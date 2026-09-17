@@ -45,7 +45,9 @@ export type MainToWorker = BootMessage | CallMessage | EmitInMessage | ShutdownM
 
 export type WorkerToMain =
   | ServiceCallMessage
-  | { readonly t: "ready"; readonly pluginName: string; readonly apiVersion?: number }
+  | { readonly t: "ready"; readonly pluginName: string; readonly apiVersion?: number;
+      readonly inject: readonly string[] }
+  | { readonly t: "shutdown-ack" }
   | { readonly t: "provided"; readonly service: string }
   | { readonly t: "listening"; readonly token: string; readonly mode: string }
   | {

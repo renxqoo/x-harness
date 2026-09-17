@@ -60,7 +60,12 @@ async function handle(message: MainToWorker): Promise<void> {
       send({ t: "apply-error", error: "module default export is not a Plugin" });
       return;
     }
-    send({ t: "ready", pluginName: plugin.name, apiVersion: plugin.apiVersion as number | undefined });
+    send({
+      t: "ready",
+      pluginName: plugin.name,
+      apiVersion: plugin.apiVersion as number | undefined,
+      inject: [...((plugin as { inject?: readonly string[] }).inject ?? [])],
+    });
     await loadPlugins(ctx, [bridged(plugin as Parameters<typeof loadPlugins>[1][number])]);
     send({ t: "apply-done" });
     return;
@@ -96,6 +101,7 @@ async function handle(message: MainToWorker): Promise<void> {
   }
   if (message.t === "shutdown") {
     await ctx.dispose();
+    send({ t: "shutdown-ack" });
     return;
   }
 }
@@ -179,5 +185,6 @@ function bridged(plugin: Parameters<typeof loadPlugins>[1][number]): Parameters<
       return ctx.scope(filter);
     },
   } as unknown as Context;
-  return { ...plugin, apply: () => plugin.apply(wrapper) };
+  // inject 刻意丢弃：跨插件依赖语义归 main 侧 plugin-manager
+  return { name: plugin.name, apply: () => plugin.apply(wrapper) };
 }

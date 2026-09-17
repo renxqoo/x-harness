@@ -1,6 +1,6 @@
 # plugin-manager 方案（对话式插件开发的装载与隔离层）
 
-> 状态：**定稿**（2026-09-18 用户裁决：直接实现 v2 完整版，避免返工——两模式架构一次立起，worker 硬隔离为生产形态）
+> 状态：**已实施**（2026-09-18：v2 双模式全量落地，159 用例四门全绿；对抗审查与收口核销见文末）
 > 级别：中（新子模块 + 新外部契约 + 装卸并发语义 + 文件系统面）
 > 定位：**平台上开发的第一个插件**（吃狗粮）——实现「对话开发 → 写本地文件 → 立即安装 → 失败隔离 → 错误回流对话 → 迭代重装」闭环的产品层；**不进内核**（五条判据一条不过：纯策略）。
 > 依赖：仅 @x-harness/core 的 Context 件（已完成）——不需要等 session/llm/tools。
@@ -151,6 +151,9 @@ packages/plugin-manager/          # @x-harness/plugin-manager（独立包，将�
 6. **模块形状**：`default export` 为 Plugin；named `plugin` export 别名宽容；可选 `apiVersion` 字段参与版本门（不声明 = 放行并记录，宿主可 `strictManifest` 收紧——v2 完整门为可选项）。
 7. **卸载依赖检查**：`dependentsOf(name)` 非空 → 默认拒（err 列出依赖方），`{force: true}` 放行——依赖方 fail-fast 的炸点前移为显式决策。
 8. **双模式同契约**：install/uninstall/list/errors/dependentsOf 在 process/worker 两模式下行为一致，执行目标是实现细节——这是「避免返工」的结构保证（worker 桥将来扩 waterfall 是加法不是改法）。
+9. **注册落位**（实现期发现）：插件的 provide/on 落**平台 root**（chain-up 决定子层注册对平台不可见），disposer 链进插件 scope（回卷向下：scope dispose 收编 root 注册）——隔离性由 teardown 保，不由落位保。
+10. **token 注册表 + contracts 模式**：跨模块 token 身份以对象为载体——插件 provide/on 的 token 经 manager 注册表按名暴露（`token(name)`/`serviceToken(name)`）；宿主与插件**共享**的 token（状态迁移通道）应住在稳定 contracts 模块（不随实现文件热换 bust——模块身份是 token 身份的载体）。loadModule 首载 plain import 保模块身份、同路径重装才 query bust；loadPlugins 的 inject 刻意剥离（同批语义）——跨插件依赖归 plugin-manager 的 dependentsOf/uninstall 检查。
+11. **RPC 代理约束**（worker 模式）：一切属性访问经方法调用（getter 不可达）；平台服务在 worker 侧为异步代理；事件载荷必须结构化克隆安全；RPC 超时的失败获知时点 = 击杀收殓完成后。
 
 ## 6. 测试口径
 
@@ -158,6 +161,7 @@ packages/plugin-manager/          # @x-harness/plugin-manager（独立包，将�
 - **e2e**（真文件，临时目录）：写 `translate.ts`（provide 服务 + on 监听）→ install → 平台层 use 服务/emit 可见 → 改文件（行为变化）→ replace 重装 → 新行为生效；写 `broken.ts`（apply throw）→ install 失败 → 平台监听者照常工作。
 - **worker 模式专项**：apply 死循环 → 超时 terminate → 装载失败、平台存活、无僵尸注册；运行期监听器死循环 → RPC 超时击杀 → 平台继续、后续 emit 不再投递该插件；worker 崩溃（process.exit）→ 收殓同上；服务 RPC 双向（main 调 worker 服务 / worker 用平台服务）；未注册 token 的监听 → 装载拒；waterfall 注册 → 装载拒（约束生效）。
 - **回归锚点**：平台 ctx 在所有失败路径后仍可注册/派发（`ctx.on` 不 throw）。
+- **实测锁定的语义发现**：async 中间件 throw 是 rejected promise（错误路由须 .catch 而非仅 try/catch）；RPC 超时击杀的 resolve 必须晚于收殓完成（调用方获知失败 = 收殓已毕）；审计为 fire-and-forget（读文件断言前需等 flush）。
 
 ## 7. 验收清单
 
