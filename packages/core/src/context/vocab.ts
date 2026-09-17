@@ -1,5 +1,3 @@
-// 内核自举词表 + 通用信封（docs/CONTEXT.md §6.1）——Context 自身拥有的 5 个 token。
-// 词表封闭性由测试锁死（导出常量集合 == 文档词表，双向）。
 
 import { defineEvent } from "./tokens.ts";
 

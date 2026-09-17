@@ -1,7 +1,4 @@
-// Context 原语类型面（docs/CONTEXT.md §1–§5、§2.1）。
-// 两种名字：服务 token 与事件 token，都注册即类型（C1）；派发模式编码在 token 里。
 
-/** 注册即回卷句柄；dispose 串行逆序执行（§4） */
 export type Disposer = () => void | Promise<void>;
 
 export interface ServiceToken<T> {

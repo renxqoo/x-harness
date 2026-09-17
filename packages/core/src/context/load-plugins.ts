@@ -1,12 +1,3 @@
-// 插件加载器（docs/CONTEXT.md §5）：inject 按插件名 topo 排序；
-// 循环依赖 / 重名 / 缺依赖 = 装配期 throw（预扫描，未跑任何 apply 前拒绝）；
-// apply 抛错 → plugin/error + 整体回卷（IMPL 裁决 2：装配阶段 ctx 视为不可用，dispose 全层）。
-//
-// 卸载契约：loadPlugins 返回与插件同序的卸载句柄（Disposer[]）——
-//   单插件卸载 = 逆序回卷其 **apply 期注册**（provide/on/onChain/effect + apply 返回的 disposer）；
-//   句柄幂等，且与层回卷共用 once 哨兵（层 dispose 兜底不双跑）；
-//   apply 之后的运行期注册归属调用方层账本，随层回卷（不在单插件卸载范围）。
-// 并发契约：并发 loadPlugins 无互斥（重名/循环检查是入口快照）——装配序列化是宿主责任。
 
 import { pluginError, pluginLoaded, pluginUnloaded } from "./vocab.ts";
 import type {

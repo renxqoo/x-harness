@@ -1,11 +1,3 @@
-// Context 实现（docs/CONTEXT.md §1–§4、§6.2）：服务注册表 + 四模式总线 + scope 层链 + effect 账本。
-// 结构：注册表按 token 对象为键、条目携带层标记——scope 是过滤器不是副本（C2）。
-//   - 监听器：链上并集、root→leaf 次序、不遮蔽（多播语义）；
-//   - 服务：nearest-first 遮蔽（单播语义）；
-//   - emit 定向 = chain-up：本层 + 祖先链可见，兄弟不可见（C3）——service/provided 亦然（提供层 chain-up）；
-//   - 一切注册的 disposer 自动入层 effect 账本（I1）：手动调用与层回卷都幂等，且自清理
-//     （手动退订后账本不再持有尸体闭包——对抗审查 #5 修复）。
-
 import { deepFreeze, shellFreeze } from "./freeze.ts";
 import { contextDisposing, serviceProvided } from "./vocab.ts";
 import type {

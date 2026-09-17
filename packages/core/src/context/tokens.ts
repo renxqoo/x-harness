@@ -1,5 +1,3 @@
-// token 铸造（docs/CONTEXT.md §2.1）：模式编码在 token、泛型即载荷——注册即类型（C1）。
-// 同名 token 重复 define 合法（跨插件隔离域：注册表按 token 对象为键，同名不同对象互不可见）。
 
 import type {
   EventToken,
