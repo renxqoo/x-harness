@@ -138,7 +138,11 @@ function bridged(plugin: Parameters<typeof loadPlugins>[1][number]): Parameters<
         send({ t: "heard", token: token.name, payload });
         return out;
       };
-      return ctx.on(token as never, wrapped as never, opts);
+      return (ctx.on as (t: AnyToken, f: unknown, o?: { readonly prepend?: boolean }) => Disposer)(
+        token,
+        wrapped,
+        opts,
+      );
     },
     emit<T>(token: EventToken<T>, payload: T): void {
       tokenByName.set(token.name, token);
