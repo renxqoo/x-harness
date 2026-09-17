@@ -1,6 +1,6 @@
 # plugin-manager 方案（对话式插件开发的装载与隔离层）
 
-> 状态：**已实施**（2026-09-18：v2 双模式全量落地，159 用例四门全绿；对抗审查与收口核销见文末）
+> 状态：**已实施·审查修复中**（2026-09-18：v2 双模式落地、159 用例四门全绿；独立会话对抗审查 24 项（7 高/9 中/8 低）——处置表见文末，高严重度修复为下一批次，未清零前不核销）
 > 级别：中（新子模块 + 新外部契约 + 装卸并发语义 + 文件系统面）
 > 定位：**平台上开发的第一个插件**（吃狗粮）——实现「对话开发 → 写本地文件 → 立即安装 → 失败隔离 → 错误回流对话 → 迭代重装」闭环的产品层；**不进内核**（五条判据一条不过：纯策略）。
 > 依赖：仅 @x-harness/core 的 Context 件（已完成）——不需要等 session/llm/tools。
@@ -184,3 +184,30 @@ packages/plugin-manager/          # @x-harness/plugin-manager（独立包，将�
 1. 安全门缺省：信任域内（当前方案）vs 缺省全拒必须显式放行？
 2. v1 是否顺带 CLI 子命令形态（`xh plugin install <path>`）——还是纯服务面等 M3 工具接线？
 3. failed 记录是否需要显式 `clear(name)` API（当前方案：成功重装即覆盖）。
+
+
+---
+
+## 9. 对抗审查处置表（2026-09-18，独立会话；「修复中」= 下一批次，未驳回任何高级项）
+
+| # | 严重度 | 问题 | 处置 |
+|---|---|---|---|
+| 1 | 高 | worker replace 必然失败：launch 先于锁，新旧插件同名服务在旧卸载前冲突即 kill | 修复中——worker 模式 replace 需「先锁内卸旧→再 launch 新」或桥侧容忍冲突延后注册 |
+| 2 | 高 | shutdown 不清 rpcPending/不置 killed：残留计时器晚到 kill 删掉重装后的新登记（跨安装污染） | 修复中——shutdown 必须与 kill 同构（清计时器+置 killed+结算 pending） |
+| 3 | 高 | serial/guard/parallel 监听桥三重坏：worker 侧 emit 对非 event token throw→击杀插件；serial await 语义缺失；guard deny 不回流 | 修复中——host 侧按 token mode 分派本地 dispatch；桥侧 forwarder 需双向（dispatch-req/resp 关联）或 v2 收窄为 emit-only 并改规格 |
+| 4 | 高 | worker 模式版本门整体缺失（BootMessage.kernelApiVersion 死字段、ready.apiVersion 无人消费） | 修复中——launch 成功判定加 apiVersion 检查 |
+| 5 | 高 | 装载失败从不留 status:"failed" 登记（裁决 5/§1.2 违背——对话迭代看不见失败历史） | 修复中——失败路径写 failed 记录，成功重装覆盖 |
+| 6 | 高 | process 卸载失败以异常炸出服务面且登记卡死一轮（Result 契约违背） | 修复中——unloadFn 捕获折算 err；remove 先于/后于 teardown 的次序修正 |
+| 7 | 高 | replace 卸载失败泄漏已启动的新 bridge（幽灵 worker + 幽灵注册） | 修复中——失败路径 kill 新 bridge |
+| 8 | 中 | 平台 ctx dispose 不终止 worker 线程（宿主关停泄漏） | 修复中——bridge 清理挂进 platform effect 账本 |
+| 9 | 中 | worker 侧运行期监听器错误不回流（协议 log 只有接收端） | 修复中——host createContext 注入 sink→协议 log |
+| 10 | 中 | worker waitFor 平台服务永久悬挂 | 修复中——waitFor 走 svc-call 停靠或明确 reject |
+| 11 | 中 | shutdown 窗口崩溃→60s 假死+错误掩盖 | 修复中——exit 在 shutdown 等待期直接结算 ack |
+| 12 | 中 | install-failed 信封从不发射 | 修复中——失败路径补 emit |
+| 13 | 中 | exit 与登记窄窗竞态→死 worker 僵尸 active 登记 | 修复中——register 前复查 worker 存活或 onKilled 幂等核对 |
+| 14 | 中 | handle.unload() 绕过同名锁；并发 shutdown 覆盖 waiter | 修复中——句柄卸载经锁；shutdownWaiter 单例拒绝二次 |
+| 15 | 中 | hostPath URL.pathname 不解 percent-encoding（含空格路径 worker 全灭） | 修复中——fileURLToPath |
+| 16 | 中 | 同名并发 worker：launch 在锁外双跑 apply | 修复中——随 #1 一并收口 |
+| 17-24 | 低 | violations 静默堆积 / thenable 误判 / "unknown" 名交叉污染 / 纯 exit 误报 timeout / approveInstall 签名文档漂移 / roots 符号链接穿透 / uninstall-blocked phase 失真 / Date.now 缓存 bust 同毫秒 | 修复中——随批次顺带；#21 文档同步、#22 文档标注先行 |
+
+审查确认干净：withNameLock 锁释放、placeOnRoot 双路径次序（内核 disposer 幂等+once 哨兵）、审计 fire-and-forget 窗口（规格性接受）。
