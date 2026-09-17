@@ -1,6 +1,6 @@
 # plugin-manager 方案（对话式插件开发的装载与隔离层）
 
-> 状态：**草稿**（待用户过目后定稿实施）
+> 状态：**定稿**（2026-09-18 用户裁决：直接实现 v2 完整版，避免返工——两模式架构一次立起，worker 硬隔离为生产形态）
 > 级别：中（新子模块 + 新外部契约 + 装卸并发语义 + 文件系统面）
 > 定位：**平台上开发的第一个插件**（吃狗粮）——实现「对话开发 → 写本地文件 → 立即安装 → 失败隔离 → 错误回流对话 → 迭代重装」闭环的产品层；**不进内核**（五条判据一条不过：纯策略）。
 > 依赖：仅 @x-harness/core 的 Context 件（已完成）——不需要等 session/llm/tools。
@@ -72,9 +72,18 @@ export interface PluginErrorEntry {
 export function createPluginManager(deps: {
   ctx: Context;
   roots: readonly string[];      // 安装白名单目录（防任意路径 import）
+  mode?: "process" | "worker";   // 执行模式缺省（install 可逐次覆盖）
   approveInstall?: (input: { path: string; pluginName: string }) => boolean | Promise<boolean>;
   errorLogLimit?: number;        // 缺省 100
+  audit?: AuditPort;             // 审计持久化端口（缺省：JSONL 追加文件于 roots[0]）
+  applyTimeoutMs?: number;       // worker 模式 apply 超时（缺省 10s；超时 terminate = 装载失败）
+  runtimeTimeoutMs?: number;     // worker 模式单次 RPC 超时（缺省 60s；超时 = 击杀 + 记录 + 平台继续）
+  tokens?: readonly AnyToken[];  // worker 模式可桥接 token 白名单（内核词表自动含）；未注册 token 的监听 = 装载拒
+  kernelApiVersion?: number;     // 缺省 1；插件 manifest.apiVersion 不匹配 = 拒
 }): Plugin
+
+export interface AuditPort { append(entry: PluginAuditEntry & { ts: number }): Promise<void> }
+export interface PluginManifest { readonly apiVersion?: number }  // 插件可声明于 default export
 ```
 
 ### 1.2 错误形态与事件时序
@@ -85,10 +94,12 @@ export function createPluginManager(deps: {
 
 ## 2. 问题域
 
-**处理**：本地模块装载（import + 缓存 bust + 形状校验）、一插件一 scope 的隔离装载、装卸生命周期登记、运行期错误归属路由（分模式：emit 吞 / waterfall 族 rethrow）、错误环形日志与查询、依赖声明留存与 dependentsOf、roots 白名单、审批挂点、replace 重装语义、装卸交错串行化（同名 install/unload 互斥——见预算）。
+**处理**：本地模块装载（import + 缓存 bust + 形状校验 + manifest 版本门）、一插件一 scope 的隔离装载、**双执行模式**（process = 全语义信任域 / worker = 硬隔离生产域）、worker 桥协议（服务 provide 双向 RPC 代理 / emit·serial·guard·parallel 监听桥 / apply 超时 terminate / 运行期 RPC 超时击杀 / worker 崩溃收殓）、装卸生命周期登记、运行期错误归属路由（process 模式分模式吞/rethrow；worker 模式错误经协议回流）、错误环形日志 + 审计持久化端口、依赖声明留存与 dependentsOf、卸载依赖检查（非空默认拒，force 放行）、roots 白名单、审批门（**缺省拒**）、replace 重装语义、装卸交错串行化（同名互斥）。
 
 **不处理（写清归属）**：
-- 工具注册面（install/uninstall 作为对话工具）→ M3 tools 件落地后接线（v1 服务面宿主/CLI 直接调用）；
+- 工具注册面（install/uninstall 作为对话工具）→ M3 tools 件落地后接线（服务面先行，宿主/CLI 直接调用）；
+- **worker 模式下注册 waterfall/chain 中间件 → 装载拒**（洋葱 next() 双向跨线程往返每跳两倍延迟，且拦截是可信平台能力——retry/权限中间件属 standard 件跑在 process 模式；worker 插件要拦截将来按需扩协议，双模式同契约保 additive 不返工）；
+- worker 模式下平台服务的同步语义 → RPC 代理一切方法为异步（`await svc.foo()` 可用，同步属性读/同步返回不可用）——跨线程的结构化克隆边界，文档约束；
 - 标准审批流（answerer 桥）→ M3 TOOLS 件；v1 只有 approveInstall 挂点；
 - 进程级硬隔离（同步崩溃/OOM/失控定时器）→ v2 的 worker 线程选项——语义隔离边界如实标注；
 - 插件状态迁移 → 插件自己的责任（宿主服务范式，已有范式用例）；
@@ -101,38 +112,51 @@ export function createPluginManager(deps: {
 - 不同名并发装载：允许（各自 scope，互不影响）；
 - errorLog 每插件上限（缺省 100，环形），内存有界；
 - install 全程无锁等待内核（scope/loadPlugins 已是串行安全的）。
+- **worker 生命周期**：apply 超时 terminate（缺省 10s）；单次 RPC 超时 terminate（缺省 60s，击杀后其桥接注册随 scope 回卷、错误入审计、平台继续）；worker error/exit 事件 = 无条件收殓（同上）。terminate 后不得有僵尸注册残留（scope dispose 兜底）。
 
 ## 4. 拆分
 
 ```
 packages/plugin-manager/          # @x-harness/plugin-manager（独立包，将来被 standard 策展）
   src/
-    types.ts                      # 服务/记录/错误条目契约
-    validate-module.ts            # 模块形状校验（default export Plugin）
-    install.ts                    # 装载流程（roots/审批/import/scope/loadPlugins/登记）
-    wrapper.ts                    # 错误路由 capture wrapper（分模式）
+    types.ts                      # 服务/记录/错误条目/审计端口/manifest 契约
+    validate-module.ts            # 模块形状校验 + 版本门
+    registry.ts                   # PluginRecord 登记 + per-name 互斥链 + 依赖图
+    error-log.ts                  # 环形日志 + 审计端口接线
+    approval.ts                   # 审批门（缺省拒）
+    install.ts                    # 装载编排（模式分派：process / worker）
+    wrapper.ts                    # process 模式错误路由 capture wrapper（分模式吞/rethrow）
+    bridge.ts                     # worker 模式 main 侧桥（服务代理/监听桥/RPC 关联/超时击杀）
+    worker/
+      protocol.ts                 # 双向消息协议（结构化克隆安全）
+      host.ts                     # worker 入口：boot 内核 + capture 桥 + 跑用户插件 + 收殓
     plugin-manager.ts             # createPluginManager：组装 + 服务 provide
     index.ts
   src/__test__/
-    plugin-manager.test.ts        # 单测（mock import：注入 loader 依赖便于测试）
-    e2e-local-file.test.ts        # 真文件 e2e：临时目录写 TS → 装 → 隔离 → 迭代
+    worker-slice.test.ts          # ★ 大级试运行切片（先于全量实施）：worker 内核启动/TS 插件加载/提供桥/监听桥/卡死击杀
+    plugin-manager.test.ts        # process 模式全量单测（注入 loader）
+    worker-mode.test.ts           # worker 模式全量
+    e2e-local-file.test.ts        # 真文件 e2e：写 TS → 装 → 隔离 → 迭代（两模式各走一遍）
 ```
 
-依赖注入细节：`import()` 经 deps 注入（`load?: (path) => Promise<unknown>`）——单测用假 loader，e2e 用真 bun import。
+依赖注入细节：`import()` 与 `Worker` 工厂均经 deps 注入——单测用假 loader/假 worker，e2e/切片用真 bun（worker 用 node:worker_threads 兼容层，切片负责验证 bun+vitest 下真实可用）。
 
 ## 5. 裁决（默认裁决 + 否决窗口）
 
 1. **包位置**：独立 `@x-harness/plugin-manager`，将来 standard 策展——不进 core（判据不过）、不抢建 standard（D15 的策展包等 M4 一起立）。
-2. **安全门 v1**：`roots` 白名单必填 + `approveInstall` 挂点缺省放行（信任域内本地文件）——**不是裸奔**（越界路径拒），但审批策略归宿主；M3 answerer 落地后推荐接标准审批流。可选收紧：缺省拒绝、宿主必须显式放行——**待用户拍板**。
+2. **安全门**：`roots` 白名单 + `approveInstall` **缺省拒**（生产就绪分级裁决：agent 自写自装必须人确认；dev 形态宿主显式传放行策略）。M3 answerer 落地后接标准审批流。
 3. **错误路由的模式分叉**：emit 监听器 catch 后不 rethrow（与内核 I3 隔离等价，但带归属）；waterfall/serial/guard/parallel 中间件 catch 后记录并 **rethrow**（关键路径 reject 语义不可吞）。
 4. **replace 语义**：install 同名默认拒；`replace: true` = 先 unload（await 完成）再装——不留双版本并存的模糊态。
 5. **failed 记录保留**：装载失败的记录留在登记簿（status=failed + 错误可查）直到成功重装或显式清理——对话迭代需要看见失败历史。
-6. **模块形状**：`default export` 为 Plugin；named `plugin` export 作为别名宽容。
+6. **模块形状**：`default export` 为 Plugin；named `plugin` export 别名宽容；可选 `apiVersion` 字段参与版本门（不声明 = 放行并记录，宿主可 `strictManifest` 收紧——v2 完整门为可选项）。
+7. **卸载依赖检查**：`dependentsOf(name)` 非空 → 默认拒（err 列出依赖方），`{force: true}` 放行——依赖方 fail-fast 的炸点前移为显式决策。
+8. **双模式同契约**：install/uninstall/list/errors/dependentsOf 在 process/worker 两模式下行为一致，执行目标是实现细节——这是「避免返工」的结构保证（worker 桥将来扩 waterfall 是加法不是改法）。
 
 ## 6. 测试口径
 
 - **单测**（假 loader）：roots 越界拒；审批拒绝拒；形状校验四态（无 default / 非 Plugin / 缺 name / 缺 apply）拒；重名拒 + replace 成功；apply 抛错 → scope 死、平台活（平台监听者照常收到后续事件）、errors 可查；emit 监听器错误归属记录 + 信封 + 不外抛；waterfall 中间件错误归属记录 + dispatch 仍 reject；errorLog 环形上限；同名并发互斥；uninstall 后 list 状态、依赖图查询。
 - **e2e**（真文件，临时目录）：写 `translate.ts`（provide 服务 + on 监听）→ install → 平台层 use 服务/emit 可见 → 改文件（行为变化）→ replace 重装 → 新行为生效；写 `broken.ts`（apply throw）→ install 失败 → 平台监听者照常工作。
+- **worker 模式专项**：apply 死循环 → 超时 terminate → 装载失败、平台存活、无僵尸注册；运行期监听器死循环 → RPC 超时击杀 → 平台继续、后续 emit 不再投递该插件；worker 崩溃（process.exit）→ 收殓同上；服务 RPC 双向（main 调 worker 服务 / worker 用平台服务）；未注册 token 的监听 → 装载拒；waterfall 注册 → 装载拒（约束生效）。
 - **回归锚点**：平台 ctx 在所有失败路径后仍可注册/派发（`ctx.on` 不 throw）。
 
 ## 7. 验收清单
