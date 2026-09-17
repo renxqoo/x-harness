@@ -254,6 +254,7 @@ core 单包起步，模块边界即未来的包边界（session、llm、agent-lo
 | D18 | 注册面运行期开放 + 快照语义：一切注册经 effect 账本；变更于下一次组装/派发点生效，在飞单元用启动时快照（工具表快照落 request/header） | 加载期注册 + 运行期冻结 | 支持自修改 agent/运行期加热工具；快照语义消解在飞竞态（M3 骨架假设之一） |
 | D19 | **投影原语 `history/splice`**：内核只拥有「可见性怎么折」一条投影语义（区间不可见 + 内联替代）；压缩完全插件化——触发策略、摘要生成（side 调用经 llm/stream dispatch）、一次 splice 追加 | 内核 `compaction` 事件（对抗走查后否决——把「压缩」概念不当抬进词表）；my-agent 式世代事件 | 同一原语服务压缩/滑窗/上下文编辑/fresh start；内核知道得更少；世代是派生值不是存储事实 |
 | D20 | **最小事件集（9 条）**：删 `tool/call`（tool_use 块已在 assistant/message，同一事实不落两处）、删 `turn/start`（= 共享 turnId 的首个事件）、删 `step/start·end`（边界 = header↔assistant 配对；失败 = 悬空 header + turn/end）；保 `turn/end`（end_turn ≠ 结束，steer 可续航，终态不可推导只能自述） | 13 条全集（想到一个事实记一个词条） | 本质性测试（§3.1 第 5 条）的系统性推导：删掉后有折叠读面断 = 本质，全部可推导 = 冗余 |
+| D22 | **差距批进内核（用户裁决）**：parallel / waitFor / 装配 join / prepend 四项对照差距趁 Context 无下游消费者时直接落地——后补即动公共面；HMR 不进内核（运行期装卸已有 + 版本热换 = unload+load + 状态经宿主服务迁移） | 留给插件层组合（先前倾向）；照抄 Cordis fiber 状态机 | 组合可达 ≠ 免动内核：公共面后补成本高于当下落地；HMR 的生产价值已被 resume + 装卸组合覆盖 |
 | D21 | **词表与规格文档归属**：每内核件独立成篇（CONTEXT/SESSION/LLM/LOOP/AGENT/TOOLS.md），件级契约与域词表单源在件文档；DESIGN 只持总规范（判据/索引/消费面/决策/议程）；代码导出可集中（`core/vocab`），文档归属按件——两回事 | 单一大文档；或 DESIGN 代持全部件契约（先前形态，已否决） | 文档镜像代码的 ownership：谁拥有谁定义；DESIGN 可读、件文档可施工 |
 
 ## 8. 待讨论清单（下一程议程）

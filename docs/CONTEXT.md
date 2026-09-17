@@ -26,6 +26,10 @@ export function defineService<T>(name: string): ServiceToken<T>
 provide<T>(token: ServiceToken<T>, impl: T): Disposer
 use<T>(token: ServiceToken<T>): T                 // 链上最近提供；缺失 throw（fail-fast）
 tryUse<T>(token: ServiceToken<T>): T | undefined
+waitFor<T>(token: ServiceToken<T>): Promise<T>    // 延迟 use：可见即解析，否则停靠——
+                                                   // 服务在可见层出现时解析（DI 自动停靠的原语）；
+                                                   // 只管「出现」不管「持续存在」（拉取式一致）；
+                                                   // 等待层 dispose 时 reject
 ```
 
 语义：
@@ -51,6 +55,7 @@ export function defineEvent<T>(name: string, opts?: { freeze?: "deep" | "shell" 
 export function defineWaterfall<I, O>(name: string): WaterfallToken<I, O>
 export function defineSerial<T>(name: string): SerialToken<T>
 export function defineGuard<T>(name: string): GuardToken<T>
+export function defineParallel<T>(name: string): ParallelToken<T>
 
 /** 匿名链：无全局名不进词表，owner 持有并经服务共享（§6.2） */
 export interface Chain<I, O> { dispatch(input: I): Promise<O> }
@@ -82,6 +87,7 @@ onChain<I, O>(chain: Chain<I, O>, middleware: ChainMiddleware<I, O>): Disposer  
 | **waterfall** | 洋葱：注册序包裹，final 最内层 | 合法（业务语义） | **派发失败**：Promise reject——拦截链是关键路径，坏监听器必须暴露 | 输入 deep | 异步 |
 | **serial** | 注册序逐个 await | 否（全部执行——弃权不得跳过他人） | **隔离**（进 sink，继续下一个） | deep | 异步顺序 |
 | **guard** | 注册序逐个 await，**全部执行不短路**——deny 与错误都不跳过他人（弃权/否决权结构性平等） | 结果 = 注册序**首个 deny 即终态**（执行不停止、结果已定）；只能否决，无 allow 可翻回 | **隔离**（坏守卫按弃权计——否则一个坏插件就能瘫痪否决链） | deep | 异步顺序 |
+| **parallel** | **并发执行全部**（Promise.allSettled），等待全部 settle——emit 的异步屏障版 | 否 | **聚合上抛**：单错抛原错、多错 AggregateError（异步屏障的错误必须暴露） | deep | 异步并发 |
 
 waterfall 的 `next` 纪律（I2）：返回时未调 → 派发结束 throw；**串行重调合法**——每次重调完整重执行链尾与 final（重试中间件的机制基础，dsh 同款）；并发调用 → 立即 throw。洋葱次序保证输入在链上可见的是「前一个监听器的产物」。**final 的可重执行性由 token owner 词表标注**：`llm/stream` 标注「可重执行」（每次 next 重调 = 真实重发）；纯函数 final（compose 等）天然可重调；不保证者标注「单次」，违者自责。
 
@@ -135,7 +141,7 @@ export interface Plugin {
 - `inject` 按插件名 topo 排序；**循环依赖 → 装配期 throw**；重名插件 → throw。
 - `apply` 可异步；返回的 disposer 自动入 effect 账本。
 - 加载完成逐个广播 `plugin/loaded`；apply 抛错 → `plugin/error` + 装配失败（整体回卷已加载的）。
-- **卸载契约**：`loadPlugins` 返回与插件同序的卸载句柄（`Disposer[]`）——单插件卸载 = 逆序回卷其 **apply 期注册**（provide/on/onChain/effect + apply 返回的 disposer）；句柄幂等，且与层回卷共用 once 哨兵（层 dispose 兜底不双跑）；**卸载与层回卷同律容错**——单个 disposer 抛错不中止（其余必回卷），单错抛原错、多错抛 AggregateError；卸载完成（含部分失败）广播 `plugin/unloaded`；apply 之后的运行期注册归调用方层账本，随层回卷。按名卸载不立内核注册表：宿主在装配点组 Map（真实需求方都在装配点；跨插件卸载走服务组合层）。**并发契约**：并发 loadPlugins 无互斥（检查是入口快照）——装配序列化是宿主责任。
+- **卸载契约**：`loadPlugins` 返回与插件同序的卸载句柄（`Disposer[]`）——单插件卸载 = 逆序回卷其 **apply 期注册**（provide/on/onChain/effect + apply 返回的 disposer）；句柄幂等，且与层回卷共用 once 哨兵（层 dispose 兜底不双跑）；**卸载与层回卷同律容错**——单个 disposer 抛错不中止（其余必回卷），单错抛原错、多错抛 AggregateError；卸载完成（含部分失败）广播 `plugin/unloaded`；apply 之后的运行期注册归调用方层账本，随层回卷。按名卸载不立内核注册表：宿主在装配点组 Map（真实需求方都在装配点；跨插件卸载走服务组合层）。**并发契约**：并发 loadPlugins 无互斥（检查是入口快照）——装配序列化是宿主责任。**装配 join**：每批 loadPlugins 是可等待的装配单元——dispose 经 join effect 自动等在飞装配 settle（dispose 完成前装配必 settle；逆序回卷期间在飞注册撞 disposing 层一律 fail-fast，不静默、不挂死）。
 
 ## 6. 内核事件词表：Context 自身
 
@@ -413,7 +419,7 @@ export function createOtel(opts: { endpoint: string; sample: Sampler }): Plugin 
 **实现期验证的等价性风险：**
 
 1. inject 耦合插件名（谁）而非服务键（能力）——当前等价；插件可替换提供同能力时僵化，改进选项 = inject 兼收 token 名（M1 后裁决）。
-2. parallel 缺位是「被推迟」不是「被证明不需要」——并发等待场景真出现时保持加第五种模式的口子。
+2. ~~parallel 缺位~~ → **已落地**（差距批修复：Promise.allSettled 并发屏障 + 聚合上抛，§2.2 矩阵第五行）。
 3. preset-on-scope（最重要）：dsh 用 mount.ts + isolate realm 防止 preset 内服务行变成进程全局、两会话冲突；我们的对应物 = `loadPlugins` 在 scoped ctx 上跑 + scope 遮蔽。M1 必测：双 agent 同 preset 各自 apply、服务互不串。
 
 ### 10.1 源码级对照（vendored Cordis 4.0.2，2026-09-18 深化 §10）
@@ -427,7 +433,7 @@ export function createOtel(opts: { endpoint: string; sample: Sampler }): Plugin 
 | 派发分配 | 每次 dispatch 2 数组 + 每监听器 1 bound fn + 非 internal 事件先递归一次 `internal/dispatch`（再一套分配） | 每次派发 1 快照数组 | 我们更省 |
 | emit 错误 | **核心不捕获**（穿透调用者；包容只在特定面：emitPluginDisposed/unload/parallel 聚合） | 默认隔离进 sink（I3） | 设计取舍：他们让调用者看见；我们让观察者不得破坏派发 |
 | unload 容错 | per-disposer catch → logger（静默） | per-disposer catch → 聚合上抛 | 都容错；错误去向不同 |
-| 服务读取 | ctx 原型链 + fiber 父链逐跳校验 isolate；**每次属性读新建 ~3 层临时 Proxy**（traceable→shadow-method→bind） | `Map(token, Map(Layer→impl))` 沿层链 has——O(深度) 零 Proxy 分配 | 我们读取路径显著更轻 |
+| 服务读取 | ctx 原型链 + fiber 父链逐跳校验 isolate；**每次属性读新建 ~3 层临时 Proxy**（traceable→shadow-method→bind） | `Map(token, Map(Layer→impl))` 沿层链 has——O(深度) 零 Proxy 分配；**waitFor 停靠原语已补（DI 自动停靠）** | 我们读取路径显著更轻 |
 | 反应式 DI | epoch 字符串 + notify **三重循环全量扫描 O(runtime×fiber×name)**，无反向索引 | 无反应式（拉取 + service/provided），零扫描 | 功能差距 vs 扩展性成本 |
 | logger 自举 | 构造顺序硬编码 + 根 fiber `_disposables.clear()`（只摘不跑）+ 环形缓冲 exporter——精巧隐晦 | sink 注入（C5） | 我们直白可推理 |
 | 复杂度分布 | 三处贵点：`Fiber.effect()` 单方法 **147 行**（状态机套状态机 + 模块级 inertia WeakMap）、traceable/shadow 双层 Proxy（需 symbols.original 逃生口 + 自定义 hasInstance）、epoch 反应式接力链 | 无 >60 行单点；复杂度均匀分布 | 结构性可维护性优势 |
@@ -435,3 +441,5 @@ export function createOtel(opts: { endpoint: string; sample: Sampler }): Plugin 
 **架构层**：Cordis 把作用域/身份/服务解析编码进 **JS 语言机制**（原型链 + Proxy + symbol 品牌），插件运行时 = fiber 状态机（PENDING/LOADING/ACTIVE/FAILED/DISPOSED/UNLOADING，状态为派生值）；我们把同样语义编码为**显式数据结构**（Layer 链 + chainSet + token 键 Map）+ 无状态 Context 视图。取舍：他们表达力强（isolate O(1) extend、依赖换人自动重载）、但有 identity 陷阱与 Proxy 链成本；我们可推理性强（可见性一眼读出）、无语言魔法、依赖方向无环（他们五服务构造顺序硬编码互相咬）。
 
 **修正记录**：§10 对照表中「回卷容错为我们更严」的表述不准确——Cordis fiber 卸载同样 per-disposer 容错；准确差别是错误去向（logger 静默 vs 聚合上抛）。
+
+**差距批修复（2026-09-18，用户裁决「直接修复避免后续动内核」）**：parallel（第五模式）、waitFor（DI 自动停靠原语）、装配 join（dispose 等在飞装配）、prepend 旋钮（on/onChain 第三参，层序仍优先）四项已进内核并有测试；生产热替换形态（unload v1 + load v2 + 状态经宿主服务迁移）以范式用例锁定。HMR 不进内核：运行期装插件是既有能力，版本热换 = unload+load，状态迁移经宿主服务显式传递。

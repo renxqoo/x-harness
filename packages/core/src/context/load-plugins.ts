@@ -73,6 +73,7 @@ function captureRegistrations(ctx: Context, captured: Disposer[]): Context {
     provide: <T>(token: ServiceToken<T>, impl: T): Disposer => track(ctx.provide(token, impl)),
     use: <T>(token: ServiceToken<T>): T => ctx.use(token),
     tryUse: <T>(token: ServiceToken<T>): T | undefined => ctx.tryUse(token),
+    waitFor: <T>(token: ServiceToken<T>): Promise<T> => ctx.waitFor(token),
     on: (token: AnyToken, fn: unknown): Disposer =>
       track((ctx.on as (token: AnyToken, fn: unknown) => Disposer)(token, fn)),
     emit: <T>(token: EventToken<T>, payload: T): void => ctx.emit(token, payload),
@@ -100,8 +101,16 @@ export async function loadPlugins(
   plugins: readonly Plugin[],
 ): Promise<readonly Disposer[]> {
   assertValid(plugins);
+  const ordered = topoOrder(plugins);
+  // 装配可等待（§5 并发契约的 quiescence 面）：dispose 经此 effect 自动等本批装配 settle——
+  // 在飞装配的后续注册落进 disposing 层会 fail-fast，但 dispose 本身不与装配竞速死锁
+  let release!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  ctx.effect(() => settled);
   const unloaders: Disposer[] = [];
-  for (const plugin of topoOrder(plugins)) {
+  for (const plugin of ordered) {
     const captured: Disposer[] = [];
     try {
       const disposer = await plugin.apply(captureRegistrations(ctx, captured));
@@ -129,6 +138,7 @@ export async function loadPlugins(
       unloaders.push(unload);
       ctx.emit(pluginLoaded, { plugin: plugin.name });
     } catch (error) {
+      release(); // 先 settle 装配单元——dispose 的 join effect 等的就是它，后放会自锁
       ctx.emit(pluginError, { plugin: plugin.name, error: String(error) });
       try {
         await ctx.dispose();
@@ -136,8 +146,10 @@ export async function loadPlugins(
         // 根因优先：apply 错误必须向上抛；回卷错误不吞根因（对抗审查 #9 修复）
         console.error("[x-harness] dispose during plugin load failure also failed", disposeError);
       }
+      release();
       throw error;
     }
   }
+  release();
   return unloaders;
 }

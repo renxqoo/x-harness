@@ -43,12 +43,26 @@ export interface GuardToken<T> {
   readonly __payload?: T;
 }
 
+/** parallel：emit 的异步屏障版——并发执行全部监听器并等待 settle，错误聚合上抛 */
+export interface ParallelToken<T> {
+  readonly kind: "parallel";
+  readonly mode: "parallel";
+  readonly name: string;
+  readonly __payload?: T;
+}
+
 export type AnyToken =
   | ServiceToken<unknown>
   | EventToken<unknown>
   | WaterfallToken<unknown, unknown>
   | SerialToken<unknown>
-  | GuardToken<unknown>;
+  | GuardToken<unknown>
+  | ParallelToken<unknown>;
+
+/** 注册次序旋钮：prepend = 插入本层段头（层序仍优先——root 恒先于子层） */
+export interface RegisterOptions {
+  readonly prepend?: boolean;
+}
 
 /** guard 的唯一输出形态：只能否决，无 allow 可翻回（§2.2） */
 export interface GuardDeny {
@@ -82,15 +96,28 @@ export interface Context {
   provide<T>(token: ServiceToken<T>, impl: T): Disposer;
   use<T>(token: ServiceToken<T>): T;
   tryUse<T>(token: ServiceToken<T>): T | undefined;
+  /** 延迟 use：可见即解析；否则停靠，服务在可见层出现时解析（§1）。
+   *  只管「出现」不管「持续存在」（拉取式一致）；等待层 dispose 时 reject。 */
+  waitFor<T>(token: ServiceToken<T>): Promise<T>;
 
   // —— 事件面（§2）——
-  on<T>(token: EventToken<T>, listener: (payload: T) => void): Disposer;
-  on<I, O>(token: WaterfallToken<I, O>, middleware: ChainMiddleware<I, O>): Disposer;
+  on<T>(token: EventToken<T>, listener: (payload: T) => void, opts?: RegisterOptions): Disposer;
+  on<I, O>(
+    token: WaterfallToken<I, O>,
+    middleware: ChainMiddleware<I, O>,
+    opts?: RegisterOptions,
+  ): Disposer;
   // serial 监听器声明为纯 void 返回：同步（任意返回值）与 async（Promise）都经 void 赋值规则匹配
-  on<T>(token: SerialToken<T>, listener: (payload: T) => void): Disposer;
+  on<T>(token: SerialToken<T>, listener: (payload: T) => void, opts?: RegisterOptions): Disposer;
   on<T>(
     token: GuardToken<T>,
     listener: (payload: T) => GuardDeny | void | Promise<GuardDeny | void>,
+    opts?: RegisterOptions,
+  ): Disposer;
+  on<T>(
+    token: ParallelToken<T>,
+    listener: (payload: T) => unknown,
+    opts?: RegisterOptions,
   ): Disposer;
 
   emit<T>(token: EventToken<T>, payload: T): void;
@@ -102,6 +129,7 @@ export interface Context {
   ): Promise<O>;
   dispatch<T>(token: SerialToken<T>, payload: T): Promise<void>;
   dispatch<T>(token: GuardToken<T>, payload: T): Promise<GuardDeny | undefined>;
+  dispatch<T>(token: ParallelToken<T>, payload: T): Promise<void>;
 
   createChain<I, O>(final: (input: I) => Promise<O>): Chain<I, O>;
   onChain<I, O>(chain: Chain<I, O>, middleware: ChainMiddleware<I, O>): Disposer;

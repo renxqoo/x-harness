@@ -5,6 +5,7 @@ import type {
   EventToken,
   FreezeMode,
   GuardToken,
+  ParallelToken,
   SerialToken,
   ServiceToken,
   WaterfallToken,
@@ -48,4 +49,9 @@ export function defineSerial<T>(name: string): SerialToken<T> {
 export function defineGuard<T>(name: string): GuardToken<T> {
   assertTokenName(name);
   return Object.freeze({ kind: "guard", mode: "guard", name }) as GuardToken<T>;
+}
+
+export function defineParallel<T>(name: string): ParallelToken<T> {
+  assertTokenName(name);
+  return Object.freeze({ kind: "parallel", mode: "parallel", name }) as ParallelToken<T>;
 }

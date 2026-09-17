@@ -18,10 +18,11 @@ import type {
   EventToken,
   GuardDeny,
   ScopeFilter,
+  ServiceToken,
 } from "./types.ts";
 
 type LayerState = "live" | "disposing" | "disposed";
-type ListenerMode = "emit" | "waterfall" | "serial" | "guard";
+type ListenerMode = "emit" | "waterfall" | "serial" | "guard" | "parallel";
 
 interface Layer {
   readonly parent: Layer | undefined;
@@ -39,6 +40,14 @@ interface ListenerEntry {
 
 interface ChainRegistry {
   readonly entries: { layer: Layer; middleware: unknown }[];
+}
+
+/** waitFor 的停靠位：提供层出现在等待者可见链上时解析 */
+interface ServiceWaiter {
+  readonly token: ServiceToken<unknown>;
+  readonly layer: Layer;
+  resolve(impl: unknown): void;
+  reject(error: Error): void;
 }
 
 function defaultSink(error: unknown, token: { readonly name: string }): void {
@@ -73,10 +82,24 @@ function chainSet(layer: Layer): Set<Layer> {
   return set;
 }
 
-/** 层序插入：新条目插到「深度 ≤ 自身的最后一个条目」之后——同层段尾追加保注册序。
- *  数组恒按 root→leaf 层序，派发路径免排序（§10.1 性能债修复：llm/chunk 高频热路径
- *  原先每次派发 toSorted O(n log n)，现在注册 O(摊还 ~1)、派发 O(n+depth) 纯过滤）。 */
-function insertByLayerDepth<T extends { readonly layer: Layer }>(entries: T[], entry: T): void {
+/** 层序插入（§10.1 性能债修复：数组恒按 root→leaf 层序，派发免排序）。
+ *  默认：插到「深度 ≤ 自身的最后一个条目」之后 = 本层段尾（保注册序）；
+ *  prepend：插到「深度 ≥ 自身的第一个条目」之前 = 本层段头（层序仍优先——root 恒先于子层）。 */
+function insertByLayerDepth<T extends { readonly layer: Layer }>(
+  entries: T[],
+  entry: T,
+  prepend = false,
+): void {
+  if (prepend) {
+    let at = 0;
+    while (at < entries.length) {
+      const ahead = entries[at];
+      if (ahead === undefined || ahead.layer.depth >= entry.layer.depth) break;
+      at += 1;
+    }
+    entries.splice(at, 0, entry);
+    return;
+  }
   let at = entries.length;
   while (at > 0) {
     const previous = entries[at - 1];
@@ -160,6 +183,31 @@ export function createContext(options: ContextOptions = {}): Context {
   const services = new Map<AnyToken, Map<Layer, unknown>>();
   const listeners = new Map<AnyToken, ListenerEntry[]>();
   const chains = new WeakMap<Chain<unknown, unknown>, ChainRegistry>();
+  const waiters = new Set<ServiceWaiter>();
+
+  /** use/tryUse/waitFor 共用：沿层链 nearest-first 查找。返回命中壳而非裸值——
+   *  「找到 undefined」≠「没找到」（审查 #8：provide(undefined) 遮蔽不穿透） */
+  function findVisibleEntry<T>(token: ServiceToken<T>, layer: Layer): { impl: T } | undefined {
+    const byLayer = services.get(token);
+    if (byLayer === undefined) return undefined;
+    for (let cursor: Layer | undefined = layer; cursor !== undefined; cursor = cursor.parent) {
+      if (byLayer.has(cursor)) return { impl: byLayer.get(cursor) as T };
+    }
+    return undefined;
+  }
+
+  /** provide 落账后：解析停靠中且可见层命中的等待者 */
+  function settleWaiters(token: ServiceToken<unknown>, providing: Layer): void {
+    const pending = Array.from(waiters); // 快照：解析路径会从 Set 删除成员
+    for (const waiter of pending) {
+      if (waiter.token !== token) continue;
+      if (!chainSet(waiter.layer).has(providing)) continue;
+      const hit = findVisibleEntry(waiter.token, waiter.layer);
+      if (hit === undefined) continue;
+      waiters.delete(waiter);
+      waiter.resolve(hit.impl);
+    }
+  }
 
   function reportListenerError(error: unknown, token: AnyToken): void {
     try {
@@ -217,6 +265,7 @@ export function createContext(options: ContextOptions = {}): Context {
           throw new Error(`service "${token.name}" already provided on this layer`);
         }
         byLayer.set(layer, impl);
+        settleWaiters(token, layer); // waitFor 停靠者先于事件广播解析（解析即事实，观察是旁路）
         // 先入账后广播：service/provided 监听者内触发 dispose 时本注册可被回卷（对抗审查 #6 修复）
         const disposer = registerEffect(
           layer,
@@ -232,43 +281,46 @@ export function createContext(options: ContextOptions = {}): Context {
       },
 
       use<T>(token: Parameters<Context["use"]>[0]): T {
-        const byLayer = services.get(token);
-        if (byLayer !== undefined) {
-          for (
-            let cursor: Layer | undefined = layer;
-            cursor !== undefined;
-            cursor = cursor.parent
-          ) {
-            // has 判定：区分「本层提供了 undefined」与「本层未提供」——垃圾输入不穿透遮蔽（#8 修复）
-            if (byLayer.has(cursor)) return byLayer.get(cursor) as T;
-          }
-        }
+        const hit = findVisibleEntry(token as ServiceToken<T>, layer);
+        if (hit !== undefined) return hit.impl;
         throw new Error(
           `service "${token.name}" not provided (searched scope chain up to root)`,
         );
       },
 
       tryUse<T>(token: Parameters<Context["tryUse"]>[0]): T | undefined {
-        const byLayer = services.get(token);
-        if (byLayer === undefined) return undefined;
-        for (
-          let cursor: Layer | undefined = layer;
-          cursor !== undefined;
-          cursor = cursor.parent
-        ) {
-          if (byLayer.has(cursor)) return byLayer.get(cursor) as T;
-        }
-        return undefined;
+        return findVisibleEntry(token as ServiceToken<T>, layer)?.impl;
       },
 
-      on(token: AnyToken, fn: unknown): Disposer {
+      waitFor<T>(token: Parameters<Context["waitFor"]>[0]): Promise<T> {
+        if (layer.state !== "live") {
+          return Promise.reject(
+            new Error(
+              `cannot wait for service "${token.name}" on a ${layer.state} context layer`,
+            ),
+          );
+        }
+        const ready = findVisibleEntry(token as ServiceToken<T>, layer);
+        if (ready !== undefined) return Promise.resolve(ready.impl);
+        return new Promise<T>((resolve, reject) => {
+          const waiter: ServiceWaiter = {
+            token: token as ServiceToken<unknown>,
+            layer,
+            resolve: (impl) => resolve(impl as T),
+            reject,
+          };
+          waiters.add(waiter);
+        });
+      },
+
+      on(token: AnyToken, fn: unknown, registerOpts?: { readonly prepend?: boolean }): Disposer {
         assertLive(layer, "on");
         if (token.kind === "service" || typeof token.mode !== "string") {
           throw new Error(`on expects an event-like token, got "${String(token?.name ?? "?")}"`);
         }
         const entry: ListenerEntry = { layer, mode: token.mode, fn };
         const registered = listeners.get(token) ?? [];
-        insertByLayerDepth(registered, entry);
+        insertByLayerDepth(registered, entry, registerOpts?.prepend === true);
         listeners.set(token, registered);
         return registerEffect(
           layer,
@@ -310,14 +362,18 @@ export function createContext(options: ContextOptions = {}): Context {
         return chain;
       },
 
-      onChain<I, O>(chain: Chain<I, O>, middleware: ChainMiddleware<I, O>): Disposer {
+      onChain<I, O>(
+        chain: Chain<I, O>,
+        middleware: ChainMiddleware<I, O>,
+        registerOpts?: { readonly prepend?: boolean },
+      ): Disposer {
         assertLive(layer, "onChain");
         const registry = chains.get(chain as Chain<unknown, unknown>);
         if (registry === undefined) {
           throw new Error("onChain expects a chain created by createChain");
         }
         const entry = { layer, middleware };
-        insertByLayerDepth(registry.entries, entry);
+        insertByLayerDepth(registry.entries, entry, registerOpts?.prepend === true);
         // 层归属消费方：注册入消费方层账本，dispose 时随层回卷（C10）
         return registerEffect(layer, () => {
           const at = registry.entries.indexOf(entry);
@@ -347,6 +403,14 @@ export function createContext(options: ContextOptions = {}): Context {
         }
         layer.effects.length = 0;
         layer.state = "disposed";
+        const parked = Array.from(waiters); // 快照：reject 路径会从 Set 删除成员
+        for (const waiter of parked) {
+          if (waiter.layer !== layer) continue;
+          waiters.delete(waiter);
+          waiter.reject(
+            new Error(`service "${waiter.token.name}" never arrived: layer disposed while waiting`),
+          );
+        }
         if (failures.length === 1) throw failures[0];
         if (failures.length > 1) throw new AggregateError(failures, "dispose unwind failures");
       },
@@ -384,6 +448,24 @@ export function createContext(options: ContextOptions = {}): Context {
           "waterfall",
         ) as ChainMiddleware<unknown, unknown>[];
         return runWaterfall(token.name, middlewares, 0, deepFreeze(payloadOrInput), final);
+      }
+      if (token.kind === "parallel") {
+        const registered = collectListeners(layer, token, "parallel") as ((
+          payload: unknown,
+        ) => unknown)[];
+        const frozen = deepFreeze(payloadOrInput);
+        const results = await Promise.allSettled(registered.map((listener) => listener(frozen)));
+        const rejected = results.filter(
+          (result): result is PromiseRejectedResult => result.status === "rejected",
+        );
+        if (rejected.length === 1) throw rejected[0]?.reason;
+        if (rejected.length > 1) {
+          throw new AggregateError(
+            rejected.map((result) => result.reason),
+            "parallel dispatch failures",
+          );
+        }
+        return undefined;
       }
       if (token.kind === "serial") {
         const registered = collectListeners(layer, token, "serial") as ((
