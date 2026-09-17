@@ -1,6 +1,6 @@
 // 运行期插件生命周期：追加装配 / 分发中注册（快照语义的注册面）/ dispose 与在飞 dispatch 交错。
 // 对应对话审计的三项口头主张——没有能让它失败的用例之前，评估不算数。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createContext } from "../create-context.ts";
 import { loadPlugins } from "../load-plugins.ts";
 import { defineEvent, defineService, defineWaterfall } from "../tokens.ts";
@@ -116,5 +116,116 @@ describe("dispose 与在飞 dispatch 交错（已知边界的语义锁定）", (
 
     await expect(dispatching).rejects.toThrow(/not provided/); // 失败暴露
     await expect(disposing).resolves.toBeUndefined(); // dispose 自身完成
+  });
+});
+
+describe("单插件粒度卸载（loadPlugins 返回卸载句柄）", () => {
+  it("卸 A 留 B：A 的注册消失、B 完好；句柄幂等；apply-disposer 恰好一次、层回卷不双跑", async () => {
+    const ctx = createContext();
+    const ping = defineEvent<{ v: number }>("ping-unload");
+    const svcA = defineService<{ tag: string }>("svc-a");
+    const svcB = defineService<{ tag: string }>("svc-b");
+    const aHeard: number[] = [];
+    const bHeard: number[] = [];
+    const aCleanup = vi.fn();
+    const bCleanup = vi.fn();
+
+    const [unloadA, unloadB] = await loadPlugins(ctx, [
+      {
+        name: "a",
+        apply: (c) => {
+          c.provide(svcA, { tag: "a" });
+          c.on(ping, ({ v }) => aHeard.push(v));
+          return aCleanup;
+        },
+      },
+      {
+        name: "b",
+        apply: (c) => {
+          c.provide(svcB, { tag: "b" });
+          c.on(ping, ({ v }) => bHeard.push(v));
+          return bCleanup;
+        },
+      },
+    ]);
+    if (unloadA === undefined || unloadB === undefined) throw new Error("unloaders missing");
+    expect(ctx.use(svcA).tag).toBe("a");
+    expect(ctx.use(svcB).tag).toBe("b");
+
+    await unloadA();
+    await unloadA(); // 幂等
+    expect(ctx.tryUse(svcA)).toBeUndefined(); // A 的服务消失
+    expect(ctx.use(svcB).tag).toBe("b"); // B 完好
+    ctx.emit(ping, { v: 1 });
+    expect(aHeard).toEqual([]);
+    expect(bHeard).toEqual([1]);
+    expect(aCleanup).toHaveBeenCalledTimes(1); // apply-disposer 恰好一次
+
+    await ctx.dispose(); // 层回卷兜底：不双跑
+    expect(aCleanup).toHaveBeenCalledTimes(1);
+    expect(bCleanup).toHaveBeenCalledTimes(1); // 未手动卸载的 B 由层回卷收
+    expect(unloadB).toBeTypeOf("function");
+  });
+
+  it("运行期追加装配同样获得卸载句柄：卸载后回到追加前状态", async () => {
+    const ctx = createContext();
+    const ping = defineEvent<{ v: number }>("ping-late-unload");
+    const heard: number[] = [];
+    ctx.on(ping, ({ v }) => heard.push(v));
+    const svc = defineService<{ n: number }>("late-svc");
+    const [unloadLate] = await loadPlugins(ctx, [
+      {
+        name: "late",
+        apply: (c) => {
+          c.provide(svc, { n: 1 });
+        },
+      },
+    ]);
+    if (unloadLate === undefined) throw new Error("unloader missing");
+    expect(ctx.tryUse(svc)).toEqual({ n: 1 });
+    await unloadLate();
+    expect(ctx.tryUse(svc)).toBeUndefined(); // 回到追加前
+    ctx.emit(ping, { v: 1 });
+    expect(heard).toEqual([1]); // 原有注册不受影响
+  });
+});
+
+describe("apply 期 wrapper 委托面（捕获包装不改变 Context 语义）", () => {
+  it("经 wrapper 的 use/tryUse/emit/dispatch/onChain 与直连 ctx 行为一致", async () => {
+    const ctx = createContext();
+    const svc = defineService<{ n: number }>("w-svc");
+    const tick = defineEvent<{ v: number }>("w-tick");
+    const wf = defineWaterfall<number, number>("w-wf");
+    const seen: number[] = [];
+    ctx.on(tick, ({ v }) => seen.push(v));
+
+    let chainResult = -1;
+    const chainSvc = defineService<{ decide: { dispatch(i: number): Promise<number> } }>("w-chain");
+    await loadPlugins(ctx, [
+      {
+        name: "base",
+        apply: (c) => {
+          c.provide(svc, { n: 5 });
+          const decide = c.createChain<number, number>(async (i) => i * 2);
+          c.onChain(decide, async (i, next) => next(i + 1));
+          c.provide(chainSvc, { decide });
+        },
+      },
+      {
+        name: "user",
+        inject: ["base"],
+        apply: async (c) => {
+          const n = c.use(svc).n; // wrapper.use
+          if (c.tryUse(svc)?.n !== n) throw new Error("tryUse mismatch"); // wrapper.tryUse
+          c.emit(tick, { v: n }); // wrapper.emit
+          chainResult = await c.dispatch(wf, n, async (i) => i + 1); // wrapper.dispatch
+        },
+      },
+    ]);
+    expect(seen).toEqual([5]);
+    expect(chainResult).toBe(6);
+    // 匿名链经 wrapper 创建/注册：语义与直连一致（final 绑定 + 消费方层归属）
+    const decide = ctx.use(chainSvc).decide;
+    expect(await decide.dispatch(1)).toBe(4); // (1+1)*2
   });
 });

@@ -135,6 +135,7 @@ export interface Plugin {
 - `inject` 按插件名 topo 排序；**循环依赖 → 装配期 throw**；重名插件 → throw。
 - `apply` 可异步；返回的 disposer 自动入 effect 账本。
 - 加载完成逐个广播 `plugin/loaded`；apply 抛错 → `plugin/error` + 装配失败（整体回卷已加载的）。
+- **卸载契约**：`loadPlugins` 返回与插件同序的卸载句柄（`Disposer[]`）——单插件卸载 = 逆序回卷其 **apply 期注册**（provide/on/onChain/effect + apply 返回的 disposer）；句柄幂等，且与层回卷共用 once 哨兵（层 dispose 兜底不双跑）；apply 之后的运行期注册归调用方层账本，随层回卷。**并发契约**：并发 loadPlugins 无互斥（检查是入口快照）——装配序列化是宿主责任。
 
 ## 6. 内核事件词表：Context 自身
 
@@ -199,6 +200,7 @@ export interface Plugin {
 - `llm/chunk` 要不要背压语义（监听器慢时丢帧/缓冲？）——倾向：不背压，慢消费者自排队（emit 同步契约的自然结论）
 - **已知限制**：waterfall 监听器永不返回 = 派发挂起——「返回时未调 next → throw」抓不到不返回的；可选超时留实现期裁决，词表设计者对自家 token 自责
 - **已知限制**：僵尸 next 的 microtask 极限窗口——中间件 `queueMicrotask(() => next(...))` 后立即 return，微任务回调先于续体执行可绕过「返回后失效」围栏（macrotask 形态已被围栏拦截）；词表设计者自责
+- **已知限制**：dispose 不中断在飞 dispatch——快照中间件继续执行，若其依赖的服务已随回卷消失 → `use` throw → dispatch reject（失败暴露不静默）；中断原语（abort 传播）是 loop/llm 的 signal 面
 - serial/guard 监听器要不要允许同步返回值（已允许：`Promise<void> | void`）
 - `tool/execute` 的 ToolResult 形状（与 tools 契约讨论合并，见 TOOLS.md §7）
 - 事件 token 要不要带 `description` 元数据（SPEC 自描述）——倾向要，词表即文档

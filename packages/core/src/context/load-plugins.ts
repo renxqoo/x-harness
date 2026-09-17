@@ -1,9 +1,25 @@
 // 插件加载器（docs/CONTEXT.md §5）：inject 按插件名 topo 排序；
 // 循环依赖 / 重名 / 缺依赖 = 装配期 throw（预扫描，未跑任何 apply 前拒绝）；
 // apply 抛错 → plugin/error + 整体回卷（IMPL 裁决 2：装配阶段 ctx 视为不可用，dispose 全层）。
+//
+// 卸载契约：loadPlugins 返回与插件同序的卸载句柄（Disposer[]）——
+//   单插件卸载 = 逆序回卷其 **apply 期注册**（provide/on/onChain/effect + apply 返回的 disposer）；
+//   句柄幂等，且与层回卷共用 once 哨兵（层 dispose 兜底不双跑）；
+//   apply 之后的运行期注册归属调用方层账本，随层回卷（不在单插件卸载范围）。
+// 并发契约：并发 loadPlugins 无互斥（重名/循环检查是入口快照）——装配序列化是宿主责任。
 
 import { pluginError, pluginLoaded } from "./vocab.ts";
-import type { Context, Plugin } from "./types.ts";
+import type {
+  AnyToken,
+  Chain,
+  ChainMiddleware,
+  Context,
+  Disposer,
+  EventToken,
+  Plugin,
+  ScopeFilter,
+  ServiceToken,
+} from "./types.ts";
 
 function assertValid(plugins: readonly Plugin[]): void {
   const names = new Set<string>();
@@ -47,12 +63,60 @@ function topoOrder(plugins: readonly Plugin[]): Plugin[] {
   return ordered;
 }
 
-export async function loadPlugins(ctx: Context, plugins: readonly Plugin[]): Promise<void> {
+/** apply 期注册捕获：委托真 ctx + 记录 disposer——单插件卸载的回收清单 */
+function captureRegistrations(ctx: Context, captured: Disposer[]): Context {
+  const track = (disposer: Disposer): Disposer => {
+    captured.push(disposer);
+    return disposer;
+  };
+  const wrapper = {
+    provide: <T>(token: ServiceToken<T>, impl: T): Disposer => track(ctx.provide(token, impl)),
+    use: <T>(token: ServiceToken<T>): T => ctx.use(token),
+    tryUse: <T>(token: ServiceToken<T>): T | undefined => ctx.tryUse(token),
+    on: (token: AnyToken, fn: unknown): Disposer =>
+      track((ctx.on as (token: AnyToken, fn: unknown) => Disposer)(token, fn)),
+    emit: <T>(token: EventToken<T>, payload: T): void => ctx.emit(token, payload),
+    dispatch: (token: AnyToken, payloadOrInput: unknown, final?: unknown): Promise<unknown> =>
+      (ctx.dispatch as (t: AnyToken, i: unknown, f?: unknown) => Promise<unknown>)(
+        token,
+        payloadOrInput,
+        final,
+      ),
+    createChain: <I, O>(final: (input: I) => Promise<O>): Chain<I, O> => ctx.createChain(final),
+    onChain: <I, O>(chain: Chain<I, O>, middleware: ChainMiddleware<I, O>): Disposer =>
+      track(ctx.onChain(chain, middleware)),
+    // effect 只入捕获清单不入层账本：由本插件的 composite（经 ctx.effect 注册）统一兜底回卷
+    effect: (disposer: Disposer): void => {
+      captured.push(disposer);
+    },
+    dispose: (): Promise<void> => ctx.dispose(),
+    scope: (filter: ScopeFilter): Context => ctx.scope(filter),
+  };
+  return wrapper as Context;
+}
+
+export async function loadPlugins(
+  ctx: Context,
+  plugins: readonly Plugin[],
+): Promise<readonly Disposer[]> {
   assertValid(plugins);
+  const unloaders: Disposer[] = [];
   for (const plugin of topoOrder(plugins)) {
+    const captured: Disposer[] = [];
     try {
-      const disposer = await plugin.apply(ctx);
-      if (disposer !== undefined && disposer !== null) ctx.effect(disposer);
+      const disposer = await plugin.apply(captureRegistrations(ctx, captured));
+      if (disposer !== undefined && disposer !== null) captured.push(disposer);
+      let done = false;
+      const unload: Disposer = async () => {
+        if (done) return; // 幂等，且与层回卷共用哨兵——绝不双跑
+        done = true;
+        for (let index = captured.length - 1; index >= 0; index -= 1) {
+          const unwind = captured[index];
+          if (unwind !== undefined) await unwind();
+        }
+      };
+      ctx.effect(unload); // 层回卷兜底（手动卸载已跑过则 no-op）
+      unloaders.push(unload);
       ctx.emit(pluginLoaded, { plugin: plugin.name });
     } catch (error) {
       ctx.emit(pluginError, { plugin: plugin.name, error: String(error) });
@@ -65,4 +129,5 @@ export async function loadPlugins(ctx: Context, plugins: readonly Plugin[]): Pro
       throw error;
     }
   }
+  return unloaders;
 }
