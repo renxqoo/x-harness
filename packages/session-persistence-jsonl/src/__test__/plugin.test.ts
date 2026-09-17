@@ -1,0 +1,212 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Context, Plugin } from "@x-harness/core";
+import type { Session, SessionId } from "@x-harness/session";
+import { sessionArchive as sessionArchiveToken } from "@x-harness/session";
+import { sessionStore as sessionStoreToken } from "@x-harness/session";
+import { createJsonlSessionPersistence } from "../plugin.ts";
+import { makeWorld, unwrap, waitUntil } from "./helpers.ts";
+import type { World } from "./helpers.ts";
+
+
+let root: string;
+let world: World;
+
+beforeEach(async () => {
+  root = await mkdtemp(join(tmpdir(), "xh-jsonl-"));
+});
+
+afterEach(async () => {
+  await world.ctx.dispose().catch(() => {});
+  await rm(root, { recursive: true, force: true });
+});
+
+const append = { surfaceOp: "append" } as const;
+
+function turn(s: Session, n: number): void {
+  s.append("turn/start", { turn: n });
+}
+
+describe("全链路落盘（docs/SESSION.md §1.8 链来源与时序）", () => {
+  it("flush 屏障后 read 逐字节对账（活回路增量排空）", async () => {
+    world = await makeWorld(root);
+    const s = unwrap(await world.store.create({ id: "s1" as SessionId }));
+    turn(s, 0);
+    s.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "hi" }] }, append);
+    s.append("tool/result", { turn: 0, step: 0, callId: "c", content: "ok" }, append);
+    expect(await world.store.flush(s.id)).toEqual({ ok: true, value: { flushed: true } });
+    const read = unwrap(await world.archive.read(s.id));
+    expect(read.events).toEqual(s.events());
+    expect(read.header.id).toBe(s.id);
+    expect(read.header.version).toBe(1);
+  });
+
+  it("首灌含构造期事件：fork 子会话落盘 = 前缀 + inherited end-seed", async () => {
+    world = await makeWorld(root);
+    const parent = unwrap(await world.store.create({ id: "p" as SessionId }));
+    turn(parent, 0);
+    parent.append("user/message", { turn: 0, step: 0, content: [] }, append);
+    await world.store.flush(parent.id);
+
+    const child = unwrap(await world.store.fork(parent.id, { id: "child" as SessionId }));
+    expect(await world.store.flush(child.id)).toEqual({ ok: true, value: { flushed: true } });
+    const read = unwrap(await world.archive.read("child" as SessionId));
+    expect(read.events.map((event) => event.type)).toEqual(["turn/start", "user/message", "session/end-seed"]);
+    expect(read.events[2]?.data).toEqual({ inherited: true });
+    expect(read.header.parentSession).toBe("p");
+  });
+
+  it("resume 回灌：read → create({id, seed, parent}) 血缘不断链", async () => {
+    world = await makeWorld(root);
+    const parent = unwrap(await world.store.create({ id: "p" as SessionId }));
+    turn(parent, 0);
+    await world.store.flush(parent.id);
+    const child = unwrap(await world.store.fork(parent.id, { id: "c" as SessionId }));
+    await world.store.flush(child.id);
+    world.store.dispose(child.id);
+
+    const snapshot = unwrap(await world.archive.read("c" as SessionId));
+    const resumed = unwrap(
+      await world.store.create({
+        id: "c" as SessionId,
+        seed: snapshot.events,
+        parent: snapshot.header.parentSession,
+      }),
+    );
+    expect(resumed.header.parentSession).toBe("p");
+    const resumedEvents = resumed.events();
+    expect(resumedEvents.slice(0, snapshot.events.length)).toEqual(snapshot.events);
+    expect(resumedEvents[snapshot.events.length]?.type).toBe("session/end-seed");
+    expect(resumedEvents[snapshot.events.length]?.data).toEqual({});
+  });
+
+  it("空会话（仅 header）也可持久化：created 首灌无需任何 append", async () => {
+    world = await makeWorld(root);
+    unwrap(await world.store.create({ id: "bare" as SessionId }));
+    await waitUntil(async () => world.archive.list().includes("bare" as SessionId));
+    const read = await world.archive.read("bare" as SessionId);
+    expect(read.ok).toBe(true);
+    if (read.ok) expect(read.value.events).toEqual([]);
+  });
+});
+
+describe("串行链不变量（docs/SESSION.md §1.8 per-id 串行）", () => {
+  it("并发 flush 同 id 不交错、不重复落盘", async () => {
+    world = await makeWorld(root);
+    const s = unwrap(await world.store.create({ id: "cc" as SessionId }));
+    for (let i = 0; i < 5; i++) turn(s, i);
+    const results = await Promise.all([world.store.flush(s.id), world.store.flush(s.id), world.store.flush(s.id)]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    const read = unwrap(await world.archive.read("cc" as SessionId));
+    expect(read.events).toHaveLength(5);
+    expect(read.events.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4]);
+    expect(read.events).toEqual(s.events());
+  });
+
+  it("dispose 链终排空：append 后直接 dispose（无 flush）→ 落盘全量", async () => {
+    world = await makeWorld(root);
+    const s = unwrap(await world.store.create({ id: "dd" as SessionId }));
+    turn(s, 0);
+    turn(s, 1);
+    world.store.dispose(s.id);
+    await waitUntil(async () => {
+      const read = await world.archive.read("dd" as SessionId);
+      return read.ok && read.value.events.length === 2;
+    });
+  });
+
+  it("插件卸载排空：pending 有货时卸载 → 全部落盘（docs/SESSION.md §1.8 终排空）", async () => {
+    world = await makeWorld(root);
+    const s = unwrap(await world.store.create({ id: "uu" as SessionId }));
+    turn(s, 0);
+    turn(s, 1);
+    await world.unload[1]!(); // 装载序 [session, jsonl]：卸载 jsonl 插件
+    const read = unwrap(await world.archive.read("uu" as SessionId));
+    expect(read.events).toHaveLength(2);
+  });
+});
+
+describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", () => {
+  it("dispose 后重建同 id：旧档逐字节不变、flush 失败 session-id-reused、onIoError 上报", async () => {
+    world = await makeWorld(root);
+    const first = unwrap(await world.store.create({ id: "dup" as SessionId }));
+    turn(first, 0);
+    first.append("user/message", { turn: 0, step: 0, content: [] }, append);
+    expect(await world.store.flush("dup" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    const before = await world.archive.read("dup" as SessionId);
+    world.store.dispose("dup" as SessionId);
+
+    const second = unwrap(await world.store.create({ id: "dup" as SessionId }));
+    turn(second, 99);
+    const flushed = await world.store.flush("dup" as SessionId);
+    expect(flushed.ok).toBe(false);
+    if (!flushed.ok) expect(flushed.reason).toContain("session-id-reused:dup");
+    const reuseReported = (): boolean => world.ioErrors.some((message) => message.includes("session-id-reused:dup"));
+    await waitUntil(async () => reuseReported());
+
+    const after = await world.archive.read("dup" as SessionId);
+    expect(after.ok).toBe(true);
+    expect(before.ok).toBe(true);
+    if (!after.ok || !before.ok) return;
+    expect(after.value.events).toEqual(before.value.events); // 旧档零损毁
+    expect(after.value.header).toEqual(before.value.header);
+  });
+});
+
+describe("flush 失败路由（docs/SESSION.md §1.8 I/O 失败路由）", () => {
+  it("created 首灌失败（root 不可写）→ flush 上浮失败 + onIoError 记录", async () => {
+    const fileRoot = join(root, "blocker");
+    await writeFile(fileRoot, "x");
+    const blocked = await makeWorld(fileRoot);
+    world = blocked;
+    const made = await blocked.store.create();
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    turn(made.value, 0);
+    const flushed = await blocked.store.flush(made.value.id);
+    expect(flushed.ok).toBe(false);
+    await waitUntil(() => Promise.resolve(blocked.ioErrors.length > 0));
+  });
+
+  it("晚装载（错过 created）的会话：append 后 flush fail-closed，不写盘（症状：曾写literal undefined header）", async () => {
+    // 装配序 session → creator → jsonl：creator 在 apply 期建会话，其 created 早于 jsonl 装载
+    const creatorPlugin = {
+      name: "creator",
+      inject: ["session"],
+      apply: async (ctx: Context) => {
+        await ctx.use(sessionStoreToken).create({ id: "late" as SessionId });
+      },
+    } satisfies Plugin;
+    const { createContext, loadPlugins } = await import("@x-harness/core");
+    const { sessionPlugin } = await import("@x-harness/session");
+    const ioErrors: string[] = [];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      sessionPlugin,
+      creatorPlugin,
+      createJsonlSessionPersistence({ root, onIoError: (message) => ioErrors.push(message) }),
+    ]);
+    const store = ctx.use(sessionStoreToken);
+    world = { ctx, store, archive: ctx.use(sessionArchiveToken), unload, ioErrors };
+
+    const made = await store.create({ id: "late2" as SessionId }); // 对照：正常会话可落盘
+    expect(made.ok).toBe(true);
+    if (made.ok) {
+      turn(made.value, 0);
+      expect(await store.flush(made.value.id)).toEqual({ ok: true, value: { flushed: true } });
+    }
+
+    // created 已错过的 "late"：新 append 建出无 header 条目 → flush 必须 fail-closed
+    const late = store.get("late" as SessionId);
+    expect(late).toBeDefined();
+    if (late === undefined) return;
+    turn(late, 0);
+    const flushed = await store.flush("late" as SessionId);
+    expect(flushed.ok).toBe(false);
+    if (!flushed.ok) expect(flushed.reason).toContain("writer-unopened:late");
+    const read = await world.archive.read("late" as SessionId);
+    expect(read.ok).toBe(false); // 无 header，不落盘
+  });
+});
