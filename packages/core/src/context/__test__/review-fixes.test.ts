@@ -7,6 +7,25 @@ import { defineEvent, defineGuard, defineSerial, defineService, defineWaterfall 
 import type { Plugin } from "../types.ts";
 import { serviceProvided } from "../vocab.ts";
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const noop = (): void => {};
+
+/** 审查 #10 的僵尸窗口：中间件已返回后经 macrotask 触发 next，错误捕到模块级变量 */
+let zombieNextError: Error | undefined;
+function fireZombieNext(next: (input: number) => Promise<number>, input: number): void {
+  setTimeout(() => {
+    try {
+      next(input);
+    } catch (error) {
+      zombieNextError = error as Error;
+    }
+  }, 0);
+}
+
 describe("审查 #1：disposer 抛错不中止回卷（I1 优先），错误聚合上抛", () => {
   it("单个 disposer 抛错：后续仍回卷、层推进到 disposed、错误上抛", async () => {
     const ctx = createContext();
@@ -39,7 +58,7 @@ describe("审查 #1：disposer 抛错不中止回卷（I1 优先），错误聚�
     expect((caught as AggregateError).errors).toHaveLength(2);
     expect(after).toHaveBeenCalledTimes(1);
     await expect(ctx.dispose()).resolves.toBeUndefined(); // 未卡死在 disposing
-    expect(() => ctx.effect(() => {})).toThrow(/disposed/); // 状态确已推进
+    expect(() => ctx.effect(noop)).toThrow(/disposed/); // 状态确已推进
   });
 });
 
@@ -96,7 +115,7 @@ describe("审查 #7：伪造 token 形状运行时拒；guard 垃圾返回值按
   it("缺 mode 的伪 token 经 on 拒收", () => {
     const ctx = createContext();
     const fake = { kind: "serial", name: "x" } as never;
-    expect(() => ctx.on(fake, () => {})).toThrow("expects an event-like token");
+    expect(() => ctx.on(fake, noop)).toThrow("expects an event-like token");
   });
 
   it("缺 freeze 的伪 event token 经 emit 拒收", () => {
@@ -130,7 +149,7 @@ describe("审查 #8：provide(undefined) 不穿透 nearest-first 遮蔽", () => 
 describe("审查 #9：loadPlugins 失败路径 dispose 也抛 → 仍抛 apply 根因", () => {
   it("回卷错误不吞根因", async () => {
     const ctx = createContext();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       const plugins: Plugin[] = [
         {
@@ -158,22 +177,15 @@ describe("审查 #10：僵尸 next 围栏（macrotask 形态）", () => {
   it("中间件返回后 setTimeout 触发的 next → throw，不影响 dispatch 结果", async () => {
     const ctx = createContext();
     const token = defineWaterfall<number, number>("wf-zombie");
-    let zombieError: Error | undefined;
     ctx.on(token, async (input, next) => {
       const result = next(input);
-      setTimeout(() => {
-        try {
-          next(input);
-        } catch (error) {
-          zombieError = error as Error;
-        }
-      }, 0);
+      fireZombieNext(next, input);
       return result;
     });
     const out = await ctx.dispatch(token, 1, async (i) => i * 10);
     expect(out).toBe(10);
-    await new Promise((r) => setTimeout(r, 5));
-    expect(zombieError?.message).toContain("after middleware returned");
+    await sleep(5);
+    expect(zombieNextError?.message).toContain("after middleware returned");
   });
 });
 
@@ -191,7 +203,7 @@ describe("审查 #11：dispatch 的祖先链 live 检查（半拆态窗口）", 
         }),
     );
     const disposing = ctx.dispose();
-    await new Promise((r) => setTimeout(r, 0)); // 进入 disposing 窗口
+    await sleep(0); // 进入 disposing 窗口
     try {
       await child.dispatch(token, { v: 1 });
     } catch (error) {
@@ -214,7 +226,7 @@ describe("审查 #12：emit 异步监听器 rejection 进 sink（不崩进程）
     });
     ctx.on(token, later);
     expect(() => ctx.emit(token, { v: 1 })).not.toThrow();
-    await new Promise((r) => setTimeout(r, 0)); // 等 rejection 传播
+    await sleep(0); // 等 rejection 传播
     expect(sink).toHaveBeenCalledTimes(1);
     expect(later).toHaveBeenCalledTimes(1);
   });

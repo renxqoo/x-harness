@@ -3,12 +3,19 @@ import { createContext } from "../create-context.ts";
 import { defineEvent } from "../tokens.ts";
 import { contextDisposing } from "../vocab.ts";
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const noop = (): void => {};
+
 describe("effect 账本与 dispose（§4）", () => {
   it("串行逆序：async disposer 完成后才回卷下一个", async () => {
     const ctx = createContext();
     const order: string[] = [];
     ctx.effect(async () => {
-      await new Promise((r) => setTimeout(r, 10));
+      await sleep(10);
       order.push("a");
     });
     ctx.effect(() => {
@@ -35,11 +42,11 @@ describe("effect 账本与 dispose（§4）", () => {
     const ctx = createContext();
     const token = defineEvent<{ v: number }>("evt");
     await ctx.dispose();
-    expect(() => ctx.on(token, () => {})).toThrow(/rejected after dispose/);
+    expect(() => ctx.on(token, noop)).toThrow(/rejected after dispose/);
     expect(() => ctx.provide({ kind: "service", name: "s" } as never, 1)).toThrow(
       /rejected after dispose/,
     );
-    expect(() => ctx.effect(() => {})).toThrow(/rejected after dispose/);
+    expect(() => ctx.effect(noop)).toThrow(/rejected after dispose/);
     expect(() => ctx.emit(token, { v: 1 })).not.toThrow();
   });
 
@@ -92,7 +99,7 @@ describe("disposing 进行中（非完成后）的边界（Cordis 对照审计�
     );
 
     const disposing = ctx.dispose();
-    await new Promise((r) => setTimeout(r, 0)); // 进入 disposing 窗口：promise disposer 在途
+    await sleep(0); // 进入 disposing 窗口：promise disposer 在途
 
     let midRegistration: Error | undefined;
     try {

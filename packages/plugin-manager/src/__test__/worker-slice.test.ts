@@ -16,6 +16,8 @@ const HOST_PATH = resolve(import.meta.dirname, "../worker/host.ts");
 const CORE_PATH = resolve(import.meta.dirname, "../../../core/src/index.ts");
 const tempDirs: string[] = [];
 
+const noop = (): void => {};
+
 afterEach(async () => {
   for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
@@ -225,7 +227,7 @@ export default {
       platform.on(tick, ({ v }) => heard.push(v));
       platform.emit(tick, { v: 1 });
       expect(heard).toEqual([1]);
-      expect(() => platform.effect(() => {})).not.toThrow();
+      expect(() => platform.effect(noop)).not.toThrow();
     } finally {
       await h.terminate();
     }

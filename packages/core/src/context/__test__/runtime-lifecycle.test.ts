@@ -4,8 +4,23 @@ import { describe, expect, it, vi } from "vitest";
 import { createContext } from "../create-context.ts";
 import { loadPlugins } from "../load-plugins.ts";
 import { defineEvent, defineService, defineWaterfall } from "../tokens.ts";
-import type { Plugin } from "../types.ts";
+import type { Context, EventToken, Plugin, WaterfallToken } from "../types.ts";
 import { pluginUnloaded } from "../vocab.ts";
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/** 迭代中注册的晚到监听者（经具名函数挂载，避免监听器体内四层回调嵌套） */
+function registerLateListener(ctx: Context, token: EventToken<{ v: number }>, order: number[]): void {
+  ctx.on(token, ({ v }) => order.push(v * 100));
+}
+
+/** 派发中注册的晚到中间件（同上） */
+function registerLateMiddleware(ctx: Context, token: WaterfallToken<number, number>): void {
+  ctx.on(token, async (j, deeper) => deeper(j + 100));
+}
 
 describe("运行期追加装配（D18 注册面开放）", () => {
   it("二次 loadPlugins：新服务即时可用、新监听者只听见后续事件、两批都随层回卷", async () => {
@@ -71,7 +86,7 @@ describe("分发中注册（快照语义的注册面，与退订面 #13 对偶�
     ctx.on(token, ({ v }) => {
       order.push(v);
       if (v === 1) {
-        ctx.on(token, ({ v: again }) => order.push(again * 100)); // 迭代中注册
+        registerLateListener(ctx, token, order); // 迭代中注册
       }
     });
     ctx.emit(token, { v: 1 });
@@ -84,7 +99,7 @@ describe("分发中注册（快照语义的注册面，与退订面 #13 对偶�
     const ctx = createContext();
     const token = defineWaterfall<number, number>("wf-midreg");
     ctx.on(token, async (input, next) => {
-      ctx.on(token, async (j, deeper) => deeper(j + 100)); // 派发中注册
+      registerLateMiddleware(ctx, token); // 派发中注册
       return next(input);
     });
     const first = await ctx.dispatch(token, 1, async (i) => i);
@@ -110,9 +125,9 @@ describe("dispose 与在飞 dispatch 交错（已知边界的语义锁定）", (
     });
 
     const dispatching = ctx.dispatch(token, 1, async (i) => i);
-    await new Promise((r) => setTimeout(r, 0)); // 中间件进入挂起
+    await sleep(0); // 中间件进入挂起
     const disposing = ctx.dispose(); // 回卷（监听器与服务注销），不等在飞 dispatch
-    await new Promise((r) => setTimeout(r, 0));
+    await sleep(0);
     release?.(0); // 放行中间件
 
     await expect(dispatching).rejects.toThrow(/not provided/); // 失败暴露

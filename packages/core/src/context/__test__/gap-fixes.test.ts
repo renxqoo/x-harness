@@ -10,6 +10,17 @@ import {
 } from "../tokens.ts";
 import type { Plugin } from "../types.ts";
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/** Promise.race 的对侧：ms 后才落定的哨兵值 */
+const later = <T>(value: T, ms: number): Promise<T> =>
+  new Promise<T>((resolve) => {
+    setTimeout(() => resolve(value), ms);
+  });
+
 describe("parallel 派发（emit 的异步屏障版）", () => {
   it("并发执行全部并等待 settle；无错 resolve", async () => {
     const ctx = createContext();
@@ -18,12 +29,12 @@ describe("parallel 派发（emit 的异步屏障版）", () => {
     const finished: number[] = [];
     ctx.on(token, async ({ v }) => {
       started.push(v);
-      await new Promise((r) => setTimeout(r, 10));
+      await sleep(10);
       finished.push(v);
     });
     ctx.on(token, async ({ v }) => {
       started.push(v * 10);
-      await new Promise((r) => setTimeout(r, 5));
+      await sleep(5);
       finished.push(v * 10);
     });
     await ctx.dispatch(token, { v: 1 });
@@ -36,11 +47,11 @@ describe("parallel 派发（emit 的异步屏障版）", () => {
     const token = defineParallel<{ v: number }>("par-concurrent");
     const events: string[] = [];
     ctx.on(token, async () => {
-      await new Promise((r) => setTimeout(r, 20));
+      await sleep(20);
       events.push("slow-done");
     });
     ctx.on(token, async () => {
-      await new Promise((r) => setTimeout(r, 1));
+      await sleep(1);
       events.push("fast-done");
     });
     await ctx.dispatch(token, { v: 1 });
@@ -117,7 +128,7 @@ describe("waitFor（延迟 use——DI 停靠的内核原语）", () => {
     child.provide(token, { n: 9 }); // child 提供：root 的 use 看不见
     const raced = await Promise.race([
       waiting.then(() => "resolved" as const),
-      new Promise<"parked">((r) => setTimeout(() => r("parked"), 10)),
+      later("parked", 10),
     ]);
     expect(raced).toBe("parked"); // 仍停靠
     ctx.provide(token, { n: 1 }); // root 自己提供
@@ -145,7 +156,7 @@ describe("waitFor（延迟 use——DI 停靠的内核原语）", () => {
       },
     };
     const loading = loadPlugins(ctx, [consumer]);
-    await new Promise((r) => setTimeout(r, 2)); // consumer 已停靠
+    await sleep(2); // consumer 已停靠
     await loadPlugins(ctx, [
       {
         name: "db",
@@ -208,13 +219,13 @@ describe("装配 join（dispose 自动等在飞装配 settle）", () => {
         },
       },
     ]);
-    await new Promise((r) => setTimeout(r, 2));
+    await sleep(2);
     const disposing = ctx.dispose(); // 装配未 settle 即开始回卷
-    await new Promise((r) => setTimeout(r, 2));
+    await sleep(2);
     // join 语义：dispose 不得在装配 settle 前完成（逆序回卷会先拆已注册项——冲突一律 fail-fast）
     const observed = await Promise.race([
       disposing.then(() => "disposed" as const),
-      new Promise<"pending">((r) => setTimeout(() => r("pending"), 5)),
+      later("pending", 5),
     ]);
     expect(observed).toBe("pending");
     gate?.();
@@ -245,9 +256,9 @@ describe("装配 join（dispose 自动等在飞装配 settle）", () => {
         },
       },
     ]);
-    await new Promise((r) => setTimeout(r, 2));
+    await sleep(2);
     const disposing = ctx.dispose();
-    await new Promise((r) => setTimeout(r, 2));
+    await sleep(2);
     gate?.(); // 放行 a；b 的注册撞上 disposing 层
     await expect(loading).rejects.toThrow(/rejected after dispose/);
     await expect(disposing).resolves.toBeUndefined(); // join effect 已 settle，dispose 完成

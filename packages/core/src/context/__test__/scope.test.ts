@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createContext } from "../create-context.ts";
 import { defineEvent, defineService } from "../tokens.ts";
 
+const noop = (): void => {};
+
 describe("scope 层链（§3）", () => {
   it("子层 dispose 只回卷本层：父层注册完好", async () => {
     const ctx = createContext();
@@ -16,7 +18,7 @@ describe("scope 层链（§3）", () => {
     expect(rootHeard).toEqual([1]);
     expect(childHeard).toEqual([]);
     // 子层 dispose 后不能再注册
-    expect(() => child.on(token, () => {})).toThrow(/disposed/);
+    expect(() => child.on(token, noop)).toThrow(/disposed/);
   });
 
   it("父层 dispose 收编未显式 dispose 的子层（scope 创建入父账本）", async () => {

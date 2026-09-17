@@ -119,110 +119,130 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
   // #8：宿主关停面——worker 终止挂进平台 effect 账本（幂等：dead 哨兵兜底双跑）
   deps.platform.effect(() => kill("platform disposed"));
 
-  worker.on("message", (message: WorkerToMain) => {
-    if (message.t === "ready") {
-      // 版本门（#4）：manifest.apiVersion 不匹配即拒
-      if (message.apiVersion !== undefined && message.apiVersion !== deps.kernelApiVersion) {
-        failReady(`plugin apiVersion ${message.apiVersion} does not match kernel ${deps.kernelApiVersion}`);
-        void kill(`apiVersion mismatch: ${message.apiVersion}`);
-        return;
-      }
-      readyInfo = { name: message.pluginName, inject: message.inject };
-      if (readyWaiter === undefined) return;
-      clearTimeout(readyWaiter.timer);
-      const settle = readyWaiter;
-      readyWaiter = undefined;
-      settle.resolve({ ok: true, value: readyInfo });
+  function onReady(message: Extract<WorkerToMain, { t: "ready" }>): void {
+    // 版本门（#4）：manifest.apiVersion 不匹配即拒
+    if (message.apiVersion !== undefined && message.apiVersion !== deps.kernelApiVersion) {
+      failReady(`plugin apiVersion ${message.apiVersion} does not match kernel ${deps.kernelApiVersion}`);
+      void kill(`apiVersion mismatch: ${message.apiVersion}`);
       return;
     }
-    if (message.t === "provided") {
-      const token = deps.tokenTable.get(message.service) ?? defineService<unknown>(message.service);
-      bridgedTokens.set(message.service, token as ServiceToken<unknown>);
-      deps.tokenTable.set(message.service, token); // svc.token/serviceToken 消费面（裁决 10）
-      bridgedNames.push(message.service);
-      try {
-        const dispose = deps.platform.provide(token as ServiceToken<unknown>, serviceProxy(message.service));
-        teardown.push(dispose);
-      } catch (error) {
-        failProceed(`provided service "${message.service}" conflicts on platform: ${String(error)}`);
-        void kill(`service conflict: ${message.service}`);
-      }
-      return;
-    }
-    if (message.t === "listening") {
-      // 审查 #3 收窄：worker 模式监听仅 emit——serial/guard/parallel/waterfall 一律装载拒
-      //（拦截与有序派发是可信平台能力，跨线程洋葱/await 语义不桥）
-      if (message.mode !== "emit") {
-        const reason = `${message.mode} listener not supported in worker mode: ${message.token}`;
-        violations.push(reason);
-        if (proceedWaiter === undefined && readyInfo !== undefined) {
-          deps.onRuntimeError(`${message.token}@${message.mode}`, `constraint violation ignored: ${reason}`);
-        }
-        return;
-      }
-      const token = deps.tokenTable.get(message.token);
-      if (token === undefined) {
-        const reason = `listening on unregistered token: ${message.token}`;
-        violations.push(reason);
-        if (proceedWaiter === undefined && readyInfo !== undefined) {
-          deps.onRuntimeError(`${message.token}@emit`, `constraint violation ignored: ${reason}`);
-        }
-        return;
-      }
-      deps.tokenTable.set(message.token, token);
-      const dispose = (deps.platform.on as (t: AnyToken, f: unknown) => () => void)(
-        token,
-        forwardToWorker(message.token),
-      );
+    readyInfo = { name: message.pluginName, inject: message.inject };
+    if (readyWaiter === undefined) return;
+    clearTimeout(readyWaiter.timer);
+    const settle = readyWaiter;
+    readyWaiter = undefined;
+    settle.resolve({ ok: true, value: readyInfo });
+  }
+
+  function onProvided(message: Extract<WorkerToMain, { t: "provided" }>): void {
+    const token = deps.tokenTable.get(message.service) ?? defineService<unknown>(message.service);
+    bridgedTokens.set(message.service, token as ServiceToken<unknown>);
+    deps.tokenTable.set(message.service, token); // svc.token/serviceToken 消费面（裁决 10）
+    bridgedNames.push(message.service);
+    try {
+      const dispose = deps.platform.provide(token as ServiceToken<unknown>, serviceProxy(message.service));
       teardown.push(dispose);
+    } catch (error) {
+      failProceed(`provided service "${message.service}" conflicts on platform: ${String(error)}`);
+      void kill(`service conflict: ${message.service}`);
+    }
+  }
+
+  /** 约束违规记录：violation 累积（apply-done 结算拒装）+ 装载期外经 onRuntimeError 留痕 */
+  function recordViolation(reason: string, where: string): void {
+    violations.push(reason);
+    if (proceedWaiter === undefined && readyInfo !== undefined) {
+      deps.onRuntimeError(where, `constraint violation ignored: ${reason}`);
+    }
+  }
+
+  function onListening(message: Extract<WorkerToMain, { t: "listening" }>): void {
+    // 审查 #3 收窄：worker 模式监听仅 emit——serial/guard/parallel/waterfall 一律装载拒
+    //（拦截与有序派发是可信平台能力，跨线程洋葱/await 语义不桥）
+    if (message.mode !== "emit") {
+      recordViolation(
+        `${message.mode} listener not supported in worker mode: ${message.token}`,
+        `${message.token}@${message.mode}`,
+      );
       return;
     }
-    if (message.t === "apply-done") {
-      if (proceedWaiter === undefined) return;
-      if (violations.length > 0) {
-        const reason = `worker-mode constraint violated: ${violations.join("; ")}`;
-        failProceed(reason);
-        void kill(`constraint violation: ${reason}`);
+    const token = deps.tokenTable.get(message.token);
+    if (token === undefined) {
+      recordViolation(`listening on unregistered token: ${message.token}`, `${message.token}@emit`);
+      return;
+    }
+    deps.tokenTable.set(message.token, token);
+    const dispose = (deps.platform.on as (t: AnyToken, f: unknown) => () => void)(
+      token,
+      forwardToWorker(message.token),
+    );
+    teardown.push(dispose);
+  }
+
+  function onApplyDone(): void {
+    if (proceedWaiter === undefined) return;
+    if (violations.length > 0) {
+      const reason = `worker-mode constraint violated: ${violations.join("; ")}`;
+      failProceed(reason);
+      void kill(`constraint violation: ${reason}`);
+      return;
+    }
+    clearTimeout(proceedWaiter.timer);
+    const settle = proceedWaiter;
+    proceedWaiter = undefined;
+    settle.resolve({ ok: true, value: undefined });
+  }
+
+  function onCallResult(message: Extract<WorkerToMain, { t: "call-result" }>): void {
+    const pending = rpcPending.get(message.id);
+    if (pending === undefined) return;
+    rpcPending.delete(message.id);
+    clearTimeout(pending.timer);
+    if (message.ok) pending.resolve(message.value);
+    else pending.reject(new Error(message.error ?? "service call failed"));
+  }
+
+  function onShutdownAck(): void {
+    if (shutdownWaiter === undefined) return;
+    clearTimeout(shutdownWaiter.timer);
+    const settle = shutdownWaiter;
+    shutdownWaiter = undefined;
+    settle.resolve({ ok: true, value: undefined });
+  }
+
+  worker.on("message", (message: WorkerToMain) => {
+    switch (message.t) {
+      case "ready":
+        onReady(message);
         return;
-      }
-      clearTimeout(proceedWaiter.timer);
-      const settle = proceedWaiter;
-      proceedWaiter = undefined;
-      settle.resolve({ ok: true, value: undefined });
-      return;
-    }
-    if (message.t === "apply-error") {
-      failProceed(`apply failed in worker: ${message.error}`);
-      void kill(`apply failed: ${message.error}`);
-      return;
-    }
-    if (message.t === "call-result") {
-      const pending = rpcPending.get(message.id);
-      if (pending === undefined) return;
-      rpcPending.delete(message.id);
-      clearTimeout(pending.timer);
-      if (message.ok) pending.resolve(message.value);
-      else pending.reject(new Error(message.error ?? "service call failed"));
-      return;
-    }
-    if (message.t === "svc-call") {
-      void handleServiceCall(message);
-      return;
-    }
-    if (message.t === "svc-wait") {
-      void handleServiceWait(message);
-      return;
-    }
-    if (message.t === "shutdown-ack") {
-      if (shutdownWaiter === undefined) return;
-      clearTimeout(shutdownWaiter.timer);
-      const settle = shutdownWaiter;
-      shutdownWaiter = undefined;
-      settle.resolve({ ok: true, value: undefined });
-      return;
-    }
-    if (message.t === "log") {
-      deps.onRuntimeError(message.entry.where, message.entry.message);
+      case "provided":
+        onProvided(message);
+        return;
+      case "listening":
+        onListening(message);
+        return;
+      case "apply-done":
+        onApplyDone();
+        return;
+      case "apply-error":
+        failProceed(`apply failed in worker: ${message.error}`);
+        void kill(`apply failed: ${message.error}`);
+        return;
+      case "call-result":
+        onCallResult(message);
+        return;
+      case "svc-call":
+        void handleServiceCall(message);
+        return;
+      case "svc-wait":
+        void handleServiceWait(message);
+        return;
+      case "shutdown-ack":
+        onShutdownAck();
+        return;
+      case "log":
+        deps.onRuntimeError(message.entry.where, message.entry.message);
+        return;
     }
   });
 

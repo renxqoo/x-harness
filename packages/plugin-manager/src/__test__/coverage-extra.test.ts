@@ -11,6 +11,13 @@ import type { PluginManagerService } from "../types.ts";
 const CORE_PATH = new URL("../../../core/src/index.ts", import.meta.url).pathname;
 const tempDirs: string[] = [];
 
+const noop = (): void => {};
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 afterEach(async () => {
   for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
@@ -101,7 +108,7 @@ describe("文件审计（缺省 JSONL）", () => {
     await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
     await expect(svc.uninstall("a")).resolves.toMatchObject({ ok: true });
     // uninstall 审计已 await 落盘（生命周期持久性）；install 侧仍 fire-and-forget，读前等一次 flush
-    await new Promise((r) => setTimeout(r, 150));
+    await sleep(150);
     const lines = (await readFile(join(root, ".plugin-manager-audit.jsonl"), "utf8")).trim().split("\n");
     expect(lines.map((l) => JSON.parse(l).kind)).toEqual(["install", "uninstall"]);
   });
@@ -128,11 +135,11 @@ export default {
     if (token === undefined) throw new Error("token missing");
     const proxy = ctx.use(token as ReturnType<typeof defineService<{ boom(): void }>>);
     await expect(proxy.boom()).rejects.toBeTruthy(); // worker 死了，RPC 断
-    await new Promise((r) => setTimeout(r, 100)); // exit 收殓异步
+    await sleep(100); // exit 收殓异步
     expect(svc.list().filter((r) => r.name === "dies")).toHaveLength(0);
     const errors = svc.errors("dies");
     expect(errors.some((e) => e.message.includes("killed") || e.message.includes("exit"))).toBe(true);
-    expect(() => ctx.effect(() => {})).not.toThrow(); // 平台存活
+    expect(() => ctx.effect(noop)).not.toThrow(); // 平台存活
   });
 
   it("provided 服务撞平台同名 → fail-fast 装载失败", async () => {

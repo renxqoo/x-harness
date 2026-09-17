@@ -28,7 +28,7 @@ export function createErrorLog(limit: number, audit?: AuditPort): ErrorLog {
   };
 }
 
-/** JSONL 追加文件审计（缺省实现；目录惰性创建；写失败静默——审计不得阻塞主流程，但 console 留痕） */
+/** JSONL 追加文件审计（缺省实现；目录惰性创建；写失败静默——审计不得阻塞主流程，但 stderr 留痕） */
 export function createFileAudit(file: string): AuditPort {
   const absolute = resolve(file);
   return {
@@ -37,7 +37,8 @@ export function createFileAudit(file: string): AuditPort {
         await mkdir(dirname(absolute), { recursive: true });
         await appendFile(absolute, `${JSON.stringify(entry)}\n`, "utf8");
       } catch (error) {
-        console.error("[plugin-manager] audit append failed", error);
+        const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+        process.stderr.write(`[plugin-manager] audit append failed: ${detail}\n`);
       }
     },
   };

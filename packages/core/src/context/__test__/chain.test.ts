@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createContext } from "../create-context.ts";
-import type { Chain } from "../types.ts";
+import type { Chain, ChainMiddleware } from "../types.ts";
 
 describe("匿名链（§6.2 / C10）", () => {
   it("dispatch 穿过中间件到达 final（铸造时绑定）", async () => {
@@ -44,7 +44,8 @@ describe("匿名链（§6.2 / C10）", () => {
   it("onChain 拒绝非 createChain 产物", () => {
     const ctx = createContext();
     const fake = { dispatch: async () => 1 } as Chain<number, number>;
-    expect(() => ctx.onChain(fake, async (i, next) => next(i))).toThrow(
+    const passthrough: ChainMiddleware<number, number> = async (i, next) => next(i);
+    expect(() => ctx.onChain(fake, passthrough)).toThrow(
       "expects a chain created by createChain",
     );
   });

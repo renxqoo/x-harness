@@ -69,13 +69,8 @@ export function createInstaller(deps: InstallerDeps): Installer {
   const auditNow = async (entry: PluginAuditEntry): Promise<void> => {
     await deps.audit?.append({ ...entry, ts: Date.now() });
   };
-  const logError = (
-    plugin: string,
-    phase: PluginErrorEntry["phase"],
-    where: string,
-    message: string,
-  ): void => {
-    deps.errorLog.add({ plugin, phase, where, message, ts: Date.now() });
+  const logError = (entry: Omit<PluginErrorEntry, "ts">): void => {
+    deps.errorLog.add({ ...entry, ts: Date.now() });
   };
   const emitEnvelope = (kind: string, data: Record<string, unknown>): void => {
     platform.emit(pluginEvent, { plugin: "plugin-manager", kind, data, ts: Date.now() });
@@ -85,15 +80,18 @@ export function createInstaller(deps: InstallerDeps): Installer {
     emitEnvelope("install-failed", { name: plugin, detail });
   };
 
-  /** 登记与句柄（#6：teardown 异常折算 err、remove 不因失败跳过；#14：句柄卸载经服务面锁） */
-  async function register(
-    name: string,
-    path: string,
-    mode: "process" | "worker",
-    inject: readonly string[],
-    teardown: () => Promise<Result<undefined, string>>,
-    owner: unknown,
-  ): Promise<PluginHandle> {
+  /** 登记入参（#6：teardown 异常折算 err、remove 不因失败跳过；#14：句柄卸载经服务面锁） */
+  interface Registration {
+    readonly name: string;
+    readonly path: string;
+    readonly mode: "process" | "worker";
+    readonly inject: readonly string[];
+    readonly teardown: () => Promise<Result<undefined, string>>;
+    readonly owner: unknown;
+  }
+
+  async function register(args: Registration): Promise<PluginHandle> {
+    const { name, path, mode, inject, teardown, owner } = args;
     const unloadFn = async (): Promise<Result<undefined, string>> => {
       let result: Result<undefined, string>;
       try {
@@ -123,12 +121,13 @@ export function createInstaller(deps: InstallerDeps): Installer {
   }
 
   /** #5：apply 期失败留 failed 登记（成功重装覆盖；显式 uninstall 清除）——owner 用新鲜对象，任何桥击杀都碰不到它 */
-  function registerFailure(
-    name: string,
-    path: string,
-    mode: "process" | "worker",
-    reason: string,
-  ): void {
+  function registerFailure(args: {
+    readonly name: string;
+    readonly path: string;
+    readonly mode: "process" | "worker";
+    readonly reason: string;
+  }): void {
+    const { name, path, mode, reason } = args;
     deps.registry.put(
       { name, path, mode, status: "failed", installedAt: Date.now(), inject: [] },
       async () => {
@@ -149,15 +148,14 @@ export function createInstaller(deps: InstallerDeps): Installer {
     const scope = platform.scope({ agentId: `plugin:${name}` });
     // 裁决 10：token 注册表——本插件提供的 token 收集在案，卸载时按身份清理（与 worker 桥同语义）
     const provided: { name: string; token: AnyToken }[] = [];
-    const wrapped = wrapPluginForErrorRouting(
-      plugin,
-      (where, message) => logError(name, "runtime", where, message),
-      platform, // 裁决 9：注册落位 root，回卷链 scope
-      (token) => {
+    const wrapped = wrapPluginForErrorRouting(plugin, {
+      sink: (where, message) => logError({ plugin: name, phase: "runtime", where, message }),
+      root: platform, // 裁决 9：注册落位 root，回卷链 scope
+      onToken: (token) => {
         deps.tokenTable.set(token.name, token);
         provided.push({ name: token.name, token });
       },
-    );
+    });
     const cleanupTokens = (): void => {
       for (const { name: tokenName, token } of provided) {
         if (deps.tokenTable.get(tokenName) === token) deps.tokenTable.delete(tokenName);
@@ -175,14 +173,21 @@ export function createInstaller(deps: InstallerDeps): Installer {
       };
       return {
         ok: true,
-        value: await register(name, path, "process", plugin.inject ?? [], teardown, teardown),
+        value: await register({
+          name,
+          path,
+          mode: "process",
+          inject: plugin.inject ?? [],
+          teardown,
+          owner: teardown,
+        }),
       };
     } catch (error) {
       await scope.dispose();
       cleanupTokens(); // apply 失败同样不留 token 残留
       const reason = `apply failed: ${String(error)}`;
-      logError(name, "install", "apply", reason);
-      registerFailure(name, path, "process", reason); // #5：失败留痕
+      logError({ plugin: name, phase: "install", where: "apply", message: reason });
+      registerFailure({ name, path, mode: "process", reason }); // #5：失败留痕
       return { ok: false, reason };
     }
   }
@@ -191,7 +196,8 @@ export function createInstaller(deps: InstallerDeps): Installer {
     path: string,
     replace: boolean,
   ): Promise<Result<PluginHandle, string>> {
-    let bridgeName: string | undefined; // #19：未知名不碰登记簿
+    // #19：未知名不碰登记簿——桥名 ready 后才可知，用 const 壳承载可变位
+    const bridgeIdentity = { name: undefined as string | undefined };
     const bridge = createWorkerBridge({
       pluginPath: path,
       platform,
@@ -200,14 +206,22 @@ export function createInstaller(deps: InstallerDeps): Installer {
       runtimeTimeoutMs: deps.runtimeTimeoutMs ?? 60_000,
       kernelApiVersion,
       hostPath,
-      onRuntimeError: (where, message) => logError(bridgeName ?? "unknown", "runtime", where, message),
+      onRuntimeError: (where, message) =>
+        logError({ plugin: bridgeIdentity.name ?? "unknown", phase: "runtime", where, message }),
       onKilled: (reason) => {
-        logError(bridgeName ?? "unknown", "runtime", "worker", `killed: ${reason}`);
-        audit({ kind: "killed", plugin: bridgeName ?? "unknown", detail: reason });
+        logError({
+          plugin: bridgeIdentity.name ?? "unknown",
+          phase: "runtime",
+          where: "worker",
+          message: `killed: ${reason}`,
+        });
+        audit({ kind: "killed", plugin: bridgeIdentity.name ?? "unknown", detail: reason });
         // 收殓按桥身份删登记（removeIfOwned）：只删「本桥注册的 active 登记」——
         // apply 期击杀时 registerFailure 已留 failed 痕（#5 律：重装覆盖/显式卸载清除），
         // 同名被拒不碰在运行老插件，晚到击杀不误删继任者
-        if (bridgeName !== undefined) deps.registry.removeIfOwned(bridgeName, teardown);
+        if (bridgeIdentity.name !== undefined) {
+          deps.registry.removeIfOwned(bridgeIdentity.name, teardown);
+        }
       },
     });
     const teardown = (): Promise<Result<undefined, string>> => bridge.shutdown();
@@ -215,43 +229,51 @@ export function createInstaller(deps: InstallerDeps): Installer {
     const begun = await bridge.begin();
     if (!begun.ok) {
       await bridge.kill(`begin failed: ${begun.reason}`);
-      logError("unknown", "install", "worker-boot", begun.reason);
+      logError({ plugin: "unknown", phase: "install", where: "worker-boot", message: begun.reason });
       installFailed("unknown", begun.reason);
       return { ok: false, reason: begun.reason };
     }
     const { name, inject } = begun.value;
-    bridgeName = name;
+    bridgeIdentity.name = name;
     return deps.registry.withNameLock(name, async () => {
       const existing = deps.registry.entry(name);
       if (existing !== undefined && existing.record.status === "active") {
         if (!replace) {
           await bridge.kill(`duplicate name after ready: ${name}`);
           const reason = `plugin "${name}" already installed (use replace)`;
-          logError(name, "install", "conflict", reason);
+          logError({ plugin: name, phase: "install", where: "conflict", message: reason });
           return { ok: false, reason };
         }
         const removed = await existing.unload();
         if (!removed.ok) {
           await bridge.kill(`replace unload failed: ${name}`); // #7：不泄漏已启动的新 bridge
-          logError(name, "install", "replace", `old unload failed: ${removed.reason}`);
+          logError({
+            plugin: name,
+            phase: "install",
+            where: "replace",
+            message: `old unload failed: ${removed.reason}`,
+          });
           return removed;
         }
       }
       // 三段式之二：放行 apply（新插件注册此刻才落平台——旧已卸载，无冲突窗口）
       const applied = await bridge.proceed();
       if (!applied.ok) {
-        logError(name, "install", "apply", applied.reason);
-        registerFailure(name, path, "worker", applied.reason); // #5
+        logError({ plugin: name, phase: "install", where: "apply", message: applied.reason });
+        registerFailure({ name, path, mode: "worker", reason: applied.reason }); // #5
         return { ok: false, reason: applied.reason };
       }
       if (bridge.isDead()) {
         // #13：apply-done 与登记之间的窄窗退出——不做僵尸 active 登记
         const reason = "worker died right after apply";
-        logError(name, "install", "race", reason);
-        registerFailure(name, path, "worker", reason);
+        logError({ plugin: name, phase: "install", where: "race", message: reason });
+        registerFailure({ name, path, mode: "worker", reason });
         return { ok: false, reason };
       }
-      return { ok: true, value: await register(name, path, "worker", inject, teardown, teardown) };
+      return {
+        ok: true,
+        value: await register({ name, path, mode: "worker", inject, teardown, owner: teardown }),
+      };
     });
   }
 
@@ -263,7 +285,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
       const dependents = deps.registry.dependentsOf(name);
       if (dependents.length > 0 && input?.force !== true) {
         const reason = `plugin "${name}" has dependents: ${dependents.join(", ")} (use force)`;
-        logError(name, "uninstall", "uninstall-blocked", reason); // #23：phase 用 uninstall
+        logError({ plugin: name, phase: "uninstall", where: "uninstall-blocked", message: reason }); // #23：phase 用 uninstall
         return { ok: false, reason };
       }
       return entry.unload();
@@ -290,7 +312,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
       const validated = validateModule(mod, kernelApiVersion);
       if (!validated.ok) {
         // 校验失败拿不到名字：不进登记簿，只进错误日志与审计
-        logError("unknown", "install", "validate", validated.reason);
+        logError({ plugin: "unknown", phase: "install", where: "validate", message: validated.reason });
         installFailed("unknown", validated.reason);
         return { ok: false, reason: validated.reason };
       }
@@ -301,7 +323,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
         if (existing !== undefined && existing.record.status === "active") {
           if (input.replace !== true) {
             const reason = `plugin "${name}" already installed (use replace)`;
-            logError(name, "install", "conflict", reason);
+            logError({ plugin: name, phase: "install", where: "conflict", message: reason });
             return { ok: false, reason };
           }
           const removed = await existing.unload();

@@ -1,20 +1,62 @@
 {
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": [
-    "typescript",
-    "import",
-    "unicorn"
-  ],
-  "categories": {
-    "correctness": "error",
-    "suspicious": "warn"
-  },
-  "ignorePatterns": [
-    "node_modules",
-    "dist",
-    "coverage"
-  ],
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+
+  // ══════════════════════════════════════════════════════════════════
+  // 宪法纪律：每条规则要么 error 且当前零违规，要么不进本文件；
+
+
+
   "rules": {
-    "unicorn/require-post-message-target-origin": "off"
-  }
+    // 单文件最多 400 行;skipComments/skipBlankLines 让注释与排版
+    // 不挤占代码预算,上限衡量的是代码量而非文件物理长度
+    "eslint/max-lines": ["error", { "max": 500, "skipComments": true, "skipBlankLines": true }],
+    // 普通函数最多 50 行;理想 4~20 行,超过通常意味着做了不止一件事
+    // 函数最多 3 个参数;第 4 个参数出现 = 缺了一个抽象,应封装 options 对象
+    "eslint/max-params": ["error", { "max": 3 }],
+    // 圈复杂度 ≤15(McCarthy 建议 10,Sonar 默认 15;给平铺 switch 留余地)
+    "eslint/complexity": ["error", { "max": 15 }],
+    // if/循环嵌套 ≤4 层;更深嵌套用 guard clause 提前返回压平
+    "eslint/max-depth": ["error", { "max": 4 }],
+    // 回调嵌套 ≤3 层;现代 async 代码出现更深嵌套基本是写错了
+    "eslint/max-nested-callbacks": ["error", { "max": 3 }],
+    // 一文件一 class;多个 class 同文件是拆分信号
+    "eslint/max-classes-per-file": ["error", 1],
+
+    // ═══ 表达式与比较 ═══
+    // 禁止嵌套/链式三元:a ? x : b ? y : z,提取变量或改 if/else
+    "eslint/no-nested-ternary": "error",
+    // 禁用 == / != 弱比较;"smart" 放行 == null 判空惯用法
+    "eslint/eqeqeq": ["error", "smart"],
+    // 注:eslint/curly 已移除——多行 if 括号属布局领地,归 oxfmt 管(见 AGENTS.md 铁律 21;
+    // oxfmt 换行会与 multi-line 判定打架)
+    // 'a' + b → `a${b}` 模板字面量,拼接风格统一
+    "eslint/prefer-template": "error",
+    // 从不重新赋值的声明必须 const
+    "eslint/prefer-const": "error",
+
+    // ═══ 异步与错误的真 bug 捕手 ═══
+    "typescript/require-await": "error",
+    "eslint/no-promise-executor-return": "error",
+    "eslint/no-template-curly-in-string": "error",
+    "promise/no-return-in-finally": "error",
+    "promise/no-multiple-resolved": "error",
+    "unicorn/error-message": "error",
+
+    // ═══ 防 AI slop 与规模棘轮 ═══
+    "unicorn/filename-case": ["error", { "case": "kebabCase" }],
+    "unicorn/no-abusive-eslint-disable": "error",
+    "eslint/no-implicit-globals": "error",
+    "eslint/no-console": "error",
+  },
+
+  "overrides": [
+    {
+      // CLI 脚本与 e2e 场景运行器：console 就是输出手段（终端报告 / 退出码门）
+      "files": ["scripts/**", "packages/e2e/**"],
+      "rules": {
+        "eslint/no-console": "off"
+      }
+    },
+  ],
+
 }

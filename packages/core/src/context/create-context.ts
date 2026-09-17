@@ -17,8 +17,12 @@ import type {
   Disposer,
   EventToken,
   GuardDeny,
+  GuardToken,
+  ParallelToken,
   ScopeFilter,
+  SerialToken,
   ServiceToken,
+  WaterfallToken,
 } from "./types.ts";
 
 type LayerState = "live" | "disposing" | "disposed";
@@ -50,8 +54,17 @@ interface ServiceWaiter {
   reject(error: Error): void;
 }
 
+/** 默认错误归宿：stderr 一行留痕（内核不依赖 console；宿主要富日志注入 onListenerError） */
 function defaultSink(error: unknown, token: { readonly name: string }): void {
-  console.error(`[x-harness] listener error on "${token.name}"`, error);
+  const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  process.stderr.write(`[x-harness] listener error on "${token.name}": ${detail}\n`);
+}
+
+/** emit 冻结档位应用（§2.1）：deep 递归 / shell 一级 / none 原样——dispatch 模式恒 deep（IMPL 裁决 7） */
+function applyEmitFreeze(token: EventToken<unknown>, payload: unknown): unknown {
+  if (token.freeze === "deep") return deepFreeze(payload);
+  if (token.freeze === "shell") return shellFreeze(payload);
+  return payload;
 }
 
 function assertLive(layer: Layer, verb: string): void {
@@ -128,30 +141,31 @@ function registerEffect(layer: Layer, teardown: () => void, cleanup?: () => void
   return disposer;
 }
 
+/** waterfall 一次派发的静态部分：递归全程不变，与逐层变化的 index/input 分离传参 */
+interface WaterfallRun<I, O> {
+  readonly name: string;
+  readonly middlewares: readonly ChainMiddleware<I, O>[];
+  readonly final: (input: I) => Promise<O>;
+}
+
 /** waterfall 合成：next 至少一次（返回未调 = throw）、串行重调合法、并发 = throw（I2）；
  *  中间件返回后 next 失效（僵尸围栏——macrotask 形态；microtask 极限窗口见 §10 已知限制）。 */
-async function runWaterfall<I, O>(
-  name: string,
-  middlewares: readonly ChainMiddleware<I, O>[],
-  index: number,
-  input: I,
-  final: (input: I) => Promise<O>,
-): Promise<O> {
-  const middleware = middlewares[index];
-  if (middleware === undefined) return final(input);
+async function runWaterfall<I, O>(run: WaterfallRun<I, O>, index: number, input: I): Promise<O> {
+  const middleware = run.middlewares[index];
+  if (middleware === undefined) return run.final(input);
   let inFlight = false;
   let called = false;
   let closed = false;
   const next = (arg: I): Promise<O> => {
     if (closed) {
-      throw new Error(`waterfall "${name}": next() called after middleware returned`);
+      throw new Error(`waterfall "${run.name}": next() called after middleware returned`);
     }
     if (inFlight) {
-      throw new Error(`waterfall "${name}": concurrent next() call`);
+      throw new Error(`waterfall "${run.name}": concurrent next() call`);
     }
     called = true;
     inFlight = true;
-    const pending = runWaterfall(name, middlewares, index + 1, deepFreeze(arg), final);
+    const pending = runWaterfall(run, index + 1, deepFreeze(arg));
     const settle = (): void => {
       inFlight = false;
     };
@@ -165,7 +179,7 @@ async function runWaterfall<I, O>(
     closed = true;
   }
   if (!called) {
-    throw new Error(`waterfall "${name}": middleware returned without calling next()`);
+    throw new Error(`waterfall "${run.name}": middleware returned without calling next()`);
   }
   return output;
 }
@@ -221,10 +235,7 @@ export function createContext(options: ContextOptions = {}): Context {
     assertEventTokenShape(token);
     const registered = listeners.get(token);
     if (registered === undefined || registered.length === 0) return;
-    const frozen =
-      token.freeze === "deep" ? deepFreeze(payload)
-      : token.freeze === "shell" ? shellFreeze(payload)
-      : payload;
+    const frozen = applyEmitFreeze(token, payload);
     const visible = registered.filter((entry) => chainSet(layer).has(entry.layer));
     for (const entry of visible) {
       try {
@@ -360,7 +371,7 @@ export function createContext(options: ContextOptions = {}): Context {
             const middlewares = registry.entries.map(
               (entry) => entry.middleware as ChainMiddleware<I, O>,
             );
-            return runWaterfall("chain", middlewares, 0, deepFreeze(input), final);
+            return runWaterfall({ name: "chain", middlewares, final }, 0, deepFreeze(input));
           },
         } as Chain<I, O>;
         chains.set(chain as Chain<unknown, unknown>, registry);
@@ -436,81 +447,97 @@ export function createContext(options: ContextOptions = {}): Context {
       },
     };
 
-    // dispatch 三分支（waterfall/serial/guard）——按 token.kind 路由后 cast 回重载面
+    // dispatch 四模式各自独立成函数（复杂度预算），dispatchImpl 只做路由 + unwind 边界执法
+    function dispatchWaterfall(
+      token: WaterfallToken<unknown, unknown>,
+      input: unknown,
+      final: ((input: unknown) => Promise<unknown>) | undefined,
+    ): Promise<unknown> {
+      if (typeof final !== "function") {
+        throw new Error(`waterfall "${token.name}" dispatch requires a final`);
+      }
+      const middlewares = collectListeners(
+        layer,
+        token,
+        "waterfall",
+      ) as ChainMiddleware<unknown, unknown>[];
+      return runWaterfall({ name: token.name, middlewares, final }, 0, deepFreeze(input));
+    }
+
+    async function dispatchParallel(
+      token: ParallelToken<unknown>,
+      payload: unknown,
+    ): Promise<unknown> {
+      const registered = collectListeners(layer, token, "parallel") as ((
+        payload: unknown,
+      ) => unknown)[];
+      const frozen = deepFreeze(payload);
+      const results = await Promise.allSettled(registered.map((listener) => listener(frozen)));
+      const rejected = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      if (rejected.length === 1) throw rejected[0]?.reason;
+      if (rejected.length > 1) {
+        throw new AggregateError(
+          rejected.map((result) => result.reason),
+          "parallel dispatch failures",
+        );
+      }
+      return undefined;
+    }
+
+    async function dispatchSerial(token: SerialToken<unknown>, payload: unknown): Promise<unknown> {
+      const registered = collectListeners(layer, token, "serial") as ((
+        payload: unknown,
+      ) => Promise<void> | void)[];
+      const frozen = deepFreeze(payload);
+      for (const listener of registered) {
+        try {
+          await listener(frozen);
+        } catch (error) {
+          reportListenerError(error, token);
+        }
+      }
+      return undefined;
+    }
+
+    async function dispatchGuard(token: GuardToken<unknown>, payload: unknown): Promise<unknown> {
+      const registered = collectListeners(layer, token, "guard") as ((
+        payload: unknown,
+      ) => GuardDeny | void | Promise<GuardDeny | void>)[];
+      const frozen = deepFreeze(payload);
+      let firstDeny: GuardDeny | undefined;
+      for (const listener of registered) {
+        // 全部执行不短路：deny 只决定结果（首个按注册序胜出），坏守卫按弃权计（C7）；
+        // 返回值形状校验：非 deny 形状按弃权（对抗审查 #7）
+        try {
+          const verdict = await listener(frozen);
+          if (
+            firstDeny === undefined &&
+            verdict !== null &&
+            typeof verdict === "object" &&
+            (verdict as GuardDeny).kind === "deny"
+          ) {
+            firstDeny = verdict as GuardDeny;
+          }
+        } catch (error) {
+          reportListenerError(error, token);
+        }
+      }
+      return firstDeny;
+    }
+
+    // dispatch 入口：unwind 边界执法 + 按 token.kind 路由（cast 回重载面）
     async function dispatchImpl(
       token: AnyToken,
       payloadOrInput: unknown,
       final?: (input: unknown) => Promise<unknown>,
     ): Promise<unknown> {
       assertChainLive(layer, "dispatch");
-      if (token.kind === "waterfall") {
-        if (typeof final !== "function") {
-          throw new Error(`waterfall "${token.name}" dispatch requires a final`);
-        }
-        const middlewares = collectListeners(
-          layer,
-          token,
-          "waterfall",
-        ) as ChainMiddleware<unknown, unknown>[];
-        return runWaterfall(token.name, middlewares, 0, deepFreeze(payloadOrInput), final);
-      }
-      if (token.kind === "parallel") {
-        const registered = collectListeners(layer, token, "parallel") as ((
-          payload: unknown,
-        ) => unknown)[];
-        const frozen = deepFreeze(payloadOrInput);
-        const results = await Promise.allSettled(registered.map((listener) => listener(frozen)));
-        const rejected = results.filter(
-          (result): result is PromiseRejectedResult => result.status === "rejected",
-        );
-        if (rejected.length === 1) throw rejected[0]?.reason;
-        if (rejected.length > 1) {
-          throw new AggregateError(
-            rejected.map((result) => result.reason),
-            "parallel dispatch failures",
-          );
-        }
-        return undefined;
-      }
-      if (token.kind === "serial") {
-        const registered = collectListeners(layer, token, "serial") as ((
-          payload: unknown,
-        ) => Promise<void> | void)[];
-        const frozen = deepFreeze(payloadOrInput);
-        for (const listener of registered) {
-          try {
-            await listener(frozen);
-          } catch (error) {
-            reportListenerError(error, token);
-          }
-        }
-        return undefined;
-      }
-      if (token.kind === "guard") {
-        const registered = collectListeners(layer, token, "guard") as ((
-          payload: unknown,
-        ) => GuardDeny | void | Promise<GuardDeny | void>)[];
-        const frozen = deepFreeze(payloadOrInput);
-        let firstDeny: GuardDeny | undefined;
-        for (const listener of registered) {
-          // 全部执行不短路：deny 只决定结果（首个按注册序胜出），坏守卫按弃权计（C7）；
-          // 返回值形状校验：非 deny 形状按弃权（对抗审查 #7）
-          try {
-            const verdict = await listener(frozen);
-            if (
-              firstDeny === undefined &&
-              verdict !== null &&
-              typeof verdict === "object" &&
-              (verdict as GuardDeny).kind === "deny"
-            ) {
-              firstDeny = verdict as GuardDeny;
-            }
-          } catch (error) {
-            reportListenerError(error, token);
-          }
-        }
-        return firstDeny;
-      }
+      if (token.kind === "waterfall") return dispatchWaterfall(token, payloadOrInput, final);
+      if (token.kind === "parallel") return dispatchParallel(token, payloadOrInput);
+      if (token.kind === "serial") return dispatchSerial(token, payloadOrInput);
+      if (token.kind === "guard") return dispatchGuard(token, payloadOrInput);
       throw new Error(
         `dispatch expects a waterfall/serial/guard token, got kind "${String(token?.kind)}" for "${String(token?.name ?? "?")}"`,
       );

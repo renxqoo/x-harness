@@ -373,7 +373,7 @@ describe("process 模式：审查修复回归", () => {
   });
 });
 
-describe("process 模式：e2e 批次修复回归", () => {
+describe("process 模式：e2e 批次审查修复回归", () => {
   it("卸载后 tokenTable 注销：serviceToken 不再返回已死服务的 token（症状：token 只增不减的泄漏与双轨语义）", async () => {
     const { svc, root } = await setup({ approve: () => true });
     const file = await writePlugin(

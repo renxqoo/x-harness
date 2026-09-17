@@ -19,6 +19,11 @@ afterEach(async () => {
 const tick = defineEvent<{ v: number }>("pm-w-tick");
 const db = defineService<{ query(sql: string): string }>("pm-w-db");
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 async function setup(options?: {
   tokens?: readonly AnyToken[];
   applyTimeoutMs?: number;
@@ -63,7 +68,7 @@ async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<voi
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error("waitFor: condition never met within timeout");
-    await new Promise((r) => setTimeout(r, 20));
+    await sleep(20);
   }
 }
 
@@ -98,7 +103,7 @@ export default {
     const counter = ctx.use(token as ReturnType<typeof defineService<{ getN(): number; bump(): void; viaDb(sql: string): Promise<string> }>>);
     expect(await counter.viaDb("select 1")).toBe("rows(select 1)"); // worker → 平台服务 RPC
     ctx.emit(tick, { v: 1 }); // 平台 → worker 事件投递
-    await new Promise((r) => setTimeout(r, 50)); // 投递即忘——等 worker 侧处理
+    await sleep(50); // 投递即忘——等 worker 侧处理
     expect(await counter.getN()).toBe(10);
   });
 
@@ -205,6 +210,22 @@ export default {
 });
 
 describe("worker 模式：审查修复回归", () => {
+  it("apply 超时击杀收殓落定后 failed 登记仍存活（症状：击杀收殓抹掉失败历史，list 查无此插件）", async () => {
+    const { svc, root, auditLog } = await setup({ applyTimeoutMs: 300 });
+    const file = join(root, "spin2.ts");
+    await writeFile(file, `export default { name: "spin2", apply: () => { while (true) {} } };`, "utf8");
+    const result = await svc.install({ path: file });
+    expect(result).toMatchObject({ ok: false });
+    // 轮询可观测信号（killed 台账到达）等收殓真正落定——不押注固定 sleep 的时序侥幸
+    const killedSpin2 = (entry: PluginAuditEntry): boolean =>
+      entry.kind === "killed" && entry.plugin === "spin2";
+    await waitFor(() => auditLog.some(killedSpin2), 5_000);
+    await sleep(20); // killed 台账之后紧邻的 removeIfOwned 落定
+    const records = svc.list().filter((r) => r.name === "spin2");
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ status: "failed" });
+  });
+
   it("#1 replace 迭代：同 provide 的 v2 换 v1 成功（proceed 门消除冲突窗口）", async () => {
     const { svc, root, ctx } = await setup();
     const v1 = join(root, "iterv1.ts");
@@ -236,7 +257,7 @@ export default { name: "sw", apply: (c) => { c.provide(defineService<{ slow(): P
     await expect(uninstalled).resolves.toMatchObject({ ok: true });
     // 重装同名——旧 bridge 的 700ms 计时器到点不得删掉新登记
     await expect(svc.install({ path: f })).resolves.toMatchObject({ ok: true });
-    await new Promise((r) => setTimeout(r, 900));
+    await sleep(900);
     expect(svc.list().filter((r) => r.name === "sw")).toHaveLength(1); // 新登记存活
   });
 
@@ -269,7 +290,7 @@ export default { name: "ser", apply: (c) => { c.on(defineSerial<{ s: string }>("
 export default { name: "wnoise", apply: (c) => { c.on(defineEvent<{ v: number }>("pm-w-tick"), () => { throw new Error("worker noise"); }); } };`);
     await expect(svc.install({ path: f })).resolves.toMatchObject({ ok: true });
     ctx.emit(tick, { v: 1 });
-    await new Promise((r) => setTimeout(r, 150)); // 投递即忘 + worker 回流
+    await sleep(150); // 投递即忘 + worker 回流
     const errors = svc.errors("wnoise");
     expect(errors.some((e) => e.message.includes("worker noise"))).toBe(true);
     expect(errors.every((e) => e.plugin === "wnoise")).toBe(true); // 归属正确
@@ -289,7 +310,7 @@ export default {
   },
 };`);
     const installed = svc.install({ path: f }); // apply 停靠在 waitFor（late-db 未提供）
-    await new Promise((r) => setTimeout(r, 150));
+    await sleep(150);
     expect(svc.list().filter((r) => r.name === "waiter" && r.status === "active")).toHaveLength(0); // 仍停靠
     ctx.provide(lateDb, { query: (sql) => `late(${sql})` }); // 晚到
     const settled = await installed;
@@ -302,21 +323,7 @@ export default {
   });
 });
 
-describe("worker 模式：e2e 批次修复回归", () => {
-  it("apply 超时击杀收殓落定后 failed 登记仍存活（症状：击杀收殓抹掉失败历史，list 查无此插件）", async () => {
-    const { svc, root, auditLog } = await setup({ applyTimeoutMs: 300 });
-    const file = join(root, "spin2.ts");
-    await writeFile(file, `export default { name: "spin2", apply: () => { while (true) {} } };`, "utf8");
-    const result = await svc.install({ path: file });
-    expect(result).toMatchObject({ ok: false });
-    // 轮询可观测信号（killed 台账到达）等收殓真正落定——不押注固定 sleep 的时序侥幸
-    await waitFor(() => auditLog.some((e) => e.kind === "killed" && e.plugin === "spin2"), 5_000);
-    await new Promise((r) => setTimeout(r, 20)); // killed 台账之后紧邻的 removeIfOwned 落定
-    const records = svc.list().filter((r) => r.name === "spin2");
-    expect(records).toHaveLength(1);
-    expect(records[0]).toMatchObject({ status: "failed" });
-  });
-
+describe("worker 模式：e2e 批次审查修复回归", () => {
   it("同名重复安装被拒 → 在运行老插件的登记不被新桥击杀误删（症状：被拒后老插件变僵尸不可卸载）", async () => {
     const { svc, root, auditLog } = await setup();
     const incumbent = join(root, "dup-a.ts");
@@ -331,11 +338,10 @@ export default { name: "dup", apply: (c) => { c.provide(defineService<{ v(): num
       reason: expect.stringContaining("use replace"),
     });
     // 等新桥击杀收殓真正落定（killed 台账），再断言老插件安然无恙
-    await waitFor(
-      () => auditLog.some((e) => e.kind === "killed" && (e.detail ?? "").includes("duplicate")),
-      5_000,
-    );
-    await new Promise((r) => setTimeout(r, 20));
+    const killedDuplicate = (entry: PluginAuditEntry): boolean =>
+      entry.kind === "killed" && (entry.detail ?? "").includes("duplicate");
+    await waitFor(() => auditLog.some(killedDuplicate), 5_000);
+    await sleep(20);
     expect(svc.list().filter((r) => r.name === "dup")).toMatchObject([{ status: "active", mode: "worker" }]);
     await expect(svc.uninstall("dup")).resolves.toMatchObject({ ok: true }); // 仍可正常卸载
     expect(svc.serviceToken("pm-w-dup")).toBeUndefined();

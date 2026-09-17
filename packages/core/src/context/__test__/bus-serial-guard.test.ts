@@ -4,13 +4,18 @@ import { defineGuard, defineSerial } from "../tokens.ts";
 
 const deny = (reason: string) => ({ kind: "deny" as const, reason });
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 describe("serial 派发（§2.2 第三行）", () => {
   it("注册序逐个 await，全部执行不短路", async () => {
     const ctx = createContext();
     const token = defineSerial<{ v: number }>("ser-order");
     const order: number[] = [];
     ctx.on(token, async ({ v }) => {
-      await new Promise((r) => setTimeout(r, 5));
+      await sleep(5);
       order.push(v * 1);
     });
     ctx.on(token, ({ v }) => order.push(v * 2));
@@ -101,7 +106,7 @@ describe("guard 派发（§2.2 第四行 + C7：全部执行不短路）", () =>
     const token = defineGuard<{ v: number }>("grd-mixed");
     const order: string[] = [];
     ctx.on(token, async () => {
-      await new Promise((r) => setTimeout(r, 5));
+      await sleep(5);
       order.push("async");
       return deny("async-deny");
     });

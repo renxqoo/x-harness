@@ -19,28 +19,29 @@ function isThenable(value: unknown): value is Promise<unknown> {
 
 export type ErrorSink = (where: string, message: string) => void;
 
-export function wrapPluginForErrorRouting(
-  plugin: Plugin,
-  sink: ErrorSink,
-  root: Context,
-  onToken?: (token: AnyToken) => void,
-): Plugin {
+/** 错误路由依赖：sink（归属记录）、root（注册落位层）、onToken（token 注册表收集） */
+export interface ErrorRoutingDeps {
+  readonly sink: ErrorSink;
+  readonly root: Context;
+  readonly onToken?: (token: AnyToken) => void;
+}
+
+export function wrapPluginForErrorRouting(plugin: Plugin, deps: ErrorRoutingDeps): Plugin {
   return {
     name: plugin.name, // inject 刻意丢弃：跨插件依赖语义归 plugin-manager（loadPlugins 只认同批）
     apply: (scope: Context) => {
-      const wrapped = wrapContext(scope, root, plugin.name, sink, onToken);
+      const wrapped = wrapContext(scope, { ...deps, pluginName: plugin.name });
       return plugin.apply(wrapped);
     },
   };
 }
 
-function wrapContext(
-  scope: Context,
-  root: Context,
-  pluginName: string,
-  sink: ErrorSink,
-  onToken?: (token: AnyToken) => void,
-): Context {
+interface WrapContextDeps extends ErrorRoutingDeps {
+  readonly pluginName: string;
+}
+
+function wrapContext(scope: Context, deps: WrapContextDeps): Context {
+  const { pluginName, sink, root, onToken } = deps;
   const report = (where: string, error: unknown): void => {
     const message = error instanceof Error ? `${String(error)}` : String(error);
     sink(where, message);

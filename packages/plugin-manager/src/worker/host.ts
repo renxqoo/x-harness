@@ -41,85 +41,105 @@ port.on("message", (message: MainToWorker) => {
 });
 
 async function handle(message: MainToWorker): Promise<void> {
-  if (message.t === "boot") {
-    // 不加 query bust：每次安装都是全新 worker（独立模块注册表——已实证含 terminate 后同路径新
-    // worker），同路径重装天然拿新模块；bust 无语义且徒增解析路径分叉
-    const mod = (await import(message.pluginPath)) as {
-      default?: unknown;
-      plugin?: unknown;
-    };
-    const plugin = (mod.default ?? mod.plugin) as
-      | { name?: unknown; apply?: unknown; apiVersion?: unknown; inject?: readonly string[] }
-      | undefined;
-    if (
-      plugin === undefined ||
-      typeof plugin !== "object" ||
-      typeof plugin.name !== "string" ||
-      plugin.name.length === 0 ||
-      typeof plugin.apply !== "function"
-    ) {
-      send({ t: "apply-error", error: "module default export is not a Plugin" });
+  switch (message.t) {
+    case "boot":
+      await handleBoot(message);
       return;
-    }
-    pendingPlugin = {
-      name: plugin.name,
-      apply: plugin.apply as (ctx: Context) => unknown,
-    };
+    case "proceed":
+      await handleProceed();
+      return;
+    case "call":
+      await handleCall(message);
+      return;
+    case "svc-result":
+      handleSvcResult(message);
+      return;
+    case "emit":
+      handleEmit(message);
+      return;
+    case "shutdown":
+      await handleShutdown();
+      return;
+  }
+}
+
+async function handleBoot(message: Extract<MainToWorker, { t: "boot" }>): Promise<void> {
+  // 不加 query bust：每次安装都是全新 worker（独立模块注册表），同路径重装天然拿新模块；
+  // 实测 terminate 热死循环 worker 后，主进程共享解析器对「带 query 的动态 import」粘性失败
+  const mod = (await import(message.pluginPath)) as {
+    default?: unknown;
+    plugin?: unknown;
+  };
+  const plugin = (mod.default ?? mod.plugin) as
+    | { name?: unknown; apply?: unknown; apiVersion?: unknown; inject?: readonly string[] }
+    | undefined;
+  if (
+    plugin === undefined ||
+    typeof plugin !== "object" ||
+    typeof plugin.name !== "string" ||
+    plugin.name.length === 0 ||
+    typeof plugin.apply !== "function"
+  ) {
+    send({ t: "apply-error", error: "module default export is not a Plugin" });
+    return;
+  }
+  pendingPlugin = {
+    name: plugin.name,
+    apply: plugin.apply as (ctx: Context) => unknown,
+  };
+  send({
+    t: "ready",
+    pluginName: plugin.name,
+    apiVersion: plugin.apiVersion as number | undefined,
+    inject: [...(plugin.inject ?? [])],
+  }); // apply 等 main 的 proceed（三段式：main 在 ready 后做锁与 replace）
+}
+
+async function handleProceed(): Promise<void> {
+  const current = pendingPlugin;
+  if (current === undefined) {
+    send({ t: "apply-error", error: "proceed without boot" });
+    return;
+  }
+  await loadPlugins(ctx, [bridged(current)]);
+  send({ t: "apply-done" });
+}
+
+async function handleCall(message: Extract<MainToWorker, { t: "call" }>): Promise<void> {
+  const impl = providedImpls.get(message.service) as Record<string, unknown> | undefined;
+  if (impl === undefined || typeof impl[message.method] !== "function") {
     send({
-      t: "ready",
-      pluginName: plugin.name,
-      apiVersion: plugin.apiVersion as number | undefined,
-      inject: [...(plugin.inject ?? [])],
+      t: "call-result",
+      id: message.id,
+      ok: false,
+      error: `no such service method ${message.service}.${message.method}`,
     });
-    return; // apply 等 main 的 proceed（三段式：main 在 ready 后做锁与 replace）
-  }
-  if (message.t === "proceed") {
-    const current = pendingPlugin;
-    if (current === undefined) {
-      send({ t: "apply-error", error: "proceed without boot" });
-      return;
-    }
-    await loadPlugins(ctx, [bridged(current)]);
-    send({ t: "apply-done" });
     return;
   }
-  if (message.t === "call") {
-    const impl = providedImpls.get(message.service) as Record<string, unknown> | undefined;
-    if (impl === undefined || typeof impl[message.method] !== "function") {
-      send({
-        t: "call-result",
-        id: message.id,
-        ok: false,
-        error: `no such service method ${message.service}.${message.method}`,
-      });
-      return;
-    }
-    try {
-      const value = await (impl[message.method] as (...args: unknown[]) => unknown)(...message.args);
-      send({ t: "call-result", id: message.id, ok: true, value });
-    } catch (error) {
-      send({ t: "call-result", id: message.id, ok: false, error: String(error) });
-    }
-    return;
+  try {
+    const value = await (impl[message.method] as (...args: unknown[]) => unknown)(...message.args);
+    send({ t: "call-result", id: message.id, ok: true, value });
+  } catch (error) {
+    send({ t: "call-result", id: message.id, ok: false, error: String(error) });
   }
-  if (message.t === "svc-result") {
-    const pending = pendingRpc.get(message.id);
-    if (pending === undefined) return;
-    pendingRpc.delete(message.id);
-    if (message.ok) pending.resolve(message.value);
-    else pending.reject(new Error(message.error ?? "service call failed"));
-    return;
-  }
-  if (message.t === "emit") {
-    const token = tokenByName.get(message.token) as EventToken<unknown> | undefined;
-    if (token !== undefined) ctx.emit(token, message.payload);
-    return;
-  }
-  if (message.t === "shutdown") {
-    await ctx.dispose();
-    send({ t: "shutdown-ack" });
-    return;
-  }
+}
+
+function handleSvcResult(message: Extract<MainToWorker, { t: "svc-result" }>): void {
+  const pending = pendingRpc.get(message.id);
+  if (pending === undefined) return;
+  pendingRpc.delete(message.id);
+  if (message.ok) pending.resolve(message.value);
+  else pending.reject(new Error(message.error ?? "service call failed"));
+}
+
+function handleEmit(message: Extract<MainToWorker, { t: "emit" }>): void {
+  const token = tokenByName.get(message.token) as EventToken<unknown> | undefined;
+  if (token !== undefined) ctx.emit(token, message.payload);
+}
+
+async function handleShutdown(): Promise<void> {
+  await ctx.dispose();
+  send({ t: "shutdown-ack" });
 }
 
 let pendingPlugin: { name: string; apply: (ctx: Context) => unknown } | undefined;

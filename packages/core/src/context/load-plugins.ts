@@ -143,8 +143,12 @@ export async function loadPlugins(
       try {
         await ctx.dispose();
       } catch (disposeError) {
-        // 根因优先：apply 错误必须向上抛；回卷错误不吞根因（对抗审查 #9 修复）
-        console.error("[x-harness] dispose during plugin load failure also failed", disposeError);
+        // 根因优先：apply 错误必须向上抛；回卷错误不吞根因（对抗审查 #9 修复）——stderr 留痕（内核不依赖 console）
+        const detail =
+          disposeError instanceof Error ? `${disposeError.name}: ${disposeError.message}` : String(disposeError);
+        process.stderr.write(
+          `[x-harness] dispose during plugin load failure also failed: ${detail}\n`,
+        );
       }
       release();
       throw error;

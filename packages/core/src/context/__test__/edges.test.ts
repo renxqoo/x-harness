@@ -5,6 +5,8 @@ import { loadPlugins } from "../load-plugins.ts";
 import { defineEvent } from "../tokens.ts";
 import type { Plugin } from "../types.ts";
 
+const noop = (): void => {};
+
 describe("freeze 边界", () => {
   it("deepFreeze：原始值/null/已冻结对象原样返回", () => {
     expect(deepFreeze(1)).toBe(1);
@@ -30,7 +32,7 @@ describe("freeze 边界", () => {
 describe("注册面垃圾输入", () => {
   it("on 传入 service token → 运行时拒", () => {
     const ctx = createContext();
-    expect(() => ctx.on({ kind: "service", name: "s" } as never, () => {})).toThrow(
+    expect(() => ctx.on({ kind: "service", name: "s" } as never, noop)).toThrow(
       "expects an event-like token",
     );
   });
@@ -44,10 +46,10 @@ describe("加载器垃圾输入", () => {
   });
 
   it("default sink（未注入时）不炸且后续监听器照常", () => {
-    const ctx = createContext(); // 不注入 onListenerError → defaultSink 写 console
+    const ctx = createContext(); // 不注入 onListenerError → defaultSink 写 stderr
     const token = defineEvent<{ v: number }>("evt-default-sink");
     const later = vi.fn();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
       ctx.on(token, () => {
         throw new Error("boom");

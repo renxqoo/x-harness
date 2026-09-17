@@ -4,6 +4,13 @@ import { loadPlugins } from "../load-plugins.ts";
 import type { Plugin } from "../types.ts";
 import { pluginError, pluginLoaded } from "../vocab.ts";
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const noop = (): void => {};
+
 describe("插件加载器（§5）", () => {
   it("inject topo：依赖者后跑", async () => {
     const ctx = createContext();
@@ -80,7 +87,7 @@ describe("插件加载器（§5）", () => {
     await expect(loadPlugins(ctx, plugins)).rejects.toThrow("apply boom");
     expect(errors).toEqual(["bad:Error: apply boom"]);
     expect(unwound).toHaveBeenCalledTimes(1); // 已加载的回卷
-    expect(() => ctx.on(pluginError, () => {})).toThrow(/disposed/); // ctx 整体不可用
+    expect(() => ctx.on(pluginError, noop)).toThrow(/disposed/); // ctx 整体不可用
   });
 
   it("async apply 按序 await", async () => {
@@ -90,7 +97,7 @@ describe("插件加载器（§5）", () => {
       {
         name: "slow",
         apply: async () => {
-          await new Promise((r) => setTimeout(r, 5));
+          await sleep(5);
           order.push("slow");
         },
       },
