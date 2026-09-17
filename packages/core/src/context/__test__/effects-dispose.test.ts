@@ -76,3 +76,38 @@ describe("effect 账本与 dispose（§4）", () => {
     expect(heard).toEqual([]);
   });
 });
+
+describe("disposing 进行中（非完成后）的边界（Cordis 对照审计补强）", () => {
+  it("回卷中途：新注册拒绝、emit 允许且送达未回卷监听者（部分送达语义）", async () => {
+    const ctx = createContext();
+    const token = defineEvent<{ v: number }>("evt-mid-disposing");
+    const heard: number[] = [];
+    ctx.on(token, ({ v }) => heard.push(v)); // 先注册 → 逆序后回卷（窗口期仍活着）
+    let release: (() => void) | undefined;
+    ctx.effect(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve; // 后注册 → 先回卷，把 dispose 挂在这里
+        }),
+    );
+
+    const disposing = ctx.dispose();
+    await new Promise((r) => setTimeout(r, 0)); // 进入 disposing 窗口：promise disposer 在途
+
+    let midRegistration: Error | undefined;
+    try {
+      ctx.on(token, () => {});
+    } catch (error) {
+      midRegistration = error as Error;
+    }
+    expect(midRegistration?.message).toMatch(/disposing/); // 进行中注册拒绝
+
+    expect(() => ctx.emit(token, { v: 1 })).not.toThrow(); // 进行中 emit 允许
+    expect(heard).toEqual([1]); // 未回卷的监听者收到（部分送达）
+
+    release?.();
+    await disposing;
+    ctx.emit(token, { v: 2 });
+    expect(heard).toEqual([1]); // 回卷完成后不再送达
+  });
+});
