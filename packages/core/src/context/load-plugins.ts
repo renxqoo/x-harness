@@ -8,7 +8,7 @@
 //   apply 之后的运行期注册归属调用方层账本，随层回卷（不在单插件卸载范围）。
 // 并发契约：并发 loadPlugins 无互斥（重名/循环检查是入口快照）——装配序列化是宿主责任。
 
-import { pluginError, pluginLoaded } from "./vocab.ts";
+import { pluginError, pluginLoaded, pluginUnloaded } from "./vocab.ts";
 import type {
   AnyToken,
   Chain,
@@ -110,10 +110,20 @@ export async function loadPlugins(
       const unload: Disposer = async () => {
         if (done) return; // 幂等，且与层回卷共用哨兵——绝不双跑
         done = true;
+        // 与层回卷同律容错：单个 disposer 抛错不中止（其余必回卷），聚合上抛
+        const failures: unknown[] = [];
         for (let index = captured.length - 1; index >= 0; index -= 1) {
           const unwind = captured[index];
-          if (unwind !== undefined) await unwind();
+          if (unwind === undefined) continue;
+          try {
+            await unwind();
+          } catch (error) {
+            failures.push(error);
+          }
         }
+        ctx.emit(pluginUnloaded, { plugin: plugin.name }); // 卸载完成（含部分失败）广播
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) throw new AggregateError(failures, "plugin unload failures");
       };
       ctx.effect(unload); // 层回卷兜底（手动卸载已跑过则 no-op）
       unloaders.push(unload);

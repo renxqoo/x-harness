@@ -5,6 +5,7 @@ import { createContext } from "../create-context.ts";
 import { loadPlugins } from "../load-plugins.ts";
 import { defineEvent, defineService, defineWaterfall } from "../tokens.ts";
 import type { Plugin } from "../types.ts";
+import { pluginUnloaded } from "../vocab.ts";
 
 describe("运行期追加装配（D18 注册面开放）", () => {
   it("二次 loadPlugins：新服务即时可用、新监听者只听见后续事件、两批都随层回卷", async () => {
@@ -227,5 +228,69 @@ describe("apply 期 wrapper 委托面（捕获包装不改变 Context 语义）"
     // 匿名链经 wrapper 创建/注册：语义与直连一致（final 绑定 + 消费方层归属）
     const decide = ctx.use(chainSvc).decide;
     expect(await decide.dispatch(1)).toBe(4); // (1+1)*2
+  });
+});
+
+describe("按名卸载与卸载容错", () => {
+  it("宿主组合按名卸载：name→handle 映射（内核不立 name-keyed 注册表的形态）", async () => {
+    const ctx = createContext();
+    const ping = defineEvent<{ v: number }>("ping-byname");
+    const svcOtel = defineService<{ on: boolean }>("svc-otel");
+    const otelHeard: number[] = [];
+    const seen: string[] = [];
+    ctx.on(pluginUnloaded, ({ plugin }) => seen.push(plugin));
+
+    const plugins: Plugin[] = [
+      { name: "otel", apply: (c) => { c.provide(svcOtel, { on: true }); c.on(ping, ({v}) => otelHeard.push(v)); } },
+      { name: "other", apply: () => {} },
+    ];
+    const unloaders = await loadPlugins(ctx, plugins);
+    const byName = new Map(plugins.map((plugin, i) => [plugin.name, unloaders[i]]));
+
+    await byName.get("otel")?.();
+    expect(ctx.tryUse(svcOtel)).toBeUndefined();
+    ctx.emit(ping, { v: 1 });
+    expect(otelHeard).toEqual([]);
+    expect(seen).toEqual(["otel"]); // 卸载广播按名
+  });
+
+  it("unload 容错：单个 disposer 抛错——其余仍回卷、聚合上抛、重试 no-op、事件仍广播", async () => {
+    const ctx = createContext();
+    const svc = defineService<{ n: number }>("svc-fail-unload");
+    const ranAfterFailure = vi.fn();
+    const seen: string[] = [];
+    ctx.on(pluginUnloaded, ({ plugin }) => seen.push(plugin));
+
+    const unloaders = await loadPlugins(ctx, [
+      {
+        name: "fragile",
+        apply: (c) => {
+          c.provide(svc, { n: 1 });
+          c.effect(() => { ranAfterFailure(); }); // 最先注册 → 逆序最后跑
+          c.effect(() => { throw new Error("cleanup boom"); });
+        },
+      },
+    ]);
+    const unload = unloaders[0];
+    if (unload === undefined) throw new Error("unloader missing");
+
+    await expect(unload()).rejects.toThrow("cleanup boom");
+    expect(ranAfterFailure).toHaveBeenCalledTimes(1); // 抛错后其余仍回卷（逆序：最后才到它）
+    expect(ctx.tryUse(svc)).toBeUndefined(); // provide 也已注销
+    expect(seen).toEqual(["fragile"]); // 部分失败仍广播卸载完成
+    await expect(unload()).resolves.toBeUndefined(); // 重试 no-op（半卸载不会发生——已全部尝试）
+  });
+
+  it("loaded ↔ unloaded 成对（C12）：装卸各恰好一次、按名", async () => {
+    const ctx = createContext();
+    const trace: string[] = [];
+    const unloaders = await loadPlugins(ctx, [{ name: "p", apply: () => {} }]);
+    // loadPlugins 内部广播 plugin/loaded；此处订阅晚于装载，只验证 unloaded 侧
+    ctx.on(pluginUnloaded, ({ plugin }) => trace.push(`unloaded:${plugin}`));
+    const unload = unloaders[0];
+    if (unload === undefined) throw new Error("unloader missing");
+    await unload();
+    await unload(); // 幂等：只广播一次
+    expect(trace).toEqual(["unloaded:p"]);
   });
 });

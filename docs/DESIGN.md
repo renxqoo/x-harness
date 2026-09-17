@@ -120,11 +120,11 @@ dsh 验证了几个我们吸收的核心分面：日志唯一事实 + 投影读�
 
 ### 3.4 内核词表索引（域词表单源在各件文档）
 
-> 机制与规则（token 形态、派发语义、单级制、冻结策略、自举域与通用信封）在 [CONTEXT.md](./CONTEXT.md)。**各域 token 的载荷与冻结标注归 owning 件的文档**——本表只是索引。代码导出可集中于 `@x-harness/core/vocab`（一个模块），文档归属按件分域，两回事。总线词表共 23 token。
+> 机制与规则（token 形态、派发语义、单级制、冻结策略、自举域与通用信封）在 [CONTEXT.md](./CONTEXT.md)。**各域 token 的载荷与冻结标注归 owning 件的文档**——本表只是索引。代码导出可集中于 `@x-harness/core/vocab`（一个模块），文档归属按件分域，两回事。总线词表共 24 token。
 
 | 域 | owning 件 | token 数 | 归档 |
 |---|---|---|---|
-| 自举域 + 通用信封 | Context | 4 + 1 | [CONTEXT.md §6](./CONTEXT.md) |
+| 自举域 + 通用信封 | Context | 5 + 1 | [CONTEXT.md §6](./CONTEXT.md) |
 | 会话域 | Session | 1 | [SESSION.md §4](./SESSION.md) |
 | Agent lifecycle 域 | Agent registry | 3 | [AGENT.md §4](./AGENT.md) |
 | loop 拦截域 | agent-loop | 3 | [LOOP.md §3](./LOOP.md) |

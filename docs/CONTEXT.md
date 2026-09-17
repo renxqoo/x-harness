@@ -135,7 +135,7 @@ export interface Plugin {
 - `inject` 按插件名 topo 排序；**循环依赖 → 装配期 throw**；重名插件 → throw。
 - `apply` 可异步；返回的 disposer 自动入 effect 账本。
 - 加载完成逐个广播 `plugin/loaded`；apply 抛错 → `plugin/error` + 装配失败（整体回卷已加载的）。
-- **卸载契约**：`loadPlugins` 返回与插件同序的卸载句柄（`Disposer[]`）——单插件卸载 = 逆序回卷其 **apply 期注册**（provide/on/onChain/effect + apply 返回的 disposer）；句柄幂等，且与层回卷共用 once 哨兵（层 dispose 兜底不双跑）；apply 之后的运行期注册归调用方层账本，随层回卷。**并发契约**：并发 loadPlugins 无互斥（检查是入口快照）——装配序列化是宿主责任。
+- **卸载契约**：`loadPlugins` 返回与插件同序的卸载句柄（`Disposer[]`）——单插件卸载 = 逆序回卷其 **apply 期注册**（provide/on/onChain/effect + apply 返回的 disposer）；句柄幂等，且与层回卷共用 once 哨兵（层 dispose 兜底不双跑）；**卸载与层回卷同律容错**——单个 disposer 抛错不中止（其余必回卷），单错抛原错、多错抛 AggregateError；卸载完成（含部分失败）广播 `plugin/unloaded`；apply 之后的运行期注册归调用方层账本，随层回卷。按名卸载不立内核注册表：宿主在装配点组 Map（真实需求方都在装配点；跨插件卸载走服务组合层）。**并发契约**：并发 loadPlugins 无互斥（检查是入口快照）——装配序列化是宿主责任。
 
 ## 6. 内核事件词表：Context 自身
 
@@ -147,6 +147,7 @@ export interface Plugin {
 |---|---|---|---|---|
 | `service/provided` | emit（提供层 chain-up） | `{ service: string }` | deep | 服务出现（可选依赖接线用——监听者须在能看见提供者的层：root 或其祖先链；兄弟不可见，与 C3 一致） |
 | `plugin/loaded` | emit | `{ plugin: string }` | deep | 加载完成 |
+| `plugin/unloaded` | emit | `{ plugin: string }` | deep | 卸载完成（含部分失败）——与 `plugin/loaded` 成对（C12） |
 | `plugin/error` | emit | `{ plugin: string; error: string }` | deep | apply 失败（随后装配失败） |
 | `context/disposing` | emit | `{}` | — | dispose 回卷开始前 |
 

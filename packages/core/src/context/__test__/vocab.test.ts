@@ -6,6 +6,7 @@ describe("内核自举词表封闭性（§6.1：导出常量 == 文档词表，�
     const vocab = await import("../vocab.ts");
     expect(vocab.serviceProvided.name).toBe("service/provided");
     expect(vocab.pluginLoaded.name).toBe("plugin/loaded");
+    expect(vocab.pluginUnloaded.name).toBe("plugin/unloaded");
     expect(vocab.pluginError.name).toBe("plugin/error");
     expect(vocab.contextDisposing.name).toBe("context/disposing");
     expect(vocab.pluginEvent.name).toBe("plugin/event");
@@ -18,6 +19,7 @@ describe("内核自举词表封闭性（§6.1：导出常量 == 文档词表，�
       "pluginError",
       "pluginEvent",
       "pluginLoaded",
+      "pluginUnloaded",
       "serviceProvided",
     ]);
   });
