@@ -1,6 +1,7 @@
-// worker 模式 main 侧桥（docs/PLUGIN-MANAGER.md §4 bridge.ts）：
-// 把切片验证过的手工机制产品化——boot/ready/apply 超时 terminate、监听桥（平台 root 落位）、
-// provided 代理注册、双向服务 RPC 关联与运行期超时击杀、exit 收殓、优雅 shutdown。
+// worker 桥 main 侧（docs/PLUGIN-MANAGER.md §4 bridge.ts，审查批次修复后的完整形态）：
+// 三段式装载（begin/proceed）、apply 与 RPC 双超时击杀、监听桥（emit-only——审查 #3 收窄）、
+// provided 代理进 token 注册表、exit 收殓、shutdown 与 kill 同构（#2/#11）、
+// worker 清理挂进平台 effect 账本（#8）。
 // 落位纪律（裁决 9）：注册在平台 root（可见性向上），disposer 由本桥持有（回卷经 kill/shutdown）。
 
 import { Worker } from "node:worker_threads";
@@ -15,22 +16,28 @@ export interface BridgeDeps {
   readonly tokenTable: Map<string, AnyToken>;
   readonly applyTimeoutMs: number;
   readonly runtimeTimeoutMs: number;
+  readonly kernelApiVersion: number;
   readonly hostPath: string;
   readonly onRuntimeError: (where: string, message: string) => void;
   readonly onKilled: (reason: string) => void;
 }
 
-export interface LaunchedPlugin {
+export interface ReadyInfo {
   readonly name: string;
   readonly inject: readonly string[];
 }
 
 export interface WorkerBridge {
-  launch(): Promise<Result<LaunchedPlugin, string>>;
+  /** 三段式之一：boot + 模块加载 + ready（apply 未跑——main 在此窗口做锁与 replace） */
+  begin(): Promise<Result<ReadyInfo, string>>;
+  /** 三段式之二：放行 apply 并等待完成（含版本门 #4 与约束裁决 #3/#17） */
+  proceed(): Promise<Result<undefined, string>>;
   callService(service: string, method: string, args: readonly unknown[]): Promise<Result<unknown, string>>;
   emitIn(token: string, payload: unknown): void;
   shutdown(): Promise<Result<undefined, string>>;
   kill(reason: string): Promise<void>;
+  /** worker 是否已死（register 前复查——审查 #13 窄窗竞态） */
+  isDead(): boolean;
   serviceToken(name: string): ServiceToken<unknown> | undefined;
 }
 
@@ -46,24 +53,44 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
   const teardown: (() => void)[] = [];
   const violations: string[] = [];
   const bridgedTokens = new Map<string, ServiceToken<unknown>>();
+  const bridgedNames: string[] = [];
   let rpcId = 0;
   let intentional = false;
-  let killed = false;
-  let launcher:
-    | { resolve(r: Result<LaunchedPlugin, string>): void; timer: ReturnType<typeof setTimeout> }
+  let dead = false;
+  let readyWaiter:
+    | { resolve(r: Result<ReadyInfo, string>): void; timer: ReturnType<typeof setTimeout> }
     | undefined;
-  let readyInfo: LaunchedPlugin | undefined;
-  let shutdownWaiter: { resolve(r: Result<undefined, string>): void; timer: ReturnType<typeof setTimeout> } | undefined;
+  let proceedWaiter:
+    | { resolve(r: Result<undefined, string>): void; timer: ReturnType<typeof setTimeout> }
+    | undefined;
+  let readyInfo: ReadyInfo | undefined;
+  let shutdownWaiter:
+    | { resolve(r: Result<undefined, string>): void; timer: ReturnType<typeof setTimeout> }
+    | undefined;
 
-  const failLaunch = (reason: string): void => {
-    if (launcher === undefined) return;
-    clearTimeout(launcher.timer);
-    const settle = launcher;
-    launcher = undefined;
+  const failReady = (reason: string): void => {
+    if (readyWaiter === undefined) return;
+    clearTimeout(readyWaiter.timer);
+    const settle = readyWaiter;
+    readyWaiter = undefined;
+    settle.resolve({ ok: false, reason });
+  };
+  const failProceed = (reason: string): void => {
+    if (proceedWaiter === undefined) return;
+    clearTimeout(proceedWaiter.timer);
+    const settle = proceedWaiter;
+    proceedWaiter = undefined;
     settle.resolve({ ok: false, reason });
   };
 
-  const bridgedNames: string[] = [];
+  const settlePending = (cause: string): void => {
+    for (const pending of rpcPending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(cause));
+    }
+    rpcPending.clear();
+  };
+
   const runTeardown = (): void => {
     for (const dispose of teardown.splice(0)) dispose();
     for (const name of bridgedNames.splice(0)) {
@@ -72,22 +99,40 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
   };
 
   const kill = async (reason: string): Promise<void> => {
-    if (killed) return;
-    killed = true;
+    if (dead) return;
+    dead = true;
     intentional = true;
-    for (const pending of rpcPending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error(`worker killed: ${reason}`));
+    failReady(`worker killed: ${reason}`);
+    failProceed(`worker killed: ${reason}`);
+    settlePending(`worker killed: ${reason}`);
+    if (shutdownWaiter !== undefined) {
+      clearTimeout(shutdownWaiter.timer);
+      const settle = shutdownWaiter;
+      shutdownWaiter = undefined;
+      settle.resolve({ ok: false, reason: `worker killed: ${reason}` });
     }
-    rpcPending.clear();
     await worker.terminate();
     runTeardown();
     deps.onKilled(reason);
   };
 
+  // #8：宿主关停面——worker 终止挂进平台 effect 账本（幂等：dead 哨兵兜底双跑）
+  deps.platform.effect(() => kill("platform disposed"));
+
   worker.on("message", (message: WorkerToMain) => {
     if (message.t === "ready") {
+      // 版本门（#4）：manifest.apiVersion 不匹配即拒
+      if (message.apiVersion !== undefined && message.apiVersion !== deps.kernelApiVersion) {
+        failReady(`plugin apiVersion ${message.apiVersion} does not match kernel ${deps.kernelApiVersion}`);
+        void kill(`apiVersion mismatch: ${message.apiVersion}`);
+        return;
+      }
       readyInfo = { name: message.pluginName, inject: message.inject };
+      if (readyWaiter === undefined) return;
+      clearTimeout(readyWaiter.timer);
+      const settle = readyWaiter;
+      readyWaiter = undefined;
+      settle.resolve({ ok: true, value: readyInfo });
       return;
     }
     if (message.t === "provided") {
@@ -99,20 +144,29 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
         const dispose = deps.platform.provide(token as ServiceToken<unknown>, serviceProxy(message.service));
         teardown.push(dispose);
       } catch (error) {
-        // 平台 root 同名服务冲突：fail-fast——装载失败路径收殓
-        failLaunch(`provided service "${message.service}" conflicts on platform: ${String(error)}`);
+        failProceed(`provided service "${message.service}" conflicts on platform: ${String(error)}`);
         void kill(`service conflict: ${message.service}`);
       }
       return;
     }
     if (message.t === "listening") {
-      const token = deps.tokenTable.get(message.token);
-      if (message.mode === "waterfall") {
-        violations.push(`waterfall middleware not supported in worker mode: ${message.token}`);
+      // 审查 #3 收窄：worker 模式监听仅 emit——serial/guard/parallel/waterfall 一律装载拒
+      //（拦截与有序派发是可信平台能力，跨线程洋葱/await 语义不桥）
+      if (message.mode !== "emit") {
+        const reason = `${message.mode} listener not supported in worker mode: ${message.token}`;
+        violations.push(reason);
+        if (proceedWaiter === undefined && readyInfo !== undefined) {
+          deps.onRuntimeError(`${message.token}@${message.mode}`, `constraint violation ignored: ${reason}`);
+        }
         return;
       }
+      const token = deps.tokenTable.get(message.token);
       if (token === undefined) {
-        violations.push(`listening on unregistered token: ${message.token}`);
+        const reason = `listening on unregistered token: ${message.token}`;
+        violations.push(reason);
+        if (proceedWaiter === undefined && readyInfo !== undefined) {
+          deps.onRuntimeError(`${message.token}@emit`, `constraint violation ignored: ${reason}`);
+        }
         return;
       }
       deps.tokenTable.set(message.token, token);
@@ -124,22 +178,21 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
       return;
     }
     if (message.t === "apply-done") {
-      if (readyInfo === undefined) return;
-      if (launcher === undefined) return;
+      if (proceedWaiter === undefined) return;
       if (violations.length > 0) {
-        const reason = violations.join("; ");
-        failLaunch(`worker-mode constraint violated: ${reason}`);
+        const reason = `worker-mode constraint violated: ${violations.join("; ")}`;
+        failProceed(reason);
         void kill(`constraint violation: ${reason}`);
         return;
       }
-      clearTimeout(launcher.timer);
-      const settle = launcher;
-      launcher = undefined;
-      settle.resolve({ ok: true, value: readyInfo });
+      clearTimeout(proceedWaiter.timer);
+      const settle = proceedWaiter;
+      proceedWaiter = undefined;
+      settle.resolve({ ok: true, value: undefined });
       return;
     }
     if (message.t === "apply-error") {
-      failLaunch(`apply failed in worker: ${message.error}`);
+      failProceed(`apply failed in worker: ${message.error}`);
       void kill(`apply failed: ${message.error}`);
       return;
     }
@@ -156,6 +209,10 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
       void handleServiceCall(message);
       return;
     }
+    if (message.t === "svc-wait") {
+      void handleServiceWait(message);
+      return;
+    }
     if (message.t === "shutdown-ack") {
       if (shutdownWaiter === undefined) return;
       clearTimeout(shutdownWaiter.timer);
@@ -165,21 +222,37 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
       return;
     }
     if (message.t === "log") {
-      const entry = message.entry as { where?: string; message?: string } | null;
-      if (entry !== null) {
-        deps.onRuntimeError(entry.where ?? "worker", entry.message ?? String(message.entry));
-      }
+      deps.onRuntimeError(message.entry.where, message.entry.message);
     }
   });
 
   worker.on("exit", () => {
+    // #11：shutdown 等待期崩溃 → 快速结算 ack（不等超时）；正常 shutdown 后的退出静默
+    if (intentional && shutdownWaiter !== undefined) {
+      clearTimeout(shutdownWaiter.timer);
+      const settle = shutdownWaiter;
+      shutdownWaiter = undefined;
+      runTeardown();
+      settle.resolve({ ok: false, reason: "worker exited during shutdown" });
+      return;
+    }
     if (intentional) return;
+    // #20：launch/proceed 期纯退出立即结算等待者（不再等计时器误报 timeout）
+    failReady("worker exited unexpectedly");
+    failProceed("worker exited unexpectedly");
     void kill("worker exited unexpectedly");
   });
   worker.on("error", (error: Error) => {
-    failLaunch(`worker crashed: ${String(error)}`);
+    failReady(`worker crashed: ${String(error)}`);
+    failProceed(`worker crashed: ${String(error)}`);
     void kill(`worker crashed: ${String(error)}`);
   });
+
+  async function lookupPlatformService(service: string): Promise<Record<string, unknown> | undefined> {
+    const token = deps.tokenTable.get(service);
+    if (token === undefined) return undefined;
+    return deps.platform.tryUse(token as ServiceToken<unknown>) as Record<string, unknown> | undefined;
+  }
 
   async function handleServiceCall(message: {
     id: number;
@@ -187,11 +260,7 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
     method: string;
     args: readonly unknown[];
   }): Promise<void> {
-    const token = deps.tokenTable.get(message.service);
-    const impl =
-      token !== undefined
-        ? (deps.platform.tryUse(token as ServiceToken<unknown>) as Record<string, unknown> | undefined)
-        : undefined;
+    const impl = await lookupPlatformService(message.service);
     const method = impl?.[message.method];
     if (impl === undefined || typeof method !== "function") {
       worker.postMessage({
@@ -210,14 +279,35 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
     }
   }
 
+  async function handleServiceWait(message: { id: number; service: string }): Promise<void> {
+    const token = deps.tokenTable.get(message.service);
+    if (token === undefined) {
+      worker.postMessage({
+        t: "svc-result",
+        id: message.id,
+        ok: false,
+        error: `no platform service token ${message.service}`,
+      });
+      return;
+    }
+    try {
+      await deps.platform.waitFor(token as ServiceToken<unknown>);
+      worker.postMessage({ t: "svc-result", id: message.id, ok: true });
+    } catch (error) {
+      worker.postMessage({ t: "svc-result", id: message.id, ok: false, error: String(error) });
+    }
+  }
+
   function serviceProxy(service: string): Record<string, unknown> {
     return new Proxy({} as Record<string, unknown>, {
-      get: (_target, method) =>
-        (...args: unknown[]) =>
+      get: (_target, method) => {
+        if (method === "then" || method === "catch") return undefined; // 防 await proxy 误判 thenable
+        return (...args: unknown[]) =>
           callService(service, String(method), args).then((result) => {
             if (result.ok) return result.value;
             throw new Error(result.reason);
-          }),
+          });
+      },
     });
   }
 
@@ -261,14 +351,24 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
   }
 
   return {
-    launch() {
-      return new Promise<Result<LaunchedPlugin, string>>((resolve) => {
+    begin() {
+      return new Promise<Result<ReadyInfo, string>>((resolve) => {
         const timer = setTimeout(() => {
-          failLaunch(`apply timeout after ${deps.applyTimeoutMs}ms`);
+          failReady(`boot timeout after ${deps.applyTimeoutMs}ms`);
+          void kill("boot timeout");
+        }, deps.applyTimeoutMs);
+        readyWaiter = { resolve, timer };
+        worker.postMessage({ t: "boot", pluginPath: deps.pluginPath, kernelApiVersion: deps.kernelApiVersion });
+      });
+    },
+    proceed() {
+      return new Promise<Result<undefined, string>>((resolve) => {
+        const timer = setTimeout(() => {
+          failProceed(`apply timeout after ${deps.applyTimeoutMs}ms`);
           void kill("apply timeout");
         }, deps.applyTimeoutMs);
-        launcher = { resolve, timer };
-        worker.postMessage({ t: "boot", pluginPath: deps.pluginPath, kernelApiVersion: 1 });
+        proceedWaiter = { resolve, timer };
+        worker.postMessage({ t: "proceed" } satisfies MainToWorker);
       });
     },
     callService,
@@ -276,7 +376,14 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
       worker.postMessage({ t: "emit", token, payload });
     },
     async shutdown() {
+      if (dead) return { ok: false as const, reason: "already shut down" };
+      if (shutdownWaiter !== undefined) return { ok: false as const, reason: "shutdown already in progress" };
+      // #2：与 kill 同构——结算在飞 RPC（调用方显式获知），置哨兵防晚到计时器跨安装污染
       intentional = true;
+      dead = true;
+      failReady("worker shut down");
+      failProceed("worker shut down");
+      settlePending("worker shut down");
       const ack = new Promise<Result<undefined, string>>((resolve) => {
         const timer = setTimeout(() => {
           shutdownWaiter = undefined;
@@ -291,6 +398,9 @@ export function createWorkerBridge(deps: BridgeDeps): WorkerBridge {
       return result;
     },
     kill,
+    isDead() {
+      return dead;
+    },
     serviceToken(name) {
       return bridgedTokens.get(name);
     },

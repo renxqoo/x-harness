@@ -7,6 +7,16 @@
 import type { AnyToken, Chain, ChainMiddleware, Context, Disposer, EventToken, Plugin, ScopeFilter, ServiceToken } from "@x-harness/core";
 import { pluginEvent } from "@x-harness/core";
 
+/** thenable 判定（#18）：then+catch 双检——仅有 then 的普通对象不是可等待的 Promise */
+function isThenable(value: unknown): value is Promise<unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as Promise<unknown>).then === "function" &&
+    typeof (value as Promise<unknown>).catch === "function"
+  );
+}
+
 export type ErrorSink = (where: string, message: string) => void;
 
 export function wrapPluginForErrorRouting(
@@ -67,7 +77,7 @@ function wrapContext(
               // emit：吞（与内核隔离一致）——归属在此记录
               try {
                 const out = original(payload);
-                if (out !== null && typeof out === "object" && typeof (out as Promise<unknown>).then === "function") {
+                if (isThenable(out)) {
                   (out as Promise<unknown>).catch((error: unknown) => report(`${token.name}@emit`, error));
                 }
                 return out;
@@ -80,7 +90,7 @@ function wrapContext(
               // 关键路径：记录后原样上抛（同步 throw 与 async rejected promise 两条路都接）
               try {
                 const out = original(payload);
-                if (out !== null && typeof out === "object" && typeof (out as Promise<unknown>).then === "function") {
+                if (isThenable(out)) {
                   return (out as Promise<unknown>).catch((error: unknown) => {
                     report(`${token.name}@${mode}`, error);
                     throw error;

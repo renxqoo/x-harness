@@ -341,3 +341,34 @@ describe("process 模式：审计与信封", () => {
     expect(spy).toHaveBeenCalled();
   });
 });
+
+describe("process 模式：审查修复回归", () => {
+  it("#6 卸载失败折算 err（不向调用方抛异常）且登记不卡死，可重装", async () => {
+    const { svc, root, ctx } = await setup({ approve: () => true });
+    const file = await writePlugin(
+      root,
+      "badunload",
+      `export default {
+  name: "badunload",
+  apply: () => () => { throw new Error("unload boom"); },
+};
+`,
+    );
+    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
+    const removed = await svc.uninstall("badunload"); // 不抛——折算 err
+    expect(removed).toMatchObject({ ok: false });
+    expect(removed.ok === false && removed.reason).toContain("unload boom");
+    expect((await svc.list()).filter((r) => r.name === "badunload")).toHaveLength(0); // 登记已清
+    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true }); // 重装不卡死
+    alive(ctx)();
+  });
+
+  it("#12 install-failed 信封发射", async () => {
+    const { svc, root, ctx } = await setup({ approve: () => true });
+    const envelopes: string[] = [];
+    ctx.on(pluginEvent, ({ kind }) => envelopes.push(kind));
+    const file = await writePlugin(root, "envfail", `export default { name: "envfail", apply: () => { throw new Error("x"); } };`);
+    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: false });
+    expect(envelopes).toContain("install-failed");
+  });
+});

@@ -95,7 +95,12 @@ export default {
     expect(result).toMatchObject({ ok: false });
     expect(result.ok === false && result.reason).toContain("apply timeout");
     alive(ctx);
-    expect((await svc.list())).toHaveLength(0);
+    // #5：失败留 failed 登记（对话迭代可见失败历史）
+    const records = svc.list().filter((r) => r.name === "whang");
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ status: "failed" });
+    await expect(svc.uninstall("whang")).resolves.toMatchObject({ ok: true }); // 显式清除
+    expect(svc.list().filter((r) => r.name === "whang")).toHaveLength(0);
   });
 
   it("运行期死循环 → RPC 超时击杀 → 登记清除、平台存活", async () => {
@@ -181,5 +186,103 @@ export default {
     await expect(svc.uninstall("wquiet")).resolves.toMatchObject({ ok: true });
     expect(svc.list().filter((r) => r.name === "wquiet")).toHaveLength(0);
     expect(svc.serviceToken("pm-w-quiet-svc")).toBeUndefined(); // 桥注册随 teardown 移除
+  });
+});
+
+describe("worker 模式：审查修复回归", () => {
+  it("#1 replace 迭代：同 provide 的 v2 换 v1 成功（proceed 门消除冲突窗口）", async () => {
+    const { svc, root, ctx } = await setup();
+    const v1 = join(root, "iterv1.ts");
+    const v2 = join(root, "iterv2.ts");
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(v1, `import { defineService } from "${CORE_PATH}";
+export default { name: "iter", apply: (c) => { c.provide(defineService<{ v(): number }>("pm-r-iter"), { v: () => 1 }); } };`);
+    await wf(v2, `import { defineService } from "${CORE_PATH}";
+export default { name: "iter", apply: (c) => { c.provide(defineService<{ v(): number }>("pm-r-iter"), { v: () => 2 }); } };`);
+    await expect(svc.install({ path: v1 })).resolves.toMatchObject({ ok: true });
+    await expect(svc.install({ path: v2, replace: true })).resolves.toMatchObject({ ok: true });
+    const token = svc.serviceToken("pm-r-iter");
+    if (token === undefined) throw new Error("token missing");
+    expect(await (ctx.use(token as ReturnType<typeof defineService<{ v(): number }>>)).v()).toBe(2);
+  });
+
+  it("#2/#11 shutdown 同构：在飞 RPC 显式拒绝；卸载后重装不被旧计时器污染", async () => {
+    const { svc, root, ctx } = await setup({ runtimeTimeoutMs: 700 });
+    const f = join(root, "sw.ts");
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(f, `import { defineService } from "${CORE_PATH}";
+export default { name: "sw", apply: (c) => { c.provide(defineService<{ slow(): Promise<void> }>("pm-r-slow"), { slow: () => new Promise(() => {}) }); } };`);
+    await expect(svc.install({ path: f })).resolves.toMatchObject({ ok: true });
+    const token = svc.serviceToken("pm-r-slow");
+    if (token === undefined) throw new Error("token missing");
+    const inFlight = (ctx.use(token as ReturnType<typeof defineService<{ slow(): Promise<void> }>>)).slow();
+    const uninstalled = svc.uninstall("sw");
+    await expect(inFlight).rejects.toThrow(/shut down|killed/); // 在飞 RPC 显式结算
+    await expect(uninstalled).resolves.toMatchObject({ ok: true });
+    // 重装同名——旧 bridge 的 700ms 计时器到点不得删掉新登记
+    await expect(svc.install({ path: f })).resolves.toMatchObject({ ok: true });
+    await new Promise((r) => setTimeout(r, 900));
+    expect(svc.list().filter((r) => r.name === "sw")).toHaveLength(1); // 新登记存活
+  });
+
+  it("#4 worker 版本门：apiVersion 不匹配拒", async () => {
+    const { svc, root } = await setup();
+    const f = join(root, "ver.ts");
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(f, `export default { name: "ver", apiVersion: 99, apply: () => {} };`);
+    const result = await svc.install({ path: f });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok === false && result.reason).toContain("apiVersion");
+  });
+
+  it("#3 serial 监听拒装（worker 收窄 emit-only）", async () => {
+    const { svc, root } = await setup();
+    const f = join(root, "ser.ts");
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(f, `import { defineSerial } from "${CORE_PATH}";
+export default { name: "ser", apply: (c) => { c.on(defineSerial<{ s: string }>("pm-r-any"), () => {}); } };`);
+    const result = await svc.install({ path: f });
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok === false && result.reason).toContain("serial listener not supported");
+  });
+
+  it("#9 worker 运行期监听器错误回流 errors()", async () => {
+    const { svc, root, ctx } = await setup();
+    const f = join(root, "noisy.ts");
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(f, `import { defineEvent } from "${CORE_PATH}";
+export default { name: "wnoise", apply: (c) => { c.on(defineEvent<{ v: number }>("pm-w-tick"), () => { throw new Error("worker noise"); }); } };`);
+    await expect(svc.install({ path: f })).resolves.toMatchObject({ ok: true });
+    ctx.emit(tick, { v: 1 });
+    await new Promise((r) => setTimeout(r, 150)); // 投递即忘 + worker 回流
+    const errors = svc.errors("wnoise");
+    expect(errors.some((e) => e.message.includes("worker noise"))).toBe(true);
+    expect(errors.every((e) => e.plugin === "wnoise")).toBe(true); // 归属正确
+  });
+
+  it("#10 worker waitFor 平台服务：晚到服务停靠后解析为异步代理", async () => {
+    const lateDb = defineService<{ query(sql: string): string }>("pm-r-late-db");
+    const { svc, root, ctx } = await setup({ tokens: [tick, db, lateDb] });
+    const f = join(root, "waiter.ts");
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(f, `import { defineService } from "${CORE_PATH}";
+export default {
+  name: "waiter",
+  apply: async (c) => {
+    const db = await c.waitFor(defineService<{ query(sql: string): string }>("pm-r-late-db"));
+    c.provide(defineService<{ run(sql: string): Promise<string> }>("pm-r-run"), { run: async (sql) => db.query(sql) });
+  },
+};`);
+    const installed = svc.install({ path: f }); // apply 停靠在 waitFor（late-db 未提供）
+    await new Promise((r) => setTimeout(r, 150));
+    expect(svc.list().filter((r) => r.name === "waiter" && r.status === "active")).toHaveLength(0); // 仍停靠
+    ctx.provide(lateDb, { query: (sql) => `late(${sql})` }); // 晚到
+    const settled = await installed;
+    expect(settled).toMatchObject({ ok: true });
+    const token = svc.serviceToken("pm-r-run");
+    if (token === undefined) throw new Error("token missing");
+    expect(
+      await (ctx.use(token as ReturnType<typeof defineService<{ run(sql: string): Promise<string> }>>)).run("sel"),
+    ).toBe("late(sel)");
   });
 });

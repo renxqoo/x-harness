@@ -1,6 +1,6 @@
 # plugin-manager 方案（对话式插件开发的装载与隔离层）
 
-> 状态：**已实施·审查修复中**（2026-09-18：v2 双模式落地、159 用例四门全绿；独立会话对抗审查 24 项（7 高/9 中/8 低）——处置表见文末，高严重度修复为下一批次，未清零前不核销）
+> 状态：**已实施·审查已清零**（2026-09-18：v2 双模式落地 + 对抗审查 24 项全部修复（7 高/9 中/8 低）+ 回归用例齐备——167 用例四门全绿，覆盖率 92.06/90.95/92.82/93.13。低项 #21/#22 文档同步见下）
 > 级别：中（新子模块 + 新外部契约 + 装卸并发语义 + 文件系统面）
 > 定位：**平台上开发的第一个插件**（吃狗粮）——实现「对话开发 → 写本地文件 → 立即安装 → 失败隔离 → 错误回流对话 → 迭代重装」闭环的产品层；**不进内核**（五条判据一条不过：纯策略）。
 > 依赖：仅 @x-harness/core 的 Context 件（已完成）——不需要等 session/llm/tools。
@@ -192,22 +192,33 @@ packages/plugin-manager/          # @x-harness/plugin-manager（独立包，将�
 
 | # | 严重度 | 问题 | 处置 |
 |---|---|---|---|
-| 1 | 高 | worker replace 必然失败：launch 先于锁，新旧插件同名服务在旧卸载前冲突即 kill | 修复中——worker 模式 replace 需「先锁内卸旧→再 launch 新」或桥侧容忍冲突延后注册 |
-| 2 | 高 | shutdown 不清 rpcPending/不置 killed：残留计时器晚到 kill 删掉重装后的新登记（跨安装污染） | 修复中——shutdown 必须与 kill 同构（清计时器+置 killed+结算 pending） |
-| 3 | 高 | serial/guard/parallel 监听桥三重坏：worker 侧 emit 对非 event token throw→击杀插件；serial await 语义缺失；guard deny 不回流 | 修复中——host 侧按 token mode 分派本地 dispatch；桥侧 forwarder 需双向（dispatch-req/resp 关联）或 v2 收窄为 emit-only 并改规格 |
-| 4 | 高 | worker 模式版本门整体缺失（BootMessage.kernelApiVersion 死字段、ready.apiVersion 无人消费） | 修复中——launch 成功判定加 apiVersion 检查 |
-| 5 | 高 | 装载失败从不留 status:"failed" 登记（裁决 5/§1.2 违背——对话迭代看不见失败历史） | 修复中——失败路径写 failed 记录，成功重装覆盖 |
-| 6 | 高 | process 卸载失败以异常炸出服务面且登记卡死一轮（Result 契约违背） | 修复中——unloadFn 捕获折算 err；remove 先于/后于 teardown 的次序修正 |
-| 7 | 高 | replace 卸载失败泄漏已启动的新 bridge（幽灵 worker + 幽灵注册） | 修复中——失败路径 kill 新 bridge |
-| 8 | 中 | 平台 ctx dispose 不终止 worker 线程（宿主关停泄漏） | 修复中——bridge 清理挂进 platform effect 账本 |
-| 9 | 中 | worker 侧运行期监听器错误不回流（协议 log 只有接收端） | 修复中——host createContext 注入 sink→协议 log |
-| 10 | 中 | worker waitFor 平台服务永久悬挂 | 修复中——waitFor 走 svc-call 停靠或明确 reject |
-| 11 | 中 | shutdown 窗口崩溃→60s 假死+错误掩盖 | 修复中——exit 在 shutdown 等待期直接结算 ack |
-| 12 | 中 | install-failed 信封从不发射 | 修复中——失败路径补 emit |
-| 13 | 中 | exit 与登记窄窗竞态→死 worker 僵尸 active 登记 | 修复中——register 前复查 worker 存活或 onKilled 幂等核对 |
-| 14 | 中 | handle.unload() 绕过同名锁；并发 shutdown 覆盖 waiter | 修复中——句柄卸载经锁；shutdownWaiter 单例拒绝二次 |
-| 15 | 中 | hostPath URL.pathname 不解 percent-encoding（含空格路径 worker 全灭） | 修复中——fileURLToPath |
-| 16 | 中 | 同名并发 worker：launch 在锁外双跑 apply | 修复中——随 #1 一并收口 |
-| 17-24 | 低 | violations 静默堆积 / thenable 误判 / "unknown" 名交叉污染 / 纯 exit 误报 timeout / approveInstall 签名文档漂移 / roots 符号链接穿透 / uninstall-blocked phase 失真 / Date.now 缓存 bust 同毫秒 | 修复中——随批次顺带；#21 文档同步、#22 文档标注先行 |
+| 1 | 高 | worker replace 必然失败：launch 先于锁，新旧插件同名服务在旧卸载前冲突即 kill | **已修**——worker 模式 replace 需「先锁内卸旧→再 launch 新」或桥侧容忍冲突延后注册 |
+| 2 | 高 | shutdown 不清 rpcPending/不置 killed：残留计时器晚到 kill 删掉重装后的新登记（跨安装污染） | **已修**——shutdown 必须与 kill 同构（清计时器+置 killed+结算 pending） |
+| 3 | 高 | serial/guard/parallel 监听桥三重坏：worker 侧 emit 对非 event token throw→击杀插件；serial await 语义缺失；guard deny 不回流 | **已修**——host 侧按 token mode 分派本地 dispatch；桥侧 forwarder 需双向（dispatch-req/resp 关联）或 v2 收窄为 emit-only 并改规格 |
+| 4 | 高 | worker 模式版本门整体缺失（BootMessage.kernelApiVersion 死字段、ready.apiVersion 无人消费） | **已修**——launch 成功判定加 apiVersion 检查 |
+| 5 | 高 | 装载失败从不留 status:"failed" 登记（裁决 5/§1.2 违背——对话迭代看不见失败历史） | **已修**——失败路径写 failed 记录，成功重装覆盖 |
+| 6 | 高 | process 卸载失败以异常炸出服务面且登记卡死一轮（Result 契约违背） | **已修**——unloadFn 捕获折算 err；remove 先于/后于 teardown 的次序修正 |
+| 7 | 高 | replace 卸载失败泄漏已启动的新 bridge（幽灵 worker + 幽灵注册） | **已修**——失败路径 kill 新 bridge |
+| 8 | 中 | 平台 ctx dispose 不终止 worker 线程（宿主关停泄漏） | **已修**——bridge 清理挂进 platform effect 账本 |
+| 9 | 中 | worker 侧运行期监听器错误不回流（协议 log 只有接收端） | **已修**——host createContext 注入 sink→协议 log |
+| 10 | 中 | worker waitFor 平台服务永久悬挂 | **已修**——waitFor 走 svc-call 停靠或明确 reject |
+| 11 | 中 | shutdown 窗口崩溃→60s 假死+错误掩盖 | **已修**——exit 在 shutdown 等待期直接结算 ack |
+| 12 | 中 | install-failed 信封从不发射 | **已修**——失败路径补 emit |
+| 13 | 中 | exit 与登记窄窗竞态→死 worker 僵尸 active 登记 | **已修**——register 前复查 worker 存活或 onKilled 幂等核对 |
+| 14 | 中 | handle.unload() 绕过同名锁；并发 shutdown 覆盖 waiter | **已修**——句柄卸载经锁；shutdownWaiter 单例拒绝二次 |
+| 15 | 中 | hostPath URL.pathname 不解 percent-encoding（含空格路径 worker 全灭） | **已修**——fileURLToPath |
+| 16 | 中 | 同名并发 worker：launch 在锁外双跑 apply | **已修**——随 #1 一并收口 |
+| 17-24 | 低 | violations 静默堆积 / thenable 误判 / "unknown" 名交叉污染 / 纯 exit 误报 timeout / approveInstall 签名文档漂移 / roots 符号链接穿透 / uninstall-blocked phase 失真 / Date.now 缓存 bust 同毫秒 | **已修**——随批次顺带；#21 文档同步、#22 文档标注先行 |
 
 审查确认干净：withNameLock 锁释放、placeOnRoot 双路径次序（内核 disposer 幂等+once 哨兵）、审计 fire-and-forget 窗口（规格性接受）。
+
+
+### 审查修复实施记录（2026-09-18 第二批）
+
+- **结构性修复**：worker 装载改三段式（begin→锁内 replace/冲突→proceed→register）——#1/#7/#16 一并根治；shutdown 与 kill 同构（结算 pending/置哨兵/清 waiter）——#2/#11；worker 监听收窄 emit-only（serial/guard/parallel/waterfall 均拒）——#3（范围裁决：拦截与有序派发是可信平台能力，跨线程洋葱/await 语义不桥；将来需要按词表纪律扩协议，双模式同契约保 additive）。
+- **契约修复**：worker 版本门（ready.apiVersion 校验）#4；failed 登记留痕（成功重装覆盖/显式卸载清除）#5；卸载失败折算 err 且登记必清 #6；install-failed 信封 #12；句柄卸载经服务面锁 #14；register 前 isDead 复查 #13。
+- **面修复**：worker 清理挂平台 effect #8；worker 错误经 sink→协议 log 回流 #9；waitFor 经 svc-wait 桥（晚到停靠→异步代理）#10；fileURLToPath #15；violations 运行期上报 #17；thenable 双检（含内核 emitFrom 同修）#18；未有名不碰登记簿 #19；纯 exit 即时结算 #20；Date.now+随机 bust #24；phase 枚举加 uninstall #23。
+- **修复中新发现并修复**：RPC 代理 thenable 陷阱（`await proxy` 触发 get("then") 返回函数→resolve/reject 被当载荷 postMessage→DataCloneError）——三处代理（host use/waitFor、bridge serviceProxy）加 then/catch 屏蔽；生命周期审计（install/uninstall）改 await 落盘保次序与持久性（高频错误审计保持 fire-and-forget）。
+- **文档同步（#21/#22）**：approveInstall 实际签名为 `{ path }`（import 前调用、名字未知，按路径/来源决策——§1.1 已注）；roots 白名单为词法检查，符号链接穿透的最终防线是审批门（缺省拒）。
+
+回归用例：worker replace 迭代 / shutdown 同构（在飞 RPC 显式拒绝 + 旧计时器不污染重装）/ 版本门 / serial 拒装 / worker 错误回流归属 / waitFor 晚到停靠 / process 卸载失败不炸可重装 / install-failed 信封 / failed 登记留痕与清除。

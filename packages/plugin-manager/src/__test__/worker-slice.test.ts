@@ -38,6 +38,9 @@ function bootWorker(pluginPath: string, platform: { services: Map<string, unknow
 
   worker.on("message", (message: WorkerToMain) => {
     received.push(message);
+    if (message.t === "ready") {
+      worker.postMessage({ t: "proceed" }); // 三段式：ready 后放行 apply
+    }
     if (message.t === "svc-call") {
       const impl = platform.services.get(message.service) as Record<string, unknown> | undefined;
       Promise.resolve()

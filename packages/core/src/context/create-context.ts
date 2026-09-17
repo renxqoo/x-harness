@@ -229,7 +229,12 @@ export function createContext(options: ContextOptions = {}): Context {
     for (const entry of visible) {
       try {
         const returned = (entry.fn as (payload: unknown) => unknown)(frozen);
-        if (returned !== null && typeof returned === "object" && typeof (returned as Promise<unknown>).then === "function") {
+        if (
+          returned !== null &&
+          typeof returned === "object" &&
+          typeof (returned as Promise<unknown>).then === "function" &&
+          typeof (returned as Promise<unknown>).catch === "function"
+        ) {
           (returned as Promise<unknown>).catch((error: unknown) => {
             reportListenerError(error, token);
           });

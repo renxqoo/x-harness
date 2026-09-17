@@ -33,7 +33,7 @@ export interface PluginRecord {
 
 export interface PluginErrorEntry {
   readonly plugin: string;
-  readonly phase: "install" | "runtime";
+  readonly phase: "install" | "runtime" | "uninstall";
   readonly where: string;
   readonly message: string;
   readonly ts: number;

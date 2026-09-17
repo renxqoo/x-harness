@@ -100,7 +100,8 @@ describe("文件审计（缺省 JSONL）", () => {
     await writeFile(file, `export default { name: "a", apply: () => {} };`, "utf8");
     await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
     await expect(svc.uninstall("a")).resolves.toMatchObject({ ok: true });
-    await new Promise((r) => setTimeout(r, 100)); // 审计为 fire-and-forget，等 flush
+    // uninstall 审计已 await 落盘（生命周期持久性）；install 侧仍 fire-and-forget，读前等一次 flush
+    await new Promise((r) => setTimeout(r, 150));
     const lines = (await readFile(join(root, ".plugin-manager-audit.jsonl"), "utf8")).trim().split("\n");
     expect(lines.map((l) => JSON.parse(l).kind)).toEqual(["install", "uninstall"]);
   });
