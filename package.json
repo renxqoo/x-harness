@@ -8,11 +8,12 @@
   ],
   "scripts": {
     "test": "vitest run --coverage",
+    "e2e": "bun packages/e2e/src/main.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
     "build": "bun build packages/core/src/index.ts --outdir packages/core/dist --target bun",
-    "check": "bun run typecheck && bun run lint && bun run build && bun run test"
+    "check": "bun run typecheck && bun run lint && bun run build && bun run test && bun run e2e"
   },
   "devDependencies": {
     "@types/bun": "^1.4.2",

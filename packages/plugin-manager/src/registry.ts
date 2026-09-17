@@ -5,6 +5,8 @@ import type { PluginHandle, PluginRecord, Result } from "./types.ts";
 interface RegistryEntry {
   record: PluginRecord;
   unload: (input?: { force?: boolean }) => Promise<Result<undefined, string>>;
+  /** 装载方身份（稳定引用）——晚到击杀按身份删登记，不误删继任者 */
+  owner: unknown;
 }
 
 export interface RegistryEntryView {
@@ -16,8 +18,10 @@ export interface Registry {
   get(name: string): PluginRecord | undefined;
   entry(name: string): RegistryEntryView | undefined;
   entries(): readonly PluginRecord[];
-  put(record: PluginRecord, unload: RegistryEntry["unload"]): void;
+  put(record: PluginRecord, unload: RegistryEntry["unload"], owner: unknown): void;
   remove(name: string): void;
+  /** 仅当登记的 owner 就是传入者时才移除（装载方身份校验）——晚到击杀不得误删继任者 */
+  removeIfOwned(name: string, owner: unknown): boolean;
   dependentsOf(name: string): readonly string[];
   withNameLock<T>(name: string, operation: () => Promise<T>): Promise<T>;
 }
@@ -38,11 +42,17 @@ export function createRegistry(): Registry {
     entries() {
       return [...byName.values()].map((entry) => entry.record);
     },
-    put(record, unload) {
-      byName.set(record.name, { record, unload });
+    put(record, unload, owner) {
+      byName.set(record.name, { record, unload, owner });
     },
     remove(name) {
       byName.delete(name);
+    },
+    removeIfOwned(name, owner) {
+      const found = byName.get(name);
+      if (found === undefined || found.owner !== owner) return false;
+      byName.delete(name);
+      return true;
     },
     dependentsOf(name) {
       const dependents: string[] = [];

@@ -222,3 +222,10 @@ packages/plugin-manager/          # @x-harness/plugin-manager（独立包，将�
 - **文档同步（#21/#22）**：approveInstall 实际签名为 `{ path }`（import 前调用、名字未知，按路径/来源决策——§1.1 已注）；roots 白名单为词法检查，符号链接穿透的最终防线是审批门（缺省拒）。
 
 回归用例：worker replace 迭代 / shutdown 同构（在飞 RPC 显式拒绝 + 旧计时器不污染重装）/ 版本门 / serial 拒装 / worker 错误回流归属 / waitFor 晚到停靠 / process 卸载失败不炸可重装 / install-failed 信封 / failed 登记留痕与清除。
+
+### e2e 实测修复与平台缺陷记录（2026-09-18 第三批；对抗审查二轮补录）
+
+- **击杀收殓改按装载方身份删登记（registry owner + removeIfOwned）**：原实现按 name 删——apply 期击杀抹掉 `registerFailure` 的 failed 留痕（违反 #5 律），且同名重复安装被拒时新桥击杀会误删**在运行老插件**的 active 登记（老插件变僵尸、不可卸载）。修复：registry 登记携带 owner 身份，onKilled 仅 `removeIfOwned(name, teardown)`——同名被拒不碰在位者、apply 期击杀不抹 failed 痕、晚到击杀不误删继任者。回归：apply 超时击杀后 failed 留痕存活（轮询 killed 台账信号，不押注固定 sleep）/ 同名被拒后在位者存活且可卸载。
+- **process 模式 tokenTable 卸载注销**：原实现只有 worker 桥 teardown 清 tokenTable，process 侧只 set 不 delete——卸载后 `serviceToken()` 仍返回已死服务的 token，长宿主反复装卸无界增长。修复：installProcess 收集本插件提供的 token，teardown 与 apply 失败路径均按 token 身份清理（与 worker 同语义）。回归：卸载后 serviceToken 为 undefined；apply 失败不留 token 残留。
+- **worker boot 去掉 query bust**：每次安装是全新 worker（独立模块注册表——已实证含 terminate 后同路径新 worker），同路径重装天然拿新模块，bust 无语义且徒增解析路径分叉；process 模式的同进程缓存 bust 保留。回归：同路径改写内容后 replace 重装见到新模块。
+- **Bun 1.4.2 平台缺陷（进程内不可修复）：terminate 热线程毒化进程级模块解析**。terminate 正在执行 JS 的 worker 线程（apply/运行期死循环的超时击杀即此形态）后，被杀插件所在 FS 树的动态 import 进程级粘性失败（报「Cannot find module」而文件在盘），约数百 ms 孵化窗口后永久生效：等 16s 不自愈、同路径重装不自愈、data: 模块 / 跨卷真实文件 / 同树标记文件的「净化 import」均无效、realpath 与 file:// 指示符均中招、主进程与 worker 双双中招。闲置线程 terminate（apply 抛错后的击杀）不致毒。**裁决方向（挂账，需架构决策）**：worker 模式对「击杀 runaway 插件后继续装载新插件」的生产连续性承诺，最终形态是子进程隔离（子进程击杀不触碰宿主进程状态）；线程 worker 定位 dev/单机形态。

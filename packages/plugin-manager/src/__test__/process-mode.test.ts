@@ -372,3 +372,32 @@ describe("process 模式：审查修复回归", () => {
     expect(envelopes).toContain("install-failed");
   });
 });
+
+describe("process 模式：e2e 批次修复回归", () => {
+  it("卸载后 tokenTable 注销：serviceToken 不再返回已死服务的 token（症状：token 只增不减的泄漏与双轨语义）", async () => {
+    const { svc, root } = await setup({ approve: () => true });
+    const file = await writePlugin(
+      root,
+      "tok",
+      `import { defineService } from "${CORE_PATH}";
+export default { name: "tok", apply: (c) => { c.provide(defineService<{ n(): number }>("pm-p-tok"), { n: () => 1 }); } };`,
+    );
+    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
+    expect(svc.serviceToken("pm-p-tok")).toBeDefined();
+    await expect(svc.uninstall("tok")).resolves.toMatchObject({ ok: true });
+    expect(svc.serviceToken("pm-p-tok")).toBeUndefined(); // 与 worker 桥 teardown 同语义
+  });
+
+  it("apply 失败同样不留 token 残留", async () => {
+    const { svc, root } = await setup({ approve: () => true });
+    const file = await writePlugin(
+      root,
+      "tokfail",
+      `import { defineService } from "${CORE_PATH}";
+export const tok = defineService<{ n(): number }>("pm-p-tokfail");
+export default { name: "tokfail", apply: (c) => { c.provide(tok, { n: () => 1 }); throw new Error("late boom"); } };`,
+    );
+    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: false });
+    expect(svc.serviceToken("pm-p-tokfail")).toBeUndefined();
+  });
+});

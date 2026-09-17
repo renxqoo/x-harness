@@ -7,7 +7,7 @@ import { createContext, defineEvent, defineService, loadPlugins } from "@x-harne
 import type { AnyToken } from "@x-harness/core";
 import { createPluginManager } from "../plugin-manager.ts";
 import { pluginManagerService } from "../types.ts";
-import type { PluginManagerService } from "../types.ts";
+import type { PluginAuditEntry, PluginManagerService } from "../types.ts";
 
 const CORE_PATH = new URL("../../../core/src/index.ts", import.meta.url).pathname;
 const tempDirs: string[] = [];
@@ -23,10 +23,16 @@ async function setup(options?: {
   tokens?: readonly AnyToken[];
   applyTimeoutMs?: number;
   runtimeTimeoutMs?: number;
-}): Promise<{ ctx: ReturnType<typeof createContext>; svc: PluginManagerService; root: string }> {
+}): Promise<{
+  ctx: ReturnType<typeof createContext>;
+  svc: PluginManagerService;
+  root: string;
+  auditLog: PluginAuditEntry[];
+}> {
   const ctx = createContext();
   const root = await mkdtemp(join(tmpdir(), "pmw-"));
   tempDirs.push(root);
+  const auditLog: PluginAuditEntry[] = [];
   ctx.provide(db, { query: (sql) => `rows(${sql})` });
   await loadPlugins(ctx, [
     createPluginManager({
@@ -37,10 +43,10 @@ async function setup(options?: {
       tokens: options?.tokens ?? [tick, db],
       applyTimeoutMs: options?.applyTimeoutMs ?? 10_000,
       runtimeTimeoutMs: options?.runtimeTimeoutMs ?? 5_000,
-      audit: { append: async () => {} },
+      audit: { append: async (entry) => { auditLog.push(entry); } },
     }),
   ]);
-  return { ctx, svc: ctx.use(pluginManagerService), root };
+  return { ctx, svc: ctx.use(pluginManagerService), root, auditLog };
 }
 
 const alive = (ctx: ReturnType<typeof createContext>): void => {
@@ -51,6 +57,15 @@ const alive = (ctx: ReturnType<typeof createContext>): void => {
   expect(heard).toEqual([1]);
   expect(() => ctx.effect(() => {})).not.toThrow();
 };
+
+/** 轮询等可观测信号落定（有界）——击杀收殓类断言不押注固定 sleep */
+async function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("waitFor: condition never met within timeout");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
 
 describe("worker 模式：完整闭环", () => {
   it("install → 服务代理（平台 use → RPC）→ 事件投递 → worker 用平台服务", async () => {
@@ -284,5 +299,59 @@ export default {
     expect(
       await (ctx.use(token as ReturnType<typeof defineService<{ run(sql: string): Promise<string> }>>)).run("sel"),
     ).toBe("late(sel)");
+  });
+});
+
+describe("worker 模式：e2e 批次修复回归", () => {
+  it("apply 超时击杀收殓落定后 failed 登记仍存活（症状：击杀收殓抹掉失败历史，list 查无此插件）", async () => {
+    const { svc, root, auditLog } = await setup({ applyTimeoutMs: 300 });
+    const file = join(root, "spin2.ts");
+    await writeFile(file, `export default { name: "spin2", apply: () => { while (true) {} } };`, "utf8");
+    const result = await svc.install({ path: file });
+    expect(result).toMatchObject({ ok: false });
+    // 轮询可观测信号（killed 台账到达）等收殓真正落定——不押注固定 sleep 的时序侥幸
+    await waitFor(() => auditLog.some((e) => e.kind === "killed" && e.plugin === "spin2"), 5_000);
+    await new Promise((r) => setTimeout(r, 20)); // killed 台账之后紧邻的 removeIfOwned 落定
+    const records = svc.list().filter((r) => r.name === "spin2");
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ status: "failed" });
+  });
+
+  it("同名重复安装被拒 → 在运行老插件的登记不被新桥击杀误删（症状：被拒后老插件变僵尸不可卸载）", async () => {
+    const { svc, root, auditLog } = await setup();
+    const incumbent = join(root, "dup-a.ts");
+    const challenger = join(root, "dup-b.ts");
+    await writeFile(incumbent, `import { defineService } from "${CORE_PATH}";
+export default { name: "dup", apply: (c) => { c.provide(defineService<{ v(): number }>("pm-w-dup"), { v: () => 1 }); } };`);
+    await writeFile(challenger, `import { defineService } from "${CORE_PATH}";
+export default { name: "dup", apply: (c) => { c.provide(defineService<{ v(): number }>("pm-w-dup"), { v: () => 2 }); } };`);
+    await expect(svc.install({ path: incumbent })).resolves.toMatchObject({ ok: true });
+    await expect(svc.install({ path: challenger })).resolves.toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("use replace"),
+    });
+    // 等新桥击杀收殓真正落定（killed 台账），再断言老插件安然无恙
+    await waitFor(
+      () => auditLog.some((e) => e.kind === "killed" && (e.detail ?? "").includes("duplicate")),
+      5_000,
+    );
+    await new Promise((r) => setTimeout(r, 20));
+    expect(svc.list().filter((r) => r.name === "dup")).toMatchObject([{ status: "active", mode: "worker" }]);
+    await expect(svc.uninstall("dup")).resolves.toMatchObject({ ok: true }); // 仍可正常卸载
+    expect(svc.serviceToken("pm-w-dup")).toBeUndefined();
+  });
+
+  it("同路径改写内容后 replace 重装见到新模块（worker 每装全新注册表——去 bust 后的新鲜度回归）", async () => {
+    const { svc, root, ctx } = await setup();
+    const file = join(root, "iterpath.ts");
+    await writeFile(file, `import { defineService } from "${CORE_PATH}";
+export default { name: "iterp", apply: (c) => { c.provide(defineService<{ v(): number }>("pm-w-iterp"), { v: () => 1 }); } };`);
+    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
+    await writeFile(file, `import { defineService } from "${CORE_PATH}";
+export default { name: "iterp", apply: (c) => { c.provide(defineService<{ v(): number }>("pm-w-iterp"), { v: () => 99 }); } };`);
+    await expect(svc.install({ path: file, replace: true })).resolves.toMatchObject({ ok: true });
+    const token = svc.serviceToken("pm-w-iterp");
+    if (token === undefined) throw new Error("token missing");
+    expect(await (ctx.use(token as ReturnType<typeof defineService<{ v(): number }>>)).v()).toBe(99);
   });
 });

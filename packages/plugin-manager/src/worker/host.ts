@@ -42,9 +42,9 @@ port.on("message", (message: MainToWorker) => {
 
 async function handle(message: MainToWorker): Promise<void> {
   if (message.t === "boot") {
-    // #24：同毫秒重装也拿到新模块——时间戳加随机段
-    const bust = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const mod = (await import(`${message.pluginPath}?pmv=${bust}`)) as {
+    // 不加 query bust：每次安装都是全新 worker（独立模块注册表——已实证含 terminate 后同路径新
+    // worker），同路径重装天然拿新模块；bust 无语义且徒增解析路径分叉
+    const mod = (await import(message.pluginPath)) as {
       default?: unknown;
       plugin?: unknown;
     };

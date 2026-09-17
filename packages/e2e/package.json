@@ -1,0 +1,10 @@
+{
+  "name": "@x-harness/e2e",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@x-harness/core": "workspace:*",
+    "@x-harness/plugin-manager": "workspace:*"
+  }
+}

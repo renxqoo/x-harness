@@ -212,6 +212,9 @@ packages/
                     #   基础 prompt 段 / 权限默认档 / 压缩 / fs 持久化端口实现（D17）；
                     #   无特权，纯插件组合包
   llm-faux/         # 确定性测试适配器（依赖 core，属内核测试地基非通用版）
+  plugin-manager/   # 运行期插件装载/卸载/审批/隔离（process + worker 双模式；已实施）
+  e2e/              # 真实使用场景包（docs/E2E.md）：sqlite 增删改查 4 插件——动态注册/使用/
+                    #   销毁无法使用；`bun run e2e` 退出码判定，挂 check 门；随里程碑长场景
 ```
 
 core 单包起步，模块边界即未来的包边界（session、llm、agent-loop 长硬后拆包）。
@@ -277,4 +280,4 @@ core 单包起步，模块边界即未来的包边界（session、llm、agent-lo
 - 上下文管理：压缩触发策略、token-meter（成本账本、估算规则）
 - 持久化与生命周期：fs 布局与锁、崩溃恢复、resume/fork(seed 前缀)、多进程宿主模型与凭据注入
 - 观察面与配置：事件 → UI/transcript 投影、secret redaction、进程级配置面（插件工厂参数 vs settings 服务——当前倾向前者，dsh 后者）、CLI 形态与唯一入口纪律
-- 测试与质量：faux 剧本语言、行走骨架 e2e、覆盖率门禁数字、四门流水线
+- 测试与质量：faux 剧本语言、行走骨架场景（真实使用场景包已立于 packages/e2e，[E2E.md](./E2E.md)）、覆盖率门禁数字、四门流水线 + e2e 退出码门

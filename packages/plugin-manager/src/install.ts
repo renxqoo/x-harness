@@ -92,6 +92,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
     mode: "process" | "worker",
     inject: readonly string[],
     teardown: () => Promise<Result<undefined, string>>,
+    owner: unknown,
   ): Promise<PluginHandle> {
     const unloadFn = async (): Promise<Result<undefined, string>> => {
       let result: Result<undefined, string>;
@@ -108,6 +109,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
     deps.registry.put(
       { name, path, mode, status: "active", installedAt: Date.now(), inject: [...inject] },
       unloadFn,
+      owner,
     );
     await auditNow({ kind: "install", plugin: name }); // 生命周期审计 await 落盘（与 uninstall 同律，保次序）
     emitEnvelope("installed", { name, path, mode });
@@ -120,7 +122,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
     };
   }
 
-  /** #5：apply 期失败留 failed 登记（成功重装覆盖；显式 uninstall 清除） */
+  /** #5：apply 期失败留 failed 登记（成功重装覆盖；显式 uninstall 清除）——owner 用新鲜对象，任何桥击杀都碰不到它 */
   function registerFailure(
     name: string,
     path: string,
@@ -134,6 +136,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
         audit({ kind: "uninstall", plugin: name, detail: "failed record cleared" });
         return { ok: true, value: undefined };
       },
+      {},
     );
     installFailed(name, reason);
   }
@@ -144,26 +147,39 @@ export function createInstaller(deps: InstallerDeps): Installer {
     name: string,
   ): Promise<Result<PluginHandle, string>> {
     const scope = platform.scope({ agentId: `plugin:${name}` });
+    // 裁决 10：token 注册表——本插件提供的 token 收集在案，卸载时按身份清理（与 worker 桥同语义）
+    const provided: { name: string; token: AnyToken }[] = [];
     const wrapped = wrapPluginForErrorRouting(
       plugin,
       (where, message) => logError(name, "runtime", where, message),
       platform, // 裁决 9：注册落位 root，回卷链 scope
-      (token) => deps.tokenTable.set(token.name, token), // 裁决 10：token 注册表
+      (token) => {
+        deps.tokenTable.set(token.name, token);
+        provided.push({ name: token.name, token });
+      },
     );
+    const cleanupTokens = (): void => {
+      for (const { name: tokenName, token } of provided) {
+        if (deps.tokenTable.get(tokenName) === token) deps.tokenTable.delete(tokenName);
+      }
+    };
     try {
       const unloaders = await loadPlugins(scope, [wrapped]);
       const unload = unloaders[0];
       if (unload === undefined) throw new Error("unloader missing");
+      const teardown = async (): Promise<Result<undefined, string>> => {
+        await scope.dispose(); // 只回卷本插件层——平台无恙（内核容错聚合上抛，此处折算 err）
+        await unload(); // composite（dispose 已跑过注册项，此处幂等兜底 apply-disposer）
+        cleanupTokens();
+        return { ok: true, value: undefined };
+      };
       return {
         ok: true,
-        value: await register(name, path, "process", plugin.inject ?? [], async () => {
-          await scope.dispose(); // 只回卷本插件层——平台无恙（内核容错聚合上抛，此处折算 err）
-          await unload(); // composite（dispose 已跑过注册项，此处幂等兜底 apply-disposer）
-          return { ok: true, value: undefined };
-        }),
+        value: await register(name, path, "process", plugin.inject ?? [], teardown, teardown),
       };
     } catch (error) {
       await scope.dispose();
+      cleanupTokens(); // apply 失败同样不留 token 残留
       const reason = `apply failed: ${String(error)}`;
       logError(name, "install", "apply", reason);
       registerFailure(name, path, "process", reason); // #5：失败留痕
@@ -188,9 +204,13 @@ export function createInstaller(deps: InstallerDeps): Installer {
       onKilled: (reason) => {
         logError(bridgeName ?? "unknown", "runtime", "worker", `killed: ${reason}`);
         audit({ kind: "killed", plugin: bridgeName ?? "unknown", detail: reason });
-        if (bridgeName !== undefined) deps.registry.remove(bridgeName);
+        // 收殓按桥身份删登记（removeIfOwned）：只删「本桥注册的 active 登记」——
+        // apply 期击杀时 registerFailure 已留 failed 痕（#5 律：重装覆盖/显式卸载清除），
+        // 同名被拒不碰在运行老插件，晚到击杀不误删继任者
+        if (bridgeName !== undefined) deps.registry.removeIfOwned(bridgeName, teardown);
       },
     });
+    const teardown = (): Promise<Result<undefined, string>> => bridge.shutdown();
     // 三段式之一：boot + ready（apply 未跑——锁与 replace 在此窗口）
     const begun = await bridge.begin();
     if (!begun.ok) {
@@ -231,7 +251,7 @@ export function createInstaller(deps: InstallerDeps): Installer {
         registerFailure(name, path, "worker", reason);
         return { ok: false, reason };
       }
-      return { ok: true, value: await register(name, path, "worker", inject, () => bridge.shutdown()) };
+      return { ok: true, value: await register(name, path, "worker", inject, teardown, teardown) };
     });
   }
 
