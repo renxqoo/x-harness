@@ -1,0 +1,25 @@
+{
+  "name": "x-harness",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "lint:fix": "oxlint --fix .",
+    "build": "bun build packages/core/src/index.ts --outdir packages/core/dist --target bun",
+    "check": "bun run typecheck && bun run lint && bun run build && bun run test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@vitest/coverage-v8": "^5.0.1",
+    "bun-types": "^1.4.2",
+    "oxlint": "^1.83.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}
