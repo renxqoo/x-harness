@@ -61,3 +61,14 @@ describe("匿名链（§6.2 / C10）", () => {
     expect(frozen).toBe(true);
   });
 });
+
+describe("链中间件层序插入（§10.1 修复）", () => {
+  it("交错注册：root 层中间件后注册仍在外层", async () => {
+    const ctx = createContext();
+    const child = ctx.scope({ agentId: "c" });
+    const chain = ctx.createChain<number, number>(async (i) => i);
+    child.onChain(chain, async (i, next) => next(i + 10)); // child 先注册
+    ctx.onChain(chain, async (i, next) => next(i + 1)); // root 后注册
+    expect(await chain.dispatch(1)).toBe(12); // root(+1) 外层 → child(+10) → final
+  });
+});

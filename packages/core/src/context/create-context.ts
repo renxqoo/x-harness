@@ -73,9 +73,17 @@ function chainSet(layer: Layer): Set<Layer> {
   return set;
 }
 
-/** root→leaf 稳定排序（注册序为次序键；toSorted 稳定且不改原数组） */
-function orderedByDepth<T extends { readonly layer: Layer }>(entries: readonly T[]): T[] {
-  return [...entries].toSorted((a, b) => a.layer.depth - b.layer.depth);
+/** 层序插入：新条目插到「深度 ≤ 自身的最后一个条目」之后——同层段尾追加保注册序。
+ *  数组恒按 root→leaf 层序，派发路径免排序（§10.1 性能债修复：llm/chunk 高频热路径
+ *  原先每次派发 toSorted O(n log n)，现在注册 O(摊还 ~1)、派发 O(n+depth) 纯过滤）。 */
+function insertByLayerDepth<T extends { readonly layer: Layer }>(entries: T[], entry: T): void {
+  let at = entries.length;
+  while (at > 0) {
+    const previous = entries[at - 1];
+    if (previous === undefined || previous.layer.depth <= entry.layer.depth) break;
+    at -= 1;
+  }
+  entries.splice(at, 0, entry);
 }
 
 /** 运行时 token 形状校验：缺 mode/freeze 的伪造对象拒收（对抗审查 #7 修复） */
@@ -169,9 +177,7 @@ export function createContext(options: ContextOptions = {}): Context {
       token.freeze === "deep" ? deepFreeze(payload)
       : token.freeze === "shell" ? shellFreeze(payload)
       : payload;
-    const visible = orderedByDepth(
-      registered.filter((entry) => chainSet(layer).has(entry.layer)),
-    );
+    const visible = registered.filter((entry) => chainSet(layer).has(entry.layer));
     for (const entry of visible) {
       try {
         const returned = (entry.fn as (payload: unknown) => unknown)(frozen);
@@ -190,9 +196,9 @@ export function createContext(options: ContextOptions = {}): Context {
     const registered = listeners.get(token);
     if (registered === undefined) return [];
     const visible = chainSet(layer);
-    return orderedByDepth(
-      registered.filter((entry) => entry.mode === mode && visible.has(entry.layer)),
-    ).map((entry) => entry.fn);
+    return registered
+      .filter((entry) => entry.mode === mode && visible.has(entry.layer))
+      .map((entry) => entry.fn);
   }
 
   function makeContext(layer: Layer): Context {
@@ -262,7 +268,7 @@ export function createContext(options: ContextOptions = {}): Context {
         }
         const entry: ListenerEntry = { layer, mode: token.mode, fn };
         const registered = listeners.get(token) ?? [];
-        registered.push(entry);
+        insertByLayerDepth(registered, entry);
         listeners.set(token, registered);
         return registerEffect(
           layer,
@@ -294,7 +300,7 @@ export function createContext(options: ContextOptions = {}): Context {
         const chain = {
           dispatch(input: I): Promise<O> {
             // 匿名链无层上下文：owner 主动共享给谁谁就能拦截——全部注册可见（IMPL 裁决 6）
-            const middlewares = orderedByDepth(registry.entries).map(
+            const middlewares = registry.entries.map(
               (entry) => entry.middleware as ChainMiddleware<I, O>,
             );
             return runWaterfall("chain", middlewares, 0, deepFreeze(input), final);
@@ -311,7 +317,7 @@ export function createContext(options: ContextOptions = {}): Context {
           throw new Error("onChain expects a chain created by createChain");
         }
         const entry = { layer, middleware };
-        registry.entries.push(entry);
+        insertByLayerDepth(registry.entries, entry);
         // 层归属消费方：注册入消费方层账本，dispose 时随层回卷（C10）
         return registerEffect(layer, () => {
           const at = registry.entries.indexOf(entry);

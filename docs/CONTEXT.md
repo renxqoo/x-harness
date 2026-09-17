@@ -415,3 +415,23 @@ export function createOtel(opts: { endpoint: string; sample: Sampler }): Plugin 
 1. inject 耦合插件名（谁）而非服务键（能力）——当前等价；插件可替换提供同能力时僵化，改进选项 = inject 兼收 token 名（M1 后裁决）。
 2. parallel 缺位是「被推迟」不是「被证明不需要」——并发等待场景真出现时保持加第五种模式的口子。
 3. preset-on-scope（最重要）：dsh 用 mount.ts + isolate realm 防止 preset 内服务行变成进程全局、两会话冲突；我们的对应物 = `loadPlugins` 在 scoped ctx 上跑 + scope 遮蔽。M1 必测：双 agent 同 preset 各自 apply、服务互不串。
+
+### 10.1 源码级对照（vendored Cordis 4.0.2，2026-09-18 深化 §10）
+
+**代码层**：
+
+| 维度 | Cordis | x-harness | 裁决 |
+|---|---|---|---|
+| 规模 | 核心 ~2700 行（fiber 754 + reflect 418 + events 352 + registry 337 + utils 287 + logger 270 + context 146） | ~740 行（含类型） | 功能面更窄的等价物 |
+| 事件存储 | 扁平 `_hooks: Record<名, Hook[]>` + prepend unshift；无层概念免排序 | `Map(token → Entry[layer,mode,fn])`；**注册期层序插入（insertByLayerDepth，摊还 ~O(1)），派发期纯过滤 O(n+depth) 免排序——性能债已修复** | 层序语义零成本化 |
+| 派发分配 | 每次 dispatch 2 数组 + 每监听器 1 bound fn + 非 internal 事件先递归一次 `internal/dispatch`（再一套分配） | 每次派发 1 快照数组 | 我们更省 |
+| emit 错误 | **核心不捕获**（穿透调用者；包容只在特定面：emitPluginDisposed/unload/parallel 聚合） | 默认隔离进 sink（I3） | 设计取舍：他们让调用者看见；我们让观察者不得破坏派发 |
+| unload 容错 | per-disposer catch → logger（静默） | per-disposer catch → 聚合上抛 | 都容错；错误去向不同 |
+| 服务读取 | ctx 原型链 + fiber 父链逐跳校验 isolate；**每次属性读新建 ~3 层临时 Proxy**（traceable→shadow-method→bind） | `Map(token, Map(Layer→impl))` 沿层链 has——O(深度) 零 Proxy 分配 | 我们读取路径显著更轻 |
+| 反应式 DI | epoch 字符串 + notify **三重循环全量扫描 O(runtime×fiber×name)**，无反向索引 | 无反应式（拉取 + service/provided），零扫描 | 功能差距 vs 扩展性成本 |
+| logger 自举 | 构造顺序硬编码 + 根 fiber `_disposables.clear()`（只摘不跑）+ 环形缓冲 exporter——精巧隐晦 | sink 注入（C5） | 我们直白可推理 |
+| 复杂度分布 | 三处贵点：`Fiber.effect()` 单方法 **147 行**（状态机套状态机 + 模块级 inertia WeakMap）、traceable/shadow 双层 Proxy（需 symbols.original 逃生口 + 自定义 hasInstance）、epoch 反应式接力链 | 无 >60 行单点；复杂度均匀分布 | 结构性可维护性优势 |
+
+**架构层**：Cordis 把作用域/身份/服务解析编码进 **JS 语言机制**（原型链 + Proxy + symbol 品牌），插件运行时 = fiber 状态机（PENDING/LOADING/ACTIVE/FAILED/DISPOSED/UNLOADING，状态为派生值）；我们把同样语义编码为**显式数据结构**（Layer 链 + chainSet + token 键 Map）+ 无状态 Context 视图。取舍：他们表达力强（isolate O(1) extend、依赖换人自动重载）、但有 identity 陷阱与 Proxy 链成本；我们可推理性强（可见性一眼读出）、无语言魔法、依赖方向无环（他们五服务构造顺序硬编码互相咬）。
+
+**修正记录**：§10 对照表中「回卷容错为我们更严」的表述不准确——Cordis fiber 卸载同样 per-disposer 容错；准确差别是错误去向（logger 静默 vs 聚合上抛）。

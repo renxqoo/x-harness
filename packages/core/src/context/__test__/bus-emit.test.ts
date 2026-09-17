@@ -130,3 +130,39 @@ describe("emit 派发（§2.2 矩阵第一行）", () => {
     expect(() => ctx.emit(fake, {})).toThrow("expects an event token");
   });
 });
+
+describe("层序插入（§10.1 排序债修复的语义锚点）", () => {
+  it("三层交错注册：派发次序恒 root→leaf、同层保注册序", () => {
+    const ctx = createContext();
+    const mid = ctx.scope({ agentId: "mid" });
+    const leaf = mid.scope({ agentId: "leaf" });
+    const token = defineEvent<{ v: number }>("evt-insert-order");
+    const order: string[] = [];
+    leaf.on(token, () => order.push("leaf-1"));
+    ctx.on(token, () => order.push("root-1"));
+    mid.on(token, () => order.push("mid-1"));
+    ctx.on(token, () => order.push("root-2"));
+    leaf.on(token, () => order.push("leaf-2"));
+    mid.on(token, () => order.push("mid-2"));
+    ctx.on(token, () => order.push("root-3"));
+    leaf.emit(token, { v: 1 });
+    expect(order).toEqual([
+      "root-1", "root-2", "root-3",
+      "mid-1", "mid-2",
+      "leaf-1", "leaf-2",
+    ]);
+  });
+
+  it("退订不破坏后续插入的层序", () => {
+    const ctx = createContext();
+    const child = ctx.scope({ agentId: "c" });
+    const token = defineEvent<{ v: number }>("evt-insert-remove");
+    const order: string[] = [];
+    const stopRoot1 = ctx.on(token, () => order.push("root-1"));
+    child.on(token, () => order.push("child-1"));
+    stopRoot1();
+    ctx.on(token, () => order.push("root-2")); // 交错退订后再插入
+    child.emit(token, { v: 1 });
+    expect(order).toEqual(["root-2", "child-1"]);
+  });
+});
