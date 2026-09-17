@@ -158,8 +158,16 @@ function bridged(plugin: Parameters<typeof loadPlugins>[1][number]): Parameters<
     createChain<I, O>(final: (input: I) => Promise<O>): Chain<I, O> {
       return ctx.createChain(final);
     },
-    onChain<I, O>(chain: Chain<I, O>, middleware: ChainMiddleware<I, O>, opts?: { readonly prepend?: boolean }): Disposer {
-      return ctx.onChain(chain, middleware, opts);
+    onChain<I, O>(
+      chain: Chain<I, O>,
+      middleware: ChainMiddleware<I, O>,
+      opts?: { readonly prepend?: boolean },
+    ): Disposer {
+      return (ctx.onChain as (
+        c: Chain<I, O>,
+        m: ChainMiddleware<I, O>,
+        o?: { readonly prepend?: boolean },
+      ) => Disposer)(chain, middleware, opts);
     },
     effect(disposer: Disposer): void {
       ctx.effect(disposer);
