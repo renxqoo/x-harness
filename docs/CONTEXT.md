@@ -443,3 +443,13 @@ export function createOtel(opts: { endpoint: string; sample: Sampler }): Plugin 
 **修正记录**：§10 对照表中「回卷容错为我们更严」的表述不准确——Cordis fiber 卸载同样 per-disposer 容错；准确差别是错误去向（logger 静默 vs 聚合上抛）。
 
 **差距批修复（2026-09-18，用户裁决「直接修复避免后续动内核」）**：parallel（第五模式）、waitFor（DI 自动停靠原语）、装配 join（dispose 等在飞装配）、prepend 旋钮（on/onChain 第三参，层序仍优先）四项已进内核并有测试；生产热替换形态（unload v1 + load v2 + 状态经宿主服务迁移）以范式用例锁定。HMR 不进内核：运行期装插件是既有能力，版本热换 = unload+load，状态迁移经宿主服务显式传递。
+
+### 10.2 HMR 不进内核的损失清算（2026-09-18）
+
+**伪损失（经源码查证）**：局部换血不陪葬全局（装卸组合本就不重启进程）；「自动状态保持」（Cordis 只保 config 后重跑 apply，任意状态同样丢）；代码级替换能力（宿主 watcher + query-string import bust 二十行）。
+
+**真损失（两条）**：① 依赖簇换血的自动拓扑编排（epoch 的核心生产价值；waitFor 已补停靠半边，缺编排器持有依赖图——loadPlugins 的 topo 信息现被丢弃，保留即得）；② dev-loop 毫秒级丝滑（restart+resume 覆盖大部分，秒级差距）。
+
+**反向收益**：无热替换使 prepareCall 免于代际绑定/单次派发/原子 replace 一族竞态补丁（dsh 坑 P4 的内核复杂度）。
+
+**回收路径**：standard 层 plugin-manager 插件（保留 topo 图 + 簇编排 + import 循环）覆盖 Cordis HMR 全部生产价值，内核零改动；「换血钩子」若将来需要按词表纪律再议。
