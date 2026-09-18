@@ -26,6 +26,11 @@ const OPAQUE_ARGV0: ReadonlySet<string> = new Set([
 /** 解释器家族（词汇在 injection.ts——ast 管道判定共用） */
 const INTERPRETERS: ReadonlySet<string> = INTERPRETER_FAMILY;
 const BASH_FAMILY: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"]);
+/** bun 子命令（身兼包管理器）：不作文件操作数——落档口径与 make/npm run/yarn 对齐（§14.11） */
+const BUN_SUBCOMMANDS: ReadonlySet<string> = new Set([
+  "run", "test", "install", "add", "remove", "update", "upgrade", "link", "unlink", "publish",
+  "audit", "outdated", "pm", "init", "create", "build", "deploy", "patch",
+]);
 
 /** 剥后结构残渣集（time { sudo id; } 实测解析成 argv=[time,{,sudo,id]——剥离后暴露残渣即 ask） */
 const JUNK: ReadonlySet<string> = new Set(["{", "}", "then", "fi", "do", "done", "else", "elif", "esac", "in", "!"]);
@@ -310,7 +315,8 @@ function interpreterPolicy(ctx: InterpreterCtx): ParsedCommand {
     queue.push(...reparsed.commands);
     return cmd;
   }
-  if (scan.stdinFlag === true || scan.operand !== undefined || scan.unknownFlag === true) return { ...cmd, opaque };
+  const operand = base === "bun" && scan.operand !== undefined && BUN_SUBCOMMANDS.has(scan.operand) ? undefined : scan.operand;
+  if (scan.stdinFlag === true || operand !== undefined || scan.unknownFlag === true) return { ...cmd, opaque };
   if (cmd.stdinFed === true) return { ...cmd, opaque }; // 裸解释器 + 管道/payload 喂入（xargs sh / | timeout 5 sh）——stdin 即代码
   return cmd; // 裸解释器（无操作数无 -c、stdin 未喂）——REPL 读空 stdin 即退，同现行
 }

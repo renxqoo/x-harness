@@ -56,7 +56,11 @@ describe("reason 快照（§14.5-6——防实现期 reason 词漂移）", () =>
     const noFence = adjudicateBash({ ...fenced, fence: undefined, command: "git push" });
     expect([noFence.verdict, noFence.reason, noFence.resolvedBy]).toEqual(["ask", "no rule matches segment", "default:ask"]);
     expect(pin("sudo id", "auto")).toEqual(["ask", "hard-deny:sudo", "hard-deny"]);
-    expect(pin("echo $(x)", "full")).toEqual(["ask", "injection:command-substitution", "injection"]);
+    expect(pin("echo $(x)", "auto")).toEqual(["ask", "injection:command-substitution", "injection"]);
+    expect(pin("echo $(x)", "full")).toEqual(["allow", "full mode", "mode:full"]); // 裁决⑤：注入在 full 不拦
+    expect(pin("rm -rf /", "full")).toEqual(["allow", "full mode", "mode:full"]); // 硬拒其余形态 full 不拦（围栏承载）
+    expect(pin("sudo id", "full")).toEqual(["deny", "hard-deny:sudo", "mode:full"]); // 唯提权直接拦截
+    expect(pin("echo 'oops", "full")).toEqual(["allow", "full mode", "mode:full"]); // 畸形 full 不保守 ask
     expect(pin("cat $F", "auto")).toEqual(["ask", "dynamic-segment (expansion/glob)", "static"]);
     expect(pin("echo x > /etc/passwd", "auto")).toEqual(["ask", "redirect:/etc/passwd", "redirect"]);
     expect(pin("cmd < ~/.ssh/id_rsa", "auto")).toEqual(["deny", "redirect-read:~/.ssh/**", "redirect-read"]);

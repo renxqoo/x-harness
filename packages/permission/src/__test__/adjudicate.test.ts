@@ -42,12 +42,15 @@ describe("adjudicateBash（管线裁决序）", () => {
     expect(adjudicateBash({ command: "ls", rules: wide, mode: "auto", root: ROOT, extraRoots: [] }).verdict).toBe("allow");
   });
 
-  it("full 档：全 allow 除 deny 规则与硬拒（dynamic 段也过——仍受围栏）", () => {
+  it("full 档（裁决⑤完全访问）：全过——唯提权/密码类直接 deny；用户 deny 规则仍最高", () => {
     const wide = rules(["Bash(*):allow"]);
     expect(adjudicateBash({ command: "ls -la $HOME", rules: wide, mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("allow");
     expect(adjudicateBash({ command: "npm test", rules: rules(), mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("allow");
-    expect(adjudicateBash({ command: "sudo id", rules: wide, mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("ask"); // 硬拒底线恒 ask（NEVER_MEMORIZE）
-    expect(adjudicateBash({ command: "git push --force", rules: rules(["Bash(git push:*):deny"]), mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("deny"); // deny 规则压过硬拒（确定性拒绝先于保守 ask）
+    expect(adjudicateBash({ command: "sudo id", rules: wide, mode: "full", root: ROOT, extraRoots: [] })).toEqual({ verdict: "deny", reason: "hard-deny:sudo", resolvedBy: "mode:full" }); // 提权直接拦截（裁决⑤）
+    expect(adjudicateBash({ command: "doas id", rules: wide, mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("deny");
+    expect(adjudicateBash({ command: "su -c id", rules: wide, mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("deny"); // 密码类
+    expect(adjudicateBash({ command: "git push --force", rules: rules(["Bash(git push:*):deny"]), mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("deny"); // 用户 deny 规则仍最高
+    expect(adjudicateBash({ command: "git push --force", rules: rules(), mode: "full", root: ROOT, extraRoots: [] }).verdict).toBe("allow"); // 硬拒其余形态 full 不拦（围栏承载）
   });
 
   it("重定向：界内 allow；越根/~/.. 归一后越根 → ask(redirect)；/dev/null 与 2>&1 不裁决", () => {

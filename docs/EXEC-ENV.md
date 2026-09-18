@@ -202,7 +202,8 @@ full 档）；词法开放但**拼错 fail-closed 拒启**。
    声明位（dsh 思想）：声明 → 路由 ask；未声明撞断网 EPERM → 错误文案含自行声明指引。
 
 **模式档**（闭集）：`plan`（write/bash 全拒，read/grep 界内 auto）/ `auto`（缺省，全流程）/
-`full`（全 allow 除 deny 规则与硬拒底线——仍受围栏，非 unsandboxed）。
+`full`（**完全访问——用户裁决⑤：不拦截任何命令，唯提权/密码类（sudo/doas/su，含包装/载荷/
+$() 内嵌形）直接 deny**；越根写/网络面由围栏内核承载；用户 deny 规则仍最高）。
 
 **ask 内嵌监听器**（dispatch 契约零改动）：permission 注册 `toolsPreExecute` 监听器，ask = 监听器
 内 `await broker.ask(req)` 后返回 allow/deny；**broker 缺席 → ask 退化 deny**。broker token：
@@ -568,7 +569,8 @@ supertype（`_statement/_expression/_primary_expression`）运行期不物化、
     合成 dynamic 单元（词位消费的替换标在命令本体，两层走 walkSubstitution 分层——互不污染）。
 12. **重定向目标位展开**：目标词面含展开/ansi_c → 命令落 dynamic（`cmd > $F` 不因目标文本按字面
     归 root 内放行）；`~user/` 形不可静态解析 → 输出面 ask。
-13. **full 档 dynamic 落穿重定向**：不再早退跳过目标裁决（无围栏 full 不得裸放越根写）。
+13. ~~full 档 dynamic 落穿重定向~~（裁决⑤取代：full 全过唯提权 deny，本条只剩历史处置记录；
+    auto 档 dynamic→ask 语义不变）。
 14. **非 bash 族 `-c/-e` 字面量不重解析**（python/node 代码非 bash 语法）→ opaque；env 丢弃的
     VAR=x 记赋值前缀（载荷为解释器按环境注入链处理）；trap 动态载荷与 eval 同类注入；语句位
     纯字面赋值（FOO=bar）不产合成单元（空转无执法面）。
@@ -747,3 +749,19 @@ argv 位/裁决序组合/fail-closed 底座/解释器 -c 递归/包装器跳参�
 终态同为 ask——边界 14 注记）；`echo \*` 转义字面星误标 dynamic（保守误报方向，与 `\$HOME` 不
 误标不对称——落注）；rules.test 旧 `find . -executable true -exec ls` 锚未逐字恢复（等效语义由
 「find 无终止符取余词」「空 payload 注入」新锚覆盖）。
+
+### 14.11 用户裁决⑤（2026-09-19）：full 档重定义 + bun 子命令修订
+
+**full = 完全访问**：裁决管线在 full 档短路为「用户 deny 规则 → 提权/密码类（hard-deny:sudo，
+即 sudo/doas/su——basename 归一，含包装器剥离、`$()`/payload/`bash -c` 再解析内嵌形）→ 其余全过
+（reason `full mode`）」。畸形命令不再保守 ask——仅原始文本命中提权词（\b(sudo|doas|su)\b）才
+deny；`needs_network` 在 full 不再路由 ask（域名白名单由代理层承载）。硬拒底线其余形态
+（rm-rf-root/force-push/chmod-777）、注入、结构失败、重定向、opaque、dynamic 在 **full 全部不再
+拦截**（auto/plan 语义不变）；围栏仍内核执法越根写/网络/拒读表。取代 §14.4/§14.10 中所有
+「full 档恒 ask」表述的 full 侧语义。
+
+**bun 子命令修订**（修复 §14.2 边界 4「bun run 落档」承诺的实现漂移）：bun 身兼解释器与包管理器
+——已知子命令形（run/test/install/add/remove/update/upgrade/link/unlink/publish/audit/outdated/
+pm/init/create/build/deploy/patch）不作文件操作数处理（走正常裁决，auto+围栏零交互——与
+make/npm run/yarn 落档口径对齐）；文件形（`bun x.ts`、带路径/脚本扩展名）与 `bun x`（任意包
+执行器）照旧 opaque。

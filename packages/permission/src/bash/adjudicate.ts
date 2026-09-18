@@ -45,6 +45,9 @@ export function withinAny(path: string, roots: readonly string[]): boolean {
 
 export const DEV_NULL = "/dev/null";
 
+/** 提权/密码词（full 档畸形命令的原始文本兜底——fail-closed 收敛于提权面） */
+const ELEVATION_WORD = /\b(sudo|doas|su)\b/;
+
 /** 重定向目标归一：~ 与 ~/ 展开 + root 相对解析；~user 形不可静态解析（node 无 passwd 面）→ null */
 function targetPath(target: string, root: string): string | null {
   if (target === "~") return homedir();
@@ -80,34 +83,49 @@ function commandDecision(cmd: ParsedCommand, input: BashPipelineInput, roots: re
   }
   if (cmd.injection !== undefined) return { verdict: "ask", reason: `injection:${cmd.injection}`, resolvedBy: "injection" };
   if (cmd.ask !== undefined) return { verdict: "ask", reason: cmd.ask, resolvedBy: "wrapper" };
-  if (cmd.dynamic && input.mode !== "full") {
+  if (cmd.dynamic) {
     return { verdict: "ask", reason: "dynamic-segment (expansion/glob)", resolvedBy: "static" }; // 静态不可裁决
   }
-  // full 档 dynamic 落穿到重定向裁决（目标越根/拒读表仍拦——围栏之外的第二道；无围栏 full 不得裸放）
   if (cmd.argv.length === 0) return redirectDecision(cmd, input, roots); // 纯重定向宿主——只裁 redirects
   const blocked = redirectDecision(cmd, input, roots);
   if (blocked !== undefined) return blocked;
   const allowed = bashRuleMatches(input.rules, cmd.argv).some((rule) => rule.verdict === "allow");
   if (allowed) return undefined;
   if (cmd.opaque !== undefined) return { verdict: "ask", reason: cmd.opaque, resolvedBy: "opaque" };
-  if (input.mode === "full") return undefined;
   // 界内合成（§5 步 5）：围栏在场 + 命令静态（非 dynamic）+ 重定向已全在界内 → auto-allow 零交互；
   // 无围栏装配时永不界内 auto（§6 对照句——bash 缺省 ask/deny）
   if (input.fence !== undefined) return undefined;
   return { verdict: "ask", reason: "no rule matches segment", resolvedBy: "default:ask" };
 }
 
+/** full 档短路（裁决⑤：完全访问）——用户 deny 规则 → 提权/密码类直接 deny → 其余全过；
+ *  越根写/网络/拒读表由围栏内核承载。 */
+function fullDecision(cmd: ParsedCommand, input: BashPipelineInput): BashAdjudication | undefined {
+  if (cmd.argv.length === 0) return undefined;
+  const denied = bashRuleMatches(input.rules, cmd.argv).find((rule) => rule.verdict === "deny");
+  if (denied !== undefined) return { verdict: "deny", reason: `rule:${denied.pattern}`, resolvedBy: `rule:${denied.origin}` };
+  if (hardDeny(cmd.argv) === "sudo") return { verdict: "deny", reason: "hard-deny:sudo", resolvedBy: "mode:full" };
+  return undefined;
+}
+
 export function adjudicateBash(input: BashPipelineInput): BashAdjudication {
   if (input.mode === "plan") return { verdict: "deny", reason: "plan mode disallows bash", resolvedBy: "mode:plan" };
   const parsed = (input.parse ?? parseBash)(input.command);
   if (!parsed.ok) {
+    if (input.mode === "full") {
+      // 完全访问下畸形命令不再保守 ask——唯提权词直接拒（fail-closed 收敛于提权面）
+      return ELEVATION_WORD.test(input.command)
+        ? { verdict: "deny", reason: "hard-deny:sudo", resolvedBy: "mode:full" }
+        : { verdict: "allow", reason: "full mode", resolvedBy: "mode:full" };
+    }
     return { verdict: "ask", reason: parsed.kind === "parser-unavailable" ? "parser-unavailable" : "unparseable command", resolvedBy: "parse" };
   }
   const roots = writableRoots(input);
   for (const cmd of parsed.commands) {
-    const blocked = commandDecision(cmd, input, roots);
+    const blocked = input.mode === "full" ? fullDecision(cmd, input) : commandDecision(cmd, input, roots);
     if (blocked !== undefined) return blocked;
   }
-  if (input.needsNetwork === true) return { verdict: "ask", reason: "network", resolvedBy: "needs_network" };
+  if (input.needsNetwork === true && input.mode !== "full") return { verdict: "ask", reason: "network", resolvedBy: "needs_network" };
+  if (input.mode === "full") return { verdict: "allow", reason: "full mode", resolvedBy: "mode:full" };
   return { verdict: "allow", reason: "in-fence", resolvedBy: input.fence !== undefined ? "auto:fence" : "auto" };
 }
