@@ -32,6 +32,8 @@ export interface DelegationOptions {
   readonly maxConcurrent?: number;
   /** 缺省 8000；agent_output 报告截断上界 */
   readonly reportCap?: number;
+  /** 启动期 worktree 对账清扫开关（缺省开；测试装置可关防跨装置互扫） */
+  readonly worktreeSweep?: boolean;
   /** 类型加载/邮箱投递等非致命告警出口（缺省静默降级） */
   readonly onWarn?: (message: string) => void;
 }

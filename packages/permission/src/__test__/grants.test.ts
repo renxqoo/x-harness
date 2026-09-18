@@ -112,3 +112,15 @@ describe("GrantsRegistry", () => {
     expect(g.domainVerdict(A, "late.io")).toBeUndefined(); // 不记账
   });
 });
+
+describe("rootOverride（件13 接缝 3——worktree 会话根替换）", () => {
+  it("set/rootOverrideOf 回路；evict 连带清除", () => {
+    const g = new GrantsRegistry();
+    expect(g.rootOverrideOf(A)).toBeUndefined();
+    g.setRootOverride(A, "/wt/agent-1", "/repo");
+    expect(g.rootOverrideOf(A)).toEqual({ dir: "/wt/agent-1", guard: "/repo" });
+    expect(g.rootOverrideOf(B)).toBeUndefined(); // 会话隔离
+    g.evict(A);
+    expect(g.rootOverrideOf(A)).toBeUndefined();
+  });
+});

@@ -86,10 +86,11 @@ idle 通知标签统一 `[Cross-session idle notice]`。**禁止**出现不存�
 3. permission：GrantsRegistry 增 `setRootOverride(session, dir)` / `rootOverrideOf(session)`；
    `addExtraRoot` 增守卫——带 override 的会话拒绝原根子树路径入 extraRoots（防权限批准
    打穿隔离）
-4. toolbox：paths.ts PathGate rootOverride 全链——admit 改为 override **替换** this.root
+4. toolbox：paths.ts PathGate rootOverride 全链——admit 增 override **替换** this.root
    （非叠加）、rebaseToRoot 词法基随 override 切换、override 根 realpath 双形归一
-   （macOS /var→/private/var，对齐 extraRoots 做法）、bash 缺省 cwd =
-   rootOverrideOf(session) ?? gate.root（workdir 参数语义不变）；四工具透传
+   （macOS /var→/private/var，对齐 extraRoots 做法）、admitSession 会话面统一入口
+   （守卫根子树的 extraRoots 批准过滤）；**bash 无路径参数——缺省 cwd =
+   rootOverrideOf(session) ?? gate.root**（cwd 即会话根）；四工具透传
 5. system-prompt：delegation 注册 `<subagent-types>` section（§7.2）
 6. sandbox-local：fence 增会话级 rootOverride——writable 集合以 override 替换 base.root、
    protectedPaths 按 override 根重算（worktree 的 bash 命令体写面执法，§8.2）

@@ -8,6 +8,7 @@ import type { ToolExecContext } from "@x-harness/tools";
 import { refOfAgentId } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { resolveAddress } from "./nameaddr.ts";
+import { evaluateCleanup } from "./worktree.ts";
 import type { CrossDeps } from "./crossmsg.ts";
 import { sendCross } from "./crossmsg.ts";
 import { childReport } from "./notify.ts";
@@ -117,7 +118,11 @@ export async function stop(deps: VerbDeps, execCtx: ToolExecContext, taskId: str
   }
   row.stopped = true;
   row.occupied = false; // 槽释放；armed 置位者由通知门丢弃（cancel 后 idle 仍会触发通知——stop 后通知如实送达）
-  return { ok: true, text: `Stopped ${displayName(row)}; it can be messaged again with agent_message.` };
+  const kept = row.worktree !== undefined
+    ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` })
+    : { removed: true };
+  const worktreeNote = kept.removed ? "" : `; worktree kept (has changes): ${String(kept.path)}`;
+  return { ok: true, text: `Stopped ${displayName(row)}; it can be messaged again with agent_message.${worktreeNote}` };
 }
 
 function ownerRow(deps: VerbDeps, execCtx: ToolExecContext, taskId: string): { ok: true; value: ChildRow } | { ok: false; reason: string } {

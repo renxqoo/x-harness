@@ -12,6 +12,7 @@ import { permissionGrants } from "@x-harness/permission";
 import { sessionDisposed } from "@x-harness/session";
 import { resolve } from "node:path";
 import { PathGate } from "./paths.ts";
+import type { RootOverrideOf } from "./paths.ts";
 import { ObservedRegistry } from "./observed.ts";
 import { createReadTool } from "./read.ts";
 import { createWriteTool } from "./write.ts";
@@ -37,7 +38,7 @@ export interface ToolboxOptions {
 export type ExtraRootsOf = (session: string | undefined) => readonly string[];
 
 interface EnvRegisteringInput {
-  readonly make: (env: ExecEnv, extraRootsOf: ExtraRootsOf) => ToolDefinition;
+  readonly make: (env: ExecEnv, extraRootsOf: ExtraRootsOf, rootOverrideOf: RootOverrideOf) => ToolDefinition;
   readonly name: string;
   readonly envOption: ExecEnv | undefined;
   readonly gate: PathGate;
@@ -60,7 +61,8 @@ function envRegistering(input: EnvRegisteringInput): Plugin {
       }
       const grants = ctx.tryUse(permissionGrants); // 会话授权根（permission 缺席=无扩展）
       const extraRootsOf: ExtraRootsOf = (session) => grants?.extraRootsOf(session as never) ?? [];
-      const offRegister = ctx.use(toolRegistry).register(make(env, extraRootsOf));
+      const rootOverrideOf: RootOverrideOf = (session) => grants?.rootOverrideOf(session as never);
+      const offRegister = ctx.use(toolRegistry).register(make(env, extraRootsOf, rootOverrideOf));
       const offEvict = ctx.on(sessionDisposed, ({ session }) => observed.evict(session));
       const offAttach = attach?.(ctx);
       return () => {
@@ -77,13 +79,13 @@ export function createToolbox(options: ToolboxOptions = {}) {
   const observed = new ObservedRegistry();
   const limits = defaultLimits(options);
   const tasks = new BackgroundTasks(defaultTaskLimits(options, limits));
-  const register = (make: (env: ExecEnv, extraRootsOf: ExtraRootsOf) => ToolDefinition, name: string, attach?: EnvRegisteringInput["attach"]): Plugin =>
+  const register = (make: (env: ExecEnv, extraRootsOf: ExtraRootsOf, rootOverrideOf: RootOverrideOf) => ToolDefinition, name: string, attach?: EnvRegisteringInput["attach"]): Plugin =>
     envRegistering({ make, name, envOption: options.env, gate, observed, attach });
   return {
-    readPlugin: register((env, extraRootsOf) => createReadTool({ gate, observed, env, extraRootsOf }), "tool-read"),
-    writePlugin: register((env, extraRootsOf) => createWriteTool({ gate, observed, env, extraRootsOf }), "tool-write"),
+    readPlugin: register((env, extraRootsOf, rootOverrideOf) => createReadTool({ gate, observed, env, extraRootsOf, rootOverrideOf }), "tool-read"),
+    writePlugin: register((env, extraRootsOf, rootOverrideOf) => createWriteTool({ gate, observed, env, extraRootsOf, rootOverrideOf }), "tool-write"),
     bashPlugin: register(
-      (env) => createBashTool({ gate, limits, env, tasks }),
+      (env, _extraRootsOf, rootOverrideOf) => createBashTool({ gate, limits, env, tasks, rootOverrideOf }),
       "tool-bash",
       // 会话终结：该会话后台任务两段杀并清桶（登记生命周期=会话生命周期）；装配拆卸：全部直接 KILL
       (ctx) => {
@@ -94,7 +96,7 @@ export function createToolbox(options: ToolboxOptions = {}) {
         };
       },
     ),
-    grepPlugin: register((env, extraRootsOf) => createGrepTool({ gate, options: { rgPath: options.rgPath }, env, extraRootsOf }), "tool-grep"),
+    grepPlugin: register((env, extraRootsOf, rootOverrideOf) => createGrepTool({ gate, options: { rgPath: options.rgPath }, env, extraRootsOf, rootOverrideOf }), "tool-grep"),
     /** 测试/宿主直取句柄（tasks=后台任务登记簿——未来通用任务动词的 bash 源） */
     gate,
     observed,

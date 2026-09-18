@@ -6,7 +6,8 @@ import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
-import type { PathGate } from "./paths.ts";
+import { admitSession } from "./paths.ts";
+import type { PathGate, RootOverrideOf } from "./paths.ts";
 import type { ExtraRootsOf } from "./toolbox.ts";
 
 const DEFAULT_LIMIT = 100;
@@ -40,11 +41,13 @@ export interface GrepToolInput {
   readonly options: GrepOptions;
   readonly env: ExecEnv;
   readonly extraRootsOf?: ExtraRootsOf;
+  readonly rootOverrideOf?: RootOverrideOf;
 }
 
 export function createGrepTool(input: GrepToolInput): ToolDefinition {
   const { gate, options, env } = input;
   const extraRootsOf = input.extraRootsOf ?? (() => []);
+  const rootOverrideOf = input.rootOverrideOf;
   return {
     name: "grep",
     description:
@@ -59,16 +62,16 @@ export function createGrepTool(input: GrepToolInput): ToolDefinition {
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_LIMIT, description: `Max matches (default ${String(DEFAULT_LIMIT)}, max ${String(MAX_LIMIT)}; over-max is rejected)` })),
     }),
     isConcurrencySafe: () => true,
-    execute: async (args, ctx: ToolExecContext) => grep({ gate, options, env, ctx, extraRootsOf, args: args as Record<string, unknown> }),
+    execute: async (args, ctx: ToolExecContext) => grep({ gate, options, env, ctx, extraRootsOf, rootOverrideOf, args: args as Record<string, unknown> }),
   };
 }
 
-async function grep(input: { readonly gate: PathGate; readonly options: GrepOptions; readonly env: ExecEnv; readonly extraRootsOf: ExtraRootsOf; readonly ctx: ToolExecContext; readonly args: Record<string, unknown> }): Promise<{ content: string; isError?: true }> {
-  const { gate, options, env, ctx, args, extraRootsOf } = input;
+async function grep(input: { readonly gate: PathGate; readonly options: GrepOptions; readonly env: ExecEnv; readonly extraRootsOf: ExtraRootsOf; readonly rootOverrideOf?: RootOverrideOf; readonly ctx: ToolExecContext; readonly args: Record<string, unknown> }): Promise<{ content: string; isError?: true }> {
+  const { gate, options, env, ctx, args, extraRootsOf, rootOverrideOf } = input;
   const pattern = args["pattern"] as string;
   if (pattern.includes("\u0000")) return { content: "NUL_IN_ARGUMENT: pattern contains NUL", isError: true };
   const targetRaw = (args["path"] as string | undefined) ?? ".";
-  const admitted = await gate.admit(targetRaw, env.realpath, extraRootsOf(ctx.session));
+  const admitted = await admitSession({ gate, realpath: env.realpath, session: ctx.session, extraRootsOf, rootOverrideOf, target: targetRaw });
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const glob = args["glob"] as string | undefined;
   if (glob !== undefined) {

@@ -242,10 +242,7 @@ describe("notify_when_idle 闭窗分支（stub 直测——复查翻转与 main 
     );
     expect(out.ok).toBe(true);
     expect(out.ok === true && out.text).toContain("notice was sent immediately");
-    await vi.waitFor(() => {
-      const texts = main.agent.session.events().filter((e) => e.type === "user/message").map((e) => JSON.stringify(e.data)).join("\n");
-      expect(texts).toContain("already idle");
-    }, { timeout: 5_000 });
+    await vi.waitFor(() => expect(userTextsOf(world, main.agent.session.id)).toContain("already idle"), { timeout: 5_000 });
     await main.dispose();
   });
 

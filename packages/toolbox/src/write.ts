@@ -5,7 +5,8 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
-import { PathGate } from "./paths.ts";
+import { PathGate, admitSession } from "./paths.ts";
+import type { RootOverrideOf } from "./paths.ts";
 import type { ExtraRootsOf } from "./toolbox.ts";
 import { ObservedRegistry } from "./observed.ts";
 import type { WriteFileResult } from "@x-harness/exec-env";
@@ -17,11 +18,13 @@ export interface WriteToolInput {
   readonly observed: ObservedRegistry;
   readonly env: ExecEnv;
   readonly extraRootsOf?: ExtraRootsOf;
+  readonly rootOverrideOf?: RootOverrideOf;
 }
 
 export function createWriteTool(input: WriteToolInput): ToolDefinition {
   const { gate, observed, env } = input;
   const extraRootsOf = input.extraRootsOf ?? (() => []);
+  const rootOverrideOf = input.rootOverrideOf;
   return {
     name: "write",
     description:
@@ -30,16 +33,16 @@ export function createWriteTool(input: WriteToolInput): ToolDefinition {
       path: Type.String({ description: "File path (relative to workspace root or absolute inside it)" }),
       content: Type.String({ description: "Full file content (empty string writes an empty file)" }),
     }),
-    execute: async (args, ctx: ToolExecContext) => write({ gate, observed, env, ctx, extraRootsOf, args: args as { path: string; content: string } }),
+    execute: async (args, ctx: ToolExecContext) => write({ gate, observed, env, ctx, extraRootsOf, rootOverrideOf, args: args as { path: string; content: string } }),
   };
 }
 
-async function write(input: { readonly gate: PathGate; readonly observed: ObservedRegistry; readonly env: ExecEnv; readonly extraRootsOf: ExtraRootsOf; readonly ctx: ToolExecContext; readonly args: { path: string; content: string } }): Promise<{ content: string; isError?: true }> {
-  const { gate, observed, env, ctx, args, extraRootsOf } = input;
+async function write(input: { readonly gate: PathGate; readonly observed: ObservedRegistry; readonly env: ExecEnv; readonly extraRootsOf: ExtraRootsOf; readonly rootOverrideOf?: RootOverrideOf; readonly ctx: ToolExecContext; readonly args: { path: string; content: string } }): Promise<{ content: string; isError?: true }> {
+  const { gate, observed, env, ctx, args, extraRootsOf, rootOverrideOf } = input;
   if (PathGate.hasNul(args.path) || PathGate.hasNul(args.content)) {
     return { content: "NUL_IN_ARGUMENT: path/content contains NUL", isError: true };
   }
-  const admitted = await gate.admit(args.path, env.realpath, extraRootsOf(ctx.session));
+  const admitted = await admitSession({ gate, realpath: env.realpath, session: ctx.session, extraRootsOf, rootOverrideOf, target: args.path });
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const path = admitted.path;
   return observed.locked(path, async () => {

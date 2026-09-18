@@ -51,3 +51,28 @@ describe("denyReadPaths（spawn 面遮挂目标展开）", () => {
     expect(paths).toContain("/var/secure"); // 普通绝对形态原样
   });
 });
+
+describe("fenceFor 会话根替换（件13 接缝 6——worktree 隔离）", () => {
+  it("override 在场：writable 换 worktree 根、protectedPaths 随之重算、原根子树 extraRoots 被过滤", () => {
+    const g = new GrantsRegistry();
+    g.setRootOverride(S, "/wt/wt-1", "/repo");
+    g.addExtraRoot(S, "/repo/sub"); // 原根子树——过滤（防权限批准打穿隔离）
+    g.addExtraRoot(S, "/other/area"); // 界外授权——保留
+    const fence = fenceFor({ root: "/repo" }, g, S);
+    expect(fence.writable).toContain("/wt/wt-1");
+    expect(fence.writable).not.toContain("/repo");
+    expect(fence.writable).toContain("/other/area");
+    expect(fence.writable).not.toContain("/repo/sub");
+    expect(fence.protectedPaths).toContain("/wt/wt-1/.git");
+    expect(fence.protectedPaths).not.toContain("/repo/.git");
+  });
+
+  it("无 override：行为不变（原根 + tmpdir + 授权根）", () => {
+    const g = new GrantsRegistry();
+    g.addExtraRoot(S, "/repo/sub");
+    const fence = fenceFor({ root: "/repo" }, g, S);
+    expect(fence.writable).toContain("/repo");
+    expect(fence.writable).toContain("/repo/sub");
+    expect(fence.protectedPaths).toContain("/repo/.git");
+  });
+});

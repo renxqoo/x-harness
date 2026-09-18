@@ -7,7 +7,8 @@ import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ReadFace, ReadHandle } from "@x-harness/exec-env";
-import type { PathGate } from "./paths.ts";
+import { admitSession } from "./paths.ts";
+import type { PathGate, RootOverrideOf } from "./paths.ts";
 import type { ExtraRootsOf } from "./toolbox.ts";
 import { ObservedRegistry } from "./observed.ts";
 
@@ -47,11 +48,13 @@ export interface ReadToolInput {
   readonly observed: ObservedRegistry;
   readonly env: ReadFace;
   readonly extraRootsOf?: ExtraRootsOf;
+  readonly rootOverrideOf?: RootOverrideOf;
 }
 
 export function createReadTool(input: ReadToolInput): ToolDefinition {
   const { gate, observed, env } = input;
   const extraRootsOf = input.extraRootsOf ?? (() => []);
+  const rootOverrideOf = input.rootOverrideOf;
   return {
     name: "read",
     description:
@@ -63,7 +66,7 @@ export function createReadTool(input: ReadToolInput): ToolDefinition {
     }),
     isConcurrencySafe: () => true,
     execute: async (args, ctx: ToolExecContext) =>
-      readFile({ gate, observed, env, ctx, extraRootsOf, args: args as { path: string; offset?: number; limit?: number } }),
+      readFile({ gate, observed, env, ctx, extraRootsOf, rootOverrideOf, args: args as { path: string; offset?: number; limit?: number } }),
   };
 }
 
@@ -72,11 +75,12 @@ async function readFile(input: {
   readonly observed: ObservedRegistry;
   readonly env: ReadFace;
   readonly extraRootsOf: ExtraRootsOf;
+  readonly rootOverrideOf?: RootOverrideOf;
   readonly ctx: ToolExecContext;
   readonly args: { path: string; offset?: number; limit?: number };
 }): Promise<{ content: string; isError?: true }> {
-  const { gate, observed, env, ctx, args, extraRootsOf } = input;
-  const admitted = await gate.admit(args.path, env.realpath, extraRootsOf(ctx.session));
+  const { gate, observed, env, ctx, args, extraRootsOf, rootOverrideOf } = input;
+  const admitted = await admitSession({ gate, realpath: env.realpath, session: ctx.session, extraRootsOf, rootOverrideOf, target: args.path });
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const path = admitted.path;
   const st = await env.stat(path);

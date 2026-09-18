@@ -46,6 +46,7 @@ const spawnSchema = Type.Object({
   subagent_type: Type.Optional(Type.String({ description: "Registered type name or the reserved 'fork'; defaults to an untyped general agent" })),
   model: Type.Optional(Type.String({ description: "Per-call model override (ignored for fork)" })),
   name: Type.Optional(Type.String({ description: "Explicit addressable name (defaults to the description slug)" })),
+  isolation: Type.Optional(Type.String({ description: "'worktree': the agent works in its own git worktree copy (auto-cleaned if unchanged)" })),
 });
 
 const messageSchema = Type.Object({

@@ -6,6 +6,8 @@ import type { SessionStore, SessionEvent, SessionId } from "@x-harness/session";
 import type { ToolRegistry, ToolExecContext } from "@x-harness/tools";
 import { forkSeed, inheritDial, mintAgentId, narrowTools, slugify } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
+import { createWorktree, evaluateCleanup } from "./worktree.ts";
+import type { WorktreePlan } from "./worktree.ts";
 import type { LoadedAgentType } from "./types.ts";
 
 export interface SpawnInput {
@@ -14,6 +16,7 @@ export interface SpawnInput {
   readonly subagent_type?: string;
   readonly model?: string;
   readonly name?: string;
+  readonly isolation?: string;
 }
 
 export interface SpawnDeps {
@@ -24,6 +27,8 @@ export interface SpawnDeps {
   readonly limits: { readonly maxDepth: number; readonly maxConcurrent: number };
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly isTearingDown: () => boolean;
+  /** permission 授权面（isolation=worktree 的根替换落账）；缺位时 worktree 隔离拒 */
+  readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
 }
 
 export type SpawnOutcome = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string };
@@ -42,6 +47,9 @@ export async function spawnAgent(deps: SpawnDeps, execCtx: ToolExecContext, inpu
   if (input.model === "") return { ok: false, reason: "invalid-args:model must be a non-empty string when provided" };
   if (input.name !== undefined && input.name.trim() === "") {
     return { ok: false, reason: "invalid-args:name must be a non-empty string when provided" };
+  }
+  if (input.isolation !== undefined && input.isolation !== "worktree") {
+    return { ok: false, reason: `invalid-args:isolation '${input.isolation}' is not supported (only 'worktree')` };
   }
 
   const caller = execCtx.session;
@@ -87,11 +95,14 @@ async function buildChild(
   const parentHandle = deps.loop.get(caller);
   if (parentHandle === undefined) return { ok: false, reason: `not-found:parent agent ${String(caller)} is not live` };
 
+  const agentId = mintAgentId();
   const named = plan.resolved.kind === "named" ? plan.resolved.type : undefined;
   const isFork = plan.resolved.kind === "fork";
   const identity = childIdentity(plan, named);
   const seed = isFork ? forkSeedOf(deps, caller) : [];
   const forked = seed.length > 0;
+  const worktree = await prepareWorktree(deps, agentId, plan.input.isolation);
+  if (!worktree.ok) return worktree;
 
   const made = await deps.loop.create({
     session: {
@@ -101,9 +112,11 @@ async function buildChild(
     },
     agent: childAgentOptions(deps, parentHandle, { named, isFork, input: plan.input, caller }),
   });
-  if (!made.ok) return { ok: false, reason: `spawn-failed:${made.reason}` };
+  if (!made.ok) {
+    if (worktree.plan !== undefined) await evaluateCleanup({ path: worktree.plan.path, branch: worktree.plan.branch }).catch(() => {});
+    return { ok: false, reason: `spawn-failed:${made.reason}` };
+  }
   const childHandle = made.value;
-  const agentId = mintAgentId();
   const row: ChildRow = {
     agentId,
     sessionId: childHandle.agent.session.id,
@@ -115,7 +128,11 @@ async function buildChild(
     armed: false,
     running: false,
     stopped: false,
+    ...(worktree.plan !== undefined ? { worktree: worktree.plan.path } : {}),
   };
+  if (worktree.plan !== undefined && deps.setRootOverride !== undefined) {
+    deps.setRootOverride(row.sessionId, worktree.plan.path, worktree.plan.repoTop);
+  }
   deps.lineage.register(row);
   if (execCtx.signal.aborted) {
     await childHandle.dispose(); // execute 内断信号：不遗孤儿子
@@ -153,6 +170,16 @@ function childAgentOptions(
     ...(spec.named !== undefined && spec.named.prompt !== "" ? { systemPrompt: spec.named.prompt } : {}),
     ...(effectiveTools !== undefined ? { tools: [...effectiveTools] } : {}),
   };
+}
+
+/** worktree 预备（§8.1/§8.2）：repo 外同级路径 + git 串行队列；grants 前置（无授权面
+ *  不建树——防半装泄漏）；create 失败由调用方清理。 */
+async function prepareWorktree(deps: SpawnDeps, agentId: string, isolation: string | undefined): Promise<{ ok: true; plan?: WorktreePlan } | { ok: false; reason: string }> {
+  if (isolation !== "worktree") return { ok: true };
+  if (deps.setRootOverride === undefined) return { ok: false, reason: "spawn-failed:worktree requires the permission grants service" };
+  const made = await createWorktree(agentId);
+  if (!made.ok) return { ok: false, reason: `spawn-failed:worktree ${made.reason}` };
+  return { ok: true, plan: made.plan };
 }
 
 function spawnText(row: ChildRow, freshFork: boolean): string {

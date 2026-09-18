@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, loadPlugins } from "@x-harness/core";
-import type { Context } from "@x-harness/core";
+import type { Context, Plugin } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
 import { sessionPlugin } from "@x-harness/session";
@@ -71,22 +71,19 @@ afterEach(async () => {
   dirs = [];
 });
 
-export async function makeWorld(options: DelegationOptions, mailboxRoot?: string): Promise<World> {
+export async function makeWorld(options: DelegationOptions, mailboxRoot?: string, extraPlugins: readonly Plugin[] = []): Promise<World> {
   const ctx = createContext();
   const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
   const calls: LlmRequest[] = [];
   const delegation = createAgentDelegationPlugin(options);
+  const base = [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin, ...extraPlugins];
   const plugins = options.mailbox !== undefined && mailboxRoot !== undefined
     ? [
-        sessionPlugin,
-        toolsPlugin,
-        llmPlugin,
-        systemPromptPlugin,
-        agentLoopPlugin,
+        ...base,
         createMailboxPlugin({ root: mailboxRoot, timing: { pollIntervalMs: 20, heartbeatMs: 5_000, graceMs: 30_000, staleMs: 7 * 24 * 3_600_000, now: () => Date.now() } }),
         delegation,
       ]
-    : [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin, delegation];
+    : [...base, delegation];
   const unload = await loadPlugins(ctx, plugins);
   const off = ctx.use(llmRuntime).registerAdapter({
     name: "fake",

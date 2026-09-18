@@ -10,6 +10,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv, ProcHandle } from "@x-harness/exec-env";
 import { PathGate } from "./paths.ts";
+import type { RootOverrideOf } from "./paths.ts";
 import type { BackgroundTasks } from "./tasks.ts";
 import { ChannelCollector, pump, writeSpill } from "./collect.ts";
 
@@ -47,12 +48,13 @@ export function defaultLimits(over: { defaultTimeoutMs?: number; maxTimeoutMs?: 
 export interface BashToolInput {
   readonly gate: PathGate;
   readonly limits: BashLimits;
+  readonly rootOverrideOf?: RootOverrideOf;
   readonly env: ExecEnv;
   readonly tasks: BackgroundTasks;
 }
 
 export function createBashTool(input: BashToolInput): ToolDefinition {
-  const { gate, limits, env, tasks } = input;
+  const { gate, limits, env, tasks, rootOverrideOf } = input;
   return {
     name: "bash",
     description:
@@ -67,7 +69,7 @@ export function createBashTool(input: BashToolInput): ToolDefinition {
       timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: "Optional timeout in milliseconds" })),
       run_in_background: Type.Optional(Type.Boolean({ description: "Set to true to run this command in the background." })),
     }),
-    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, tasks, ctx, args: args as { command: string; timeout?: number; run_in_background?: boolean } }),
+    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, tasks, rootOverrideOf, ctx, args: args as { command: string; timeout?: number; run_in_background?: boolean } }),
   };
 }
 
@@ -76,22 +78,24 @@ async function bash(input: {
   readonly limits: BashLimits;
   readonly env: ExecEnv;
   readonly tasks: BackgroundTasks;
+  readonly rootOverrideOf?: RootOverrideOf;
   readonly ctx: ToolExecContext;
   readonly args: { command: string; timeout?: number; run_in_background?: boolean };
 }): Promise<{ content: string; isError?: true }> {
-  const { gate, limits, env, tasks, ctx, args } = input;
+  const { gate, limits, env, tasks, ctx, args, rootOverrideOf } = input;
+  const cwd = rootOverrideOf?.(ctx.session)?.dir ?? gate.root; // bash 无路径参数——cwd 即会话根（件13 接缝 4）
   if (PathGate.hasNul(args.command)) {
     return { content: "NUL_IN_ARGUMENT: command contains NUL", isError: true };
   }
   if (ctx.signal.aborted) return { content: "aborted: tool call aborted before dispatch", isError: true }; // pre-abort 零 spawn
 
     if (args.run_in_background === true) {
-    const started = await tasks.start({ command: args.command, cwd: gate.root, session: ctx.session, env });
+    const started = await tasks.start({ command: args.command, cwd, session: ctx.session, env });
     if (!started.ok) return { content: started.reason, isError: true };
     return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — it keeps running across turns; poll its output and state via the task layer` };
   }
   const timeoutMs = Math.min(args.timeout ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
-  return render(await runCommand({ command: args.command, cwd: gate.root, timeoutMs, limits, env, ctx }));
+  return render(await runCommand({ command: args.command, cwd, timeoutMs, limits, env, ctx }));
 }
 
 interface RunResult {

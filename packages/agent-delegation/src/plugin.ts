@@ -7,8 +7,10 @@ import { sessionStore } from "@x-harness/session";
 import { toolRegistry } from "@x-harness/tools";
 import { systemPrompt } from "@x-harness/system-prompt";
 import { mailboxService } from "@x-harness/session-mailbox";
+import { permissionGrants } from "@x-harness/permission";
 import type { CrossDeps } from "./crossmsg.ts";
 import { createMailboxConsumer, startDrain } from "./mailbox-consumer.ts";
+import { evaluateCleanup, sweepWorktrees } from "./worktree.ts";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
 import { loadAgentTypes, resolveAgentDirs, typesFingerprint } from "./types-loader.ts";
@@ -87,10 +89,23 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
           await childHandle.agent.whenIdle();
           await childHandle.dispose();
         }
+        if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` }).catch(() => {});
         lineage.drop(row.sessionId);
       };
 
-      const spawnDeps = { loop, store, registry, lineage, limits, types: () => current, isTearingDown: () => tearingDown };
+      const grants = ctx.tryUse(permissionGrants);
+      const spawnDeps = {
+        loop,
+        store,
+        registry,
+        lineage,
+        limits,
+        types: () => current,
+        isTearingDown: () => tearingDown,
+        ...(grants !== undefined ? { setRootOverride: (session: import("@x-harness/session").SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
+      };
+      // 启动期对账清扫（§8.3——崩溃泄漏兜底）；测试可关（worktreeSweep:false）
+      if (options.worktreeSweep !== false) void sweepWorktrees([]).catch(() => {});
       let verbDeps: VerbDeps = { loop, store, lineage, reportCap: limits.reportCap, adoptOrphan };
 
       let consumer: ReturnType<typeof createMailboxConsumer> | undefined;
@@ -142,6 +157,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
           childHandle.agent.cancel("delegation-disposed");
           await childHandle.agent.whenIdle();
           await childHandle.dispose();
+          if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` }).catch(() => {});
         });
         offSection();
         offVariable();

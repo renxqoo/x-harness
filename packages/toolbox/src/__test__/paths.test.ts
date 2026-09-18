@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { realpathDeep } from "@x-harness/exec-env";
-import { PathGate } from "../paths.ts";
+import { PathGate, admitSession } from "../paths.ts";
 import type { RealpathFn } from "../paths.ts";
 
 let root: string;
@@ -80,5 +80,24 @@ describe("PathGate（docs/TOOLBOX.md §1 + EXEC-ENV.md §3）", () => {
     expect(await whole.admit("/usr/lib", rp)).toEqual({ ok: true, path: "/usr/lib" });
     expect((await whole.admit("etc/hosts", rp)).ok).toBe(true); // 相对路径以 / 解析
     expect(await whole.admit("/", rp)).toEqual({ ok: true, path: "/" });
+  });
+});
+
+describe("admitSession 会话根替换（件13 接缝 4——worktree 真隔离）", () => {
+  it("override 在场：worktree 路径放行、原根不可达、原根子树 extraRoots 被过滤、界外授权保留", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "xh-ov-repo-"));
+    const wt = mkdtempSync(join(tmpdir(), "xh-ov-wt-"));
+    const gate = new PathGate(repo);
+    const rp = async (p: string) => p;
+    const overrideOf = () => ({ dir: wt, guard: repo });
+    const extraRootsOf = () => [join(repo, "sub"), join(tmpdir(), "xh-ov-extra-")];
+    const toWT = await admitSession({ gate, realpath: rp, session: undefined, extraRootsOf, rootOverrideOf: overrideOf, target: join(wt, "file.ts") });
+    expect(toWT.ok).toBe(true); // worktree 内放行
+    const toRepo = await admitSession({ gate, realpath: rp, session: undefined, extraRootsOf, rootOverrideOf: overrideOf, target: join(repo, "secret.ts") });
+    expect(toRepo.ok).toBe(false); // 原根不可达
+    const viaGuarded = await admitSession({ gate, realpath: rp, session: undefined, extraRootsOf, rootOverrideOf: overrideOf, target: join(repo, "sub", "x.ts") });
+    expect(viaGuarded.ok).toBe(false); // 原根子树授权被过滤
+    const viaExtra = await admitSession({ gate, realpath: rp, session: undefined, extraRootsOf, rootOverrideOf: overrideOf, target: join(tmpdir(), "xh-ov-extra-", "y.ts") });
+    expect(viaExtra.ok).toBe(true); // 界外授权保留
   });
 });

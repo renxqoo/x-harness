@@ -3,7 +3,7 @@
 // fenceFacts）与 spawn 围栏共用同一合成结果（§6——授权即时生效是设计意图，执法不弱化）。
 
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 import type { SessionId } from "@x-harness/session";
 import type { GrantsRegistry } from "@x-harness/permission";
 
@@ -34,12 +34,23 @@ function normalize(p: string): string {
 
 export const DEFAULT_DENY_READ: readonly string[] = ["~/.ssh", "~/.aws", "~/.gcp"];
 
-/** 单一解析函数：base ∧ 会话授权（域名并集即时生效）。 */
+function withinLexical(root: string, p: string): boolean {
+  const prefix = root.endsWith(sep) ? root : root + sep;
+  return p === root || p.startsWith(prefix);
+}
+
+/** 单一解析函数：base ∧ 会话授权（域名并集即时生效）。
+ *  会话根替换（worktree 隔离——件13 接缝 6）：override 在场 → writable 以 override 替换
+ *  base.root、protectedPaths 随 override 根重算、原根子树的 extraRoots 批准被过滤（防打穿）。 */
 export function fenceFor(base: FenceBase, grants: GrantsRegistry, session: SessionId | undefined): Fence {
-  const writable = [base.root, tmpdir(), ...(base.writableExtra ?? []), ...grants.extraRootsOf(session)].map(normalize);
+  const override = grants.rootOverrideOf(session);
+  const extraRoots = override === undefined
+    ? grants.extraRootsOf(session)
+    : grants.extraRootsOf(session).filter((r) => !withinLexical(normalize(override.guard), normalize(r)));
+  const writable = [...(override !== undefined ? [override.dir] : [base.root]), tmpdir(), ...(base.writableExtra ?? []), ...extraRoots].map(normalize);
   const denyRead = [...DEFAULT_DENY_READ, ...(base.denyReadExtra ?? [])];
   // 受保护默认：工作区 .git 内部（darwin 内核不可表达落档 §13——执法归工具面；linux --tmpfs 遮挂消费）
-  const protectedPaths = [resolve(base.root, ".git"), ...(base.protectedPaths ?? [])].map(normalize);
+  const protectedPaths = [resolve(override?.dir ?? base.root, ".git"), ...(base.protectedPaths ?? [])].map(normalize);
   if (base.networkOff === true) return { writable, denyRead, protectedPaths, network: "off" };
   // 宿主预授权（会话无关）+ 会话授权域名并集；deny 不入白名单
   const granted = [...(base.allowedDomains ?? []), ...grants.allowedDomainsOf(session)];

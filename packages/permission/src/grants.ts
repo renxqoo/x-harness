@@ -2,6 +2,7 @@
 // 根/网 B 会话不借用；resume 不继承）；per-(session,domain) 单飞互斥（check→ask→record 临界区——
 // 同域并发只问一次，异域并行）；sessionDisposed 逐出。
 
+import { resolve } from "node:path";
 import type { SessionId } from "@x-harness/session";
 import type { PermissionRule } from "./types.ts";
 
@@ -9,6 +10,8 @@ interface SessionBucket {
   extraRoots: Set<string>;
   domains: Map<string, "allow" | "deny">;
   rules: PermissionRule[];
+  /** 会话级根替换（worktree 隔离——件13 接缝 3）：dir=替换根；guard=原根（extraRoots 守卫） */
+  rootOverride?: { readonly dir: string; readonly guard: string };
 }
 
 function domainChainKey(session: SessionId | undefined, domain: string): string {
@@ -35,6 +38,16 @@ export class GrantsRegistry {
 
   addExtraRoot(session: SessionId | undefined, dir: string): void {
     this.bucket(session).extraRoots.add(dir);
+  }
+
+  /** 会话根替换（worktree 子的真隔离）：dir 替换主根；guard=原根——该根子树的 extraRoot
+   *  批准在消费面被过滤（防权限批准打穿隔离——件13 §8.2）。resume 不继承，复活方重放。 */
+  setRootOverride(session: SessionId | undefined, dir: string, guard: string): void {
+    this.bucket(session).rootOverride = { dir: resolve(dir), guard: resolve(guard) };
+  }
+
+  rootOverrideOf(session: SessionId | undefined): { readonly dir: string; readonly guard: string } | undefined {
+    return this.buckets.get(session ?? "_anon")?.rootOverride;
   }
 
   domainVerdict(session: SessionId | undefined, domain: string): "allow" | "deny" | undefined {

@@ -15,7 +15,8 @@ The reserved subagent_type "fork" copies the parent's completed conversation and
 - The agent's final report is not shown to the user — relay what matters. When relaying, don't quote the original in full; summarize.
 - Use agent_message with the agent's agentId to continue a previously spawned agent with its context intact; a new agent_spawn call starts fresh (except subagent_type "fork", which inherits your context).
 - Each agent type's model and tools come from its .x-harness/agents/*.md definition; the model parameter takes precedence over the type definition, which takes precedence over the parent model.
-- description is a 3-5 word task summary and seeds the agent's name; pass name explicitly when you will address the agent by name later.`;
+- description is a 3-5 word task summary and seeds the agent's name; pass name explicitly when you will address the agent by name later.
+- isolation "worktree" gives the agent its own git worktree copy of the repo (auto-cleaned if unchanged; kept with its changes otherwise).`;
 
 export const AGENT_MESSAGE_DESCRIPTION = `# agent_message
 
