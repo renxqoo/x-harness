@@ -131,7 +131,7 @@ describe("sandbox 真内核（darwin Seatbelt 全腿）", () => {
     const out = await reg.dispatch({
       callId: "fenced-bash",
       name: "bash",
-      args: { command: 'for i in $(seq 1 6000); do echo "line-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; done; echo err-line 1>&2', timeout_ms: 8_000 },
+      args: { command: 'for i in $(seq 1 6000); do echo "line-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; done; echo err-line 1>&2', timeout: 8_000 },
       signal: new AbortController().signal,
     });
     for (const dispose of unload) await dispose();

@@ -124,7 +124,7 @@ describe("extraRoots 全链（ask 批 → gate 放行 → fence 并入）", () =
     const write = await reg.dispatch({
       callId: "c2",
       name: "bash",
-      args: { command: `echo made > ${JSON.stringify(join(outside, "made.txt"))}`, timeout_ms: 10_000 },
+      args: { command: `echo made > ${JSON.stringify(join(outside, "made.txt"))}`, timeout: 10_000 },
       signal: new AbortController().signal,
       session,
     });
