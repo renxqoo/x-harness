@@ -91,7 +91,7 @@ export async function executeToolCalls(
       mustAppend(session, "tool/call", { turn, step, callId: call.callId, name: call.name, arguments: call.arguments });
     }
     const outcomes = await Promise.all(
-      pool.map((call) => registry.dispatch({ callId: call.callId, name: call.name, args: parseArgs(call.arguments), signal })),
+      pool.map((call) => registry.dispatch({ callId: call.callId, name: call.name, args: parseArgs(call.arguments), signal, session: session.id })),
     );
     for (let i = 0; i < pool.length; i++) {
       const outcome = outcomes[i];
@@ -113,7 +113,7 @@ interface Ledger {
 
 async function runOne(deps: SchedulerDeps, call: ToolCallSpec, ledger: Ledger): Promise<void> {
   mustAppend(ledger.session, "tool/call", { turn: ledger.turn, step: ledger.step, callId: call.callId, name: call.name, arguments: call.arguments });
-  const outcome = await deps.registry.dispatch({ callId: call.callId, name: call.name, args: parseArgs(call.arguments), signal: deps.signal });
+  const outcome = await deps.registry.dispatch({ callId: call.callId, name: call.name, args: parseArgs(call.arguments), signal: deps.signal, session: ledger.session.id });
   commitOutcome(call, outcome, ledger);
 }
 

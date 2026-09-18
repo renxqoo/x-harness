@@ -33,8 +33,18 @@
       "name": "@x-harness/e2e",
       "version": "0.0.1",
       "dependencies": {
+        "@x-harness/agent-loop": "workspace:*",
         "@x-harness/core": "workspace:*",
+        "@x-harness/llm": "workspace:*",
         "@x-harness/plugin-manager": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/session-checkpoint": "workspace:*",
+        "@x-harness/session-persistence-jsonl": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
       },
     },
     "packages/llm": {
@@ -58,6 +68,22 @@
       "version": "0.0.1",
       "dependencies": {
         "@x-harness/core": "workspace:*",
+      },
+    },
+    "packages/session-checkpoint": {
+      "name": "@x-harness/session-checkpoint",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/session-persistence-jsonl": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
       },
     },
     "packages/session-persistence-jsonl": {
@@ -247,6 +273,8 @@
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
 
     "@x-harness/session": ["@x-harness/session@workspace:packages/session"],
+
+    "@x-harness/session-checkpoint": ["@x-harness/session-checkpoint@workspace:packages/session-checkpoint"],
 
     "@x-harness/session-persistence-jsonl": ["@x-harness/session-persistence-jsonl@workspace:packages/session-persistence-jsonl"],
 

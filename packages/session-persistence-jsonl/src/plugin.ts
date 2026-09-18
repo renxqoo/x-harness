@@ -95,12 +95,12 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
         if (live.closed) return;
         const writer = live.writer !== undefined ? live.writer : await ensureWriter(live);
         if (live.pending.length > 0) {
-          const batch = live.pending;
-          const lines = batch.map((event) => `${JSON.stringify(event)}\n`);
-          // 写入成功后才移除已写批次：失败时按序保留供下次 flush 重试；
-          // await 期间新到事件只追加在尾部（slice 按批次长度截断，不误删）
+          // 长度快照：await 期间新到事件追加尾部，slice 按快照截断——活引用会让批次长度膨胀、误切未写事件
+          const size = live.pending.length;
+          const lines = live.pending.slice(0, size).map((event) => `${JSON.stringify(event)}\n`);
+          // 写入成功后才移除已写批次：失败时按序保留供下次 flush 重试
           await writer.append(lines);
-          live.pending = live.pending.slice(batch.length);
+          live.pending = live.pending.slice(size);
         }
         await writer.sync();
       }

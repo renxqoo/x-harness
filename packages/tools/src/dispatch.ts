@@ -130,7 +130,7 @@ export function createDispatcher(deps: DispatcherDeps): ToolRegistry["dispatch"]
       }
       return await deps.dispatchExecute(request, async (req) => {
         // 中间件可换 signal（超时/取消包裹）；args/name/callId 不可换——替换即击穿校验先行的契约
-        if (req.args !== request.args || req.name !== request.name || req.callId !== request.callId) {
+        if (req.args !== request.args || req.name !== request.name || req.callId !== request.callId || req.session !== request.session) {
           return errorOutcome("request-altered");
         }
         return runBody(tool, req);

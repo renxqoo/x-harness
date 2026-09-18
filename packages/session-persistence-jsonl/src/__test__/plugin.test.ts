@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Context, Plugin } from "@x-harness/core";
 import type { Session, SessionId } from "@x-harness/session";
 import { sessionArchive as sessionArchiveToken } from "@x-harness/session";
-import { sessionStore as sessionStoreToken } from "@x-harness/session";
+import { sessionEvent, sessionStore as sessionStoreToken } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "../plugin.ts";
 import { makeWorld, unwrap, waitUntil } from "./helpers.ts";
 import type { World } from "./helpers.ts";
@@ -305,5 +305,33 @@ describe("flush 失败路由（docs/SESSION.md §1.8 I/O 失败路由）", () =>
     if (!flushed.ok) expect(flushed.reason).toContain("writer-unopened:late");
     const read = await world.archive.read("late" as SessionId);
     expect(read.ok).toBe(false); // 无 header，不落盘
+  });
+});
+
+describe("排空竞态（回归：活引用批次长度膨胀误切未写事件）", () => {
+  it("回归：排空期间新到事件不丢——二次 flush 后全部在盘", async () => {
+    world = await makeWorld(root);
+    const s = unwrap(await world.store.create({ id: "race" as SessionId }));
+    turn(s, 0);
+    // marker 事件广播时挂 macrotask：在 writer.append 的 I/O await 窗口内追加新事件
+    const appendSix = (): void => {
+      turn(s, 6);
+    };
+    const off = world.ctx.on(sessionEvent, ({ event }: { event: { data: unknown } }) => {
+      if ((event.data as { turn?: number }).turn === 5) setTimeout(appendSix, 0);
+    });
+    turn(s, 5);
+    expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true });
+    off();
+    // 竞态新事件曾随活引用批次被误切丢弃（永不落盘）；修复后留在 pending，后续 flush 必然写出
+    const turnsOnDisk = async (): Promise<Array<number | undefined>> => {
+      const read = unwrap(await world.archive.read(s.id));
+      return read.events.map((e) => (e.data as { turn?: number }).turn);
+    };
+    await waitUntil(async () => {
+      expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true });
+      const turns = await turnsOnDisk();
+      return turns.length === 3 && turns[0] === 0 && turns[1] === 5 && turns[2] === 6;
+    });
   });
 });

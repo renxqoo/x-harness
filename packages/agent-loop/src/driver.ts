@@ -45,6 +45,16 @@ function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutcome | u
   return foldInbox(session.events()).nextTurn.length > 0;
 }
 
+/** 逃逸路径的括号收尾：step/end 闭不上为止（已封存），错误路径括号形状一致 */
+function closeOpenStep(session: Session, turnNumber: number, openStep: number): void {
+  if (openStep < 0) return;
+  try {
+    appendEvent(session, "step/end", { turn: turnNumber, step: openStep });
+  } catch {
+    /* 已封存：闭不上为止（turn/end 路径同策） */
+  }
+}
+
 function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown> {
   if (reason.kind === "aborted") {
     return { turn, reason: { kind: "aborted", ...(reason.cause !== "" ? { cause: reason.cause } : {}) } };
@@ -120,6 +130,7 @@ export function createDriver(deps: DriverDeps): {
     phase = { abort: controller, turn: turnNumber };
     let turnEnds: TurnOutcome | undefined;
     let pendingConclude = false;
+    let openStep = -1; // 已落 step/start 未落 step/end 的步号（catch 收尾闭括号用）
     try {
       appendEvent(session, "turn/start", { turn: turnNumber });
       for (let step = 0; ; step++) {
@@ -134,6 +145,7 @@ export function createDriver(deps: DriverDeps): {
           break;
         }
         appendEvent(session, "step/start", { turn: turnNumber, step });
+        openStep = step;
         anchorSystem(scope, step);
         appendUserBatch(scope, step, entry);
         const dialed = await dialStep(scope, step);
@@ -168,12 +180,14 @@ export function createDriver(deps: DriverDeps): {
         turnEnds = settled.turnEnds;
         pendingConclude = settled.pendingConclude;
         appendEvent(session, "step/end", { turn: turnNumber, step });
+        openStep = -1;
         turnEnds = await maybeResume(scope, turnEnds); // stopping 续航（仅 completed）
         if (turnEnds !== undefined) break;
       }
     } catch (error) {
-      // 逃逸 throw（中间件违约/append 失败等）：turn 以 error 单次收尾
+      // 逃逸 throw（中间件违约/append 失败等）：闭开着的 step 括号后以 error 单次收尾
       turnEnds = mergeOutcome(turnEnds, { kind: "error", message: errorText(error) });
+      closeOpenStep(session, turnNumber, openStep);
     } finally {
       const reason = turnEnds ?? { kind: "completed" as const };
       try {

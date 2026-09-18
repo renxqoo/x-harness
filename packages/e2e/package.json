@@ -5,6 +5,16 @@
   "type": "module",
   "dependencies": {
     "@x-harness/core": "workspace:*",
-    "@x-harness/plugin-manager": "workspace:*"
+    "@x-harness/plugin-manager": "workspace:*",
+    "@x-harness/agent-loop": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/session-checkpoint": "workspace:*",
+    "@x-harness/session-persistence-jsonl": "workspace:*",
+    "@x-harness/system-prompt": "workspace:*",
+    "@x-harness/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.0"
   }
 }

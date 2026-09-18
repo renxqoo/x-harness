@@ -2,7 +2,7 @@
 // 进 outcome，不做 exec 上的方法调用；additionalContexts 仅 text 块（tool_use 会被适配器丢弃）。
 
 import type { Static, TSchema } from "@sinclair/typebox";
-import type { ContentBlock } from "@x-harness/session";
+import type { ContentBlock, SessionId } from "@x-harness/session";
 
 export type TextBlock = Extract<ContentBlock, { readonly type: "text" }>;
 
@@ -57,6 +57,8 @@ export interface ToolCallRequest {
   readonly name: string;
   readonly args: unknown;
   readonly signal: AbortSignal;
+  /** 归属会话（agent 调度携带）：语义持久检查点据此 flush；缺省=非 agent 调用方 */
+  readonly session?: SessionId;
 }
 
 export type PreExecuteDecision = { readonly kind: "allow" } | { readonly kind: "deny"; readonly reason: string };

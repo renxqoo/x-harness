@@ -85,6 +85,7 @@ export const agentLoopPlugin = {
           driver.cancel("disposed");
           await driver.whenIdle();
           await agentScope.dispose();
+          await store.flush(session.id); // dispose 前先 flush（消费方纪律）：字节完整后才封存，resume 不读截断卷
           store.dispose(session.id); // 封存写权：append 此后 session-disposed；持久化层 drain-then-close
         },
       };
