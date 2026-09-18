@@ -140,9 +140,11 @@ describe("动词入参防线（invalid-args 分支）", () => {
     const noTo = await callTool({ world, name: "agent_message", args: { message: "hi" }, session: parent.agent.session.id });
     expect(noTo.isError).toBe(true);
     expect(noTo.content).toContain("to");
-    const noMessage = await callTool({ world, name: "agent_message", args: { to: "agent-00000000" }, session: parent.agent.session.id });
-    expect(noMessage.isError).toBe(true);
-    expect(noMessage.content).toContain("message");
+    // message 现可选（纯订阅形态）；对进程内目标省略 message → invalid-args（非订阅场景必填）
+    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x" }, session: parent.agent.session.id });
+    const bare = await callTool({ world, name: "agent_message", args: { to: (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] }, session: parent.agent.session.id });
+    expect(bare.isError).toBe(true);
+    expect(bare.content).toContain("message is required");
     const outNoId = await callTool({ world, name: "agent_output", args: {}, session: parent.agent.session.id });
     expect(outNoId.isError).toBe(true);
     expect(outNoId.content).toContain("task_id");

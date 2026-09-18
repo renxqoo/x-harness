@@ -17,21 +17,26 @@ import type { MessageInput, OutputInput, VerbOutcome } from "./verbs.ts";
 
 export interface ToolDeps {
   readonly spawn: (ctx: ToolExecContext, input: SpawnInput) => Promise<VerbOutcome>;
-  readonly message: (ctx: ToolExecContext, input: MessageInput) => VerbOutcome;
+  readonly message: (ctx: ToolExecContext, input: MessageInput) => Promise<VerbOutcome>;
   readonly output: (ctx: ToolExecContext, input: OutputInput) => Promise<VerbOutcome>;
   readonly stop: (ctx: ToolExecContext, taskId: string) => Promise<VerbOutcome>;
-  readonly list: (ctx: ToolExecContext) => readonly ChildView[];
+  readonly list: (ctx: ToolExecContext) => Promise<readonly ChildView[]>;
 }
 
 const CALLER_MISSING = "agent tools are only available inside an agent session";
 
-function run(result: VerbOutcome): { content: string; isError?: true } {
-  return result.ok ? { content: result.text } : { content: result.reason, isError: true };
+async function run(result: Promise<VerbOutcome> | VerbOutcome): Promise<{ content: string; isError?: true }> {
+  const settled = await result;
+  return settled.ok ? { content: settled.text } : { content: settled.reason, isError: true };
 }
 
 function viewLines(view: readonly ChildView[]): string {
   return view
-    .map((row) => `${row.name} [${row.ref}] kind=${row.kind} ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}`)
+    .map((row) =>
+      row.kind === "subagent"
+        ? `${row.name} [${row.ref}] kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}`
+        : `${row.name} [${row.ref}] kind=local-session status=${row.status}`,
+    )
     .join("\n");
 }
 
@@ -44,8 +49,10 @@ const spawnSchema = Type.Object({
 });
 
 const messageSchema = Type.Object({
-  to: Type.String({ description: "agentId from agent_spawn" }),
-  message: Type.String({ description: "Message content" }),
+  to: Type.String({ description: "agentId, name, 'name [ref]', 'main' (sub-agents), or a local session (box) name" }),
+  message: Type.Optional(Type.String({ maxLength: 300, description: "Message content; omit for a pure notify_when_idle subscription. Long content: hand over via files" })),
+  summary: Type.Optional(Type.String({ maxLength: 200, description: "Optional label for your own record (not transmitted to the recipient)" })),
+  notify_when_idle: Type.Optional(Type.Boolean({ description: "Ask a local session to send ONE notice when it next goes idle — opt-in, one-shot; main conversation only; never poll instead" })),
 });
 
 const taskSchema = Type.Object({
@@ -93,7 +100,7 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
       inputSchema: Type.Object({}),
       execute: async (_args: Record<string, never>, ctx) => {
         if (ctx.session === undefined) return { content: CALLER_MISSING, isError: true };
-        const view = deps.list(ctx);
+        const view = await deps.list(ctx);
         if (view.length === 0) return { content: "(no sub-agents)" };
         return { content: viewLines(view) };
       },

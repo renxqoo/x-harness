@@ -10,7 +10,8 @@
     "@x-harness/agent-loop": "workspace:*",
     "@x-harness/core": "workspace:*",
     "@x-harness/session": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/session-mailbox": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0",

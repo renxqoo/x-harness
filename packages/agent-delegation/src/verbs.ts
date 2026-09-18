@@ -8,6 +8,8 @@ import type { ToolExecContext } from "@x-harness/tools";
 import { refOfAgentId } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { resolveAddress } from "./nameaddr.ts";
+import type { CrossDeps } from "./crossmsg.ts";
+import { sendCross } from "./crossmsg.ts";
 import { childReport } from "./notify.ts";
 import type { ChildReport } from "./notify.ts";
 import type { ChildView } from "./types.ts";
@@ -18,13 +20,17 @@ export interface VerbDeps {
   readonly lineage: Lineage;
   readonly reportCap: number;
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
+  /** 跨进程面（未开箱 = 缺省纯进程内：box 域寻址与 notify_when_idle 拒） */
+  readonly cross?: CrossDeps;
 }
 
 export type VerbOutcome = { readonly ok: true; readonly text: string } | { ok: false; readonly reason: string };
 
 export interface MessageInput {
   readonly to: string;
-  readonly message: string;
+  readonly message?: string;
+  readonly summary?: string;
+  readonly notify_when_idle?: boolean;
 }
 
 export interface OutputInput {
@@ -33,12 +39,25 @@ export interface OutputInput {
   readonly timeout?: number;
 }
 
-export function message(deps: VerbDeps, execCtx: ToolExecContext, input: MessageInput): VerbOutcome {
+export async function message(deps: VerbDeps, execCtx: ToolExecContext, input: MessageInput): Promise<VerbOutcome> {
   if (input.to === "") return { ok: false, reason: "invalid-args:to must be a non-empty string" };
   if (input.message === "") return { ok: false, reason: "invalid-args:message must be a non-empty string" };
   if (execCtx.session === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
+  if (input.notify_when_idle === true) {
+    // 仅根会话可用（§4.4）；子代理走完成通知，不需要订阅
+    if (deps.lineage.bySession(execCtx.session) !== undefined) {
+      return { ok: false, reason: "invalid-args:notify_when_idle is only available from the main conversation" };
+    }
+    if (deps.cross === undefined) return { ok: false, reason: "invalid-args:no local mailbox is configured" };
+    return sendCross(deps.cross, execCtx, input);
+  }
   const resolved = resolveAddress(deps.lineage, execCtx.session, input.to);
-  if (resolved.kind === "miss") return { ok: false, reason: resolved.reason };
+  if (resolved.kind === "miss") {
+    // 进程内落空 → 跨进程 box 域（§5.2-4b；未开箱则维持 not-found）
+    if (deps.cross === undefined || input.message === undefined) return { ok: false, reason: resolved.reason };
+    return sendCross(deps.cross, execCtx, input);
+  }
+  if (input.message === undefined) return { ok: false, reason: "invalid-args:message is required unless notify_when_idle is set" };
   if (resolved.kind === "main") return deliverToMain(deps, execCtx.session, input.message);
 
   const row = resolved.row;
@@ -115,21 +134,30 @@ function ownerRow(deps: VerbDeps, execCtx: ToolExecContext, taskId: string): { o
   return { ok: true, value: row };
 }
 
-export function listAgents(deps: VerbDeps, execCtx: ToolExecContext): readonly ChildView[] {
+export async function listAgents(deps: VerbDeps, execCtx: ToolExecContext): Promise<readonly ChildView[]> {
   if (execCtx.session === undefined) return [];
-  return deps.lineage
+  const rows: ChildView[] = deps.lineage
     .rows()
     .filter((row) => row.parent === execCtx.session)
     .map((row) => ({
+      kind: "subagent",
       name: row.name,
       ref: refOfAgentId(row.agentId),
-      kind: "subagent",
       agentId: row.agentId,
       sessionId: String(row.sessionId),
       type: row.type,
       depth: row.depth,
       status: viewStatus(row),
     }));
+  // 本机其他会话（§2.1 五类中的 local-session；own box 除外）
+  if (deps.cross !== undefined) {
+    const own = deps.cross.box;
+    for (const box of await deps.cross.service.discover()) {
+      if (box.name === own) continue;
+      rows.push({ kind: "local-session", name: box.name, ref: box.ref, status: box.status });
+    }
+  }
+  return rows;
 }
 
 function raceIdle(whenIdle: Promise<void>, timeoutMs: number): Promise<void> {

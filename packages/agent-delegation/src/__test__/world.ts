@@ -15,6 +15,7 @@ import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolRegistry } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
+import { createMailboxPlugin } from "@x-harness/session-mailbox";
 import { createAgentDelegationPlugin } from "../plugin.ts";
 import type { DelegationOptions } from "../types.ts";
 import { afterEach, expect } from "vitest";
@@ -70,12 +71,23 @@ afterEach(async () => {
   dirs = [];
 });
 
-export async function makeWorld(options: DelegationOptions): Promise<World> {
+export async function makeWorld(options: DelegationOptions, mailboxRoot?: string): Promise<World> {
   const ctx = createContext();
   const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
   const calls: LlmRequest[] = [];
   const delegation = createAgentDelegationPlugin(options);
-  const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin, delegation]);
+  const plugins = options.mailbox !== undefined && mailboxRoot !== undefined
+    ? [
+        sessionPlugin,
+        toolsPlugin,
+        llmPlugin,
+        systemPromptPlugin,
+        agentLoopPlugin,
+        createMailboxPlugin({ root: mailboxRoot, timing: { pollIntervalMs: 20, heartbeatMs: 5_000, graceMs: 30_000, staleMs: 7 * 24 * 3_600_000, now: () => Date.now() } }),
+        delegation,
+      ]
+    : [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin, delegation];
+  const unload = await loadPlugins(ctx, plugins);
   const off = ctx.use(llmRuntime).registerAdapter({
     name: "fake",
     stream: (request) => {
@@ -118,8 +130,8 @@ export function textScript(_model: string, text: string): AsyncGenerator<LlmChun
   })();
 }
 
-export async function spawnParent(world: World, model = PARENT_MODEL): Promise<AgentHandle> {
-  const made = await world.loop.create({ agent: { model, provider: "fake" } });
+export async function spawnParent(world: World, model = PARENT_MODEL, id?: SessionId): Promise<AgentHandle> {
+  const made = await world.loop.create({ ...(id !== undefined ? { session: { id } } : {}), agent: { model, provider: "fake" } });
   expect(made.ok).toBe(true);
   if (!made.ok) throw new Error(made.reason);
   return made.value;

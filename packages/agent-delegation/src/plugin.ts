@@ -6,6 +6,9 @@ import { agentLoopServiceToken, agentStatus } from "@x-harness/agent-loop";
 import { sessionStore } from "@x-harness/session";
 import { toolRegistry } from "@x-harness/tools";
 import { systemPrompt } from "@x-harness/system-prompt";
+import { mailboxService } from "@x-harness/session-mailbox";
+import type { CrossDeps } from "./crossmsg.ts";
+import { createMailboxConsumer, startDrain } from "./mailbox-consumer.ts";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
 import { loadAgentTypes, resolveAgentDirs, typesFingerprint } from "./types-loader.ts";
@@ -88,7 +91,20 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
       };
 
       const spawnDeps = { loop, store, registry, lineage, limits, types: () => current, isTearingDown: () => tearingDown };
-      const verbDeps: VerbDeps = { loop, store, lineage, reportCap: limits.reportCap, adoptOrphan };
+      let verbDeps: VerbDeps = { loop, store, lineage, reportCap: limits.reportCap, adoptOrphan };
+
+      let consumer: ReturnType<typeof createMailboxConsumer> | undefined;
+      let cross: CrossDeps | undefined;
+      if (options.mailbox !== undefined) {
+        const service = ctx.tryUse(mailboxService);
+        if (service === undefined) throw new Error("agent-delegation: options.mailbox requires the session-mailbox plugin to be assembled");
+        const boxHandle = await service.open(options.mailbox.box); // 真重名活箱构造期 throw（装配 fail-fast）
+        consumer = createMailboxConsumer({ service, loop, box: boxHandle, mainSession: options.mailbox.mainSession, onWarn: options.onWarn });
+        cross = { service, loop, box: options.mailbox.box, mainSession: options.mailbox.mainSession, lineage };
+        verbDeps = { ...verbDeps, cross };
+        ctx.effect(startDrain(consumer, service.timing.pollIntervalMs, options.onWarn)); // 停 drain 先行（dispose 序列 §5.3）
+        ctx.effect(boxHandle.startHeartbeat());
+      }
 
       const notifier = createNotifier({ loop, store, getRow: (session) => lineage.bySession(session), isTearingDown: () => tearingDown, adoptOrphan });
       const offStatus = ctx.on(agentStatus, (payload) => {
@@ -96,6 +112,14 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         if (payload.status === "running") void refreshTypes().catch(() => {
           /* 探测失败保持现状：下次 kick 再试 */
         });
+        if (consumer !== undefined && options.mailbox !== undefined && payload.session === options.mailbox.mainSession) {
+          void consumer.mirrorStatus(payload.status).catch(() => {
+            /* 镜像失败：心跳兜底 */
+          });
+          if (payload.status === "idle") void consumer.settleSubs().catch(() => {
+            /* 结算尽力：下次 idle 再试前订阅已摘 */
+          });
+        }
       });
       const offs = delegationTools({
         spawn: (execCtx, input: SpawnInput) => spawnAgent(spawnDeps, execCtx, input),
@@ -109,6 +133,9 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         tearingDown = true; // 通知门先行：级联 cancel 的 abort 通知不得 steer 复活父
         offStatus();
         for (const off of offs) off();
+        void consumer?.shutdown().catch(() => {
+          /* 关箱尽力：陈尸回收兜底 */
+        });
         const cascade = lineage.rows().map(async (row) => {
           const childHandle = loop.get(row.sessionId);
           if (childHandle === undefined) return;
