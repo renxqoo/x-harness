@@ -34,6 +34,8 @@ function textScript(text: string): AsyncGenerator<LlmChunk> {
 }
 
 export async function runToolboxJourney(): Promise<void> {
+  // grep 是 rg 硬依赖（TOOLBOX.md §5）——缺席 = 环境配置错误，fail-fast 报可行动指引
+  must(Bun.which("rg") !== null, "e2e 需要 ripgrep：brew install ripgrep / apt install ripgrep，或设 X_HARNESS_RG_PATH");
   const root = await mkdtemp(join(tmpdir(), "xh-toolbox-e2e-"));
   try {
     const ctx = createContext();

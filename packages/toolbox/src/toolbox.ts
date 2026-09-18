@@ -18,7 +18,6 @@ export interface ToolboxOptions {
   readonly maxOutputBytes?: number;
   readonly spillDir?: string;
   readonly rgPath?: string;
-  readonly disableRg?: boolean;
 }
 
 function registering(tool: ToolDefinition, name: string): Plugin {
@@ -37,7 +36,7 @@ export function createToolbox(options: ToolboxOptions = {}) {
     readPlugin: registering(createReadTool(gate, observed), "tool-read"),
     writePlugin: registering(createWriteTool(gate, observed), "tool-write"),
     bashPlugin: registering(createBashTool(gate, limits), "tool-bash"),
-    grepPlugin: registering(createGrepTool(gate, { rgPath: options.rgPath, disableRg: options.disableRg }), "tool-grep"),
+    grepPlugin: registering(createGrepTool(gate, { rgPath: options.rgPath }), "tool-grep"),
     /** 测试/宿主直取句柄 */
     gate,
     observed,

@@ -318,7 +318,7 @@ in-repo**（argv 内容级 + darwin 全腿 + T9 外部矩阵承载）；权限 5
 输出帽部分兜底，VM 层正解）；审计入会话流（session 件）；审批 UI/CLI 宿主；danger 豁免档接入
 形态（配置留位）；BASH_ENV 时序（不注入 BASH_ENV）；pi 式模糊路径匹配（可用性特性，落档）；
 会话授权撤销（只增不减）；**macOS setsid 孙进程宿主退出残留**（无 PDEATHSIG 等价，落档）；
-walker 每文件双往返（性能非正确性，32MB 帽已在）；spill 走 env fs 面（宿主运维产物豁免——
+spill 走 env fs 面（宿主运维产物豁免——
 「六文件全部经 ExecEnv」的明文例外）。
 
 ## 10. 实施批次（单件交付、内部小步）
@@ -346,7 +346,8 @@ protectedPaths 进剖面（SBPL deny-write/bwrap tmpfs 遮挂）+Linux denyRead 
 等全 string（§1）；realpath 语义钉死进契约+physicalOf 单源迁移（§1/§2）；§8 计数口径改运行期+
 D3 入缺口（§0/§8）；readDir/SpawnResult reason 闭集（§1）；版本登记时序不变量+空文件/hadBom
 落死（§3）；modeIfCreate 缺省 0600（§1）；信号死亡 code null+signal 归一+selfKilled 归属点名
-（§1）；walker 双往返与「全部经 env」措辞豁免落档（§9）。
+（§1）；walker 双往返与「全部经 env」措辞豁免落档（§9）——walker 已随 grep rg 硬依赖化删除
+（docs/TOOLBOX.md §5），豁免条目仅对 rg 子进程内 I/O 语义残留适用。
 **采纳（B，P0×3+P1×5+P2×3+P3×2）**：插件拆卸契约成节（§5——sandbox 两段杀→settled→关代理池、
 permission ask 全 deny 结算、exit handler 进程级单例+quiescence）；代理改 **per-session 口池**
 （CONNECT 会话归属无歧义，§4）+会话终结关口；ask 撤销=socket close+负缓存防重试风暴（§4/§5）；

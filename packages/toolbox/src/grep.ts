@@ -1,10 +1,9 @@
-// grep 工具（docs/TOOLBOX.md §5）：双路径（系统 rg / JS walker 回退）；纯 argv 向量注入安全；
-// selfKilled 达限即停成功终态；--json 事件组装；两路径同输出形状。
+// grep 工具（docs/TOOLBOX.md §5）：rg 硬依赖单路径（解析链 rgPath → env X_HARNESS_RG_PATH →
+// PATH 探测；缺席 fail-closed 报修复指引——绝不静默降级）。纯 argv 向量注入安全；
+// selfKilled 达限即停成功终态；--json 事件组装；malformed 流 fail-closed。
 
 import { spawn } from "node:child_process";
-import { fstatSync } from "node:fs";
-import { readdirSync, readSync, openSync, closeSync, statSync, type Stats } from "node:fs";
-import { join } from "node:path";
+import { statSync } from "node:fs";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { PathGate } from "./paths.ts";
@@ -13,13 +12,26 @@ const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1_000;
 const LINE_PREVIEW = 500;
 const RAW_CAP = 1_000_000;
-/** 双路径共享跳过集（rg --glob 与 walker 同表——放弃 gitignore 换一致性） */
+/** 目录搜索跳过集（`--glob !node_modules --glob !.git`；不尊重 gitignore——--no-ignore 声明） */
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
+
+const RG_GUIDANCE = "install ripgrep (brew install ripgrep / apt install ripgrep), set X_HARNESS_RG_PATH, or pass rgPath to createToolbox";
 
 export interface GrepOptions {
   readonly rgPath?: string;
-  /** 显式禁用 rg 强制 walker 路径（测试对齐装置/无 rg 环境逃生口） */
-  readonly disableRg?: boolean;
+}
+
+/** rg 解析链：显式 rgPath → env X_HARNESS_RG_PATH → PATH 探测（PATH 目录不可写的信任前提落档 §7）。
+ *  env/which 可注入——Bun.which 缓存启动期 PATH，运行时改 env 不生效，缺席态只能注入构造 */
+export function resolveRg(
+  explicit: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+  which: (command: string) => string | null = (command) => Bun.which(command),
+): string | null {
+  if (explicit !== undefined && explicit !== "") return explicit;
+  const fromEnv = env.X_HARNESS_RG_PATH;
+  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  return which("rg");
 }
 
 export function createGrepTool(gate: PathGate, options: GrepOptions = {}): ToolDefinition {
@@ -58,31 +70,22 @@ async function grep(input: { readonly gate: PathGate; readonly options: GrepOpti
   const context = (args["context"] as number | undefined) ?? 0;
   const literal = (args["literal"] as boolean | undefined) === true;
   const ignoreCase = (args["ignore_case"] as boolean | undefined) === true;
-  let st: Stats;
   try {
-    st = statSync(admitted.path);
+    statSync(admitted.path); // 存在性门（目录/文件都合法——rg 自行分派）
   } catch {
     return { content: `FS_NOT_FOUND: ${targetRaw} does not exist`, isError: true };
   }
-
-  const search: SearchArgs = { pattern, path: admitted.path, isFile: st.isFile(), glob, literal, ignoreCase, context, limit, signal: ctx.signal };
-  if (options.disableRg !== true) {
-    const rg = options.rgPath ?? whichRg();
-    if (rg !== null && rg !== "") return runRg({ ...search, rgPath: rg as string });
+  const rg = resolveRg(options.rgPath);
+  if (rg === null) {
+    return { content: `SEARCH_RG_UNAVAILABLE: ripgrep is required but not found — ${RG_GUIDANCE}`, isError: true };
   }
-  return walk(search);
+  const search: SearchArgs = { pattern, path: admitted.path, glob, literal, ignoreCase, context, limit, signal: ctx.signal };
+  return runRg({ ...search, rgPath: rg });
 }
-
-function whichRg(): string | null {
-  return Bun.which("rg");
-}
-
-// ---------- rg 路径 ----------
 
 interface SearchArgs {
   readonly pattern: string;
   readonly path: string;
-  readonly isFile: boolean;
   readonly glob?: string;
   readonly literal: boolean;
   readonly ignoreCase: boolean;
@@ -174,19 +177,9 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
     child.on("error", () => resolve(-1));
   });
   a.signal.removeEventListener("abort", abortRg);
-  // kill 后排空：残余 buffer 的完整行继续解析；无尾换行的末段是撕裂半行——记截断不记损坏
-  if (raw !== "" && !reached) {
-    if (raw.endsWith("\n") || selfKilled) {
-      const lines = raw.split("\n");
-      if (!raw.endsWith("\n")) lines.pop();
-      for (const line of lines) {
-        if (line === "" || reached) continue;
-        if (parseRgLine(line, matches) === "malformed") malformed = true;
-      }
-    }
-  }
-  const settled = settleRg({ code, selfKilled, malformed, rawOverflow, aborted: a.signal.aborted, stderrTail, matches, limit: a.limit });
-  return settled;
+  // kill 落点之后的未解析输出（同 chunk 余行、撕裂半行）直接丢弃——已解析行即终态；
+  // 不做 kill 后排空：其结果在三路终态下均不可达（reached 排除、aborted/rawOverflow 优先归一）
+  return settleRg({ code, selfKilled, malformed, rawOverflow, aborted: a.signal.aborted, stderrTail, matches, limit: a.limit });
 }
 
 /** 退出码矩阵：selfKilled→成功走 limit 页脚；1=零命中成功；2→FAILED（stderr 特征附 literal 提示）；
@@ -195,7 +188,7 @@ function settleRg(input: { readonly code: number | null; readonly selfKilled: bo
   if (input.aborted) return { content: "SEARCH_ABORTED: search cancelled", isError: true };
   if (input.rawOverflow) return { content: "SEARCH_RAW_OUTPUT_OVERFLOW: rg output exceeded 1MB", isError: true };
   if (input.malformed) return { content: "SEARCH_FAILED: rg produced malformed output (stream corrupted)", isError: true };
-  if (input.code === -1) return { content: "SEARCH_FAILED: failed to start rg", isError: true };
+  if (input.code === -1) return { content: `SEARCH_FAILED: failed to start rg (path may be wrong) — ${RG_GUIDANCE}`, isError: true };
   if (input.code === 1 && !input.selfKilled) return { content: "No matches found" };
   if (input.code !== 0 && input.code !== 1 && !input.selfKilled) {
     const hint = /regex|parse|unrecognized|invalid pattern/i.test(input.stderrTail) ? " (the pattern may be invalid — try literal:true)" : "";
@@ -222,133 +215,6 @@ function parseRgLine(line: string, matches: Array<{ path: string; line: number; 
   return parsed.type;
 }
 
-// ---------- walker 路径 ----------
-
-/** 目录收集（BFS；跳过共享跳过集与一切 symlink；单条目失败跳过不杀遍历）。
- *  全同步单宏任务——abort 观测不到中途态，入口由 dispatch 管线拦截 */
-function collectFiles(a: SearchArgs): string[] {
-  if (a.isFile) return [a.path]; // 单文件目标：不做目录遍历
-  const files: string[] = [];
-  const queue: string[] = [a.path];
-  while (queue.length > 0) {
-    const dir = queue.shift() as string;
-    let entries;
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name)) continue;
-        queue.push(full);
-      } else if (entry.isFile()) {
-        if (a.glob !== undefined && !globMatch(a.glob, relativeToRoot(a, full))) continue; // 相对路径匹配（与 rg 对齐）
-        files.push(full);
-      }
-      // symlink：跳过一切（与 rg 默认一致）
-    }
-  }
-  return files;
-}
-
-interface ScanFileInput {
-  readonly file: string;
-  readonly lines: readonly string[];
-  readonly matcher: (line: string) => boolean;
-  readonly context: number;
-  readonly limit: number;
-}
-
-/** 单文件命中（含上下文行展开；计满即停不补尾 context——两路径同形状） */
-function scanFile(input: ScanFileInput, matches: Array<{ path: string; line: number; text: string; isContext: boolean }>): "full" | "more" {
-  const { file, lines, matcher, context, limit } = input;
-  const hits: number[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (matcher(lines[i] as string)) hits.push(i + 1);
-  }
-  for (const hit of hits) {
-    if (matches.filter((m) => !m.isContext).length >= limit) return "full";
-    const start = Math.max(1, hit - context);
-    const end = Math.min(lines.length, hit + context);
-    for (let n = start; n <= end; n++) {
-      if (matches.some((m) => m.path === file && m.line === n)) continue;
-      matches.push({ path: file, line: n, text: lines[n - 1] as string, isContext: !hits.includes(n) }); // 自身命中永远是 match 行（rg 同款；context 重叠不降级）
-    }
-  }
-  return "more";
-}
-
-async function walk(a: SearchArgs): Promise<{ content: string; isError?: true }> {
-  const matcher = compileMatcher(a.pattern, a.literal, a.ignoreCase);
-  if (matcher === undefined) {
-    return { content: "SEARCH_INVALID_PATTERN: cannot compile pattern (try literal:true)", isError: true };
-  }
-  const files = collectFiles(a);
-  const matches: Array<{ path: string; line: number; text: string; isContext: boolean }> = [];
-  for (const file of files) {
-    const lines = readTextLines(file);
-    if (lines === undefined) continue; // 二进制（首 8KB NUL）/超大/读失败跳过
-    if (scanFile({ file, lines, matcher, context: a.context, limit: a.limit }, matches) === "full") break;
-  }
-  if (matches.length === 0) return { content: "No matches found" };
-  return { content: renderMatches(matches, a.limit) };
-}
-
-const WALKER_FILE_CAP = 32 * 1024 * 1024;
-
-function readTextLines(file: string): string[] | undefined {
-  let fd: number;
-  try {
-    fd = openSync(file, "r");
-  } catch {
-    return undefined;
-  }
-  try {
-    const head = Buffer.alloc(8_192);
-    const headRead = readSync(fd, head, 0, head.length, 0);
-    if (head.subarray(0, headRead).includes(0)) return undefined; // 二进制跳过
-    const st = fstatSize(fd);
-    if (st > WALKER_FILE_CAP) return undefined; // 大文件跳过（整读 OOM 防护——rg 路径无此限）
-    const all = Buffer.alloc(st);
-    let done = 0;
-    while (done < st) {
-      const read = readSync(fd, all, done, st - done, done);
-      if (read === 0) break;
-      done += read;
-    }
-    return all.toString("utf8", 0, done).split("\n").map((line) => line.replace(/\r$/, ""));
-  } catch {
-    return undefined;
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function fstatSize(fd: number): number {
-  const st = fstatSync(fd);
-  return Number(st.size);
-}
-
-// ---------- 共享 ----------
-
-function compileMatcher(pattern: string, literal: boolean, ignoreCase: boolean): ((line: string) => boolean) | undefined {
-  try {
-    const source = literal ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern;
-    const re = new RegExp(source, ignoreCase ? "i" : "");
-    return (line: string) => re.test(line);
-  } catch {
-    return undefined;
-  }
-}
-
-/** 简单 glob：* 与 {a,b} 交替（与 rg -g 子集对齐；brace-aware 逗号校验在入口） */
-function globMatch(glob: string, name: string): boolean {
-  const expanded = expandBraces(glob);
-  return expanded.some((alt) => globToRe(alt).test(name));
-}
-
 const GLOB_EXPAND_CAP = 64;
 
 function expandBraces(glob: string, budget: { count: number } = { count: 1 }): string[] {
@@ -364,23 +230,7 @@ function expandBraces(glob: string, budget: { count: number } = { count: 1 }): s
   return parts.flatMap((part) => expandBraces(`${prefix}${part}${suffix}`, budget));
 }
 
-function globToRe(glob: string): RegExp {
-  const escaped = glob
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*\*/g, "[:doublestar:]")
-    .replace(/\*/g, "[^/]*")
-    .replace(/\?/g, "[^/]")
-    .replace(/:doublestar:/g, ".*");
-  return new RegExp(`^${escaped}$`);
-}
-
-function relativeToRoot(a: SearchArgs, full: string): string {
-  const root = a.path;
-  const rel = full.startsWith(`${root}/`) ? full.slice(root.length + 1) : full;
-  return rel;
-}
-
-/** glob 校验：顶层逗号拒（brace 内放行）；负向拒 */
+/** glob 校验：顶层逗号拒（brace 内放行）；负向拒；指数展开帽 */
 function globError(glob: string): string | undefined {
   if (glob.startsWith("!")) return "negative globs are not supported";
   let depth = 0;
@@ -403,4 +253,4 @@ function renderMatches(matches: Array<{ path: string; line: number; text: string
   return [header, ...rows].join("\n");
 }
 
-export { SKIP_DIRS, globMatch, parseRgLine, settleRg };
+export { parseRgLine, settleRg };

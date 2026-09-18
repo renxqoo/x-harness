@@ -1,6 +1,6 @@
 # TOOLBOX：read / write / bash / grep 四工具插件（件 10）
 
-> 状态：已实施（单测 76 例 + e2e 四工具旅程全绿；方案审 A/B 处置见 §9，实施期两轮代码审处置见 §9 末）
+> 状态：已实施（单测全绿 + e2e 四工具旅程；grep 为 rg 硬依赖单路径——裁决与获取形态对照见 §5）
 > 级别：中（文件系统/进程副作用、注入面、并发互斥、原子性）
 > 包：`packages/toolbox`（@x-harness/toolbox）
 
@@ -13,8 +13,7 @@ export interface ToolboxOptions {
   readonly maxTimeoutMs?: number;      // bash timeout_ms 上限（缺省 600_000——防排他屏障被钉死）
   readonly maxOutputBytes?: number;    // bash 输出字节帽（缺省 30_000，截断保尾部）
   readonly spillDir?: string;          // 截断全文落盘目录（缺省 mkdtemp(tmpdir()/x-harness-)，0700）
-  readonly rgPath?: string;            // rg 显式路径（缺省 PATH 探测——PATH 信任前提落档 §7）
-  readonly disableRg?: boolean;        // 显式禁用 rg 强制 walker 路径（无 rg 环境逃生口/测试对齐装置）
+  readonly rgPath?: string;            // rg 显式路径（解析链最高优先级；缺省 env X_HARNESS_RG_PATH → PATH 探测）
 }
 export function createToolbox(options?: ToolboxOptions): {
   readonly readPlugin: Plugin;   // name "tool-read"
@@ -22,7 +21,7 @@ export function createToolbox(options?: ToolboxOptions): {
   readonly bashPlugin: Plugin;   // name "tool-bash"
   readonly grepPlugin: Plugin;   // name "tool-grep"
 };
-// 四插件共享闭包状态（read 观察版本登记 → write 版本 CAS）；read+write 需同工厂成对装配
+// read+write 共享观察登记（需同工厂成对装配）；grep 依赖 rg 二进制（§5 解析链）
 ```
 
 四个工具经 `toolRegistry.register` 注册（inject ["tools"]）。并发档（交集 35）：read/grep 声明
@@ -126,44 +125,52 @@ export function createToolbox(options?: ToolboxOptions): {
 **不做（落档）**：后台 job 模式；流式 progress 转发（无消费面）；受信 env 注入；60s 无输出
 hung-kill（缺省墙钟已兜底挂死——有意以墙钟替代双时间线，简化）。
 
-## 5. grep（grep.ts + walk.ts）
+## 5. grep（grep.ts）
 
 **Schema**：`{ pattern: string（非空）, path?: string（缺省 root）, glob?: string（单正向 glob，
 拒绝 `!`/逗号——D38）, literal?: boolean, ignore_case?: boolean, context?: int 0-5, limit?: int
 （缺省 100，上限 1000——A31 口径） }`。
 
-**双路径**：系统 `rg` 存在（PATH 探测）→ rg 子进程；否则 JS walker（语义一致回退——A27）。
-两路径同断言套件跑（表驱动 × 路径矩阵）。
+**rg 硬依赖（用户裁决：删 walker 兜底）**：grep 只有 ripgrep 一条路径。参考系对照——DSH 库层
+`@vscode/ripgrep`（npm install 时 postinstall 下载，装时网络 + 浮动信任，bun 还需
+trustedDependencies 开口；其 pkg 发行形态实为 `<exe>-rg` sidecar）；pi 运行时懒下载 latest
+（CHANGELOG 病历：GitHub API 配额枯竭、musl 资产修复、下载超时崩溃，且无 sha256 校验）。
+本仓形态是内部部署、制品可控：**二进制随制品/镜像携带，agent 运行时零网络**；rg 缺席 =
+配置错误 → fail-closed 报错带修复指引，**绝不静默降级**（JS 回退会把 ReDoS 暴露与百倍
+性能崖藏进生产路径，且双路径对齐是永久维护税）。触发条件落档：未来若发公开裸 CLI
+（匿名用户首次运行、无制品层），获取模型切换为运行时下载（pi 式）是独立产品裁决。
 
-**rg 路径**：纯 argv 向量（无 shell 层）：`rg --json --no-config --no-messages --hidden --no-ignore
+**rg 解析链**（单一顺序）：`ToolboxOptions.rgPath` 显式 → env `X_HARNESS_RG_PATH` →
+PATH 探测（`Bun.which("rg")`）。全失败 → `SEARCH_RG_UNAVAILABLE` + 三条修复指引
+（安装 rg：`brew install ripgrep` / `apt install ripgrep`；设 `X_HARNESS_RG_PATH`；
+`createToolbox({ rgPath })`）。显式给出但不可执行 → spawn 失败归
+`SEARCH_FAILED: failed to start rg`（附同款指引）。
+
+**执行**：纯 argv 向量（无 shell 层）：`rg --json --no-config --no-messages --hidden --no-ignore
 [skip globs] [--fixed-strings] [-i] [-g glob] [-C N] --regexp=<pattern> -- <path>`
 （`--no-config` 防 RIPGREP_CONFIG_PATH `--pre` 注入——D37；pattern 在 `--regexp=`、path 在
 `--` 后——flag-like pattern 惰性——P23；**不用 `-m`**——那是 per-file 上限与全局 limit 语义
-相悖）。**跳过集与 walker 同表**（`--glob !node_modules --glob !.git` 等 + walker 镜像同集且跳
-一切 symlink；放弃 gitignore 换双路径一致——文档声明）。
+相悖）。**跳过集**（`--glob !node_modules --glob !.git`；rg 默认不跟 symlink；不尊重
+gitignore——`--no-ignore`，声明即可）。
 退出码：0=命中、1=零命中成功 `No matches found`（交集 27）、2 → `SEARCH_FAILED` 透传 stderr
 尾部（路径缺失与坏正则同为 2——仅 stderr 含正则解析特征时附 literal 提示）、其他 → 若
 **selfKilled**（我方达限 kill——退出码 128+SIGTERM）→ 成功终态走 limit 页脚，否则 `SEARCH_FAILED`。
-malformed JSON 行 → 整体失败（D34）——**但 selfKill 撕裂的最后半行除外**（记截断不记损坏；
-kill 后先排空 buffer 再解析）。达 limit 即 kill rg（P22 提前停）。abort → kill（交集 34）。
+malformed 完整行 → 整体失败（D34）。kill 落点之后的未解析输出（同 chunk 余行、撕裂半行）
+直接丢弃——已解析行即终态，不做 kill 后排空（三路终态下排空结果均不可达：达限被
+reached 排除、abort/rawOverflow 被 settle 优先归一）。达 limit 即 kill rg（P22 提前停）。
+abort → kill（交集 34）。
 `--json` 事件形态：begin（path）→ match（path.text/line_number/lines.text/submatches）→
 context（同构，submatches 恒空）→ end → summary；输出由事件组装。
 
-**walker 路径**：目录遍历（BFS，跳过 symlink 目录与 .git/node_modules；尊重 glob 简单匹配）；
-逐文件首 8KB NUL 嗅探跳过二进制（A34）；单文件整读上限 32MB（超出跳过——OOM 防护，rg 路径
-流式无此限——分歧面已入测试口径）；遍历全同步单宏任务（abort 观测不到中途态，入口由 dispatch
-管线拦截）；单条目 stat 失败跳过不杀遍历。自身命中行与 context 重叠时保持 match 分类
-（`isContext = !hits.includes(n)`——与 rg 一致，不降级）。
-
-**输出**（两路径统一）：`Found N matches` + `path:line:text`（单文件也带文件名——P24）；
+**输出**：`Found N matches` + `path:line:text`（单文件也带文件名——P24）；
 上下文行 `path-line-text`（grep -C 惯例——交集 29）；行超 500 字符截断 + ` (line truncated, use
-read for full line)`（交集 31）；达 limit → `Match limit N reached. Use limit=M for more, or
-refine the pattern`（交集 30——**两路径同形状：计满即停，不补尾 context**）；rg 原始 stdout 超
-1MB → `SEARCH_RAW_OUTPUT_OVERFLOW`（D41）。glob 校验 brace-aware：顶层逗号拒、`*.{ts,tsx}`
-放行（D38）。limit/offset 超上限 → 校验层拒绝（与非法值同口径——与参考的钳制有意不同）。
+read for full line)`（交集 31）；达 limit → `Found N matches (limit M reached). Use limit=K for
+more, or refine the pattern`（交集 30——计满即停，不补尾 context）；rg 原始 stdout 超
+1MB → `SEARCH_RAW_OUTPUT_OVERFLOW`（D41）。glob 校验 brace-aware：顶层逗号拒、负向 `!` 拒、
+`*.{ts,tsx}` 放行（D38）。limit/offset 超上限 → 校验层拒绝（与非法值同口径——与参考的钳制有意不同）。
 
-**不做（落档）**：rg 自动下载（P29）；respect .gitignore（walker 侧显式跳 .git 已覆盖主要噪声，
-gitignore 语义留给 rg 路径天然具备）；多 glob/负向 glob。
+**不做（落档）**：rg 获取（安装/下载/sidecar 拼装全归制品与宿主层——解析链只负责找）；
+respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows target（整仓 POSIX-only）。
 
 ## 6. 测试口径（交集 38 条逐条 + 回归源）
 
@@ -182,16 +189,20 @@ gitignore 语义留给 rg 路径天然具备）；多 glob/负向 glob。
   ANSI+撕裂 UTF-8/workdir 预检 WORKDIR_NOT_FOUND/spawn 失败/**abort 杀整组**（`process.kill(-pid,0)`
   组探活断言——回归进程泄漏）/pre-abort 零 spawn（marker 文件副作用断言——回归 D28）/
   **host-exit 清场**（子进程杀后父进程退出→ detached 组死净——墙钟验证）。
-- grep（12+回归）：零命中成功/退出码矩阵（含 **selfKilled→成功+limit 页脚**——回归 A-P0）/argv
-  惰性矩阵（`$(rm)`/反引号/换行/`--pre=payload` 均无副作用文件——回归 P23/D36）/`--no-config`/
-  literal 逃生/ignore_case/glob（brace 放行+顶层逗号拒）/上下文行格式/500 字符截断/limit 提示
-  （**触顶时 context 形状两路径一致——自身命中行不降级为 context**）/abort（管线归一口径）/
-  binary 目录搜索跳过/**双路径对齐 fixture**（含 node_modules/隐藏文件/真 .gitignore/越根
-  symlink 四类分歧面——防贫 fixture 假绿；越根外目录存活到 afterEach 非 dangling）/
-  walker 32MB 大文件分歧面（walker 跳过、rg 照常命中）；walker 路径同套件重跑；**rg 缺席时
-  rg 路径用例显式 skip 并计数汇报**（不静默消失）；**假 rg 注入装置（rgPath 指向脚本）**：
-  malformed/RAW_OVERFLOW/中途 abort/exit 2+literal 提示/启动失败——确定性矩阵；parseRgLine/
-  settleRg 纯函数单测。
+- grep（rg 单路径）：零命中成功/退出码矩阵（含 **selfKilled→成功+limit 页脚**——回归 A-P0）/argv
+  惰性矩阵（`$(rm)`/反引号/换行均无副作用文件——回归 P23/D36）+ **argv 矩阵真 spawn 取证**
+  （假 rg 吐 stderr：--json/--no-config/--no-messages/--hidden/--no-ignore/跳过集/--regexp 惰性/
+  `--` 分隔全在场）/literal 逃生/ignore_case/glob（brace 放行；顶层逗号拒与负向 `!` 拒——rg 无关
+  契约不随 rg skip）/上下文行格式/500 字符截断/limit 提示/**2MB 大文件流式命中 tripwire**/
+  abort（管线归一口径）/binary 目录搜索跳过/**分歧面 fixture**（node_modules 跳过、隐藏文件搜到、
+  真 .gitignore 不生效、越根 symlink 不跟——越根外目录存活到 afterEach 非 dangling）/
+  **rg 缺席时真 rg 用例显式 skip 并计数汇报**（不静默消失）；**解析链**：rgPath 显式 >
+  env `X_HARNESS_RG_PATH` > PATH（真 dispatch 双向验证：显式胜 env、env 生效）；
+  全缺席 → `SEARCH_RG_UNAVAILABLE` 带三条修复指引（回归：缺席曾静默落 JS 兜底产出弱化
+  结果——子进程剥 PATH 构造真缺席 + resolveRg 注入单测双覆盖）；显式 rgPath 不可执行 →
+  failed to start rg 带指引；**假 rg 注入装置（rgPath 指向脚本）**：
+  malformed/RAW_OVERFLOW/中途 abort/exit 2+literal 提示/argv 矩阵——确定性装置；
+  parseRgLine/settleRg 纯函数单测。
 - 路径门：越根 `..`/绝对路径越根/symlink 逃逸（回归 my-agent BUG-06）/NUL 拒绝/root="/"
   前缀不拼 `//`（一切绝对路径在根内）。
 - 横切：并发档声明（read/grep parallel、write/bash exclusive）/非 agent 调用方可用。
@@ -202,11 +213,12 @@ gitignore 语义留给 rg 路径天然具备）；多 glob/负向 glob。
 图片/多模态（ContentBlock 契约扩展时）；sandbox/审批流（安全产品线）；后台 job（长任务件）；
 流式 progress（观察面消费方出现时）；会话 cwd（宿主件写入 SessionHeader.cwd 后挂——届时
 workdir 升三级）；exit 标记 round-trip（UI 状态面出现时）；TOCTOU 窗口（门 check 与 I/O 之间
-换 symlink——接受，防护归安全产品线）；rg 自动下载；跨进程文件锁（CAS 限同进程）；spill 清理
-（保留为恢复产物；宿主可清）；**POSIX-only**（/bin/sh、负 pid 组杀——Windows 不支持）；
-PATH 探测信任前提（PATH 目录不可写——rgPath 选项为显式逃生口）；resume 后观察登记清零
-（fail-closed：续写后首笔覆盖写需重读——落档）；两层截断方向相反（内层字节保尾/外层字符保头）
-——有意设计勿「对齐」；成对装配 fail-closed（漏装 readPlugin → 覆盖写全拒，新建不受影响）。
+换 symlink——接受，防护归安全产品线）；**rg 获取全链**（安装/下载/sidecar 拼装归制品与
+宿主层——安装时下载与运行时下载的形态对照及不采纳理由见 §5）；跨进程文件锁（CAS 限同进程）；
+spill 清理（保留为恢复产物；宿主可清）；**POSIX-only**（/bin/sh、负 pid 组杀——Windows 不支持）；
+解析链信任前提（env 与 PATH 探测的目录不可写——rgPath/env 显式指定是逃生口）；resume 后观察
+登记清零（fail-closed：续写后首笔覆盖写需重读——落档）；两层截断方向相反（内层字节保尾/外层
+字符保头）——有意设计勿「对齐」；成对装配 fail-closed（漏装 readPlugin → 覆盖写全拒，新建不受影响）。
 
 ## 9. 方案审查处置（A/B 两路并行——A 含 Bun/rg 实测）
 
@@ -239,6 +251,8 @@ read !isFile 全拒（P3——FIFO 阻塞）；Bun.spawn signal 选项禁用（�
 
 ## 8. 验收清单
 
-- [x] §1–§6 逐条；单测 76 例全绿（paths 8 / read-write 22 / bash 16 / grep 30——含双路径
-  describe.each 与假 rg 注入装置）；e2e 四工具旅程绿（write→read→覆写→bash→未观察拒→grep
-  六步经真实 agent turn + 盘上副作用断言）；四门与覆盖率数字以流水线汇报为准
+- [x] §1–§6 逐条；单测 71 例全绿（paths 8 / read-write 22 / bash 16 / grep 25——含假 rg 注入装置
+  与解析链子进程装置）；e2e 四工具旅程绿（rg 缺席 fail-fast 探针 + write→read→覆写→bash→
+  未观察拒→grep 六步经真实 agent turn + 盘上副作用断言）；已知覆盖盲区如实落档：grep 的
+  `SEARCH_RG_UNAVAILABLE` 分支仅在子进程内可达（v8 覆盖率不可见——行为由子进程用例背书，
+  同 worker/host.ts 先例）；四门与覆盖率数字以流水线汇报为准
