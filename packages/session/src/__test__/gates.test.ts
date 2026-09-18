@@ -150,6 +150,12 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("no/such", {})).toBe("unknown-type:no/such");
   });
 
+  it("turn/end aborted 可选 cause（AGENT-LOOP-DRIVER F1）", () => {
+    expect(gateEvent("turn/end", { turn: 0, reason: { kind: "aborted", cause: "user" } })).toBeUndefined();
+    expect(gateEvent("turn/end", { turn: 0, reason: { kind: "aborted" } })).toBeUndefined();
+    expect(gateEvent("turn/end", { turn: 0, reason: { kind: "aborted", cause: 5 } })).toBe("shape:turn/end");
+  });
+
   it("inbox 词条门表驱动（docs/SESSION-RESUME §7）", () => {
     expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-step", turn: 0, claimed: ["a", "b"] })).toBeUndefined();
     expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-step", turn: 0, claimed: [] })).toBeUndefined();

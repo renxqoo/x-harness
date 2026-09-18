@@ -15,7 +15,7 @@ export interface SessionHeader {
 
 export type TurnEndReason =
   | { readonly kind: "completed" }
-  | { readonly kind: "aborted" }
+  | { readonly kind: "aborted"; readonly cause?: string }
   | { readonly kind: "blocked" }
   | { readonly kind: "error"; readonly message: string; readonly code?: string }
   | { readonly kind: "max-tokens" }

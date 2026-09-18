@@ -48,10 +48,15 @@ export function projectSurface(events: readonly SessionEvent[]): readonly Surfac
   return nodes;
 }
 
+const NULL_MARKER = Symbol("dormant");
+type NullMarker = typeof NULL_MARKER;
+
 export function surfaceToMessages(nodes: readonly SurfaceNode[]): SurfaceMessage[] {
-  return nodes.map(({ event }): SurfaceMessage => {
+  return nodes
+    .map(({ event }): SurfaceMessage | NullMarker => {
     switch (event.type) {
       case "system/message":
+        if (event.data.text === "") return NULL_MARKER; // dormant 锚点：空文本不产消息
         return { role: "system", text: event.data.text };
       case "user/message":
         return { role: "user", content: event.data.content };
@@ -70,5 +75,6 @@ export function surfaceToMessages(nodes: readonly SurfaceNode[]): SurfaceMessage
           ...(event.data.isError !== undefined ? { isError: event.data.isError } : {}),
         };
     }
-  });
+    })
+    .filter((message): message is SurfaceMessage => message !== NULL_MARKER);
 }

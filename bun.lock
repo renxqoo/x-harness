@@ -13,6 +13,18 @@
         "vitest": "^5.0.1",
       },
     },
+    "packages/agent-loop": {
+      "name": "@x-harness/agent-loop",
+      "version": "0.0.1",
+      "dependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@x-harness/core",
       "version": "0.0.1",
@@ -223,6 +235,8 @@
     "@vitest/mocker": ["@vitest/mocker@5.0.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.31", "@vitest/spy": "5.0.1", "estree-walker": "^3.0.3", "magic-string": "^1.2.3" }, "peerDependencies": { "msw": "^2.4.9", "vite": "^6.0.0 || ^7.0.0 || ^8.0.0" }, "optionalPeers": ["msw", "vite"] }, "sha512-6K1DoBNAPGvuOcSsGA4D6x+5zEEff/KmOOP3uetT2TrGpVfI+HRHRnJJfKi5ib/g1vx8IYHQD8s0pbJz8WQI7Q=="],
 
     "@vitest/spy": ["@vitest/spy@5.0.1", "", {}, "sha512-rbto/mF/SGERxEgYOek7Xm6B9b+y+mVoo+f4b2LymYO8zM1b7uB5nHuhVMTP2hxdzgxvGiZYGxGIaMvL5y180Q=="],
+
+    "@x-harness/agent-loop": ["@x-harness/agent-loop@workspace:packages/agent-loop"],
 
     "@x-harness/core": ["@x-harness/core@workspace:packages/core"],
 

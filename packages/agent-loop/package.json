@@ -1,0 +1,17 @@
+{
+  "name": "@x-harness/agent-loop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/core": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/system-prompt": "workspace:*",
+    "@sinclair/typebox": "^0.34.0"
+  }
+}

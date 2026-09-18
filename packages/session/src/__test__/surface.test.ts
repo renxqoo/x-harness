@@ -110,6 +110,15 @@ describe("surfaceToMessages（docs/SESSION.md §1.4 角色映射）", () => {
     ]);
   });
 
+  it("空文本 system 节点 dormant：投影不产消息（AGENT-LOOP-DRIVER F3 锚点策略）", () => {
+    const log = [
+      surfaceEvent({ seq: 0, type: "system/message", data: { turn: 0, step: 0, text: "" }, op: "append" }),
+      surfaceEvent({ seq: 1, type: "user/message", data: { turn: 0, step: 0, content: [{ type: "text", text: "hi" }] }, op: "append" }),
+    ] as SessionEvent[];
+    const messages = surfaceToMessages(projectSurface(log));
+    expect(messages).toEqual([{ role: "user", content: [{ type: "text", text: "hi" }] }]);
+  });
+
   it("无可选字段时不产生 undefined 键", () => {
     const log = [
       surfaceEvent({ seq: 0, type: "assistant/message", data: { turn: 0, step: 0, content: [] }, op: "append" }),

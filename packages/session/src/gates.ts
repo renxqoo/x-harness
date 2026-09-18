@@ -43,6 +43,7 @@ function isTurnEndReason(value: unknown): boolean {
   switch (value["kind"]) {
     case "completed":
     case "aborted":
+      return value["cause"] === undefined || isStr(value["cause"]);
     case "blocked":
     case "max-tokens":
     case "interrupted":

@@ -41,7 +41,7 @@
 | P8 拓扑图修正 | 本文档 §4 |
 | P9 claim 批次语义 | →#1：claim = 按 claimed ids 跨队列移除；step0 一条 claim{next-turn} 携带「next-turn 队首 + next-step 全部」的 ids；后续步 claim{next-step} |
 | P10 版本机制预埋 | →#1：删除格式版本字段（用户裁决：无历史版本不预埋；闭合词表 fail-closed 即身份判别，语义级变更届时引入判别字段）；SESSION.md 同步 |
-| P11 system node0 规则 | →#5：有 system 节点 → replace [seq,seq]；无且 surface 空 → append；无且非空 → replace [0,0]（前置） |
+| P11 system node0 规则 | →#5：锚点策略——turn 1 step0 恒落 system/message 锚点（文本可空），后续恒 replace [seq,seq]（[0,0] 前置在已交付 surface 语义下不可行，审查修正） |
 | P12 e2e/real 门 | →#6：e2e 假适配器全链旅程进默认门；真凭证旅程 `bun run e2e:real`（env 凭证缺席=显式 skip 计数报告）；声明口径「契约级生产可用 + 真凭证 opt-in」 |
 | P13 token 计数 | →#5：loop 拥有 7 token（不移植 inbox 生命周期 emit，观察走 session/event + agent/status） |
 | P14 LlmChunk 契约 | →#4：流必须恰一个 finish 收尾，违约按 error 结算；index 首现必须带 callId+name（loop 兜底铸 `call-${index}`）；适配器对 user 角色仅取 text 块拼接 |
