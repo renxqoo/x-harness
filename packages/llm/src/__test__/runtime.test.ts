@@ -2,7 +2,7 @@
 // abort 豁免、waterfall 改写、提前 break 清理委托、注册生命周期。
 
 import { createContext, loadPlugins } from "@x-harness/core";
-import { createOpenaiCompatLlm, llmPlugin, llmRuntime, llmStream } from "../index.ts";
+import { createAnthropicCompatLlm, createOpenaiCompatLlm, llmPlugin, llmRuntime, llmStream } from "../index.ts";
 import type { LlmChunk, LlmRequest } from "../index.ts";
 import { describe, expect, it } from "vitest";
 
@@ -132,12 +132,22 @@ describe("失败归一层（docs/LLM.md §1.2/§1.3——不向消费者裸 thro
   });
 });
 
-describe("adapter-plugin（docs/LLM.md §1.4 挂点）", () => {
+describe("adapter-plugin（docs/LLM.md §1.4/§1.5 挂点）", () => {
   it("createOpenaiCompatLlm 注册 openai-compat 适配器到 runtime（可解析可流）", async () => {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [llmPlugin, createOpenaiCompatLlm({ baseUrl: "http://127.0.0.1:1", apiKey: "k" })]);
     const runtime = ctx.use(llmRuntime);
     const chunks = await collect(runtime.stream(request()));
+    expect(chunks[0]).toMatchObject({ type: "finish", finish: { kind: "error", code: "network" } });
+    await ctx.dispose();
+    void unload;
+  });
+
+  it("createAnthropicCompatLlm 注册 anthropic-compat 适配器（provider 名一致可解析）", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [llmPlugin, createAnthropicCompatLlm({ baseUrl: "http://127.0.0.1:1", apiKey: "k" })]);
+    const runtime = ctx.use(llmRuntime);
+    const chunks = await collect(runtime.stream(request({ provider: "anthropic-compat", maxTokens: 32 })));
     expect(chunks[0]).toMatchObject({ type: "finish", finish: { kind: "error", code: "network" } });
     await ctx.dispose();
     void unload;

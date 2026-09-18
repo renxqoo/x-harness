@@ -88,7 +88,9 @@ main.ts 编排先后两场景）：
 `bun run e2e:real`（packages/e2e/src/real.ts）：
 
 - env `X_HARNESS_E2E_REAL_API_KEY` + `X_HARNESS_E2E_REAL_BASE_URL` + `X_HARNESS_E2E_REAL_MODEL` 齐备 →
-  openai-compat 真适配器单 turn 冒烟（一条 user → 非空回应 + completed 收轮 + jsonl 落盘）。
+  真适配器单 turn 冒烟（一条 user → 非空回应 + completed 收轮 + jsonl 落盘）。
+  `X_HARNESS_E2E_REAL_PROTOCOL ∈ {openai, anthropic}`（缺省 openai；缺席不触发 skip；
+  BASE_URL 语义随协议——anthropic 是 `/v1/messages` 根，openai 是 `/chat/completions` 根）。
 - 缺席 → 显式 skip：打印 `skip: 1（env 凭证缺席——P12 opt-in）`，退出码 0（缺席不是失败）。
 - 真凭证旅程不进默认门。
 

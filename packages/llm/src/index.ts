@@ -3,4 +3,6 @@ export { llmRuntime, llmStream } from "./tokens.ts";
 export { llmPlugin } from "./plugin.ts";
 export { createOpenaiCompatAdapter } from "./openai-compat.ts";
 export type { OpenaiCompatOptions } from "./openai-compat.ts";
-export { createOpenaiCompatLlm } from "./adapter-plugin.ts";
+export { createAnthropicCompatAdapter } from "./anthropic-compat.ts";
+export type { AnthropicCompatOptions } from "./anthropic-compat.ts";
+export { createOpenaiCompatLlm, createAnthropicCompatLlm } from "./adapter-plugin.ts";
