@@ -10,7 +10,7 @@
 | # | 交付物 | 独立方案文档 | 状态 |
 | --- | --- | --- | --- |
 | 1 | session 扩展：inbox 词条 + 可验证续写 + header 覆盖 | docs/SESSION-RESUME.md | 已收口 |
-| 2 | @x-harness/tools：注册表 + 执行管线 | docs/TOOLS.md | 待写 |
+| 2 | @x-harness/tools：注册表 + 执行管线 | docs/TOOLS.md | 已收口 |
 | 3 | @x-harness/system-prompt：sections/variables | docs/SYSTEM-PROMPT.md | 待写 |
 | 4 | @x-harness/llm：runtime + openai-compat 适配器 | docs/LLM.md | 待写 |
 | 5 | @x-harness/agent-loop：循环本体 | docs/AGENT-LOOP-DRIVER.md | 待写 |
