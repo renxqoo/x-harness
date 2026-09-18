@@ -10,10 +10,15 @@ export function isSafeBoxName(name: string): boolean {
   return BOX_NAME.test(name);
 }
 
-/** tmp→rename 原子替换：读方永不见半写文件（方案 §5.3 原子性三则之二） */
+let tmpCounter = 0;
+
+/** tmp→rename 原子替换：读方永不见半写文件；tmp 名带唯一后缀——并发写者不共用同一
+ *  tmp（交错损坏会被 rename 发布成坏文件——审查 B-P1-3） */
 export async function atomicWrite(path: string, text: string): Promise<void> {
-  await writeFile(`${path}.tmp`, text);
-  await rename(`${path}.tmp`, path);
+  tmpCounter += 1;
+  const tmp = `${path}.${process.pid}-${String(tmpCounter)}.tmp`;
+  await writeFile(tmp, text);
+  await rename(tmp, path);
 }
 
 /** manifest 坏/缺 → undefined（判活退回 pid 面由调用方定夺） */
@@ -69,10 +74,22 @@ export function manifestClaimable(manifest: BoxManifest | undefined, timing: Mai
   return timing.now() - manifest.updatedTs > timing.graceMs;
 }
 
-/** 陈尸 = pid 死且超 staleMs */
+/** 陈尸 = pid 死且超 staleMs。manifest 坏/缺（undefined）不无条件判死——读方应配
+ *  statStale（目录 mtime 超龄）再判，防坏 manifest 触发活箱回收（审查 B-P1-3 放大链） */
 export function manifestStale(manifest: BoxManifest | undefined, timing: MailboxTiming): boolean {
-  if (manifest === undefined) return true;
+  if (manifest === undefined) return false;
   return !pidAlive(manifest.pid) && timing.now() - manifest.updatedTs > timing.staleMs;
+}
+
+/** manifest 缺席时的保守陈尸判据：目录 mtime 超龄（内容增删才刷新；rename 覆盖不刷新——
+ *  活箱因 inbox/subs 活动而 mtime 新鲜） */
+export async function statStale(dir: string, timing: MailboxTiming): Promise<boolean> {
+  try {
+    const info = await (await import("node:fs/promises")).stat(dir);
+    return timing.now() - info.mtimeMs > timing.staleMs;
+  } catch {
+    return false;
+  }
 }
 
 export async function ensureDir(path: string): Promise<void> {

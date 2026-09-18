@@ -15,6 +15,8 @@ export interface SessionHeader {
   readonly agentName?: string;
   readonly agentType?: string;
   readonly agentDepth?: number;
+  /** worktree 隔离子的工作树路径（复活重放 rootOverride 的锚——件13 §6.2） */
+  readonly agentWorktree?: string;
 }
 
 export type TurnEndReason =
@@ -135,7 +137,7 @@ export interface CreateSessionOptions {
   /** 血缘回填：resume 消费方从 archive.read 的 header.parentSession 取（fork 内部自动携带） */
   readonly parent?: SessionId;
   /** 子代理元数据透传（birth 落 header；resume 的归档 header 分支忽略——归档原文为准） */
-  readonly agent?: { readonly name: string; readonly type: string; readonly depth: number };
+  readonly agent?: { readonly name: string; readonly type: string; readonly depth: number; readonly worktree?: string };
   /** resume 的归档 header 原文：提供时以它为准（id 取 header.id、parent 忽略、归档元数据保留） */
   readonly header?: SessionHeader;
 }

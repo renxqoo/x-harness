@@ -34,6 +34,8 @@ export interface DelegationOptions {
   readonly reportCap?: number;
   /** 启动期 worktree 对账清扫开关（缺省开；测试装置可关防跨装置互扫） */
   readonly worktreeSweep?: boolean;
+  /** 缺省 32；idle 子驻留上限——超限最旧档化（dispose 会话，WAL 在盘可按名复活） */
+  readonly maxResident?: number;
   /** 类型加载/邮箱投递等非致命告警出口（缺省静默降级） */
   readonly onWarn?: (message: string) => void;
 }

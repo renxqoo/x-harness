@@ -8,6 +8,7 @@ import type { ToolExecContext } from "@x-harness/tools";
 import { refOfAgentId } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { resolveAddress } from "./nameaddr.ts";
+import type { ReviveOutcome } from "./revive.ts";
 import { evaluateCleanup } from "./worktree.ts";
 import type { CrossDeps } from "./crossmsg.ts";
 import { sendCross } from "./crossmsg.ts";
@@ -23,6 +24,8 @@ export interface VerbDeps {
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
   /** 跨进程面（未开箱 = 缺省纯进程内：box 域寻址与 notify_when_idle 拒） */
   readonly cross?: CrossDeps;
+  /** archive 惰性复活（§6.2）：caller 自己的历史子按名 resume 重建；缺席=无档案面 */
+  readonly reviveByName?: (caller: SessionId, name: string) => Promise<ReviveOutcome>;
 }
 
 export type VerbOutcome = { readonly ok: true; readonly text: string } | { ok: false; readonly reason: string };
@@ -34,6 +37,8 @@ export interface MessageInput {
   readonly notify_when_idle?: boolean;
 }
 
+const SUMMARY_CAP = 200;
+
 export interface OutputInput {
   readonly task_id: string;
   readonly block?: boolean;
@@ -44,31 +49,58 @@ export async function message(deps: VerbDeps, execCtx: ToolExecContext, input: M
   if (input.to === "") return { ok: false, reason: "invalid-args:to must be a non-empty string" };
   if (input.message === "") return { ok: false, reason: "invalid-args:message must be a non-empty string" };
   if (execCtx.session === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
-  if (input.notify_when_idle === true) {
-    // 仅根会话可用（§4.4）；子代理走完成通知，不需要订阅
-    if (deps.lineage.bySession(execCtx.session) !== undefined) {
-      return { ok: false, reason: "invalid-args:notify_when_idle is only available from the main conversation" };
-    }
-    if (deps.cross === undefined) return { ok: false, reason: "invalid-args:no local mailbox is configured" };
-    return sendCross(deps.cross, execCtx, input);
-  }
-  const resolved = resolveAddress(deps.lineage, execCtx.session, input.to);
-  if (resolved.kind === "miss") {
-    // 进程内落空 → 跨进程 box 域（§5.2-4b；未开箱则维持 not-found）
-    if (deps.cross === undefined || input.message === undefined) return { ok: false, reason: resolved.reason };
-    return sendCross(deps.cross, execCtx, input);
-  }
+  if (input.notify_when_idle === true) return notifyWhenIdle(deps, execCtx, input);
   if (input.message === undefined) return { ok: false, reason: "invalid-args:message is required unless notify_when_idle is set" };
+  const resolved = resolveAddress(deps.lineage, execCtx.session, input.to);
+  if (resolved.kind === "miss") return crossFallback(deps, execCtx, { input: { ...input, message: input.message as string }, missReason: resolved.reason });
   if (resolved.kind === "main") return deliverToMain(deps, execCtx.session, input.message);
+  return deliverToRow(deps, resolved.row, input.message);
+}
 
-  const row = resolved.row;
+/** notify_when_idle（§4.4/§5.4）：仅根会话 + 仅跨进程 box 目标（进程内子走完成通知） */
+async function notifyWhenIdle(deps: VerbDeps, execCtx: ToolExecContext, input: MessageInput): Promise<VerbOutcome> {
+  if (deps.lineage.bySession(execCtx.session as SessionId) !== undefined) {
+    return { ok: false, reason: "invalid-args:notify_when_idle is only available from the main conversation" };
+  }
+  if (resolveAddress(deps.lineage, execCtx.session as SessionId, input.to).kind === "row") {
+    return { ok: false, reason: "invalid-args:notify_when_idle targets a local session (cross-process); in-process sub-agents notify you on completion already" };
+  }
+  if (deps.cross === undefined) return { ok: false, reason: "invalid-args:no local mailbox is configured" };
+  return echoSummary(await sendCross(deps.cross, execCtx, input), input);
+}
+
+/** summary 截断回显（§2.1：不传输、仅发方可见——等价物=结果回显） */
+function echoSummary(sent: VerbOutcome, input: MessageInput): VerbOutcome {
+  if (!sent.ok || input.summary === undefined) return sent;
+  const cut = input.summary.slice(0, SUMMARY_CAP);
+  return { ok: true, text: `${sent.text} (summary: ${cut}${input.summary.length > SUMMARY_CAP ? "…" : ""})` };
+}
+
+/** 回退链（§5.2-4b→5）：跨进程 box 域 → archive 惰性复活；歧义/无效直返 */
+async function crossFallback(deps: VerbDeps, execCtx: ToolExecContext, plan: { readonly input: MessageInput & { readonly message: string }; readonly missReason: string }): Promise<VerbOutcome> {
+  const { input, missReason } = plan;
+  if (deps.cross !== undefined) {
+    const cross = await sendCross(deps.cross, execCtx, input);
+    if (cross.ok || !cross.reason.startsWith("not-found:")) return cross; // not-found 续走复活
+  }
+  if (deps.reviveByName !== undefined) {
+    const revived = await deps.reviveByName(execCtx.session as SessionId, input.to);
+    if (revived.kind === "row") return deliverToRow(deps, revived.row, input.message);
+    if (revived.kind === "ambiguous") {
+      return { ok: false, reason: `ambiguous:${input.to}; multiple archived children of yours share this name — respawn with a fresh agent_spawn or address a live agentId` };
+    }
+  }
+  return { ok: false, reason: missReason };
+}
+
+function deliverToRow(deps: VerbDeps, row: ChildRow, text: string): VerbOutcome {
   const childHandle = deps.loop.get(row.sessionId);
-  if (childHandle === undefined) return { ok: false, reason: notFound(input.to) };
+  if (childHandle === undefined) return { ok: false, reason: notFound(row.agentId) };
   if (deps.loop.get(row.parent) === undefined) {
     void deps.adoptOrphan(row); // 唤醒入口重验：父已死的子不任其烧请求（收养异步收敛）
-    return { ok: false, reason: notFound(input.to) };
+    return { ok: false, reason: notFound(row.agentId) };
   }
-  childHandle.agent.steer(input.message); // busy → 步边界排队；idle → 唤醒（收件箱三态）
+  childHandle.agent.steer(text); // busy → 步边界排队；idle → 唤醒（收件箱三态）
   return { ok: true, text: `Delivered to ${displayName(row)} (consumed at the next step boundary if busy; wakes it if idle).` };
 }
 
@@ -101,7 +133,9 @@ export async function output(deps: VerbDeps, execCtx: ToolExecContext, input: Ou
   const childSession = deps.store.get(row.sessionId);
   if (childSession === undefined) return { ok: false, reason: notFound(input.task_id) };
   if (row.running) {
-    return { ok: true, text: `agent ${row.agentId} (${row.name}) is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.` };
+    const soFar = childReport(childSession.events());
+    const tail = soFar.summary === undefined ? "" : `; last output so far: ${soFar.summary}`;
+    return { ok: true, text: `agent ${row.agentId} (${row.name}) is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.${tail}` };
   }
   return { ok: true, text: reportText(row, childReport(childSession.events()), deps.reportCap) };
 }

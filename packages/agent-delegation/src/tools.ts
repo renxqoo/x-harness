@@ -50,9 +50,9 @@ const spawnSchema = Type.Object({
 });
 
 const messageSchema = Type.Object({
-  to: Type.String({ description: "agentId, name, 'name [ref]', 'main' (sub-agents), or a local session (box) name" }),
+  to: Type.String({ pattern: "^[^\\n\\r]*$", description: "agentId, name, 'name [ref]', 'main' (sub-agents), or a local session (box) name — single line" }),
   message: Type.Optional(Type.String({ maxLength: 300, description: "Message content; omit for a pure notify_when_idle subscription. Long content: hand over via files" })),
-  summary: Type.Optional(Type.String({ maxLength: 200, description: "Optional label for your own record (not transmitted to the recipient)" })),
+  summary: Type.Optional(Type.String({ description: "Optional label for your own record (max 200, truncated not rejected; not transmitted to the recipient)" })),
   notify_when_idle: Type.Optional(Type.Boolean({ description: "Ask a local session to send ONE notice when it next goes idle — opt-in, one-shot; main conversation only; never poll instead" })),
 });
 

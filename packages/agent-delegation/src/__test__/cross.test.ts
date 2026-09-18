@@ -154,10 +154,10 @@ describe("notify_when_idle（§5.4 闭窗与结算）", () => {
     expect(noBox.isError).toBe(true);
     expect(noBox.content).toContain("no local mailbox");
     await plainMain.dispose();
-    // 未知目标 + 无 message + 非订阅 → not-found（纯空发无意义）
+    // 无 message + 非订阅 → invalid-args（动词误用先于寻址裁决）
     const empty = await callTool({ world: alpha, name: "agent_message", args: { to: "ghost-box" }, session: alphaMain.agent.session.id });
     expect(empty.isError).toBe(true);
-    expect(empty.content).toContain("not-found");
+    expect(empty.content).toContain("message is required");
     await alphaMain.dispose();
     await twins.betaMain.dispose();
     await rm(twins.root, { recursive: true, force: true }).catch(() => {});

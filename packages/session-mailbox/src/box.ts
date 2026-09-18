@@ -45,6 +45,7 @@ export async function openBox(deps: BoxDeps, name: string): Promise<BoxHandle> {
     if (!manifestClaimable(existing, deps.timing)) {
       throw new Error(`box-name-taken:${name} (pid ${String(existing?.pid ?? "?")} is live)`);
     }
+    await claimAtomically(dir, name); // 双进程同刻认领——claim 文件 wx 独占裁决（审查 B-P2-7）
     await clearResidue(dir);
   }
   const bootId = mintBootId();
@@ -74,6 +75,18 @@ export async function openBox(deps: BoxDeps, name: string): Promise<BoxHandle> {
     },
     close: () => removeDir(dir),
   };
+}
+
+/** 认领原子裁决：claim-<pid>-<n> 以 wx 独占创建——并发认领恰一个成功，败者 throw */
+async function claimAtomically(dir: string, name: string): Promise<void> {
+  const claimPath = join(dir, `claim-${String(process.pid)}-${String(Date.now())}`);
+  try {
+    const handle = await (await import("node:fs/promises")).open(claimPath, "wx");
+    await handle.close();
+  } catch {
+    throw new Error(`box-name-taken:${name} (concurrent claim won)`);
+  }
+  await (await import("node:fs/promises")).rm(claimPath, { force: true });
 }
 
 /** 认领清扫：inbox/subs 全清（崩溃残留的 .proc/.msg/.sub 一并） */

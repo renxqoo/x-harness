@@ -6,7 +6,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
@@ -77,8 +77,12 @@ export async function evaluateCleanup(plan: { readonly path: string; readonly br
   return { removed: !existsSync(plan.path) };
 }
 
-/** 启动期对账清扫：无 live 行对应的 worktree 目录（崩溃泄漏）——无改动清、有改动保留 */
-export async function sweepWorktrees(livePaths: readonly string[]): Promise<readonly string[]> {
+/** 启动期对账清扫：无 live 行对应的 worktree 目录（崩溃泄漏）——无改动清、有改动保留。
+ *  新鲜度门槛（FRESH_MS）：目录 mtime 晚于该窗的不清——同仓他进程/本进程刚建的在用
+ *  工作树防误删（审查 A-P1-2/B-P2-6；崩溃泄漏必然超过该窗，兜底语义不变）。 */
+const FRESH_MS = 3_600_000;
+
+export async function sweepWorktrees(livePaths: readonly string[], now: () => number = Date.now): Promise<readonly string[]> {
   const top = await repoTopOf();
   if (!top.ok) return [];
   const parent = worktreeParent(top.top);
@@ -92,7 +96,12 @@ export async function sweepWorktrees(livePaths: readonly string[]): Promise<read
   for (const entry of entries) {
     const path = join(parent, entry);
     if (livePaths.includes(path)) continue;
-    const result = await evaluateCleanup({ path, branch: `x-harness/${entry.split("-").pop() ?? ""}` });
+    const info = await stat(path).catch(() => undefined);
+    if (info !== undefined && now() - info.mtimeMs < FRESH_MS) continue; // 新鲜树不清
+    // 分支复原：<repo>-agent-<8hex> → agent-<8hex>（split("-").pop() 丢 agent- 前缀——审查 B-P1-4）
+    const agentId = entry.slice(entry.indexOf("agent-"));
+    if (agentId === "") continue;
+    const result = await evaluateCleanup({ path, branch: `x-harness/${agentId}` });
     if (!result.removed) kept.push(path);
   }
   return kept;

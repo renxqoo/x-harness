@@ -97,8 +97,8 @@ describe("worktree 隔离（§8）", () => {
     const twins = await worktreeWorld();
     const spawned = await spawnWorktree(twins, "dirty");
     const agentId = agentIdOf(spawned.content);
-    const entry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId));
-    const wtPath = join(worktreeParent(repo), entry ?? "");
+    const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
+    const wtPath = join(worktreeParent(repo), wtEntry);
     writeFileSync(join(wtPath, "NEW.md"), "changes\n"); // 子工作区弄脏
     const stopped = await callTool({ world: twins.world, name: "agent_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
     expect(stopped.content).toContain(`worktree kept (has changes): ${wtPath}`);
@@ -150,17 +150,31 @@ describe("worktree 隔离（§8）", () => {
     await twins.parent.dispose();
   });
 
-  it("启动期清扫：泄漏的无改动 worktree 被清、有改动保留（sweepWorktrees 直测）", async () => {
+  it("启动期清扫：净树+分支被清、脏树保留（sweepWorktrees 直测，now 注入超龄）", async () => {
     repo = await gitRepo();
     const made = await createWorktree("agent-sweep01");
     expect(made.ok).toBe(true);
     const dirty = await createWorktree("agent-sweep02");
     expect(dirty.ok).toBe(true);
     if (dirty.ok) writeFileSync(join(dirty.plan.path, "CHANGE.md"), "x");
-    const kept = await sweepWorktrees([]);
+    const aged = (): number => Date.now() + 2 * 3_600_000; // 目录 mtime 判超龄
+    const kept = await sweepWorktrees([], aged);
     expect(kept).toHaveLength(1); // 脏树保留
-    if (made.ok) expect(existsSync(made.plan.path)).toBe(false); // 净树被清
+    if (made.ok) {
+      expect(existsSync(made.plan.path)).toBe(false); // 净树被清
+      const branches = await exec("git", ["branch", "--list", "x-harness/agent-sweep01"]);
+      expect(branches.stdout.trim()).toBe(""); // 分支同删（审查 B-P1-4 回归锚）
+    }
     if (dirty.ok) await rm(dirty.plan.path, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it("新鲜树不清（FRESH_MS 窗内——同仓他进程在用工作树防线）", async () => {
+    repo = await gitRepo();
+    const made = await createWorktree("agent-fresh01");
+    expect(made.ok).toBe(true);
+    const kept = await sweepWorktrees([]); // 缺省 now=Date.now → mtime 新鲜
+    expect(kept).toHaveLength(0); // 不清也不报 kept（跳过）
+    if (made.ok) expect(existsSync(made.plan.path)).toBe(true);
   });
 
   it("teardown 级联：插件 dispose 清理子的 worktree（净树）", async () => {
@@ -168,8 +182,8 @@ describe("worktree 隔离（§8）", () => {
     const twins = await worktreeWorld();
     const spawned = await spawnWorktree(twins, "cascade");
     const agentId = agentIdOf(spawned.content);
-    const entry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId));
-    const wtPath = join(worktreeParent(repo), entry ?? "");
+    const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
+    const wtPath = join(worktreeParent(repo), wtEntry);
     await twins.world.disposePlugins();
     await sleep(50);
     expect(existsSync(wtPath)).toBe(false);
@@ -180,5 +194,34 @@ describe("worktree 隔离（§8）", () => {
     expect(worktreeParent(repo)).toBe(join(dirname(repo), ".x-harness-worktrees"));
     expect(worktreeParent(repo).startsWith(join(repo, ".git"))).toBe(false);
     expect(basename(worktreeParent(repo))).toBe(".x-harness-worktrees");
+  });
+});
+
+describe("组合隔离（§8.2 工具参数面 × grants 子会话键——审查 A-P1-4 处置）", () => {
+  it("worktree 子会话视角：worktree 路径放行、主仓路径拒、原根子树授权被过滤", async () => {
+    repo = await gitRepo();
+    const repoNow = repo; // 闭包内保收窄（模块级 let 不跨闭包窄化）
+    const twins = await worktreeWorld();
+    const spawned = await spawnWorktree(twins, "combo");
+    expect(spawned.isError).toBeUndefined();
+    const agentId = agentIdOf(spawned.content);
+    const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
+    const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
+    const wtPath = join(worktreeParent(repo), wtEntry);
+    const { PathGate, admitSession } = await import("../../../toolbox/src/paths.ts");
+    const gate = new PathGate(repoNow);
+    const rp = async (p: string) => p;
+    const grants = twins.world.ctx.tryUse(permissionGrants);
+    const overrideOf = (session: SessionId | undefined) => grants?.rootOverrideOf(session);
+    const extraRootsOf = (session: SessionId | undefined) => (session === childSession ? [join(repoNow, "sub")] : []);
+    const inside = await admitSession({ gate, realpath: rp, session: childSession, extraRootsOf, rootOverrideOf: overrideOf, target: join(wtPath, "file.ts") });
+    expect(inside.ok).toBe(true); // 子视角：worktree 内放行
+    const outside = await admitSession({ gate, realpath: rp, session: childSession, extraRootsOf, rootOverrideOf: overrideOf, target: join(repoNow, "secret.ts") });
+    expect(outside.ok).toBe(false); // 子视角：主仓不可达
+    const viaGuarded = await admitSession({ gate, realpath: rp, session: childSession, extraRootsOf, rootOverrideOf: overrideOf, target: join(repoNow, "sub", "x.ts") });
+    expect(viaGuarded.ok).toBe(false); // 原根子树授权被过滤
+    const parentView = await admitSession({ gate, realpath: rp, session: twins.parent.agent.session.id, extraRootsOf, rootOverrideOf: overrideOf, target: join(repoNow, "secret.ts") });
+    expect(parentView.ok).toBe(true); // 父视角不受影响
+    await twins.parent.dispose();
   });
 });

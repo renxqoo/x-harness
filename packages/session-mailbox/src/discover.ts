@@ -2,7 +2,7 @@
 
 import { join } from "node:path";
 import { readdir, rename } from "node:fs/promises";
-import { ensureDir, listSubdirs, manifestLive, manifestStale, readManifest, refOf, removeDir } from "./util.ts";
+import { ensureDir, listSubdirs, manifestLive, manifestStale, readManifest, refOf, removeDir, statStale } from "./util.ts";
 import type { LiveBox } from "./types.ts";
 import type { SendDeps } from "./send.ts";
 import { sendEnvelope } from "./send.ts";
@@ -17,7 +17,7 @@ export async function discoverBoxes(deps: SendDeps): Promise<readonly LiveBox[]>
       out.push({ name, ref: refOf(manifest?.bootId ?? ""), status: manifest?.status ?? "idle" });
       continue;
     }
-    if (manifestStale(manifest, deps.timing)) {
+    if (manifestStale(manifest, deps.timing) || (manifest === undefined && (await statStale(join(deps.root, name), deps.timing)))) {
       await reclaimBox(deps, name);
     }
   }

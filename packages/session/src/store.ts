@@ -46,7 +46,7 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
       createdAt: Date.now(),
       cwd: process.cwd(),
       ...(parent !== undefined ? { parentSession: parent } : {}),
-      ...(agent !== undefined ? { agentName: agent.name, agentType: agent.type, agentDepth: agent.depth } : {}),
+      ...(agent !== undefined ? { agentName: agent.name, agentType: agent.type, agentDepth: agent.depth, ...(agent.worktree !== undefined ? { agentWorktree: agent.worktree } : {}) } : {}),
     }) as SessionHeader;
   }
 

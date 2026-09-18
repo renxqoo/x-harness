@@ -43,7 +43,9 @@ export function createMailboxConsumer(deps: MailboxConsumerDeps): MailboxConsume
     }
   };
 
-  const settleSubs = async (): Promise<void> => {
+  /** 单飞：idle 边沿与 teardown 双路径并发结算 → 复用在飞 promise（审查 B-P1-2 恰好一条） */
+  let settling: Promise<void> | undefined;
+  const settleOnce = async (): Promise<void> => {
     for (const from of await service.subs.list(box.name)) {
       const sent = await service.send(from, {
         from: box.name,
@@ -53,6 +55,12 @@ export function createMailboxConsumer(deps: MailboxConsumerDeps): MailboxConsume
       if (!sent.ok) deps.onWarn?.(`mailbox: idle notice to ${from} undeliverable (${sent.reason ?? "?"})`);
       await service.subs.remove(box.name, from); // 一次性；from 死也摘（订阅随目标存活期终结）
     }
+  };
+  const settleSubs = (): Promise<void> => {
+    settling ??= settleOnce().finally(() => {
+      settling = undefined;
+    });
+    return settling;
   };
 
   return {
@@ -72,13 +80,24 @@ export function createMailboxConsumer(deps: MailboxConsumerDeps): MailboxConsume
   };
 }
 
-/** drain 定时循环（unref；返回停止函数） */
+/** drain 自链式调度（unref）：上一拍完成后再排下一拍——定时器不重入、跨拍不乱序
+ *  （审查 B-P3-14）；停止后不再起拍，在飞拍自然收尾 */
 export function startDrain(consumer: MailboxConsumer, intervalMs: number, onWarn?: (message: string) => void): () => void {
-  const timer = setInterval(() => {
-    void consumer.drainOnce().catch((error: unknown) => {
-      onWarn?.(`mailbox: drain failed (${String(error)})`);
-    });
-  }, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
+  let stopped = false;
+  const tick = (): void => {
+    if (stopped) return;
+    const timer = setTimeout(() => {
+      void consumer
+        .drainOnce()
+        .catch((error: unknown) => {
+          onWarn?.(`mailbox: drain failed (${String(error)})`);
+        })
+        .finally(tick);
+    }, intervalMs);
+    timer.unref?.();
+  };
+  tick();
+  return () => {
+    stopped = true;
+  };
 }

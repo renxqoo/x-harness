@@ -43,7 +43,7 @@ export async function spawnAgent(deps: SpawnDeps, execCtx: ToolExecContext, inpu
   if (input.description.trim() === "") {
     return { ok: false, reason: "invalid-args:description must be a non-empty string (3-5 word task summary)" };
   }
-  if (input.prompt === "") return { ok: false, reason: "invalid-args:prompt must be a non-empty string" };
+  if (input.prompt.trim() === "") return { ok: false, reason: "invalid-args:prompt must be a non-empty string" };
   if (input.model === "") return { ok: false, reason: "invalid-args:model must be a non-empty string when provided" };
   if (input.name !== undefined && input.name.trim() === "") {
     return { ok: false, reason: "invalid-args:name must be a non-empty string when provided" };
@@ -95,6 +95,7 @@ async function buildChild(
   const parentHandle = deps.loop.get(caller);
   if (parentHandle === undefined) return { ok: false, reason: `not-found:parent agent ${String(caller)} is not live` };
 
+  if (execCtx.signal.aborted) return { ok: false, reason: "aborted:spawn cancelled before dispatch" }; // 建树前断信号（审查 B-P2-5 前置）
   const agentId = mintAgentId();
   const named = plan.resolved.kind === "named" ? plan.resolved.type : undefined;
   const isFork = plan.resolved.kind === "fork";
@@ -104,14 +105,7 @@ async function buildChild(
   const worktree = await prepareWorktree(deps, agentId, plan.input.isolation);
   if (!worktree.ok) return worktree;
 
-  const made = await deps.loop.create({
-    session: {
-      parent: caller,
-      ...(forked ? { seed } : {}),
-      agent: { name: identity.name, type: identity.typeName, depth: plan.depth },
-    },
-    agent: childAgentOptions(deps, parentHandle, { named, isFork, input: plan.input, caller }),
-  });
+  const made = await createChildSession(deps, { caller, plan, identity, seed: forked ? seed : [], worktree: worktree.plan });
   if (!made.ok) {
     if (worktree.plan !== undefined) await evaluateCleanup({ path: worktree.plan.path, branch: worktree.plan.branch }).catch(() => {});
     return { ok: false, reason: `spawn-failed:${made.reason}` };
@@ -134,11 +128,7 @@ async function buildChild(
     deps.setRootOverride(row.sessionId, worktree.plan.path, worktree.plan.repoTop);
   }
   deps.lineage.register(row);
-  if (execCtx.signal.aborted) {
-    await childHandle.dispose(); // execute 内断信号：不遗孤儿子
-    deps.lineage.drop(row.sessionId);
-    return { ok: false, reason: "aborted:spawn cancelled before dispatch" };
-  }
+  if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
   childHandle.agent.followup(plan.input.prompt);
   return { ok: true, text: spawnText(row, isFork && !forked) };
 }
@@ -180,6 +170,35 @@ async function prepareWorktree(deps: SpawnDeps, agentId: string, isolation: stri
   const made = await createWorktree(agentId);
   if (!made.ok) return { ok: false, reason: `spawn-failed:worktree ${made.reason}` };
   return { ok: true, plan: made.plan };
+}
+
+function createChildSession(
+  deps: SpawnDeps,
+  spec: {
+    readonly caller: SessionId;
+    readonly plan: { readonly input: SpawnInput; readonly resolved: ResolvedType; readonly depth: number };
+    readonly identity: { readonly name: string; readonly typeName: string };
+    readonly seed: readonly SessionEvent[];
+    readonly worktree?: WorktreePlan;
+  },
+): ReturnType<AgentLoopService["create"]> {
+  const named = spec.plan.resolved.kind === "named" ? spec.plan.resolved.type : undefined;
+  return deps.loop.create({
+    session: {
+      parent: spec.caller,
+      ...(spec.seed.length > 0 ? { seed: spec.seed } : {}),
+      agent: { name: spec.identity.name, type: spec.identity.typeName, depth: spec.plan.depth, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
+    },
+    agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller }),
+  });
+}
+
+/** execute 内断信号：不遗孤儿子（worktree 一并评估——审查 B-P2-5） */
+async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandle: AgentHandle; readonly row: ChildRow; readonly plan?: WorktreePlan }): Promise<SpawnOutcome> {
+  await input.childHandle.dispose();
+  if (input.plan !== undefined) await evaluateCleanup({ path: input.plan.path, branch: input.plan.branch }).catch(() => {});
+  input.deps.lineage.drop(input.row.sessionId);
+  return { ok: false, reason: "aborted:spawn cancelled before dispatch" };
 }
 
 function spawnText(row: ChildRow, freshFork: boolean): string {

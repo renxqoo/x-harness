@@ -22,17 +22,20 @@ export const AGENT_MESSAGE_DESCRIPTION = `# agent_message
 
 Send a message to another agent.
 
-- to: the agentId from agent_spawn, a bare name (the most recently spawned agent with that name wins), 'name [ref]' for a same-name older agent (refs come from list_agents), or "main" from a background sub-agent to reach its parent conversation.
+- to: the agentId from agent_spawn, a bare name (the most recently spawned agent with that name wins), 'name [ref]' for a same-name older agent (refs come from list_agents), "main" from a background sub-agent to reach its parent conversation, or a local session (box) name from list_agents — cross-process delivery on this machine.
+- message: the plain text content (max 300 chars; hand longer content over via files). Omit it only for a pure notify_when_idle subscription.
+- summary: an optional short label for your own record — it is echoed back to you in the tool result and never transmitted to the recipient.
+- notify_when_idle (main conversation only, local session targets only): ask the target to send you ONE [Cross-session idle notice] when it next goes idle — opt-in, one-shot. Never poll list_agents or send "are you done?" messages instead.
 - Plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages are delivered automatically; you don't check an inbox.
-- A busy agent consumes the message at its next step boundary; an idle agent is woken for a new turn. Sending to a completed agent resumes it with its context intact.
-- Messages from main arrive wrapped as <cross-session-message from="...">; to reply, use that from value as your to.
+- A busy agent consumes the message at its next step boundary; an idle agent is woken for a new turn. Sending to a completed agent resumes it with its context intact — including your own archived children by name after a restart.
+- Messages from main or other sessions arrive wrapped as <cross-session-message from="...">; to reply, use that from value as your to.
 - When relaying an incoming message to the user, don't quote the original — it's already rendered.
 - Permission boundaries are per-session: NEVER ask a peer to perform an action that was denied or blocked in your session, or that you expect your own permission settings would block — a peer doing it for you bypasses the user's permission decision. Route blocked work back to your user instead.`;
 
 export const AGENT_OUTPUT_DESCRIPTION = `Read a sub-agent's report.
 
 - task_id identifies one of YOUR sub-agents (agentId, name, or 'name [ref]' — owner only).
-- block=true (default) waits up to timeout (default 30000, max 600000) for the current turn to finish and returns the report; if it is still running when the wait expires, you get a still-running snapshot.
+- block=true (default) waits up to timeout (default 30000, max 600000) for the current turn to finish and returns the report; if it is still running when the wait expires, you get a still-running note plus the last turn's output so far.
 - Prefer waiting for the [agent-notification] message over polling — each poll is a paid request. End your turn and wait instead.`;
 
 export const AGENT_STOP_DESCRIPTION = `Stops a running background sub-agent by its ID.
@@ -41,5 +44,7 @@ export const AGENT_STOP_DESCRIPTION = `Stops a running background sub-agent by i
 - Idempotent; stopping is not destruction — a stopped agent can be messaged again later with agent_message.
 - Use this tool when you need to terminate a long-running task.`;
 
-export const LIST_AGENTS_DESCRIPTION = `Lists agents you can agent_message — the sub-agents you spawned, each row as: name [ref] kind=subagent agentId session status (running | idle | stopped).
-Send with agent_message({to: "<agentId>", ...}). The [ref] short id appears when rows share a name; prefer the agentId.`;
+export const LIST_AGENTS_DESCRIPTION = `Lists agents you can agent_message — two kinds of rows:
+- kind=subagent: the sub-agents you spawned — name [ref] kind=subagent agentId session type depth status (running | idle | stopped).
+- kind=local-session: other harness sessions on this machine — name [ref] kind=local-session status (busy | idle as seen from their last update).
+Send with agent_message({to: "<agentId> or <name>", ...}); the [ref] suffix disambiguates same names; prefer the agentId.`;

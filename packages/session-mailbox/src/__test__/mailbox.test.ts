@@ -108,15 +108,23 @@ describe("session-mailbox", () => {
     const timing = makeTiming({ heartbeatMs: 5, now: () => Date.now() });
     const svc = serviceOf(root, timing, []);
     const box = await svc.open("beat");
-    const before = (JSON.parse(await readFile(join(root, "beat", "manifest.json"), "utf8")) as BoxManifest).updatedTs;
+    const readTs = async (): Promise<number> => (JSON.parse(await readFile(join(root, "beat", "manifest.json"), "utf8")) as BoxManifest).updatedTs;
+    const before = await readTs();
     const stop = box.startHeartbeat();
-    await sleep(25);
+    // 负载容忍：轮询等首拍推进（固定窗口在并行负载下偶发落空——审查处置）
+    const deadline = Date.now() + 2_000;
+    let after = before;
+    while (after === before && Date.now() < deadline) {
+      await sleep(20);
+      after = await readTs();
+    }
     stop();
-    const after = (JSON.parse(await readFile(join(root, "beat", "manifest.json"), "utf8")) as BoxManifest).updatedTs;
     expect(after).toBeGreaterThan(before);
-    await sleep(15);
-    const settled = (JSON.parse(await readFile(join(root, "beat", "manifest.json"), "utf8")) as BoxManifest).updatedTs;
-    expect(settled).toBe(after);
+    await sleep(30);
+    const quiesceA = await readTs();
+    await sleep(30);
+    const quiesceB = await readTs();
+    expect(quiesceB).toBe(quiesceA); // 停止后静默（双读相等——不钉具体值，免在飞拍竞态）
   });
 
   it("投递：活箱得 .msg（无 .tmp 残留）；死箱 not-live", async () => {

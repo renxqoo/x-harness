@@ -493,3 +493,44 @@ kick 边沿（§7.1）、timing 注入（§2.2/§11.2）、对账锚反向+词�
 （§2.1）、墙钟/unref（§5.3/§13）、唤醒重验（§4.1/§5.1）、slug 回退随机段（§6.1）、两步
 非原子注明（§5.4）、manifest.status 粒度落档（§13）、git 串行（§8.1）、迁移矩阵工作量
 如实（§11.1）。
+
+## 15. 代码级对抗审查处置（F 收口前两路并行，2026-09-19）
+
+> 状态：件13 六阶段实施完成；两路代码审（A 契约/假绿面 21 项、B 并发/生命周期 15 项）全处置。
+
+**路 A（契约/语义/假绿面）**：P0-1 对账用例缺席+描述违约 → **采纳**：contract.test.ts 双向
+对账三用例（词边界正则）落地即绿前先补齐描述真实能力（message 补 summary/notify_when_idle/
+box 寻址/纯订阅/复活语义；list 补 local-session 行与 [ref]；output 超时摘要措辞）。P1-2
+启动清扫互删 → **采纳**：FRESH_MS=1h 新鲜度门槛（崩溃泄漏必超窗）+ 测试装置默认关。P1-3
+复活丢 worktree 隔离 → **采纳**：接缝 1 再扩 header.agentWorktree；复活重放 setRootOverride
+（树已清/授权面缺席 → onWarn 明示降级）。P1-4 组合零测试 → **采纳**：worktree.test 补
+「子会话视角」组合用例（gate×grants×spawn 子会话键：worktree 放行/主仓拒/守卫过滤/父
+不受影响）。P2-5 sweep 分支错 → 与 B-P1-4 合并处置（`entry.slice(indexOf("agent-"))` +
+清扫用例补分支断言）。P2-6 歧义词表 → **采纳**：ReviveOutcome 三态，ambiguous 带指引
+文案；测试锚同步。P2-7 notify 进程内目标拒 → **采纳**（§4.4 三种拒补全）。P2-8 超时快照
+补末轮摘要 → **采纳**。P2-9 to 单行 pattern → **采纳**。P2-10 summary 截断不拒+回显 →
+**采纳**（schema 去 maxLength、200 截断、结果回显）。P2-12 inject/permission → **落档**：
+permission 可缺席是合法部署（纯进程内），走 tryUse；顺序脆弱性由装配纪律承担（文档 §3
+勘误：inject 不含 permission、mailbox 同理）。P2-13 复活白名单不收窄 → **采纳**：
+parentToolsOf 注入 narrowTools（X15 不因复活放宽）。P3-14 stopped 绕驻留上限 → **采纳**
+（stopped 计入驻留；档化后 message 走 archive 复活，停止可续语义不变）。P3-15 abort 漏
+worktree 清理 → **采纳**（+ 建树前前置 abort 检查）。P3-16 prompt 空白串 → **采纳**。
+P3-17 e2e 弱断言 → **采纳**（notice 恰好一条计数、复活 whenIdle 屏障；cross.test 真
+sleep 存量 1 处——timing 注入改造挂账 F 后续）。P3-18 list 行/描述偏差 → **采纳**。
+P3-19 死导出/devDeps → **采纳**（index 收缩至 plugin+类型；persistence-jsonl 移
+devDependencies）。P3-20 TOCTOU 小窗 → **落档**（评估窗 ms 级，sweep 新鲜度门槛兜底）。
+P3-21 real.ts 残留 → **归属**：他人在途未提交改动，不越界。
+
+**路 B（并发/生命周期）**：P1-1 teardown 序倒置+shutdown 未 await → **采纳**：drain/心跳
+effect 后置注册（逆序回卷即「停 drain → 停心跳」）、composite 内 await shutdown（§5.3 序
+成立）。P1-2 settle 双结算 → **采纳**：consumer 单飞 promise（idle 边沿与 teardown 并发
+复用在飞）。P1-3 manifest tmp 同名 → **采纳**：tmp 唯一后缀 + manifest 缺席不无条件判陈尸
+（statStale 目录 mtime 超龄才回收）。P1-4 sweep 分支错 → 见 A-P2-5。P2-5 abort 窗口 → 见
+A-P3-15。P2-6 sweep 互删 → 见 A-P1-2（新鲜度+本进程 live 排除留待跨进程协调件）。P2-7
+认领非原子 → **采纳**：claim 文件 wx 独占裁决。P2-8 复活丢隔离 → 见 A-P1-3。P2-9 复活
+旅程假屏障 → **采纳**（whenIdle 完成屏障）。P3-10 apply 失败定时器泄漏 → **采纳**（effect
+注册推迟到 apply 尾）。P3-11 PathGate(override) 热路径 realpathSync → **落档**（每次一
+次已存在路径的 realpathSync，量级可接受；缓存挂账）。P3-12 `as never` 类型逃逸 → **落档**
+（随 toolbox 后续件统一 SessionId 导入）。P3-13 清理失败零上报 → **采纳**（onWarn 出口：
+sweep kept/关箱尽力路径）。P3-14 drain 重入乱序 → **采纳**（自链式调度）。P3-15 real.ts →
+**归属**同 A-P3-21。
