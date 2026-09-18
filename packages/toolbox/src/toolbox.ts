@@ -4,7 +4,7 @@ import type { Context, Plugin } from "@x-harness/core";
 import { toolRegistry } from "@x-harness/tools";
 import type { ToolDefinition } from "@x-harness/tools";
 import { execEnv } from "@x-harness/exec-env";
-import type { ReadFace } from "@x-harness/exec-env";
+import type { ExecEnv } from "@x-harness/exec-env";
 import { PathGate } from "./paths.ts";
 import { ObservedRegistry } from "./observed.ts";
 import { createReadTool } from "./read.ts";
@@ -21,18 +21,10 @@ export interface ToolboxOptions {
   readonly spillDir?: string;
   readonly rgPath?: string;
   /** 执行环境（三级解析：工厂参数 > execEnv 服务 > 装配期 throw——fail-closed） */
-  readonly env?: ReadFace;
+  readonly env?: ExecEnv;
 }
 
-function registering(tool: ToolDefinition, name: string): Plugin {
-  return {
-    name,
-    inject: ["tools"],
-    apply: (ctx) => ctx.effect(ctx.use(toolRegistry).register(tool)),
-  };
-}
-
-function readRegistering(make: (env: ReadFace) => ToolDefinition, name: string, envOption: ReadFace | undefined): Plugin {
+function envRegistering(make: (env: ExecEnv) => ToolDefinition, name: string, envOption: ExecEnv | undefined): Plugin {
   return {
     name,
     inject: ["tools"],
@@ -49,10 +41,10 @@ export function createToolbox(options: ToolboxOptions = {}) {
   const observed = new ObservedRegistry();
   const limits: BashLimits = defaultLimits(options);
   return {
-    readPlugin: readRegistering((env) => createReadTool(gate, observed, env), "tool-read", options.env),
-    writePlugin: registering(createWriteTool(gate, observed), "tool-write"),
-    bashPlugin: registering(createBashTool(gate, limits), "tool-bash"),
-    grepPlugin: registering(createGrepTool(gate, { rgPath: options.rgPath }), "tool-grep"),
+    readPlugin: envRegistering((env) => createReadTool(gate, observed, env), "tool-read", options.env),
+    writePlugin: envRegistering((env) => createWriteTool(gate, observed, env), "tool-write", options.env),
+    bashPlugin: envRegistering((env) => createBashTool(gate, limits, env), "tool-bash", options.env),
+    grepPlugin: envRegistering((env) => createGrepTool(gate, { rgPath: options.rgPath }, env), "tool-grep", options.env),
     /** 测试/宿主直取句柄 */
     gate,
     observed,

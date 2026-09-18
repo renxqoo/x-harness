@@ -1,13 +1,16 @@
-// bash 工具（docs/TOOLBOX.md §4）：detached 进程组 + 手动负 pid 两段杀；host-exit 清场登记簿；
-// 双流全程并发消费；截断保尾+spill（mkdtemp 0700、wx 0600、随机名无用户成分）；退出码非 isError。
+// bash 工具（docs/TOOLBOX.md §4 + docs/EXEC-ENV.md §3/§6）：进程生命周期经 env.spawn
+// （detached 组杀/settle 观测面/host-exit 清场——全在 exec-env；本文件只留两段杀节奏策略）；
+// 双流全程并发消费；截断保尾+spill（0700/wx 0600/随机名）；退出码非 isError；
+// needs_network 声明位（permission 裁决依据——声明走 ask，未声明撞断网自行回头）。
 
-import { mkdirSync, mkdtempSync, openSync, closeSync, writeSync, statSync, type Stats } from "node:fs";
+import { mkdirSync, mkdtempSync, openSync, closeSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
+import type { ExecEnv, ProcHandle } from "@x-harness/exec-env";
 import { PathGate } from "./paths.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -16,17 +19,12 @@ const DEFAULT_OUTPUT_BYTES = 30_000;
 const OUTPUT_LINE_CAP = 2_000;
 const KILL_GRACE_MS = 5_000;
 
-/** 活组登记簿 + host-exit 清场（exit handler 仅同步操作） */
-const liveGroups = new Set<number>();
-process.prependListener("exit", () => {
-  for (const pid of liveGroups) {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      /* 组已亡 */
-    }
-  }
-});
+/** POSIX 信号→编号（128+n 渲染——env 层 code null + signal，折算属本层） */
+const SIGNAL_NUM: Readonly<Record<string, number>> = {
+  SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGTRAP: 5, SIGABRT: 6, SIGBUS: 7, SIGFPE: 8,
+  SIGKILL: 9, SIGUSR1: 10, SIGSEGV: 11, SIGUSR2: 12, SIGPIPE: 13, SIGALRM: 14, SIGTERM: 15,
+  SIGCHLD: 17, SIGCONT: 18, SIGSTOP: 19, SIGTSTP: 20, SIGTTIN: 21, SIGTTOU: 22,
+};
 
 export interface BashLimits {
   readonly defaultTimeoutMs: number;
@@ -47,41 +45,46 @@ export function defaultLimits(over: { defaultTimeoutMs?: number; maxTimeoutMs?: 
   };
 }
 
-export function createBashTool(gate: PathGate, limits: BashLimits): ToolDefinition {
+export function createBashTool(gate: PathGate, limits: BashLimits, env: ExecEnv): ToolDefinition {
   return {
     name: "bash",
     description:
-      "Run a shell command with /bin/sh -c in the workspace root (workdir optional, must stay inside the root). Non-zero exit codes are shown as [exit code: N] and are NOT tool errors — inspect the output. Long-running commands (builds, installs) should pass timeout_ms explicitly (default 120000ms, max 600000ms). Output is truncated to the last 30000 bytes with the full output written to a spill file.",
+      "Run a shell command with /bin/sh -c in the workspace root (workdir optional, must stay inside the root). Non-zero exit codes are shown as [exit code: N] and are NOT tool errors — inspect the output. Long-running commands (builds, installs) should pass timeout_ms explicitly (default 120000ms, max 600000ms). Commands needing network access (installs, fetches) must declare needs_network:true. Output is truncated to the last 30000 bytes with the full output written to a spill file.",
     inputSchema: Type.Object({
       command: Type.String({ description: "Shell command line" }),
       timeout_ms: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: `Wall-clock timeout in ms (default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)})` })),
       workdir: Type.Optional(Type.String({ description: "Working directory (inside workspace root; default root)" })),
+      needs_network: Type.Optional(Type.Boolean({ description: "Declare that this command requires network access — routes through approval before running" })),
     }),
-    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, ctx, args: args as { command: string; timeout_ms?: number; workdir?: string } }),
+    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, ctx, args: args as { command: string; timeout_ms?: number; workdir?: string; needs_network?: boolean } }),
   };
 }
 
-async function bash(input: { readonly gate: PathGate; readonly limits: BashLimits; readonly ctx: ToolExecContext; readonly args: { command: string; timeout_ms?: number; workdir?: string } }): Promise<{ content: string; isError?: true }> {
-  const { gate, limits, ctx, args } = input;
+async function bash(input: {
+  readonly gate: PathGate;
+  readonly limits: BashLimits;
+  readonly env: ExecEnv;
+  readonly ctx: ToolExecContext;
+  readonly args: { command: string; timeout_ms?: number; workdir?: string; needs_network?: boolean };
+}): Promise<{ content: string; isError?: true }> {
+  const { gate, limits, env, ctx, args } = input;
+  void args.needs_network; // 声明位由 permission 在 pre-execute 裁决——执行层不消费
   if (PathGate.hasNul(args.command) || (args.workdir !== undefined && PathGate.hasNul(args.workdir))) {
     return { content: "NUL_IN_ARGUMENT: command/workdir contains NUL", isError: true };
   }
   let cwd = gate.root;
   if (args.workdir !== undefined) {
-    const admitted = gate.admit(args.workdir);
+    const admitted = await gate.admit(args.workdir, env.realpath);
     if (!admitted.ok) return { content: admitted.reason, isError: true };
-    let st: Stats;
-    try {
-      st = statSync(admitted.path);
-    } catch {
-      return { content: `WORKDIR_NOT_FOUND: ${args.workdir} does not exist`, isError: true };
-    }
-    if (!st.isDirectory()) return { content: `WORKDIR_NOT_DIRECTORY: ${args.workdir} is not a directory`, isError: true };
+    const st = await env.stat(admitted.path);
+    if (!st.ok) return { content: `WORKDIR_NOT_FOUND: ${args.workdir} does not exist`, isError: true };
+    if (st.stat.kind !== "dir") return { content: `WORKDIR_NOT_DIRECTORY: ${args.workdir} is not a directory`, isError: true };
     cwd = admitted.path;
   }
+  if (ctx.signal.aborted) return { content: "aborted: tool call aborted before dispatch", isError: true }; // pre-abort 零 spawn
 
   const timeoutMs = Math.min(args.timeout_ms ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
-  return render(await runCommand({ command: args.command, cwd, timeoutMs, limits, ctx }));
+  return render(await runCommand({ command: args.command, cwd, timeoutMs, limits, env, ctx }));
 }
 
 interface RunResult {
@@ -96,47 +99,41 @@ interface RunResult {
   readonly truncated: boolean;
 }
 
-async function runCommand(input: { readonly command: string; readonly cwd: string; readonly timeoutMs: number; readonly limits: BashLimits; readonly ctx: ToolExecContext }): Promise<RunResult> {
-  const { command, cwd, timeoutMs, limits, ctx } = input;
+async function runCommand(input: { readonly command: string; readonly cwd: string; readonly timeoutMs: number; readonly limits: BashLimits; readonly env: ExecEnv; readonly ctx: ToolExecContext }): Promise<RunResult> {
+  const { command, cwd, timeoutMs, limits, env, ctx } = input;
   const out = new ChannelCollector();
   const err = new ChannelCollector();
-  let proc: Bun.Subprocess;
-  try {
-    proc = Bun.spawn(["/bin/sh", "-c", command], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true });
-  } catch (error) {
-    return { stdout: "", stderr: "", exitCode: null, timeoutMs, timedOut: false, aborted: false, spawnError: error instanceof Error ? error.message : String(error), spillPath: undefined, truncated: false };
+  const spawned = await env.spawn({ argv: ["/bin/sh", "-c", command], cwd, ...(ctx.session !== undefined ? { session: ctx.session } : {}) });
+  if (!spawned.ok) {
+    return { stdout: "", stderr: "", exitCode: null, timeoutMs, timedOut: false, aborted: false, spawnError: `${spawned.reason.kind}: ${spawned.reason.detail}`, spillPath: undefined, truncated: false };
   }
-  const pid = proc.pid;
-  liveGroups.add(pid);
+  const proc: ProcHandle = spawned.proc;
   let timedOut = false;
   const wall = setTimeout(() => {
     timedOut = true;
-    killGroup(pid, "SIGTERM");
+    void proc.kill("term");
   }, timeoutMs);
-  // KILL 升级在组级：组长先退 ≠ 组清空——升级定时器只在组探活确认死净后才清理
+  // KILL 升级在组级：组长先退 ≠ 组清空——env.settled 是死净观测面，升级定时器只在死净后清理
   const killUpgrade = setTimeout(() => {
-    killGroup(pid, "SIGKILL");
+    void proc.kill("kill");
   }, timeoutMs + KILL_GRACE_MS);
   let abortUpgrade: ReturnType<typeof setTimeout> | undefined;
   const onAbort = (): void => {
-    killGroup(pid, "SIGTERM");
-    abortUpgrade = setTimeout(() => killGroup(pid, "SIGKILL"), KILL_GRACE_MS);
+    void proc.kill("term");
+    abortUpgrade = setTimeout(() => void proc.kill("kill"), KILL_GRACE_MS);
   };
   ctx.signal.addEventListener("abort", onAbort, { once: true });
+  proc.settled.then(() => {
+    clearTimeout(killUpgrade);
+    if (abortUpgrade !== undefined) clearTimeout(abortUpgrade);
+  });
 
-  const pumps = [pump(proc.stdout as ReadableStream<Uint8Array>, out), pump(proc.stderr as ReadableStream<Uint8Array>, err)];
-  let exitCode: number | null = null;
-  try {
-    exitCode = (await proc.exited) as number;
-  } catch {
-    exitCode = null;
-  }
+  const pumps = [pump(proc.stdout, out), pump(proc.stderr, err)];
+  const exited = await proc.exited;
   await Promise.allSettled(pumps);
   clearTimeout(wall);
   ctx.signal.removeEventListener("abort", onAbort);
-  if (abortUpgrade !== undefined) clearTimeout(abortUpgrade);
-  // 组探活：孙进程可能仍活（组长退出≠组清空）——活则等净再除名与撤 KILL
-  await settleGroup(pid, killUpgrade);
+  await proc.settled; // 孙进程收敛（组长退出≠组清空——有界 5s 兜底 KILL 在 env）
   // 先结算（truncated 标志在 text() 内置位）再决定 spill——顺序反了会漏 spill
   const stdoutText = out.text(limits.maxOutputBytes);
   const stderrText = err.text(limits.maxOutputBytes);
@@ -145,7 +142,7 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
   return {
     stdout: stdoutText,
     stderr: stderrText,
-    exitCode,
+    exitCode: renderableCode(exited),
     timeoutMs,
     timedOut,
     aborted: ctx.signal.aborted,
@@ -155,39 +152,20 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
   };
 }
 
-function killGroup(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
-  try {
-    process.kill(-pid, signal);
-  } catch {
-    /* 组已不存在 */
-  }
+/** 信号死亡 → 128+n（exit code 文案口径；正常退出直取 code） */
+function renderableCode(exited: { readonly code: number | null; readonly signal: string | null }): number | null {
+  if (exited.code !== null) return exited.code;
+  if (exited.signal !== null) return 128 + (SIGNAL_NUM[exited.signal] ?? 0);
+  return null;
 }
 
-function groupAlive(pid: number): boolean {
-  try {
-    process.kill(-pid, 0); // 组探活：0 信号不杀只探测
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 组清零收敛：组长退出后孙进程可能仍活——有界轮询（50ms×100=5s 上限）探活；
- *  一直活到上限则发 SIGKILL 兜底后除名（host-exit 清场不再兜底——这里是最后防线） */
-async function settleGroup(pid: number, killUpgrade: ReturnType<typeof setTimeout>): Promise<void> {
-  for (let i = 0; i < 100; i++) {
-    if (!groupAlive(pid)) {
-      clearTimeout(killUpgrade);
-      liveGroups.delete(pid);
-      return;
-    }
-    await new Promise((resolve) => {
-      setTimeout(resolve, 50);
-    });
-  }
-  killGroup(pid, "SIGKILL");
-  clearTimeout(killUpgrade);
-  liveGroups.delete(pid);
+/** 字节精确取尾：起始位置若落在 UTF-8 续字节（0b10xxxxxx）则前移到字符边界——
+ *  不撕裂多字节字符、必有推进（对比字符数切片：≥3 字节/字符的输出会使切片成为无进展空转） */
+function tailBytes(text: string, maxBytes: number): string {
+  const buf = Buffer.from(text, "utf8");
+  let start = buf.byteLength - maxBytes;
+  while (start > 0 && ((buf[start] as number) & 0xc0) === 0x80) start -= 1;
+  return buf.subarray(start).toString("utf8");
 }
 
 /** 双流全程并发消费：即使截断/spill 失败也读到 EOF 丢弃（防子进程堵管假挂） */
@@ -252,15 +230,6 @@ const CR_RE = new RegExp("\\r(?!\\n)", "g"); // 裸 \r（非 CRLF）
 /** ANSI 转义与裸 \r 清洗（token 噪声；锚定 ESC——普通 [word] 文本不受影响） */
 function cleanAnsi(text: string): string {
   return text.replace(CSI_RE, "").replace(OSC_RE, "").replace(CR_RE, "");
-}
-
-/** 字节精确取尾：起始位置若落在 UTF-8 续字节（0b10xxxxxx）则前移到字符边界——
- *  不撕裂多字节字符、必有推进（对比字符数切片：≥3 字节/字符的输出会使切片成为无进展空转） */
-function tailBytes(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf8");
-  let start = buf.byteLength - maxBytes;
-  while (start > 0 && ((buf[start] as number) & 0xc0) === 0x80) start -= 1; // start < byteLength 恒真——索引必在界内
-  return buf.subarray(start).toString("utf8");
 }
 
 function writeSpill(limits: BashLimits, full: string): string | undefined {

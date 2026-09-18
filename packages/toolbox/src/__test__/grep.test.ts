@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createToolbox } from "../toolbox.ts";
+import { createLocalEnv } from "@x-harness/exec-env";
 import type { ToolRegistry } from "@x-harness/tools";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
@@ -34,7 +35,7 @@ function seedWorkspace(root: string): void {
 }
 
 async function makeRegistry(root: string, opts: { rgPath?: string } = {}): Promise<{ registry: ToolRegistry; cleanup: () => Promise<void> }> {
-  const box = createToolbox({ root, ...opts });
+  const box = createToolbox({ root, env: createLocalEnv(root), ...opts });
   const ctx = createContext();
   const unload = await loadPlugins(ctx, [toolsPlugin, box.grepPlugin]);
   return {
@@ -291,9 +292,10 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
       [
         `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/src/index.ts"))};`,
         `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/tools/src/index.ts"))};`,
+        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/exec-env/src/local/env.ts"))};`,
         `import { createToolbox } from ${JSON.stringify(join(repo, "packages/toolbox/src/toolbox.ts"))};`,
         `const ctx = createContext();`,
-        `const box = createToolbox({ root: ${JSON.stringify(root)} });`, // 无 rgPath → env → PATH 链
+        `const box = createToolbox({ root: ${JSON.stringify(root)}, env: createLocalEnv(${JSON.stringify(root)}) });`, // 无 rgPath → env → PATH 链
         `const unload = await loadPlugins(ctx, [toolsPlugin, box.grepPlugin]);`,
         `const reg = ctx.use(toolRegistry);`,
         `const r = await reg.dispatch({ callId: "c", name: "grep", args: { pattern: "x", path: "app.ts" }, signal: new AbortController().signal });`,
@@ -394,11 +396,11 @@ describe("rg-line 纯函数", () => {
     expect(parseRgLine(JSON.stringify({ type: "context", data: { path: { text: "a.ts" }, line_number: 2, lines: { text: "near\n" } } }), matches)).toBe("context");
     expect(parseRgLine("garbage {", matches)).toBe("malformed");
     expect(matches[0]).toEqual({ path: "a.ts", line: 3, text: "hit", isContext: false });
-    const failed = settleRg({ code: 0, selfKilled: false, malformed: true, rawOverflow: false, aborted: false, stderrTail: "", matches: [], limit: 100 });
+    const failed = settleRg({ code: 0, signal: null, selfKilled: false, malformed: true, rawOverflow: false, aborted: false, stderrTail: "", matches: [], limit: 100 });
     expect(failed.isError).toBe(true);
     expect(failed.content).toContain("malformed");
     // aborted 直调语义：管线在 dispatch 层归一，此分支是 execute 直调时的兜底
-    const aborted = settleRg({ code: 0, selfKilled: true, malformed: false, rawOverflow: true, aborted: true, stderrTail: "", matches: [], limit: 100 });
+    const aborted = settleRg({ code: 0, signal: null, selfKilled: true, malformed: false, rawOverflow: true, aborted: true, stderrTail: "", matches: [], limit: 100 });
     expect(aborted.isError).toBe(true);
     expect(aborted.content).toContain("SEARCH_ABORTED");
   });

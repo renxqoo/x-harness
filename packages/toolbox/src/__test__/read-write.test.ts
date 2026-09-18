@@ -1,6 +1,6 @@
 // read/write 工具测试（docs/TOOLBOX.md §2/§3/§6）：交集 read 10 条 + write 6 条 + 回归源。
 
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, readFileSync, utimesSync, chmodSync, existsSync, readdirSync, writeSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, readFileSync, utimesSync, chmodSync, existsSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -247,22 +247,11 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
     expect(existsSync(join(root, "pre-new.txt"))).toBe(false); // 零 I/O
   });
 
-  it("atomicWrite 注入（审查 B-P2）：短写循环续写完整；中途抛错 → 原文完好 + temp 清理", async () => {
-    const { atomicWrite } = await import("../write.ts");
-    const partial = (fd: number, buf: Buffer, off: number): number => writeSync(fd, buf.subarray(off, Math.min(off + 7, buf.length))); // 每次至多 7 字节
-    const target = join(root, "inj.txt");
-    writeFileSync(target, "original");
-    expect(atomicWrite(target, "0123456789abcdef", partial)).toBeUndefined();
-    expect(readFileSync(target, "utf8")).toBe("0123456789abcdef"); // 部分写被循环续完
-    let calls = 0;
-    const failing = (fd: number, buf: Buffer, off: number): number => {
-      calls += 1;
-      if (calls >= 3) throw new Error("EIO: injected mid-write");
-      return partial(fd, buf, off);
-    };
-    expect(atomicWrite(target, "0123456789abcdef", failing)).toContain("EIO");
-    expect(readFileSync(target, "utf8")).toBe("0123456789abcdef"); // 原子：目标未被半截污染
-    expect(readdirSync(root).some((f) => f.endsWith(".tmp"))).toBe(false); // temp 无残留
+  it("D3 回归（症状：父段是已存在文件曾静默归 write_failed）：显式报 FS_NOT_DIRECTORY_PARENT", async () => {
+    writeFileSync(join(root, "afile3.txt"), "x");
+    const w = await call("write", { path: "afile3.txt/child.txt", content: "x" });
+    expect(w.isError).toBe(true);
+    expect(w.content).toContain("FS_NOT_DIRECTORY_PARENT");
   });
 
   it("symlink 不穿透：rename 替换链接本身（与 DSH 穿透写有意相反）", async () => {
@@ -297,7 +286,6 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
 
   it("原子性：写后目录无 temp 残留", async () => {
     await call("write", { path: "atom.txt", content: "ok" }, SESSION_A);
-    const { readdirSync } = await import("node:fs");
     const residue = readdirSync(root).filter((name) => name.endsWith(".tmp"));
     expect(residue).toEqual([]);
   });

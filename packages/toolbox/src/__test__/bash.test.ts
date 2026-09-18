@@ -18,7 +18,7 @@ let spillDir: string;
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "xh-bash-"));
   spillDir = mkdtempSync(join(tmpdir(), "xh-spill-"));
-  const box = createToolbox({ root, spillDir, defaultTimeoutMs: 3_000 });
+  const box = createToolbox({ root, spillDir, defaultTimeoutMs: 3_000, env: createLocalEnv(root) });
   const ctx = createContext();
   const unload = await loadPlugins(ctx, [toolsPlugin, box.bashPlugin]);
   registry = ctx.use(toolRegistry);
@@ -193,9 +193,9 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
       [
         `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/src/index.ts"))};`,
         `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/tools/src/index.ts"))};`,
-        `import { createToolbox } from ${JSON.stringify(join(repo, "packages/toolbox/src/toolbox.ts"))};`,
+        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/exec-env/src/local/env.ts"))};\nimport { createToolbox } from ${JSON.stringify(join(repo, "packages/toolbox/src/toolbox.ts"))};`,
         `const ctx = createContext();`,
-        `const box = createToolbox({ root: ${JSON.stringify(root)} });`,
+        `const box = createToolbox({ root: ${JSON.stringify(root)}, env: createLocalEnv(${JSON.stringify(root)}) });`,
         `const unload = await loadPlugins(ctx, [toolsPlugin, box.bashPlugin]);`,
         `const reg = ctx.use(toolRegistry);`,
         `void reg.dispatch({ callId: "host-exit", name: "bash", args: { command: ${JSON.stringify(`sleep 3; touch ${marker}`)}, timeout_ms: 30000 }, signal: new AbortController().signal }).catch(() => {});`,

@@ -1,7 +1,6 @@
-// 观察版本登记（docs/TOOLBOX.md §3）：会话键控（跨会话不可借用观察）；版本元组 {ino,size,mtimeNs}
-// （statSync bigint——temp+rename 换 inode 必须可比）；同路径进程内互斥（promise chain）。
-
-import { statSync } from "node:fs";
+// 观察版本登记（docs/TOOLBOX.md §3 + docs/EXEC-ENV.md §3）：会话键控（跨会话不可借用观察）；
+// 版本元组 {ino,size,mtimeNs} 由 ExecEnv 产出（read=openRead fd 版本，write=env.stat——
+// temp+rename 换 inode 必须可比）；同路径进程内互斥（promise chain）。
 
 export interface FileVersion {
   readonly ino: string;
@@ -23,16 +22,6 @@ export class ObservedRegistry {
     const fresh = new Map<string, FileVersion>();
     this.bySession.set(key, fresh);
     return fresh;
-  }
-
-  /** 元组拆出：read 的 stat 必须发生在 head peek 前（fail-closed），hadBom 要 peek 后才检测得出 */
-  static tupleOf(path: string): Pick<FileVersion, "ino" | "size" | "mtimeNs"> {
-    const st = statSync(path, { bigint: true }) as unknown as { ino: bigint; size: bigint; mtimeNs: bigint };
-    return { ino: st.ino.toString(), size: st.size.toString(), mtimeNs: st.mtimeNs.toString() };
-  }
-
-  static versionOf(path: string, hadBom: boolean): FileVersion {
-    return { ...ObservedRegistry.tupleOf(path), hadBom };
   }
 
   record(session: string | undefined, path: string, version: FileVersion): void {

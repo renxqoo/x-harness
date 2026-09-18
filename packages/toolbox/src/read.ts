@@ -64,7 +64,7 @@ async function readFile(input: {
   readonly args: { path: string; offset?: number; limit?: number };
 }): Promise<{ content: string; isError?: true }> {
   const { gate, observed, env, ctx, args } = input;
-  const admitted = gate.admit(args.path);
+  const admitted = await gate.admit(args.path, env.realpath);
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const path = admitted.path;
   const st = await env.stat(path);

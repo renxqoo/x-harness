@@ -2,10 +2,10 @@
 // PATH 探测；缺席 fail-closed 报修复指引——绝不静默降级）。纯 argv 向量注入安全；
 // selfKilled 达限即停成功终态；--json 事件组装；malformed 流 fail-closed。
 
-import { spawn } from "node:child_process";
-import { statSync } from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
+import type { ExecEnv } from "@x-harness/exec-env";
 import type { PathGate } from "./paths.ts";
 
 const DEFAULT_LIMIT = 100;
@@ -34,7 +34,7 @@ export function resolveRg(
   return which("rg");
 }
 
-export function createGrepTool(gate: PathGate, options: GrepOptions = {}): ToolDefinition {
+export function createGrepTool(gate: PathGate, options: GrepOptions, env: ExecEnv): ToolDefinition {
   return {
     name: "grep",
     description:
@@ -49,16 +49,16 @@ export function createGrepTool(gate: PathGate, options: GrepOptions = {}): ToolD
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_LIMIT, description: `Max matches (default ${String(DEFAULT_LIMIT)}, max ${String(MAX_LIMIT)}; over-max is rejected)` })),
     }),
     isConcurrencySafe: () => true,
-    execute: async (args, ctx: ToolExecContext) => grep({ gate, options, ctx, args: args as Record<string, unknown> }),
+    execute: async (args, ctx: ToolExecContext) => grep({ gate, options, env, ctx, args: args as Record<string, unknown> }),
   };
 }
 
-async function grep(input: { readonly gate: PathGate; readonly options: GrepOptions; readonly ctx: ToolExecContext; readonly args: Record<string, unknown> }): Promise<{ content: string; isError?: true }> {
-  const { gate, options, ctx, args } = input;
+async function grep(input: { readonly gate: PathGate; readonly options: GrepOptions; readonly env: ExecEnv; readonly ctx: ToolExecContext; readonly args: Record<string, unknown> }): Promise<{ content: string; isError?: true }> {
+  const { gate, options, env, ctx, args } = input;
   const pattern = args["pattern"] as string;
   if (pattern.includes("\u0000")) return { content: "NUL_IN_ARGUMENT: pattern contains NUL", isError: true };
   const targetRaw = (args["path"] as string | undefined) ?? ".";
-  const admitted = gate.admit(targetRaw);
+  const admitted = await gate.admit(targetRaw, env.realpath);
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const glob = args["glob"] as string | undefined;
   if (glob !== undefined) {
@@ -70,16 +70,13 @@ async function grep(input: { readonly gate: PathGate; readonly options: GrepOpti
   const context = (args["context"] as number | undefined) ?? 0;
   const literal = (args["literal"] as boolean | undefined) === true;
   const ignoreCase = (args["ignore_case"] as boolean | undefined) === true;
-  try {
-    statSync(admitted.path); // 存在性门（目录/文件都合法——rg 自行分派）
-  } catch {
-    return { content: `FS_NOT_FOUND: ${targetRaw} does not exist`, isError: true };
-  }
+  const st = await env.stat(admitted.path); // 存在性门（目录/文件都合法——rg 自行分派）
+  if (!st.ok) return { content: `FS_NOT_FOUND: ${targetRaw} does not exist`, isError: true };
   const rg = resolveRg(options.rgPath);
   if (rg === null) {
     return { content: `SEARCH_RG_UNAVAILABLE: ripgrep is required but not found — ${RG_GUIDANCE}`, isError: true };
   }
-  const search: SearchArgs = { pattern, path: admitted.path, glob, literal, ignoreCase, context, limit, signal: ctx.signal };
+  const search: SearchArgs = { pattern, path: admitted.path, glob, literal, ignoreCase, context, limit, signal: ctx.signal, env, session: ctx.session };
   return runRg({ ...search, rgPath: rg });
 }
 
@@ -92,6 +89,8 @@ interface SearchArgs {
   readonly context: number;
   readonly limit: number;
   readonly signal: AbortSignal;
+  readonly env: ExecEnv;
+  readonly session: ToolExecContext["session"];
 }
 
 interface RgLine {
@@ -116,7 +115,12 @@ function rgArgv(a: SearchArgs): string[] {
 
 async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ content: string; isError?: true }> {
   const argv = rgArgv(a);
-  const child = spawn(a.rgPath, argv, { stdio: ["ignore", "pipe", "pipe"] });
+  const spawned = await a.env.spawn({ argv: [a.rgPath, ...argv], ...(a.session !== undefined ? { session: a.session } : {}) });
+  if (!spawned.ok) {
+    // 启动失败（二进制缺席等）——与 close(-1) 同终态
+    return settleRg({ code: -1, signal: null, selfKilled: false, malformed: false, rawOverflow: false, aborted: a.signal.aborted, stderrTail: spawned.reason.detail, matches: [], limit: a.limit });
+  }
+  const proc = spawned.proc;
   let raw = "";
   let rawBytes = 0;
   let rawOverflow = false;
@@ -128,27 +132,20 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
   let malformed = false; // 完整行 JSON 解析失败 = 输出流损坏——fail-closed，不静默当零命中
   const abortRg = (): void => {
     selfKilled = true;
-    child.kill("SIGTERM");
+    void proc.kill("term");
   };
   a.signal.addEventListener("abort", abortRg, { once: true });
 
-  const stdout = child.stdout;
-  stdout.setEncoding("utf8");
-  stdout.on("data", (chunk: string) => {
+  const consumeChunk = (chunk: string): void => {
     if (reached) return; // 达限闭流
-    if (drainChunk(chunk)) return;
-    // 流式计数达限即停（-m 是 per-file 上限不用——全局 limit 由计数实现）
-    consumeCompleteLines();
-  });
-  const drainChunk = (chunk: string): boolean => {
     rawBytes += Buffer.byteLength(chunk);
     if (rawBytes > RAW_CAP) {
       rawOverflow = true;
-      child.kill("SIGTERM");
-      return true;
+      void proc.kill("term");
+      return;
     }
     raw += chunk;
-    return false;
+    consumeCompleteLines();
   };
   const consumeCompleteLines = (): void => {
     let nl = raw.indexOf("\n");
@@ -167,36 +164,48 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
       nl = raw.indexOf("\n");
     }
   };
-  const stderr = child.stderr;
-  stderr.setEncoding("utf8");
-  stderr.on("data", (chunk: string) => {
-    stderrTail = `${stderrTail}${chunk}`.slice(-500);
-  });
-  const code = await new Promise<number | null>((resolve) => {
-    child.on("close", (exitCode) => resolve(exitCode));
-    child.on("error", () => resolve(-1));
-  });
+  const pump = async (stream: ReadableStream<Uint8Array>, onText: (text: string) => void): Promise<void> => {
+    const reader = stream.getReader();
+    const decoder = new StringDecoder("utf8");
+    for (;;) {
+      const read = await reader.read();
+      if (read.done) break;
+      onText(decoder.write(read.value));
+    }
+    onText(decoder.end());
+  };
+  const pumps = [pump(proc.stdout, consumeChunk), pump(proc.stderr, (text) => {
+    stderrTail = `${stderrTail}${text}`.slice(-500);
+  })];
+  const exited = await proc.exited;
+  await Promise.allSettled(pumps);
   a.signal.removeEventListener("abort", abortRg);
+  await proc.settled;
   // kill 落点之后的未解析输出（同 chunk 余行、撕裂半行）直接丢弃——已解析行即终态；
   // 不做 kill 后排空：其结果在三路终态下均不可达（reached 排除、aborted/rawOverflow 优先归一）
-  return settleRg({ code, selfKilled, malformed, rawOverflow, aborted: a.signal.aborted, stderrTail, matches, limit: a.limit });
+  return settleRg({ code: exited.code, signal: exited.signal, selfKilled, malformed, rawOverflow, aborted: a.signal.aborted, stderrTail, matches, limit: a.limit });
 }
 
 /** 退出码矩阵：selfKilled→成功走 limit 页脚；1=零命中成功；2→FAILED（stderr 特征附 literal 提示）；
  *  malformed→FAILED（损坏流不可信——静默当零命中是假空，fail-closed） */
-function settleRg(input: { readonly code: number | null; readonly selfKilled: boolean; readonly malformed: boolean; readonly rawOverflow: boolean; readonly aborted: boolean; readonly stderrTail: string; readonly matches: Array<{ path: string; line: number; text: string; isContext: boolean }>; readonly limit: number }): { content: string; isError?: true } {
+function settleRg(input: { readonly code: number | null; readonly signal: string | null; readonly selfKilled: boolean; readonly malformed: boolean; readonly rawOverflow: boolean; readonly aborted: boolean; readonly stderrTail: string; readonly matches: Array<{ path: string; line: number; text: string; isContext: boolean }>; readonly limit: number }): { content: string; isError?: true } {
   if (input.aborted) return { content: "SEARCH_ABORTED: search cancelled", isError: true };
   if (input.rawOverflow) return { content: "SEARCH_RAW_OUTPUT_OVERFLOW: rg output exceeded 1MB", isError: true };
   if (input.malformed) return { content: "SEARCH_FAILED: rg produced malformed output (stream corrupted)", isError: true };
   if (input.code === -1) return { content: `SEARCH_FAILED: failed to start rg (path may be wrong) — ${RG_GUIDANCE}`, isError: true };
   if (input.code === 1 && !input.selfKilled) return { content: "No matches found" };
-  if (input.code !== 0 && input.code !== 1 && !input.selfKilled) {
+  if ((input.code === null || (input.code !== 0 && input.code !== 1)) && !input.selfKilled) {
     const hint = /regex|parse|unrecognized|invalid pattern/i.test(input.stderrTail) ? " (the pattern may be invalid — try literal:true)" : "";
     const tail = input.stderrTail === "" ? "" : `: ${input.stderrTail.trim()}`;
-    return { content: `SEARCH_FAILED: rg exited ${String(input.code)}${tail}${hint}`, isError: true };
+    return { content: `SEARCH_FAILED: rg exited ${rgExitText(input)}${tail}${hint}`, isError: true };
   }
   if (input.matches.length === 0) return { content: "No matches found" };
   return { content: renderMatches(input.matches, input.limit) };
+}
+
+function rgExitText(input: { readonly code: number | null; readonly signal: string | null }): string {
+  if (input.code !== null) return String(input.code);
+  return `killed by ${input.signal ?? "unknown signal"}`;
 }
 
 function parseRgLine(line: string, matches: Array<{ path: string; line: number; text: string; isContext: boolean }>): "match" | "context" | "other" | "malformed" {
