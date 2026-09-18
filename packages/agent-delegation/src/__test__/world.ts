@@ -1,5 +1,9 @@
 // 子代理测试共享装置：按 model 分桶的假适配器世界（未注册 model 报错——防串线静默假绿）。
+// 类型经临时 .md 目录种入（U4：类型唯一来源 = 文件）。
 
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -17,10 +21,31 @@ import { afterEach, expect } from "vitest";
 
 export const PARENT_MODEL = "parent-model";
 export const CHILD_MODEL = "child-model";
+export const AGENT_ID = /agent-[0-9a-f]{8}/;
 
-export const OPTIONS: DelegationOptions = {
-  types: { worker: { model: CHILD_MODEL, prompt: "you are a worker" } },
-};
+export interface TypeSpec {
+  readonly model?: string;
+  readonly provider?: string;
+  readonly tools?: readonly string[];
+  /** 正文 = 子 system prompt */
+  readonly body?: string;
+}
+
+/** 把类型规格写成临时 .md 目录（每个 makeOptions 独立目录，afterEach 清理） */
+export async function makeOptions(types: Record<string, TypeSpec>, over: Partial<DelegationOptions> = {}): Promise<DelegationOptions> {
+  const dir = await mkdtemp(join(tmpdir(), "xh-agents-"));
+  dirs = [...dirs, dir];
+  for (const [name, spec] of Object.entries(types)) {
+    const fields = [`name: ${name}`, `description: test type ${name}`];
+    if (spec.model !== undefined) fields.push(`model: ${spec.model}`);
+    if (spec.provider !== undefined) fields.push(`provider: ${spec.provider}`);
+    if (spec.tools !== undefined) fields.push(`tools: ${spec.tools.join(", ")}`);
+    await writeFile(join(dir, `${name}.md`), `---\n${fields.join("\n")}\n---\n${spec.body ?? ""}`);
+  }
+  return { agentsDirs: [dir], ...over };
+}
+
+export const workerOptions = (): Promise<DelegationOptions> => makeOptions({ worker: { model: CHILD_MODEL, body: "you are a worker" } });
 
 export interface World {
   readonly ctx: Context;
@@ -33,6 +58,7 @@ export interface World {
 }
 
 let worlds: World[] = [];
+let dirs: string[] = [];
 
 export function resetWorlds(): void {
   worlds = [];
@@ -40,6 +66,8 @@ export function resetWorlds(): void {
 
 afterEach(async () => {
   for (const world of worlds) await world.cleanup().catch(() => {});
+  for (const dir of dirs) await rm(dir, { recursive: true, force: true }).catch(() => {});
+  dirs = [];
 });
 
 export async function makeWorld(options: DelegationOptions): Promise<World> {
@@ -108,3 +136,15 @@ export async function callTool(input: { readonly world: World; readonly name: st
 }
 
 export const typesOf = (handle: AgentHandle): string[] => handle.agent.session.events().map((e: { type: string }) => e.type);
+
+export const agentIdOf = (spawnText: string): string => {
+  const hit = spawnText.match(AGENT_ID);
+  if (hit === null) throw new Error(`no agentId in: ${spawnText}`);
+  return hit[0];
+};
+
+export const sessionOf = (spawnText: string): SessionId => {
+  const hit = spawnText.match(/session ([A-Za-z0-9._-]+)/);
+  if (hit === null) throw new Error(`no session in: ${spawnText}`);
+  return hit[1] as SessionId;
+};

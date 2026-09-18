@@ -40,12 +40,13 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
     return { ok: true, value: id };
   }
 
-  function makeHeader(id: SessionId, parent: SessionId | undefined): SessionHeader {
+  function makeHeader(id: SessionId, parent: SessionId | undefined, agent: CreateSessionOptions["agent"]): SessionHeader {
     return deepFreeze({
       id,
       createdAt: Date.now(),
       cwd: process.cwd(),
       ...(parent !== undefined ? { parentSession: parent } : {}),
+      ...(agent !== undefined ? { agentName: agent.name, agentType: agent.type, agentDepth: agent.depth } : {}),
     }) as SessionHeader;
   }
 
@@ -103,7 +104,7 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
         const seedErr = validateSessionEvents(seed);
         if (seedErr !== undefined) return { ok: false, reason: seedErr };
       }
-      return birth(header ?? makeHeader(id, options.parent), seed, false);
+      return birth(header ?? makeHeader(id, options.parent, options.agent), seed, false);
     },
 
     fork: async (source: SessionId, options: ForkSessionOptions = {}) => {
@@ -119,7 +120,7 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
       if (sessions.has(idRes.value)) return { ok: false, reason: `duplicate:${idRes.value}` };
       // seed 是自身维护不变量日志的冻结切片（append 逐条过门），无需重验
       const seed = snapshot.slice(0, cut + 1);
-      return birth(makeHeader(idRes.value, source), seed, true);
+      return birth(makeHeader(idRes.value, source, undefined), seed, true);
     },
 
     get: (id) => sessions.get(id)?.session,

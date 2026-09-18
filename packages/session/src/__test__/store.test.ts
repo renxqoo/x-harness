@@ -271,3 +271,22 @@ describe("flush / dispose（docs/SESSION.md §1.5）", () => {
     expect(await store.flush(s.id)).toEqual({ ok: false, reason: `no-session:${s.id}` });
   });
 });
+
+describe("create agent 元数据透传（件13 接缝 1——子代理 header 锚）", () => {
+  it("agent 三字段随 birth 落 header；缺省不带；resume header 分支以归档原文为准", async () => {
+    const h = makeStore();
+    const store = createSessionStore(h.hooks);
+    const spawned = unwrap(await store.create({ parent: sid("p"), agent: { name: "worker", type: "explore", depth: 1 } }));
+    expect(spawned.header.agentName).toBe("worker");
+    expect(spawned.header.agentType).toBe("explore");
+    expect(spawned.header.agentDepth).toBe(1);
+    expect(spawned.header.parentSession).toBe(sid("p"));
+
+    const plain = unwrap(await store.create());
+    expect(plain.header.agentName).toBeUndefined();
+
+    const resumed = unwrap(await store.create({ header: { id: sid("old"), createdAt: 1, agentName: "archived-name" }, agent: { name: "ignored", type: "ignored", depth: 9 } }));
+    expect(resumed.header.agentName).toBe("archived-name");
+    expect(resumed.header.agentType).toBeUndefined();
+  });
+});

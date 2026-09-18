@@ -31,6 +31,7 @@ async function makeWorld(withArchive?: (snapshots: Map<string, SessionSnapshot>)
       const snapshot = snapshots.get(id);
       return snapshot === undefined ? { ok: false, reason: `no-session:${id}` } : { ok: true, value: snapshot };
     },
+    listHeaders: async () => [...snapshots.values()].map((snapshot) => snapshot.header),
   });
   return { ctx, cleanup: async () => { await ctx.dispose(); void unload; } };
 }

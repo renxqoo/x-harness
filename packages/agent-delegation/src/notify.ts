@@ -1,6 +1,7 @@
-// 完成通知（docs/AGENT-DELEGATION.md §1.3）：agentStatus 监听 → 子 idle 且 armed → 读子 WAL
+// 完成通知（docs/AGENT-DELEGATION.md §5.1）：agentStatus 监听 → 子 idle 且 armed → 读子 WAL
 // 末 turn/end（词表对齐 TurnEndReason 全集）+ 本轮 assistant 摘要 → steer 注入父；
-// tearing-down 门（级联期丢弃）；孤儿子收养处置（父 get 缺位 → cancel+dispose+摘行）。
+// tearing-down 门（级联期丢弃）；孤儿子收养处置（父 get 缺位 → cancel+dispose+摘行）；
+// 子会话缺档 → 占位通知如实送达（不静默丢 completion）。
 
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
@@ -11,7 +12,8 @@ const SUMMARY_CAP = 200;
 export interface NotifyDeps {
   readonly loop: AgentLoopService;
   readonly store: SessionStore;
-  readonly rows: Map<SessionId, ChildRow>;
+  /** 活查询（登记后立即可见——快照会让新子永远收不到通知臂） */
+  readonly getRow: (session: SessionId) => ChildRow | undefined;
   isTearingDown: () => boolean;
   adoptOrphan: (row: ChildRow) => Promise<void>;
 }
@@ -63,10 +65,15 @@ export function notificationText(row: ChildRow, report: ChildReport): string {
   return lines.join("\n");
 }
 
+/** 缺档占位（子会话已封存且档案不可读——completion 事实仍送达） */
+export function archivedNotificationText(row: ChildRow): string {
+  return `[agent-notification] agent ${row.agentId} (${row.name}) finished: session-archived (no report available)`;
+}
+
 /** 状态事件路由：running → armed/running 置位；idle 且 armed → 通知（armed/occupied 复位） */
 export function createNotifier(deps: NotifyDeps): (payload: { session: SessionId; status: "idle" | "running" }) => void {
   return (payload) => {
-    const row = deps.rows.get(payload.session);
+    const row = deps.getRow(payload.session);
     if (row === undefined || deps.isTearingDown()) return;
     if (payload.status === "running") {
       row.armed = true;
@@ -91,8 +98,7 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
     return;
   }
   const childSession = deps.store.get(row.sessionId);
-  if (childSession === undefined) return; // 子会话已封存：无报告可送
-  const text = notificationText(row, childReport(childSession.events()));
+  const text = childSession === undefined ? archivedNotificationText(row) : notificationText(row, childReport(childSession.events()));
   try {
     parentHandle.agent.steer(text);
   } catch {

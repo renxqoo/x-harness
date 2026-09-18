@@ -11,6 +11,10 @@ export interface SessionHeader {
   readonly createdAt: number;
   readonly cwd?: string;
   readonly parentSession?: SessionId;
+  /** 子代理元数据（delegation spawn 落盘；跨重启按名惰性复活的锚——docs/AGENT-DELEGATION.md §6.2） */
+  readonly agentName?: string;
+  readonly agentType?: string;
+  readonly agentDepth?: number;
 }
 
 export type TurnEndReason =
@@ -130,6 +134,8 @@ export interface CreateSessionOptions {
   readonly seed?: readonly SessionEvent[];
   /** 血缘回填：resume 消费方从 archive.read 的 header.parentSession 取（fork 内部自动携带） */
   readonly parent?: SessionId;
+  /** 子代理元数据透传（birth 落 header；resume 的归档 header 分支忽略——归档原文为准） */
+  readonly agent?: { readonly name: string; readonly type: string; readonly depth: number };
   /** resume 的归档 header 原文：提供时以它为准（id 取 header.id、parent 忽略、归档元数据保留） */
   readonly header?: SessionHeader;
 }
@@ -158,4 +164,6 @@ export interface SessionSnapshot {
 export interface SessionArchive {
   list(): readonly SessionId[];
   read(id: SessionId): Promise<Result<SessionSnapshot>>;
+  /** 轻量 header 投影（不读事件卷）——delegation 按名惰性复活的扫描面；坏档案跳过不列 */
+  listHeaders(): Promise<readonly SessionHeader[]>;
 }

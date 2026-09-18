@@ -8,22 +8,45 @@ import { deepFreeze } from "@x-harness/core";
 import { isSafeSessionId, validateSessionEvents } from "@x-harness/session";
 import type { SessionArchive, SessionEvent, SessionHeader, SessionId } from "@x-harness/session";
 
+function listIds(root: string): readonly SessionId[] {
+  let entries;
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    // 仅「root 尚未创建」视为无档案；权限等环境错误上抛（区分可见性，不静默折叠）
+    if ((error as { code?: unknown }).code === "ENOENT") return Object.freeze([] as SessionId[]);
+    throw error;
+  }
+  return Object.freeze(
+    entries
+      .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, "header.json")))
+      .map((entry) => entry.name as SessionId),
+  );
+}
+
 export function createArchiveReader(root: string): SessionArchive {
   return {
-    list: () => {
-      let entries;
-      try {
-        entries = readdirSync(root, { withFileTypes: true });
-      } catch (error) {
-        // 仅「root 尚未创建」视为无档案；权限等环境错误上抛（区分可见性，不静默折叠）
-        if ((error as { code?: unknown }).code === "ENOENT") return Object.freeze([] as SessionId[]);
-        throw error;
+    list: () => listIds(root),
+
+    listHeaders: async () => {
+      const out: SessionHeader[] = [];
+      for (const id of listIds(root)) {
+        let text: string;
+        try {
+          text = await readFile(join(root, id, "header.json"), "utf8");
+        } catch {
+          continue; // list 已探得 header 在场，此处缺失=竞态拆除：跳过
+        }
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          continue; // 坏档案不阻断发现面（read() 单卷访问时仍 fail-closed）
+        }
+        if (gateHeader(json, id) !== undefined) continue;
+        out.push(json as SessionHeader);
       }
-      return Object.freeze(
-        entries
-          .filter((entry) => entry.isDirectory() && existsSync(join(root, entry.name, "header.json")))
-          .map((entry) => entry.name as SessionId),
-      );
+      return Object.freeze(out);
     },
 
     read: async (id) => {
@@ -73,14 +96,19 @@ export function createArchiveReader(root: string): SessionArchive {
   };
 }
 
+const STRING_FIELDS = ["cwd", "parentSession", "agentName", "agentType"] as const;
+
 function gateHeader(value: unknown, id: string): string | undefined {
   if (typeof value !== "object" || value === null) return `corrupt-header:${id}`;
   const record = value as Record<string, unknown>;
   if (record["id"] !== id) return `corrupt-header:${id}:id-mismatch`;
   if (typeof record["createdAt"] !== "number" || !Number.isFinite(record["createdAt"])) return `corrupt-header:${id}`;
-  if (record["cwd"] !== undefined && typeof record["cwd"] !== "string") return `corrupt-header:${id}:cwd`;
-  if (record["parentSession"] !== undefined && typeof record["parentSession"] !== "string") {
-    return `corrupt-header:${id}:parentSession`;
+  for (const field of STRING_FIELDS) {
+    if (record[field] !== undefined && typeof record[field] !== "string") return `corrupt-header:${id}:${field}`;
+  }
+  const depth = record["agentDepth"];
+  if (depth !== undefined && (typeof depth !== "number" || !Number.isSafeInteger(depth) || depth < 0)) {
+    return `corrupt-header:${id}:agentDepth`;
   }
   return undefined;
 }

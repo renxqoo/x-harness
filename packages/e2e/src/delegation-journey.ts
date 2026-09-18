@@ -1,7 +1,7 @@
-// e2e：子代理旅程（docs/AGENT-DELEGATION.md §4）——独立装配不动既有 assembleWorld：
-// 假适配器按 request.model 分桶路由；父模型调 agent_spawn → 子模型完成 → 父第二 turn 消费通知；
-// 断言父子两会话 jsonl 落盘。
-import { mkdtemp, rm } from "node:fs/promises";
+// e2e：子代理旅程（docs/AGENT-DELEGATION.md §11.3）——独立装配不动既有 assembleWorld：
+// 类型经临时 .md 目录种入（U4）；假适配器按 request.model 分桶路由；父模型调 agent_spawn →
+// 子模型完成 → 父第二 turn 消费通知；断言父子两会话 jsonl 落盘与 header 三字段锚。
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,7 +22,12 @@ const CHILD_MODEL = "e2e-child-model";
 
 export async function runDelegationJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-delegation-"));
+  const agentsDir = await mkdtemp(join(tmpdir(), "xh-delegation-agents-"));
   try {
+    await writeFile(
+      join(agentsDir, "worker.md"),
+      `---\nname: worker\ndescription: counting worker\nmodel: ${CHILD_MODEL}\n---\nyou are the worker`,
+    );
     const ctx = createContext();
     const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
     const unload = await loadPlugins(ctx, [
@@ -32,7 +37,7 @@ export async function runDelegationJourney(): Promise<void> {
       llmPlugin,
       systemPromptPlugin,
       agentLoopPlugin,
-      createAgentDelegationPlugin({ types: { worker: { model: CHILD_MODEL, prompt: "you are the worker" } } }),
+      createAgentDelegationPlugin({ agentsDirs: [agentsDir] }),
     ]);
     const off = ctx.use(llmRuntime).registerAdapter({
       name: "fake",
@@ -63,7 +68,7 @@ export async function runDelegationJourney(): Promise<void> {
           index: 0,
           callId: "e2e-spawn",
           name: "agent_spawn",
-          argumentsDelta: JSON.stringify({ prompt: "count to three", type: "worker" }),
+          argumentsDelta: JSON.stringify({ description: "count things", prompt: "count to three", subagent_type: "worker" }),
         };
         yield { type: "finish", finish: { kind: "stop" } };
       })(),
@@ -106,6 +111,8 @@ export async function runDelegationJourney(): Promise<void> {
     await store.flush("delegation-parent" as SessionId);
     const childDisk = readFileSync(join(root, childSession as string, "events.jsonl"), "utf8");
     must(childDisk.includes('"turn/end"') && childDisk.includes('"completed"'), "子会话 jsonl 完整落盘");
+    const childHeaderDisk = readFileSync(join(root, childSession as string, "header.json"), "utf8");
+    must(childHeaderDisk.includes('"agentName":"count-things"') && childHeaderDisk.includes('"agentType":"worker"'), "子 header 三字段锚落盘");
     const parentDisk = readFileSync(join(root, "delegation-parent", "events.jsonl"), "utf8");
     must(parentDisk.includes('"tool/call"') && parentDisk.includes("[agent-notification]"), "父会话 jsonl 含 spawn 调用与通知");
 
@@ -115,5 +122,6 @@ export async function runDelegationJourney(): Promise<void> {
     console.log("子代理旅程：父 spawn → 子完成 → 通知唤醒父消费 → 双会话落盘 通过");
   } finally {
     await rm(root, { recursive: true, force: true }).catch(() => {});
+    await rm(agentsDir, { recursive: true, force: true }).catch(() => {});
   }
 }
