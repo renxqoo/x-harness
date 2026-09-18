@@ -76,17 +76,6 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
     }
   });
 
-  it("workdir：相对 root 解析生效；不存在 → WORKDIR_NOT_FOUND；越根拒绝", async () => {
-    const r = await bash({ command: "basename \"$PWD\"", workdir: "." });
-    expect(r.content).toContain("xh-bash-");
-    const missing = await bash({ command: "true", workdir: "no-such-dir" });
-    expect(missing.isError).toBe(true);
-    expect(missing.content).toContain("WORKDIR_NOT_FOUND");
-    const escape = await bash({ command: "true", workdir: ".." });
-    expect(escape.isError).toBe(true);
-    expect(escape.content).toContain("PATH_ESCAPES_ROOT");
-  });
-
   it("截断保尾部三件套：标注在场+尾部内容在场+spill 字节级等于全文（审查 B-P2）", async () => {
     const r = await bash({ command: "seq 1 100000" }); // 100k 行 > 行帽
     expect(r.content).toContain("[output truncated; full output:");

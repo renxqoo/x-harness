@@ -1,7 +1,7 @@
 // bash 裁决管线（docs/EXEC-ENV.md §5/§14）：AST 解析（unparseable/parser-unavailable → ask）→
 // 逐命令 [deny 规则 → 硬拒 ask → injection ask → 结构失败 ask → dynamic(auto:ask/full:过) →
-// 重定向双面 → allow 规则 → 不透明 ask → full 过 → 界内合成(auto:allow) → 默认 ask] →
-// 全命令允许后 needs_network → ask。deny 压过 allow；硬拒/injection/结构失败恒 ask
+// 重定向双面 → allow 规则 → 不透明 ask → full 过 → 界内合成(auto:allow) → 默认 ask]。
+// deny 压过 allow；硬拒/injection/结构失败恒 ask
 // （allow 规则不可越过——NEVER_MEMORIZE）；不透明面（source/解释器文件/字符串实参代码）可被
 // allow 规则以用户信任越过。裁决序重排申明见 §14.4：deny 规则现压过 injection（确定性拒绝
 // 先于保守 ask，与 full 档 deny 压过硬拒同哲学）。
@@ -24,7 +24,6 @@ export interface BashAdjudication {
 
 export interface BashPipelineInput {
   readonly command: string;
-  readonly needsNetwork?: boolean;
   readonly rules: readonly PermissionRule[];
   readonly mode: ModeKnob;
   readonly root: string;
@@ -125,7 +124,6 @@ export function adjudicateBash(input: BashPipelineInput): BashAdjudication {
     const blocked = input.mode === "full" ? fullDecision(cmd, input) : commandDecision(cmd, input, roots);
     if (blocked !== undefined) return blocked;
   }
-  if (input.needsNetwork === true && input.mode !== "full") return { verdict: "ask", reason: "network", resolvedBy: "needs_network" };
   if (input.mode === "full") return { verdict: "allow", reason: "full mode", resolvedBy: "mode:full" };
   return { verdict: "allow", reason: "in-fence", resolvedBy: input.fence !== undefined ? "auto:fence" : "auto" };
 }

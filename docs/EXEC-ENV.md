@@ -198,8 +198,8 @@ full 档）；词法开放但**拼错 fail-closed 拒启**。
 5. **重定向双面裁决**——算符全矩阵 `>`/`>>`/`2>`/`2>&1`/`&>`/`>&`/`>|`/任意 fd 前缀 + 输入 `<`
    （denyRead 表 deny，不做越根 ask）：输出目标越根/`..`/`~` 归一后越根 → ask；界内 allow；
 6. **allow 规则** → **不透明信任类**（source/解释器文件/stdin/字符串实参代码——可被 allow 以
-   用户信任越过）→ **围栏事实合成**：命令全过且界内 → **auto-allow**。`needs_network: true`
-   声明位（dsh 思想）：声明 → 路由 ask；未声明撞断网 EPERM → 错误文案含自行声明指引。
+   用户信任越过）→ **围栏事实合成**：命令全过且界内 → **auto-allow**。网络声明位已删除（用户裁决）：出站控制
+   全权归围栏代理层（白名单 + 撞墙 EPERM 自行换路）。
 
 **模式档**（闭集）：`plan`（write/bash 全拒，read/grep 界内 auto）/ `auto`（缺省，全流程）/
 `full`（**完全访问——用户裁决⑤：不拦截任何命令，唯提权/密码类（sudo/doas/su，含包装/载荷/
@@ -235,11 +235,11 @@ per-session 互斥）；**会话终结逐出**（`on(sessionDisposed)` 关桶—
 ## 6. 决策流时序（bash 一次调用）
 
 ```
-模型 tool_use bash{command, needs_network?}
+模型 tool_use bash{command}
 → tools.dispatch → toolsPreExecute waterfall
    → permission 监听器（纯函数裁决管线 + fenceFacts（会话 fence 快照，与 spawn 同一解析函数产物））
       界内且无危险 → allow（零交互）
-      界外/危险/needs_network → broker.ask → 批：grant 入会话集 → allow / 拒 → deny(reason)
+      界外/危险 → broker.ask → 批：grant 入会话集 → allow / 拒 → deny(reason)
       broker 缺席 → deny（fail-closed）
 → toolsExecute → bash.execute → env.spawn({argv:["/bin/sh","-c",cmd], cwd, session})
    → sandbox env：fenceFor(session) = base ∧ grants（单一解析函数，决策与 spawn 共用；域名/根授权
@@ -280,8 +280,8 @@ grammar 升级加 kind 必红）；注入 6 kind（节点级）+ 硬拒逃脱形
 NEVER_MEMORIZE 投毒；**包装器剥离矩阵**（exact/bounded × sudo、未知旗 fail-closed、剥后残渣）；
 **解释器载荷**（-c 再解析/传染/文件操作数/stdin/赋值前缀/管道喂入）；payload（xargs/find -exec
 空载与良性）；前缀规则精确匹配；**重定向算符全矩阵双面**（输出 × 界内/越根/../~；输入 ×
-denyRead 表 + 反向钉不越根 ask）；**reason 快照**（全 reason 词表逐条钉死）；**needs_network
-声明/未声明双路**；deny 压过 allow 含 full 档与注入（裁决序重排锚）；来源覆盖；拼错规则拒启
+denyRead 表 + 反向钉不越根 ask）；**reason 快照**（全 reason 词表逐条钉死）；deny 压过 allow
+含 full 档与注入（裁决序重排锚）；来源覆盖；拼错规则拒启
 （apply throw）；三模式档矩阵；broker 缺席 ask→deny；审计事件每裁决一条（次数断言）；会话授权
 隔离（A/B 互不借用）+ **sessionDisposed 逐出**（桶关、代理口关）。
 
@@ -369,7 +369,7 @@ session（§6）；apply 先探测后绑定+ctx.effect 登记（§4）；授权�
 **采纳（C，P0×2+P1×4+P2×4+P3×2）**：零改动口径改「零行为断言改动」+装配行机械适配（§3/§7）；
 验收基数以 vitest 运行期报告机械再生（§0/§12）；sandbox journey 进默认门+在场 skip>0 失败+删
 计数逃生口（§7/§12）；linux 腿 known-untested+REQUIRE knob+T9 证据（§7/§8/§12）；负向网络三腿
-（直连/非代理口/DNS）（§7）；重定向算符全矩阵+变异角度+needs_network 双路（§5/§7）；conformance
+（直连/非代理口/DNS）（§7）；重定向算符全矩阵+变异角度（§5/§7）；conformance
 三档标注+localEnv 注错缝+local 权威（§2/§7）；spawn 失败移入真缺口（§8）；§8 行标覆盖腿+
 fenced 四行为腿（§8/§7）；覆盖率平台策略=纯函数化+禁 mock 凑数（§7）；atomicWrite 注入移植
 （§3）；组探活 marker 法措辞（§8）。
@@ -759,7 +759,7 @@ argv 位/裁决序组合/fail-closed 底座/解释器 -c 递归/包装器跳参�
 **full = 完全访问**：裁决管线在 full 档短路为「用户 deny 规则 → 提权/密码类（hard-deny:sudo，
 即 sudo/doas/su——basename 归一，含包装器剥离、`$()`/payload/`bash -c` 再解析内嵌形）→ 其余全过
 （reason `full mode`）」。畸形命令不再保守 ask——仅原始文本命中提权词（\b(sudo|doas|su)\b）才
-deny；`needs_network` 在 full 不再路由 ask（域名白名单由代理层承载）。硬拒底线其余形态
+deny；域名白名单由代理层承载；硬拒底线其余形态
 （rm-rf-root/force-push/chmod-777）、注入、结构失败、重定向、opaque、dynamic 在 **full 全部不再
 拦截**（auto/plan 语义不变）；围栏仍内核执法越根写/网络/拒读表。取代 §14.4/§14.10 中所有
 「full 档恒 ask」表述的 full 侧语义。

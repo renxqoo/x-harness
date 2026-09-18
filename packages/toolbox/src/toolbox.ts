@@ -72,7 +72,7 @@ export function createToolbox(options: ToolboxOptions = {}) {
   return {
     readPlugin: register((env, extraRootsOf) => createReadTool({ gate, observed, env, extraRootsOf }), "tool-read"),
     writePlugin: register((env, extraRootsOf) => createWriteTool({ gate, observed, env, extraRootsOf }), "tool-write"),
-    bashPlugin: register((env, extraRootsOf) => createBashTool({ gate, limits, env, extraRootsOf }), "tool-bash"),
+    bashPlugin: register((env) => createBashTool({ gate, limits, env }), "tool-bash"),
     grepPlugin: register((env, extraRootsOf) => createGrepTool({ gate, options: { rgPath: options.rgPath }, env, extraRootsOf }), "tool-grep"),
     /** 测试/宿主直取句柄 */
     gate,

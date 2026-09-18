@@ -45,10 +45,9 @@ export function decideFor(input: DecideInput): Decision {
   // （那是 bash/spawn 面的可写集，含 tmpdir；两层口径漂移会把 tmpdir 误判为工具面界内）
   const pathRoots = [input.root, ...input.extraRoots.map((r) => resolve(r))];
   if (input.tool === "bash") {
-    const args = (input.args ?? {}) as { command?: unknown; needs_network?: unknown };
+    const args = (input.args ?? {}) as { command?: unknown };
     const adjudication = adjudicateBash({
       command: typeof args.command === "string" ? args.command : "",
-      needsNetwork: args.needs_network === true,
       rules,
       mode: input.mode,
       root: input.root,

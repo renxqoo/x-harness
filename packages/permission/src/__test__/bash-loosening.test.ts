@@ -69,7 +69,6 @@ describe("reason 快照（§14.5-6——防实现期 reason 词漂移）", () =>
     expect(pin("bash x.sh", "auto")).toEqual(["ask", "opaque-code:bash", "opaque"]); // 无规则 harness——opaque 可被 allow 越过是独立语义
     expect(pin("git status", "auto")).toEqual(["allow", "in-fence", "auto:fence"]);
     expect(pin("ls", "auto", WIDE)).toEqual(["allow", "in-fence", "auto:fence"]);
-    expect(adjudicateBash({ ...fenced, command: "curl x", needsNetwork: true })).toMatchObject({ verdict: "ask", reason: "network", resolvedBy: "needs_network" });
   });
   it("deny 规则压过注入（裁决序重排锚——§14.4：确定性拒绝先于保守 ask）", () => {
     const rules = [parseRule("Bash(echo:*):deny", "user"), parseRule("Bash(*):allow", "user")];

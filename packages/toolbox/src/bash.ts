@@ -1,7 +1,6 @@
 // bash 工具（docs/TOOLBOX.md §4 + docs/EXEC-ENV.md §3/§6）：进程生命周期经 env.spawn
 // （detached 组杀/settle 观测面/host-exit 清场——全在 exec-env；本文件只留两段杀节奏策略）；
-// 双流全程并发消费；截断保尾+spill（0700/wx 0600/随机名）；退出码非 isError；
-// needs_network 声明位（permission 裁决依据——声明走 ask，未声明撞断网自行回头）。
+// 双流全程并发消费；截断保尾+spill（0700/wx 0600/随机名）；退出码非 isError。
 
 import { mkdirSync, mkdtempSync, openSync, closeSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +11,6 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv, ProcHandle } from "@x-harness/exec-env";
 import { PathGate } from "./paths.ts";
-import type { ExtraRootsOf } from "./toolbox.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -50,23 +48,19 @@ export interface BashToolInput {
   readonly gate: PathGate;
   readonly limits: BashLimits;
   readonly env: ExecEnv;
-  readonly extraRootsOf?: ExtraRootsOf;
 }
 
 export function createBashTool(input: BashToolInput): ToolDefinition {
   const { gate, limits, env } = input;
-  const extraRootsOf = input.extraRootsOf ?? (() => []);
   return {
     name: "bash",
     description:
-      "Run a shell command with /bin/sh -c in the workspace root (workdir optional, must stay inside the root). Non-zero exit codes are shown as [exit code: N] and are NOT tool errors — inspect the output. Long-running commands (builds, installs) should pass timeout_ms explicitly (default 120000ms, max 600000ms). Commands needing network access (installs, fetches) must declare needs_network:true. Output is truncated to the last 30000 bytes with the full output written to a spill file.",
+      "Run a shell command with /bin/sh -c in the workspace root (cd within the command for subdirectories). Non-zero exit codes are shown as [exit code: N] and are NOT tool errors — inspect the output. Long-running commands (builds, installs) should pass timeout_ms explicitly (default 120000ms, max 600000ms). Output is truncated to the last 30000 bytes with the full output written to a spill file.",
     inputSchema: Type.Object({
       command: Type.String({ description: "Shell command line" }),
       timeout_ms: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: `Wall-clock timeout in ms (default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)})` })),
-      workdir: Type.Optional(Type.String({ description: "Working directory (inside workspace root; default root)" })),
-      needs_network: Type.Optional(Type.Boolean({ description: "Declare that this command requires network access — routes through approval before running" })),
     }),
-    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, ctx, extraRootsOf, args: args as { command: string; timeout_ms?: number; workdir?: string; needs_network?: boolean } }),
+    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, ctx, args: args as { command: string; timeout_ms?: number } }),
   };
 }
 
@@ -74,28 +68,17 @@ async function bash(input: {
   readonly gate: PathGate;
   readonly limits: BashLimits;
   readonly env: ExecEnv;
-  readonly extraRootsOf: ExtraRootsOf;
   readonly ctx: ToolExecContext;
-  readonly args: { command: string; timeout_ms?: number; workdir?: string; needs_network?: boolean };
+  readonly args: { command: string; timeout_ms?: number };
 }): Promise<{ content: string; isError?: true }> {
-  const { gate, limits, env, ctx, args, extraRootsOf } = input;
-  void args.needs_network; // 声明位由 permission 在 pre-execute 裁决——执行层不消费
-  if (PathGate.hasNul(args.command) || (args.workdir !== undefined && PathGate.hasNul(args.workdir))) {
-    return { content: "NUL_IN_ARGUMENT: command/workdir contains NUL", isError: true };
-  }
-  let cwd = gate.root;
-  if (args.workdir !== undefined) {
-    const admitted = await gate.admit(args.workdir, env.realpath, extraRootsOf(ctx.session));
-    if (!admitted.ok) return { content: admitted.reason, isError: true };
-    const st = await env.stat(admitted.path);
-    if (!st.ok) return { content: `WORKDIR_NOT_FOUND: ${args.workdir} does not exist`, isError: true };
-    if (st.stat.kind !== "dir") return { content: `WORKDIR_NOT_DIRECTORY: ${args.workdir} is not a directory`, isError: true };
-    cwd = admitted.path;
+  const { gate, limits, env, ctx, args } = input;
+  if (PathGate.hasNul(args.command)) {
+    return { content: "NUL_IN_ARGUMENT: command contains NUL", isError: true };
   }
   if (ctx.signal.aborted) return { content: "aborted: tool call aborted before dispatch", isError: true }; // pre-abort 零 spawn
 
   const timeoutMs = Math.min(args.timeout_ms ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
-  return render(await runCommand({ command: args.command, cwd, timeoutMs, limits, env, ctx }));
+  return render(await runCommand({ command: args.command, cwd: gate.root, timeoutMs, limits, env, ctx }));
 }
 
 interface RunResult {

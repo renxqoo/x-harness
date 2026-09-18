@@ -18,7 +18,7 @@ export class PathGate {
     this.root = realpathOrSelf(this.lexicalRoot);
   }
 
-  /** 入参含 NUL → 拒（统一口径：三工具与 bash command/workdir） */
+  /** 入参含 NUL → 拒（统一口径：工具路径入参与 bash command） */
   static hasNul(value: string): boolean {
     return value.includes("\u0000");
   }

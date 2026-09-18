@@ -272,8 +272,8 @@ describe("full 档矩阵（裁决⑤：完全访问——唯提权/密码类直�
   ])("%s → allow（硬拒其余形态/注入/不透明/重定向/畸形在 full 全不拦——围栏承载）", (command) => {
     expect(adjudicateBash({ ...wide, command, mode: "full" }).verdict).toBe("allow");
   });
-  it("畸形含提权词 → deny；needs_network 在 full 不路由 ask", () => {
+  it("畸形含提权词 → deny；full 档网络命令放行（域控由代理层承载）", () => {
     expect(adjudicateBash({ ...wide, command: "echo 'oops sudo", mode: "full" })).toMatchObject({ verdict: "deny", reason: "hard-deny:sudo" });
-    expect(adjudicateBash({ ...wide, command: "curl x", needsNetwork: true, mode: "full" }).verdict).toBe("allow");
+    expect(adjudicateBash({ ...wide, command: "curl x", mode: "full" }).verdict).toBe("allow");
   });
 });

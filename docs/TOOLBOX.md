@@ -91,15 +91,18 @@ export function createToolbox(options?: ToolboxOptions): {
 
 ## 4. bash（bash.ts）
 
-**Schema**：`{ command: string, timeout_ms?: int >0（上限 2^31-1）, workdir?: string }`。
+**Schema**：`{ command: string, timeout_ms?: int >0（上限 600_000——maxTimeoutMs 可配收紧） }`。
 无缺省超时的三参考共识 vs 我仓无宿主看门狗——**有意偏离**：缺省墙钟 120s（可配），文档落档。
 
 **行为**：
-- `Bun.spawn(["/bin/sh","-c",command], { cwd, stdin: "ignore", detached: true })`——**绝不使用
-  Bun.spawn 的 signal 选项**（abort 只杀直接子进程，孙进程存活——实测；组杀必须手动
-  `process.kill(-pgid)`，Bun 支持负 pid——实测）；**host-exit 清场**：活组登记簿 +
-  `process.prependListener("exit", 同步 SIGKILL 全部活组)`（exit handler 仅同步操作——detached
-  组在宿主退出后成为孤儿是进程泄漏，必须防）；
+- 进程生命周期经 **exec-env**（`env.spawn` 三级解析：工厂参数 > execEnv 服务 > 装配期
+  throw——fail-closed；detached 组杀/`settled` 死净观测面/host-exit 清场全在 env 层，
+  见 docs/EXEC-ENV.md）；本文件只留两段杀节奏策略：TERM → 无条件等满 5s → KILL
+  （绝不依赖 Bun.spawn 的 signal 选项——abort 只杀直接子进程，孙进程存活，实测）；
+  信号死亡渲染 128+n（env 层 code null + signal，折算属本层）；
+- 工作目录固定 root：**无 workdir 参数（用户裁决）**——`cd sub && cmd` 在 `sh -c` 下语义等价，
+  少一个参数面与两个错误码；DSH 需要 workdir 是 fresh-shell 无状态 + UI 终端呈现 cwd，本仓
+  无呈现面（command 内容本就可 `cd`，workdir 门是装饰性防护）；
 - 退出码入文本 `[exit code: N]` 且**非 isError**（DSH 口径——命令失败是模型可检视的正常结果，
   交集 16 的口径裁决）；静默命令 `(no output)`（交集 17）；
 - 超时：SIGTERM → **无条件等满 5s** → SIGKILL（组长先退≠组清空——不提前取消 KILL）；文本
@@ -116,14 +119,12 @@ export function createToolbox(options?: ToolboxOptions): {
   command/path 任何用户成分**；`wx` 0600；全文累积上限 64MB）；字节帽取尾为**字节精确**
   （Buffer subarray + UTF-8 续字节前移到字符边界——多字节密集输出不撕裂且必有推进）；
   spill 失败 → `(full output unavailable)` 不失败；
-- workdir：spawn 前 stat 预检，不存在 → `WORKDIR_NOT_FOUND`（Bun 的 ENOENT 文案只提 /bin/sh
-  会误导——实测）；spawn 同步 throw 兜底 catch；
-- workdir：显式 > 进程 cwd（会话 cwd 未接入，落档同 §2）；workdir 不存在 / spawn ENOENT →
-  isError 透传（交集 23）；
-- 命令含 NUL 拒绝；env 不透传模型注入面（named spawn 选项，无 shell 二次展开——交集 25）。
+- spawn 同步 throw（如 ENOENT）兜底 catch → `SPAWN_FAILED`；命令含 NUL 拒绝；env 不透传模型
+  注入面（named spawn 选项，无 shell 二次展开——交集 25）。
 
 **不做（落档）**：后台 job 模式；流式 progress 转发（无消费面）；受信 env 注入；60s 无输出
-hung-kill（缺省墙钟已兜底挂死——有意以墙钟替代双时间线，简化）。
+hung-kill（缺省墙钟已兜底挂死——有意以墙钟替代双时间线，简化）；KILL 宽限可配（5s 常数与
+排他档防钉死绑死）。
 
 ## 5. grep（grep.ts）
 
@@ -186,7 +187,7 @@ respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows ta
 - bash（11+回归）：退出码可见且非 isError/静默 (no output)/超时两段杀（**无条件等满宽限**）+
   标记顺序+尾部输出+raise 指引/trap-exit-0 不伪装（回归 D23）/timeout 校验表（0/负/超 maxTimeoutMs）
   /截断保尾部**三件套断言**（标注在场+尾部内容在场+spill 字节级等于全文）/行帽（尾换行不算行）/
-  ANSI+撕裂 UTF-8/workdir 预检 WORKDIR_NOT_FOUND/spawn 失败/**abort 杀整组**（`process.kill(-pid,0)`
+  ANSI+撕裂 UTF-8/spawn 失败兜底/**abort 杀整组**（`process.kill(-pid,0)`
   组探活断言——回归进程泄漏）/pre-abort 零 spawn（marker 文件副作用断言——回归 D28）/
   **host-exit 清场**（子进程杀后父进程退出→ detached 组死净——墙钟验证）。
 - grep（rg 单路径）：零命中成功/退出码矩阵（含 **selfKilled→成功+limit 页脚**——回归 A-P0）/argv
@@ -212,7 +213,7 @@ respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows ta
 
 图片/多模态（ContentBlock 契约扩展时）；sandbox/审批流（安全产品线）；后台 job（长任务件）；
 流式 progress（观察面消费方出现时）；会话 cwd（宿主件写入 SessionHeader.cwd 后挂——届时
-workdir 升三级）；exit 标记 round-trip（UI 状态面出现时）；TOCTOU 窗口（门 check 与 I/O 之间
+bash 已固定 root 无 workdir）；exit 标记 round-trip（UI 状态面出现时）；TOCTOU 窗口（门 check 与 I/O 之间
 换 symlink——接受，防护归安全产品线）；**rg 获取全链**（安装/下载/sidecar 拼装归制品与
 宿主层——安装时下载与运行时下载的形态对照及不采纳理由见 §5）；跨进程文件锁（CAS 限同进程）；
 spill 清理（保留为恢复产物；宿主可清）；**POSIX-only**（/bin/sh、负 pid 组杀——Windows 不支持）；
@@ -226,7 +227,7 @@ spill 清理（保留为恢复产物；宿主可清）；**POSIX-only**（/bin/s
 坏死）；host-exit 清场登记簿（P1——detached 孤儿组是进程泄漏）；同路径进程内互斥（P1）；
 write 后自登记（P1——连续写被自己的门拒）；版本元组升 {ino,size,mtimeNs} bigint（P3）；
 read !isFile 全拒（P3——FIFO 阻塞）；Bun.spawn signal 选项禁用（实测只杀直接子进程）+无条件
-等满宽限；双流全程并发消费；workdir stat 预检；rg --hidden --no-ignore --no-messages 对齐 +
+等满宽限；双流全程并发消费；workdir stat 预检（后随 workdir 参数删除一并移除）；rg --hidden --no-ignore --no-messages 对齐 +
 共享跳过集；exit 2 合并话术；spill mkdtemp 0700+wx 0600+随机名+体量上限；maxTimeoutMs 帽。
 采纳（B）：观察门会话键控（P0——跨会话开门）；前缀判定路径段边界；路径门参数清单含 workdir
 （裁决过门）；双路径对齐 fixture 三类分歧面；rg 缺席显式 skip 计数；50KB 双断言措辞根治

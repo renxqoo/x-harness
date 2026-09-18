@@ -1,5 +1,5 @@
 // 裁决管线矩阵（docs/EXEC-ENV.md §5/§7）：段序（deny 规则→硬拒→dynamic→重定向→allow→默认）/
-// 三模式档 / needs_network 双路 / NEVER_MEMORIZE（allow 规则不可越过硬拒）/ fence 合成。
+// 三模式档 / NEVER_MEMORIZE（allow 规则不可越过硬拒）/ fence 合成。
 
 import { describe, expect, it } from "vitest";
 import { adjudicateBash } from "../bash/adjudicate.ts";
@@ -70,12 +70,6 @@ describe("adjudicateBash（管线裁决序）", () => {
     expect(out.verdict).toBe("allow");
   });
 
-  it("needs_network：声明 → ask network；未声明界内 → allow", () => {
-    const base = { rules: rules(["Bash(curl:*):allow"]), mode: "auto" as const, root: ROOT, extraRoots: [] };
-    expect(adjudicateBash({ ...base, command: "curl https://x", needsNetwork: true }).verdict).toBe("ask");
-    expect(adjudicateBash({ ...base, command: "curl https://x" }).verdict).toBe("allow");
-  });
-
   it("unparseable（未闭合引号）→ 保守 ask", () => {
     expect(adjudicateBash({ command: "echo 'oops", rules: rules(["Bash(*):allow"]), mode: "auto", root: ROOT, extraRoots: [] }).verdict).toBe("ask");
   });
@@ -111,8 +105,6 @@ describe("adjudicateBash（管线裁决序）", () => {
     expect(bare.verdict).toBe("ask"); // 无围栏——同命令不得自动放行（§6 对照句）
     const fencedDynamic = adjudicateBash({ command: "cat $F", rules: rules(), mode: "auto", root: ROOT, extraRoots: [], fence: { writable: [ROOT], allowedDomains: [] } });
     expect(fencedDynamic.verdict).toBe("ask"); // 动态段即便围栏在场也 ask
-    const fencedNet = adjudicateBash({ command: "curl x", rules: rules(), mode: "auto", root: ROOT, extraRoots: [], fence: { writable: [ROOT], allowedDomains: [] }, needsNetwork: true });
-    expect(fencedNet.verdict).toBe("ask"); // needs_network 声明位仍走 ask
   });
 
   it("env -i 逃脱（审查 F11）：env 前缀 flag 词剥离后硬拒仍中", () => {
