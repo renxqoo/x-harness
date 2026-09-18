@@ -10,7 +10,7 @@
 export interface ToolboxOptions {
   readonly root?: string;              // 工作区根（缺省 process.cwd()）；相对路径在其下解析，越根拒绝
   readonly defaultTimeoutMs?: number;  // bash 缺省墙钟（缺省 120_000）
-  readonly maxTimeoutMs?: number;      // bash timeout_ms 上限（缺省 600_000——防排他屏障被钉死）
+  readonly maxTimeoutMs?: number;      // bash timeout 上限（缺省 600_000——防排他屏障被钉死）
   readonly maxOutputBytes?: number;    // bash 输出字节帽（缺省 30_000，截断保尾部）
   readonly spillDir?: string;          // 截断全文落盘目录（缺省 mkdtemp(tmpdir()/x-harness-)，0700）
   readonly rgPath?: string;            // rg 显式路径（解析链最高优先级；缺省 env X_HARNESS_RG_PATH → PATH 探测）
@@ -94,8 +94,10 @@ export function createToolbox(options?: ToolboxOptions): {
 
 ## 4. bash（bash.ts）
 
-**Schema**：`{ command: string, timeout_ms?: int >0（上限 600_000——maxTimeoutMs 可配收紧）,
-run_in_background?: boolean }`。
+**Schema**：`{ command: string, timeout?: int >0（上限 600_000——maxTimeoutMs 可配收紧）,
+run_in_background?: boolean }`。工具 description 对齐 Claude Code 文案（用户裁决——模型侧
+契约沿用其训练分布），两处与实际行为相反的从句按本仓事实修正：cwd 每调用重置为 root
+（非 persists——本仓无持久 shell），后台为拉模式（poll task_output，非 re-invoke 唤醒）。
 无缺省超时的三参考共识 vs 我仓无宿主看门狗——**有意偏离**：缺省墙钟 120s（可配），文档落档。
 
 **行为**：
@@ -110,9 +112,9 @@ run_in_background?: boolean }`。
 - 退出码入文本 `[exit code: N]` 且**非 isError**（DSH 口径——命令失败是模型可检视的正常结果，
   交集 16 的口径裁决）；静默命令 `(no output)`（交集 17）；
 - 超时：SIGTERM → **无条件等满 5s** → SIGKILL（组长先退≠组清空——不提前取消 KILL）；文本
-  `[timed out after Nms]` + 尾部输出 + `raise timeout_ms and retry` 指引；trap 后 exit 0 不得伪装
+  `[timed out after Nms]` + 尾部输出 + `raise timeout and retry` 指引；trap 后 exit 0 不得伪装
   成功（超时标记在 exit 标记之前——归因靠「我发起过击杀」标志而非退出码——D23）；工具
-  description 教模型「长命令（构建/安装）显式传 timeout_ms」；
+  description 教模型「长命令走 run_in_background、禁 cat/head/tail/sed/awk/echo 用专用工具」；
 - abort（ctx.signal）：同两段杀；pre-abort（执行前已断）由 dispatch 管线入口拦截——工具
   零执行零 spawn（D28；abort 结果归一为管线单一职责）；
 - 输出：**双流全程并发消费**（只读一边另一边写满 64KB 管道即死锁假挂；截断/spill 失败后同样

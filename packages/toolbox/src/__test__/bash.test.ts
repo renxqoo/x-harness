@@ -62,16 +62,16 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
     expect(ansi.content).not.toContain("[31m");
   });
 
-  it("超时两段杀：[timed out] + raise timeout_ms 指引；trap-exit-0 不伪装成功（回归 D23）", async () => {
-    const r = await bash({ command: "trap 'exit 0' TERM; sleep 30", timeout_ms: 300 });
+  it("超时两段杀：[timed out] + raise timeout 指引；trap-exit-0 不伪装成功（回归 D23）", async () => {
+    const r = await bash({ command: "trap 'exit 0' TERM; sleep 30", timeout: 300 });
     expect(r.content).toContain("[timed out after 300ms]");
-    expect(r.content).toContain("raise timeout_ms");
+    expect(r.content).toContain("raise timeout");
     expect(r.content).not.toMatch(/\[exit code: 0\]\s*$/); // 超时标记归因优先
   }, 15_000);
 
   it("timeout 校验表：0/负/超 maxTimeoutMs 拒绝", async () => {
     for (const bad of [0, -1, 600_001]) {
-      const r = await bash({ command: "true", timeout_ms: bad });
+      const r = await bash({ command: "true", timeout: bad });
       expect(r.isError, String(bad)).toBe(true);
     }
   });
@@ -118,7 +118,7 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
     // 超时后被杀的组若仍有活进程，marker 会在杀后继续被写
     const marker = join(root, "alive-marker");
     const started = Date.now();
-    await bash({ command: `(sleep 2; touch after-kill) & while true; do :; done; true`, timeout_ms: 300 });
+    await bash({ command: `(sleep 2; touch after-kill) & while true; do :; done; true`, timeout: 300 });
     expect(Date.now() - started).toBeLessThan(8_000); // 墙钟：没挂到缺省 120s
     await new Promise((resolve) => {
       setTimeout(resolve, 2_500);
@@ -157,7 +157,7 @@ describe("回归（审查 A-P1）：组长速死孙进程——组探活不提�
   it("组长退出但孙进程活 → settleGroup 等净（marker 不出现）且工具收敛 <10s", async () => {
     const marker = join(root, "grandchild-marker");
     const started = Date.now();
-    const r = await bash({ command: `sh -c 'trap "" TERM; sleep 6; touch ${marker}' >/dev/null 2>&1 & exit 0`, timeout_ms: 500 });
+    const r = await bash({ command: `sh -c 'trap "" TERM; sleep 6; touch ${marker}' >/dev/null 2>&1 & exit 0`, timeout: 500 });
     expect(r.content).toContain("[exit code: 0]"); // 组长立即退出
     expect(Date.now() - started).toBeLessThan(10_000); // 但工具等到组净（孙进程被 KILL 兜底）
     await new Promise((resolve) => {
@@ -187,7 +187,7 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
         `const box = createToolbox({ root: ${JSON.stringify(root)}, env: createLocalEnv(${JSON.stringify(root)}) });`,
         `const unload = await loadPlugins(ctx, [toolsPlugin, box.bashPlugin]);`,
         `const reg = ctx.use(toolRegistry);`,
-        `void reg.dispatch({ callId: "host-exit", name: "bash", args: { command: ${JSON.stringify(`sleep 3; touch ${marker}`)}, timeout_ms: 30000 }, signal: new AbortController().signal }).catch(() => {});`,
+        `void reg.dispatch({ callId: "host-exit", name: "bash", args: { command: ${JSON.stringify(`sleep 3; touch ${marker}`)}, timeout: 30000 }, signal: new AbortController().signal }).catch(() => {});`,
         `setTimeout(() => process.exit(0), 800); // spawn 已发生、dispatch 未收敛——宿主退出走清场`,
         `void unload;`,
       ].join("\n"),

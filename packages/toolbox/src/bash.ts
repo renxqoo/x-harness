@@ -56,13 +56,18 @@ export function createBashTool(input: BashToolInput): ToolDefinition {
   return {
     name: "bash",
     description:
-      "Run a shell command with /bin/sh -c in the workspace root (cd within the command for subdirectories). Non-zero exit codes are shown as [exit code: N] and are NOT tool errors — inspect the output. Commands that finish quickly (default 120000ms, max 600000ms) run in the foreground and return full output. Long-running commands (builds, installs, servers) should set run_in_background:true — the call returns a task id immediately instead of waiting. Output is truncated to the last 30000 bytes with the full output written to a spill file.",
+      "Executes a bash command and returns its output.\n" +
+      " - Working directory resets to the workspace root between calls — use `cd` within a single compound command to change directories; shell state (env vars, functions) does not persist.\n" +
+      " - IMPORTANT: Avoid using this tool to run `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user.\n" +
+      " - Command output is displayed to you, not reliably to the user.\n" +
+      " - `timeout` is in milliseconds: default 120000, max 600000.\n" +
+      " - `run_in_background` runs the command detached: it keeps running across turns; poll its output and state via the task layer (task_output). No `&` needed.",
     inputSchema: Type.Object({
-      command: Type.String({ description: "Shell command line" }),
-      timeout_ms: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: `Foreground wall-clock timeout in ms (default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)})` })),
-      run_in_background: Type.Optional(Type.Boolean({ description: "Run detached: return a task id immediately instead of waiting for completion" })),
+      command: Type.String({ description: "The command to execute" }),
+      timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: "Optional timeout in milliseconds" })),
+      run_in_background: Type.Optional(Type.Boolean({ description: "Set to true to run this command in the background." })),
     }),
-    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, tasks, ctx, args: args as { command: string; timeout_ms?: number; run_in_background?: boolean } }),
+    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, tasks, ctx, args: args as { command: string; timeout?: number; run_in_background?: boolean } }),
   };
 }
 
@@ -72,7 +77,7 @@ async function bash(input: {
   readonly env: ExecEnv;
   readonly tasks: BackgroundTasks;
   readonly ctx: ToolExecContext;
-  readonly args: { command: string; timeout_ms?: number; run_in_background?: boolean };
+  readonly args: { command: string; timeout?: number; run_in_background?: boolean };
 }): Promise<{ content: string; isError?: true }> {
   const { gate, limits, env, tasks, ctx, args } = input;
   if (PathGate.hasNul(args.command)) {
@@ -85,7 +90,7 @@ async function bash(input: {
     if (!started.ok) return { content: started.reason, isError: true };
     return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — it keeps running across turns; poll its output and state via the task layer` };
   }
-  const timeoutMs = Math.min(args.timeout_ms ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
+  const timeoutMs = Math.min(args.timeout ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
   return render(await runCommand({ command: args.command, cwd: gate.root, timeoutMs, limits, env, ctx }));
 }
 
@@ -170,7 +175,7 @@ function render(result: RunResult): { content: string; isError?: true } {
   if (result.stderr !== "") sections.push(`[stderr]\n${result.stderr}`);
   let body = sections.length === 0 ? "(no output)" : sections.join("\n");
   if (result.timedOut) {
-    body = `[timed out after ${String(result.timeoutMs)}ms]${result.aborted ? " (aborted)" : " — raise timeout_ms and retry if this command legitimately needs longer, or use run_in_background"}\n${body}`;
+    body = `[timed out after ${String(result.timeoutMs)}ms]${result.aborted ? " (aborted)" : " — raise timeout and retry if this command legitimately needs longer, or use run_in_background"}\n${body}`;
   } else if (result.aborted) {
     body = `[aborted]\n${body}`;
   }
