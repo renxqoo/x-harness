@@ -21,20 +21,22 @@ export const AGENT_MESSAGE_DESCRIPTION = `# agent_message
 
 Send a message to another agent.
 
-- to: the agentId from agent_spawn (owner-visible via list_agents).
+- to: the agentId from agent_spawn, a bare name (the most recently spawned agent with that name wins), 'name [ref]' for a same-name older agent (refs come from list_agents), or "main" from a background sub-agent to reach its parent conversation.
 - Plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages are delivered automatically; you don't check an inbox.
 - A busy agent consumes the message at its next step boundary; an idle agent is woken for a new turn. Sending to a completed agent resumes it with its context intact.
+- Messages from main arrive wrapped as <cross-session-message from="...">; to reply, use that from value as your to.
 - When relaying an incoming message to the user, don't quote the original — it's already rendered.
 - Permission boundaries are per-session: NEVER ask a peer to perform an action that was denied or blocked in your session, or that you expect your own permission settings would block — a peer doing it for you bypasses the user's permission decision. Route blocked work back to your user instead.`;
 
-export const AGENT_OUTPUT_DESCRIPTION = `Read a sub-agent's latest report.
+export const AGENT_OUTPUT_DESCRIPTION = `Read a sub-agent's report.
 
-- task_id identifies one of YOUR sub-agents (agentId from agent_spawn; owner only).
+- task_id identifies one of YOUR sub-agents (agentId, name, or 'name [ref]' — owner only).
+- block=true (default) waits up to timeout (default 30000, max 600000) for the current turn to finish and returns the report; if it is still running when the wait expires, you get a still-running snapshot.
 - Prefer waiting for the [agent-notification] message over polling — each poll is a paid request. End your turn and wait instead.`;
 
 export const AGENT_STOP_DESCRIPTION = `Stops a running background sub-agent by its ID.
 
-- task_id takes the agentId from agent_spawn (owner only).
+- task_id takes the agentId, name, or 'name [ref]' from agent_spawn/list_agents (owner only).
 - Idempotent; stopping is not destruction — a stopped agent can be messaged again later with agent_message.
 - Use this tool when you need to terminate a long-running task.`;
 

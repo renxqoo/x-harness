@@ -13,12 +13,12 @@ import {
 } from "./descriptions.ts";
 import type { ChildView } from "./types.ts";
 import type { SpawnInput } from "./spawn.ts";
-import type { VerbOutcome } from "./verbs.ts";
+import type { MessageInput, OutputInput, VerbOutcome } from "./verbs.ts";
 
 export interface ToolDeps {
   readonly spawn: (ctx: ToolExecContext, input: SpawnInput) => Promise<VerbOutcome>;
-  readonly message: (ctx: ToolExecContext, input: { readonly to: string; readonly message: string }) => VerbOutcome;
-  readonly output: (ctx: ToolExecContext, taskId: string) => VerbOutcome;
+  readonly message: (ctx: ToolExecContext, input: MessageInput) => VerbOutcome;
+  readonly output: (ctx: ToolExecContext, input: OutputInput) => Promise<VerbOutcome>;
   readonly stop: (ctx: ToolExecContext, taskId: string) => Promise<VerbOutcome>;
   readonly list: (ctx: ToolExecContext) => readonly ChildView[];
 }
@@ -49,7 +49,13 @@ const messageSchema = Type.Object({
 });
 
 const taskSchema = Type.Object({
-  task_id: Type.String({ description: "agentId from agent_spawn (owner only)" }),
+  task_id: Type.String({ description: "agentId, name, or 'name [ref]' from agent_spawn/list_agents (owner only)" }),
+});
+
+const outputSchema = Type.Object({
+  task_id: taskSchema.properties.task_id,
+  block: Type.Optional(Type.Boolean({ description: "Wait for completion (default true); false = immediate snapshot" })),
+  timeout: Type.Optional(Type.Number({ minimum: 0, maximum: 600000, description: "Max wait in ms when block=true (default 30000)" })),
 });
 
 export function delegationTools(deps: ToolDeps): ToolDefinition[] {
@@ -71,8 +77,8 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
     {
       name: "agent_output",
       description: AGENT_OUTPUT_DESCRIPTION,
-      inputSchema: taskSchema,
-      execute: async (args: Static<typeof taskSchema>, ctx) => run(deps.output(ctx, args.task_id)),
+      inputSchema: outputSchema,
+      execute: async (args: Static<typeof outputSchema>, ctx) => run(await deps.output(ctx, args)),
       isConcurrencySafe: parallel,
     },
     {

@@ -168,9 +168,9 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
 3. "name [ref]" 形 → 拆名与 ref；进程内域：agentId 8hex 段尾 6 位精确匹配；
    跨进程域：box ref（bootId 尾 6 hex）精确匹配；落空 → not-found 带 ref 清单
 4. 裸名 name：
-   a. 进程内名索引 live 行 ≥2 → ambiguous:name 带各行 [ref]
-   b. 进程内唯一 live          → 命中（进程内优先于会话——规格原文语义）
-   c. 进程内无                 → mailbox discover 裸名：唯一 live box → 跨进程投递；
+   a. 进程内名索引 live 行 ≥1 → **latest-wins**（最新 spawn 者——规格 :194 原文语义；
+      [ref] 供精确寻址旧同名者）
+   b. 进程内无                 → mailbox discover 裸名：唯一 live box → 跨进程投递；
                                  ≥2 → ambiguous 带 [ref]；无 → 转 5
 5. archive 惰性重建（仅 caller 自己的历史子代理，§6.2）：header.agentName 匹配 →
    resume 复活 → 命中；否则 not-found（附 list_agents 引导）
