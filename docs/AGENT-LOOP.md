@@ -19,6 +19,7 @@
 | 8 | @x-harness/token-meter：用量记账+估算 | docs/TOKEN-METER.md | 已收口（新增：失败尝试计费+路线归因） |
 | 9 | @x-harness/agent-delegation：子代理 | docs/AGENT-DELEGATION.md | 已收口（异步 spawn+通知唤醒，四路审查处置） |
 | 10 | @x-harness/toolbox：read/write/bash/grep 四工具 | docs/TOOLBOX.md | 已收口（grep rg 硬依赖单路径——裁决 §5；e2e 四工具旅程） |
+| 11 | @x-harness/exec-env + permission + sandbox-local：执行环境/本机沙箱/auto 权限（toolbox 全量接入） | docs/EXEC-ENV.md | 已实施（B0–B3 交付；代码审查 A/B 处置见文档 §13；darwin 真内核腿绿，linux 腿 T9 承载） |
 
 实施顺序 = 表序；每件：独立方案 → 子 agent 对抗审查 → 处置定稿 → 实现 + 单测 → 四门 → 代码对抗审查 → 回归 → 收口提交（引用本文档节号 + 各件文档节号）。
 

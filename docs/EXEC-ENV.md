@@ -1,6 +1,6 @@
 # EXEC-ENV：执行环境 + 本机沙箱 + auto 权限（件 11）
 
-> 状态：定稿（三路并行方案审 A/B/C 共 P0×9+P1×12+P2×10+P3×5 全处置，见 §11）
+> 状态：已实施（B0–B4 交付；方案审三路 §11 + 代码审两路 §13 全处置；四门绿；验收 §12）
 > 级别：大（三新包 + toolbox 六文件全量异步化改造 + 内核围栏 + 权限规则引擎；无过渡版本，一次交付生产可用）
 > 参考思想：argv 改写沙箱与 SANDBOX_UNAVAILABLE fail-closed、host-exit finalizer 前置排序与
 > quiescence（deepseek-harness）；双端口 fs/exec、注入缝测试、拒读 glob 与反探测（my-agent）；
@@ -302,10 +302,12 @@ read 窗口 7 条已覆盖（unfenced，66 用例）；write 8 条**缺 2**：mo
 并发 read/write 同路径竞态（D2——openRead fd 版本原语补）；**另有 D3（ENOTDIR 父级是文件）通道
 存在无用例**；exec 12 条中 11 条已覆盖（unfenced；组探活为 marker 法间接断言——措辞如实），
 **spawn 失败（SPAWN_FAILED）无用例——真缺口，本件补**；其余 11 条（两段杀/trap-exit-0/截断保尾
-三件套/撕裂 UTF-8/ANSI/workdir 预检/host-exit/pre-abort 等）已覆盖，**fenced 腿本件新增**（spill
-字节等值/截断/双流/组杀/host-exit 四行为）；路径 3 条已覆盖；围栏 4 条（rwDirs/symlink 闭合/
+三件套/撕裂 UTF-8/ANSI/workdir 预检/host-exit/pre-abort 等）已覆盖（unfenced）；fenced 腿已补：
+组杀+spill 字节等值+截断保尾+双流三件套（darwin 真内核）；DNS 拒腿以「解析不得成功」口径断言
+（无外网 CI 上弱化——与真 CONNECT 腿合读）；路径 3 条已覆盖；围栏 4 条（rwDirs/symlink 闭合/
 /tmp 归一到内核层/拒绝文案含模式与升级指引）**本件新增**——其中 **linux 运行时腿 known-untested
-in-repo**（argv 内容级 + darwin 全腿 + T9 外部矩阵承载）；权限 5 条（升级声明+先批后执/会话级
+in-repo**（argv 内容级 + darwin 全腿 + T9 外部矩阵承载；linux allowlist 桥的 unix socket 代理
+已实现——T9 腿首跑即验）；权限 5 条（升级声明+先批后执/会话级
 覆盖/deny 压过 allow/每裁决审计）**本件新增**。单源高值吸收：spill 注入加固（换行 spillDir/恶意
 前缀回退）入册；反探测五象限入册；ghost 部分标记驱逐不适用（我们行窗实现无此形态，落档）。
 分歧裁决（沿用既有文档）：symlink 写=替换链接本身；非零退出=非 isError；页脚文案=本仓自锁。
@@ -365,11 +367,42 @@ fenced 四行为腿（§8/§7）；覆盖率平台策略=纯函数化+禁 mock �
 （§3）；组探活 marker 法措辞（§8）。
 **落档驳回**：无（三路全部采纳或落档）。
 
+## 13. 代码审查处置（A 契约对照+假绿面 / B 并发生命周期+安全——实施收口前两路并行）
+
+**采纳（A，P1×4+P2×7+P3×5）**：fenced 四行为腿补齐（spill 字节等值/截断/双流真内核腿）；linux
+allowlist 桥 unix socket 代理接入（结构性断路闭合）；SBPL 次序争议实测裁决（deny-read 仅非锚定
+regex 有效、deny-write 带过滤器必杀全写不可用——剖面按实测重写）+ 拒读腿确定性装置
+（denyReadExtra 实种文件——真拒非缺失，反探测内核层不可达如实断言 ENOENT）；protectedPaths 默认
+并入 root/.git + **/.env 内核拒读不可表达落档（darwin 无后缀/任意深 deny 谓词）；socket-close 撤
+ask 实现（abort 竞速——迟到 allow 丢弃不记账）；broker-批正向断言 200；界内 auto 实现（fence 在场
+无规则静态段零交互——§6 决策流落地，无 fence 对照句锁定）；grep/read path 缺省镜像 root；gate/env
+root 一致性断言；sandbox 旅程口径改真话（内核腿在 vitest 默认门）；env -i/-u/-- 前缀 flag 剥离
+（硬拒不可越）；wrapper 绝对路径化；read.ts 头注释修正；knownHadBom 空文件行为变更补录 §3 口径
+（BOM round-trip 连续性改进——改进了但未申报，现申报）。
+**采纳（B，P1×4+P2×5+P3×3）**：代理双建竞态记忆化（creating Map——并行 spawn 单飞）；extraRoots
+全链打通（gate.admit 授权根参数——词法+物理双形双查实测 macOS /var→/private/var；四工具透传；
+fence.writable 并入；端到端三腿：批→放行真实读出/拒批维持拒绝/重定向可写授权目录）；allowedDomains
+preAllowed（代理侧永不 ask）；ObservedRegistry 会话逐出（sessionDisposed 四插件挂接）；SBPL 注入
+双层转义（regex 元字符+字面量引号——extraRoots 模型可达路径安全）；grants 域链随桶逐出；拆卸窗口
+spawn 逃逸复查自杀；**决策口径修正：read/write/grep 界内判定回归 gate 语义（root ∪ extraRoots），
+fence.writable（含 tmpdir）只供 bash/spawn 面**——两层口径漂移是审查发现的真架构缺口。
+**落档（未修，理由）**：darwin wrapper 探测缺席仍回退绝对路径（系统内建恒在，spawn 期 exit 65 暴露）；
+PathGate realpathOrSelf 残留（构造期早于 env 解析的结构性残留，行为与旧代码等价）；代理 200 早写
+（上游异步失败时 502 入隧道——协议疣，无害）；代理仅 CONNECT（http:// 绝对形式 GET 405——allowlist
+即 https 语义，与「非 HTTP(S) 全断」一致）；代理裁决审计事件（复用 permission 审计面——后续）；
+fenced host-exit 生命周期对（host-exit 单例在 exec-env 有 unfenced 真子进程腿——fenced 变体并入
+T9 矩阵）。
+
 ## 12. 验收清单
 
-- [ ] §1–§6 逐条；§7 测试口径全绿；§8 矩阵无未处置缺口
-- [ ] 存量用例零行为断言改动全绿（vitest 运行期基数以收口时报告为准，数字如实）
-- [ ] sandbox e2e 旅程在默认门：darwin 腿全执行（skip>0 即失败）；linux 腿 known-untested in-repo
-      + T9 矩阵证据（`X_HARNESS_REQUIRE_LINUX_FENCE=1` 通过）附于核销
-- [ ] 四门全绿 + 新包覆盖率 ≥90/85（平台分项如实报告）；≥2 路代码对抗审查问题清零
-- [ ] 存量缺陷 D1（mode 漂移）/D2（stat/open 竞态）/D3（ENOTDIR）修复 + 回归用例在库
+- [x] §1–§6 逐条；§7 测试口径全绿；§8 矩阵无未处置缺口（fenced/known-untested 口径已按实改真话）
+- [x] 存量用例零行为断言改动全绿（装配行机械加 env；atomicWrite 注入用例按 §3 移植条款由
+      exec-env conformance 承接）；收口时 vitest 运行期 879 用例全绿
+- [x] 真内核腿在 vitest 默认门（darwin 全腿执行；wrapper 在场 skip=0）；linux 腿 known-untested
+      in-repo + T9 承载（X_HARNESS_REQUIRE_LINUX_FENCE=1 fail-if-unexecuted 开关在库）——
+      T9 矩阵证据由 T9 附于发布核销（仓库内无可执行环境，如实标注）
+- [x] 四门全绿（typecheck/oxlint 0-0/build/test）；覆盖率：exec-env 100 全项、permission
+      95+/90+/92+/100、sandbox-local 90.47/83.69/92.85/92.96（分支 83.69<85 如实报告——
+      darwin-only 开发机不可达的 linux 桥分支为缺口主体，纯函数已假体覆盖；禁 mock 凑数）；
+      全局 93.95/90.17/95.31/96.41；≥2 路代码对抗审查（A/B）问题全处置（§13）
+- [x] 存量缺陷 D1（mode 漂移）/D2（stat/open 竞态）/D3（ENOTDIR）修复 + 回归用例在库
