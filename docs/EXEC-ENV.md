@@ -323,11 +323,15 @@ walker 每文件双往返（性能非正确性，32MB 帽已在）；spill 走 e
 
 ## 10. 实施批次（单件交付、内部小步）
 
-- **B0 de-risk 垂直切片（大级试运行）**：exec-env 契约 + localEnv read 面 + toolbox read 异步化
-  + conformance 套件（local+fake，read 面用例）走完整闭环（实现→测试→审查→四门）——验证流程
+- **B0 de-risk 垂直切片（大级试运行）**：exec-env 契约 + localEnv 的 read 面 + toolbox read 异步化改造
+  + conformance 套件（local+fake）read 面用例走完整闭环（实现→测试→审查→四门）——验证流程
   本身；切片代码即正式代码，演进不重写；
+  实施注记（2026-09-19）：B0 拆两步落地——**B0′=exec-env 包独立闭环**（契约+local read 面+
+  conformance 双腿，纯新增文件；因件10 grep 单路径返工在途占用 toolbox.ts，避让他人未提交变更）；
+  **B0.5=toolbox read 接入**（在途返工落库后）；
 - **B1** exec-env 全量（write/spawn/readDir/注错缝）+ toolbox write/bash/grep/paths/observed 改造
-  + D1/D2/D3 修复回归 + 存量用例装配行适配 + e2e toolbox 旅程绿（行为零变化）；
+  + D1/D2/D3 修复回归 + 存量用例装配行适配 + e2e toolbox 旅程绿（行为零变化）；grep 侧随件10
+  单路径裁决对齐（rg 经 env.spawn 透传 session——方案 §6 语义不变）；
 - **B2** permission 包（纯函数规则引擎 + grants + broker + 审计 + 拆卸契约 + toolsPreExecute 集成）；
 - **B3** sandbox-local（confine/probe/会话代理/受保护集/env provider/拆卸契约）+ 真内核 e2e 旅程；
 - **B4** 收口：代码对抗审查（≥2 路）、四门、覆盖率数字如实、验收清单核销。

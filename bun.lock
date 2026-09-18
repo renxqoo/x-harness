@@ -64,6 +64,14 @@
         "@sinclair/typebox": "^0.34.0",
       },
     },
+    "packages/exec-env": {
+      "name": "@x-harness/exec-env",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
+      },
+    },
     "packages/llm": {
       "name": "@x-harness/llm",
       "version": "0.0.1",
@@ -317,6 +325,8 @@
     "@x-harness/core": ["@x-harness/core@workspace:packages/core"],
 
     "@x-harness/e2e": ["@x-harness/e2e@workspace:packages/e2e"],
+
+    "@x-harness/exec-env": ["@x-harness/exec-env@workspace:packages/exec-env"],
 
     "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
 
