@@ -37,6 +37,15 @@ export class GrantsRegistry {
     return this.bucket(session).domains.get(domain);
   }
 
+  /** 会话已授权域名集合（正缓存；sandbox fence 合成用——deny 不入网络白名单） */
+  allowedDomainsOf(session: SessionId | undefined): readonly string[] {
+    const out: string[] = [];
+    for (const [domain, verdict] of this.bucket(session).domains) {
+      if (verdict === "allow") out.push(domain);
+    }
+    return out;
+  }
+
   recordDomain(session: SessionId | undefined, domain: string, verdict: "allow" | "deny"): void {
     this.bucket(session).domains.set(domain, verdict); // deny=负缓存（重试不重弹）
   }

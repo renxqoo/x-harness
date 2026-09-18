@@ -113,6 +113,16 @@
         "@x-harness/core": "workspace:*",
       },
     },
+    "packages/sandbox-local": {
+      "name": "@x-harness/sandbox-local",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/permission": "workspace:*",
+        "@x-harness/session": "workspace:*",
+      },
+    },
     "packages/session": {
       "name": "@x-harness/session",
       "version": "0.0.1",
@@ -349,6 +359,8 @@
     "@x-harness/permission": ["@x-harness/permission@workspace:packages/permission"],
 
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
+
+    "@x-harness/sandbox-local": ["@x-harness/sandbox-local@workspace:packages/sandbox-local"],
 
     "@x-harness/session": ["@x-harness/session@workspace:packages/session"],
 
