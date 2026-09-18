@@ -25,6 +25,15 @@
         "@x-harness/plugin-manager": "workspace:*",
       },
     },
+    "packages/llm": {
+      "name": "@x-harness/llm",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+    },
     "packages/plugin-manager": {
       "name": "@x-harness/plugin-manager",
       "version": "0.0.1",
@@ -45,6 +54,13 @@
       "dependencies": {
         "@x-harness/core": "workspace:*",
         "@x-harness/session": "workspace:*",
+      },
+    },
+    "packages/system-prompt": {
+      "name": "@x-harness/system-prompt",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
       },
     },
     "packages/tools": {
@@ -212,11 +228,15 @@
 
     "@x-harness/e2e": ["@x-harness/e2e@workspace:packages/e2e"],
 
+    "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
+
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
 
     "@x-harness/session": ["@x-harness/session@workspace:packages/session"],
 
     "@x-harness/session-persistence-jsonl": ["@x-harness/session-persistence-jsonl@workspace:packages/session-persistence-jsonl"],
+
+    "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/system-prompt"],
 
     "@x-harness/tools": ["@x-harness/tools@workspace:packages/tools"],
 
