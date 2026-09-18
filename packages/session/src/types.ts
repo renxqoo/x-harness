@@ -4,10 +4,9 @@ export type SessionId = string & { readonly __brand: "SessionId" };
 
 export type Result<T, E = string> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reason: E };
 
-export const SESSION_FORMAT_VERSION = 1;
-
+/** 无格式版本字段：格式身份判别 = 闭合词表 + fail-closed 校验（docs/SESSION.md §1.6）；
+ *  语义级变更（改既有词条含义/信封机制）发生的当下再引入显式判别字段，字段缺失即变更前档案 */
 export interface SessionHeader {
-  readonly version: typeof SESSION_FORMAT_VERSION;
   readonly id: SessionId;
   readonly createdAt: number;
   readonly cwd?: string;
@@ -58,7 +57,21 @@ export interface SessionEventData {
   };
   readonly "request/context": { readonly provider: string; readonly model: string; readonly contextWindow?: number };
   readonly "session/end-seed": { readonly inherited?: true };
+  /** 收件箱拼接：fold 投影归 agent-loop（docs/SESSION-RESUME.md §1.1——claim 按成员移除、判重按当前在场） */
+  readonly "agent/inbox/spliced": InboxSpliceData;
 }
+
+export type InboxTarget = "next-turn" | "next-step";
+
+export interface InboxEntry {
+  readonly id: string;
+  readonly content: readonly ContentBlock[];
+}
+
+export type InboxSpliceData =
+  | { readonly op: "insert"; readonly target: InboxTarget; readonly entries: readonly InboxEntry[] }
+  | { readonly op: "claim"; readonly target: InboxTarget; readonly turn: number; readonly claimed: readonly string[] }
+  | { readonly op: "clear"; readonly reason: string };
 
 export type SessionEventType = keyof SessionEventData;
 /** 产模型可见消息的词条：仅此 4 类可携带 surfaceOp */
@@ -107,6 +120,8 @@ export interface CreateSessionOptions {
   readonly seed?: readonly SessionEvent[];
   /** 血缘回填：resume 消费方从 archive.read 的 header.parentSession 取（fork 内部自动携带） */
   readonly parent?: SessionId;
+  /** resume 的归档 header 原文：提供时以它为准（id 取 header.id、parent 忽略、归档元数据保留） */
+  readonly header?: SessionHeader;
 }
 
 export interface ForkSessionOptions {

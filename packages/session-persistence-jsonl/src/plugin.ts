@@ -74,7 +74,12 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
         // created 未达（如持久化晚于会话创建装载）：fail-closed，不写盘
         if (live.header === undefined) throw new Error(`writer-unopened:${live.id}`);
         try {
-          live.writer = await openSessionWriter(join(options.root, live.id), live.header);
+          const opened = await openSessionWriter(join(options.root, live.id), live.header, store.get(live.id)?.events() ?? []);
+          live.writer = opened.writer;
+          // 续写模式：磁盘已落账前缀不重写——pending 按前缀长度裁剪（await 期间新到事件在尾部，不受影响）
+          if (opened.prefixLength > 0) {
+            live.pending = live.pending.slice(opened.prefixLength);
+          }
           return live.writer;
         } catch (error) {
           if (isEexistError(error)) {

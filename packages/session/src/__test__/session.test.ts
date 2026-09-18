@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createSession } from "../session.ts";
 import type { SessionEvent, SessionHeader, SessionId } from "../types.ts";
 
-const header: SessionHeader = { version: 1, id: "s1" as SessionId, createdAt: 1, cwd: "/tmp" };
+const header: SessionHeader = { id: "s1" as SessionId, createdAt: 1, cwd: "/tmp" };
 
 function makeSession(seed: readonly SessionEvent[] = [], inherited = false) {
   const appended: SessionEvent[] = [];
@@ -33,14 +33,11 @@ describe("createSession end-seed 构造（docs/SESSION.md §1.3、§1.5）", () 
     expect(forked[1]?.data).toEqual({ inherited: true });
   });
 
-  it("seed 收养即深冻：宿主手造事件入账后不可再改（症状：可变别名曾可腐蚀日志）", () => {
+  it("seed 收养即脱钩快照：事件冻结（宿主对象自由度见 snapshot.test）", () => {
     const seed = [{ type: "turn/start", seq: 0, time: 1, data: { turn: 0 } }] as SessionEvent[];
     const { session } = makeSession(seed);
     expect(Object.isFrozen(session.events()[0])).toBe(true);
     expect(Object.isFrozen(session.events()[0]?.data)).toBe(true);
-    expect(() => {
-      (seed[0] as { seq: number }).seq = 99;
-    }).toThrow();
     expect(session.events()[0]?.seq).toBe(0);
   });
 

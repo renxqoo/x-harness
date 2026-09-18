@@ -29,15 +29,16 @@ function checkJsonSafe(value: unknown, path: Set<object>): boolean {
   if (typeof value !== "object") return false; // undefined / function / symbol / bigint
   if (path.has(value)) return false; // 循环引用（回到祖先）
   path.add(value);
-  const ok =
-    Array.isArray(value)
-      ? value.every((item) => checkJsonSafe(item, path))
-      : (() => {
-          const proto = Object.getPrototypeOf(value);
-          if (proto !== Object.prototype && proto !== null) return false; // Date/Map/类实例等
-          if (Object.getOwnPropertySymbols(value).length > 0) return false; // Symbol 键会被 JSON 静默丢弃
-          return Object.values(value).every((item) => checkJsonSafe(item, path)); // 显式 undefined 值在此被拒
-        })();
+  const ok = Array.isArray(value)
+    ? Object.keys(value).length === value.length && value.every((item) => checkJsonSafe(item, path)) // 稀疏数组（洞）在此被拒
+    : (() => {
+        const proto = Object.getPrototypeOf(value);
+        // 原型须是 Object.prototype 或 null：既拒 Date/Map/类实例，也拒 `{__proto__: X}` 字面量
+        // 设置的原型污染（其值不在自有键上，验证不可跳过）
+        if (proto !== Object.prototype && proto !== null) return false;
+        if (Object.getOwnPropertySymbols(value).length > 0) return false; // Symbol 键会被 JSON 静默丢弃
+        return Object.values(value).every((item) => checkJsonSafe(item, path)); // 显式 undefined 值在此被拒
+      })();
   path.delete(value);
   return ok;
 }
@@ -93,6 +94,17 @@ function isToolRefs(value: unknown): boolean {
   );
 }
 
+function isInboxTarget(value: unknown): boolean {
+  return value === "next-turn" || value === "next-step";
+}
+
+function isInboxEntries(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => isObj(entry) && isStr(entry["id"]) && entry["id"] !== "" && isContentBlocks(entry["content"]))
+  );
+}
+
 /** 逐词条形状门：词表闭合（13 条），结构与归属键检查，语义归写方 */
 const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean } = {
   "turn/start": (d) => isObj(d) && isCount(d["turn"]),
@@ -128,6 +140,24 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
   "request/context": (d) =>
     isObj(d) && isStr(d["provider"]) && isStr(d["model"]) && (d["contextWindow"] === undefined || isCount(d["contextWindow"])),
   "session/end-seed": (d) => isObj(d) && (d["inherited"] === undefined || d["inherited"] === true),
+  "agent/inbox/spliced": (d) => {
+    if (!isObj(d)) return false;
+    switch (d["op"]) {
+      case "insert":
+        return isInboxTarget(d["target"]) && isInboxEntries(d["entries"]);
+      case "claim":
+        return (
+          isInboxTarget(d["target"]) &&
+          isCount(d["turn"]) &&
+          Array.isArray(d["claimed"]) &&
+          d["claimed"].every((id) => isStr(id) && id !== "")
+        );
+      case "clear": // 清双队列，无 target
+        return isStr(d["reason"]) && d["reason"] !== "";
+      default:
+        return false;
+    }
+  },
 };
 
 /** append 的第一道门：未知词条 / 非 JSON 安全 data / 形状不符 → 返回失败理由 */

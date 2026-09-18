@@ -5,7 +5,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deepFreeze } from "@x-harness/core";
-import { SESSION_FORMAT_VERSION, isSafeSessionId, validateSessionEvents } from "@x-harness/session";
+import { isSafeSessionId, validateSessionEvents } from "@x-harness/session";
 import type { SessionArchive, SessionEvent, SessionHeader, SessionId } from "@x-harness/session";
 
 export function createArchiveReader(root: string): SessionArchive {
@@ -75,9 +75,6 @@ export function createArchiveReader(root: string): SessionArchive {
 function gateHeader(value: unknown, id: string): string | undefined {
   if (typeof value !== "object" || value === null) return `corrupt-header:${id}`;
   const record = value as Record<string, unknown>;
-  if (record["version"] !== SESSION_FORMAT_VERSION) {
-    return `unsupported-version:${id}:${String(record["version"])}`;
-  }
   if (record["id"] !== id) return `corrupt-header:${id}:id-mismatch`;
   if (typeof record["createdAt"] !== "number" || !Number.isFinite(record["createdAt"])) return `corrupt-header:${id}`;
   return undefined;

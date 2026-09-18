@@ -3,6 +3,7 @@
 
 import { deepFreeze } from "@x-harness/core";
 import { gateEvent, gateSurfaceOp, parseSurfaceOp } from "./gates.ts";
+import { materializeJson } from "./snapshot.ts";
 import { applySurfaceEvent, isSurfaceEventType, projectSurface, surfaceToMessages } from "./surface.ts";
 import type {
   Result,
@@ -30,8 +31,8 @@ export interface CreateSessionInput {
 }
 
 export function createSession(input: CreateSessionInput): SessionHandle {
-  // 收养即冻结：seed 事件无论来源（archive/fork/宿主手造）都深冻后入账，宿主不再持有可变别名
-  const log: SessionEvent[] = input.seed.map((event) => deepFreeze(event));
+  // 收养即脱钩：seed 事件物化为纯 JSON 快照后深冻——宿主对象不被冻结、getter 值一次性定影
+  const log: SessionEvent[] = input.seed.map((event) => deepFreeze(materializeJson(event)) as SessionEvent);
   // 构造器是 end-seed 的唯一合法写者；seed 非空才落边界标记，不广播（经 created 首灌落盘）
   if (log.length > 0) {
     const marker = input.inherited ? { inherited: true } : {};
@@ -61,11 +62,18 @@ export function createSession(input: CreateSessionInput): SessionHandle {
         const opErr = gateSurfaceOp(parsedOp, nodes.map((node) => node.seq));
         if (opErr !== undefined) return { ok: false, reason: opErr };
       }
+      // data 脱钩快照：调用方对象不被冻结、getter 不稳定值一次性定影（门已过，此处物化防御性兜底）
+      let snapshot: unknown;
+      try {
+        snapshot = materializeJson(data);
+      } catch {
+        return { ok: false, reason: `not-json-safe:${type}` };
+      }
       const event = deepFreeze({
         type,
         seq: log.length,
         time: Date.now(),
-        data,
+        data: snapshot,
         ...(parsedOp !== undefined ? { surfaceOp: parsedOp } : {}),
       }) as SessionEvent;
       log.push(event);

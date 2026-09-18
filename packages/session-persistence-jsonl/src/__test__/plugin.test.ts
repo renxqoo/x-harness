@@ -40,7 +40,6 @@ describe("全链路落盘（docs/SESSION.md §1.8 链来源与时序）", () => 
     const read = unwrap(await world.archive.read(s.id));
     expect(read.events).toEqual(s.events());
     expect(read.header.id).toBe(s.id);
-    expect(read.header.version).toBe(1);
   });
 
   it("首灌含构造期事件：fork 子会话落盘 = 前缀 + inherited end-seed", async () => {
@@ -129,7 +128,7 @@ describe("串行链不变量（docs/SESSION.md §1.8 per-id 串行）", () => {
 });
 
 describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", () => {
-  it("dispose 后重建同 id：旧档逐字节不变、flush 失败 session-id-reused、onIoError 上报", async () => {
+  it("dispose 后重建同 id（新 header）：旧档逐字节不变、flush 失败 session-id-reused、onIoError 上报、dead 闩稳定", async () => {
     world = await makeWorld(root);
     const first = unwrap(await world.store.create({ id: "dup" as SessionId }));
     turn(first, 0);
@@ -145,6 +144,10 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     if (!flushed.ok) expect(flushed.reason).toContain("session-id-reused:dup");
     const reuseReported = (): boolean => world.ioErrors.some((message) => message.includes("session-id-reused:dup"));
     await waitUntil(async () => reuseReported());
+    // dead 闩：第二次 flush 仍报 session-id-reused（docs/SESSION-RESUME 审查 #8）
+    const again = await world.store.flush("dup" as SessionId);
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.reason).toContain("session-id-reused:dup");
 
     const after = await world.archive.read("dup" as SessionId);
     expect(after.ok).toBe(true);
@@ -153,7 +156,100 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     expect(after.value.events).toEqual(before.value.events); // 旧档零损毁
     expect(after.value.header).toEqual(before.value.header);
   });
+
+  it("篡改 seed（非磁盘前缀）→ 续写校验拒，旧档不变（docs/SESSION-RESUME §7 续写拒配）", async () => {
+    world = await makeWorld(root);
+    const first = unwrap(await world.store.create({ id: "tam" as SessionId }));
+    turn(first, 0);
+    await world.store.flush("tam" as SessionId);
+    const snapshot = unwrap(await world.archive.read("tam" as SessionId));
+    world.store.dispose("tam" as SessionId);
+
+    const shorter = snapshot.events.slice(0, -1); // 磁盘比当前日志长 → 前缀反向
+    const made = await world.store.create({ header: snapshot.header, seed: shorter });
+    expect(made.ok).toBe(true);
+    if (made.ok) turn(made.value, 1);
+    const flushed = await world.store.flush("tam" as SessionId);
+    expect(flushed.ok).toBe(false);
+    if (!flushed.ok) expect(flushed.reason).toContain("session-id-reused:tam");
+    const after = unwrap(await world.archive.read("tam" as SessionId));
+    expect(after.events).toEqual(snapshot.events);
+  });
 });
+
+describe("turn/end reason 持久往返（DSH session.spec 承接：六态 reason 逐一对账）", () => {
+  it.each([
+    [{ kind: "completed" as const }],
+    [{ kind: "aborted" as const }],
+    [{ kind: "blocked" as const }],
+    [{ kind: "error" as const, message: "boom", code: "E_API" }],
+    [{ kind: "max-tokens" as const }],
+    [{ kind: "interrupted" as const }],
+  ])("reason %j 落盘读回逐字节一致", async (reason) => {
+    world = await makeWorld(root);
+    const s = unwrap(await world.store.create({ id: "rt" as SessionId }));
+    s.append("turn/start", { turn: 0 });
+    s.append("turn/end", { turn: 0, reason });
+    expect(await world.store.flush("rt" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    const read = unwrap(await world.archive.read("rt" as SessionId));
+    expect(read.events[1]?.data).toEqual({ turn: 0, reason });
+    expect(read.events[1]?.data).toEqual(s.events()[1]?.data);
+  });
+});
+
+describe("resume 续写主链（docs/SESSION-RESUME §1.4/§7）", () => {
+  it("同 id 归档 header 回灌 → 追加不重复落盘 → 重启读全量", async () => {
+    world = await makeWorld(root);
+    const gen1 = unwrap(await world.store.create({ id: "rs" as SessionId }));
+    turn(gen1, 0);
+    gen1.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "hi" }] }, append);
+    expect(await world.store.flush("rs" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    const snapshot = unwrap(await world.archive.read("rs" as SessionId));
+    world.store.dispose("rs" as SessionId);
+    await waitUntil(async () => {
+      const read = await world.archive.read("rs" as SessionId);
+      return read.ok && read.value.events.length === snapshot.events.length;
+    });
+
+    // resume：seed = 归档卷 + repair closers（此处无残 turn → closers 空），构造器补 end-seed
+    const gen2 = unwrap(await world.store.create({ header: snapshot.header, seed: snapshot.events }));
+    turn(gen2, 1);
+    expect(await world.store.flush("rs" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    const r2 = unwrap(await world.archive.read("rs" as SessionId));
+    const expected = [...snapshot.events, { type: "session/end-seed" }, { type: "turn/start" }];
+    expect(r2.events.map((e) => e.type)).toEqual(expected.map((e) => (e as { type: string }).type));
+    const seqs = r2.events.map((e) => e.seq);
+    expect(new Set(seqs).size).toBe(seqs.length); // 无重复
+    expect(r2.events).toEqual(gen2.events());
+    expect(r2.header).toEqual(snapshot.header); // header 原文保留
+  });
+
+  it("二次续写幂等链：第二次前缀 = 第一次续写后全量", async () => {
+    world = await makeWorld(root);
+    const gen1 = unwrap(await world.store.create({ id: "chain" as SessionId }));
+    turn(gen1, 0);
+    await world.store.flush("chain" as SessionId);
+    let snapshot = unwrap(await world.archive.read("chain" as SessionId));
+    world.store.dispose("chain" as SessionId);
+
+    for (const round of [1, 2]) {
+      await waitUntil(async () => {
+        const read = await world.archive.read("chain" as SessionId);
+        return read.ok && read.value.events.length === snapshot.events.length;
+      });
+      const next = unwrap(await world.store.create({ header: snapshot.header, seed: snapshot.events }));
+      turn(next, round);
+      expect(await world.store.flush("chain" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+      const read = unwrap(await world.archive.read("chain" as SessionId));
+      const seqs = read.events.map((e) => e.seq);
+      expect(new Set(seqs).size).toBe(seqs.length);
+      expect(read.events).toEqual(next.events());
+      snapshot = read;
+      world.store.dispose("chain" as SessionId);
+    }
+  });
+});
+
 
 describe("flush 失败路由（docs/SESSION.md §1.8 I/O 失败路由）", () => {
   it("created 首灌失败（root 不可写）→ flush 上浮失败 + onIoError 记录", async () => {

@@ -3,7 +3,7 @@
 
 import { deepFreeze } from "@x-harness/core";
 import type { GuardDeny } from "@x-harness/core";
-import { isSafeSessionId, validateSessionEvents } from "./gates.ts";
+import { isJsonSafe, isSafeSessionId, validateSessionEvents } from "./gates.ts";
 import type { SessionHandle } from "./session.ts";
 import { createSession } from "./session.ts";
 import type {
@@ -16,7 +16,6 @@ import type {
   SessionId,
   SessionStore,
 } from "./types.ts";
-import { SESSION_FORMAT_VERSION } from "./types.ts";
 
 export interface SessionStoreHooks {
   readonly onEvent: (session: SessionId, event: SessionEvent) => void;
@@ -42,7 +41,6 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
 
   function makeHeader(id: SessionId, parent: SessionId | undefined): SessionHeader {
     return deepFreeze({
-      version: SESSION_FORMAT_VERSION,
       id,
       createdAt: Date.now(),
       cwd: process.cwd(),
@@ -61,19 +59,40 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
     return { ok: true, value: handle.session };
   }
 
+  /** create 的 id/header 解析：归档 header 原文（resume）或铸号 + 血缘（docs/SESSION-RESUME.md §1.3） */
+  function resolveCreateHeader(options: CreateSessionOptions): Result<{ readonly header: SessionHeader | undefined; readonly id: SessionId }> {
+    if (options.header !== undefined) {
+      // id 以 header 为准，parent 忽略；形状门（id 合法 + JSON 安全）
+      if (!isSafeSessionId(options.header.id)) {
+        return { ok: false, reason: "invalid-header:shape" };
+      }
+      if (options.id !== undefined && options.id !== options.header.id) {
+        return { ok: false, reason: "invalid-header:id-mismatch" };
+      }
+      if (!isJsonSafe(options.header)) {
+        return { ok: false, reason: "invalid-header:not-json" };
+      }
+      return { ok: true, value: { header: deepFreeze(options.header), id: options.header.id } };
+    }
+    const idRes = resolveId(options.id);
+    if (!idRes.ok) return idRes;
+    if (options.parent !== undefined && !isSafeSessionId(options.parent)) {
+      return { ok: false, reason: `invalid-parent:${options.parent}` };
+    }
+    return { ok: true, value: { header: undefined, id: idRes.value } };
+  }
+
   return {
     create: async (options: CreateSessionOptions = {}) => {
-      const idRes = resolveId(options.id);
-      if (!idRes.ok) return idRes;
-      if (options.parent !== undefined && !isSafeSessionId(options.parent)) {
-        return { ok: false, reason: `invalid-parent:${options.parent}` };
-      }
-      if (sessions.has(idRes.value)) return { ok: false, reason: `duplicate:${idRes.value}` };
+      const resolved = resolveCreateHeader(options);
+      if (!resolved.ok) return resolved;
+      const { header, id } = resolved.value;
+      if (sessions.has(id)) return { ok: false, reason: `duplicate:${id}` };
       if (options.seed !== undefined) {
         const seedErr = validateSessionEvents(options.seed);
         if (seedErr !== undefined) return { ok: false, reason: seedErr };
       }
-      return birth(makeHeader(idRes.value, options.parent), options.seed ?? [], false);
+      return birth(header ?? makeHeader(id, options.parent), options.seed ?? [], false);
     },
 
     fork: async (source: SessionId, options: ForkSessionOptions = {}) => {

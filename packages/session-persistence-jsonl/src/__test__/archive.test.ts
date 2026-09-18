@@ -19,7 +19,7 @@ const reader = () => createArchiveReader(root);
 
 async function seedSession(
   id: string,
-  header: Record<string, unknown> = { version: 1, id, createdAt: 1 },
+  header: Record<string, unknown> = { id, createdAt: 1 },
   lines: readonly string[] = [],
 ): Promise<void> {
   const dir = join(root, id);
@@ -45,7 +45,7 @@ describe("read（docs/SESSION.md §1.8 读侧规则）", () => {
     const result = await reader().read("s1" as SessionId);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.value.header).toEqual({ version: 1, id: "s1", createdAt: 1 });
+    expect(result.value.header).toEqual({ id: "s1", createdAt: 1 });
     expect(result.value.events).toEqual([JSON.parse(ev0), JSON.parse(ev1)]);
     expect(Object.isFrozen(result.value.events)).toBe(true);
     expect(Object.isFrozen(result.value.events[0])).toBe(true);
@@ -61,8 +61,7 @@ describe("read（docs/SESSION.md §1.8 读侧规则）", () => {
   it.each<[string, () => Promise<unknown>, string]>([
     ["header 缺失", () => mkdir(join(root, "nohdr"), { recursive: true }), "no-header:nohdr"],
     ["header 非合法 JSON", () => seedSession("badhdr", undefined, []).then(() => writeFile(join(root, "badhdr", "header.json"), "{")), "corrupt-header:badhdr"],
-    ["版本未知", () => seedSession("v2", { version: 2, id: "v2", createdAt: 1 }), "unsupported-version:v2:2"],
-    ["id 不匹配", () => seedSession("mism", { version: 1, id: "other", createdAt: 1 }), "corrupt-header:mism:id-mismatch"],
+    ["id 不匹配", () => seedSession("mism", { id: "other", createdAt: 1 }), "corrupt-header:mism:id-mismatch"],
   ])("拒绝：%s → %s", async (_name, seed, expected) => {
     await seed();
     const result = await reader().read(expected.split(":")[1] as SessionId);
@@ -72,7 +71,7 @@ describe("read（docs/SESSION.md §1.8 读侧规则）", () => {
   it("末行残缺（JSON.parse 失败）→ 跳过（崩溃痕迹）", async () => {
     const dir = join(root, "tail");
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "header.json"), `${JSON.stringify({ version: 1, id: "tail", createdAt: 1 })}\n`);
+    await writeFile(join(dir, "header.json"), `${JSON.stringify({ id: "tail", createdAt: 1 })}\n`);
     await writeFile(join(dir, "events.jsonl"), `${ev0}\n${ev1}\n{"type":"turn/start","seq":2`);
     const result = await reader().read("tail" as SessionId);
     expect(result).toMatchObject({ ok: true });

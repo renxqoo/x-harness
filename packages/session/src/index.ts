@@ -21,7 +21,6 @@ export type {
   ToolRef,
   TurnEndReason,
 } from "./types.ts";
-export { SESSION_FORMAT_VERSION } from "./types.ts";
 export {
   sessionStore,
   sessionArchive,

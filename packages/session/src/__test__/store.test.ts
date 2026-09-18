@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { GuardDeny } from "@x-harness/core";
 import { createSessionStore } from "../store.ts";
 import type { SessionStoreHooks } from "../store.ts";
-import type { SessionEvent, SessionHeader } from "../types.ts";
+import type { CreateSessionOptions, SessionEvent, SessionHeader } from "../types.ts";
 import { sid, unwrap } from "./helpers.ts";
 
 interface Harness {
@@ -68,7 +68,6 @@ describe("create（docs/SESSION.md §1.5）", () => {
     const b = unwrap(await store.create());
     expect(a.id).toBe("session-0");
     expect(b.id).toBe("session-1");
-    expect(a.header.version).toBe(1);
     expect(typeof a.header.createdAt).toBe("number");
     expect(a.header.cwd).toBe(process.cwd());
     expect(h.created).toHaveLength(2);
@@ -122,6 +121,25 @@ describe("create（docs/SESSION.md §1.5）", () => {
     const store = createSessionStore(makeStore().hooks);
     expect(unwrap(await store.create({ parent: sid("p1") })).header.parentSession).toBe("p1");
     expect(await store.create({ parent: sid("../p") })).toEqual({ ok: false, reason: "invalid-parent:../p" });
+  });
+
+  it("header 覆盖：归档原文入账、元数据保留（docs/SESSION-RESUME §1.3）", async () => {
+    const store = createSessionStore(makeStore().hooks);
+    const archived = { id: sid("arch"), createdAt: 12345, cwd: "/old/cwd", parentSession: sid("old-parent") };
+    const s = unwrap(await store.create({ header: archived }));
+    expect(s.header).toEqual(archived);
+    expect(Object.isFrozen(s.header)).toBe(true);
+    expect(store.get(sid("arch"))).toBeDefined();
+  });
+
+  it.each<[string, CreateSessionOptions, string]>([
+    ["非法 id", { header: { id: sid("../x"), createdAt: 1 } }, "invalid-header:shape"],
+    ["id 冲突", { header: { id: sid("a"), createdAt: 1 }, id: sid("b") }, "invalid-header:id-mismatch"],
+  ])("header 覆盖拒绝：%s", (_name, options, expected) => {
+    return (async () => {
+      const store = createSessionStore(makeStore().hooks);
+      expect(await store.create(options)).toEqual({ ok: false, reason: expected });
+    })();
   });
 });
 

@@ -98,6 +98,7 @@ const validSamples: Record<string, unknown> = {
   "request/header": { model: "m", provider: "p", temperature: 0.5, maxTokens: 100, tools: [{ name: "t", description: "d" }] },
   "request/context": { provider: "p", model: "m", contextWindow: 8192 },
   "session/end-seed": {},
+  "agent/inbox/spliced": { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: "hi" }] }] },
 };
 
 const brokenSamples: Record<string, unknown> = {
@@ -114,10 +115,11 @@ const brokenSamples: Record<string, unknown> = {
   "request/header": { model: "m", tools: [{ name: 1 }] },
   "request/context": { provider: "p", model: "m", contextWindow: -1 },
   "session/end-seed": { inherited: "yes" },
+  "agent/inbox/spliced": { op: "insert", target: "side-queue", entries: [] },
 };
 
 describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵）", () => {
-  it("13 词条合法样本全部放行", () => {
+  it("14 词条合法样本全部放行", () => {
     for (const [type, data] of Object.entries(validSamples)) {
       expect(gateEvent(type, data), type).toBeUndefined();
     }
@@ -135,6 +137,26 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("user/message", { turn: 0, step: 0, content: [], extra: undefined })).toBe(
       "not-json-safe:user/message",
     );
+  });
+
+  it("inbox 词条门表驱动（docs/SESSION-RESUME §7）", () => {
+    expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-step", turn: 0, claimed: ["a", "b"] })).toBeUndefined();
+    expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-step", turn: 0, claimed: [] })).toBeUndefined();
+    expect(gateEvent("agent/inbox/spliced", { op: "clear", reason: "cancelled" })).toBeUndefined();
+    expect(gateEvent("agent/inbox/spliced", { op: "insert", target: "next-step", entries: [{ id: "", content: [] }] })).toBe(
+      "shape:agent/inbox/spliced",
+    );
+    expect(gateEvent("agent/inbox/spliced", { op: "insert", target: "next-step", entries: [{ id: "x", content: [{ type: "text", text: 1 }] }] })).toBe(
+      "shape:agent/inbox/spliced",
+    );
+    expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-turn", turn: -1, claimed: [] })).toBe(
+      "shape:agent/inbox/spliced",
+    );
+    expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-turn", turn: 0, claimed: [""] })).toBe(
+      "shape:agent/inbox/spliced",
+    );
+    expect(gateEvent("agent/inbox/spliced", { op: "clear", reason: "" })).toBe("shape:agent/inbox/spliced");
+    expect(gateEvent("agent/inbox/spliced", { op: "noop", target: "next-turn" })).toBe("shape:agent/inbox/spliced");
   });
 });
 
