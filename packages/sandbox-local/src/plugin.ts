@@ -34,23 +34,36 @@ export function createSandboxPlugin(options: SandboxOptions): Plugin {
 
       let tornDown = false;
       const proxies = new Map<string, ProxyHandle>();
+      const creating = new Map<string, Promise<ProxyHandle>>(); // 并发 spawn 单飞——双建竞态防泄漏
+      const preAllowed = new Set(options.allowedDomains ?? []); // 宿主预授权——永不 ask（§4）
+      const askDomain = async (s: SessionId | undefined, domain: string): Promise<"allow" | "deny"> => {
+        const broker = ctx.tryUse(permissionBroker); // ask 时惰性解析（broker 可晚于本插件装配）
+        if (tornDown || broker === undefined) return "deny"; // broker 缺席/拆卸 → ask 退化 deny
+        try {
+          return await broker.ask({ tool: "network", reason: `connect to ${domain}`, ...(s !== undefined ? { session: s } : {}) });
+        } catch {
+          return "deny";
+        }
+      };
       const proxyTargetOf = async (session: SessionId | undefined): Promise<ProxyTarget | undefined> => {
         if (tornDown) return undefined;
         if (options.networkOff === true) return undefined; // fence 已 off——不会走到（防御）
         const key = session ?? "_anon";
         const existing = proxies.get(key);
         if (existing !== undefined) return probe.dialect === "darwin" ? { port: existing.port } : { mounted: true };
-        const broker = ctx.tryUse(permissionBroker);
-        const handle = await createSessionProxy(session, grants, {
-          askDomain: async (s, domain) => {
-            if (tornDown || broker === undefined) return "deny"; // broker 缺席/拆卸 → ask 退化 deny
-            try {
-              return await broker.ask({ tool: "network", reason: `connect to ${domain}`, ...(s !== undefined ? { session: s } : {}) });
-            } catch {
-              return "deny";
-            }
-          },
-        });
+        const inflight = creating.get(key);
+        if (inflight !== undefined) {
+          const handle = await inflight;
+          return probe.dialect === "darwin" ? { port: handle.port } : { mounted: true };
+        }
+        const made = createSessionProxy(session, grants, { askDomain, preAllowed });
+        creating.set(key, made);
+        let handle: ProxyHandle;
+        try {
+          handle = await made;
+        } finally {
+          creating.delete(key);
+        }
         if (tornDown) {
           await handle.close(); // 竞态：拆卸发生在监听建立之间——立即收口
           return undefined;
@@ -65,6 +78,7 @@ export function createSandboxPlugin(options: SandboxOptions): Plugin {
         dialect: probe.dialect,
         proxyTargetOf,
         isTornDown: () => tornDown,
+        wrapper: probe.wrapper,
       });
 
       const offEnv = ctx.provide(execEnv, sandbox.env);

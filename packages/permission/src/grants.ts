@@ -11,6 +11,10 @@ interface SessionBucket {
   rules: PermissionRule[];
 }
 
+function domainChainKey(session: SessionId | undefined, domain: string): string {
+  return `${session ?? "_anon"}\u0000${domain}`;
+}
+
 export class GrantsRegistry {
   private readonly buckets = new Map<string, SessionBucket>();
   private readonly domainChains = new Map<string, Promise<unknown>>();
@@ -55,13 +59,20 @@ export class GrantsRegistry {
   }
 
   /** 域授权单飞：同 (session,domain) 并发只产生一次 ask；异域并行互不阻塞 */
-  askDomainOnce(session: SessionId | undefined, domain: string, ask: () => Promise<"allow" | "deny">): Promise<"allow" | "deny"> {
+  askDomainOnce(req: {
+    readonly session: SessionId | undefined;
+    readonly domain: string;
+    readonly ask: () => Promise<"allow" | "deny">;
+    readonly abort?: Promise<unknown>;
+  }): Promise<"allow" | "deny"> {
+    const { session, domain, ask, abort } = req;
+    const opts = { abort };
     const settled = this.domainVerdict(session, domain);
     if (settled !== undefined) return Promise.resolve(settled);
-    const key = `${session ?? "_anon"}\u0000${domain}`;
+    const key = domainChainKey(session, domain);
     // 链条只由本方法写入（永不 reject 的续接）——单臂足够
     const previous: Promise<unknown> = this.domainChains.get(key) ?? Promise.resolve();
-    const run = previous.then(() => this.settleDomainAsk(session, domain, ask));
+    const run = previous.then(() => this.settleDomainAsk({ session, domain, ask, abort: opts.abort }));
     this.domainChains.set(
       key,
       run.then(
@@ -72,14 +83,27 @@ export class GrantsRegistry {
     return run;
   }
 
-  private async settleDomainAsk(session: SessionId | undefined, domain: string, ask: () => Promise<"allow" | "deny">): Promise<"allow" | "deny"> {
+  private async settleDomainAsk(req: {
+    readonly session: SessionId | undefined;
+    readonly domain: string;
+    readonly ask: () => Promise<"allow" | "deny">;
+    readonly abort?: Promise<unknown>;
+  }): Promise<"allow" | "deny"> {
+    const { session, domain, ask } = req;
+    const opts = { abort: req.abort };
     const settled = this.domainVerdict(session, domain); // 链上排队后复检（前一个 ask 可能已记）
     if (settled !== undefined) return settled;
     let verdict: "allow" | "deny";
     try {
-      verdict = await ask();
+      if (opts.abort !== undefined) {
+        const outcome = await Promise.race([ask(), opts.abort.then(() => "aborted" as const)]);
+        if (outcome === "aborted") return "deny"; // 客户端已断——迟到裁决丢弃（不记账）
+        verdict = outcome;
+      } else {
+        verdict = await ask();
+      }
     } catch {
-      verdict = "deny"; // broker 抛错 fail-closed
+      return "deny"; // broker 抛错 fail-closed（含 race 内 rejected ask）
     }
     if (this.disposed) return "deny"; // 拆卸后迟到裁决丢弃——deny 结算
     this.recordDomain(session, domain, verdict);
@@ -87,7 +111,12 @@ export class GrantsRegistry {
   }
 
   evict(session: SessionId | undefined): void {
-    this.buckets.delete(session ?? "_anon");
+    const key = session ?? "_anon";
+    this.buckets.delete(key);
+    for (const chainKey of this.domainChains.keys()) {
+      if (chainKey.startsWith(`${key}\u0000`)) this.domainChains.delete(chainKey); // 会话链随桶逐出
+    }
+    void domainChainKey;
   }
 
   /** 拆卸契约（§5）：拒新记录；在飞 ask 的 broker 迟到裁决被丢弃（deny 结算语义） */

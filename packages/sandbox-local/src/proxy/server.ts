@@ -15,6 +15,8 @@ export interface ProxyHandle {
 export interface ProxyDeps {
   /** broker 裁决入口（缺席/抛错 → deny——fail-closed 由 grants 承担） */
   readonly askDomain: (session: SessionId | undefined, domain: string) => Promise<"allow" | "deny">;
+  /** 宿主预授权域名（永不走 ask——§4） */
+  readonly preAllowed?: ReadonlySet<string>;
   readonly connect?: typeof net.connect;
   readonly createServer?: typeof net.createServer;
 }
@@ -59,21 +61,22 @@ export function createSessionProxy(session: SessionId | undefined, grants: Grant
     const port = Number(match[2] ?? "443");
     const settled = grants.domainVerdict(session, domain);
     let verdict: "allow" | "deny" = settled ?? "deny";
-    if (settled === undefined) {
-      // socket close 即撤 ask：客户端断开（子进程被杀/超时）时 broker 迟到裁决被丢弃
-      let closed = false;
-      const onClose = (): void => {
-        closed = true;
-      };
-      client.once("close", onClose);
-      verdict = await new Promise<"allow" | "deny">((resolve) => {
-        void grants
-          .askDomainOnce(session, domain, () => deps.askDomain(session, domain))
-          .then((v) => resolve(v))
-          .catch(() => resolve("deny"));
-        void closed; // closed 语义由 seal/迟到丢弃承担（grants 层）；此处 once 清理防泄漏
+    if (settled === undefined && deps.preAllowed?.has(domain) === true) {
+      verdict = "allow"; // 宿主预授权——永不 ask
+    } else if (settled === undefined) {
+      // socket close 即撤 ask：客户端断开（子进程被杀/超时）→ aborted——迟到裁决不记账不生效
+      const aborted = new Promise<"aborted">((resolve) => {
+        client.once("close", () => resolve("aborted"));
       });
-      client.removeListener("close", onClose);
+      const outcome = await Promise.race([
+        grants.askDomainOnce({ session, domain, ask: () => deps.askDomain(session, domain), abort: aborted }),
+        aborted,
+      ]);
+      if (outcome === "aborted") {
+        client.destroy();
+        return;
+      }
+      verdict = outcome;
     }
     if (verdict === "deny") {
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");

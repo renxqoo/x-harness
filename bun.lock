@@ -121,6 +121,7 @@
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/permission": "workspace:*",
         "@x-harness/session": "workspace:*",
+        "@x-harness/toolbox": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
     },
@@ -176,6 +177,8 @@
       "dependencies": {
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
+        "@x-harness/permission": "workspace:*",
+        "@x-harness/session": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {

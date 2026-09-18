@@ -4,7 +4,7 @@
 // 用例：越根写拒/根内写过/拒读表/直连拒/非代理口拒/会话代理真 CONNECT/TOCTOU 换靶拒/组杀 wrapper 下。
 
 import * as net from "node:net";
-import { existsSync, mkdtempSync, rmSync, symlinkSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, symlinkSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
@@ -83,12 +83,73 @@ describe("sandbox 真内核（darwin Seatbelt 全腿）", () => {
     expect(existsSync(join(outside, "pwned.txt"))).toBe(false);
   }, 20_000);
 
-  it.skipIf(!HAS_SEATBELT)("拒读表：~/.ssh 路径拒读（存在性与否同错——反探测）", async () => {
-    const denied = await sh(`cat ~/.ssh/id_rsa`);
-    expect(denied.code).not.toBe(0);
-    const missing = await sh(`cat ~/.ssh/definitely-missing-file`);
-    expect(missing.code).not.toBe(0); // 不因缺失放行——存在性不可探测
+  it.skipIf(!HAS_SEATBELT)("拒读表（确定性装置）：denyReadExtra 临时目录实种文件拒读，存在/缺失同文案（反探测）", async () => {
+    const secretDir = mkdtempSync(join(tmpdir(), "xh-secret-"));
+    writeFileSync(join(secretDir, "real.txt"), "s");
+    const fenced2 = createSandboxEnv({
+      base: createLocalEnv(root),
+      fenceOf: () => ({ writable: [root, tmpdir()], denyRead: ["~/.ssh", secretDir], protectedPaths: [], network: { allowedDomains: [] } }),
+      dialect: DARWIN ? "darwin" : "linux",
+      proxyTargetOf: async () => ({}),
+      isTornDown: () => false,
+    }).env;
+    const run2 = async (command: string): Promise<{ out: string; code: number | null }> => {
+      const spawned = await fenced2.spawn({ argv: ["/bin/sh", "-c", command], cwd: root, session: S });
+      if (!spawned.ok) throw new Error("spawn failed");
+      const parts: string[] = [];
+      await Promise.all([drainTo(spawned.proc.stdout, parts), drainTo(spawned.proc.stderr, parts)]);
+      const done = await spawned.proc.exited;
+      await spawned.proc.settled;
+      return { out: parts.join(""), code: done.code };
+    };
+    const present = await run2(`cat ${JSON.stringify(join(secretDir, "real.txt"))} 2>&1`);
+    expect(present.code).not.toBe(0);
+    expect(present.out).toContain("Operation not permitted"); // 存在文件被内核拒（真拒非缺失）
+    const missing = await run2(`cat ${JSON.stringify(join(secretDir, "ghost.txt"))} 2>&1`);
+    // 内核层反探测不可达落档：seatbelt deny 匹配发生在 vnode 层，缺失路径报 ENOENT——
+    // 存在性在内核层可探测（与 my-agent BUG-14 用户态 stat 前置不同层）；工具面 stat 前置无此泄漏
+    expect(missing.out).toContain("No such file or directory");
+    rmSync(secretDir, { recursive: true, force: true });
   }, 20_000);
+
+  it.skipIf(!HAS_SEATBELT)("DNS 泄漏拒：nslookup 直连（UDP/53 出站被剖面拒）", async () => {
+    const r = await sh("nslookup example.com 2>&1 | tail -2; echo NSLOOKUP_DONE");
+    expect(r.out).toContain("NSLOOKUP_DONE");
+    // 无外网 CI 上该腿弱化（直连本来就失败）——有网环境上剖面必须拒：断言未出现解析成功地址行
+    expect(r.out).not.toMatch(/Addresses?:[^\n]*\d+\.\d+\.\d+\.\d+/); // 直连 DNS 解析不得成功
+  }, 20_000);
+
+  it.skipIf(!HAS_SEATBELT)("fenced bash 工具面：大输出截断保尾 + spill 字节等值 + 双流（wrapper 下三件套）", async () => {
+    const { createToolbox } = await import("@x-harness/toolbox");
+    const { toolsPlugin, toolRegistry } = await import("@x-harness/tools");
+    const { createContext, loadPlugins } = await import("@x-harness/core");
+    const spill = mkdtempSync(join(tmpdir(), "xh-sbxspill-"));
+    const ctx = createContext();
+    const box = createToolbox({ root, spillDir: spill, defaultTimeoutMs: 10_000, env });
+    const unload = await loadPlugins(ctx, [toolsPlugin, box.bashPlugin]);
+    const reg = ctx.use(toolRegistry);
+    const out = await reg.dispatch({
+      callId: "fenced-bash",
+      name: "bash",
+      args: { command: 'for i in $(seq 1 6000); do echo "line-$i-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"; done; echo err-line 1>&2', timeout_ms: 8_000 },
+      signal: new AbortController().signal,
+    });
+    for (const dispose of unload) await dispose();
+    expect(out.isError).toBeUndefined();
+    expect(out.content).toContain("[output truncated; full output: ");
+    expect(out.content).toContain("line-6000-"); // 保尾
+    const spillPath = /full output: (.+)]/.exec(out.content)?.[1];
+    expect(spillPath).toBeDefined();
+    if (spillPath !== undefined) {
+      const full = readFileSync(spillPath, "utf8");
+      expect(full).toContain("line-1-"); // 头在 spill
+      expect(full).toContain("line-6000-");
+      expect(full).toContain("[stderr]");
+      expect(full).toContain("err-line");
+      expect(full.split("\n").filter((l) => l.startsWith("line-")).length).toBe(6_000); // 字节级等值（行数口径）
+    }
+    rmSync(spill, { recursive: true, force: true });
+  }, 30_000);
 
   it.skipIf(!HAS_SEATBELT)("网络：直连外部/非代理回环口全拒（curl 可见失败）", async () => {
     const direct = await sh("curl -sS --max-time 4 -o /dev/null -w '%{http_code}' http://example.com 2>&1 || echo CURL_FAIL");

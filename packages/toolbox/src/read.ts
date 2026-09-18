@@ -8,6 +8,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ReadFace, ReadHandle } from "@x-harness/exec-env";
 import type { PathGate } from "./paths.ts";
+import type { ExtraRootsOf } from "./toolbox.ts";
 import { ObservedRegistry } from "./observed.ts";
 
 const DEFAULT_LIMIT = 2_000;
@@ -41,7 +42,16 @@ async function readChunk(handle: ReadHandle): Promise<Uint8Array | null> {
   return chunk.data;
 }
 
-export function createReadTool(gate: PathGate, observed: ObservedRegistry, env: ReadFace): ToolDefinition {
+export interface ReadToolInput {
+  readonly gate: PathGate;
+  readonly observed: ObservedRegistry;
+  readonly env: ReadFace;
+  readonly extraRootsOf?: ExtraRootsOf;
+}
+
+export function createReadTool(input: ReadToolInput): ToolDefinition {
+  const { gate, observed, env } = input;
+  const extraRootsOf = input.extraRootsOf ?? (() => []);
   return {
     name: "read",
     description:
@@ -52,7 +62,8 @@ export function createReadTool(gate: PathGate, observed: ObservedRegistry, env: 
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_LIMIT, description: `Max lines (default and cap ${String(DEFAULT_LIMIT)})` })),
     }),
     isConcurrencySafe: () => true,
-    execute: async (args, ctx: ToolExecContext) => readFile({ gate, observed, env, ctx, args: args as { path: string; offset?: number; limit?: number } }),
+    execute: async (args, ctx: ToolExecContext) =>
+      readFile({ gate, observed, env, ctx, extraRootsOf, args: args as { path: string; offset?: number; limit?: number } }),
   };
 }
 
@@ -60,11 +71,12 @@ async function readFile(input: {
   readonly gate: PathGate;
   readonly observed: ObservedRegistry;
   readonly env: ReadFace;
+  readonly extraRootsOf: ExtraRootsOf;
   readonly ctx: ToolExecContext;
   readonly args: { path: string; offset?: number; limit?: number };
 }): Promise<{ content: string; isError?: true }> {
-  const { gate, observed, env, ctx, args } = input;
-  const admitted = await gate.admit(args.path, env.realpath);
+  const { gate, observed, env, ctx, args, extraRootsOf } = input;
+  const admitted = await gate.admit(args.path, env.realpath, extraRootsOf(ctx.session));
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const path = admitted.path;
   const st = await env.stat(path);

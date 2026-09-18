@@ -63,8 +63,12 @@ function segmentDecision(segment: Segment, input: BashPipelineInput, roots: read
     if (!withinAny(path, roots)) return { verdict: "ask", reason: `redirect:${redirect.target}`, resolvedBy: "redirect" };
   }
   const allowed = bashRuleMatches(input.rules, commandWords).some((rule) => rule.verdict === "allow");
-  if (!allowed && input.mode !== "full") return { verdict: "ask", reason: "no rule matches segment", resolvedBy: "default:ask" };
-  return undefined;
+  if (allowed) return undefined;
+  if (input.mode === "full") return undefined;
+  // 界内合成（§5 步 5）：围栏在场 + 段静态（非 dynamic）+ 重定向已全在界内 → auto-allow 零交互；
+  // 无围栏装配时永不界内 auto（§6 对照句——bash 缺省 ask/deny）
+  if (input.fence !== undefined) return undefined;
+  return { verdict: "ask", reason: "no rule matches segment", resolvedBy: "default:ask" };
 }
 
 export function adjudicateBash(input: BashPipelineInput): BashAdjudication {

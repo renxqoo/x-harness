@@ -24,19 +24,36 @@ export class PathGate {
   }
 
   /** 越根/逃逸 → 错误码；通过 → 返回词法绝对路径（I/O 用这条，不用 realpath）。
-   *  物理判定（symlink 逃逸防护）经 realpath 参数——由调用方注入 env.realpath（单源）。 */
-  async admit(target: string, realpath: RealpathFn): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
+   *  物理判定（symlink 逃逸防护）经 realpath 参数——由调用方注入 env.realpath（单源）。
+   *  extraRoots：会话授权根（permission 批准落账）——同样词法+物理双查后放行。 */
+  async admit(
+    target: string,
+    realpath: RealpathFn,
+    extraRoots: readonly string[] = [],
+  ): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
     if (PathGate.hasNul(target)) return { ok: false, reason: "NUL_IN_ARGUMENT: path contains NUL" };
     // 绝对入参可能以词法 root 写入（如 /var/... 而门 root 是 /private/...）——先归一到词法 root 再判
     const lexical = isAbsolute(target) ? resolve(this.rebaseToRoot(resolve(target))) : resolve(this.root, target);
-    if (!this.withinRootLexical(lexical)) {
+    // 授权根双形（词法 + 物理——macOS /var→/private/var；symlink 逃逸双查每根独立执行）
+    const roots = [this.root];
+    for (const r of extraRoots) {
+      roots.push(resolve(r));
+      const physicalRoot = await realpath(resolve(r));
+      if (!roots.includes(physicalRoot)) roots.push(physicalRoot);
+    }
+    if (!roots.some((root) => this.withinRootLexicalOf(root, lexical))) {
       return { ok: false, reason: `PATH_ESCAPES_ROOT: ${target} resolves outside the workspace root` };
     }
     const physical = await realpath(lexical);
-    if (!this.withinRootLexical(physical)) {
+    if (!roots.some((root) => this.withinRootLexicalOf(root, physical))) {
       return { ok: false, reason: `PATH_ESCAPES_ROOT: ${target} resolves (through symlink) outside the workspace root` };
     }
     return { ok: true, path: lexical };
+  }
+
+  private withinRootLexicalOf(root: string, p: string): boolean {
+    const prefix = root.endsWith(sep) ? root : root + sep;
+    return p === root || p.startsWith(prefix);
   }
 
   /** 词法 root（/var/...）的入参换算到物理 root（/private/...）前缀；非 root 前缀原样返回 */

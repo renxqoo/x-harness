@@ -12,6 +12,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv, ProcHandle } from "@x-harness/exec-env";
 import { PathGate } from "./paths.ts";
+import type { ExtraRootsOf } from "./toolbox.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
@@ -45,7 +46,16 @@ export function defaultLimits(over: { defaultTimeoutMs?: number; maxTimeoutMs?: 
   };
 }
 
-export function createBashTool(gate: PathGate, limits: BashLimits, env: ExecEnv): ToolDefinition {
+export interface BashToolInput {
+  readonly gate: PathGate;
+  readonly limits: BashLimits;
+  readonly env: ExecEnv;
+  readonly extraRootsOf?: ExtraRootsOf;
+}
+
+export function createBashTool(input: BashToolInput): ToolDefinition {
+  const { gate, limits, env } = input;
+  const extraRootsOf = input.extraRootsOf ?? (() => []);
   return {
     name: "bash",
     description:
@@ -56,7 +66,7 @@ export function createBashTool(gate: PathGate, limits: BashLimits, env: ExecEnv)
       workdir: Type.Optional(Type.String({ description: "Working directory (inside workspace root; default root)" })),
       needs_network: Type.Optional(Type.Boolean({ description: "Declare that this command requires network access — routes through approval before running" })),
     }),
-    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, ctx, args: args as { command: string; timeout_ms?: number; workdir?: string; needs_network?: boolean } }),
+    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, ctx, extraRootsOf, args: args as { command: string; timeout_ms?: number; workdir?: string; needs_network?: boolean } }),
   };
 }
 
@@ -64,17 +74,18 @@ async function bash(input: {
   readonly gate: PathGate;
   readonly limits: BashLimits;
   readonly env: ExecEnv;
+  readonly extraRootsOf: ExtraRootsOf;
   readonly ctx: ToolExecContext;
   readonly args: { command: string; timeout_ms?: number; workdir?: string; needs_network?: boolean };
 }): Promise<{ content: string; isError?: true }> {
-  const { gate, limits, env, ctx, args } = input;
+  const { gate, limits, env, ctx, args, extraRootsOf } = input;
   void args.needs_network; // 声明位由 permission 在 pre-execute 裁决——执行层不消费
   if (PathGate.hasNul(args.command) || (args.workdir !== undefined && PathGate.hasNul(args.workdir))) {
     return { content: "NUL_IN_ARGUMENT: command/workdir contains NUL", isError: true };
   }
   let cwd = gate.root;
   if (args.workdir !== undefined) {
-    const admitted = await gate.admit(args.workdir, env.realpath);
+    const admitted = await gate.admit(args.workdir, env.realpath, extraRootsOf(ctx.session));
     if (!admitted.ok) return { content: admitted.reason, isError: true };
     const st = await env.stat(admitted.path);
     if (!st.ok) return { content: `WORKDIR_NOT_FOUND: ${args.workdir} does not exist`, isError: true };

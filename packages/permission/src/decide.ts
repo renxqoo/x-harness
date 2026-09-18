@@ -7,7 +7,7 @@ import type { SessionId } from "@x-harness/session";
 import type { FenceFacts, ModeKnob, PermissionRule, Verdict } from "./types.ts";
 import { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE } from "./types.ts";
 import { globMatch } from "./rules/glob.ts";
-import { adjudicateBash, withinAny, writableRoots } from "./bash/adjudicate.ts";
+import { adjudicateBash, withinAny } from "./bash/adjudicate.ts";
 
 export interface Decision {
   readonly verdict: Verdict;
@@ -41,7 +41,9 @@ function defaultDenyRules(): PermissionRule[] {
 
 export function decideFor(input: DecideInput): Decision {
   const rules = [...input.userRules, ...defaultDenyRules(), ...input.sessionRules];
-  const roots = writableRoots({ root: input.root, extraRoots: input.extraRoots, fence: input.fence });
+  // 路径面（read/write/grep）界内判定 = gate 语义（root ∪ 会话授权根）——不含 fence.writable
+  // （那是 bash/spawn 面的可写集，含 tmpdir；两层口径漂移会把 tmpdir 误判为工具面界内）
+  const pathRoots = [input.root, ...input.extraRoots.map((r) => resolve(r))];
   if (input.tool === "bash") {
     const args = (input.args ?? {}) as { command?: unknown; needs_network?: unknown };
     const adjudication = adjudicateBash({
@@ -59,7 +61,7 @@ export function decideFor(input: DecideInput): Decision {
   if (ruleTool === undefined) {
     return { verdict: "ask", reason: `unknown tool:${input.tool}`, resolvedBy: "default:ask" };
   }
-  return decidePathTool({ ...input, ruleTool, rules, roots });
+  return decidePathTool({ ...input, ruleTool, rules, roots: pathRoots });
 }
 
 function ruleToolOf(tool: string): "Read" | "Write" | "Grep" | undefined {
@@ -77,7 +79,8 @@ interface PathDecisionInput extends DecideInput {
 
 function decidePathTool(input: PathDecisionInput): Decision {
   const args = (input.args ?? {}) as { path?: unknown };
-  const path = typeof args.path === "string" ? resolve(input.root, args.path) : "";
+  // path 缺省=工作区根（镜像 toolbox grep 的 schema 缺省——不因缺参坠落 ask）
+  const path = typeof args.path === "string" ? resolve(input.root, args.path) : input.root;
   const denied = input.rules.find((rule) => rule.tool === input.ruleTool && rule.verdict === "deny" && path !== "" && globMatch(rule.pattern, path, input.root));
   if (denied !== undefined) {
     return { verdict: "deny", reason: `rule:${denied.pattern}`, resolvedBy: `rule:${denied.origin}` };

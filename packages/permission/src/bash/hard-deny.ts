@@ -14,11 +14,27 @@ function normalizeWords(words: readonly string[]): string[] {
     const base = raw.includes("/") ? (raw.split("/").filter(Boolean).pop() ?? "/") : raw;
     if (base !== "") out.push(base);
   }
-  // env 前缀剥离：env [VAR=x…] cmd → cmd（env 子进程的真实 argv0 在赋值之后）
+  // env 前缀剥离：env [-i|-u X|--] [VAR=x…] cmd → cmd（flag 与赋值都属 env 自身参数）
   let at = 0;
   if (out[0] === "env") {
     at = 1;
-    while (at < out.length && /^\w+=/.test(out[at] as string)) at += 1;
+    for (;;) {
+      const word = out[at];
+      if (word === undefined) break;
+      if (word === "-i" || word === "--") {
+        at += 1;
+        continue;
+      }
+      if (word === "-u") {
+        at += 2; // -u USER 两词
+        continue;
+      }
+      if (/^\w+=/.test(word)) {
+        at += 1;
+        continue;
+      }
+      break;
+    }
   }
   return out.slice(at);
 }

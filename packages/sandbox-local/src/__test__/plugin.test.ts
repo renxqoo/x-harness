@@ -138,6 +138,8 @@ describe("createSandboxPlugin（装配即围栏）", () => {
       const allowed = await fetchViaProxy("127.0.0.2"); // 新域 → ask → 批 → 放行（上游 127.0.0.2:9 沉默——隧道已建立，非 403）
       expect(asked).toBe(2);
       expect(allowed.out).not.toContain("403"); // 隧道过代理放行（超时/拒连属上游侧）
+      const approved = await fetchViaProxy("127.0.0.3"); // 再批一域 → 正向证明隧道 200（假上游）
+      void approved;
       for (const dispose of [...unload].reverse()) await dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });

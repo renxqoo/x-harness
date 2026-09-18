@@ -7,6 +7,7 @@ import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
 import type { PathGate } from "./paths.ts";
+import type { ExtraRootsOf } from "./toolbox.ts";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1_000;
@@ -34,7 +35,16 @@ export function resolveRg(
   return which("rg");
 }
 
-export function createGrepTool(gate: PathGate, options: GrepOptions, env: ExecEnv): ToolDefinition {
+export interface GrepToolInput {
+  readonly gate: PathGate;
+  readonly options: GrepOptions;
+  readonly env: ExecEnv;
+  readonly extraRootsOf?: ExtraRootsOf;
+}
+
+export function createGrepTool(input: GrepToolInput): ToolDefinition {
+  const { gate, options, env } = input;
+  const extraRootsOf = input.extraRootsOf ?? (() => []);
   return {
     name: "grep",
     description:
@@ -49,16 +59,16 @@ export function createGrepTool(gate: PathGate, options: GrepOptions, env: ExecEn
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_LIMIT, description: `Max matches (default ${String(DEFAULT_LIMIT)}, max ${String(MAX_LIMIT)}; over-max is rejected)` })),
     }),
     isConcurrencySafe: () => true,
-    execute: async (args, ctx: ToolExecContext) => grep({ gate, options, env, ctx, args: args as Record<string, unknown> }),
+    execute: async (args, ctx: ToolExecContext) => grep({ gate, options, env, ctx, extraRootsOf, args: args as Record<string, unknown> }),
   };
 }
 
-async function grep(input: { readonly gate: PathGate; readonly options: GrepOptions; readonly env: ExecEnv; readonly ctx: ToolExecContext; readonly args: Record<string, unknown> }): Promise<{ content: string; isError?: true }> {
-  const { gate, options, env, ctx, args } = input;
+async function grep(input: { readonly gate: PathGate; readonly options: GrepOptions; readonly env: ExecEnv; readonly extraRootsOf: ExtraRootsOf; readonly ctx: ToolExecContext; readonly args: Record<string, unknown> }): Promise<{ content: string; isError?: true }> {
+  const { gate, options, env, ctx, args, extraRootsOf } = input;
   const pattern = args["pattern"] as string;
   if (pattern.includes("\u0000")) return { content: "NUL_IN_ARGUMENT: pattern contains NUL", isError: true };
   const targetRaw = (args["path"] as string | undefined) ?? ".";
-  const admitted = await gate.admit(targetRaw, env.realpath);
+  const admitted = await gate.admit(targetRaw, env.realpath, extraRootsOf(ctx.session));
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const glob = args["glob"] as string | undefined;
   if (glob !== undefined) {

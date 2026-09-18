@@ -37,6 +37,11 @@ export class ObservedRegistry {
     return a.ino !== b.ino || a.size !== b.size || a.mtimeNs !== b.mtimeNs;
   }
 
+  /** 会话终结逐出（sessionDisposed——delegation 子会话不累积） */
+  evict(session: string | undefined): void {
+    this.bySession.delete(session ?? "_anon");
+  }
+
   /** 同绝对路径进程内互斥：check→temp→rename 临界区串行化 */
   async locked<T>(path: string, critical: () => Promise<T>): Promise<T> {
     const previous = this.chains.get(path) ?? Promise.resolve();

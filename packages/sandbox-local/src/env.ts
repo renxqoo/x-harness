@@ -22,6 +22,8 @@ export interface SandboxEnvDeps {
   readonly base: ExecEnv;
   readonly fenceOf: (session: SessionId | undefined) => Fence;
   readonly dialect: Dialect;
+  /** wrapper 绝对路径（probe 产物；缺省 PATH 名） */
+  readonly wrapper?: string;
   /** allowlist 档惰性取会话代理目标（off 档不会被调用）；拆卸后返回 undefined → fail-closed */
   readonly proxyTargetOf: (session: SessionId | undefined) => Promise<ProxyTarget | undefined>;
   readonly isTornDown: () => boolean;
@@ -82,9 +84,15 @@ export function createSandboxEnv(deps: SandboxEnvDeps): SandboxEnvHandle {
         env = { ...rest, HTTP_PROXY: proxyUrl, http_proxy: proxyUrl, HTTPS_PROXY: proxyUrl, https_proxy: proxyUrl, ALL_PROXY: proxyUrl, all_proxy: proxyUrl };
       }
     }
-    const argv = confine(deps.dialect, confineInput);
+    const argv = confine(deps.dialect, confineInput, deps.wrapper);
     const spawned = await deps.base.spawn({ ...req, argv, env });
     if (spawned.ok) {
+      if (deps.isTornDown()) {
+        // 拆卸窗口逃逸复查：spawn 通过时拆卸已发生——立即两段杀自杀，不交还给调用方
+        await spawned.proc.kill("term");
+        setTimeout(() => void spawned.proc.kill("kill"), 5_000);
+        return { ok: false, reason: { kind: "sandbox_unavailable", detail: "sandbox plugin is disposed — refusing to run unfenced" } };
+      }
       live.add(spawned.proc);
       spawned.proc.settled.then(() => {
         live.delete(spawned.proc);
@@ -114,7 +122,9 @@ interface ConfineInput {
   readonly proxyPort: number | undefined;
 }
 
-function confine(dialect: Dialect, input: ConfineInput): readonly string[] {
-  if (dialect === "darwin") return seatbeltArgv({ fence: input.fence, proxyPort: input.proxyPort, argv: input.argv, realpathOf: (p) => realpathDeep(p) });
+function confine(dialect: Dialect, input: ConfineInput, wrapper: string | undefined): readonly string[] {
+  if (dialect === "darwin") {
+    return seatbeltArgv({ fence: input.fence, proxyPort: input.proxyPort, argv: input.argv, realpathOf: (p) => realpathDeep(p), wrapper });
+  }
   return bwrapArgv({ fence: input.fence, proxyMounted: input.proxyMounted, argv: input.argv });
 }

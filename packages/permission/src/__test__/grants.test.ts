@@ -33,10 +33,10 @@ describe("GrantsRegistry", () => {
       });
       return "allow";
     };
-    const [r1, r2, r3] = await Promise.all([g.askDomainOnce(A, "x.com", ask), g.askDomainOnce(A, "x.com", ask), g.askDomainOnce(A, "x.com", ask)]);
+    const [r1, r2, r3] = await Promise.all([g.askDomainOnce({ session: A, domain: "x.com", ask }), g.askDomainOnce({ session: A, domain: "x.com", ask }), g.askDomainOnce({ session: A, domain: "x.com", ask })]);
     expect([r1, r2, r3]).toEqual(["allow", "allow", "allow"]);
     expect(asks).toBe(1); // 同域单问
-    const again = await g.askDomainOnce(A, "x.com", ask);
+    const again = await g.askDomainOnce({ session: A, domain: "x.com", ask });
     expect(again).toBe("allow");
     expect(asks).toBe(1); // 缓存命中
   });
@@ -51,16 +51,39 @@ describe("GrantsRegistry", () => {
       order.push(domain);
       return "allow";
     };
-    await Promise.all([g.askDomainOnce(A, "slow.io", slow("slow.io", 60)), g.askDomainOnce(A, "fast.io", slow("fast.io", 10))]);
+    await Promise.all([g.askDomainOnce({ session: A, domain: "slow.io", ask: slow("slow.io", 60) }), g.askDomainOnce({ session: A, domain: "fast.io", ask: slow("fast.io", 10) })]);
     expect(order).toEqual(["fast.io", "slow.io"]); // fast 不等 slow
   });
 
   it("broker 抛错 → deny（fail-closed）", async () => {
     const g = new GrantsRegistry();
-    const verdict = await g.askDomainOnce(A, "boom.io", async () => {
-      throw new Error("broker gone");
+    const verdict = await g.askDomainOnce({
+      session: A,
+      domain: "boom.io",
+      ask: async () => {
+        throw new Error("broker gone");
+      },
     });
     expect(verdict).toBe("deny");
+  });
+
+  it("abort 先到 → 迟到裁决丢弃（不记账——客户端断开撤 ask）", async () => {
+    const g = new GrantsRegistry();
+    let releaseAsk: () => void = () => {};
+    const ask = (): Promise<"allow" | "deny"> =>
+      new Promise((resolve) => {
+        releaseAsk = () => resolve("allow");
+      });
+    const abort = new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
+    const pending = g.askDomainOnce({ session: A, domain: "gone.io", ask, abort });
+    await new Promise((r) => {
+      setTimeout(r, 20);
+    });
+    releaseAsk(); // broker 迟到批——应被丢弃
+    expect(await pending).toBe("deny");
+    expect(g.domainVerdict(A, "gone.io")).toBeUndefined(); // 不记账
   });
 
   it("evict：会话终结逐出桶", () => {
@@ -79,7 +102,7 @@ describe("GrantsRegistry", () => {
       new Promise((resolve) => {
         release = resolve;
       });
-    const pending = g.askDomainOnce(A, "late.io", ask);
+    const pending = g.askDomainOnce({ session: A, domain: "late.io", ask });
     await new Promise((r) => {
       setTimeout(r, 5);
     }); // 让链上 settleDomainAsk 起跑、ask 的 resolve 已绑定

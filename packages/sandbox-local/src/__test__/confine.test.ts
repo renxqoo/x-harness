@@ -22,11 +22,11 @@ describe("seatbeltProfile（SBPL 内容级）", () => {
     expect(lines[0]).toBe("(version 1)");
     expect(lines[1]).toBe("(deny default)");
     expect(lines).toContain("(allow process-exec*)");
-    expect(lines.indexOf('(deny file-read* (subpath "/Users/demo/.ssh"))')).toBeLessThan(lines.indexOf("(allow file-read*)")); // 拒读先于全放（具体优先）
+    expect(lines).toContain('(deny file-read* (regex "/Users/demo/\\.ssh/"))'); // 拒读=非锚定 regex（实测唯一有效形态）
     expect(lines).toContain('(allow file-write* (literal "/dev/null"))');
     expect(lines).toContain('(allow file-write* (subpath "/w/app"))');
     expect(lines).toContain('(allow file-write* (subpath "/tmp"))');
-    expect(lines).toContain('(deny file-write* (subpath "/w/app/.xh-config"))'); // 受保护路径写拒
+    expect(lines.some((l) => l.startsWith("(deny file-write*"))).toBe(false); // darwin 受保护写拒不可表达（实测）——执法归工具面
     expect(lines).toContain('(allow network-outbound (remote ip "localhost:8085"))'); // 仅本会话代理口（host 只收 */localhost——实测）
     expect(sbpl).not.toContain("allow network*"); // 无泛网络放行
   });
@@ -41,8 +41,15 @@ describe("seatbeltProfile（SBPL 内容级）", () => {
     const sbpl = seatbeltProfile({ fence: fence(), proxyPort: undefined, home: "/Users/demo", realpathOf: (p) => (p === "/w/app" ? "/private/w/app" : p) });
     expect(sbpl).toContain('(allow file-write* (subpath "/w/app"))');
     expect(sbpl).toContain('(allow file-write* (subpath "/private/w/app"))');
-    const single = seatbeltProfile({ fence: fence(), proxyPort: undefined, home: "/Users/demo", realpathOf: (p) => p });
+    const single = seatbeltProfile({ fence: fence(), proxyPort: undefined, home: "/Users/demo" });
     expect(single.match(/subpath "\/w\/app"/g)).toHaveLength(1); // 同形不重复
+  });
+
+  it("SBPL 注入转义：路径含引号/反斜杠不逃逸（regex 与 subpath 双层转义）", () => {
+    const evil = fence({ writable: ['/w/ap"p'], denyRead: ['~/.ssh"x'] });
+    const sbpl = seatbeltProfile({ fence: evil, proxyPort: undefined, home: "/Users/demo" });
+    expect(sbpl).toContain('subpath "/w/ap\\"p"'); // 引号转义为 \" 留在字面量内（不逃逸）
+    expect(sbpl).toContain('regex "/Users/demo/\\.ssh\\"x/"');
   });
 
   it("seatbeltArgv：sandbox-exec -p 前缀 + 逻辑 argv 原样后缀", () => {

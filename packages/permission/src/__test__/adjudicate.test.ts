@@ -100,4 +100,22 @@ describe("adjudicateBash（管线裁决序）", () => {
     const noFence = adjudicateBash({ command: "ls", rules: rules(["Bash(ls):allow"]), mode: "auto", root: ROOT, extraRoots: [] });
     expect(noFence.resolvedBy).toBe("auto");
   });
+
+  it("界内 auto（§5 步5/§6）：fence 在场无规则静态段零交互放行；无 fence 同命令仍 ask（永不界内 auto）", () => {
+    const fenced = adjudicateBash({ command: "git status && npm test", rules: rules(), mode: "auto", root: ROOT, extraRoots: [], fence: { writable: [ROOT], allowedDomains: [] } });
+    expect(fenced).toMatchObject({ verdict: "allow", resolvedBy: "auto:fence" }); // 界内零交互
+    const bare = adjudicateBash({ command: "git status && npm test", rules: rules(), mode: "auto", root: ROOT, extraRoots: [] });
+    expect(bare.verdict).toBe("ask"); // 无围栏——同命令不得自动放行（§6 对照句）
+    const fencedDynamic = adjudicateBash({ command: "cat $F", rules: rules(), mode: "auto", root: ROOT, extraRoots: [], fence: { writable: [ROOT], allowedDomains: [] } });
+    expect(fencedDynamic.verdict).toBe("ask"); // 动态段即便围栏在场也 ask
+    const fencedNet = adjudicateBash({ command: "curl x", rules: rules(), mode: "auto", root: ROOT, extraRoots: [], fence: { writable: [ROOT], allowedDomains: [] }, needsNetwork: true });
+    expect(fencedNet.verdict).toBe("ask"); // needs_network 声明位仍走 ask
+  });
+
+  it("env -i 逃脱（审查 F11）：env 前缀 flag 词剥离后硬拒仍中", () => {
+    const wide = rules(["Bash(env:*):allow", "Bash(*):allow"]);
+    expect(adjudicateBash({ command: "env -i sudo id", rules: wide, mode: "auto", root: ROOT, extraRoots: [] }).verdict).toBe("ask");
+    expect(adjudicateBash({ command: "env -u USER sudo rm -rf /", rules: wide, mode: "auto", root: ROOT, extraRoots: [] }).verdict).toBe("ask");
+    expect(adjudicateBash({ command: "env -i git status", rules: wide, mode: "auto", root: ROOT, extraRoots: [], fence: { writable: [ROOT], allowedDomains: [] } }).verdict).toBe("allow"); // 良性 env 用法不误伤
+  });
 });

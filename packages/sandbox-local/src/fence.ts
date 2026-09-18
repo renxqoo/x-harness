@@ -36,9 +36,10 @@ export const DEFAULT_DENY_READ: readonly string[] = ["~/.ssh", "~/.aws", "~/.gcp
 
 /** 单一解析函数：base ∧ 会话授权（域名并集即时生效）。 */
 export function fenceFor(base: FenceBase, grants: GrantsRegistry, session: SessionId | undefined): Fence {
-  const writable = [base.root, tmpdir(), ...(base.writableExtra ?? [])].map(normalize);
+  const writable = [base.root, tmpdir(), ...(base.writableExtra ?? []), ...grants.extraRootsOf(session)].map(normalize);
   const denyRead = [...DEFAULT_DENY_READ, ...(base.denyReadExtra ?? [])];
-  const protectedPaths = (base.protectedPaths ?? []).map(normalize);
+  // 受保护默认：工作区 .git 内部（darwin 内核不可表达落档 §13——执法归工具面；linux --tmpfs 遮挂消费）
+  const protectedPaths = [resolve(base.root, ".git"), ...(base.protectedPaths ?? [])].map(normalize);
   if (base.networkOff === true) return { writable, denyRead, protectedPaths, network: "off" };
   // 宿主预授权（会话无关）+ 会话授权域名并集；deny 不入白名单
   const granted = [...(base.allowedDomains ?? []), ...grants.allowedDomainsOf(session)];
