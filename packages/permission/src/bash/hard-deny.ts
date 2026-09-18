@@ -5,7 +5,8 @@
 
 export type HardDenyKind = "rm-rf-root" | "sudo" | "force-push" | "chmod-777";
 
-const SUDO_LIKE: ReadonlySet<string> = new Set(["sudo", "doas", "su"]); // 提权/密码类——full 档唯一直接 deny 面（裁决⑤）
+/** 提权/密码类——auto 档硬拒底线、full 档唯一直接 deny 面（裁决⑤）、运行器提权词扫描共用 */
+export const SUDO_LIKE: ReadonlySet<string> = new Set(["sudo", "doas", "su"]);
 
 /** basename 归一（/usr/bin/sudo → sudo；纯根 "/" 保留） */
 function basenameOf(word: string): string {

@@ -520,8 +520,9 @@ supertype（`_statement/_expression/_primary_expression`）运行期不物化、
    越根 ask**——argv 文件实参（`cat /etc/passwd`）本就不做根裁决，输入重定向单独加越根 ask 只
    会逼模型换写法、零安全增益；读敏感面的真闸门是 denyRead 表（`**/.env` 在 bash argv 实参面
    的裸穷与 make/npm run 等不透明面一并落档 §14.9-落档）。
-3. **包装器剥离表**（argv 级，剥后跑同一硬拒/规则管线；**家族内 argv0 未能完整剥离（含未知
-   flag）→ ask**——fail-closed，堵审查 B-P1-3）：
+3. **包装器剥离表**（~~argv 级全表~~ **§14.12 裁决⑥收敛：剥离只剩 env/nohup/time 平凡三件，
+   其余已知运行器统一「提权词扫描命中 → 硬 ask；干净 → opaque（allow 可委托）」——下表细节为
+   历史记录**；fail-closed 口径不变）：
    - exact-strip（无自身参数）：`nohup` `setsid` `time`（容 `-p`）`exec` `command`（容 `-p`）
      `builtin`；
    - bounded-skip（有界跳参）：`env`（-i / -u X / -- / 赋值前缀；**遇 `-S/--split-string` →
@@ -536,7 +537,10 @@ supertype（`_statement/_expression/_primary_expression`）运行期不物化、
      审查 B-P0-5 家族）；
    - **剥后健全性检查**：剥离结果 argv0 ∈ 结构残渣集（`{` `}` then fi do done 等，实测
      `time { sudo id; }` 解析成 argv=[time,`{`,sudo,id]）或 argv 空 → ask。
-4. **解释器家族**（sh bash zsh dash ksh ash node bun deno python python3 ruby perl php）：
+4. **解释器家族**（~~四规则矩阵~~ **§14.12 裁决⑥原则化：EXECUTORS 词表 × 一条规则——任何
+   实参/输入面重定向/stdin 喂入/赋值前缀 → opaque；唯 bash 族 -c 字面量再解析与 bun 子命令
+   （§14.11）例外；下列矩阵为历史记录**。家族：sh bash zsh dash ksh ash node bun deno python
+   python3 ruby perl php）：
    - `-c`/`-lc` + **字面量**载荷 → 递归 parseBash 并入裁决列表（`bash -c 'sudo id'` 由内层
      硬拒兜住）；载荷动态/空 → ask；**载荷再解析 unparseable → 外层 ask（传染语义）**；
    - **脚本文件操作数（`bash x.sh` `node s.js`）→ 恒 ask**：文件内容不可静态裁决，且围栏
@@ -765,3 +769,26 @@ deny；`needs_network` 在 full 不再路由 ask（域名白名单由代理层�
 pm/init/create/build/deploy/patch）不作文件操作数处理（走正常裁决，auto+围栏零交互——与
 make/npm run/yarn 落档口径对齐）；文件形（`bun x.ts`、带路径/脚本扩展名）与 `bun x`（任意包
 执行器）照旧 opaque。
+
+### 14.12 用户裁决⑥（2026-09-19）：简化令——wrapper 收敛 + opaque 原则化
+
+**动机**：收口后的 wrappers 层 ~430 行里约 2/3 是「降低 ask 率」的体验优化而非安全必需（围栏
+承载执法、硬拒底线与重定向/拒读面才是不可减层）——用户裁决砍掉两块：
+
+1. **bounded-skip 家族收敛**：剥离只剩 env（旗面+赋值剥离、-S → opaque）/nohup/time（容 -p）。
+   删 timeout/nice/stdbuf/watch 四个旗面解析器与 setsid/exec/command/builtin exact 剥离（~150 行）。
+   其余**已知运行器**（setsid/exec/command/builtin/timeout/nice/stdbuf/watch/coproc/script/
+   strace/ltrace/valgrind）不再解析旗面——统一「载荷词含提权词（sudo/doas/su，basename 归一）→
+   结构失败类 ask（reason `hard-deny:sudo`，**full 档亦 deny**——裁决⑤提权面保住）；干净 →
+   opaque（可被 allow 规则委托，如 `Bash(timeout:*)`）」。代价：`timeout 5 npm test` 等良性形
+   auto 档多问一次（allow 规则可救）。
+2. **opaque 原则化**：删 OPAQUE_ARGV0 枚举、awk 特例、解释器旗面语义扫描（operand/stdin-flag/
+   unknown-flag 区分，~80 行）。替代：**EXECUTORS 词表**（解释器族含 python3.11 正则 + source/. +
+   awk/gawk/mawk + ssh/docker/podman/kubectl/osascript）× **一条规则**（argv 超出 argv0 的任何
+   实参 / 输入面重定向 / stdinFed / 赋值前缀 → opaque；裸执行器放行；bash 族 `-c/-lc` 字面量
+   载荷再解析例外——内容可见即非不透明；bun 子命令例外保留 §14.11）。git -c 内联别名保留
+   （实证执行面，B-P0-5）；xargs/parallel/find payload 提取与 eval/trap 载荷再解析保留
+   （非本次收敛对象）。auto 档绝大多数终态不变（机制收敛非语义放宽）；`curl x | timeout 5 sh`
+   类包装形由运行器 opaque 承接（reason 从 opaque-code:sh 变 opaque-code:timeout）。
+
+§14.2 边界 3 的 bounded-skip 表与边界 4 的四规则矩阵由本节取代（历史处置记录见 §14.10）。

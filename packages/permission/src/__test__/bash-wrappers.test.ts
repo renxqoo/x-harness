@@ -42,25 +42,32 @@ describe("剥离家族 × sudo（WIDE harness——硬拒不可被 allow 越过�
     expect(out.verdict).toBe("ask");
     expect(out.reason).toBe("hard-deny:sudo");
   });
-  it("良性剥离不误伤：env -i git status 界内 allow（fence 无规则）", () => {
+  it("良性剥离不误伤（§14.12）：env/nohup 界内 allow；timeout 运行器 ask——allow 规则可委托", () => {
     expect(adjudicateBash({ ...fenced, command: "env -i git status" }).verdict).toBe("allow");
-    expect(adjudicateBash({ ...fenced, command: "timeout 5 git status" }).verdict).toBe("allow");
     expect(adjudicateBash({ ...fenced, command: "nohup git status" }).verdict).toBe("allow");
+    const timeout = adjudicateBash({ ...fenced, command: "timeout 5 git status" });
+    expect(timeout).toMatchObject({ verdict: "ask", reason: "opaque-code:timeout" }); // 裁决⑥代价：良性运行器形多问
+    const trusted = adjudicateBash({ ...fenced, command: "timeout 5 git status", rules: [parseRule("Bash(timeout:*):allow", "user")] });
+    expect(trusted.verdict).toBe("allow"); // opaque 类可被 allow 委托
   });
 });
 
 describe("未知旗 fail-closed（§14.2 边界 3——结构失败类，WIDE 也拦）", () => {
   it.each([
-    ["timeout -q 5 sudo id", "wrapper:timeout"],
-    ["nice --weird sudo id", "wrapper:nice"],
-    ["stdbuf -z 1 sudo id", "wrapper:stdbuf"],
-    ["watch -dn 5 sudo id", "wrapper:watch"],
-    ["env -C / sudo id", "wrapper:env"],
-    ["xargs -Z sudo id", "wrapper:xargs"],
-  ])("%s → ask（不可被 allow 越过）", (command, reason) => {
+    ["timeout -q 5 sudo id", "hard-deny:sudo"], // §14.12：运行器不再解析旗面——提权词命中优先
+    ["nice --weird sudo id", "hard-deny:sudo"],
+    ["stdbuf -z 1 sudo id", "hard-deny:sudo"],
+    ["watch -dn 5 sudo id", "hard-deny:sudo"],
+    ["env -C / sudo id", "wrapper:env"], // env 保留旗面解析——未知旗 fail-closed
+    ["xargs -Z sudo id", "wrapper:xargs"], // 载体旗面保留
+  ])("%s → %s（WIDE 也不放行）", (command, reason) => {
     const out = adjudicateBash({ ...wide, command });
     expect(out.verdict).toBe("ask");
     expect(out.reason).toBe(reason);
+  });
+  it("干净运行器形：fenced → opaque ask；`Bash(*):allow` 委托放行（opaque 类语义）", () => {
+    expect(adjudicateBash({ ...fenced, command: "timeout -q 5 git status" })).toMatchObject({ verdict: "ask", reason: "opaque-code:timeout" });
+    expect(adjudicateBash({ ...wide, command: "timeout -q 5 git status" }).verdict).toBe("allow");
   });
   it("剥后结构残渣：`time { sudo id; }` 解析形 argv=[time,{,sudo,id] → wrapper:time", () => {
     const out = adjudicateBash({ ...wide, command: "time { sudo id; }" });
@@ -158,22 +165,24 @@ describe("payload 提取（xargs/find -exec/parallel——§14.2 边界 3）", (
 
 describe("恒 ask 表 it.each 全词（不透明信任类——fence 无规则 harness）", () => {
   it.each([
-    "source /tmp/evil.sh",
-    ". /tmp/evil.sh",
-    "ssh host sudo id",
-    "docker run x",
-    "podman run x",
-    "kubectl delete all",
-    "osascript -e 'tell app x'",
-    "script -q /dev/null sudo id",
-    "coproc sudo id",
-    "strace sudo id",
-    "ltrace sudo id",
-    "valgrind sudo id",
-  ])("%s → opaque ask", (command) => {
+    ["source /tmp/evil.sh", "opaque", "opaque-code:source"],
+    [". /tmp/evil.sh", "opaque", "opaque-code:."],
+    ["ssh host sudo id", "opaque", "opaque-code:ssh"],
+    ["docker run x", "opaque", "opaque-code:docker"],
+    ["podman run x", "opaque", "opaque-code:podman"],
+    ["kubectl delete all", "opaque", "opaque-code:kubectl"],
+    ["osascript -e 'tell app x'", "opaque", "opaque-code:osascript"],
+    ["script -q /dev/null sudo id", "wrapper", "hard-deny:sudo"], // §14.12：运行器提权词——硬 ask
+    ["coproc sudo id", "wrapper", "hard-deny:sudo"],
+    ["strace sudo id", "wrapper", "hard-deny:sudo"],
+    ["ltrace sudo id", "wrapper", "hard-deny:sudo"],
+    ["valgrind sudo id", "wrapper", "hard-deny:sudo"],
+    ["strace npm test", "opaque", "opaque-code:strace"], // 干净运行器——可被 allow 委托
+  ])("%s → %s", (command, resolvedBy, reason) => {
     const out = adjudicateBash({ ...fenced, command });
     expect(out.verdict).toBe("ask");
-    expect(out.resolvedBy).toBe("opaque");
+    expect(out.resolvedBy).toBe(resolvedBy);
+    expect(out.reason).toBe(reason);
   });
 });
 
@@ -185,11 +194,11 @@ describe("裸解释器与裸 awk（无操作数无代码旗——同现行放行
 });
 
 describe("词面重构快照（argv 剥离后的真实形状）", () => {
-  it("env -i 前缀与 timeout 时长剥离后 argv 即载荷", () => {
+  it("env -i 前缀剥离后 argv 即载荷；timeout 不再剥离（§14.12）", () => {
     const env = parseBash("env -i git status");
     expect(env.ok && env.commands[0]?.argv).toEqual(["git", "status"]);
     const timeout = parseBash("timeout 5 git push");
-    expect(timeout.ok && timeout.commands[0]?.argv).toEqual(["git", "push"]);
+    expect(timeout.ok && timeout.commands[0]?.argv).toEqual(["timeout", "5", "git", "push"]); // 运行器 argv 原样
   });
 });
 
