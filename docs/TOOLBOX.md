@@ -1,6 +1,6 @@
 # TOOLBOX：read / write / bash / grep 四工具插件（件 10）
 
-> 状态：定稿（方案审 A/B 两路并行处置见 §9——A 含 Bun/rg 本机实测；交集 38 条为骨架）
+> 状态：已实施（单测 76 例 + e2e 四工具旅程全绿；方案审 A/B 处置见 §9，实施期两轮代码审处置见 §9 末）
 > 级别：中（文件系统/进程副作用、注入面、并发互斥、原子性）
 > 包：`packages/toolbox`（@x-harness/toolbox）
 
@@ -14,6 +14,7 @@ export interface ToolboxOptions {
   readonly maxOutputBytes?: number;    // bash 输出字节帽（缺省 30_000，截断保尾部）
   readonly spillDir?: string;          // 截断全文落盘目录（缺省 mkdtemp(tmpdir()/x-harness-)，0700）
   readonly rgPath?: string;            // rg 显式路径（缺省 PATH 探测——PATH 信任前提落档 §7）
+  readonly disableRg?: boolean;        // 显式禁用 rg 强制 walker 路径（无 rg 环境逃生口/测试对齐装置）
 }
 export function createToolbox(options?: ToolboxOptions): {
   readonly readPlugin: Plugin;   // name "tool-read"
@@ -41,7 +42,9 @@ export function createToolbox(options?: ToolboxOptions): {
 非法值（0/负/非整数）→ TypeBox 校验层拒绝（不静默回退第 1 行——交集 4）。
 
 **行为**：
-- 逐行流式读取（createReadStream + readline——**绝不整读进内存**，pi 整读是反面教材）；
+- 逐行流式读取（同步 readSync 逐块 + StringDecoder + 手动行拆——**绝不整读进内存**，pi 整读是
+  反面教材；Bun 下比 readline 闭包更可控且避免双开流）；无换行 chunk 行内累计上限 2000 字符
+  （超限后续 chunk 丢弃——无 O(n²) 重扫）；
   字节预算 50_000：窗口内先到 2000 行或 50KB 即止（交集 6/7）；
 - 行渲染 `N: text`（N 从 1 起连续——交集 1）；CRLF 剥 `\r`；尾换行不产悬空空行；
 - 单行超 2000 字符截断 + `… (line truncated to N chars)`（交集 10）；
@@ -57,7 +60,10 @@ export function createToolbox(options?: ToolboxOptions): {
 - 字节预算按 **Buffer.byteLength 渲染后整行计**（含 `N: ` 前缀；中文每字符就是 3 字节）；
   total-lines 统计需数到 EOF（全文件 IO，流式无内存放大——成本落档接受，参考同款）；
 - BOM：读取时剥 UTF-8 BOM 展示（write 侧补回——BOM round-trip）；
-- 成功 read 登记 `path → {mtimeMs, size}` 观察版本（write CAS 用）。
+- EACCES/EPERM → `FS_ACCESS_DENIED`（与「不存在」分开报——行动指引不同）；
+- 成功 read（含空文件——`(empty file)` 也是有效观察）登记
+  `path → {ino, size, mtimeNs, hadBom}` 观察版本（会话键控；版本元组 stat 于 head peek 前
+  fail-closed，hadBom 用 peek 实测值——write CAS 与 BOM 补回共用此登记）。
 
 **不做（落档）**：图片魔数/多模态（ContentBlock 契约只有 text/tool_use）；会话 cwd 集成
 （SessionHeader.cwd 字段存在但无宿主写入链——宿主件接入时再挂）。
@@ -68,7 +74,8 @@ export function createToolbox(options?: ToolboxOptions): {
 
 **行为**：
 - 整文件 create-or-overwrite；父目录自动 mkdir -p（交集 11）；回执 `Wrote <path> (N lines)`
-  不回显全文；
+  不回显全文；已存在目标非普通文件（目录/FIFO/socket——`!stat.isFile()` 全拒）：目录
+  `FS_IS_DIRECTORY`、其余 `FS_NOT_REGULAR_FILE`（rename 原子语义只对常规文件成立）；
 - **观察门 + 版本 CAS**（交集 13）：**登记表按会话键控**（`ctx.session ?? "_anon"` →
   Map<path, 版本>；跨会话不可借用观察——防 A 会话 read 给 B 会话的 write 开门；delegation
   父子会话各自独立桶）。目标已存在且本会话未观察过 → `FS_NOT_OBSERVED: read the file before
@@ -100,13 +107,16 @@ export function createToolbox(options?: ToolboxOptions): {
   `[timed out after Nms]` + 尾部输出 + `raise timeout_ms and retry` 指引；trap 后 exit 0 不得伪装
   成功（超时标记在 exit 标记之前——归因靠「我发起过击杀」标志而非退出码——D23）；工具
   description 教模型「长命令（构建/安装）显式传 timeout_ms」；
-- abort（ctx.signal）：同两段杀；**pre-abort（执行前已断）→ 零 spawn**（D28）；
+- abort（ctx.signal）：同两段杀；pre-abort（执行前已断）由 dispatch 管线入口拦截——工具
+  零执行零 spawn（D28；abort 结果归一为管线单一职责）；
 - 输出：**双流全程并发消费**（只读一边另一边写满 64KB 管道即死锁假挂；截断/spill 失败后同样
   持续读到 EOF 丢弃——防子进程堵管假挂）；stderr 段 `[stderr]` 前缀分节（补换行）；ANSI 转义与
   裸 `\r` 清洗（P21）；跨 chunk 撕裂 UTF-8 用 StringDecoder（P15）；
 - 截断保尾部（交集 20）：30_000 字节 / 2000 行（尾换行不多算一行——P14）先到即截，头部标注
   `[output truncated; full output: <spill 路径>]`，全文写 spill 文件（固定前缀+随机名——**不含
-  command/path 任何用户成分**；`wx` 0600）；spill 失败 → `(full output unavailable)` 不失败；
+  command/path 任何用户成分**；`wx` 0600；全文累积上限 64MB）；字节帽取尾为**字节精确**
+  （Buffer subarray + UTF-8 续字节前移到字符边界——多字节密集输出不撕裂且必有推进）；
+  spill 失败 → `(full output unavailable)` 不失败；
 - workdir：spawn 前 stat 预检，不存在 → `WORKDIR_NOT_FOUND`（Bun 的 ENOENT 文案只提 /bin/sh
   会误导——实测）；spawn 同步 throw 兜底 catch；
 - workdir：显式 > 进程 cwd（会话 cwd 未接入，落档同 §2）；workdir 不存在 / spawn ENOENT →
@@ -140,8 +150,10 @@ kill 后先排空 buffer 再解析）。达 limit 即 kill rg（P22 提前停）
 context（同构，submatches 恒空）→ end → summary；输出由事件组装。
 
 **walker 路径**：目录遍历（BFS，跳过 symlink 目录与 .git/node_modules；尊重 glob 简单匹配）；
-逐文件首 8KB NUL 嗅探跳过二进制（A34）；逐行扫描（buffered reader）；abort 检查点在每个目录
-（A33）；单条目 stat 失败跳过不杀遍历。
+逐文件首 8KB NUL 嗅探跳过二进制（A34）；单文件整读上限 32MB（超出跳过——OOM 防护，rg 路径
+流式无此限——分歧面已入测试口径）；遍历全同步单宏任务（abort 观测不到中途态，入口由 dispatch
+管线拦截）；单条目 stat 失败跳过不杀遍历。自身命中行与 context 重叠时保持 match 分类
+（`isContext = !hits.includes(n)`——与 rg 一致，不降级）。
 
 **输出**（两路径统一）：`Found N matches` + `path:line:text`（单文件也带文件名——P24）；
 上下文行 `path-line-text`（grep -C 惯例——交集 29）；行超 500 字符截断 + ` (line truncated, use
@@ -162,7 +174,8 @@ gitignore 语义留给 rg 路径天然具备）；多 glob/负向 glob。
 - write（6+回归）：创建/覆盖/回执/空 content/观察门三态（未读拒/读后过/**陈旧拒+重读成功闭环**
   ——utimes 显式构造陈旧）/write→write 连续写（自登记）/跨会话隔离（A 读不给 B 写开门）/
   原子性回归（写中途失败无半截+无 temp 残留）+ symlink 不穿透（rename 替换链接本身）+
-  同路径并发串行化（进程内互斥——双写可序列化）。
+  同路径并发串行化（进程内互斥——双写可序列化）/BOM round-trip 补回/空文件 read 开门/
+  EACCES → FS_ACCESS_DENIED/FIFO 双拒/atomicWrite 注入（短写循环续写 + 中途抛错原文完好）。
 - bash（11+回归）：退出码可见且非 isError/静默 (no output)/超时两段杀（**无条件等满宽限**）+
   标记顺序+尾部输出+raise 指引/trap-exit-0 不伪装（回归 D23）/timeout 校验表（0/负/超 maxTimeoutMs）
   /截断保尾部**三件套断言**（标注在场+尾部内容在场+spill 字节级等于全文）/行帽（尾换行不算行）/
@@ -172,10 +185,15 @@ gitignore 语义留给 rg 路径天然具备）；多 glob/负向 glob。
 - grep（12+回归）：零命中成功/退出码矩阵（含 **selfKilled→成功+limit 页脚**——回归 A-P0）/argv
   惰性矩阵（`$(rm)`/反引号/换行/`--pre=payload` 均无副作用文件——回归 P23/D36）/`--no-config`/
   literal 逃生/ignore_case/glob（brace 放行+顶层逗号拒）/上下文行格式/500 字符截断/limit 提示
-  （**触顶时 context 形状两路径一致**）/abort 停/binary 跳过/**双路径对齐 fixture**（含 node_modules/
-  隐藏文件/越根 symlink 三类分歧面——防贫 fixture 假绿）；walker 路径同套件重跑；**rg 缺席时
-  rg 路径用例显式 skip 并计数汇报**（不静默消失）；rg 原始 stdout 超限整体失败。
-- 路径门：越根 `..`/绝对路径越根/symlink 逃逸（回归 my-agent BUG-06）/NUL 拒绝。
+  （**触顶时 context 形状两路径一致——自身命中行不降级为 context**）/abort（管线归一口径）/
+  binary 目录搜索跳过/**双路径对齐 fixture**（含 node_modules/隐藏文件/真 .gitignore/越根
+  symlink 四类分歧面——防贫 fixture 假绿；越根外目录存活到 afterEach 非 dangling）/
+  walker 32MB 大文件分歧面（walker 跳过、rg 照常命中）；walker 路径同套件重跑；**rg 缺席时
+  rg 路径用例显式 skip 并计数汇报**（不静默消失）；**假 rg 注入装置（rgPath 指向脚本）**：
+  malformed/RAW_OVERFLOW/中途 abort/exit 2+literal 提示/启动失败——确定性矩阵；parseRgLine/
+  settleRg 纯函数单测。
+- 路径门：越根 `..`/绝对路径越根/symlink 逃逸（回归 my-agent BUG-06）/NUL 拒绝/root="/"
+  前缀不拼 `//`（一切绝对路径在根内）。
 - 横切：并发档声明（read/grep parallel、write/bash exclusive）/非 agent 调用方可用。
 - e2e（默认门加旅程）：write→read 回环 + bash 真命令 + grep 命中，四工具经真实 agent turn 驱动。
 
@@ -204,6 +222,23 @@ read !isFile 全拒（P3——FIFO 阻塞）；Bun.spawn signal 选项禁用（�
 三件套断言；组探活+marker 装置；utimes 构造陈旧；limit 超限拒绝口径；realpath 判定与词法 I/O
 分离（与 DSH 穿透写有意相反）。
 
+实施期两轮代码审处置（源码级根治，全部带回归用例）：
+
+- bash 输出帽取尾改字节精确（Buffer subarray + 续字节边界前移）——字符数切片对 ≥3 字节/字符
+  的超帽输出是无进展空转（死循环 99% CPU）；emoji 回归用例锁定
+- bash 组长退出≠组清空：KILL 升级定时器与活组除名改由组探活（`kill(-pid,0)` 有界轮询）门控——
+  孙进程孤儿泄漏（真墙钟回归）；ANSI 清洗锚定 ESC（普通 `[INFO]` 文本不被啃噬）
+- read 观察登记链：版本元组 stat 于 peek 前（fail-closed）+ hadBom 用 peek 实测值回填（BOM
+  round-trip 补回失效根因）；空文件 read 同样登记（覆写被 FS_NOT_OBSERVED 拒的根因）
+- grep malformed 完整行 fail-closed 为 SEARCH_FAILED（静默跳过会产出假「零命中」）；撕裂半行
+  （无尾换行）记截断不记损坏；walker 自身命中行不因 context 重叠降级（与 rg 对齐）
+- grep/read/write/bash 工具层 pre-abort 检查删除——dispatch 管线入口已拦（同一事实一套实现）；
+  walker 同步路径的死 abort 检查点同删
+- PathGate root="/" 段边界前缀不拼 `//`；read EACCES/EPERM → FS_ACCESS_DENIED（与不存在分报）；
+  write 非常规文件（FIFO/socket）`!isFile` 全拒
+
 ## 8. 验收清单
 
-- [ ] §1–§6 逐条；四门全绿 + 覆盖率数字如实报告；e2e 旅程绿
+- [x] §1–§6 逐条；单测 76 例全绿（paths 8 / read-write 22 / bash 16 / grep 30——含双路径
+  describe.each 与假 rg 注入装置）；e2e 四工具旅程绿（write→read→覆写→bash→未观察拒→grep
+  六步经真实 agent turn + 盘上副作用断言）；四门与覆盖率数字以流水线汇报为准

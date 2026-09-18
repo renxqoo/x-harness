@@ -57,6 +57,7 @@
         "@x-harness/session-checkpoint": "workspace:*",
         "@x-harness/session-persistence-jsonl": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/toolbox": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {
@@ -135,6 +136,17 @@
       "dependencies": {
         "@x-harness/core": "workspace:*",
         "@x-harness/session": "workspace:*",
+      },
+    },
+    "packages/toolbox": {
+      "name": "@x-harness/toolbox",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
       },
     },
     "packages/tools": {
@@ -321,6 +333,8 @@
     "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/system-prompt"],
 
     "@x-harness/token-meter": ["@x-harness/token-meter@workspace:packages/token-meter"],
+
+    "@x-harness/toolbox": ["@x-harness/toolbox@workspace:packages/toolbox"],
 
     "@x-harness/tools": ["@x-harness/tools@workspace:packages/tools"],
 
