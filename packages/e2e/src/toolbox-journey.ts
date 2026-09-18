@@ -16,6 +16,7 @@ import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
+import { createLocalEnv } from "@x-harness/exec-env";
 import { createToolbox } from "@x-harness/toolbox";
 import { must } from "./check.ts";
 
@@ -39,7 +40,7 @@ export async function runToolboxJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-toolbox-e2e-"));
   try {
     const ctx = createContext();
-    const box = createToolbox({ root, defaultTimeoutMs: 10_000 });
+    const box = createToolbox({ root, defaultTimeoutMs: 10_000, env: createLocalEnv(root) });
     const scripts: Array<AsyncGenerator<LlmChunk>> = [];
     await loadPlugins(ctx, [
       sessionPlugin,

@@ -8,7 +8,8 @@
   },
   "dependencies": {
     "@x-harness/core": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/exec-env": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0"

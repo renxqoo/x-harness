@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { createLocalEnv } from "@x-harness/exec-env";
 import { createToolbox } from "../toolbox.ts";
 import type { ToolRegistry } from "@x-harness/tools";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -214,7 +215,7 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
 
 describe("并发档声明（§6 横切——真实 registry 口径）", () => {
   it("read/grep 并行、write/bash 排他", async () => {
-    const box = createToolbox({ root });
+    const box = createToolbox({ root, env: createLocalEnv(root) });
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [toolsPlugin, box.readPlugin, box.writePlugin, box.bashPlugin, box.grepPlugin]);
     const reg = ctx.use(toolRegistry);

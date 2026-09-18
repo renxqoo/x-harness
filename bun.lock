@@ -51,6 +51,7 @@
         "@x-harness/agent-delegation": "workspace:*",
         "@x-harness/agent-loop": "workspace:*",
         "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
         "@x-harness/llm": "workspace:*",
         "@x-harness/plugin-manager": "workspace:*",
         "@x-harness/session": "workspace:*",
@@ -163,6 +164,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {

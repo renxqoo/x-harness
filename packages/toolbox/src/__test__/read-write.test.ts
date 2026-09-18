@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createToolbox } from "../toolbox.ts";
+import { createLocalEnv } from "@x-harness/exec-env";
 import type { ToolRegistry } from "@x-harness/tools";
 
 let root: string;
@@ -14,7 +15,7 @@ let cleanupFns: Array<() => void> = [];
 
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "xh-rw-"));
-  const box = createToolbox({ root });
+  const box = createToolbox({ root, env: createLocalEnv(root) });
   // 直接经 registry.dispatch 走完整管线（含 TypeBox 校验层）
   const { toolsPlugin, toolRegistry: reg } = await import("@x-harness/tools");
   const { createContext, loadPlugins } = await import("@x-harness/core");

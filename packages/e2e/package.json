@@ -14,7 +14,8 @@
     "@x-harness/session-persistence-jsonl": "workspace:*",
     "@x-harness/system-prompt": "workspace:*",
     "@x-harness/toolbox": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/exec-env": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0"
