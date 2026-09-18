@@ -49,10 +49,10 @@ export interface SpawnRequest {
 }
 
 export type SpawnFailure =
-  | { readonly kind: "not_found" }
-  | { readonly kind: "not_executable" }
-  | { readonly kind: "cwd_invalid" }
-  | { readonly kind: "sandbox_unavailable" }
+  | { readonly kind: "not_found"; readonly detail: string }
+  | { readonly kind: "not_executable"; readonly detail: string }
+  | { readonly kind: "cwd_invalid"; readonly detail: string }
+  | { readonly kind: "sandbox_unavailable"; readonly detail: string }
   | { readonly kind: "io_error"; readonly detail: string };
 
 /** spawn 失败即无句柄（无 exited）——spawnError 通道等价保留 */
@@ -66,9 +66,12 @@ export type OpenReadResult =
   | { readonly ok: true; readonly handle: ReadHandle; readonly version: FileVersion }
   | { readonly ok: false; readonly reason: "not_found" | "not_regular" | "access_denied" };
 
+/** write_failed 带 detail（模型可行动的错误面——ENOSPC/EIO 等原样透出）；
+ *  not_directory_parent = 父路径不可用（缺失且未请求 makeParents，或某段是已存在的非目录） */
 export type WriteFileResult =
   | { readonly ok: true; readonly stat: FileStat }
-  | { readonly ok: false; readonly reason: "is_directory" | "not_directory_parent" | "access_denied" | "write_failed" };
+  | { readonly ok: false; readonly reason: "is_directory" | "not_directory_parent" | "access_denied" } // 简单拒绝无细节
+  | { readonly ok: false; readonly reason: "write_failed"; readonly detail: string };
 
 export type ReadDirResult =
   | { readonly ok: true; readonly entries: readonly DirEntry[] }
@@ -99,3 +102,5 @@ export interface ExecEnv {
 
 /** B0 切片面：toolbox read 改造所需的最小结构面（B1 起全量 ExecEnv） */
 export type ReadFace = Pick<ExecEnv, "kind" | "root" | "realpath" | "stat" | "openRead">;
+export type WriteFace = Pick<ExecEnv, "writeFileAtomic" | "stat">;
+export type ReadDirFace = Pick<ExecEnv, "readDir" | "stat">;

@@ -4,10 +4,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createFakeReadFace } from "./fake-read-face.ts";
+import { createFakeEnv } from "./fake-env.ts";
 import { seedReadFace, readFaceBothSuite } from "./conformance.ts";
 
-describe("read-face conformance（内存 fake，7B 块）", readFaceBothSuite((root) => createFakeReadFace(root)));
+describe("read-face conformance（内存 fake，7B 块）", readFaceBothSuite((root) => createFakeEnv(root)));
 
 describe("read-face conformance fake-only", () => {
   let root = "";
@@ -20,7 +20,7 @@ describe("read-face conformance fake-only", () => {
   });
 
   it("failReadsOf：首读 io_error 粘性；同环境其它文件不受影响", async () => {
-    const env = createFakeReadFace(root, { failReadsOf: [join(root, "hello.txt")] });
+    const env = createFakeEnv(root, { failReadsOf: [join(root, "hello.txt")] });
     const bad = await env.openRead(join(root, "hello.txt"));
     if (!bad.ok) throw new Error("open failed");
     expect(await bad.handle.read()).toEqual({ ok: false, reason: "io_error" });
@@ -36,7 +36,7 @@ describe("read-face conformance fake-only", () => {
   });
 
   it("自定义 chunkSize=1：逐字节读多字节字符仍字节等值", async () => {
-    const env = createFakeReadFace(root, { chunkSize: 1 });
+    const env = createFakeEnv(root, { chunkSize: 1 });
     const open = await env.openRead(join(root, "big.txt"));
     if (!open.ok) throw new Error("open failed");
     const parts: Buffer[] = [];
