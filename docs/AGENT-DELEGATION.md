@@ -1,7 +1,6 @@
 # AGENT-DELEGATION：子代理插件（件 9）
 
-> 状态：定稿（方案审 A/B 两路并行处置见 §6；用户裁决默认组合：异步 spawn+通知唤醒 / 类型注册表 /
-> maxDepth+maxConcurrent+fork；maxTurns 挂账）
+> 状态：已实施（方案审 A/B + 代码审 A/B 四路处置见 §6/§8；e2e 旅程绿）
 > 级别：中（跨包新件 + agent-loop/tools 两处接缝扩展 + 子代理生命周期并发语义）
 > 参考思想：my-agent agents 件（异步 spawn/通知唤醒/动词族/门禁——实现逻辑主参考）、
 > DSH subagent 族（max-depth/结算映射/孤儿防护）。测试语义子集 X1–X20 已提取对照（§5）。
@@ -159,4 +158,18 @@ blocked/max-tokens 轮末滞留通知落档（P3）；摘要只取本轮 assista
 
 ## 7. 验收清单
 
-- [ ] §1–§4 逐条；四门全绿 + 覆盖率数字如实报告；e2e 旅程绿
+- [x] §1–§4 逐条；四门全绿 + 覆盖率数字如实报告；e2e 旅程绿（提交说明载数字）
+
+## 8. 代码审查处置（A/B 两路并行）
+
+采纳（A）：notifier running 分支复占槽（message 重唤醒的在飞子上限不被旁路——回归用例）；
+deliver 兜底 catch（进程级未处理拒绝对不可接受）；viewStatus running 前置（停止复活如实）；
+buildChild 入口 tearingDown 查（teardown 期不登记脱管子）；fork system 节点特赦（锚点 replace
+漂移后 seq 滤除会丢父系统提示词）。
+采纳（B）：busy 步边界真用例（悬停流闸门——turn 数不变 + 后续 step 消化通知）；agent_message
+正向路径；子 error turn 通知 status=error 且不回潮前轮摘要；X20 execute 内防线真触达
+（toolsExecute 中间件换 signal + 微任务 abort——内存 create 全微任务解析，定时器赶不上窗口）；
+并行池三 spawn exclusive 计数不超；fork 含工具轮（tool/result 重铸）；e2e 旅程（分桶适配器 +
+双会话 jsonl 落盘 + flush 屏障）；死面清除（reportOf/callerMissing/SpawnPlan/多余导出/as never）；
+文档同变三处（状态/件表/验收）。
+落档驳回：maxConcurrent 用例的时序耦合注记（已用闸门流稳定化）。

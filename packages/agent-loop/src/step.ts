@@ -5,7 +5,7 @@
 import type { LlmChunk, LlmRuntime } from "@x-harness/llm";
 import type { ContentBlock, InboxEntry, InboxTarget, Session, SessionEvent } from "@x-harness/session";
 import type { SystemPromptService } from "@x-harness/system-prompt";
-import type { ToolRegistry } from "@x-harness/tools";
+import type { ToolRegistry, ToolSchema } from "@x-harness/tools";
 import { claimStepBatch, claimTurnBatch, foldInbox, insertData } from "./inbox.ts";
 import type { InboxState } from "./inbox.ts";
 import { executeToolCalls } from "./tool-calls.ts";
@@ -37,6 +37,7 @@ export interface ResolvedOptions {
   readonly systemPrompt?: string;
   readonly maxParallelToolCalls: number;
   readonly maxToolResultChars: number;
+  readonly tools?: readonly string[];
 }
 
 export type TurnOutcome =
@@ -169,6 +170,13 @@ function appendContextIfShifted(session: Session, dial: Dial): void {
   }
 }
 
+export /** 白名单投影：undefined=全集（AgentOptions.tools） */
+function allowedSchemas(schemas: readonly ToolSchema[], allow: readonly string[] | undefined): readonly ToolSchema[] {
+  if (allow === undefined) return schemas;
+  const names = new Set(allow);
+  return schemas.filter((tool) => names.has(tool.name));
+}
+
 export function dialFailure(kind: "no-model" | "bad-dial"): TurnOutcome {
   if (kind === "no-model") return { kind: "error", message: "no model configured", code: "no-model" };
   return { kind: "error", message: "agentRequest returned invalid dial", code: "bad-dial" };
@@ -187,7 +195,7 @@ export async function dialStep(scope: TurnScope, step: number): Promise<DialStep
   if ("missing" in folded) return { kind: "no-model" };
   const dial = await deps.dispatchRequest({ session: session.id, turn, step, dial: folded, signal: controller.signal }, folded);
   if (!isDialShape(dial)) return { kind: "bad-dial" };
-  const schemas = deps.tools.schemas();
+  const schemas = allowedSchemas(deps.tools.schemas(), deps.options.tools);
   const toolRefs = toToolRefs(schemas);
   if (headerChanged(dial, toolRefs, session.events())) {
     appendEvent(session, "request/header", {
@@ -315,6 +323,7 @@ export async function scheduleTools(scope: TurnScope, step: number, assistant: A
       maxResultChars: deps.options.maxToolResultChars,
       turn,
       step,
+      ...(deps.options.tools !== undefined ? { allowedTools: deps.options.tools } : {}),
     },
     specs,
   );

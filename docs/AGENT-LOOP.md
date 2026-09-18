@@ -17,6 +17,7 @@
 | 6 | @x-harness/session-checkpoint + e2e 旅程 | docs/SESSION-CHECKPOINT.md | 已收口（审查 7 条处置） |
 | 7 | @x-harness/llm-retry：退避重试 | docs/LLM-RETRY.md | 已收口（新增：审计事件+进程内预算） |
 | 8 | @x-harness/token-meter：用量记账+估算 | docs/TOKEN-METER.md | 已收口（新增：失败尝试计费+路线归因） |
+| 9 | @x-harness/agent-delegation：子代理 | docs/AGENT-DELEGATION.md | 已收口（异步 spawn+通知唤醒，四路审查处置） |
 
 实施顺序 = 表序；每件：独立方案 → 子 agent 对抗审查 → 处置定稿 → 实现 + 单测 → 四门 → 代码对抗审查 → 回归 → 收口提交（引用本文档节号 + 各件文档节号）。
 

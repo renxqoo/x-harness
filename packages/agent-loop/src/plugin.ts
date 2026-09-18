@@ -4,7 +4,7 @@ import type { Context, Disposer, Plugin } from "@x-harness/core";
 import type { Result } from "@x-harness/core";
 import { defineService, errorText } from "@x-harness/core";
 import { llmRuntime } from "@x-harness/llm";
-import type { SessionArchive, SessionStore } from "@x-harness/session";
+import type { SessionArchive, SessionId, SessionStore } from "@x-harness/session";
 import { sessionArchive, sessionStore } from "@x-harness/session";
 import { systemPrompt } from "@x-harness/system-prompt";
 import { toolRegistry } from "@x-harness/tools";
@@ -43,6 +43,24 @@ export const agentLoopPlugin = {
     const llm = ctx.use(llmRuntime);
     const tools = ctx.use(toolRegistry);
     const prompt = ctx.use(systemPrompt);
+
+    const live = new Map<SessionId, AgentHandle>();
+
+    const register = (handle: AgentHandle): AgentHandle => {
+      const innerDispose = handle.dispose;
+      let disposed = false;
+      const wrapped: AgentHandle = {
+        agent: handle.agent,
+        dispose: async () => {
+          if (disposed) return;
+          disposed = true;
+          live.delete(handle.agent.session.id); // 摘除先于处置 await：dispose 进行期 get 即缺位（delegation 孤儿判定不竞态）
+          await innerDispose();
+        },
+      };
+      live.set(handle.agent.session.id, wrapped); // 存包装版——get 取出的句柄自带摘除语义
+      return wrapped;
+    };
 
     const spawn = async (session: Awaited<ReturnType<SessionStore["create"]>> extends infer R ? (R extends { ok: true; value: infer S } ? S : never) : never, agentScope: Context, options: ResolvedOptions): Promise<AgentHandle> => {
       const driver = createDriver({
@@ -98,7 +116,7 @@ export const agentLoopPlugin = {
       const agentScope = ctx.scope({ agentId: `agent:${session.id}` });
       try {
         const handle = await spawn(session as never, agentScope, resolveOptions(options.agent));
-        return { ok: true, value: handle };
+        return { ok: true, value: register(handle) };
       } catch (error) {
         await agentScope.dispose().catch(() => {});
         store.dispose(session.id); // 失败不留可写会话在 store
@@ -120,7 +138,7 @@ export const agentLoopPlugin = {
       const agentScope = ctx.scope({ agentId: `agent:${made.value.id}` });
       try {
         const handle = await spawn(made.value as never, agentScope, resolveOptions(options.agent));
-        return { ok: true, value: handle };
+        return { ok: true, value: register(handle) };
       } catch (error) {
         await agentScope.dispose().catch(() => {});
         store.dispose(made.value.id); // 失败不留可写会话在 store
@@ -128,7 +146,7 @@ export const agentLoopPlugin = {
       }
     };
 
-    const service: AgentLoopService = { create, resume };
+    const service: AgentLoopService = { create, resume, get: (id: SessionId) => live.get(id) };
     return ctx.provide(agentLoopServiceToken, service);
   },
 } satisfies Plugin;

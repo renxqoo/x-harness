@@ -16,6 +16,8 @@ export interface ToolExecContext {
   readonly callId: string;
   readonly name: string;
   readonly signal: AbortSignal;
+  /** 调用方会话（agent 调度携带）——工具识别父/血缘寻址 */
+  readonly session?: SessionId;
 }
 
 export interface ToolOutcome {

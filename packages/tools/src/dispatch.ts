@@ -99,7 +99,12 @@ function gateOutcome(raw: unknown): ToolOutcome {
 async function runBody(tool: ToolDefinition, request: ToolCallRequest): Promise<ToolOutcome> {
   let raw: unknown;
   try {
-    raw = await tool.execute(request.args, { callId: request.callId, name: request.name, signal: request.signal });
+    raw = await tool.execute(request.args, {
+      callId: request.callId,
+      name: request.name,
+      signal: request.signal,
+      ...(request.session !== undefined ? { session: request.session } : {}),
+    });
   } catch (error) {
     if (request.signal.aborted) return abortedOutcome();
     return errorOutcome(normalizeThrown(error));

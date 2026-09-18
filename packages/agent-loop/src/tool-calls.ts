@@ -24,9 +24,28 @@ export interface SchedulerDeps {
   readonly maxResultChars: number;
   readonly turn: number;
   readonly step: number;
+  /** 工具白名单（缺省=全部）；白名单外调用拦截在执行面并配对落账 */
+  readonly allowedTools?: readonly string[];
 }
 
 const ABORTED_BEFORE_DISPATCH = "tool call aborted before dispatch";
+
+interface DenyCheck {
+  readonly session: Session;
+  readonly call: ToolCallSpec;
+  readonly allowed: Set<string> | undefined;
+  readonly turn: number;
+  readonly step: number;
+}
+
+/** 白名单外调用：拦截在执行面并配对落账（isError 结果） */
+function denyNotAllowed(check: DenyCheck): boolean {
+  if (check.allowed === undefined || check.allowed.has(check.call.name)) return false;
+  const at = { turn: check.turn, step: check.step };
+  mustAppend(check.session, "tool/call", { ...at, callId: check.call.callId, name: check.call.name, arguments: check.call.arguments });
+  mustAppendSurface(check.session, "tool/result", { ...at, callId: check.call.callId, content: `tool-not-allowed:${check.call.name}`, isError: true });
+  return true;
+}
 
 /** 落账失败即 throw：配对不变量（tool/call↔tool/result）不容静默丢失；逃逸由 driver 收 error turn/end */
 function mustAppend(session: Session, type: string, data: unknown): void {
@@ -58,6 +77,7 @@ export async function executeToolCalls(
 ): Promise<ToolCallOutcomeCollected> {
   const { session, registry, signal, maxParallel, turn, step } = deps;
   const ledger: Ledger = { session, turn, step, maxResultChars: deps.maxResultChars, contexts: [], concludesTurn: false };
+  const allowed = deps.allowedTools === undefined ? undefined : new Set(deps.allowedTools);
 
   let index = 0;
   while (index < calls.length) {
@@ -70,6 +90,10 @@ export async function executeToolCalls(
       return { concludesTurn: ledger.concludesTurn, additionalContexts: ledger.contexts };
     }
     const head = calls[index] as ToolCallSpec;
+    if (denyNotAllowed({ session, call: head, allowed, turn, step })) {
+      index += 1;
+      continue;
+    }
     const headArgs = parseArgs(head.arguments);
     if (registry.concurrencyOf(head.name, headArgs) !== "parallel") {
       // 排他屏障：单独执行
@@ -81,6 +105,7 @@ export async function executeToolCalls(
     const pool: ToolCallSpec[] = [];
     while (index < calls.length && pool.length < maxParallel) {
       const candidate = calls[index] as ToolCallSpec;
+      if (allowed !== undefined && !allowed.has(candidate.name)) break; // 白名单外不进池（下一轮头部拦截落账）
       const candidateArgs = parseArgs(candidate.arguments);
       if (registry.concurrencyOf(candidate.name, candidateArgs) !== "parallel") break;
       pool.push(candidate);
