@@ -406,3 +406,292 @@ T9 矩阵）。
       darwin-only 开发机不可达的 linux 桥分支为缺口主体，纯函数已假体覆盖；禁 mock 凑数）；
       全局 93.95/90.17/95.31/96.41；≥2 路代码对抗审查（A/B）问题全处置（§13）
 - [x] 存量缺陷 D1（mode 漂移）/D2（stat/open 竞态）/D3（ENOTDIR）修复 + 回归用例在库
+
+## 14. bash 裁决 AST 化（tree-sitter 迁移）——件12
+
+> 状态：方案定稿（2026-09-18；初稿经三路并行对抗审查——契约语义/安全 fail-closed/测试假绿——
+> P0×9 全处置后整体重写，处置明细见 §14.9）。§5 bash 管线的解析底座由手写两遍词法器换
+> tree-sitter-bash AST，政策层（裁决序骨架/规则词汇表/三模式档/grants/审计）不变。
+> 实施=单批次（§14.6），代码收口前另起 ≥2 路对抗审查。
+
+### 14.0 动机：手写段解析器的实证漏洞（8 形，全部经现行管线实跑复现）
+
+现行 `bash/segments.ts` 只按 `;` `|` `&&` `||` 换行 `(` `)` 切段、取段首词作 argv0 做硬拒/规则
+匹配。以下形态让真命令藏在关键词/包装词后面，**硬拒底线（NEVER_MEMORIZE）被穿透**（fence 在场
++ auto 档 + `Bash(*):allow` 下全部终态 allow，实证）：
+
+| # | 形态 | 现状解析结果 | 后果 |
+| --- | --- | --- | --- |
+| 1 | `if true; then sudo id; fi` | 段 argv0 = if/then/fi | sudo 硬拒漏网，界内 auto-allow |
+| 2 | `ls & sudo id` | `&` 非切分符，单段 argv0=ls | 同上 |
+| 3 | `f() { sudo id; }` | words=[f,`{`,sudo,id]，argv0=f（函数名） | sudo 藏在函数体词列里 |
+| 4 | `while true; do rm -rf /; done` | argv0 = while/do/done | rm-rf-root 漏网（字面量 `/` 目标不兜） |
+| 5 | `FOO=bar sudo id` | argv0=FOO=bar（env 赋值前缀只在 argv0=env 时剥离） | sudo 漏网（AST 实证 `variable_assignment` 是 command 子节点） |
+| 6 | heredoc 体逐行当命令裁决 | 解析即错误：体行会命中规则/硬拒（假阳性方向），规则 allow 也可能匹配体行 | 语义全错 |
+| 7 | `echo "a > /etc/passwd" > f` | redirect 正则扫原文，引号内 `/etc/passwd"` 误作越根目标 | 假阳性 ask（界内目标变体则漏放） |
+| 8 | `cmd < /etc/passwd` | `<` 完全不裁决（redirect.ts 只认输出算符） | 输入面零执法 |
+| + | `cat <(sudo id)` | `(` 配深入段原文，words=[cat,<,sudo,id]，argv0=cat | 进程替换内命令漏网 |
+
+其中 1–5 与 + 是硬拒底线穿透（模型一条命令绕过 NEVER_MEMORIZE），不是可用性问题。
+
+### 14.1 载体实测（2026-09-18，Bun 1.4.2 / darwin arm64 / 仓库 vitest 5）
+
+| 载体 | bun 运行 | 仓库 vitest worker | bun build | 结论 |
+| --- | --- | --- | --- | --- |
+| 原生 `tree-sitter@0.22` + `tree-sitter-bash@0.23.3` | ✓ | ✓（真探针用例过） | ✓（`--external` 后运行通；本仓 build 门现仅打 core——不触发） | **采纳** |
+| WASM `web-tree-sitter` 0.22.6 / 0.24.7 + 包内自带 bash.wasm | init ✓ 11ms，**parse 恒抛 "Parsing failed"** | — | — | Bun wasm 运行时坑（非 ABI 配错，两条版本线同症）——**不可用** |
+
+- 原生两包各带 6 平台 prebuilds（darwin/linux/win32 × arm64/x64），**安装免编译**；Bun 拦截的
+  `node-gyp-build` postinstall 仅为 prebuilds 缺席平台的兜底，运行期直读 prebuilds 目录。
+- 依赖落 `@x-harness/permission`（唯一直接消费方）；WASM 修复后可经 ast.ts 单封装点平移。
+- 装载失败（平台缺席/损坏）→ `parser-unavailable` → **bash 全量 ask**（fail-closed 降级，
+  不崩溃、不裸放行），测试锁定（§14.5-5）；另有常驻装载冒烟锚用例（§14.5-5）。
+- 深嵌套输入（20k 层 `$( $( … ) )`）parse 本体不抛但 JS 递归遍历会 `RangeError`——parseBash
+  整体 try/catch → unparseable（审查 B-P1-6，垃圾输入不崩溃）。
+
+### 14.2 新增模块 `bash/ast.ts`（唯一新增文件）
+
+```ts
+export interface ParsedCommand {
+  readonly argv: readonly string[];          // 词面重构后的干净 argv（剥引号/转义/拼接）
+  readonly dynamic: boolean;                 // 存在 shell 会展开/通配的词（auto→ask / full→过）
+  readonly injection?: InjectionKind;        // 命令替换/载荷入解释器等（压过 full 与 allow）
+  readonly redirects: readonly Redirect[];   // 全算符矩阵 + 目标（词面）；fd 复制/关闭无目标
+  readonly raw: string;                      // 命令原文（审计/回归定位）
+}
+export type BashParse =
+  | { ok: true; commands: readonly ParsedCommand[] }
+  | { ok: false; kind: "unparseable" }       // ERROR/MISSING、未知 kind、遍历异常、结构残渣
+  | { ok: false; kind: "parser-unavailable" }; // 载体装载失败（memoized）
+export function parseBash(src: string): BashParse;   // 同步；adjudicateBash 签名不变、decide/plugin 零改动
+```
+
+**装载**：懒加载单例（`createRequire` 首次调用时 require 两包，try/catch → memoized unavailable）；
+**parseBash 本体（parse+遍历）整体 try/catch → unparseable**。
+
+**遍历分类闭集**——数据源=语法包自带 `src/node-types.json`：named 共 62 条，其中 3 条
+supertype（`_statement/_expression/_primary_expression`）运行期不物化、穷尽性测试过滤；
+**可见 kind 恰 59 个，每个恰归一类**（§14.5-5 穷尽性测试按此文件锁定，grammar 升级新增 kind
+→ 红测试强制归类）：
+
+| 类别 | 处置 | kind（59 全集） |
+| --- | --- | --- |
+| 容器（30） | 深入子节点继续收命令（含 command 的非词法子件——审查 B-P1-2：`time (sudo id)` 的 subshell 必须递归） | program list subshell compound_statement if_statement elif_clause else_clause while_statement for_statement c_style_for_statement case_statement case_item do_group function_definition pipeline negated_command redirected_statement variable_assignment variable_assignments declaration_command array heredoc_body test_command binary_expression unary_expression ternary_expression postfix_expression parenthesized_expression brace_expression subscript（后 7 个纯算术内部，只含词件，递归无害） |
+| 叶提取（2） | 成型 ParsedCommand（子件分派：词面入 argv、file_redirect 入 redirects、容器子件递归收集；**剥后 argv 为空（如纯 `time` + subshell）→ ask**） | command unset_command |
+| 词面部件（20） | 不产命令；重构词面/打标记：`simple_expansion expansion special_variable_name arithmetic_expansion ansi_c_string extglob_pattern` → dynamic；`command_substitution process_substitution` → **无论位置** dynamic+injection+递归收集内嵌命令 | command_name word string string_content raw_string translated_string ansi_c_string concatenation number simple_expansion expansion special_variable_name variable_name arithmetic_expansion command_substitution process_substitution regex extglob_pattern file_descriptor test_operator |
+| 宿主消费（3） | 由 command/redirected_statement/容器处理时消费，不独立遍历：算符=**匿名子节点文本**（`>` `>>` `2>` `2>>` `&>` `>&` `>\|` `<`）；descriptor=`file_descriptor`；destination：`word`→路径裁决 / `number`→fd 复制跳过 / `process_substitution`（`> >(cmd)`）→递归收集**不裁决目标** / 缺（`>&-` `<&-`）→跳过 | file_redirect heredoc_redirect herestring_redirect |
+| 惰性（4） | 不产命令不标记（heredoc_start 文本用于判定界符是否带引号） | comment heredoc_start heredoc_content heredoc_end |
+| **未知** | **unparseable（fail-closed）** | 其余一切 |
+
+- **词面重构**：`sud''o` → command_name=concatenation(word,raw_string,word) → 剥引号拼得
+  `sudo`（实测）；重构次序=先剥转义/引号、**再** basename 归一（`s\udo` 类）；重构后的文本
+  **不重扫 `$`**（dynamic 只由展开节点类别判定——`echo \$HOME` 字面形不误标）；glob 扫描只对
+  **word 部件原文**扫 `* ? [`（引号部件 AST 天然排除 `echo "*"`；`~` 确定性展开不扫，与现行
+  同）；转义形 `\*` 误标 dynamic 属可接受保守（落注）。
+- **ERROR/MISSING 节点 → unparseable**（实测：未闭合引号、`if true then` 缺分号、`<>` 算符、
+  `$<` 均产出——现行「未闭合引号→ask」口径免费保留且更宽）。
+- **命令替换全覆盖**：`$( )`、反引号、双引号内嵌、赋值右值、数组元素、`[[ ]]` 内、
+  here-string、非引号 heredoc 体（实测 `heredoc_body` 内真实暴露 `command_substitution`）——
+  外层打 injection + **内层命令递归入裁决列表**（`$(sudo id)` 由内层硬拒兜住）。
+
+**边界规则**（实测驱动；编号被 §14.9 处置表引用）：
+
+1. **heredoc**：非引号定界（heredoc_start 文本不含引号）→ 整命令 dynamic（体会展开；`<<-`
+   tab 形 AST 体节点为空而 bash 真执行——实测盲区，uniform dynamic 覆盖）；引号定界 → 纯字面
+   惰性；体内 `command_substitution` 照常递归 + injection（压过 full）。`<<$X` 类展开界符 →
+   ERROR → ask（保守正确）。
+2. **重定向全算符与双面裁决**：输出面算符 `>` `>>` `2>` `2>>` `&>`（`&>>` 归并） `>&`
+   `>|` 与**任意 fd 前缀**（`3> x` 的 descriptor+word）——目标 `~`/`..` 归一后越 root∪extraRoots
+   → ask（现行语义）；fd 复制/关闭（destination=number 或缺）跳过；`/dev/null` 围栏许可。
+   **无命令纯重定向**（`> /etc/passwd`，redirected_statement 无 body）→ 产出 argv=[] 的
+   ParsedCommand 携带 redirects 入裁决（仅裁决 redirects——堵审查 A-P0-1 越根 truncate 放行）。
+   **输入面**（`<`）：目标命中 permission `DEFAULT_DENY_READ`（types.ts 工具面表——内核面
+   darwin 不可表达是 §13 落档项，两层口径在此绑定）→ deny（reason `redirect-read:`）；**不做
+   越根 ask**——argv 文件实参（`cat /etc/passwd`）本就不做根裁决，输入重定向单独加越根 ask 只
+   会逼模型换写法、零安全增益；读敏感面的真闸门是 denyRead 表（`**/.env` 在 bash argv 实参面
+   的裸穷与 make/npm run 等不透明面一并落档 §14.9-落档）。
+3. **包装器剥离表**（argv 级，剥后跑同一硬拒/规则管线；**家族内 argv0 未能完整剥离（含未知
+   flag）→ ask**——fail-closed，堵审查 B-P1-3）：
+   - exact-strip（无自身参数）：`nohup` `setsid` `time`（容 `-p`）`exec` `command`（容 `-p`）
+     `builtin`；
+   - bounded-skip（有界跳参）：`env`（-i / -u X / -- / 赋值前缀；**遇 `-S/--split-string` →
+     恒 ask**——载荷即命令行）`timeout`（时长实参 + --signal/--kill-after/-k）`nice`
+     （-n N/-N/--adjustment）`stdbuf`（-o/-e/-i L）`watch`（-n N）；
+   - payload 提取（实参即命令）：`xargs`、`find -exec/-execdir/-ok`（终止符 `\;`/`+` 在
+     concatenation 词内按词面识别）、`parallel`——payload 词再跑硬拒；payload **为空、含解释
+     器、含展开 → ask**（堵审查 A-P0-2：`printf "sudo id" | xargs sh -c` 空载荷 stdin 填充）；
+   - 恒 ask（载荷静态不可还原/不透明代码面）：`source` `.` `ssh` `docker` `podman` `kubectl`
+     `osascript` `script` `coproc` `strace` `ltrace` `valgrind` `env -S`，及**字符串实参代码
+     执行形**（`awk/perl/python*/ruby/node -e/-c` 且 flag 后存在字符串实参、`git -c`——
+     审查 B-P0-5 家族）；
+   - **剥后健全性检查**：剥离结果 argv0 ∈ 结构残渣集（`{` `}` then fi do done 等，实测
+     `time { sudo id; }` 解析成 argv=[time,`{`,sudo,id]）或 argv 空 → ask。
+4. **解释器家族**（sh bash zsh dash ksh ash node bun deno python python3 ruby perl php）：
+   - `-c`/`-lc` + **字面量**载荷 → 递归 parseBash 并入裁决列表（`bash -c 'sudo id'` 由内层
+     硬拒兜住）；载荷动态/空 → ask；**载荷再解析 unparseable → 外层 ask（传染语义）**；
+   - **脚本文件操作数（`bash x.sh` `node s.js`）→ 恒 ask**：文件内容不可静态裁决，且围栏
+     不拦 process-exec——sudo 可在脚本内运行（审查 B-P0-1 实证零交互链）；
+   - **stdin/heredoc 喂给解释器（`bash < x.sh`、`sh <<'EOF'`）→ 恒 ask**（同上）；
+   - **解释器命令带赋值前缀 → 恒 ask**（`BASH_ENV=x bash -c ':'` 类环境注入链，审查 B-P0-1）。
+   - `make`/`npm run`/`bun run`/`yarn`/`pnpm run` 不透明配置执行 → **落档**（与现行等价
+     auto-allow；配置文件写入已被 Write 门控、执行受围栏；.git 写/.env 读 darwin 内核缺口
+     是 §13 已载残留——审查 B-P1-10 之处置）。
+5. **赋值与 declaration 合成单元**：顶层/前缀 `variable_assignment`（`FOO=$(rm …)`）与
+   `declaration_command`（declare/local/export/readonly/typeset）各自产出合成 ParsedCommand
+   （argv 取词面、dynamic 按体内展开节点、injection 按体内 command_substitution——堵审查
+   A-P0-3 full 档压制丢失）；**declaration 实参为引号字符串时原文兜底扫描 `$(`/反引号 →
+   injection**（`declare -a 'a=($(sudo id))'` 引号内数组 bash 真执行——审查 B-P0-2 实证，
+   AST 无节点，保守扫描是唯一闸门）。赋值前缀剥离后**不**标 dynamic（命令本体静态即可裁决，
+   §14.4 放宽申报；解释器命令除外——见边界 4）。
+6. **ansi_c_string（`$'\x73udo'`）→ dynamic**（bash 实测解码执行；不解码、保守 ask——审查
+   A/B-P0 一致）。
+7. **管道结构**：pipeline 末位是 shell 解释器且上游是 fetcher → injection net-pipe-shell
+   （curl/wget/fetch）/ base64-shell（base64）；判定用 **basename 归一后**的 argv0
+   （`/usr/bin/curl x | sh` 不漏——审查 A-P1-3）。
+8. **`trap`/`eval`**：字面量载荷 → 递归再解析并入（同边界 4 机制）；动态载荷 → ask。
+9. **`sud$((1))o` 类**：argv0 含任何展开/通配部件 → dynamic（auto ask；硬拒不做解码推测）。
+
+### 14.3 改/删映射（文件级）
+
+| 文件 | 处置 |
+| --- | --- |
+| `bash/segments.ts` | **整文件删**（~137 行词法/组装——全部漏洞的源头） |
+| `bash/redirect.ts` | **整文件删**：REDIRECT_RE 正则、`withoutRedirects` 词元剔除 hack、opOf 全由 AST file_redirect 匿名算符子节点取代；`DEV_NULL` 常量与目标裁决逻辑移驻 adjudicate/ast |
+| `bash/injection.ts` | 重写瘦身：9 kind → 6 kind——`command-substitution` 吸收 backtick/env-substitution；`fd-substitution` 删（`$<` 实测 hasError→unparseable，同终态）；`net-pipe-shell`/`base64-shell` 管道结构化（basename 归一）；`find-exec`/`xargs-shell` 改 payload 规则（边界 3）；`eval` 并入载荷再解析机制。原文正则 `detectInjection` 删 |
+| `bash/hard-deny.ts` | 归一化砍半：引号/反斜杠/级联分支删（词面重构免费给出，次序见 §14.2）；env 前缀剥离迁 ast.ts 包装器表；basename 保留；`netPipeShell` 的 rawText 参数删（管道结构化）；新增 payload 入口（xargs/find -exec 提取词跑同一硬拒） |
+| `bash/adjudicate.ts` | 管线裁决序骨架不变；输入形状 Segment → ParsedCommand；重定向双面裁决（边界 2）；unparseable + parser-unavailable → ask；argv=[] 纯重定向单元与赋值/declaration 合成单元进循环 |
+| `rules/bash-prefix.ts` | 匹配词列换干净 argv（前缀/裸精确/`*` 万配语义不变） |
+| `src/index.ts` | 移除 parseSegments/Segment/ParseResult/detectInjection/redirectsOf/Redirect/DEV_NULL 导出；新增 parseBash/BashParse/ParsedCommand；InjectionKind 保留（审查 A-P1-2——漏此行 typecheck 即红） |
+| `decide.ts` / `plugin.ts` | **零改动**（adjudicateBash 同步签名与 BashPipelineInput 不变） |
+| `bash/ast.ts` | **新增**（§14.2） |
+
+### 14.4 语义变化清单（双向全申报，逐条有测试背书）
+
+**收紧（修真漏洞）**：§14.0 表 8+1 全形；包装器家族与 payload 面；解释器文件/stdin/赋值前缀/
+空载荷；declaration 引号实参兜底扫描；ansi_c；`>|`/`>&`/任意 fd 输出算符入矩阵；`<` 输入面
+denyRead deny；无命令纯重定向裁决。
+
+**放宽（修假阳性/摩擦，均有 shell 语义或裁决一致性依据）**：
+- `$((1+2))` 非 injection（降级 dynamic 词——auto 仍 ask / full 过；argv0 与重定向目标内
+  含算术照旧 dynamic）；
+- 单引号/注释内 `$( )` 不再命中（shell 本就不展开——declaration 引号实参例外，见边界 5）；
+- 引号定界 heredoc 体纯字面，不再当命令裁决（现行体行假阳性硬拒消失）；
+- 引号内 `>` 不再误作重定向目标；
+- `FOO=$X git status` 赋值前缀不再拖 dynamic（命令本体静态即可裁决；解释器例外）；
+- `ls \| xargs grep foo`、`find . -exec grep foo {} \;`、`eval 'git status'`、`bash -c 'git status'`
+  良性形从现行 injection 恒 ask 变为可界内 auto-allow（载荷已再解析/硬拒过筛）。
+
+**裁决序重排明示**（审查 A-P0-6）：现行 injection 在顶层压过一切；新序 injection 为命令级第 3
+位（deny 规则、硬拒之后）。终态变化仅一处：injection 命中且 deny 规则命中的命令 ask→deny
+（方向更安全，与现行 full 档「deny 规则压过硬拒」同哲学，adjudicate.test.ts 已有先例断言）；
+injection 仍压过 full 档与 allow 规则（NEVER_MEMORIZE 不变）。unparseable 与 injection 先后：
+现行先答 injection，新序 parse 失败即 unparseable（终态同 ask、reason 变化，§14.5-6 钉）。
+
+### 14.5 边界与异常测试增补（真实异常、区分度钉死，禁假绿）
+
+1. **洞回归×9**（§14.0 逐行，**harness 钉死**：fence 在场 + `Bash(*):allow` + auto 档——旧代码
+   此 harness 下全 allow，区分度成立；reason 逐条钉 `hard-deny:sudo`/`hard-deny:rm-rf-root`/
+   `injection:command-substitution`/`redirect-read:` 等）：表 8+1 形；heredoc 洞 6 用区分形双钉：
+   非引号体 `$(rm -rf /)` → ask（reason 钉 injection——机制锚）+ 引号定界体含 `sudo id` 行 →
+   allow（旧=假阳性 ask，新=纯字面——放宽回归）；洞 7 用例用**引号内越根变体**
+   `echo "a > /etc/passwd" > f` 界内目标 → allow（旧=ask 假阳性——审查 C-P0-1：原示例新旧同
+   输出零区分度）。
+2. **包装器矩阵**（it.each 全家族×主形，flag 变体各至少一腿——覆盖率预算见 §14.6）：
+   exact/bounded 全表 × `sudo` → ask；未知 flag（`timeout -k`、`env -C`）→ ask（fail-closed）；
+   `env -S 'sudo id'` → ask；`time { sudo id; }` 结构残渣 → ask；剥后空 argv（`time (sudo id)`
+   实测形）→ ask；恒 ask 表 it.each 全词（source/./ssh/docker/podman/kubectl/osascript/script/
+   coproc/strace/ltrace/valgrind 及 `-e/-c` 字符串实参形、`git -c`）；`ls | xargs grep foo` 良性
+   → allow；`printf "sudo id" | xargs sh -c` → ask；`find . -exec sudo id \;` → ask；既有
+   `env -i` 用例（adjudicate.test.ts:115-120）断言零改动全绿。
+3. **解释器与载荷**：`bash -c 'sudo id'` → ask；`bash -c 'git status'` 界内 → allow；
+   `bash -c "$x"` / `bash -c`（空）→ ask；`bash -c '<畸形>'` → ask（传染）；`bash x.sh`/
+   `bash < x.sh`/`sh <<'EOF'…EOF`/`BASH_ENV=x bash -c ':'` → ask；`eval 'sudo id'`/
+   `trap 'sudo id' EXIT` → ask；`source /tmp/x.sh` → ask。
+4. **放宽回归**（防退回假阳性）：`echo $((1+2))` full→allow / auto 界内→ask；`echo '$(x)'`/
+   `# $(sudo id)`/引号 heredoc 界内→allow；`echo "*"`（引号 glob）→ allow；`cat *.log`
+   auto→ask / full→allow（glob 机制钉——审查 C-P0-3）；`FOO=$X git status` 界内→allow；
+   `echo \$HOME`（转义字面）界内→allow（不误标 dynamic）。
+5. **畸形与 fail-closed**：未闭合引号、`if true then`、`<>`、`$<` → ask（reason unparseable）；
+   **parser-unavailable**：`parseBashWith(loader)` 真接缝注入抛错装载器 → 全量 ask（reason 钉
+   `parser-unavailable`——与 unparseable 可区分，运维定位需要）；**loader 成功但 parse/遍历抛
+   异常**（深嵌套假体）→ unparseable 不崩 pre-execute；**未知 kind**：classifyKind 纯函数导出，
+   合成 kind → unparseable；**分类闭集穷尽性三锁**：读语法包真实 `node-types.json`——
+   (a) createRequire 解析路径（防 worker cwd/hoisting 漂移）；(b) 过滤 3 条 supertype；
+   (c) **计数哨兵=59 非空**（防文件路径错/JSON 形变 → 空集恒真——审查 C-P1-4 假绿口子）；
+   断言每个可见 kind 恰归一类（表↔switch↔JSON 三锁合一）；**常驻装载冒烟锚**：`parseBash
+   ('echo hi')` ok:true（bun.lock 拉坏 prebuild 时给定位性红）。
+6. **政策不变量与断言口径**：必不变=adjudicate.test.ts 现行 14 例（verdict/reason 全形状）+
+   plugin.test.ts 10 例（审计断言无 reason 文本匹配，实证不受迁移影响）；必变（审查 C-P1-3
+   六处点名）=rules.test.ts 的 parseSegments 四块（15-45）整写为 parseBash 断言、backtick/
+   fd-substitution 断言（kind 删除/$< → unparseable）、hardDeny 调用形（rawText 参数删、
+   env 剥离迁出）、拼接变体链换 parseBash+重构 argv；注入良性负向电池（rules.test.ts:65-72）
+   原样保留防过紧回归；**reason 快照 describe**：对裁决管线全 reason 词建快照表（
+   hard-deny:\*/injection:\*/dynamic-segment (expansion/glob)/redirect:\*/redirect-read:\*/
+   rule:\*/unparseable command/parser-unavailable/wrapper:\*/opaque-code:\*），防实现期词漂移。
+7. **输入面双向钉**：`cmd < ~/.ssh/id_rsa` → deny（reason `redirect-read:`）；denyRead 四表项
+   it.each；**反向钉** `cmd < /etc/passwd` → 不 deny 不 ask（裁决①口径——将来补越根 ask
+   必红）；`3> x` 越根 → ask；`>& f` 越根 → ask；`>&-`/`<&-`/`2>&1` → 不裁决放行。
+
+### 14.6 实施批次
+
+单实现批次（无过渡版本、无双轨）：依赖（permission +tree-sitter^0.22 +tree-sitter-bash^0.23，
+bun.lock）+ ast.ts + 管线迁移 + 删 segments/redirect + index.ts 导出换血 + 测试重锚与增补 +
+**§7 测试口径同提交更新**（注入 8 形→6 kind、硬拒 15 逃脱→砍半归一化的表述随代码同变），
+同一提交（文档先行已随本节）；四门全绿 + 覆盖率只升不降核验。覆盖率预算：基线钉死为
+permission stmts 94.63 / branch 89.58 / funcs 93.33 / lines 99.2（审查 C 实测列序）；segments
+（~137 行）出分母、ast.ts 进分子，包装器 flag 变体与恒 ask 表 it.each 保分支余量（裁
+ionice——罕见价值薄）；分类闭集 59 kind 的 switch 分支由穷尽性测试与合成 kind 用例共同覆盖。
+
+### 14.7 风险
+
+- **grammar kind 漂移**：caret 语义内 minor 升级可能加 kind——穷尽性三锁测试强制归类，升级必红；
+- **平台覆盖**：6 平台 prebuilds 之外（BSD 等）走 node-gyp 编译兜底（Bun 拦 postinstall——T9
+  矩阵留意）；装载任何失败 → parser-unavailable 全量 ask（fail-closed 有测试+冒烟锚）；
+- **打包**：bundler 消费 permission 时需 `--external tree-sitter --external tree-sitter-bash`
+  （本仓 build 门现仅 core，不触发；落注防将来踩）；
+- **性能**：原生单例 + 单次 parse µs 级；深嵌套遍历 try/catch 兜 RangeError。
+
+### 14.8 用户裁决点（2026-09-18 讨论定案，默认采纳；审查后范围细化）
+
+1. `<` 输入重定向纳管 → **采纳**（denyRead 表 deny、不做越根 ask——§14.2 边界 2 论证；审查
+   B-P1-7/P1-8 的表绑定与 .env 落档已并入）；
+2. 算术展开 `$((x))` → **采纳**（非 injection、降级 dynamic 词）；
+3. 载体 → **原生**（实测 WASM 在 Bun parse 恒败；原生三集成点全绿；=用户钉的版本）；
+4. 包装器前缀剥离 → **采纳**（§14.2 边界 3 表；审查补强：未知 flag fail-closed、`env -S`
+   恒 ask、payload 空载/解释器 ask、剥后健全性检查、coproc 入恒 ask）。
+
+### 14.9 方案审查处置（2026-09-18 三路并行：A 契约语义 / B 安全 fail-closed / C 测试假绿）
+
+**采纳——织入正文**：A-P0-1（边界 2 无命令纯重定向宿主）｜A-P0-2/B（边界 3 payload 空载规则）
+｜A-P0-3（边界 5 赋值/declaration 合成单元）｜A-P0-4=B-P0-3（边界 6 ansi_c dynamic）｜
+A-P0-5=C-P0-2=B-P1-5（分类表按真实 62 named/59 可见重取齐；command_name/file_redirect/
+算术族补入；command_substitution 双列矛盾消解为「词面部件+永远递归」；穷尽性三锁）｜
+A-P0-6（裁决序重排 §14.4 明示）｜B-P0-1（边界 4 解释器家族四规则）｜B-P0-2（边界 5
+declaration 引号实参原文兜底扫描）｜B-P0-4（env -S 恒 ask）｜B-P0-5（恒 ask 表扩
+「字符串实参代码执行」族）｜A-P1-1/C-P0-1/C-P1-1（14.0 表修正+洞用例 harness/reason/区分形
+钉死）｜A-P1-2（index.ts 行）｜A-P1-3（basename 归一明示）｜A-P1-4/B-P1-4（`3>`/`>&` 入
+矩阵）｜A-P1-5（赋值前缀放宽申报+解释器例外）｜A-P1-6（放宽清单补全 §14.4）｜A-P1-7/
+C-P1-3（reason 口径+必变断言六处清单）｜B-P1-1（coproc）｜B-P1-2（command 非词法子件递归+
+剥后空 argv ask）｜B-P1-3（包装器未知 flag → ask）｜B-P1-6（parseBash 整体 try/catch）｜
+B-P1-7（denyRead 表钉 DEFAULT_DENY_READ）｜C-P0-3（glob 扫描机制+用例）｜C-P1-2（零改动
+范围收敛 adjudicate/plugin 两文件+`>|`/`>&-` 用例）｜C-P1-4（穷尽性哨兵 59+supertype 过滤+
+createRequire+it.each 变体/裁 ionice+基线列序钉死）｜C-P1-5（输入面反向钉+全表 it.each+
+reason 词钉）｜C-P2 全（reason 快照 describe、两败态可区分、§7 同提交、装载冒烟锚、
+classifyKind 纯函数导出、parse 抛异常假体、恒 ask 全词 it.each、`<<-` 用例、sud$((1))o 用例、
+良性负向电池保留）｜A-P2-1/P2-2/P2-4/P2-6/P2-7、B-P2 全（转义不重扫、glob 排除引号/~、
+find 终止符词内识别、重构→basename 次序、计数口径统一、heredoc tab 形注记、匿名算符子节点、
+`> >()` 递归不裁目标、setsid/exec 与 §4 清场语义交叉引用、内层 unparseable 传染）。
+
+**落档（不修，理由）**：
+- **`.env` 的 bash argv 实参读面**（B-P1-8）：`cat .env` 在工具面（Read/Grep 规则）与 darwin
+  内核面（无 .env 拒读谓词）都不拦，bash argv 实参级路径扫描超出本件范围；规则词表可表达
+  用户自配（`Bash(cat .env):deny` 精确形）。
+- **git 内联配置/别名链**（B-P1-9）：`git -c alias…`/`git config` 写 .git/config——darwin
+  deny-write 带过滤器必杀全写（§13 落档）使 .git 写保护内核不可表达，围栏 writable 含 root；
+  与 §13 已载残留同源，不新增。
+- **make/npm run/bun run/yarn/pnpm run 不透明配置执行**（B-P1-10 之一）：与现行等价
+  auto-allow（非新弱化）；配置写入已被 Write 门控、执行受围栏承载；`git -c` 已入恒 ask（单
+  命令内联形可精确识别），配置文件驱动形落档。
+- **brace 展开 `{a,b}`**（A-P2-3）：现行与本方案都当字面量（等价盲区、非新弱化），落档。
+
+**驳回**：无（三路全部采纳或落档）。
