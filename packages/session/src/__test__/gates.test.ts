@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { gateEvent, gateSurfaceOp, isJsonSafe, isSafeSessionId, validateSessionEvents } from "../gates.ts";
+import { gateEvent, isSafeSessionId, validateSessionEvents } from "../gates.ts";
+import { materializeJson } from "../snapshot.ts";
 
 describe("isSafeSessionId（docs/SESSION.md §1.8 路径安全门）", () => {
   it.each<[string, boolean]>([
@@ -21,60 +22,76 @@ describe("isSafeSessionId（docs/SESSION.md §1.8 路径安全门）", () => {
   });
 });
 
-describe("isJsonSafe（docs/SESSION.md §1.8 JSON 安全门）", () => {
-  it.each<[unknown, boolean]>([
-    [null, true],
-    [true, true],
-    ["s", true],
-    [0, true],
-    [-1.5, true],
-    [[], true],
-    [[1, [2, { a: "b" }]], true],
-    [{}, true],
-    [{ a: { b: [1] } }, true],
-    [Object.assign(Object.create(null), { x: 1 }), true],
-    [undefined, false],
-    [NaN, false],
-    [Infinity, false],
-    [-Infinity, false],
-    [(): number => 1, false],
-    [Symbol("x"), false],
-    [new Date(), false],
-    [new Map(), false],
-    [new (class {})(), false],
-    [{ a: undefined }, false],
-  ])("样本 %j → %s", (value, expected) => {
-    expect(isJsonSafe(value)).toBe(expected);
+describe("JSON 值域（materializeJson 单一权威，docs/SESSION.md §1.3）", () => {
+  it.each<unknown>([null, true, "s", 0, -1.5, [], [1, [2, { a: "b" }]], {}, { a: { b: [1] } }, Object.assign(Object.create(null), { x: 1 })])(
+    "样本 %j 物化通过",
+    (value) => {
+      expect(() => materializeJson(value)).not.toThrow();
+    },
+  );
+
+  it.each<unknown>([
+    undefined,
+    NaN,
+    Infinity,
+    -Infinity,
+    -0,
+    (): number => 1,
+    Symbol("x"),
+    new Date(),
+    new Map(),
+    new (class {})(),
+    { a: undefined },
+    { [Symbol("k")]: 1 },
+  ])("样本 %j 物化拒绝", (value) => {
+    expect(() => materializeJson(value)).toThrow();
   });
 
-  it("BigInt → false", () => {
-    expect(isJsonSafe(10n)).toBe(false);
+  it("BigInt → 拒绝", () => {
+    expect(() => materializeJson(10n)).toThrow();
   });
 
-  it("Symbol 键 → false（JSON 会静默丢弃）", () => {
-    expect(isJsonSafe({ [Symbol("k")]: 1 })).toBe(false);
+  it("Symbol 键 → 拒绝（JSON 会静默丢弃）", () => {
+    expect(() => materializeJson({ [Symbol("k")]: 1 })).toThrow();
   });
 
-  it("循环引用 → false", () => {
+  it("循环引用 → 拒绝", () => {
     const cyclic: { self?: unknown } = {};
     cyclic.self = cyclic;
-    expect(isJsonSafe(cyclic)).toBe(false);
+    expect(() => materializeJson(cyclic)).toThrow();
   });
 
-  it("DAG 重复引用（同一冻结块复用）→ true（症状：曾误判 not-json-safe）", () => {
+  it("DAG 重复引用（同一冻结块复用）→ 合法", () => {
     const shared = { type: "text", text: "block" };
-    expect(isJsonSafe([shared, shared])).toBe(true);
-    expect(isJsonSafe({ a: shared, b: shared })).toBe(true);
-    expect(isJsonSafe([{ a: shared }, { a: shared }])).toBe(true);
+    expect(() => materializeJson([shared, shared])).not.toThrow();
+    expect(() => materializeJson({ a: shared, b: shared })).not.toThrow();
+    expect(() => materializeJson([{ a: shared }, { a: shared }])).not.toThrow();
   });
 
-  it("getter 抛错 → false（垃圾输入不崩）", () => {
+  it("getter 抛错 → 拒绝（垃圾输入不崩路径：物化抛出由调用方转 Result）", () => {
     const evil = {
       get x(): number {
         throw new Error("boom");
       },
     };
-    expect(isJsonSafe(evil)).toBe(false);
+    expect(() => materializeJson(evil)).toThrow();
+  });
+
+  it("稀疏数组 → 拒绝（洞读为 undefined，JSON 会静默写 null）", () => {
+    const sparse = [1, 2];
+    delete sparse[1];
+    expect(() => materializeJson(sparse)).toThrow();
+  });
+
+  it("字面量/显式设置的原型污染 → 拒绝（验证不可被原型链跳过）", () => {
+    const crafted: Record<string, unknown> = {};
+    Object.setPrototypeOf(crafted, { hidden: { deep: 1 } });
+    expect(() => materializeJson(crafted)).toThrow();
+  });
+
+  it("JSON 值域的 -0 与非有限数拒绝（往返有损）", () => {
+    expect(() => materializeJson({ t: -0 })).toThrow();
+    expect(() => materializeJson({ t: NaN })).toThrow();
   });
 });
 
@@ -133,12 +150,6 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("no/such", {})).toBe("unknown-type:no/such");
   });
 
-  it("非 JSON 安全（显式 undefined 值）→ not-json-safe", () => {
-    expect(gateEvent("user/message", { turn: 0, step: 0, content: [], extra: undefined })).toBe(
-      "not-json-safe:user/message",
-    );
-  });
-
   it("inbox 词条门表驱动（docs/SESSION-RESUME §7）", () => {
     expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-step", turn: 0, claimed: ["a", "b"] })).toBeUndefined();
     expect(gateEvent("agent/inbox/spliced", { op: "claim", target: "next-step", turn: 0, claimed: [] })).toBeUndefined();
@@ -157,28 +168,6 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     );
     expect(gateEvent("agent/inbox/spliced", { op: "clear", reason: "" })).toBe("shape:agent/inbox/spliced");
     expect(gateEvent("agent/inbox/spliced", { op: "noop", target: "next-turn" })).toBe("shape:agent/inbox/spliced");
-  });
-});
-
-describe("gateSurfaceOp（docs/SESSION.md §1.4 replace 区间门）", () => {
-  const seqs = [0, 2, 5];
-
-  it("append 恒通过", () => {
-    expect(gateSurfaceOp("append", seqs)).toBeUndefined();
-  });
-
-  it("端点齐备的区间通过（含单点 start==end）", () => {
-    expect(gateSurfaceOp({ op: "replace", startSeq: 0, endSeq: 2 }, seqs)).toBeUndefined();
-    expect(gateSurfaceOp({ op: "replace", startSeq: 5, endSeq: 5 }, seqs)).toBeUndefined();
-  });
-
-  it("端点缺失 → replace-target-missing", () => {
-    expect(gateSurfaceOp({ op: "replace", startSeq: 1, endSeq: 2 }, seqs)).toBe("replace-target-missing:1");
-    expect(gateSurfaceOp({ op: "replace", startSeq: 0, endSeq: 9 }, seqs)).toBe("replace-target-missing:9");
-  });
-
-  it("start > end → replace-range", () => {
-    expect(gateSurfaceOp({ op: "replace", startSeq: 2, endSeq: 0 }, seqs)).toBe("replace-range:2>0");
   });
 });
 
@@ -211,12 +200,14 @@ describe("validateSessionEvents（docs/SESSION.md §1.8 seed 整卷校验）", (
     ["data 形状不符", [envelope({ seq: 0, type: "turn/start", data: { turn: -1 } })], "corrupt-envelope:0:shape:turn/start"],
     ["surface 词条缺 surfaceOp", [envelope({ seq: 0, type: "user/message", data: { turn: 0, step: 0, content: [] } })], "corrupt-envelope:0:surface-op"],
     ["log-only 词条带 surfaceOp", [envelope({ seq: 0, type: "turn/start", data: { turn: 0 }, surfaceOp: "append" })], "corrupt-envelope:0:surface-op-not-allowed"],
-    ["replace 端点悬空", [envelope({ seq: 0, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 5, endSeq: 6 } })], "corrupt-surface:0"],
+    ["replace 端点悬空", [envelope({ seq: 0, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 5, endSeq: 6 } })], "corrupt-surface:0:replace-target-missing:5"],
+    ["信封额外键", [Object.assign(envelope({ seq: 0, type: "turn/start", data: { turn: 0 } }), { ignorable: true })], "corrupt-envelope:0:extra-key:ignorable"],
+    ["log-only 词条带显式 surfaceOp 键（值为 undefined）", [{ type: "turn/start", seq: 0, time: 1, data: { turn: 0 }, surfaceOp: undefined }], "corrupt-envelope:0:surface-op-not-allowed"],
     ["replace 反向区间（start>end 且端点存在）", [
       envelope({ seq: 0, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: "append" }),
       envelope({ seq: 1, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 0, endSeq: 0 } }),
       envelope({ seq: 2, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 1, endSeq: 0 } }),
-    ], "corrupt-envelope:2:replace-range"],
+    ], "corrupt-surface:2:replace-range:1>0"],
   ])("非法卷：%s → %s", (_name, events, expected) => {
     expect(validateSessionEvents(events)).toBe(expected);
   });

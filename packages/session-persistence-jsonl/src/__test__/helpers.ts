@@ -2,7 +2,8 @@ import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context, Disposer } from "@x-harness/core";
 import { sessionPlugin } from "@x-harness/session";
 import { sessionArchive, sessionStore } from "@x-harness/session";
-import type { Result, SessionArchive, SessionStore } from "@x-harness/session";
+import type { Result } from "@x-harness/core";
+import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "../plugin.ts";
 
 export interface World {

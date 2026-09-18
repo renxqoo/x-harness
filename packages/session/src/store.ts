@@ -1,15 +1,16 @@
 // 会话仓库：create/fork 共用 birth 路径（guard 否决 → 二次占用检查 → 落账 → created 广播），
 // flush 屏障派发，dispose 封存写权（docs/SESSION.md §1.5、§3）。
 
-import { deepFreeze } from "@x-harness/core";
+import { deepFreeze, errorText } from "@x-harness/core";
 import type { GuardDeny } from "@x-harness/core";
-import { isJsonSafe, isSafeSessionId, validateSessionEvents } from "./gates.ts";
+import { isSafeSessionId, validateSessionEvents } from "./gates.ts";
+import { materializeJson } from "./snapshot.ts";
 import type { SessionHandle } from "./session.ts";
 import { createSession } from "./session.ts";
+import type { Result } from "@x-harness/core";
 import type {
   CreateSessionOptions,
   ForkSessionOptions,
-  Result,
   Session,
   SessionEvent,
   SessionHeader,
@@ -69,10 +70,13 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
       if (options.id !== undefined && options.id !== options.header.id) {
         return { ok: false, reason: "invalid-header:id-mismatch" };
       }
-      if (!isJsonSafe(options.header)) {
+      let snapshot: unknown;
+      try {
+        snapshot = materializeJson(options.header); // 脱钩：调用方对象不被就地冻结
+      } catch {
         return { ok: false, reason: "invalid-header:not-json" };
       }
-      return { ok: true, value: { header: deepFreeze(options.header), id: options.header.id } };
+      return { ok: true, value: { header: deepFreeze(snapshot) as SessionHeader, id: options.header.id } };
     }
     const idRes = resolveId(options.id);
     if (!idRes.ok) return idRes;
@@ -88,11 +92,18 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
       if (!resolved.ok) return resolved;
       const { header, id } = resolved.value;
       if (sessions.has(id)) return { ok: false, reason: `duplicate:${id}` };
+      let seed: readonly SessionEvent[] = [];
       if (options.seed !== undefined) {
-        const seedErr = validateSessionEvents(options.seed);
+        // 物化先行：信封整体脱钩定影，再整卷校验（门-账不可能发散；exotic 信封在此拒绝）
+        try {
+          seed = options.seed.map((event) => materializeJson(event) as SessionEvent);
+        } catch {
+          return { ok: false, reason: "corrupt-envelope:not-json" };
+        }
+        const seedErr = validateSessionEvents(seed);
         if (seedErr !== undefined) return { ok: false, reason: seedErr };
       }
-      return birth(header ?? makeHeader(id, options.parent), options.seed ?? [], false);
+      return birth(header ?? makeHeader(id, options.parent), seed, false);
     },
 
     fork: async (source: SessionId, options: ForkSessionOptions = {}) => {
@@ -106,9 +117,8 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
       const idRes = resolveId(options.id);
       if (!idRes.ok) return idRes;
       if (sessions.has(idRes.value)) return { ok: false, reason: `duplicate:${idRes.value}` };
+      // seed 是自身维护不变量日志的冻结切片（append 逐条过门），无需重验
       const seed = snapshot.slice(0, cut + 1);
-      const seedErr = validateSessionEvents(seed);
-      if (seedErr !== undefined) return { ok: false, reason: seedErr };
       return birth(makeHeader(idRes.value, source), seed, true);
     },
 
@@ -120,7 +130,7 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
       if (!sessions.has(id)) return { ok: false, reason: `no-session:${id}` };
       try {
         await hooks.onFlush(id);
-        return { ok: true, value: { flushed: true } as const };
+        return { ok: true, value: true };
       } catch (error) {
         return { ok: false, reason: `flush-failed:${errorText(error)}` };
       }
@@ -135,10 +145,4 @@ export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
       return { ok: true, value: true };
     },
   };
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof AggregateError) return error.errors.map((inner) => errorText(inner)).join("; ");
-  if (error instanceof Error) return error.message;
-  return String(error);
 }

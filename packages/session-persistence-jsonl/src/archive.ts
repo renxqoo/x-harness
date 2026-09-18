@@ -50,7 +50,8 @@ export function createArchiveReader(root: string): SessionArchive {
       try {
         text = await readFile(join(dir, "events.jsonl"), "utf8");
       } catch {
-        return { ok: true, value: deepFreeze({ header, events: [] as SessionEvent[] }) };
+        // header 在而 events 缺失 = 外部损坏态（写侧恒先建 events）：fail-closed，不折叠为空会话静默丢史
+        return { ok: false, reason: `no-events:${id}` };
       }
       const lines = text.split("\n");
       if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
@@ -77,5 +78,9 @@ function gateHeader(value: unknown, id: string): string | undefined {
   const record = value as Record<string, unknown>;
   if (record["id"] !== id) return `corrupt-header:${id}:id-mismatch`;
   if (typeof record["createdAt"] !== "number" || !Number.isFinite(record["createdAt"])) return `corrupt-header:${id}`;
+  if (record["cwd"] !== undefined && typeof record["cwd"] !== "string") return `corrupt-header:${id}:cwd`;
+  if (record["parentSession"] !== undefined && typeof record["parentSession"] !== "string") {
+    return `corrupt-header:${id}:parentSession`;
+  }
   return undefined;
 }

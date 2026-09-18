@@ -51,9 +51,9 @@ create(options?: { id?; seed?; parent?; header?: SessionHeader })
 4. **前缀校验**（含相等）：`D.length ≤ C.length` 且逐事件**规范化深度相等**（C = `store.get(id).events()` 当时值；C 单调增长不破坏前缀）。
 5. 全过 → 同一 fd 续写（追加模式），**返回前缀长度 k**。
 
-**pending 裁剪**（审查处置 #2）：created 首灌 pending 初始化仍为构造期全量；首个排空段在 writer 就绪后将 `pending = pending.slice(k)`（k 闩在该 writer 上；D 段永不重写；await 期间新到事件只追加尾部，slice 按前缀长度截断不误删）。flush 中途失败重试按既有「写后移除」语义，只重放 k 之后的批次。
+**pending 裁剪**（审查处置 #2）：created 首灌 pending 初始化仍为构造期全量；首个排空段在 writer 就绪后将 `pending = pending.slice(k)`（k 闩在该 writer 上；D 段永不重写；await 期间新到事件只追加尾部，slice 按前缀长度截断不误删）。flush 中途失败重试按既有「写后移除」语义，只重放 k 之后的批次；writer.append 失败先**截断回滚到批前长度**再重抛（同进程重试无重复字节）。
 
-**失败路径**：任一校验不过 → **重抛原 EEXIST 错误**（复用现行 dead 闩与 `session-id-reused` 报文；审查处置 #8）。
+**失败路径**：任一校验不过 → 按**来源分类的永久拒绝**（`permanent` 标记闩 dead，区别于可重试瞬时 I/O）：header 缺失 `archive-orphan-events` / header 不等 `session-id-reused` / 前缀不符 `archive-prefix-mismatch` / 中间损坏 `archive-corrupt`。
 
 **语义合并声明**：「同 id 重生」只有两形态——带归档 header = 续写（resume），带新 header = dead。「全新重开同 id」概念消失；**截断式恢复不支持**（seed 必须含全量 D，否则前缀校验必拒；要截断请 fork）。
 

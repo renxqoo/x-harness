@@ -38,7 +38,7 @@ type SessionEvent = { type; seq; time; data }
   & (type ∈ SurfaceEventType ? { surfaceOp: SurfaceOp } : { surfaceOp?: never })
 ```
 
-- `seq` 单调连续，由 Session 独占分配（= 落账时日志长度）；`time` 为 Unix 毫秒。信封与 data 经 **JSON 脱钩快照（materializeJson）后深冻**：调用方对象不被就地冻结、getter 不稳定值在物化时刻定影（TOCTOU 关闭）、稀疏数组与 `__proto__` 字面量原型污染被拒（原型链上的值逃不出验证）、JSON 来源的 `__proto__` 自有键保留不污染。
+- `seq` 单调连续，由 Session 独占分配（= 落账时日志长度）；`time` 为 Unix 毫秒。**物化先行**：append/seed/header 一律先 `materializeJson`（单一 JSON 值域权威——稀疏数组/原型污染/Symbol 键/显式 undefined/非有限数与 -0 全拒；getter 单遍定影，门与存储不可能见到不同值），门只看快照形状，快照深冻入账——调用方对象永不被就地冻结。
 - **surface 词条**（产模型可见消息，仅此 4 类可携带 surfaceOp）：`system/message`、`user/message`、`assistant/message`、`tool/result`。
 - **log-only 词条**：`turn/start`、`turn/end`、`step/start`、`step/end`、`assistant/attempt`、`tool/call`、`request/header`、`request/context`、`session/end-seed`。
 
@@ -121,7 +121,8 @@ interface SessionArchive {
 - `sessionEvent` → 仅入内存 pending 队列（同步，零 I/O，不阻塞 append）。created 必先于该会话一切 `sessionEvent`（create 落账后广播，append 只能更晚），队列无窗口。
 - **排他创建与可验证续写（SESSION-RESUME §1.4）**：两级打开——`events.jsonl` `'ax'` 成功 → 全新档案（`header.json` `'wx'`；wx EEXIST 时孤儿 header 与当前 header 规范化相等则续写空卷 k=0，不等则撤销 dead）；`'ax'` EEXIST → **续写校验**：字节级尾态修复（截到最后换行）→ 磁盘卷是当前日志前缀（含相等，规范化深度相等）∧ 磁盘 header 相等 → `'a'` 追加续写并返回前缀长度 k（**首灌 pending 按k 裁剪，D 段永不重写**）；任一不过重抛 EEXIST → 现行重用 fail-closed（`session-id-reused`，旧档零损毁）。**并发边界：可验证 ≠ 独占——跨进程并发续写同一档案会交错腐蚀，单进程单写者部署是硬性前提（宿主保证）**。「同 id 重生」只剩两形态：带归档 header = 续写（resume），带新 header = dead；截断式恢复不支持（要截断用 fork）。dispose 不删档（历史保留）。
 - 读侧：header 缺失 → 失败；header JSON 解析失败 → `corrupt-header`（含 `'wx'` 直写崩溃残缺窗口）；`events.jsonl` 不存在 = 空会话；**残行 = 位于文件末行且 JSON.parse 失败 → 跳过**（崩溃痕迹；末行 bit-rot 与撕裂不可分辨，接受项，审查处置 P12）；中间行损坏/信封非法/seq 断档/replace 反向区间 → 失败（`corrupt` 理由带行号）；seed 投影重放验证（replace 端点悬空）→ `corrupt-surface`。`list()`：root ENOENT = 空列表，其余环境错误（如 EACCES）上抛不静默折叠。
-- **失败重试语义**：排空段写盘成功后才移除已写批次——append/fsync 失败时 pending 按序保留，下次 flush 重试（await 期间新到事件只追加尾部，按批次长度截断不误删）。
+- **失败重试语义**：排空段写盘成功后才移除已写批次——append/fsync 失败时 pending 按序保留，下次 flush 重试（await 期间新到事件只追加尾部，按批次长度截断不误删）；writer.append 失败**截断回滚到批前长度**（同进程重试不产生重复字节，跨进程由续写前缀校验自愈）。
+- **永久性拒绝分类**（均闩 dead、区别于可重试瞬时 I/O）：`session-id-reused:<id>`（同 id 不同 header）/ `archive-orphan-events:<id>`（events 在 header 缺）/ `archive-corrupt:<id>`（中间损坏）/ `archive-prefix-mismatch:<id>`（磁盘非当前日志前缀）。读侧对称：header 在而 `events.jsonl` 缺失 → `no-events` 拒绝（不折叠为空会话静默丢史）。
 - **晚装载 fail-closed**：持久化插件晚于会话创建装载（错过 `sessionCreated`）时，该会话后续 append 只入队不落盘，flush 失败 `writer-unopened:<id>`，绝不写出无 header 的档案。
 - 路径安全：SessionId 必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`（默认铸造天然合规）。
 - 落盘口径：flush 屏障 = 文件 `fsync`；不 fsync 目录项（首次建目录后断电的极窄窗口，接受并记录）。
@@ -150,7 +151,7 @@ interface SessionArchive {
 - `append`：同步、零 I/O、O(payload)（脱钩快照 + 深冻 + log push + 投影增量维护；emit token freeze=none，平台不重复深冻）。
 - `replace`：O(surface) 定位 + 摘除（低频操作，surface 节点数千级内可接受）。
 - `events()/surface()/deriveMessages()`：O(日志/投影) 快照副本，无副作用。
-- `create`：O(1)；带 seed = O(N) 校验（信封 + seq 连续 + 投影重放验证）。
+- `create`：O(1)；带 seed = O(N)（物化 + 信封白名单 + seq 连续 + 投影重放验证，单遍完成）。
 - `fork`：O(N) 快照复制 + O(N) seed 重验 + 首灌 O(N) 落盘（一次性，本就要写盘）。
 - `flush`：一次排空 = 批量追加 + 单次 fsync；同 id 串行链、不同 id 并行；无定时器。
 - 内存上界：pending 队列 ≤ 创建首灌后两次 flush 之间的事件数（由消费方检查点策略决定，本件不设上限不丢事件）。
@@ -210,6 +211,8 @@ packages/session-persistence-jsonl/src/
 **不承接（机制不存在，复制即投机——用户裁决：参照只取机制思想）**：格式世代迁移/zstd 压缩/跨进程文件锁/Windows 发布路径（DSH 为部署存量服务，本仓无存量）；`sourceEventSeqs` 引用与区间编码（本仓 replace 只带区间，已裁决）；prepare/enter/announce 三段拆分及其重入竞态（单 birth 路径）；system 节点路由特判（system/message 是普通 surface 节点）；冷读 memo/单飞历史准备（全量读足够）。
 
 **归属后件**：结构不变量伴随插件（turn/step 括号纪律）→ agent-loop 件；崩溃修复 interruptedTurnClosers 全部语义（平衡卷零修复/step 先 turn 后闭合/not-started vs outcome-unknown/多调用顺序/孤儿 tool-call 优雅）→ agent-loop repair；checkpoint fail-closed 全矩阵 → session-checkpoint 件。三件的独立文档必须逐条承接上述清单。
+
+**三路独立审计处置（2026-09-18，多子 agent 并行）**：① 门-账 TOCTOU 发散（getter 两遍读）→ 物化先行根治，`isJsonSafe` 谓词删除（materializeJson 单一真相）；② replace 区间三处重复实现 → `applySurfaceEvent` 返回判别联合成为唯一真相（append 落账前先算步进），`gateSurfaceOp` 删除；③ 孤儿 header 投机续写分支与「events 缺失=空会话」静默丢史路径成对删除/改 fail-closed；④ 终排空失败 fd 泄漏 → 无条件 close 后重抛；⑤ `rootReady` 冗余层删除（writer mkdir 覆盖）；⑥ 拒绝报文按来源分类（原一律 session-id-reused 误导运维）；⑦ `Result`/`errorText` 迁 core；⑧ flush 载荷 `{flushed:true}`→`true`；⑨ 信封键白名单 + isCount safe-integer + time 非负；⑩ usage 形状门；⑪ 监听器重入 append 卫兵（拒 `append-reentrant` 防栈溢出）；⑫ 故障注入测试补全（FileHandle 原型拦截：半写回滚/并发串行/重生链继承/close 不泄漏）。
 
 ## 9. 验收清单
 

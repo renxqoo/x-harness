@@ -1,4 +1,4 @@
-import type { Result } from "../types.ts";
+import type { Result } from "@x-harness/core";
 import type { SessionId } from "../types.ts";
 
 /** 测试用 Result 解包：失败即抛（测试内失败路径另行显式断言） */

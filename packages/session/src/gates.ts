@@ -1,4 +1,5 @@
-// 写侧与读侧共用的校验门：路径安全 / JSON 安全 / 逐词条形状 / seed 信封 + 投影重放（docs/SESSION.md §1.8、§7）。
+// 写侧与读侧共用的校验门：路径安全 / 逐词条形状 / seed 信封白名单 + 投影重放（docs/SESSION.md §1.8、§7）。
+// JSON 值域由 snapshot.ts 的 materializeJson 单一权威承担（调用方物化先行，门只看快照形状）；
 // 垃圾输入一律返回失败理由，不抛不崩。
 
 import { applySurfaceEvent, isSurfaceEventType } from "./surface.ts";
@@ -11,38 +12,6 @@ export function isSafeSessionId(id: string): boolean {
   return SESSION_ID_PATTERN.test(id);
 }
 
-export function isJsonSafe(value: unknown): boolean {
-  try {
-    return checkJsonSafe(value, new Set<object>());
-  } catch {
-    // 病态输入（如 getter 抛错）按不安全降级
-    return false;
-  }
-}
-
-/** 环检测按「祖先路径」判：DAG 重复引用（同一冻结块复用）合法，仅回到祖先判循环 */
-function checkJsonSafe(value: unknown, path: Set<object>): boolean {
-  if (value === null) return true;
-  const kind = typeof value;
-  if (kind === "string" || kind === "boolean") return true;
-  if (kind === "number") return Number.isFinite(value);
-  if (typeof value !== "object") return false; // undefined / function / symbol / bigint
-  if (path.has(value)) return false; // 循环引用（回到祖先）
-  path.add(value);
-  const ok = Array.isArray(value)
-    ? Object.keys(value).length === value.length && value.every((item) => checkJsonSafe(item, path)) // 稀疏数组（洞）在此被拒
-    : (() => {
-        const proto = Object.getPrototypeOf(value);
-        // 原型须是 Object.prototype 或 null：既拒 Date/Map/类实例，也拒 `{__proto__: X}` 字面量
-        // 设置的原型污染（其值不在自有键上，验证不可跳过）
-        if (proto !== Object.prototype && proto !== null) return false;
-        if (Object.getOwnPropertySymbols(value).length > 0) return false; // Symbol 键会被 JSON 静默丢弃
-        return Object.values(value).every((item) => checkJsonSafe(item, path)); // 显式 undefined 值在此被拒
-      })();
-  path.delete(value);
-  return ok;
-}
-
 function isObj(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -52,7 +21,7 @@ function isStr(value: unknown): value is string {
 }
 
 function isCount(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0);
 }
 
 function isContentBlocks(value: unknown): boolean {
@@ -105,7 +74,7 @@ function isInboxEntries(value: unknown): boolean {
   );
 }
 
-/** 逐词条形状门：词表闭合（13 条），结构与归属键检查，语义归写方 */
+/** 逐词条形状门：词表闭合（14 条），结构与归属键检查，语义归写方 */
 const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean } = {
   "turn/start": (d) => isObj(d) && isCount(d["turn"]),
   "turn/end": (d) => isObj(d) && isCount(d["turn"]) && isTurnEndReason(d["reason"]),
@@ -118,6 +87,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isCount(d["turn"]) &&
     isCount(d["step"]) &&
     isContentBlocks(d["content"]) &&
+    (d["usage"] === undefined || isObj(d["usage"])) &&
     (d["stopReason"] === undefined || isStr(d["stopReason"])) &&
     (d["interrupted"] === undefined || d["interrupted"] === true),
   "assistant/attempt": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["error"]),
@@ -160,21 +130,11 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
   },
 };
 
-/** append 的第一道门：未知词条 / 非 JSON 安全 data / 形状不符 → 返回失败理由 */
+/** 形状门：未知词条 / 形状不符 → 返回失败理由（data 须为已物化快照或 JSON.parse 产物） */
 export function gateEvent(type: string, data: unknown): string | undefined {
   const gate = (shapeGates as Record<string, ((data: unknown) => boolean) | undefined>)[type];
   if (gate === undefined) return `unknown-type:${type}`;
-  if (!isJsonSafe(data)) return `not-json-safe:${type}`;
   return gate(data) ? undefined : `shape:${type}`;
-}
-
-/** replace 区间门：端点必须都是当前 surface 现存节点 */
-export function gateSurfaceOp(op: SurfaceOp, surfaceSeqs: readonly number[]): string | undefined {
-  if (op === "append") return undefined;
-  if (op.startSeq > op.endSeq) return `replace-range:${op.startSeq}>${op.endSeq}`;
-  if (!surfaceSeqs.includes(op.startSeq)) return `replace-target-missing:${op.startSeq}`;
-  if (!surfaceSeqs.includes(op.endSeq)) return `replace-target-missing:${op.endSeq}`;
-  return undefined;
 }
 
 /** intent 本体的运行时形状门（append 与 replace 之外一律非法；null/缺键/多余形状在此拦截） */
@@ -186,29 +146,43 @@ export function parseSurfaceOp(value: unknown): SurfaceOp | undefined {
   return undefined;
 }
 
-/** seed（resume/fork 前缀/磁盘读回）的整卷校验：信封形状 + seq 连续 + surfaceOp 一致性 + 投影重放 */
+const ENVELOPE_KEYS: ReadonlySet<string> = new Set(["type", "seq", "time", "data", "surfaceOp"]);
+
+/** seed（resume/磁盘读回）的整卷校验：信封白名单 + 形状 + seq 连续 + surfaceOp 一致性 + 投影重放。
+ *  输入须为已物化快照（store 侧物化先行）或 JSON.parse 产物 */
+function envelopeExtraKey(raw: Record<string, unknown>): string | undefined {
+  for (const key of Object.keys(raw)) {
+    if (!ENVELOPE_KEYS.has(key)) return key;
+  }
+  return undefined;
+}
+
 export function validateSessionEvents(events: readonly unknown[]): string | undefined {
   let nodes: readonly SurfaceNode[] = [];
   for (let i = 0; i < events.length; i++) {
     const raw = events[i];
     if (!isObj(raw)) return `corrupt-envelope:${i}:not-object`;
+    const extraKey = envelopeExtraKey(raw);
+    if (extraKey !== undefined) return `corrupt-envelope:${i}:extra-key:${extraKey}`;
     const type = raw["type"];
     if (typeof type !== "string") return `corrupt-envelope:${i}:type`;
     const gateErr = gateEvent(type, raw["data"]);
     if (gateErr !== undefined) return `corrupt-envelope:${i}:${gateErr}`;
     if (raw["seq"] !== i) return `corrupt-envelope:${i}:seq`;
-    if (typeof raw["time"] !== "number" || !Number.isFinite(raw["time"])) return `corrupt-envelope:${i}:time`;
+    const time = raw["time"];
+    if (typeof time !== "number" || !Number.isFinite(time) || time < 0 || Object.is(time, -0)) {
+      return `corrupt-envelope:${i}:time`;
+    }
     const op = parseSurfaceOp(raw["surfaceOp"]);
     if (isSurfaceEventType(type)) {
       if (op === undefined) return `corrupt-envelope:${i}:surface-op`;
-      if (op !== "append" && op.startSeq > op.endSeq) return `corrupt-envelope:${i}:replace-range`;
-      const next = applySurfaceEvent(
+      const step = applySurfaceEvent(
         nodes,
-        { seq: i, time: raw["time"], type, data: raw["data"], surfaceOp: op } as unknown as SessionEvent<SurfaceEventType>,
+        { seq: i, time, type, data: raw["data"], surfaceOp: op } as unknown as SessionEvent<SurfaceEventType>,
       );
-      if (next === undefined) return `corrupt-surface:${i}`;
-      nodes = next;
-    } else if (op !== undefined) {
+      if (!step.ok) return `corrupt-surface:${i}:${step.reason}`;
+      nodes = step.nodes;
+    } else if (Object.hasOwn(raw, "surfaceOp")) {
       return `corrupt-envelope:${i}:surface-op-not-allowed`;
     }
   }

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { isJsonSafe } from "../gates.ts";
 import { materializeJson } from "../snapshot.ts";
 import { createSession } from "../session.ts";
 import type { SessionEvent, SessionHeader, SessionId } from "../types.ts";
@@ -54,7 +53,6 @@ describe("JSON 脱钩快照（docs/SESSION.md §1.3——DSH json.spec/TOCTOU �
 
   it("__proto__ 自有键（JSON 来源）保留为自有键、不污染原型", () => {
     const parsed = JSON.parse('{"__proto__": {"a": 1}, "b": 2}');
-    expect(isJsonSafe(parsed)).toBe(true);
     const out = materializeJson(parsed) as Record<string, unknown>;
     expect(Object.getPrototypeOf(out)).toBe(Object.prototype);
     expect(Object.keys(out)).toContain("__proto__");
@@ -62,18 +60,12 @@ describe("JSON 脱钩快照（docs/SESSION.md §1.3——DSH json.spec/TOCTOU �
     expect(JSON.stringify(out)).toBe(JSON.stringify(parsed));
   });
 
-  it("字面量/显式设置的原型污染被 isJsonSafe 拒绝（验证不可被原型链跳过）", () => {
+  it("字面量/显式设置的原型污染被物化拒绝（验证不可被原型链跳过）", () => {
     const crafted: Record<string, unknown> = {};
     Object.setPrototypeOf(crafted, { hidden: { deep: 1 } });
-    expect(isJsonSafe(crafted)).toBe(false);
+    expect(() => materializeJson(crafted)).toThrow();
     const viaNullProto = Object.assign(Object.create(null), { a: 1 });
-    expect(isJsonSafe(viaNullProto)).toBe(true); // null 原型的普通 record 合法
-  });
-
-  it("稀疏数组 → false（洞读为 undefined，JSON 会静默写 null）", () => {
-    const sparse = [1, 2];
-    delete sparse[1];
-    expect(isJsonSafe(sparse)).toBe(false);
+    expect(() => materializeJson(viaNullProto)).not.toThrow(); // null 原型的普通 record 合法
   });
 
   it("拒绝路径不 mutate 输入", () => {

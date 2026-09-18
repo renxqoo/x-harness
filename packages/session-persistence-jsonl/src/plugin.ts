@@ -1,15 +1,15 @@
 // jsonl 持久化桥：pending 内存队列 + per-id 串行链（一切磁盘写只经此链，docs/SESSION.md §1.8 单一不变量）。
 // 链来源三处：created 首灌（构造期全量）、flush 增量排空、disposed/卸载终排空；同 id 重用 fail-closed。
 
-import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { errorText } from "@x-harness/core";
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { sessionArchive, sessionCreated, sessionDisposed, sessionEvent, sessionFlush, sessionStore } from "@x-harness/session";
 import type { SessionEvent, SessionHeader, SessionId } from "@x-harness/session";
 import { createArchiveReader } from "./archive.ts";
 import { openSessionWriter } from "./writer.ts";
 import type { SessionWriter } from "./writer.ts";
-import { isEexistError } from "./writer.ts";
+import { isPermanentRejection } from "./writer.ts";
 
 export interface JsonlPersistenceOptions {
   readonly root: string;
@@ -37,8 +37,6 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
         ((message: string) => {
           process.stderr.write(`${message}\n`);
         });
-      const rootReady = mkdir(options.root, { recursive: true });
-      void rootReady.catch(() => {}); // 拒绝由各链段 await 时拿到；此处仅消未处理拒绝
 
       const store = ctx.use(sessionStore);
       const lives = new Map<SessionId, LiveSession>();
@@ -82,8 +80,9 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
           }
           return live.writer;
         } catch (error) {
-          if (isEexistError(error)) {
-            live.dead = `session-id-reused:${live.id}`;
+          // 永久性拒绝（重用/档案损坏/前缀不符）闩 dead 并按来源报文；瞬时 I/O 错误上抛可重试
+          if (isPermanentRejection(error)) {
+            live.dead = error instanceof Error ? error.message : String(error);
             report(live.dead);
           }
           throw error;
@@ -108,12 +107,20 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
 
       function closeSteps(live: LiveSession): Promise<void> {
         return runSegment(live, async () => {
-          await rootReady;
-          if (!live.closed && live.dead === undefined) await drainSteps(live);
+          // 终排空失败不得泄漏 fd：drain 捕获错误，writer 无条件关闭后再重抛
+          let drainError: unknown;
+          if (!live.closed && live.dead === undefined) {
+            try {
+              await drainSteps(live);
+            } catch (error) {
+              drainError = error;
+            }
+          }
           live.closed = true;
           const writer = live.writer;
           live.writer = undefined;
           if (writer !== undefined) await writer.close();
+          if (drainError !== undefined) throw drainError;
         });
       }
 
@@ -133,10 +140,7 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
             dead: undefined,
           };
           lives.set(header.id, live);
-          void runSegment(live, async () => {
-            await rootReady;
-            await drainSteps(live);
-          }).catch((error) => {
+          void runSegment(live, () => drainSteps(live)).catch((error) => {
             report(`session-created-persist-failed:${header.id}:${errorText(error)}`);
           });
         }),
@@ -146,10 +150,7 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
         ctx.on(sessionFlush, ({ session }) => {
           const live = lives.get(session);
           if (live === undefined) return undefined;
-          return runSegment(live, async () => {
-            await rootReady;
-            await drainSteps(live);
-          });
+          return runSegment(live, () => drainSteps(live));
         }),
         ctx.on(sessionDisposed, ({ session }) => {
           const live = lives.get(session);
@@ -177,8 +178,3 @@ export function createJsonlSessionPersistence(options: JsonlPersistenceOptions):
   } satisfies Plugin;
 }
 
-function errorText(error: unknown): string {
-  if (error instanceof AggregateError) return error.errors.map((inner) => errorText(inner)).join("; ");
-  if (error instanceof Error) return error.message;
-  return String(error);
-}

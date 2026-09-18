@@ -135,11 +135,37 @@ describe("create（docs/SESSION.md §1.5）", () => {
   it.each<[string, CreateSessionOptions, string]>([
     ["非法 id", { header: { id: sid("../x"), createdAt: 1 } }, "invalid-header:shape"],
     ["id 冲突", { header: { id: sid("a"), createdAt: 1 }, id: sid("b") }, "invalid-header:id-mismatch"],
+    ["非 JSON 字段（函数）", { header: { id: sid("j"), createdAt: 1, cwd: (() => "/x") as unknown as string } }, "invalid-header:not-json"],
   ])("header 覆盖拒绝：%s", (_name, options, expected) => {
     return (async () => {
       const store = createSessionStore(makeStore().hooks);
       expect(await store.create(options)).toEqual({ ok: false, reason: expected });
+      expect(store.list()).toEqual([]); // 零残留
     })();
+  });
+
+  it("header 覆盖脱钩：create 后调用方对象可继续修改、store 不受影响（G7）", async () => {
+    const store = createSessionStore(makeStore().hooks);
+    const source = { id: sid("det"), createdAt: 1, cwd: "/old" };
+    const s = unwrap(await store.create({ header: source }));
+    source.cwd = "/mutated";
+    expect(s.header.cwd).toBe("/old");
+    expect(Object.isFrozen(source)).toBe(false); // 调用方对象不被就地冻结
+  });
+
+  it("seed 信封含非 JSON 成员（显式 undefined 键/类实例）→ Result 拒绝零残留（G5：曾裸抛 not-json）", async () => {
+    const store = createSessionStore(makeStore().hooks);
+    const withUndefined = [{ type: "turn/start", seq: 0, time: 1, data: { turn: 0 }, surfaceOp: undefined }];
+    expect(await store.create({ id: sid("u"), seed: withUndefined as never })).toEqual({
+      ok: false,
+      reason: "corrupt-envelope:not-json",
+    });
+    const exotic = [Object.assign(new (class {})(), { type: "turn/start", seq: 0, time: 1, data: { turn: 0 } })];
+    expect(await store.create({ id: sid("e"), seed: exotic as never })).toEqual({
+      ok: false,
+      reason: "corrupt-envelope:not-json",
+    });
+    expect(store.list()).toEqual([]);
   });
 });
 
@@ -196,6 +222,20 @@ describe("fork（docs/SESSION.md §1.5）", () => {
     const empty = unwrap(await store.create());
     expect(await store.fork(empty.id)).toEqual({ ok: false, reason: "bad-cut:-1" });
   });
+
+  it("fork 失败路径零残留 + 显式子 id 冲突不影响现有会话（G6）", async () => {
+    const store = createSessionStore(makeStore().hooks);
+    const parent = unwrap(await store.create({ id: sid("p") }));
+    parent.append("turn/start", { turn: 0 });
+    const existing = unwrap(await store.create({ id: sid("taken") }));
+    const clashed = await store.fork(parent.id, { id: sid("taken") });
+    expect(clashed).toEqual({ ok: false, reason: "duplicate:taken" });
+    expect(store.get(sid("taken"))).toBe(existing); // 现有会话不被覆盖
+    for (const bad of [await store.fork(sid("nope")), await store.fork(parent.id, { untilSeq: 99 })]) {
+      expect(bad.ok).toBe(false);
+    }
+    expect(store.list()).toEqual(["p", "taken"]); // 失败路径零残留
+  });
 });
 
 describe("flush / dispose（docs/SESSION.md §1.5）", () => {
@@ -204,7 +244,7 @@ describe("flush / dispose（docs/SESSION.md §1.5）", () => {
     const store = createSessionStore(h.hooks);
     expect(await store.flush(sid("nope"))).toEqual({ ok: false, reason: "no-session:nope" });
     const s = unwrap(await store.create());
-    expect(await store.flush(s.id)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await store.flush(s.id)).toEqual({ ok: true, value: true });
     expect(h.flushes).toEqual([s.id]);
     h.setFlushError(new Error("io"));
     expect(await store.flush(s.id)).toEqual({ ok: false, reason: "flush-failed:io" });

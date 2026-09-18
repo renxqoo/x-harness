@@ -1,8 +1,8 @@
 // Session 契约类型：事件信封判别联合、13 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
 
-export type SessionId = string & { readonly __brand: "SessionId" };
+import type { Result } from "@x-harness/core";
 
-export type Result<T, E = string> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly reason: E };
+export type SessionId = string & { readonly __brand: "SessionId" };
 
 /** 无格式版本字段：格式身份判别 = 闭合词表 + fail-closed 校验（docs/SESSION.md §1.6）；
  *  语义级变更（改既有词条含义/信封机制）发生的当下再引入显式判别字段，字段缺失即变更前档案 */
@@ -136,7 +136,7 @@ export interface SessionStore {
   get(id: SessionId): Session | undefined;
   list(): readonly SessionId[];
   /** 落盘屏障：空屏障语义——未装配持久化插件时成功不承诺字节落盘（docs/SESSION.md §1.5） */
-  flush(id: SessionId): Promise<Result<{ readonly flushed: true }>>;
+  flush(id: SessionId): Promise<Result<true>>;
   dispose(id: SessionId): Result<true>;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySurfaceEvent, projectSurface, surfaceReplace, surfaceToMessages } from "../surface.ts";
+import { applySurfaceEvent, projectSurface, surfaceToMessages } from "../surface.ts";
 import type { SessionEvent, SurfaceEventType, SurfaceOp } from "../types.ts";
 
 function surfaceEvent(spec: { seq: number; type: SurfaceEventType; data: unknown; op: SurfaceOp }): SessionEvent<SurfaceEventType> {
@@ -33,7 +33,8 @@ describe("projectSurface / applySurfaceEvent（docs/SESSION.md §1.4 投影语�
   it("replace 单点（start==end）", () => {
     const nodes = projectSurface([userEvent(0, "append"), userEvent(1, "append"), userEvent(2, "append")]);
     const next = applySurfaceEvent(nodes, userEvent(3, { op: "replace", startSeq: 1, endSeq: 1 }));
-    expect(next?.map((n) => n.seq)).toEqual([0, 3, 2]);
+    expect(next.ok).toBe(true);
+    if (next.ok) expect(next.nodes.map((n) => n.seq)).toEqual([0, 3, 2]);
   });
 
   it("replace 区间可跨 log-only seq（摘除按数值成员，非位置）", () => {
@@ -48,7 +49,8 @@ describe("projectSurface / applySurfaceEvent（docs/SESSION.md §1.4 投影语�
     const nodes = projectSurface(log);
     expect(nodes.map((n) => n.seq)).toEqual([0, 2, 5]);
     const next = applySurfaceEvent(nodes, userEvent(6, { op: "replace", startSeq: 0, endSeq: 5 }));
-    expect(next?.map((n) => n.seq)).toEqual([6]);
+    expect(next.ok).toBe(true);
+    if (next.ok) expect(next.nodes.map((n) => n.seq)).toEqual([6]);
   });
 
   it("连续叠加 replace 后位置保持自洽", () => {
@@ -63,20 +65,32 @@ describe("projectSurface / applySurfaceEvent（docs/SESSION.md §1.4 投影语�
     let nodes = projectSurface(log);
     expect(nodes.map((n) => n.seq)).toEqual([0, 5, 4]);
     // 数值区间 [4,5] 摘除按成员：位置在 start 前的 5 同在区间内，一并摘除
-    nodes = applySurfaceEvent(nodes, userEvent(6, { op: "replace", startSeq: 4, endSeq: 5 })) ?? [];
+    const stepped = applySurfaceEvent(nodes, userEvent(6, { op: "replace", startSeq: 4, endSeq: 5 }));
+    expect(stepped.ok).toBe(true);
+    if (!stepped.ok) return;
+    nodes = stepped.nodes;
     expect(nodes.map((n) => n.seq)).toEqual([0, 6]);
-    nodes = applySurfaceEvent(nodes, userEvent(7, "append")) ?? [];
+    const appended = applySurfaceEvent(nodes, userEvent(7, "append"));
+    expect(appended.ok).toBe(true);
+    if (appended.ok) nodes = appended.nodes;
     expect(nodes.map((n) => n.seq)).toEqual([0, 6, 7]);
   });
 
-  it("端点缺失的 replace → undefined（幂等拒绝）", () => {
+  it("端点缺失 / 反向区间的 replace → 失败理由（单一真相：applySurfaceEvent）", () => {
     const nodes = projectSurface([userEvent(0, "append"), userEvent(2, "append")]);
-    expect(surfaceReplace(nodes, userEvent(3, { op: "replace", startSeq: 1, endSeq: 2 }), { op: "replace", startSeq: 1, endSeq: 2 })).toBeUndefined();
+    expect(applySurfaceEvent(nodes, userEvent(3, { op: "replace", startSeq: 1, endSeq: 2 }))).toEqual({
+      ok: false,
+      reason: "replace-target-missing:1",
+    });
+    expect(applySurfaceEvent(nodes, userEvent(3, { op: "replace", startSeq: 2, endSeq: 0 }))).toEqual({
+      ok: false,
+      reason: "replace-range:2>0",
+    });
   });
 
-  it("projectSurface 对含非法 replace 的日志防御性跳过（保持可计算）", () => {
+  it("projectSurface 对含非法 replace 的日志抛错（fail-closed，不静默算错投影）", () => {
     const log = [userEvent(0, "append"), userEvent(1, { op: "replace", startSeq: 9, endSeq: 9 })] as SessionEvent[];
-    expect(projectSurface(log).map((n) => n.seq)).toEqual([0]);
+    expect(() => projectSurface(log)).toThrow("invalid-surface:1");
   });
 });
 

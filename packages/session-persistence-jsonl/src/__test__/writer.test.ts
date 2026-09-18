@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { SessionEvent, SessionHeader, SessionId } from "@x-harness/session";
-import { isEexistError, openSessionWriter } from "../writer.ts";
+import { isEexistError, isPermanentRejection, openSessionWriter } from "../writer.ts";
 
 let root: string;
 const header: SessionHeader = { id: "w1" as SessionId, createdAt: 1 };
@@ -50,10 +50,11 @@ describe("openSessionWriter 全新路径（docs/SESSION-RESUME §1.4 Level 1）"
     expect(await readFile(join(root, "events.jsonl"), "utf8")).toBe("");
   });
 
-  it("events 已存在且无有效续写（currentEvents 空）→ EEXIST，旧档不动", async () => {
+  it("events 已存在且无 header（孤儿事件档）→ archive-orphan-events，旧档不动", async () => {
     await writeLines(root, [JSON.stringify(ev0)]);
     const error = await openSessionWriter(root, header, []).catch((e: unknown) => e);
-    expect(isEexistError(error)).toBe(true);
+    expect(isPermanentRejection(error)).toBe(true);
+    expect((error as Error).message).toMatch(/^archive-orphan-events:/);
     expect(await readFile(join(root, "events.jsonl"), "utf8")).toBe(`${JSON.stringify(ev0)}\n`);
   });
 
@@ -67,15 +68,13 @@ describe("openSessionWriter 全新路径（docs/SESSION-RESUME §1.4 Level 1）"
     await expect(readFile(join(root, "events.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("孤儿 header（header 在、events 缺）且相等 → 续写空卷 k=0（docs/SESSION-RESUME 审查 #5）", async () => {
+  it("孤儿 header（header 在、events 缺，外部损坏态）→ wx EEXIST 回滚拒绝，旧 header 零损毁", async () => {
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "header.json"), `${JSON.stringify(header)}\n`);
-    const opened = await openSessionWriter(root, header, [ev0]);
-    expect(opened.prefixLength).toBe(0);
-    await opened.writer.append([`${JSON.stringify(ev0)}\n`]);
-    await opened.writer.sync();
-    await opened.writer.close();
-    expect(await readFile(join(root, "events.jsonl"), "utf8")).toBe(`${JSON.stringify(ev0)}\n`);
+    const error = await openSessionWriter(root, header, [ev0]).catch((e: unknown) => e);
+    expect(isEexistError(error)).toBe(true);
+    expect(await readFile(join(root, "header.json"), "utf8")).toBe(`${JSON.stringify(header)}\n`);
+    await expect(readFile(join(root, "events.jsonl"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("isEexistError 对非 fs 错误 → false", () => {
@@ -98,12 +97,13 @@ describe("openSessionWriter 续写路径（docs/SESSION-RESUME §1.4 Level 2）"
     expect(lines).toEqual([JSON.stringify(ev0), JSON.stringify(ev1)]);
   });
 
-  it("前缀不符（磁盘事件与当前日志不同）→ EEXIST，旧档不动", async () => {
+  it("前缀不符（磁盘事件与当前日志不同）→ archive-prefix-mismatch，旧档不动", async () => {
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "header.json"), `${JSON.stringify(header)}\n`);
     await writeLines(root, [JSON.stringify(ev1)]);
     const error = await openSessionWriter(root, header, [ev0, ev1]).catch((e: unknown) => e);
-    expect(isEexistError(error)).toBe(true);
+    expect(isPermanentRejection(error)).toBe(true);
+    expect((error as Error).message).toMatch(/^archive-prefix-mismatch:/);
     expect(await readFile(join(root, "events.jsonl"), "utf8")).toBe(`${JSON.stringify(ev1)}\n`);
   });
 
@@ -115,10 +115,11 @@ describe("openSessionWriter 续写路径（docs/SESSION-RESUME §1.4 Level 2）"
     const ok = await openSessionWriter(root, header, [ev0]);
     expect(ok.prefixLength).toBe(1);
     await ok.writer.close();
-    // 值不同（createdAt）→ 拒
+    // 值不同（createdAt）→ session-id-reused
     await writeFile(join(root, "header.json"), `${JSON.stringify({ id: "w1", createdAt: 9 })}\n`);
     const error = await openSessionWriter(root, header, [ev0]).catch((e: unknown) => e);
-    expect(isEexistError(error)).toBe(true);
+    expect(isPermanentRejection(error)).toBe(true);
+    expect((error as Error).message).toMatch(/^session-id-reused:/);
   });
 
   it("残尾半行 → 截断丢弃 + 续写后读全量（docs/SESSION-RESUME 审查 #1 态一）", async () => {
@@ -148,11 +149,15 @@ describe("openSessionWriter 续写路径（docs/SESSION-RESUME §1.4 Level 2）"
     expect(lines).toEqual([JSON.stringify(ev0), JSON.stringify(ev1)]);
   });
 
-  it("中间空行 / 中间坏行 → EEXIST（修复只针对尾部）", async () => {
+  it("中间空行 / 中间坏行 → archive-corrupt（修复只针对尾部）", async () => {
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "header.json"), `${JSON.stringify(header)}\n`);
     await writeFile(join(root, "events.jsonl"), `${JSON.stringify(ev0)}\n\n${JSON.stringify(ev1)}\n`);
     const error = await openSessionWriter(root, header, [ev0, ev1]).catch((e: unknown) => e);
-    expect(isEexistError(error)).toBe(true);
+    expect(isPermanentRejection(error)).toBe(true);
+    expect((error as Error).message).toMatch(/^archive-corrupt:.*:blank-line$/);
+    await writeFile(join(root, "events.jsonl"), `${JSON.stringify(ev0)}\n{broken\n${JSON.stringify(ev1)}\n`);
+    const error2 = await openSessionWriter(root, header, [ev0, ev1]).catch((e: unknown) => e);
+    expect((error2 as Error).message).toMatch(/^archive-corrupt:.*:line1$/);
   });
 });

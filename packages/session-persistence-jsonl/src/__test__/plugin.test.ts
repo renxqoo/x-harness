@@ -36,7 +36,7 @@ describe("全链路落盘（docs/SESSION.md §1.8 链来源与时序）", () => 
     turn(s, 0);
     s.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "hi" }] }, append);
     s.append("tool/result", { turn: 0, step: 0, callId: "c", content: "ok" }, append);
-    expect(await world.store.flush(s.id)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true });
     const read = unwrap(await world.archive.read(s.id));
     expect(read.events).toEqual(s.events());
     expect(read.header.id).toBe(s.id);
@@ -50,7 +50,7 @@ describe("全链路落盘（docs/SESSION.md §1.8 链来源与时序）", () => 
     await world.store.flush(parent.id);
 
     const child = unwrap(await world.store.fork(parent.id, { id: "child" as SessionId }));
-    expect(await world.store.flush(child.id)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await world.store.flush(child.id)).toEqual({ ok: true, value: true });
     const read = unwrap(await world.archive.read("child" as SessionId));
     expect(read.events.map((event) => event.type)).toEqual(["turn/start", "user/message", "session/end-seed"]);
     expect(read.events[2]?.data).toEqual({ inherited: true });
@@ -133,9 +133,10 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     const first = unwrap(await world.store.create({ id: "dup" as SessionId }));
     turn(first, 0);
     first.append("user/message", { turn: 0, step: 0, content: [] }, append);
-    expect(await world.store.flush("dup" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await world.store.flush("dup" as SessionId)).toEqual({ ok: true, value: true });
     const before = await world.archive.read("dup" as SessionId);
     world.store.dispose("dup" as SessionId);
+    await new Promise((resolve) => { setTimeout(resolve, 3); }); // 跨毫秒，确保新 header createdAt 严格不同
 
     const second = unwrap(await world.store.create({ id: "dup" as SessionId }));
     turn(second, 99);
@@ -171,7 +172,7 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     if (made.ok) turn(made.value, 1);
     const flushed = await world.store.flush("tam" as SessionId);
     expect(flushed.ok).toBe(false);
-    if (!flushed.ok) expect(flushed.reason).toContain("session-id-reused:tam");
+    if (!flushed.ok) expect(flushed.reason).toContain("archive-prefix-mismatch:tam");
     const after = unwrap(await world.archive.read("tam" as SessionId));
     expect(after.events).toEqual(snapshot.events);
   });
@@ -190,7 +191,7 @@ describe("turn/end reason 持久往返（DSH session.spec 承接：六态 reason
     const s = unwrap(await world.store.create({ id: "rt" as SessionId }));
     s.append("turn/start", { turn: 0 });
     s.append("turn/end", { turn: 0, reason });
-    expect(await world.store.flush("rt" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await world.store.flush("rt" as SessionId)).toEqual({ ok: true, value: true });
     const read = unwrap(await world.archive.read("rt" as SessionId));
     expect(read.events[1]?.data).toEqual({ turn: 0, reason });
     expect(read.events[1]?.data).toEqual(s.events()[1]?.data);
@@ -203,7 +204,7 @@ describe("resume 续写主链（docs/SESSION-RESUME §1.4/§7）", () => {
     const gen1 = unwrap(await world.store.create({ id: "rs" as SessionId }));
     turn(gen1, 0);
     gen1.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "hi" }] }, append);
-    expect(await world.store.flush("rs" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await world.store.flush("rs" as SessionId)).toEqual({ ok: true, value: true });
     const snapshot = unwrap(await world.archive.read("rs" as SessionId));
     world.store.dispose("rs" as SessionId);
     await waitUntil(async () => {
@@ -214,7 +215,7 @@ describe("resume 续写主链（docs/SESSION-RESUME §1.4/§7）", () => {
     // resume：seed = 归档卷 + repair closers（此处无残 turn → closers 空），构造器补 end-seed
     const gen2 = unwrap(await world.store.create({ header: snapshot.header, seed: snapshot.events }));
     turn(gen2, 1);
-    expect(await world.store.flush("rs" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await world.store.flush("rs" as SessionId)).toEqual({ ok: true, value: true });
     const r2 = unwrap(await world.archive.read("rs" as SessionId));
     const expected = [...snapshot.events, { type: "session/end-seed" }, { type: "turn/start" }];
     expect(r2.events.map((e) => e.type)).toEqual(expected.map((e) => (e as { type: string }).type));
@@ -239,7 +240,7 @@ describe("resume 续写主链（docs/SESSION-RESUME §1.4/§7）", () => {
       });
       const next = unwrap(await world.store.create({ header: snapshot.header, seed: snapshot.events }));
       turn(next, round);
-      expect(await world.store.flush("chain" as SessionId)).toEqual({ ok: true, value: { flushed: true } });
+      expect(await world.store.flush("chain" as SessionId)).toEqual({ ok: true, value: true });
       const read = unwrap(await world.archive.read("chain" as SessionId));
       const seqs = read.events.map((e) => e.seq);
       expect(new Set(seqs).size).toBe(seqs.length);
@@ -291,7 +292,7 @@ describe("flush 失败路由（docs/SESSION.md §1.8 I/O 失败路由）", () =>
     expect(made.ok).toBe(true);
     if (made.ok) {
       turn(made.value, 0);
-      expect(await store.flush(made.value.id)).toEqual({ ok: true, value: { flushed: true } });
+      expect(await store.flush(made.value.id)).toEqual({ ok: true, value: true });
     }
 
     // created 已错过的 "late"：新 append 建出无 header 条目 → flush 必须 fail-closed

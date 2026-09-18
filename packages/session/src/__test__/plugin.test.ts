@@ -71,13 +71,13 @@ describe("插件装配与总线时序（docs/SESSION.md §1.2）", () => {
   it("flush 空屏障：无监听立即成功；监听抛错经 parallel 聚合上浮", async () => {
     const { ctx, store } = await assemble();
     const s = unwrap(await store.create());
-    expect(await store.flush(s.id)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await store.flush(s.id)).toEqual({ ok: true, value: true });
     const off = ctx.on(sessionFlush, async () => {
       throw new Error("io");
     });
     expect(await store.flush(s.id)).toEqual({ ok: false, reason: "flush-failed:io" });
     off();
-    expect(await store.flush(s.id)).toEqual({ ok: true, value: { flushed: true } });
+    expect(await store.flush(s.id)).toEqual({ ok: true, value: true });
   });
 
   it("多监听器同时失败：AggregateError 展开后原因全保留（症状：曾只见 parallel dispatch failures）", async () => {

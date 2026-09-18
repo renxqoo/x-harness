@@ -194,6 +194,37 @@ describe("投影与快照（docs/SESSION.md §1.4、§1.5）", () => {
     expect(Object.isFrozen(events)).toBe(true);
   });
 
+  it("replace intent 对象 append 后可被调用方自由修改，落账信封不受影响（G9）", () => {
+    const { session } = makeSession();
+    session.append("user/message", { turn: 0, step: 0, content: [] }, userAppend);
+    const intent = { surfaceOp: { op: "replace" as const, startSeq: 0, endSeq: 0 } };
+    expect(session.append("user/message", { turn: 0, step: 0, content: [] }, intent).ok).toBe(true);
+    (intent.surfaceOp as { startSeq: number }).startSeq = 99;
+    const logged = session.events()[1] as { surfaceOp: { startSeq: number } };
+    expect(logged.surfaceOp.startSeq).toBe(0);
+    expect(Object.isFrozen(intent.surfaceOp)).toBe(false); // 调用方对象不被就地冻结
+  });
+
+  it("监听器内重入 append 被拒绝而非栈溢出；非重入监听器不受影响（G11）", () => {
+    const appended: SessionEvent[] = [];
+    const handle = createSession({
+      header,
+      seed: [],
+      inherited: false,
+      onAppend: (_session, event) => {
+        appended.push(event);
+        if (appended.length === 1) {
+          // 恒重入监听器：第一次事件里再 append——必须得到拒绝而不是无限递归
+          const reentrant = handle.session.append("turn/start", { turn: 99 });
+          expect(reentrant).toEqual({ ok: false, reason: "append-reentrant" });
+        }
+      },
+    });
+    expect(handle.session.append("turn/start", { turn: 0 }).ok).toBe(true);
+    expect(handle.session.append("turn/end", { turn: 0, reason: { kind: "completed" } }).ok).toBe(true);
+    expect(appended).toHaveLength(2);
+  });
+
   it("onAppend 收到 sessionId 与冻结事件", () => {
     const { session, appended } = makeSession();
     session.append("turn/start", { turn: 0 });

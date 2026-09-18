@@ -51,11 +51,10 @@ describe("read（docs/SESSION.md §1.8 读侧规则）", () => {
     expect(Object.isFrozen(result.value.events[0])).toBe(true);
   });
 
-  it("events.jsonl 缺失 = 空会话", async () => {
+  it("events.jsonl 缺失（header 在）→ no-events fail-closed，不折叠为空会话", async () => {
     await seedSession("empty");
     const result = await reader().read("empty" as SessionId);
-    expect(result).toMatchObject({ ok: true });
-    if (result.ok) expect(result.value.events).toEqual([]);
+    expect(result).toEqual({ ok: false, reason: "no-events:empty" });
   });
 
   it.each<[string, () => Promise<unknown>, string]>([
