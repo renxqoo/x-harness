@@ -73,7 +73,7 @@ export function createFakeEnv(root: string, opts: FakeEnvOptions = {}): FakeEnv 
   return {
     kind: "fake",
     root: resolve(root),
-    realpath: async (p) => resolve(p),
+    realpath: async (p) => resolve(resolve(root), p), // 相对入参锚 root（与 local 同口径）
     stat: async (p) => {
       const entry = entryAt(p);
       if (entry === undefined) return { ok: false, reason: "not_found" };

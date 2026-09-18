@@ -21,7 +21,6 @@ export type {
   WriteFileResult,
 } from "./types.ts";
 export { execEnv } from "./tokens.ts";
-export { createLocalReadFace } from "./local/read-face.ts";
 export { createLocalEnv } from "./local/env.ts";
 export { createLocalEnvPlugin } from "./local/plugin.ts";
 export type { LocalEnvPluginOptions } from "./local/plugin.ts";

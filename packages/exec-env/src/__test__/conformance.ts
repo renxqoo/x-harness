@@ -104,5 +104,15 @@ export function readFaceBothSuite(make: (root: string) => ReadFace): () => void 
       const deepMissing = await env.realpath(join(root, "ghost-a", "ghost-b", "x.txt"));
       expect(deepMissing).toBe(join(await env.realpath(root), "ghost-a", "ghost-b", "x.txt"));
     });
+
+    it("realpath：全不存在路径锚根保留完整尾段（回归：曾丢段）；相对入参以 env.root 解析", async () => {
+      const rootReal = await env.realpath(root);
+      // 根自身存在但子段全缺——最深存在祖先=根，尾段必须原样拼接
+      const ghost = await env.realpath(join(root, "ghost-a", "ghost-b", "x.txt"));
+      expect(ghost).toBe(join(rootReal, "ghost-a", "ghost-b", "x.txt"));
+      // 相对入参锚 env.root（不落 process.cwd）
+      const rel = await env.realpath("sub/inner.txt");
+      expect(rel).toBe(join(rootReal, "sub", "inner.txt"));
+    });
   };
 }

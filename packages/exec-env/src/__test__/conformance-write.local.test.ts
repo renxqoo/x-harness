@@ -1,6 +1,6 @@
 // write 面 local 腿：双腿套件 + local-only（D1 mode 承袭回归 / 注错缝 / 原子无残留 / symlink 替换链接本身）。
 
-import { mkdtemp, rm, writeFile, chmod, symlink, readdir, lstat, readFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, chmod, symlink, readdir, lstat, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
@@ -62,6 +62,18 @@ describe("write-face conformance local-only", () => {
   it("常规写后无 .tmp 残留", async () => {
     await writeFileAtomicLocal(join(root, "clean.txt"), Buffer.from("x"), { makeParents: true });
     expect(await temps()).toEqual([]);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("access_denied：父目录 000 → 写被拒（EACCES 判别）", async () => {
+    const dir = join(root, "denyw");
+    await mkdir(dir, { recursive: true });
+    await chmod(dir, 0o000);
+    try {
+      const result = await writeFileAtomicLocal(join(dir, "f.txt"), Buffer.from("x"), { makeParents: false });
+      expect(result).toEqual({ ok: false, reason: "access_denied" });
+    } finally {
+      await chmod(dir, 0o700);
+    }
   });
 
   it("symlink 目标：rename 替换链接本身——目标文件内容不变、路径不再是链接", async () => {

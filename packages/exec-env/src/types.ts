@@ -70,7 +70,7 @@ export type OpenReadResult =
  *  not_directory_parent = 父路径不可用（缺失且未请求 makeParents，或某段是已存在的非目录） */
 export type WriteFileResult =
   | { readonly ok: true; readonly stat: FileStat }
-  | { readonly ok: false; readonly reason: "is_directory" | "not_directory_parent" | "access_denied" } // 简单拒绝无细节
+  | { readonly ok: false; readonly reason: "is_directory" | "not_regular" | "not_directory_parent" | "access_denied" } // 简单拒绝无细节
   | { readonly ok: false; readonly reason: "write_failed"; readonly detail: string };
 
 export type ReadDirResult =

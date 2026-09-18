@@ -10,10 +10,12 @@ import { readDirLocal } from "./read-dir.ts";
 import { spawnLocal } from "./spawn.ts";
 
 export function createLocalEnv(root: string): ExecEnv {
+  const rootReal = realpathOrSelf(resolve(root));
   return {
     kind: "local",
-    root: realpathOrSelf(resolve(root)),
-    realpath: async (p) => realpathDeep(p),
+    root: rootReal,
+    // 相对入参以 env.root 解析（契约锚定——不落 process.cwd）
+    realpath: async (p) => realpathDeep(p, rootReal),
     stat: async (p) => statLocal(p),
     openRead: async (p) => openReadLocal(p),
     writeFileAtomic: async (p, content, opts) => writeFileAtomicLocal(p, content, opts),

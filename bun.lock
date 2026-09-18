@@ -93,6 +93,18 @@
         "@x-harness/tools": "workspace:*",
       },
     },
+    "packages/permission": {
+      "name": "@x-harness/permission",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+      },
+    },
     "packages/plugin-manager": {
       "name": "@x-harness/plugin-manager",
       "version": "0.0.1",
@@ -331,6 +343,8 @@
     "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
 
     "@x-harness/llm-retry": ["@x-harness/llm-retry@workspace:packages/llm-retry"],
+
+    "@x-harness/permission": ["@x-harness/permission@workspace:packages/permission"],
 
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
 

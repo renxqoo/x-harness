@@ -126,7 +126,14 @@ export function createDispatcher(deps: DispatcherDeps): ToolRegistry["dispatch"]
       if (request.signal.aborted) return abortedOutcome();
       const tool = deps.registry.get(request.name);
       if (tool === undefined) return errorOutcome(`unknown-tool:${request.name}`);
-      const decision = gateDecision(await deps.dispatchPreExecute({ callId: request.callId, name: request.name, args: request.args }));
+      const decision = gateDecision(
+        await deps.dispatchPreExecute({
+          callId: request.callId,
+          name: request.name,
+          args: request.args,
+          ...(request.session !== undefined ? { session: request.session } : {}),
+        }),
+      );
       if (decision.kind === "deny") return errorOutcome(`denied:${decision.reason}`);
       if (request.signal.aborted) return abortedOutcome();
       const violations = violationsOf(tool.inputSchema, request.args);

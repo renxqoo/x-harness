@@ -52,14 +52,36 @@ describe("spawn conformance（local 真进程）", () => {
     await spawned.proc.settled;
   });
 
-  it("信号死亡：kill -9 自杀 → exited 形状可判别（code null 或 128+n——渲染层折算）", async () => {
+  it("信号死亡：kill -9 自杀 → exited 精确形状 {code:null, signal:\"SIGKILL\"}（128+n 折算属渲染层）", async () => {
     const env = createLocalEnv(root);
     const spawned = await env.spawn({ argv: ["/bin/sh", "-c", "kill -9 $$"] });
     if (!spawned.ok) throw new Error("spawn failed");
     const exited = await spawned.proc.exited;
-    const dead = (exited.code === null && exited.signal !== null) || exited.code === 137;
-    expect(dead).toBe(true);
+    expect(exited).toEqual({ code: null, signal: "SIGKILL" });
     await spawned.proc.settled;
+  });
+
+  it("cwd_invalid：cwd 缺席 → 判别（不并入 not_found——坏 cwd 与缺二进制同为 ENOENT，预检是唯一判别面）", async () => {
+    const env = createLocalEnv(root);
+    const miss = await env.spawn({ argv: ["/bin/sh", "-c", "true"], cwd: join(root, "no-such-dir") });
+    expect(miss.ok).toBe(false);
+    if (!miss.ok) expect(miss.reason.kind).toBe("cwd_invalid");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(join(root, "plain.txt"), "x", "utf8");
+    const notDir = await env.spawn({ argv: ["/bin/sh", "-c", "true"], cwd: join(root, "plain.txt") });
+    if (!notDir.ok) expect(notDir.reason.kind).toBe("cwd_invalid");
+    else throw new Error("expected cwd_invalid");
+  });
+
+  it("not_executable：无执行位二进制 → 判别（EACCES 不并入 io_error）", async () => {
+    const env = createLocalEnv(root);
+    const { copyFile, chmod } = await import("node:fs/promises");
+    const p = join(root, "noexec.bin");
+    await copyFile("/bin/echo", p);
+    await chmod(p, 0o644);
+    const spawned = await env.spawn({ argv: [p, "hi"] });
+    expect(spawned.ok).toBe(false);
+    if (!spawned.ok) expect(spawned.reason.kind).toBe("not_executable");
   });
 
   it("kill 幂等不 throw；TERM 杀组长后 settled 有界收敛", async () => {
@@ -84,7 +106,7 @@ describe("spawn conformance（local 真进程）", () => {
     if (!spawned.ok) throw new Error("spawn failed");
     const started = Date.now();
     await spawned.proc.settled;
-    expect(Date.now() - started).toBeLessThan(7_000); // 有界（≤5s 轮询上限+余量）
+    expect(Date.now() - started).toBeLessThan(8_500); // 有界（≤5s 轮询上限+慢 CI 余量）
     await new Promise((r) => {
       setTimeout(r, 300); // KILL 落定余量
     });

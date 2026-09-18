@@ -3,13 +3,14 @@
 
 import { mkdtemp, rm, writeFile, rename, chmod, symlink, mkdir } from "node:fs/promises";
 import { openSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createLocalReadFace, LocalReadHandle } from "../index.ts";
+import { createLocalEnv, LocalReadHandle, openReadLocal } from "../index.ts";
 import { readFaceBothSuite } from "./conformance.ts";
 
-describe("read-face conformance（local 真盘）", readFaceBothSuite((root) => createLocalReadFace(root)));
+describe("read-face conformance（local 真盘）", readFaceBothSuite((root) => createLocalEnv(root)));
 
 describe("read-face conformance local-only", () => {
   let root = "";
@@ -22,7 +23,7 @@ describe("read-face conformance local-only", () => {
 
   // root 身份无 EACCES（T9 linux 容器腿）——显式跳过计数，不静默让行
   it.skipIf(process.getuid?.() === 0)("access_denied：父目录 000 → stat/openRead 均拒；文件 000 → 仅 openRead 拒", async () => {
-    const env = createLocalReadFace(root);
+    const env = createLocalEnv(root);
     // POSIX：stat 只需父目录搜览权——access_denied 必须经父目录构造
     await mkdir(join(root, "denydir"), { recursive: true });
     await writeFile(join(root, "denydir", "f.txt"), "x", "utf8");
@@ -47,7 +48,7 @@ describe("read-face conformance local-only", () => {
   });
 
   it("realpath 经 symlink：根内链接指向根外 → 解析到物理外部路径", async () => {
-    const env = createLocalReadFace(root);
+    const env = createLocalEnv(root);
     const outside = await mkdtemp(join(tmpdir(), "xh-envout-"));
     try {
       await writeFile(join(outside, "x.txt"), "x", "utf8");
@@ -61,7 +62,7 @@ describe("read-face conformance local-only", () => {
   });
 
   it("D2 版本原子性：openRead 后 rename 覆盖——句柄读旧内容、版本属旧 inode", async () => {
-    const env = createLocalReadFace(root);
+    const env = createLocalEnv(root);
     const p = join(root, "d2.txt");
     await writeFile(p, "old-content", "utf8");
     const open = await env.openRead(p);
@@ -80,6 +81,24 @@ describe("read-face conformance local-only", () => {
     if (!fresh.ok) throw new Error("stat failed");
     expect(open.version.ino).not.toBe(fresh.stat.version.ino); // 版本随 inode——CAS 必拒陈旧
     expect(open.version).not.toEqual(fresh.stat.version);
+  });
+
+  it("FIFO → not_regular（O_NONBLOCK 打开不阻塞——回归：无写者 FIFO 曾同步挂死事件循环）", async () => {
+    const env = createLocalEnv(root);
+    const p = join(root, "pipe.fifo");
+    execSync(`mkfifo ${JSON.stringify(p)}`);
+    expect(await env.openRead(p)).toEqual({ ok: false, reason: "not_regular" });
+  });
+
+  it("env 级 io_error 缝：openReadLocal seam 首读即 io_error（经真实 fd 的 syscall 映射通道）", async () => {
+    const p = join(root, "seam.txt");
+    await writeFile(p, "0123456789", "utf8");
+    const open = openReadLocal(p, { ioErrorAt: 0 });
+    expect(open.ok).toBe(true);
+    if (!open.ok) return;
+    expect(await open.handle.read()).toEqual({ ok: false, reason: "io_error" });
+    expect(await open.handle.read()).toEqual({ ok: false, reason: "io_error" }); // 粘性
+    await open.handle.close();
   });
 
   it("LocalReadHandle 注错缝：ioErrorAt 后 io_error 粘性；close 后读为 null", async () => {

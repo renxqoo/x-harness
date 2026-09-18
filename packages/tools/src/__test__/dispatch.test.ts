@@ -24,6 +24,23 @@ const call = (name: string, args: unknown = {}, signal?: AbortSignal): ToolCallR
   signal: signal ?? new AbortController().signal,
 });
 
+describe("pre-execute 载荷（session 服务端透传——docs/EXEC-ENV.md §5）", () => {
+  it("请求携带 session → pre-execute 载荷透传（模型入参不可伪造的服务端事实）", async () => {
+    const seen: unknown[] = [];
+    const world = makeWorld(async (payload) => {
+      seen.push(payload);
+      return { kind: "allow" };
+    });
+    world.registry.register({ name: "noop", inputSchema: Type.Object({}), execute: async () => ({ content: "" }) });
+    const { dispatch } = world;
+    const req = { ...call("noop"), session: "sess-x" as never };
+    await dispatch(req);
+    expect(seen[0]).toMatchObject({ callId: "c1", name: "noop", session: "sess-x" });
+    await dispatch(call("noop"));
+    expect(seen[seen.length - 1]).not.toHaveProperty("session"); // 缺省不伪造字段
+  });
+});
+
 describe("dispatch 路径矩阵（docs/TOOLS.md §7）", () => {
   it("形状守卫：缺 signal / 缺 name / 非 callId → invalid-request", async () => {
     const { dispatch } = makeWorld();

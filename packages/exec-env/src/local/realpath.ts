@@ -5,9 +5,10 @@
 import { realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 
-/** 契约 realpath：ENOENT 沿祖先上溯；EACCES 等其他错误同样上溯（词法兜底——与迁移前行为一致） */
-export function realpathDeep(p: string): string {
-  let probe = resolve(p);
+/** 契约 realpath：ENOENT 沿祖先上溯；EACCES 等其他错误同样上溯（词法兜底——与迁移前行为一致）；
+ *  一路不存在到根也保留完整尾段（最深存在祖先=/——契约句「祖先 realpath 后拼接余段」不容丢段） */
+export function realpathDeep(p: string, anchor: string = process.cwd()): string {
+  let probe = resolve(anchor, p);
   const tail: string[] = [];
   for (;;) {
     try {
@@ -15,7 +16,7 @@ export function realpathDeep(p: string): string {
       return tail.length === 0 ? real : resolve(real, ...tail);
     } catch {
       const at = probe.lastIndexOf(sep);
-      if (at <= 0) return probe; // 一路不存在到根：词法判定已够
+      if (at <= 0) return resolve("/", ...tail); // 探到根都不存在：锚在根上的完整词法路径
       tail.unshift(probe.slice(at + 1));
       probe = probe.slice(0, at);
     }

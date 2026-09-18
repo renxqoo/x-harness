@@ -2,6 +2,7 @@
 // + settle 观测面（组长退出≠组清空——孙进程有界收敛 5s 后 SIGKILL 兜底）。语义自 toolbox bash.ts 迁移。
 // 两段杀的节奏（何时 TERM/何时 KILL）是策略，归 bash 工具；本模块只提供动作与观测。
 
+import { statSync } from "node:fs";
 import type { ProcHandle, SpawnRequest, SpawnResult } from "../types.ts";
 
 /** settle 收敛上限：50ms×100=5s；到顶仍活 → SIGKILL 兜底后除名（host-exit 不再兜底——最后防线） */
@@ -58,6 +59,16 @@ async function settleGroup(pid: number): Promise<void> {
 }
 
 export async function spawnLocal(req: SpawnRequest): Promise<SpawnResult> {
+  // cwd 预检：坏 cwd 与缺二进制在 spawn 错误里同为 ENOENT——预检是唯一判别面（cwd_invalid 分支的来源）
+  if (req.cwd !== undefined) {
+    let dirOk = false;
+    try {
+      dirOk = statSync(req.cwd).isDirectory();
+    } catch {
+      dirOk = false;
+    }
+    if (!dirOk) return { ok: false, reason: { kind: "cwd_invalid", detail: `cwd is not an accessible directory: ${req.cwd}` } };
+  }
   let proc: Bun.Subprocess;
   try {
     proc = Bun.spawn([...req.argv], {
@@ -68,21 +79,32 @@ export async function spawnLocal(req: SpawnRequest): Promise<SpawnResult> {
       detached: true,
     });
   } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
     const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("ENOENT")) return { ok: false, reason: { kind: "not_found", detail: message } };
-    if (message.includes("EACCES") || message.includes("EPERM")) return { ok: false, reason: { kind: "not_executable", detail: message } };
+    if (code === "EACCES" || code === "EPERM") return { ok: false, reason: { kind: "not_executable", detail: message } };
+    if (code === "ENOENT" || message.includes("ENOENT")) return { ok: false, reason: { kind: "not_found", detail: message } };
     return { ok: false, reason: { kind: "io_error", detail: message } };
   }
-  const pid = proc.pid ?? -1;
+  const pid = proc.pid;
+  if (typeof pid !== "number" || pid <= 0) {
+    return { ok: false, reason: { kind: "io_error", detail: "spawn returned no usable pid" } }; // fail-closed：绝不向未知 pid 组开火
+  }
   installExitHook();
   liveGroups.add(pid);
 
   const exited = (async (): Promise<{ code: number | null; signal: string | null }> => {
-    await proc.exited;
+    try {
+      await proc.exited; // 拒绝面包含：按「已死无码」归一，不让 rejection 外泄（settled 派生自它）
+    } catch {
+      return { code: null, signal: null };
+    }
     return { code: proc.exitCode ?? null, signal: proc.signalCode ?? null };
   })();
   // settle 在组长退出即启动（不等消费方 await）——孙进程收敛不等位于策略层
-  const settled = exited.then(() => settleGroup(pid));
+  const settled = exited.then(
+    () => settleGroup(pid),
+    () => settleGroup(pid),
+  );
 
   const handle: ProcHandle = {
     stdout: proc.stdout as ReadableStream<Uint8Array>,
