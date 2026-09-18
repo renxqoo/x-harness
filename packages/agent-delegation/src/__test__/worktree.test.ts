@@ -62,14 +62,14 @@ async function worktreeWorld() {
   return { world, parent };
 }
 
-const spawnWorktree = (world: Awaited<ReturnType<typeof worktreeWorld>>, name: string) =>
-  callTool({ world: world.world, name: "agent_spawn", args: { description: "isolated work", prompt: "x", name, isolation: "worktree" }, session: world.parent.agent.session.id });
+const spawnWorktree = (world: Awaited<ReturnType<typeof worktreeWorld>>) =>
+  callTool({ world: world.world, name: "agent_spawn", args: { description: "isolated work", prompt: "x", isolation: "worktree" }, session: world.parent.agent.session.id });
 
 describe("worktree 隔离（§8）", () => {
   it("isolation=worktree：repo 外路径建树 + 授权根落账（真隔离）；stop 无改动自动清理（树与分支消失）", async () => {
     repo = await gitRepo();
     const twins = await worktreeWorld();
-    const spawned = await spawnWorktree(twins, "iso");
+    const spawned = await spawnWorktree(twins);
     expect(spawned.isError).toBeUndefined();
     const agentId = agentIdOf(spawned.content);
     const parentDir = worktreeParent(repo);
@@ -95,7 +95,7 @@ describe("worktree 隔离（§8）", () => {
   it("有改动 stop → worktree 保留且文案带路径", async () => {
     repo = await gitRepo();
     const twins = await worktreeWorld();
-    const spawned = await spawnWorktree(twins, "dirty");
+    const spawned = await spawnWorktree(twins);
     const agentId = agentIdOf(spawned.content);
     const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
     const wtPath = join(worktreeParent(repo), wtEntry);
@@ -141,7 +141,7 @@ describe("worktree 隔离（§8）", () => {
   it("git 串行队列：并发两 worktree spawn 均成且路径互异", async () => {
     repo = await gitRepo();
     const twins = await worktreeWorld();
-    const [a, b] = await Promise.all([spawnWorktree(twins, "par-a"), spawnWorktree(twins, "par-b")]);
+    const [a, b] = await Promise.all([spawnWorktree(twins), spawnWorktree(twins)]);
     expect(a.isError).toBeUndefined();
     expect(b.isError).toBeUndefined();
     expect(agentIdOf(a.content)).not.toBe(agentIdOf(b.content));
@@ -180,7 +180,7 @@ describe("worktree 隔离（§8）", () => {
   it("teardown 级联：插件 dispose 清理子的 worktree（净树）", async () => {
     repo = await gitRepo();
     const twins = await worktreeWorld();
-    const spawned = await spawnWorktree(twins, "cascade");
+    const spawned = await spawnWorktree(twins);
     const agentId = agentIdOf(spawned.content);
     const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
     const wtPath = join(worktreeParent(repo), wtEntry);
@@ -202,7 +202,7 @@ describe("组合隔离（§8.2 工具参数面 × grants 子会话键——审�
     repo = await gitRepo();
     const repoNow = repo; // 闭包内保收窄（模块级 let 不跨闭包窄化）
     const twins = await worktreeWorld();
-    const spawned = await spawnWorktree(twins, "combo");
+    const spawned = await spawnWorktree(twins);
     expect(spawned.isError).toBeUndefined();
     const agentId = agentIdOf(spawned.content);
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;

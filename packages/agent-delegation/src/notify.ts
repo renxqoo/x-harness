@@ -58,7 +58,7 @@ export function childReport(events: readonly SessionEvent[]): ChildReport {
 }
 
 export function notificationText(row: ChildRow, report: ChildReport): string {
-  const lines = [`[agent-notification] agent ${row.agentId} (${row.name}) finished: ${report.status}`];
+  const lines = [`[agent-notification] agent ${row.agentId} finished: ${report.status}`];
   if (report.summary !== undefined) lines.push(`summary: ${report.summary}`);
   if (report.usage !== undefined) lines.push(`usage: ${JSON.stringify(report.usage)}`);
   lines.push(`(use agent_output with agentId "${row.agentId}" for the full report)`);
@@ -67,7 +67,7 @@ export function notificationText(row: ChildRow, report: ChildReport): string {
 
 /** 缺档占位（子会话已封存且档案不可读——completion 事实仍送达） */
 export function archivedNotificationText(row: ChildRow): string {
-  return `[agent-notification] agent ${row.agentId} (${row.name}) finished: session-archived (no report available)`;
+  return `[agent-notification] agent ${row.agentId} finished: session-archived (no report available)`;
 }
 
 /** 状态事件路由：running → armed/running 置位；idle 且 armed → 通知（armed/occupied 复位） */

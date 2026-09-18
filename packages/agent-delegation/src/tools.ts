@@ -34,36 +34,50 @@ function viewLines(view: readonly ChildView[]): string {
   return view
     .map((row) =>
       row.kind === "subagent"
-        ? `${row.name} [${row.ref}] kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}`
+        ? `kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}`
         : `${row.name} [${row.ref}] kind=local-session status=${row.status}`,
     )
     .join("\n");
 }
 
 const spawnSchema = Type.Object({
-  description: Type.String({ description: "A 3-5 word task summary; seeds the agent's name" }),
-  prompt: Type.String({ description: "The task for the agent to perform (self-contained — it gets no other initial input)" }),
-  subagent_type: Type.Optional(Type.String({ description: "Registered type name or the reserved 'fork'; defaults to an untyped general agent" })),
-  model: Type.Optional(Type.String({ description: "Per-call model override (ignored for fork)" })),
-  name: Type.Optional(Type.String({ description: "Explicit addressable name (defaults to the description slug)" })),
-  isolation: Type.Optional(Type.String({ description: "'worktree': the agent works in its own git worktree copy (auto-cleaned if unchanged)" })),
+  description: Type.String({ description: "A short (3-5 word) description of the task" }),
+  prompt: Type.String({ description: "The task for the agent to perform" }),
+  subagent_type: Type.Optional(Type.String({ description: "The type of specialized agent to use for this task" })),
+  model: Type.Optional(Type.String({ description: "Optional model override for this agent. Takes precedence over the agent definition's model frontmatter and the configured default subagent model. If omitted, uses the agent definition's model, else the default (inherits from the parent unless a default subagent model is configured). Ignored for subagent_type: \"fork\" — forks always inherit the parent model." })),
+  isolation: Type.Optional(Type.Union([Type.Literal("worktree"), Type.Literal("remote")], { description: "Isolation mode. \"worktree\" creates a temporary git worktree so the agent works on an isolated copy of the repo. \"remote\" launches the agent in a remote cloud environment (always runs in background; availability is gated)." })),
 });
 
 const messageSchema = Type.Object({
-  to: Type.String({ pattern: "^[^\\n\\r]*$", description: "agentId, name, 'name [ref]', 'main' (sub-agents), or a local session (box) name — single line" }),
-  message: Type.Optional(Type.String({ maxLength: 300, description: "Message content; omit for a pure notify_when_idle subscription. Long content: hand over via files" })),
-  summary: Type.Optional(Type.String({ description: "Optional label for your own record (max 200, truncated not rejected; not transmitted to the recipient)" })),
-  notify_when_idle: Type.Optional(Type.Boolean({ description: "Ask a local session to send ONE notice when it next goes idle — opt-in, one-shot; main conversation only; never poll instead" })),
+  to: Type.String({
+    pattern: "^[^\\n\\r]*$",
+    description: "Recipient: a name from ListAgents (append its \` [ref]\` only when a listing or an error shows one), a teammate name, \`main\`, or a background agent's agentId",
+  }),
+  message: Type.String({
+    pattern: "^[\\s\\S]{0,300}$",
+    description: "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention.",
+  }),
+  summary: Type.Optional(Type.String({
+    maxLength: 200,
+    description: "A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of \`message\`). Truncated to 200 characters rather than rejected.",
+  })),
+  notify_when_idle: Type.Optional(Type.Boolean({
+    description: "Ask a session ON THIS MACHINE to send you ONE notice when it next goes idle (finishes its turn with nothing queued) or exits — opt-in, one-shot, no polling. With a message: deliver it now AND subscribe. Without a message (omit it): a pure subscription that costs the other session nothing.",
+  })),
 });
 
 const taskSchema = Type.Object({
-  task_id: Type.String({ description: "agentId, name, or 'name [ref]' from agent_spawn/list_agents (owner only)" }),
+  task_id: Type.String({ description: "The task ID to get output for" }),
 });
 
 const outputSchema = Type.Object({
   task_id: taskSchema.properties.task_id,
-  block: Type.Optional(Type.Boolean({ description: "Wait for completion (default true); false = immediate snapshot" })),
-  timeout: Type.Optional(Type.Number({ minimum: 0, maximum: 600000, description: "Max wait in ms when block=true (default 30000)" })),
+  block: Type.Optional(Type.Boolean({ description: "Whether to wait for completion" })),
+  timeout: Type.Optional(Type.Number({ minimum: 0, maximum: 600000, description: "Max wait time in ms" })),
+});
+
+const stopSchema = Type.Object({
+  task_id: Type.String({ description: "The ID of the background task to stop" }),
 });
 
 export function delegationTools(deps: ToolDeps): ToolDefinition[] {
@@ -92,8 +106,8 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
     {
       name: "agent_stop",
       description: AGENT_STOP_DESCRIPTION,
-      inputSchema: taskSchema,
-      execute: async (args: Static<typeof taskSchema>, ctx) => run(await deps.stop(ctx, args.task_id)),
+      inputSchema: stopSchema,
+      execute: async (args: Static<typeof stopSchema>, ctx) => run(await deps.stop(ctx, args.task_id)),
     },
     {
       name: "list_agents",

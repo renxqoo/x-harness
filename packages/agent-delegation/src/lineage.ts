@@ -1,16 +1,15 @@
-// 子代理血缘表与 spawn 决策原语（docs/AGENT-DELEGATION.md §4.2/§6.1/§1.4）：agentId 8hex
-// 双索引 + 名索引（latest-wins）、fork 种子 surface 重铸、模型覆盖序、白名单沿树收窄。
+// 子代理血缘表与 spawn 决策原语（docs/AGENT-DELEGATION.md §4.2/§6/§1.4——修订A「去名」）：
+// agentId 唯一身份（8hex 随机，header 落盘跨重启稳定）；双索引；fork 种子 surface 重铸；
+// 模型覆盖序；白名单沿树收窄。
 
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { Session, SessionEvent, SessionId } from "@x-harness/session";
 import type { LoadedAgentType } from "./types.ts";
 
 export interface ChildRow {
-  /** agent-<8hex> 随机（进程内唯一且跨重启不撞——计数器重启归零会劫持旧档案） */
+  /** agent-<8hex> 随机；跨重启稳定（header.agentId 落盘，复活沿用不重铸） */
   readonly agentId: string;
   readonly sessionId: SessionId;
-  /** 寻址主键之一；同名共存，裸名解析 latest-wins */
-  readonly name: string;
   readonly type: string;
   readonly parent: SessionId;
   readonly depth: number;
@@ -24,35 +23,24 @@ export interface ChildRow {
 export function createLineage() {
   const byAgentId = new Map<string, ChildRow>();
   const bySessionId = new Map<SessionId, string>();
-  const byName = new Map<string, string[]>();
   const rowOf = (session: SessionId): ChildRow | undefined => {
     const agentId = bySessionId.get(session);
     return agentId === undefined ? undefined : byAgentId.get(agentId);
   };
-  return {    register: (row: ChildRow): void => {
+  return {
+    register: (row: ChildRow): void => {
       byAgentId.set(row.agentId, row);
       bySessionId.set(row.sessionId, row.agentId);
-      const names = byName.get(row.name) ?? [];
-      names.push(row.agentId);
-      byName.set(row.name, names);
     },
     drop: (sessionId: SessionId): void => {
       const agentId = bySessionId.get(sessionId);
       if (agentId === undefined) return;
-      const row = byAgentId.get(agentId);
       byAgentId.delete(agentId);
       bySessionId.delete(sessionId);
-      if (row !== undefined) byName.set(row.name, (byName.get(row.name) ?? []).filter((id) => id !== agentId));
     },
     get: (agentId: string): ChildRow | undefined => byAgentId.get(agentId),
     bySession: rowOf,
     depthOf: (session: SessionId): number => rowOf(session)?.depth ?? 0,
-    /** 同名 live 行（spawn 序，尾部=最新）；live = 内存行存在即 live（含 stopped 可复活） */
-    liveByName: (name: string): readonly ChildRow[] => {
-      const ids = byName.get(name);
-      if (ids === undefined) return [];
-      return ids.map((id) => byAgentId.get(id)).filter((row): row is ChildRow => row !== undefined);
-    },
     rows: (): readonly ChildRow[] => [...byAgentId.values()],
     occupiedBy: (parent: SessionId): number => [...byAgentId.values()].filter((row) => row.parent === parent && row.occupied).length,
   };
@@ -60,27 +48,9 @@ export function createLineage() {
 
 export type Lineage = ReturnType<typeof createLineage>;
 
+/** agentId 铸造：agent-<8hex> 随机（进程内唯一；跨重启碰撞概率 ~2^-32·n，可忽略） */
 export function mintAgentId(): string {
   const bytes = new Uint8Array(4);
-  globalThis.crypto.getRandomValues(bytes);
-  return `agent-${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
-}
-
-/** [ref] = agentId 的 8hex 段尾 6 位（消歧用；规格 hex 形态） */
-export function refOfAgentId(agentId: string): string {
-  return agentId.slice("agent-".length).slice(-6);
-}
-
-/** name 缺省铸造：description slug（折叠空则回退随机段——非拉丁简述防误路由） */
-export function slugify(description: string): string {
-  const slug = description
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24)
-    .replace(/-+$/g, "");
-  if (slug !== "") return slug;
-  const bytes = new Uint8Array(2);
   globalThis.crypto.getRandomValues(bytes);
   return `agent-${[...bytes].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
 }

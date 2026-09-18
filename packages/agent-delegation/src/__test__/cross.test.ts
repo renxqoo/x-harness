@@ -96,7 +96,7 @@ describe("notify_when_idle（§5.4 闭窗与结算）", () => {
     const twins = await makeTwins();
     const { alpha, alphaMain } = twins;
     alpha.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "consume")]);
-    const subbed = await callTool({ world: alpha, name: "agent_message", args: { to: "beta", notify_when_idle: true }, session: alphaMain.agent.session.id });
+    const subbed = await callTool({ world: alpha, name: "agent_message", args: { to: "beta", message: "anyone home", notify_when_idle: true }, session: alphaMain.agent.session.id });
     expect(subbed.isError).toBeUndefined();
     expect(subbed.content).toContain("notice was sent immediately");
     await vi.waitFor(() => expect(userTextsOf(alpha, alphaMain.agent.session.id)).toContain("[Cross-session idle notice]"), { timeout: 5_000 });
@@ -144,20 +144,20 @@ describe("notify_when_idle（§5.4 闭窗与结算）", () => {
     // 子代理调用
     const spawned = await callTool({ world: alpha, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: alphaMain.agent.session.id });
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
-    const fromChild = await callTool({ world: alpha, name: "agent_message", args: { to: "beta", notify_when_idle: true }, session: childSession });
+    const fromChild = await callTool({ world: alpha, name: "agent_message", args: { to: "beta", message: "hi", notify_when_idle: true }, session: childSession });
     expect(fromChild.isError).toBe(true);
     expect(fromChild.content).toContain("only available from the main conversation");
     // 未开箱部署
     const plain = await makeWorld(await workerOptions());
     const plainMain = await spawnParent(plain);
-    const noBox = await callTool({ world: plain, name: "agent_message", args: { to: "beta", notify_when_idle: true }, session: plainMain.agent.session.id });
+    const noBox = await callTool({ world: plain, name: "agent_message", args: { to: "beta", message: "hi", notify_when_idle: true }, session: plainMain.agent.session.id });
     expect(noBox.isError).toBe(true);
     expect(noBox.content).toContain("no local mailbox");
     await plainMain.dispose();
-    // 无 message + 非订阅 → invalid-args（动词误用先于寻址裁决）
+    // message 现为 schema 必填（spec 对齐）——缺参由 TypeBox 拦截且回显字段名
     const empty = await callTool({ world: alpha, name: "agent_message", args: { to: "ghost-box" }, session: alphaMain.agent.session.id });
     expect(empty.isError).toBe(true);
-    expect(empty.content).toContain("message is required");
+    expect(empty.content).toContain("message");
     await alphaMain.dispose();
     await twins.betaMain.dispose();
     await rm(twins.root, { recursive: true, force: true }).catch(() => {});
@@ -238,7 +238,7 @@ describe("notify_when_idle 闭窗分支（stub 直测——复查翻转与 main 
     const out = await sendCross(
       { service: stub as never, loop: world.loop, box: "watcher", mainSession: main.agent.session.id, lineage: { bySession: () => undefined } as never },
       { callId: "c9", name: "agent_message", signal: new AbortController().signal, session: main.agent.session.id },
-      { to: "flipper", notify_when_idle: true },
+      { to: "flipper", message: "ping", notify_when_idle: true },
     );
     expect(out.ok).toBe(true);
     expect(out.ok === true && out.text).toContain("notice was sent immediately");
@@ -258,7 +258,7 @@ describe("notify_when_idle 闭窗分支（stub 直测——复查翻转与 main 
     const out = await sendCross(
       { service: stub as never, loop: world.loop, box: "watcher2", mainSession: "main-none" as never, lineage: { bySession: () => undefined } as never },
       { callId: "c10", name: "agent_message", signal: new AbortController().signal, session: "main-none2" as never },
-      { to: "idlebox", notify_when_idle: true },
+      { to: "idlebox", message: "ping", notify_when_idle: true },
     );
     expect(out.ok).toBe(true);
     expect(out.ok === true && out.text).toContain("A [Cross-session idle notice] arrives once");

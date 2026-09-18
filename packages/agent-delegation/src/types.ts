@@ -43,8 +43,6 @@ export interface DelegationOptions {
 export type ChildView =
   | {
       readonly kind: "subagent";
-      readonly name: string;
-      readonly ref: string;
       readonly agentId: string;
       readonly sessionId: string;
       readonly type: string;

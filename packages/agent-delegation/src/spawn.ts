@@ -4,7 +4,7 @@
 import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionStore, SessionEvent, SessionId } from "@x-harness/session";
 import type { ToolRegistry, ToolExecContext } from "@x-harness/tools";
-import { forkSeed, inheritDial, mintAgentId, narrowTools, slugify } from "./lineage.ts";
+import { forkSeed, inheritDial, mintAgentId, narrowTools } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { createWorktree, evaluateCleanup } from "./worktree.ts";
 import type { WorktreePlan } from "./worktree.ts";
@@ -15,7 +15,6 @@ export interface SpawnInput {
   readonly prompt: string;
   readonly subagent_type?: string;
   readonly model?: string;
-  readonly name?: string;
   readonly isolation?: string;
 }
 
@@ -45,11 +44,11 @@ export async function spawnAgent(deps: SpawnDeps, execCtx: ToolExecContext, inpu
   }
   if (input.prompt.trim() === "") return { ok: false, reason: "invalid-args:prompt must be a non-empty string" };
   if (input.model === "") return { ok: false, reason: "invalid-args:model must be a non-empty string when provided" };
-  if (input.name !== undefined && input.name.trim() === "") {
-    return { ok: false, reason: "invalid-args:name must be a non-empty string when provided" };
+  if (input.isolation === "remote") {
+    return { ok: false, reason: "invalid-args:isolation 'remote' is not available in this build (availability is gated)" };
   }
   if (input.isolation !== undefined && input.isolation !== "worktree") {
-    return { ok: false, reason: `invalid-args:isolation '${input.isolation}' is not supported (only 'worktree')` };
+    return { ok: false, reason: `invalid-args:isolation '${input.isolation}' is not supported` };
   }
 
   const caller = execCtx.session;
@@ -99,23 +98,19 @@ async function buildChild(
   const agentId = mintAgentId();
   const named = plan.resolved.kind === "named" ? plan.resolved.type : undefined;
   const isFork = plan.resolved.kind === "fork";
-  const identity = childIdentity(plan, named);
+  const typeName = named !== undefined ? named.name : plan.resolved.kind;
   const seed = isFork ? forkSeedOf(deps, caller) : [];
   const forked = seed.length > 0;
   const worktree = await prepareWorktree(deps, agentId, plan.input.isolation);
   if (!worktree.ok) return worktree;
 
-  const made = await createChildSession(deps, { caller, plan, identity, seed: forked ? seed : [], worktree: worktree.plan });
-  if (!made.ok) {
-    if (worktree.plan !== undefined) await evaluateCleanup({ path: worktree.plan.path, branch: worktree.plan.branch }).catch(() => {});
-    return { ok: false, reason: `spawn-failed:${made.reason}` };
-  }
+  const made = await createChildSession(deps, { caller, plan, agentId, typeName, seed: forked ? seed : [], worktree: worktree.plan });
+  if (!made.ok) return spawnFailed(made.reason, worktree.plan);
   const childHandle = made.value;
   const row: ChildRow = {
     agentId,
     sessionId: childHandle.agent.session.id,
-    name: identity.name,
-    type: identity.typeName,
+    type: typeName,
     parent: caller,
     depth: plan.depth,
     occupied: true,
@@ -125,22 +120,12 @@ async function buildChild(
     ...(worktree.plan !== undefined ? { worktree: worktree.plan.path } : {}),
   };
   if (worktree.plan !== undefined && deps.setRootOverride !== undefined) {
-    deps.setRootOverride(row.sessionId, worktree.plan.path, worktree.plan.repoTop);
+    deps.setRootOverride(childHandle.agent.session.id, worktree.plan.path, worktree.plan.repoTop);
   }
   deps.lineage.register(row);
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
   childHandle.agent.followup(plan.input.prompt);
   return { ok: true, text: spawnText(row, isFork && !forked) };
-}
-
-function childIdentity(
-  plan: { readonly input: SpawnInput; readonly resolved: ResolvedType },
-  named: LoadedAgentType | undefined,
-): { readonly name: string; readonly typeName: string } {
-  return {
-    name: plan.input.name !== undefined ? plan.input.name : slugify(plan.input.description),
-    typeName: named !== undefined ? named.name : plan.resolved.kind,
-  };
 }
 
 /** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt + 白名单收窄 */
@@ -162,6 +147,12 @@ function childAgentOptions(
   };
 }
 
+/** create 失败收尾：半建 worktree 清理 + 统一词表 */
+function spawnFailed(reason: string, plan: WorktreePlan | undefined): SpawnOutcome {
+  if (plan !== undefined) void evaluateCleanup({ path: plan.path, branch: plan.branch }).catch(() => {});
+  return { ok: false, reason: `spawn-failed:${reason}` };
+}
+
 /** worktree 预备（§8.1/§8.2）：repo 外同级路径 + git 串行队列；grants 前置（无授权面
  *  不建树——防半装泄漏）；create 失败由调用方清理。 */
 async function prepareWorktree(deps: SpawnDeps, agentId: string, isolation: string | undefined): Promise<{ ok: true; plan?: WorktreePlan } | { ok: false; reason: string }> {
@@ -177,7 +168,8 @@ function createChildSession(
   spec: {
     readonly caller: SessionId;
     readonly plan: { readonly input: SpawnInput; readonly resolved: ResolvedType; readonly depth: number };
-    readonly identity: { readonly name: string; readonly typeName: string };
+    readonly agentId: string;
+    readonly typeName: string;
     readonly seed: readonly SessionEvent[];
     readonly worktree?: WorktreePlan;
   },
@@ -187,7 +179,7 @@ function createChildSession(
     session: {
       parent: spec.caller,
       ...(spec.seed.length > 0 ? { seed: spec.seed } : {}),
-      agent: { name: spec.identity.name, type: spec.identity.typeName, depth: spec.plan.depth, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
+      agent: { id: spec.agentId, type: spec.typeName, depth: spec.plan.depth, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
     },
     agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller }),
   });
@@ -204,9 +196,9 @@ async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandl
 function spawnText(row: ChildRow, freshFork: boolean): string {
   const forkNote = freshFork ? " (parent has no completed turns — started fresh)" : "";
   return (
-    `Spawned ${row.agentId} (name '${row.name}', type '${row.type}', session ${String(row.sessionId)}). ` +
+    `Spawned ${row.agentId} (type '${row.type}', session ${String(row.sessionId)}). ` +
     `It runs in the background; an [agent-notification] message will arrive on completion. ` +
-    `End your turn and wait instead of polling agent_output.${forkNote}`
+    `Address it by this agentId — it stays stable across restarts.${forkNote}`
   );
 }
 

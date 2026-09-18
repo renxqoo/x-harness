@@ -140,11 +140,11 @@ describe("动词入参防线（invalid-args 分支）", () => {
     const noTo = await callTool({ world, name: "agent_message", args: { message: "hi" }, session: parent.agent.session.id });
     expect(noTo.isError).toBe(true);
     expect(noTo.content).toContain("to");
-    // message 现可选（纯订阅形态）；对进程内目标省略 message → invalid-args（非订阅场景必填）
+    // message 为 schema 必填（spec 对齐）——缺参由 TypeBox 拦截
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x" }, session: parent.agent.session.id });
     const bare = await callTool({ world, name: "agent_message", args: { to: (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] }, session: parent.agent.session.id });
     expect(bare.isError).toBe(true);
-    expect(bare.content).toContain("message is required");
+    expect(bare.content).toContain("message");
     const outNoId = await callTool({ world, name: "agent_output", args: {}, session: parent.agent.session.id });
     expect(outNoId.isError).toBe(true);
     expect(outNoId.content).toContain("task_id");
@@ -172,7 +172,7 @@ describe("动词入参防线（invalid-args 分支）", () => {
 describe("reportText 三分支（纯函数直测）", () => {
   it("无摘要/短摘要/截断", async () => {
     const { reportText } = await import("../verbs.ts");
-    const row = { agentId: "agent-9", name: "w" } as never;
+    const row = { agentId: "agent-9" } as never;
     expect(reportText(row, { status: "aborted", summary: undefined, usage: undefined }, 10)).toContain("(no assistant output in the last turn)");
     expect(reportText(row, { status: "completed", summary: "short", usage: undefined }, 10)).toContain("short");
     expect(reportText(row, { status: "completed", summary: "0123456789ABCDEF", usage: undefined }, 10)).toContain("truncated at 10");
@@ -191,7 +191,7 @@ describe("通知细节分支（纯函数直测）", () => {
     expect(report.status).toBe("completed");
     expect(report.summary?.length).toBe(201);
     expect(report.usage).toEqual({ input: 5, output: 6 });
-    const text = notificationText({ agentId: "a", name: "n" } as never, report);
+    const text = notificationText({ agentId: "a" } as never, report);
     expect(text).toContain("usage:");
     expect(text).toContain("agent_output");
     const bare = childReport([{ type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], stopReason: "stop" } }] as never);

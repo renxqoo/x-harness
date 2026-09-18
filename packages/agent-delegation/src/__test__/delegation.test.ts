@@ -30,7 +30,7 @@ beforeEach(() => {
 });
 
 describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
-  it("spawn 立即返回文本句柄（8hex agentId + name/type/session）；子后台完成 → 父 idle 被唤醒（双断言）且通知含 agentId/status/摘要", async () => {
+  it("spawn 立即返回文本句柄（8hex agentId + type/session）；子后台完成 → 父 idle 被唤醒（双断言）且通知含 agentId/status/摘要", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "parent first turn")]);
@@ -41,9 +41,8 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "research the thing", prompt: "work", subagent_type: "worker" }, session: parent.agent.session.id });
     expect(spawned.isError).toBeUndefined();
     const agentId = agentIdOf(spawned.content);
-    expect(spawned.content).toContain("name 'research-the-thing'"); // description slug 铸名（§6.1）
     expect(spawned.content).toContain("type 'worker'");
-    expect(spawned.content).toContain("End your turn and wait");
+    expect(spawned.content).toContain("stays stable across restarts"); // 修订A：agentId 即持久身份引导
     const turnCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
     await vi.waitFor(() => expect(turnCount()).toBe(2), { timeout: 5_000 });
     const userMessages = parent.agent.session.events().filter((e) => e.type === "user/message");
@@ -60,34 +59,27 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
   it("header 三字段锚（件13 接缝 1）：agentName/agentType/agentDepth 随子会话落盘", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
-    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "anchor probe", prompt: "x", subagent_type: "worker", name: "probe" }, session: parent.agent.session.id });
+    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "anchor probe", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
     const childSession = sessionOf(spawned.content);
     const header = world.ctx.use(sessionStore).get(childSession)?.header;
-    expect(header?.agentName).toBe("probe");
+    expect(header?.agentId).toBe(agentIdOf(spawned.content)); // id 持久锚（修订A）
     expect(header?.agentType).toBe("worker");
     expect(header?.agentDepth).toBe(1);
     expect(header?.parentSession).toBe(parent.agent.session.id);
     await parent.dispose();
   });
 
-  it("同名子共存互不串扰（agentId 唯一寻址，8hex 互异）（X13）", async () => {
+  it("并行两子：agentId 互异、list 各自成行（修订A——去名后无歧义面）", async () => {
     const world = await makeWorld(await makeOptions({}, { maxConcurrent: 5 }));
     const parent = await spawnParent(world);
-    const first = await callTool({ world, name: "agent_spawn", args: { description: "task a", prompt: "a", name: "same-name" }, session: parent.agent.session.id });
-    const second = await callTool({ world, name: "agent_spawn", args: { description: "task b", prompt: "b", name: "same-name" }, session: parent.agent.session.id });
+    world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
+    const first = await callTool({ world, name: "agent_spawn", args: { description: "task a", prompt: "a" }, session: parent.agent.session.id });
+    const second = await callTool({ world, name: "agent_spawn", args: { description: "task b", prompt: "b" }, session: parent.agent.session.id });
     const firstId = agentIdOf(first.content);
     const secondId = agentIdOf(second.content);
     expect(firstId).not.toBe(secondId);
     const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
-    expect(listed.content.split("\n").filter((line) => line.includes("same-name"))).toHaveLength(2); // 同名两行共存
-    await parent.dispose();
-  });
-
-  it("非拉丁 description slug 折叠为空 → 回退随机段名（§6.1 防误路由）", async () => {
-    const world = await makeWorld(await workerOptions());
-    const parent = await spawnParent(world);
-    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "调研一下", prompt: "x" }, session: parent.agent.session.id });
-    expect(spawned.content).toMatch(/name 'agent-[0-9a-f]{4}'/);
+    expect(listed.content.split("\n").filter((line) => line.includes("kind=subagent"))).toHaveLength(2);
     await parent.dispose();
   });
 
@@ -195,7 +187,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     expect(openMessage.content).toContain("Delivered");
     const unknown = await callTool({ world, name: "agent_output", args: { task_id: "agent-ffffffff" }, session: parent.agent.session.id });
     expect(unknown.isError).toBe(true);
-    expect(unknown.content).toContain("use list_agents");
+    expect(unknown.content).toContain("not-found");
     await parent.dispose();
     await stranger.dispose();
   });
@@ -229,14 +221,14 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     await parent.dispose();
   });
 
-  it("list_agents 限调用方子树；行格式 name [ref] kind=... status=...", async () => {
+  it("list_agents 限调用方子树；行格式 kind=subagent agentId session=... status=...", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
     const other = await spawnParent(world);
-    await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", name: "mine" }, session: parent.agent.session.id });
+    await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x" }, session: parent.agent.session.id });
     const mine = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
-    expect(mine.content).toContain("mine");
-    expect(mine.content).toMatch(/mine \[[0-9a-f]{6}\] kind=subagent agent-[0-9a-f]{8} session=\S+/);
+    expect(mine.content).toContain("kind=subagent");
+    expect(mine.content).toMatch(/kind=subagent agent-[0-9a-f]{8} session=\S+/);
     const theirs = await callTool({ world, name: "list_agents", args: {}, session: other.agent.session.id });
     expect(theirs.content).toContain("(no sub-agents)"); // 子树隔离
     await parent.dispose();

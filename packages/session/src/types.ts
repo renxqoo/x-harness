@@ -11,8 +11,9 @@ export interface SessionHeader {
   readonly createdAt: number;
   readonly cwd?: string;
   readonly parentSession?: SessionId;
-  /** 子代理元数据（delegation spawn 落盘；跨重启按名惰性复活的锚——docs/AGENT-DELEGATION.md §6.2） */
-  readonly agentName?: string;
+  /** 子代理元数据（delegation spawn 落盘）：agentId 是唯一身份且跨重启稳定——
+   *  复活按 agentId 寻址、复活后 id 不变（件13 修订A「去名」裁决） */
+  readonly agentId?: string;
   readonly agentType?: string;
   readonly agentDepth?: number;
   /** worktree 隔离子的工作树路径（复活重放 rootOverride 的锚——件13 §6.2） */
@@ -137,7 +138,7 @@ export interface CreateSessionOptions {
   /** 血缘回填：resume 消费方从 archive.read 的 header.parentSession 取（fork 内部自动携带） */
   readonly parent?: SessionId;
   /** 子代理元数据透传（birth 落 header；resume 的归档 header 分支忽略——归档原文为准） */
-  readonly agent?: { readonly name: string; readonly type: string; readonly depth: number; readonly worktree?: string };
+  readonly agent?: { readonly id: string; readonly type: string; readonly depth: number; readonly worktree?: string };
   /** resume 的归档 header 原文：提供时以它为准（id 取 header.id、parent 忽略、归档元数据保留） */
   readonly header?: SessionHeader;
 }

@@ -112,7 +112,8 @@ export async function runDelegationJourney(): Promise<void> {
     const childDisk = readFileSync(join(root, childSession as string, "events.jsonl"), "utf8");
     must(childDisk.includes('"turn/end"') && childDisk.includes('"completed"'), "子会话 jsonl 完整落盘");
     const childHeaderDisk = readFileSync(join(root, childSession as string, "header.json"), "utf8");
-    must(childHeaderDisk.includes('"agentName":"count-things"') && childHeaderDisk.includes('"agentType":"worker"'), "子 header 三字段锚落盘");
+    const agentId = (childHeaderDisk.match(/agent-[0-9a-f]{8}/) ?? [""])[0] ?? "";
+    must(agentId !== "" && childHeaderDisk.includes(`"agentId":"${agentId}"`) && childHeaderDisk.includes('"agentType":"worker"'), "子 header id/类型锚落盘");
     const parentDisk = readFileSync(join(root, "delegation-parent", "events.jsonl"), "utf8");
     must(parentDisk.includes('"tool/call"') && parentDisk.includes("[agent-notification]"), "父会话 jsonl 含 spawn 调用与通知");
 

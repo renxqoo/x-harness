@@ -13,7 +13,7 @@ import type { SessionId } from "@x-harness/session";
 import type { CrossDeps } from "./crossmsg.ts";
 import { createMailboxConsumer, startDrain } from "./mailbox-consumer.ts";
 import type { MailboxConsumer } from "./mailbox-consumer.ts";
-import { reviveByName } from "./revive.ts";
+import { reviveByAgentId } from "./revive.ts";
 import { evaluateCleanup, sweepWorktrees } from "./worktree.ts";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
@@ -126,24 +126,26 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
       const archive = ctx.tryUse(sessionArchive);
       const revive = archive === undefined
         ? undefined
-        : (caller: SessionId, name: string) => reviveByName(
+        : (caller: SessionId, agentId: string) => reviveByAgentId(
             {
               archive,
               loop,
               lineage,
               types: () => current,
-              parentModelOf: (session) => loop.get(session)?.agent.options.model,
-              parentToolsOf: (session) => loop.get(session)?.agent.options.tools,
+              parentModelOf: (session: SessionId) => loop.get(session)?.agent.options.model,
+              parentToolsOf: (session: SessionId) => loop.get(session)?.agent.options.tools,
               ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
               ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
             },
             caller,
-            name,
+            agentId,
           );
 
-      /** 驻留档化（§2.2）：idle/stopped 子超 maxResident → 最旧 dispose（WAL 在盘，可按名复活；
-       *  stopped 计入驻留——防反复 spawn+stop 无限累积旁路上限，档化后 message 走 archive 复活语义不变） */
+      /** 驻留档化（§2.2）：idle/stopped 子超 maxResident → 最旧 dispose（WAL 在盘可按
+       *  agentId 复活；stopped 计入驻留防无限累积）。**archive 缺席（纯内存部署）跳过——
+       *  无盘可回时踢出=永久丢失，宁可驻留内存不静默毁约「可再 message」（修订A 处置） */
       const evictIdle = (): void => {
+        if (archive === undefined) return;
         const idle = lineage.rows().filter((row) => !row.occupied && !row.running);
         for (const row of idle.slice(0, Math.max(0, idle.length - limits.maxResident))) {
           void (async () => {

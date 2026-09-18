@@ -5,7 +5,6 @@
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionStore, SessionId } from "@x-harness/session";
 import type { ToolExecContext } from "@x-harness/tools";
-import { refOfAgentId } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { resolveAddress } from "./nameaddr.ts";
 import type { ReviveOutcome } from "./revive.ts";
@@ -24,8 +23,8 @@ export interface VerbDeps {
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
   /** 跨进程面（未开箱 = 缺省纯进程内：box 域寻址与 notify_when_idle 拒） */
   readonly cross?: CrossDeps;
-  /** archive 惰性复活（§6.2）：caller 自己的历史子按名 resume 重建；缺席=无档案面 */
-  readonly reviveByName?: (caller: SessionId, name: string) => Promise<ReviveOutcome>;
+  /** archive 惰性复活（§6.2——修订A：按 agentId）：caller 自己的历史子 resume 重建；缺席=无档案面 */
+  readonly reviveByName?: (caller: SessionId, agentId: string) => Promise<ReviveOutcome>;
 }
 
 export type VerbOutcome = { readonly ok: true; readonly text: string } | { ok: false; readonly reason: string };
@@ -86,9 +85,6 @@ async function crossFallback(deps: VerbDeps, execCtx: ToolExecContext, plan: { r
   if (deps.reviveByName !== undefined) {
     const revived = await deps.reviveByName(execCtx.session as SessionId, input.to);
     if (revived.kind === "row") return deliverToRow(deps, revived.row, input.message);
-    if (revived.kind === "ambiguous") {
-      return { ok: false, reason: `ambiguous:${input.to}; multiple archived children of yours share this name — respawn with a fresh agent_spawn or address a live agentId` };
-    }
   }
   return { ok: false, reason: missReason };
 }
@@ -101,7 +97,7 @@ function deliverToRow(deps: VerbDeps, row: ChildRow, text: string): VerbOutcome 
     return { ok: false, reason: notFound(row.agentId) };
   }
   childHandle.agent.steer(text); // busy → 步边界排队；idle → 唤醒（收件箱三态）
-  return { ok: true, text: `Delivered to ${displayName(row)} (consumed at the next step boundary if busy; wakes it if idle).` };
+  return { ok: true, text: `Delivered to ${row.agentId} (consumed at the next step boundary if busy; wakes it if idle).` };
 }
 
 /** 子→父 main 通道（§5.1）：信封包装 steer 进父会话；from = 子地址（name） */
@@ -110,7 +106,7 @@ function deliverToMain(deps: VerbDeps, caller: SessionId, text: string): VerbOut
   const parentHandle = parent === undefined ? undefined : deps.loop.get(parent);
   if (parentHandle === undefined) return { ok: false, reason: "not-found:main; the parent conversation is not live" };
   const callerRow = deps.lineage.bySession(caller);
-  const from = callerRow === undefined ? String(caller) : callerRow.name;
+  const from = callerRow === undefined ? String(caller) : callerRow.agentId;
   const wrapped = `<cross-session-message from="${from}">${text}</cross-session-message>`;
   try {
     parentHandle.agent.steer(wrapped); // 父 busy → 步边界；父 idle → 唤醒
@@ -135,7 +131,7 @@ export async function output(deps: VerbDeps, execCtx: ToolExecContext, input: Ou
   if (row.running) {
     const soFar = childReport(childSession.events());
     const tail = soFar.summary === undefined ? "" : `; last output so far: ${soFar.summary}`;
-    return { ok: true, text: `agent ${row.agentId} (${row.name}) is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.${tail}` };
+    return { ok: true, text: `agent ${row.agentId} is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.${tail}` };
   }
   return { ok: true, text: reportText(row, childReport(childSession.events()), deps.reportCap) };
 }
@@ -144,7 +140,7 @@ export async function stop(deps: VerbDeps, execCtx: ToolExecContext, taskId: str
   const found = ownerRow(deps, execCtx, taskId);
   if (!found.ok) return found;
   const row = found.value;
-  if (row.stopped) return { ok: true, text: `${displayName(row)} already stopped` }; // 幂等
+  if (row.stopped) return { ok: true, text: `${row.agentId} already stopped` }; // 幂等
   const childHandle = deps.loop.get(row.sessionId);
   if (childHandle !== undefined) {
     childHandle.agent.cancel("agent-stop");
@@ -156,7 +152,7 @@ export async function stop(deps: VerbDeps, execCtx: ToolExecContext, taskId: str
     ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` })
     : { removed: true };
   const worktreeNote = kept.removed ? "" : `; worktree kept (has changes): ${String(kept.path)}`;
-  return { ok: true, text: `Stopped ${displayName(row)}; it can be messaged again with agent_message.${worktreeNote}` };
+  return { ok: true, text: `Stopped ${row.agentId}; it can be messaged again with agent_message.${worktreeNote}` };
 }
 
 function ownerRow(deps: VerbDeps, execCtx: ToolExecContext, taskId: string): { ok: true; value: ChildRow } | { ok: false; reason: string } {
@@ -168,7 +164,7 @@ function ownerRow(deps: VerbDeps, execCtx: ToolExecContext, taskId: string): { o
   if (resolved.kind === "main") return { ok: false, reason: "invalid-args:task_id 'main' is not a task" };
   const row = resolved.row;
   if (execCtx.session !== row.parent) {
-    return { ok: false, reason: `not-owner:${displayName(row)}; you can only read/stop sub-agents you spawned` };
+    return { ok: false, reason: `not-owner:${row.agentId}; you can only read/stop sub-agents you spawned` };
   }
   return { ok: true, value: row };
 }
@@ -180,8 +176,6 @@ export async function listAgents(deps: VerbDeps, execCtx: ToolExecContext): Prom
     .filter((row) => row.parent === execCtx.session)
     .map((row) => ({
       kind: "subagent",
-      name: row.name,
-      ref: refOfAgentId(row.agentId),
       agentId: row.agentId,
       sessionId: String(row.sessionId),
       type: row.type,
@@ -213,10 +207,6 @@ function raceIdle(whenIdle: Promise<void>, timeoutMs: number): Promise<void> {
   });
 }
 
-function displayName(row: ChildRow): string {
-  return `${row.name} (${row.agentId})`;
-}
-
 function viewStatus(row: ChildRow): "stopped" | "running" | "idle" {
   if (row.running) return "running"; // 停止后再 message 复活的子如实显示 running
   if (row.stopped) return "stopped";
@@ -225,7 +215,7 @@ function viewStatus(row: ChildRow): "stopped" | "running" | "idle" {
 
 /** 报告铸文本：cap 截断 + agent_message 追问引导（无文件指针——任务体系未并入，U2） */
 export function reportText(row: ChildRow, report: ChildReport, cap: number): string {
-  const head = `agent ${row.agentId} (${row.name}) last turn: ${report.status}`;
+  const head = `agent ${row.agentId} last turn: ${report.status}`;
   if (report.summary === undefined) return `${head}\n(no assistant output in the last turn)`;
   if (report.summary.length <= cap) return `${head}\n${report.summary}`;
   return `${head}\n${report.summary.slice(0, cap)}\n[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics]`;

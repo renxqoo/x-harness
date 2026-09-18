@@ -534,3 +534,23 @@ A-P3-15。P2-6 sweep 互删 → 见 A-P1-2（新鲜度+本进程 live 排除留�
 （随 toolbox 后续件统一 SessionId 导入）。P3-13 清理失败零上报 → **采纳**（onWarn 出口：
 sweep kept/关箱尽力路径）。P3-14 drain 重入乱序 → **采纳**（自链式调度）。P3-15 real.ts →
 **归属**同 A-P3-21。
+
+## 16. 修订A/B（2026-09-19 用户裁决，同日实施）
+
+**修订A「去名」**：agent_spawn 删除 name 入参与名字概念——**agentId 是子代理唯一身份**
+（`agent-<8hex>` 随机；header.agentId 落盘跨重启稳定；复活沿用不重铸）。连锁删除：名索引/
+slug 铸名/裸名 latest-wins/`name [ref]` 消歧/档案同名 ambiguous 词表（歧义面整体消亡）。
+寻址收敛：`to` = agentId 精确 | main | box 名；task_id = agentId 精确。SessionHeader 锚
+agentName→agentId（store/gateHeader/复活扫描同步）。evictIdle 增 archive 守卫：纯内存部署
+（无 jsonl）跳过档化——无盘不踢，「可再 message」不静默毁约（审查遗留处置）。
+
+**修订B「逐字对齐」**：五工具 description 与参数描述回到规格源文档逐字口径（重同步纪律，
+contract.test 以 spec blockquote 逐字符比对为机械锚）；参数面与规格参数表一致：message
+改为必填（pattern `^[\s\S]{0,300}$`；纯订阅经 description 的运行时语义，schema 层由
+必填封锁——spec 自身的 required/描述矛盾按 required 执行）；isolation 枚举
+worktree|remote（remote 运行期门控拒，spec「availability is gated」）；block/timeout/
+task_id/to/summary 的描述与上下限逐字对齐。
+
+受影响节：§2.1（参数表/行格式/词表）、§4.2-4.3（无 name 字段）、§5.2（六步算法收敛为
+三分支）、§6（6.1 名字注册整节废止；6.2 按 agentId 复活）、§9.2 裁决表、§11.1 迁移矩阵
+（X13 同名共存用例改 agentId 互异并存）。

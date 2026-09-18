@@ -272,21 +272,21 @@ describe("flush / dispose（docs/SESSION.md §1.5）", () => {
   });
 });
 
-describe("create agent 元数据透传（件13 接缝 1——子代理 header 锚）", () => {
+describe("create agent 元数据透传（件13 接缝 1——子代理 header 锚；修订A：agentId 持久身份）", () => {
   it("agent 三字段随 birth 落 header；缺省不带；resume header 分支以归档原文为准", async () => {
     const h = makeStore();
     const store = createSessionStore(h.hooks);
-    const spawned = unwrap(await store.create({ parent: sid("p"), agent: { name: "worker", type: "explore", depth: 1 } }));
-    expect(spawned.header.agentName).toBe("worker");
+    const spawned = unwrap(await store.create({ parent: sid("p"), agent: { id: "agent-00112233", type: "explore", depth: 1 } }));
+    expect(spawned.header.agentId).toBe("agent-00112233");
     expect(spawned.header.agentType).toBe("explore");
     expect(spawned.header.agentDepth).toBe(1);
     expect(spawned.header.parentSession).toBe(sid("p"));
 
     const plain = unwrap(await store.create());
-    expect(plain.header.agentName).toBeUndefined();
+    expect(plain.header.agentId).toBeUndefined();
 
-    const resumed = unwrap(await store.create({ header: { id: sid("old"), createdAt: 1, agentName: "archived-name" }, agent: { name: "ignored", type: "ignored", depth: 9 } }));
-    expect(resumed.header.agentName).toBe("archived-name");
+    const resumed = unwrap(await store.create({ header: { id: sid("old"), createdAt: 1, agentId: "agent-deadbeef" }, agent: { id: "agent-ignored00", type: "ignored", depth: 9 } }));
+    expect(resumed.header.agentId).toBe("agent-deadbeef");
     expect(resumed.header.agentType).toBeUndefined();
   });
 });

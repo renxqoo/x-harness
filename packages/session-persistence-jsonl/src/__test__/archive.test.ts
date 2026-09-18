@@ -136,12 +136,12 @@ describe("list（docs/SESSION.md §1.8——只认 header.json）", () => {
 
 describe("listHeaders（件13 接缝 1b——delegation 按名复活扫描面）", () => {
   it("轻量投影：返回各档案 header（不读事件卷），agent 元数据随档", async () => {
-    await seedSession("session-1", { id: "session-1", createdAt: 1, parentSession: "session-0", agentName: "worker", agentType: "explore", agentDepth: 1 });
+    await seedSession("session-1", { id: "session-1", createdAt: 1, parentSession: "session-0", agentId: "agent-00112233", agentType: "explore", agentDepth: 1 });
     await seedSession("session-2", { id: "session-2", createdAt: 2 });
     const headers = await reader().listHeaders();
     expect(headers.map((h) => h.id).sort()).toEqual(["session-1", "session-2"]);
-    expect(headers.find((h) => h.id === "session-1")?.agentName).toBe("worker");
-    expect(headers.find((h) => h.id === "session-2")?.agentName).toBeUndefined();
+    expect(headers.find((h) => h.id === "session-1")?.agentId).toBe("agent-00112233");
+    expect(headers.find((h) => h.id === "session-2")?.agentId).toBeUndefined();
   });
 
   it("坏档案跳过不列（坏 JSON / 形状门拒），不阻断发现面", async () => {

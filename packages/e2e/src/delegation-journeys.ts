@@ -114,7 +114,7 @@ export async function runCrossProcessJourney(): Promise<void> {
     must(userTextsOf(harness, "alpha-main" as SessionId).includes("peer ack from real subprocess"), "peer 回信经信封到达 alpha main");
 
     // ② notify_when_idle：peer 空闲后恰好一条 notice
-    const subbed = await registry.dispatch({ callId: "e2e-x2", name: "agent_message", args: { to: "peer", notify_when_idle: true }, signal: new AbortController().signal, session: "alpha-main" as SessionId });
+    const subbed = await registry.dispatch({ callId: "e2e-x2", name: "agent_message", args: { to: "peer", message: "done ping", notify_when_idle: true }, signal: new AbortController().signal, session: "alpha-main" as SessionId });
     must(!subbed.isError, `idle 订阅（实际：${subbed.content}）`);
     const noticeDeadline = Date.now() + 15_000;
     while (!userTextsOf(harness, "alpha-main" as SessionId).includes("[Cross-session idle notice]") && Date.now() < noticeDeadline) await sleep(100);
@@ -206,8 +206,9 @@ export async function runReviveJourney(): Promise<void> {
     first.scripts.set("child-model", [textScript("first life"), textScript("second life")]);
     first.scripts.set("parent-model", [textScript("p1"), textScript("p2")]);
     const registry1 = first.ctx.use((await import("@x-harness/tools")).toolRegistry);
-    const spawned = await registry1.dispatch({ callId: "e2e-r1", name: "agent_spawn", args: { description: "revive me", prompt: "work", subagent_type: "worker", name: "phoenix" }, signal: new AbortController().signal, session: "revive-parent" as SessionId });
-    must(!spawned.isError, `spawn 命名子（实际：${spawned.content}）`);
+    const spawned = await registry1.dispatch({ callId: "e2e-r1", name: "agent_spawn", args: { description: "revive me", prompt: "work", subagent_type: "worker" }, signal: new AbortController().signal, session: "revive-parent" as SessionId });
+    must(!spawned.isError, `spawn 子（实际：${spawned.content}）`);
+    const agentId = (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] as string;
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
     await sleep(300); // 子完成 + 通知
     const store1 = first.ctx.use(sessionStore);
@@ -225,8 +226,8 @@ export async function runReviveJourney(): Promise<void> {
     second.scripts.set("child-model", [textScript("second life")]);
     second.scripts.set("parent-model", [textScript("p3")]);
     const registry2 = second.ctx.use((await import("@x-harness/tools")).toolRegistry);
-    const woke = await registry2.dispatch({ callId: "e2e-r2", name: "agent_message", args: { to: "phoenix", message: "rise again" }, signal: new AbortController().signal, session: "revive-parent" as SessionId });
-    must(!woke.isError, `按名复活（实际：${woke.content}）`);
+    const woke = await registry2.dispatch({ callId: "e2e-r2", name: "agent_message", args: { to: agentId, message: "rise again" }, signal: new AbortController().signal, session: "revive-parent" as SessionId });
+    must(!woke.isError, `按 agentId 复活（实际：${woke.content}）`);
     // 完成屏障：等复活子真正 idle（steer 的 kick 异步——flush 快照不等 turn，审查 B-P2-9）
     const childHandle = loop2.get(childSession);
     must(childHandle !== undefined, "复活子句柄在场");
@@ -236,11 +237,11 @@ export async function runReviveJourney(): Promise<void> {
     const childDisk = await readFile(join(persistenceRoot, childSession, "events.jsonl"), "utf8");
     must(childDisk.includes("first life") && childDisk.includes("second life"), "子会话同卷续写（两世同卷）");
     const childHeader = await readFile(join(persistenceRoot, childSession, "header.json"), "utf8");
-    must(childHeader.includes('"agentName":"phoenix"'), "子 header 名字锚落盘");
+    must(childHeader.includes(`"agentId":"${agentId}"`), "子 header id 锚落盘");
     await parentHandle.dispose();
     await second.ctx.dispose();
     void second.unload;
-    console.log("复活旅程：全灭 → 档案 resume 父 → 按名复活子续卷双落盘 通过");
+    console.log("复活旅程：全灭 → 档案 resume 父 → 按 agentId 复活子续卷双落盘 通过");
   } finally {
     await rm(persistenceRoot, { recursive: true, force: true }).catch(() => {});
     await rm(agentsDir, { recursive: true, force: true }).catch(() => {});
