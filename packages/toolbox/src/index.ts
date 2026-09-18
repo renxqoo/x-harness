@@ -7,4 +7,6 @@ export { createReadTool } from "./read.ts";
 export { createWriteTool } from "./write.ts";
 export { createBashTool, defaultLimits } from "./bash.ts";
 export type { BashLimits } from "./bash.ts";
+export { BackgroundTasks, defaultTaskLimits } from "./tasks.ts";
+export type { TaskLimits, TaskSnapshot, TaskRead, TaskState } from "./tasks.ts";
 export { createGrepTool } from "./grep.ts";

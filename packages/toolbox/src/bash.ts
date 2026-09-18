@@ -1,21 +1,21 @@
 // bash 工具（docs/TOOLBOX.md §4 + docs/EXEC-ENV.md §3/§6）：进程生命周期经 env.spawn
 // （detached 组杀/settle 观测面/host-exit 清场——全在 exec-env；本文件只留两段杀节奏策略）；
-// 双流全程并发消费；截断保尾+spill（0700/wx 0600/随机名）；退出码非 isError。
+// 双流全程并发消费；截断保尾+spill（0700/wx 0600/随机名）；退出码非 isError；
+// run_in_background → BackgroundTasks 登记簿（tasks.ts）立返任务 id。
 
-import { mkdirSync, mkdtempSync, openSync, closeSync, writeSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
-import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv, ProcHandle } from "@x-harness/exec-env";
 import { PathGate } from "./paths.ts";
+import type { BackgroundTasks } from "./tasks.ts";
+import { ChannelCollector, pump, writeSpill } from "./collect.ts";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_OUTPUT_BYTES = 30_000;
-const OUTPUT_LINE_CAP = 2_000;
 const KILL_GRACE_MS = 5_000;
 
 /** POSIX 信号→编号（128+n 渲染——env 层 code null + signal，折算属本层） */
@@ -48,19 +48,21 @@ export interface BashToolInput {
   readonly gate: PathGate;
   readonly limits: BashLimits;
   readonly env: ExecEnv;
+  readonly tasks: BackgroundTasks;
 }
 
 export function createBashTool(input: BashToolInput): ToolDefinition {
-  const { gate, limits, env } = input;
+  const { gate, limits, env, tasks } = input;
   return {
     name: "bash",
     description:
-      "Run a shell command with /bin/sh -c in the workspace root (cd within the command for subdirectories). Non-zero exit codes are shown as [exit code: N] and are NOT tool errors — inspect the output. Long-running commands (builds, installs) should pass timeout_ms explicitly (default 120000ms, max 600000ms). Output is truncated to the last 30000 bytes with the full output written to a spill file.",
+      "Run a shell command with /bin/sh -c in the workspace root (cd within the command for subdirectories). Non-zero exit codes are shown as [exit code: N] and are NOT tool errors — inspect the output. Commands that finish quickly (default 120000ms, max 600000ms) run in the foreground and return full output. Long-running commands (builds, installs, servers) should set run_in_background:true — the call returns a task id immediately instead of waiting. Output is truncated to the last 30000 bytes with the full output written to a spill file.",
     inputSchema: Type.Object({
       command: Type.String({ description: "Shell command line" }),
-      timeout_ms: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: `Wall-clock timeout in ms (default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)})` })),
+      timeout_ms: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: `Foreground wall-clock timeout in ms (default ${String(DEFAULT_TIMEOUT_MS)}, max ${String(MAX_TIMEOUT_MS)})` })),
+      run_in_background: Type.Optional(Type.Boolean({ description: "Run detached: return a task id immediately instead of waiting for completion" })),
     }),
-    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, ctx, args: args as { command: string; timeout_ms?: number } }),
+    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, tasks, ctx, args: args as { command: string; timeout_ms?: number; run_in_background?: boolean } }),
   };
 }
 
@@ -68,15 +70,21 @@ async function bash(input: {
   readonly gate: PathGate;
   readonly limits: BashLimits;
   readonly env: ExecEnv;
+  readonly tasks: BackgroundTasks;
   readonly ctx: ToolExecContext;
-  readonly args: { command: string; timeout_ms?: number };
+  readonly args: { command: string; timeout_ms?: number; run_in_background?: boolean };
 }): Promise<{ content: string; isError?: true }> {
-  const { gate, limits, env, ctx, args } = input;
+  const { gate, limits, env, tasks, ctx, args } = input;
   if (PathGate.hasNul(args.command)) {
     return { content: "NUL_IN_ARGUMENT: command contains NUL", isError: true };
   }
   if (ctx.signal.aborted) return { content: "aborted: tool call aborted before dispatch", isError: true }; // pre-abort 零 spawn
 
+    if (args.run_in_background === true) {
+    const started = await tasks.start({ command: args.command, cwd: gate.root, session: ctx.session, env });
+    if (!started.ok) return { content: started.reason, isError: true };
+    return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — it keeps running across turns; poll its output and state via the task layer` };
+  }
   const timeoutMs = Math.min(args.timeout_ms ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
   return render(await runCommand({ command: args.command, cwd: gate.root, timeoutMs, limits, env, ctx }));
 }
@@ -132,7 +140,7 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
   const stdoutText = out.text(limits.maxOutputBytes);
   const stderrText = err.text(limits.maxOutputBytes);
   const truncated = out.truncated || err.truncated;
-  const spillPath = truncated ? writeSpill(limits, `${out.full}${err.full === "" ? "" : `\n[stderr]\n${err.full}`}`) : undefined;
+  const spillPath = truncated ? writeSpill(limits.spillDir, "bash", `${out.full}${err.full === "" ? "" : `\n[stderr]\n${err.full}`}`) : undefined;
   return {
     stdout: stdoutText,
     stderr: stderrText,
@@ -153,95 +161,6 @@ function renderableCode(exited: { readonly code: number | null; readonly signal:
   return null;
 }
 
-/** 字节精确取尾：起始位置若落在 UTF-8 续字节（0b10xxxxxx）则前移到字符边界——
- *  不撕裂多字节字符、必有推进（对比字符数切片：≥3 字节/字符的输出会使切片成为无进展空转） */
-function tailBytes(text: string, maxBytes: number): string {
-  const buf = Buffer.from(text, "utf8");
-  let start = buf.byteLength - maxBytes;
-  while (start > 0 && ((buf[start] as number) & 0xc0) === 0x80) start -= 1;
-  return buf.subarray(start).toString("utf8");
-}
-
-/** 双流全程并发消费：即使截断/spill 失败也读到 EOF 丢弃（防子进程堵管假挂） */
-async function pump(stream: ReadableStream<Uint8Array>, collector: ChannelCollector): Promise<void> {
-  const reader = stream.getReader();
-  const decoder = new StringDecoder("utf8");
-  for (;;) {
-    const read = await reader.read();
-    if (read.done) break;
-    collector.push(decoder.write(read.value)); // StringDecoder：跨 chunk 撕裂 UTF-8 不出替换符
-  }
-  collector.push(decoder.end());
-}
-
-const FULL_CAP_BYTES = 64 * 1024 * 1024;
-
-class ChannelCollector {
-  private readonly parts: string[] = [];
-  full = "";
-  fullBytes = 0;
-  fullCapped = false;
-  truncated = false;
-
-  push(text: string): void {
-    if (text === "" || this.fullCapped) return;
-    this.parts.push(text);
-    this.full += text;
-    this.fullBytes += Buffer.byteLength(text);
-    if (this.fullBytes > FULL_CAP_BYTES) {
-      this.fullCapped = true; // spill 体量上限：停止累积（内存 DoS 防护）
-      this.full = this.full.slice(0, FULL_CAP_BYTES * 2);
-    }
-  }
-
-  /** 截断保尾部（完整行边界起，单行超帽允许行中截）+ 行数帽；字节精确取尾不越 30KB 口径 */
-  text(maxBytes: number): string {
-    let joined = this.parts.join("");
-    if (Buffer.byteLength(joined) > maxBytes) {
-      this.truncated = true;
-      joined = tailBytes(joined, maxBytes);
-      const nl = joined.indexOf("\n");
-      joined = nl >= 0 && Buffer.byteLength(joined) - Buffer.byteLength(joined.slice(nl + 1)) < maxBytes
-        ? joined.slice(nl + 1) // 从完整行边界起（行内剩余仍 ≤ 帽）
-        : joined; // 单行超帽：行中截（保尾部优先于行完整）
-    }
-    const lines = joined.split("\n");
-    const counted = lines[lines.length - 1] === "" ? lines.length - 1 : lines.length;
-    if (counted > OUTPUT_LINE_CAP) {
-      this.truncated = true;
-      joined = lines.slice(-OUTPUT_LINE_CAP).join("\n");
-    }
-    return cleanAnsi(joined);
-  }
-}
-
-const ESC = String.fromCharCode(27);
-const BEL = String.fromCharCode(7);
-const CSI_RE = new RegExp(`${ESC}\\[[0-9;?]*[A-Za-z]`, "g"); // ESC[ 序列（ANSI CSI）
-const OSC_RE = new RegExp(`${ESC}\\][^${BEL}]*(?:${BEL}|${ESC}\\\\)`, "g"); // ESC]...BEL OSC 序列
-const CR_RE = new RegExp("\\r(?!\\n)", "g"); // 裸 \r（非 CRLF）
-
-/** ANSI 转义与裸 \r 清洗（token 噪声；锚定 ESC——普通 [word] 文本不受影响） */
-function cleanAnsi(text: string): string {
-  return text.replace(CSI_RE, "").replace(OSC_RE, "").replace(CR_RE, "");
-}
-
-function writeSpill(limits: BashLimits, full: string): string | undefined {
-  try {
-    mkdirSync(limits.spillDir, { recursive: true, mode: 0o700 });
-    const path = join(limits.spillDir, `bash-${randomBytes(8).toString("hex")}.txt`);
-    const fd = openSync(path, "wx", 0o600);
-    try {
-      writeSync(fd, full);
-    } finally {
-      closeSync(fd);
-    }
-    return path;
-  } catch {
-    return undefined;
-  }
-}
-
 function render(result: RunResult): { content: string; isError?: true } {
   if (result.spawnError !== undefined) {
     return { content: `SPAWN_FAILED: ${result.spawnError}`, isError: true };
@@ -251,7 +170,7 @@ function render(result: RunResult): { content: string; isError?: true } {
   if (result.stderr !== "") sections.push(`[stderr]\n${result.stderr}`);
   let body = sections.length === 0 ? "(no output)" : sections.join("\n");
   if (result.timedOut) {
-    body = `[timed out after ${String(result.timeoutMs)}ms]${result.aborted ? " (aborted)" : " — raise timeout_ms and retry if this command legitimately needs longer"}\n${body}`;
+    body = `[timed out after ${String(result.timeoutMs)}ms]${result.aborted ? " (aborted)" : " — raise timeout_ms and retry if this command legitimately needs longer, or use run_in_background"}\n${body}`;
   } else if (result.aborted) {
     body = `[aborted]\n${body}`;
   }
@@ -266,4 +185,4 @@ function render(result: RunResult): { content: string; isError?: true } {
   return { content: body };
 }
 
-export { KILL_GRACE_MS, OUTPUT_LINE_CAP, DEFAULT_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS };
+export { KILL_GRACE_MS, DEFAULT_OUTPUT_BYTES, DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, SIGNAL_NUM };

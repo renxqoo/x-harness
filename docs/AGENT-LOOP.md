@@ -18,7 +18,7 @@
 | 7 | @x-harness/llm-retry：退避重试 | docs/LLM-RETRY.md | 已收口（新增：审计事件+进程内预算） |
 | 8 | @x-harness/token-meter：用量记账+估算 | docs/TOKEN-METER.md | 已收口（新增：失败尝试计费+路线归因） |
 | 9 | @x-harness/agent-delegation：子代理 | docs/AGENT-DELEGATION.md | 已收口（异步 spawn+通知唤醒，四路审查处置） |
-| 10 | @x-harness/toolbox：read/write/bash/grep 四工具 | docs/TOOLBOX.md | 已收口（grep rg 硬依赖单路径——裁决 §5；e2e 四工具旅程） |
+| 10 | @x-harness/toolbox：read/write/bash/grep 四工具 + 后台任务登记簿 | docs/TOOLBOX.md | 已收口（grep rg 硬依赖 §5；run_in_background 登记簿 §4——task 动词归未来件） |
 | 11 | @x-harness/exec-env + permission + sandbox-local：执行环境/本机沙箱/auto 权限（toolbox 全量接入） | docs/EXEC-ENV.md | 已实施（B0–B3 交付；代码审查 A/B 处置见文档 §13；darwin 真内核腿绿，linux 腿 T9 承载） |
 | 12 | permission bash 裁决 AST 化：tree-sitter 迁移（段词法器 8 漏洞根治） | docs/EXEC-ENV.md §14 | 已收口（载体原生；方案审三路 §14.9 + 收口审两路 §14.10 全处置）；§14.11 裁决⑤ full 重定义 + bun 子命令修订；§14.12 裁决⑥简化令（wrapper 收敛 + opaque 原则化，wrappers 439→300 行零未覆盖） |
 

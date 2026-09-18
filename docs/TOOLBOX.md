@@ -14,6 +14,9 @@ export interface ToolboxOptions {
   readonly maxOutputBytes?: number;    // bash 输出字节帽（缺省 30_000，截断保尾部）
   readonly spillDir?: string;          // 截断全文落盘目录（缺省 mkdtemp(tmpdir()/x-harness-)，0700）
   readonly rgPath?: string;            // rg 显式路径（解析链最高优先级；缺省 env X_HARNESS_RG_PATH → PATH 探测）
+  readonly env?: ExecEnv;              // 执行环境（三级解析：工厂参数 > execEnv 服务 > 装配期 throw——fail-closed）
+  readonly maxConcurrentTasks?: number; // 每会话后台任务并发帽（缺省 3）
+  readonly taskTimeoutMs?: number;     // 后台任务墙钟帽（缺省 600_000——任务生命周期上限，与前台 turn 等待上限解耦）
 }
 export function createToolbox(options?: ToolboxOptions): {
   readonly readPlugin: Plugin;   // name "tool-read"
@@ -91,7 +94,8 @@ export function createToolbox(options?: ToolboxOptions): {
 
 ## 4. bash（bash.ts）
 
-**Schema**：`{ command: string, timeout_ms?: int >0（上限 600_000——maxTimeoutMs 可配收紧） }`。
+**Schema**：`{ command: string, timeout_ms?: int >0（上限 600_000——maxTimeoutMs 可配收紧）,
+run_in_background?: boolean }`。
 无缺省超时的三参考共识 vs 我仓无宿主看门狗——**有意偏离**：缺省墙钟 120s（可配），文档落档。
 
 **行为**：
@@ -122,7 +126,29 @@ export function createToolbox(options?: ToolboxOptions): {
 - spawn 同步 throw（如 ENOENT）兜底 catch → `SPAWN_FAILED`；命令含 NUL 拒绝；env 不透传模型
   注入面（named spawn 选项，无 shell 二次展开——交集 25）。
 
-**不做（落档）**：后台 job 模式；流式 progress 转发（无消费面）；受信 env 注入；60s 无输出
+**后台任务（run_in_background: true，tasks.ts——BackgroundTasks 登记簿）**：
+
+- spawn 同前台（env.spawn，argv/围栏/裁决不变——permission 对 command 的裁决与前台同管线），
+  **不等待**：立返 `Background task <id> started`（id 形如 `t-<hex>`；回执不含输出）；
+- 登记簿**会话键控**（`ctx.session ?? "_anon"`——A 会话不可读/停 B 的任务）；每会话并发帽
+  （缺省 3，超限 `TASK_LIMIT` 拒绝并指引等待/停旧）；
+- 状态机 `running → completed | failed | killed | timed-out`：墙钟帽（缺省 600s）到点两段杀
+  （TERM→5s→KILL，同前台节奏）→ `timed-out`；`stop()` 幂等（已终态返回当前快照）→ `killed`；
+  退出码 0/非 0 → completed/failed（信号死折算 128+n，同前台）；
+- 输出：双流**按到达序并流**进单缓冲（单字节偏移增量读——`read(session, id, offset)` 返回
+  切片 + nextOffset + more；伪 offset 回退到字符首字节（不跳数据）、非有限 offset 归 0、
+  ANSI/裸 \r 清洗与前台同口径；`[stderr]` 分节是前台语义，后台不保留）；**保留帽 spill**
+  触发口径=fullCapBytes（缺省 64MB 可配）超帽停累积并 spill 已保留部分（前台是 30KB 展示
+  截断触发——各自口径）；pumps 全 EOF 后才 finalize（bytes/终态/spill 不缺尾）；
+- 清场与登记生命周期：sessionDisposed → 该会话任务两段杀并**清桶逐出**（会话生命周期即
+  登记生命周期——终态任务保留到会话终结，供 task_output 轮询，无跨会话累积）；装配 dispose →
+  全部**直接 KILL**（收尾窗口不留给 teardown——env 层兜底）；host-exit 由 env 进程登记覆盖；
+  **单装配假设**：一工厂一装配（同工厂多处 apply 共享登记簿，teardown 互杀不支持）；
+  并发帽含在途 spawn 占位（检查与登记隔 await——防 TOCTOU 越帽）；
+- **读/停的模型侧动词不建 bash 专属工具（用户裁决）**——未来通用任务层出 `task_output`/
+  `task_stop`（跨任务源），本登记簿经 `createToolbox().tasks` 句柄供给。
+
+**不做（落档）**：流式 progress 转发（无消费面）；受信 env 注入；60s 无输出
 hung-kill（缺省墙钟已兜底挂死——有意以墙钟替代双时间线，简化）；KILL 宽限可配（5s 常数与
 排他档防钉死绑死）。
 
@@ -184,6 +210,9 @@ respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows ta
   原子性回归（写中途失败无半截+无 temp 残留）+ symlink 不穿透（rename 替换链接本身）+
   同路径并发串行化（进程内互斥——双写可序列化）/BOM round-trip 补回/空文件 read 开门/
   EACCES → FS_ACCESS_DENIED/FIFO 双拒/atomicWrite 注入（短写循环续写 + 中途抛错原文完好）。
+- bash 后台（tasks.test.ts）：立返 id 不等待/状态机五态（completed/failed/killed/timed-out）/
+  增量读字节偏移与多字节边界/并发帽 TASK_LIMIT/墙钟帽自动杀/stop 幂等/会话隔离（A 不可读停 B）/
+  sessionDisposed 清场与 dispose 直接 KILL（marker 法无孤儿）；
 - bash（11+回归）：退出码可见且非 isError/静默 (no output)/超时两段杀（**无条件等满宽限**）+
   标记顺序+尾部输出+raise 指引/trap-exit-0 不伪装（回归 D23）/timeout 校验表（0/负/超 maxTimeoutMs）
   /截断保尾部**三件套断言**（标注在场+尾部内容在场+spill 字节级等于全文）/行帽（尾换行不算行）/
@@ -211,7 +240,8 @@ respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows ta
 
 ## 7. 不处理（归属）
 
-图片/多模态（ContentBlock 契约扩展时）；sandbox/审批流（安全产品线）；后台 job（长任务件）；
+图片/多模态（ContentBlock 契约扩展时）；sandbox/审批流（安全产品线）；通用任务动词
+task_output/task_stop（未来任务件——跨任务源消费 tasks 句柄，不建 bash 专属工具，用户裁决）；
 流式 progress（观察面消费方出现时）；会话 cwd（宿主件写入 SessionHeader.cwd 后挂——届时
 bash 已固定 root 无 workdir）；exit 标记 round-trip（UI 状态面出现时）；TOCTOU 窗口（门 check 与 I/O 之间
 换 symlink——接受，防护归安全产品线）；**rg 获取全链**（安装/下载/sidecar 拼装归制品与
@@ -250,10 +280,20 @@ read !isFile 全拒（P3——FIFO 阻塞）；Bun.spawn signal 选项禁用（�
 - PathGate root="/" 段边界前缀不拼 `//`；read EACCES/EPERM → FS_ACCESS_DENIED（与不存在分报）；
   write 非常规文件（FIFO/socket）`!isFile` 全拒
 
+后台任务批裁决（用户裁决，两轮）：
+
+- 长任务正解 = run_in_background 后台化（前台墙钟维持 120s——排他档防钉死；前台超时文案补
+  run_in_background 指引）；后台墙钟帽与前台等待上限语义解耦（缺省 600s 可配）
+- **不建 bash 专属 job 读/停工具**——通用任务动词 task_output/task_stop 归未来任务件（跨任务源
+  消费 `createToolbox().tasks` 句柄）；登记簿先落地：会话键控/五态状态机/字节偏移增量读（伪
+  offset 回退到字符首字节，不跳数据）/每会话并发帽/两段杀节奏与前台同款/dispose 直接 KILL
+- ChannelCollector/pump/writeSpill 抽 collect.ts（前台与后台共用——单源）
+
 ## 8. 验收清单
 
-- [x] §1–§6 逐条；单测 71 例全绿（paths 8 / read-write 22 / bash 16 / grep 25——含假 rg 注入装置
-  与解析链子进程装置）；e2e 四工具旅程绿（rg 缺席 fail-fast 探针 + write→read→覆写→bash→
-  未观察拒→grep 六步经真实 agent turn + 盘上副作用断言）；已知覆盖盲区如实落档：grep 的
+- [x] §1–§6 逐条；单测 82 例全绿（paths 8 / read-write 22 / bash 15 / grep 25 / tasks 12——
+  含假 rg 注入装置、解析链子进程装置与后台登记簿套件）；e2e 旅程绿（rg 缺席 fail-fast 探针 +
+  write→read→覆写→bash→未观察拒→grep→后台立返 七步经真实 agent turn + 盘上副作用与登记簿
+  终态断言）；已知覆盖盲区如实落档：grep 的
   `SEARCH_RG_UNAVAILABLE` 分支仅在子进程内可达（v8 覆盖率不可见——行为由子进程用例背书，
   同 worker/host.ts 先例）；四门与覆盖率数字以流水线汇报为准
