@@ -1,180 +1,494 @@
-# AGENT-DELEGATION：子代理插件（件 9）
+# AGENT-DELEGATION：子代理与跨会话通信终态（件 13）
 
-> 状态：已实施（方案审 A/B + 代码审 A/B 四路处置见 §6/§8；e2e 旅程绿）
-> 级别：中（跨包新件 + agent-loop/tools 两处接缝扩展 + 子代理生命周期并发语义）
-> 参考思想：my-agent agents 件（异步 spawn/通知唤醒/动词族/门禁——实现逻辑主参考）、
-> DSH subagent 族（max-depth/结算映射/孤儿防护）。测试语义子集 X1–X20 已提取对照（§5）。
+> 状态：**方案定稿**（两路对抗审查 41 条发现全处置，见 §14）
+> 级别：高（agent-delegation 整包重写 + session-mailbox 新包 + agent-loop/session/session-persistence/
+> permission/toolbox/sandbox-local/system-prompt 七处接缝）
+> 规格层级（本件特设，先于一切）：**外部规格 = `/Users/wrr/work/claude-tool/agent-and-background-tasks.md`**
+> （Claude Code 子代理与后台任务五工具文档）+ §1 四项用户裁决；旧实现不再是规格，但其已验证
+> 机制（X1–X20 语义、fork 净化、通知臂/占槽拆分、孤儿收养）作为保留机制映射表（§9.3）继承。
 
-## 0. 动机
+## 0. 动机与终态定义
 
-生产 agent 必须能并行拆解任务：父模型经工具派生子代理（独立会话、可受限工具集、可继承
-上下文），子完成主动唤醒父继续——父的模型上下文不被子过程污染。地基已备：AgentHandle
-动词族（followup/steer/cancel/whenIdle）、session fork、agentStatus 事件冒泡（子 scope emit
-可达根层监听者）。
+现状：五工具描述已逐字对齐规格，但参数面/行为面是进程内子代理子集，描述承诺大量不存在的能力
+（task_id/block/timeout、to/message/summary/notify_when_idle、跨会话、isolation、system-reminder
+类型注入），契约自相矛盾。本件目标 = **消灭矛盾**：按规格语义重写 agent-delegation 到终态，
+不留过渡版本、不留兼容双轨。
 
-## 1. 契约
+终态边界（由 §1 裁决确定）：本机单进程子代理全语义 + 本机跨进程会话通信；云端/Remote
+Control/agent-team/统一后台任务体系（bash 后台、输出文件指针、/tasks）不做，落档 §13。
 
-```ts
-export interface SubagentType {
-  readonly prompt?: string;                 // 子 system prompt（缺省=装配默认）
-  readonly model?: string;                  // 缺省=父模型
-  readonly provider?: string;
-  readonly tools?: readonly string[];       // 工具白名单（沿树只收窄：∩ 调用方白名单）
-}
-export interface DelegationOptions {
-  readonly types: Readonly<Record<string, SubagentType>>;
-  readonly maxDepth?: number;               // 缺省 3；子再派孙超深度拒
-  readonly maxConcurrent?: number;          // 缺省 10；按父计在飞（running）子数
-  readonly reportCap?: number;              // 缺省 8000；agent_output 报告截断上界
-}
-export function createAgentDelegationPlugin(options: DelegationOptions): Plugin;
-// name "agent-delegation"，inject ["session","tools","agent-loop"]
+## 1. 用户裁决记录（2026-09-19，AskUserQuestion 落档）
+
+| # | 裁决点 | 决定 | 派生后果 |
+| --- | --- | --- | --- |
+| U1 | 跨会话通信边界 | **+本机跨进程**：文件系统邮箱 + peer 发现，本机多个 harness 进程可互发 | liveness/回收/原子投递协议（§5.3）；云端/Remote Control/agent-team 落档 |
+| U2 | 统一后台任务体系 | **不并入**：TaskOutput/TaskStop 只管子代理任务 | 描述不得承诺 bash 任务/输出文件指针//tasks（§2.3）；任务体系归后续件 |
+| U3 | 工具命名 | **保留蛇形名**（agent_spawn/agent_message/agent_output/agent_stop/list_agents） | descriptions.ts 弃逐字原文，改写为真实语义（引用本仓工具名与参数） |
+| U4 | 类型定义来源 | **仅 .md 文件**（frontmatter + 正文=子 system prompt），弃编程式 types | DelegationOptions.types 删除（零兼容）；类型清单注入通道新建（§7.2） |
+
+## 2. 外部契约
+
+### 2.1 五工具参数面（终态）
+
+| 工具 | 入参 | 行为要点 |
+| --- | --- | --- |
+| `agent_spawn` | `{description, prompt, subagent_type?, model?, name?, isolation?}` | description 必填（3-5 词任务简述，缺省 name 来源=slug，§6.1）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；name 显式命名（**本仓扩展参数**：规格 Agent 无 name 入参，名字是系统返回值；本仓为寻址需要开放显式命名）；isolation 仅 `"worktree"`（§8）。返回 `{agentId, sessionId, name}` + 反轮询引导；后台运行，完成时 `[agent-notification]`（§5.1） |
+| `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——`name [ref]` 解析依赖）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,300}$`，长内容走文件中转）；summary ≤200 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
+| `agent_output` | `{task_id, block?, timeout?}` | task_id=agentId、name 或 `name [ref]`（**限 owner 亲生子**，§4.4）；block 缺省 true；timeout 缺省 30000、min 0、max 600000。block=true：`whenIdle()+race(timeout)` 等完成再回报告（到点未完 → 返回 running 状态与当前末轮摘要）；block=false 立即快照。报告 reportCap 截断。本仓一等工具，**不继承规格 DEPRECATED 定位**（无文件指针替代路径，U2） |
+| `agent_stop` | `{task_id}` | task_id 同 agent_output 形态（限 owner）；cancel+whenIdle 收敛；幂等；停止非销毁（可再 message 复活）；worktree 子触发清理评估（§8.3）。无 shell_id（规格已弃用参数，不实现）与 teammate 形态（落档） |
+| `list_agents` | `{}` | 行格式 `<name> [<ref>] kind=<subagent\|local-session> <agentId\|box> status=<running\|idle\|stopped>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档） |
+
+错误词表（判别联合 reason，中性英文，统一 `area:detail`）：`invalid-args:*`（参数形状/未知
+类型/to 含换行/notify_when_idle 越权或非 box 目标）、`not-found:*`（寻址落空，带清单或消歧
+提示）、`not-owner:*`、`denied:max-depth|shutting-down`、`busy:max-concurrent`、
+`spawn-failed:*`、`not-live:*`（跨进程对端死）、`ambiguous:*`（裸名多命中，带 [ref] 清单）、
+`aborted:*`（execute 内断信号防线，现状继承）。
+
+### 2.2 限额与预算
+
+maxDepth 缺省 3 / maxConcurrent 缺省 10（occupied 口径：登记占、完成通知/stop 释、message
+复活复占）/ reportCap 缺省 8000 / 通知摘要 200 / **maxResident 缺省 32**（idle 子驻留上限，
+最旧档化：dispose 子会话（WAL 在盘）+摘行，配合 §6.2 惰性复活天然可恢复——防完成子无限
+驻留累积）/ mailbox 定时参数全部可注入（pollIntervalMs 300 / heartbeatMs 10_000 /
+graceMs 30_000 / staleMs 7d / now()——测试确定性收口，§11）。
+
+### 2.3 description 改写原则（U3 派生）
+
+descriptions.ts 保留独立常量文件形态，文本全部重写：以本仓蛇形工具名与真实参数为准；
+继承规格的行为规范内核：委派后勿自查、禁编造未完成代理结果、最终报告需主会话转述、
+**转述时不引用原文**（已渲染给用户）、**回复跨会话消息时拷贝其 from 为 to**、权限洗白红线、
+notify_when_idle 反轮询（禁循环 list_agents/「好了吗」）、`[agent-notification]` 等待语义、
+idle 通知标签统一 `[Cross-session idle notice]`。**禁止**出现不存在的承诺（/tasks、bash 任务、
+输出文件路径、云端、teammate、DEPRECATED）。改写后 description 与 schema 逐字段可对账
+（§11.2 双向对账）——假绿抽查硬检查项。
+
+## 3. 架构与包边界
+
+```text
+┌─ agent-delegation（重写）──────────────────────────────────────────┐
+│ plugin.ts(装配) spawn.ts(决策流) verbs.ts(output/stop/list)        │
+│ nameaddr.ts(寻址解析) lineage.ts(双索引血缘) notify.ts(通知)        │
+│ types-loader.ts(.md) worktree.ts(隔离) mailbox-consumer.ts(跨进程) │
+└────────────┬───────────────────────────────────────────────────────┘
+             │ use
+┌─ session-mailbox（新包，仅依赖 core）──────────────────────────────┐
+│ box.ts(开箱/认领/manifest/心跳/关箱) send.ts(原子投递/抢占 drain)   │
+│ discover.ts(peer 发现/墓碑两步回收) subs.ts(idle 订阅/结算)         │
+│ 纯文件协议：tmp+rename 原子、单文件单消息（§5.3）                    │
+└────────────────────────────────────────────────────────────────────┘
+接缝（同提交，各包内最小扩展）：
+1. session：CreateSessionOptions 增 agent 元数据透传（makeHeader 扩展落盘通道——
+   store.ts birth 路径），SessionHeader 增 `agentName?/agentType?/agentDepth?`
+   （复活锚：名字/类型/深度冗余落盘，免链回溯）
+1b. session-persistence-jsonl：SessionArchive 增 `listHeaders()`（只读 header.json 的
+   轻量投影——复活扫描与 discover 不读全卷）
+2. agent-loop：无新动词（block 等待用现有 whenIdle；类型清单走 system-prompt）
+3. permission：GrantsRegistry 增 `setRootOverride(session, dir)` / `rootOverrideOf(session)`；
+   `addExtraRoot` 增守卫——带 override 的会话拒绝原根子树路径入 extraRoots（防权限批准
+   打穿隔离）
+4. toolbox：paths.ts PathGate rootOverride 全链——admit 改为 override **替换** this.root
+   （非叠加）、rebaseToRoot 词法基随 override 切换、override 根 realpath 双形归一
+   （macOS /var→/private/var，对齐 extraRoots 做法）、bash 缺省 cwd =
+   rootOverrideOf(session) ?? gate.root（workdir 参数语义不变）；四工具透传
+5. system-prompt：delegation 注册 `<subagent-types>` section（§7.2）
+6. sandbox-local：fence 增会话级 rootOverride——writable 集合以 override 替换 base.root、
+   protectedPaths 按 override 根重算（worktree 的 bash 命令体写面执法，§8.2）
 ```
 
-### 1.1 工具族（注册进 toolRegistry，父与子都可见——递归由 maxDepth 管）
+依赖方向：agent-delegation → session-mailbox / agent-loop / session / tools / permission(grants
+token) / system-prompt（**inject 扩为 `["session","tools","agent-loop","permission",
+"system-prompt"]` + mailbox 服务**）；session-mailbox → 仅 core。mailbox 时间参数与 now()
+经 options 注入（§2.2）。
 
-| 工具 | 入参 | 行为 |
+## 4. agent 管理控制面（怎么管理控制所有 agent）
+
+### 4.1 生命周期状态机（单子代理）
+
+```text
+spawned(瞬态，登记即 followup) → running ──idle+armed──> [agent-notification] → idle(槽释放)
+idle ──message──> running（复活复占槽；唤醒入口重验父存活，缺位→孤儿收养）
+running|idle ──agent_stop──> stopped(幂等；槽释放；可 message 复活)
+idle 驻留超 maxResident → 档化（dispose 子会话+摘行；可按名惰性复活，§6.2）
+任意 ──插件 teardown──> disposed（级联 cancel+whenIdle+dispose；tearing-down 通知门先行；
+  worktree 清理评估；mailbox 序列见 §5.3 关箱）
+进程消失 ──重启──> 内存行丢失 → 惰性重建（§6.2）
+```
+
+不变量：① occupied 计数与 running/复活严格对应（通知与 stop 是仅有的两个释槽点）；
+② armed 只在 running 置位、通知即复位（防 idle 双通知）；③ tearing-down 置位后通知门丢弃
+一切（级联 cancel 的 abort 通知不得 steer 复活父）；④ 孤儿子收养（父先 dispose →
+cancel+dispose+摘行），唤醒入口（message）同样重验；⑤ 三索引（agentId/sessionId/name）
+单一 register/drop 出口同改。
+
+### 4.2 lineage 数据结构（重构）
+
+`Map<agentId, ChildRow>` 主索引 + `Map<sessionId, agentId>` 副索引 + `Map<name, agentId[]>`
+名索引（同名人按 spawn 序，尾部=最新=裸名解析优先）。**agentId 铸造 = `agent-<8hex随机>`
+（crypto 随机，进程内唯一且跨重启不撞）**；`[ref]` = agentId 的 8hex 段尾 6 位（hex 形态，
+规格形）；box ref = manifest.bootId 尾 6 hex。ChildRow 增：`worktree?: string`。
+
+### 4.3 ChildRow 字段终态
+
+`{agentId, sessionId, name, type, parent, depth, occupied, armed, running, stopped, worktree?}`。
+**live 定义：内存行存在即 live（含 stopped——可复活）**，同名消歧计数按此口径。视图投影
+status：running→`running`；stopped→`stopped`；否则 `idle`（停止后复活如实显示 running）。
+
+### 4.4 属主边界（管理面红线）
+
+- `agent_output` / `agent_stop`：**仅 owner**（callerSession === row.parent），task_id 解析
+  复用 §5.2 分支 2/3/4a/4b（**不支持 main 与跨进程**；[ref] 形态开放——否则同名消歧指引死锁）。
+- `agent_message` / `list_agents`：**开放寻址**（规格 SendMessage 语义）——进程内任意 live
+  子代理（含兄弟）、本机任意 live 会话（box 域，仅会话级——**子代理不跨进程直接寻址**，
+  见 §5.3）；子代理可用 `to:"main"` 回父（§5.2 分支 1）。
+- `notify_when_idle`：仅根会话 + 仅跨进程 box 目标；进程内目标 → invalid-args（进程内有
+  天然完成通知）；本进程未开 box → invalid-args:no-mailbox。
+- 跨会话权限洗白红线：description 行为规范层执法；机械执法落档 §13。
+
+## 5. agent 交互协议（agent 之间如何交互）
+
+### 5.1 进程内（父 ⇄ 子）
+
+- **父→子**：`agent_message` → 子 steer（busy→步边界排队；idle→唤醒起新轮）。spawn 的
+  prompt 走 followup（next-turn 队首）。
+- **子→父（main 通道）**：子调 `agent_message{to:"main"}` → 插件路由 steer 到父会话，文本
+  包装 `<cross-session-message from="<子 name 或 agentId>">…</cross-session-message>`。父
+  busy→步边界；父 idle→唤醒。父已 dispose → not-found。
+- **完成通知**：现状机制整体继承（agentStatus 监听 → armed/idle → 子 WAL 末 turn/end
+  reason 全集透传 + 本轮 assistant 摘要 ≤200 + usage → `[agent-notification]` steer 注入父 →
+  释槽）。变更：子会话缺档时投递 `session-archived` 占位通知（如实，不再静默）。
+- **兄弟互发**：`agent_message{to:"<兄弟名|agentId|name [ref]>"}`，同 steer 路径。
+
+### 5.2 寻址解析算法（nameaddr.ts，`to` 的唯一解析真源）
+
+```text
+解析(to, callerSession):
+1. to === "main"   → caller 有 parent? 父会话(进程内 steer) : invalid-args(main 仅子代理可用)
+2. to 匹配 ^agent-[0-9a-f]+$ → lineage 主索引精确命中；未命中 → not-found
+   （agentId 不跨重启复活——名字才跨重启，§6.2）
+3. "name [ref]" 形 → 拆名与 ref；进程内域：agentId 8hex 段尾 6 位精确匹配；
+   跨进程域：box ref（bootId 尾 6 hex）精确匹配；落空 → not-found 带 ref 清单
+4. 裸名 name：
+   a. 进程内名索引 live 行 ≥2 → ambiguous:name 带各行 [ref]
+   b. 进程内唯一 live          → 命中（进程内优先于会话——规格原文语义）
+   c. 进程内无                 → mailbox discover 裸名：唯一 live box → 跨进程投递；
+                                 ≥2 → ambiguous 带 [ref]；无 → 转 5
+5. archive 惰性重建（仅 caller 自己的历史子代理，§6.2）：header.agentName 匹配 →
+   resume 复活 → 命中；否则 not-found（附 list_agents 引导）
+```
+
+`agent_output`/`agent_stop` 的 task_id 复用分支 2/3/4a/4b（不支持 1 与跨进程），再过 owner
+校验。**跨进程域只解析会话（box）**：`to` 落在 box 域 = 消息进对端进程的宿主 main 会话；
+子代理跨进程发送以父 box 为出址（from=父 box），回信进父进程 main 会话——规格「子代理
+的发送走父会话地址、回复送回父会话对话」原文语义。
+
+### 5.3 跨进程（本机会话 ⇄ 会话，session-mailbox 文件协议）
+
+**目录布局**（root：`X_HARNESS_MAILBOX_DIR`，缺省 `~/.x-harness/mailbox`；目录 0700）：
+
+```text
+<root>/<box-name>/
+  manifest.json     # {pid, bootId, status:"running"|"idle", updatedTs}——原子重写（tmp+rename）
+  inbox/<ulid>.msg  # 信封（写方先写 <ulid>.tmp 再 rename 发布——读方只见完整文件）
+  inbox/<ulid>.proc # 收方 rename 抢占标记（单读者保证）；启动时清残留
+  subs/<from>.json  # idle 订阅 {from, ts}（原子重写；一次性，fire 后删）
+```
+
+**信封**：`{"id":"<ulid>","from":"<box>","to":"<box>","message":"…","ts":<ms>,"kind":"message"|"idle-notice"|"idle-expired"}`
+（无 summary——不传输）。from 恒为发送方宿主 box 名。
+
+**原子性三则**：① 信封发布 tmp→rename（收方永不见半写文件）；② manifest/subs 一律
+tmp+rename 原子替换；③ parse 失败语义——信封坏=丢弃+日志一条（at-most-once 投递语义，
+crash 窗口 `.proc` 残留清扫=接受丢失，如实声明）；manifest 坏=退回 `kill(pid,0)` 判活。
+
+**开箱/关箱/认领**：开箱 mkdir 排他；EEXIST → 读 manifest：pid 死或超宽限 → **认领**
+（重写为自己的 pid/bootId，清 inbox/subs 残留）；pid 活 → throw（真重名）。正常退出关箱
+（插件 dispose 链末步）：结算 subs（§5.4）→ 删 box 目录——7d 陈尸回收只兜异常崩溃。
+manifest.status：本进程 agentStatus 边沿**即时重写**（不等心跳）；心跳（heartbeatMs）只
+touch updatedTs。判活 = `kill(pid,0)` 成功或 updatedTs < graceMs（墙钟，NTP 回拨风险落档
+§13；bootId 消费者=[ref] 铸造与认领，不参与判活——pid 复用窗 30s 接受，落档）。
+
+**投递时序**（规格对齐：消息在对端下一工具轮消费）：**一 box 一 drain 循环**
+（pollIntervalMs，进程存活期常驻，`ctx.effect` 挂接——dispose 序列钉死「停 drain → 停心跳
+→ 结算 subs → 关箱删目录」，全部定时器 unref 不阻退出）：readdir inbox → 逐个
+`rename(x, x.proc)` 抢占成功者读信封 → **路由：信封一律 steer 到宿主 main 会话**（包装
+`<cross-session-message from="…">`）→ unlink。steer 异常（宿主恰在封存）→ 捕获+日志+继续
+循环（drain 永不被单封击穿）。busy 天然步边界消费；idle 唤醒。
+
+**liveness 与回收**：发送前对目标 box 判活，死 → `not-live:<box>`。discover 惰性回收：
+判陈尸（pid 死且 mtime > staleMs）→ **墓碑两步**：rename 目录到 `<root>/.tomb/<box>-<ts>`
+→ 重读 manifest 验 pid 与判定时一致（防回收/重开竞态删活箱）→ 删墓碑；不一致 → 还原。
+回收时结算该 box 的 subs：向各 from 投 `kind:"idle-expired"`（`[Cross-session idle notice]
+subscription expired: <box> gone`）——规格「恒一条通知」的 expired 分支。
+
+**box 命名**：装配层指定（宿主 main 会话对外名）；真重名（活 pid）构造期 throw。
+
+### 5.4 notify_when_idle（一次性空闲订阅）
+
+**双向闭窗**（错过 idle 事件窗口的修复）：订阅方（根会话）发起时——(a) 写 subs 前查目标
+manifest.status，已 idle → **立即投 notice 不写订阅**；(b) 写 subs 后复查一次目标状态，
+idle → 结算（覆盖 (a) 之后的翻转）。线性化点：订阅生效 = subs 文件 rename 发布瞬间；
+idle 判定 = 目标进程 manifest.status 值。
+
+时序：带 message → 先投信封再写 subs（两步非原子，一次性尽力语义，注明）；纯订阅 =
+message 省略 + 只写 subs。目标会话转 idle（agentStatus 边沿）或进程 teardown 时：读全部
+subs → 逐个向 from box 投 `kind:"idle-notice"`（`[Cross-session idle notice] <box> idle
+at <ts>`）→ 删订阅文件（一次性）。from 已死 → 投递失败仍删。目标异常死亡 → 回收期
+idle-expired 结算（§5.3）。收到的 notice 按普通信封消费（steer 注入）。**反轮询执法**：
+description 行为规范。
+
+## 6. 名字、复活与重启重建
+
+### 6.1 名字注册（进程内）
+
+spawn 时 name = 显式 name 参数 ?? description slug（小写、`[^a-z0-9-]` 折叠、截 24 字符、
+**空则回退 `agent-<8hex>` 随机段**——中文简述折叠为空的误路由防线）。同名人共存（名索引
+数组）；裸名解析 latest-wins（§5.2.4b）。name 永非唯一键，agentId 才是。
+
+### 6.2 archive 惰性重建（「名字在完成后仍有效」的跨重启形态）
+
+接缝 1 落盘 `header.agentName/agentType/agentDepth`。寻址落空（§5.2 第 5 步）→
+`archive.listHeaders()` 过滤 `parentSession === caller && agentName === name`（多个 →
+ambiguous）→ `loop.resume(sessionId, agent)` 重建 options：**按落盘 agentType 从 .md 重取
+systemPrompt/model/tools 白名单**（类型文件已删/改 → fail-closed 拒复活
+`not-found:type-def-missing`，不降级复活）；depth 取落盘冗余（不链回溯）；row.worktree
+在 → **重放 grants/fence rootOverride**（复活不丢隔离，§8.2）→ `steer(message)` 唤醒 →
+重建 ChildRow（occupied=true/armed=false）。resume 单写者边界：依赖「会话归父进程所有 +
+box 唯一」的占有模型（SESSION-RESUME §1.4）——**如实声明该闭环依赖宿主部署纪律**（对端
+不开同 box 无法机械拦截跨进程双开；档案级锁落档 §13）。
+
+## 7. 类型系统（仅 .md，U4）
+
+### 7.1 文件规格与加载器（types-loader.ts）
+
+目录（优先级降序，同名前者胜）：`X_HARNESS_AGENTS_DIRS`（冒号分隔）> `<cwd>/.x-harness/agents/`
+> `~/.x-harness/agents/`。文件格式：
+
+```markdown
+---
+name: explore            # 必填，须与文件名一致；保留名 fork/main 拒
+description: 只读搜索代理    # 必填，注入清单用（§7.2）
+model: <model-id>          # 可选
+provider: <provider-id>    # 可选
+tools: read, grep, bash    # 可选白名单（逗号分隔；缺省=全集；含未注册名 spawn 时拒）
+---
+正文 = 该类型子代理的 system prompt（空正文合法=装配默认）
+```
+
+frontmatter = 自写扁平 `key: value` 解析器（无嵌套、无新依赖）；垃圾输入（缺必填键/保留名
+冲突/值类型不符）→ 该文件拒注册 + 装配日志一条（中性英文），不 throw 不崩。加载时机：
+插件 apply 全量 + **agentStatus running 边沿探测**（每 kick 一次；现状无 turn 前钩子，
+粒度损失=类型变更在下一 kick 生效，落档 §13）——变更 → 重载 → system-prompt 变量自动
+刷新（§7.2）。保留类型 `fork` 内建；`main` 是地址非类型，文件名占用即拒。
+
+### 7.2 类型清单注入通道（system-reminder 语义）
+
+delegation 向 system-prompt 注册 section：文本 = `<system-reminder>\nAvailable agent
+types:\n- name — description (model)\n…\n</system-reminder>`，经惰性变量每次 assemble
+重算。消费机制（零新接缝）：**未显式设 `AgentOptions.systemPrompt` 的会话**每步走
+`assemble()`（anchorSystem 漂移 replace 自动反映变更）。机制事实（如实）：untyped 子、
+fork 子、空正文类型子、复活子也会看到清单（共享 registry 的自然结果）；仅显式设了类型
+正文的 .md 子不注入。此为本仓机制选择，非规格要求（规格对子代理是否看清单无规定）。
+
+### 7.3 model 覆盖序（规格优先级；无 default subagent model 配置层，落档 §13）
+
+`spawn.model`（按次）> `type.model`（.md）> 父 `options.model` > 父末次 request/header
+折叠。fork：`model` 参数忽略，固定父模型（规格原文）。provider 同序。reasoning effort：
+AgentOptions 无字段，落档 §13。
+
+## 8. isolation: worktree（§2.1 唯一 isolation 值；remote 落档）
+
+### 8.1 创建（worktree.ts）
+
+路径 = **repo 外同级** `<repoParent>/.x-harness-worktrees/<repoName>-<agentId>`（避开 .git
+受保护区与主仓工作树污染）。`git rev-parse --git-dir` 确认在仓 → `git worktree add -b
+x-harness/<agentId> <path> HEAD`。**spawn 侧 git 调用经互斥队列串行**（并发 spawn 依赖 git
+内部锁未验证，串行消除风险）。任一步失败 → spawn 拒（`spawn-failed:worktree <原因>`），
+半建产物清理（worktree remove + branch -D 兜底）。
+
+### 8.2 授权面（双层执法 + 如实降级声明）
+
+- **工具参数面（恒执法）**：`grants.setRootOverride(childSession, path)`（接缝 3）→
+  read/write/grep/bash(workdir) 经 PathGate（接缝 4）：override **替换**原根——主仓不可
+  达；bash 缺省 cwd = override 根。`addExtraRoot` 守卫拒绝原根子树（防权限批准打穿）。
+- **bash 命令体写面（fence 在场时执法）**：接缝 6——sandbox fence 会话级 rootOverride，
+  writable 集合替换 base.root、protectedPaths 按 override 根重算 → worktree 子的 bash
+  命令体内绝对路径写主仓被内核层拒绝。
+- **降级边界（如实）**：未装配 sandbox-local 的部署，bash 命令体路径不在隔离执法面
+  （仅工具参数面隔离）——description 行为规范层禁止 + §13 落档。
+
+### 8.3 清理时序（规格「无改动自动清理」）
+
+评估时机：子 dispose（teardown 级联/孤儿收养/驻留档化）、`agent_stop`、**启动期对账清扫**
+（装配时扫描 worktree 根目录：无 live 行对应的目录——status --porcelain 空 → worktree
+remove + branch -D；非空 → 保留+日志——父进程崩溃泄漏兜底）。评估 = `git -C <path>
+status --porcelain` 空 → remove+branch -D；非空 → 保留，stop/通知文案带路径。完成通知
+不触发清理（子驻留可复活，worktree 即其工作区；驻留档化时评估）。
+
+## 9. 旧实现审计与逐模块裁决
+
+### 9.1 审计结论（四标准逐文件，含用户点名的删除/重构项）
+
+| 文件 | 问题（标准①正确性/②契约/③质量/④依赖） | 级别 |
 | --- | --- | --- |
-| `agent_spawn` | `{prompt, type?, name?}` | 立即返回文本（agentId/sessionId/name + 等待引导）；子后台跑（X1） |
-| `agent_message` | `{agentId, text}` | 向子追加输入：子 busy → steer（步边界排队）；idle → 唤醒（X4） |
-| `agent_output` | `{agentId}` | 读子会话报告（末轮 assistant 文本，cap 截断文案引导 agent_message 追问——无文件指针）（X11） |
-| `agent_stop` | `{agentId}` | cancel + 收敛；幂等（X19）；停止不是销毁——可再 message（X5） |
-| `list_agents` | `{}` | 活视图（**限调用方子树**）：agentId/sessionId/name/type/depth/status |
+| plugin.ts:123 | ①④ `seed: seed as never` 不安全 cast——CreateSessionOptions.seed 类型摩擦的遮罩 | P1 |
+| plugin.ts:47-54 | ③ rowOf 以 `[...values()].find` 线性扫 agentId——血统表键位选错 | P1 |
+| plugin.ts:21-33 | ③ `countValue` 命名失真（校验非负安全整数，非「计数」）；reportCap>0 特判折叠绕 | P3 |
+| plugin.ts 整体 | ③ 258 行装装配+决策流+四动词+视图四件事，违「一文件一件事」 | P2 |
+| notify.ts:93-94 | ① 子会话缺档 → 静默 return，父永不知 completion 丢失 | P2 |
+| tools.ts | ③ schema `args as {…}` 窄化 4 调用点 5 处表达式（TypeBox 泛型未对齐） | P3 |
+| types.ts | ② DelegationOptions.types 与 U4 裁决冲突（删除）；ChildView 随 §2.1 重铸 | 裁决 |
+| descriptions.ts | ② 逐字原文与 U3 裁决冲突（改写，§2.3） | 裁决 |
+| lineage.ts / notify.ts 核心机制 | 四标准通过（forkSeed 重铸/inheritDial/narrowTools/armed-occupied/收养处置） | 保留 |
+| 死代码扫描 | 全包无未消费导出/不可达分支；无旧路径别名残留 | 无 |
 
-- 寻址主键 = agentId（`agent-` 前缀 + 计数，插件内唯一单调）；同名共存（X13 进程内版）。
-- **description 逐字常量**（`src/descriptions.ts`）：五工具描述取自 Claude Code 子代理与后台任务
-  工具文档英文原文（源 `/Users/wrr/work/claude-tool/agent-and-background-tasks.md`；映射
-  agent_spawn←Agent、agent_message←SendMessage、agent_output←TaskOutput、agent_stop←TaskStop、
-  list_agents←ListAgents）——描述面先行对齐，参数/行为面差异（to/message/task_id、跨会话、
-  isolation 等）尚未迁移，以本表「入参/行为」列与 §3 落档为准。
-- 工具体经 ToolExecContext.session 识别**调用方会话**；**动词工具属主校验**：
-  callerSession ≠ row.parent → invalid-args（防跨父猜 id 操纵别家子）。
-- 白名单 `undefined` = 全集（沿树只收窄不放宽）。
+### 9.2 逐模块裁决表
 
-### 1.2 spawn 决策流（检查序；`agent_spawn` 工具 exclusive——排他屏障串行化检查→登记窗口，关并行超卖）
+| 旧模块 | 裁决 | 去向 |
+| --- | --- | --- |
+| plugin.ts 装配骨架 | 重构 | 拆八文件（§3）；inject 扩 `["session","tools","agent-loop","permission","system-prompt"]` + mailbox |
+| spawn 决策流（resolveType→depth→concurrent→buildChild→断信号防线） | 复制+扩展 | spawn.ts；类型解析改 .md 源 + model 覆盖序 + name 铸造 + isolation 分支 + git 串行队列 |
+| lineage.ts 血缘 | 重构 | 双索引 + name 索引 + agentId 8hex + worktree 字段；forkSeed/recastSurface/inheritDial/narrowTools 原样迁移 |
+| notify.ts 通知 | 复制+微修 | armed/occupied/收养/tearing-down 门全保留；缺档占位通知 + 唤醒入口重验父存活 |
+| verbs（message/output/stop/list） | 重写 | nameaddr 寻址 + 开放寻址/owner 边界 + block/timeout + main 通道 |
+| tools.ts 工具面 | 重写 | §2.1 参数面 + TypeBox 泛型对齐（删 as 窄化） |
+| descriptions.ts | 重写 | §2.3 改写原则 |
+| types.ts | 重写 | 终态 options：{agentsDirs?, mailboxDir?, mailboxTiming?, maxDepth?, maxConcurrent?, reportCap?, maxResident?} |
+| 新增 | 新写 | session-mailbox（box/send/discover/subs）+ nameaddr + types-loader + worktree + mailbox-consumer |
 
-1. 调用方识别：ToolExecContext.session 缺位（非 agent 宿主直调）→ invalid-args 拒。
-2. 类型解析：`fork`（保留）→ 重铸种子 + 父模型；未注册名 → invalid-args + 可用类型清单（X17）；
-   缺省 → 无类型（父模型）。**type.tools 含未注册名 → invalid-args 带该名与可用清单**（构造期
-   校验不可行——工具注册是运行期行为；spawn 时注册表已就绪）。
-3. maxDepth：调用方 depth+1 > maxDepth → 拒（maxDepth=0 即全拒；配置垃圾值构造期 throw，X7）。
-4. maxConcurrent：该父名下 **occupied** 子数 ≥ 上限 → 拒（文案带数字与等待引导；spawn 登记
-   即占槽、完成通知/stop 即释放，X8）。
-5. 建子：`loop.create({session: fork? 重铸种子+parent 血缘 : 全新, agent: {model, provider,
-   systemPrompt, tools: 白名单∩}})`（**id 不自铸——store 铸号，agentId 与 sessionId 解耦**；
-   父模型/线路从父 options ?? 父末次 request/header 折叠取——全新子无 header）→ 登记 lineage
-   （occupied=true, armed=false）→ **create 后 followup 前查 signal.aborted：断则 dispose 子
-   再返回（execute 内断信号不遗孤儿子，X20）** → `followup(prompt)`。
-6. 返回 content 铸文本：agentId/sessionId/name + 反轮询引导（结束回合等通知，勿轮询 output）。
+### 9.3 保留机制映射表（旧 → 新，行为等价锚点）
 
-### 1.2.1 工具并发分类
+X1 后台 spawn/X2 完成通知/X4 收件箱三态/X5 停止可续/X7 深度门/X8 并发占槽/X10 reason 全集
+透传/X11 报告 cap/X13 同名共存/X14 fork 净化（surface 重铸+末 turn/end 切口+system 特赦）/
+X15 白名单沿树收窄（header 投影+执行面双断言）/X17 未知类型带清单/X19 stop 幂等/X20 execute
+内断信号防线——逐条进 §11 迁移矩阵。
 
-`agent_spawn`/`agent_stop` = exclusive（检查-登记原子性；stop 含 whenIdle 收敛）；
-`agent_message`/`agent_output`/`list_agents` = parallel。
+## 10. 删除清单（本次提交内物理删除）
 
-### 1.3 完成通知（X2/X4/X10）
+1. `DelegationOptions.types` 及 resolveType 的编程式分支（U4）。
+2. descriptions.ts 逐字原文五段（U3；源文档路径在 §0 已锚）。
+3. `seed as never` / `args as {…}` 窄化 / `session as never`（toolbox.ts:55，接缝 4 触碰处一并修类型）。
+4. plugin.ts 单文件四合一结构（拆分后旧形状不复存在）。
+5. 旧 `name` 参数语义（「纯展示、永非地址」）——终态 name 是寻址主键之一，旧注释/文案/断言同步删。
 
-插件根层监听 `agentStatus`（**tearing-down 门：插件 dispose 置位后监听器丢弃一切通知——级联
-cancel 触发的 abort 通知不得 steer 复活父**）：表内子 running → `armed=true`；idle 且 armed →
-收通知一轮：读子 WAL 末 `turn/end`（**status 词表对齐 TurnEndReason 全集**：completed/aborted/
-error/max-tokens/blocked 如实透传；interrupted 透传；未知→fail-closed 按 error）+ **本轮**
-（末 turn/end 之后的）assistant 文本摘要 ≤200 字（本轮无 assistant 则略摘要——aborted 轮不回潮
-前轮文案）+ usage（若有）→ 铸 `[agent-notification] …` → **`loop.get(parentSessionId).agent.steer`
-注入**（父 busy → 步边界消费；父 idle → 唤醒起 turn）；armed=false、**occupied=false（槽释放）**。
-父 get 缺位（已 dispose）→ 对该子 `cancel("parent-gone")+whenIdle+dispose+摘表行`（孤儿子不
-任其烧请求）；steer 落账失败（父恰在封存）→ try/catch 丢弃（emit 错误隔离不依赖隐式契约）。
-已知窗口落档：父 blocked/max-tokens 轮末的滞留通知等下次任意唤醒消费；父被 cancel（未 dispose）
-时通知到达会 steer 拉起新轮（通知=新素材，接受）；idle→running 微窗口的双通知语义接受。
+## 11. 测试计划
 
-### 1.4 fork 种子 = surface 重铸（X14；两路审查 P0 处置——滤除切片破坏 seq 连续与 replace 寻的，机制性不可行）
+### 11.1 旧用例迁移矩阵（delegation.test.ts 21 用例 + notify-path 8 用例）
 
-裸切片不可行（validateSessionEvents 强制 seq==下标；replace 按绝对 seq 寻的）。重铸构造
-（delegation 自持，不改 session 包）：父 surface 节点滤至**最后一个 `turn/end`**（完成轮投影
-——剔除开放轮与在飞 tool_use，DSH/交集语义）→ `surfaceToMessages` → **逐条重铸全新 append
-形态事件**（seq 0..n-1，turn/step 全 0——形状门与投影重放皆过，纯 append 无 replace 寻的）；
-父无已完成 turn → 无种子全新子（工具结果文案如实告知）。`create({session: {seed, parent: 父 id}})`
-（header.parentSession 血缘落盘）。end-seed 不带 inherited 标记（create 路径语义）——落档。
+| 旧用例组 | 处置 |
+| --- | --- |
+| X1/X13 spawn 唯一 id、同名共存 | 改写（name=寻址键；latest-wins 断言；agentId 8hex 形态断言） |
+| X17 未知类型带清单 | 改写（清单来源 = .md 装置种文件） |
+| 类型生效（model/systemPrompt/tools 投影） | 改写（types 配置装置 → .md 临时目录装置） |
+| X7/X8/X20 门禁组 | 改写（入参名 + **错误词表全换**——旧断言大面积改写，工作量按改写计非移植） |
+| 通知组（唤醒双断言/步边界/error/blocked/aborted 不回潮/孤儿收养/teardown 抑制） | 移植 + 缺档占位通知 + 唤醒重验父存活新断言 |
+| 动词组（message 忙闲/output cap/stop 幂等复活/list 子树/属主） | 改写（owner 边界仅 output/stop；message 开放寻址 + main/兄弟） |
+| 白名单双断言 X15 | 移植（+ 复活后白名单不变断言） |
+| fork 净化 X14 | 移植（+ model 参数忽略断言） |
 
-## 2. 接缝扩展（同提交）
+### 11.2 新用例清单（每组带回归锚命名）
 
-1. **tools**：`ToolExecContext` + `session?: SessionId`（dispatch 透传——wire 上 ToolCallRequest
-   已带，最后一米补齐；request-altered 断言已含 session）。
-2. **agent-loop**：
-   - `AgentLoopService.get(id): AgentHandle | undefined`（delegation 取父/测试用；dispose 摘除）；
-   - `AgentOptions.tools?: readonly string[]` 白名单：dialStep 的 schemas 投影过滤 +
-     tool-calls dispatch 前置拒绝（`tool-not-allowed:<name>` isError 结果——白名单外拦在
-     执行面，X15）。
+寻址：main 通道（子→父注入/根调用拒/父 dispose 后 not-found）；裸名 latest-wins；ambiguous
+带 [ref] 清单；`name [ref]` 精确（含 output/stop 开放性）；agentId 未命中直接 not-found（不
+转 archive）；archive 惰性复活（header 三字段断言/复活后 systemPrompt+tools 白名单不变/
+类型定义缺失 fail-closed/worktree 复活重放 override）；跨进程（双真进程共享测试沙箱 root：
+对端收信封 steer 进 main、busy 步边界、not-live、rename 抢占单读者、.proc 残留清扫、
+at-most-once 语义、steer 异常不击穿 drain）；mailbox 协议（tmp+rename 原子——半写不可见、
+box EEXIST 认领/活 pid throw、关箱删目录、墓碑两步回收不删活箱、manifest 坏退 pid 判活、
+status 边沿即时重写）；notify_when_idle（订阅时已 idle 立即投、写后复查闭窗、一次性 fire、
+纯订阅 message 省略、from 死仍删、teardown 结算、陈尸回收 idle-expired、子代理/进程内
+目标/无 box 三种拒）；类型加载（frontmatter 垃圾降级、保留名拒、目录优先级、kick 边沿
+重载+prompt 刷新断言、untyped/fork/空正文子见清单的机制事实断言）；worktree（真 git 仓
+fixture：路径在 repo 外、子写落 worktree、主仓 read/write/grep 不可达、bash 命令体写主仓
+被 fence 拒【fence 在场】、无改动清理、有改动保留+路径文案、git 失败 spawn 拒无残留、启动
+期清扫崩溃泄漏、并发 spawn 串行、extraRoot 批原根子树被守卫拒）；agent_output block/timeout
+（完成即回/超时回 running 快照/block=false 立即）；驻留档化（超 maxResident 最旧 dispose、
+可按名复活）；**描述-schema 双向对账**（正向：schema 每字段名以词边界正则出现在
+description；反向：description 引用的参数名 ⊆ schema 字段——锚=正则规则写死在用例里）；
+mailboxTiming 注入（fake now/短间隔驱动 liveness/回收/心跳用例，无真 sleep）。
 
-## 3. 问题域
+### 11.3 e2e 旅程（默认门新增三条，复用隔离装置惯例）
 
-**处理**：spawn/类型解析/fork 净化/lineage 表（进程内）/完成通知（steer 注入）/动词族
-（message/output/stop/list）/maxDepth+maxConcurrent/报告截断/工具白名单沿树只收窄
-（effective = type.tools ∩ 调用方白名单）/插件 dispose 级联 cancel+dispose 全部子。
-**不处理（落档）**：跨进程 lineage 持久与重启重建（my-agent WAL 表/replay——子会话盘上可
-resume，父表进程内）；通知合并窗口/digest（多子同窗=多条 steer，父轮内多消息可接受）；
-子 maxTurns/maxTokens 预算（挂账）；子→父 message_main 通道；通知信封闭合标签中和（X18——
-报告经 cap 截断，无富信封 v1）；LRU 驻留驱逐；同步前台 delegate 工具；fork 自归档。
+1. 跨进程旅程：真子进程（bun 起 harness 装配；detached + 超时 kill 兜底清理，失败不留孤儿
+   进程）与主进程**共享测试沙箱 mailbox root**（与开发机默认 root 隔离）→ 开 box →
+   list_agents 见 local-session 行 → SendMessage 往返（对端回复信封到主进程 main 消费）→
+   notify_when_idle 恰好一条 notice → 双进程退出、box 目录清理、无陈尸。
+2. worktree 旅程：临时真 git 仓装配（含 sandbox fence）→ spawn(isolation=worktree) → 子经
+   假适配器调 write 落 worktree → 断言主仓 `status --porcelain` 空 + 主仓路径 read 拒 →
+   agent_stop 无改动自动清理（worktree 目录与分支消失）。
+3. 复活旅程：spawn 命名子 → 子完成 → 主进程 teardown → 新装配 resume 主会话 → 按名
+   message → 子从档案复活续轮（systemPrompt/白名单不变断言）→ 双会话 jsonl 落盘断言。
 
-## 4. 测试口径（对照 X1–X20 逐条——v1 覆盖项写用例）
+### 11.4 门禁与覆盖率
 
-- 契约：插件名/inject；配置垃圾值 fail-fast 表（maxDepth/maxConcurrent 负/小数/NaN）。
-- spawn：立即返回唯一 agentId、同名共存互不串扰（X1/X13）；未知类型 err 带清单（X17）；
-  类型生效（model/systemPrompt/tools 白名单——子请求头 tools 投影只含白名单，X15）；
-  白名单沿树收窄（父受限 type 的子再派孙 ∩ 生效）；fork 净化（种子切至最后 turn/end、
-  无 inbox 事件、继承父模型——断言子 deriveMessages 首条为父 system）（X14）。
-- 门禁：maxDepth=0 拒 / 深度链第 4 层拒（X7）；maxConcurrent 占槽含在途（三 spawn 并发
-  挂起流——第三个拒，文案带数字）（X8）；spawn 竞态（signal 已断不建子，X20）。
-- 通知：子完成 → 父 steer 注入含 agentId/status/摘要；**父 idle 被唤醒双断言**（turn/start ≥2
-  且第二 turn user/message 含通知文本）；**父 busy 步边界路径**（悬停流闸门装置：turn 数不变、
-  当前 turn 后续 step 的 user/message 含通知）；子 error turn → status=error；blocked 如实
-  透传（X10/P2-1）；aborted 轮不回潮前轮摘要；父 dispose 后子完成 → 孤儿子被收养处置（cancel+
-  dispose，lineage 摘行）；插件 dispose 级联 cancel 子且**通知门抑制复活**（级联期父不被 steer）。
-- 动词：agent_message busy 排队步边界 / idle 唤醒；agent_output 报告 + cap 截断文案；
-  agent_stop 幂等 + 停止后可再 message；list_agents 限子树；**属主校验**（他父会话调动词 →
-  invalid-args）。
-- 门禁：maxConcurrent=2 + 一条消息三个 spawn tool_use 进并行池 → 第三个拒（exclusive 串行下
-  计数不超）；type.tools 未注册名拒带清单。
-- X20：spawn execute 内断信号 → 子被 dispose（lineage 无孤儿）。
-- 白名单执法双断言（X15）：子 request/header.tools 只含白名单；孙沿树收窄 = ∩（孙 header 只含
-  交集 + 孙直呼白名单外名 → tool-not-allowed isError 配对落账）。
-- e2e（默认门加旅程，独立装配不动既有 assembleWorld）：**假适配器脚本按 request.model 分桶**
-  （未注册 model 报错不 fallback——防串线）；type 显式 model ≠ 父 model；父调 spawn → 子完成 →
-  父第二 turn 消费通知 → 完成；断言两会话 jsonl 落盘（子目录经 spawn 返回的 sessionId 寻址）。
+四门全绿 + 覆盖率行/语句/函数 ≥90、分支 ≥85 只升不降；新增两包数字如实分项报告。
 
-## 5. 语义子集对照结论（提取自 my-agent/DSH 测试）
+## 12. 实施顺序（分阶段提交，每阶段四门+该阶段用例绿）
 
-v1 覆盖：X1/X2/X4(收件箱天然)/X5(stop 级联与可续)/X7/X8/X10/X11/X13(进程内)/X14(净化)/
-X15/X17/X19/X20。落档不做：X3(合并 digest)/X6(spawn 中断回滚——工具管线 pre-abort 已挡主要
-窗口)/X9(预算)/X16(子→父通道)/X18(信封中和)/X12 的 dispose 失败双通道细节。
+A. session-mailbox 新包（纯文件协议 + 单测 + timing/now 注入位；无消费者——单测即覆盖面）。
+B. agent-delegation 重构地基：文件拆分 + lineage 双索引/8hex + 参数面/描述改写 +
+   types-loader + system-prompt 注入；**接缝 1/1b（header 透传 + listHeaders）落地**。
+C. 寻址终态：nameaddr + main 通道 + owner 边界重划 + agent_output block/timeout。
+D. 跨进程接线：mailbox-consumer（一 box 一 drain/poller/manifest/认领关箱）+ list_agents
+   扩展 + notify_when_idle（含闭窗与 expired 结算）。
+E. worktree：接缝 3/4/6（grants override + PathGate 全链 + fence override）+ worktree.ts +
+   清理 + 启动期清扫 + git 串行。
+F. archive 惰性复活 + 驻留档化 + e2e 三旅程 + 全量四门。
+（每阶段独立可回滚；F 后代码级两路对抗审查，本方案审查之外另起。）
 
-## 6. 方案审查处置（A/B 两路并行）
+## 13. 不处理（落档）与归属
 
-采纳（A）：fork 净化改 surface 重铸（P0——切片破坏 seq 校验与 replace 寻的）；dispose 置
-tearing-down 通知门（级联 cancel 不得 steer 复活父，P1）；孤儿子收养处置（get 缺位 → cancel+
-dispose+摘行，P1）；occupied/armed 拆分（P2）；父模型从父 options??末次 header 折叠（P3）；
-blocked/max-tokens 轮末滞留通知落档（P3）；摘要只取本轮 assistant（P3）；handle 单源 loop.get
-（P3）；steer 失败 try/catch（P3）。
-采纳（B）：agent_spawn/stop exclusive、message/output/list parallel（P1 超卖窗口）；type.tools
-未注册名 spawn 时校验（P1）；无已完成 turn 的 fork 退化为全新子并如实告知（P1）；通知 status
-词表对齐全集含 blocked（P2）；e2e 按模型分桶+type 显式异 model+独立装配（P2）；spawn 返回/
-视图带 sessionId（P2）；busy 步边界路径用例（P2）；execute 内断信号不遗孤儿（P2）；沿树收窄
-双断言（P2）；返回铸文本+反轮询引导（P3）；gate 拒绝配对落账（P3）；undefined=全集（P3）。
-落档驳回：无 session 调用方直接拒（而非建无父子——通知无处投）。
+| 项 | 理由 | 归属 |
+| --- | --- | --- |
+| 云端会话 / Remote Control / agent-team（teammate、name@team） | 无云基建与账号体系；U1 边界外 | 未来云接入件 |
+| 统一后台任务体系（bash run_in_background、task_id 注册表、输出文件指针、/tasks CLI） | U2 裁决不并入 | 后续任务体系件 |
+| TaskOutput 输出文件路径模式（Read 输出文件） | 依赖任务体系 | 同上 |
+| agent_output 的 DEPRECATED 定位 / TaskStop shell_id / ListAgents channel、q | U2/U3 派生：无任务体系则 output 为一等工具；弃用参数与占位参数不实现 | 本件内裁定 |
+| reasoning effort / maxTurns / 预算；default subagent model 配置层 | AgentOptions 无字段；规格覆盖序的该层不存在 | agent-loop/llm 后续件 |
+| 跨会话权限洗白机械执法；approval-hold 展示语义 | 需跨会话权限模型；规格亦为行为规范层执法 | permission 后续件 |
+| busy=running 命名差异（本仓生命周期词表保留 running） | 本仓既有词表，改词破生态 | 本件内裁定，描述改写时说明 |
+| manifest.status 只反映对端宿主 main 会话（子代理忙闲跨进程不可见） | box=会话级地址（规格同形） | 云接入件一并 |
+| pid 复用 30s 宽限窗 / NTP 墙钟回拨 | 本机单用户信任域，风险接受 | 挂账 |
+| 档案级锁（跨进程双开 resume 的机械拦截） | 依赖宿主部署纪律（box 唯一+会话归父进程） | 挂账 |
+| 未装配 sandbox-local 时 bash 命令体不在隔离执法面 | fence 是内核层唯一执法点 | 部署纪律 + description 规范层 |
+| 类型变更 kick 边沿粒度（无 turn 前钩子） | 现状无挂接点，粒度损失接受 | agent-loop 后续件 |
+| fork 复制剔除开放轮（末 turn/end 切口） | X14 工程裁决（在飞轮不可安全复制） | 本件内裁定 |
+| 通知合并 digest / 信封闭合标签中和 | 沿旧落档（X3/X18） | 挂账 |
+| message 300 上限的「文件中转」专建通道 | 复用现有 write/read | 不建 |
+| mailbox 跨机/加密/鉴权 | 本机信任域（0700） | 云接入件一并 |
 
-## 7. 验收清单
+## 14. 对抗审查处置（两路并行，41 条全处置）
 
-- [x] §1–§4 逐条；四门全绿 + 覆盖率数字如实报告；e2e 旅程绿（提交说明载数字）
+**路 A（契约/语义对照面）**：P0-1 worktree 与 fence 倒置/bash 穿透 → **采纳**：接缝 6
+（fence 会话级 rootOverride）+ 路径迁 repo 外（§8.1）+ 双层执法与降级边界如实声明（§8.2）
++ bash 面测试补齐（§11.2/§11.3-2 含 fence 断言）。P1-1 message 必填矛盾 → **采纳**：统一
+可选（§2.1）。P1-2 summary 传输 → **采纳**：信封删 summary、仅结果回显、超长截断（§2.1/§5.3）。
+P1-3 回信直达子代理 → **采纳**：跨进程仅 box 域、from=父 box、回信进 main（§5.2/§5.3）。
+P1-4 output/stop 消歧死锁 → **采纳**：复用 2/3/4a/4b、[ref] 开放（§4.4/§5.2）。P1-5 复活
+断链 → **采纳**：header 落 name/type/depth 三字段、复活按类型重建 options、agentId 未命中
+直接 not-found（§4.2/§5.2/§6.2）。P2-1 词表表述 → **采纳**：删「对齐规格」、落档命名差异。
+P2-2 expired notice → **采纳**：陈尸回收结算 idle-expired；approval-hold 落档。P2-3 进程内
+目标未定义 → **采纳**：仅 box 目标，三种拒（§4.4）。P2-4 §7.2 等价失真 → **采纳**：改机制
+事实表述（§7.2）。P2-5 bash cwd → **采纳**：接缝 4 扩（§3/§8.2）。P2-6 box ref 未定义 →
+**采纳**：bootId 尾 6 hex + agentId 8hex 化（§4.2/§5.2）。P2-7 落档断链 → **采纳**：§13 补
+shell_id/channel-q/DEPRECATED 三行。P3-1/2/3/4/5/6/12 → **采纳**：扩展参数标注、default
+model 落档、untyped 如实、aborted 入词表、to 单行、live 定义、fork 剔开放轮落档+§2.3 补
+两条行为规范。P3-7 mtime 挂点 → **采纳**：降级 kick 边沿（§7.1）+落档。P3-8 list 接口 →
+**采纳**：接缝 1b listHeaders（§3）。P3-9 标签统一 `[Cross-session idle notice]`（§2.3/§5.4）。
+P3-10/11 计数与对账 → **采纳**：§9.1 改 5 处、§11.2 双向对账。
 
-## 8. 代码审查处置（A/B 两路并行）
-
-采纳（A）：notifier running 分支复占槽（message 重唤醒的在飞子上限不被旁路——回归用例）；
-deliver 兜底 catch（进程级未处理拒绝对不可接受）；viewStatus running 前置（停止复活如实）；
-buildChild 入口 tearingDown 查（teardown 期不登记脱管子）；fork system 节点特赦（锚点 replace
-漂移后 seq 滤除会丢父系统提示词）。
-采纳（B）：busy 步边界真用例（悬停流闸门——turn 数不变 + 后续 step 消化通知）；agent_message
-正向路径；子 error turn 通知 status=error 且不回潮前轮摘要；X20 execute 内防线真触达
-（toolsExecute 中间件换 signal + 微任务 abort——内存 create 全微任务解析，定时器赶不上窗口）；
-并行池三 spawn exclusive 计数不超；fork 含工具轮（tool/result 重铸）；e2e 旅程（分桶适配器 +
-双会话 jsonl 落盘 + flush 屏障）；死面清除（reportOf/callerMissing/SpawnPlan/多余导出/as never）；
-文档同变三处（状态/件表/验收）。
-落档驳回：maxConcurrent 用例的时序耦合注记（已用闸门流稳定化）。
+**路 B（并发/资源生命周期/架构/假绿面）**：P0-1 原子性三则 → **采纳**（§5.3）。P0-2
+notify_when_idle 闭窗 → **采纳**：双向闭窗+线性化点（§5.4）。P0-3 box EEXIST/关箱 →
+**采纳**：认领/关箱删目录（§5.3）。P0-4 bash 假绿 → 与 A-P0-1 合并处置（§8.2/§11）。
+P1-5 inject 清单 → **采纳**（§3/§9.2）。P1-6 复活丢 override → **采纳**：重放（§6.2）。
+P1-7 寻址死路 → 与 A-P1-3 合并处置（§5.2/§5.3）。P1-8 一 box 一 drain → **采纳**：+路由
+进 main+失败语义（§5.3）。P1-9 agentId 撞号 → 与 A-P1-5 合并（§4.2）+ 启动期清扫（§8.3）。
+P1-10 定时器生命周期 → **采纳**：ctx.effect+dispose 序列+unref（§5.3）。P1-11 驻留无上限
+→ **采纳**：maxResident 档化（§2.2/§4.1）。P1-12 崩溃泄漏 → **采纳**：启动期对账清扫
+（§8.3）。P1-13 depth 回溯 → **采纳**：冗余落盘（§6.2）。P2-14 至 P2-24 → **全采纳**：
+at-most-once 声明+drain 兜底（§5.3）、接缝 4 逐点（§3）、override×extraRoots 守卫（§3/§8.2）、
+manifest 三则（§5.3）、墓碑两步（§5.3）、占有模型如实（§6.2）、接缝 1 通道写明（§3）、
+kick 边沿（§7.1）、timing 注入（§2.2/§11.2）、对账锚反向+词边界正则（§11.2）、e2e 孤儿
+清理+沙箱 root 表述（§11.3）。P3-25 至 P3-33 → **全采纳**：瞬态注明（§4.1）、词表拆句
+（§2.1）、墙钟/unref（§5.3/§13）、唤醒重验（§4.1/§5.1）、slug 回退随机段（§6.1）、两步
+非原子注明（§5.4）、manifest.status 粒度落档（§13）、git 串行（§8.1）、迁移矩阵工作量
+如实（§11.1）。
