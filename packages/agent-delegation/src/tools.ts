@@ -51,7 +51,7 @@ const spawnSchema = Type.Object({
 const messageSchema = Type.Object({
   to: Type.String({
     pattern: "^[^\\n\\r]*$",
-    description: "Recipient: a name from ListAgents (append its \` [ref]\` only when a listing or an error shows one), a teammate name, \`main\`, or a background agent's agentId",
+    description: "Recipient: a name from ListAgents (append its ' [ref]' only when a listing or an error shows one), a teammate name, 'main', or a background agent's agentId",
   }),
   message: Type.String({
     pattern: "^[\\s\\S]{0,300}$",
