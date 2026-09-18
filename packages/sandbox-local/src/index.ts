@@ -8,3 +8,7 @@ export type { Dialect, ProbeInternals, ProbeResult } from "./probe.ts";
 export { probeWrappers, assertProbes } from "./probe.ts";
 export type { ProxyHandle, ProxyDeps } from "./proxy/server.ts";
 export { createSessionProxy } from "./proxy/server.ts";
+export type { SandboxEnvDeps, SandboxEnvHandle, ProxyTarget } from "./env.ts";
+export { createSandboxEnv, scrubEnv } from "./env.ts";
+export type { SandboxOptions } from "./plugin.ts";
+export { createSandboxPlugin } from "./plugin.ts";

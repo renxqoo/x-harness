@@ -73,6 +73,7 @@ export async function spawnLocal(req: SpawnRequest): Promise<SpawnResult> {
   try {
     proc = Bun.spawn([...req.argv], {
       ...(req.cwd !== undefined ? { cwd: req.cwd } : {}),
+      ...(req.env !== undefined ? { env: req.env } : {}), // 缺省继承宿主
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

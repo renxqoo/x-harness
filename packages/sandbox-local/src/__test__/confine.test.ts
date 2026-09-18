@@ -17,7 +17,7 @@ const fence = (over: Partial<Fence> = {}): Fence => ({
 
 describe("seatbeltProfile（SBPL 内容级）", () => {
   it("剖面骨架：deny default 先行 + exec/read 全放 + writable 逐段 + /dev/null 字面 + 拒读子路径", () => {
-    const sbpl = seatbeltProfile(fence(), 8085, "/Users/demo");
+    const sbpl = seatbeltProfile({ fence: fence(), proxyPort: 8085, home: "/Users/demo" });
     const lines = sbpl.split("\n");
     expect(lines[0]).toBe("(version 1)");
     expect(lines[1]).toBe("(deny default)");
@@ -27,14 +27,22 @@ describe("seatbeltProfile（SBPL 内容级）", () => {
     expect(lines).toContain('(allow file-write* (subpath "/w/app"))');
     expect(lines).toContain('(allow file-write* (subpath "/tmp"))');
     expect(lines).toContain('(deny file-write* (subpath "/w/app/.xh-config"))'); // 受保护路径写拒
-    expect(lines).toContain('(allow network-outbound (remote ip-loopback (port "8085")))'); // 仅本会话代理口
+    expect(lines).toContain('(allow network-outbound (remote ip "localhost:8085"))'); // 仅本会话代理口（host 只收 */localhost——实测）
     expect(sbpl).not.toContain("allow network*"); // 无泛网络放行
   });
 
   it("network off：显式 deny network*、无代理口", () => {
-    const sbpl = seatbeltProfile(fence({ network: "off" }), undefined, "/Users/demo");
+    const sbpl = seatbeltProfile({ fence: fence({ network: "off" }), proxyPort: undefined, home: "/Users/demo" });
     expect(sbpl).toContain("(deny network*)");
     expect(sbpl).not.toContain("network-outbound");
+  });
+
+  it("双形展开：realpathOf 返回不同物理路径时词法/物理两行都在场（实测 SBPL 词法匹配）", () => {
+    const sbpl = seatbeltProfile({ fence: fence(), proxyPort: undefined, home: "/Users/demo", realpathOf: (p) => (p === "/w/app" ? "/private/w/app" : p) });
+    expect(sbpl).toContain('(allow file-write* (subpath "/w/app"))');
+    expect(sbpl).toContain('(allow file-write* (subpath "/private/w/app"))');
+    const single = seatbeltProfile({ fence: fence(), proxyPort: undefined, home: "/Users/demo", realpathOf: (p) => p });
+    expect(single.match(/subpath "\/w\/app"/g)).toHaveLength(1); // 同形不重复
   });
 
   it("seatbeltArgv：sandbox-exec -p 前缀 + 逻辑 argv 原样后缀", () => {

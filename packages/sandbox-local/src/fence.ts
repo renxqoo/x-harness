@@ -3,7 +3,6 @@
 // fenceFacts）与 spawn 围栏共用同一合成结果（§6——授权即时生效是设计意图，执法不弱化）。
 
 import { tmpdir } from "node:os";
-import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import type { SessionId } from "@x-harness/session";
 import type { GrantsRegistry } from "@x-harness/permission";
@@ -28,12 +27,9 @@ export interface FenceBase {
   readonly networkOff?: boolean;
 }
 
+/** 词法解析即可——物理双形展开在消费方（seatbelt subpath 词法匹配实测；bwrap bind 词法路径成立） */
 function normalize(p: string): string {
-  try {
-    return realpathSync(resolve(p));
-  } catch {
-    return resolve(p);
-  }
+  return resolve(p);
 }
 
 export const DEFAULT_DENY_READ: readonly string[] = ["~/.ssh", "~/.aws", "~/.gcp"];
@@ -44,7 +40,8 @@ export function fenceFor(base: FenceBase, grants: GrantsRegistry, session: Sessi
   const denyRead = [...DEFAULT_DENY_READ, ...(base.denyReadExtra ?? [])];
   const protectedPaths = (base.protectedPaths ?? []).map(normalize);
   if (base.networkOff === true) return { writable, denyRead, protectedPaths, network: "off" };
-  const granted = [...grants.allowedDomainsOf(session)]; // 会话授权域名（含预授权）并入
+  // 宿主预授权（会话无关）+ 会话授权域名并集；deny 不入白名单
+  const granted = [...(base.allowedDomains ?? []), ...grants.allowedDomainsOf(session)];
   return { writable, denyRead, protectedPaths, network: { allowedDomains: granted } };
 }
 

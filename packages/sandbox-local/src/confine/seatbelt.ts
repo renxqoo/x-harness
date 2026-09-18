@@ -8,17 +8,43 @@ import { homedir } from "node:os";
 import type { Fence } from "../fence.ts";
 import { denyReadPaths } from "../fence.ts";
 
-export function seatbeltProfile(fence: Fence, proxyPort: number | undefined, home: string = homedir()): string {
-  const lines: string[] = ["(version 1)", "(deny default)", "(allow process-exec*)"];
-  for (const d of denyReadPaths(fence, home)) lines.push(`(deny file-read* (subpath "${d}"))`);
+/** SBPL subpath 匹配是词法的（实测）——经 symlink 的路径必须词法/物理双形都放行/拒 */
+export type RealpathOf = (p: string) => string;
+
+function forms(p: string, realpathOf: RealpathOf): readonly string[] {
+  const real = realpathOf(p);
+  return real === p ? [p] : [p, real];
+}
+
+export interface SeatbeltProfileInput {
+  readonly fence: Fence;
+  readonly proxyPort: number | undefined;
+  readonly home?: string;
+  readonly realpathOf?: RealpathOf;
+}
+
+export function seatbeltProfile(input: SeatbeltProfileInput): string {
+  const home = input.home === undefined ? homedir() : input.home;
+  const realpathOf = input.realpathOf ?? ((p: string) => p);
+  const fence = input.fence;
+  const proxyPort = input.proxyPort;
+  const lines: string[] = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec*)"];
+  for (const d of denyReadPaths(fence, home)) {
+    for (const f of forms(d, realpathOf)) lines.push(`(deny file-read* (subpath "${f}"))`);
+  }
   lines.push("(allow file-read*)");
   lines.push('(allow file-write* (literal "/dev/null"))');
-  for (const w of fence.writable) lines.push(`(allow file-write* (subpath "${w}"))`);
-  for (const p of fence.protectedPaths) lines.push(`(deny file-write* (subpath "${p}"))`);
+  for (const w of fence.writable) {
+    for (const f of forms(w, realpathOf)) lines.push(`(allow file-write* (subpath "${f}"))`);
+  }
+  for (const p of fence.protectedPaths) {
+    for (const f of forms(p, realpathOf)) lines.push(`(deny file-write* (subpath "${f}"))`);
+  }
   if (fence.network === "off") {
     lines.push("(deny network*)"); // 显式重复（deny default 已含）——剖面自述
   } else if (proxyPort !== undefined) {
-    lines.push(`(allow network-outbound (remote ip-loopback (port "${String(proxyPort)}")))`);
+    // 远端过滤 host 只接受 * / localhost（实测：127.0.0.1 字面量被拒）——localhost 限回环本会话代理口
+    lines.push(`(allow network-outbound (remote ip "localhost:${String(proxyPort)}"))`);
   }
   return lines.join("\n");
 }
@@ -28,9 +54,9 @@ export interface SeatbeltArgvInput {
   readonly proxyPort: number | undefined;
   readonly argv: readonly string[];
   readonly home?: string;
+  readonly realpathOf?: RealpathOf;
 }
 
 export function seatbeltArgv(input: SeatbeltArgvInput): readonly string[] {
-  const home = input.home === undefined ? homedir() : input.home;
-  return ["sandbox-exec", "-p", seatbeltProfile(input.fence, input.proxyPort, home), "--", ...input.argv];
+  return ["sandbox-exec", "-p", seatbeltProfile(input), "--", ...input.argv];
 }

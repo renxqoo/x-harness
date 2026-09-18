@@ -111,6 +111,23 @@ describe("createSessionProxy（真 socket）", () => {
     }
   });
 
+  it("垃圾输入降级：头部超限（>16K 无 HEAD_END）连接被毁，代理存活", async () => {
+    const grants = new GrantsRegistry();
+    const proxy = await createSessionProxy(S, grants, { askDomain: async () => "deny" });
+    try {
+      const junk = `X-${"a".repeat(20_000)}`;
+      await speak(proxy.port, junk, { marker: "__never__" }).then(
+        () => "closed",
+        () => "closed",
+      );
+      // 代理仍在服务
+      const still = await speak(proxy.port, "CONNECT any.dev:443 HTTP/1.1\r\n\r\n", { marker: "403" });
+      expect(still).toContain("403");
+    } finally {
+      await proxy.close();
+    }
+  });
+
   it("同域并发 CONNECT 只问一次（单飞经 grants）；close 后监听停", async () => {
     const grants = new GrantsRegistry();
     let asks = 0;

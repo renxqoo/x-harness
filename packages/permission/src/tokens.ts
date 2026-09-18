@@ -13,5 +13,9 @@ export const permissionGrants = defineService<import("./grants.ts").GrantsRegist
 /** 每裁决一条审计（次数断言）；会话流持久化归属 session 件 */
 export const permissionDecided = defineEvent<PermissionAudit>("permission/decided", { freeze: "deep" });
 
-/** sandbox-local 提供的围栏事实快照服务（无沙箱装配时缺席——bash 永不界内 auto） */
-export const fenceFacts = defineService<FenceFacts>("permission/fence-facts");
+/** sandbox 提供的围栏事实解析服务（fenceFor(session) 单一合成函数的暴露；无沙箱装配时缺席——
+ *  bash 永不界内 auto） */
+export interface FenceFactsResolver {
+  forSession(session: import("@x-harness/session").SessionId | undefined): FenceFacts;
+}
+export const fenceFacts = defineService<FenceFactsResolver>("permission/fence-facts");

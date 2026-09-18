@@ -3,7 +3,6 @@
 
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
-import { realpathSync } from "node:fs";
 import { GrantsRegistry } from "@x-harness/permission";
 import { fenceFor, denyReadPaths } from "../fence.ts";
 import type { SessionId } from "@x-harness/session";
@@ -14,7 +13,7 @@ describe("fenceFor（base ∧ grants 单一合成）", () => {
   it("writable = root+tmpdir+附加（realpath 归一）；denyRead 默认表在场可加", () => {
     const grants = new GrantsRegistry();
     const f = fenceFor({ root: "/tmp", writableExtra: ["/tmp/extra-cache"], denyReadExtra: ["~/secrets"] }, grants, S);
-    expect(f.writable).toContain(realpathSync(tmpdir())); // 归一口径（/var→/private/var）
+    expect(f.writable).toContain(tmpdir()); // 词法口径（物理双形在 seatbelt 剖面层展开）
     expect(f.writable.some((w) => w.endsWith("extra-cache"))).toBe(true);
     expect(f.denyRead).toContain("~/.ssh"); // 默认表（用户裁决②可加不可减）
     expect(f.denyRead).toContain("~/secrets"); // 宿主追加
@@ -28,7 +27,7 @@ describe("fenceFor（base ∧ grants 单一合成）", () => {
     if (f.network === "off") throw new Error("expected allowlist");
     expect(f.network.allowedDomains).toContain("a.com"); // 会话授权并集
     expect(f.network.allowedDomains).not.toContain("evil.com"); // deny 不入白名单
-    expect(f.network.allowedDomains).not.toContain("pre.dev"); // allowedDomains 配置经 grants 预授权入正缓存（见 plugin）——fence 只看授权集
+    expect(f.network.allowedDomains).toContain("pre.dev"); // 宿主预授权会话无关直接并入
     const off = fenceFor({ root: "/tmp", networkOff: true }, grants, S);
     expect(off.network).toBe("off");
   });
@@ -43,10 +42,12 @@ describe("fenceFor（base ∧ grants 单一合成）", () => {
 });
 
 describe("denyReadPaths（spawn 面遮挂目标展开）", () => {
-  it("~ 展开到家目录绝对路径", () => {
-    const f = fenceFor({ root: "/tmp" }, new GrantsRegistry(), undefined);
+  it("~ 展开到家目录绝对路径（含裸 ~ 形态与普通绝对形态）", () => {
+    const f = fenceFor({ root: "/tmp", denyReadExtra: ["~", "/var/secure"] }, new GrantsRegistry(), undefined);
     const paths = denyReadPaths(f, "/Users/demo");
     expect(paths).toContain("/Users/demo/.ssh");
     expect(paths).toContain("/Users/demo/.aws");
+    expect(paths).toContain("/Users/demo"); // 裸 ~ = 家目录整体
+    expect(paths).toContain("/var/secure"); // 普通绝对形态原样
   });
 });

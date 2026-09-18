@@ -44,6 +44,8 @@ export interface SpawnRequest {
   /** 逻辑 argv（如 ["/bin/sh","-c",cmd]）；实现自行包裹传输层 */
   readonly argv: readonly string[];
   readonly cwd?: string;
+  /** 子进程 env 覆盖（缺省=继承宿主）；围栏层用于密钥清洗与代理注入 */
+  readonly env?: Readonly<Record<string, string>>;
   /** 围栏解析键；所有 spawn 调用点（含 rg）必须透传 ctx.session */
   readonly session?: SessionId;
 }

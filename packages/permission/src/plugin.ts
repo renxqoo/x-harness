@@ -66,7 +66,7 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
           mode,
           root: options.root,
           extraRoots: grants.extraRootsOf(payload.session),
-          fence: ctx.tryUse(fenceFacts),
+          fence: ctx.tryUse(fenceFacts)?.forSession(payload.session),
         });
         let finalVerdict = decision.verdict;
         let finalReason = decision.reason;
