@@ -11,9 +11,9 @@
 | --- | --- | --- | --- |
 | 1 | session 扩展：inbox 词条 + 可验证续写 + header 覆盖 | docs/SESSION-RESUME.md | 已收口 |
 | 2 | @x-harness/tools：注册表 + 执行管线 | docs/TOOLS.md | 已收口 |
-| 3 | @x-harness/system-prompt：sections/variables | docs/SYSTEM-PROMPT.md | 待写 |
-| 4 | @x-harness/llm：runtime + openai-compat 适配器 | docs/LLM.md | 待写 |
-| 5 | @x-harness/agent-loop：循环本体 | docs/AGENT-LOOP-DRIVER.md | 待写 |
+| 3 | @x-harness/system-prompt：sections/variables | docs/SYSTEM-PROMPT.md | 已收口 |
+| 4 | @x-harness/llm：runtime + openai-compat 适配器 | docs/LLM.md | 已收口 |
+| 5 | @x-harness/agent-loop：循环本体 | docs/AGENT-LOOP-DRIVER.md | 已收口（方案审 20 条 + 代码审 13 条处置） |
 | 6 | @x-harness/session-checkpoint + e2e 旅程 | docs/SESSION-CHECKPOINT.md | 已收口（审查 7 条处置） |
 
 实施顺序 = 表序；每件：独立方案 → 子 agent 对抗审查 → 处置定稿 → 实现 + 单测 → 四门 → 代码对抗审查 → 回归 → 收口提交（引用本文档节号 + 各件文档节号）。
