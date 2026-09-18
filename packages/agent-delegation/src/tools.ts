@@ -1,8 +1,15 @@
 // 工具族（docs/AGENT-DELEGATION.md §1.1/§1.2.1）：spawn(exclusive)/message/output/list(parallel)/stop(exclusive)。
-// 属主校验（callerSession === row.parent）；反轮询文案；报告 cap 截断。
+// 属主校验（callerSession === row.parent）；报告 cap 截断；description 逐字常量见 descriptions.ts。
 
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
+import {
+  AGENT_MESSAGE_DESCRIPTION,
+  AGENT_OUTPUT_DESCRIPTION,
+  AGENT_SPAWN_DESCRIPTION,
+  AGENT_STOP_DESCRIPTION,
+  LIST_AGENTS_DESCRIPTION,
+} from "./descriptions.ts";
 import type { ChildRow } from "./lineage.ts";
 import type { ChildReport } from "./notify.ts";
 import type { ChildView } from "./types.ts";
@@ -22,8 +29,7 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
   return [
     {
       name: "agent_spawn",
-      description:
-        "Spawn a sub-agent to run a task in the background. type selects a registered subagent type (restricted tools/model/identity); the reserved type 'fork' copies the parent's completed conversation. Returns immediately with agentId/sessionId — the sub-agent runs in the background and an [agent-notification] message arrives when it finishes. End your turn and wait instead of polling agent_output (each poll is a paid request).",
+      description: AGENT_SPAWN_DESCRIPTION,
       inputSchema: Type.Object({
         prompt: Type.String({ description: "The sub-agent's task (its only initial input; must be self-contained)" }),
         type: Type.Optional(Type.String({ description: "Registered type name or 'fork'; defaults to an untyped agent" })),
@@ -33,7 +39,7 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
     },
     {
       name: "agent_message",
-      description: "Send additional input to a sub-agent you spawned. If it is busy the message is queued and consumed at the next step boundary; if idle it wakes the agent for a new turn.",
+      description: AGENT_MESSAGE_DESCRIPTION,
       inputSchema: Type.Object({
         agentId: Type.String({ description: "agentId from agent_spawn (owner only)" }),
         text: Type.String({ description: "Message content" }),
@@ -43,20 +49,20 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
     },
     {
       name: "agent_output",
-      description: "Read a finished sub-agent's latest report. Do NOT poll while it runs — wait for the [agent-notification] message (each poll is a paid request).",
+      description: AGENT_OUTPUT_DESCRIPTION,
       inputSchema: Type.Object({ agentId: Type.String({ description: "agentId from agent_spawn (owner only)" }) }),
       isConcurrencySafe: parallel,
       execute: async (args, ctx) => run(deps.output(ctx, (args as { agentId: string }).agentId)),
     },
     {
       name: "agent_stop",
-      description: "Stop a sub-agent you spawned (cancels its in-flight turn and waits for it to settle). Idempotent; a stopped agent can be messaged again later.",
+      description: AGENT_STOP_DESCRIPTION,
       inputSchema: Type.Object({ agentId: Type.String({ description: "agentId from agent_spawn (owner only)" }) }),
       execute: async (args, ctx) => run(await deps.stop(ctx, (args as { agentId: string }).agentId)),
     },
     {
       name: "list_agents",
-      description: "List the sub-agents you spawned (agentId/sessionId/name/type/depth/status).",
+      description: LIST_AGENTS_DESCRIPTION,
       inputSchema: Type.Object({}),
       isConcurrencySafe: parallel,
       execute: async (_args, ctx) => {

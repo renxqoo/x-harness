@@ -42,6 +42,11 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin;
 | `list_agents` | `{}` | 活视图（**限调用方子树**）：agentId/sessionId/name/type/depth/status |
 
 - 寻址主键 = agentId（`agent-` 前缀 + 计数，插件内唯一单调）；同名共存（X13 进程内版）。
+- **description 逐字常量**（`src/descriptions.ts`）：五工具描述取自 Claude Code 子代理与后台任务
+  工具文档英文原文（源 `/Users/wrr/work/claude-tool/agent-and-background-tasks.md`；映射
+  agent_spawn←Agent、agent_message←SendMessage、agent_output←TaskOutput、agent_stop←TaskStop、
+  list_agents←ListAgents）——描述面先行对齐，参数/行为面差异（to/message/task_id、跨会话、
+  isolation 等）尚未迁移，以本表「入参/行为」列与 §3 落档为准。
 - 工具体经 ToolExecContext.session 识别**调用方会话**；**动词工具属主校验**：
   callerSession ≠ row.parent → invalid-args（防跨父猜 id 操纵别家子）。
 - 白名单 `undefined` = 全集（沿树只收窄不放宽）。
