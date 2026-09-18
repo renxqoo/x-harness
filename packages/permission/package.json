@@ -9,7 +9,9 @@
   "dependencies": {
     "@x-harness/core": "workspace:*",
     "@x-harness/session": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "tree-sitter": "^0.22.0",
+    "tree-sitter-bash": "^0.23.0"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0"

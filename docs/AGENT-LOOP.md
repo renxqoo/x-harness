@@ -20,7 +20,7 @@
 | 9 | @x-harness/agent-delegation：子代理 | docs/AGENT-DELEGATION.md | 已收口（异步 spawn+通知唤醒，四路审查处置） |
 | 10 | @x-harness/toolbox：read/write/bash/grep 四工具 | docs/TOOLBOX.md | 已收口（grep rg 硬依赖单路径——裁决 §5；e2e 四工具旅程） |
 | 11 | @x-harness/exec-env + permission + sandbox-local：执行环境/本机沙箱/auto 权限（toolbox 全量接入） | docs/EXEC-ENV.md | 已实施（B0–B3 交付；代码审查 A/B 处置见文档 §13；darwin 真内核腿绿，linux 腿 T9 承载） |
-| 12 | permission bash 裁决 AST 化：tree-sitter 迁移（段词法器 8 漏洞根治） | docs/EXEC-ENV.md §14 | 方案定稿（载体实测原生；三路审查处置见 §14.9；四裁决点默认采纳待否决） |
+| 12 | permission bash 裁决 AST 化：tree-sitter 迁移（段词法器 8 漏洞根治） | docs/EXEC-ENV.md §14 | 已收口（载体原生；方案审三路 §14.9 + 收口审两路 §14.10 全处置；1023 用例四门绿，覆盖率只升不降） |
 
 实施顺序 = 表序；每件：独立方案 → 子 agent 对抗审查 → 处置定稿 → 实现 + 单测 → 四门 → 代码对抗审查 → 回归 → 收口提交（引用本文档节号 + 各件文档节号）。
 

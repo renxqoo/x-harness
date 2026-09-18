@@ -6,14 +6,11 @@ export { permissionBroker, permissionDecided, permissionGrants, fenceFacts } fro
 export { parseRule, parseRules } from "./rules/parse.ts";
 export { globMatch } from "./rules/glob.ts";
 export { bashPrefixMatch } from "./rules/bash-prefix.ts";
-export { parseSegments } from "./bash/segments.ts";
-export type { Segment, ParseResult } from "./bash/segments.ts";
-export { detectInjection } from "./bash/injection.ts";
+export { parseBash, parseBashWith, classifyKind } from "./bash/ast.ts";
+export type { BashParse, ParsedCommand, Redirect, ParserLoader, NodeClass } from "./bash/ast.ts";
 export type { InjectionKind } from "./bash/injection.ts";
 export { hardDeny } from "./bash/hard-deny.ts";
 export type { HardDenyKind } from "./bash/hard-deny.ts";
-export { redirectsOf, DEV_NULL } from "./bash/redirect.ts";
-export type { Redirect } from "./bash/redirect.ts";
 export { adjudicateBash, writableRoots, withinAny } from "./bash/adjudicate.ts";
 export type { BashAdjudication, BashPipelineInput } from "./bash/adjudicate.ts";
 export { decideFor } from "./decide.ts";
