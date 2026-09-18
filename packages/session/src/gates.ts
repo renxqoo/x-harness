@@ -75,7 +75,7 @@ function isInboxEntries(value: unknown): boolean {
   );
 }
 
-/** 逐词条形状门：词表闭合（14 条），结构与归属键检查，语义归写方 */
+/** 逐词条形状门：词表闭合（15 条），结构与归属键检查，语义归写方 */
 const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean } = {
   "turn/start": (d) => isObj(d) && isCount(d["turn"]),
   "turn/end": (d) => isObj(d) && isCount(d["turn"]) && isTurnEndReason(d["reason"]),
@@ -91,7 +91,8 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     (d["usage"] === undefined || isObj(d["usage"])) &&
     (d["stopReason"] === undefined || isStr(d["stopReason"])) &&
     (d["interrupted"] === undefined || d["interrupted"] === true),
-  "assistant/attempt": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["error"]),
+  "assistant/attempt": (d) =>
+    isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["error"]) && (d["usage"] === undefined || isObj(d["usage"])),
   "tool/call": (d) =>
     isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["callId"]) && isStr(d["name"]) && isStr(d["arguments"]),
   "tool/result": (d) =>
@@ -110,6 +111,20 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isToolRefs(d["tools"]),
   "request/context": (d) =>
     isObj(d) && isStr(d["provider"]) && isStr(d["model"]) && (d["contextWindow"] === undefined || isCount(d["contextWindow"])),
+  "llm/retry": (d) =>
+    isObj(d) &&
+    isCount(d["turn"]) &&
+    isCount(d["step"]) &&
+    isStr(d["provider"]) &&
+    d["provider"] !== "" &&
+    isCount(d["retry"]) &&
+    d["retry"] >= 1 &&
+    isCount(d["delayMs"]) &&
+    d["delayMs"] <= 2_147_483_647 &&
+    isObj(d["failure"]) &&
+    isStr(d["failure"]["message"]) &&
+    d["failure"]["message"] !== "" &&
+    (d["failure"]["code"] === undefined || isStr(d["failure"]["code"])),
   "session/end-seed": (d) => isObj(d) && (d["inherited"] === undefined || d["inherited"] === true),
   "agent/inbox/spliced": (d) => {
     if (!isObj(d)) return false;

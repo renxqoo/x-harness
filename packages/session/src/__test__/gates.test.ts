@@ -109,11 +109,12 @@ const validSamples: Record<string, unknown> = {
     usage: { total: 1 },
     stopReason: "end_turn",
   },
-  "assistant/attempt": { turn: 0, step: 0, error: "timeout" },
+  "assistant/attempt": { turn: 0, step: 0, error: "timeout", usage: { input: 3, output: 4 } },
   "tool/call": { turn: 0, step: 0, callId: "c1", name: "t", arguments: "{}" },
   "tool/result": { turn: 0, step: 0, callId: "c1", content: "ok", isError: true },
   "request/header": { model: "m", provider: "p", temperature: 0.5, maxTokens: 100, tools: [{ name: "t", description: "d" }] },
   "request/context": { provider: "p", model: "m", contextWindow: 8192 },
+  "llm/retry": { turn: 0, step: 0, provider: "p", retry: 1, delayMs: 500, failure: { message: "http-503:upstream", code: "http-503" } },
   "session/end-seed": {},
   "agent/inbox/spliced": { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: "hi" }] }] },
 };
@@ -131,12 +132,13 @@ const brokenSamples: Record<string, unknown> = {
   "tool/result": { turn: 0, step: 0, callId: "c", content: "ok", isError: "true" },
   "request/header": { model: "m", tools: [{ name: 1 }] },
   "request/context": { provider: "p", model: "m", contextWindow: -1 },
+  "llm/retry": { turn: 0, step: 0, provider: "", retry: 1, delayMs: 500, failure: { message: "x" } },
   "session/end-seed": { inherited: "yes" },
   "agent/inbox/spliced": { op: "insert", target: "side-queue", entries: [] },
 };
 
 describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵）", () => {
-  it("14 词条合法样本全部放行", () => {
+  it("15 词条合法样本全部放行", () => {
     for (const [type, data] of Object.entries(validSamples)) {
       expect(gateEvent(type, data), type).toBeUndefined();
     }
@@ -216,5 +218,25 @@ describe("validateSessionEvents（docs/SESSION.md §1.8 seed 整卷校验）", (
     ], "corrupt-surface:2:replace-range:1>0"],
   ])("非法卷：%s → %s", (_name, events, expected) => {
     expect(validateSessionEvents(events)).toBe(expected);
+  });
+});
+
+describe("llm/retry 词条形状门（docs/LLM-RETRY.md §1——审计事件先于等待落账）", () => {
+  const base = { turn: 0, step: 0, provider: "p", retry: 1, delayMs: 500, failure: { message: "m" } };
+
+  it.each([
+    ["retry=0（第 0 次重试无意义）", { retry: 0 }],
+    ["delayMs 超 setTimeout 域", { delayMs: 2_147_483_648 }],
+    ["provider 空串", { provider: "" }],
+    ["failure 非对象", { failure: "boom" }],
+    ["failure.message 空串", { failure: { message: "" } }],
+    ["failure.code 非串", { failure: { message: "m", code: 1 } }],
+  ])("垃圾：%s → shape:llm/retry", (_name, patch) => {
+    expect(gateEvent("llm/retry", { ...base, ...patch })).toBe("shape:llm/retry");
+  });
+
+  it("合法域边界：retry=1 / delayMs=0（立即重试）与 2^31-1 放行", () => {
+    expect(gateEvent("llm/retry", { ...base, delayMs: 0 })).toBeUndefined();
+    expect(gateEvent("llm/retry", { ...base, delayMs: 2_147_483_647 })).toBeUndefined();
   });
 });

@@ -19,5 +19,6 @@ export {
 export type { AssistantStreamFrame, Dial, PreStepDecision, RequestFailure } from "./tokens.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";
 export { foldInbox } from "./inbox.ts";
+export { lastRequestContext } from "./request.ts";
 export type { InboxState } from "./inbox.ts";
 export { interruptedTurnClosers } from "./repair.ts";

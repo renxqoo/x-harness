@@ -5,5 +5,5 @@ import type { LlmChunk, LlmRequest, LlmRuntime } from "./types.ts";
 
 export const llmRuntime = defineService<LlmRuntime>("llm-runtime");
 
-/** 中间件位：重试/回放/路由后续挂此；final = 适配器流 */
+/** 中间件位：回放/路由/计量后续挂此；final = 适配器流（解析失败 → no-adapter 错误流） */
 export const llmStream = defineWaterfall<LlmRequest, AsyncIterable<LlmChunk>>("llm/stream");

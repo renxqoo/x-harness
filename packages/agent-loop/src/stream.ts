@@ -72,10 +72,11 @@ export class StreamAccumulator {
   }
 }
 
-/** 结算判定：message（stop/max-tokens，或有内容的 abort）/ attempt（错误、空完成、无 finish 流） */
+/** 结算判定：message（stop/max-tokens，或有内容的 abort）/ attempt（错误、空完成、无 finish 流）。
+ *  attempt 携 code/retryAfterMs 透传给 RequestFailure——重试件的可重试判定与快车道输入 */
 export type Settlement =
   | { readonly kind: "message"; readonly stopReason: "stop" | "max-tokens"; readonly interrupted?: true }
-  | { readonly kind: "attempt"; readonly error: string };
+  | { readonly kind: "attempt"; readonly error: string; readonly code?: string; readonly retryAfterMs?: number };
 
 export function settleStream(accum: StreamAccumulator, streamThrew: unknown, signalAborted: boolean): Settlement {
   if (streamThrew !== undefined) {
@@ -83,8 +84,15 @@ export function settleStream(accum: StreamAccumulator, streamThrew: unknown, sig
     return { kind: "attempt", error: normalizeFailure(streamThrew) };
   }
   const finish = accum.settledFinish;
-  if (finish === undefined) return { kind: "attempt", error: "stream ended without finish" };
-  if (finish.kind === "error") return { kind: "attempt", error: `${finish.code !== undefined ? `${finish.code}:` : ""}${finish.message}` };
+  if (finish === undefined) return { kind: "attempt", error: "stream ended without finish", code: "network" };
+  if (finish.kind === "error") {
+    return {
+      kind: "attempt",
+      error: `${finish.code !== undefined ? `${finish.code}:` : ""}${finish.message}`,
+      ...(finish.code !== undefined ? { code: finish.code } : {}),
+      ...(finish.retryAfterMs !== undefined ? { retryAfterMs: finish.retryAfterMs } : {}),
+    };
+  }
   if (finish.kind === "max-tokens") return { kind: "message", stopReason: "max-tokens" };
   if (!accum.hasContent) return { kind: "attempt", error: "empty completion" };
   return { kind: "message", stopReason: "stop" };

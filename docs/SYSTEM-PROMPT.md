@@ -1,34 +1,66 @@
-# System-Prompt 件方案（sections 分层合并 + variables 插值）
+# SYSTEM-PROMPT 件方案（锚点定位 sections + 变量插值 + 指纹）——回炉重写
 
-> 状态：定稿
-> 级别：小（纯加法、单职责、无并发语义；消费方为 agent-loop 每步组装）
-> 上游：docs/AGENT-LOOP.md §3（用户裁决：完整 prompt 件）；工具表不在此收集（与 tools 解耦，loop 直取）。
+> 状态：已实施（回炉重写；代码审查处置：δ/2ⁿ 注册序预热修复前向引用错序 + 回归用例）
+> 级别：小级偏上（纯加法、单职责；定位代数是纯函数可穷举测试）
+> 上游：docs/AGENT-LOOP.md §3；工具表不在此收集（loop 直取 toolRegistry）。
+> 参考思想出处：my-agent packages/core/src/prompt（锚点/指纹/缓存）；DSH/pi 的静态拼装验证口径。
+
+## 0. 回炉动机（真缺口，对照参考语义子集 A1–A10）
+
+- 插件互相不知道对方的 order 魔数——「排在核心段之后」只能靠约定数字，错位无诊断；
+- assemble 无内容指纹——KV cache 前缀命中无法观测（生产 prompt 件的必要面）；
+- 变量函数抛错行为未定义（A9：坏段降级不崩）；身份守卫注销两分支无测试；
+- 每步重排重算（my-agent A10 的缓存思想）。
 
 ## 1. 契约
 
-token：`systemPrompt` 服务（name: "system-prompt"）。插件 `systemPromptPlugin`（name: "system-prompt"，无 inject）。
+token：`systemPrompt` 服务（name "system-prompt"）。插件 `systemPromptPlugin`（无 inject）。
 
 ```ts
-section(input: { name: string; order: number; text: string }): Disposer;   // 同名覆盖（后者胜）；注销按身份守卫
-variable(name: string, value: string | (() => string)): Disposer;          // {{name}} 插值；函数惰性求值（每次 assemble 现算）
-assemble(): { readonly text: string };                                      // sections 按 (order, name) 升序 join("\n\n") 后插值；无 sections → ""
+section(spec: {
+  name: string;                 // 同名覆盖（后者胜）；注销按身份守卫
+  after?: string;               // 锚点：置于 name=after 的段之后（缺席锚 → 约束 no-op）
+  before?: string;              // 对偶：置于目标之前；after+before 同声明 → throw
+  text: string;                 // 静态文本（动态值走变量函数）
+}): Disposer;
+variable(name: string, value: string | (() => string)): Disposer;   // {{name}} 单层插值；惰性
+assemble(): { readonly text: string; readonly fingerprint: string }; // join("\n\n") 后插值；指纹=sha256 前 16 hex
 ```
 
-- 插值规则：`{{name}}` 整段替换；未注册变量保持原样（策略插件可后补）；变量值不再递归插值（单层）。
-- 注册参数垃圾（空 name / order 非有限数 / text 非 string / value 非 string|fn）→ throw（装配期错误，同内核 provide 语义）。
+定位代数（常量：δ=0.5、TAIL_BASE=1_000_000；before/after **共用**同一 per-anchor 后代计数器；
+比较器平级 tie-break = 注册序——代数可产生并列位次（如 P before Q 且 Q after X，P 与 X 平位），
+tie-break 保证全序确定）：
+
+环检测在**注册期**（新增边时沿锚链查环——缺席锚不建边不影响检测；成环 throw 点名环成员，
+与垃圾参数 throw 同位）；assemble 不再因环中弹。
+- `after X` → 位次 = orderOf(X) + δ/2ⁿ（n = X 已有的 after 后代数——后注册者更贴近目标，「插在中间」语义）；
+  `before X` 对偶取 orderOf(X) − δ/2ⁿ；链式锚递归合成；
+- 约束成环 → throw（装配期诊断点名环成员）；after+before 同声明 → throw；
+- 无边段位次 = TAIL_BASE + 注册序（无边段可插入锚链派生值之间——装配序即语义）；
+- 同名覆盖后，旧段不再作为锚目标（新段顶替位置语义，**沿用旧注册序**——覆盖是改文本不是挪位）。
+
+插值：`{{name}}` 整段替换；未注册变量保持原样；**变量函数抛错 → 该变量保持 `{{name}}`
+原样**（降级不崩，垃圾输入原则）；单层不递归。
 
 ## 2. 问题域
 
-**处理**：section 注册/覆盖/注销、variable 注册/注销、assemble 合并插值。
-**不处理**：按 agent 分层（注册发生在哪个 ctx 层就活在哪层——消费方用 scope 注册即得分层）；上下文注入（归 agent/pre-step 消费方）；工具表收集（loop 从 toolRegistry 直取）；prompt 缓存/长度治理。
+**处理**：section 注册/覆盖/注销、锚点定位代数（注册期环检测）、变量插值、指纹、
+**排序缓存**（缓存面=排序结果，段集版本号失效；插值与指纹每次 assemble 现算——变量是
+惰性闭包，"文本未变"不可判定，不缓存装配结果）。
+**不处理**：按 agent 分层（ctx 层级即分层）；上下文注入（agent/pre-step 消费方）；工具表收集；
+prompt 长度治理/压缩。
 
-## 3. 测试口径
+## 3. 测试口径（对照 A1–A10 逐条）
 
-- 契约：token 名锁定；assemble 确定性（两次调用相等）。
-- 合并：order 升序、同 order 按 name、同名覆盖后者胜、空注册 → ""、单 section 无 join。
-- 插值：字符串/函数值、未注册保持、单层不递归、函数每次现算。
-- 生命周期：disposer 注销、同名覆盖后旧 disposer 不误删新注册（身份守卫）、参数垃圾 throw 表。
+- 定位：after/before 基本序；缺席锚 no-op；链式锚递归；同锚多后代 δ/2ⁿ 贴近；无边段插链间；
+  after+before 同声明 throw；注册期成环 throw（点名环成员）；**平位 tie-break 回归**
+  （P before Q、Q after X → P 与 X 平位，注册序定先后）；
+- 覆盖与注销：同名后者胜；旧 disposer 不误删新段（身份守卫两分支）；覆盖后锚目标顶替；
+- 插值：字符串/惰性函数/未注册保持/单层不递归/函数抛错保持原样；
+- 指纹：同内容稳定、内容变即变、变量值变（函数现算）→ 指纹变；
+- 缓存：段集未变连续 assemble 文本+指纹相等（段集版本号断言零重排）；注册/注销后缓存失效；
+- 契约：token 名锁定；assemble 确定性；注册垃圾参数 throw 表（空 name/after===name/before===name/text 非 string/value 非 string|fn）。
 
 ## 4. 验收清单
 
-- [ ] §1 逐条；§3 表逐条；四门全绿 + 覆盖率数字如实报告
+- [ ] §1–§3 逐条；四门全绿 + 覆盖率数字如实报告

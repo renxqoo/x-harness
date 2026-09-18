@@ -56,6 +56,18 @@
         "@x-harness/tools": "workspace:*",
       },
     },
+    "packages/llm-retry": {
+      "name": "@x-harness/llm-retry",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+    },
     "packages/plugin-manager": {
       "name": "@x-harness/plugin-manager",
       "version": "0.0.1",
@@ -99,6 +111,14 @@
       "version": "0.0.1",
       "dependencies": {
         "@x-harness/core": "workspace:*",
+      },
+    },
+    "packages/token-meter": {
+      "name": "@x-harness/token-meter",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
       },
     },
     "packages/tools": {
@@ -270,6 +290,8 @@
 
     "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
 
+    "@x-harness/llm-retry": ["@x-harness/llm-retry@workspace:packages/llm-retry"],
+
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
 
     "@x-harness/session": ["@x-harness/session@workspace:packages/session"],
@@ -279,6 +301,8 @@
     "@x-harness/session-persistence-jsonl": ["@x-harness/session-persistence-jsonl@workspace:packages/session-persistence-jsonl"],
 
     "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/system-prompt"],
+
+    "@x-harness/token-meter": ["@x-harness/token-meter@workspace:packages/token-meter"],
 
     "@x-harness/tools": ["@x-harness/tools@workspace:packages/tools"],
 

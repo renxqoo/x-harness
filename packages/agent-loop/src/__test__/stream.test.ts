@@ -62,17 +62,23 @@ describe("settleStream（docs/AGENT-LOOP-DRIVER §1.4）", () => {
   it("finish error 带 code → `code:message`；无 code → message", () => {
     const withCode = new StreamAccumulator();
     withCode.push({ type: "finish", finish: { kind: "error", message: "boom", code: "E503" } });
-    expect(settleStream(withCode, undefined, false)).toEqual({ kind: "attempt", error: "E503:boom" });
+    expect(settleStream(withCode, undefined, false)).toEqual({ kind: "attempt", error: "E503:boom", code: "E503" });
 
     const bare = new StreamAccumulator();
     bare.push({ type: "finish", finish: { kind: "error", message: "boom" } });
     expect(settleStream(bare, undefined, false)).toEqual({ kind: "attempt", error: "boom" });
+
+    // retryAfterMs 快车道透传（docs/LLM.md §1.2）
+    const throttled = new StreamAccumulator();
+    throttled.push({ type: "finish", finish: { kind: "error", message: "slow down", code: "http-429", retryAfterMs: 2500 } });
+    expect(settleStream(throttled, undefined, false)).toEqual({ kind: "attempt", error: "http-429:slow down", code: "http-429", retryAfterMs: 2500 });
   });
 
   it("流无 finish → attempt；finish stop 零内容 → 空结算 attempt", () => {
     const noFinish = new StreamAccumulator();
     noFinish.push({ type: "text-delta", text: "x" });
-    expect(settleStream(noFinish, undefined, false)).toEqual({ kind: "attempt", error: "stream ended without finish" });
+    // 无 finish 的截断流归 network（可重试）——驱动兜底对违约适配器同口径
+    expect(settleStream(noFinish, undefined, false)).toEqual({ kind: "attempt", error: "stream ended without finish", code: "network" });
 
     const emptyStop = new StreamAccumulator();
     emptyStop.push({ type: "finish", finish: { kind: "stop" } });

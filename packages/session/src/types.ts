@@ -1,4 +1,4 @@
-// Session 契约类型：事件信封判别联合、13 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
+// Session 契约类型：事件信封判别联合、15 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
 
 import type { Result } from "@x-harness/core";
 
@@ -45,7 +45,8 @@ export interface SessionEventData {
     readonly stopReason?: string;
     readonly interrupted?: true;
   };
-  readonly "assistant/attempt": { readonly turn: number; readonly step: number; readonly error: string };
+  /** 失败尝试：中断前已收到的 usage 帧随尝试落账（token-meter 失败尝试计费） */
+  readonly "assistant/attempt": { readonly turn: number; readonly step: number; readonly error: string; readonly usage?: unknown };
   readonly "tool/call": { readonly turn: number; readonly step: number; readonly callId: string; readonly name: string; readonly arguments: string };
   readonly "tool/result": { readonly turn: number; readonly step: number; readonly callId: string; readonly content: string; readonly isError?: true };
   readonly "request/header": {
@@ -56,6 +57,15 @@ export interface SessionEventData {
     readonly tools: readonly ToolRef[];
   };
   readonly "request/context": { readonly provider: string; readonly model: string; readonly contextWindow?: number };
+  /** 重试调度审计（docs/LLM-RETRY.md §1）：先于等待落账；预算为进程内计数，事件是观测面 */
+  readonly "llm/retry": {
+    readonly turn: number;
+    readonly step: number;
+    readonly provider: string;
+    readonly retry: number;
+    readonly delayMs: number;
+    readonly failure: { readonly message: string; readonly code?: string };
+  };
   readonly "session/end-seed": { readonly inherited?: true };
   /** 收件箱拼接：fold 投影归 agent-loop（docs/SESSION-RESUME.md §1.1——claim 按成员移除、判重按当前在场） */
   readonly "agent/inbox/spliced": InboxSpliceData;

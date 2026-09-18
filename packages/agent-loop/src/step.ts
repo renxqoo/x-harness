@@ -254,13 +254,23 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
     }
     const settlement = settleStream(accum, threw, signal.aborted);
     if (settlement.kind === "attempt") {
-      appendEvent(session, "assistant/attempt", { turn, step, error: settlement.error });
+      // 失败尝试中断前已收到的 usage 帧随尝试落账（token-meter 失败尝试计费，docs/TOKEN-METER.md §1）
+      appendEvent(session, "assistant/attempt", {
+        turn,
+        step,
+        error: settlement.error,
+        ...(accum.usageSnapshot !== undefined ? { usage: accum.usageSnapshot } : {}),
+      });
       deps.emitStreamFrame(turn, step, { phase: "end", kind: "attempt" });
       const retry = await deps.dispatchRequestError({
         session: session.id,
         turn,
         step,
-        failure: { message: settlement.error },
+        failure: {
+          message: settlement.error,
+          ...(settlement.code !== undefined ? { code: settlement.code } : {}),
+          ...(settlement.retryAfterMs !== undefined ? { retryAfterMs: settlement.retryAfterMs } : {}),
+        },
         signal,
       });
       if (retry?.kind === "retry" && !signal.aborted) continue; // 不重落 system/user/header

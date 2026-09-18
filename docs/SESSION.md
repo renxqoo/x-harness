@@ -31,7 +31,7 @@ const store = ctx.use(sessionStore);
 | `sessionFlush` | parallel | `{ session: SessionId }` | — | store.flush 派发；all-settled，聚合错误经 flush 的 Result 上浮 |
 | `sessionDisposed` | emit | `{ session: SessionId }` | none | store.dispose 移除后广播，恰好一次 |
 
-### 1.3 事件信封与词表（闭合，14 词条）
+### 1.3 事件信封与词表（闭合，15 词条）
 
 ```ts
 type SessionEvent = { type; seq; time; data }
@@ -40,7 +40,7 @@ type SessionEvent = { type; seq; time; data }
 
 - `seq` 单调连续，由 Session 独占分配（= 落账时日志长度）；`time` 为 Unix 毫秒。**物化先行**：append/seed/header 一律先 `materializeJson`（单一 JSON 值域权威——稀疏数组/原型污染/Symbol 键/显式 undefined/非有限数与 -0 全拒；getter 单遍定影，门与存储不可能见到不同值），门只看快照形状，快照深冻入账——调用方对象永不被就地冻结。
 - **surface 词条**（产模型可见消息，仅此 4 类可携带 surfaceOp）：`system/message`、`user/message`、`assistant/message`、`tool/result`。
-- **log-only 词条**：`turn/start`、`turn/end`、`step/start`、`step/end`、`assistant/attempt`、`tool/call`、`request/header`、`request/context`、`session/end-seed`。
+- **log-only 词条**：`turn/start`、`turn/end`、`step/start`、`step/end`、`assistant/attempt`、`tool/call`、`request/header`、`request/context`、`llm/retry`、`session/end-seed`。
 
 | 词条 | data 形状 | 事实 |
 | --- | --- | --- |
@@ -50,11 +50,12 @@ type SessionEvent = { type; seq; time; data }
 | `system/message` | `{ turn; step; text }` | 模型可见 system 消息（普通 surface 节点，无特判） |
 | `user/message` | `{ turn; step; content: ContentBlock[] }` | 模型可见 user 消息 |
 | `assistant/message` | `{ turn; step; content: ContentBlock[]; usage?; stopReason?; interrupted? }` | 消息即账本：输出与用量同行 |
-| `assistant/attempt` | `{ turn; step; error }` | 未沉淀为消息的失败尝试（观测用，不进消息面） |
+| `assistant/attempt` | `{ turn; step; error; usage? }` | 未沉淀为消息的失败尝试（观测用，不进消息面）；中断前已收到的 usage 帧随尝试落账（token-meter 失败尝试计费） |
 | `tool/call` | `{ turn; step; callId; name; arguments }` | 模型发起的工具调用（arguments 为未解析原串） |
 | `tool/result` | `{ turn; step; callId; content; isError? }` | 工具结果，按 callId 关联 |
 | `request/header` | `{ model; provider?; temperature?; maxTokens?; tools: ToolRef[] }` | 请求信封快照（拨号配置 + 工具表） |
 | `request/context` | `{ provider; model; contextWindow? }` | 线路能力元数据（容量等）；不参与请求重建；何时写入归写方策略 |
+| `llm/retry` | `{ turn; step; provider; retry; delayMs; failure{message, code?} }` | 重试调度审计（docs/LLM-RETRY.md）：先于等待落账；预算为进程内计数，事件是观测面 |
 | `session/end-seed` | `{ inherited?: true }` | seed 边界：之前的事件来自 seed；**构造器唯一合法写者**。**消费方以日志中最后一个 end-seed 为当前边界**（审查处置 P5）；前缀中的祖先标记是历史事实，保留不删——fork 逐字复制前缀必然携带祖先标记，属合法日志 |
 | `agent/inbox/spliced` | `insert{target,entries} \| claim{target,turn,claimed} \| clear{reason}` | 收件箱拼接（log-only）。fold 投影归 agent-loop；**claim 按成员移除（携带被领条目 id 全集）**；fold 判重按**当前队列在场**——claim 移除后同 id 再 insert 必须重新入队（repair 回灌依赖，SESSION-RESUME §1.1） |
 

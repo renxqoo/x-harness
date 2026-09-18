@@ -1,61 +1,208 @@
-import { describe, expect, it } from "vitest";
+// runtime 归一层与适配器解析（docs/LLM.md §1.3 / §3）：no-adapter 错误结算、同步/异步失败归一、
+// abort 豁免、waterfall 改写、提前 break 清理委托、注册生命周期。
+
 import { createContext, loadPlugins } from "@x-harness/core";
-import type { Context, Disposer } from "@x-harness/core";
-import { llmPlugin, llmRuntime, llmStream } from "../index.ts";
-import type { LlmChunk, LlmRequest, LlmRuntime } from "../index.ts";
+import { createOpenaiCompatLlm, llmPlugin, llmRuntime, llmStream } from "../index.ts";
+import type { LlmChunk, LlmRequest } from "../index.ts";
+import { describe, expect, it } from "vitest";
 
-const request = (overrides: Partial<LlmRequest> = {}): LlmRequest => ({
-  model: "m",
-  tools: [],
-  messages: [],
-  signal: new AbortController().signal,
-  ...overrides,
-});
-
-async function assemble(): Promise<{ ctx: Context; llm: LlmRuntime; unload: readonly Disposer[] }> {
-  const ctx = createContext();
-  const unload = await loadPlugins(ctx, [llmPlugin]);
-  return { ctx, llm: ctx.use(llmRuntime), unload };
+function request(over: Partial<LlmRequest> = {}): LlmRequest {
+  return { model: "m", tools: [], messages: [], signal: new AbortController().signal, ...over };
 }
 
 async function collect(stream: AsyncIterable<LlmChunk>): Promise<LlmChunk[]> {
-  const chunks: LlmChunk[] = [];
-  for await (const chunk of stream) chunks.push(chunk);
-  return chunks;
+  const out: LlmChunk[] = [];
+  for await (const chunk of stream) out.push(chunk);
+  return out;
 }
 
-describe("runtime（docs/LLM.md §1.2）", () => {
-  it("token 词表与重名 throw/disposer", async () => {
-    expect(llmRuntime).toMatchObject({ kind: "service", name: "llm-runtime" });
-    expect(llmStream).toMatchObject({ kind: "waterfall", mode: "waterfall", name: "llm/stream" });
-    const { llm } = await assemble();
-    const off = llm.registerAdapter({ name: "a", stream: async function* () {} });
-    expect(() => llm.registerAdapter({ name: "a", stream: async function* () {} })).toThrow("already registered");
-    off();
-    llm.registerAdapter({ name: "a", stream: async function* () {} });
+function textAdapter(name: string, chunks: LlmChunk[] = [{ type: "text-delta", text: "hi" }]): { name: string; stream: (r: LlmRequest) => AsyncGenerator<LlmChunk> } {
+  return {
+    name,
+    stream: async function* (): AsyncGenerator<LlmChunk> {
+      yield* chunks;
+    },
+  };
+}
+
+async function makeRuntime() {
+  const ctx = createContext();
+  const unload = await loadPlugins(ctx, [llmPlugin]);
+  return { ctx, runtime: ctx.use(llmRuntime), cleanup: async () => { await ctx.dispose(); void unload; } };
+}
+
+describe("LlmRuntime 注册生命周期（docs/LLM.md §3）", () => {
+  it("重名 throw；名称/形状垃圾 throw；disposer 身份守卫注销后可重注册", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      const off = runtime.registerAdapter(textAdapter("a"));
+      expect(() => runtime.registerAdapter(textAdapter("a"))).toThrow("already registered");
+      expect(() => runtime.registerAdapter({ name: "", stream: textAdapter("x").stream })).toThrow();
+      expect(() => runtime.registerAdapter({ name: "b", stream: "not-fn" as never })).toThrow();
+      off();
+      const reRegistered = runtime.registerAdapter(textAdapter("a")); // 注销后同名可重注册
+      reRegistered();
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe("失败归一层（docs/LLM.md §1.2/§1.3——不向消费者裸 throw，abort 豁免）", () => {
+  it("未注册 provider → no-adapter 错误流（保留区分信息），不 throw", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      const chunks = await collect(runtime.stream(request({ provider: "ghost" })));
+      expect(chunks).toEqual([{ type: "finish", finish: { kind: "error", message: "no-adapter:ghost", code: "no-adapter" } }]);
+    } finally {
+      await cleanup();
+    }
   });
 
-  it("provider 解析：命名命中 / 未注册 throw / 缺省唯一 / 缺省零个 throw", async () => {
-    const { llm } = await assemble();
-    await expect(collect(llm.stream(request()))).rejects.toThrow("no-adapter:none-registered");
-    llm.registerAdapter({ name: "a", stream: async function* () { yield { type: "finish", finish: { kind: "stop" } }; } });
-    await expect(collect(llm.stream(request({ provider: "x" })))).rejects.toThrow("no-adapter:x");
-    expect((await collect(llm.stream(request()))).map((c) => c.type)).toEqual(["finish"]);
+  it("缺省零适配器 → none-registered；缺省多适配器 → ambiguous-N", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      expect(await collect(runtime.stream(request()))).toEqual([
+        { type: "finish", finish: { kind: "error", message: "no-adapter:none-registered", code: "no-adapter" } },
+      ]);
+      runtime.registerAdapter(textAdapter("a"));
+      runtime.registerAdapter(textAdapter("b"));
+      expect(await collect(runtime.stream(request()))).toEqual([
+        { type: "finish", finish: { kind: "error", message: "no-adapter:ambiguous-2", code: "no-adapter" } },
+      ]);
+    } finally {
+      await cleanup();
+    }
   });
 
-  it("llm/stream waterfall：中间件可改写流（注入额外 chunk）", async () => {
-    const { ctx, llm } = await assemble();
-    llm.registerAdapter({ name: "a", stream: async function* () { yield { type: "text-delta", text: "hi" } as LlmChunk; } });
-    const off = ctx.on(llmStream, async (req, next) => {
-      const stream = await next(req);
-      async function* wrapped(): AsyncGenerator<LlmChunk> {
-        yield { type: "text-delta", text: "[" };
-        for await (const chunk of stream) yield chunk;
-        yield { type: "text-delta", text: "]" };
-      }
-      return wrapped();
-    });
-    expect((await collect(llm.stream(request()))).map((c) => (c as { text?: string }).text ?? "")).toEqual(["[", "hi", "]"]);
-    off();
+  it("适配器同步 throw（final 内）→ network 错误流", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      runtime.registerAdapter({
+        name: "boom",
+        stream: () => {
+          throw new Error("sync blew");
+        },
+      });
+      const chunks = await collect(runtime.stream(request({ provider: "boom" })));
+      expect(chunks).toEqual([{ type: "finish", finish: { kind: "error", message: "sync blew", code: "network" } }]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("流中异步 reject 任意值（非 Error）→ network 错误流", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      const partialThenThrow = async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "text-delta", text: "partial" };
+        throw "raw string failure" as never;
+      };
+      runtime.registerAdapter({ name: "async-boom", stream: () => partialThenThrow() });
+      const chunks = await collect(runtime.stream(request({ provider: "async-boom" })));
+      expect(chunks.at(-1)).toEqual({ type: "finish", finish: { kind: "error", message: "raw string failure", code: "network" } });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("abort 豁免：流中 AbortError → throw 透传（不归一为 error finish）", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      const abortRightAway = async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "text-delta", text: "" }; // 不可达：先 throw——require-yield 达标用
+        throw new DOMException("aborted", "AbortError");
+      };
+      runtime.registerAdapter({ name: "aborting", stream: () => abortRightAway() });
+      await expect(collect(runtime.stream(request({ provider: "aborting" })))).rejects.toThrow("aborted");
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("缺省唯一适配器解析成功并透传流", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      runtime.registerAdapter(textAdapter("only"));
+      const chunks = await collect(runtime.stream(request()));
+      expect(chunks).toEqual([{ type: "text-delta", text: "hi" }]);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe("adapter-plugin（docs/LLM.md §1.4 挂点）", () => {
+  it("createOpenaiCompatLlm 注册 openai-compat 适配器到 runtime（可解析可流）", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [llmPlugin, createOpenaiCompatLlm({ baseUrl: "http://127.0.0.1:1", apiKey: "k" })]);
+    const runtime = ctx.use(llmRuntime);
+    const chunks = await collect(runtime.stream(request()));
+    expect(chunks[0]).toMatchObject({ type: "finish", finish: { kind: "error", code: "network" } });
+    await ctx.dispose();
+    void unload;
+  });
+});
+
+describe("llm/stream waterfall 与迭代器委托（docs/LLM.md §3）", () => {
+  it("中间件可改写流（包装 chunks）；中间件 throw 传播不吞", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [llmPlugin]);
+    const runtime = ctx.use(llmRuntime);
+    try {
+      const prefixed = (inner: AsyncIterable<LlmChunk>): AsyncGenerator<LlmChunk> =>
+        (async function* (): AsyncGenerator<LlmChunk> {
+          yield { type: "text-delta", text: "prefix " };
+          yield* inner;
+        })();
+      const off = ctx.on(llmStream, async (payload: LlmRequest, next: (input: LlmRequest) => Promise<AsyncIterable<LlmChunk>>) => prefixed(await next(payload)));
+      runtime.registerAdapter(textAdapter("a", [{ type: "text-delta", text: "body" }]));
+      expect(await collect(runtime.stream(request({ provider: "a" })))).toEqual([
+        { type: "text-delta", text: "prefix " },
+        { type: "text-delta", text: "body" },
+      ]);
+      off();
+      const offThrow = ctx.on(llmStream, async (payload: LlmRequest, next: (input: LlmRequest) => Promise<AsyncIterable<LlmChunk>>) => {
+        await next(payload);
+        throw new Error("middleware blew");
+      });
+      await expect(collect(runtime.stream(request({ provider: "a" })))).rejects.toThrow("middleware blew");
+      offThrow();
+    } finally {
+      await ctx.dispose();
+      void unload;
+    }
+  });
+
+  it("提前 break → 内层迭代器 return() 被调用（清理委托，恰一次）", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [llmPlugin]);
+    const runtime = ctx.use(llmRuntime);
+    try {
+      let returns = 0;
+      const twoChunks = async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "text-delta", text: "one" };
+        yield { type: "text-delta", text: "two" };
+      };
+      const countingIterator = (): AsyncIterator<LlmChunk> => {
+        const target = twoChunks()[Symbol.asyncIterator]();
+        return {
+          next: () => target.next(),
+          return: () => {
+            returns += 1;
+            return target.return(undefined as never);
+          },
+        };
+      };
+      runtime.registerAdapter({ name: "cleanup", stream: () => ({ [Symbol.asyncIterator]: countingIterator }) });
+      const stream = runtime.stream(request({ provider: "cleanup" }));
+      const iterator = stream[Symbol.asyncIterator]();
+      await iterator.next();
+      await iterator.return?.();
+      expect(returns).toBe(1);
+    } finally {
+      await ctx.dispose();
+      void unload;
+    }
   });
 });

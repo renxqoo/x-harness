@@ -11,10 +11,12 @@
 | --- | --- | --- | --- |
 | 1 | session 扩展：inbox 词条 + 可验证续写 + header 覆盖 | docs/SESSION-RESUME.md | 已收口 |
 | 2 | @x-harness/tools：注册表 + 执行管线 | docs/TOOLS.md | 已收口 |
-| 3 | @x-harness/system-prompt：sections/variables | docs/SYSTEM-PROMPT.md | 已收口 |
-| 4 | @x-harness/llm：runtime + openai-compat 适配器 | docs/LLM.md | 已收口 |
+| 3 | @x-harness/system-prompt：锚点 sections/变量/指纹 | docs/SYSTEM-PROMPT.md | 已收口（回炉重写：锚点定位） |
+| 4 | @x-harness/llm：runtime + openai-compat 适配器 | docs/LLM.md | 已收口（回炉重写：失败契约结构化+SSE 硬化） |
 | 5 | @x-harness/agent-loop：循环本体 | docs/AGENT-LOOP-DRIVER.md | 已收口（方案审 20 条 + 代码审 13 条处置） |
 | 6 | @x-harness/session-checkpoint + e2e 旅程 | docs/SESSION-CHECKPOINT.md | 已收口（审查 7 条处置） |
+| 7 | @x-harness/llm-retry：退避重试 | docs/LLM-RETRY.md | 已收口（新增：审计事件+进程内预算） |
+| 8 | @x-harness/token-meter：用量记账+估算 | docs/TOKEN-METER.md | 已收口（新增：失败尝试计费+路线归因） |
 
 实施顺序 = 表序；每件：独立方案 → 子 agent 对抗审查 → 处置定稿 → 实现 + 单测 → 四门 → 代码对抗审查 → 回归 → 收口提交（引用本文档节号 + 各件文档节号）。
 

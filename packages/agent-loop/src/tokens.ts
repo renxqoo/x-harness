@@ -52,6 +52,8 @@ export const agentRequest = defineWaterfall<
 export interface RequestFailure {
   readonly message: string;
   readonly code?: string;
+  /** 429/503 的 Retry-After（毫秒）——重试件快车道（docs/LLM.md §1.2） */
+  readonly retryAfterMs?: number;
 }
 
 export const agentRequestError = defineWaterfall<
