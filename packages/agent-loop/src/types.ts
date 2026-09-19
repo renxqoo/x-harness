@@ -1,13 +1,16 @@
 // Agent-Loop 契约类型（docs/AGENT-LOOP-DRIVER.md §1.1）。
 
 import type { Result } from "@x-harness/core";
-import type { CreateSessionOptions, Session, SessionId } from "@x-harness/session";
+import type { Session, SessionId, CreateSessionOptions } from "@x-harness/session";
+import type { ThinkingLevel } from "@x-harness/llm";
 
 export interface AgentOptions {
   readonly provider?: string;
   readonly model?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  /** 思考等级（缺省/off = 不发 thinking 参数）；随 Dial 折叠与 request/header 落账 */
+  readonly thinking?: ThinkingLevel;
   /** 静态系统提示词：优先于 systemPrompt.assemble() */
   readonly systemPrompt?: string;
   /** 并行工具池上限（默认 10） */

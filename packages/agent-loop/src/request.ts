@@ -10,6 +10,7 @@ interface HeaderSnapshot {
   readonly provider?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  readonly thinking?: Dial["thinking"];
   readonly tools: readonly ToolRef[];
 }
 
@@ -22,28 +23,36 @@ function lastHeader(events: readonly SessionEvent[]): HeaderSnapshot | undefined
       ...(event.data.provider !== undefined ? { provider: event.data.provider } : {}),
       ...(event.data.temperature !== undefined ? { temperature: event.data.temperature } : {}),
       ...(event.data.maxTokens !== undefined ? { maxTokens: event.data.maxTokens } : {}),
+      ...(event.data.thinking !== undefined ? { thinking: event.data.thinking as Dial["thinking"] } : {}), // 门禁已验词表闭集
       tools: event.data.tools,
     };
   }
   return snapshot;
 }
 
+/** 折叠取值：options 显式值恒胜，否则末次 header 同名字段 */
+function pick<T>(fromOptions: T | undefined, fromHeader: T | undefined): T | undefined {
+  return fromOptions ?? fromHeader;
+}
+
 /** 逐字段折叠：options 显式值恒胜，否则末次 header 同名字段 */
 export function foldDial(
-  options: { provider?: string; model?: string; temperature?: number; maxTokens?: number },
+  options: { provider?: string; model?: string; temperature?: number; maxTokens?: number; thinking?: Dial["thinking"] },
   events: readonly SessionEvent[],
 ): Dial | { readonly missing: true } {
   const header = lastHeader(events);
-  const model = options.model ?? header?.model;
+  const model = pick(options.model, header?.model);
   if (model === undefined || model === "") return { missing: true };
-  const provider = options.provider ?? header?.provider;
-  const temperature = options.temperature ?? header?.temperature;
-  const maxTokens = options.maxTokens ?? header?.maxTokens;
+  const provider = pick(options.provider, header?.provider);
+  const temperature = pick(options.temperature, header?.temperature);
+  const maxTokens = pick(options.maxTokens, header?.maxTokens);
+  const thinking = pick(options.thinking, header?.thinking);
   return {
     model,
     ...(provider !== undefined ? { provider } : {}),
     ...(temperature !== undefined ? { temperature } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(thinking !== undefined ? { thinking } : {}),
   };
 }
 
@@ -62,6 +71,7 @@ export function headerChanged(dial: Dial, tools: readonly ToolRef[], events: rea
     header.provider !== dial.provider ||
     header.temperature !== dial.temperature ||
     header.maxTokens !== dial.maxTokens ||
+    header.thinking !== dial.thinking ||
     JSON.stringify(header.tools) !== JSON.stringify(tools)
   );
 }

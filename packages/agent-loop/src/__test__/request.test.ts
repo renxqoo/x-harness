@@ -42,6 +42,18 @@ describe("foldDial（docs/AGENT-LOOP-DRIVER §1.4：options 显式值恒胜）",
     );
     expect(folded).toEqual({ model: "m", provider: "p9" });
   });
+
+  it("thinking 等级同规则折叠：options 恒胜 / header 回填 / 缺席不落键", () => {
+    expect(foldDial({ model: "m", thinking: "high" }, [headerEvent({ model: "m", thinking: "low", tools: TOOLS })])).toEqual({
+      model: "m",
+      thinking: "high",
+    });
+    expect(foldDial({ model: "m" }, [headerEvent({ model: "m", thinking: "low", tools: TOOLS })])).toEqual({
+      model: "m",
+      thinking: "low",
+    });
+    expect(foldDial({ model: "m" }, [headerEvent({ model: "m", tools: TOOLS })])).toEqual({ model: "m" });
+  });
 });
 
 describe("headerChanged（规范化比较含 tools）", () => {
@@ -56,6 +68,14 @@ describe("headerChanged（规范化比较含 tools）", () => {
     expect(headerChanged(dial, TOOLS, same)).toBe(false);
     expect(headerChanged({ ...dial, temperature: 0.6 }, TOOLS, same)).toBe(true);
     expect(headerChanged(dial, [{ name: "a" }, { name: "b" }], same)).toBe(true); // description 差异也算 tools 漂移
+  });
+
+  it("thinking 漂移 → 落账", () => {
+    const dialSame = { model: "m", thinking: "low" as const };
+    const headerSame = headerEvent({ model: "m", thinking: "low", tools: TOOLS });
+    expect(headerChanged(dialSame, TOOLS, [headerSame])).toBe(false);
+    expect(headerChanged({ ...dialSame, thinking: "high" }, TOOLS, [headerSame])).toBe(true);
+    expect(headerChanged({ model: "m" }, TOOLS, [headerSame])).toBe(true); // 有→无也是漂移
   });
 
   it("可选字段缺席与显式 undefined 等价（undefined 不落账）", () => {

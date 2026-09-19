@@ -79,6 +79,19 @@ function collectFrames(world: FrameWorld): { frames: AssistantStreamFrame[]; off
 }
 
 describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
+  it("thinking 等级全链传递：AgentOptions → Dial 折叠 → llm.stream 请求体", async () => {
+    const world = await makeFrameWorld();
+    worlds.push(world);
+    world.fake.scripts.push(textScript("ok"));
+    const made = await world.loop.create({ agent: { ...AGENT, thinking: "low" } });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    made.value.agent.followup("hi");
+    await made.value.agent.whenIdle();
+    expect(world.fake.calls[0]?.thinking).toBe("low");
+    await made.value.dispose();
+  });
+
   it("帧序列整锁：start→thinking/text 交错→end；tool-call/usage 零帧；思考不落账不回传（哨兵）", async () => {
     const world = await makeFrameWorld();
     worlds.push(world);

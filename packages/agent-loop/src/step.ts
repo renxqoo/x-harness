@@ -34,6 +34,7 @@ export interface ResolvedOptions {
   readonly model?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  readonly thinking?: import("@x-harness/llm").ThinkingLevel;
   readonly systemPrompt?: string;
   readonly maxParallelToolCalls: number;
   readonly maxToolResultChars: number;
@@ -150,7 +151,7 @@ export type DialStep =
   | { readonly kind: "no-model" }
   | { readonly kind: "bad-dial" };
 
-/** agentRequest waterfall 输出形状门：非同形四字段按违约处置（垃圾不进 header/流） */
+/** agentRequest waterfall 输出形状门：非同形字段按违约处置（垃圾不进 header/流） */
 function isDialShape(value: unknown): value is Dial {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
@@ -158,6 +159,7 @@ function isDialShape(value: unknown): value is Dial {
   if (v.provider !== undefined && typeof v.provider !== "string") return false;
   if (v.temperature !== undefined && typeof v.temperature !== "number") return false;
   if (v.maxTokens !== undefined && (typeof v.maxTokens !== "number" || !Number.isInteger(v.maxTokens))) return false;
+  if (v.thinking !== undefined && !["off", "low", "medium", "high"].includes(v.thinking as string)) return false;
   return true;
 }
 
@@ -203,6 +205,7 @@ export async function dialStep(scope: TurnScope, step: number): Promise<DialStep
       ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
       ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
       ...(dial.maxTokens !== undefined ? { maxTokens: dial.maxTokens } : {}),
+      ...(dial.thinking !== undefined ? { thinking: dial.thinking } : {}),
       tools: toolRefs,
     });
     appendContextIfShifted(session, dial);
@@ -244,6 +247,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
         ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
         ...(dial.maxTokens !== undefined ? { maxTokens: dial.maxTokens } : {}),
+        ...(dial.thinking !== undefined ? { thinking: dial.thinking } : {}),
         tools: schemas as never,
         messages: session.deriveMessages(), // 请求体纯折叠不变量
         signal,

@@ -27,8 +27,8 @@
 - 不处理：
   - openai 协议 `reasoning_content` 透传（openai-compat 不产出思考帧）（用户裁决：不用 openai 端点）；
   - 思考落账/回放/回传（未来若做「思考进会话账本」另立项——session ContentBlock 与两适配器请求映射都要动）；
-  - 请求侧 thinking 开关：请求体恒不带 `thinking` 参数——GLM anthropic 桥默认下发思考块（实测），
-    思考出现与否由端点默认行为决定；
+  - 请求侧 thinking 开关：`LlmRequest.thinking`（off/low/medium/high）→ anthropic 侧注入
+    `thinkingEnabled+effort+thinkingBudgetTokens`（docs/LLM-PI.md 契约 6）；缺省/off 不发参数。
   - `signature_delta`、`redacted_thinking`：按未知形状跳过。
 
 ## 并发/一致性预算
@@ -38,11 +38,9 @@
 
 ## 拆分
 
-- llm 包：`types.ts`（chunk 变体）+ `anthropic-compat.ts`（`AnthropicEvent` 补
-  `content_block.thinking`/`delta.thinking` 字段、start/delta 映射）
-  + `__test__/anthropic-compat.test.ts`：:231「工具调用…thinking 块夹杂」用例期望数组插入
-  thinking-delta（原 `// 跳过` 注释行删除）；:208 全文流场景表加 thinking 行锁
-  usage→thinking→text→usage→finish 全序。
+- llm 包：`types.ts`（chunk 变体）+ `pi-events.ts`（`thinking_delta` 事件 → thinking-delta chunk——
+  wire 归 pi-ai，见 docs/LLM-PI.md）+ 注入层事件矩阵用例（思考交错/边界/全序）与 pi-wire 真身
+  冒烟的思考透传断言。
 - agent-loop 包：`tokens.ts`（帧形状）+ `step.ts`（emit 分支：thinking-delta → kind:"thinking"，
   text-delta → kind:"text"）+ `stream.ts`（累积器显式忽略 case）
   + `__test__/stream.test.ts`（忽略/empty/max-tokens 结算）

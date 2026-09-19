@@ -42,6 +42,7 @@ export interface Dial {
   readonly provider?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  readonly thinking?: import("@x-harness/llm").ThinkingLevel;
 }
 
 export const agentRequest = defineWaterfall<

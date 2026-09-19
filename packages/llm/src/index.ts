@@ -1,8 +1,8 @@
-export type { LlmAdapter, LlmChunk, LlmFinish, LlmRequest, LlmRuntime, TokenUsage } from "./types.ts";
+export type { LlmAdapter, LlmChunk, LlmFinish, LlmRequest, LlmRuntime, ThinkingLevel, TokenUsage } from "./types.ts";
 export { llmRuntime, llmStream } from "./tokens.ts";
 export { llmPlugin } from "./plugin.ts";
-export { createOpenaiCompatAdapter } from "./openai-compat.ts";
-export type { OpenaiCompatOptions } from "./openai-compat.ts";
-export { createAnthropicCompatAdapter } from "./anthropic-compat.ts";
-export type { AnthropicCompatOptions } from "./anthropic-compat.ts";
+export { createOpenaiCompatAdapter, createAnthropicCompatAdapter } from "./pi-adapter.ts";
+export type { OpenaiCompatOptions, AnthropicCompatOptions, PiStreamFn } from "./pi-adapter.ts";
+export { toPiContext } from "./pi-context.ts";
+export { classifyErrorText, foldUsage } from "./pi-events.ts";
 export { createOpenaiCompatLlm, createAnthropicCompatLlm } from "./adapter-plugin.ts";

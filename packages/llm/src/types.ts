@@ -8,6 +8,10 @@ export interface TokenUsage {
   readonly output?: number;
 }
 
+/** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high → anthropic 侧
+ *  thinkingEnabled + effort + 预算（THINKING_BUDGETS）；openai 侧不注入 */
+export type ThinkingLevel = "off" | "low" | "medium" | "high";
+
 export type LlmFinish =
   | { readonly kind: "stop" }
   | { readonly kind: "max-tokens" }
@@ -33,6 +37,8 @@ export interface LlmRequest {
   readonly provider?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  /** 思考等级（缺省/off = 不发 thinking 参数——上游默认行为决定是否思考） */
+  readonly thinking?: ThinkingLevel;
   readonly tools: readonly ToolSchema[];
   /** 恒 = session.deriveMessages()（loop 侧纯折叠不变量） */
   readonly messages: readonly SurfaceMessage[];

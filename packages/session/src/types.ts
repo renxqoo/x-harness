@@ -61,6 +61,8 @@ export interface SessionEventData {
     readonly provider?: string;
     readonly temperature?: number;
     readonly maxTokens?: number;
+    /** 思考等级（agent-loop Dial 折叠面，docs/LLM-PI.md）：词表 "off"|"low"|"medium"|"high" */
+    readonly thinking?: string;
     readonly tools: readonly ToolRef[];
   };
   readonly "request/context": { readonly provider: string; readonly model: string; readonly contextWindow?: number };

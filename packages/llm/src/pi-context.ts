@@ -90,7 +90,7 @@ export function toPiMessages(
           api: meta.api as never,
           provider: meta.provider as never,
           model: meta.model,
-          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
           stopReason: "stop",
           timestamp: 0,
         });
@@ -115,8 +115,8 @@ export function toPiMessages(
 function toPiTools(tools: readonly ToolSchema[]): PiTool[] {
   return tools.map((tool) => ({
     name: tool.name,
-    ...(tool.description !== undefined ? { description: tool.description } : {}),
-    parameters: tool.inputSchema,
+    description: tool.description ?? "", // pi Tool.description 必填——缺席落空串
+    parameters: tool.inputSchema as PiTool["parameters"],
   }));
 }
 

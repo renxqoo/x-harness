@@ -56,7 +56,7 @@ try {
     execute: async (args) => {
       const text = (args as { text: string }).text;
       outputs.push(text);
-      return { content: `已输出：${text}` };
+      return { content: `1111已输出==================>：${text}` };
     },
   });
 
@@ -113,14 +113,12 @@ try {
   ctx.effect(offStream);
 
   made.value.agent.followup(
-    "你好！请先用不少于 80 字介绍流式输出对终端体验的意义，然后调用 output 工具，text 参数填「你好，x-harness 全链已调通」，最后简短收尾。",
+    "调用 output 工具",
   );
   await made.value.agent.whenIdle();
   if (pacer !== undefined) clearInterval(pacer);
   drain();
-  console.log(
-    `\nreal: 完成（${PROTOCOL} 协议：思考 ${String(thinkingCount)} 帧 + 正文 ${String(textCount)} 帧；output 工具收到 ${JSON.stringify(outputs)}）`,
-  );
+
 
   await made.value.dispose();
   await ctx.dispose();

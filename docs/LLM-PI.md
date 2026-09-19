@@ -1,6 +1,6 @@
 # LLM 请求层重构：wire 层换 @earendil-works/pi-ai（参考 my-agent provider-pi）方案
 
-> 状态：定稿（双对抗审查 A/P 问题全部处置）
+> 状态：已实施（双对抗审查问题全部处置；工具出口改 end 单帧——用户裁决；真凭证验证待用户拍板）
 > 级别：中（外部契约不变，包内 wire 实现整体替换 + 新增外部依赖）
 
 ## 契约
@@ -21,7 +21,7 @@
    直 import `@earendil-works/pi-ai/api/anthropic-messages` 与 `/api/openai-completions` 的
    `stream(model, context, options)`。options 携带：
    `apiKey`、`headers: { "accept-encoding": "identity" }`（硬化迁移——GLM 攒批根因，审查 B3/P6）、
-   `signal`、`maxTokens`、`temperature?`、`fetch?`、`onResponse`（Retry-After 头捕获，审查 B2/P3）、
+   `signal`、`maxTokens`、`temperature?`、`fetch?`、**fetch 包装层捕获非 2xx 状态与 retry-after 头**（pi 的 onResponse 只在成功路径触发——SDK 对错误状态在 retryProviderRequest 内即 throw，审查 A1/P3 处置）、
    `cacheRetention: "none"`（保持现 wire 无 cache_control，审查 B4）。
    Model 条目最小构造（`api`/`provider`/`baseUrl`/`maxTokens: 8192`/`contextWindow` 必填，
    工厂选项 `contextWindow?` 缺省 200_000）。anthropic 工厂注入缺省 maxTokens（协议必填）；
@@ -29,12 +29,12 @@
 2. 新增三文件：
    - `pi-context.ts`：SurfaceMessage → pi `Context`（system 顶层；user 只取 text 块、空 user 跳过；
      assistant text/tool_use，input STRING→JSON.parse 降 {}；tool 消息→toolResult，toolName 前文
-     回查、查无 "unknown"；assistant 重放元数据必填字段补齐，stopReason `max-tokens`→`length` 映射）。
+     回查、查无 "unknown"；assistant 重放元数据必填字段补齐（SurfaceMessage 投影无 stopReason，重放恒 stop））。
    - `pi-events.ts`：pi 事件 → `LlmChunk`：
      - `text_start`/`thinking_start` 读 `partial.content[contentIndex]` 非空初值 → 补发 delta（P10 保真，审查 B5）；
      - `text_delta`/`thinking_delta` → 对应 chunk；`toolcall_start` 有身份 → `{index: contentIndex, callId, name}`
        （**语义变更：index 由 wire 原值稀疏变 pi 稠密**——StreamAccumulator 按 index 键聚积，兼容；落档）；
-       无身份 → 缓冲至 `toolcall_end` 补发（tracker 三形态全覆盖：无身份无缓冲/partial 非数组/有 id 无 name）；
+       start/delta 分片不透传——**出口单帧**（用户裁决：pi 的 toolcall_end 已含完整调用，不做工具流处理）；
      - `done` → usage（折算+全零守卫）+ finish（`length`→max-tokens；`toolUse`/`deferred`/未知→stop）；
      - `error` → **先发 usage chunk（error.usage 折算——失败尝试计费保真，审查 A4）**，再按分类发 error finish；
      - **abort 豁免（审查 A3/P1）**：`reason === "aborted"` 或 `request.signal.aborted` →
@@ -57,7 +57,13 @@
 - redacted_thinking：旧跳过 → pi 广播 `[Reasoning redacted]` thinking 块（透传为 thinking-delta）。
 - SSE 停读/连接释放/ping/CRLF/字节撕裂防守：随 wire 删除整体移交 pi（放弃面）；
   真身冒烟覆盖 destroy/非2xx/refused 三态。
-- Retry-After：头捕获路径保真（含 HTTP-date 三态用例整体迁移）。
+- Retry-After：头捕获路径保真（秒/HTTP-date/毫秒语义头四态真身用例）。
+- 未知 stop_reason：旧 fail-open 落 stop → pi throw "Unhandled stop reason" → error 事件 → network
+  （可重试）——注入层用例锁定口径。
+- 尾段断流（已发 stop_reason、未见 message_stop）：旧宽容收尾（成功收轮）→ pi 严格 throw →
+  network 整轮可重试。
+- 提前 break/throw 止损：piChunks finally 对上游迭代器 return() 仅 fire-and-forget（pi EventStream
+  挂在内部 await 时 await return() 会 pending）；流止损依赖 abort signal——消费方纪律。
 
 ## 问题域
 
