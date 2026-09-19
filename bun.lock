@@ -45,6 +45,17 @@
         "@x-harness/tools": "workspace:*",
       },
     },
+    "packages/compaction": {
+      "name": "@x-harness/compaction",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/token-meter": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@x-harness/core",
       "version": "0.0.1",
@@ -536,6 +547,8 @@
     "@x-harness/agent-delegation": ["@x-harness/agent-delegation@workspace:packages/agent-delegation"],
 
     "@x-harness/agent-loop": ["@x-harness/agent-loop@workspace:packages/agent-loop"],
+
+    "@x-harness/compaction": ["@x-harness/compaction@workspace:packages/compaction"],
 
     "@x-harness/core": ["@x-harness/core@workspace:packages/core"],
 

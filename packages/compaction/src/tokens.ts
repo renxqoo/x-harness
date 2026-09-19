@@ -1,0 +1,35 @@
+// compaction 件 token（docs/COMPACTION.md §1.1）：runner 服务 + 两个观测事件。
+
+import { defineEvent, defineService } from "@x-harness/core";
+import type { SessionId } from "@x-harness/session";
+import type { CompactTrigger, CompactionResult } from "./compact.ts";
+import type { SummarizerFace } from "./summarize.ts";
+
+export interface CompactionRunner {
+  compact(fields: {
+    readonly session: SessionId;
+    readonly trigger?: CompactTrigger;
+    readonly customInstructions?: string;
+    readonly keepRecentTokens?: number;
+  }): Promise<CompactionResult>;
+  /** 水位触发权开关（autocompact 接管仲裁用；缺省开） */
+  setAutoTriggerEnabled(enabled: boolean): void;
+  /** 解析后的摘要面（autocompact 的 CP 与压缩摘要共用同一模型面——单一真相 + 覆盖注入） */
+  readonly summarizer: SummarizerFace | undefined;
+}
+
+export const compactionRunner = defineService<CompactionRunner>("compaction/runner");
+
+/** 压缩落账观测（replace 落账成功后恰好一次） */
+export const compactionLanded = defineEvent<{
+  readonly session: SessionId;
+  readonly trigger: CompactTrigger;
+  readonly replacedNodes: number;
+  readonly summaryTokens: number;
+}>("compaction/landed", { freeze: "none" });
+
+/** 413 实测窗口落 request/context 成功后广播（写失败走告警不广播） */
+export const compactionServedWindow = defineEvent<{ readonly session: SessionId; readonly servedWindow: number }>(
+  "compaction/served-window",
+  { freeze: "none" },
+);

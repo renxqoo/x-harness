@@ -24,7 +24,7 @@ export interface SessionUsage {
 }
 export interface TokenMeterService {
   usageOf(sessionId: SessionId): SessionUsage | undefined;   // 未知会话 → undefined
-  estimateText(text: string): number;                        // chars/4 向上取整（请求压力粗估）
+  estimateText(text: string): number;                        // 上界口径：ASCII/空白 len/4、非 ASCII 1.25/字、向上取整（UTF-16 计长）
 }
 export const tokenMeter = defineService<TokenMeterService>("token-meter");
 export const tokenMeterPlugin: Plugin;   // name "token-meter"，inject ["session"]
@@ -82,7 +82,8 @@ estimateText 是它的预留口径）；cache/reasoning 桶细分（TokenUsage �
   边界）账单延续；同事件重放不双计（游标）；**晚装载**（事件到达时插件未装/未知会话 →
   usageOf 冷启动后账目完整）；
 - 生命周期：sessionDisposed 后 usageOf → undefined（缓存摘除）；冷启动未知会话全量折叠；
-- 估算：estimateText 表驱动（UTF-16 code unit 计长：空 0、1-3 字符 1、4 字符 1、5 字符 2）；
+- 估算：estimateText 表驱动（UTF-16 code unit 计长：空 0、1-3 字符 1、4 字符 1、5 字符 2；
+  上界桶：CJK 1.25/字、emoji 按 2 单位入上界桶、混合分段折算、控制空白按 len/4）；
 - 契约：token 名锁定。
 
 ## 4. 验收清单
@@ -92,7 +93,9 @@ estimateText 是它的预留口径）；cache/reasoning 桶细分（TokenUsage �
 ## 5. 裁决落档
 
 - 砍 surface/route 计价与 contextPressure 投影（DSH 为压缩件的影子计价机制——压缩件未立项，
-  提前搬会带进无消费方的复杂度）；estimateText 保留为压缩件预留口径；
+  提前搬会带进无消费方的复杂度）；estimateText 保留为压缩件预留口径（裁决已随
+  docs/COMPACTION.md 生效：chars/4 升级为 CJK 上界口径——ASCII/空白 len/4、非 ASCII
+  1.25/字；`WIDE_TOKENS_PER_CHAR` 为费率单一真相）；
 - 砍 cache/reasoning 桶（TokenUsage 契约层面只有 input/output，扩桶属跨件契约变更）；
 - 失败尝试计费采纳（M16）——重试的成本可见性是生产必要面（写侧改动由本件认领，见 §1）。
 

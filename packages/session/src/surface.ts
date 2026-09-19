@@ -1,5 +1,6 @@
-// surface 投影：日志的纯函数派生。append 入尾；replace 摘除数值区间内节点、
-// 新节点落在 startSeq 原位置（docs/SESSION.md §1.4）。日志永不改写。
+// surface 投影：日志的纯函数派生。append 入尾；replace 端点以 seq 定位节点、
+// 摘除两端点位置之间（含）的节点、新节点落 startSeq 端点原位置（docs/SESSION.md §1.4）。
+// 日志永不改写。
 
 import type { SessionEvent, SurfaceEventType, SurfaceMessage, SurfaceNode } from "./types.ts";
 
@@ -14,26 +15,26 @@ export function isSurfaceEventType(type: string): type is SurfaceEventType {
   return SURFACE_TYPES.has(type);
 }
 
-/** 投影步进的唯一真相：append 入尾；replace 区间摘除按数值成员（与位置无关）、新节点落 startSeq 原位置。
- *  失败返回理由（端点缺失 / start>end）——append 落账前先算步进，不可行即拒（日志零变动） */
+/** 投影步进的唯一真相：append 入尾；replace 端点以 seq 定位节点、摘除两端点**位置之间**
+ *  （含端点）的全部节点、新节点落 startSeq 端点原位置。区间按位置不按数值成员——迭代
+ *  前缀替换（压缩/滑窗）落地后头部节点携带 journal 尾 seq、其后保留节点 seq 更小，摘除集
+ *  不再是数值连续区间，数值成员语义不可表达（docs/COMPACTION.md §2.A）。
+ *  失败返回理由（端点缺失 / 位置逆序）——append 落账前先算步进，不可行即拒（日志零变动） */
 export type SurfaceStep = { readonly ok: true; readonly nodes: SurfaceNode[] } | { readonly ok: false; readonly reason: string };
 
 export function applySurfaceEvent(nodes: readonly SurfaceNode[], event: SessionEvent<SurfaceEventType>): SurfaceStep {
   const op = event.surfaceOp;
   if (op === "append") return { ok: true, nodes: [...nodes, { seq: event.seq, event }] };
-  if (op.startSeq > op.endSeq) return { ok: false, reason: `replace-range:${op.startSeq}>${op.endSeq}` };
   let startIdx = -1;
-  let hasEnd = false;
+  let endIdx = -1;
   for (const [i, node] of nodes.entries()) {
     if (node.seq === op.startSeq) startIdx = i;
-    if (node.seq === op.endSeq) hasEnd = true;
+    if (node.seq === op.endSeq) endIdx = i;
   }
   if (startIdx < 0) return { ok: false, reason: `replace-target-missing:${op.startSeq}` };
-  if (!hasEnd) return { ok: false, reason: `replace-target-missing:${op.endSeq}` };
-  const inRange = (node: SurfaceNode): boolean => node.seq >= op.startSeq && node.seq <= op.endSeq;
-  const before = nodes.slice(0, startIdx).filter((node) => !inRange(node));
-  const after = nodes.slice(startIdx).filter((node) => !inRange(node));
-  return { ok: true, nodes: [...before, { seq: event.seq, event }, ...after] };
+  if (endIdx < 0) return { ok: false, reason: `replace-target-missing:${op.endSeq}` };
+  if (startIdx > endIdx) return { ok: false, reason: `replace-range:${op.startSeq}>${op.endSeq}` };
+  return { ok: true, nodes: [...nodes.slice(0, startIdx), { seq: event.seq, event }, ...nodes.slice(endIdx + 1)] };
 }
 
 /** 内部日志（落账前已过步进校验）的全量投影；损坏即抛——fail-closed，不静默算错投影 */

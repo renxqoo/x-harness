@@ -75,7 +75,7 @@ function isInboxEntries(value: unknown): boolean {
   );
 }
 
-/** 逐词条形状门：词表闭合（15 条），结构与归属键检查，语义归写方 */
+/** 逐词条形状门：词表闭合（16 条），结构与归属键检查，语义归写方 */
 const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean } = {
   "turn/start": (d) => isObj(d) && isCount(d["turn"]),
   "turn/end": (d) => isObj(d) && isCount(d["turn"]) && isTurnEndReason(d["reason"]),
@@ -127,6 +127,14 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     d["failure"]["message"] !== "" &&
     (d["failure"]["code"] === undefined || isStr(d["failure"]["code"])),
   "session/end-seed": (d) => isObj(d) && (d["inherited"] === undefined || d["inherited"] === true),
+  "autocompact/checkpoint": (d) =>
+    isObj(d) &&
+    isCount(d["turn"]) &&
+    isCount(d["step"]) &&
+    isStr(d["ledger"]) &&
+    d["ledger"] !== "" &&
+    isCount(d["coveredSeq"]) &&
+    (d["stale"] === undefined || d["stale"] === true),
   "agent/inbox/spliced": (d) => {
     if (!isObj(d)) return false;
     switch (d["op"]) {

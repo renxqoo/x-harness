@@ -1,0 +1,14 @@
+{
+  "name": "@x-harness/compaction",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@x-harness/agent-loop": "workspace:*",
+    "@x-harness/core": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/token-meter": "workspace:*"
+  }
+}

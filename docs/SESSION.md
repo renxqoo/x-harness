@@ -31,7 +31,7 @@ const store = ctx.use(sessionStore);
 | `sessionFlush` | parallel | `{ session: SessionId }` | — | store.flush 派发；all-settled，聚合错误经 flush 的 Result 上浮 |
 | `sessionDisposed` | emit | `{ session: SessionId }` | none | store.dispose 移除后广播，恰好一次 |
 
-### 1.3 事件信封与词表（闭合，15 词条）
+### 1.3 事件信封与词表（闭合，16 词条）
 
 ```ts
 type SessionEvent = { type; seq; time; data }
@@ -40,7 +40,7 @@ type SessionEvent = { type; seq; time; data }
 
 - `seq` 单调连续，由 Session 独占分配（= 落账时日志长度）；`time` 为 Unix 毫秒。**物化先行**：append/seed/header 一律先 `materializeJson`（单一 JSON 值域权威——稀疏数组/原型污染/Symbol 键/显式 undefined/非有限数与 -0 全拒；getter 单遍定影，门与存储不可能见到不同值），门只看快照形状，快照深冻入账——调用方对象永不被就地冻结。
 - **surface 词条**（产模型可见消息，仅此 4 类可携带 surfaceOp）：`system/message`、`user/message`、`assistant/message`、`tool/result`。
-- **log-only 词条**：`turn/start`、`turn/end`、`step/start`、`step/end`、`assistant/attempt`、`tool/call`、`request/header`、`request/context`、`llm/retry`、`session/end-seed`。
+- **log-only 词条**：`turn/start`、`turn/end`、`step/start`、`step/end`、`assistant/attempt`、`tool/call`、`request/header`、`request/context`、`llm/retry`、`session/end-seed`、`autocompact/checkpoint`。
 
 | 词条 | data 形状 | 事实 |
 | --- | --- | --- |
@@ -58,6 +58,7 @@ type SessionEvent = { type; seq; time; data }
 | `llm/retry` | `{ turn; step; provider; retry; delayMs; failure{message, code?} }` | 重试调度审计（docs/LLM-RETRY.md）：先于等待落账；预算为进程内计数，事件是观测面 |
 | `session/end-seed` | `{ inherited?: true }` | seed 边界：之前的事件来自 seed；**构造器唯一合法写者**。**消费方以日志中最后一个 end-seed 为当前边界**（审查处置 P5）；前缀中的祖先标记是历史事实，保留不删——fork 逐字复制前缀必然携带祖先标记，属合法日志 |
 | `agent/inbox/spliced` | `insert{target,entries} \| claim{target,turn,claimed} \| clear{reason}` | 收件箱拼接（log-only）。fold 投影归 agent-loop；**claim 按成员移除（携带被领条目 id 全集）**；fold 判重按**当前队列在场**——claim 移除后同 id 再 insert 必须重新入队（repair 回灌依赖，SESSION-RESUME §1.1） |
+| `autocompact/checkpoint` | `{ turn; step; ledger; coveredSeq; stale? }` | autocompact 账本快照（log-only，docs/COMPACTION.md §1.2）：ledger 为序列化原文，coveredSeq = 已收编覆盖的 journal seq 边界；重开恢复折叠 last-wins、垃圾跳过 |
 
 ```ts
 type TurnEndReason =
@@ -73,7 +74,8 @@ type ToolRef = { name: string; description?: string };
 ### 1.4 surface 投影（replace 原语）
 
 - `SurfaceOp = "append" | { op: "replace"; startSeq; endSeq }`。
-- append：节点入投影尾。replace：`startSeq`/`endSeq`（闭区间）**都必须是当前 surface 现存节点**且 `start ≤ end`；摘除区间内全部 surface 节点，新节点落在 `startSeq` 原位置；日志永不改写。
+- append：节点入投影尾。replace：`startSeq`/`endSeq` **都必须是当前 surface 现存节点**（以 seq 定位），且 startSeq 端点的**位置**不晚于 endSeq 端点；摘除两端点位置之间（含）的全部 surface 节点，新节点落在 startSeq 端点原位置；日志永不改写。
+- 区间按**位置**不按数值成员：迭代前缀替换（压缩/滑窗）落地后头部节点携带 journal 尾 seq、其后保留节点 seq 更小，摘除集不再是数值连续区间（docs/COMPACTION.md §2.A）。**对既有档案等价**：此变更前唯一 replace 写者是单点替换 `[seq,seq]`，两种语义对全部已产档案重放恒等。
 - 压缩/滑窗/上下文裁剪 = 追加一个带 replace 的摘要事件——策略归消费方插件，本件只提供原语。
 - `Session.surface(): readonly SurfaceNode[]`（`{ seq, event }`，消费方取 seq 锚点算区间）；`Session.deriveMessages(): readonly SurfaceMessage[]`（`role: system/user/assistant/tool` 的模型可见消息快照）。两者与 `events()` 同为纯函数派生快照，返回冻结数组。
 

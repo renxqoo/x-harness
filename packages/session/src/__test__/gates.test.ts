@@ -117,6 +117,7 @@ const validSamples: Record<string, unknown> = {
   "llm/retry": { turn: 0, step: 0, provider: "p", retry: 1, delayMs: 500, failure: { message: "http-503:upstream", code: "http-503" } },
   "session/end-seed": {},
   "agent/inbox/spliced": { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: "hi" }] }] },
+  "autocompact/checkpoint": { turn: 0, step: 1, ledger: "<goals>\n(g)</goals>", coveredSeq: 3, stale: true },
 };
 
 const brokenSamples: Record<string, unknown> = {
@@ -135,10 +136,11 @@ const brokenSamples: Record<string, unknown> = {
   "llm/retry": { turn: 0, step: 0, provider: "", retry: 1, delayMs: 500, failure: { message: "x" } },
   "session/end-seed": { inherited: "yes" },
   "agent/inbox/spliced": { op: "insert", target: "side-queue", entries: [] },
+  "autocompact/checkpoint": { turn: 0, step: 1, ledger: "", coveredSeq: 3 },
 };
 
 describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵）", () => {
-  it("15 词条合法样本全部放行", () => {
+  it("16 词条合法样本全部放行", () => {
     for (const [type, data] of Object.entries(validSamples)) {
       expect(gateEvent(type, data), type).toBeUndefined();
     }
@@ -146,6 +148,18 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
 
   it.each(Object.keys(brokenSamples))("形状门：%s 坏样本 → shape:<type>", (type) => {
     expect(gateEvent(type, brokenSamples[type])).toBe(`shape:${type}`);
+  });
+
+  it("autocompact/checkpoint 坏样本矩阵（docs/COMPACTION.md §2.B——ledger 非空/coveredSeq 非负/stale 仅 true）", () => {
+    const bad: unknown[] = [
+      { turn: 0, step: 0, ledger: "", coveredSeq: 0 }, // 空账本
+      { turn: 0, step: 0, ledger: "L", coveredSeq: -1 }, // 负覆盖边界
+      { turn: 0, step: 0, ledger: "L", coveredSeq: 1.5 }, // 非整数
+      { turn: "0", step: 0, ledger: "L", coveredSeq: 0 }, // turn 非计数
+      { turn: 0, step: 0, ledger: "L", coveredSeq: 0, stale: false }, // stale 仅 true
+      { turn: 0, step: 0, coveredSeq: 0 }, // 缺 ledger
+    ];
+    for (const sample of bad) expect(gateEvent("autocompact/checkpoint", sample)).toBe("shape:autocompact/checkpoint");
   });
 
   it("未知词条 → unknown-type", () => {
@@ -211,9 +225,14 @@ describe("validateSessionEvents（docs/SESSION.md §1.8 seed 整卷校验）", (
     ["replace 端点悬空", [envelope({ seq: 0, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 5, endSeq: 6 } })], "corrupt-surface:0:replace-target-missing:5"],
     ["信封额外键", [Object.assign(envelope({ seq: 0, type: "turn/start", data: { turn: 0 } }), { ignorable: true })], "corrupt-envelope:0:extra-key:ignorable"],
     ["log-only 词条带显式 surfaceOp 键（值为 undefined）", [{ type: "turn/start", seq: 0, time: 1, data: { turn: 0 }, surfaceOp: undefined }], "corrupt-envelope:0:surface-op-not-allowed"],
-    ["replace 反向区间（start>end 且端点存在）", [
+    ["replace 端点已被前序替换摘除（数值逆序卷，位置语义下按端点缺席报）", [
       envelope({ seq: 0, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: "append" }),
       envelope({ seq: 1, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 0, endSeq: 0 } }),
+      envelope({ seq: 2, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 1, endSeq: 0 } }),
+    ], "corrupt-surface:2:replace-target-missing:0"],
+    ["replace 位置逆序（两端点在场、startSeq 端点位置晚于 endSeq 端点）", [
+      envelope({ seq: 0, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: "append" }),
+      envelope({ seq: 1, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: "append" }),
       envelope({ seq: 2, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: { op: "replace", startSeq: 1, endSeq: 0 } }),
     ], "corrupt-surface:2:replace-range:1>0"],
   ])("非法卷：%s → %s", (_name, events, expected) => {

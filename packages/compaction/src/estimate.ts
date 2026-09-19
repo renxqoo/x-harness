@@ -1,0 +1,43 @@
+// token 估算的消息面（docs/COMPACTION.md §1.4）：token-meter 的 estimateText 是
+// 字符串→token 的单一真相，本文件只做消息/节点形状的求和——切点、配额、尾估、
+// 占用共用单份，不另铸估算器。
+
+import type { ContentBlock, SurfaceMessage, SurfaceNode } from "@x-harness/session";
+import { estimateText } from "@x-harness/token-meter";
+
+/** 块求和：text 计正文；tool_use 计 name + input（input 为原始 JSON 串，按串估） */
+export function estimateBlocks(blocks: readonly ContentBlock[]): number {
+  let tokens = 0;
+  for (const block of blocks) {
+    if (block.type === "text") tokens += estimateText(block.text);
+    else tokens += estimateText(block.name) + estimateText(block.input);
+  }
+  return tokens;
+}
+
+/** 单消息估算（四角色全覆盖——CJK 不低估是水位口径的前提） */
+export function estimateMessage(message: SurfaceMessage): number {
+  switch (message.role) {
+    case "system":
+      return estimateText(message.text);
+    case "user":
+    case "assistant":
+      return estimateBlocks(message.content);
+    case "tool":
+      return estimateText(message.content);
+  }
+}
+
+/** 投影节点估算（与 estimateMessage 同口径；直接读事件 data，不经过消息派生） */
+export function nodeTokens(node: SurfaceNode): number {
+  const event = node.event;
+  switch (event.type) {
+    case "system/message":
+      return estimateText(event.data.text);
+    case "user/message":
+    case "assistant/message":
+      return estimateBlocks(event.data.content);
+    case "tool/result":
+      return estimateText(event.data.content);
+  }
+}

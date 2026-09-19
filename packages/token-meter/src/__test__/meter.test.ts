@@ -243,14 +243,17 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
   });
 });
 
-describe("估算（docs/TOKEN-METER.md §1）", () => {
+describe("估算（docs/TOKEN-METER.md §1——CJK 上界口径，压缩件预留裁决生效）", () => {
   it.each([
     ["空串", "", 0],
     ["1 字符", "a", 1],
     ["3 字符", "abc", 1],
     ["4 字符", "abcd", 1],
     ["5 字符", "abcde", 2],
-    ["UTF-16 计长（emoji 算 2）", "😀", 1],
+    ["CJK 1.25/字上界（chars/4 口径低估 3-4× 为反例）", "你好世界", 5],
+    ["UTF-16 计长（emoji 算 2 单位，上界桶）", "😀", 3],
+    ["混合分段折算：ASCII len/4 + 非 ASCII 1.25", "abc你好", 4], // 3/4=0.75 + 2×1.25=2.5 → 3.25 → ceil 4
+    ["控制空白按 len/4（不进上界桶）", "a\tb\nc", 2], // 5 单位全在 len/4 桶 → ceil(5/4)
   ])("estimateText %s", (_name, text, expected) => {
     expect(estimateText(text)).toBe(expected);
   });

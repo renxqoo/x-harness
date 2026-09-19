@@ -11,7 +11,7 @@ import type { SessionUsage } from "./fold.ts";
 export interface TokenMeterService {
   /** 未知会话 / 聚合溢出（fail-closed）→ undefined */
   usageOf(sessionId: SessionId): SessionUsage | undefined;
-  /** chars/4 向上取整（UTF-16 code unit 计长）——请求压力粗估口径；非字符串降级 0 */
+  /** 上界口径 token 估算（ASCII/空白 len/4、非 ASCII 1.25/字，向上取整）；非字符串降级 0 */
   estimateText(text: string): number;
 }
 
@@ -65,8 +65,29 @@ export const tokenMeterPlugin = {
   },
 } satisfies Plugin;
 
-/** chars/4 向上取整（压缩件的请求压力预留口径） */
+/** 非西文上界费率（单一真相：估算与压缩件的字符预算反算共用）——主流 tokenizer
+ *  对 CJK/西里尔/阿拉伯/emoji 均值 ≤1 token/char，留 25% 余量；纯 chars/4 对这些
+ *  文字低估 3-5×（压缩水位晚触发已实证），请求压力估算必须按上界走 */
+export const WIDE_TOKENS_PER_CHAR = 1.25;
+
+// 非 ASCII 判定 = 「可打印 ASCII 区间之外」：\t\n\r 控制空白按 len/4 计（不进上界
+// 桶——日志/JSON 类内容不虚高 5-13%），用字符串字面量白名单而非控制字符正则表达
+const NON_PRINTABLE_RE = /[^\x20-\x7e]/g;
+
+function countControlWhitespace(text: string): number {
+  let count = 0;
+  for (const ch of text) {
+    if (ch === "\t" || ch === "\n" || ch === "\r") count += 1;
+  }
+  return count;
+}
+
+/** 可打印 ASCII 与控制空白按 len/4、其余文字（CJK/西里尔/emoji 等）按 1.25/char，
+ *  向上取整（UTF-16 code unit 计长）——请求压力上界口径（压缩件的预留口径，
+ *  docs/TOKEN-METER.md §5 裁决生效）；非字符串降级 0 */
 export function estimateText(text: string): number {
-  if (typeof text !== "string") return 0;
-  return Math.ceil(text.length / 4);
+  if (typeof text !== "string" || text.length === 0) return 0;
+  const nonPrintable = text.match(NON_PRINTABLE_RE)?.length ?? 0;
+  const wideCount = nonPrintable - countControlWhitespace(text);
+  return Math.ceil(wideCount * WIDE_TOKENS_PER_CHAR + (text.length - wideCount) / 4);
 }

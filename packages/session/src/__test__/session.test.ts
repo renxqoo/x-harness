@@ -67,6 +67,7 @@ describe("append 全词条（docs/SESSION.md §1.3 判别联合穷举）", () =>
       session.append("assistant/attempt", { turn: 0, step: 0, error: "timeout" }),
       session.append("turn/end", { turn: 0, reason: { kind: "error", message: "boom" } }),
       session.append("step/end", { turn: 0, step: 0 }),
+      session.append("autocompact/checkpoint", { turn: 0, step: 0, ledger: "<goals>\n</goals>", coveredSeq: 0 }),
     ];
     for (const [i, result] of results.entries()) {
       expect(result.ok, `#${i}`).toBe(true);
@@ -153,9 +154,14 @@ describe("append 门失败矩阵（docs/SESSION.md §7——全部 Result 失败
     });
     expect(raw(session)("user/message", { turn: 0, step: 0, content: [] }, { surfaceOp: { op: "replace", startSeq: 1, endSeq: 0 } })).toEqual({
       ok: false,
-      reason: "replace-range:1>0",
+      reason: "replace-target-missing:1", // 位置语义：端点缺席先于位置逆序报出
     });
-    expect(session.events()).toHaveLength(1);
+    session.append("user/message", { turn: 0, step: 0, content: [] }, userAppend);
+    expect(raw(session)("user/message", { turn: 0, step: 0, content: [] }, { surfaceOp: { op: "replace", startSeq: 1, endSeq: 0 } })).toEqual({
+      ok: false,
+      reason: "replace-range:1>0", // 两端点在场、位置逆序
+    });
+    expect(session.events()).toHaveLength(2); // 仅首条合法 append 落账，两次非法 replace 零变动
   });
 
   it("封存后 append → session-disposed（docs/SESSION.md §1.5 写权封存）", () => {

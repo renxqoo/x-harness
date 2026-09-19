@@ -1,4 +1,4 @@
-// Session 契约类型：事件信封判别联合、15 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
+// Session 契约类型：事件信封判别联合、16 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
 
 import type { Result } from "@x-harness/core";
 
@@ -78,6 +78,15 @@ export interface SessionEventData {
   readonly "session/end-seed": { readonly inherited?: true };
   /** 收件箱拼接：fold 投影归 agent-loop（docs/SESSION-RESUME.md §1.1——claim 按成员移除、判重按当前在场） */
   readonly "agent/inbox/spliced": InboxSpliceData;
+  /** autocompact 账本快照（docs/COMPACTION.md §1.2/§2.B）：log-only 持久化面——重开恢复
+   *  折叠 last-wins；ledger 为序列化原文，coveredSeq = 已收编覆盖的 journal seq 边界 */
+  readonly "autocompact/checkpoint": {
+    readonly turn: number;
+    readonly step: number;
+    readonly ledger: string;
+    readonly coveredSeq: number;
+    readonly stale?: true;
+  };
 }
 
 export type InboxTarget = "next-turn" | "next-step";
