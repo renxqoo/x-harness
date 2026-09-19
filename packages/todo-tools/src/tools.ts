@@ -40,7 +40,7 @@ const updateSchema = Type.Object({
 /** BigInt 等合法入库值序列化会 throw——降级占位不崩溃（垃圾输入降级口径） */
 function jsonOf(value: Readonly<Record<string, unknown>>): string {
   try {
-    return JSON.stringify(value) ?? "undefined";
+    return JSON.stringify(value);
   } catch {
     return "<unserializable>";
   }
@@ -75,7 +75,7 @@ export function listText(tasks: readonly TodoTask[]): string {
 
 /** 错误铸文：reason 枚举即词表前缀（not-found:<id>; no such task / invalid-args:<详情>） */
 function cast(result: { readonly ok: false; readonly reason: "not-found" | "invalid-args"; readonly message?: string }): { content: string; isError?: true } {
-  return { content: `${result.reason}:${result.message ?? "invalid request"}`, isError: true };
+  return { content: `${result.reason}:${result.message}`, isError: true };
 }
 
 export function createTodoTools(store: TodoList): ToolDefinition[] {
@@ -88,7 +88,7 @@ export function createTodoTools(store: TodoList): ToolDefinition[] {
       execute: async (args: Static<typeof createSchema>) => {
         const result = store.create({ subject: args.subject ?? "", description: args.description, activeForm: args.activeForm, metadata: args.metadata });
         if (!result.ok) return cast(result);
-        return { content: `Created task ${result.task.id}: ${result.task.subject} (status: pending)` };
+        return { content: `Created task ${result.task.id}: ${result.task.subject} (status: ${result.task.status})` };
       },
       isConcurrencySafe: parallel,
     },

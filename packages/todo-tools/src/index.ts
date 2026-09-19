@@ -8,7 +8,7 @@ export { cardText, listText } from "./tools.ts";
 export { todoList } from "./tokens.ts";
 export type {
   TodoCreateInput,
-  TodoCreateResult,
+  TodoTaskResult,
   TodoList,
   TodoReject,
   TodoStatus,

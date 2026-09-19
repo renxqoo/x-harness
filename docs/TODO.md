@@ -1,6 +1,6 @@
 # TODO：任务清单件（件 15）
 
-> 状态：**定稿**（两路定稿前对抗审查 19 项全处置，见 §9）
+> 状态：**已核销**（两路定稿前审查 19 项 + 两路收口审查 14 项全处置——§9/§10；数字见 §11）
 > 级别：中（todo-tools 新包 + 4 个 LLM 可见新工具 + e2e 旅程）
 > 规格：`/Users/wrr/work/claude-tool/task-tools.md`（Claude Code Task 工具族中的 4 个
 > 任务清单动词；另 2 个后台任务动词已由件14 task_output/task_stop 兑现）。
@@ -103,9 +103,10 @@ export interface TodoList {
 - 入库 `structuredClone` 深拷贝、出口快照新对象（防 caller 引用变异穿透）；clone 失败
   （metadata 含函数/symbol 等不可克隆值——服务面/直连可达，工具面 JSON.parse 不可达）
   → 拒 `invalid-args:metadata not cloneable`（降级不崩溃的仓规口径）；
-- **服务面信任边界**：类型即契约——运行时形状守卫仅在工具面（校验层 + 前置校验）；
-  宿主绕过 TypeScript 传垃圾 = 宿主 bug，服务面不防（cloneable 守卫是唯一例外，
-  因其崩溃而非类型问题）；
+- **服务面信任边界**：类型即契约——**语义校验与最小形状防御（空 subject / taskId
+  形状 / 依赖引用存在性）单点住 store**（get/update 对垃圾 taskId 回 invalid-args），
+  工具面只铸文；宿主绕过 TypeScript 传深层垃圾（数组 metadata、非串 subject）= 宿主
+  bug，服务面不防（cloneable 守卫是唯一例外，因其崩溃而非类型问题）；
 - 服务 token `todoList`（defineService）；e2e/宿主经 `ctx.use(todoList)` 断言终态
   （对齐 taskHub 先例）。
 
@@ -141,7 +142,10 @@ export interface TodoList {
 
 对账测试锁死（§6）：四条正文锚词 + **per-param description 全量逐字对账**（14 条
 参数描述 vs 规格表格列，非取样锚）+ 参数面双向对账（描述承诺的参数 schema 必有、
-schema 有的参数描述必提——件14 descriptions.test 先例）。
+schema 有的参数描述必提——件14 descriptions.test 先例）+ **enum/必填面从表格列解析
+对账**（status 四值 ↔ Union literals；✅ 列 ↔ required——create 特例按规格注记 required
+为空）。spec 快照入仓 `src/__test__/fixtures/task-tools.spec.md`（来源即上述仓外文件，
+上游更新时手动重拷——门禁不绑单机路径，机器绑定债不随本件扩大）。
 
 ## 3. 拆分与依赖
 
@@ -229,10 +233,10 @@ B. e2e 旅程（真实 agent turn 驱动 create → in_progress → 依赖 → l
 
 ## 8. 验收清单
 
-- [ ] §1 契约逐条（四工具参数面 == 规格表、铸文、并发档、服务面）
-- [ ] §6 测试口径逐条落地全绿
-- [ ] 四门 + 覆盖率数字如实报告；e2e 旅程绿
-- [ ] 对抗审查（定稿前 + 收口前各 ≥2 路）问题清零
+- [x] §1 契约逐条（四工具参数面 == 规格表、铸文、并发档、服务面）
+- [x] §6 测试口径逐条落地全绿
+- [x] 四门 + 覆盖率数字如实报告（§11）；e2e 旅程绿
+- [x] 对抗审查（定稿前 + 收口前各 ≥2 路）问题清零（§9/§10）
 
 ## 9. 定稿前对抗审查处置（两路并行，19 项全处置）
 
@@ -263,3 +267,46 @@ not provided 双断言（§6）。B11 update subject 空串未定义 → **采�
 deleted/清边/id 不复用、metadata 键级合并、依赖追加去重与双向语义、共享清单裁决、
 并发档 parallel 论据、inject 接线与 effect 摘除、依赖方向无环、dispose 顺序、
 additionalProperties 裁决依据核实、e2e 装置可行性。
+
+## 10. 收口前对抗审查处置（两路并行，14 项全处置）
+
+**路 A（契约/语义对照面）**：P1-1 对账测试绑死单机绝对路径 → **采纳根治**：spec 快照
+入仓 fixtures（不沿袭 agent-delegation contract.test 机器绑定债——门禁可移植性优先）。
+P2-1 并发 update 杂交断言锁不住（字段级交错仍绿——审查者脚本复证）→ **采纳**：同源
+断言（subject/owner 轮次后缀一致）。P2-2 方案 §1.4 与实现校验位置漂移未同变 →
+**采纳**：§1.4 重写（语义校验与最小形状防御单点住 store）+ store 头注释同变。
+P3-1 get 复用 TodoCreateResult 名 → **采纳**：改名 TodoTaskResult。P3-2 两处不可达
+死分支（`?? "undefined"` / `?? "invalid request"`）→ **采纳**：清理 + TodoReject.message
+改必填（所有 reject 调用本就必带）。P3-3 create 回执硬编码 status: pending →
+**采纳**：取快照值。
+
+**路 B（并发/生命周期/假绿面）**：P1-1=与 A-P2-1 合并（同源断言）。P1-2 enum 对账
+缺位 + required 面硬编码自证 → **采纳**：表格类型列/必填列解析对账（status enum ↔
+Union literals 双向；create 特例按规格注记 required 空——表格 ✅ 与注记矛盾以注记
+为准，方案 §1.1 既有裁决）。P2-3 反向清边零单测（removeRow 反向摘除分支 0 覆盖）
+→ **采纳**：补「删被阻塞任务后 blocker blocks 为空」用例。P2-4 卡片 Description 行
+零断言 → **采纳**：纯函数直测补形态。P2-5 squatter 用例恒真断言（throw 前未注册的
+工具断言 undefined）+ 探针缺失 → **采纳**：squatter 占名第 3 个工具（task_list），
+断言 throw 前已注册的 task_create/task_get 被回卷摘除。P3-6 dispose 注释无断言
+支撑 → **采纳**：删误导注释。P3-7=与 A-P1-1 合并。P3-8=与 A-P3-1 合并。P3-9 store
+头注释与实现矛盾 → 与 A-P2-2 合并同变。P3-10 e2e 收轮断言依赖 events.at(-1) →
+**采纳**：改 filter turn/end 终态事件。P3-11 inject 用例 toThrow 无模式 → **采纳**：
+加 /tools/ 模式。
+
+**收口审查连带发现（core 存量缺陷，当场修）**：P2-5 处置中暴露 loadPlugins 对
+apply 中途 throw 的插件**自身已捕获注册不回卷**（composite 尚未入层账本即 throw——
+captureRegistrations 的「统一兜底回卷」设计意图在 throw 路径漏挂账，半装状态泄漏；
+本件 plugin.ts 注释声称的「apply 中途 throw 也回卷」在 core 现实现下不成立）→
+**core/load-plugins.ts catch 路径补逆序回卷 + core 回归用例**（「half」插件两 effect
+逆序 unwind 断言）；task-tools 等既有插件注释的同款表述随 core 修复成真。
+
+## 11. 收口数字（2026-09-19）
+
+- 四门：lint（todo-tools + core + e2e 旅程面）0-0 / tsc 0 / build ok / test 全绿；
+  全仓 lint 余 1 错 3 警位于 packages/e2e/gap-probe.ts 与 real.ts——**他人基线**
+  （602063e 引入，不在本件提交范围，不越界代修）。
+- 用例：todo-tools 45（store 23 + tools 14 + plugin 4 + descriptions 4）+ core 回归 1；
+  全仓 1237 例全绿；e2e 十一场景（含 todo 八步旅程）绿。
+- 覆盖率：todo-tools lines/branch/funcs/stmts 全 100（阈值 90/85/90/90）；
+  全仓 lines 94.09 / branch 90.69 / funcs 94.16 / stmts 96.46。
+- 已知覆盖盲区：无（收口审查指出的 removeRow 反向分支与 Description 行已补用例盖绿）。

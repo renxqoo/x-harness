@@ -37,14 +37,13 @@ describe("todo-tools plugin assembly", () => {
       isError: true,
       content: expect.stringContaining("task_create"),
     });
-    expect(() => ctx.use(todoList)).toThrow(/todo-list/);
-    // 清单生命周期 = 装配生命周期：dispose 后经旧引用操作不影响世界（服务已不可解析）
+    expect(() => ctx.use(todoList)).toThrow(/todo-list/); // 清单生命周期 = 装配生命周期（服务已不可解析）
   });
 
   it("apply 中途 throw 回卷：同批次占名 → todo-tools 注册重名 throw，registry 与服务双空", async () => {
     const ctx = createContext();
-    const squatterTool = createTodoTools(createTodoStore()).find((t) => t.name === "task_create");
-    if (squatterTool === undefined) throw new Error("task_create definition missing");
+    const squatterTool = createTodoTools(createTodoStore()).find((t) => t.name === "task_list");
+    if (squatterTool === undefined) throw new Error("task_list definition missing");
     let registryRef: ToolRegistry | undefined;
     const squatter: Plugin = {
       name: "squatter",
@@ -54,18 +53,21 @@ describe("todo-tools plugin assembly", () => {
         c.effect(registry.register(squatterTool));
       },
     };
-    // squatter 排 todo-tools 前：第 4 个工具重名 throw → 整体装配失败 → 全量回卷
-    await expect(loadPlugins(ctx, [toolsPlugin, squatter, createTodoToolsPlugin()])).rejects.toThrow(/task_create/);
+    // squatter 占名第 3 个工具（task_list）：task_create/task_get 已注册、task_list 重名 throw → 全量回卷
+    await expect(loadPlugins(ctx, [toolsPlugin, squatter, createTodoToolsPlugin()])).rejects.toThrow(/task_list/);
+    // throw 点前已注册的两个工具必须被回卷摘除（恒真探针之外的真回卷断言）
+    expect(registryRef?.get("task_create")).toBeUndefined();
     expect(registryRef?.get("task_get")).toBeUndefined();
-    expect(registryRef?.get("task_list")).toBeUndefined();
     expect(registryRef?.get("task_update")).toBeUndefined();
+    // squatter 自己注册的占名工具同样回卷
+    expect(registryRef?.get("task_list")).toBeUndefined();
     expect(ctx.tryUse(todoList)).toBeUndefined();
     await ctx.dispose();
   });
 
   it("inject 硬依赖：tools 缺席 → 装配失败（拓扑保证 registry 先行）", async () => {
     const ctx = createContext();
-    await expect(loadPlugins(ctx, [createTodoToolsPlugin()])).rejects.toThrow();
+    await expect(loadPlugins(ctx, [createTodoToolsPlugin()])).rejects.toThrow(/tools/);
     expect(ctx.tryUse(todoList)).toBeUndefined();
     await ctx.dispose();
   });

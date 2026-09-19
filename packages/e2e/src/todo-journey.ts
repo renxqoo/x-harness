@@ -95,7 +95,8 @@ export async function runTodoJourney(): Promise<void> {
       // 共享清单锚：无 session 直连可见（与件14 task_output 拒无 session 有意相反——协作载体）
       const anon = await ctx.use(toolRegistry).dispatch({ callId: "e2e-todo-anon", name: "task_list", args: {}, signal: new AbortController().signal });
       must(!anon.isError && anon.content.includes("1. [completed]"), `无 session 直连 task_list（实际：${anon.content}）`);
-      must(JSON.stringify(events.at(-1)?.data).includes('"completed"'), "turn completed 收轮");
+      const turnEnds = events.filter((e) => e.type === "turn/end");
+      must(JSON.stringify(turnEnds.at(-1)?.data).includes('"completed"'), "turn completed 收轮（turn 终态事件断言——不依赖最后一条落账形态）");
       await made.value.dispose();
     }
     await ctx.dispose();

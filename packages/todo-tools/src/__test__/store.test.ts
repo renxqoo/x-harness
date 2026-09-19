@@ -185,6 +185,17 @@ describe("deleted 语义", () => {
     expect(next).toMatchObject({ ok: true, task: { id: "3" } });
   });
 
+  it("删除清边（反向）：删被阻塞任务后 blocker 的 blocks 为空，无悬空 id", () => {
+    const store = createTodoStore();
+    make(store, "A");
+    make(store, "B");
+    store.update("1", { addBlocks: ["2"] });
+    store.update("2", { status: "deleted" });
+    const a = store.get("1");
+    if (!a.ok) throw new Error("unreachable");
+    expect(a.task.blocks).toEqual([]);
+  });
+
   it("删除清边：删 blocker 后被阻塞任务的 blockedBy 为空，无悬空 id", () => {
     const store = createTodoStore();
     make(store, "A");
@@ -213,9 +224,10 @@ describe("并发组（钉死 store 全同步前提——parallel 声明的正确
     const round = (i: number) => Promise.resolve().then(() => store.update(id, { subject: `S${i}`, owner: `o${i}` }));
     await Promise.all(Array.from({ length: 10 }, (_, i) => round(i)));
     const got = store.get(id);
-    if (!got.ok) throw new Error("unreachable");
+    if (!got.ok || got.task.owner === undefined) throw new Error("unreachable");
+    // 同源断言：两字段轮次后缀一致——字段级交错（subject=S3+owner=o7 杂交）必挂
     expect(got.task.subject).toMatch(/^S\d$/);
-    expect(got.task.owner).toMatch(/^o\d$/);
+    expect(got.task.subject.slice(1)).toBe(got.task.owner.slice(1));
   });
 
   it("并发 list：每次都是一致快照（条目数单调不减）", async () => {

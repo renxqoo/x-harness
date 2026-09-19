@@ -40,19 +40,20 @@ export interface TodoUpdatePatch {
   readonly addBlockedBy?: readonly string[];
 }
 
-export type TodoCreateResult = { readonly ok: true; readonly task: TodoTask } | TodoReject;
+/** 单任务读结果（create 与 get 共用——两者都回完整任务快照） */
+export type TodoTaskResult = { readonly ok: true; readonly task: TodoTask } | TodoReject;
 
 export type TodoUpdateResult = { readonly ok: true; readonly task: TodoTask } | { readonly ok: true; readonly deleted: true } | TodoReject;
 
 export interface TodoReject {
   readonly ok: false;
   readonly reason: "not-found" | "invalid-args";
-  readonly message?: string;
+  readonly message: string;
 }
 
 export interface TodoList {
-  create(input: TodoCreateInput): TodoCreateResult;
-  get(taskId: string): TodoCreateResult;
+  create(input: TodoCreateInput): TodoTaskResult;
+  get(taskId: string): TodoTaskResult;
   /** 数值 id 升序快照 */
   list(): readonly TodoTask[];
   update(taskId: string, patch: TodoUpdatePatch): TodoUpdateResult;

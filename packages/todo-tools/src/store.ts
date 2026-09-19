@@ -1,6 +1,6 @@
 // 清单内核（docs/TODO.md §1.2/§1.4）：CRUD + 依赖单源边集 + deleted 清边 + 深拷贝 + 数值序。
-// 语义校验单点住本层（空 subject / taskId 形状 / 依赖引用存在性）——工具面只铸文；
-// 形状守卫（typeof）不在此层：类型即契约，宿主绕过 TypeScript 传垃圾 = 宿主 bug。
+// 语义校验与最小形状防御单点住本层（空 subject / taskId 形状 / 依赖引用存在性）——
+// 工具面只铸文。深层形状不防：类型即契约，宿主绕过 TypeScript 传垃圾 = 宿主 bug。
 
 import type {
   TodoList,

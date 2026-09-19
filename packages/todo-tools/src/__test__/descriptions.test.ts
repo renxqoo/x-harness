@@ -1,7 +1,8 @@
 // 描述与参数对账（docs/TODO.md §2/§6）：正文与规格 blockquote 原文逐字符一致
 // （唯一合法偏离 = 已知工具名替换集）；per-param description 与规格参数表格列全量
-// 逐字一致（表格解析对账——零转录风险）；参数面双向对账（描述承诺的参数 schema 必有、
-// schema 有的参数描述必提）。
+// 逐字一致（表格解析对账——零转录风险）；enum 与必填面从表格列解析对账（防硬编码自证）。
+// spec 快照入仓 fixtures/task-tools.spec.md（来源 /Users/wrr/work/claude-tool/task-tools.md；
+// 上游更新时手动重拷——仓内副本是对账的单一事实源，门禁不绑单机路径）。
 
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
@@ -14,7 +15,7 @@ import {
   TASK_UPDATE_DESCRIPTION,
 } from "../descriptions.ts";
 
-const SPEC_PATH = "/Users/wrr/work/claude-tool/task-tools.md";
+const SPEC_PATH = new URL("./fixtures/task-tools.spec.md", import.meta.url).pathname;
 
 /** 已知替换集（docs/TODO.md §2①）：本仓注册名——对账时施加于 spec 原文后应逐字符相等 */
 const RENAMES: Array<[RegExp, string]> = [
@@ -46,27 +47,26 @@ function blockRuns(spec: string): string[] {
   return runs;
 }
 
-/** spec 参数表格解析：工具节内 `### 参数` 后首表 → 参数名 → description 全映射。
- *  行内 `\|` 是转义竖线（enum 值），split 前先占位再还原 */
-function paramTableOf(spec: string, section: string): Record<string, string> {
+/** spec 工具节的参数表行（已剥转义）：[名, 类型, 必填, description] */
+function tableRows(spec: string, section: string): Array<[string, string, string, string]> {
   const start = spec.indexOf(section);
   expect(start, `spec 节在场：${section}`).toBeGreaterThan(-1);
   const body = spec.slice(start, spec.indexOf("\n## ", start));
   const tableStart = body.indexOf("| 参数 |");
   expect(tableStart, `参数表格在场：${section}`).toBeGreaterThan(-1);
   const rows = body.slice(tableStart).split("\n").filter((line) => line.startsWith("|"));
-  const out: Record<string, string> = {};
-  for (const row of rows.slice(2)) {
-    const cells = row.replace(/\\\|/g, "<PIPE/>").split("|").map((cell) => cell.replace(/<PIPE\/>/g, "|").trim());
-    const name = (cells[1] ?? "").replace(/^`|`$/g, "");
-    if (name !== "") out[name] = cells[4] ?? "";
-  }
-  return out;
+  return rows
+    .slice(2)
+    .map((row) => {
+      const cells = row.replace(/\\\|/g, "<PIPE/>").split("|").map((cell) => cell.replace(/<PIPE\/>/g, "|").trim());
+      return [cells[1] ?? "", cells[2] ?? "", cells[3] ?? "", cells[4] ?? ""] as [string, string, string, string];
+    })
+    .filter(([name]) => name !== "");
 }
 
-function propsOf(name: string): Record<string, { description?: string }> {
-  const schema = tools.find((t) => t.name === name)?.inputSchema as { properties?: Record<string, { description?: string }> } | undefined;
-  return schema?.properties ?? {};
+function propsOf(name: string): Record<string, { description?: string; anyOf?: Array<{ const?: string }> }> {
+  const schema = tools.find((t) => t.name === name)?.inputSchema as { properties?: Record<string, never> } | undefined;
+  return (schema?.properties ?? {}) as never;
 }
 
 describe("正文逐字对账（spec blockquote + 已知替换集）", () => {
@@ -95,43 +95,44 @@ describe("正文逐字对账（spec blockquote + 已知替换集）", () => {
   });
 });
 
-describe("per-param description 全量对账（spec 参数表格列逐字）", () => {
-  it("task_create 四参数 + task_get/task_update 参数与规格表格逐字符一致", async () => {
+describe("参数面对账（spec 参数表格解析——description/enum/必填面全量）", () => {
+  it("per-param description 逐字一致；参数集双向相等；必填面 ↔ required；status enum ↔ Union literals", async () => {
     const spec = await readFile(SPEC_PATH, "utf8");
-    const tableOf = (name: string): Record<string, string> => {
-      const table = paramTableOf(spec, name);
-      expect(Object.keys(table).length, `${name} 表格非空`).toBeGreaterThan(0);
-      return table;
+    const requiredOf = (name: string): string[] => {
+      const schema = tools.find((t) => t.name === name)?.inputSchema as { required?: string[] };
+      return schema.required ?? [];
     };
-    const check = (tool: string, table: Record<string, string>): void => {
+    const check = (tool: string, section: string, requiredFromTable: boolean): Array<[string, string, string]> => {
+      const rows = tableRows(spec, section);
+      expect(rows.length, `${tool} 表格非空`).toBeGreaterThan(0);
       const props = propsOf(tool);
-      expect(Object.keys(props).sort()).toEqual(Object.keys(table).sort());
-      for (const [param, doc] of Object.entries(table)) {
-        expect(props[param]?.description, `${tool}.${param} description 与规格逐字一致`).toBe(doc);
+      const named = rows.map(([rawName]) => rawName.replace(/^`|`$/g, ""));
+      expect(Object.keys(props).sort()).toEqual([...named].sort());
+      for (const [rawName, , , doc] of rows) {
+        expect(props[rawName.replace(/^`|`$/g, "")]?.description, `${tool}.${rawName} description 与规格逐字一致`).toBe(doc);
       }
+      if (requiredFromTable) {
+        expect(requiredOf(tool)).toEqual(rows.filter(([, , req]) => req === "✅").map(([name]) => name.replace(/^`|`$/g, "")));
+      }
+      return rows.map(([name, type, req]) => [name.replace(/^`|`$/g, ""), type, req] as [string, string, string]);
     };
-    check("task_create", tableOf("## 1. TaskCreate"));
-    check("task_get", tableOf("## 2. TaskGet"));
-    check("task_update", tableOf("## 4. TaskUpdate"));
+    // create 特例：表格 subject 标 ✅ 但规格注记明写 required 数组为空（语义必填在 execute 层——
+    // 方案 §1.1 裁决）；required 空数组是规格原样形态，语义校验由 store 用例背书
+    check("task_create", "## 1. TaskCreate", false);
+    expect(requiredOf("task_create")).toEqual([]);
+    check("task_get", "## 2. TaskGet", true);
+    const updateRows = check("task_update", "## 4. TaskUpdate", true);
+
+    // status enum：表格类型列（enum: a \| b \| …）↔ schema Union literals——防漏值/杂值双向漂移
+    const statusRow = updateRows.find(([name]) => name === "status");
+    if (statusRow === undefined) throw new Error("status 行缺席");
+    const specEnum = (statusRow[1] ?? "").replace(/^enum:\s*/, "").split("|").map((v) => v.trim().replace(/`/g, ""));
+    const schemaEnum = (propsOf("task_update").status as { anyOf?: Array<{ const?: string }> } | undefined)?.anyOf?.map((l) => l.const);
+    expect(schemaEnum, "schema enum 从 Union 解析").toEqual(specEnum);
+    expect(specEnum).toEqual(["pending", "in_progress", "completed", "deleted"]);
   });
 
   it("task_list 无参数（schema 空对象）", () => {
     expect(propsOf("task_list")).toEqual({});
-  });
-});
-
-describe("参数面双向对账（schema 结构事实）", () => {
-  it("task_create required 为空（规格原样）；task_get/task_update 必填 taskId", () => {
-    const schemaOf = (name: string): { required?: string[] } =>
-      tools.find((t) => t.name === name)?.inputSchema as { required?: string[] };
-    expect(schemaOf("task_create").required ?? []).toEqual([]);
-    expect(schemaOf("task_get").required).toEqual(["taskId"]);
-    expect(schemaOf("task_update").required).toEqual(["taskId"]);
-  });
-
-  it("task_update 参数面 = taskId + 8 可选字段（规格参数表全集）", () => {
-    expect(Object.keys(propsOf("task_update")).sort()).toEqual(
-      ["taskId", "subject", "description", "activeForm", "status", "owner", "metadata", "addBlocks", "addBlockedBy"].sort(),
-    );
   });
 });

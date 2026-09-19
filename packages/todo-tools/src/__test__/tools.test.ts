@@ -158,6 +158,7 @@ describe("铸文纯函数直测", () => {
     expect(cardText(task({ owner: "w", blocks: ["2", "3"], blockedBy: ["4"] }))).toBe(
       "Task 1: S\nStatus: pending\nOwner: w\nBlocks: 2, 3\nBlocked by: 4",
     );
+    expect(cardText(task({ description: "d", activeForm: "af" }))).toBe("Task 1: S\nStatus: pending\nDescription: d\nActive form: af");
   });
 
   it("listText 空态与注记拼接", () => {
