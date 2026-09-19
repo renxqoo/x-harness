@@ -16,7 +16,7 @@ export {
   agentStatus,
   agentTurnStopping,
   agentAssistantSettle,
-  llmStream,
+  agentLlmStream,
 } from "./tokens.ts";
 export type { AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestFailure } from "./tokens.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";

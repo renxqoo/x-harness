@@ -18,7 +18,7 @@ import {
   agentRequest,
   agentRequestError,
   agentStatus,
-  agentTurnStopping, agentAssistantSettle, llmStream} from "./tokens.ts";
+  agentTurnStopping, agentAssistantSettle, agentLlmStream} from "./tokens.ts";
 import type { Agent, AgentHandle, AgentLoopService, AgentOptions, CreateAgentOptions, ResumeAgentOptions } from "./types.ts";
 
 const DEFAULT_MAX_PARALLEL = 10;
@@ -91,7 +91,7 @@ export const agentLoopPlugin = {
             ...(p.interrupted === true ? { interrupted: true } : {}),
           }) as never),
         // F0③ 流拦截：final = runtime.stream 原样
-        dispatchLlmStream: (request) => agentScope.dispatch(llmStream, { request } as never, async (p) => llm.stream(p.request) as never),
+        dispatchLlmStream: (request) => agentScope.dispatch(agentLlmStream, { request } as never, async (p) => llm.stream(p.request) as never),
       });
       const agent: Agent = {
         session,

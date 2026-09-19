@@ -116,13 +116,20 @@ export async function beginStep(scope: TurnScope, step: number, isStep0: boolean
     turn,
     step,
     messages: session.deriveMessages(),
+    claim: batch.entries, // 收口审查 1.1：领取批次进载荷——改写决策的输入源
     signal: controller.signal,
   });
   if (isEnterDecision(decision)) {
     const rewritten = (decision as { readonly messages?: readonly InboxEntry[] }).messages;
     if (rewritten !== undefined) {
-      if (isStep0 && rewritten.length === 0) return { kind: "empty" }; // F0①：改写空 = 闭 turn（领取项被显式清除——中间件语义）
-      return { kind: "enter", entries: rewritten }; // 落账走重写版
+      if (!isRewrittenEntries(rewritten)) {
+        throw new Error(`pre-step rewrite shape invalid: messages must be an array of { id, content } (got ${JSON.stringify(rewritten).slice(0, 80)})`); // 收口审查 1.4：形状门（对齐 bad-dial 的可读失败）
+      }
+      if (isStep0 && rewritten.length === 0) {
+        appendEvent(session, "agent/inbox/spliced", { op: "clear", reason: "rewritten-empty" }); // 收口审查 1.2：durable 清除意图——repair trailingClaims 由 clear 复位，运行态与恢复态一致
+        return { kind: "empty" };
+      }
+      return { kind: "enter", entries: rewritten }; // 落账走重写版（claim 记原始）
     }
     return { kind: "enter", entries: batch.entries };
   }
@@ -283,7 +290,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     const consume = async (): Promise<void> => {
-      const stream = await deps.dispatchLlmStream({ // F0③：流拦截面（final = runtime.stream）
+      const stream = await deps.dispatchLlmStream({ // F0③（agent/llm-stream）：agent 层流包裹（final = runtime.stream；全局面在 llm 包 llm/stream）
         model: dial.model,
         ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
         ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
@@ -293,7 +300,11 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         messages: session.deriveMessages(), // 请求体纯折叠不变量
         signal,
       });
-      for await (const chunk of stream as AsyncIterable<LlmChunk>) {
+      if (stream === null || typeof (stream as AsyncIterable<LlmChunk>)[Symbol.asyncIterator] !== "function") {
+        throw new Error("agent/llm-stream middleware must return an AsyncIterable (fresh per call——重试重派时中间件须幂等)"); // 收口审查 3.3：可读契约失败（非 TypeError 伪装 LLM 故障）
+      }
+      for await (const chunk of stream) {
+        if (signal.aborted) break; // 收口审查 3.2：弃单后迟到帧守卫（不 push 不 emit）
         accum.push(chunk);
         if (chunk.type === "text-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "text", text: chunk.text });
         else if (chunk.type === "thinking-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "thinking", text: chunk.text });
@@ -331,16 +342,10 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
       return { kind: "fatal", outcome: { kind: "error", message: settlement.error } };
     }
     const usage = accum.usageSnapshot;
-    // F0②：assistant 落账前纠——改写版即落账版（「模型可见必落盘」保持）
-    const settled = await deps.dispatchAssistantSettle({
-      session: session.id,
-      turn,
-      step,
-      content: [...accum.textBlock, ...accum.toolUseBlocks],
-      stopReason: settlement.stopReason,
-      ...(settlement.interrupted === true ? { interrupted: true } : {}),
-      signal,
-    }) as { content: readonly ContentBlock[]; stopReason: "stop" | "max-tokens"; interrupted?: true };
+    // F0②：assistant 落账前纠——改写版即落账版（「模型可见必落盘」保持）。形状门在
+    // settleAssistant 内（收口审查 2.1）；输出契约只 content/stopReason——interrupted 由
+    // 内核独占（收口审查 2.2）。
+    const settled = await settleAssistant({ deps, sessionId: session.id, turn, step, accum, settlement, signal });
     appendSurfaceEvent(session, {
       type: "assistant/message",
       data: {
@@ -349,14 +354,14 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         content: settled.content,
         ...(usage !== undefined ? { usage } : {}),
         stopReason: settled.stopReason,
-        ...(settled.interrupted === true ? { interrupted: true } : {}),
+        ...(settlement.interrupted === true ? { interrupted: true } : {}),
       },
       surfaceOp: "append",
     });
     deps.emitStreamFrame(turn, step, { phase: "end", kind: "message" });
     return {
       kind: "ok",
-      message: { content: settled.content, stopReason: settled.stopReason, ...(settled.interrupted === true ? { interrupted: true } : {}) },
+      message: { content: settled.content, stopReason: settled.stopReason, ...(settlement.interrupted === true ? { interrupted: true } : {}) },
     };
   }
 }
@@ -429,6 +434,47 @@ async function stoppingResumes(scope: TurnScope): Promise<boolean> {
 export async function maybeResume(scope: TurnScope, turnEnds: TurnOutcome | undefined): Promise<TurnOutcome | undefined> {
   if (turnEnds?.kind !== "completed") return turnEnds;
   return (await stoppingResumes(scope)) ? undefined : turnEnds;
+}
+
+
+/** F0② 落账前纠派发（含形状门）。注：**不与 abort 赛跑**——中断是合法完成态（部分消息结算
+ *  必须照常落账）；中间件挂起防护与 preStep/request 同契约（waterfall 不得无限挂起——文档承载）。
+ *  输出契约只 content/stopReason：interrupted 由内核独占（收口审查 2.2）。 */
+async function settleAssistant(spec: {
+  readonly deps: DriverDeps;
+  readonly sessionId: import("@x-harness/session").SessionId;
+  readonly turn: number;
+  readonly step: number;
+  readonly accum: StreamAccumulator;
+  readonly settlement: { stopReason: "stop" | "max-tokens"; interrupted?: true };
+  readonly signal: AbortSignal;
+}): Promise<{ content: readonly ContentBlock[]; stopReason: "stop" | "max-tokens" }> {
+  const settled = await spec.deps.dispatchAssistantSettle({
+    session: spec.sessionId,
+    turn: spec.turn,
+    step: spec.step,
+    content: [...spec.accum.textBlock, ...spec.accum.toolUseBlocks],
+    stopReason: spec.settlement.stopReason,
+    ...(spec.settlement.interrupted === true ? { interrupted: true } : {}),
+    signal: spec.signal,
+  }) as { content?: unknown; stopReason?: unknown };
+  if (!isSettlementShape(settled)) {
+    throw new Error(`agent/assistant-settle output shape invalid: stopReason must be "stop" | "max-tokens" (got ${JSON.stringify(settled?.stopReason)})`);
+  }
+  return settled;
+}
+
+/** settle 输出形状门（收口审查 2.1）：content 数组 + stopReason 闭集 */
+function isSettlementShape(value: unknown): value is { content: readonly ContentBlock[]; stopReason: "stop" | "max-tokens" } {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as { content?: unknown; stopReason?: unknown };
+  return Array.isArray(v.content) && (v.stopReason === "stop" || v.stopReason === "max-tokens");
+}
+
+/** 改写条目形状门（收口审查 1.4）：{ id: string, content: ContentBlock[] } 数组 */
+function isRewrittenEntries(value: unknown): value is readonly InboxEntry[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((entry) => typeof entry === "object" && entry !== null && typeof (entry as InboxEntry).id === "string" && Array.isArray((entry as InboxEntry).content));
 }
 
 function isEnterDecision(value: unknown): boolean {

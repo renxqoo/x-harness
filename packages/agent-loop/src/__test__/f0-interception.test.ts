@@ -10,7 +10,7 @@ import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolRegistry } from "@x-harness/tools";
 import { afterEach, describe, expect, it } from "vitest";
-import { agentAssistantSettle, agentLoopPlugin, agentLoopServiceToken, agentPreStep, llmStream } from "../index.ts";
+import { agentAssistantSettle, agentError, agentLlmStream, agentLoopPlugin, agentLoopServiceToken, agentPreStep } from "../index.ts";
 import type { AgentLoopService } from "../index.ts";
 
 function textScript(text: string): AsyncGenerator<LlmChunk> {
@@ -116,7 +116,7 @@ describe("F0 拦截面（SDK-DESIGN §6.1）", () => {
   it("③ 流拦截：wrapStream 注入前缀帧 → 结算消息含注入内容；settle 改写仍胜（落账以 settle 为准）", async () => {
     const world = await makeWorld();
     worlds.push(world);
-    const offStream = world.ctx.on(llmStream, async (payload, next) => {
+    const offStream = world.ctx.on(agentLlmStream, async (payload, next) => {
       const inner = await next(payload);
       return prefixStream("PREFIX-", inner);
     });
@@ -137,7 +137,7 @@ describe("F0 拦截面（SDK-DESIGN §6.1）", () => {
   it("③ 流拦截（无 settle 时）：注入帧进结算——流面影响累积与落账", async () => {
     const world = await makeWorld();
     worlds.push(world);
-    const off = world.ctx.on(llmStream, async (payload, next) => {
+    const off = world.ctx.on(agentLlmStream, async (payload, next) => {
       const inner = await next(payload);
       return prefixStream("PREFIX-", inner);
     });
@@ -148,5 +148,55 @@ describe("F0 拦截面（SDK-DESIGN §6.1）", () => {
     await made.value.agent.whenIdle();
     off();
     expect(surfaceTexts(made.value.agent.session.events(), "assistant/message")).toEqual(["PREFIX-hello"]);
+  });
+});
+
+describe("F0 收口审查处置回归", () => {
+  it("1.2：step0 改写空 → 落 durable clear（repair trailingClaims 复位依据）；turn 闭", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const off = world.ctx.on(agentPreStep, async (payload, next) => ((await next(payload), { kind: "enter", messages: [] }) as never));
+    const made = await world.loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    made.value.agent.followup("drop-me");
+    await made.value.agent.whenIdle();
+    off();
+    const events = made.value.agent.session.events();
+    expect(events.some((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "clear")).toBe(true); // durable 清除意图
+    expect(surfaceTexts(events, "user/message")).toEqual([]); // 无 user 落账
+  });
+
+  it("1.1：载荷含 claim 批次（改写输入源）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    let seenClaim = 0;
+    const off = world.ctx.on(agentPreStep, async (payload, next) => {
+      seenClaim = (payload as unknown as { claim?: unknown[] }).claim?.length ?? -1;
+      return next(payload);
+    });
+    const made = await world.loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    made.value.agent.followup("claimed-one");
+    await made.value.agent.whenIdle();
+    off();
+    expect(seenClaim).toBe(1);
+  });
+
+  it("1.4/2.1：改写垃圾形状与 settle stopReason 越词表 → 可读 throw（非 TypeError 伪装）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const errors: string[] = [];
+    const offErr = world.ctx.on(agentError, (e) => errors.push(e.message));
+    const off = world.ctx.on(agentPreStep, async (_p, next) => ((await next(_p), { kind: "enter", messages: "garbage" }) as never));
+    const made = await world.loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    made.value.agent.followup("x");
+    await made.value.agent.whenIdle();
+    off();
+    offErr();
+    expect(errors.some((m) => m.includes("pre-step rewrite shape invalid"))).toBe(true); // 可读契约失败经 agentError 面
   });
 });

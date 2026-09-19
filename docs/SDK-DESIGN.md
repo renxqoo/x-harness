@@ -96,6 +96,7 @@ softInject 仅装配期拓扑计算（O(V+E)）零运行时开销；kit 为纯�
 ```ts
 // ① pre-step 改写：enter 可携重写消息（落账走重写版——「模型可见必落盘」不变量保持：重写版即日志版）
 export type PreStepDecision = { kind: "enter" } | { kind: "enter"; messages: readonly InboxEntry[] } | { kind: "reject"; reason: string };
+// 载荷含 claim（领取批次——改写输入源；messages 为全史观察面）
 // ② assistant 落账前纠：settle 与 append 之间（content/stopReason 可改写；落的是改写后版本）
 export const agentAssistantSettle = defineWaterfall<{ session; turn; step; content; stopReason; signal }, { content; stopReason }>("agent/assistant-settle");
 // ③ 流拦截：包 adapter.stream（包裹/截断/注入帧；settle 仍以落账版为准——流拦截只影响实时面）
