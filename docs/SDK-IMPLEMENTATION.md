@@ -42,10 +42,6 @@
 | S0 | 内核 softInject + tool-core 采纳 | 乱序装配探针 + 1730 零改写 | S0-SOFT-INJECT |
 | F3 | @x-harness/testkit + e2e 换用（提前——后续波共用） | journey 断言零语义变化 + testkit 用例 | F3-TESTKIT |
 | F1 | harness kit 目录 + createAgentWorld + CLI dogfood | CLI/e2e 零改写 + 乱序插件集用例 | F1-HARNESS-KITS |
-| T2A | settings seam（register/get 分层/set 变更事件/file 提供方） | seam 契约用例 + 层叠解析矩阵 | T2A-SETTINGS |
-| T2B | 持久状态 seam（KV 契约 + memory/json 提供方） | 契约用例 + json 持久往返 | T2B-STATE |
-| T2C | credentials seam（resolve 引用式 + env/.env/file + redact） | 契约用例 + 换源即达 | T2C-CREDENTIALS |
-| T2D | 遥测 seam（record + 脱敏 + stderr sink） | 契约用例 + 脱敏矩阵 | T2D-TELEMETRY |
-| F2 | PLUGIN-AUTHORING.md（总表/陷阱含 F-08 护栏/契约规矩/token 惯例/seam 目录） | 五块齐 + 零死链 + 事实核对 | F2-AUTHORING |
+| F2 | PLUGIN-AUTHORING.md（总表/陷阱含 F-08 护栏/契约规矩/token 惯例/**能力插件模式章**） | 五块齐 + 零死链 + 事实核对 | F2-AUTHORING |
 
 每波单提交可 revert。

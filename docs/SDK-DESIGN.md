@@ -5,7 +5,8 @@
 
 ## 0. 目标与非目标
 
-**目标**：任意插件集可被正确装配（顺序知识结构性消灭）；成品 = kit 目录任选 + 自有插件混入；作者有单一入口与测试装置。
+**目标**：底层只开放**三个域的基础接口**——对话上下文（进/出/持久/注入/提示）、工具（注册/可见性/调用管线）、循环（步进/拨号/失败/流/终态）；任意插件集可被正确装配（顺序知识结构性消灭）；成品 = kit 目录任选 + 自有插件混入；作者有单一入口与测试装置。
+**反混乱五原则**（新拦截面的准入门槛，与 F2 契约规矩同源）：①词表封闭（一面一 token，payload 冻结）②洋葱不变量（中间件必须调 next，否决语义唯一）③落账不变量（改写版即日志版）④**最少面原则**（新 token 须证明现有面组合无法表达）⑤声明式顺序（softInject）。
 **非目标**：YAML 声明式 preset（函数即配置；多产品矩阵时重启）；sdk/ACP 跨进程；npm 分发（产品阶段）；自定义驱动循环（Agent 接口已在，作者文档记路径，本波不做新驱动）。
 
 ## 1. 用户裁决
@@ -17,7 +18,7 @@
 | S3 | 门面零业务内容：prompt 基础段经 kit/插件注入（后核销修正 1 原则）；adapters 经插件闭包注册（消灭"后置注册"仪式） | 设计裁决 |
 | S4 | World 形状沿用（ctx/unload/store/archive/loop/prompt/meter/registry） | 避免双类型 |
 | S5 | **新增内核原语 `Plugin.softInject`**："在场则排后，缺席则无约束"的声明式软依赖——任意组合安全性的结构基础 | 本设计（见 §2.1） |
-| S6 | T1+T2 全量：拦截面三缺口（F0）+ token 词表治理（F0.5）+ 契约稳定性规矩（并入 F2）；四个标准 seam——settings/持久状态/credentials/遥测（T2A-D）全部进本轮 | 2026-09-20 对话 |
+| S6（修订） | T1 全量（F0 拦截面三缺口 + F0.5 token 治理 + 契约规矩）；**T2 四 seam 降级**：settings/state/credentials/telemetry 经「需动底层才能实现吗」检验——全部零地基改动可写成纯插件 → 不进底层议程，降为 F2 能力插件模式章 + 真实需求时一方参考插件 | 2026-09-20 对话（「底层开放基础接口，不过度实现」） |
 | S7 | seam 形态 = **自包含上层包**（服务 token + 类型 + 缺省提供方 + 插件，permission/sandbox-local 同款模式）——不动内核，契约随包走 | 设计裁决 |
 
 ## 2. 外部契约
@@ -106,20 +107,9 @@ export const llmStream = defineWaterfall<LlmRequest, AsyncGenerator<LlmChunk>>("
 - plugin-manager `tokenTable.set` 前查同名异体（不同对象同 name）→ **install 期 throw**（fail-closed）。
 - well-known 治理规矩（并入 F2 文档）：token 随其服务定义包发布；消费别人服务=依赖其包（模块单例保证对象同一）；禁止第三方复用平台 token 名。
 
-## 7. T2 四个标准 seam（自包含包，S7）
+## 7. 能力插件模式（原 T2 四 seam——降级裁决）
 
-### 7.1 T2A settings（packages/settings）：`ctx.settings`
-- `register(namespace, TypeBox schema)` 注册配置面 + `get<T>(namespace): Static<T>` 分层解析（插件缺省 < 文件层 < 运行时层）+ `set(namespace, patch)` 运行时变更（发 `settings/changed` 事件，插件可监听热响应）+ 提供方 seam（settings-file：json 后端）。
-- 端用户可配任意 agent 的标准面；宿主决定层叠来源。
-
-### 7.2 T2B 持久状态（packages/state）：`ctx.state`
-- `scope(namespace): { get(key): Promise<T|undefined>; set(key, v): Promise<void>; list(prefix?): Promise<readonly K[]> }` KV 契约；提供方 seam（state-memory 缺省 / state-json 落盘）；memory/索引类插件的 durable 落点（会话日志之外）。
-
-### 7.3 T2C credentials（packages/credentials）：`ctx.credentials`
-- `resolve(ref): Promise<Result<string>>`（引用式——配置持引用不持值）；提供方 seam（env/.env/file）；`redact(value)` 展示脱敏标准面。provider 换源不改消费方（dsh「rotated credential reaches the very next request」同语义）。
-
-### 7.4 T2D 遥测（packages/telemetry）：`ctx.telemetry`
-- `record(event: { kind: "span"|"metric"|"log"; name; fields; ts? })` + 字段脱敏钩子 + sink seam（缺省 stderr JSONL）。token-meter 用量归一入此面（迁移可选，挂账）。
+**检验标准**：「这个能力需要动底层才能实现吗？」settings/state/credentials/telemetry 四者全部**否**——service token 定义在上层包 + `ctx.provide` 即成能力 seam（permission/sandbox-local 同款形态），底层零改动。故不设地基波次，F2 作者文档立「能力插件模式」范式（token 定义/提供方可选换/消费方 tryUse 优雅降级），真实消费者出现时作一方参考插件实现（可换可弃非平台承诺）。原 §7.1-7.4 契约草案降为模式示例素材。
 
 ## 8. 契约稳定性规矩（并入 F2 作者文档）
 

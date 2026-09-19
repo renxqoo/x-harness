@@ -29,6 +29,10 @@ export interface DriverDeps {
   readonly dispatchRequest: (payload: unknown, dial: Dial) => Promise<Dial>;
   readonly dispatchRequestError: (payload: unknown) => Promise<{ readonly kind: "retry" } | undefined>;
   readonly dispatchTurnStopping: (payload: unknown) => Promise<void>;
+  /** F0② assistant 落账前纠（final = 原样透传） */
+  readonly dispatchAssistantSettle: (payload: unknown) => Promise<unknown>;
+  /** F0③ 流拦截（final = runtime.stream 原样） */
+  readonly dispatchLlmStream: (request: unknown) => Promise<AsyncIterable<LlmChunk>>;
 }
 
 export interface ResolvedOptions {
@@ -114,7 +118,14 @@ export async function beginStep(scope: TurnScope, step: number, isStep0: boolean
     messages: session.deriveMessages(),
     signal: controller.signal,
   });
-  if (isEnterDecision(decision)) return { kind: "enter", entries: batch.entries };
+  if (isEnterDecision(decision)) {
+    const rewritten = (decision as { readonly messages?: readonly InboxEntry[] }).messages;
+    if (rewritten !== undefined) {
+      if (isStep0 && rewritten.length === 0) return { kind: "empty" }; // F0①：改写空 = 闭 turn（领取项被显式清除——中间件语义）
+      return { kind: "enter", entries: rewritten }; // 落账走重写版
+    }
+    return { kind: "enter", entries: batch.entries };
+  }
   reinsertClaimed(session, inbox, isStep0);
   return { kind: "blocked" };
 }
@@ -272,7 +283,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     const consume = async (): Promise<void> => {
-      const stream = deps.llm.stream({
+      const stream = await deps.dispatchLlmStream({ // F0③：流拦截面（final = runtime.stream）
         model: dial.model,
         ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
         ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
@@ -319,24 +330,33 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
       if (retry?.kind === "retry" && !signal.aborted) continue; // 不重落 system/user/header
       return { kind: "fatal", outcome: { kind: "error", message: settlement.error } };
     }
-    const content = [...accum.textBlock, ...accum.toolUseBlocks];
     const usage = accum.usageSnapshot;
+    // F0②：assistant 落账前纠——改写版即落账版（「模型可见必落盘」保持）
+    const settled = await deps.dispatchAssistantSettle({
+      session: session.id,
+      turn,
+      step,
+      content: [...accum.textBlock, ...accum.toolUseBlocks],
+      stopReason: settlement.stopReason,
+      ...(settlement.interrupted === true ? { interrupted: true } : {}),
+      signal,
+    }) as { content: readonly ContentBlock[]; stopReason: "stop" | "max-tokens"; interrupted?: true };
     appendSurfaceEvent(session, {
       type: "assistant/message",
       data: {
         turn,
         step,
-        content,
+        content: settled.content,
         ...(usage !== undefined ? { usage } : {}),
-        stopReason: settlement.stopReason,
-        ...(settlement.interrupted === true ? { interrupted: true } : {}),
+        stopReason: settled.stopReason,
+        ...(settled.interrupted === true ? { interrupted: true } : {}),
       },
       surfaceOp: "append",
     });
     deps.emitStreamFrame(turn, step, { phase: "end", kind: "message" });
     return {
       kind: "ok",
-      message: { content, stopReason: settlement.stopReason, ...(settlement.interrupted === true ? { interrupted: true } : {}) },
+      message: { content: settled.content, stopReason: settled.stopReason, ...(settled.interrupted === true ? { interrupted: true } : {}) },
     };
   }
 }
