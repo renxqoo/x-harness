@@ -186,7 +186,8 @@ createAgentDelegationPlugin()                               // agentsDirs 走缺
   `llmRuntime.registerAdapter` 直注册（e2e real.ts 同法）。适配器名 = provider 名 =
   `AgentOptions.provider`。`--api-key` 在此折进所选档案的 adapter options。
 - **llm-retry 缺省策略**（每 provider 与 default 同值）：`{maxRetries: 3, initialDelayMs: 500,
-  maxDelayMs: 30_000, jitterRatio: 0.2}`（不暴露 CLI flag；瞬时码集走包缺省）。
+  maxDelayMs: 30_000, jitterRatio: 0}`（不暴露 CLI flag；瞬时码集走包缺省；jitterRatio 契约
+  为整数 [0,1]，取 0 = 确定性退避——单用户进程无惊群面）。
 - **sandbox options**：root=cwd，writableExtra/denyReadExtra/protectedPaths/allowedDomains/
   networkOff 全缺省（域名白名单 + 会话授权，ask 经 broker，缺席退化 deny——包契约）。
   probe 失败（无 wrapper / linux 无 socat）= 装配期 throw = 进程 exit 1 + stderr 说明

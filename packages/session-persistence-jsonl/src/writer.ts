@@ -8,6 +8,8 @@ import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionEvent, SessionHeader } from "@x-harness/session";
 import { canonicallyEqual } from "./equal.ts";
+import { acquireSessionLock } from "./lock.ts";
+import type { SessionLock } from "./lock.ts";
 
 export interface SessionWriter {
   /** lines 为已含尾换行的完整行；空数组为纯 sync 屏障。失败时截断回滚到批前长度再重抛（重试无重复字节） */
@@ -41,6 +43,35 @@ export async function openSessionWriter(
   currentEvents: readonly SessionEvent[],
 ): Promise<OpenedWriter> {
   await mkdir(dir, { recursive: true }); // 会话目录惰性创建（幂等；含 root 前缀）
+  // 单写者锁先于任何卷操作（跨进程双开交织写防护，docs/CLI.md §2.6）；
+  // 打开失败必须释放，否则一次失败永久占死会话
+  const lock = await acquireSessionLock(dir, dirName(dir));
+  let opened: OpenedWriter;
+  try {
+    opened = await openUnlocked(dir, header, currentEvents);
+  } catch (error) {
+    await lock.release();
+    throw error;
+  }
+  return { writer: withLockRelease(opened.writer, lock), prefixLength: opened.prefixLength };
+}
+
+/** close 时随 fd 一并释放锁（先关 fd 后释放，任何路径都尽力而为） */
+function withLockRelease(writer: SessionWriter, lock: SessionLock): SessionWriter {
+  return {
+    append: (lines) => writer.append(lines),
+    sync: () => writer.sync(),
+    close: async () => {
+      try {
+        await writer.close();
+      } finally {
+        await lock.release();
+      }
+    },
+  };
+}
+
+async function openUnlocked(dir: string, header: SessionHeader, currentEvents: readonly SessionEvent[]): Promise<OpenedWriter> {
   const eventsPath = join(dir, "events.jsonl");
   const headerPath = join(dir, "header.json");
 
