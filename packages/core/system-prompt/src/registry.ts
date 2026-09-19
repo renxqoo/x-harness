@@ -1,5 +1,8 @@
-// sections/variables 注册表（docs/SYSTEM-PROMPT.md §1）：锚点定位代数（after/before，注册期环检测）、
-// 同名覆盖（沿用旧注册序）+ 身份守卫注销、{{var}} 单层插值（函数抛错保持原样）、sha256 指纹、排序缓存。
+// sections/variables 注册表（docs/SYSTEM-PROMPT.md §1；ELEVATION-DESIGN §2.1 W2C）：
+// 根层锚点定位代数（after/before，注册期环检测）、同名覆盖（沿用旧注册序）+ 身份守卫注销、
+// {{var}} 单层插值（函数抛错保持原样）、sha256 指纹、排序缓存；会话层 section（锚定子集：
+// 会话段只锚根层段名——跨层环构造性不存在；位次派生根层当前序——根序不因会话注册漂移）。
+// 缓存双向失效：根层变异 → 全部会话合并缓存失效；会话层变异 → 仅该会话失效（键=双版本）。
 
 import { createHash } from "node:crypto";
 import type { PromptVariable, SectionSpec, SystemPromptService } from "./types.ts";
@@ -14,11 +17,22 @@ interface SectionEntry {
   readonly regIndex: number;
 }
 
+/** 会话层合并投影缓存条目：双版本键（根版本, 会话版本）——任一变异即失效 */
+interface MergedCache {
+  readonly rootVersion: number;
+  readonly sessionVersion: number;
+  readonly order: readonly { readonly name: string; readonly session: boolean }[];
+}
+
 export function createPromptRegistry(): SystemPromptService {
   const sections = new Map<string, SectionEntry>();
   const variables = new Map<string, { readonly value: PromptVariable; readonly identity: object }>();
+  const sessionLayers = new Map<string, Map<string, SectionEntry>>();
   let regCounter = 0;
+  let rootVersion = 0;
   let orderCache: readonly string[] | undefined;
+  const sessionVersions = new Map<string, number>();
+  const mergedCaches = new Map<string, MergedCache>();
 
   const anchorOf = (spec: SectionSpec): string | undefined => spec.after ?? spec.before;
 
@@ -72,26 +86,119 @@ export function createPromptRegistry(): SystemPromptService {
     return sections.get(name)?.regIndex ?? 0;
   }
 
+  /** 根层注册/注销/覆盖的统一失效面：根序缓存 + 全部会话合并缓存（双向失效） */
+  function invalidateRoot(): void {
+    orderCache = undefined;
+    rootVersion += 1;
+    mergedCaches.clear();
+  }
+
+  /** 会话层分桶：after/before 按根锚名分桶，无锚/缺席锚落尾（注册序）。
+   *  注：layer 是 Map<name, entry>——层内同名后者胜由 Map 语义承担（键唯一，值最新） */
+  function bucketLayer(layer: Map<string, SectionEntry> | undefined): {
+    readonly after: Map<string, SectionEntry[]>;
+    readonly before: Map<string, SectionEntry[]>;
+    readonly tail: SectionEntry[];
+  } {
+    const after = new Map<string, SectionEntry[]>();
+    const before = new Map<string, SectionEntry[]>();
+    const tail: SectionEntry[] = [];
+    if (layer === undefined) return { after, before, tail };
+    for (const entry of [...layer.values()].sort((a, b) => a.regIndex - b.regIndex)) {
+      const anchor = anchorOf(entry.spec);
+      if (anchor === undefined || !sections.has(anchor)) {
+        tail.push(entry); // 无锚/缺席锚（含锚被注销）→ 根段之后
+        continue;
+      }
+      const buckets = entry.spec.after !== undefined ? after : before;
+      const bucket = buckets.get(anchor) ?? [];
+      bucket.push(entry);
+      buckets.set(anchor, bucket);
+    }
+    return { after, before, tail };
+  }
+
+  /** 会话层合并投影：根序游走 + 会话段按锚插位（δ/2ⁿ 语义与根层代数同款，n 按会话层注册序）。
+   *  无锚/缺席锚会话段排全部根段之后（按会话层注册序）；同名会话段顶替根段位（覆盖）。 */
+  function mergedOrder(sessionId: string): readonly { readonly name: string; readonly session: boolean }[] {
+    if (orderCache === undefined) orderCache = resolveOrder();
+    const sessionVersion = sessionVersions.get(sessionId) ?? 0;
+    const cached = mergedCaches.get(sessionId);
+    if (cached !== undefined && cached.rootVersion === rootVersion && cached.sessionVersion === sessionVersion) return cached.order;
+
+    const { after: afterBuckets, before: beforeBuckets, tail } = bucketLayer(sessionLayers.get(sessionId));
+    // 桶内序：after 按 n 降序（后注册更贴近锚——与根层 δ/2ⁿ 一致）；before 按 n 升序
+    const byRegDesc = (a: SectionEntry, b: SectionEntry): number => b.regIndex - a.regIndex;
+    const byRegAsc = (a: SectionEntry, b: SectionEntry): number => a.regIndex - b.regIndex;
+    // 跳过：与根段同名的会话段（经根槽顶替呈现——不双发）
+    const rootSet = new Set(orderCache);
+
+    const order: { readonly name: string; readonly session: boolean }[] = [];
+    for (const name of orderCache) {
+      for (const entry of (beforeBuckets.get(name) ?? []).sort(byRegAsc)) {
+        if (!rootSet.has(entry.spec.name)) order.push({ name: entry.spec.name, session: true });
+      }
+      order.push({ name, session: false }); // 根段（被会话同名覆盖时文本取会话版——assemble 按名查层）
+      for (const entry of (afterBuckets.get(name) ?? []).sort(byRegDesc)) {
+        if (!rootSet.has(entry.spec.name)) order.push({ name: entry.spec.name, session: true });
+      }
+    }
+    for (const entry of tail.sort(byRegAsc)) {
+      if (!rootSet.has(entry.spec.name)) order.push({ name: entry.spec.name, session: true });
+    }
+    const computed: MergedCache = { rootVersion, sessionVersion, order };
+    mergedCaches.set(sessionId, computed);
+    return computed.order;
+  }
+
+  /** 层内注册公共面（根/会话共用参数门与身份守卫；会话层附加锚定子集门） */
+  function registerIn(layer: Map<string, SectionEntry>, spec: SectionSpec, isSession: boolean): () => void {
+    const invalid = sectionSpecError(spec);
+    if (invalid !== undefined) throw invalid;
+    if (isSession) {
+      // 锚定子集：会话段锚名不得指向本会话层（只许根层段名或缺席 no-op）
+      const anchor = anchorOf(spec);
+      if (anchor !== undefined && !sections.has(anchor) && layer.has(anchor)) {
+        throw new Error(`session section "${spec.name}" may only anchor a root section (got session section "${anchor}")`);
+      }
+    } else if (wouldCycle(spec.name, spec)) {
+      const anchor = anchorOf(spec) as string;
+      throw new Error(`section cycle: ${spec.name} -> ${anchor}`);
+    }
+    const identity = {};
+    const previous = layer.get(spec.name);
+    layer.set(spec.name, { spec, identity, regIndex: previous?.regIndex ?? regCounter++ });
+    return () => {
+      const current = layer.get(spec.name);
+      if (current?.identity === identity) layer.delete(spec.name);
+    };
+  }
+
   return {
     section: (spec: SectionSpec) => {
-      const invalid = sectionSpecError(spec);
-      if (invalid !== undefined) throw invalid;
-      if (wouldCycle(spec.name, spec)) {
-        const anchor = anchorOf(spec) as string;
-        throw new Error(`section cycle: ${spec.name} -> ${anchor}`);
-      }
-      const identity = {};
-      const previous = sections.get(spec.name);
-      sections.set(spec.name, { spec, identity, regIndex: previous?.regIndex ?? regCounter++ });
-      orderCache = undefined;
+      const off = registerIn(sections, spec, false);
+      invalidateRoot(); // 注册/覆盖/注销统一走双失效面（根变异 → 全部会话合并缓存失效）
       return () => {
-        const current = sections.get(spec.name);
-        if (current?.identity === identity) {
-          sections.delete(spec.name);
-          orderCache = undefined;
-        }
+        off();
+        invalidateRoot();
       };
     },
+
+    scoped: (sessionId: string) => ({
+      section: (spec: SectionSpec) => {
+        const layer = sessionLayers.get(sessionId) ?? new Map<string, SectionEntry>();
+        sessionLayers.set(sessionId, layer);
+        const off = registerIn(layer, spec, true);
+        const bump = (): void => {
+          sessionVersions.set(sessionId, (sessionVersions.get(sessionId) ?? 0) + 1); // 仅本会话合并缓存失效
+        };
+        bump();
+        return () => {
+          off();
+          bump();
+        };
+      },
+    }),
 
     variable: (name: string, value: PromptVariable) => {
       if (typeof name !== "string" || name === "") throw new Error("variable name must be a non-empty string");
@@ -106,10 +213,15 @@ export function createPromptRegistry(): SystemPromptService {
       };
     },
 
-    assemble: () => {
-      // 排序缓存：段集未变复用；插值与指纹每次现算（变量是惰性闭包，结果不可缓存）
-      if (orderCache === undefined) orderCache = resolveOrder();
-      const joined = orderCache.map((name) => resolveText(name, sections.get(name)?.spec.text)).join("\n\n");
+    assemble: (options) => {
+      const sessionId = options?.sessionId;
+      const layer = sessionId === undefined ? undefined : sessionLayers.get(sessionId);
+      const order = sessionId === undefined
+        ? (orderCache === undefined ? (orderCache = resolveOrder()) : orderCache).map((name) => ({ name, session: false }))
+        : mergedOrder(sessionId);
+      const joined = order
+        .map(({ name }) => resolveText(name, (layer?.get(name) ?? sections.get(name))?.spec.text))
+        .join("\n\n");
       const text = interpolate(joined, variables);
       return { text, fingerprint: createHash("sha256").update(text).digest("hex").slice(0, 16) };
     },

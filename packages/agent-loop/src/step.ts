@@ -134,7 +134,7 @@ function insertBatch(session: Session, target: InboxTarget, entries: readonly In
 export function anchorSystem(scope: TurnScope, step: number): void {
   const { deps, turn } = scope;
   const session = deps.session;
-  const systemText = deps.options.systemPrompt ?? deps.prompt.assemble().text;
+  const systemText = deps.options.systemPrompt ?? deps.prompt.assemble({ sessionId: session.id }).text; // W2C：会话层合并投影（无会话段时与缺省逐字节等价）
   const nodes = session.surface();
   const anchorIndex = anchorIndexOf(nodes);
   if (anchorIndex < 0) {

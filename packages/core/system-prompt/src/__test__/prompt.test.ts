@@ -203,3 +203,81 @@ describe("排序缓存与契约（A10 适配）", () => {
     expect(second.fingerprint).toBe(first.fingerprint);
   });
 });
+
+// —— W2C：会话层（锚定子集/覆盖/确定性/双向缓存——ELEVATION-MIGRATION-W2C §5）——
+
+describe("会话层（W2C）", () => {
+  it("M-1 等价断言：无会话注册时 assemble({id}) ≡ assemble()（逐字节）", () => {
+    const svc = reg();
+    svc.section({ name: "a", text: "A" });
+    svc.section({ name: "b", after: "a", text: "B" });
+    expect(layerNames(svc, "s1")).toEqual(names(svc));
+  });
+
+  it("会话段锚根段插位：after 根段之后；δ/2ⁿ 后注册更贴近锚；before 对偶", () => {
+    const svc = reg();
+    svc.section({ name: "core", text: "C" });
+    svc.section({ name: "tail", text: "T" });
+    svc.scoped("s1").section({ name: "first", after: "core", text: "F" });
+    svc.scoped("s1").section({ name: "second", after: "core", text: "S" });
+    expect(layerNames(svc, "s1")).toEqual(["C", "S", "F", "T"]); // second 后注册更贴近
+    svc.scoped("s2").section({ name: "pre", before: "core", text: "P" });
+    expect(layerNames(svc, "s2")).toEqual(["P", "C", "T"]);
+    expect(names(svc)).toEqual(["C", "T"]); // 他会话/缺省不受影响
+  });
+
+  it("同名会话段顶替根段位（覆盖，不双发）；层内同名后者胜", () => {
+    const svc = reg();
+    svc.section({ name: "core", text: "ROOT" });
+    svc.section({ name: "x", text: "X" });
+    svc.scoped("s1").section({ name: "core", text: "SESSION" });
+    expect(layerNames(svc, "s1")).toEqual(["SESSION", "X"]); // 单次呈现、根位
+    const face = svc.scoped("s1");
+    face.section({ name: "extra", text: "E1" });
+    face.section({ name: "extra", text: "E2" });
+    expect(layerNames(svc, "s1")).toEqual(["SESSION", "X", "E2"]);
+  });
+
+  it("无锚/缺席锚会话段排全部根段之后（会话层注册序）", () => {
+    const svc = reg();
+    svc.section({ name: "core", text: "C" });
+    svc.scoped("s1").section({ name: "free", text: "FREE" });
+    svc.scoped("s1").section({ name: "ghosted", after: "ghost", text: "G" });
+    expect(layerNames(svc, "s1")).toEqual(["C", "FREE", "G"]);
+  });
+
+  it("锚定子集违规：会话段锚本会话层段名 → throw", () => {
+    const svc = reg();
+    svc.section({ name: "core", text: "C" });
+    const face = svc.scoped("s1");
+    face.section({ name: "sibling", text: "S" });
+    expect(() => face.section({ name: "bad", after: "sibling", text: "B" })).toThrow(/may only anchor a root section/);
+  });
+
+  it("双向缓存失效：根层变异 → 会话投影即时变；会话变异 → 他会话投影不变", () => {
+    const svc = reg();
+    svc.section({ name: "core", text: "C" });
+    svc.scoped("s1").section({ name: "s1only", text: "ONE" });
+    expect(layerNames(svc, "s1")).toEqual(["C", "ONE"]);
+    const offRoot = svc.section({ name: "newroot", text: "N" }); // 根变异
+    expect(layerNames(svc, "s1")).toEqual(["C", "N", "ONE"]); // s1 投影即时变（缓存失效）
+    svc.scoped("s2").section({ name: "s2only", text: "TWO" }); // 会话变异
+    expect(layerNames(svc, "s1")).toEqual(["C", "N", "ONE"]); // s1 不受影响
+    expect(layerNames(svc, "s2")).toEqual(["C", "N", "TWO"]);
+    offRoot();
+    expect(layerNames(svc, "s1")).toEqual(["C", "ONE"]); // 根注销同样失效
+  });
+
+  it("确定性：同参两次 assemble 逐字节相等（合并缓存复用）", () => {
+    const svc = reg();
+    svc.section({ name: "a", text: "A" });
+    svc.scoped("s1").section({ name: "b", after: "a", text: "B" });
+    const first = svc.assemble({ sessionId: "s1" });
+    expect(svc.assemble({ sessionId: "s1" })).toEqual(first);
+  });
+});
+
+function layerNames(svc: SystemPromptService, sessionId?: string): string[] {
+  const text = svc.assemble(sessionId === undefined ? undefined : { sessionId }).text;
+  return text === "" ? [] : text.split("\n\n");
+}

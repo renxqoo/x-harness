@@ -22,6 +22,10 @@ export interface AssembledPrompt {
 
 export interface SystemPromptService {
   section(spec: SectionSpec): () => void;
+  /** 会话层注册面（W2C，ELEVATION-DESIGN §2.1）：锚定子集——会话段只锚根层段名；
+   *  同名会话段顶替根段位（覆盖）；变量不分层（世界级——DESIGN §3 裁决） */
+  scoped(sessionId: string): { section(spec: SectionSpec): () => void };
   variable(name: string, value: PromptVariable): () => void;
-  assemble(): AssembledPrompt;
+  /** 合并投影：根层 ∪ 该会话层（缺省参会话无关 = 纯根层，向后兼容） */
+  assemble(options?: { readonly sessionId?: string }): AssembledPrompt;
 }
