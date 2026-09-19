@@ -1,6 +1,7 @@
 # TODO：任务清单件（件 15）
 
-> 状态：**已核销**（两路定稿前审查 19 项 + 两路收口审查 14 项全处置——§9/§10；数字见 §11）
+> 状态：**修订B 已实施**（§1–§11 为初版口径，其中共享清单裁决已由 §13 修订B 撤销——
+> 各节撤销指针见文内注记；两轮四路审查处置见 §9/§10/§13.6/§14）
 > 级别：中（todo-tools 新包 + 4 个 LLM 可见新工具 + e2e 旅程）
 > 规格：`/Users/wrr/work/claude-tool/task-tools.md`（Claude Code Task 工具族中的 4 个
 > 任务清单动词；另 2 个后台任务动词已由件14 task_output/task_stop 兑现）。
@@ -14,7 +15,8 @@ todo 清单四动词落地为独立插件 `@x-harness/todo-tools`：`task_create
 （参数集、per-param description、enum、required 面）与工具 description 正文对齐
 规格（用户指令）；本仓事实冲突处按类别落档（§2）。
 
-不做（落档 §7）：持久化/resume 恢复、环检测、UI 观察面/事件总线、会话隔离、条目数帽。
+不做（落档 §7）：~~持久化/resume 恢复、会话隔离~~（持久化与 per-session 归属已由 §13 修订B
+兑现——其余三条维持）、环检测、UI 观察面/事件总线、条目数帽。
 
 ## 1. 契约
 
@@ -61,9 +63,9 @@ todo 清单四动词落地为独立插件 `@x-harness/todo-tools`：`task_create
 - **不检测依赖环**（A→B→A）：规格未定义，描述未承诺；环的后果是两条任务互相
   blocked（TaskList 如实呈现），模型可自纠（落档 §7）。
 
-### 1.3 清单边界（与件14 后台任务的本质差异）
+### 1.3 清单边界（**已由 §13 修订B 撤销——清单改每会话一份**；以下为初版口径，保留决策痕迹）
 
-- **共享清单**（装配内单例，非会话键控）：规格 §8 多代理协作语义——owner 认领、
+- ~~**共享清单**（装配内单例，非会话键控）~~【撤销：该语义无生产消费方——§13.1】规格 §8 多代理协作语义——owner 认领、
   「各代理通过 TaskList 领取无主、未阻塞的 pending 任务」——要求跨会话可见。
   本仓 agent-delegation 子代理是独立 session，会话键控会切断该协作面。与
   BackgroundTasks 会话键控的差异落档：后台任务是**进程资源**（有属主/杀灭边界），
@@ -173,14 +175,14 @@ B. e2e 旅程（真实 agent turn 驱动 create → in_progress → 依赖 → l
    deleted 收尾全链 + 服务快照终态断言）+ TASKS.md 注记——四门绿。
 每步独立提交可回滚；收口前两路对抗审查（仓规）。
 
-## 5. 裁决
+## 5. 裁决（共享清单一行已由 §13 修订B 撤销；其余维持）
 
 - **用户裁决**：参数与提示词对齐规格（原始指令「参数和提示词一样就好」；工具名
   引用改写与张力提法保留是「对齐本仓实名/逐字」的推论，见 §2）。
 - 默认裁决（否决窗口内可推翻）：
   - 工具名小写蛇形 `task_create` 族（规格 TaskCreate 家族命名 + 本仓 bash/read/write
     小写化先例——模型侧家族性与仓内命名规约同时成立）；
-  - 共享清单非会话键控（规格 §8 协作语义——见 §1.3 论据）；
+  - ~~共享清单非会话键控（规格 §8 协作语义——见 §1.3 论据）~~【撤销——§13.1 per-session】；
   - 不持久化（TASKS.md §9 先例）；
   - status set 语义不强制单向（§1.2 论据）；
   - 依赖引用未知 id 拒绝（fail-closed 仓规）；
@@ -213,7 +215,7 @@ B. e2e 旅程（真实 agent turn 驱动 create → in_progress → 依赖 → l
   dispatch → unknown-tool + ctx.use(todoList) throw not provided——负向边界锁）/
   apply 中途 throw 回卷（预注册 task_create 后装配 → 整体失败 → registry 空 +
   tryUse(todoList) undefined）；
-- **共享语义锚**：两个不同 session 的调用方互相可见对方创建的任务；
+- ~~**共享语义锚**：两个不同 session 的调用方互相可见对方创建的任务~~【§13.4 反转为隔离断言】；
 - **e2e**：真实 agent turn 四动词全链（create → in_progress → 依赖建立 → list →
   complete → deleted → 删后 not-found 收尾）+ tool/result 事件落账数量 + 铸文锚
   （list 行格式 / blocked by 注记 / Deleted 回执）+ `ctx.use(todoList)` 终态断言。
@@ -553,3 +555,35 @@ await 不破坏段内原子、dispose 与 in-flight 无错序窗口、jsonl per-
 兼容、surface/repair/resume 无冲突（log-only 不进投影）、data 形态完备（边集展平
 无损）、`_anon` 无撞桶、DSH 取舍如实、依赖方向无环、e2e resume 装置可行、旧档案
 自然兼容（词表子集）。
+
+## 14. 修订B 收口审查处置（两路并行，17 项全处置）与收口数字
+
+**路 A（契约/语义）**：P1-1 覆盖率回退（99.21<100）→ **采纳根治**：快照往返全字段矩阵
+（含 activeForm/多 blocker 边排序/update 路径恢复入口）——**回到 100/100/100/100**。
+P1-2 包出口头注释与实现相反 → **采纳**（index.ts/descriptions.ts 改 §13 口径）。
+P1-3 TODO.md 多节未同变 → **采纳**：§0/§1.3/§5/§6 加撤销指针（注记式取代，正文留决策
+痕迹）。P1-4 SESSION.md 词表三处未同变 → **采纳**：标题 16 + log-only 清单 + 表格补
+todo/snapshot 行。P2-5 多桶并发用例缺失 → **采纳**（两会话并发 + 各卷尾 last-wins）。
+P2-6 evict 用例名实不符 → **采纳**（正向逐出断言：id 从 1 重计）。P2-7/8/9 tools.test
+头注释/组名、gates.test「16 词条」、descriptions 张力注记 → **采纳**。P3-10 缺席漏
+update → **采纳**。P3-11 自愈只测覆盖 → **采纳**（删任务自愈变体）。P3-12 events 全卷
+拷贝 → 与 B 合并（thunk 化）。P3-13 id > 2^53 精度边界 → **落档 §13.5**（工具面自产
+不可达——seq 单调计数不会超安全整数；仅伪造档案面，DSH 同款接受面）。P3-14 并发首触达
+区分力弱 → **采纳**（卷置两条快照，取尾不取首可观测）。
+
+**路 B（并发/生命周期/假绿）**：P1-1 **服务面读探测创建空桶、劫持工具面惰性恢复**
+（真 bug：宿主 get/list 探测后该会话 agent 的 task_list 永远 No tasks、恢复失效）→
+**采纳根治**：bucketFor 拆 peek（读路径零创建副作用）/ensure（写路径）；restore 的
+桶在场判定先行（thunk 取卷——顺带根治 P2-3 白拷贝）；补「服务面读探测 → 工具面恢复
+仍生效」回归锚。P2-1 并发单调包含钉不死 append 同步性 → **采纳**：tool.execute 不
+await 立即断言卷已含快照（延迟 append 形态必挂的直钉用例）。P2-2 restore 幂等恒真 →
+**采纳**：改「逐出后同卷重 fold 全等」真形态。P2-3/P2-4 → 与 A 合并。P3-1=与 A-P3-10
+合并。P3-2=与 A-P2-6 合并。P3-3 多桶隔离名含依赖零操作 → **采纳**（跨桶引用
+invalid-args 断言）。P3-4=与 A-P2-8 合并。P3-5 activeForm 往返 → 与 A-P1-1 合并。
+P3-6 e2e resume 后持久化继续工作 → **采纳**（rc-2 新快照含 id 3 落卷断言）。
+
+**收口数字（2026-09-19）**：四门 lint（本件范围）0-0 / tsc 0 / build ok / test
+**1261 例全绿**（todo-tools 67：store 32 + tools 26 + plugin 5 + descriptions 4）；
+todo-tools 覆盖率 **100/100/100/100**；全仓 94.12/90.82/94.21/96.52；e2e 十一场景
+（含 todo 旅程 resume 段）全绿。全仓 lint 余 1 错 3 警属 real.ts/gap-probe.ts（他人
+基线，不越界代修）。

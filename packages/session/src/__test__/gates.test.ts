@@ -140,7 +140,7 @@ const brokenSamples: Record<string, unknown> = {
 };
 
 describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵）", () => {
-  it("15 词条合法样本全部放行", () => {
+  it("16 词条合法样本全部放行", () => {
     for (const [type, data] of Object.entries(validSamples)) {
       expect(gateEvent(type, data), type).toBeUndefined();
     }

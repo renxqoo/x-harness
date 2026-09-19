@@ -3,8 +3,10 @@
 // ① 描述内工具名引用改写为本仓实名（TaskUpdate→task_update、TaskList→task_list、
 //    TaskGet→task_get——本仓注册名，指称的工具必须在工具列表里存在）；
 // ② schema 不设 additionalProperties: false（本仓校验层探活不支持布尔节点——实现层口径）；
-// ③ 张力提法保留原文、语义以实现为准（"current coding session" 实为装配内共享清单；
-//    "shown in spinner" 本仓无 spinner 面、字段照存；"Plan mode" 本仓无该面，场景指引无害）。
+// ③ 张力提法保留原文、语义以实现为准（"current coding session" 在修订B per-session 桶下
+//    与实现一致（张力已消解——docs/TODO.md §13.1）；"shown in spinner" 本仓无 spinner 面、
+//    字段照存；"Plan mode" 本仓无该面，场景指引无害；TaskList 的 owner 认领在单会话内是
+//    规格带来的虚指——字段照存，§13.1 落档）。
 
 export const TASK_CREATE_DESCRIPTION = `Use this tool to create a structured task list for your current coding session. This helps you track progress, organize complex tasks, and demonstrate thoroughness to the user.
 

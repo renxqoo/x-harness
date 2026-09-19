@@ -263,7 +263,7 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
       snapEvent({ seq: 1, tasks: [{ id: "1", subject: "A", status: "pending" }], edges: [] }),
       snapEvent({ seq: 3, tasks: [{ id: "1", subject: "A", status: "completed", owner: "w" }, { id: "3", subject: "C", status: "pending" }], edges: [["1", "3"]] }),
     ];
-    store.restore(undefined, events);
+    store.restore(undefined, () => events);
     const list = store.list(undefined);
     expect(list.length).toBe(2);
     expect(list[0]).toMatchObject({ id: "1", status: "completed", owner: "w" });
@@ -275,7 +275,7 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
 
   it("restore 深拷贝：恢复后 update 可变更（卷内冻结对象不穿透为 row 引用）", () => {
     const store = createTodoStore();
-    store.restore(undefined, [snapEvent({ seq: 1, tasks: [{ id: "1", subject: "A", status: "pending", metadata: { k: 1 } }], edges: [] })]);
+    store.restore(undefined, () => [snapEvent({ seq: 1, tasks: [{ id: "1", subject: "A", status: "pending", metadata: { k: 1 } }], edges: [] })]);
     const changed = store.update(undefined, "1", { subject: "A2" });
     expect(changed).toMatchObject({ ok: true, task: { subject: "A2" } });
     const cleared = store.update(undefined, "1", { metadata: { k: null } });
@@ -286,34 +286,40 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
     const store = createTodoStore();
     make(store, "A");
     store.update(undefined, "1", { status: "in_progress" });
-    store.restore(undefined, [snapEvent({ seq: 5, tasks: [{ id: "5", subject: "stale", status: "pending" }], edges: [] })]);
+    store.restore(undefined, () => [snapEvent({ seq: 5, tasks: [{ id: "5", subject: "stale", status: "pending" }], edges: [] })]);
     const list = store.list(undefined);
     expect(list.length).toBe(1);
     expect(list[0]).toMatchObject({ id: "1", status: "in_progress" });
   });
 
-  it("空卷/无快照事件 → 全新桶；restore 幂等（同卷两次结果全等）", () => {
+  it("空卷/无快照事件 → 全新桶；restore 幂等（逐出后同卷重 fold 结果全等）", () => {
     const store = createTodoStore();
-    store.restore(undefined, []);
-    store.restore(undefined, [{ type: "user/message", data: {} } as SessionEvent]);
+    store.restore(undefined, () => []);
+    store.restore(undefined, () => [{ type: "user/message", data: {} } as SessionEvent]);
     expect(store.list(undefined)).toEqual([]);
     const events = [snapEvent({ seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "pending" }], edges: [["1", "2"]] })];
-    store.restore(undefined, events);
+    store.restore(undefined, () => events);
     const once = store.snapshotOf(undefined);
-    store.restore(undefined, events);
+    store.restore(undefined, () => events); // 桶在场跳过——快照不变
+    expect(store.snapshotOf(undefined)).toEqual(once);
+    store.evict(undefined as never); // 真幂等：逐出后同卷重 fold 结果全等
+    store.restore(undefined, () => events);
     expect(store.snapshotOf(undefined)).toEqual(once);
   });
 
-  it("evict 逐出：同会话再触达 = 新桶（旧状态不携带）", () => {
+  it("evict 逐出：同会话再触达 = 新桶（id 从 1 重计）；他桶不受波及", () => {
     const store = createTodoStore();
-    make(store, "A");
+    const a1 = store.create("sess-a" as never, { subject: "A1" });
+    expect(a1).toMatchObject({ ok: true, task: { id: "1" } });
+    store.evict("sess-a" as never);
+    expect(store.list("sess-a" as never)).toEqual([]); // 逐出生效（非 no-op）
+    const rebuilt = store.create("sess-a" as never, { subject: "A1-new" });
+    expect(rebuilt).toMatchObject({ ok: true, task: { id: "1" } }); // 新桶 id 从 1 重计
     store.evict("sess-x" as never);
-    make(store, "B");
-    // 键控逐出按 SessionId——undefined 匿名桶不被 sess-x 逐出波及
-    expect(store.list(undefined).length).toBe(2);
+    expect(store.list("sess-a" as never).length).toBe(1); // 键控逐出不波及他桶
   });
 
-  it("多桶隔离：两会话各自清单、id 各自从 1、依赖跨桶不互见", () => {
+  it("多桶隔离：两会话各自清单、id 各自从 1、依赖跨桶不可引用", () => {
     const store = createTodoStore();
     const a1 = store.create("sess-a" as never, { subject: "A1" });
     const b1 = store.create("sess-b" as never, { subject: "B1" });
@@ -321,5 +327,40 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
     expect(b1).toMatchObject({ ok: true, task: { id: "1" } });
     expect(store.get("sess-a" as never, "1")).toMatchObject({ ok: true, task: { subject: "A1" } });
     expect(store.list("sess-b" as never).length).toBe(1);
+    // B 桶无 id 2——A 桶的 2 不可跨桶依赖（桶内引用闭合）
+    store.create("sess-a" as never, { subject: "A2" });
+    expect(store.update("sess-b" as never, "1", { addBlockedBy: ["2"] })).toMatchObject({ ok: false, reason: "invalid-args" });
+  });
+
+  it("服务面读探测零副作用：get/list/snapshotOf 不建桶——工具面惰性恢复不被劫持（收口审查 B-P1-1 回归锚）", () => {
+    const store = createTodoStore();
+    const events = [snapEvent({ seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "pending" }], edges: [] })];
+    // 宿主经服务面探测（not-found / 空清单）——不得创建空桶
+    expect(store.get("s" as never, "1")).toMatchObject({ ok: false, reason: "not-found" });
+    expect(store.list("s" as never)).toEqual([]);
+    expect(store.snapshotOf("s" as never)).toEqual({ seq: 0, tasks: [], edges: [] });
+    store.restore("s" as never, () => events); // 之后工具面恢复仍生效
+    expect(store.list("s" as never).length).toBe(2);
+  });
+});
+
+describe("快照往返矩阵（收口审查回补——description/activeForm/owner/metadata 全字段往返）", () => {
+  it("snapshotOf → restore 全字段保真：可选字段在场与缺席两态", () => {
+    const store = createTodoStore();
+    const id1 = make(store, "A", { description: "d1", activeForm: "af1" });
+    const id2 = make(store, "B", { metadata: { k: [1, { nested: null }] } });
+    store.update(undefined, id1, { owner: "w", status: "in_progress" });
+    store.update(undefined, id2, { addBlockedBy: [id1] });
+    store.update(undefined, id2, { addBlockedBy: [id1] }); // 已有 1→2；再造多 blocker 排序面
+    const id3 = make(store, "C");
+    store.update(undefined, id2, { addBlockedBy: [id3] });
+    const snap = store.snapshotOf(undefined);
+    expect(snap.edges.length).toBe(2); // 两个 blocker（1、3）→ 边按数值序导出
+    const revived = createTodoStore();
+    revived.restore(undefined, () => [{ type: "todo/snapshot", data: snap } as SessionEvent]);
+    expect(revived.snapshotOf(undefined)).toEqual(snap); // 导出→恢复→再导出全等
+    const got = revived.get(undefined, id2);
+    expect(got).toMatchObject({ ok: true, task: { blockedBy: [id1, id3], metadata: { k: [1, { nested: null }] } } });
+    expect("activeForm" in (got.ok ? got.task : {})).toBe(false); // 缺席字段恢复后仍缺席
   });
 });

@@ -63,8 +63,8 @@ export interface TodoList {
   update(session: SessionId | undefined, taskId: string, patch: TodoUpdatePatch): TodoUpdateResult;
   /** 桶闭包状态导出（append 铸事件用） */
   snapshotOf(session: SessionId | undefined): TodoSnapshotEventData;
-  /** 惰性恢复：折尾取最后一条 todo/snapshot 深拷贝灌桶；桶在场即跳过（不覆盖内存变更） */
-  restore(session: SessionId | undefined, events: readonly SessionEvent[]): void;
+  /** 惰性恢复：折尾取最后一条 todo/snapshot 深拷贝灌桶；桶在场即跳过（不取卷——thunk 避免白拷贝） */
+  restore(session: SessionId | undefined, eventsOf: () => readonly SessionEvent[]): void;
   /** sessionDisposed 逐出（同 id 重建 = 新桶） */
   evict(session: SessionId): void;
 }

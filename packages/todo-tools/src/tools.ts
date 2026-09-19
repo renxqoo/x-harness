@@ -110,7 +110,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
       execute: async (args: Static<typeof createSchema>, ctx) => {
         const log = sessionLog(sessions, ctx.session);
         if ("content" in log) return log;
-        store.restore(ctx.session, log.log?.events() ?? []);
+        store.restore(ctx.session, () => log.log?.events() ?? []);
         const result = store.create(ctx.session, { subject: args.subject ?? "", description: args.description, activeForm: args.activeForm, metadata: args.metadata });
         if (!result.ok) return cast(result);
         return persist(log.log, store, ctx.session) ?? { content: `Created task ${result.task.id}: ${result.task.subject} (status: ${result.task.status})` };
@@ -124,7 +124,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
       execute: async (args: Static<typeof getSchema>, ctx) => {
         const log = sessionLog(sessions, ctx.session);
         if ("content" in log) return log;
-        store.restore(ctx.session, log.log?.events() ?? []);
+        store.restore(ctx.session, () => log.log?.events() ?? []);
         const result = store.get(ctx.session, args.taskId);
         return result.ok ? { content: cardText(result.task) } : cast(result);
       },
@@ -137,7 +137,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
       execute: async (_args: unknown, ctx) => {
         const log = sessionLog(sessions, ctx.session);
         if ("content" in log) return log;
-        store.restore(ctx.session, log.log?.events() ?? []);
+        store.restore(ctx.session, () => log.log?.events() ?? []);
         return { content: listText(store.list(ctx.session)) };
       },
       isConcurrencySafe: parallel,
@@ -149,7 +149,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
       execute: async (args: Static<typeof updateSchema>, ctx) => {
         const log = sessionLog(sessions, ctx.session);
         if ("content" in log) return log;
-        store.restore(ctx.session, log.log?.events() ?? []);
+        store.restore(ctx.session, () => log.log?.events() ?? []);
         const result = store.update(ctx.session, args.taskId, {
           subject: args.subject,
           description: args.description,

@@ -173,8 +173,7 @@ function applyUpdateEdges(bucket: Bucket, row: TodoRow, patch: TodoUpdatePatch):
 }
 
 function bucketUpdate(bucket: Bucket, taskId: string, patch: TodoUpdatePatch): TodoTask | { ok: true; deleted: true } | TodoReject {
-  const bad = checkTaskId(taskId);
-  if (bad !== undefined) return bad;
+  // taskId 形状已由分发层单点校验（checkTaskId）——此处只面对合法形状
   const row = bucket.rows.get(taskId);
   if (row === undefined) return reject("not-found", `${taskId}; no such task`);
   // 删除优先：status=deleted 与其余字段同传时余字段静默忽略（无「先改后删」中间态）
@@ -254,7 +253,9 @@ export function latestTodoSnapshot(events: readonly SessionEvent[]): TodoSnapsho
 export function createTodoStore(): TodoList {
   const buckets = new Map<string, Bucket>();
   const keyOf = (session: SessionId | undefined): string => session ?? "_anon";
-  const bucketFor = (session: SessionId | undefined): Bucket => {
+  /** 只读探测：桶缺席返回 undefined，零创建副作用——服务面读探测不得劫持工具面惰性恢复 */
+  const peekBucket = (session: SessionId | undefined): Bucket | undefined => buckets.get(keyOf(session));
+  const ensureBucket = (session: SessionId | undefined): Bucket => {
     const key = keyOf(session);
     let bucket = buckets.get(key);
     if (bucket === undefined) {
@@ -266,27 +267,38 @@ export function createTodoStore(): TodoList {
 
   return {
     create: (session, input) => {
-      const result = bucketCreate(bucketFor(session), input);
+      const result = bucketCreate(ensureBucket(session), input);
       return "ok" in result ? result : { ok: true, task: result };
     },
     get: (session, taskId) => {
       const bad = checkTaskId(taskId);
       if (bad !== undefined) return bad;
-      const result = bucketGet(bucketFor(session), taskId);
+      const bucket = peekBucket(session);
+      if (bucket === undefined) return reject("not-found", `${taskId}; no such task`);
+      const result = bucketGet(bucket, taskId);
       return "ok" in result ? result : { ok: true, task: result };
     },
-    list: (session) => bucketList(bucketFor(session)),
+    list: (session) => {
+      const bucket = peekBucket(session);
+      return bucket === undefined ? [] : bucketList(bucket);
+    },
     update: (session, taskId, patch) => {
-      const result = bucketUpdate(bucketFor(session), taskId, patch);
+      const bad = checkTaskId(taskId);
+      if (bad !== undefined) return bad;
+      const bucket = peekBucket(session);
+      if (bucket === undefined) return reject("not-found", `${taskId}; no such task`);
+      const result = bucketUpdate(bucket, taskId, patch);
       return "ok" in result ? result : { ok: true, task: result };
     },
-    snapshotOf: (session) => snapshotOfBucket(bucketFor(session)),
-    restore: (session, events) => {
-      const key = keyOf(session);
-      // 桶在场即跳过：不覆盖内存变更（含 append 失败期间保留的桶内状态）
-      if (buckets.has(key)) return;
-      const last = latestTodoSnapshot(events);
-      if (last !== undefined) restoreBucket(bucketFor(session), last);
+    snapshotOf: (session) => {
+      const bucket = peekBucket(session);
+      return bucket === undefined ? { seq: 0, tasks: [], edges: [] } : snapshotOfBucket(bucket);
+    },
+    restore: (session, eventsOf) => {
+      // 桶在场即跳过（不覆盖内存变更）；缺席才取卷 fold——thunk 化避免桶在场时白拷贝全卷
+      if (peekBucket(session) !== undefined) return;
+      const last = latestTodoSnapshot(eventsOf());
+      if (last !== undefined) restoreBucket(ensureBucket(session), last);
     },
     evict: (session) => {
       buckets.delete(session as string);
