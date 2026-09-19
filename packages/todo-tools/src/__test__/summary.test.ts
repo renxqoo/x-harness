@@ -10,7 +10,6 @@ import { llmRuntime } from "@x-harness/llm";
 import type { LlmChunk } from "@x-harness/llm";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { createCompactionPlugin } from "@x-harness/compaction";
-import { summarySection } from "@x-harness/compaction";
 import { todoSummarySection } from "../summary.ts";
 import { latestTodoSnapshot, tasksOfSnapshot } from "../store.ts";
 import { createTodoToolsPlugin } from "../plugin.ts";
