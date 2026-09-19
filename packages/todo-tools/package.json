@@ -1,0 +1,17 @@
+{
+  "name": "@x-harness/todo-tools",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/core": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.0"
+  }
+}

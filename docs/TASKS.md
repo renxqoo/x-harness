@@ -217,7 +217,7 @@ B. delegation 迁移（工具摘除 + 源注册 + 签名重构 + 双轨文案清
 
 | 项 | 理由 | 归属 |
 | --- | --- | --- |
-| 任务枚举/清单工具（/tasks 面） | 用户未指令；agent 有 list_agents，bash id 由返回值持有 | 后续任务件 |
+| 任务枚举/清单工具（/tasks 面） | ~~用户未指令；agent 有 list_agents，bash id 由返回值持有~~ 已由件15 兑现（@x-harness/todo-tools：task_create/get/list/update——规格 Task 清单四动词；详见 docs/TODO.md） | 件15 |
 | 跨源统一 id 铸造/全局注册表 | 定序路由已闭环；第二真相反伤 | 不建 |
 | 任务持久化/跨重启任务面 | 登记簿生命周期=会话（TOOLBOX.md 既有裁决） | 后续件 |
 | remote 会话源（规格 TaskOutput/Stop 覆盖 remote session） | kind 闭合 agent\|bash；remote 无基建 | 云接入件 |

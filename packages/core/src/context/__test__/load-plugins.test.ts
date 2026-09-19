@@ -114,6 +114,25 @@ describe("插件加载器（§5）", () => {
     expect(() => ctx.on(pluginError, noop)).toThrow(/disposed/); // ctx 整体不可用
   });
 
+  it("apply 中途 throw：本插件已捕获的注册逆序回卷（半装状态不泄漏——件15 收口审查发现）", async () => {
+    const ctx = createContext();
+    const order: string[] = [];
+    await expect(
+      loadPlugins(ctx, [
+        {
+          name: "half",
+          apply: (c) => {
+            c.effect(() => { order.push("first-out"); });
+            c.effect(() => { order.push("second-out"); });
+            throw new Error("halfway boom");
+          },
+        },
+      ]),
+    ).rejects.toThrow("halfway boom");
+    expect(order).toEqual(["second-out", "first-out"]); // 逆序：throw 前的注册全回卷
+    await ctx.dispose();
+  });
+
   it("async apply 按序 await", async () => {
     const ctx = createContext();
     const order: string[] = [];

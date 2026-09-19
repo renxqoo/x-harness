@@ -75,7 +75,47 @@ function isInboxEntries(value: unknown): boolean {
   );
 }
 
-/** 逐词条形状门：词表闭合（16 条），结构与归属键检查，语义归写方 */
+/** todo/snapshot 词条门子函数（docs/TODO.md §13.2）：tasks 数组级校验 + id 收集（含 seq 下界）；失败 undefined */
+function todoSnapshotTaskIds(value: unknown, seq: number): ReadonlySet<string> | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const ids = new Set<string>();
+  let maxId = 0;
+  for (const task of value) {
+    if (!todoSnapshotTaskOk(task, ids)) return undefined;
+    const id = (task as Record<string, unknown>)["id"] as string;
+    ids.add(id);
+    maxId = Math.max(maxId, Number(id));
+  }
+  return seq >= maxId ? ids : undefined;
+}
+
+function todoSnapshotTaskOk(task: unknown, ids: ReadonlySet<string>): boolean {
+  if (!isObj(task)) return false;
+  // 规范形十进制（拒 "01"/"0"——数值同序字面不等会破恢复侧排序与唯一性）
+  const id = task["id"];
+  if (typeof id !== "string" || !/^[1-9][0-9]*$/.test(id) || ids.has(id)) return false;
+  if (typeof task["subject"] !== "string" || task["subject"] === "") return false;
+  if (task["status"] !== "pending" && task["status"] !== "in_progress" && task["status"] !== "completed") return false;
+  for (const key of ["description", "activeForm", "owner"] as const) {
+    if (task[key] !== undefined && typeof task[key] !== "string") return false;
+  }
+  const metadata = task["metadata"];
+  return metadata === undefined || (typeof metadata === "object" && metadata !== null && !Array.isArray(metadata));
+}
+
+/** edges 二元组校验：blocker ≠ blocked（自环——工具面拒的态门也拒）、两端 id 在场 */
+function todoSnapshotEdges(value: unknown, ids: ReadonlySet<string>): boolean {
+  if (!Array.isArray(value)) return false;
+  for (const edge of value) {
+    if (!Array.isArray(edge) || edge.length !== 2) return false;
+    const [blocker, blocked] = edge as [unknown, unknown];
+    if (typeof blocker !== "string" || typeof blocked !== "string") return false;
+    if (blocker === blocked || !ids.has(blocker) || !ids.has(blocked)) return false;
+  }
+  return true;
+}
+
+/** 逐词条形状门：词表闭合（17 条），结构与归属键检查，语义归写方 */
 const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean } = {
   "turn/start": (d) => isObj(d) && isCount(d["turn"]),
   "turn/end": (d) => isObj(d) && isCount(d["turn"]) && isTurnEndReason(d["reason"]),
@@ -153,6 +193,12 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
         return false;
     }
   },
+  "todo/snapshot": (d) => {
+    if (!isObj(d) || !isCount(d["seq"])) return false;
+    const ids = todoSnapshotTaskIds(d["tasks"], d["seq"]);
+    return ids !== undefined && todoSnapshotEdges(d["edges"], ids);
+  },
+
 };
 
 /** 形状门：未知词条 / 形状不符 → 返回失败理由（data 须为已物化快照或 JSON.parse 产物） */

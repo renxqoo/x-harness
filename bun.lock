@@ -116,6 +116,7 @@
         "@x-harness/session-persistence-jsonl": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/task-tools": "workspace:*",
+        "@x-harness/todo-tools": "workspace:*",
         "@x-harness/tool-bash": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tool-grep": "workspace:*",
@@ -252,6 +253,18 @@
       "devDependencies": {
         "@sinclair/typebox": "^0.34.0",
         "@x-harness/exec-env": "workspace:*",
+      },
+    },
+    "packages/todo-tools": {
+      "name": "@x-harness/todo-tools",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
       },
     },
     "packages/token-meter": {
@@ -620,6 +633,8 @@
     "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/system-prompt"],
 
     "@x-harness/task-tools": ["@x-harness/task-tools@workspace:packages/task-tools"],
+
+    "@x-harness/todo-tools": ["@x-harness/todo-tools@workspace:packages/todo-tools"],
 
     "@x-harness/token-meter": ["@x-harness/token-meter@workspace:packages/token-meter"],
 

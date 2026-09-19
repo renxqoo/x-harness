@@ -149,6 +149,17 @@ export async function loadPlugins(
     } catch (error) {
       release(); // 先 settle 装配单元——dispose 的 join effect 等的就是它，后放会自锁
       ctx.emit(pluginError, { plugin: plugin.name, error: String(error) });
+      // 本插件已捕获的注册逆序回卷：apply 中途 throw 时 composite 尚未入层账本，
+      // 不在此回卷则半装状态泄漏（throw 前已 provide/register 的服务与工具残留）
+      for (let index = captured.length - 1; index >= 0; index -= 1) {
+        const unwind = captured[index];
+        if (unwind === undefined) continue;
+        try {
+          await unwind();
+        } catch {
+          /* 容错同 unload composite：单个 disposer 抛错不中止回卷 */
+        }
+      }
       try {
         await ctx.dispose();
       } catch (disposeError) {
