@@ -310,3 +310,246 @@ captureRegistrations 的「统一兜底回卷」设计意图在 throw 路径漏�
 - 覆盖率：todo-tools lines/branch/funcs/stmts 全 100（阈值 90/85/90/90）；
   全仓 lines 94.09 / branch 90.69 / funcs 94.16 / stmts 96.46。
 - 已知覆盖盲区：无（收口审查指出的 removeRow 反向分支与 Description 行已补用例盖绿）。
+
+## 12. 修订A：清单持久化（已撤销——由 §13 修订B 取代）
+
+> **撤销（2026-09-19 用户裁决，未实施零清理）**：快照文件方案是「不动共享本体前提下的
+> 局部最优」。对照 DSH（deepseek-harness tool-todo）后认定件15 §1.3 的「装配级共享」
+> 裁决本身是对规格的过度推广——Claude Code 的 taskId 会话内从 1 计数、清单语义
+> "current coding session"，规格 §8 的 owner 协作是 teammate 部署形态且本仓无消费方
+> （子代理协作走 agent-delegation spawn prompt）。归属修正为 per-session 后，持久化
+> 从「自建快照文件」消解为「会话事件流免费继承」。本节保留为决策痕迹，全部条款由
+> §13 取代；§1.3/§5/§7 的共享口径同步由 §13 修订。
+
+### 12.1 形态裁决
+
+- **快照 = 装配级单文件**：`createTodoToolsPlugin({ snapshotPath })` 指定路径（推荐
+  放档案 root 下，如 `<root>/todo-snapshot.json`）；清单是装配级共享实体（§1.3），
+  快照同为装配级——不挂任何会话名下（A 会话建的任务 B 会话 resume 后同样可见，
+  共享语义跨重启存续）；
+- **每变更原子全量写**（temp + rename，tool-write 同款原子纪律）：store 变更成功后
+  同步回调 sink 落盘。对比挂件6 checkpoint 屏障（副作用前 flush）的取舍：每变更即写
+  **无尾巴窗口**（屏障形态在「变更后到下一边界间崩溃」丢一拍）、件6 零改动、
+  store 仍全同步无 await——**并发档 parallel 论据原样保持**（同步内存 + 同步写盘，
+  无竞态窗口）；清单量级（协作 todo，几十条）全量 JSON 写放大可忽略；
+- **恢复时机 = 装配 apply 期自动**：文件不存在 = 全新清单（正常态）；存在即读入
+  灌 store。快照损坏（非法 JSON/形状门不过）→ **装配期 throw fail-closed**（静默
+  空清单 = 任务全丢装作没事；对齐 jsonl 档案 corrupt → dead 口径）；
+- **seq 随快照持久**：id 不复用语义跨重启保持（恢复后新建任务从快照 seq 续号，
+  不与既有 id 相撞）；
+- **无 snapshotPath = 易失形态**（既有行为）：不是兼容层，是「有/无持久化层」的两种
+  合法装配形态（同 session 有/无 jsonl 持久化先例——空屏障语义）。
+
+### 12.2 快照格式（闭合形状门，无版本字段——SESSION-RESUME §1.2 先例）
+
+```ts
+interface TodoSnapshot {
+  readonly seq: number;                          // id 计数器（≥ 所有任务 id 数值）
+  readonly tasks: readonly TodoSnapshotTask[];   // 无依赖字段（依赖在 edges 单源）
+  readonly edges: readonly (readonly [blocker, blocked])[];  // 依赖边对（blocksOf 展平）
+}
+```
+
+形状门（读取即校验，住 persistence 层）：JSON 可解析；tasks 数组且 id 唯一、十进制
+数字串 ≥1；status ∈ 三值闭合词表（无 deleted——物理移除不进快照）；subject 非空串；
+metadata 为对象或缺席；edges 二元组且引用的 id 全部在场；seq ≥ max(id)。非法 →
+throw（带路径与违反项）。语义级变更发生时再引入显式判别字段——字段缺席即旧快照。
+
+### 12.3 拆分
+
+```text
+packages/todo-tools/src/persistence.ts   # 快照文件读写：原子写（temp+rename）+ 形状门 load
+packages/todo-tools/src/store.ts         # 构造参数 { initial?: TodoSnapshot; onCommit?: (s: TodoSnapshot) => void }
+                                          #   ——变更成功后同步回调 onCommit；snapshot() 内部态导出
+packages/todo-tools/src/plugin.ts        # 工厂参数 { snapshotPath?: string }；apply 期 load 灌入 + sink 挂 store
+packages/todo-tools/src/__test__/persistence.test.ts
+packages/e2e/src/todo-journey.ts         # 旅程段：变更→dispose→新装配同 snapshotPath→清单在场 + seq 续号
+```
+
+### 12.4 测试口径
+
+- **往返全等**：多任务 + 依赖边 + metadata + owner 各形态 → snapshot() → 新 store
+  initial 灌入 → list/get/snapshot 逐字段全等（含依赖双侧派生）；
+- **原子性**：写后无 temp 残留；写到一半崩溃形态（手工截断文件）→ load fail-closed；
+- **形状门表驱动**：非法 JSON / tasks 非数组 / id 重复 / id 非数字串 / status 出表 /
+  subject 空串 / edges 引用悬空 / seq < max(id) / seq 负数——逐项 throw 带违反项；
+- **id 续号**：删任务 1 后 dispose → 新装配恢复 → 新建任务 id = seq+1 不撞既有；
+- **每变更即写**：create/update（含 deleted）后文件即时反映（无 flush 依赖）；
+- **易失形态回归**：无 snapshotPath 装配行为与本件 A 阶段一致（dispose 后无副作用）；
+- **plugin 装配**：snapshotPath 在场时 apply 恢复 + 变更落盘；快照损坏装配期 throw；
+- **e2e**：旅程段「变更→dispose→新装配→清单与 seq 回来」经真实装配。
+
+### 12.5 不处理（落档）
+
+| 项 | 理由 | 归属 |
+| --- | --- | --- |
+| todo 变更进 session 事件流（第 15 词条） | 清单是装配级实体，挂会话档错位；session 词表闭合（件5 收口）不动 | 本修订裁定 |
+| 快照写盘挂件6 checkpoint 屏障 | 尾巴窗口弱于每变更即写；件6 零改动 | 本修订裁定 |
+| 多装配同 snapshotPath 并发写 | 单进程单写者是 jsonl 同款硬性前提（SESSION-RESUME §1.4） | 部署纪律 |
+| 快照压缩/增量 | 量级微不足道 | 不建 |
+| 跨 root 迁移/合并 | 无场景 | 不建 |
+
+## 13. 修订B：per-session 清单 + 事件流持久化（2026-09-19 用户裁决「开始执行」）
+
+> 状态：**定稿**（两路定稿前审查 27 项全处置，见 §13.6）。级别：中（todo-tools 归属
+> 契约改造 + session 词表第 16 词条 + e2e resume 段）。
+> 取代 §12（撤销记录见彼）；上游参考 deepseek-harness `packages/todo/tool-todo`（事件流
+> 持久化 + last-wins fold 思想；其 turn/start 清零与单工具整表面**不采纳**——本仓保留
+> 四动词规格对齐与「任务到 completed/deleted 为止」的生命周期）。
+
+### 13.1 形态裁决
+
+- **清单归属：每会话一份**（会话键控桶——BackgroundTasks/ObservedRegistry 同款先例；
+  `ctx.session ?? "_anon"`：无 session 调用方**共享一个匿名桶**（先例同口径——`_anon`
+  非合法 SessionId，首字符禁 `_`，与真实会话 id 空间不相交）。id 会话内从 1 计数
+> （回到规格示例原样）；依赖/owner 字段照存（规格对齐面零改动——owner 的跨代理协作
+> 在单会话内是虚指，张力补进 §2③ 落档）；**跨会话隔离**（§1.3 共享裁决撤销：该语义
+> 无生产消费方——grep 证实 todoList 零外部引用，损失仅在测试/e2e 断言面，见 §13.4）；
+- **持久化：每次变更后全量快照 append 为 log-only 事件 `todo/snapshot`** 进发起会话
+  档案（append 同步入内存卷 + jsonl pending drain；append-only + checkpoint 屏障 +
+  尾态修复全部继承档案层）。**execute 体内自惰性恢复起至 append 停是单一同步段**
+  （禁止任何 await/异步读档——恢复只读 `sessionStore.get(id).events()` 同步内存卷；
+  async 函数体无 await 即 run-to-completion，并发调用的变更→append 入队序 == 变更序，
+  last-wins 恒正确）。工具面读动词触达只 fold **不补写快照**（否则首触达多写一拍）；
+- **服务面 = 内存真相，恒不 append**：append 单点住工具面 execute（宿主经 todoList
+  服务变更后档案暂失步，下次工具变更的全量快照覆盖自愈——同 §13.1 自愈口径）；
+- **恢复：惰性 fold**——某会话的桶首次被触达时（四动词任一 execute），从该会话内存
+  事件卷折尾取最后一条 `todo/snapshot` 灌桶（**深拷贝重建可变副本**——卷内事件 data
+  是 deepFreeze 产物，直接引用灌桶则恢复后 update 变异 row 严格模式 throw）；
+  **桶在场即不再 fold**（后续内存变更不被卷尾快照覆盖）。resume 后 seed 事件卷在内存
+  日志，首次调用即恢复；fork 的 seed 前缀含快照 → fork 会话继承源清单至切口副本
+> （自然语义，落档）。空卷/无快照事件 = 全新桶；匿名桶永不恢复；
+- **桶生命周期 = 会话**：`sessionDisposed` 逐出桶（observed/BackgroundTasks 同款挂法）。
+  逐出后同 id 重建：**无 seed create = 空卷全新桶；resume（seed 前缀）= 恢复旧清单**
+> ——由 seed 有无自然区分，不矛盾；
+- **会话缺席 fail-closed（四动词统一）**：带 session 但 `sessionStore.get(id)` 缺席
+  （宿主伪造/已 dispose）→ isError；无 session（匿名桶）合法易失，不 append 不恢复；
+- **append 失败（Result !ok）语义**：工具回 isError 且**内存桶保留已生效变更**——
+  回执明写「已生效未持久化」（防模型误以为失败而盲目重试 create 造成重复任务）；
+  reason 分两类：**确定性**（not-json-safe——桶内残留不可 JSON 序列化值如 BigInt
+  metadata：全量快照每条都含它，append 持续失败，**自愈条件 = 该值被 update 覆盖或
+  任务删除后**；期间档案停在坏数据入库前，崩溃恢复会丢该段变更且 seq 回退、重建 id
+  与已展示 id 可能撞号——如实落档）与**瞬时**（I/O 类，重试可期）。
+
+### 13.2 第 16 词条 `todo/snapshot`（session 词表追加式演进——SESSION-RESUME §1.2 明文支持；现词表 15 条，types/gates 头注释「15 条」同步改 16）
+
+```ts
+// session/src/types.ts（词条 data 类型住 session——inbox 词条同款先例；log-only）
+export interface TodoSnapshotTaskData {
+  readonly id: string;                                  // /^[1-9][0-9]*$/（拒 "01"——数值同序字面不等会破 byNumericId 稳定性与唯一门）
+  readonly subject: string;                             // 非空
+  readonly status: "pending" | "in_progress" | "completed";
+  readonly description?: string;
+  readonly activeForm?: string;
+  readonly owner?: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+export interface TodoSnapshotEventData {
+  readonly seq: number;                                 // count；空 tasks 时约定 max 取 0
+  readonly tasks: readonly TodoSnapshotTaskData[];
+  readonly edges: readonly (readonly [blocker: string, blocked: string])[];  // 单源边集展平（Map<String,Set> 展平无损）
+}
+readonly "todo/snapshot": TodoSnapshotEventData;        // SessionEventData 第 16 词条
+```
+
+gates 词条门：seq count；tasks 数组逐项（id 匹配规范形且唯一、subject 非空串、status
+三值闭合、description/activeForm/owner 缺省或串、metadata 缺省或对象）；edges 二元组、
+**blocker ≠ blocked（自环——工具面 checkReferences 拒的态，门也拒）**、两端 id 全部
+在场；seq ≥ max(id 数值)（空集取 0）。档案手工重复边过门、恢复灌 Set 去重（非 store
+可达态，无害——落档）。**不设 turn 开放性门**（DSH invariant 的「open turn 内」不采纳：
+直连带 session 可在无 turn 卷内 append，log-only 无 surface 后果——落档）。
+
+### 13.3 拆分
+
+```text
+packages/session/src/types.ts     # TodoSnapshotTaskData/TodoSnapshotEventData + 词条 + 头注释 16
+packages/session/src/gates.ts     # 形状门 validator + 词表计数注释
+packages/todo-tools/src/tokens.ts # 服务签名加 session 参数（SessionId | undefined 首参）；
+                                  #   快照类型复用 session 词条类型（单一真相）
+packages/todo-tools/src/store.ts  # 会话键控桶 + snapshotOf/restoreOf（深拷贝）+ seq 桶内计数
+packages/todo-tools/src/plugin.ts # inject ["tools","session"]（硬依赖——todo 价值=随会话，
+                                  #   无 session 装配不可用：装配面收窄落档）；sessionDisposed 逐出
+packages/todo-tools/src/tools.ts  # execute 单一同步段：惰性恢复 → 变更 →（带 session）append
+packages/e2e/src/todo-journey.ts  # resume 段：dispose → 新装配同 root → resume → followup
+                                  #   触发 todo 工具 → 清单/依赖/seq 在场；既有 anon 断言反转
+```
+
+依赖方向：todo-tools → core/tools/session（新增 session；无环）。
+
+### 13.4 测试口径
+
+- **隔离反转**：跨 session 互见用例反转为隔离断言（A 建的 B 不可见、id 各自从 1）；
+  匿名桶（共享单桶）独立可用；**服务面全部既有用例加会话实参（或匿名缺省）**——
+  签名变化波及 store.test/plugin.test/e2e 的全部 `todoList` 断言（非零改动，如实计）；
+- **append 语义**：带 session 变更后卷含 `todo/snapshot`（last-wins 与桶终态全等）；
+  **经 dispatch 并发**（不直连 store——直连测不到 execute 同步段）两路并发变更 →
+  卷内快照序列单调包含（create×2 两条快照分别恰含 {id1} 与 {id1,id2}）；
+  **并发首触达**（桶不存在，Promise.all 两路 dispatch）→ 单 fold 无双灌；
+  读动词触达不补写快照（卷内快照数不变）；
+- **append 失败**：metadata 含 BigInt（服务面入库）→ isError 铸文含「已生效未持久化」
+  与确定性指引 → **覆盖该 metadata / 删该任务后** append 恢复成功（自愈条件用例）；
+  带 session 但会话缺席 → isError（读动词同口径）；dispose 后 dispatch 带 session →
+  isError 而非孤儿桶静默变更；
+- **惰性恢复**：预置事件卷（多条快照）→ 首次 get/list → last-wins 灌桶（依赖边双向
+  派生恢复）；**恢复 → 变更 → 再触发动词 → 桶不被卷尾快照覆盖**（桶在场不再 fold
+  ——真不变量）；恢复后 update 可变更（深拷贝副本，非冻结引用 throw）；空卷 → 全新桶；
+  匿名桶不恢复；恢复幂等（同卷 fold 结果全等）；
+- **桶逐出**：sessionDisposed 后同 id 重建会话 → 新桶（**裸 session 装配下测**——
+  jsonl 装配同 id 重建 header 不等撞 session-id-reused permanent dead）；
+- **session gates**：todo/snapshot 表驱动（合法 / seq 负 / id 非规范形含 "01" 与 "0" /
+  id 重复 / status 出表 / subject 空 / edges 悬空 / edges 自环 / seq < max id / 空
+  tasks 合法 / 重复边过门去重）；
+- **多桶并发**：两会话并发变更互不干扰 + 各卷尾正确；覆盖率只升不降（现 100）；
+- **回归**：四动词契约面（参数/铸文/语义）零改动——descriptions/对账用例原样；
+- **e2e**：八步旅程改造——任务 2 的删除保留但**留一条带依赖的存活任务到 resume 后**
+> （否则依赖边恢复无 e2e 覆盖）；anon 直连断言反转为 `No tasks`（匿名桶空）；resume
+  段（dispose 前置 flush → 新装配同 root → create({header, seed}) → followup 脚本
+  task_list → 断言清单在场/依赖/seq 续号）——装置嫁接 agent-journey 崩溃残卷段形态。
+
+### 13.5 不处理（落档）
+
+| 项 | 理由 | 归属 |
+| --- | --- | --- |
+| 跨会话共享/owner 协作 | §1.3 裁决撤销（无生产消费方）；规格 §8 teammate 形态是部署语义 | 本修订裁定 |
+| turn/start 清零（DSH 语义） | 清单生命周期到 completed/deleted 为止（规格语义）；DSH 的 turn 级计划是另一种本体 | 本修订裁定 |
+| todo/write 单工具整表面 | 四动词是件15 用户指令的规格对齐面；操作审计由 tool/call 事件承担，档案面仍是 DSH 同构 last-wins 整表快照 | 件15 既有裁决 |
+| 持久化强度相对修订A 回退（屏障窗口：末变更后到下一 checkpoint 屏障间崩溃丢该拍，resume 回退到上一快照） | 归属修正的代价——修订A 的「每变更即写无窗口」依附独立文件形态，随 §12 撤销一并放弃；checkpoint 屏障频率（每请求/每工具）已很密 | 本修订裁定（取舍痕迹） |
+| 无 session 装配（sessionStore 硬依赖缺席） | todo 价值 = 随会话；inject ["session"] 缺席装配期 throw | 本修订裁定（装配面收窄） |
+| 非 agent 宿主直调的持久化 | 匿名桶易失（无档案归属）——合法装配形态 | 本修订裁定 |
+| turn 开放性门（DSH invariant 的 open-turn 约束） | log-only 无 surface 后果；直连形态合法 | 本修订裁定 |
+| 快照事件压缩/滑窗 | 量级微不足道；档案滑窗归策略插件 | 后续件 |
+| 多装配同 root 并发 | 单进程单写者（SESSION-RESUME §1.4 同款硬性前提） | 部署纪律 |
+
+### 13.6 定稿前对抗审查处置（两路并行，27 项全处置）
+
+**路 A（契约/语义）**：P1-1 BigInt 自愈论断错误（确定性失败非瞬时——档案停在坏数据前、
+seq 回退撞号）→ **采纳**：§13.1 自愈条件改「坏值被覆盖/删除后」+ 撞号如实落档。
+P1-2 isError 回执语义缺失（模型认知与桶状态发散）→ **采纳**：「已生效未持久化」+
+确定性/瞬时分因。P2-3 门缺自环 → **采纳**（§13.2）。P2-4 id 规范形 "01" → **采纳**
+（正则拒）。P2-5 e2e anon 断言反转未点名 → **采纳**（§13.4 点名）。P2-6 「新会话新卷」
+与 resume 矛盾 → **采纳**：seed 有无自然区分（§13.1）。P2-7 「既有用例全保持」不准 →
+**采纳**：服务面用例统一加会话实参（§13.4）。P2-8 恢复幂等钉不住真不变量 → **采纳**：
+改「桶在场不再 fold」用例。P3-9/14 计数与门边界（空集 max=0、重复边去重落档）→
+**采纳**。P3-10/11/12 fork 继承/turn 门不设/owner 张力 → **采纳落档**。P3-13 匿名桶
+措辞 → **采纳**（共享单桶，§13.1）。
+
+**路 B（并发/生命周期/假绿）**：P1-1 zero-await 未覆盖恢复段（fold 被写成 async 则
+并发首触达双灌桶）→ **采纳**：单一同步段明文 + 并发首触达用例（§13.1/§13.4）。
+P1-2 = 与 A-P1-1 合并。P1-3 读动词会话缺席口径缺失 → **采纳**：四动词统一 fail-closed
+（§13.1）。P2-1 服务面 append 语义空白 → **裁决**：服务面 = 内存真相恒不 append，单点
+住工具面（§13.1）。P2-2 并发组断言弱/未钉通道 → **采纳**：经 dispatch + 单调包含
+断言（§13.4）。P2-3 dispose 负向 + 铸文锚 → **采纳**（§13.4）。P2-4 桶逐出用例装配
+形态（jsonl 同 id 重建撞 dead）→ **采纳**：裸 session 装配（§13.4）。P2-5 恢复灌桶
+须重建可变副本（deepFreeze 卷）→ **采纳**（§13.1/§13.4）。P2-6 持久化强度回退未留痕 →
+**采纳落档**（§13.5）。P2-7 inject 收窄未落档 → **采纳落档**（§13.3/§13.5）。
+P2-8 e2e 依赖恢复零覆盖 → **采纳**：留带依赖存活任务（§13.4）。P3-1 计数 → 与 A 合并。
+P3-2 恢复不补写 → **采纳落档**（§13.1）。P3-3 fork → 与 A 合并。P3-4 e2e anon 点名 →
+与 A 合并。P3-5 `_anon` 空间不相交依据（isSafeSessionId 首字符禁 `_`）→ **采纳**：
+写进 §13.1 依据。P3-6 多桶并发/覆盖率 → **采纳**（§13.4）。
+
+**核过无偏（两路一致）**：归属自洽（依赖/owner 会话内闭合）、惰性恢复无缺尾窗口
+（events() 同步内存卷）、append 同步性与 run-to-completion 论据、dispatch 双前置
+await 不破坏段内原子、dispose 与 in-flight 无错序窗口、jsonl per-id 串行、checkpoint
+兼容、surface/repair/resume 无冲突（log-only 不进投影）、data 形态完备（边集展平
+无损）、`_anon` 无撞桶、DSH 取舍如实、依赖方向无环、e2e resume 装置可行、旧档案
+自然兼容（词表子集）。
