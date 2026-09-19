@@ -55,3 +55,11 @@ IMPLEMENTATION §1 F5（glob/包名）、§2.1（裁决表）、§3（门禁强�
 - [ ] 门禁脚本四用例绿；人为注入 V5 形态（devDeps 藏边上层 import）时 check 失败（手动验证记录）
 - [ ] 对抗审查：对照移动前后 diff 找行为偏差，找不到明说找不到
 - [ ] docs 内旧路径引用勘误（AGENTS.md 及 docs/*.md 中 packages/core、packages/tools 等字样）
+
+## 8. 实施记录（2026-09-20 收口）
+
+- **交付物**：五包迁入 packages/core/{context,tools,system-prompt,exec-env,session}（88 文件）；workspaces/vitest/tsconfig/build 路径改写；scripts/check-kernel-deps.ts 强形式门禁（扫 src 说明符）+ 四用例；check 流水挂载（typecheck 之后）；docs 路径勘误五份。
+- **门禁数字**：typecheck ✓ lint ✓ build ✓ test **145 文件/1708 用例**（存量 144/1704 零丢失 + 门禁测试 +1 文件/+4 用例）✓ e2e 全旅程 ✓ rename **88 个 @100% 相似度** ✓ V5 形态人工注入验证（藏 devDeps 的 upper-layer import → exit 1，复原后绿）✓。
+- **实施期发现并修复的真实缺陷（W0-1）**：对抗审查的路径字面量清单不完整——plugin-manager 四个测试文件以**相对路径**引用被迁包（`../../../core/src/index.ts`，经 `new URL`/`resolve` 构造），字符串 grep 不可见。症状：25 用例红（子进程 module-not-found 连锁）。修法：四处相对路径同步改 `../../../core/context/src/index.ts`。教训：路径引用有三形态（整串字面量/glob/相对构造），纯移动审计须三者俱扫——补录为后续波次审计清单项。
+- **新增裁决补录**：无（D5 白名单与强形式门禁按定稿实施）。
+- **显式挂账**：无。

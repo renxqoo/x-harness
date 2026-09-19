@@ -17,9 +17,9 @@
     "skipLibCheck": true
   },
   "include": [
-    "packages/*/src/**/*.ts",
-    "packages/*/test/**/*.ts",
-    "packages/*/plugins/**/*.ts",
+    "packages/*/src/**/*.ts", "packages/core/*/src/**/*.ts",
+    "packages/*/test/**/*.ts", "packages/core/*/test/**/*.ts",
+    "packages/*/plugins/**/*.ts", "packages/core/*/plugins/**/*.ts",
     "apps/*/src/**/*.ts"
   ]
 }

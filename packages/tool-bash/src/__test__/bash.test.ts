@@ -182,9 +182,9 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
     writeFileSync(
       script,
       [
-        `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/src/index.ts"))};`,
-        `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/tools/src/index.ts"))};`,
-        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/exec-env/src/local/env.ts"))};\nimport { PathGate } from ${JSON.stringify(join(repo, "packages/tool-core/src/paths.ts"))};\nimport { createBashPlugin } from ${JSON.stringify(join(repo, "packages/tool-bash/src/plugin.ts"))};`,
+        `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/context/src/index.ts"))};`,
+        `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/core/tools/src/index.ts"))};`,
+        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/core/exec-env/src/local/env.ts"))};\nimport { PathGate } from ${JSON.stringify(join(repo, "packages/tool-core/src/paths.ts"))};\nimport { createBashPlugin } from ${JSON.stringify(join(repo, "packages/tool-bash/src/plugin.ts"))};`,
         `const ctx = createContext();`,
         `const gate = new PathGate(${JSON.stringify(root)});`,
         `const unload = await loadPlugins(ctx, [toolsPlugin, createBashPlugin({ gate, env: createLocalEnv(${JSON.stringify(root)}) })]);`,

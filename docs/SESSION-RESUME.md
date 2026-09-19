@@ -82,9 +82,9 @@ create(options?: { id?; seed?; parent?; header?: SessionHeader })
 ## 4. 拆分
 
 ```
-packages/session/src/types.ts        # Inbox 类型 + CreateSessionOptions.header
-packages/session/src/gates.ts        # 第 14 词条形状门
-packages/session/src/store.ts        # create header 覆盖分支
+packages/core/session/src/types.ts        # Inbox 类型 + CreateSessionOptions.header
+packages/core/session/src/gates.ts        # 第 14 词条形状门
+packages/core/session/src/store.ts        # create header 覆盖分支
 packages/session-persistence-jsonl/src/equal.ts    # 规范化深度相等（键排序 stringify）
 packages/session-persistence-jsonl/src/writer.ts   # 两级打开 + 尾态修复 + 返回前缀长度 k
 packages/session-persistence-jsonl/src/plugin.ts   # ensureWriter 传当前日志；首灌 pending.slice(k) 裁剪

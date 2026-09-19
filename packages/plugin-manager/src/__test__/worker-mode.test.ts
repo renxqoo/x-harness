@@ -9,7 +9,7 @@ import { createPluginManager } from "../plugin-manager.ts";
 import { pluginManagerService } from "../types.ts";
 import type { PluginAuditEntry, PluginManagerService } from "../types.ts";
 
-const CORE_PATH = new URL("../../../core/src/index.ts", import.meta.url).pathname;
+const CORE_PATH = new URL("../../../core/context/src/index.ts", import.meta.url).pathname;
 const tempDirs: string[] = [];
 
 afterEach(async () => {

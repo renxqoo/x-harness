@@ -13,7 +13,7 @@ import { createContext, defineEvent, defineService } from "@x-harness/core";
 import type { WorkerToMain } from "../worker/protocol.ts";
 
 const HOST_PATH = resolve(import.meta.dirname, "../worker/host.ts");
-const CORE_PATH = resolve(import.meta.dirname, "../../../core/src/index.ts");
+const CORE_PATH = resolve(import.meta.dirname, "../../../core/context/src/index.ts");
 const tempDirs: string[] = [];
 
 const noop = (): void => {};

@@ -290,9 +290,9 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     writeFileSync(
       script,
       [
-        `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/src/index.ts"))};`,
-        `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/tools/src/index.ts"))};`,
-        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/exec-env/src/local/env.ts"))};`,
+        `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/context/src/index.ts"))};`,
+        `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/core/tools/src/index.ts"))};`,
+        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/core/exec-env/src/local/env.ts"))};`,
         `import { PathGate } from ${JSON.stringify(join(repo, "packages/tool-core/src/paths.ts"))};`,
         `import { createGrepPlugin } from ${JSON.stringify(join(repo, "packages/tool-grep/src/plugin.ts"))};`,
         `const ctx = createContext();`,

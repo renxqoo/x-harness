@@ -164,7 +164,7 @@ interface SessionArchive {
 ## 4. 拆分与依赖方向
 
 ```
-packages/session/src/
+packages/core/session/src/
   tokens.ts      # 7 token（sessionStore/sessionArchive 服务 + 5 总线）
   types.ts       # id/header/事件词表/信封/surface/接口/Result
   gates.ts       # 路径安全门/JSON 安全门/逐词条形状门/seed 信封+投影重放校验/replace 区间门

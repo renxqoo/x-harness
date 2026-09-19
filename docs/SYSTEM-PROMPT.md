@@ -3,7 +3,7 @@
 > 状态：已实施（回炉重写；代码审查处置：δ/2ⁿ 注册序预热修复前向引用错序 + 回归用例）
 > 级别：小级偏上（纯加法、单职责；定位代数是纯函数可穷举测试）
 > 上游：docs/AGENT-LOOP.md §3；工具表不在此收集（loop 直取 toolRegistry）。
-> 参考思想出处：my-agent packages/core/src/prompt（锚点/指纹/缓存）；DSH/pi 的静态拼装验证口径。
+> 参考思想出处：my-agent packages/core/src/prompt（旧仓路径，未随迁）（锚点/指纹/缓存）；DSH/pi 的静态拼装验证口径。
 
 ## 0. 回炉动机（真缺口，对照参考语义子集 A1–A10）
 

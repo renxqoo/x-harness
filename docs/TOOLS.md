@@ -122,7 +122,7 @@ dispatch(request) —— 函数体整体 try/catch，任何逃逸 throw → isEr
 ## 4. 拆分
 
 ```
-packages/tools/src/
+packages/core/tools/src/
   tokens.ts     # toolRegistry 服务 + toolsPreExecute/toolsExecute waterfall
   types.ts      # §1.1 全部类型 + defineTool
   validate.ts   # TypeBox 校验封装：violationsOf(schema, value) → 违规清单（path + 信息 + args 回显格式化）

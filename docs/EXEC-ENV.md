@@ -44,7 +44,7 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin;  // 
 口径，撤销通道落档后续）；**验收用例基数以收口时 `vitest run` 运行期报告为准**（当前快照：toolbox
 66 静态/76 rg 在场运行期，tools 37 静态/59 运行期——静态=源 it 数，运行期=it.each 展开）。
 
-## 1. ExecEnv 契约（packages/exec-env/src/types.ts）
+## 1. ExecEnv 契约（packages/core/exec-env/src/types.ts）
 
 fs 与 proc **对等双面、各自原生实现**（否决「exec 派生 fs」——三仓零先例：远端后端两 seam 均走 SDK
 原生）。全判别联合不 throw；错误 reason 为**闭集判别**（非自由文本——错误 TEXT 契约存活才有类型保证）：
@@ -92,7 +92,7 @@ export interface ExecEnv {
 信号已投递（grep 双杀点「kill 后排空再解析」时序以此为准：kill 后读流至 EOF/RST）；selfKilled 归因
 标志留命令工具包（tool-grep/tool-bash——「我发起过击杀」，env 不做归因）。
 
-## 2. localEnv（packages/exec-env/src/local/）
+## 2. localEnv（packages/core/exec-env/src/local/）
 
 现命令工具包行为原样搬迁为契约实现：`openRead` = fd 流式分块 + **fstat 取版本**（8KB NUL 嗅探逻辑
 留 tool-read，经 handle 首 read 组合——嗅探跨块由 conformance chunk 用例锁）；`writeFileAtomic` =

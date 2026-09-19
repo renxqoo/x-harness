@@ -464,8 +464,8 @@ gates 词条门：seq count；tasks 数组逐项（id 匹配规范形且唯一�
 ### 13.3 拆分
 
 ```text
-packages/session/src/types.ts     # TodoSnapshotTaskData/TodoSnapshotEventData + 词条 + 头注释 16
-packages/session/src/gates.ts     # 形状门 validator + 词表计数注释
+packages/core/session/src/types.ts     # TodoSnapshotTaskData/TodoSnapshotEventData + 词条 + 头注释 16
+packages/core/session/src/gates.ts     # 形状门 validator + 词表计数注释
 packages/todo-tools/src/tokens.ts # 服务签名加 session 参数（SessionId | undefined 首参）；
                                   #   快照类型复用 session 词条类型（单一真相）
 packages/todo-tools/src/store.ts  # 会话键控桶 + snapshotOf/restoreOf（深拷贝）+ seq 桶内计数
