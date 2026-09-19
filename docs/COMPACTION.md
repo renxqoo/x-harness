@@ -603,14 +603,14 @@ scavenger 65/65；全局语句门禁通过）。compaction/src 行 98.06 / 函�
   回归用例。pi-wire Retry-After HTTP-date 用例为存量时钟 flake（非本批文件，
   单独重跑稳定通过）。
 
-## 14. 修订A：摘要注入点 summarySection（2026-09-19 用户指令——todo 清单压缩后机制性存活）
+## 15. 修订A：摘要注入点 summarySection（2026-09-19 用户指令——todo 清单压缩后机制性存活）
 
 > 状态：草稿。级别：中（compaction 通用注入点 + todo-tools 停靠提供 + 剥离再生）。
 > 动机：todo 清单的模型视野靠 task_list 回执（surface），压缩摘掉后靠摘要 LLM 从被压缩
 > 文本「概率性」捞进 Progress 区——emergency（keepRecent=0）时连保留窗都归零。真相在
 > 事件卷 todo/snapshot（last-wins），压缩时确定性注入即机制性存活。
 
-### 14.1 契约
+### 15.1 契约
 
 ```ts
 // compaction/src/tokens.ts（消费方定义接口、提供方停靠——依赖方向 todo-tools → compaction）
@@ -633,7 +633,7 @@ export const summarySection = defineService<SummarySectionProvider>("compaction/
 - **注入段不计 summaryTokens**（非 LLM 输出）；occupancy 测量经投影自然包含；
 - **单提供者**（provide 遮蔽语义）：多提供者聚合是未来扩展，落档。
 
-### 14.2 todo 侧停靠（todo-tools → compaction 依赖，装配序无关）
+### 15.2 todo 侧停靠（todo-tools → compaction 依赖，装配序无关）
 
 ```ts
 // store.ts 导出 tasksOfSnapshot（快照 → TodoTask[]：edges 重建 blocks/blockedBy——
@@ -644,7 +644,7 @@ export const summarySection = defineService<SummarySectionProvider>("compaction/
 // plugin.ts：ctx.provide(summarySection, { render: todoSummarySection })
 ```
 
-### 14.3 测试口径
+### 15.3 测试口径
 
 - compaction：stub provider → 落账节点含注入段与锚点；UPDATE 轮 summarize 输入的
   previousSummary 已剥离（探针断言）；缺席/undefined → 行为不变回归；
@@ -654,7 +654,7 @@ export const summarySection = defineService<SummarySectionProvider>("compaction/
   注入段再生成最新；
 - e2e：压缩防线旅程加 todo 段（建任务→compact→摘要含任务行→完成→再 compact→段更新）。
 
-### 14.4 不处理（落档）
+### 15.4 不处理（落档）
 
 | 项 | 理由 | 归属 |
 | --- | --- | --- |
