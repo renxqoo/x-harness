@@ -47,3 +47,12 @@ IMPLEMENTATION §1 F1/F7；DESIGN §7 台账（V10/F-12 处置）。
 - [ ] ELEVATION 全套文档状态推进；IMPLEMENTATION §5 波次表逐波勾选
 - [ ] DESIGN §3「不处理」逐项确认无留白转化；重启条件清单复核
 - [ ] 对抗审查终轮：文档 vs 代码一致性（说到的都在、没说的没加）
+
+## 8. 实施记录（2026-09-20）
+
+- **交付物**：`assertVisibleLogged`（「模型可见必落盘」不变量——提交后以 deriveMessages 的 system 投影复核，三口径落位：①静态串通道比对对象天然统一（systemText 即 options.systemPrompt）②no-op 分支 systemText 为本次现算装配、缓存陈旧由 W2C 版本键专测背书 ③同步执行于提交与派发之间无介入面）；`observePrompt` 指纹观测线（debug 旋钮下每步 stderr 输出 fingerprint+changed）；旋钮 `X_HARNESS_ASSERT_VISIBLE=1`，关态零开销短路。
+- **裁决补录（偏离 §3）**：指纹观测落 stderr 观测线而非 token-meter——计量面语义是用量非内容指纹；进 session 事件体被 D1 裁决（§2.4）排除。文本可从落盘 text 现算，观测线满足 debug 需求。
+- **F7 根治（修正 W0 期误诊）**：host-exit 用例非时序 flaky——`const repo = process.cwd()` 在从包目录启动 vitest 时错误解析（早前「预存偶发红」结论是误诊，实际是调试调用方式的 cwd 差异）。修法：bash/grep 两测试改 `resolve(import.meta.dirname, "../../../..")` 仓根锚定，cwd 无关。从包目录与仓根双形态验证 17/26 全绿。
+- **门禁数字**：typecheck ✓ lint ✓（observePrompt 收 spec 对象）test **145 文件/1726 用例**（1723 + W3 断言 3）e2e 全旅程 ✓ 内核门禁 ✓。
+- **新增裁决补录**：无其他。
+- **显式挂账**：REPL×flag 端到端矩阵（W2B 遗留，前置=REPL 交互测试装置）。

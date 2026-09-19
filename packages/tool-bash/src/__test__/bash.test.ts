@@ -2,7 +2,7 @@
 
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { PathGate } from "@x-harness/tool-core";
@@ -178,7 +178,7 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
   it("宿主进程退出 → 活组被 exit handler SIGKILL（marker 不出现）", async () => {
     const marker = join(root, "leak-marker");
     const script = join(root, "host-exit-runner.ts");
-    const repo = process.cwd();
+    const repo = resolve(import.meta.dirname, "../../../.."); // 仓根（cwd 无关——W3 F7 根治：从包目录启动 vitest 不再误诊）
     writeFileSync(
       script,
       [

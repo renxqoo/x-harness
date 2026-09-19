@@ -358,7 +358,7 @@ status --porcelain` 空 → remove+branch -D；非空 → 保留，stop/通知�
 
 X1 后台 spawn/X2 完成通知/X4 收件箱三态/X5 停止可续/X7 深度门/X8 并发占槽/X10 reason 全集
 透传/X11 报告 cap/X13 同名共存/X14 fork 净化（surface 重铸+末 turn/end 切口+system 特赦）/
-X15 白名单沿树收窄（header 投影+执行面双断言）/X17 未知类型带清单/X19 stop 幂等/X20 execute
+X15 白名单沿树收窄（registry 会话层 restriction——W2A 后唯一真相；header 投影+执行面双断言保留）/X17 未知类型带清单/X19 stop 幂等/X20 execute
 内断信号防线——逐条进 §11 迁移矩阵。
 
 ## 10. 删除清单（本次提交内物理删除）
@@ -512,7 +512,7 @@ box 寻址/纯订阅/复活语义；list 补 local-session 行与 [ref]；output
 **采纳**（schema 去 maxLength、200 截断、结果回显）。P2-12 inject/permission → **落档**：
 permission 可缺席是合法部署（纯进程内），走 tryUse；顺序脆弱性由装配纪律承担（文档 §3
 勘误：inject 不含 permission、mailbox 同理）。P2-13 复活白名单不收窄 → **采纳**：
-parentToolsOf 注入 narrowTools（X15 不因复活放宽）。P3-14 stopped 绕驻留上限 → **采纳**
+parentToolsOf 读 registry.restrictionOf 注入 narrowTools（X15 不因复活放宽；W2A 后唯一真相在会话层）。P3-14 stopped 绕驻留上限 → **采纳**
 （stopped 计入驻留；档化后 message 走 archive 复活，停止可续语义不变）。P3-15 abort 漏
 worktree 清理 → **采纳**（+ 建树前前置 abort 检查）。P3-16 prompt 空白串 → **采纳**。
 P3-17 e2e 弱断言 → **采纳**（notice 恰好一条计数、复活 whenIdle 屏障；cross.test 真

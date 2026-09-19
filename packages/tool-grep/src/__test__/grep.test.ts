@@ -3,7 +3,7 @@
 
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { PathGate } from "@x-harness/tool-core";
@@ -286,7 +286,7 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     // Bun.which 缓存本进程启动期 PATH——真缺席态只能子进程构造（新进程读新 PATH）
     mkdirSync(join(root, "empty-bin"));
     const script = join(root, "rg-absent.ts");
-    const repo = process.cwd();
+    const repo = resolve(import.meta.dirname, "../../../.."); // 仓根（cwd 无关——W3 F7 根治：从包目录启动 vitest 不再误诊）
     writeFileSync(
       script,
       [

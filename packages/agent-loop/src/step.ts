@@ -2,6 +2,7 @@
 // dialStep（拨号+header）/ runAttempt（流结算+retry）/ scheduleTools / settleConclude / stopping 续航。
 // driver.ts 持生命周期编排（kick/turn 循环），本文件只装一个 step 的相位函数与共享原语。
 
+import { createHash } from "node:crypto";
 import type { LlmChunk, LlmRuntime } from "@x-harness/llm";
 import { anchorIndexOf } from "@x-harness/session";
 import type { ContentBlock, InboxEntry, InboxTarget, Session, SessionEvent } from "@x-harness/session";
@@ -130,22 +131,55 @@ function insertBatch(session: Session, target: InboxTarget, entries: readonly In
   appendEvent(session, "agent/inbox/spliced", { op: "insert", target, entries: [...entries] });
 }
 
-/** system 锚点：无锚点 append；文本漂移 replace[seq,seq]（锚点谓词 = session anchorIndexOf） */
+/** system 锚点：无锚点 append；文本漂移 replace[seq,seq]（锚点谓词 = session anchorIndexOf）。
+ *  提交后经 assertVisibleLogged 复核「模型可见必落盘」（debug 旋钮，W3）。 */
 export function anchorSystem(scope: TurnScope, step: number): void {
   const { deps, turn } = scope;
   const session = deps.session;
   const systemText = deps.options.systemPrompt ?? deps.prompt.assemble({ sessionId: session.id }).text; // W2C：会话层合并投影（无会话段时与缺省逐字节等价）
   const nodes = session.surface();
   const anchorIndex = anchorIndexOf(nodes);
+  let changed = false;
   if (anchorIndex < 0) {
     appendSurfaceEvent(session, { type: "system/message", data: { turn, step, text: systemText }, surfaceOp: "append" });
-    return;
+    changed = true;
+  } else {
+    const anchor = nodes[anchorIndex];
+    if (anchor !== undefined) {
+      const anchorText = (anchor.event.data as { text: string }).text ?? "";
+      if (anchorText !== systemText) {
+        appendSurfaceEvent(session, { type: "system/message", data: { turn, step, text: systemText }, surfaceOp: { op: "replace", startSeq: anchor.seq, endSeq: anchor.seq } });
+        changed = true;
+      }
+    }
   }
-  const anchor = nodes[anchorIndex];
-  if (anchor === undefined) return;
-  const anchorText = (anchor.event.data as { text: string }).text ?? "";
-  if (anchorText !== systemText) {
-    appendSurfaceEvent(session, { type: "system/message", data: { turn, step, text: systemText }, surfaceOp: { op: "replace", startSeq: anchor.seq, endSeq: anchor.seq } });
+  observePrompt({ turn, step, text: systemText, changed });
+  assertVisibleLogged(session, systemText);
+}
+
+/** 指纹观测线（W3，ELEVATION-DESIGN §2.4 裁决补录）：debug 旋钮下每步输出——指纹可从
+ *  落盘 text 现算（不进事件体）；KV cache 前缀命中 = 指纹不变。不进 token-meter
+ *  （计量面语义是用量非内容）——记 MIGRATION-W3 §8 裁决补录 */
+function observePrompt(spec: { readonly turn: number; readonly step: number; readonly text: string; readonly changed: boolean }): void {
+  if (process.env.X_HARNESS_ASSERT_VISIBLE !== "1") return;
+  const fingerprint = createHash("sha256").update(spec.text).digest("hex").slice(0, 16);
+  process.stderr.write(`[prompt] turn=${String(spec.turn)} step=${String(spec.step)} fingerprint=${fingerprint} changed=${String(spec.changed)}\n`);
+}
+
+/** 「模型可见必落盘」不变量（W3，MIGRATION-W3 §3 三口径）：提交后以 deriveMessages()
+ *  的 system 投影复核。口径①静态串——systemText 本就是 options.systemPrompt，比对对象
+ *  天然统一；口径② no-op 分支——systemText 为本次现算装配，缓存陈旧先经「锚点≠新装配」
+ *  暴露（缓存版本键由 W2C 专测背书）；口径③执行时点——本函数同步执行于提交与派发之间，
+ *  无 await 无介入面。失配 throw（fail-loud——不变量违例非降级）。 */
+export function assertVisibleLogged(session: Session, systemText: string): void {
+  if (process.env.X_HARNESS_ASSERT_VISIBLE !== "1") return;
+  const projected = session
+    .deriveMessages()
+    .filter((message) => message.role === "system")
+    .map((message) => message.text)
+    .join("\n");
+  if (projected !== systemText) {
+    throw new Error(`visible-logged invariant violated: system projection (${String(projected.length)} chars) != committed systemText (${String(systemText.length)} chars)`);
   }
 }
 

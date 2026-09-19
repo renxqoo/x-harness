@@ -52,7 +52,9 @@ export type PreExecuteDecision = { readonly kind: "allow" } | { readonly kind: "
 ```ts
 register(def: ToolDefinition): Disposer;          // 重名注册 throw；运行期注册新名合法（schemas 即时反映）
 get(name: string): ToolDefinition | undefined;
-schemas(): readonly ToolSchema[];                 // LLM 请求装配用快照
+schemas(options?: { sessionId?: string }): readonly ToolSchema[];  // 分层投影：根层 − 会话 restriction（缺省=全量，W2A）
+scoped(sessionId).restrict(filter | "deny-all"): Disposer;         // 会话层收窄（X15 沿树只收窄；sessionDisposed 自动注销）
+restrictionOf(sessionId): ToolFilter | undefined;                   // 读回——血缘收窄输入源
 concurrencyOf(name: string, args: unknown): "parallel" | "exclusive";   // O(1) 查表；分类器抛错吞为 exclusive
 dispatch(request: ToolCallRequest): Promise<ToolOutcome>;               // 管线入口（§1.3）
 ```
