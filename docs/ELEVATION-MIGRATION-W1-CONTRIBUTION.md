@@ -72,3 +72,15 @@ IMPLEMENTATION §1 F4/F8；DESIGN §1 D6（时序裁决）。
 - **验收核对**：grep `toolGuidanceBridge` 代码零命中（ELEVATION 文档内 4 处为合法历史引用）；两处陈旧注释勘误完成；tool-core→system-prompt 为上层→内核边（门禁管 core 组纯净性，方向正确）。
 - **新增裁决补录**：无偏离定稿。
 - **显式挂账**：无。
+
+## 9. 收口对抗审查处置（2026-09-20）
+
+审查结论：核心通路（桥→停靠等价/D6 数组序/disposer 链序/text 函数形/空串缺席分支/门禁）**零行为缺陷**——等价静态成立。处置：
+
+- **M-1（中）等价验收缺工件**：补 CLI 形态世界 prompt 组合金测试（cli-prompt-sections.test.ts——生产序世界 base 全段游标在序 + facts 全插值 + local env bash 零停靠段 + 追加段落尾），未来组合回归有网。
+- **L-1（低）guidance 消费面收窄**：make() 自带 guidance 字段不再触发停靠（仅工厂参数投稿）——types.ts 注释记录该语义边界（当前仓内生产者唯 tool-bash 工厂参数，无实际差异）。
+- **L-2（低）五处「组合层桥接」陈旧注释**：全部勘误（tool-plugin.test.ts describe 标题与同块新用例的正面矛盾、tools/types.ts、tool-bash plugin/service.test、cli 测试措辞）。
+- **L-3（低）SYSTEM-PROMPT.md 两处口径**：错误占位格式补 `<msg>`；baseCore「唯一跨包锚点常量」改 wellKnown 词汇表口径 + 别名事实。
+- **L-4（低）**：baseCore 导出改 `typeof wellKnown.baseCore` 保字面量类型。
+- **I-1（信息）**：段级 vs 变量级降级方向差异、占位文本经插值的边缘二次替换、undefined 分支死防御——文档记录不修。
+- 用例数：1716 → 1717（+1 金测试）。

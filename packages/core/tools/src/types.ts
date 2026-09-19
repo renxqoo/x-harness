@@ -36,8 +36,9 @@ export interface ToolDefinition extends ToolSchema {
   /** 控制类工具（Codex is_builtin_control_tool 同构语义）：agent 自我组织/控制面行为，
    *  非环境副作用——permission 裁决面直通（声明权在工具定义，安全面只认标记不认名单） */
   readonly isControlTool?: true;
-  /** 使用守则（纯数据）：工具在场才成立的行事约束——组合层桥接进 system-prompt，
-   *  本包不认识 prompt。不进 LLM 序列化（schemas() 显式子集映射，guidance 不外漏） */
+  /** 使用守则（纯数据）：工具在场才成立的行事约束——经 tool-core 工厂参数投稿为
+   *  system-prompt 段（D3；make() 自带此字段仅作数据不触发停靠——W1 审查 L-1 记录）。
+   *  不进 LLM 序列化（schemas() 显式子集映射，guidance 不外漏） */
   readonly guidance?: string;
   execute(args: unknown, ctx: ToolExecContext): Promise<ToolOutcome>;
 }

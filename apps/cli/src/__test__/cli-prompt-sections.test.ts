@@ -6,9 +6,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
+import { createLocalEnv } from "@x-harness/exec-env";
 import { baseCore, createBasePromptPlugin, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
 import type { BasePromptFacts, SystemPromptService } from "@x-harness/system-prompt";
+import { toolsPlugin } from "@x-harness/tools";
+import { bashGuidance } from "@x-harness/tool-bash";
+import { PathGate, createToolPlugin } from "@x-harness/tool-core";
 import { promptFactsOf, registerAppendSections } from "../cli-prompt-sections.ts";
 
 const FACTS: BasePromptFacts = { cwd: "/tmp/proj", isGit: false, platform: "darwin", shell: "zsh", date: "2026-09-20" };
@@ -32,7 +37,7 @@ describe("registerAppendSections", () => {
     expect(second).toBeGreaterThan(first);
   });
 
-  it("与工具段共序：tool/<name> 桥接段（after baseCore）仍先于追加段", async () => {
+  it("与工具段共序：tool/<name> 停靠段（after baseCore）仍先于追加段", async () => {
     const prompt = await makePrompt();
     prompt.section({ name: "tool/bash", after: baseCore, text: "## Shell\n\nfence rule" });
     registerAppendSections(prompt, ["TAIL-APPEND"]);
@@ -72,5 +77,42 @@ describe("promptFactsOf（宿主探测）", () => {
   it("env.SHELL 缺席 → unknown（垃圾降级，绝不空值）", () => {
     const facts = promptFactsOf({ cwd: "/w", platform: "linux", env: {} });
     expect(facts.shell).toBe("unknown");
+  });
+});
+
+describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验收工件）", () => {
+  it("生产序世界：base 全段在序 + facts 插值 + local env bash 零段 + 追加段落尾（组合回归锚）", async () => {
+    const ctx = createContext();
+    const facts: BasePromptFacts = { cwd: "/w/proj", isGit: true, platform: "darwin", shell: "zsh", date: "2026-09-20" };
+    const root = mkdtempSync(join(tmpdir(), "xh-cli-prompt-"));
+    try {
+      const unload = await loadPlugins(ctx, [
+        systemPromptPlugin, // D6 硬约束：前置于带 guidance 的 tool-*
+        createBasePromptPlugin(facts),
+        toolsPlugin,
+        createToolPlugin({ name: "tool-bash", gate: new PathGate(root), envOption: createLocalEnv(root), make: () => ({ name: "bash", description: "bash", inputSchema: Type.Object({}), execute: async () => ({ content: "ok" }) }), guidance: bashGuidance }),
+      ]);
+      const prompt = ctx.use(systemPrompt);
+      const offAppend = registerAppendSections(prompt, ["EXTRA-RULE"]);
+      const text = prompt.assemble().text;
+      // base 全段按序（游标单调推进）
+      const order = ["You are Agent", "## Security", "## Conduct", "## Tone", "## Tool Use", "## Making Changes", "## Safety", "## Environment", "## Context Management", "## Output Format"];
+      let cursor = -1;
+      for (const part of order) {
+        const at = text.indexOf(part);
+        expect(at).toBeGreaterThan(cursor);
+        cursor = at;
+      }
+      expect(text).toContain("- Working directory: /w/proj");
+      expect(text).toContain("- Is a git repository: yes");
+      expect(text).not.toContain("{{"); // facts 全插值
+      expect(text).not.toContain("## Shell"); // local env → bashGuidance 空串 → 零停靠段（W1 等价语义）
+      expect(text.indexOf("EXTRA-RULE")).toBeGreaterThan(cursor); // 追加段落尾
+      offAppend();
+      for (const dispose of unload) await dispose();
+      await ctx.dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

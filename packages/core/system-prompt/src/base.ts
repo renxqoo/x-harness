@@ -12,7 +12,7 @@ import type { SystemPromptService } from "./types.ts";
 export const wellKnown = { baseCore: "base/core" } as const;
 
 /** 基础段名（= wellKnown.baseCore 别名，保留一个版本周期——MIGRATION-W1 §3） */
-export const baseCore: string = wellKnown.baseCore;
+export const baseCore: typeof wellKnown.baseCore = wellKnown.baseCore;
 
 /** 环境事实（宿主探测后传入；date 为本地时区 yyyy-mm-dd，宿主负责定格） */
 export interface BasePromptFacts {

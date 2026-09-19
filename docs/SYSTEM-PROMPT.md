@@ -49,15 +49,16 @@ tie-break 保证全序确定）：
   **facts 由宿主探测传入，包不做 IO**；入口 `normalizeBaseFacts` 归一：换行压空格
   （环境值不得伪造新段落——注入面收口）、垃圾降级 `"unknown"`、date 只认 yyyy-mm-dd
   （时钟归宿主，会话内定格防午夜缓存前缀断裂）。
-- `baseCore = "base/core"`：**唯一跨包锚点常量**——工具守则段与追加段的缺省锚；
-  基础段缺席时锚点 no-op 落尾（优雅降级）。
+- `wellKnown.baseCore = "base/core"`：**唯一跨包锚点词汇表**（内核所有）——工具守则段
+  与追加段的缺省锚；基础段缺席时锚点 no-op 落尾（优雅降级）。`baseCore` 为其别名
+  （保留一个版本周期）。
 - **工具守则走投稿式（D3，ELEVATION-DESIGN §1）**：`ToolDefinition.guidance?: string`
   （tools 包纯数据位，env 解析后定型——配置感知；不进 LLM 序列化：schemas() 显式子集映射）；
   tool-core 在 apply 期直接停靠 section `tool/<name>`（锚 `wellKnown.baseCore`，词汇表
   内核所有）。**装配序硬约束（D6）**：带 guidance 的 tool-* 必须排在 system-prompt 之后
   （tryUse 即时求值，晚序=段静默缺失；sandbox/execEnv 同款先例）；无 prompt 服务的世界
   优雅降级不注册。`SectionSpec.text` 支持 `(() => string)` 函数形：assemble 期现算，
-  抛错 → `[section <name> render error]` 占位（段级降级，对齐变量级语义）。
+  抛错 → `[section <name> render error: <msg>]` 占位（段级降级——不中断装配意义上对齐变量级；变量是保持原样、段落是错误占位，方向异同 W1 审查 I-1 记录）。
 - 拆段（基础段再细分）与 assemble 工具集过滤**明确不做**（过度设计裁决）：重启条件
   分别为「出现需要段间精确落位的第二消费者」「delegation 收窄子代理被全量 prompt
   实测干扰」。

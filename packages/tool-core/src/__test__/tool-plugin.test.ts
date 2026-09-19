@@ -123,7 +123,7 @@ describe("createToolPlugin（docs/TOOLBOX.md §0——装配期 fail-closed）",
   });
 });
 
-describe("guidance 纯数据位（组合层桥接——本包不认识 prompt）", () => {
+describe("guidance 投稿（数据位 + 内核直停靠——D3）", () => {
   it("guidance 落 ToolDefinition：registry.get 可读；缺席为 undefined", async () => {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [

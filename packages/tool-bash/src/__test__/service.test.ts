@@ -41,7 +41,7 @@ describe("backgroundTasks service", () => {
   });
 });
 
-describe("bash guidance（纯数据——组合层桥接，本包不认识 prompt）", () => {
+describe("bash guidance（纯函数——工厂参数投稿，D3）", () => {
   it("sandbox env → 围栏守则文本；非 sandbox → 空串", () => {
     const fenced = bashGuidance({ kind: "sandbox" } as never);
     expect(fenced).toContain("sandbox");

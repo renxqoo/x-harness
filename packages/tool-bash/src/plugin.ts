@@ -56,7 +56,7 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
     envOption: env,
     gate,
     make: (resolved, _extraRootsOf, rootOverrideOf) => createBashTool({ gate, limits, env: resolved, tasks, rootOverrideOf }),
-    // 使用守则（纯数据，组合层桥接）：仅 sandbox 围栏下有话可说——裸 local 无围栏语义，零守则
+    // 使用守则（工厂参数投稿，D3）：仅 sandbox 围栏下有话可说——裸 local 无围栏语义，零守则
     guidance: bashGuidance,
     // 会话终结：该会话后台任务两段杀并清桶（登记生命周期=会话生命周期）；装配拆卸：全部直接 KILL；
     // 生效登记簿 provide 为服务——task-tools 停靠（bash 工具与 task_output/task_stop 同一实例）
