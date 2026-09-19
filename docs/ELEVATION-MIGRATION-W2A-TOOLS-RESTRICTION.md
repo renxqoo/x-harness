@@ -55,3 +55,12 @@ IMPLEMENTATION §1 F3（消费方全集含 step.ts:335/plugin.ts:138/run-repl sp
 - [ ] 四门全绿；§1 清单 1-5 逐条等价（对抗审查对照 X15 专测零改写）
 - [ ] `restrictionOf` 供 delegation 血缘（孙代收窄有专测：父 restrict 后 spawn typed 子，交集语义=现状）
 - [ ] 泄漏回归绿；性能预算实测记录（DESIGN §4）
+
+## 8. 实施记录（2026-09-20）
+
+- **交付物**：tools registry 会话层（restrict 身份守卫覆盖/restrictionOf 读回/schemas({sessionId}) 投影/deny-all 空投影/dropRestriction 内部面）；toolsPlugin 挂 sessionDisposed 自动注销；step.ts 双点切换（dialStep 投影 + allowedTools 喂投影名集——**双执法保留**，denyNotAllowed 零改动）；delegation 三点（spawn restrictChildTools 读父 restrictionOf / plugin parentToolsOf / revive X15 重放）；narrowTools 放宽 ToolFilter（deny-all ∩ 任何 = 空，X15 单调）；CLI main 初始注册（create 恒注册全量快照、resume 带 flag 才注册）+ REPL makeNext 单点重注册（F-2 三分支）。
+- **裁决补录（偏离定稿的切割调整）**：CLI main 与 REPL makeNext 从 W2B 挪入本波——step 切数据源后所有现行 options.tools 写点必须同波迁移，否则 W2A/W2B 之间 --tools 用户丢白名单（过渡态行为保持）。W2B 收窄为：删通道字段 + resolve-agent-options 改写 + 注释勘误 + grep 死透。
+- **门禁数字**：typecheck ✓ lint ✓（buildChild 复杂度拆 restrictChildTools）test **144 文件/1716 用例**（1712 + registry 3 + 泄漏 1）e2e 全旅程 ✓ 内核门禁 ✓。
+- **等价锚核对**：delegation.test.ts「白名单双执法（X15）」执行面用例**零改写通过**；「沿树只收窄」内部态断言按迁移矩阵改读 restrictionOf（唯一真相迁移）；resolve-agent-options.test.ts 零改写通过。
+- **新增裁决补录**：无其他。
+- **显式挂账**：无。

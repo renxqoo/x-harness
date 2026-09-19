@@ -73,11 +73,21 @@ export interface ToolCallRequest {
 
 export type PreExecuteDecision = { readonly kind: "allow" } | { readonly kind: "deny"; readonly reason: string };
 
+/** 会话层工具收窄：可见名白名单或 "deny-all"（全禁） */
+export type ToolFilter = readonly string[] | "deny-all";
+
 export interface ToolRegistry {
   /** 重名注册 throw；运行期注册新名合法（schemas 即时反映）；Disposer 由注册方自行绑定 ctx.effect */
   register(def: ToolDefinition): () => void;
   get(name: string): ToolDefinition | undefined;
-  schemas(): readonly ToolSchema[];
+  /** 分层投影：根层 − 该会话 restriction（缺省参会话无关 = 全量，向后兼容——ELEVATION-DESIGN §2.2）。
+   *  只投影不执行门禁的孪生执法面在 agent-loop（allowedTools 喂投影名集） */
+  schemas(options?: { readonly sessionId?: string }): readonly ToolSchema[];
+  /** 会话层收窄写入面（X15 沿树只收窄）；同会话二次 restrict 覆盖（身份守卫）。
+   *  生命周期：sessionDisposed 自动注销（toolsPlugin 挂），或 disposer 手动 */
+  scoped(sessionId: string): { restrict(filter: ToolFilter): () => void };
+  /** 读回：该会话当前生效 restriction（无 = 未收窄）——delegation 血缘收窄的输入源（W2A） */
+  restrictionOf(sessionId: string): ToolFilter | undefined;
   concurrencyOf(name: string, args: unknown): "parallel" | "exclusive";
   dispatch(request: ToolCallRequest): Promise<ToolOutcome>;
 }

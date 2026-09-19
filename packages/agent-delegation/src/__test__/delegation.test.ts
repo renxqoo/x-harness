@@ -365,7 +365,7 @@ describe("白名单双执法（X15）", () => {
     expect(grand.isError).toBeUndefined();
     const grandSession = sessionOf(grand.content);
     const grandHandle = world.loop.get(grandSession);
-    expect(grandHandle?.agent.options.tools).toEqual(["allowed_tool"]); // 只收窄
+    expect(world.registry.restrictionOf(grandSession)).toEqual(["allowed_tool"]); // 只收窄（W2A：唯一真相在 registry 会话层）
     if (grandHandle !== undefined) await grandHandle.dispose();
     await parent.dispose();
   });
@@ -478,6 +478,23 @@ describe("并行池三 spawn（exclusive 串行下计数不超）", () => {
     expect(denied).toHaveLength(1);
     expect(String(denied[0]?.data.content)).toContain("concurrency limit reached (2 busy");
     release();
+    await parent.dispose();
+  });
+});
+
+// —— W2A：restriction 生命周期（ELEVATION-MIGRATION-W2A §5 泄漏回归）——
+
+describe("restriction 生命周期（W2A）", () => {
+  it("子代理终结（dispose → sessionDisposed）自动注销其会话层 restriction——无泄漏", async () => {
+    const world = await makeWorld(await makeOptions({ narrow: { tools: ["allowed_tool"] } }));
+    world.registry.register({ name: "allowed_tool", inputSchema: Type.Object({}), execute: async () => ({ content: "ok" }) });
+    const parent = await spawnParent(world);
+    const child = await callTool({ world, name: "agent_spawn", args: { description: "c", prompt: "c", subagent_type: "narrow" }, session: parent.agent.session.id });
+    const childSession = sessionOf(child.content);
+    expect(world.registry.restrictionOf(childSession)).toEqual(["allowed_tool"]); // 在场
+    const childHandle = world.loop.get(childSession);
+    if (childHandle !== undefined) await childHandle.dispose();
+    expect(world.registry.restrictionOf(childSession)).toBeUndefined(); // 终结即注销
     await parent.dispose();
   });
 });

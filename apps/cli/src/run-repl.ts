@@ -6,6 +6,7 @@ import type { AgentHandle, AgentLoopService, AgentOptions } from "@x-harness/age
 import { agentAssistantStream } from "@x-harness/agent-loop";
 import type { Result } from "@x-harness/core";
 import type { CliArgs } from "./parse-cli-args.ts";
+import { resolveToolNames } from "./resolve-agent-options.ts";
 import { formatSessionSummary, formatTurnLine } from "./format-usage.ts";
 import { newSessionId } from "./new-session-id.ts";
 import type { ProvidersConfig } from "./providers-file.ts";
@@ -93,6 +94,8 @@ async function makeNext(input: MakeNextInput): Promise<Result<AgentHandle>> {
 
 export async function runRepl(input: ReplInput): Promise<number> {
   const { world, io } = input;
+  // 注册工具名快照：restriction 重演的基集（makeNext 单点用——F-2 处置）
+  const registeredToolNames = world.registry.schemas().map((schema) => schema.name);
   let handle = input.handle;
   let dial = dialOf(handle.agent.options);
   let quitting = false;
@@ -156,6 +159,9 @@ export async function runRepl(input: ReplInput): Promise<number> {
         return `fatal: session switch failed: ${made.reason}`;
       }
       handle = made.value;
+      // F-2 处置（ELEVATION-MIGRATION-W2B §1.4-1.6）：makeNext 单点重注册——dispose 触发
+      // sessionDisposed 已注销旧层，此处从 CLI flag 状态重演（/new 新 id / /model 同 id / 兜底）
+      world.registry.scoped(handle.agent.session.id).restrict(resolveToolNames(input.args, registeredToolNames));
       const flushed = await world.store.flush(handle.agent.session.id);
       if (!flushed.ok) {
         quit(1);

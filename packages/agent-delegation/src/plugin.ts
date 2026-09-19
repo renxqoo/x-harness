@@ -132,10 +132,11 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
             {
               archive,
               loop,
+              registry,
               lineage,
               types: () => current,
               parentModelOf: (session: SessionId) => loop.get(session)?.agent.options.model,
-              parentToolsOf: (session: SessionId) => loop.get(session)?.agent.options.tools,
+              parentToolsOf: (session: SessionId) => registry.restrictionOf(session),
               ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
               ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
             },

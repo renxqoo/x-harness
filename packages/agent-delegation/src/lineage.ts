@@ -3,6 +3,7 @@
 // 模型覆盖序；白名单沿树收窄。
 
 import type { AgentHandle } from "@x-harness/agent-loop";
+import type { ToolFilter } from "@x-harness/tools";
 import type { Session, SessionEvent, SessionId } from "@x-harness/session";
 import type { LoadedAgentType } from "./types.ts";
 
@@ -142,9 +143,10 @@ export function inheritDial(
 }
 
 /** 沿树只收窄：type.tools ∩ 调用方白名单；undefined=全集 */
-export function narrowTools(callerTools: readonly string[] | undefined, typeTools: readonly string[] | undefined): readonly string[] | undefined {
+export function narrowTools(callerTools: ToolFilter | undefined, typeTools: readonly string[] | undefined): ToolFilter | undefined {
   if (typeTools === undefined) return callerTools;
   if (callerTools === undefined) return typeTools;
+  if (callerTools === "deny-all") return []; // deny-all ∩ 任何 = 空（X15 单调）
   const caller = new Set(callerTools);
   return typeTools.filter((name) => caller.has(name));
 }

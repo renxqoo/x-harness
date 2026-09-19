@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AgentLoopService } from "@x-harness/agent-loop";
+import type { ToolFilter, ToolRegistry } from "@x-harness/tools";
 import type { SessionArchive, SessionId } from "@x-harness/session";
 import { narrowTools } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
@@ -14,11 +15,12 @@ import type { LoadedAgentType } from "./types.ts";
 export interface ReviveDeps {
   readonly archive: SessionArchive;
   readonly loop: AgentLoopService;
+  readonly registry: ToolRegistry;
   readonly lineage: Lineage;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly parentModelOf: (session: SessionId) => string | undefined;
   /** 复活父当前工具白名单（沿树只收窄——X15 不因复活放宽） */
-  readonly parentToolsOf: (session: SessionId) => readonly string[] | undefined;
+  readonly parentToolsOf: (session: SessionId) => ToolFilter | undefined;
   /** worktree 隔离重放面（grants 缺席则隔离降级为明示）；onWarn 降级告知 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
   readonly onWarn?: (message: string) => void;
@@ -39,6 +41,9 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
     agent: revivedOptions(deps, caller, named),
   });
   if (!made.ok) return { kind: "miss" };
+  // X15 重放（W2A）：白名单 = 类型 ∩ 复活父当前 restriction——registry 会话层注册
+  const effectiveTools = narrowTools(deps.parentToolsOf(caller), named?.tools);
+  if (effectiveTools !== undefined) deps.registry.scoped(made.value.agent.session.id).restrict(effectiveTools);
   const worktree = await replayWorktree(deps, header.agentWorktree, made.value.agent.session.id);
   const row: ChildRow = {
     agentId, // 沿用落盘 id——agentId 即持久身份，复活不换号
@@ -75,15 +80,13 @@ function typeOf(deps: ReviveDeps, agentType: string | undefined): LoadedAgentTyp
   return deps.types()[agentType];
 }
 
-/** 复活 options：类型 model/systemPrompt 重建；白名单 = 类型 ∩ 复活父当前白名单
- *  （沿树只收窄——X15 不因复活放宽）；模型兜底 = 复活调用方 options（§7.3 序） */
-function revivedOptions(deps: ReviveDeps, caller: SessionId, named: LoadedAgentType | undefined): { model?: string; systemPrompt?: string; tools?: string[] } {
+/** 复活 options：类型 model/systemPrompt 重建（白名单走 registry 会话层重放，W2A）；
+ *  模型兜底 = 复活调用方 options（§7.3 序） */
+function revivedOptions(deps: ReviveDeps, caller: SessionId, named: LoadedAgentType | undefined): { model?: string; systemPrompt?: string } {
   const model = named?.model ?? deps.parentModelOf(caller);
-  const tools = narrowTools(deps.parentToolsOf(caller), named?.tools);
   return {
     ...(model !== undefined ? { model } : {}),
     ...(named !== undefined && named.prompt !== "" ? { systemPrompt: named.prompt } : {}),
-    ...(tools !== undefined ? { tools: [...tools] } : {}),
   };
 }
 

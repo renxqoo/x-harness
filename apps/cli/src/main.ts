@@ -19,7 +19,7 @@ import { processFileArgs } from "./process-file-args.ts";
 import { readProvidersConfig } from "./providers-file.ts";
 import type { ProvidersConfig } from "./providers-file.ts";
 import { readPipedStdin } from "./read-stdin.ts";
-import { agentOptionsForCreate, agentOptionsForResume } from "./resolve-agent-options.ts";
+import { agentOptionsForCreate, agentOptionsForResume, resolveToolNames } from "./resolve-agent-options.ts";
 import { resolveModel } from "./resolve-model.ts";
 import type { ModelResolution } from "./resolve-model.ts";
 import { continueCandidate, mainSessions, matchPrefix } from "./resolve-session.ts";
@@ -184,6 +184,11 @@ async function openWorld(input: {
   }
   if (!args.systemPrompt) {
     world.ctx.effect(registerAppendSections(world.prompt, args.appendSystemPrompts));
+  }
+  // 工具面 restriction（ELEVATION-DESIGN §2.2，W2A）：create 恒注册（无 flag=全量快照——
+  // 血缘分级的名单恒可读）；resume 带 flag 才注册（无 flag=显式全集，与现状等价）
+  if (input.resumeId === undefined || args.noTools || args.tools !== undefined || args.excludeTools !== undefined) {
+    world.registry.scoped(made.value.agent.session.id).restrict(resolveToolNames(args, registered));
   }
   const flushed = await world.store.flush(made.value.agent.session.id);
   if (!flushed.ok) {

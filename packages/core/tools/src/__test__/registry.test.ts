@@ -72,3 +72,40 @@ describe("concurrencyOf fail-closed（docs/TOOLS.md §1.2）", () => {
     expect(registry.concurrencyOf("t", {})).toBe(expected);
   });
 });
+
+// —— W2A：会话层 restriction（ELEVATION-DESIGN §2.2 / MIGRATION-W2A §5）——
+
+describe("scoped restriction（会话层收窄——W2A）", () => {
+  it("restrict 白名单投影 schemas({sessionId})；缺省参会话无关（向后兼容）；restrictionOf 读回", () => {
+    const registry = createToolRegistry();
+    registry.register(def("a"));
+    registry.register(def("b"));
+    expect(registry.schemas().map((s) => s.name)).toEqual(["a", "b"]); // 无参 = 全量
+    const off = registry.scoped("s1").restrict(["a"]);
+    expect(registry.schemas({ sessionId: "s1" }).map((s) => s.name)).toEqual(["a"]);
+    expect(registry.schemas({ sessionId: "s2" }).map((s) => s.name)).toEqual(["a", "b"]); // 他会话不受影响
+    expect(registry.restrictionOf("s1")).toEqual(["a"]);
+    expect(registry.restrictionOf("s2")).toBeUndefined();
+    off();
+    expect(registry.schemas({ sessionId: "s1" }).map((s) => s.name)).toEqual(["a", "b"]); // 注销复原
+  });
+
+  it("deny-all → 空投影；二次 restrict 覆盖（身份守卫：旧 disposer 不误删新层）", () => {
+    const registry = createToolRegistry();
+    registry.register(def("a"));
+    const offOld = registry.scoped("s1").restrict("deny-all");
+    expect(registry.schemas({ sessionId: "s1" })).toEqual([]);
+    const offNew = registry.scoped("s1").restrict(["a"]); // 覆盖
+    expect(registry.schemas({ sessionId: "s1" }).map((s) => s.name)).toEqual(["a"]);
+    offOld(); // 旧 disposer no-op
+    expect(registry.schemas({ sessionId: "s1" }).map((s) => s.name)).toEqual(["a"]);
+    offNew();
+    expect(registry.restrictionOf("s1")).toBeUndefined();
+  });
+
+  it("垃圾 filter throw（非 deny-all 非字符串数组）", () => {
+    const registry = createToolRegistry();
+    expect(() => registry.scoped("s1").restrict([1] as never)).toThrow(/non-empty tool names/);
+    expect(() => registry.scoped("s1").restrict("" as never)).toThrow(/non-empty tool names/);
+  });
+});

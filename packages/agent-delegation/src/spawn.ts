@@ -107,6 +107,7 @@ async function buildChild(
   const made = await createChildSession(deps, { caller, plan, agentId, typeName, seed: forked ? seed : [], worktree: worktree.plan });
   if (!made.ok) return spawnFailed(made.reason, worktree.plan);
   const childHandle = made.value;
+  restrictChildTools(deps, { caller, child: childHandle, named });
   const row: ChildRow = {
     agentId,
     sessionId: childHandle.agent.session.id,
@@ -128,22 +129,20 @@ async function buildChild(
   return { ok: true, text: spawnText(row, isFork && !forked) };
 }
 
-/** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt + 白名单收窄 */
+/** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt（白名单走 registry 会话层，W2A） */
 function childAgentOptions(
   deps: SpawnDeps,
   parentHandle: AgentHandle,
   spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId },
-): { model?: string; provider?: string; systemPrompt?: string; tools?: string[] } {
+): { model?: string; provider?: string; systemPrompt?: string } {
   const dial = inheritDial(parentHandle, {
     type: spec.named,
     lastHeader: lastHeaderOf(deps, spec.caller),
     override: spec.isFork ? undefined : { model: spec.input.model }, // fork 忽略 model 参数（规格原文）
   });
-  const effectiveTools = narrowTools(parentHandle.agent.options.tools, spec.named?.tools);
   return {
     ...dial,
     ...(spec.named !== undefined && spec.named.prompt !== "" ? { systemPrompt: spec.named.prompt } : {}),
-    ...(effectiveTools !== undefined ? { tools: [...effectiveTools] } : {}),
   };
 }
 
@@ -183,6 +182,14 @@ function createChildSession(
     },
     agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller }),
   });
+}
+
+
+/** X15 沿树只收窄（W2A）：narrow 输入源 = 父会话当前 restriction（registry 读回面）；
+ *  注册在 child 会话层，sessionDisposed 自动注销 */
+function restrictChildTools(deps: SpawnDeps, spec: { readonly caller: SessionId; readonly child: AgentHandle; readonly named: LoadedAgentType | undefined }): void {
+  const effectiveTools = narrowTools(deps.registry.restrictionOf(spec.caller), spec.named?.tools);
+  if (effectiveTools !== undefined) deps.registry.scoped(spec.child.agent.session.id).restrict(effectiveTools);
 }
 
 /** execute 内断信号：不遗孤儿子（worktree 一并评估——审查 B-P2-5） */
