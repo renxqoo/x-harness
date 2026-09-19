@@ -4,6 +4,7 @@
 // +task-tools（服务停靠共享 bash 登记簿——件14）；脚本化假 LLM 驱动七步工具链：write→read（开门）→
 // 覆写（观察门放行）→bash 追加+建文件→未观察覆写拒（fail-closed）→grep 命中→bash 后台立返任务 id。
 // 断言盘上副作用、事件落账；后台任务经 task_output/task_stop 收读停（bash 源接线自动探测点）。
+import { scriptedAdapter, textScript } from "@x-harness/testkit";
 import { mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,13 +35,6 @@ function callScript(callId: string, name: string, args: Record<string, unknown>)
   })();
 }
 
-function textScript(text: string): AsyncGenerator<LlmChunk> {
-  return (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "text-delta", text };
-    yield { type: "finish", finish: { kind: "stop" } };
-  })();
-}
-
 export async function runToolboxJourney(): Promise<void> {
   // grep 是 rg 硬依赖（TOOLBOX.md §5）——缺席 = 环境配置错误，fail-fast 报可行动指引
   must(Bun.which("rg") !== null, "e2e 需要 ripgrep：brew install ripgrep / apt install ripgrep，或设 X_HARNESS_RG_PATH");
@@ -66,10 +60,7 @@ export async function runToolboxJourney(): Promise<void> {
       agentLoopPlugin,
       sessionCheckpointPlugin,
     ]);
-    ctx.use(llmRuntime).registerAdapter({
-      name: "fake",
-      stream: () => scripts.shift() ?? textScript("(exhausted)"),
-    });
+    ctx.use(llmRuntime).registerAdapter(scriptedAdapter({ scripts, exhausted: "(exhausted)" }));
     const made = await ctx.use(agentLoopServiceToken).create({
       session: { id: "toolbox" as SessionId },
       agent: { model: "fake-model", provider: "fake" },

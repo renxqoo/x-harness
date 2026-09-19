@@ -4,6 +4,7 @@
 // 第二任务开工【存活带依赖到 resume 后】→ get 卡片）；断言 tool/result 落账、todo/snapshot
 // 事件 last-wins、匿名桶独立；resume 段（dispose → 新装配同 root → agentLoop.resume →
 // followup 触发惰性恢复）断言清单/依赖边/seq 续号跨重启回来。
+import { scriptedAdapter, textScript } from "@x-harness/testkit";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -28,13 +29,6 @@ function callScript(callId: string, name: string, args: Record<string, unknown>)
   })();
 }
 
-function textScript(text: string): AsyncGenerator<LlmChunk> {
-  return (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "text-delta", text };
-    yield { type: "finish", finish: { kind: "stop" } };
-  })();
-}
-
 interface World {
   ctx: ReturnType<typeof createContext>;
   scripts: Array<AsyncGenerator<LlmChunk>>;
@@ -54,7 +48,7 @@ async function assembleWorld(root: string): Promise<World> {
     agentLoopPlugin,
     sessionCheckpointPlugin,
   ]);
-  ctx.use(llmRuntime).registerAdapter({ name: "fake", stream: () => scripts.shift() ?? textScript("(exhausted)") });
+  ctx.use(llmRuntime).registerAdapter(scriptedAdapter({ scripts, exhausted: "(exhausted)" }));
   return { ctx, scripts };
 }
 

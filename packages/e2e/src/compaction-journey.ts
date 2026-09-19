@@ -2,6 +2,7 @@
 // 真实装配 session+jsonl+tools+llm+system-prompt+agent-loop+compaction+autocompact；
 // 脚本化假 LLM 适配器。旅程A：长对话灌入 → 水位压缩落账 → 后续请求用压缩投影。
 // 旅程B：假窗口 413 → 紧急自愈重试 + servedWindow 落账 → 任务不中断。
+import { textScript } from "@x-harness/testkit";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,13 +20,6 @@ import type { Agent } from "@x-harness/agent-loop";
 import { compactionLanded, createCompactionPlugin } from "@x-harness/compaction";
 import { autocompactL1Cleared, createAutoCompactPlugin } from "@x-harness/autocompact";
 import { must } from "./check.ts";
-
-function textScript(text: string): AsyncGenerator<LlmChunk> {
-  return (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "text-delta", text };
-    yield { type: "finish", finish: { kind: "stop" } };
-  })();
-}
 
 /** 摘要拨号脚本：结构化检查点摘要形态（水位触发时由 compaction 摘要面消费） */
 function summaryScript(): AsyncGenerator<LlmChunk> {
