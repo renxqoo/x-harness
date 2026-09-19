@@ -50,6 +50,20 @@ describe("插件加载器（§5）", () => {
     await expect(loadPlugins(ctx, plugins)).rejects.toThrow(/unknown plugin "ghost"/);
   });
 
+  it("有 name 无 apply 函数的对象 → 装配期 throw（非 dispose 期深处）", async () => {
+    const ctx = createContext();
+    await expect(loadPlugins(ctx, [{ name: "hollow" } as never])).rejects.toThrow(/plugin "hollow" has no apply function/);
+  });
+
+  it("apply 返回非函数（如误返回插件对象/配置）→ 装配期 throw，不进 unwind 链", async () => {
+    const ctx = createContext();
+    const impostor = { str: "not a disposer" };
+    await expect(
+      loadPlugins(ctx, [{ name: "bad-return", apply: () => impostor } as never]),
+    ).rejects.toThrow(/plugin "bad-return" apply must return a disposer function or void — got object/);
+    await ctx.dispose(); // 崩在装配期而非 dispose——干净
+  });
+
   it("工厂函数冒充插件（漏调用）→ 装配期 fail-fast 并点名调用法", async () => {
     const ctx = createContext();
     // 形状复刻：命名工厂函数自带 name/Function.prototype.apply，结构上满足 Plugin——

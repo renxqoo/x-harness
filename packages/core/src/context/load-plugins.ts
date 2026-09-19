@@ -26,6 +26,9 @@ function assertValid(plugins: readonly Plugin[]): void {
     if (typeof plugin.name !== "string" || plugin.name.length === 0) {
       throw new Error("plugin name must be a non-empty string");
     }
+    if (typeof plugin.apply !== "function") {
+      throw new Error(`plugin "${plugin.name}" has no apply function`);
+    }
     if (names.has(plugin.name)) {
       throw new Error(`duplicate plugin name: "${plugin.name}"`);
     }
@@ -113,7 +116,14 @@ export async function loadPlugins(
     const captured: Disposer[] = [];
     try {
       const disposer = await plugin.apply(captureRegistrations(ctx, captured));
-      if (disposer !== undefined && disposer !== null) captured.push(disposer);
+      // disposer 必须是函数：非函数形态在此静默入账 = dispose 期深处 'unwind is not a
+      // function'——装配期 fail-fast（典型：apply 误返回了插件对象/配置对象）
+      if (disposer !== undefined && disposer !== null) {
+        if (typeof disposer !== "function") {
+          throw new Error(`plugin "${plugin.name}" apply must return a disposer function or void — got ${typeof disposer}`);
+        }
+        captured.push(disposer);
+      }
       let done = false;
       const unload: Disposer = async () => {
         if (done) return; // 幂等，且与层回卷共用哨兵——绝不双跑
