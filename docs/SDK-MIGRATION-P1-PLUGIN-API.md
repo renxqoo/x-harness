@@ -41,3 +41,9 @@ tapSessionEvents(ctx, fn: (e: SessionEvent) => void): Disposer;                 
 ## 5. 回滚：纯加法单波 revert。
 
 ## 6. 验收：四门 + 用例绿 + 对抗审查（sugar 与裸 token 行为等价性逐 helper 核对）。
+
+## 7. 实施记录（2026-09-20）
+
+- **交付物**：packages/plugin-api——transform×4（Messages/Assistant/ToolResult/Dial）+ veto×2（Step/Tools）+ wrapStream + tap×4（Assistant/ToolCalls/Stream/TurnEnd）+ tapSessionEvents 逃生舱。全部为既有 token 语法糖（零新 token——词表不变断言由类型层保证：无 defineXxx 调用）；veto 一律先 next 后否决（I2）；transformAssistant 输出契约收窄 content/stopReason（interrupted 内核独占——糖层再保险）；transformToolResult 支持 prepend 注册序（收口审查 4.3）；tapSessionEvents 注释含三红线。
+- **门禁数字**：typecheck ✓ lint ✓ test **148 文件/1754 用例**（+P1 等价性 6：改写落账一致/否决/纠/deny 配对+输出变换/流包裹+双 tap/拨号变换）e2e 全旅程 ✓ 内核门禁 ✓。
+- **等价性锚**：糖与裸中间件行为逐 helper 对照（F0 专测测面、P1 测糖——互补）。
