@@ -8,8 +8,8 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createLocalEnv } from "@x-harness/exec-env";
 import type { ExecEnv } from "@x-harness/exec-env";
 import type { SessionId } from "@x-harness/session";
-import { createToolbox } from "@x-harness/toolbox";
-import type { BackgroundTasks } from "@x-harness/toolbox";
+import { BackgroundTasks, defaultTaskLimits } from "@x-harness/tool-bash";
+import type { BackgroundTasks as BackgroundTasksType } from "@x-harness/tool-bash";
 import { bashTaskSource, bashReadText } from "../source-bash.ts";
 
 const sid = (v: string): SessionId => v as SessionId;
@@ -17,12 +17,12 @@ const SESSION = sid("bash-src");
 
 let root: string;
 let env: ExecEnv;
-let tasks: BackgroundTasks;
+let tasks: BackgroundTasksType;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "xh-bashsrc-"));
   env = createLocalEnv(root);
-  tasks = createToolbox({ root, spillDir: root, env }).tasks;
+  tasks = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir: root }));
 });
 
 afterEach(() => {

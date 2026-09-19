@@ -9,8 +9,8 @@ import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv, ProcHandle } from "@x-harness/exec-env";
-import { PathGate } from "./paths.ts";
-import type { RootOverrideOf } from "./paths.ts";
+import { PathGate } from "@x-harness/tool-core";
+import type { RootOverrideOf } from "@x-harness/tool-core";
 import type { BackgroundTasks } from "./tasks.ts";
 import { ChannelCollector, pump, writeSpill } from "./collect.ts";
 
@@ -36,7 +36,7 @@ export interface BashLimits {
 export function defaultLimits(over: { defaultTimeoutMs?: number; maxTimeoutMs?: number; maxOutputBytes?: number; spillDir?: string } = {}): BashLimits {
   const defaultTimeoutMs = over.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxTimeoutMs = over.maxTimeoutMs ?? MAX_TIMEOUT_MS;
-  if (defaultTimeoutMs > maxTimeoutMs) throw new Error("toolbox: defaultTimeoutMs must not exceed maxTimeoutMs");
+  if (defaultTimeoutMs > maxTimeoutMs) throw new Error("tool-bash: defaultTimeoutMs must not exceed maxTimeoutMs");
   return {
     defaultTimeoutMs,
     maxTimeoutMs,

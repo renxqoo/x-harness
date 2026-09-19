@@ -1,5 +1,5 @@
 {
-  "name": "@x-harness/toolbox",
+  "name": "@x-harness/tool-read",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -8,12 +8,9 @@
   },
   "dependencies": {
     "@x-harness/core": "workspace:*",
-    "@x-harness/tools": "workspace:*",
     "@x-harness/exec-env": "workspace:*",
-    "@x-harness/permission": "workspace:*",
-    "@x-harness/session": "workspace:*"
-  },
-  "devDependencies": {
+    "@x-harness/tool-core": "workspace:*",
+    "@x-harness/tools": "workspace:*",
     "@sinclair/typebox": "^0.34.0"
   }
 }

@@ -1,6 +1,6 @@
 // extraRoots 端到端（审查 B-2 处置证明）：permission 批准界外目录 → gate 放行（不再
 // PATH_ESCAPES_ROOT）→ 工具真实读出 → fence.writable 并入（bash 重定向可写）→ 会话隔离。
-// 全链装配 permission + sandbox + toolbox（darwin 真围栏；linux 腿 networkOff）。
+// 全链装配 permission + sandbox + 命令工具插件 tool-read/write/bash（darwin 真围栏；linux 腿 networkOff）。
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,7 +9,10 @@ import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { createPermissionPlugin, permissionBroker } from "@x-harness/permission";
-import { createToolbox } from "@x-harness/toolbox";
+import { ObservedRegistry, PathGate } from "@x-harness/tool-core";
+import { createReadPlugin } from "@x-harness/tool-read";
+import { createWritePlugin } from "@x-harness/tool-write";
+import { createBashPlugin } from "@x-harness/tool-bash";
 import { createSandboxPlugin } from "../plugin.ts";
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import type { SessionId } from "@x-harness/session";
@@ -55,14 +58,15 @@ describe("extraRoots 全链（ask 批 → gate 放行 → fence 并入）", () =
   async function assemble(script: readonly ("allow" | "deny")[]): Promise<{ ctx: Context; unload: readonly Disposer[] }> {
     const b = broker(script);
     const ctx = createContext();
-    const box = createToolbox({ root });
+    const gate = new PathGate(root);
+    const observed = new ObservedRegistry();
     const unload = await loadPlugins(ctx, [
       toolsPlugin,
       createPermissionPlugin({ root }),
       createSandboxPlugin({ root, networkOff: true }), // 本用例专注文件面
-      box.readPlugin,
-      box.writePlugin,
-      box.bashPlugin,
+      createReadPlugin({ gate, observed }),
+      createWritePlugin({ gate, observed }),
+      createBashPlugin({ gate }),
       b.plugin,
     ]);
     return { ctx, unload };

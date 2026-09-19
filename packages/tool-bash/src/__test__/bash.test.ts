@@ -5,10 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createLocalEnv } from "@x-harness/exec-env";
-import { createToolbox } from "../toolbox.ts";
+import { PathGate } from "@x-harness/tool-core";
 import type { ToolRegistry } from "@x-harness/tools";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
+import { createBashPlugin } from "../plugin.ts";
+import { BackgroundTasks, defaultTaskLimits } from "../tasks.ts";
 
 let root: string;
 let registry: ToolRegistry;
@@ -18,9 +20,9 @@ let spillDir: string;
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "xh-bash-"));
   spillDir = mkdtempSync(join(tmpdir(), "xh-spill-"));
-  const box = createToolbox({ root, spillDir, defaultTimeoutMs: 3_000, env: createLocalEnv(root) });
+  const gate = new PathGate(root);
   const ctx = createContext();
-  const unload = await loadPlugins(ctx, [toolsPlugin, box.bashPlugin]);
+  const unload = await loadPlugins(ctx, [toolsPlugin, createBashPlugin({ gate, env: createLocalEnv(root), limits: { spillDir, defaultTimeoutMs: 3_000 } })]);
   registry = ctx.use(toolRegistry);
   disposers.push(async () => {
     await ctx.dispose();
@@ -182,10 +184,10 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
       [
         `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/src/index.ts"))};`,
         `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/tools/src/index.ts"))};`,
-        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/exec-env/src/local/env.ts"))};\nimport { createToolbox } from ${JSON.stringify(join(repo, "packages/toolbox/src/toolbox.ts"))};`,
+        `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/exec-env/src/local/env.ts"))};\nimport { PathGate } from ${JSON.stringify(join(repo, "packages/tool-core/src/paths.ts"))};\nimport { createBashPlugin } from ${JSON.stringify(join(repo, "packages/tool-bash/src/plugin.ts"))};`,
         `const ctx = createContext();`,
-        `const box = createToolbox({ root: ${JSON.stringify(root)}, env: createLocalEnv(${JSON.stringify(root)}) });`,
-        `const unload = await loadPlugins(ctx, [toolsPlugin, box.bashPlugin]);`,
+        `const gate = new PathGate(${JSON.stringify(root)});`,
+        `const unload = await loadPlugins(ctx, [toolsPlugin, createBashPlugin({ gate, env: createLocalEnv(${JSON.stringify(root)}) })]);`,
         `const reg = ctx.use(toolRegistry);`,
         `void reg.dispatch({ callId: "host-exit", name: "bash", args: { command: ${JSON.stringify(`sleep 3; touch ${marker}`)}, timeout: 30000 }, signal: new AbortController().signal }).catch(() => {});`,
         `setTimeout(() => process.exit(0), 800); // spawn 已发生、dispatch 未收敛——宿主退出走清场`,
@@ -203,18 +205,21 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
 });
 
 describe("并发档声明（§6 横切——真实 registry 口径）", () => {
-  it("read/grep 并行、write/bash 排他", async () => {
-    const box = createToolbox({ root, env: createLocalEnv(root) });
-    const ctx = createContext();
-    const unload = await loadPlugins(ctx, [toolsPlugin, box.readPlugin, box.writePlugin, box.bashPlugin, box.grepPlugin]);
-    const reg = ctx.use(toolRegistry);
-    const ctrl = new AbortController().signal;
-    expect(reg.concurrencyOf("read", {})).toBe("parallel");
-    expect(reg.concurrencyOf("grep", {})).toBe("parallel");
-    expect(reg.concurrencyOf("write", {})).toBe("exclusive");
-    expect(reg.concurrencyOf("bash", {})).toBe("exclusive");
-    void ctrl;
-    await ctx.dispose();
-    void unload;
+  it("bash 排他（缺省 exclusive——fail-closed）", async () => {
+    expect(registry.concurrencyOf("bash", {})).toBe("exclusive");
+  });
+});
+
+describe("装配期 fail-closed（收口审查 P1：tasks/taskLimits 同传曾静默忽略）", () => {
+  it("tasks 与 taskLimits 同传 → throw（装配矛盾拒绝，不静默取一）", () => {
+    const gate = new PathGate(root);
+    const tasks = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir }));
+    expect(() => createBashPlugin({ gate, tasks, taskLimits: { taskTimeoutMs: 1_000 } })).toThrow(/not both/);
+  });
+
+  it("taskLimits 非法值 → 装配期 throw（校验不因缺省链缺席）", () => {
+    const gate = new PathGate(root);
+    expect(() => createBashPlugin({ gate, taskLimits: { taskTimeoutMs: -1 } })).toThrow(/taskTimeoutMs/);
+    expect(() => createBashPlugin({ gate, taskLimits: { maxConcurrentTasks: 0 } })).toThrow(/maxConcurrentTasks/);
   });
 });

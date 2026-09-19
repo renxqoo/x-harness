@@ -3,15 +3,15 @@
 
 import type { Context, Plugin } from "@x-harness/core";
 import { toolRegistry } from "@x-harness/tools";
-import type { BackgroundTasks } from "@x-harness/toolbox";
+import type { BackgroundTasks } from "@x-harness/tool-bash";
 import { createTaskHub } from "./hub.ts";
 import { taskHub } from "./tokens.ts";
 import { createTaskTools } from "./tools.ts";
 import { bashTaskSource } from "./source-bash.ts";
 
 export interface TaskToolsOptions {
-  /** bash 后台任务登记簿句柄（createToolbox().tasks 公开面）——在场即注册 bash 源；
-   *  未传则 bash id 落统一 not-found（装配纪律，docs/TASKS.md §9） */
+  /** bash 后台任务登记簿句柄（装配方经 createBashPlugin({ tasks }) 穿引的同一实例）——
+   *  在场即注册 bash 源；未传则 bash id 落统一 not-found（装配纪律，docs/TASKS.md §9） */
   readonly bashTasks?: BackgroundTasks;
   readonly onWarn?: (message: string) => void;
 }

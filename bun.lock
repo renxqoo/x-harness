@@ -30,6 +30,7 @@
         "@x-harness/llm": "workspace:*",
         "@x-harness/session-persistence-jsonl": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
       },
     },
     "packages/agent-loop": {
@@ -65,7 +66,11 @@
         "@x-harness/session-persistence-jsonl": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/task-tools": "workspace:*",
-        "@x-harness/toolbox": "workspace:*",
+        "@x-harness/tool-bash": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tool-grep": "workspace:*",
+        "@x-harness/tool-read": "workspace:*",
+        "@x-harness/tool-write": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {
@@ -130,8 +135,13 @@
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/permission": "workspace:*",
         "@x-harness/session": "workspace:*",
-        "@x-harness/toolbox": "workspace:*",
         "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@x-harness/tool-bash": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tool-read": "workspace:*",
+        "@x-harness/tool-write": "workspace:*",
       },
     },
     "packages/session": {
@@ -185,7 +195,7 @@
       "dependencies": {
         "@x-harness/core": "workspace:*",
         "@x-harness/session": "workspace:*",
-        "@x-harness/toolbox": "workspace:*",
+        "@x-harness/tool-bash": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {
@@ -201,8 +211,20 @@
         "@x-harness/session": "workspace:*",
       },
     },
-    "packages/toolbox": {
-      "name": "@x-harness/toolbox",
+    "packages/tool-bash": {
+      "name": "@x-harness/tool-bash",
+      "version": "0.0.1",
+      "dependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+    },
+    "packages/tool-core": {
+      "name": "@x-harness/tool-core",
       "version": "0.0.1",
       "dependencies": {
         "@x-harness/core": "workspace:*",
@@ -213,6 +235,42 @@
       },
       "devDependencies": {
         "@sinclair/typebox": "^0.34.0",
+      },
+    },
+    "packages/tool-grep": {
+      "name": "@x-harness/tool-grep",
+      "version": "0.0.1",
+      "dependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+    },
+    "packages/tool-read": {
+      "name": "@x-harness/tool-read",
+      "version": "0.0.1",
+      "dependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+    },
+    "packages/tool-write": {
+      "name": "@x-harness/tool-write",
+      "version": "0.0.1",
+      "dependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@x-harness/tool-read": "workspace:*",
       },
     },
     "packages/tools": {
@@ -410,7 +468,15 @@
 
     "@x-harness/token-meter": ["@x-harness/token-meter@workspace:packages/token-meter"],
 
-    "@x-harness/toolbox": ["@x-harness/toolbox@workspace:packages/toolbox"],
+    "@x-harness/tool-bash": ["@x-harness/tool-bash@workspace:packages/tool-bash"],
+
+    "@x-harness/tool-core": ["@x-harness/tool-core@workspace:packages/tool-core"],
+
+    "@x-harness/tool-grep": ["@x-harness/tool-grep@workspace:packages/tool-grep"],
+
+    "@x-harness/tool-read": ["@x-harness/tool-read@workspace:packages/tool-read"],
+
+    "@x-harness/tool-write": ["@x-harness/tool-write@workspace:packages/tool-write"],
 
     "@x-harness/tools": ["@x-harness/tools@workspace:packages/tools"],
 

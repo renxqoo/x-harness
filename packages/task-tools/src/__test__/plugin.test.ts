@@ -10,7 +10,8 @@ import { sessionPlugin } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { createLocalEnv } from "@x-harness/exec-env";
-import { createToolbox } from "@x-harness/toolbox";
+import { BackgroundTasks, defaultTaskLimits } from "@x-harness/tool-bash";
+import type { BackgroundTasks as BackgroundTasksType } from "@x-harness/tool-bash";
 import { createTaskToolsPlugin } from "../plugin.ts";
 import { taskHub } from "../tokens.ts";
 
@@ -22,7 +23,7 @@ afterEach(() => {
   roots = [];
 });
 
-async function assemble(bashTasks?: ReturnType<typeof createToolbox>["tasks"]) {
+async function assemble(bashTasks?: BackgroundTasksType) {
   const ctx = createContext();
   const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createTaskToolsPlugin(bashTasks !== undefined ? { bashTasks } : {})]);
   return { ctx, registry: ctx.use(toolRegistry), unload };
@@ -45,10 +46,10 @@ describe("task-tools plugin assembly", () => {
   it("end-to-end bash seam: a registry-started task is read and stopped through the tools", async () => {
     const root = mkdtempSync(join(tmpdir(), "xh-tasktools-"));
     roots = [...roots, root];
-    const box = createToolbox({ root, spillDir: root, env: createLocalEnv(root) });
-    const { ctx, registry } = await assemble(box.tasks);
+    const boxTasks = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir: root }));
+    const { ctx, registry } = await assemble(boxTasks);
     const session = sid("plugin-e2e");
-    const started = await box.tasks.start({ command: "sleep 0.2; echo seam-marker", cwd: root, session, env: createLocalEnv(root) });
+    const started = await boxTasks.start({ command: "sleep 0.2; echo seam-marker", cwd: root, session, env: createLocalEnv(root) });
     expect(started.ok).toBe(true);
     if (!started.ok) throw new Error(started.reason);
 
@@ -59,7 +60,7 @@ describe("task-tools plugin assembly", () => {
     expect(read.content).toContain("completed exit=0");
     expect(read.content).toContain("more=false");
 
-    const long = await box.tasks.start({ command: "sleep 30", cwd: root, session, env: createLocalEnv(root) });
+    const long = await boxTasks.start({ command: "sleep 30", cwd: root, session, env: createLocalEnv(root) });
     expect(long.ok).toBe(true);
     if (!long.ok) throw new Error(long.reason);
     const stopped = await registry.dispatch({ callId: "c2", name: "task_stop", args: { task_id: long.value.id }, signal: new AbortController().signal, session });

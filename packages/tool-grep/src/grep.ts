@@ -6,9 +6,8 @@ import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
-import { admitSession } from "./paths.ts";
-import type { PathGate, RootOverrideOf } from "./paths.ts";
-import type { ExtraRootsOf } from "./toolbox.ts";
+import { admitSession } from "@x-harness/tool-core";
+import type { PathGate, RootOverrideOf, ExtraRootsOf } from "@x-harness/tool-core";
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1_000;
@@ -17,7 +16,7 @@ const RAW_CAP = 1_000_000;
 /** 目录搜索跳过集（`--glob !node_modules --glob !.git`；不尊重 gitignore——--no-ignore 声明） */
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
 
-const RG_GUIDANCE = "install ripgrep (brew install ripgrep / apt install ripgrep), set X_HARNESS_RG_PATH, or pass rgPath to createToolbox";
+const RG_GUIDANCE = "install ripgrep (brew install ripgrep / apt install ripgrep), set X_HARNESS_RG_PATH, or pass rgPath to createGrepPlugin";
 
 export interface GrepOptions {
   readonly rgPath?: string;

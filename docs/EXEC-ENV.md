@@ -24,11 +24,12 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin;  // 
 // provides: permissionGrants（会话授权集）+ permissionBroker（人类裁决，宿主提供）
 //         + permissionDecided（审计事件）；on(sessionDisposed) 逐出会话桶
 
-// packages/toolbox 改造：六文件全部经 ExecEnv（spill 例外——宿主侧运维产物，明文豁免）；
-// createToolbox 增三级解析：工厂参数 env > ctx.use(execEnv) > 装配期 throw（fail-closed）
+// 工具命令包改造（tool-read/write/bash/grep + tool-core）：六文件全部经 ExecEnv（spill
+// 例外——宿主侧运维产物，明文豁免）；工具插件工厂三级解析：工厂参数 env > ctx.use(execEnv)
+// > 装配期 throw（fail-closed——tool-core createToolPlugin）
 ```
 
-装配即选择：`[permissionPlugin, sandboxPlugin, toolsPlugin, ...toolboxPlugins]` = 围栏+auto；
+装配即选择：`[permissionPlugin, sandboxPlugin, toolsPlugin, ...四命令插件（tool-read 等）]` = 围栏+auto；
 不装 sandbox = permission 照常裁决但无围栏（bash 不得界内 auto，见 §6）；只装 localEnvPlugin =
 现状等价（工具可用、无围栏无权限）。
 
@@ -89,27 +90,27 @@ export interface ExecEnv {
 
 契约纪律：pid 不进契约（负 pid 组杀是 localEnv 实现细节，经 `settled`/`kill` 抽象）；kill resolve=
 信号已投递（grep 双杀点「kill 后排空再解析」时序以此为准：kill 后读流至 EOF/RST）；selfKilled 归因
-标志留 toolbox（「我发起过击杀」——env 不做归因）。
+标志留命令工具包（tool-grep/tool-bash——「我发起过击杀」，env 不做归因）。
 
 ## 2. localEnv（packages/exec-env/src/local/）
 
-现 toolbox 行为原样搬迁为契约实现：`openRead` = fd 流式分块 + **fstat 取版本**（8KB NUL 嗅探逻辑
-留 toolbox，经 handle 首 read 组合——嗅探跨块由 conformance chunk 用例锁）；`writeFileAtomic` =
+现命令工具包行为原样搬迁为契约实现：`openRead` = fd 流式分块 + **fstat 取版本**（8KB NUL 嗅探逻辑
+留 tool-read，经 handle 首 read 组合——嗅探跨块由 conformance chunk 用例锁）；`writeFileAtomic` =
 同目录 temp（随机名，`wx 0600`）+ 存在目标 mode 承袭（fstat→fchmod temp）+ rename + 失败清 temp
 （**注错缝**：选项注入 `failAt` 分段失败——EIO 中途/短写循环——conformance local 腿可用，接替现
 `atomicWrite` ByteSink 缝）；`spawn` = `Bun.spawn(detached: true)` + 负 pid 组杀 + **进程级单例**
 liveGroups 登记簿与 host-exit exit handler（模块级，非 per-plugin——dispose 不注销 handler，
 quiescence 后仅移除自身条目；dsh「finalizer 前置排序 + 正常 disposal 达 quiescence 前保活」纪律）+
 settleGroup 轮询（50ms×100 有界，定时器随 settled 结算清理）。`realpath` = 最深存在祖先归一
-（现 PathGate.physicalOf **迁移至此，toolbox 侧删除无双实现**）。`localEnvPlugin(options)` 提供无
+（现 PathGate.physicalOf **迁移至此，工具包侧删除无双实现**）。`localEnvPlugin(options)` 提供无
 围栏 execEnv（现状等价）。wrapper/shell 路径解析忽略模型可影响的 env（my-agent 假二进制防御），
 装配期 `Bun.which` 探测一次缓存。
 
-## 3. toolbox 改造 + 存量缺陷修复
+## 3. 工具命令包改造 + 存量缺陷修复
 
 六文件改吃 ExecEnv：read 行扫描重写为 async ReadHandle 上的扫描（BOM/carry/字节预算/截断原样迁移）；
 **版本登记时序不变量**（fail-closed）：版本取自 openRead 返回的 fd 版本（先于首字节读取）；空文件
-（size 0）跳嗅探仍登记；hadBom 组合留 toolbox。`ObservedRegistry` 键控不变（ctx.session 侧无漂移）；
+（size 0）跳嗅探仍登记；hadBom 组合留 tool-read。`ObservedRegistry` 键控不变（ctx.session 侧无漂移）；
 版本元组由 env 产出（全 string，判等即可）。`grep` 双路径不变——rg 经 env.spawn **透传 ctx.session**
 （自动同围栏）；`bash` 两段杀节奏/输出帽/截断保尾/spill 全留宿主侧不变（kill/settled 语义见 §1）。
 `PathGate.admit` 改 async 并委托 `env.realpath`（词法判定留 gate，物理判定单源在 env）。
@@ -117,7 +118,7 @@ settleGroup 轮询（50ms×100 有界，定时器随 settled 结算清理）。`
 **围栏执法面裁决**（审查 A4/A6/B11）：fs 面（openRead/readDir/writeFileAtomic）**无会话概念、
 无内核围栏**——工具 fs 面的 denyRead/protectedPaths/根围栏执法全在 **gate/permission 层**（进程内，
 所有工具路径必过 gate 单一执法点）；内核 denyRead 剖面只对 **spawn 面**（bash/rg 子进程）生效。
-授权根（extraRoots）：permission 批准时记原始路径，**归一责任方 = toolbox gate**（持有 env）——
+授权根（extraRoots）：permission 批准时记原始路径，**归一责任方 = tool-core gate（PathGate——持有 env）**——
 admit 对授权根内路径**同样执行词法+物理双查**（realpath 复核防 symlink 根直通敏感区）后放行。
 
 **存量缺陷清单（盘点发现，当场修）**：
