@@ -13,6 +13,31 @@
         "vitest": "^5.0.1",
       },
     },
+    "apps/cli": {
+      "name": "@x-harness/cli",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-delegation": "workspace:*",
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/llm-retry": "workspace:*",
+        "@x-harness/permission": "workspace:*",
+        "@x-harness/sandbox-local": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/session-checkpoint": "workspace:*",
+        "@x-harness/session-persistence-jsonl": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/task-tools": "workspace:*",
+        "@x-harness/token-meter": "workspace:*",
+        "@x-harness/tool-bash": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tool-grep": "workspace:*",
+        "@x-harness/tool-read": "workspace:*",
+        "@x-harness/tool-write": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+    },
     "packages/agent-delegation": {
       "name": "@x-harness/agent-delegation",
       "version": "0.0.1",
@@ -563,6 +588,8 @@
     "@x-harness/agent-loop": ["@x-harness/agent-loop@workspace:packages/agent-loop"],
 
     "@x-harness/autocompact": ["@x-harness/autocompact@workspace:packages/autocompact"],
+
+    "@x-harness/cli": ["@x-harness/cli@workspace:apps/cli"],
 
     "@x-harness/compaction": ["@x-harness/compaction@workspace:packages/compaction"],
 
