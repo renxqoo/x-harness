@@ -20,6 +20,8 @@ export type {
   SurfaceMessage,
   SurfaceNode,
   SurfaceOp,
+  TodoSnapshotEventData,
+  TodoSnapshotTaskData,
   ToolRef,
   TurnEndReason,
 } from "./types.ts";

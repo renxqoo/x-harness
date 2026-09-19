@@ -117,6 +117,7 @@ const validSamples: Record<string, unknown> = {
   "llm/retry": { turn: 0, step: 0, provider: "p", retry: 1, delayMs: 500, failure: { message: "http-503:upstream", code: "http-503" } },
   "session/end-seed": {},
   "agent/inbox/spliced": { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: "hi" }] }] },
+  "todo/snapshot": { seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "in_progress", owner: "w", metadata: { k: 1 } }], edges: [["1", "2"]] },
 };
 
 const brokenSamples: Record<string, unknown> = {
@@ -135,6 +136,7 @@ const brokenSamples: Record<string, unknown> = {
   "llm/retry": { turn: 0, step: 0, provider: "", retry: 1, delayMs: 500, failure: { message: "x" } },
   "session/end-seed": { inherited: "yes" },
   "agent/inbox/spliced": { op: "insert", target: "side-queue", entries: [] },
+  "todo/snapshot": { seq: 1, tasks: [{ id: "01", subject: "A", status: "pending" }], edges: [] },
 };
 
 describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵）", () => {
@@ -156,6 +158,29 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("turn/end", { turn: 0, reason: { kind: "aborted", cause: "user" } })).toBeUndefined();
     expect(gateEvent("turn/end", { turn: 0, reason: { kind: "aborted" } })).toBeUndefined();
     expect(gateEvent("turn/end", { turn: 0, reason: { kind: "aborted", cause: 5 } })).toBe("shape:turn/end");
+  });
+
+  it("todo/snapshot 词条门表驱动（docs/TODO.md §13.2/§13.4——规范形/自环/悬空/seq 界）", () => {
+    const ok = (data: unknown): boolean => gateEvent("todo/snapshot", data) === undefined;
+    const bad = (data: unknown): string => gateEvent("todo/snapshot", data) ?? "passed";
+    expect(ok({ seq: 0, tasks: [], edges: [] })).toBe(true); // 空清单合法（max 空集取 0）
+    expect(ok({ seq: 3, tasks: [{ id: "1", subject: "A", status: "completed" }, { id: "3", subject: "B", status: "pending", description: "d" }], edges: [["3", "1"]] })).toBe(true);
+    expect(ok({ seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "pending" }], edges: [["1", "2"], ["1", "2"]] })).toBe(true); // 重复边过门（恢复灌 Set 去重——落档无害）
+    expect(bad({ seq: -1, tasks: [], edges: [] })).toBe("shape:todo/snapshot"); // 表驱动 brokenSamples 之外补界
+    for (const [label, data] of [
+      ["id 非规范形 01", { seq: 1, tasks: [{ id: "01", subject: "A", status: "pending" }], edges: [] }],
+      ["id 非规范形 0", { seq: 0, tasks: [{ id: "0", subject: "A", status: "pending" }], edges: [] }],
+      ["id 重复", { seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "1", subject: "B", status: "pending" }], edges: [] }],
+      ["status 出表", { seq: 1, tasks: [{ id: "1", subject: "A", status: "deleted" }], edges: [] }],
+      ["subject 空", { seq: 1, tasks: [{ id: "1", subject: "", status: "pending" }], edges: [] }],
+      ["edges 悬空", { seq: 1, tasks: [{ id: "1", subject: "A", status: "pending" }], edges: [["1", "9"]] }],
+      ["edges 自环", { seq: 1, tasks: [{ id: "1", subject: "A", status: "pending" }], edges: [["1", "1"]] }],
+      ["seq < max id", { seq: 1, tasks: [{ id: "2", subject: "A", status: "pending" }], edges: [] }],
+      ["metadata 非对象", { seq: 1, tasks: [{ id: "1", subject: "A", status: "pending", metadata: "x" }], edges: [] }],
+      ["tasks 非数组", { seq: 1, tasks: {}, edges: [] }],
+    ] as Array<[string, unknown]>) {
+      expect(ok(data), label).toBe(false);
+    }
   });
 
   it("inbox 词条门表驱动（docs/SESSION-RESUME §7）", () => {

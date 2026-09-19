@@ -1,7 +1,11 @@
-// todo 清单件契约（docs/TODO.md §1.4）：TodoList 服务 + 任务快照类型。
-// id 是十进制递增字符串；status 无 deleted 态——deleted 即物理移除。
+// todo 清单件契约（docs/TODO.md §13 修订B）：TodoList 服务 + 任务快照类型。
+// 清单每会话一份（键控桶）；id 会话内十进制递增；status 无 deleted 态——deleted 即物理移除。
+// 快照事件类型复用 session 词条类型（单一真相——docs/TODO.md §13.2）。
 
 import { defineService } from "@x-harness/core";
+import type { SessionEvent, SessionId, TodoSnapshotEventData } from "@x-harness/session";
+
+export type { TodoSnapshotEventData, TodoSnapshotTaskData } from "@x-harness/session";
 
 export type TodoStatus = "pending" | "in_progress" | "completed";
 
@@ -40,7 +44,6 @@ export interface TodoUpdatePatch {
   readonly addBlockedBy?: readonly string[];
 }
 
-/** 单任务读结果（create 与 get 共用——两者都回完整任务快照） */
 export type TodoTaskResult = { readonly ok: true; readonly task: TodoTask } | TodoReject;
 
 export type TodoUpdateResult = { readonly ok: true; readonly task: TodoTask } | { readonly ok: true; readonly deleted: true } | TodoReject;
@@ -52,11 +55,18 @@ export interface TodoReject {
 }
 
 export interface TodoList {
-  create(input: TodoCreateInput): TodoTaskResult;
-  get(taskId: string): TodoTaskResult;
-  /** 数值 id 升序快照 */
-  list(): readonly TodoTask[];
-  update(taskId: string, patch: TodoUpdatePatch): TodoUpdateResult;
+  /** 服务面 = 内存真相（恒不 append——append 单点住工具面 execute，docs/TODO.md §13.1） */
+  create(session: SessionId | undefined, input: TodoCreateInput): TodoTaskResult;
+  get(session: SessionId | undefined, taskId: string): TodoTaskResult;
+  /** 数值 id 升序快照（本会话桶） */
+  list(session: SessionId | undefined): readonly TodoTask[];
+  update(session: SessionId | undefined, taskId: string, patch: TodoUpdatePatch): TodoUpdateResult;
+  /** 桶闭包状态导出（append 铸事件用） */
+  snapshotOf(session: SessionId | undefined): TodoSnapshotEventData;
+  /** 惰性恢复：折尾取最后一条 todo/snapshot 深拷贝灌桶；桶在场即跳过（不覆盖内存变更） */
+  restore(session: SessionId | undefined, events: readonly SessionEvent[]): void;
+  /** sessionDisposed 逐出（同 id 重建 = 新桶） */
+  evict(session: SessionId): void;
 }
 
 export const todoList = defineService<TodoList>("todo-list");

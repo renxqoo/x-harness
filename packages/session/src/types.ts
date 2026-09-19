@@ -1,4 +1,4 @@
-// Session 契约类型：事件信封判别联合、15 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
+// Session 契约类型：事件信封判别联合、16 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
 
 import type { Result } from "@x-harness/core";
 
@@ -78,6 +78,27 @@ export interface SessionEventData {
   readonly "session/end-seed": { readonly inherited?: true };
   /** 收件箱拼接：fold 投影归 agent-loop（docs/SESSION-RESUME.md §1.1——claim 按成员移除、判重按当前在场） */
   readonly "agent/inbox/spliced": InboxSpliceData;
+  /** todo 清单全量快照（docs/TODO.md §13——log-only；每次变更后 last-wins 落账，恢复侧惰性 fold） */
+  readonly "todo/snapshot": TodoSnapshotEventData;
+}
+
+/** todo 快照内单任务（docs/TODO.md §13.2）：id 十进制规范形、status 三值闭合（无 deleted——物理移除不进快照） */
+export interface TodoSnapshotTaskData {
+  readonly id: string;
+  readonly subject: string;
+  readonly status: "pending" | "in_progress" | "completed";
+  readonly description?: string;
+  readonly activeForm?: string;
+  readonly owner?: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+/** todo 快照事件 data（docs/TODO.md §13.2）：桶闭包状态三件——计数器 + 行集 + 单源边集展平 */
+export interface TodoSnapshotEventData {
+  readonly seq: number;
+  readonly tasks: readonly TodoSnapshotTaskData[];
+  /** [blocker, blocked] 依赖边（blocksOf 展平；自环与悬空引用由词条门拒） */
+  readonly edges: readonly (readonly [blocker: string, blocked: string])[];
 }
 
 export type InboxTarget = "next-turn" | "next-step";

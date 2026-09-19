@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@x-harness/core": "workspace:*",
+    "@x-harness/session": "workspace:*",
     "@x-harness/tools": "workspace:*"
   },
   "devDependencies": {

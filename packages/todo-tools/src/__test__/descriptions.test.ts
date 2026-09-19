@@ -6,8 +6,12 @@
 
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import type { SessionStore } from "@x-harness/session";
 import { createTodoStore } from "../store.ts";
 import { createTodoTools } from "../tools.ts";
+
+/** 对账只消费 schema——sessions 传最小 stub（会话面行为由 tools.test 背书） */
+const noSessions = { get: () => undefined } as unknown as SessionStore;
 import {
   TASK_CREATE_DESCRIPTION,
   TASK_GET_DESCRIPTION,
@@ -24,7 +28,7 @@ const RENAMES: Array<[RegExp, string]> = [
   [/TaskGet/g, "task_get"],
 ];
 
-const tools = createTodoTools(createTodoStore());
+const tools = createTodoTools(createTodoStore(), noSessions);
 const descriptions: Record<string, string> = {
   task_create: TASK_CREATE_DESCRIPTION,
   task_get: TASK_GET_DESCRIPTION,

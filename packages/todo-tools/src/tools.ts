@@ -1,8 +1,11 @@
-// 工具面 + 铸文（docs/TODO.md §1.1/§1.5）：语义校验全在 store（单一真相），本层只铸文。
+// 工具面 + 铸文（docs/TODO.md §13 修订B §1.1/§1.5）：语义校验全在 store（单一真相），
+// 本层铸文 + 持久化编排。execute 体内自惰性恢复起至 append 停是单一同步段（无 await——
+// run-to-completion；并发调用的变更→append 入队序 == 变更序，last-wins 恒正确）。
 // 四工具全 parallel：store 操作全同步、无 await 竞态窗口（并发组用例钉死该前提）。
 
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
+import type { Session, SessionId, SessionStore } from "@x-harness/session";
 import type { ToolDefinition } from "@x-harness/tools";
 import type { TodoList, TodoTask } from "./tokens.ts";
 import {
@@ -74,21 +77,43 @@ export function listText(tasks: readonly TodoTask[]): string {
 }
 
 /** 错误铸文：reason 枚举即词表前缀（not-found:<id>; no such task / invalid-args:<详情>） */
-function cast(result: { readonly ok: false; readonly reason: "not-found" | "invalid-args"; readonly message?: string }): { content: string; isError?: true } {
+function cast(result: { readonly ok: false; readonly reason: "not-found" | "invalid-args"; readonly message: string }): { content: string; isError?: true } {
   return { content: `${result.reason}:${result.message}`, isError: true };
 }
 
-export function createTodoTools(store: TodoList): ToolDefinition[] {
+/** 会话档案句柄解析：带 session 但会话缺席 → fail-closed（四动词统一口径） */
+function sessionLog(sessions: SessionStore, session: SessionId | undefined): { ok: true; log: Session | undefined } | { content: string; isError: true } {
+  if (session === undefined) return { ok: true, log: undefined }; // 匿名桶：合法易失形态
+  const log = sessions.get(session);
+  if (log === undefined) return { content: `not-found:session '${session as string}'; no such session — todo tools require an existing session`, isError: true };
+  return { ok: true, log };
+}
+
+/** 变更后落账：失败时变更已生效——回执明写，防模型盲目重试造成重复任务 */
+function persist(log: Session | undefined, store: TodoList, session: SessionId | undefined): { content: string; isError: true } | undefined {
+  if (log === undefined) return undefined;
+  const appended = log.append("todo/snapshot", store.snapshotOf(session));
+  if (appended.ok) return undefined;
+  return {
+    content: `todo persistence failed: change applied to the in-memory list but not persisted (${appended.reason}); if the reason is not-json-safe (e.g. BigInt metadata), fix or delete the offending data — snapshots resume once JSON-safe. Do not blindly retry the same create.`,
+    isError: true,
+  };
+}
+
+export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDefinition[] {
   const parallel = (): boolean => true;
   return [
     {
       name: "task_create",
       description: TASK_CREATE_DESCRIPTION,
       inputSchema: createSchema,
-      execute: async (args: Static<typeof createSchema>) => {
-        const result = store.create({ subject: args.subject ?? "", description: args.description, activeForm: args.activeForm, metadata: args.metadata });
+      execute: async (args: Static<typeof createSchema>, ctx) => {
+        const log = sessionLog(sessions, ctx.session);
+        if ("content" in log) return log;
+        store.restore(ctx.session, log.log?.events() ?? []);
+        const result = store.create(ctx.session, { subject: args.subject ?? "", description: args.description, activeForm: args.activeForm, metadata: args.metadata });
         if (!result.ok) return cast(result);
-        return { content: `Created task ${result.task.id}: ${result.task.subject} (status: ${result.task.status})` };
+        return persist(log.log, store, ctx.session) ?? { content: `Created task ${result.task.id}: ${result.task.subject} (status: ${result.task.status})` };
       },
       isConcurrencySafe: parallel,
     },
@@ -96,8 +121,11 @@ export function createTodoTools(store: TodoList): ToolDefinition[] {
       name: "task_get",
       description: TASK_GET_DESCRIPTION,
       inputSchema: getSchema,
-      execute: async (args: Static<typeof getSchema>) => {
-        const result = store.get(args.taskId);
+      execute: async (args: Static<typeof getSchema>, ctx) => {
+        const log = sessionLog(sessions, ctx.session);
+        if ("content" in log) return log;
+        store.restore(ctx.session, log.log?.events() ?? []);
+        const result = store.get(ctx.session, args.taskId);
         return result.ok ? { content: cardText(result.task) } : cast(result);
       },
       isConcurrencySafe: parallel,
@@ -106,15 +134,23 @@ export function createTodoTools(store: TodoList): ToolDefinition[] {
       name: "task_list",
       description: TASK_LIST_DESCRIPTION,
       inputSchema: listSchema,
-      execute: async () => ({ content: listText(store.list()) }),
+      execute: async (_args: unknown, ctx) => {
+        const log = sessionLog(sessions, ctx.session);
+        if ("content" in log) return log;
+        store.restore(ctx.session, log.log?.events() ?? []);
+        return { content: listText(store.list(ctx.session)) };
+      },
       isConcurrencySafe: parallel,
     },
     {
       name: "task_update",
       description: TASK_UPDATE_DESCRIPTION,
       inputSchema: updateSchema,
-      execute: async (args: Static<typeof updateSchema>) => {
-        const result = store.update(args.taskId, {
+      execute: async (args: Static<typeof updateSchema>, ctx) => {
+        const log = sessionLog(sessions, ctx.session);
+        if ("content" in log) return log;
+        store.restore(ctx.session, log.log?.events() ?? []);
+        const result = store.update(ctx.session, args.taskId, {
           subject: args.subject,
           description: args.description,
           activeForm: args.activeForm,
@@ -125,8 +161,8 @@ export function createTodoTools(store: TodoList): ToolDefinition[] {
           addBlockedBy: args.addBlockedBy,
         });
         if (!result.ok) return cast(result);
-        if ("deleted" in result) return { content: `Deleted task ${args.taskId}` };
-        return { content: cardText(result.task) };
+        if ("deleted" in result) return persist(log.log, store, ctx.session) ?? { content: `Deleted task ${args.taskId}` };
+        return persist(log.log, store, ctx.session) ?? { content: cardText(result.task) };
       },
       isConcurrencySafe: parallel,
     },
