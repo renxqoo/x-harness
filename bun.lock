@@ -239,6 +239,16 @@
         "@x-harness/session": "workspace:*",
       },
     },
+    "packages/skill": {
+      "name": "@x-harness/skill",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/md-frontmatter": "workspace:*",
+        "@x-harness/session": "workspace:*",
+      },
+    },
     "packages/system-prompt": {
       "name": "@x-harness/system-prompt",
       "version": "0.0.1",
@@ -636,6 +646,8 @@
     "@x-harness/session-mailbox": ["@x-harness/session-mailbox@workspace:packages/session-mailbox"],
 
     "@x-harness/session-persistence-jsonl": ["@x-harness/session-persistence-jsonl@workspace:packages/session-persistence-jsonl"],
+
+    "@x-harness/skill": ["@x-harness/skill@workspace:packages/skill"],
 
     "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/system-prompt"],
 
