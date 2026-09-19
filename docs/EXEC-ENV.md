@@ -12,7 +12,7 @@
 三新包 + 一改造：
 
 ```ts
-// packages/exec-env（@x-harness/exec-env）——契约 + localEnv 原生实现（无围栏）
+// packages/core/exec-env（@x-harness/exec-env）——契约 + localEnv 原生实现（无围栏）
 export const execEnv = defineService<ExecEnv>("exec-env");
 
 // packages/sandbox-local（@x-harness/sandbox-local）——围栏执行环境 provider

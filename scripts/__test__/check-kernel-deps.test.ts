@@ -3,6 +3,7 @@
 // 外部说明符未声明。fixture 用临时目录铸最小内核组。
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -56,5 +57,27 @@ describe("check-kernel-deps（内核组纯净性门禁）", () => {
     corePkg("exec-env", "@x-harness/exec-env", { src: 'import { z } from "zod";\nimport { Type } from "@sinclair/typebox";\n' });
     const reasons = kernelDependencyViolations(root).map((v) => `${v.specifier}:${v.reason}`).sort();
     expect(reasons).toEqual(["@sinclair/typebox:undeclared", "zod:external-not-allowed"]);
+  });
+
+  it("反例（W0 审查 #1/#3/#4 绕过形态）：动态 import()/require()/无空格 import 全检出", () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kd-bypass-"));
+    corePkg("tools", "@x-harness/tools", { src: `${[
+      'const m = await import("@x-harness/agent-loop");',
+      'const r = require("@x-harness/permission");',
+      'import{x}from"@x-harness/skill";',
+    ].join("\n")}\n` });
+    const specs = kernelDependencyViolations(root).map((v) => v.specifier).sort();
+    expect(specs).toEqual(["@x-harness/agent-loop", "@x-harness/permission", "@x-harness/skill"]);
+  });
+
+  it("反例（W0 审查 #7/#9 目录范围）：__test__ 与 .js 文件的上层边检出；测试面外部库不检", () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kd-scope-"));
+    corePkg("session", "@x-harness/session");
+    const testDir = join(root, "packages/core/session/src/__test__");
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(join(testDir, "x.test.ts"), 'import { describe } from "vitest";\nimport { p } from "@x-harness/permission";\n'); // vitest=测试面外部不检；上层边要检
+    writeFileSync(join(root, "packages/core/session/scripts.js"), 'const q = require("@x-harness/skill");\n'); // 非 ts 扩展也要检
+    const specs = kernelDependencyViolations(root).map((v) => v.specifier).sort();
+    expect(specs).toEqual(["@x-harness/permission", "@x-harness/skill"]);
   });
 });

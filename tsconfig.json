@@ -20,6 +20,7 @@
     "packages/*/src/**/*.ts", "packages/core/*/src/**/*.ts",
     "packages/*/test/**/*.ts", "packages/core/*/test/**/*.ts",
     "packages/*/plugins/**/*.ts", "packages/core/*/plugins/**/*.ts",
-    "apps/*/src/**/*.ts"
+    "apps/*/src/**/*.ts",
+    "scripts/**/*.ts"
   ]
 }
