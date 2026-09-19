@@ -2,8 +2,8 @@
 
 export { createCompactionPlugin } from "./plugin.ts";
 export type { CompactionOptions } from "./plugin.ts";
-export { compactionRunner, compactionLanded, compactionServedWindow } from "./tokens.ts";
-export type { CompactionRunner } from "./tokens.ts";
+export { compactionRunner, compactionLanded, compactionServedWindow, summarySection } from "./tokens.ts";
+export type { CompactionRunner, SummarySectionProvider } from "./tokens.ts";
 export type { CompactTrigger, CompactionResult, CompactionSkipReason, ResolvedConfig } from "./compact.ts";
 export { runCompact, previousSummaryOf } from "./compact.ts";
 export type { SummarizerFace, SummarizeOutcome, SummarizeInput } from "./summarize.ts";

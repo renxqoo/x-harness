@@ -3,7 +3,8 @@
 // log-only 事件 todo/snapshot 进会话档案，恢复侧惰性 fold last-wins（resume 后首次触达即恢复）。
 
 export { createTodoToolsPlugin } from "./plugin.ts";
-export { createTodoStore } from "./store.ts";
+export { todoSummarySection } from "./summary.ts";
+export { createTodoStore, tasksOfSnapshot, latestTodoSnapshot } from "./store.ts";
 export { cardText, listText } from "./tools.ts";
 export { todoList } from "./tokens.ts";
 export type {

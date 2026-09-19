@@ -241,6 +241,13 @@ function restoreBucket(bucket: Bucket, data: TodoSnapshotEventData): void {
   }
 }
 
+/** 快照 → 任务视图（注入渲染用）：临时桶复用 restoreBucket 的行/边重建（单一真相） */
+export function tasksOfSnapshot(data: TodoSnapshotEventData): readonly TodoTask[] {
+  const bucket = emptyBucket();
+  restoreBucket(bucket, data);
+  return bucketList(bucket);
+}
+
 /** 事件卷折尾取最后一条 todo/snapshot（last-wins）；无词条 → undefined（全新桶） */
 export function latestTodoSnapshot(events: readonly SessionEvent[]): TodoSnapshotEventData | undefined {
   let last: TodoSnapshotEventData | undefined;
