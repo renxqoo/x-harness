@@ -208,7 +208,7 @@ describe("组合隔离（§8.2 工具参数面 × grants 子会话键——审�
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
     const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
     const wtPath = join(worktreeParent(repo), wtEntry);
-    const { PathGate, admitSession } = await import("../../../toolbox/src/paths.ts");
+    const { PathGate, admitSession } = await import("@x-harness/tool-core");
     const gate = new PathGate(repoNow);
     const rp = async (p: string) => p;
     const grants = twins.world.ctx.tryUse(permissionGrants);

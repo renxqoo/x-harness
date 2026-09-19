@@ -8,12 +8,13 @@ import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
-import { createToolbox } from "../toolbox.ts";
+import { PathGate } from "@x-harness/tool-core";
 import { BackgroundTasks, defaultTaskLimits } from "../tasks.ts";
 import type { BackgroundTasks as BackgroundTasksType } from "../tasks.ts";
 import type { ToolRegistry } from "@x-harness/tools";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { SessionId } from "@x-harness/session";
+import { createBashPlugin } from "../plugin.ts";
 
 /** SessionId 品牌（测试会话名都是普通字符串） */
 const sid = (v: string): SessionId => v as SessionId;
@@ -28,11 +29,10 @@ let spillDir: string;
 beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "xh-task-"));
   spillDir = mkdtempSync(join(tmpdir(), "xh-task-spill-"));
-  const box = createToolbox({ root, spillDir, taskTimeoutMs: 2_000, maxConcurrentTasks: 2, env: createLocalEnv(root) });
+  tasks = new BackgroundTasks(defaultTaskLimits({ taskTimeoutMs: 2_000, maxConcurrentTasks: 2 }, { maxOutputBytes: 30_000, spillDir }));
   const ctx = createContext();
-  const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, box.bashPlugin]);
+  const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createBashPlugin({ gate: new PathGate(root), env: createLocalEnv(root), tasks })]);
   registry = ctx.use(toolRegistry);
-  tasks = box.tasks;
   disposers.push(async () => {
     await ctx.dispose();
     void unload;
@@ -194,10 +194,10 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即 task 动词的 ba
   it("sessionDisposed：会话终结两段杀并清桶（断言先于 teardown——不靠 dispose 兜底）", async () => {
     const marker = join(root, "after-session-end");
     const ctx2 = createContext();
-    const box2 = createToolbox({ root, spillDir, env: createLocalEnv(root) });
+    const tasks2 = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir }));
     let unload2: (() => Promise<void>) | undefined;
     try {
-      const unload = await loadPlugins(ctx2, [sessionPlugin, toolsPlugin, box2.bashPlugin]);
+      const unload = await loadPlugins(ctx2, [sessionPlugin, toolsPlugin, createBashPlugin({ gate: new PathGate(root), env: createLocalEnv(root), tasks: tasks2 })]);
       unload2 = async () => {
         await unload;
       };
@@ -208,7 +208,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即 task 动词的 ba
       const id2 = idOf(r.content);
       const disposed = ctx2.use(sessionStore).dispose("sY" as never); // → sessionDisposed → evict：两段杀 + 清桶
       expect(disposed.ok).toBe(true);
-      expect(box2.tasks.list(sid("sY") as never)).toEqual([]); // 清桶——会话生命周期即登记生命周期
+      expect(tasks2.list(sid("sY") as never)).toEqual([]); // 清桶——会话生命周期即登记生命周期
       await new Promise((resolve) => {
         setTimeout(resolve, 6_500);
       });

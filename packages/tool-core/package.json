@@ -1,5 +1,5 @@
 {
-  "name": "@x-harness/sandbox-local",
+  "name": "@x-harness/tool-core",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -14,9 +14,6 @@
     "@x-harness/tools": "workspace:*"
   },
   "devDependencies": {
-    "@x-harness/tool-bash": "workspace:*",
-    "@x-harness/tool-core": "workspace:*",
-    "@x-harness/tool-read": "workspace:*",
-    "@x-harness/tool-write": "workspace:*"
+    "@sinclair/typebox": "^0.34.0"
   }
 }

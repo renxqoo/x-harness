@@ -9,8 +9,8 @@
   "dependencies": {
     "@x-harness/core": "workspace:*",
     "@x-harness/session": "workspace:*",
-    "@x-harness/tools": "workspace:*",
-    "@x-harness/toolbox": "workspace:*"
+    "@x-harness/tool-bash": "workspace:*",
+    "@x-harness/tools": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0",

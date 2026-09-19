@@ -1,0 +1,19 @@
+{
+  "name": "@x-harness/tool-write",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/core": "workspace:*",
+    "@x-harness/exec-env": "workspace:*",
+    "@x-harness/tool-core": "workspace:*",
+    "@x-harness/tools": "workspace:*",
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "@x-harness/tool-read": "workspace:*"
+  }
+}

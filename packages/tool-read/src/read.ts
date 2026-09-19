@@ -7,10 +7,8 @@ import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ReadFace, ReadHandle } from "@x-harness/exec-env";
-import { admitSession } from "./paths.ts";
-import type { PathGate, RootOverrideOf } from "./paths.ts";
-import type { ExtraRootsOf } from "./toolbox.ts";
-import { ObservedRegistry } from "./observed.ts";
+import { admitSession } from "@x-harness/tool-core";
+import type { PathGate, RootOverrideOf, ExtraRootsOf, ObservedRegistry } from "@x-harness/tool-core";
 
 const DEFAULT_LIMIT = 2_000;
 const MAX_LIMIT = 2_000;

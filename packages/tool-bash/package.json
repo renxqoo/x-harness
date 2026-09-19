@@ -1,5 +1,5 @@
 {
-  "name": "@x-harness/sandbox-local",
+  "name": "@x-harness/tool-bash",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -9,14 +9,9 @@
   "dependencies": {
     "@x-harness/core": "workspace:*",
     "@x-harness/exec-env": "workspace:*",
-    "@x-harness/permission": "workspace:*",
     "@x-harness/session": "workspace:*",
-    "@x-harness/tools": "workspace:*"
-  },
-  "devDependencies": {
-    "@x-harness/tool-bash": "workspace:*",
     "@x-harness/tool-core": "workspace:*",
-    "@x-harness/tool-read": "workspace:*",
-    "@x-harness/tool-write": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "@sinclair/typebox": "^0.34.0"
   }
 }

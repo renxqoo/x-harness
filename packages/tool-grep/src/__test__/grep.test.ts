@@ -5,11 +5,12 @@ import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, chmodSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createToolbox } from "../toolbox.ts";
 import { createLocalEnv } from "@x-harness/exec-env";
+import { PathGate } from "@x-harness/tool-core";
 import type { ToolRegistry } from "@x-harness/tools";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
+import { createGrepPlugin } from "../plugin.ts";
 
 const HAS_RG = Bun.which("rg") !== null;
 
@@ -35,9 +36,8 @@ function seedWorkspace(root: string): void {
 }
 
 async function makeRegistry(root: string, opts: { rgPath?: string } = {}): Promise<{ registry: ToolRegistry; cleanup: () => Promise<void> }> {
-  const box = createToolbox({ root, env: createLocalEnv(root), ...opts });
   const ctx = createContext();
-  const unload = await loadPlugins(ctx, [toolsPlugin, box.grepPlugin]);
+  const unload = await loadPlugins(ctx, [toolsPlugin, createGrepPlugin({ gate: new PathGate(root), env: createLocalEnv(root), rgPath: opts.rgPath })]);
   return {
     registry: ctx.use(toolRegistry),
     cleanup: async () => {
@@ -293,10 +293,11 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
         `import { createContext, loadPlugins } from ${JSON.stringify(join(repo, "packages/core/src/index.ts"))};`,
         `import { toolsPlugin, toolRegistry } from ${JSON.stringify(join(repo, "packages/tools/src/index.ts"))};`,
         `import { createLocalEnv } from ${JSON.stringify(join(repo, "packages/exec-env/src/local/env.ts"))};`,
-        `import { createToolbox } from ${JSON.stringify(join(repo, "packages/toolbox/src/toolbox.ts"))};`,
+        `import { PathGate } from ${JSON.stringify(join(repo, "packages/tool-core/src/paths.ts"))};`,
+        `import { createGrepPlugin } from ${JSON.stringify(join(repo, "packages/tool-grep/src/plugin.ts"))};`,
         `const ctx = createContext();`,
-        `const box = createToolbox({ root: ${JSON.stringify(root)}, env: createLocalEnv(${JSON.stringify(root)}) });`, // 无 rgPath → env → PATH 链
-        `const unload = await loadPlugins(ctx, [toolsPlugin, box.grepPlugin]);`,
+        `const gate = new PathGate(${JSON.stringify(root)});`, // 无 rgPath → env → PATH 链
+        `const unload = await loadPlugins(ctx, [toolsPlugin, createGrepPlugin({ gate, env: createLocalEnv(${JSON.stringify(root)}) })]);`,
         `const reg = ctx.use(toolRegistry);`,
         `const r = await reg.dispatch({ callId: "c", name: "grep", args: { pattern: "x", path: "app.ts" }, signal: new AbortController().signal });`,
         `console.log(r.content);`,
@@ -403,5 +404,13 @@ describe("rg-line 纯函数", () => {
     const aborted = settleRg({ code: 0, signal: null, selfKilled: true, malformed: false, rawOverflow: true, aborted: true, stderrTail: "", matches: [], limit: 100 });
     expect(aborted.isError).toBe(true);
     expect(aborted.content).toContain("SEARCH_ABORTED");
+  });
+});
+
+describe("并发档声明（§6 横切——真实 registry 口径）", () => {
+  it("grep 并行（isConcurrencySafe）", async () => {
+    const made = await makeRegistry(root);
+    cleanups.push(made.cleanup);
+    expect(made.registry.concurrencyOf("grep", {})).toBe("parallel");
   });
 });

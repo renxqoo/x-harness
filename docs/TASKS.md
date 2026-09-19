@@ -2,11 +2,13 @@
 
 > 状态：**已实施**（方案定稿两路审查 27 项全处置 §10；实施前二次自洽压测 ⑥⑦⑧ 并入；
 > 收口审查与四门见文末实施记录）
-> 级别：中（task-tools 新包 + agent-delegation 工具面迁移 + toolbox bash 源接入 + 测试迁移）
+> 级别：中（task-tools 新包 + agent-delegation 工具面迁移 + bash 源接入（时为 toolbox，现为
+> tool-bash）+ 测试迁移）
 > 上游裁决：件13 U2（任务体系不并入）本件部分兑现——**模型侧动词统一为 task_output/task_stop，
 > 跨任务源（agent 子代理 + bash 后台任务）**；TOOLBOX.md §150/§246/§289「未来任务件」即本件。
 > 用户指令（2026-09-19 一次）：agent_output/agent_stop 改名 task_output/task_stop，单独
-> 插件，bash 侧共用。**用户指令（同日二次）：不写进 toolbox，toolbox 零改动**。
+> 插件，bash 侧共用。**用户指令（同日二次）：任务逻辑不写进命令工具包（时为 toolbox——零改动；
+> 后 toolbox 拆为一命令一包，bash 源 = @x-harness/tool-bash 的 BackgroundTasks 公开面）**。
 > **用户指令（同日三次）：没有 task-bash——bash 源适配收进 task-tools 本体（工厂参数收
 > bashTasks 句柄）；LLM 面上只有 task_output/task_stop 两个工具，无第三者**。
 
@@ -16,7 +18,7 @@
 拆出为跨源通用面。**终态**：`task_output`/`task_stop` 由独立插件（@x-harness/task-tools）
 提供，经 TaskHub 服务路由到注册的任务源；agent-delegation 注册 `agent` 源（原 agent_output/
 agent_stop 语义迁移——含签名重构，见 §4）；**bash 源在 task-tools 本体内注册**（工厂参数收 `bashTasks: BackgroundTasks`
-公开句柄，桥接适配器为 task-tools 内文件——toolbox 零改动，无独立 bash 插件，
+公开句柄，桥接适配器为 task-tools 内文件——命令工具包零改动，无独立 bash 插件，
 见 §3）。**LLM 可见面 = task_output + task_stop 两个工具，别无其他**。
 
 不做（落档 §9）：任务枚举/清单工具、跨源统一 id 铸造、任务持久化、remote 会话源。
@@ -86,7 +88,7 @@ export interface TaskHub {
 
 ```text
 packages/task-tools（新；依赖 core + session[SessionId] + tools[ToolDefinition] +
-  toolbox[BackgroundTasks 类型与适配]）
+  tool-bash[BackgroundTasks 类型与适配——命令工具包公开面]）
   tokens.ts（taskHub）
   plugin.ts：createTaskToolsPlugin(options?: { bashTasks?: BackgroundTasks })——
     name "task-tools"，inject ["tools"]（拓扑保证 registry 先行）；provide hub +
@@ -99,24 +101,27 @@ agent-delegation：inject 增 "task-tools"（硬依赖：无 hub 装配即失败
   子代理面一部分，不静默降级）；verbs.output/stop 改造为 agent TaskSource（session 提参
   签名重构，非直通）。
 
-toolbox：**零改动**——tasks 句柄与 read/stop 公开面（TOOLBOX.md §150 既有设计
-「本登记簿经 createToolbox().tasks 句柄供给」即本接线）。
+命令工具包（时为 toolbox，现拆为 tool-bash 等）：**零改动**——tasks 句柄与 read/stop
+  公开面（TOOLBOX.md §4「本登记簿经 createBashPlugin({ tasks }) 穿引实例供给」即本接线）。
 ```
 
-依赖方向：agent-delegation → task-tools → core/tools/session/toolbox；toolbox 不依赖
-任务层。无环。装配：bash 后台任务要进 task_output 面 = `createTaskToolsPlugin({
-bashTasks: box.tasks })` 一并传句柄（未传 → bash id 落统一 not-found——装配纪律落档
+依赖方向：agent-delegation → task-tools → core/tools/session/tool-bash（另有 agent-delegation
+→ tool-core，test-only——worktree 隔离用例消费 PathGate/admitSession 公开面）；tool-bash 不依赖
+任务层。无环。装配：bash 后台任务要进 task_output 面 = `createBashPlugin({ gate, tasks })`
+与 `createTaskToolsPlugin({ bashTasks: tasks })` 穿引同一 BackgroundTasks 实例（未传 →
+bash id 落统一 not-found——装配纪律落档
 §9）。一 hub 一 bash 源（重名 kind throw fail-fast）。
 
-## 3. bash 侧怎么改（task-tools 内适配——toolbox 零改动，无独立插件）
+## 3. bash 侧怎么改（task-tools 内适配——命令工具包零改动，无独立插件）
 
 ### 3.1 接线（装配层传句柄）
 
-宿主装配：`const box = createToolbox(...); loadPlugins(ctx, [..., box.bashPlugin,
-createTaskToolsPlugin({ bashTasks: box.tasks }), ...])`——工厂参数直取
-`createToolbox().tasks` 公开句柄（TOOLBOX.md §150「本登记簿经 createToolbox().tasks
-句柄供给」的原设计兑现）；task-tools apply 即 `ctx.use 自身 provide 的 hub` 注册
-`bashTaskSource(bashTasks)`，摘除经 ctx.effect。无 toolbox 内 tryUse/waitFor 时序问题
+宿主装配：`const tasks = new BackgroundTasks(defaultTaskLimits({}, limits));
+loadPlugins(ctx, [..., createBashPlugin({ gate, tasks }),
+createTaskToolsPlugin({ bashTasks: tasks }), ...])`——工厂参数直取
+BackgroundTasks 公开句柄（TOOLBOX.md §4「本登记簿经 createBashPlugin({ tasks }) 穿引实例
+供给」的原设计兑现）；task-tools apply 即 `ctx.use 自身 provide 的 hub` 注册
+`bashTaskSource(bashTasks)`，摘除经 ctx.effect。无命令包内 tryUse/waitFor 时序问题
 （原 B-P0-2 装配序脆弱性随工厂注入消解）。
 
 `bashTaskSource(tasks)`（task-tools/src/source-bash.ts）：
@@ -125,7 +130,7 @@ createTaskToolsPlugin({ bashTasks: box.tasks }), ...])`——工厂参数直取
 - `output`：read(caller, id, offset ?? 0) → §1.1 bash 铸文。
 - `stop`：tasks.stop 发起两段杀 → `waitSettled(...)` 外置收敛 → 终态快照铸文。
 
-### 3.2 外置等待原语（不改 tasks.ts——toolbox 零改动约束）
+### 3.2 外置等待原语（不改 tasks.ts——命令工具包零改动约束）
 
 `waitSettled(tasks, session, id, timeoutMs)`（source-bash.ts 内）：
 - **收敛判据 = `snapshot.endedAt !== undefined`**（endedAt 只在 finalize 置位——五条终态
@@ -137,7 +142,7 @@ createTaskToolsPlugin({ bashTasks: box.tasks }), ...])`——工厂参数直取
   snapshot 不碰缓冲区。settle 后才做唯一一次真 read 切片。纯内存 Map 查询无 fs。
   超时回当前快照（state 自述）。
 - 与审查 B-P1-3 原设计（登记簿内 waiters/finalize 单点释放）的取舍：外置轮询为满足
-  「toolbox 零改动」约束的等价实现——撕裂快照防护同效（判据同为 finalize 产物），
+  「命令工具包零改动」约束的等价实现——撕裂快照防护同效（判据同为 finalize 产物），
   代价是 25ms 粒度的唤醒延迟（相对 KILL_GRACE 5s 可忽略）；登记簿内原语不建。
 - rec 已被 evict 的竞态：list 中 id 消失 → 停止等待，最终 read miss → 如实返回 miss
   口径（stop 收敛期极罕见，统一词表兜底）。
@@ -219,7 +224,7 @@ B. delegation 迁移（工具摘除 + 源注册 + 签名重构 + 双轨文案清
 | task_output 不继承规格 DEPRECATED 定位（件13 U2 裁决随迁——本工具为一等读面） | 无文件指针替代路径 | 本件裁定 |
 | TaskStop 的 shell_id（规格已弃用参数）与 teammate 形态（name@team） | 不实现 | 本件裁定 |
 | bash 后台任务进 task_output 面需装配时传 bashTasks 句柄 | 未传 → bash id 落统一 not-found（文案含来源提示可自纠）；bash 描述静态提法兑现依赖装配 | 装配纪律 |
-| 一 ctx 一 toolbox（一 bash 源） | 重名 kind throw 已 fail-fast | 单装配纪律 |
+| 一 ctx 一 tool-bash 装配（一 bash 源） | 重名 kind throw 已 fail-fast | 单装配纪律 |
 | waitSettled 为内存轮询（25ms）而非登记簿内 waiters | toolbox 零改动约束（用户二次裁决）下的等价实现——撕裂防护同效（endedAt 判据），代价唤醒粒度 | 本件裁定 |
 | contract.test 逐字对账读绝对路径 /Users/wrr/work/claude-tool/…（规格在本仓外无副本） | 其他 checkout 上该用例必挂——机器绑定是既有取舍（件13 起即如此） | 后续件（规格入仓或环境探测） |
 

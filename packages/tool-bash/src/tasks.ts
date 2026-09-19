@@ -25,8 +25,8 @@ export function defaultTaskLimits(
 ): TaskLimits {
   const maxConcurrent = over.maxConcurrentTasks ?? 3;
   const timeoutMs = over.taskTimeoutMs ?? 600_000;
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("toolbox: taskTimeoutMs must be a positive number");
-  if (!Number.isFinite(maxConcurrent) || maxConcurrent < 1) throw new Error("toolbox: maxConcurrentTasks must be >= 1");
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("tool-bash: taskTimeoutMs must be a positive number");
+  if (!Number.isFinite(maxConcurrent) || maxConcurrent < 1) throw new Error("tool-bash: maxConcurrentTasks must be >= 1");
   return {
     maxConcurrent,
     timeoutMs,

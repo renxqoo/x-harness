@@ -5,10 +5,8 @@
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
-import { PathGate, admitSession } from "./paths.ts";
-import type { RootOverrideOf } from "./paths.ts";
-import type { ExtraRootsOf } from "./toolbox.ts";
-import { ObservedRegistry } from "./observed.ts";
+import { admitSession, ObservedRegistry, PathGate } from "@x-harness/tool-core";
+import type { RootOverrideOf, ExtraRootsOf } from "@x-harness/tool-core";
 import type { WriteFileResult } from "@x-harness/exec-env";
 
 const BOM = "﻿";

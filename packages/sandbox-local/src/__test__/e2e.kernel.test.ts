@@ -120,13 +120,14 @@ describe("sandbox 真内核（darwin Seatbelt 全腿）", () => {
   }, 20_000);
 
   it.skipIf(!HAS_SEATBELT)("fenced bash 工具面：大输出截断保尾 + spill 字节等值 + 双流（wrapper 下三件套）", async () => {
-    const { createToolbox } = await import("@x-harness/toolbox");
+    const { PathGate } = await import("@x-harness/tool-core");
+    const { createBashPlugin } = await import("@x-harness/tool-bash");
     const { toolsPlugin, toolRegistry } = await import("@x-harness/tools");
     const { createContext, loadPlugins } = await import("@x-harness/core");
     const spill = mkdtempSync(join(tmpdir(), "xh-sbxspill-"));
     const ctx = createContext();
-    const box = createToolbox({ root, spillDir: spill, defaultTimeoutMs: 10_000, env });
-    const unload = await loadPlugins(ctx, [toolsPlugin, box.bashPlugin]);
+    const gate = new PathGate(root);
+    const unload = await loadPlugins(ctx, [toolsPlugin, createBashPlugin({ gate, env, limits: { spillDir: spill, defaultTimeoutMs: 10_000 } })]);
     const reg = ctx.use(toolRegistry);
     const out = await reg.dispatch({
       callId: "fenced-bash",

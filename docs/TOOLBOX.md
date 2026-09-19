@@ -1,36 +1,51 @@
-# TOOLBOX：read / write / bash / grep 四工具插件（件 10）
+# TOOLBOX：read / write / bash / grep 四命令插件（件 10；一命令一包——用户裁决）
 
 > 状态：已实施（单测全绿 + e2e 四工具旅程；grep 为 rg 硬依赖单路径——裁决与获取形态对照见 §5）
 > 级别：中（文件系统/进程副作用、注入面、并发互斥、原子性）
-> 包：`packages/toolbox`（@x-harness/toolbox）
+> 包：`packages/tool-core`（共享内核）+ `packages/tool-read` / `tool-write` / `tool-bash` /
+> `tool-grep`（一命令一插件包；原 `packages/toolbox` 已删除，无兼容层）
 
 ## 0. 形态
 
 ```ts
-export interface ToolboxOptions {
-  readonly root?: string;              // 工作区根（缺省 process.cwd()）；相对路径在其下解析，越根拒绝
-  readonly defaultTimeoutMs?: number;  // bash 缺省墙钟（缺省 120_000）
-  readonly maxTimeoutMs?: number;      // bash timeout 上限（缺省 600_000——防排他屏障被钉死）
-  readonly maxOutputBytes?: number;    // bash 输出字节帽（缺省 30_000，截断保尾部）
-  readonly spillDir?: string;          // 截断全文落盘目录（缺省 mkdtemp(tmpdir()/x-harness-)，0700）
-  readonly rgPath?: string;            // rg 显式路径（解析链最高优先级；缺省 env X_HARNESS_RG_PATH → PATH 探测）
-  readonly env?: ExecEnv;              // 执行环境（三级解析：工厂参数 > execEnv 服务 > 装配期 throw——fail-closed）
-  readonly maxConcurrentTasks?: number; // 每会话后台任务并发帽（缺省 3）
-  readonly taskTimeoutMs?: number;     // 后台任务墙钟帽（缺省 600_000——任务生命周期上限，与前台 turn 等待上限解耦）
-}
-export function createToolbox(options?: ToolboxOptions): {
-  readonly readPlugin: Plugin;   // name "tool-read"
-  readonly writePlugin: Plugin;  // name "tool-write"
-  readonly bashPlugin: Plugin;   // name "tool-bash"
-  readonly grepPlugin: Plugin;   // name "tool-grep"
-};
-// read+write 共享观察登记（需同工厂成对装配）；grep 依赖 rg 二进制（§5 解析链）
+// tool-core（共享内核——不含任何命令）：路径门 + 观察登记 + 工具插件工厂
+export function createToolPlugin(input: {
+  readonly name: string;                                                // 插件名（"tool-read" 等）
+  readonly make: (env: ExecEnv, extraRootsOf, rootOverrideOf) => ToolDefinition;
+  readonly gate: PathGate;
+  readonly observed?: ObservedRegistry;   // read/write 传——挂 sessionDisposed 逐出；bash/grep 不传
+  readonly envOption?: ExecEnv;           // 三级解析：工厂参数 > execEnv 服务 > 装配期 throw——fail-closed
+  readonly attach?: (ctx: Context) => Disposer | void; // 装配期附加生命周期（bash 任务清场）
+}): Plugin;
+export { PathGate, ObservedRegistry, admitSession };   // 装配方创建实例并穿引
+
+// 一命令一工厂（四个命令包各出一个 Plugin 工厂——一个事实一套接口）
+const gate = new PathGate(root);                        // 工作区根（缺省 process.cwd()）；越根拒绝
+const observed = new ObservedRegistry();
+createReadPlugin({ gate, observed, env? });             // name "tool-read"
+createWritePlugin({ gate, observed, env? });            // name "tool-write"
+createBashPlugin({ gate, env?, limits?, tasks?, taskLimits? }); // name "tool-bash"
+//   limits: { defaultTimeoutMs?（缺省 120_000）, maxTimeoutMs?（600_000）, maxOutputBytes?（30_000）,
+//             spillDir?（mkdtemp 0700）}——部分字段缺省补齐
+//   tasks: BackgroundTasks（任务动词消费方穿引同一实例；缺省自建——与 taskLimits 互斥，同传装配期 throw）；
+//   taskLimits: { maxConcurrentTasks?（并发帽缺省 3）, taskTimeoutMs?（墙钟缺省 600s）,
+//                fullCapBytes?（保留帽缺省 64MB）}——部分字段缺省补齐
+createGrepPlugin({ gate, env?, rgPath? });              // name "tool-grep"；rgPath 解析链最高优先级
 ```
+
+装配序契约：execEnv/permissionGrants 提供者（sandbox/permission 插件）须**先于**命令插件装配
+（createToolPlugin apply 期 tryUse——env 缺席 throw 响亮、grants 缺席静默无扩展，与单装配口径一致）。
+
+配对契约从「同工厂成对装配」改为「装配方穿引同一实例」：**read+write 必须共享同一
+gate+observed 实例**（错穿症状 FS_NOT_OBSERVED——fail-closed 不假绿；e2e 旅程是成对装配的
+行为背书）。任务动词消费方（task-tools）经 `createBashPlugin({ tasks })` 穿引同一
+BackgroundTasks——tool-bash 公开导出 BackgroundTasks/TaskRead/TaskSnapshot/defaultLimits/
+defaultTaskLimits（bash 源消费面）。**第 5 个命令 = 新包 + createToolPlugin，内核与其余命令包零改动。**
 
 四个工具经 `toolRegistry.register` 注册（inject ["tools"]）。并发档（交集 35）：read/grep 声明
 `isConcurrencySafe: () => true`（parallel）；write/bash 不声明（缺省 exclusive——fail-closed）。
 
-## 1. 路径门（共享，paths.ts——交集 36）
+## 1. 路径门（共享，tool-core/paths.ts——交集 36）
 
 - 相对路径以 `root` 解析；解析后（含 `..`）越出 root → `PATH_ESCAPES_ROOT` 拒绝；
 - 绝对路径必须落在 root 内（含 realpath 归一：对已存在最深祖先做 realpath 后再判前缀——symlink
@@ -145,10 +160,12 @@ run_in_background?: boolean }`。工具 description 对齐 Claude Code 文案（
 - 清场与登记生命周期：sessionDisposed → 该会话任务两段杀并**清桶逐出**（会话生命周期即
   登记生命周期——终态任务保留到会话终结，供 task_output 轮询，无跨会话累积）；装配 dispose →
   全部**直接 KILL**（收尾窗口不留给 teardown——env 层兜底）；host-exit 由 env 进程登记覆盖；
-  **单装配假设**：一工厂一装配（同工厂多处 apply 共享登记簿，teardown 互杀不支持）；
+  **单装配假设**：一插件一装配（同一 BackgroundTasks 实例多处 apply 共享登记簿，teardown
+  互杀不支持）；
   并发帽含在途 spawn 占位（检查与登记隔 await——防 TOCTOU 越帽）；
-- **读/停的模型侧动词不建 bash 专属工具（用户裁决）**——未来通用任务层出 `task_output`/
-  `task_stop`（跨任务源），本登记簿经 `createToolbox().tasks` 句柄供给。
+- **读/停的模型侧动词不建 bash 专属工具（用户裁决）**——通用任务层 `task_output`/
+  `task_stop`（跨任务源，task-tools 包），本登记簿经 `createBashPlugin({ tasks })` 穿引的
+  BackgroundTasks 实例供给（tool-bash 公开面）。
 
 **不做（落档）**：流式 progress 转发（无消费面）；受信 env 注入；60s 无输出
 hung-kill（缺省墙钟已兜底挂死——有意以墙钟替代双时间线，简化）；KILL 宽限可配（5s 常数与
@@ -169,10 +186,10 @@ trustedDependencies 开口；其 pkg 发行形态实为 `<exe>-rg` sidecar）；
 性能崖藏进生产路径，且双路径对齐是永久维护税）。触发条件落档：未来若发公开裸 CLI
 （匿名用户首次运行、无制品层），获取模型切换为运行时下载（pi 式）是独立产品裁决。
 
-**rg 解析链**（单一顺序）：`ToolboxOptions.rgPath` 显式 → env `X_HARNESS_RG_PATH` →
+**rg 解析链**（单一顺序）：`createGrepPlugin({ rgPath })` 显式 → env `X_HARNESS_RG_PATH` →
 PATH 探测（`Bun.which("rg")`）。全失败 → `SEARCH_RG_UNAVAILABLE` + 三条修复指引
 （安装 rg：`brew install ripgrep` / `apt install ripgrep`；设 `X_HARNESS_RG_PATH`；
-`createToolbox({ rgPath })`）。显式给出但不可执行 → spawn 失败归
+`createGrepPlugin({ rgPath })`）。显式给出但不可执行 → spawn 失败归
 `SEARCH_FAILED: failed to start rg`（附同款指引）。
 
 **执行**：纯 argv 向量（无 shell 层）：`rg --json --no-config --no-messages --hidden --no-ignore
@@ -201,44 +218,51 @@ more, or refine the pattern`（交集 30——计满即停，不补尾 context�
 **不做（落档）**：rg 获取（安装/下载/sidecar 拼装全归制品与宿主层——解析链只负责找）；
 respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows target（整仓 POSIX-only）。
 
-## 6. 测试口径（交集 38 条逐条 + 回归源）
+## 6. 测试口径（交集 38 条逐条 + 回归源；一命令一包各自落 `__test__`）
 
-- read（10）：行号连续/窗口页脚行动型/越 EOF 报错/非法参数（含 limit>2000）TypeBox 拒/
-  NOT_FOUND+目录引导/2000 行帽/**50KB 字节帽双断言**（<2000 行且 >50KB ASCII → 字节截；
-  300 行×100 中文字符=90KB → 截在完整行边界不撕裂多字节）/空文件/超长行截断/CRLF+尾换行+
-  二进制拒/FIFO 非 isFile 拒。
-- write（6+回归）：创建/覆盖/回执/空 content/观察门三态（未读拒/读后过/**陈旧拒+重读成功闭环**
-  ——utimes 显式构造陈旧）/write→write 连续写（自登记）/跨会话隔离（A 读不给 B 写开门）/
-  原子性回归（写中途失败无半截+无 temp 残留）+ symlink 不穿透（rename 替换链接本身）+
-  同路径并发串行化（进程内互斥——双写可序列化）/BOM round-trip 补回/空文件 read 开门/
-  EACCES → FS_ACCESS_DENIED/FIFO 双拒/atomicWrite 注入（短写循环续写 + 中途抛错原文完好）。
-- bash 后台（tasks.test.ts）：立返 id 不等待/状态机五态（completed/failed/killed/timed-out）/
-  增量读字节偏移与多字节边界/并发帽 TASK_LIMIT/墙钟帽自动杀/stop 幂等/会话隔离（A 不可读停 B）/
-  sessionDisposed 清场与 dispose 直接 KILL（marker 法无孤儿）；
-- bash（11+回归）：退出码可见且非 isError/静默 (no output)/超时两段杀（**无条件等满宽限**）+
-  标记顺序+尾部输出+raise 指引/trap-exit-0 不伪装（回归 D23）/timeout 校验表（0/负/超 maxTimeoutMs）
-  /截断保尾部**三件套断言**（标注在场+尾部内容在场+spill 字节级等于全文）/行帽（尾换行不算行）/
-  ANSI+撕裂 UTF-8/spawn 失败兜底/**abort 杀整组**（`process.kill(-pid,0)`
-  组探活断言——回归进程泄漏）/pre-abort 零 spawn（marker 文件副作用断言——回归 D28）/
-  **host-exit 清场**（子进程杀后父进程退出→ detached 组死净——墙钟验证）。
-- grep（rg 单路径）：零命中成功/退出码矩阵（含 **selfKilled→成功+limit 页脚**——回归 A-P0）/argv
-  惰性矩阵（`$(rm)`/反引号/换行均无副作用文件——回归 P23/D36）+ **argv 矩阵真 spawn 取证**
-  （假 rg 吐 stderr：--json/--no-config/--no-messages/--hidden/--no-ignore/跳过集/--regexp 惰性/
-  `--` 分隔全在场）/literal 逃生/ignore_case/glob（brace 放行；顶层逗号拒与负向 `!` 拒——rg 无关
-  契约不随 rg skip）/上下文行格式/500 字符截断/limit 提示/**2MB 大文件流式命中 tripwire**/
-  abort（管线归一口径）/binary 目录搜索跳过/**分歧面 fixture**（node_modules 跳过、隐藏文件搜到、
-  真 .gitignore 不生效、越根 symlink 不跟——越根外目录存活到 afterEach 非 dangling）/
-  **rg 缺席时真 rg 用例显式 skip 并计数汇报**（不静默消失）；**解析链**：rgPath 显式 >
-  env `X_HARNESS_RG_PATH` > PATH（真 dispatch 双向验证：显式胜 env、env 生效）；
-  全缺席 → `SEARCH_RG_UNAVAILABLE` 带三条修复指引（回归：缺席曾静默落 JS 兜底产出弱化
-  结果——子进程剥 PATH 构造真缺席 + resolveRg 注入单测双覆盖）；显式 rgPath 不可执行 →
-  failed to start rg 带指引；**假 rg 注入装置（rgPath 指向脚本）**：
-  malformed/RAW_OVERFLOW/中途 abort/exit 2+literal 提示/argv 矩阵——确定性装置；
-  parseRgLine/settleRg 纯函数单测。
-- 路径门：越根 `..`/绝对路径越根/symlink 逃逸（回归 my-agent BUG-06）/NUL 拒绝/root="/"
-  前缀不拼 `//`（一切绝对路径在根内）。
-- 横切：并发档声明（read/grep parallel、write/bash exclusive）/非 agent 调用方可用。
-- e2e（默认门加旅程）：write→read 回环 + bash 真命令 + grep 命中，四工具经真实 agent turn 驱动。
+- 路径门（tool-core/paths.test.ts）：越根 `..`/绝对路径越根/symlink 逃逸（回归 my-agent
+  BUG-06）/NUL 拒绝/root="/" 前缀不拼 `//`（一切绝对路径在根内）；admitSession 会话根替换
+  （件13 接缝 4——worktree 真隔离四断言）。
+- 工具插件工厂（tool-core/tool-plugin.test.ts）：env 三级解析缺席/根错配装配期 throw（此前
+  全仓零覆盖的两条执法分支）/注册卸载往返/observed 在场挂 sessionDisposed 逐出/缺席不挂/
+  attach Disposer 随拆卸执行。
+- read（tool-read，单面 10）：行号连续/窗口页脚行动型/越 EOF 报错/非法参数（含 limit>2000）
+  TypeBox 拒/NOT_FOUND+目录引导/2000 行帽/**50KB 字节帽双断言**（<2000 行且 >50KB ASCII →
+  字节截；300 行×100 中文字符=90KB → 截在完整行边界不撕裂多字节）/空文件/超长行截断/CRLF+
+  尾换行+二进制拒/门优先于类型判定。
+- write（tool-write，单面+配对 12；read↔write 配对经 devDep 引 tool-read 公开面）：创建/覆盖/
+  回执/空 content/观察门三态（未读拒/读后过/**陈旧拒+重读成功闭环**——utimes 显式构造陈旧）/
+  write→write 连续写（自登记）/跨会话隔离（A 读不给 B 写开门）/原子性回归（写后无 temp 残留）+
+  symlink 不穿透（rename 替换链接本身）+同路径并发串行化（进程内互斥——双写可序列化）/
+  BOM round-trip 补回/空文件 read 开门/EACCES → FS_ACCESS_DENIED/FIFO 双拒/pre-abort 零 I/O/
+  D3 父段非目录显式报。
+- bash 后台（tool-bash/tasks.test.ts）：立返 id 不等待/状态机五态（completed/failed/killed/
+  timed-out）/增量读字节偏移与多字节边界/并发帽 TASK_LIMIT/墙钟帽自动杀/stop 幂等/会话隔离
+  （A 不可读停 B）/sessionDisposed 清场与 dispose 直接 KILL（marker 法无孤儿）/保留帽 spill/
+  spawn 失败透传；
+- bash 前台（tool-bash，11+回归）：退出码可见且非 isError/静默 (no output)/超时两段杀
+  （**无条件等满宽限**）+标记顺序+尾部输出+raise 指引/trap-exit-0 不伪装（回归 D23）/timeout
+  校验表（0/负/超 maxTimeoutMs）/截断保尾部**三件套断言**（标注在场+尾部内容在场+spill 字节级
+  等于全文）/行帽（尾换行不算行）/ANSI+撕裂 UTF-8/spawn 失败兜底/**abort 杀整组**（marker
+  法——回归进程泄漏）/pre-abort 零 spawn（回归 D28）/**host-exit 清场**（子进程杀后父进程
+  退出→ detached 组死净——墙钟验证；子进程脚本 import 新包路径）。
+- grep（tool-grep，rg 单路径）：零命中成功/退出码矩阵（含 **selfKilled→成功+limit 页脚**——回归
+  A-P0）/argv 惰性矩阵（`$(rm)`/反引号/换行均无副作用文件——回归 P23/D36）+ **argv 矩阵真
+  spawn 取证**（假 rg 吐 stderr：--json/--no-config/--no-messages/--hidden/--no-ignore/跳过集/
+  --regexp 惰性/`--` 分隔全在场）/literal 逃生/ignore_case/glob（brace 放行；顶层逗号拒与负向
+  `!` 拒——rg 无关契约不随 rg skip）/上下文行格式/500 字符截断/limit 提示/**2MB 大文件流式命中
+  tripwire**/abort（管线归一口径）/binary 目录搜索跳过/**分歧面 fixture**（node_modules 跳过、
+  隐藏文件搜到、真 .gitignore 不生效、越根 symlink 不跟——越根外目录存活到 afterEach 非
+  dangling）/**rg 缺席时真 rg 用例显式 skip 并计数汇报**（不静默消失）；**解析链**：rgPath 显式 >
+  env `X_HARNESS_RG_PATH` > PATH（真 dispatch 双向验证：显式胜 env、env 生效）；全缺席 →
+  `SEARCH_RG_UNAVAILABLE` 带三条修复指引（回归：缺席曾静默落 JS 兜底产出弱化结果——子进程
+  剥 PATH 构造真缺席 + resolveRg 注入单测双覆盖）；显式 rgPath 不可执行 → failed to start rg
+  带指引；**假 rg 注入装置（rgPath 指向脚本）**：malformed/RAW_OVERFLOW/中途 abort/exit 2+
+  literal 提示/argv 矩阵——确定性装置；parseRgLine/settleRg 纯函数单测。
+- 横切：并发档声明单包各自断言（read/grep parallel、write/bash exclusive——原联合用例按
+  一命令一包拆分，联合装配由 e2e 旅程背书）/非 agent 调用方可用。
+- e2e（默认门加旅程）：write→read 回环 + bash 真命令 + grep 命中 + 后台立返，四工具经真实
+  agent turn 驱动（gate/observed/tasks 由旅程穿引——成对装配的行为背书）。
 
 ## 7. 不处理（归属）
 
@@ -251,7 +275,8 @@ bash 已固定 root 无 workdir）；exit 标记 round-trip（UI 状态面出现
 spill 清理（保留为恢复产物；宿主可清）；**POSIX-only**（/bin/sh、负 pid 组杀——Windows 不支持）；
 解析链信任前提（env 与 PATH 探测的目录不可写——rgPath/env 显式指定是逃生口）；resume 后观察
 登记清零（fail-closed：续写后首笔覆盖写需重读——落档）；两层截断方向相反（内层字节保尾/外层
-字符保头）——有意设计勿「对齐」；成对装配 fail-closed（漏装 readPlugin → 覆盖写全拒，新建不受影响）。
+字符保头）——有意设计勿「对齐」；配对纪律 fail-closed（read+write 须穿引同一 gate+observed
+实例——漏装 read 插件或错穿实例 → 覆盖写全拒 FS_NOT_OBSERVED，新建不受影响）。
 
 ## 9. 方案审查处置（A/B 两路并行——A 含 Bun/rg 实测）
 
@@ -293,8 +318,10 @@ read !isFile 全拒（P3——FIFO 阻塞）；Bun.spawn signal 选项禁用（�
 
 ## 8. 验收清单
 
-- [x] §1–§6 逐条；单测 82 例全绿（paths 8 / read-write 22 / bash 15 / grep 25 / tasks 12——
-  含假 rg 注入装置、解析链子进程装置与后台登记簿套件）；e2e 旅程绿（rg 缺席 fail-fast 探针 +
+- [x] §1–§6 逐条；命令族单测 94 例全绿（tool-core：paths 9 + tool-plugin 6 / tool-read 11 /
+  tool-write 13 / tool-bash：bash 17（含装配期 fail-closed 2 例——tasks/taskLimits 互斥与
+  taskLimits 非法值）+ tasks 12 / tool-grep 26——含假 rg 注入装置、解析链
+  子进程装置与后台登记簿套件；全仓套件 1189 例全绿）；e2e 旅程绿（rg 缺席 fail-fast 探针 +
   write→read→覆写→bash→未观察拒→grep→后台立返 七步经真实 agent turn + 盘上副作用与登记簿
   终态断言）；已知覆盖盲区如实落档：grep 的
   `SEARCH_RG_UNAVAILABLE` 分支仅在子进程内可达（v8 覆盖率不可见——行为由子进程用例背书，

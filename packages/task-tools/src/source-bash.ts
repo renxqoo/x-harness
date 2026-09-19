@@ -1,16 +1,16 @@
 // bash 源适配（docs/TASKS.md §3）：BackgroundTasks 句柄 → TaskSource；外置 waitSettled
-// 收敛（判据 endedAt——finalize 唯一收口，防 mid-kill 撕裂快照）。toolbox 零改动：
+// 收敛（判据 endedAt——finalize 唯一收口，防 mid-kill 撕裂快照）。tool-bash 零改动：
 // 全部经公开句柄（read/list/stop）达成。
 
-import type { BackgroundTasks, TaskRead, TaskSnapshot } from "@x-harness/toolbox";
+import type { BackgroundTasks, TaskRead, TaskSnapshot } from "@x-harness/tool-bash";
 import type { SessionId } from "@x-harness/session";
 import type { TaskSource } from "./tokens.ts";
 
 const COMMAND_CAP = 80;
 const SETTLE_POLL_MS = 25;
 const WAIT_DEFAULT_MS = 30_000;
-/** stop 收敛预算 = TERM → KILL_GRACE（toolbox bash.ts 内 5s）→ KILL + 8s 余量上界；
- *  toolbox 零改动约束下不 import 其私有常量，改值时两处同变 */
+/** stop 收敛预算 = TERM → KILL_GRACE（tool-bash bash.ts 内 5s）→ KILL + 8s 余量上界；
+ *  tool-bash 零改动约束下不 import 其私有常量，改值时两处同变 */
 const STOP_SETTLE_BUDGET_MS = 13_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
