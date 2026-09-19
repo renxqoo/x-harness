@@ -51,8 +51,8 @@
 
   "overrides": [
     {
-      // CLI 脚本与 e2e 场景运行器：console 就是输出手段（终端报告 / 退出码门）
-      "files": ["scripts/**", "packages/e2e/**"],
+      // CLI 脚本、e2e 场景运行器与 CLI 宿主 app：console/终端写就是输出手段
+      "files": ["scripts/**", "packages/e2e/**", "apps/cli/**"],
       "rules": {
         "eslint/no-console": "off"
       }
