@@ -11,6 +11,7 @@ import { execEnv } from "@x-harness/exec-env";
 import type { ExecEnv } from "@x-harness/exec-env";
 import { permissionGrants } from "@x-harness/permission";
 import { sessionDisposed } from "@x-harness/session";
+import { systemPrompt, wellKnown } from "@x-harness/system-prompt";
 import { resolve } from "node:path";
 import type { PathGate, RootOverrideOf } from "./paths.ts";
 import type { ObservedRegistry } from "./observed.ts";
@@ -26,9 +27,21 @@ export interface ToolPluginInput {
   readonly observed?: ObservedRegistry;
   /** 装配期附加生命周期（env 解析后调用；返回的 Disposer 随插件拆卸执行） */
   readonly attach?: (ctx: Context) => Disposer | void;
-  /** 使用守则（纯数据）：函数形接收解析后的 env——配置感知（bash 按 sandbox 与否分支）。
-   *  解析为空串不落 def。组合层桥接进 system-prompt——本包不认识 prompt（层次：工具层不依赖表现层） */
+  /** 使用守则（投稿式，DESIGN §1 D3）：函数形接收解析后的 env——配置感知（bash 按 sandbox
+   *  与否分支）。非空文本直接停靠为 section tool/<name>（锚 wellKnown.baseCore——内核投稿
+   *  纪律：锚点名内核所有）。**装配序硬约束（D6）**：带 guidance 的 tool-* 必须排在
+   *  system-prompt 之后（tryUse 即时求值，晚序=段静默缺失；sandbox/execEnv 同款先例）；
+   *  无 prompt 服务的世界优雅降级不注册 */
   readonly guidance?: string | ((env: ExecEnv) => string);
+}
+
+/** guidance 投稿停靠（DESIGN §1 D3/D6）：system-prompt 服务在场且文本非空 → 注册
+ *  section tool/<name>（锚 wellKnown.baseCore）；缺席/空文本 → 不注册（优雅降级/零守则） */
+function dockGuidance(ctx: Context, toolName: string, text: string | undefined): Disposer | undefined {
+  if (text === undefined || text === "") return undefined;
+  const svc = ctx.tryUse(systemPrompt);
+  if (svc === undefined) return undefined;
+  return svc.section({ name: `tool/${toolName}`, after: wellKnown.baseCore, text });
 }
 
 export function createToolPlugin(input: ToolPluginInput): Plugin {
@@ -52,11 +65,13 @@ export function createToolPlugin(input: ToolPluginInput): Plugin {
       else if (guidance !== undefined) text = guidance(env);
       const def = text === undefined || text === "" ? made : { ...made, guidance: text };
       const offRegister = ctx.use(toolRegistry).register(def);
+      const offDock = dockGuidance(ctx, def.name, text);
       const offEvict = observed === undefined ? undefined : ctx.on(sessionDisposed, ({ session }) => observed.evict(session));
       const offAttach = attach?.(ctx);
       return () => {
         offAttach?.();
         offEvict?.();
+        offDock?.();
         offRegister();
       };
     },

@@ -202,10 +202,10 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
 - **gate 一致性**：PathGate(cwd) 与围栏 execEnv root=cwd 满足 tool-core 根一致性校验。
 - **系统提示词**：基础段归 `@x-harness/system-prompt` 的 `basePromptPlugin`（section
   `base/core`：身份/守则/环境块；facts=cwd/isGit/platform/shell/date 由宿主探测传入，
-  入口归一压换行——注入面收口，date 会话内定格防午夜缓存断裂）；工具守则段由组合层
-  桥接 `cli-tool-guidance` 从 `ToolDefinition.guidance`（纯数据）提升为 section
-  `tool/<name>`（after: base/core；bash 围栏守则在 sandbox env 下才有文本）；装配序
-  硬约束 system-prompt 先于 tool-*（头注）。`--system-prompt` 整体替换时不装基础段
+  入口归一压换行——注入面收口，date 会话内定格防午夜缓存断裂）；工具守则段由 tool-core
+  在 apply 期直接停靠（D3 投稿式）：section `tool/<name>`（锚 wellKnown.baseCore；
+  bash 围栏守则在 sandbox env 下才有文本，local 零段）；装配序硬约束 system-prompt
+  先于带 guidance 的 tool-*（D6，头注）。`--system-prompt` 整体替换时不装基础段
   （走 AgentOptions.systemPrompt 静态串，优先于 assemble 是包契约）；
   `--append-system-prompt` 追加 section `cli-user-<n>`（无边落尾=全部内置段之后，链式保序）。
 - **会话 id 生成（宿主职责）**：`SessionStore.create` 缺省铸号是进程内计数，持久目录下跨进程

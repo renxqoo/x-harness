@@ -324,6 +324,7 @@
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/permission": "workspace:*",
         "@x-harness/session": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {

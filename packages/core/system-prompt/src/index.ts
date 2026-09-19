@@ -8,6 +8,7 @@ export {
   inline,
   normalizeBaseFacts,
   registerBasePrompt,
+  wellKnown,
 } from "./base.ts";
 export type { BasePromptFacts } from "./base.ts";
 export type { AssembledPrompt, PromptVariable, SectionSpec, SystemPromptService } from "./types.ts";

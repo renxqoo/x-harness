@@ -14,6 +14,8 @@ import { createLocalEnv } from "@x-harness/exec-env";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import { PathGate, ObservedRegistry, createToolPlugin } from "../index.ts";
 import type { FileVersion } from "../index.ts";
+import { createBasePromptPlugin, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
+import type { BasePromptFacts } from "@x-harness/system-prompt";
 
 let root: string;
 let gate: PathGate;
@@ -161,6 +163,36 @@ describe("guidance 纯数据位（组合层桥接——本包不认识 prompt）
     const schema = ctx.use(toolRegistry).schemas().find((s) => s.name === "probe");
     expect(schema).toBeDefined();
     expect(JSON.stringify(schema)).not.toContain("secret-guidance");
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+
+  it("投稿停靠（D6 序）：guidance + system-prompt 在场 → section tool/<name>（锚 base/core，Output Format 之后）；拆卸回收", async () => {
+    const ctx = createContext();
+    const facts: BasePromptFacts = { cwd: "/w", isGit: false, platform: "darwin", shell: "zsh", date: "2026-09-20" };
+    const unload = await loadPlugins(ctx, [
+      systemPromptPlugin,
+      createBasePromptPlugin(facts),
+      toolsPlugin,
+      createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: "## Probe\n\nprobe rule" }),
+    ]);
+    const prompt = ctx.use(systemPrompt);
+    const text = prompt.assemble().text;
+    expect(text).toContain("probe rule");
+    expect(text.indexOf("## Output Format")).toBeLessThan(text.indexOf("## Probe")); // 锚 base/core：基础段末尾之后
+    for (const dispose of unload) await dispose();
+    expect(prompt.assemble().text).not.toContain("probe rule"); // 拆卸即回收（disposer 链先于 prompt 服务回卷）
+    await ctx.dispose();
+  });
+
+  it("投稿停靠：空串 guidance（如 local env 的 bash）不注册段——assemble 无 tool/ 段", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      systemPromptPlugin,
+      toolsPlugin,
+      createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: () => "" }),
+    ]);
+    expect(ctx.use(systemPrompt).assemble().text).toBe("");
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });

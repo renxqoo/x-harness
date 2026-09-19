@@ -64,3 +64,11 @@ IMPLEMENTATION §1 F4/F8；DESIGN §1 D6（时序裁决）。
 - [ ] 依赖门禁绿（tool-core→system-prompt 为上层→内核边，门禁管 core 组纯净性不查此向——表述已修正）
 - [ ] 对抗审查重点：停靠时序（D6 约束下 tryUse 必中）、disposer 链序（段先于 prompt 服务回卷）、段级降级与变量降级不冲突
 - [ ] docs/SYSTEM-PROMPT.md §1.4 更新（桥→停靠；D6 约束补记）
+
+## 8. 实施记录（2026-09-20）
+
+- **交付物**：tool-core 投稿停靠（`dockGuidance`：tryUse + `tool/<name>` + wellKnown.baseCore，disposer 入链先于 register 回卷）；apps/cli 桥删除（含数组位/导出/build-world.test.ts 迁语义至 tool-core）；build-world 头注与行注 D6 硬约束化；toolbox-journey systemPromptPlugin 前置（其余三旅程无 guidance 工具不动）；SectionSpec.text 函数形 + 段级降级 `[section <name> render error: <msg>]`；wellKnown 词汇表导出 + baseCore 别名；SYSTEM-PROMPT.md §1.4 / CLI.md 同步。
+- **门禁数字**：typecheck ✓ lint ✓（registry 复杂度拆分 textSpecError）test **144 文件/1712 用例**（1710 + fn 形 2 + 停靠 2 − 桥测试文件 1 含 2 用例）e2e 全旅程 ✓（toolbox localEnv → bashGuidance 空串 → journey prompt 逐字节等价成立）内核门禁 ✓。
+- **验收核对**：grep `toolGuidanceBridge` 代码零命中（ELEVATION 文档内 4 处为合法历史引用）；两处陈旧注释勘误完成；tool-core→system-prompt 为上层→内核边（门禁管 core 组纯净性，方向正确）。
+- **新增裁决补录**：无偏离定稿。
+- **显式挂账**：无。

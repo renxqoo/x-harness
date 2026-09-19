@@ -109,11 +109,19 @@ export function createPromptRegistry(): SystemPromptService {
     assemble: () => {
       // 排序缓存：段集未变复用；插值与指纹每次现算（变量是惰性闭包，结果不可缓存）
       if (orderCache === undefined) orderCache = resolveOrder();
-      const joined = orderCache.map((name) => sections.get(name)?.spec.text ?? "").join("\n\n");
+      const joined = orderCache.map((name) => resolveText(name, sections.get(name)?.spec.text)).join("\n\n");
       const text = interpolate(joined, variables);
       return { text, fingerprint: createHash("sha256").update(text).digest("hex").slice(0, 16) };
     },
   };
+}
+
+/** text 形状门（拆分自 sectionSpecError——复杂度预算） */
+function textSpecError(spec: SectionSpec): Error | undefined {
+  if (typeof spec.text !== "string" && typeof spec.text !== "function") {
+    return new Error(`section "${spec.name}" text must be a string or function`);
+  }
+  return undefined;
 }
 
 /** 注册参数门：形状/互斥/自锚（装配期错误，与内核 provide 同语义） */
@@ -131,8 +139,18 @@ function sectionSpecError(spec: SectionSpec): Error | undefined {
   if (spec.after === spec.name || spec.before === spec.name) {
     return new Error(`section "${spec.name}" cannot anchor to itself`);
   }
-  if (typeof spec.text !== "string") return new Error(`section "${spec.name}" text must be a string`);
-  return undefined;
+  return textSpecError(spec);
+}
+
+/** 段文本解析：函数形 assemble 期现算；抛错 → 段级降级占位（不中断装配） */
+function resolveText(name: string, text: string | (() => string) | undefined): string {
+  if (text === undefined) return "";
+  if (typeof text === "string") return text;
+  try {
+    return text();
+  } catch (error) {
+    return `[section ${name} render error: ${error instanceof Error ? error.message : String(error)}]`;
+  }
 }
 
 /** 单层插值：未注册变量保持原样；变量函数抛错保持原样（降级不崩）；值不再递归展开 */

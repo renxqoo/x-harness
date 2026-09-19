@@ -169,6 +169,30 @@ describe("排序缓存与契约（A10 适配）", () => {
     expect(() => svc.variable("v", 1 as never)).toThrow();
   });
 
+  it("text 函数形：每次 assemble 现算（惰性）；抛错降级占位不中断；与变量插值共存", () => {
+    const svc = reg();
+    let tick = 1;
+    svc.section({ name: "lazy", text: () => `TICK=${tick}` });
+    svc.section({ name: "boom", text: () => { throw new Error("nope"); } });
+    svc.section({ name: "steady", text: "hi {{who}}" });
+    svc.variable("who", "world");
+    const first = svc.assemble().text;
+    expect(first).toContain("TICK=1");
+    expect(first).toContain("[section boom render error: nope]"); // 段级降级
+    expect(first).toContain("hi world"); // 其余段照常
+    tick = 2;
+    expect(svc.assemble().text).toContain("TICK=2"); // 每次 assemble 现算
+  });
+
+  it("text 函数形：指纹随现算值变", () => {
+    const svc = reg();
+    let tick = 1;
+    svc.section({ name: "s", text: () => String(tick) });
+    const first = svc.assemble();
+    tick = 2;
+    expect(svc.assemble().fingerprint).not.toBe(first.fingerprint);
+  });
+
   it("assemble 确定性：两次调用文本与指纹逐字节相等", () => {
     const svc = reg();
     svc.section({ name: "a", text: "{{x}}" });

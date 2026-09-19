@@ -6,7 +6,10 @@ export interface SectionSpec {
   readonly after?: string;
   /** 置于目标段之前（对偶） */
   readonly before?: string;
-  readonly text: string;
+  /** 静态文本或 assemble 期惰性函数（配置/环境感知）。函数抛错 → 该段降级
+   *  `[section <name> render error: <msg>]` 占位不中断（段级降级，对齐变量级语义）；
+   *  函数须会话内确定——间歇抛错会使 anchorSystem 逐步落 replace 事件（可观测告警面） */
+  readonly text: string | (() => string);
 }
 
 export type PromptVariable = string | (() => string);

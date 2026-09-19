@@ -8,8 +8,11 @@ import type { Disposer, Plugin } from "@x-harness/core";
 import { systemPrompt } from "./tokens.ts";
 import type { SystemPromptService } from "./types.ts";
 
-/** 基础段名（唯一跨包锚点常量——工具段/追加段的缺省锚） */
-export const baseCore = "base/core";
+/** 跨包锚点词汇表（内核所有——唯一合法的跨包锚点名来源，DESIGN §2.1.1） */
+export const wellKnown = { baseCore: "base/core" } as const;
+
+/** 基础段名（= wellKnown.baseCore 别名，保留一个版本周期——MIGRATION-W1 §3） */
+export const baseCore: string = wellKnown.baseCore;
 
 /** 环境事实（宿主探测后传入；date 为本地时区 yyyy-mm-dd，宿主负责定格） */
 export interface BasePromptFacts {

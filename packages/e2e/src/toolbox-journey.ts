@@ -55,6 +55,7 @@ export async function runToolboxJourney(): Promise<void> {
     await loadPlugins(ctx, [
       sessionPlugin,
       createJsonlSessionPersistence({ root }),
+      systemPromptPlugin, // D6 硬约束前置于 tool-*（guidance 停靠 tryUse 时序，ELEVATION-DESIGN §1）
       toolsPlugin,
       createReadPlugin({ gate, observed, env }),
       createWritePlugin({ gate, observed, env }),
@@ -62,7 +63,6 @@ export async function runToolboxJourney(): Promise<void> {
       createGrepPlugin({ gate, env }),
       createTaskToolsPlugin(), // 服务停靠：与 bash 插件共享生效登记簿（装配序无关）
       llmPlugin,
-      systemPromptPlugin,
       agentLoopPlugin,
       sessionCheckpointPlugin,
     ]);
