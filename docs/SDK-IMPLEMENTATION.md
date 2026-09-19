@@ -38,6 +38,7 @@
 | 波 | 单元 | 验收点 | 文档 |
 |---|---|---|---|
 | F0 | 拦截面三缺口（pre-step 改写/assistant-settle/llm-stream） | 三 waterfall 契约用例 + 1730 零改写 + 对抗审查 | F0-INTERCEPTION |
+| P1 | @x-harness/plugin-api 纯函数 archetype 层（零新 token 语法糖） | 每 helper 用例 + 词表不变断言 | 
 | F0.5 | token 词表治理（装期同名异体 throw） | 冲突检测用例 + 现有 plugin-manager 测试零改写 | F05-TOKEN-GOVERNANCE |
 | S0 | 内核 softInject + tool-core 采纳 | 乱序装配探针 + 1730 零改写 | S0-SOFT-INJECT |
 | F3 | @x-harness/testkit + e2e 换用（提前——后续波共用） | journey 断言零语义变化 + testkit 用例 | F3-TESTKIT |
