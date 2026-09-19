@@ -24,6 +24,8 @@ export type TaskOutcome = { readonly ok: true; readonly text: string } | { reado
 export interface TaskSource {
   readonly kind: "agent" | "bash";
   probe(taskId: string, caller: SessionId | undefined): TaskProbe;
+  /** 失败 reason 以 `not-found:` 开头 = 迟到 miss（probe hit 后行消失）——路由层据此续试
+   *  余源并兜底统一词表；其余 reason 一律透传终结。这是源的协议事实，第三源措辞必须遵守 */
   output(taskId: string, caller: SessionId | undefined, opts: TaskOutputOptions): Promise<TaskOutcome>;
   stop(taskId: string, caller: SessionId | undefined): Promise<TaskOutcome>;
 }

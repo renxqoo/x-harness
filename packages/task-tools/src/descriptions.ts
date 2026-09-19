@@ -1,9 +1,13 @@
 // 工具 description（docs/TASKS.md §1.1/§9）：正文取 Claude Code 规格原文（源
-// /Users/wrr/work/claude-tool/agent-and-background-tasks.md），四处偏离均落档件14：
-// ① 不继承 DEPRECATED 前言（件13 U2——本仓无一等文件指针路径，task_output 即一等读面）；
-// ② 删「/tasks command」行（本仓无该面——id 来源=agent_spawn 结果与 bash run_in_background 返回值）；
+// /Users/wrr/work/claude-tool/agent-and-background-tasks.md），偏离按类别落档件14：
+// ① 不继承 DEPRECATED 前言与文件指针/Read 替代路径（件13 U2——本仓无一等文件指针路径，
+//    task_output 即一等读面）；
+// ② 删「/tasks command」行与本仓不存在的 id 来源（id 来源=agent_spawn 结果与 bash
+//    run_in_background 返回值，两处 bullet 的括注随之改写）；
 // ③ 删 name@team/按名停止两行（件13 修订A 去名——agentId 是唯一身份）；
-// ④ 增 offset/block:false 轮询/Idempotent/nextOffset（本仓扩展与既有语义，描述明写防误用）。
+// ④ 删 remote session（kind 闭合 agent|bash——remote 归云接入件）；
+// ⑤ 增 offset/block:false 轮询/Idempotent/停止非销毁复活引导（本仓扩展与既有语义，
+//    描述明写防误用）。
 
 export const TASK_OUTPUT_DESCRIPTION = `Retrieves output from a running or completed task (background shell or agent)
 

@@ -18,8 +18,9 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   timer.unref?.();
 });
 
+/** 码点安全截断（UTF-16 slice 会劈开代理对——emoji 命令不产生孤立代理项） */
 function commandHead(command: string): string {
-  return command.length > COMMAND_CAP ? `${command.slice(0, COMMAND_CAP)}…` : command;
+  return [...command].length > COMMAND_CAP ? `${[...command].slice(0, COMMAND_CAP).join("")}…` : command;
 }
 
 function exitText(code: number | null): string {
@@ -62,22 +63,24 @@ async function waitSettled(query: SettleQuery): Promise<TaskSnapshot | undefined
 export function bashTaskSource(tasks: BackgroundTasks): TaskSource {
   return {
     kind: "bash",
-    // probe-by-read（offset 0 纯查询无副作用）；会话键控即属主面——越权即 miss
-    probe: (taskId, caller) => (tasks.read(caller, taskId, 0).ok ? { kind: "hit" } : { kind: "miss" }),
+    // probe 走 list()（会话键控即属主面）——不碰输出缓冲：read 每次 Buffer.from(full)
+    // 全量重编码保留缓冲（64MB fullCap 上界），probe+output 走两遍不可接受
+    probe: (taskId, caller) => (tasks.list(caller).some((t) => t.id === taskId) ? { kind: "hit" } : { kind: "miss" }),
     output: async (taskId, caller, opts) => {
       const timeout = opts.timeout ?? WAIT_DEFAULT_MS;
-      if ((opts.block ?? true) && timeout > 0) await waitSettled({ tasks, session: caller, id: taskId, timeoutMs: timeout }); // timeout=0 = 零等待立即快照
+      if (opts.block === true && timeout > 0) await waitSettled({ tasks, session: caller, id: taskId, timeoutMs: timeout }); // timeout=0 = 零等待立即快照；block 归一化在工具层（显式传源）
       const read = tasks.read(caller, taskId, opts.offset ?? 0);
       return read.ok ? { ok: true, text: bashReadText(read.value) } : { ok: false, reason: `not-found:${taskId}` };
     },
     stop: async (taskId, caller) => {
-      const before = tasks.list(caller).find((t) => t.id === taskId);
+      // 发起返回的同步快照即「发起时是否已终态」的无竞态答案（晚一拍的自然完成归 Stopped 属实）
       const initiated = tasks.stop(caller, taskId);
       if (!initiated.ok) return { ok: false, reason: `not-found:${taskId}` }; // 发起期 404（迟到 miss——路由层回落统一词表）
+      const alreadyFinished = initiated.value.endedAt !== undefined;
       const settled = await waitSettled({ tasks, session: caller, id: taskId, timeoutMs: STOP_SETTLE_BUDGET_MS });
       const snap = settled ?? tasks.list(caller).find((t) => t.id === taskId);
       if (snap === undefined) return { ok: false, reason: `not-found:${taskId}` };
-      const prefix = before !== undefined && before.endedAt !== undefined ? "already finished" : "Stopped"; // 发起前已终态：裸 Stopped 是谎言
+      const prefix = alreadyFinished ? "already finished" : "Stopped";
       const midKill = snap.endedAt === undefined ? " (still settling — mid-kill snapshot)" : "";
       return { ok: true, text: `${prefix} ${stateLine(snap)}${midKill}` };
     },

@@ -114,7 +114,7 @@ describe("bash task source stop", () => {
     expect(out.text).toContain("Stopped");
     expect(out.text).toContain("killed");
     expect(out.text).not.toContain("mid-kill");
-    expect(out.text).toMatch(/exit=(143|137|null)/); // TERM/收敛后的可渲染退出
+    expect(out.text).toMatch(/exit=(143|137)/); // settle 后可渲染退出码（TERM=143/KILL=137）——null 属未收敛
   });
 
   it("an already-finished task stops with the already finished prefix (no false Stopped)", async () => {
@@ -134,6 +134,15 @@ describe("bash task source stop", () => {
     const id = await start("sleep 30");
     tasks.evict(SESSION); // stop 前记录已消失——发起即 404
     const out = await source.stop(id, SESSION);
+    expect(out).toEqual({ ok: false, reason: `not-found:${id}` });
+  });
+
+  it("a task evicted during the settle window falls through the snapshot fallback to not-found", async () => {
+    const source = bashTaskSource(tasks);
+    const id = await start("sleep 30");
+    const stopping = source.stop(id, SESSION);
+    tasks.evict(SESSION); // 收敛窗内（waitSettled 首拍后）记录被逐出——settled=undefined 走 list 回落
+    const out = await stopping;
     expect(out).toEqual({ ok: false, reason: `not-found:${id}` });
   });
 });

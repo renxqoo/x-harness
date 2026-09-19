@@ -76,4 +76,10 @@ describe("task-tools plugin assembly", () => {
     expect(out.content).toContain("no such task in any source");
     await ctx.dispose();
   });
+
+  it("double assembly fails fast (duplicate tool name in the same registry)", async () => {
+    const ctx = createContext();
+    await expect(loadPlugins(ctx, [sessionPlugin, toolsPlugin, createTaskToolsPlugin(), createTaskToolsPlugin()])).rejects.toThrow();
+    await ctx.dispose().catch(() => {});
+  });
 });

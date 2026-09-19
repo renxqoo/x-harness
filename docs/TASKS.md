@@ -27,7 +27,7 @@ agent_stop 语义迁移——含签名重构，见 §4）；**bash 源在 task-t
 
 | 工具 | 入参 | 行为 |
 | --- | --- | --- |
-| `task_output` | `{task_id, offset?, block?, timeout?}`（offset 为非负数，schema `Type.Number` minimum 0——**不用 Integer**：tools validate 按 Kind symbol 派发，integer 是否在派发面未核实；bash 源 headBytes 对非整数/非有限值本就防御性取整归零，垃圾输入降级不崩溃） | task_id：agent 任务的 agentId/name/`name [ref]`（owner 限定），或 bash 后台任务 id（会话键控）。**offset 是规格外本仓扩展**（上游三参数 task_id/block/timeout——增量读靠输出文件+Read；本仓 bash 源以 offset/nextOffset 表达，agent 源忽略）。**block 缺省 true**（与上游规格 :113、件13 §2.1、反自旋原则一致——bash 源无完成通知，缺省阻塞正是省轮询手段；拉模式裁决裁的是通知机制非单次调用阻塞缺省）。timeout 缺省 30000、min 0、max 600000；**timeout=0 = 零等待立即快照**。agent 源 block=true = whenIdle race（在飞快照带末轮摘要）；bash 源 block=true = whenSettled 有界等终态（§3.2），到点未完回 running/killed 中间态快照（state 自述） |
+| `task_output` | `{task_id, offset?, block?, timeout?}`（offset 为非负数，schema `Type.Number` minimum 0——**不用 Integer**：tools validate 按 Kind symbol 派发，integer 是否在派发面未核实；bash 源 headBytes 对非整数/非有限值本就防御性取整归零，垃圾输入降级不崩溃） | task_id：agent 任务的 **agentId 精确**（owner 限定——修订A），或 bash 后台任务 id（会话键控）。**offset 是规格外本仓扩展**（上游三参数 task_id/block/timeout——增量读靠输出文件+Read；本仓 bash 源以 offset/nextOffset 表达，agent 源忽略）。**block 缺省 true**（与上游规格 :113、件13 §2.1、反自旋原则一致——bash 源无完成通知，缺省阻塞正是省轮询手段；拉模式裁决裁的是通知机制非单次调用阻塞缺省）。timeout 缺省 30000、min 0、max 600000；**timeout=0 = 零等待立即快照**。agent 源 block=true = whenIdle race（在飞快照带末轮摘要）；bash 源 block=true = whenSettled 有界等终态（§3.2），到点未完回 running/killed 中间态快照（state 自述） |
 | `task_stop` | `{task_id}` | agent 源：cancel+whenIdle 收敛+幂等+停止非销毁（可再 message 复活）+ worktree 清理评估（kept 带路径）。bash 源：两段杀（term→kill）发起 + **whenSettled 有界收敛后铸终态快照**（KILL_GRACE+余量 8s 上界；超时如实回 mid-kill 快照——state=killed/exit=null 属实瞬态，铸文容忍）；**stop 发起前已终态（endedAt 已置）的任务铸文加 already finished 前缀**——裸 "Stopped" 对 completed 任务是谎言 |
 
 **工具入口前置校验**（不进路由）：task_id 空/含换行/调用方无 session → invalid-args；
@@ -74,10 +74,11 @@ export interface TaskHub {
 
 - **路由序固定**：hub 按 kind 字典序遍历（agent 先于 bash）——不依赖注册时序，同名撞形
   id（`t-<12hex>` 是合法 agent 名）在不同装配下解析一致。
-- **路由安全论据（修正）**：bash id = `t-`+12hex（tasks.ts 铸造）、agentId = `agent-`+8hex，
-  两前缀正交；裸名撞 bash id 需「同名 + 同会话同 id」双重巧合（概率可忽略）且定序兜底。
-- **单源异常隔离**：路由层 try/catch 单源 probe/output 异常 → 按 miss 计 + onWarn 留痕
-  （单源 bug 不打穿另一源）。
+- **路由安全论据（修订A 后收敛）**：bash id = `t-`+12hex（tasks.ts 铸造）、agentId =
+  `agent-`+8hex，两前缀正交；agent 源 probe 只认 agentId 精确（regex 锚定），无撞形面。
+- **单源异常隔离**：路由层 try/catch 单源 probe/output/**stop** 异常 → 按 miss 计 +
+  onWarn 留痕（单源 bug 不打穿另一源；stop 中途抛错如实吞成统一 not-found——onWarn 是
+  唯一痕迹，故插件缺省 onWarn 落 stderr，对齐 core 监听器错误缺省 sink）。
 - **block 归一化点**：工具层显式 `block: opts.block ?? true` 传源（verbs 内部 `!== false`
   口径与之一致——不依赖双层缺省巧合）。
 
@@ -119,7 +120,8 @@ createTaskToolsPlugin({ bashTasks: box.tasks }), ...])`——工厂参数直取
 （原 B-P0-2 装配序脆弱性随工厂注入消解）。
 
 `bashTaskSource(tasks)`（task-tools/src/source-bash.ts）：
-- `probe`：`tasks.read(caller, id, 0)` ok → hit；miss → miss（会话键控即属主面）。
+- `probe`：`tasks.list(caller).some(t => t.id === id)` → hit；否则 miss（会话键控即属主面；
+  **不用 read 判定**——read 每次 Buffer.from(full) 全量重编码保留缓冲，与 §3.2 同一成本论据）。
 - `output`：read(caller, id, offset ?? 0) → §1.1 bash 铸文。
 - `stop`：tasks.stop 发起两段杀 → `waitSettled(...)` 外置收敛 → 终态快照铸文。
 
@@ -219,6 +221,7 @@ B. delegation 迁移（工具摘除 + 源注册 + 签名重构 + 双轨文案清
 | bash 后台任务进 task_output 面需装配时传 bashTasks 句柄 | 未传 → bash id 落统一 not-found（文案含来源提示可自纠）；bash 描述静态提法兑现依赖装配 | 装配纪律 |
 | 一 ctx 一 toolbox（一 bash 源） | 重名 kind throw 已 fail-fast | 单装配纪律 |
 | waitSettled 为内存轮询（25ms）而非登记簿内 waiters | toolbox 零改动约束（用户二次裁决）下的等价实现——撕裂防护同效（endedAt 判据），代价唤醒粒度 | 本件裁定 |
+| contract.test 逐字对账读绝对路径 /Users/wrr/work/claude-tool/…（规格在本仓外无副本） | 其他 checkout 上该用例必挂——机器绑定是既有取舍（件13 起即如此） | 后续件（规格入仓或环境探测） |
 
 ## 10. 对抗审查处置（两路并行，27 项全处置）
 
@@ -299,3 +302,37 @@ not-found 口径 → **采纳**：§1.1 说明。P3-14 旅程装配序探测点 
   97.29/90.9/90.9/100）；e2e 十场景绿。bun.lock 混有他人未提交 session-mailbox 条目——
   不随本件提交，留协调。
 - 收口两路对抗审查处置见 §12。
+
+## 12. 收口两路对抗审查处置（2026-09-19，路A 契约/语义 + 路B 并发/生命周期/假绿）
+
+**路A（2 P2 + 8 P3）**：P2-1 TASKS §1.1/§1.2 task_id 形态未随修订A 收敛 → **采纳**（本版已改
+写：agentId 精确 + 前缀正交）。P2-2 AGENT-DELEGATION §2.1/§5.1/§5.2/词表四处残留修订A 前
+名字机制 → **采纳**（§5.2 收敛三分支、ambiguous 词目删除、pattern 依据与 main 信封 from 改
+agentId 口径）。P3-3 表格被注记行截断 → **采纳**（注记移表尾；list_agents 行格式改双形态
+如实）。P3-4 §7 承诺 §12/§14/§15 加注仅 §12 落地 → **采纳**（两节尾注指向 §17）。P3-5 描述
+头注偏离计数偏低 → **采纳**（改五类偏离清单）。P3-6 源侧死缺省 `?? true` → **采纳**（改
+`=== true`——tokens 注释「源不再猜缺省」成真）。P3-7 probe-by-read 双重全量重编码 → **采纳**
+（probe 改 list().some——§3.1 同变；与路B P3-2 合并）。P3-8 stop 收敛窗 evict 分支无测试 →
+**采纳**（补「settle 窗内逐出 → not-found」用例）。P3-9 stop 异常隔离超方案字面 → **采纳**
+（§1.2 口径扩为 probe/output/stop，取舍明示）。P3-10 UTF-16 截断劈代理对 → **采纳**
+（commandHead 改码点截断）。
+
+**路B（2 P2 + 6 P3）**：P2-1 delegation 摘除序注释与 LIFO 实序相反（关箱后仍有 drain/心跳拍
+窗口）→ **采纳**：consumer.shutdown 改经 pendingEffects 注册于心跳/drain **之前**——回卷序
+成真「停 drain → 停心跳 → 结算+关箱」（件13 遗留，本件清偿）。P2-2 缺省装配下单源异常零
+留痕 → **采纳**：插件缺省 onWarn 落 stderr（对齐 core 缺省 sink）。P3-1 already-finished
+TOCTOU（before 预查与 stop 发起之间自然完成）→ **采纳**：判据改 `initiated.value.endedAt`
+（发起返回的同步快照），删 before 预查。P3-2 与路A P3-7 合并处置。P3-3 迟到 miss 以
+`not-found:` 前缀耦合源词表未落契约 → **采纳**（TaskSource 接口注释写为协议事实；
+routing.test 迟到用例即锚）。P3-4 `exit=(143|137|null)` 放宽 → **采纳**（收紧为
+`(143|137)`——null 属未收敛）。P3-5 插件层双装配 fail-fast 无用例 → **采纳**（plugin.test
+补 rejects 用例）。P3-6 contract.test 读绝对机器路径规格源 → **落档 §9**（规格在本仓外、
+无仓内副本；机器绑定是既有取舍，后续件再治）。
+
+**核过无偏面（两路一致）**：语义保真（block/timeout/超时快照/reportCap/not-owner/幂等/
+worktree kept 逐字等价）、三态路由（denied 不遮蔽/统一词表/迟到回落/异常隔离/归一化点）、
+描述真实性、双轨清零、toolbox 零改动、e2e 真接线（非直柄换皮）、迁移断言零弱化（三锚
+逐字 + block 显式化）、apply 中途 throw 回卷、资源无泄漏。
+
+**状态注记**：审查进行中用户将工作区整体提交为 `c39480e`（"fix: bug"，含本件全部成果与
+他人 llm/agent-loop 在途变更）——本处置批次以只含本件文件的新提交落地。

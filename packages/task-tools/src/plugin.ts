@@ -24,7 +24,12 @@ export function createTaskToolsPlugin(options: TaskToolsOptions = {}): Plugin {
       const hub = createTaskHub();
       ctx.effect(ctx.provide(taskHub, hub));
       const registry = ctx.use(toolRegistry);
-      for (const tool of createTaskTools(hub, options.onWarn ?? (() => {}))) ctx.effect(registry.register(tool));
+      // 缺省 stderr 留痕（对齐 core 监听器错误缺省 sink——内核面不依赖 console）：单源异常
+      // 若静默吞成统一 not-found，源 bug 与「任务不存在」不可区分——调试黑洞
+      const onWarn = options.onWarn ?? ((message: string) => {
+        process.stderr.write(`[x-harness] task-tools: ${message}\n`);
+      });
+      for (const tool of createTaskTools(hub, onWarn)) ctx.effect(registry.register(tool));
       if (options.bashTasks !== undefined) ctx.effect(hub.registerSource(bashTaskSource(options.bashTasks)));
     },
   };

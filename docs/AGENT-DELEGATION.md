@@ -33,16 +33,17 @@ Control/agent-team/统一后台任务体系（bash 后台、输出文件指针�
 | 工具 | 入参 | 行为要点 |
 | --- | --- | --- |
 | `agent_spawn` | `{description, prompt, subagent_type?, model?, isolation?}` | description 必填（3-5 词任务简述）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；isolation 仅 `"worktree"`（§8）。返回 `{agentId, sessionId}` + 反轮询引导；后台运行，完成时 `[agent-notification]`（§5.1） |
-| `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——`name [ref]` 解析依赖）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,300}$`，长内容走文件中转）；summary ≤200 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
+| `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——agentId/box 名为无换行原子串）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,300}$`，长内容走文件中转）；summary ≤200 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
+| `list_agents` | `{}` | 行格式双形态：子代理行 `kind=subagent <agentId> session=<id> type=<t> depth=<n> status=<running\|idle\|stopped>`；本机会话行 `<box名> [<ref>] kind=local-session status=<...>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档） |
+
 （读/停动词已迁出——件14 修订C：`task_output`/`task_stop` 由 @x-harness/task-tools 提供，
 经 TaskHub 路由到 agent 源（本包 agentTaskSource 注册）与 bash 源；schema/铸文/统一
 not-found 词表见 docs/TASKS.md §1。）
-| `list_agents` | `{}` | 行格式 `<name> [<ref>] kind=<subagent\|local-session> <agentId\|box> status=<running\|idle\|stopped>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档） |
 
 错误词表（判别联合 reason，中性英文，统一 `area:detail`）：`invalid-args:*`（参数形状/未知
-类型/to 含换行/notify_when_idle 越权或非 box 目标）、`not-found:*`（寻址落空，带清单或消歧
-提示）、`not-owner:*`、`denied:max-depth|shutting-down`、`busy:max-concurrent`、
-`spawn-failed:*`、`not-live:*`（跨进程对端死）、`ambiguous:*`（裸名多命中，带 [ref] 清单）、
+类型/to 含换行/notify_when_idle 越权或非 box 目标）、`not-found:*`（寻址落空，带形态与清单
+引导）、`not-owner:*`、`denied:max-depth|shutting-down`、`busy:max-concurrent`、
+`spawn-failed:*`、`not-live:*`（跨进程对端死）、
 `aborted:*`（execute 内断信号防线，现状继承）。
 
 ### 2.2 限额与预算
@@ -126,7 +127,7 @@ cancel+dispose+摘行），唤醒入口（message）同样重验；⑤ 三索引
 ### 4.2 lineage 数据结构（重构）
 
 `Map<agentId, ChildRow>` 主索引 + `Map<sessionId, agentId>` 副索引 + `Map<name, agentId[]>`
-名索引（同名人按 spawn 序，尾部=最新=裸名解析优先）。**agentId 铸造 = `agent-<8hex随机>`
+**agentId 铸造 = `agent-<8hex随机>`（修订A：唯一身份，无名索引）
 （crypto 随机，进程内唯一且跨重启不撞）**；`[ref]` = agentId 的 8hex 段尾 6 位（hex 形态，
 规格形）；box ref = manifest.bootId 尾 6 hex。ChildRow 增：`worktree?: string`。
 
@@ -155,29 +156,23 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
 - **父→子**：`agent_message` → 子 steer（busy→步边界排队；idle→唤醒起新轮）。spawn 的
   prompt 走 followup（next-turn 队首）。
 - **子→父（main 通道）**：子调 `agent_message{to:"main"}` → 插件路由 steer 到父会话，文本
-  包装 `<cross-session-message from="<子 name 或 agentId>">…</cross-session-message>`。父
+  包装 `<cross-session-message from="<子 agentId>">…</cross-session-message>`。父
   busy→步边界；父 idle→唤醒。父已 dispose → not-found。
 - **完成通知**：现状机制整体继承（agentStatus 监听 → armed/idle → 子 WAL 末 turn/end
   reason 全集透传 + 本轮 assistant 摘要 ≤200 + usage → `[agent-notification]` steer 注入父 →
   释槽）。变更：子会话缺档时投递 `session-archived` 占位通知（如实，不再静默）。
-- **兄弟互发**：`agent_message{to:"<兄弟名|agentId|name [ref]>"}`，同 steer 路径。
+- **兄弟互发**：`agent_message{to:"<兄弟agentId>"}`，同 steer 路径。
 
 ### 5.2 寻址解析算法（nameaddr.ts，`to` 的唯一解析真源）
 
 ```text
-解析(to, callerSession):
+解析(to, callerSession)（修订A 收敛为三分支）:
 1. to === "main"   → caller 有 parent? 父会话(进程内 steer) : invalid-args(main 仅子代理可用)
-2. to 匹配 ^agent-[0-9a-f]+$ → lineage 主索引精确命中；未命中 → not-found
-   （agentId 不跨重启复活——名字才跨重启，§6.2）
-3. "name [ref]" 形 → 拆名与 ref；进程内域：agentId 8hex 段尾 6 位精确匹配；
-   跨进程域：box ref（bootId 尾 6 hex）精确匹配；落空 → not-found 带 ref 清单
-4. 裸名 name：
-   a. 进程内名索引 live 行 ≥1 → **latest-wins**（最新 spawn 者——规格 :194 原文语义；
-      [ref] 供精确寻址旧同名者）
-   b. 进程内无                 → mailbox discover 裸名：唯一 live box → 跨进程投递；
-                                 ≥2 → ambiguous 带 [ref]；无 → 转 5
-5. archive 惰性重建（仅 caller 自己的历史子代理，§6.2）：header.agentId 匹配 →
-   resume 复活（沿用原 id）→ 命中；否则 not-found（附 list_agents 引导）
+2. to 匹配 ^agent-[0-9a-f]+$ → lineage 精确命中；未命中 → 转 3
+   （跨重启复活经 agent_message 回退链——档案按 header.agentId 复活，§6.2）
+3. 非 agentId 形 → mailbox discover 裸名（box 名）：唯一 live box → 跨进程投递；
+   无 → archive 惰性重建（仅 caller 自己的历史子代理，§6.2）：header.agentId 匹配 →
+   resume 复活（沿用原 id）→ 命中；否则 not-found（附 agentId 形态与 list_agents 引导）
 ```
 
 task_output/task_stop（agent 源）的 task_id = agentId 精确（nameaddr 分支 2；不支持 main
@@ -246,7 +241,7 @@ description 行为规范。
 
 spawn 时 name = 显式 name 参数 ?? description slug（小写、`[^a-z0-9-]` 折叠、截 24 字符、
 **空则回退 `agent-<8hex>` 随机段**——中文简述折叠为空的误路由防线）。同名人共存（名索引
-数组）；裸名解析 latest-wins（§5.2.4b）。name 永非唯一键，agentId 才是。
+数组）。name 概念已随修订A 消亡——agentId 是唯一键。
 
 ### 6.2 archive 惰性重建（「名字在完成后仍有效」的跨重启形态）
 
@@ -497,6 +492,8 @@ kick 边沿（§7.1）、timing 注入（§2.2/§11.2）、对账锚反向+词�
 非原子注明（§5.4）、manifest.status 粒度落档（§13）、git 串行（§8.1）、迁移矩阵工作量
 如实（§11.1）。
 
+
+> 注：本节及以下历史处置节中的 agent_output/agent_stop 提法，其工具已于件14 修订C 迁 task-tools（§17）。
 ## 15. 代码级对抗审查处置（F 收口前两路并行，2026-09-19）
 
 > 状态：件13 六阶段实施完成；两路代码审（A 契约/假绿面 21 项、B 并发/生命周期 15 项）全处置。
@@ -538,6 +535,8 @@ A-P3-15。P2-6 sweep 互删 → 见 A-P1-2（新鲜度+本进程 live 排除留�
 sweep kept/关箱尽力路径）。P3-14 drain 重入乱序 → **采纳**（自链式调度）。P3-15 real.ts →
 **归属**同 A-P3-21。
 
+
+> 注：同上——output/stop 处置记述针对当时的 agent_output/agent_stop，现状见 §17。
 ## 16. 修订A/B（2026-09-19 用户裁决，同日实施）
 
 **修订A「去名」**：agent_spawn 删除 name 入参与名字概念——**agentId 是子代理唯一身份**

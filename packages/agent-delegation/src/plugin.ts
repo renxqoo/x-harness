@@ -92,8 +92,8 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
 
       const lineage = createLineage();
       let tearingDown = false;
-      /** drain/心跳停止的注册推迟到 apply 尾——装配中途 throw 不泄漏定时器（审查 B-P3-10） */
-      const pendingEffects: Array<() => () => void> = [];
+      /** drain/心跳/关箱停止的注册推迟到 apply 尾——装配中途 throw 不泄漏定时器（审查 B-P3-10） */
+      const pendingEffects: Array<() => Disposer> = [];
 
       const adoptOrphan = async (row: ChildRow): Promise<void> => {
         const childHandle = loop.get(row.sessionId);
@@ -172,8 +172,11 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         consumer = createMailboxConsumer({ service, loop, box: boxHandle, mainSession: options.mailbox.mainSession, onWarn: options.onWarn });
         cross = { service, loop, box: options.mailbox.box, mainSession: options.mailbox.mainSession, lineage };
         verbDeps = { ...verbDeps, cross };
+        // §5.3 回卷序（注册序 = 回卷逆序）：注册 [shutdown, 心跳, drain] → LIFO 回卷得
+        // 停 drain → 停心跳 → 结算+关箱——关箱后再无 drain/心跳拍（对已删目录的写窗口归零）
+        pendingEffects.push(() => () => (consumer as MailboxConsumer).shutdown());
         pendingEffects.push(() => boxHandle.startHeartbeat());
-        pendingEffects.push(() => startDrain(consumer as MailboxConsumer, service.timing.pollIntervalMs, options.onWarn)); // 后注册先回卷：停 drain 最先（§5.3 序）
+        pendingEffects.push(() => startDrain(consumer as MailboxConsumer, service.timing.pollIntervalMs, options.onWarn));
       }
 
       const notifier = createNotifier({ loop, store, getRow: (session) => lineage.bySession(session), isTearingDown: () => tearingDown, adoptOrphan });
@@ -216,8 +219,9 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         });
         offSection();
         offVariable();
-        // 回卷序：effect 已先停 drain/心跳（后注册先回卷）→ 此处结算+关箱收尾（§5.3 序）
-        return Promise.allSettled([...cascade, ...(consumer !== undefined ? [consumer.shutdown()] : [])]).then(() => {});
+        // 回卷序：drain/心跳/结算+关箱全经 effect（LIFO 得 §5.3 序：停 drain → 停心跳 → 关箱）；
+        // 此处只剩级联 cancel 与 prompt 摘除（tearing-down 门已先行）
+        return Promise.allSettled(cascade).then(() => {});
       };
     },
   };
