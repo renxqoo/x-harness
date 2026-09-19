@@ -8,8 +8,7 @@ const MAX_SHOWN = 15;
 export function formatSessionList(headers: readonly SessionHeader[]): readonly string[] {
   return headers.slice(0, MAX_SHOWN).map((header, index) => {
     const when = new Date(header.createdAt).toISOString().replace("T", " ").slice(0, 16);
-    const agent = header.agentId === undefined ? "" : ` [${header.agentType ?? "agent"}]`;
-    return `${String(index + 1)}. ${header.id}  ${when}${agent}`;
+    return `${String(index + 1)}. ${header.id}  ${when}`;
   });
 }
 

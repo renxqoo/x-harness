@@ -302,8 +302,8 @@ output:
   --mode <text|json>        output format (json = JSONL event stream)
 
 misc:
-  --version | --help | --   everything after -- is positional
-                            @-prefixed args attach file contents to the message
+  --version (-v) | --help (-h) | --   everything after -- is positional
+                                     @-prefixed args attach file contents to the message
 
 config: $X_HARNESS_HOME/providers.json (default ~/.x-harness/providers.json)
 exit codes: 0 ok, 1 runtime failure, 2 usage/config error`;

@@ -19,7 +19,11 @@ export async function exportSession(input: {
   if (exists) return { ok: false, reason: `refusing to overwrite existing file: ${target}` };
   const flushed = await store.flush(session.id);
   if (!flushed.ok) return { ok: false, reason: flushed.reason };
-  await mkdir(dirname(target), { recursive: true });
+  try {
+    await mkdir(dirname(target), { recursive: true });
+  } catch (error) {
+    return { ok: false, reason: `export failed: ${error instanceof Error ? error.message : "cannot create target directory"}` };
+  }
   if (input.persist) {
     const source = join(input.sessionRoot, session.id, "events.jsonl");
     try {

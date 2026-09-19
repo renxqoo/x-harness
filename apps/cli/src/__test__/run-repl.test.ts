@@ -58,6 +58,10 @@ interface ReplFixture {
   world: World;
   stdin: PassThrough;
   output: string[];
+  /** REPL 主 promise：/quit/EOF/信号后 await 并断言退出码（挂起即用例超时暴露） */
+  exitCode: () => Promise<number>;
+  /** 触发已注册的信号回调（REPL 经 onSignal 登记的面） */
+  signal: (kind: "SIGINT" | "SIGTERM" | "SIGHUP") => void;
   cleanup: () => Promise<void>;
   waitFor: (marker: string) => Promise<void>;
 }
@@ -87,10 +91,12 @@ const textScript = (text: string): LlmChunk[] => [
   { type: "finish", finish: { kind: "stop" } },
 ];
 
-async function makeRepl(scripts: LlmChunk[][], persist = false): Promise<ReplFixture> {
+async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean } = {}): Promise<ReplFixture> {
+  const persist = over.persist ?? false;
   const root = await mkdtemp(join(tmpdir(), "xh-repl-"));
   const stdin = new PassThrough();
   const output: string[] = [];
+  const signalCbs: Partial<Record<"SIGINT" | "SIGTERM" | "SIGHUP", () => void>> = {};
   const built = await buildWorld({
     cwd: root,
     sessionRoot: join(root, "sessions"),
@@ -113,17 +119,6 @@ async function makeRepl(scripts: LlmChunk[][], persist = false): Promise<ReplFix
       });
     }
   };
-  const fixture: ReplFixture = {
-    world: built.value,
-    stdin,
-    output,
-    cleanup: async () => {
-      await built.value.ctx.dispose().catch(() => {});
-      await rm(root, { recursive: true, force: true }).catch(() => {});
-    },
-    waitFor,
-  };
-  fixtures.push(fixture);
   const replPromise = runRepl({
     world: built.value,
     handle: made.value,
@@ -132,9 +127,21 @@ async function makeRepl(scripts: LlmChunk[][], persist = false): Promise<ReplFix
     config: CONFIG.config,
     sessionRoot: join(root, "sessions"),
     persist,
-    io: { write: (text) => output.push(text), stdin, isTTY: false },
+    io: { write: (text) => output.push(text), stdin, isTTY: false, onSignal: (kind, callback) => { signalCbs[kind] = callback; } },
   });
-  void replPromise;
+  const fixture: ReplFixture = {
+    world: built.value,
+    stdin,
+    output,
+    exitCode: () => replPromise,
+    signal: (kind) => signalCbs[kind]?.(),
+    cleanup: async () => {
+      await built.value.ctx.dispose().catch(() => {});
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    },
+    waitFor,
+  };
+  fixtures.push(fixture);
   await waitFor("type /help");
   return fixture;
 }
@@ -146,7 +153,7 @@ describe("runRepl（管道驱动）", () => {
     await fixture.waitFor("REPL-ANSWER");
     await fixture.waitFor("turn 1");
     fixture.stdin.write("/quit\n");
-    await delay(100);
+    expect(await fixture.exitCode()).toBe(0);
     const text = fixture.output.join("");
     expect(text).toContain("x-harness v");
     expect(text).toContain("session repl-test");
@@ -159,15 +166,38 @@ describe("runRepl（管道驱动）", () => {
     fixture.stdin.write("/nope\n");
     await fixture.waitFor("unknown command");
     fixture.stdin.write("/quit\n");
-    await delay(100);
+    expect(await fixture.exitCode()).toBe(0);
   });
 
-  it("空行忽略不触发 turn；EOF（stdin end）退出", async () => {
+  it("空行忽略不触发 turn；EOF（stdin end）退出码 0", async () => {
     const fixture = await makeRepl([]);
     fixture.stdin.write("   \n");
     await delay(50);
     fixture.stdin.end();
-    await delay(100);
+    expect(await fixture.exitCode()).toBe(0);
     expect(fixture.output.join("")).not.toContain("turn 1");
+  });
+
+  it("SIGTERM：退出码 143 且清理路径可达（回归：退出不 cancel 在飞 turn 会挂死）", async () => {
+    const fixture = await makeRepl([textScript("SLOW")]);
+    fixture.stdin.write("hello\n");
+    await fixture.waitFor("SLOW");
+    fixture.signal("SIGTERM");
+    expect(await fixture.exitCode()).toBe(143);
+  });
+
+  it("persist=true：/thinking 切换走 dispose→resume 续写（事件卷跨代延续）", async () => {
+    const fixture = await makeRepl([textScript("FIRST"), textScript("SECOND")], { persist: true });
+    fixture.stdin.write("hi\n");
+    await fixture.waitFor("FIRST");
+    await fixture.waitFor("turn 1");
+    fixture.stdin.write("/thinking low\n");
+    await fixture.waitFor("switched to");
+    fixture.stdin.write("again\n");
+    await fixture.waitFor("SECOND");
+    fixture.stdin.write("/quit\n");
+    expect(await fixture.exitCode()).toBe(0);
+    const text = fixture.output.join("");
+    expect(text).toContain("note: switching resets"); // 副作用提示
   });
 });

@@ -14,6 +14,7 @@ import { defaultSessionRoot, providersPath } from "./harness-home.ts";
 import { newSessionId } from "./new-session-id.ts";
 import { parseCliArgs, usageText } from "./parse-cli-args.ts";
 import type { CliArgs } from "./parse-cli-args.ts";
+import { pickIndex, pickSession, formatSessionList } from "./pick-session.ts";
 import { processFileArgs } from "./process-file-args.ts";
 import { readProvidersConfig } from "./providers-file.ts";
 import type { ProvidersConfig } from "./providers-file.ts";
@@ -21,9 +22,11 @@ import { readPipedStdin } from "./read-stdin.ts";
 import { agentOptionsForCreate, agentOptionsForResume } from "./resolve-agent-options.ts";
 import { resolveModel } from "./resolve-model.ts";
 import type { ModelResolution } from "./resolve-model.ts";
-import { planSession, planToResult } from "./resolve-session.ts";
+import { continueCandidate, mainSessions, matchPrefix } from "./resolve-session.ts";
 import { runPrintMode } from "./run-print-mode.ts";
 import { runRepl } from "./run-repl.ts";
+import readline from "node:readline";
+import { Writable } from "node:stream";
 import pkg from "../package.json";
 
 export interface CliIO {
@@ -53,6 +56,36 @@ function guarded(write: (text: string) => void): (text: string) => void {
   };
 }
 
+/** guarded + 断管回调（REPL：EPIPE 触发清理退出而非继续在死管上跑） */
+function guardedEpipe(write: (text: string) => void, onBroken: () => void): (text: string) => void {
+  let broken = false;
+  return (text) => {
+    if (broken) return;
+    try {
+      write(text);
+    } catch (error) {
+      if ((error as { code?: string }).code !== "EPIPE") throw error;
+      broken = true;
+      onBroken();
+    }
+  };
+}
+
+/** 一次性 readline 的 echo 出面（EPIPE 吞掉，与 guarded 同口径） */
+function epipeSafeWritable(io: CliIO): Writable {
+  return new Writable({
+    write: (chunk, _encoding, callback) => {
+      try {
+        io.stdout(chunk.toString("utf8"));
+        callback();
+      } catch (error) {
+        if ((error as { code?: string }).code === "EPIPE") callback();
+        else callback(error instanceof Error ? error : undefined);
+      }
+    },
+  });
+}
+
 function listModelsLines(config: ProvidersConfig, search: string | undefined): string {
   const lines: string[] = [];
   for (const profile of config.providers) {
@@ -63,16 +96,54 @@ function listModelsLines(config: ProvidersConfig, search: string | undefined): s
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
-/** 会话计划：archive 纯读探针（不装世界、不占锁）；-r 的 pick 形态在非交互下报 exit 2 */
-async function planResumeId(args: CliArgs, io: CliIO): Promise<{ readonly resumeId: SessionId | undefined } | { readonly failure: string }> {
+/** 会话计划：archive 纯读探针（不装世界、不占锁）。pick/ambiguous 形态只在交互下可达
+ *  （选择 UI 需要 stdin 所有权）；非交互一律 fail（exit 2） */
+type SessionPlanOutcome =
+  | { readonly kind: "resume"; readonly id: SessionId }
+  | { readonly kind: "new" }
+  | { readonly kind: "pick"; readonly headers: readonly import("@x-harness/session").SessionHeader[] }
+  | { readonly kind: "ambiguous"; readonly ids: readonly SessionId[] }
+  | { readonly kind: "fail"; readonly reason: string };
+
+async function planResumeId(args: CliArgs, io: CliIO, interactive: boolean): Promise<SessionPlanOutcome> {
   const needsArchive = args.session !== undefined || args.continueRecent || args.resume;
-  if (!needsArchive) return { resumeId: undefined };
+  if (!needsArchive) return { kind: "new" };
   const headers = await createArchiveReader(args.sessionDir ?? defaultSessionRoot(io.env)).listHeaders();
-  const plan = planSession(args, headers, io.cwd);
-  if (plan.kind === "pick") return { failure: "-r/--resume needs an interactive terminal to pick a session" };
-  const settled = planToResult(plan);
-  if (!settled.ok) return { failure: settled.reason };
-  return settled.value.kind === "new" ? { resumeId: undefined } : { resumeId: settled.value.id };
+  if (args.session !== undefined) {
+    const match = matchPrefix(headers, args.session);
+    if (match.status === "unique") return { kind: "resume", id: match.id };
+    if (match.status === "none") return { kind: "fail", reason: `no session matches prefix "${args.session}"` };
+    if (!interactive) return { kind: "fail", reason: `prefix "${args.session}" is ambiguous: ${match.candidates.join(", ")}` };
+    return { kind: "ambiguous", ids: match.candidates };
+  }
+  if (args.continueRecent) {
+    const id = continueCandidate(headers, io.cwd);
+    return id === undefined ? { kind: "new" } : { kind: "resume", id };
+  }
+  const list = mainSessions(headers);
+  if (list.length === 0) return { kind: "fail", reason: "no saved sessions" };
+  if (!interactive) return { kind: "fail", reason: "-r/--resume needs an interactive terminal to pick a session" };
+  return { kind: "pick", headers: list };
+}
+
+/** 交互选择（一次性 readline，REPL 接管 stdin 之前完成）：取消/垃圾输入 = 新会话 */
+async function chooseSessionInteractive(plan: { kind: "pick"; headers: readonly import("@x-harness/session").SessionHeader[] } | { kind: "ambiguous"; ids: readonly SessionId[] }, io: CliIO): Promise<SessionId | undefined> {
+  const rl = readline.createInterface({ input: io.stdin, output: epipeSafeWritable(io), terminal: false });
+  const question = (prompt: string): Promise<string | undefined> =>
+    new Promise((resolve) => {
+      rl.question(prompt, (answer) => resolve(answer));
+    });
+  try {
+    if (plan.kind === "pick") {
+      io.stdout(`${formatSessionList(plan.headers).join("\n")}\n`);
+      return await pickSession(plan.headers, question);
+    }
+    io.stdout(`${plan.ids.map((id, index) => `${String(index + 1)}. ${id}`).join("\n")}\n`);
+    const index = await pickIndex(plan.ids.length, question);
+    return index === undefined ? undefined : plan.ids[index];
+  } finally {
+    rl.close();
+  }
 }
 
 /** broker IO：交互形态的提问面由 REPL 终端经 wireAsk 回填（buildWorld 前先占位） */
@@ -154,13 +225,16 @@ export async function cliMain(argv: readonly string[], io: CliIO): Promise<numbe
     io.stderr(`${resolution.reason}\n`);
     return 2;
   }
-  const plan = await planResumeId(args, io);
-  if ("failure" in plan) {
-    io.stderr(`${plan.failure}\n`);
+  const interactive = !args.print && io.stdinIsTTY;
+  const plan = await planResumeId(args, io, interactive);
+  if (plan.kind === "fail") {
+    io.stderr(`${plan.reason}\n`);
     return 2;
   }
-  const interactive = !args.print && io.stdinIsTTY;
-  const context: MainContext = { args, config: providers.value, resolution: resolution.value, io, resumeId: plan.resumeId };
+  let resumeId: SessionId | undefined;
+  if (plan.kind === "resume") resumeId = plan.id;
+  else if (plan.kind === "pick" || plan.kind === "ambiguous") resumeId = await chooseSessionInteractive(plan, io);
+  const context: MainContext = { args, config: providers.value, resolution: resolution.value, io, resumeId };
   return interactive ? interactiveMain(context) : printMain(context);
 }
 
@@ -208,10 +282,20 @@ async function printMain(context: MainContext): Promise<number> {
   return code;
 }
 
-/** 交互 REPL：单一 readline 所有权；broker 提问面在终端就绪后回填 */
+/** 交互 REPL：stdin TTY。一次性选择 UI（-r/歧义前缀）先于 REPL 完成；位置参数/@file/
+ *  管道 stdin 拼成初始提示依序 kick；stdout EPIPE 经 wireQuit 触发清理退出 */
 async function interactiveMain(context: MainContext): Promise<number> {
   const { args, config, resolution, io, resumeId } = context;
+  const files = await processFileArgs(args.fileArgs);
+  if (!files.ok) {
+    io.stderr(`${files.reason}\n`);
+    return 2;
+  }
+  const stdin = await readPipedStdin(io.stdin); // TTY 恒空；防御性保持与 print 同构
+  const initial = buildInitialMessage({ stdin, fileText: files.value.text, firstMessage: args.messages[0] });
+  const prompts = [...(initial !== undefined ? [initial] : []), ...args.messages.slice(1)];
   let ask: (prompt: string) => Promise<string | undefined> = () => Promise.resolve(undefined);
+  let brokenQuit: (code: number) => void = () => {};
   const opened = await openWorld({ args, config, resolution, io, interactive: true, resumeId, ask: (prompt) => ask(prompt) });
   if ("failure" in opened) {
     io.stderr(`startup failed: ${opened.failure}\n`);
@@ -226,15 +310,19 @@ async function interactiveMain(context: MainContext): Promise<number> {
     sessionRoot: args.sessionDir ?? defaultSessionRoot(io.env),
     persist: !args.noSession,
     io: {
-      write: guarded(io.stdout),
+      write: guardedEpipe(io.stdout, () => brokenQuit(1)),
       stdin: io.stdin,
       isTTY: io.stdoutIsTTY,
       onSignal: (kind, callback) => {
         process.on(kind, callback);
       },
     },
+    initialPrompts: prompts,
     wireAsk: (face) => {
       ask = face;
+    },
+    wireQuit: (quit) => {
+      brokenQuit = quit;
     },
   });
   await opened.world.ctx.dispose().catch(() => {});

@@ -1,6 +1,6 @@
 # CLI：x-harness 宿主终端
 
-> 状态：**定稿**（2026-09-19；同日经两路对抗审查修订——契约对照面 + 生命周期/并发面，问题
+> 状态：**已核销**（2026-09-19 定稿；两轮双路对抗审查（定稿前 + 收口前）问题全部处置，
 > 清单已处置见 §7）。apps/cli 是 x-harness 的终端宿主 app：全量装配插件世界，提供行式交互
 > REPL 与非交互 `-p` 两种形态。参考 pi CLI（`/Users/wrr/work/pi`）的功能形态，落在
 > x-harness 插件生态的对等物上。本文是装配与接口的裁决表。
@@ -173,7 +173,7 @@ sessionCheckpointPlugin
 createAgentDelegationPlugin()                               // agentsDirs 走缺省链；mailbox 缺席=进程内
 ```
 
-（共 17 个插件 + N 个运行时注册的 LLM adapter。）
+（共 18 个插件（含 cli-permission-broker 审批插件）+ N 个运行时注册的 LLM adapter。）
 
 裁决与依据：
 
@@ -200,24 +200,28 @@ createAgentDelegationPlugin()                               // agentsDirs 走缺
   必撞 `session-id-reused` 永久拒写——CLI 一律显式生成 `<UTC时间戳>-<6位随机>` 形态 id
   （满足 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`）；`/new` 亦然。
 - **`--no-session` 装配形态**：略去 createJsonlSessionPersistence（无条件装配的唯一例外，
-  内存会话语义必然）——后果：sessionArchive 缺席 → `/model`、`/resume` 禁用（提示），`/export`
-  走内存序列化，`--continue`/`--session` 与其互斥。
+  内存会话语义必然）——后果：sessionArchive 缺席 → `/model`、`/thinking`、`/resume` 禁用
+  （提示；三者都走 dispose→resume 重建，内存会话重建即丢上下文），`/export` 走内存序列化，
+  `--continue`/`--session` 与其互斥。
 
 ### 2.6 会话解析（resolve-session）
 
 优先序：`--no-session` > `--session <前缀>` > `--continue` > `--resume` > 新建。
 
-- **主会话过滤**：`--continue` 候选与 `/resume`、`-r` 列表一律过滤 `header.agentId ===
-  undefined`（delegation 子代理会话同 cwd 落盘，不得当主会话恢复）。
+- **主会话过滤**：`--continue` 候选与 `/resume`、`-r`、`--session` 前缀匹配一律过滤
+  `header.agentId === undefined`（delegation 子代理会话同 cwd 落盘，不得当主会话恢复）。
 - `--continue`：filter（cwd === process.cwd() ∧ 主会话）中 createdAt 最新；无候选 → 新会话
   （非报错——首次使用是常态）。
 - `--session <前缀>`：archive listHeaders 过滤 `id.startsWith(prefix)`；恰一个 → resume；
-  多个 → 交互选择（print 模式 exit 2 并列候选）；零个 → exit 2。
+  多个 → 交互下编号选择（print 模式 exit 2 并列候选）；零个 → exit 2。
 - **resume 的模型语义**：`AgentOptions` 显式值在 agent-loop 折叠时**恒胜**会话末次记录——
   因此 resume 路径只传**用户显式 flag**（--provider/--model/--thinking/--api-key 中实际给出
-  的），未给的留 undefined，自然回落会话末次 dial；仅**新建**会话才用 providers.json
-  default 解析全量。resolve-model 产出因此是两层：`{defaults（新建用）, overrides（仅显式
-  flag，resume 亦用）}`。
+  的，含显式 `--thinking off`），未给的留 undefined，自然回落会话末次 dial；工具面同理：
+  无工具 flag 时 resume 不传 `tools`（不放开上一会话的受限名单）。仅**新建**会话才用
+  providers.json default 解析全量。resolve-model 产出因此是两层：`{defaults（新建用）,
+  overrides（仅显式 flag，resume 亦用）}`。`--api-key` 绑定 default 解析出的档案
+  （apiKeyProvider）；resume 无显式 --provider/--model 时若请求实际发往会话末次 provider，
+  覆盖不跟随（绑定口径落档）。
 - **单写者假设与锁**：jsonl writer 无跨进程锁，双进程同开会话会交织写坏（前缀校验只在打开
   瞬间做）——session-persistence-jsonl 包补会话目录锁（`lock` 文件 O_EXCL + pid 活性检测 +
   死锁接管），冲突方 open 即败 `session-locked`，CLI 报错 exit 1。
@@ -302,25 +306,27 @@ coverage include 扩 `apps/*/src/**`；不接受为凑数排除）。
 
 ## 6. 验收清单
 
-- [ ] 交互 REPL：流式渲染（text/thinking dim/工具行/用量行）、steer、审批 y/N（含 Ctrl+C
+- [x] 交互 REPL：流式渲染（text/thinking dim/工具行/用量行）、steer、审批 y/N（含 Ctrl+C
       强制 deny）、Ctrl+C/D 退出（含清理窗口迟到输入不崩）
-- [ ] -p text：stdout 纯最终文本；exit 0/1/2 语义正确；EPIPE 不崩
-- [ ] -p --mode json：JSONL 流含 permission 事件，done 恰为末行
-- [ ] 会话：落盘目录形态、唯一 id 无跨进程撞名、--continue/--resume/--session 前缀（主会话
+- [x] -p text：stdout 纯最终文本；exit 0/1/2 语义正确；EPIPE 不崩
+- [x] -p --mode json：JSONL 流含 permission 事件，done 恰为末行
+- [x] 会话：落盘目录形态、唯一 id 无跨进程撞名、--continue/--resume/--session 前缀（主会话
       过滤）、resume 后上下文延续且模型回落会话末次（无显式 flag 时）、/export（flush 后）
-- [ ] providers.json：多 provider 注册、/model 切换（副作用提示）、--list-models、default
+- [x] providers.json：多 provider 注册、/model 切换（副作用提示）、--list-models、default
       缺省链、校验错例全表
-- [ ] 装配：全量 17 插件 + N adapter，数组序护栏（sandbox 先于 tool-*）、--no-session 条件化
-- [ ] 工具面：read/write/bash/grep/task_output/task_stop/delegation 工具在册；--tools/-xt/-nt 生效
-- [ ] 权限：界内 auto allow、ask 经 broker、非 TTY deny+警告、broker 缺席退化 deny 不崩
-- [ ] thinking 四级、token 用量显示（/session + turn 行，含 resume 冷启动折叠）
-- [ ] compact：保锚点折叠、fold 后 turn 摘要仍在、abort 可取消
-- [ ] 会话锁：双进程同会话第二个 session-locked 拒绝
-- [ ] 四门全绿 + 覆盖率 ≥90/85 如实报告 + e2e 旅程全绿 + 对抗审查清零
+- [x] 装配：全量 17 插件 + N adapter，数组序护栏（sandbox 先于 tool-*）、--no-session 条件化
+- [x] 工具面：read/write/bash/grep/task_output/task_stop/delegation 工具在册；--tools/-xt/-nt 生效
+- [x] 权限：界内 auto allow、ask 经 broker、非 TTY deny+警告、broker 缺席退化 deny 不崩
+- [x] thinking 四级、token 用量显示（/session + turn 行，含 resume 冷启动折叠）
+- [x] compact：保锚点折叠、fold 后 turn 摘要仍在、abort 可取消
+- [x] 会话锁：双进程同会话第二个 session-locked 拒绝
+- [x] 四门全绿 + 覆盖率 ≥90/85 如实报告 + e2e 旅程全绿 + 对抗审查清零
 
 ## 7. 定稿前对抗审查处置记录（2026-09-19）
 
 两路并行审查（契约对照面 / 生命周期与并发面）发现的问题与处置：
+
+第一轮（方案定稿前）：
 
 | # | 问题 | 处置 |
 | --- | --- | --- |
@@ -339,3 +345,24 @@ coverage include 扩 `apps/*/src/**`；不接受为凑数排除）。
 | 13 | stdout EPIPE 崩溃绕过清理 | §2.3/§2.4 EPIPE 处置 |
 | 14 | 非darwin/linux 与缺 socat linux 的无条件装配后果未落档 | §2.1 平台矩阵 + exit 1 归属 |
 | 15 | 退出机制（readline/定时器挂住进程）、清理窗口迟到输入炸 REPL、/export 已存在行为、/compact abort 与用量口径、--api-key 绑定时点、delegation agents 链不吃 X_HARNESS_HOME、插件计数/引用勘误 | §2.3/§2.5/§2.6/§2.7 逐条落档 |
+
+第二轮（代码收口前，2026-09-19；两路：契约/行为对照 + 生命周期/假绿）：
+
+| # | 问题 | 处置 |
+| --- | --- | --- |
+| 1 | json 模式 permission 事件行承诺落空（无订阅） | run-print-mode 订阅 permissionDecided 审计事件输出 permission 行 + 用例 |
+| 2 | 交互 `-r` 恒 exit 2（pick 形态被无条件拒绝）；`--session` 歧义前缀交互无选择 | planResumeId 区分交互形态；交互下 pick/歧义走一次性 readline 选择（REPL 接管 stdin 前） |
+| 3 | `--no-session` 下 `/thinking` 换级会毁灭会话（兜底新建丢上下文） | /thinking 内存会话禁用 + 矩阵落档 §2.5 |
+| 4 | resume 显式 `--thinking off` 被归一丢弃 | overrides 层不做 off 归一（显式 off 恒胜会话末次等级）+ 用例 |
+| 5 | resume 恒传全量 tools，上一会话受限名单被静默放开 | 无工具 flag 时 resume 不传 tools + 用例 |
+| 6 | 退出路径不 cancel 在飞 turn → /quit/SIGTERM 挂到流自然结束 | quit() 统一 cancel("quitting") + SIGTERM 143 回归用例 |
+| 7 | Ctrl+C 挂起审批只 deny 不 cancel turn | cancelPendingQuestion 后补 cancel（§2.3 原文语义兑现） |
+| 8 | slash 分派链路零 rejection 捕获（/export 不可写、compact abort 等炸 REPL） | 分派 .then(ok, err) 降级 + exportSession mkdir 捕获 + summarize 流异常归一 |
+| 9 | cancelPendingQuestion 留僵尸 readline question（吞用户下一行） | 收束后 resume+write("\n") 结清僵尸回调 + 回归用例 |
+| 10 | 锁接管 check-then-act 竞态（败者 unlink 掉胜者活锁） | rename(2) 原子摘除 + wx 重建权威；败者按新持有者活锁判定拒绝 |
+| 11 | REPL stdout EPIPE 不触发清理退出 | guardedEpipe + wireQuit 回填触发 quit(1) |
+| 12 | /model//resume 切换无 flush 屏障（可切进不可持久化会话）/无并发互斥 | makeNext 后 store.flush 失败即 fatal 退出 + switching 互斥 |
+| 13 | run-repl 测试丢弃 replPromise（挂起类 bug 永远测不出） | fixture 保存 promise，/quit/EOF/信号后 await 并断言退出码 |
+| 14 | e2e 缺腿：--continue、管道 stdin；pty 双击腿弱断言 | 三腿补齐（--continue 上下文延续 / stdin+@file 组合 / press-again 断言） |
+| 15 | compact 单击 Ctrl+C 不取消 | idle 分支顺带 abort compactAbort（幂等） |
+| 16 | 文档勘误：插件计数 18（含 broker）、--session 前缀也过滤主会话、退出顺序（close 先于 dispose——ask 挂起强制 deny 语义）、--api-key 绑定口径、usageText 补 -v/-h | 各节同步修订 |

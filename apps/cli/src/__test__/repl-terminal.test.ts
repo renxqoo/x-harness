@@ -45,6 +45,21 @@ describe("createReplTerminal", () => {
     stdin.end();
   });
 
+  it("cancelPendingQuestion：收束未决提问且用户的下一行仍可达（回归：僵尸 question 吞行）", async () => {
+    const { stdin, terminal } = makeTerminal();
+    const lines: string[] = [];
+    terminal.onLine((line) => lines.push(line));
+    const asked = terminal.question("[y/N] ");
+    await delay(10);
+    expect(terminal.cancelPendingQuestion()).toBe(true);
+    expect(await asked).toBeUndefined();
+    stdin.write("next-command\n");
+    await delay(30);
+    expect(lines).toEqual(["next-command"]);
+    expect(terminal.cancelPendingQuestion()).toBe(false); // 无挂起时 false
+    stdin.end();
+  });
+
   it("已关闭后 question 直接 undefined；重复 close 幂等", async () => {
     const { terminal } = makeTerminal();
     terminal.close();

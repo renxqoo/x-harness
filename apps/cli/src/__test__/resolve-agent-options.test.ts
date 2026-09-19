@@ -43,15 +43,25 @@ describe("agentOptionsForCreate", () => {
 });
 
 describe("agentOptionsForResume", () => {
-  it("仅显式 flag 进 options；未给处 undefined（回落会话末次 dial）", () => {
+  it("仅显式 flag 进 options；未给处 undefined（回落会话末次 dial/header）", () => {
     const options = agentOptionsForResume(args([]), {}, REGISTERED);
     expect(options.provider).toBeUndefined();
     expect(options.model).toBeUndefined();
-    expect(options.tools).toEqual(REGISTERED);
+    expect(options.tools).toBeUndefined(); // 无工具 flag 不传——避免放开上一会话受限名单
   });
 
   it("overrides 成对下传（--model 唯一命中带 provider）", () => {
     const options = agentOptionsForResume(args(["--thinking", "high"]), { provider: "ovt", model: "qwen3", thinking: "high" }, REGISTERED);
-    expect(options).toEqual({ provider: "ovt", model: "qwen3", thinking: "high", tools: REGISTERED });
+    expect(options).toEqual({ provider: "ovt", model: "qwen3", thinking: "high" });
+  });
+
+  it("显式 --thinking off 保留（foldDial 显式恒胜会话末次等级）", () => {
+    const options = agentOptionsForResume(args(["--thinking", "off"]), { thinking: "off" }, REGISTERED);
+    expect(options.thinking).toBe("off");
+  });
+
+  it("工具 flag 在场时 resume 同样收窄", () => {
+    const options = agentOptionsForResume(args(["--tools", "read"]), {}, REGISTERED);
+    expect(options.tools).toEqual(["read"]);
   });
 });

@@ -42,8 +42,12 @@ export interface ReplInput {
   readonly sessionRoot: string;
   readonly persist: boolean;
   readonly io: ReplIO;
+  /** 启动后依序执行的初始提示（交互模式的位置参数/管道 stdin 拼接产物） */
+  readonly initialPrompts?: readonly string[];
   /** broker 提问面接线：REPL 终端就绪后回传 question（Ctrl+C 强制关闭 → undefined → deny） */
   readonly wireAsk?: (ask: (prompt: string) => Promise<string | undefined>) => void;
+  /** 退出面接线（stdout EPIPE 等外部断裂触发清理退出） */
+  readonly wireQuit?: (quit: (code: number) => void) => void;
 }
 
 /** 行分派纯函数：空行忽略；slash 行透传；running 时普通文本 = steer */
@@ -92,7 +96,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
   let handle = input.handle;
   let dial = dialOf(handle.agent.options);
   let quitting = false;
-  let turnCount = 0;
   const compactAbort = new AbortController();
   const terminal = createReplTerminal({ stdin: io.stdin, write: io.write });
   const renderer = createStreamRenderer({ write: io.write, isTTY: io.isTTY });
@@ -110,7 +113,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
   };
 
   const kick = (text: string): void => {
-    turnCount += 1;
     io.write("\n");
     try {
       handle.agent.followup(text);
@@ -130,28 +132,43 @@ export async function runRepl(input: ReplInput): Promise<number> {
     }
   };
 
-  /** 换会话/换 dial：先 dispose 现有，再建新；失败兜底新建内存态防 REPL 裸奔 */
+  /** 换会话/换 dial：先 dispose 现有，再建新（flush 屏障防切进不可持久化会话）；
+   *  失败兜底新建内存态防 REPL 裸奔；switching 互斥防并发 slash 双重切换 */
+  let switching = false;
+  const buildNextOptions = (over: { readonly dial?: SlashDial }): AgentOptions => {
+    const nextDial = { ...dial, ...over.dial };
+    return { ...input.baseOptions, ...nextDial, ...(input.args.systemPrompt !== undefined ? { systemPrompt: input.args.systemPrompt } : {}) };
+  };
   const reopen = async (over: { readonly sessionId?: SessionId; readonly newSession?: boolean; readonly dial?: SlashDial }): Promise<string> => {
+    if (switching) return "already switching";
     if (handle.agent.status === "running") return "cannot switch while the agent is running";
     if (over.sessionId === undefined && over.newSession !== true && over.dial === undefined) return "nothing to switch";
-    if (input.persist && over.newSession !== true) {
-      io.write("note: switching resets session grants and background tasks\n");
+    switching = true;
+    try {
+      if (input.persist && over.newSession !== true) {
+        io.write("note: switching resets session grants and background tasks\n");
+      }
+      const previousId = handle.agent.session.id;
+      await handle.dispose().catch(() => {});
+      const made = await makeNext({ loop: world.loop, over, previousId, options: buildNextOptions(over) });
+      if (!made.ok) {
+        quit(1);
+        return `fatal: session switch failed: ${made.reason}`;
+      }
+      handle = made.value;
+      const flushed = await world.store.flush(handle.agent.session.id);
+      if (!flushed.ok) {
+        quit(1);
+        return `fatal: switched session cannot persist: ${flushed.reason}`;
+      }
+      dial = dialOf(handle.agent.options);
+      if (over.newSession === true) {
+        return `new session ${handle.agent.session.id} (${dial.provider ?? "?"}/${dial.model ?? "?"})`;
+      }
+      return `switched to ${dial.provider ?? "?"}/${dial.model ?? "?"} (session ${handle.agent.session.id})`;
+    } finally {
+      switching = false;
     }
-    const nextDial = { ...dial, ...over.dial };
-    const nextOptions: AgentOptions = { ...input.baseOptions, ...nextDial, ...(input.args.systemPrompt !== undefined ? { systemPrompt: input.args.systemPrompt } : {}) };
-    const previousId = handle.agent.session.id;
-    await handle.dispose();
-    const made = await makeNext({ loop: world.loop, over, previousId, options: nextOptions });
-    if (!made.ok) {
-      quit(1);
-      return `fatal: session switch failed: ${made.reason}`;
-    }
-    handle = made.value;
-    dial = dialOf(handle.agent.options);
-    if (over.newSession === true) {
-      return `new session ${handle.agent.session.id} (${dial.provider ?? "?"}/${dial.model ?? "?"})`;
-    }
-    return `switched to ${dial.provider ?? "?"}/${dial.model ?? "?"} (session ${handle.agent.session.id})`;
   };
 
   const slashDeps: SlashDeps = {
@@ -184,16 +201,29 @@ export async function runRepl(input: ReplInput): Promise<number> {
     if (quitting) return;
     quitting = true;
     compactAbort.abort();
+    try {
+      handle.agent.cancel("quitting"); // 在飞 turn 立即收尾（whenIdle 才能到达），否则退出挂到流自然结束
+    } catch {
+      // 已在收尾路径——忽略
+    }
     terminal.close();
     quitReason(code);
   };
 
-  // Ctrl+C 状态机（docs/CLI.md §2.3）：ask 挂起 → 强制收束提问（broker deny，turn 自然收尾）；
-  // running → cancel；idle → 500ms 双击退出。readline 事件与进程 SIGINT 两来源共用（幂等）
+  // Ctrl+C 状态机（docs/CLI.md §2.3）：ask 挂起 → 强制收束提问（deny）+ cancel turn；
+  // running → cancel；idle → 500ms 双击退出（单击顺带 abort 在飞 compact）。
+  // readline 事件与进程 SIGINT 两来源共用（幂等）
   let lastInterrupt = 0;
   const onInterrupt = (): void => {
     if (quitting) return;
-    if (terminal.cancelPendingQuestion()) return;
+    if (terminal.cancelPendingQuestion()) {
+      try {
+        handle.agent.cancel("interrupted");
+      } catch {
+        // 已在收尾路径——忽略
+      }
+      return;
+    }
     if (handle.agent.status === "running") {
       try {
         handle.agent.cancel("interrupted");
@@ -202,6 +232,7 @@ export async function runRepl(input: ReplInput): Promise<number> {
       }
       return;
     }
+    compactAbort.abort();
     const now = Date.now();
     if (now - lastInterrupt < DOUBLE_PRESS_MS) quit();
     else io.write("(press Ctrl+C again to quit)\n");
@@ -232,14 +263,21 @@ export async function runRepl(input: ReplInput): Promise<number> {
       return;
     }
     if (action.kind === "slash") {
-      if (handle.agent.status === "running" && action.line !== "/quit") {
-        io.write("agent is running — /quit or Ctrl+C to cancel first\n");
+      if ((handle.agent.status === "running" || switching) && action.line !== "/quit") {
+        io.write("agent is busy — /quit or Ctrl+C to cancel first\n");
         return;
       }
-      void runSlashCommand(action.line, slashDeps).then((outcome) => {
-        if (outcome === "quit") quit();
-        else if (!quitting) terminal.showPrompt();
-      });
+      // 迟到/异常输入捕获降级（/export 目标不可写、compact abort 等），不炸 REPL
+      void runSlashCommand(action.line, slashDeps).then(
+        (outcome) => {
+          if (outcome === "quit") quit();
+          else if (!quitting) terminal.showPrompt();
+        },
+        (error: unknown) => {
+          io.write(`command failed: ${error instanceof Error ? error.message : "internal error"}\n`);
+          if (!quitting) terminal.showPrompt();
+        },
+      );
     }
   });
 
@@ -247,6 +285,8 @@ export async function runRepl(input: ReplInput): Promise<number> {
   io.write("type /help for commands, /quit to exit\n");
   terminal.showPrompt();
   input.wireAsk?.((prompt) => terminal.question(prompt));
+  input.wireQuit?.(quit);
+  for (const prompt of input.initialPrompts ?? []) kick(prompt);
 
   const exited = new Promise<number>((resolve) => {
     quitReason = resolve;

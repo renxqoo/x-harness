@@ -35,9 +35,15 @@ async function summarize(input: SummarizeInput): Promise<string | undefined> {
     { role: "user" as const, content: [{ type: "text" as const, text: ask }] },
   ];
   let text = "";
-  for await (const chunk of runtime.stream({ model: input.dial.model ?? "", ...(input.dial.provider !== undefined ? { provider: input.dial.provider } : {}), tools: [], messages, signal: input.signal })) {
-    if (chunk.type === "text-delta") text += chunk.text;
-    if (chunk.type === "finish" && chunk.finish.kind === "error") return undefined;
+  try {
+    for await (const chunk of runtime.stream({ model: input.dial.model ?? "", ...(input.dial.provider !== undefined ? { provider: input.dial.provider } : {}), tools: [], messages, signal: input.signal })) {
+      if (chunk.type === "text-delta") text += chunk.text;
+      if (chunk.type === "finish" && chunk.finish.kind === "error") return undefined;
+    }
+  } catch (error) {
+    if (input.signal.aborted) return undefined; // Ctrl+C 取消：不算失败文案，调用方按 aborted 收尾
+    if (error instanceof Error && error.name === "AbortError") return undefined;
+    return undefined; // 流异常（网络/中间件）：归一为总结失败，不炸 REPL
   }
   return text.trim().length > 0 ? text : undefined;
 }

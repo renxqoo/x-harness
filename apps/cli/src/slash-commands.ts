@@ -94,6 +94,11 @@ async function commandModel(deps: SlashDeps, pattern: string | undefined): Promi
 }
 
 async function commandThinking(deps: SlashDeps, level: string | undefined): Promise<void> {
+  if (level !== undefined && level !== "" && deps.current().inMemory) {
+    // 换 thinking 走 dispose→resume 重建，内存会话无 archive → 兜底会丢上下文，禁用
+    deps.write("thinking switch requires a persisted session (this one is in-memory)");
+    return;
+  }
   if (level === undefined || level === "") {
     deps.write(`thinking: ${deps.current().dial.thinking ?? "off"}`);
     return;

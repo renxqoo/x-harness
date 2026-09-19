@@ -5,7 +5,7 @@
 // 属咨询锁的已知边界：pid 复用会误判存活（拒绝打开，安全侧失败）；释放是尽力而为
 //（进程崩溃残留死锁，下次打开由 pid 活性检测接管）。
 
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const LOCK_NAME = "lock";
@@ -41,7 +41,10 @@ async function readHolder(lockPath: string): Promise<number | undefined> {
   }
 }
 
-/** 打开即取锁：拒绝错误带 permanent 标记（与 writer 的永久拒绝同通道，plugin dead 闩接管） */
+/** 打开即取锁：拒绝错误带 permanent 标记（与 writer 的永久拒绝同通道，plugin dead 闩接管）。
+ *  接管（前主已死/垃圾锁）：先 rename(2) 原子摘除陈旧锁（并发接管恰一胜者，败者 ENOENT），
+ *  再 O_EXCL 重建——重建权威在 wx：即便摘除与重建间有他方先建，wx EEXIST 后按新持有者
+ *  活锁判定拒绝。unlink+重写方案有 check-then-act 竞态（败者 unlink 掉胜者的活锁），弃用 */
 export async function acquireSessionLock(dir: string, sessionLabel: string): Promise<SessionLock> {
   const lockPath = join(dir, LOCK_NAME);
   const content = `${process.pid}\n`;
@@ -49,11 +52,15 @@ export async function acquireSessionLock(dir: string, sessionLabel: string): Pro
     await writeFile(lockPath, content, { flag: "wx" });
   } catch (error) {
     if (!isErrno(error, "EEXIST")) throw error;
-    const holder = await readHolder(lockPath);
-    if (holder !== undefined && pidAlive(holder)) {
-      throw Object.assign(new Error(`session-locked:${sessionLabel}:pid-${holder}`), { permanent: true });
+    await claimStaleLock({ dir, lockPath, sessionLabel });
+    try {
+      await writeFile(lockPath, content, { flag: "wx" });
+    } catch (rebuild) {
+      if (!isErrno(rebuild, "EEXIST")) throw rebuild;
+      const holder = await readHolder(lockPath);
+      const detail = holder !== undefined && pidAlive(holder) ? `pid-${holder}` : "takeover-race";
+      throw Object.assign(new Error(`session-locked:${sessionLabel}:${detail}`), { permanent: true });
     }
-    await writeFile(lockPath, content, { flag: "w" }); // 前主已死/锁内容不可解析 → 接管
   }
   return {
     release: () => unlink(lockPath).then(
@@ -61,4 +68,23 @@ export async function acquireSessionLock(dir: string, sessionLabel: string): Pro
       () => {},
     ),
   };
+}
+
+/** 摘除陈旧锁：活锁拒绝；死/垃圾锁 rename 原子摘除（败者 ENOENT 直接返回，重建阶段收敛） */
+async function claimStaleLock(input: { readonly dir: string; readonly lockPath: string; readonly sessionLabel: string }): Promise<void> {
+  const holder = await readHolder(input.lockPath);
+  if (holder !== undefined && pidAlive(holder)) {
+    throw Object.assign(new Error(`session-locked:${input.sessionLabel}:pid-${holder}`), { permanent: true });
+  }
+  const claimed = join(input.dir, `lock.claim-${String(process.pid)}`);
+  try {
+    await rename(input.lockPath, claimed);
+  } catch (error) {
+    if (!isErrno(error, "ENOENT")) throw error; // 已被他方摘除：无陈旧项可清，直接走重建
+    return;
+  }
+  await unlink(claimed).then(
+    () => {},
+    () => {},
+  );
 }

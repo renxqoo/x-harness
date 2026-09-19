@@ -81,14 +81,27 @@ function withTimeout<T>(promise: Promise<T>): Promise<T> {
   });
 }
 
-async function runCli(argv: readonly string[], home: string, cwd: string): Promise<CliRun> {
-  const proc = Bun.spawn([process.execPath, CLI_MAIN, ...argv], {
-    cwd,
-    stdin: "ignore",
+interface CliRequest {
+  readonly argv: readonly string[];
+  readonly home: string;
+  readonly cwd: string;
+  /** 管道 stdin 内容（缺省 = ignore） */
+  readonly stdin?: string;
+}
+
+async function runCli(request: CliRequest): Promise<CliRun> {
+  const proc = Bun.spawn([process.execPath, CLI_MAIN, ...request.argv], {
+    cwd: request.cwd,
+    stdin: request.stdin === undefined ? "ignore" : "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...process.env, X_HARNESS_HOME: home },
+    env: { ...process.env, X_HARNESS_HOME: request.home },
   });
+  if (request.stdin !== undefined && proc.stdin !== undefined) {
+    proc.stdin.write(request.stdin);
+    await proc.stdin.flush();
+    await proc.stdin.end();
+  }
   const [stdout, stderr, exitCode] = await withTimeout(Promise.all([
     new Response(proc.stdout as ReadableStream).text(),
     new Response(proc.stderr as ReadableStream).text(),
@@ -196,13 +209,13 @@ function sessionIdOf(stdout: string): string {
 }
 
 async function journeyShortCircuits(home: string, cwd: string): Promise<void> {
-  const version = await runCli(["--version"], home, cwd);
+  const version = await runCli({ argv: ["--version"], home, cwd });
   must(version.exitCode === 0 && version.stdout.trim().length > 0, `--version 应 0 退出并出版本（got ${String(version.exitCode)}: ${version.stdout.slice(0, 50)}）`);
-  const help = await runCli(["--help"], home, cwd);
+  const help = await runCli({ argv: ["--help"], home, cwd });
   must(help.exitCode === 0 && help.stdout.includes("usage:"), "--help 应输出用法");
-  const badFlag = await runCli(["--nope"], home, cwd);
+  const badFlag = await runCli({ argv: ["--nope"], home, cwd });
   must(badFlag.exitCode === 2 && badFlag.stderr.includes("unknown option"), `未知 flag 应 exit 2（got ${String(badFlag.exitCode)}）`);
-  const noPrompt = await runCli(["-p"], home, cwd);
+  const noPrompt = await runCli({ argv: ["-p"], home, cwd });
   must(noPrompt.exitCode === 2 && noPrompt.stderr.includes("no prompt"), `-p 无提示应 exit 2（got ${String(noPrompt.exitCode)}）`);
 }
 
@@ -210,15 +223,18 @@ async function journeyPrintText(server: FakeServer, home: string, cwd: string): 
   server.respond("CLI-E2E-ANSWER");
   const notePath = join(cwd, "note.txt");
   await writeFile(notePath, "FILE-CONTENT-XYZ", "utf8");
-  const run = await runCli(["-p", "summarize the attached file", `@${notePath}`], home, cwd);
+  // 管道 stdin 拼在初始消息最前 + @file 附加 + 位置参数为空：stdin+@file 组合形态
+  const run = await runCli({ argv: ["-p", `@${notePath}`], home, cwd, stdin: "PIPED-STDIN-PROMPT\n" });
   must(run.exitCode === 0, `print text 应 exit 0（stderr: ${run.stderr.slice(0, 200)}）`);
   must(run.stdout.trim() === "CLI-E2E-ANSWER", `stdout 应纯最终文本（got: ${JSON.stringify(run.stdout.slice(0, 100))}）`);
-  must(JSON.stringify(server.requests[server.requests.length - 1]?.body ?? {}).includes("FILE-CONTENT-XYZ"), "@file 内容应进请求上下文");
+  const body = JSON.stringify(server.requests[server.requests.length - 1]?.body ?? {});
+  must(body.includes("FILE-CONTENT-XYZ"), "@file 内容应进请求上下文");
+  must(body.includes("PIPED-STDIN-PROMPT"), "管道 stdin 应拼进初始消息");
 }
 
 async function journeyPrintJson(server: FakeServer, home: string, cwd: string): Promise<void> {
   server.respond("JSON-MODE-TEXT");
-  const run = await runCli(["-p", "--mode", "json", "json please"], home, cwd);
+  const run = await runCli({ argv: ["-p", "--mode", "json", "json please"], home, cwd });
   must(run.exitCode === 0, `json 模式应 exit 0（stderr: ${run.stderr.slice(0, 200)}）`);
   const lines = run.stdout.trim().split("\n").map((line) => JSON.parse(line) as { type: string; exit?: number; kind?: string });
   must(lines[0]?.type === "session", "JSONL 首行应为 session 头");
@@ -228,14 +244,20 @@ async function journeyPrintJson(server: FakeServer, home: string, cwd: string): 
 
 async function journeyResume(server: FakeServer, home: string, cwd: string): Promise<void> {
   server.respond("FIRST-OK");
-  const first = await runCli(["-p", "--mode", "json", "REMEMBER-TOKEN-42"], home, cwd);
+  const first = await runCli({ argv: ["-p", "--mode", "json", "REMEMBER-TOKEN-42"], home, cwd });
   must(first.exitCode === 0, "resume 首轮应 exit 0");
   const id = sessionIdOf(first.stdout);
   server.respond("SECOND-OK");
-  const second = await runCli(["--session", id, "-p", "what did I say"], home, cwd);
+  const second = await runCli({ argv: ["--session", id, "-p", "what did I say"], home, cwd });
   must(second.exitCode === 0 && second.stdout.trim() === "SECOND-OK", `resume 二轮应成功（stderr: ${second.stderr.slice(0, 200)}）`);
   const lastBody = JSON.stringify(server.requests[server.requests.length - 1]?.body ?? {});
   must(lastBody.includes("REMEMBER-TOKEN-42"), "resume 后请求应携带首轮上下文（id 前缀恢复 + 日志续读）");
+
+  // --continue：取当前 cwd 最新主会话续聊（上下文延续）
+  server.respond("THIRD-OK");
+  const third = await runCli({ argv: ["--continue", "-p", "and now?"], home, cwd });
+  must(third.exitCode === 0 && third.stdout.trim() === "THIRD-OK", `--continue 应成功（stderr: ${third.stderr.slice(0, 200)}）`);
+  must(JSON.stringify(server.requests[server.requests.length - 1]?.body ?? {}).includes("REMEMBER-TOKEN-42"), "--continue 应取最新会话延续上下文");
 }
 
 async function journeySessionLock(home: string, cwd: string): Promise<void> {
@@ -246,7 +268,7 @@ async function journeySessionLock(home: string, cwd: string): Promise<void> {
   await writeFile(join(dir, "header.json"), `${JSON.stringify({ id, createdAt: Date.now(), cwd })}\n`, "utf8");
   await writeFile(join(dir, "events.jsonl"), "", "utf8");
   await writeFile(join(dir, "lock"), `${process.pid}\n`, "utf8"); // 本测试进程持有活锁
-  const run = await runCli(["--session", id, "-p", "hi"], home, cwd);
+  const run = await runCli({ argv: ["--session", id, "-p", "hi"], home, cwd });
   must(run.exitCode === 1, `活锁双开应 exit 1（got ${String(run.exitCode)}）`);
   must(run.stderr.includes("session-locked"), `stderr 应含 session-locked（got: ${run.stderr.slice(0, 200)}）`);
 }
@@ -264,6 +286,7 @@ async function journeyRepl(server: FakeServer, home: string, cwd: string): Promi
   const interrupted = await runReplPty({ home, cwd, lines: ["\u0003", "\u0003"], marker: "press Ctrl+C again" });
   if (interrupted.stdout.startsWith("(skipped")) return;
   must(interrupted.exitCode === 0, `REPL Ctrl+C 双击应 exit 0（got ${String(interrupted.exitCode)}）`);
+  must(interrupted.stdout.includes("press Ctrl+C again"), "首个 ^C 应提示双击退出");
 }
 
 export async function runCliJourney(): Promise<void> {

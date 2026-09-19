@@ -86,7 +86,9 @@ export function resolveModel(config: ProvidersConfig, flags: ModelFlags): Result
       },
       overrides: {
         ...dialOverride,
-        ...(normalizeThinking(flags.thinking) !== undefined ? { thinking: normalizeThinking(flags.thinking) } : {}),
+        // resume 层不做 off→undefined 归一：显式 --thinking off 必须胜过会话末次等级
+        //（AgentOptions.thinking 为显式值时 foldDial 恒胜 header）；off 语义 = 不发思考参数
+        ...(flags.thinking !== undefined ? { thinking: flags.thinking } : {}),
         ...(flags.apiKey !== undefined ? { apiKey: flags.apiKey } : {}),
       },
       apiKeyProvider: owner.value.provider,

@@ -91,6 +91,12 @@ export function createReplTerminal(io: ReplTerminalIO): ReplTerminal {
       if (pending.size === 0) return false;
       for (const resolve of pending) resolve(undefined);
       pending.clear();
+      // readline 内部仍挂着 question 回调（僵尸会吞掉用户的下一行）——喂一个换行让它
+      // 自然结清并走 resume/prompt 恢复路径；外层 promise 已收束，回调侧是 no-op
+      if (!closed) {
+        rl.resume();
+        rl.write("\n");
+      }
       return true;
     },
     showPrompt: () => {

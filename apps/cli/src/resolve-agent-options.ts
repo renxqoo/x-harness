@@ -27,13 +27,15 @@ export function agentOptionsForCreate(args: CliArgs, defaults: ModelChoice, regi
   };
 }
 
-/** resume 会话的 AgentOptions（仅显式 flag；未给处 undefined 回落会话末次 dial） */
+/** resume 会话的 AgentOptions（仅显式 flag；未给处 undefined 回落会话末次 dial/header——
+ *  工具面同理：无工具 flag 时不传 tools，避免把上一会话的受限名单静默放开） */
 export function agentOptionsForResume(args: CliArgs, overrides: Partial<ModelChoice>, registered: readonly string[]): AgentOptions {
+  const hasToolFlags = args.noTools || args.tools !== undefined || args.excludeTools !== undefined;
   return {
     ...(overrides.provider !== undefined ? { provider: overrides.provider } : {}),
     ...(overrides.model !== undefined ? { model: overrides.model } : {}),
     ...(overrides.thinking !== undefined ? { thinking: overrides.thinking } : {}),
     ...(args.systemPrompt !== undefined ? { systemPrompt: args.systemPrompt } : {}),
-    tools: resolveToolNames(args, registered),
+    ...(hasToolFlags ? { tools: resolveToolNames(args, registered) } : {}),
   };
 }

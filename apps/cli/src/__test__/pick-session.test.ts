@@ -46,8 +46,8 @@ describe("formatSessionList", () => {
     expect(lines[0]).toMatch(/^1\. s0  2026-09-19 01:02$/);
   });
 
-  it("子代理会话带类型标注（防御展示；主列表已过滤，此形态仅展示层）", () => {
-    const lines = formatSessionList([{ id: "sub", createdAt: 0, agentId: "a1", agentType: "worker" } as SessionHeader]);
-    expect(lines[0]).toContain("[worker]");
+  it("主会话列表形态（无子代理标注——列表恒经主会话过滤）", () => {
+    const lines = formatSessionList([{ id: "main", createdAt: Date.UTC(2026, 8, 19, 1, 2) } as SessionHeader]);
+    expect(lines[0]).toBe("1. main  2026-09-19 01:02");
   });
 });

@@ -6,6 +6,7 @@ import type { AgentHandle } from "@x-harness/agent-loop";
 import { agentAssistantStream, agentError } from "@x-harness/agent-loop";
 import type { AssistantStreamFrame } from "@x-harness/agent-loop";
 import type { Context } from "@x-harness/core";
+import { permissionDecided } from "@x-harness/permission";
 import type { SessionEvent, SessionEventType } from "@x-harness/session";
 import { sessionEvent } from "@x-harness/session";
 import type { TokenMeterService } from "@x-harness/token-meter";
@@ -85,6 +86,10 @@ function wireObservers(run: PrintRun): Observers {
   const offs = [
     input.ctx.on(agentAssistantStream, onStream),
     input.ctx.on(sessionEvent, onSessionEvent),
+    // 审批裁决审计事件 → json permission 行（docs/CLI.md §2.4）
+    input.ctx.on(permissionDecided, (audit) => {
+      if (json) out(jsonLine("permission", { tool: audit.tool, verdict: audit.verdict, reason: audit.reason }));
+    }),
     input.ctx.on(agentError, ({ message }) => {
       errorMessage = message;
       if (json) out(jsonLine("error", { message }));
