@@ -3,7 +3,7 @@
 // 公开导出，装配方经 createBashPlugin({ tasks }) 穿引同一实例。
 
 export { backgroundTasks } from "./tokens.ts";
-export { createBashPlugin } from "./plugin.ts";
+export { createBashPlugin, bashGuidance } from "./plugin.ts";
 export type { BashPluginInput, BashLimitsOptions, TaskLimitsOptions } from "./plugin.ts";
 export { defaultLimits } from "./bash.ts";
 export type { BashLimits } from "./bash.ts";

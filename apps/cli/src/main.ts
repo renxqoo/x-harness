@@ -9,7 +9,7 @@ import type { World } from "./build-world.ts";
 import { buildInitialMessage } from "./build-initial-message.ts";
 import { createTerminalBrokerPlugin } from "./broker-terminal.ts";
 import type { BrokerIO } from "./broker-terminal.ts";
-import { registerCliPromptSections } from "./cli-prompt-sections.ts";
+import { promptFactsOf, registerAppendSections } from "./cli-prompt-sections.ts";
 import { defaultSessionRoot, providersPath } from "./harness-home.ts";
 import { newSessionId } from "./new-session-id.ts";
 import { parseCliArgs, usageText } from "./parse-cli-args.ts";
@@ -39,10 +39,6 @@ export interface CliIO {
   readonly env: NodeJS.ProcessEnv;
   readonly cwd: string;
   readonly platform: string;
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 /** stdout/stderr EPIPE（下游关管道）静默停写——print 循环对断管自行降级收尾 */
@@ -170,6 +166,8 @@ async function openWorld(input: {
     cwd: io.cwd,
     sessionRoot: args.sessionDir ?? defaultSessionRoot(io.env),
     persist: !args.noSession,
+    // --system-prompt 整体替换时不装基础段（装配方裁决；静态串优先是包契约）
+    promptFacts: args.systemPrompt === undefined ? promptFactsOf(io) : undefined,
     config,
     resolution,
     broker: createTerminalBrokerPlugin(brokerIO(io, input.interactive, input.ask)),
@@ -185,7 +183,7 @@ async function openWorld(input: {
     return { failure: made.reason };
   }
   if (!args.systemPrompt) {
-    world.ctx.effect(registerCliPromptSections(world.prompt, { cwd: io.cwd, platform: io.platform, date: today() }, args.appendSystemPrompts));
+    world.ctx.effect(registerAppendSections(world.prompt, args.appendSystemPrompts));
   }
   const flushed = await world.store.flush(made.value.agent.session.id);
   if (!flushed.ok) {

@@ -120,3 +120,48 @@ describe("createToolPlugin（docs/TOOLBOX.md §0——装配期 fail-closed）",
     await ctx.dispose();
   });
 });
+
+describe("guidance 纯数据位（组合层桥接——本包不认识 prompt）", () => {
+  it("guidance 落 ToolDefinition：registry.get 可读；缺席为 undefined", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      toolsPlugin,
+      createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: "## Probe\n\nprobe rule" }),
+    ]);
+    expect(ctx.use(toolRegistry).get("probe")?.guidance).toBe("## Probe\n\nprobe rule");
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+
+  it("函数形 guidance 接收解析后 env（配置感知）；空串解析不落 def", async () => {
+    const ctx = createContext();
+    const seenKinds: string[] = [];
+    const unload = await loadPlugins(ctx, [
+      toolsPlugin,
+      createToolPlugin({
+        name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(),
+        guidance: (env) => { seenKinds.push(env.kind); return env.kind === "sandbox" ? "fence rule" : ""; },
+      }),
+    ]);
+    const reg = ctx.use(toolRegistry);
+    expect(seenKinds).toEqual(["local"]);
+    expect(reg.get("probe")?.guidance).toBeUndefined(); // 非 sandbox → 空串 → 不落 def
+    const r = await reg.dispatch({ callId: "p1", name: "probe", args: {}, signal: new AbortController().signal });
+    expect(r.content).toBe("probe-ok"); // 工具行为与 guidance 无耦合
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+
+  it("guidance 不进 schemas()（LLM 序列化面无此字段）", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      toolsPlugin,
+      createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: "secret-guidance" }),
+    ]);
+    const schema = ctx.use(toolRegistry).schemas().find((s) => s.name === "probe");
+    expect(schema).toBeDefined();
+    expect(JSON.stringify(schema)).not.toContain("secret-guidance");
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+});

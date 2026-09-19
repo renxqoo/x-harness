@@ -1,7 +1,10 @@
-// 世界装配（docs/CLI.md §2.5）：全量 18 插件 + N adapter，数组序即注册序。
+// 世界装配（docs/CLI.md §2.5）：全量 19 插件 + N adapter，数组序即注册序。
 // 硬约束：tool-* 的 env 是 apply 时同步 tryUse(execEnv)，围栏 execEnv 提供者 sandbox
-// 必须排在 tool-* 之前。多 provider 不用适配器插件工厂（插件名固定会重名被拒），
-// loadPlugins 后宿主直注册。--no-session 条件化略去 jsonl 持久化（无条件装配唯一例外）。
+// 必须排在 tool-* 之前；guidance 桥必须排在 tool-* 之后（registry 填充后才读——数组位
+// 即约束，inject 只保 tools/system-prompt 先于桥）。system-prompt 前置非硬约束——头部
+// 注册使 base/core 取最小尾序（无边段按注册序落尾，身份段恒先）。
+// 多 provider 不用适配器插件工厂（插件名固定会重名被拒），loadPlugins 后宿主直注册。
+// --no-session 条件化略去 jsonl 持久化、--system-prompt 条件化略去基础段（无条件装配仅此两例外）。
 
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context, Disposer, Plugin, Result } from "@x-harness/core";
@@ -20,8 +23,8 @@ import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session"
 import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
-import { systemPromptPlugin, systemPrompt } from "@x-harness/system-prompt";
-import type { SystemPromptService } from "@x-harness/system-prompt";
+import { baseCore, createBasePromptPlugin, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
+import type { BasePromptFacts, SystemPromptService } from "@x-harness/system-prompt";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { createBashPlugin } from "@x-harness/tool-bash";
 import { ObservedRegistry, PathGate } from "@x-harness/tool-core";
@@ -44,6 +47,8 @@ export interface WorldOptions {
   readonly sessionRoot: string;
   /** --no-session → false：略去 jsonl 持久化（无 sessionArchive） */
   readonly persist: boolean;
+  /** 环境事实：在场才装 basePromptPlugin（--system-prompt 整体替换时传 undefined） */
+  readonly promptFacts?: BasePromptFacts;
   readonly config: ProvidersConfig;
   readonly resolution: ModelResolution;
   /** 审批 broker 插件（REPL/print 各自 IO 形态） */
@@ -53,6 +58,29 @@ export interface WorldOptions {
   /** 测试注入：替换 providers.json 派生的 adapter 集（假剧本/离线） */
   readonly adapters?: readonly LlmAdapter[];
 }
+
+/** 组合层桥接（docs/CLI.md §2.5）：ToolDefinition.guidance（纯数据）→ system-prompt 段。
+ *  依赖倒置的桥——唯一允许同时认识 tools 与 system-prompt 的层（工具层不依赖表现层）；
+ *  段名 tool/<name>，锚 base/core（基础段缺席时 no-op 落尾）。必须排在 tool-* 之后
+ *  （registry 填充后才读）——数组位即此约束。 */
+export const toolGuidanceBridge: Plugin = {
+  name: "cli-tool-guidance",
+  inject: ["tools", "system-prompt"],
+  apply: (ctx: Context) => {
+    const reg = ctx.use(toolRegistry);
+    const prompt = ctx.use(systemPrompt);
+    const offs: Disposer[] = [];
+    for (const schema of reg.schemas()) {
+      const guidance = reg.get(schema.name)?.guidance;
+      if (guidance !== undefined && guidance !== "") {
+        offs.push(prompt.section({ name: `tool/${schema.name}`, after: baseCore, text: guidance }));
+      }
+    }
+    return () => {
+      for (const off of offs) off();
+    };
+  },
+};
 
 export interface World {
   readonly ctx: Context;
@@ -96,6 +124,8 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
   const gate = new PathGate(options.cwd);
   const observed = new ObservedRegistry();
   const plugins: Plugin[] = [
+    systemPromptPlugin, // prompt 注册表前置（guidance 桥 tryUse 时序——硬约束见头注）
+    ...(options.promptFacts !== undefined ? [createBasePromptPlugin(options.promptFacts)] : []),
     sessionPlugin,
     ...(options.persist ? [createJsonlSessionPersistence({ root: options.sessionRoot, onIoError: options.onIoError })] : []),
     toolsPlugin,
@@ -107,13 +137,13 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     createBashPlugin({ gate }),
     createGrepPlugin({ gate }),
     createTaskToolsPlugin(),
+    toolGuidanceBridge, // tool-* 之后：registry 已填充（数组位即时序约束）
     tokenMeterPlugin,
     createLlmRetryPlugin({
       providers: Object.fromEntries(options.config.providers.map((profile) => [profile.name, RETRY_POLICY])),
       default: RETRY_POLICY,
     }),
     llmPlugin,
-    systemPromptPlugin,
     agentLoopPlugin,
     sessionCheckpointPlugin,
     createAgentDelegationPlugin(),

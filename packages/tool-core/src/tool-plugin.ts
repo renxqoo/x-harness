@@ -26,10 +26,13 @@ export interface ToolPluginInput {
   readonly observed?: ObservedRegistry;
   /** 装配期附加生命周期（env 解析后调用；返回的 Disposer 随插件拆卸执行） */
   readonly attach?: (ctx: Context) => Disposer | void;
+  /** 使用守则（纯数据）：函数形接收解析后的 env——配置感知（bash 按 sandbox 与否分支）。
+   *  解析为空串不落 def。组合层桥接进 system-prompt——本包不认识 prompt（层次：工具层不依赖表现层） */
+  readonly guidance?: string | ((env: ExecEnv) => string);
 }
 
 export function createToolPlugin(input: ToolPluginInput): Plugin {
-  const { make, name, envOption, gate, observed, attach } = input;
+  const { make, name, envOption, gate, observed, attach, guidance } = input;
   return {
     name,
     inject: ["tools"],
@@ -43,7 +46,12 @@ export function createToolPlugin(input: ToolPluginInput): Plugin {
       const grants = ctx.tryUse(permissionGrants); // 会话授权根（permission 缺席=无扩展）
       const extraRootsOf: ExtraRootsOf = (session) => grants?.extraRootsOf(session as never) ?? [];
       const rootOverrideOf: RootOverrideOf = (session) => grants?.rootOverrideOf(session as never);
-      const offRegister = ctx.use(toolRegistry).register(make(env, extraRootsOf, rootOverrideOf));
+      const made = make(env, extraRootsOf, rootOverrideOf);
+      let text: string | undefined;
+      if (typeof guidance === "string") text = guidance;
+      else if (guidance !== undefined) text = guidance(env);
+      const def = text === undefined || text === "" ? made : { ...made, guidance: text };
+      const offRegister = ctx.use(toolRegistry).register(def);
       const offEvict = observed === undefined ? undefined : ctx.on(sessionDisposed, ({ session }) => observed.evict(session));
       const offAttach = attach?.(ctx);
       return () => {

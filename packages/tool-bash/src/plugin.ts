@@ -19,6 +19,17 @@ export type BashLimitsOptions = Partial<Pick<BashLimits, "defaultTimeoutMs" | "m
 /** 后台任务限额（部分字段——缺省补齐于前台 limits 之上） */
 export type TaskLimitsOptions = { readonly maxConcurrentTasks?: number; readonly taskTimeoutMs?: number; readonly fullCapBytes?: number };
 
+/** bash 使用守则（docs/TOOLBOX.md §4）：sandbox 围栏下的行事约束——denied domain 是 fence
+ *  不是 obstacle。裸 local（无围栏）返回空串：无守则可说（空串不落 def） */
+export function bashGuidance(env: ExecEnv): string {
+  if (env.kind !== "sandbox") return "";
+  return `## Shell
+
+Commands run inside an OS-level sandbox with a network domain allowlist.
+A denied domain is a fence, not an obstacle to route around — ask the
+user instead of trying to evade it.`;
+}
+
 export interface BashPluginInput {
   /** 路径门（缺省 = 当前工作目录围栏——沿 toolbox 时代 createToolbox 的 root 缺省口径，
    *  无参装配直接可用且不裸奔） */
@@ -45,6 +56,8 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
     envOption: env,
     gate,
     make: (resolved, _extraRootsOf, rootOverrideOf) => createBashTool({ gate, limits, env: resolved, tasks, rootOverrideOf }),
+    // 使用守则（纯数据，组合层桥接）：仅 sandbox 围栏下有话可说——裸 local 无围栏语义，零守则
+    guidance: bashGuidance,
     // 会话终结：该会话后台任务两段杀并清桶（登记生命周期=会话生命周期）；装配拆卸：全部直接 KILL；
     // 生效登记簿 provide 为服务——task-tools 停靠（bash 工具与 task_output/task_stop 同一实例）
     attach: (ctx) => {

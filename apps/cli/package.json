@@ -7,6 +7,7 @@
     "@x-harness/agent-delegation": "workspace:*",
     "@x-harness/agent-loop": "workspace:*",
     "@x-harness/core": "workspace:*",
+    "@x-harness/exec-env": "workspace:*",
     "@x-harness/llm": "workspace:*",
     "@x-harness/llm-retry": "workspace:*",
     "@x-harness/permission": "workspace:*",
@@ -24,5 +25,8 @@
     "@x-harness/tool-read": "workspace:*",
     "@x-harness/tool-write": "workspace:*",
     "@x-harness/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.0"
   }
 }

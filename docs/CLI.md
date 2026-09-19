@@ -200,9 +200,14 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   probe 失败（无 wrapper / linux 无 socat）= 装配期 throw = 进程 exit 1 + stderr 说明
   （fail-closed，预期行为；平台矩阵见 §2.1）。
 - **gate 一致性**：PathGate(cwd) 与围栏 execEnv root=cwd 满足 tool-core 根一致性校验。
-- **系统提示词**：CLI 注册 section `cli-core`（身份/cwd/平台/日期/工具守则，variable 注入）；
-  `--system-prompt` 整体替换（走 AgentOptions.systemPrompt 静态串，优先于 assemble）；
-  `--append-system-prompt` 追加 section `cli-user-<n>`（after: cli-core）。
+- **系统提示词**：基础段归 `@x-harness/system-prompt` 的 `basePromptPlugin`（section
+  `base/core`：身份/守则/环境块；facts=cwd/isGit/platform/shell/date 由宿主探测传入，
+  入口归一压换行——注入面收口，date 会话内定格防午夜缓存断裂）；工具守则段由组合层
+  桥接 `cli-tool-guidance` 从 `ToolDefinition.guidance`（纯数据）提升为 section
+  `tool/<name>`（after: base/core；bash 围栏守则在 sandbox env 下才有文本）；装配序
+  硬约束 system-prompt 先于 tool-*（头注）。`--system-prompt` 整体替换时不装基础段
+  （走 AgentOptions.systemPrompt 静态串，优先于 assemble 是包契约）；
+  `--append-system-prompt` 追加 section `cli-user-<n>`（无边落尾=全部内置段之后，链式保序）。
 - **会话 id 生成（宿主职责）**：`SessionStore.create` 缺省铸号是进程内计数，持久目录下跨进程
   必撞 `session-id-reused` 永久拒写——CLI 一律显式生成 `<UTC时间戳>-<6位随机>` 形态 id
   （满足 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`）；`/new` 亦然。

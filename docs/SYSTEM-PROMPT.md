@@ -42,6 +42,23 @@ tie-break 保证全序确定）：
 插值：`{{name}}` 整段替换；未注册变量保持原样；**变量函数抛错 → 该变量保持 `{{name}}`
 原样**（降级不崩，垃圾输入原则）；单层不递归。
 
+### 1.4 basePromptPlugin（基础段）与 guidance 数据位（工具条件注入）
+
+- `createBasePromptPlugin(facts)`：单一 section `base/core`（身份/守则/环境块）+ facts
+  变量（cwd/isGit/platform/shell/date）；`inject: ["system-prompt"]` 硬依赖 topo 保序。
+  **facts 由宿主探测传入，包不做 IO**；入口 `normalizeBaseFacts` 归一：换行压空格
+  （环境值不得伪造新段落——注入面收口）、垃圾降级 `"unknown"`、date 只认 yyyy-mm-dd
+  （时钟归宿主，会话内定格防午夜缓存前缀断裂）。
+- `baseCore = "base/core"`：**唯一跨包锚点常量**——工具守则段与追加段的缺省锚；
+  基础段缺席时锚点 no-op 落尾（优雅降级）。
+- **工具守则走依赖倒置**：`ToolDefinition.guidance?: string`（tools 包纯数据位，
+  env 解析后定型——配置感知；不进 LLM 序列化：schemas() 显式子集映射）；
+  **组合层桥接插件**（apps/cli `cli-tool-guidance`）把 guidance 提升为 section
+  `tool/<name>`（after baseCore）。工具层不依赖本包——桥是唯一同时认识两侧的层。
+- 拆段（基础段再细分）与 assemble 工具集过滤**明确不做**（过度设计裁决）：重启条件
+  分别为「出现需要段间精确落位的第二消费者」「delegation 收窄子代理被全量 prompt
+  实测干扰」。
+
 ## 2. 问题域
 
 **处理**：section 注册/覆盖/注销、锚点定位代数（注册期环检测）、变量插值、指纹、

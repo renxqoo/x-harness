@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin } from "@x-harness/session";
-import { toolsPlugin } from "@x-harness/tools";
+import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { createLocalEnvPlugin } from "@x-harness/exec-env";
-import { BackgroundTasks, createBashPlugin, defaultLimits, defaultTaskLimits, backgroundTasks } from "../index.ts";
+import { BackgroundTasks, bashGuidance, createBashPlugin, defaultLimits, defaultTaskLimits, backgroundTasks } from "../index.ts";
 
 let roots: string[] = [];
 
@@ -36,6 +36,24 @@ describe("backgroundTasks service", () => {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin({ tasks: external })]);
     expect(ctx.tryUse(backgroundTasks)).toBe(external); // 引用同一——task-tools 停靠即共享
+    await ctx.dispose();
+    void unload;
+  });
+});
+
+describe("bash guidance（纯数据——组合层桥接，本包不认识 prompt）", () => {
+  it("sandbox env → 围栏守则文本；非 sandbox → 空串", () => {
+    const fenced = bashGuidance({ kind: "sandbox" } as never);
+    expect(fenced).toContain("sandbox");
+    expect(fenced).toContain("fence");
+    expect(bashGuidance({ kind: "local" } as never)).toBe("");
+  });
+
+  it("local 装配：guidance 不落 def（registry.get 读不到）", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin()]);
+    const reg = ctx.tryUse(toolRegistry);
+    expect(reg?.get("bash")?.guidance).toBeUndefined();
     await ctx.dispose();
     void unload;
   });
