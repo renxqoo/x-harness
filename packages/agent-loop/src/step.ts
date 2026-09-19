@@ -39,7 +39,6 @@ export interface ResolvedOptions {
   readonly systemPrompt?: string;
   readonly maxParallelToolCalls: number;
   readonly maxToolResultChars: number;
-  readonly tools?: readonly string[];
 }
 
 export type TurnOutcome =

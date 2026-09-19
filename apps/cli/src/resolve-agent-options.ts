@@ -16,26 +16,24 @@ export function resolveToolNames(args: CliArgs, registered: readonly string[]): 
   return args.tools.filter((name) => !exclude.includes(name));
 }
 
-/** 新建会话的 AgentOptions（dial = defaults 层全量） */
-export function agentOptionsForCreate(args: CliArgs, defaults: ModelChoice, registered: readonly string[]): AgentOptions {
+/** 新建会话的 AgentOptions（dial = defaults 层全量；工具面 restriction 由 main 装配注册） */
+export function agentOptionsForCreate(args: CliArgs, defaults: ModelChoice): AgentOptions {
   return {
     provider: defaults.provider,
     model: defaults.model,
     ...(defaults.thinking !== undefined ? { thinking: defaults.thinking } : {}),
     ...(args.systemPrompt !== undefined ? { systemPrompt: args.systemPrompt } : {}),
-    tools: resolveToolNames(args, registered),
   };
 }
 
-/** resume 会话的 AgentOptions（仅显式 flag；未给处 undefined 回落会话末次 dial/header——
- *  工具面同理：无工具 flag 时不传 tools，避免把上一会话的受限名单静默放开） */
-export function agentOptionsForResume(args: CliArgs, overrides: Partial<ModelChoice>, registered: readonly string[]): AgentOptions {
-  const hasToolFlags = args.noTools || args.tools !== undefined || args.excludeTools !== undefined;
+/** resume 会话的 AgentOptions（仅显式 flag；未给处 undefined 回落会话末次 dial/header）。
+ *  工具面（勘误——W2B）：无 flag = 显式全集（放开），与历史行为等价；原「不静默放开」
+ *  注释词不达意——restriction 语义见 main.ts 装配处（带 flag 才注册） */
+export function agentOptionsForResume(args: CliArgs, overrides: Partial<ModelChoice>): AgentOptions {
   return {
     ...(overrides.provider !== undefined ? { provider: overrides.provider } : {}),
     ...(overrides.model !== undefined ? { model: overrides.model } : {}),
     ...(overrides.thinking !== undefined ? { thinking: overrides.thinking } : {}),
     ...(args.systemPrompt !== undefined ? { systemPrompt: args.systemPrompt } : {}),
-    ...(hasToolFlags ? { tools: resolveToolNames(args, registered) } : {}),
   };
 }

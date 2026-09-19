@@ -176,8 +176,8 @@ async function openWorld(input: {
   const world = built.value;
   const registered = world.registry.schemas().map((schema) => schema.name);
   const made = input.resumeId === undefined
-    ? await world.loop.create({ session: { id: newSessionId() }, agent: agentOptionsForCreate(args, resolution.defaults, registered) })
-    : await world.loop.resume({ id: input.resumeId, agent: agentOptionsForResume(args, resolution.overrides, registered) });
+    ? await world.loop.create({ session: { id: newSessionId() }, agent: agentOptionsForCreate(args, resolution.defaults) })
+    : await world.loop.resume({ id: input.resumeId, agent: agentOptionsForResume(args, resolution.overrides) });
   if (!made.ok) {
     await world.ctx.dispose().catch(() => {});
     return { failure: made.reason };

@@ -18,7 +18,6 @@ export interface AgentOptions {
   /** tool/result 落账前截断（默认 100_000，尾标 …[truncated]） */
   readonly maxToolResultChars?: number;
   /** 工具白名单（名字集；缺省=全部注册工具）——schemas 投影与 dispatch 双执法 */
-  readonly tools?: readonly string[];
 }
 
 export type AgentStatus = "idle" | "running";

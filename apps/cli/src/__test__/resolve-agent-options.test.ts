@@ -1,5 +1,6 @@
-// AgentOptions 合成（docs/CLI.md §2.1/§2.6 表驱动）：工具白/黑名单矩阵 + create/resume
-// 两层 dial + 系统提示词静态串形态。
+// AgentOptions 合成（docs/CLI.md §2.1/§2.6 表驱动）：create/resume 两层 dial + 系统提示词
+// 静态串形态。工具白/黑名单矩阵 = resolveToolNames 纯函数（restriction 注册的输入源，
+// W2B 后 options 不再携带 tools——通道删除，语义见 main.ts 装配处）。
 
 import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../parse-cli-args.ts";
@@ -13,7 +14,7 @@ function args(argv: string[]) {
   return parsed.value;
 }
 
-describe("resolveToolNames（表驱动）", () => {
+describe("resolveToolNames（表驱动——restriction 输入源）", () => {
   const cases: readonly { readonly name: string; readonly argv: string[]; readonly expected: readonly string[] }[] = [
     { name: "缺省 = 全部注册工具", argv: [], expected: REGISTERED },
     { name: "--no-tools = 全禁", argv: ["--no-tools"], expected: [] },
@@ -30,38 +31,31 @@ describe("resolveToolNames（表驱动）", () => {
 });
 
 describe("agentOptionsForCreate", () => {
-  it("dial = defaults 全量（provider/model/thinking）+ 工具投影", () => {
-    const options = agentOptionsForCreate(args([]), { provider: "glm", model: "glm-4.7", thinking: "low" }, REGISTERED);
-    expect(options).toEqual({ provider: "glm", model: "glm-4.7", thinking: "low", tools: REGISTERED });
+  it("dial = defaults 全量（provider/model/thinking）；无 tools 字段（通道已删——restriction 归装配）", () => {
+    const options = agentOptionsForCreate(args([]), { provider: "glm", model: "glm-4.7", thinking: "low" });
+    expect(options).toEqual({ provider: "glm", model: "glm-4.7", thinking: "low" });
   });
 
   it("thinking 缺席不发；--system-prompt 走静态串", () => {
-    const options = agentOptionsForCreate(args(["--system-prompt", "CUSTOM"]), { provider: "glm", model: "m" }, REGISTERED);
+    const options = agentOptionsForCreate(args(["--system-prompt", "CUSTOM"]), { provider: "glm", model: "m" });
     expect(options.thinking).toBeUndefined();
     expect(options.systemPrompt).toBe("CUSTOM");
   });
 });
 
 describe("agentOptionsForResume", () => {
-  it("仅显式 flag 进 options；未给处 undefined（回落会话末次 dial/header）", () => {
-    const options = agentOptionsForResume(args([]), {}, REGISTERED);
-    expect(options.provider).toBeUndefined();
-    expect(options.model).toBeUndefined();
-    expect(options.tools).toBeUndefined(); // 无工具 flag 不传——避免放开上一会话受限名单
+  it("仅显式 flag 进 options；未给处 undefined（回落会话末次 dial/header）；无 tools 字段", () => {
+    const options = agentOptionsForResume(args([]), {});
+    expect(options).toEqual({});
   });
 
   it("overrides 成对下传（--model 唯一命中带 provider）", () => {
-    const options = agentOptionsForResume(args(["--thinking", "high"]), { provider: "ovt", model: "qwen3", thinking: "high" }, REGISTERED);
+    const options = agentOptionsForResume(args(["--thinking", "high"]), { provider: "ovt", model: "qwen3", thinking: "high" });
     expect(options).toEqual({ provider: "ovt", model: "qwen3", thinking: "high" });
   });
 
   it("显式 --thinking off 保留（foldDial 显式恒胜会话末次等级）", () => {
-    const options = agentOptionsForResume(args(["--thinking", "off"]), { thinking: "off" }, REGISTERED);
+    const options = agentOptionsForResume(args(["--thinking", "off"]), { thinking: "off" });
     expect(options.thinking).toBe("off");
-  });
-
-  it("工具 flag 在场时 resume 同样收窄", () => {
-    const options = agentOptionsForResume(args(["--tools", "read"]), {}, REGISTERED);
-    expect(options.tools).toEqual(["read"]);
   });
 });
