@@ -1,6 +1,6 @@
 # W2B 迁移文档：删 AgentOptions.tools 通道 + CLI/REPL/delegation 迁移
 
-> 状态：定稿（2026-09-20 对抗审查处置后；依赖 W2A）
+> 状态：**已核销**（实施完毕 + 收口对抗审查处置完毕；定稿/审查/实施记录见各节）
 > 迁移单元：白名单唯一真相迁至 registry 会话层；REPL 切换路径单点重注册（审查 F-2 处置）
 > 旧实现：`AgentOptions.tools`/`ResolvedOptions.tools`（types.ts:21 / step.ts:42）；CLI 合成（resolve-agent-options.ts）；REPL spread 继承（main.ts:305 baseOptions → run-repl.ts:138-172 makeNext）
 > 关联：ELEVATION-DESIGN §2.3；MIGRATION-W2A
@@ -69,3 +69,8 @@ IMPLEMENTATION §1 F3（run-repl spread 路径 typecheck 不报错）；DESIGN �
 - **门禁数字**：typecheck ✓（grep options.tools 零命中——通道死透）lint ✓ test **144 文件/1716 用例**（1717 − 1：工具 flag resume 用例随通道删除按矩阵改写吸收）e2e 全旅程 ✓ 内核门禁 ✓。
 - **新增裁决补录**：无其他。
 - **显式挂账**：REPL `/new`、`/model` × `--tools` 组合的专测（机制已实现，**当前无任何专测覆盖**——run-repl 为交互面、无测试装置，注册点亦未单测；前置=REPL 交互测试装置，触发=CLI 测试面扩展波）。风险敞口如实记录：该路径回归只能靠 e2e cli-journey 的宽网。
+
+## 9. 终审处置补录（2026-09-20）
+
+- **B1（中，已修）**：makeNext 无条件 restrict 把「resume 无 flag 的放开态」误变为全量快照受限态——修为分支语义：create（/new 与兜底）恒注册全量快照；resume（/model、/resume）带 flag 才注册、无 flag 显式放开（与迁移前 spread undefined 等价）。显式裁决变更：resume-origin 的 `/new`（新会话= create 语义）从迁移前的「继承 undefined 放开」变为「创建时全量快照」——与 W2B §1.1 血缘裁决一致（新会话名单恒可读），运行时新注册工具对新会话不自动可见。
+- **B2（低，更正）**：dc8db07 提交信息「注册点单测覆盖」为虚报（§8 自认未单测）——以文档为准，本行即更正记录。REPL×flag 端到端矩阵挂账不变。

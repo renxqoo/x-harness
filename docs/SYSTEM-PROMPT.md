@@ -24,7 +24,8 @@ section(spec: {
   text: string;                 // 静态文本（动态值走变量函数）
 }): Disposer;
 variable(name: string, value: string | (() => string)): Disposer;   // {{name}} 单层插值；惰性
-assemble(): { readonly text: string; readonly fingerprint: string }; // join("\n\n") 后插值；指纹=sha256 前 16 hex
+assemble(options?: { sessionId?: string }): { text; fingerprint }; // 合并投影（W2C）：根层∪会话层；缺省=纯根层向后兼容
+scoped(sessionId).section(spec): Disposer;  // 会话层（锚定子集：只锚根层段名；同名顶替根段位）
 ```
 
 定位代数（常量：δ=0.5、TAIL_BASE=1_000_000；before/after **共用**同一 per-anchor 后代计数器；

@@ -1,6 +1,6 @@
 # W1 迁移文档：system-prompt 投稿式（内核公共贡献服务）
 
-> 状态：定稿（2026-09-20 对抗审查处置后——V9/F-5 时序裁决 D6、F-10 交互记录）
+> 状态：**已核销**（实施完毕 + 收口对抗审查处置完毕；定稿/审查/实施记录见各节）
 > 迁移单元：guidance 通路从「数据位+组合层桥」改为「内核投稿直达」；wellKnown 词汇表；SectionSpec.text 函数形
 > 旧实现：`ToolDefinition.guidance`（tools/src/types.ts:41）+ apps/cli `toolGuidanceBridge`（build-world.ts:66-83，inject topo）+ tool-core guidance 输入位（tool-plugin.ts）
 > 关联：ELEVATION-DESIGN §2.1/§1 D6；IMPLEMENTATION §2.2

@@ -70,7 +70,7 @@ turn()（逃逸 throw——中间件违约/append 失败——在 turn 内 catch
     拨号（request.ts）：逐字段折叠（options 显式值恒胜；否则末次 request/header 同名字段；中间件改写落 header 后成为后续折叠基底=有意粘性）→
       waterfall agentRequest（输入携当前折叠拨号；输出过同形四字段形状门——违约垃圾按 bad-dial error 收轮）→
       model 缺失 → turnEnds={error, message:"no model configured", code:"no-model"}；均先闭 step/end 再跳出（括号形状一致）；
-      tools 每步从 toolRegistry.schemas() 现取（LlmRequest 全量；request/header 落 ToolRef 投影=剥 inputSchema）；
+      tools 每步从 toolRegistry.schemas({ sessionId })（W2A 分层投影） 现取（LlmRequest 全量；request/header 落 ToolRef 投影=剥 inputSchema）；
       append request/header（与末次规范化深比较不同才落，比较含 tools）+ request/context（provider 与 model 齐备且变化才落）
     流结算（stream.ts）：请求体 = session.deriveMessages()（纯折叠不变量）→ llmRuntime.stream：
       finish stop → append assistant/message{content,usage?,stopReason:"stop"}（surface append）

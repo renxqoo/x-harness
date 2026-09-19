@@ -1,6 +1,6 @@
 # W2A 迁移文档：tools restriction + 读回面 + 执行面门禁保留
 
-> 状态：定稿（2026-09-20 对抗审查处置后）
+> 状态：**已核销**（实施完毕 + 收口对抗审查处置完毕；定稿/审查/实施记录见各节）
 > 迁移单元：ToolRegistry 会话层 restriction、`restrictionOf` 读回、执行面 allowedTools 改喂投影名集（**门禁不删**——审查 V1/F-1/H-1 处置）
 > 旧实现：`AgentOptions.tools` 双消费（step.ts:204 投影 + step.ts:335→tool-calls.ts:42-48 执行拦截配对落账）；delegation X15 沿树收窄（spawn.ts:142 narrowTools / plugin.ts:138 parentToolsOf / revive.ts:82）
 > 关联：ELEVATION-DESIGN §2.2/§3；先行：W0/W1
@@ -41,7 +41,8 @@ IMPLEMENTATION §1 F3（消费方全集含 step.ts:335/plugin.ts:138/run-repl sp
 
 | 旧测试 | 去处 | 动作 |
 |---|---|---|
-| delegation.test.ts「白名单双执法（X15）」 | 原位 | **移植零改写**（本波等价锚——改一字即回退方案） |
+| delegation.test.ts「白名单双执法（X15）」执行面用例 | 原位 | **移植零改写**（本波等价锚——改一字即回退方案） |
+| 同 describe「沿树只收窄」内部态断言 | 原位 | 改写：options.tools 直读 → restrictionOf（唯一真相迁移——终审 A2 补记本行） |
 | narrowTools 单元用例 | 原位 | 移植（纯函数不动） |
 | （新增）restrict/restrictionOf/deny-all 往返、disposer 注销、泄漏（sessionDisposed 后投影复原） | tools | 新增 |
 | （新增）执行面：白名单外调用经新数据源仍配对落账 | agent-loop | 新增 |
@@ -64,3 +65,8 @@ IMPLEMENTATION §1 F3（消费方全集含 step.ts:335/plugin.ts:138/run-repl sp
 - **等价锚核对**：delegation.test.ts「白名单双执法（X15）」执行面用例**零改写通过**；「沿树只收窄」内部态断言按迁移矩阵改读 restrictionOf（唯一真相迁移）；resolve-agent-options.test.ts 零改写通过。
 - **新增裁决补录**：无其他。
 - **显式挂账**：无。
+
+## 9. 终审处置补录（2026-09-20）
+
+- **A1（低，已裁决）**：白名单含未注册名时拦截形态漂移——旧经 dispatch 落 `unknown-tool:<name>`，新经 denyNotAllowed 落 `tool-not-allowed:<name>`（allowedTools=注册集∩restriction，未注册名不在集内）。均为 isError 配对落账仅 content 串异；DESIGN §2.2 认可新形态（投影名集即权威面）。revive 的 named.tools 不经注册校验路径同此。
+- **A2（低，已补记）**：§5 矩阵补「沿树只收窄」改写行（见上）——「零改写」限定执行面用例。

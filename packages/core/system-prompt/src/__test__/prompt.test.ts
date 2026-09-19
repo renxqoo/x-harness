@@ -281,3 +281,20 @@ function layerNames(svc: SystemPromptService, sessionId?: string): string[] {
   const text = svc.assemble(sessionId === undefined ? undefined : { sessionId }).text;
   return text === "" ? [] : text.split("\n\n");
 }
+
+describe("跨层环兜底（终审 C1）", () => {
+  it("根段锚缺席名 + 会话层补名成环 → 注册期 throw", () => {
+    const svc = reg();
+    svc.section({ name: "C", after: "S1", text: "C" }); // S1 缺席 → no-op 建段（合法）
+    expect(() => svc.scoped("s1").section({ name: "S1", after: "C", text: "S" })).toThrow(/section cycle: S1 -> C/);
+  });
+
+  it("会话段锚事后变本层段名 → 不变（良定义：分桶只认根层名，落尾稳定）", () => {
+    const svc = reg();
+    svc.section({ name: "core", text: "C" });
+    const face = svc.scoped("s1");
+    face.section({ name: "Q", after: "P", text: "Q" }); // P 缺席 → 落尾
+    face.section({ name: "P", text: "P" }); // P 出现（会话段）
+    expect(layerNames(svc, "s1")).toEqual(["C", "Q", "P"]); // Q 锚不指向根层名 → 落尾序稳定
+  });
+});

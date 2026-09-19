@@ -5,7 +5,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { Session } from "@x-harness/session";
-import { assertVisibleLogged } from "../step.ts";
+import { assertVisibleLogged, observePrompt } from "../step.ts";
 
 const ENV_KEY = "X_HARNESS_ASSERT_VISIBLE";
 const had = process.env[ENV_KEY];
@@ -45,5 +45,34 @@ describe("assertVisibleLogged（W3 不变量）", () => {
     const r = session.append("system/message", { turn: 0, step: 0, text: "STALE" } as never, { surfaceOp: "append" } as never);
     expect(r.ok).toBe(true);
     expect(() => assertVisibleLogged(session, "FRESH")).not.toThrow();
+  });
+});
+
+describe("observePrompt（W3 指纹观测线）", () => {
+  it("开态：stderr 输出 fingerprint+changed 行（sha256 前 16 hex）", () => {
+    process.env[ENV_KEY] = "1";
+    const chunks: string[] = [];
+    const original = process.stderr.write;
+    process.stderr.write = ((s: string) => { chunks.push(s); return true; }) as typeof process.stderr.write;
+    try {
+      observePrompt({ turn: 1, step: 2, text: "hello", changed: true });
+    } finally {
+      process.stderr.write = original;
+    }
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toMatch(/^\[prompt\] turn=1 step=2 fingerprint=[0-9a-f]{16} changed=true\n$/);
+  });
+
+  it("关态：零输出（生产形态零开销短路）", () => {
+    delete process.env[ENV_KEY];
+    const chunks: string[] = [];
+    const original = process.stderr.write;
+    process.stderr.write = ((s: string) => { chunks.push(s); return true; }) as typeof process.stderr.write;
+    try {
+      observePrompt({ turn: 1, step: 2, text: "hello", changed: false });
+    } finally {
+      process.stderr.write = original;
+    }
+    expect(chunks).toHaveLength(0);
   });
 });

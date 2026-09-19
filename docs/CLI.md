@@ -229,7 +229,7 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
 - **resume 的模型语义**：`AgentOptions` 显式值在 agent-loop 折叠时**恒胜**会话末次记录——
   因此 resume 路径只传**用户显式 flag**（--provider/--model/--thinking/--api-key 中实际给出
   的，含显式 `--thinking off`），未给的留 undefined，自然回落会话末次 dial；工具面同理：
-  无工具 flag 时 resume 不传 `tools`（不放开上一会话的受限名单）。仅**新建**会话才用
+  无工具 flag 时 resume 不注册 restriction（= 显式全集放开——W2B 勘误：与历史行为等价，原「不放开」表述词不达意）。仅**新建**会话才用
   providers.json default 解析全量。resolve-model 产出因此是两层：`{defaults（新建用）,
   overrides（仅显式 flag，resume 亦用）}`。`--api-key` 绑定 default 解析出的档案
   （apiKeyProvider）；resume 无显式 --provider/--model 时若请求实际发往会话末次 provider，

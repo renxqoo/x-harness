@@ -1,6 +1,6 @@
 # W3 迁移文档：运行时不变量 + 指纹观测 + 收尾核销
 
-> 状态：定稿（2026-09-20 对抗审查处置后——V10/F-12 三口径补齐）
+> 状态：**已核销**（实施完毕 + 收口对抗审查处置完毕；定稿/审查/实施记录见各节）
 > 迁移单元：「模型可见必落盘」断言（debug 可开）+ 指纹观测面 + 全仓收口
 > 旧实现：落盘链路已存在（F1：anchorSystem append/replace/去重 + deriveMessages 重放 + lineage 播种 + compaction 感知）；断言与观测缺失
 > 关联：ELEVATION-DESIGN §1 D1/§5；依赖 W2A（schemas 数据源）/W2C（assemble 参会）
@@ -56,3 +56,9 @@ IMPLEMENTATION §1 F1/F7；DESIGN §7 台账（V10/F-12 处置）。
 - **门禁数字**：typecheck ✓ lint ✓（observePrompt 收 spec 对象）test **145 文件/1726 用例**（1723 + W3 断言 3）e2e 全旅程 ✓ 内核门禁 ✓。
 - **新增裁决补录**：无其他。
 - **显式挂账**：REPL×flag 端到端矩阵（W2B 遗留，前置=REPL 交互测试装置）。
+
+## 9. 终审处置补录（2026-09-20）
+
+- **D1（中，部分补齐）**：observePrompt 两用例补齐（开态 stderr 行形态/关态零输出）；「静态串口径」「no-op 漂移路径」的 anchorSystem 级集成测试挂账（前置=TurnScope 测试装置，与 REPL 挂账同类）——assertVisibleLogged 通用形态（一致/失配/关态）已有直调用例，口径①为平凡成立、②的缓存背书在 W2C 专测。
+- **D2（低，已记录）**：口径③时窗排除清单——断言同步紧邻提交 ✓；提交至 runAttempt 取 deriveMessages 之间经 agentRequest waterfall（session-checkpoint/compaction/llm-retry 在册消费面），现有插件均不改写 system 面（autocompact 挂 agentPreStep 先于 anchorSystem）——时窗面存在但当前零改写者，记为断言探测边界。
+- **D3（中，已履行）**：SYSTEM-PROMPT.md（assemble 参/scoped 面）/CLI.md（resume 放开语义勘误）/AGENT-LOOP-DRIVER.md（schemas 投影措辞）同步；六份迁移文档状态推进「已核销」。

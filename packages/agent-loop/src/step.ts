@@ -160,7 +160,7 @@ export function anchorSystem(scope: TurnScope, step: number): void {
 /** 指纹观测线（W3，ELEVATION-DESIGN §2.4 裁决补录）：debug 旋钮下每步输出——指纹可从
  *  落盘 text 现算（不进事件体）；KV cache 前缀命中 = 指纹不变。不进 token-meter
  *  （计量面语义是用量非内容）——记 MIGRATION-W3 §8 裁决补录 */
-function observePrompt(spec: { readonly turn: number; readonly step: number; readonly text: string; readonly changed: boolean }): void {
+export function observePrompt(spec: { readonly turn: number; readonly step: number; readonly text: string; readonly changed: boolean }): void {
   if (process.env.X_HARNESS_ASSERT_VISIBLE !== "1") return;
   const fingerprint = createHash("sha256").update(spec.text).digest("hex").slice(0, 16);
   process.stderr.write(`[prompt] turn=${String(spec.turn)} step=${String(spec.step)} fingerprint=${fingerprint} changed=${String(spec.changed)}\n`);

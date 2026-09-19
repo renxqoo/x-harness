@@ -10,7 +10,7 @@
 - **F4** tool-core 四条功能性停靠边（execEnv:40/permissionGrants:46/sessionDisposed:55/toolRegistry:54）；guidance 投稿为表现性依赖——D3 后合法（上层→内核方向）。
 - **F5** workspaces `packages/*`+`apps/*`（package.json:6-9）；包名不含目录→src import 零变更；**但**路径字面量引用存在：vitest.config.ts:5,8、tsconfig.json include、根 build 脚本、tool-bash bash.test.ts:185-187 与 tool-grep grep.test.ts:293-295 子进程脚本（W0 §3 全列）。
 - **F6** `check` = typecheck+lint+build+test+e2e（package.json:17）；144 测试文件静态计数；覆盖率 92.1% 语句/1704 用例（2026-09-20 实测）。
-- **F7** tool-bash host-exit 用例（bash.test.ts:177 起）时序敏感偶发红（预存，stash 验证）。
+- **F7** tool-bash host-exit 用例（bash.test.ts:177 起）cwd 敏感（process.cwd() 作仓根）——非 flaky，W3 根治（import.meta.dirname 锚定；「预存偶发红」为 W0 期误诊， stash 验证的是 cwd 差异）。
 - **F8** `ToolDefinition.guidance`（tools/src/types.ts:41）+ apps/cli `toolGuidanceBridge`（build-world.ts:66-83）已实施（2026-09-20）。
 - **F9** llm 层不校验 tool_use 名（pi-context 仅块整形）——「模型不可见即不可调」前提为假（设计官核证）。
 - **F10** permission 包无工具名白名单机制（mode/路径门禁）——原「执行门禁归 permission」为空归属。
@@ -47,11 +47,11 @@
 
 | 波 | 单元 | 验收点 | 文档 |
 |---|---|---|---|
-| W0 试运行 | 内核分组+门禁 | **144/1704 逐项相等**（否决级）+ rename 100% + 门禁四用例 + 对抗审查 | W0 |
-| W1 | 投稿式 | CLI prompt 逐字节一致 + 桥零残留 + D6 约束下停靠必中 | W1 |
-| W2A | tools restriction+读回+执行面 | X15 专测零改写 + 孙代收窄 + 泄漏 | W2A |
-| W2B | 删通道+CLI/REPL 迁移 | §1 七条矩阵 + grep 通道死透 + REPL×flag | W2B |
-| W2C | prompt 分层机制 | prompt.test 零改写 + 锚定子集 throw + 确定性 | W2C |
-| W3 | 不变量+观测+核销 | 三口径双态 + 全套核销清单 | W3 |
+| W0 试运行 | 内核分组+门禁 | ✅ 144/1704 零丢失 + rename 88@100% + 门禁六用例（v2）+ 收口审查处置 | W0 |
+| W1 | 投稿式 | ✅ 组合金测试（等价工件）+ 桥零残留 + D6 约束 + 收口审查处置 | W1 |
+| W2A | tools restriction+读回+执行面 | ✅ X15 执行面用例零改写 + 孙代收窄 + 泄漏 + 终审 A1/A2 处置 | W2A |
+| W2B | 删通道+CLI/REPL 迁移 | ✅ grep 死透 + B1 分支语义修复（终审）+ REPL×flag 端到端挂账 | W2B |
+| W2C | prompt 分层机制 | ✅ prompt.test 零改写 + 锚定子集 throw + 跨层环兜底（终审 C1）+ 确定性 | W2C |
+| W3 | 不变量+观测+核销 | ✅ 断言双态 + observePrompt 用例 + F7 根治 + 文档全量同步（终审 D1-D3） | W3 |
 
 每波：四门 → 对抗审查（独立上下文）→ 处置 → 提交；**每波单提交独立可 revert**（W2 拆三波后该口径成立）。

@@ -54,6 +54,24 @@ export function createPromptRegistry(): SystemPromptService {
     }
   }
 
+  /** 合并视图环检测（终审 C1 兜底）：锚链查询同时看根层与本会话层——缺席锚不建边 */
+  function wouldCycleMerged(name: string, spec: SectionSpec, layer: Map<string, SectionEntry>): boolean {
+    const start = anchorOf(spec);
+    if (start === undefined) return false;
+    const seen = new Set<string>([name]);
+    const queue = [start];
+    for (;;) {
+      const current = queue.pop();
+      if (current === undefined) return false;
+      if (current === name) return true;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      const entry = sections.get(current) ?? layer.get(current);
+      const anchor = entry === undefined ? undefined : anchorOf(entry.spec);
+      if (anchor !== undefined && (anchor === name || sections.has(anchor) || layer.has(anchor))) queue.push(anchor);
+    }
+  }
+
   function resolveOrder(): readonly string[] {
     // 位次递归（memo；环已在注册期拦截）；anchorChildren 为 before/after 共用的每锚后代计数
     const memo = new Map<string, number>();
@@ -161,6 +179,12 @@ export function createPromptRegistry(): SystemPromptService {
       if (anchor !== undefined && !sections.has(anchor) && layer.has(anchor)) {
         throw new Error(`session section "${spec.name}" may only anchor a root section (got session section "${anchor}")`);
       }
+      // 跨层环兜底（终审 C1）：沿「根层∪本会话层」合并视图查环——根段可锚缺席名（如 S1）
+      // 由本层补上成环（C after S1 + S1 after C）；单层检测互不可见
+      if (wouldCycleMerged(spec.name, spec, layer)) {
+        const a = anchorOf(spec) as string;
+        throw new Error(`section cycle: ${spec.name} -> ${a}`);
+      }
     } else if (wouldCycle(spec.name, spec)) {
       const anchor = anchorOf(spec) as string;
       throw new Error(`section cycle: ${spec.name} -> ${anchor}`);
@@ -187,8 +211,8 @@ export function createPromptRegistry(): SystemPromptService {
     scoped: (sessionId: string) => ({
       section: (spec: SectionSpec) => {
         const layer = sessionLayers.get(sessionId) ?? new Map<string, SectionEntry>();
+        const off = registerIn(layer, spec, true); // throw 不留空层（终审 C2）
         sessionLayers.set(sessionId, layer);
-        const off = registerIn(layer, spec, true);
         const bump = (): void => {
           sessionVersions.set(sessionId, (sessionVersions.get(sessionId) ?? 0) + 1); // 仅本会话合并缓存失效
         };

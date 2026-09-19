@@ -81,15 +81,32 @@ interface MakeNextInput {
 }
 
 /** 建立下一会话：newSession → create；指定 id 或当前 id → resume；同会话 resume 失败
- *  （--no-session 无 archive 等）兜底 create 新会话，避免 REPL 无会话可用 */
-async function makeNext(input: MakeNextInput): Promise<Result<AgentHandle>> {
-  const { loop, over, options } = input;
+ *  （--no-session 无 archive 等）兜底 create 新会话，避免 REPL 无会话可用。
+ *  工具面 restriction 重演（终审 B1 处置）：create 语义（/new 与兜底）恒注册全量快照
+ *  （W2B §1.1 血缘分级名单恒可读）；resume 语义（/model、/resume）带 flag 才注册，
+ *  无 flag = 显式放开（与迁移前 spread undefined 等价——不再误把放开态变受限态） */
+async function makeNext(input: MakeNextInput & { readonly world: import("./build-world.ts").World; readonly args: CliArgs; readonly registered: readonly string[] }): Promise<Result<AgentHandle>> {
+  const { loop, over, options, world, args, registered } = input;
+  const registerCreate = (sessionId: SessionId): void => {
+    world.registry.scoped(sessionId).restrict(resolveToolNames(args, registered)); // create 语义：恒全量快照
+  };
   if (over.newSession === true) {
-    return loop.create({ session: { id: newSessionId() }, agent: options });
+    const made = await loop.create({ session: { id: newSessionId() }, agent: options });
+    if (made.ok) registerCreate(made.value.agent.session.id);
+    return made;
   }
   const resumed = await loop.resume({ id: over.sessionId ?? input.previousId, agent: options });
-  if (resumed.ok || over.sessionId !== undefined) return resumed;
-  return loop.create({ session: { id: newSessionId() }, agent: options });
+  if (resumed.ok) {
+    // resume 语义：带 flag 才注册（无 flag = 显式放开——终审 B1 处置，与迁移前 spread undefined 等价）
+    if (args.noTools || args.tools !== undefined || args.excludeTools !== undefined) {
+      world.registry.scoped(resumed.value.agent.session.id).restrict(resolveToolNames(args, registered));
+    }
+    return resumed;
+  }
+  if (over.sessionId !== undefined) return resumed; // 指定 id 失败——不兜底（沿用旧契约）
+  const made = await loop.create({ session: { id: newSessionId() }, agent: options }); // 兜底 = create 语义恒快照
+  if (made.ok) registerCreate(made.value.agent.session.id);
+  return made;
 }
 
 export async function runRepl(input: ReplInput): Promise<number> {
@@ -153,15 +170,12 @@ export async function runRepl(input: ReplInput): Promise<number> {
       }
       const previousId = handle.agent.session.id;
       await handle.dispose().catch(() => {});
-      const made = await makeNext({ loop: world.loop, over, previousId, options: buildNextOptions(over) });
+      const made = await makeNext({ loop: world.loop, over, previousId, options: buildNextOptions(over), world, args: input.args, registered: registeredToolNames });
       if (!made.ok) {
         quit(1);
         return `fatal: session switch failed: ${made.reason}`;
       }
       handle = made.value;
-      // F-2 处置（ELEVATION-MIGRATION-W2B §1.4-1.6）：makeNext 单点重注册——dispose 触发
-      // sessionDisposed 已注销旧层，此处从 CLI flag 状态重演（/new 新 id / /model 同 id / 兜底）
-      world.registry.scoped(handle.agent.session.id).restrict(resolveToolNames(input.args, registeredToolNames));
       const flushed = await world.store.flush(handle.agent.session.id);
       if (!flushed.ok) {
         quit(1);
