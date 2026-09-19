@@ -4,6 +4,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseFlat, splitFrontmatter } from "@x-harness/md-frontmatter";
 import type { LoadedAgentType } from "./types.ts";
 
 export interface TypeLoadResult {
@@ -91,23 +92,4 @@ async function parseFile(path: string, stem: string): Promise<ParseOutcome> {
     prompt: matter.body,
   };
   return type;
-}
-
-function splitFrontmatter(text: string): { readonly head: string; readonly body: string } | undefined {
-  if (!text.startsWith("---\n")) return undefined;
-  const end = text.indexOf("\n---\n", 4);
-  if (end < 0) return undefined;
-  return { head: text.slice(4, end), body: text.slice(end + 5) };
-}
-
-/** 扁平 key: value 解析：嵌套/数组/空行外内容 → undefined（拒） */
-function parseFlat(head: string): Map<string, string> | undefined {
-  const out = new Map<string, string>();
-  for (const line of head.split("\n")) {
-    if (line === "") continue;
-    const colon = line.indexOf(":");
-    if (colon <= 0) return undefined;
-    out.set(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
-  }
-  return out;
 }

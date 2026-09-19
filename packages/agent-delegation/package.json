@@ -9,6 +9,7 @@
   "dependencies": {
     "@x-harness/agent-loop": "workspace:*",
     "@x-harness/core": "workspace:*",
+    "@x-harness/md-frontmatter": "workspace:*",
     "@x-harness/session": "workspace:*",
     "@x-harness/tools": "workspace:*",
     "@x-harness/session-mailbox": "workspace:*",
