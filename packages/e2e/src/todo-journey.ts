@@ -139,7 +139,7 @@ async function resumedLife(root: string): Promise<void> {
       const final = w2.ctx.use(todoList).list("todo" as SessionId);
       must(final.length === 3 && final[2]?.id === "3", `服务终态三任务含续号 id=3（实际：${String(final.map((t) => t.id))}）`);
       // resume 后持久化继续工作：rc-2 变更的新快照已落卷（含续号 id 3）
-      const newSnaps = events2.filter((e) => e.type === "todo/snapshot" && JSON.stringify(e.data).includes('\"id\":\"3\"'));
+      const newSnaps = events2.filter((e) => e.type === "todo/snapshot" && JSON.stringify(e.data).includes('"id":"3"'));
       must(newSnaps.length === 1, `resume 后新快照落卷含 id=3（实际：${String(newSnaps.length)}）`);
       const turnEnds = events2.filter((e) => e.type === "turn/end");
       must(JSON.stringify(turnEnds.at(-1)?.data).includes('"completed"'), "turn completed 收轮（turn 终态事件断言——不依赖最后一条落账形态）");

@@ -75,6 +75,10 @@ function isInboxEntries(value: unknown): boolean {
   );
 }
 
+/** todo/snapshot 词条门常量：status 闭合词表 + 可选串字段名 */
+const TODO_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress", "completed"]);
+const TODO_SNAPSHOT_TEXT_KEYS = ["description", "activeForm", "owner"] as const;
+
 /** todo/snapshot 词条门子函数（docs/TODO.md §13.2）：tasks 数组级校验 + id 收集（含 seq 下界）；失败 undefined */
 function todoSnapshotTaskIds(value: unknown, seq: number): ReadonlySet<string> | undefined {
   if (!Array.isArray(value)) return undefined;
@@ -95,10 +99,8 @@ function todoSnapshotTaskOk(task: unknown, ids: ReadonlySet<string>): boolean {
   const id = task["id"];
   if (typeof id !== "string" || !/^[1-9][0-9]*$/.test(id) || ids.has(id)) return false;
   if (typeof task["subject"] !== "string" || task["subject"] === "") return false;
-  if (task["status"] !== "pending" && task["status"] !== "in_progress" && task["status"] !== "completed") return false;
-  for (const key of ["description", "activeForm", "owner"] as const) {
-    if (task[key] !== undefined && typeof task[key] !== "string") return false;
-  }
+  if (!TODO_SNAPSHOT_STATUSES.has(task["status"] as string)) return false;
+  if (TODO_SNAPSHOT_TEXT_KEYS.some((key) => task[key] !== undefined && typeof task[key] !== "string")) return false;
   const metadata = task["metadata"];
   return metadata === undefined || (typeof metadata === "object" && metadata !== null && !Array.isArray(metadata));
 }
