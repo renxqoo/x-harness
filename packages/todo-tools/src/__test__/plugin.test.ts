@@ -23,6 +23,10 @@ describe("todo-tools plugin assembly", () => {
     const registry = ctx.use(toolRegistry);
     expect(ctx.tryUse(todoList)).toBeDefined();
     expect(registry.schemas().map((s) => s.name)).toEqual([...TODO_TOOLS]);
+    // 控制类声明（§16）：四工具全部 isControlTool——permission 裁决面直通
+    for (const name of TODO_TOOLS) {
+      expect(registry.get(name)?.isControlTool, name).toBe(true);
+    }
     const made = ctx.use(todoList).create(undefined, { subject: "A" });
     expect(made).toMatchObject({ ok: true, task: { id: "1", status: "pending" } });
     await ctx.dispose();

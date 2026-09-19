@@ -587,3 +587,16 @@ P3-6 e2e resume 后持久化继续工作 → **采纳**（rc-2 新快照含 id 3
 todo-tools 覆盖率 **100/100/100/100**；全仓 94.12/90.82/94.21/96.52；e2e 十一场景
 （含 todo 旅程 resume 段）全绿。全仓 lint 余 1 错 3 警属 real.ts/gap-probe.ts（他人
 基线，不越界代修）。
+
+
+## 16. 控制类工具身份（2026-09-19 用户裁决「修复启示3」——对齐 Codex is_builtin_control_tool）
+
+**问题**：permission 的 decideFor 对名单外工具回 `ask`（`unknown tool:xxx`）——todo 四工具
+在 permission 装配下进审批，broker 缺席时 fail-closed 拒绝——agent 记待办的自我组织行为
+被安全面拦截。
+
+**方案（小级）**：`ToolDefinition.isControlTool?: true`（声明权在工具定义——agent 自我
+组织/控制面行为、非环境副作用；permission 只认标记不认名单，未知工具 ask 兜底保持）；
+dispatch 的 preExecute 载荷填充 `control: true`；decideFor 首行直通
+（`resolvedBy: "control-tool"`）；todo 四工具声明。安全模型：标记由装配方信任的工具自带
+（与 Codex 内置工具同权），不放宽未声明工具的裁决。

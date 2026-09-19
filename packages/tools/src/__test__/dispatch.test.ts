@@ -25,6 +25,20 @@ const call = (name: string, args: unknown = {}, signal?: AbortSignal): ToolCallR
 });
 
 describe("pre-execute 载荷（session 服务端透传——docs/EXEC-ENV.md §5）", () => {
+  it("isControlTool 工具的载荷携带 control 标记（permission 直通依据）；普通工具不带", async () => {
+    const seen: unknown[] = [];
+    const world = makeWorld(async (payload) => {
+      seen.push(payload);
+      return { kind: "allow" };
+    });
+    world.registry.register({ name: "ctrl", inputSchema: Type.Object({}), isControlTool: true, execute: async () => ({ content: "" }) });
+    world.registry.register({ name: "plain", inputSchema: Type.Object({}), execute: async () => ({ content: "" }) });
+    await world.dispatch(call("ctrl"));
+    await world.dispatch(call("plain"));
+    expect(seen[0]).toMatchObject({ name: "ctrl", control: true });
+    expect(seen[1]).not.toHaveProperty("control"); // 缺省不伪造字段
+  });
+
   it("请求携带 session → pre-execute 载荷透传（模型入参不可伪造的服务端事实）", async () => {
     const seen: unknown[] = [];
     const world = makeWorld(async (payload) => {

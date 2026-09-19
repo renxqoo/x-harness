@@ -2,6 +2,7 @@
 // TypeBox 校验 → execute waterfall → 归一化。函数体整体 try/catch——dispatch 永不 reject。
 
 import { errorText } from "@x-harness/core";
+import type { SessionId } from "@x-harness/session";
 import type { PreExecuteDecision, ToolCallRequest, ToolDefinition, ToolOutcome, ToolRegistry } from "./types.ts";
 import { formatArgsEcho, violationsOf } from "./validate.ts";
 
@@ -113,6 +114,24 @@ async function runBody(tool: ToolDefinition, request: ToolCallRequest): Promise<
   return gateOutcome(raw);
 }
 
+/** preExecute 载荷：control 标记（isControlTool 工具——permission 直通依据）与 session
+ *  缺省不伪造字段 */
+function preExecutePayload(tool: ToolDefinition, request: ToolCallRequest): {
+  readonly callId: string;
+  readonly name: string;
+  readonly args: unknown;
+  readonly control?: true;
+  readonly session?: SessionId;
+} {
+  return {
+    callId: request.callId,
+    name: request.name,
+    args: request.args,
+    ...(tool.isControlTool !== undefined ? { control: true } : {}),
+    ...(request.session !== undefined ? { session: request.session } : {}),
+  };
+}
+
 export function createDispatcher(deps: DispatcherDeps): ToolRegistry["dispatch"] {
   return async (request: ToolCallRequest): Promise<ToolOutcome> => {
     try {
@@ -127,12 +146,7 @@ export function createDispatcher(deps: DispatcherDeps): ToolRegistry["dispatch"]
       const tool = deps.registry.get(request.name);
       if (tool === undefined) return errorOutcome(`unknown-tool:${request.name}`);
       const decision = gateDecision(
-        await deps.dispatchPreExecute({
-          callId: request.callId,
-          name: request.name,
-          args: request.args,
-          ...(request.session !== undefined ? { session: request.session } : {}),
-        }),
+        await deps.dispatchPreExecute(preExecutePayload(tool, request)),
       );
       if (decision.kind === "deny") return errorOutcome(`denied:${decision.reason}`);
       if (request.signal.aborted) return abortedOutcome();

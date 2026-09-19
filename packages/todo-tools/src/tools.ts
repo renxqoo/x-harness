@@ -116,6 +116,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
         return persist(log.log, store, ctx.session) ?? { content: `Created task ${result.task.id}: ${result.task.subject} (status: ${result.task.status})` };
       },
       isConcurrencySafe: parallel,
+      isControlTool: true,
     },
     {
       name: "task_get",
@@ -129,6 +130,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
         return result.ok ? { content: cardText(result.task) } : cast(result);
       },
       isConcurrencySafe: parallel,
+      isControlTool: true,
     },
     {
       name: "task_list",
@@ -141,6 +143,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
         return { content: listText(store.list(ctx.session)) };
       },
       isConcurrencySafe: parallel,
+      isControlTool: true,
     },
     {
       name: "task_update",
@@ -165,6 +168,7 @@ export function createTodoTools(store: TodoList, sessions: SessionStore): ToolDe
         return persist(log.log, store, ctx.session) ?? { content: cardText(result.task) };
       },
       isConcurrencySafe: parallel,
+      isControlTool: true,
     },
   ];
 }

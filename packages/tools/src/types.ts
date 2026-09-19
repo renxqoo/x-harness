@@ -33,6 +33,9 @@ export interface ToolOutcome {
 export interface ToolDefinition extends ToolSchema {
   /** 严格 true 才可并行（缺省/抛错/非 true 一律 exclusive——fail-closed） */
   readonly isConcurrencySafe?: (args: unknown) => boolean;
+  /** 控制类工具（Codex is_builtin_control_tool 同构语义）：agent 自我组织/控制面行为，
+   *  非环境副作用——permission 裁决面直通（声明权在工具定义，安全面只认标记不认名单） */
+  readonly isControlTool?: true;
   execute(args: unknown, ctx: ToolExecContext): Promise<ToolOutcome>;
 }
 
@@ -42,6 +45,7 @@ export function defineTool<T extends TSchema>(def: {
   readonly description?: string;
   readonly inputSchema: T;
   readonly isConcurrencySafe?: (args: unknown) => boolean;
+  readonly isControlTool?: true;
   execute(args: Static<T>, ctx: ToolExecContext): Promise<ToolOutcome>;
 }): ToolDefinition {
   return {
@@ -49,6 +53,7 @@ export function defineTool<T extends TSchema>(def: {
     ...(def.description !== undefined ? { description: def.description } : {}),
     inputSchema: def.inputSchema,
     ...(def.isConcurrencySafe !== undefined ? { isConcurrencySafe: def.isConcurrencySafe } : {}),
+    ...(def.isControlTool !== undefined ? { isControlTool: def.isControlTool } : {}),
     // 运行时收到的是经 TypeBox 校验的值；静态收窄由本助手的泛型保证
     execute: def.execute as ToolDefinition["execute"],
   };

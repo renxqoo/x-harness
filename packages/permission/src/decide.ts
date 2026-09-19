@@ -20,6 +20,8 @@ export interface Decision {
 export interface DecideInput {
   readonly tool: string;
   readonly args: unknown;
+  /** 控制类工具标记（dispatch 从 ToolDefinition.isControlTool 填充）——直通裁决 */
+  readonly control?: true;
   readonly session?: SessionId;
   readonly userRules: readonly PermissionRule[];
   readonly sessionRules: readonly PermissionRule[];
@@ -40,6 +42,9 @@ function defaultDenyRules(): PermissionRule[] {
 }
 
 export function decideFor(input: DecideInput): Decision {
+  // 控制类工具（agent 自我组织/控制面行为——todo 清单类）：非环境副作用，裁决面直通；
+  // 未知工具 ask 兜底保持不变——安全面只对显式声明的控制标记放行
+  if (input.control === true) return { verdict: "allow", reason: "control tool", resolvedBy: "control-tool" };
   const rules = [...input.userRules, ...defaultDenyRules(), ...input.sessionRules];
   // 路径面（read/write/grep）界内判定 = gate 语义（root ∪ 会话授权根）——不含 fence.writable
   // （那是 bash/spawn 面的可写集，含 tmpdir；两层口径漂移会把 tmpdir 误判为工具面界内）
