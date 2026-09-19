@@ -17,12 +17,20 @@ import { toolsPlugin } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { Agent } from "@x-harness/agent-loop";
 import { compactionLanded, createCompactionPlugin } from "@x-harness/compaction";
+import { createTodoToolsPlugin } from "@x-harness/todo-tools";
 import { autocompactL1Cleared, createAutoCompactPlugin } from "@x-harness/autocompact";
 import { must } from "./check.ts";
 
 function textScript(text: string): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LlmChunk> {
     yield { type: "text-delta", text };
+    yield { type: "finish", finish: { kind: "stop" } };
+  })();
+}
+
+function callScript(callId: string, name: string, args: Record<string, unknown>): AsyncGenerator<LlmChunk> {
+  return (async function* (): AsyncGenerator<LlmChunk> {
+    yield { type: "tool-call-delta", index: 0, callId, name, argumentsDelta: JSON.stringify(args) };
     yield { type: "finish", finish: { kind: "stop" } };
   })();
 }
@@ -50,6 +58,7 @@ async function assembleWorld(root: string, options?: { readonly mainDialFails413
     llmPlugin,
     systemPromptPlugin,
     agentLoopPlugin,
+    createTodoToolsPlugin(), // 摘要注入段停靠（docs/COMPACTION.md §15）
     createCompactionPlugin({
       contextWindow: 1_200,
       reserveTokens: 100,
@@ -106,7 +115,14 @@ export async function runCompactionJourney(): Promise<void> {
         const landed: string[] = [];
         world.ctx.on(compactionLanded, (payload: { trigger: string }) => landed.push(payload.trigger));
         for (let round = 0; round < 6; round += 1) {
-          world.scripts.push(textScript(`answer-round-${String(round)} ${"x".repeat(2_400)}`));
+          if (round === 1) {
+            // todo 段（§15）：经真实 agent turn 建任务——todo/snapshot 落卷，注入段随后携带
+            world.scripts.push(callScript(`tc-e2e-${String(round)}`, "task_create", { subject: "Compaction e2e task" }));
+          } else if (round === 3) {
+            world.scripts.push(callScript(`tc-e2e-${String(round)}`, "task_update", { taskId: "1", status: "completed" }));
+          } else {
+            world.scripts.push(textScript(`answer-round-${String(round)} ${"x".repeat(2_400)}`));
+          }
           world.agent.followup(`question-${String(round)} ${"q".repeat(2_400)}`);
           await world.agent.whenIdle();
         }
@@ -120,6 +136,16 @@ export async function runCompactionJourney(): Promise<void> {
           return block !== undefined && block.type === "text" && block.text.includes("## Goal");
         });
         must(hasSummary, "后续请求投影含压缩摘要");
+        // §15 注入段：任务行机制性存活过压缩（且为最新态——completed 覆盖 in_progress）
+        const hasTaskSection = lastMessages.some((message) => {
+          if (message.role !== "user" || !("content" in message)) return false;
+          const block = message.content[0];
+          return block !== undefined && block.type === "text" && block.text.includes("## Task List");
+        });
+        must(hasTaskSection, "压缩后投影含 todo 注入段（机制性存活——非摘要 LLM 概率性）");
+        const taskLine = lastMessages.map((m) => ("content" in m ? JSON.stringify(m.content) : "")).join("");
+        must(taskLine.includes("1. [completed] Compaction e2e task"), "注入段任务行为最新态（completed）");
+        must(!taskLine.includes("[in_progress] Compaction e2e task"), "注入段无旧状态残片（in_progress 不得残留——锚点失效防线）");
         const totalChars = lastMessages.reduce((sum, message) => sum + JSON.stringify(message).length, 0);
         must(totalChars < 6 * 5_000, `投影已折叠（实际 ${String(totalChars)} chars）`);
       } finally {

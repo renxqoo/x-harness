@@ -5,6 +5,8 @@
 import type { Context, Plugin } from "@x-harness/core";
 import { toolRegistry } from "@x-harness/tools";
 import { sessionDisposed, sessionStore } from "@x-harness/session";
+import { summarySection } from "@x-harness/compaction";
+import { todoSummarySection } from "./summary.ts";
 import { createTodoStore } from "./store.ts";
 import { todoList } from "./tokens.ts";
 import { createTodoTools } from "./tools.ts";
@@ -16,6 +18,8 @@ export function createTodoToolsPlugin(): Plugin {
     apply: (ctx: Context) => {
       const store = createTodoStore();
       ctx.effect(ctx.provide(todoList, store));
+      // 摘要注入段停靠（软可选——不声明 inject compaction：不装时 provide 悬挂无人消费）
+      ctx.effect(ctx.provide(summarySection, { render: todoSummarySection }));
       const registry = ctx.use(toolRegistry);
       const sessions = ctx.use(sessionStore);
       for (const tool of createTodoTools(store, sessions)) ctx.effect(registry.register(tool));

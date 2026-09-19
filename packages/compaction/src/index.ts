@@ -2,8 +2,8 @@
 
 export { createCompactionPlugin } from "./plugin.ts";
 export type { CompactionOptions } from "./plugin.ts";
-export { compactionRunner, compactionLanded, compactionServedWindow } from "./tokens.ts";
-export type { CompactionRunner } from "./tokens.ts";
+export { compactionRunner, compactionLanded, compactionServedWindow, summarySection } from "./tokens.ts";
+export type { CompactionRunner, SummarySectionProvider } from "./tokens.ts";
 export type { CompactTrigger, CompactionResult, CompactionSkipReason, ResolvedConfig } from "./compact.ts";
 export { runCompact, previousSummaryOf } from "./compact.ts";
 export type { SummarizerFace, SummarizeOutcome, SummarizeInput } from "./summarize.ts";
@@ -39,3 +39,5 @@ export {
 } from "./occupancy.ts";
 export type { Occupancy } from "./occupancy.ts";
 export { SUMMARIZATION_PROMPT, UPDATE_SUMMARIZATION_PROMPT, AUTO_CONTINUATION_NOTE } from "./prompts.ts";
+
+export { SECTION_BEGIN, SECTION_END, appendSummarySection, stripSummarySection } from "./section.ts";
