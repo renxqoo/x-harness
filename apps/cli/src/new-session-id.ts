@@ -3,6 +3,7 @@
 // 满足 isSafeSessionId 词表 ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$（同时按字典序即时间序）。
 
 import { isSafeSessionId } from "@x-harness/session";
+import type { SessionId } from "@x-harness/session";
 
 const RANDOM_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 const RANDOM_LENGTH = 6;
@@ -20,11 +21,11 @@ function timestamp(now: Date): string {
   return `${pad(now.getUTCFullYear(), 4)}${pad(now.getUTCMonth() + 1, 2)}${pad(now.getUTCDate(), 2)}T${pad(now.getUTCHours(), 2)}${pad(now.getUTCMinutes(), 2)}${pad(now.getUTCSeconds(), 2)}`;
 }
 
-export function newSessionId(now: Date = new Date(), random: () => number = Math.random): string {
+export function newSessionId(now: Date = new Date(), random: () => number = Math.random): SessionId {
   const id = `${timestamp(now)}-${randomSuffix(random)}`;
   if (!isSafeSessionId(id)) {
     // 词表护栏：时间戳段恒安全，随机段恒取词表内字符——到达这里说明实现漂移，立即暴露
     throw new Error(`newSessionId produced an unsafe id: ${id}`);
   }
-  return id;
+  return id as SessionId;
 }
