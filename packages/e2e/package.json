@@ -6,6 +6,8 @@
   "dependencies": {
     "@x-harness/agent-delegation": "workspace:*",
     "@x-harness/agent-loop": "workspace:*",
+    "@x-harness/autocompact": "workspace:*",
+    "@x-harness/compaction": "workspace:*",
     "@x-harness/core": "workspace:*",
     "@x-harness/exec-env": "workspace:*",
     "@x-harness/llm": "workspace:*",

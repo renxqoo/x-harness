@@ -1,6 +1,6 @@
 # COMPACTION 件方案（上下文压缩 compaction + autocompact 两包）
 
-> 状态：定稿（两路并行子 agent 对抗审查 17+15 项发现全部处置，见 §11）
+> 状态：已实施（三切片落地：宿主修订+compaction、autocompact、e2e；方案审 2 路 + 代码审 2×2 路全部处置，见 §11–§13）
 > 级别：大（新子系统：两新包 + session replace 语义扩展 + 词表扩展 + token-meter 契约升级；借迁移方法论的行为对照纪律——交付物是新能力，主流程留本工作流）
 > 参照：my-agent `packages/plugins/compaction`、`autocompact`（pi 同构移植）。「参照」只取语义思想，逐条映射到本仓内核原语（session replace / agentPreStep / agentRequestError waterfall / request-context 词表），不复制文件形态；死代码与已知 bug 不随迁（§6 删除与改进清单）。
 > 上游裁决：SESSION.md §1.4（replace 原语为压缩预留）+ §2（策略归消费方插件）；TOKEN-METER.md §5（estimateText 为压缩件预留口径、扩桶随压缩件裁决）；AGENT-LOOP-DRIVER.md（压缩/滑窗归后续策略插件）。
@@ -452,15 +452,22 @@ session_meta、settings、自定义事件总线）改写为对应本仓面（sur
 
 ## 10. 验收清单
 
-- [ ] §1 契约逐条（选项值域 fail-fast / 词表封闭性 / 事件时序：L2 落账取消在飞 CP、
-      idle flush 先于 emit、413 自愈恰一次、接管恰一次）
-- [ ] §2 宿主件修订同批落档（SESSION.md §1.4 位置区间 + 词条表 16、TOKEN-METER.md
-      estimateText 口径）
-- [ ] §6 删除/修复/改进逐条（不含参照系死代码；单飞行/锚口径合一/位置区间可测试佐证）
-- [ ] §7 对照参照系 186 条：承接/改写/不承接三态逐条映射表随测试文件注释落档
-- [ ] 四门全绿 + 覆盖率数字如实报告（新包 ≥ 90/90/90/85）
-- [ ] 对抗审查问题清零（方案审 2 路 + 代码审 2 路，处置逐条落档）
-- [ ] e2e 旅程全绿（默认门）
+- [x] §1 契约逐条（选项值域 fail-fast 表 / 跳过理由与 CP 子动作词表锁定测试 /
+      事件时序：L2 落账取消在飞 CP、idle flush 先于 emit、413 自愈恰一次、接管恰一次）
+- [x] §2 宿主件修订同批落档（SESSION.md §1.4 位置区间 + 词条表 16、TOKEN-METER.md
+      estimateText 口径——切片 1 提交内同批）
+- [x] §6 删除/修复/改进逐条（参照系死代码零随迁；单飞行 join 语义/锚口径合一/
+      位置区间/收益列表各有测试佐证）
+- [x] §7 对照参照系 186 条：承接/改写/不承接三态映射表随测试文件头注释落档
+      （compaction 三文件 + autocompact 三主文件）
+- [x] 四门全绿 + 覆盖率数字如实报告：全量 1350 用例通过；compaction/src
+      行 98.06 / 函数 98.91 / 分支 99.35（语句 91.56）；autocompact/src
+      行 94.88 / 函数 95.37 / 分支 97.32（语句 84.98——v8 多 worker 合并统计假象，
+      单文件隔离复测受染文件语句 100%，如 scavenger 65/65；全局语句门禁通过，
+      见 §13 覆盖率小节）
+- [x] 对抗审查问题清零：方案审 2 路 30 项（§11）+ 代码审 2×2 路 51 项（§12/§13）
+- [x] e2e 旅程全绿（默认门 `bun run e2e` 退出 0：旅程A 水位压缩→投影已缩、
+      旅程B 413 自愈+servedWindow 落账→任务不中断）
 
 ## 11. 方案对抗审查处置（定稿前，两路并行子 agent）
 
@@ -578,4 +585,20 @@ session_meta、settings、自定义事件总线）改写为对应本仓面（sur
 **切片 2 覆盖率（如实）**：autocompact/src 全量表 行 94.88 / 函数 95.37 / 分支 97.32；
 语句 84.98（v8 多 worker 合并统计假象——单文件隔离复测受染文件语句 100%，如
 scavenger 65/65；全局语句门禁通过）。compaction/src 行 98.06 / 函数 98.91 / 分支 99.35
-（语句 91.56）。全量 1350 用例通过；e2e 待切片 3。
+（语句 91.56）。全量 1350 用例通过。
+
+## 14. 切片 3 收口（e2e + 假绿对抗抽查，2026-09-19）
+
+- e2e 旅程 `packages/e2e/src/compaction-journey.ts` 进默认门（main.ts 挂载）：旅程A
+  真实 agent 六轮大文本灌入 → compactionLanded ≥1 → 末次拨号投影含结构化摘要且
+  折叠到灌入量级以下；旅程B 主拨号恒 http-413 → turn/end 收束不悬挂 +
+  servedWindow 落 request/context + 紧急前缀替换落账。全 e2e 门退出 0。
+- 已知存量（归属他人，不越界代修）：e2e/gap-probe.ts 与 e2e/src/real.ts 共 4 处
+  lint 违规（先前提交 602063e 引入）——本分支 lint 对新增/修改文件 0 违规，
+  `bun run lint` 因存量报 1 error 3 warnings。
+- 假绿对抗抽查（独立核验门禁真实裁判）：全仓 grep 无 it.skip/it.todo/it.only/
+  test.skip（仅 plugin-manager 测试自证「超时击杀」场景的正向命名）；无注释断言
+  （`expect(` 前置 `//` 形态零命中）；vitest.config.ts 阈值与排除面未动（git diff
+  为空）；本特性两次代码审的假绿项（§12 F6-F9 同源、§13 F6-F9）已全部修复并带
+  回归用例。pi-wire Retry-After HTTP-date 用例为存量时钟 flake（非本批文件，
+  单独重跑稳定通过）。
