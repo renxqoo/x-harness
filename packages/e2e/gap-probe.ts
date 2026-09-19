@@ -2,16 +2,6 @@
 // error finish 打到 stderr——失败不再静默（曾因请求体 model 字段错误而只收到 error finish）。
 // 用法：GLM_API_KEY=... [GLM_BASE_URL=...] [GLM_MODEL=...] bun packages/e2e/gap-probe.ts
 import { createAnthropicCompatAdapter } from "@x-harness/llm";
-const deepseek = {
-  baseUrl: process.env.DEEPSEEK_BASE_URL ,
-  apiKey: process.env.DEEPSEEK_APIPKEY,
-  model:process.env.DEEPSEEK_MODEL
-}
-const glm = {
-  baseUrl: process.env.GLM_BASE_URL ,
-  apiKey: process.env.GLM_API_KEY,
-  model: process.env.GLM_MODEL
-}
 const isDeepSeek = false
 const model = {
   baseUrl: isDeepSeek?process.env.DEEPSEEK_BASE_URL :process.env.GLM_BASE_URL ,
@@ -20,7 +10,7 @@ const model = {
 }
 
 if (!model.baseUrl || !model.apiKey) {
-    throw Error('not found model'+JSON.stringify(model))
+    throw Error(`not found model${JSON.stringify(model)}`)
 }
 
 const adapter = createAnthropicCompatAdapter({

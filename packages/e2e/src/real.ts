@@ -2,7 +2,6 @@
 // 自定义输出工具，流式帧实时上屏（agentAssistantStream：思考 dim、正文原色——docs/THINKING-STREAM.md）。
 // env GLM_API_KEY + GLM_BASE_URL + GLM_MODEL 齐备才执行；缺席 = 显式 skip（退出码 0）。不进默认门。
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter, llmPlugin, llmRuntime } from "@x-harness/llm";
