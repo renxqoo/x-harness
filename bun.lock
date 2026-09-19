@@ -204,6 +204,17 @@
         "@x-harness/exec-env": "workspace:*",
       },
     },
+    "packages/todo-tools": {
+      "name": "@x-harness/todo-tools",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+      },
+    },
     "packages/token-meter": {
       "name": "@x-harness/token-meter",
       "version": "0.0.1",
@@ -564,6 +575,8 @@
     "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/system-prompt"],
 
     "@x-harness/task-tools": ["@x-harness/task-tools@workspace:packages/task-tools"],
+
+    "@x-harness/todo-tools": ["@x-harness/todo-tools@workspace:packages/todo-tools"],
 
     "@x-harness/token-meter": ["@x-harness/token-meter@workspace:packages/token-meter"],
 
