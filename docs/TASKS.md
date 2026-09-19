@@ -341,3 +341,23 @@ worktree kept 逐字等价）、三态路由（denied 不遮蔽/统一词表/迟
 
 **状态注记**：审查进行中用户将工作区整体提交为 `c39480e`（"fix: bug"，含本件全部成果与
 他人 llm/agent-loop 在途变更）——本处置批次以只含本件文件的新提交落地。
+
+## 13. 服务停靠（2026-09-19 用户裁决「修改」——b08a77f 拆包后地形变化）
+
+手工穿引（`createBashPlugin({tasks})` + `createTaskToolsPlugin({bashTasks: tasks})`）是件14
+三次裁决时「toolbox 零改动 + 无 bash 包」约束下的最小接线。`b08a77f` 把 bash 拆为独立包后
+该约束消亡，缺省共享改为服务停靠（同 execEnv 先例：提供方 provide、消费方停靠）：
+
+- **tool-bash**：`createBashPlugin` 把生效登记簿（外穿实例或自建）provide 为
+  `backgroundTasks` 服务（attach 期——env 解析后，装卸同回卷）。
+- **task-tools**：显式 `bashTasks` 参数保留为覆盖（优先级高于停靠）；缺省
+  `ctx.waitFor(backgroundTasks)` 停靠——tool-bash 在场即共享，不在场（纯 agent 形态）不
+  注册 bash 源、bash id 落统一 not-found（语义不变）。**可选依赖不 inject**：inject 缺席
+  =装配失败，会把 bash 变成任务动词的前提。停靠摘除经 ctx.effect；dispose 竞态以停靠旗
+  收口；显式参+停靠双注册 = 重复源 fail-fast（dup-kind throw 响亮）。
+- **装配面**：`createBashPlugin()` + `createTaskToolsPlugin()` 两行裸调用即共享（装配序
+  无关——real.ts/toolbox-journey 已随迁）；一 hub 一 bash 源 fail-fast 兜底不变。
+
+§2 依赖图注与 §9「装配纪律」行的手工穿引口径由本节取代；显式参数路径（自定义限额/宿主
+自管生命周期）继续有效。测试：task-tools plugin.test 停靠/序无关两用例 + tool-bash
+service.test 自建与外穿双形态。

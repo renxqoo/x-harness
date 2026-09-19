@@ -1,7 +1,7 @@
 // e2e：四命令工具旅程（docs/TOOLBOX.md §8——进默认门）。
 // 真实装配 session+jsonl+tools+llm+system-prompt+agent-loop+session-checkpoint+四命令插件
 // （tool-read/write/bash/grep——一命令一包，gate/observed 装配方穿引）
-// +task-tools（bashTasks 句柄接线——件14）；脚本化假 LLM 驱动七步工具链：write→read（开门）→
+// +task-tools（服务停靠共享 bash 登记簿——件14）；脚本化假 LLM 驱动七步工具链：write→read（开门）→
 // 覆写（观察门放行）→bash 追加+建文件→未观察覆写拒（fail-closed）→grep 命中→bash 后台立返任务 id。
 // 断言盘上副作用、事件落账；后台任务经 task_output/task_stop 收读停（bash 源接线自动探测点）。
 import { mkdtemp, rm } from "node:fs/promises";
@@ -22,7 +22,7 @@ import { createLocalEnv } from "@x-harness/exec-env";
 import { PathGate, ObservedRegistry } from "@x-harness/tool-core";
 import { createReadPlugin } from "@x-harness/tool-read";
 import { createWritePlugin } from "@x-harness/tool-write";
-import { createBashPlugin, BackgroundTasks, defaultLimits, defaultTaskLimits } from "@x-harness/tool-bash";
+import { backgroundTasks, createBashPlugin, defaultLimits } from "@x-harness/tool-bash";
 import { createGrepPlugin } from "@x-harness/tool-grep";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { must } from "./check.ts";
@@ -51,7 +51,6 @@ export async function runToolboxJourney(): Promise<void> {
     const gate = new PathGate(root);
     const observed = new ObservedRegistry();
     const limits = defaultLimits({ defaultTimeoutMs: 10_000 });
-    const bashTasks = new BackgroundTasks(defaultTaskLimits({}, limits));
     const scripts: Array<AsyncGenerator<LlmChunk>> = [];
     await loadPlugins(ctx, [
       sessionPlugin,
@@ -59,9 +58,9 @@ export async function runToolboxJourney(): Promise<void> {
       toolsPlugin,
       createReadPlugin({ gate, observed, env }),
       createWritePlugin({ gate, observed, env }),
-      createBashPlugin({ gate, env, limits, tasks: bashTasks }),
+      createBashPlugin({ gate, env, limits }),
       createGrepPlugin({ gate, env }),
-      createTaskToolsPlugin({ bashTasks }),
+      createTaskToolsPlugin(), // 服务停靠：与 bash 插件共享生效登记簿（装配序无关）
       llmPlugin,
       systemPromptPlugin,
       agentLoopPlugin,
@@ -106,7 +105,7 @@ export async function runToolboxJourney(): Promise<void> {
       const read = await dispatch.dispatch({ callId: "e2e-tt-1", name: "task_output", args: { task_id: taskId, block: true, timeout: 5_000 }, signal: new AbortController().signal, session: "toolbox" as SessionId });
       must(!read.isError && read.content.includes("completed exit=0"), `task_output 收终态（实际：${read.content}）`);
       must(read.content.includes("bg-needle-marker"), "task_output 带输出切片（bg-needle-marker 到场）");
-      const long = await bashTasks.start({ command: "sleep 30", cwd: root, session: "toolbox" as SessionId, env });
+      const long = await ctx.use(backgroundTasks).start({ command: "sleep 30", cwd: root, session: "toolbox" as SessionId, env });
       must(long.ok, `长任务起（实际：${long.ok === false ? long.reason : "ok"}）`);
       const stopped = await dispatch.dispatch({ callId: "e2e-tt-2", name: "task_stop", args: { task_id: long.ok ? long.value.id : "" }, signal: new AbortController().signal, session: "toolbox" as SessionId });
       must(!stopped.isError && stopped.content.includes("killed"), `task_stop 两段杀收敛（实际：${stopped.content}）`);

@@ -4,17 +4,18 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter, llmPlugin, llmRuntime } from "@x-harness/llm";
 import { sessionPlugin } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
-import { toolsPlugin, toolRegistry } from "@x-harness/tools";
+import { toolsPlugin } from "@x-harness/tools";
 import { agentAssistantStream, agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
-
+import { createBashPlugin } from "@x-harness/tool-bash";
+import { createTaskToolsPlugin } from "@x-harness/task-tools";
+import { createLocalEnvPlugin } from "@x-harness/exec-env";
 const API_KEY = process.env.GLM_API_KEY;
 const BASE_URL = process.env.GLM_BASE_URL;
 const MODEL = process.env.GLM_MODEL;
@@ -26,17 +27,21 @@ if (API_KEY === undefined || API_KEY === "" || BASE_URL === undefined || BASE_UR
   process.exit(0);
 }
 
-const root = await mkdtemp(join(tmpdir(), "xh-real-"));
+const root = await mkdtemp(join('./', "xh-real-"));
 try {
   const ctx = createContext();
+  // bash 自建登记簿并 provide 为服务；task-tools 停靠共享——两行裸调用（装配序无关）
   const unload = await loadPlugins(ctx, [
     sessionPlugin,
     createJsonlSessionPersistence({ root }),
+    createLocalEnvPlugin(),
     toolsPlugin,
     llmPlugin,
     systemPromptPlugin,
     agentLoopPlugin,
     sessionCheckpointPlugin,
+    createBashPlugin(),
+    createTaskToolsPlugin(),
   ]);
   // BASE_URL 语义随协议：openai → {baseUrl}/chat/completions；anthropic → {baseUrl}/v1/messages
   const adapter =
@@ -46,19 +51,6 @@ try {
   const provider = adapter.name; // provider 名与 adapter.name 精确一致（no-adapter fail-closed）
   const off = ctx.use(llmRuntime).registerAdapter(adapter);
   ctx.effect(off);
-
-  // 自定义输出工具：模型通过 tool_use 调用它，工具体真实执行并回传
-  const outputs: string[] = [];
-  ctx.use(toolRegistry).register({
-    name: "output",
-    description: "把给定文本作为本会话的正式输出展示给用户",
-    inputSchema: Type.Object({ text: Type.String({ description: "要输出的内容" }) }),
-    execute: async (args) => {
-      const text = (args as { text: string }).text;
-      outputs.push(text);
-      return { content: `1111已输出==================>：${text}` };
-    },
-  });
 
   const made = await ctx.use(agentLoopServiceToken).create({
     session: { id: "real-smoke" as SessionId },
@@ -112,9 +104,7 @@ try {
   });
   ctx.effect(offStream);
 
-  made.value.agent.followup(
-    "调用 output 工具",
-  );
+  made.value.agent.followup( "你能做什么，你有哪些工具" );
   await made.value.agent.whenIdle();
   if (pacer !== undefined) clearInterval(pacer);
   drain();

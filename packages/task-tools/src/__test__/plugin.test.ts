@@ -9,8 +9,8 @@ import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
-import { createLocalEnv } from "@x-harness/exec-env";
-import { BackgroundTasks, defaultTaskLimits } from "@x-harness/tool-bash";
+import { createLocalEnv, createLocalEnvPlugin } from "@x-harness/exec-env";
+import { backgroundTasks, createBashPlugin, BackgroundTasks, defaultTaskLimits } from "@x-harness/tool-bash";
 import type { BackgroundTasks as BackgroundTasksType } from "@x-harness/tool-bash";
 import { createTaskToolsPlugin } from "../plugin.ts";
 import { taskHub } from "../tokens.ts";
@@ -68,6 +68,33 @@ describe("task-tools plugin assembly", () => {
     expect(stopped.content).toContain("killed");
     expect(stopped.content).not.toContain("mid-kill"); // whenSettled 收敛后铸终态
     await ctx.dispose(); // dispose 两段杀在途任务
+  });
+
+  it("bare assembly docks tool-bash's registry via the service (no manual threading)", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin(), createTaskToolsPlugin()]);
+    const session = sid("dock");
+    const started = await ctx.use(backgroundTasks).start({ command: "echo dock-ok", cwd: process.cwd(), session, env: createLocalEnv(process.cwd()) });
+    expect(started.ok).toBe(true);
+    const read = await ctx.use(toolRegistry).dispatch({ callId: "c1", name: "task_output", args: { task_id: started.ok ? started.value.id : "", block: true, timeout: 5_000 }, signal: new AbortController().signal, session });
+    expect(read.isError).toBeUndefined();
+    expect(read.content).toContain("dock-ok");
+    expect(read.content).toContain("completed exit=0");
+    await ctx.dispose(); // dispose 两段杀在途任务
+    void unload;
+  });
+
+  it("docking is order-independent: task-tools listed before tool-bash still shares", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createTaskToolsPlugin(), createLocalEnvPlugin(), createBashPlugin()]);
+    const session = sid("dock-2");
+    const started = await ctx.use(backgroundTasks).start({ command: "echo dock-order-ok", cwd: process.cwd(), session, env: createLocalEnv(process.cwd()) });
+    expect(started.ok).toBe(true);
+    const read = await ctx.use(toolRegistry).dispatch({ callId: "c1", name: "task_output", args: { task_id: started.ok ? started.value.id : "", block: true, timeout: 5_000 }, signal: new AbortController().signal, session });
+    expect(read.isError).toBeUndefined();
+    expect(read.content).toContain("dock-order-ok");
+    await ctx.dispose();
+    void unload;
   });
 
   it("without bashTasks the hub answers unified not-found for bash-shaped ids", async () => {

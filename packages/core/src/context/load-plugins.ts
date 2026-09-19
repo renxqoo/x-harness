@@ -15,6 +15,14 @@ import type {
 function assertValid(plugins: readonly Plugin[]): void {
   const names = new Set<string>();
   for (const plugin of plugins) {
+    // 工厂函数自带 name 与 Function.prototype.apply，结构上冒充 Plugin 骗过类型检查——
+    // 形状特征：apply 变成「无参调用工厂」（副作用不发生），返回的 Plugin 对象被当
+    // disposer 压进 unwind 链（dispose 期 'unwind is not a function'）。装配期 fail-fast
+    const raw: unknown = plugin;
+    if (typeof raw === "function") {
+      const name = (raw as { readonly name?: string }).name ?? "anonymous";
+      throw new Error(`plugin is a factory function, not a plugin — call it: ${name}()`);
+    }
     if (typeof plugin.name !== "string" || plugin.name.length === 0) {
       throw new Error("plugin name must be a non-empty string");
     }

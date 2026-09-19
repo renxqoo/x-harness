@@ -50,6 +50,16 @@ describe("插件加载器（§5）", () => {
     await expect(loadPlugins(ctx, plugins)).rejects.toThrow(/unknown plugin "ghost"/);
   });
 
+  it("工厂函数冒充插件（漏调用）→ 装配期 fail-fast 并点名调用法", async () => {
+    const ctx = createContext();
+    // 形状复刻：命名工厂函数自带 name/Function.prototype.apply，结构上满足 Plugin——
+    // 症状（修复前）：apply 变无参调用工厂，副作用不发生 + 返回对象进 unwind 链崩 dispose
+    const createGhost = (): Plugin => ({ name: "ghost", apply: () => {} });
+    await expect(loadPlugins(ctx, [createGhost as never])).rejects.toThrow(
+      /plugin is a factory function, not a plugin — call it: createGhost\(\)/,
+    );
+  });
+
   it("apply 返回 disposer 自动入账，dispose 时回卷", async () => {
     const ctx = createContext();
     const unwound = vi.fn();

@@ -22,7 +22,7 @@
     "@x-harness/tool-grep": "workspace:*",
     "@x-harness/tool-read": "workspace:*",
     "@x-harness/tool-write": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0"
