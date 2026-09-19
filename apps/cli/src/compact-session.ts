@@ -5,6 +5,7 @@
 
 import type { Context } from "@x-harness/core";
 import { llmRuntime } from "@x-harness/llm";
+import { anchorIndexOf } from "@x-harness/session";
 import type { Session, SurfaceNode } from "@x-harness/session";
 
 export type CompactOutcome =
@@ -14,9 +15,10 @@ export type CompactOutcome =
 
 const SUMMARY_INSTRUCTION = "Summarize the conversation above compactly for future context: key decisions, current task state, open items, and any file paths or identifiers that matter. Output only the summary.";
 
-/** 锚点 = surface 首个 data.text 在场节点（system/message） */
+/** 锚点 = surface 首个含 text 节点（session anchorIndexOf 共用谓词） */
 function anchorOf(surface: readonly SurfaceNode[]): SurfaceNode | undefined {
-  return surface.find((node) => (node.event.data as { text?: string }).text !== undefined);
+  const index = anchorIndexOf(surface);
+  return index >= 0 ? surface[index] : undefined;
 }
 
 interface SummarizeInput {

@@ -3,6 +3,7 @@
 // driver.ts 持生命周期编排（kick/turn 循环），本文件只装一个 step 的相位函数与共享原语。
 
 import type { LlmChunk, LlmRuntime } from "@x-harness/llm";
+import { anchorIndexOf } from "@x-harness/session";
 import type { ContentBlock, InboxEntry, InboxTarget, Session, SessionEvent } from "@x-harness/session";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 import type { ToolRegistry, ToolSchema } from "@x-harness/tools";
@@ -130,16 +131,19 @@ function insertBatch(session: Session, target: InboxTarget, entries: readonly In
   appendEvent(session, "agent/inbox/spliced", { op: "insert", target, entries: [...entries] });
 }
 
-/** system 锚点：无锚点 append；文本漂移 replace[seq,seq] */
+/** system 锚点：无锚点 append；文本漂移 replace[seq,seq]（锚点谓词 = session anchorIndexOf） */
 export function anchorSystem(scope: TurnScope, step: number): void {
   const { deps, turn } = scope;
   const session = deps.session;
   const systemText = deps.options.systemPrompt ?? deps.prompt.assemble().text;
-  const anchor = session.surface().find((node) => (node.event.data as { text?: string }).text !== undefined);
-  if (anchor === undefined) {
+  const nodes = session.surface();
+  const anchorIndex = anchorIndexOf(nodes);
+  if (anchorIndex < 0) {
     appendSurfaceEvent(session, { type: "system/message", data: { turn, step, text: systemText }, surfaceOp: "append" });
     return;
   }
+  const anchor = nodes[anchorIndex];
+  if (anchor === undefined) return;
   const anchorText = (anchor.event.data as { text: string }).text ?? "";
   if (anchorText !== systemText) {
     appendSurfaceEvent(session, { type: "system/message", data: { turn, step, text: systemText }, surfaceOp: { op: "replace", startSeq: anchor.seq, endSeq: anchor.seq } });

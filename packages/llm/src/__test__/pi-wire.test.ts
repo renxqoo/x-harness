@@ -166,7 +166,6 @@ describe("pi 真身冒烟：anthropic-messages", () => {
 
   it.each([
     ["秒小数", { "retry-after": "2" }, 2000],
-    ["HTTP-date 未来", { "retry-after": new Date(Date.now() + 5000).toUTCString() }, "4000-5000"],
     ["HTTP-date 过去=0", { "retry-after": "Wed, 21 Oct 2015 07:28:00 GMT" }, 0],
     ["毫秒语义头", { "retry-after-ms": "1800" }, 1800],
   ])("Retry-After 头捕获链路：%s", async (_name, headers, expected) => {
@@ -177,12 +176,19 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const finish = chunks.at(-1);
     if (finish?.type !== "finish" || finish.finish.kind !== "error") throw new Error("非 error finish");
     expect(finish.finish.code).toBe("http-429");
-    if (expected === "4000-5000") {
-      expect(finish.finish.retryAfterMs).toBeGreaterThanOrEqual(4000);
-      expect(finish.finish.retryAfterMs).toBeLessThanOrEqual(5000);
-    } else {
-      expect(finish.finish.retryAfterMs).toBe(expected);
-    }
+    expect(finish.finish.retryAfterMs).toBe(expected);
+  });
+
+  it("Retry-After 头捕获链路：HTTP-date 未来（日期用例体内现算——表构造期求值会被并行调度延迟吃掉断言窗口）", async () => {
+    srv = await startSceneServer();
+    srv.nextScene({ status: 429, headers: { "retry-after": new Date(Date.now() + 5000).toUTCString() }, chunks: ["data: {}"] });
+    const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test" });
+    const chunks = await collect(adapter.stream(request({})));
+    const finish = chunks.at(-1);
+    if (finish?.type !== "finish" || finish.finish.kind !== "error") throw new Error("非 error finish");
+    expect(finish.finish.code).toBe("http-429");
+    expect(finish.finish.retryAfterMs).toBeGreaterThanOrEqual(4000);
+    expect(finish.finish.retryAfterMs).toBeLessThanOrEqual(5000);
   });
 });
 

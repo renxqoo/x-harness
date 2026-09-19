@@ -15,6 +15,13 @@ export function isSurfaceEventType(type: string): type is SurfaceEventType {
   return SURFACE_TYPES.has(type);
 }
 
+/** 锚点下标：首个 data 含顶层 text 字段的节点（system/message 专有形态；含 dormant
+ *  空文本锚）；无锚返回 -1。共用谓词——agent-loop anchorSystem 漂移替换、CLI /compact
+ *  折叠区间、compaction L2 保留头三处锚定语义由此唯一决定。 */
+export function anchorIndexOf(nodes: readonly SurfaceNode[]): number {
+  return nodes.findIndex((node) => (node.event.data as { text?: unknown }).text !== undefined);
+}
+
 /** 投影步进的唯一真相：append 入尾；replace 端点以 seq 定位节点、摘除两端点**位置之间**
  *  （含端点）的全部节点、新节点落 startSeq 端点原位置。区间按位置不按数值成员——迭代
  *  前缀替换（压缩/滑窗）落地后头部节点携带 journal 尾 seq、其后保留节点 seq 更小，摘除集

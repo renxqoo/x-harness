@@ -4,6 +4,7 @@
 // 累积更新链。
 
 import type { LlmRuntime } from "@x-harness/llm";
+import { anchorIndexOf } from "@x-harness/session";
 import type { SessionId, SessionStore, SurfaceNode } from "@x-harness/session";
 import { estimateText } from "@x-harness/token-meter";
 import { findCutPoint, USER_QUOTE_TOKENS } from "./cut.ts";
@@ -219,12 +220,16 @@ async function compactSession(
 ): Promise<CompactionResult> {
   const quote = fields.trigger === "emergency" ? 0 : USER_QUOTE_TOKENS;
   const keep = fields.keepRecentTokens ?? deps.config.keepRecentTokens;
-  const cut = findCutPoint(nodes, keep, quote);
+  // 保留头 = 锚点（首个含 text 节点——session anchorIndexOf 共用谓词）及其之前：
+  // 预锚注入（skill 清单等）与 system 锚点永不进摘要区间；无锚 → 0。
+  // 切口候选同步以 start 为下界（预锚 append 型 user 块不算真轮起点——不进护栏
+  // 分母、不占原话配额），防「区间只剩上一份摘要但护栏被预锚块虚假满足」。
+  const start = anchorIndexOf(nodes) + 1;
+  const cut = findCutPoint(nodes, keep, { userQuoteTokens: quote, protectedHead: start });
   if (cut === undefined) return { ok: false, reason: "no-cut-point" };
 
-  // 区间 = [保留头之后首节点 .. cut 前末节点]（system 锚点本身保留；位置区间语义）。
+  // 区间 = [保留头之后首节点 .. cut 前末节点]（system 锚点与预锚注入保留；位置区间语义）。
   // 空区间不可达：无进展护栏保证 cut > 首候选 ≥ start，故 end = cut − 1 ≥ start 恒成立
-  const start = nodes[0] !== undefined && nodes[0].event.type === "system/message" ? 1 : 0;
   const end = cut.cut - 1;
 
   const face = deps.config.summarizer;

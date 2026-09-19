@@ -110,11 +110,9 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
     任何被读文件」同类风险（统一治理立场）；渲染的三字段清洗/中和/截断/条目
     上限把该无门面做成有界。
   - 无压缩装配时跨进程快照漂移的清单块线性累积（见 §1.3 累积语义）。
-  - **挂账（不越界代修，影响未来装配）**：`packages/compaction` L2 头部替换
-    守卫（compact.ts `nodes[0] 为 system 才豁免`）会被技能块占 surface[0] 击穿
-    ——届时 system 锚点被连坐折叠、锚点位置周期弹跳；且注入块被 cut.ts 判为
-    「真轮起点」挤占用户原话保留配额。未来 compaction 接入 CLI 装配前必须先修
-    该守卫（豁免首个 data.text 节点）并在 cut.ts 排除合成块。
+  - ~~挂账：`packages/compaction` L2 头部守卫会被技能块占 surface[0] 击穿~~
+    已核销：保留头改为锚点谓词定位（`session.anchorIndexOf` 共用）+ 切口候选
+    以保留头为下界——预锚注入豁免一切切口角色（docs/COMPACTION.md §1.1）。
 
 ## §3 并发/一致性预算
 
@@ -200,6 +198,7 @@ prompt 结构性静态作为防线保留（未来任何动态化倾向都会先�
 EACCES 的平台条件，非门禁规避）；收口批次断言只加强未削弱（幸存者身份钉死、
 封存重复边沿、头块压缩在场）。
 
-挂账（不越界代修）：① `packages/compaction` L2 头部守卫 + cut.ts 真轮起点
-配额（未来接入 CLI 装配前先修，见 §2）；② `packages/llm pi-wire.test.ts`
-"Retry-After HTTP-date" 并行调度偶发（存量时序敏感用例，非本改动引入）。
+挂账（不越界代修）：① ~~compaction L2 头部守卫~~ 已核销（锚点谓词保留头 +
+protectedHead，见 §2）；② `packages/llm pi-wire.test.ts` "Retry-After
+HTTP-date" 并行调度偶发——已修（未来日期用例体内现算，表构造期求值被调度
+延迟吃掉断言窗口是根因）。

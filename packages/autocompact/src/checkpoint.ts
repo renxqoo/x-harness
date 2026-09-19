@@ -9,6 +9,7 @@
 
 import type { LlmRuntime } from "@x-harness/llm";
 import type { Session, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
+import { anchorIndexOf } from "@x-harness/session";
 import {
   accumulateFileOps,
   capSerializedConversation,
@@ -231,11 +232,14 @@ export function firstUncoveredIndex(state: CheckpointState, nodes: readonly Surf
   return nodes.length;
 }
 
-/** 新投影的保守覆盖边界（外部落账/吞段后的重锚面）：首个切口候选（index ≥ 1 的
- *  真轮起点）之前节点的 seq——该前缀已被外部摘要承载，视为已覆盖；
- *  无候选 → 末节点 seq（全投影视为覆盖前缀的外部承载面） */
+/** 新投影的保守覆盖边界（外部落账/吞段后的重锚面）：首个切口候选（锚点之后的
+ *  真轮起点——anchorIndexOf 共用谓词，预锚注入不计候选）之前节点的 seq——该前缀
+ *  已被外部摘要承载，视为已覆盖；无候选 → 末节点 seq（全投影视为覆盖前缀的外部
+ *  承载面）；无锚 → 维持跳过首节点的旧口径 */
 export function conservativeBoundarySeq(nodes: readonly SurfaceNode[]): number {
-  for (let i = 1; i < nodes.length; i += 1) {
+  const anchor = anchorIndexOf(nodes);
+  const from = anchor < 0 ? 1 : anchor + 1;
+  for (let i = from; i < nodes.length; i += 1) {
     if (isTurnStartNode(nodes[i] as SurfaceNode)) return (nodes[i - 1] as SurfaceNode).seq;
   }
   return nodes.length > 0 ? (nodes[nodes.length - 1] as SurfaceNode).seq : -1;

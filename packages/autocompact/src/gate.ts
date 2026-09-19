@@ -6,6 +6,7 @@
 
 import type { LlmRuntime } from "@x-harness/llm";
 import type { Session, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
+import { anchorIndexOf } from "@x-harness/session";
 import { isTurnStartNode, lastWindow, nodeTokens, type FileToolNames, type SummarizerFace } from "@x-harness/compaction";
 import { calibrationFactor, pushCalibrationSample } from "./calibration.ts";
 import { joinInflight, maybeStartCheckpoint } from "./checkpoint.ts";
@@ -86,10 +87,13 @@ function updateCalibration(cache: SessionState["cache"], pair: { readonly traili
 
 /** 外部 compaction 后覆盖边界重锚：任何无在飞作业时的前缀落账（手动 /compact、
  *  L3 紧急）都会使其失真——重锚到当前投影内（保守 min：未收编段重新从活口头
- *  算起，L2 覆盖域守卫恢复有效） */
+ *  算起，L2 覆盖域守卫恢复有效）。首个候选以锚点谓词定位（预锚注入不计）；
+ *  无锚 → 维持跳过首节点的旧口径 */
 function reanchorCoverage(state: SessionState, nodes: readonly SurfaceNode[]): void {
   let targetSeq = -1;
-  for (let i = 1; i < nodes.length; i += 1) {
+  const anchor = anchorIndexOf(nodes);
+  const from = anchor < 0 ? 1 : anchor + 1;
+  for (let i = from; i < nodes.length; i += 1) {
     const node = nodes[i];
     if (node !== undefined && isTurnStartNode(node)) {
       targetSeq = node.seq;

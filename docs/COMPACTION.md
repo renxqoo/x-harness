@@ -99,10 +99,15 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin;
   候选）→ `cut = 首个 ≥ floor 的候选 ?? lastCandidate`。护栏：最后候选恒保留；无进展
   （可摘要区间不含切口候选）→ `undefined`（不发起摘要调用——参照系 H3 根治面）。
   emergency 时 keep=0、quote=0。非整数预算按数值比较（NaN 同 0、Infinity 同超大）。
+  **保留头（protectedHead）**：锚点（`session.anchorIndexOf`——首个含顶层 text 节点，
+  与 agent-loop anchorSystem / CLI /compact 共用谓词）及其之前的全部节点。切口候选
+  以保留头为下界：预锚注入（skill 清单等 append 型 user 块）不算真轮起点——不进
+  候选、不占原话配额、不参与无进展护栏分母（否则护栏被预锚块虚假满足 → 摘要摘摘要）。
 - 摘要落账 = `session.append("user/message", {turn, step, content:[{type:"text",text}]},
   {surfaceOp:{op:"replace", startSeq, endSeq}})`；**区间 = 位置区间**（§2.A 语义扩展）：
-  startSeq = 保留头之后首节点 seq（**system 锚点本身保留**——锚点在场则取其后首节点；
-  无锚点则常为上一份摘要/首节点），endSeq = cut 前末节点 seq；摘除两端点**位置之间**全部
+  startSeq = 保留头之后首节点 seq（**system 锚点与预锚注入本身保留**——锚点由谓词
+  定位而非位置特判，锚点在场则取其后首节点；无锚点则常为上一份摘要/首节点），
+  endSeq = cut 前末节点 seq；摘除两端点**位置之间**全部
   节点（含端点），新节点落 startSeq 位置。空区间不可达：无进展护栏 cut > 首候选 ≥ start
   ⇒ end = cut − 1 ≥ start 恒成立（实现按不变量构造，不设死分支）。上一份摘要（或 L2 账本落账，见下）位于区间首位、被本份替换——累积更新链。
   turn/step 取触发上下文：水位/自愈 = payload 的 turn/step；手动 = 在飞轮的当前值，

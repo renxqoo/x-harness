@@ -474,3 +474,61 @@ describe("理由词表封闭性（docs/COMPACTION.md §1.1——词表由测试�
     }
   });
 });
+
+describe("预锚注入头部豁免（skill 清单形态——L2 头部守卫缺陷回归）", () => {
+  function injectSkillList(session: import("@x-harness/session").Session): void {
+    const injected = session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "SKILL-LIST" }] }, { surfaceOp: "append" });
+    if (!injected.ok) throw new Error(injected.reason);
+  }
+
+  it("症状回归：预锚 user 块占 surface[0] 不击穿保留头——预锚块与 system 锚点均不进摘要区间", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("skillhead") });
+      if (!made.ok) throw new Error(made.reason);
+      const session = made.value;
+      injectSkillList(session);
+      seedSystem(session, "SYS");
+      seedTurn(session, { turn: 0, user: "first question", assistant: { text: "answer-0", usage: { input: 50, output: 5 } } });
+      seedTurn(session, { turn: 1, user: "second question", assistant: { text: "answer-1", usage: { input: 950, output: 5 } } });
+      world.llm.scripts.push(textScript("COMPACT-SUMMARY"));
+
+      await dispatchPreStep(world, { session: session.id });
+
+      const messages = session.deriveMessages();
+      // 修复前：nodes[0] 非 system → start=0 → 区间 [预锚块, system 锚点, ...] 连坐折叠
+      expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "SKILL-LIST" }] });
+      expect(messages[1]).toMatchObject({ role: "system", text: "SYS" });
+      const summary = messages[2] as unknown as { content: ReadonlyArray<{ text: string }> };
+      expect(summary.content[0]?.text ?? "").toContain("COMPACT-SUMMARY");
+      expect(messages.length).toBeLessThan(6); // 前缀已折叠（预锚块+锚点+摘要+当轮消息）
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("症状回归：头部之后只剩上一份摘要时拒切——预锚块不得虚假满足无进展护栏（摘要摘摘要防线）", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("skillstale") });
+      if (!made.ok) throw new Error(made.reason);
+      const session = made.value;
+      injectSkillList(session);
+      seedSystem(session, "SYS");
+      seedTurn(session, { turn: 0, user: "q0", assistant: { text: "a0", usage: { input: 10, output: 1 } } });
+      seedTurn(session, { turn: 1, user: "q1", assistant: { text: "a1", usage: { input: 10, output: 1 } } });
+      seedTurn(session, { turn: 2, user: "q2", assistant: { text: "a2", usage: { input: 10, output: 1 } } });
+      const runner = world.ctx.use(compactionRunner);
+      world.llm.scripts.push(textScript("FIRST-SUMMARY"));
+      const first = await runner.compact({ session: session.id });
+      if (!first.ok) throw new Error(first.reason);
+
+      // 第二次：保护头后仅剩 [FIRST-SUMMARY(replace), 当轮]——修复前护栏被预锚块虚假满足 → 摘要摘摘要
+      const second = await runner.compact({ session: session.id });
+      expect(second).toEqual({ ok: false, reason: "no-cut-point" });
+      expect(world.llm.calls).toHaveLength(1); // 第二次零拨号
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+});

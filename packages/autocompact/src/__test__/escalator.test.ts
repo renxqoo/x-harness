@@ -186,3 +186,43 @@ describe("escalateL2", () => {
     }
   });
 });
+
+describe("L2 头部守卫（预锚注入——skill 清单形态缺陷回归）", () => {
+  it("症状回归：预锚 user 块 + system 锚点均不进 L2 替换区间——账本摘要落锚点之后", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("l2-head") });
+      if (!made.ok) throw new Error(made.reason);
+      const session = made.value;
+      // 修复前形态：[skill 块(append user), system 锚点, 轮次……]——nodes[0] 非 system
+      const injected = session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "SKILL-LIST" }] }, { surfaceOp: "append" });
+      if (!injected.ok) throw new Error(injected.reason);
+      const sys = session.append("system/message", { turn: 0, step: 0, text: "SYS" }, { surfaceOp: "append" });
+      if (!sys.ok) throw new Error(sys.reason);
+      for (let turn = 0; turn < 8; turn += 1) {
+        seedTurn(session, { turn, user: textOf(2_000), assistant: { text: textOf(2_000), usage: { input: 10, output: 1 } } });
+      }
+      const state = stateWithLedger();
+      state.armed = true;
+      state.coveredSeq = session.surface().at(-2)?.seq ?? -1; // 账本已覆盖全前缀
+      const result = escalateL2({ state, session, nodes: session.surface(), effectiveWindow: 900, ledgerBudgetTokens: 200, emit: () => {} });
+      expect(result.ok).toBe(true);
+      const messages = session.deriveMessages();
+      // 修复前：start=0（nodes[0] 非 system）→ 预锚块与锚点被账本摘要连坐替换
+      expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "SKILL-LIST" }] });
+      expect(messages[1]).toMatchObject({ role: "system", text: "SYS" });
+      const summary = messages[2] as { content: ReadonlyArray<{ text: string }> };
+      expect(summary.content[0]?.text ?? "").toContain("<goals>");
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("alignDownToTurnStart 扫描下界：预锚块不作对齐目标", () => {
+    const nodes = [userNode(0, "SKILL-LIST"), userNode(1, textOf(1)), assistantNode(2, textOf(1)), userNode(3, textOf(1))];
+    expect(alignDownToTurnStart(nodes, 3)).toBe(3); // 缺省全扫：u3 最近
+    expect(alignDownToTurnStart(nodes, 3, 1)).toBe(3); // from=1 跳过预锚块
+    expect(alignDownToTurnStart(nodes, 2, 1)).toBe(1); // ceiling=2 → u1
+    expect(alignDownToTurnStart(nodes, 2, 2)).toBeUndefined(); // 保护头后无候选
+  });
+});

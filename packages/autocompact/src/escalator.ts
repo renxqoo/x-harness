@@ -4,6 +4,7 @@
 // 账本已覆盖的前缀（复测门二次落账豁免——其唯一目的是缩活口本身）。
 
 import type { Session, SessionId, SurfaceNode } from "@x-harness/session";
+import { anchorIndexOf } from "@x-harness/session";
 import { AUTO_CONTINUATION_NOTE, findCutPoint, isTurnStartNode, USER_QUOTE_TOKENS } from "@x-harness/compaction";
 import { cancelJob, filesTextOf, firstUncoveredIndex } from "./checkpoint.ts";
 import type { CheckpointState } from "./checkpoint.ts";
@@ -20,10 +21,11 @@ export function ledgerReadyForL2(state: CheckpointState): boolean {
   return !state.broken && ledgerReady(state.ledger);
 }
 
-/** ceiling 之下（含）最近的真轮起点节点下标；无候选 → undefined */
-export function alignDownToTurnStart(nodes: readonly SurfaceNode[], ceiling: number): number | undefined {
+/** ceiling 之下（含）最近的真轮起点节点下标；无候选 → undefined。from = 扫描下界
+ *  （保留头——预锚注入不算真轮起点，不作对齐目标） */
+export function alignDownToTurnStart(nodes: readonly SurfaceNode[], ceiling: number, from = 0): number | undefined {
   let cut: number | undefined;
-  for (let i = 0; i < nodes.length && i <= ceiling; i += 1) {
+  for (let i = from; i < nodes.length && i <= ceiling; i += 1) {
     if (isTurnStartNode(nodes[i] as SurfaceNode)) cut = i;
   }
   return cut;
@@ -51,15 +53,17 @@ export function escalateL2(fields: {
   const ledgerTok = Math.min(ledgerTokens(state.ledger, filesText), fields.ledgerBudgetTokens);
   const factor = fields.liveBudgetFactor ?? 1;
   const liveBudget = Math.max(500, Math.floor((fields.effectiveWindow - ledgerTok) * factor) - 2_000);
-  const budgetCut = findCutPoint(nodes, liveBudget, USER_QUOTE_TOKENS);
+  // 保留头 = 锚点（session anchorIndexOf 共用谓词）及其之前——预锚注入（skill 清单
+  // 等）与 system 锚点豁免 L2 替换；切口候选/对齐同步以保留头为下界
+  const start = anchorIndexOf(nodes) + 1;
+  const budgetCut = findCutPoint(nodes, liveBudget, { userQuoteTokens: USER_QUOTE_TOKENS, protectedHead: start });
   if (budgetCut === undefined) return { ok: false, nodes: undefined };
   // 覆盖域守卫：不替换账本未覆盖的前缀；复测门二次（coverageGuard=false）不受
   // 钳制——首次落账后前缀已是账本摘要，二次的目的是收缩活口
   const ceiling = fields.coverageGuard === false ? budgetCut.cut : Math.min(budgetCut.cut, coveredIndex);
-  const cut = alignDownToTurnStart(nodes, ceiling);
-  if (cut === undefined || cut <= 0) return { ok: false, nodes: undefined };
+  const cut = alignDownToTurnStart(nodes, ceiling, start);
+  if (cut === undefined || cut <= start) return { ok: false, nodes: undefined };
 
-  const start = nodes[0] !== undefined && nodes[0].event.type === "system/message" ? 1 : 0;
   const end = cut - 1;
   if (end < start) return { ok: false, nodes: undefined };
   const startNode = nodes[start];
