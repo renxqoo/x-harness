@@ -1,4 +1,4 @@
-// 世界装配（docs/CLI.md §2.5）：全量 17 插件 + N adapter，数组序即注册序。
+// 世界装配（docs/CLI.md §2.5）：全量 18 插件 + N adapter，数组序即注册序。
 // 硬约束：tool-* 的 env 是 apply 时同步 tryUse(execEnv)，围栏 execEnv 提供者 sandbox
 // 必须排在 tool-* 之前。多 provider 不用适配器插件工厂（插件名固定会重名被拒），
 // loadPlugins 后宿主直注册。--no-session 条件化略去 jsonl 持久化（无条件装配唯一例外）。
@@ -15,6 +15,7 @@ import { createLlmRetryPlugin } from "@x-harness/llm-retry";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
 import { createSandboxPlugin } from "@x-harness/sandbox-local";
+import { createSkillPlugin } from "@x-harness/skill";
 import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session";
 import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
@@ -116,6 +117,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     agentLoopPlugin,
     sessionCheckpointPlugin,
     createAgentDelegationPlugin(),
+    createSkillPlugin(),
   ];
   const ctx = createContext();
   try {

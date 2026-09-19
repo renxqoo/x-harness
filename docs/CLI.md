@@ -24,7 +24,7 @@
 | 事项 | 归属 |
 | --- | --- |
 | OAuth 登录、auth 子命令、凭据管理 | 不做——llm 包是纯配置对象，凭据即 providers.json |
-| 主题系统、extensions/skills/themes 加载 | 不做——x-harness 无对应插件子系统 |
+| 主题系统、extensions/themes 加载 | 不做——x-harness 无对应插件子系统（skills 已有：packages/skill，见 §2.5） |
 | package manager（install/remove/update） | 不做——plugin-manager 是库形态，宿主 CLI 面另行立项 |
 | 会话分享 / HTML 导出 / RPC 模式 | 不做——核心面外 |
 | 图片 @file 引用 | 不做——session surface 无图片词条；仅文本文件 |
@@ -172,9 +172,15 @@ systemPromptPlugin
 agentLoopPlugin
 sessionCheckpointPlugin
 createAgentDelegationPlugin()                               // agentsDirs 走缺省链；mailbox 缺席=进程内
+createSkillPlugin()                                         // skills 目录扫描 + 会话首轮清单注入（docs/SKILL.md）
 ```
 
-（共 18 个插件（含 cli-permission-broker 审批插件）+ N 个运行时注册的 LLM adapter。）
+（共 19 个插件（含 cli-permission-broker 审批插件）+ N 个运行时注册的 LLM adapter。）
+
+skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
+`[<cwd>/.x-harness/skills, ~/.x-harness/skills]`（同名项目域胜）；清单以
+`<system-reminder>` user 消息注入每会话首 turn，skill 正文由模型经 read 工具
+按清单内绝对路径自行读取（用户域首读走既有 permission ask）。
 
 裁决与依据：
 

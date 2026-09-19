@@ -27,6 +27,7 @@
         "@x-harness/session": "workspace:*",
         "@x-harness/session-checkpoint": "workspace:*",
         "@x-harness/session-persistence-jsonl": "workspace:*",
+        "@x-harness/skill": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/task-tools": "workspace:*",
         "@x-harness/token-meter": "workspace:*",
