@@ -37,9 +37,15 @@
 
 | 波 | 单元 | 验收点 | 文档 |
 |---|---|---|---|
-| S0 | 内核 softInject 原语 + tool-core 采纳（数组序约束结构性消灭） | 乱序装配探针 + 1730 用例零改写 | S0-SOFT-INJECT |
-| F1 | @x-harness/harness kit 目录 + createAgentWorld + CLI dogfood | CLI/e2e 零改写 + 乱序插件集用例 | F1-HARNESS-KITS |
-| F2 | PLUGIN-AUTHORING.md 作者入口 | 五块齐 + 总表零死链 + 事实核对 | F2-AUTHORING |
-| F3 | @x-harness/testkit + e2e 换用 | journey 断言零语义变化 + testkit 用例 | F3-TESTKIT |
+| F0 | 拦截面三缺口（pre-step 改写/assistant-settle/llm-stream） | 三 waterfall 契约用例 + 1730 零改写 + 对抗审查 | F0-INTERCEPTION |
+| F0.5 | token 词表治理（装期同名异体 throw） | 冲突检测用例 + 现有 plugin-manager 测试零改写 | F05-TOKEN-GOVERNANCE |
+| S0 | 内核 softInject + tool-core 采纳 | 乱序装配探针 + 1730 零改写 | S0-SOFT-INJECT |
+| F3 | @x-harness/testkit + e2e 换用（提前——后续波共用） | journey 断言零语义变化 + testkit 用例 | F3-TESTKIT |
+| F1 | harness kit 目录 + createAgentWorld + CLI dogfood | CLI/e2e 零改写 + 乱序插件集用例 | F1-HARNESS-KITS |
+| T2A | settings seam（register/get 分层/set 变更事件/file 提供方） | seam 契约用例 + 层叠解析矩阵 | T2A-SETTINGS |
+| T2B | 持久状态 seam（KV 契约 + memory/json 提供方） | 契约用例 + json 持久往返 | T2B-STATE |
+| T2C | credentials seam（resolve 引用式 + env/.env/file + redact） | 契约用例 + 换源即达 | T2C-CREDENTIALS |
+| T2D | 遥测 seam（record + 脱敏 + stderr sink） | 契约用例 + 脱敏矩阵 | T2D-TELEMETRY |
+| F2 | PLUGIN-AUTHORING.md（总表/陷阱/契约规矩/token 惯例/seam 目录） | 五块齐 + 零死链 + 事实核对 | F2-AUTHORING |
 
 每波单提交可 revert。

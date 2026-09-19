@@ -17,6 +17,8 @@
 | S3 | 门面零业务内容：prompt 基础段经 kit/插件注入（后核销修正 1 原则）；adapters 经插件闭包注册（消灭"后置注册"仪式） | 设计裁决 |
 | S4 | World 形状沿用（ctx/unload/store/archive/loop/prompt/meter/registry） | 避免双类型 |
 | S5 | **新增内核原语 `Plugin.softInject`**："在场则排后，缺席则无约束"的声明式软依赖——任意组合安全性的结构基础 | 本设计（见 §2.1） |
+| S6 | T1+T2 全量：拦截面三缺口（F0）+ token 词表治理（F0.5）+ 契约稳定性规矩（并入 F2）；四个标准 seam——settings/持久状态/credentials/遥测（T2A-D）全部进本轮 | 2026-09-20 对话 |
+| S7 | seam 形态 = **自包含上层包**（服务 token + 类型 + 缺省提供方 + 插件，permission/sandbox-local 同款模式）——不动内核，契约随包走 | 设计裁决 |
 
 ## 2. 外部契约
 
@@ -78,3 +80,41 @@ softInject 仅装配期拓扑计算（O(V+E)）零运行时开销；kit 为纯�
 | kit 边界吸业务 | S3 判据：内容经参数注入；审查专项 |
 | CLI 换用漂移 | F0 等价锚：CLI 全测试 + e2e 零改写 |
 | softInject 名漂移（改名失配=静默退化为数组序） | 门禁可加：tool-core 声明的软名在本仓插件名清单内（实施期裁决成本） |
+
+
+## 6. T1 地基补全（F0/F0.5）
+
+### 6.1 F0 拦截面（agent-loop/tools/llm 三个新 waterfall——契约级，core 不动）
+
+```ts
+// ① pre-step 改写：enter 可携重写消息（落账走重写版——「模型可见必落盘」不变量保持：重写版即日志版）
+export type PreStepDecision = { kind: "enter" } | { kind: "enter"; messages: readonly InboxEntry[] } | { kind: "reject"; reason: string };
+// ② assistant 落账前纠：settle 与 append 之间（content/stopReason 可改写；落的是改写后版本）
+export const agentAssistantSettle = defineWaterfall<{ session; turn; step; content; stopReason; signal }, { content; stopReason }>("agent/assistant-settle");
+// ③ 流拦截：包 adapter.stream（包裹/截断/注入帧；settle 仍以落账版为准——流拦截只影响实时面）
+export const llmStream = defineWaterfall<LlmRequest, AsyncGenerator<LlmChunk>>("llm/stream");
+```
+
+### 6.2 F0.5 token 词表治理
+
+- plugin-manager `tokenTable.set` 前查同名异体（不同对象同 name）→ **install 期 throw**（fail-closed）。
+- well-known 治理规矩（并入 F2 文档）：token 随其服务定义包发布；消费别人服务=依赖其包（模块单例保证对象同一）；禁止第三方复用平台 token 名。
+
+## 7. T2 四个标准 seam（自包含包，S7）
+
+### 7.1 T2A settings（packages/settings）：`ctx.settings`
+- `register(namespace, TypeBox schema)` 注册配置面 + `get<T>(namespace): Static<T>` 分层解析（插件缺省 < 文件层 < 运行时层）+ `set(namespace, patch)` 运行时变更（发 `settings/changed` 事件，插件可监听热响应）+ 提供方 seam（settings-file：json 后端）。
+- 端用户可配任意 agent 的标准面；宿主决定层叠来源。
+
+### 7.2 T2B 持久状态（packages/state）：`ctx.state`
+- `scope(namespace): { get(key): Promise<T|undefined>; set(key, v): Promise<void>; list(prefix?): Promise<readonly K[]> }` KV 契约；提供方 seam（state-memory 缺省 / state-json 落盘）；memory/索引类插件的 durable 落点（会话日志之外）。
+
+### 7.3 T2C credentials（packages/credentials）：`ctx.credentials`
+- `resolve(ref): Promise<Result<string>>`（引用式——配置持引用不持值）；提供方 seam（env/.env/file）；`redact(value)` 展示脱敏标准面。provider 换源不改消费方（dsh「rotated credential reaches the very next request」同语义）。
+
+### 7.4 T2D 遥测（packages/telemetry）：`ctx.telemetry`
+- `record(event: { kind: "span"|"metric"|"log"; name; fields; ts? })` + 字段脱敏钩子 + sink seam（缺省 stderr JSONL）。token-meter 用量归一入此面（迁移可选，挂账）。
+
+## 8. 契约稳定性规矩（并入 F2 作者文档）
+
+冻结面：Plugin 接口/六类 token 形状/token 名词表；pre-stable 面：waterfall payload（变更须迁移说明）。版本化：包版本 + 变更日志（发布策略属产品阶段挂账）。
