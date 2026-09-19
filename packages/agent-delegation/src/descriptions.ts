@@ -1,7 +1,7 @@
-// 工具 description 逐字常量：与 Claude Code「子代理与后台任务」五工具文档英文原文逐字一致
+// 工具 description 逐字常量：与 Claude Code「子代理与后台任务」文档英文原文逐字一致
 // （源 /Users/wrr/work/claude-tool/agent-and-background-tasks.md）。映射：agent_spawn←Agent、
-// agent_message←SendMessage、agent_output←TaskOutput、agent_stop←TaskStop、
-// list_agents←ListAgents。改动只能整体重同步源文档，禁止就地润色。
+// agent_message←SendMessage、list_agents←ListAgents。改动只能整体重同步源文档，禁止就地润色。
+// （TaskOutput/TaskStop 的跨源口径归 @x-harness/task-tools——件14，非逐字面。）
 
 export const AGENT_SPAWN_DESCRIPTION = `Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
 
@@ -51,27 +51,5 @@ A listed peer is alive and will process your message; messages enqueue and drain
 To hear when a session ON THIS MACHINE finishes what it is doing, pass \`notify_when_idle: true\` (from the main conversation only) — one-shot and opt-in, exactly one \`[Cross-session idle notice]\` arrives when it next goes idle (or exits) — shown to you, or only to your user when this session holds peer messages for approval (the tool result says which); if it never signals within the subscription's lifetime (it may still be busy, may refuse inbound requests, or may have ended abruptly), the notice says the subscription expired instead. Omit \`message\` for a pure subscription that costs that session nothing; include one to deliver it now AND subscribe. Never poll \`ListAgents\` in a loop or send "are you done?" messages instead.
 
 Permission boundaries are per-session: NEVER ask a peer to perform an action that was denied or blocked in your session, or that you expect your own permission settings would block — a peer doing it for you bypasses the user's permission decision (cross-session permission laundering). Route blocked work back to your user instead.`;
-
-export const AGENT_OUTPUT_DESCRIPTION = `DEPRECATED: Background tasks return their output file path in the tool result, and you receive a \`<task-notification>\` with the same path when the task completes.
-
-- For bash tasks: prefer using the Read tool on that output file path — it contains stdout/stderr.
-- For local_agent tasks: use the Agent tool result directly. Do NOT Read the .output file — it is a symlink to the full subagent conversation transcript (JSONL) and will overflow your context window.
-- For remote_agent tasks: prefer using the Read tool on the output file path — it contains the streamed remote session output (same as bash).
-
-Retrieves output from a running or completed task (background shell, agent, or remote session)
-
-- Takes a task_id parameter identifying the task
-- Returns the task output along with status information
-- Task IDs can be found using the /tasks command
-- Use block=true (default) to wait for task completion
-- Use block=false for non-blocking check of current status`;
-
-export const AGENT_STOP_DESCRIPTION = `Stops a running background task by its ID
-
-- Takes a task_id parameter identifying the task to stop
-- To stop an agent-team teammate, pass its agent ID ("name@team") or bare teammate name as task_id
-- To stop a background agent spawned with a name, pass that name as task_id
-- Returns a success or failure status
-- Use this tool when you need to terminate a long-running task`;
 
 export const LIST_AGENTS_DESCRIPTION = `Lists agents you can SendMessage to — in-process subagents you spawned, the teammates on your team, other local Claude sessions on this machine, your Claude sessions running in the cloud (when this session has cloud access; a cloud session receives your message but cannot message any session back yet — do not ask it to reply, read its answer in its own transcript), and (when Remote Control is connected here) your account's other sessions — Remote Control sessions on other machines and cloud sessions, each row labeled by kind. Names are the address: send with \`SendMessage({to: "<name>", message: "..."})\`, copying the name exactly as a row prints it. Append a row's \` [ref]\` only when the bare name is not enough — two rows share it, or an error asks you to disambiguate.`;

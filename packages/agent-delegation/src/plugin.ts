@@ -10,6 +10,7 @@ import { mailboxService } from "@x-harness/session-mailbox";
 import { permissionGrants } from "@x-harness/permission";
 import { sessionArchive } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
+import { taskHub } from "@x-harness/task-tools";
 import type { CrossDeps } from "./crossmsg.ts";
 import { createMailboxConsumer, startDrain } from "./mailbox-consumer.ts";
 import type { MailboxConsumer } from "./mailbox-consumer.ts";
@@ -22,8 +23,9 @@ import type { DelegationOptions, LoadedAgentType } from "./types.ts";
 import { createNotifier } from "./notify.ts";
 import { spawnAgent } from "./spawn.ts";
 import type { SpawnInput } from "./spawn.ts";
-import { listAgents, message, output, stop } from "./verbs.ts";
+import { listAgents, message } from "./verbs.ts";
 import type { VerbDeps } from "./verbs.ts";
+import { agentTaskSource } from "./task-source.ts";
 import { delegationTools } from "./tools.ts";
 
 const DEFAULT_MAX_DEPTH = 3;
@@ -66,7 +68,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
   const dirs = resolveAgentDirs(options.agentsDirs);
   return {
     name: "agent-delegation",
-    inject: ["session", "tools", "agent-loop", "system-prompt"],
+    inject: ["session", "tools", "agent-loop", "system-prompt", "task-tools"],
     apply: async (ctx: Context): Promise<Disposer> => {
       const loop = ctx.use(agentLoopServiceToken);
       const store = ctx.use(sessionStore);
@@ -191,11 +193,12 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         }
       });
       for (const register of pendingEffects) ctx.effect(register());
+      // agent 源注册（件14）：硬依赖 task-tools（inject 声明——无 hub 装配即失败，output/stop
+      // 是子代理面一部分，不静默降级）；摘除经 effect——apply 中途 throw 回卷也摘
+      ctx.effect(ctx.use(taskHub).registerSource(agentTaskSource(verbDeps)));
       const offs = delegationTools({
         spawn: (execCtx, input: SpawnInput) => spawnAgent(spawnDeps, execCtx, input),
         message: (execCtx, input) => message(verbDeps, execCtx, input),
-        output: (execCtx, input) => output(verbDeps, execCtx, input),
-        stop: (execCtx, taskId) => stop(verbDeps, execCtx, taskId),
         list: (execCtx) => listAgents(verbDeps, execCtx),
       }).map((tool) => registry.register(tool));
 

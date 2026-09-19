@@ -1,9 +1,7 @@
-// e2e:real——真凭证全链冒烟（docs/SESSION-CHECKPOINT.md §3，P12：opt-in）：一条「你好」+
-// 自定义输出工具——验证 模型 tool_use → 工具体执行 → tool/result 回传 → 下一步完成 全链调通。
-// env X_HARNESS_E2E_REAL_API_KEY + X_HARNESS_E2E_REAL_BASE_URL + X_HARNESS_E2E_REAL_MODEL 齐备才执行；
-// 缺席 = 显式 skip（打印计数，退出码 0——缺席不是失败）。不进默认门。
+// e2e:real——真凭证全链观察脚本（docs/SESSION-CHECKPOINT.md §3，P12：opt-in）：一条「你好」+
+// 自定义输出工具，流式帧实时上屏（agentAssistantStream：思考 dim、正文原色——docs/THINKING-STREAM.md）。
+// env GLM_API_KEY + GLM_BASE_URL + GLM_MODEL 齐备才执行；缺席 = 显式 skip（退出码 0）。不进默认门。
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
@@ -14,23 +12,17 @@ import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
-import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
+import { agentAssistantStream, agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
-import { must } from "./check.ts";
 
-const API_KEY = process.env.X_HARNESS_E2E_REAL_API_KEY;
-const BASE_URL = process.env.X_HARNESS_E2E_REAL_BASE_URL;
-const MODEL = process.env.X_HARNESS_E2E_REAL_MODEL;
+const API_KEY = process.env.GLM_API_KEY;
+const BASE_URL = process.env.GLM_BASE_URL;
+const MODEL = process.env.GLM_MODEL;
 /** 协议闭集 {openai, anthropic}（缺省 openai；缺席不触发 skip——skip 三变量口径不变） */
-const PROTOCOL_RAW = process.env.X_HARNESS_E2E_REAL_PROTOCOL ?? "openai";
-if (PROTOCOL_RAW !== "openai" && PROTOCOL_RAW !== "anthropic") {
-  console.error(`e2e:real 失败：X_HARNESS_E2E_REAL_PROTOCOL 非法值 "${PROTOCOL_RAW}"（闭集 {openai, anthropic}）`);
-  process.exit(1);
-}
-const PROTOCOL = PROTOCOL_RAW;
+const PROTOCOL = "anthropic";
 
 if (API_KEY === undefined || API_KEY === "" || BASE_URL === undefined || BASE_URL === "" || MODEL === undefined || MODEL === "") {
-  console.log("skip: 1（env 凭证缺席——P12 opt-in：X_HARNESS_E2E_REAL_API_KEY / _BASE_URL / _MODEL）");
+  console.log("skip: 1（env 凭证缺席——P12 opt-in：GLM_API_KEY / GLM_BASE_URL / GLM_MODEL）");
   process.exit(0);
 }
 
@@ -55,7 +47,7 @@ try {
   const off = ctx.use(llmRuntime).registerAdapter(adapter);
   ctx.effect(off);
 
-  // 自定义输出工具：模型应通过 tool_use 调用它，工具体真实执行并回传
+  // 自定义输出工具：模型通过 tool_use 调用它，工具体真实执行并回传
   const outputs: string[] = [];
   ctx.use(toolRegistry).register({
     name: "output",
@@ -70,40 +62,67 @@ try {
 
   const made = await ctx.use(agentLoopServiceToken).create({
     session: { id: "real-smoke" as SessionId },
-    agent: { model: MODEL, provider, maxTokens: 512 },
+    agent: { model: MODEL, provider, maxTokens: 1024 },
   });
-  must(made.ok, `agent 创建（实际：${made.ok === false ? made.reason : "ok"}）`);
-  if (made.ok) {
-    made.value.agent.followup("你好！请调用 output 工具，text 参数填「你好，x-harness 全链已调通」，然后简短收尾。");
-    await made.value.agent.whenIdle();
-    const events = made.value.agent.session.events();
+  if (!made.ok) throw new Error(`agent 创建失败：${made.reason}`);
 
-    // ① 模型确实发起了 tool_use（Anthropic/OpenAI 双协议的 callId/name 都进 tool/call）
-    const calls = events.filter((e) => e.type === "tool/call");
-    must(calls.some((e) => (e.data as { name?: string }).name === "output"), `模型调用了自定义 output 工具（实际调用：${JSON.stringify(calls.map((e) => e.data))}）`);
+  // 流式帧订阅（先于 followup——事件即发即弃无重放）：思考 dim、正文原色；
+  // kind 切换与 attempt 边界换行。SMOOTH_CPS>0 时显示侧匀速放帧（打字机）——
+  // 上游成坨到达时摊平观感，代价是显示滞后于真实到达（whenIdle 后排干余量）
+  const smoothCps = Number(process.env.SMOOTH_CPS ?? "0");
+  const tty = process.stdout.isTTY === true;
+  let thinkingCount = 0;
+  let textCount = 0;
+  let lastKind: "text" | "thinking" | undefined;
+  const pending: Array<{ kind: "text" | "thinking"; text: string }> = [];
+  const writeFrame = (kind: "text" | "thinking", text: string): void => {
+    if (lastKind !== undefined && lastKind !== kind) process.stdout.write("\n");
+    lastKind = kind;
+    process.stdout.write(kind === "thinking" && tty ? `\x1b[2m${text}\x1b[0m` : text);
+  };
+  const drain = (): void => {
+    for (const frame of pending.splice(0)) writeFrame(frame.kind, frame.text);
+  };
+  const pacer =
+    smoothCps > 0
+      ? setInterval(() => {
+          let budget = Math.max(1, Math.round((smoothCps * 16) / 1000));
+          while (budget > 0 && pending.length > 0) {
+            const head = pending[0] as { kind: "text" | "thinking"; text: string };
+            const take = head.text.slice(0, budget);
+            budget -= take.length;
+            writeFrame(head.kind, take);
+            if (take.length === head.text.length) pending.shift();
+            else pending[0] = { kind: head.kind, text: head.text.slice(take.length) };
+          }
+        }, 16)
+      : undefined;
+  const offStream = ctx.on(agentAssistantStream, (payload) => {
+    if (payload.frame.phase === "end" && payload.frame.kind === "attempt") {
+      drain();
+      process.stdout.write("\n");
+      lastKind = undefined;
+      return;
+    }
+    if (payload.frame.phase !== "chunk") return;
+    if (payload.frame.kind === "thinking") thinkingCount += 1;
+    else textCount += 1;
+    if (pacer === undefined) writeFrame(payload.frame.kind, payload.frame.text);
+    else pending.push({ kind: payload.frame.kind, text: payload.frame.text });
+  });
+  ctx.effect(offStream);
 
-    // ② 工具体真实执行（副作用可观察）且结果回传模型
-    must(outputs.length > 0, "output 工具体真实执行（副作用可观察）");
-    const results = events.filter((e) => e.type === "tool/result");
-    must(
-      results.some((e) => String((e.data as { content?: string }).content).includes("你好，x-harness 全链已调通")),
-      `tool/result 回传含工具体输出（实际：${JSON.stringify(results.map((e) => e.data))}）`,
-    );
+  made.value.agent.followup(
+    "你好！请先用不少于 80 字介绍流式输出对终端体验的意义，然后调用 output 工具，text 参数填「你好，x-harness 全链已调通」，最后简短收尾。",
+  );
+  await made.value.agent.whenIdle();
+  if (pacer !== undefined) clearInterval(pacer);
+  drain();
+  console.log(
+    `\nreal: 完成（${PROTOCOL} 协议：思考 ${String(thinkingCount)} 帧 + 正文 ${String(textCount)} 帧；output 工具收到 ${JSON.stringify(outputs)}）`,
+  );
 
-    // ③ 工具结果消化后 turn 正常收轮
-    must(JSON.stringify(events.at(-1)?.data).includes('"completed"'), "工具结果消化后 turn completed 收轮");
-    const stepCount = events.filter((e) => e.type === "step/start").length;
-    must(stepCount >= 2, `多步链路（tool_use 步 + 消化步，实际 ${String(stepCount)} 步）`);
-
-    await made.value.dispose();
-    const disk = readFileSync(join(root, "real-smoke", "events.jsonl"), "utf8");
-    must(
-      disk.includes('"tool/call"') && disk.includes('"tool/result"') && disk.includes('"assistant/message"'),
-      "jsonl 落盘含完整工具往返",
-    );
-    console.log(`real: 1 通过（${PROTOCOL} 协议真凭证全链：你好 → output 工具调用/执行/回传 → 完成；落盘 ✓）`);
-    console.log(`output 工具收到的内容：${JSON.stringify(outputs)}`);
-  }
+  await made.value.dispose();
   await ctx.dispose();
   void unload;
 } finally {

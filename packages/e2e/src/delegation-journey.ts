@@ -15,6 +15,7 @@ import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
+import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { must } from "./check.ts";
 
 const PARENT_MODEL = "e2e-parent-model";
@@ -37,6 +38,7 @@ export async function runDelegationJourney(): Promise<void> {
       llmPlugin,
       systemPromptPlugin,
       agentLoopPlugin,
+      createTaskToolsPlugin(),
       createAgentDelegationPlugin({ agentsDirs: [agentsDir] }),
     ]);
     const off = ctx.use(llmRuntime).registerAdapter({

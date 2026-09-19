@@ -1,25 +1,22 @@
-// 工具族（docs/AGENT-DELEGATION.md §2.1/§3.2.1）：spawn(exclusive)/message/output/list(parallel)/
-// stop(exclusive)。schema 与 description 逐字段对账（§2.3）。
+// 工具族（docs/AGENT-DELEGATION.md §2.1/§3.2.1）：spawn(exclusive)/message/list(parallel)。
+// schema 与 description 逐字段对账（§2.3）。读/停动词 task_output/task_stop 归
+// @x-harness/task-tools（件14）——本包经 agentTaskSource 注册 agent 源。
 
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import {
   AGENT_MESSAGE_DESCRIPTION,
-  AGENT_OUTPUT_DESCRIPTION,
   AGENT_SPAWN_DESCRIPTION,
-  AGENT_STOP_DESCRIPTION,
   LIST_AGENTS_DESCRIPTION,
 } from "./descriptions.ts";
 import type { ChildView } from "./types.ts";
 import type { SpawnInput } from "./spawn.ts";
-import type { MessageInput, OutputInput, VerbOutcome } from "./verbs.ts";
+import type { MessageInput, VerbOutcome } from "./verbs.ts";
 
 export interface ToolDeps {
   readonly spawn: (ctx: ToolExecContext, input: SpawnInput) => Promise<VerbOutcome>;
   readonly message: (ctx: ToolExecContext, input: MessageInput) => Promise<VerbOutcome>;
-  readonly output: (ctx: ToolExecContext, input: OutputInput) => Promise<VerbOutcome>;
-  readonly stop: (ctx: ToolExecContext, taskId: string) => Promise<VerbOutcome>;
   readonly list: (ctx: ToolExecContext) => Promise<readonly ChildView[]>;
 }
 
@@ -59,25 +56,11 @@ const messageSchema = Type.Object({
   }),
   summary: Type.Optional(Type.String({
     maxLength: 200,
-    description: "A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of \`message\`). Truncated to 200 characters rather than rejected.",
+    description: 'A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of `message`). Truncated to 200 characters rather than rejected.',
   })),
   notify_when_idle: Type.Optional(Type.Boolean({
     description: "Ask a session ON THIS MACHINE to send you ONE notice when it next goes idle (finishes its turn with nothing queued) or exits — opt-in, one-shot, no polling. With a message: deliver it now AND subscribe. Without a message (omit it): a pure subscription that costs the other session nothing.",
   })),
-});
-
-const taskSchema = Type.Object({
-  task_id: Type.String({ description: "The task ID to get output for" }),
-});
-
-const outputSchema = Type.Object({
-  task_id: taskSchema.properties.task_id,
-  block: Type.Optional(Type.Boolean({ description: "Whether to wait for completion" })),
-  timeout: Type.Optional(Type.Number({ minimum: 0, maximum: 600000, description: "Max wait time in ms" })),
-});
-
-const stopSchema = Type.Object({
-  task_id: Type.String({ description: "The ID of the background task to stop" }),
 });
 
 export function delegationTools(deps: ToolDeps): ToolDefinition[] {
@@ -95,19 +78,6 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
       inputSchema: messageSchema,
       execute: async (args: Static<typeof messageSchema>, ctx) => run(deps.message(ctx, args)),
       isConcurrencySafe: parallel,
-    },
-    {
-      name: "agent_output",
-      description: AGENT_OUTPUT_DESCRIPTION,
-      inputSchema: outputSchema,
-      execute: async (args: Static<typeof outputSchema>, ctx) => run(await deps.output(ctx, args)),
-      isConcurrencySafe: parallel,
-    },
-    {
-      name: "agent_stop",
-      description: AGENT_STOP_DESCRIPTION,
-      inputSchema: stopSchema,
-      execute: async (args: Static<typeof stopSchema>, ctx) => run(await deps.stop(ctx, args.task_id)),
     },
     {
       name: "list_agents",

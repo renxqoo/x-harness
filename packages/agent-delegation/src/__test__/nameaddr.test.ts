@@ -96,7 +96,8 @@ describe("main 通道（§5.1/§5.2-1）", () => {
       // userTextsOf 是 JSON.stringify 空间——内层引号被转义，按转义形态断言
       expect(userTextsOf(world, parent.agent.session.id)).toContain(`<cross-session-message from=\\"${agentId}\\">child asking parent</cross-session-message>`);
     }, { timeout: 5_000 });
-    await vi.waitFor(() => expect(typesOf(parent).filter((t: string) => t === "turn/start").length).toBeGreaterThanOrEqual(2), { timeout: 5_000 });
+    const turnStartCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
+    await vi.waitFor(() => expect(turnStartCount()).toBeGreaterThanOrEqual(2), { timeout: 5_000 });
     await parent.dispose();
   });
 
@@ -118,11 +119,11 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
     world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "one"), textScript(CHILD_MODEL, "two")]);
     const first = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "a", subagent_type: "worker" }, session: parent.agent.session.id });
     const idA = agentIdOf(first.content);
-    const stopped = await callTool({ world, name: "agent_stop", args: { task_id: idA }, session: parent.agent.session.id });
+    const stopped = await callTool({ world, name: "task_stop", args: { task_id: idA }, session: parent.agent.session.id });
     expect(stopped.isError).toBeUndefined();
     const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
     expect(listed.content).toContain("status=stopped");
-    const output = await callTool({ world, name: "agent_output", args: { task_id: idA, block: false }, session: parent.agent.session.id });
+    const output = await callTool({ world, name: "task_output", args: { task_id: idA, block: false }, session: parent.agent.session.id });
     expect(output.isError).toBeUndefined();
     expect(output.content).toContain(idA);
     await parent.dispose();
@@ -148,12 +149,12 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
       const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
       expect(listed.content).toContain("status=running");
     }, { timeout: 5_000 });
-    const waited = await callTool({ world, name: "agent_output", args: { task_id: agentId, block: true, timeout: 50 }, session: parent.agent.session.id });
+    const waited = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true, timeout: 50 }, session: parent.agent.session.id });
     expect(waited.isError).toBeUndefined();
     expect(waited.content).toContain("still running");
     expect(waited.content).toContain("waited 50ms");
     release();
-    const done = await callTool({ world, name: "agent_output", args: { task_id: agentId, block: true, timeout: 5_000 }, session: parent.agent.session.id });
+    const done = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true, timeout: 5_000 }, session: parent.agent.session.id });
     expect(done.content).toContain("completed");
     expect(done.content).toContain("slow child finished");
     await parent.dispose();

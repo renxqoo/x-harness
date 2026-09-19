@@ -21,6 +21,8 @@ export class StreamAccumulator {
       case "text-delta":
         this.textParts.push(chunk.text);
         break;
+      case "thinking-delta":
+        break; // 思考只走流帧广播，不落账、不救空结算（docs/THINKING-STREAM.md 契约 5）
       case "tool-call-delta": {
         const existing = this.calls.get(chunk.index);
         if (existing === undefined) {

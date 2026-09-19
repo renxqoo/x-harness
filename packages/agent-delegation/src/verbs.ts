@@ -1,6 +1,7 @@
 // 动词族（docs/AGENT-DELEGATION.md §2.1/§4.4/§5.1/§5.2）：message 开放寻址（nameaddr 解析 +
-// main 通道信封包装 + 唤醒入口重验父存活）；output/stop 仅 owner（task_id = agentId/name/[ref]）；
-// output 带 block/timeout 等待语义；list 自子树视图。
+// main 通道信封包装 + 唤醒入口重验父存活）；output/stop 仅 owner（task_id = agentId——件14 起
+// 经 task-tools 的 task_output/task_stop 暴露，本文件为其 agent 源实现）；output 带 block/timeout
+// 等待语义；list 自子树视图。
 
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionStore, SessionId } from "@x-harness/session";
@@ -116,8 +117,8 @@ function deliverToMain(deps: VerbDeps, caller: SessionId, text: string): VerbOut
   return { ok: true, text: "Delivered to main (the parent conversation)." };
 }
 
-export async function output(deps: VerbDeps, execCtx: ToolExecContext, input: OutputInput): Promise<VerbOutcome> {
-  const found = ownerRow(deps, execCtx, input.task_id);
+export async function output(deps: VerbDeps, caller: SessionId | undefined, input: OutputInput): Promise<VerbOutcome> {
+  const found = ownerRow(deps, caller, input.task_id);
   if (!found.ok) return found;
   const row = found.value;
   const childHandle = deps.loop.get(row.sessionId);
@@ -136,8 +137,8 @@ export async function output(deps: VerbDeps, execCtx: ToolExecContext, input: Ou
   return { ok: true, text: reportText(row, childReport(childSession.events()), deps.reportCap) };
 }
 
-export async function stop(deps: VerbDeps, execCtx: ToolExecContext, taskId: string): Promise<VerbOutcome> {
-  const found = ownerRow(deps, execCtx, taskId);
+export async function stop(deps: VerbDeps, caller: SessionId | undefined, taskId: string): Promise<VerbOutcome> {
+  const found = ownerRow(deps, caller, taskId);
   if (!found.ok) return found;
   const row = found.value;
   if (row.stopped) return { ok: true, text: `${row.agentId} already stopped` }; // 幂等
@@ -155,15 +156,15 @@ export async function stop(deps: VerbDeps, execCtx: ToolExecContext, taskId: str
   return { ok: true, text: `Stopped ${row.agentId}; it can be messaged again with agent_message.${worktreeNote}` };
 }
 
-function ownerRow(deps: VerbDeps, execCtx: ToolExecContext, taskId: string): { ok: true; value: ChildRow } | { ok: false; reason: string } {
+function ownerRow(deps: VerbDeps, caller: SessionId | undefined, taskId: string): { ok: true; value: ChildRow } | { ok: false; reason: string } {
   if (taskId === "") return { ok: false, reason: "invalid-args:task_id must be a non-empty string" };
-  if (execCtx.session === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
+  if (caller === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
   // task_id 复用 §5.2 分支 2/3/4（不支持 main 与跨进程——§4.4）
-  const resolved = resolveAddress(deps.lineage, execCtx.session, taskId);
+  const resolved = resolveAddress(deps.lineage, caller, taskId);
   if (resolved.kind === "miss") return { ok: false, reason: resolved.reason };
   if (resolved.kind === "main") return { ok: false, reason: "invalid-args:task_id 'main' is not a task" };
   const row = resolved.row;
-  if (execCtx.session !== row.parent) {
+  if (caller !== row.parent) {
     return { ok: false, reason: `not-owner:${row.agentId}; you can only read/stop sub-agents you spawned` };
   }
   return { ok: true, value: row };

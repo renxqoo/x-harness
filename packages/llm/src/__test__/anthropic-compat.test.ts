@@ -56,6 +56,8 @@ describe("anthropic-compat 请求体（docs/LLM.md §1.5）", () => {
     expect(captured?.path).toBe("/v1/messages");
     expect(captured?.headers["x-api-key"]).toBe("k-test");
     expect(captured?.headers["anthropic-version"]).toBe("2023-06-01");
+    // SSE 恒不协商压缩：运行时默认 accept-encoding 会换来无逐块 flush 的 gzip/br 攒批（http-dial 实验复现）
+    expect(captured?.headers["accept-encoding"]).toBe("identity");
     const body = captured?.body ?? {};
     expect(body["system"]).toBe("sys-a\n\nsys-b");
     expect(body["temperature"]).toBe(0.3);
@@ -205,15 +207,18 @@ describe("anthropic-compat 请求体（docs/LLM.md §1.5）", () => {
 });
 
 describe("anthropic-compat 流事件（docs/LLM.md §1.5）", () => {
-  it("全文流：usage 值来源断言（input 来自 message_start 含 cache 桶折入；output 来自 message_delta）+ finish(stop)", async () => {
+  it("全文流：usage 值来源断言（input 来自 message_start 含 cache 桶折入；output 来自 message_delta）+ thinking→text 全序 + finish(stop)", async () => {
     srv = await startSceneServer();
     srv.nextScene({
       status: 200,
       chunks: [
         ev("message_start", { message: { usage: { input_tokens: 10, cache_read_input_tokens: 5, cache_creation_input_tokens: 2 } } }),
-        ev("content_block_start", { index: 0, content_block: { type: "text", text: "he" } }),
-        ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "llo" } }),
+        ev("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "pl" } }),
+        ev("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "an" } }),
         ev("content_block_stop", { index: 0 }),
+        ev("content_block_start", { index: 1, content_block: { type: "text", text: "he" } }),
+        ev("content_block_delta", { index: 1, delta: { type: "text_delta", text: "llo" } }),
+        ev("content_block_stop", { index: 1 }),
         ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 7 } }),
         ev("message_stop"),
       ],
@@ -221,7 +226,9 @@ describe("anthropic-compat 流事件（docs/LLM.md §1.5）", () => {
     const chunks = await collect(adapter().stream(request()));
     expect(chunks).toEqual([
       { type: "usage", usage: { input: 17 } }, // 10+5+2 折入
-      { type: "text-delta", text: "he" }, // content_block_start 初值不丢（P10）
+      { type: "thinking-delta", text: "pl" }, // content_block_start 初值不丢（P10）
+      { type: "thinking-delta", text: "an" },
+      { type: "text-delta", text: "he" },
       { type: "text-delta", text: "llo" },
       { type: "usage", usage: { input: 17, output: 7 } }, // 字段级合并快照
       { type: "finish", finish: { kind: "stop" } },
@@ -234,8 +241,8 @@ describe("anthropic-compat 流事件（docs/LLM.md §1.5）", () => {
       status: 200,
       chunks: [
         ev("message_start", { message: { usage: { input_tokens: 1 } } }),
-        ev("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "" } }),
-        ev("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }), // 跳过
+        ev("content_block_start", { index: 0, content_block: { type: "thinking", thinking: "" } }), // 空初值不产帧
+        ev("content_block_delta", { index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }), // 透传
         ev("content_block_stop", { index: 0 }),
         ev("content_block_start", { index: 1, content_block: { type: "tool_use", id: "t1", name: "add" } }),
         ev("content_block_delta", { index: 1, delta: { type: "input_json_delta", partial_json: '{"a"' } }),
@@ -251,12 +258,71 @@ describe("anthropic-compat 流事件（docs/LLM.md §1.5）", () => {
     const chunks = await collect(adapter().stream(request()));
     expect(chunks).toEqual([
       { type: "usage", usage: { input: 1 } },
+      { type: "thinking-delta", text: "hmm" },
       { type: "tool-call-delta", index: 1, callId: "t1", name: "add" },
       { type: "tool-call-delta", index: 1, argumentsDelta: '{"a"' },
       { type: "tool-call-delta", index: 1, argumentsDelta: ":1}" },
       { type: "text-delta", text: "mid" },
       { type: "tool-call-delta", index: 3, callId: "t2", name: "sub" }, // 稀疏 index 原值（1/3 非重编号 0/1）
       { type: "usage", usage: { input: 1, output: 3 } },
+      { type: "finish", finish: { kind: "stop" } },
+    ]);
+  });
+
+  it("thinking 边界：空串/字段缺席/非字符串不产帧不崩；signature/redacted/未知 delta 跳过", async () => {
+    srv = await startSceneServer();
+    srv.nextScene({
+      status: 200,
+      chunks: [
+        ev("message_start", { message: { usage: { input_tokens: 1 } } }),
+        ev("content_block_start", { index: 0, content_block: { type: "thinking" } }), // 字段缺席
+        ev("content_block_start", { index: 1, content_block: { type: "thinking", thinking: "" } }), // 空初值
+        ev("content_block_start", { index: 2, content_block: { type: "thinking", thinking: 5 } }), // 非字符串
+        ev("content_block_delta", { index: 3, delta: { type: "thinking_delta" } }), // 字段缺席
+        ev("content_block_delta", { index: 4, delta: { type: "thinking_delta", thinking: "" } }), // 空串
+        ev("content_block_delta", { index: 5, delta: { type: "thinking_delta", thinking: 7 } }), // 非字符串
+        ev("content_block_delta", { index: 6, delta: { type: "signature_delta", signature: "sig" } }), // 签名
+        ev("content_block_delta", { index: 7, delta: { type: "redacted_thinking", data: "x" } }), // redacted
+        ev("content_block_delta", { index: 8, delta: { type: "mystery_delta" } }), // 未知
+        ev("content_block_delta", { index: 9, delta: { type: "text_delta", text: "ok" } }),
+        ev("message_delta", { delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } }),
+        ev("message_stop"),
+      ],
+    });
+    const chunks = await collect(adapter().stream(request()));
+    expect(chunks).toEqual([
+      { type: "usage", usage: { input: 1 } },
+      { type: "text-delta", text: "ok" },
+      { type: "usage", usage: { input: 1, output: 2 } },
+      { type: "finish", finish: { kind: "stop" } },
+    ]);
+  });
+
+  it("思考交错：text→thinking→text 与双 thinking 块，帧序与到达序一致", async () => {
+    srv = await startSceneServer();
+    srv.nextScene({
+      status: 200,
+      chunks: [
+        ev("message_start", { message: { usage: { input_tokens: 1 } } }),
+        ev("content_block_start", { index: 0, content_block: { type: "text", text: "a" } }),
+        ev("content_block_start", { index: 1, content_block: { type: "thinking", thinking: "t1" } }),
+        ev("content_block_delta", { index: 1, delta: { type: "thinking_delta", thinking: "-t2" } }),
+        ev("content_block_stop", { index: 1 }),
+        ev("content_block_start", { index: 2, content_block: { type: "thinking", thinking: "u1" } }), // 第二个 thinking 块
+        ev("content_block_stop", { index: 2 }),
+        ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "b" } }),
+        ev("message_delta", { delta: { stop_reason: "end_turn" } }),
+        ev("message_stop"),
+      ],
+    });
+    const chunks = await collect(adapter().stream(request()));
+    expect(chunks).toEqual([
+      { type: "usage", usage: { input: 1 } },
+      { type: "text-delta", text: "a" },
+      { type: "thinking-delta", text: "t1" },
+      { type: "thinking-delta", text: "-t2" },
+      { type: "thinking-delta", text: "u1" },
+      { type: "text-delta", text: "b" },
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });

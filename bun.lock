@@ -19,12 +19,16 @@
       "dependencies": {
         "@x-harness/agent-loop": "workspace:*",
         "@x-harness/core": "workspace:*",
+        "@x-harness/permission": "workspace:*",
         "@x-harness/session": "workspace:*",
+        "@x-harness/session-mailbox": "workspace:*",
+        "@x-harness/task-tools": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {
         "@sinclair/typebox": "^0.34.0",
         "@x-harness/llm": "workspace:*",
+        "@x-harness/session-persistence-jsonl": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
       },
     },
@@ -53,11 +57,14 @@
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/llm": "workspace:*",
+        "@x-harness/permission": "workspace:*",
         "@x-harness/plugin-manager": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/session-checkpoint": "workspace:*",
+        "@x-harness/session-mailbox": "workspace:*",
         "@x-harness/session-persistence-jsonl": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/task-tools": "workspace:*",
         "@x-harness/toolbox": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
@@ -150,6 +157,13 @@
         "@x-harness/system-prompt": "workspace:*",
       },
     },
+    "packages/session-mailbox": {
+      "name": "@x-harness/session-mailbox",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+      },
+    },
     "packages/session-persistence-jsonl": {
       "name": "@x-harness/session-persistence-jsonl",
       "version": "0.0.1",
@@ -163,6 +177,20 @@
       "version": "0.0.1",
       "dependencies": {
         "@x-harness/core": "workspace:*",
+      },
+    },
+    "packages/task-tools": {
+      "name": "@x-harness/task-tools",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/toolbox": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/exec-env": "workspace:*",
       },
     },
     "packages/token-meter": {
@@ -372,9 +400,13 @@
 
     "@x-harness/session-checkpoint": ["@x-harness/session-checkpoint@workspace:packages/session-checkpoint"],
 
+    "@x-harness/session-mailbox": ["@x-harness/session-mailbox@workspace:packages/session-mailbox"],
+
     "@x-harness/session-persistence-jsonl": ["@x-harness/session-persistence-jsonl@workspace:packages/session-persistence-jsonl"],
 
     "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/system-prompt"],
+
+    "@x-harness/task-tools": ["@x-harness/task-tools@workspace:packages/task-tools"],
 
     "@x-harness/token-meter": ["@x-harness/token-meter@workspace:packages/token-meter"],
 

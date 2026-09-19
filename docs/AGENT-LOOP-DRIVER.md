@@ -38,7 +38,7 @@ export interface AgentLoopService {
 | --- | --- | --- | --- |
 | `agentStatus` | emit | `{ session, status }` | none |
 | `agentError` | emit | `{ session, turn, message }`（turn 终态 error 的活观察） | none |
-| `agentAssistantStream` | emit | `{ session, turn, step, frame }`：`{phase:"start"} \| {phase:"chunk", text} \| {phase:"end", kind:"message"\|"attempt"}`（end 以落账为前提） | none |
+| `agentAssistantStream` | emit | `{ session, turn, step, frame }`：`{phase:"start"} \| {phase:"chunk", kind:"text"\|"thinking", text} \| {phase:"end", kind:"message"\|"attempt"}`（thinking 帧仅广播不落账——docs/THINKING-STREAM.md；end 以落账为前提） | none |
 | `agentPreStep` | waterfall | `{ session, turn, step, messages, signal }`（messages 仅供观察——请求体恒 deriveMessages 不变量）→ `{kind:"enter"} \| {kind:"reject", reason}` | none |
 | `agentRequest` | waterfall | `{ session, turn, step, dial, signal }`（dial=当前折叠拨号）→ 拨号 `{model, provider?, temperature?, maxTokens?}` | none |
 | `agentRequestError` | waterfall | `{ session, turn, step, failure, signal }` → `{kind:"retry"} \| undefined`（缺省终态） | none |

@@ -42,6 +42,15 @@ describe("StreamAccumulator（docs/AGENT-LOOP-DRIVER §1.4）", () => {
     accum.push({ type: "usage", usage: { input: 3, output: 4 } });
     expect(accum.usageSnapshot).toEqual({ input: 3, output: 4 });
   });
+
+  it("thinking-delta 忽略：不进 text/落账块、不救空结算（docs/THINKING-STREAM.md 契约 5）", () => {
+    const accum = new StreamAccumulator();
+    accum.push({ type: "thinking-delta", text: "hmm" });
+    expect(accum.text).toBe("");
+    expect(accum.textBlock).toEqual([]);
+    expect(accum.toolUseBlocks).toEqual([]);
+    expect(accum.hasContent).toBe(false);
+  });
 });
 
 describe("settleStream（docs/AGENT-LOOP-DRIVER §1.4）", () => {
@@ -83,6 +92,20 @@ describe("settleStream（docs/AGENT-LOOP-DRIVER §1.4）", () => {
     const emptyStop = new StreamAccumulator();
     emptyStop.push({ type: "finish", finish: { kind: "stop" } });
     expect(settleStream(emptyStop, undefined, false)).toEqual({ kind: "attempt", error: "empty completion" });
+
+    // thinking-only 不救空结算：思考只广播不落账，stop 无正文/工具仍判空（docs/THINKING-STREAM.md 契约 5）
+    const thinkingOnly = new StreamAccumulator();
+    thinkingOnly.push({ type: "thinking-delta", text: "hmm" });
+    thinkingOnly.push({ type: "finish", finish: { kind: "stop" } });
+    expect(settleStream(thinkingOnly, undefined, false)).toEqual({ kind: "attempt", error: "empty completion" });
+  });
+
+  it("thinking-only + finish max-tokens → message max-tokens（空 content——既有 max-tokens 前置语义）", () => {
+    const accum = new StreamAccumulator();
+    accum.push({ type: "thinking-delta", text: "hmm" });
+    accum.push({ type: "finish", finish: { kind: "max-tokens" } });
+    expect(settleStream(accum, undefined, false)).toEqual({ kind: "message", stopReason: "max-tokens" });
+    expect(accum.textBlock).toEqual([]);
   });
 
   it("流抛：abort 且有内容 → interrupted message；否则 attempt（Error 与非 Error 文案）", () => {

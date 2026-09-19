@@ -28,7 +28,9 @@ export async function dial(input: DialInput): Promise<DialResult> {
   try {
     const response = await input.fetch(input.url, {
       method: "POST",
-      headers: input.headers,
+      // SSE 恒不协商压缩：运行时默认 accept-encoding 会换来无逐块 flush 的 gzip/br，
+      // 透明解压把流攒成大坨（本地实验复现：8ms/帧平滑流 → 全部挤在流末一坨）
+      headers: { ...input.headers, "accept-encoding": "identity" },
       body: JSON.stringify(input.body),
       signal: input.signal,
     });

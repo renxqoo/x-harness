@@ -61,7 +61,7 @@ export function notificationText(row: ChildRow, report: ChildReport): string {
   const lines = [`[agent-notification] agent ${row.agentId} finished: ${report.status}`];
   if (report.summary !== undefined) lines.push(`summary: ${report.summary}`);
   if (report.usage !== undefined) lines.push(`usage: ${JSON.stringify(report.usage)}`);
-  lines.push(`(use agent_output with agentId "${row.agentId}" for the full report)`);
+  lines.push(`(use task_output with agentId "${row.agentId}" for the full report)`);
   return lines.join("\n");
 }
 

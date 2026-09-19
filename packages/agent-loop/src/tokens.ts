@@ -14,7 +14,7 @@ export const agentError = defineEvent<{ readonly session: SessionId; readonly tu
 
 export type AssistantStreamFrame =
   | { readonly phase: "start" }
-  | { readonly phase: "chunk"; readonly text: string }
+  | { readonly phase: "chunk"; readonly kind: "text" | "thinking"; readonly text: string }
   | { readonly phase: "end"; readonly kind: "message" | "attempt" };
 
 export const agentAssistantStream = defineEvent<{

@@ -287,6 +287,8 @@ describe("openai-compat 请求体（docs/LLM.md §1.4 消息与工具表转换�
     expect(captured?.method).toBe("POST");
     expect(captured?.path).toBe("/chat/completions");
     expect(captured?.headers["authorization"]).toBe("Bearer k-test");
+    // SSE 恒不协商压缩：运行时默认 accept-encoding 会换来无逐块 flush 的 gzip/br 攒批（http-dial 实验复现）
+    expect(captured?.headers["accept-encoding"]).toBe("identity");
     const body = captured?.body ?? {};
     expect(body["stream"]).toBe(true);
     expect(body["temperature"]).toBe(0.7);

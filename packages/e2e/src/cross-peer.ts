@@ -14,6 +14,7 @@ import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { agentLoopPlugin } from "@x-harness/agent-loop";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
+import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { createMailboxPlugin } from "@x-harness/session-mailbox";
 
 const MAILBOX_ROOT = process.argv[2] ?? "";
@@ -32,6 +33,7 @@ const unload = await loadPlugins(ctx, [
   systemPromptPlugin,
   agentLoopPlugin,
   createMailboxPlugin({ root: MAILBOX_ROOT, timing: { pollIntervalMs: 40, heartbeatMs: 1_000, graceMs: 30_000, staleMs: 7 * 24 * 3_600_000, now: () => Date.now() } }),
+  createTaskToolsPlugin(),
   createAgentDelegationPlugin({ agentsDirs: [agentsDir], mailbox: { box: "peer", mainSession: "peer-main" as SessionId } }),
 ]);
 const off = ctx.use(llmRuntime).registerAdapter({

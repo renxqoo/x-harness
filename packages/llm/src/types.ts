@@ -22,6 +22,7 @@ export type LlmFinish =
 
 export type LlmChunk =
   | { readonly type: "text-delta"; readonly text: string }
+  | { readonly type: "thinking-delta"; readonly text: string }
   | { readonly type: "tool-call-delta"; readonly index: number; readonly callId?: string; readonly name?: string; readonly argumentsDelta?: string }
   | { readonly type: "usage"; readonly usage: TokenUsage }
   | { readonly type: "finish"; readonly finish: LlmFinish };

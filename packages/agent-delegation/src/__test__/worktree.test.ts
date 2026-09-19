@@ -82,7 +82,7 @@ describe("worktree 隔离（§8）", () => {
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
     expect(grants?.rootOverrideOf(childSession)).toEqual({ dir: wtPath, guard: repo });
     // 无改动 stop → 清理
-    const stopped = await callTool({ world: twins.world, name: "agent_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
+    const stopped = await callTool({ world: twins.world, name: "task_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
     expect(stopped.isError).toBeUndefined();
     expect(stopped.content).not.toContain("worktree kept");
     await sleep(50);
@@ -100,7 +100,7 @@ describe("worktree 隔离（§8）", () => {
     const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
     const wtPath = join(worktreeParent(repo), wtEntry);
     writeFileSync(join(wtPath, "NEW.md"), "changes\n"); // 子工作区弄脏
-    const stopped = await callTool({ world: twins.world, name: "agent_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
+    const stopped = await callTool({ world: twins.world, name: "task_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
     expect(stopped.content).toContain(`worktree kept (has changes): ${wtPath}`);
     expect(existsSync(wtPath)).toBe(true); // 改动不丢
     await twins.parent.dispose();

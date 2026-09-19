@@ -250,7 +250,8 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
       });
       for await (const chunk of stream as AsyncIterable<LlmChunk>) {
         accum.push(chunk);
-        if (chunk.type === "text-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", text: chunk.text });
+        if (chunk.type === "text-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "text", text: chunk.text });
+        else if (chunk.type === "thinking-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "thinking", text: chunk.text });
       }
     };
     try {

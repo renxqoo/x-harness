@@ -1,6 +1,7 @@
 # TASKS：通用任务动词件（件 14）
 
-> 状态：**方案定稿**（两路对抗审查 27 项发现全处置，见 §10）
+> 状态：**已实施**（方案定稿两路审查 27 项全处置 §10；实施前二次自洽压测 ⑥⑦⑧ 并入；
+> 收口审查与四门见文末实施记录）
 > 级别：中（task-tools 新包 + agent-delegation 工具面迁移 + toolbox bash 源接入 + 测试迁移）
 > 上游裁决：件13 U2（任务体系不并入）本件部分兑现——**模型侧动词统一为 task_output/task_stop，
 > 跨任务源（agent 子代理 + bash 后台任务）**；TOOLBOX.md §150/§246/§289「未来任务件」即本件。
@@ -26,8 +27,8 @@ agent_stop 语义迁移——含签名重构，见 §4）；**bash 源在 task-t
 
 | 工具 | 入参 | 行为 |
 | --- | --- | --- |
-| `task_output` | `{task_id, offset?, block?, timeout?}`（offset 为非负整数，schema minimum 0） | task_id：agent 任务的 agentId/name/`name [ref]`（owner 限定），或 bash 后台任务 id（会话键控）。**offset 是规格外本仓扩展**（上游三参数 task_id/block/timeout——增量读靠输出文件+Read；本仓 bash 源以 offset/nextOffset 表达，agent 源忽略）。**block 缺省 true**（与上游规格 :113、件13 §2.1、反自旋原则一致——bash 源无完成通知，缺省阻塞正是省轮询手段；拉模式裁决裁的是通知机制非单次调用阻塞缺省）。timeout 缺省 30000、min 0、max 600000；**timeout=0 = 零等待立即快照**。agent 源 block=true = whenIdle race（在飞快照带末轮摘要）；bash 源 block=true = whenSettled 有界等终态（§3.2），到点未完回 running/killed 中间态快照（state 自述） |
-| `task_stop` | `{task_id}` | agent 源：cancel+whenIdle 收敛+幂等+停止非销毁（可再 message 复活）+ worktree 清理评估（kept 带路径）。bash 源：两段杀（term→kill）发起 + **whenSettled 有界收敛后铸终态快照**（KILL_GRACE+余量 8s 上界；超时如实回 mid-kill 快照——state=killed/exit=null 属实瞬态，铸文容忍） |
+| `task_output` | `{task_id, offset?, block?, timeout?}`（offset 为非负数，schema `Type.Number` minimum 0——**不用 Integer**：tools validate 按 Kind symbol 派发，integer 是否在派发面未核实；bash 源 headBytes 对非整数/非有限值本就防御性取整归零，垃圾输入降级不崩溃） | task_id：agent 任务的 agentId/name/`name [ref]`（owner 限定），或 bash 后台任务 id（会话键控）。**offset 是规格外本仓扩展**（上游三参数 task_id/block/timeout——增量读靠输出文件+Read；本仓 bash 源以 offset/nextOffset 表达，agent 源忽略）。**block 缺省 true**（与上游规格 :113、件13 §2.1、反自旋原则一致——bash 源无完成通知，缺省阻塞正是省轮询手段；拉模式裁决裁的是通知机制非单次调用阻塞缺省）。timeout 缺省 30000、min 0、max 600000；**timeout=0 = 零等待立即快照**。agent 源 block=true = whenIdle race（在飞快照带末轮摘要）；bash 源 block=true = whenSettled 有界等终态（§3.2），到点未完回 running/killed 中间态快照（state 自述） |
+| `task_stop` | `{task_id}` | agent 源：cancel+whenIdle 收敛+幂等+停止非销毁（可再 message 复活）+ worktree 清理评估（kept 带路径）。bash 源：两段杀（term→kill）发起 + **whenSettled 有界收敛后铸终态快照**（KILL_GRACE+余量 8s 上界；超时如实回 mid-kill 快照——state=killed/exit=null 属实瞬态，铸文容忍）；**stop 发起前已终态（endedAt 已置）的任务铸文加 already finished 前缀**——裸 "Stopped" 对 completed 任务是谎言 |
 
 **工具入口前置校验**（不进路由）：task_id 空/含换行/调用方无 session → invalid-args；
 `task_id === "main"` → `invalid-args:task_id 'main' is not a task`（denied 同款终结）。
@@ -128,12 +129,16 @@ createTaskToolsPlugin({ bashTasks: box.tasks }), ...])`——工厂参数直取
 - **收敛判据 = `snapshot.endedAt !== undefined`**（endedAt 只在 finalize 置位——五条终态
   路径唯一收口，天生规避 stop/timeout 乐观置态期的 mid-kill 撕裂快照；state 字段是
   乐观面不可用作判据）。
-- 实现 = **内存态轮询**（25ms 间隔读 `tasks.read(...).snapshot`——纯内存 Map 查询无 fs，
-  成本可忽略）至 endedAt 置位或超时；超时回当前快照（state 自述）。
+- 实现 = **内存态轮询，但轮询面用 `tasks.list(session)` 而非 `tasks.read(..., 0)`**
+  （25ms 间隔）——read 每次调用 `Buffer.from(full, "utf8")` 全量重编码整个保留缓冲
+  （fullCap 64MB × 每秒 40 次 ≈ GB/s memcpy，非「可忽略」）；list 只读 rec 字段拼
+  snapshot 不碰缓冲区。settle 后才做唯一一次真 read 切片。纯内存 Map 查询无 fs。
+  超时回当前快照（state 自述）。
 - 与审查 B-P1-3 原设计（登记簿内 waiters/finalize 单点释放）的取舍：外置轮询为满足
   「toolbox 零改动」约束的等价实现——撕裂快照防护同效（判据同为 finalize 产物），
   代价是 25ms 粒度的唤醒延迟（相对 KILL_GRACE 5s 可忽略）；登记簿内原语不建。
-- rec 已被 evict 的竞态：read miss → 如实返回 miss 口径（stop 收敛期极罕见，统一词表兜底）。
+- rec 已被 evict 的竞态：list 中 id 消失 → 停止等待，最终 read miss → 如实返回 miss
+  口径（stop 收敛期极罕见，统一词表兜底）。
 
 ### 3.3 文案
 
@@ -152,10 +157,10 @@ task-tools 但未传 bashTasks：bash id 落统一 not-found（文案含 bash id
    denied；`main` → denied invalid-args；解析 miss → miss）。
 3. plugin：inject 增 "task-tools"；apply `ctx.effect(ctx.use(taskHub).registerSource(
    agentTaskSource(...)))`（摘除经 effect——apply 中途 throw 回卷也摘）。
-4. **双轨残留清理**：`spawn.ts` spawn 文案「wait instead of polling agent_output」、
-   `notify.ts` 通知尾注「(use agent_output with agentId ... for the full report)」、
-   `types.ts` 注释——三处同步改 task_output；验收 grep 锚：src 全仓 `agent_output|
-   agent_stop` 清零（docs 历史节除外）。
+4. **双轨残留清理**：`notify.ts` 通知尾注「(use agent_output with agentId ... for the
+   full report)」、`types.ts` 注释（reportCap「agent_output 报告截断上界」）——两处同步改
+   task_output（spawn.ts 修订A 时已无 agent_output 文案，方案早前所记三处为二处）；
+   验收 grep 锚：src 全仓 `agent_output|agent_stop` 清零（docs 历史节除外）。
 5. `list_agents` 不动（子代理视图，非任务清单——落档 §9）。
 
 ## 5. 测试计划（迁移文件与断言不变式逐条）
@@ -253,6 +258,16 @@ hub、同一对工具、同一路由序），代价是通用层携带一个具�
 一例。⑤ 代码级验证：endedAt 仅在 rec.finalize 置位（五路收口）✓、tasks.read 纯查询
 （probe-by-read 无副作用）✓。
 
+**实施前二次自洽压测（同日，全链路走查）**：⑥ waitSettled 若按本文件原稿「轮询
+tasks.read(...,0)」——read 每次 `Buffer.from(full)` 全量重编码保留缓冲（64MB fullCap ×
+40 次/s ≈ GB/s memcpy），「成本可忽略」论断不成立 → §3.2 修正为轮询 `tasks.list()`
+（只读 rec 字段）；⑦ stop 铸文对发起前已终态任务裸写 "Stopped" 失实 → §1.1 补
+already finished 前缀；⑧ offset 用 Type.Integer 有 validate Kind 派发面未核实的风险 →
+§1.1 改 Type.Number（headBytes 防御取整兜底）。边界确认（非洞）：档化/重启后
+task_output 如实 404、重生动词是 agent_message（与 Claude Code "a send resumes it from
+its transcript" 同构；bash 任务会话级易失同 `/tmp` 实证）；规格「/tasks command」一行
+不入描述（本仓无该面，id 来源=spawn 结果与 bash 返回值，not-found 词表已写明）。
+
 **路 B（架构/接缝/假绿）**：P0-1 describe 无法表达 not-owner → 与 A-P1-2 合并处置
 （三态）。P0-2 自然装配序 bash 源静默失效 → **采纳**：waitFor 停靠注册（§2/§3.1；迟到
 provide 语义已核实支持）。P1-3 whenSettled 释放点漏 evict/stopAll + 撕裂快照 → **采纳**
@@ -265,3 +280,22 @@ provide 语义已核实支持）。P1-3 whenSettled 释放点漏 evict/stopAll +
 effect → **采纳**（§4-3）。P3-12 一 ctx 一 bash 源 → **落档**（§9）。P3-13 两套
 not-found 口径 → **采纳**：§1.1 说明。P3-14 旅程装配序探测点 → **采纳**：§5（旅程即
 自动探测）。
+
+## 11. 实施记录（2026-09-19）
+
+- **A/B 两步同日完成**：task-tools 新包（tokens/hub/tools/source-bash/plugin/descriptions
+  6 源文件 + 5 套单测）；delegation 迁移（工具摘除、agentTaskSource、verbs 签名提参、
+  双轨文案清理）；装配面 world + e2e 四文件（toolbox-journey 传 bashTasks、后台段改经
+  task_output/task_stop、pollTaskDone 直柄废弃）。
+- **迁移发现并修正**：① 方案 §3.2 原稿轮询 read() 全量重编码缓冲——改轮询 list()（§3.2
+  已同变）；② stop 已终态铸文加 already finished 前缀（§1.1 已同变）；③ verbs.ownerRow
+  签名重构残留一处 execCtx 引用（运行期 ReferenceError 被路由异常隔离吞为 miss——单测
+  抓出后修复，测试平移用例即回归锚）；④ delegation-journeys spawn args 残留修订A 已废
+  的 name 参数（清除）。
+- **顺手清偿**：修订A 遗留 lint 债 5 错 1 警（revive/nameaddr 回调嵌套、contract 可选链）
+  一并修复——agent-delegation 归属本件作者。
+- **数字**：四门 lint 0-0 / tsc 0 / build ok / test **1178/1178**（93 文件；覆盖率
+  lines 93.82 / branch 89.96 / funcs 94.07 / stmts 96.4——task-tools 新包
+  97.29/90.9/90.9/100）；e2e 十场景绿。bun.lock 混有他人未提交 session-mailbox 条目——
+  不随本件提交，留协调。
+- 收口两路对抗审查处置见 §12。

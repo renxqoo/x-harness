@@ -27,8 +27,8 @@ interface AnthropicEvent {
   readonly type?: string;
   readonly index?: number;
   readonly message?: { readonly usage?: AnthropicUsage };
-  readonly content_block?: { readonly type?: string; readonly text?: string; readonly id?: string; readonly name?: string };
-  readonly delta?: { readonly type?: string; readonly text?: string; readonly partial_json?: string; readonly stop_reason?: string; readonly stop_details?: { readonly explanation?: string } };
+  readonly content_block?: { readonly type?: string; readonly text?: string; readonly thinking?: string; readonly id?: string; readonly name?: string };
+  readonly delta?: { readonly type?: string; readonly text?: string; readonly thinking?: string; readonly partial_json?: string; readonly stop_reason?: string; readonly stop_details?: { readonly explanation?: string } };
   readonly usage?: AnthropicUsage;
   readonly error?: { readonly type?: string; readonly message?: string };
 }
@@ -79,11 +79,14 @@ function count(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** content_block_start → 块身份 chunk（text 初值不丢 P10；tool_use 身份带稀疏 index 原值；未知块跳过） */
+/** content_block_start → 块身份 chunk（text/thinking 初值不丢 P10；tool_use 身份带稀疏 index 原值；未知块跳过） */
 function blockStartChunks(event: AnthropicEvent): LlmChunk[] {
   const block = event.content_block;
   if (block?.type === "text" && typeof block.text === "string" && block.text !== "") {
     return [{ type: "text-delta", text: block.text }];
+  }
+  if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking !== "") {
+    return [{ type: "thinking-delta", text: block.thinking }];
   }
   if (block?.type === "tool_use" && typeof block.id === "string" && count(event.index)) {
     return [{ type: "tool-call-delta", index: event.index, callId: block.id, ...(block.name !== undefined ? { name: block.name } : {}) }];
@@ -91,12 +94,15 @@ function blockStartChunks(event: AnthropicEvent): LlmChunk[] {
   return [];
 }
 
-/** content_block_delta → 增量 chunk（text/input_json；thinking/未知 delta 跳过；空文本跳过） */
+/** content_block_delta → 增量 chunk（text/thinking/input_json；signature/未知 delta 跳过；空文本跳过） */
 function blockDeltaChunks(event: AnthropicEvent): LlmChunk[] {
   const delta = event.delta;
   if (!count(event.index)) return [];
   if (delta?.type === "text_delta" && typeof delta.text === "string" && delta.text !== "") {
     return [{ type: "text-delta", text: delta.text }];
+  }
+  if (delta?.type === "thinking_delta" && typeof delta.thinking === "string" && delta.thinking !== "") {
+    return [{ type: "thinking-delta", text: delta.thinking }];
   }
   if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
     return [{ type: "tool-call-delta", index: event.index, argumentsDelta: delta.partial_json }];
@@ -172,6 +178,7 @@ export function createAnthropicCompatAdapter(options: AnthropicCompatOptions): L
         try {
           for await (const payload of scanDataFrames(sent.response.body as ReadableStream<Uint8Array>, {
             isTerminator: (frame) => {
+
               try {
                 if ((JSON.parse(frame) as { type?: string }).type === "message_stop") {
                   sawStop = true;

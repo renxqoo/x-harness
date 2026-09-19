@@ -145,10 +145,10 @@ describe("动词入参防线（invalid-args 分支）", () => {
     const bare = await callTool({ world, name: "agent_message", args: { to: (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] }, session: parent.agent.session.id });
     expect(bare.isError).toBe(true);
     expect(bare.content).toContain("message");
-    const outNoId = await callTool({ world, name: "agent_output", args: {}, session: parent.agent.session.id });
+    const outNoId = await callTool({ world, name: "task_output", args: {}, session: parent.agent.session.id });
     expect(outNoId.isError).toBe(true);
     expect(outNoId.content).toContain("task_id");
-    const stopNoId = await callTool({ world, name: "agent_stop", args: {}, session: parent.agent.session.id });
+    const stopNoId = await callTool({ world, name: "task_stop", args: {}, session: parent.agent.session.id });
     expect(stopNoId.isError).toBe(true);
     const direct = await world.registry.dispatch({ callId: "d2", name: "list_agents", args: {}, signal: new AbortController().signal });
     expect(direct.isError).toBe(true);
@@ -193,7 +193,7 @@ describe("通知细节分支（纯函数直测）", () => {
     expect(report.usage).toEqual({ input: 5, output: 6 });
     const text = notificationText({ agentId: "a" } as never, report);
     expect(text).toContain("usage:");
-    expect(text).toContain("agent_output");
+    expect(text).toContain("task_output");
     const bare = childReport([{ type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], stopReason: "stop" } }] as never);
     expect(bare.status).toBe("error");
   });
@@ -203,7 +203,7 @@ describe("通知细节分支（纯函数直测）", () => {
     const parent = await spawnParent(world);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
     const agentId = agentIdOf(spawned.content);
-    const stopped = await callTool({ world, name: "agent_stop", args: { task_id: agentId }, session: parent.agent.session.id });
+    const stopped = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: parent.agent.session.id });
     expect(stopped.isError).toBeUndefined();
     const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
     expect(listed.content).toContain("status=stopped");

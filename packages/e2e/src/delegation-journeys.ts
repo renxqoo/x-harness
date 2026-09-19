@@ -19,6 +19,7 @@ import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { agentLoopPlugin } from "@x-harness/agent-loop";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
+import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { createMailboxPlugin } from "@x-harness/session-mailbox";
 import { GrantsRegistry, permissionGrants } from "@x-harness/permission";
 import { must } from "./check.ts";
@@ -45,6 +46,7 @@ async function assemble(input: { readonly agentsDir: string; readonly mailboxRoo
   }
   await loadPlugins(ctx, [
     ...plugins,
+    createTaskToolsPlugin(),
     createAgentDelegationPlugin({
       agentsDirs: [input.agentsDir],
       ...(input.mailboxRoot !== undefined && input.box !== undefined ? { mailbox: { box: input.box, mainSession: "alpha-main" as SessionId } } : {}),
@@ -162,7 +164,7 @@ export async function runWorktreeJourney(): Promise<void> {
     if (!made.ok) throw new Error(`parent 创建失败：${made.reason}`);
     harness.scripts.set("parent-model", [textScript("parent idle")]);
     const registry = harness.ctx.use((await import("@x-harness/tools")).toolRegistry);
-    const spawned = await registry.dispatch({ callId: "e2e-w1", name: "agent_spawn", args: { description: "isolated build", prompt: "work in isolation", subagent_type: "worker", name: "builder", isolation: "worktree" }, signal: new AbortController().signal, session: made.value.agent.session.id });
+    const spawned = await registry.dispatch({ callId: "e2e-w1", name: "agent_spawn", args: { description: "isolated build", prompt: "work in isolation", subagent_type: "worker", isolation: "worktree" }, signal: new AbortController().signal, session: made.value.agent.session.id });
     must(!spawned.isError, `worktree spawn（实际：${spawned.content}）`);
     const agentId = (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] as string;
     const wtParent = join(dirname(physical), ".x-harness-worktrees");
@@ -174,7 +176,7 @@ export async function runWorktreeJourney(): Promise<void> {
     const status = await exec("git", ["-C", repo, "status", "--porcelain"]);
     must(status.stdout.trim() === "", "主仓工作树不受污染");
     // 无改动 stop → worktree 与分支清理
-    const stopped = await registry.dispatch({ callId: "e2e-w2", name: "agent_stop", args: { task_id: agentId }, signal: new AbortController().signal, session: made.value.agent.session.id });
+    const stopped = await registry.dispatch({ callId: "e2e-w2", name: "task_stop", args: { task_id: agentId }, signal: new AbortController().signal, session: made.value.agent.session.id });
     must(!stopped.isError, `stop（实际：${stopped.content}）`);
     await sleep(100);
     must(!existsSync(wtPath), "无改动 worktree 自动清理");

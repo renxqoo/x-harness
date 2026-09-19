@@ -28,14 +28,15 @@ Control/agent-team/统一后台任务体系（bash 后台、输出文件指针�
 
 ## 2. 外部契约
 
-### 2.1 五工具参数面（终态）
+### 2.1 工具参数面（终态；修订A 去名 + 修订C 读停迁出后余三工具）
 
 | 工具 | 入参 | 行为要点 |
 | --- | --- | --- |
-| `agent_spawn` | `{description, prompt, subagent_type?, model?, name?, isolation?}` | description 必填（3-5 词任务简述，缺省 name 来源=slug，§6.1）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；name 显式命名（**本仓扩展参数**：规格 Agent 无 name 入参，名字是系统返回值；本仓为寻址需要开放显式命名）；isolation 仅 `"worktree"`（§8）。返回 `{agentId, sessionId, name}` + 反轮询引导；后台运行，完成时 `[agent-notification]`（§5.1） |
+| `agent_spawn` | `{description, prompt, subagent_type?, model?, isolation?}` | description 必填（3-5 词任务简述）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；isolation 仅 `"worktree"`（§8）。返回 `{agentId, sessionId}` + 反轮询引导；后台运行，完成时 `[agent-notification]`（§5.1） |
 | `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——`name [ref]` 解析依赖）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,300}$`，长内容走文件中转）；summary ≤200 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
-| `agent_output` | `{task_id, block?, timeout?}` | task_id=agentId、name 或 `name [ref]`（**限 owner 亲生子**，§4.4）；block 缺省 true；timeout 缺省 30000、min 0、max 600000。block=true：`whenIdle()+race(timeout)` 等完成再回报告（到点未完 → 返回 running 状态与当前末轮摘要）；block=false 立即快照。报告 reportCap 截断。本仓一等工具，**不继承规格 DEPRECATED 定位**（无文件指针替代路径，U2） |
-| `agent_stop` | `{task_id}` | task_id 同 agent_output 形态（限 owner）；cancel+whenIdle 收敛；幂等；停止非销毁（可再 message 复活）；worktree 子触发清理评估（§8.3）。无 shell_id（规格已弃用参数，不实现）与 teammate 形态（落档） |
+（读/停动词已迁出——件14 修订C：`task_output`/`task_stop` 由 @x-harness/task-tools 提供，
+经 TaskHub 路由到 agent 源（本包 agentTaskSource 注册）与 bash 源；schema/铸文/统一
+not-found 词表见 docs/TASKS.md §1。）
 | `list_agents` | `{}` | 行格式 `<name> [<ref>] kind=<subagent\|local-session> <agentId\|box> status=<running\|idle\|stopped>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档） |
 
 错误词表（判别联合 reason，中性英文，统一 `area:detail`）：`invalid-args:*`（参数形状/未知
@@ -60,7 +61,8 @@ descriptions.ts 保留独立常量文件形态，文本全部重写：以本仓�
 notify_when_idle 反轮询（禁循环 list_agents/「好了吗」）、`[agent-notification]` 等待语义、
 idle 通知标签统一 `[Cross-session idle notice]`。**禁止**出现不存在的承诺（/tasks、bash 任务、
 输出文件路径、云端、teammate、DEPRECATED）。改写后 description 与 schema 逐字段可对账
-（§11.2 双向对账）——假绿抽查硬检查项。
+（§11.2 双向对账）——假绿抽查硬检查项。件14 修订C 起 output/stop 的对账对象随工具迁
+task-tools 包内（跨源口径非逐字面，锚词对账见 docs/TASKS.md §5）；本包对账面=三工具。
 
 ## 3. 架构与包边界
 
@@ -108,8 +110,8 @@ token) / system-prompt（**inject 扩为 `["session","tools","agent-loop","permi
 ```text
 spawned(瞬态，登记即 followup) → running ──idle+armed──> [agent-notification] → idle(槽释放)
 idle ──message──> running（复活复占槽；唤醒入口重验父存活，缺位→孤儿收养）
-running|idle ──agent_stop──> stopped(幂等；槽释放；可 message 复活)
-idle 驻留超 maxResident → 档化（dispose 子会话+摘行；可按名惰性复活，§6.2）
+running|idle ──task_stop──> stopped(幂等；槽释放；可 message 复活)
+idle 驻留超 maxResident → 档化（dispose 子会话+摘行；可按 agentId 惰性复活，§6.2）
 任意 ──插件 teardown──> disposed（级联 cancel+whenIdle+dispose；tearing-down 通知门先行；
   worktree 清理评估；mailbox 序列见 §5.3 关箱）
 进程消失 ──重启──> 内存行丢失 → 惰性重建（§6.2）
@@ -136,8 +138,9 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
 
 ### 4.4 属主边界（管理面红线）
 
-- `agent_output` / `agent_stop`：**仅 owner**（callerSession === row.parent），task_id 解析
-  复用 §5.2 分支 2/3/4a/4b（**不支持 main 与跨进程**；[ref] 形态开放——否则同名消歧指引死锁）。
+- `task_output` / `task_stop`（agent 源——件14 经 task-tools 暴露）：**仅 owner**
+  （callerSession === row.parent），task_id = agentId 精确（**不支持 main 与跨进程**）；
+  not-owner 经 probe denied 通道透传，源内 not-found 回落 task-tools 统一词表。
 - `agent_message` / `list_agents`：**开放寻址**（规格 SendMessage 语义）——进程内任意 live
   子代理（含兄弟）、本机任意 live 会话（box 域，仅会话级——**子代理不跨进程直接寻址**，
   见 §5.3）；子代理可用 `to:"main"` 回父（§5.2 分支 1）。
@@ -173,12 +176,12 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
       [ref] 供精确寻址旧同名者）
    b. 进程内无                 → mailbox discover 裸名：唯一 live box → 跨进程投递；
                                  ≥2 → ambiguous 带 [ref]；无 → 转 5
-5. archive 惰性重建（仅 caller 自己的历史子代理，§6.2）：header.agentName 匹配 →
-   resume 复活 → 命中；否则 not-found（附 list_agents 引导）
+5. archive 惰性重建（仅 caller 自己的历史子代理，§6.2）：header.agentId 匹配 →
+   resume 复活（沿用原 id）→ 命中；否则 not-found（附 list_agents 引导）
 ```
 
-`agent_output`/`agent_stop` 的 task_id 复用分支 2/3/4a/4b（不支持 1 与跨进程），再过 owner
-校验。**跨进程域只解析会话（box）**：`to` 落在 box 域 = 消息进对端进程的宿主 main 会话；
+task_output/task_stop（agent 源）的 task_id = agentId 精确（nameaddr 分支 2；不支持 main
+与跨进程），再过 owner 校验（§4.4）。**跨进程域只解析会话（box）**：`to` 落在 box 域 = 消息进对端进程的宿主 main 会话；
 子代理跨进程发送以父 box 为出址（from=父 box），回信进父进程 main 会话——规格「子代理
 的发送走父会话地址、回复送回父会话对话」原文语义。
 
@@ -319,7 +322,7 @@ x-harness/<agentId> <path> HEAD`。**spawn 侧 git 调用经互斥队列串行**
 
 ### 8.3 清理时序（规格「无改动自动清理」）
 
-评估时机：子 dispose（teardown 级联/孤儿收养/驻留档化）、`agent_stop`、**启动期对账清扫**
+评估时机：子 dispose（teardown 级联/孤儿收养/驻留档化）、`task_stop`、**启动期对账清扫**
 （装配时扫描 worktree 根目录：无 live 行对应的目录——status --porcelain 空 → worktree
 remove + branch -D；非空 → 保留+日志——父进程崩溃泄漏兜底）。评估 = `git -C <path>
 status --porcelain` 空 → remove+branch -D；非空 → 保留，stop/通知文案带路径。完成通知
@@ -401,8 +404,8 @@ status 边沿即时重写）；notify_when_idle（订阅时已 idle 立即投、
 重载+prompt 刷新断言、untyped/fork/空正文子见清单的机制事实断言）；worktree（真 git 仓
 fixture：路径在 repo 外、子写落 worktree、主仓 read/write/grep 不可达、bash 命令体写主仓
 被 fence 拒【fence 在场】、无改动清理、有改动保留+路径文案、git 失败 spawn 拒无残留、启动
-期清扫崩溃泄漏、并发 spawn 串行、extraRoot 批原根子树被守卫拒）；agent_output block/timeout
-（完成即回/超时回 running 快照/block=false 立即）；驻留档化（超 maxResident 最旧 dispose、
+期清扫崩溃泄漏、并发 spawn 串行、extraRoot 批原根子树被守卫拒）；task_output（agent 源）block/timeout
+（完成即回/超时回 running 快照/block=false 立即——经 task-tools 工具面调用，路由/词表/bash 源用例在 task-tools 包内）；驻留档化（超 maxResident 最旧 dispose、
 可按名复活）；**描述-schema 双向对账**（正向：schema 每字段名以词边界正则出现在
 description；反向：description 引用的参数名 ⊆ schema 字段——锚=正则规则写死在用例里）；
 mailboxTiming 注入（fake now/短间隔驱动 liveness/回收/心跳用例，无真 sleep）。
@@ -415,9 +418,9 @@ mailboxTiming 注入（fake now/短间隔驱动 liveness/回收/心跳用例，�
    notify_when_idle 恰好一条 notice → 双进程退出、box 目录清理、无陈尸。
 2. worktree 旅程：临时真 git 仓装配（含 sandbox fence）→ spawn(isolation=worktree) → 子经
    假适配器调 write 落 worktree → 断言主仓 `status --porcelain` 空 + 主仓路径 read 拒 →
-   agent_stop 无改动自动清理（worktree 目录与分支消失）。
-3. 复活旅程：spawn 命名子 → 子完成 → 主进程 teardown → 新装配 resume 主会话 → 按名
-   message → 子从档案复活续轮（systemPrompt/白名单不变断言）→ 双会话 jsonl 落盘断言。
+   task_stop 无改动自动清理（worktree 目录与分支消失）。
+3. 复活旅程：spawn 子 → 子完成 → 主进程 teardown → 新装配 resume 主会话 → 按
+   agentId message → 子从档案复活续轮（systemPrompt/白名单不变断言）→ 双会话 jsonl 落盘断言。
 
 ### 11.4 门禁与覆盖率
 
@@ -428,7 +431,7 @@ mailboxTiming 注入（fake now/短间隔驱动 liveness/回收/心跳用例，�
 A. session-mailbox 新包（纯文件协议 + 单测 + timing/now 注入位；无消费者——单测即覆盖面）。
 B. agent-delegation 重构地基：文件拆分 + lineage 双索引/8hex + 参数面/描述改写 +
    types-loader + system-prompt 注入；**接缝 1/1b（header 透传 + listHeaders）落地**。
-C. 寻址终态：nameaddr + main 通道 + owner 边界重划 + agent_output block/timeout。
+C. 寻址终态：nameaddr + main 通道 + owner 边界重划 + agent_output block/timeout（件14 修订C：该两动词迁 task-tools）。
 D. 跨进程接线：mailbox-consumer（一 box 一 drain/poller/manifest/认领关箱）+ list_agents
    扩展 + notify_when_idle（含闭窗与 expired 结算）。
 E. worktree：接缝 3/4/6（grants override + PathGate 全链 + fence override）+ worktree.ts +
@@ -554,3 +557,14 @@ task_id/to/summary 的描述与上下限逐字对齐。
 受影响节：§2.1（参数表/行格式/词表）、§4.2-4.3（无 name 字段）、§5.2（六步算法收敛为
 三分支）、§6（6.1 名字注册整节废止；6.2 按 agentId 复活）、§9.2 裁决表、§11.1 迁移矩阵
 （X13 同名共存用例改 agentId 互异并存）。
+
+## 17. 修订C（2026-09-19 件14：读停动词迁出）
+
+`agent_output`/`agent_stop` 从本包工具面删除——**模型侧动词统一为 `task_output`/
+`task_stop`**，由新包 @x-harness/task-tools 提供（TaskHub 三态路由：hit/denied/miss，
+kind 字典序 agent 先于 bash）。本包改为：plugin inject 增 `"task-tools"`（硬依赖），
+`agentTaskSource(verbDeps)` 注册 agent 源（probe = nameaddr 解析 + owner 预检；verbs 的
+output/stop 签名提参 `caller: SessionId | undefined`，经路由层调用）。bash 源在 task-tools
+本体内经工厂参数 `bashTasks: BackgroundTasks` 接线（toolbox 零改动——用户三次裁决）。
+通知尾注与 reportCap 注释的 agent_output 提法同步改 task_output。方案与处置全记录：
+docs/TASKS.md（件14）。

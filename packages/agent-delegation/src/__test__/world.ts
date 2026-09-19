@@ -16,6 +16,7 @@ import type { ToolRegistry } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
 import { createMailboxPlugin } from "@x-harness/session-mailbox";
+import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { createAgentDelegationPlugin } from "../plugin.ts";
 import type { DelegationOptions } from "../types.ts";
 import { afterEach, expect } from "vitest";
@@ -77,7 +78,7 @@ export async function makeWorld(options: DelegationOptions, mailboxRoot?: string
   const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
   const calls: LlmRequest[] = [];
   const delegation = createAgentDelegationPlugin(options);
-  const base = [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin, ...extraPlugins];
+  const base = [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin, createTaskToolsPlugin(), ...extraPlugins];
   const plugins = options.mailbox !== undefined && mailboxRoot !== undefined
     ? [
         ...base,

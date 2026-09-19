@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sessionStore } from "@x-harness/session";
+import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, resetWorlds, sessionOf } from "./world.ts";
 import type { World } from "./world.ts";
@@ -14,6 +15,12 @@ import type { World } from "./world.ts";
 beforeEach(() => {
   resetWorlds();
 });
+
+const turnEndCount = (world: World, session: SessionId): number =>
+  world.ctx.use(sessionStore).get(session)?.events().filter((e: { type: string }) => e.type === "turn/end").length ?? 0;
+
+const hasTurnEnd = (world: World, session: SessionId): boolean =>
+  world.ctx.use(sessionStore).get(session)?.events().some((e: { type: string }) => e.type === "turn/end") ?? false;
 
 async function persistedWorld(root: string, over: Parameters<typeof makeOptions>[1] = {}, withParent = true): Promise<{ world: World; parent: Awaited<ReturnType<typeof spawnParent>> }> {
   const options = await makeOptions({ worker: { model: CHILD_MODEL, body: "you are the worker" } }, over);
@@ -33,8 +40,7 @@ describe("archive 惰性复活（§6.2——修订A：按 agentId）", () => {
       const agentId = (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] as string;
       const childSession = sessionOf(spawned.content);
       await vi.waitFor(() => {
-        const ends = first.world.ctx.use(sessionStore).get(childSession)?.events().filter((e) => e.type === "turn/end").length ?? 0;
-        expect(ends).toBe(1);
+        expect(turnEndCount(first.world, childSession)).toBe(1);
       }, { timeout: 5_000 });
       await first.world.ctx.use(sessionStore).flush(childSession);
       await first.world.ctx.use(sessionStore).flush(first.parent.agent.session.id);
@@ -51,8 +57,7 @@ describe("archive 惰性复活（§6.2——修订A：按 agentId）", () => {
       const listed = await callTool({ world: second.world, name: "list_agents", args: {}, session: first.parent.agent.session.id });
       expect(listed.content).toContain(childSession); // 同 sessionId 续卷（档案 resume，非新建）
       await vi.waitFor(() => {
-        const ends = second.world.ctx.use(sessionStore).get(childSession)?.events().filter((e) => e.type === "turn/end").length ?? 0;
-        expect(ends).toBe(2); // 第二轮完成（续卷非重开）
+        expect(turnEndCount(second.world, childSession)).toBe(2); // 第二轮完成（续卷非重开）
       }, { timeout: 5_000 });
       const childEvents = second.world.ctx.use(sessionStore).get(childSession)?.events() ?? [];
       expect(JSON.stringify(childEvents)).toContain("you are the worker"); // 类型 systemPrompt 重建
@@ -110,8 +115,7 @@ describe("驻留档化（§2.2 maxResident）", () => {
       const sessionA = sessionOf(a.content);
       const sessionB = sessionOf(b.content);
       await vi.waitFor(() => {
-        const ends = first.world.ctx.use(sessionStore).get(sessionB)?.events().some((e) => e.type === "turn/end") ?? false;
-        expect(ends).toBe(true);
+        expect(hasTurnEnd(first.world, sessionB)).toBe(true);
       }, { timeout: 5_000 });
       // 第二子完成后：驻留 1——最旧 alpha 被档化（loop 摘除），beta 仍驻留
       await vi.waitFor(() => expect(first.world.loop.get(sessionA)).toBeUndefined(), { timeout: 5_000 });
@@ -132,8 +136,7 @@ describe("驻留档化（§2.2 maxResident）", () => {
       const s1 = sessionOf(c1.content);
       const s2 = sessionOf(c2.content);
       await vi.waitFor(() => {
-        const ends = plain.ctx.use(sessionStore).get(s2)?.events().some((e) => e.type === "turn/end") ?? false;
-        expect(ends).toBe(true);
+        expect(hasTurnEnd(plain, s2)).toBe(true);
       }, { timeout: 5_000 });
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 100); // 等潜在档化窗口过

@@ -24,11 +24,13 @@ export async function* scanDataFrames(body: ReadableStream<Uint8Array>, options:
     for (;;) {
       const read = await reader.read();
       if (read.done) break;
+
       buffer += decoder.decode(read.value, { stream: true });
       yield* drainLines();
       if (terminated) break;
     }
     buffer += decoder.decode(); // EOF 终 flush：多字节残量解码
+
     if (buffer.length > 0 && !terminated) yield* drainFinalLine();
   } finally {
     await reader.cancel().catch(() => {});

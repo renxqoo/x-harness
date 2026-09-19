@@ -17,6 +17,7 @@ export type LlmFinish =
   | { readonly kind: "error"; readonly message: string; readonly code?: string; readonly retryAfterMs?: number };
 export type LlmChunk =
   | { readonly type: "text-delta"; readonly text: string }
+  | { readonly type: "thinking-delta"; readonly text: string }
   | { readonly type: "tool-call-delta"; readonly index: number; readonly callId?: string; readonly name?: string; readonly argumentsDelta?: string }
   | { readonly type: "usage"; readonly usage: TokenUsage }
   | { readonly type: "finish"; readonly finish: LlmFinish };
@@ -106,6 +107,8 @@ POST `{baseUrl}/v1/messages`，headers `x-api-key` + `anthropic-version: 2023-06
   `event:`/`id:` 行跳过、EOF 整行终 flush、终止符回调 `isTerminator(payload)` 停读、
   先 `cancel` 再 `releaseLock`）；
 - `http-dial.ts`：拨号段 + `Retry-After` 解析（小数秒/HTTP-date/过去=0——协议无关，禁止第二份）。
+  SSE 恒 `accept-encoding: identity`：运行时默认会替请求协商压缩，若服务端用无逐块 flush 的
+  gzip/br 回应 SSE，透明解压层把流攒成大坨（本地实验：8ms/帧平滑流 → 121 帧挤在流末一坨）。
 
 **请求转换（anthropic-request.ts）**：
 - system → **顶层 `system` 字符串**（相邻拼接）；`temperature` 透传；
@@ -126,11 +129,13 @@ POST `{baseUrl}/v1/messages`，headers `x-api-key` + `anthropic-version: 2023-06
 - `message_start` → 发 usage 快照 `{input: input_tokens + cache_read + cache_creation}`（cache
   桶并入 input 保 total 口径——GLM 桥自动缓存不低计）；**usage 是快照语义、随事件即发**（消费方
   last-wins 幂等）——早断/截断/失败尝试的 input 账不丢（token-meter 计费依赖）；
-- `content_block_start`：`text` 带初值 → text-delta；`tool_use` → tool-call-delta `{index,
+- `content_block_start`：`text` 带初值 → text-delta；`thinking` 带初值 → thinking-delta（初值
+  空串/缺席不产帧）；`tool_use` → tool-call-delta `{index,
   callId:id, name}`（index = content block 索引**原值透传**——夹 text/thinking 块时稀疏，消费方
-  按 index 聚积排序安全）；`thinking`/未知块类型 → 跳过（content_block_stop 恒 no-op）；
-- `content_block_delta`：`text_delta` → text-delta；`input_json_delta` → tool-call-delta
-  `{index, argumentsDelta:partial_json}`；`thinking_delta`/未知 → 跳过；
+  按 index 聚积排序安全）；未知块类型 → 跳过（content_block_stop 恒 no-op）；
+- `content_block_delta`：`text_delta` → text-delta；`thinking_delta` → thinking-delta（空串/
+  缺席不产帧）；`input_json_delta` → tool-call-delta
+  `{index, argumentsDelta:partial_json}`；`signature_delta`/未知 → 跳过；
 - `message_delta`：`stop_reason` → finish **恰一次**，映射全集：end_turn/tool_use/stop_sequence/
   pause_turn→stop；max_tokens→max-tokens；refusal/sensitive→`finish{error, message:
   stop_details.explanation ?? stop_reason}`；未知→stop（fail-open 落档）；`usage` 存在 →
@@ -177,9 +182,9 @@ POST `{baseUrl}/v1/messages`，headers `x-api-key` + `anthropic-version: 2023-06
     N 并行 tool_result 合一向量；孤立 tool_use 合成 is_error 空结果；input 解析失败与非对象
     （"null"/"[1]"/"5"）降 {}；max_tokens 缺省 8192 与 maxTokensDefault 逃生位；temperature
     透传；input_schema 工具表；空 user 跳过；
-  - 流：message_start（usage input 含 cache 桶并入）+content_block_start（text 初值不丢/
-    tool_use 身份/`thinking` 块夹杂跳过且**稀疏 index 原值透传**——双 tool_use 夹 text 块
-    index 1/2 非重编号 0/1）+text_delta/input_json_delta 分片+message_delta（stop_reason
+  - 流：message_start（usage input 含 cache 桶并入）+content_block_start（text/thinking 初值
+    不丢/tool_use 身份/`thinking` 块夹杂透传且**稀疏 index 原值透传**——双 tool_use 夹 text 块
+    index 1/2 非重编号 0/1）+text_delta/thinking_delta/input_json_delta 分片+message_delta（stop_reason
     **全集**：end_turn/tool_use/stop_sequence/pause_turn/max_tokens/refusal/sensitive/未知；
     usage 字段级合并——只回 output 时 input 不归零）+message_stop 终止 + **挂连接释放断言**
     （afterDone 装置，socket close 计数）+finish 已发后 error 事件忽略（恰一 finish）+

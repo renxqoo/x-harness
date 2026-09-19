@@ -1,40 +1,37 @@
-// 契约对账（docs/AGENT-DELEGATION.md §2.3——修订B 逐字口径）：五段工具 description 与规格
-// 源文档逐字符一致（重同步纪律的机械锚）；参数面与规格参数表一致（形状/必填/pattern/上限）。
+// 契约对账（docs/AGENT-DELEGATION.md §2.3——修订B 逐字口径）：本包三段工具 description
+// 与规格源文档逐字符一致（重同步纪律的机械锚）；参数面与规格参数表一致（形状/必填/pattern/上限）。
+// task_output/task_stop 的跨源口径归 @x-harness/task-tools（件14）——对账在其包内。
 
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { delegationTools } from "../tools.ts";
 import {
   AGENT_MESSAGE_DESCRIPTION,
-  AGENT_OUTPUT_DESCRIPTION,
   AGENT_SPAWN_DESCRIPTION,
-  AGENT_STOP_DESCRIPTION,
   LIST_AGENTS_DESCRIPTION,
 } from "../descriptions.ts";
 
 const tools = delegationTools({
   spawn: async () => ({ ok: false as const, reason: "unused" }),
   message: async () => ({ ok: false as const, reason: "unused" }),
-  output: async () => ({ ok: false as const, reason: "unused" }),
-  stop: async () => ({ ok: false as const, reason: "unused" }),
   list: async () => [],
 });
 
 const descriptions: Record<string, string> = {
   agent_spawn: AGENT_SPAWN_DESCRIPTION,
   agent_message: AGENT_MESSAGE_DESCRIPTION,
-  agent_output: AGENT_OUTPUT_DESCRIPTION,
-  agent_stop: AGENT_STOP_DESCRIPTION,
   list_agents: LIST_AGENTS_DESCRIPTION,
 };
 
 const wordIn = (text: string, word: string): boolean => new RegExp(`\\b${word}\\b`).test(text);
 
-const propsOf = (name: string): Record<string, { description?: string; pattern?: string; maxLength?: number; minimum?: number; maximum?: number }> =>
-  ((tools.find((t) => t.name === name)?.inputSchema as { properties?: Record<string, never> }).properties ?? {}) as never;
+const propsOf = (name: string): Record<string, { description?: string; pattern?: string; maxLength?: number; minimum?: number; maximum?: number }> => {
+  const schema = tools.find((t) => t.name === name)?.inputSchema as { properties?: Record<string, never> } | undefined;
+  return (schema?.properties ?? {}) as never;
+};
 
 describe("描述逐字对账（修订B——与规格源文档逐字符一致）", () => {
-  it("五段 description 与 spec blockquote 原文逐字符相等", async () => {
+  it("三段 description 与 spec blockquote 原文逐字符相等", async () => {
     const spec = await readFile("/Users/wrr/work/claude-tool/agent-and-background-tasks.md", "utf8");
     const runs: string[] = [];
     let cur: string[] = [];
@@ -53,8 +50,6 @@ describe("描述逐字对账（修订B——与规格源文档逐字符一致）
     };
     expect(AGENT_SPAWN_DESCRIPTION).toBe(block("Launch a new agent"));
     expect(AGENT_MESSAGE_DESCRIPTION).toBe(block("# SendMessage"));
-    expect(AGENT_OUTPUT_DESCRIPTION).toBe(block("DEPRECATED: Background tasks"));
-    expect(AGENT_STOP_DESCRIPTION).toBe(block("Stops a running background task"));
     expect(LIST_AGENTS_DESCRIPTION).toBe(block("Lists agents you can SendMessage"));
   });
 });
@@ -80,19 +75,9 @@ describe("参数面对账（与规格参数表一致）", () => {
     expect(p["notify_when_idle"]?.description).toContain("ONE notice");
   });
 
-  it("agent_output ↔ TaskOutput：task_id 必填；block/timeout 带缺省语义与 0-600000 限", () => {
-    const output = tools.find((t) => t.name === "agent_output")?.inputSchema as unknown as { required?: string[]; properties: Record<string, never> };
-    expect((output.required ?? []) as string[]).toEqual(["task_id"]);
-    const p = propsOf("agent_output");
-    expect(p["block"]?.description).toContain("Whether to wait for completion");
-    expect(p["timeout"]?.minimum).toBe(0);
-    expect(p["timeout"]?.maximum).toBe(600000);
-  });
-
-  it("agent_stop ↔ TaskStop：task_id 必填；list_agents 无参数", () => {
-    const stop = tools.find((t) => t.name === "agent_stop")?.inputSchema as unknown as { required?: string[]; properties: Record<string, never> };
-    expect((stop.required ?? []) as string[]).toEqual(["task_id"]);
+  it("list_agents 无参数；工具面只有本包三工具（task_output/task_stop 归 task-tools）", () => {
     expect(Object.keys(propsOf("list_agents"))).toEqual([]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["agent_message", "agent_spawn", "list_agents"]);
   });
 
   it("参数描述非空且词边界覆盖字段名或其语义（防漏述）", () => {

@@ -1,7 +1,8 @@
 // e2e：toolbox 四工具旅程（docs/TOOLBOX.md §8——进默认门）。
-// 真实装配 session+jsonl+tools+llm+system-prompt+agent-loop+session-checkpoint+toolbox 四插件；
-// 脚本化假 LLM 驱动七步工具链：write→read（开门）→覆写（观察门放行）→bash 追加+建文件→
-// 未观察覆写拒（fail-closed）→grep 命中→bash 后台立返任务 id。断言盘上副作用、事件落账与登记簿终态。
+// 真实装配 session+jsonl+tools+llm+system-prompt+agent-loop+session-checkpoint+toolbox 四插件
+// +task-tools（bashTasks 句柄接线——件14）；脚本化假 LLM 驱动七步工具链：write→read（开门）→
+// 覆写（观察门放行）→bash 追加+建文件→未观察覆写拒（fail-closed）→grep 命中→bash 后台立返任务 id。
+// 断言盘上副作用、事件落账；后台任务经 task_output/task_stop 收读停（bash 源接线自动探测点）。
 import { mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,11 +14,12 @@ import { sessionPlugin } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
-import { toolsPlugin } from "@x-harness/tools";
+import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { createToolbox } from "@x-harness/toolbox";
+import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { must } from "./check.ts";
 
 function callScript(callId: string, name: string, args: Record<string, unknown>): AsyncGenerator<LlmChunk> {
@@ -34,26 +36,14 @@ function textScript(text: string): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 登记簿轮询到终态（有界 5s；返回最后一次 read 结果） */
-async function pollTaskDone(box: ReturnType<typeof createToolbox>, session: SessionId, id: string): Promise<ReturnType<ReturnType<typeof createToolbox>["tasks"]["read"]>> {
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    const read = box.tasks.read(session, id, 0);
-    if (read.ok && read.value.snapshot.state !== "running") return read;
-    if (Date.now() > deadline) return read;
-    await new Promise((resolve) => {
-      setTimeout(resolve, 100);
-    });
-  }
-}
-
 export async function runToolboxJourney(): Promise<void> {
   // grep 是 rg 硬依赖（TOOLBOX.md §5）——缺席 = 环境配置错误，fail-fast 报可行动指引
   must(Bun.which("rg") !== null, "e2e 需要 ripgrep：brew install ripgrep / apt install ripgrep，或设 X_HARNESS_RG_PATH");
   const root = await mkdtemp(join(tmpdir(), "xh-toolbox-e2e-"));
   try {
     const ctx = createContext();
-    const box = createToolbox({ root, defaultTimeoutMs: 10_000, env: createLocalEnv(root) });
+    const env = createLocalEnv(root);
+    const box = createToolbox({ root, defaultTimeoutMs: 10_000, env });
     const scripts: Array<AsyncGenerator<LlmChunk>> = [];
     await loadPlugins(ctx, [
       sessionPlugin,
@@ -63,6 +53,7 @@ export async function runToolboxJourney(): Promise<void> {
       box.writePlugin,
       box.bashPlugin,
       box.grepPlugin,
+      createTaskToolsPlugin({ bashTasks: box.tasks }),
       llmPlugin,
       systemPromptPlugin,
       agentLoopPlugin,
@@ -102,15 +93,21 @@ export async function runToolboxJourney(): Promise<void> {
       must(bgStarted.includes("Background task t-"), "tc-7 立返后台任务 id（不等待完成）");
       const taskId = (bgStarted.match(/t-[0-9a-f]+/) ?? [])[0];
       must(taskId !== undefined, "任务 id 可解析");
-      // 登记簿句柄轮询到终态（模型侧 task_output/task_stop 归未来任务层——此处验证其 bash 源语义）
-      const done = await pollTaskDone(box, "toolbox" as SessionId, taskId as string);
-      must(done.ok && done.value.snapshot.state === "completed", "后台任务完成态可见（登记簿句柄）");
-      must(done.ok && done.value.text.includes("bg-needle-marker"), "后台任务输出可增量读（bg-needle-marker 到场）");
+      // 模型侧读停经 task_output/task_stop（bash 源接线探测——件14 终态）
+      const dispatch = ctx.use(toolRegistry);
+      const read = await dispatch.dispatch({ callId: "e2e-tt-1", name: "task_output", args: { task_id: taskId, block: true, timeout: 5_000 }, signal: new AbortController().signal, session: "toolbox" as SessionId });
+      must(!read.isError && read.content.includes("completed exit=0"), `task_output 收终态（实际：${read.content}）`);
+      must(read.content.includes("bg-needle-marker"), "task_output 带输出切片（bg-needle-marker 到场）");
+      const long = await box.tasks.start({ command: "sleep 30", cwd: root, session: "toolbox" as SessionId, env });
+      must(long.ok, `长任务起（实际：${long.ok === false ? long.reason : "ok"}）`);
+      const stopped = await dispatch.dispatch({ callId: "e2e-tt-2", name: "task_stop", args: { task_id: long.ok ? long.value.id : "" }, signal: new AbortController().signal, session: "toolbox" as SessionId });
+      must(!stopped.isError && stopped.content.includes("killed"), `task_stop 两段杀收敛（实际：${stopped.content}）`);
+      must(!stopped.content.includes("mid-kill"), "stop 后快照是终态非撕裂");
       must(JSON.stringify(events.at(-1)?.data).includes('"completed"'), "turn completed 收轮");
       await made.value.dispose();
     }
     await ctx.dispose();
-    console.log("旅程：read/write/bash/grep + 后台任务 七步经真实 agent turn（观察门 fail-closed + 盘上副作用 + 登记簿终态）通过");
+    console.log("旅程：read/write/bash/grep + 后台任务 七步经真实 agent turn（观察门 fail-closed + 盘上副作用 + task_output/task_stop 收读停）通过");
   } finally {
     await rm(root, { recursive: true, force: true }).catch(() => {});
   }
