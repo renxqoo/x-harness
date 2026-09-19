@@ -401,3 +401,25 @@ export default { name: "tokfail", apply: (c) => { c.provide(tok, { n: () => 1 })
     expect(svc.serviceToken("pm-p-tokfail")).toBeUndefined();
   });
 });
+
+describe("F0.5 token 词表治理（同名异体 fail-closed）", () => {
+  it("两插件各自 defineService 同名 → 第二个安装失败（身份分裂拒绝）；同名同体（重装）不误伤", async () => {
+    const { svc, root } = await setup({ approve: () => true });
+    const first = await writePlugin(root, "tok-a", `import { defineService } from "${CORE_PATH}";
+export const dupToken = defineService<{ v: number }>("dup-token");
+export default { name: "tok-a", apply: (ctx) => ctx.provide(dupToken, { v: 1 }) };`);
+    const second = await writePlugin(root, "tok-b", `import { defineService } from "${CORE_PATH}";
+export const dupToken = defineService<{ v: number }>("dup-token");
+export default { name: "tok-b", apply: (ctx) => ctx.provide(dupToken, { v: 2 }) };`);
+    const a = await svc.install({ path: first });
+    expect(a.ok).toBe(true);
+    const b = await svc.install({ path: second });
+    expect(b.ok).toBe(false);
+    if (!b.ok) expect(b.reason).toMatch(/token name collision: "dup-token"/);
+    // 同插件重装（同模块身份 → 同对象）不受误伤
+    const offA = a.ok ? await a.value.unload() : undefined;
+    void offA;
+    const a2 = await svc.install({ path: first, replace: true });
+    expect(a2.ok).toBe(true);
+  });
+});

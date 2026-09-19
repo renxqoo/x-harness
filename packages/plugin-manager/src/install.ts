@@ -152,6 +152,11 @@ export function createInstaller(deps: InstallerDeps): Installer {
       sink: (where, message) => logError({ plugin: name, phase: "runtime", where, message }),
       root: platform, // 裁决 9：注册落位 root，回卷链 scope
       onToken: (token) => {
+        // F0.5 词表治理：同名异体 = 跨模块 token 身份分裂（消费方 use 不到提供方）——fail-closed
+        const existing = deps.tokenTable.get(token.name);
+        if (existing !== undefined && existing !== token) {
+          throw new Error(`token name collision: "${token.name}" already registered by a different module (token identity is object-based — share via the defining package)`);
+        }
         deps.tokenTable.set(token.name, token);
         provided.push({ name: token.name, token });
       },
