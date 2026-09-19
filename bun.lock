@@ -21,6 +21,7 @@
         "@x-harness/agent-loop": "workspace:*",
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
+        "@x-harness/harness": "workspace:*",
         "@x-harness/llm": "workspace:*",
         "@x-harness/llm-retry": "workspace:*",
         "@x-harness/permission": "workspace:*",
@@ -164,6 +165,37 @@
       },
       "devDependencies": {
         "@sinclair/typebox": "^0.34.0",
+      },
+    },
+    "packages/harness": {
+      "name": "@x-harness/harness",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-delegation": "workspace:*",
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/llm-retry": "workspace:*",
+        "@x-harness/permission": "workspace:*",
+        "@x-harness/sandbox-local": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/session-checkpoint": "workspace:*",
+        "@x-harness/session-persistence-jsonl": "workspace:*",
+        "@x-harness/skill": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/task-tools": "workspace:*",
+        "@x-harness/token-meter": "workspace:*",
+        "@x-harness/tool-bash": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tool-grep": "workspace:*",
+        "@x-harness/tool-read": "workspace:*",
+        "@x-harness/tool-write": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/testkit": "workspace:*",
       },
     },
     "packages/llm": {
@@ -657,6 +689,8 @@
     "@x-harness/e2e": ["@x-harness/e2e@workspace:packages/e2e"],
 
     "@x-harness/exec-env": ["@x-harness/exec-env@workspace:packages/core/exec-env"],
+
+    "@x-harness/harness": ["@x-harness/harness@workspace:packages/harness"],
 
     "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
 
