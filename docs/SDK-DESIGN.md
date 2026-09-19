@@ -35,8 +35,13 @@ export interface Plugin {
 }
 ```
 
-- topoOrder 扩展：`for (const dep of [...inject 强制, ...softInject 过滤在场]) visit(dep)`；软名缺席跳过、不进校验 throw；环检测沿用 visiting 栈。
-- **采纳方**：tool-core `softInject: ["system-prompt"]`（guidance 停靠 tryUse 必中——D6 数组序约束**结构性消灭**）+ `softInject: ["sandbox-local"]`（execEnv 停靠同款；env 缺席仍 fail-closed throw 不变）。两条数组序硬约束从"世界知识"降为"插件自声明"。
+- topoOrder 扩展：`for (const dep of [...inject 强制, ...softInject **先 byName.has 过滤**再 visit])`（缺席软名直接跳过——照抄硬路径的 `visit(byName.get(dep) as Plugin)` 会在 undefined 上 TypeError）；环检测沿用 visiting 栈。
+- **软-软环裁决（F-04）**：双向软依赖（A softInject B 且 B softInject A）= 约束矛盾 → **throw**（诚实暴露；数组序世界不失败是偶然不是语义）。硬+软重复声明同一插件：第二次 visit 命中 done 短路，无害。自软锚 throw（cyclic 文案）。
+- **主张收窄（F-05）**：softInject 消灭的是 **apply 期服务停靠约束**；中间件注册序（同 waterfall 上多监听器的相对序）与无边 prompt 尾序是另两个顺序面——前者由"序敏感插件硬 inject 协作方"惯例承载（作者文档），后者由后置注册惯例承载（F-02）。
+- **采纳方（F-01 处置——A2 原审计"两条"失真，实为五处 apply 期停靠）**：
+  - tool-core：`["system-prompt", "sandbox-local", "permission"]`（guidance 停靠 / execEnv 停靠 / **permissionGrants apply 期闭包捕获**——tool-plugin.ts:59-61 晚注册 permission = 会话授权根静默丢失，反例 1）
+  - agent-delegation：`["permission", "session-persistence-jsonl"]` + 工厂条件并入 `options.mailbox !== undefined ? ["session-mailbox"] : []`（grants setRootOverride 静默 / archive tryUse 复活禁用 / mailbox 在场假阴性 throw——plugin.ts:109/128/170-172，反例 2-4）
+  - env 缺席仍 fail-closed throw 不变。数组序硬约束从"世界知识"降为"插件自声明"。
 - 否决项更新：inject（硬失败，缺席世界炸）、waitFor（异步拆卸竞态）维持否决——softInject 为第三形态：同步、声明式、缺席无害。
 
 ### 2.2 `@x-harness/harness`（F0，packages/harness）：kit 目录 + World 装配
@@ -45,18 +50,19 @@ export interface Plugin {
 // kit = 返回正确内部接线的插件组（含自声明 softInject/inject——顺序由 loader 保证）
 export const inlineSessionKit = (): Plugin[];                                  // session（内存会话）
 export const durableSessionKit = (o: { root: string; onIoError? }): Plugin[];   // + jsonl 持久化/archive
-export const llmKit = (adapters: readonly LlmAdapter[], retry?: RetryPolicy): Plugin[];  // llm-retry + llm + adapter 注册插件（闭包——消灭后置注册仪式）
-export const toolboxKit = (o?: { gate?: PathGate; observed?: ObservedRegistry }): Plugin[]; // tools + read/write/bash/grep/task-tools（共享实例接线内包）
+export const llmKit = (adapters: readonly LlmAdapter[], retry?: RetryPolicy | Record<string, RetryPolicy>): Plugin[];  // llm-retry + llm + N 个 adapter 注册插件（**名按 adapter.name/index 铸唯一**——F-06：固定名多实例会重名 throw；retry 支持 per-provider map——F-07.3）
+export const toolboxKit = (o?: { gate?: PathGate; observed?: ObservedRegistry; env?: ExecEnv }): Plugin[]; // tools + read/write/bash/grep/task-tools（共享实例接线内包；env 透传给无围栏世界——F-07.2）
 export const fenceKit = (o: { root: string }): Plugin[];                       // permission + sandbox-local
-export const delegationKit = (): Plugin[];                                     // agent-delegation（含 checkpoint）
+export const delegationKit = (): Plugin[];                                     // agent-delegation
+export const checkpointKit = (): Plugin[];                                     // session-checkpoint（**独立 kit**——F-11：与 delegation 零共享面，绑死则"要 delegation 不要 flush 屏障"不可表达）
 export const skillKit = (): Plugin[];                                          // skill
 export const meterKit = (): Plugin[];                                          // token-meter
-export const promptKit = (base: Plugin, appends?: readonly string[]): Plugin[];// system-prompt + 宿主基础段插件 + 追加链
+export const promptKit = (base?: Plugin): Plugin[];                            // system-prompt + 宿主基础段插件（base 可选——F-07.1：--system-prompt 整替时 base/appends 俱省；appends 不在此——F-02）
 export function createAgentWorld(o: { readonly plugins: readonly Plugin[]; readonly broker?: Plugin }): Promise<Result<World>>;
 ```
 
-- `createAgentWorld` = loadPlugins + World 七字段提取 + 失败 ctx.dispose 兜底——**对任意插件集**工作（顺序由 inject/softInject topo 保证）；broker 只是普通插件参数（惯例位）。
-- 追加段链注册逻辑自 apps/cli 迁入 promptKit（机制归 kit、内容归宿主）。
+- `createAgentWorld` = loadPlugins + World 七字段提取 + 失败 ctx.dispose 兜底——**对含五服务（session/agent-loop/system-prompt/tools/token-meter）的插件集**工作（F-03 处置：提取 ctx.use 缺服务即 fail-closed throw → dispose → {ok:false}——**有意裁决**，防"装配成功但字段缺席"的半态；最小集直接用 loadPlugins，作者文档记双入口）。
+- **appends 留宿主后置注册（F-02 处置）**：无边段落尾位次=纯注册序（registry TAIL_BASE+regIndex），kit 化 apply 期注册会使尾序翻转为 [cli-user-*, subagent-types]（现状相反）且无单点位可全保（baseCore 亦无边尾段）——appends 保持 loadPlugins 后宿主注册（CLI 现仪式不变，作者文档记惯例）。
 - CLI = dogfood：build-world 改为上述 kit 组合（行为零变化）；e2e journey 的 7 插件子集 = 另一组 kit 组合（inlineSession + llm + prompt 空 + toolbox 子集…或保持手排——S2' 裁决：journey 逐步换用，最小子集允许手工）。
 
 ### 2.3 `@x-harness/testkit`（F2）：textScript / scriptedAdapter / fakeTool（原案不变）。
@@ -118,3 +124,9 @@ export const llmStream = defineWaterfall<LlmRequest, AsyncGenerator<LlmChunk>>("
 ## 8. 契约稳定性规矩（并入 F2 作者文档）
 
 冻结面：Plugin 接口/六类 token 形状/token 名词表；pre-stable 面：waterfall payload（变更须迁移说明）。版本化：包版本 + 变更日志（发布策略属产品阶段挂账）。
+
+## 9. 设计审查处置台账（2026-09-20，12 项）
+
+**必须改（已改）**：F-01 A2 审计勘误（五处停靠，采纳清单扩充+delegation 条件软名）；F-02 appends 留宿主后置；F-03 主张收窄+fail-closed 裁决。
+**应补裁决（已补）**：F-04 软-软环 throw+实现约束（byName.has 先滤）+测试清单四补；F-05 主张收窄+两顺序面惯例归属；F-06 adapter 插件名铸造；F-07 kit 签名三修（promptKit base 可选/toolboxKit env 透传/llmKit per-provider retry）；F-08 作者护栏（自有插件应 softInject+名漂移静默风险——并入 F2 陷阱表）；F-09 软名锚插件名 vs 服务 token 的错位（作者文档言明；token 锚定升级挂账）。
+**挂账**：F-10 testkit 回落参数化（F3 动工时改 spec——四 journey 回落形态不一：文本/(exhausted)/error-finish 帧）；F-12 测试计数口径写死（F1 前定：`bun run test` 报告数）；F-11 已处置为拆 checkpointKit。

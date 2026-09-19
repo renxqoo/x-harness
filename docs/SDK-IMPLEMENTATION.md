@@ -5,7 +5,7 @@
 ## 1. 事实核查结论（审计证据）
 
 - **A1** apps/cli/src/build-world.ts（130 行）= 事实上的装配参考：19 插件数组（systemPrompt 前置 D6 硬约束 + basePlugin 条件位 + session/persist 条件 + tools/permission/sandbox/broker/read/write/bash/grep/task-tools/tokenMeter/llm-retry/llm/agentLoop/checkpoint/delegation/skill）；adapters 后置 register 循环；`World` 接口七字段；失败 `ctx.dispose()` 兜底。
-- **A2** 数组序硬约束两条：sandbox/execEnv 先于 tool-*（三级解析 tryUse）；system-prompt 先于带 guidance 的 tool-*（D6）。均只在 build-world 头注释。
+- **A2（F-01 勘误：原"两条"失真）** apply 期停靠约束**五处**：tool-core execEnv（三级解析 tryUse）/permissionGrants（apply 期闭包捕获 :59-61——时序敏感，原"时序不敏感"判断被证伪）；system-prompt guidance 停靠（D6）；delegation grants（plugin.ts:109）/sessionArchive（:128）/mailbox 条件（:170-172 在场假阴性 throw）。原两条只在 build-world 头注释。
 - **A3** e2e 四 journey 各持私有样板：textScript 生成器、假 adapter（calls/scripts 捕获）、fake tool、7 插件子集装配——testkit 提炼源。
 - **A4** tools/permission/sandbox/delegation/skill 工厂参数：permission `{root, mode}`；sandbox `{root}`；delegation/skill 无参（CLI 形态）；read/write `{gate, observed}`；bash `{gate}`；grep `{gate}`。
 - **A5** 无任何作者入口文档；docs/ 21 份均为内部设计文档。
@@ -46,6 +46,6 @@
 | T2B | 持久状态 seam（KV 契约 + memory/json 提供方） | 契约用例 + json 持久往返 | T2B-STATE |
 | T2C | credentials seam（resolve 引用式 + env/.env/file + redact） | 契约用例 + 换源即达 | T2C-CREDENTIALS |
 | T2D | 遥测 seam（record + 脱敏 + stderr sink） | 契约用例 + 脱敏矩阵 | T2D-TELEMETRY |
-| F2 | PLUGIN-AUTHORING.md（总表/陷阱/契约规矩/token 惯例/seam 目录） | 五块齐 + 零死链 + 事实核对 | F2-AUTHORING |
+| F2 | PLUGIN-AUTHORING.md（总表/陷阱含 F-08 护栏/契约规矩/token 惯例/seam 目录） | 五块齐 + 零死链 + 事实核对 | F2-AUTHORING |
 
 每波单提交可 revert。
