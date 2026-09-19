@@ -27,8 +27,10 @@ export interface ReplIO {
   readonly write: (text: string) => void;
   readonly stdin: NodeJS.ReadableStream;
   readonly isTTY: boolean;
-  /** 信号面注入（生产 = process.on）；缺席 = 不接信号（进程默认语义，测试安全） */
-  readonly onSignal?: (kind: "SIGTERM" | "SIGHUP", callback: () => void) => void;
+  /** 信号面注入（生产 = process.on）；缺席 = 不接信号（进程默认语义，测试安全）。
+   *  SIGINT 必须接线：规范模式 pty（e2e）下 ^C 由内核直投，readline 的 SIGINT 事件只在
+   *  raw 模式触发——两个来源共用同一状态机，幂等不双触发 */
+  readonly onSignal?: (kind: "SIGINT" | "SIGTERM" | "SIGHUP", callback: () => void) => void;
 }
 
 export interface ReplInput {
@@ -186,16 +188,12 @@ export async function runRepl(input: ReplInput): Promise<number> {
     quitReason(code);
   };
 
-  if (input.io.onSignal !== undefined) {
-    input.io.onSignal("SIGTERM", () => quit(143));
-    input.io.onSignal("SIGHUP", () => quit(129));
-  }
-
-  // Ctrl+C 状态机（docs/CLI.md §2.3）：ask 挂起 → 强制关闭提问（broker deny）；running → cancel；
-  // idle → 500ms 双击退出
+  // Ctrl+C 状态机（docs/CLI.md §2.3）：ask 挂起 → 强制收束提问（broker deny，turn 自然收尾）；
+  // running → cancel；idle → 500ms 双击退出。readline 事件与进程 SIGINT 两来源共用（幂等）
   let lastInterrupt = 0;
-  terminal.onInterrupt(() => {
+  const onInterrupt = (): void => {
     if (quitting) return;
+    if (terminal.cancelPendingQuestion()) return;
     if (handle.agent.status === "running") {
       try {
         handle.agent.cancel("interrupted");
@@ -208,8 +206,15 @@ export async function runRepl(input: ReplInput): Promise<number> {
     if (now - lastInterrupt < DOUBLE_PRESS_MS) quit();
     else io.write("(press Ctrl+C again to quit)\n");
     lastInterrupt = now;
-  });
+  };
+  terminal.onInterrupt(onInterrupt);
   terminal.onQuit(quit);
+
+  if (input.io.onSignal !== undefined) {
+    input.io.onSignal("SIGINT", onInterrupt);
+    input.io.onSignal("SIGTERM", () => quit(143));
+    input.io.onSignal("SIGHUP", () => quit(129));
+  }
 
   terminal.onLine((line) => {
     if (quitting) return;

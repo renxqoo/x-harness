@@ -20,6 +20,8 @@ export interface ReplTerminal {
   question(prompt: string): Promise<string | undefined>;
   /** 强制关闭（退出路径）：挂起中的 question 立即 resolve undefined */
   close(): void;
+  /** 只收束挂起中的提问（Ctrl+C ask 路径 → broker deny）；无挂起返回 false */
+  cancelPendingQuestion(): boolean;
   showPrompt(): void;
 }
 
@@ -84,6 +86,12 @@ export function createReplTerminal(io: ReplTerminalIO): ReplTerminal {
       pending.clear();
       rl.close();
       io.write("\n");
+    },
+    cancelPendingQuestion: () => {
+      if (pending.size === 0) return false;
+      for (const resolve of pending) resolve(undefined);
+      pending.clear();
+      return true;
     },
     showPrompt: () => {
       if (!closed) rl.prompt(true);
