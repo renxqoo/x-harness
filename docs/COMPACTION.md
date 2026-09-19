@@ -624,7 +624,7 @@ export interface SummarySectionProvider {
 export const summarySection = defineService<SummarySectionProvider>("compaction/summary-section");
 ```
 
-- **注入点 = 落账组装段代码拼接**（摘要正文 + 文件账本标签 + AUTO_CONTINUATION_NOTE
+- **注入点 = 落账组装段代码拼接**（落账文本最末可缀锚点包裹的注入段——§1.1 落账形状同步此事实；摘要正文 + 文件账本标签 + AUTO_CONTINUATION_NOTE
   **之后**——注入段恒为落账文本最末段），以 compaction 统一包裹的锚点
   `<!-- summary-section:begin -->` / `<!-- summary-section:end -->` 界定（锚点由
   compaction 加——provider 不感知锚点）；锚点包裹后再缀一个空行分隔。停靠缺席或
@@ -684,7 +684,10 @@ export const summarySection = defineService<SummarySectionProvider>("compaction/
 | 多提供者聚合（数组段拼接/显式聚合层） | 现仅 todo 一方；同层唯一 + fail-fast | 未来扩展 |
 | 注入段进 system 锚点常驻 | 每轮 token 成本裁决未做（Claude Code 未选） | 后续件 |
 | L1/L2 零 LLM 防线自身注入 | 占位/账本形态本就在场（L2 窗口期见上行落档） | 本修订裁定 |
-| 段长度上界 | todo 量级微不足道；provider 契约注释提示自限 | 落档（未来加帽） |
+| ~~段长度上界~~（收口回补：已加 8_000 字符硬上界——截尾 + summary-section-truncated 告警，防小窗压缩-注入正反馈） | 快照全量渲染不随压缩缩小 | 收口裁定（B-P2-2） |
+| summaryTokens 口径 = LLM 输出段（不含注入段）；占用/触发面经投影含段 | 两观测口径各自成立、无仓内消费方；外部消费须知口径 | 收口裁定（B-P2-3 落档） |
+| side-call 窗口 dispose+同 id 重生竞态（render/store.get 取到新会话） | 既有语义非本件引入；replace-target-missing 兜底 | 落档（B-P3-6） |
+| renderSummarySection 的 events() 全卷浅拷贝叠加 | 微秒级、元素引用共享；复用 runCompact session 引用是微优化 | 落档不做（B-P3-4） |
 
 ### 15.5 定稿前对抗审查处置（两路并行，25 项全处置）
 
@@ -716,3 +719,41 @@ summarize 失败路径段不落、previousSummaryOf 调用点唯一、L2 账本�
 occupancy 双口径、emergency keep=0 下全卷再生（动机达成）、deriveMessages 原样进
 主对话、单飞行恰调一次、匿名桶不进段、依赖单向无环、锚点与中和防线无交互、
 fakeLlm 探针可写。
+
+
+### 15.6 收口审查处置（两路并行，13 项全处置）
+
+**路 A（契约/语义）**：P1-1 段内伪造锚点击穿三面剥离（实证两形态：伪造 BEGIN 致误截
+残留、伪造 END 致整段永不剥——静默失效无自愈）→ **与 B-P1 合并根治**：
+appendSummarySection 铸造时全角化段内 HTML 注释边界（serialize 中和纪律同构）——
+段内任何锚点字面不再匹配真锚点，剥离恒命中真段；伪造回归用例（两种字面）锁定。
+P1-2 summaryTokens 断言恒真（chars/4 估算下含段全文也过）→ **采纳**：精确断言
+`toBe(estimateText(strip(落账文本)))`。P2-1 伪文件标签攻击面用例缺席 → **采纳**：
+provider 段内嵌 `<read-files>` 伪标签 → 二轮权威账本不受压（剥段后正文断言）。
+P3-1 空行措辞 → **采纳**（§15.1 按实现改写）。P3-2 §1.1 落账形状未同步 → **采纳**
+（补注入段事实句）。P3-3 undefined/不装两态显式用例 → **采纳**（undefined 显式用例
++ 缺席由既有 87 例回归背书，用例内注明）。P3-4 serialize 往返性质断言 → **采纳**
+（strip(append(x,y))===x + 伪造字面中和痕迹断言）。P3-5 锚点常量测试副本/死分支 →
+**采纳**：compaction 导出 SECTION 常量与 strip/append（公共面 +4 纯常量函数），
+todo 侧删副本改 import；`(from events)` 死分支删（该职责由 todo 集成测试声明）。
+
+**路 B（并发/生命周期/假绿）**：P1-1 = 与 A-P1-1 合并（同根治）。P2-2 段无上界
+（压缩-注入正反馈风险）→ **采纳**：8_000 字符硬上界 + 截尾 + 告警（§15.4 更新行）。
+P2-3 summaryTokens 观测口径分裂 → **落档**（§15.4：LLM 输出段口径，占用面含段——
+两观测口径各自成立，无仓内消费方）。P3-4 events() 拷贝叠加 → **落档不做**（微秒级）。
+P3-5 断言强度（第二轮节点取法依赖单 replace 语义；e2e 无负断言）→ **采纳**：取法
+注释 + e2e 补「无 in_progress 残片」负断言（锚点失效的 e2e 防线）。
+P3-6 dispose+同 id 重生竞态 → **落档**（既有语义，§15.4）。P3-7 锚点常量副本 → 与
+A-P3-5 合并（导出根治）。
+
+**核过无偏（两路一致，含实证）**：中和不改锚点字面（conversation 面剥离成立——
+`<!-- -->` 不含 `</`、不在中和名单、非行首角色标签，三防线实跑验证）；previousSummary
+剥离点正确（span 构造前，fileListsOf/summarizeSpan 同源）；注入段恒为最末（manual 空
+note 不破坏）；summaryTokens 实现链正确（tokensOf=body）；render 落账时点与同步段；
+单飞行恰渲染一次；L2 账本无锚点 no-op、无交替残片；CP 的 new-segment 输入复用
+serializeConversation——**剥离自动覆盖第四输入面**（超出 §15 三面的意外受益）；
+provider throw 降级实证（stderr 告警）；依赖单向；e2e 实跑通过。
+
+**收口数字（2026-09-19）**：四门 lint 0-0 / tsc 0 / build ok / test **1628 例全绿**
+（新增 section 10 + summary 6）；compaction 覆盖率 98.16/91.97/98.98/99.39、
+todo-tools **全 100**；e2e 十三场景全绿（含压缩旅程 todo 段）。

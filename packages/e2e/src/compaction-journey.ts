@@ -145,6 +145,7 @@ export async function runCompactionJourney(): Promise<void> {
         must(hasTaskSection, "压缩后投影含 todo 注入段（机制性存活——非摘要 LLM 概率性）");
         const taskLine = lastMessages.map((m) => ("content" in m ? JSON.stringify(m.content) : "")).join("");
         must(taskLine.includes("1. [completed] Compaction e2e task"), "注入段任务行为最新态（completed）");
+        must(!taskLine.includes("[in_progress] Compaction e2e task"), "注入段无旧状态残片（in_progress 不得残留——锚点失效防线）");
         const totalChars = lastMessages.reduce((sum, message) => sum + JSON.stringify(message).length, 0);
         must(totalChars < 6 * 5_000, `投影已折叠（实际 ${String(totalChars)} chars）`);
       } finally {

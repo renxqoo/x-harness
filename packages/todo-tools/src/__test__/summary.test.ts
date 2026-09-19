@@ -14,7 +14,7 @@ import { summarySection } from "@x-harness/compaction";
 import { todoSummarySection } from "../summary.ts";
 import { latestTodoSnapshot, tasksOfSnapshot } from "../store.ts";
 import { createTodoToolsPlugin } from "../plugin.ts";
-import { SECTION_BEGIN } from "./section-anchor.ts";
+import { SECTION_BEGIN } from "@x-harness/compaction";
 
 const snapEvent = (data: unknown): SessionEvent => ({ type: "todo/snapshot", data }) as SessionEvent;
 
@@ -129,6 +129,7 @@ describe("真装配两包集成（compaction + todo-tools）", () => {
     scripts.push(textScript("## Goal\nintegration summary v2"));
     const second = await runner.compact({ session: sid });
     if (!second.ok) throw new Error(`compact2 failed: ${second.reason}`);
+    // 依赖「压缩区间吞并后投影恒单 replace 节点」语义取最新落账（多 replace 并存是 L2 并装形态——本装置不装 autocompact）
     const landed2 = [...s.surface()].reverse().find((n) => typeof n.event.surfaceOp === "object" && n.event.type === "user/message");
     const text2 = landed2 !== undefined && landed2.event.type === "user/message" && landed2.event.data.content[0]?.type === "text" ? landed2.event.data.content[0].text : "";
     expect(text2).toContain("1. [completed] Ship integration");

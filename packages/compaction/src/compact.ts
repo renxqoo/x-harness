@@ -264,15 +264,26 @@ async function compactSession(
   return landSummary({ deps, fields, nodes, start, end, summary: section === undefined ? body : appendSummarySection(body, section), tokensOf: body });
 }
 
+/** 段长硬上界：超界截尾 + 告警（§15.4 落档的体积失控防线——快照全量渲染不随压缩缩小，
+ *  小窗场景防「压缩→注入大段→更快再触发」正反馈） */
+const SECTION_MAX_CHARS = 8_000;
+
 /** 落账时点取卷渲染注入段；provider throw/缺席/会话已亡降级不注入（压缩主流程优先） */
 function renderSummarySection(deps: CompactDeps, session: SessionId): string | undefined {
   const provider = deps.trySection();
   const log = deps.store.get(session);
   if (provider === undefined || log === undefined) return undefined;
+  let section: string | undefined;
   try {
-    return provider.render(log.events());
+    section = provider.render(log.events());
   } catch (error) {
     deps.warn(session, "summary-section-failed", { reason: String(error) });
     return undefined;
   }
+  if (section === undefined) return undefined;
+  if (section.length > SECTION_MAX_CHARS) {
+    deps.warn(session, "summary-section-truncated", { limit: SECTION_MAX_CHARS, got: section.length });
+    return `${section.slice(0, SECTION_MAX_CHARS)}\n(section truncated)`;
+  }
+  return section;
 }
