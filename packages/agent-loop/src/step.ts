@@ -27,7 +27,7 @@ export interface DriverDeps {
   readonly emitStreamFrame: (turn: number, step: number, frame: unknown) => void;
   readonly dispatchPreStep: (payload: unknown) => Promise<unknown>;
   readonly dispatchRequest: (payload: unknown, dial: Dial) => Promise<Dial>;
-  readonly dispatchRequestError: (payload: unknown) => Promise<{ readonly kind: "retry" } | undefined>;
+  readonly dispatchRequestError: (payload: unknown) => Promise<{ readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined>;
   readonly dispatchTurnStopping: (payload: unknown) => Promise<void>;
   /** F0② assistant 落账前纠（final = 原样透传） */
   readonly dispatchAssistantSettle: (payload: unknown) => Promise<unknown>;
@@ -274,9 +274,10 @@ type AttemptResult =
 
 /** 流结算（attempt 循环）：abort 赛跑、三分支结算、request-error retry */
 export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
-  const { scope, dial, schemas, step } = input;
+  const { scope, schemas, step } = input;
   const { deps, turn } = scope;
   const session = deps.session;
+  let dial = input.dial; // 可变：retry 携 dial 补丁时就地合并（requestError pre-stable 扩展）
   const signal = scope.controller.signal;
   for (;;) {
     const accum = new StreamAccumulator();
@@ -338,7 +339,10 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         },
         signal,
       });
-      if (retry?.kind === "retry" && !signal.aborted) continue; // 不重落 system/user/header
+      if (retry?.kind === "retry" && !signal.aborted) {
+        if (retry.dial !== undefined) dial = { ...dial, ...retry.dial }; // 降级补丁（不重派 agentRequest——dsh 同口径）
+        continue; // 不重落 system/user/header
+      }
       return { kind: "fatal", outcome: { kind: "error", message: settlement.error } };
     }
     const usage = accum.usageSnapshot;

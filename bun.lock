@@ -253,6 +253,27 @@
         "@sinclair/typebox": "^0.34.0",
       },
     },
+    "packages/plugin-examples": {
+      "name": "@x-harness/plugin-examples",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/plugin-api": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/harness": "workspace:*",
+        "@x-harness/testkit": "workspace:*",
+      },
+    },
     "packages/plugin-manager": {
       "name": "@x-harness/plugin-manager",
       "version": "0.0.1",
@@ -701,6 +722,8 @@
     "@x-harness/permission": ["@x-harness/permission@workspace:packages/permission"],
 
     "@x-harness/plugin-api": ["@x-harness/plugin-api@workspace:packages/plugin-api"],
+
+    "@x-harness/plugin-examples": ["@x-harness/plugin-examples@workspace:packages/plugin-examples"],
 
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
 

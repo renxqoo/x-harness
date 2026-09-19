@@ -8,14 +8,14 @@ import { agentAssistantSettle, agentAssistantStream, agentLlmStream, agentPreSte
 import type { AssistantSettlement, Dial } from "@x-harness/agent-loop";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
 import { sessionEvent } from "@x-harness/session";
-import type { InboxEntry, SessionEvent } from "@x-harness/session";
+import type { InboxEntry, SessionEvent, SessionId } from "@x-harness/session";
 import { toolsExecute, toolsPreExecute } from "@x-harness/tools";
 import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
 
 // —— 上下文域 ——
 
 /** pre-step 改写：fn 收当前生效领取批次（链上前者改写版或原始 claim），输出即落账版 */
-export function transformMessages(ctx: Context, fn: (claim: readonly InboxEntry[]) => InboxEntry[] | Promise<readonly InboxEntry[]>): Disposer {
+export function transformMessages(ctx: Context, fn: (claim: readonly InboxEntry[]) => readonly InboxEntry[] | Promise<readonly InboxEntry[]>): Disposer {
   return ctx.on(agentPreStep, async (payload, next) => {
     const decision = await next(payload);
     if ((decision as { kind?: string }).kind !== "enter") return decision;
@@ -113,7 +113,7 @@ export function tapTurnEnd(ctx: Context, fn: () => void): Disposer {
 // —— 逃生舱 ——
 
 /** 原始日志广播观察（高频同步面——三红线：回调须 O(1)；无过滤参数收全量；异常进 sink 静默。
- *  默认先用领域面，此面仅在领域面表达不了时用。） */
-export function tapSessionEvents(ctx: Context, fn: (event: SessionEvent) => void): Disposer {
-  return ctx.on(sessionEvent, (payload) => fn(payload.event));
+ *  默认先用领域面，此面仅在领域面表达不了时用。session 随载荷透传（按会话分账场景）。 */
+export function tapSessionEvents(ctx: Context, fn: (event: SessionEvent, session: SessionId) => void): Disposer {
+  return ctx.on(sessionEvent, (payload) => fn(payload.event, payload.session));
 }

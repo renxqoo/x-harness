@@ -75,7 +75,9 @@ export const agentRequestError = defineWaterfall<
     readonly failure: RequestFailure;
     readonly signal: AbortSignal;
   },
-  { readonly kind: "retry" } | undefined
+  /** retry 可携 dial 补丁（pre-stable 扩展——plugin-examples ⑨ dogfood 发现：重试不重派
+   *  agentRequest，降级类插件无处改 retry 的模型；补丁在重试分支就地合并） */
+  { readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined
 >("agent/request-error");
 
 export const agentTurnStopping = defineSerial<{ readonly session: SessionId; readonly turn: number; readonly signal: AbortSignal }>(
