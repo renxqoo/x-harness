@@ -7,13 +7,11 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@x-harness/compaction": "workspace:*",
     "@x-harness/core": "workspace:*",
     "@x-harness/session": "workspace:*",
     "@x-harness/tools": "workspace:*"
   },
   "devDependencies": {
-    "@sinclair/typebox": "^0.34.0",
-    "@x-harness/llm": "workspace:*"
+    "@sinclair/typebox": "^0.34.0"
   }
 }

@@ -2,7 +2,6 @@
 // 纯文本形态（块角色化标注——摘要模型看得见工具脉络；单工具结果/入参截断防单条
 // 大输出淹没对话）；内容进提示词数据区前过三防线中和。
 
-import { stripSummarySection } from "./section.ts";
 import type { SurfaceNode } from "@x-harness/session";
 
 const TOOL_RESULT_MAX_CHARS = 2_000;
@@ -129,19 +128,6 @@ function userPart(content: readonly unknown[]): string[] {
   return parts;
 }
 
-/** replace 型 user/message = 压缩摘要/账本节点：其文本渲染前剥离注入段（三输入面之三——
- *  docs/COMPACTION.md §15.1；L2 账本无锚点 no-op） */
-function summaryNodePart(event: { readonly surfaceOp?: unknown }, content: readonly unknown[]): string[] {
-  const op = event.surfaceOp;
-  if (typeof op !== "object" || op === null) return userPart(content);
-  return userPartStripped(content);
-}
-
-function userPartStripped(content: readonly unknown[]): string[] {
-  const parts = userPart(content);
-  return parts.map((part) => (part.startsWith("[User]: ") ? `[User]: ${stripSummarySection(part.slice("[User]: ".length))}` : part));
-}
-
 function assistantPart(content: readonly unknown[]): string[] {
   const texts: string[] = [];
   for (const block of content) {
@@ -170,7 +156,7 @@ function partOf(node: SurfaceNode): string[] {
     case "system/message":
       return systemPart(data);
     case "user/message":
-      return summaryNodePart(node.event, contentOf(data));
+      return userPart(contentOf(data));
     case "assistant/message":
       return assistantPart(contentOf(data));
     case "tool/result":

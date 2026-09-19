@@ -12,7 +12,7 @@ import type { SessionId } from "@x-harness/session";
 import { runCompact } from "./compact.ts";
 import type { CompactFields, CompactTrigger, CompactionResult, CompactionSkipReason, ResolvedConfig } from "./compact.ts";
 import { lastRoute, lastWindow, measureContext, pendingClaimTokens, shouldCompact } from "./occupancy.ts";
-import { compactionLanded, compactionRunner, compactionServedWindow, summarySection } from "./tokens.ts";
+import { compactionLanded, compactionRunner, compactionServedWindow } from "./tokens.ts";
 import type { CompactionRunner } from "./tokens.ts";
 import type { SummarizerFace } from "./summarize.ts";
 import type { FileToolNames } from "./file-ops.ts";
@@ -167,7 +167,6 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
           ctx.emit(compactionLanded, payload);
         },
         inflight,
-        trySection: () => ctx.tryUse(summarySection),
       };
 
       const compact = (

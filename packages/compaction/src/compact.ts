@@ -6,8 +6,6 @@
 import type { LlmRuntime } from "@x-harness/llm";
 import type { SessionId, SessionStore, SurfaceNode } from "@x-harness/session";
 import { estimateText } from "@x-harness/token-meter";
-import { appendSummarySection, stripSummarySection } from "./section.ts";
-import type { SummarySectionProvider } from "./tokens.ts";
 import { findCutPoint, USER_QUOTE_TOKENS } from "./cut.ts";
 import {
   accumulateFileOps,
@@ -73,8 +71,6 @@ export interface CompactDeps {
   readonly store: SessionStore;
   readonly llm: LlmRuntime | undefined;
   readonly config: ResolvedConfig;
-  /** 摘要注入段停靠（docs/COMPACTION.md §15）：运行期拉取（装配序无关/缺席不注入） */
-  readonly trySection: () => SummarySectionProvider | undefined;
   readonly warn: (session: SessionId, code: string, detail?: Record<string, unknown>) => void;
   readonly landed: (payload: LandedPayload) => void;
   /** per-session 单飞行账本（join 语义）：并发 compact 汇入在飞者共享同一结果——
@@ -196,8 +192,6 @@ interface LandingCall {
   readonly start: number;
   readonly end: number;
   readonly summary: string;
-  /** summaryTokens 计量段（不含注入段——非 LLM 输出，§15.1） */
-  readonly tokensOf: string;
 }
 
 /** replace 位置区间落账 + 观测广播 */
@@ -213,7 +207,7 @@ function landSummary(call: LandingCall): CompactionResult {
   );
   if (!appended.ok) return { ok: false, reason: "replace-failed" };
   const replacedNodes = end - start + 1;
-  const summaryTokens = estimateText(call.tokensOf);
+  const summaryTokens = estimateText(summary);
   deps.landed({ session: fields.session, trigger: fields.trigger, replacedNodes, summaryTokens });
   return { ok: true, replacedNodes, summaryTokens };
 }
@@ -244,10 +238,7 @@ async function compactSession(
     return { ok: false, reason: "llm-unavailable" };
   }
 
-  // 注入段不进任何 LLM 输入/解析面：previousSummary 剥离后经 span 供 fileListsOf 与
-  // summarizeSpan（三输入面之一——另两处：conversation 渲染与 parseFileOperations 输入）
-  const rawPrevious = previousSummaryOf(nodes);
-  const previousSummary = rawPrevious === undefined ? undefined : stripSummarySection(rawPrevious);
+  const previousSummary = previousSummaryOf(nodes);
   const span: Span = { nodes: nodes.slice(start, cut.cut), previousSummary };
   const lists = fileListsOf(deps, fields.session, span);
   const outcome = await summarizeSpan({ deps, fields, span, face, llm });
@@ -256,34 +247,8 @@ async function compactSession(
     return { ok: false, reason: OUTCOME_REASONS[outcome.reason] };
   }
 
-  // 组装序：正文 → 文件账本标签 → 续航注入语（manual 不附加）→ 注入段（恒为最末——§15.1）
+  // 组装序：正文 → 文件账本标签 → 续航注入语（manual 不附加——人工压缩后自然对话）
   const tail = formatFileOperations(lists.readFiles, lists.modifiedFiles);
   const note = fields.trigger === "manual" ? "" : `\n\n${AUTO_CONTINUATION_NOTE}`;
-  const body = `${outcome.text}${tail}${note}`;
-  const section = renderSummarySection(deps, fields.session);
-  return landSummary({ deps, fields, nodes, start, end, summary: section === undefined ? body : appendSummarySection(body, section), tokensOf: body });
-}
-
-/** 段长硬上界：超界截尾 + 告警（§15.4 落档的体积失控防线——快照全量渲染不随压缩缩小，
- *  小窗场景防「压缩→注入大段→更快再触发」正反馈） */
-const SECTION_MAX_CHARS = 8_000;
-
-/** 落账时点取卷渲染注入段；provider throw/缺席/会话已亡降级不注入（压缩主流程优先） */
-function renderSummarySection(deps: CompactDeps, session: SessionId): string | undefined {
-  const provider = deps.trySection();
-  const log = deps.store.get(session);
-  if (provider === undefined || log === undefined) return undefined;
-  let section: string | undefined;
-  try {
-    section = provider.render(log.events());
-  } catch (error) {
-    deps.warn(session, "summary-section-failed", { reason: String(error) });
-    return undefined;
-  }
-  if (section === undefined) return undefined;
-  if (section.length > SECTION_MAX_CHARS) {
-    deps.warn(session, "summary-section-truncated", { limit: SECTION_MAX_CHARS, got: section.length });
-    return `${section.slice(0, SECTION_MAX_CHARS)}\n(section truncated)`;
-  }
-  return section;
+  return landSummary({ deps, fields, nodes, start, end, summary: `${outcome.text}${tail}${note}` });
 }
