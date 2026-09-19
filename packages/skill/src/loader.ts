@@ -25,11 +25,15 @@ export async function loadSkills(dirs: readonly string[]): Promise<SkillLoadResu
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      continue; // 目录缺席合法（未配置任何 skill）
+    } catch (error) {
+      const code = (error as { code?: string }).code;
+      if (code === "ENOENT" || code === "ENOTDIR") continue; // 目录缺席合法（未配置）
+      warnings.push(`skills: unreadable directory ${dir} (${code ?? "io"})`); // 显式配置却不可读 → 告警不静默
+      continue;
     }
     for (const entry of entries) {
-      if (!entry.isDirectory()) continue; // 根下普通文件不是 skill，静默忽略
+      // 普通文件/断链静默忽略；symlink 目录跟随（stat 解引用——stow/dotfiles 摆放可用）
+      if (!entry.isDirectory() && !(entry.isSymbolicLink() && (await resolvesToDir(join(dir, entry.name))))) continue;
       const loaded = await parseSkillDir(join(dir, entry.name));
       if (typeof loaded === "string") {
         warnings.push(loaded);
@@ -39,6 +43,11 @@ export async function loadSkills(dirs: readonly string[]): Promise<SkillLoadResu
     }
   }
   return { skills, warnings };
+}
+
+async function resolvesToDir(path: string): Promise<boolean> {
+  const info = await stat(path).catch(() => undefined);
+  return info?.isDirectory() ?? false;
 }
 
 type ParseOutcome = SkillMeta | string; // string = 拒注册告警

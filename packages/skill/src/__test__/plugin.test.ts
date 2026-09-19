@@ -5,7 +5,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentLoopServiceToken, agentStatus } from "@x-harness/agent-loop";
@@ -42,7 +42,7 @@ interface World {
   readonly register: (session: Session) => void;
 }
 
-async function makeWorld(withSkill: boolean): Promise<World> {
+async function makeWorld(withSkill: boolean, noWarn = false): Promise<World> {
   if (withSkill) await writeAlpha();
   const live = new Map<SessionId, AgentHandle>();
   const loopStub = { get: (id: SessionId) => live.get(id) } as unknown as AgentLoopService;
@@ -57,7 +57,8 @@ async function makeWorld(withSkill: boolean): Promise<World> {
   const unload = await loadPlugins(ctx, [
     stub,
     sessionPlugin,
-    createSkillPlugin({ skillsDirs: [skillsDir], onWarn: (message) => warnings.push(message) }),
+    // noWarn=true 不传 onWarn——走 stderr 缺省路径（jsonl onIoError 同例的用例面）
+    createSkillPlugin(noWarn ? { skillsDirs: [skillsDir] } : { skillsDirs: [skillsDir], onWarn: (message) => warnings.push(message) }),
   ]);
   const created = await ctx.use(sessionStore).create();
   if (!created.ok) throw new Error(created.reason);
@@ -148,12 +149,37 @@ describe("createSkillPlugin 注入", () => {
     expect(textBlocksOf(world.session)).toEqual(["summary", expected]);
   });
 
-  it("封存会话：append 失败告警不崩、下次 running 幂等重试", async () => {
+  it("封存会话：append 失败逐次告警不崩（防御分支——生产封存先摘句柄，走 loop.get 缺位路径）", async () => {
     const world = await makeWorld(true);
     const disposed = world.ctx.use(sessionStore).dispose(world.session.id);
     expect(disposed.ok).toBe(true);
     running(world.ctx, world.session.id);
-    expect(world.warnings.some((message) => message.includes("inject failed") && message.includes("session-disposed"))).toBe(true);
+    running(world.ctx, world.session.id);
+    const failed = world.warnings.filter((message) => message.includes("inject failed") && message.includes("session-disposed"));
+    expect(failed).toHaveLength(2); // 每次 running 存在性检查重试，失败即告警，不崩不累积异常
+  });
+
+  it("头块（锚点前）经压缩折叠在场：replace 只吃锚点之后，块存活且不重注入", async () => {
+    const world = await makeWorld(true);
+    running(world.ctx, world.session.id);
+    const block = textBlocksOf(world.session)[0] ?? "";
+    expect(block).not.toBe("");
+    // 构造 /compact 前形态：[skill块, system 锚点, 历史尾部]
+    world.session.append("system/message", { turn: 0, step: 0, text: "system prompt" }, { surfaceOp: "append" });
+    world.session.append("user/message", { turn: 1, step: 0, content: [{ type: "text", text: "old turn" }] }, { surfaceOp: "append" });
+    const nodes = world.session.surface();
+    const anchorSeq = nodes.find((node) => (node.event.data as { text?: string }).text !== undefined)?.seq;
+    const tail = nodes[nodes.length - 1];
+    if (anchorSeq === undefined || tail === undefined) throw new Error("anchor/tail missing");
+    const replaced = world.session.append(
+      "user/message",
+      { turn: 1, step: 0, content: [{ type: "text", text: "summary" }] },
+      { surfaceOp: { op: "replace", startSeq: tail.seq, endSeq: tail.seq } },
+    );
+    expect(replaced.ok).toBe(true);
+    expect(blockPresent(world.session, block)).toBe(true); // 头块在锚点前，折叠后在场
+    running(world.ctx, world.session.id);
+    expect(textBlocksOf(world.session)).toEqual([block, "summary"]); // 幂等跳过——无第二块
   });
 
   it("多会话：各自首次注入一块", async () => {
@@ -182,6 +208,19 @@ describe("createSkillPlugin 注入", () => {
     running(world.ctx, world.session.id);
     expect(world.session.surface()).toHaveLength(0);
     expect(world.warnings).toEqual([]);
+  });
+
+  it("onWarn 缺省写 stderr：不接告警的宿主也不静默", async () => {
+    await writeAlpha();
+    await mkdir(join(skillsDir, "broken"), { recursive: true });
+    await writeFile(join(skillsDir, "broken", "SKILL.md"), "no frontmatter");
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      await makeWorld(true, true);
+      expect(stderr.mock.calls.some(([text]) => String(text).startsWith("skills: "))).toBe(true);
+    } finally {
+      stderr.mockRestore();
+    }
   });
 
   it("dispose 摘除监听：卸载后 running 不再注入", async () => {

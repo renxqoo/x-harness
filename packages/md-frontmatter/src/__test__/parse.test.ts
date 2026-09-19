@@ -31,6 +31,7 @@ describe("parseFlat", () => {
   it.each([
     ["无冒号行", "name"],
     ["空键（冒号在行首）", ": v"],
+    ["空键（冒号前仅空白）", " : v"],
     ["列表行（连字符开头）", "  - item"],
     ["首行合法次行破坏", "a: 1\nbroken"],
   ])("拒注册形态整体 undefined：%s", (_label, head) => {

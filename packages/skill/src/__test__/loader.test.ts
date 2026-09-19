@@ -1,6 +1,6 @@
 // loader 表驱动（docs/SKILL.md §1.1/§7）：目录解析矩阵 + 注册/拒注册/上限边界。
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -44,6 +44,11 @@ describe("resolveSkillDirs", () => {
   it("env 冒号分隔、空串元素过滤", () => {
     process.env["X_HARNESS_SKILLS_DIRS"] = "/a::/b:";
     expect(resolveSkillDirs()).toEqual(["/a", "/b"]);
+  });
+
+  it("env 仅冒号（过滤后空）→ 显式零，不回退缺省", () => {
+    process.env["X_HARNESS_SKILLS_DIRS"] = "::";
+    expect(resolveSkillDirs()).toEqual([]);
   });
 
   it("env 空串 → 缺省两目录", () => {
@@ -135,5 +140,52 @@ describe("loadSkills", () => {
     const result = await loadSkills([root]);
     expect(Object.keys(result.skills)).toEqual(["alpha"]);
     expect(result.warnings).toEqual([]);
+  });
+
+  it("symlink 目录跟随加载（stow/dotfiles 摆放；skill 名 = 链接名）", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "xh-skills-out-"));
+    try {
+      await writeFile(join(outside, "SKILL.md"), "---\nname: linked\ndescription: via link\n---\n");
+      await symlink(outside, join(root, "linked"));
+      const result = await loadSkills([root]);
+      expect(result.skills).toEqual({ linked: { name: "linked", description: "via link", path: join(root, "linked", "SKILL.md") } });
+      expect(result.warnings).toEqual([]);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("断链 symlink 静默忽略（与普通文件同策）", async () => {
+    await symlink(join(root, "no-target"), join(root, "dangling"));
+    const result = await loadSkills([root]);
+    expect(result.skills).toEqual({});
+    expect(result.warnings).toEqual([]);
+  });
+
+  it("SKILL.md 是目录（非普通文件）拒注册告警", async () => {
+    await mkdir(join(root, "weird", "SKILL.md"), { recursive: true });
+    const result = await loadSkills([root]);
+    expect(result.skills).toEqual({});
+    expect(result.warnings.some((warning) => warning.includes("is not a regular file"))).toBe(true);
+  });
+
+  // root 运行时 chmod 不产生 EACCES——权限用例仅在非 root 生效
+  it.skipIf(process.getuid?.() === 0)("SKILL.md 不可读（EACCES）拒注册告警", async () => {
+    const dir = await writeSkill("locked", "name: locked\ndescription: x");
+    await chmod(join(dir, "SKILL.md"), 0o000);
+    const result = await loadSkills([root]);
+    expect(result.skills).toEqual({});
+    expect(result.warnings.some((warning) => warning.startsWith("skills: unreadable"))).toBe(true);
+  });
+
+  it.skipIf(process.getuid?.() === 0)("skills 根不可读（EACCES，非缺席）告警不静默", async () => {
+    try {
+      await chmod(root, 0o000);
+      const result = await loadSkills([root]);
+      expect(result.skills).toEqual({});
+      expect(result.warnings.some((warning) => warning.startsWith("skills: unreadable directory"))).toBe(true);
+    } finally {
+      await chmod(root, 0o755);
+    }
   });
 });

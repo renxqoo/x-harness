@@ -4,6 +4,7 @@
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentLoopServiceToken, agentStatus } from "@x-harness/agent-loop";
 import { loadSkills, resolveSkillDirs } from "./loader.ts";
+import type { SkillLoadResult } from "./types.ts";
 import { blockPresent } from "./present.ts";
 import { renderSkillsBlock } from "./render.ts";
 import type { SkillPluginOptions } from "./types.ts";
@@ -14,8 +15,17 @@ export function createSkillPlugin(options: SkillPluginOptions = {}): Plugin {
     name: "skill",
     inject: ["agent-loop"],
     apply: async (ctx: Context): Promise<Disposer | void> => {
-      const loaded = await loadSkills(dirs);
-      for (const warning of loaded.warnings) options.onWarn?.(warning);
+      // 告警缺省写 stderr（jsonl 持久化 onIoError 同例）——宿主不接 onWarn 也不静默
+      const warn = options.onWarn ?? ((message: string) => {
+        process.stderr.write(`${message}\n`);
+      });
+      let loaded: SkillLoadResult;
+      try {
+        loaded = await loadSkills(dirs);
+      } catch (error) {
+        loaded = { skills: {}, warnings: [`skills: scan failed (${error instanceof Error ? error.message : String(error)})`] }; // 空快照收场——不阻断装配（docs/SKILL.md §1.4）
+      }
+      for (const warning of loaded.warnings) warn(warning);
       const block = renderSkillsBlock(loaded.skills);
       if (block === "") return; // 零快照无痕：不注册监听、不追加任何事件
       const loop = ctx.use(agentLoopServiceToken);
@@ -30,7 +40,7 @@ export function createSkillPlugin(options: SkillPluginOptions = {}): Plugin {
           { turn: 0, step: 0, content: [{ type: "text", text: block }] },
           { surfaceOp: "append" },
         );
-        if (!appended.ok) options.onWarn?.(`skills: inject failed for session ${payload.session} (${appended.reason})`);
+        if (!appended.ok) warn(`skills: inject failed for session ${payload.session} (${appended.reason})`);
       });
       return () => off();
     },

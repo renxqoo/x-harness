@@ -1,6 +1,6 @@
 # SKILL 子系统方案（docs/SKILL.md）
 
-> 状态：已实施（收口审查后转已核销）
+> 状态：已核销（收口审查 13 项发现全处置；数字见 §8）
 > 级别：中（模板 B：方案 + 实施两节）
 
 skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + 可选捆绑文件）。
@@ -25,9 +25,12 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   `resolveAgentDirs` 的 `[]` 落空回退 env 行为**有意不同**（显式零供嵌入方/测试
   表达关闭——差异在此钉死，防照抄）。列表序即优先序：同名 skill 前者胜（项目域
   覆盖用户域）。目录按原样使用（缺省两条为绝对路径）。
-- 目录缺席合法（未配置任何 skill）；垃圾输入（目录不可读、SKILL.md 不可读/超限、
-  无 frontmatter、缺字段、name 与目录名不符）拒注册该 skill + onWarn 告警，
+- 目录缺席合法（未配置任何 skill）；skills 根**存在但不可读**（EACCES 等，非缺席）
+  → 告警不静默；垃圾输入（SKILL.md 不可读/超限/非普通文件、无 frontmatter、
+  缺字段、无冒号或空键行、name 与目录名不符）拒注册该 skill + onWarn 告警，
   不 throw 不崩。
+- symlink 目录跟随加载（stat 解引用——stow/dotfiles 摆放可用；skill 名 = 链接名，
+  frontmatter name 须与链接名一致）；断链与普通文件同策静默忽略。
 
 ### §1.2 包契约
 
@@ -84,10 +87,11 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
 
 ### §1.4 错误形态
 
-- loader 全路径降级：拒注册 + warnings 数组（不 throw）；apply 期扫描异常不阻断
-  装配（空快照收场）。
-- 注入 append 失败（现实形态仅 session 封存）→ onWarn；下次 running 存在性检查
-  自然重试（幂等）。
+- loader 全路径降级：拒注册 + warnings 数组（不 throw）；apply 内对 loadSkills
+  另有 try/catch 兜底（意外异常 → 空快照 + 告警收场，不阻断装配——结构保证）。
+- onWarn 缺省写 stderr（jsonl 持久化 onIoError 同例）——宿主不接告警也不静默。
+- 注入 append 失败（防御分支：生产封存路径先摘句柄走 loop.get 缺位）→ onWarn；
+  下次 running 存在性检查自然重试（幂等）。
 
 ## §2 问题域
 
@@ -153,6 +157,9 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
 | 10 | 渲染防护扩至三字段清洗 + `</system` 中和 + 截断 200 + 条目上限 50 + SKILL.md 1MB 上限——处置审查注入面/体积发现 | 默认裁决（否决窗口，审查处置） |
 | 11 | `skillsDirs: []` = 显式零，与 resolveAgentDirs 有意不同（文档钉死） | 默认裁决（否决窗口，审查处置） |
 | 12 | 累积上界条件化（压缩周期内），无压缩漂移累积落档已知边界；compaction L2 守卫击穿挂账 | 默认裁决（否决窗口，审查处置） |
+| 13 | symlink 目录跟随加载（skill 名 = 链接名）；根不可读（非缺席）告警——处置收口审查 F1/F4 | 默认裁决（否决窗口，审查处置） |
+| 14 | onWarn 缺省写 stderr + apply 兜底空快照（结构保证）——处置收口审查 P1-1/P3-2 | 默认裁决（否决窗口，审查处置） |
+| 15 | 渲染防护收口：截断按码点（代理对不截半）、中和大小写不敏感含开标签、清洗扩 Cf 类——处置收口审查 F3/F5 | 默认裁决（否决窗口，审查处置） |
 
 备注（落档）：裁决 4 的原始动机（动态数据防 system prompt 前缀抖动）随裁决 3
 （不重载）已消解——静态快照入 system prompt 亦无 cache 成本。放置维持 user
@@ -166,19 +173,33 @@ prompt 结构性静态作为防线保留（未来任何动态化倾向都会先�
   注入后 deriveMessages 首位含块；**同步红线：注入块事件 seq < 当轮 turn/start
   seq**；零快照零监听零事件；存在性检查扫 `type === "text"` 块（空 content /
   首块 tool_use 的 user/message 不误判）。
-- 压缩交互：模拟 surface replace 折叠尾块 → 下次 running 补注入；头块（锚点前）
-  经折叠在场。
-- 边界（表驱动）：无目录/空目录/非目录项忽略/不可读 SKILL.md/**超 1MB 拒**/无
-  frontmatter/无冒号行拒/缺 name/缺 description/name 与目录名不符/同名优先级
-  覆盖/`[]` 显式零/env 空串过滤/参数>env>缺省矩阵/200 字符截断两侧/控制字符
-  （含中位 \r、ESC）清洗/>50 条溢出行。
+- 边界（表驱动）：无目录/空目录/非目录项忽略/**断链忽略**/**symlink 目录跟随**/
+  **根 EACCES 告警**/**SKILL.md EACCES**/**SKILL.md 为目录**/超 1MB 拒/无
+  frontmatter/无冒号**与空键**行拒/缺 name/缺 description/name 与目录名不符/
+  同名优先级覆盖/`[]` 显式零/env 空串过滤/**env 仅冒号 → 显式零**/
+  参数>env>缺省矩阵/200 码点截断两侧/**代理对不截半**/控制字符（含中位 \r、
+  ESC）清洗/**Cf（ZWSP/RTL）清洗**/**中和大小写与开标签**/>50 条溢出行
+  （**幸存者身份钉死**）。
+- 压缩交互：折叠尾块 → 下次 running 补注入；**头块（锚点前）经折叠在场且
+  不重注入**。
 - 回归：append 失败（封存会话）告警不崩、下次幂等重试；dispose 后监听器摘除。
 - 既有回归：agent-delegation types-loader 全量用例迁移后全绿。
 
 ## §8 验收清单
 
-- [ ] §1.1–§1.4 契约逐条（含时序依据复核）
-- [ ] §7 边界表逐项
-- [ ] §3 预算逐条
-- [ ] 四门 + 覆盖率数字如实报告（新包入全局分母，只升不降）
-- [ ] docs/CLI.md 裁决行与装配清单同提交更新
+- [x] §1.1–§1.4 契约逐条（两轮方案审查 + 收口契约对照核实为真）
+- [x] §7 边界表逐项（skill 51 用例：loader 24 / render 9 / present 4 / plugin 14）
+- [x] §3 预算逐条（零定时器/零运行期 IO/零插件状态；O(surface) 存在性检查）
+- [x] 四门 + 覆盖率数字：typecheck/lint(0-0)/build 绿；全量 test 1684/1687
+      （3 败归属他人在途 apps/cli/src/cli-prompt-sections.ts 变更）；包覆盖
+      skill 98.11/94.36/100/98.79、md-frontmatter 100/100/100/100；
+      e2e 13 场景全通过
+- [x] docs/CLI.md 裁决行与装配清单同提交更新
+
+假绿抽查记录：skip 仅 2 处 `skipIf(getuid() === 0)`（root 下 chmod 不产生
+EACCES 的平台条件，非门禁规避）；收口批次断言只加强未削弱（幸存者身份钉死、
+封存重复边沿、头块压缩在场）。
+
+挂账（不越界代修）：① `packages/compaction` L2 头部守卫 + cut.ts 真轮起点
+配额（未来接入 CLI 装配前先修，见 §2）；② `packages/llm pi-wire.test.ts`
+"Retry-After HTTP-date" 并行调度偶发（存量时序敏感用例，非本改动引入）。

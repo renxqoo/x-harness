@@ -20,11 +20,14 @@ export function renderSkillsBlock(skills: Readonly<Record<string, SkillMeta>>): 
   return `<system-reminder>\n### Available skills\n${lines.join("\n")}\n</system-reminder>`;
 }
 
-/** 控制字符（含换行/中位 \r/ESC，Unicode Cc 类）压成空格；</system 中和防 reminder 包装击穿 */
+/** 控制字符（Cc）与格式字符（Cf：ZWSP/RTL override 等）压成空格；system 开/闭标签
+ *  中和（大小写不敏感——防 reminder 包装击穿） */
 function sanitize(value: string): string {
-  return value.replace(/[\p{Cc}]+/gu, " ").replaceAll("</system", "<\\/system").trim();
+  return value.replace(/[\p{Cc}\p{Cf}]+/gu, " ").replace(/<\s*\/?\s*system/gi, "<\\/system").trim();
 }
 
+/** 按码点截断——UTF-16 代理对不截半（孤立代理项出进程会变 U+FFFD） */
 function clip(value: string): string {
-  return value.length > DESCRIPTION_MAX ? `${value.slice(0, DESCRIPTION_MAX)}…` : value;
+  const units = Array.from(value);
+  return units.length > DESCRIPTION_MAX ? `${units.slice(0, DESCRIPTION_MAX).join("")}…` : value;
 }
