@@ -605,7 +605,7 @@ scavenger 65/65；全局语句门禁通过）。compaction/src 行 98.06 / 函�
 
 ## 15. 修订A：摘要注入点 summarySection（2026-09-19 用户指令——todo 清单压缩后机制性存活）
 
-> 状态：草稿。级别：中（compaction 通用注入点 + todo-tools 停靠提供 + 剥离再生）。
+> 状态：**定稿**（两路定稿前审查 25 项全处置，见 §15.5）。级别：中。
 > 动机：todo 清单的模型视野靠 task_list 回执（surface），压缩摘掉后靠摘要 LLM 从被压缩
 > 文本「概率性」捞进 Progress 区——emergency（keepRecent=0）时连保留窗都归零。真相在
 > 事件卷 todo/snapshot（last-wins），压缩时确定性注入即机制性存活。
@@ -613,52 +613,106 @@ scavenger 65/65；全局语句门禁通过）。compaction/src 行 98.06 / 函�
 ### 15.1 契约
 
 ```ts
-// compaction/src/tokens.ts（消费方定义接口、提供方停靠——依赖方向 todo-tools → compaction）
+// compaction/src/tokens.ts + index.ts 导出（消费方定义接口、提供方停靠——依赖方向
+// todo-tools → compaction；todo 不声明 inject compaction——软停靠：不装时 provide 悬挂
+// 无人消费，无害。render(events) 拿全卷是可信前提（仓内 provider）；异常自吞回
+// undefined——契约写明 + 消费点 try/catch 兜底（压缩主流程价值高于注入段））
 export interface SummarySectionProvider {
-  /** 全量快照文本段（含自述标题）；undefined = 本次不注入（无状态/不适用） */
+  /** 段完整文本（含自述小标题，如 "## Task List"）；undefined = 本次不注入 */
   render(events: readonly SessionEvent[]): string | undefined;
 }
 export const summarySection = defineService<SummarySectionProvider>("compaction/summary-section");
 ```
 
-- **注入点 = 摘要落账前代码拼接**（不经摘要 LLM——防概率性改写）：compact 组装段
-  `trySection()?.render(session.events())`，产出以 `<!-- summary-section:begin/end -->`
-  锚点包裹追加在摘要文本尾；`render` 返回 undefined 或停靠缺席（**tryUse 运行期拉取**——
-  装配序无关、晚装即用、不装不注入，拉取式一致口径）不注入；
-- **每轮再生**：注入段每次 compact 从最新事件卷重新生成——不依赖上一轮摘要传递，
-  自愈（emergency 受益最大）；
-- **旧段剥离**：previousSummaryOf 取到上份摘要后、喂 summarize 前，strip 到
-  `begin` 锚点（含）为止——防摘要模型把过时注入段卷进 Progress；剥离后的文本照旧过
-  parseFileOperations（注入段天然无文件操作）；
-- **注入段不计 summaryTokens**（非 LLM 输出）；occupancy 测量经投影自然包含；
-- **单提供者**（provide 遮蔽语义）：多提供者聚合是未来扩展，落档。
+- **注入点 = 落账组装段代码拼接**（摘要正文 + 文件账本标签 + AUTO_CONTINUATION_NOTE
+  **之后**——注入段恒为落账文本最末段），以 compaction 统一包裹的锚点
+  `<!-- summary-section:begin -->` / `<!-- summary-section:end -->` 界定（锚点由
+  compaction 加——provider 不感知锚点）；锚点包裹后再缀一个空行分隔。停靠缺席或
+  render 回 undefined → 不注入；**tryUse 运行期拉取**（装配序无关、晚装即用、
+  不装不注入——拉取式一致口径）。注入时点 = 落账时点（side-call 窗口内新落的
+  todo/snapshot 进段——与保留窗内回执同口径，避免模型见矛盾状态）；
+- **剥离 = 单一函数覆盖全部三个输入面**（收口审查 A-P0/B-P1 合并根治）：summarize 的
+  previousSummary、fileListsOf 的 parseFileOperations 输入、serializeConversation 对
+  replace 型摘要节点（区间首位）的文本渲染——三个消费点在喂给 LLM/解析器前统一剥除
+  注入段。剥离后注入段不进任何 LLM 输入与文件账本解析面：过时段不卷进 Progress
+  （原动机）；subject/description 内嵌伪 `<read-files>` 标签经注入段压过权威账本的
+  攻击面（末次匹配）随之消失（收口审查 A-P1-2 根治——注入段根本不进 parse 输入）；
+- **剥离规格（确定性）**：从尾 `lastIndexOf(begin)` 剥离最后一个完整 begin..end 段
+  （含锚点与包裹内文本）；无锚点 → no-op（L2 账本文本/旧摘要）；半锚点（有 begin 无
+  end）或 end 后有尾随内容 → 保守跳过不剥（宁可漏剥不可误截正文/权威账本标签）；
+- **每轮再生**：注入段每次 compact 从最新事件卷重新生成（落账时点），不依赖上一轮
+  传递，自愈；summaryTokens 按**不含注入段**的 LLM 输出段单独计量（landSummary 持
+  两段）；occupancy 经投影自然包含注入段（两观测口径各自成立）；
+- **单提供者 = 同层唯一**：core 同层二次 provide 装配期 throw（非遮蔽——遮蔽仅跨层）；
+  多提供者聚合是未来扩展（需显式聚合层设计），落档。
 
-### 15.2 todo 侧停靠（todo-tools → compaction 依赖，装配序无关）
+### 15.2 todo 侧停靠
 
 ```ts
-// store.ts 导出 tasksOfSnapshot（快照 → TodoTask[]：edges 重建 blocks/blockedBy——
-// 恢复与注入共用重建，单一真相）
-// summary.ts：todoSummarySection(events) = latestTodoSnapshot → undefined（无词条，
-// 整段缺席——不诱导）| tasks 空注入 "No tasks"（用过且当前空——明确事实）
-//   | listText(tasksOfSnapshot(...))（复用工具回执格式——模型在摘要与回执见同构清单）
+// store.ts：tasksOfSnapshot(data) → readonly TodoTask[]——行重建 + edges 派生
+//   blocks/blockedBy 抽为 store 内共享私有函数（restoreBucket 灌桶与注入渲染共用）
+// summary.ts：todoSummarySection(events)：
+//   latestTodoSnapshot(events) → undefined（无词条——整段缺席，不诱导）
+//   | tasks 空 → "## Task List\nNo tasks"（用过且当前空——明确事实）
+//   | "## Task List\n" + listText(tasksOfSnapshot(...))（复用工具回执格式——模型在
+//     摘要与回执见同构清单）
 // plugin.ts：ctx.provide(summarySection, { render: todoSummarySection })
+// package.json：依赖 @x-harness/compaction（workspace:*，单向无环）
 ```
 
 ### 15.3 测试口径
 
-- compaction：stub provider → 落账节点含注入段与锚点；UPDATE 轮 summarize 输入的
-  previousSummary 已剥离（探针断言）；缺席/undefined → 行为不变回归；
-- todo：todoSummarySection 三态（有词条含依赖注记行 / 空 No tasks / 无词条 undefined）；
-  tasksOfSnapshot 往返（含 edges 双侧派生）；
-- 集成：真装配两包 → compact → deriveMessages 摘要节点含任务行；变更后二次 compact
-  注入段再生成最新；
-- e2e：压缩防线旅程加 todo 段（建任务→compact→摘要含任务行→完成→再 compact→段更新）。
+- compaction（本包）：stub provider → 落账节点文本含锚点包裹段且在最末；**三输入面
+  剥离**各一探针（UPDATE 轮 summarize 输入 previous-summary 区不含锚点——fakeLlm
+  promptOf 断言；parseFileOperations 输入剥离——伪 `<read-files>` 标签在注入段内不
+  压账本；conversation 序列化对区间首位摘要节点已剥）；strip 三边界（无锚点 no-op /
+  半锚点跳过 / 多锚点剥最后一个）；render throw → 告警降级不注入、compact 照常成功；
+  undefined/缺席 → 行为不变回归；summaryTokens 不含注入段数字断言；
+- todo-tools（本包——集成测试归 todo 侧，依赖方向）：todoSummarySection 三态；
+  tasksOfSnapshot 往返（edges 双侧派生）；**真装配两包** → compact → deriveMessages
+  摘要节点含任务行 → 变更后二次 compact → 段再生为最新；
+- e2e：compaction-journey 加 todo 段（插件装配 + 建任务 → compact → 摘要含任务行 →
+  完成任务 → 再 compact → 段更新；小窗断言重校知悉——注入段影响切口预算）。
 
 ### 15.4 不处理（落档）
 
 | 项 | 理由 | 归属 |
 | --- | --- | --- |
 | 注入信息喂给摘要 LLM 卷进 Progress | 概率性违背本件动机；Progress 与注入段语义互补 | 本修订裁定 |
-| 多提供者聚合（数组段拼接） | 现仅 todo 一方；单提供者遮蔽先跑 | 未来扩展 |
+| L2 账本落账吞注入段的窗口期（L2 replace 掉含段摘要节点，至下次 L3 再生前 todo 可见性退回账本 LLM 概率性收编） | 如实落档：窗口期存在、L3 再生自愈；escalator 同经 summarySection 拼接是扩展（改动面 vs 窗口收益） | 本修订裁定（收口审查 A-P1-3） |
+| emergency 失败路径（summarize-failed/empty/truncated/budget-exhausted）注入段不落账 | replace 不落账则段无处安放；重试链由既有语义兜底 | 本修订裁定（如实） |
+| 多提供者聚合（数组段拼接/显式聚合层） | 现仅 todo 一方；同层唯一 + fail-fast | 未来扩展 |
 | 注入段进 system 锚点常驻 | 每轮 token 成本裁决未做（Claude Code 未选） | 后续件 |
-| L1/L2 零 LLM 防线注入 | 占位/账本形态本就在场，无摘要面 | 本修订裁定 |
+| L1/L2 零 LLM 防线自身注入 | 占位/账本形态本就在场（L2 窗口期见上行落档） | 本修订裁定 |
+| 段长度上界 | todo 量级微不足道；provider 契约注释提示自限 | 落档（未来加帽） |
+
+### 15.5 定稿前对抗审查处置（两路并行，25 项全处置）
+
+**路 A（契约/语义）**：P0-1 剥离只挂 previousSummary 半堵（conversation 序列化通道
+原样喂过时段——目标被击穿）+ P1-2 注入段伪文件标签可确定性压过权威账本（subject
+内嵌 `<read-files>`，parseFileOperations 末次匹配）→ **合并根治**：§15.1 剥离收敛
+单一函数覆盖三输入面（previousSummary / parseFileOperations / conversation 渲染）。
+P1-3 L2 落账吞段窗口期 → **如实落档**（§15.4，L3 再生自愈；escalator 拼接留扩展）。
+P1-4 剥离语义不完备（无锚点/假锚点/中置误截正文）→ **采纳**：尾部 lastIndexOf +
+完整段 + 半锚点保守跳过（§15.1）。P2-6 provide 遮蔽措辞与 core 不符（同层 throw）→
+**采纳**（§15.1 措辞修正）。P2-7 emergency 失败路径落档 → **采纳**（§15.4）。
+P2-8 summaryTokens 计量点 → **采纳**（两段分别计量，§15.1）。P2-9 四形态组合与降级
+用例 → **采纳**（§15.3）。P3-10 render 全卷信任前提 → **采纳**（契约注释）。P3-11
+不声明 inject 的软停靠裁决 → **采纳**（§15.1）。
+
+**路 B（实现可行性）**：P1-1 注入位置歧义（正文尾会斩账本链）→ **采纳**：恒为落账
+文本最末段（NOTE 之后），剥离只动最尾（§15.1）。P1-2 = 与 A-P0-1 合并。P1-3 strip
+三态规格 → 与 A-P1-4 合并。P2-4 render throw 契约 → 与 A 采纳（自吞 + try/catch）。
+P2-5 = A-P2-8 合并。P2-6 = A-P2-6 合并。P2-7 注入段时点竞态 → **裁定**：落账时点
+（与保留窗同口径，§15.1）。P2-8 tasksOfSnapshot 重构落点 → **采纳**（store 内共享
+私有函数，§15.2）。P3-9 锚点内格式谁定 → **裁定**：provider 出段正文（含自述标题）、
+compaction 出锚点包裹（§15.1）。P3-10 集成测试归属 → **采纳**（todo 侧，依赖方向，
+§15.3）。P3-11 e2e 装置改动量与切口重校 → **知悉采纳**（§15.3）。P3-12 todo 包模块
+图拉进 agent-loop/llm → 知悉（单向无环）。P3-13 index 导出 → **采纳**（§15.1）。
+P3-14 剥离后空串 ≠ undefined → 实现注意项（§15.1 剥离规格内隐含）。
+
+**核过无偏（两路一致）**：tryUse 运行期拉取全形态成立（单层装配/晚装/不装/dispose）、
+summarize 失败路径段不落、previousSummaryOf 调用点唯一、L2 账本无锚点剥离 no-op、
+occupancy 双口径、emergency keep=0 下全卷再生（动机达成）、deriveMessages 原样进
+主对话、单飞行恰调一次、匿名桶不进段、依赖单向无环、锚点与中和防线无交互、
+fakeLlm 探针可写。
