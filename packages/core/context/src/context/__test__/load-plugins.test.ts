@@ -149,3 +149,49 @@ describe("插件加载器（§5）", () => {
     expect(order).toEqual(["slow", "fast"]);
   });
 });
+
+// —— S0：softInject 软依赖（SDK-DESIGN §2.1）——
+
+describe("softInject（S0——在场则排后，缺席无约束）", () => {
+  it("在场：声明者排在软目标之后（数组序颠倒也保序）", async () => {
+    const order: string[] = [];
+    const late: Plugin = { name: "late", apply: () => { order.push("late"); } };
+    const early: Plugin = { name: "early", softInject: ["late"], apply: () => { order.push("early"); } };
+    await loadPlugins(createContext(), [early, late]);
+    expect(order).toEqual(["late", "early"]); // 数组序 early 在前——软依赖拉到 late 后
+  });
+
+  it("缺席：无约束不报错（按数组序）；未知名不进校验 throw", async () => {
+    const order: string[] = [];
+    const solo: Plugin = { name: "solo", softInject: ["ghost-absent"], apply: () => { order.push("solo"); } };
+    await loadPlugins(createContext(), [solo]);
+    expect(order).toEqual(["solo"]); // 缺席软名静默跳过（对照 inject 未知名 → throw）
+  });
+
+  it("与 inject 混合：硬先软后；混合环仍被 visiting 栈抓到", async () => {
+    const a: Plugin = { name: "a", inject: ["b"], softInject: ["c"], apply: () => {} };
+    const b: Plugin = { name: "b", apply: () => {} };
+    const c: Plugin = { name: "c", apply: () => {} };
+    const unloaded = await loadPlugins(createContext(), [a, b, c]);
+    for (const dispose of unloaded) await dispose();
+    // 混合环：a softInject b + b inject a
+    const x: Plugin = { name: "x", softInject: ["y"], apply: () => {} };
+    const y: Plugin = { name: "y", inject: ["x"], apply: () => {} };
+    await expect(loadPlugins(createContext(), [x, y])).rejects.toThrow(/cyclic plugin dependency/);
+  });
+
+  it("双向软依赖 = 约束矛盾 throw（软-软环不降级为数组序——诚实暴露）", async () => {
+    const p: Plugin = { name: "p", softInject: ["q"], apply: () => {} };
+    const q: Plugin = { name: "q", softInject: ["p"], apply: () => {} };
+    await expect(loadPlugins(createContext(), [p, q])).rejects.toThrow(/cyclic plugin dependency/);
+  });
+
+  it("自软锚 throw；硬+软重复声明同一插件无害（done 短路）", async () => {
+    const self: Plugin = { name: "self", softInject: ["self"], apply: () => {} };
+    await expect(loadPlugins(createContext(), [self])).rejects.toThrow(/cyclic plugin dependency/);
+    const a: Plugin = { name: "dup-a", inject: ["dup-b"], softInject: ["dup-b"], apply: () => {} };
+    const b: Plugin = { name: "dup-b", apply: () => {} };
+    const unloaded = await loadPlugins(createContext(), [a, b]);
+    for (const dispose of unloaded) await dispose();
+  });
+});

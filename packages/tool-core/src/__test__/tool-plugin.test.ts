@@ -11,6 +11,7 @@ import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolDefinition } from "@x-harness/tools";
 import { createLocalEnv } from "@x-harness/exec-env";
+import { permissionGrants } from "@x-harness/permission";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import { PathGate, ObservedRegistry, createToolPlugin } from "../index.ts";
 import type { FileVersion } from "../index.ts";
@@ -191,6 +192,40 @@ describe("guidance 投稿（数据位 + 内核直停靠——D3）", () => {
       createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: () => "" }),
     ]);
     expect(ctx.use(systemPrompt).assemble().text).toBe("");
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+});
+
+describe("S0 乱序装配探针（softInject——数组序颠倒在场合约束仍生效）", () => {
+  it("tool-* 列前、systemPromptPlugin 列后 → guidance 仍停靠（tryUse 必中）", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      toolsPlugin,
+      createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: "## Probe\n\nprobe rule" }),
+      systemPromptPlugin, // 数组序在 tool 之后——S0 软依赖拉前
+    ]);
+    const prompt = ctx.use(systemPrompt);
+    prompt.section({ name: wellKnown.baseCore, text: "BASE" });
+    const text = prompt.assemble().text;
+    expect(text).toContain("probe rule"); // 停靠未静默丢失（D6 陷阱已结构性消灭）
+    expect(text.indexOf("BASE")).toBeLessThan(text.indexOf("## Probe"));
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+
+  it("permission 列后 → grants 闭包捕获仍命中（软依赖拉前；标记判别）", async () => {
+    const seen: string[] = [];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      toolsPlugin,
+      createToolPlugin({
+        name: "tool-probe", gate, envOption: createLocalEnv(root),
+        make: (_env, extraRootsOf) => { seen.push(...extraRootsOf(undefined)); return probe(); }, // 捕获时序观测点
+      }),
+      { name: "permission", apply: (c) => c.provide(permissionGrants, { extraRootsOf: () => ["GRANTS-CAPTURED"], rootOverrideOf: () => undefined } as never) },
+    ]);
+    expect(seen).toEqual(["GRANTS-CAPTURED"]); // 列后仍捕获（缺席对照=空数组——标记判别）
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
