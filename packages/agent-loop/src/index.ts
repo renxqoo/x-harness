@@ -15,8 +15,10 @@ export {
   agentRequestError,
   agentStatus,
   agentTurnStopping,
+  agentAssistantSettle,
+  llmStream,
 } from "./tokens.ts";
-export type { AssistantStreamFrame, Dial, PreStepDecision, RequestFailure } from "./tokens.ts";
+export type { AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestFailure } from "./tokens.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";
 export { foldInbox } from "./inbox.ts";
 export { lastRequestContext } from "./request.ts";
