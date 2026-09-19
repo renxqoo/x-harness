@@ -79,7 +79,8 @@ export function buildAdapters(config: ProvidersConfig, resolution: ModelResoluti
 }
 
 export async function buildWorld(options: WorldOptions): Promise<Result<World>> {
-  const adapters = options.adapters ?? buildAdapters(options.config, options.resolution);
+  try {
+  const adapters = options.adapters ?? buildAdapters(options.config, options.resolution); // 终审 F1-2：构造错误走 Result 面（不逃逸 throw）
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
@@ -96,5 +97,8 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...delegationKit(),
     ...skillKit(),
   ];
-  return createAgentWorld({ plugins });
+  return await createAgentWorld({ plugins });
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+  }
 }

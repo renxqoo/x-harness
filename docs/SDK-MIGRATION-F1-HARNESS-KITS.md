@@ -7,7 +7,7 @@
 - World 七字段形状不变；main.ts/run-repl 消费面零改动。
 
 ## 2. 交付（DESIGN §2.2 全量）
-- kit 目录：inlineSession/durableSession/llm(adapter 注册插件化)/toolbox(gate+observed 接线)/fence/delegation(含 checkpoint)/skill/meter/prompt(base+appends)。
+- kit 目录：inlineSession/durableSession/llm(adapter 注册插件化)/toolbox(gate+observed 接线)/fence/**delegation 与 checkpoint 分立两 kit**（F-11 处置——§2 原案"delegation(含 checkpoint)"已改，独立表达"要委派不要屏障"）/skill/meter/**prompt(base?，无 appends——F-02 处置：appends 留宿主后置注册，registerAppendSections 未迁移)**/loop。
 - createAgentWorld({plugins, broker?}): loadPlugins + World 提取 + 失败自清理——任意插件集。
 - CLI build-world 改 kit 组合；adapterOptionsOf/buildAdapters 留宿主；registerAppendSections 迁 promptKit。
 

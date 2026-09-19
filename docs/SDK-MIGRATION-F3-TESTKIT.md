@@ -1,4 +1,4 @@
-# F2 迁移文档：@x-harness/testkit
+# F3 迁移文档：@x-harness/testkit
 
 > 状态：草稿。迁移单元：e2e 私有样板提炼为共享测试装置包。
 > 旧实现：四 journey 各持 textScript/假 adapter/fake tool 样板（A3）。

@@ -99,6 +99,7 @@ export const llmKit = (
   llmPlugin,
   ...adapters.map((adapter, index): Plugin => ({
     name: `llm-adapter-${String(index)}-${adapter.name}`,
+    inject: ["llm"], // 终审 F1-1：apply 期 use llmRuntime 的硬依赖声明式时序（与在库 adapter-plugin 同款）
     apply: (ctx: Context): Disposer => ctx.use(llmRuntime).registerAdapter(adapter),
   })),
 ];

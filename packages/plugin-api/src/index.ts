@@ -47,7 +47,7 @@ export function transformAssistant(ctx: Context, fn: (s: AssistantSettlement) =>
 /** 工具否决器：返回 deny 则拦截（先 next 后 deny——I2；最外层 deny 胜） */
 export function vetoTools(
   ctx: Context,
-  fn: (call: { readonly callId: string; readonly name: string; readonly args: unknown; readonly session?: never }) => { readonly kind: "deny"; readonly reason: string } | undefined,
+  fn: (call: { readonly callId: string; readonly name: string; readonly args: unknown; readonly session?: SessionId; readonly control?: true }) => { readonly kind: "deny"; readonly reason: string } | undefined,
 ): Disposer {
   return ctx.on(toolsPreExecute, async (payload, next) => {
     const inner = await next(payload);
@@ -56,8 +56,9 @@ export function vetoTools(
   });
 }
 
-/** 工具输出变换（execute 后处理）。注册序（收口审查 4.3）：缺省外层（见超时后处理后的
- *  outcome）；需内层视角传 { prepend: true }。 */
+/** 工具输出变换（execute 后处理）。注册序方向（终审 P1-1 勘误：先注册=最外层）：
+ *  缺省（append）= **内层**——fn 见 final 的原始 outcome（先于他人后处理）；
+ *  { prepend: true } = 外层——fn 见更早注册中间件（超时/检查点包裹）处理后的 outcome。 */
 export function transformToolResult(
   ctx: Context,
   fn: (outcome: ToolOutcome, request: ToolCallRequest) => ToolOutcome,

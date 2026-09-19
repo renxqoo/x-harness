@@ -33,7 +33,7 @@ tapSessionEvents(ctx, fn: (e: SessionEvent) => void): Disposer;                 
 
 - **inject 不单设**：注入=transformMessages 的加法形态（最少面原则第一次执行）。
 - **veto 的 next 纪律**：helper 内「先 next 后 deny」（tools I2 契约）——形态差异在作者文档言明。
-- **transformToolResult 注册序（收口审查 4.3）**：缺省注册（外层——见超时后处理后的 outcome）；需内层视角时传 `{prepend: true}`。
+- **transformToolResult 注册序（终审 P1-1 勘误：先注册=最外层）**：缺省（append）=内层（见原始 outcome）；`{prepend: true}` =外层（见他人后处理后）。
 - 包装/装饰他人服务（微调四式之一）不做 helper——`use + provide` 三行即达，包成 sugar 反遮语义。
 
 ## 4. 测试：每 helper 一用例（变换落账一致/否决配对 deny/流包裹不改落账——与 F0 专测互补：F0 测面，P1 测糖）；零新 token 断言（词表不变）。
