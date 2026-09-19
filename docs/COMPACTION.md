@@ -183,7 +183,8 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
 - **CP（账本维护，唯一常规摘要面）**：
   - **输入硬界**（参照系 checkpointMaxChars 同式）：`budgetChars = (CP 窗 − min(maxOutput, 20_000)
     − 4_000 − 账本字符) / 1.25`（CP 窗 = CP 模型面自己的 contextWindow）；≤0 → 不拨号，
-    软失败 `cp-input-budget-exhausted`。
+    软失败 `cp-input-budget-exhausted`。**输出上限同口径封顶 20k**（预留按 20k 算而输出
+    放行是错配）。无真轮起点的退化投影按全投影收编（参照系容错——不烧熔断预算）。
   - 段装箱：起点对齐切口候选、终点对齐在飞轮起点、至少装一轮；预算受限只装尾部一轮；
     极小预算兜底单轮（进展优先）；`from ≥ 在飞轮起点` / 空投影 → 无可装。
   - 七节账本（goals/decisions/tasksDone/tasksPending/factsVerified/factsUnverified/current）：
@@ -192,8 +193,10 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   - 落账 `autocompact/checkpoint {turn, step, ledger, coveredSeq, stale?}` 词条（§2）持久化，
     重开恢复折叠（快照 last-wins、垃圾跳过、负 coveredSeq 钳 0）；**词条落账失败（会话
     封存等）= 计败**（参照系 appendCustom 拒绝同策）。
-  - **失效判定**：段内全部 user/assistant 节点 seq 仍在当前投影（**任一缺席即失效**——
-    覆盖部分替换场景，端点-only 检查有洞）。三分支终态：
+  - **失效判定**：作业启动后落账的前缀替换（replace 型 user/message——L1 的
+    tool/result 单点替换不参与：patch 描述的原文正是账本想要的）；**段锚** = 作业启动时
+    段首边界节点的 seq——缺席即段被吞；部分前缀替换使下标漂移时按 seq 回定位重算段首。
+    三分支终态：
     (i) **段被吞**（from 锚不在投影或投影已短于段起点）→ 重锚（coveredSeq = 新投影首个
     切口候选前的覆盖降级，保守 min）、**丢弃 patch、非失败不计数、不再拨号**；
     (ii) 失效且重试余量 > 0 → 重锚后**重新拨号**（重试计数 = 模型重拨次数）；
@@ -209,7 +212,16 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   缺席取命令首 token、再缺席 `<no-path>`；保留 isError 元数据——配对不变量不破坏）；
   预门槛 = 收益能把占用压回 L1 线内才落（前缀缓存裁决）；**退避精度**：收益 < 1_000 才
   l1Backoff（本 turn 内不再试）+ `l1-no-gain`——预门槛不成立但收益可观时不退避（参照系
-  精度，避免堆积中损失落账时机）。收益在插件态累计（锚时效规则：只冲抵锚后新增）。
+  精度，避免堆积中损失落账时机）。收益为**有界落账列表**（每次 L1 落账一条 {tokens,
+  sinceSeq}，截 8 条）：锚时效规则按条判定——只扣减 sinceSeq > 锚 seq 的条目（锚的
+  usage 已含其效果的条目停计并剪除；单累计对在混合时序下会把已被旧锚吸收的收益
+  重复扣减——切片 2 代码审查处置，§13）。
+- **覆盖边界（coveredSeq）= 位置语义**：coveredSeq 定位边界节点、其后为首未覆盖区——
+  迭代前缀替换后头部节点携带 journal 尾 seq、其后保留节点 seq 更小，边界推导必须按
+  seq 定位节点的**位置**而非数值比较（数值扫描会把保留区整体误判，L2 二次落账因此
+  不可达——§13 修复）；边界节点缺席（被外部替换吞掉）回退数值扫描。L2 落账后边界
+  重锚到**落账摘要节点自身 seq**（摘要即新边界——二次 L2 单点替换上一份摘要）；
+  吞段/外部失真重锚取保守 min（新投影首个切口候选之前节点的 seq）。
 - **L2（零 LLM 落账）**：账本就绪（非熔断且任一节非空）且越线 →
   - **首次落账（受守卫）**：活口预算 `liveBudget = max(500, floor((effectiveWindow −
     min(ledgerTokens, ledgerBudget)) × 1) − 2_000)`（factor=1）；`budgetCut = findCutPoint(
@@ -233,7 +245,8 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
 - **空闲清理**：插件级单定时器（tick 自适应 250ms–60s，unref，dispose 清除；回调全包
   try/catch——定时器异常是进程级崩溃面）；条件 = 空闲到期（turnActive=false 且
   now − lastTurnEndAt ≥ 阈）+ 收益达标 → L1 落账 + **flush 先于 emit**（观测不抢跑在
-  持久化之前；flush 失败吞并告警）。turnActive/lastTurnEndAt 由 `sessionEvent`
+  持久化之前；flush 失败告警 `idle-flush-failed` 但 **emit 照发**——落账已成 append-only
+  日志事实，与参照系「flush 失败回滚 redaction」的有意分歧：落账不可逆故如实报态）。turnActive/lastTurnEndAt 由 `sessionEvent`
   （turn/start、turn/end）维护，冷启动由 journal 折叠。
 - **接管仲裁**：**全局恰一次**，首个 `agentPreStep` 到达时评估（此时装配已定，无停靠竞态）：
   `compactionRunner` 在场且 CP 模型面就绪（runner.summarizer 或覆盖项 + llm 停靠到位）→
@@ -518,3 +531,51 @@ session_meta、settings、自定义事件总线）改写为对应本仓面（sur
 - F9：死别名 userTurnNode 删除；stderr spy 建点移入 World 之后 try 之前（失败路径也还原）（采纳）；
 - F10：pi-wire Retry-After 时钟 flake——非本批文件，单独重跑两次 + 全量复跑均绿（登记）；
 - F11：token-meter 变更纯净性核验通过（无需处置）。
+
+## 13. 切片 2 代码对抗审查处置（两路并行子 agent，2026-09-19）
+
+**审查1（参照系语义/契约面）7 项 + 测试缺口 11 项**：
+- #1 阻断：L2 落账后 coveredSeq 重锚到活口真轮起点 seq 与数值扫描边界不相容——头部
+  摘要节点携带 journal 尾 seq，二次 L2 的覆盖域守卫恒钳 0 → L2 每会话只能落账一次。
+  修复：覆盖边界改**位置语义**（seq 定位边界节点 +1；缺席回退数值扫描）；L2 落账后
+  重锚到摘要节点自身 seq（§1.2 落档）（采纳）；
+- #2 重大：L1 收益单累计对在「新锚吸收旧收益后」重复扣减（占用系统性低估）。修复：
+  有界落账列表按条锚时效判定 + 剪除已吸收条目（§1.2 落档）（采纳）；
+- #3 重大：吞段重锚 max（全投影已覆盖）与方案「保守 min」矛盾——过度声明使 L2 守卫
+  放行未收编内容。修复：按方案口径 conservativeBoundarySeq（min 到新投影首个切口
+  候选之前）（采纳——方案与代码同变闭环）；
+- #4 重大：失效处理未验证段锚在场（部分前缀替换使下标漂移→静默漏段）。修复：段锚
+  seq 记录 + 缺席即吞段分支 + 在场按 seq 回定位（§1.2 落档）（采纳）；
+- #5 轻微：CP 拨号输出上限未封顶 20k → min(maxOutput, 20k)（采纳）；
+- #6 轻微：无真轮起点投影 CP 计败（参照系按全投影容错）→ lastTurnStart<0 按投影长（采纳）；
+- #7 轻微：idle flush 失败后的 emit 语义与参照系（回滚）分歧未落档 → §1.2 落档
+  有意分歧（采纳）。
+- 测试缺口处置：二次守护 L2/CheckpointAction 词表锁/外部失真重锚/CP 截断与错错/
+  词条落账失败计败（裸世界直击）/并行逼近恰一次与首步缺省/idle flush 失败/两次 CP
+  反衰减旅程/三态映射表（三主测试文件头注释）——全部已补；armed 复位走安全区既有
+  覆盖；gate 抛出软失败为防御分支（登记不造测）。
+
+**审查2（并发/生命周期 + 假绿面）12 项**：
+- F1 阻断（lint）：新代码 13 处违规全清零，含 **void-X 哨兵堆判为 lint-gaming——
+  全部删除并清未用导入**（采纳）；e2e 包 4 处存量违规归属他人在途提交（不越界）；
+- F2 重大：joinInflight 看门狗在作业先落定路径不清除（120s 引用计时器累积拖住事件
+  循环）+ 预中止信号不短路 → finally 全路径 clearTimeout + 预中止守卫（采纳）；
+- F3/F4：disposer 看门狗 clearTimeout；idle flush 链 .catch（采纳）；
+- F5（覆盖率主张核实）：审查员复测多文件包内跑 ≡ 全量并判「无假象」——**本仓以
+  单文件隔离 JSON 报告终裁：scavenger.ts 语句 65/65=100%，全量表 89.36% 系 v8
+  多 worker 合并的统计假象**（多文件跑同样受染；行/函数/分支指标无此形态）。
+  汇报口径：行/函数/分支取全量表真值；语句受染文件以单文件隔离 JSON 为准；
+- F6 重大（假绿）：复测门用例从未触发二次落账（≤2 断言掩护）→ 低线配置
+  （cp 540 < warn 550 < l1 600）+ 大活口使复评仍越线，断言收紧（采纳）；
+- F7 重大（假绿）：sessionDisposed 用例用永挂流（删掉取消逻辑也绿）→
+  abortableScript（信号感知脚本）使取消可观测：快速落定 + 无失败告警（采纳）；
+- F8 重大（假绿）：词条落账失败计败从未被测 → 裸 session 世界直击 acceptPatch
+  封存落败断言计败（采纳）；
+- F9 重大（假绿）：多会话隔离用例断言空泛 → A 越线落 L1 / B 安全区零落账对照（采纳）；
+- F10-F12：计时器清点/假 llm 保真度（abortableScript 已补信号面）/e2e lint 归属——
+  登记或既有处置。
+
+**切片 2 覆盖率（如实）**：autocompact/src 全量表 行 94.88 / 函数 95.37 / 分支 97.32；
+语句 84.98（v8 多 worker 合并统计假象——单文件隔离复测受染文件语句 100%，如
+scavenger 65/65；全局语句门禁通过）。compaction/src 行 98.06 / 函数 98.91 / 分支 99.35
+（语句 91.56）。全量 1350 用例通过；e2e 待切片 3。

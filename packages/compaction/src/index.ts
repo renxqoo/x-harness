@@ -7,7 +7,7 @@ export type { CompactionRunner } from "./tokens.ts";
 export type { CompactTrigger, CompactionResult, CompactionSkipReason, ResolvedConfig } from "./compact.ts";
 export { runCompact, previousSummaryOf } from "./compact.ts";
 export type { SummarizerFace, SummarizeOutcome, SummarizeInput } from "./summarize.ts";
-export { summarize, summaryInputMaxChars, buildSummarizePrompt, SUMMARIZATION_SYSTEM_PROMPT } from "./summarize.ts";
+export { summarize, runTextRequest, summaryInputMaxChars, buildSummarizePrompt, SUMMARIZATION_SYSTEM_PROMPT } from "./summarize.ts";
 export { findCutPoint, isTurnStartNode, USER_QUOTE_TOKENS } from "./cut.ts";
 export type { CutPoint } from "./cut.ts";
 export { estimateMessage, estimateBlocks, nodeTokens } from "./estimate.ts";

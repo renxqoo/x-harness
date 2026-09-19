@@ -152,7 +152,26 @@ export async function summarize(input: SummarizeInput): Promise<SummarizeOutcome
     ...(input.previousSummary !== undefined ? { previousSummary: input.previousSummary } : {}),
     ...(input.customInstructions !== undefined ? { customInstructions: input.customInstructions } : {}),
   });
+  return runTextRequest({
+    llm: input.llm,
+    face: input.face,
+    system: SUMMARIZATION_SYSTEM_PROMPT,
+    prompt,
+    idleTimeoutMs: input.idleTimeoutMs,
+    signal: input.signal,
+  });
+}
 
+/** 通用文本拨号 + 流结算（compaction 摘要与 autocompact CP 共用的单份流消费面：
+ *  system 先行、空文本判 trim、截断丢弃、abort/看门狗静默、空闲收殓） */
+export async function runTextRequest(input: {
+  readonly llm: LlmRuntime;
+  readonly face: SummarizerFace;
+  readonly system: string;
+  readonly prompt: string;
+  readonly idleTimeoutMs: number;
+  readonly signal: AbortSignal;
+}): Promise<SummarizeOutcome> {
   // 看门狗与父 signal 联动到本地 controller；监听器 finally 拆净
   const linked = new AbortController();
   const onParentAbort = (): void => linked.abort();
@@ -164,10 +183,10 @@ export async function summarize(input: SummarizeInput): Promise<SummarizeOutcome
       model: input.face.model,
       ...(input.face.provider !== undefined ? { provider: input.face.provider } : {}),
       tools: [],
-      // 系统提示词先行（结构化检查点纪律——不随对话漂移），pi 适配器从 system 角色消息装配
+      // 系统提示词先行（不随对话漂移），pi 适配器从 system 角色消息装配
       messages: [
-        { role: "system", text: SUMMARIZATION_SYSTEM_PROMPT },
-        { role: "user", content: [{ type: "text", text: prompt }] },
+        { role: "system", text: input.system },
+        { role: "user", content: [{ type: "text", text: input.prompt }] },
       ],
       maxTokens: input.face.maxOutputTokens,
       signal: linked.signal,
