@@ -602,3 +602,63 @@ scavenger 65/65；全局语句门禁通过）。compaction/src 行 98.06 / 函�
   为空）；本特性两次代码审的假绿项（§12 F6-F9 同源、§13 F6-F9）已全部修复并带
   回归用例。pi-wire Retry-After HTTP-date 用例为存量时钟 flake（非本批文件，
   单独重跑稳定通过）。
+
+## 14. 修订A：摘要注入点 summarySection（2026-09-19 用户指令——todo 清单压缩后机制性存活）
+
+> 状态：草稿。级别：中（compaction 通用注入点 + todo-tools 停靠提供 + 剥离再生）。
+> 动机：todo 清单的模型视野靠 task_list 回执（surface），压缩摘掉后靠摘要 LLM 从被压缩
+> 文本「概率性」捞进 Progress 区——emergency（keepRecent=0）时连保留窗都归零。真相在
+> 事件卷 todo/snapshot（last-wins），压缩时确定性注入即机制性存活。
+
+### 14.1 契约
+
+```ts
+// compaction/src/tokens.ts（消费方定义接口、提供方停靠——依赖方向 todo-tools → compaction）
+export interface SummarySectionProvider {
+  /** 全量快照文本段（含自述标题）；undefined = 本次不注入（无状态/不适用） */
+  render(events: readonly SessionEvent[]): string | undefined;
+}
+export const summarySection = defineService<SummarySectionProvider>("compaction/summary-section");
+```
+
+- **注入点 = 摘要落账前代码拼接**（不经摘要 LLM——防概率性改写）：compact 组装段
+  `trySection()?.render(session.events())`，产出以 `<!-- summary-section:begin/end -->`
+  锚点包裹追加在摘要文本尾；`render` 返回 undefined 或停靠缺席（**tryUse 运行期拉取**——
+  装配序无关、晚装即用、不装不注入，拉取式一致口径）不注入；
+- **每轮再生**：注入段每次 compact 从最新事件卷重新生成——不依赖上一轮摘要传递，
+  自愈（emergency 受益最大）；
+- **旧段剥离**：previousSummaryOf 取到上份摘要后、喂 summarize 前，strip 到
+  `begin` 锚点（含）为止——防摘要模型把过时注入段卷进 Progress；剥离后的文本照旧过
+  parseFileOperations（注入段天然无文件操作）；
+- **注入段不计 summaryTokens**（非 LLM 输出）；occupancy 测量经投影自然包含；
+- **单提供者**（provide 遮蔽语义）：多提供者聚合是未来扩展，落档。
+
+### 14.2 todo 侧停靠（todo-tools → compaction 依赖，装配序无关）
+
+```ts
+// store.ts 导出 tasksOfSnapshot（快照 → TodoTask[]：edges 重建 blocks/blockedBy——
+// 恢复与注入共用重建，单一真相）
+// summary.ts：todoSummarySection(events) = latestTodoSnapshot → undefined（无词条，
+// 整段缺席——不诱导）| tasks 空注入 "No tasks"（用过且当前空——明确事实）
+//   | listText(tasksOfSnapshot(...))（复用工具回执格式——模型在摘要与回执见同构清单）
+// plugin.ts：ctx.provide(summarySection, { render: todoSummarySection })
+```
+
+### 14.3 测试口径
+
+- compaction：stub provider → 落账节点含注入段与锚点；UPDATE 轮 summarize 输入的
+  previousSummary 已剥离（探针断言）；缺席/undefined → 行为不变回归；
+- todo：todoSummarySection 三态（有词条含依赖注记行 / 空 No tasks / 无词条 undefined）；
+  tasksOfSnapshot 往返（含 edges 双侧派生）；
+- 集成：真装配两包 → compact → deriveMessages 摘要节点含任务行；变更后二次 compact
+  注入段再生成最新；
+- e2e：压缩防线旅程加 todo 段（建任务→compact→摘要含任务行→完成→再 compact→段更新）。
+
+### 14.4 不处理（落档）
+
+| 项 | 理由 | 归属 |
+| --- | --- | --- |
+| 注入信息喂给摘要 LLM 卷进 Progress | 概率性违背本件动机；Progress 与注入段语义互补 | 本修订裁定 |
+| 多提供者聚合（数组段拼接） | 现仅 todo 一方；单提供者遮蔽先跑 | 未来扩展 |
+| 注入段进 system 锚点常驻 | 每轮 token 成本裁决未做（Claude Code 未选） | 后续件 |
+| L1/L2 零 LLM 防线注入 | 占位/账本形态本就在场，无摘要面 | 本修订裁定 |
