@@ -3,8 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
-import { baseCore, baseCoreText, createBasePromptPlugin, normalizeBaseFacts, registerBasePrompt, systemPrompt, systemPromptPlugin } from "../index.ts";
-import type { BasePromptFacts } from "../index.ts";
+import { wellKnown, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
+import { baseCoreText, createBasePromptPlugin, normalizeBaseFacts, registerBasePrompt } from "../base-prompt.ts";
+import type { BasePromptFacts } from "../base-prompt.ts";
 
 const FACTS: BasePromptFacts = { cwd: "/w/proj", isGit: true, platform: "darwin", shell: "zsh", date: "2026-09-20" };
 
@@ -54,7 +55,7 @@ describe("basePromptPlugin（docs/SYSTEM-PROMPT.md §1.4）", () => {
     const ctx = createContext();
     const prompt = await loadPluginsWithKernel(ctx);
     registerBasePrompt(prompt, FACTS);
-    prompt.section({ name: "tool/bash", after: baseCore, text: "## Shell\n\nfence rule" });
+    prompt.section({ name: "tool/bash", after: wellKnown.baseCore, text: "## Shell\n\nfence rule" });
     const text = prompt.assemble().text;
     expect(text.indexOf("## Output Format")).toBeLessThan(text.indexOf("## Shell"));
     expect(text.indexOf("You are Agent")).toBe(0);

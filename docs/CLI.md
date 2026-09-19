@@ -200,7 +200,7 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   probe 失败（无 wrapper / linux 无 socat）= 装配期 throw = 进程 exit 1 + stderr 说明
   （fail-closed，预期行为；平台矩阵见 §2.1）。
 - **gate 一致性**：PathGate(cwd) 与围栏 execEnv root=cwd 满足 tool-core 根一致性校验。
-- **系统提示词**：基础段归 `@x-harness/system-prompt` 的 `basePromptPlugin`（section
+- **系统提示词**：基础段归本 app 的 `base-prompt.ts`（`createBasePromptPlugin`——业务内容在上层；内核 `@x-harness/system-prompt` 仅持注册表与 `wellKnown` 锚点词汇表）（section
   `base/core`：身份/守则/环境块；facts=cwd/isGit/platform/shell/date 由宿主探测传入，
   入口归一压换行——注入面收口，date 会话内定格防午夜缓存断裂）；工具守则段由 tool-core
   在 apply 期直接停靠（D3 投稿式）：section `tool/<name>`（锚 wellKnown.baseCore；

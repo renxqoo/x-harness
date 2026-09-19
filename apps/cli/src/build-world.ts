@@ -23,8 +23,10 @@ import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session"
 import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
-import { createBasePromptPlugin, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
-import type { BasePromptFacts, SystemPromptService } from "@x-harness/system-prompt";
+import { systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
+import { createBasePromptPlugin } from "./base-prompt.ts";
+import type { SystemPromptService } from "@x-harness/system-prompt";
+import type { BasePromptFacts } from "./base-prompt.ts";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { createBashPlugin } from "@x-harness/tool-bash";
 import { ObservedRegistry, PathGate } from "@x-harness/tool-core";

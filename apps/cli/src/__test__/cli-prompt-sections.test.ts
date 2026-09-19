@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { createLocalEnv } from "@x-harness/exec-env";
-import { baseCore, createBasePromptPlugin, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
-import type { BasePromptFacts, SystemPromptService } from "@x-harness/system-prompt";
+import { wellKnown, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
+import { createBasePromptPlugin } from "../base-prompt.ts";
+import type { BasePromptFacts } from "../base-prompt.ts";
+import type { SystemPromptService } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { bashGuidance } from "@x-harness/tool-bash";
 import { PathGate, createToolPlugin } from "@x-harness/tool-core";
@@ -39,7 +41,7 @@ describe("registerAppendSections", () => {
 
   it("与工具段共序：tool/<name> 停靠段（after baseCore）仍先于追加段", async () => {
     const prompt = await makePrompt();
-    prompt.section({ name: "tool/bash", after: baseCore, text: "## Shell\n\nfence rule" });
+    prompt.section({ name: "tool/bash", after: wellKnown.baseCore, text: "## Shell\n\nfence rule" });
     registerAppendSections(prompt, ["TAIL-APPEND"]);
     const text = prompt.assemble().text;
     expect(text.indexOf("## Shell")).toBeGreaterThan(text.indexOf("You are Agent"));

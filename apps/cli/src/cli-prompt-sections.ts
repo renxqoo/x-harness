@@ -6,8 +6,9 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Disposer } from "@x-harness/core";
-import { normalizeBaseFacts } from "@x-harness/system-prompt";
-import type { BasePromptFacts, SystemPromptService } from "@x-harness/system-prompt";
+import type { SystemPromptService } from "@x-harness/system-prompt";
+import { normalizeBaseFacts } from "./base-prompt.ts";
+import type { BasePromptFacts } from "./base-prompt.ts";
 
 /** facts 探测所需的最小 IO 面（CliIO 结构子集——避免与 main 循环依赖） */
 export interface CliIoFacts {

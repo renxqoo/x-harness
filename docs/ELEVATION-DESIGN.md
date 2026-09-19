@@ -136,3 +136,10 @@ export interface ToolRegistry {
 **必须改方案（已改）**：V1/F-1/H-1 执行面门禁保留（§2.2/§3 反转）；V2/F-6 `restrictionOf` 读回面（§2.2）；V3/F-7 W0 纯移动证伪→裁决表补 vitest/tsconfig/build/测试路径（MIGRATION-W0 §3）；V4/H-2 typebox 白名单（D5）。
 **应补裁决（已补）**：V5 门禁扫 src import 说明符（IMPLEMENTATION §3 强形式）；V6 生命周期=每进程一次+resume 语义措辞修正（§3）；V7/F-3/F-4 锚定子集+双向缓存（§2.1）；V8/F-8 scoped 面删 variable（§2.1）；V9/F-5 数组序硬约束（D6）+两处陈旧注释勘误（MIGRATION-W1 §3）；V10/F-12 W3 断言三口径（MIGRATION-W3 §3）；V11/F-11 W2 拆分（D7）+M-1 降级为等价重构（MIGRATION-W2C）。
 **低（已修）**：行号/文件名笔误五处；包计数 28；F2「scope 零消费方」表述改写（agent-loop plugin.ts:116/137 已用 `agent:<sessionId>` 层键——registry 分层键用 SessionId 与 dispatch `ToolExecContext.session` 对齐，映射关系在此注明）。
+
+
+## 8. 后核销修正（2026-09-20，用户复审）
+
+- **修正 1（分层失误）**：§2.1.1 原把 `basePromptPlugin`（整篇基础提示词 + facts 归一）放在内核包——业务内容入内核，违反本设计自己的「零领域知识」判据。修正：内核仅持 `wellKnown` 锚点词汇表（= dsh SECTION_ORDERS 槽位同构——名字治理非内容）；`base.ts` 全量迁 apps/cli（`apps/cli/src/base-prompt.ts`，唯一消费者；第二宿主出现时再抽包）。tool-core 测试改手工注册槽位段（不依赖内容）。四门全绿（145/1730）。
+- **复核 2（维持原判）**：tool-core 不进内核组——依赖 permission（上层）+ PathGate/ObservedRegistry/guidance 停靠均为工具箱层策略件；进内核需先倒置 permission 依赖，不值。
+- **复核 3（维持原判）**：session 契约在内核（dsh core/session 同构——spine）；提供方（persistence-jsonl/checkpoint/mailbox）留上层，与 dsh session 组一致。

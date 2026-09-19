@@ -1,18 +1,10 @@
-// 基础段插件（docs/SYSTEM-PROMPT.md §1.4）：单一 base/core 段——身份/守则/环境事实，
-// facts 经工厂参数传入（包不做 IO 探测，纯渲染）。跨包锚点词汇表仅此一个常量：
-// 工具段（tool-core 自停靠）缺省 after: baseCore，缺席时 no-op 落尾（优雅降级）。
-// 纪律：环境值入口归一（换行压空格——环境值不得伪造新段落）；垃圾形态降级 "unknown"
-// 绝不产出 undefined/空行；date 只认 yyyy-mm-dd（时钟归宿主，包内不取 now）。
+// CLI 基础提示词（业务内容——归上层宿主；内核仅持锚点词汇表 wellKnown，ELEVATION
+// 后核销修正 1）：单一 base/core 段（身份/守则/环境块）+ facts 变量；facts 由宿主探测
+// 传入，入口归一（换行压空格——注入面收口）；date 会话内定格（午夜漂移不打断缓存前缀）。
 
 import type { Disposer, Plugin } from "@x-harness/core";
-import { systemPrompt } from "./tokens.ts";
-import type { SystemPromptService } from "./types.ts";
-
-/** 跨包锚点词汇表（内核所有——唯一合法的跨包锚点名来源，DESIGN §2.1.1） */
-export const wellKnown = { baseCore: "base/core" } as const;
-
-/** 基础段名（= wellKnown.baseCore 别名，保留一个版本周期——MIGRATION-W1 §3） */
-export const baseCore: typeof wellKnown.baseCore = wellKnown.baseCore;
+import { systemPrompt, wellKnown } from "@x-harness/system-prompt";
+import type { SystemPromptService } from "@x-harness/system-prompt";
 
 /** 环境事实（宿主探测后传入；date 为本地时区 yyyy-mm-dd，宿主负责定格） */
 export interface BasePromptFacts {
@@ -146,7 +138,7 @@ already established in the conversation.
   the change being discussed.`;
 }
 
-/** 注册 base/core 段与环境变量；返回整体注销器 */
+/** 注册 base/core 段（锚名 = 内核 wellKnown.baseCore 槽位）与环境变量；返回整体注销器 */
 export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromptFacts): Disposer {
   const normalized = normalizeBaseFacts(facts);
   const offs = [
@@ -155,7 +147,7 @@ export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromp
     prompt.variable("platform", normalized.platform),
     prompt.variable("shell", normalized.shell),
     prompt.variable("date", normalized.date),
-    prompt.section({ name: baseCore, text: baseCoreText() }),
+    prompt.section({ name: wellKnown.baseCore, text: baseCoreText() }),
   ];
   return () => {
     for (const off of offs) off();
@@ -165,7 +157,7 @@ export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromp
 /** 基础段插件：inject system-prompt（硬依赖——无注册表的基础内容无意义，topo 保序） */
 export function createBasePromptPlugin(facts: BasePromptFacts): Plugin {
   return {
-    name: "system-prompt-base",
+    name: "cli-base-prompt",
     inject: ["system-prompt"],
     apply: (ctx) => registerBasePrompt(ctx.use(systemPrompt), facts),
   };

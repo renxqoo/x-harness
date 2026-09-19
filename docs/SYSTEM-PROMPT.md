@@ -43,9 +43,13 @@ tie-break 保证全序确定）：
 插值：`{{name}}` 整段替换；未注册变量保持原样；**变量函数抛错 → 该变量保持 `{{name}}`
 原样**（降级不崩，垃圾输入原则）；单层不递归。
 
-### 1.4 basePromptPlugin（基础段）与 guidance 数据位（工具条件注入）
+### 1.4 基础段（base/core 槽位）与 guidance 数据位（工具条件注入）
 
-- `createBasePromptPlugin(facts)`：单一 section `base/core`（身份/守则/环境块）+ facts
+- **内核只持词汇表不持内容（后核销修正 1）**：`wellKnown.baseCore` 槽位名在本包；
+  基础段正文（身份/守则/环境块 + facts 变量 + 入口归一）归**上层宿主** apps/cli
+  （`apps/cli/src/base-prompt.ts` 的 `createBasePromptPlugin`——业务内容由上层业务决定；
+  dsh 同构：内核 SECTION_ORDERS 槽位 + persona 在 preset/bundle）。第二宿主出现时再抽包。
+- `createBasePromptPlugin(facts)`（apps/cli）：单一 section `base/core`（身份/守则/环境块）+ facts
   变量（cwd/isGit/platform/shell/date）；`inject: ["system-prompt"]` 硬依赖 topo 保序。
   **facts 由宿主探测传入，包不做 IO**；入口 `normalizeBaseFacts` 归一：换行压空格
   （环境值不得伪造新段落——注入面收口）、垃圾降级 `"unknown"`、date 只认 yyyy-mm-dd
