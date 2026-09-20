@@ -11,7 +11,7 @@ async function tempDir(prefix: string): Promise<string> {
 }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makePool, until, wakeAndDeliver } from "./kit/pool-fixture.ts";
+import { makePool, until, wakeAndDeliver, withPendingResume, wrote } from "./kit/pool-fixture.ts";
 import { fenceSessionPath } from "../host/read-history.ts";
 import { createDirectRead } from "../host/read-history.ts";
 import { createParkedReads } from "../host/parked-reads.ts";
@@ -38,8 +38,8 @@ describe("worker-pool 唤醒与关闭面", () => {
     // 12 拍重试：每拍取「最新 spawn 且含未决 resume」的 worker 手动失败应答
     const seen = new Set<string>();
     for (let i = 0; i < 12; i += 1) {
-      await until(() => f.spawned.some((w) => !seen.has(w.uid) && w.written.some((line) => line.includes('"thread/resume"'))), `attempt ${i}`, 8_000);
-      const worker = f.spawned.find((w) => !seen.has(w.uid) && w.written.some((line) => line.includes('"thread/resume"')));
+      await until(() => withPendingResume(f, seen) !== undefined, `attempt ${i}`, 8_000);
+      const worker = withPendingResume(f, seen);
       if (worker === undefined) break;
       seen.add(worker.uid);
       worker.helloOk();
@@ -82,7 +82,7 @@ describe("worker-pool 唤醒与关闭面", () => {
     const f = makePool();
     f.table.insert({ threadId: "t1", cwd: "/w", sessionPath: "/hub/sessions/t1/events.jsonl", state: "parked", trusted: false, keepalive: false });
     f.pool.beginKnown("t1", JSON.stringify({ type: "get_state", id: "g1", threadId: "t1" }));
-    await until(() => (f.spawned[0]?.written.some((line) => line.includes("get_state")) ?? false));
+    await until(wrote(f.spawned[0], "get_state"));
   });
 });
 
@@ -146,14 +146,12 @@ describe("read-history fence 与直读", () => {
       const dir2 = join(root, "ok1");
       await mkdir(dir2, { recursive: true });
       await writeFile(join(dir2, "header.json"), JSON.stringify({ id: "ok1", createdAt: 1, cwd: "/w" }), "utf8");
-      await writeFile(
-        join(dir2, "events.jsonl"),
-        [
-          { type: "turn/start", seq: 0, time: 1, data: { turn: 0 } },
-          { type: "session/meta", seq: 1, time: 2, data: { key: "title", value: "T" } },
-        ].map((e) => JSON.stringify(e)).join("\n") + "\n",
-        "utf8",
-      );
+      const ok1Events = [
+        { type: "turn/start", seq: 0, time: 1, data: { turn: 0 } },
+        { type: "session/meta", seq: 1, time: 2, data: { key: "title", value: "T" } },
+      ];
+      const ok1Lines = ok1Events.map((e) => JSON.stringify(e)).join("\n");
+      await writeFile(join(dir2, "events.jsonl"), `${ok1Lines}\n`, "utf8");
       const state = await direct.readState("ok1");
       expect(state?.sessionName).toBe("T");
       expect(state?.sessionFile).toContain("ok1/events.jsonl");
@@ -197,7 +195,9 @@ describe("worker 关闭路径（stdin EOF → 优雅退出 exit 0）", () => {
     w.input.send('"bare string"');
     w.input.send("{}");
     w.input.emit("data", Buffer.from("42\\n", "utf8"));
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 80);
+    });
     const parseFailures = w.captured.lines.filter((line) => line.includes('"command":"parse"'));
     expect(parseFailures.length).toBeGreaterThanOrEqual(2); // 裸字符串/数字两路 parse failure（"{}" 合法——unknown command 域）
     // 尾行无换行残段：EOF flush 处理（合法尾行命令也应答）

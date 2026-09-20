@@ -47,7 +47,7 @@ export function fakeSpawnFactory() {
         spec_.written.push(line);
         return Promise.resolve();
       },
-      kill: (graceMs: number) => spec_.kill(),
+      kill: (_graceMs: number) => spec_.kill(),
       eof: () => spec_.eof(),
       exited,
     };
@@ -74,6 +74,21 @@ export function makePool(maxThreads = 8, over: { workerEnv?: () => Record<string
     spawn: fake.spawn as never,
   });
   return { table, pool, client, spawned: fake.spawned };
+}
+
+/** written 断言 helper（until 谓词工厂——降嵌套层级） */
+export function wrote(worker: { written: readonly string[] } | undefined, needle: string): () => boolean {
+  return () => (worker?.written.some((line) => line.includes(needle)) ?? false);
+}
+
+/** spawned 中首个含未决 resume 且未见过的 worker 查询 */
+export function withPendingResume(f: PoolFixture, seen: ReadonlySet<string>): FakeWorkerSpec | undefined {
+  return f.spawned.find((w) => !seen.has(w.uid) && w.written.some((line) => line.includes('"thread/resume"')));
+}
+
+/** client 帧断言 helper（until 谓词工厂） */
+export function clientHas(client: readonly string[], needle: string): () => boolean {
+  return () => client.some((line) => line.includes(needle));
 }
 
 export async function until(pred: () => boolean, label = "until", timeoutMs = 5_000): Promise<void> {

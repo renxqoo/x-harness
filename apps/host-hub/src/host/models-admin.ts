@@ -9,6 +9,12 @@ import { atomicWriteJson, readJson, updateJson } from "../shared/atomic-file.ts"
 
 type ProvidersFile = HubProvidersFile & { modelOverrides?: Record<string, { contextWindow?: number; maxOutputTokens?: number }> };
 
+function seedApiKeyEnv(existing: { apiKeyEnv?: string } | undefined, input: { apiKeyEnv?: unknown }): string | undefined {
+  if (existing?.apiKeyEnv !== undefined) return existing.apiKeyEnv;
+  if (typeof input.apiKeyEnv === "string" && input.apiKeyEnv !== "") return input.apiKeyEnv;
+  return undefined;
+}
+
 async function readProvidersFile(agentDir: string): Promise<ProvidersFile> {
   const parsed = await readJson<ProvidersFile>(providersFilePath(agentDir), { providers: [] });
   return parsed !== undefined && Array.isArray((parsed as { providers?: unknown }).providers)
@@ -104,7 +110,7 @@ export async function addModel(agentDir: string, input: { [key: string]: unknown
         name: providerName,
         protocol: seed.protocol,
         baseUrl: seed.baseUrl,
-        ...(existing?.apiKeyEnv !== undefined ? { apiKeyEnv: existing.apiKeyEnv } : typeof input.apiKeyEnv === "string" && input.apiKeyEnv !== "" ? { apiKeyEnv: input.apiKeyEnv } : {}),
+        ...(seedApiKeyEnv(existing, input) !== undefined ? { apiKeyEnv: seedApiKeyEnv(existing, input) } : {}),
         ...(existing?.contextWindow !== undefined ? { contextWindow: existing.contextWindow } : {}),
         ...(existing?.maxOutputTokens !== undefined ? { maxOutputTokens: existing.maxOutputTokens } : {}),
         models: [bareEntry ? id : meta],

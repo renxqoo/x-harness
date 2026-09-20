@@ -6,7 +6,6 @@ import { EventEmitter } from "node:events";
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { runHost } from "../host/host.ts";
 import type { WorkerSpawnSpec } from "../host/worker-process.ts";
@@ -72,7 +71,9 @@ async function waitFrame(client: readonly string[], pred: (frame: Record<string,
       if (pred(frame)) return frame;
     }
     if (Date.now() - started > timeoutMs) throw new Error(`waitFrame timeout; last: ${client.slice(-4).join(" | ")}`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 10);
+    });
   }
 }
 
@@ -124,10 +125,14 @@ async function startHost(env: Record<string, string | undefined> = {}): Promise<
 /** thread/start 手驱：spawn → hello → 控制应答（表落实） */
 async function driveStart(f: HostFixture, id: string, cwd = "/w"): Promise<string> {
   f.send({ type: "thread/start", id, cwd });
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
   const worker = f.workers[f.workers.length - 1];
   worker?.hello();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
   const startLine = worker?.written.find((line) => line.includes('"thread/start"'));
   const threadId = `t-${id}`;
   worker?.onLine(responseLine({ id, command: "thread/start", success: true, data: { threadId, cwd, sessionPath: `${f.sessionsRoot}/${threadId}/events.jsonl` } }));
@@ -200,7 +205,7 @@ describe("host 本地命令（注入 IO）", () => {
       { type: "session/meta", seq: 3, time: 4, data: { key: "title", value: "saved thread" } },
       { type: "turn/end", seq: 4, time: 5, data: { turn: 0, reason: { kind: "completed" } } },
     ];
-    await writeFile(join(dir, "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
+    await writeFile(join(dir, "events.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
     f.send({ type: "thread/register", id: "rg1", sessionPath: join(dir, "events.jsonl") });
     const registered = await waitResponse(f.client, "thread/register", "rg1");
     expect(registered["data"]).toEqual({ threadId: sid, cwd: "/proj", sessionPath: join(dir, "events.jsonl") });
@@ -276,7 +281,7 @@ describe("host 本地命令（注入 IO）", () => {
     const badProtocol = await waitResponse(f.client, "models/add", "m-bad");
     expect(badProtocol["error"]).toContain("protocol");
     f.send({ type: "models/add", provider: "p1", protocol: "openai", baseUrl: "https://p1", contextWindow: 128_000 });
-    const noId = await waitFrame(f.client, (frame) => frame["type"] === "response" && frame["command"] === "models/add" && frame["error"] === "invalid model entry: id required");
+    await waitFrame(f.client, (frame) => frame["type"] === "response" && frame["command"] === "models/add" && frame["error"] === "invalid model entry: id required");
     // id 兼作模型 id 与响应关联（附录 B——add 的模型 id 字段就是 id）
     f.send({ type: "models/add", id: "m-1", provider: "p1", protocol: "openai", baseUrl: "https://p1", contextWindow: 128_000 });
     const okAdded = await waitResponse(f.client, "models/add", "m-1");
@@ -375,7 +380,7 @@ describe("host 本地命令（注入 IO）", () => {
         ...(title !== undefined ? [{ type: "session/meta", time: 12, data: { key: "title", value: title } }] : []),
         { type: "turn/end", time: 13, data: { turn: 0, reason: { kind: "completed" } } },
       ].map((event, index) => ({ ...event, seq: index }));
-      await writeFile(join(dir, "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
+      await writeFile(join(dir, "events.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
     };
     await mk("saveda", undefined);
     await mk("savedb", "named thread");

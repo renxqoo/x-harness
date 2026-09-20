@@ -2,7 +2,7 @@
 // 终路（死亡对账合成 failure/settled）、心跳单向迁移、fork 重键、retire 竞窗、
 // internal id 不可碰撞、预算/风暴上限、唤醒排队重评。
 import { describe, expect, test } from "vitest";
-import { makePool, until, wakeAndDeliver } from "./kit/pool-fixture.ts";
+import { clientHas, makePool, until, wakeAndDeliver, wrote } from "./kit/pool-fixture.ts";
 
 function responseLine(fields: { id?: string; command: string; success: boolean; data?: unknown; error?: string }): string {
   const head = `{"id":${fields.id !== undefined ? JSON.stringify(fields.id) : "null"},"type":"response","command":${JSON.stringify(fields.command)},"success":${fields.success ? "true" : "false"}`;
@@ -22,7 +22,7 @@ describe("worker-pool（stub worker）", () => {
     expect(verdict.ok).toBe(true);
     const worker = f.spawned[0];
     expect(worker).toBeDefined();
-    await until(() => (worker?.written.some((line) => line.includes('"thread/start"')) ?? false));
+    await until(wrote(worker, '"thread/start"'));
     worker?.helloOk();
     worker?.onLine(responseLine({ id: "c1", command: "thread/start", success: true, data: { threadId: "t1", cwd: "/w", sessionPath: "/hub/sessions/t1/events.jsonl" } }));
     await until(() => f.table.get("t1")?.state === "live");
@@ -46,7 +46,7 @@ describe("worker-pool（stub worker）", () => {
     void f.pool.routeLine(JSON.stringify({ type: "prompt", id: "p1", threadId: "t1" }));
     void f.pool.routeLine(JSON.stringify({ type: "get_state", id: "g2", threadId: "t1" }));
     void f.pool.routeLine(JSON.stringify({ type: "prompt", id: "p2", threadId: "t1" }));
-    await until(() => worker?.written.some((line) => line.includes('"p2"')) ?? false);
+    await until(wrote(worker, '"p2"'));
     // p1 全收敛面：受理 ack（pendingIds 核销）+ settled（drivingIds 核销）
     worker?.onLine(responseLine({ id: "p1", command: "prompt", success: true }));
     worker?.onLine(`{"type":"event","threadId":"t1","name":"settled","payload":{"sendId":"p1","ok":true}}`);
@@ -72,7 +72,7 @@ describe("worker-pool（stub worker）", () => {
     await wakeAndDeliver(f, { type: "get_state", id: "g0", threadId: "t1" });
     void f.pool.deliverRaw("t1", JSON.stringify({ type: "fork", id: "f1", threadId: "t1", seq: 3 }));
     const worker = f.spawned[f.spawned.length - 1];
-    await until(() => worker?.written.some((line) => line.includes('"fork"')) ?? false);
+    await until(wrote(worker, '"fork"'));
     worker?.onLine(responseLine({ id: "f1", command: "fork", success: true, data: { threadId: "t2", previousThreadId: "t1", sessionPath: "/hub/sessions/t2/events.jsonl" } }));
     await until(() => f.table.get("t2") !== undefined);
     expect(f.table.get("t1")).toBeUndefined(); // 旧 id 删表
@@ -82,7 +82,7 @@ describe("worker-pool（stub worker）", () => {
     expect(forwarded).toBe(true);
     // 旧 id 命令 → Unknown threadId
     void f.pool.routeLine(JSON.stringify({ type: "get_state", id: "g-old", threadId: "t1" }));
-    await until(() => f.client.some((line) => line.includes("g-old")));
+    await until(clientHas(f.client, "g-old"));
     expect(f.client.some((line) => line.includes('"Unknown threadId"'))).toBe(true);
   });
 
@@ -140,7 +140,7 @@ describe("worker-pool（stub worker）", () => {
     await Bun.sleep(30);
     expect(f.client.every((line) => !line.includes('"p1"') || line.includes("Unknown threadId"))).toBe(true); // 无成功应答（重评结果除外）
     f.spawned[f.spawned.length - 1]?.close();
-    await until(() => f.client.some((line) => line.includes('"p1"')));
+    await until(clientHas(f.client, '"p1"'));
     // close 删表（stop 意图）→ 重评 → Unknown threadId
     expect(f.client.some((line) => line.includes('"p1"') && line.includes("Unknown threadId"))).toBe(true);
   });
@@ -151,7 +151,7 @@ describe("worker-pool（stub worker）", () => {
     const worker = f.spawned[0];
     worker?.onLine(`{"type":"hello","protocolVersion":2,"backendId":"other"}`);
     worker?.close();
-    await until(() => f.client.some((line) => line.includes("worker died before responding")));
+    await until(clientHas(f.client, "worker died before responding"));
     expect(f.client.some((line) => line.includes("thread_died"))).toBe(false); // @pending 撤位无死亡帧
   });
 
