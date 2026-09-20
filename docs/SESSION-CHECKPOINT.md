@@ -13,21 +13,29 @@
 
 ## 1. 方案：@x-harness/session-checkpoint
 
-单一职责插件——在两个语义边界前置 flush（sessionStore.flush 屏障），fail-closed。
+单一职责插件——在三个语义边界设 flush 屏障（sessionStore.flush）：模型请求前与工具副作用前
+前置且 fail-closed；turn 收尾后异步告警式（不阻断收轮链）。
 
-### 1.1 挂点（2 个）
+### 1.1 挂点（3 个）
 
-| 边界 | 挂点 | 行为 | 失败（fail-closed） |
+| 边界 | 挂点 | 行为 | 失败 |
 | --- | --- | --- | --- |
-| 模型请求前 | `agentRequest` waterfall 中间件 | `store.flush(payload.session)` 成功才 `next` | throw → 逃逸 driver turn catch → `turn/end{error}`，适配器零派发 |
-| 工具副作用前 | `toolsExecute` waterfall 中间件 | payload 带 `session` 才 flush（非 agent 调用方直通） | throw（携带 reason）→ dispatch 管线捕获 → isError outcome（reason 可见），工具体零执行 |
+| 模型请求前 | `agentRequest` waterfall 中间件 | `store.flush(payload.session)` 成功才 `next` | fail-closed：throw → 逃逸 driver turn catch → `turn/end{error}`，适配器零派发 |
+| 工具副作用前 | `toolsExecute` waterfall 中间件 | payload 带 `session` 才 flush（非 agent 调用方直通） | fail-closed：throw（携带 reason）→ dispatch 管线捕获 → isError outcome（reason 可见），工具体零执行 |
+| turn 收尾后 | `sessionEvent` 过滤 `turn/end` | fire-and-forget `store.flush`（旁观者：不阻断收轮链） | 告警式：stderr `session-checkpoint/turn-end-flush-failed`（同会话一次）；pending 保留，由下一 agentRequest 屏障（fail-closed）与 dispose drain-then-close 兜底重试 |
 
 依据：
 - P2/P3 裁决「请求侧挂点挪到 agent/request（此时 system/user 已落账）」——agentRequest 在拨号前，
   覆盖 DSH 的 llm/stream 挂点且更早（请求体=纯折叠，flush 后派发窗口内日志即请求前缀）。
 - 副作用边界 = DSH 的 tools/execute 思想：tool/call 记录先于工具体持久。
+- turn 收尾边界挂 `sessionEvent` 过滤 `turn/end`：`turn/end` 属 session 闭合词表（docs/SESSION.md
+  §1.3），判别联合下拼写有编译期检查（autocompact 监听 sessionEvent 过滤 turn/* 为同款先例）。
+  排序：持久化插件对 sessionEvent 只做同步 pending 入账，drain 段经 per-session 串行链在本轮
+  同步广播之后执行——drain 必含 turn/end，且同一链 FIFO 保证先于下一 turn 的请求屏障。
 - P16：inject 去掉 llm——本插件 inject 仅 `["session"]`（不挂 llm/stream）。
 - 不挂 preStep：每步 agentRequest 已 flush 前一步提交，preStep 挂点冗余。
+- 装配契约：本插件须晚于 session-persistence-jsonl 装载（context teardown 逆序回卷时本插件
+  挂点先拆、持久化终排空殿后）；调换顺序会使拆除期触发的 flush 落进空屏障（成功不承诺字节）。
 
 ### 1.2 flush 语义
 
@@ -35,10 +43,17 @@
 docs/SESSION.md §1.5）。checkpoint 以 Result 判定：`!ok` 即 throw（store 已把 listener 异常收敛为
 `flush-failed:*` reason）。不直接 dispatch `sessionFlush` token——公共 API 面优先，且 store 捕获语义明确。
 
-### 1.3 尾巴窗口（有意不覆盖）
+失败语义的边界不对称是有意的：请求/工具边界有下游可阻断（适配器派发、工具体执行），fail-closed；
+turn 收尾边界无下游可阻断（turn 已收尾），告警不 throw——失败后 pending 按 docs/SESSION.md §1.8
+保留，由下一 turn 的 agentRequest 屏障（fail-closed）与 dispose drain-then-close 兜底重试。
 
-- 最后一步 `turn/end`：崩溃后由 repair closers 关闭（resume 合成 interrupted 收尾）——checkpoint 不在
-  turn/end 后追加 flush；dispose 路径由持久化层 drain-then-close 覆盖（dispose 语义见 §2.6）。
+### 1.3 强度边界与残卷形状
+
+- turn 收尾触发异步 flush：崩溃丢失窗口 = flush 在飞窗口（毫秒级），而非「到下一触发点（可能
+  永不）」。`whenIdle`/idle 状态不承诺字节已 fsync——读盘必经 flush 屏障（/export 的显式屏障
+  因此保留）。
+- 崩溃残卷的括号形状仍由 repair closers 关闭（resume 合成 interrupted 收尾）；正常收尾卷的
+  turn/end 已在盘，repair 对已闭合 turn 不补 closers——两机制方向一致，只会减少合成量。
 - 流内 text-delta：不落日志（assistant/message 一步落账），无 checkpoint 语义。
 
 ### 1.4 ToolCallRequest 扩展
@@ -63,8 +78,9 @@ packages/session-checkpoint/
 
 ### 1.6 flush 频率语义（有意选择）
 
-每步 1 次（agentRequest）+ 每工具调用 1 次（toolsExecute）flush；并行池 N 调用 = N 次串行 drain
-（首次已覆盖整池 tool/call，其余为纯 fsync 屏障）。正确性优先的有意选择；批量化/合并留给后续策略插件。
+每步 1 次（agentRequest）+ 每工具调用 1 次（toolsExecute）+ 每 turn 收尾 1 次（turn/end）flush；
+并行池 N 调用 = N 次串行 drain（首次已覆盖整池 tool/call，其余为纯 fsync 屏障）。正确性优先的
+有意选择；批量化/合并/空批跳过 fsync 留给后续策略插件。
 
 ## 2. e2e 旅程（P12：进默认门）
 
@@ -102,7 +118,11 @@ main.ts 编排先后两场景）：
   - 请求边界 fail-closed：flush 失败（jsonl root 指向不可写路径）→ turn/end{error}、适配器零调用；
   - 工具边界：payload 带 session → 工具体执行前盘上已有 tool/call；不带 session 直通；
   - 工具边界 fail-closed：flush 失败 → 工具体零执行 + isError 结果（reason 可见）；
-  - 空 barrier：未装 jsonl 持久化时 flush 成功（空屏障语义）旅程照常。
+  - 空 barrier：未装 jsonl 持久化时 flush 成功（空屏障语义）旅程照常；
+  - turn 收尾边界：turn 完成（不 dispose）后盘上 events.jsonl 已含 assistant/message 与
+    turn/end 行（轮询等待异步 flush 落定，超时失败带当前盘上行集；末行即 turn/end 防乱序假绿）；
+  - turn 收尾告警式：flush 失败（不可写 root）→ stderr 告警出现（同会话去重）、turn 收尾链
+    不被阻断（turn/end 照常落账）。
 - e2e 旅程退出码背书（must 断言逐步报点）。
 
 ## 5. 边界与非目标
@@ -124,3 +144,15 @@ R5（P2）e2e 断言词表钉死：请求时点保证 = {system/message, user/me
 R6（P2）flush 频率声明为有意选择（§1.6）。
 R7（P3）逃逸 throw 的 step 括号：driver turn catch 对已开的 step/end 补闭合（错误路径括号形状一致）；
   中间件意图位声明（§1.5）。
+R8（P1）turn 收尾尾巴窗口（用户裁决）：原 §1.3「有意不覆盖」作废——turn 收尾必须是耐久边界。
+  新增第三挂点（sessionEvent 过滤 turn/end，告警式异步 flush）；崩溃窗口收敛为 flush 在飞窗口，
+  §1.3 如实落档强度。
+R9（P1）whenIdle 语义钉死：whenIdle/idle 状态不承诺字节已 fsync，读盘必经 flush 屏障——
+  挂点注释与 §1.3 双落点，防未来消费者踩坑。
+R10（P2）装配顺序契约固化：本插件须晚于 session-persistence-jsonl 装载（teardown 逆序回卷
+  本插件先拆、持久化终排空殿后）——§1.1 依据与两端插件头注释双落点。
+R11（P2）告警形态对齐仓库惯例：结构化前缀 `session-checkpoint/turn-end-flush-failed
+  session=<id> <reason>`（对齐 autocompact/compaction 的 `<插件>/<code> session=` 报文）；
+  同会话去重 + sessionDisposed 摘除（dead 闩会话连跑多 turn 不刷屏、无泄漏）。
+R12（P2）测试假绿/假红防护：成功路径轮询读盘钉死异步落定（whenIdle 后直接读盘会 flaky）；
+  失败路径 spy stderr 验证告警真实出现——两路径均有断言，非仅靠覆盖率。

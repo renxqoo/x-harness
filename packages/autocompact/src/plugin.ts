@@ -19,6 +19,7 @@ import type { SessionState } from "./session-state.ts";
 import {
   autocompactBreaker,
   autocompactCheckpoint,
+  autocompactDiagnostic,
   autocompactL1Cleared,
   autocompactL2Escalated,
   autocompactLinesDegraded,
@@ -90,6 +91,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
   return {
     name: "autocompact",
     inject: ["compaction", "session"],
+    softInject: ["llm"], // 审计问题 3：llm 停靠声明式时序（迟到世界防恰一次误判）
     apply: (ctx: Context): Disposer => {
       const store = ctx.use(sessionStore);
       const runner = ctx.use(compactionRunner);
@@ -99,7 +101,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         .then((runtime) => {
           llm = runtime;
         })
-        .catch(() => {});
+        .catch((e: unknown) => { process.stderr.write(`autocompact/llm-dock-failed:${String(e)}\n`); });
 
       const face: SummarizerFace | undefined = options.summarizer ?? runner.summarizer;
       // 装配期值域 fail-fast（含段门槛缺省解析——依赖 face 预留后的有效窗口）
@@ -117,6 +119,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       const warn = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
         const suffix = detail === undefined ? "" : ` ${JSON.stringify(detail)}`;
         process.stderr.write(`autocompact/${code} session=${session}${suffix}\n`);
+        ctx.emit(autocompactDiagnostic, { session, code, ...detail } as never); // 审计问题 4：事件总线可见（不只 stderr）
       };
       const emitCheckpoint = (session: SessionId) => (action: CheckpointAction, detail?: Record<string, unknown>) => {
         if (action === "breaker") {
@@ -158,7 +161,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         get llm(): LlmRuntime | undefined {
           return llm;
         },
-        session: store.get(session) as never,
+        session: store.get(session),
         state,
         fileTools,
         warn,
@@ -245,6 +248,11 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         await Promise.race([Promise.allSettled(inflight), watchdog]);
         if (watchdogTimer !== undefined) clearTimeout(watchdogTimer);
         states.clear();
+        // 审计问题 2：拆卸还权——autocompact 接管了 compaction 的水位决策权，
+        // 卸载后必须归还（否则 compaction 永久禁用）。与 onBreaker 的还权同款。
+        if (takeoverDone && face !== undefined && llm !== undefined) {
+          runner.setAutoTriggerEnabled(true);
+        }
       };
     },
   };

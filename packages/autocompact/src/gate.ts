@@ -35,7 +35,7 @@ export interface GateDeps {
   readonly config: GateConfig;
   readonly face: SummarizerFace | undefined;
   readonly llm: LlmRuntime | undefined;
-  readonly session: Session;
+  readonly session: Session | undefined; // 审计问题 6：store.get 可能 undefined——类型化替代 as never
   readonly state: SessionState;
   readonly fileTools: FileToolNames;
   readonly warn: (session: SessionId, code: string, detail?: Record<string, unknown>) => void;
@@ -64,23 +64,27 @@ function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
   lines = refitLines(lines);
   if (lines.degraded && !cache.warnedDegraded) {
     cache.warnedDegraded = true;
-    deps.warn(deps.session.id, "lines-degraded", { effectiveWindow: lines.effectiveWindow });
-    deps.emitLinesDegraded(deps.session.id, lines.effectiveWindow);
+    if (deps.session !== undefined) {
+      deps.warn(deps.session.id, "lines-degraded", { effectiveWindow: lines.effectiveWindow });
+      deps.emitLinesDegraded(deps.session.id, lines.effectiveWindow);
+    }
   }
   cache.lines = lines;
   cache.servedWindow = served;
   return lines;
 }
 
-/** 校准配对：新锚到达时用「实测尾段 / 上次纯预测」的 ratio 推入中位数滚动 */
-function updateCalibration(cache: SessionState["cache"], pair: { readonly trailingTokens: number; readonly gainTokens: number; readonly hasAnchor: boolean }): void {
+/** 校准配对：新锚到达时用「实测锚 / 上次纯预测」的 ratio 推入中位数滚动。
+ *  语义修正（审计问题 1）：分子必须是 LLM 实报的 anchorTokens（纯值），不是
+ *  trailingTokens（上一步的尾段——与预测的不是同一个量）。符号统一：
+ *  lastEstimated 与占用同口径（tokens − gains + pending），消存取对撞。 */
+function updateCalibration(cache: SessionState["cache"], pair: { readonly trailingTokens: number; readonly gainTokens: number; readonly hasAnchor: boolean; readonly anchorTokens: number }): void {
   if (!pair.hasAnchor) {
-    cache.lastEstimated = pair.trailingTokens + pair.gainTokens; // 纯预测占用
+    cache.lastEstimated = pair.trailingTokens + pair.gainTokens; // 纯预测占用（下一步的预估）
     return;
   }
-  if (cache.lastEstimated !== undefined && cache.lastEstimated > 0) {
-    const ratio = pair.trailingTokens + pair.gainTokens > 0 ? pair.trailingTokens / Math.max(1, cache.lastEstimated) : 1;
-    pushCalibrationSample(cache.calibration, ratio);
+  if (cache.lastEstimated !== undefined && cache.lastEstimated > 0 && pair.anchorTokens > 0) {
+    pushCalibrationSample(cache.calibration, pair.anchorTokens / cache.lastEstimated); // 实测锚 / 前次纯预测
   }
   cache.lastEstimated = undefined; // 配对一次性消耗
 }
@@ -111,8 +115,10 @@ function warnParallelApproach(deps: GateDeps, watch: { readonly occupancy: numbe
   const worst = deps.config.toolResultCapTokens * Math.max(1, watch.maxParallel);
   if (cache.lastOccupancy !== undefined && cache.lastOccupancy + worst > lines.effectiveWindow) {
     cache.warnedParallel = true;
-    deps.warn(deps.session.id, "parallel-approach", { worstStep: worst });
-    deps.emitParallelApproach(deps.session.id, worst);
+    if (deps.session !== undefined) {
+      deps.warn(deps.session.id, "parallel-approach", { worstStep: worst });
+      deps.emitParallelApproach(deps.session.id, worst);
+    }
   }
 }
 
@@ -128,7 +134,9 @@ function segmentTokens(nodes: readonly SurfaceNode[], from: number): number {
 
 /** 决策链主体（永不抛出；落账直接经 session——驱动重读投影） */
 export async function runStepGate(deps: GateDeps, payload: { readonly turn: number; readonly step: number; readonly signal: AbortSignal }): Promise<void> {
-  const { session, state } = deps;
+  const { state } = deps;
+  const session = deps.session;
+  if (session === undefined) return; // 审计问题 6：会话已终结——无决策面直接返回（原 as never 掩盖）
   try {
     const events = session.events();
     const nodes = session.surface();
@@ -160,6 +168,7 @@ export async function runStepGate(deps: GateDeps, payload: { readonly turn: numb
       trailingTokens: measured.occupancy.trailingTokens,
       gainTokens: measured.gainTokens,
       hasAnchor: measured.occupancy.hasAnchor,
+      anchorTokens: measured.occupancy.anchorTokens,
     });
     const occupancy = Math.max(0, measured.occupancy.tokens - measured.gainTokens) + measured.pendingClaimTokens;
 
@@ -195,7 +204,7 @@ function armOrStartCheckpoint(fields: {
     deps: {
       llm: deps.llm,
       face: deps.face,
-      session,
+      session: session as Session, // 已在 runStepGate 顶部守卫非 undefined
       config: {
         ledgerBudgetTokens: config.ledgerBudgetTokens,
         checkpointMaxRetries: config.checkpointMaxRetries,
@@ -259,7 +268,9 @@ async function l1AndBeyond(fields: {
   readonly signal: AbortSignal;
 }): Promise<void> {
   const { deps, lines, nodes, events, occupancy, signal } = fields;
-  const { session, state, config } = deps;
+  const { state, config } = deps;
+  const session = deps.session;
+  if (session === undefined) return; // runStepGate 已守卫——此处双保险（routeZones 也被独立测试调用）
   if (!state.cache.l1Backoff) {
     const plan = computeClearPlan(nodes, events, { clearableTools: config.clearableTools, clearKeepRecent: config.clearKeepRecent });
     if (plan.entries.length > 0 && l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines })) {
@@ -289,7 +300,9 @@ async function l1AndBeyond(fields: {
  *  join 兜底；终局恒放行——join 不可得/账本未就绪/升级无进展时交 413 现场 L3 */
 async function escalateOrJoin(fields: { readonly deps: GateDeps; readonly lines: Lines; readonly signal: AbortSignal }): Promise<void> {
   const { deps, lines, signal } = fields;
-  const { session, state, config } = deps;
+  const { state, config } = deps;
+  const session = deps.session;
+  if (session === undefined) return;
   if (lines.degraded) {
     // servedWindow 深收缩降级纯本地通道——禁 L2（冻结账本不做零 LLM 替换）
     deps.warn(session.id, "budget-gate-release", { reason: "degraded" });
@@ -325,6 +338,7 @@ async function escalateOrJoin(fields: { readonly deps: GateDeps; readonly lines:
 
 function escalateOnce(fields: { readonly deps: GateDeps; readonly lines: Lines; readonly liveBudgetFactor: number; readonly coverageGuard?: boolean }): boolean {
   const { deps, lines } = fields;
+  if (deps.session === undefined) return false;
   return escalateL2({
     state: deps.state.checkpoint,
     session: deps.session,
@@ -338,6 +352,7 @@ function escalateOnce(fields: { readonly deps: GateDeps; readonly lines: Lines; 
 }
 
 function remeasure(deps: GateDeps): number {
+  if (deps.session === undefined) return 0;
   const events = deps.session.events();
   const measured = measureOccupancy({
     session: deps.session.id,

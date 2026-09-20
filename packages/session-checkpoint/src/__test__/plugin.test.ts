@@ -194,5 +194,83 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await handle.dispose();
   });
+
+  it("turn 收尾边界：turn 完成后盘上已含 assistant/message 与 turn/end（症状：崩溃丢最后一轮）", async () => {
+    const world = await makeWorld(root, true);
+    worlds.push(world);
+    const { agent, handle } = await spawn(world);
+    world.fake.scripts.push(textScript("done"));
+    agent.followup("hi");
+    await agent.whenIdle(); // 不 dispose——证明收尾屏障自身落盘，而非 dispose 兜底
+    const file = join(root, agent.session.id, "events.jsonl");
+    const diskLines = (): string[] => readFileSync(file, "utf8").split("\n").filter((line) => line !== "");
+    const hasEventType = (lines: readonly string[], type: string): boolean =>
+      lines.some((line) => line.includes(`"type":"${type}"`));
+    // turn 收尾 flush 是异步告警式屏障，whenIdle 不承诺 fsync 完成：轮询等待 drain 落定
+    const lines = await vi.waitFor(
+      async () => {
+        const disk = diskLines();
+        if (!hasEventType(disk, "assistant/message") || !hasEventType(disk, "turn/end")) {
+          throw new Error(`盘上缺 assistant/message/turn/end 行，当前 ${String(disk.length)} 行`);
+        }
+        return disk;
+      },
+      { timeout: 5000, interval: 25 },
+    );
+    expect(lines.at(-1)).toContain('"turn/end"'); // 末行即收尾：防 drain 乱序假绿
+    await handle.dispose();
+  });
+
+  it("turn 收尾告警式：flush 失败告警且不阻断收尾，同会话只告警一次", async () => {
+    chmodSync(root, 0o555); // root 不可写 → 打开文件即败（请求屏障 fail-closed + turn 收尾 flush 失败）
+    const world = await makeWorld(root, true);
+    worlds.push(world);
+    const { agent, handle } = await spawn(world);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      agent.followup("hi");
+      await agent.whenIdle();
+      agent.followup("again");
+      await agent.whenIdle();
+      // 两个 turn 均以 error 收尾（请求屏障 fail-closed），收尾链本身不被 turn-end flush 失败阻断
+      const ends = agent.session.events().filter((e) => e.type === "turn/end");
+      expect(ends).toHaveLength(2);
+      expect(ends.every((e) => (e.data as { reason?: { kind?: string } }).reason?.kind === "error")).toBe(true);
+      const warnHits = (): number =>
+        stderr.mock.calls.filter((call) => String(call[0]).includes("turn-end-flush-failed")).length;
+      await vi.waitFor(() => {
+        if (warnHits() === 0) throw new Error("turn-end-flush-failed 告警未出现");
+        expect(warnHits()).toBe(1); // 两次收尾、一次告警：同会话去重
+      }, { timeout: 5000, interval: 25 });
+    } finally {
+      stderr.mockRestore();
+      chmodSync(root, 0o755); // 恢复可写供 afterEach 清理
+    }
+    await handle.dispose();
+  });
+
+  it("turn 收尾告警式：告警通道自身异常被 catch 兜住（后台异常是进程级崩溃面，不产生 unhandled rejection）", async () => {
+    chmodSync(root, 0o555);
+    const world = await makeWorld(root, true);
+    worlds.push(world);
+    const { agent, handle } = await spawn(world);
+    const stderr = vi.spyOn(process.stderr, "write");
+    stderr.mockImplementationOnce(() => {
+      throw new Error("stderr broken");
+    });
+    stderr.mockReturnValue(true);
+    try {
+      agent.followup("hi");
+      await agent.whenIdle(); // 若 .catch 缺席：then 内 throw → unhandled rejection → vitest 直接判败
+      await vi.waitFor(() => {
+        expect(stderr.mock.calls.length).toBeGreaterThan(0); // 告警路径确实被触达过
+      }, { timeout: 5000, interval: 25 });
+      expect(agent.session.events().at(-1)?.type).toBe("turn/end"); // 收尾链不受影响
+    } finally {
+      stderr.mockRestore();
+      chmodSync(root, 0o755);
+    }
+    await handle.dispose();
+  });
 });
 

@@ -50,7 +50,7 @@ export function escalateL2(fields: {
   const filesText = filesTextOf(nodes.slice(0, coveredIndex));
   const ledgerText = serializeLedger(state.ledger, filesText);
   // files 文本计入预算（落账文本含 files——漏算会让 L2 头部超账本预算）
-  const ledgerTok = Math.min(ledgerTokens(state.ledger, filesText), fields.ledgerBudgetTokens);
+  const ledgerTok = ledgerTokens(state.ledger, filesText); // 审计问题 7：不向下钳位——实测超预算时活口应偏小（保守方向），钳位方向与保守性相反
   const factor = fields.liveBudgetFactor ?? 1;
   const liveBudget = Math.max(500, Math.floor((fields.effectiveWindow - ledgerTok) * factor) - 2_000);
   // 保留头 = 锚点（session anchorIndexOf 共用谓词）及其之前——预锚注入（skill 清单

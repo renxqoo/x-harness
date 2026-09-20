@@ -138,8 +138,8 @@ x-harness [flags] [message...] [@file...]
   「surface 首个含 text 的节点」为系统提示词锚点，折叠它会在下一 turn 被锚点覆写机制摧毁）。
   surface 为空或仅锚点 = no-op。带 AbortSignal（Ctrl+C 可取消）；落账失败捕获降级提示；
   turn/step 取被折叠首节点的数值。
-- **/export 语义**：先 `store.flush(id)`（idle 后 pending 事件必须先落盘——checkpoint 只在
-  请求前/工具前排空，turn 收尾后没有自动 flush 点），再拷贝落盘卷；`--no-session` 会话从
+- **/export 语义**：先 `store.flush(id)`（turn 收尾的 flush 为异步告警式，idle 后不承诺字节
+  已 fsync——拷卷前必须显式屏障），再拷贝落盘卷；`--no-session` 会话从
   内存 `events()` 序列化。目标路径已存在 → 拒绝（exit 语义按 1，防误覆盖）。
 
 ### 2.4 print 模式契约
@@ -351,7 +351,7 @@ coverage include 扩 `apps/*/src/**`；不接受为凑数排除）。
 | 7 | 审批 ask 挂起时 Ctrl+C/SIGTERM 全退出路径死锁 | §2.3/§2.7 强制 resolve deny + cancel 契约 |
 | 8 | 双进程同会话交织写盘（writer 无锁，前缀校验只防打开瞬间） | §2.6/§3 包内会话锁（O_EXCL+pid 活性+接管） |
 | 9 | /model 副作用（grants evict/后台任务杀/代理关）未落档 | §1 遗留登记 + §2.3 切换前提示 |
-| 10 | /export 拷到 pending 滞后卷（turn 收尾无 flush 点） | §2.3 flush 屏障先行 |
+| 10 | /export 拷到 pending 滞后卷（turn 收尾 flush 为异步，idle 不承诺 fsync 完成） | §2.3 flush 屏障先行 |
 | 11 | stdin 双消费者（ask 的 question 与 REPL prompt 竞争） | §2.3 单 readline 所有权协议 |
 | 12 | print 管道 stdin 审批静默 EOF→deny | §2.4 非 TTY 显式 deny+警告+json permission 事件 |
 | 13 | stdout EPIPE 崩溃绕过清理 | §2.3/§2.4 EPIPE 处置 |

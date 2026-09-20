@@ -1,6 +1,6 @@
-// /export 实现（docs/CLI.md §2.3）：flush 屏障先行（turn 收尾后没有自动落盘点，
-// 直接拷会拷到滞后卷）→ 拷贝磁盘卷；--no-session 会话从内存 events() 序列化；
-// 目标已存在拒绝（防误覆盖）。
+// /export 实现（docs/CLI.md §2.3）：flush 屏障先行（turn 收尾的 flush 为异步告警式，
+// idle 不承诺字节已 fsync——直接拷会拷到滞后卷）→ 拷贝磁盘卷；--no-session 会话从内存
+// events() 序列化；目标已存在拒绝（防误覆盖）。
 
 import { copyFile, mkdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";

@@ -11,6 +11,8 @@ export interface Occupancy {
   readonly hasAnchor: boolean;
   readonly anchorSeq: number | undefined;
   readonly trailingTokens: number;
+  /** 纯锚 token（LLM 实报 usage.input——校准配对的分子；不含 trailing×factor 污染） */
+  readonly anchorTokens: number;
 }
 
 /** 压缩基线：末个 replace 型 user/message 事件的 seq（compaction 摘要与 autocompact
@@ -60,13 +62,13 @@ export function measureContext(
   if (anchorSeq < 0) {
     let total = 0;
     for (const node of nodes) total += nodeTokens(node);
-    return { tokens: total, hasAnchor: false, anchorSeq: undefined, trailingTokens: total };
+    return { tokens: total, hasAnchor: false, anchorSeq: undefined, trailingTokens: total, anchorTokens: 0 };
   }
   let trailing = 0;
   for (const node of nodes) {
     if (node.seq > anchorSeq) trailing += nodeTokens(node);
   }
-  return { tokens: anchorTokens + Math.ceil(trailing * factor), hasAnchor: true, anchorSeq, trailingTokens: trailing };
+  return { tokens: anchorTokens + Math.ceil(trailing * factor), hasAnchor: true, anchorSeq, trailingTokens: trailing, anchorTokens };
 }
 
 /** 触发判定：tokens > contextWindow − reserve（严格大于——reserve 是绝对预留非百分比） */

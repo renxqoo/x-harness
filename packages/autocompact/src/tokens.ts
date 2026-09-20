@@ -13,11 +13,26 @@ export type CheckpointAction =
   | "failed"
   | "breaker";
 
+/** detail 形状闭集（审计问题 5：判别联合替代 Record<string,unknown>） */
+export type CheckpointDetail =
+  | { readonly segmentFrom: number } // started / reanchored
+  | { readonly coveredSeq: number } // advanced / stale-accepted
+  | { readonly retries: number } // invalidated-retry
+  | { readonly reason?: string; readonly failures: number } // failed / breaker
+  | Record<string, never>;
+
 export const autocompactCheckpoint = defineEvent<{
   readonly session: SessionId;
   readonly action: CheckpointAction;
-  readonly detail?: Readonly<Record<string, unknown>>;
+  readonly detail?: CheckpointDetail;
 }>("autocompact/checkpoint", { freeze: "none" });
+
+/** 诊断事件（审计问题 4）：结构化诊断码——事件总线消费者可见（不只 stderr） */
+export const autocompactDiagnostic = defineEvent<{
+  readonly session: SessionId;
+  readonly code: string;
+  readonly detail?: Readonly<Record<string, unknown>>;
+}>("autocompact/diagnostic", { freeze: "none" });
 
 export const autocompactL1Cleared = defineEvent<{
   readonly session: SessionId;
