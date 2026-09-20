@@ -100,10 +100,12 @@ describe("流空闲看门狗（docs/AGENT-LOOP-DRIVER.md §1.4）", () => {
     const events = made.value.agent.session.events();
     const attempts = events.filter((e) => e.type === "assistant/attempt");
     expect(attempts).toHaveLength(1); // 恰一次失败尝试（无重试件装配——单次超时后终态完成需第二次成功）
-    const attemptEvent = attempts[0] as { data: { error?: string } } | undefined;
+    const attemptEvent = attempts[0] as { data: { error?: string; content?: Array<{ type: string; text?: string }> } } | undefined;
     expect(attemptEvent).toBeDefined();
     if (attemptEvent !== undefined) {
       expect(String(attemptEvent.data.error)).toContain("network");
+      // 超时前已收的部分文本随尝试落盘（STREAM-PARTIAL-PERSISTENCE——不进正文但进账）
+      expect(attemptEvent.data.content).toEqual([{ type: "text", text: "partial" }]);
     }
     expect(world.fake.calls).toHaveLength(2); // 真实重拨（新请求）
     const final = events.find((e) => e.type === "assistant/message");

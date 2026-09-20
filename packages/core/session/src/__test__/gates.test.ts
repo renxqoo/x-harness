@@ -180,6 +180,16 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("turn/end", { turn: 0, reason: { kind: "blocked", reason: 5 } })).toBe("shape:turn/end");
   });
 
+  it("assistant thinking/attempt content 可选（STREAM-PARTIAL-PERSISTENCE——截断已收内容落盘）", () => {
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinking: "thought" })).toBeUndefined();
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [] })).toBeUndefined();
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinking: 5 })).toBe("shape:assistant/message");
+    expect(gateEvent("assistant/attempt", { turn: 0, step: 0, error: "boom", content: [{ type: "text", text: "draft" }], thinking: "half" })).toBeUndefined();
+    expect(gateEvent("assistant/attempt", { turn: 0, step: 0, error: "boom" })).toBeUndefined();
+    expect(gateEvent("assistant/attempt", { turn: 0, step: 0, error: "boom", content: "not-blocks" })).toBe("shape:assistant/attempt");
+    expect(gateEvent("assistant/attempt", { turn: 0, step: 0, error: "boom", thinking: 5 })).toBe("shape:assistant/attempt");
+  });
+
   it("todo/snapshot 词条门表驱动（docs/TODO.md §13.2/§13.4——规范形/自环/悬空/seq 界）", () => {
     const ok = (data: unknown): boolean => gateEvent("todo/snapshot", data) === undefined;
     const bad = (data: unknown): string => gateEvent("todo/snapshot", data) ?? "passed";

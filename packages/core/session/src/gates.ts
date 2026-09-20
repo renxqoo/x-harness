@@ -131,11 +131,18 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isCount(d["turn"]) &&
     isCount(d["step"]) &&
     isContentBlocks(d["content"]) &&
+    (d["thinking"] === undefined || isStr(d["thinking"])) &&
     (d["usage"] === undefined || isObj(d["usage"])) &&
     (d["stopReason"] === undefined || isStr(d["stopReason"])) &&
     (d["interrupted"] === undefined || d["interrupted"] === true),
   "assistant/attempt": (d) =>
-    isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["error"]) && (d["usage"] === undefined || isObj(d["usage"])),
+    isObj(d) &&
+    isCount(d["turn"]) &&
+    isCount(d["step"]) &&
+    isStr(d["error"]) &&
+    (d["content"] === undefined || isContentBlocks(d["content"])) &&
+    (d["thinking"] === undefined || isStr(d["thinking"])) &&
+    (d["usage"] === undefined || isObj(d["usage"])),
   "tool/call": (d) =>
     isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["callId"]) && isStr(d["name"]) && isStr(d["arguments"]),
   "tool/result": (d) =>

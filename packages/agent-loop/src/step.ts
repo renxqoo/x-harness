@@ -314,6 +314,20 @@ async function drainGuarded(input: {
   }
 }
 
+/** attempt 落账：error + 截止错误时已收增量（content/thinking——STREAM-PARTIAL-PERSISTENCE，
+ *  不丢弃上游已交付数据）+ usage（token-meter 失败尝试计费，docs/TOKEN-METER.md §1） */
+function appendAttemptLedger(session: Session, spec: { readonly turn: number; readonly step: number; readonly error: string; readonly accum: StreamAccumulator }): void {
+  const partialContent = [...spec.accum.textBlock, ...spec.accum.toolUseBlocks];
+  appendEvent(session, "assistant/attempt", {
+    turn: spec.turn,
+    step: spec.step,
+    error: spec.error,
+    ...(partialContent.length > 0 ? { content: partialContent } : {}),
+    ...(spec.accum.thinkingText !== "" ? { thinking: spec.accum.thinkingText } : {}),
+    ...(spec.accum.usageSnapshot !== undefined ? { usage: spec.accum.usageSnapshot } : {}),
+  });
+}
+
 export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
   const { scope, schemas, step } = input;
   const { deps, turn } = scope;
@@ -376,13 +390,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
     }
     const settlement = settleStream(accum, threw, signal.aborted);
     if (settlement.kind === "attempt") {
-      // 失败尝试中断前已收到的 usage 帧随尝试落账（token-meter 失败尝试计费，docs/TOKEN-METER.md §1）
-      appendEvent(session, "assistant/attempt", {
-        turn,
-        step,
-        error: settlement.error,
-        ...(accum.usageSnapshot !== undefined ? { usage: accum.usageSnapshot } : {}),
-      });
+      appendAttemptLedger(session, { turn, step, error: settlement.error, accum });
       deps.emitStreamFrame(turn, step, { phase: "end", kind: "attempt" });
       const retry = await deps.dispatchRequestError({
         session: session.id,
@@ -404,7 +412,8 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
     const usage = accum.usageSnapshot;
     // F0②：assistant 落账前纠——改写版即落账版（「模型可见必落盘」保持）。形状门在
     // settleAssistant 内（收口审查 2.1）；输出契约只 content/stopReason——interrupted 由
-    // 内核独占（收口审查 2.2）。
+    // 内核独占（收口审查 2.2）。thinking 为落盘旁路字段（不过纠中间件、不进投影——
+    // docs/STREAM-PARTIAL-PERSISTENCE.md）。
     const settled = await settleAssistant({ deps, sessionId: session.id, turn, step, accum, settlement, signal });
     appendSurfaceEvent(session, {
       type: "assistant/message",
@@ -412,6 +421,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         turn,
         step,
         content: settled.content,
+        ...(accum.thinkingText !== "" ? { thinking: accum.thinkingText } : {}),
         ...(usage !== undefined ? { usage } : {}),
         stopReason: settled.stopReason,
         ...(settlement.interrupted === true ? { interrupted: true } : {}),

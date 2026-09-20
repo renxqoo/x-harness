@@ -15,8 +15,11 @@
    仓库内消费方（step.ts 产出位、e2e/real.ts、docs 帧表）同批改净。start/end 帧形状不变。
 4. 事件时序不变：每 attempt 恰一次 start、恰一次 end；thinking/text 帧按到达序原样广播，driver 不重排
    （协议上思考块先于正文块，时序由上游决定）；tool-call-delta/usage/finish chunk 不产帧。
-5. 落账不变：thinking 不进 `assistant/message` content、不进 `deriveMessages`、不回传请求、不进 jsonl。
-   `StreamAccumulator` 显式忽略 thinking-delta（不进 text/hasContent）。thinking-only + finish(stop)
+5. 落账（docs/STREAM-PARTIAL-PERSISTENCE.md 翻转原「不落账」）：thinking 不进
+   `assistant/message` content、不进 `deriveMessages`、不回传请求；**全文落
+   `assistant/message.thinking` / `assistant/attempt.thinking`**（本 attempt 增量拼接，
+   缺席=无思考）。`StreamAccumulator` 收集 thinking-delta（不进 text/hasContent——空结算
+   判定不含思考）。thinking-only + finish(stop)
    → empty completion 结算（无 code）→ `agentRequestError` → llm-retry 对无 code 恒不重试 → turn error
    终态（既有语义，非本件新增裁决）；thinking-only + finish(max-tokens) → 空 content 的 message
    max-tokens（既有语义）；thinking-only + abort → attempt("aborted") 走既有 fatal→aborted 映射。
@@ -26,7 +29,8 @@
 - 处理：anthropic SSE thinking 增量 → thinking-delta chunk → agentAssistantStream 思考帧 → 终端实时上屏。
 - 不处理：
   - openai 协议 `reasoning_content` 透传（openai-compat 不产出思考帧）（用户裁决：不用 openai 端点）；
-  - 思考落账/回放/回传（未来若做「思考进会话账本」另立项——session ContentBlock 与两适配器请求映射都要动）；
+  - 思考回放/回传（落账已由 docs/STREAM-PARTIAL-PERSISTENCE.md 实施；resume 回放渲染与
+    回传模型仍另立项——session ContentBlock 与两适配器请求映射都要动）；
   - 请求侧 thinking 开关：`LlmRequest.thinking`（off/low/medium/high）→ anthropic 侧注入
     `thinkingEnabled+effort+thinkingBudgetTokens`（docs/LLM-PI.md 契约 6）；缺省/off 不发参数。
   - `signature_delta`、`redacted_thinking`：按未知形状跳过。
@@ -34,7 +38,8 @@
 ## 并发/一致性预算
 
 - 无新增并发面：复用既有同步 emit 路径（双层实测逐帧 ≤1ms）。
-- 帧量级：思考 token 与正文同量级，每 token 一帧；广播后即弃、累积器不存思考，内存零增长。
+- 帧量级：思考 token 与正文同量级，每 token 一帧；广播即弃，累积器驻留思考全文至结算落盘
+  （内存量级=正文同制，落盘不截断——STREAM-PARTIAL-PERSISTENCE 预算节）。
 
 ## 拆分
 
@@ -62,7 +67,10 @@
 ## 裁决
 
 - 仅 anthropic 端点；openai 不实现思考透传（用户裁决：不要用 open.bigmodel.cn/api/paas/v4）。
-- 思考仅瞬时广播、不落账不回传（默认裁决，否决窗口：若需 resume 回放思考，另立项动 session 契约）。
+- 思考瞬时广播 + 落盘不回传（docs/STREAM-PARTIAL-PERSISTENCE.md 翻转原「不落账」裁决，
+  用户裁决 2026-09-21：截断已收内容必须落盘）：本 attempt 思考全文落
+  `assistant/message.thinking` / `assistant/attempt.thinking`；`surfaceToMessages` 白名单
+  投影不回传——请求体/压缩摘要输入不含思考。resume 回放渲染仍不在契约内（未来件）。
 - chunk 帧加 `kind` 判别字段、删除旧形状（默认裁决：判别联合单轨，同仓库「同一事实一套接口」纪律）。
 - 请求体恒不带 `thinking` 开关；「真端点确实到达思考块」这一前提由 opt-in 的 e2e real.ts 验证，
   是否运行由用户拍板（默认门内无法暴露此断层——mock 测试天然全绿）。
@@ -75,7 +83,8 @@
     → 不产 chunk 不崩；start thinking 块字段缺席/非字符串 → 不产 chunk 不崩；`signature_delta`/未知 → 不产；
     text→thinking→text 交错与双 thinking 块顺序（整帧数组 toEqual）；thinking 不混入 text-delta。
   - StreamAccumulator：push thinking-delta 后 `text`/`textBlock`/`toolUseBlocks`/`hasContent` 全不变
-    （语义锁——switch 无穷尽断言，该用例不背书「case 已写」，分支覆盖由 driver 级用例承担）；
+    （语义锁——switch 无穷尽断言，该用例不背书「case 已写」，分支覆盖由 driver 级用例承担），
+    `thinkingText` 增量拼接（落盘面——STREAM-PARTIAL-PERSISTENCE）；
     thinking-only + finish(stop) → empty completion；thinking-only + finish(max-tokens) → message max-tokens。
   - driver 级（整帧数组 toEqual，锁形状+顺序+不重排）：
     - 脚本 thinking→text→thinking→text 交错 + 掺 tool-call-delta/usage → 帧序列恰为
@@ -83,15 +92,17 @@
     - attempt 重试边界：errorScript 后接成功脚本 → 两个 start、一个 end{attempt}、一个 end{message}；
     - abort 变种（复用悬停流装置）：thinking-only + abort → attempt 终态；
       thinking+text 部分 + abort → interrupted message 且 content 只含 text；
-    - 落账零泄漏（哨兵串 THINK-SENTINEL）：thinking 脚本 + 工具续步后，
-      第二次请求体与全部 session 事件不含哨兵串。
+    - 落盘不回传（哨兵串 THINK-SENTINEL，STREAM-PARTIAL-PERSISTENCE 翻转后口径）：
+      thinking 脚本 + 工具续步后，assistant/message.thinking 含哨兵（交错增量拼接序），
+      第二次请求体不含哨兵（投影白名单）。
 - 分层：单元（两包 `__test__`）；e2e real.ts 为 opt-in 观察脚本，不进默认门。
 
 ## 验收清单
 
-- [ ] 契约：chunk 变体 / 帧 kind / 时序 / 非文本 chunk 零帧 / 落账不变（含请求体与 jsonl 零泄漏）
+- [ ] 契约：chunk 变体 / 帧 kind / 时序 / 非文本 chunk 零帧 / 落盘不回传（thinking 落
+      事件 thinking 字段；请求体与投影零泄漏）
 - [ ] 边界：空初值、字段缺席、非字符串、交错、双 thinking 块、attempt 边界、abort 两变种、
       thinking-only stop/max-tokens 终态
-- [ ] 预算：无新增并发与内存累积面
+- [ ] 预算：无新增并发面；思考全文驻留至结算（与正文同制）
 - [ ] 四门全绿 + 覆盖率数字如实报告
 - [ ] e2e real.ts 思考上屏（非 TTY 输出可区分 thinking/text；真凭证运行与否由用户裁决）

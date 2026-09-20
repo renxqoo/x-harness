@@ -92,7 +92,7 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
     await made.value.dispose();
   });
 
-  it("帧序列整锁：start→thinking/text 交错→end；tool-call/usage 零帧；思考不落账不回传（哨兵）", async () => {
+  it("帧序列整锁：start→thinking/text 交错→end；tool-call/usage 零帧；思考落盘不回传（哨兵）", async () => {
     const world = await makeFrameWorld();
     worlds.push(world);
     world.tools.register({ name: "t", inputSchema: Type.Object({}), execute: async () => ({ content: "1" }) });
@@ -124,8 +124,10 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
       { phase: "chunk", kind: "text", text: "done" },
       { phase: "end", kind: "message" },
     ]);
-    // 落账与回传零泄漏：session 事件、第二次请求体均不含思考哨兵
-    expect(JSON.stringify(agent.session.events().map((e: SessionEvent) => e.data))).not.toContain("THINK-SENTINEL");
+    // 落盘不回传（STREAM-PARTIAL-PERSISTENCE 翻转契约 5）：WAL 含思考哨兵（交错增量拼接），
+    // 第二次请求体不含（投影白名单）
+    const walText = JSON.stringify(agent.session.events().map((e: SessionEvent) => e.data));
+    expect(walText).toContain("THINK-SENTINELmore");
     expect(JSON.stringify(world.fake.calls[1]?.messages)).not.toContain("THINK-SENTINEL");
     const assistants = agent.session.events().filter((e) => e.type === "assistant/message");
     expect(assistants).toHaveLength(2);
@@ -134,8 +136,10 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
         { type: "text", text: "ab" },
         { type: "tool_use", callId: "c1", name: "t", input: "{}" },
       ],
+      thinking: "THINK-SENTINELmore",
     });
     expect(assistants[1]?.data).toMatchObject({ content: [{ type: "text", text: "done" }] });
+    expect(assistants[1]?.data).not.toHaveProperty("thinking");
     await handle.dispose();
   });
 
@@ -172,7 +176,13 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
       { phase: "chunk", kind: "text", text: "ok" },
       { phase: "end", kind: "message" },
     ]);
-    expect(JSON.stringify(agent.session.events().map((e: SessionEvent) => e.data))).not.toContain("first-thought");
+    // attempt 落盘已收思考；重试成功消息不粘连前段思考、请求体不回传
+    expect(JSON.stringify(agent.session.events().map((e: SessionEvent) => e.data))).toContain("first-thought");
+    const attempt = agent.session.events().find((e) => e.type === "assistant/attempt");
+    expect(attempt?.data).toMatchObject({ error: "E1", thinking: "first-thought" });
+    const message = agent.session.events().find((e) => e.type === "assistant/message");
+    expect(message?.data).not.toHaveProperty("thinking");
+    expect(JSON.stringify(world.fake.calls[1]?.messages)).not.toContain("first-thought");
     await handle.dispose();
   });
 
@@ -199,6 +209,7 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
       { phase: "end", kind: "attempt" },
     ]);
     expect(madeA.agent.session.events().some((e: SessionEvent) => e.type === "assistant/message")).toBe(false);
+    expect(madeA.agent.session.events().find((e) => e.type === "assistant/attempt")?.data).toMatchObject({ thinking: "hmm" });
     expect(madeA.agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "aborted", cause: "user" } });
     await madeA.handle.dispose();
 
@@ -226,7 +237,7 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
       { phase: "end", kind: "message" },
     ]);
     const assistant = madeB.agent.session.events().find((e) => e.type === "assistant/message");
-    expect(assistant?.data).toMatchObject({ interrupted: true, content: [{ type: "text", text: "partial" }] });
+    expect(assistant?.data).toMatchObject({ interrupted: true, content: [{ type: "text", text: "partial" }], thinking: "hmm" });
     await madeB.handle.dispose();
   });
 });

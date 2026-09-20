@@ -166,4 +166,13 @@ describe("surfaceToMessages（docs/SESSION.md §1.4 角色映射）", () => {
     expect(Object.keys(messages[0] ?? {})).toEqual(["role", "content"]);
     expect(Object.keys(messages[1] ?? {})).toEqual(["role", "callId", "content"]);
   });
+
+  it("assistant/message 带 thinking → 投影白名单不含（落盘不回传——STREAM-PARTIAL-PERSISTENCE）", () => {
+    const log = [
+      surfaceEvent({ seq: 0, type: "assistant/message", data: { turn: 0, step: 0, content: [{ type: "text", text: "yo" }], thinking: "SECRET" }, op: "append" }),
+    ] as SessionEvent[];
+    const messages = surfaceToMessages(projectSurface(log));
+    expect(JSON.stringify(messages)).not.toContain("SECRET");
+    expect(Object.keys(messages[0] ?? {})).toEqual(["role", "content"]);
+  });
 });

@@ -50,8 +50,8 @@ type SessionEvent = { type; seq; time; data }
 | `step/start` / `step/end` | `{ turn; step }` | 步括号 |
 | `system/message` | `{ turn; step; text }` | 模型可见 system 消息（普通 surface 节点，无特判） |
 | `user/message` | `{ turn; step; content: ContentBlock[] }` | 模型可见 user 消息 |
-| `assistant/message` | `{ turn; step; content: ContentBlock[]; usage?; stopReason?; interrupted? }` | 消息即账本：输出与用量同行 |
-| `assistant/attempt` | `{ turn; step; error; usage? }` | 未沉淀为消息的失败尝试（观测用，不进消息面）；中断前已收到的 usage 帧随尝试落账（token-meter 失败尝试计费） |
+| `assistant/message` | `{ turn; step; content: ContentBlock[]; thinking?; usage?; stopReason?; interrupted? }` | 消息即账本：输出与用量同行；thinking=本 attempt 思考全文（落盘不回传——docs/STREAM-PARTIAL-PERSISTENCE.md） |
+| `assistant/attempt` | `{ turn; step; error; content?; thinking?; usage? }` | 未沉淀为消息的失败尝试（观测用，不进消息面）；中断前已收增量（content/thinking）与 usage 帧随尝试落账（STREAM-PARTIAL-PERSISTENCE + token-meter 失败尝试计费） |
 | `tool/call` | `{ turn; step; callId; name; arguments }` | 模型发起的工具调用（arguments 为未解析原串） |
 | `tool/result` | `{ turn; step; callId; content; isError? }` | 工具结果，按 callId 关联 |
 | `request/header` | `{ model; provider?; temperature?; maxTokens?; tools: ToolRef[] }` | 请求信封快照（拨号配置 + 工具表） |
