@@ -61,13 +61,14 @@ function seedEvent(seq: number, turn = 0): SessionEvent {
 }
 
 describe("create（docs/SESSION.md §1.5）", () => {
-  it("默认铸号 session-<n>，header 盖当前版本", async () => {
+  it("默认铸号 = mintSessionId 形态且互异（症状：进程内计数 session-N 跨进程撞名致子代理永久拒写），header 盖当前版本", async () => {
     const h = makeStore();
     const store = createSessionStore(h.hooks);
     const a = unwrap(await store.create());
     const b = unwrap(await store.create());
-    expect(a.id).toBe("session-0");
-    expect(b.id).toBe("session-1");
+    expect(a.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/); // UTC 时间戳-6 位随机（docs/SESSION.md §1.5）
+    expect(b.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/);
+    expect(a.id).not.toBe(b.id); // 随机段分流 + store Map duplicate 兜底
     expect(typeof a.header.createdAt).toBe("number");
     expect(a.header.cwd).toBe(process.cwd());
     expect(h.created).toHaveLength(2);

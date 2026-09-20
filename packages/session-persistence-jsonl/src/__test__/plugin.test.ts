@@ -131,6 +131,29 @@ describe("串行链不变量（docs/SESSION.md §1.8 per-id 串行）", () => {
     });
   });
 
+  it("跨进程缺省铸号不撞名：同 root 两代 world 缺省 create 均可落盘（症状：子代理 session-0 撞孤儿目录 session-id-reused 永久拒写）", async () => {
+    world = await makeWorld(root); // 第一代（模拟首进程）
+    const gen1 = unwrap(await world.store.create()); // 缺省 id
+    turn(gen1, 0);
+    expect(await world.store.flush(gen1.id)).toEqual({ ok: true, value: true });
+    await world.ctx.dispose();
+
+    const gen2 = await makeWorld(root); // 第二代（模拟重启的新进程，旧实现计数器归零重铸 session-0）
+    try {
+      const again = unwrap(await gen2.store.create()); // 缺省 id——必须不再撞 gen1 的目录
+      expect(again.id).not.toBe(gen1.id);
+      expect(again.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/); // 证明走的是缺省铸号路径（mintSessionId 形态）
+      turn(again, 0);
+      expect(await gen2.store.flush(again.id)).toEqual({ ok: true, value: true }); // 旧实现此处 session-id-reused 必红
+      const read1 = unwrap(await gen2.archive.read(gen1.id));
+      const read2 = unwrap(await gen2.archive.read(again.id));
+      expect(read1.events).toEqual(gen1.events());
+      expect(read2.events).toEqual(again.events()); // 两会话互不侵蚀
+    } finally {
+      await gen2.ctx.dispose().catch(() => {});
+    }
+  });
+
   it("插件卸载排空：pending 有货时卸载 → 全部落盘（docs/SESSION.md §1.8 终排空）", async () => {
     world = await makeWorld(root);
     const s = unwrap(await world.store.create({ id: "uu" as SessionId }));

@@ -11,7 +11,6 @@ import { createTerminalBrokerPlugin } from "./broker-terminal.ts";
 import type { BrokerIO } from "./broker-terminal.ts";
 import { promptFactsOf, registerAppendSections } from "./cli-prompt-sections.ts";
 import { defaultSessionRoot, providersPath } from "./harness-home.ts";
-import { newSessionId } from "./new-session-id.ts";
 import { parseCliArgs, usageText } from "./parse-cli-args.ts";
 import type { CliArgs } from "./parse-cli-args.ts";
 import { pickIndex, pickSession, formatSessionList } from "./pick-session.ts";
@@ -176,7 +175,7 @@ async function openWorld(input: {
   const world = built.value;
   const registered = world.registry.schemas().map((schema: { name: string }) => schema.name);
   const made = input.resumeId === undefined
-    ? await world.loop.create({ session: { id: newSessionId() }, agent: agentOptionsForCreate(args, resolution.defaults) })
+    ? await world.loop.create({ agent: agentOptionsForCreate(args, resolution.defaults) })
     : await world.loop.resume({ id: input.resumeId, agent: agentOptionsForResume(args, resolution.overrides) });
   if (!made.ok) {
     await world.ctx.dispose().catch(() => {});

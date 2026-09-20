@@ -10,7 +10,7 @@
 
 | 包 | 提供物 |
 | --- | --- |
-| `@x-harness/session` | 插件 `sessionPlugin`（name: `session`）：provide `sessionStore`/`sessionAuditDrain` 服务；拥有 9 个 token（3 服务 + 6 总线） |
+| `@x-harness/session` | 插件 `sessionPlugin`（name: `session`）：provide `sessionStore`/`sessionAuditDrain` 服务；拥有 9 个 token（3 服务 + 6 总线）；导出 `mintSessionId`（时间戳-随机，`create` 缺省铸号单一来源——跨进程唯一） |
 | `@x-harness/session-persistence-jsonl` | 插件工厂 `createJsonlSessionPersistence({ root, onIoError? })`（name: `session-persistence-jsonl`，`inject: ["session"]`）：provide `sessionArchive` 服务，订阅总线完成落盘 |
 
 ```ts
@@ -92,7 +92,7 @@ flush(id): Promise<Result<{ flushed: true }>>
 dispose(id): Result<true>
 ```
 
-- `create`：id 缺省铸 `session-<n>`（n 进位，失败 burnt 可跳号）；显式 id 先过路径安全门（§1.8）。seed 提供 = resume/replay 语义：校验通过后由构造器追加 `session/end-seed`（不带 inherited）；`parent` 回填血缘（resume 消费方从 `archive.read` 的 header.parentSession 取，审查处置 P5）。**`header` 提供 = 归档原文覆盖**（id 取 header.id、parent 忽略、元数据保留；SESSION-RESUME §1.3）。guard deny / id 冲突（含 await guard 后的二次占用检查，并发同显式 id 恰一个成功）/ seed 非法 / invalid-header → `Result` 失败，零残留。
+- `create`：id 缺省铸 `mintSessionId()`（`<UTC时间戳>-<6位随机>`，跨进程唯一；碰撞为概率级零风险 ~4.6e-10/同秒对，命中仍按 `session-id-reused` 永久拒绝——fail-closed 契约保留，不做 resume 分支重试/再铸号）；显式 id 先过路径安全门（§1.8）。seed 提供 = resume/replay 语义：校验通过后由构造器追加 `session/end-seed`（不带 inherited）；`parent` 回填血缘（resume 消费方从 `archive.read` 的 header.parentSession 取，审查处置 P5）。**`header` 提供 = 归档原文覆盖**（id 取 header.id、parent 忽略、元数据保留；SESSION-RESUME §1.3）。guard deny / id 冲突（含 await guard 后的二次占用检查，并发同显式 id 恰一个成功）/ seed 非法 / invalid-header → `Result` 失败，零残留。
 - `fork`：经 `events()` 冻结快照读取源日志（并发 append 不影响一致性），复制 `[0, untilSeq]` 闭区间前缀为 seed（逐字复制，含祖先标记），追加 `session/end-seed { inherited: true }`，子 header 记 `parentSession`；内部走与 create 相同的诞生路径（guard + created 各恰好一次）。`untilSeq` 值域 `0 ≤ untilSeq < len`（空前缀非法，`-1`/`len` 越界失败，审查处置 P9）；源不存在 → 失败。
 - `flush`：未知 id → 失败；派发 `sessionFlush` 屏障，聚合错误 → 失败。**空屏障语义**：未装配（或已卸载）持久化插件时 flush 立即成功——成功 = 屏障完成，不承诺字节落盘；需要落盘保证的宿主必须装配持久化插件（审查处置 P8）。
 - `dispose`：移除、**封存 Session 写权**（此后该 Session 的 append 返回 `session-disposed` 失败；`events()/surface()/deriveMessages()` 读面仍开放——历史可查，审查处置 P4）、广播 `sessionDisposed`；未知 id → 失败。消费方纪律：dispose 前先 flush。
@@ -167,9 +167,10 @@ interface SessionArchive {
 
 ```
 packages/core/session/src/
-  tokens.ts      # 7 token（sessionStore/sessionArchive 服务 + 5 总线）
+  tokens.ts      # 9 token（sessionStore/sessionArchive/sessionAuditDrain 服务 + 6 总线）
   types.ts       # id/header/事件词表/信封/surface/接口/Result
   gates.ts       # 路径安全门/JSON 安全门/逐词条形状门/seed 信封+投影重放校验/replace 区间门
+  id.ts          # mintSessionId（缺省铸号单一来源：UTC 时间戳-随机，跨进程唯一）
   surface.ts     # applySurfaceEvent（增量步进，单一真相）/ projectSurface / surfaceToMessages
   session.ts     # createSession（append/events/surface/deriveMessages/end-seed 构造/写权封存）
   store.ts       # createSessionStore（create/fork/get/list/flush/dispose + 并发闭合 + birth 路径）

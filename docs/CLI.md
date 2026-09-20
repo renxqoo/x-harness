@@ -208,9 +208,9 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   先于带 guidance 的 tool-*（D6，头注）。`--system-prompt` 整体替换时不装基础段
   （走 AgentOptions.systemPrompt 静态串，优先于 assemble 是包契约）；
   `--append-system-prompt` 追加 section `cli-user-<n>`（无边落尾=全部内置段之后，链式保序）。
-- **会话 id 生成（宿主职责）**：`SessionStore.create` 缺省铸号是进程内计数，持久目录下跨进程
-  必撞 `session-id-reused` 永久拒写——CLI 一律显式生成 `<UTC时间戳>-<6位随机>` 形态 id
-  （满足 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`）；`/new` 亦然。
+- **会话 id 生成（单一来源）**：`mintSessionId`（@x-harness/session）铸 `<UTC时间戳>-<6位随机>`
+  形态 id（满足 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`，字典序即时间序）；`SessionStore.create`
+  缺省铸号即此（跨进程唯一）——CLI 一律走缺省铸号（不传 id），`/new` 亦然。
 - **`--no-session` 装配形态**：略去 createJsonlSessionPersistence（无条件装配的唯一例外，
   内存会话语义必然）——后果：sessionArchive 缺席 → `/model`、`/thinking`、`/resume` 禁用
   （提示；三者都走 dispose→resume 重建，内存会话重建即丢上下文），`/export` 走内存序列化，
@@ -258,7 +258,6 @@ parse-cli-args.ts        参数解析（纯函数，Result 形态）+ usage 文�
 providers-file.ts        providers.json 定位/读取/校验（解析纯函数 + IO 薄层）
 resolve-model.ts         两层解析：defaults（新建用）+ overrides（仅显式 flag）
 harness-home.ts          X_HARNESS_HOME / ~/.x-harness 定位
-new-session-id.ts        会话唯一 id 生成（时间戳+随机，词表校验）
 build-world.ts           装配数组构造（含 --no-session 条件化）+ adapter 直注册 + 服务门面
 broker-terminal.ts       permission broker（readline/TTY 探测注入，ask 可被关闭强制 deny）
 cli-prompt-sections.ts   系统提示 section/variable 注册（文本纯函数 + 注册薄层）
@@ -284,7 +283,7 @@ console 使用豁免：`.oxlintrc.json` no-console override 的 files 加 `apps/
 
 - **契约级**：parse-cli-args 表驱动——每 flag 生效/缺省/别名/互斥全错例（含 `-p`+`-c` 合法
   组合）/未知 flag/`--` 分流；providers-file 词表封闭（protocol/thinking 闭集、default 指向
-  性、maxTokensDefault 协议约束）；slash 命令表闭集 = /help 文档列出集；new-session-id 词表
+  性、maxTokensDefault 协议约束）；slash 命令表闭集 = /help 文档列出集；mintSessionId 词表（测试居 @x-harness/session 包）
   与唯一性。
 - **边界**：空 providers/坏 JSON/重复 name/default 指向缺席 provider；@file 不存在（exit 2）/
   空文件跳过/BOM 剥离；空 stdin；垃圾 slash 输入（未知命令提示不崩）；print 无 message 且无
@@ -343,7 +342,7 @@ coverage include 扩 `apps/*/src/**`；不接受为凑数排除）。
 | # | 问题 | 处置 |
 | --- | --- | --- |
 | 1 | compact 折叠全部 surface 会毁掉 agent-loop 系统锚点（下一 turn 摘要被覆写机制摧毁） | §2.3 改为保锚点 user/message 折叠 + §4 回归用例 |
-| 2 | 会话 id 进程内计数跨进程撞名 → session-id-reused 永久拒写 | §2.5 宿主显式生成唯一 id（new-session-id） |
+| 2 | 会话 id 进程内计数跨进程撞名 → session-id-reused 永久拒写 | §2.5 铸号单一来源（store 缺省 mintSessionId） |
 | 3 | --no-session 与无条件装配持久化矛盾；no-session 下 /model /resume 必坏 | §2.5 条件化装配 + 行为矩阵 + 互斥校验 |
 | 4 | resume 被 providers.json default 静默改写模型/thinking | §2.6 两层 resolve-model（resume 仅显式 flag） |
 | 5 | continue/resume 候选混入 delegation 子代理会话 | §2.6 agentId 过滤 |

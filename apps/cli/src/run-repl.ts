@@ -8,7 +8,6 @@ import type { Result } from "@x-harness/core";
 import type { CliArgs } from "./parse-cli-args.ts";
 import { resolveToolNames } from "./resolve-agent-options.ts";
 import { formatSessionSummary, formatTurnLine } from "./format-usage.ts";
-import { newSessionId } from "./new-session-id.ts";
 import type { ProvidersConfig } from "./providers-file.ts";
 import { mainSessions } from "./resolve-session.ts";
 import { createReplTerminal } from "./repl-terminal.ts";
@@ -91,7 +90,7 @@ async function makeNext(input: MakeNextInput & { readonly world: import("./build
     world.registry.scoped(sessionId).restrict(resolveToolNames(args, registered)); // create 语义：恒全量快照
   };
   if (over.newSession === true) {
-    const made = await loop.create({ session: { id: newSessionId() }, agent: options });
+    const made = await loop.create({ agent: options }); // 缺省铸号（mintSessionId 单一来源）
     if (made.ok) registerCreate(made.value.agent.session.id);
     return made;
   }
@@ -104,7 +103,7 @@ async function makeNext(input: MakeNextInput & { readonly world: import("./build
     return resumed;
   }
   if (over.sessionId !== undefined) return resumed; // 指定 id 失败——不兜底（沿用旧契约）
-  const made = await loop.create({ session: { id: newSessionId() }, agent: options }); // 兜底 = create 语义恒快照
+  const made = await loop.create({ agent: options }); // 兜底 = create 语义恒快照（缺省铸号，mintSessionId 单一来源）
   if (made.ok) registerCreate(made.value.agent.session.id);
   return made;
 }

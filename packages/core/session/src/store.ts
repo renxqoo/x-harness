@@ -4,6 +4,7 @@
 import { deepFreeze, errorText } from "@x-harness/core";
 import type { GuardDeny } from "@x-harness/core";
 import { isSafeSessionId, validateSessionEvents } from "./gates.ts";
+import { mintSessionId } from "./id.ts";
 import { materializeJson } from "./snapshot.ts";
 import type { SessionHandle } from "./session.ts";
 import { createSession } from "./session.ts";
@@ -28,14 +29,10 @@ export interface SessionStoreHooks {
 
 export function createSessionStore(hooks: SessionStoreHooks): SessionStore {
   const sessions = new Map<SessionId, SessionHandle>();
-  let counter = 0;
-
-  function mint(): SessionId {
-    return `session-${counter++}` as SessionId;
-  }
 
   function resolveId(id: SessionId | undefined): Result<SessionId> {
-    if (id === undefined) return { ok: true, value: mint() };
+    // 缺省铸号 = mintSessionId（时间戳-随机，跨进程唯一——持久目录撞名即永久拒写）
+    if (id === undefined) return { ok: true, value: mintSessionId() };
     if (!isSafeSessionId(id)) return { ok: false, reason: `invalid-id:${id}` };
     return { ok: true, value: id };
   }
