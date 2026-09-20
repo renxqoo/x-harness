@@ -1,4 +1,4 @@
-// 步闸决策链（docs/COMPACTION.md §1.2；参照系 gate 移植）：占用测量 → CP 再武装/
+// 步闸：每步 preStep 时测量占用并按水位线路由（warn/L1/L2/CP 四通道）
 // 启动（上升沿 + 段门槛，后台异步不阻塞）→ 警告区预算外推（算而未落——前缀缓存
 // 裁决）→ L1 预门槛落账 → 复评 → L2 升级（零 LLM + 复测门）→ join 兜底。
 // 终局恒放行（步闸永不 reject——有意 413 现场交 compaction 既有 L3 通道；reject
@@ -174,7 +174,7 @@ export async function runStepGate(deps: GateDeps, payload: { readonly turn: numb
 
     armOrStartCheckpoint({ deps, lines, occupancy, nodes, payload });
     await routeZones({ deps, lines, occupancy, nodes, events, measured, payload });
-    state.cache.lastOccupancy = remeasure(deps); // 分支可能已 L1/L2 落账——存复评值
+    state.cache.lastOccupancy = remeasure(deps); // 无条件覆写（L1/L2 落账后的真实投影——非"各分支自行刷新"）
   } catch (error) {
     deps.warn(session.id, "gate-soft-fail", { error: error instanceof Error ? error.message : String(error) });
   }

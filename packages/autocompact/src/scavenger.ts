@@ -1,4 +1,4 @@
-// L1 无损清理（docs/COMPACTION.md §1.2；参照系 scavenger 移植，落账改写为
+// 清道夫：L1 落账计划计算（可清工具结果 + 保留最近 N 轮
 // tool/result 单点 replace——同 callId/turn/step 占位、保留 isError，配对不变量不破坏）：
 // 白名单 + 在飞轮整轮豁免 + keepRecent 按条保底 + 占位幂等 + path 提取。
 // write 恒豁免（回执不变量：L1-only 路径无文件账本兜底，模型对自己刚写过的东西

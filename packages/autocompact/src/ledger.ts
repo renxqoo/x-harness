@@ -1,4 +1,4 @@
-// 滚动检查点账本（docs/COMPACTION.md §1.2；参照系 ledger 移植）：六节 append-only
+// L2 账本：已收编段的 token 记账（预算裁剪 + 文件文本计入
 // + 覆写 current——整段式摘要的死穴是重述衰减（摘要的摘要），账本用机械合并消灭
 // 它：goals/decisions 行级只增不删（翻案走新增行）、done 吸收 pending、verified 吸收
 // unverified、current 唯一允许覆写（patch 空则保留旧值）。files 节是纯机械面，组装期

@@ -218,9 +218,9 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
           ); // 定时器异常是进程级崩溃面
         }
       };
-      const idleMs = config.idleClearMinutes > 0 ? config.idleClearMinutes * 60_000 : 60_000;
-      const timer = setInterval(tickIdle, Math.min(60_000, Math.max(250, idleMs)));
-      timer.unref?.();
+      const idleMs = config.idleClearMinutes > 0 ? config.idleClearMinutes * 60_000 : 0;
+      const timer = idleMs > 0 ? setInterval(tickIdle, Math.min(60_000, Math.max(250, idleMs))) : undefined; // 审计 #10：禁用不起定时器
+      timer?.unref?.();
 
       const offs = [
         ctx.on(agentPreStep, onPreStep as never),
@@ -233,7 +233,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       ];
       return async () => {
         for (const off of offs) off();
-        clearInterval(timer);
+        if (timer !== undefined) clearInterval(timer);
         // 在飞 CP 取消 + 有界 join（join-before-close）：迟滞不超过 5s，不吊死拆卸
         const inflight: Array<Promise<void>> = [];
         for (const state of states.values()) {

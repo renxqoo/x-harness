@@ -1,5 +1,5 @@
 // 占用测量组合面（docs/COMPACTION.md §1.2/§1.4）：锚/尾估复用 compaction 的
-// measureContext（单一真相——参照系两包口径不一的修复），本文件补 autocompact
+// 测量：occupancy + gains 的组合测量面
 // 特有面：并行度观测（首步增量缺省）、L1 收益扣减（锚时效规则）、领取批次。
 
 import type { SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";

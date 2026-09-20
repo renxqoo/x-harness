@@ -1,4 +1,4 @@
-// 阈值线推导（docs/COMPACTION.md §1.2；参照系 arbiter 移植）：有效窗口 =
+// 线条域：上下文窗口的预算分区（warn/L2/CP 三条水位线 + 有效窗口推导）
 // min(主窗, servedWindow) − 摘要输出预留；L1 线 = L2 线；警告线只触发预算外推不
 // 落账（前缀缓存裁决）。装配期值域 fail-fast；servedWindow 收缩的运行期复算走
 // refitLines 降级（纯本地通道），不抛出（运行期事实非装配错误）。

@@ -1,5 +1,5 @@
 // per-session 状态容器（docs/COMPACTION.md §1.2）：x-harness 内核 apply 一次于根层，
-// 全部可变态按 SessionId 分桶（替代参照系 per-assembly 槽机）；sessionDisposed 摘除。
+// 会话状态：per-session 的 gate 缓存 + checkpoint 轮活性 + 冷启动恢复
 // 首触冷启动由 journal 折叠（checkpoint 恢复 + 轮活性），不依赖进程内记忆。
 
 import type { SessionEvent, SessionId } from "@x-harness/session";
@@ -32,7 +32,6 @@ export interface SessionState {
   gains: L1Gains;
   turnActive: boolean;
   lastTurnEndAt: number;
-  recovered: boolean;
 }
 
 export function makeSessionState(id: SessionId): SessionState {
@@ -53,7 +52,6 @@ export function makeSessionState(id: SessionId): SessionState {
     gains: [],
     turnActive: false,
     lastTurnEndAt: 0,
-    recovered: false,
   };
 }
 
@@ -74,5 +72,4 @@ export function recoverSessionState(state: SessionState, events: readonly Sessio
   state.turnActive = turnActive;
   state.lastTurnEndAt = lastTurnEndAt;
   state.cache.journalSeen = events.length;
-  state.recovered = true;
 }

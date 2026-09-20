@@ -33,3 +33,10 @@ export const compactionServedWindow = defineEvent<{ readonly session: SessionId;
   "compaction/served-window",
   { freeze: "none" },
 );
+
+/** 诊断事件（审计 #13）：结构化诊断码——事件总线消费者可见（不只 stderr） */
+export const compactionDiagnostic = defineEvent<{
+  readonly session: SessionId;
+  readonly code: string;
+  readonly detail?: Readonly<Record<string, unknown>>;
+}>("compaction/diagnostic", { freeze: "none" });

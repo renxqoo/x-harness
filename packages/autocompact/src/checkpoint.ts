@@ -1,4 +1,4 @@
-// 检查点总结（docs/COMPACTION.md §1.2；参照系 checkpoint 移植）：后台异步维护滚动
+// CP 作业：分段预压缩的 WAL（started→advanced→终态 三相 + 失效重锚
 // 账本——唯一常规 LLM 总结面。纪律：单飞行；由步闸启动并链当步 turn signal；
 // 输入硬界（CP 面自身窗宽为分母、CJK 安全折算、预算 <1 不拨号）；失效判定 =
 // 作业期前缀替换落账（compaction 摘要/L2 账本——L1 单点 tool/result 替换不参与，
@@ -321,7 +321,7 @@ async function callCheckpointModel(fields: {
   const boxed = boxSegment({
     nodes,
     from: job.segmentFrom,
-    // 无真轮起点的退化投影按全投影收编（参照系容错——不烧熔断预算）
+    // 退化投影：boxed 缺席走 failOnce（烧熔断预算——与注释原声称矛盾，以代码为准）
     lastTurnStart: lastStart < 0 ? nodes.length : lastStart,
     tokenBudget: Math.max(1, Math.floor(maxChars / 4)),
   });
@@ -385,7 +385,16 @@ function acceptPatch(fields: {
     coveredSeq: state.coveredSeq,
     ...(stale ? { stale: true } : {}),
   });
-  if (!recorded.ok) throw new Error(`checkpoint append failed: ${recorded.reason}`);
+  if (!recorded.ok) {
+    // 审计 #9：业务失败用判别联合（不抛异常做控制流）；reason 传入 fail 面
+    deps.emit("failed", { failures: state.consecutiveFailures + 1, reason: `append-failed:${recorded.reason}` });
+    state.consecutiveFailures += 1;
+    if (state.consecutiveFailures >= 3) {
+      deps.emit("breaker", { failures: state.consecutiveFailures });
+      deps.onBreaker();
+    }
+    return;
+  }
   deps.emit(stale ? "stale-accepted" : "advanced", { coveredSeq: state.coveredSeq });
 }
 
