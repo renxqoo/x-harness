@@ -1,4 +1,5 @@
 import { deepFreeze, shellFreeze } from "./freeze.ts";
+import { stderrLine } from "../stderr-line.ts";
 import { contextDisposing, serviceProvided } from "./vocab.ts";
 import type {
   AnyToken,
@@ -46,10 +47,10 @@ interface ServiceWaiter {
   reject(error: Error): void;
 }
 
-/** 默认错误归宿：stderr 一行留痕（内核不依赖 console；宿主要富日志注入 onListenerError） */
+/** 默认错误归宿：一行留痕（console.error——Node 下即 stderr）；宿主要富日志注入 onListenerError */
 function defaultSink(error: unknown, token: { readonly name: string }): void {
   const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  process.stderr.write(`[x-harness] listener error on "${token.name}": ${detail}\n`);
+  stderrLine(`[x-harness] listener error on "${token.name}": ${detail}`);
 }
 
 /** emit 冻结档位应用（§2.1）：deep 递归 / shell 一级 / none 原样——dispatch 模式恒 deep（IMPL 裁决 7） */

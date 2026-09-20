@@ -1,4 +1,5 @@
 
+import { stderrLine } from "../stderr-line.ts";
 import { pluginError, pluginLoaded, pluginUnloaded } from "./vocab.ts";
 import type {
   AnyToken,
@@ -85,7 +86,7 @@ function topoOrder(plugins: readonly Plugin[]): Plugin[] {
         // 远距缺席（合法降级）不噪）
         const near = [...byName.keys()].find((n) => editDistance(n, dep) <= 2 && n !== dep);
         if (near !== undefined) {
-          process.stderr.write(`[softInject] plugin "${plugin.name}" declares "${dep}" — did you mean "${near}"?`);
+          stderrLine(`[softInject] plugin "${plugin.name}" declares "${dep}" — did you mean "${near}"?`);
         }
       }
     }
@@ -194,12 +195,10 @@ export async function loadPlugins(
       try {
         await ctx.dispose();
       } catch (disposeError) {
-        // 根因优先：apply 错误必须向上抛；回卷错误不吞根因（对抗审查 #9 修复）——stderr 留痕（内核不依赖 console）
+        // 根因优先：apply 错误必须向上抛；回卷错误不吞根因（对抗审查 #9 修复）——留痕走统一 console 通道
         const detail =
           disposeError instanceof Error ? `${disposeError.name}: ${disposeError.message}` : String(disposeError);
-        process.stderr.write(
-          `[x-harness] dispose during plugin load failure also failed: ${detail}\n`,
-        );
+        stderrLine(`[x-harness] dispose during plugin load failure also failed: ${detail}`);
       }
       release();
       throw error;

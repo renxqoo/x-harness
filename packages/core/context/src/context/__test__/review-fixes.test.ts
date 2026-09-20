@@ -149,7 +149,7 @@ describe("审查 #8：provide(undefined) 不穿透 nearest-first 遮蔽", () => 
 describe("审查 #9：loadPlugins 失败路径 dispose 也抛 → 仍抛 apply 根因", () => {
   it("回卷错误不吞根因", async () => {
     const ctx = createContext();
-    const errorSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const plugins: Plugin[] = [
         {

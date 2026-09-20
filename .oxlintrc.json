@@ -57,6 +57,14 @@
         "eslint/no-console": "off"
       }
     },
+    {
+      // 内核唯一留痕面：console.error（Node 下即 stderr，浏览器同参可达）——三处调用点
+      // 统一经此文件，定点豁免使 no-console 纪律其余面不动
+      "files": ["packages/core/context/src/stderr-line.ts"],
+      "rules": {
+        "eslint/no-console": "off"
+      }
+    },
   ],
 
 }
