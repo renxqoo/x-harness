@@ -148,7 +148,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
       const warn = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
         const suffix = detail === undefined ? "" : ` ${JSON.stringify(detail)}`;
         process.stderr.write(`compaction/${code} session=${session}${suffix}\n`);
-        ctx.emit(compactionDiagnostic, { session, code, ...(detail ?? {}) } as never); // 审计 #13：事件总线可见
+        ctx.emit(compactionDiagnostic, { session, code, ...detail } as never); // 审计 #13：事件总线可见
       };
 
       const deps = {

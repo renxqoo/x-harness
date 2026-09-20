@@ -1,13 +1,9 @@
 // 15-19 号探针插件验证（第二轮 DX 压力测试——故意踩不同面找真缺失）。
 
-import { describe, expect, it, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin } from "@x-harness/session";
-import { toolsPlugin, toolRegistry } from "@x-harness/tools";
-import { systemPromptPlugin } from "@x-harness/system-prompt";
+import { toolsPlugin } from "@x-harness/tools";
 import { Type } from "@sinclair/typebox";
 import { textScript } from "@x-harness/testkit";
 import { makeTestWorld, runTurn, textsOf, AGENT } from "../test-world.ts";
@@ -17,16 +13,6 @@ import { dynamicToolPlugin } from "../dynamic-tool.ts";
 import { midTurnSteerPlugin } from "../mid-turn-steer.ts";
 import { scopedPersonaPlugin } from "../scoped-persona.ts";
 
-let dirs: string[] = [];
-afterEach(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-  dirs = [];
-});
-const tmp = (): string => {
-  const d = mkdtempSync(join(tmpdir(), "xh-plx2-"));
-  dirs = [...dirs, d];
-  return d;
-};
 
 describe("⑮ 能力插件（defineService + provide——seam 形态）", () => {
   it("通知服务注册可消费；notify/recent 往返；tryUse 缺席优雅降级", async () => {

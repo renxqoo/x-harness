@@ -4,7 +4,7 @@
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { tapToolCalls, transformMessages } from "@x-harness/plugin-api";
-import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
+import type { ToolCallRequest } from "@x-harness/tools";
 
 export interface SteerOptions {
   readonly afterToolCalls: number; // 第 N 次工具调用后注入
@@ -18,7 +18,7 @@ export function midTurnSteerPlugin(options: SteerOptions): Plugin {
     apply: (ctx: Context): Disposer => {
       let toolCalls = 0;
       let shouldSteer = false;
-      const offTap = tapToolCalls(ctx, (request: ToolCallRequest) => {
+      const offTap = tapToolCalls(ctx, (_request: ToolCallRequest) => {
         toolCalls += 1;
         if (toolCalls >= options.afterToolCalls) shouldSteer = true; // 达阈值
       });

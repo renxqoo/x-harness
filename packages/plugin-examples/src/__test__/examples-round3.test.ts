@@ -1,9 +1,6 @@
 // 20-22 号探针：guard token / 多代理端到端 / 性能预算实测。
 
-import { describe, expect, it, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { Type } from "@sinclair/typebox";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
@@ -11,25 +8,11 @@ import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { textScript } from "@x-harness/testkit";
 import { createContext, loadPlugins } from "@x-harness/core";
-import { makeTestWorld, runTurn, textsOf, AGENT } from "../test-world.ts";
+import { makeTestWorld, textsOf, AGENT } from "../test-world.ts";
 import { sessionGuardPlugin } from "../session-guard.ts";
 import { tokenAnalyticsPlugin, tokenAnalyticsService } from "../token-analytics.ts";
 import { scopedPersonaPlugin } from "../scoped-persona.ts";
-import { promptKit, inlineSessionKit, toolboxKit, meterKit, llmKit, loopKit, createAgentWorld } from "@x-harness/harness";
-import { createLocalEnv } from "@x-harness/exec-env";
-import { PathGate } from "@x-harness/tool-core";
-import { wellKnown } from "@x-harness/system-prompt";
 
-let dirs: string[] = [];
-afterEach(() => {
-  for (const d of dirs) rmSync(d, { recursive: true, force: true });
-  dirs = [];
-});
-const tmp = (): string => {
-  const d = mkdtempSync(join(tmpdir(), "xh-plx3-"));
-  dirs = [...dirs, d];
-  return d;
-};
 
 describe("⑳ guard token（sessionCreateGuard——19 插件零使用的面）", () => {
   it("深度超限否决；正常深度放行", async () => {
