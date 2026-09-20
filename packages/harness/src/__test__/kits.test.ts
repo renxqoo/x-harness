@@ -10,7 +10,7 @@ import type { Plugin } from "@x-harness/core";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { compactionRunner } from "@x-harness/compaction";
 import { sessionPlugin } from "@x-harness/session";
-import { compactionKit } from "../index.ts";
+import { autoCompactKit, compactionKit } from "../index.ts";
 import { PathGate } from "@x-harness/tool-core";
 import { textScript } from "@x-harness/testkit";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
@@ -183,6 +183,18 @@ describe("compactionKit（/compact 插件接入）", () => {
     expect(runner.summarizer).toBeUndefined(); // 未配 summarizer → 手动 compact 报 summarizer-unconfigured
     const result = await runner.compact({ session: "ghost" as never });
     expect(result).toEqual({ ok: false, reason: "session-unknown" });
+    await ctx.dispose();
+  });
+});
+
+describe("autoCompactKit（分层自动压缩接入）", () => {
+  it("装配后与 compaction 共存:agentPreStep 分层防线挂上(L1/L2 观测面在场)、CP 面缺省取 runner.summarizer", async () => {
+    const ctx = createContext();
+    await loadPlugins(ctx, [sessionPlugin, ...compactionKit({ contextWindow: 200_000, summarizer: { model: "sum", provider: "p" } }), ...autoCompactKit({ contextWindow: 200_000 })]);
+    const { autocompactL1Cleared } = await import("@x-harness/autocompact");
+    const landed: string[] = [];
+    ctx.on(autocompactL1Cleared, (payload: unknown) => landed.push(String((payload as { session: string }).session)));
+    expect(ctx.use(compactionRunner).summarizer?.model).toBe("sum"); // CP 面单一真相源在场(runner.summarizer)
     await ctx.dispose();
   });
 });

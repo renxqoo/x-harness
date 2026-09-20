@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LlmAdapter, LlmChunk, LlmRequest } from "@x-harness/llm";
-import { buildWorld, compactionOptionsOf } from "../build-world.ts";
+import { autoCompactOptionsOf, buildWorld, compactionOptionsOf } from "../build-world.ts";
 import type { World } from "../build-world.ts";
 import { compactionRunner } from "@x-harness/compaction";
 import { exportSession } from "../export-session.ts";
@@ -115,6 +115,20 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
   });
 
 
+
+
+  it("autocompact 装配在场:主窗与 compaction 同源派生(autoCompactOptionsOf),CP 摘要面缺省回落 runner.summarizer", async () => {
+    // 主窗同源:显式传参档
+    expect(autoCompactOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 77_000 } })).toEqual({ contextWindow: 77_000 });
+    // 主窗同源:兜底档(与 compactionOptionsOf 同一数字)
+    const base = { config: CONFIG.config, resolution: CONFIG.resolution } as Parameters<typeof autoCompactOptionsOf>[0];
+    expect(autoCompactOptionsOf(base).contextWindow).toBe(compactionOptionsOf(base).contextWindow);
+    // CP 面单一真相:world 里 runner.summarizer 在场(autoCompactKit 不传 summarizer 时的回落源)
+    const fixture = await makeFixture([textScript("a-1")], false);
+    const handle = await makeAgent(fixture, "auto-in");
+    expect(fixture.world.ctx.use(compactionRunner).summarizer).toBeDefined();
+    await handle.dispose();
+  });
 
   it("主窗链三档:显式传参 > providers 声明窗 > 保守兜底 128k——contextWindow 必须吃 providers.json 声明(修复:恒兜底忽略声明窗)", async () => {
     const base: Parameters<typeof compactionOptionsOf>[0] = { config: CONFIG.config, resolution: CONFIG.resolution };

@@ -5,12 +5,14 @@
 // 由 durableSession/inlineSession 与 promptKit(base?) 表达。
 
 import type { Plugin, Result } from "@x-harness/core";
-import type { ModeKnob } from "@x-harness/permission";
+import type { AutoCompactOptions } from "@x-harness/autocompact";
 import type { CompactionOptions } from "@x-harness/compaction";
+import type { ModeKnob } from "@x-harness/permission";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { AnthropicCompatOptions, LlmAdapter, OpenaiCompatOptions } from "@x-harness/llm";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import {
+  autoCompactKit,
   checkpointKit,
   compactionKit,
   createAgentWorld,
@@ -84,6 +86,12 @@ function adapterOf(profile: ProviderProfile, apiKey: string): LlmAdapter {
   return profile.protocol === "anthropic" ? createAnthropicCompatAdapter(options) : createOpenaiCompatAdapter(options);
 }
 
+/** autocompact 装配参数:contextWindow 与 compaction 同源(同一主窗事实——两处分母
+ *  不一致是装配错误面);CP 模型面不传,缺省取 compactionRunner.summarizer(单一真相) */
+export function autoCompactOptionsOf(options: Pick<WorldOptions, "config" | "resolution" | "compaction">): AutoCompactOptions {
+  return { contextWindow: compactionOptionsOf(options).contextWindow };
+}
+
 /** providers.json → adapter 集；--api-key 覆盖只折进所绑定档案（docs/CLI.md §2.1） */
 export function buildAdapters(config: ProvidersConfig, resolution: ModelResolution): readonly LlmAdapter[] {
   const override = resolution.defaults.apiKey !== undefined ? resolution.apiKeyProvider : undefined;
@@ -119,7 +127,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...fenceKit({ root: options.cwd, ...(options.permission !== undefined ? { mode: options.permission } : {}) }),
     options.broker,
     ...meterKit(),
-    ...(options.compaction !== undefined ? compactionKit(compactionOptionsOf(options)) : []),
+    ...(options.compaction !== undefined ? [...compactionKit(compactionOptionsOf(options)), ...autoCompactKit(autoCompactOptionsOf(options))] : []),
     ...(options.telemetryPath !== undefined
       ? telemetryKit({ db: options.telemetryPath, resource: { serviceName: "x-harness-cli" }, onIoError: options.onTelemetryError })
       : []),

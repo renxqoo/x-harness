@@ -140,7 +140,10 @@ x-harness [flags] [message...] [@file...]
   尾部 ~20k token 原文保留（keepRecentTokens）、无进展护栏（折叠区不含真轮起点时
   no-cut-point = nothing to compact）。摘要面 = 默认档装配期快照：运行期 `/model` 切换
   不改变摘要拨号（装配期事实先例同 maxOutputTokens）。装配即三面全开：水位自动压缩
-  （agentPreStep）+ 413 紧急自愈（agentRequestError）+ 手动 /compact。print 模式
+  （agentPreStep）+ 413 紧急自愈（agentRequestError）+ 手动 /compact；同窗同源再装
+  autocompact 分层防线（CP 后台账本维护 → L1 旧工具结果占位 → L2 账本落账 → 水位
+  决策权接管/归还——零 LLM 前置层，主窗与 compactionKit 同一数字，CP 摘要面缺省回落
+  compactionRunner.summarizer）。print 模式
   （`-p` 单发）经同一 openWorld 装配，同样在水位与 413 自愈覆盖内。主窗链：
   显式传参 > 默认档 providers.json 声明窗 > 保守兜底 128k（宁早压不撞 413；真实窗由
   servedWindow——413 实测——收敛）。手动压缩的取消信号：Ctrl+C（idle 单击/quit）abort

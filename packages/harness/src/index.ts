@@ -12,6 +12,8 @@ import type { AgentLoopService } from "@x-harness/agent-loop";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
+import { createAutoCompactPlugin } from "@x-harness/autocompact";
+import type { AutoCompactOptions } from "@x-harness/autocompact";
 import { createCompactionPlugin } from "@x-harness/compaction";
 import type { CompactionOptions } from "@x-harness/compaction";
 import { createLlmRetryPlugin } from "@x-harness/llm-retry";
@@ -144,6 +146,12 @@ export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];
  *  软禁用、413 自愈降级为 served-window 记录——插件契约）。摘要面是装配期快照：
  *  运行期 /model 切换不改变摘要拨号（与 maxOutputTokens 同款装配期事实先例）。 */
 export const compactionKit = (options: CompactionOptions): readonly Plugin[] => [createCompactionPlugin(options)];
+
+/** 分层自动压缩（docs/COMPACTION.md §1.2）：CP 后台账本维护 → L1 旧工具结果占位 →
+ *  L2 账本落账 → 水位决策权接管/归还。inject compaction——CP 模型面缺省取
+ *  compactionRunner.summarizer（单一真相，宿主无需重复传）。contextWindow 与
+ *  compactionKit 同源（同一主窗事实——两处分母不一致是装配错误面）。 */
+export const autoCompactKit = (options: AutoCompactOptions): readonly Plugin[] => [createAutoCompactPlugin(options)];
 
 /** 技能装载 */
 export const skillKit = (): readonly Plugin[] => [createSkillPlugin()];
