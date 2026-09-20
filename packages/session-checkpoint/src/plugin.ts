@@ -8,8 +8,10 @@
 // 屏障（fail-closed）与 dispose drain-then-close 兜底重试。异步 flush 经持久化层
 // per-session 串行链在本轮同步广播（含 pending 入账）之后执行——drain 必含 turn/end
 // 且先于下一 turn 的请求屏障；whenIdle/idle 状态不承诺字节已 fsync，读盘必经 flush 屏障。
-// 装配契约：本插件须晚于 session-persistence-jsonl 装载（teardown 逆序回卷时本插件挂点
-// 先拆、持久化终排空殿后）；调换会使拆除期触发落进空屏障（成功不承诺字节）。
+// 装配契约（softInject ["session-persistence-jsonl"] topo 固化）：持久化在场时先装载——
+// teardown 逆序回卷本插件挂点先拆、持久化终排空殿后；调换会使拆除期触发的 flush 落进
+// 空屏障（成功不承诺字节）。运行期覆盖与装载序无关：sessionEvent 同步逐监听器入账 +
+// drain 至少晚一个 microtask，恒含 turn/end。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentRequest } from "@x-harness/agent-loop";
@@ -18,6 +20,7 @@ import { sessionDisposed, sessionEvent, sessionStore } from "@x-harness/session"
 import type { SessionId } from "@x-harness/session";
 import { toolsExecute } from "@x-harness/tools";
 import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
+import { checkpointDiagnostic } from "./tokens.ts";
 
 type AgentRequestPayload = {
   readonly session: SessionId;
@@ -30,6 +33,7 @@ type AgentRequestPayload = {
 export const sessionCheckpointPlugin: Plugin = {
   name: "session-checkpoint",
   inject: ["session"], // P16：不挂 llm/stream，请求侧挂点在 agentRequest（更早覆盖同一边界）
+  softInject: ["session-persistence-jsonl"], // 装配契约 topo 固化：持久化在场时先装载（拆除殿后）；缺席 = inline 会话组合正常跳过
   apply: (ctx: Context): Disposer => {
     const store = ctx.use(sessionStore);
 
@@ -38,12 +42,14 @@ export const sessionCheckpointPlugin: Plugin = {
       if (!flushed.ok) throw new Error(`checkpoint-flush-failed:${flushed.reason}`);
     };
 
-    // 同会话只告警一次：dead 闩会话连跑多 turn 不刷屏；sessionDisposed 摘除防泄漏
+    // 同会话只告警一次：dead 闩会话连跑多 turn 不刷屏；sessionDisposed 摘除防泄漏。
+    // 闩位在送达成功之后——告警通道故障（write throw）时不闩，catch 重告仍可送达
     const warned = new Set<SessionId>();
     const warnTurnEndFlush = (session: SessionId, reason: string): void => {
       if (warned.has(session)) return;
+      process.stderr.write(`session-checkpoint/turn-end-flush-failed session=${session} ${JSON.stringify({ reason })}\n`);
+      ctx.emit(checkpointDiagnostic, { session, code: "turn-end-flush-failed", detail: { reason } }); // 事件总线可见（不只 stderr）
       warned.add(session);
-      process.stderr.write(`session-checkpoint/turn-end-flush-failed session=${session} ${reason}\n`);
     };
 
     const offTurnEnd = ctx.on(sessionEvent, ({ session, event }) => {
@@ -51,10 +57,10 @@ export const sessionCheckpointPlugin: Plugin = {
       void store
         .flush(session)
         .then((flushed) => {
-          if (!flushed.ok) warnTurnEndFlush(session, flushed.reason);
+          if (!flushed.ok) warnTurnEndFlush(session, flushed.reason); // 通道故障 throw → 落入 catch 重告
         })
-        .catch((error: unknown) => {
-          warnTurnEndFlush(session, error instanceof Error ? error.message : String(error)); // 后台异常是进程级崩溃面
+        .catch(() => {
+          warnTurnEndFlush(session, "warn-channel-failed"); // store.flush 恒 resolve：此路只兜告警通道自身故障
         });
     });
 

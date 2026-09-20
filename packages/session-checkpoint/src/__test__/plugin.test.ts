@@ -11,6 +11,7 @@ import type { Context, Plugin } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
 import { sessionPlugin } from "@x-harness/session";
+import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { Type } from "@sinclair/typebox";
@@ -20,6 +21,7 @@ import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { Agent, AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionCheckpointPlugin } from "../plugin.ts";
+import { checkpointDiagnostic } from "../tokens.ts";
 
 interface World {
   ctx: Context;
@@ -207,11 +209,12 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     const hasEventType = (lines: readonly string[], type: string): boolean =>
       lines.some((line) => line.includes(`"type":"${type}"`));
     // turn 收尾 flush 是异步告警式屏障，whenIdle 不承诺 fsync 完成：轮询等待 drain 落定
+    const eventTypeOf = (line: string): string => line.match(/"type":"([^"]+)"/)?.[1] ?? "(unparsed)";
     const lines = await vi.waitFor(
       async () => {
         const disk = diskLines();
         if (!hasEventType(disk, "assistant/message") || !hasEventType(disk, "turn/end")) {
-          throw new Error(`盘上缺 assistant/message/turn/end 行，当前 ${String(disk.length)} 行`);
+          throw new Error(`盘上缺 assistant/message/turn/end 行，当前行集 ${disk.map(eventTypeOf).join(",")}`);
         }
         return disk;
       },
@@ -227,6 +230,8 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     worlds.push(world);
     const { agent, handle } = await spawn(world);
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const diagnostics: string[] = [];
+    world.ctx.on(checkpointDiagnostic, (payload) => diagnostics.push(payload.code)); // 双通道：事件总线面
     try {
       agent.followup("hi");
       await agent.whenIdle();
@@ -242,6 +247,7 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
         if (warnHits() === 0) throw new Error("turn-end-flush-failed 告警未出现");
         expect(warnHits()).toBe(1); // 两次收尾、一次告警：同会话去重
       }, { timeout: 5000, interval: 25 });
+      expect(diagnostics).toEqual(["turn-end-flush-failed"]); // 诊断事件与 stderr 同步送达且同样去重
     } finally {
       stderr.mockRestore();
       chmodSync(root, 0o755); // 恢复可写供 afterEach 清理
@@ -249,7 +255,7 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     await handle.dispose();
   });
 
-  it("turn 收尾告警式：告警通道自身异常被 catch 兜住（后台异常是进程级崩溃面，不产生 unhandled rejection）", async () => {
+  it("turn 收尾告警式：告警通道自身异常被 catch 兜住并重告送达（不产生 unhandled rejection）", async () => {
     chmodSync(root, 0o555);
     const world = await makeWorld(root, true);
     worlds.push(world);
@@ -259,18 +265,58 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
       throw new Error("stderr broken");
     });
     stderr.mockReturnValue(true);
+    const diagnostics: string[] = [];
+    world.ctx.on(checkpointDiagnostic, (payload) => diagnostics.push(payload.code));
     try {
       agent.followup("hi");
       await agent.whenIdle(); // 若 .catch 缺席：then 内 throw → unhandled rejection → vitest 直接判败
+      // 闩位在送达成功之后：首次 write 被吞后 catch 重告必须送达，而非被去重闩静默
+      const delivered = (): boolean =>
+        stderr.mock.calls.some((call) => String(call[0]).includes("warn-channel-failed"));
       await vi.waitFor(() => {
-        expect(stderr.mock.calls.length).toBeGreaterThan(0); // 告警路径确实被触达过
+        if (!delivered()) throw new Error("通道故障后 catch 重告未送达（闩被误置）");
       }, { timeout: 5000, interval: 25 });
+      expect(diagnostics).toEqual(["turn-end-flush-failed"]); // 诊断事件面同样送达
       expect(agent.session.events().at(-1)?.type).toBe("turn/end"); // 收尾链不受影响
     } finally {
       stderr.mockRestore();
       chmodSync(root, 0o755);
     }
     await handle.dispose();
+  });
+
+  it("turn 收尾告警去重按会话生命周期：dispose 后同 id 重生会话失败再告警", async () => {
+    chmodSync(root, 0o555);
+    const world = await makeWorld(root, true);
+    worlds.push(world);
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const warnHits = (): number =>
+      stderr.mock.calls.filter((call) => String(call[0]).includes("turn-end-flush-failed")).length;
+    try {
+      const first = await world.loop.create({ agent: AGENT, session: { id: "revive-me" as SessionId } });
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      first.value.agent.followup("hi");
+      await first.value.agent.whenIdle();
+      await vi.waitFor(() => {
+        if (warnHits() === 0) throw new Error("第一代会话告警未出现");
+      }, { timeout: 5000, interval: 25 });
+      chmodSync(root, 0o755);
+      await first.value.dispose(); // → sessionDisposed → 去重闩随会话摘除
+      chmodSync(root, 0o555);
+      const second = await world.loop.create({ agent: AGENT, session: { id: "revive-me" as SessionId } });
+      expect(second.ok).toBe(true);
+      if (!second.ok) return;
+      second.value.agent.followup("again");
+      await second.value.agent.whenIdle();
+      await vi.waitFor(() => {
+        if (warnHits() < 2) throw new Error("重生会话未再告警（去重闩未随生命周期摘除）");
+      }, { timeout: 5000, interval: 25 });
+      await second.value.dispose();
+    } finally {
+      stderr.mockRestore();
+      chmodSync(root, 0o755);
+    }
   });
 });
 

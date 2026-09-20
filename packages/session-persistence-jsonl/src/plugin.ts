@@ -1,7 +1,7 @@
 // jsonl 持久化桥：pending 内存队列 + per-id 串行链（一切磁盘写只经此链，docs/SESSION.md §1.8 单一不变量）。
 // 链来源三处：created 首灌（构造期全量）、flush 增量排空、disposed/卸载终排空；同 id 重用 fail-closed。
-// 装配契约：须早于 session-checkpoint 装载（teardown 逆序回卷时 checkpoint 挂点先拆、本层终排空
-// 殿后）；调换会使拆除期触发的 flush 落进空屏障（成功不承诺字节）。
+// 装配契约：须早于 session-checkpoint 装载（teardown 逆序回卷时 checkpoint 挂点先拆、本层
+// 终排空殿后）；由 checkpoint 侧 softInject ["session-persistence-jsonl"] topo 固化。
 
 import { join } from "node:path";
 import { errorText } from "@x-harness/core";
