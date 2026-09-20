@@ -1,7 +1,7 @@
 // @x-harness/permission：完整规则词汇表 + auto 决策 + broker + 会话授权（docs/EXEC-ENV.md §5）。
 
 export type { AskRequest, FenceFacts, ModeKnob, PermissionAudit, PermissionRule, RuleOrigin, RuleTool, Verdict } from "./types.ts";
-export { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE } from "./types.ts";
+export { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE, MODE_KNOBS } from "./types.ts";
 export { permissionBroker, permissionDecided, permissionGrants, fenceFacts } from "./tokens.ts";
 export { parseRule, parseRules } from "./rules/parse.ts";
 export { globMatch } from "./rules/glob.ts";

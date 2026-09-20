@@ -91,7 +91,7 @@ const textScript = (text: string): LlmChunk[] => [
   { type: "finish", finish: { kind: "stop" } },
 ];
 
-async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean } = {}): Promise<ReplFixture> {
+async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean; permission?: "plan" | "auto" | "full" } = {}): Promise<ReplFixture> {
   const persist = over.persist ?? false;
   const root = await mkdtemp(join(tmpdir(), "xh-repl-"));
   const stdin = new PassThrough();
@@ -103,6 +103,7 @@ async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean } = {})
     persist,
     config: CONFIG.config,
     resolution: CONFIG.resolution,
+    ...(over.permission !== undefined ? { permission: over.permission } : {}),
     broker: createTerminalBrokerPlugin({ interactive: true, write: () => {}, question: () => Promise.resolve(undefined) }),
     adapters: [scriptAdapter(scripts)],
   });
@@ -271,5 +272,27 @@ describe("runRepl × 工具 flag（W2B 挂账收口——makeNext 重演矩阵�
     await replPromise;
     await built.value.ctx.dispose().catch(() => {});
     await rm(root, { recursive: true, force: true }).catch(() => {});
+  });
+});
+
+describe("runRepl × --permission（reopen 保持矩阵——docs/PERMISSION-MODE-FLAG.md）", () => {
+  it("/new：新会话仍按 plan 裁决 write 拒（mode 经 plugin apply 闭包保持，会话重建不丢）", async () => {
+    const repl = await makeRepl([textScript("REPL-ANSWER")], { permission: "plan" });
+    repl.stdin.write("/new\n");
+    await repl.waitFor("new session ");
+    const out = repl.output.join("");
+    const newId = out.slice(out.lastIndexOf("new session ") + "new session ".length).split(" ")[0];
+    expect(repl.world.registry.restrictionOf(newId as never)).toBeDefined(); // 提取自检（W2B 同款）：垃圾 id 静默错在此先红
+    const outcome = await repl.world.registry.dispatch({
+      callId: "perm-reopen-1",
+      name: "write",
+      args: { path: "escape.txt", content: "x" },
+      signal: new AbortController().signal,
+      session: newId as never,
+    });
+    expect(outcome).toMatchObject({ isError: true, content: expect.stringContaining("plan mode disallows write") });
+    repl.stdin.write("/quit\n");
+    await repl.exitCode();
+    await repl.cleanup();
   });
 });

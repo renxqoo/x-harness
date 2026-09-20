@@ -54,6 +54,7 @@ x-harness [flags] [message...] [@file...]
 | `--provider <name>` | 覆盖 providers.json default.provider | — |
 | `--model <model>` | 覆盖 default.model | — |
 | `--thinking <off\|low\|medium\|high>` | 思考等级 | default.thinking（缺省 off） |
+| `--permission <plan\|auto\|full>` | 权限模式档（docs/EXEC-ENV.md §5：plan=write/bash 全拒；auto=全流程审批；full=完全访问唯提权硬拒）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | auto |
 | `--api-key <key>` | 运行时覆盖**所选 provider** 档案的 apiKey（仅装配期生效；/model 切到其他档案不跟随） | — |
 | `--tools <a,b>` | 工具白名单 | 全部注册工具 |
 | `--exclude-tools <a,b>` | 工具黑名单（白名单基础上再减） | — |
@@ -158,7 +159,7 @@ x-harness [flags] [message...] [@file...]
 sessionPlugin
 createJsonlSessionPersistence({ root: sessionDir })        // --no-session 时略去；provide sessionArchive
 toolsPlugin
-createPermissionPlugin({ root: cwd, mode: "auto" })
+createPermissionPlugin({ root: cwd, mode: --permission 档 })  // 经 fenceKit 透传；缺省 auto（permission 包内落定）
 createSandboxPlugin({ root: cwd })                          // inject permission; provide 围栏 execEnv
 createReadPlugin({ gate: PathGate(cwd), observed })         // env 走围栏 execEnv（apply 时 tryUse）
 createWritePlugin({ gate, observed })                       // read/write 共享同一 gate+observed
@@ -234,6 +235,13 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   overrides（仅显式 flag，resume 亦用）}`。`--api-key` 绑定 default 解析出的档案
   （apiKeyProvider）；resume 无显式 --provider/--model 时若请求实际发往会话末次 provider，
   覆盖不跟随（绑定口径落档）。
+- **resume 的权限模式语义**：`--permission` 不进会话档、不随 resume 继承——按**当次**
+  flag 装配（与模型面「显式 flag 恒胜」不同：mode 无会话末次记录可回落）。后果显式落档：
+  plan 会话 resume 不带 flag 即回 auto（用户可感知的静默放宽写权限）。full 档边界：
+  路径工具（read/write/grep）界外在许可层放行但执行层 PathGate 仍拒（extraRoots 唯一
+  来源是审批落账，full 绕过审批即无授权根）——界外文件访问经 bash 面可达；
+  sandbox 代理层网络域名 ask 不受 mode 门控（print 非 TTY 下恒 deny）。
+  详见 docs/PERMISSION-MODE-FLAG.md「不处理」表。
 - **单写者假设与锁**：jsonl writer 无跨进程锁，双进程同开会话会交织写坏（前缀校验只在打开
   瞬间做）——session-persistence-jsonl 包补会话目录锁（`lock` 文件 O_EXCL + pid 活性检测 +
   死锁接管），冲突方 open 即败 `session-locked`，CLI 报错 exit 1。

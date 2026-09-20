@@ -2,6 +2,7 @@
 // `--` 分流/@ 前缀/枚举闭集/可选值 flag。
 
 import { describe, expect, it } from "vitest";
+import { MODE_KNOBS } from "@x-harness/permission";
 import { parseCliArgs, usageText } from "../parse-cli-args.ts";
 
 function ok(argv: string[]) {
@@ -102,6 +103,35 @@ describe("枚举闭集", () => {
     expect(fail(["--thinking", "xhigh"])).toContain("expected off | low | medium | high");
     expect(ok(["--thinking", "high"]).thinking).toBe("high");
   });
+
+  it("--permission 只收三档闭集（表驱动：生效值 + 缺省）", () => {
+    for (const knob of ["plan", "auto", "full"] as const) {
+      expect(ok(["--permission", knob]).permission).toBe(knob);
+    }
+    expect(ok([]).permission).toBeUndefined();
+  });
+
+  it("--permission=full 附值形态与重复末次胜出", () => {
+    expect(ok(["--permission=full"]).permission).toBe("full");
+    expect(ok(["--permission", "plan", "--permission", "full"]).permission).toBe("full");
+  });
+
+  it("--permission 垃圾值/空附值 → 词表完整错误文案", () => {
+    expect(fail(["--permission", "fast"])).toContain('expected plan | auto | full (got "fast")');
+    expect(fail(["--permission="])).toContain('expected plan | auto | full (got "")');
+  });
+
+  it("--permission 邻接 flag-like token 作值消费（arity 1 必取）→ 枚举闭集报错；末尾缺 token → requires a value", () => {
+    expect(fail(["--permission", "-p"])).toContain('got "-p"');
+    expect(fail(["--permission", "--"])).toContain('got "--"');
+    expect(fail(["--permission"])).toContain("requires a value");
+  });
+
+  it("--permission 与位置参数混合：后续 token 进 messages", () => {
+    const args = ok(["--permission", "plan", "hello"]);
+    expect(args.permission).toBe("plan");
+    expect(args.messages).toEqual(["hello"]);
+  });
 });
 
 describe("互斥（表驱动，docs/CLI.md §2.1）", () => {
@@ -143,5 +173,9 @@ describe("usageText", () => {
     expect(text).toContain("usage: x-harness");
     expect(text).toContain("providers.json");
     expect(text).toContain("exit codes");
+  });
+
+  it("帮助文本含 --permission 完整词表行（期望串与 MODE_KNOBS 同源生成——扩档时本用例红提醒 usage 同步）", () => {
+    expect(usageText("x-harness")).toContain(`--permission <${MODE_KNOBS.join("|")}>`);
   });
 });

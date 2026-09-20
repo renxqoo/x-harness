@@ -15,6 +15,7 @@ import { createLlmRetryPlugin } from "@x-harness/llm-retry";
 import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
+import type { ModeKnob } from "@x-harness/permission";
 import { createSandboxPlugin } from "@x-harness/sandbox-local";
 import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session";
 import type { SessionArchive, SessionStore } from "@x-harness/session";
@@ -73,9 +74,9 @@ export const toolboxKit = (o: {
   ];
 };
 
-/** 围栏（permission 路径/审批 + sandbox execEnv） */
-export const fenceKit = (o: { readonly root: string }): readonly Plugin[] => [
-  createPermissionPlugin({ root: o.root, mode: "auto" }),
+/** 围栏（permission 路径/审批 + sandbox execEnv）；mode 缺省 auto 由 permission 包落定 */
+export const fenceKit = (o: { readonly root: string; readonly mode?: ModeKnob }): readonly Plugin[] => [
+  createPermissionPlugin({ root: o.root, ...(o.mode !== undefined ? { mode: o.mode } : {}) }),
   createSandboxPlugin({ root: o.root }),
 ];
 

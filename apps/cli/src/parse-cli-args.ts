@@ -3,6 +3,8 @@
 // 枚举/互斥在 finalize 闭口；位置参数按 @ 前缀分流 file/messages。
 
 import type { Result } from "@x-harness/core";
+import { MODE_KNOBS } from "@x-harness/permission";
+import type { ModeKnob } from "@x-harness/permission";
 import { THINKING_LEVELS } from "./providers-file.ts";
 import type { ThinkingLevelCli } from "./providers-file.ts";
 
@@ -19,6 +21,7 @@ export interface CliArgs {
   readonly provider?: string;
   readonly model?: string;
   readonly thinking?: ThinkingLevelCli;
+  readonly permission?: ModeKnob;
   readonly apiKey?: string;
   readonly tools?: readonly string[];
   readonly excludeTools?: readonly string[];
@@ -47,6 +50,7 @@ const FLAG_SPECS: readonly FlagSpec[] = [
   { long: "--provider", arity: 1 },
   { long: "--model", arity: 1 },
   { long: "--thinking", arity: 1 },
+  { long: "--permission", arity: 1 },
   { long: "--api-key", arity: 1 },
   { long: "--tools", short: "-t", arity: 1 },
   { long: "--exclude-tools", short: "-xt", arity: 1 },
@@ -225,6 +229,10 @@ function checkEnums(raw: RawArgs): Result<true> {
   if (thinking !== undefined && !THINKING_LEVELS.includes(thinking as ThinkingLevelCli)) {
     return { ok: false, reason: `--thinking: expected ${THINKING_LEVELS.join(" | ")} (got "${thinking}")` };
   }
+  const permission = flagValue(raw, "--permission");
+  if (permission !== undefined && !(MODE_KNOBS as readonly string[]).includes(permission)) {
+    return { ok: false, reason: `--permission: expected ${MODE_KNOBS.join(" | ")} (got "${permission}")` };
+  }
   return { ok: true, value: true };
 }
 
@@ -256,6 +264,8 @@ function finalize(raw: RawArgs): Result<CliArgs> {
   copy.value("--model", "model");
   const thinking = flagValue(raw, "--thinking");
   if (thinking !== undefined) args.thinking = thinking as ThinkingLevelCli;
+  const permission = flagValue(raw, "--permission");
+  if (permission !== undefined) args.permission = permission as ModeKnob;
   copy.value("--api-key", "apiKey");
   copy.list("--tools", "tools");
   copy.list("--exclude-tools", "excludeTools");
@@ -292,6 +302,9 @@ tools:
   -t, --tools <a,b,...>     tool allowlist
   -xt, --exclude-tools <a,b>  remove tools from the allowlist
   -nt, --no-tools           disable all tools
+
+permission:
+  --permission <plan|auto|full>  tool permission mode (default auto)
 
 prompt:
   --system-prompt <text>    replace the system prompt

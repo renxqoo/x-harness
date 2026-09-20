@@ -17,6 +17,10 @@ export interface PermissionRule {
 
 export type ModeKnob = "plan" | "auto" | "full";
 
+/** 模式档运行时词表（ModeKnob 的单一真相）——CLI/宿主枚举校验与错误文案 join 同源；
+ * 反向穷尽断言在 __test__/types.test.ts（ModeKnob 扩档而本表漏跟 → 编译期红） */
+export const MODE_KNOBS = ["plan", "auto", "full"] as const satisfies readonly ModeKnob[];
+
 /** 围栏事实快照（sandbox 提供，permission 定义 token 消费；缺席=无围栏装配） */
 export interface FenceFacts {
   readonly writable: readonly string[];

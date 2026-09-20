@@ -1,6 +1,8 @@
-// CLI 宿主子进程旅程（docs/CLI.md §4/§5 批E）：真进程装配全量世界 × 本地假 anthropic SSE 服务器。
-// 覆盖：短路命令退出码 / print 文本与 @file / JSONL 事件流形态 / --session resume 上下文延续 /
-// 会话锁双开拒绝 / REPL pty 驱动（darwin：script 伪终端；他平台该腿跳过并注明）。
+// CLI 宿主子进程旅程（docs/CLI.md §4/§5 批E + docs/PERMISSION-MODE-FLAG.md）：真进程装配
+// 全量世界 × 本地假 anthropic SSE 服务器。覆盖：短路命令退出码 / print 文本与 @file /
+// JSONL 事件流形态 / --session resume 上下文延续 / 会话锁双开拒绝 / REPL pty 驱动
+// （darwin：script 伪终端；他平台该腿跳过并注明）/ --permission 用法面与生效面
+// （tool_use 剧本 → plan 档 write 拒 → tool_result 回流）。
 
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,33 +16,51 @@ interface CapturedRequest {
   readonly body: unknown;
 }
 
+/** 单轮剧本：text = 纯文本终答；tool_use = 发起工具调用（stop_reason tool_use，
+ *  agent loop 真执行工具并带 tool_result 回流发起下一轮请求） */
+type ScriptedTurn =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "tool_use"; readonly id: string; readonly name: string; readonly input: Record<string, unknown> };
+
 interface FakeServer {
   readonly port: number;
   readonly requests: CapturedRequest[];
   readonly respond: (text: string) => void;
+  readonly respondToolUse: (name: string, input: Record<string, unknown>) => void;
+  /** 排空剧本队列——旅程腿间解耦（中断类腿预入队的剧本可能未被消耗而残留） */
+  readonly clearScripted: () => void;
   readonly stop: () => Promise<void>;
 }
 
-/** anthropic wire 假服务器：记录请求体，按队列回剧本文本（docs/LLM-PI.md wire 形态） */
+/** anthropic wire 假服务器：记录请求体，按队列回剧本（docs/LLM-PI.md wire 形态；
+ *  tool_use 帧序同 packages/llm __test__/pi-wire.test.ts 工具流全链路） */
 function startFakeAnthropic(): FakeServer {
   const requests: CapturedRequest[] = [];
-  const scripted: string[] = [];
+  const scripted: ScriptedTurn[] = [];
   const server = Bun.serve({
     port: 0,
     fetch: async (req) => {
       const body = await req.json().catch(() => ({}));
       requests.push({ body });
-      const text = scripted.shift() ?? "E2E-FINAL-TEXT";
+      const turn = scripted.shift() ?? { kind: "text" as const, text: "E2E-FINAL-TEXT" };
       const sse = (type: string, fields: Record<string, unknown>): string => `event: ${type}\ndata: ${JSON.stringify({ type, ...fields })}\n\n`;
+      const frames: string[] = [sse("message_start", { message: { usage: { input_tokens: 10 } } })];
+      if (turn.kind === "tool_use") {
+        frames.push(sse("content_block_start", { index: 0, content_block: { type: "tool_use", id: turn.id, name: turn.name } }));
+        frames.push(sse("content_block_delta", { index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(turn.input) } }));
+        frames.push(sse("content_block_stop", { index: 0 }));
+        frames.push(sse("message_delta", { delta: { stop_reason: "tool_use" }, usage: { input_tokens: 10, output_tokens: 8 } }));
+      } else {
+        frames.push(sse("content_block_start", { index: 0, content_block: { type: "text", text: "" } }));
+        frames.push(sse("content_block_delta", { index: 0, delta: { type: "text_delta", text: turn.text } }));
+        frames.push(sse("content_block_stop", { index: 0 }));
+        frames.push(sse("message_delta", { delta: { stop_reason: "end_turn" }, usage: { input_tokens: 10, output_tokens: 8 } }));
+      }
+      frames.push(sse("message_stop", {}));
       const stream = new ReadableStream({
         start(controller) {
           const push = (line: string): void => controller.enqueue(new TextEncoder().encode(line));
-          push(sse("message_start", { message: { usage: { input_tokens: 10 } } }));
-          push(sse("content_block_start", { index: 0, content_block: { type: "text", text: "" } }));
-          push(sse("content_block_delta", { index: 0, delta: { type: "text_delta", text } }));
-          push(sse("content_block_stop", { index: 0 }));
-          push(sse("message_delta", { delta: { stop_reason: "end_turn" }, usage: { input_tokens: 10, output_tokens: 8 } }));
-          push(sse("message_stop", {}));
+          for (const frame of frames) push(frame);
           controller.close();
         },
       });
@@ -49,11 +69,18 @@ function startFakeAnthropic(): FakeServer {
   });
   const port = server.port;
   if (port === undefined) throw new Error("cli-journey: fake server port unavailable");
+  let toolSeq = 0; // tool_use id 全局单调——队列长度推导在「push→排空→再 push」复用时会撞 id
   return {
     port,
     requests,
     respond: (text) => {
-      scripted.push(text);
+      scripted.push({ kind: "text", text });
+    },
+    respondToolUse: (name, input) => {
+      scripted.push({ kind: "tool_use", id: `e2e-tool-${String(toolSeq += 1)}`, name, input });
+    },
+    clearScripted: () => {
+      scripted.splice(0, scripted.length);
     },
     stop: () => server.stop(true),
   };
@@ -289,6 +316,32 @@ async function journeyRepl(server: FakeServer, home: string, cwd: string): Promi
   must(interrupted.stdout.includes("press Ctrl+C again"), "首个 ^C 应提示双击退出");
 }
 
+async function journeyPermission(server: FakeServer, home: string, cwd: string): Promise<void> {
+  server.clearScripted(); // 中断类腿（^C 双击）可能残留未消耗剧本——腿间解耦
+  // 用法面：垃圾档位 exit 2 + 词表完整文案（真进程 parse 层）
+  const bad = await runCli({ argv: ["--permission", "bogus", "-p", "hi"], home, cwd });
+  must(bad.exitCode === 2, `--permission 垃圾值应 exit 2（got ${String(bad.exitCode)}）`);
+  must(bad.stderr.includes("expected plan | auto | full"), `stderr 应含词表文案（got: ${bad.stderr.slice(0, 120)}）`);
+
+  // 生效面：plan 档 write 工具调用被拒 → tool_result(is_error) 回流 → 第二轮请求 → 终答
+  // （真 argv → main.openWorld → buildWorld → fenceKit 折入的端到端锚——进程内测试覆盖不到的接线）
+  server.respondToolUse("write", { path: "e2e-plan.txt", content: "x" });
+  server.respond("PLAN-DENIED-HANDLED");
+  const run = await runCli({ argv: ["--permission", "plan", "-p", "--mode", "json", "write a file"], home, cwd });
+  must(run.exitCode === 0, `plan 档 print 应 exit 0（stderr: ${run.stderr.slice(0, 200)}）`);
+  const lines = run.stdout.trim().split("\n").map((line) => JSON.parse(line) as { type: string; exit?: number; tool?: string; verdict?: string; reason?: string });
+  const permission = lines.find((line) => line.type === "permission");
+  must(permission !== undefined && permission.tool === "write" && permission.verdict === "deny", `JSONL 应含 write deny 的 permission 行（got: ${JSON.stringify(permission)}`);
+  must((permission?.reason ?? "").includes("plan mode disallows write"), `permission 行 reason 应含 plan 拒因（got: ${JSON.stringify(permission?.reason)}`);
+  const last = lines[lines.length - 1];
+  must(last?.type === "done" && last.exit === 0, "done 应恰为末行且 exit 0");
+  const secondRequestBody = JSON.stringify(server.requests[server.requests.length - 1]?.body ?? {});
+  must(secondRequestBody.includes("tool_result"), "write 拒绝结果应以 tool_result 回流第二轮请求");
+  must(secondRequestBody.includes('"is_error":true'), "tool_result 应为 is_error 形态（错误结果而非伪成功）");
+  must(secondRequestBody.includes("plan mode disallows write"), `tool_result 应含 plan 拒因（got: ${secondRequestBody.slice(0, 300)}）`);
+  must(secondRequestBody.includes("PLAN-DENIED-HANDLED") === false, "终答文本是第二轮的响应而非请求上下文");
+}
+
 export async function runCliJourney(): Promise<void> {
   const server = startFakeAnthropic();
   const home = await makeHome(server.port);
@@ -300,6 +353,7 @@ export async function runCliJourney(): Promise<void> {
     await journeyResume(server, home, cwd);
     await journeySessionLock(home, cwd);
     await journeyRepl(server, home, cwd);
+    await journeyPermission(server, home, cwd);
   } finally {
     await server.stop();
     await rm(home, { recursive: true, force: true }).catch(() => {});

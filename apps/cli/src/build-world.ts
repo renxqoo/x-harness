@@ -5,6 +5,7 @@
 // 由 durableSession/inlineSession 与 promptKit(base?) 表达。
 
 import type { Plugin, Result } from "@x-harness/core";
+import type { ModeKnob } from "@x-harness/permission";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { AnthropicCompatOptions, LlmAdapter, OpenaiCompatOptions } from "@x-harness/llm";
 import type { RetryPolicy } from "@x-harness/llm-retry";
@@ -43,6 +44,8 @@ export interface WorldOptions {
   readonly promptFacts?: BasePromptFacts;
   readonly config: ProvidersConfig;
   readonly resolution: ModelResolution;
+  /** 权限模式档（--permission；缺省 auto 由 permission 包落定） */
+  readonly permission?: ModeKnob;
   /** 审批 broker 插件（REPL/print 各自 IO 形态） */
   readonly broker: Plugin;
   /** 持久化 I/O 失败上报；缺省写 stderr */
@@ -85,7 +88,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
     ...toolboxKit({ root: options.cwd }),
-    ...fenceKit({ root: options.cwd }),
+    ...fenceKit({ root: options.cwd, ...(options.permission !== undefined ? { mode: options.permission } : {}) }),
     options.broker,
     ...meterKit(),
     ...llmKit(adapters, {
