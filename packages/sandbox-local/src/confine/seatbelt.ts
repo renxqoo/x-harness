@@ -43,6 +43,11 @@ export function seatbeltProfile(input: SeatbeltProfileInput): string {
   const home = input.home === undefined ? homedir() : input.home;
   const realpathOf = input.realpathOf ?? ((p: string) => p);
   const lines: string[] = ["(version 1)", "(deny default)", "(allow process-fork)", "(allow process-exec*)"];
+  // Rust std 的 page_size() 经 sysctl hw.pagesize_compat——被 deny default 拒后拿不到页大小，
+  // SIGSEGV 备用栈的 guard page 以错误对齐 mmap → EINVAL → 立即 panic（rg 等 Rust 二进制实测崩）。
+  // 只放这一个变量（最小放宽）；其余被拒 sysctl（kern.bootargs 等）与 /dev/dtracehelper 是
+  // dyld 降级容忍项，不致命不放宽（darwin 25.5 实测）
+  lines.push('(allow sysctl-read (sysctl-name "hw.pagesize_compat"))');
   lines.push("(allow file-read*)");
   for (const d of denyReadPaths(input.fence, home)) {
     // 非锚定子串（尾斜杠目录前缀）——实测唯一有效的拒读形态；双形天然覆盖

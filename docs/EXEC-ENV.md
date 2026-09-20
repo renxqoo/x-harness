@@ -149,6 +149,10 @@ export interface Fence {
 ```
 
 **macOS（Seatbelt）**：SBPL `(deny default)` + `(allow process-exec*)` + `(allow file-read*)` +
+`(allow sysctl-read (sysctl-name "hw.pagesize_compat"))`（**Rust 运行时必需**：std 的 page_size
+经此 sysctl，被 deny default 拒后 guard page 以错误对齐 mmap → EINVAL → rg 类二进制立即
+panic；只放这一个变量，其余被拒 sysctl 与 /dev/dtracehelper 是 dyld 降级容忍项——darwin 25.5
+实测，围栏下 grep 真跑回归在库）+
 denyRead 子路径拒读 + protectedPaths **deny-write 子路径**（优先于 writable allow——SBPL 规则
 优先级是**实现期实测点**，e2e 锁定）+ writable 逐段 `(allow file-write* (subpath …))` +
 `(allow file-write* (literal "/dev/null"))` + 网络：仅 `(literal "127.0.0.1:<本会话代理口>")` 出站

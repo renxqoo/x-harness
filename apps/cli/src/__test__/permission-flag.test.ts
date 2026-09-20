@@ -131,7 +131,7 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     await expect(readFile(target, "utf8")).resolves.toBe("OUTSIDE-FULL");
   });
 
-  it("read 界外真读到 + grep 界外过授权门（rg×seatbelt 崩溃为存量缺陷挂账，见方案「不处理」表）", async () => {
+  it("read/grep 界外真读到真搜到（授权根 / + 剖面 sysctl-read 窄许可——完整功能锚）", async () => {
     const j = await makeJourney({ permission: "full" });
     const outsideDir = await mkdtemp(join(tmpdir(), "xh-permflag-fr-"));
     roots.push(outsideDir);
@@ -140,11 +140,10 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     const read = await j.dispatch("read", { path: target });
     expect(read.isError).not.toBe(true);
     expect(read.content).toContain("GREP-TARGET-LINE");
-    // grep：授权根 "/" 经 PathGate（admit 在 spawn 前）+ permission 裁决 allow；rg 二进制在
-    // seatbelt deny default 剖面下的 SIGABRT 是与本件无关的存量缺陷——只锚授权面
     const grep = await j.dispatch("grep", { pattern: "GREP-TARGET", path: outsideDir });
     expect(j.audits).toContainEqual({ tool: "grep", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", session: j.session });
-    expect(grep.content).not.toContain("PATH_ESCAPES_ROOT");
+    expect(grep.isError).not.toBe(true); // 剖面缺 sysctl-read 时的症状：SEARCH_FAILED rg SIGABRT
+    expect(grep.content).toContain("GREP-TARGET-LINE");
   });
 
   it("deny 规则压过 full：.git 内写仍拒（rule 压过 mode 档的安全底线）", async () => {

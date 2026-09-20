@@ -24,6 +24,8 @@ describe("seatbeltProfile（SBPL 内容级）", () => {
     expect(lines[0]).toBe("(version 1)");
     expect(lines[1]).toBe("(deny default)");
     expect(lines).toContain("(allow process-exec*)");
+    expect(lines).toContain('(allow sysctl-read (sysctl-name "hw.pagesize_compat"))'); // Rust std page_size 必需——缺席即 rg 类二进制 guard page 崩
+    expect(lines.filter((l) => l.startsWith("(allow sysctl-read"))).toHaveLength(1); // 最小宣称锁：唯一一条且带 sysctl-name 过滤器——防未来泛放行
     expect(lines).toContain('(deny file-read* (regex "/Users/demo/\\.ssh/"))'); // 拒读=非锚定 regex（实测唯一有效形态）
     expect(lines).toContain('(allow file-write* (literal "/dev/null"))');
     expect(lines).toContain('(allow file-write* (subpath "/w/app"))');

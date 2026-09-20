@@ -95,7 +95,7 @@ plugin 在 mode=full 装配期确立；总括授权对外表现为授权根 `"/"
 | linux bwrap `--bind / /` 真跑验证 | 开发环境 darwin；单测锁 argv 相对序 + 落档验证归属（linux CI 真跑腿归流水线环境） |
 | plan 档对称面 | 无断裂（write/bash 裁决层全拒，read 界外走既有 ask→grant 链） |
 | fenceFacts / adjudicate 改动 | full/plan 裁决短路在界内判定之前；auto 档无总括——零影响零改动 |
-| **rg（ripgrep）在 seatbelt deny default 剖面下 SIGABRT** | **存量缺陷登记（实现期发现，与本件无关）**：最小剖面 `(deny default)(allow process-fork)(allow process-exec*)(allow file-read*)` 下 rg 即崩（`failed to allocate a guard page`——Rust 多线程运行时×seatbelt 兼容），auto/full 同崩；grep 经围栏装配的形态全仓零覆盖（e2e toolbox 走 localEnv）。本件 grep 腿只锚授权面（audit allow + 非 PATH_ESCAPES_ROOT）；根治归 seatbelt 剖面独立件（需裁决剖面补何许可动词） |
+| **rg（ripgrep）在 seatbelt deny default 剖面下 SIGABRT** | ~~存量缺陷登记~~ **已根治**：根因 = deny default 拒 `sysctl-read hw.pagesize_compat` → Rust std page_size 失败 → guard page mmap EINVAL。剖面补窄许可 `(allow sysctl-read (sysctl-name "hw.pagesize_compat"))`（单变量最小放宽）；围栏下 grep 真跑回归锚在库（auto 界内 + full 界外，extra-roots/permission-flag）；grep 经围栏装配的形态覆盖缺口一并补齐 |
 
 ## 并发/一致性预算
 
