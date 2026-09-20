@@ -3,7 +3,7 @@
 
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
-import { transformAssistant, transformMessages } from "@x-harness/plugin-api";
+import { transformAssistant, transformMessages, textOf } from "@x-harness/plugin-api";
 import type { AssistantSettlement } from "@x-harness/agent-loop";
 import type { InboxEntry } from "@x-harness/session";
 
@@ -21,7 +21,7 @@ export function loopBreakerPlugin(options: LoopBreakerOptions = {}): Plugin {
       let repeats = 0;
       let pendingNudge = false; // 截断置位、注入消费——两相分离（否则复位吃掉注入窗口）
       const offA = transformAssistant(ctx, (s: AssistantSettlement): AssistantSettlement => {
-        const text = s.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
+        const text = textOf(s.content);
         if (text === "") return s;
         const tail = text.slice(-40);
         if (seenTails.length > 0 && seenTails[seenTails.length - 1] === tail) repeats += 1;

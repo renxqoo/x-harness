@@ -8,7 +8,7 @@ import { agentAssistantSettle, agentAssistantStream, agentLlmStream, agentPreSte
 import type { AssistantSettlement, Dial } from "@x-harness/agent-loop";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
 import { sessionEvent } from "@x-harness/session";
-import type { InboxEntry, SessionEvent, SessionId } from "@x-harness/session";
+import type { ContentBlock, InboxEntry, SessionEvent, SessionId } from "@x-harness/session";
 import { toolsExecute, toolsPreExecute } from "@x-harness/tools";
 import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
 
@@ -109,6 +109,23 @@ export function tapStream(ctx: Context, fn: (frame: unknown) => void): Disposer 
 /** turn 终态观察 */
 export function tapTurnEnd(ctx: Context, fn: () => void): Disposer {
   return ctx.on(agentTurnStopping, () => fn());
+}
+
+// —— 内容提取（11 处/19 插件重复的那一行——频率判定成立）——
+
+/** 提取 text 块并拼接为单串 */
+export function textOf(content: readonly ContentBlock[]): string {
+  return content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("");
+}
+
+/** 只取 text 块（保留结构——需要逐块处理时用） */
+export function textBlocksOf(content: readonly ContentBlock[]): readonly { type: "text"; text: string }[] {
+  return content.filter((b): b is { type: "text"; text: string } => b.type === "text");
+}
+
+/** 剥离 text 块（保留 tool_use 等——"只改文本不动结构"的插件用） */
+export function nonTextOf(content: readonly ContentBlock[]): readonly ContentBlock[] {
+  return content.filter((b) => b.type !== "text");
 }
 
 // —— 逃生舱 ——

@@ -4,7 +4,7 @@
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import type { AssistantSettlement } from "@x-harness/agent-loop";
-import { transformAssistant } from "@x-harness/plugin-api";
+import { transformAssistant, textBlocksOf } from "@x-harness/plugin-api";
 import type { ContentBlock } from "@x-harness/session";
 
 export function hallucinationFixerPlugin(): Plugin {
@@ -12,7 +12,7 @@ export function hallucinationFixerPlugin(): Plugin {
     name: "hallucination-fixer",
     apply: (ctx: Context): Disposer =>
       transformAssistant(ctx, (s: AssistantSettlement): AssistantSettlement => {
-        const texts = s.content.filter((b): b is { type: "text"; text: string } => b.type === "text");
+        const texts = textBlocksOf(s.content);
         if (texts.length === 0) return s;
         const seen = new Set<string>();
         const deduped: string[] = [];

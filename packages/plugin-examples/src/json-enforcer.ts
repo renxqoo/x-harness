@@ -4,7 +4,7 @@
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import type { AssistantSettlement } from "@x-harness/agent-loop";
-import { transformAssistant } from "@x-harness/plugin-api";
+import { transformAssistant, textBlocksOf } from "@x-harness/plugin-api";
 
 export interface JsonEnforcerOptions {
   /** 自定义校验（缺省 JSON.parse 可解析即可） */
@@ -17,7 +17,7 @@ export function jsonEnforcerPlugin(options: JsonEnforcerOptions = {}): Plugin {
     name: "json-enforcer",
     apply: (ctx: Context): Disposer =>
       transformAssistant(ctx, (s: AssistantSettlement): AssistantSettlement => {
-        const texts = s.content.filter((b): b is { type: "text"; text: string } => b.type === "text");
+        const texts = textBlocksOf(s.content);
         if (texts.length !== 1) return s;
         const raw = texts[0]?.text.trim() ?? "";
         const fenced = raw.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");

@@ -79,7 +79,9 @@ export const myCapabilityPlugin = { name: "my-capability", apply: (ctx) => ctx.p
 ```
 
 **token 惯例**：token 随服务定义包发布；消费别人的服务 = 依赖其包；禁止复用平台 token 名（plugin-manager 装期同名异体 throw）。
-**微调他人插件四式**：waterfall 后置链（看到前者输出）/ `{prepend: true}` 前置 / use+provide 装饰服务 / kit 组合保序。
+**微调他人插件三式**（~~四式~~——use+provide 装饰在内核走不通：provide 同层重复 throw）：
+waterfall 后置链（看到前者输出）/ `{prepend: true}` 前置 / kit 组合保序。
+服务级包装用 waterfall 替代（wrap execute/preExecute 管线），不用 provide 重注册。
 
 ## 6. 测试你的插件
 
