@@ -3,8 +3,9 @@
 // request 供 get_pending_dialogs 重建；RESERVED 帧头键与 __proto__ 注入过滤；
 // 晚到 resolve 忽略返回 false。permissionBroker 服务与直执行 bash 准入共用本面。
 import { randomUUID } from "node:crypto";
+import { uiRequestFrame } from "../protocol/frames.ts";
 
-/** ui_request 帧头保留键——payload 不得覆盖（帧构造面冲突） */
+/** ui_request 帧头保留键——payload 不得覆盖（帧构造面冲突；帧构造单源 uiRequestFrame） */
 const RESERVED_KEYS = new Set(["type", "requestId", "threadId", "method"]);
 
 export interface PendingDialog {
@@ -39,12 +40,7 @@ export function createDialogBroker(deps: DialogBrokerDeps) {
       if (RESERVED_KEYS.has(key) || key === "__proto__") continue;
       safePayload[key] = value;
     }
-    const body = Object.entries(safePayload)
-      .map(([k, v]) => `${JSON.stringify(k)}:${JSON.stringify(v)}`)
-      .join(",");
-    deps.sendFrame(
-      `{"type":"ui_request","requestId":${JSON.stringify(dialog.requestId)},"threadId":${JSON.stringify(dialog.threadId)},"method":${JSON.stringify(dialog.method)}${body === "" ? "" : `,${body}`}}`,
-    );
+    deps.sendFrame(uiRequestFrame({ requestId: dialog.requestId, threadId: dialog.threadId, method: dialog.method, payload: safePayload }));
   }
 
   return {
