@@ -59,6 +59,6 @@ IMPLEMENTATION §1 F1/F7；DESIGN §7 台账（V10/F-12 处置）。
 
 ## 9. 终审处置补录（2026-09-20）
 
-- **D1（中，部分补齐）**：observePrompt 两用例补齐（开态 stderr 行形态/关态零输出）；「静态串口径」「no-op 漂移路径」的 anchorSystem 级集成测试挂账（前置=TurnScope 测试装置，与 REPL 挂账同类）——assertVisibleLogged 通用形态（一致/失配/关态）已有直调用例，口径①为平凡成立、②的缓存背书在 W2C 专测。
+- **D1（已收口——挖深轮）**：anchorSystem 级集成三用例落地（TurnScope 手工构造——不需要完整 driver）：静态串口径（落账与投影均等于 options.systemPrompt，assemble 不参与）、fn 段漂移 replace 路径（步间文本变→锚点替换，事件日志保留旧版）、no-op 分支（文本未变→零新事件；assertVisibleLogged 仍验当前装配）。
 - **D2（低，已记录）**：口径③时窗排除清单——断言同步紧邻提交 ✓；提交至 runAttempt 取 deriveMessages 之间经 agentRequest waterfall（session-checkpoint/compaction/llm-retry 在册消费面），现有插件均不改写 system 面（autocompact 挂 agentPreStep 先于 anchorSystem）——时窗面存在但当前零改写者，记为断言探测边界。
 - **D3（中，已履行）**：SYSTEM-PROMPT.md（assemble 参/scoped 面）/CLI.md（resume 放开语义勘误）/AGENT-LOOP-DRIVER.md（schemas 投影措辞）同步；六份迁移文档状态推进「已核销」。

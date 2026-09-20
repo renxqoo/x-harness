@@ -1,6 +1,7 @@
 // e2e：件13 三旅程（docs/AGENT-DELEGATION.md §11.3）——跨进程（真子进程双宿主）、
 // worktree（真 git 仓 + 工具面隔离 + 无改动清理）、复活（teardown → 新装配档案复活续卷）。
 
+import { textScript } from "@x-harness/testkit";
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -66,12 +67,6 @@ const grantsPlugin: Plugin = {
   name: "e2e-grants",
   apply: (ctx) => ctx.provide(permissionGrants, new GrantsRegistry()),
 };
-
-const textScript = (text: string): AsyncGenerator<LlmChunk> =>
-  (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "text-delta", text };
-    yield { type: "finish", finish: { kind: "stop" } };
-  })();
 
 const userTextsOf = (harness: Harness, session: SessionId): string =>
   harness.ctx

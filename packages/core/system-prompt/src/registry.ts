@@ -24,7 +24,7 @@ interface MergedCache {
   readonly order: readonly { readonly name: string; readonly session: boolean }[];
 }
 
-export function createPromptRegistry(): SystemPromptService {
+export function createPromptRegistry(): SystemPromptService & { dropLayer(sessionId: string): void } {
   const sections = new Map<string, SectionEntry>();
   const variables = new Map<string, { readonly value: PromptVariable; readonly identity: object }>();
   const sessionLayers = new Map<string, Map<string, SectionEntry>>();
@@ -248,6 +248,12 @@ export function createPromptRegistry(): SystemPromptService {
         .join("\n\n");
       const text = interpolate(joined, variables);
       return { text, fingerprint: createHash("sha256").update(text).digest("hex").slice(0, 16) };
+    },
+
+    dropLayer: (sessionId: string): void => {
+      sessionLayers.delete(sessionId); // 会话终结清层（挂账#4——plugin 挂 sessionDisposed，与 tools.dropRestriction 同款生命周期）
+      mergedCaches.delete(sessionId); // 合并缓存同步清理（终审 R1：防陈旧投影+慢性泄漏）
+      sessionVersions.delete(sessionId);
     },
   };
 }

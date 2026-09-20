@@ -15,6 +15,7 @@ import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
+import { scriptedAdapter, textScript } from "@x-harness/testkit";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { Agent } from "@x-harness/agent-loop";
@@ -28,13 +29,6 @@ interface Journey {
   scripts: Array<AsyncGenerator<LlmChunk>>;
   calls: LlmRequest[];
   noteCount: () => number;
-}
-
-function textScript(text: string): AsyncGenerator<LlmChunk> {
-  return (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "text-delta", text };
-    yield { type: "finish", finish: { kind: "stop" } };
-  })();
 }
 
 /** 裸世界装配：插件 + 假适配器 + 假工具（resume 场景不预建会话——resume 自建 seed 会话） */
@@ -52,15 +46,7 @@ async function assembleWorld(root: string): Promise<Journey> {
     agentLoopPlugin,
     sessionCheckpointPlugin,
   ]);
-  ctx.use(llmRuntime).registerAdapter({
-    name: "fake",
-    stream: (request) => {
-      calls.push(request);
-      const next = scripts.shift();
-      if (next === undefined) return textScript("(no script)");
-      return next;
-    },
-  });
+  ctx.use(llmRuntime).registerAdapter(scriptedAdapter({ calls, scripts }));
   ctx.use(toolRegistry).register({
     name: "note",
     inputSchema: Type.Object({}),

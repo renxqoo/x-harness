@@ -96,6 +96,7 @@ softInject 仅装配期拓扑计算（O(V+E)）零运行时开销；kit 为纯�
 ```ts
 // ① pre-step 改写：enter 可携重写消息（落账走重写版——「模型可见必落盘」不变量保持：重写版即日志版）
 export type PreStepDecision = { kind: "enter" } | { kind: "enter"; messages: readonly InboxEntry[] } | { kind: "reject"; reason: string };
+// 载荷含 claim（领取批次——改写输入源；messages 为全史观察面）
 // ② assistant 落账前纠：settle 与 append 之间（content/stopReason 可改写；落的是改写后版本）
 export const agentAssistantSettle = defineWaterfall<{ session; turn; step; content; stopReason; signal }, { content; stopReason }>("agent/assistant-settle");
 // ③ 流拦截：包 adapter.stream（包裹/截断/注入帧；settle 仍以落账版为准——流拦截只影响实时面）
@@ -115,8 +116,57 @@ export const llmStream = defineWaterfall<LlmRequest, AsyncGenerator<LlmChunk>>("
 
 冻结面：Plugin 接口/六类 token 形状/token 名词表；pre-stable 面：waterfall payload（变更须迁移说明）。版本化：包版本 + 变更日志（发布策略属产品阶段挂账）。
 
+## 8.5 自洽走查结论（2026-09-20，三帽检验——用户裁决）
+
+三顶帽子（终端用户/插件开发者/产品构建者）全部插件清单逐个走查接口面：**零结构缺口**（成本上限经 session/event usage、记忆插件经宿主信任域自管、微调四式齐）。固化三原则：
+1. **插件代码 = 宿主信任域**——围栏/权限约束模型驱动的动作，不约束插件代码（插件可直接 node:fs/自管持久化）；
+2. **领域面优先，session/event 是逃生舱**（有意比 dsh 收窄：主推类型面而非 firehose）；
+3. **能力自举检验**——每个"要不要进底层"的提议先过 persona 走查（本次为首次执行）。
+F0 spec 修正：settle 载荷**不带** usage（session/event 已覆盖——最少面原则应用）。
+
 ## 9. 设计审查处置台账（2026-09-20，12 项）
 
 **必须改（已改）**：F-01 A2 审计勘误（五处停靠，采纳清单扩充+delegation 条件软名）；F-02 appends 留宿主后置；F-03 主张收窄+fail-closed 裁决。
 **应补裁决（已补）**：F-04 软-软环 throw+实现约束（byName.has 先滤）+测试清单四补；F-05 主张收窄+两顺序面惯例归属；F-06 adapter 插件名铸造；F-07 kit 签名三修（promptKit base 可选/toolboxKit env 透传/llmKit per-provider retry）；F-08 作者护栏（自有插件应 softInject+名漂移静默风险——并入 F2 陷阱表）；F-09 软名锚插件名 vs 服务 token 的错位（作者文档言明；token 锚定升级挂账）。
 **挂账**：F-10 testkit 回落参数化（F3 动工时改 spec——四 journey 回落形态不一：文本/(exhausted)/error-finish 帧）；F-12 测试计数口径写死（F1 前定：`bun run test` 报告数）；F-11 已处置为拆 checkpointKit。
+
+## 10. P1 波（plugin-api——自洽走查后新增）
+
+纯函数 archetype 层（packages/plugin-api）：transform/veto/tap × 三域 + tapSessionEvents 逃生舱——**零新语义零新 token**，全部为既有面的语法糖；next 纪律/洋葱序结构性保证。详见 SDK-MIGRATION-P1-PLUGIN-API.md。波次序：F0 → **P1** → F0.5 → S0 → F3 → F1 → F2。
+
+
+## 11. 终态台账（2026-09-20 核销）
+
+### 交付面
+| 面 | 包 | 验证 |
+|---|---|---|
+| softInject 原语 | core/context | 六语义专测 + 乱序探针 |
+| 拦截面三缺口 | agent-loop（pre-step 改写/assistant-settle/agent-llm-stream） | 7 用例 + 收口审查 17 项处置 |
+| token 词表治理 | plugin-manager | 异体拒/同体不误伤 |
+| plugin-api archetype | plugin-api | 等价性 6 用例 + textOf 三助手 |
+| harness kit 目录 | harness | 乱序集端到端 + CLI dogfood 零改写 |
+| PLUGIN-AUTHORING | docs | 总表 14 行实指 + 零死链 |
+| testkit | testkit | 3 用例 + 五 journey 换用零语义变化 |
+| 验证插件 | plugin-examples | **20 个**插件 + 2 场景（多代理端到端/性能预算）覆盖全部六类 token |
+
+### 性能预算实测（§4 → ㉒）
+| 预算 | 声称 | 实测 |
+|---|---|---|
+| assemble @100 段/50KB | ≤1ms | 中位 <1ms ✓ |
+| schemas @40 工具+restriction | ≤0.1ms | 中位 <0.1ms ✓ |
+| sha256 指纹 @50KB | ≤0.1ms | 中位 <0.1ms ✓ |
+
+### 对抗审查记录
+| 轮次 | 对象 | 发现 |
+|---|---|---|
+| 方案审 | SDK-DESIGN/IMPLEMENTATION | 12 项（A2 审计失真/B1 放开态漂移/C1 跨层环…全处置） |
+| F0+P1 审 | 拦截面 + archetype 设计 | 17 项（词表碰撞/claim 缺失/durable clear…全处置） |
+| F1/F3/S0 审 | kit/softInject/testkit 实施 | 8 项（注册序方向反/adapter inject 缺/文档四勘误…全处置） |
+| 终局审 | 全分支 diff | 待归档 |
+
+### 探针插件三轮
+| 轮 | 数量 | 新踩面 | 反哺内核 |
+|---|---|---|---|
+| 1 | 14 插件 | 全部基础面 | retry dial 补丁/claim 载荷/session 透传/layer 清理 |
+| 2 | 5 插件 | defineService/registry 可变/sessionCreated | provide 同层阻断确认/header 形状摩擦 |
+| 3 | 1 插件 + 2 场景 | guard token/多代理端到端/性能预算 | 三预算达标 |

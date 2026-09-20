@@ -8,6 +8,7 @@
     "@x-harness/agent-loop": "workspace:*",
     "@x-harness/core": "workspace:*",
     "@x-harness/exec-env": "workspace:*",
+    "@x-harness/harness": "workspace:*",
     "@x-harness/llm": "workspace:*",
     "@x-harness/llm-retry": "workspace:*",
     "@x-harness/permission": "workspace:*",

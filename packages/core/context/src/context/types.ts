@@ -142,6 +142,9 @@ export interface Plugin {
   readonly name: string;
   /** 依赖的插件名——加载序约束（topo）；引用不存在的名字 = 装配期 throw（IMPL 裁决 5） */
   readonly inject?: readonly string[];
+  /** 软依赖（S0，SDK-DESIGN §2.1）：点名插件**在场**则排其后；缺席则无约束不报错——
+   *  apply 期 tryUse 停靠的声明式时序（反混乱五原则之五）。软-软环 = 约束矛盾 throw。 */
+  readonly softInject?: readonly string[];
   apply(ctx: Context): Disposer | void | Promise<Disposer | void>;
 }
 

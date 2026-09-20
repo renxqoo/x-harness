@@ -58,6 +58,11 @@ function topoOrder(plugins: readonly Plugin[]): Plugin[] {
     for (const dep of plugin.inject ?? []) {
       visit(byName.get(dep) as Plugin, [...stack, plugin.name]);
     }
+    // S0 软依赖：在场才建边（缺席跳过——不进未知名校验）；双向软依赖经 visiting 栈暴露为环（约束矛盾 fail-fast）
+    for (const dep of plugin.softInject ?? []) {
+      const target = byName.get(dep);
+      if (target !== undefined) visit(target, [...stack, plugin.name]);
+    }
     state.set(plugin.name, "done");
     ordered.push(plugin);
   };

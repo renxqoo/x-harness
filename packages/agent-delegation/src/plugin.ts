@@ -69,6 +69,8 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
   return {
     name: "agent-delegation",
     inject: ["session", "tools", "agent-loop", "system-prompt", "task-tools"],
+    // S0 软依赖（F-01）：grants setRootOverride / archive 复活 / mailbox 在场假阴性——在场则排后
+    softInject: ["permission", "session-persistence-jsonl", ...(options.mailbox !== undefined ? ["session-mailbox"] : [])],
     apply: async (ctx: Context): Promise<Disposer> => {
       const loop = ctx.use(agentLoopServiceToken);
       const store = ctx.use(sessionStore);

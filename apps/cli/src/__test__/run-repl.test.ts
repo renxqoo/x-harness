@@ -201,3 +201,75 @@ describe("runRepl（管道驱动）", () => {
     expect(text).toContain("note: switching resets"); // 副作用提示
   });
 });
+
+describe("runRepl × 工具 flag（W2B 挂账收口——makeNext 重演矩阵）", () => {
+  it("/new：新会话继承 --tools 白名单（restriction 重演，工具面不放宽）", async () => {
+    const repl = await makeRepl([textScript("REPL-ANSWER")]);
+    repl.stdin.write("hi\n");
+    await repl.waitFor("REPL-ANSWER");
+    repl.stdin.write("/new\n");
+    await repl.waitFor("new session ");
+    const out = repl.output.join("");
+    const newId = out.slice(out.lastIndexOf("new session ") + "new session ".length).split(" ")[0];
+    const restriction = repl.world.registry.restrictionOf(newId as never);
+    expect(restriction).toBeDefined(); // create 语义：恒注册（全量快照——无 flag 时）
+    repl.stdin.write("/quit\n");
+    await repl.exitCode();
+    await repl.cleanup();
+  });
+
+  it("--tools read 下 /new 与 /model：restriction 精确重演为白名单（不静默放宽）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-repl-tools-"));
+    const stdin = new PassThrough();
+    const output: string[] = [];
+    const built = await buildWorld({
+      cwd: root,
+      sessionRoot: join(root, "sessions"),
+      persist: true,
+      config: CONFIG.config,
+      resolution: CONFIG.resolution,
+      broker: createTerminalBrokerPlugin({ interactive: true, write: () => {}, question: () => Promise.resolve(undefined) }),
+      adapters: [scriptAdapter([textScript("REPL-ANSWER"), textScript("M2"), textScript("M3")])],
+    });
+    if (!built.ok) throw new Error(built.reason);
+    const made = await built.value.loop.create({ session: { id: "repl-tools" as never }, agent: { model: "m1" } });
+    if (!made.ok) throw new Error(made.reason);
+    built.value.registry.scoped(made.value.agent.session.id).restrict(["read"]); // 模拟 main.openWorld 的初始注册（create 恒注册）
+    const replPromise = runRepl({
+      world: built.value,
+      handle: made.value,
+      baseOptions: made.value.agent.options,
+      args: argsOf(["--tools", "read"]),
+      config: CONFIG.config,
+      sessionRoot: join(root, "sessions"),
+      persist: true,
+      io: { write: (text: string) => output.push(text), stdin, isTTY: false, onSignal: () => {} },
+    });
+    const waitFor = async (marker: string): Promise<void> => {
+      const deadline = Date.now() + 5000;
+      for (;;) {
+        if (output.join("").includes(marker)) return;
+        if (Date.now() > deadline) throw new Error(`timeout: ${marker}`);
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      }
+    };
+    await waitFor("type /help");
+    replPromise.catch(() => {}); // 静默收割退出
+    // /model：dispose→同 id resume → 重注册（F-2 场景 5）
+    stdin.write("/model m1\n");
+    await waitFor("switched to");
+    expect(built.value.registry.restrictionOf(made.value.agent.session.id)).toEqual(["read"]); // 同 id 重演
+    // /new：新 id → create 语义注册白名单
+    stdin.write("/new\n");
+    await waitFor("new session ");
+    const out = output.join("");
+    const newId = out.slice(out.lastIndexOf("new session ") + "new session ".length).split(" ")[0];
+    expect(built.value.registry.restrictionOf(newId as never)).toEqual(["read"]); // 不放宽
+    stdin.write("/quit\n");
+    await replPromise;
+    await built.value.ctx.dispose().catch(() => {});
+    await rm(root, { recursive: true, force: true }).catch(() => {});
+  });
+});

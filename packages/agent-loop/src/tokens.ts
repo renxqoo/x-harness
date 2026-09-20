@@ -38,7 +38,10 @@ export const agentPreStep = defineWaterfall<
     readonly session: SessionId;
     readonly turn: number;
     readonly step: number;
+    /** 全对话史投影（只读观察面——改写依据 claim，不是改写 messages） */
     readonly messages: readonly unknown[];
+    /** 本步领取的批次（改写决策的输入与替代对象——收口审查 1.1：同名字段两种语义，拆开） */
+    readonly claim: readonly InboxEntry[];
     readonly signal: AbortSignal;
   },
   PreStepDecision
@@ -72,7 +75,9 @@ export const agentRequestError = defineWaterfall<
     readonly failure: RequestFailure;
     readonly signal: AbortSignal;
   },
-  { readonly kind: "retry" } | undefined
+  /** retry 可携 dial 补丁（pre-stable 扩展——plugin-examples ⑨ dogfood 发现：重试不重派
+   *  agentRequest，降级类插件无处改 retry 的模型；补丁在重试分支就地合并） */
+  { readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined
 >("agent/request-error");
 
 export const agentTurnStopping = defineSerial<{ readonly session: SessionId; readonly turn: number; readonly signal: AbortSignal }>(
@@ -99,5 +104,8 @@ export const agentAssistantSettle = defineWaterfall<
   AssistantSettlement
 >("agent/assistant-settle");
 
-/** F0③：流拦截——包 adapter.stream（包裹/截断/注入帧）；settle 仍以落账版为准（流拦截只影响实时面） */
-export const llmStream = defineWaterfall<{ readonly request: LlmRequest }, AsyncIterable<LlmChunk>>("llm/stream");
+/** F0③（收口审查 3.1 处置：改名避撞——@x-harness/llm 已有 root 层全局 "llm/stream"）：
+ *  本面是 **agent 层**流包裹（per-agent 包裹/截断/注入帧；final = llm.stream）；
+ *  全局回放/路由类拦截用 llm 包的 llm/stream（root 层，docs/LLM.md §）。两层串联：
+ *  本面 final 内的 runtime 调用再经全局面。settle 仍以落账版为准（流拦截只影响实时面）。 */
+export const agentLlmStream = defineWaterfall<{ readonly request: LlmRequest }, AsyncIterable<LlmChunk>>("agent/llm-stream");

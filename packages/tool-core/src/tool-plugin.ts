@@ -49,6 +49,10 @@ export function createToolPlugin(input: ToolPluginInput): Plugin {
   return {
     name,
     inject: ["tools"],
+    // S0 软依赖（F-01 处置——五处 apply 期停靠的三处在 tool-core）：system-prompt（guidance
+    // 停靠）/sandbox-local（execEnv 停靠）/permission（grants apply 期闭包捕获）——
+    // 在场则排后，缺席无约束（env 缺席仍 fail-closed throw）
+    softInject: ["system-prompt", "sandbox-local", "permission"],
     apply: (ctx: Context): Disposer => {
       const env = envOption ?? ctx.tryUse(execEnv);
       if (env === undefined) throw new Error(`${name} requires an ExecEnv (pass env to the factory or provide the exec-env service)`);
