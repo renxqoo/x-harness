@@ -1,0 +1,13 @@
+{
+  "name": "@x-harness/llm-replay-guard",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/core": "workspace:*",
+    "@x-harness/llm": "workspace:*"
+  }
+}

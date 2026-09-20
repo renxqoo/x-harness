@@ -12,7 +12,7 @@ import { claimStepBatch, claimTurnBatch, foldInbox, insertData } from "./inbox.t
 import type { InboxState } from "./inbox.ts";
 import { executeToolCalls } from "./tool-calls.ts";
 import type { ToolCallOutcomeCollected, ToolCallSpec } from "./tool-calls.ts";
-import { settleStream, StreamAccumulator } from "./stream.ts";
+import { raceIdleChunk, settleStream, StreamAccumulator } from "./stream.ts";
 import { foldDial, headerChanged, lastRequestContext, toToolRefs } from "./request.ts";
 import type { Dial } from "./tokens.ts";
 
@@ -44,6 +44,7 @@ export interface ResolvedOptions {
   readonly systemPrompt?: string;
   readonly maxParallelToolCalls: number;
   readonly maxToolResultChars: number;
+  readonly streamIdleTimeoutMs: number;
 }
 
 export type TurnOutcome =
@@ -273,6 +274,37 @@ type AttemptResult =
   | { readonly kind: "fatal"; readonly outcome: TurnOutcome };
 
 /** 流结算（attempt 循环）：abort 赛跑、三分支结算、request-error retry */
+/** 看门狗守卫的流汲取：逐 chunk 间隔计时；超时注入 finish{error,code:network}（走 finish
+ *  分支携带 code——throw 路径无 code 会导致 llm-retry 不重试；不抛 AbortError 防误判取消）。
+ *  超时后 pending 的迭代推进由 raceIdleChunk 附挂 catch 收殓；iterator.return 尽力收殓
+ *  （挂起流可能永不落定——LLM-PI 契约，泄漏止损靠 abort signal） */
+async function drainGuarded(input: {
+  readonly iterator: AsyncIterator<LlmChunk>;
+  readonly idleMs: number;
+  readonly onTimeout: () => void;
+  readonly turnSignal: AbortSignal;
+  readonly push: (chunk: LlmChunk) => void;
+  readonly emit: (chunk: LlmChunk) => void;
+}): Promise<void> {
+  try {
+    for (;;) {
+      const next = await raceIdleChunk(input.iterator.next(), input.idleMs);
+      if (next.timedOut) {
+        input.onTimeout(); // 掐底层 fetch
+        input.push({ type: "finish", finish: { kind: "error", message: "stream idle timeout", code: "network" } });
+        return;
+      }
+      if (next.value.done === true) return;
+      const chunk = next.value.value;
+      if (input.turnSignal.aborted) return; // 收口审查 3.2：弃单后迟到帧守卫（不 push 不 emit）
+      input.push(chunk);
+      input.emit(chunk);
+    }
+  } finally {
+    void input.iterator.return?.(undefined as never).catch(() => {}); // 正常/异常/超时退出均尽力收殓（幂等）
+  }
+}
+
 export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
   const { scope, schemas, step } = input;
   const { deps, turn } = scope;
@@ -291,24 +323,39 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
       else signal.addEventListener("abort", onAbort, { once: true });
     });
     const consume = async (): Promise<void> => {
-      const stream = await deps.dispatchLlmStream({ // F0③（agent/llm-stream）：agent 层流包裹（final = runtime.stream；全局面在 llm 包 llm/stream）
-        model: dial.model,
-        ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
-        ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
-        ...(dial.maxTokens !== undefined ? { maxTokens: dial.maxTokens } : {}),
-        ...(dial.thinking !== undefined ? { thinking: dial.thinking } : {}),
-        tools: schemas as never,
-        messages: session.deriveMessages(), // 请求体纯折叠不变量
-        signal,
-      });
-      if (stream === null || typeof (stream as AsyncIterable<LlmChunk>)[Symbol.asyncIterator] !== "function") {
-        throw new Error("agent/llm-stream middleware must return an AsyncIterable (fresh per call——重试重派时中间件须幂等)"); // 收口审查 3.3：可读契约失败（非 TypeError 伪装 LLM 故障）
-      }
-      for await (const chunk of stream) {
-        if (signal.aborted) break; // 收口审查 3.2：弃单后迟到帧守卫（不 push 不 emit）
-        accum.push(chunk);
-        if (chunk.type === "text-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "text", text: chunk.text });
-        else if (chunk.type === "thinking-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "thinking", text: chunk.text });
+      // attempt 级止损信号：turn 取消联动穿透；看门狗超时只断本请求（不动 turn——取消语义独占）。
+      // 换绑 dispatchLlmStream 的 signal 使 abort 打得到底层 fetch（否则挂死流继续泄漏在生成器里）
+      const attempt = new AbortController();
+      const onTurnAbort = (): void => attempt.abort();
+      if (signal.aborted) attempt.abort();
+      else signal.addEventListener("abort", onTurnAbort, { once: true });
+      try {
+        const stream = await deps.dispatchLlmStream({ // F0③（agent/llm-stream）：agent 层流包裹（final = runtime.stream；全局面在 llm 包 llm/stream）
+          model: dial.model,
+          ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
+          ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
+          ...(dial.maxTokens !== undefined ? { maxTokens: dial.maxTokens } : {}),
+          ...(dial.thinking !== undefined ? { thinking: dial.thinking } : {}),
+          tools: schemas as never,
+          messages: session.deriveMessages(), // 请求体纯折叠不变量
+          signal: attempt.signal,
+        });
+        if (stream === null || typeof (stream as AsyncIterable<LlmChunk>)[Symbol.asyncIterator] !== "function") {
+          throw new Error("agent/llm-stream middleware must return an AsyncIterable (fresh per call——重试重派时中间件须幂等)"); // 收口审查 3.3：可读契约失败（非 TypeError 伪装 LLM 故障）
+        }
+        await drainGuarded({
+          iterator: stream[Symbol.asyncIterator](),
+          idleMs: deps.options.streamIdleTimeoutMs,
+          onTimeout: () => attempt.abort(),
+          turnSignal: signal,
+          push: (chunk) => accum.push(chunk),
+          emit: (chunk) => {
+            if (chunk.type === "text-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "text", text: chunk.text });
+            else if (chunk.type === "thinking-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "thinking", text: chunk.text });
+          },
+        });
+      } finally {
+        signal.removeEventListener("abort", onTurnAbort); // per-attempt 监听不跨尝试累积
       }
     };
     try {

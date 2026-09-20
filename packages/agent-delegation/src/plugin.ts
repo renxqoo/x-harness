@@ -138,6 +138,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
               lineage,
               types: () => current,
               parentModelOf: (session: SessionId) => loop.get(session)?.agent.options.model,
+              parentIdleTimeoutOf: (session: SessionId) => loop.get(session)?.agent.options.streamIdleTimeoutMs,
               parentToolsOf: (session: SessionId) => registry.restrictionOf(session),
               ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
               ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),

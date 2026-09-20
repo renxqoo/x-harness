@@ -247,6 +247,9 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   L3 永不可达，参照系裁决照搬）。整闸 try/catch 软失败（告警 + 原样放行，异常不外溢 step）。
 - **校准**（纯函数）：无锚步缓存纯预测 → 有锚步配对入样（实测/预测比），FIFO 9 样本去
   极值取中位；尾估乘因子。垃圾样本（≤0 或 >10）丢弃。
+- **看门狗边界**：本件 idleTimeoutMs（摘要流空闲，超时→aborted 跳过本轮不可重试）与
+  agent-loop 的 streamIdleTimeoutMs（主对话流空闲，超时→network 可重试重拨，
+  docs/AGENT-LOOP-DRIVER.md §1.2.1）是两个不同看门狗——同名不同语义、缺省同值非耦合。
 - **空闲清理**：插件级单定时器（tick 自适应 250ms–60s，unref，dispose 清除；回调全包
   try/catch——定时器异常是进程级崩溃面）；条件 = 空闲到期（turnActive=false 且
   now − lastTurnEndAt ≥ 阈）+ 收益达标 → L1 落账 + **flush 先于 emit**（观测不抢跑在

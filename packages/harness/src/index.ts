@@ -12,6 +12,7 @@ import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
 import { createLlmRetryPlugin } from "@x-harness/llm-retry";
+import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
 import { createSandboxPlugin } from "@x-harness/sandbox-local";
@@ -97,6 +98,7 @@ export const llmKit = (
 ): readonly Plugin[] => [
   ...(retry !== undefined ? [createLlmRetryPlugin({ providers: retry.providers ?? {}, ...(retry.default !== undefined ? { default: retry.default } : {}) })] : []),
   llmPlugin,
+  createReplayGuardPlugin(), // llm/stream 重放容错（docs/LLM-REPLAY-GUARD.md）：上游断流从头重发时下游/UI 干净单份
   ...adapters.map((adapter, index): Plugin => ({
     name: `llm-adapter-${String(index)}-${adapter.name}`,
     inject: ["llm"], // 终审 F1-1：apply 期 use llmRuntime 的硬依赖声明式时序（与在库 adapter-plugin 同款）

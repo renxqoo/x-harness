@@ -60,7 +60,7 @@ export class StreamAccumulator {
   }
 
   get hasContent(): boolean {
-    return this.textParts.length > 0 || this.calls.size > 0;
+    return this.text !== "" || this.calls.size > 0; // 拼接后判空——零宽帧（replay-guard 保活）不计内容
   }
 
   get toolUseBlocks(): ContentBlock[] {
@@ -71,6 +71,27 @@ export class StreamAccumulator {
 
   get textBlock(): ContentBlock[] {
     return this.text === "" ? [] : [{ type: "text" as const, text: this.text }];
+  }
+}
+
+/** 流空闲看门狗赛跑：idleMs ≤0 直通；超时以 timedOut 哨兵解决（不抛——取消语义独占，
+ *  超时注入 finish 的路径在消费方）。败者收殓：超时路径的 pending 随后可能因 abort 传导
+ *  而拒绝，附挂 catch 防悬空 rejection */
+type IdleRace<T> = { readonly timedOut: true } | { readonly timedOut: false; readonly value: T };
+
+export async function raceIdleChunk<T>(pending: Promise<T>, idleMs: number): Promise<IdleRace<T>> {
+  if (idleMs <= 0) return { timedOut: false, value: await pending };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending.then((value) => ({ timedOut: false as const, value })),
+      new Promise<{ readonly timedOut: true }>((resolve) => {
+        timer = setTimeout(() => resolve({ timedOut: true }), idleMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    pending.catch(() => {});
   }
 }
 

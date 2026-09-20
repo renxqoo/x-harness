@@ -134,7 +134,7 @@ function childAgentOptions(
   deps: SpawnDeps,
   parentHandle: AgentHandle,
   spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId },
-): { model?: string; provider?: string; systemPrompt?: string } {
+): { model?: string; provider?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
   const dial = inheritDial(parentHandle, {
     type: spec.named,
     lastHeader: lastHeaderOf(deps, spec.caller),
@@ -143,6 +143,7 @@ function childAgentOptions(
   return {
     ...dial,
     ...(spec.named !== undefined && spec.named.prompt !== "" ? { systemPrompt: spec.named.prompt } : {}),
+    streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs, // 看门狗透传：子恒继承父 resolved 值（缺省同源——resolveOptions 恒填）
   };
 }
 

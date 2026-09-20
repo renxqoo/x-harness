@@ -29,6 +29,42 @@ beforeEach(() => {
   resetWorlds();
 });
 
+describe("子代理看门狗透传（streamIdleTimeoutMs）", () => {
+  it("spawn 的子恒继承父 resolved 看门狗值（症状钉子：删透传字段曾不红）", async () => {
+    const world = await makeWorld(await workerOptions());
+    const parent = await spawnParent(world);
+    // 父显式收紧 33ms——子代理（最常挂死的面）必须继承而非回落缺省
+    const tight = await world.loop.create({ agent: { model: PARENT_MODEL, provider: "fake", streamIdleTimeoutMs: 33 } });
+    expect(tight.ok).toBe(true);
+    if (!tight.ok) return;
+    const spawned = await callTool({
+      world,
+      name: "agent_spawn",
+      args: { description: "watchdog probe", prompt: "work", subagent_type: "worker" },
+      session: tight.value.agent.session.id,
+    });
+    expect(spawned.isError).not.toBe(true);
+    const child = world.loop.get(sessionOf(spawned.content));
+    expect(child).toBeDefined();
+    expect(child?.agent.options.streamIdleTimeoutMs).toBe(33); // resolved 值直传
+    void parent;
+  });
+
+  it("父未显式配置时子回落插件缺省 120_000", async () => {
+    const world = await makeWorld(await workerOptions());
+    const parent = await spawnParent(world);
+    const spawned = await callTool({
+      world,
+      name: "agent_spawn",
+      args: { description: "default probe", prompt: "work", subagent_type: "worker" },
+      session: parent.agent.session.id,
+    });
+    expect(spawned.isError).not.toBe(true);
+    const child = world.loop.get(sessionOf(spawned.content));
+    expect(child?.agent.options.streamIdleTimeoutMs).toBe(120_000);
+  });
+});
+
 describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
   it("spawn 立即返回文本句柄（8hex agentId + type/session）；子后台完成 → 父 idle 被唤醒（双断言）且通知含 agentId/status/摘要", async () => {
     const world = await makeWorld(await workerOptions());

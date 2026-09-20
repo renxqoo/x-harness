@@ -49,7 +49,7 @@
 | P10 版本机制预埋 | →#1：删除格式版本字段（用户裁决：无历史版本不预埋；闭合词表 fail-closed 即身份判别，语义级变更届时引入判别字段）；SESSION.md 同步 |
 | P11 system node0 规则 | →#5：锚点策略——turn 1 step0 恒落 system/message 锚点（文本可空），后续恒 replace [seq,seq]（[0,0] 前置在已交付 surface 语义下不可行，审查修正） |
 | P12 e2e/real 门 | →#6：e2e 假适配器全链旅程进默认门；真凭证旅程 `bun run e2e:real`（env 凭证缺席=显式 skip 计数报告）；声明口径「契约级生产可用 + 真凭证 opt-in」 |
-| P13 token 计数 | →#5：loop 拥有 7 token（不移植 inbox 生命周期 emit，观察走 session/event·UI 面 / session/audit-event·审计面 + agent/status） |
+| P13 token 计数 | →#5：loop 拥有 9 token（不移植 inbox 生命周期 emit，观察走 session/event·UI 面 / session/audit-event·审计面 + agent/status） |
 | P14 LlmChunk 契约 | →#4：流必须恰一个 finish 收尾，违约按 error 结算；index 首现必须带 callId+name（loop 兜底铸 `call-${index}`）；适配器对 user 角色仅取 text 块拼接 |
 | P15 流帧时序 | 本文档 §2.2（已并入） |
 | P16 杂项 | →#6：checkpoint inject 去掉 llm；→#5：provider/model 缺失显式 `turn/end{error}`；additionalContexts 注入仍驱动下一步（优先级写明） |

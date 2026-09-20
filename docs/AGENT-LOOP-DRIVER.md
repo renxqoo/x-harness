@@ -15,6 +15,7 @@ export interface AgentOptions {
   readonly systemPrompt?: string;              // 静态提示词，优先于 systemPrompt.assemble()
   readonly maxParallelToolCalls?: number;       // 默认 10
   readonly maxToolResultChars?: number;         // 默认 100_000：tool/result 落账前截断（尾标 …[truncated]）
+  readonly streamIdleTimeoutMs?: number;        // 流空闲看门狗，默认 120_000（≤0 关闭），SDK 面（无 CLI flag——同 llm-retry 先例）
 }
 export interface Agent {
   readonly session: Session; readonly options: AgentOptions;
@@ -32,7 +33,7 @@ export interface AgentLoopService {
 }
 ```
 
-### 1.2 token（7 个，纲领 P13）
+### 1.2 token（9 个，纲领 P13）
 
 | token | 模式 | 载荷 | freeze |
 | --- | --- | --- | --- |
@@ -43,6 +44,24 @@ export interface AgentLoopService {
 | `agentRequest` | waterfall | `{ session, turn, step, dial, signal }`（dial=当前折叠拨号）→ 拨号 `{model, provider?, temperature?, maxTokens?, thinking?}`（thinking 词表 off/low/medium/high——llm 侧注入 anthropic thinking 参数） | none |
 | `agentRequestError` | waterfall | `{ session, turn, step, failure, signal }` → `{kind:"retry"} \| undefined`（缺省终态） | none |
 | `agentTurnStopping` | serial | `{ session, turn, signal }`——窗口后重读收件箱定续航（数据驱动） | none |
+| `agentAssistantSettle` | waterfall | `{ session, turn, step, content, stopReason, interrupted? }` → 同形（落账前纠：改写版即落账版） | none |
+| `agentLlmStream` | waterfall | `{ request }` → `AsyncIterable<LlmChunk>`（agent 层流包裹，final = llm.stream；全局回放/路由类拦截用 llm 包 llm/stream root 层） | none |
+
+### 1.2.1 流空闲看门狗（step.ts consume）
+
+- `streamIdleTimeoutMs`（AgentOptions，默认 120_000，≤0 关闭；SDK 面——不进 Dial 闭集、不落
+  request/header、resume 后回落缺省；delegation 子代理经 childAgentOptions/revivedOptions 透传
+  父显式值）。相邻 LlmChunk 间隔超时 → attempt 级 AbortController 止损（换绑 dispatchLlmStream
+  的 signal 使 abort 打到底层 fetch；turn 级 signal 只联动取消——**看门狗不触碰 turn 信号，
+  取消语义独占**）→ 注入 `finish{kind:"error", message:"stream idle timeout", code:"network"}`
+  （走 finish 分支携带 code——throw 路径无 code 会导致 llm-retry 不重试）→ attempt 落账 →
+  llm-retry 重拨；预算尽/未装重试件 → turn error（有界失败，静默挂死不可再发生）。超时后
+  pending 的迭代推进附挂 catch 收殓 + `iterator.return()` 尽力收殓（不留悬空协程/rejection）。
+- 三个看门狗语义边界：本件 streamIdleTimeoutMs（超时→network 可重试）；compaction idleTimeoutMs
+  （摘要流，超时→aborted 跳过本轮不可重试）；autocompact checkpointIdleTimeoutMs（join 超时）。
+  缺省同为 120s 是巧合不是耦合。
+- 误伤面：大 prompt prefill 期零帧可能超过缺省 120s（推理模型深思期通常持续吐 thinking 帧）；
+  误伤后果 = 丢本 attempt 已收文本 + 重拨烧预算——fail-loud 优于挂死，可调大或 ≤0 关闭。
 
 ### 1.3 收件箱投影（inbox.ts）
 

@@ -26,11 +26,14 @@ const DEFAULT_MAX_RESULT_CHARS = 100_000;
 
 export const agentLoopServiceToken = defineService<AgentLoopService>("agent-loop");
 
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
+
 function resolveOptions(options: AgentOptions | undefined): ResolvedOptions {
   return {
     ...options,
     maxParallelToolCalls: options?.maxParallelToolCalls ?? DEFAULT_MAX_PARALLEL,
     maxToolResultChars: options?.maxToolResultChars ?? DEFAULT_MAX_RESULT_CHARS,
+    streamIdleTimeoutMs: options?.streamIdleTimeoutMs ?? DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   };
 }
 

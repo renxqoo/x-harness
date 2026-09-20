@@ -17,6 +17,10 @@ export interface AgentOptions {
   readonly maxParallelToolCalls?: number;
   /** tool/result 落账前截断（默认 100_000，尾标 …[truncated]） */
   readonly maxToolResultChars?: number;
+  /** 流空闲看门狗毫秒（默认 120_000；≤0 关闭）：相邻 chunk 间隔超时 → 注入
+   *  finish{error,code:network} 走既有 llm-retry 重拨——静默挂死变有界失败。
+   *  与取消语义无关（不触碰 turn 级 signal）；子代理经 childAgentOptions 透传 */
+  readonly streamIdleTimeoutMs?: number;
   /** 工具白名单（名字集；缺省=全部注册工具）——schemas 投影与 dispatch 双执法 */
 }
 

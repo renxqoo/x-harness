@@ -13,6 +13,7 @@
     "@x-harness/exec-env": "workspace:*",
     "@x-harness/llm": "workspace:*",
     "@x-harness/llm-retry": "workspace:*",
+    "@x-harness/llm-replay-guard": "workspace:*",
     "@x-harness/permission": "workspace:*",
     "@x-harness/sandbox-local": "workspace:*",
     "@x-harness/session": "workspace:*",

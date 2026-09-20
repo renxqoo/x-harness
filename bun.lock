@@ -177,6 +177,7 @@
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/llm": "workspace:*",
+        "@x-harness/llm-replay-guard": "workspace:*",
         "@x-harness/llm-retry": "workspace:*",
         "@x-harness/permission": "workspace:*",
         "@x-harness/sandbox-local": "workspace:*",
@@ -207,6 +208,14 @@
         "@x-harness/core": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/tools": "workspace:*",
+      },
+    },
+    "packages/llm-replay-guard": {
+      "name": "@x-harness/llm-replay-guard",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/llm": "workspace:*",
       },
     },
     "packages/llm-retry": {
@@ -715,6 +724,8 @@
     "@x-harness/harness": ["@x-harness/harness@workspace:packages/harness"],
 
     "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
+
+    "@x-harness/llm-replay-guard": ["@x-harness/llm-replay-guard@workspace:packages/llm-replay-guard"],
 
     "@x-harness/llm-retry": ["@x-harness/llm-retry@workspace:packages/llm-retry"],
 

@@ -19,6 +19,7 @@ export interface ReviveDeps {
   readonly lineage: Lineage;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly parentModelOf: (session: SessionId) => string | undefined;
+  readonly parentIdleTimeoutOf: (session: SessionId) => number | undefined;
   /** 复活父当前工具白名单（沿树只收窄——X15 不因复活放宽） */
   readonly parentToolsOf: (session: SessionId) => ToolFilter | undefined;
   /** worktree 隔离重放面（grants 缺席则隔离降级为明示）；onWarn 降级告知 */
@@ -82,11 +83,13 @@ function typeOf(deps: ReviveDeps, agentType: string | undefined): LoadedAgentTyp
 
 /** 复活 options：类型 model/systemPrompt 重建（白名单走 registry 会话层重放，W2A）；
  *  模型兜底 = 复活调用方 options（§7.3 序） */
-function revivedOptions(deps: ReviveDeps, caller: SessionId, named: LoadedAgentType | undefined): { model?: string; systemPrompt?: string } {
+function revivedOptions(deps: ReviveDeps, caller: SessionId, named: LoadedAgentType | undefined): { model?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
   const model = named?.model ?? deps.parentModelOf(caller);
+  const idle = deps.parentIdleTimeoutOf(caller); // 看门狗透传：复活子恒继承复活调用方 resolved 值
   return {
     ...(model !== undefined ? { model } : {}),
     ...(named !== undefined && named.prompt !== "" ? { systemPrompt: named.prompt } : {}),
+    ...(idle !== undefined ? { streamIdleTimeoutMs: idle } : {}), // loop.get 落空（会话不在场）时缺省回落
   };
 }
 
