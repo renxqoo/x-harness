@@ -202,7 +202,7 @@ export function assertVisibleLogged(session: Session, systemText: string): void 
 }
 
 export type DialStep =
-  | { readonly kind: "dial"; readonly dial: Dial; readonly schemas: readonly unknown[] }
+  | { readonly kind: "dial"; readonly dial: Dial; readonly schemas: readonly import("@x-harness/tools").ToolSchema[] }
   | { readonly kind: "no-model" }
   | { readonly kind: "bad-dial" };
 
