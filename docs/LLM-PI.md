@@ -9,7 +9,7 @@
 
 1. `LlmChunk` 五变体词表、`LlmFinish`、`LlmRequest`、`LlmAdapter`、`LlmRuntime`（types.ts 原样）。
 2. 工厂名与签名：`createAnthropicCompatAdapter` / `createOpenaiCompatAdapter`
-   （`{ name?, baseUrl, apiKey, fetch?, maxTokensDefault? }`——`fetch` 经 pi `options.fetch` 原样透传，
+   （`{ name?, baseUrl, apiKey, fetch?, maxOutputTokens?, contextWindow?, streamFn? }`——`fetch` 经 pi `options.fetch` 原样透传，
    scene-server 真身测试形态续命）、`llmPlugin`、token、adapter-plugin 工厂。
 3. 错误码闭集：`http-<status>` / `network` / `no-adapter` + `retryAfterMs`（llm-retry 依赖面）。
 4. usage 折算：pi `Usage` cacheRead+cacheWrite 折入 input；全零不发 usage 帧（守卫保留）。
@@ -23,9 +23,10 @@
    `apiKey`、`headers: { "accept-encoding": "identity" }`（硬化迁移——GLM 攒批根因，审查 B3/P6）、
    `signal`、`maxTokens`、`temperature?`、`fetch?`、**fetch 包装层捕获非 2xx 状态与 retry-after 头**（pi 的 onResponse 只在成功路径触发——SDK 对错误状态在 retryProviderRequest 内即 throw，审查 A1/P3 处置）、
    `cacheRetention: "none"`（保持现 wire 无 cache_control，审查 B4）。
-   Model 条目最小构造（`api`/`provider`/`baseUrl`/`maxTokens: 8192`/`contextWindow` 必填，
-   工厂选项 `contextWindow?` 缺省 200_000）。anthropic 工厂注入缺省 maxTokens（协议必填）；
-   openai 工厂仅显式才发（现状不对称保持）。
+   Model 条目最小构造（`api`/`provider`/`baseUrl`/`maxTokens`/`contextWindow` 必填，
+   工厂选项 `contextWindow?` 缺省 200_000）。输出上限折叠：`request.maxTokens ?? maxOutputTokens`；
+   anthropic 工厂恒注入 maxTokens（协议必填，链末端 8192）；openai 工厂仅折叠值在场才发
+   （请求显式或档案配置；双缺席不发）。
 2. 新增三文件：
    - `pi-context.ts`：SurfaceMessage → pi `Context`（system 顶层；user 只取 text 块、空 user 跳过；
      assistant text/tool_use，input STRING→JSON.parse 降 {}；tool 消息→toolResult，toolName 前文
@@ -117,7 +118,7 @@
 
 - 注入层：事件矩阵全量（含 P10 初值、tracker 三形态、deferred/未知 reason、redacted 文案、
   error.usage 先行）；context 矩阵（含 input 降级三态 `[1]`/`null`/`5`、toolName 回查、空 user、
-  maxTokensDefault 注入、四角色）；分类表（词边界负例全表）；abort 三用例
+  maxOutputTokens 注入、四角色）；分类表（词边界负例全表）；abort 三用例
   （请求前 throw / error{aborted} rethrow / 流中 signal 断）。
 - 真身层：如拆分六项。
 - 回归：stream-frames/runtime/llm-retry/e2e 全绿；runtime 工厂注册→network 用例标注「巧合绿」不计数。

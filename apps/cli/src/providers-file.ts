@@ -17,7 +17,7 @@ export interface ProviderProfile {
   readonly apiKey: string;
   readonly models: readonly string[];
   readonly contextWindow?: number;
-  readonly maxTokensDefault?: number;
+  readonly maxOutputTokens?: number;
 }
 
 export interface DefaultChoice {
@@ -57,6 +57,16 @@ function isHttpUrl(value: string): boolean {
 
 interface FieldError { readonly ok: false; readonly reason: string }
 
+/** 封闭模式校验：未知键显式报错（allowed 集随错误给出）——拼错/字段改名不留静默吞没通道 */
+function rejectUnknownFields(obj: Record<string, unknown>, allowed: readonly string[], label: string): FieldError | undefined {
+  for (const key of Object.keys(obj)) {
+    if (!allowed.includes(key)) {
+      return { ok: false, reason: `${label}: unknown field "${key}" (allowed: ${allowed.join(", ")})` };
+    }
+  }
+  return undefined;
+}
+
 function requireString(obj: Record<string, unknown>, field: string, label: string): Result<string> | FieldError {
   const value = obj[field];
   if (!isNonEmptyStr(value)) return { ok: false, reason: `${label}.${field}: expected a non-empty string` };
@@ -90,31 +100,33 @@ function parseModels(obj: Record<string, unknown>, label: string): Result<readon
   return { ok: true, value: models as readonly string[] };
 }
 
-/** 可选数值字段：contextWindow 两协议通用；maxTokensDefault 仅 anthropic（openai 适配器无此参数） */
-function parseOptionalNumbers(obj: Record<string, unknown>, protocol: ProviderProtocol, label: string): Result<Pick<ProviderProfile, "contextWindow" | "maxTokensDefault">> {
+const PROFILE_FIELDS: readonly string[] = ["name", "protocol", "baseUrl", "apiKey", "models", "contextWindow", "maxOutputTokens"];
+
+/** 可选数值字段：contextWindow/maxOutputTokens 两协议通用（正整数） */
+function parseOptionalNumbers(obj: Record<string, unknown>, label: string): Result<Pick<ProviderProfile, "contextWindow" | "maxOutputTokens">> {
   const contextWindow = obj.contextWindow;
   if (contextWindow !== undefined && !isPositiveInt(contextWindow)) {
     return { ok: false, reason: `${label}.contextWindow: expected a positive integer` };
   }
-  const maxTokensDefault = obj.maxTokensDefault;
-  if (maxTokensDefault === undefined) {
+  const maxOutputTokens = obj.maxOutputTokens;
+  if (maxOutputTokens === undefined) {
     return { ok: true, value: contextWindow !== undefined ? { contextWindow } : {} };
   }
-  if (protocol !== "anthropic") {
-    return { ok: false, reason: `${label}.maxTokensDefault: only supported for the anthropic protocol` };
-  }
-  if (!isPositiveInt(maxTokensDefault)) {
-    return { ok: false, reason: `${label}.maxTokensDefault: expected a positive integer` };
+
+  if (!isPositiveInt(maxOutputTokens)) {
+    return { ok: false, reason: `${label}.maxOutputTokens: expected a positive integer` };
   }
   return {
     ok: true,
-    value: { ...(contextWindow !== undefined ? { contextWindow } : {}), maxTokensDefault },
+    value: { ...(contextWindow !== undefined ? { contextWindow } : {}), maxOutputTokens },
   };
 }
 
 /** 单档案校验：字段名/闭集/唯一性全部在本层闭口（错误带字段路径便于定位） */
 function parseProfile(raw: unknown, index: number): Result<ProviderProfile> {
   if (!isObj(raw)) return { ok: false, reason: `providers[${index}]: expected an object` };
+  const unknown = rejectUnknownFields(raw, PROFILE_FIELDS, `providers[${index}]`);
+  if (unknown !== undefined) return unknown;
   const name = requireString(raw, "name", `providers[${index}]`);
   if (!name.ok) return name;
   const label = `providers[${index}] (${name.value})`;
@@ -126,7 +138,7 @@ function parseProfile(raw: unknown, index: number): Result<ProviderProfile> {
   if (!apiKey.ok) return apiKey;
   const models = parseModels(raw, label);
   if (!models.ok) return models;
-  const numbers = parseOptionalNumbers(raw, protocol.value, label);
+  const numbers = parseOptionalNumbers(raw, label);
   if (!numbers.ok) return numbers;
   return {
     ok: true,
@@ -152,6 +164,8 @@ function synthesizeDefault(rawDefault: unknown, providers: readonly ProviderProf
     return { ok: false, reason: "default: required when more than one provider is declared" };
   }
   if (!isObj(rawDefault)) return { ok: false, reason: "default: expected an object" };
+  const unknown = rejectUnknownFields(rawDefault, ["provider", "model", "thinking"], "default");
+  if (unknown !== undefined) return unknown;
   const providerName = rawDefault.provider;
   if (!isNonEmptyStr(providerName)) return { ok: false, reason: "default.provider: expected a non-empty string" };
   const provider = providers.find((p) => p.name === providerName);
@@ -174,6 +188,8 @@ function synthesizeDefault(rawDefault: unknown, providers: readonly ProviderProf
 /** 纯解析：unknown → ProvidersConfig；全部校验失败以 reason 返回（docs/CLI.md §2.2 逐条） */
 export function parseProvidersConfig(raw: unknown): Result<ProvidersConfig> {
   if (!isObj(raw)) return { ok: false, reason: "providers.json: expected a top-level object" };
+  const unknownTop = rejectUnknownFields(raw, ["providers", "default"], "providers.json");
+  if (unknownTop !== undefined) return unknownTop;
   const rawProviders = raw.providers;
   if (!Array.isArray(rawProviders) || rawProviders.length === 0) {
     return { ok: false, reason: "providers.json: providers must be a non-empty array" };

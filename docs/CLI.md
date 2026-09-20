@@ -88,7 +88,7 @@ x-harness [flags] [message...] [@file...]
       "apiKey": "sk-...",
       "models": ["glm-4.7", "glm-4.7-flash"],
       "contextWindow": 200000,
-      "maxTokensDefault": 8192
+      "maxOutputTokens": 8192
     }
   ],
   "default": { "provider": "glm", "model": "glm-4.7", "thinking": "medium" }
@@ -98,10 +98,12 @@ x-harness [flags] [message...] [@file...]
 - 位置：`$X_HARNESS_HOME/providers.json`（缺省 `~/.x-harness/providers.json`）。
 - 校验（失败 → 中性英文错误 + exit 2，附示例路径）：`name` 非空且唯一；`protocol` ∈
   {anthropic, openai}；`baseUrl` http(s)；`apiKey` 非空；`models` 非空数组；`contextWindow`
-  可选正整数（两协议都接受）；`maxTokensDefault` 可选正整数且**仅 anthropic 接受**（openai
-  档出现 = 配置错误）；`default.provider` 必须指向已声明 provider；`default.model` 必须在该
-  provider 的 models 内；`default.thinking` ∈ 四级闭集。单 provider 且无 default → 缺省取该
-  provider 首个 model；多 provider 无 default → 报错。
+  可选正整数（两协议都接受）；`maxOutputTokens` 可选正整数（两协议都接受——请求未显式带
+  输出上限时注入，anthropic 侧协议必填兜底链末端 8192）；**封闭模式**：顶层
+  （`providers`/`default`）、档案（上述七键）、`default`（`provider`/`model`/`thinking`）各自
+  只认闭集键，未知键报 `unknown field`（附 allowed 集）；`default.provider` 必须指向已声明
+  provider；`default.model` 必须在该 provider 的 models 内；`default.thinking` ∈ 四级闭集。
+  单 provider 且无 default → 缺省取该 provider 首个 model；多 provider 无 default → 报错。
 - 文件只读不写；错误信息提示 0600 权限建议。
 
 ### 2.3 交互 REPL 契约
@@ -291,7 +293,7 @@ console 使用豁免：`.oxlintrc.json` no-console override 的 files 加 `apps/
 
 - **契约级**：parse-cli-args 表驱动——每 flag 生效/缺省/别名/互斥全错例（含 `-p`+`-c` 合法
   组合）/未知 flag/`--` 分流；providers-file 词表封闭（protocol/thinking 闭集、default 指向
-  性、maxTokensDefault 协议约束）；slash 命令表闭集 = /help 文档列出集；mintSessionId 词表（测试居 @x-harness/session 包）
+  性、maxOutputTokens 正整数与封闭模式校验）；slash 命令表闭集 = /help 文档列出集；mintSessionId 词表（测试居 @x-harness/session 包）
   与唯一性。
 - **边界**：空 providers/坏 JSON/重复 name/default 指向缺席 provider；@file 不存在（exit 2）/
   空文件跳过/BOM 剥离；空 stdin；垃圾 slash 输入（未知命令提示不崩）；print 无 message 且无

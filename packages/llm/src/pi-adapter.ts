@@ -59,8 +59,8 @@ interface AdapterCoreOptions {
   readonly streamFn?: PiStreamFn;
   readonly api: "anthropic-messages" | "openai-completions";
   readonly provider: string;
-  /** anthropic：协议必填的缺省上限；openai：不注入（仅显式 maxTokens 才发） */
-  readonly maxTokensDefault?: number;
+  /** 档案级输出上限：请求未显式带 maxTokens 时生效（请求显式值恒胜） */
+  readonly maxOutputTokens?: number;
 }
 
 /** 单 attempt 装配：onResponse 捕获状态与 retry-after；同步抛折算；abort 豁免交给 piChunks */
@@ -71,7 +71,6 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
     core.api === "anthropic-messages"
       ? (streamAnthropicMessages as unknown as PiStreamFn)
       : (streamOpenaiCompletions as unknown as PiStreamFn);
-  const injectDefaultMaxTokens = core.api === "anthropic-messages"; // openai 侧仅显式才发（语义不对称保持）
   return {
     name,
     contextWindow: core.contextWindow, // 缺失 B 修复：适配器携带窗口（运行时 contextWindowOf 可查）
@@ -98,7 +97,10 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           }
           return response;
         }) as typeof fetch;
-        const explicitMaxTokens = request.maxTokens ?? core.maxTokensDefault;
+        // 输出上限折叠：请求显式值恒胜档案配置；anthropic 协议必填恒注入（链末端
+        // DEFAULT_MAX_TOKENS 兜底）；openai 仅折叠值在场才发（双缺席不发）
+        const effectiveMaxTokens = request.maxTokens ?? core.maxOutputTokens;
+        const injectMaxTokens = effectiveMaxTokens !== undefined || core.api === "anthropic-messages";
         // Model 条目按请求构造：id/name = request.model（请求体的 model 字段来源——适配器名
         // 只作 provider 注册键，绝不进请求体）；maxTokens 与 options 同源
         const model = {
@@ -111,7 +113,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           input: ["text" as const],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: core.contextWindow ?? 200_000,
-          maxTokens: explicitMaxTokens ?? DEFAULT_MAX_TOKENS,
+          maxTokens: effectiveMaxTokens ?? DEFAULT_MAX_TOKENS,
         };
         const options: Record<string, unknown> = {
           apiKey: core.apiKey,
@@ -119,7 +121,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           signal: request.signal,
           maxRetries: 0, // 单 attempt：重试职责在 llm-retry waterfall（SDK 缺省 2 必须显式归零）
           cacheRetention: "none", // 保持 wire 无 cache_control 标记（缓存启用另裁决）
-          ...(injectDefaultMaxTokens || explicitMaxTokens !== undefined ? { maxTokens: explicitMaxTokens ?? DEFAULT_MAX_TOKENS } : {}),
+          ...(injectMaxTokens ? { maxTokens: effectiveMaxTokens ?? DEFAULT_MAX_TOKENS } : {}),
           ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
           ...thinkingOptions(request.thinking, core.api),
           fetch: capturingFetch,
@@ -152,8 +154,8 @@ export interface AnthropicCompatOptions {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly fetch?: typeof fetch;
-  /** 仅 request.maxTokens 缺席时使用（协议必填的缺省上限逃生位） */
-  readonly maxTokensDefault?: number;
+  /** 输出上限：请求未显式带 maxTokens 时生效；双缺席链末端 DEFAULT_MAX_TOKENS（协议必填） */
+  readonly maxOutputTokens?: number;
   /** pi Context 模型条目必填；缺省 200_000（仅元数据面，不参与钳制） */
   readonly contextWindow?: number;
   /** 测试注入：离线事件剧本（缺省走 pi api-level stream 真身） */
@@ -170,7 +172,7 @@ export function createAnthropicCompatAdapter(options: AnthropicCompatOptions): L
     streamFn: options.streamFn,
     api: "anthropic-messages",
     provider: "anthropic",
-    maxTokensDefault: options.maxTokensDefault,
+    maxOutputTokens: options.maxOutputTokens,
   });
 }
 
@@ -180,6 +182,8 @@ export interface OpenaiCompatOptions {
   readonly apiKey: string;
   readonly fetch?: typeof fetch;
   readonly contextWindow?: number;
+  /** 输出上限：请求未显式带 maxTokens 时注入；双缺席不发（openai 无协议必填） */
+  readonly maxOutputTokens?: number;
   readonly streamFn?: PiStreamFn;
 }
 
@@ -193,6 +197,7 @@ export function createOpenaiCompatAdapter(options: OpenaiCompatOptions): LlmAdap
     streamFn: options.streamFn,
     api: "openai-completions",
     provider: "openai",
+    maxOutputTokens: options.maxOutputTokens,
   });
 }
 

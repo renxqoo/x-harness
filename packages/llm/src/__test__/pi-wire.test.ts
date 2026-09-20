@@ -1,7 +1,7 @@
 // pi 真身冒烟（docs/LLM-PI.md 测试口径·真身层）：scene-server 假 HTTP/SSE × pi api-level stream 真身——
 // 注入面测不到的 wire 行为在这里防守：非 2xx→http-<status>、retry-after 头捕获、中途断连→network、
 // 请求头硬化（identity/单份 anthropic-version）、wire 体形状（无 cache_control、system 顶层、
-// openai 仅显式 maxTokens）、usage 字段级合并。
+// openai 双缺席不发 max_tokens）、usage 字段级合并。
 
 import { afterEach, describe, expect, it } from "vitest";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "../pi-adapter.ts";
@@ -193,7 +193,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
 });
 
 describe("pi 真身冒烟：openai-completions", () => {
-  it("全文流：usage 后置折算 + finish stop；仅显式 maxTokens；Bearer + identity 头", async () => {
+  it("全文流：usage 后置折算 + finish stop；双缺席不发 max_tokens；Bearer + identity 头", async () => {
     srv = await startSceneServer();
     srv.nextScene({
       status: 200,
@@ -217,7 +217,7 @@ describe("pi 真身冒烟：openai-completions", () => {
     expect(captured?.body["model"]).toBe("m");
     expect(String(captured?.headers["authorization"])).toContain("Bearer");
     expect(captured?.headers["accept-encoding"]).toBe("identity");
-    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false); // 仅显式才发
+    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false); // 双缺席不发
     expect(captured?.body["stream"]).toBe(true);
   });
 });

@@ -82,8 +82,8 @@ retryableCodes 与退避快车道；裸 throw 丢结构（前版 RequestFailure 
 
 ### 1.4 协议适配器（wire 委托 @earendil-works/pi-ai——docs/LLM-PI.md）
 
-两工厂 `createAnthropicCompatAdapter({ name?, baseUrl, apiKey, fetch?, maxTokensDefault?, contextWindow?, streamFn? })`
-与 `createOpenaiCompatAdapter({ name?, baseUrl, apiKey, fetch?, contextWindow?, streamFn? })`（插件
+两工厂 `createAnthropicCompatAdapter({ name?, baseUrl, apiKey, fetch?, maxOutputTokens?, contextWindow?, streamFn? })`
+与 `createOpenaiCompatAdapter({ name?, baseUrl, apiKey, fetch?, maxOutputTokens?, contextWindow?, streamFn? })`（插件
 `createAnthropicCompatLlm`/`createOpenaiCompatLlm` inject ["llm"]）。自研 wire（http-dial/sse-scan/
 anthropic-request/两旧适配器）已删——SSE 解析、流式 tool-call 分片、供应商怪癖归 pi-ai 的
 **api-level stream**（不走 Models：provider 注册门 + env 鉴权门与手配 baseUrl/apiKey 形态不兼容）。
@@ -95,8 +95,8 @@ anthropic-request/两旧适配器）已删——SSE 解析、流式 tool-call �
 - options：`apiKey`；`headers:{"accept-encoding":"identity"}`（SSE 恒不协商压缩——运行时默认协商
   会换来无逐块 flush 的 gzip/br，透明解压把流攒成大坨）；`maxRetries:0`（单 attempt，重试职责在
   llm-retry——SDK 缺省 2 必须显式归零）；`cacheRetention:"none"`（wire 无 cache_control）；`signal`；
-  anthropic 侧 maxTokens 恒注入（协议必填：`request.maxTokens ?? maxTokensDefault ?? 8192`），
-  openai 侧仅显式才发；`temperature?`；思考等级注入（仅 anthropic-messages）：low/medium/high →
+  anthropic 侧 maxTokens 恒注入（协议必填，链末端 8192；折叠序 `request.maxTokens ?? maxOutputTokens ?? 8192`），
+  openai 侧仅折叠值在场才发（请求显式或档案配置，双缺席不发）；`temperature?`；思考等级注入（仅 anthropic-messages）：low/medium/high →
   `thinkingEnabled:true + effort + thinkingBudgetTokens`（2048/8192/16384），缺省/off 不发；`fetch`（用户注入的 fetch 经**非 2xx 捕获包装**：状态码与
   `retry-after`（秒/HTTP-date）/`retry-after-ms`（毫秒语义直取）头在此确定性捕获——pi 的
   onResponse 只在成功路径触发，错误状态在 SDK 内即 throw）；
@@ -156,7 +156,7 @@ anthropic-request/两旧适配器）已删——SSE 解析、流式 tool-call �
     `anthropic-version`；请求体 `model`=request.model（回归：适配器名曾误入请求体）/`max_tokens`
     8192/system 块数组/无 cache_control）；429+retry-after 头 → `http-429`+retryAfterMs（fetch 包装
     捕获）；中途断连 → error 事件 → `network`；连接拒绝 → `network`；请求前 abort → throw；
-    openai 全文流（usage 后置折算、仅显式 maxTokens、Bearer、identity 头）；
+    openai 全文流（usage 后置折算、双缺席不发 max_tokens、Bearer、identity 头）；
   - 既有回归：runtime（适配器同步 throw/异步 reject 归一、waterfall 改写流）；llm-retry 码表；
     agent-loop stream-frames（thinking 流帧）与假适配器 e2e 旅程（不经过 wire）。
 

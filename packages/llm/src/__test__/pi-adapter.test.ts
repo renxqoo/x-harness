@@ -40,7 +40,7 @@ function doneEvent(): DoneEvent {
 
 describe("pi-adapter 注入层", () => {
   it("anthropic 工厂：identity 头/单 attempt/cacheRetention none/maxTokens 缺省 8192/apiKey/signal 透传", async () => {
-    const seen: Array<{ model: { api: string; id: string; baseUrl: string; provider: string }; context: Context; options: Record<string, unknown> }> = [];
+    const seen: Array<{ model: { api: string; id: string; baseUrl: string; provider: string; maxTokens: number }; context: Context; options: Record<string, unknown> }> = [];
     const streamFn: PiStreamFn = async function* (model, context, options) {
       seen.push({ model: model as never, context, options: options as Record<string, unknown> });
       yield doneEvent();
@@ -63,34 +63,47 @@ describe("pi-adapter 注入层", () => {
     expect(first.options["maxRetries"]).toBe(0);
     expect(first.options["cacheRetention"]).toBe("none");
     expect(first.options["maxTokens"]).toBe(8192); // 协议必填缺省
+    expect(first.model.maxTokens).toBe(8192); // model 条目与 options 同源
     expect(first.options["signal"]).toBe(controller.signal);
   });
 
-  it("anthropic 工厂：maxTokens 显式优先于 maxTokensDefault；temperature 透传", async () => {
-    const seen: Array<Record<string, unknown>> = [];
-    const streamFn: PiStreamFn = async function* (_model, _context, options) {
-      seen.push(options as Record<string, unknown>);
+  it("anthropic 工厂：请求显式 maxTokens 恒胜档案 maxOutputTokens；配置在场填 options 与 model 条目；temperature 透传", async () => {
+    const seen: Array<{ model: Record<string, unknown>; options: Record<string, unknown> }> = [];
+    const streamFn: PiStreamFn = async function* (model, _context, options) {
+      seen.push({ model: model as unknown as Record<string, unknown>, options: options as Record<string, unknown> });
       yield doneEvent();
     };
-    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxTokensDefault: 4096, streamFn });
+    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokens: 4096, streamFn });
     await collect(adapter.stream(request({ maxTokens: 64, temperature: 0.3 })));
-    expect(seen[0]?.["maxTokens"]).toBe(64);
-    expect(seen[0]?.["temperature"]).toBe(0.3);
+    expect(seen[0]?.options["maxTokens"]).toBe(64);
+    expect(seen[0]?.model["maxTokens"]).toBe(64);
+    expect(seen[0]?.options["temperature"]).toBe(0.3);
     await collect(adapter.stream(request({})));
-    expect(seen[1]?.["maxTokens"]).toBe(4096);
+    expect(seen[1]?.options["maxTokens"]).toBe(4096);
+    expect(seen[1]?.model["maxTokens"]).toBe(4096);
   });
 
-  it("openai 工厂：仅显式 maxTokens 才发（缺省不注入）", async () => {
-    const seen: Array<Record<string, unknown>> = [];
-    const streamFn: PiStreamFn = async function* (_model, _context, options) {
-      seen.push(options as Record<string, unknown>);
+  it("openai 工厂：双缺席不发（model 条目仍 8192 元数据）；仅请求显式或档案 maxOutputTokens 在场才发", async () => {
+    const seen: Array<{ model: Record<string, unknown>; options: Record<string, unknown> }> = [];
+    const streamFn: PiStreamFn = async function* (model, _context, options) {
+      seen.push({ model: model as unknown as Record<string, unknown>, options: options as Record<string, unknown> });
       yield { ...doneEvent(), message: { ...doneEvent().message, api: "openai-completions" } } as never;
     };
     const adapter = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn });
     await collect(adapter.stream(request({})));
-    expect(Object.hasOwn(seen[0] as object, "maxTokens")).toBe(false);
+    expect(Object.hasOwn(seen[0]!.options, "maxTokens")).toBe(false); // 双缺席：wire 不带
+    expect(seen[0]?.model["maxTokens"]).toBe(8192); // 元数据面协议无关兜底（不对称钉死）
     await collect(adapter.stream(request({ maxTokens: 128 })));
-    expect(seen[1]?.["maxTokens"]).toBe(128);
+    expect(seen[1]?.options["maxTokens"]).toBe(128);
+    expect(seen[1]?.model["maxTokens"]).toBe(128);
+
+    const configured = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokens: 2048, streamFn });
+    await collect(configured.stream(request({})));
+    expect(seen[2]?.options["maxTokens"]).toBe(2048); // 档案配置在场 = 显式注入
+    expect(seen[2]?.model["maxTokens"]).toBe(2048);
+    await collect(configured.stream(request({ maxTokens: 128 })));
+    expect(seen[3]?.options["maxTokens"]).toBe(128); // 请求显式恒胜档案配置
+    expect(seen[3]?.model["maxTokens"]).toBe(128);
   });
 
   it("思考等级注入（anthropic）：low/medium/high → thinkingEnabled+effort+预算；off/缺省不发；openai 恒不注入", async () => {

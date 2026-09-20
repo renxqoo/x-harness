@@ -27,8 +27,11 @@ describe("foldDial（docs/AGENT-LOOP-DRIVER §1.4：options 显式值恒胜）",
   });
 
   it("options 部分显式 → 缺字段由末次 header 同名回填", () => {
-    const folded = foldDial({ model: "m2" }, [headerEvent({ model: "m1", provider: "p1", temperature: 0.1, tools: TOOLS })]);
-    expect(folded).toEqual({ model: "m2", provider: "p1", temperature: 0.1 });
+    const folded = foldDial(
+      { model: "m2" },
+      [headerEvent({ model: "m1", provider: "p1", temperature: 0.1, maxTokens: 5, tools: TOOLS })],
+    );
+    expect(folded).toEqual({ model: "m2", provider: "p1", temperature: 0.1, maxTokens: 5 });
   });
 
   it("options 仅 model 且无 header → 最小拨号", () => {

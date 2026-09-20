@@ -54,19 +54,14 @@ export interface WorldOptions {
   readonly adapters?: readonly LlmAdapter[];
 }
 
-/** 档案 → adapter options（纯函数；--api-key 覆盖在 buildAdapters 层折入） */
+/** 档案 → adapter options（纯函数；--api-key 覆盖在 buildAdapters 层折入；两协议字段集合同构） */
 export function adapterOptionsOf(profile: ProviderProfile, apiKey: string): AnthropicCompatOptions | OpenaiCompatOptions {
-  const common = { name: profile.name, baseUrl: profile.baseUrl, apiKey };
-  if (profile.protocol === "anthropic") {
-    return {
-      ...common,
-      ...(profile.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
-      ...(profile.maxTokensDefault !== undefined ? { maxTokensDefault: profile.maxTokensDefault } : {}),
-    };
-  }
   return {
-    ...common,
+    name: profile.name,
+    baseUrl: profile.baseUrl,
+    apiKey,
     ...(profile.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
+    ...(profile.maxOutputTokens !== undefined ? { maxOutputTokens: profile.maxOutputTokens } : {}),
   };
 }
 

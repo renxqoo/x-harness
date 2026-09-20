@@ -51,6 +51,23 @@ describe("parseProvidersConfig 正例", () => {
     const parsed = parseProvidersConfig(config([profile()], { provider: "glm", model: "glm-4.7" }));
     expect(parsed.ok && parsed.value.default.thinking).toBe("off");
     expect(parsed.ok && "contextWindow" in parsed.value.providers[0]!).toBe(false);
+    expect(parsed.ok && "maxOutputTokens" in parsed.value.providers[0]!).toBe(false);
+  });
+
+  it("maxOutputTokens 两协议通用：openai 档携带合法并保留值", () => {
+    const parsed = parseProvidersConfig(config([profile({ protocol: "openai" as ProviderProtocol, maxOutputTokens: 4096 })]));
+    expect(parsed).toEqual({
+      ok: true,
+      value: {
+        providers: [expect.objectContaining({ protocol: "openai", maxOutputTokens: 4096 })],
+        default: { provider: "glm", model: "glm-4.7", thinking: "off" },
+      },
+    });
+  });
+
+  it("anthropic 档 maxOutputTokens 携带值通过", () => {
+    const parsed = parseProvidersConfig(config([profile({ maxOutputTokens: 8192 })]));
+    expect(parsed.ok && parsed.value.providers[0]!.maxOutputTokens).toBe(8192);
   });
 });
 
@@ -66,8 +83,10 @@ describe("parseProvidersConfig 错例（表驱动）", () => {
     { name: "models 空", raw: config([profile({ models: [] })]), reasonIncludes: "models: expected a non-empty array" },
     { name: "models 重复项", raw: config([profile({ models: ["a", "a"] })]), reasonIncludes: "duplicate entries" },
     { name: "contextWindow 非正整数", raw: config([profile({ contextWindow: 1.5 })]), reasonIncludes: "contextWindow: expected a positive integer" },
-    { name: "openai 档带 maxTokensDefault", raw: config([profile({ protocol: "openai", maxTokensDefault: 10 })]), reasonIncludes: "maxTokensDefault: only supported for the anthropic protocol" },
-    { name: "maxTokensDefault 非正整数", raw: config([profile({ maxTokensDefault: 0 })]), reasonIncludes: "maxTokensDefault: expected a positive integer" },
+    { name: "档案未知字段（旧名 maxTokensDefault）", raw: config([profile({ maxTokensDefault: 10 })]), reasonIncludes: `unknown field "maxTokensDefault" (allowed: name, protocol, baseUrl, apiKey, models, contextWindow, maxOutputTokens)` },
+    { name: "顶层未知字段", raw: { providers: [profile()], extra: 1 }, reasonIncludes: `unknown field "extra" (allowed: providers, default)` },
+    { name: "default 未知字段", raw: config([profile()], { provider: "glm", model: "glm-4.7", maxim: "x" }), reasonIncludes: `unknown field "maxim" (allowed: provider, model, thinking)` },
+    { name: "maxOutputTokens 非正整数", raw: config([profile({ maxOutputTokens: 0 })]), reasonIncludes: "maxOutputTokens: expected a positive integer" },
     { name: "档案重名", raw: config([profile(), profile()]), reasonIncludes: "duplicate provider name" },
     { name: "多档案无 default", raw: config([profile(), profile({ name: "b" })]), reasonIncludes: "default: required when more than one provider" },
     { name: "default 指向缺席 provider", raw: config([profile()], { provider: "nope", model: "glm-4.7" }), reasonIncludes: "unknown provider" },
