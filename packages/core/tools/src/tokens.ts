@@ -9,7 +9,7 @@ export const toolRegistry = defineService<ToolRegistry>("tool-registry");
 /** 权限否决位：中间件必须调 next（内核 I2），拒绝 = 调 next 后返回 deny（最外层 deny 胜）。
  *  session 由 dispatch 从请求透传（服务端事实，模型入参不可伪造）——权限类监听器会话键控依据。 */
 export const toolsPreExecute = defineWaterfall<
-  { readonly callId: string; readonly name: string; readonly args: unknown; readonly session?: SessionId },
+  { readonly callId: string; readonly name: string; readonly args: unknown; readonly control?: true; readonly session?: SessionId },
   PreExecuteDecision
 >("tools/pre-execute");
 

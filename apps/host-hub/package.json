@@ -23,6 +23,8 @@
     "@x-harness/permission": "workspace:*",
     "@x-harness/session": "workspace:*",
     "@x-harness/session-persistence-jsonl": "workspace:*",
-    "@x-harness/skill": "workspace:*"
+    "@x-harness/skill": "workspace:*",
+    "@x-harness/session-checkpoint": "workspace:*",
+    "@x-harness/llm-retry": "workspace:*"
   }
 }

@@ -70,12 +70,14 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
       name: "agent_spawn",
       description: AGENT_SPAWN_DESCRIPTION,
       inputSchema: spawnSchema,
+      isControlTool: true,
       execute: async (args: Static<typeof spawnSchema>, ctx) => run(await deps.spawn(ctx, args)),
     },
     {
       name: "agent_message",
       description: AGENT_MESSAGE_DESCRIPTION,
       inputSchema: messageSchema,
+      isControlTool: true,
       execute: async (args: Static<typeof messageSchema>, ctx) => run(deps.message(ctx, args)),
       isConcurrencySafe: parallel,
     },
@@ -83,6 +85,7 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
       name: "list_agents",
       description: LIST_AGENTS_DESCRIPTION,
       inputSchema: Type.Object({}),
+      isControlTool: true,
       execute: async (_args: Record<string, never>, ctx) => {
         if (ctx.session === undefined) return { content: CALLER_MISSING, isError: true };
         const view = await deps.list(ctx);

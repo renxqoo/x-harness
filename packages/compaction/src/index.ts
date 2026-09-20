@@ -2,7 +2,7 @@
 
 export { createCompactionPlugin } from "./plugin.ts";
 export type { CompactionOptions } from "./plugin.ts";
-export { compactionRunner, compactionLanded, compactionServedWindow } from "./tokens.ts";
+export { compactionDiagnostic, compactionRunner, compactionLanded, compactionServedWindow } from "./tokens.ts";
 export type { CompactionRunner } from "./tokens.ts";
 export type { CompactTrigger, CompactionResult, CompactionSkipReason, ResolvedConfig } from "./compact.ts";
 export { runCompact, previousSummaryOf } from "./compact.ts";

@@ -24,9 +24,9 @@ interface Bench {
 }
 
 /** 单装配多 dispatch：broker 可编程（脚本耗尽即 deny）；审计与 ask 全记账 */
-async function bench(root: string, options: { rules?: readonly string[]; mode?: "plan" | "auto" | "full"; brokerScript?: readonly ("allow" | "deny")[] } = {}): Promise<Bench> {
+async function bench(root: string, options: { rules?: readonly string[]; mode?: "plan" | "auto" | "full"; brokerScript?: readonly ("allow" | "deny")[]; controlTools?: readonly string[] } = {}): Promise<Bench> {
   const ctx = createContext();
-  const audits: { tool: string; verdict: string }[] = [];
+  const audits: { tool: string; verdict: string; resolvedBy?: string }[] = [];
   const asks: { tool: string; reason: string }[] = [];
   let at = 0;
   const broker: Plugin = {
@@ -46,10 +46,14 @@ async function bench(root: string, options: { rules?: readonly string[]; mode?: 
     createPermissionPlugin({ root, ...(options.rules !== undefined ? { rules: options.rules } : {}), ...(options.mode !== undefined ? { mode: options.mode } : {}) }),
     broker,
   ]);
-  ctx.on(permissionDecided, (audit) => audits.push({ tool: audit.tool, verdict: audit.verdict }));
+  ctx.on(permissionDecided, (audit) => audits.push({ tool: audit.tool, verdict: audit.verdict, resolvedBy: audit.resolvedBy }));
   const reg = ctx.use(toolRegistry);
   const disposers: Disposer[] = [];
   const toolNames = new Set<string>();
+  for (const name of options.controlTools ?? []) {
+    toolNames.add(name);
+    disposers.push(reg.register({ name, inputSchema: Type.Object({}), isControlTool: true, execute: async () => ({ content: "ran" }) }));
+  }
   const call = async (name: string, args: unknown, session?: SessionId): Promise<ToolOutcome> => {
     if (!toolNames.has(name)) {
       toolNames.add(name);
@@ -107,7 +111,7 @@ describe("permission 插件（真实管线）", () => {
     const out = await b.call("read", { path: "f.txt" }, "s1" as SessionId);
     expect(out.content).toBe("ran");
     expect(out.isError).toBeUndefined();
-    expect(b.audits).toEqual([{ tool: "read", verdict: "allow" }]);
+    expect(b.audits).toEqual([{ tool: "read", verdict: "allow", resolvedBy: "auto" }]);
     for (const d of b.unload) await d();
   });
 
@@ -176,6 +180,15 @@ describe("permission 插件（真实管线）", () => {
     const plan = await bench(root, { mode: "plan" });
     expect(plan.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
     for (const d of plan.unload) await d();
+  });
+
+  it("控制面工具（isControlTool）直通：auto 档下未知工具零 ask、审计标 control（delegation 动词不撞保守墙）", async () => {
+    const b = await bench(root, { brokerScript: [], controlTools: ["agent_spawn"] });
+    const outcome = await b.call("agent_spawn", {});
+    expect(outcome.content).toBe("ran");
+    expect(b.asks).toHaveLength(0); // 未标记的未知工具才保守 ask
+    expect(b.audits).toContainEqual({ tool: "agent_spawn", verdict: "allow", resolvedBy: "control" });
+    for (const d of b.unload) await d();
   });
 
   it("permissionMode 服务：运行期切档原子同步 decide 面与授权面（进入 full 即授、离开即撤）", async () => {

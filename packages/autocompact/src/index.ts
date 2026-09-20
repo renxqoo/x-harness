@@ -5,6 +5,7 @@ export type { AutoCompactOptions } from "./plugin.ts";
 export {
   autocompactBreaker,
   autocompactCheckpoint,
+  autocompactDiagnostic,
   autocompactL1Cleared,
   autocompactL2Escalated,
   autocompactLinesDegraded,

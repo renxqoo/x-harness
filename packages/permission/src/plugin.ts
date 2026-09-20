@@ -66,6 +66,18 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
       };
 
       const offDecide = ctx.on(toolsPreExecute, async (payload, next): Promise<PreExecuteDecision> => {
+        if (payload.control === true) {
+          // 控制面工具（isControlTool——dispatch 侧标记）直通：动词本身不触 fs/exec 面，
+          // 其衍生的会话内工具调用各自过裁决（会话键控不越权）
+          ctx.emit(permissionDecided, {
+            tool: payload.name,
+            verdict: "allow",
+            resolvedBy: "control",
+            reason: "control tool",
+            ...(payload.session !== undefined ? { session: payload.session } : {}),
+          });
+          return next(payload); // 内核 I2：必须调 next
+        }
         const decision = decideFor({
           tool: payload.name,
           args: payload.args,
