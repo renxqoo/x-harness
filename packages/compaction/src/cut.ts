@@ -1,8 +1,10 @@
 // 切口选择（docs/COMPACTION.md §1.1）：从尾向头累计 token 至 keepRecentTokens，在
-// 真轮起点落刀。真轮起点 = append 型 user/message（steer/inject/委派通知与首话同权——
-// 真实用户原话是合法切口且享原话配额；压缩摘要/L2 账本自带 replace op 天然排除，
-// 不会摘要摘要）。user/message 节点永不落在 tool_use 与其 tool/result 之间（步内结果
-// 先于下一步 user 批次落账）——切口不拆配对是构造保证。
+// 真轮起点落刀。真轮起点 = append 型 user/message 且非快照信封形态（边沿注入快照不是
+// 用户真轮——不进切口候选/原话配额/护栏分母；其折叠语义走自愈环，docs/
+// TAIL-SNAPSHOT-CHANNEL.md；steer/inject/委派通知与首话同权——真实用户原话是合法切口
+// 且享原话配额；压缩摘要/L2 账本自带 replace op 天然排除，不会摘要摘要）。
+// user/message 节点永不落在 tool_use 与其 tool/result 之间（步内结果先于下一步 user
+// 批次落账）——切口不拆配对是构造保证。
 // 用户原话配额：主预算耗尽后，尾向首继续保留真轮起点形态的消息（计入独立配额，
 // 不占主预算），遇其他消息即停——保留区仍为连续区间，被保留原话保持一等公民消息。
 // trigger=emergency 时配额为 0（L3 keep=0 语义纯净，配额放大保留区会导致自愈重试后仍超窗）。
@@ -10,11 +12,12 @@
 // 不算真轮起点（不进切口候选、不占原话配额、不参与无进展护栏分母）。
 
 import type { SurfaceNode } from "@x-harness/session";
+import { isSnapshotNode } from "@x-harness/agent-loop";
 import { nodeTokens } from "./estimate.ts";
 
-/** 真轮起点：append 型 user/message */
+/** 真轮起点：append 型 user/message，快照信封形态排除（谓词单源 @x-harness/agent-loop） */
 export function isTurnStartNode(node: SurfaceNode): boolean {
-  return node.event.type === "user/message" && node.event.surfaceOp === "append";
+  return node.event.type === "user/message" && node.event.surfaceOp === "append" && !isSnapshotNode(node);
 }
 
 /** 用户原话配额缺省（20k token，CJK 上界口径——预算即真实上界） */

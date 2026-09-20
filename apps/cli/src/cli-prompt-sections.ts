@@ -17,14 +17,6 @@ export interface CliIoFacts {
   readonly env: NodeJS.ProcessEnv;
 }
 
-/** 本地时区 yyyy-mm-dd（toISOString 是 UTC——东八区晚间会差一天） */
-function localToday(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
 /** 自 cwd 向上寻 .git（目录或 worktree file 皆算——到文件系统根为止） */
 function isGitWorkdir(cwd: string): boolean {
   let dir = resolve(cwd);
@@ -36,15 +28,15 @@ function isGitWorkdir(cwd: string): boolean {
   }
 }
 
-/** 宿主探测：环境事实（date 会话内定格于此——午夜漂移不打断缓存前缀）；
- *  normalizeBaseFacts 入口归一（换行压空格/垃圾降级）——注入面收口在包侧统一执行 */
+/** 宿主探测：环境事实（进程内静态项——日期已迁边沿注入快照通道，docs/
+ *  TAIL-SNAPSHOT-CHANNEL.md）；normalizeBaseFacts 入口归一（换行压空格/垃圾降级）——
+ *  注入面收口在包侧统一执行 */
 export function promptFactsOf(io: CliIoFacts): BasePromptFacts {
   return normalizeBaseFacts({
     cwd: io.cwd,
     isGit: isGitWorkdir(io.cwd),
     platform: io.platform,
     shell: io.env.SHELL ?? "",
-    date: localToday(),
   });
 }
 

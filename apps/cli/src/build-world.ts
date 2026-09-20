@@ -26,6 +26,7 @@ import {
 } from "@x-harness/harness";
 import { createBasePromptPlugin } from "./base-prompt.ts";
 import type { BasePromptFacts } from "./base-prompt.ts";
+import { createFactsSnapshotPlugin } from "./snapshot-facts.ts";
 import type { ProvidersConfig, ProviderProfile } from "./providers-file.ts";
 import type { ModelResolution } from "./resolve-model.ts";
 
@@ -57,6 +58,8 @@ export interface WorldOptions {
   readonly onTelemetryError?: (message: string) => void;
   /** 测试注入：替换 providers.json 派生的 adapter 集（假剧本/离线） */
   readonly adapters?: readonly LlmAdapter[];
+  /** 测试注入：日期快照 clock（缺省 Date.now——假钟锚按天幂等/跨天新条） */
+  readonly factsNow?: () => number;
 }
 
 /** 档案 → adapter options（纯函数；--api-key 覆盖在 buildAdapters 层折入；两协议字段集合同构） */
@@ -102,6 +105,8 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...checkpointKit(),
     ...delegationKit(),
     ...skillKit(),
+    // 快照装配位写死：紧随 skillKit（docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）
+    createFactsSnapshotPlugin({ cwd: options.cwd, ...(options.factsNow !== undefined ? { now: options.factsNow } : {}), ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}) }),
   ];
   return await createAgentWorld({ plugins });
   } catch (error) {

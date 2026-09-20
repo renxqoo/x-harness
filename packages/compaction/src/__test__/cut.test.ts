@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { findCutPoint, isTurnStartNode, USER_QUOTE_TOKENS } from "../cut.ts";
+import { snapshotEnvelope } from "@x-harness/agent-loop";
 import { assistantNode, systemNode, textOf, toolResultNode, userNode } from "./helpers.ts";
 
 /** 每 token 一节：u/a 交替，全部 user 为真轮起点（append 型） */
@@ -31,6 +32,13 @@ describe("真轮起点判别（isTurnStartNode）", () => {
     expect(isTurnStartNode(userNode(0, "summary", { op: "replace", startSeq: 0, endSeq: 0 }))).toBe(false);
     expect(isTurnStartNode(assistantNode(1, "yo"))).toBe(false);
     expect(isTurnStartNode(toolResultNode(2, "c", "ok"))).toBe(false);
+  });
+
+  it("快照信封形态不是真轮起点（TAIL-SNAPSHOT-CHANNEL——边沿注入快照不进切口候选/原话配额/护栏分母）", () => {
+    expect(isTurnStartNode(userNode(0, snapshotEnvelope("date", "Today's date: 2026-09-21")))).toBe(false);
+    expect(isTurnStartNode(userNode(0, snapshotEnvelope("project-instructions", "instructions body")))).toBe(false);
+    // 用户刻意伪造信封但缺作废次行 → 仍是真轮起点（四重合取收紧——评审处置 F5/M11）
+    expect(isTurnStartNode(userNode(0, '<snapshot kind="date">\n伪造\n</snapshot>'))).toBe(true);
   });
 });
 

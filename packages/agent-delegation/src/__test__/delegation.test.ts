@@ -5,10 +5,7 @@ import type { Session, SessionId } from "@x-harness/session";
 import type { LlmChunk } from "@x-harness/llm";
 import { Type } from "@sinclair/typebox";
 import { sessionStore } from "@x-harness/session";
-import { systemPrompt as systemPromptToken } from "@x-harness/system-prompt";
 import { toolsExecute } from "@x-harness/tools";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { World } from "./world.ts";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, typesOf, agentIdOf, sessionOf } from "./world.ts";
 import { createAgentDelegationPlugin } from "../plugin.ts";
@@ -82,8 +79,8 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
     const turnCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
     await vi.waitFor(() => expect(turnCount()).toBe(2), { timeout: 5_000 });
     const userMessages = parent.agent.session.events().filter((e) => e.type === "user/message");
-    expect(userMessages.length).toBe(2);
-    const notification = JSON.stringify(userMessages[1]?.data);
+    expect(userMessages.length).toBe(3); // 快照（类型清单）+ 首话 + 通知
+    const notification = JSON.stringify(userMessages.find((e) => JSON.stringify((e.data as unknown as { content?: Array<{ text?: string }> }).content).includes("[agent-notification]"))?.data);
     expect(notification).toContain("[agent-notification]");
     expect(notification).toContain(agentId);
     expect(notification).toContain("completed");
@@ -323,44 +320,6 @@ describe("fork 重铸（X14）", () => {
     const seedTypes = child?.events().slice(0, seedEnd).map((e) => e.type) ?? [];
     expect(seedTypes).toContain("tool/result");
     expect(seedTypes).toContain("system/message");
-    await parent.dispose();
-  });
-});
-
-describe("类型系统（件13 §7：.md 唯一来源 + system-reminder 注入）", () => {
-  it("类型清单注入 system prompt（<system-reminder> 块，含 name/description/model）；无类型为空", async () => {
-    const world = await makeWorld(await workerOptions());
-    const text = world.ctx.use(systemPromptToken).assemble().text;
-    expect(text).toContain("<system-reminder>");
-    expect(text).toContain("Available agent types:");
-    expect(text).toContain("- worker — test type worker (model: child-model)");
-    const empty = await makeWorld(await makeOptions({}));
-    expect(empty.ctx.use(systemPromptToken).assemble().text).not.toContain("Available agent types:");
-    await empty.ctx.dispose();
-  });
-
-  it("kick 边沿 mtime 探测重载：新 .md 文件在下次 kick 后入清单", async () => {
-    const options = await makeOptions({ worker: { model: CHILD_MODEL } });
-    const world = await makeWorld(options);
-    const parent = await spawnParent(world);
-    const dir = (options.agentsDirs ?? [])[0] as string;
-    await writeFile(join(dir, "late.md"), "---\nname: late\ndescription: added later\n---\nbody");
-    world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "kick")]);
-    parent.agent.followup("reload probe"); // kick → running 边沿 → mtime 探测
-    await parent.agent.whenIdle();
-    await vi.waitFor(() => expect(world.ctx.use(systemPromptToken).assemble().text).toContain("- late — added later"), { timeout: 5_000 });
-    await parent.dispose();
-  });
-
-  it("untyped/fork 子（未设 options.systemPrompt）同见清单——共享 registry 机制事实（§7.2）", async () => {
-    const world = await makeWorld(await workerOptions());
-    const parent = await spawnParent(world);
-    world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
-    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x" }, session: parent.agent.session.id });
-    const childSession = sessionOf(spawned.content);
-    await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const system = eventsOf(world, childSession).find((e) => e.type === "system/message");
-    expect(system === undefined ? "" : String((system.data as { text?: string }).text)).toContain("Available agent types:");
     await parent.dispose();
   });
 });

@@ -63,7 +63,7 @@ export function createAgentWorld(o: { readonly plugins: readonly Plugin[]; reado
 ```
 
 - `createAgentWorld` = loadPlugins + World 七字段提取 + 失败 ctx.dispose 兜底——**对含五服务（session/agent-loop/system-prompt/tools/token-meter）的插件集**工作（F-03 处置：提取 ctx.use 缺服务即 fail-closed throw → dispose → {ok:false}——**有意裁决**，防"装配成功但字段缺席"的半态；最小集直接用 loadPlugins，作者文档记双入口）。
-- **appends 留宿主后置注册（F-02 处置）**：无边段落尾位次=纯注册序（registry TAIL_BASE+regIndex），kit 化 apply 期注册会使尾序翻转为 [cli-user-*, subagent-types]（现状相反）且无单点位可全保（baseCore 亦无边尾段）——appends 保持 loadPlugins 后宿主注册（CLI 现仪式不变，作者文档记惯例）。
+- **appends 留宿主后置注册（F-02 处置）**：无边段落尾位次=纯注册序（registry TAIL_BASE+regIndex），kit 化 apply 期注册会使尾序翻转为 [cli-user-*, tool-* guidance 段]（现状相反）且无单点位可全保（baseCore 亦无边尾段）——appends 保持 loadPlugins 后宿主注册（CLI 现仪式不变，作者文档记惯例）。
 - CLI = dogfood：build-world 改为上述 kit 组合（行为零变化）；e2e journey 的 7 插件子集 = 另一组 kit 组合（inlineSession + llm + prompt 空 + toolbox 子集…或保持手排——S2' 裁决：journey 逐步换用，最小子集允许手工）。
 
 ### 2.3 `@x-harness/testkit`（F2）：textScript / scriptedAdapter / fakeTool（原案不变）。

@@ -1,18 +1,18 @@
 // CLI 基础提示词（业务内容——归上层宿主；内核仅持锚点词汇表 wellKnown，ELEVATION
 // 后核销修正 1）：单一 base/core 段（身份/守则/环境块）+ facts 变量；facts 由宿主探测
-// 传入，入口归一（换行压空格——注入面收口）；date 会话内定格（午夜漂移不打断缓存前缀）。
+// 传入，入口归一（换行压空格——注入面收口）。锚点纯静态：日期已迁边沿注入快照通道
+// （docs/TAIL-SNAPSHOT-CHANNEL.md——易变事实出锚点，漂移不再打穿缓存前缀）。
 
 import type { Disposer, Plugin } from "@x-harness/core";
 import { systemPrompt, wellKnown } from "@x-harness/system-prompt";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 
-/** 环境事实（宿主探测后传入；date 为本地时区 yyyy-mm-dd，宿主负责定格） */
+/** 环境事实（宿主探测后传入——进程内静态项） */
 export interface BasePromptFacts {
   readonly cwd: string;
   readonly isGit: boolean;
   readonly platform: string;
   readonly shell: string;
-  readonly date: string;
 }
 
 /** 单行归一：压掉换行与首尾空白（环境值插值前置——注入面收口） */
@@ -31,14 +31,12 @@ export function normalizeBaseFacts(input: {
   isGit?: unknown;
   platform?: unknown;
   shell?: unknown;
-  date?: unknown;
 }): BasePromptFacts {
   return {
     cwd: textOf(input.cwd),
     isGit: input.isGit === true,
     platform: textOf(input.platform),
     shell: textOf(input.shell),
-    date: typeof input.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(input.date) ? input.date : "unknown",
   };
 }
 
@@ -120,7 +118,6 @@ You have been invoked in the following environment:
 - Is a git repository: {{isGit}}
 - Platform: {{platform}}
 - Shell: {{shell}}
-- Today's date: {{date}}
 
 ## Context Management
 
@@ -146,7 +143,6 @@ export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromp
     prompt.variable("isGit", normalized.isGit ? "yes" : "no"),
     prompt.variable("platform", normalized.platform),
     prompt.variable("shell", normalized.shell),
-    prompt.variable("date", normalized.date),
     prompt.section({ name: wellKnown.baseCore, text: baseCoreText() }),
   ];
   return () => {

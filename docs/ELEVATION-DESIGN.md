@@ -95,7 +95,7 @@ export interface ToolRegistry {
 
 **明确不处理**（每项写清归属）：
 - ~~dispatch 期 restriction 执行门禁~~ → **反转：本轮处理**（§2.2，复用既有 allowedTools 面）；
-- variable 的 scope 分层 → 无按会话分变量需求；世界级变量（如 `agentTypes` 全量清单）与未来 scoped section 的插值错配记**重启条件**（首个 typed-persona 走 scoped section 时一并裁决）；
+- variable 的 scope 分层 → 无按会话分变量需求；世界级变量（如 `cwd` 环境事实）与未来 scoped section 的插值错配记**重启条件**（首个 typed-persona 走 scoped section 时一并裁决；历史例 `agentTypes` 已随类型清单迁边沿注入快照移除——docs/TAIL-SNAPSHOT-CHANNEL.md）；
 - tools 会话层 `register`（同名覆盖= schema/execute 错配脚枪）→ 挂账：出现会话层工具定义需求时与 dispatch 按层解析一起做；
 - prompt 段随 restriction 过滤（收窄子代理不显示 `tool/<受限名>` 段）→ 需 prompt 感知 tools 投影（L3 邻域），记重启条件；
 - **restriction 生命周期 = 每进程生命期一次注册**（create/resume/revive 皆可注册或重放；进程内中途变更不做；跨重启不持久——无 flag resume = 显式全集，与现状等价[现状即放开，resolve-agent-options.test.ts:47-50 钉死]）；

@@ -1,7 +1,10 @@
 // .md 类型加载器（docs/AGENT-DELEGATION.md §7.1）：扁平 frontmatter、保留名拒、
 // 垃圾输入降级（拒注册该文件 + 告警，不 throw 不崩）；目录优先级降序同名前者胜。
+// 同步 fs（docs/TAIL-SNAPSHOT-CHANNEL.md 评审处置 H2）：kick 边沿快照注入的同步
+// 红线要求探测+装载+渲染全同步——类型变更当轮 kick 可见，不留一 kick 滞后；
+// agents 目录几十个小文件的同步扫描与指令 readFileSync 同成本类（本地盘假设）。
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseFlat, splitFrontmatter } from "@x-harness/md-frontmatter";
@@ -22,38 +25,43 @@ export function resolveAgentDirs(configured?: readonly string[]): readonly strin
 }
 
 /** 目录指纹（mtime 探测——kick 边沿重载的变更判据） */
-export async function typesFingerprint(dirs: readonly string[]): Promise<string> {
+export function typesFingerprint(dirs: readonly string[]): string {
   const marks: string[] = [];
   for (const dir of dirs) {
     let entries;
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       continue;
     }
     for (const entry of entries.filter((e) => e.isFile() && e.name.endsWith(".md")).map((e) => e.name).sort()) {
-      const info = await stat(join(dir, entry)).catch(() => undefined);
-      marks.push(`${dir}/${entry}:${info === undefined ? "-" : String(info.mtimeMs)}`);
+      let mtime = "-";
+      try {
+        mtime = String(statSync(join(dir, entry)).mtimeMs);
+      } catch {
+        /* stat 失败记 '-'：指纹仍区分在场/缺席 */
+      }
+      marks.push(`${dir}/${entry}:${mtime}`);
     }
   }
   return marks.join("|");
 }
 
-export async function loadAgentTypes(dirs: readonly string[]): Promise<TypeLoadResult> {
+export function loadAgentTypes(dirs: readonly string[]): TypeLoadResult {
   const types: Record<string, LoadedAgentType> = {};
   const warnings: string[] = [];
   // 低优先目录先铺、高优先目录后写覆盖（同名后者胜——方案 §7.1 优先级降序前者胜）
   for (const dir of [...dirs].reverse()) {
     let entries;
     try {
-      entries = await readdir(dir, { withFileTypes: true });
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
       continue; // 目录缺席合法（未配置任何类型）
     }
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
       const stem = entry.name.slice(0, -".md".length);
-      const loaded = await parseFile(join(dir, entry.name), stem);
+      const loaded = parseFile(join(dir, entry.name), stem);
       if (typeof loaded === "string") {
         warnings.push(loaded);
         continue;
@@ -66,10 +74,10 @@ export async function loadAgentTypes(dirs: readonly string[]): Promise<TypeLoadR
 
 type ParseOutcome = LoadedAgentType | string; // string = 拒注册告警
 
-async function parseFile(path: string, stem: string): Promise<ParseOutcome> {
+function parseFile(path: string, stem: string): ParseOutcome {
   let text: string;
   try {
-    text = await readFile(path, "utf8");
+    text = readFileSync(path, "utf8");
   } catch (error) {
     return `agents: unreadable ${path} (${(error as { code?: string }).code ?? "io"})`;
   }

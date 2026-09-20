@@ -1,6 +1,6 @@
 // 追加段链 + 环境事实探测（docs/CLI.md §2.5）：基础段归 @x-harness/system-prompt
 // （包内 base-plugin.test 覆盖）；本层只测 appends 链（落尾语义/注销回收/与工具段共序）
-// 与 promptFactsOf（isGit 祖先上寻/shell 归一/date 本地格式）。
+// 与 promptFactsOf（isGit 祖先上寻/shell 归一——date 已迁快照通道）。
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +18,7 @@ import { bashGuidance } from "@x-harness/tool-bash";
 import { PathGate, createToolPlugin } from "@x-harness/tool-core";
 import { promptFactsOf, registerAppendSections } from "../cli-prompt-sections.ts";
 
-const FACTS: BasePromptFacts = { cwd: "/tmp/proj", isGit: false, platform: "darwin", shell: "zsh", date: "2026-09-20" };
+const FACTS: BasePromptFacts = { cwd: "/tmp/proj", isGit: false, platform: "darwin", shell: "zsh" };
 
 async function makePrompt(): Promise<SystemPromptService> {
   const ctx = createContext();
@@ -60,7 +60,7 @@ describe("registerAppendSections", () => {
 });
 
 describe("promptFactsOf（宿主探测）", () => {
-  it("isGit 祖先上寻（worktree file 形态算）；shell 换行归一；date 本地 yyyy-mm-dd", () => {
+  it("isGit 祖先上寻（worktree file 形态算）；shell 换行归一；date 已迁快照通道不在 facts", () => {
     const root = mkdtempSync(join(tmpdir(), "xh-facts-"));
     try {
       expect(promptFactsOf({ cwd: root, platform: "darwin", env: {} }).isGit).toBe(false);
@@ -69,7 +69,7 @@ describe("promptFactsOf（宿主探测）", () => {
       const facts = promptFactsOf({ cwd: join(root, "sub"), platform: "darwin", env: { SHELL: "/bin/zsh\n" } });
       expect(facts.isGit).toBe(true); // 自 sub 上寻命中
       expect(facts.shell).toBe("/bin/zsh"); // 换行被入口归一压掉
-      expect(facts.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect("date" in facts).toBe(false); // 日期已迁快照通道（TAIL-SNAPSHOT-CHANNEL）
       expect(facts.cwd).toBe(join(root, "sub"));
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -85,7 +85,7 @@ describe("promptFactsOf（宿主探测）", () => {
 describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验收工件）", () => {
   it("生产序世界：base 全段在序 + facts 插值 + local env bash 零段 + 追加段落尾（组合回归锚）", async () => {
     const ctx = createContext();
-    const facts: BasePromptFacts = { cwd: "/w/proj", isGit: true, platform: "darwin", shell: "zsh", date: "2026-09-20" };
+    const facts: BasePromptFacts = { cwd: "/w/proj", isGit: true, platform: "darwin", shell: "zsh" };
     const root = mkdtempSync(join(tmpdir(), "xh-cli-prompt-"));
     try {
       const unload = await loadPlugins(ctx, [

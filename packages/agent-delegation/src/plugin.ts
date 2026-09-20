@@ -1,11 +1,11 @@
-// agent-delegation 插件装配（docs/AGENT-DELEGATION.md §3/§7）：类型 .md 加载 + system-prompt
-// 注入（kick 边沿 mtime 探测重载）+ 血缘/通知/动词接线；dispose 级联（tearing-down 门先行）。
+// agent-delegation 插件装配（docs/AGENT-DELEGATION.md §3/§7 + docs/TAIL-SNAPSHOT-CHANNEL.md）：
+// 类型 .md 同步加载 + 类型清单快照注入（running 边沿 mtime 探测重载——变更当轮 kick
+// 可见）+ 血缘/通知/动词接线；dispose 级联（tearing-down 门先行）。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
-import { agentLoopServiceToken, agentStatus } from "@x-harness/agent-loop";
+import { agentLoopServiceToken, agentStatus, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
 import { sessionStore } from "@x-harness/session";
 import { toolRegistry } from "@x-harness/tools";
-import { systemPrompt } from "@x-harness/system-prompt";
 import { mailboxService } from "@x-harness/session-mailbox";
 import { permissionGrants } from "@x-harness/permission";
 import { sessionArchive } from "@x-harness/session";
@@ -52,7 +52,7 @@ export function validateOptions(options: DelegationOptions): { maxDepth: number;
   return { maxDepth, maxConcurrent, reportCap, maxResident };
 }
 
-/** 类型清单注入块（<system-reminder> 语义——无类型时为空串不占位） */
+/** 类型清单快照体（<system-reminder> 语义——无类型时为空串不占位；信封由快照原语铸造） */
 export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>>): string {
   const names = Object.keys(types).sort();
   if (names.length === 0) return "";
@@ -68,29 +68,25 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
   const dirs = resolveAgentDirs(options.agentsDirs);
   return {
     name: "agent-delegation",
-    inject: ["session", "tools", "agent-loop", "system-prompt", "task-tools"],
+    inject: ["session", "tools", "agent-loop", "task-tools"],
     // S0 软依赖（F-01）：grants setRootOverride / archive 复活 / mailbox 在场假阴性——在场则排后
     softInject: ["permission", "session-persistence-jsonl", ...(options.mailbox !== undefined ? ["session-mailbox"] : [])],
     apply: async (ctx: Context): Promise<Disposer> => {
       const loop = ctx.use(agentLoopServiceToken);
       const store = ctx.use(sessionStore);
       const registry = ctx.use(toolRegistry);
-      const prompt = ctx.use(systemPrompt);
 
       let current: Readonly<Record<string, LoadedAgentType>> = {};
       let fingerprint = "";
-      const refreshTypes = async (): Promise<void> => {
-        const next = await typesFingerprint(dirs);
+      const refreshTypes = (): void => {
+        const next = typesFingerprint(dirs);
         if (next === fingerprint) return;
         fingerprint = next;
-        const loaded = await loadAgentTypes(dirs);
+        const loaded = loadAgentTypes(dirs);
         current = loaded.types;
         for (const warning of loaded.warnings) options.onWarn?.(warning);
       };
-      await refreshTypes(); // 装配期全量并等待——apply 完成即类型可用（loadPlugins 语义）
-
-      const offVariable = prompt.variable("agentTypes", () => renderTypesBlock(current));
-      const offSection = prompt.section({ name: "subagent-types", text: "{{agentTypes}}" });
+      refreshTypes(); // 装配期全量——apply 完成即类型可用（loadPlugins 语义）
 
       const lineage = createLineage();
       let tearingDown = false;
@@ -187,9 +183,6 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
       const offStatus = ctx.on(agentStatus, (payload) => {
         notifier(payload);
         if (payload.status === "idle") evictIdle();
-        if (payload.status === "running") void refreshTypes().catch(() => {
-          /* 探测失败保持现状：下次 kick 再试 */
-        });
         if (consumer !== undefined && options.mailbox !== undefined && payload.session === options.mailbox.mainSession) {
           void consumer.mirrorStatus(payload.status).catch(() => {
             /* 镜像失败：心跳兜底 */
@@ -198,6 +191,21 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
             /* 结算尽力：下次 idle 再试前订阅已摘 */
           });
         }
+      });
+      // 类型清单快照：render 内同步探测（fingerprint 门控——未变更时仅一次 stat 扫描）
+      // + 渲染，变更当轮 kick 可见；空清单零注入
+      const offTypesSnapshot = createTailSnapshot({
+        ctx,
+        loop,
+        spec: {
+          id: "agent-types",
+          render: () => {
+            refreshTypes();
+            const body = renderTypesBlock(current);
+            return body === "" ? "" : snapshotEnvelope("agent-types", body);
+          },
+          ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
+        },
       });
       for (const register of pendingEffects) ctx.effect(register());
       // agent 源注册（件14）：硬依赖 task-tools（inject 声明——无 hub 装配即失败，output/stop
@@ -212,6 +220,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
       return () => {
         tearingDown = true; // 通知门先行：级联 cancel 的 abort 通知不得 steer 复活父
         offStatus();
+        offTypesSnapshot();
         for (const off of offs) off();
         const cascade = lineage.rows().map(async (row) => {
           const childHandle = loop.get(row.sessionId);
@@ -221,10 +230,8 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
           await childHandle.dispose();
           if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` }).catch(() => {});
         });
-        offSection();
-        offVariable();
         // 回卷序：drain/心跳/结算+关箱全经 effect（LIFO 得 §5.3 序：停 drain → 停心跳 → 关箱）；
-        // 此处只剩级联 cancel 与 prompt 摘除（tearing-down 门已先行）
+        // 此处只剩级联 cancel 与快照摘除（tearing-down 门已先行）
         return Promise.allSettled(cascade).then(() => {});
       };
     },

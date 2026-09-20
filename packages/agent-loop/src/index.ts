@@ -24,3 +24,5 @@ export { foldInbox } from "./inbox.ts";
 export { lastRequestContext } from "./request.ts";
 export type { InboxState } from "./inbox.ts";
 export { interruptedTurnClosers } from "./repair.ts";
+export { createTailSnapshot, isSnapshotNode, snapshotEnvelope, SNAPSHOT_SUPERSEDES } from "./snapshot.ts";
+export type { TailSnapshotSpec } from "./snapshot.ts";

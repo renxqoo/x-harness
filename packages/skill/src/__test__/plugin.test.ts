@@ -15,7 +15,6 @@ import type { Session, SessionId } from "@x-harness/session";
 import { createSkillPlugin } from "../plugin.ts";
 import { loadSkills } from "../loader.ts";
 import { renderSkillsBlock } from "../render.ts";
-import { blockPresent } from "../present.ts";
 
 let root: string;
 let skillsDir: string;
@@ -143,9 +142,9 @@ describe("createSkillPlugin 注入", () => {
       { surfaceOp: { op: "replace", startSeq: node.seq, endSeq: node.seq } },
     );
     expect(replaced.ok).toBe(true);
-    expect(blockPresent(world.session, expected)).toBe(false);
+    expect(textBlocksOf(world.session)).not.toContain(expected);
     running(world.ctx, world.session.id);
-    expect(blockPresent(world.session, expected)).toBe(true);
+    expect(textBlocksOf(world.session)).toContain(expected);
     expect(textBlocksOf(world.session)).toEqual(["summary", expected]);
   });
 
@@ -155,7 +154,7 @@ describe("createSkillPlugin 注入", () => {
     expect(disposed.ok).toBe(true);
     running(world.ctx, world.session.id);
     running(world.ctx, world.session.id);
-    const failed = world.warnings.filter((message) => message.includes("inject failed") && message.includes("session-disposed"));
+    const failed = world.warnings.filter((message) => message.includes("append failed") && message.includes("session-disposed"));
     expect(failed).toHaveLength(2); // 每次 running 存在性检查重试，失败即告警，不崩不累积异常
   });
 
@@ -177,7 +176,7 @@ describe("createSkillPlugin 注入", () => {
       { surfaceOp: { op: "replace", startSeq: tail.seq, endSeq: tail.seq } },
     );
     expect(replaced.ok).toBe(true);
-    expect(blockPresent(world.session, block)).toBe(true); // 头块在锚点前，折叠后在场
+    expect(textBlocksOf(world.session)).toContain(block); // 头块在锚点前，折叠后在场
     running(world.ctx, world.session.id);
     expect(textBlocksOf(world.session)).toEqual([block, "summary"]); // 幂等跳过——无第二块
   });

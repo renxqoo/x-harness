@@ -52,13 +52,12 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
 
 - **装载**：插件 apply 内 `await loadSkills(dirs)` 一次性扫描（loadPlugins 语义：
   apply 完成即快照可用）；此后进程内不再读盘、不刷新（快照进程常量）。
-- **注入（无状态幂等）**：快照非空时监听 `agentStatus`；每次 `running` 做**同步**
-  存在性检查——会话 surface 中不存在「首 text 块与当前渲染块逐字节相同」的
-  user/message 时，同步追加：
-  `session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: 块 }] }, { surfaceOp: "append" })`。
-  存在即跳过。**无插件状态**（无 Set/Map）：幂等性由存在性检查自身保证。
-  存在性检查按「扫描 content 中 `type === "text"` 的块」实现（content 可为空
-  数组、首块可为 tool_use——不假设 content[0]）。
+- **注入（无状态幂等）**：快照非空时经 `createTailSnapshot` 共用原语
+  （@x-harness/agent-loop，docs/TAIL-SNAPSHOT-CHANNEL.md）注册 running 边沿监听：
+  render（进程常量块）→ 在场判定（仅扫 append 型 user/message 单 text 块的全文
+  精确匹配——replace 型摘要节点不扫）→ 缺席同步追加
+  `session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: 块 }] }, { surfaceOp: "append" })`，
+  在场跳过。**无插件状态**（无 Set/Map）：幂等性由在场判定自身保证。
 - **同步红线**：监听器整体同步（emit 链同步分发，kick 头 running → 监听器 →
   append 全部发生于 `deriveMessages()` 求值之前）——引入任何 await 即失效，
   测试以「注入块事件 seq < 当轮 turn/start seq」锁死。

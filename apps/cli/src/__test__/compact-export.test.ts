@@ -104,8 +104,8 @@ describe("compactSession", () => {
     expect(outcome).toMatchObject({ kind: "folded" });
     const surface = handle.agent.session.surface();
     expect(surface.length).toBeLessThan(before);
-    const anchor = surface[0];
-    expect(anchor?.event.type).toBe("system/message"); // 锚点保留
+    const anchor = surface.find((node) => (node.event.data as { text?: unknown }).text !== undefined);
+    expect(anchor?.event.type).toBe("system/message"); // 锚点保留（anchorIndexOf 谓词定位——预锚快照可占 surface[0]）
     const last = surface[surface.length - 1];
     expect(last?.event.type).toBe("user/message");
     expect(JSON.stringify(last?.event.data)).toContain("SUMMARY-TEXT");

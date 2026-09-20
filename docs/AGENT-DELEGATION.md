@@ -85,7 +85,7 @@ task-tools 包内（跨源口径非逐字面，锚词对账见 docs/TASKS.md §5
    （复活锚：名字/类型/深度冗余落盘，免链回溯）
 1b. session-persistence-jsonl：SessionArchive 增 `listHeaders()`（只读 header.json 的
    轻量投影——复活扫描与 discover 不读全卷）
-2. agent-loop：无新动词（block 等待用现有 whenIdle；类型清单走 system-prompt）
+2. agent-loop：无新动词（block 等待用现有 whenIdle；类型清单走边沿注入快照）
 3. permission：GrantsRegistry 增 `setRootOverride(session, dir)` / `rootOverrideOf(session)`；
    `addExtraRoot` 增守卫——带 override 的会话拒绝原根子树路径入 extraRoots（防权限批准
    打穿隔离）
@@ -94,7 +94,7 @@ task-tools 包内（跨源口径非逐字面，锚词对账见 docs/TASKS.md §5
    （macOS /var→/private/var，对齐 extraRoots 做法）、admitSession 会话面统一入口
    （守卫根子树的 extraRoots 批准过滤）；**bash 无路径参数——缺省 cwd =
    rootOverrideOf(session) ?? gate.root**（cwd 即会话根）；四工具透传
-5. system-prompt：delegation 注册 `<subagent-types>` section（§7.2）
+5. ~~system-prompt 依赖~~：类型清单已迁边沿注入快照（§7.2，docs/TAIL-SNAPSHOT-CHANNEL.md）——delegation 不再注入 system-prompt
 6. sandbox-local：fence 增会话级 rootOverride——writable 集合以 override 替换 base.root、
    protectedPaths 按 override 根重算（worktree 的 bash 命令体写面执法，§8.2）
 ```
@@ -282,17 +282,19 @@ tools: read, grep, bash    # 可选白名单（逗号分隔；缺省=全集；�
 frontmatter = 自写扁平 `key: value` 解析器（无嵌套、无新依赖）；垃圾输入（缺必填键/保留名
 冲突/值类型不符）→ 该文件拒注册 + 装配日志一条（中性英文），不 throw 不崩。加载时机：
 插件 apply 全量 + **agentStatus running 边沿探测**（每 kick 一次；现状无 turn 前钩子，
-粒度损失=类型变更在下一 kick 生效，落档 §13）——变更 → 重载 → system-prompt 变量自动
-刷新（§7.2）。保留类型 `fork` 内建；`main` 是地址非类型，文件名占用即拒。
+同步装载（types-loader 同步 fs）——变更 → 重载 → 快照 render 当轮拾取（§7.2）。
+保留类型 `fork` 内建；`main` 是地址非类型，文件名占用即拒。
 
-### 7.2 类型清单注入通道（system-reminder 语义）
+### 7.2 类型清单注入通道（边沿注入快照——docs/TAIL-SNAPSHOT-CHANNEL.md）
 
-delegation 向 system-prompt 注册 section：文本 = `<system-reminder>\nAvailable agent
-types:\n- name — description (model)\n…\n</system-reminder>`，经惰性变量每次 assemble
-重算。消费机制（零新接缝）：**未显式设 `AgentOptions.systemPrompt` 的会话**每步走
-`assemble()`（anchorSystem 漂移 replace 自动反映变更）。机制事实（如实）：untyped 子、
-fork 子、空正文类型子、复活子也会看到清单（共享 registry 的自然结果）；仅显式设了类型
-正文的 .md 子不注入。此为本仓机制选择，非规格要求（规格对子代理是否看清单无规定）。
+delegation 经 `createTailSnapshot` 共用原语在 running 边沿幂等注入 user/message 快照：
+`<snapshot kind="agent-types">` 信封 + 作废声明 + `<system-reminder>\nAvailable agent
+types:\n- name — description (model)\n…\n</system-reminder>` 体。render 内同步探测
+（types-loader 同步 fs，fingerprint 门控）+ 渲染——类型变更**当轮 kick 可见**；内容维
+幂等（同文不重复注入，变更后尾部新条、旧条靠作废声明收敛）。机制事实（如实）：一切
+经 loop kick 的会话（含 untyped 子、fork 子、空正文类型子、复活子）都会看到清单——
+全局边沿的自然结果；无类型零注入。此为本仓机制选择，非规格要求。锚点不再含类型清单
+（易变事实出锚点——漂移不打穿缓存前缀）。
 
 ### 7.3 model 覆盖序（规格优先级；无 default subagent model 配置层，落档 §13）
 
@@ -455,7 +457,7 @@ F. archive 惰性复活 + 驻留档化 + e2e 三旅程 + 全量四门。
 | pid 复用 30s 宽限窗 / NTP 墙钟回拨 | 本机单用户信任域，风险接受 | 挂账 |
 | 档案级锁（跨进程双开 resume 的机械拦截） | 依赖宿主部署纪律（box 唯一+会话归父进程） | 挂账 |
 | 未装配 sandbox-local 时 bash 命令体不在隔离执法面 | fence 是内核层唯一执法点 | 部署纪律 + description 规范层 |
-| 类型变更 kick 边沿粒度（无 turn 前钩子） | 现状无挂接点，粒度损失接受 | agent-loop 后续件 |
+| ~~类型变更 kick 边沿粒度~~ | 已根治（types-loader 同步 fs + 快照 render 当轮拾取，docs/TAIL-SNAPSHOT-CHANNEL.md） | 本件内核销 |
 | fork 复制剔除开放轮（末 turn/end 切口） | X14 工程裁决（在飞轮不可安全复制） | 本件内裁定 |
 | 通知合并 digest / 信封闭合标签中和 | 沿旧落档（X3/X18） | 挂账 |
 | message 300 上限的「文件中转」专建通道 | 复用现有 write/read | 不建 |
