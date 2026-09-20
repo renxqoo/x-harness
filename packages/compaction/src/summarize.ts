@@ -57,10 +57,22 @@ interface Consumed {
   readonly aborted: boolean;
 }
 
+/** 空闲赛跑入参 */
+interface RaceIdleFields<T> {
+  readonly promise: Promise<T>;
+  readonly ms: number;
+  readonly onTimeout: () => void;
+  /** 操作者/水位取消信号——纳入赛跑：适配器不感知 signal 时,取消不必等
+   *  idleTimeoutMs 看门狗才收殓(REPL Ctrl+C 后最长 120s 假死的窗口)。生产恒在场 */
+  readonly signal: AbortSignal;
+}
+
 /** 空闲赛跑：ms ≤ 0 直通；超时触发 onTimeout 后以 AbortError 拒绝（按取消路径收） */
-async function raceIdle<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
+async function raceIdle<T>(fields: RaceIdleFields<T>): Promise<T> {
+  const { promise, ms, onTimeout, signal } = fields;
   if (ms <= 0) return promise;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let offAbort: (() => void) | undefined;
   try {
     return await Promise.race([
       promise,
@@ -69,27 +81,40 @@ async function raceIdle<T>(promise: Promise<T>, ms: number, onTimeout: () => voi
           onTimeout();
           reject(new DOMException("summarize idle", "AbortError"));
         }, ms);
+        if (signal.aborted) {
+          reject(new DOMException("summarize aborted", "AbortError"));
+          return;
+        }
+        const onAbort = () => reject(new DOMException("summarize aborted", "AbortError"));
+        signal.addEventListener("abort", onAbort, { once: true });
+        offAbort = () => signal.removeEventListener("abort", onAbort);
       }),
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    offAbort?.();
   }
 }
 
 /** 消费摘要流至终态：操作者取消与看门狗 → aborted（挂死跳过本轮，不告警不悬挂；
  *  尽力收殓迭代器——不信任适配器必然感知 signal）；其余异常 → failed */
-async function consumeSummarizeStream(
-  iterator: AsyncIterator<LlmChunk>,
-  idleTimeoutMs: number,
-  onIdle: () => void,
-): Promise<Consumed> {
+/** 流消费入参 */
+interface ConsumeFields {
+  readonly iterator: AsyncIterator<LlmChunk>;
+  readonly idleTimeoutMs: number;
+  readonly onIdle: () => void;
+  readonly signal: AbortSignal;
+}
+
+async function consumeSummarizeStream(fields: ConsumeFields): Promise<Consumed> {
+  const { iterator, idleTimeoutMs, onIdle, signal } = fields;
   let text = "";
   let finish: LlmFinish | undefined;
   let aborted = false;
   for (;;) {
     let chunk: IteratorResult<LlmChunk>;
     try {
-      chunk = await raceIdle(iterator.next(), idleTimeoutMs, onIdle);
+      chunk = await raceIdle({ promise: iterator.next(), ms: idleTimeoutMs, onTimeout: onIdle, signal });
     } catch (error) {
       if (isAbortLike(error)) {
         aborted = true;
@@ -191,9 +216,14 @@ export async function runTextRequest(input: {
       maxTokens: input.face.maxOutputTokens,
       signal: linked.signal,
     });
-    const consumed = await consumeSummarizeStream(stream[Symbol.asyncIterator](), input.idleTimeoutMs, () => {
-      idle = true;
-      linked.abort();
+    const consumed = await consumeSummarizeStream({
+      iterator: stream[Symbol.asyncIterator](),
+      idleTimeoutMs: input.idleTimeoutMs,
+      onIdle: () => {
+        idle = true;
+        linked.abort();
+      },
+      signal: input.signal,
     });
     return outcomeOf(consumed, input.signal.aborted || idle);
   } finally {

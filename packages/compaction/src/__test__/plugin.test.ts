@@ -4,25 +4,16 @@
 // dispatch + sessionStore 形态）。
 
 import { describe, expect, it, vi } from "vitest";
-import { agentPreStep, agentRequestError } from "@x-harness/agent-loop";
+import { agentRequestError } from "@x-harness/agent-loop";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import { compactionLanded, compactionRunner } from "../tokens.ts";
 import { createCompactionPlugin } from "../plugin.ts";
 import { previousSummaryOf } from "../compact.ts";
 import type { CompactionSkipReason } from "../compact.ts";
-import { assistantNode, BASE_OPTIONS, emptyScript, makeWorld, promptOf, seedSystem, seedTurn, sid, slowScript, textOf, textScript, truncatedScript, userNode } from "./helpers.ts";
-
-async function dispatchPreStep(
-  world: Awaited<ReturnType<typeof makeWorld>>,
-  fields: { readonly session: ReturnType<typeof sid>; readonly turn?: number; readonly step?: number },
-) {
-  return world.ctx.dispatch(
-    agentPreStep,
-    { session: fields.session, turn: fields.turn ?? 9, step: fields.step ?? 0, messages: [], signal: new AbortController().signal } as never,
-    async () => ({ kind: "enter" }) as never,
-  );
-}
+import { assistantNode, BASE_OPTIONS, emptyScript, makeWorld, promptOf, seedSystem, seedTurn, sid, textOf, textScript, truncatedScript, userNode,
+  dispatchPreStep,
+} from "./helpers.ts";
 
 describe("配置值域 fail-fast（装配期 throw）", () => {
   it.each([
@@ -214,61 +205,6 @@ describe("manual runner（服务直调）", () => {
   });
 });
 
-describe("单飞行与生命周期", () => {
-  it("并发 compact join 在飞者共享同一结果（单落账、单拨号——参照系缺口修复回归）", async () => {
-    const world = await makeWorld();
-    try {
-      const made = await world.store.create({ id: sid("sf") });
-      if (!made.ok) throw new Error(made.reason);
-      seedTurn(made.value, { turn: 0, user: "s0", assistant: { text: "a0", usage: { input: 100, output: 5 } } });
-      seedTurn(made.value, { turn: 1, user: "s1", assistant: { text: "a1", usage: { input: 100, output: 5 } } });
-      world.llm.scripts.push(slowScript("slow", 30));
-      const runner = world.ctx.use(compactionRunner);
-      const first = runner.compact({ session: made.value.id });
-      const second = await runner.compact({ session: made.value.id });
-      expect(second.ok).toBe(true); // join：共享在飞结果而非拒绝
-      expect((await first).ok).toBe(true);
-      expect(world.llm.calls).toHaveLength(1); // 单拨号
-      expect(made.value.events().filter((e) => typeof e.surfaceOp === "object")).toHaveLength(1); // 单落账
-    } finally {
-      await world.ctx.dispose();
-    }
-  });
-
-  it("未知会话 → session-unknown；sessionDisposed 后同形", async () => {
-    const world = await makeWorld();
-    try {
-      const runner = world.ctx.use(compactionRunner);
-      expect(await runner.compact({ session: sid("ghost") })).toEqual({ ok: false, reason: "session-unknown" });
-      const made = await world.store.create({ id: sid("gone") });
-      if (!made.ok) throw new Error(made.reason);
-      world.store.dispose(made.value.id);
-      expect(await runner.compact({ session: made.value.id })).toEqual({ ok: false, reason: "session-unknown" });
-    } finally {
-      await world.ctx.dispose();
-    }
-  });
-
-  it("空会话 / 无可切 → no-cut-point；阈值成立未落账 → trigger-noop 一次性告警", async () => {
-    const world = await makeWorld();
-    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    try {
-      const made = await world.store.create({ id: sid("noop") });
-      if (!made.ok) throw new Error(made.reason);
-      const runner = world.ctx.use(compactionRunner);
-      expect(await runner.compact({ session: made.value.id })).toEqual({ ok: false, reason: "no-cut-point" });
-      // 单轮会话：唯一真轮起点必须保留 → 无进展
-      seedTurn(made.value, { turn: 0, user: "only", assistant: { text: "a", usage: { input: 950, output: 5 } } });
-      await dispatchPreStep(world, { session: made.value.id });
-      await dispatchPreStep(world, { session: made.value.id });
-      const warns = stderr.mock.calls.filter((line) => String(line[0]).includes("trigger-noop"));
-      expect(warns).toHaveLength(1);
-    } finally {
-      stderr.mockRestore();
-      await world.ctx.dispose();
-    }
-  });
-});
 
 describe("软失败矩阵（装配层——终态映射与告警面）", () => {
   async function seededFor(world: Awaited<ReturnType<typeof makeWorld>>, id: string) {

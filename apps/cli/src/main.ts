@@ -167,6 +167,10 @@ async function openWorld(input: {
     sessionRoot: args.sessionDir ?? defaultSessionRoot(io.env),
     // 本地遥测常开（OTel 落库 = harness home/telemetry.db；--no-session 时 inline 会话同样遥测）
     telemetryPath: join(harnessHome(io.env), "telemetry.db"),
+    // 上下文压缩常开（裁决 A 三面全开）：水位 + 413 紧急自愈 + /compact 统一走
+    // compactionRunner；摘要面 = 默认档装配期快照（/model 切换不改摘要拨号——装配期
+    // 事实先例同 maxOutputTokens）；缺省档窗缺席时水位分母用保守兜底窗
+    compaction: {},
     persist: !args.noSession,
     // --system-prompt 整体替换时不装基础段（装配方裁决；静态串优先是包契约）
     promptFacts: args.systemPrompt === undefined ? promptFactsOf(io) : undefined,

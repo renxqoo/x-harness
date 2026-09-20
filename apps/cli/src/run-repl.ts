@@ -11,7 +11,7 @@ import { formatSessionSummary, formatTurnLine } from "./format-usage.ts";
 import type { ProvidersConfig } from "./providers-file.ts";
 import { mainSessions } from "./resolve-session.ts";
 import { createReplTerminal } from "./repl-terminal.ts";
-import { compactSession } from "./compact-session.ts";
+import { compactionRunner } from "@x-harness/compaction";
 import { exportSession } from "./export-session.ts";
 import { createStreamRenderer } from "./render-stream.ts";
 import { runSlashCommand } from "./slash-commands.ts";
@@ -115,7 +115,7 @@ export async function runRepl(input: ReplInput): Promise<number> {
   let handle = input.handle;
   let dial = dialOf(handle.agent.options);
   let quitting = false;
-  const compactAbort = new AbortController();
+  let compactAbort = new AbortController();
   const terminal = createReplTerminal({ stdin: io.stdin, write: io.write });
   const renderer = createStreamRenderer({ write: io.write, isTTY: io.isTTY });
   let turnChain = Promise.resolve();
@@ -204,10 +204,18 @@ export async function runRepl(input: ReplInput): Promise<number> {
     listMainSessions: async () => (world.archive === undefined ? [] : mainSessions(await world.archive.listHeaders())),
     compact: async (instructions) => {
       if (handle.agent.status === "running") return "cannot compact while the agent is running";
-      const outcome = await compactSession({ ctx: world.ctx, session: handle.agent.session, dial, instructions, signal: compactAbort.signal });
-      if (outcome.kind === "noop") return "nothing to compact";
-      if (outcome.kind === "failed") return `compact failed: ${outcome.reason}`;
-      return `compacted [${String(outcome.fromSeq)}..${String(outcome.toSeq)}]`;
+      // 统一走 compactionRunner（docs/COMPACTION.md 手动面）：结构化 checkpoint 摘要 +
+      // 文件账本 + keepRecent 尾保留；dial 参数不入——摘要面是装配期快照（默认档）
+      // 入口条件重铸：Ctrl+C（idle 单击/quit）abort 的永远是「在飞压缩持有的」当前
+      // 控制器——在飞可取消；下一次 /compact 检测到已 abort 则重铸，不被毒化
+      if (compactAbort.signal.aborted) compactAbort = new AbortController();
+      const result = await world.ctx.use(compactionRunner).compact({
+        session: handle.agent.session.id,
+        ...(instructions !== undefined && instructions.trim() !== "" ? { customInstructions: instructions } : {}),
+        signal: compactAbort.signal,
+      });
+      if (!result.ok) return compactFailureText(result.reason);
+      return `compacted [${String(result.replacedNodes)} nodes · ~${String(result.summaryTokens)} tokens]`;
     },
     exportTo: async (path) => {
       const exported = await exportSession({ store: world.store, sessionRoot: input.sessionRoot, session: handle.agent.session, persist: input.persist, target: path });
@@ -316,4 +324,20 @@ export async function runRepl(input: ReplInput): Promise<number> {
   await turnChain.catch(() => {});
   await handle.dispose().catch(() => {});
   return code;
+}
+
+/** 压缩 skip 理由 → REPL 文案（docs/COMPACTION.md 跳过词表闭射） */
+function compactFailureText(reason: import("@x-harness/compaction").CompactionSkipReason): string {
+  switch (reason) {
+    case "no-cut-point":
+      return "nothing to compact";
+    case "summarizer-unconfigured":
+      return "compact failed: no summarizer model";
+    case "session-unknown":
+      return "compact failed: session closed";
+    case "aborted":
+      return "cancelled";
+    default:
+      return `compact failed: ${reason}`;
+  }
 }

@@ -135,12 +135,19 @@ x-harness [flags] [message...] [@file...]
   续写，header 不变；jsonl 续写校验对同 id 二次打开成立——dispose 先 flush）。**副作用
   落档**：dispose 广播 sessionDisposed → 本会话 extraRoot/域名授权 evict、后台任务两段杀、
   沙箱代理关闭。切换前提示一行。
-- **/compact 语义**：idle 时直调 `llmStream`（summary 指令 = 历史 surface 投影 + 用户
-  instructions），产出落**一条 user/message**，`surfaceOp:{op:"replace"}` 折叠**锚点之后到
-  尾部**的区间——**必须保留 surface 第一条 system/message 锚点**（agent-loop 每 turn 以
-  「surface 首个含 text 的节点」为系统提示词锚点，折叠它会在下一 turn 被锚点覆写机制摧毁）。
-  surface 为空或仅锚点 = no-op。带 AbortSignal（Ctrl+C 可取消）；落账失败捕获降级提示；
-  turn/step 取被折叠首节点的数值。
+- **/compact 语义**：统一走 compactionRunner（`@x-harness/compaction` 手动面）——结构化
+  checkpoint 摘要（Goal/Progress/Decisions/Next Steps 格式 + 文件账本 read/modified 清单）、
+  尾部 ~20k token 原文保留（keepRecentTokens）、无进展护栏（折叠区不含真轮起点时
+  no-cut-point = nothing to compact）。摘要面 = 默认档装配期快照：运行期 `/model` 切换
+  不改变摘要拨号（装配期事实先例同 maxOutputTokens）。装配即三面全开：水位自动压缩
+  （agentPreStep）+ 413 紧急自愈（agentRequestError）+ 手动 /compact。print 模式
+  （`-p` 单发）经同一 openWorld 装配，同样在水位与 413 自愈覆盖内。主窗链：
+  显式传参 > 默认档 providers.json 声明窗 > 保守兜底 128k（宁早压不撞 413；真实窗由
+  servedWindow——413 实测——收敛）。手动压缩的取消信号：Ctrl+C（idle 单击/quit）abort
+  在飞压缩持有的当前信号；下一次 /compact 检测到已 abort 则重铸，不被毒化。产出落**一条 user/message**
+  （`surfaceOp:{op:"replace"}`）——锚点保护在插件切口层（protectedHead = 锚点后起算，
+  与 agent-loop anchorSystem 共用谓词）。带 AbortSignal（REPL Ctrl+C 可取消）；摘要失败/
+  截断/空产出按 skip 词表映射 REPL 文案。
 - **/export 语义**：先 `store.flush(id)`（turn 收尾的 flush 为异步告警式，idle 后不承诺字节
   已 fsync——拷卷前必须显式屏障），再拷贝落盘卷；`--no-session` 会话从
   内存 `events()` 序列化。目标路径已存在 → 拒绝（exit 语义按 1，防误覆盖）。
@@ -278,9 +285,8 @@ build-initial-message.ts stdin + files + 首条 message 拼接（纯函数）
 render-stream.ts         流帧/工具事件 → 展示行（纯函数，sink 注入）
 format-usage.ts          token 数/用量行格式化（纯函数）
 run-print-mode.ts        -p 执行器（text/json 两形态；EPIPE 处置）
-run-repl.ts              REPL 循环（stdin 单所有权、Ctrl+C 状态机、退出清理）
+run-repl.ts              REPL 循环（stdin 单所有权、Ctrl+C 状态机、退出清理；/compact 经 compactionRunner + REPL 文案映射）
 slash-commands.ts        slash 命令表 + 分派执行
-compact-session.ts       /compact 实现（保锚点 surface replace；AbortSignal；失败降级）
 export-session.ts        /export 实现（flush 屏障 → 拷贝/内存序列化；已存在拒绝）
 ```
 
@@ -322,7 +328,7 @@ coverage include 扩 `apps/*/src/**`；不接受为凑数排除）。
 | A | monorepo 接线（workspaces/tsconfig/oxlint/vitest 扩 apps）+ apps/cli package.json + parse-cli-args + providers-file + resolve-model + harness-home + new-session-id + 单测 | 四门 |
 | B | session-persistence-jsonl 会话锁（+回归用例）+ build-world（全量装配 + adapter 直注册 + no-session 条件化）+ broker-terminal + cli-prompt-sections + 装配冒烟单测 | 四门 |
 | C | process-file-args + build-initial-message + render-stream + format-usage + run-print-mode（text/json）+ 单测 | 四门 |
-| D | resolve-session + pick-session + run-repl + slash-commands + compact-session + export-session + 单测 | 四门 |
+| D | resolve-session + pick-session + run-repl + slash-commands + export-session + 单测 | 四门 |
 | E | e2e cli-journey 进默认门 + 对抗审查（≥2 并行子 agent：契约对照面/生命周期与清理面/假绿面）+ 处置 + 收口 | check 全绿 |
 
 ## 6. 验收清单

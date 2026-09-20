@@ -69,9 +69,10 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   （位置无关，两协议工厂共用同一映射，连续 user 形态既有先例）；注入消息 data
   无 `text` 字段，不会被锚点搜索（首个含 text 节点）误判；`isCount` 门接受 0。
 - **压缩存活语义**（已推演）：
-  - REPL `/compact`（compact-session.ts）：替换区间 = 锚点之后到尾部。新会话
-    注入位于锚点前（surface[0]）→ 永久存活；resume 场景历史中旧块在锚点后
-    → 被折叠，下一次 `running` 存在性检查发现缺席 → 尾部补注入（自愈）。
+  - REPL `/compact`（compactionRunner 手动面，`@x-harness/compaction`）：切口
+    protectedHead 从锚点之后起算。新会话注入位于锚点前（surface[0]）→ 永久存活；
+    resume 场景历史中旧块在锚点后 → 被折叠，下一次 `running` 存在性检查发现缺席
+    → 尾部补注入（自愈）。
   - repair（repair.ts:61-75）：trailingClaims 以 user/message 推进 lastUserIndex
     并清积累；注入块先于一切 claim 落账 → 对 claim 恢复惰性。
 - **累积语义（如实）**：同进程快照常量 → 文本相等去重使同快照永不重复注入

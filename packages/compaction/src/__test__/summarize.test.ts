@@ -98,6 +98,36 @@ describe("终态矩阵", () => {
     expect(outcome).toEqual({ ok: false, reason: "aborted" });
   });
 
+
+  it("回归:看门狗在场时操作者取消即时生效——不必等 idleTimeoutMs(适配器不感知 signal 的挂起流)", async () => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 25); // 流已挂起后取消(早于 5s 看门狗)
+    const startedAt = Date.now();
+    const outcome = await run(hangScript("partial"), { idleTimeoutMs: 5_000, signal: controller.signal });
+    expect(outcome).toEqual({ ok: false, reason: "aborted" });
+    expect(Date.now() - startedAt).toBeLessThan(2_000); // 未等看门狗即收束
+  });
+
+  it("回归:预 aborted signal 同步拒绝——拨号前即返回 aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fake = fakeLlm();
+    fake.scripts.push(textScript("never-consumed"));
+    const outcome = await summarize({
+      llm: fake.runtime,
+      face: { model: "m", provider: "p", contextWindow: 100_000, maxOutputTokens: 100 },
+      reserveTokens: 10_000,
+      conversation: "c",
+      signal: controller.signal,
+      idleTimeoutMs: 60_000,
+    });
+    expect(outcome).toEqual({ ok: false, reason: "aborted" });
+  });
+  it("看门狗关闭(ms=0)时 signal 不入赛跑——直通完成(取消靠适配器与终态检查兜底)", async () => {
+    const outcome = await run(textScript("plain"), { idleTimeoutMs: 0 });
+    expect(outcome).toEqual({ ok: true, text: "plain" }); // run 包装不传 finish(文本面)
+  });
+
   it("拨号形状：system 提示词先行 + 单 user 提示 + 空 tools/maxTokens", async () => {
     const fake = fakeLlm();
     fake.scripts.push(textScript("ok"));

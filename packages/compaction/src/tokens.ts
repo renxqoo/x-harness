@@ -11,6 +11,8 @@ export interface CompactionRunner {
     readonly trigger?: CompactTrigger;
     readonly customInstructions?: string;
     readonly keepRecentTokens?: number;
+    /** 操作者取消信号（REPL Ctrl+C 等）——联动摘要拨号；水位/自愈路径走触发上下文 signal */
+    readonly signal?: AbortSignal;
   }): Promise<CompactionResult>;
   /** 水位触发权开关（autocompact 接管仲裁用；缺省开） */
   setAutoTriggerEnabled(enabled: boolean): void;

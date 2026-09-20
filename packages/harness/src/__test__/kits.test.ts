@@ -8,6 +8,9 @@ import { describe, expect, it, afterEach } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Plugin } from "@x-harness/core";
 import { createLocalEnv } from "@x-harness/exec-env";
+import { compactionRunner } from "@x-harness/compaction";
+import { sessionPlugin } from "@x-harness/session";
+import { compactionKit } from "../index.ts";
 import { PathGate } from "@x-harness/tool-core";
 import { textScript } from "@x-harness/testkit";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
@@ -169,5 +172,17 @@ describe("telemetryKit（本地遥测接入 F1 kit 目录）", () => {
     if (!world.ok) throw new Error(world.reason);
     expect(world.value.telemetry).toBeUndefined();
     await world.value.ctx.dispose();
+  });
+});
+
+describe("compactionKit（/compact 插件接入）", () => {
+  it("装配后 compactionRunner 可用;summarizer 缺席 = 软禁用手动面", async () => {
+    const ctx = createContext();
+    await loadPlugins(ctx, [sessionPlugin, ...compactionKit({ contextWindow: 200_000 })]);
+    const runner = ctx.use(compactionRunner);
+    expect(runner.summarizer).toBeUndefined(); // 未配 summarizer → 手动 compact 报 summarizer-unconfigured
+    const result = await runner.compact({ session: "ghost" as never });
+    expect(result).toEqual({ ok: false, reason: "session-unknown" });
+    await ctx.dispose();
   });
 });

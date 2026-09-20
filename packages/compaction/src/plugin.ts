@@ -10,6 +10,7 @@ import type { LlmRuntime } from "@x-harness/llm";
 import { sessionDisposed, sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { runCompact } from "./compact.ts";
+import type { Flight } from "./compact.ts";
 import type { CompactFields, CompactTrigger, CompactionResult, CompactionSkipReason, ResolvedConfig } from "./compact.ts";
 import { lastRoute, lastWindow, measureContext, pendingClaimTokens, shouldCompact } from "./occupancy.ts";
 import { compactionLanded, compactionRunner, compactionServedWindow, compactionDiagnostic} from "./tokens.ts";
@@ -136,7 +137,8 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         .catch(() => {});
 
       let autoEnabled = true;
-      const inflight = new Map<SessionId, Promise<CompactionResult>>();
+      const inflight = new Map<SessionId, Flight>();
+      const epochs = new Map<SessionId, number>();
       const healed = new Map<SessionId, string>();
       const warned = new Set<string>();
       const warnOnce = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
@@ -168,6 +170,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
           ctx.emit(compactionLanded, payload);
         },
         inflight,
+        epochs,
       };
 
       const compact = (
@@ -236,7 +239,11 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
             else warn(payload.session, "served-window-write-failed", { reason: appended.reason });
           }
         }
-        // 紧急压缩（keep=0/quote=0）；成败都重试恰一次——重试由驱动重读投影
+        // 紧急压缩（keep=0/quote=0）；成败都重试恰一次——重试由驱动重读投影。
+        // join 例外:先等在飞飞行落定再以紧急参数发起新飞行——否则汇入 auto/manual
+        // (keep=20k)的飞行拿不到激进参数,healed 键已耗而重试仍超窗,自愈被稀释
+        const inflightFor = inflight.get(payload.session);
+        if (inflightFor !== undefined) await inflightFor.promise.catch(() => {});
         await compact({
           session: payload.session,
           trigger: "emergency",
@@ -255,7 +262,9 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         ctx.on(agentPreStep, onPreStep as never),
         ctx.on(agentRequestError, onRequestError as never),
         ctx.on(sessionDisposed, ({ session }: { session: SessionId }) => {
-          // inflight 不在此摘：identity 删除（落定回调）自洽，且同 id 重生会话的新飞入不得被误摘
+          // inflight 不在此摘：identity 删除（落定回调）自洽，且同 id 重生会话的新飞入不得被误摘。
+          // 世代推进：同 id 重生后，新调用不 join 旧世代的在飞飞行（旧飞行对着已封存句柄）
+          epochs.set(session, (epochs.get(session) ?? 0) + 1);
           healed.delete(session);
           for (const key of warned) {
             if (key.startsWith(`${session}:`)) warned.delete(key);
@@ -274,6 +283,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
       return () => {
         for (const off of [...offs, offProvide]) off();
         inflight.clear();
+        epochs.clear();
         healed.clear();
         warned.clear();
       };

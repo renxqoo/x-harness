@@ -12,6 +12,8 @@ import type { AgentLoopService } from "@x-harness/agent-loop";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
+import { createCompactionPlugin } from "@x-harness/compaction";
+import type { CompactionOptions } from "@x-harness/compaction";
 import { createLlmRetryPlugin } from "@x-harness/llm-retry";
 import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
@@ -136,6 +138,12 @@ export const delegationKit = (): readonly Plugin[] => [createAgentDelegationPlug
 
 /** 请求前 WAL 屏障（独立 kit——与 delegation 零共享面） */
 export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];
+
+/** 上下文压缩（docs/COMPACTION.md）：水位触发 + 413 紧急自愈 + compactionRunner 手动面。
+ *  options 透传插件工厂（contextWindow 必填装配期事实；summarizer 缺席 = 手动/自动压缩
+ *  软禁用、413 自愈降级为 served-window 记录——插件契约）。摘要面是装配期快照：
+ *  运行期 /model 切换不改变摘要拨号（与 maxOutputTokens 同款装配期事实先例）。 */
+export const compactionKit = (options: CompactionOptions): readonly Plugin[] => [createCompactionPlugin(options)];
 
 /** 技能装载 */
 export const skillKit = (): readonly Plugin[] => [createSkillPlugin()];

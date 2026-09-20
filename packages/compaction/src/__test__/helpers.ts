@@ -5,6 +5,7 @@ import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmRuntime } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest, LlmRuntime } from "@x-harness/llm";
+import { agentPreStep } from "@x-harness/agent-loop";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { ContentBlock, Session, SessionEvent, SessionId, SessionStore, SurfaceNode, SurfaceOp } from "@x-harness/session";
 
@@ -181,3 +182,15 @@ export function logEvent(type: string, seq: number, data: unknown): SessionEvent
 export const sid = (v: string): SessionId => v as SessionId;
 
 export type { Context, Session, SessionStore };
+
+/** 水位触发面:直接 dispatch agentPreStep(绕过 agent-loop 整装) */
+export async function dispatchPreStep(
+  world: Awaited<ReturnType<typeof makeWorld>>,
+  fields: { readonly session: ReturnType<typeof sid>; readonly turn?: number; readonly step?: number },
+) {
+  return world.ctx.dispatch(
+    agentPreStep,
+    { session: fields.session, turn: fields.turn ?? 9, step: fields.step ?? 0, messages: [], signal: new AbortController().signal } as never,
+    async () => ({ kind: "enter" }) as never,
+  );
+}

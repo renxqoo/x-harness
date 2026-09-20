@@ -6,11 +6,13 @@
 
 import type { Plugin, Result } from "@x-harness/core";
 import type { ModeKnob } from "@x-harness/permission";
+import type { CompactionOptions } from "@x-harness/compaction";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { AnthropicCompatOptions, LlmAdapter, OpenaiCompatOptions } from "@x-harness/llm";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import {
   checkpointKit,
+  compactionKit,
   createAgentWorld,
   delegationKit,
   durableSessionKit,
@@ -40,6 +42,10 @@ export interface WorldOptions {
   readonly cwd: string;
   /** 遥测库路径（telemetryKit 路径形态——kit 开连接并收殓）；undefined = 不装遥测 */
   readonly telemetryPath?: string;
+  /** 压缩装配面（docs/COMPACTION.md）：水位/413 自愈/手动 /compact 三面全开。
+   *  contextWindow 缺席时取默认档 providers 档案声明窗，再缺席用保守兜底 128k
+   *  （宁早压不撞 413）；真实窗由 servedWindow（413 实测）逐步收敛。 */
+  readonly compaction?: { readonly contextWindow?: number };
   /** 会话存储根；persist=false 时仅占位不使用 */
   readonly sessionRoot: string;
   /** --no-session → false：略去 jsonl 持久化（无 sessionArchive） */
@@ -84,6 +90,25 @@ export function buildAdapters(config: ProvidersConfig, resolution: ModelResoluti
   return config.providers.map((profile) => adapterOf(profile, profile.name === override ? resolution.defaults.apiKey ?? profile.apiKey : profile.apiKey));
 }
 
+/** 压缩装配参数派生：摘要面 = 默认档（--provider/--model 显式 flag 合成后的 defaults）。
+ *  主窗链：显式传参 > 默认档 providers 档案声明窗 > 保守兜底 128k（宁早压不撞 413；
+ *  真实窗由 servedWindow——413 实测——逐步收敛）。 */
+export function compactionOptionsOf(options: Pick<WorldOptions, "config" | "resolution" | "compaction">): CompactionOptions {
+  const profile = options.config.providers.find((p) => p.name === options.resolution.defaults.provider);
+  return {
+    contextWindow: options.compaction?.contextWindow ?? profile?.contextWindow ?? FALLBACK_CONTEXT_WINDOW,
+    summarizer: {
+      model: options.resolution.defaults.model,
+      ...(options.resolution.defaults.provider !== undefined ? { provider: options.resolution.defaults.provider } : {}),
+      ...(profile?.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
+      ...(profile?.maxOutputTokens !== undefined ? { maxOutputTokens: profile.maxOutputTokens } : {}),
+    },
+  };
+}
+
+/** 缺省档窗缺席时的水位分母兜底（保守小窗——宁可早压不可撞 413；真实窗由 servedWindow 收敛） */
+const FALLBACK_CONTEXT_WINDOW = 128_000;
+
 export async function buildWorld(options: WorldOptions): Promise<Result<World>> {
   try {
   const adapters = options.adapters ?? buildAdapters(options.config, options.resolution); // 终审 F1-2：构造错误走 Result 面（不逃逸 throw）
@@ -94,6 +119,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...fenceKit({ root: options.cwd, ...(options.permission !== undefined ? { mode: options.permission } : {}) }),
     options.broker,
     ...meterKit(),
+    ...(options.compaction !== undefined ? compactionKit(compactionOptionsOf(options)) : []),
     ...(options.telemetryPath !== undefined
       ? telemetryKit({ db: options.telemetryPath, resource: { serviceName: "x-harness-cli" }, onIoError: options.onTelemetryError })
       : []),

@@ -103,6 +103,7 @@ async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean; permis
     persist,
     config: CONFIG.config,
     resolution: CONFIG.resolution,
+    compaction: { contextWindow: 200_000 }, // 生产同型装配(/compact 经 compactionRunner)
     ...(over.permission !== undefined ? { permission: over.permission } : {}),
     broker: createTerminalBrokerPlugin({ interactive: true, write: () => {}, question: () => Promise.resolve(undefined) }),
     adapters: [scriptAdapter(scripts)],
@@ -158,6 +159,17 @@ describe("runRepl（管道驱动）", () => {
     const text = fixture.output.join("");
     expect(text).toContain("x-harness v");
     expect(text).toContain("session repl-test");
+  });
+
+  it("/compact:经 compactionRunner——小会话 no-cut-point 显示 nothing to compact(生产参数路径)", async () => {
+    const fixture = await makeRepl([textScript("R1"), textScript("R2")]);
+    fixture.stdin.write("q1\n");
+    await fixture.waitFor("R1");
+    await fixture.waitFor("turn 1");
+    fixture.stdin.write("/compact\n");
+    await fixture.waitFor("nothing to compact"); // 缺省 keep=20k 下小会话无切口
+    fixture.stdin.write("/quit\n");
+    expect(await fixture.exitCode()).toBe(0);
   });
 
   it("slash：/session 显示 facts 与用量；未知命令提示", async () => {

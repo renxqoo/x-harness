@@ -76,7 +76,11 @@ export interface CompactDeps {
   readonly landed: (payload: LandedPayload) => void;
   /** per-session 单飞行账本（join 语义）：并发 compact 汇入在飞者共享同一结果——
    *  消灭参照系「并发 compact 双落账」缺口；identity 删除防同 id 重生会话误摘新主 */
-  readonly inflight: Map<SessionId, Promise<CompactionResult>>;
+  readonly inflight: Map<SessionId, Flight>;
+  /** 会话世代账本（store.get 句柄无世代面）：sessionDisposed 推进世代；join 前比对
+   *  当前世代——旧世代飞行不得被同 id 重生会话的新调用误 join（会拿到旧会话的
+   *  session-unknown 结果，对活会话误报失败） */
+  readonly epochs: Map<SessionId, number>;
 }
 
 /** 摘要终态 → 跳过理由词表（闭射——新终态必须显式入表） */
@@ -104,18 +108,32 @@ export function previousSummaryOf(nodes: readonly SurfaceNode[]): string | undef
   return undefined;
 }
 
-/** 单飞行（join 语义）：在飞者直接汇入（水位/自愈/手动并发共用）；落定后 identity
- *  删除（同 id 重生会话的在新飞入不会被旧 finally 误摘） */
+/** 在飞飞行（带创建时世代——join 前比对，旧世代不汇入） */
+export interface Flight {
+  readonly epoch: number;
+  readonly promise: Promise<CompactionResult>;
+}
+
+/** 单飞行（join 语义）：同世代在飞者直接汇入（水位/自愈/手动并发共用）；落定后 identity
+ *  删除（同 id 重生会话的新飞入不会被旧 finally 误摘）。旧世代飞行（会话已 dispose 且
+ *  同 id 重生）不汇入——它对着已封存句柄，其 session-unknown 结果对当前会话是误报 */
 export function runCompact(deps: CompactDeps, fields: CompactFields): Promise<CompactionResult> {
-  const existing = deps.inflight.get(fields.session);
-  if (existing !== undefined) return existing;
   const session = deps.store.get(fields.session);
   if (session === undefined) return Promise.resolve({ ok: false, reason: "session-unknown" });
-  const flight = compactSession(deps, fields, session.surface()).finally(() => {
-    if (deps.inflight.get(fields.session) === flight) deps.inflight.delete(fields.session);
+  const epoch = deps.epochs.get(fields.session) ?? 0;
+  const existing = deps.inflight.get(fields.session);
+  if (existing !== undefined && existing.epoch === epoch) return existing.promise;
+  const promise = compactSession(deps, fields, { epoch, nodes: session.surface() }).finally(() => {
+    const current = deps.inflight.get(fields.session);
+    if (current !== undefined && current.promise === promise) {
+      deps.inflight.delete(fields.session);
+      // 世代账本联动清理：飞行落定且被摘除时,store 中该 id 已无会话 → 无可 join 的
+      // 旧飞行,epochs 条目可安全删除（长寿命宿主 delegation 密集生灭防无界增长）
+      if (deps.store.get(fields.session) === undefined) deps.epochs.delete(fields.session);
+    }
   });
-  deps.inflight.set(fields.session, flight);
-  return flight;
+  deps.inflight.set(fields.session, { epoch, promise });
+  return promise;
 }
 
 /** 摘要区间载荷：区间节点 + 上一份摘要（跨函数传递的参数对象——缺抽象即封装） */
@@ -193,11 +211,16 @@ interface LandingCall {
   readonly start: number;
   readonly end: number;
   readonly summary: string;
+  /** 飞行创建时会话世代（世代门落账侧比对用） */
+  readonly epoch: number;
 }
 
 /** replace 位置区间落账 + 观测广播 */
 function landSummary(call: LandingCall): CompactionResult {
-  const { deps, fields, nodes, start, end, summary } = call;
+  const { deps, fields, nodes, start, end, summary, epoch } = call;
+  // 世代门（落账侧）：飞行创建后 会话 dispose / 同 id 重生 → 当前世代已推进，
+  // 本飞行对着的是旧投影，落账即跨代写——丢弃
+  if ((deps.epochs.get(fields.session) ?? 0) !== epoch) return { ok: false, reason: "session-unknown" };
   const session = deps.store.get(fields.session);
   if (session === undefined) return { ok: false, reason: "session-unknown" };
   const appended = session.append(
@@ -216,8 +239,9 @@ function landSummary(call: LandingCall): CompactionResult {
 async function compactSession(
   deps: CompactDeps,
   fields: CompactFields,
-  nodes: readonly SurfaceNode[],
+  leg: { readonly epoch: number; readonly nodes: readonly SurfaceNode[] },
 ): Promise<CompactionResult> {
+  const { epoch, nodes } = leg;
   const quote = fields.trigger === "emergency" ? 0 : USER_QUOTE_TOKENS;
   const keep = fields.keepRecentTokens ?? deps.config.keepRecentTokens;
   // 保留头 = 锚点（首个含 text 节点——session anchorIndexOf 共用谓词）及其之前：
@@ -255,5 +279,5 @@ async function compactSession(
   // 组装序：正文 → 文件账本标签 → 续航注入语（manual 不附加——人工压缩后自然对话）
   const tail = formatFileOperations(lists.readFiles, lists.modifiedFiles);
   const note = fields.trigger === "manual" ? "" : `\n\n${AUTO_CONTINUATION_NOTE}`;
-  return landSummary({ deps, fields, nodes, start, end, summary: `${outcome.text}${tail}${note}` });
+  return landSummary({ deps, fields, nodes, start, end, summary: `${outcome.text}${tail}${note}`, epoch });
 }

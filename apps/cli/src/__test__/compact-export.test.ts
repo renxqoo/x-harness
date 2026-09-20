@@ -8,9 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { LlmAdapter, LlmChunk, LlmRequest } from "@x-harness/llm";
-import { buildWorld } from "../build-world.ts";
+import { buildWorld, compactionOptionsOf } from "../build-world.ts";
 import type { World } from "../build-world.ts";
-import { compactSession } from "../compact-session.ts";
+import { compactionRunner } from "@x-harness/compaction";
 import { exportSession } from "../export-session.ts";
 import { parseProvidersConfig } from "../providers-file.ts";
 import { resolveModel } from "../resolve-model.ts";
@@ -64,6 +64,7 @@ async function makeFixture(scripts: LlmChunk[][], persist: boolean): Promise<Fix
   const built = await buildWorld({
     cwd: root,
     sessionRoot: join(root, "sessions"),
+    compaction: { contextWindow: 200_000 }, // 手动 /compact 走 compactionRunner（生产路径）
     persist,
     config: CONFIG.config,
     resolution: CONFIG.resolution,
@@ -94,31 +95,77 @@ async function runTurn(handle: Awaited<ReturnType<typeof makeAgent>>, prompt: st
   await handle.agent.whenIdle();
 }
 
-describe("compactSession", () => {
-  it("有历史：折叠锚点之后的全部 surface，摘要落 user/message；空会话 no-op", async () => {
-    const fixture = await makeFixture([textScript("answer-1"), textScript("SUMMARY-TEXT")], false);
+describe("compactionRunner 手动面（/compact 生产路径）", () => {
+  it("有历史：折叠锚点之后的区间 surface，摘要落 user/message（checkpoint 形态）；单轮 no-op", async () => {
+    const fixture = await makeFixture([textScript("answer-1"), textScript("answer-2"), textScript("SUMMARY-TEXT")], false);
     const handle = await makeAgent(fixture, "compact-a");
     await runTurn(handle, "question-1");
+    await runTurn(handle, "question-2");
     const before = handle.agent.session.surface().length;
-    const outcome = await compactSession({ ctx: fixture.world.ctx, session: handle.agent.session, dial: { provider: "glm", model: "m1" }, instructions: undefined, signal: new AbortController().signal });
-    expect(outcome).toMatchObject({ kind: "folded" });
+    const runner = fixture.world.ctx.use(compactionRunner);
+    const outcome = await runner.compact({ session: handle.agent.session.id, keepRecentTokens: 0, signal: new AbortController().signal });
+    expect(outcome).toMatchObject({ ok: true });
     const surface = handle.agent.session.surface();
     expect(surface.length).toBeLessThan(before);
     const anchor = surface.find((node) => (node.event.data as { text?: unknown }).text !== undefined);
     expect(anchor?.event.type).toBe("system/message"); // 锚点保留（anchorIndexOf 谓词定位——预锚快照可占 surface[0]）
-    const last = surface[surface.length - 1];
-    expect(last?.event.type).toBe("user/message");
-    expect(JSON.stringify(last?.event.data)).toContain("SUMMARY-TEXT");
+    const text = JSON.stringify(surface);
+    expect(text).toContain("SUMMARY-TEXT"); // 摘要落 surface（checkpoint user/message；尾轮原文按 keepRecent 保留）
     await handle.dispose();
   });
 
+
+
+  it("主窗链三档:显式传参 > providers 声明窗 > 保守兜底 128k——contextWindow 必须吃 providers.json 声明(修复:恒兜底忽略声明窗)", async () => {
+    const base: Parameters<typeof compactionOptionsOf>[0] = { config: CONFIG.config, resolution: CONFIG.resolution };
+    // 兜底档:档案无 contextWindow → 128_000
+    expect(compactionOptionsOf(base).contextWindow).toBe(128_000);
+    // 声明窗档:档案带 contextWindow → 声明值生效
+    const withWindow: Parameters<typeof compactionOptionsOf>[0] = {
+      config: { ...CONFIG.config, providers: [{ ...CONFIG.config.providers[0]!, contextWindow: 999_000 }] },
+      resolution: CONFIG.resolution,
+    };
+    expect(compactionOptionsOf(withWindow).contextWindow).toBe(999_000);
+    // 显式档:compaction.contextWindow 恒最高优先
+    const explicit: Parameters<typeof compactionOptionsOf>[0] = { ...base, compaction: { contextWindow: 50_000 } };
+    expect(compactionOptionsOf(explicit).contextWindow).toBe(50_000);
+  });
+
+  it("生产参数(缺省 keepRecentTokens=20k):小会话 → no-cut-point(nothing to compact);大粘贴越过保留区 → 真折叠", async () => {
+    // 小会话:两轮短对话总量远小于 20k 保留预算 → 尾保留吞没全部起点,无切口
+    const small = await makeFixture([textScript("a-1"), textScript("a-2")], false);
+    const smallHandle = await makeAgent(small, "compact-small");
+    await runTurn(smallHandle, "question-1");
+    await runTurn(smallHandle, "question-2");
+    const noop = await small.world.ctx.use(compactionRunner).compact({ session: smallHandle.agent.session.id, signal: new AbortController().signal });
+    expect(noop).toEqual({ ok: false, reason: "no-cut-point" });
+    expect(smallHandle.agent.session.events().some((event) => typeof event.surfaceOp === "object")).toBe(false); // 无落账
+    await smallHandle.dispose();
+
+    // 大会话:中间轮 >20k token 的 CJK 粘贴越过保留预算 → 生产参数下真折叠
+    // (首个真轮不可折——被摘要区间须含真轮起点;大粘贴须在早轮之后的轮)
+    const bigPaste = "长".repeat(80_000); // CJK 1:1 计量——80k token 越过 20k 保留预算
+    const big = await makeFixture([textScript("b-1"), textScript("b-2"), textScript("b-3"), textScript("SUMMARY-BIG")], false);
+    const bigHandle = await makeAgent(big, "compact-big");
+    await runTurn(bigHandle, "question-1");
+    await runTurn(bigHandle, bigPaste);
+    await runTurn(bigHandle, "question-3");
+    const folded = await big.world.ctx.use(compactionRunner).compact({ session: bigHandle.agent.session.id, signal: new AbortController().signal });
+    expect(folded.ok).toBe(true); // 不传 keepRecentTokens(生产形态)——大粘贴产生真切口
+    const surface = bigHandle.agent.session.surface();
+    expect(surface.length).toBeLessThan(bigHandle.agent.session.events().length); // 投影收缩(replace 在场)
+    expect(JSON.stringify(surface)).toContain("SUMMARY-BIG");
+    await bigHandle.dispose();
+  });
+
   it("回归：折叠后再跑一个 turn，摘要仍在 surface 且锚点不被覆写摧毁", async () => {
-    const fixture = await makeFixture([textScript("answer-1"), textScript("SUMMARY-KEEP"), textScript("answer-2")], false);
+    const fixture = await makeFixture([textScript("answer-1"), textScript("answer-2"), textScript("SUMMARY-KEEP"), textScript("answer-3")], false);
     const handle = await makeAgent(fixture, "compact-b");
     await runTurn(handle, "question-1");
-    const folded = await compactSession({ ctx: fixture.world.ctx, session: handle.agent.session, dial: { provider: "glm", model: "m1" }, instructions: undefined, signal: new AbortController().signal });
-    expect(folded.kind).toBe("folded");
     await runTurn(handle, "question-2");
+    const folded = await fixture.world.ctx.use(compactionRunner).compact({ session: handle.agent.session.id, keepRecentTokens: 0, signal: new AbortController().signal });
+    expect(folded.ok).toBe(true);
+    await runTurn(handle, "question-3");
     const text = JSON.stringify(handle.agent.session.surface());
     expect(text).toContain("SUMMARY-KEEP"); // 摘要存活
     expect(handle.agent.session.events().filter((event) => event.type === "system/message").length).toBeGreaterThanOrEqual(1);
@@ -126,11 +173,13 @@ describe("compactSession", () => {
   });
 
   it("总结失败（error finish）→ failed 不落账", async () => {
-    const fixture = await makeFixture([textScript("answer-1"), [{ type: "finish", finish: { kind: "error", message: "boom", code: "http-400" } }]], false);
+    const fixture = await makeFixture([textScript("answer-1"), textScript("answer-2"), [{ type: "finish", finish: { kind: "error", message: "boom", code: "http-400" } }]], false);
     const handle = await makeAgent(fixture, "compact-c");
     await runTurn(handle, "question-1");
-    const outcome = await compactSession({ ctx: fixture.world.ctx, session: handle.agent.session, dial: { provider: "glm", model: "m1" }, instructions: undefined, signal: new AbortController().signal });
-    expect(outcome).toMatchObject({ kind: "failed" });
+    await runTurn(handle, "question-2");
+    const outcome = await fixture.world.ctx.use(compactionRunner).compact({ session: handle.agent.session.id, keepRecentTokens: 0, signal: new AbortController().signal });
+    expect(outcome).toMatchObject({ ok: false, reason: "summarize-failed" });
+    expect(handle.agent.session.events().some((event) => typeof event.surfaceOp === "object")).toBe(false); // 失败不落账
     await handle.dispose();
   });
 });
