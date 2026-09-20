@@ -204,7 +204,17 @@ full 档）；词法开放但**拼错 fail-closed 拒启**。
 
 **模式档**（闭集）：`plan`（write/bash 全拒，read/grep 界内 auto）/ `auto`（缺省，全流程）/
 `full`（**完全访问——用户裁决⑤：不拦截任何命令，唯提权/密码类（sudo/doas/su，含包装/载荷/
-$() 内嵌形）直接 deny**；越根写/网络面由围栏内核承载；用户 deny 规则仍最高）。
+$() 内嵌形）直接 deny**；**总括授权（docs/PERMISSION-FULL-UNRESTRICTED.md）：装配期
+`grants.setUnrestricted()` 把启动期授权意志翻译为授权根 `"/"`，经既有授权管道三面铺开**——
+工具面 read/write/grep 界外可达（PathGate 授权根含 `/`）、围栏面 writable 含 `/`（seatbelt
+`subpath "/"`/bwrap `--bind / /`，auto 档越根写由围栏白名单承载的口径在 full 下由总括覆盖）、
+网络面代理短路（CONNECT 不经 ask、压过逐域负缓存、不记账）。**底线分面口径**：用户 deny 规则
+（.git 写拒、拒读表）仍压过 full；linux tmpfs 遮挂跨 fs 不受 rename 影响；**darwin 已知边界：
+全盘写放行使拒读表可被 rename/硬链绕过（`mv ~/.ssh/id_rsa /tmp/x` 后可读）——内核无法表达
+拒写特定路径（§13 先例），接受为 full 的显式边界**。**子代理传导**：共享世界内一切会话（含
+delegation 子、匿名）同为总括态——同一 plugin 闭包与 grants 实例的既成事实；worktree 隔离
+（rootOverride）会话例外：不注入总括根、逐目录授权保留、代理不短路（防打穿件13 隔离）；seal
+（拆卸）收回总括（fail-closed）。
 
 **ask 内嵌监听器**（dispatch 契约零改动）：permission 注册 `toolsPreExecute` 监听器，ask = 监听器
 内 `await broker.ask(req)` 后返回 allow/deny；**broker 缺席 → ask 退化 deny**。broker token：
@@ -216,7 +226,11 @@ Map }` 按会话键控（ObservedRegistry 同款纪律；**锁粒度 per-(sessio
 check→ask→record——同域并发 CONNECT 只产生一次 ask，异域并行不互相头阻塞；extraRoots 写入同
 per-session 互斥）；**会话终结逐出**（`on(sessionDisposed)` 关桶——delegation 子会话生生灭灭不
 累积；ObservedRegistry 自身的无逐出问题本件一并修，同事件）；resume 不继承（fail-closed）。
-会话授权只增不减（本件口径；撤销通道落档后续）。
+会话授权只增不减（本件口径；撤销通道落档后续）。**进程级例外——总括授权旗标**
+（docs/PERMISSION-FULL-UNRESTRICTED.md）：`setUnrestricted()` 仅装配期调用（full 档）；
+总括态下 extraRootsOf 对无 rootOverride 会话深等于 `["/"]`（吸收一切逐目录授权），rootOverride
+会话保留逐目录语义（isUnrestricted 恒 false）；evict 不清旗标（进程级事实）；seal 收回
+（拆卸 fail-closed）。
 
 **审计**：每裁决发 `permissionDecided` 事件（tool/verdict/resolvedBy/reason/session；次数断言）；
 会话流持久化归属 session 件。

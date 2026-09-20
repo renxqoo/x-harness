@@ -98,7 +98,9 @@ function commandDecision(cmd: ParsedCommand, input: BashPipelineInput, roots: re
 }
 
 /** full 档短路（裁决⑤：完全访问）——用户 deny 规则 → 提权/密码类直接 deny → 其余全过；
- *  越根写/网络/拒读表由围栏内核承载。运行器提权词扫描（§14.12）的硬 ask 在此兑现为 deny。 */
+ *  full 总括授权下围栏 writable 含 "/"（docs/PERMISSION-FULL-UNRESTRICTED.md），越根写/网络
+ *  由围栏+代理承载；auto 档越根写仍由围栏 writable 白名单承载。运行器提权词扫描（§14.12）
+ *  的硬 ask 在此兑现为 deny。 */
 function fullDecision(cmd: ParsedCommand, input: BashPipelineInput): BashAdjudication | undefined {
   if (cmd.argv.length === 0) return undefined;
   const denied = bashRuleMatches(input.rules, cmd.argv).find((rule) => rule.verdict === "deny");

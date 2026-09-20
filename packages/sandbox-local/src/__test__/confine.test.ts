@@ -3,6 +3,8 @@
 // writable bind/tmpfs 遮挂/socat 桥模板/argv 引号转义。
 
 import { describe, expect, it } from "vitest";
+import { GrantsRegistry } from "@x-harness/permission";
+import { fenceFor } from "../fence.ts";
 import { seatbeltProfile, seatbeltArgv } from "../confine/seatbelt.ts";
 import { bwrapArgv, PROXY_LOOPBACK_PORT } from "../confine/bubblewrap.ts";
 import type { Fence } from "../fence.ts";
@@ -82,5 +84,45 @@ describe("bwrapArgv（linux 剖面内容级）", () => {
     // 单引号转义：含内嵌单引号的参数不逃逸
     const tricky = bwrapArgv({ fence: fence(), proxyMounted: true, argv: ["echo", "it's"], home: "/Users/demo" });
     expect(tricky.join(" ")).toContain(`exec 'echo' 'it'\\''s'`);
+  });
+});
+
+describe("总括授权剖面（docs/PERMISSION-FULL-UNRESTRICTED.md——全链装置：grants → fenceFor → 剖面，禁手搓 Fence）", () => {
+  it("seatbelt：总括 grants 经 fenceFor 合成 writable 含 / → subpath \"/\" 全盘写 + denyRead/代理口底线行仍在", () => {
+    const grants = new GrantsRegistry();
+    grants.setUnrestricted();
+    const fence = fenceFor({ root: "/w/app" }, grants, "sess-u" as never);
+    const sbpl = seatbeltProfile({ fence, proxyPort: 8085, home: "/Users/demo" });
+    const lines = sbpl.split("\n");
+    expect(lines[1]).toBe("(deny default)"); // 底线骨架不因总括位移
+    expect(lines).toContain('(allow file-write* (subpath "/"))'); // 全盘写放行
+    expect(lines).toContain('(deny file-read* (regex "/Users/demo/\\.ssh/"))'); // 拒读底线仍在
+    expect(lines).toContain('(allow network-outbound (remote ip "localhost:8085"))'); // 网络仅代理口
+    expect(lines.some((l) => l.includes("allow network*") && !l.includes("remote"))).toBe(false); // 无网络泛放行
+  });
+
+  it("bwrap：总括 writable → --bind / / 且相对序锚——ro-bind 先行、/ bind 是最后一条 writable bind、tmpfs 遮挂晚于它", () => {
+    const grants = new GrantsRegistry();
+    grants.setUnrestricted();
+    const fence = fenceFor({ root: "/w/app" }, grants, "sess-u" as never);
+    const argv = bwrapArgv({ fence, proxyMounted: false, argv: ["ls"], home: "/Users/demo" });
+    const flat = argv.join(" ");
+    expect(flat).toContain("--bind / /"); // 全盘可写化（ro-bind 之上的 bind）
+    const roBindAt = argv.indexOf("--ro-bind");
+    expect(roBindAt).toBeGreaterThanOrEqual(0);
+    // 定位 --bind / / 参数对（writable 序 [root, tmpdir, "/"]——"/" 恒最后）
+    let rootBindAt = -1;
+    let lastBindAt = -1;
+    for (let i = 0; i < argv.length; i += 1) {
+      if (argv[i] === "--bind") {
+        lastBindAt = i;
+        if (argv[i + 1] === "/" && argv[i + 2] === "/") rootBindAt = i;
+      }
+    }
+    expect(rootBindAt).toBeGreaterThan(roBindAt); // ro 先于全盘 bind
+    expect(rootBindAt).toBe(lastBindAt); // 全盘 bind 是最后一条 writable bind——遮挂压顶序的前提
+    for (let i = 0; i < argv.length; i += 1) {
+      if (argv[i] === "--tmpfs") expect(i).toBeGreaterThan(rootBindAt); // 一切遮挂晚于全盘 bind（防 denyRead 被打穿）
+    }
   });
 });

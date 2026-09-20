@@ -59,6 +59,12 @@ export function createSessionProxy(session: SessionId | undefined, grants: Grant
     }
     const domain = (match[1] ?? "").toLowerCase();
     const port = Number(match[2] ?? "443");
+    if (grants.isUnrestricted(session)) {
+      // full 总括授权（docs/PERMISSION-FULL-UNRESTRICTED.md）：位序在域名桶之前（压过逐域
+      // 负缓存）、不 ask、不记账——放行后 domainVerdict 仍 undefined；override 会话不短路
+      await pipeUpstream({ client, domain, port, pipelined });
+      return;
+    }
     const settled = grants.domainVerdict(session, domain);
     let verdict: "allow" | "deny" = settled ?? "deny";
     if (settled === undefined && deps.preAllowed?.has(domain) === true) {
@@ -82,6 +88,12 @@ export function createSessionProxy(session: SessionId | undefined, grants: Grant
       client.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }
+    await pipeUpstream({ client, domain, port, pipelined });
+  };
+
+  /** CONNECT 放行后的上游管道建立（总括短路与逐域批准共用出口） */
+  const pipeUpstream = async (req: { readonly client: net.Socket; readonly domain: string; readonly port: number; readonly pipelined: Buffer }): Promise<void> => {
+    const { client, domain, port, pipelined } = req;
     let upstream: net.Socket;
     try {
       upstream = connect({ host: domain, port });

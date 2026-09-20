@@ -49,7 +49,7 @@
 | 会话存档记录 mode | mode 是宿主装配事实非会话事实；resume 重建按当次 flag（§2.6 落行：plan 会话不带 flag resume 即回 auto——用户可感知的静默放宽，文档显式写明） |
 | providers.json / 环境变量配置入口 | 本需求只做启动 flag |
 | sandbox 插件档位与网络面 | full 档 bash 提权硬拒底线在 permission 裁决层既有实现；sandbox 代理层网络域名 ask（CONNECT 未预授权域）**不受 mode 门控**——print 非 TTY 形态下恒 deny，即 `--permission full -p` 并非零 ask（网络面） |
-| **full 档路径工具界外的许可/执法两层语义** | **存量缺陷登记挂账**：permission 层 full 对界外 read/write/grep 返回 allow（decide.ts full 检查在界内判定前），但工具执行面的 PathGate.admit 其 extraRoots 唯一来源是 ask 批准落账的 grants（tool-plugin.ts extraRootsOf）——full 恰绕过 ask，grant 永不产生，界外路径实际 `PATH_ESCAPES_ROOT` 拒。净效果：auto 档经审批**可以**界外写、full 档反而**不可达**（能力倒置；bash 面不受影响，full 档 bash 可写界外）。根治需裁决 mode 是否下沉 PathGate 口径（涉 EXEC-ENV §5 已核销契约与 tool-core 执法层语义），独立件立项。本次：CLI.md 如实写明 + 集成测试钉住现状行为快照（permission allow mode:full + 执行层 PATH_ESCAPES_ROOT） |
+| **full 档路径工具界外的许可/执法两层语义** | ~~存量缺陷登记挂账~~ **已根治（docs/PERMISSION-FULL-UNRESTRICTED.md）：full 总括授权翻译为授权根 `"/"` 三面铺开（工具/围栏/网络），执法层零改动**。原挂账时对 bash 面的「不受影响、界外可写」断言一并修正——bash 围栏面同款断裂曾并存（full 裁决放行但围栏 writable 白名单拒），总括铺开后两面对齐 |
 | print 模式 broker 行为 | 不变：非 TTY ask 显式 deny（permission 工具裁决层的 full 放行不受影响；网络面见上「sandbox 插件档位与网络面」行） |
 
 ## 并发/一致性预算
@@ -92,8 +92,8 @@ harness 包现有单测零平台依赖的纪律保持；mode 透传断言由 app
   按模式名列举理解，非严格 flag 拼写。
 - 缺省 `auto` 不变；缺省值唯一真相收归 permission plugin 既有 `?? "auto"`
   （fenceKit 硬编码第二缺省删除）。
-- full 档界外路径工具语义按「存量缺陷挂账 + 行为快照锚定」处置（见「不处理」表），
-  不在本件内改 PathGate/裁决序。
+- full 档界外路径工具语义本件时点按「存量缺陷挂账 + 行为快照锚定」处置——后续由
+  docs/PERMISSION-FULL-UNRESTRICTED.md 根治（总括授权三面铺开），快照用例已随根治件翻转。
 
 ## 测试口径
 
@@ -121,7 +121,7 @@ harness 包现有单测零平台依赖的纪律保持；mode 透传断言由 app
   首次入锚；
 - **full 腿**：dispatch write 界内 → allow（`resolvedBy: "mode:full"`）且真写出
   tmp 文件；dispatch write 界外（路径避开 `**/.git/**` 等 deny glob）→ permission
-  allow（mode:full）+ 执行层 `PATH_ESCAPES_ROOT`（挂账语义行为快照）；
+  allow（mode:full）且真写出（总括授权根治后语义，docs/PERMISSION-FULL-UNRESTRICTED.md）；
 - **deny 压过 mode**：full 档 dispatch write `<root>/.git/config` → deny
   （rule 压过 full，`rule:**/.git/**`）；
 - **缺省锚**：不带 permission 的 buildWorld → 界内 write allow（`resolvedBy:
@@ -164,7 +164,7 @@ harness 包现有单测零平台依赖的纪律保持；mode 透传断言由 app
 - [ ] REPL 与 -p 两形态生效（REPL 经 reopen 保持锚）；resume 按当次 flag（负向锚）
 - [ ] MODE_KNOBS 词表封闭断言 + 编译期反向穷尽在库
 - [ ] usageText 与 docs/CLI.md §2.1/§2.5/§2.6 同步（人工验收）
-- [ ] full 档界外两层语义行为快照入锚 + CLI.md 写明 + 挂账登记
+- [x] full 档界外语义：根治后行为锚（真写出）+ CLI.md 写明（PERMISSION-FULL-UNRESTRICTED.md 同变）
 - [ ] 四门全绿 + 覆盖率数字如实报告
 
 ## 审查处置（2026-09-20 定稿前双路审查）

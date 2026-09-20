@@ -39,6 +39,7 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
       const userRules = [...parseRules(options.rules ?? [], "user"), ...protectedRules];
       const grants = new GrantsRegistry();
       const mode = options.mode ?? "auto";
+      if (mode === "full") grants.setUnrestricted(); // 启动期总括授权 → 授权事实（docs/PERMISSION-FULL-UNRESTRICTED.md）
       let tearingDown = false;
 
       const ask = async (tool: string, decision: Decision, session: SessionId | undefined): Promise<"allow" | "deny"> => {

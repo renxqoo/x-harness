@@ -76,3 +76,23 @@ describe("fenceFor 会话根替换（件13 接缝 6——worktree 隔离）", ()
     expect(fence.protectedPaths).toContain("/repo/.git");
   });
 });
+
+describe("fenceFor × unrestricted 总括（docs/PERMISSION-FULL-UNRESTRICTED.md）", () => {
+  it("总括态：writable 并入全盘根 /（授权根经既有管道流入围栏合成）", () => {
+    const grants = new GrantsRegistry();
+    grants.setUnrestricted();
+    const f = fenceFor({ root: "/w/app" }, grants, S);
+    expect(f.writable).toContain("/");
+    expect(f.denyRead).toContain("~/.ssh"); // 拒读底线不因总括消失
+  });
+
+  it("worktree 例外消费面：override + 总括 → writable 不含 / 且以 override.dir 为根（隔离压过总括在合成面成立）", () => {
+    const grants = new GrantsRegistry();
+    grants.setRootOverride(S, "/wt/wt-u", "/repo");
+    grants.setUnrestricted();
+    const f = fenceFor({ root: "/repo" }, grants, S);
+    expect(f.writable).not.toContain("/");
+    expect(f.writable).toContain("/wt/wt-u"); // override 根替换语义保持
+    expect(f.writable.some((w) => w === "/repo" || w.startsWith("/repo/"))).toBe(false); // 原根不可达
+  });
+});

@@ -97,7 +97,9 @@ export interface SessionAdmitInput {
   readonly target: string;
 }
 
-/** 会话面统一入口：override 在场 → 原根不可达 + 守卫根子树的 extraRoots 批准被过滤（件13 §8.2） */
+/** 会话面统一入口：override 在场 → 原根不可达 + 守卫根子树的 extraRoots 批准被过滤（件13 §8.2）。
+ *  总括根 "/" 是 guard 的祖先而非子孙——guard 过滤滤不掉它，full 总括的 worktree 例外必须在
+ *  grants 层（extraRootsOf 不注入，docs/PERMISSION-FULL-UNRESTRICTED.md），不得依赖本过滤。 */
 export async function admitSession(input: SessionAdmitInput): Promise<{ ok: true; path: string } | { ok: false; reason: string }> {
   const override = input.rootOverrideOf?.(input.session);
   const extraRoots = override === undefined

@@ -44,6 +44,8 @@ function withinLexical(root: string, p: string): boolean {
  *  base.root、protectedPaths 随 override 根重算、原根子树的 extraRoots 批准被过滤（防打穿）。 */
 export function fenceFor(base: FenceBase, grants: GrantsRegistry, session: SessionId | undefined): Fence {
   const override = grants.rootOverrideOf(session);
+  // guard 过滤只滤 guard 子树的逐目录批准；总括根 "/" 是 guard 祖先滤不掉——总括的 worktree
+  // 例外必须在 grants 层（extraRootsOf 不注入，docs/PERMISSION-FULL-UNRESTRICTED.md）
   const extraRoots = override === undefined
     ? grants.extraRootsOf(session)
     : grants.extraRootsOf(session).filter((r) => !withinLexical(normalize(override.guard), normalize(r)));

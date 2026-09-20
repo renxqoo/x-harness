@@ -162,6 +162,33 @@ describe("permission 插件（真实管线）", () => {
     for (const d of full.unload) await d();
   });
 
+  it("模式档 × 总括确立：full 装配 setUnrestricted，auto/plan 不确立", async () => {
+    const full = await bench(root, { mode: "full" });
+    const grants = full.ctx.use(permissionGrants);
+    expect(grants.isUnrestricted(undefined)).toBe(true);
+    expect(grants.extraRootsOf(undefined)).toEqual(["/"]);
+    for (const d of full.unload) await d();
+
+    const auto = await bench(root);
+    expect(auto.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
+    for (const d of auto.unload) await d();
+
+    const plan = await bench(root, { mode: "plan" });
+    expect(plan.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
+    for (const d of plan.unload) await d();
+  });
+
+  it("full 档拒读表仍压过：.env 与家目录 ~/.ssh 读拒（deny 规则先于 full 短路）", async () => {
+    const full = await bench(root, { mode: "full" });
+    const env = await full.call("read", { path: ".env" });
+    expect(env.isError).toBe(true);
+    expect(env.content).toContain("rule:**/.env");
+    const homeSsh = await full.call("read", { path: join(homedir(), ".ssh", "id_rsa") });
+    expect(homeSsh.isError).toBe(true);
+    expect(homeSsh.content).toContain("rule:~/.ssh/**"); // 拒因锚（与 .env 腿对称）
+    for (const d of full.unload) await d();
+  });
+
   it("sessionDisposed：会话终结逐出授权桶（session 插件真实事件链）", async () => {
     const ctx = createContext();
     const asks: { reason: string }[] = [];

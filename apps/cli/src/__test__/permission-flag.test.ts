@@ -1,11 +1,12 @@
 // --permission flag 装配旅程（docs/PERMISSION-MODE-FLAG.md 测试口径）：parseCliArgs →
 // buildWorld → fenceKit → 真实 dispatch 管线的模式档行为锚。plan（write/bash 全拒）/
-// full（许可放行 + 执法层两层语义快照——full 界外 PathGate 拒是登记挂账的现状行为）/
+// full（总括授权三面铺开——界外真可达，docs/PERMISSION-FULL-UNRESTRICTED.md）/
 // deny 规则压过 mode / 缺省 auto 精确锚（resolvedBy 区分 auto 与 mode:full）/
-// resume 不继承（mode 是装配事实非会话事实——plan 建档、无 flag 恢复即回 auto）。
+// resume 不继承（mode 是装配事实非会话事实——plan/full 建档、无 flag 恢复即回 auto）。
 
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LlmAdapter, LlmRequest } from "@x-harness/llm";
@@ -110,7 +111,7 @@ describe("--permission plan 装配旅程", () => {
   });
 });
 
-describe("--permission full 装配旅程", () => {
+describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FULL-UNRESTRICTED.md）", () => {
   it("write 界内放行（mode:full）且真写出文件", async () => {
     const j = await makeJourney({ permission: "full" });
     const out = await j.dispatch("write", { path: "made.txt", content: "FULL-MADE" });
@@ -119,13 +120,31 @@ describe("--permission full 装配旅程", () => {
     await expect(readFile(join(j.root, "made.txt"), "utf8")).resolves.toBe("FULL-MADE");
   });
 
-  it("write 界外：许可层 allow（mode:full）+ 执法层 PATH_ESCAPES_ROOT——full 档两层语义现状快照（挂账锚）", async () => {
-    // extraRoots 唯一来源是 ask 批准落账的 grants，full 绕过 ask → gate 无授权根 → 界外拒
+  it("write 界外真写出：授权根 / 经既有管道流入 PathGate（许可与执法两层一致）", async () => {
     const j = await makeJourney({ permission: "full" });
-    const outside = join(tmpdir(), "xh-permflag-outside", "f.txt");
-    const out = await j.dispatch("write", { path: outside, content: "x" });
-    expect(out).toMatchObject({ isError: true, content: expect.stringContaining("PATH_ESCAPES_ROOT") });
+    const outsideDir = await mkdtemp(join(tmpdir(), "xh-permflag-full-"));
+    roots.push(outsideDir); // mkdtemp 每次新建并登记清理——防 FS_NOT_OBSERVED 二次运行 flake
+    const target = join(outsideDir, "f.txt");
+    const out = await j.dispatch("write", { path: target, content: "OUTSIDE-FULL" });
+    expect(out.isError).not.toBe(true);
     expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", session: j.session });
+    await expect(readFile(target, "utf8")).resolves.toBe("OUTSIDE-FULL");
+  });
+
+  it("read 界外真读到 + grep 界外过授权门（rg×seatbelt 崩溃为存量缺陷挂账，见方案「不处理」表）", async () => {
+    const j = await makeJourney({ permission: "full" });
+    const outsideDir = await mkdtemp(join(tmpdir(), "xh-permflag-fr-"));
+    roots.push(outsideDir);
+    const target = join(outsideDir, "note.txt");
+    await writeFile(target, "GREP-TARGET-LINE\n", "utf8");
+    const read = await j.dispatch("read", { path: target });
+    expect(read.isError).not.toBe(true);
+    expect(read.content).toContain("GREP-TARGET-LINE");
+    // grep：授权根 "/" 经 PathGate（admit 在 spawn 前）+ permission 裁决 allow；rg 二进制在
+    // seatbelt deny default 剖面下的 SIGABRT 是与本件无关的存量缺陷——只锚授权面
+    const grep = await j.dispatch("grep", { pattern: "GREP-TARGET", path: outsideDir });
+    expect(j.audits).toContainEqual({ tool: "grep", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", session: j.session });
+    expect(grep.content).not.toContain("PATH_ESCAPES_ROOT");
   });
 
   it("deny 规则压过 full：.git 内写仍拒（rule 压过 mode 档的安全底线）", async () => {
@@ -170,5 +189,29 @@ describe("resume 不继承 mode（mode 是装配事实非会话事实）", () =>
     const allowed = await dispatch("write", { path: "after-resume.txt", content: "x" });
     expect(allowed.isError).not.toBe(true);
     expect(second.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "auto", reason: "in-root", session: id });
+  });
+
+  it("full 建档 → 无 flag 恢复即回 auto：总括不落会话档，界外 write 回归 ask→deny 链", async () => {
+    const sessionRoot = join(tmpdir(), `xh-permflag-resume-full-${String(Date.now())}`);
+    roots.push(sessionRoot);
+    const outsideDir = await mkdtemp(join(tmpdir(), "xh-permflag-rf-"));
+    roots.push(outsideDir);
+    const target = join(outsideDir, "f.txt");
+    const first = await makeJourney({ permission: "full", persist: true, sessionRoot });
+    const written = await first.dispatch("write", { path: target, content: "x" });
+    expect(written.isError).not.toBe(true); // full 总括下界外真写出
+    await expect(readFile(target, "utf8")).resolves.toBe("x");
+    const id = first.session;
+    await first.world.ctx.dispose().catch(() => {});
+    worlds.splice(worlds.indexOf(first.world), 1);
+
+    const second = await makeJourney({ persist: true, sessionRoot }); // 不带 flag——auto
+    const resumed = await second.world.loop.resume({ id, agent: { model: "m1" } });
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) throw new Error(resumed.reason);
+    rmSync(target, { force: true }); // 清掉首程文件——auto 档若放行会重写成功
+    const blocked = await second.world.registry.dispatch({ callId: "permflag-rf-2", name: "write", args: { path: target, content: "y" }, signal: new AbortController().signal, session: id });
+    expect(blocked.isError).toBe(true); // 回到 ask→broker deny（非总括直接放行）
+    expect(second.audits).toContainEqual({ tool: "write", verdict: "deny", resolvedBy: "outside-root", reason: expect.stringContaining("outside-root:"), session: id });
   });
 });

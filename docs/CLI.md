@@ -54,7 +54,7 @@ x-harness [flags] [message...] [@file...]
 | `--provider <name>` | 覆盖 providers.json default.provider | — |
 | `--model <model>` | 覆盖 default.model | — |
 | `--thinking <off\|low\|medium\|high>` | 思考等级 | default.thinking（缺省 off） |
-| `--permission <plan\|auto\|full>` | 权限模式档（docs/EXEC-ENV.md §5：plan=write/bash 全拒；auto=全流程审批；full=完全访问唯提权硬拒）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | auto |
+| `--permission <plan\|auto\|full>` | 权限模式档（docs/EXEC-ENV.md §5：plan=write/bash 全拒；auto=全流程审批；full=完全访问——总括授权三面铺开，docs/PERMISSION-FULL-UNRESTRICTED.md：工具/围栏/网络面，deny 规则与提权硬拒仍压顶）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | auto |
 | `--api-key <key>` | 运行时覆盖**所选 provider** 档案的 apiKey（仅装配期生效；/model 切到其他档案不跟随） | — |
 | `--tools <a,b>` | 工具白名单 | 全部注册工具 |
 | `--exclude-tools <a,b>` | 工具黑名单（白名单基础上再减） | — |
@@ -237,11 +237,11 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   覆盖不跟随（绑定口径落档）。
 - **resume 的权限模式语义**：`--permission` 不进会话档、不随 resume 继承——按**当次**
   flag 装配（与模型面「显式 flag 恒胜」不同：mode 无会话末次记录可回落）。后果显式落档：
-  plan 会话 resume 不带 flag 即回 auto（用户可感知的静默放宽写权限）。full 档边界：
-  路径工具（read/write/grep）界外在许可层放行但执行层 PathGate 仍拒（extraRoots 唯一
-  来源是审批落账，full 绕过审批即无授权根）——界外文件访问经 bash 面可达；
-  sandbox 代理层网络域名 ask 不受 mode 门控（print 非 TTY 下恒 deny）。
-  详见 docs/PERMISSION-MODE-FLAG.md「不处理」表。
+  plan 会话 resume 不带 flag 即回 auto（用户可感知的静默放宽写权限）；full 会话同理回
+  auto（界外回归 ask 审批链）。full 档边界（docs/PERMISSION-FULL-UNRESTRICTED.md）：
+  总括授权使工具面界外可达、围栏 writable 全盘、网络面代理短路（`full -p` 下未预授权
+  域名 CONNECT 直接放行，非 TTY 不再恒 deny）；deny 规则（.git 写拒/拒读表）与提权
+  硬拒仍压过 full；darwin 拒读表可被 rename 绕过为已知内核边界（EXEC-ENV §5）。
 - **单写者假设与锁**：jsonl writer 无跨进程锁，双进程同开会话会交织写坏（前缀校验只在打开
   瞬间做）——session-persistence-jsonl 包补会话目录锁（`lock` 文件 O_EXCL + pid 活性检测 +
   死锁接管），冲突方 open 即败 `session-locked`，CLI 报错 exit 1。

@@ -4,7 +4,7 @@
 // （darwin：script 伪终端；他平台该腿跳过并注明）/ --permission 用法面与生效面
 // （tool_use 剧本 → plan 档 write 拒 → tool_result 回流）。
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { must } from "./check.ts";
@@ -342,6 +342,32 @@ async function journeyPermission(server: FakeServer, home: string, cwd: string):
   must(secondRequestBody.includes("PLAN-DENIED-HANDLED") === false, "终答文本是第二轮的响应而非请求上下文");
 }
 
+/** full 总括授权生效面（docs/PERMISSION-FULL-UNRESTRICTED.md）：界外 write 真成功——
+ *  tool_result 在场 + 非 is_error + 成功输出三重断言；文件真写出（cwd 外 mkdtemp 每次新建） */
+async function journeyPermissionFull(server: FakeServer, home: string, cwd: string): Promise<void> {
+  server.clearScripted(); // 腿间解耦（与 journeyPermission 同约定——不依赖上游腿的剧本消耗精确性）
+  const outsideDir = await mkdtemp(join(tmpdir(), "xh-cli-full-out-"));
+  try {
+    server.respondToolUse("write", { path: join(outsideDir, "made.txt"), content: "E2E-FULL-OUTSIDE" });
+    server.respond("FULL-WROTE-SEEN");
+    const fullRun = await runCli({ argv: ["--permission", "full", "-p", "--mode", "json", "write outside"], home, cwd });
+    must(fullRun.exitCode === 0, `full 档 print 应 exit 0（stderr: ${fullRun.stderr.slice(0, 200)}）`);
+    const fullLines = fullRun.stdout.trim().split("\n").map((line) => JSON.parse(line) as { type: string; exit?: number; tool?: string; verdict?: string });
+    const fullPermission = fullLines.find((line) => line.type === "permission");
+    must(fullPermission !== undefined && fullPermission.tool === "write" && fullPermission.verdict === "allow", `full 档 JSONL 应含 write allow 的 permission 行（got: ${JSON.stringify(fullPermission)}`);
+    const fullBody = JSON.stringify(server.requests[server.requests.length - 1]?.body ?? {});
+    must(fullBody.includes("tool_result"), "full 档 write 结果应以 tool_result 回流（三重断言之独立在场项）");
+    must(fullBody.includes('"is_error":true') === false, `full 档 tool_result 不应为 is_error（got: ${fullBody.slice(0, 300)}）`);
+    must(fullBody.includes("Wrote "), `tool_result content 应含 write 成功输出片段（got: ${fullBody.slice(0, 300)}）`);
+    const fullLast = fullLines[fullLines.length - 1];
+    must(fullLast?.type === "done" && fullLast.exit === 0, "full 档 done 应恰为末行且 exit 0");
+    const wrote = await readFile(join(outsideDir, "made.txt"), "utf8").catch(() => undefined);
+    must(wrote === "E2E-FULL-OUTSIDE", `界外文件应真写出（got: ${JSON.stringify(wrote)}`);
+  } finally {
+    await rm(outsideDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export async function runCliJourney(): Promise<void> {
   const server = startFakeAnthropic();
   const home = await makeHome(server.port);
@@ -354,6 +380,7 @@ export async function runCliJourney(): Promise<void> {
     await journeySessionLock(home, cwd);
     await journeyRepl(server, home, cwd);
     await journeyPermission(server, home, cwd);
+    await journeyPermissionFull(server, home, cwd);
   } finally {
     await server.stop();
     await rm(home, { recursive: true, force: true }).catch(() => {});
