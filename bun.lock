@@ -187,6 +187,7 @@
         "@x-harness/skill": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/task-tools": "workspace:*",
+        "@x-harness/telemetry-sqlite": "workspace:*",
         "@x-harness/token-meter": "workspace:*",
         "@x-harness/tool-bash": "workspace:*",
         "@x-harness/tool-core": "workspace:*",

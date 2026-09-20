@@ -4,6 +4,7 @@
 // promptKit(base) 注入、adapters/审批/providers 全是宿主注入参数；appends 留宿主
 // 后置注册（F-02 尾序契约）。
 
+import { Database } from "bun:sqlite";
 import type { Context, Disposer, Plugin, Result } from "@x-harness/core";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
@@ -25,6 +26,8 @@ import { createSkillPlugin } from "@x-harness/skill";
 import { systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
+import { createBunSqliteExecutor, sqliteTelemetry, sqliteTelemetryPlugin } from "@x-harness/telemetry-sqlite";
+import type { SqliteExecutor, SqliteTx, TelemetryQueryService, TelemetryResource } from "@x-harness/telemetry-sqlite";
 import { tokenMeter, tokenMeterPlugin } from "@x-harness/token-meter";
 import type { TokenMeterService } from "@x-harness/token-meter";
 import { createBashPlugin } from "@x-harness/tool-bash";
@@ -44,6 +47,54 @@ export const durableSessionKit = (o: { readonly root: string; readonly onIoError
   sessionPlugin,
   createJsonlSessionPersistence({ root: o.root, onIoError: o.onIoError }),
 ];
+
+/** 本地遥测（OTel 数据模型 → sqlite；docs/TELEMETRY-SQLITE.md）。db 两种形态：
+ *  - SqliteExecutor：宿主自持连接（e2e SqliteDb 契约同款——close 归宿主，插件只拿执行器）；
+ *  - 路径串：kit 开 bun:sqlite（pragmas 统一设置），连接随 kit 返回的句柄归宿主——
+ *    World teardown 后宿主 close（插件 teardown 只终排空不 close，连接归宿主约定）。
+ *  缺省 includeBodies=true 全量保真；onIoError 缺省 stderr。 */
+export interface TelemetryKitHandle {
+  /** 路径形态 = kit 开的连接执行器（含 tx；宿主 teardown 后可不再触碰——close 已由 kit 收殓）；
+   *  执行面形态 = 宿主传入原样透传 */
+  readonly db: SqliteExecutor;
+  readonly plugins: readonly Plugin[];
+}
+
+export const telemetryKit = (o: {
+  readonly db: SqliteExecutor | string;
+  readonly tx?: SqliteTx;
+  readonly resource: TelemetryResource;
+  readonly includeBodies?: boolean;
+  readonly onIoError?: (message: string) => void;
+}): readonly Plugin[] => telemetryKitWithHandle(o).plugins;
+
+/** 带句柄形态：路径开库时宿主持返回的 db（teardown 后 close）；执行面形态句柄即透传 */
+export function telemetryKitWithHandle(o: {
+  readonly db: SqliteExecutor | string;
+  readonly tx?: SqliteTx;
+  readonly resource: TelemetryResource;
+  readonly includeBodies?: boolean;
+  readonly onIoError?: (message: string) => void;
+}): TelemetryKitHandle {
+  if (typeof o.db !== "string") return { db: o.db, plugins: [sqliteTelemetryPlugin({ db: o.db, tx: o.tx, resource: o.resource, includeBodies: o.includeBodies, onIoError: o.onIoError })] };
+  const connection = new Database(o.db);
+  const db = createBunSqliteExecutor(connection);
+  const inner = sqliteTelemetryPlugin({ db, tx: db.tx, resource: o.resource, includeBodies: o.includeBodies, onIoError: o.onIoError });
+  // wrapper 组合 teardown：先 telemetry（终排空 drainAll）后 close——顺序在同一个 disposer
+  // 体内串行保证（独立插件经 inject topo 会后装先拆，close 抢在终排空前 = closed database）
+  const wrapped: Plugin = {
+    name: "telemetry-sqlite-path",
+    inject: ["session"],
+    apply: async (ctx: Context): Promise<Disposer> => {
+      const teardown = await inner.apply(ctx); // Plugin.apply 允许 Promise（loadPlugins await）——组合面同律
+      return async () => {
+        await teardown?.();
+        connection.close();
+      };
+    },
+  };
+  return { db, plugins: [wrapped] };
+}
 
 /** 驱动循环（五服务之一） */
 export const loopKit = (): readonly Plugin[] => [agentLoopPlugin];
@@ -119,6 +170,8 @@ export interface World {
   readonly prompt: SystemPromptService;
   readonly meter: TokenMeterService;
   readonly registry: ToolRegistry;
+  /** 本地遥测查询面（telemetryKit 在场时可见；缺席 undefined——可选件同 archive） */
+  readonly telemetry: TelemetryQueryService | undefined;
 }
 
 export async function createAgentWorld(o: { readonly plugins: readonly Plugin[] }): Promise<Result<World>> {
@@ -136,6 +189,7 @@ export async function createAgentWorld(o: { readonly plugins: readonly Plugin[] 
         prompt: ctx.use(systemPrompt),
         meter: ctx.use(tokenMeter),
         registry: ctx.use(toolRegistry),
+        telemetry: ctx.tryUse(sqliteTelemetry),
       },
     };
   } catch (error) {

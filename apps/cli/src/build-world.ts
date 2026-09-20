@@ -22,6 +22,7 @@ import {
   promptKit,
   skillKit,
   toolboxKit,
+  telemetryKit,
 } from "@x-harness/harness";
 import { createBasePromptPlugin } from "./base-prompt.ts";
 import type { BasePromptFacts } from "./base-prompt.ts";
@@ -36,6 +37,8 @@ export type { World };
 
 export interface WorldOptions {
   readonly cwd: string;
+  /** 遥测库路径（telemetryKit 路径形态——kit 开连接并收殓）；undefined = 不装遥测 */
+  readonly telemetryPath?: string;
   /** 会话存储根；persist=false 时仅占位不使用 */
   readonly sessionRoot: string;
   /** --no-session → false：略去 jsonl 持久化（无 sessionArchive） */
@@ -50,6 +53,8 @@ export interface WorldOptions {
   readonly broker: Plugin;
   /** 持久化 I/O 失败上报；缺省写 stderr */
   readonly onIoError?: (message: string) => void;
+  /** 遥测写失败上报（缺省同 onIoError 链路——stderr） */
+  readonly onTelemetryError?: (message: string) => void;
   /** 测试注入：替换 providers.json 派生的 adapter 集（假剧本/离线） */
   readonly adapters?: readonly LlmAdapter[];
 }
@@ -86,6 +91,9 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...fenceKit({ root: options.cwd, ...(options.permission !== undefined ? { mode: options.permission } : {}) }),
     options.broker,
     ...meterKit(),
+    ...(options.telemetryPath !== undefined
+      ? telemetryKit({ db: options.telemetryPath, resource: { serviceName: "x-harness-cli" }, onIoError: options.onTelemetryError })
+      : []),
     ...llmKit(adapters, {
       providers: Object.fromEntries(options.config.providers.map((profile) => [profile.name, RETRY_POLICY])),
       default: RETRY_POLICY,

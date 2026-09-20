@@ -1,6 +1,7 @@
 // CLI 入口（docs/CLI.md §2.1/§3）：解析 → 短路命令 → providers.json → 会话计划 →
 // 装配 → 模式分派（print / REPL）→ 退出清理 → 退出码。进程绑定经 CliIO 注入（可测）。
 
+import { join } from "node:path";
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { SessionId } from "@x-harness/session";
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
@@ -10,7 +11,7 @@ import { buildInitialMessage } from "./build-initial-message.ts";
 import { createTerminalBrokerPlugin } from "./broker-terminal.ts";
 import type { BrokerIO } from "./broker-terminal.ts";
 import { promptFactsOf, registerAppendSections } from "./cli-prompt-sections.ts";
-import { defaultSessionRoot, providersPath } from "./harness-home.ts";
+import { defaultSessionRoot, harnessHome, providersPath } from "./harness-home.ts";
 import { parseCliArgs, usageText } from "./parse-cli-args.ts";
 import type { CliArgs } from "./parse-cli-args.ts";
 import { pickIndex, pickSession, formatSessionList } from "./pick-session.ts";
@@ -164,6 +165,8 @@ async function openWorld(input: {
   const built = await buildWorld({
     cwd: io.cwd,
     sessionRoot: args.sessionDir ?? defaultSessionRoot(io.env),
+    // 本地遥测常开（OTel 落库 = harness home/telemetry.db；--no-session 时 inline 会话同样遥测）
+    telemetryPath: join(harnessHome(io.env), "telemetry.db"),
     persist: !args.noSession,
     // --system-prompt 整体替换时不装基础段（装配方裁决；静态串优先是包契约）
     promptFacts: args.systemPrompt === undefined ? promptFactsOf(io) : undefined,

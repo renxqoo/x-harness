@@ -11,7 +11,9 @@ import { createLocalEnv } from "@x-harness/exec-env";
 import { PathGate } from "@x-harness/tool-core";
 import { textScript } from "@x-harness/testkit";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
-import { createAgentWorld, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, toolboxKit } from "../index.ts";
+import { Database } from "bun:sqlite";
+import { createAgentWorld, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, telemetryKit, telemetryKitWithHandle, toolboxKit } from "../index.ts";
+import { createBunSqliteExecutor } from "@x-harness/telemetry-sqlite";
 
 let root = "";
 afterEach(() => {
@@ -74,5 +76,98 @@ describe("createAgentWorld + kits（F1）", () => {
     expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "bash", "grep", "task_output", "task_stop"]);
     for (const dispose of unload) await dispose();
     await ctx.dispose();
+  });
+});
+
+describe("telemetryKit（本地遥测接入 F1 kit 目录）", () => {
+  it("执行面形态：内存库跑一轮 → world.telemetry 可查 span 树 + log 流 + usage", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-tel-"));
+    const db = new Database(":memory:");
+    const exec = createBunSqliteExecutor(db);
+    const plugins: readonly Plugin[] = [
+      ...meterKit(),
+      ...toolboxKit({ root, gate: new PathGate(root), env: createLocalEnv(root) }),
+      ...inlineSessionKit(),
+      ...telemetryKit({ db: exec, tx: exec.tx, resource: { serviceName: "kits-test" } }),
+      ...llmKit([{ name: "fake", stream: () => (async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
+        yield { type: "text-delta", text: "measured" };
+        yield { type: "usage", usage: { input: 8, output: 4, cacheRead: 1, cacheWrite: 1 } };
+        yield { type: "finish", finish: { kind: "stop" } };
+      })() }]),
+      ...promptKit(),
+      ...loopKit(),
+    ];
+    const world = await createAgentWorld({ plugins });
+    expect(world.ok).toBe(true);
+    if (!world.ok) throw new Error(world.reason);
+    expect(world.value.telemetry).toBeDefined(); // 可选服务面：kit 在场即暴露
+    const made = await world.value.loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    made.value.agent.followup("hi");
+    await made.value.agent.whenIdle();
+    await world.value.ctx.dispose();
+    const telemetry = world.value.telemetry;
+    if (telemetry === undefined) throw new Error("telemetry missing");
+    const sessions = exec.all<{ session_id: string }>("SELECT DISTINCT session_id FROM otel_sessions");
+    expect(sessions.length).toBe(1);
+    const id = sessions[0]?.["session_id"] ?? "";
+    const names = telemetry.spansOf(id).map((row) => row.name);
+    expect(names[0]).toBe("session");
+    expect(names).toContain("turn");
+    expect(names).toContain("llm.chat");
+    expect(telemetry.usageOf(id)).toEqual({ inputTokens: 8, outputTokens: 4, cacheRead: 1, cacheWrite: 1 });
+    expect(telemetry.logsOf(id).length).toBeGreaterThan(3);
+    db.close(); // 宿主自持连接：close 归宿主
+  });
+
+  it("路径形态：kit 开库 + 连接收殓（dispose 后库文件完整、句柄 close 幂等路径）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-tel2-"));
+    const dbPath = join(root, "telemetry.db");
+    const handle = telemetryKitWithHandle({ db: dbPath, resource: { serviceName: "path-test" } });
+    const plugins: readonly Plugin[] = [
+      ...meterKit(),
+      ...toolboxKit({ root, gate: new PathGate(root), env: createLocalEnv(root) }),
+      ...inlineSessionKit(),
+      ...handle.plugins,
+      ...llmKit([{ name: "fake", stream: () => textScript("path-hello") }]),
+      ...promptKit(),
+      ...loopKit(),
+    ];
+    const world = await createAgentWorld({ plugins });
+    expect(world.ok).toBe(true);
+    if (!world.ok) throw new Error(world.reason);
+    const made = await world.value.loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    made.value.agent.followup("hi");
+    await made.value.agent.whenIdle();
+    // dispose 前查询（dispose 后连接已收殓——查询面归库文件重开）
+    const telemetry = world.value.telemetry;
+    expect(telemetry?.logsOf(made.value.agent.session.id).length ?? 0).toBeGreaterThan(3);
+    await world.value.ctx.dispose(); // wrapper 组合 teardown：telemetry 终排空 → connection close
+    // 重开验证文件库完整性（WAL checkpoint/恢复面）
+    const reopen = new Database(dbPath);
+    const rows = reopen.query("SELECT COUNT(*) AS n FROM otel_logs").get() as { n: number };
+    expect(rows.n).toBeGreaterThan(3);
+    reopen.close();
+  });
+
+  it("缺席形态：不挂 telemetryKit → world.telemetry === undefined（可选件同 archive）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-tel3-"));
+    const world = await createAgentWorld({
+      plugins: [
+        ...meterKit(),
+        ...toolboxKit({ root, gate: new PathGate(root), env: createLocalEnv(root) }),
+        ...inlineSessionKit(),
+        ...llmKit([{ name: "fake", stream: () => textScript("bare") }]),
+        ...promptKit(),
+        ...loopKit(),
+      ],
+    });
+    expect(world.ok).toBe(true);
+    if (!world.ok) throw new Error(world.reason);
+    expect(world.value.telemetry).toBeUndefined();
+    await world.value.ctx.dispose();
   });
 });
