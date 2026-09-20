@@ -1,105 +1,20 @@
 // 驱动状态机全链（docs/AGENT-LOOP-DRIVER §3）：真实装配 session+tools+llm+system-prompt，
-// 脚本化假 LLM 适配器 + 假工具；事件序列逐条断言。
+// 脚本化假 LLM 适配器 + 假工具；事件序列逐条断言。共享装置在 ./world.ts。
 
 import { createContext, loadPlugins } from "@x-harness/core";
-import type { Context } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
-import type { LlmChunk, LlmRequest } from "@x-harness/llm";
-import { sessionPlugin, sessionStore } from "@x-harness/session";
-import type { SessionEvent, SessionStore } from "@x-harness/session";
+import type { LlmChunk } from "@x-harness/llm";
+import { sessionPlugin } from "@x-harness/session";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
+import { toolsPlugin } from "@x-harness/tools";
 import { Type } from "@sinclair/typebox";
-import { toolsPlugin, toolRegistry } from "@x-harness/tools";
-import type { ToolRegistry } from "@x-harness/tools";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { agentLoopPlugin, agentLoopServiceToken, agentPreStep, agentRequest, agentRequestError, agentStatus, agentTurnStopping } from "../index.ts";
-import type { Agent, AgentHandle, AgentLoopService } from "../index.ts";
+import { errorScript, fakeAdapter, makeWorld, resetWorlds, spawn, textScript, toolScript, types, worlds } from "./world.ts";
 
-/** 脚本化假适配器：每次调用弹出一段脚本 */
-function fakeAdapter(): { scripts: Array<AsyncGenerator<LlmChunk> | ((request: LlmRequest) => AsyncGenerator<LlmChunk>)>; calls: LlmRequest[] } {
-  const calls: LlmRequest[] = [];
-  const scripts: Array<AsyncGenerator<LlmChunk> | ((request: LlmRequest) => AsyncGenerator<LlmChunk>)> = [];
-  return {
-    calls,
-    scripts,
-  };
-}
-
-function textScript(text: string, finish: "stop" | "max-tokens" = "stop"): AsyncGenerator<LlmChunk> {
-  return (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "text-delta", text };
-    yield { type: "usage", usage: { input: 1, output: 2 } };
-    yield { type: "finish", finish: { kind: finish } };
-  })();
-}
-
-function toolScript(callId: string, name: string, args: string): AsyncGenerator<LlmChunk> {
-  return (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "tool-call-delta", index: 0, callId, name, argumentsDelta: args };
-    yield { type: "finish", finish: { kind: "stop" } };
-  })();
-}
-
-function errorScript(message: string, code?: string): AsyncGenerator<LlmChunk> {
-  return (async function* (): AsyncGenerator<LlmChunk> {
-    yield { type: "finish", finish: { kind: "error", message, code } };
-  })();
-}
-
-interface World {
-  ctx: Context;
-  loop: AgentLoopService;
-  store: SessionStore;
-  tools: ToolRegistry;
-  fake: ReturnType<typeof fakeAdapter>;
-  cleanup: () => Promise<void>;
-}
-
-async function makeWorld(): Promise<World> {
-  const ctx = createContext();
-  const fake = fakeAdapter();
-  const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin]);
-  const off = ctx.use(llmRuntime).registerAdapter({
-    name: "fake",
-    stream: (request) => {
-      fake.calls.push(request);
-      const next = fake.scripts.shift();
-      if (next === undefined) return textScript("(no script)");
-      return typeof next === "function" ? next(request) : next;
-    },
-  });
-  ctx.effect(off);
-  return {
-    ctx,
-    loop: ctx.use(agentLoopServiceToken),
-    store: ctx.use(sessionStore),
-    tools: ctx.use(toolRegistry),
-    fake,
-    cleanup: async () => {
-      await ctx.dispose();
-      void unload;
-    },
-  };
-}
-
-const AGENT = { model: "fake-model", provider: "fake" };
-
-let worlds: World[] = [];
 beforeEach(() => {
-  worlds = [];
+  resetWorlds();
 });
-afterEach(async () => {
-  for (const world of worlds) await world.cleanup().catch(() => {});
-});
-
-async function spawn(world: World): Promise<{ handle: AgentHandle; agent: Agent }> {
-  const made = await world.loop.create({ agent: AGENT });
-  expect(made.ok).toBe(true);
-  if (!made.ok) throw new Error(made.reason);
-  return { handle: made.value, agent: made.value.agent };
-}
-
-const types = (agent: Agent): string[] => agent.session.events().map((event: SessionEvent) => event.type);
 
 describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
   it("fresh turn（无工具）：claim→step 括号→system 锚点→user→header→assistant→completed 收轮", async () => {
@@ -367,7 +282,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     agent.followup("hi");
     await agent.whenIdle();
     off();
-    expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "blocked" } });
+    expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "blocked", reason: "guard" } });
     // 回灌（回归：同 id、保原 target）：claim 的 id 原样重新在场——repair trailing-claim 依赖同 id 判重
     const spliced = agent.session.events().filter((e) => e.type === "agent/inbox/spliced");
     const claim = spliced.find((e) => e.data.op === "claim");
@@ -520,7 +435,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     agent.followup("hi");
     await agent.whenIdle();
     off();
-    expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "blocked" } });
+    expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "blocked", reason: "guard" } });
     const inserts = agent.session.events().filter((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "insert");
     expect(inserts).toHaveLength(1); // 仅 followup 的 insert：空领取 reject 无回灌噪音
     await handle.dispose();

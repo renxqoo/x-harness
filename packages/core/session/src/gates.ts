@@ -45,6 +45,7 @@ function isTurnEndReason(value: unknown): boolean {
     case "aborted":
       return value["cause"] === undefined || isStr(value["cause"]);
     case "blocked":
+      return value["reason"] === undefined || isStr(value["reason"]);
     case "max-tokens":
     case "interrupted":
       return true;

@@ -50,7 +50,7 @@ export interface ResolvedOptions {
 export type TurnOutcome =
   | { readonly kind: "completed" }
   | { readonly kind: "aborted"; readonly cause: string }
-  | { readonly kind: "blocked" }
+  | { readonly kind: "blocked"; readonly reason?: string }
   | { readonly kind: "error"; readonly message: string; readonly code?: string }
   | { readonly kind: "max-tokens" };
 
@@ -87,7 +87,7 @@ export interface TurnScope {
 
 export type StepEntry =
   | { readonly kind: "enter"; readonly entries: readonly InboxEntry[] }
-  | { readonly kind: "blocked" }
+  | { readonly kind: "blocked"; readonly reason?: string }
   | { readonly kind: "empty" };
 
 export type AssistantSettled = { readonly content: readonly ContentBlock[]; readonly stopReason: "stop" | "max-tokens"; readonly interrupted?: true };
@@ -135,7 +135,16 @@ export async function beginStep(scope: TurnScope, step: number, isStep0: boolean
     return { kind: "enter", entries: batch.entries };
   }
   reinsertClaimed(session, inbox, isStep0);
-  return { kind: "blocked" };
+  const rejectReason = rejectReasonOf(decision);
+  return { kind: "blocked", ...(rejectReason !== undefined ? { reason: rejectReason } : {}) };
+}
+
+/** reject 原因提取（PreStepDecision reject 声明携 reason——声明强形态；waterfall 不校验
+ *  输出形状，null/undefined/垃圾决策按弱形态防御：如实缺席不炸；空串省略与 aborted.cause 同口径） */
+function rejectReasonOf(decision: unknown): string | undefined {
+  if (typeof decision !== "object" || decision === null) return undefined;
+  const reason = (decision as { reason?: unknown }).reason;
+  return typeof reason === "string" && reason !== "" ? reason : undefined;
 }
 
 /** 回灌：step0 领取 = next-turn 队首 + next-step 全部；step≥1 = next-step 全部。分原 target 落 insert */

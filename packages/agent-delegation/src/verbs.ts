@@ -12,7 +12,7 @@ import type { ReviveOutcome } from "./revive.ts";
 import { evaluateCleanup } from "./worktree.ts";
 import type { CrossDeps } from "./crossmsg.ts";
 import { sendCross } from "./crossmsg.ts";
-import { childReport } from "./notify.ts";
+import { childReport, failureDetail } from "./notify.ts";
 import type { ChildReport } from "./notify.ts";
 import type { ChildView } from "./types.ts";
 
@@ -214,12 +214,22 @@ function viewStatus(row: ChildRow): "stopped" | "running" | "idle" {
   return "idle";
 }
 
-/** 报告铸文本：cap 截断 + agent_message 追问引导（无文件指针——任务体系未并入，U2） */
+/** 报告首行：与通知 outcomeHead 同口径（正常 completed / aborted stopped / 其余 failed + 原因句） */
+function reportHead(row: ChildRow, report: ChildReport): string {
+  if (report.status === "completed") return `agent ${row.agentId} last turn: completed`;
+  if (report.status === "aborted") return `agent ${row.agentId} stopped: ${failureDetail(report)}`;
+  return `agent ${row.agentId} failed: ${failureDetail(report)}`;
+}
+
+/** 报告铸文本：与通知同词表（docs/SUBAGENT-FAILURE-NOTIFICATION.md——异常终态显式
+ *  failed/stopped + 原因句 + session 行）+ cap 截断 + agent_message 追问引导
+ *  （无文件指针——任务体系未并入，U2） */
 export function reportText(row: ChildRow, report: ChildReport, cap: number): string {
-  const head = `agent ${row.agentId} last turn: ${report.status}`;
-  if (report.summary === undefined) return `${head}\n(no assistant output in the last turn)`;
-  if (report.summary.length <= cap) return `${head}\n${report.summary}`;
-  return `${head}\n${report.summary.slice(0, cap)}\n[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics]`;
+  const lines = [reportHead(row, report), `session: ${String(row.sessionId)}`];
+  if (report.summary === undefined) lines.push("(no assistant output in the last turn)");
+  else if (report.summary.length <= cap) lines.push(report.summary);
+  else lines.push(report.summary.slice(0, cap), `[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics]`);
+  return lines.join("\n");
 }
 
 export function notFound(target: string): string {

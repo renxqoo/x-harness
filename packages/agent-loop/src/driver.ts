@@ -24,10 +24,10 @@ import type { DriverDeps, ResolvedOptions, StepEntry, TurnOutcome, TurnScope } f
 
 export type { DriverDeps, ResolvedOptions };
 
-/** 步入口早退：空领取 → completed；preStep 否决 → blocked；enter → undefined 继续 */
+/** 步入口早退：空领取 → completed；preStep 否决 → blocked（携否决原因）；enter → undefined 继续 */
 function entryOutcome(entry: StepEntry): TurnOutcome | undefined {
   if (entry.kind === "empty") return { kind: "completed" };
-  if (entry.kind === "blocked") return { kind: "blocked" };
+  if (entry.kind === "blocked") return { kind: "blocked", ...(entry.reason !== undefined ? { reason: entry.reason } : {}) };
   return undefined;
 }
 
@@ -38,10 +38,11 @@ function appendUserBatch(scope: TurnScope, step: number, entry: StepEntry): void
   appendSurfaceEvent(deps.session, { type: "user/message", data: { turn, step, content }, surfaceOp: "append" });
 }
 
-/** 链式条件：未取消、非 blocked、有 next-turn */
+/** 链式条件：未取消、终态 completed、有 next-turn——异常终态（error/max-tokens/aborted/
+ *  blocked）一律不链：排队消息原地保留（下次 kick 的 step0 消费），立即 idle 让失败通知出。 */
 function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutcome | undefined, session: Session): boolean {
   if (cancelled !== undefined) return false;
-  if (turnEnds?.kind === "blocked") return false;
+  if (turnEnds !== undefined && turnEnds.kind !== "completed") return false;
   return foldInbox(session.events()).nextTurn.length > 0;
 }
 
@@ -61,6 +62,9 @@ function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown>
   }
   if (reason.kind === "error") {
     return { turn, reason: { kind: "error", message: reason.message, ...(reason.code !== undefined ? { code: reason.code } : {}) } };
+  }
+  if (reason.kind === "blocked") {
+    return { turn, reason: { kind: "blocked", ...(reason.reason !== undefined && reason.reason !== "" ? { reason: reason.reason } : {}) } };
   }
   return { turn, reason: { kind: reason.kind } };
 }
@@ -109,13 +113,16 @@ export function createDriver(deps: DriverDeps): {
       deps.emitError(failedTurnRef.turn, errorText(error));
     } finally {
       phase = undefined;
-      deps.emitStatus("idle");
-      // 锁存唤醒 replay 仅在收件箱确有 next-turn 时（链式条件可能已消费——双触发会造空 turn）
-      if (wakeRequested && cancelled === undefined && foldInbox(session.events()).nextTurn.length > 0) {
-        wakeRequested = false;
+      // 先判 replay 再发 idle：replay 边界不发假 idle——同步监听者（evictIdle 驻留档化/
+      // 邮箱状态镜像）不得在「即将继续」的边界上做生命周期决策（假 idle 可致 dispose 压掉
+      // replay 并 clear 掉锁存的排队消息）。锁存唤醒 replay 仅在收件箱确有 next-turn 时
+      // （链式条件可能已消费——双触发会造空 turn）。
+      const replay = wakeRequested && cancelled === undefined && foldInbox(session.events()).nextTurn.length > 0;
+      wakeRequested = false;
+      if (replay) {
         void kick();
       } else {
-        wakeRequested = false;
+        deps.emitStatus("idle");
         notifyIdle();
       }
     }

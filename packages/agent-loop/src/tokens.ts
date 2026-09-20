@@ -27,7 +27,9 @@ export const agentAssistantStream = defineEvent<{
 }>("agent/assistant-stream", { freeze: "none" });
 
 /** F0①：enter 可携重写消息（落账走重写版——「模型可见必落盘」保持：重写版即日志版）；
- *  step0 改写为空 = 闭 turn（领取项被中间件显式清除）。 */
+ *  step0 改写为空 = 闭 turn（领取项被中间件显式清除）。
+ *  reject.reason 声明为强形态；waterfall 不校验输出形状——内核按弱形态防御
+ *  （null/undefined/垃圾决策在 beginStep 形状收窄，如实按无 reason 落）。 */
 export type PreStepDecision =
   | { readonly kind: "enter" }
   | { readonly kind: "enter"; readonly messages: readonly InboxEntry[] }

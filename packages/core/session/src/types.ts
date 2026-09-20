@@ -23,7 +23,7 @@ export interface SessionHeader {
 export type TurnEndReason =
   | { readonly kind: "completed" }
   | { readonly kind: "aborted"; readonly cause?: string }
-  | { readonly kind: "blocked" }
+  | { readonly kind: "blocked"; readonly reason?: string }
   | { readonly kind: "error"; readonly message: string; readonly code?: string }
   | { readonly kind: "max-tokens" }
   | { readonly kind: "interrupted" };

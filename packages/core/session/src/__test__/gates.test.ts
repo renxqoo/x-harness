@@ -174,6 +174,12 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("turn/end", { turn: 0, reason: { kind: "aborted", cause: 5 } })).toBe("shape:turn/end");
   });
 
+  it("turn/end blocked 可选 reason（SUBAGENT-FAILURE-NOTIFICATION——preStep reject 透传）", () => {
+    expect(gateEvent("turn/end", { turn: 0, reason: { kind: "blocked", reason: "guard" } })).toBeUndefined();
+    expect(gateEvent("turn/end", { turn: 0, reason: { kind: "blocked" } })).toBeUndefined();
+    expect(gateEvent("turn/end", { turn: 0, reason: { kind: "blocked", reason: 5 } })).toBe("shape:turn/end");
+  });
+
   it("todo/snapshot 词条门表驱动（docs/TODO.md §13.2/§13.4——规范形/自环/悬空/seq 界）", () => {
     const ok = (data: unknown): boolean => gateEvent("todo/snapshot", data) === undefined;
     const bad = (data: unknown): string => gateEvent("todo/snapshot", data) ?? "passed";

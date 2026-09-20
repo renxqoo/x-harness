@@ -1,6 +1,7 @@
 // 完成通知（docs/AGENT-DELEGATION.md §5.1）：agentStatus 监听 → 子 idle 且 armed → 读子 WAL
-// 末 turn/end（词表对齐 TurnEndReason 全集）+ 本轮 assistant 摘要 → steer 注入父；
-// tearing-down 门（级联期丢弃）；孤儿子收养处置（父 get 缺位 → cancel+dispose+摘行）；
+// 末 turn/end 全字段透传（kind/message/code/cause/reason——docs/SUBAGENT-FAILURE-NOTIFICATION.md：
+// 异常终态显式回传，主代理不解读状态词）+ 本轮 assistant 摘要 + session id 行 → steer 注入
+// 父；tearing-down 门（级联期丢弃）；孤儿子收养处置（父 get 缺位 → cancel+dispose+摘行）；
 // 子会话缺档 → 占位通知如实送达（不静默丢 completion）。
 
 import type { AgentLoopService } from "@x-harness/agent-loop";
@@ -22,52 +23,121 @@ export interface ChildReport {
   readonly status: string;
   readonly summary: string | undefined;
   readonly usage: unknown;
+  /** error 终态原因（turn/end 透传） */
+  readonly message?: string;
+  readonly code?: string;
+  /** aborted 终态原因（turn/end 透传） */
+  readonly cause?: string;
+  /** blocked 终态原因（preStep reject 透传） */
+  readonly blockedReason?: string;
 }
 
-/** 子末轮报告：turn/end reason（全集透传）+ 本轮（turn/end 之前最近的）assistant 摘要 + usage */
+interface TurnEndPayload {
+  readonly reason?: {
+    readonly kind?: string;
+    readonly message?: string;
+    readonly code?: string;
+    readonly cause?: string;
+    readonly reason?: string;
+  };
+}
+
+/** turn/end 原因字段透传：在场且为 string 才落（垃圾形态如实缺席） */
+function reasonFields(reason: TurnEndPayload["reason"]): Pick<ChildReport, "message" | "code" | "cause" | "blockedReason"> {
+  const out: { message?: string; code?: string; cause?: string; blockedReason?: string } = {};
+  if (typeof reason?.message === "string") out.message = reason.message;
+  if (typeof reason?.code === "string") out.code = reason.code;
+  if (typeof reason?.cause === "string") out.cause = reason.cause;
+  if (typeof reason?.reason === "string") out.blockedReason = reason.reason;
+  return out;
+}
+
+/** 子末轮报告：turn/end reason 全字段透传（kind/message/code/cause/reason）+ 本轮
+ *  （turn/end 之前最近的）assistant 摘要 + usage */
 export function childReport(events: readonly SessionEvent[]): ChildReport {
-  let turnEnd: { readonly reason?: { readonly kind?: string } } | undefined;
+  let turnEnd: TurnEndPayload | undefined;
   let turnEndAt = -1;
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i] as SessionEvent;
     if (event.type === "turn/end") {
-      turnEnd = event.data as { reason?: { kind?: string } };
+      turnEnd = event.data as TurnEndPayload;
       turnEndAt = i;
       break;
     }
   }
   const kind = turnEnd?.reason?.kind;
   const status = kind === undefined ? "error" : kind; // 未知/缺席 fail-closed 按 error
-  let summary: string | undefined;
-  let usage: unknown;
+  return { status, ...lastAssistantOf(events, turnEndAt), ...reasonFields(turnEnd?.reason) };
+}
+
+/** 本轮（turn/end 之前最近的）assistant 摘要 + usage；越界无消息 → 双缺席（键恒在） */
+function lastAssistantOf(events: readonly SessionEvent[], turnEndAt: number): { summary: string | undefined; usage: unknown } {
   for (let i = turnEndAt - 1; i >= 0; i--) {
     const event = events[i] as SessionEvent;
     if (event.type === "turn/end" || event.type === "turn/start") break; // 本轮边界
-    if (event.type === "assistant/message") {
-      const data = event.data as unknown as { content?: Array<{ type?: string; text?: string }>; usage?: unknown };
-      const text = (data.content ?? [])
-        .filter((block) => block.type === "text")
-        .map((block) => block.text ?? "")
-        .join("");
-      if (text !== "") summary = text.length > SUMMARY_CAP ? `${text.slice(0, SUMMARY_CAP)}…` : text;
-      if (data.usage !== undefined) usage = data.usage;
-      break;
-    }
+    if (event.type !== "assistant/message") continue;
+    const data = event.data as unknown as { content?: Array<{ type?: string; text?: string }>; usage?: unknown };
+    const text = (data.content ?? [])
+      .filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("");
+    let summary: string | undefined;
+    if (text !== "") summary = text.length > SUMMARY_CAP ? `${text.slice(0, SUMMARY_CAP)}…` : text;
+    return { summary, usage: data.usage };
   }
-  return { status, summary, usage };
+  return { summary: undefined, usage: undefined };
+}
+
+/** error 终态句：message 缺席/空串兜底；code 空串视同缺席 */
+function errorDetail(report: ChildReport): string {
+  if (report.message === undefined || report.message === "") return "turn ended with error";
+  const code = report.code === undefined || report.code === "" ? undefined : report.code;
+  return code === undefined ? report.message : `${report.message} (code: ${code})`;
+}
+
+/** 终态原因句（词表单一真相）：completed 原样；aborted → 取消原因；interrupted → 崩溃
+ *  恢复铸造态（repair 闭合残卷——已知 kind，如实铸句不落 unknown）；其余 → 失败原因句。
+ *  notificationText 与 reportText 共用——主代理不解读状态词，句子里就是「发生了什么」。 */
+export function failureDetail(report: ChildReport): string {
+  switch (report.status) {
+    case "completed":
+      return "completed";
+    case "aborted":
+      return report.cause === undefined || report.cause === "" ? "cancelled" : report.cause;
+    case "interrupted":
+      return "turn interrupted before completing (crash recovery)";
+    case "max-tokens":
+      return report.summary === undefined
+        ? "hit the output token limit before producing any report (no summary)"
+        : "hit the output token limit (last output may be truncated)";
+    case "error":
+      return errorDetail(report);
+    case "blocked":
+      return report.blockedReason === undefined || report.blockedReason === "" ? "step rejected by middleware" : `step rejected by middleware: ${report.blockedReason}`;
+    default:
+      return "turn ended abnormally (unknown reason kind)";
+  }
+}
+
+/** 首行铸语：正常 finished: completed（词面沿用）；aborted stopped（取消语义非失败）；
+ *  其余 failed + 原因句——主代理不解读状态词，句子里就是「发生了什么」 */
+function outcomeHead(agentId: string, report: ChildReport): string {
+  if (report.status === "completed") return `[agent-notification] agent ${agentId} finished: completed`;
+  if (report.status === "aborted") return `[agent-notification] agent ${agentId} stopped: ${failureDetail(report)}`;
+  return `[agent-notification] agent ${agentId} failed: ${failureDetail(report)}`;
 }
 
 export function notificationText(row: ChildRow, report: ChildReport): string {
-  const lines = [`[agent-notification] agent ${row.agentId} finished: ${report.status}`];
+  const lines = [outcomeHead(row.agentId, report), `session: ${String(row.sessionId)}`];
   if (report.summary !== undefined) lines.push(`summary: ${report.summary}`);
   if (report.usage !== undefined) lines.push(`usage: ${JSON.stringify(report.usage)}`);
   lines.push(`(use task_output with agentId "${row.agentId}" for the full report)`);
   return lines.join("\n");
 }
 
-/** 缺档占位（子会话已封存且档案不可读——completion 事实仍送达） */
+/** 缺档占位（子会话已封存且档案不可读——completion 事实仍送达；session 行照带——档案指针） */
 export function archivedNotificationText(row: ChildRow): string {
-  return `[agent-notification] agent ${row.agentId} finished: session-archived (no report available)`;
+  return `[agent-notification] agent ${row.agentId} finished: session-archived (no report available)\nsession: ${String(row.sessionId)}`;
 }
 
 /** 状态事件路由：running → armed/running 置位；idle 且 armed → 通知（armed/occupied 复位） */

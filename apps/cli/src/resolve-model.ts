@@ -90,6 +90,7 @@ export function resolveModel(config: ProvidersConfig, flags: ModelFlags): Result
         //（AgentOptions.thinking 为显式值时 foldDial 恒胜 header）；off 语义 = 不发思考参数
         ...(flags.thinking !== undefined ? { thinking: flags.thinking } : {}),
         ...(flags.apiKey !== undefined ? { apiKey: flags.apiKey } : {}),
+        
       },
       apiKeyProvider: owner.value.provider,
     },

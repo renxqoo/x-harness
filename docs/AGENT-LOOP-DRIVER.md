@@ -70,7 +70,8 @@ export interface AgentLoopService {
 ### 1.4 turn/step 状态机（driver.ts）
 
 ```
-kick(): while (await turn()) {}；exit 回 idle，锁存唤醒 replay（收件箱确有 next-turn 才重放——防空 turn）
+kick(): while (await turn()) {}；exit 先判锁存唤醒 replay（收件箱确有 next-turn 才重放——防空 turn）再发 idle——
+  replay 边界不发假 idle（同步监听者不得在「即将继续」的边界上做生命周期决策）
   sticky 取消以 kick 边界为界：cancel 后再 followup/steer 可开新 kick（dispose 后的抑制由 session 封存承担）
   idle 通告收敛：notifyIdle 前复查 phase——idle 监听器重入 followup 时不提前 resolve（由新 kick 的 finally 收尾）
 turn()（逃逸 throw——中间件违约/append 失败——在 turn 内 catch：turnEnds={error} 后由 finally 单次收轮）:
@@ -80,7 +81,8 @@ turn()（逃逸 throw——中间件违约/append 失败——在 turn 内 catch
     preStep: fold 收件箱 → 无领取不落 claim 不落 user/message（防空 claim 尾随触发回灌噪音）
       → claim（落 claim 事件，claimed = 领取 ids）→ waterfall agentPreStep：
       reject → 回灌已领批次（insert 原对象：同 id、保原 target，next-turn 与 next-step 各一事件——repair 的
-        trailing-claim 按旧 id 回灌依赖同 id 在场判重）→ turnEnds={blocked} 跳出
+        trailing-claim 按旧 id 回灌依赖同 id 在场判重）→ turnEnds={blocked, reason?}（reject 载荷
+        reason 透传——空串省略，与 aborted.cause 同口径）跳出
       step0 且领取空 → turnEnds={completed}（不花模型调用）跳出
     append step/start
     system/message 锚点策略：turn 1 step0 恒落锚点（文本可空——门 isStr 不查非空），
@@ -111,8 +113,12 @@ turn()（逃逸 throw——中间件违约/append 失败——在 turn 内 catch
     append 失败统一策略：致命 → 尽力落 turn/end{error}，落不上也退 idle 并 emit agentError
     turn() 顶层 catch（中间件违约等逃逸 throw）→ turn/end{error} → 发 idle
   }
-  finally append turn/end {turn, reason}（aborted 带 cause——词表已扩）
-  链式条件：未置 sticky 取消 ∧ 无 blocked（blocked 不链式：kick 退出、条目留队、等显式唤醒重试——防活锁）
+  finally append turn/end {turn, reason}（aborted 带 cause、blocked 带 reason——词表已扩）
+  链式条件：未置 sticky 取消 ∧ 终态 completed ∧ 有 next-turn——异常终态（error/max-tokens/
+    aborted/blocked）一律不链：排队消息原地保留（下次 kick 的 step0 消费），立即 idle 让
+    完成通知出（SUBAGENT-FAILURE-NOTIFICATION）。锁存唤醒 replay 不在此列：飞行中新
+    followup 到达是用户主动唤醒语义（idle 可唤醒契约的另一半），照常 replay（replay 判定
+    先于 idle 发布——replay 边界不发假 idle）
     → 链式新 turn：新 AbortController 在 turn/start 落账前完成交换
 ```
 
@@ -165,7 +171,7 @@ resume = `sessionArchive.read` → closers → `store.create({ header, seed: [..
 
 ## 5. 审查处置记录（20 条）
 
-F1 词表 aborted 扩可选 cause（session 门同步）；F2 blocked 不链式防活锁；F3 system 锚点策略（恒落锚点+空文本 dormant 投影，纲领 P11 同步修正）；F4 步起点与工具相位后直查 abort；F5 per-kick sticky 取消+controller 先换后落账；F6 preStep enter 输出无 messages（观察专用）；F7 续航仅 completed、继续时复位；F8 覆盖全序格；F9 tools 现取+ToolRef 投影+context 齐备才落；F10 逐字段折叠+options 恒胜+改写粘性写明；F11 空结算视同流错误；F12 append 失败统一致命策略；F13 turn 顶层 catch；F14 回灌保原 target 单事件批量；F15 closers 信封铸造细则；F16 回灌后缀语义+last-insert-wins；F17 conclude 延后至 contexts 消化（pendingConclude）；F18 空 claim 不落；F19 resume 不自动 kick；F20 error 形状映射+cancel 空串护栏。
+F1 词表 aborted 扩可选 cause（session 门同步）；F2 链式条件=仅 completed（异常终态一律不链——blocked 防活锁语义并入，SUBAGENT-FAILURE-NOTIFICATION 扩至全异常态；锁存唤醒 replay 先于 idle 发布、replay 边界不发假 idle）；F3 system 锚点策略（恒落锚点+空文本 dormant 投影，纲领 P11 同步修正）；F4 步起点与工具相位后直查 abort；F5 per-kick sticky 取消+controller 先换后落账；F6 preStep enter 输出无 messages（观察专用）；F7 续航仅 completed、继续时复位；F8 覆盖全序格；F9 tools 现取+ToolRef 投影+context 齐备才落；F10 逐字段折叠+options 恒胜+改写粘性写明；F11 空结算视同流错误；F12 append 失败统一致命策略；F13 turn 顶层 catch；F14 回灌保原 target 单事件批量；F15 closers 信封铸造细则；F16 回灌后缀语义+last-insert-wins；F17 conclude 延后至 contexts 消化（pendingConclude）；F18 空 claim 不落；F19 resume 不自动 kick；F20 error 形状映射+cancel 空串护栏。
 
 ## 6. 代码对抗审查处置（实现后独立审查）
 

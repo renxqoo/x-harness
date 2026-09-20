@@ -158,9 +158,15 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
 - **子→父（main 通道）**：子调 `agent_message{to:"main"}` → 插件路由 steer 到父会话，文本
   包装 `<cross-session-message from="<子 agentId>">…</cross-session-message>`。父
   busy→步边界；父 idle→唤醒。父已 dispose → not-found。
-- **完成通知**：现状机制整体继承（agentStatus 监听 → armed/idle → 子 WAL 末 turn/end
-  reason 全集透传 + 本轮 assistant 摘要 ≤200 + usage → `[agent-notification]` steer 注入父 →
-  释槽）。变更：子会话缺档时投递 `session-archived` 占位通知（如实，不再静默）。
+- **完成通知**：agentStatus 监听 → armed/idle → 子 WAL 末 turn/end 全字段透传
+  （kind/message/code/cause/reason——`docs/SUBAGENT-FAILURE-NOTIFICATION.md`）+ 本轮
+  assistant 摘要 ≤200 + `session:` 行（子会话档案指针）+ usage → `[agent-notification]`
+  steer 注入父 → 释槽。异常终态显式成败：completed → `finished: completed`；aborted →
+  `stopped: <cause>`；error/max-tokens/blocked/interrupted → `failed: <原因句>`
+  （max-tokens 区分有无摘要、error 带 message/code、blocked 带 preStep reject 原因、
+  interrupted 为 repair 残卷铸造态——docs/SUBAGENT-FAILURE-NOTIFICATION.md 词表）——
+  主代理不猜、不轮询、不解读状态词。子会话缺档时投递 `session-archived` 占位通知
+  （如实，不再静默，session 行照带）。
 - **兄弟互发**：`agent_message{to:"<兄弟agentId>"}`，同 steer 路径。
 
 ### 5.2 寻址解析算法（nameaddr.ts，`to` 的唯一解析真源）
