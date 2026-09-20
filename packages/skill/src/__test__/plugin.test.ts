@@ -79,6 +79,35 @@ function textBlocksOf(session: Session): string[] {
 }
 
 describe("createSkillPlugin 注入", () => {
+  it("disabled 名单：合并后按名过滤——清单块不含禁用名、未禁用名保留", async () => {
+    await writeAlpha();
+    await mkdir(join(skillsDir, "beta"), { recursive: true });
+    await writeFile(join(skillsDir, "beta", "SKILL.md"), `---\nname: beta\ndescription: does B\n---\nbody`);
+    const warnings: string[] = [];
+    const live = new Map<SessionId, AgentHandle>();
+    const loopStub = { get: (id: SessionId) => live.get(id) } as unknown as AgentLoopService;
+    const stub: Plugin = {
+      name: "agent-loop",
+      apply: (ctx: Context) => {
+        ctx.provide(agentLoopServiceToken, loopStub);
+      },
+    };
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      stub,
+      sessionPlugin,
+      createSkillPlugin({ skillsDirs: [skillsDir], disabled: ["alpha"], onWarn: (message) => warnings.push(message) }),
+    ]);
+    const created = await ctx.use(sessionStore).create();
+    if (!created.ok) throw new Error(created.reason);
+    live.set(created.value.id, { agent: { session: created.value } } as unknown as AgentHandle);
+    ctx.emit(agentStatus, { session: created.value.id, status: "running" });
+    const blocks = textBlocksOf(created.value);
+    expect(blocks.some((text) => text.includes("beta"))).toBe(true);
+    expect(blocks.every((text) => !text.includes("alpha"))).toBe(true);
+    for (const d of unload) await d();
+  });
+
   it("running 注入：surface[0] 为清单块，deriveMessages 首位含块", async () => {
     await writeAlpha();
     const block = renderSkillsBlock((await loadSkills([skillsDir])).skills);

@@ -5,7 +5,6 @@
 
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionStore, SessionId } from "@x-harness/session";
-import type { ToolExecContext } from "@x-harness/tools";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { resolveAddress } from "./nameaddr.ts";
 import type { ReviveOutcome } from "./revive.ts";
@@ -45,28 +44,28 @@ export interface OutputInput {
   readonly timeout?: number;
 }
 
-export async function message(deps: VerbDeps, execCtx: ToolExecContext, input: MessageInput): Promise<VerbOutcome> {
+export async function message(deps: VerbDeps, caller: SessionId | undefined, input: MessageInput): Promise<VerbOutcome> {
   if (input.to === "") return { ok: false, reason: "invalid-args:to must be a non-empty string" };
   if (input.message === "") return { ok: false, reason: "invalid-args:message must be a non-empty string" };
-  if (execCtx.session === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
-  if (input.notify_when_idle === true) return notifyWhenIdle(deps, execCtx, input);
+  if (caller === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
+  if (input.notify_when_idle === true) return notifyWhenIdle(deps, caller, input);
   if (input.message === undefined) return { ok: false, reason: "invalid-args:message is required unless notify_when_idle is set" };
-  const resolved = resolveAddress(deps.lineage, execCtx.session, input.to);
-  if (resolved.kind === "miss") return crossFallback(deps, execCtx, { input: { ...input, message: input.message as string }, missReason: resolved.reason });
-  if (resolved.kind === "main") return deliverToMain(deps, execCtx.session, input.message);
+  const resolved = resolveAddress(deps.lineage, caller, input.to);
+  if (resolved.kind === "miss") return crossFallback(deps, caller, { input: { ...input, message: input.message as string }, missReason: resolved.reason });
+  if (resolved.kind === "main") return deliverToMain(deps, caller, input.message);
   return deliverToRow(deps, resolved.row, input.message);
 }
 
 /** notify_when_idle（§4.4/§5.4）：仅根会话 + 仅跨进程 box 目标（进程内子走完成通知） */
-async function notifyWhenIdle(deps: VerbDeps, execCtx: ToolExecContext, input: MessageInput): Promise<VerbOutcome> {
-  if (deps.lineage.bySession(execCtx.session as SessionId) !== undefined) {
+async function notifyWhenIdle(deps: VerbDeps, caller: SessionId, input: MessageInput): Promise<VerbOutcome> {
+  if (deps.lineage.bySession(caller) !== undefined) {
     return { ok: false, reason: "invalid-args:notify_when_idle is only available from the main conversation" };
   }
-  if (resolveAddress(deps.lineage, execCtx.session as SessionId, input.to).kind === "row") {
+  if (resolveAddress(deps.lineage, caller, input.to).kind === "row") {
     return { ok: false, reason: "invalid-args:notify_when_idle targets a local session (cross-process); in-process sub-agents notify you on completion already" };
   }
   if (deps.cross === undefined) return { ok: false, reason: "invalid-args:no local mailbox is configured" };
-  return echoSummary(await sendCross(deps.cross, execCtx, input), input);
+  return echoSummary(await sendCross(deps.cross, caller, input), input);
 }
 
 /** summary 截断回显（§2.1：不传输、仅发方可见——等价物=结果回显） */
@@ -77,14 +76,14 @@ function echoSummary(sent: VerbOutcome, input: MessageInput): VerbOutcome {
 }
 
 /** 回退链（§5.2-4b→5）：跨进程 box 域 → archive 惰性复活；歧义/无效直返 */
-async function crossFallback(deps: VerbDeps, execCtx: ToolExecContext, plan: { readonly input: MessageInput & { readonly message: string }; readonly missReason: string }): Promise<VerbOutcome> {
+async function crossFallback(deps: VerbDeps, caller: SessionId, plan: { readonly input: MessageInput & { readonly message: string }; readonly missReason: string }): Promise<VerbOutcome> {
   const { input, missReason } = plan;
   if (deps.cross !== undefined) {
-    const cross = await sendCross(deps.cross, execCtx, input);
+    const cross = await sendCross(deps.cross, caller, input);
     if (cross.ok || !cross.reason.startsWith("not-found:")) return cross; // not-found 续走复活
   }
   if (deps.reviveByName !== undefined) {
-    const revived = await deps.reviveByName(execCtx.session as SessionId, input.to);
+    const revived = await deps.reviveByName(caller, input.to);
     if (revived.kind === "row") return deliverToRow(deps, revived.row, input.message);
   }
   return { ok: false, reason: missReason };
@@ -137,14 +136,20 @@ export async function output(deps: VerbDeps, caller: SessionId | undefined, inpu
   return { ok: true, text: reportText(row, childReport(childSession.events()), deps.reportCap) };
 }
 
-export async function stop(deps: VerbDeps, caller: SessionId | undefined, taskId: string): Promise<VerbOutcome> {
+export interface StopInput {
+  readonly taskId: string;
+  readonly cause?: string;
+}
+
+export async function stop(deps: VerbDeps, caller: SessionId | undefined, input: StopInput): Promise<VerbOutcome> {
+  const taskId = input.taskId;
   const found = ownerRow(deps, caller, taskId);
   if (!found.ok) return found;
   const row = found.value;
   if (row.stopped) return { ok: true, text: `${row.agentId} already stopped` }; // 幂等
   const childHandle = deps.loop.get(row.sessionId);
   if (childHandle !== undefined) {
-    childHandle.agent.cancel("agent-stop");
+    childHandle.agent.cancel(input.cause ?? "agent-stop");
     await childHandle.agent.whenIdle();
   }
   row.stopped = true;
@@ -170,11 +175,11 @@ function ownerRow(deps: VerbDeps, caller: SessionId | undefined, taskId: string)
   return { ok: true, value: row };
 }
 
-export async function listAgents(deps: VerbDeps, execCtx: ToolExecContext): Promise<readonly ChildView[]> {
-  if (execCtx.session === undefined) return [];
+export async function listAgents(deps: VerbDeps, caller: SessionId | undefined): Promise<readonly ChildView[]> {
+  if (caller === undefined) return [];
   const rows: ChildView[] = deps.lineage
     .rows()
-    .filter((row) => row.parent === execCtx.session)
+    .filter((row) => row.parent === caller)
     .map((row) => ({
       kind: "subagent",
       agentId: row.agentId,

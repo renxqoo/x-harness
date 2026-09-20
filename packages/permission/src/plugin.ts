@@ -13,7 +13,7 @@ import { decideFor } from "./decide.ts";
 import type { Decision } from "./decide.ts";
 import { GrantsRegistry } from "./grants.ts";
 import { parseRules } from "./rules/parse.ts";
-import { permissionBroker, permissionDecided, permissionGrants, fenceFacts } from "./tokens.ts";
+import { permissionBroker, permissionDecided, permissionGrants, permissionMode, fenceFacts } from "./tokens.ts";
 import type { ModeKnob, PermissionRule } from "./types.ts";
 
 export interface PermissionOptions {
@@ -38,9 +38,17 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
       }));
       const userRules = [...parseRules(options.rules ?? [], "user"), ...protectedRules];
       const grants = new GrantsRegistry();
-      const mode = options.mode ?? "auto";
-      if (mode === "full") grants.setUnrestricted(); // 启动期总括授权 → 授权事实（docs/PERMISSION-FULL-UNRESTRICTED.md）
+      let mode = options.mode ?? "auto";
+      grants.setUnrestricted(mode === "full"); // 装配期总括授权 → 授权事实（docs/PERMISSION-FULL-UNRESTRICTED.md）
       let tearingDown = false;
+
+      const modeService = {
+        get: (): ModeKnob => mode,
+        set(next: ModeKnob): void {
+          mode = next;
+          grants.setUnrestricted(next === "full"); // decide 面与授权面原子同步
+        },
+      };
 
       const ask = async (tool: string, decision: Decision, session: SessionId | undefined): Promise<"allow" | "deny"> => {
         if (tearingDown) return "deny";
@@ -89,12 +97,14 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
       });
       const offDisposed = ctx.on(sessionDisposed, ({ session }) => grants.evict(session));
       const offGrants = ctx.provide(permissionGrants, grants);
+      const offMode = ctx.provide(permissionMode, modeService);
       return () => {
         tearingDown = true; // 拒新 ask；在飞 ask 迟到裁决丢弃
         grants.seal();
         offDecide();
         offDisposed();
         offGrants();
+        offMode();
       };
     },
   };

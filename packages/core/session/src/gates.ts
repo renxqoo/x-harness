@@ -118,7 +118,7 @@ function todoSnapshotEdges(value: unknown, ids: ReadonlySet<string>): boolean {
   return true;
 }
 
-/** 逐词条形状门：词表闭合（17 条），结构与归属键检查，语义归写方 */
+/** 逐词条形状门：词表闭合（18 条），结构与归属键检查，语义归写方 */
 const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean } = {
   "turn/start": (d) => isObj(d) && isCount(d["turn"]),
   "turn/end": (d) => isObj(d) && isCount(d["turn"]) && isTurnEndReason(d["reason"]),
@@ -208,7 +208,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     const ids = todoSnapshotTaskIds(d["tasks"], d["seq"]);
     return ids !== undefined && todoSnapshotEdges(d["edges"], ids);
   },
-
+  "session/meta": (d) => isObj(d) && isStr(d["key"]) && d["key"] !== "", // value 语义归写方（内核只运不判）
 };
 
 /** 形状门：未知词条 / 形状不符 → 返回失败理由（data 须为已物化快照或 JSON.parse 产物） */

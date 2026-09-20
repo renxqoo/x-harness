@@ -13,7 +13,7 @@ import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolOutcome } from "@x-harness/tools";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
-import { createPermissionPlugin, permissionBroker, permissionDecided, permissionGrants } from "../index.ts";
+import { createPermissionPlugin, permissionBroker, permissionDecided, permissionGrants, permissionMode } from "../index.ts";
 
 interface Bench {
   readonly ctx: Context;
@@ -176,6 +176,28 @@ describe("permission 插件（真实管线）", () => {
     const plan = await bench(root, { mode: "plan" });
     expect(plan.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
     for (const d of plan.unload) await d();
+  });
+
+  it("permissionMode 服务：运行期切档原子同步 decide 面与授权面（进入 full 即授、离开即撤）", async () => {
+    const b = await bench(root, { brokerScript: [] });
+    const svc = b.ctx.use(permissionMode);
+    expect(svc.get()).toBe("auto");
+    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
+
+    svc.set("plan");
+    expect(svc.get()).toBe("plan");
+    expect((await b.call("write", { path: "f.txt", content: "x" })).isError).toBe(true); // decide 面读现值
+    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
+
+    svc.set("full");
+    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(true); // 授权面同步授予
+    expect(b.ctx.use(permissionGrants).extraRootsOf(undefined)).toEqual(["/"]);
+    expect((await b.call("bash", { command: "ls whatever" })).content).toBe("ran");
+
+    svc.set("auto");
+    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false); // 撤销即时收回
+    expect(b.ctx.use(permissionGrants).extraRootsOf(undefined)).toEqual([]);
+    for (const d of b.unload) await d();
   });
 
   it("full 档拒读表仍压过：.env 与家目录 ~/.ssh 读拒（deny 规则先于 full 短路）", async () => {

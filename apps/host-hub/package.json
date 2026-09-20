@@ -1,0 +1,28 @@
+{
+  "name": "@x-harness/host-hub",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./host": "./src/host/cli.ts",
+    "./worker": "./src/worker/main.ts"
+  },
+  "scripts": {
+    "build": "bun build src/host/cli.ts src/worker/main.ts --outdir dist --target bun --format esm --external \"@x-harness/*\"",
+    "e2e:llm": "bun run test/llm-e2e.ts"
+  },
+  "dependencies": {
+    "@x-harness/agent-delegation": "workspace:*",
+    "@x-harness/agent-loop": "workspace:*",
+    "@x-harness/autocompact": "workspace:*",
+    "@x-harness/compaction": "workspace:*",
+    "@x-harness/core": "workspace:*",
+    "@x-harness/harness": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/md-frontmatter": "workspace:*",
+    "@x-harness/permission": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/session-persistence-jsonl": "workspace:*",
+    "@x-harness/skill": "workspace:*"
+  }
+}

@@ -2,7 +2,8 @@
 
 export type { AskRequest, FenceFacts, ModeKnob, PermissionAudit, PermissionRule, RuleOrigin, RuleTool, Verdict } from "./types.ts";
 export { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE, MODE_KNOBS } from "./types.ts";
-export { permissionBroker, permissionDecided, permissionGrants, fenceFacts } from "./tokens.ts";
+export { permissionBroker, permissionDecided, permissionGrants, permissionMode, fenceFacts } from "./tokens.ts";
+export type { PermissionModeService } from "./tokens.ts";
 export { parseRule, parseRules } from "./rules/parse.ts";
 export { globMatch } from "./rules/glob.ts";
 export { bashPrefixMatch } from "./rules/bash-prefix.ts";

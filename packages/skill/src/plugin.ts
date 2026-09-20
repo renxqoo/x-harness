@@ -26,7 +26,9 @@ export function createSkillPlugin(options: SkillPluginOptions = {}): Plugin {
         loaded = { skills: {}, warnings: [`skills: scan failed (${error instanceof Error ? error.message : String(error)})`] }; // 空快照收场——不阻断装配（docs/SKILL.md §1.4）
       }
       for (const warning of loaded.warnings) warn(warning);
-      const block = renderSkillsBlock(loaded.skills);
+      const disabled = new Set(options.disabled ?? []);
+      const skills = disabled.size === 0 ? loaded.skills : Object.fromEntries(Object.entries(loaded.skills).filter(([name]) => !disabled.has(name)));
+      const block = renderSkillsBlock(skills);
       if (block === "") return; // 零快照无痕：不注册监听、不追加任何事件
       const loop = ctx.use(agentLoopServiceToken);
       return createTailSnapshot({ ctx, loop, spec: { id: "skills", render: () => block, onWarn: warn } });

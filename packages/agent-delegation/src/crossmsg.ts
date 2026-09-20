@@ -4,7 +4,7 @@
 
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionId } from "@x-harness/session";
-import type { ToolExecContext } from "@x-harness/tools";
+
 import type { LiveBox, MailboxService } from "@x-harness/session-mailbox";
 import type { Lineage } from "./lineage.ts";
 
@@ -44,8 +44,8 @@ async function resolveBox(deps: CrossDeps, to: string): Promise<{ ok: true; box:
     : { ok: true, box: hit };
 }
 
-export async function sendCross(deps: CrossDeps, execCtx: ToolExecContext, input: CrossMessageInput): Promise<CrossOutcome> {
-  if (execCtx.session === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
+export async function sendCross(deps: CrossDeps, caller: SessionId | undefined, input: CrossMessageInput): Promise<CrossOutcome> {
+  if (caller === undefined) return { ok: false, reason: "invalid-args:agent tools are only available inside an agent session" };
   const resolved = await resolveBox(deps, input.to);
   if (!resolved.ok) return resolved;
   const target = resolved.box;

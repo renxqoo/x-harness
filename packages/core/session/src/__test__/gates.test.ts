@@ -119,6 +119,7 @@ const validSamples: Record<string, unknown> = {
   "agent/inbox/spliced": { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: "hi" }] }] },
   "autocompact/checkpoint": { turn: 0, step: 1, ledger: "<goals>\n(g)</goals>", coveredSeq: 3, stale: true },
   "todo/snapshot": { seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "in_progress", owner: "w", metadata: { k: 1 } }], edges: [["1", "2"]] },
+  "session/meta": { key: "title", value: "会话标题" },
 };
 
 const brokenSamples: Record<string, unknown> = {
@@ -139,10 +140,11 @@ const brokenSamples: Record<string, unknown> = {
   "agent/inbox/spliced": { op: "insert", target: "side-queue", entries: [] },
   "autocompact/checkpoint": { turn: 0, step: 1, ledger: "", coveredSeq: 3 },
   "todo/snapshot": { seq: 1, tasks: [{ id: "01", subject: "A", status: "pending" }], edges: [] },
+  "session/meta": { key: "", value: 1 },
 };
 
 describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵）", () => {
-  it("17 词条合法样本全部放行", () => {
+  it("18 词条合法样本全部放行", () => {
     for (const [type, data] of Object.entries(validSamples)) {
       expect(gateEvent(type, data), type).toBeUndefined();
     }

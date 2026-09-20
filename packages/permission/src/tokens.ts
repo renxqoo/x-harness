@@ -10,6 +10,14 @@ export const permissionBroker = defineService<{ ask(input: AskRequest): Promise<
 /** 会话授权集（extraRoots/域名正负缓存/会话规则；sessionDisposed 逐出） */
 export const permissionGrants = defineService<import("./grants.ts").GrantsRegistry>("permission/grants");
 
+/** 运行期 mode 面（插件恒提供）：get 读现值（每裁决消费）；set 原子切换 decide 面
+ *  mode + grants 总括授权（进入 full 即授、离开即撤——网络/extraRoots 授权面同步）。 */
+export interface PermissionModeService {
+  get(): import("./types.ts").ModeKnob;
+  set(mode: import("./types.ts").ModeKnob): void;
+}
+export const permissionMode = defineService<PermissionModeService>("permission/mode");
+
 /** 每裁决一条审计（次数断言）；会话流持久化归属 session 件 */
 export const permissionDecided = defineEvent<PermissionAudit>("permission/decided", { freeze: "deep" });
 

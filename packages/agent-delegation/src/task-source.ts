@@ -31,6 +31,6 @@ export function agentTaskSource(deps: VerbDeps): TaskSource {
         ...(opts.block !== undefined ? { block: opts.block } : {}),
         ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
       }),
-    stop: (taskId, caller) => stop(deps, caller, taskId),
+    stop: (taskId, caller) => stop(deps, caller, { taskId }),
   };
 }

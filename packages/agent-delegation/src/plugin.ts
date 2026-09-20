@@ -23,10 +23,11 @@ import type { DelegationOptions, LoadedAgentType } from "./types.ts";
 import { createNotifier } from "./notify.ts";
 import { spawnAgent } from "./spawn.ts";
 import type { SpawnInput } from "./spawn.ts";
-import { listAgents, message } from "./verbs.ts";
+import { listAgents, message, stop } from "./verbs.ts";
 import type { VerbDeps } from "./verbs.ts";
 import { agentTaskSource } from "./task-source.ts";
 import { delegationTools } from "./tools.ts";
+import { delegationView } from "./view.ts";
 
 const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_CONCURRENT = 10;
@@ -213,14 +214,25 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
       ctx.effect(ctx.use(taskHub).registerSource(agentTaskSource(verbDeps)));
       const offs = delegationTools({
         spawn: (execCtx, input: SpawnInput) => spawnAgent(spawnDeps, execCtx, input),
-        message: (execCtx, input) => message(verbDeps, execCtx, input),
-        list: (execCtx) => listAgents(verbDeps, execCtx),
+        message: (execCtx, input) => message(verbDeps, execCtx.session, input),
+        list: (execCtx) => listAgents(verbDeps, execCtx.session),
       }).map((tool) => registry.register(tool));
+      // 宿主直调服务面（delegationView）：与工具面同一动词实现——不经工具 dispatch 的
+      // 权限裁决与文本解析（hub get_subagents/subagent-steer/abort 级联消费）
+      const offView = ctx.provide(delegationView, {
+        list: (caller) => listAgents(verbDeps, caller),
+        message: (caller, input) => message(verbDeps, caller, input),
+        stopAll: async (caller, cause) => {
+          const rows = verbDeps.lineage.rows().filter((row) => row.parent === caller && !row.stopped);
+          for (const row of rows) await stop(verbDeps, caller, { taskId: row.agentId, cause });
+        },
+      });
 
       return () => {
         tearingDown = true; // 通知门先行：级联 cancel 的 abort 通知不得 steer 复活父
         offStatus();
         offTypesSnapshot();
+        offView();
         for (const off of offs) off();
         const cascade = lineage.rows().map(async (row) => {
           const childHandle = loop.get(row.sessionId);

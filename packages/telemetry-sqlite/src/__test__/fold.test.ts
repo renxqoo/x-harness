@@ -213,7 +213,7 @@ describe("llm span（§1.3 request/header|context + assistant + attempt + retry�
 });
 
 describe("log 流（§1.3 其余消息/快照类）", () => {
-  it("severity 闭合表矩阵（§7）：全 17 词条经 severityOf 映射闭合", () => {
+  it("severity 闭合表矩阵（§7）：全 18 词条经 severityOf 映射闭合", () => {
     const samples: readonly SessionEvent[] = [
       ev("turn/start", { turn: 0 }),
       ev("turn/end", { turn: 0, reason: { kind: "completed" } }),
@@ -232,9 +232,10 @@ describe("log 流（§1.3 其余消息/快照类）", () => {
       ev("session/end-seed", {}),
       ev("agent/inbox/spliced", { op: "clear", reason: "r" }),
       ev("todo/snapshot", { seq: 1, tasks: [], edges: [] }),
+      ev("session/meta", { key: "title", value: "t" }),
     ];
     const expected: readonly ("INFO" | "WARN" | "ERROR")[] = [
-      "INFO", "INFO", "INFO", "INFO", "INFO", "INFO", "INFO", "WARN", "INFO", "INFO", "ERROR", "INFO", "INFO", "WARN", "INFO", "INFO", "INFO",
+      "INFO", "INFO", "INFO", "INFO", "INFO", "INFO", "INFO", "WARN", "INFO", "INFO", "ERROR", "INFO", "INFO", "WARN", "INFO", "INFO", "INFO", "INFO",
     ];
     expect(samples.map(severityOf)).toEqual(expected);
     for (const s of samples.map(severityOf)) expect(LOG_SEVERITIES).toContain(s);

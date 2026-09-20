@@ -46,6 +46,24 @@
         "@sinclair/typebox": "^0.34.0",
       },
     },
+    "apps/host-hub": {
+      "name": "@x-harness/host-hub",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/agent-delegation": "workspace:*",
+        "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/autocompact": "workspace:*",
+        "@x-harness/compaction": "workspace:*",
+        "@x-harness/core": "workspace:*",
+        "@x-harness/harness": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/md-frontmatter": "workspace:*",
+        "@x-harness/permission": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/session-persistence-jsonl": "workspace:*",
+        "@x-harness/skill": "workspace:*",
+      },
+    },
     "packages/agent-delegation": {
       "name": "@x-harness/agent-delegation",
       "version": "0.0.1",
@@ -741,6 +759,8 @@
     "@x-harness/exec-env": ["@x-harness/exec-env@workspace:packages/core/exec-env"],
 
     "@x-harness/harness": ["@x-harness/harness@workspace:packages/harness"],
+
+    "@x-harness/host-hub": ["@x-harness/host-hub@workspace:apps/host-hub"],
 
     "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
 

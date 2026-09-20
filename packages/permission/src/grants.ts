@@ -44,9 +44,10 @@ export class GrantsRegistry {
     return this.overriddenKeys.has(session ?? "_anon");
   }
 
-  /** 进程级总括授权（full 档）。仅装配期调用——运行期置位会即时改变一切在飞会话的授权面。 */
-  setUnrestricted(): void {
-    this.unrestricted = true;
+  /** 进程级总括授权（full 档）。可重复置位/撤销（运行期切档同步授权面——permissionMode
+   *  服务消费）；撤销即时收回一切在飞会话的总括授权（逐目录/规则授权面不受影响）。 */
+  setUnrestricted(enabled: boolean): void {
+    this.unrestricted = enabled;
   }
 
   /** 总括态查询：override 会话恒 false（隔离压过总括，文件/网络两面同向）；

@@ -92,7 +92,7 @@ describe("bwrapArgv（linux 剖面内容级）", () => {
 describe("总括授权剖面（docs/PERMISSION-FULL-UNRESTRICTED.md——全链装置：grants → fenceFor → 剖面，禁手搓 Fence）", () => {
   it("seatbelt：总括 grants 经 fenceFor 合成 writable 含 / → subpath \"/\" 全盘写 + denyRead/代理口底线行仍在", () => {
     const grants = new GrantsRegistry();
-    grants.setUnrestricted();
+    grants.setUnrestricted(true);
     const fence = fenceFor({ root: "/w/app" }, grants, "sess-u" as never);
     const sbpl = seatbeltProfile({ fence, proxyPort: 8085, home: "/Users/demo" });
     const lines = sbpl.split("\n");
@@ -105,7 +105,7 @@ describe("总括授权剖面（docs/PERMISSION-FULL-UNRESTRICTED.md——全链�
 
   it("bwrap：总括 writable → --bind / / 且相对序锚——ro-bind 先行、/ bind 是最后一条 writable bind、tmpfs 遮挂晚于它", () => {
     const grants = new GrantsRegistry();
-    grants.setUnrestricted();
+    grants.setUnrestricted(true);
     const fence = fenceFor({ root: "/w/app" }, grants, "sess-u" as never);
     const argv = bwrapArgv({ fence, proxyMounted: false, argv: ["ls"], home: "/Users/demo" });
     const flat = argv.join(" ");

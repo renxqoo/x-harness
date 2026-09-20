@@ -161,7 +161,7 @@ describe("createSessionProxy × unrestricted 总括（docs/PERMISSION-FULL-UNRES
   it("总括短路：负缓存被压过（位序在桶查询前）+ 不 ask + 不记账 + 双向 pipe", async () => {
     const grants = new GrantsRegistry();
     grants.recordDomain(S, "127.0.0.1", "deny"); // 先造负缓存——总括必须压过它
-    grants.setUnrestricted();
+    grants.setUnrestricted(true);
     let asks = 0;
     let unrecordedConnects = 0;
     const proxy = await createSessionProxy(S, grants, {
@@ -198,7 +198,7 @@ describe("createSessionProxy × unrestricted 总括（docs/PERMISSION-FULL-UNRES
 
   it("总括态非 CONNECT 方法仍 405（短路不吞方法检查）", async () => {
     const grants = new GrantsRegistry();
-    grants.setUnrestricted();
+    grants.setUnrestricted(true);
     const proxy = await createSessionProxy(S, grants, { askDomain: async () => "deny" });
     try {
       const out = await speak(proxy.port, "GET http://x.dev/ HTTP/1.1\r\n\r\n", { marker: "405" });
@@ -211,7 +211,7 @@ describe("createSessionProxy × unrestricted 总括（docs/PERMISSION-FULL-UNRES
   it("rootOverride 会话不短路：仍走 ask 链（隔离压过总括，文件/网络同向）", async () => {
     const grants = new GrantsRegistry();
     grants.setRootOverride(S, "/wt/agent-1", "/repo");
-    grants.setUnrestricted();
+    grants.setUnrestricted(true);
     let asks = 0;
     const proxy = await createSessionProxy(S, grants, {
       askDomain: async () => {

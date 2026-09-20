@@ -1,4 +1,4 @@
-// Session 契约类型：事件信封判别联合、17 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
+// Session 契约类型：事件信封判别联合、18 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
 
 import type { Result } from "@x-harness/core";
 
@@ -99,6 +99,9 @@ export interface SessionEventData {
   };
   /** todo 清单全量快照（docs/TODO.md §13——log-only；每次变更后 last-wins 落账，恢复侧惰性 fold） */
   readonly "todo/snapshot": TodoSnapshotEventData;
+  /** 会话级 KV（log-only；last-wins 折叠归消费方——内核只运不判）：宿主侧标题/拨号/
+   *  思考档/权限档等持久事实的单一事实通道（WAL 随 fork/恢复天然携带） */
+  readonly "session/meta": { readonly key: string; readonly value: unknown };
 }
 
 /** todo 快照内单任务（docs/TODO.md §13.2）：id 十进制规范形、status 三值闭合（无 deleted——物理移除不进快照） */
