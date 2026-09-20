@@ -22,9 +22,9 @@ export function budgetGuardPlugin(options: BudgetOptions): Plugin {
       const spent = new Map<SessionId, number>();
       return tapSessionEvents(ctx, (event, session) => {
         if (event.type !== "assistant/message") return;
-        const usage = (event.data as { usage?: { input: number; output: number } }).usage;
-        if (usage === undefined) return;
-        const total = (spent.get(session) ?? 0) + usage.input + usage.output;
+        const usage = (event.data as { usage?: import("@x-harness/llm").TokenUsage }).usage;
+        if (usage === undefined || usage.input === undefined) return;
+        const total = (spent.get(session) ?? 0) + usage.input + (usage.output ?? 0);
         spent.set(session, total);
         if (total > options.maxTotalTokens) {
           options.onExceeded?.(session, total);

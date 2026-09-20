@@ -1,4 +1,5 @@
 // ⑩ 轻量记忆：turn 收尾把最后一条 user/assistant 摘要写盘；下一步领取时按关键词注入命中行。
+// 已知局限（设计选择——"lite" 定位）：只提取 text 块、不存 tool 结果；完整记忆需持久状态 seam。
 // 真实场景：跨 turn 的"记住我之前说过"（宿主信任域持久化——能力插件模式中的 state 自建示范）。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

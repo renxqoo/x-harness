@@ -1,5 +1,7 @@
 // ④ 思考/文本死循环纠正：跨步检测重复 → 注入纠偏 + 落账前截断（transformMessages × transformAssistant 组合）。
 // 真实场景：模型陷入复读循环时拉回正轨。
+// 已知边界：ContentBlock 只有 text|tool_use——thinking 块不进 settle 面/session 日志（Anthropic 语义：临时内容不回传）。
+// 检测 thinking 重复需 tapStream 实时帧（本插件未做——文本重复是主场景）。
 
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
