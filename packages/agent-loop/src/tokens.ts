@@ -38,8 +38,8 @@ export const agentPreStep = defineWaterfall<
     readonly session: SessionId;
     readonly turn: number;
     readonly step: number;
-    /** 全对话史投影（只读观察面——改写依据 claim，不是改写 messages） */
-    readonly messages: readonly unknown[];
+    /** 全对话史投影（只读观察面——改写依据 claim；SurfaceMessage 判别联合——非 unknown[]） */
+    readonly messages: readonly import("@x-harness/session").SurfaceMessage[];
     /** 本步领取的批次（改写决策的输入与替代对象——收口审查 1.1：同名字段两种语义，拆开） */
     readonly claim: readonly InboxEntry[];
     readonly signal: AbortSignal;

@@ -3,6 +3,14 @@
 import type { SurfaceMessage } from "@x-harness/session";
 import type { ToolSchema } from "@x-harness/tools";
 
+export interface UsageCost {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly total: number;
+}
+
 export interface TokenUsage {
   readonly input?: number;
   readonly output?: number;
@@ -12,6 +20,8 @@ export interface TokenUsage {
   readonly cacheWrite?: number;
   /** 总 token（上游 pi-ai 透传——可由 input+output 推导，但保留避免双写） */
   readonly totalTokens?: number;
+  /** 计费明细（上游 pi-ai 透传——成本追踪插件的输入源；非计费场景忽略） */
+  readonly cost?: UsageCost;
 }
 
 /** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high → anthropic 侧

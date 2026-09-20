@@ -43,6 +43,23 @@ function assertValid(plugins: readonly Plugin[]): void {
   }
 }
 
+
+/** Levenshtein 距离（软名近距检测用——短串快速版） */
+function editDistance(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 2) return 3; // 快速路径
+  const dp: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0]!;
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const temp = dp[j]!;
+      dp[j] = a[i - 1] === b[j - 1] ? prev : Math.min(prev, dp[j - 1]!, dp[j]!) + 1;
+      prev = temp;
+    }
+  }
+  return dp[b.length]!;
+}
+
 /** DFS topo：访问序 = 加载序；遇回边（栈中节点）= 循环依赖 */
 function topoOrder(plugins: readonly Plugin[]): Plugin[] {
   const byName = new Map(plugins.map((plugin) => [plugin.name, plugin] as const));
@@ -58,10 +75,19 @@ function topoOrder(plugins: readonly Plugin[]): Plugin[] {
     for (const dep of plugin.inject ?? []) {
       visit(byName.get(dep) as Plugin, [...stack, plugin.name]);
     }
-    // S0 软依赖：在场才建边（缺席跳过——不进未知名校验）；双向软依赖经 visiting 栈暴露为环（约束矛盾 fail-fast）
+    // S0 软依赖：在场才建边（缺席跳过）；双向软依赖经 visiting 栈暴露为环（约束矛盾 fail-fast）
     for (const dep of plugin.softInject ?? []) {
       const target = byName.get(dep);
-      if (target !== undefined) visit(target, [...stack, plugin.name]);
+      if (target !== undefined) {
+        visit(target, [...stack, plugin.name]);
+      } else {
+        // 近距警告（终审教训：拼错=静默错序——Edit distance ≤2 的未匹配软名提示，
+        // 远距缺席（合法降级）不噪）
+        const near = [...byName.keys()].find((n) => editDistance(n, dep) <= 2 && n !== dep);
+        if (near !== undefined) {
+          process.stderr.write(`[softInject] plugin "${plugin.name}" declares "${dep}" — did you mean "${near}"?`);
+        }
+      }
     }
     state.set(plugin.name, "done");
     ordered.push(plugin);

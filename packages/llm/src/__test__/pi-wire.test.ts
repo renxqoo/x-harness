@@ -57,7 +57,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     expect(chunks).toEqual([
       { type: "text-delta", text: "he" }, // P10 初值
       { type: "text-delta", text: "llo" },
-      { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2 } }, // 10+5+2 折入+明细
+      { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2, totalTokens: 24 } }, // 10+5+2 折入+明细+总量
       { type: "finish", finish: { kind: "stop" } },
     ]);
     const captured = srv.captured();
@@ -125,7 +125,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const chunks = await collect(adapter.stream(request({})));
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' }, // 单帧全量出口
-      { type: "usage", usage: { input: 5, output: 9 } },
+      { type: "usage", usage: { input: 5, output: 9, totalTokens: 14 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });
@@ -146,7 +146,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const chunks = await collect(adapter.stream(request({})));
     expect(chunks).toEqual([
       { type: "thinking-delta", text: "[Reasoning redacted]" },
-      { type: "usage", usage: { input: 1, output: 2 } },
+      { type: "usage", usage: { input: 1, output: 2, totalTokens: 3 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });
@@ -209,7 +209,7 @@ describe("pi 真身冒烟：openai-completions", () => {
     expect(chunks).toEqual([
       { type: "text-delta", text: "he" },
       { type: "text-delta", text: "llo" },
-      { type: "usage", usage: { input: 3, output: 4 } },
+      { type: "usage", usage: { input: 3, output: 4, totalTokens: 7 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
     const captured = srv.captured();
