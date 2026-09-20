@@ -78,7 +78,7 @@ function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
  *  语义修正（审计问题 1）：分子必须是 LLM 实报的 anchorTokens（纯值），不是
  *  trailingTokens（上一步的尾段——与预测的不是同一个量）。符号统一：
  *  lastEstimated 与占用同口径（tokens − gains + pending），消存取对撞。 */
-function updateCalibration(cache: SessionState["cache"], pair: { readonly trailingTokens: number; readonly gainTokens: number; readonly hasAnchor: boolean; readonly anchorTokens: number }): void {
+export function updateCalibration(cache: SessionState["cache"], pair: { readonly trailingTokens: number; readonly gainTokens: number; readonly hasAnchor: boolean; readonly anchorTokens: number }): void {
   if (!pair.hasAnchor) {
     cache.lastEstimated = pair.trailingTokens + pair.gainTokens; // 纯预测占用（下一步的预估）
     return;
