@@ -50,7 +50,7 @@ describe("子代理看门狗透传（streamIdleTimeoutMs）", () => {
     void parent;
   });
 
-  it("父未显式配置时子回落插件缺省 120_000", async () => {
+  it("父未显式配置时子回落插件缺省 300_000", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
     const spawned = await callTool({
@@ -61,7 +61,7 @@ describe("子代理看门狗透传（streamIdleTimeoutMs）", () => {
     });
     expect(spawned.isError).not.toBe(true);
     const child = world.loop.get(sessionOf(spawned.content));
-    expect(child?.agent.options.streamIdleTimeoutMs).toBe(120_000);
+    expect(child?.agent.options.streamIdleTimeoutMs).toBe(300_000);
   });
 });
 

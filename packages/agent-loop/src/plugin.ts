@@ -26,7 +26,7 @@ const DEFAULT_MAX_RESULT_CHARS = 100_000;
 
 export const agentLoopServiceToken = defineService<AgentLoopService>("agent-loop");
 
-const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 120_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
 function resolveOptions(options: AgentOptions | undefined): ResolvedOptions {
   return {
