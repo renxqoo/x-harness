@@ -6,6 +6,10 @@ import type { ToolSchema } from "@x-harness/tools";
 export interface TokenUsage {
   readonly input?: number;
   readonly output?: number;
+  /** 缓存命中 token（从缓存读取——不重新计费） */
+  readonly cacheRead?: number;
+  /** 缓存写入 token（首次入缓存——折半计费） */
+  readonly cacheWrite?: number;
 }
 
 /** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high → anthropic 侧

@@ -122,10 +122,10 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
     const usage = { input: 10, output: 7, cacheRead: 5, cacheWrite: 2 };
     for (const reason of ["stop", "toolUse", "deferred"] as const) {
       const chunks = await collect([assistantEvent({ type: "done", reason, message: { usage } })]);
-      expect(chunks).toEqual([{ type: "usage", usage: { input: 17, output: 7 } }, { type: "finish", finish: { kind: "stop" } }]);
+      expect(chunks).toEqual([{ type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2 } }, { type: "finish", finish: { kind: "stop" } }]);
     }
     expect(await collect([assistantEvent({ type: "done", reason: "length", message: { usage } })])).toEqual([
-      { type: "usage", usage: { input: 17, output: 7 } },
+      { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2 } },
       { type: "finish", finish: { kind: "max-tokens" } },
     ]);
     // 终态恰一次：done 后的多余事件不产 chunk（finish 恰一帧且为末帧）
@@ -147,7 +147,7 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   it("usage 全零守卫：缺报后端不产噪音帧；foldUsage 直接断言", () => {
     expect(foldUsage({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([]);
     expect(foldUsage(undefined)).toEqual([]);
-    expect(foldUsage({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([{ type: "usage", usage: { input: 1, output: 0 } }]);
+    expect(foldUsage({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([{ type: "usage", usage: { input: 1, output: 0 } }]); // 零 cache 不透传
   });
 
   it("error：usage 先行（失败尝试计费）→ 状态码在场落 http-<status> + retryAfterMs 透传", async () => {

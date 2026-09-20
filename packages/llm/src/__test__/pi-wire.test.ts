@@ -57,7 +57,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     expect(chunks).toEqual([
       { type: "text-delta", text: "he" }, // P10 初值
       { type: "text-delta", text: "llo" },
-      { type: "usage", usage: { input: 17, output: 7 } }, // 10+5+2 折入
+      { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2 } }, // 10+5+2 折入+明细
       { type: "finish", finish: { kind: "stop" } },
     ]);
     const captured = srv.captured();

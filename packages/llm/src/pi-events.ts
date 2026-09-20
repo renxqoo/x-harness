@@ -7,12 +7,22 @@
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { LlmChunk, TokenUsage } from "./types.ts";
 
-/** usage 折算（docs/LLM-PI.md 契约 4）：cacheRead+cacheWrite 并入 input——GLM 桥自动缓存不低计；全零不发 */
+/** usage 折算（docs/LLM-PI.md 契约 4 修订——保留明细）：input 仍含 cache 总量
+ *  （GLM 桥自动缓存不低计——旧消费方不变）；cacheRead/cacheWrite 可选透传——
+ *  下游可算精确缓存率（cacheRead / input）。全零不发。 */
 export function foldUsage(usage: { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined): LlmChunk[] {
   if (usage === undefined) return [];
   const input = usage.input + usage.cacheRead + usage.cacheWrite;
   if (input === 0 && usage.output === 0) return []; // 空快照守卫：缺报后端全零不产噪音帧
-  return [{ type: "usage", usage: { input, output: usage.output } satisfies TokenUsage }];
+  return [{
+    type: "usage",
+    usage: {
+      input,
+      output: usage.output,
+      ...(usage.cacheRead > 0 ? { cacheRead: usage.cacheRead } : {}),
+      ...(usage.cacheWrite > 0 ? { cacheWrite: usage.cacheWrite } : {}),
+    } satisfies TokenUsage,
+  }];
 }
 
 function blockAt(partial: { content?: unknown } | undefined, index: number): Record<string, unknown> | undefined {

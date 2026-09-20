@@ -175,7 +175,7 @@ describe("㉓ Token 分析（六面组合 + 两缺失暴露）", () => {
     expect(b.remaining).toBe(100_000 - b.total); // 余量 = 窗口 - 占用
     expect(b.utilization).toBeGreaterThan(0);
     expect(b.utilization).toBeLessThan(1);
-    expect(b.cacheStability).toBeGreaterThanOrEqual(0); // 指纹间接指标
+    expect(b.cacheHitRate).toBeGreaterThanOrEqual(0); // 精确缓存率（LLM 实报 cacheRead）
     // 按会话独立计
     expect(svc.sessionOutput(made.value.agent.session.id)).toBe(20);
     await made.value.dispose();

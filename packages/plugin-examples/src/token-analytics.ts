@@ -9,7 +9,7 @@ import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { systemPrompt } from "@x-harness/system-prompt";
 import { toolRegistry } from "@x-harness/tools";
-import { tapSessionEvents, textOf } from "@x-harness/plugin-api";
+import { tapSessionEvents } from "@x-harness/plugin-api";
 import type { SessionEvent, SessionId } from "@x-harness/session";
 
 export interface TokenBreakdown {
@@ -31,8 +31,12 @@ export interface TokenBreakdown {
   lastReportedInput: number;
   /** LLM 实报 output token（累计） */
   totalOutputTokens: number;
-  /** 缓存命中估算（基于指纹稳定性——间接指标，非 API 级准确） */
-  cacheStability: number; // 0-1：指纹未变的 assemble 占比
+  /** 精确缓存命中率 = cacheRead / input（LLM 实报——TokenUsage 扩展后可用） */
+  cacheHitRate: number; // 0-1：cacheRead / lastReportedInput
+  /** 缓存命中的 token 累计（节省的重新计算量） */
+  totalCacheRead: number;
+  /** 缓存写入的 token 累计 */
+  totalCacheWrite: number;
 }
 
 export interface TokenAnalyticsOptions {
@@ -52,22 +56,26 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
       const prompt = ctx.use(systemPrompt);
       const registry = ctx.use(toolRegistry);
 
-      // 指纹稳定性追踪（缓存命中间接指标——指纹不变 → 前缀命中）
-      let assembleCount = 0;
-      let stableCount = 0;
-      let lastFingerprint = "";
       let lastReportedInput = 0;
       let totalOutput = 0;
+      let lastCacheRead = 0;
+      let totalCacheRead = 0;
+      let totalCacheWrite = 0;
       const perSessionOutput = new Map<SessionId, number>();
 
       const offTap = tapSessionEvents(ctx, (event: SessionEvent, session: SessionId) => {
         if (event.type === "assistant/message") {
-          const usage = (event.data as { usage?: { input?: number; output?: number } }).usage;
+          const usage = (event.data as { usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } }).usage;
           if (usage?.input !== undefined) lastReportedInput = usage.input;
           if (usage?.output !== undefined) {
             totalOutput += usage.output;
             perSessionOutput.set(session, (perSessionOutput.get(session) ?? 0) + usage.output);
           }
+          if (usage?.cacheRead !== undefined) {
+            lastCacheRead = usage.cacheRead;
+            totalCacheRead += usage.cacheRead;
+          }
+          if (usage?.cacheWrite !== undefined) totalCacheWrite += usage.cacheWrite;
         }
       });
 
@@ -76,10 +84,6 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
         breakdown(sessionId?: SessionId): TokenBreakdown {
           // 系统提示词（含技能段——skill 经 section 注册）
           const assembled = prompt.assemble(sessionId !== undefined ? { sessionId } : undefined);
-          if (assembled.fingerprint === lastFingerprint) stableCount += 1;
-          else stableCount = 0;
-          lastFingerprint = assembled.fingerprint;
-          assembleCount += 1;
 
           // 工具 schema（发给 LLM 的 tools 数组 JSON 估算）
           const schemas = registry.schemas(sessionId !== undefined ? { sessionId } : undefined);
@@ -103,7 +107,9 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
             utilization: total / options.contextWindow,
             lastReportedInput,
             totalOutputTokens: totalOutput,
-            cacheStability: assembleCount > 0 ? stableCount / assembleCount : 0,
+            cacheHitRate: lastReportedInput > 0 ? lastCacheRead / lastReportedInput : 0,
+            totalCacheRead,
+            totalCacheWrite,
           };
         },
         sessionOutput(session: SessionId): number {
@@ -130,19 +136,11 @@ import { defineService } from "@x-harness/core";
 export const tokenAnalyticsService = defineService<TokenAnalyticsService>("token-analytics");
 
 /*
- * ── 内核缺失记录（本插件暴露的两个真缺失）─────────────────────────────
- *
- * A. 缓存率不可算
- *    foldUsage (llm/pi-events.ts:11) 把 cacheRead+cacheWrite 并入 input 后丢弃明细。
- *    TokenUsage {input, output} 不含缓存字段——下游无法区分"新 input"与"缓存命中"。
- *    解法：TokenUsage 增可选 cacheRead/cacheWrite 字段（pre-stable 扩展），
- *    foldUsage 保留明细而非折平。
- *
- * B. 上下文窗口不可查
- *    contextWindow 在 adapter 配置（providers.json）里，运行时无服务暴露。
- *    插件必须由宿主注入 contextWindow 参数（绕行）。
- *    解法：llm 包 provide 一个 contextWindowOf(model) 服务（或 agentRequest 载荷携窗口）。
- *
- * 当前绕行：A 用指纹稳定性作间接指标；B 由宿主注入。两者均为可用的弱形态。
+ * ── 内核缺失修复记录 ─────────────────────────────────────────────────
+ * A. 缓存率 ✅ 已修：TokenUsage 增 cacheRead/cacheWrite（pre-stable 扩展），
+ *    foldUsage 保留明细（input 仍含 cache 总量——旧消费方不变）。
+ *    cacheHitRate = lastCacheRead / lastReportedInput（精确——LLM 实报）。
+ * B. 上下文窗口：仍由宿主注入 contextWindow 参数（contextWindow 在 adapter
+ *    配置里，运行时无服务暴露——后续可 provide contextWindowOf(model)）。
  * ────────────────────────────────────────────────────────────────────
  */
