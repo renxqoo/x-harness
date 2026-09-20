@@ -118,11 +118,11 @@ export const llmStream = defineWaterfall<LlmRequest, AsyncGenerator<LlmChunk>>("
 
 ## 8.5 自洽走查结论（2026-09-20，三帽检验——用户裁决）
 
-三顶帽子（终端用户/插件开发者/产品构建者）全部插件清单逐个走查接口面：**零结构缺口**（成本上限经 session/event usage、记忆插件经宿主信任域自管、微调四式齐）。固化三原则：
+三顶帽子（终端用户/插件开发者/产品构建者）全部插件清单逐个走查接口面：**零结构缺口**（成本上限经 session/audit-event usage、记忆插件经宿主信任域自管、微调四式齐）。固化三原则：
 1. **插件代码 = 宿主信任域**——围栏/权限约束模型驱动的动作，不约束插件代码（插件可直接 node:fs/自管持久化）；
-2. **领域面优先，session/event 是逃生舱**（有意比 dsh 收窄：主推类型面而非 firehose）；
+2. **领域面优先，session/audit-event 是逃生舱**（有意比 dsh 收窄：主推类型面而非 firehose；同步 session/event 面仅宿主 UI 观察消费）；
 3. **能力自举检验**——每个"要不要进底层"的提议先过 persona 走查（本次为首次执行）。
-F0 spec 修正：settle 载荷**不带** usage（session/event 已覆盖——最少面原则应用）。
+F0 spec 修正：settle 载荷**不带** usage（审计通道已覆盖——最少面原则应用）。
 
 ## 9. 设计审查处置台账（2026-09-20，12 项）
 

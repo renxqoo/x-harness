@@ -10,7 +10,7 @@
 
 | 包 | 提供物 |
 | --- | --- |
-| `@x-harness/session` | 插件 `sessionPlugin`（name: `session`）：provide `sessionStore` 服务；拥有 7 个 token（2 服务 + 5 总线） |
+| `@x-harness/session` | 插件 `sessionPlugin`（name: `session`）：provide `sessionStore`/`sessionAuditDrain` 服务；拥有 9 个 token（3 服务 + 6 总线） |
 | `@x-harness/session-persistence-jsonl` | 插件工厂 `createJsonlSessionPersistence({ root, onIoError? })`（name: `session-persistence-jsonl`，`inject: ["session"]`）：provide `sessionArchive` 服务，订阅总线完成落盘 |
 
 ```ts
@@ -19,15 +19,16 @@ await loadPlugins(ctx, [sessionPlugin, createJsonlSessionPersistence({ root: dir
 const store = ctx.use(sessionStore);
 ```
 
-宿主若要让 plugin-manager 动态安装的 worker 插件观察到会话事件，须把 emit token 经 `createPluginManager({ tokens: [sessionCreated, sessionEvent, sessionDisposed] })` 注册进可桥接表（内核按 token 对象身份注册，同名不同对象互不可见；worker 桥仅放行 emit 监听）。
+宿主若要让 plugin-manager 动态安装的 worker 插件观察到会话事件，须把 emit token 经 `createPluginManager({ tokens: [sessionCreated, sessionEvent, sessionAuditEvent, sessionDisposed] })` 注册进可桥接表（内核按 token 对象身份注册，同名不同对象互不可见；worker 桥仅放行 emit 监听）。
 
-### 1.2 总线 token（session 件拥有，封闭词表，共 5 个）
+### 1.2 总线 token（session 件拥有，封闭词表，共 6 个）
 
 | token | 模式 | 载荷 | freeze | 时序 |
 | --- | --- | --- | --- | --- |
 | `sessionCreateGuard` | guard | `{ header }` | — | **每条诞生路径**（create 与 fork）落账前派发；任一 deny → 会话不诞生（零残留） |
 | `sessionCreated` | emit | `{ header }` | none（构造期预冻） | 诞生路径全部落账后广播，恰好一次；fork 产生的子会话同样广播（header 含 `parentSession`） |
-| `sessionEvent` | emit | `{ session: SessionId; event }` | none（构造期预冻） | 每次**活回路 append** 成功后同步广播；构造期事件（seed 前缀 + end-seed）不逐条广播，经 created 首灌覆盖（§1.8） |
+| `sessionEvent` | emit | `{ session: SessionId; event }` | none（构造期预冻） | 每次**活回路 append** 成功后同步广播（**UI 观察面**——仅宿主渲染消费，禁止任务处理；红线为纪律约束，非类型/测试执法）；构造期事件（seed 前缀 + end-seed）不逐条广播，经 created 首灌覆盖（§1.8） |
+| `sessionAuditEvent` | emit | `{ session: SessionId; event }` | none（构造期预冻） | 与 sessionEvent 同载荷的**审计面**：微任务级异步投递（queueMicrotask，FIFO 保序、不丢不重）——任务处理消费者（持久化/checkpoint/计量/压缩状态/第三方 tap）专用。投递时序为协议约束：桥接 onFlush 先同步排空本通道再派发 sessionFlush（结构性保证，不依赖监听器注册序）；禁 setTimeout/setImmediate 调度（换宏任务即破坏全部屏障时序——微任务与 promise reaction 同 FIFO 是 V8/JSC 运行时事实） |
 | `sessionFlush` | parallel | `{ session: SessionId }` | — | store.flush 派发；all-settled，聚合错误经 flush 的 Result 上浮 |
 | `sessionDisposed` | emit | `{ session: SessionId }` | none | store.dispose 移除后广播，恰好一次 |
 
@@ -118,19 +119,20 @@ interface SessionArchive {
 ### 1.8 jsonl 磁盘布局与落盘时序
 
 - 布局：`<root>/<sessionId>/header.json` + `<root>/<sessionId>/events.jsonl`（逐事件一行 JSON）。
-- **单一不变量（审查处置 P1/P3）：该会话的一切磁盘写只经 per-id 串行链**，三个入链来源，同链串行、绝不交错：
-  1. `sessionCreated` → 首灌：初始化 pending 队列为**当前全量日志**（含构造期 seed 前缀与 end-seed——构造期事件不逐条广播、只经此首灌落盘），然后排空（打开 writer 并逐行写入）+ 写 header；同 id 重生（前一代已 dispose）时**整体重置 per-id 条目**（旧 closed/dead 不跨代），仅保留串行链让在飞终排空先完成；
-  2. `sessionFlush` → 增量排空：pending 追加写入 + fsync，屏障返回 = 已 fsync；
-  3. `sessionDisposed` / 插件卸载 → 终排空 + 关 writer（close 幂等；链上 close 后再入排空段 = no-op，pending 已清）。
-- `sessionEvent` → 仅入内存 pending 队列（同步，零 I/O，不阻塞 append）。created 必先于该会话一切 `sessionEvent`（create 落账后广播，append 只能更晚），队列无窗口。
+- **单一不变量（审查处置 P1/P3）：该会话的一切磁盘写只经 per-id 串行链**，四个入链来源，同链串行、绝不交错：
+  1. `sessionCreated` → 首灌：初始化 pending 队列为**当前全量日志**（含构造期 seed 前缀与 end-seed——构造期事件不逐条广播、只经此首灌落盘），然后排空（打开 writer 并逐行写入）+ 写 header；同 id 重生（前一代已 dispose）时**整体重置 per-id 条目**（旧 closed/dead/degraded 不跨代），仅保留串行链让在飞终排空先完成；
+  2. `sessionAuditEvent` → **实时段**：事件投递即入链 append（写 fd、不 fsync；监听器内仅入队，磁盘写在广播之外异步执行）。日志序前缀保证（结构性）：一切写入按 pending 前缀批 + 失败截断回滚——失败滞留事件与后续事件恒同批按序写出，乱序卷不可达。实时段降级闩 = 纵深防御：writer 一次 append 失败即保守停用实时段（事件只入 pending，每降级周期恰一次上报），屏障批量 + fsync 成功后恢复信任；writer 未就绪（晚装载/首灌在飞）/dead/closed 同样只入 pending；
+  3. `sessionFlush` → 增量排空：append（幂等——实时段已写则空批）+ fsync，屏障返回 = 已 fsync；成功解闩 degraded 恢复实时段；
+  4. `sessionDisposed` / 插件卸载 → 终排空 + 关 writer（close 幂等；链上 close 后再入排空段 = no-op，pending 已清）。
+- `sessionAuditEvent` 投递面与排空兜底：微任务级投递、投递序 = 日志序（投递循环内 append 的事件续排本批之后；重入排空被卫兵挡回外层循环）。`store.flush` 的桥接 onFlush 先排空审计队列再派发 sessionFlush——「flush 成功 ⇒ 屏障发起前已 append 的事件已入 pending」（发起后同批在途事件在 drain 段执行前必已入账——drain 段至少晚一个微任务）；contextDisposing 广播（回卷最先、监听器全存活）与 `sessionAuditDrain` 端口（单插件卸载面拆除前调用）兜残余队列。created 必先于该会话一切审计投递（create 落账后才有活回路 append），队列无窗口。
 - **排他创建与可验证续写（SESSION-RESUME §1.4）**：两级打开——`events.jsonl` `'ax'` 成功 → 全新档案（`header.json` `'wx'`；wx EEXIST 时孤儿 header 与当前 header 规范化相等则续写空卷 k=0，不等则撤销 dead）；`'ax'` EEXIST → **续写校验**：字节级尾态修复（截到最后换行）→ 磁盘卷是当前日志前缀（含相等，规范化深度相等）∧ 磁盘 header 相等 → `'a'` 追加续写并返回前缀长度 k（**首灌 pending 按k 裁剪，D 段永不重写**）；任一不过重抛 EEXIST → 现行重用 fail-closed（`session-id-reused`，旧档零损毁）。**并发边界：可验证 ≠ 独占——跨进程并发续写同一档案会交错腐蚀，单进程单写者部署是硬性前提（宿主保证）**。「同 id 重生」只剩两形态：带归档 header = 续写（resume），带新 header = dead；截断式恢复不支持（要截断用 fork）。dispose 不删档（历史保留）。
 - 读侧：header 缺失 → 失败；header JSON 解析失败 → `corrupt-header`（含 `'wx'` 直写崩溃残缺窗口）；`events.jsonl` 不存在 = 空会话；**残行 = 位于文件末行且 JSON.parse 失败 → 跳过**（崩溃痕迹；末行 bit-rot 与撕裂不可分辨，接受项，审查处置 P12）；中间行损坏/信封非法/seq 断档/replace 反向区间 → 失败（`corrupt` 理由带行号）；seed 投影重放验证（replace 端点悬空）→ `corrupt-surface`。`list()`：root ENOENT = 空列表，其余环境错误（如 EACCES）上抛不静默折叠。
-- **失败重试语义**：排空段写盘成功后才移除已写批次——append/fsync 失败时 pending 按序保留，下次 flush 重试（await 期间新到事件只追加尾部，按批次长度截断不误删）；writer.append 失败**截断回滚到批前长度**（同进程重试不产生重复字节，跨进程由续写前缀校验自愈）。
+- **失败重试语义**：写段成功后才移除已写批次——append/fsync 失败时 pending 按序保留，下次 flush 重试（await 期间新到事件只追加尾部，按批次长度截断不误删）；writer.append 失败**截断回滚到批前长度**（同进程重试不产生重复字节，跨进程由续写前缀校验自愈）。实时段失败额外闩 degraded（见单一不变量第 2 条）——按会话去重上报一次（`session-realtime-append-failed:<id>`），屏障成功后重置。
 - **永久性拒绝分类**（均闩 dead、区别于可重试瞬时 I/O）：`session-id-reused:<id>`（同 id 不同 header）/ `archive-orphan-events:<id>`（events 在 header 缺）/ `archive-corrupt:<id>`（中间损坏）/ `archive-prefix-mismatch:<id>`（磁盘非当前日志前缀）。读侧对称：header 在而 `events.jsonl` 缺失 → `no-events` 拒绝（不折叠为空会话静默丢史）。
 - **晚装载 fail-closed**：持久化插件晚于会话创建装载（错过 `sessionCreated`）时，该会话后续 append 只入队不落盘，flush 失败 `writer-unopened:<id>`，绝不写出无 header 的档案。
 - 路径安全：SessionId 必须匹配 `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`（默认铸造天然合规）。
 - 落盘口径：flush 屏障 = 文件 `fsync`；不 fsync 目录项（首次建目录后断电的极窄窗口，接受并记录）。
-- I/O 失败路由：flush 路径错误经 `store.flush` Result 上浮（fail-closed）；created/disposed 的 fire-and-forget 路径失败经可选 `onIoError` 上报（缺省 console.error）。
+- I/O 失败路由：flush 路径错误经 `store.flush` Result 上浮（fail-closed）；created/disposed/实时段的 fire-and-forget 路径失败经可选 `onIoError` 上报（缺省 console.error；实时段按会话去重，writer 未就绪/dead 静默——flush fail-closed 上浮）。
 
 ## 2. 问题域
 
@@ -157,9 +159,9 @@ interface SessionArchive {
 - `events()/surface()/deriveMessages()`：O(日志/投影) 快照副本，无副作用。
 - `create`：O(1)；带 seed = O(N)（物化 + 信封白名单 + seq 连续 + 投影重放验证，单遍完成）。
 - `fork`：O(N) 快照复制 + O(N) seed 重验 + 首灌 O(N) 落盘（一次性，本就要写盘）。
-- `flush`：一次排空 = 批量追加 + 单次 fsync；同 id 串行链、不同 id 并行；无定时器。
-- 内存上界：pending 队列 ≤ 创建首灌后两次 flush 之间的事件数（由消费方检查点策略决定，本件不设上限不丢事件）。
-- 竞态闭合：create 显式 id 并发 → birth 后二次占用检查恰一个成功；一切磁盘写经 per-id 串行链（created 首灌 / flush 增量 / disposed·卸载终排空互斥）；fork 经快照读取；worker 不参与屏障。
+- `flush`：一次排空 = append（幂等，实时段已写则空批）+ 单次 fsync；同 id 串行链、不同 id 并行；无定时器。实测（APFS/NVMe/Bun）：实时段 ≈25µs/事件（含回滚锚 stat 两次异步 syscall），90 事件 turn 共 ~2.3ms——远低于 LLM 步延迟；屏障 fsync 清洁 ~12µs、脏 3KB ~46µs。
+- 内存上界：成功路径 pending ≤ 实时段在飞链窗口内的事件数（微任务级）；降级期（段失败闩停）≤ 两次 flush 之间的事件数（由消费方检查点策略决定）。本件不设上限不丢事件。
+- 竞态闭合：create 显式 id 并发 → birth 后二次占用检查恰一个成功；一切磁盘写经 per-id 串行链（created 首灌 / 审计实时段 / flush 增量 / disposed·卸载终排空互斥）；fork 经快照读取；worker 不参与屏障。
 
 ## 4. 拆分与依赖方向
 

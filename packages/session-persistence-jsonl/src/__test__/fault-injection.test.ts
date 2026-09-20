@@ -46,7 +46,7 @@ const turn = (s: Session, n: number): void => {
 };
 
 describe("写路径故障注入（真实 fd + 原型拦截）", () => {
-  it("append 半写失败 → 截断回滚 + pending 保留；恢复后重试落盘全量、无重复字节（G1+G2）", async () => {
+  it("实时段半写失败 → 降级闩（纵深防御）+ 截断回滚 + pending 保留；屏障恢复落盘全量、无重复字节（G1+G2）", async () => {
     world = await makeWorld(root);
     const s = unwrap(await world.store.create({ id: sid("fi") }));
     turn(s, 0);
@@ -54,8 +54,6 @@ describe("写路径故障注入（真实 fd + 原型拦截）", () => {
     expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true });
     const beforeText = await readFile(join(root, "fi", "events.jsonl"), "utf8");
 
-    turn(s, 1);
-    turn(s, 2);
     const proto = await fileHandleProto();
     const originalAppend = proto.appendFile;
     const spy = vi.spyOn(proto, "appendFile");
@@ -63,17 +61,26 @@ describe("写路径故障注入（真实 fd + 原型拦截）", () => {
       await originalAppend.call(this, data.slice(0, Math.floor(data.length / 2))); // 半写后崩溃
       throw new Error("EIO-injected");
     });
-    const failed = await world.store.flush(s.id);
-    expect(failed.ok).toBe(false);
-    if (!failed.ok) expect(failed.reason).toContain("EIO-injected");
+    turn(s, 1);
+    const realtimeFailed = async (): Promise<boolean> =>
+      world.ioErrors.some((message) => message.includes("session-realtime-append-failed:fi"));
+    await waitUntil(realtimeFailed);
     expect(await readFile(join(root, "fi", "events.jsonl"), "utf8")).toBe(beforeText); // 截断回滚到批前
+
+    // 降级闩钉力：闩置位后新事件不得再发起任何实时 append 调用（闩缺席则 ev2+ev3 前缀批已发出）
+    const callsAfterFailure = spy.mock.calls.length;
+    turn(s, 2);
+    await new Promise((resolve) => {
+      setImmediate(resolve); // appendFile 调用发生在微任务链内——本时点必已发生或永不发生
+    });
+    expect(spy.mock.calls.length).toBe(callsAfterFailure);
 
     const retried = await world.store.flush(s.id); // spy 已耗尽，真实写
     expect(retried).toEqual({ ok: true, value: true });
     const text = await readFile(join(root, "fi", "events.jsonl"), "utf8");
     expect(text).toBe(`${beforeText}${JSON.stringify(s.events()[2])}\n${JSON.stringify(s.events()[3])}\n`);
     const read = unwrap(await world.archive.read(sid("fi")));
-    expect(read.events).toEqual(s.events()); // 批次不丢、不重
+    expect(read.events).toEqual(s.events()); // 批次不丢、不重、按日志序（乱序卷结构性不可达——前缀批+回滚）
   });
 
   it("dispose 与在飞 flush 同链串行：并发落账恰一次、无重复（G3）", async () => {

@@ -1,6 +1,6 @@
 # SESSION-CHECKPOINT：语义持久检查点 + e2e 旅程（件 6）
 
-状态：定稿（对抗审查 15 条处置见 §6）
+状态：定稿（对抗审查 17 条处置见 §6）
 归属：docs/AGENT-LOOP.md §1 件 6；处置依据 P2/P3/P12/P16。
 
 ## 0. 问题
@@ -22,17 +22,17 @@
 | --- | --- | --- | --- |
 | 模型请求前 | `agentRequest` waterfall 中间件 | `store.flush(payload.session)` 成功才 `next` | fail-closed：throw → 逃逸 driver turn catch → `turn/end{error}`，适配器零派发 |
 | 工具副作用前 | `toolsExecute` waterfall 中间件 | payload 带 `session` 才 flush（非 agent 调用方直通） | fail-closed：throw（携带 reason）→ dispatch 管线捕获 → isError outcome（reason 可见），工具体零执行 |
-| turn 收尾后 | `sessionEvent` 过滤 `turn/end` | fire-and-forget `store.flush`（旁观者：不阻断收轮链） | 告警式双通道：stderr `session-checkpoint/turn-end-flush-failed session=<id> {"reason":<json>}` + `checkpointDiagnostic` 事件（同会话一次，sessionDisposed 摘除；闩位在送达成功后——通道故障由 catch 重告）；pending 保留，由下一 agentRequest 屏障（fail-closed）与 dispose drain-then-close 兜底重试 |
+| turn 收尾后 | `sessionAuditEvent` 过滤 `turn/end`（审计通道微任务投递） | fire-and-forget `store.flush`（旁观者：不阻断收轮链） | 告警式双通道：stderr `session-checkpoint/turn-end-flush-failed session=<id> {"reason":<json>}` + `checkpointDiagnostic` 事件（同会话一次，sessionDisposed 摘除；闩位在送达成功后——通道故障由 catch 重告）；pending 保留，由下一 agentRequest 屏障（fail-closed）与 dispose drain-then-close 兜底重试 |
 
 依据：
 - P2/P3 裁决「请求侧挂点挪到 agent/request（此时 system/user 已落账）」——agentRequest 在拨号前，
   覆盖 DSH 的 llm/stream 挂点且更早（请求体=纯折叠，flush 后派发窗口内日志即请求前缀）。
 - 副作用边界 = DSH 的 tools/execute 思想：tool/call 记录先于工具体持久。
-- turn 收尾边界挂 `sessionEvent` 过滤 `turn/end`：`turn/end` 属 session 闭合词表（docs/SESSION.md
-  §1.3），判别联合下拼写有编译期检查（autocompact 监听 sessionEvent 过滤 turn/* 为同款先例）。
-  排序：持久化插件对 sessionEvent 只做同步 pending 入账，drain 段经 per-session 串行链在本轮
-  同步广播之后执行——drain 必含 turn/end，且同一链 FIFO 保证先于下一 turn 的请求屏障。
-  emit 同步入账 + drain 微任务后行使运行期覆盖与装载序无关；装载序仅约束拆除期（见下条）。
+- turn 收尾边界挂 `sessionAuditEvent` 过滤 `turn/end`：`turn/end` 属 session 闭合词表（docs/SESSION.md
+  §1.3），判别联合下拼写有编译期检查（autocompact 监听审计通道过滤 turn/* 为同款先例）。
+  排序（结构性保证，与监听器注册序/装载序无关）：桥接 onFlush 先同步排空审计队列再派发
+  sessionFlush——本屏障发起时 turn/end 必已入持久化 pending；同一 per-session 串行链 FIFO
+  保证先于下一 turn 的请求屏障。装载序仅约束拆除期（见下条）。
 - P16：inject 去掉 llm——本插件 inject 仅 `["session"]`（不挂 llm/stream）。
 - 不挂 preStep：每步 agentRequest 已 flush 前一步提交，preStep 挂点冗余。
 - 装配契约（`softInject: ["session-persistence-jsonl"]` topo 固化，缺席 = inline 会话组合正常
@@ -51,9 +51,12 @@ turn 收尾边界无下游可阻断（turn 已收尾），告警不 throw——�
 
 ### 1.3 强度边界与残卷形状
 
-- turn 收尾触发异步 flush：崩溃丢失窗口 = flush 在飞窗口（drain 排在 per-session 串行链
-  FIFO 尾，受在飞 fsync 顺延影响）。`whenIdle`/idle 状态不承诺字节已 fsync——读盘必经
-  flush 屏障（/export 的显式屏障因此保留）。
+- 事件级实时写盘 + 屏障 fsync（docs/SESSION.md §1.8 实时段）：实时段 resolve 后的事件
+  **进程级崩溃（含 SIGKILL）不丢**（write(2) 直达内核页缓存）；段在飞半写由 resume 尾态
+  修复收敛为丢该事件；段失败/未执行滞留内存由屏障 fail-closed 兜底。断电强度 = 运行时
+  fsync 语义的耐久屏障（macOS/Bun 下设备级强度未核验），丢失窗口为最近一次成功屏障 sync
+  之后的全部事件。`whenIdle`/idle 状态不承诺字节已 fsync——读盘必经 flush 屏障（/export
+  的显式屏障因此保留）。
 - 崩溃残卷的括号形状由 repair closers 关闭（resume 合成 interrupted 收尾）；正常收尾卷的
   turn/end 已在盘，repair 对已闭合 turn 不补 closers——两机制对任一残卷恰处理其一。
 - 流内 text-delta：不落日志（assistant/message 一步落账），无 checkpoint 语义。
@@ -81,9 +84,10 @@ packages/session-checkpoint/
 
 ### 1.6 flush 频率语义（有意选择）
 
-每步 1 次（agentRequest）+ 每工具调用 1 次（toolsExecute）+ 每 turn 收尾 1 次（turn/end）flush；
-并行池 N 调用 = N 次串行 drain（首次已覆盖整池 tool/call，其余为纯 fsync 屏障）。正确性优先的
-有意选择；批量化/合并/空批跳过 fsync 留给后续策略插件。
+事件 append 已由审计实时段先行落 fd（docs/SESSION.md §1.8）；屏障语义 = 排空审计队列 + 幂等
+append + fsync。每步 1 次（agentRequest）+ 每工具调用 1 次（toolsExecute）+ 每 turn 收尾 1 次
+（turn/end）屏障；并行池 N 调用 = N 次串行段（多数为纯 fsync 屏障）。正确性优先的有意选择；
+合并/空批跳过 fsync 留给后续策略插件。
 
 ## 2. e2e 旅程（P12：进默认门）
 
@@ -136,7 +140,7 @@ main.ts 编排先后两场景）：
 - 不改 session 词表与 repair 语义（件 5 已收口）；
 - 真凭证多轮压力、断网重试等 real 深旅程：非本件（P12 只要求单 turn 冒烟 opt-in）。
 
-## 6. 对抗审查处置（15 条）
+## 6. 对抗审查处置（17 条）
 
 R1（P0）jsonl drain 排空竞态：pending 活引用在 await 期间膨胀、按膨胀长度截断——未写事件被误切丢弃
   且 flush 报成功（违反 SESSION.md §1.8 已文档化的不变量）→ 改长度快照；回归用例「排空期间新到事件不丢」。
@@ -170,3 +174,12 @@ R14（P2）文档一致性：§6 计数失实、§1.3 变相版本叙事（「�
   消歧；超时失败信息带盘上事件类型行集（与 §4 承诺对齐）。
 R15（P3）去重闩生命周期背书：dispose 后同 id 重生会话失败再告警的回归用例（摘除逻辑由
   测试证明，非死码）。
+R16（P1·双通道收口审查）审计投递重入早投递（PoC 实锤）：投递循环内监听器发起 store.flush
+  → onFlush 重入排空，把批次中段 append 的事件提前投递——FIFO 破坏可致乱序卷永久拒绝。
+  处置：桥接 deliverAudit 重入卫兵 + 按队列头续排（投递序 = 日志序成为结构不变量）；
+  checkpoint 屏障发起推迟一个微任务移出投递循环；回归用例「重入投递序恒 = 日志序」。
+R17（P2·双通道收口审查）钉力与语义勘误：①「乱序卷防线」归因勘误——结构性防线是前缀批
+  + 截断回滚，降级闩实为 writer 健康度纵深防御（G1 用例以 appendFile 调用计数重获区分度）；
+  ②「flush 成功 ⇒ 此前」收窄为「屏障发起前」；③ maybeRealtime 去重位删除（闩后无二次尝试，
+  死码）；④ closeSteps 同一性条目回收（防泄漏 + 防误删重生代条目）；⑤ checkpoint 收尾屏障
+  以 fsync 计数独立钉力（实时段不能掩盖屏障缺席）。

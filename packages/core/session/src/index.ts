@@ -28,6 +28,8 @@ export type {
 export {
   sessionStore,
   sessionArchive,
+  sessionAuditDrain,
+  sessionAuditEvent,
   sessionCreateGuard,
   sessionCreated,
   sessionEvent,

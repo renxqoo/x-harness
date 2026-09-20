@@ -2,7 +2,7 @@
 // system-prompt+agent-loop+checkpoint；假适配器与工具体在执行体内读 jsonl 文件——「先持久后派发」的
 // 时点证明；fail-closed 双边界（不可写 root）。
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -221,6 +221,25 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
       { timeout: 5000, interval: 25 },
     );
     expect(lines.at(-1)).toContain('"turn/end"'); // 末行即收尾：防 drain 乱序假绿
+    await handle.dispose();
+  });
+
+  it("turn 收尾屏障独立钉力：单步 turn 恰 3 次屏障 fsync（首灌+请求+收尾）——实时段不能掩盖屏障缺席", async () => {
+    const world = await makeWorld(root, true);
+    worlds.push(world);
+    const { agent, handle } = await spawn(world);
+    const probe = await open(join(root, "proto-probe"), "a");
+    const proto = Object.getPrototypeOf(probe) as { sync: () => Promise<void> };
+    await probe.close();
+    const syncSpy = vi.spyOn(proto, "sync");
+    world.fake.scripts.push(textScript("ok"));
+    agent.followup("hi");
+    await agent.whenIdle();
+    // 首灌 1 + 请求屏障 1 + 收尾屏障 1；实时段只 append 不 sync——删收尾挂点则恒 2
+    await vi.waitFor(() => {
+      if (syncSpy.mock.calls.length < 3) throw new Error(`屏障 fsync 次数 ${String(syncSpy.mock.calls.length)} < 3`);
+    }, { timeout: 5000, interval: 25 });
+    expect(syncSpy.mock.calls.length).toBe(3);
     await handle.dispose();
   });
 

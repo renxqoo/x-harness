@@ -1,9 +1,9 @@
-// token-meter 插件（docs/TOKEN-METER.md §1）：增量（sessionEvent 监听只更新已存在条目——
+// token-meter 插件（docs/TOKEN-METER.md §1）：增量（sessionAuditEvent 监听只更新已存在条目——
 // 未知会话不建账，晚装载由 usageOf 冷启动全量折叠）+ sessionDisposed 摘缓存 + 估算函数。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { defineService } from "@x-harness/core";
-import { sessionDisposed, sessionEvent, sessionStore } from "@x-harness/session";
+import { sessionDisposed, sessionAuditEvent, sessionStore } from "@x-harness/session";
 import type { SessionEvent, SessionId } from "@x-harness/session";
 import { applyEvent, createFoldState, foldUsage, snapshotOf } from "./fold.ts";
 import type { SessionUsage } from "./fold.ts";
@@ -44,7 +44,7 @@ export const tokenMeterPlugin = {
     };
 
     const offs = [
-      ctx.on(sessionEvent, ({ session, event }: { session: SessionId; event: SessionEvent }) => {
+      ctx.on(sessionAuditEvent, ({ session, event }: { session: SessionId; event: SessionEvent }) => {
         // 晚装载纪律：未知会话不建账（建空账会钉死错误数字）——等 usageOf 冷启动
         const entry = cache.get(session);
         if (entry === undefined) return;

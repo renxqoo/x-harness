@@ -251,8 +251,8 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   try/catch——定时器异常是进程级崩溃面）；条件 = 空闲到期（turnActive=false 且
   now − lastTurnEndAt ≥ 阈）+ 收益达标 → L1 落账 + **flush 先于 emit**（观测不抢跑在
   持久化之前；flush 失败告警 `idle-flush-failed` 但 **emit 照发**——落账已成 append-only
-  日志事实，与参照系「flush 失败回滚 redaction」的有意分歧：落账不可逆故如实报态）。turnActive/lastTurnEndAt 由 `sessionEvent`
-  （turn/start、turn/end）维护，冷启动由 journal 折叠。
+  日志事实，与参照系「flush 失败回滚 redaction」的有意分歧：落账不可逆故如实报态）。turnActive/lastTurnEndAt 由 `sessionAuditEvent`
+  （turn/start、turn/end；审计通道微任务投递）维护，冷启动由 journal 折叠；L1 落账后的 flush 为 fsync 屏障（append 已由审计实时段先行）。
 - **接管仲裁**：**全局恰一次**，首个 `agentPreStep` 到达时评估（此时装配已定，无停靠竞态）：
   `compactionRunner` 在场且 CP 模型面就绪（runner.summarizer 或覆盖项 + llm 停靠到位）→
   `setAutoTriggerEnabled(false)`；否则一次性告警不接管、**此后不再重试**（防抖动）。

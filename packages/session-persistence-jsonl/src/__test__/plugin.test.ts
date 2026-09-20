@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Context, Plugin } from "@x-harness/core";
 import type { Session, SessionId } from "@x-harness/session";
 import { sessionArchive as sessionArchiveToken } from "@x-harness/session";
-import { sessionEvent, sessionStore as sessionStoreToken } from "@x-harness/session";
+import { sessionAuditEvent, sessionStore as sessionStoreToken } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "../plugin.ts";
 import { makeWorld, unwrap, waitUntil } from "./helpers.ts";
 import type { World } from "./helpers.ts";
@@ -40,6 +40,21 @@ describe("全链路落盘（docs/SESSION.md §1.8 链来源与时序）", () => 
     const read = unwrap(await world.archive.read(s.id));
     expect(read.events).toEqual(s.events());
     expect(read.header.id).toBe(s.id);
+  });
+
+  it("实时写盘：事件经审计通道即落 fd，不调 flush 轮询可见（症状：未到屏障的崩溃丢事件）", async () => {
+    world = await makeWorld(root);
+    const s = unwrap(await world.store.create({ id: "rt" as SessionId }));
+    turn(s, 0);
+    expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true }); // 确保 writer 已开
+    turn(s, 1);
+    turn(s, 2); // 全程无 flush——实时段（审计投递 → 链上 append，不 fsync）负责落盘
+    await waitUntil(async () => {
+      const read = unwrap(await world.archive.read(s.id));
+      return read.events.length === 3;
+    });
+    const read = unwrap(await world.archive.read(s.id));
+    expect(read.events).toEqual(s.events()); // 逐事件对账（含日志序）
   });
 
   it("首灌含构造期事件：fork 子会话落盘 = 前缀 + inherited end-seed", async () => {
@@ -317,7 +332,7 @@ describe("排空竞态（回归：活引用批次长度膨胀误切未写事件�
     const appendSix = (): void => {
       turn(s, 6);
     };
-    const off = world.ctx.on(sessionEvent, ({ event }: { event: { data: unknown } }) => {
+    const off = world.ctx.on(sessionAuditEvent, ({ event }: { event: { data: unknown } }) => {
       if ((event.data as { turn?: number }).turn === 5) setTimeout(appendSix, 0);
     });
     turn(s, 5);

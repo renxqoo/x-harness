@@ -207,7 +207,7 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
     expect(world.meter.usageOf(made.value.id)).toBeUndefined();
   });
 
-  it("sessionEvent 监听只更新已存在条目：未冷启动的会话事件不建账（晚装载纪律）", async () => {
+  it("sessionAuditEvent 监听只更新已存在条目：未冷启动的会话事件不建账（晚装载纪律）", async () => {
     const world = await makeWorld();
     worlds.push(world);
     const made = await world.store.create({ id: "unseen" as SessionId });
@@ -218,8 +218,9 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 9, output: 0 }, stopReason: "stop" }, appendOp);
     const usage = world.meter.usageOf(made.value.id);
     expect(usage).toMatchObject({ attempts: 1, inputTokens: 9 }); // 冷启动全量折叠（含监听器跳过的事件）
-    // 冷启动后增量继续
+    // 冷启动后增量继续：审计通道微任务投递——投递注册先于断言续段（FIFO），让渡一个微任务即增量可见
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 1, output: 0 }, stopReason: "stop" }, appendOp);
+    await Promise.resolve();
     expect(world.meter.usageOf(made.value.id)).toMatchObject({ attempts: 2, inputTokens: 10 });
   });
 

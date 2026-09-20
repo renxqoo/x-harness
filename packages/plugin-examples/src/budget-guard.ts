@@ -1,4 +1,4 @@
-// ② 成本上限：session/event 用量观测 → 超限 cancel（逃生舱 + 循环域取消面）。
+// ② 成本上限：审计通道用量观测 → 超限 cancel（逃生舱 + 循环域取消面）。
 // 真实场景：终端用户"这个会话最多花 N token"。
 
 import type { Disposer, Plugin } from "@x-harness/core";

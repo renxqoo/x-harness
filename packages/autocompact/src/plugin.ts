@@ -7,7 +7,7 @@ import { agentPreStep } from "@x-harness/agent-loop";
 import { llmRuntime } from "@x-harness/llm";
 import type { LlmRuntime } from "@x-harness/llm";
 import { DEFAULT_FILE_TOOLS, compactionRunner, type FileToolNames, type SummarizerFace } from "@x-harness/compaction";
-import { sessionDisposed, sessionEvent, sessionStore } from "@x-harness/session";
+import { sessionDisposed, sessionAuditEvent, sessionStore } from "@x-harness/session";
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
 import { cancelJob } from "./checkpoint.ts";
 import { maybeIdleClear } from "./idle.ts";
@@ -224,7 +224,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
 
       const offs = [
         ctx.on(agentPreStep, onPreStep as never),
-        ctx.on(sessionEvent, onSessionEvent as never),
+        ctx.on(sessionAuditEvent, onSessionEvent as never),
         ctx.on(sessionDisposed, ({ session }: { session: SessionId }) => {
           const state = states.get(session);
           if (state !== undefined) cancelJob(state.checkpoint); // 落账只会计败告警——取消在先无垃圾观测

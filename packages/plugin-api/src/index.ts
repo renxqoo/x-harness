@@ -7,7 +7,7 @@ import type { Context, Disposer } from "@x-harness/core";
 import { agentAssistantSettle, agentAssistantStream, agentLlmStream, agentPreStep, agentRequest, agentTurnStopping } from "@x-harness/agent-loop";
 import type { AssistantSettlement, Dial } from "@x-harness/agent-loop";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
-import { sessionEvent } from "@x-harness/session";
+import { sessionAuditEvent } from "@x-harness/session";
 import type { ContentBlock, InboxEntry, SessionEvent, SessionId } from "@x-harness/session";
 import { toolsExecute, toolsPreExecute } from "@x-harness/tools";
 import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
@@ -130,8 +130,10 @@ export function nonTextOf(content: readonly ContentBlock[]): readonly ContentBlo
 
 // —— 逃生舱 ——
 
-/** 原始日志广播观察（高频同步面——三红线：回调须 O(1)；无过滤参数收全量；异常进 sink 静默。
- *  默认先用领域面，此面仅在领域面表达不了时用。session 随载荷透传（按会话分账场景）。 */
+/** 原始日志审计观察（审计通道微任务级投递、FIFO 保序——持久化/计量同款通道；异常进 sink 静默）。
+ *  纪律：回调内 append 合法（同步重入卫兵不适用于异步投递），但不得恒重入——微任务链自繁殖
+ *  会饿死进程；仍应先用领域面，此逃生舱仅在领域面表达不了时用。session 随载荷透传（按会话
+ *  分账场景）。UI 观察走宿主各自的渲染面（sessionEvent 同步面仅宿主 UI 消费）。 */
 export function tapSessionEvents(ctx: Context, fn: (event: SessionEvent, session: SessionId) => void): Disposer {
-  return ctx.on(sessionEvent, (payload) => fn(payload.event, payload.session));
+  return ctx.on(sessionAuditEvent, (payload) => fn(payload.event, payload.session));
 }

@@ -52,7 +52,7 @@ export const tokenMeterPlugin: Plugin;   // name "token-meter"，inject ["sessio
 流内 usage chunk 不单独落账——驱动只在结算时落一次 message/attempt usage，M15「同值只计一次」
 由架构天然保证）。溢出安全整数 → 该会话折叠 fail-closed 返回 undefined（M23）。
 
-实现形态：增量（sessionEvent 监听更新 per-session 聚合——**监听器只更新已存在条目；
+实现形态：增量（sessionAuditEvent 审计通道监听更新 per-session 聚合（微任务级投递——读侧在 whenIdle/屏障后，时序天然覆盖）——**监听器只更新已存在条目；
 未知会话一概丢弃**，等 usageOf 冷启动全量折叠：晚装载时对活跃会话的后续事件建空账会钉死
 错误数字）+ 冷启动（usageOf 遇未知会话 → store.get(id).events() 全量折叠入缓存）+
 sessionDisposed 摘缓存（防泄漏）。

@@ -3,20 +3,21 @@
 // tool/call 记录先于工具体持久，崩溃后可判别「已派发 outcome unknown」vs「未启动」）
 // fail-closed：flush 失败一律 throw（不借「未调 next」违约文本当控制流），请求侧逃逸
 // driver 收 error turn/end、工具侧被 dispatch 管线收敛为携带 reason 的 isError outcome。
-// turn 收尾后（sessionEvent 过滤 turn/end——session 闭合词表，与 autocompact 同款先例）
-// 告警式：turn 已收尾无下游可阻断，flush 失败告警不阻断，pending 保留由下一 agentRequest
-// 屏障（fail-closed）与 dispose drain-then-close 兜底重试。异步 flush 经持久化层
-// per-session 串行链在本轮同步广播（含 pending 入账）之后执行——drain 必含 turn/end
-// 且先于下一 turn 的请求屏障；whenIdle/idle 状态不承诺字节已 fsync，读盘必经 flush 屏障。
+// turn 收尾后（sessionAuditEvent 过滤 turn/end——审计通道微任务级投递，session 闭合词表，
+// 与 autocompact 同款先例）告警式：turn 已收尾无下游可阻断，flush 失败告警不阻断，pending
+// 保留由下一 agentRequest 屏障（fail-closed）与 dispose drain-then-close 兜底重试。排序：
+// 桥接 onFlush 先同步排空审计队列再派发 sessionFlush——本屏障发起时 turn/end 必已入持久化
+// pending（结构性保证，与监听器注册序无关）；同一 per-session 串行链 FIFO 保证先于下一
+// turn 的请求屏障；whenIdle/idle 状态不承诺字节已 fsync，读盘必经 flush 屏障。
 // 装配契约（softInject ["session-persistence-jsonl"] topo 固化）：持久化在场时先装载——
 // teardown 逆序回卷本插件挂点先拆、持久化终排空殿后；调换会使拆除期触发的 flush 落进
-// 空屏障（成功不承诺字节）。运行期覆盖与装载序无关：sessionEvent 同步逐监听器入账 +
-// drain 至少晚一个 microtask，恒含 turn/end。
+// 空屏障（成功不承诺字节）。运行期覆盖与装载序无关：flush 的结构性排空 + drain 至少晚一
+// 个 microtask，恒含 turn/end。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentRequest } from "@x-harness/agent-loop";
 import type { Dial } from "@x-harness/agent-loop";
-import { sessionDisposed, sessionEvent, sessionStore } from "@x-harness/session";
+import { sessionAuditEvent, sessionDisposed, sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { toolsExecute } from "@x-harness/tools";
 import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
@@ -52,16 +53,21 @@ export const sessionCheckpointPlugin: Plugin = {
       warned.add(session);
     };
 
-    const offTurnEnd = ctx.on(sessionEvent, ({ session, event }) => {
+    const offTurnEnd = ctx.on(sessionAuditEvent, ({ session, event }) => {
       if (event.type !== "turn/end") return;
-      void store
-        .flush(session)
-        .then((flushed) => {
-          if (!flushed.ok) warnTurnEndFlush(session, flushed.reason); // 通道故障 throw → 落入 catch 重告
-        })
-        .catch(() => {
-          warnTurnEndFlush(session, "warn-channel-failed"); // store.flush 恒 resolve：此路只兜告警通道自身故障
-        });
+      // 屏障发起推迟一个微任务：本批审计投递完整落地后再生效——不在投递循环内派发
+      // sessionFlush（桥接重入卫兵已封重入面，此处进一步把发起点挪出循环；下一 turn 的
+      // 请求屏障远在其后，覆盖不受影响）
+      queueMicrotask(() => {
+        void store
+          .flush(session)
+          .then((flushed) => {
+            if (!flushed.ok) warnTurnEndFlush(session, flushed.reason); // 通道故障 throw → 落入 catch 重告
+          })
+          .catch(() => {
+            warnTurnEndFlush(session, "warn-channel-failed"); // store.flush 恒 resolve：此路只兜告警通道自身故障
+          });
+      });
     });
 
     const offDisposed = ctx.on(sessionDisposed, ({ session }: { session: SessionId }) => {
