@@ -23,3 +23,5 @@ export { scopedPersonaPlugin } from "./scoped-persona.ts";
 export { sessionGuardPlugin } from "./session-guard.ts";
 export { webFetchPlugin } from "./web-fetch.ts";
 export type { Fetcher } from "./web-fetch.ts";
+export { tokenAnalyticsPlugin, tokenAnalyticsService } from "./token-analytics.ts";
+export type { TokenBreakdown, TokenAnalyticsOptions, TokenAnalyticsService } from "./token-analytics.ts";
