@@ -39,7 +39,7 @@ export interface AgentLoopService {
 | --- | --- | --- | --- |
 | `agentStatus` | emit | `{ session, status }` | none |
 | `agentError` | emit | `{ session, turn, message }`（turn 终态 error 的活观察） | none |
-| `agentAssistantStream` | emit | `{ session, turn, step, frame }`：`{phase:"start"} \| {phase:"chunk", kind:"text"\|"thinking", text} \| {phase:"end", kind:"message"\|"attempt"}`（thinking 帧仅广播不落账——docs/THINKING-STREAM.md；end 以落账为前提） | none |
+| `agentAssistantStream` | emit | `{ session, turn, step, frame }`：`{phase:"start"} \| {phase:"chunk", kind:"text"\|"thinking", text} \| {phase:"end", kind:"message"\|"attempt"}`（thinking 帧广播；思考全文经 accumulator 落 `assistant/message.thinking`/`assistant/attempt.thinking`——docs/STREAM-PARTIAL-PERSISTENCE.md，不回传；end 以落账为前提） | none |
 | `agentPreStep` | waterfall | `{ session, turn, step, messages, signal }`（messages 仅供观察——请求体恒 deriveMessages 不变量）→ `{kind:"enter"} \| {kind:"reject", reason}` | none |
 | `agentRequest` | waterfall | `{ session, turn, step, dial, signal }`（dial=当前折叠拨号）→ 拨号 `{model, provider?, temperature?, maxTokens?, thinking?}`（thinking 词表 off/low/medium/high——llm 侧注入 anthropic thinking 参数） | none |
 | `agentRequestError` | waterfall | `{ session, turn, step, failure, signal }` → `{kind:"retry"} \| undefined`（缺省终态） | none |
@@ -94,12 +94,13 @@ turn()（逃逸 throw——中间件违约/append 失败——在 turn 内 catch
       tools 每步从 toolRegistry.schemas({ sessionId })（W2A 分层投影） 现取（LlmRequest 全量；request/header 落 ToolRef 投影=剥 inputSchema）；
       append request/header（与末次规范化深比较不同才落，比较含 tools）+ request/context（provider 与 model 齐备且变化才落）
     流结算（stream.ts）：请求体 = session.deriveMessages()（纯折叠不变量）→ llmRuntime.stream：
-      finish stop → append assistant/message{content,usage?,stopReason:"stop"}（surface append）
+      finish stop → append assistant/message{content,thinking?,usage?,stopReason:"stop"}（surface append；
+        thinking=本 attempt 思考全文，落盘不回传——STREAM-PARTIAL-PERSISTENCE）
       finish max-tokens → 同上 stopReason:"max-tokens"；turnEnds 粘性 max-tokens
-      finish error / 流抛 / 流无 finish（P14 兜底）/ finish stop 但零文本零工具（空结算，视同流错误）→ append assistant/attempt{error=`code:message`} → waterfall agentRequestError
+      finish error / 流抛 / 流无 finish（P14 兜底）/ finish stop 但零文本零工具（空结算，视同流错误）→ append assistant/attempt{error=`code:message`, content?=已收增量, thinking?=已收思考, usage?} → waterfall agentRequestError
         {retry} → 重进 attempt（不重落 system/user/header）；否则 fatal：源于 abort（signal 已断）按 {aborted} 收尾，
         其余 turnEnds={error}；均先闭 step/end 再跳出
-      中途 abort 且已有部分文本 → append assistant/message{…, interrupted:true}；无文本 → attempt（终态仍 aborted）
+      中途 abort 且已有部分文本 → append assistant/message{…, interrupted:true, thinking?}；无文本 → attempt（thinking 照落；终态仍 aborted）
     assistant 的 tool_use 块 → tool-calls.ts 调度（§1.5）；additionalContexts → insert next-step；concludesTurn → {completed}
     工具相位结束查 signal.aborted → 直达 turnEnds={aborted}
     stopReason 判定：stop 且无工具→{completed}；有工具且未 conclude→null（下一步）；max-tokens→粘性

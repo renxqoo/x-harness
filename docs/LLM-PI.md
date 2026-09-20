@@ -13,7 +13,7 @@
    scene-server 真身测试形态续命）、`llmPlugin`、token、adapter-plugin 工厂。
 3. 错误码闭集：`http-<status>` / `network` / `no-adapter` + `retryAfterMs`（llm-retry 依赖面）。
 4. usage 折算：pi `Usage` cacheRead+cacheWrite 折入 input；全零不发 usage 帧（守卫保留）。
-5. 流帧语义：finish 恰一次；thinking-delta 只广播不落账；请求前已 abort → throw（豁免路径不变）。
+5. 流帧语义：finish 恰一次；thinking-delta 只透传（落账收集由 agent-loop 承担——docs/STREAM-PARTIAL-PERSISTENCE.md）；请求前已 abort → throw（豁免路径不变）。
 
 **变更（含语义变更落档）**：
 

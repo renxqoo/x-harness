@@ -48,12 +48,22 @@ export interface SessionEventData {
     readonly turn: number;
     readonly step: number;
     readonly content: readonly ContentBlock[];
+    /** 本 attempt 思考全文（落盘不回传——docs/STREAM-PARTIAL-PERSISTENCE.md；缺席=无思考） */
+    readonly thinking?: string;
     readonly usage?: unknown;
     readonly stopReason?: string;
     readonly interrupted?: true;
   };
-  /** 失败尝试：中断前已收到的 usage 帧随尝试落账（token-meter 失败尝试计费） */
-  readonly "assistant/attempt": { readonly turn: number; readonly step: number; readonly error: string; readonly usage?: unknown };
+  /** 失败尝试：中断前已收增量随尝试落账（content/thinking——STREAM-PARTIAL-PERSISTENCE；
+   *  usage 帧 token-meter 失败尝试计费） */
+  readonly "assistant/attempt": {
+    readonly turn: number;
+    readonly step: number;
+    readonly error: string;
+    readonly content?: readonly ContentBlock[];
+    readonly thinking?: string;
+    readonly usage?: unknown;
+  };
   readonly "tool/call": { readonly turn: number; readonly step: number; readonly callId: string; readonly name: string; readonly arguments: string };
   readonly "tool/result": { readonly turn: number; readonly step: number; readonly callId: string; readonly content: string; readonly isError?: true };
   readonly "request/header": {

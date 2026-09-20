@@ -43,13 +43,18 @@ describe("StreamAccumulator（docs/AGENT-LOOP-DRIVER §1.4）", () => {
     expect(accum.usageSnapshot).toEqual({ input: 3, output: 4 });
   });
 
-  it("thinking-delta 忽略：不进 text/落账块、不救空结算（docs/THINKING-STREAM.md 契约 5）", () => {
+  it("thinking-delta 收集拼接：thinkingText 落盘面；不进 text/落账块、不救空结算（docs/STREAM-PARTIAL-PERSISTENCE.md）", () => {
     const accum = new StreamAccumulator();
     accum.push({ type: "thinking-delta", text: "hmm" });
+    accum.push({ type: "thinking-delta", text: " more" });
+    expect(accum.thinkingText).toBe("hmm more");
     expect(accum.text).toBe("");
     expect(accum.textBlock).toEqual([]);
     expect(accum.toolUseBlocks).toEqual([]);
-    expect(accum.hasContent).toBe(false);
+    expect(accum.hasContent).toBe(false); // 空结算判定不含思考（思考不救活零产出完成）
+
+    const bare = new StreamAccumulator();
+    expect(bare.thinkingText).toBe("");
   });
 });
 

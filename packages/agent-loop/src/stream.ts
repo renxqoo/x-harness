@@ -1,5 +1,6 @@
-// 流累积与结算（docs/AGENT-LOOP-DRIVER.md §1.4）：text-delta 拼接、tool-call-delta 按 index 聚积、
-// usage 捕获、finish 三态；结算判定（message / attempt / 空）。
+// 流累积与结算（docs/AGENT-LOOP-DRIVER.md §1.4）：text-delta 拼接、thinking-delta 拼接
+// （落盘收集——docs/STREAM-PARTIAL-PERSISTENCE.md，回传面仍不投影）、tool-call-delta 按
+// index 聚积、usage 捕获、finish 三态；结算判定（message / attempt / 空）。
 
 import type { ContentBlock } from "@x-harness/session";
 import type { LlmChunk, LlmFinish, TokenUsage } from "@x-harness/llm";
@@ -12,6 +13,7 @@ interface ToolCallAccum {
 
 export class StreamAccumulator {
   private readonly textParts: string[] = [];
+  private readonly thinkingParts: string[] = [];
   private readonly calls = new Map<number, ToolCallAccum>();
   private usage: TokenUsage | undefined;
   private finish: LlmFinish | undefined;
@@ -22,7 +24,8 @@ export class StreamAccumulator {
         this.textParts.push(chunk.text);
         break;
       case "thinking-delta":
-        break; // 思考只走流帧广播，不落账、不救空结算（docs/THINKING-STREAM.md 契约 5）
+        this.thinkingParts.push(chunk.text); // 落账收集（docs/STREAM-PARTIAL-PERSISTENCE.md——回传面仍不投影）
+        break;
       case "tool-call-delta": {
         const existing = this.calls.get(chunk.index);
         if (existing === undefined) {
@@ -49,6 +52,11 @@ export class StreamAccumulator {
 
   get text(): string {
     return this.textParts.join("");
+  }
+
+  /** 本 attempt 思考全文（增量拼接；无思考=空串）——落盘专用，空结算判定不含思考 */
+  get thinkingText(): string {
+    return this.thinkingParts.join("");
   }
 
   get settledFinish(): LlmFinish | undefined {
