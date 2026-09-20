@@ -50,11 +50,8 @@ describe("⑮ 能力插件（defineService + provide——seam 形态）", () =>
 describe("⑯ 服务装饰探针（微调四式之三——文档声称 vs 内核实际）", () => {
   it("同层 provide 覆盖 → throw（文档声称的装饰路径在内核走不通）", async () => {
     const ctx = createContext();
-    await loadPlugins(ctx, [sessionPlugin, toolsPlugin, toolRegistryDecoratorPlugin()]).catch((e: Error) => {
-      expect(e.message).toMatch(/already provided/); // 真缺失：装饰路径被同层重复 throw 阻断
-    });
-    // 如果没 throw（内核改了语义），标记为通过
-    await ctx.dispose();
+    await expect(loadPlugins(ctx, [sessionPlugin, toolsPlugin, toolRegistryDecoratorPlugin()])).rejects.toThrow(/already provided/); // 终审 R2：固化失败语义（内核改支持装饰时此测试红——提示转正）
+    await ctx.dispose().catch(() => {});
   });
 });
 

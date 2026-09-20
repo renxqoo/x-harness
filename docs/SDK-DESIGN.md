@@ -147,7 +147,7 @@ F0 spec 修正：settle 载荷**不带** usage（session/event 已覆盖——�
 | harness kit 目录 | harness | 乱序集端到端 + CLI dogfood 零改写 |
 | PLUGIN-AUTHORING | docs | 总表 14 行实指 + 零死链 |
 | testkit | testkit | 3 用例 + 五 journey 换用零语义变化 |
-| 验证插件 | plugin-examples | **22 个**覆盖全部六类 token |
+| 验证插件 | plugin-examples | **20 个**插件 + 2 场景（多代理端到端/性能预算）覆盖全部六类 token |
 
 ### 性能预算实测（§4 → ㉒）
 | 预算 | 声称 | 实测 |
@@ -167,6 +167,6 @@ F0 spec 修正：settle 载荷**不带** usage（session/event 已覆盖——�
 ### 探针插件三轮
 | 轮 | 数量 | 新踩面 | 反哺内核 |
 |---|---|---|---|
-| 1 | 14 | 全部基础面 | retry dial 补丁/claim 载荷/session 透传/layer 清理 |
-| 2 | 5 | defineService/registry 可变/sessionCreated | provide 同层阻断确认/header 形状摩擦 |
-| 3 | 3 | guard token/多代理端到端/性能预算 | 三预算达标 |
+| 1 | 14 插件 | 全部基础面 | retry dial 补丁/claim 载荷/session 透传/layer 清理 |
+| 2 | 5 插件 | defineService/registry 可变/sessionCreated | provide 同层阻断确认/header 形状摩擦 |
+| 3 | 1 插件 + 2 场景 | guard token/多代理端到端/性能预算 | 三预算达标 |

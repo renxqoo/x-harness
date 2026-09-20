@@ -5,7 +5,7 @@ import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import type { AssistantSettlement } from "@x-harness/agent-loop";
 import { transformAssistant, transformToolResult } from "@x-harness/plugin-api";
-import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
+import type { ToolOutcome } from "@x-harness/tools";
 
 const PATTERNS: readonly { readonly re: RegExp; readonly mask: string }[] = [
   { re: /[\w.+-]+@[\w-]+\.[\w.]+/g, mask: "[email]" },
@@ -26,10 +26,9 @@ export function piiScrubberPlugin(): Plugin {
         stopReason: s.stopReason,
         content: s.content.map((b) => (b.type === "text" ? { type: "text", text: scrub((b as { text: string }).text) } : b)),
       }));
-      const offT = transformToolResult(ctx, (outcome: ToolOutcome, req: ToolCallRequest): ToolOutcome => ({
+      const offT = transformToolResult(ctx, (outcome: ToolOutcome): ToolOutcome => ({
         ...outcome,
         content: scrub(outcome.content),
-        ...(req.name === "bash" ? {} : {}),
       }));
       return () => {
         offT();

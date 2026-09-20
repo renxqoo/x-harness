@@ -83,7 +83,7 @@ export const agentLoopPlugin = {
         dispatchRequestError: (payload) =>
           agentScope.dispatch(agentRequestError, payload as never, async () => undefined),
         dispatchTurnStopping: (payload) => agentScope.dispatch(agentTurnStopping, payload as never),
-        // F0② 落账前纠：final = 原样透传（content/stopReason/interrupted）
+        // F0② 落账前纠：final = 原样透传（content/stopReason——interrupted 内核独占，终审 2.2）
         dispatchAssistantSettle: (payload) =>
           agentScope.dispatch(agentAssistantSettle, payload as never, async (p) => ({
             content: p.content,

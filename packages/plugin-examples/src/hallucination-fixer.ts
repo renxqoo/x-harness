@@ -4,8 +4,7 @@
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import type { AssistantSettlement } from "@x-harness/agent-loop";
-import { transformAssistant, textBlocksOf } from "@x-harness/plugin-api";
-import type { ContentBlock } from "@x-harness/session";
+import { transformAssistant, textBlocksOf, nonTextOf } from "@x-harness/plugin-api";
 
 export function hallucinationFixerPlugin(): Plugin {
   return {
@@ -29,7 +28,7 @@ export function hallucinationFixerPlugin(): Plugin {
         }
         const collapsed = deduped.length < texts.flatMap((b) => b.text.split(/\n{2,}/).filter((p) => p.trim() !== "")).length;
         const text = deduped.join("\n\n") + (collapsed ? "\n\n[repeated paragraphs collapsed by hallucination-fixer]" : "");
-        const rest = s.content.filter((b) => b.type !== "text") as readonly ContentBlock[];
+        const rest = nonTextOf(s.content);
         return { content: [...rest, { type: "text", text }], stopReason: s.stopReason };
       }),
   };
