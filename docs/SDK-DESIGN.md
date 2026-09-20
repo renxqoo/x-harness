@@ -133,3 +133,40 @@ F0 spec 修正：settle 载荷**不带** usage（session/event 已覆盖——�
 ## 10. P1 波（plugin-api——自洽走查后新增）
 
 纯函数 archetype 层（packages/plugin-api）：transform/veto/tap × 三域 + tapSessionEvents 逃生舱——**零新语义零新 token**，全部为既有面的语法糖；next 纪律/洋葱序结构性保证。详见 SDK-MIGRATION-P1-PLUGIN-API.md。波次序：F0 → **P1** → F0.5 → S0 → F3 → F1 → F2。
+
+
+## 11. 终态台账（2026-09-20 核销）
+
+### 交付面
+| 面 | 包 | 验证 |
+|---|---|---|
+| softInject 原语 | core/context | 六语义专测 + 乱序探针 |
+| 拦截面三缺口 | agent-loop（pre-step 改写/assistant-settle/agent-llm-stream） | 7 用例 + 收口审查 17 项处置 |
+| token 词表治理 | plugin-manager | 异体拒/同体不误伤 |
+| plugin-api archetype | plugin-api | 等价性 6 用例 + textOf 三助手 |
+| harness kit 目录 | harness | 乱序集端到端 + CLI dogfood 零改写 |
+| PLUGIN-AUTHORING | docs | 总表 14 行实指 + 零死链 |
+| testkit | testkit | 3 用例 + 五 journey 换用零语义变化 |
+| 验证插件 | plugin-examples | **22 个**覆盖全部六类 token |
+
+### 性能预算实测（§4 → ㉒）
+| 预算 | 声称 | 实测 |
+|---|---|---|
+| assemble @100 段/50KB | ≤1ms | 中位 <1ms ✓ |
+| schemas @40 工具+restriction | ≤0.1ms | 中位 <0.1ms ✓ |
+| sha256 指纹 @50KB | ≤0.1ms | 中位 <0.1ms ✓ |
+
+### 对抗审查记录
+| 轮次 | 对象 | 发现 |
+|---|---|---|
+| 方案审 | SDK-DESIGN/IMPLEMENTATION | 12 项（A2 审计失真/B1 放开态漂移/C1 跨层环…全处置） |
+| F0+P1 审 | 拦截面 + archetype 设计 | 17 项（词表碰撞/claim 缺失/durable clear…全处置） |
+| F1/F3/S0 审 | kit/softInject/testkit 实施 | 8 项（注册序方向反/adapter inject 缺/文档四勘误…全处置） |
+| 终局审 | 全分支 diff | 待归档 |
+
+### 探针插件三轮
+| 轮 | 数量 | 新踩面 | 反哺内核 |
+|---|---|---|---|
+| 1 | 14 | 全部基础面 | retry dial 补丁/claim 载荷/session 透传/layer 清理 |
+| 2 | 5 | defineService/registry 可变/sessionCreated | provide 同层阻断确认/header 形状摩擦 |
+| 3 | 3 | guard token/多代理端到端/性能预算 | 三预算达标 |
