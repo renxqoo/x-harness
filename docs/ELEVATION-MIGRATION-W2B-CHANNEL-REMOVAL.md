@@ -68,7 +68,7 @@ IMPLEMENTATION §1 F3（run-repl spread 路径 typecheck 不报错）；DESIGN �
 - **切割说明（裁决补录，见 W2A §8）**：CLI main 初始注册与 REPL makeNext 单点重注册已在 W2A 落地（过渡态行为保持）；本波收窄为通道删除与清扫。§1 矩阵 4-6（REPL 三分支）的行为保持由 W2A 的 makeNext 实现承载，其测试覆盖现状：REPL×flag 专测**挂账（无现有覆盖）**（e2e 层——现有 cli-journey 未覆盖 /new×--tools 组合；记入下方挂账，触发条件：CLI 测试面扩展波）。
 - **门禁数字**：typecheck ✓（grep options.tools 零命中——通道死透）lint ✓ test **144 文件/1716 用例**（1717 − 1：工具 flag resume 用例随通道删除按矩阵改写吸收）e2e 全旅程 ✓ 内核门禁 ✓。
 - **新增裁决补录**：无其他。
-- **显式挂账**：REPL `/new`、`/model` × `--tools` 组合的专测（机制已实现，**当前无任何专测覆盖**——run-repl 为交互面、无测试装置，注册点亦未单测；前置=REPL 交互测试装置，触发=CLI 测试面扩展波）。风险敞口如实记录：该路径回归只能靠 e2e cli-journey 的宽网。
+- **显式挂账 → 已收口（2026-09-20 挖深轮）**：REPL×flag 矩阵专测落地（run-repl.test.ts——/new 新 id 白名单重演 + /model 同 id dispose→resume 重演，persist 形态）。原挂账前置（REPL 交互装置）由既有 PassThrough 驱动满足。
 
 ## 9. 终审处置补录（2026-09-20）
 
