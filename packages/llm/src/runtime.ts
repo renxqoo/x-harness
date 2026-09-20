@@ -79,5 +79,11 @@ export function createLlmRuntime(deps: RuntimeDeps): LlmRuntime {
         }
       })();
     },
+    contextWindowOf: (provider?: string): number | undefined => {
+      // 缺失 B 修复：按适配器查 contextWindow；唯一适配器缺省取之，多适配器须点名
+      if (provider !== undefined) return adapters.get(provider)?.contextWindow;
+      if (adapters.size === 1) return [...adapters.values()][0]?.contextWindow;
+      return undefined;
+    },
   };
 }

@@ -45,6 +45,7 @@ export function fakeLlm(): FakeLlm {
   const scripts: ScriptEntry[] = [];
   const runtime: LlmRuntime = {
     registerAdapter: () => () => {},
+    contextWindowOf: () => undefined,
     stream: (request) => {
       calls.push(request);
       const entry = scripts.shift();

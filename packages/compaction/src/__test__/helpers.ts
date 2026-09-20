@@ -72,6 +72,7 @@ export function fakeLlm(): FakeLlm {
   const scripts: Array<AsyncGenerator<LlmChunk>> = [];
   const runtime: LlmRuntime = {
     registerAdapter: () => () => {},
+    contextWindowOf: () => undefined,
     stream: (request) => {
       calls.push(request);
       const script = scripts.shift();

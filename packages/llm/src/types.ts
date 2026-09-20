@@ -10,6 +10,8 @@ export interface TokenUsage {
   readonly cacheRead?: number;
   /** 缓存写入 token（首次入缓存——折半计费） */
   readonly cacheWrite?: number;
+  /** 总 token（上游 pi-ai 透传——可由 input+output 推导，但保留避免双写） */
+  readonly totalTokens?: number;
 }
 
 /** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high → anthropic 侧
@@ -51,6 +53,8 @@ export interface LlmRequest {
 
 export interface LlmAdapter {
   readonly name: string;
+  /** 适配器的上下文窗口（pi-ai adapter 配置——缺失 B 修复：运行时可查询，插件不再要求宿主注入） */
+  readonly contextWindow?: number;
   /** 恰一个 finish 收尾（P14：无 finish 流按 error 结算归 loop 兜底；适配器违约自担测试） */
   stream(request: LlmRequest): AsyncIterable<LlmChunk>;
 }
@@ -60,4 +64,6 @@ export interface LlmRuntime {
   registerAdapter(adapter: LlmAdapter): () => void;
   /** 经 llm/stream waterfall 派发；失败归一为 error finish 流（abort 豁免——throw AbortError） */
   stream(request: LlmRequest): AsyncIterable<LlmChunk>;
+  /** 上下文窗口查询（缺失 B 修复）：按适配器名查其 contextWindow；未知返回 undefined（消费方自行兜底） */
+  contextWindowOf(provider?: string): number | undefined;
 }

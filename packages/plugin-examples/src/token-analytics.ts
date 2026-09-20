@@ -11,6 +11,7 @@ import { systemPrompt } from "@x-harness/system-prompt";
 import { toolRegistry } from "@x-harness/tools";
 import { tapSessionEvents } from "@x-harness/plugin-api";
 import type { SessionEvent, SessionId } from "@x-harness/session";
+import { llmRuntime } from "@x-harness/llm";
 
 export interface TokenBreakdown {
   /** 系统提示词估算 token（含技能段） */
@@ -40,7 +41,10 @@ export interface TokenBreakdown {
 }
 
 export interface TokenAnalyticsOptions {
-  readonly contextWindow: number; // 宿主注入（缺失 B 的绕行——knows from providers.json）
+  /** 上下文窗口缺省：从 llmRuntime.contextWindowOf() 查（缺失 B 已修）；查不到（无适配器/多适配器未点名）时由此参数兜底 */
+  readonly contextWindow?: number;
+  /** 多适配器时点名查哪个的窗口 */
+  readonly provider?: string;
 }
 
 /** 估算：~4 chars/token（英文；中文 ~2 chars/token——取中庸 3.5） */
@@ -52,9 +56,13 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
   return {
     name: "token-analytics",
     inject: ["system-prompt", "tools", "session"],
+    softInject: ["llm"], // runtime 查 contextWindow（缺席=无适配器世界，兜底参数接手）
     apply: (ctx: Context): Disposer => {
       const prompt = ctx.use(systemPrompt);
       const registry = ctx.use(toolRegistry);
+      const runtime = ctx.tryUse(llmRuntime);
+      const resolveWindow = (): number =>
+        options.contextWindow ?? runtime?.contextWindowOf(options.provider) ?? 200_000; // 三级：参数 > runtime > 缺省
 
       let lastReportedInput = 0;
       let totalOutput = 0;
@@ -102,9 +110,9 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
             tools: toolsTokens,
             messages: messageProxy,
             total,
-            contextWindow: options.contextWindow,
-            remaining: Math.max(0, options.contextWindow - total),
-            utilization: total / options.contextWindow,
+            contextWindow: resolveWindow(),
+            remaining: Math.max(0, resolveWindow() - total),
+            utilization: total / resolveWindow(),
             lastReportedInput,
             totalOutputTokens: totalOutput,
             cacheHitRate: lastReportedInput > 0 ? lastCacheRead / lastReportedInput : 0,
@@ -140,7 +148,7 @@ export const tokenAnalyticsService = defineService<TokenAnalyticsService>("token
  * A. 缓存率 ✅ 已修：TokenUsage 增 cacheRead/cacheWrite（pre-stable 扩展），
  *    foldUsage 保留明细（input 仍含 cache 总量——旧消费方不变）。
  *    cacheHitRate = lastCacheRead / lastReportedInput（精确——LLM 实报）。
- * B. 上下文窗口：仍由宿主注入 contextWindow 参数（contextWindow 在 adapter
- *    配置里，运行时无服务暴露——后续可 provide contextWindowOf(model)）。
+ * B. 上下文窗口 ✅ 已修：LlmAdapter 增 contextWindow 可选 + LlmRuntime 增
+ *    contextWindowOf(provider) 查询。三级兜底：参数 > runtime > 200k 缺省。
  * ────────────────────────────────────────────────────────────────────
  */

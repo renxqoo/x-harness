@@ -74,6 +74,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
   const injectDefaultMaxTokens = core.api === "anthropic-messages"; // openai 侧仅显式才发（语义不对称保持）
   return {
     name,
+    contextWindow: core.contextWindow, // 缺失 B 修复：适配器携带窗口（运行时 contextWindowOf 可查）
     stream: (request: LlmRequest): AsyncIterable<LlmChunk> => {
       async function* generate(): AsyncGenerator<LlmChunk> {
         request.signal.throwIfAborted();
