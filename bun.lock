@@ -274,6 +274,7 @@
         "@x-harness/plugin-api": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/telemetry-sqlite": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
@@ -362,6 +363,18 @@
       "devDependencies": {
         "@sinclair/typebox": "^0.34.0",
         "@x-harness/exec-env": "workspace:*",
+      },
+    },
+    "packages/telemetry-sqlite": {
+      "name": "@x-harness/telemetry-sqlite",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/plugin-api": "workspace:*",
+        "@x-harness/session": "workspace:*",
+      },
+      "devDependencies": {
+        "@x-harness/testkit": "workspace:*",
       },
     },
     "packages/testkit": {
@@ -755,6 +768,8 @@
     "@x-harness/system-prompt": ["@x-harness/system-prompt@workspace:packages/core/system-prompt"],
 
     "@x-harness/task-tools": ["@x-harness/task-tools@workspace:packages/task-tools"],
+
+    "@x-harness/telemetry-sqlite": ["@x-harness/telemetry-sqlite@workspace:packages/telemetry-sqlite"],
 
     "@x-harness/testkit": ["@x-harness/testkit@workspace:packages/testkit"],
 

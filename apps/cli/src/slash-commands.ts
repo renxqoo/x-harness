@@ -42,7 +42,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "quit", usage: "/quit", help: "exit (also Ctrl+C twice / Ctrl+D)" },
   { name: "new", usage: "/new", help: "start a new session (old one stays saved)" },
   { name: "model", usage: "/model [pattern]", help: "list/switch model" },
-  { name: "thinking", usage: "/thinking [level]", help: "show/set thinking level (off|low|medium|high)" },
+  { name: "thinking", usage: "/thinking [level]", help: `show/set thinking level (${THINKING_LEVELS.join("|")})` },
   { name: "session", usage: "/session", help: "session facts and token usage" },
   { name: "compact", usage: "/compact [instructions]", help: "fold history into a summary" },
   { name: "export", usage: "/export <path>", help: "export session events to a jsonl file" },

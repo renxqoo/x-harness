@@ -23,10 +23,11 @@ export const DEFAULT_MAX_TOKENS = 8192;
 
 /** 思考预算（docs/LLM-PI.md 契约）：等级 → thinkingBudgetTokens（老预算型模型生效；
  *  自适应模型由 effort 决定）。与 my-agent provider-pi 同表。 */
-export const THINKING_BUDGETS: Record<"low" | "medium" | "high", number> = {
+export const THINKING_BUDGETS: Record<"low" | "medium" | "high" | "max", number> = {
   low: 2_048,
   medium: 8_192,
   high: 16_384,
+  max: 16_384, // 自适应模型走 effort:"max" 无约束；老预算型模型同 high（pi clampReasoning 同款）
 };
 
 /** Retry-After：秒（含小数）→ 毫秒；HTTP-date → 相对毫秒（过去=0 立即）；不可解析 → undefined */

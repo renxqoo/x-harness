@@ -31,7 +31,7 @@
   - openai 协议 `reasoning_content` 透传（openai-compat 不产出思考帧）（用户裁决：不用 openai 端点）；
   - 思考回放/回传（落账已由 docs/STREAM-PARTIAL-PERSISTENCE.md 实施；resume 回放渲染与
     回传模型仍另立项——session ContentBlock 与两适配器请求映射都要动）；
-  - 请求侧 thinking 开关：`LlmRequest.thinking`（off/low/medium/high）→ anthropic 侧注入
+  - 请求侧 thinking 开关：`LlmRequest.thinking`（off/low/medium/high/max——max 为自适应模型无约束档，老预算型模型预算同 high）→ anthropic 侧注入
     `thinkingEnabled+effort+thinkingBudgetTokens`（docs/LLM-PI.md 契约 6）；缺省/off 不发参数。
   - `signature_delta`、`redacted_thinking`：按未知形状跳过。
 

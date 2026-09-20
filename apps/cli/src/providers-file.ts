@@ -6,7 +6,7 @@ import type { Result } from "@x-harness/core";
 import { readFile } from "node:fs/promises";
 
 export type ProviderProtocol = "anthropic" | "openai";
-export type ThinkingLevelCli = "off" | "low" | "medium" | "high";
+export type ThinkingLevelCli = "off" | "low" | "medium" | "high" | "max";
 
 const PROTOCOLS: readonly ProviderProtocol[] = ["anthropic", "openai"];
 
@@ -32,7 +32,7 @@ export interface ProvidersConfig {
 }
 
 /** 词表导出：--thinking/default.thinking 共用同一闭集（单一真相） */
-export const THINKING_LEVELS: readonly ThinkingLevelCli[] = ["off", "low", "medium", "high"];
+export const THINKING_LEVELS: readonly ThinkingLevelCli[] = ["off", "low", "medium", "high", "max"];
 
 function isObj(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

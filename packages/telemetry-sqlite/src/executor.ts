@@ -13,10 +13,14 @@ export function createBunSqliteExecutor(db: Database): BunSqliteExecutor {
   db.run("PRAGMA journal_mode = WAL");
   db.run("PRAGMA synchronous = FULL");
   db.run("PRAGMA busy_timeout = 5000");
+  const narrow = db as unknown as {
+    run(sql: string, ...params: SqlValue[]): { changes: number | bigint };
+    query(sql: string): { all(...params: SqlValue[]): unknown[] };
+  };
   const executor: SqliteExecutor = {
-    run: (sql, params) => ({ changes: db.run(sql, ...(params ?? [])).changes }),
+    run: (sql, params) => narrow.run(sql, ...(params ?? [])),
     all: <T extends Record<string, SqlValue>>(sql: string, params?: readonly SqlValue[]): T[] =>
-      db.query(sql).all(...(params ?? [])) as T[],
+      narrow.query(sql).all(...(params ?? [])) as T[],
   };
   return { ...executor, tx: createTx(executor) };
 }

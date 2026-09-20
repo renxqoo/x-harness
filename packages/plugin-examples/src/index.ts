@@ -7,7 +7,6 @@ export { hallucinationFixerPlugin } from "./hallucination-fixer.ts";
 export { loopBreakerPlugin } from "./loop-breaker.ts";
 export { toolGuideDynamicPlugin } from "./tool-guide-dynamic.ts";
 export { personaOverridePlugin } from "./persona-override.ts";
-export { auditLogPlugin } from "./audit-log.ts";
 export { jsonEnforcerPlugin } from "./json-enforcer.ts";
 export { modelFallbackPlugin } from "./model-fallback.ts";
 export { memoryLitePlugin } from "./memory-lite.ts";

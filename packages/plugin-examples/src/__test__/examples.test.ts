@@ -2,6 +2,8 @@
 // 装置 = F1 kits + F3 testkit dogfood（test-world.ts）。
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { createBunSqliteExecutor, createQueryService, sqliteTelemetryPlugin } from "@x-harness/telemetry-sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
@@ -11,7 +13,6 @@ import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { Type } from "@sinclair/typebox";
 import { textScript } from "@x-harness/testkit";
 import { makeTestWorld, runTurn, textsOf, AGENT } from "../test-world.ts";
-import { auditLogPlugin } from "../audit-log.ts";
 import { budgetGuardPlugin } from "../budget-guard.ts";
 import { destructiveGuardPlugin } from "../destructive-guard.ts";
 import { hallucinationFixerPlugin } from "../hallucination-fixer.ts";
@@ -121,18 +122,33 @@ describe("⑥ 人格覆盖（同名段覆盖 baseCore）", () => {
   });
 });
 
-describe("⑦ 审计日志（tapSessionEvents + 宿主信任域 fs）", () => {
-  it("全事件流 JSONL 落盘（含 seq/type/session）", async () => {
-    const dir = tmp();
-    const log = join(dir, "audit.jsonl");
-    const tw = await makeTestWorld([auditLogPlugin(log)]);
-    await runTurn(tw, "audit me");
-    const lines = readFileSync(log, "utf8").split("\n").filter((l) => l !== "");
-    expect(lines.length).toBeGreaterThan(3);
-    const first = JSON.parse(lines[0] ?? "{}") as { type: string; session: string; seq: number };
-    expect(typeof first.session).toBe("string");
-    expect(typeof first.seq).toBe("number");
-    await tw.cleanup();
+describe("⑦ 本地遥测（telemetry-sqlite 生产路径——替代旧 audit-log 演示）", () => {
+  it("OTel span/log 落 sqlite（含 usage 四字段 + 树形 span 序）", async () => {
+    const db = new Database(":memory:");
+    const exec = createBunSqliteExecutor(db);
+    const tw = await makeTestWorld([
+      sqliteTelemetryPlugin({ db: exec, tx: exec.tx, resource: { serviceName: "examples-test" }, includeBodies: true, onIoError: (m) => { throw new Error(m); } }),
+    ]);
+    tw.scripts.push((async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
+      yield { type: "text-delta", text: "audited" };
+      yield { type: "usage", usage: { input: 9, output: 3, cacheRead: 1, cacheWrite: 2 } };
+      yield { type: "finish", finish: { kind: "stop" } };
+    })());
+    const events = await runTurn(tw, "audit me");
+    const query = createQueryService(exec);
+    // 事件流全量落 log 表：从 otel_sessions 提取唯一 session id 再对账
+    const sessions = exec.all<{ session_id: string }>("SELECT DISTINCT session_id FROM otel_sessions");
+    expect(sessions.length).toBe(1);
+    const id = sessions[0]?.["session_id"] ?? "";
+    expect(query.logsOf(id).map((row) => row.eventType)).toEqual(events.map((event) => event.type));
+    expect(query.usageOf(id)).toEqual({ inputTokens: 9, outputTokens: 3, cacheRead: 1, cacheWrite: 2 }); // usage 四字段透传
+    const names = query.spansOf(id).map((row) => row.name);
+    expect(names[0]).toBe("session");
+    expect(names).toContain("turn");
+    expect(names).toContain("step");
+    expect(names).toContain("llm.chat");
+    await tw.cleanup(); // teardown 终排空完成后再关库（插件不持连接——close 归宿主）
+    db.close();
   });
 });
 

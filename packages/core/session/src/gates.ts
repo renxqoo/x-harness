@@ -158,7 +158,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     (d["provider"] === undefined || isStr(d["provider"])) &&
     (d["temperature"] === undefined || typeof d["temperature"] === "number") &&
     (d["maxTokens"] === undefined || isCount(d["maxTokens"])) &&
-    (d["thinking"] === undefined || ["off", "low", "medium", "high"].includes(d["thinking"] as string)) &&
+    (d["thinking"] === undefined || ["off", "low", "medium", "high", "max"].includes(d["thinking"] as string)) &&
     isToolRefs(d["tools"]),
   "request/context": (d) =>
     isObj(d) && isStr(d["provider"]) && isStr(d["model"]) && (d["contextWindow"] === undefined || isCount(d["contextWindow"])),

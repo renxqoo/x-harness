@@ -53,7 +53,7 @@ x-harness [flags] [message...] [@file...]
 | `--session-dir <dir>` | 会话存储根 | `~/.x-harness/sessions` |
 | `--provider <name>` | 覆盖 providers.json default.provider | — |
 | `--model <model>` | 覆盖 default.model | — |
-| `--thinking <off\|low\|medium\|high>` | 思考等级 | default.thinking（缺省 off） |
+| `--thinking <off\|low\|medium\|high\|max>` | 思考等级 | default.thinking（缺省 off；max=自适应模型无约束思考） |
 | `--permission <plan\|auto\|full>` | 权限模式档（docs/EXEC-ENV.md §5：plan=write/bash 全拒；auto=全流程审批；full=完全访问——总括授权三面铺开，docs/PERMISSION-FULL-UNRESTRICTED.md：工具/围栏/网络面，deny 规则与提权硬拒仍压顶）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | auto |
 | `--api-key <key>` | 运行时覆盖**所选 provider** 档案的 apiKey（仅装配期生效；/model 切到其他档案不跟随） | — |
 | `--tools <a,b>` | 工具白名单 | 全部注册工具 |
@@ -102,7 +102,7 @@ x-harness [flags] [message...] [@file...]
   输出上限时注入，anthropic 侧协议必填兜底链末端 8192）；**封闭模式**：顶层
   （`providers`/`default`）、档案（上述七键）、`default`（`provider`/`model`/`thinking`）各自
   只认闭集键，未知键报 `unknown field`（附 allowed 集）；`default.provider` 必须指向已声明
-  provider；`default.model` 必须在该 provider 的 models 内；`default.thinking` ∈ 四级闭集。
+  provider；`default.model` 必须在该 provider 的 models 内；`default.thinking` ∈ 五级闭集（off/low/medium/high/max）。
   单 provider 且无 default → 缺省取该 provider 首个 model；多 provider 无 default → 报错。
 - 文件只读不写；错误信息提示 0600 权限建议。
 

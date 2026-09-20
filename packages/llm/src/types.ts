@@ -24,9 +24,10 @@ export interface TokenUsage {
   readonly cost?: UsageCost;
 }
 
-/** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high → anthropic 侧
- *  thinkingEnabled + effort + 预算（THINKING_BUDGETS）；openai 侧不注入 */
-export type ThinkingLevel = "off" | "low" | "medium" | "high";
+/** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high/max → anthropic 侧
+ *  thinkingEnabled + effort + 预算（THINKING_BUDGETS；max=自适应模型无约束思考，
+ *  pi AnthropicEffort 原生含 max——老预算型模型预算同 high）；openai 侧不注入 */
+export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max";
 
 export type LlmFinish =
   | { readonly kind: "stop" }

@@ -1,6 +1,9 @@
 // B1 地基测试：词表闭合（双向）、DDL 快照、版本门 fail-closed、executor 参数绑定。
 // 测试替身执行器（内存 Map）——不依赖 bun:sqlite 可达性；executor 单独用 bun:sqlite 直测。
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { Database } from "bun:sqlite";
 import { createBunSqliteExecutor } from "../executor.ts";
@@ -130,8 +133,9 @@ describe("createBunSqliteExecutor", () => {
     }
   });
 
-  it("pragmas 已设：WAL + synchronous=FULL", () => {
-    const db = new Database(":memory:");
+  it("pragmas 已设：WAL + synchronous=FULL（文件库——:memory: 恒 memory journal）", () => {
+    const dir = mkdtempSync(join(tmpdir(), "xh-tel-"));
+    const db = new Database(join(dir, "t.db"));
     try {
       const exec = createBunSqliteExecutor(db);
       const mode = exec.all<{ journal_mode: string }>("PRAGMA journal_mode");
@@ -140,6 +144,7 @@ describe("createBunSqliteExecutor", () => {
       expect(sync[0]?.synchronous).toBe(2); // FULL
     } finally {
       db.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -147,6 +152,8 @@ describe("createBunSqliteExecutor", () => {
     const db = new Database(":memory:");
     try {
       expect(() => createBunSqliteExecutor(db)).not.toThrow();
+      const mode = createBunSqliteExecutor(db).all<{ journal_mode: string }>("PRAGMA journal_mode");
+      expect(mode[0]?.journal_mode).toBe("memory"); // :memory: 无 wal 支持——降级不炸
     } finally {
       db.close();
     }
@@ -154,8 +161,8 @@ describe("createBunSqliteExecutor", () => {
 });
 
 /** 替身执行器契约面：后续 writer/fold 测试共用此形态（无 bun:sqlite 依赖） */
-export function createMemoryExecutor(): { exec: import("../types.ts").SqliteExecutor; log: { sql: string; params: SqlValue[] | undefined }[] } {
-  const log: { sql: string; params: SqlValue[] | undefined }[] = [];
+export function createMemoryExecutor(): { exec: import("../types.ts").SqliteExecutor; log: { sql: string; params: readonly SqlValue[] | undefined }[] } {
+  const log: { sql: string; params: readonly SqlValue[] | undefined }[] = [];
   return {
     log,
     exec: {

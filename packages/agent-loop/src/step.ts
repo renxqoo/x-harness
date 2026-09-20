@@ -224,7 +224,7 @@ function isDialShape(value: unknown): value is Dial {
   if (v.provider !== undefined && typeof v.provider !== "string") return false;
   if (v.temperature !== undefined && typeof v.temperature !== "number") return false;
   if (v.maxTokens !== undefined && (typeof v.maxTokens !== "number" || !Number.isInteger(v.maxTokens))) return false;
-  if (v.thinking !== undefined && !["off", "low", "medium", "high"].includes(v.thinking as string)) return false;
+  if (v.thinking !== undefined && !["off", "low", "medium", "high", "max"].includes(v.thinking as string)) return false;
   return true;
 }
 

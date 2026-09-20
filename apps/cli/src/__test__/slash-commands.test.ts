@@ -137,10 +137,14 @@ describe("分派行为", () => {
     await runSlashCommand("/thinking high", ok.deps);
     expect(ok.recorder.reopens[0]).toEqual({ dial: { thinking: "high" } });
 
+    const max = makeDemos();
+    await runSlashCommand("/thinking max", max.deps);
+    expect(max.recorder.reopens[0]).toEqual({ dial: { thinking: "max" } }); // max 档合法（五级闭集）
+
     const bad = makeDemos();
-    await runSlashCommand("/thinking max", bad.deps);
+    await runSlashCommand("/thinking ultra", bad.deps);
     expect(bad.recorder.reopens).toEqual([]);
-    expect(bad.recorder.lines[0]).toContain("off | low | medium | high");
+    expect(bad.recorder.lines[0]).toContain("off | low | medium | high | max");
 
     const show = makeDemos();
     await runSlashCommand("/thinking", show.deps);
