@@ -13,3 +13,4 @@ export { modelFallbackPlugin } from "./model-fallback.ts";
 export { memoryLitePlugin } from "./memory-lite.ts";
 export { rateLimiterPlugin } from "./rate-limiter.ts";
 export { piiScrubberPlugin } from "./pii-scrubber.ts";
+export { perSessionContextPlugin } from "./per-session-context.ts";

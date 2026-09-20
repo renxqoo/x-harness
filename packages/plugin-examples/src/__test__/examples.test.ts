@@ -24,6 +24,7 @@ import { piiScrubberPlugin } from "../pii-scrubber.ts";
 import { rateLimiterPlugin } from "../rate-limiter.ts";
 import { toolGuideDynamicPlugin } from "../tool-guide-dynamic.ts";
 import { webFetchPlugin } from "../web-fetch.ts";
+import { perSessionContextPlugin } from "../per-session-context.ts";
 
 let dirs: string[] = [];
 afterEach(() => {
@@ -227,6 +228,23 @@ describe("⑬ 新工具插件（createToolPlugin + guidance 投稿 + fetcher 注
     expect(tw.world.prompt.assemble().text).toContain("## Web Fetch"); // guidance 投稿停靠
     const bad = await reg.dispatch({ callId: "f2", name: "fetch", args: { url: "ftp://x" }, signal: new AbortController().signal });
     expect(bad.isError).toBe(true); // 协议门
+    await tw.cleanup();
+  });
+});
+
+describe("⑭ 每会话动态上下文（sessionCreated → scoped section + 终结清层）", () => {
+  it("会话建立即注入专属段；dispose 会话后层清理（assemble 回纯根层）", async () => {
+    const tw = await makeTestWorld([perSessionContextPlugin((h) => `Context for session ${String(h.id).slice(0, 8)} cwd=${String(h.cwd ?? "n/a")}`)]);
+    const made = await tw.world.loop.create({ agent: { ...AGENT }, session: { id: "sess-14" as never, header: { id: "sess-14" as never, createdAt: Date.now(), cwd: "/w/ctx" } } });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    const sid = made.value.agent.session.id;
+    const withLayer = tw.world.prompt.assemble({ sessionId: sid }).text;
+    expect(withLayer).toContain("Context for session");
+    expect(withLayer).toContain("cwd=/w/ctx");
+    expect(tw.world.prompt.assemble().text).not.toContain("Context for session"); // 他会话不受污染
+    await made.value.dispose(); // → sessionDisposed → dropLayer
+    expect(tw.world.prompt.assemble({ sessionId: sid }).text).not.toContain("Context for session"); // 清层生效
     await tw.cleanup();
   });
 });

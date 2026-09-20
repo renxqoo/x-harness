@@ -124,6 +124,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
       },
     },
     "packages/core/tools": {
