@@ -9,7 +9,7 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "vitest run --coverage",
+    "test": "bunx --bun vitest run --coverage",
     "e2e": "bun packages/e2e/src/main.ts",
     "typecheck": "tsc --noEmit",
     "check:kernel-deps": "bun scripts/check-kernel-deps.ts",
