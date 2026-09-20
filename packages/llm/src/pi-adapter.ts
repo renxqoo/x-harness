@@ -195,3 +195,15 @@ export function createOpenaiCompatAdapter(options: OpenaiCompatOptions): LlmAdap
     provider: "openai",
   });
 }
+
+export function createAi(apiMode:"anthropic-messages"|"openai-completions",options: OpenaiCompatOptions|AnthropicCompatOptions) {
+  if (apiMode === 'anthropic-messages') {
+    return createAnthropicCompatAdapter(options)
+  }
+
+  if (apiMode === 'openai-completions') {
+    return createOpenaiCompatAdapter(options)
+  }
+
+  throw  new Error(`not fund apiMode ${apiMode}`)
+}
