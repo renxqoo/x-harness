@@ -20,3 +20,4 @@ export { toolRegistryDecoratorPlugin } from "./tool-registry-decorator.ts";
 export { dynamicToolPlugin } from "./dynamic-tool.ts";
 export { midTurnSteerPlugin } from "./mid-turn-steer.ts";
 export { scopedPersonaPlugin } from "./scoped-persona.ts";
+export { sessionGuardPlugin } from "./session-guard.ts";
