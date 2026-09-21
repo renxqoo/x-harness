@@ -1,7 +1,7 @@
 # host-hub 设计基线（DESIGN）
 
-> 状态：定稿（两轮并行对抗审查 6H/26M/22L 全处置；实施中）
-> 状态流转：草稿 → 定稿（审查清零+用户放行）→ 实施中 → 已核销（验收清单全勾）
+> 状态：已核销（两轮并行方案审查 6H/26M/22L + 收口代码审查 3H/7M/10L + 5H/8M/7L + 假绿抽查处置全清；MIGRATION §8 全勾）
+> 状态流转：草稿 → 定稿 → 实施中 → 已核销（验收清单全勾）
 > 迁移源：/Users/wrr/work/my-agent/packages/host-hub（已核销实现，行为规格基线）｜底座：@x-harness/* 内核包族
 > 文档族：[IMPLEMENTATION.md](IMPLEMENTATION.md)｜[MIGRATION.md](MIGRATION.md)
 
