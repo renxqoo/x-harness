@@ -72,7 +72,9 @@ async function waitFrame(client: readonly string[], pred: (frame: Record<string,
     }
     if (Date.now() - started > timeoutMs) throw new Error(`waitFrame timeout; last: ${client.slice(-4).join(" | ")}`);
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 10);
+      setTimeout(() => {
+        resolve();
+      }, 10);
     });
   }
 }
@@ -126,12 +128,16 @@ async function startHost(env: Record<string, string | undefined> = {}): Promise<
 async function driveStart(f: HostFixture, id: string, cwd = "/w"): Promise<string> {
   f.send({ type: "thread/start", id, cwd });
   await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+      setTimeout(() => {
+        resolve();
+      }, 20);
     });
   const worker = f.workers[f.workers.length - 1];
   worker?.hello();
   await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+      setTimeout(() => {
+        resolve();
+      }, 20);
     });
   const startLine = worker?.written.find((line) => line.includes('"thread/start"'));
   const threadId = `t-${id}`;

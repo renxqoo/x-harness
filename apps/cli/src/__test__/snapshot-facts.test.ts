@@ -167,7 +167,8 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
       const anchorIndex = surface.findIndex((n) => n.event.type === "system/message");
       expect(anchorIndex).toBeGreaterThan(0);
       for (const node of surface.slice(0, anchorIndex)) expect(node.event.type).toBe("user/message");
-      expect((surface[anchorIndex + 1]?.event.data as unknown as { content?: Array<{ text?: string }> }).content?.[0]?.text).toBe("one");
+      const afterAnchor = surface[anchorIndex + 1]?.event.data as unknown as { content?: Array<{ text?: string }> };
+      expect(afterAnchor.content?.[0]?.text).toBe("one");
       expect(JSON.stringify(captured[0]?.messages)).toContain("agents instructions v1"); // 本轮请求即携带
       expect(JSON.stringify(captured[0]?.messages)).toContain("claude instructions");
       expect(systemCount()).toBe(1); // 锚点恰一条（首 kick 落锚）

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "bun build src/host/cli.ts src/worker/main.ts --outdir dist --target bun --format esm --external \"@x-harness/*\"",
-    "e2e:llm": "bun run test/llm-e2e.ts"
+    "e2e:llm": "bun run src/__test__/llm-e2e.ts"
   },
   "dependencies": {
     "@x-harness/agent-delegation": "workspace:*",

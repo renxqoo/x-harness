@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { delegationView } from "../index.ts";
 import type { ChildView } from "../index.ts";
-import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, workerOptions, resetWorlds, agentIdOf } from "./world.ts";
+import { makeWorld, spawnParent, callTool, textScript, CHILD_MODEL, workerOptions, resetWorlds, agentIdOf } from "./world.ts";
 
 beforeEach(() => {
   resetWorlds();

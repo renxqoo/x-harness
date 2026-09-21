@@ -196,7 +196,9 @@ describe("worker 关闭路径（stdin EOF → 优雅退出 exit 0）", () => {
     w.input.send("{}");
     w.input.emit("data", Buffer.from("42\\n", "utf8"));
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 80);
+      setTimeout(() => {
+        resolve();
+      }, 80);
     });
     const parseFailures = w.captured.lines.filter((line) => line.includes('"command":"parse"'));
     expect(parseFailures.length).toBeGreaterThanOrEqual(2); // 裸字符串/数字两路 parse failure（"{}" 合法——unknown command 域）

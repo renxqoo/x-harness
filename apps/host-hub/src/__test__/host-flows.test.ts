@@ -52,7 +52,9 @@ async function waitResponse(client: readonly string[], command: string, id?: str
     }
     if (Date.now() - started > timeoutMs) throw new Error(`waitResponse timeout: ${command}; last=${client.slice(-3).join(" | ")}`);
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 10);
+      setTimeout(() => {
+        resolve();
+      }, 10);
     });
   }
 }
@@ -120,12 +122,16 @@ describe("host 流程补面", () => {
     const sessionPath = await makeArchive(f.sessionsRoot, "resumable01");
     f.send({ type: "thread/resume", id: "r1", sessionPath });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+      setTimeout(() => {
+        resolve();
+      }, 30);
     });
     const worker = f.workers[f.workers.length - 1];
     worker?.hello();
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+      setTimeout(() => {
+        resolve();
+      }, 20);
     });
     const resumeLine = worker?.written.find((line) => line.includes('"thread/resume"'));
     expect(resumeLine).toBeDefined();
@@ -144,7 +150,9 @@ describe("host 流程补面", () => {
     await waitResponse(f.client, "thread/retire", "rt1");
     worker?.close();
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 50);
+      setTimeout(() => {
+        resolve();
+      }, 50);
     });
     expect(f.client.some((line) => line.includes("thread_parked"))).toBe(true);
   });
@@ -154,12 +162,16 @@ describe("host 流程补面", () => {
     const sessionPath = await makeArchive(f.sessionsRoot, "relayme0001");
     f.send({ type: "thread/resume", id: "r1", sessionPath });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+      setTimeout(() => {
+        resolve();
+      }, 30);
     });
     const worker = f.workers[f.workers.length - 1];
     worker?.hello();
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+      setTimeout(() => {
+        resolve();
+      }, 20);
     });
     const resumeLine = worker?.written.find((line) => line.includes('"thread/resume"'));
     const resume = JSON.parse(resumeLine as string) as { id: string };
@@ -169,13 +181,17 @@ describe("host 流程补面", () => {
     f.send({ type: "ui_response", id: "ur1", requestId: "rq-1", payload: { confirmed: true } });
     await waitResponse(f.client, "ui_response", "ur1");
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+      setTimeout(() => {
+        resolve();
+      }, 30);
     });
     expect(worker?.written.some((line) => line.includes("ui_response") && line.includes("rq-1"))).toBe(true);
     // set_model 带 threadId：host 单点 → live 交池转发 worker
     f.send({ type: "set_model", id: "sm1", threadId: "relayme0001", provider: "glm", modelId: "glm-5.3" });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+      setTimeout(() => {
+        resolve();
+      }, 30);
     });
     expect(worker?.written.some((line) => line.includes("set_model"))).toBe(true);
     worker?.onLine(responseLine({ id: "sm1", command: "set_model", success: true }));
@@ -220,7 +236,9 @@ describe("host 流程补面", () => {
       }) as never,
     });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 80);
+      setTimeout(() => {
+        resolve();
+      }, 80);
     });
     const proc = process as unknown as { emit(event: string, ...args: unknown[]): boolean };
     proc.emit("uncaughtException", new Error("boom-uncaught"));
@@ -228,7 +246,9 @@ describe("host 流程补面", () => {
     // register 相对路径（fence 拒面——非 spawn 路径）
     input.send({ type: "thread/register", id: "rg-rel", sessionPath: "relative/events.jsonl" });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100);
+      setTimeout(() => {
+        resolve();
+      }, 100);
     });
     expect(client.some((line) => line.includes("hub_error") && line.includes("boom-uncaught"))).toBe(true);
     expect(client.some((line) => line.includes("hub_error") && line.includes("boom-rejection"))).toBe(true);
@@ -240,12 +260,16 @@ describe("host 流程补面", () => {
     const sessionPath = await makeArchiveIn(f.sessionsRoot, "cwdoverride1", "/original");
     f.send({ type: "thread/resume", id: "r1", sessionPath, cwd: "/explicit" });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+      setTimeout(() => {
+        resolve();
+      }, 30);
     });
     const worker = f.workers[f.workers.length - 1];
     worker?.hello();
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+      setTimeout(() => {
+        resolve();
+      }, 20);
     });
     const resumeLine = worker?.written.find((line) => line.includes('"thread/resume"'));
     const resume = JSON.parse(resumeLine as string) as { id: string; cwd?: string };
@@ -255,7 +279,9 @@ describe("host 流程补面", () => {
     // thread/start 缺省 cwd = host 进程 cwd
     f.send({ type: "thread/start", id: "s1" });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 30);
+      setTimeout(() => {
+        resolve();
+      }, 30);
     });
     const startLine = f.workers[f.workers.length - 1]?.written.find((line) => line.includes('"thread/start"'));
     expect(startLine).toBeDefined();
@@ -279,7 +305,9 @@ describe("host 流程补面", () => {
     f.input.emit("data", Buffer.from("{}\n", "utf8"));
     f.input.emit("data", Buffer.from(`${JSON.stringify({ noType: true })}\n`, "utf8"));
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100);
+      setTimeout(() => {
+        resolve();
+      }, 100);
     });
     expect(f.client.some((line) => line.includes("unknown command"))).toBe(true);
   });
@@ -314,11 +342,15 @@ describe("host 流程补面", () => {
       }),
     });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100);
+      setTimeout(() => {
+        resolve();
+      }, 100);
     });
     input.emit("end"); // EOF → shutdown（FakeInput 无 end——事件直发）
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 150);
+      setTimeout(() => {
+        resolve();
+      }, 150);
     });
     expect(exited).toBe(0);
     void eofSeen;
@@ -332,7 +364,9 @@ describe("host 流程补面", () => {
     await waitResponse(f.client, "thread/register", "rg1");
     // register trusted:true 登记注册表（host 转发链——entry.cwd 为项目目录）
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 50);
+      setTimeout(() => {
+        resolve();
+      }, 50);
     });
     const registry = JSON.parse(await Bun.file(join(f.agentDir, "trusted-workspaces.json")).text()) as string[];
     const { normalizeCwd } = await import("../shared/settings-store.ts");

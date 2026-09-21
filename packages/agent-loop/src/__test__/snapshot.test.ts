@@ -111,7 +111,8 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     const surface = agent.session.surface();
     // 首 kick 预锚落位：快照在 system 锚点之前，本轮 user 批次在锚点之后
     expect(surface[0]?.event.type).toBe("user/message");
-    expect((surface[0]?.event.data as unknown as { content: Array<{ text: string }> }).content[0]?.text).toBe(envelope);
+    const first = surface[0]?.event.data as unknown as { content: Array<{ text: string }> };
+    expect(first.content[0]?.text).toBe(envelope);
     expect(surface[1]?.event.type).toBe("system/message");
     expect(surface[2]?.event.type).toBe("user/message"); // 本轮 user 批次在锚点之后
     expect(surface[3]?.event.type).toBe("assistant/message");

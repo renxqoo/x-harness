@@ -13,7 +13,7 @@ import { createPermissionPlugin, permissionBroker } from "@x-harness/permission"
 import { PathGate } from "@x-harness/tool-core";
 import { createGrepPlugin } from "@x-harness/tool-grep";
 import { createSandboxPlugin } from "../plugin.ts";
-import type { Context, Disposer, Plugin } from "@x-harness/core";
+import type { Context, Plugin } from "@x-harness/core";
 import type { SessionId } from "@x-harness/session";
 
 const DARWIN = process.platform === "darwin";
