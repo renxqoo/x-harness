@@ -78,6 +78,10 @@ describe("agentSpawned/agentFinished 发射矩阵", () => {
     expect(log.finished[0]).toMatchObject({ outcome: "stopped" });
     expect(typeof log.finished[0]?.detail).toBe("string");
     expect(log.finished[0]?.detail).not.toBe("");
+    // 幂等早退：再 stop 不双发（stopped 同步置位守卫——kick 失败行同形状，收口审 K-M3/K-L4）
+    const again = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: parent.agent.session.id });
+    expect(again.content).toContain("already stopped");
+    expect(log.finished).toHaveLength(1);
     await parent.dispose();
   });
 

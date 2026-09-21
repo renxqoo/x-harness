@@ -141,6 +141,7 @@ function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly han
     spec.handle.agent.followup(spec.prompt);
   } catch (error) {
     spec.row.occupied = false;
+    spec.row.stopped = true; // stopAll 幂等早退守卫——防同一周期二次 finished（收口审 K-M3）
     deps.emitFinished({
       parent: spec.row.parent,
       agentId: spec.row.agentId,

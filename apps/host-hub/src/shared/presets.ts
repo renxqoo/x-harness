@@ -15,6 +15,7 @@ export const PRESET_PROFILES: readonly HubProviderProfile[] = [
         contextWindow: 1_000_000,
         maxTokens: 34_000,
         reasoning: true,
+        input: ["text", "image"], // GLM 旗舰多模态——开箱携图可用（providers.json 可覆写）
         cost: { input: 8, output: 16, cacheRead: 1, cacheWrite: 0 },
       },
     ],

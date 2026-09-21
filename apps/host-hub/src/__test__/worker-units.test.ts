@@ -172,3 +172,11 @@ describe("get_messages 软上限（BATCH2 审 M6——超 worker 行限以 worke
     expect(withinResponseBudget(huge, 100 * 1024)).toBe(false);
   });
 });
+
+describe("get_messages 软上限字节口径（收口审 K-M1——CJK 3 倍膨胀漏判回归）", () => {
+  test("预算按 UTF-8 字节：CJK 串按 3 字节/字计，不按码元漏放", () => {
+    const cjkMessage = { role: "user", content: [{ type: "text", text: "中".repeat(50 * 1024) }] };
+    expect(JSON.stringify(cjkMessage).length).toBeLessThan(200 * 1024); // 码元口径 < 200KiB
+    expect(withinResponseBudget([cjkMessage], 100 * 1024)).toBe(false); // 字节口径 ≈150KiB 超限
+  });
+});

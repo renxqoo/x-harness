@@ -37,11 +37,18 @@ describe("thread/delete 状态矩阵", () => {
     expect(second).toEqual({ ok: true, removed: [] }); // 幂等
   });
 
-  test("活族拒（already open，词表收敛复用）；parked/dead 撤表后删", async () => {
+  test("活族拒（already open，词表收敛复用——含活锁在场与目录缺席两形态）；parked/dead 撤表后删", async () => {
     const f = await fixture();
     await makeSession(f.sessionsRoot, "t1");
+    // 活锁在场（生产 live 形态——worker 持活 pid lock）：活族判定先于 lock 探活 → already open
+    await writeFile(join(f.sessionsRoot, "t1", "lock"), `${process.pid}\n`, "utf8");
     f.table.insert({ threadId: "t1", cwd: "/w", sessionPath: pathOf(f.root, "t1"), state: "live", trusted: false, keepalive: false });
     expect(await deleteSession(f, pathOf(f.root, "t1"))).toEqual({ ok: false, reason: "already open" });
+    // 目录被外部 rm 但表项仍 live：不因缺席放行（worker 仍活——先 stop）
+    f.table.insert({ threadId: "t0", cwd: "/w", sessionPath: pathOf(f.root, "t0"), state: "live", trusted: false, keepalive: false });
+    expect(await deleteSession(f, pathOf(f.root, "t0"))).toEqual({ ok: false, reason: "already open" });
+    f.table.remove("t1");
+    await writeFile(join(f.sessionsRoot, "t1", "lock"), "999999999\n", "utf8"); // 活锁场景结束——死锁放行
     f.table.insert({ threadId: "t1", cwd: "/w", sessionPath: pathOf(f.root, "t1"), state: "parked", trusted: false, keepalive: false });
     expect(await deleteSession(f, pathOf(f.root, "t1"))).toEqual({ ok: true, removed: ["t1"] });
     expect(f.table.holderOf(pathOf(f.root, "t1"))).toBeUndefined(); // 表已撤

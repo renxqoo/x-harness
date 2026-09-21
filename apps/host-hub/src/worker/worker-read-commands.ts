@@ -41,12 +41,13 @@ function handleGetInflight(rt: WorkerRuntime, input: CommandInput): void {
   respond(rt, { id: input.id, command: "get_inflight", data: { ...rt.inflightState.snapshot(), bash: rt.bash.readLatest() } });
 }
 
-/** get_messages 软上限判定（导出单测面）：预算按 JSON 串长累计，帧信封/转义留 4KiB
- *  余量——超限以有界 failure 结算（超 worker 行限 = worker 被杀，thread_died） */
+/** get_messages 软上限判定（导出单测面）：预算按 UTF-8 字节累计（CJK 3 倍膨胀下
+ *  UTF-16 码元计数会漏判），帧信封/转义留 4KiB 余量——超限以有界 failure 结算
+ *  （超 worker 行限 = worker 被杀，thread_died） */
 export function withinResponseBudget(messages: readonly unknown[], cap: number): boolean {
   let budget = cap - 4096;
   for (const message of messages) {
-    budget -= JSON.stringify(message).length;
+    budget -= Buffer.byteLength(JSON.stringify(message), "utf8");
     if (budget < 0) return false;
   }
   return true;

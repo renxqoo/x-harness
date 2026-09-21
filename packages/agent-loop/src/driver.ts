@@ -65,7 +65,8 @@ function userBlocks(text: string, options: { images?: readonly ImageBlock[] } | 
   return [{ type: "text" as const, text }, ...images];
 }
 
-function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown> {  if (reason.kind === "aborted") {
+function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown> {
+  if (reason.kind === "aborted") {
     return { turn, reason: { kind: "aborted", ...(reason.cause !== "" ? { cause: reason.cause } : {}) } };
   }
   if (reason.kind === "error") {

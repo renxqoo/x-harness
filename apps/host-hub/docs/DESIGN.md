@@ -650,6 +650,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | `already open` | 同 sessionPath 已占用（start/resume/register；thread/delete 对活族同串复用） |
 | `cannot delete subagent session` | thread/delete：header.agentId 在场（子代理会话归 delegation 生命周期管理） |
 | `session is locked by another process` | thread/delete：目录 lock 持有活进程（跨 host 防线） |
+| `delete failed: rename` / `delete failed: <code>` | thread/delete：rename/stat 异常如实上报（目录原子消失失败） |
 | `response too large; use get_entries` | get_messages 软上限（100MiB JSON 串长） |
 | `session path outside sessions dir` | resume/register/delete 围栏（绝对路径/realpath 圈外） |
 | `Session file not readable` | 零字节/空卷/不可读 / register >64MiB |
@@ -675,7 +676,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | `shutting down` | 关闭期新命令 |
 | `Session not persisted yet` | retire 未落盘线程 |
 | `permission denied` | 直执行 bash 确认拒绝 |
-| `invalid images: expected array` / `invalid images: bad block` / `invalid images: type must be image` / `invalid images: data must be non-empty base64` / `invalid images: mediaType required` / `invalid images: too many images (max 8)` / `invalid images: image too large` / `invalid images: images too large in total` / `invalid images: model does not accept images` / `invalid images: compact does not accept images` | images 坏形状/量限/能力门/compact 拒图（shared/images + meta-state 单点） |
+| `invalid images: expected array` / `invalid images: bad block` / `invalid images: type must be image` / `invalid images: data must be non-empty base64` / `invalid images: mediaType required` / `invalid images: too many images (max 8)` / `invalid images: image too large (max 5242880 base64 chars)` / `invalid images: images too large in total (max 12582912 base64 chars)` / `invalid images: model does not accept images` / `invalid images: compact does not accept images` | images 坏形状/量限/能力门/compact 拒图（shared/images + meta-state 单点） |
 | `invalid id: reserved namespace` | 客户端 id 冒用 `@hub-internal:` 前缀 |
 | `unknown setting key: <key>` / `invalid setting value: <reason>` | hub-settings 白名单键值校验 |
 | `invalid model entry: <reason>` | models/add 校验族 |

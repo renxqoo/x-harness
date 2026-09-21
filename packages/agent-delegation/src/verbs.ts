@@ -149,13 +149,13 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
   if (!found.ok) return found;
   const row = found.value;
   if (row.stopped) return { ok: true, text: `${row.agentId} already stopped` }; // 幂等
+  row.stopped = true; // 同步置位（check-and-set）：并发 stop 第二个走幂等早退——防双 finished
   const childHandle = deps.loop.get(row.sessionId);
   const wasRunning = row.running;
   if (childHandle !== undefined) {
     childHandle.agent.cancel(input.cause ?? "agent-stop");
     await childHandle.agent.whenIdle();
   }
-  row.stopped = true;
   row.occupied = false; // 槽释放；armed 置位者由通知门丢弃（cancel 后 idle 仍会触发通知——stop 后通知如实送达）
   if (!wasRunning) {
     // idle 子无 armed-idle 边沿可达（通知门永不再触发）——finished 同步发射（BATCH2 审 L4）

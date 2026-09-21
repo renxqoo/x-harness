@@ -97,53 +97,67 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
 
   // —— 工具增量流（BATCH2 §2）：主会话 inflight 逐 delta 追加（get_inflight 恒新鲜）；
   // wire 帧 per-(session,callId) 尾沿合并 ≥25ms（delta 可连接——合并不损；火喉输出下
-  // 帧率有界）。子会话帧经同机制外推（归属 payload 自带 session）——
+  // 帧率有界）。清理由结算/轮界/会话终结边沿各归其主（主 tool/result 与子的
+  // tool/result、各自 turn/end、sessionDisposed——不留无界 Map 也不丢弃 pending）——
   interface ToolStreamPending {
     owner: string;
+    callId: string;
     pending: string;
     timer: ReturnType<typeof setTimeout> | undefined;
     lastAt: number;
   }
+  /** 键 = `${owner}:${callId}`——owner 是 SessionId（词法无冒号）故前缀切分无歧义；
+   *  键只作寻址不解析，owner/callId 存在 state 里（callId 可为任意串） */
   const toolStream = new Map<string, ToolStreamPending>();
 
-  function flushToolStream(key: string): void {
+  function emitToolStreamFrame(state: ToolStreamPending): void {
+    const chunk = state.pending;
+    state.pending = "";
+    state.lastAt = Date.now();
+    if (chunk !== "") emit(agentToolStream.name, { session: state.owner, callId: state.callId, delta: chunk });
+  }
+
+  /** 结算边沿：尾批冲净后撤 entry（终态最后——帧序在 tool/result 之前不保证，
+   *  pending 冲净保证增量流完整） */
+  function settleToolStream(key: string): void {
     const state = toolStream.get(key);
     if (state === undefined) return;
     if (state.timer !== undefined) {
       clearTimeout(state.timer);
       state.timer = undefined;
     }
-    const chunk = state.pending;
-    state.pending = "";
-    state.lastAt = Date.now();
-    if (chunk !== "") emit(agentToolStream.name, { session: state.owner, callId: keyOf(key).callId, delta: chunk });
+    emitToolStreamFrame(state);
+    toolStream.delete(key);
   }
 
-  /** 帧键 → (owner, callId) 还原：主会话键 = callId（历史形态），子会话键 = `<session>:<callId>` */
-  function keyOf(key: string): { owner: string; callId: string } {
-    const split = key.indexOf(":");
-    if (split === -1) return { owner: deps.threadId(), callId: key };
-    return { owner: key.slice(0, split), callId: key.slice(split + 1) };
+  /** 轮/会话终结边沿：该 owner 的全部在途 entry 冲净（子代理后台跨父轮运行——父
+   *  turn/end 只清父自己的） */
+  function settleOwnerStreams(owner: string): void {
+    for (const [key, state] of toolStream) {
+      if (state.owner === owner) settleToolStream(key);
+    }
   }
 
   function feedToolStream(owner: string, callId: string, delta: string): void {
     const main = owner === deps.threadId();
     if (main) deps.inflight.toolOutput(callId, delta);
-    const key = main ? callId : `${owner}:${callId}`;
-    const state = toolStream.get(key) ?? { owner, pending: "", timer: undefined, lastAt: 0 };
+    const key = `${owner}:${callId}`;
+    const state = toolStream.get(key) ?? { owner, callId, pending: "", timer: undefined, lastAt: 0 };
     toolStream.set(key, state);
     state.pending += delta;
     if (state.timer === undefined) {
       const wait = Math.max(0, TOOL_STREAM_MIN_INTERVAL_MS - (Date.now() - state.lastAt));
       const timer = setTimeout(() => {
         state.timer = undefined;
-        flushToolStream(key);
+        if (toolStream.get(key) !== state) return; // 已被结算边沿撤走——死后不发射
+        emitToolStreamFrame(state);
       }, wait);
       timer.unref?.();
       state.timer = timer;
     }
   }
 
+  /** 拆线清场：只撤定时器不冲刷（wire 已死，帧无处去） */
   function clearToolStream(): void {
     for (const state of toolStream.values()) {
       if (state.timer !== undefined) clearTimeout(state.timer);
@@ -153,23 +167,24 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
 
   function onSessionEvent(owner: string, event: SessionEvent): void {
     const main = owner === deps.threadId();
-    if (main) {
-      if (event.type === "turn/start") {
+    if (event.type === "turn/start") {
+      if (main) {
         streaming = true;
         partial.reset();
         deps.inflight.turnStart(event.seq, event.time);
-      } else if (event.type === "turn/end") {
+      }
+    } else if (event.type === "turn/end") {
+      settleOwnerStreams(owner); // 轮边界：该会话在途尾巴冲净（含子会话——不丢弃增量）
+      if (main) {
         streaming = false;
         deps.inflight.turnEnd();
         partial.reset();
-        clearToolStream(); // 轮边界：在途尾巴冲净（settled 后无增量）
-      } else if (event.type === "tool/call") {
-        deps.inflight.toolOutput(event.data.callId, ""); // 在途工具占位（startedAt 基线；增量经 agent/tool-stream）
-      } else if (event.type === "tool/result") {
-        flushToolStream(event.data.callId); // 结算边沿：尾批冲净后撤状态
-        toolStream.delete(event.data.callId);
-        deps.inflight.toolDone(event.data.callId);
       }
+    } else if (event.type === "tool/call") {
+      if (main) deps.inflight.toolOutput(event.data.callId, ""); // 在途占位（startedAt 基线；增量经 agent/tool-stream）
+    } else if (event.type === "tool/result") {
+      settleToolStream(`${owner}:${event.data.callId}`); // 结算边沿：尾批冲净后撤状态
+      if (main) deps.inflight.toolDone(event.data.callId);
     }
     emit(event.type, sessionPayload(event, owner));
   }
@@ -180,9 +195,12 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
       offs.push(
         ctx.on(sessionEvent, ({ session, event }) => onSessionEvent(String(session), event)),
         ctx.on(sessionDisposed, ({ session }) => {
-          // 子会话终结边沿：忙态表/归属映射清行（异常终止无 idle 边沿时防恒 busy；映射无界增长防线）
-          childStatuses.delete(String(session));
-          childNames.delete(String(session));
+          // 子会话终结边沿：忙态表/归属映射清行 + 该会话工具增量尾批冲净（异常终止
+          // 无 idle 边沿时防恒 busy；映射/增量流无界增长防线）
+          const owner = String(session);
+          childStatuses.delete(owner);
+          childNames.delete(owner);
+          settleOwnerStreams(owner);
         }),
         ctx.on(agentAssistantStream, (payload) => {
           // D2/D3：partial 文本唯一源 = 主会话 stream 帧；llmTurn/llmStep 仅主会话跟踪

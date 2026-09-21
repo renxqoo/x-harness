@@ -53,6 +53,10 @@ function entryOf(profile: HubProviderProfile, model: string | HubModelMeta, sour
   const meta: Partial<HubModelMeta> = typeof model === "string" ? {} : model;
   const contextWindow = firstDefined(meta.contextWindow, profile.contextWindow);
   const maxTokens = firstDefined(meta.maxTokens, profile.maxOutputTokens);
+  // input 值域净化：只认 "text"|"image" 成员（拼写错误不静默丢能力也不进 pi Model.input）
+  const input = Array.isArray(meta.input)
+    ? meta.input.filter((member): member is "text" | "image" => member === "text" || member === "image")
+    : undefined;
   return {
     provider: profile.name,
     model: modelId(model),
@@ -62,7 +66,7 @@ function entryOf(profile: HubProviderProfile, model: string | HubModelMeta, sour
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     reasoning: meta.reasoning ?? true,
-    ...(Array.isArray(meta.input) && meta.input.length > 0 ? { input: [...meta.input] } : {}),
+    ...(input !== undefined && input.length > 0 ? { input } : {}),
     ...(meta.cost !== undefined ? { cost: meta.cost } : {}),
     source,
   };

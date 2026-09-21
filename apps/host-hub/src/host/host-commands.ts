@@ -384,7 +384,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   handlers.set("thread/resume", handleThreadResume);
   handlers.set("thread/register", handleThreadRegister);
   handlers.set("thread/stop", handleThreadStop);
-  handlers.set("thread/delete", (input, id) => void handleThreadDelete(input, id));
+  handlers.set("thread/delete", handleThreadDelete);
   handlers.set("thread/retire", handleThreadRetire);
   handlers.set("thread/set_keepalive", handleThreadSetKeepalive);
   handlers.set("thread/list", handleThreadList);

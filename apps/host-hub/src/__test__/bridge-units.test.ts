@@ -109,20 +109,45 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
     expect(w.frames.at(-1)?.agentName).toBeUndefined(); // 已清
   });
 
-  test("tool-stream 分流：主会话喂 inflight + 帧；子会话仅帧（带归属）", async () => {
+  test("tool-stream 分流：主会话喂 inflight + 帧；子会话仅帧（带归属）+ 结算/轮界冲净不丢弃", async () => {
     const w = await wired();
     w.ctx.emit(agentSpawned, { parent: MAIN, agentId: "agent-abc12345", sessionId: CHILD, type: "explore", depth: 1 });
     w.ctx.emit(agentToolStream, { session: MAIN, callId: "c1", delta: "main-delta" });
     w.ctx.emit(agentToolStream, { session: CHILD, callId: "c1", delta: "child-delta" });
     expect(w.inflightCalls).toEqual(["toolOutput:c1:main-delta"]); // 子增量不进主 inflight
+    // 结算边沿（主 tool/result）：立即冲净（不等 25ms 定时器）
+    w.ctx.emit(sessionEvent, { session: MAIN, event: ev(1, "tool/result", { turn: 0, step: 0, callId: "c1", content: "done" }) });
+    const mainFrames = w.frames.filter((f) => f.name === "agent/tool-stream");
+    expect(mainFrames).toHaveLength(1);
+    expect(mainFrames[0]?.payload).toMatchObject({ session: "main-1", callId: "c1", delta: "main-delta" });
+    // 主轮边界不冲子的 pending（子后台跨父轮运行——收口审 K-H1 回归）
+    w.ctx.emit(sessionEvent, { session: MAIN, event: ev(2, "turn/end", { turn: 0, reason: { kind: "completed" } }) });
+    expect(w.frames.filter((f) => f.name === "agent/tool-stream").some((f) => (f.payload as { session?: string }).session === "child-9")).toBe(false);
+    // 子 tool/result 结算：尾批冲净 + entry 撤（25ms 窗内两 delta 连接合并——无损）
+    w.ctx.emit(agentToolStream, { session: CHILD, callId: "c1", delta: "child-delta-2" });
+    w.ctx.emit(sessionEvent, { session: CHILD, event: ev(3, "tool/result", { turn: 0, step: 0, callId: "c1", content: "done" }) });
+    const childFrames = w.frames.filter((f) => f.name === "agent/tool-stream" && (f.payload as { session?: string }).session === "child-9");
+    expect(childFrames).toHaveLength(1);
+    expect(childFrames[0]?.payload).toMatchObject({ callId: "c1", delta: "child-deltachild-delta-2" });
+    expect(childFrames[0]?.agentName).toBe("agent-abc12345");
     await new Promise((resolve) => {
       setTimeout(resolve, 60);
-    }); // 25ms 尾沿合并冲刷
-    const toolFrames = w.frames.filter((f) => f.name === "agent/tool-stream");
-    expect(toolFrames).toHaveLength(2);
-    expect(toolFrames[0]?.payload).toMatchObject({ session: "main-1", callId: "c1", delta: "main-delta" });
-    expect(toolFrames[1]?.payload).toMatchObject({ session: "child-9", callId: "c1", delta: "child-delta" });
-    expect(toolFrames[1]?.agentName).toBe("agent-abc12345");
+    }); // 结算后无残留发射
+    expect(w.frames.filter((f) => f.name === "agent/tool-stream").length).toBe(2);
+  });
+
+  test("子轮边界冲净本会话在途增量（跨父轮运行常态）；sessionDisposed 兜底清", async () => {
+    const w = await wired();
+    w.ctx.emit(agentToolStream, { session: CHILD, callId: "c2", delta: "tail" });
+    w.ctx.emit(sessionEvent, { session: CHILD, event: ev(0, "turn/start", { turn: 0 }) });
+    w.ctx.emit(sessionEvent, { session: CHILD, event: ev(1, "turn/end", { turn: 0, reason: { kind: "completed" } }) });
+    const frames = w.frames.filter((f) => f.name === "agent/tool-stream");
+    expect(frames).toHaveLength(1); // 轮边界冲净（不丢弃）
+    expect(frames[0]?.payload).toMatchObject({ session: "child-9", callId: "c2", delta: "tail" });
+    // sessionDisposed 兜底：新 pending 在无结算边沿时随会话终结冲净
+    w.ctx.emit(agentToolStream, { session: CHILD, callId: "c3", delta: "last" });
+    w.ctx.emit(sessionDisposed, { session: CHILD });
+    expect(w.frames.filter((f) => f.name === "agent/tool-stream").some((f) => (f.payload as { callId?: string }).callId === "c3")).toBe(true);
   });
 
   test("agent/finished 原样转发（周期终结边沿）", async () => {
