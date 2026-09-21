@@ -158,3 +158,30 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
     expect(frame?.payload).toMatchObject({ outcome: "completed", detail: "completed", summary: "did things" });
   });
 });
+
+async function wiredBridge(): Promise<{ ctx: Context; bridge: ReturnType<typeof createEventBridge> }> {
+  const made = makeBridge();
+  const ctx = createContext();
+  made.bridge.wire(ctx);
+  return { ctx, bridge: made.bridge };
+}
+
+describe("命令执行中计数（BATCH3 §2.4——busy 面/清账面）", () => {
+  test("主会话 run/done 边沿计数；子会话不计；unsubscribe 清零", async () => {
+    const w = await wiredBridge();
+    expect(w.bridge.commandBusy()).toBe(false);
+    w.ctx.emit(sessionEvent, { session: CHILD, event: ev(0, "command/run", { commandId: "c-x", name: "compact" }) });
+    expect(w.bridge.commandBusy()).toBe(false); // 子会话不计
+    w.ctx.emit(sessionEvent, { session: MAIN, event: ev(1, "command/run", { commandId: "c1", name: "compact" }) });
+    w.ctx.emit(sessionEvent, { session: MAIN, event: ev(2, "command/run", { commandId: "c2", name: "compact" }) });
+    expect(w.bridge.commandBusy()).toBe(true);
+    w.ctx.emit(sessionEvent, { session: MAIN, event: ev(3, "command/done", { commandId: "c1", kind: "success" }) });
+    expect(w.bridge.commandBusy()).toBe(true); // c2 仍在飞
+    w.ctx.emit(sessionEvent, { session: MAIN, event: ev(4, "command/done", { commandId: "c2", kind: "error", text: "x" }) });
+    expect(w.bridge.commandBusy()).toBe(false);
+    w.ctx.emit(sessionEvent, { session: MAIN, event: ev(5, "command/run", { commandId: "c3", name: "compact" }) });
+    expect(w.bridge.commandBusy()).toBe(true);
+    w.bridge.unsubscribe(); // fork 重装配清账
+    expect(w.bridge.commandBusy()).toBe(false);
+  });
+});

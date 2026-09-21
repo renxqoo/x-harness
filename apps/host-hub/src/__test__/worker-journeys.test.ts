@@ -286,3 +286,58 @@ describe("子代理实时事件面（BATCH2 §3——去轮询：推送全覆盖
     expect((finishedFrame.payload as { outcome: string }).outcome).toBe("stopped");
   });
 });
+
+describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", () => {
+  test("成功三元组（compact 协议命令 + customInstructions 透传）", async () => {
+    const huge = "h".repeat(60000);
+    const w = await spawn([
+      { reply: huge },
+      { reply: huge },
+      { reply: huge },
+      { reply: huge },
+      { reply: "SUM" }, // 摘要步
+      { reply: "tail" },
+    ]);
+    const threadId = await start(w);
+    for (const [index, tag] of ["one", "two", "three", "four"].entries()) {
+      w.send({ type: "prompt", id: `base-${index}`, threadId, message: tag });
+      await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === `base-${index}`);
+    }
+    w.send({ type: "compact", id: "ok-1", threadId, customInstructions: "focus tests" });
+    const ok = await waitResponse(w.captured.lines, "compact", "ok-1");
+    if (ok.success !== true) throw new Error(`compact failed: ${String(ok.error)}`);
+    const data = ok.data as { summary: unknown; replacedCount: number; summaryTokens: number };
+    expect(data.replacedCount).toBeGreaterThan(0);
+    expect(data.summaryTokens).toBeGreaterThan(0);
+    expect(JSON.stringify(data.summary)).toContain("SUM");
+    // 命令生命周期事件可观察（log-only 配对）
+    const lifecycle = w.captured.lines.filter((line) => /command\/(run|done)/.test(line));
+    expect(lifecycle.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("双发第二响应 already in progress + abort 归一串 compaction aborted（prompt 拦截路径）", async () => {
+    const huge = "h".repeat(60000);
+    const w = await spawn([
+      { reply: huge },
+      { reply: huge },
+      { reply: huge },
+      { reply: huge },
+      { delayMs: 60_000 }, // 摘要步挂起——abort 靶
+      { reply: "tail" },
+    ]);
+    const threadId = await start(w);
+    for (const [index, tag] of ["one", "two", "three", "four"].entries()) {
+      w.send({ type: "prompt", id: `base-${index}`, threadId, message: tag });
+      await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === `base-${index}`);
+    }
+    // /compact 经 prompt 拦截：摘要走 delay 步挂起（在飞）
+    w.send({ type: "prompt", id: "cmd-1", threadId, message: "/compact keep goals" });
+    w.send({ type: "compact", id: "dup-1", threadId });
+    const dup = await waitResponse(w.captured.lines, "compact", "dup-1");
+    expect(dup.error).toBe("Compaction already in progress");
+    w.send({ type: "abort", id: "ab-1", threadId });
+    await waitResponse(w.captured.lines, "abort", "ab-1");
+    const aborted = await waitResponse(w.captured.lines, "prompt", "cmd-1");
+    expect(aborted.error).toBe("compaction aborted");
+  });
+});

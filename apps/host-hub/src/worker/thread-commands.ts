@@ -406,6 +406,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       if (rt.state.delegation !== undefined) {
         await rt.state.delegation.stopAll(handle.agent.session.id, "thread-stop");
       }
+      await rt.inflight.abortAll(); // 在飞命令取消并等 settle（BATCH3 收口审 M1——拆卸序兑现）
       rt.bridge.unsubscribe();
       await handle.dispose();
       if (rt.state.world !== undefined) await teardownWorld(rt.state.world);

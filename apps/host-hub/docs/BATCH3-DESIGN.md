@@ -1,6 +1,7 @@
 # BATCH3 方案——commands 插件（借件 deepseek-harness：内核命令注册面 + kit 自声明）
 
-状态机：**定稿**（草稿 → 两路方案审查 5H/10M/9L 全处置 → **[当前]** → 已实施 → 已核销）。借件迁移：交付物是**新能力**（命令注册
+状态机：**已核销**（草稿 → 定稿（方案审查 5H/10M/9L 处置）→ 已实施（W1 ed362fa/2c30b81、
+W2 8e16562、W3 8ef5eec）→ 收口审查处置 + 假绿抽查 → **[当前]** 已核销）。借件迁移：交付物是**新能力**（命令注册
 面下沉内核、kit 自声明命令），借 repo-migration-e2e-v2 的文档结构、存量审计纪律与
 装置适配记录；行为规格基线 = 本仓 hub 现状（旧实现行为是唯一规格），deepseek-harness
 的 `packages/interaction/commands` + `packages/compaction/command-compact` 是架构参照
@@ -75,10 +76,10 @@ agent-loop 零改动，命令不进模型上下文由 log-only 天然保证）�
 
 ### 2.3 compaction 包：`/compact` 自声明（`src/command-compact.ts`）
 
-- `commandCompactPlugin`：`inject: ["commands", "compaction", "agent-loop"]`
-  （compaction 已依赖 agent-loop，无环；busy 前置用 `agentLoopServiceToken` 的
-  `get(id)?.agent.status`）；`ctx.effect` 注册
-  `{ name: "compact", description: "Compact the conversation history", handler }`。
+- `commandCompactPlugin`：`inject: ["commands", "compaction"]`（agent-loop 面经 handler
+  内惰性 `ctx.tryUse(agentLoopServiceToken)`——装配序无关；无 agent-loop 服务的最小世界
+  busy 前置退化为不查，hub 装配恒含故线上等价——收口审 M1 同变）；apply 返回 disposer
+  注册 `{ name: "compact", description: "Compact the conversation history", handler }`。
 - handler 语义（**行为规格 = 本仓现状，非参照系**）：
   - `rawInput.trim()` 非空 → **customInstructions**（本仓 /compact 收参——参照系
     argument-free 是其产品裁决，不移植，差异表 #D2）；
@@ -178,3 +179,22 @@ agent-loop 零改动，命令不进模型上下文由 log-only 天然保证）�
 4. **W4** 收口：对抗审查（≥2 并行）→ 假绿抽查 → 四门 + 文档核销。
 
 每波独立提交、四门全绿；覆盖率阈值不动（90/85/90/90）只升不降。
+
+
+## 7. 收口审查记录（两路并行代码对抗审查 + 处置）
+
+**契约面 1H/3M/7L + 并发面 0H/2M/5L，全部处置**：
+- H1/M1：成功路径 done-append 同样 contained（拆线竞窗下结果仍交付，悬挂 run 合法）；
+  thread/stop 与 doFork 补 `await rt.inflight.abortAll()`（拆卸序「abortAll 先于封存」
+  三路径兑现——在飞 /compact 不再跨越拆线，stop 应答等待命令终态有界收敛）。
+- M2 测试债四项交付：hub 成功三元组 e2e + 双发第二响应 already in progress + abort
+  归一串 compaction aborted（prompt 拦截路径全链）+ 桥 busy 计数边沿/清账单测。
+- M1/M3 文档同变：BATCH3-DESIGN inject 契约、DESIGN §3.2/§3.3/§4/附录 残留清理
+  （stearing 错字/「内核无命令注册面」过时叙述/心跳注释）、MIGRATION source 词表行。
+- 低危接受项：busy 拒绝的 /compact 落 run|done 事件对（execute 模型既定代价，log-only）；
+  get_commands 目录序命令前置；instanceToken 32 位碰撞理论面；sessionDisposed 清账
+  为防御性兜底（unsubscribe 先行）。
+
+**假绿抽查**：独立确认无 skip/断言弱化；方案 §5 矩阵承诺断言全部落测。
+**数字**：2257/2257 用例；覆盖率 90.63/85.51/91.45/92.68（四项较批前 90.55/85.40/91.32/92.59
+全升）。

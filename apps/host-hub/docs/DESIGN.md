@@ -160,9 +160,12 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
     占位文本）。投递形状 = **单 inbox entry 全块**（图文同 entry 同轮消费——内核
     insertData 单 entry 化）；纯图 prompt（message=""）合法。`/compact` 拦截携图仍拒。
   - 空闲态（无在飞 turn ∨ 无在飞 send）：`agent.followup(text, {images})`（受理即应答
-    fire-and-accept）。斜杠命令词法：`/compact` 行首拦截（下条 compact）；其余
-    `/word` 按普通文本交模型（**内核无命令注册面——与迁移源 settled
-    unknown-command 面的差异有意变更**，MIGRATION §4）。
+    fire-and-accept）。斜杠命令分路（BATCH3 起——内核命令注册面
+    `@x-harness/commands`）：prompt 先经 `commandRegistry.execute`——命中 → 成功
+    respond `data` = 命令结果结构化载荷（compact 三元组；响应 command 字段留
+    `prompt`、无 settled）；未注册词形（含 `/skill-name`）→ 按普通文本交模型
+    （**与迁移源 settled unknown-command 面的差异有意变更**，MIGRATION §4）。
+    `/compact` 由 compaction 包自声明（词法/执行/busy 全在内核单源）。
   - 流式中（turn 在飞 ∨ send 在飞——受理窗口同口径）：**必须带
     `streamingBehavior`**，`"steer"` → `agent.steer(text, {images})`、`"followUp"` →
     `agent.followup(text, {images})`。不带 → failure `streamingBehavior required while streaming`。
@@ -203,7 +206,7 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   model——迁移源为 modelId 单字段，改名声明 MIGRATION §4**）= `session/meta{dial}`
   尾值 → `request/header` 尾值 → 装配缺省；isCompacting 仅反映 worker 发起的手动
   压缩（自动压缩在 step 内部，经 `compaction/*` 事件可观察——声明性边界）；
-  queue = `foldInbox(events)` 文本数组 `{stearing:[], followUp:[]}`；isCompacting =
+  queue = `foldInbox(events)` 文本数组 `{steering:[], followUp:[]}`；isCompacting =
   命令执行中谓词（BATCH3 起数据源 = 桥对 command/run|done 的计数——本批唯一命令是
   compact，语义等价）。
 - **get_inflight** `{threadId}` → `{turnStartSeq, turnStartedAt, message, toolOutputs,
@@ -239,8 +242,7 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   "command"——机器拦截的斜杠动词，`/compact` 由 compaction 包自声明，description
   `"Compact the conversation history"` 单点锚定）+ skills 清单（source:"skill"——
   模型分发面，未注册词形交模型）。**source 词表收缩 command|skill**
-  （builtin→command，BATCH3 变更）
-  （内核无命令注册面——有意变更）。
+  （builtin→command，BATCH3 变更——命令注册面已下沉内核）。
 - **get_fork_messages** `{threadId}` → `[{seq, text}]` — 可分叉用户消息（surface
   user/message 文本折叠）。
 

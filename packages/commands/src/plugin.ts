@@ -115,7 +115,11 @@ export const commandsPlugin = {
           settleThrown(session, commandId);
           throw error instanceof Error ? error : new Error(`command handler failed: ${errorText(error)}`);
         }
-        appendDone(result);
+        try {
+          appendDone(result);
+        } catch {
+          /* 会话已封存（stop/fork 拆线竞窗）：结果仍交付（悬挂 run 合法——BATCH3 收口审 H1） */
+        }
         return { commandId, result };
       },
     };
