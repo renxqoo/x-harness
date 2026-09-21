@@ -14,8 +14,11 @@ export interface QueueView {
 
 function entryText(content: readonly ContentBlock[]): string {
   return content
-    .filter((block): block is { type: "text"; text: string } => block.type === "text")
-    .map((block) => block.text)
+    .map((block) => {
+      if (block.type === "text") return block.text;
+      if (block.type === "image") return `[image: ${block.mediaType}]`; // 纯图 entry 可见性——不留空串
+      return "";
+    })
     .join("");
 }
 

@@ -5,7 +5,7 @@
 // assistant 重放元数据必填字段补齐（pi 要求 api/provider/model/usage/stopReason/timestamp）。
 
 import type { Context, Message as PiMessage, Tool as PiTool, ToolCall } from "@earendil-works/pi-ai";
-import type { TextContent, ThinkingContent } from "@earendil-works/pi-ai";
+import type { ImageContent, TextContent, ThinkingContent } from "@earendil-works/pi-ai";
 import type { SurfaceMessage } from "@x-harness/session";
 import type { ToolSchema } from "@x-harness/tools";
 import type { LlmRequest } from "./types.ts";
@@ -23,16 +23,25 @@ function parseToolInput(raw: string): Record<string, unknown> {
   return {};
 }
 
-function textBlocksOf(content: unknown): string[] {
-  if (!Array.isArray(content)) return [];
-  const texts: string[] = [];
+/** user 块整形：text（非空）→ TextContent；image → ImageContent（mediaType 换名 mimeType——
+ *  内核字段名对齐 hub wire，pi 侧换名收敛于此单点） */
+function userContent(content: unknown): Array<TextContent | ImageContent> {
+  const out: Array<TextContent | ImageContent> = [];
+  if (!Array.isArray(content)) return out;
   for (const block of content) {
-    if (typeof block === "object" && block !== null) {
-      const record = block as Record<string, unknown>;
-      if (record["type"] === "text" && typeof record["text"] === "string" && record["text"] !== "") texts.push(record["text"]);
+    if (typeof block !== "object" || block === null) continue;
+    const record = block as Record<string, unknown>;
+    if (record["type"] === "text" && typeof record["text"] === "string" && record["text"] !== "") {
+      out.push({ type: "text", text: record["text"] });
+    } else if (
+      record["type"] === "image" &&
+      typeof record["data"] === "string" && record["data"] !== "" &&
+      typeof record["mediaType"] === "string" && record["mediaType"] !== ""
+    ) {
+      out.push({ type: "image", data: record["data"], mimeType: record["mediaType"] });
     }
   }
-  return texts;
+  return out;
 }
 
 /** assistant 块整形：text → TextContent；tool_use → ToolCall（input 解析降 {}） */
@@ -69,11 +78,11 @@ export function toPiMessages(
       case "system":
         break; // systemPrompt 收集归调用方
       case "user": {
-        const texts = textBlocksOf(message.content);
-        if (texts.length === 0) continue; // 空 user 整条跳过（垃圾降级，不换 400）
+        const content = userContent(message.content);
+        if (content.length === 0) continue; // 空 user 整条跳过（垃圾降级，不换 400）
         out.push({
           role: "user",
-          content: texts.map((text) => ({ type: "text" as const, text })),
+          content,
           timestamp: 0,
         });
         break;

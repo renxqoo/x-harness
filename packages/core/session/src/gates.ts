@@ -24,7 +24,9 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && !Object.is(value, -0);
 }
 
-function isContentBlocks(value: unknown): boolean {
+/** 内容块形状门：user 域（user/message、inbox insert）放行 image；assistant 域拒——
+ *  驱动永不铸 assistant image，损坏档案在恢复面 fail-closed（archive-corrupt） */
+function isContentBlocks(value: unknown, allowImage: boolean): boolean {
   return (
     Array.isArray(value) &&
     value.every((block) => {
@@ -32,6 +34,9 @@ function isContentBlocks(value: unknown): boolean {
       if (block["type"] === "text") return isStr(block["text"]);
       if (block["type"] === "tool_use") {
         return isStr(block["callId"]) && isStr(block["name"]) && isStr(block["input"]);
+      }
+      if (block["type"] === "image") {
+        return allowImage && isStr(block["data"]) && isStr(block["mediaType"]);
       }
       return false;
     })
@@ -72,7 +77,7 @@ function isInboxTarget(value: unknown): boolean {
 function isInboxEntries(value: unknown): boolean {
   return (
     Array.isArray(value) &&
-    value.every((entry) => isObj(entry) && isStr(entry["id"]) && entry["id"] !== "" && isContentBlocks(entry["content"]))
+    value.every((entry) => isObj(entry) && isStr(entry["id"]) && entry["id"] !== "" && isContentBlocks(entry["content"], true))
   );
 }
 
@@ -125,12 +130,12 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
   "step/start": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]),
   "step/end": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]),
   "system/message": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["text"]),
-  "user/message": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isContentBlocks(d["content"]),
+  "user/message": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isContentBlocks(d["content"], true),
   "assistant/message": (d) =>
     isObj(d) &&
     isCount(d["turn"]) &&
     isCount(d["step"]) &&
-    isContentBlocks(d["content"]) &&
+    isContentBlocks(d["content"], false) &&
     (d["thinking"] === undefined || isStr(d["thinking"])) &&
     (d["usage"] === undefined || isObj(d["usage"])) &&
     (d["stopReason"] === undefined || isStr(d["stopReason"])) &&
@@ -140,7 +145,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isCount(d["turn"]) &&
     isCount(d["step"]) &&
     isStr(d["error"]) &&
-    (d["content"] === undefined || isContentBlocks(d["content"])) &&
+    (d["content"] === undefined || isContentBlocks(d["content"], false)) &&
     (d["thinking"] === undefined || isStr(d["thinking"])) &&
     (d["usage"] === undefined || isObj(d["usage"])),
   "tool/call": (d) =>

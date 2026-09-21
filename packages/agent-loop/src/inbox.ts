@@ -31,7 +31,8 @@ export function foldInbox(events: readonly SessionEvent[]): InboxState {
   return { nextTurn, nextStep };
 }
 
-/** insert 事件 data 构造（id 铸 uuid；单事件批量） */
+/** insert 事件 data 构造（id 铸 uuid；每次 splice 单 entry 全块——图文必须同 entry
+ *  同轮消费：claimTurnBatch 的 next-turn 只领队首，逐块分目会把后续块拆到链式后续轮） */
 export function insertData(target: InboxTarget, contents: readonly ContentBlock[]): {
   readonly op: "insert";
   readonly target: InboxTarget;
@@ -40,7 +41,7 @@ export function insertData(target: InboxTarget, contents: readonly ContentBlock[
   return {
     op: "insert",
     target,
-    entries: contents.map((content) => ({ id: crypto.randomUUID(), content: [content] })),
+    entries: contents.length === 0 ? [] : [{ id: crypto.randomUUID(), content: contents }],
   };
 }
 

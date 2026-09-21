@@ -5,7 +5,7 @@
 // 语义映射：prompt 空闲 = agent.followup（受理即应答 fire-and-accept；收敛经
 // settled）；流式 = steer/followup 纯文本降级；直写会话（信封/dial/thinking/
 // title/permission-mode/clear）一律 append+flush。
-import type { Session, SessionId } from "@x-harness/session";
+import type { ImageBlock, Session, SessionId } from "@x-harness/session";
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { World } from "@x-harness/harness";
 import { compactionRunner, previousSummaryOf } from "@x-harness/compaction";
@@ -15,11 +15,12 @@ import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
 import { foldQueueText } from "../shared/inbox-fold.ts";
 import { normalizeImages } from "../shared/images.ts";
+import type { WireImage } from "../shared/images.ts";
 import { catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import type { DialFact } from "../shared/meta-fold.ts";
 import type { ScriptAdapter } from "../shared/script-adapter.ts";
-import { currentDialOf, currentThinkingOf, thinkingUnsupported, META_KEY_DIAL } from "./meta-state.ts";
+import { currentDialOf, currentThinkingOf, imagesUnsupported, thinkingUnsupported, META_KEY_DIAL } from "./meta-state.ts";
 import { interceptCompact } from "./compact-invocation.ts";
 import type { DialogBroker } from "./dialogs.ts";
 import type { BashExec } from "./bash-exec.ts";
@@ -135,13 +136,23 @@ export function wrapSyncHandler(fn: (input: CommandInput) => void): Handler {
   };
 }
 
-/** images 校验（单点 = shared/normalizeImages）：形状校验先行；非 undefined 即
- *  `unsupported by this kernel`（内核 ContentBlock 无 image——显式拒绝不静默丢） */
-function parseImages(value: unknown): { ok: true } | { ok: false; reason: string } {
-  const parsed = normalizeImages(value);
-  if (!parsed.ok) return { ok: false, reason: parsed.reason };
-  if (parsed.images !== undefined) return { ok: false, reason: "invalid images: unsupported by this kernel" };
-  return { ok: true };
+/** images 校验（单点 = shared/normalizeImages）：形状 + 量限（单图/张数/总量） */
+function parseImages(value: unknown): { ok: true; images: WireImage[] | undefined } | { ok: false; reason: string } {
+  return normalizeImages(value);
+}
+
+/** images 能力门：携图时按当前 dial（双源折叠）查模型输入模态——不含 image 即拒
+ *  （防上游 openai 协议把图静默降级为占位文本；BATCH2-DESIGN §1.1） */
+function imagesGate(rt: WorkerRuntime, images: WireImage[] | undefined): string | undefined {
+  if (images === undefined) return undefined;
+  const session = rt.state.handle?.agent.session;
+  const dial = session !== undefined ? currentDialOf(session.events(), rt.state.dial) : rt.state.dial;
+  return imagesUnsupported(rt.state.catalog, dial);
+}
+
+/** WireImage（wire 形状）→ Agent face images 选项（字段同形直传） */
+function imageOptions(images: WireImage[] | undefined): { images: readonly ImageBlock[] } | undefined {
+  return images === undefined ? undefined : { images: [...images] };
 }
 
 /** settled 收敛面：kick 时打事件长度标记，whenIdle 后扫描新区间的 turn/end——
@@ -235,9 +246,13 @@ async function runManualCompact(rt: WorkerRuntime, input: { id?: string; command
   }
 }
 
-/** prompt 流式分支（turn 在飞 ∨ send 在飞）：steer/followup 纯文本投递
- * （不经命令词法——声明性降级） */
-function promptStreamingBranch(rt: WorkerRuntime, input: CommandInput, message: string): void {
+/** prompt 流式分支（turn 在飞 ∨ send 在飞）：steer/followup 投递（携图同投——
+ *  单 entry 同轮消费；不经命令词法——声明性降级） */
+function promptStreamingBranch(
+  rt: WorkerRuntime,
+  input: CommandInput,
+  payload: { message: string; images: WireImage[] | undefined },
+): void {
   const behavior = input.streamingBehavior;
   if (behavior !== "steer" && behavior !== "followUp") {
     respond(rt, { id: input.id, command: "prompt", error: "streamingBehavior required while streaming" });
@@ -249,8 +264,8 @@ function promptStreamingBranch(rt: WorkerRuntime, input: CommandInput, message: 
     return;
   }
   try {
-    if (behavior === "steer") agent.steer(message);
-    else agent.followup(message);
+    if (behavior === "steer") agent.steer(payload.message, imageOptions(payload.images));
+    else agent.followup(payload.message, imageOptions(payload.images));
   } catch (error) {
     // kick 同步抛错：未受理——failure 应答（无 settled 义务）
     respond(rt, { id: input.id, command: "prompt", error: String(error instanceof Error ? error.message : error) });
@@ -283,6 +298,11 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, { id: input.id, command: "prompt", error: parsedImages.reason });
       return;
     }
+    const gate = imagesGate(rt, parsedImages.images);
+    if (gate !== undefined) {
+      respond(rt, { id: input.id, command: "prompt", error: gate });
+      return;
+    }
     const intercept = interceptCompact(message);
     if (intercept.intercepted) {
       if (input.images !== undefined) {
@@ -295,7 +315,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     // 流式判定 = turn 在飞 ∨ send 在飞（受理窗口：response 已发而 turn/start 未达
     // 的窗口内双发 prompt 不走 send 竞态）
     if (rt.pendingSends > 0 || rt.bridge.isStreaming()) {
-      promptStreamingBranch(rt, input, message);
+      promptStreamingBranch(rt, input, { message, images: parsedImages.images });
       return;
     }
     const agent = rt.state.handle?.agent;
@@ -304,7 +324,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     try {
-      agent.followup(message); // kick 同步（先 kick 后应答——全路径恰一响应）
+      agent.followup(message, imageOptions(parsedImages.images)); // kick 同步（先 kick 后应答——全路径恰一响应）
     } catch (error) {
       respond(rt, { id: input.id, command: "prompt", error: String(error instanceof Error ? error.message : error) });
       return;
@@ -321,13 +341,18 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, { id: input.id, command: "steer", error: parsedImages.reason });
       return;
     }
+    const gate = imagesGate(rt, parsedImages.images);
+    if (gate !== undefined) {
+      respond(rt, { id: input.id, command: "steer", error: gate });
+      return;
+    }
     const agent = rt.state.handle?.agent;
     if (agent === undefined) {
       respond(rt, { id: input.id, command: "steer", error: "Unknown threadId" });
       return;
     }
     try {
-      agent.steer(typeof input.message === "string" ? input.message : "");
+      agent.steer(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
     } catch (error) {
       respond(rt, { id: input.id, command: "steer", error: String(error instanceof Error ? error.message : error) });
       return;
@@ -344,13 +369,18 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, { id: input.id, command: "follow_up", error: parsedImages.reason });
       return;
     }
+    const gate = imagesGate(rt, parsedImages.images);
+    if (gate !== undefined) {
+      respond(rt, { id: input.id, command: "follow_up", error: gate });
+      return;
+    }
     const agent = rt.state.handle?.agent;
     if (agent === undefined) {
       respond(rt, { id: input.id, command: "follow_up", error: "Unknown threadId" });
       return;
     }
     try {
-      agent.followup(typeof input.message === "string" ? input.message : "");
+      agent.followup(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
     } catch (error) {
       respond(rt, { id: input.id, command: "follow_up", error: String(error instanceof Error ? error.message : error) });
       return;

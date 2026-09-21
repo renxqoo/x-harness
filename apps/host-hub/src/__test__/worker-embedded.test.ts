@@ -21,6 +21,23 @@ async function spawn(script: readonly ScriptStep[]): Promise<ScriptWorker> {
   return w;
 }
 
+/** text-only 目录 worker：快照通道（非 script 模式）注入无 input 声明的模型——
+ *  能力门拒绝路径的嵌入式装置（prompt 在 LLM 调用前被拒，不打网络） */
+async function spawnTextOnlyWorker(): Promise<ScriptWorker> {
+  const w = await spawnScriptWorker({
+    env: {
+      HUB_WORKER_PROVIDER: undefined,
+      HUB_WORKER_PROVIDERS: JSON.stringify({
+        providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://127.0.0.1:9", apiKey: "", models: ["m1"] }],
+        default: { provider: "p", model: "m1" },
+        modelMeta: { m1: { reasoning: true } },
+      }),
+    },
+  });
+  workers.push({ input: w.input });
+  return w;
+}
+
 interface DrivePlan {
   script: readonly ScriptStep[];
   message: string;
@@ -198,20 +215,54 @@ describe("worker 内嵌旅程", () => {
     expect(compacted.error).toBe("context too small to compact");
   });
 
-  test("images 显式拒绝（形状文案 + unsupported）", async () => {
-    const worker = await spawn([]);
+  test("prompt 携图全链（单 entry 图文同轮落 WAL）+ 形状/量限/compact 拒绝", async () => {
+    const worker = await spawn([{ reply: "got it" }]);
     worker.send({ type: "thread/start", id: "s1" });
     const started = await waitResponse(worker.captured.lines, "thread/start", "s1");
     const threadId = (started.data as { threadId: string }).threadId;
     worker.send({ type: "prompt", id: "p1", threadId, message: "hi", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
-    const rejected = await waitResponse(worker.captured.lines, "prompt", "p1");
-    expect(rejected.error).toBe("invalid images: unsupported by this kernel");
+    const accepted = await waitResponse(worker.captured.lines, "prompt", "p1");
+    expect(accepted.error).toBeUndefined();
+    await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
+    // WAL 投影：user/message 单条携带 [text, image] 全块（单 entry 同轮——拆轮防线回归）
+    worker.send({ type: "get_entries", id: "e1", threadId });
+    const entries = await waitResponse(worker.captured.lines, "get_entries", "e1");
+    const userMsg = (entries.data as { entries: Array<{ event: { type: string; content?: unknown } }> }).entries
+      .filter((row) => row.event.type === "user/message")
+      .at(-1); // 末条 = 本 prompt 落账（首条是 running 边沿注入的 agent-types 快照）
+    expect(userMsg?.event.content).toEqual([
+      { type: "text", text: "hi" },
+      { type: "image", data: "aGk=", mediaType: "image/png" },
+    ]);
+    // fork 选点投影：纯图/携图行可见（[image] 标记——不留整行缺席）
+    worker.send({ type: "get_fork_messages", id: "f1", threadId });
+    const forks = await waitResponse(worker.captured.lines, "get_fork_messages", "f1");
+    const forkRow = JSON.stringify((forks.data as unknown[]).at(-1)); // 末行 = 本 prompt（首行是 agent-types 快照）
+    expect(forkRow).toContain("hi");
+    expect(forkRow).toContain("[image: image/png]");
+    // 形状拒绝（hub 边缘硬拒）
     worker.send({ type: "prompt", id: "p2", threadId, message: "hi", images: "junk" });
-    const badShape = await waitResponse(worker.captured.lines, "prompt", "p2");
-    expect(badShape.error).toBe("invalid images: expected array");
+    expect((await waitResponse(worker.captured.lines, "prompt", "p2")).error).toBe("invalid images: expected array");
     worker.send({ type: "prompt", id: "p3", threadId, message: "hi", images: [{}] });
-    const badBlock = await waitResponse(worker.captured.lines, "prompt", "p3");
-    expect(badBlock.error).toBe("invalid images: type must be image");
+    expect((await waitResponse(worker.captured.lines, "prompt", "p3")).error).toBe("invalid images: type must be image");
+    // 量限拒绝：张数
+    worker.send({ type: "prompt", id: "p4", threadId, message: "hi", images: Array.from({ length: 9 }, () => ({ type: "image", data: "aGk=", mediaType: "image/png" })) });
+    expect((await waitResponse(worker.captured.lines, "prompt", "p4")).error).toContain("invalid images: too many images");
+    // compact 拦截仍拒图（能力门先过——script-1 携 image 模态）
+    worker.send({ type: "prompt", id: "p5", threadId, message: "/compact", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
+    expect((await waitResponse(worker.captured.lines, "prompt", "p5")).error).toBe("invalid images: compact does not accept images");
+  });
+
+  test("能力门：模型输入模态不含 image → 携图拒（steer 同口径）", async () => {
+    const worker = await spawnTextOnlyWorker();
+    worker.send({ type: "thread/start", id: "s1" });
+    const started = await waitResponse(worker.captured.lines, "thread/start", "s1");
+    const threadId = (started.data as { threadId: string }).threadId;
+    worker.send({ type: "prompt", id: "p1", threadId, message: "hi", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
+    const gated = await waitResponse(worker.captured.lines, "prompt", "p1");
+    expect(gated.error).toBe("invalid images: model does not accept images");
+    worker.send({ type: "steer", id: "st1", threadId, message: "hi", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
+    expect((await waitResponse(worker.captured.lines, "steer", "st1")).error).toBe("invalid images: model does not accept images");
   });
 
   test("failure 必 emit 表驱动：unknown command / parse failure / Unknown threadId（无会话与错 id 两面）", async () => {

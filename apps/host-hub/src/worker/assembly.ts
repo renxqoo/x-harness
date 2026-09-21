@@ -114,16 +114,24 @@ function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: strin
   };
 }
 
-/** adapters 构造：快照 → compat adapters（name = 档案名——dial.provider 精确匹配） */
+/** adapters 构造：快照 → compat adapters（name = 档案名——dial.provider 精确匹配）；
+ *  inputByModel 按档案模型过滤（Model 按请求查表申报输入模态——openai 协议在
+ *  input 缺 "image" 时把图降级为占位文本，能力须如实透传） */
 function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined): LlmAdapter[] {
   if (script !== undefined) return [script];
   return catalog.providers.map((p) => {
+    const inputByModel: Record<string, readonly ("text" | "image")[]> = {};
+    for (const model of p.models) {
+      const input = catalog.modelMeta[model]?.input;
+      if (input !== undefined) inputByModel[model] = input;
+    }
     const options = {
       name: p.provider,
       baseUrl: p.baseUrl,
       apiKey: p.apiKey,
       ...(p.contextWindow !== undefined ? { contextWindow: p.contextWindow } : {}),
       ...(p.maxOutputTokens !== undefined ? { maxOutputTokens: p.maxOutputTokens } : {}),
+      ...(Object.keys(inputByModel).length > 0 ? { inputByModel } : {}),
     };
     return p.protocol === "anthropic" ? createAnthropicCompatAdapter(options) : createOpenaiCompatAdapter(options);
   });

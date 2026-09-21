@@ -40,3 +40,25 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
     expect(claimStepBatch(state).claimed).toEqual(["s1"]);
   });
 });
+
+describe("insertData 单 entry 全块（BATCH2-DESIGN §1.1——图文拆轮防线回归）", () => {
+  it("多块 → 单 entry：claimTurnBatch 队首领取即整条（图文同轮）", () => {
+    const d = insertData("next-turn", [
+      { type: "text", text: "hi" },
+      { type: "image", data: "aGk=", mediaType: "image/png" },
+    ]);
+    expect(d.entries).toHaveLength(1);
+    expect(d.entries[0]).toMatchObject({
+      content: [
+        { type: "text", text: "hi" },
+        { type: "image", data: "aGk=", mediaType: "image/png" },
+      ],
+    });
+    const state = foldInbox([ev(0, d)]);
+    expect(claimTurnBatch(state).claimed).toHaveLength(1);
+  });
+
+  it("空块数组 → 零 entry", () => {
+    expect(insertData("next-step", []).entries).toEqual([]);
+  });
+});

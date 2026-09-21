@@ -62,6 +62,7 @@ function entryOf(profile: HubProviderProfile, model: string | HubModelMeta, sour
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     reasoning: meta.reasoning ?? true,
+    ...(Array.isArray(meta.input) && meta.input.length > 0 ? { input: [...meta.input] } : {}),
     ...(meta.cost !== undefined ? { cost: meta.cost } : {}),
     source,
   };

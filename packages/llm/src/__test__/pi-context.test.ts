@@ -138,3 +138,27 @@ describe("toPiContext（docs/LLM-PI.md 契约 2）", () => {
     expect((ctx.messages[0] as { content: Array<{ type: string }> }).content.map((b) => b.type)).toEqual(["text", "toolCall"]);
   });
 });
+
+describe("user 携图映射（BATCH2-DESIGN §1.2——mediaType→mimeType 单点换名）", () => {
+  it("text+image → TextContent+ImageContent；mimeType 换名", () => {
+    const ctx = toPiContext(
+      request([{ role: "user", content: [{ type: "text", text: "hi" }, { type: "image", data: "aGk=", mediaType: "image/png" }] }]),
+      META,
+    );
+    expect(ctx.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "hi" },
+          { type: "image", data: "aGk=", mimeType: "image/png" },
+        ],
+        timestamp: 0,
+      },
+    ]);
+  });
+
+  it("纯图 user（空 text 块被滤）→ 仅 image 内容，整条不跳过", () => {
+    const ctx = toPiContext(request([{ role: "user", content: [{ type: "text", text: "" }, { type: "image", data: "aGk=", mediaType: "image/jpeg" }] }]), META);
+    expect(ctx.messages).toEqual([{ role: "user", content: [{ type: "image", data: "aGk=", mimeType: "image/jpeg" }], timestamp: 0 }]);
+  });
+});

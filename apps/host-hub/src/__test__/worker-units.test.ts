@@ -7,7 +7,8 @@ import { entryWindow } from "../worker/entries-window.ts";
 import { projectEntries } from "../shared/entries-project.ts";
 import { resolveWorkerCatalog, scriptCatalog, workerCatalogFromEnv, catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
 import { interceptCompact, parseSlashCommand } from "../worker/compact-invocation.ts";
-import { thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
+import { imagesUnsupported, thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
+import { withinResponseBudget } from "../worker/worker-read-commands.ts";
 import * as workerMain from "../worker/main.ts";
 import type { HubProviderProfile } from "../shared/catalog-types.ts";
 
@@ -134,5 +135,40 @@ describe("catalog-types 形状（类型单点导入面）", () => {
   test("ProviderProfile 字段集（编译期形状 + 运行时样例）", () => {
     const profile: HubProviderProfile = { name: "t", protocol: "anthropic", baseUrl: "https://t", models: ["m"] };
     expect(profile.models).toEqual(["m"]);
+  });
+});
+
+describe("images 能力门（BATCH2-DESIGN §1.1——meta 判据单点）", () => {
+  const textOnly = {
+    providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://x", apiKey: "", models: ["m1"] }],
+    default: { provider: "p", model: "m1" },
+    modelMeta: { m1: { reasoning: true } },
+  };
+  const vision = {
+    ...textOnly,
+    modelMeta: { m1: { reasoning: true, input: ["text", "image"] as ("text" | "image")[] } },
+  };
+
+  test("无 input 声明 / input 缺 image → 拒；声明含 image → 放行", () => {
+    expect(imagesUnsupported(workerCatalogFromSnapshot(textOnly), { provider: "p", model: "m1" })).toBe(
+      "invalid images: model does not accept images",
+    );
+    expect(imagesUnsupported(workerCatalogFromSnapshot(vision), { provider: "p", model: "m1" })).toBeUndefined();
+  });
+
+  test("scriptCatalog：script-1 声明 image 模态（携图全链测试不经门误拒）", () => {
+    expect(scriptCatalog().modelMeta["script-1"]?.input).toContain("image");
+  });
+});
+
+function workerCatalogFromSnapshot(snapshot: Record<string, unknown>): ReturnType<typeof workerCatalogFromEnv> {
+  return workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify(snapshot) });
+}
+
+describe("get_messages 软上限（BATCH2 审 M6——超 worker 行限以 worker 被杀收场，改有界 failure）", () => {
+  test("预算按 JSON 串长累计：超限 false / 界内 true", () => {
+    expect(withinResponseBudget([{ role: "user", content: [{ type: "text", text: "hi" }] }], 8192)).toBe(true);
+    const huge = [{ role: "user", content: [{ type: "text", text: "x".repeat(200 * 1024) }] }];
+    expect(withinResponseBudget(huge, 100 * 1024)).toBe(false);
   });
 });

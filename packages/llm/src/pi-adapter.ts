@@ -62,6 +62,9 @@ interface AdapterCoreOptions {
   readonly provider: string;
   /** 档案级输出上限：请求未显式带 maxTokens 时生效（请求显式值恒胜） */
   readonly maxOutputTokens?: number;
+  /** 逐模型输入模态（缺省 ["text"]）：Model 按请求查表——openai 协议在 input 缺
+   *  "image" 时把图降级为占位文本，能力须如实申报；anthropic 协议不消费此字段 */
+  readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
 }
 
 /** 单 attempt 装配：onResponse 捕获状态与 retry-after；同步抛折算；abort 豁免交给 piChunks */
@@ -111,7 +114,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           provider: core.provider,
           baseUrl: core.baseUrl,
           reasoning: true,
-          input: ["text" as const],
+          input: [...(core.inputByModel?.[request.model] ?? ["text" as const])],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: core.contextWindow ?? 200_000,
           maxTokens: effectiveMaxTokens ?? DEFAULT_MAX_TOKENS,
@@ -159,6 +162,8 @@ export interface AnthropicCompatOptions {
   readonly maxOutputTokens?: number;
   /** pi Context 模型条目必填；缺省 200_000（仅元数据面，不参与钳制） */
   readonly contextWindow?: number;
+  /** 逐模型输入模态（缺省 ["text"]）——能力如实透传 */
+  readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
   /** 测试注入：离线事件剧本（缺省走 pi api-level stream 真身） */
   readonly streamFn?: PiStreamFn;
 }
@@ -174,6 +179,7 @@ export function createAnthropicCompatAdapter(options: AnthropicCompatOptions): L
     api: "anthropic-messages",
     provider: "anthropic",
     maxOutputTokens: options.maxOutputTokens,
+    inputByModel: options.inputByModel,
   });
 }
 
@@ -185,6 +191,9 @@ export interface OpenaiCompatOptions {
   readonly contextWindow?: number;
   /** 输出上限：请求未显式带 maxTokens 时注入；双缺席不发（openai 无协议必填） */
   readonly maxOutputTokens?: number;
+  /** 逐模型输入模态（缺省 ["text"]）——openai 协议在 input 缺 "image" 时把图降级为
+   *  占位文本，vision 模型必须显式申报 */
+  readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
   readonly streamFn?: PiStreamFn;
 }
 
@@ -199,6 +208,7 @@ export function createOpenaiCompatAdapter(options: OpenaiCompatOptions): LlmAdap
     api: "openai-completions",
     provider: "openai",
     maxOutputTokens: options.maxOutputTokens,
+    inputByModel: options.inputByModel,
   });
 }
 

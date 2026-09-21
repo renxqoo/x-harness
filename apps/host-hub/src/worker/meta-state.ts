@@ -57,3 +57,10 @@ export function thinkingUnsupported(catalog: WorkerCatalog, dial: DialFact, thin
   if (catalog.modelMeta[dial.model]?.reasoning === false) return "model does not support thinking";
   return undefined;
 }
+
+/** prompt images 写前校验单点（prompt/steer/follow_up 共用）：当前模型输入模态
+ *  不含 image 即拒（不落 WAL）——防上游 openai 协议把图静默降级为占位文本 */
+export function imagesUnsupported(catalog: WorkerCatalog, dial: DialFact): string | undefined {
+  if (catalog.modelMeta[dial.model]?.input?.includes("image") === true) return undefined;
+  return "invalid images: model does not accept images";
+}

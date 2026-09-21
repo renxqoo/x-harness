@@ -70,12 +70,13 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
         continue;
       }
       lines.push(frame);
-      for (const waiter of [...waiters]) {
-        if (waiter.pred(frame)) {
-          clearTimeout(waiter.timer);
-          waiters.splice(waiters.indexOf(waiter), 1);
-          waiter.resolve(frame);
-        }
+      const matched = waiters.filter((waiter) => waiter.pred(frame));
+      for (const waiter of matched) {
+        clearTimeout(waiter.timer);
+        waiters.splice(waiters.indexOf(waiter), 1);
+      }
+      for (const waiter of matched) {
+        waiter.resolve(frame);
       }
     }
   });

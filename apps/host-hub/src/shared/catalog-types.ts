@@ -3,12 +3,14 @@
 // 读写/校验/快照构造与本文件成对。
 export type ProviderProtocol = "anthropic" | "openai";
 
-/** 模型条目：裸 id 或带元数据对象（contextWindow/maxTokens/reasoning/cost） */
+/** 模型条目：裸 id 或带元数据对象（contextWindow/maxTokens/reasoning/input/cost） */
 export interface HubModelMeta {
   id: string;
   contextWindow?: number;
   maxTokens?: number;
   reasoning?: boolean;
+  /** 输入模态（缺省仅 text）：含 "image" 才接受 prompt images（能力门判据） */
+  input?: ("text" | "image")[];
   cost?: Record<string, number>;
 }
 
@@ -43,6 +45,7 @@ export interface CatalogEntry {
   readonly contextWindow?: number;
   readonly maxTokens?: number;
   readonly reasoning: boolean;
+  readonly input?: ("text" | "image")[];
   readonly cost?: Record<string, number>;
   readonly source: "preset" | "custom";
 }

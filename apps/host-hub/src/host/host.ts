@@ -86,8 +86,10 @@ export async function runHost(boot: HostBoot): Promise<void> {
     const catalogNow = await readCatalog(boot.agentDir);
     const creds = await credentials.read();
     const providers = buildAssemblySnapshot(catalogNow, creds.keys, env);
-    const modelMeta: Record<string, { reasoning?: boolean }> = {};
-    for (const entry of catalogNow.entries) modelMeta[entry.model] = { reasoning: entry.reasoning };
+    const modelMeta: Record<string, { reasoning?: boolean; input?: ("text" | "image")[] }> = {};
+    for (const entry of catalogNow.entries) {
+      modelMeta[entry.model] = { reasoning: entry.reasoning, ...(entry.input !== undefined ? { input: [...entry.input] } : {}) };
+    }
     const defaults = resolveDefaultDial(catalogNow);
     snapshotCache = {
       HUB_WORKER_PROVIDERS: JSON.stringify({

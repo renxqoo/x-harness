@@ -93,6 +93,11 @@ function textBlocksOf(content: readonly unknown[]): string {
     if (typeof block !== "object" || block === null) continue;
     const record = block as Record<string, unknown>;
     if (record["type"] === "text" && typeof record["text"] === "string") parts.push(record["text"]);
+    else if (record["type"] === "image") {
+      // 图不进摘要正文，但必须在场留痕——折叠后摘要里无任何图片痕迹 = 静默丢事实
+      const mediaType = typeof record["mediaType"] === "string" ? record["mediaType"] : "unknown";
+      parts.push(`[image: ${mediaType}]`);
+    }
   }
   return parts.join("\n"); // raw——中和由调用点在截断后做（转义膨胀不撑破截断上界）
 }

@@ -4,7 +4,7 @@
 
 import type { ContentBlock, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
 import { estimateText } from "@x-harness/token-meter";
-import { nodeTokens } from "./estimate.ts";
+import { IMAGE_TOKENS, nodeTokens } from "./estimate.ts";
 
 export interface Occupancy {
   readonly tokens: number;
@@ -122,6 +122,7 @@ export function pendingClaimTokens(events: readonly SessionEvent[]): number {
     if (content === undefined) continue;
     for (const block of content) {
       if (block.type === "text") tokens += estimateText(block.text);
+      else if (block.type === "image") tokens += IMAGE_TOKENS; // 413 防线对图不盲（与 estimateBlocks 同源常量）
     }
   }
   return tokens;

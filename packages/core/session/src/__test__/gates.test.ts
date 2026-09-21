@@ -302,3 +302,32 @@ describe("llm/retry 词条形状门（docs/LLM-RETRY.md §1——审计事件先
     expect(gateEvent("llm/retry", { ...base, delayMs: 2_147_483_647 })).toBeUndefined();
   });
 });
+
+describe("image 块域执法（BATCH2-DESIGN §1.1 R2：仅 user 域合法）", () => {
+  const image = { type: "image", data: "aGk=", mediaType: "image/png" };
+
+  it.each([
+    { name: "user/message 携图过门", type: "user/message", data: { turn: 0, step: 0, content: [{ type: "text", text: "hi" }, image] }, expected: undefined },
+    { name: "inbox insert 携图过门（user 域）", type: "agent/inbox/spliced", data: { op: "insert", target: "next-turn", entries: [{ id: "e1", content: [{ type: "text", text: "t" }, image] }] }, expected: undefined },
+    { name: "assistant/message 携图拒", type: "assistant/message", data: { turn: 0, step: 0, content: [image] }, expected: "shape:assistant/message" },
+    { name: "assistant/attempt 携图拒", type: "assistant/attempt", data: { turn: 0, step: 0, error: "e", content: [image] }, expected: "shape:assistant/attempt" },
+    { name: "user image 缺 mediaType 拒", type: "user/message", data: { turn: 0, step: 0, content: [{ type: "image", data: "aGk=" }] }, expected: "shape:user/message" },
+    { name: "user image data 非串拒", type: "user/message", data: { turn: 0, step: 0, content: [{ type: "image", data: 1, mediaType: "m" }] }, expected: "shape:user/message" },
+    { name: "user 未知块型拒", type: "user/message", data: { turn: 0, step: 0, content: [{ type: "video", data: "a" }] }, expected: "shape:user/message" },
+  ])("$name", (row) => {
+    expect(gateEvent(row.type, row.data)).toBe(row.expected);
+  });
+
+  it("恢复面：含图 user 卷通过；assistant 图卷 fail-closed（archive-corrupt）", () => {
+    const okVolume = [
+      envelope({ seq: 0, type: "turn/start", data: { turn: 0 } }),
+      envelope({ seq: 1, type: "user/message", data: { turn: 0, step: 0, content: [{ type: "text", text: "hi" }, image] }, surfaceOp: "append" }),
+    ];
+    expect(validateSessionEvents(okVolume)).toBeUndefined();
+    const badVolume = [
+      envelope({ seq: 0, type: "turn/start", data: { turn: 0 } }),
+      envelope({ seq: 1, type: "assistant/message", data: { turn: 0, step: 0, content: [image] }, surfaceOp: "append" }),
+    ];
+    expect(validateSessionEvents(badVolume)).toBe("corrupt-envelope:1:shape:assistant/message");
+  });
+});

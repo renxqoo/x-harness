@@ -152,21 +152,26 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
 ### 3.2 对话驱动
 
 - **prompt** `{threadId, message, images?, streamingBehavior?}`。
-  - images：**当前内核 ContentBlock 无 image 类型——携 images 恒 failure
-    `invalid images: unsupported by this kernel`**（显式拒绝，不静默丢弃；内核加
-    image 块后放开，挂账 MIGRATION §6）。形状校验先行（`shared/images.ts` 单点）。
-  - 空闲态（无在飞 turn ∨ 无在飞 send）：`agent.followup(text)`（受理即应答
+  - images：user 域图像块 `{type:"image", data:base64, mediaType}`（BATCH2 起——内核
+    ContentBlock 已加 image 块，仅 user 域合法）。形状校验 + 量限三条先行
+    （`shared/images.ts` 单点）：张数 ≤8、单图 base64 ≤5MiB、总量 ≤12MiB（16MiB 行限内
+    的诚实余量）；能力门：当前模型（dial 双源折叠）`input` 模态不含 `image` → failure
+    `invalid images: model does not accept images`（防上游 openai 协议把图静默降级为
+    占位文本）。投递形状 = **单 inbox entry 全块**（图文同 entry 同轮消费——内核
+    insertData 单 entry 化）；纯图 prompt（message=""）合法。`/compact` 拦截携图仍拒。
+  - 空闲态（无在飞 turn ∨ 无在飞 send）：`agent.followup(text, {images})`（受理即应答
     fire-and-accept）。斜杠命令词法：`/compact` 行首拦截（下条 compact）；其余
     `/word` 按普通文本交模型（**内核无命令注册面——与迁移源 settled
     unknown-command 面的差异有意变更**，MIGRATION §4）。
   - 流式中（turn 在飞 ∨ send 在飞——受理窗口同口径）：**必须带
-    `streamingBehavior`**，`"steer"` → `agent.steer(text)`、`"followUp"` →
-    `agent.followup(text)`。不带 → failure `streamingBehavior required while streaming`。
+    `streamingBehavior`**，`"steer"` → `agent.steer(text, {images})`、`"followUp"` →
+    `agent.followup(text, {images})`。不带 → failure `streamingBehavior required while streaming`。
   - response 在受理时刻发出；收敛后 worker 发 `settled` 事件（§4 恰一不变式；
     **无 id 驱动命令不发 settled**）。
-- **steer / follow_up** `{threadId, message, images?}` — 显式排队（agent.steer/followup）；
-  队列变化经 `agent/inbox/spliced` 事件可观察（文本读口 get_state.queue——`foldInbox`
-  投影，host/worker 共用折叠器）。
+- **steer / follow_up** `{threadId, message, images?}` — 显式排队（agent.steer/followup，
+  images 语义/量限/能力门与 prompt 同口径）；队列变化经 `agent/inbox/spliced` 事件可观察
+  （文本读口 get_state.queue——`foldInbox` 投影，host/worker 共用折叠器；纯图 entry 投影为
+  `[image: <mediaType>]` 标记）。
 - **abort** `{threadId}` — `agent.cancel("client-abort")` + 停止在跑子代理任务
   （delegationView.stopAll）+ settle 挂起弹窗（默认拒绝）+ 中止手动压缩
   （compact AbortController 联动）+ 中止在跑直执行 bash（含弹窗期准入取消）。
@@ -203,7 +208,9 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   64KiB/调用、至多 8 条、truncated 粘滞；bash 按命令 id 隔离（读口取最新仍在跑者）。
   无在途 → `{null,null,null,[],null}` 恒 success。
 - **get_messages** `{threadId}` — `session.deriveMessages()` 全量（无分页；仅诊断用）；
-  非 live 走 §3.4 矩表。
+  软上限 100MiB（JSON 串长累计）——超限 failure `response too large; use get_entries`
+  （多轮携图全量投影可超 128MiB worker 行限，有界失败优于 worker 被杀）；非 live 走
+  §3.4 矩表。
 - **get_entries** `{threadId, since?, before?, limit?}` → `{entries, leafSeq, hasMore}` —
   seq 游标（**seq = WAL 行号 = 数组下标，0 基**，会话内单调、跨重启/跨压缩恒稳定）。
   排他语义：`since` = 该 seq 之后（排他，等价 index+1 起前向）；`before` = 该 seq
@@ -452,7 +459,7 @@ worker = `createAgentWorld` + kit 配方（`promptKit` / `durableSessionKit` /
 | 迁移源（@my-agent） | host-hub（@x-harness） |
 | --- | --- |
 | Agent.send（命令路由/skill 展开/多模态） | `agent.followup(text)`（纯文本；/compact 拦截 hub 侧；无命令路由面） |
-| loop.steer/followup（userMessage 含 images） | `agent.steer/followup(text)`（纯文本） |
+| loop.steer/followup（userMessage 含 images） | `agent.steer/followup(text, {images})`——内核 ContentBlock 已含 image 块（BATCH2） |
 | loop.cancel + manager.cancelAll | `agent.cancel(cause)` + delegationView.stopAll（子代理级联） |
 | compactionRunner.compact({messages,...}) | `compactionRunner.compact({session, trigger, customInstructions, keepRecentTokens, signal})` → CompactionResult |
 | model-change 事件（+flush） | `session/meta{dial}` + agentRequest waterfall 改写（内核自动记 request/context） |
@@ -538,7 +545,8 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | OAuth 交互式登录 | auth/set_api_key 单通道 |
 | 跨机器/远程接入 | stdio 单机限定 |
 | 会话删除命令 | 后续加法（§3.10 挂账） |
-| prompt images | 内核 ContentBlock 无 image（挂账） |
+| prompt images 已支持（§3.2）；已知边界：多轮携图全量投影受 get_messages 100MiB 软上限（超限 failure 引导 get_entries）、64MiB 直读上限（register 拒/list_saved 跳过——既有降级面携图更易触达）、compaction 折叠摘要以 `[image: <mediaType>]` 占位 | 量限/边界声明（BATCH2-DESIGN §1） |
+| 工具结果带图（pi 支持，内核 ToolOutcome 为单串） | 另一契约，挂账 |
 | telemetry sqlite | 不装（产品面未消费；后续按需加 kit） |
 | 跨进程 mailbox IPC | 不用（host↔worker 走 stdio 管道 JSONL） |
 
@@ -624,7 +632,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | `shutting down` | 关闭期新命令 |
 | `Session not persisted yet` | retire 未落盘线程 |
 | `permission denied` | 直执行 bash 确认拒绝 |
-| `invalid images: expected array` / `invalid images: bad block` / `invalid images: type must be image` / `invalid images: data must be non-empty base64` / `invalid images: mediaType required` / `invalid images: unsupported by this kernel` | images 坏形状/不支持（shared/images 单点） |
+| `invalid images: expected array` / `invalid images: bad block` / `invalid images: type must be image` / `invalid images: data must be non-empty base64` / `invalid images: mediaType required` / `invalid images: too many images (max 8)` / `invalid images: image too large` / `invalid images: images too large in total` / `invalid images: model does not accept images` / `invalid images: compact does not accept images` | images 坏形状/量限/能力门/compact 拒图（shared/images + meta-state 单点） |
 | `invalid id: reserved namespace` | 客户端 id 冒用 `@hub-internal:` 前缀 |
 | `unknown setting key: <key>` / `invalid setting value: <reason>` | hub-settings 白名单键值校验 |
 | `invalid model entry: <reason>` | models/add 校验族 |

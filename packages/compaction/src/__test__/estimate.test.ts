@@ -1,9 +1,9 @@
 // 估算的消息面（docs/COMPACTION.md §1.4；对照参照系 pure-estimate 语义子集：承接
-// 块角色全覆盖；image 固定估值本仓 ContentBlock 无 image 块——不承接；字符串口径
-// 归 token-meter 表驱动，不在此重复）。
+// 块角色全覆盖；image 固定估值见文末 describe——视觉下采样典型占用，不按字节估；
+// 字符串口径归 token-meter 表驱动，不在此重复）。
 
 import { describe, expect, it } from "vitest";
-import { estimateBlocks, estimateMessage, nodeTokens } from "../estimate.ts";
+import { estimateBlocks, estimateMessage, IMAGE_TOKENS, nodeTokens } from "../estimate.ts";
 import type { ContentBlock, SurfaceMessage } from "@x-harness/session";
 import { assistantNode, systemNode, textOf, toolResultNode, userNode } from "./helpers.ts";
 
@@ -37,5 +37,15 @@ describe("estimateMessage / estimateBlocks / nodeTokens", () => {
   it("CJK 上界不低估（chars/4 旧口径为反例——token-meter 单一真相承接）", () => {
     const cjk = "你好世界"; // 4 字 × 1.25 = 5
     expect(estimateMessage({ role: "user", content: [{ type: "text", text: cjk }] })).toBe(5);
+  });
+});
+
+describe("image 块估算（BATCH2-DESIGN §1.2——视觉下采样典型占用，不按 base64 字节估）", () => {
+  it("image 块计固定 IMAGE_TOKENS（高估促折叠，安全侧）", () => {
+    const blocks: ContentBlock[] = [
+      { type: "text", text: "hi" },
+      { type: "image", data: "x".repeat(4096), mediaType: "image/png" },
+    ];
+    expect(estimateBlocks(blocks)).toBe(estimateBlocks([{ type: "text", text: "hi" }]) + IMAGE_TOKENS);
   });
 });

@@ -30,7 +30,12 @@ export type TurnEndReason =
 
 export type ContentBlock =
   | { readonly type: "text"; readonly text: string }
-  | { readonly type: "tool_use"; readonly callId: string; readonly name: string; readonly input: string };
+  | { readonly type: "tool_use"; readonly callId: string; readonly name: string; readonly input: string }
+  | { readonly type: "image"; readonly data: string; readonly mediaType: string };
+
+/** user 域图像块（prompt 携图）：data = 纯 base64 载荷（无 data: 前缀），mediaType = MIME。
+ *  仅 user 域合法——assistant 域由 gates 拒（驱动永不铸 assistant image） */
+export type ImageBlock = Extract<ContentBlock, { readonly type: "image" }>;
 
 export interface ToolRef {
   readonly name: string;

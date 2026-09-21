@@ -5,7 +5,7 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { loadAgentTypes } from "@x-harness/agent-delegation";
-import { responseFrame, hubErrorFrame } from "../protocol/frames.ts";
+import { responseFrame } from "../protocol/frames.ts";
 import { clampIdleRetireMs, clampRssRetireBytes, DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
 import type { WorkerPool } from "./worker-pool.ts";
 import type { ThreadTable } from "./thread-table.ts";

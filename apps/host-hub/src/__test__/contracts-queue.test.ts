@@ -46,3 +46,15 @@ describe("queue 折叠（WAL 单真相）", () => {
     expect(view).toEqual({ steering: [], followUp: [] });
   });
 });
+
+describe("queue 投影 image 标记（BATCH2 审 M6——纯图 entry 不留空串）", () => {
+  test("纯图 entry → [image: mediaType]；图文 entry → 文本 + 标记", () => {
+    const insert = (seq: number, content: unknown): SessionEvent =>
+      ({ type: "agent/inbox/spliced", seq, time: seq, data: { op: "insert", target: "next-step", entries: [{ id: `e${seq}`, content }] } }) as SessionEvent;
+    const view = foldQueueText([
+      insert(0, [{ type: "image", data: "aGk=", mediaType: "image/png" }]),
+      insert(1, [{ type: "text", text: "hi" }, { type: "image", data: "aGk=", mediaType: "image/png" }]),
+    ]);
+    expect(view.steering).toEqual(["[image: image/png]", "hi[image: image/png]"]);
+  });
+});

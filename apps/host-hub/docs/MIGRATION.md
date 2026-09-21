@@ -80,7 +80,7 @@ minus 迁移源已声明的不移植域，minus 本仓声明差异（§4 + §6�
 
 | 命令 | 差异 | 理由 |
 | --- | --- | --- |
-| prompt | images 携带恒 failure（`invalid images: unsupported by this kernel`）；无 unknown-command settled 面（合法词形交模型）；流式判定 = turn 在飞 ∨ send 在飞 | 内核 ContentBlock 无 image；无命令注册面 |
+| prompt | images 携带已支持（BATCH2 起——量限/能力门/单 entry 图文同轮见 DESIGN §3.2；迁移期曾恒 failure `invalid images: unsupported by this kernel`）；无 unknown-command settled 面（合法词形交模型）；流式判定 = turn 在飞 ∨ send 在飞 | 内核 ContentBlock image 块（BATCH2 补齐）；无命令注册面 |
 | steer/follow_up | images 同上 | 同上 |
 | compact | 响应 `{summary, tokens}`（源码已是 `{summary, replacedCount}`）→ `{summary, replacedCount, summaryTokens}`；skip reason 完整映射（DESIGN §3.2——含 compaction failed:/aborted 归一） | compactionRunner 返回面 |
 | get_state | model = `{provider, model}` 复合形（**字段名 model——源为 modelId 单字段，改名**）；queue = foldInbox `{steering, followUp}` | 内核词表 |
@@ -149,9 +149,10 @@ turn/end reason 判别联合；inbox-full 退役。
 
 | 挂账 | 归属 |
 | --- | --- |
-| prompt/steer images 支持 | 内核 ContentBlock 加 image 块后放开（hub 校验单点已就位） |
-| 会话删除命令 | 内核 remove 面或 hub 目录级删除加法 |
-| 子代理实时事件面（agents/* 七事件等价物） | delegation 事件面加法（当前 delegationView 轮询 + 通知注入替代） |
+| ~~prompt/steer images 支持~~ **已实施（BATCH2-DESIGN §1）** | 内核 ContentBlock image 块 + hub 量限/能力门 + 单 entry 图文同轮 |
+| worker stdout writer 无界串行队列（慢 host + 高频帧下待写闭包无界堆积） | 背压/有界队列独立收敛（BATCH2 审 M1 登记；新增面已节流） |
+| 会话删除命令 | hub 目录级删除加法（BATCH2-DESIGN §4 实施中） |
+| 子代理实时事件面（agents/* 七事件等价物） | delegation 事件面加法（BATCH2-DESIGN §3 实施中） |
 | 项目数据目录名自定义（dirs.projectName 类） | 设置键扩展（当前恒 .x-harness） |
 | 项目级 permission allow/deny 规则 | permission RuleOrigin 接入（源仓挂账继承——deny 先行不对称序） |
 | 本地不提交层（settings.local） | 源仓挂账继承 |

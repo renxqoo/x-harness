@@ -4,6 +4,7 @@
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { projectEntries } from "../shared/entries-project.ts";
 import { foldQueueText } from "../shared/inbox-fold.ts";
+import { WORKER_RESPONSE_SOFT_CAP } from "../shared/limits.ts";
 import { entryWindow } from "./entries-window.ts";
 import { listCommands } from "./command-listing.ts";
 import { currentDialOf, titleOf } from "./meta-state.ts";
@@ -40,10 +41,26 @@ function handleGetInflight(rt: WorkerRuntime, input: CommandInput): void {
   respond(rt, { id: input.id, command: "get_inflight", data: { ...rt.inflightState.snapshot(), bash: rt.bash.readLatest() } });
 }
 
+/** get_messages 软上限判定（导出单测面）：预算按 JSON 串长累计，帧信封/转义留 4KiB
+ *  余量——超限以有界 failure 结算（超 worker 行限 = worker 被杀，thread_died） */
+export function withinResponseBudget(messages: readonly unknown[], cap: number): boolean {
+  let budget = cap - 4096;
+  for (const message of messages) {
+    budget -= JSON.stringify(message).length;
+    if (budget < 0) return false;
+  }
+  return true;
+}
+
 function handleGetMessages(rt: WorkerRuntime, input: CommandInput): void {
   const session = requireThread(rt, { ...input, command: "get_messages" });
   if (session === undefined) return;
-  respond(rt, { id: input.id, command: "get_messages", data: { messages: session.deriveMessages() } });
+  const messages = session.deriveMessages();
+  if (!withinResponseBudget(messages, WORKER_RESPONSE_SOFT_CAP)) {
+    respond(rt, { id: input.id, command: "get_messages", error: "response too large; use get_entries" });
+    return;
+  }
+  respond(rt, { id: input.id, command: "get_messages", data: { messages } });
 }
 
 function handleGetEntries(rt: WorkerRuntime, input: CommandInput): void {
@@ -210,8 +227,11 @@ function handleGetForkMessages(rt: WorkerRuntime, input: CommandInput): void {
     const event = node.event;
     if (event.type !== "user/message") continue;
     const text = event.data.content
-      .filter((block): block is { type: "text"; text: string } => block.type === "text")
-      .map((block) => block.text)
+      .map((block) => {
+        if (block.type === "text") return block.text;
+        if (block.type === "image") return `[image: ${block.mediaType}]`; // 纯图行可见性——不留整行缺席
+        return "";
+      })
       .join("");
     if (text !== "") forkable.push({ seq: event.seq, text });
   }

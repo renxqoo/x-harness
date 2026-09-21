@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { compactionBaselineSeq, lastRoute, lastWindow, measureContext, pendingClaimTokens, shouldCompact } from "../occupancy.ts";
+import { IMAGE_TOKENS } from "../estimate.ts";
 import type { SessionEvent, SurfaceNode } from "@x-harness/session";
 import { assistantNode, logEvent, systemNode, textOf, toolResultNode, userNode } from "./helpers.ts";
 
@@ -131,5 +132,17 @@ describe("领取未落账批次（pendingClaimTokens）", () => {
     ];
     expect(pendingClaimTokens(withTail as SessionEvent[])).toBe(0);
     expect(pendingClaimTokens([logEvent("agent/inbox/spliced", 0, { op: "claim", target: "next-turn", turn: 1, claimed: [] }) as never])).toBe(0);
+  });
+
+  it("回归（BATCH2 审 H2）：image 块计 IMAGE_TOKENS——413 防线对图不盲", () => {
+    const events = [
+      logEvent("agent/inbox/spliced", 0, {
+        op: "insert",
+        target: "next-turn",
+        entries: [{ id: "u1", content: [{ type: "text", text: textOf(5) }, { type: "image", data: "aGk=", mediaType: "image/png" }] }],
+      }) as never,
+      logEvent("agent/inbox/spliced", 1, { op: "claim", target: "next-turn", turn: 1, claimed: ["u1"] }) as never,
+    ];
+    expect(pendingClaimTokens(events as SessionEvent[])).toBe(5 + IMAGE_TOKENS);
   });
 });

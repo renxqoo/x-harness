@@ -1,7 +1,7 @@
 // Agent-Loop 契约类型（docs/AGENT-LOOP-DRIVER.md §1.1）。
 
 import type { Result } from "@x-harness/core";
-import type { Session, SessionId, CreateSessionOptions } from "@x-harness/session";
+import type { ImageBlock, Session, SessionId, CreateSessionOptions } from "@x-harness/session";
 import type { ThinkingLevel } from "@x-harness/llm";
 
 export interface AgentOptions {
@@ -30,11 +30,11 @@ export interface Agent {
   readonly session: Session;
   readonly options: AgentOptions;
   readonly status: AgentStatus;
-  /** insert next-turn + 唤醒 */
-  followup(text: string): void;
-  /** insert next-step + 唤醒 */
-  steer(text: string): void;
-  /** insert next-step 不唤醒 */
+  /** insert next-turn + 唤醒；images = user 域图像块（与文本同 entry 同轮消费） */
+  followup(text: string, options?: { images?: readonly ImageBlock[] }): void;
+  /** insert next-step + 唤醒；images 语义同 followup */
+  steer(text: string, options?: { images?: readonly ImageBlock[] }): void;
+  /** insert next-step 不唤醒（通知注入通道——单一用途，纯文本） */
   inject(text: string): void;
   /** 缺省 append clear 事件后 abort；置 per-kick sticky 取消；cause 空串护栏 */
   cancel(cause: string, options?: { keepInbox?: boolean }): void;

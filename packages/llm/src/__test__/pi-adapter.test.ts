@@ -185,3 +185,25 @@ describe("parseRetryAfterMs", () => {
     expect(parseRetryAfterMs("", now)).toBeUndefined();
   });
 });
+
+describe("Model.input 按请求查表（BATCH2-DESIGN §1.1——openai 协议缺 image 声明会把图降级为占位文本）", () => {
+  it("inputByModel 命中 → 逐模型模态；缺席模型 → 缺省 [text]", async () => {
+    const seen: Array<{ id: string; input: string[] }> = [];
+    const streamFn: PiStreamFn = async function* (model) {
+      seen.push({ id: (model as { id: string }).id, input: [...(model as { input: string[] }).input] });
+      yield doneEvent();
+    };
+    const adapter = createOpenaiCompatAdapter({
+      baseUrl: "http://x",
+      apiKey: "k",
+      streamFn,
+      inputByModel: { "vision-x": ["text", "image"] },
+    });
+    await collect(adapter.stream(request({ model: "vision-x" })));
+    await collect(adapter.stream(request({ model: "plain-y" })));
+    expect(seen).toEqual([
+      { id: "vision-x", input: ["text", "image"] },
+      { id: "plain-y", input: ["text"] },
+    ]);
+  });
+});

@@ -8,12 +8,13 @@ import type { DialFact } from "./meta-fold.ts";
 export interface WorkerCatalog {
   readonly providers: readonly AssemblyProvider[];
   readonly default: DialFact;
-  /** 逐模型元数据（reasoning 面——thinking 校验判据） */
-  readonly modelMeta: Readonly<Record<string, { readonly reasoning?: boolean }>>;
+  /** 逐模型元数据（reasoning 面——thinking 校验判据；input 面——images 能力门判据） */
+  readonly modelMeta: Readonly<Record<string, { readonly reasoning?: boolean; readonly input?: readonly ("text" | "image")[] }>>;
 }
 
 export interface WorkerModelMeta {
   readonly reasoning?: boolean;
+  readonly input?: readonly ("text" | "image")[];
 }
 
 /** 快照 JSON 形状（host buildAssemblySnapshot 产出与此处消费同契约） */
@@ -60,12 +61,13 @@ function defaultsOf(parsed: SnapshotJson, providers: readonly AssemblyProvider[]
   return { provider: "", model: "" };
 }
 
-/** script 模式快照（HUB_WORKER_PROVIDER=script——script-adapter 单 provider） */
+/** script 模式快照（HUB_WORKER_PROVIDER=script——script-adapter 单 provider）；
+ *  script-1 声明 image 输入模态——携图全链测试不经能力门误拒 */
 export function scriptCatalog(): WorkerCatalog {
   return {
     providers: [{ provider: "script", protocol: "anthropic", baseUrl: "script://local", apiKey: "", models: ["script-1"], contextWindow: 200_000 }],
     default: { provider: "script", model: "script-1" },
-    modelMeta: { "script-1": { reasoning: true } },
+    modelMeta: { "script-1": { reasoning: true, input: ["text", "image"] } },
   };
 }
 

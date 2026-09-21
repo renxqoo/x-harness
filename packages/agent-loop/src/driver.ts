@@ -2,7 +2,7 @@
 // 唤醒与取消边界（sticky 取消以 kick 边界为界——cancel 后再 followup 必须可用）、
 // 逃逸 throw 单次收轮；步相位函数在 step.ts。
 
-import type { InboxEntry, Session, SessionId } from "@x-harness/session";
+import type { ImageBlock, InboxEntry, Session, SessionId } from "@x-harness/session";
 import { errorText } from "@x-harness/core";
 import { foldInbox, insertData } from "./inbox.ts";
 import {
@@ -56,8 +56,16 @@ function closeOpenStep(session: Session, turnNumber: number, openStep: number): 
   }
 }
 
-function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown> {
-  if (reason.kind === "aborted") {
+/** followup/steer 投递块：text 块恒在（空串 text 由 LLM 映射层过滤，WAL 形状稳定——
+ *  纯图 prompt 由此支持）+ 结构合法的 image 块（垃圾形状降级丢弃，严格校验在 hub 边缘） */
+function userBlocks(text: string, options: { images?: readonly ImageBlock[] } | undefined) {
+  const images = Array.isArray(options?.images)
+    ? options.images.filter((block) => block?.type === "image" && typeof block.data === "string" && typeof block.mediaType === "string")
+    : [];
+  return [{ type: "text" as const, text }, ...images];
+}
+
+function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown> {  if (reason.kind === "aborted") {
     return { turn, reason: { kind: "aborted", ...(reason.cause !== "" ? { cause: reason.cause } : {}) } };
   }
   if (reason.kind === "error") {
@@ -70,8 +78,8 @@ function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown>
 }
 
 export function createDriver(deps: DriverDeps): {
-  readonly followup: (text: string) => void;
-  readonly steer: (text: string) => void;
+  readonly followup: (text: string, options?: { images?: readonly ImageBlock[] }) => void;
+  readonly steer: (text: string, options?: { images?: readonly ImageBlock[] }) => void;
   readonly inject: (text: string) => void;
   readonly cancel: (cause: string, options?: { keepInbox?: boolean }) => void;
   readonly whenIdle: () => Promise<void>;
@@ -216,14 +224,14 @@ export function createDriver(deps: DriverDeps): {
   }
 
   return {
-    followup: (text: string) => {
+    followup: (text: string, options?: { images?: readonly ImageBlock[] }) => {
       if (typeof text !== "string") return; // 垃圾输入降级：不落账不唤醒
-      appendEvent(session, "agent/inbox/spliced", insertData("next-turn", [{ type: "text", text }]));
+      appendEvent(session, "agent/inbox/spliced", insertData("next-turn", userBlocks(text, options)));
       wake();
     },
-    steer: (text: string) => {
+    steer: (text: string, options?: { images?: readonly ImageBlock[] }) => {
       if (typeof text !== "string") return;
-      appendEvent(session, "agent/inbox/spliced", insertData("next-step", [{ type: "text", text }]));
+      appendEvent(session, "agent/inbox/spliced", insertData("next-step", userBlocks(text, options)));
       wake();
     },
     inject: (text: string) => {

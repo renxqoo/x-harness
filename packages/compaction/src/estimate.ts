@@ -5,11 +5,16 @@
 import type { ContentBlock, SurfaceMessage, SurfaceNode } from "@x-harness/session";
 import { estimateText } from "@x-harness/token-meter";
 
-/** 块求和：text 计正文；tool_use 计 name + input（input 为原始 JSON 串，按串估） */
+/** 视觉块 token 估算：视觉 API 对图普遍下采样（典型 ≤2k token/图）——按 base64 字节数
+ *  估会高两个数量级误触压缩，取保守上界常量（高估促折叠，安全侧） */
+export const IMAGE_TOKENS = 2048;
+
+/** 块求和：text 计正文；image 计 IMAGE_TOKENS；tool_use 计 name + input（input 为原始 JSON 串，按串估） */
 export function estimateBlocks(blocks: readonly ContentBlock[]): number {
   let tokens = 0;
   for (const block of blocks) {
     if (block.type === "text") tokens += estimateText(block.text);
+    else if (block.type === "image") tokens += IMAGE_TOKENS;
     else tokens += estimateText(block.name) + estimateText(block.input);
   }
   return tokens;
