@@ -277,27 +277,34 @@ class CommandPairing {
   }
 }
 
+/** 单事件信封静态校验（白名单键/形状门/seq/time）——形状归 gateEvent，此处只查信封 */
+function envelopeError(raw: Record<string, unknown>, i: number): string | undefined {
+  const extraKey = envelopeExtraKey(raw);
+  if (extraKey !== undefined) return `corrupt-envelope:${i}:extra-key:${extraKey}`;
+  const type = raw["type"];
+  if (typeof type !== "string") return `corrupt-envelope:${i}:type`;
+  const gateErr = gateEvent(type, raw["data"]);
+  if (gateErr !== undefined) return `corrupt-envelope:${i}:${gateErr}`;
+  if (raw["seq"] !== i) return `corrupt-envelope:${i}:seq`;
+  const time = raw["time"];
+  if (typeof time !== "number" || !Number.isFinite(time) || time < 0 || Object.is(time, -0)) {
+    return `corrupt-envelope:${i}:time`;
+  }
+  return undefined;
+}
+
 export function validateSessionEvents(events: readonly unknown[]): string | undefined {
   let nodes: readonly SurfaceNode[] = [];
   const commandPairing = new CommandPairing();
   for (let i = 0; i < events.length; i++) {
     const raw = events[i];
-    if (isObj(raw)) {
-      const pairingError = commandPairing.check(raw);
-      if (pairingError !== undefined) return `corrupt-envelope:${i}:${pairingError}`;
-    }
     if (!isObj(raw)) return `corrupt-envelope:${i}:not-object`;
-    const extraKey = envelopeExtraKey(raw);
-    if (extraKey !== undefined) return `corrupt-envelope:${i}:extra-key:${extraKey}`;
-    const type = raw["type"];
-    if (typeof type !== "string") return `corrupt-envelope:${i}:type`;
-    const gateErr = gateEvent(type, raw["data"]);
-    if (gateErr !== undefined) return `corrupt-envelope:${i}:${gateErr}`;
-    if (raw["seq"] !== i) return `corrupt-envelope:${i}:seq`;
-    const time = raw["time"];
-    if (typeof time !== "number" || !Number.isFinite(time) || time < 0 || Object.is(time, -0)) {
-      return `corrupt-envelope:${i}:time`;
-    }
+    const pairingError = commandPairing.check(raw);
+    if (pairingError !== undefined) return `corrupt-envelope:${i}:${pairingError}`;
+    const staticError = envelopeError(raw, i);
+    if (staticError !== undefined) return staticError;
+    const type = raw["type"] as string;
+    const time = raw["time"] as number;
     const op = parseSurfaceOp(raw["surfaceOp"]);
     if (isSurfaceEventType(type)) {
       if (op === undefined) return `corrupt-envelope:${i}:surface-op`;
