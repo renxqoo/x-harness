@@ -49,7 +49,7 @@ describe("场景：契约", () => {
     const req0 = await host.wait((frame) => frame.type === "ui_request" && frame.method === "confirm" && frame.summary === "echo late", "bash confirm 0");
     host.send({ type: "abort_bash", id: "ab0", threadId });
     const aborted = await host.response("b0");
-    expect(aborted.error).toBe("aborted before execution started");
+    expect(aborted.error).toEqual({ code: "bash_denied", message: "aborted before execution started" });
     await host.response("ab0");
     void req0;
     // 正常执行：确认 → 流式 → 完成 → 信封
@@ -88,7 +88,7 @@ describe("场景：契约", () => {
     host.send({ type: "prompt", id: "c1", threadId, message: "/compact keep the goals" });
     const compacted = await host.response("c1");
     expect(compacted.command).toBe("prompt"); // 响应 command 留 prompt
-    expect(compacted.error).toBe("context too small to compact");
+    expect(compacted.error).toEqual({ code: "compact_rejected", message: "context too small to compact" });
   }, 60_000);
 
   test("子代理面：agent_spawn（full 档）→ get_subagents 行 → subagent/steer 投递", async () => {
@@ -113,6 +113,8 @@ describe("场景：契约", () => {
     expect(steered.success).toBe(true);
     host.send({ type: "subagent/steer", id: "ss2", threadId, agentId: "agent-00000000", message: "x" });
     const miss = await host.response("ss2");
-    expect(String(miss.error).includes("not available")).toBe(true);
+    const missErr = miss.error as { code?: string; message?: string } | undefined;
+    expect(missErr?.code).toBe("invalid_input");
+    expect(missErr?.message).toContain("not available");
   }, 90_000);
 });

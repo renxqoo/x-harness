@@ -40,7 +40,8 @@ describe("场景：韧性", () => {
     // worker 应答（observer 直答快于杀窗）——两种收敛都恰一，按实际形态断言）
     await host.wait((frame) => frame.type === "thread_died" && frame.threadId === threadId, "thread_died");
     const e1 = await host.response("e1");
-    expect(e1.success === true || e1.error === "worker died before responding").toBe(true);
+    const e1Err = e1.error as { code?: string; message?: string } | undefined;
+    expect(e1.success === true || (e1Err?.code === "protocol" && e1Err.message === "worker died before responding")).toBe(true);
     await host.event("settled", (payload) => (payload as { sendId?: string; reason?: string }).sendId === "p2" && (payload as { reason?: string }).reason === "worker-died");
     // 写命令自动复活（新 worker）：剧本继续（hold 已被杀——新 turn 用空剧本收敛 error）
     host.send({ type: "get_state", id: "g1", threadId });
@@ -57,7 +58,7 @@ describe("场景：韧性", () => {
     // 同 host 再 resume 同路径 → already open（占用表）
     hostA.send({ type: "thread/resume", id: "r1", sessionPath });
     const rejected = await hostA.response("r1");
-    expect(rejected.error).toBe("already open");
+    expect(rejected.error).toEqual({ code: "already_open", message: "already open" });
   }, 60_000);
 
   test("retire → parked → 直读（get_state 免唤醒）→ wake 对话继续", async () => {
@@ -126,7 +127,7 @@ describe("场景：韧性", () => {
     host.send({ type: "thread/resume", id: "r2", sessionPath: join(dir2, "events.jsonl") });
     const rejected = await host.response("r2");
     expect(rejected.success).toBe(false);
-    expect(rejected.error).toContain("cannot resume session");
+    expect((rejected.error as { message: string }).message).toContain("cannot resume session");
   }, 60_000);
 
   test("背压（慢消费者）：host 不丢帧不交错（全量帧序合法）", async () => {
@@ -157,6 +158,6 @@ describe("场景：会话目录与限流", () => {
     await writeFile(join(dir, "events.jsonl"), " ".repeat(65 * 1024 * 1024), "utf8");
     host.send({ type: "thread/register", id: "rg1", sessionPath: join(dir, "events.jsonl") });
     const rejected = await host.response("rg1");
-    expect(rejected.error).toBe("Session file not readable");
+    expect(rejected.error).toEqual({ code: "session_unreadable", message: "Session file not readable" });
   }, 120_000);
 });

@@ -2,6 +2,7 @@
 // 协议词表封闭性（COMMAND_NAMES 与四集合包含关系）。
 import { describe, expect, test } from "vitest";
 import { classifyResponseHead, responseLine } from "../shared/frame-classify.ts";
+import { hubError } from "../shared/errors.ts";
 import { COMMAND_NAMES } from "../protocol/commands.ts";
 import { DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS, OBSERVER_COMMANDS, THREAD_SCOPED_COMMANDS } from "../protocol/internal.ts";
 
@@ -10,12 +11,12 @@ describe("frame-classify（key 顺序契约）", () => {
     const line = responseLine({ id: "42", command: "prompt", success: true });
     const c = classifyResponseHead(line);
     expect(c).toEqual({ kind: "response", id: "42", command: "prompt", success: true });
-    const failLine = responseLine({ id: "43", command: "prompt", success: false, error: "inbox full" });
+    const failLine = responseLine({ id: "43", command: "prompt", success: false, error: hubError("streaming_window", "inbox full") });
     expect(classifyResponseHead(failLine)).toEqual({ kind: "response", id: "43", command: "prompt", success: false });
   });
 
   test("无 id 响应（parse failure 形态）", () => {
-    const line = responseLine({ command: "parse", success: false, error: "bad" });
+    const line = responseLine({ command: "parse", success: false, error: hubError("protocol", "bad") });
     expect(classifyResponseHead(line)?.id).toBeUndefined();
     expect(classifyResponseHead(line)?.command).toBe("parse");
   });
@@ -32,7 +33,7 @@ describe("frame-classify（key 顺序契约）", () => {
 
   test("data/error 互斥形状", () => {
     expect(responseLine({ command: "c", success: true })).toBe('{"id":null,"type":"response","command":"c","success":true}');
-    expect(responseLine({ command: "c", success: false, error: "e" })).toContain('"error":"e"');
+    expect(responseLine({ command: "c", success: false, error: hubError("internal", "e") })).toContain('"error":{"code":"internal","message":"e"}');
     expect(responseLine({ command: "c", success: true, data: [1] })).toContain('"data":[1]');
   });
 });

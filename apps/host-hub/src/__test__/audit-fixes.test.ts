@@ -10,6 +10,7 @@ import { createBashExec, cleanupBashOutputs } from "../worker/bash-exec.ts";
 import { redact } from "../host/credentials.ts";
 import { classifyResponseHead, responseLine } from "../shared/frame-classify.ts";
 import { spawnScriptWorker, waitResponse } from "./kit/worker-harness.ts";
+import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import type { HostHandle } from "./kit/host-client.ts";
 import { startHost, drivePrompt } from "./kit/host-client.ts";
 import { builtinTypesDir } from "../worker/assembly.ts";
@@ -29,7 +30,7 @@ afterAll(async () => {
   await Promise.all(hosts.map((host) => host.exited().catch(() => -1)));
 });
 
-function responseLineOf(fields: { id?: string; command: string; success: boolean; data?: unknown; error?: string }): string {
+function responseLineOf(fields: { id?: string; command: string; success: boolean; data?: unknown; error?: HubErrorShape }): string {
   const head = `{"id":${fields.id !== undefined ? JSON.stringify(fields.id) : "null"},"type":"response","command":${JSON.stringify(fields.command)},"success":${fields.success ? "true" : "false"}`;
   if (!fields.success && fields.error !== undefined) return `${head},"error":${JSON.stringify(fields.error)}}`;
   if (fields.success && fields.data !== undefined) return `${head},"data":${JSON.stringify(fields.data)}}`;
@@ -67,7 +68,7 @@ describe("抽查处置：pool 容量与关闭面", () => {
     void f.pool.routeLine(JSON.stringify({ type: "prompt", id: "rej1", threadId: "t1" }));
     await until(wrote(worker, '"rej1"'), "deliver");
     // worker 拒绝受理（failure 应答——流式中无 streamingBehavior 等）
-    worker?.onLine(responseLineOf({ id: "rej1", command: "prompt", success: false, error: "streamingBehavior required while streaming" }));
+    worker?.onLine(responseLineOf({ id: "rej1", command: "prompt", success: false, error: hubError("streaming_window", "streamingBehavior required while streaming") }));
     await until(clientHas(f.client, "rej1"), "failure forwarded");
     worker?.close();
     await until(() => f.table.get("t1")?.state === "dead");

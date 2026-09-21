@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { rm } from "node:fs/promises";
 import { loadSkills } from "@x-harness/skill";
+import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import { readHubSettings, readProjectSettings, updateHubSettings, updateSettingsFile, projectSettingsPath } from "../shared/settings-store.ts";
 
 function userSkillsDir(): string {
@@ -67,10 +68,10 @@ export interface SetEnabledSpec {
   readonly cwd?: string;
 }
 
-export async function setSkillEnabled(spec: SetEnabledSpec): Promise<{ ok: true; stillDisabled?: "user" } | { ok: false; error: string }> {
+export async function setSkillEnabled(spec: SetEnabledSpec): Promise<{ ok: true; stillDisabled?: "user" } | { ok: false; error: HubErrorShape }> {
   const known = new Set(await knownSkillNames(spec.cwd));
   if (!known.has(spec.name)) {
-    return { ok: false, error: `unknown skill: ${spec.name} (available: ${[...known].sort().join(", ")})` };
+    return { ok: false, error: hubError("state_conflict", `unknown skill: ${spec.name} (available: ${[...known].sort().join(", ")})`) };
   }
   if (spec.cwd !== undefined) {
     await updateSettingsFile(projectSettingsPath(spec.cwd), (current) => {
@@ -97,7 +98,7 @@ export async function setSkillEnabled(spec: SetEnabledSpec): Promise<{ ok: true;
   return { ok: true };
 }
 
-export async function removeSkill(input: { name: string; trustedCwds: readonly string[] }): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function removeSkill(input: { name: string; trustedCwds: readonly string[] }): Promise<{ ok: true } | { ok: false; error: HubErrorShape }> {
   // 现扫定 source：user 目录在场才可删；project 级 → not user-defined（删除是
   // user 级专属——防误删项目共享资产）；删 user 遮蔽后同名复活（builtin 同构）
   const userLoaded = await loadSkills([userSkillsDir()]);
@@ -106,11 +107,11 @@ export async function removeSkill(input: { name: string; trustedCwds: readonly s
     for (const cwd of input.trustedCwds) {
       const project = await loadSkills([projectSkillsDir(cwd)]);
       if (project.skills[input.name] !== undefined) {
-        return { ok: false, error: `skill not user-defined: ${input.name}` };
+        return { ok: false, error: hubError("state_conflict", `skill not user-defined: ${input.name}`) };
       }
     }
     const known = new Set(await knownSkillNames());
-    return { ok: false, error: `unknown skill: ${input.name} (available: ${[...known].sort().join(", ")})` };
+    return { ok: false, error: hubError("state_conflict", `unknown skill: ${input.name} (available: ${[...known].sort().join(", ")})`) };
   }
   await rm(userSkill.path, { recursive: true, force: true });
   return { ok: true };

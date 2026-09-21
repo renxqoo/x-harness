@@ -2,6 +2,7 @@
 // get_pending_dialogs）直接空形态恒 success；get_state/get_entries 走直读
 // （不可用 fail-open 回落池路由唤醒——仍是线程域，live/spawning/retiring 交池）。
 import { responseFrame } from "../protocol/frames.ts";
+import type { HubErrorShape } from "../shared/errors.ts";
 import type { ThreadEntry, ThreadTable } from "./thread-table.ts";
 import type { DirectRead } from "./read-history.ts";
 
@@ -15,7 +16,7 @@ export interface ParkedReadDeps {
 }
 
 export function createParkedReads(deps: ParkedReadDeps) {
-  function respond(id: string | undefined, command: string, result: { data?: unknown; error?: string }): void {
+  function respond(id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }): void {
     deps.emitClient(
       responseFrame({
         ...(id !== undefined && id !== "" ? { id } : {}),

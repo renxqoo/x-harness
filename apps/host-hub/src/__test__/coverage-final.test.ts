@@ -30,12 +30,12 @@ describe("skills-admin removeSkill 分支", () => {
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, "SKILL.md"), "---\nname: beta\ndescription: B\n---\nbody", "utf8");
     const projectRemoval = await removeSkill({ name: "beta", trustedCwds: [projectCwd] });
-    expect(projectRemoval).toEqual({ ok: false, error: "skill not user-defined: beta" });
+    expect(projectRemoval).toEqual({ ok: false, error: { code: "state_conflict", message: "skill not user-defined: beta" } });
     // user 级真删路径：os.homedir() 在 Bun 下不随 HOME env 翻转（进程启动期定值），
     // 真实 user 目录不可测试隔离——该分支由 process smoke 的设置面旅程覆盖（真进程
     // 可设 HOME）。此处补 unknown-skill 拒面：
     const ghost = await removeSkill({ name: "ghost-skill", trustedCwds: [] });
-    expect(ghost).toEqual({ ok: false, error: expect.stringContaining("unknown skill: ghost-skill") });
+    expect(ghost).toEqual({ ok: false, error: { code: "state_conflict", message: expect.stringContaining("unknown skill: ghost-skill") } });
     void homedir;
     void setSkillEnabled;
   });

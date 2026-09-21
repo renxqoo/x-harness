@@ -43,10 +43,10 @@ describe("thread/delete 状态矩阵", () => {
     // 活锁在场（生产 live 形态——worker 持活 pid lock）：活族判定先于 lock 探活 → already open
     await writeFile(join(f.sessionsRoot, "t1", "lock"), `${process.pid}\n`, "utf8");
     f.table.insert({ threadId: "t1", cwd: "/w", sessionPath: pathOf(f.root, "t1"), state: "live", trusted: false, keepalive: false });
-    expect(await deleteSession(f, pathOf(f.root, "t1"))).toEqual({ ok: false, reason: "already open" });
+    expect(await deleteSession(f, pathOf(f.root, "t1"))).toEqual({ ok: false, reason: { code: "already_open", message: "already open" } });
     // 目录被外部 rm 但表项仍 live：不因缺席放行（worker 仍活——先 stop）
     f.table.insert({ threadId: "t0", cwd: "/w", sessionPath: pathOf(f.root, "t0"), state: "live", trusted: false, keepalive: false });
-    expect(await deleteSession(f, pathOf(f.root, "t0"))).toEqual({ ok: false, reason: "already open" });
+    expect(await deleteSession(f, pathOf(f.root, "t0"))).toEqual({ ok: false, reason: { code: "already_open", message: "already open" } });
     f.table.remove("t1");
     await writeFile(join(f.sessionsRoot, "t1", "lock"), "999999999\n", "utf8"); // 活锁场景结束——死锁放行
     f.table.insert({ threadId: "t1", cwd: "/w", sessionPath: pathOf(f.root, "t1"), state: "parked", trusted: false, keepalive: false });
@@ -69,7 +69,7 @@ describe("thread/delete 状态矩阵", () => {
   test("子代理会话拒删（header.agentId）；孤儿目录（无 header）可删", async () => {
     const f = await fixture();
     await makeSession(f.sessionsRoot, "child1", { id: "child1", createdAt: 1, cwd: "/w", agentId: "agent-abc", parentSession: "p1" });
-    expect(await deleteSession(f, pathOf(f.root, "child1"))).toEqual({ ok: false, reason: "cannot delete subagent session" });
+    expect(await deleteSession(f, pathOf(f.root, "child1"))).toEqual({ ok: false, reason: { code: "state_conflict", message: "cannot delete subagent session" } });
     await mkdir(join(f.sessionsRoot, "orphan"), { recursive: true });
     await writeFile(join(f.sessionsRoot, "orphan", "lock.claim-123"), "x", "utf8");
     expect(await deleteSession(f, pathOf(f.root, "orphan"))).toEqual({ ok: true, removed: ["orphan"] }); // 垃圾目录连残迹清
@@ -79,7 +79,7 @@ describe("thread/delete 状态矩阵", () => {
     const f = await fixture();
     await makeSession(f.sessionsRoot, "locked");
     await writeFile(join(f.sessionsRoot, "locked", "lock"), `${process.pid}\n`, "utf8");
-    expect(await deleteSession(f, pathOf(f.root, "locked"))).toEqual({ ok: false, reason: "session is locked by another process" });
+    expect(await deleteSession(f, pathOf(f.root, "locked"))).toEqual({ ok: false, reason: { code: "already_open", message: "session is locked by another process" } });
     await writeFile(join(f.sessionsRoot, "locked", "lock"), "999999999\n", "utf8"); // 死 pid
     expect(await deleteSession(f, pathOf(f.root, "locked"))).toEqual({ ok: true, removed: ["locked"] });
   });

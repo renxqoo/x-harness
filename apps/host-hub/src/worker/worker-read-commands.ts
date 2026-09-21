@@ -2,6 +2,7 @@
 // 弹窗只读查询（表内现值或事件日志折叠）；set_session_name 为标题直写会话
 // （append+flush）。failure 路径单点经共享 respond。
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
+import { hubError } from "../shared/errors.ts";
 import { projectEntries } from "../shared/entries-project.ts";
 import { foldQueueText } from "../shared/inbox-fold.ts";
 import { WORKER_RESPONSE_SOFT_CAP } from "../shared/limits.ts";
@@ -58,7 +59,7 @@ function handleGetMessages(rt: WorkerRuntime, input: CommandInput): void {
   if (session === undefined) return;
   const messages = session.deriveMessages();
   if (!withinResponseBudget(messages, WORKER_RESPONSE_SOFT_CAP)) {
-    respond(rt, { id: input.id, command: "get_messages", error: "response too large; use get_entries" });
+    respond(rt, { id: input.id, command: "get_messages", error: hubError("thread_limit", "response too large; use get_entries") });
     return;
   }
   respond(rt, { id: input.id, command: "get_messages", data: { messages } });
@@ -73,7 +74,7 @@ function handleGetEntries(rt: WorkerRuntime, input: CommandInput): void {
     ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
   });
   if (!result.ok) {
-    respond(rt, { id: input.id, command: "get_entries", error: result.reason });
+    respond(rt, { id: input.id, command: "get_entries", error: hubError(result.code, result.reason) });
     return;
   }
   // data 形状与 host 直读路径闭合：解构判别联合，不带 ok 字段
@@ -134,7 +135,7 @@ async function handleGetTree(rt: WorkerRuntime, input: CommandInput): Promise<vo
     });
   } catch (error) {
     process.stderr.write(`hub:worker: get_tree walk failed: ${String(error)}\n`);
-    respond(rt, { id: input.id, command: "get_tree", error: "Session file not readable" });
+    respond(rt, { id: input.id, command: "get_tree", error: hubError("session_unreadable", "Session file not readable") });
   }
 }
 
@@ -194,18 +195,18 @@ async function handleSetSessionName(rt: WorkerRuntime, input: CommandInput): Pro
   if (session === undefined) return;
   const name = input.name;
   if (typeof name !== "string" || name.trim() === "") {
-    respond(rt, { id: input.id, command: "set_session_name", error: "invalid name: non-empty string required" });
+    respond(rt, { id: input.id, command: "set_session_name", error: hubError("invalid_input", "invalid name: non-empty string required") });
     return;
   }
   const append = session.append("session/meta", { key: "title", value: name });
   if (!append.ok) {
-    respond(rt, { id: input.id, command: "set_session_name", error: append.reason });
+    respond(rt, { id: input.id, command: "set_session_name", error: hubError("io_failed", append.reason) });
     return;
   }
   const flushed = await rt.state.world?.store.flush(session.id);
   if (flushed !== undefined && !flushed.ok) {
     process.stderr.write(`hub:worker: set_session_name flush failed: ${flushed.reason}\n`);
-    respond(rt, { id: input.id, command: "set_session_name", error: flushed.reason });
+    respond(rt, { id: input.id, command: "set_session_name", error: hubError("io_failed", flushed.reason) });
     return;
   }
   respond(rt, { id: input.id, command: "set_session_name" });

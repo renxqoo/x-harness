@@ -16,6 +16,7 @@ import type { FrameRelay } from "./worker-frames.ts";
 import { createControlRouter } from "./worker-control.ts";
 import { FORK_GRACE_SIGTERM_MS, PENDING_COMMANDS_CAP, WORKER_SPAWN_TIMEOUT_MS } from "../shared/limits.ts";
 import { responseFrame, threadDiedFrame, threadParkedFrame } from "../protocol/frames.ts";
+import { hubError, type HubErrorShape } from "../shared/errors.ts";
 
 export interface PoolDeps {
   table: ThreadTable;
@@ -35,7 +36,7 @@ interface LiveSlot {
   relay: FrameRelay;
   pendingIds: Set<string>;
   drivingIds: Set<string>;
-  resumeWaiter: { resolve: (ok: boolean, reason?: string) => void } | undefined;
+  resumeWaiter: { resolve: (ok: boolean, reason?: HubErrorShape) => void } | undefined;
   retireIntent: "stop" | "retire" | undefined;
   /** 收编原因（close 结算 thread_parked 帧的 reason——随发起方定值） */
   retireReason: RetireOrigin;
@@ -70,7 +71,7 @@ export function createWorkerPool(deps: PoolDeps) {
     return uid !== undefined ? slots.get(uid) : undefined;
   }
 
-  function emitFailure(id: string | undefined, command: string, error: string): void {
+  function emitFailure(id: string | undefined, command: string, error: HubErrorShape): void {
     deps.emitClient(
       responseFrame({
         ...(id !== undefined && id !== "" ? { id } : {}),
@@ -84,7 +85,7 @@ export function createWorkerPool(deps: PoolDeps) {
   /** close 结算债务面：pending 补恰一 failure / 在飞驱动合成 settled / 等待者释放 */
   function releaseSlotDebts(slot: LiveSlot): void {
     for (const id of slot.pendingIds) {
-      emitFailure(id, pendingCommands.get(id) ?? "unknown", "worker died before responding");
+      emitFailure(id, pendingCommands.get(id) ?? "unknown", hubError("protocol", "worker died before responding"));
       pendingCommands.delete(id);
     }
     for (const sendId of slot.drivingIds) {
@@ -257,7 +258,7 @@ export function createWorkerPool(deps: PoolDeps) {
     const slot = slots.get(uid);
     if (slot === undefined) return;
     if (pendingCommands.size >= PENDING_COMMANDS_CAP && info.id !== undefined && !pendingCommands.has(info.id)) {
-      emitFailure(info.id, info.type, "too many in-flight commands");
+      emitFailure(info.id, info.type, hubError("thread_limit", "too many in-flight commands"));
       return;
     }
     if (info.id !== undefined) {
@@ -299,9 +300,9 @@ export function createWorkerPool(deps: PoolDeps) {
     return deps.table.liveCount() + pending;
   }
 
-  function beginThread(line: string, trusted: boolean, cwd: string): { ok: true } | { ok: false; reason: string } {
+  function beginThread(line: string, trusted: boolean, cwd: string): { ok: true } | { ok: false; reason: HubErrorShape } {
     if (occupiedThreads() >= deps.limits.maxThreads) {
-      return { ok: false, reason: "too many live threads (limit reached)" };
+      return { ok: false, reason: hubError("thread_limit", "too many live threads (limit reached)") };
     }
     pendingSeq += 1;
     const pendingId = `@pending-${pendingSeq}`;
@@ -342,9 +343,9 @@ export function createWorkerPool(deps: PoolDeps) {
       deps.table.update(threadId, { state: "spawning" });
       const slot = spawnSlot(threadId, entry.trusted, entry.cwd);
       const internalId = nextInternalId();
-      const verdict = await new Promise<{ ok: boolean; reason?: string }>((resolve) => {
+      const verdict = await new Promise<{ ok: boolean; reason?: HubErrorShape }>((resolve) => {
         let settled = false;
-        const finish = (ok: boolean, reason?: string): void => {
+        const finish = (ok: boolean, reason?: HubErrorShape): void => {
           if (settled) return;
           settled = true;
           clearTimeout(deadline);
@@ -352,7 +353,7 @@ export function createWorkerPool(deps: PoolDeps) {
         };
         // internal resume 死线：心跳存活但装配挂死的 worker 不得永久悬挂唤醒——
         // 超时按失败结算（kill 由下方失败路径执行）
-        const deadline = setTimeout(() => finish(false, "resume deadline exceeded"), WORKER_SPAWN_TIMEOUT_MS);
+        const deadline = setTimeout(() => finish(false, hubError("protocol", "resume deadline exceeded")), WORKER_SPAWN_TIMEOUT_MS);
         slot.resumeWaiter = {
           resolve: (ok, reason) => finish(ok, reason),
         };
@@ -367,7 +368,7 @@ export function createWorkerPool(deps: PoolDeps) {
         );
       });
       if (verdict.ok) return true;
-      process.stderr.write(`hub: wake resume failed (attempt ${attempt + 1}): ${verdict.reason ?? "unknown"}\n`);
+      process.stderr.write(`hub: wake resume failed (attempt ${attempt + 1}): ${verdict.reason?.message ?? "unknown"}\n`);
       slot.worker.kill(FORK_GRACE_SIGTERM_MS);
       await Promise.race([slot.worker.exited, Bun.sleep(FORK_GRACE_SIGTERM_MS + 1_000)]);
       if (deps.table.get(threadId) === undefined) return false; // 表项已亡（外部删除）
@@ -387,7 +388,7 @@ export function createWorkerPool(deps: PoolDeps) {
       input = JSON.parse(line) as { type?: unknown; id?: unknown; threadId?: unknown };
     } catch (error) {
       process.stderr.write(`hub: pool parse failure: ${String(error)}\n`);
-      emitFailure(undefined, "parse", "parse failure");
+      emitFailure(undefined, "parse", hubError("protocol", "parse failure"));
       return undefined;
     }
     return {
@@ -404,20 +405,20 @@ export function createWorkerPool(deps: PoolDeps) {
     if (id !== undefined && id.startsWith(INTERNAL_ID_PREFIX)) {
       // internal 命名空间不可冒用：客户端 id 侵入会使响应被误判为内部 ack——
       // 不转发、恰一 failure
-      emitFailure(id, type, "invalid id: reserved namespace");
+      emitFailure(id, type, hubError("protocol", "invalid id: reserved namespace"));
       return;
     }
     if (!isThreadScoped(type) && !HOST_RELAYED_THREAD_COMMANDS.has(type)) {
-      emitFailure(id, type, "unknown command");
+      emitFailure(id, type, hubError("unknown_command", "unknown command"));
       return;
     }
     if (threadId === "") {
-      emitFailure(id, type, "threadId required");
+      emitFailure(id, type, hubError("invalid_input", "threadId required"));
       return;
     }
     const entry = deps.table.get(threadId);
     if (entry === undefined) {
-      emitFailure(id, type, "Unknown threadId");
+      emitFailure(id, type, hubError("unknown_thread", "Unknown threadId"));
       return;
     }
     if (entry.state === "retiring") {
@@ -431,7 +432,7 @@ export function createWorkerPool(deps: PoolDeps) {
       if (deliverIfLive(threadId, line, info)) return;
     }
     process.stderr.write(`hub: routeLine wake failed for ${threadId} (entry=${deps.table.get(threadId) !== undefined ? deps.table.get(threadId)?.state : "gone"})\n`);
-    emitFailure(id, type, "Unknown threadId");
+    emitFailure(id, type, hubError("unknown_thread", "Unknown threadId"));
   }
 
   async function deliverRaw(threadId: string, line: string): Promise<void> {

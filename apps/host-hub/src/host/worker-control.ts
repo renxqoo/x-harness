@@ -4,6 +4,7 @@
 import { isSafeSessionId } from "@x-harness/session";
 import { FORK_GRACE_SIGTERM_MS } from "../shared/limits.ts";
 import { INTERNAL_ID_PREFIX } from "../protocol/internal.ts";
+import type { HubErrorShape } from "../shared/errors.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import type { ControlFrame } from "./worker-frames.ts";
 
@@ -19,7 +20,7 @@ export interface ControlSlot {
   threadId: string;
   worker: { kill(graceMs: number): void; eof(): void };
   retireIntent: "stop" | "retire" | undefined;
-  resumeWaiter: { resolve: (ok: boolean, reason?: string) => void } | undefined;
+  resumeWaiter: { resolve: (ok: boolean, reason?: HubErrorShape) => void } | undefined;
 }
 
 /** threadId/sessionPath 入表词法（防畸形 worker 污染表） */

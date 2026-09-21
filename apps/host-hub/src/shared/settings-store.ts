@@ -7,6 +7,7 @@ import { join, resolve } from "node:path";
 import type { ModeKnob } from "@x-harness/permission";
 import type { ThinkingLevel } from "@x-harness/llm";
 import { activeAtomicPaths, atomicWriteJson, updateJson } from "./atomic-file.ts";
+import { hubError, type HubErrorShape } from "./errors.ts";
 import { hubLog } from "./hub-log.ts";
 
 export interface HubSettings {
@@ -22,27 +23,27 @@ const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "low", "medium", "high
 /** 项目数据目录名（x-harness 约定：内核 skills/agents 目录同根） */
 export const PROJECT_DATA_DIR = ".x-harness";
 
-/** 键白名单 + 值校验（单点——settings/set 的唯一判定面） */
-export function validateSettingValue(key: string, value: unknown): { ok: true; key: HubSettingsKey } | { ok: false; error: string } {
+/** 键白名单 + 值校验（单点——settings/set 的唯一判定面；恒 invalid_input 族） */
+export function validateSettingValue(key: string, value: unknown): { ok: true; key: HubSettingsKey } | { ok: false; error: HubErrorShape } {
   if (key === "permission.defaultMode") {
     if (typeof value !== "string" || !PERM_MODES.includes(value as ModeKnob)) {
-      return { ok: false, error: `invalid setting value: permission.defaultMode must be one of ${PERM_MODES.join(", ")}` };
+      return { ok: false, error: hubError("invalid_input", `invalid setting value: permission.defaultMode must be one of ${PERM_MODES.join(", ")}`) };
     }
     return { ok: true, key };
   }
   if (key === "thinking.default") {
     if (typeof value !== "string" || !THINKING_LEVELS.includes(value as ThinkingLevel)) {
-      return { ok: false, error: `invalid setting value: thinking.default must be one of ${THINKING_LEVELS.join(", ")}` };
+      return { ok: false, error: hubError("invalid_input", `invalid setting value: thinking.default must be one of ${THINKING_LEVELS.join(", ")}`) };
     }
     return { ok: true, key };
   }
   if (key === "skills.disabled") {
     if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item === "")) {
-      return { ok: false, error: "invalid setting value: skills.disabled must be an array of non-empty strings" };
+      return { ok: false, error: hubError("invalid_input", "invalid setting value: skills.disabled must be an array of non-empty strings") };
     }
     return { ok: true, key };
   }
-  return { ok: false, error: `unknown setting key: ${key}` };
+  return { ok: false, error: hubError("invalid_input", `unknown setting key: ${key}`) };
 }
 
 function isKnownKey(key: string): key is HubSettingsKey {

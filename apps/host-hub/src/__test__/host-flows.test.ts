@@ -59,6 +59,11 @@ async function waitResponse(client: readonly string[], command: string, id?: str
   }
 }
 
+/** response error 字段结构化断言面（code + message） */
+function errOf(frame: Record<string, unknown>): { code: string; message: string } {
+  return frame["error"] as { code: string; message: string };
+}
+
 async function startHost(): Promise<{ input: FakeInput; client: string[]; agentDir: string; sessionsRoot: string; workers: Array<{ written: string[]; onLine: (l: string) => void; hello: () => void; close: () => void }>; send: (cmd: unknown) => void }> {
   const agentDir = await tempDir("hub-fh-");
   const sessionsRoot = join(agentDir, "sessions");
@@ -142,7 +147,7 @@ describe("host 流程补面", () => {
     // keepalive：未知线程拒 + 已知设位
     f.send({ type: "thread/set_keepalive", id: "ka1", threadId: "ghost", keepalive: true });
     const unknownThread = await waitResponse(f.client, "thread/set_keepalive", "ka1");
-    expect(unknownThread["error"]).toBe("Unknown threadId");
+    expect(errOf(unknownThread)).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
     f.send({ type: "thread/set_keepalive", id: "ka2", threadId: "resumable01", keepalive: true });
     await waitResponse(f.client, "thread/set_keepalive", "ka2");
     // retire：live 表项 → retiring（ack ok；close 后 parked 帧）
@@ -243,7 +248,7 @@ describe("host 流程补面", () => {
     const alias = sessionPath.replace("/aliasproof1/", "/./aliasproof1/");
     f.send({ type: "thread/resume", id: "r2", sessionPath: alias });
     const rejected = await waitResponse(f.client, "thread/resume", "r2");
-    expect(rejected["error"]).toBe("already open");
+    expect(errOf(rejected)).toEqual({ code: "already_open", message: "already open" });
     // 线程仍 live（别名不可把表项打死）
     f.send({ type: "thread/list", id: "l1" });
     const listed = await waitResponse(f.client, "thread/list", "l1");

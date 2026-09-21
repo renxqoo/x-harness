@@ -1,6 +1,7 @@
 // 输出帧（host→client 与 worker→host 共用字面量）：response 走 frame-classify 单点
 // （key 顺序契约）；event 帧打 threadId/name/payload/agentName? 标签；合成域事件
 // （settled / bash_execution_update）的载荷形状在此定义（DESIGN 附录 C）。
+import type { HubErrorShape } from "../shared/errors.ts";
 import { responseLine } from "../shared/frame-classify.ts";
 
 export interface SettledEvent {
@@ -20,7 +21,7 @@ export function responseFrame(fields: {
   command: string;
   success: boolean;
   data?: unknown;
-  error?: string;
+  error?: HubErrorShape;
 }): string {
   return responseLine(fields);
 }

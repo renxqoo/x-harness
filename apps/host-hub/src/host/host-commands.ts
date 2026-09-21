@@ -3,10 +3,10 @@
 // → unknown command（池侧统一拒）；缺 threadId 由池侧判（线程域命令）。
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import { loadAgentTypes } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
 import { clampIdleRetireMs, clampRssRetireBytes, DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
+import { HUB_ERROR_CODES, hubError, type HubErrorShape } from "../shared/errors.ts";
 import type { WorkerPool } from "./worker-pool.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
@@ -56,15 +56,15 @@ type LocalHandler = (input: { type?: unknown; id?: unknown; [key: string]: unkno
 
 /** 词法围栏（同步段）：绝对路径 + 布局 + id 词法 + **词法规范化**（别名拼法归一
  *  canonical 形——占用表键不可被 `./`、双斜杠等拼法绕过；realpath 复核在占位后） */
-function shapeFence(sessionPath: string, sessionsRoot: string): { ok: true; threadId: string; sessionPath: string } | { ok: false; reason: string } {
+function shapeFence(sessionPath: string, sessionsRoot: string): { ok: true; threadId: string; sessionPath: string } | { ok: false; reason: HubErrorShape } {
   if (!sessionPath.startsWith("/")) {
-    return { ok: false, reason: "session path outside sessions dir: absolute path required" };
+    return { ok: false, reason: hubError("path_forbidden", "session path outside sessions dir: absolute path required") };
   }
   const parts = sessionPath.split("/");
   const file = parts.at(-1);
   const id = parts.at(-2) ?? "";
   if (file !== "events.jsonl" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id === "." || id === "..") {
-    return { ok: false, reason: "session path outside sessions dir: malformed layout" };
+    return { ok: false, reason: hubError("path_forbidden", "session path outside sessions dir: malformed layout") };
   }
   const canonical = join(sessionsRoot, id, "events.jsonl");
   if (sessionPath !== canonical) {
@@ -81,7 +81,7 @@ function registerTrust(trust: TrustStore, input: { trusted?: unknown }, cwd: str
 }
 
 export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandContext) {
-  function respond(id: string | undefined, command: string, result: { data?: unknown; error?: string }): void {
+  function respond(id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }): void {
     deps.emitClient(
       responseFrame({
         ...(id !== undefined && id !== "" ? { id } : {}),
@@ -122,18 +122,18 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
         break;
       }
       if (holderEntry === undefined || (holderEntry.state !== "retiring" && holderEntry.state !== "spawning")) {
-        respond(id, "thread/resume", { error: "already open" });
+        respond(id, "thread/resume", { error: hubError("already_open", "already open") });
         return { ok: false };
       }
       await Bun.sleep(250);
     }
     const holderAfter = deps.table.holderOf(shape.sessionPath);
     if (holderAfter !== undefined) {
-      respond(id, "thread/resume", { error: "already open" });
+      respond(id, "thread/resume", { error: hubError("already_open", "already open") });
       return { ok: false };
     }
     if (deps.table.liveCount() >= deps.limits.maxThreads) {
-      respond(id, "thread/resume", { error: "too many live threads (limit reached)" });
+      respond(id, "thread/resume", { error: hubError("thread_limit", "too many live threads (limit reached)") });
       return { ok: false };
     }
     const existing = deps.table.get(shape.threadId);
@@ -172,7 +172,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     if (!exists) {
       const current = deps.table.holderOf(shape.sessionPath);
       if (current === shape.threadId) deps.table.remove(shape.threadId);
-      respond(id, "thread/resume", { error: "Session file not readable" });
+      respond(id, "thread/resume", { error: hubError("session_unreadable", "Session file not readable") });
       return;
     }
     deps.pool.beginKnown(fence.threadId, JSON.stringify(input));
@@ -198,7 +198,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   function registerOccupied(holder: string, id: string | undefined): void {
     const entry = deps.table.get(holder);
     if (entry === undefined || entry.state === "live" || entry.state === "spawning" || entry.state === "retiring") {
-      respond(id, "thread/register", { error: "already open" });
+      respond(id, "thread/register", { error: hubError("already_open", "already open") });
       return;
     }
     respond(id, "thread/register", { data: { threadId: entry.threadId, cwd: entry.cwd, sessionPath: entry.sessionPath } });
@@ -221,12 +221,12 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
       () => -1,
     );
     if (size < 0 || size > DIRECT_READ_MAX_BYTES) {
-      respond(id, "thread/register", { error: "Session file not readable" });
+      respond(id, "thread/register", { error: hubError("session_unreadable", "Session file not readable") });
       return;
     }
     const state = await deps.direct.readState(fence.threadId);
     if (state === undefined) {
-      respond(id, "thread/register", { error: "Session file not readable" });
+      respond(id, "thread/register", { error: hubError("session_unreadable", "Session file not readable") });
       return;
     }
     // 占位复核：readState 的 await 窗口内 resume/start 可能已占同 path——insert 前
@@ -269,10 +269,10 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const outcome = deps.pool.retireThread(threadId, "retire");
     if (outcome === "not-persisted") {
-      respond(id, "thread/retire", { error: "Session not persisted yet" });
+      respond(id, "thread/retire", { error: hubError("state_conflict", "Session not persisted yet") });
     } else if (outcome === "in-flight") {
       // wake 重试在飞：命令排队由 wake 终态收口（耗尽落 dead 后本命令重发可重试）
-      respond(id, "thread/retire", { error: "thread not live" });
+      respond(id, "thread/retire", { error: hubError("thread_not_live", "thread not live") });
     } else {
       respond(id, "thread/retire", {}); // 三态幂等 ack；thread_parked 帧在 close 结算发
     }
@@ -282,7 +282,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const keepalive = input.keepalive;
     if (typeof keepalive !== "boolean" || deps.table.get(threadId) === undefined) {
-      respond(id, "thread/set_keepalive", { error: "Unknown threadId" });
+      respond(id, "thread/set_keepalive", { error: hubError("unknown_thread", "Unknown threadId") });
       return;
     }
     deps.table.update(threadId, { keepalive });
@@ -340,6 +340,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   function handleGetHostInfo(_input: { [key: string]: unknown }, id: string | undefined): void {
     respond(id, "get_host_info", {
       data: {
+        errorCodes: HUB_ERROR_CODES,
         version: deps.version,
         bunVersion: process.versions.bun ?? "",
         pid: process.pid,
@@ -358,7 +359,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   function handleSetIdleRetireMs(input: { [key: string]: unknown }, id: string | undefined): void {
     const value = input.value;
     if (typeof value !== "number" || !Number.isInteger(value)) {
-      respond(id, "set_idle_retire_ms", { error: `invalid: ${String(value)}` });
+      respond(id, "set_idle_retire_ms", { error: hubError("invalid_input", `invalid: ${String(value)}`) });
       return;
     }
     const clamped = clampIdleRetireMs(value);
@@ -369,7 +370,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   function handleSetRssRetireBytes(input: { [key: string]: unknown }, id: string | undefined): void {
     const value = input.value;
     if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
-      respond(id, "set_rss_retire_bytes", { error: `invalid: ${String(value)}` });
+      respond(id, "set_rss_retire_bytes", { error: hubError("invalid_input", `invalid: ${String(value)}`) });
       return;
     }
     const clamped = clampRssRetireBytes(value);

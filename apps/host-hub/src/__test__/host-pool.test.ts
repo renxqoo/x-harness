@@ -3,8 +3,9 @@
 // internal id 不可碰撞、预算/风暴上限、唤醒排队重评。
 import { describe, expect, test } from "vitest";
 import { clientHas, makePool, until, wakeAndDeliver, wrote } from "./kit/pool-fixture.ts";
+import type { HubErrorShape } from "../shared/errors.ts";
 
-function responseLine(fields: { id?: string; command: string; success: boolean; data?: unknown; error?: string }): string {
+function responseLine(fields: { id?: string; command: string; success: boolean; data?: unknown; error?: HubErrorShape }): string {
   const head = `{"id":${fields.id !== undefined ? JSON.stringify(fields.id) : "null"},"type":"response","command":${JSON.stringify(fields.command)},"success":${fields.success ? "true" : "false"}`;
   if (!fields.success && fields.error !== undefined) return `${head},"error":${JSON.stringify(fields.error)}}`;
   if (fields.success && fields.data !== undefined) return `${head},"data":${JSON.stringify(fields.data)}}`;
@@ -53,7 +54,7 @@ describe("worker-pool（stub worker）", () => {
     worker?.close();
     await until(() => f.table.get("t1")?.state === "dead");
     const frames = lines(f.client);
-    const failures = frames.filter((frame) => (frame as { type?: string; command?: string; id?: string; error?: string }).type === "response" && (frame as { error?: string }).error === "worker died before responding");
+    const failures = frames.filter((frame) => (frame as { type?: string; command?: string; id?: string; error?: { message?: string } }).type === "response" && (frame as { error?: { message?: string } }).error?.message === "worker died before responding");
     expect(failures.map((frame) => (frame as { id?: string }).id).sort()).toEqual(["g2", "p2"]); // 恰一补failure：g2/p2 各一条（g1/p1 已核销不补）
     const settledAll = frames.filter((frame) => (frame as { type?: string; name?: string }).name === "settled");
     const settledP1 = settledAll.filter((frame) => (frame as { payload?: { sendId?: string } }).payload?.sendId === "p1");
@@ -103,7 +104,7 @@ describe("worker-pool（stub worker）", () => {
     const first = f.pool.beginThread(JSON.stringify({ type: "thread/start", id: "c1", cwd: "/w" }), false, "/w");
     expect(first.ok).toBe(true);
     const second = f.pool.beginThread(JSON.stringify({ type: "thread/start", id: "c2", cwd: "/w" }), false, "/w");
-    expect(second).toEqual({ ok: false, reason: "too many live threads (limit reached)" });
+    expect(second).toEqual({ ok: false, reason: { code: "thread_limit", message: "too many live threads (limit reached)" } });
     const worker = f.spawned[0];
     worker?.helloOk();
     worker?.onLine(responseLine({ id: "c1", command: "thread/start", success: true, data: { threadId: "t1", cwd: "/w", sessionPath: "/hub/sessions/t1/events.jsonl" } }));

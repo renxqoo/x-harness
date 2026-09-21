@@ -71,21 +71,21 @@ describe("进程契约 smoke", () => {
     for (const command of ["prompt", "get_state", "fork", "bash"]) {
       host.send({ type: command, id: `nt-${command}` });
       const frame = await host.response(`nt-${command}`);
-      expect(frame.error).toBe("threadId required");
+      expect(frame.error).toEqual({ code: "invalid_input", message: "threadId required" });
     }
     // 未知线程
     host.send({ type: "get_state", id: "uk1", threadId: "ghost" });
-    expect((await host.response("uk1")).error).toBe("Unknown threadId");
+    expect((await host.response("uk1")).error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
     // 未知命令
     host.send({ type: "no_such_command", id: "uc1" });
-    expect((await host.response("uc1")).error).toBe("unknown command");
+    expect((await host.response("uc1")).error).toEqual({ code: "unknown_command", message: "unknown command" });
     // parse failure（无 id 帧）
     (host.proc.stdin as NodeJS.WritableStream).write("garbage not json\n");
     const parseFrame = await host.wait((frame) => frame.type === "response" && frame.command === "parse" && frame.id === null, "parse failure");
-    expect(parseFrame.error).toBe("parse failure");
+    expect(parseFrame.error).toEqual({ code: "protocol", message: "parse failure" });
     // internal id 冒用
     host.send({ type: "get_state", id: "@hub-internal:999", threadId: "x" });
-    expect((await host.response("@hub-internal:999")).error).toBe("invalid id: reserved namespace");
+    expect((await host.response("@hub-internal:999")).error).toEqual({ code: "protocol", message: "invalid id: reserved namespace" });
     // 关闭期命令
     host.end();
     await host.exited();

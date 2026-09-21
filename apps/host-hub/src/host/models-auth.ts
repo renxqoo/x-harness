@@ -3,10 +3,11 @@
 import { readCatalog } from "../shared/catalog.ts";
 import { createCredentials, redact } from "./credentials.ts";
 import type { CredentialStore } from "./credentials.ts";
+import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import { updateProvidersFile } from "./models-admin.ts";
 
 export interface RespondFn {
-  (id: string | undefined, command: string, result: { data?: unknown; error?: string }): void;
+  (id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }): void;
 }
 
 /** 非法数值回显的数组元素面：null/undefined 空串、嵌套数组递归（String 语义） */
@@ -26,23 +27,23 @@ function invalidValueText(value: unknown): string {
   return String(value);
 }
 
-/** set_model_override 校验段：字段组合与数值合法性（错误文案单点） */
+/** set_model_override 校验段：字段组合与数值合法性（错误文案单点——恒 invalid_input 族） */
 export function validateOverrideInput(
   input: { contextWindow?: unknown; maxTokens?: unknown; remove?: unknown },
-): { ok: true; remove: boolean; contextWindow: unknown; maxTokens: unknown } | { ok: false; error: string } {
+): { ok: true; remove: boolean; contextWindow: unknown; maxTokens: unknown } | { ok: false; error: HubErrorShape } {
   const remove = input.remove === true;
   const cw = input.contextWindow;
   const mt = input.maxTokens;
   if (!remove && cw === undefined && mt === undefined) {
-    return { ok: false, error: "invalid: nothing to set (provide contextWindow/maxTokens or remove)" };
+    return { ok: false, error: hubError("invalid_input", "invalid: nothing to set (provide contextWindow/maxTokens or remove)") };
   }
   for (const value of [cw, mt]) {
     if (value !== undefined && value !== null && (typeof value !== "number" || !Number.isInteger(value) || value < 1)) {
-      return { ok: false, error: `invalid: ${invalidValueText(value)} must be a positive integer or null` };
+      return { ok: false, error: hubError("invalid_input", `invalid: ${invalidValueText(value)} must be a positive integer or null`) };
     }
   }
   if (remove && (cw !== undefined || mt !== undefined)) {
-    return { ok: false, error: "invalid: remove is exclusive with field updates" };
+    return { ok: false, error: hubError("invalid_input", "invalid: remove is exclusive with field updates") };
   }
   return { ok: true, remove, contextWindow: cw, maxTokens: mt };
 }
@@ -114,7 +115,7 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
     const known = catalog.entries.some((e) => e.provider === provider && e.model === modelId);
     if (!known) {
       spec.respond(id, "set_model_override", {
-        error: `unknown model preset: ${modelId} (available: ${catalog.entries.map((e) => e.model).join(", ")})`,
+        error: hubError("model_unavailable", `unknown model preset: ${modelId} (available: ${catalog.entries.map((e) => e.model).join(", ")})`),
       });
       return;
     }
@@ -161,11 +162,11 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
       const apiKey = typeof input.apiKey === "string" ? input.apiKey : "";
       const catalog = await readCatalog(spec.agentDir);
       if (!catalog.profiles.some((profile) => profile.name === provider)) {
-        spec.respond(id, "auth/set_api_key", { error: redact(`auth provider not in catalog: ${provider}`, [apiKey]) });
+        spec.respond(id, "auth/set_api_key", { error: hubError("invalid_input", redact(`auth provider not in catalog: ${provider}`, [apiKey])) });
         return;
       }
       if (apiKey === "") {
-        spec.respond(id, "auth/set_api_key", { error: "invalid: apiKey required" });
+        spec.respond(id, "auth/set_api_key", { error: hubError("invalid_input", "invalid: apiKey required") });
         return;
       }
       try {
@@ -173,7 +174,7 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
         await spec.refreshSnapshot(); // 新 key 立即可注入后续 spawn
         spec.respond(id, "auth/set_api_key", {});
       } catch (error) {
-        spec.respond(id, "auth/set_api_key", { error: redact(String(error), [apiKey]) });
+        spec.respond(id, "auth/set_api_key", { error: hubError("io_failed", redact(String(error), [apiKey])) });
       }
     },
     async authRemoveKey(input, id) {

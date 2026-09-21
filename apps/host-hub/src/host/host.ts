@@ -15,6 +15,7 @@ import { createSweep } from "./thread-retire.ts";
 import { createDirectRead } from "./read-history.ts";
 import { createHostCommands } from "./host-commands.ts";
 import { heartbeatFrame, hubErrorFrame, responseFrame } from "../protocol/frames.ts";
+import { hubError } from "../shared/errors.ts";
 
 export interface HostBoot {
   agentDir: string;
@@ -172,7 +173,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
       const { lines, oversize } = splitter.feed(chunk);
       if (oversize > 0) {
         process.stderr.write("hub: parse failure: line exceeds limit\n");
-        emitClient(responseFrame({ command: "parse", success: false, error: "parse failure" }));
+        emitClient(responseFrame({ command: "parse", success: false, error: hubError("protocol", "parse failure") }));
       }
       for (const line of lines) {
         let parsed: { type?: unknown; id?: unknown };
@@ -180,11 +181,11 @@ export async function runHost(boot: HostBoot): Promise<void> {
           parsed = JSON.parse(line) as { type?: unknown; id?: unknown };
         } catch (error) {
           process.stderr.write(`hub: parse failure: invalid JSON (${String(error)})\n`);
-          emitClient(responseFrame({ command: "parse", success: false, error: "parse failure" }));
+          emitClient(responseFrame({ command: "parse", success: false, error: hubError("protocol", "parse failure") }));
           continue;
         }
         if (shuttingDown) {
-          emitClient(responseFrame({ ...(typeof parsed.id === "string" ? { id: parsed.id } : {}), command: typeof parsed.type === "string" ? parsed.type : "parse", success: false, error: "shutting down" }));
+          emitClient(responseFrame({ ...(typeof parsed.id === "string" ? { id: parsed.id } : {}), command: typeof parsed.type === "string" ? parsed.type : "parse", success: false, error: hubError("protocol", "shutting down") }));
           continue;
         }
         void commands
@@ -195,7 +196,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
           .catch((error: unknown) => {
             // 异常兜底：带 id 合成恰一 failure（hub_error 无 id 不可对账——不单独承担）
             const failId = typeof parsed.id === "string" ? parsed.id : undefined;
-            emitClient(responseFrame({ ...(failId !== undefined ? { id: failId } : {}), command: typeof parsed.type === "string" ? parsed.type : "unknown", success: false, error: String(error instanceof Error ? error.message : error) }));
+            emitClient(responseFrame({ ...(failId !== undefined ? { id: failId } : {}), command: typeof parsed.type === "string" ? parsed.type : "unknown", success: false, error: hubError("internal", String(error instanceof Error ? error.message : error)) }));
             emitClient(hubErrorFrame(String(error)));
           });
       }

@@ -6,6 +6,7 @@
 import { CONFIRM_TIMEOUT_MS, WORKER_LINE_LIMIT, readLimits } from "../shared/limits.ts";
 import { OBSERVER_COMMANDS, WORKER_BACKEND_ID, WORKER_PROTOCOL_VERSION } from "../protocol/internal.ts";
 import { responseFrame, hubErrorFrame } from "../protocol/frames.ts";
+import { hubError } from "../shared/errors.ts";
 import { takeOverStdout } from "../shared/stdout-guard.ts";
 import { createJsonlSplitter } from "../shared/jsonl.ts";
 import { createDialogBroker } from "./dialogs.ts";
@@ -181,7 +182,7 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
       const { lines, oversize } = splitter.feed(chunk);
       if (oversize > 0) {
         hubLog("worker: parse failure: line exceeds limit");
-        void writer.write(responseFrame({ command: "parse", success: false, error: "parse failure" }));
+        void writer.write(responseFrame({ command: "parse", success: false, error: hubError("protocol", "parse failure") }));
       }
       for (const line of lines) {
         let input_: { type?: unknown; id?: unknown };
@@ -189,22 +190,22 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
           input_ = JSON.parse(line) as { type?: unknown; id?: unknown };
         } catch (error) {
           hubLog(`worker: parse failure: invalid JSON (${String(error)})`);
-          void writer.write(responseFrame({ command: "parse", success: false, error: "parse failure" }));
+          void writer.write(responseFrame({ command: "parse", success: false, error: hubError("protocol", "parse failure") }));
           continue;
         }
         if (typeof input_ !== "object" || input_ === null || typeof input_.type !== "string") {
           hubLog(`worker: parse failure: not an object (${line.slice(0, 200)})`);
-          void writer.write(responseFrame({ command: "parse", success: false, error: "parse failure" }));
+          void writer.write(responseFrame({ command: "parse", success: false, error: hubError("protocol", "parse failure") }));
           continue;
         }
         const typed = input_ as { type: string; id?: string };
         if (shuttingDown) {
-          void writer.write(responseFrame({ ...(typed.id !== undefined ? { id: typed.id } : {}), command: typed.type, success: false, error: "shutting down" }));
+          void writer.write(responseFrame({ ...(typed.id !== undefined ? { id: typed.id } : {}), command: typed.type, success: false, error: hubError("protocol", "shutting down") }));
           continue;
         }
         const handler = handlers.get(typed.type);
         if (handler === undefined) {
-          void writer.write(responseFrame({ ...(typed.id !== undefined ? { id: typed.id } : {}), command: typed.type, success: false, error: "unknown command" }));
+          void writer.write(responseFrame({ ...(typed.id !== undefined ? { id: typed.id } : {}), command: typed.type, success: false, error: hubError("unknown_command", "unknown command") }));
           continue;
         }
         if (!OBSERVER_COMMANDS.has(typed.type)) markBusy(); // 观察者不重置 idle（§3）

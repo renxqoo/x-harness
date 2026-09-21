@@ -149,7 +149,41 @@ describe("worker 内嵌旅程", () => {
     // 词表外拒
     worker.send({ type: "set_thinking_level", id: "t3", threadId, level: "huge" });
     const bad = await waitResponse(worker.captured.lines, "set_thinking_level", "t3");
-    expect(bad.error).toBe("invalid thinking level: huge");
+    expect(bad.error).toEqual({ code: "invalid_input", message: "invalid thinking level: huge" });
+  });
+
+  test("显式 thinkingLevel 不被目录支持 → capability_thinking（CodedError 内层穿透：start 直提 / resume 前缀保 code）", async () => {
+    // reasoning:false 快照目录：装配期写前校验拒绝（不打网络）
+    const worker = await spawnScriptWorker({
+      env: {
+        HUB_WORKER_PROVIDER: undefined,
+        HUB_WORKER_PROVIDERS: JSON.stringify({
+          providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://127.0.0.1:9", apiKey: "", models: ["m1"] }],
+          default: { provider: "p", model: "m1" },
+          modelMeta: { m1: { reasoning: false } },
+        }),
+      },
+    });
+    workers.push({ input: worker.input });
+    // start 面：assembleThread 抛 CodedError → 外层 catch errorOfCause 保 code
+    worker.send({ type: "thread/start", id: "s1", thinkingLevel: "high" });
+    const rejected = await waitResponse(worker.captured.lines, "thread/start", "s1");
+    expect(rejected.success).toBe(false);
+    expect(rejected.error).toEqual({ code: "capability_thinking", message: "thinkingLevel rejected: model does not support thinking" });
+    // resume 面：无档 start 成会话 → stop → 带 thinkingLevel resume → 包装前缀
+    // "cannot resume session: …" 同样保 code
+    worker.send({ type: "thread/start", id: "s2" });
+    const made = await waitResponse(worker.captured.lines, "thread/start", "s2");
+    const madeData = made.data as { threadId: string; sessionPath: string };
+    worker.send({ type: "thread/stop", id: "sp1", threadId: madeData.threadId });
+    await waitResponse(worker.captured.lines, "thread/stop", "sp1");
+    worker.send({ type: "thread/resume", id: "r1", sessionPath: madeData.sessionPath, thinkingLevel: "high" });
+    const resumeRejected = await waitResponse(worker.captured.lines, "thread/resume", "r1");
+    expect(resumeRejected.success).toBe(false);
+    expect(resumeRejected.error).toEqual({
+      code: "capability_thinking",
+      message: "cannot resume session: thinkingLevel rejected: model does not support thinking",
+    });
   });
 
   test("set_model 下一 turn 生效（dial meta → request/context 落盘）+ 未知名 fail-closed", async () => {
@@ -160,7 +194,9 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "set_model", id: "m1", threadId, provider: "script", modelId: "nope" });
     const unknown = await waitResponse(worker.captured.lines, "set_model", "m1");
     expect(unknown.success).toBe(false);
-    expect(unknown.error).toContain("unknown model preset");
+    const unknownErr = unknown.error as { code?: string; message?: string } | undefined;
+    expect(unknownErr?.code).toBe("model_unavailable");
+    expect(unknownErr?.message).toContain("unknown model preset");
     worker.send({ type: "set_model", id: "m2", threadId, provider: "script", modelId: "script-1" });
     const okSet = await waitResponse(worker.captured.lines, "set_model", "m2");
     expect(okSet.success).toBe(true);
@@ -181,10 +217,10 @@ describe("worker 内嵌旅程", () => {
     const data = forked.data as { threadId: string; previousThreadId: string };
     expect(data.previousThreadId).toBe(threadId);
     expect(data.threadId).not.toBe(threadId);
-    // 旧 id 命令 → Unknown threadId（单会话守卫）
+    // 旧 id 命令 → Unknown threadId（单会话守卫——fork 重键结算面，与真缺失分码）
     worker.send({ type: "get_state", id: "g-old", threadId });
     const oldGuard = await waitResponse(worker.captured.lines, "get_state", "g-old");
-    expect(oldGuard.error).toBe("Unknown threadId");
+    expect(oldGuard.error).toEqual({ code: "thread_superseded", message: "Unknown threadId" });
     // 新线程 thinking 继承（前缀 meta 复制）
     worker.send({ type: "get_thinking_level", id: "t2", threadId: data.threadId });
     const inherited = await waitResponse(worker.captured.lines, "get_thinking_level", "t2");
@@ -200,7 +236,7 @@ describe("worker 内嵌旅程", () => {
     expect(got.data).toMatchObject({ mode: "full", source: "session" });
     worker.send({ type: "permission/set_mode", id: "pm3", threadId, mode: "bogus" });
     const bad = await waitResponse(worker.captured.lines, "permission/set_mode", "pm3");
-    expect(bad.error).toBe("invalid permission mode: bogus");
+    expect(bad.error).toEqual({ code: "invalid_input", message: "invalid permission mode: bogus" });
   });
 
   test("compact：双发拒 + /compact 拦截（响应 command 留 prompt）", async () => {
@@ -212,7 +248,7 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "prompt", id: "p1", threadId, message: "/compact keep the goals" });
     const compacted = await waitResponse(worker.captured.lines, "prompt", "p1");
     expect(compacted.success).toBe(false);
-    expect(compacted.error).toBe("context too small to compact");
+    expect(compacted.error).toEqual({ code: "compact_rejected", message: "context too small to compact" });
   });
 
   test("prompt 携图全链（单 entry 图文同轮落 WAL）+ 形状/量限/compact 拒绝", async () => {
@@ -242,15 +278,17 @@ describe("worker 内嵌旅程", () => {
     expect(forkRow).toContain("[image: image/png]");
     // 形状拒绝（hub 边缘硬拒）
     worker.send({ type: "prompt", id: "p2", threadId, message: "hi", images: "junk" });
-    expect((await waitResponse(worker.captured.lines, "prompt", "p2")).error).toBe("invalid images: expected array");
+    expect((await waitResponse(worker.captured.lines, "prompt", "p2")).error).toEqual({ code: "invalid_input", message: "invalid images: expected array" });
     worker.send({ type: "prompt", id: "p3", threadId, message: "hi", images: [{}] });
-    expect((await waitResponse(worker.captured.lines, "prompt", "p3")).error).toBe("invalid images: type must be image");
+    expect((await waitResponse(worker.captured.lines, "prompt", "p3")).error).toEqual({ code: "invalid_input", message: "invalid images: type must be image" });
     // 量限拒绝：张数
     worker.send({ type: "prompt", id: "p4", threadId, message: "hi", images: Array.from({ length: 9 }, () => ({ type: "image", data: "aGk=", mediaType: "image/png" })) });
-    expect((await waitResponse(worker.captured.lines, "prompt", "p4")).error).toContain("invalid images: too many images");
+    const tooMany = (await waitResponse(worker.captured.lines, "prompt", "p4")).error as { code?: string; message?: string } | undefined;
+    expect(tooMany?.code).toBe("images_too_many");
+    expect(tooMany?.message).toContain("invalid images: too many images");
     // compact 拦截仍拒图（能力门先过——script-1 携 image 模态）
     worker.send({ type: "prompt", id: "p5", threadId, message: "/compact", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
-    expect((await waitResponse(worker.captured.lines, "prompt", "p5")).error).toBe("invalid images: compact does not accept images");
+    expect((await waitResponse(worker.captured.lines, "prompt", "p5")).error).toEqual({ code: "invalid_input", message: "invalid images: compact does not accept images" });
   });
 
   test("能力门：模型输入模态不含 image → 携图拒（steer 同口径）", async () => {
@@ -260,9 +298,9 @@ describe("worker 内嵌旅程", () => {
     const threadId = (started.data as { threadId: string }).threadId;
     worker.send({ type: "prompt", id: "p1", threadId, message: "hi", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
     const gated = await waitResponse(worker.captured.lines, "prompt", "p1");
-    expect(gated.error).toBe("invalid images: model does not accept images");
+    expect(gated.error).toEqual({ code: "capability_images", message: "invalid images: model does not accept images" });
     worker.send({ type: "steer", id: "st1", threadId, message: "hi", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
-    expect((await waitResponse(worker.captured.lines, "steer", "st1")).error).toBe("invalid images: model does not accept images");
+    expect((await waitResponse(worker.captured.lines, "steer", "st1")).error).toEqual({ code: "capability_images", message: "invalid images: model does not accept images" });
   });
 
   test("工具输出增量流：模型工具路径 bash 逐块外推（agent/tool-stream）+ get_inflight 执行中非空 + 结算冲净", async () => {
@@ -307,16 +345,16 @@ describe("worker 内嵌旅程", () => {
     worker.input.send("not json");
     const parse = await waitResponse(worker.captured.lines, "parse");
     expect(parse.success).toBe(false);
-    expect(parse.error).toBe("parse failure");
+    expect(parse.error).toEqual({ code: "protocol", message: "parse failure" });
     worker.send({ type: "no_such_command", id: "u1" });
     const unknown = await waitResponse(worker.captured.lines, "no_such_command", "u1");
-    expect(unknown.error).toBe("unknown command");
+    expect(unknown.error).toEqual({ code: "unknown_command", message: "unknown command" });
     worker.send({ type: "get_state", id: "g1" });
     const noThread = await waitResponse(worker.captured.lines, "get_state", "g1");
-    expect(noThread.error).toBe("Unknown threadId");
+    expect(noThread.error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
     worker.send({ type: "get_state", id: "g2", threadId: "missing" });
     const badThread = await waitResponse(worker.captured.lines, "get_state", "g2");
-    expect(badThread.error).toBe("Unknown threadId");
+    expect(badThread.error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
   });
 
   test("thread/stop 幂等 + stop 后线程空（Unknown threadId）", async () => {
@@ -328,7 +366,7 @@ describe("worker 内嵌旅程", () => {
     expect(again.success).toBe(true);
     worker.send({ type: "get_state", id: "g1", threadId });
     const gone = await waitResponse(worker.captured.lines, "get_state", "g1");
-    expect(gone.error).toBe("Unknown threadId");
+    expect(gone.error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
   });
 
   test("get_subagents 空形态 + get_pending_dialogs 空形态（恒 success）", async () => {

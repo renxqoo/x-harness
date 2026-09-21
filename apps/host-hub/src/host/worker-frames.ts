@@ -4,6 +4,7 @@
 // settled 事件的 sendId 轻量提取（在飞驱动对账用）。
 import { WORKER_BACKEND_ID, WORKER_PROTOCOL_VERSION } from "../protocol/internal.ts";
 import { classifyResponseHead } from "../shared/frame-classify.ts";
+import { isHubErrorShape, type HubErrorShape } from "../shared/errors.ts";
 
 /** 表更新先于转发的控制命令集（响应携带路由事实） */
 const CONTROL_COMMANDS = new Set(["thread/start", "thread/resume", "thread/stop", "fork", "clone"]);
@@ -16,7 +17,7 @@ export interface ControlFrame {
   command: string;
   id: string | undefined;
   data: unknown;
-  error?: string;
+  error?: HubErrorShape;
 }
 
 export interface FrameRelayDeps {
@@ -89,11 +90,11 @@ export function createFrameRelay(deps: FrameRelayDeps): FrameRelay {
     deps.onResponse(head.id, head.success); // pending 核销（数据+控制同面——恰一对账）
     if (CONTROL_COMMANDS.has(head.command)) {
       let data: unknown;
-      let error: string | undefined;
+      let error: HubErrorShape | undefined;
       try {
         const parsed = JSON.parse(line) as { data?: unknown; error?: unknown };
         data = parsed.data;
-        if (typeof parsed.error === "string") error = parsed.error;
+        if (isHubErrorShape(parsed.error)) error = parsed.error;
       } catch {
         data = undefined;
       }

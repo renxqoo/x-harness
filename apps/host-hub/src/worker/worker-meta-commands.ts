@@ -2,6 +2,7 @@
 // 独立键持久化 + agentRequest 挂点下一 turn 生效——写者 append+flush 直写纪律；
 // 词表校验先于流式拒）与 permission/set_mode|get_mode（permissionMode 服务即时切 +
 // WAL 持久化——唤醒无回落；controller.set 后置到 flush 成功）。
+import { hubError } from "../shared/errors.ts";
 import { respond, requireThread, wrapSyncHandler } from "./worker-commands.ts";
 import type { CommandInput, Handler, WorkerRuntime } from "./worker-commands.ts";
 import {
@@ -22,30 +23,30 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
     if (session === undefined) return;
     const level = input.level;
     if (typeof level !== "string" || !THINKING_LEVELS.includes(level as never)) {
-      respond(rt, { id: input.id, command: "set_thinking_level", error: `invalid thinking level: ${String(level)}` });
+      respond(rt, { id: input.id, command: "set_thinking_level", error: hubError("invalid_input", `invalid thinking level: ${String(level)}`) });
       return;
     }
     // 在飞拒 = 受理窗口同口径（pendingSends ∨ streaming）——已 ack 未起跑的 turn
     // 不得捡新档
     if (rt.pendingSends > 0 || rt.bridge.isStreaming()) {
-      respond(rt, { id: input.id, command: "set_thinking_level", error: "thread is streaming" });
+      respond(rt, { id: input.id, command: "set_thinking_level", error: hubError("streaming_window", "thread is streaming") });
       return;
     }
     // 写前单点：当前拨号换 thinking（provider/model 原样保留）
     const dial = currentDialOf(session.events(), rt.state.dial);
     const unsupported = thinkingUnsupported(rt.state.catalog, dial, level as never);
     if (unsupported !== undefined) {
-      respond(rt, { id: input.id, command: "set_thinking_level", error: unsupported });
+      respond(rt, { id: input.id, command: "set_thinking_level", error: hubError("capability_thinking", unsupported) });
       return;
     }
     const append = session.append("session/meta", { key: META_KEY_THINKING, value: level });
     if (!append.ok) {
-      respond(rt, { id: input.id, command: "set_thinking_level", error: append.reason });
+      respond(rt, { id: input.id, command: "set_thinking_level", error: hubError("io_failed", append.reason) });
       return;
     }
     const flushed = await rt.state.world?.store.flush(session.id);
     if (flushed !== undefined && !flushed.ok) {
-      respond(rt, { id: input.id, command: "set_thinking_level", error: flushed.reason });
+      respond(rt, { id: input.id, command: "set_thinking_level", error: hubError("io_failed", flushed.reason) });
       return;
     }
     respond(rt, { id: input.id, command: "set_thinking_level" });
@@ -73,17 +74,17 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
     if (session === undefined) return;
     const mode = input.mode;
     if (typeof mode !== "string" || !PERMISSION_MODES.includes(mode)) {
-      respond(rt, { id: input.id, command: "permission/set_mode", error: `invalid permission mode: ${String(mode)}` });
+      respond(rt, { id: input.id, command: "permission/set_mode", error: hubError("invalid_input", `invalid permission mode: ${String(mode)}`) });
       return;
     }
     const append = session.append("session/meta", { key: META_KEY_PERMISSION, value: mode });
     if (!append.ok) {
-      respond(rt, { id: input.id, command: "permission/set_mode", error: append.reason });
+      respond(rt, { id: input.id, command: "permission/set_mode", error: hubError("io_failed", append.reason) });
       return;
     }
     const flushed = await rt.state.world?.store.flush(session.id);
     if (flushed !== undefined && !flushed.ok) {
-      respond(rt, { id: input.id, command: "permission/set_mode", error: flushed.reason });
+      respond(rt, { id: input.id, command: "permission/set_mode", error: hubError("io_failed", flushed.reason) });
       return;
     }
     // 即时切档后置到持久化成功（报失败但提权成功是最坏方向——安全不变量）

@@ -13,6 +13,7 @@ import type { ThinkingLevel } from "@x-harness/llm";
 import { permissionMode as permissionModeToken } from "@x-harness/permission";
 import { delegationView } from "@x-harness/agent-delegation";
 import { commandRegistry } from "@x-harness/commands";
+import { hubError, CodedError, errorOfCause } from "../shared/errors.ts";
 import { assembleWorkerAgent, teardownWorld } from "./assembly.ts";
 import type { AssemblyResult } from "./assembly.ts";
 import { forkInputVerdict, respond, requireThread, sessionOf } from "./worker-commands.ts";
@@ -139,7 +140,8 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
     if (unsupported !== undefined) {
       await assembled.handle.dispose().catch(() => undefined);
       await teardownWorld(assembled.world);
-      throw new Error(`thinkingLevel rejected: ${unsupported}`);
+      // CodedError 内层穿透：外层 start/resume catch 经 errorOfCause 保 code
+      throw new CodedError("capability_thinking", `thinkingLevel rejected: ${unsupported}`);
     }
   }
   applyAssembly({ rt, assembled, cwd: plan.cwdOf(assembled), sessionsRoot: rt.sessionsRoot });
@@ -171,15 +173,15 @@ async function applySessionSettings(rt: WorkerRuntime, fields: { params: Session
   const walModeValid = permissionOf(metaTailOf(events, META_KEY_PERMISSION));
   if (fields.params.paramMode !== undefined && fields.params.paramMode !== walModeValid) {
     const append = session.append("session/meta", { key: META_KEY_PERMISSION, value: fields.params.paramMode });
-    if (!append.ok) throw new Error(append.reason);
+    if (!append.ok) throw new CodedError("io_failed", append.reason);
   }
   if (fields.params.paramLevel !== undefined) {
     // 入参成为新尾值即胜过既有尾值，且持久化（与 permission 的 append 语义对称）
     const append = session.append("session/meta", { key: META_KEY_THINKING, value: fields.params.paramLevel });
-    if (!append.ok) throw new Error(append.reason);
+    if (!append.ok) throw new CodedError("io_failed", append.reason);
   }
   const flushed = await rt.state.world?.store.flush(session.id);
-  if (flushed !== undefined && !flushed.ok) throw new Error(flushed.reason);
+  if (flushed !== undefined && !flushed.ok) throw new CodedError("io_failed", flushed.reason);
   // 即时切档后置到持久化成功；WAL 尾值 > 入参（入参已 append——终值即入参）
   const finalMode = fields.params.paramMode ?? walModeValid;
   if (finalMode !== undefined) rt.state.permissionService?.set(finalMode);
@@ -215,7 +217,7 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   // 撞 fork-beyond-durable 且报误导文案——fork 前先冲刷
   const flushed = await world.store.flush(session.id);
   if (!flushed.ok) {
-    respond(rt, { id: input.id, command, error: flushed.reason });
+    respond(rt, { id: input.id, command, error: hubError("io_failed", flushed.reason) });
     return;
   }
   const previousThreadId = rt.state.threadId;
@@ -223,14 +225,14 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   const currentDial = foldDial(events.slice(0, untilSeq + 1), rt.state.dial); // 前缀拨号（截断域折叠——cut 后的 set_model 不泄漏）
   const forked = await world.store.fork(session.id as SessionId, { untilSeq, id: mintSessionId() });
   if (!forked.ok) {
-    respond(rt, { id: input.id, command, error: `invalid fork seq: ${forked.reason}` });
+    respond(rt, { id: input.id, command, error: hubError("invalid_input", `invalid fork seq: ${forked.reason}`) });
     return;
   }
   const newId = forked.value.id;
   // fork 返回的是已打开会话（持写锁）——取 id 后即关，重装配走 resume 路径
   const disposed = world.store.dispose(newId);
   if (!disposed.ok) {
-    respond(rt, { id: input.id, command, error: `fork reassembly failed: ${disposed.reason}` });
+    respond(rt, { id: input.id, command, error: hubError("io_failed", `fork reassembly failed: ${disposed.reason}`) });
     return;
   }
   // 拆除序（BATCH2 §3）：stopAll 先于 unsubscribe——fork 重装配期子的 finished 边沿可达
@@ -262,7 +264,9 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
     });
   } catch (error) {
     process.stderr.write(`hub:worker: fork reassembly failed: ${String(error)}\n`);
-    respond(rt, { id: input.id, command, error: `fork reassembly failed: ${String(error instanceof Error ? error.message : error)}` });
+    // CodedError 保 code（io/路径类内层），其余 internal——前缀文案保留
+    const cause = errorOfCause(error);
+    respond(rt, { id: input.id, command, error: { code: cause.code, message: `fork reassembly failed: ${cause.message}` } });
     rt.triggerShutdown();
     return;
   }
@@ -300,7 +304,7 @@ function serialized(handler: Handler): Handler {
 export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, Handler>): void {
   handlers.set("thread/start", async (input) => {
     if (rt.state.handle !== undefined) {
-      respond(rt, { id: input.id, command: "thread/start", error: "already open" });
+      respond(rt, { id: input.id, command: "thread/start", error: hubError("already_open", "already open") });
       return;
     }
     try {
@@ -342,19 +346,19 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
         },
       });
     } catch (error) {
-      respond(rt, { id: input.id, command: "thread/start", error: String(error instanceof Error ? error.message : error) });
+      respond(rt, { id: input.id, command: "thread/start", error: errorOfCause(error) });
     }
   });
 
   handlers.set("thread/resume", async (input) => {
     if (rt.state.handle !== undefined) {
-      respond(rt, { id: input.id, command: "thread/resume", error: "already open" });
+      respond(rt, { id: input.id, command: "thread/resume", error: hubError("already_open", "already open") });
       return;
     }
     const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
     const resumeId = sessionPath.split("/").at(-2) ?? "";
     if (!isSafeSessionId(resumeId)) {
-      respond(rt, { id: input.id, command: "thread/resume", error: "Session file not readable" });
+      respond(rt, { id: input.id, command: "thread/resume", error: hubError("session_unreadable", "Session file not readable") });
       return;
     }
     try {
@@ -365,7 +369,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       const eventsExists = await stat(eventsFile).then(() => true, () => false);
       const headerExists = await stat(headerFile).then(() => true, () => false);
       if (!eventsExists || !headerExists) {
-        respond(rt, { id: input.id, command: "thread/resume", error: "Session file not readable" });
+        respond(rt, { id: input.id, command: "thread/resume", error: hubError("session_unreadable", "Session file not readable") });
         return;
       }
       const trusted = input.trusted === true;
@@ -393,7 +397,9 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
         data: { threadId: rt.state.threadId, cwd: rt.state.cwd, sessionPath: rt.state.sessionPath },
       });
     } catch (error) {
-      respond(rt, { id: input.id, command: "thread/resume", error: `cannot resume session: ${String(error instanceof Error ? error.message : error)}` });
+      // CodedError 保 code（thinkingLevel rejected → capability_thinking 等），前缀文案保留
+      const cause = errorOfCause(error);
+      respond(rt, { id: input.id, command: "thread/resume", error: { code: cause.code, message: `cannot resume session: ${cause.message}` } });
     }
   });
 

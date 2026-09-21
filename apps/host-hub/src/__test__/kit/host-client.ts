@@ -162,7 +162,10 @@ export function aliveOf(pids: readonly number[]): boolean[] {
 export async function drivePrompt(host: HostHandle, fields: { threadId: string; id: string; message: string }): Promise<void> {
   host.send({ type: "prompt", id: fields.id, threadId: fields.threadId, message: fields.message });
   const ack = await host.response(fields.id);
-  if (!ack.success) throw new Error(`prompt rejected: ${String(ack.error)}`);
+  if (!ack.success) {
+    const err = ack.error as { code?: string; message?: string } | undefined;
+    throw new Error(`prompt rejected: ${err !== undefined ? `${err.code ?? "?"}: ${err.message ?? ""}` : "no error payload"}`);
+  }
   await host.event("settled", (payload) => (payload as { sendId?: string }).sendId === fields.id);
 }
 

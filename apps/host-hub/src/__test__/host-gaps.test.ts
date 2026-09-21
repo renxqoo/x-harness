@@ -17,13 +17,14 @@ import { createDirectRead } from "../host/read-history.ts";
 import { createParkedReads } from "../host/parked-reads.ts";
 import { createThreadTable } from "../host/thread-table.ts";
 import { spawnScriptWorker, waitResponse } from "./kit/worker-harness.ts";
+import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import * as hostCli from "../host/cli.ts";
 import * as workerMain from "../worker/main.ts";
 
 void hostCli;
 void workerMain;
 
-function responseLine(fields: { id?: string; command: string; success: boolean; data?: unknown; error?: string }): string {
+function responseLine(fields: { id?: string; command: string; success: boolean; data?: unknown; error?: HubErrorShape }): string {
   const head = `{"id":${fields.id !== undefined ? JSON.stringify(fields.id) : "null"},"type":"response","command":${JSON.stringify(fields.command)},"success":${fields.success ? "true" : "false"}`;
   if (!fields.success && fields.error !== undefined) return `${head},"error":${JSON.stringify(fields.error)}}`;
   if (fields.success && fields.data !== undefined) return `${head},"data":${JSON.stringify(fields.data)}}`;
@@ -45,7 +46,7 @@ describe("worker-pool 唤醒与关闭面", () => {
       worker.helloOk();
       const resumeLine = worker.written.find((line) => line.includes('"thread/resume"'));
       const resume = JSON.parse(resumeLine as string) as { id: string };
-      worker.onLine(responseLine({ id: resume.id, command: "thread/resume", success: false, error: "cannot resume session: corrupt" }));
+      worker.onLine(responseLine({ id: resume.id, command: "thread/resume", success: false, error: hubError("session_unreadable", "cannot resume session: corrupt") }));
       worker.close();
     }
     const ok = await wakePromise;
@@ -123,7 +124,8 @@ describe("read-history fence 与直读", () => {
       const { symlink } = await import("node:fs/promises");
       await symlink(outside, join(root, "evil", "events.jsonl"));
       const escaped = await fenceSessionPath(`${root}/evil/events.jsonl`, root);
-      expect(escaped.ok === false && escaped.reason).toContain("symlink escape");
+      expect(escaped.ok === false && escaped.reason.message).toContain("symlink escape");
+      expect(escaped.ok === false && escaped.reason.code).toBe("path_forbidden");
       await rm(outside, { recursive: true, force: true });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -159,7 +161,8 @@ describe("read-history fence 与直读", () => {
       expect(header?.cwd).toBe("/w");
       // 游标错误 = 真命令失败
       const bad = await direct.readEntries("ok1", { since: 99 });
-      expect(bad !== undefined && "error" in bad && bad.error).toContain("invalid since cursor");
+      expect(bad !== undefined && "error" in bad && bad.error.message).toContain("invalid since cursor");
+      expect(bad !== undefined && "error" in bad && bad.error.code).toBe("invalid_input");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -41,7 +41,7 @@ describe("worker 旅程 II", () => {
     // 坏路径先行：不安全 id
     w.send({ type: "thread/resume", id: "r2", sessionPath: join(w.sessionsRoot, "../escape") });
     const bad = await waitResponse(w.captured.lines, "thread/resume", "r2");
-    expect(bad.error).toBe("Session file not readable");
+    expect(bad.error).toEqual({ code: "session_unreadable", message: "Session file not readable" });
     // resume：thinking 尾值恢复
     w.send({ type: "thread/resume", id: "r1", sessionPath });
     const resumed = await waitResponse(w.captured.lines, "thread/resume", "r1");
@@ -67,7 +67,7 @@ describe("worker 旅程 II", () => {
     const w2 = await spawn([]);
     w2.send({ type: "thread/resume", id: "r2", sessionPath: join(w2.sessionsRoot, "nope", "events.jsonl") });
     const missing = await waitResponse(w2.captured.lines, "thread/resume", "r2");
-    expect(missing.error).toBe("Session file not readable");
+    expect(missing.error).toEqual({ code: "session_unreadable", message: "Session file not readable" });
     w2.input.end();
   });
 
@@ -95,7 +95,9 @@ describe("worker 旅程 II", () => {
     expect((forkable.data as Array<{ text: string }>).some((entry) => entry.text.includes("question"))).toBe(true);
     w.send({ type: "set_session_name", id: "sn1", threadId, name: "" });
     const empty = await waitResponse(w.captured.lines, "set_session_name", "sn1");
-    expect(empty.error).toContain("invalid name");
+    const emptyErr = empty.error as { code?: string; message?: string } | undefined;
+    expect(emptyErr?.code).toBe("invalid_input");
+    expect(emptyErr?.message).toContain("invalid name");
     w.send({ type: "set_session_name", id: "sn2", threadId, name: "my thread" });
     await waitResponse(w.captured.lines, "set_session_name", "sn2");
     w.send({ type: "get_state", id: "gs2", threadId });
@@ -111,13 +113,13 @@ describe("worker 旅程 II", () => {
     const req1 = await waitFrame(w.captured.lines, (f) => f.type === "ui_request" && f.method === "confirm");
     w.send({ type: "ui_response", id: "ur1", requestId: req1.requestId, payload: { confirmed: false } });
     const denied = await waitResponse(w.captured.lines, "bash", "b1");
-    expect(denied.error).toBe("permission denied");
+    expect(denied.error).toEqual({ code: "bash_denied", message: "permission denied" });
     // 弹窗期 abort_bash → aborted before execution started
     w.send({ type: "bash", id: "b2", threadId, command: "echo late" });
     await waitFrame(w.captured.lines, (f) => f.type === "ui_request" && f.method === "confirm");
     w.send({ type: "abort_bash", id: "ab1", threadId });
     const aborted = await waitResponse(w.captured.lines, "bash", "b2");
-    expect(aborted.error).toBe("aborted before execution started");
+    expect(aborted.error).toEqual({ code: "bash_denied", message: "aborted before execution started" });
     await waitResponse(w.captured.lines, "abort_bash", "ab1");
     // 超时 → cancelled:true 正常 success
     w.send({ type: "bash", id: "b3", threadId, command: "sleep 5", timeoutMs: 150 });
@@ -138,10 +140,12 @@ describe("worker 旅程 II", () => {
     // 空 command / 非法 timeout
     w.send({ type: "bash", id: "b5", threadId, command: "  " });
     const badCmd = await waitResponse(w.captured.lines, "bash", "b5");
-    expect(badCmd.error).toBe("invalid command: required");
+    expect(badCmd.error).toEqual({ code: "invalid_input", message: "invalid command: required" });
     w.send({ type: "bash", id: "b6", threadId, command: "echo x", timeoutMs: -1 });
     const badTimeout = await waitResponse(w.captured.lines, "bash", "b6");
-    expect(badTimeout.error).toContain("invalid timeoutMs");
+    const timeoutErr = badTimeout.error as { code?: string; message?: string } | undefined;
+    expect(timeoutErr?.code).toBe("invalid_input");
+    expect(timeoutErr?.message).toContain("invalid timeoutMs");
   });
 
   test("子代理面：agent_spawn 工具 → get_subagents 行 + subagent/steer 投递", async () => {
@@ -169,7 +173,9 @@ describe("worker 旅程 II", () => {
     expect(steered.success).toBe(true);
     w.send({ type: "subagent/steer", id: "ss2", threadId, agentId: "agent-00000000", message: "x" });
     const missed = await waitResponse(w.captured.lines, "subagent/steer", "ss2");
-    expect(missed.error).toContain("not available");
+    const missedErr = missed.error as { code?: string; message?: string } | undefined;
+    expect(missedErr?.code).toBe("invalid_input");
+    expect(missedErr?.message).toContain("not available");
   });
 
   test("compact 双发预检 + abort 命令路径", async () => {
@@ -178,7 +184,7 @@ describe("worker 旅程 II", () => {
     w.send({ type: "compact", id: "c1", threadId });
     const first = await waitResponse(w.captured.lines, "compact", "c1");
     expect(first.success).toBe(false); // 上下文太小
-    expect(first.error).toBe("context too small to compact");
+    expect(first.error).toEqual({ code: "compact_rejected", message: "context too small to compact" });
     // abort 全路径（无在飞也幂等成功）
     w.send({ type: "abort", id: "ab1", threadId });
     await waitResponse(w.captured.lines, "abort", "ab1");
@@ -189,18 +195,20 @@ describe("worker 旅程 II", () => {
     const threadId = await start(w);
     w.send({ type: "prompt", id: "p1", threadId, message: "hold" });
     await waitEvent(w.captured.lines, "turn/start");
-    for (const [command, extra] of [
-      ["fork", { seq: 0, position: "at" }],
-      ["compact", {}],
-      ["set_thinking_level", { level: "high" }],
+    // 流式拒分族：fork/set_thinking_level = 受理窗口（worker 面）；compact 经内核
+    // busy 前置 = compact_rejected（message 同串）
+    for (const [command, extra, code] of [
+      ["fork", { seq: 0, position: "at" }, "streaming_window"],
+      ["compact", {}, "compact_rejected"],
+      ["set_thinking_level", { level: "high" }, "streaming_window"],
     ] as const) {
       w.send({ type: command, id: `x-${command}`, threadId, ...extra });
       const rejected = await waitResponse(w.captured.lines, command, `x-${command}`);
-      expect(rejected.error).toBe("thread is streaming");
+      expect(rejected.error).toEqual({ code, message: "thread is streaming" });
     }
     w.send({ type: "prompt", id: "p2", threadId, message: "must fail" });
     const noBehavior = await waitResponse(w.captured.lines, "prompt", "p2");
-    expect(noBehavior.error).toBe("streamingBehavior required while streaming");
+    expect(noBehavior.error).toEqual({ code: "streaming_window", message: "streamingBehavior required while streaming" });
   });
 
   test("fork 边界：seq 越界 / before 首事件 / 无效 seq", async () => {
@@ -210,13 +218,15 @@ describe("worker 旅程 II", () => {
     await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === "p1");
     w.send({ type: "fork", id: "f1", threadId, seq: 999 });
     const beyond = await waitResponse(w.captured.lines, "fork", "f1");
-    expect(beyond.error).toBe("fork beyond durable boundary");
+    expect(beyond.error).toEqual({ code: "cursor_stale", message: "fork beyond durable boundary" });
     w.send({ type: "fork", id: "f2", threadId, seq: 0 });
     const beforeFirst = await waitResponse(w.captured.lines, "fork", "f2");
-    expect(beforeFirst.error).toBe("fork before first event");
+    expect(beforeFirst.error).toEqual({ code: "invalid_input", message: "fork before first event" });
     w.send({ type: "fork", id: "f3", threadId, seq: -1 });
     const invalid = await waitResponse(w.captured.lines, "fork", "f3");
-    expect(invalid.error).toContain("invalid fork seq");
+    const invalidErr = invalid.error as { code?: string; message?: string } | undefined;
+    expect(invalidErr?.code).toBe("invalid_input");
+    expect(invalidErr?.message).toContain("invalid fork seq");
   });
 
   test("stop→start 再用（同 worker 复用）", async () => {
@@ -336,10 +346,10 @@ describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", (
     w.send({ type: "prompt", id: "cmd-1", threadId, message: "/compact keep goals" });
     w.send({ type: "compact", id: "dup-1", threadId });
     const dup = await waitResponse(w.captured.lines, "compact", "dup-1");
-    expect(dup.error).toBe("Compaction already in progress");
+    expect(dup.error).toEqual({ code: "compact_rejected", message: "Compaction already in progress" });
     w.send({ type: "abort", id: "ab-1", threadId });
     await waitResponse(w.captured.lines, "abort", "ab-1");
     const aborted = await waitResponse(w.captured.lines, "prompt", "cmd-1");
-    expect(aborted.error).toBe("compaction aborted");
+    expect(aborted.error).toEqual({ code: "compact_rejected", message: "compaction aborted" });
   });
 });

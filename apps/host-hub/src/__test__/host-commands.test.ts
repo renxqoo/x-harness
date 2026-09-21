@@ -79,6 +79,11 @@ async function waitFrame(client: readonly string[], pred: (frame: Record<string,
   }
 }
 
+/** response error 字段结构化断言面（code + message） */
+function errOf(frame: Record<string, unknown>): { code: string; message: string } {
+  return frame["error"] as { code: string; message: string };
+}
+
 async function waitResponse(client: readonly string[], command: string, id?: string): Promise<Record<string, unknown>> {
   return waitFrame(client, (frame) => frame["type"] === "response" && frame["command"] === command && (id === undefined || frame["id"] === id));
 }
@@ -161,13 +166,13 @@ describe("host 本地命令（注入 IO）", () => {
     expect((clamped["data"] as { value: number }).value).toBe(1_000); // clamp 下限
     f.send({ type: "set_rss_retire_bytes", id: "k2", value: -5 });
     const badRss = await waitResponse(f.client, "set_rss_retire_bytes", "k2");
-    expect(badRss["error"]).toContain("invalid");
+    expect(errOf(badRss).code).toBe("invalid_input");
     f.input.emit("data", Buffer.from("not json\n", "utf8")); // 裸行——不经 JSON.stringify
     const parse = await waitResponse(f.client, "parse");
-    expect(parse["error"]).toBe("parse failure");
+    expect(errOf(parse)).toEqual({ code: "protocol", message: "parse failure" });
     f.send({ type: "no_such_command", id: "u1" });
     const unknown = await waitResponse(f.client, "no_such_command", "u1");
-    expect(unknown["error"]).toBe("unknown command");
+    expect(errOf(unknown)).toEqual({ code: "unknown_command", message: "unknown command" });
     f.send({ type: "ui_response", id: "ur1", requestId: "none", payload: { confirmed: true } });
     const ack = await waitResponse(f.client, "ui_response", "ur1");
     expect(ack["success"]).toBe(true);
@@ -186,7 +191,7 @@ describe("host 本地命令（注入 IO）", () => {
     // 预算满：第二个 start 拒
     f.send({ type: "thread/start", id: "s2" });
     const rejected = await waitResponse(f.client, "thread/start", "s2");
-    expect(rejected["error"]).toBe("too many live threads (limit reached)");
+    expect(errOf(rejected)).toEqual({ code: "thread_limit", message: "too many live threads (limit reached)" });
     // stop：幂等 ack
     f.send({ type: "thread/stop", id: "sp1", threadId: t1 });
     const stopped = await waitResponse(f.client, "thread/stop", "sp1");
@@ -197,10 +202,10 @@ describe("host 本地命令（注入 IO）", () => {
     const f = await startHost();
     f.send({ type: "thread/resume", id: "r1", sessionPath: "relative/path/events.jsonl" });
     const relative = await waitResponse(f.client, "thread/resume", "r1");
-    expect(relative["error"]).toContain("session path outside sessions dir");
+    expect(errOf(relative).code).toBe("path_forbidden");
     f.send({ type: "thread/resume", id: "r2", sessionPath: `${f.sessionsRoot}/nope/events.jsonl` });
     const missing = await waitResponse(f.client, "thread/resume", "r2");
-    expect(missing["error"]).toBe("Session file not readable");
+    expect(errOf(missing)).toEqual({ code: "session_unreadable", message: "Session file not readable" });
     // 真档案：register → parked 表项；再 register 幂等；get_state parked 直读
     const sid = "regsession01";
     const dir = join(f.sessionsRoot, sid);
@@ -257,7 +262,7 @@ describe("host 本地命令（注入 IO）", () => {
     // 未信任 cwd 的 settings/get{cwd} → 拒（带出路文案）
     f.send({ type: "settings/get", id: "sg1", cwd: "/untrusted" });
     const gate = await waitResponse(f.client, "settings/get", "sg1");
-    expect(gate["error"]).toContain("untrusted workspace");
+    expect(errOf(gate).code).toBe("trust_required");
     // 信任后：合并视图 + raw 两级
     f.send({ type: "settings/get", id: "sg2", cwd: "/definitely/path" });
     const merged = await waitResponse(f.client, "settings/get", "sg2");
@@ -265,10 +270,10 @@ describe("host 本地命令（注入 IO）", () => {
     // set 白名单
     f.send({ type: "settings/set", id: "ss1", key: "bogus.key", value: 1 });
     const unknownKey = await waitResponse(f.client, "settings/set", "ss1");
-    expect(unknownKey["error"]).toBe("unknown setting key: bogus.key");
+    expect(errOf(unknownKey)).toEqual({ code: "invalid_input", message: "unknown setting key: bogus.key" });
     f.send({ type: "settings/set", id: "ss2", key: "thinking.default", value: "huge" });
     const badValue = await waitResponse(f.client, "settings/set", "ss2");
-    expect(badValue["error"]).toContain("invalid setting value");
+    expect(errOf(badValue).code).toBe("invalid_input");
     f.send({ type: "settings/set", id: "ss3", key: "thinking.default", value: "low" });
     await waitResponse(f.client, "settings/set", "ss3");
     f.send({ type: "settings/get", id: "sg3" });
@@ -277,19 +282,19 @@ describe("host 本地命令（注入 IO）", () => {
     // workspace/trust 相对路径拒 + 坏布尔拒
     f.send({ type: "workspace/trust", id: "wt3", cwd: "rel", trusted: true });
     const rel = await waitResponse(f.client, "workspace/trust", "wt3");
-    expect(rel["error"]).toContain("invalid workspace path");
+    expect(errOf(rel).code).toBe("invalid_input");
     f.send({ type: "workspace/trust", id: "wt4", cwd: "/tmp", trusted: "yes" });
     const badBool = await waitResponse(f.client, "workspace/trust", "wt4");
-    expect(badBool["error"]).toBe("invalid setting value: trusted must be a boolean");
+    expect(errOf(badBool)).toEqual({ code: "invalid_input", message: "invalid setting value: trusted must be a boolean" });
   });
 
   test("models/add·remove + set_model_override + auth 面 + providers.json 坏文件降级", async () => {
     const f = await startHost();
     f.send({ type: "models/add", id: "m-bad", provider: "p1", protocol: "bogus", baseUrl: "https://p1" });
     const badProtocol = await waitResponse(f.client, "models/add", "m-bad");
-    expect(badProtocol["error"]).toContain("protocol");
+    expect(errOf(badProtocol).code).toBe("invalid_input");
     f.send({ type: "models/add", provider: "p1", protocol: "openai", baseUrl: "https://p1", contextWindow: 128_000 });
-    await waitFrame(f.client, (frame) => frame["type"] === "response" && frame["command"] === "models/add" && frame["error"] === "invalid model entry: id required");
+    await waitFrame(f.client, (frame) => frame["type"] === "response" && frame["command"] === "models/add" && errOf(frame).message === "invalid model entry: id required");
     // id 兼作模型 id 与响应关联（附录 B——add 的模型 id 字段就是 id）；能力位随回显（单点构造）
     f.send({ type: "models/add", id: "m-1", provider: "p1", protocol: "openai", baseUrl: "https://p1", contextWindow: 128_000, reasoning: false, input: ["text", "image"] });
     const okAdded = await waitResponse(f.client, "models/add", "m-1");
@@ -297,21 +302,25 @@ describe("host 本地命令（注入 IO）", () => {
     // input 词表外成员拒（写门不放拼写错误进盘）
     f.send({ type: "models/add", id: "m-2", provider: "p1", protocol: "openai", baseUrl: "https://p1", input: ["texts"] });
     const badInput = await waitResponse(f.client, "models/add", "m-2");
-    expect(badInput["error"]).toContain("input must be an array of text|image");
+    expect(errOf(badInput).code).toBe("invalid_input");
+    expect(errOf(badInput).message).toContain("input must be an array of text|image");
     // set_model_override 窄合并
     f.send({ type: "set_model_override", id: "ov1", provider: "p1", modelId: "m-1", contextWindow: 64_000 });
     const overridden = await waitResponse(f.client, "set_model_override", "ov1");
     expect((overridden["data"] as { model: { contextWindow?: number } }).model?.contextWindow).toBe(64_000);
     f.send({ type: "set_model_override", id: "ov2", provider: "p1", modelId: "m-1" });
     const nothing = await waitResponse(f.client, "set_model_override", "ov2");
-    expect(nothing["error"]).toContain("nothing to set");
+    expect(errOf(nothing).code).toBe("invalid_input");
+    expect(errOf(nothing).message).toContain("nothing to set");
     f.send({ type: "set_model_override", id: "ov3", provider: "p1", modelId: "m-1", remove: true, contextWindow: 1 });
     const exclusive = await waitResponse(f.client, "set_model_override", "ov3");
-    expect(exclusive["error"]).toContain("remove is exclusive");
+    expect(errOf(exclusive).code).toBe("invalid_input");
+    expect(errOf(exclusive).message).toContain("remove is exclusive");
     // remove：预设裸名拒
     f.send({ type: "models/remove", id: "glm-5.3" });
     const preset = await waitResponse(f.client, "models/remove", "glm-5.3");
-    expect(preset["error"]).toContain("unknown model preset");
+    expect(errOf(preset).code).toBe("model_unavailable");
+    expect(errOf(preset).message).toContain("unknown model preset");
     f.send({ type: "models/remove", id: "m-1" });
     await waitResponse(f.client, "models/remove", "m-1");
     // auth 面：全目录三态 + set/remove
@@ -321,10 +330,11 @@ describe("host 本地命令（注入 IO）", () => {
     expect(providers.some((p) => p.provider === "glm" && p.type === "preset-env")).toBe(true);
     f.send({ type: "auth/set_api_key", id: "ak1", provider: "ghost", apiKey: "sk" });
     const domain = await waitResponse(f.client, "auth/set_api_key", "ak1");
-    expect(domain["error"]).toContain("auth provider not in catalog");
+    expect(errOf(domain).code).toBe("invalid_input");
+    expect(errOf(domain).message).toContain("auth provider not in catalog");
     f.send({ type: "auth/set_api_key", id: "ak2", provider: "glm", apiKey: "" });
     const empty = await waitResponse(f.client, "auth/set_api_key", "ak2");
-    expect(empty["error"]).toBe("invalid: apiKey required");
+    expect(errOf(empty)).toEqual({ code: "invalid_input", message: "invalid: apiKey required" });
     f.send({ type: "auth/set_api_key", id: "ak3", provider: "glm", apiKey: "sk-secret" });
     await waitResponse(f.client, "auth/set_api_key", "ak3");
     f.send({ type: "auth/list", id: "al2" });
@@ -350,7 +360,8 @@ describe("host 本地命令（注入 IO）", () => {
     const f = await startHost();
     f.send({ type: "agents/create", id: "ac1", name: "researcher", description: "", systemPrompt: "you research" });
     const noDesc = await waitResponse(f.client, "agents/create", "ac1");
-    expect(noDesc["error"]).toContain("description required");
+    expect(errOf(noDesc).code).toBe("invalid_input");
+    expect(errOf(noDesc).message).toContain("description required");
     f.send({ type: "agents/create", id: "ac2", name: "researcher", description: "does research", systemPrompt: "you research things", model: "script-1" });
     const created = await waitResponse(f.client, "agents/create", "ac2");
     expect((created["data"] as { path: string }).path).toContain("researcher.md");
@@ -360,10 +371,10 @@ describe("host 本地命令（注入 IO）", () => {
     expect(agents.some((a) => a.name === "researcher" && a.model === "script-1")).toBe(true);
     f.send({ type: "agents/create", id: "ac3", name: "researcher", description: "dup", systemPrompt: "x" });
     const dup = await waitResponse(f.client, "agents/create", "ac3");
-    expect(dup["error"]).toBe("agent type already exists: researcher");
+    expect(errOf(dup)).toEqual({ code: "name_conflict", message: "agent type already exists: researcher" });
     f.send({ type: "agents/remove", id: "ar1", name: "ghost" });
     const ghost = await waitResponse(f.client, "agents/remove", "ar1");
-    expect(ghost["error"]).toBe("unknown agent type: ghost");
+    expect(errOf(ghost)).toEqual({ code: "state_conflict", message: "unknown agent type: ghost" });
     f.send({ type: "agents/remove", id: "ar2", name: "researcher" });
     await waitResponse(f.client, "agents/remove", "ar2");
     // user 级同名 builtin = 合法遮蔽（create 只扫 user 目录）：遮蔽档可删（T39 集成门
@@ -377,14 +388,15 @@ describe("host 本地命令（注入 IO）", () => {
     expect(unshadow["success"]).toBe(true);
     f.send({ type: "agents/remove", id: "ar4", name: "code-reviewer" });
     const bareBuiltin = await waitResponse(f.client, "agents/remove", "ar4");
-    expect(["agent type not user-defined: code-reviewer", "unknown agent type: code-reviewer"]).toContain(bareBuiltin["error"]);
+    expect(errOf(bareBuiltin).code).toBe("state_conflict");
+    expect(["agent type not user-defined: code-reviewer", "unknown agent type: code-reviewer"]).toContain(errOf(bareBuiltin).message);
     // permission 双域：无 threadId get → 全局默认；set 词表校验
     f.send({ type: "permission/get_mode", id: "pg1" });
     const globalGet = await waitResponse(f.client, "permission/get_mode", "pg1");
     expect(globalGet["data"]).toEqual({ mode: "auto", source: "default" });
     f.send({ type: "permission/set_mode", id: "ps1", mode: "bogus" });
     const badMode = await waitResponse(f.client, "permission/set_mode", "ps1");
-    expect(badMode["error"]).toBe("invalid permission mode: bogus");
+    expect(errOf(badMode)).toEqual({ code: "invalid_input", message: "invalid permission mode: bogus" });
     f.send({ type: "permission/set_mode", id: "ps2", mode: "full" });
     await waitResponse(f.client, "permission/set_mode", "ps2");
     f.send({ type: "permission/get_mode", id: "pg2" });
@@ -393,7 +405,7 @@ describe("host 本地命令（注入 IO）", () => {
     // 未知 threadId → Unknown threadId；parked 表项 set → thread not live
     f.send({ type: "permission/get_mode", id: "pg3", threadId: "ghost" });
     const ghostThread = await waitResponse(f.client, "permission/get_mode", "pg3");
-    expect(ghostThread["error"]).toBe("Unknown threadId");
+    expect(errOf(ghostThread)).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
   });
 
   test("thread/list_saved：真实档案折叠（title 派生/updatedAt 序/子代理滤除）", async () => {
@@ -429,13 +441,15 @@ describe("host 本地命令（注入 IO）", () => {
     // 白名单拒面；写实体放 project 形态验证）
     f.send({ type: "skills/set_enabled", id: "se1", name: "no-such-skill", enabled: false });
     const unknown = await waitResponse(f.client, "skills/set_enabled", "se1");
-    expect(unknown["error"]).toContain("unknown skill");
+    expect(errOf(unknown).code).toBe("state_conflict");
+    expect(errOf(unknown).message).toContain("unknown skill");
     f.send({ type: "skills/remove", id: "sr1", name: "no-such-skill" });
     const removeUnknown = await waitResponse(f.client, "skills/remove", "sr1");
-    expect(removeUnknown["error"]).toContain("unknown skill");
+    expect(errOf(removeUnknown).code).toBe("state_conflict");
+    expect(errOf(removeUnknown).message).toContain("unknown skill");
     f.send({ type: "skills/list", id: "sl1", cwd: "/untrusted" });
     const gated = await waitResponse(f.client, "skills/list", "sl1");
-    expect(gated["error"]).toContain("untrusted workspace");
+    expect(errOf(gated).code).toBe("trust_required");
     f.send({ type: "skills/list", id: "sl2" });
     const listed = await waitResponse(f.client, "skills/list", "sl2");
     expect(listed["success"]).toBe(true);
@@ -463,6 +477,7 @@ describe("thread/delete（BATCH2 §4——host 命令面旅程）", () => {
     f.input.send({ type: "thread/delete", id: "d3", sessionPath: "relative/path" });
     const bad = await waitResponse(f.client, "thread/delete", "d3");
     expect(bad["success"]).toBe(false);
-    expect(bad["error"]).toContain("absolute path required");
+    expect(errOf(bad).code).toBe("path_forbidden");
+    expect(errOf(bad).message).toContain("absolute path required");
   });
 });

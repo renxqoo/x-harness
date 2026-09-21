@@ -10,6 +10,8 @@ import type { AgentHandle } from "@x-harness/agent-loop";
 import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
+import { hubError, errorOfCause } from "../shared/errors.ts";
+import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
 import { foldQueueText } from "../shared/inbox-fold.ts";
@@ -86,7 +88,7 @@ export interface ResponseTarget {
   id: string | undefined;
   command: string;
   data?: unknown;
-  error?: string;
+  error?: HubErrorShape;
 }
 
 /** 响应单点（failure 必 emit） */
@@ -111,12 +113,12 @@ export function sessionOf(rt: WorkerRuntime): Session | undefined {
 export function requireThread(rt: WorkerRuntime, input: { id?: string; threadId?: unknown; command?: string }): Session | undefined {
   const session = sessionOf(rt);
   if (session === undefined || rt.state.threadId === "") {
-    respond(rt, { id: input.id, command: input.command ?? "", error: "Unknown threadId" });
+    respond(rt, { id: input.id, command: input.command ?? "", error: hubError("unknown_thread", "Unknown threadId") });
     return undefined;
   }
   if (input.threadId !== undefined && input.threadId !== rt.state.threadId) {
-    // 单会话守卫（fork 重键在飞旧 id 命令由此结算）
-    respond(rt, { id: input.id, command: input.command ?? "", error: "Unknown threadId" });
+    // 单会话守卫（fork 重键在飞旧 id 命令由此结算）——同串分码：superseded 禁重锚自愈
+    respond(rt, { id: input.id, command: input.command ?? "", error: hubError("thread_superseded", "Unknown threadId") });
     return undefined;
   }
   return session;
@@ -135,8 +137,9 @@ export function wrapSyncHandler(fn: (input: CommandInput) => void): Handler {
   };
 }
 
-/** images 校验（单点 = shared/normalizeImages）：形状 + 量限（单图/张数/总量） */
-function parseImages(value: unknown): { ok: true; images: WireImage[] | undefined } | { ok: false; reason: string } {
+/** images 校验（单点 = shared/normalizeImages）：形状 + 量限（单图/张数/总量）——
+ *  code 由单点携带（形状 → invalid_input / 量限 → images_too_many） */
+function parseImages(value: unknown): { ok: true; images: WireImage[] | undefined } | { ok: false; code: "invalid_input" | "images_too_many"; reason: string } {
   return normalizeImages(value);
 }
 
@@ -152,6 +155,29 @@ function imagesGate(rt: WorkerRuntime, images: WireImage[] | undefined): string 
 /** WireImage（wire 形状）→ Agent face images 选项（字段同形直传） */
 function imageOptions(images: WireImage[] | undefined): { images: readonly ImageBlock[] } | undefined {
   return images === undefined ? undefined : { images: [...images] };
+}
+
+/** bash 直执行失败族映射（bash-exec reason 闭词表对拍）：准入拒/中止 → bash_denied、
+ *  并发容量 → thread_limit、请求形状 → invalid_input、id 占用 → state_conflict；
+ *  词表外（平台缺席/spawn 异常等）→ internal，原文保留 */
+function bashOutcomeError(reason: string): HubErrorShape {
+  if (reason === "permission denied" || reason === "aborted before execution started") return hubError("bash_denied", reason);
+  if (reason === "too many concurrent direct bash executions (limit reached)") return hubError("thread_limit", reason);
+  if (reason === "concurrent direct bash requires a command id" || reason === "invalid command: required" || reason.startsWith("invalid timeoutMs:")) {
+    return hubError("invalid_input", reason);
+  }
+  if (reason === "bash command id is already in use") return hubError("state_conflict", reason);
+  return hubError("internal", reason);
+}
+
+/** delegation 投递失败族映射（agent-delegation reason 前缀词表对拍）：寻址/参数
+ *  → invalid_input（无会话文件重锚面——不得误用 unknown_thread 触发自愈）、
+ *  not-live → thread_not_live、busy 容量 → thread_limit、其余 → internal 原文保留 */
+function delegationError(reason: string): HubErrorShape {
+  if (reason.startsWith("invalid-args:") || reason.startsWith("not-found:") || reason.startsWith("not-owner:")) return hubError("invalid_input", reason);
+  if (reason.startsWith("not-live:")) return hubError("thread_not_live", reason);
+  if (reason.startsWith("busy:")) return hubError("thread_limit", reason);
+  return hubError("internal", reason);
 }
 
 /** settled 收敛面：kick 时打事件长度标记，whenIdle 后扫描新区间的 turn/end——
@@ -206,7 +232,7 @@ async function dispatchCommand(
   // 携图命中命令 → 既有拒绝串（命令面不收附件；分路序：形状/量限/能力门已在前）
   const parsed = parseCommand(spec.line);
   if (spec.imagesPresent && parsed !== undefined && registry.find(parsed.name) !== undefined) {
-    respond(rt, { id: input.id, command: spec.command, error: "invalid images: compact does not accept images" });
+    respond(rt, { id: input.id, command: spec.command, error: hubError("invalid_input", "invalid images: compact does not accept images") });
     return true;
   }
   const registration = rt.inflight.register();
@@ -214,14 +240,15 @@ async function dispatchCommand(
     const execution = await registry.execute(session, spec.line, registration.signal);
     if (execution === undefined) return false;
     if (execution.result.kind === "error") {
-      respond(rt, { id: input.id, command: spec.command, error: execution.result.text });
+      // compact 命令词表（packages/compaction 内层穿透）统一 compact_rejected
+      respond(rt, { id: input.id, command: spec.command, error: hubError("compact_rejected", execution.result.text) });
     } else {
       respond(rt, { id: input.id, command: spec.command, data: execution.result.data });
     }
     return true;
   } catch (error) {
     // 异常必应答（恰一响应铁律——execute 重抛态）
-    respond(rt, { id: input.id, command: spec.command, error: String(error instanceof Error ? error.message : error) });
+    respond(rt, { id: input.id, command: spec.command, error: errorOfCause(error) });
     return true;
   } finally {
     registration.unregister();
@@ -237,12 +264,12 @@ function promptStreamingBranch(
 ): void {
   const behavior = input.streamingBehavior;
   if (behavior !== "steer" && behavior !== "followUp") {
-    respond(rt, { id: input.id, command: "prompt", error: "streamingBehavior required while streaming" });
+    respond(rt, { id: input.id, command: "prompt", error: hubError("streaming_window", "streamingBehavior required while streaming") });
     return;
   }
   const agent = rt.state.handle?.agent;
   if (agent === undefined) {
-    respond(rt, { id: input.id, command: "prompt", error: "Unknown threadId" });
+    respond(rt, { id: input.id, command: "prompt", error: hubError("unknown_thread", "Unknown threadId") });
     return;
   }
   try {
@@ -250,7 +277,7 @@ function promptStreamingBranch(
     else agent.followup(payload.message, imageOptions(payload.images));
   } catch (error) {
     // kick 同步抛错：未受理——failure 应答（无 settled 义务）
-    respond(rt, { id: input.id, command: "prompt", error: String(error instanceof Error ? error.message : error) });
+    respond(rt, { id: input.id, command: "prompt", error: errorOfCause(error) });
     return;
   }
   respond(rt, { id: input.id, command: "prompt" });
@@ -258,13 +285,14 @@ function promptStreamingBranch(
   settleAfter(rt, input.id);
 }
 
-/** fork 入参校验（单点错误面）：流式互斥/seq 词法（0 基）/边界/首事件前 */
-export function forkInputVerdict(rt: WorkerRuntime, lastSeq: number, input: CommandInput): string | undefined {
-  if (rt.bridge.isStreaming()) return "thread is streaming";
+/** fork 入参校验（单点错误面）：流式互斥/seq 词法（0 基）/边界/首事件前——
+ *  越过 durable 边界 = 调用方游标过期（cursor_stale，消费方重取 leafSeq） */
+export function forkInputVerdict(rt: WorkerRuntime, lastSeq: number, input: CommandInput): HubErrorShape | undefined {
+  if (rt.bridge.isStreaming()) return hubError("streaming_window", "thread is streaming");
   const seq = input.seq;
-  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0) return `invalid fork seq: ${String(seq)}`;
-  if (seq > lastSeq) return "fork beyond durable boundary";
-  if (input.position !== "at" && seq === 0) return "fork before first event"; // 首事件前无可保留内容
+  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0) return hubError("invalid_input", `invalid fork seq: ${String(seq)}`);
+  if (seq > lastSeq) return hubError("cursor_stale", "fork beyond durable boundary");
+  if (input.position !== "at" && seq === 0) return hubError("invalid_input", "fork before first event"); // 首事件前无可保留内容
   return undefined;
 }
 
@@ -277,12 +305,12 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     const message = typeof input.message === "string" ? input.message : "";
     const parsedImages = parseImages(input.images);
     if (!parsedImages.ok) {
-      respond(rt, { id: input.id, command: "prompt", error: parsedImages.reason });
+      respond(rt, { id: input.id, command: "prompt", error: hubError(parsedImages.code, parsedImages.reason) });
       return;
     }
     const gate = imagesGate(rt, parsedImages.images);
     if (gate !== undefined) {
-      respond(rt, { id: input.id, command: "prompt", error: gate });
+      respond(rt, { id: input.id, command: "prompt", error: hubError("capability_images", gate) });
       return;
     }
     // 命令分路（现状序保持：先于流式判定——流式中 /compact 经 busy 前置收 thread is streaming）
@@ -296,13 +324,13 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     }
     const agent = rt.state.handle?.agent;
     if (agent === undefined) {
-      respond(rt, { id: input.id, command: "prompt", error: "Unknown threadId" });
+      respond(rt, { id: input.id, command: "prompt", error: hubError("unknown_thread", "Unknown threadId") });
       return;
     }
     try {
       agent.followup(message, imageOptions(parsedImages.images)); // kick 同步（先 kick 后应答——全路径恰一响应）
     } catch (error) {
-      respond(rt, { id: input.id, command: "prompt", error: String(error instanceof Error ? error.message : error) });
+      respond(rt, { id: input.id, command: "prompt", error: errorOfCause(error) });
       return;
     }
     respond(rt, { id: input.id, command: "prompt" });
@@ -314,23 +342,23 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     if (requireThread(rt, { ...input, command: "steer" }) === undefined) return;
     const parsedImages = parseImages(input.images);
     if (!parsedImages.ok) {
-      respond(rt, { id: input.id, command: "steer", error: parsedImages.reason });
+      respond(rt, { id: input.id, command: "steer", error: hubError(parsedImages.code, parsedImages.reason) });
       return;
     }
     const gate = imagesGate(rt, parsedImages.images);
     if (gate !== undefined) {
-      respond(rt, { id: input.id, command: "steer", error: gate });
+      respond(rt, { id: input.id, command: "steer", error: hubError("capability_images", gate) });
       return;
     }
     const agent = rt.state.handle?.agent;
     if (agent === undefined) {
-      respond(rt, { id: input.id, command: "steer", error: "Unknown threadId" });
+      respond(rt, { id: input.id, command: "steer", error: hubError("unknown_thread", "Unknown threadId") });
       return;
     }
     try {
       agent.steer(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
     } catch (error) {
-      respond(rt, { id: input.id, command: "steer", error: String(error instanceof Error ? error.message : error) });
+      respond(rt, { id: input.id, command: "steer", error: errorOfCause(error) });
       return;
     }
     respond(rt, { id: input.id, command: "steer" });
@@ -342,23 +370,23 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     if (requireThread(rt, { ...input, command: "follow_up" }) === undefined) return;
     const parsedImages = parseImages(input.images);
     if (!parsedImages.ok) {
-      respond(rt, { id: input.id, command: "follow_up", error: parsedImages.reason });
+      respond(rt, { id: input.id, command: "follow_up", error: hubError(parsedImages.code, parsedImages.reason) });
       return;
     }
     const gate = imagesGate(rt, parsedImages.images);
     if (gate !== undefined) {
-      respond(rt, { id: input.id, command: "follow_up", error: gate });
+      respond(rt, { id: input.id, command: "follow_up", error: hubError("capability_images", gate) });
       return;
     }
     const agent = rt.state.handle?.agent;
     if (agent === undefined) {
-      respond(rt, { id: input.id, command: "follow_up", error: "Unknown threadId" });
+      respond(rt, { id: input.id, command: "follow_up", error: hubError("unknown_thread", "Unknown threadId") });
       return;
     }
     try {
       agent.followup(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
     } catch (error) {
-      respond(rt, { id: input.id, command: "follow_up", error: String(error instanceof Error ? error.message : error) });
+      respond(rt, { id: input.id, command: "follow_up", error: errorOfCause(error) });
       return;
     }
     respond(rt, { id: input.id, command: "follow_up" });
@@ -386,12 +414,12 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     const before = foldQueueText(session.events()); // 先取后清——返回被清文本
     const append = session.append("agent/inbox/spliced", { op: "clear", reason: "client-clear" });
     if (!append.ok) {
-      respond(rt, { id: input.id, command: "clear_queue", error: append.reason });
+      respond(rt, { id: input.id, command: "clear_queue", error: hubError("io_failed", append.reason) });
       return;
     }
     const flushed = await rt.state.world?.store.flush(session.id);
     if (flushed !== undefined && !flushed.ok) {
-      respond(rt, { id: input.id, command: "clear_queue", error: flushed.reason });
+      respond(rt, { id: input.id, command: "clear_queue", error: hubError("io_failed", flushed.reason) });
       return;
     }
     respond(rt, { id: input.id, command: "clear_queue", data: before });
@@ -401,7 +429,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     if (requireThread(rt, { ...input, command: "compact" }) === undefined) return;
     const custom = typeof input.customInstructions === "string" && input.customInstructions.trim() !== "" ? input.customInstructions.trim() : undefined;
     const dispatched = await dispatchCommand(rt, input, { command: "compact", line: custom !== undefined ? `/compact ${custom}` : "/compact", imagesPresent: false });
-    if (!dispatched) respond(rt, { id: input.id, command: "compact", error: "unknown command" }); // 无命令面装配的防御分支（hub 恒装配）
+    if (!dispatched) respond(rt, { id: input.id, command: "compact", error: hubError("unknown_command", "unknown command") }); // 无命令面装配的防御分支（hub 恒装配）
   });
 
   handlers.set("fork", (input) => serializedLifecycle(() => doFork(rt, input, "fork")));
@@ -421,7 +449,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, {
         id: input.id,
         command: "set_model",
-        error: `unknown model preset: ${modelId} (available: ${catalogModelIds(rt.state.catalog).join(", ")})`,
+        error: hubError("model_unavailable", `unknown model preset: ${modelId} (available: ${catalogModelIds(rt.state.catalog).join(", ")})`),
       });
       return;
     }
@@ -433,18 +461,18 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, {
         id: input.id,
         command: "set_model",
-        error: `cannot switch model: ${unsupported} — set_thinking_level off first or pick a compatible model`,
+        error: hubError("model_unavailable", `cannot switch model: ${unsupported} — set_thinking_level off first or pick a compatible model`),
       });
       return;
     }
     const append = session.append("session/meta", { key: META_KEY_DIAL, value: { provider: candidate.provider, model: candidate.model } });
     if (!append.ok) {
-      respond(rt, { id: input.id, command: "set_model", error: append.reason });
+      respond(rt, { id: input.id, command: "set_model", error: hubError("io_failed", append.reason) });
       return;
     }
     const flushed = await rt.state.world?.store.flush(session.id);
     if (flushed !== undefined && !flushed.ok) {
-      respond(rt, { id: input.id, command: "set_model", error: flushed.reason });
+      respond(rt, { id: input.id, command: "set_model", error: hubError("io_failed", flushed.reason) });
       return;
     }
     respond(rt, { id: input.id, command: "set_model" });
@@ -459,7 +487,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       ...(typeof input.id === "string" && input.id !== "" ? { id: input.id } : {}), // id 缺省回落 = 请求 id（DESIGN §3.7）
     });
     if (!outcome.ok) {
-      respond(rt, { id: input.id, command: "bash", error: outcome.reason });
+      respond(rt, { id: input.id, command: "bash", error: bashOutcomeError(outcome.reason) });
       return;
     }
     respond(rt, {
@@ -491,18 +519,18 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     const agentId = typeof input.agentId === "string" ? input.agentId : "";
     const caller = rt.state.threadId as SessionId;
     if (view === undefined) {
-      respond(rt, { id: input.id, command: "subagent/steer", error: `subagent ${agentId} not available (status: unknown)` });
+      respond(rt, { id: input.id, command: "subagent/steer", error: hubError("invalid_input", `subagent ${agentId} not available (status: unknown)`) });
       return;
     }
     const rows = await view.list(caller);
     const row = rows.find((entry) => entry.kind === "subagent" && entry.agentId === agentId);
     if (row === undefined) {
-      respond(rt, { id: input.id, command: "subagent/steer", error: `subagent ${agentId} not available (status: unknown)` });
+      respond(rt, { id: input.id, command: "subagent/steer", error: hubError("invalid_input", `subagent ${agentId} not available (status: unknown)`) });
       return;
     }
     // 驻留即投递：running → 步边界排队 / idle → 唤醒开新轮（内核 agent_message 语义）
     const sent = await view.message(caller, { to: agentId, message: typeof input.message === "string" ? input.message : "" });
-    respond(rt, sent.ok ? { id: input.id, command: "subagent/steer" } : { id: input.id, command: "subagent/steer", error: sent.reason });
+    respond(rt, sent.ok ? { id: input.id, command: "subagent/steer" } : { id: input.id, command: "subagent/steer", error: delegationError(sent.reason) });
   });
 
   registerReadCommands(rt, handlers);

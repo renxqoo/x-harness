@@ -1,7 +1,9 @@
 // 帧头分类（DESIGN §9 热路径）：数据类响应按行首正则提取 id/command/success
 // 三个字段就转发——不 JSON.parse、不读 body（转发路径 <1ms 零解析）。key 顺序
 // 契约：帧字面量由 frames.ts 单点生成（id,type,command,success 次序），正则与
-// 字面量成对（单测锁定）。
+// 字面量成对（单测锁定）。error 为结构化错误通道（shared/errors 词表）。
+import type { HubErrorShape } from "./errors.ts";
+
 export interface FrameClass {
   kind: "response";
   /** 回显 id（无 id 响应为 undefined——parse failure） */
@@ -33,7 +35,7 @@ export function responseLine(fields: {
   command: string;
   success: boolean;
   data?: unknown;
-  error?: string;
+  error?: HubErrorShape;
 }): string {
   const head = `{"id":${fields.id !== undefined ? JSON.stringify(fields.id) : "null"},"type":"response","command":${JSON.stringify(fields.command)},"success":${fields.success ? "true" : "false"}`;
   if (!fields.success && fields.error !== undefined) {

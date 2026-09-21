@@ -32,7 +32,7 @@ describe("场景：生命周期", () => {
     });
     host.send({ type: "get_state", id: "g1", threadId });
     const state = await host.response("g1");
-    expect(state.error).toBe("Unknown threadId");
+    expect(state.error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
   }, 60_000);
 
   test("fork 全旅程（真进程）：前缀复制 + 旧 id 失效 + 新线程继续对话", async () => {
@@ -49,7 +49,7 @@ describe("场景：生命周期", () => {
     expect(data.previousThreadId).toBe(threadId);
     // 旧 id 失效
     host.send({ type: "get_state", id: "g-old", threadId });
-    expect((await host.response("g-old")).error).toBe("Unknown threadId");
+    expect((await host.response("g-old")).error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
     // 新线程继续对话（新 worker 剧本重放）
     await drivePrompt(host, { threadId: data.threadId, id: "p2", message: "fork continues" });
     const wal = await (await import("node:fs/promises")).readFile(data.sessionPath, "utf8");

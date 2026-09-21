@@ -60,7 +60,7 @@ describe("settings-store", () => {
     expect(validateSettingValue("thinking.default", "huge").ok).toBe(false);
     expect(validateSettingValue("skills.disabled", ["a"]).ok).toBe(true);
     expect(validateSettingValue("skills.disabled", "a").ok).toBe(false);
-    expect(validateSettingValue("unknown.key", 1)).toEqual({ ok: false, error: "unknown setting key: unknown.key" });
+    expect(validateSettingValue("unknown.key", 1)).toEqual({ ok: false, error: { code: "invalid_input", message: "unknown setting key: unknown.key" } });
   });
 
   test("缺席/坏文件/坏值降级（安全向：逐键丢、不崩）", async () => {

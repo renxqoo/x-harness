@@ -8,6 +8,7 @@ import { mkdir, readFile, rename, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
+import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
 
@@ -17,7 +18,7 @@ export interface DeleteDeps {
   readonly agentDir: string;
 }
 
-export type DeleteResult = { ok: true; removed: string[] } | { ok: false; reason: string };
+export type DeleteResult = { ok: true; removed: string[] } | { ok: false; reason: HubErrorShape };
 
 /** 活族判定（live/spawning/retiring——含表项缺席的防御形态）：删除面唯二拒绝态之一 */
 function isLiveFamily(state: string | undefined): boolean {
@@ -125,21 +126,21 @@ export async function deleteSession(deps: DeleteDeps, sessionPath: string): Prom
   // —— 只读检查段（await 允许——此段不改状态）——
   const dirStat = await stat(dir).catch((error: unknown) => error as NodeJS.ErrnoException);
   if (dirStat instanceof Error && dirStat.code !== "ENOENT") {
-    return { ok: false, reason: `delete failed: ${dirStat.code ?? "stat"}` }; // EACCES 等不伪装缺席
+    return { ok: false, reason: hubError("io_failed", `delete failed: ${dirStat.code ?? "stat"}`) }; // EACCES 等不伪装缺席
   }
   if (dirStat instanceof Error) {
     // 目录缺席（幂等路径）：活族不因缺席放行（外部 rm 后 worker 仍活——先 stop）
-    if (isLiveFamily(holderState())) return { ok: false, reason: "already open" };
+    if (isLiveFamily(holderState())) return { ok: false, reason: hubError("already_open", "already open") };
     withdrawTableEntry(deps.table, canonicalPath); // 表残留一并撤
     return { ok: true, removed: [] };
   }
   // 活族先拒（纯读）：live worker 持活锁——先于 lock 探活给词表正确串
-  if (isLiveFamily(holderState())) return { ok: false, reason: "already open" };
+  if (isLiveFamily(holderState())) return { ok: false, reason: hubError("already_open", "already open") };
   if (await lockHeldByLiveProcess(dir)) {
-    return { ok: false, reason: "session is locked by another process" };
+    return { ok: false, reason: hubError("already_open", "session is locked by another process") };
   }
   if (await isSubagentSession(dir)) {
-    return { ok: false, reason: "cannot delete subagent session" };
+    return { ok: false, reason: hubError("state_conflict", "cannot delete subagent session") };
   }
   const children = await descendantIds(deps.sessionsRoot, fence.threadId);
   await mkdir(join(deps.agentDir, "trash"), { recursive: true }).catch(() => {}); // 预建——状态变更段零 await
@@ -149,7 +150,7 @@ export async function deleteSession(deps: DeleteDeps, sessionPath: string): Prom
 
   const removed: string[] = [];
   const vanished = await vanishToTrash(dir, deps.agentDir, fence.threadId);
-  if (vanished === "failed") return { ok: false, reason: "delete failed: rename" };
+  if (vanished === "failed") return { ok: false, reason: hubError("io_failed", "delete failed: rename") };
   if (vanished === "renamed") removed.push(fence.threadId);
   for (const child of children) {
     const outcome = await vanishToTrash(join(deps.sessionsRoot, child), deps.agentDir, child);

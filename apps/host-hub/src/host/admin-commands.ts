@@ -16,6 +16,7 @@ import {
   validateSettingValue,
 } from "../shared/settings-store.ts";
 import { metaTailOf } from "../shared/meta-fold.ts";
+import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import { addModel, removeModel } from "./models-admin.ts";
 import { createUserAgentType, removeUserAgentType } from "./agents-admin.ts";
 import { knownSkillNames, listSkills, removeSkill, setSkillEnabled } from "./skills-admin.ts";
@@ -29,7 +30,7 @@ export interface AdminCommandsDeps {
   sessionsRoot: string;
   table: ThreadTable;
   trust: TrustStore;
-  respond: (id: string | undefined, command: string, result: { data?: unknown; error?: string }) => void;
+  respond: (id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }) => void;
 }
 
 /** 信任 cwd 全集（注册表 ∪ live trusted——规范化）——skills/remove 的 project 判定用 */
@@ -42,14 +43,14 @@ async function trustedCwdsOf(deps: AdminCommandsDeps): Promise<string[]> {
   return [...new Set([...registry, ...live])];
 }
 
-/** cwd 形态的门禁与规范化（未过门禁返回拒绝文案） */
-async function gatedCwd(trust: TrustStore, table: ThreadTable, raw: string): Promise<{ ok: true; cwd: string } | { ok: false; error: string }> {
+/** cwd 形态的门禁与规范化（未过门禁返回结构化拒绝——invalid_input/trust_required） */
+async function gatedCwd(trust: TrustStore, table: ThreadTable, raw: string): Promise<{ ok: true; cwd: string } | { ok: false; error: HubErrorShape }> {
   if (!raw.startsWith("/")) {
-    return { ok: false, error: `invalid workspace path: ${raw}` };
+    return { ok: false, error: hubError("invalid_input", `invalid workspace path: ${raw}`) };
   }
   const cwd = await normalizeCwd(raw);
   if (!(await trust.isTrusted(cwd, table))) {
-    return { ok: false, error: `untrusted workspace: ${cwd} (trust it via workspace/trust or a trusted thread start)` };
+    return { ok: false, error: hubError("trust_required", `untrusted workspace: ${cwd} (trust it via workspace/trust or a trusted thread start)`) };
   }
   return { ok: true, cwd };
 }
@@ -89,7 +90,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       }
       const verdict = validateSettingValue("permission.defaultMode", input.mode);
       if (!verdict.ok) {
-        deps.respond(id, type, { error: `invalid permission mode: ${String(input.mode)}` });
+        deps.respond(id, type, { error: hubError("invalid_input", `invalid permission mode: ${String(input.mode)}`) });
         return true;
       }
       await updateHubSettings(deps.agentDir, (current) => ({ ...current, "permission.defaultMode": input.mode as never }));
@@ -98,14 +99,14 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
     }
     const entry = deps.table.get(threadId);
     if (entry === undefined) {
-      deps.respond(id, type, { error: "Unknown threadId" });
+      deps.respond(id, type, { error: hubError("unknown_thread", "Unknown threadId") });
       return true;
     }
     if (entry.state === "parked" || entry.state === "dead") {
       if (type === "permission/get_mode") {
         deps.respond(id, type, { data: await parkedPermissionMode(deps, threadId) });
       } else {
-        deps.respond(id, type, { error: "thread not live" });
+        deps.respond(id, type, { error: hubError("thread_not_live", "thread not live") });
       }
       return true;
     }
@@ -156,10 +157,10 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         // 名单键白名单收紧（只收合并清单内的名字——cwd 形态含 project 层）
         const known = new Set(await knownSkillNames(gate?.ok ? gate.cwd : undefined));
         const unknown = (input.value as string[]).filter((name) => !known.has(name));
-        if (unknown.length > 0) {
-          deps.respond(id, "settings/set", { error: `invalid setting value: skills.disabled contains unknown skill: ${unknown.join(", ")}` });
-          return;
-        }
+      if (unknown.length > 0) {
+        deps.respond(id, "settings/set", { error: hubError("invalid_input", `invalid setting value: skills.disabled contains unknown skill: ${unknown.join(", ")}`) });
+        return;
+      }
       }
       if (gate?.ok === true) {
         // 项目级：目录自建 + 整替目标级名单
@@ -177,11 +178,11 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         return;
       }
       if (!rawCwd.startsWith("/")) {
-        deps.respond(id, "workspace/trust", { error: `invalid workspace path: ${rawCwd}` });
+        deps.respond(id, "workspace/trust", { error: hubError("invalid_input", `invalid workspace path: ${rawCwd}`) });
         return;
       }
       if (input.trusted !== true && input.trusted !== false) {
-        deps.respond(id, "workspace/trust", { error: "invalid setting value: trusted must be a boolean" });
+        deps.respond(id, "workspace/trust", { error: hubError("invalid_input", "invalid setting value: trusted must be a boolean") });
         return;
       }
       if (input.trusted) await deps.trust.trust(rawCwd);
