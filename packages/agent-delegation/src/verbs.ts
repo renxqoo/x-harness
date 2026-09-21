@@ -21,6 +21,8 @@ export interface VerbDeps {
   readonly lineage: Lineage;
   readonly reportCap: number;
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
+  /** 周期终结事件发射面（BATCH2 §3——stop 对 idle 子无 armed-idle 边沿，同步发射） */
+  readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
   /** 跨进程面（未开箱 = 缺省纯进程内：box 域寻址与 notify_when_idle 拒） */
   readonly cross?: CrossDeps;
   /** archive 惰性复活（§6.2——修订A：按 agentId）：caller 自己的历史子 resume 重建；缺席=无档案面 */
@@ -148,12 +150,23 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
   const row = found.value;
   if (row.stopped) return { ok: true, text: `${row.agentId} already stopped` }; // 幂等
   const childHandle = deps.loop.get(row.sessionId);
+  const wasRunning = row.running;
   if (childHandle !== undefined) {
     childHandle.agent.cancel(input.cause ?? "agent-stop");
     await childHandle.agent.whenIdle();
   }
   row.stopped = true;
   row.occupied = false; // 槽释放；armed 置位者由通知门丢弃（cancel 后 idle 仍会触发通知——stop 后通知如实送达）
+  if (!wasRunning) {
+    // idle 子无 armed-idle 边沿可达（通知门永不再触发）——finished 同步发射（BATCH2 审 L4）
+    deps.emitFinished({
+      parent: row.parent,
+      agentId: row.agentId,
+      sessionId: row.sessionId,
+      outcome: "stopped",
+      detail: input.cause ?? "stopped",
+    });
+  }
   const kept = row.worktree !== undefined
     ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` })
     : { removed: true };

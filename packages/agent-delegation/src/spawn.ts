@@ -26,6 +26,9 @@ export interface SpawnDeps {
   readonly limits: { readonly maxDepth: number; readonly maxConcurrent: number };
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly isTearingDown: () => boolean;
+  /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
+  readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number }) => void;
+  readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
   /** permission 授权面（isolation=worktree 的根替换落账）；缺位时 worktree 隔离拒 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
 }
@@ -124,9 +127,29 @@ async function buildChild(
     deps.setRootOverride(childHandle.agent.session.id, worktree.plan.path, worktree.plan.repoTop);
   }
   deps.lineage.register(row);
+  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth });
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
-  childHandle.agent.followup(plan.input.prompt);
+  kickChild(deps, { row, handle: childHandle, prompt: plan.input.prompt });
   return { ok: true, text: spawnText(row, isFork && !forked) };
+}
+
+/** kick 子代理（spawn 收尾）：失败 → finished 闭环 + 释放占槽后重抛（dispatch 归一为
+ *  工具错误结果）。armed 恒 false——armed-idle 通知门永不可达，不闭环即事件幽灵 +
+ *  占槽永久泄漏（BATCH2 审 H3） */
+function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string }): void {
+  try {
+    spec.handle.agent.followup(spec.prompt);
+  } catch (error) {
+    spec.row.occupied = false;
+    deps.emitFinished({
+      parent: spec.row.parent,
+      agentId: spec.row.agentId,
+      sessionId: spec.row.sessionId,
+      outcome: "failed",
+      detail: `kick failed: ${error instanceof Error ? error.message : String(error)}`,
+    });
+    throw error;
+  }
 }
 
 /** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt（白名单走 registry 会话层，W2A） */
@@ -193,8 +216,15 @@ function restrictChildTools(deps: SpawnDeps, spec: { readonly caller: SessionId;
   if (effectiveTools !== undefined) deps.registry.scoped(spec.child.agent.session.id).restrict(effectiveTools);
 }
 
-/** execute 内断信号：不遗孤儿子（worktree 一并评估——审查 B-P2-5） */
+/** execute 内断信号：不遗孤儿子（worktree 一并评估——审查 B-P2-5）；spawned 已发 → finished 收口 */
 async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandle: AgentHandle; readonly row: ChildRow; readonly plan?: WorktreePlan }): Promise<SpawnOutcome> {
+  input.deps.emitFinished({
+    parent: input.row.parent,
+    agentId: input.row.agentId,
+    sessionId: input.row.sessionId,
+    outcome: "stopped",
+    detail: "spawn cancelled before dispatch",
+  });
   await input.childHandle.dispose();
   if (input.plan !== undefined) await evaluateCleanup({ path: input.plan.path, branch: input.plan.branch }).catch(() => {});
   input.deps.lineage.drop(input.row.sessionId);

@@ -17,6 +17,8 @@ export interface NotifyDeps {
   readonly getRow: (session: SessionId) => ChildRow | undefined;
   isTearingDown: () => boolean;
   adoptOrphan: (row: ChildRow) => Promise<void>;
+  /** 周期终结事件发射面（BATCH2 §3——deliver 单点：正常/停止/孤儿全收敛于此） */
+  readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
 }
 
 export interface ChildReport {
@@ -161,14 +163,43 @@ export function createNotifier(deps: NotifyDeps): (payload: { session: SessionId
   };
 }
 
+/** report.status → finished.outcome 映射（completed 原样；aborted → stopped 取消语义；
+ *  其余终态 failed——与 outcomeHead 首行铸语同口径） */
+function outcomeOf(status: string): "completed" | "stopped" | "failed" {
+  if (status === "completed") return "completed";
+  if (status === "aborted") return "stopped";
+  return "failed";
+}
+
 async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
   const parentHandle = deps.loop.get(row.parent);
   if (parentHandle === undefined) {
+    deps.emitFinished({
+      parent: row.parent,
+      agentId: row.agentId,
+      sessionId: row.sessionId,
+      outcome: "failed",
+      detail: "parent session gone (agent stopped)",
+    });
     await deps.adoptOrphan(row); // 孤儿子：不任其烧请求
     return;
   }
   const childSession = deps.store.get(row.sessionId);
   const text = childSession === undefined ? archivedNotificationText(row) : notificationText(row, childReport(childSession.events()));
+  if (childSession === undefined) {
+    // 封存缺档：completion 事实仍送达（idle 边沿已证跑完一轮）
+    deps.emitFinished({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, outcome: "completed", detail: "session-archived (no report available)" });
+  } else {
+    const report = childReport(childSession.events());
+    deps.emitFinished({
+      parent: row.parent,
+      agentId: row.agentId,
+      sessionId: row.sessionId,
+      outcome: outcomeOf(report.status),
+      detail: failureDetail(report),
+      ...(report.summary !== undefined ? { summary: report.summary } : {}),
+    });
+  }
   try {
     parentHandle.agent.steer(text);
   } catch {

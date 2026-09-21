@@ -147,8 +147,8 @@ describe("worker 旅程 II", () => {
   test("子代理面：agent_spawn 工具 → get_subagents 行 + subagent/steer 投递", async () => {
     const w = await spawn([
       { toolCalls: [{ name: "agent_spawn", input: '{"description":"research","prompt":"do work"}' }] },
-      { reply: "child works" },
       { reply: "parent continues" },
+      { reply: "child works" },
     ]);
     // full 档起线程：agent_spawn 工具不弹窗（入参路径 + 授权面同步的旅程锚）
     w.send({ type: "thread/start", id: "s1", permissionMode: "full" });
@@ -229,5 +229,60 @@ describe("worker 旅程 II", () => {
     expect(second).not.toBe(first);
     w.send({ type: "prompt", id: "p2", threadId: second, message: "again" });
     await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === "p2");
+  });
+});
+
+describe("子代理实时事件面（BATCH2 §3——去轮询：推送全覆盖）", () => {
+  test("agent/spawned → agent/status → agent/finished 推送 + 子归属帧 agentName/session 字段", async () => {
+    const w = await spawn([
+      { toolCalls: [{ name: "agent_spawn", input: '{"description":"research","prompt":"do work"}' }] },
+      { reply: "parent continues" },
+      { reply: "child works" },
+    ]);
+    w.send({ type: "thread/start", id: "s1", permissionMode: "full" });
+    const startedFrame = await waitResponse(w.captured.lines, "thread/start", "s1");
+    const threadId = (startedFrame.data as { threadId: string }).threadId;
+    w.send({ type: "prompt", id: "p1", threadId, message: "spawn one" });
+    // ① spawned 推送（零轮询——客户端不再依赖 get_subagents 轮询感知）
+    const spawnedFrame = await waitEvent(w.captured.lines, "agent/spawned");
+    const spawned = spawnedFrame.payload as { parent: string; agentId: string; sessionId: string; type: string; depth: number };
+    expect(spawned.parent).toBe(threadId);
+    expect(spawned.type).toBe("untyped");
+    expect(spawned.depth).toBe(1);
+    expect(spawned.agentId).toMatch(/^agent-/);
+    // ② 子运行边沿（agent/status 带 session 归属）
+    const childRun = await waitEvent(w.captured.lines, "agent/status", (p) => (p as { session?: string }).session === spawned.sessionId && (p as { status?: string }).status === "running");
+    expect((childRun.payload as { session: string }).session).toBe(spawned.sessionId);
+    // ③ 子 WAL 帧带 session 归属 + agentName（D1 修复面：外发可归属，不污染主线程状态）
+    const childTurn = await waitEvent(w.captured.lines, "turn/start", (p) => (p as { session?: string }).session === spawned.sessionId);
+    expect(childTurn.agentName).toBe(spawned.agentId);
+    // ④ 周期终结推送
+    const finishedFrame = await waitEvent(w.captured.lines, "agent/finished", (p) => (p as { agentId?: string }).agentId === spawned.agentId);
+    const finished = finishedFrame.payload as { outcome: string; detail: string; summary?: string };
+    expect(finished.outcome).toBe("completed");
+    expect(finished.detail).toBe("completed");
+    expect(finished.summary).toContain("child works");
+    await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === "p1");
+  });
+
+  test("thread/stop 拆除序：子在飞时 stop → agent/finished{stopped} 帧可达（桥先于 teardown 拆）", async () => {
+    const w = await spawn([
+      { toolCalls: [{ name: "agent_spawn", input: '{"description":"slow","prompt":"work"}' }] },
+      { reply: "parent continues" },
+      { delayMs: 60_000 },
+    ]);
+    w.send({ type: "thread/start", id: "s1", permissionMode: "full" });
+    const startedFrame = await waitResponse(w.captured.lines, "thread/start", "s1");
+    const threadId = (startedFrame.data as { threadId: string }).threadId;
+    w.send({ type: "prompt", id: "p1", threadId, message: "spawn slow one" });
+    const spawnedFrame = await waitEvent(w.captured.lines, "agent/spawned");
+    const spawned = spawnedFrame.payload as { agentId: string; sessionId: string };
+    // 子消费 delay 剧本步（60s hold）——父继续收敛
+    await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === "p1");
+    w.send({ type: "thread/stop", id: "st1", threadId });
+    await waitResponse(w.captured.lines, "thread/stop", "st1");
+    // 拆除序承诺：stopAll 先于 unsubscribe——子的 finished 边沿必须到达客户端
+    const finishedFrame = await waitEvent(w.captured.lines, "agent/finished", (p) => (p as { agentId?: string }).agentId === spawned.agentId);
+    expect((finishedFrame.payload as { outcome: string }).outcome).toBe("stopped");
   });
 });

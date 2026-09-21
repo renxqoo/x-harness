@@ -231,6 +231,10 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
     respond(rt, { id: input.id, command, error: `fork reassembly failed: ${disposed.reason}` });
     return;
   }
+  // 拆除序（BATCH2 §3）：stopAll 先于 unsubscribe——fork 重装配期子的 finished 边沿可达
+  if (rt.state.delegation !== undefined && rt.state.handle !== undefined) {
+    await rt.state.delegation.stopAll(rt.state.handle.agent.session.id, "fork-reassembly");
+  }
   rt.bridge.unsubscribe();
   await rt.state.handle?.dispose();
   await teardownWorld(world);
@@ -393,6 +397,12 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
   handlers.set("thread/stop", serialized(async (input) => {
     const handle = rt.state.handle;
     if (handle !== undefined) {
+      // 拆除序（BATCH2 §3，对齐 worker 优雅关停）：先 stopAll（桥在线——子的
+      // agent/finished 边沿可达客户端）→ 再 unsubscribe → 再 teardown（级联期
+      // tearing-down 门挡回 notifier，先拆桥会吞掉全部 finished 事件）
+      if (rt.state.delegation !== undefined) {
+        await rt.state.delegation.stopAll(handle.agent.session.id, "thread-stop");
+      }
       rt.bridge.unsubscribe();
       await handle.dispose();
       if (rt.state.world !== undefined) await teardownWorld(rt.state.world);

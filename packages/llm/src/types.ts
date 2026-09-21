@@ -1,6 +1,6 @@
 // LLM 契约类型（docs/LLM.md §1.1）：LlmChunk 流、失败契约（结构化 code/retryAfterMs）、适配器与 runtime。
 
-import type { SurfaceMessage } from "@x-harness/session";
+import type { SessionId, SurfaceMessage } from "@x-harness/session";
 import type { ToolSchema } from "@x-harness/tools";
 
 export interface UsageCost {
@@ -52,6 +52,8 @@ export interface LlmRequest {
   readonly model: string;
   /** 适配器选择键；缺省 = 唯一注册适配器 */
   readonly provider?: string;
+  /** 请求归属会话（agent-loop 构造时携带——流 tap 归属判据；不透传出站） */
+  readonly session?: SessionId;
   readonly temperature?: number;
   readonly maxTokens?: number;
   /** 思考等级（缺省/off = 不发 thinking 参数——上游默认行为决定是否思考） */

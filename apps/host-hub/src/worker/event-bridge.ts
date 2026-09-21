@@ -1,13 +1,16 @@
 // 事件桥（DESIGN §4/§5）：world ctx 的 session 域（sessionEvent 镜像 WAL）+ 实时域
-// （assistant-stream/status/error/compaction/permission/checkpoint bus 事件）→ wire
-// 事件帧（name = 内核 token 原名，payload 逐字转发）。worker 盖章 threadId = 当前
-// 会话 id（fork 重键后即新 id——host 逐字转发）。另挂 llm/stream waterfall tap →
-// llm/chunk 合成域（工具增量/usage/finish——内核事件面只含 text/thinking）；维护
-// 观察态：streaming（turn 配对）、在途喂入（partial 累积/工具占位）、settled 合成。
+// （assistant-stream/status/error/tool-stream/compaction/permission/checkpoint bus 事件）
+// → wire 事件帧（name = 内核 token 原名，payload 逐字转发 + session 归属字段）。
+// worker 盖章 threadId = 当前会话 id（fork 重键后即新 id——host 逐字转发）。
+// 归属纪律（BATCH2 §3）：只有主会话事件喂观察态（streaming/inflight/partial）——
+// 子会话事件外发但不污染主线程状态（D1/D2/D3 回归面）；子归属帧填 agentName
+// （agentSpawned 事件播种映射，sessionDisposed/unsubscribe 清）。另挂 llm/stream
+// waterfall tap → llm/chunk 合成域（仅主会话；子的模型增量经 agent/assistant-stream）。
 import type { Context } from "@x-harness/core";
 import { sessionDisposed, sessionEvent } from "@x-harness/session";
 import type { SessionEvent } from "@x-harness/session";
 import { agentAssistantStream, agentError, agentStatus, agentToolStream } from "@x-harness/agent-loop";
+import { agentFinished, agentSpawned } from "@x-harness/agent-delegation";
 import { llmStream } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
 import { compactionDiagnostic, compactionLanded, compactionServedWindow } from "@x-harness/compaction";
@@ -24,8 +27,8 @@ export interface EventBridgeDeps {
   inflight: InflightState;
 }
 
-/** 在途 assistant partial 累积器：text/thinking（assistant-stream chunk）+
- * tool-call 增量（llm/chunk）→ 伪消息形状 */
+/** 在途 assistant partial 累积器：text/thinking（assistant-stream chunk——唯一文本源）+
+ *  tool-call 增量（llm/chunk）→ 伪消息形状 */
 function createPartialAccumulator() {
   let text = "";
   let thinking = "";
@@ -68,9 +71,10 @@ export interface EventBridge {
   childBusy(): boolean;
 }
 
-/** session 事件 → wire payload：{seq, time, ...data}（WAL 对账面——客户端以 seq 游标增量拉取） */
-function sessionPayload(event: SessionEvent): Record<string, unknown> {
-  return { seq: event.seq, time: event.time, ...(event.data as Record<string, unknown>) };
+/** session 事件 → wire payload：{seq, time, ...data, session}——session 后置（事件
+ *  数据词表无 session 键，不遮蔽；主会话 session === threadId，客户端一条规则过滤归属） */
+function sessionPayload(event: SessionEvent, session: string): Record<string, unknown> {
+  return { seq: event.seq, time: event.time, ...(event.data as Record<string, unknown>), session };
 }
 
 export function createEventBridge(deps: EventBridgeDeps): EventBridge {
@@ -78,26 +82,32 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
   let streaming = false;
   const partial = createPartialAccumulator();
   const childStatuses = new Map<string, "idle" | "running">();
+  const childNames = new Map<string, { agentId: string; type: string }>();
   let llmTurn = 0;
   let llmStep = 0;
 
   function emit(name: string, payload: unknown): void {
     const threadId = deps.threadId();
     if (threadId === "") return; // 未装配：无盖章不外发
-    deps.emitLine(eventFrame({ threadId, name, payload }));
+    // 子归属帧填 agentName（frames 死字段激活——DESIGN §4 声明兑现）
+    const owner = (payload as { session?: unknown }).session;
+    const named = owner !== undefined ? childNames.get(String(owner)) : undefined;
+    deps.emitLine(eventFrame({ threadId, name, payload, ...(named !== undefined ? { agentName: named.agentId } : {}) }));
   }
 
-  // —— 工具增量流（BATCH2 §2）：inflight 逐 delta 追加（get_inflight 恒新鲜）；wire 帧
-  // per-callId 尾沿合并 ≥25ms（delta 可连接——合并不损；火喉输出下帧率有界）——
+  // —— 工具增量流（BATCH2 §2）：主会话 inflight 逐 delta 追加（get_inflight 恒新鲜）；
+  // wire 帧 per-(session,callId) 尾沿合并 ≥25ms（delta 可连接——合并不损；火喉输出下
+  // 帧率有界）。子会话帧经同机制外推（归属 payload 自带 session）——
   interface ToolStreamPending {
+    owner: string;
     pending: string;
     timer: ReturnType<typeof setTimeout> | undefined;
     lastAt: number;
   }
   const toolStream = new Map<string, ToolStreamPending>();
 
-  function flushToolStream(callId: string): void {
-    const state = toolStream.get(callId);
+  function flushToolStream(key: string): void {
+    const state = toolStream.get(key);
     if (state === undefined) return;
     if (state.timer !== undefined) {
       clearTimeout(state.timer);
@@ -106,19 +116,28 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     const chunk = state.pending;
     state.pending = "";
     state.lastAt = Date.now();
-    if (chunk !== "") emit(agentToolStream.name, { session: deps.threadId(), callId, delta: chunk });
+    if (chunk !== "") emit(agentToolStream.name, { session: state.owner, callId: keyOf(key).callId, delta: chunk });
   }
 
-  function feedToolStream(callId: string, delta: string): void {
-    deps.inflight.toolOutput(callId, delta);
-    const state = toolStream.get(callId) ?? { pending: "", timer: undefined, lastAt: 0 };
-    toolStream.set(callId, state);
+  /** 帧键 → (owner, callId) 还原：主会话键 = callId（历史形态），子会话键 = `<session>:<callId>` */
+  function keyOf(key: string): { owner: string; callId: string } {
+    const split = key.indexOf(":");
+    if (split === -1) return { owner: deps.threadId(), callId: key };
+    return { owner: key.slice(0, split), callId: key.slice(split + 1) };
+  }
+
+  function feedToolStream(owner: string, callId: string, delta: string): void {
+    const main = owner === deps.threadId();
+    if (main) deps.inflight.toolOutput(callId, delta);
+    const key = main ? callId : `${owner}:${callId}`;
+    const state = toolStream.get(key) ?? { owner, pending: "", timer: undefined, lastAt: 0 };
+    toolStream.set(key, state);
     state.pending += delta;
     if (state.timer === undefined) {
       const wait = Math.max(0, TOOL_STREAM_MIN_INTERVAL_MS - (Date.now() - state.lastAt));
       const timer = setTimeout(() => {
         state.timer = undefined;
-        flushToolStream(callId);
+        flushToolStream(key);
       }, wait);
       timer.unref?.();
       state.timer = timer;
@@ -132,52 +151,65 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     toolStream.clear();
   }
 
-  function onSessionEvent(event: SessionEvent): void {
-    if (event.type === "turn/start") {
-      streaming = true;
-      partial.reset();
-      deps.inflight.turnStart(event.seq, event.time);
-    } else if (event.type === "turn/end") {
-      streaming = false;
-      deps.inflight.turnEnd();
-      partial.reset();
-      clearToolStream(); // 轮边界：在途尾巴冲净（settled 后无增量）
-    } else if (event.type === "tool/call") {
-      deps.inflight.toolOutput(event.data.callId, ""); // 在途工具占位（startedAt 基线；增量经 agent/tool-stream）
-    } else if (event.type === "tool/result") {
-      flushToolStream(event.data.callId); // 结算边沿：尾批冲净后撤状态
-      toolStream.delete(event.data.callId);
-      deps.inflight.toolDone(event.data.callId);
+  function onSessionEvent(owner: string, event: SessionEvent): void {
+    const main = owner === deps.threadId();
+    if (main) {
+      if (event.type === "turn/start") {
+        streaming = true;
+        partial.reset();
+        deps.inflight.turnStart(event.seq, event.time);
+      } else if (event.type === "turn/end") {
+        streaming = false;
+        deps.inflight.turnEnd();
+        partial.reset();
+        clearToolStream(); // 轮边界：在途尾巴冲净（settled 后无增量）
+      } else if (event.type === "tool/call") {
+        deps.inflight.toolOutput(event.data.callId, ""); // 在途工具占位（startedAt 基线；增量经 agent/tool-stream）
+      } else if (event.type === "tool/result") {
+        flushToolStream(event.data.callId); // 结算边沿：尾批冲净后撤状态
+        toolStream.delete(event.data.callId);
+        deps.inflight.toolDone(event.data.callId);
+      }
     }
-    emit(event.type, sessionPayload(event));
+    emit(event.type, sessionPayload(event, owner));
   }
 
   return {
     wire(ctx: Context) {
       this.unsubscribe();
       offs.push(
-        ctx.on(sessionEvent, ({ event }) => onSessionEvent(event)),
+        ctx.on(sessionEvent, ({ session, event }) => onSessionEvent(String(session), event)),
         ctx.on(sessionDisposed, ({ session }) => {
-          // 子会话终结边沿：忙态表清行（异常终止无 idle 边沿时防恒 busy——idle retire 永不触发的缺陷面）
+          // 子会话终结边沿：忙态表/归属映射清行（异常终止无 idle 边沿时防恒 busy；映射无界增长防线）
           childStatuses.delete(String(session));
+          childNames.delete(String(session));
         }),
         ctx.on(agentAssistantStream, (payload) => {
-          llmTurn = payload.turn;
-          llmStep = payload.step;
-          if (payload.frame.phase === "chunk") {
-            partial.pushChunk(payload.frame.kind, payload.frame.text);
-            deps.inflight.partial(partial.snapshot());
+          // D2/D3：partial 文本唯一源 = 主会话 stream 帧；llmTurn/llmStep 仅主会话跟踪
+          // （子帧曾无条件覆盖全局游标 + 双路喂 partial 双计正文——回归面）
+          if (String(payload.session) === deps.threadId()) {
+            llmTurn = payload.turn;
+            llmStep = payload.step;
+            if (payload.frame.phase === "chunk") {
+              partial.pushChunk(payload.frame.kind, payload.frame.text);
+              deps.inflight.partial(partial.snapshot());
+            }
           }
           emit(agentAssistantStream.name, payload);
         }),
         ctx.on(agentToolStream, (payload) => {
-          // W2：仅主会话外推（W3 归属泛化——子的工具增量届时带 session 转发）
-          if (String(payload.session) !== deps.threadId()) return;
-          feedToolStream(payload.callId, payload.delta);
+          feedToolStream(String(payload.session), payload.callId, payload.delta);
+        }),
+        ctx.on(agentSpawned, (payload) => {
+          childNames.set(String(payload.sessionId), { agentId: payload.agentId, type: payload.type });
+          emit(agentSpawned.name, payload);
+        }),
+        ctx.on(agentFinished, (payload) => {
+          emit(agentFinished.name, payload);
         }),
         ctx.on(agentStatus, (payload) => {
           const threadId = deps.threadId();
-          if (threadId !== "" && payload.session !== threadId) {
+          if (threadId !== "" && String(payload.session) !== threadId) {
             childStatuses.set(String(payload.session), payload.status); // 子会话边沿（busy 面）
           }
           emit(agentStatus.name, payload);
@@ -197,7 +229,8 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
         ctx.on(checkpointDiagnostic, (payload) => emit(checkpointDiagnostic.name, payload)),
       );
       // llm/chunk 合成域：tap llm/stream waterfall（中间件契约——必须调 next）；
-      // 逐块转发 LlmChunk（工具增量/usage/finish——内核事件面只含 text/thinking）
+      // 逐块转发 LlmChunk（工具增量/usage/finish——内核事件面只含 text/thinking）。
+      // 仅主会话（D2）：子的模型增量经 agent/assistant-stream（payload 已含 session），不双通道重复
       offs.push(
         ctx.on(llmStream, (request: LlmRequest, next: (input: LlmRequest) => Promise<AsyncIterable<LlmChunk>>) =>
           tapLlmStream(request, next),
@@ -208,6 +241,7 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
       for (const off of offs.splice(0)) off();
       streaming = false;
       childStatuses.clear();
+      childNames.clear(); // fork 重键 = wire 重接空置重建（新装配无子）
       partial.reset();
       clearToolStream();
     },
@@ -227,18 +261,21 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     },
   };
 
+  /** tap 喂入面：主会话流仅喂 tool-call 增量（text/thinking 唯一源在 assistant-stream
+   *  帧——双路喂曾致 partial 正文双计，D3 回归） */
   function feedPartial(chunk: LlmChunk): void {
     if (chunk.type === "tool-call-delta" && chunk.argumentsDelta !== undefined) partial.pushToolDelta(chunk.argumentsDelta);
-    else if (chunk.type === "text-delta") partial.pushChunk("text", chunk.text);
-    else if (chunk.type === "thinking-delta") partial.pushChunk("thinking", chunk.text);
   }
 
   async function tapLlmStream(request: LlmRequest, next: (input: LlmRequest) => Promise<AsyncIterable<LlmChunk>>): Promise<AsyncIterable<LlmChunk>> {
     const stream = await next(request);
+    const main = request.session === undefined || String(request.session) === deps.threadId();
+    if (!main) return stream; // 子会话流：不合成 llm/chunk（走 assistant-stream），原样放行
     const self = {
       async *[Symbol.asyncIterator](): AsyncIterator<LlmChunk> {
         for await (const chunk of stream) {
           feedPartial(chunk);
+          if (chunk.type === "tool-call-delta") deps.inflight.partial(partial.snapshot()); // 工具增量后即发布（否则等下一帧才可见）
           emit("llm/chunk", { turn: llmTurn, step: llmStep, chunk });
           yield chunk;
         }

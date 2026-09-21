@@ -153,12 +153,14 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     const row = { agentId: "agent-deadbeef", sessionId: "session-x" as never, name: "ghost", type: "worker", parent: parent.agent.session.id, depth: 1, occupied: false, armed: true, running: false, stopped: false };
     const store = world.ctx.use((await import("@x-harness/session")).sessionStore);
     const loop = world.loop;
+    const finished: Array<{ outcome: string; detail: string }> = [];
     const notifier = createNotifier({
       loop,
       store,
       getRow: (session) => (session === row.sessionId ? row : undefined),
       isTearingDown: () => false,
       adoptOrphan: async () => {},
+      emitFinished: (payload) => finished.push({ outcome: payload.outcome, detail: payload.detail }),
     });
     notifier({ session: row.sessionId, status: "running" });
     notifier({ session: row.sessionId, status: "idle" }); // store.get(session-x) undefined → 占位路径
@@ -169,6 +171,8 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     };
     await vi.waitFor(() => expect(lastUserText()).toContain("session-archived"), { timeout: 5_000 });
     expect(lastUserText()).toContain("session: session-x"); // 占位通知同样带 session 行（档案指针）
+    // 占位路径的周期终结事件（BATCH2 §3）：idle 边沿已证跑完一轮 → completed + 缺档句
+    expect(finished).toContainEqual({ outcome: "completed", detail: "session-archived (no report available)" });
     await parent.dispose();
   });
 });

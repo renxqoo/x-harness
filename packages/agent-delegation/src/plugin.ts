@@ -28,6 +28,8 @@ import type { VerbDeps } from "./verbs.ts";
 import { agentTaskSource } from "./task-source.ts";
 import { delegationTools } from "./tools.ts";
 import { delegationView } from "./view.ts";
+import { agentFinished, agentSpawned } from "./tokens.ts";
+import type { AgentFinishedPayload, AgentSpawnedPayload } from "./tokens.ts";
 
 const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_CONCURRENT = 10;
@@ -106,6 +108,9 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
       };
 
       const grants = ctx.tryUse(permissionGrants);
+      // 生命周期事件发射面（BATCH2 §3）：root 层 emit——宿主桥（hub event-bridge）可观察
+      const emitSpawned = (payload: AgentSpawnedPayload): void => ctx.emit(agentSpawned, payload);
+      const emitFinished = (payload: AgentFinishedPayload): void => ctx.emit(agentFinished, payload);
       const spawnDeps = {
         loop,
         store,
@@ -114,6 +119,8 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         limits,
         types: () => current,
         isTearingDown: () => tearingDown,
+        emitSpawned,
+        emitFinished,
         ...(grants !== undefined ? { setRootOverride: (session: import("@x-harness/session").SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
       };
       // 启动期对账清扫（§8.3——崩溃泄漏兜底）；测试可关（worktreeSweep:false）
@@ -137,6 +144,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
               parentModelOf: (session: SessionId) => loop.get(session)?.agent.options.model,
               parentIdleTimeoutOf: (session: SessionId) => loop.get(session)?.agent.options.streamIdleTimeoutMs,
               parentToolsOf: (session: SessionId) => registry.restrictionOf(session),
+              emitSpawned,
               ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
               ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
             },
@@ -162,7 +170,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         }
       };
 
-      let verbDeps: VerbDeps = { loop, store, lineage, reportCap: limits.reportCap, adoptOrphan, reviveByName: revive };
+      let verbDeps: VerbDeps = { loop, store, lineage, reportCap: limits.reportCap, adoptOrphan, emitFinished, reviveByName: revive };
 
       let consumer: ReturnType<typeof createMailboxConsumer> | undefined;
       let cross: CrossDeps | undefined;
@@ -180,7 +188,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         pendingEffects.push(() => startDrain(consumer as MailboxConsumer, service.timing.pollIntervalMs, options.onWarn));
       }
 
-      const notifier = createNotifier({ loop, store, getRow: (session) => lineage.bySession(session), isTearingDown: () => tearingDown, adoptOrphan });
+      const notifier = createNotifier({ loop, store, getRow: (session) => lineage.bySession(session), isTearingDown: () => tearingDown, adoptOrphan, emitFinished });
       const offStatus = ctx.on(agentStatus, (payload) => {
         notifier(payload);
         if (payload.status === "idle") evictIdle();

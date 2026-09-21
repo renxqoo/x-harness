@@ -358,6 +358,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         const stream = await deps.dispatchLlmStream({ // F0③（agent/llm-stream）：agent 层流包裹（final = runtime.stream；全局面在 llm 包 llm/stream）
           model: dial.model,
           ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
+          session: session.id, // 流 tap 归属判据（子代理流过滤——BATCH2 §3）
           ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
           ...(dial.maxTokens !== undefined ? { maxTokens: dial.maxTokens } : {}),
           ...(dial.thinking !== undefined ? { thinking: dial.thinking } : {}),

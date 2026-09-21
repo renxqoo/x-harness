@@ -343,6 +343,9 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
 - **get_subagents** `{threadId}` → `{subagents: [...]}` — delegationView.list()
   ChildView 行原样 `{kind, agentId?, sessionId?, name?, ref?, type?, depth?, status:
   running|idle|stopped}`（**状态词表 = 内核 ChildView 原样**，MIGRATION §4）。
+  **消费模型（BATCH2 起）**：本命令是水化快照读（重连/首查一次）；状态增量经
+  `agent/spawned` / `agent/status` / `agent/finished` 推送事件到达——**零轮询**
+  （`[agent-notification]` 通知注入是父模型感知通道，与客户端事件面不同消费方）。
 - **get_host_info** → `{version, bunVersion, pid, uptimeMs, rssBytes, threads:{live,
   parked,dead}, limits:{...}}`；不含路径/env/凭据。
 - **set_idle_retire_ms / set_rss_retire_bytes** — 运行时旋钮（回 clamp 后值）。
@@ -407,7 +410,7 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
 | 帧 | 说明 |
 | --- | --- |
 | `response` | `{id?, command, success, data?\|error}`（恰一契约；id-first key 序单点） |
-| `event` | `{threadId, name, payload, agentName?}` — worker 盖章 threadId（= 其当前会话 id；host 逐字转发）；`agentName` 仅子代理域事件携带 |
+| `event` | `{threadId, name, payload, agentName?}` — worker 盖章 threadId（= 其当前会话 id；host 逐字转发）；`agentName` = 子代理归属帧的 agentId（BATCH2 起激活：桥由 `agent/spawned` 事件播种 session→agentId 映射，凡 payload 携带子会话 session 的帧即填；sessionDisposed/换会话清） |
 | `ui_request` | `{requestId, threadId, method, ...}`（§6） |
 | `heartbeat` | 1Hz `{rssBytes, cpuPercent}`（host 自身） |
 | `hub_error` | 未捕获异常报告（进程不退出；worker 源带 threadId） |
@@ -417,8 +420,10 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
 **事件词表（认领集 + 未知透传）**：
 
 - **session 域**（`sessionEvent` bus 镜像——与 WAL 事件一一对应，payload 携带
-  `{seq, time, ...data}`）：`turn/start`、`turn/end`（reason = TurnEndReason 判别
-  联合 `{kind: completed|aborted|blocked|error|max-tokens|interrupted, ...}`）、
+  `{seq, time, ...data, session}`；**session 归属字段（BATCH2 起）**：主会话帧
+  session === threadId，子代理会话帧 session = 子会话 id——客户端一条规则过滤归属；
+  子会话帧外发但不喂主线程观察态）：`turn/start`、`turn/end`（reason = TurnEndReason
+  判别联合 `{kind: completed|aborted|blocked|error|max-tokens|interrupted, ...}`）、
   `step/start`、`step/end`、`system/message`、`user/message`、`assistant/message`、
   `assistant/attempt`、`tool/call`、`tool/result`、`request/header`、
   `request/context`、`llm/retry`、`session/end-seed`、`agent/inbox/spliced`
@@ -426,13 +431,23 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   `session/meta`。
 - **实时域**（bus 事件 token 原名透传）：`agent/assistant-stream`（payload =
   `{session, turn, step, frame}`——AssistantStreamFrame：start / chunk（**仅
-  `{kind:"text"|"thinking", text}`**）/ end）、`agent/status`（`{session, status:
+  `{kind:"text"|"thinking", text}`**）/ end；**子代理模型增量经本面到达**——llm/chunk
+  仅主会话，不双通道重复）、`agent/status`（`{session, status:
   idle|running}`）、`agent/error`（`{session, turn, message}`）、`agent/tool-stream`
-  （`{session, callId, delta}`——内核工具增量事件，BATCH2 起；当前仅主会话外推，
-  delta 为原始字节流口径——ANSI 清洗是 tool/result 结算口径）、`compaction/landed`、
+  （`{session, callId, delta}`——内核工具增量事件，BATCH2 起，主/子会话均外推，
+  delta 为原始字节流口径——ANSI 清洗是 tool/result 结算口径）、
+  **`agent/spawned`（BATCH2 §3）** `{parent, agentId, sessionId, type, depth}`——
+  spawn 成功与 revive 复活两处发射；**`agent/finished`（BATCH2 §3）**
+  `{parent, agentId, sessionId, outcome: completed|stopped|failed, detail, summary?}`——
+  **每运行周期恰一次**（非生命周期终态：stop 后可复活再发；终态以 get_subagents
+  快照对账）；deliver 单点（正常/stopAll 级联/孤儿收养）+ spawn kick 失败闭环 +
+  stop-idle 子同步发射；thread/stop 与 fork 拆除序 = stopAll 先于桥拆除（finished
+  边沿可达客户端）、`compaction/landed`、
   `compaction/served-window`、`compaction/diagnostic`、`autocompact/*` 事件族、
   `permission/decided`、`session-checkpoint/diagnostic`、`session/created`、
   `session/disposed`。
+- **llm/chunk 归属（BATCH2 起）**：仅主会话流外发（request.session 判据）；子代理
+  流的 text/thinking 增量经 `agent/assistant-stream`（payload 已含 session）。
 - **worker 合成域**：
   - `llm/chunk` `{turn, step, chunk}`——worker 挂 `llm/stream` waterfall tap 中间件
     逐块转发 LlmChunk（`text-delta`/`thinking-delta`/`tool-call-delta`/`usage`/

@@ -22,6 +22,8 @@ export interface ReviveDeps {
   readonly parentIdleTimeoutOf: (session: SessionId) => number | undefined;
   /** 复活父当前工具白名单（沿树只收窄——X15 不因复活放宽） */
   readonly parentToolsOf: (session: SessionId) => ToolFilter | undefined;
+  /** 复活注册事件发射面（BATCH2 §3——桥接方归属映射重播种；快照/事件两源一致） */
+  readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number }) => void;
   /** worktree 隔离重放面（grants 缺席则隔离降级为明示）；onWarn 降级告知 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
   readonly onWarn?: (message: string) => void;
@@ -59,6 +61,7 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
     ...(worktree !== undefined ? { worktree } : {}),
   };
   deps.lineage.register(row);
+  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth });
   return { kind: "row", row };
 }
 
