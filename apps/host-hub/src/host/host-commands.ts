@@ -11,6 +11,7 @@ import type { WorkerPool } from "./worker-pool.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
 import type { DirectRead } from "./read-history.ts";
+import { deleteSession } from "./session-delete.ts";
 import { listSavedSessions } from "./saved-query.ts";
 import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
@@ -254,6 +255,13 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     respond(id, "thread/stop", {});
   }
 
+  async function handleThreadDelete(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
+    const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
+    const result = await deleteSession({ table: deps.table, sessionsRoot: deps.sessionsRoot, agentDir: deps.agentDir }, sessionPath);
+    if (!result.ok) respond(id, "thread/delete", { error: result.reason });
+    else respond(id, "thread/delete", {});
+  }
+
   function handleThreadRetire(input: { [key: string]: unknown }, id: string | undefined): void {
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const outcome = deps.pool.retireThread(threadId, "retire");
@@ -376,6 +384,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   handlers.set("thread/resume", handleThreadResume);
   handlers.set("thread/register", handleThreadRegister);
   handlers.set("thread/stop", handleThreadStop);
+  handlers.set("thread/delete", (input, id) => void handleThreadDelete(input, id));
   handlers.set("thread/retire", handleThreadRetire);
   handlers.set("thread/set_keepalive", handleThreadSetKeepalive);
   handlers.set("thread/list", handleThreadList);

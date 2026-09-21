@@ -81,11 +81,11 @@ spawn("<host-hub bin>", [], { env: { ...process.env, HUB_AGENT_DIR: <配置目�
 - 错误形态：`{"success":false,"error":"<英文中性>"}`；错误文案词表 = 封闭清单
   （附录 A）；单条命令失败绝不退出进程。
 
-## 3. 命令集（55 个——迁移源同集；分组见各节）
+## 3. 命令集（56 个——迁移源 55 + thread/delete（BATCH2）；分组见各节）
 
 | 组 | 命令 | host 本地/worker |
 | --- | --- | --- |
-| 线程生命周期 | thread/start、thread/resume、thread/register、thread/stop、thread/retire、thread/set_keepalive、thread/list、thread/list_saved | host |
+| 线程生命周期 | thread/start、thread/resume、thread/register、thread/stop、thread/delete、thread/retire、thread/set_keepalive、thread/list、thread/list_saved | host |
 | 对话驱动 | prompt、steer、follow_up、abort、clear_queue、compact | worker |
 | 状态与历史 | get_state、get_inflight、get_messages、get_entries、get_tree、get_session_stats、set_session_name、get_commands、get_fork_messages | worker（§3.4 矩阵） |
 | 收敛读口 | get_subagents、get_pending_dialogs | worker（非 live 空形态） |
@@ -402,8 +402,25 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
 
 ### 3.10 会话删除
 
-- **thread/stop 后会话文件保留**；本批不占会话删除命令（内核无 remove 面；目录级
-  删除归后续加法，挂账 MIGRATION §6）。
+- **thread/delete** `{sessionPath}` → success `{}`（**幂等**：目录已不在 = success；对齐
+  thread/stop「未知 success」先例）。host 本地命令（不进池、worker 无感知、internal
+  四集合不动）。输入键 = sessionPath（对齐 resume/register——作用于存档的命令族；
+  stop/retire 的 threadId 是活线程操作族，分野有意）。
+- 语义序：**只读检查段**（shapeFence 词法 + realpath 围栏拒 symlink 逃逸 → 目录缺席
+  即幂等 success 并撤表残留 → lock 探活拒活进程 → header.agentId 拒子代理会话 →
+  parentSession 血缘 BFS 级联集）→ **状态变更段（同步表操作与 rename 之间零 await）**：
+  占用表活族（live/spawning/retiring）→ failure **`already open`**（显式两步：先
+  thread/stop）；parked/dead → 撤表 → **原子 rename-to-trash**
+  （`<agentDir>/trash/<id>.<pid>.<rand>`；sessionsRoot 即刻消失，一切后续
+  stat/lock/register 干净失败）→ 异步 rm（trash 残迹由 tmp-sweep 扩清——mtime > 1h）。
+- 级联：子代理会话（header.parentSession 血缘，含孙代）一并删除——子会话在
+  list_saved 不可见，不级联即永不可清的隐形垃圾。
+- lock 探活：读 `<dir>/lock`（纯 pid）+ kill(pid,0)——活 → failure `session is
+  locked by another process`；死 pid/垃圾内容放行（rm 连锁清）。探活先行兼覆盖
+  「子会话创建中 header 未落」窗口。check-then-act 窗口由 rename 原子性收窄到瞬时；
+  **跨 host 并发删除同一会话不在支持矩阵**（已知边界）。
+- 无 header 的孤儿目录（半创建残迹）仍删；无 lock 无 header 的目录 = 死数据。
+- bash spill（agentDir/bash-outputs）不随会话删——tmp-sweep 7 天兜底（既有语义）。
 
 ## 4. 输出帧与事件词表
 
@@ -567,7 +584,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | 后端注册表/能力协商 | 单一后端（hello 握手：`{protocolVersion:1, backendId:"x-harness"}`） |
 | OAuth 交互式登录 | auth/set_api_key 单通道 |
 | 跨机器/远程接入 | stdio 单机限定 |
-| 会话删除命令 | 后续加法（§3.10 挂账） |
+| 会话删除 | **已支持（§3.10 thread/delete，BATCH2）** |
 | prompt images 已支持（§3.2）；已知边界：多轮携图全量投影受 get_messages 100MiB 软上限（超限 failure 引导 get_entries）、64MiB 直读上限（register 拒/list_saved 跳过——既有降级面携图更易触达）、compaction 折叠摘要以 `[image: <mediaType>]` 占位 | 量限/边界声明（BATCH2-DESIGN §1） |
 | 工具结果带图（pi 支持，内核 ToolOutcome 为单串） | 另一契约，挂账 |
 | telemetry sqlite | 不装（产品面未消费；后续按需加 kit） |
@@ -630,8 +647,11 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | `Unknown threadId` | 表中无此线程（含 1024 逐出后） |
 | `too many live threads (limit reached)` | 准入预算（HUB_MAX_THREADS） |
 | `too many in-flight commands` | 命令风暴上限（pendingCommands 65536） |
-| `already open` | 同 sessionPath 已占用（start/resume/register） |
-| `session path outside sessions dir` | resume/register 围栏（绝对路径/realpath 圈外） |
+| `already open` | 同 sessionPath 已占用（start/resume/register；thread/delete 对活族同串复用） |
+| `cannot delete subagent session` | thread/delete：header.agentId 在场（子代理会话归 delegation 生命周期管理） |
+| `session is locked by another process` | thread/delete：目录 lock 持有活进程（跨 host 防线） |
+| `response too large; use get_entries` | get_messages 软上限（100MiB JSON 串长） |
+| `session path outside sessions dir` | resume/register/delete 围栏（绝对路径/realpath 圈外） |
 | `Session file not readable` | 零字节/空卷/不可读 / register >64MiB |
 | `cannot resume session: <reason>` | 内核恢复器失败透传（含 archive-corrupt 中段坏行） |
 | `thread is streaming` | 流式中拒（fork/clone/compact/set_thinking_level） |

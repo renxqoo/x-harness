@@ -151,7 +151,7 @@ turn/end reason 判别联合；inbox-full 退役。
 | --- | --- |
 | ~~prompt/steer images 支持~~ **已实施（BATCH2-DESIGN §1）** | 内核 ContentBlock image 块 + hub 量限/能力门 + 单 entry 图文同轮 |
 | worker stdout writer 无界串行队列（慢 host + 高频帧下待写闭包无界堆积） | 背压/有界队列独立收敛（BATCH2 审 M1 登记；新增面已节流） |
-| 会话删除命令 | hub 目录级删除加法（BATCH2-DESIGN §4 实施中） |
+| 会话删除命令 | **已实施（BATCH2-DESIGN §4）**：thread/delete（trash 原子化 + lock 探活 + 级联 + 幂等） |
 | 子代理实时事件面 | **已实施（BATCH2-DESIGN §3）**：agent/spawned + agent/finished 推送（零轮询）+ 帧归属（session 字段/agentName）+ D1/D2/D3 既有污染/双计缺陷修复 |
 | 项目数据目录名自定义（dirs.projectName 类） | 设置键扩展（当前恒 .x-harness） |
 | 项目级 permission allow/deny 规则 | permission RuleOrigin 接入（源仓挂账继承——deny 先行不对称序） |

@@ -4,7 +4,7 @@
 // agents-admin/direct-reads/旋钮/host_info 矩阵。
 import { EventEmitter } from "node:events";
 import { afterAll, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHost } from "../host/host.ts";
@@ -417,5 +417,28 @@ describe("host 本地命令（注入 IO）", () => {
     f.send({ type: "skills/list", id: "sl2" });
     const listed = await waitResponse(f.client, "skills/list", "sl2");
     expect(listed["success"]).toBe(true);
+  });
+});
+
+describe("thread/delete（BATCH2 §4——host 命令面旅程）", () => {
+  test("存档删除成功 + 幂等 + 目录消失；未知路径形状拒", async () => {
+    const f = await startHost();
+    const sessionsRoot = join(f.agentDir, "sessions");
+    const id = "delarc1";
+    await mkdir(join(sessionsRoot, id), { recursive: true });
+    await writeFile(join(sessionsRoot, id, "header.json"), JSON.stringify({ id, createdAt: 1, cwd: "/w" }), "utf8");
+    await writeFile(join(sessionsRoot, id, "events.jsonl"), `${JSON.stringify({ type: "turn/start", seq: 0, time: 1, data: { turn: 0 } })}\n`, "utf8");
+    const sessionPath = join(sessionsRoot, id, "events.jsonl");
+    f.input.send({ type: "thread/delete", id: "d1", sessionPath });
+    const ok = await waitResponse(f.client, "thread/delete", "d1");
+    expect(ok["success"]).toBe(true);
+    await expect(stat(join(sessionsRoot, id))).rejects.toMatchObject({ code: "ENOENT" });
+    f.input.send({ type: "thread/delete", id: "d2", sessionPath });
+    const again = await waitResponse(f.client, "thread/delete", "d2");
+    expect(again["success"]).toBe(true); // 幂等
+    f.input.send({ type: "thread/delete", id: "d3", sessionPath: "relative/path" });
+    const bad = await waitResponse(f.client, "thread/delete", "d3");
+    expect(bad["success"]).toBe(false);
+    expect(bad["error"]).toContain("absolute path required");
   });
 });
