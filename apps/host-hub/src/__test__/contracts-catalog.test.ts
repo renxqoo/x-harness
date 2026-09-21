@@ -73,7 +73,19 @@ describe("catalog", () => {
       default: { provider: "gone", model: "x" },
     }));
     const fallback = await readCatalog(dir);
-    expect(resolveDefaultDial(fallback)).toEqual({ provider: "glm", model: "glm-5.3" });
+    // 回落首条 = custom 档案优先序（用户显式配置压过预设——裸 id 撞名消歧同口径）
+    expect(resolveDefaultDial(fallback)).toEqual({ provider: "p2", model: "m2" });
+  });
+
+  test("裸 modelId 撞名消歧 custom 优先（custom 与预设同名模型——用户配置压过无凭据预设）", async () => {
+    const dir = await tempDir();
+    await Bun.write(join(dir, "providers.json"), JSON.stringify({
+      providers: [{ name: "my-glm", protocol: "anthropic", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKeyEnv: "MY_KEY", models: ["glm-5.3"] }],
+    }));
+    const catalog = await readCatalog(dir);
+    const entry = catalog.entries.find((e) => e.model === "glm-5.3");
+    expect(entry?.source).toBe("custom");
+    expect(entry?.provider).toBe("my-glm");
   });
 
   test("modelOverrides 双键命中覆写（复合键整对象优先于裸键——不跨键合并）", async () => {

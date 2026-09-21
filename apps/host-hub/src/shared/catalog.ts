@@ -112,10 +112,14 @@ export async function readCatalog(agentDir: string): Promise<ModelsCatalog> {
   const file = read.file;
   const custom = customProfilesOf(file);
   const customNames = new Set(custom.profiles.map((p) => p.name));
-  // custom 同名整档覆盖预设（单一事实 = providers.json；预设只兜底缺席档案）
+  // custom 同名整档覆盖预设（单一事实 = providers.json；预设只兜底缺席档案）。
+  // custom 档案插入序在预设之前：裸 modelId 撞名（custom 与预设同名模型）时消歧
+  // 命中用户显式配置而非无凭据的预设（resolveDefaultDial/owners[0] 按条目序取首）
   const byName = new Map<string, HubProviderProfile>();
-  for (const preset of PRESET_PROFILES) byName.set(preset.name, preset);
   for (const profile of custom.profiles) byName.set(profile.name, profile);
+  for (const preset of PRESET_PROFILES) {
+    if (!byName.has(preset.name)) byName.set(preset.name, preset);
+  }
   const overrides = file?.modelOverrides ?? {};
   const entries: CatalogEntry[] = [];
   for (const profile of byName.values()) {
