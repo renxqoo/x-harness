@@ -20,14 +20,13 @@ async function readRaw(agentDir: string): Promise<string[]> {
 export function createTrustStore(agentDir: string) {
   return {
     list: (): Promise<string[]> => readRaw(agentDir),
-    /** 登记（幂等；入参规范化；已登记则不重写盘） */
+    /** 登记（幂等；入参规范化；复查在写链临界区内——并发同 cwd 不落重复条目） */
     async trust(cwd: string): Promise<void> {
       const normalized = await normalizeCwd(cwd);
-      if ((await readRaw(agentDir)).includes(normalized)) return; // 幂等短路——少一次 IO
       await updateJson(trustPath(agentDir), {
         read: () => readRaw(agentDir),
-        write: (list) => atomicWriteJson(trustPath(agentDir), [...list, normalized].sort()),
-        mutate: (list) => list,
+        write: (list) => atomicWriteJson(trustPath(agentDir), [...new Set([...list, normalized])].sort()),
+        mutate: (list) => (list.includes(normalized) ? list : [...list, normalized]),
       });
     },
     /** 撤销（不回收在途 live 线程——仅影响下次装配/命令门禁） */

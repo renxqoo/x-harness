@@ -62,6 +62,36 @@ function handleGetEntries(rt: WorkerRuntime, input: CommandInput): void {
   respond(rt, { id: input.id, command: "get_entries", data: { entries: result.entries, leafSeq: result.leafSeq, hasMore: result.hasMore } });
 }
 
+interface SubtreeWalk {
+  readonly headers: readonly { id: unknown; parentSession?: unknown; agentId?: unknown }[];
+  readonly seen: Set<string>;
+  readonly children: string[];
+}
+
+/** 全子孙收集（BFS 沿 parentSession——排除子代理会话；环防御 + 深度封顶） */
+export function descendantsOf(root: string, headers: readonly { id: unknown; parentSession?: unknown; agentId?: unknown }[]): string[] {
+  const walk: SubtreeWalk = { headers, seen: new Set<string>([root]), children: [] };
+  let frontier = [root];
+  for (let depth = 0; depth < headers.length && frontier.length > 0; depth += 1) {
+    frontier = expandFrontier(walk, frontier);
+  }
+  return walk.children;
+}
+
+function expandFrontier(walk: SubtreeWalk, frontier: readonly string[]): string[] {
+  const next: string[] = [];
+  for (const parent of frontier) {
+    for (const header of walk.headers) {
+      const id = String(header.id);
+      if (header.agentId !== undefined || String(header.parentSession) !== parent || walk.seen.has(id)) continue;
+      walk.seen.add(id);
+      walk.children.push(id);
+      next.push(id);
+    }
+  }
+  return next;
+}
+
 /** 会话 fork 谱系（DESIGN §3.3）：ancestors 沿 header.parentSession 链（不含自身）；
  *  children = parentSession === id 的 headers（排除子代理会话——header.agentId 滤除） */
 async function handleGetTree(rt: WorkerRuntime, input: CommandInput): Promise<void> {
@@ -78,9 +108,7 @@ async function handleGetTree(rt: WorkerRuntime, input: CommandInput): Promise<vo
       ancestors.push(id);
       cursor = byId.get(id)?.parentSession;
     }
-    const children = headers
-      .filter((header) => String(header.parentSession) === rt.state.threadId && header.agentId === undefined)
-      .map((header) => String(header.id));
+    const children = descendantsOf(rt.state.threadId, headers);
     respond(rt, {
       id: input.id,
       command: "get_tree",

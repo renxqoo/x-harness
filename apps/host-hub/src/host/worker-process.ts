@@ -90,7 +90,8 @@ export function spawnWorker(spec: WorkerSpawnSpec): WorkerHandle {
     });
     child.on("exit", () => {
       // exit 先于 stdout drain 到达时等 close；close 缺席（极端）兜底结算
-      setTimeout(() => settle(), 5_000);
+      const fallback = setTimeout(() => settle(), 5_000);
+      fallback.unref?.();
     });
     child.stderr.on("data", (chunk: Buffer) => {
       for (const line of chunk.toString("utf8").split("\n")) {

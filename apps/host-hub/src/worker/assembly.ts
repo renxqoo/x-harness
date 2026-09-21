@@ -31,13 +31,13 @@ import type { LlmAdapter, ThinkingLevel } from "@x-harness/llm";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { permissionBroker } from "@x-harness/permission";
 import type { AskRequest } from "@x-harness/permission";
-import { metaTailOf } from "../shared/meta-fold.ts";
+import { foldDial, metaTailOf } from "../shared/meta-fold.ts";
 import { createScriptAdapter, scriptFromEnv } from "../shared/script-adapter.ts";
 import type { ScriptAdapter } from "../shared/script-adapter.ts";
 import { catalogEntryOf, resolveWorkerCatalog } from "../shared/worker-catalog.ts";
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import { thinkingLevelOf, thinkingUnsupported } from "./meta-state.ts";
-import { META_KEY_DIAL, META_KEY_THINKING } from "./meta-state.ts";
+import { META_KEY_THINKING } from "./meta-state.ts";
 
 /** llm-retry 缺省策略（apps/cli 同款——确定性退避） */
 export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0 };
@@ -97,12 +97,20 @@ function userAgentsDir(): string {
   return join(homedir(), ".x-harness", "agents");
 }
 
-/** trusted 门禁目录（project > user——trusted 时 project 级并入；DESIGN §5） */
+/** 内置 agents 类型目录（随包分发——装载序末位；迁移源 builtin 层等价物） */
+export function builtinTypesDir(): string {
+  return join(import.meta.dirname, "../../agent-types");
+}
+
+/** trusted 门禁目录（project > user > builtin——x-harness 内核装载序「前者胜」；
+ *  skills/agents 同序一致，DESIGN §5） */
 function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: string[]; agentsDirs: string[] } {
-  if (!fields.trusted) return { skillsDirs: [userSkillsDir()], agentsDirs: [userAgentsDir()] };
+  if (!fields.trusted) {
+    return { skillsDirs: [userSkillsDir()], agentsDirs: [builtinTypesDir(), userAgentsDir()] };
+  }
   return {
     skillsDirs: [join(cwd, ".x-harness", "skills"), userSkillsDir()],
-    agentsDirs: [join(cwd, ".x-harness", "agents"), userAgentsDir()],
+    agentsDirs: [join(cwd, ".x-harness", "agents"), userAgentsDir(), builtinTypesDir()],
   };
 }
 
@@ -147,21 +155,14 @@ function dialHookPlugin(): Plugin {
         const dial = await next(payload);
         const session = ctx.use(sessionStore).get(payload.session);
         if (session === undefined) return dial;
-        const events = session.events();
-        const metaDial = metaTailOf(events, META_KEY_DIAL);
-        const thinking = thinkingLevelOf(metaTailOf(events, META_KEY_THINKING));
-        const override =
-          typeof metaDial === "object" && metaDial !== null && typeof (metaDial as { model?: unknown }).model === "string"
-            ? (metaDial as { model: string; provider?: unknown })
-            : undefined;
+        // 双源折叠与全部读口（foldDial）同源：meta 显式 > request/header 隐式 > 装配
+        // options 透传——resume 后 options 显式值不得压过 WAL 事实
+        const folded = foldDial(session.events(), { provider: dial.provider ?? "", model: dial.model });
+        const thinking = thinkingLevelOf(metaTailOf(session.events(), META_KEY_THINKING));
         return {
           ...dial,
-          ...(override !== undefined
-            ? {
-                model: override.model,
-                ...(typeof override.provider === "string" ? { provider: override.provider } : {}),
-              }
-            : {}),
+          ...(folded.model !== "" ? { model: folded.model } : {}),
+          ...(folded.provider !== "" ? { provider: folded.provider } : {}),
           ...(thinking !== undefined ? { thinking } : {}),
         };
       }),
@@ -272,8 +273,13 @@ async function createSession(world: World, plan: { fields: AssemblyFields; agent
   });
 }
 
-/** world 收殓：handle dispose 由调用方先行；此处收殓插件卸载与 ctx */
+const tornDownWorlds = new WeakSet<object>();
+
+/** world 收殓（幂等——stop/fork/shutdown 并发收殓不双跑插件 disposer）：
+ *  handle dispose 由调用方先行；此处收殓插件卸载与 ctx */
 export async function teardownWorld(world: World): Promise<void> {
+  if (tornDownWorlds.has(world)) return;
+  tornDownWorlds.add(world);
   for (const disposer of world.unload) await disposer();
   await world.ctx.dispose();
 }

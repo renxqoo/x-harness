@@ -219,6 +219,37 @@ describe("host 流程补面", () => {
     void homedir;
   });
 
+  test("cH4：resume 别名拼法（./）占用归一——已 live 线程不可被别名打死", async () => {
+    const f = await startHost();
+    const sessionPath = await makeArchive(f.sessionsRoot, "aliasproof1");
+    f.send({ type: "thread/resume", id: "r1", sessionPath });
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 30);
+    });
+    const worker = f.workers[f.workers.length - 1];
+    worker?.hello();
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 20);
+    });
+    const resumeLine = worker?.written.find((line) => line.includes('"thread/resume"'));
+    const resume = JSON.parse(resumeLine as string) as { id: string };
+    worker?.onLine(responseLine({ id: resume.id, command: "thread/resume", success: true, data: { threadId: "aliasproof1", cwd: "/w", sessionPath } }));
+    await waitResponse(f.client, "thread/resume", "r1");
+    // 同会话的 `./` 别名 resume → already open（占用键已归一 canonical）
+    const alias = sessionPath.replace("/aliasproof1/", "/./aliasproof1/");
+    f.send({ type: "thread/resume", id: "r2", sessionPath: alias });
+    const rejected = await waitResponse(f.client, "thread/resume", "r2");
+    expect(rejected["error"]).toBe("already open");
+    // 线程仍 live（别名不可把表项打死）
+    f.send({ type: "thread/list", id: "l1" });
+    const listed = await waitResponse(f.client, "thread/list", "l1");
+    expect(((listed["data"] as Array<{ threadId: string; state: string }>).find((row) => row.threadId === "aliasproof1"))?.state).toBe("live");
+  });
+
   test("uncaught/rejection 只发 hub_error 不崩（注册面覆盖）+ thread/register 相对路径拒", async () => {
     const agentDir = await tempDir("hub-err-");
     const sessionsRoot = join(agentDir, "sessions");

@@ -2,9 +2,7 @@
 // abort 再等 settle——恰一响应）；toolOutputs 尾部 64KiB/调用、至多 8 条、truncated
 // 粘滞；bash 面按命令 id 隔离（读口取最新仍在跑者）；turnStartSeq 权威轮游标。
 import { tailBytes } from "../shared/truncate.ts";
-
-const TOOL_OUTPUT_CAP = 64 * 1024;
-const TOOL_OUTPUT_MAX = 8;
+import { INFLIGHT_TOOL_TAIL_BYTES, INFLIGHT_TOOL_MAX } from "../shared/limits.ts";
 
 export interface InflightRegistration {
   /** per-call 取消信号（compact 联动 abort / 长操作共用面） */
@@ -88,14 +86,14 @@ export function createInflightState() {
     toolOutput(callId: string, chunk: string): void {
       const existing = toolOutputs.get(callId);
       if (existing === undefined) {
-        if (toolOutputs.size >= TOOL_OUTPUT_MAX) return; // 满表不挤（读口有界）
+        if (toolOutputs.size >= INFLIGHT_TOOL_MAX) return; // 满表不挤（读口有界）
         // 首块即过 64KiB 同样封顶（单块工具输出不撑爆快照面）
-        const tail = tailBytes(chunk, TOOL_OUTPUT_CAP);
+        const tail = tailBytes(chunk, INFLIGHT_TOOL_TAIL_BYTES);
         toolOutputs.set(callId, { callId, output: tail.text, truncated: tail.truncated, startedAt: Date.now() });
         return;
       }
       const appended = existing.output + chunk;
-      const tail = tailBytes(appended, TOOL_OUTPUT_CAP);
+      const tail = tailBytes(appended, INFLIGHT_TOOL_TAIL_BYTES);
       existing.output = tail.text;
       existing.truncated = existing.truncated || tail.truncated; // 粘滞：丢过头即恒 true
     },

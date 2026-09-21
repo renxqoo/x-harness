@@ -48,8 +48,8 @@ export function createCredentials(agentDir: string) {
       const creds = await read();
       mutate(creds.keys);
       const tmp = tmpPath();
-      await writeFile(tmp, JSON.stringify({ keys: creds.keys }, null, 2), "utf8");
-      await chmod(tmp, 0o600);
+      await writeFile(tmp, JSON.stringify({ keys: creds.keys }, null, 2), { encoding: "utf8", mode: 0o600 }); // 创建即收紧（0644 窗口消灭）
+      await chmod(tmp, 0o600); // 兜底（umask 收紧不可移植假设）
       await rename(tmp, path);
     });
   }

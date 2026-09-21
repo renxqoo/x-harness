@@ -9,15 +9,14 @@
 // 7 天溢写文件（cleanupBashOutputs）。
 import { existsSync } from "node:fs";
 import { mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import type { Session } from "@x-harness/session";
-import { BASH_CONCURRENCY, BASH_OUTPUT_INLINE_CAP, FORK_GRACE_SIGTERM_MS } from "../shared/limits.ts";
+import { BASH_CONCURRENCY, BASH_OUTPUT_INLINE_CAP, BASH_OUTPUT_INLINE_RESPONSE_CAP, BASH_OUTPUT_MEMORY_CAP, FORK_GRACE_SIGTERM_MS } from "../shared/limits.ts";
 import { truncateBytes } from "../shared/truncate.ts";
 
 /** 溢写文件保留期（启动清扫判据） */
 export const BASH_OUTPUT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-const OUTPUT_MEMORY_CAP = 8 * 1024 * 1024;
-const OUTPUT_RESPONSE_CAP = 64 * 1024;
 
 export interface BashRequest {
   command: string;
@@ -95,7 +94,7 @@ export async function twoStageKillGroup(pid: number, graceMs = FORK_GRACE_SIGTER
 export interface BashExecDeps {
   session: () => { session: Session; flush: () => Promise<unknown> } | undefined;
   cwd: () => string;
-  confirm: (fields: { tool: string; summary: string; reason: string }) => Promise<boolean>;
+  confirm: (fields: { tool: string; summary: string; reason: string }, signal?: AbortSignal) => Promise<boolean>;
   emitEvent: (name: string, payload: unknown) => void;
   agentDir: string;
   defaultTimeoutMs: number;
@@ -154,13 +153,14 @@ export function createBashExec(deps: BashExecDeps) {
     }
   }
 
-  async function spill(output: string): Promise<string | undefined> {
+  async function spill(output: string, key: string): Promise<string | undefined> {
     if (Buffer.byteLength(output, "utf8") <= BASH_OUTPUT_INLINE_CAP) return undefined;
     const agent = deps.session();
     const seq = agent !== undefined ? agent.session.events().length - 1 : Date.now();
     const dir = join(deps.agentDir, "bash-outputs");
     await mkdir(dir, { recursive: true });
-    const path = join(dir, `${seq}.txt`);
+    // 文件名并入命令 key + 随机后缀——并发命令同 seq 不互相覆写
+    const path = join(dir, `${seq}.${encodeURIComponent(key).replaceAll("%", "_")}.${randomUUID().slice(0, 8)}.txt`);
     await writeFile(path, output, "utf8");
     return path;
   }
@@ -183,27 +183,30 @@ export function createBashExec(deps: BashExecDeps) {
    *  穿透 = 与 confirm 竞速（abort_bash 即时结算——不等弹窗超时；孤儿弹窗由
    *  broker 按未应答结算） */
   async function admit(request: BashRequest, key: string): Promise<{ ok: true; controller: AbortController } | { ok: false; reason: string }> {
-    let cancelArmed = false;
+    const cancelSignal = new AbortController();
     let cancelAdmission: () => void = () => {};
     const cancelled = new Promise<false>((resolve) => {
       cancelAdmission = () => {
-        cancelArmed = true;
         resolve(false);
       };
     });
-    admissionAborts.add(cancelAdmission);
+    const onAdmissionAbort = (): void => {
+      cancelAdmission();
+      cancelSignal.abort(); // 孤儿弹窗即时结算（不挂 5min 超时占 busy 面）
+    };
+    admissionAborts.add(onAdmissionAbort);
     let approved: boolean;
     try {
       approved = await Promise.race([
-        deps.confirm({ tool: "bash", summary: request.command, reason: "direct execution requested by client" }),
+        deps.confirm({ tool: "bash", summary: request.command, reason: "direct execution requested by client" }, cancelSignal.signal),
         cancelled,
       ]);
     } finally {
-      admissionAborts.delete(cancelAdmission);
+      admissionAborts.delete(onAdmissionAbort);
     }
     if (!approved) {
       releaseClaim(key);
-      return { ok: false, reason: cancelArmed ? "aborted before execution started" : "permission denied" };
+      return { ok: false, reason: cancelSignal.signal.aborted ? "aborted before execution started" : "permission denied" };
     }
     const entry = running.get(key);
     const controller = entry?.controller ?? new AbortController();
@@ -225,14 +228,21 @@ export function createBashExec(deps: BashExecDeps) {
     const graceMs = deps.killGraceMs ?? FORK_GRACE_SIGTERM_MS;
     const timer = effectiveTimeout > 0 ? setTimeout(() => controller.abort(), effectiveTimeout) : undefined;
     try {
-      return await new Promise<BashOutcome>((resolve) => {
-        const child = Bun.spawn([shellPath, "-c", request.command], {
-          cwd: deps.cwd(),
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-          detached: true, // 进程组成立（组杀面 = -pid）
-        });
+      return await new Promise<BashOutcome>((resolve, reject) => {
+        let child: ReturnType<typeof Bun.spawn>;
+        try {
+          child = Bun.spawn([shellPath, "-c", request.command], {
+            cwd: deps.cwd(),
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            detached: true, // 进程组成立（组杀面 = -pid）
+          });
+        } catch (error) {
+          // 真 spawn 失败（ENOENT/EMFILE/cwd 缺席）——错误终态应答（恰一响应不悬挂）
+          reject(new Error(String(error instanceof Error ? error.message : error)));
+          return;
+        }
         const pid = child.pid;
         trackDetached(pid);
         // abort/timeout 组杀（两段）：fire-and-forget——停机路径由登记簿清场与 exit
@@ -254,7 +264,7 @@ export function createBashExec(deps: BashExecDeps) {
         const decoder = new TextDecoder();
         const push = (chunk: string): void => {
           output += chunk;
-          const bounded = truncateBytes(output, OUTPUT_MEMORY_CAP);
+          const bounded = truncateBytes(output, BASH_OUTPUT_MEMORY_CAP);
           if (bounded.truncated) {
             output = bounded.text;
             truncated = true;
@@ -274,9 +284,9 @@ export function createBashExec(deps: BashExecDeps) {
           untrackDetached(pid);
           const cancelled = controller.signal.aborted;
           if (!request.excludeFromContext) void appendEnvelope(request.command, output);
-          void spill(output).then(
+          void spill(output, key).then(
             (fullOutputPath) => {
-              const inline = truncateBytes(output, OUTPUT_RESPONSE_CAP);
+              const inline = truncateBytes(output, BASH_OUTPUT_INLINE_RESPONSE_CAP);
               resolve({
                 ok: true,
                 output: inline.text,
@@ -287,7 +297,7 @@ export function createBashExec(deps: BashExecDeps) {
               });
             },
             () => {
-              const inline = truncateBytes(output, OUTPUT_RESPONSE_CAP);
+              const inline = truncateBytes(output, BASH_OUTPUT_INLINE_RESPONSE_CAP);
               resolve({ ok: true, output: inline.text, exitCode: code ?? -1, cancelled, truncated: truncated || inline.truncated });
             },
           );
@@ -325,17 +335,22 @@ export function createBashExec(deps: BashExecDeps) {
       for (const entry of running.values()) entry.controller.abort();
     },
     async exec(request: BashRequest): Promise<BashOutcome> {
-      const verdict = validateRequest(request);
-      if (!verdict.ok) return { ok: false, reason: verdict.reason };
-      // shell 解析钉在 claimSlot 前：零副作用、不占并发额度、不弹废窗
-      const shell = deps.shell ?? resolveShell();
-      if (!shell.ok) return { ok: false, reason: shell.reason };
-      const slot = claimSlot(request.id, request.command);
-      if (!slot.ok) return { ok: false, reason: slot.reason };
-      deps.onStateChange();
-      const admission = await admit(request, slot.key);
-      if (!admission.ok) return { ok: false, reason: admission.reason };
-      return await runCommand({ request, key: slot.key, controller: admission.controller, shellPath: shell.path });
+      try {
+        const verdict = validateRequest(request);
+        if (!verdict.ok) return { ok: false, reason: verdict.reason };
+        // shell 解析钉在 claimSlot 前：零副作用、不占并发额度、不弹废窗
+        const shell = deps.shell ?? resolveShell();
+        if (!shell.ok) return { ok: false, reason: shell.reason };
+        const slot = claimSlot(request.id, request.command);
+        if (!slot.ok) return { ok: false, reason: slot.reason };
+        deps.onStateChange();
+        const admission = await admit(request, slot.key);
+        if (!admission.ok) return { ok: false, reason: admission.reason };
+        return await runCommand({ request, key: slot.key, controller: admission.controller, shellPath: shell.path });
+      } catch (error) {
+        // 执行器异常终态（spawn 同步抛错等）——错误面应答不悬挂（恰一响应）
+        return { ok: false, reason: String(error instanceof Error ? error.message : error) };
+      }
     },
   };
 }

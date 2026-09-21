@@ -38,12 +38,13 @@ function derivedTitle(events: readonly SessionEvent[]): string {
 function foldSummary(header: SessionHeader, events: readonly SessionEvent[]): SavedSession {
   const meta = foldMeta(events);
   const last = events[events.length - 1];
+  const dial = foldDial(events, { provider: "", model: "" });
   return {
     id: String(header.id),
     createdAt: header.createdAt,
     updatedAt: last?.time ?? header.createdAt,
     title: typeof meta["title"] === "string" && meta["title"] !== "" ? meta["title"] : derivedTitle(events),
-    ...(foldDial(events, { provider: "", model: "" }).model !== "" ? { model: foldDial(events, { provider: "", model: "" }).model } : {}),
+    ...(dial.model !== "" ? { model: dial.model } : {}),
     ...(header.cwd !== undefined ? { cwd: header.cwd } : {}),
     ...(header.parentSession !== undefined ? { forkParent: String(header.parentSession) } : {}),
     messageCount: events.filter((event) => event.type === "user/message" || event.type === "assistant/message").length,

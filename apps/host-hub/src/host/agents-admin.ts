@@ -78,6 +78,11 @@ export async function createUserAgentType(input: { [key: string]: unknown }): Pr
 }
 
 export async function removeUserAgentType(name: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { builtinTypesDir } = await import("../worker/assembly.ts");
+  const builtin = loadAgentTypes([builtinTypesDir()]);
+  if (builtin.types[name] !== undefined) {
+    return { ok: false, error: `agent type not user-defined: ${name}` }; // builtin 档不可删（随包事实）
+  }
   const loaded = await loadAgentTypes([userAgentsDir()]);
   if (loaded.types[name] === undefined) {
     return { ok: false, error: `unknown agent type: ${name}` };

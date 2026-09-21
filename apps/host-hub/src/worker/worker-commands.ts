@@ -25,7 +25,7 @@ import type { DialogBroker } from "./dialogs.ts";
 import type { BashExec } from "./bash-exec.ts";
 import type { EventBridge } from "./event-bridge.ts";
 import type { InflightRegistry, InflightState } from "./inflight.ts";
-import { doFork, registerThreadCommands } from "./thread-commands.ts";
+import { doFork, registerThreadCommands, serializedLifecycle } from "./thread-commands.ts";
 import { registerReadCommands } from "./worker-read-commands.ts";
 import { registerMetaCommands } from "./worker-meta-commands.ts";
 
@@ -150,6 +150,7 @@ function settleAfter(rt: WorkerRuntime, id: string | undefined): void {
   if (id === undefined) return; // 无 id 无从关联——不发 settled
   const handle = rt.state.handle;
   if (handle === undefined) return;
+  const threadIdAtKick = rt.state.threadId; // fork 替换后旧输入的 settled 仍按 kick 时线程盖章
   const marker = handle.agent.session.events().length;
   void handle.agent
     .whenIdle()
@@ -171,11 +172,11 @@ function settleAfter(rt: WorkerRuntime, id: string | undefined): void {
           }
         }
       }
-      rt.bridge.emitSettled(id, ok, reason);
+      rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ok, reason });
     })
     .catch(() => {
       rt.pendingSends = Math.max(0, rt.pendingSends - 1);
-      rt.bridge.emitSettled(id, false, "settle-failed");
+      rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ok: false, reason: "settle-failed" });
     });
 }
 
@@ -396,14 +397,12 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     await runManualCompact(rt, { ...(input.id !== undefined ? { id: input.id } : {}), command: "compact", ...(custom !== undefined ? { customInstructions: custom } : {}) });
   });
 
-  handlers.set("fork", async (input) => {
-    await doFork(rt, input, "fork");
-  });
+  handlers.set("fork", (input) => serializedLifecycle(() => doFork(rt, input, "fork")));
 
   handlers.set("clone", async (input) => {
     const session = requireThread(rt, { ...input, command: "clone" });
     if (session === undefined) return;
-    await doFork(rt, { ...input, seq: session.events().length - 1, position: "at" }, "clone");
+    await serializedLifecycle(() => doFork(rt, { ...input, seq: session.events().length - 1, position: "at" }, "clone"));
   });
 
   handlers.set("set_model", async (input) => {

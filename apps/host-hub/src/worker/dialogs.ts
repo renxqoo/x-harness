@@ -44,8 +44,9 @@ export function createDialogBroker(deps: DialogBrokerDeps) {
   }
 
   return {
-    /** 发起 confirm：resolve(true/false)；超时/abort → false（默认拒绝） */
-    confirm(threadId: string, fields: ConfirmFields): Promise<boolean> {
+    /** 发起 confirm：resolve(true/false)；超时/取消 → false（默认拒绝）。signal 中止
+     *  即结算并出队——孤儿弹窗不占 pending/busy 面 */
+    confirm(threadId: string, fields: ConfirmFields, signal?: AbortSignal): Promise<boolean> {
       return new Promise<boolean>((resolve) => {
         const requestId = randomUUID();
         const dialog: PendingDialog = {
@@ -59,10 +60,19 @@ export function createDialogBroker(deps: DialogBrokerDeps) {
           if (settled) return;
           settled = true;
           clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
           pending.delete(requestId);
           resolve(value);
         };
+        const onAbort = (): void => settle(false);
         const timer = setTimeout(() => settle(false), deps.confirmTimeoutMs);
+        if (signal !== undefined) {
+          if (signal.aborted) {
+            settle(false);
+            return;
+          }
+          signal.addEventListener("abort", onAbort, { once: true });
+        }
         pending.set(requestId, { dialog, settle, timer });
         emitRequest(dialog);
       });

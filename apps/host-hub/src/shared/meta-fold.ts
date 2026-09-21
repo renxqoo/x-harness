@@ -6,10 +6,12 @@ import type { SessionEvent } from "@x-harness/session";
 export type MetaRecord = Record<string, unknown>;
 
 /** 全量折叠（list_saved/直读面——一次读全档） */
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 export function foldMeta(events: readonly SessionEvent[]): MetaRecord {
-  const out: MetaRecord = {};
+  const out: MetaRecord = Object.create(null); // 原型污染防护（伪造卷的 __proto__ 键不得设原型）
   for (const event of events) {
-    if (event.type === "session/meta") out[event.data.key] = event.data.value;
+    if (event.type === "session/meta" && !UNSAFE_KEYS.has(event.data.key)) out[event.data.key] = event.data.value;
   }
   return out;
 }

@@ -150,7 +150,8 @@ export function buildAssemblySnapshot(
   env: Readonly<Record<string, string | undefined>>,
 ): AssemblyProvider[] {
   return catalog.profiles.map((profile) => {
-    const apiKey = firstDefined(credentials[profile.name], profile.apiKey, env[profile.apiKeyEnv ?? "HUB_API_KEY"]) ?? "";
+    const apiKeyEnv = profile.apiKeyEnv; // 无声明不回退全局 env 键（凭据外送面关闭）
+    const apiKey = firstDefined(credentials[profile.name], profile.apiKey, apiKeyEnv !== undefined ? env[apiKeyEnv] : undefined) ?? "";
     return {
       provider: profile.name,
       protocol: profile.protocol,

@@ -5,7 +5,7 @@
 // llm/chunk 合成域（工具增量/usage/finish——内核事件面只含 text/thinking）；维护
 // 观察态：streaming（turn 配对）、在途喂入（partial 累积/工具占位）、settled 合成。
 import type { Context } from "@x-harness/core";
-import { sessionEvent } from "@x-harness/session";
+import { sessionDisposed, sessionEvent } from "@x-harness/session";
 import type { SessionEvent } from "@x-harness/session";
 import { agentAssistantStream, agentError, agentStatus } from "@x-harness/agent-loop";
 import { llmStream } from "@x-harness/llm";
@@ -59,6 +59,8 @@ export interface EventBridge {
   unsubscribe(): void;
   /** settled 合成：驱动命令收敛后调用（ok = 收敛结果面） */
   emitSettled(sendId: string, ok: boolean, reason?: string): void;
+  /** settled 合成（显式线程域——fork 替换后旧输入按 kick 时线程盖章） */
+  emitSettledFor(spec: { threadId: string; sendId: string; ok: boolean; reason?: string }): void;
   /** 观察态读口（心跳 busy 面消费） */
   isStreaming(): boolean;
   /** 子代理在飞谓词（同步——心跳 busy 面；agentStatus 儿童会话边沿跟踪） */
@@ -106,6 +108,10 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
       this.unsubscribe();
       offs.push(
         ctx.on(sessionEvent, ({ event }) => onSessionEvent(event)),
+        ctx.on(sessionDisposed, ({ session }) => {
+          // 子会话终结边沿：忙态表清行（异常终止无 idle 边沿时防恒 busy——idle retire 永不触发的缺陷面）
+          childStatuses.delete(String(session));
+        }),
         ctx.on(agentAssistantStream, (payload) => {
           llmTurn = payload.turn;
           llmStep = payload.step;
@@ -153,6 +159,10 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     emitSettled(sendId, ok, reason) {
       emit("settled", { sendId, ok, ...(reason !== undefined ? { reason } : {}) });
     },
+    emitSettledFor(spec) {
+      if (spec.threadId === "") return;
+      deps.emitLine(eventFrame({ threadId: spec.threadId, name: "settled", payload: { sendId: spec.sendId, ok: spec.ok, ...(spec.reason !== undefined ? { reason: spec.reason } : {}) } }));
+    },
     isStreaming: () => streaming,
     childBusy: () => {
       for (const status of childStatuses.values()) {
@@ -162,14 +172,18 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     },
   };
 
+  function feedPartial(chunk: LlmChunk): void {
+    if (chunk.type === "tool-call-delta" && chunk.argumentsDelta !== undefined) partial.pushToolDelta(chunk.argumentsDelta);
+    else if (chunk.type === "text-delta") partial.pushChunk("text", chunk.text);
+    else if (chunk.type === "thinking-delta") partial.pushChunk("thinking", chunk.text);
+  }
+
   async function tapLlmStream(request: LlmRequest, next: (input: LlmRequest) => Promise<AsyncIterable<LlmChunk>>): Promise<AsyncIterable<LlmChunk>> {
     const stream = await next(request);
     const self = {
       async *[Symbol.asyncIterator](): AsyncIterator<LlmChunk> {
         for await (const chunk of stream) {
-          if (chunk.type === "tool-call-delta" && chunk.argumentsDelta !== undefined) partial.pushToolDelta(chunk.argumentsDelta);
-          if (chunk.type === "text-delta") partial.pushChunk("text", chunk.text);
-          if (chunk.type === "thinking-delta") partial.pushChunk("thinking", chunk.text);
+          feedPartial(chunk);
           emit("llm/chunk", { turn: llmTurn, step: llmStep, chunk });
           yield chunk;
         }

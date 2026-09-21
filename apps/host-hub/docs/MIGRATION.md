@@ -103,7 +103,18 @@ minus 迁移源已声明的不移植域，minus 本仓声明差异（§4 + §6�
 | thread/retire | 唤醒在飞 → failure `thread not live`（源码事实——源文档「落地即收编」为 lag；新文档按代码） | 同 |
 | fork/clone | durable boundary = 会话事件日志尾（in-memory 与 get_entries 同域）；fork 前 store.flush；其余同构 | 内核 fork 语义 |
 | thread/start/resume | 入参 permissionMode/thinkingLevel 词表随内核；显式档 × 模型不兼容 → `thinkingLevel rejected: <reason>` 显式拒；sessionPath 布局变（§3） | 同上 |
-| bash | 同构（confirm 弹窗两字段 {tool, reason}——源三字段）；id 缺省回落 = 请求 id；输出 8MiB 内存封顶 + 溢写只含封顶后内容 + 7 天清扫；abort_bash unknown id 落穿中止全部 | AskRequest 形状/源行为锚定 |
+| bash | confirm 弹窗三字段 {tool, summary, reason}（permission 面两字段 {tool, reason}）；id 缺省回落 = 请求 id；输出 8MiB 内存封顶 + 溢写文件名并入命令 key + 随机后缀（并发不覆写）+ 7 天清扫；abort_bash unknown id 落穿中止全部；spawn 同步抛错错误面应答（恰一）；溢写文件名 `<seq>.<key>.<rand>.txt` | AskRequest 形状/并发覆写修复 |
+
+**收口审查处置的额外差异（方案与代码同变）**：skills/agents 同名优先级统一为
+project > user > builtin（x-harness 内核装载序「前者胜」——源 skills 为 user >
+project 的不一致收敛，运行时与清单面同序）；agents/list 补随包内置类型层
+（general-purpose/explore/code-reviewer，`agent-types/` 随包分发，装载序末位，
+remove 档拒 `agent type not user-defined`）；get_tree children 为全子树
+（BFS 沿 parentSession）；list_saved{cwd} 双边 normalizeCwd；get_inflight
+toolOutputs 执行中为空占位（内核无工具输出增量流面——终值经 WAL tool/result，
+挂账内核加流面）；装配快照无 apiKeyEnv 不回退全局 env 键；worker host 关闭/
+异常路径响应均 id-first（含 id 回显）；foldMeta/entries-project 原型污染与
+type 遮蔽防护。
 
 **事件面差异汇总**：message_* 系不存在（session 域 18+1 条 + 实时域 token 名——DESIGN
 §4）；agents/* 七事件退役（delegationView 轮询 + 通知注入）；assistant 权威终局 =

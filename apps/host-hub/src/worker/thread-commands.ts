@@ -5,7 +5,7 @@
 // （trusted）> hub-settings 默认；thinking level = 显式入参 > WAL 尾值。显式入参 =
 // append session/meta 覆盖（不静默压制）；controller 后置到 flush 成功（报失败但
 // 提权是最坏方向）。
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isSafeSessionId, mintSessionId } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
@@ -217,8 +217,8 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
     return;
   }
   const previousThreadId = rt.state.threadId;
-  const currentDial = foldDial(events, rt.state.dial); // 前缀拨号（meta dial 已随 fork 复制；fallback = 装配值）
   const untilSeq = position === "at" ? seq : seq - 1;
+  const currentDial = foldDial(events.slice(0, untilSeq + 1), rt.state.dial); // 前缀拨号（截断域折叠——cut 后的 set_model 不泄漏）
   const forked = await world.store.fork(session.id as SessionId, { untilSeq, id: mintSessionId() });
   if (!forked.ok) {
     respond(rt, { id: input.id, command, error: `invalid fork seq: ${forked.reason}` });
@@ -228,7 +228,7 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   // fork 返回的是已打开会话（持写锁）——取 id 后即关，重装配走 resume 路径
   const disposed = world.store.dispose(newId);
   if (!disposed.ok) {
-    respond(rt, { id: input.id, command, error: `invalid fork seq: ${disposed.reason}` });
+    respond(rt, { id: input.id, command, error: `fork reassembly failed: ${disposed.reason}` });
     return;
   }
   rt.bridge.unsubscribe();
@@ -264,6 +264,30 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
     command,
     data: { threadId: newId, previousThreadId, sessionPath: rt.state.sessionPath },
   });
+}
+
+/** 生命周期互斥（审查 cM1）：thread/start|resume|stop|fork|clone 串行——stop 与
+ *  在飞 fork 的 dispose/重装配不再交错；其余命令不受影响 */
+let lifecycleChain: Promise<void> = Promise.resolve();
+
+export function serializedLifecycle(run: () => Promise<void>): Promise<void> {
+  const task = lifecycleChain.then(run);
+  lifecycleChain = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return task;
+}
+
+function serialized(handler: Handler): Handler {
+  return (input) => {
+    const run = lifecycleChain.then(() => handler(input));
+    lifecycleChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  };
 }
 
 export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, Handler>): void {
@@ -329,8 +353,8 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
     try {
       // hub 预检：零字节/空 events.jsonl（内核对空卷返回成功——预检归 hub 侧拒）
       const eventsFile = join(rt.sessionsRoot, resumeId, "events.jsonl");
-      const size = await readFile(eventsFile)
-        .then((buffer) => buffer.byteLength)
+      const size = await stat(eventsFile)
+        .then((info) => info.size)
         .catch(() => -1);
       if (size <= 0) {
         respond(rt, { id: input.id, command: "thread/resume", error: "Session file not readable" });
@@ -344,7 +368,8 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       await assembleThread(rt, {
         fields: {
           sessionsRoot: rt.sessionsRoot,
-          ...(explicitCwd !== undefined ? { cwd: explicitCwd } : {}),
+          // cwd 回退序全链生效（fence/toolbox/trusted 目录根——worker 进程 cwd 不得渗入）
+          cwd: explicitCwd ?? cwdHint,
           trusted,
           resumeId,
           env: rt.env,
@@ -364,7 +389,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
     }
   });
 
-  handlers.set("thread/stop", async (input) => {
+  handlers.set("thread/stop", serialized(async (input) => {
     const handle = rt.state.handle;
     if (handle !== undefined) {
       rt.bridge.unsubscribe();
@@ -378,5 +403,5 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       rt.state.delegation = undefined;
     }
     respond(rt, { id: input.id, command: "thread/stop" });
-  });
+  }));
 }

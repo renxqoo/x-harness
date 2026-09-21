@@ -45,6 +45,8 @@ interface LiveSlot {
 
 /** retiring 重放队列上限（风暴丢行：重发可重试——retiring 本就重评） */
 const MAX_REQUEUE_PER_THREAD = 1_024;
+/** retiring 重放队列字节预算（行限 16MiB 下 1024 行可达 16GiB——4MiB 封顶防 OOM） */
+const MAX_REQUEUE_BYTES_PER_THREAD = 4 * 1024 * 1024;
 
 export function createWorkerPool(deps: PoolDeps) {
   const slots = new Map<string, LiveSlot>();
@@ -135,6 +137,7 @@ export function createWorkerPool(deps: PoolDeps) {
       slot.resumeWaiter = undefined;
       if (slot.spawnDeadline !== undefined) clearTimeout(slot.spawnDeadline);
       requeue.delete(threadId);
+      requeueBytes.delete(threadId);
       return;
     }
     releaseSlotDebts(slot);
@@ -143,6 +146,7 @@ export function createWorkerPool(deps: PoolDeps) {
     settleThreadOutcome(slot, entry);
     const queued = requeue.get(threadId);
     requeue.delete(threadId);
+    requeueBytes.delete(threadId);
     if (queued !== undefined) {
       // 顺序重放（for-await）：重评路由串行——后续命令见到的表状态按序演进
       void (async () => {
@@ -266,12 +270,16 @@ export function createWorkerPool(deps: PoolDeps) {
     void slot.worker.write(line);
   }
 
-  /** retiring 重评队列：close 结算后按原序重投递 */
+  const requeueBytes = new Map<string, number>();
+
+  /** retiring 重评队列：close 结算后按原序重投递（行数 + 字节双预算） */
   function requeueLine(threadId: string, line: string): void {
     const queue = requeue.get(threadId) ?? [];
-    if (queue.length >= MAX_REQUEUE_PER_THREAD) return; // 风暴丢行：重发可重试（无应答悬挂——retiring 本就重评）
+    const bytes = (requeueBytes.get(threadId) ?? 0) + line.length;
+    if (queue.length >= MAX_REQUEUE_PER_THREAD || bytes > MAX_REQUEUE_BYTES_PER_THREAD) return; // 风暴丢行：重发可重试（无应答悬挂——retiring 本就重评）
     queue.push(line);
     requeue.set(threadId, queue);
+    requeueBytes.set(threadId, bytes);
   }
 
   /** 在飞槽直接投递（命中即写——返回 false = 无槽需唤醒） */

@@ -22,20 +22,15 @@ async function scanSkills(cwd: string | undefined): Promise<{ name: string; sour
   const dirs: Array<{ dir: string; source: "user" | "project" }> = [{ dir: userSkillsDir(), source: "user" }];
   if (cwd !== undefined) dirs.push({ dir: projectSkillsDir(cwd), source: "project" });
   const out: { name: string; source: "user" | "project"; path: string }[] = [];
-  const seen = new Set<string>();
-  // 高优先目录后写覆盖（同名 project 胜）——与 delegation types-loader 同构
-  for (const { dir, source } of [...dirs].reverse()) {
+  const byName = new Map<string, { name: string; source: "user" | "project"; path: string }>();
+  // 目录列表序即优先序（前者胜——与内核 skill 装载器/运行时装配同序一致）
+  for (const { dir, source } of dirs) {
     const loaded = await loadSkills([dir]);
     for (const skill of Object.values(loaded.skills)) {
-      if (seen.has(skill.name)) {
-        const existing = out.findIndex((entry) => entry.name === skill.name);
-        if (existing >= 0) out[existing] = { name: skill.name, source, path: skill.path };
-        continue;
-      }
-      seen.add(skill.name);
-      out.push({ name: skill.name, source, path: skill.path });
+      if (!byName.has(skill.name)) byName.set(skill.name, { name: skill.name, source, path: skill.path });
     }
   }
+  out.push(...byName.values());
   return out;
 }
 

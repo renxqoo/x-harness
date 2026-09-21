@@ -13,7 +13,8 @@ export function projectEntry(event: SessionEvent): EntryLine {
   return {
     seq: event.seq,
     ts: event.time,
-    event: { type: event.type, ...(event.data as Record<string, unknown>), ...(event.surfaceOp !== undefined ? { surfaceOp: event.surfaceOp } : {}) },
+    // type 后置——data 内多余键（伪造卷）不得遮蔽真实事件类型
+    event: { ...(event.data as Record<string, unknown>), type: event.type, ...(event.surfaceOp !== undefined ? { surfaceOp: event.surfaceOp } : {}) },
   };
 }
 

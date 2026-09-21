@@ -188,6 +188,9 @@ export async function runHost(boot: HostBoot): Promise<void> {
             if (!handled) void pool.routeLine(line);
           })
           .catch((error: unknown) => {
+            // 异常兜底：带 id 合成恰一 failure（hub_error 无 id 不可对账——不单独承担）
+            const failId = typeof parsed.id === "string" ? parsed.id : undefined;
+            emitClient(responseFrame({ ...(failId !== undefined ? { id: failId } : {}), command: typeof parsed.type === "string" ? parsed.type : "unknown", success: false, error: String(error instanceof Error ? error.message : error) }));
             emitClient(hubErrorFrame(String(error)));
           });
       }

@@ -23,6 +23,7 @@ export const DIRECT_READ_MAX_BYTES = 64 * 1024 * 1024; // register 直读上限
 export const WORKER_SPAWN_TIMEOUT_MS = 10_000; // hello 截止
 export const PENDING_COMMANDS_CAP = 65_536; // 命令风暴上限（host 侧 pending 表）
 export const BASH_OUTPUT_INLINE_RESPONSE_CAP = 64 * 1024; // bash 响应 output 内联截断
+export const BASH_OUTPUT_MEMORY_CAP = 8 * 1024 * 1024; // bash 输出内存累积封顶（truncated 粘滞）
 export const INFLIGHT_TOOL_TAIL_BYTES = 64 * 1024; // get_inflight toolOutputs 尾部
 export const INFLIGHT_TOOL_MAX = 8; // get_inflight toolOutputs 条数
 

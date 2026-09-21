@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { removeSkill, setSkillEnabled } from "../host/skills-admin.ts";
 import { createDialogBroker } from "../worker/dialogs.ts";
+import { createBashExec } from "../worker/bash-exec.ts";
 import type { PendingDialog } from "../worker/dialogs.ts";
 import { createInflightState } from "../worker/inflight.ts";
 import { createEventBridge } from "../worker/event-bridge.ts";
@@ -112,6 +113,66 @@ describe("addModel 校验矩阵（分支补面）", () => {
     // remove 后空档案自删
     const { removeModel } = await import("../host/models-admin.ts");
     expect((await removeModel(agentDir, "glm-5.3-air")).ok).toBe(true);
+  });
+});
+
+describe("审查修复回归（收口处置）", () => {
+  test("H2/cM4：bash-exec spawn 同步抛错 → {ok:false} 错误面（恰一响应不悬挂）", async () => {
+    void 0;
+    const agentDir = await tempDir("hub-fix-");
+    const bash = createBashExec({
+      session: () => undefined,
+      cwd: () => "/definitely/missing/cwd",
+      confirm: async () => true,
+      emitEvent: () => {},
+      agentDir,
+      defaultTimeoutMs: 5_000,
+      onStateChange: () => {},
+      shell: { ok: true, path: "/nonexistent/shell" },
+    });
+    const outcome = await bash.exec({ command: "echo x", id: "b1" });
+    expect(outcome.ok).toBe(false); // spawn 抛错被 exec 顶层 catch——错误面应答
+  });
+
+  test("cM2：准入取消 → 弹窗即时结算（pendingCount 归零——不挂 5min）", async () => {
+    const agentDir = await tempDir("hub-fix2-");
+    const broker = createDialogBroker({ confirmTimeoutMs: 60_000, sendFrame: () => {} });
+    const bash = createBashExec({
+      session: () => undefined,
+      cwd: () => agentDir,
+      confirm: (fields, signal) => broker.confirm("t1", fields as { tool: string; reason: string }, signal),
+      emitEvent: () => {},
+      agentDir,
+      defaultTimeoutMs: 5_000,
+      onStateChange: () => {},
+    });
+    const pending = bash.exec({ command: "echo late", id: "b1" });
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        resolve();
+      }, 30);
+    });
+    expect(broker.pendingCount()).toBe(1);
+    bash.abortAdmissions(); // 取消——弹窗应即时结算
+    const outcome = await pending;
+    expect(outcome.ok === false && outcome.reason).toBe("aborted before execution started");
+    expect(broker.pendingCount()).toBe(0); // 孤儿弹窗不占 pending/busy 面
+  });
+
+  test("M2：get_tree 子孙全收集（孙代在内 + 子代理滤除 + 环防御）", async () => {
+    const { descendantsOf } = await import("../worker/worker-read-commands.ts");
+    const headers = [
+      { id: "root" },
+      { id: "a", parentSession: "root" },
+      { id: "b", parentSession: "root" },
+      { id: "a1", parentSession: "a" },
+      { id: "a2", parentSession: "a1" },
+      { id: "agent-x", parentSession: "b", agentId: "agent-12345678" }, // 子代理滤除
+      { id: "loop", parentSession: "loop" }, // 环防御（自环不进集）
+    ];
+    expect(descendantsOf("root", headers).sort()).toEqual(["a", "a1", "a2", "b"]);
+    expect(descendantsOf("a", headers).sort()).toEqual(["a1", "a2"]);
+    expect(descendantsOf("b", headers)).toEqual([]);
   });
 });
 

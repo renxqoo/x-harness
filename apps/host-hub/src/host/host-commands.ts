@@ -2,24 +2,22 @@
 // overrides、凭据、宿主信息与旋钮、agents/list、ui_response 广播。非本集且非线程域
 // → unknown command（池侧统一拒）；缺 threadId 由池侧判（线程域命令）。
 import { stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { loadAgentTypes } from "@x-harness/agent-delegation";
 import { responseFrame, hubErrorFrame } from "../protocol/frames.ts";
 import { clampIdleRetireMs, clampRssRetireBytes, DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
-import { readCatalog } from "../shared/catalog.ts";
 import type { WorkerPool } from "./worker-pool.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
 import type { DirectRead } from "./read-history.ts";
 import { listSavedSessions } from "./saved-query.ts";
+import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
-import { createCredentials, redact } from "./credentials.ts";
-import type { CredentialStore } from "./credentials.ts";
+import { createModelsAuthCommands } from "./models-auth.ts";
 import { createAdminCommands } from "./admin-commands.ts";
 import { createTrustStore } from "./trust-store.ts";
 import type { TrustStore } from "./trust-store.ts";
-import { updateProvidersFile } from "./models-admin.ts";
 
 export interface HostCommandsDeps {
   table: ThreadTable;
@@ -48,56 +46,12 @@ export interface HostCommandContext {
   refreshSnapshot: () => Promise<void>;
 }
 
-/** auth/list 三态：有存 key/档案字面 → api-key；仅 env 键名 → preset-env；皆无 → none */
-function authTypeOf(hasLiteral: boolean, hasEnvName: boolean): "api-key" | "preset-env" | "none" {
-  if (hasLiteral) return "api-key";
-  if (hasEnvName) return "preset-env";
-  return "none";
-}
-
 /** host 本地命令处理器面（注册表按命令名一分派） */
 type LocalHandler = (input: { type?: unknown; id?: unknown; [key: string]: unknown }, id: string | undefined) => Promise<void> | void;
 
-/** 非法数值回显的数组元素面：null/undefined 空串、嵌套数组递归（String 语义） */
-function arrayElementText(value: unknown): string {
-  if (value === null) return "";
-  if (Array.isArray(value)) return value.map(arrayElementText).join(",");
-  if (typeof value === "object") return "[object Object]";
-  if (typeof value === "undefined") return "";
-  return String(value);
-}
-
-/** 非法数值回显：保持 String 语义（数组 join/对象 [object Object]——错误文案不变） */
-function invalidValueText(value: unknown): string {
-  if (value === null) return "null";
-  if (Array.isArray(value)) return value.map(arrayElementText).join(",");
-  if (typeof value === "object") return "[object Object]";
-  return String(value);
-}
-
-/** set_model_override 校验段：字段组合与数值合法性（错误文案单点） */
-function validateOverrideInput(
-  input: { contextWindow?: unknown; maxTokens?: unknown; remove?: unknown },
-): { ok: true; remove: boolean; contextWindow: unknown; maxTokens: unknown } | { ok: false; error: string } {
-  const remove = input.remove === true;
-  const cw = input.contextWindow;
-  const mt = input.maxTokens;
-  if (!remove && cw === undefined && mt === undefined) {
-    return { ok: false, error: "invalid: nothing to set (provide contextWindow/maxTokens or remove)" };
-  }
-  for (const value of [cw, mt]) {
-    if (value !== undefined && value !== null && (typeof value !== "number" || !Number.isInteger(value) || value < 1)) {
-      return { ok: false, error: `invalid: ${invalidValueText(value)} must be a positive integer or null` };
-    }
-  }
-  if (remove && (cw !== undefined || mt !== undefined)) {
-    return { ok: false, error: "invalid: remove is exclusive with field updates" };
-  }
-  return { ok: true, remove, contextWindow: cw, maxTokens: mt };
-}
-
-/** 词法围栏（同步段）：绝对路径 + 布局 + id 词法——不含 fs（realpath 复核在占位后） */
-function shapeFence(sessionPath: string): { ok: true; threadId: string; sessionPath: string } | { ok: false; reason: string } {
+/** 词法围栏（同步段）：绝对路径 + 布局 + id 词法 + **词法规范化**（别名拼法归一
+ *  canonical 形——占用表键不可被 `./`、双斜杠等拼法绕过；realpath 复核在占位后） */
+function shapeFence(sessionPath: string, sessionsRoot: string): { ok: true; threadId: string; sessionPath: string } | { ok: false; reason: string } {
   if (!sessionPath.startsWith("/")) {
     return { ok: false, reason: "session path outside sessions dir: absolute path required" };
   }
@@ -107,38 +61,12 @@ function shapeFence(sessionPath: string): { ok: true; threadId: string; sessionP
   if (file !== "events.jsonl" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id) || id === "." || id === "..") {
     return { ok: false, reason: "session path outside sessions dir: malformed layout" };
   }
-  return { ok: true, threadId: id, sessionPath };
-}
-
-type OverrideFile = { modelOverrides?: Record<string, { contextWindow?: number; maxOutputTokens?: number }> };
-
-/** overrides 键变更：remove 删键；字段更新后空键自删 */
-function applyOverrideEntry(file: OverrideFile, key: string, fields: { remove: boolean; contextWindow: unknown; maxTokens: unknown }): void {
-  file.modelOverrides ??= {};
-  if (fields.remove) {
-    delete file.modelOverrides[key];
-    return;
+  const canonical = join(sessionsRoot, id, "events.jsonl");
+  if (sessionPath !== canonical) {
+    // 词法别名（./、重复段、非规范顺序）——占用判定按 canonical 归一
+    return { ok: true, threadId: id, sessionPath: canonical };
   }
-  const entry = file.modelOverrides[key] ?? {};
-  if (fields.contextWindow === null) delete entry.contextWindow;
-  else if (typeof fields.contextWindow === "number") entry.contextWindow = fields.contextWindow;
-  if (fields.maxTokens === null) delete entry.maxOutputTokens;
-  else if (typeof fields.maxTokens === "number") entry.maxOutputTokens = fields.maxTokens;
-  if (entry.contextWindow === undefined && entry.maxOutputTokens === undefined) delete file.modelOverrides[key];
-  else file.modelOverrides[key] = entry;
-}
-
-/** 刷新后模型对象（附录 B 形状——单点构造） */
-function modelShapeOf(entry: { model: string; provider: string; contextWindow?: number; maxTokens?: number; cost?: Record<string, number>; source: "preset" | "custom" } | undefined): Record<string, unknown> | undefined {
-  if (entry === undefined) return undefined;
-  return {
-    id: entry.model,
-    provider: entry.provider,
-    ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
-    ...(entry.maxTokens !== undefined ? { maxTokens: entry.maxTokens } : {}),
-    ...(entry.cost !== undefined ? { cost: entry.cost } : {}),
-    source: entry.source,
-  };
+  return { ok: true, threadId: id, sessionPath };
 }
 
 /** trusted:true 的注册表登记（start/resume/register 共用——host 转发链执行，
@@ -148,10 +76,6 @@ function registerTrust(trust: TrustStore, input: { trusted?: unknown }, cwd: str
 }
 
 export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandContext) {
-  const credentials: CredentialStore = createCredentials(deps.agentDir);
-  const trust = createTrustStore(deps.agentDir);
-  const parkedReads = createParkedReads({ table: deps.table, direct: deps.direct, emitClient: deps.emitClient });
-
   function respond(id: string | undefined, command: string, result: { data?: unknown; error?: string }): void {
     deps.emitClient(
       responseFrame({
@@ -163,36 +87,10 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
       }),
     );
   }
-
-  async function setModelOverride(
-    input: { provider?: unknown; modelId?: unknown; contextWindow?: unknown; maxTokens?: unknown; remove?: unknown },
-    id: string | undefined,
-  ): Promise<void> {
-    const provider = typeof input.provider === "string" ? input.provider : "";
-    const modelId = typeof input.modelId === "string" ? input.modelId : "";
-    const catalog = await readCatalog(deps.agentDir);
-    const known = catalog.entries.some((e) => e.provider === provider && e.model === modelId);
-    if (!known) {
-      respond(id, "set_model_override", {
-        error: `unknown model preset: ${modelId} (available: ${catalog.entries.map((e) => e.model).join(", ")})`,
-      });
-      return;
-    }
-    const verdict = validateOverrideInput(input);
-    if (!verdict.ok) {
-      respond(id, "set_model_override", { error: verdict.error });
-      return;
-    }
-    const key = `${provider}::${modelId}`;
-    await updateProvidersFile(deps.agentDir, (file) => {
-      applyOverrideEntry(file, key, verdict);
-      return file;
-    });
-    // 热刷新 = 每次读取现算（readCatalog 无缓存）——响应回显刷新后模型对象
-    const refreshed = await readCatalog(deps.agentDir);
-    const entry = refreshed.entries.find((e) => e.provider === provider && e.model === modelId);
-    respond(id, "set_model_override", { data: { model: modelShapeOf(entry) } });
-  }
+  const modelsAuth = createModelsAuthCommands({ agentDir: deps.agentDir, respond, emitClient: deps.emitClient, refreshSnapshot: ctx.refreshSnapshot });
+  const credentials = modelsAuth.credentials;
+  const trust = createTrustStore(deps.agentDir);
+  const parkedReads = createParkedReads({ table: deps.table, direct: deps.direct, emitClient: deps.emitClient });
 
   /** thread/resume 占位段：词法围栏 + 有界等待释放 + 预算 + 表占位（先于复核段） */
   async function reserveResumeSlot(
@@ -202,7 +100,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
     // 同步段：词法围栏 + 占用声明——先于一切 await（消灭双开竞态窗口）；
     // realpath 围栏在占位后复核（失败撤位应答）
-    const shape = shapeFence(sessionPath);
+    const shape = shapeFence(sessionPath, deps.sessionsRoot);
     if (!shape.ok) {
       respond(id, "thread/resume", { error: shape.reason });
       return { ok: false };
@@ -395,64 +293,10 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   }
 
   async function handleThreadListSaved(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
-    const cwd = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : undefined;
+    const rawCwd = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : undefined;
+    const cwd = rawCwd !== undefined ? await normalizeCwd(rawCwd) : undefined; // 与存储侧 header.cwd 同口径（尾斜杠/symlink 拼法不漏会话）
     const sessions = await listSavedSessions(deps.sessionsRoot, cwd !== undefined ? { cwd } : {});
     respond(id, "thread/list_saved", { data: { sessions } });
-  }
-
-  async function handleGetModels(_input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
-    const catalog = await readCatalog(deps.agentDir);
-    if (catalog.degraded) {
-      deps.emitClient(hubErrorFrame("providers.json unreadable; preset-only catalog"));
-    }
-    respond(id, "get_models", {
-      data: catalog.entries.map((e) => ({
-        id: e.model,
-        provider: e.provider,
-        ...(e.contextWindow !== undefined ? { contextWindow: e.contextWindow } : {}),
-        ...(e.maxTokens !== undefined ? { maxTokens: e.maxTokens } : {}),
-        ...(e.cost !== undefined ? { cost: e.cost } : {}),
-        source: e.source,
-      })),
-    });
-  }
-
-  async function handleAuthList(_input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
-    const catalog = await readCatalog(deps.agentDir);
-    const creds = await credentials.read();
-    const providers = catalog.profiles.map((profile) => ({
-      provider: profile.name,
-      type: authTypeOf(creds.keys[profile.name] !== undefined || profile.apiKey !== undefined, profile.apiKeyEnv !== undefined),
-    }));
-    respond(id, "auth/list", { data: { providers } });
-  }
-
-  async function handleAuthSetApiKey(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
-    const provider = typeof input.provider === "string" ? input.provider : "";
-    const apiKey = typeof input.apiKey === "string" ? input.apiKey : "";
-    const catalog = await readCatalog(deps.agentDir);
-    if (!catalog.profiles.some((profile) => profile.name === provider)) {
-      respond(id, "auth/set_api_key", { error: redact(`auth provider not in catalog: ${provider}`, [apiKey]) });
-      return;
-    }
-    if (apiKey === "") {
-      respond(id, "auth/set_api_key", { error: "invalid: apiKey required" });
-      return;
-    }
-    try {
-      await credentials.setKey(provider, apiKey);
-      await ctx.refreshSnapshot(); // 新 key 立即可注入后续 spawn
-      respond(id, "auth/set_api_key", {});
-    } catch (error) {
-      respond(id, "auth/set_api_key", { error: redact(String(error), [apiKey]) });
-    }
-  }
-
-  async function handleAuthRemoveKey(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
-    const provider = typeof input.provider === "string" ? input.provider : "";
-    await credentials.removeKey(provider);
-    await ctx.refreshSnapshot(); // 撤 key 后续 spawn 不再注入
-    respond(id, "auth/remove_key", {});
   }
 
   async function handleAgentsList(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
@@ -462,12 +306,20 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const entry = threadId !== "" ? deps.table.get(threadId) : undefined;
     const projectDir = entry !== undefined && entry.trusted ? join(entry.cwd, ".x-harness", "agents") : undefined;
-    const userLoaded = loadAgentTypes([userDir]);
-    const merged = projectDir !== undefined ? loadAgentTypes([userDir, projectDir]) : userLoaded;
+    const builtinDir = join(import.meta.dirname, "../../../agent-types"); // 随包内置类型（最低优先）
+    const dirs = [builtinDir, userDir, ...(projectDir !== undefined ? [projectDir] : [])];
+    const projectLoaded = projectDir !== undefined ? loadAgentTypes([projectDir]) : undefined;
+    const userLoaded = loadAgentTypes([builtinDir, userDir]);
+    const merged = loadAgentTypes(dirs);
+    const sourceOf = (name: string): "builtin" | "user" | "project" => {
+      if (projectLoaded?.types[name] !== undefined) return "project";
+      if (userLoaded.types[name] !== undefined) return "user";
+      return "builtin";
+    };
     const types = Object.values(merged.types).map((def) => ({
       name: def.name,
       description: def.description,
-      source: projectDir !== undefined && userLoaded.types[def.name] === undefined ? "project" : "user",
+      source: sourceOf(def.name),
       ...(def.model !== undefined ? { model: def.model } : {}),
     }));
     respond(id, "agents/list", { data: { agents: types } });
@@ -527,11 +379,11 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   handlers.set("thread/set_keepalive", handleThreadSetKeepalive);
   handlers.set("thread/list", handleThreadList);
   handlers.set("thread/list_saved", handleThreadListSaved);
-  handlers.set("get_models", handleGetModels);
-  handlers.set("set_model_override", (input, id) => setModelOverride(input as { provider?: unknown; modelId?: unknown; contextWindow?: unknown; maxTokens?: unknown; remove?: unknown }, id));
-  handlers.set("auth/list", handleAuthList);
-  handlers.set("auth/set_api_key", handleAuthSetApiKey);
-  handlers.set("auth/remove_key", handleAuthRemoveKey);
+  handlers.set("get_models", (_input, id) => modelsAuth.getModels(id));
+  handlers.set("set_model_override", (input, id) => modelsAuth.setModelOverride(input as { provider?: unknown; modelId?: unknown; contextWindow?: unknown; maxTokens?: unknown; remove?: unknown }, id));
+  handlers.set("auth/list", (_input, id) => modelsAuth.authList(id));
+  handlers.set("auth/set_api_key", (input, id) => modelsAuth.authSetApiKey(input, id));
+  handlers.set("auth/remove_key", (input, id) => modelsAuth.authRemoveKey(input, id));
   handlers.set("agents/list", handleAgentsList);
   handlers.set("get_host_info", handleGetHostInfo);
   handlers.set("set_idle_retire_ms", handleSetIdleRetireMs);
