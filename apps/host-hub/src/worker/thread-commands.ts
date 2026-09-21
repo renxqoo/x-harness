@@ -351,12 +351,13 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       return;
     }
     try {
-      // hub 预检：零字节/空 events.jsonl（内核对空卷返回成功——预检归 hub 侧拒）
+      // hub 预检：档案在场性（header + events 文件存在；空 events = 合法空会话——
+      // 内核 create 先落 header、事件随首条 append；撕裂末行由内核恢复器处理）
       const eventsFile = join(rt.sessionsRoot, resumeId, "events.jsonl");
-      const size = await stat(eventsFile)
-        .then((info) => info.size)
-        .catch(() => -1);
-      if (size <= 0) {
+      const headerFile = join(rt.sessionsRoot, resumeId, "header.json");
+      const eventsExists = await stat(eventsFile).then(() => true, () => false);
+      const headerExists = await stat(headerFile).then(() => true, () => false);
+      if (!eventsExists || !headerExists) {
         respond(rt, { id: input.id, command: "thread/resume", error: "Session file not readable" });
         return;
       }

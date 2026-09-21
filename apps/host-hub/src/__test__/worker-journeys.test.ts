@@ -53,7 +53,7 @@ describe("worker 旅程 II", () => {
     expect(got.data).toEqual({ level: "medium", source: "session" });
   });
 
-  test("resume 零字节卷 hub 预检拒（内核对空卷成功——预检归 hub）", async () => {
+  test("resume 空 events.jsonl（合法空会话——header 在场）成功；档案缺席拒", async () => {
     const w = await spawn([]);
     const emptyDir = join(w.sessionsRoot, "emptyvol");
     const { mkdir } = await import("node:fs/promises");
@@ -61,8 +61,14 @@ describe("worker 旅程 II", () => {
     await writeFile(join(emptyDir, "header.json"), JSON.stringify({ id: "emptyvol", createdAt: 1 }), "utf8");
     await writeFile(join(emptyDir, "events.jsonl"), "", "utf8");
     w.send({ type: "thread/resume", id: "r1", sessionPath: join(emptyDir, "events.jsonl") });
-    const rejected = await waitResponse(w.captured.lines, "thread/resume", "r1");
-    expect(rejected.error).toBe("Session file not readable");
+    const resumed = await waitResponse(w.captured.lines, "thread/resume", "r1");
+    expect(resumed.success).toBe(true); // 空卷合法（内核 create 先落 header）
+    // 档案缺席（无 header/events）→ 拒（独立 worker——本会话已 open 占用先拒）
+    const w2 = await spawn([]);
+    w2.send({ type: "thread/resume", id: "r2", sessionPath: join(w2.sessionsRoot, "nope", "events.jsonl") });
+    const missing = await waitResponse(w2.captured.lines, "thread/resume", "r2");
+    expect(missing.error).toBe("Session file not readable");
+    w2.input.end();
   });
 
   test("读口族：get_messages/get_tree/get_session_stats/get_fork_messages/set_session_name", async () => {

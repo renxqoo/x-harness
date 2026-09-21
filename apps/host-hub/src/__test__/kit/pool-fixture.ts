@@ -20,10 +20,13 @@ export function fakeSpawnFactory() {
   const spawned: FakeWorkerSpec[] = [];
   const spawn = (spec: WorkerSpawnSpec): WorkerHandle => {
     let resolveExited: () => void = () => {};
+    let settled = false;
     const exited = new Promise<void>((resolve) => {
       resolveExited = resolve;
     });
     const settle = (): void => {
+      if (settled) return; // close 恰一（对齐真 spawnWorker 的 closed 守卫）
+      settled = true;
       spec.onClosed();
       resolveExited();
     };

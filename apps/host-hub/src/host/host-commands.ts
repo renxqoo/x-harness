@@ -15,6 +15,7 @@ import { listSavedSessions } from "./saved-query.ts";
 import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
 import { createModelsAuthCommands } from "./models-auth.ts";
+import { builtinTypesDir } from "../worker/assembly.ts";
 import { createAdminCommands } from "./admin-commands.ts";
 import { createTrustStore } from "./trust-store.ts";
 import type { TrustStore } from "./trust-store.ts";
@@ -306,7 +307,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const entry = threadId !== "" ? deps.table.get(threadId) : undefined;
     const projectDir = entry !== undefined && entry.trusted ? join(entry.cwd, ".x-harness", "agents") : undefined;
-    const builtinDir = join(import.meta.dirname, "../../../agent-types"); // 随包内置类型（最低优先）
+    const builtinDir = builtinTypesDir(); // 随包内置类型（最低优先——assembly 单源）
     const dirs = [builtinDir, userDir, ...(projectDir !== undefined ? [projectDir] : [])];
     const projectLoaded = projectDir !== undefined ? loadAgentTypes([projectDir]) : undefined;
     const userLoaded = loadAgentTypes([builtinDir, userDir]);
