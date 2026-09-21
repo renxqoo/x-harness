@@ -40,3 +40,4 @@ export {
 } from "./occupancy.ts";
 export type { Occupancy } from "./occupancy.ts";
 export { SUMMARIZATION_PROMPT, UPDATE_SUMMARIZATION_PROMPT, AUTO_CONTINUATION_NOTE } from "./prompts.ts";
+export { commandCompactPlugin, compactSkipError, COMPACT_KEEP_RECENT_TOKENS } from "./command-compact.ts";

@@ -111,11 +111,20 @@
         "@x-harness/token-meter": "workspace:*",
       },
     },
+    "packages/commands": {
+      "name": "@x-harness/commands",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/session": "workspace:*",
+      },
+    },
     "packages/compaction": {
       "name": "@x-harness/compaction",
       "version": "0.0.1",
       "dependencies": {
         "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/commands": "workspace:*",
         "@x-harness/core": "workspace:*",
         "@x-harness/llm": "workspace:*",
         "@x-harness/session": "workspace:*",
@@ -751,6 +760,8 @@
     "@x-harness/autocompact": ["@x-harness/autocompact@workspace:packages/autocompact"],
 
     "@x-harness/cli": ["@x-harness/cli@workspace:apps/cli"],
+
+    "@x-harness/commands": ["@x-harness/commands@workspace:packages/commands"],
 
     "@x-harness/compaction": ["@x-harness/compaction@workspace:packages/compaction"],
 
