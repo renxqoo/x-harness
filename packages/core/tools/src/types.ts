@@ -18,6 +18,10 @@ export interface ToolExecContext {
   readonly signal: AbortSignal;
   /** 调用方会话（agent 调度携带）——工具识别父/血缘寻址 */
   readonly session?: SessionId;
+  /** 增量输出通道（可选）：执行中可多次调用的观察回调——不进 WAL、不影响结果；
+   *  结果权威仍 = 返回值（「结果即返回值」不变量不动）。实现方自负不抛（观察面纪律）；
+   *  可被中间件替换/包裹（与 signal 同类） */
+  readonly onOutput?: (delta: string) => void;
 }
 
 export interface ToolOutcome {
@@ -70,6 +74,8 @@ export interface ToolCallRequest {
   readonly signal: AbortSignal;
   /** 归属会话（agent 调度携带）：语义持久检查点据此 flush；缺省=非 agent 调用方 */
   readonly session?: SessionId;
+  /** 增量输出通道（可选）：调度方提供，runBody 透传进 ToolExecContext */
+  readonly onOutput?: (delta: string) => void;
 }
 
 export type PreExecuteDecision = { readonly kind: "allow" } | { readonly kind: "deny"; readonly reason: string };

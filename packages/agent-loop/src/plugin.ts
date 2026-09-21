@@ -18,6 +18,7 @@ import {
   agentRequest,
   agentRequestError,
   agentStatus,
+  agentToolStream,
   agentTurnStopping, agentAssistantSettle, agentLlmStream} from "./tokens.ts";
 import type { Agent, AgentHandle, AgentLoopService, AgentOptions, CreateAgentOptions, ResumeAgentOptions } from "./types.ts";
 
@@ -79,6 +80,9 @@ export const agentLoopPlugin = {
         },
         emitStreamFrame: (turn, step, frame) => {
           agentScope.emit(agentAssistantStream, { session: session.id, turn, step, frame: frame as never });
+        },
+        emitToolStream: (callId, delta) => {
+          agentScope.emit(agentToolStream, { session: session.id, callId, delta });
         },
         dispatchPreStep: (payload) =>
           agentScope.dispatch(agentPreStep, payload as never, async () => ({ kind: "enter" }) as never),

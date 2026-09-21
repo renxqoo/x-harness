@@ -26,6 +26,7 @@ export const BASH_OUTPUT_INLINE_RESPONSE_CAP = 64 * 1024; // bash 响应 output 
 export const BASH_OUTPUT_MEMORY_CAP = 8 * 1024 * 1024; // bash 输出内存累积封顶（truncated 粘滞）
 export const INFLIGHT_TOOL_TAIL_BYTES = 64 * 1024; // get_inflight toolOutputs 尾部
 export const INFLIGHT_TOOL_MAX = 8; // get_inflight toolOutputs 条数
+export const TOOL_STREAM_MIN_INTERVAL_MS = 25; // agent/tool-stream 帧尾沿合并间隔（火喉输出下 wire 帧率有界）
 export const PROMPT_IMAGE_DATA_MAX = 5 * 1024 * 1024; // 单图 base64 串长上限
 export const PROMPT_IMAGES_MAX = 8; // 单 prompt 图像张数上限
 export const PROMPT_IMAGES_TOTAL_MAX = 12 * 1024 * 1024; // 单 prompt 图像总字节上限（16MiB 行限内的诚实余量）

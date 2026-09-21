@@ -238,3 +238,39 @@ describe("outcome 形状门矩阵（docs/TOOLS.md §1.3）", () => {
     });
   });
 });
+
+describe("onOutput 增量通道（BATCH2-DESIGN §2——观察面，结果权威仍在返回值）", () => {
+  it("请求携带 onOutput → ToolExecContext 透传；缺省不伪造字段", async () => {
+    const ctxs: Array<Record<string, unknown>> = [];
+    const world = makeWorld();
+    world.registry.register({
+      name: "streamy",
+      inputSchema: Type.Object({}),
+      execute: async (_args, ctx) => {
+        ctxs.push(ctx as unknown as Record<string, unknown>);
+        ctx.onOutput?.("chunk-1");
+        ctx.onOutput?.("chunk-2");
+        return { content: "done" };
+      },
+    });
+    const deltas: string[] = [];
+    await world.dispatch({ ...call("streamy"), onOutput: (d) => deltas.push(d) });
+    expect(deltas).toEqual(["chunk-1", "chunk-2"]);
+    expect(ctxs[0]).toHaveProperty("onOutput");
+    await world.dispatch(call("streamy"));
+    expect(ctxs[1]).not.toHaveProperty("onOutput");
+  });
+
+  it("中间件可换 onOutput（与 signal 同类——包裹/过滤合法，args/name/callId 仍冻结）", async () => {
+    const registry = createToolRegistry();
+    const dispatch = createDispatcher({
+      registry,
+      dispatchPreExecute: () => Promise.resolve({ kind: "allow" } as PreExecuteDecision),
+      dispatchExecute: (request, final) => final({ ...request, onOutput: (d: string) => request.onOutput?.(`[${d}]`) }),
+    });
+    registry.register({ name: "t", inputSchema: Type.Object({}), execute: async (_a, ctx) => { ctx.onOutput?.("x"); return { content: "" }; } });
+    const seen: string[] = [];
+    await dispatch({ ...call("t"), onOutput: (d) => seen.push(d) });
+    expect(seen).toEqual(["[x]"]);
+  });
+});

@@ -26,9 +26,23 @@ export interface SchedulerDeps {
   readonly step: number;
   /** 工具白名单（缺省=全部）；白名单外调用拦截在执行面并配对落账 */
   readonly allowedTools?: readonly string[];
+  /** 工具增量输出发射面（agentToolStream——自包裹 try/catch：观察面异常不杀工具结果） */
+  readonly emitToolStream?: (callId: string, delta: string) => void;
 }
 
 const ABORTED_BEFORE_DISPATCH = "tool call aborted before dispatch";
+
+/** onOutput 构造（池/排他共用）：调度方发射面自包裹——观察者异常不得杀死工具执行 */
+function onOutputOf(deps: SchedulerDeps, callId: string): ((delta: string) => void) | undefined {
+  if (deps.emitToolStream === undefined) return undefined;
+  return (delta: string) => {
+    try {
+      deps.emitToolStream?.(callId, delta);
+    } catch {
+      /* 观察面失败静默收敛：结果权威在返回值 */
+    }
+  };
+}
 
 interface DenyCheck {
   readonly session: Session;
@@ -116,7 +130,17 @@ export async function executeToolCalls(
       mustAppend(session, "tool/call", { turn, step, callId: call.callId, name: call.name, arguments: call.arguments });
     }
     const outcomes = await Promise.all(
-      pool.map((call) => registry.dispatch({ callId: call.callId, name: call.name, args: parseArgs(call.arguments), signal, session: session.id })),
+      pool.map((call) => {
+        const onOutput = onOutputOf(deps, call.callId);
+        return registry.dispatch({
+          callId: call.callId,
+          name: call.name,
+          args: parseArgs(call.arguments),
+          signal,
+          session: session.id,
+          ...(onOutput !== undefined ? { onOutput } : {}),
+        });
+      }),
     );
     for (let i = 0; i < pool.length; i++) {
       const outcome = outcomes[i];
@@ -138,7 +162,15 @@ interface Ledger {
 
 async function runOne(deps: SchedulerDeps, call: ToolCallSpec, ledger: Ledger): Promise<void> {
   mustAppend(ledger.session, "tool/call", { turn: ledger.turn, step: ledger.step, callId: call.callId, name: call.name, arguments: call.arguments });
-  const outcome = await deps.registry.dispatch({ callId: call.callId, name: call.name, args: parseArgs(call.arguments), signal: deps.signal, session: ledger.session.id });
+  const onOutput = onOutputOf(deps, call.callId);
+  const outcome = await deps.registry.dispatch({
+    callId: call.callId,
+    name: call.name,
+    args: parseArgs(call.arguments),
+    signal: deps.signal,
+    session: ledger.session.id,
+    ...(onOutput !== undefined ? { onOutput } : {}),
+  });
   commitOutcome(call, outcome, ledger);
 }
 

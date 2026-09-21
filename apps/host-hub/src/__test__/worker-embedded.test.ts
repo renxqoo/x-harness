@@ -265,6 +265,43 @@ describe("worker 内嵌旅程", () => {
     expect((await waitResponse(worker.captured.lines, "steer", "st1")).error).toBe("invalid images: model does not accept images");
   });
 
+  test("工具输出增量流：模型工具路径 bash 逐块外推（agent/tool-stream）+ get_inflight 执行中非空 + 结算冲净", async () => {
+    const worker = await spawn([
+      { toolCalls: [{ name: "bash", input: JSON.stringify({ command: "echo part-one; sleep 1; echo part-two" }) }] },
+      { reply: "done" },
+    ]);
+    worker.send({ type: "thread/start", id: "s1" });
+    const started = await waitResponse(worker.captured.lines, "thread/start", "s1");
+    const threadId = (started.data as { threadId: string }).threadId;
+    worker.send({ type: "permission/set_mode", id: "pm1", threadId, mode: "full" });
+    await waitResponse(worker.captured.lines, "permission/set_mode", "pm1");
+    worker.send({ type: "prompt", id: "p1", threadId, message: "run it" });
+    await waitResponse(worker.captured.lines, "prompt", "p1");
+    // 增量帧：首个含 part-one 的 agent/tool-stream（25ms 尾沿合并——bash sleep 1s 窗口宽）
+    const first = await waitEvent(worker.captured.lines, "agent/tool-stream", (p) => typeof (p as { delta?: string }).delta === "string" && (p as { delta: string }).delta.includes("part-one"));
+    expect((first.payload as { callId?: string }).callId).toMatch(/^call-/);
+    // 执行中快照：toolOutputs 非空且含部分输出（原为空占位——BATCH2 §2.1 验收面）
+    worker.send({ type: "get_inflight", id: "gi1", threadId });
+    const inflight = await waitResponse(worker.captured.lines, "get_inflight", "gi1");
+    const outputs = (inflight.data as { toolOutputs: Array<{ output: string }> }).toolOutputs;
+    expect(outputs.length).toBeGreaterThanOrEqual(1);
+    expect(outputs.some((entry) => entry.output.includes("part-one"))).toBe(true);
+    await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
+    // 帧合并无损：全部 delta 连接含两段输出
+    const joined = worker.captured.lines
+      .map((line) => JSON.parse(line) as { type?: string; name?: string; payload?: { delta?: string } })
+      .filter((f) => f.type === "event" && f.name === "agent/tool-stream")
+      .map((f) => f.payload?.delta ?? "")
+      .join("");
+    expect(joined).toContain("part-one");
+    expect(joined).toContain("part-two");
+    // WAL 终局（结果权威）：tool/result 含全文
+    worker.send({ type: "get_entries", id: "e1", threadId });
+    const entries = await waitResponse(worker.captured.lines, "get_entries", "e1");
+    const toolResult = (entries.data as { entries: Array<{ event: { type: string; content?: string } }> }).entries.find((row) => row.event.type === "tool/result");
+    expect(toolResult?.event.content).toContain("part-two");
+  });
+
   test("failure 必 emit 表驱动：unknown command / parse failure / Unknown threadId（无会话与错 id 两面）", async () => {
     const worker = await spawn([]);
     worker.input.send("not json");

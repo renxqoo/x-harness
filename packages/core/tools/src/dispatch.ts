@@ -105,6 +105,7 @@ async function runBody(tool: ToolDefinition, request: ToolCallRequest): Promise<
       name: request.name,
       signal: request.signal,
       ...(request.session !== undefined ? { session: request.session } : {}),
+      ...(request.onOutput !== undefined ? { onOutput: request.onOutput } : {}),
     });
   } catch (error) {
     if (request.signal.aborted) return abortedOutcome();

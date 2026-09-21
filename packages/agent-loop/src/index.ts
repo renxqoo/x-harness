@@ -14,6 +14,7 @@ export {
   agentRequest,
   agentRequestError,
   agentStatus,
+  agentToolStream,
   agentTurnStopping,
   agentAssistantSettle,
   agentLlmStream,

@@ -112,8 +112,10 @@ interface RunResult {
 
 async function runCommand(input: { readonly command: string; readonly cwd: string; readonly timeoutMs: number; readonly limits: BashLimits; readonly env: ExecEnv; readonly ctx: ToolExecContext }): Promise<RunResult> {
   const { command, cwd, timeoutMs, limits, env, ctx } = input;
-  const out = new ChannelCollector();
-  const err = new ChannelCollector();
+  // 增量通道（BATCH2 §2）：双流逐块经 onChunk 外推（ctx.onOutput——调度方发射面）；
+  // 原始字节流口径（ANSI 清洗是结算时态）
+  const out = new ChannelCollector(ctx.onOutput !== undefined ? { onChunk: ctx.onOutput } : {});
+  const err = new ChannelCollector(ctx.onOutput !== undefined ? { onChunk: ctx.onOutput } : {});
   const spawned = await env.spawn({ argv: ["/bin/sh", "-c", command], cwd, ...(ctx.session !== undefined ? { session: ctx.session } : {}) });
   if (!spawned.ok) {
     return { stdout: "", stderr: "", exitCode: null, timeoutMs, timedOut: false, aborted: false, spawnError: `${spawned.reason.kind}: ${spawned.reason.detail}`, spillPath: undefined, truncated: false };

@@ -25,6 +25,8 @@ export interface DriverDeps {
   readonly emitStatus: (status: "idle" | "running") => void;
   readonly emitError: (turn: number, message: string) => void;
   readonly emitStreamFrame: (turn: number, step: number, frame: unknown) => void;
+  /** 工具增量输出发射面（agentToolStream——BATCH2 §2；缺省不发） */
+  readonly emitToolStream?: (callId: string, delta: string) => void;
   readonly dispatchPreStep: (payload: unknown) => Promise<unknown>;
   readonly dispatchRequest: (payload: unknown, dial: Dial) => Promise<Dial>;
   readonly dispatchRequestError: (payload: unknown) => Promise<{ readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined>;
@@ -456,6 +458,7 @@ export async function scheduleTools(scope: TurnScope, step: number, assistant: A
       ...(deps.tools.restrictionOf(session.id) !== undefined
         ? { allowedTools: deps.tools.schemas({ sessionId: session.id }).map((schema) => schema.name) }
         : {}),
+      ...(deps.emitToolStream !== undefined ? { emitToolStream: deps.emitToolStream } : {}),
     },
     specs,
   );

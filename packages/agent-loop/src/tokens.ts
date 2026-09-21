@@ -26,6 +26,15 @@ export const agentAssistantStream = defineEvent<{
   readonly frame: AssistantStreamFrame;
 }>("agent/assistant-stream", { freeze: "none" });
 
+/** 工具执行增量输出（BATCH2-DESIGN §2）：实时观察面——不进 WAL（结果权威 =
+ *  tool/result），宿主桥接消费（wire 帧 + 在途快照喂入）。delta 为原始字节流口径
+ *  （ANSI 清洗是结算时态——escape 序列可跨 chunk，逐块清洗会截坏序列） */
+export const agentToolStream = defineEvent<{
+  readonly session: SessionId;
+  readonly callId: string;
+  readonly delta: string;
+}>("agent/tool-stream", { freeze: "none" });
+
 /** F0①：enter 可携重写消息（落账走重写版——「模型可见必落盘」保持：重写版即日志版）；
  *  step0 改写为空 = 闭 turn（领取项被中间件显式清除）。
  *  reject.reason 声明为强形态；waterfall 不校验输出形状——内核按弱形态防御

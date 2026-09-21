@@ -21,17 +21,29 @@ function tailBytes(text: string, maxBytes: number): string {
 export class ChannelCollector {
   private readonly parts: string[] = [];
   readonly fullCapBytes: number;
+  /** 增量观察回调（可选）：push 早段同步调用（在保留帽早退**之前**——过帽仍流，
+   *  对齐直执行面 truncated 语义）；观察者异常防御性吞掉——不得杀死 pump */
+  private readonly onChunk?: (text: string) => void;
   full = "";
   fullBytes = 0;
   fullCapped = false;
   truncated = false;
 
-  constructor(options: { readonly fullCapBytes?: number } = {}) {
+  constructor(options: { readonly fullCapBytes?: number; readonly onChunk?: (text: string) => void } = {}) {
     this.fullCapBytes = options.fullCapBytes ?? FULL_CAP_BYTES;
+    this.onChunk = options.onChunk;
   }
 
   push(text: string): void {
-    if (text === "" || this.fullCapped) return;
+    if (text === "") return;
+    if (this.onChunk !== undefined) {
+      try {
+        this.onChunk(text);
+      } catch {
+        /* 观察者 throw 不杀 pump：reader 继续 cancel 语义由 pump 自身承担 */
+      }
+    }
+    if (this.fullCapped) return;
     this.parts.push(text);
     this.full += text;
     this.fullBytes += Buffer.byteLength(text);

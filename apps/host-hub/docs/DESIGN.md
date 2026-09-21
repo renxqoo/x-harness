@@ -204,8 +204,10 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
 - **get_inflight** `{threadId}` → `{turnStartSeq, turnStartedAt, message, toolOutputs,
   bash}`——turnStartSeq = 本轮 turn/start 事件 seq（轮边界唯一权威）；message = 在途
   assistant partial（`agent/assistant-stream` text/thinking chunk 累积 +
-  `llm/chunk` 工具增量拼接，`assistant/message` 事件为步终局）；toolOutputs 尾部
-  64KiB/调用、至多 8 条、truncated 粘滞；bash 按命令 id 隔离（读口取最新仍在跑者）。
+  `llm/chunk` 工具增量拼接，`assistant/message` 事件为步终局）；toolOutputs = 执行中
+  实时尾部（BATCH2 起——模型工具增量经 `agent/tool-stream` 逐 delta 追加；尾部
+  64KiB/调用、至多 8 条、truncated 粘滞；一次性结果工具执行期为空串占位——如实）；
+  bash 按命令 id 隔离（读口取最新仍在跑者）。
   无在途 → `{null,null,null,[],null}` 恒 success。
 - **get_messages** `{threadId}` — `session.deriveMessages()` 全量（无分页；仅诊断用）；
   软上限 100MiB（JSON 串长累计）——超限 failure `response too large; use get_entries`
@@ -425,7 +427,9 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
 - **实时域**（bus 事件 token 原名透传）：`agent/assistant-stream`（payload =
   `{session, turn, step, frame}`——AssistantStreamFrame：start / chunk（**仅
   `{kind:"text"|"thinking", text}`**）/ end）、`agent/status`（`{session, status:
-  idle|running}`）、`agent/error`（`{session, turn, message}`）、`compaction/landed`、
+  idle|running}`）、`agent/error`（`{session, turn, message}`）、`agent/tool-stream`
+  （`{session, callId, delta}`——内核工具增量事件，BATCH2 起；当前仅主会话外推，
+  delta 为原始字节流口径——ANSI 清洗是 tool/result 结算口径）、`compaction/landed`、
   `compaction/served-window`、`compaction/diagnostic`、`autocompact/*` 事件族、
   `permission/decided`、`session-checkpoint/diagnostic`、`session/created`、
   `session/disposed`。
@@ -440,6 +444,10 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
     id 合成 `settled{ok:false, reason:"worker-died"}`**。排序承诺：settled 必在本
     输入引发的最后一个 turn/end 之后；abort/clear_queue 不取消 settled（仍发，ok
     反映实际收敛结果；turn/end reason 为 error/blocked → ok:false 带 reason）。
+  - `agent/tool-stream` `{session, callId, delta}`——模型工具执行增量（内核
+    agentToolStream 事件；桥 per-callId 尾沿合并 ≥25ms——delta 可连接合并不损；
+    tool/result 到达时尾批冲净；get_inflight 的 toolOutputs 同步逐 delta 追加不受
+    节流）。
   - `bash_execution_update` `{id, delta, truncated?}`。
 
 **消息权威终局**：`assistant/message` WAL 事件是本步消息的权威终局（content/

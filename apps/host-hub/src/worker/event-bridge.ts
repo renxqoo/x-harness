@@ -7,7 +7,7 @@
 import type { Context } from "@x-harness/core";
 import { sessionDisposed, sessionEvent } from "@x-harness/session";
 import type { SessionEvent } from "@x-harness/session";
-import { agentAssistantStream, agentError, agentStatus } from "@x-harness/agent-loop";
+import { agentAssistantStream, agentError, agentStatus, agentToolStream } from "@x-harness/agent-loop";
 import { llmStream } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
 import { compactionDiagnostic, compactionLanded, compactionServedWindow } from "@x-harness/compaction";
@@ -15,6 +15,7 @@ import { autocompactBreaker, autocompactCheckpoint, autocompactDiagnostic, autoc
 import { permissionDecided } from "@x-harness/permission";
 import { checkpointDiagnostic } from "@x-harness/session-checkpoint";
 import type { InflightState } from "./inflight.ts";
+import { TOOL_STREAM_MIN_INTERVAL_MS } from "../shared/limits.ts";
 import { eventFrame } from "../protocol/frames.ts";
 
 export interface EventBridgeDeps {
@@ -86,6 +87,51 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     deps.emitLine(eventFrame({ threadId, name, payload }));
   }
 
+  // —— 工具增量流（BATCH2 §2）：inflight 逐 delta 追加（get_inflight 恒新鲜）；wire 帧
+  // per-callId 尾沿合并 ≥25ms（delta 可连接——合并不损；火喉输出下帧率有界）——
+  interface ToolStreamPending {
+    pending: string;
+    timer: ReturnType<typeof setTimeout> | undefined;
+    lastAt: number;
+  }
+  const toolStream = new Map<string, ToolStreamPending>();
+
+  function flushToolStream(callId: string): void {
+    const state = toolStream.get(callId);
+    if (state === undefined) return;
+    if (state.timer !== undefined) {
+      clearTimeout(state.timer);
+      state.timer = undefined;
+    }
+    const chunk = state.pending;
+    state.pending = "";
+    state.lastAt = Date.now();
+    if (chunk !== "") emit(agentToolStream.name, { session: deps.threadId(), callId, delta: chunk });
+  }
+
+  function feedToolStream(callId: string, delta: string): void {
+    deps.inflight.toolOutput(callId, delta);
+    const state = toolStream.get(callId) ?? { pending: "", timer: undefined, lastAt: 0 };
+    toolStream.set(callId, state);
+    state.pending += delta;
+    if (state.timer === undefined) {
+      const wait = Math.max(0, TOOL_STREAM_MIN_INTERVAL_MS - (Date.now() - state.lastAt));
+      const timer = setTimeout(() => {
+        state.timer = undefined;
+        flushToolStream(callId);
+      }, wait);
+      timer.unref?.();
+      state.timer = timer;
+    }
+  }
+
+  function clearToolStream(): void {
+    for (const state of toolStream.values()) {
+      if (state.timer !== undefined) clearTimeout(state.timer);
+    }
+    toolStream.clear();
+  }
+
   function onSessionEvent(event: SessionEvent): void {
     if (event.type === "turn/start") {
       streaming = true;
@@ -95,9 +141,12 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
       streaming = false;
       deps.inflight.turnEnd();
       partial.reset();
+      clearToolStream(); // 轮边界：在途尾巴冲净（settled 后无增量）
     } else if (event.type === "tool/call") {
-      deps.inflight.toolOutput(event.data.callId, ""); // 在途工具占位（增量流内核无面——完整输出经 WAL）
+      deps.inflight.toolOutput(event.data.callId, ""); // 在途工具占位（startedAt 基线；增量经 agent/tool-stream）
     } else if (event.type === "tool/result") {
+      flushToolStream(event.data.callId); // 结算边沿：尾批冲净后撤状态
+      toolStream.delete(event.data.callId);
       deps.inflight.toolDone(event.data.callId);
     }
     emit(event.type, sessionPayload(event));
@@ -120,6 +169,11 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
             deps.inflight.partial(partial.snapshot());
           }
           emit(agentAssistantStream.name, payload);
+        }),
+        ctx.on(agentToolStream, (payload) => {
+          // W2：仅主会话外推（W3 归属泛化——子的工具增量届时带 session 转发）
+          if (String(payload.session) !== deps.threadId()) return;
+          feedToolStream(payload.callId, payload.delta);
         }),
         ctx.on(agentStatus, (payload) => {
           const threadId = deps.threadId();
@@ -155,6 +209,7 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
       streaming = false;
       childStatuses.clear();
       partial.reset();
+      clearToolStream();
     },
     emitSettled(sendId, ok, reason) {
       emit("settled", { sendId, ok, ...(reason !== undefined ? { reason } : {}) });

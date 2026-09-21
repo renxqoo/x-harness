@@ -276,3 +276,63 @@ describe("executeToolCalls（docs/AGENT-LOOP-DRIVER §1.5）", () => {
     ]);
   });
 });
+
+describe("emitToolStream 发射面（BATCH2-DESIGN §2）", () => {
+  it("并行池：onOutput 逐 callId 发射；abort 未启动合成结果零发射", async () => {
+    const h = await makeHarness();
+    harnesses.push(h);
+    h.registry.register({
+      name: "t",
+      inputSchema: Type.Object({}),
+      isConcurrencySafe: () => true,
+      execute: async (_a, ctx) => {
+        ctx.onOutput?.("d1");
+        ctx.onOutput?.("d2");
+        return { content: "ok" };
+      },
+    });
+    const seen: string[] = [];
+    await scheduler(h, { emitToolStream: (callId, delta) => seen.push(`${callId}:${delta}`) })([spec("c1", "{}"), spec("c2", "{}")]);
+    expect([...seen].sort()).toEqual(["c1:d1", "c1:d2", "c2:d1", "c2:d2"]);
+    const controller = new AbortController();
+    controller.abort();
+    const abortedSeen: string[] = [];
+    await executeToolCalls(
+      {
+        session: h.session,
+        registry: h.registry,
+        signal: controller.signal,
+        maxParallel: 10,
+        maxResultChars: 100_000,
+        turn: 0,
+        step: 0,
+        emitToolStream: (callId, delta) => abortedSeen.push(`${callId}:${delta}`),
+      },
+      [spec("c3", "{}")],
+    );
+    expect(abortedSeen).toEqual([]);
+  });
+
+  it("排他路径同携 onOutput；发射面 throw 不杀工具结果（回归 BATCH2 审 M3）", async () => {
+    const h = await makeHarness();
+    harnesses.push(h);
+    h.registry.register({
+      name: "ex",
+      inputSchema: Type.Object({}),
+      execute: async (_a, ctx) => {
+        ctx.onOutput?.("delta-1");
+        return { content: "exclusive-ok" };
+      },
+    });
+    const seen: string[] = [];
+    await scheduler(h, {
+      emitToolStream: (callId, delta) => {
+        seen.push(`${callId}:${delta}`);
+        throw new Error("emitter bug");
+      },
+    })([{ callId: "c9", name: "ex", arguments: "{}" }]);
+    expect(seen).toEqual(["c9:delta-1"]);
+    const result = h.session.events().find((e) => e.type === "tool/result");
+    expect(result && result.type === "tool/result" ? result.data.content : "").toContain("exclusive-ok");
+  });
+});
