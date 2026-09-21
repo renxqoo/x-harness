@@ -179,7 +179,10 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   append `agent/inbox/spliced {op:"clear", reason:"client-clear"}` + flush（**不用
   agent.cancel**——那是 abort 语义；clear 事件是 driver 同款机制事件，折叠器天然
   清空）。
-- **compact** `{threadId, customInstructions?}` — `compactionRunner.compact({session,
+- **compact** `{threadId, customInstructions?}` — 薄壳（BATCH3 起）：合成 `/compact`
+  行（customInstructions 有则拼）走与 prompt 拦截同一条内核 execute 路（单一执行路径
+  ——busy 前置/skip 归一/成功三元组全在 compaction 包的 commandCompactPlugin）；响应
+  形状不变。直调 `compactionRunner.compact({session,
   trigger:"manual", customInstructions?, signal})`；压缩中再发 → failure（命令级
   isCompacting 预检）；**响应在完成时返回** `{summary, replacedCount, summaryTokens}`
   （summary 经 `previousSummaryOf(session.surface())`；replacedCount = replacedNodes；
@@ -200,7 +203,9 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   model——迁移源为 modelId 单字段，改名声明 MIGRATION §4**）= `session/meta{dial}`
   尾值 → `request/header` 尾值 → 装配缺省；isCompacting 仅反映 worker 发起的手动
   压缩（自动压缩在 step 内部，经 `compaction/*` 事件可观察——声明性边界）；
-  queue = `foldInbox(events)` 文本数组 `{steering:[], followUp:[]}`。
+  queue = `foldInbox(events)` 文本数组 `{stearing:[], followUp:[]}`；isCompacting =
+  命令执行中谓词（BATCH3 起数据源 = 桥对 command/run|done 的计数——本批唯一命令是
+  compact，语义等价）。
 - **get_inflight** `{threadId}` → `{turnStartSeq, turnStartedAt, message, toolOutputs,
   bash}`——turnStartSeq = 本轮 turn/start 事件 seq（轮边界唯一权威）；message = 在途
   assistant partial（`agent/assistant-stream` text/thinking chunk 累积 +
@@ -229,9 +234,12 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   TokenUsage.cost 可选携带——比迁移源升级，目录 cost 表齐备后自动生效）。
 - **set_session_name** `{threadId, name}` — `session/meta {key:"title"}` + flush；空串
   拒；响应无 data（受理即全部信息）。
-- **get_commands** `{threadId}` → `[{name, description?, source: skill|builtin}]` —
-  skills 清单（source:"skill"）+ hub 注入 builtin 条目 `compact`（description
-  `"Compact the conversation history"` 单点锚定）。**source 词表收缩 skill|builtin**
+- **get_commands** `{threadId}` → `[{name, description?, source: command|skill}]` —
+  统一命令目录（BATCH3 起）：内核命令注册面 `commandRegistry.list()`（source:
+  "command"——机器拦截的斜杠动词，`/compact` 由 compaction 包自声明，description
+  `"Compact the conversation history"` 单点锚定）+ skills 清单（source:"skill"——
+  模型分发面，未注册词形交模型）。**source 词表收缩 command|skill**
+  （builtin→command，BATCH3 变更）
   （内核无命令注册面——有意变更）。
 - **get_fork_messages** `{threadId}` → `[{seq, text}]` — 可分叉用户消息（surface
   user/message 文本折叠）。
@@ -445,7 +453,9 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   `assistant/attempt`、`tool/call`、`tool/result`、`request/header`、
   `request/context`、`llm/retry`、`session/end-seed`、`agent/inbox/spliced`
   （InboxSpliceData 判别联合原样）、`autocompact/checkpoint`、`todo/snapshot`、
-  `session/meta`。
+  `session/meta`、`command/run`/`command/done`（BATCH3：命令生命周期 log-only 配对，
+  commandId 配对镜像 tool/call↔tool/result；args 缺席 = recordInput:false；不开 turn、
+  不进模型上下文；恢复面配对校验 at-most-once 双向，悬挂 run 合法）。
 - **实时域**（bus 事件 token 原名透传）：`agent/assistant-stream`（payload =
   `{session, turn, step, frame}`——AssistantStreamFrame：start / chunk（**仅
   `{kind:"text"|"thinking", text}`**）/ end；**子代理模型增量经本面到达**——llm/chunk
@@ -579,7 +589,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | 权限规则引擎/裁决 | @x-harness/permission（broker 只传输；mode/授权面归 permissionMode 服务） |
 | 子代理委派/预算/通知 | @x-harness/agent-delegation（hub 只消费 delegationView + 中继事件） |
 | 会话 WAL/写锁/fork/恢复 | @x-harness/session + session-persistence-jsonl（hub 只围栏与路由） |
-| 命令注册/dispatch | 内核无此面（get_commands 仅 skills+compact；斜杠文本交模型） |
+| 命令注册/dispatch | **已支持（BATCH3）**：内核 `@x-harness/commands` 注册面 + kit 自声明（compact）+ execute 分路；未注册词形仍交模型（skill 分发面） |
 | sandbox/远程工作区 | @x-harness/sandbox-local（fenceKit 装配面） |
 | 后端注册表/能力协商 | 单一后端（hello 握手：`{protocolVersion:1, backendId:"x-harness"}`） |
 | OAuth 交互式登录 | auth/set_api_key 单通道 |

@@ -1,7 +1,6 @@
 // 生命周期事件（BATCH2-DESIGN §3）：agentSpawned/agentFinished 发射矩阵——正常完成 /
 // stopAll / stop-idle 子 / 孤儿收养四路径；finished = 每运行周期恰一次（复活后再发）。
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AgentHandle } from "@x-harness/agent-loop";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, workerOptions, resetWorlds, agentIdOf, sessionOf } from "./world.ts";
 import { agentFinished, agentSpawned } from "../tokens.ts";
 import type { AgentFinishedPayload, AgentSpawnedPayload } from "../tokens.ts";
@@ -21,9 +20,6 @@ function wireLog(ctx: import("@x-harness/core").Context): EventLog {
   ctx.on(agentFinished, (payload) => log.finished.push(payload));
   return log;
 }
-
-const lastNotificationOf = (parent: AgentHandle): string =>
-  JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
 
 describe("agentSpawned/agentFinished 发射矩阵", () => {
   it("正常完成：spawned 一发 + finished{completed} 一发（detail=completed，summary 透传）", async () => {
@@ -113,7 +109,6 @@ describe("agentSpawned/agentFinished 发射矩阵", () => {
     expect(messaged.isError).toBeUndefined();
     await vi.waitFor(() => expect(log.finished).toHaveLength(2), { timeout: 5_000 });
     expect(log.finished[1]).toMatchObject({ outcome: "completed", detail: "completed" });
-    void lastNotificationOf;
     await parent.dispose();
   });
 });

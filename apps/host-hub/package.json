@@ -15,16 +15,17 @@
     "@x-harness/agent-delegation": "workspace:*",
     "@x-harness/agent-loop": "workspace:*",
     "@x-harness/autocompact": "workspace:*",
+    "@x-harness/commands": "workspace:*",
     "@x-harness/compaction": "workspace:*",
     "@x-harness/core": "workspace:*",
     "@x-harness/harness": "workspace:*",
     "@x-harness/llm": "workspace:*",
+    "@x-harness/llm-retry": "workspace:*",
     "@x-harness/md-frontmatter": "workspace:*",
     "@x-harness/permission": "workspace:*",
     "@x-harness/session": "workspace:*",
-    "@x-harness/session-persistence-jsonl": "workspace:*",
-    "@x-harness/skill": "workspace:*",
     "@x-harness/session-checkpoint": "workspace:*",
-    "@x-harness/llm-retry": "workspace:*"
+    "@x-harness/session-persistence-jsonl": "workspace:*",
+    "@x-harness/skill": "workspace:*"
   }
 }

@@ -10,6 +10,8 @@ import type { Context, Disposer } from "@x-harness/core";
 import { mintSessionId, sessionStore } from "@x-harness/session";
 import { agentRequest } from "@x-harness/agent-loop";
 import type { Dial } from "@x-harness/agent-loop";
+import { commandCompactPlugin } from "@x-harness/compaction";
+import { commandsPlugin } from "@x-harness/commands";
 import {
   autoCompactKit,
   checkpointKit,
@@ -235,6 +237,8 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
     ...(fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : []),
     ...meterKit(),
     ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider } }),
+    commandsPlugin,
+    commandCompactPlugin,
     ...autoCompactKit({ contextWindow }),
     ...llmKit(adapters, { default: RETRY_POLICY }),
     ...loopKit(),

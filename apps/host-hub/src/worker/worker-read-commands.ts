@@ -25,7 +25,7 @@ function handleGetState(rt: WorkerRuntime, input: CommandInput): void {
     data: {
       model: currentDialOf(events, rt.state.dial), // {provider, model} 复合形（字段改名声明 MIGRATION §4）
       isStreaming: rt.bridge.isStreaming(),
-      isCompacting: rt.state.compacting,
+      isCompacting: rt.bridge.commandBusy(), // 命令执行中（BATCH3：本批唯一命令 compact，语义等价）
       sessionId: rt.state.threadId,
       sessionName: titleOf(events) ?? "",
       sessionFile: rt.state.sessionPath,
@@ -216,7 +216,7 @@ async function handleGetCommands(rt: WorkerRuntime, input: CommandInput): Promis
   respond(rt, {
     id: input.id,
     command: "get_commands",
-    data: await listCommands({ skillsDirs: rt.state.skillsDirs, disabled: rt.state.skillsDisabled }),
+    data: await listCommands({ skillsDirs: rt.state.skillsDirs, disabled: rt.state.skillsDisabled, commands: rt.state.commands?.list() ?? [] }),
   });
 }
 

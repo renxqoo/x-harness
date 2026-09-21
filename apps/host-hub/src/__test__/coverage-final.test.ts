@@ -11,7 +11,7 @@ import { createBashExec } from "../worker/bash-exec.ts";
 import type { PendingDialog } from "../worker/dialogs.ts";
 import { createInflightState } from "../worker/inflight.ts";
 import { createEventBridge } from "../worker/event-bridge.ts";
-import { compactSkipError } from "../worker/worker-commands.ts";
+import { compactSkipError } from "@x-harness/compaction";
 
 const roots: string[] = [];
 async function tempDir(prefix: string): Promise<string> {

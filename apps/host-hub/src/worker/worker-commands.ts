@@ -8,12 +8,12 @@
 import type { ImageBlock, Session, SessionId } from "@x-harness/session";
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { World } from "@x-harness/harness";
-import { compactionRunner, previousSummaryOf } from "@x-harness/compaction";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
 import { foldQueueText } from "../shared/inbox-fold.ts";
+import { parseCommand } from "@x-harness/commands";
 import { normalizeImages } from "../shared/images.ts";
 import type { WireImage } from "../shared/images.ts";
 import { catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
@@ -21,7 +21,6 @@ import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import type { DialFact } from "../shared/meta-fold.ts";
 import type { ScriptAdapter } from "../shared/script-adapter.ts";
 import { currentDialOf, currentThinkingOf, imagesUnsupported, thinkingUnsupported, META_KEY_DIAL } from "./meta-state.ts";
-import { interceptCompact } from "./compact-invocation.ts";
 import type { DialogBroker } from "./dialogs.ts";
 import type { BashExec } from "./bash-exec.ts";
 import type { EventBridge } from "./event-bridge.ts";
@@ -30,7 +29,6 @@ import { doFork, registerThreadCommands, serializedLifecycle } from "./thread-co
 import { registerReadCommands } from "./worker-read-commands.ts";
 import { registerMetaCommands } from "./worker-meta-commands.ts";
 
-const KEEP_RECENT_TOKENS = 20_000; // compaction 手动压缩保留窗（compaction 插件口径对齐）
 
 export interface WorkerState {
   handle: AgentHandle | undefined;
@@ -43,13 +41,14 @@ export interface WorkerState {
   thinking: ThinkingLevel | undefined;
   /** 会话内权限档即时切句柄（装配期经 permissionMode 服务接线） */
   permissionService: PermissionModeService | undefined;
+  /** 命令注册面（装配期捕获——prompt 分路与 compact 薄壳消费；fork/stop 随 world 失效） */
+  commands: import("@x-harness/commands").CommandRegistry | undefined;
   /** 子代理面（delegationView——abort 级联与读口消费） */
   delegation: DelegationView | undefined;
   threadId: string;
   sessionPath: string;
   cwd: string;
   trusted: boolean;
-  compacting: boolean;
   /** skills 目录快照（get_commands 目录面） */
   skillsDirs: readonly string[];
   skillsDisabled: ReadonlySet<string>;
@@ -191,57 +190,40 @@ function settleAfter(rt: WorkerRuntime, id: string | undefined): void {
     });
 }
 
-/** compact skip reason 归一（封闭映射——DESIGN §3.2） */
-export function compactSkipError(reason: string): string {
-  if (reason === "no-cut-point" || reason === "summary-input-budget-exhausted" || reason === "summary-empty") {
-    return "context too small to compact";
-  }
-  if (reason === "summarizer-unconfigured") return "compaction summarizer not configured";
-  if (reason === "aborted") return "compaction aborted";
-  return `compaction failed: ${reason}`;
-}
-
-async function runManualCompact(rt: WorkerRuntime, input: { id?: string; command: string; customInstructions?: string | undefined }): Promise<void> {
+/** 命令分路（BATCH3-DESIGN §2.4）：内核 execute 未命中 → false（调用方走原路径——
+ *  未注册词形交模型）；命中 → 恰一应答（成功 data = 结果结构化载荷三元组、error =
+ *  result.text 既有词表串；throw 同步 catch 应答——零响应悬挂防线）。signal = inflight
+ *  登记面（abort 命令/优雅关停经此穿透到 runner，归一串 compaction aborted 不变） */
+async function dispatchCommand(
+  rt: WorkerRuntime,
+  input: CommandInput,
+  spec: { command: string; line: string; imagesPresent: boolean },
+): Promise<boolean> {
+  const registry = rt.state.commands;
+  if (registry === undefined) return false;
   const session = sessionOf(rt);
-  const world = rt.state.world;
-  if (session === undefined || world === undefined) {
-    respond(rt, { id: input.id, command: input.command, error: "Unknown threadId" });
-    return;
+  if (session === undefined) return false;
+  // 携图命中命令 → 既有拒绝串（命令面不收附件；分路序：形状/量限/能力门已在前）
+  const parsed = parseCommand(spec.line);
+  if (spec.imagesPresent && parsed !== undefined && registry.find(parsed.name) !== undefined) {
+    respond(rt, { id: input.id, command: spec.command, error: "invalid images: compact does not accept images" });
+    return true;
   }
-  if (rt.bridge.isStreaming()) {
-    // 流式互斥：压缩以持久快照为源——在飞 turn 的未落盘事件不在压缩域内
-    respond(rt, { id: input.id, command: input.command, error: "thread is streaming" });
-    return;
-  }
-  if (rt.state.compacting) {
-    respond(rt, { id: input.id, command: input.command, error: "Compaction already in progress" });
-    return;
-  }
-  const runner = world.ctx.use(compactionRunner);
   const registration = rt.inflight.register();
-  rt.state.compacting = true;
   try {
-    const result = await runner.compact({
-      session: session.id,
-      trigger: "manual",
-      keepRecentTokens: KEEP_RECENT_TOKENS,
-      signal: registration.signal,
-      ...(input.customInstructions !== undefined ? { customInstructions: input.customInstructions } : {}),
-    });
-    if (!result.ok) {
-      respond(rt, { id: input.id, command: input.command, error: compactSkipError(result.reason) });
-      return;
+    const execution = await registry.execute(session, spec.line, registration.signal);
+    if (execution === undefined) return false;
+    if (execution.result.kind === "error") {
+      respond(rt, { id: input.id, command: spec.command, error: execution.result.text });
+    } else {
+      respond(rt, { id: input.id, command: spec.command, data: execution.result.data });
     }
-    respond(rt, {
-      id: input.id,
-      command: input.command,
-      data: { summary: previousSummaryOf(session.surface()), replacedCount: result.replacedNodes, summaryTokens: result.summaryTokens },
-    });
+    return true;
   } catch (error) {
-    // 异常必应答（零响应悬挂 = 恰一响应铁律破坏）
-    respond(rt, { id: input.id, command: input.command, error: String(error instanceof Error ? error.message : error) });
+    // 异常必应答（恰一响应铁律——execute 重抛态）
+    respond(rt, { id: input.id, command: spec.command, error: String(error instanceof Error ? error.message : error) });
+    return true;
   } finally {
-    rt.state.compacting = false;
     registration.unregister();
   }
 }
@@ -303,15 +285,9 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, { id: input.id, command: "prompt", error: gate });
       return;
     }
-    const intercept = interceptCompact(message);
-    if (intercept.intercepted) {
-      if (input.images !== undefined) {
-        respond(rt, { id: input.id, command: "prompt", error: "invalid images: compact does not accept images" });
-        return;
-      }
-      await runManualCompact(rt, { ...(input.id !== undefined ? { id: input.id } : {}), command: "prompt", ...(intercept.customInstructions !== undefined ? { customInstructions: intercept.customInstructions } : {}) });
-      return;
-    }
+    // 命令分路（现状序保持：先于流式判定——流式中 /compact 经 busy 前置收 thread is streaming）
+    const dispatched = await dispatchCommand(rt, input, { command: "prompt", line: message, imagesPresent: input.images !== undefined });
+    if (dispatched) return;
     // 流式判定 = turn 在飞 ∨ send 在飞（受理窗口：response 已发而 turn/start 未达
     // 的窗口内双发 prompt 不走 send 竞态）
     if (rt.pendingSends > 0 || rt.bridge.isStreaming()) {
@@ -424,7 +400,8 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
   handlers.set("compact", async (input) => {
     if (requireThread(rt, { ...input, command: "compact" }) === undefined) return;
     const custom = typeof input.customInstructions === "string" && input.customInstructions.trim() !== "" ? input.customInstructions.trim() : undefined;
-    await runManualCompact(rt, { ...(input.id !== undefined ? { id: input.id } : {}), command: "compact", ...(custom !== undefined ? { customInstructions: custom } : {}) });
+    const dispatched = await dispatchCommand(rt, input, { command: "compact", line: custom !== undefined ? `/compact ${custom}` : "/compact", imagesPresent: false });
+    if (!dispatched) respond(rt, { id: input.id, command: "compact", error: "unknown command" }); // 无命令面装配的防御分支（hub 恒装配）
   });
 
   handlers.set("fork", (input) => serializedLifecycle(() => doFork(rt, input, "fork")));

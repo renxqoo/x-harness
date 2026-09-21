@@ -12,6 +12,7 @@ import type { SessionId } from "@x-harness/session";
 import type { ThinkingLevel } from "@x-harness/llm";
 import { permissionMode as permissionModeToken } from "@x-harness/permission";
 import { delegationView } from "@x-harness/agent-delegation";
+import { commandRegistry } from "@x-harness/commands";
 import { assembleWorkerAgent, teardownWorld } from "./assembly.ts";
 import type { AssemblyResult } from "./assembly.ts";
 import { forkInputVerdict, respond, requireThread, sessionOf } from "./worker-commands.ts";
@@ -105,6 +106,7 @@ function applyAssembly(target: AssemblyTarget): void {
   rt.state.scriptAdapter = assembled.scriptAdapter;
   rt.state.permissionService = assembled.world.ctx.tryUse(permissionModeToken);
   rt.state.delegation = assembled.world.ctx.tryUse(delegationView);
+  rt.state.commands = assembled.world.ctx.tryUse(commandRegistry);
   rt.bridge.wire(assembled.world.ctx);
 }
 
@@ -242,6 +244,7 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   rt.state.world = undefined;
   rt.state.permissionService = undefined; // 旧服务随 world 失效——防悬挂
   rt.state.delegation = undefined;
+  rt.state.commands = undefined;
   try {
     // 重装配走公共腿（与 start/resume 同构）：dial 挂点/permission 服务/skills
     // 快照全接线；fork 前缀自带 session/meta → WAL 尾值天然继承
@@ -412,6 +415,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       rt.state.sessionPath = "";
       rt.state.permissionService = undefined;
       rt.state.delegation = undefined;
+  rt.state.commands = undefined;
     }
     respond(rt, { id: input.id, command: "thread/stop" });
   }));

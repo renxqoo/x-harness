@@ -124,7 +124,7 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "get_commands", id: "c1", threadId });
     const commands = await waitResponse(worker.captured.lines, "get_commands", "c1");
     const listed = commands.data as Array<{ name: string; source: string }>;
-    expect(listed.some((cmd) => cmd.name === "compact" && cmd.source === "builtin")).toBe(true);
+    expect(listed.some((cmd) => cmd.name === "compact" && cmd.source === "command")).toBe(true); // BATCH3：source 词表 builtin→command（内核注册面）
 
     worker.send({ type: "get_inflight", id: "i1", threadId });
     const inflight = await waitResponse(worker.captured.lines, "get_inflight", "i1");

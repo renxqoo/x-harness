@@ -67,6 +67,8 @@ export interface EventBridge {
   emitSettledFor(spec: { threadId: string; sendId: string; ok: boolean; reason?: string }): void;
   /** 观察态读口（心跳 busy 面消费） */
   isStreaming(): boolean;
+  /** 命令执行中谓词（心跳 busy / get_state.isCompacting 数据源） */
+  commandBusy(): boolean;
   /** 子代理在飞谓词（同步——心跳 busy 面；agentStatus 儿童会话边沿跟踪） */
   childBusy(): boolean;
 }
@@ -85,6 +87,9 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
   const childNames = new Map<string, { agentId: string; type: string }>();
   let llmTurn = 0;
   let llmStep = 0;
+  // 命令执行中计数（BATCH3 §2.4）：主会话 command/run|done 边沿维护——心跳 busy 面；
+  // 清账面：sessionDisposed（done 落账在封存后丢失的兜底）+ unsubscribe（fork 重装配）
+  let commandBusyCount = 0;
 
   function emit(name: string, payload: unknown): void {
     const threadId = deps.threadId();
@@ -185,6 +190,10 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     } else if (event.type === "tool/result") {
       settleToolStream(`${owner}:${event.data.callId}`); // 结算边沿：尾批冲净后撤状态
       if (main) deps.inflight.toolDone(event.data.callId);
+    } else if (main && event.type === "command/run") {
+      commandBusyCount += 1;
+    } else if (main && event.type === "command/done") {
+      commandBusyCount = Math.max(0, commandBusyCount - 1);
     }
     emit(event.type, sessionPayload(event, owner));
   }
@@ -201,6 +210,7 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
           childStatuses.delete(owner);
           childNames.delete(owner);
           settleOwnerStreams(owner);
+          if (owner === deps.threadId()) commandBusyCount = 0;
         }),
         ctx.on(agentAssistantStream, (payload) => {
           // D2/D3：partial 文本唯一源 = 主会话 stream 帧；llmTurn/llmStep 仅主会话跟踪
@@ -258,6 +268,7 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
     unsubscribe() {
       for (const off of offs.splice(0)) off();
       streaming = false;
+      commandBusyCount = 0;
       childStatuses.clear();
       childNames.clear(); // fork 重键 = wire 重接空置重建（新装配无子）
       partial.reset();
@@ -271,6 +282,8 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
       deps.emitLine(eventFrame({ threadId: spec.threadId, name: "settled", payload: { sendId: spec.sendId, ok: spec.ok, ...(spec.reason !== undefined ? { reason: spec.reason } : {}) } }));
     },
     isStreaming: () => streaming,
+    /** 命令执行中谓词（心跳 busy / get_state.isCompacting 数据源——BATCH3 §2.4） */
+    commandBusy: () => commandBusyCount > 0,
     childBusy: () => {
       for (const status of childStatuses.values()) {
         if (status === "running") return true;

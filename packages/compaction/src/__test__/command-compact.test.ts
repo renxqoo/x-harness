@@ -44,8 +44,7 @@ describe("/compact 自声明（BATCH3 §2.3）", () => {
       world.llm.scripts.push(textScript("CC-SUM"));
       const execution = await world.registry.execute(session, "/compact focus tests", new AbortController().signal);
       if (execution?.result.kind !== "success") throw new Error(`compact failed: ${JSON.stringify(execution?.result)}`);
-      expect(execution.result.kind).toBe("success");
-      const data = (execution?.result as { data: { replacedCount: number; summaryTokens: number; summary: unknown } }).data;
+      const data = (execution.result as { data: { replacedCount: number; summaryTokens: number; summary: unknown } }).data;
       expect(data.replacedCount).toBeGreaterThan(0);
       expect(data.summaryTokens).toBeGreaterThan(0);
       expect(JSON.stringify(data.summary)).toContain("CC-SUM");

@@ -6,8 +6,8 @@ import { foldDial, foldMeta, metaTailOf } from "../shared/meta-fold.ts";
 import { entryWindow } from "../worker/entries-window.ts";
 import { projectEntries } from "../shared/entries-project.ts";
 import { resolveWorkerCatalog, scriptCatalog, workerCatalogFromEnv, catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
-import { interceptCompact, parseSlashCommand } from "../worker/compact-invocation.ts";
 import { imagesUnsupported, thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
+import { parseCommand } from "@x-harness/commands";
 import { withinResponseBudget } from "../worker/worker-read-commands.ts";
 import * as workerMain from "../worker/main.ts";
 import type { HubProviderProfile } from "../shared/catalog-types.ts";
@@ -112,15 +112,14 @@ describe("worker-catalog 解析", () => {
   });
 });
 
-describe("compact 拦截词法（hub 单源）", () => {
-  test("命中矩阵", () => {
-    expect(interceptCompact("/compact")).toEqual({ intercepted: true });
-    expect(interceptCompact("  /compact keep goals  ")).toEqual({ intercepted: true, customInstructions: "keep goals" });
-    expect(interceptCompact("/COMPACT")).toEqual({ intercepted: false }); // 大写 → conversation
-    expect(interceptCompact("/compactfoo")).toEqual({ intercepted: false }); // 其他词形 → conversation
-    expect(interceptCompact("//compact")).toEqual({ intercepted: false }); // 注释形态
-    expect(interceptCompact("plain text")).toEqual({ intercepted: false });
-    expect(parseSlashCommand("/model list")).toEqual({ name: "model", args: "list" });
+describe("命令词法（内核单源——BATCH3 迁移：hub 侧词法删除）", () => {
+  test("命中矩阵（词法面用例随内核包 commands.test.ts 全量覆盖）", () => {
+    expect(parseCommand("/compact")).toEqual({ name: "compact", rawInput: "" });
+    expect(parseCommand("  /compact keep goals  ")).toEqual({ name: "compact", rawInput: " keep goals" });
+    expect(parseCommand("/COMPACT")).toBeUndefined(); // 大写 → conversation
+    expect(parseCommand("/compactfoo")).toEqual({ name: "compactfoo", rawInput: "" }); // 未注册词形 → registry miss → conversation
+    expect(parseCommand("//compact")).toBeUndefined(); // 注释形态
+    expect(parseCommand("plain text")).toBeUndefined();
   });
 });
 

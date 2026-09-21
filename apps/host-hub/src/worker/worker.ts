@@ -52,11 +52,11 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     thinking: undefined,
     permissionService: undefined,
     delegation: undefined,
+    commands: undefined,
     threadId: "",
     sessionPath: "",
     cwd: env["HUB_WORKER_CWD"] ?? process.cwd(),
     trusted: false,
-    compacting: false,
     skillsDirs: [],
     skillsDisabled: new Set(),
     scriptAdapter: undefined,
@@ -121,7 +121,7 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
   let lastBusyAt = Date.now();
   // busy = send 在飞 ∨ streaming ∨ 手动压缩 ∨ 弹窗挂起 ∨ 直执行在跑 ∨ 子代理在飞
   const busy = (): boolean =>
-    rt.pendingSends > 0 || bridge.isStreaming() || state.compacting || broker.pendingCount() > 0 || bash.isRunning() || bridge.childBusy();
+    rt.pendingSends > 0 || bridge.isStreaming() || bridge.commandBusy() || broker.pendingCount() > 0 || bash.isRunning() || bridge.childBusy();
 
   const heartbeat = setInterval(() => {
     void writer.write(
