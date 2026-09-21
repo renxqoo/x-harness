@@ -259,7 +259,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
     const result = await deleteSession({ table: deps.table, sessionsRoot: deps.sessionsRoot, agentDir: deps.agentDir }, sessionPath);
     if (!result.ok) respond(id, "thread/delete", { error: result.reason });
-    else respond(id, "thread/delete", {});
+    else respond(id, "thread/delete", { data: { removed: result.removed } });
   }
 
   function handleThreadRetire(input: { [key: string]: unknown }, id: string | undefined): void {

@@ -281,12 +281,13 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   ProvidersConfig 超集：`{providers: ProviderProfile[], default: {provider, model,
   thinking}, modelOverrides?: Record<modelId, {contextWindow?, maxOutputTokens?}>}`；
   ProviderProfile = `{name, protocol: "anthropic"|"openai", baseUrl, apiKey?, apiKeyEnv?,
-  models: (string | {id, contextWindow?, maxTokens?, reasoning?, cost?})[], contextWindow?,
+  models: (string | {id, contextWindow?, maxTokens?, reasoning?, input?: ("text"|"image")[], cost?})[], contextWindow?,
   maxOutputTokens?}`——与 apps/cli providers.json 兼容，hub 增量字段向前兼容）+ 内置
   预设（GLM 档案，source:"preset"；custom 同名整档覆盖预设）。**坏 providers.json →
   一帧 hub_error + 目录降级为仅预设**（get_models 仍 success 返回预设集；修复后下次
   读取恢复）。
-- **get_models** → `[{id, provider, contextWindow, maxTokens, cost?, source: preset|custom}]`。
+- **get_models** → `[{id, provider, contextWindow, maxTokens, reasoning, input?, cost?, source: preset|custom}]`
+  （reasoning 恒在场——目录侧缺省 true；input 条件在场——携图能力门判据）。
 - **凭据 = `<agentDir>/credentials.json`**（0600；provider 名 → apiKey；优先级 =
   credentials > providers.json apiKey > apiKeyEnv 环境变量）。**auth/list** →
   `{providers: [{provider, type:"api-key"|"preset-env"|"none"}]}`（**全目录成员**——
@@ -309,8 +310,9 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   校验失败不写文件；响应 `{model}`（刷新后完整模型对象）；启动期清扫
   `<agentDir>/*.pid.*.tmp` 残留。
 - **models/add** `{id, provider?, protocol?, baseUrl?, apiKeyEnv?, contextWindow?,
-  maxTokens?, reasoning?, cost?}` → `{model}` — provider 已存在则并入 models，否则
-  必带 protocol+baseUrl 新建档案；目录现算——下一次 spawn 即热。
+  maxTokens?, reasoning?, input?: ("text"|"image")[], cost?}` → `{model}` — provider
+  已存在则并入 models，否则必带 protocol+baseUrl 新建档案；input 词表外成员拒
+  （写门不放拼写错误进盘）；目录现算——下一次 spawn 即热。
 - **models/remove** `{id}` — 仅 custom 条目可删（预设裸名 → `unknown model preset`）；
   允许删被预设覆盖的 custom 条目（删除即恢复预设视图）；删除即时生效，在用会话撞已删
   模型 = LLM 调用错误收敛、worker 不死（自愈语义，不扫 parked WAL——预算 O(1)）。
@@ -352,7 +354,8 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   可投，MIGRATION §4）。投递 = delegationView.message（agent.steer 同款机制）。
 - **get_subagents** `{threadId}` → `{subagents: [...]}` — delegationView.list()
   ChildView 行原样 `{kind, agentId?, sessionId?, name?, ref?, type?, depth?, status:
-  running|idle|stopped}`（**状态词表 = 内核 ChildView 原样**，MIGRATION §4）。
+  running|idle|stopped, work?}`（**状态词表 = 内核 ChildView 原样**，MIGRATION §4；
+  work = spawn 任务摘要，T39 D10.2 起——spawn 在场恒有、复活自 header 回填可能缺席）。
   **消费模型（BATCH2 起）**：本命令是水化快照读（重连/首查一次）；状态增量经
   `agent/spawned` / `agent/status` / `agent/finished` 推送事件到达——**零轮询**
   （`[agent-notification]` 通知注入是父模型感知通道，与客户端事件面不同消费方）。
@@ -412,10 +415,11 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
 
 ### 3.10 会话删除
 
-- **thread/delete** `{sessionPath}` → success `{}`（**幂等**：目录已不在 = success；对齐
-  thread/stop「未知 success」先例）。host 本地命令（不进池、worker 无感知、internal
-  四集合不动）。输入键 = sessionPath（对齐 resume/register——作用于存档的命令族；
-  stop/retire 的 threadId 是活线程操作族，分野有意）。
+- **thread/delete** `{sessionPath}` → success `{data: {removed: [threadId…]}}`（本次
+  实际 rename 成功的目录名集，级联子按 BFS 序；**幂等**：目录已不在 = success
+  `removed: []`；对齐 thread/stop「未知 success」先例）。host 本地命令（不进池、
+  worker 无感知、internal 四集合不动）。输入键 = sessionPath（对齐 resume/register
+  ——作用于存档的命令族；stop/retire 的 threadId 是活线程操作族，分野有意）。
 - 语义序：**只读检查段**（shapeFence 词法 + realpath 围栏拒 symlink 逃逸 → 目录缺席
   即幂等 success 并撤表残留 → lock 探活拒活进程 → header.agentId 拒子代理会话 →
   parentSession 血缘 BFS 级联集）→ **状态变更段（同步表操作与 rename 之间零 await）**：
@@ -465,8 +469,9 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   idle|running}`）、`agent/error`（`{session, turn, message}`）、`agent/tool-stream`
   （`{session, callId, delta}`——内核工具增量事件，BATCH2 起，主/子会话均外推，
   delta 为原始字节流口径——ANSI 清洗是 tool/result 结算口径）、
-  **`agent/spawned`（BATCH2 §3）** `{parent, agentId, sessionId, type, depth}`——
-  spawn 成功与 revive 复活两处发射；**`agent/finished`（BATCH2 §3）**
+  **`agent/spawned`（BATCH2 §3）** `{parent, agentId, sessionId, type, depth, work?}`——
+  spawn 成功与 revive 复活两处发射（work = spawn 任务摘要；复活发射可能缺席——
+  旧档案无 agentWork 字段）；**`agent/finished`（BATCH2 §3）**
   `{parent, agentId, sessionId, outcome: completed|stopped|failed, detail, summary?}`——
   **每运行周期恰一次**（非生命周期终态：stop 后可复活再发；终态以 get_subagents
   快照对账）；deliver 单点（正常/stopAll 级联/孤儿收养）+ spawn kick 失败闭环 +
@@ -730,7 +735,7 @@ maxTokens` 退役——预算钳制归内核 llm 拨号层。）
 | get_fork_messages | `[{seq, text}]` |
 | get_subagents / get_pending_dialogs | `{subagents: [...]}`（§3.8 形状）/ `{dialogs: [{requestId, threadId, method, payload}]}` |
 | fork / clone | `{threadId, previousThreadId, sessionPath}` |
-| get_models | `[{id, provider, contextWindow, maxTokens, cost?, source}]` |
+| get_models | `[{id, provider, contextWindow, maxTokens, reasoning, input?, cost?, source}]`（reasoning 恒在场，input 条件在场） |
 | models/add | `{model}` |
 | set_model_override | `{model}` |
 | auth/list | `{providers: [{provider, type}]}`（全目录三态） |

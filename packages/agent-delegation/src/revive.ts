@@ -23,7 +23,7 @@ export interface ReviveDeps {
   /** 复活父当前工具白名单（沿树只收窄——X15 不因复活放宽） */
   readonly parentToolsOf: (session: SessionId) => ToolFilter | undefined;
   /** 复活注册事件发射面（BATCH2 §3——桥接方归属映射重播种；快照/事件两源一致） */
-  readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number }) => void;
+  readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string }) => void;
   /** worktree 隔离重放面（grants 缺席则隔离降级为明示）；onWarn 降级告知 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
   readonly onWarn?: (message: string) => void;
@@ -54,6 +54,7 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
     type: header.agentType ?? "untyped",
     parent: caller,
     depth: header.agentDepth ?? 1,
+    ...(header.agentWork !== undefined ? { work: header.agentWork } : {}), // 旧档案无此字段即缺席
     occupied: true,
     armed: false,
     running: false,
@@ -61,7 +62,7 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
     ...(worktree !== undefined ? { worktree } : {}),
   };
   deps.lineage.register(row);
-  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth });
+  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, ...(row.work !== undefined ? { work: row.work } : {}) });
   return { kind: "row", row };
 }
 
@@ -69,6 +70,7 @@ interface ArchivedHeader {
   readonly id: SessionId;
   readonly agentType?: string;
   readonly agentDepth?: number;
+  readonly agentWork?: string;
   readonly agentWorktree?: string;
 }
 
@@ -76,7 +78,7 @@ async function uniqueHeader(deps: ReviveDeps, caller: SessionId, agentId: string
   const hits = (await deps.archive.listHeaders()).filter((h) => h.parentSession === caller && h.agentId === agentId);
   const header = hits.length === 1 ? hits[0] : undefined;
   if (header === undefined) return undefined;
-  return { id: header.id, agentType: header.agentType, agentDepth: header.agentDepth, agentWorktree: header.agentWorktree };
+  return { id: header.id, agentType: header.agentType, agentDepth: header.agentDepth, agentWork: header.agentWork, agentWorktree: header.agentWorktree };
 }
 
 function typeOf(deps: ReviveDeps, agentType: string | undefined): LoadedAgentType | undefined {

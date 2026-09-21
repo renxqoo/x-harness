@@ -31,7 +31,7 @@ function viewLines(view: readonly ChildView[]): string {
   return view
     .map((row) =>
       row.kind === "subagent"
-        ? `kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}`
+        ? `kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}${row.work !== undefined ? ` work=${row.work}` : ""}`
         : `${row.name} [${row.ref}] kind=local-session status=${row.status}`,
     )
     .join("\n");

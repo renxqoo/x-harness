@@ -14,6 +14,8 @@ export interface ChildRow {
   readonly type: string;
   readonly parent: SessionId;
   readonly depth: number;
+  /** spawn 任务摘要（header.agentWork 持久锚——复活回填；旧档案可能缺席） */
+  readonly work?: string;
   occupied: boolean; // 占槽（登记置；完成通知/stop 释）
   armed: boolean; // 通知臂（running 置；通知后复位）
   running: boolean;

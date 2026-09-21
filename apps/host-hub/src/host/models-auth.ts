@@ -65,14 +65,16 @@ function applyOverrideEntry(file: OverrideFile, key: string, fields: { remove: b
   else file.modelOverrides[key] = entry;
 }
 
-/** 刷新后模型对象（附录 B 形状——单点构造） */
-export function modelShapeOf(entry: { model: string; provider: string; contextWindow?: number; maxTokens?: number; cost?: Record<string, number>; source: "preset" | "custom" } | undefined): Record<string, unknown> | undefined {
+/** 刷新后模型对象（附录 B 形状——单点构造；reasoning 恒在场随条目透传，input 条件在场） */
+export function modelShapeOf(entry: { model: string; provider: string; contextWindow?: number; maxTokens?: number; reasoning: boolean; input?: ("text" | "image")[]; cost?: Record<string, number>; source: "preset" | "custom" } | undefined): Record<string, unknown> | undefined {
   if (entry === undefined) return undefined;
   return {
     id: entry.model,
     provider: entry.provider,
     ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
     ...(entry.maxTokens !== undefined ? { maxTokens: entry.maxTokens } : {}),
+    reasoning: entry.reasoning,
+    ...(entry.input !== undefined ? { input: entry.input } : {}),
     ...(entry.cost !== undefined ? { cost: entry.cost } : {}),
     source: entry.source,
   };
@@ -142,14 +144,7 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
         spec.emitClient(hubErrorFrame("providers.json unreadable; preset-only catalog"));
       }
       spec.respond(id, "get_models", {
-        data: catalog.entries.map((e) => ({
-          id: e.model,
-          provider: e.provider,
-          ...(e.contextWindow !== undefined ? { contextWindow: e.contextWindow } : {}),
-          ...(e.maxTokens !== undefined ? { maxTokens: e.maxTokens } : {}),
-          ...(e.cost !== undefined ? { cost: e.cost } : {}),
-          source: e.source,
-        })),
+        data: catalog.entries.map((e) => modelShapeOf(e)),
       });
     },
     async authList(id) {

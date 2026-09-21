@@ -133,7 +133,7 @@ cancel+dispose+摘行），唤醒入口（message）同样重验；⑤ 三索引
 
 ### 4.3 ChildRow 字段终态
 
-`{agentId, sessionId, name, type, parent, depth, occupied, armed, running, stopped, worktree?}`。
+`{agentId, sessionId, name, type, parent, depth, occupied, armed, running, stopped, work?, worktree?}`（work = spawn description 任务摘要，header.agentWork 持久锚——复活回填，旧档案可能缺席）。
 **live 定义：内存行存在即 live（含 stopped——可复活）**，同名消歧计数按此口径。视图投影
 status：running→`running`；stopped→`stopped`；否则 `idle`（停止后复活如实显示 running）。
 
@@ -257,7 +257,8 @@ ambiguous）→ `loop.resume(sessionId, agent)` 重建 options：**按落盘 age
 systemPrompt/model/tools 白名单**（类型文件已删/改 → fail-closed 拒复活
 `not-found:type-def-missing`，不降级复活）；depth 取落盘冗余（不链回溯）；row.worktree
 在 → **重放 grants/fence rootOverride**（复活不丢隔离，§8.2）→ `steer(message)` 唤醒 →
-重建 ChildRow（occupied=true/armed=false）。resume 单写者边界：依赖「会话归父进程所有 +
+重建 ChildRow（occupied=true/armed=false；work 自 `header.agentWork` 回填——旧档案
+无此字段即缺席）。resume 单写者边界：依赖「会话归父进程所有 +
 box 唯一」的占有模型（SESSION-RESUME §1.4）——**如实声明该闭环依赖宿主部署纪律**（对端
 不开同 box 无法机械拦截跨进程双开；档案级锁落档 §13）。
 

@@ -200,6 +200,7 @@ export async function listAgents(deps: VerbDeps, caller: SessionId | undefined):
       type: row.type,
       depth: row.depth,
       status: viewStatus(row),
+      ...(row.work !== undefined ? { work: row.work } : {}),
     }));
   // 本机其他会话（§2.1 五类中的 local-session；own box 除外）
   if (deps.cross !== undefined) {

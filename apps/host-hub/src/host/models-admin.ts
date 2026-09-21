@@ -6,6 +6,7 @@
 import { readCatalog, providersFilePath } from "../shared/catalog.ts";
 import type { HubModelMeta, HubProvidersFile } from "../shared/catalog-types.ts";
 import { atomicWriteJson, readJson, updateJson } from "../shared/atomic-file.ts";
+import { modelShapeOf } from "./models-auth.ts";
 
 type ProvidersFile = HubProvidersFile & { modelOverrides?: Record<string, { contextWindow?: number; maxOutputTokens?: number }> };
 
@@ -36,28 +37,23 @@ function positiveInt(value: unknown): boolean {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-/** add 的模型对象回显（刷新后完整形状——附录 B） */
-async function modelShape(agentDir: string, provider: string, id: string): Promise<Record<string, unknown> | undefined> {
+/** add 的模型对象回显（刷新后完整形状——附录 B；构造单点 = modelShapeOf） */
+async function refreshedModelShape(agentDir: string, provider: string, id: string): Promise<Record<string, unknown> | undefined> {
   const catalog = await readCatalog(agentDir);
   const entry = catalog.entries.find((e) => e.provider === provider && e.model === id);
-  if (entry === undefined) return undefined;
-  return {
-    id: entry.model,
-    provider: entry.provider,
-    ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
-    ...(entry.maxTokens !== undefined ? { maxTokens: entry.maxTokens } : {}),
-    ...(entry.cost !== undefined ? { cost: entry.cost } : {}),
-    source: entry.source,
-  };
+  return modelShapeOf(entry);
 }
 
-/** 数值/布尔字段校验（单点错误面） */
+/** 数值/布尔字段校验（单点错误面）；input 成员拒绝式校验——写门不放拼写错误进盘（读侧净化只兜手改文件） */
 function validateFields(input: { [key: string]: unknown }): string | undefined {
-  const { contextWindow, maxTokens, reasoning, cost } = input;
+  const { contextWindow, maxTokens, reasoning, cost, input: inputModes } = input;
   if (contextWindow !== undefined && !positiveInt(contextWindow)) return `invalid model entry: contextWindow must be a positive integer (got ${String(contextWindow)})`;
   if (maxTokens !== undefined && !positiveInt(maxTokens)) return `invalid model entry: maxTokens must be a positive integer (got ${String(maxTokens)})`;
   if (reasoning !== undefined && typeof reasoning !== "boolean") return `invalid model entry: reasoning must be a boolean (got ${String(reasoning)})`;
   if (cost !== undefined && (typeof cost !== "object" || cost === null || Array.isArray(cost))) return "invalid model entry: cost must be an object";
+  if (inputModes !== undefined && (!Array.isArray(inputModes) || inputModes.some((member) => member !== "text" && member !== "image"))) {
+    return `invalid model entry: input must be an array of text|image (got ${JSON.stringify(inputModes)})`;
+  }
   return undefined;
 }
 
@@ -70,12 +66,13 @@ function validateNewProfile(providerName: string, protocol: unknown, baseUrl: st
 }
 
 function metaOf(id: string, input: { [key: string]: unknown }): HubModelMeta {
-  const { contextWindow, maxTokens, reasoning, cost } = input;
+  const { contextWindow, maxTokens, reasoning, cost, input: inputModes } = input;
   return {
     id,
     ...(positiveInt(contextWindow) ? { contextWindow: contextWindow as number } : {}),
     ...(positiveInt(maxTokens) ? { maxTokens: maxTokens as number } : {}),
     ...(typeof reasoning === "boolean" ? { reasoning } : {}),
+    ...(Array.isArray(inputModes) && inputModes.length > 0 ? { input: inputModes as ("text" | "image")[] } : {}),
     ...(cost !== undefined ? { cost: cost as Record<string, number> } : {}),
   };
 }
@@ -124,7 +121,7 @@ export async function addModel(agentDir: string, input: { [key: string]: unknown
     providers[index] = { ...profile, models };
     return { ...file, providers };
   });
-  return { ok: true, model: await modelShape(agentDir, providerName, id) };
+  return { ok: true, model: await refreshedModelShape(agentDir, providerName, id) };
 }
 
 export async function removeModel(agentDir: string, id: string): Promise<{ ok: true } | { ok: false; error: string }> {

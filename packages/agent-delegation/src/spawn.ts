@@ -27,7 +27,7 @@ export interface SpawnDeps {
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly isTearingDown: () => boolean;
   /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
-  readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number }) => void;
+  readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string }) => void;
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
   /** permission 授权面（isolation=worktree 的根替换落账）；缺位时 worktree 隔离拒 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
@@ -117,6 +117,7 @@ async function buildChild(
     type: typeName,
     parent: caller,
     depth: plan.depth,
+    work: plan.input.description,
     occupied: true,
     armed: false,
     running: false,
@@ -127,7 +128,7 @@ async function buildChild(
     deps.setRootOverride(childHandle.agent.session.id, worktree.plan.path, worktree.plan.repoTop);
   }
   deps.lineage.register(row);
-  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth });
+  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, work: row.work });
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
   kickChild(deps, { row, handle: childHandle, prompt: plan.input.prompt });
   return { ok: true, text: spawnText(row, isFork && !forked) };
@@ -203,7 +204,7 @@ function createChildSession(
     session: {
       parent: spec.caller,
       ...(spec.seed.length > 0 ? { seed: spec.seed } : {}),
-      agent: { id: spec.agentId, type: spec.typeName, depth: spec.plan.depth, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
+      agent: { id: spec.agentId, type: spec.typeName, depth: spec.plan.depth, work: spec.plan.input.description, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
     },
     agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller }),
   });

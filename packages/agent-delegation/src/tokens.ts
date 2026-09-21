@@ -12,6 +12,8 @@ export interface AgentSpawnedPayload {
   readonly sessionId: SessionId;
   readonly type: string;
   readonly depth: number;
+  /** spawn 任务摘要（与 get_subagents ChildView.work 同源）；复活发射可能缺席（旧档案无此字段） */
+  readonly work?: string;
 }
 
 /** 运行周期终结边沿：**每运行周期恰一次**（非生命周期终态——stop 后可复活，复活再

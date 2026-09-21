@@ -88,7 +88,7 @@ minus 迁移源已声明的不移植域，minus 本仓声明差异（§4 + §6�
 | get_tree | 实现沿 header.parentSession 链（ancestors 不含自身；children 排除子代理会话） | 内核无现成查询 |
 | get_session_stats | tokens 增可选 `cost`（内核 TokenUsage.cost 在场即透传——**升级**；源无 cost） | 内核 usage 链 |
 | get_commands | source 收缩 `skill\|builtin`（无 plugin 源——内核无命令注册）；compact 条目 description 单点锚定 | 同上 |
-| get_subagents | `{subagents: [{kind, agentId?, sessionId?, name?, ref?, type?, depth?, status: running\|idle\|stopped}]}`（delegationView ChildView 原样；源 8 字段 AgentView + busy\|idle\|on-disk 词表） | delegation 服务面 |
+| get_subagents | `{subagents: [{kind, agentId?, sessionId?, name?, ref?, type?, depth?, status: running\|idle\|stopped, work?}]}`（delegationView ChildView 原样；源 8 字段 AgentView + busy\|idle\|on-disk 词表；work = spawn 任务摘要——T39 D10.2） | delegation 服务面 |
 | subagent/steer | **入参字段 agentId（源码事实——源文档 agentName 为 lag）；gate = 驻留即投递**：running → 子代理步边界排队、idle → 立即唤醒开新轮（源仅 busy 可投）；非驻留拒 `subagent <agentId> not available (status: <status>)`（源文案 `not busy`）；投递 = delegationView.message（agent.steer 机制） | delegation 服务面语义升级 |
 | get_models/set_model_override/models/add/remove | 目录 = providers.json 超集（provider 档案 + models 名单 + modelOverrides 节）；get_models source: preset\|custom | x-harness 目录形状 |
 | auth/list | 全目录成员 + `{type: "api-key"\|"preset-env"\|"none"}`（源仅列有存 key 者且恒 "api-key"） | credentials 叠加模型 |

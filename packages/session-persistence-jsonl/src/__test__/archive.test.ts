@@ -61,6 +61,8 @@ describe("read（docs/SESSION.md §1.8 读侧规则）", () => {
     ["header 缺失", () => mkdir(join(root, "nohdr"), { recursive: true }), "no-header:nohdr"],
     ["header 非合法 JSON", () => seedSession("badhdr", undefined, []).then(() => writeFile(join(root, "badhdr", "header.json"), "{")), "corrupt-header:badhdr"],
     ["id 不匹配", () => seedSession("mism", { id: "other", createdAt: 1 }), "corrupt-header:mism:id-mismatch"],
+    ["agentWork 非字符串", () => seedSession("badwork", { id: "badwork", createdAt: 1, agentWork: 42 }), "corrupt-header:badwork:agentWork"],
+    ["agentWorktree 非字符串", () => seedSession("badwt", { id: "badwt", createdAt: 1, agentWorktree: true }), "corrupt-header:badwt:agentWorktree"],
   ])("拒绝：%s → %s", async (_name, seed, expected) => {
     await seed();
     const result = await reader().read(expected.split(":")[1] as SessionId);

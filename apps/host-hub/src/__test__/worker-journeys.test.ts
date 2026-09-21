@@ -158,9 +158,10 @@ describe("worker 旅程 II", () => {
     await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === "p1");
     w.send({ type: "get_subagents", id: "sa1", threadId });
     const subs = await waitResponse(w.captured.lines, "get_subagents", "sa1");
-    const rows = (subs.data as { subagents: Array<{ kind: string; agentId?: string; status: string }> }).subagents;
+    const rows = (subs.data as { subagents: Array<{ kind: string; agentId?: string; status: string; work?: string }> }).subagents;
     expect(rows.length).toBeGreaterThanOrEqual(1);
     expect(rows[0]?.kind).toBe("subagent");
+    expect(rows[0]?.work).toBe("research"); // work 链（T39 D10.2）：spawn description 直达 wire
     const agentId = rows[0]?.agentId ?? "";
     // steer 驻留目标（idle 唤醒语义）；未知目标拒
     w.send({ type: "subagent/steer", id: "ss1", threadId, agentId, message: "status update" });
@@ -243,13 +244,14 @@ describe("子代理实时事件面（BATCH2 §3——去轮询：推送全覆盖
     const startedFrame = await waitResponse(w.captured.lines, "thread/start", "s1");
     const threadId = (startedFrame.data as { threadId: string }).threadId;
     w.send({ type: "prompt", id: "p1", threadId, message: "spawn one" });
-    // ① spawned 推送（零轮询——客户端不再依赖 get_subagents 轮询感知）
+    // ① spawned 推送（零轮询——客户端不再依赖 get_subagents 轮询感知）；work 链随载荷（T39 D10.2）
     const spawnedFrame = await waitEvent(w.captured.lines, "agent/spawned");
-    const spawned = spawnedFrame.payload as { parent: string; agentId: string; sessionId: string; type: string; depth: number };
+    const spawned = spawnedFrame.payload as { parent: string; agentId: string; sessionId: string; type: string; depth: number; work?: string };
     expect(spawned.parent).toBe(threadId);
     expect(spawned.type).toBe("untyped");
     expect(spawned.depth).toBe(1);
     expect(spawned.agentId).toMatch(/^agent-/);
+    expect(spawned.work).toBe("research");
     // ② 子运行边沿（agent/status 带 session 归属）
     const childRun = await waitEvent(w.captured.lines, "agent/status", (p) => (p as { session?: string }).session === spawned.sessionId && (p as { status?: string }).status === "running");
     expect((childRun.payload as { session: string }).session).toBe(spawned.sessionId);

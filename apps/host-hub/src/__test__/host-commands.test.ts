@@ -288,10 +288,14 @@ describe("host 本地命令（注入 IO）", () => {
     expect(badProtocol["error"]).toContain("protocol");
     f.send({ type: "models/add", provider: "p1", protocol: "openai", baseUrl: "https://p1", contextWindow: 128_000 });
     await waitFrame(f.client, (frame) => frame["type"] === "response" && frame["command"] === "models/add" && frame["error"] === "invalid model entry: id required");
-    // id 兼作模型 id 与响应关联（附录 B——add 的模型 id 字段就是 id）
-    f.send({ type: "models/add", id: "m-1", provider: "p1", protocol: "openai", baseUrl: "https://p1", contextWindow: 128_000 });
+    // id 兼作模型 id 与响应关联（附录 B——add 的模型 id 字段就是 id）；能力位随回显（单点构造）
+    f.send({ type: "models/add", id: "m-1", provider: "p1", protocol: "openai", baseUrl: "https://p1", contextWindow: 128_000, reasoning: false, input: ["text", "image"] });
     const okAdded = await waitResponse(f.client, "models/add", "m-1");
-    expect((okAdded["data"] as { model: { id: string; provider: string } }).model).toMatchObject({ id: "m-1", provider: "p1" });
+    expect((okAdded["data"] as { model: { id: string; provider: string; reasoning?: boolean; input?: string[] } }).model).toMatchObject({ id: "m-1", provider: "p1", reasoning: false, input: ["text", "image"] });
+    // input 词表外成员拒（写门不放拼写错误进盘）
+    f.send({ type: "models/add", id: "m-2", provider: "p1", protocol: "openai", baseUrl: "https://p1", input: ["texts"] });
+    const badInput = await waitResponse(f.client, "models/add", "m-2");
+    expect(badInput["error"]).toContain("input must be an array of text|image");
     // set_model_override 窄合并
     f.send({ type: "set_model_override", id: "ov1", provider: "p1", modelId: "m-1", contextWindow: 64_000 });
     const overridden = await waitResponse(f.client, "set_model_override", "ov1");
@@ -332,6 +336,10 @@ describe("host 本地命令（注入 IO）", () => {
     f.send({ type: "get_models", id: "gm1" });
     const models = await waitResponse(f.client, "get_models", "gm1");
     expect((models["data"] as Array<{ source: string }>).every((entry) => entry.source === "preset")).toBe(true);
+    // 能力位透传（T39 D10.1）：预设条目带 reasoning/input——目录已知能力直达 wire
+    const glmEntry = (models["data"] as Array<{ id: string; reasoning?: boolean; input?: string[] }>).find((entry) => entry.id === "glm-5.3");
+    expect(glmEntry?.reasoning).toBe(true);
+    expect(glmEntry?.input).toEqual(["text", "image"]);
     const hubErr = await waitFrame(f.client, (frame) => frame["type"] === "hub_error");
     expect(hubErr["message"]).toContain("providers.json unreadable");
   });
@@ -432,10 +440,12 @@ describe("thread/delete（BATCH2 §4——host 命令面旅程）", () => {
     f.input.send({ type: "thread/delete", id: "d1", sessionPath });
     const ok = await waitResponse(f.client, "thread/delete", "d1");
     expect(ok["success"]).toBe(true);
+    expect(ok["data"]).toEqual({ removed: ["delarc1"] }); // 级联结果透传（T39 D10.3）
     await expect(stat(join(sessionsRoot, id))).rejects.toMatchObject({ code: "ENOENT" });
     f.input.send({ type: "thread/delete", id: "d2", sessionPath });
     const again = await waitResponse(f.client, "thread/delete", "d2");
     expect(again["success"]).toBe(true); // 幂等
+    expect(again["data"]).toEqual({ removed: [] });
     f.input.send({ type: "thread/delete", id: "d3", sessionPath: "relative/path" });
     const bad = await waitResponse(f.client, "thread/delete", "d3");
     expect(bad["success"]).toBe(false);

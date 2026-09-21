@@ -290,4 +290,14 @@ describe("create agent 元数据透传（件13 接缝 1——子代理 header �
     expect(resumed.header.agentId).toBe("agent-deadbeef");
     expect(resumed.header.agentType).toBeUndefined();
   });
+
+  it("agent work 随 birth 落 header；缺省不带（T39 D10.2——面板 work 展示的持久锚）", async () => {
+    const h = makeStore();
+    const store = createSessionStore(h.hooks);
+    const spawned = unwrap(await store.create({ parent: sid("p"), agent: { id: "agent-00112233", type: "explore", depth: 1, work: "probe the flaky test" } }));
+    expect(spawned.header.agentWork).toBe("probe the flaky test");
+
+    const bare = unwrap(await store.create({ parent: sid("p"), agent: { id: "agent-00112234", type: "explore", depth: 1 } }));
+    expect(bare.header.agentWork).toBeUndefined();
+  });
 });

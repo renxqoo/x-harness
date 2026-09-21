@@ -102,7 +102,7 @@ dispose(id): Result<true>
 ### 1.6 Header 与格式身份
 
 ```ts
-interface SessionHeader { id; createdAt; cwd?; parentSession? }
+interface SessionHeader { id; createdAt; cwd?; parentSession?; agentId?; agentType?; agentDepth?; agentWork?; agentWorktree? }
 ```
 
 **无格式版本字段**（本仓无历史档案，不预埋演进机制）。格式身份判别 = **闭合词表 + fail-closed 校验**：未知词条/信封非法/投影悬空的档案读侧直接拒绝；追加式词表演进天然双向安全（旧运行时读新日志遇未知词条拒，新运行时读旧日志是子集恒可读）。**不变量：语义级变更（改既有词条含义、信封或 surface 机制）时必须引入显式判别字段——届时设计，字段缺失即可识别变更前档案**。

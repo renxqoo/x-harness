@@ -96,7 +96,7 @@ export function createArchiveReader(root: string): SessionArchive {
   };
 }
 
-const STRING_FIELDS = ["cwd", "parentSession", "agentId", "agentType"] as const;
+const STRING_FIELDS = ["cwd", "parentSession", "agentId", "agentType", "agentWork", "agentWorktree"] as const;
 
 function gateHeader(value: unknown, id: string): string | undefined {
   if (typeof value !== "object" || value === null) return `corrupt-header:${id}`;

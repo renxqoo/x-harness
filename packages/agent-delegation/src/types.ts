@@ -48,6 +48,8 @@ export type ChildView =
       readonly type: string;
       readonly depth: number;
       readonly status: "running" | "idle" | "stopped";
+      /** spawn 任务摘要（spawn 在场恒有；复活自 header 回填——旧档案可能缺席） */
+      readonly work?: string;
     }
   | {
       readonly kind: "local-session";
