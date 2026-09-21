@@ -53,18 +53,11 @@ describe("acquireSessionLock", () => {
   });
 
   it("持有方已死（pid 不存在）→ 接管", async () => {
-    // 找一个几乎必然不存在的 pid：从当前 pid 向上探（复用窗口内仍可能存在，循环找 ESRCH）
-    let deadPid = process.pid;
-    while (deadPid < process.pid + 100000) {
-      deadPid += 1;
-      let alive = true;
-      try {
-        process.kill(deadPid, 0);
-      } catch (error) {
-        alive = (error as { code?: string }).code !== "ESRCH";
-      }
-      if (!alive) break;
-    }
+    // 保证死 pid：fork 一个即刻退出的子进程并等它收殓（reaped pid 复用窗口远小于
+    // 向上扫描法——并发全套件下扫描会撞上 pid 复用产生假红）
+    const child = Bun.spawn({ cmd: ["/bin/sh", "-c", "exit 0"], stdout: "ignore", stderr: "ignore" });
+    await child.exited;
+    const deadPid = child.pid as number;
     await writeFile(join(dir, "lock"), `${deadPid}\n`, "utf8");
     const taken = await acquireSessionLock(dir, "s-lock"); // 接管不抛
     await taken.release();

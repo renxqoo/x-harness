@@ -38,7 +38,7 @@ describe("frame-classify（key 顺序契约）", () => {
 });
 
 describe("协议词表封闭性", () => {
-  test("55 命令；四集合成员都在命令表内", () => {
+  test("56 命令；四集合成员都在命令表内", () => {
     expect(COMMAND_NAMES.length).toBe(56);
     expect(new Set(COMMAND_NAMES).size).toBe(56);
     for (const set of [THREAD_SCOPED_COMMANDS, OBSERVER_COMMANDS, DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS]) {

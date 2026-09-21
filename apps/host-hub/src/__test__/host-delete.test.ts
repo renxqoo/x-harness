@@ -2,7 +2,7 @@
 // 无表项删 / 幂等 / 子代理拒 / 活锁拒 / 死锁过 / symlink 逃逸拒 / 形状拒 / 级联子孙 /
 // trash 残迹清扫 / rm 中途崩溃回收。真目录 + 真表，无进程依赖。
 import { describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, rm as rmDir, symlink, utimes, writeFile, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, utimes, writeFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createThreadTable } from "../host/thread-table.ts";
@@ -139,7 +139,5 @@ describe("thread/delete 状态矩阵", () => {
     // resume 路径的表/文件面：无表项 + 无目录 → host reserveResumeSlot stat 失败语义由
     // 既有测试覆盖；此处锚定 delete 幂等不复活表项
     expect(f.table.holderOf(pathOf(f.root, "gone2"))).toBeUndefined();
-    void readFile;
-    void rmDir;
   });
 });

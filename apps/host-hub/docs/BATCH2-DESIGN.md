@@ -1,12 +1,44 @@
 # BATCH2 方案——四项挂账功能（prompt images / 工具输出增量流 / 子代理实时事件面 / 会话删除）
 
-状态机：**定稿候选**（草稿 → **[当前]** 对抗审查已处置 → 定稿 → 已实施 → 已核销）。本批 =
-MIGRATION §6 四项挂账的统一实施方案，契约基线 = DESIGN.md（已核销态）；实施时 DESIGN.md
-各节随代码同变（方案与代码同变纪律）。
+状态机：**已核销**（草稿 → 定稿（两路方案审查处置）→ 已实施（W1-W4）→ **[当前]**
+收口审查 + 假绿抽查 + real LLM 门全过 → 已核销）。本批 = MIGRATION §6 四项挂账的统一
+实施方案，契约基线 = DESIGN.md；DESIGN/MIGRATION 各节已随代码同变（方案与代码同变纪律）。
 
-审查记录：定稿前两路并行对抗审查（契约/语义面 6H/7M/5L；并发/资源生命周期面 3H/6M/5L），
-全部处置见 §8；其中 4 条审查发现指向**既有缺陷**（inbox 逐块分目、413 防线盲区、partial
-双计、kick 失败占槽泄漏），本批一并修复。
+## 9. 实施记录
+
+| 波 | 提交 | 内容 | 数字 |
+| --- | --- | --- | --- |
+| W1 | 9bfca58 | F1 prompt images：内核 image 块（仅 user 域）+ inbox 单 entry 化 + pi 映射/能力查表 + compaction 计图三面 + hub 量限/能力门/get_messages 软上限 | 2200 用例；90.54/85.43/91.42/92.58 |
+| W2 | 5b7ee89 | F2 工具增量流：onOutput 通道（dispatch 透传/中间件可换/双层防御）+ agentToolStream + collector onChunk + 桥 25ms 尾沿合并 | 2208 用例 |
+| W3 | b219f54 | F3 子代理实时事件面：spawned/finished 四发射点 + kick 失败闭环 + 桥归属重构（D1/D2/D3 修复 + agentName 激活）+ 拆除序统一 | 2221 用例 |
+| W4 | b9a4a26 | F4 thread/delete：只读检查段 + 零 await 状态变更段 + trash 原子化 + 级联；命令集 55→56 | 2231 用例 |
+| W5 | 59aca15 | 收口审查处置（下节）+ 假绿抽查修复项 | 2233 用例；90.55/85.40/91.32/92.59 |
+
+## 10. 收口审查记录（定稿后两路并行代码对抗审查 + 假绿抽查）
+
+**代码审查（契约/语义面 2H/6M/7L + 并发/资源生命周期面 1H/3M/6L）全部处置**（59aca15）：
+
+- 高：活族删除先于 lock 探活给词表正确串（already open）+ 目录缺席活族不放行；
+  toolStream 子会话条目冲净不丢弃（结算/轮界/sessionDisposed 各归其主清，键不解析）；
+  kick 失败行 stopped 置位防 stopAll 双 finished。
+- 中：trash 预建（状态变更段真零 await）+ vanish mtime touch（1h 回收窗真实）+ 级联
+  表卫生与失败不静默；stop 同步 check-and-set；预设 GLM 多模态声明（开箱携图可用）；
+  providers.json input 值域净化；软上限字节口径（CJK 3 倍膨胀回归）；`delete failed`
+  入词表。
+- 低：stat EACCES 不伪装缺席、词表精确串、死代码/用例名清理、（既有）lock 测试
+  pid 复用易碎根治（fork+reaped pid）。
+
+**假绿对抗抽查（独立会话）六项全 PASS**：无 skip/静音、无断言弱化（旧「携图恒拒」
+改写强度等价）、五个高危断言真判别（时序窗口/双计回退/锁语义/同步发射/fail-closed）、
+覆盖率阈值未动且分母完整、56 锚有真实实现背书、无压制注释。
+
+**real LLM 门（opt-in）PASS**：全旅程含并发线程/收编/唤醒/EOF；期间上游端点对突发
+模式的一次瞬时抖动经基线 worktree A/B（基线同败 + 直探针健康）判定为环境面非回归，
+超时取证转储（按线程帧计数）已固化进门禁脚本。
+
+**遗留（挂账，非本批缺陷）**：worker stdout writer 无界串行队列（背压/有界队列独立
+收敛——MIGRATION §6 在册）；compaction 摘要流无 session 标注（tap 按「缺席=主」
+归属，坐标沿用最后主帧——既有行为）。
 
 ## 0. 分级与总量
 

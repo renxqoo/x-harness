@@ -64,18 +64,34 @@ async function main(): Promise<void> {
     }
   });
   proc.stderr.on("data", (chunk: Buffer) => process.stderr.write(`[llm-host] ${String(chunk)}`));
+  const dump = (label: string): void => {
+    // 失败取证：按线程汇总帧名计数（定位停层——turn 未起/流中断/不收敛）
+    const byThread = new Map<string, Map<string, number>>();
+    for (const frame of lines) {
+      if (frame.type !== "event") continue;
+      const tid = String(frame.threadId ?? "");
+      const counts = byThread.get(tid) ?? new Map<string, number>();
+      counts.set(String(frame.name), (counts.get(String(frame.name)) ?? 0) + 1);
+      byThread.set(tid, counts);
+    }
+    console.error(`llm-e2e frames@timeout(${label}): responses=${lines.filter((f) => f.type === "response").length}`);
+    for (const [tid, counts] of byThread) console.error(`  ${tid}: ${JSON.stringify([...counts.entries()])}`);
+  };
   const wait = async (pred: (frame: Frame) => boolean, label: string, timeoutMs = 120_000): Promise<Frame> => {
     const started = Date.now();
     for (;;) {
       for (const frame of lines) {
         if (pred(frame)) return frame;
       }
-      if (Date.now() - started > timeoutMs) throw new Error(`llm-e2e wait timeout: ${label}`);
+      if (Date.now() - started > timeoutMs) {
+        dump(label);
+        throw new Error(`llm-e2e wait timeout: ${label}`);
+      }
       await new Promise<void>((resolve) => {
-      setTimeout(() => {
-        resolve();
-      }, 50);
-    });
+        setTimeout(() => {
+          resolve();
+        }, 50);
+      });
     }
   };
   const response = (id: string): Promise<Frame> => wait((frame) => frame.type === "response" && frame.id === id, `response ${id}`);
