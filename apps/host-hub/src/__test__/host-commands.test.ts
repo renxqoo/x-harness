@@ -87,10 +87,12 @@ async function waitResponse(client: readonly string[], command: string, id?: str
 async function startHost(env: Record<string, string | undefined> = {}): Promise<HostFixture> {
   const agentDir = await tempDir("hub-host-");
   const sessionsRoot = join(agentDir, "sessions");
+  const home = await tempDir("hub-home-");
   const input = new FakeInput();
   const client: string[] = [];
   const workers: FakeWorker[] = [];
   void runHost({
+    homeDir: home,
     agentDir,
     sessionsRoot,
     env,
@@ -364,6 +366,18 @@ describe("host 本地命令（注入 IO）", () => {
     expect(ghost["error"]).toBe("unknown agent type: ghost");
     f.send({ type: "agents/remove", id: "ar2", name: "researcher" });
     await waitResponse(f.client, "agents/remove", "ar2");
+    // user 级同名 builtin = 合法遮蔽（create 只扫 user 目录）：遮蔽档可删（T39 集成门
+    // 抓出的口径分叉——写侧允许遮蔽则删侧必须放行），裸 builtin 档才拒
+    // startHome 注入缝隔离（bun homedir 启动缓存，进程内 HOME 重定向无效）
+    f.send({ type: "agents/create", id: "ac4", name: "general-purpose", description: "shadow builtin", systemPrompt: "x" });
+    const shadowed = await waitResponse(f.client, "agents/create", "ac4");
+    expect(shadowed["success"]).toBe(true);
+    f.send({ type: "agents/remove", id: "ar3", name: "general-purpose" });
+    const unshadow = await waitResponse(f.client, "agents/remove", "ar3");
+    expect(unshadow["success"]).toBe(true);
+    f.send({ type: "agents/remove", id: "ar4", name: "code-reviewer" });
+    const bareBuiltin = await waitResponse(f.client, "agents/remove", "ar4");
+    expect(["agent type not user-defined: code-reviewer", "unknown agent type: code-reviewer"]).toContain(bareBuiltin["error"]);
     // permission 双域：无 threadId get → 全局默认；set 词表校验
     f.send({ type: "permission/get_mode", id: "pg1" });
     const globalGet = await waitResponse(f.client, "permission/get_mode", "pg1");

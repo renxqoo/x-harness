@@ -28,6 +28,8 @@ export interface HostBoot {
   spawn?: typeof import("./worker-process.ts").spawnWorker;
   /** 帧出口注入缝（单测收帧断言；缺省接管 stdout） */
   emitOverride?: (line: string) => void;
+  /** user 级 agents 目录的 HOME 注入缝（缺省真实 HOME；单测隔离——bun homedir 启动缓存） */
+  homeDir?: string;
 }
 
 export async function runHost(boot: HostBoot): Promise<void> {
@@ -131,6 +133,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
       emitClient,
       startedAt: Date.now(),
       version: boot.version ?? "0.0.1",
+      ...(boot.homeDir !== undefined ? { homeDir: boot.homeDir } : {}),
     },
     {
       broadcastToWorkers: (line) => {

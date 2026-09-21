@@ -18,6 +18,7 @@ import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
 import { createModelsAuthCommands } from "./models-auth.ts";
 import { builtinTypesDir } from "../worker/assembly.ts";
 import { createAdminCommands } from "./admin-commands.ts";
+import { userAgentsDirOf } from "./agents-admin.ts";
 import { createTrustStore } from "./trust-store.ts";
 import type { TrustStore } from "./trust-store.ts";
 
@@ -39,6 +40,8 @@ export interface HostCommandsDeps {
   emitClient: (line: string) => void;
   startedAt: number;
   version: string;
+  /** user 级 agents 目录的 HOME 注入缝（缺省真实 HOME；单测隔离） */
+  homeDir?: string;
 }
 
 export interface HostCommandContext {
@@ -311,7 +314,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   async function handleAgentsList(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
     // 目录栈（低→高）：user（恒在）；trusted 线程含 project 级（同名 project 覆盖
     //  user——来源按装载序分账：project 目录装载的条目标 project）
-    const userDir = join(homedir(), ".x-harness", "agents");
+    const userDir = userAgentsDirOf(deps.homeDir);
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const entry = threadId !== "" ? deps.table.get(threadId) : undefined;
     const projectDir = entry !== undefined && entry.trusted ? join(entry.cwd, ".x-harness", "agents") : undefined;
@@ -399,7 +402,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   handlers.set("set_idle_retire_ms", handleSetIdleRetireMs);
   handlers.set("set_rss_retire_bytes", handleSetRssRetireBytes);
   handlers.set("ui_response", handleUiResponse);
-  const admin = createAdminCommands({ agentDir: deps.agentDir, sessionsRoot: deps.sessionsRoot, table: deps.table, trust, respond });
+  const admin = createAdminCommands({ agentDir: deps.agentDir, sessionsRoot: deps.sessionsRoot, table: deps.table, trust, respond, ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}) });
   admin.register(handlers);
   const permissionDual = admin.permissionDual;
 

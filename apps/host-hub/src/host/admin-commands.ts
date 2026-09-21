@@ -23,6 +23,8 @@ import type { ThreadTable } from "./thread-table.ts";
 import type { TrustStore } from "./trust-store.ts";
 
 export interface AdminCommandsDeps {
+  /** user 级 agents 目录的 HOME 注入缝（缺省真实 HOME；测试隔离用）。 */
+  homeDir?: string;
   agentDir: string;
   sessionsRoot: string;
   table: ThreadTable;
@@ -195,11 +197,11 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       deps.respond(id, "models/remove", outcome.ok ? {} : { error: outcome.error });
     });
     handlers.set("agents/create", async (input, id) => {
-      const outcome = await createUserAgentType(input);
+      const outcome = await createUserAgentType(input, deps.homeDir);
       deps.respond(id, "agents/create", outcome.ok ? { data: { path: outcome.path } } : { error: outcome.error });
     });
     handlers.set("agents/remove", async (input, id) => {
-      const outcome = await removeUserAgentType(typeof input.name === "string" ? input.name : "");
+      const outcome = await removeUserAgentType(typeof input.name === "string" ? input.name : "", deps.homeDir);
       deps.respond(id, "agents/remove", outcome.ok ? {} : { error: outcome.error });
     });
     handlers.set("skills/list", async (input, id) => {
