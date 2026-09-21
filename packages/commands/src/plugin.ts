@@ -4,7 +4,7 @@
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { errorText } from "@x-harness/core";
-import type { Session } from "@x-harness/session";
+import type { Session, SessionEventData } from "@x-harness/session";
 import { randomUUID } from "node:crypto";
 import { COMMAND_NAME, parseCommand } from "./lexer.ts";
 import { commandRegistry, commandsChange } from "./tokens.ts";
@@ -52,8 +52,8 @@ export const commandsPlugin = {
     const instanceToken = randomUUID().slice(0, 8);
     let commandSeq = 0;
 
-    function appendCommandEvent(session: Session, type: "command/run" | "command/done", data: unknown): void {
-      const appended = session.append(type as never, data as never);
+    function appendCommandEvent<K extends "command/run" | "command/done">(session: Session, type: K, data: SessionEventData[K]): void {
+      const appended = session.append(type, data);
       if (!appended.ok) throw new Error(`append-failed:${type}:${appended.reason}`);
     }
 
