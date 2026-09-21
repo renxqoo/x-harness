@@ -214,6 +214,13 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     return ids !== undefined && todoSnapshotEdges(d["edges"], ids);
   },
   "session/meta": (d) => isObj(d) && isStr(d["key"]) && d["key"] !== "", // value 语义归写方（内核只运不判）
+  "command/run": (d) => isObj(d) && isStr(d["commandId"]) && d["commandId"] !== "" && isStr(d["name"]) && (d["args"] === undefined || isStr(d["args"])),
+  "command/done": (d) =>
+    isObj(d) &&
+    isStr(d["commandId"]) &&
+    d["commandId"] !== "" &&
+    (d["kind"] === "success" || d["kind"] === "error") &&
+    (d["text"] === undefined || isStr(d["text"])),
 };
 
 /** 形状门：未知词条 / 形状不符 → 返回失败理由（data 须为已物化快照或 JSON.parse 产物） */
@@ -243,10 +250,42 @@ function envelopeExtraKey(raw: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
+/** 命令配对账（BATCH3-DESIGN §2.2，at-most-once 双向）：run 登记（重复 corrupt）；
+ *  done 必须命中未配对的 run（消费之）。悬挂 run（无 done）合法——torn 卷可恢复 */
+class CommandPairing {
+  private readonly open = new Set<string>();
+  private readonly matched = new Set<string>();
+
+  /** 配对违规理由，或 undefined 放行 */
+  check(raw: Record<string, unknown>): string | undefined {
+    const data = raw["data"];
+    const commandId = isObj(data) ? data["commandId"] : undefined;
+    if (typeof commandId !== "string" || commandId === "") return undefined;
+    if (raw["type"] === "command/run") {
+      if (this.open.has(commandId) || this.matched.has(commandId)) {
+        return `command-run-duplicate:${commandId}`;
+      }
+      this.open.add(commandId);
+      return undefined;
+    }
+    if (raw["type"] === "command/done") {
+      if (!this.open.has(commandId)) return `command-done-unpaired:${commandId}`;
+      this.open.delete(commandId);
+      this.matched.add(commandId);
+    }
+    return undefined;
+  }
+}
+
 export function validateSessionEvents(events: readonly unknown[]): string | undefined {
   let nodes: readonly SurfaceNode[] = [];
+  const commandPairing = new CommandPairing();
   for (let i = 0; i < events.length; i++) {
     const raw = events[i];
+    if (isObj(raw)) {
+      const pairingError = commandPairing.check(raw);
+      if (pairingError !== undefined) return `corrupt-envelope:${i}:${pairingError}`;
+    }
     if (!isObj(raw)) return `corrupt-envelope:${i}:not-object`;
     const extraKey = envelopeExtraKey(raw);
     if (extraKey !== undefined) return `corrupt-envelope:${i}:extra-key:${extraKey}`;

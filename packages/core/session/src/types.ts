@@ -107,6 +107,10 @@ export interface SessionEventData {
   /** 会话级 KV（log-only；last-wins 折叠归消费方——内核只运不判）：宿主侧标题/拨号/
    *  思考档/权限档等持久事实的单一事实通道（WAL 随 fork/恢复天然携带） */
   readonly "session/meta": { readonly key: string; readonly value: unknown };
+  /** 命令生命周期（BATCH3-DESIGN §2.2，log-only）：commandId 配对镜像 tool/call↔tool/result；
+   *  run 的 args 缺席 = 命令定义 recordInput:false；悬挂 run（无 done）合法——torn 卷可恢复 */
+  readonly "command/run": { readonly commandId: string; readonly name: string; readonly args?: string };
+  readonly "command/done": { readonly commandId: string; readonly kind: "success" | "error"; readonly text?: string };
 }
 
 /** todo 快照内单任务（docs/TODO.md §13.2）：id 十进制规范形、status 三值闭合（无 deleted——物理移除不进快照） */
