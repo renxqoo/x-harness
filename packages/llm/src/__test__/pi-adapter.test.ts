@@ -65,6 +65,20 @@ describe("pi-adapter 注入层", () => {
     expect(first.options["maxTokens"]).toBe(8192); // 协议必填缺省
     expect(first.model.maxTokens).toBe(8192); // model 条目与 options 同源
     expect(first.options["signal"]).toBe(controller.signal);
+    expect((first.model as Record<string, unknown>)["compat"]).toBeUndefined(); // anthropic 协议不挂 compat（无 developer/system 之分）
+  });
+
+  it("openai 工厂：系统提示词角色钉死 system——model.compat.supportsDeveloperRole=false（名单外中转 developer 角色 422 回归锚）", async () => {
+    const seen: Array<{ model: Record<string, unknown> }> = [];
+    const streamFn: PiStreamFn = async function* (model) {
+      seen.push({ model: model as never });
+      yield doneEvent();
+    };
+    const adapter = createOpenaiCompatAdapter({ baseUrl: "http://relay.example/v1", apiKey: "k", streamFn });
+    await collect(adapter.stream(request({})));
+    const compat = seen[0]?.model["compat"] as Record<string, unknown> | undefined;
+    expect(compat).toBeDefined();
+    expect(compat?.["supportsDeveloperRole"]).toBe(false); // 未知 baseUrl 探测恒 true → 此处必须覆写
   });
 
   it("anthropic 工厂：请求显式 maxTokens 恒胜档案 maxOutputTokens；配置在场填 options 与 model 条目；temperature 透传", async () => {
