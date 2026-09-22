@@ -182,13 +182,16 @@ function delegationError(reason: string): HubErrorShape {
 }
 
 /** settled 收敛面：kick 时打事件长度标记，whenIdle 后扫描新区间的 turn/end——
- *  error/blocked 收敛 → ok:false（否则 ok:true）；abort/clear 不取消 settled。 */
-function settleAfter(rt: WorkerRuntime, id: string | undefined): void {
-  if (id === undefined) return; // 无 id 无从关联——不发 settled
+ *  error/blocked 收敛 → ok:false（否则 ok:true）；abort/clear 不取消 settled。
+ *  受理记账（pendingSends +1）在登记成功时同步进行：无 id 的 driving 命令无从
+ *  关联 settled、也就无人减账——不入账，否则受理窗口（pendingSends>0）永久敞开。 */
+export function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
+  if (id === undefined) return false; // 无 id 无从关联——不发 settled
   const handle = rt.state.handle;
-  if (handle === undefined) return;
+  if (handle === undefined) return false;
   const threadIdAtKick = rt.state.threadId; // fork 替换后旧输入的 settled 仍按 kick 时线程盖章
   const marker = handle.agent.session.events().length;
+  rt.pendingSends += 1;
   void handle.agent
     .whenIdle()
     .then(() => {
@@ -215,6 +218,7 @@ function settleAfter(rt: WorkerRuntime, id: string | undefined): void {
       rt.pendingSends = Math.max(0, rt.pendingSends - 1);
       rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ok: false, reason: "settle-failed" });
     });
+  return true;
 }
 
 /** 命令分路（BATCH3-DESIGN §2.4）：内核 execute 未命中 → false（调用方走原路径——
@@ -282,7 +286,6 @@ function promptStreamingBranch(
     return;
   }
   respond(rt, { id: input.id, command: "prompt" });
-  rt.pendingSends += 1;
   settleAfter(rt, input.id);
 }
 
@@ -335,8 +338,8 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "prompt" });
-    rt.pendingSends += 1;
     settleAfter(rt, input.id);
+
   });
 
   handlers.set("steer", async (input) => {
@@ -363,8 +366,8 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "steer" });
-    rt.pendingSends += 1; // 受理窗口覆盖（与 prompt 全路径同口径）
-    settleAfter(rt, input.id);
+    settleAfter(rt, input.id); // 受理窗口覆盖（与 prompt 全路径同口径）
+
   });
 
   handlers.set("follow_up", async (input) => {
@@ -391,8 +394,8 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "follow_up" });
-    rt.pendingSends += 1;
     settleAfter(rt, input.id);
+
   });
 
   handlers.set("abort", async (input) => {

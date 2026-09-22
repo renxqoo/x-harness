@@ -40,8 +40,11 @@ function appendUserBatch(scope: TurnScope, step: number, entry: StepEntry): void
 
 /** 链式条件：未取消、终态 completed、收件箱有存货（next-turn ∨ next-step）——
  *  异常终态（error/max-tokens/aborted/blocked）一律不链：排队消息原地保留（下次 kick
- *  的 step0 消费），立即 idle 让失败通知出。next-step 计入链式：steer/send_now 在
- *  收轮判定之后到达（最后一步已过领取点）时消息不得搁浅在 next-step。 */
+ *  的 step0 消费），立即 idle 让失败通知出。next-step 析取支是纯防御子句：现驱动流中
+ *  completed 收轮前必经 stopping 窗口重读（step.ts stoppingResumes 读1/读2）与下一步
+ *  的 claimStepBatch，next-step 存货在那两处已被消费——此分支防未来重构挪动收尾序列
+ *  时开真实搁浅口；改道/steer 条目的实际保障 = stopping 窗口 + 下次 kick 的 step0
+ *  claimTurnBatch（含 next-step 全部）。 */
 export function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutcome | undefined, session: Session): boolean {
   if (cancelled !== undefined) return false;
   if (turnEnds !== undefined && turnEnds.kind !== "completed") return false;

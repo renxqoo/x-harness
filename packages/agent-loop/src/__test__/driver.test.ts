@@ -4,7 +4,7 @@
 import { createContext, loadPlugins } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmChunk } from "@x-harness/llm";
-import { sessionPlugin } from "@x-harness/session";
+import { sessionPlugin, type Session } from "@x-harness/session";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { Type } from "@sinclair/typebox";
@@ -15,6 +15,15 @@ import { errorScript, fakeAdapter, makeWorld, resetWorlds, spawn, textScript, to
 beforeEach(() => {
   resetWorlds();
 });
+
+/** 末条排队（next-turn insert）条目的 id——stopping 窗口 retarget 测试的寻址键。 */
+function lastQueuedTurnEntryId(session: Session): string {
+  const inserts = session
+    .events()
+    .filter((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "insert" && (e.data as { target?: string }).target === "next-turn");
+  const last = inserts.at(-1)?.data as { entries: Array<{ id: string }> } | undefined;
+  return last?.entries[0]?.id ?? "";
+}
 
 describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
   it("fresh turn（无工具）：claim→step 括号→system 锚点→user→header→assistant→completed 收轮", async () => {
@@ -106,6 +115,37 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const eventTypes = types(agent);
     expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1); // 同一 turn 续航
     expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2); // 原批次 + steer
+    expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
+    await handle.dispose();
+  });
+
+  it("stopping 窗口：queue/send_now 式 retarget（next-turn→next-step）落进 dispatch await → 同轮续航领取（真实防搁浅机制钉住）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { agent, handle } = await spawn(world);
+    world.fake.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "text-delta", text: "first" };
+        yield { type: "finish", finish: { kind: "stop" } };
+      })(),
+    );
+    let retargeted = false;
+    const off = world.ctx.on(agentTurnStopping, () => {
+      if (retargeted) return;
+      retargeted = true;
+      // 模拟 queue/send_now 命令在 stopping dispatch await 窗口落 WAL：把运行中排队的
+      // next-turn 条目改道进 next-step——read2 重读非空 → 同轮续航消化
+      const entryId = lastQueuedTurnEntryId(agent.session);
+      expect(entryId).toBeTruthy();
+      agent.session.append("agent/inbox/spliced", { op: "retarget", id: entryId, to: "next-step" });
+    });
+    agent.followup("go");
+    agent.followup("later question"); // 轮运行中排队（next-turn）
+    await agent.whenIdle();
+    off();
+    const eventTypes = types(agent);
+    expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1); // 同一轮续航消化
+    expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2); // 原批次 + 改道条目
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await handle.dispose();
   });

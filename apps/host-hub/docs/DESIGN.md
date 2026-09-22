@@ -182,6 +182,16 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   append `agent/inbox/spliced {op:"clear", reason:"client-clear"}` + flush（**不用
   agent.cancel**——那是 abort 语义；clear 事件是 driver 同款机制事件，折叠器天然
   清空）。
+- **queue/drop** `{threadId, entryId}` — 单条移除：entryId 所在队列直接 append
+  `agent/inbox/spliced {op:"drop", target, dropped:[entryId], reason:"client-drop"}`
+  + flush。寻址键 = get_state.queue 投影的 entry id；不在队（已消费/已清空/未知）→
+  `state_conflict`；空 entryId → `invalid_input`。空闲可用（无轮次要求）。
+- **queue/send_now** `{threadId, entryId}` — 立即改向：仅 next-turn 条目可改（不在
+  next-turn → `state_conflict`）；须有可注入的运行中轮（`bridge.isStreaming() ||
+  pendingSends > 0`），否则 `streaming_window` 拒绝且**不落 WAL**（条目原地保留）。
+  放行即 append `{op:"retarget", id:entryId, to:"next-step"}` + flush——运行中轮的
+  下一步边界领取注入；轮恰收尾则由 stopping 窗口重读/下次 kick 的 step0 领取兜底。
+  无 settled 义务（不进 DRIVING、不加 pendingSends）。
 - **compact** `{threadId, customInstructions?}` — 薄壳（BATCH3 起）：合成 `/compact`
   行（customInstructions 有则拼）走与 prompt 拦截同一条内核 execute 路（单一执行路径
   ——busy 前置/skip 归一/成功三元组全在 compaction 包的 commandCompactPlugin）；响应

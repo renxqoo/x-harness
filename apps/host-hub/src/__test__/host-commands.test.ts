@@ -230,7 +230,7 @@ describe("host 本地命令（注入 IO）", () => {
     const spawnCount = f.workers.length;
     f.send({ type: "get_state", id: "gs1", threadId: sid });
     const state = await waitResponse(f.client, "get_state", "gs1");
-    const sd = state["data"] as { sessionName: string; messageCount: number; sessionId: string; queue: { steering: string[]; followUp: string[] } };
+    const sd = state["data"] as { sessionName: string; messageCount: number; sessionId: string; queue: { steering: Array<{ id: string; text: string }>; followUp: Array<{ id: string; text: string }> } };
     expect(sd.sessionName).toBe("saved thread");
     expect(sd.messageCount).toBe(2);
     expect(sd.sessionId).toBe(sid);

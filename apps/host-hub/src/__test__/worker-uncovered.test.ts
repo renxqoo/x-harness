@@ -46,7 +46,7 @@ describe("assembly 装配面", () => {
     await world.ctx.dispose(); // teardownWorld 同径（重复 dispose 幂等面不在此断言）
   }, 20_000);
 
-  test("thinking.default 不兼容丢弃（openai 协议拒 thinking——materialize 告警面）", async () => {
+  test("thinking.default openai 渠道保留（协议无条件拒已撤——仅目录 reasoning:false 拒）", async () => {
     const agentDir = await tempDir("hub-asm2-");
     const sessionsRoot = join(agentDir, "sessions");
     const snapshot = JSON.stringify({
@@ -60,7 +60,9 @@ describe("assembly 装配面", () => {
       thinkingDefault: "high",
       env: { HUB_WORKER_PROVIDERS: snapshot },
     });
-    expect(assembled.thinking).toBeUndefined(); // 丢弃并告警（stderr）
+    // 5d6bd1e 撤「openai 协议无条件拒 thinking」（capability_thinking 误拒根治）：
+    // openai 渠道的 thinking 缺省现在原样保留，仅目录 reasoning:false 才拒
+    expect(assembled.thinking).toBe("high");
     expect(assembled.dial).toEqual({ provider: "o", model: "m" });
     await assembled.handle.dispose();
     for (const disposer of assembled.world.unload) await disposer();
