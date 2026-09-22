@@ -156,7 +156,9 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
     release();
     const done = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true, timeout: 5_000 }, session: parent.agent.session.id });
     expect(done.content).toContain("completed");
-    expect(done.content).toContain("slow child finished");
+    expect(done.content).toContain("already delivered"); // 全文已随通知交付——复查不复读
+    const notice = JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
+    expect(notice).toContain("slow child finished"); // 全文在通知里（交付未丢失）
     await parent.dispose();
   });
 });

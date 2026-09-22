@@ -135,7 +135,12 @@ export async function output(deps: VerbDeps, caller: SessionId | undefined, inpu
     const tail = soFar.summary === undefined ? "" : `; last output so far: ${summaryLines(soFar.summary, deps.reportCap).join("\n")}`;
     return { ok: true, text: `agent ${row.agentId} is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.${tail}` };
   }
-  return { ok: true, text: reportText(row, childReport(childSession.events()), deps.reportCap) };
+  const report = childReport(childSession.events());
+  if (row.reportDelivered) {
+    // 全文已随 [agent-notification] 交付——复读只重复占用父上下文；保留状态头与档案指针
+    return { ok: true, text: [reportHead(row, report), `session: ${String(row.sessionId)}`, "(full report already delivered via the [agent-notification]; use agent_message to ask the agent for specifics)"].join("\n") };
+  }
+  return { ok: true, text: reportText(row, report, deps.reportCap) };
 }
 
 export interface StopInput {

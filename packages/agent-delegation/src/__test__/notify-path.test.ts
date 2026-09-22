@@ -70,7 +70,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     expect(lastNotification).toContain(`agent ${agentId} failed: hit the output token limit before producing any report (no summary)`);
     expect(lastNotification).toContain(`session: ${String(sessionOf(spawned.content))}`);
     expect(lastNotification).toContain('\\"output\\":8192'); // 外层 stringify 转义后的 usage 行
-    // task_output 同口径：显式 failed + session 行（完整报告面）
+    // task_output 复查：状态头 + session 行（全文已随通知交付，不复读）
     const probed = await callTool({ world, name: "task_output", args: { task_id: agentId, block: false, timeout: 0 }, session: parent.agent.session.id });
     expect(probed.isError).toBeUndefined();
     expect(probed.content).toContain("failed: hit the output token limit");
@@ -150,7 +150,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
   it("子会话缺档 → 占位通知如实送达（session-archived，不静默丢 completion）", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
-    const row = { agentId: "agent-deadbeef", sessionId: "session-x" as never, name: "ghost", type: "worker", parent: parent.agent.session.id, depth: 1, occupied: false, armed: true, running: false, stopped: false };
+    const row = { agentId: "agent-deadbeef", sessionId: "session-x" as never, name: "ghost", type: "worker", parent: parent.agent.session.id, depth: 1, occupied: false, armed: true, running: false, stopped: false, reportDelivered: false };
     const store = world.ctx.use((await import("@x-harness/session")).sessionStore);
     const loop = world.loop;
     const finished: Array<{ outcome: string; detail: string }> = [];

@@ -230,7 +230,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     await stranger.dispose();
   });
 
-  it("task_output（agent 源）：报告含 status 与末轮文本；cap 截断带 agent_message 引导（X11）", async () => {
+  it("报告全文单次交付（X11）：通知携带全文（cap 截断带 agent_message 引导）；task_output 复查不复读", async () => {
     const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }, { reportCap: 10 }));
     const parent = await spawnParent(world);
     world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "0123456789ABCDEF")]);
@@ -238,14 +238,17 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     const agentId = agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
+    await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 10"), { timeout: 5_000 }); // 通知：全文经 cap 截断
+    expect(lastNotice()).toContain("agent_message");
     const output = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: parent.agent.session.id });
-    expect(output.content).toContain("completed");
-    expect(output.content).toContain("truncated at 10");
-    expect(output.content).toContain("agent_message");
+    expect(output.content).toContain("completed"); // 状态头仍在
+    expect(output.content).toContain("already delivered"); // 复查不复读
+    expect(output.content).not.toContain("0123456789ABCDEF");
     await parent.dispose();
   });
 
-  it("完成通知直接携带全文报告（与 task_output 同一 reportCap，模型无需二次调用取报告）", async () => {
+  it("报告全文单次交付：完成通知直送全文（与 reportCap 同一上界）；task_output 复查不复读（同份内容只进父上下文一次）", async () => {
     const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } })); // 缺省 reportCap 34000
     const parent = await spawnParent(world);
     const long = "y".repeat(300);
@@ -259,8 +262,8 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     expect(lastNotice()).not.toContain("truncated at");
     expect(lastNotice()).not.toContain("task_output"); // 不再引导二次调用取报告
     const output = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: parent.agent.session.id });
-    expect(output.content).toContain(long); // 显式查询同口径全文
-    expect(output.content).not.toContain("truncated at");
+    expect(output.content).toContain("already delivered"); // 全文已随通知交付——task_output 不复读（单次交付专项见 report-delivery.test.ts）
+    expect(output.content).not.toContain(long);
     await parent.dispose();
   });
 

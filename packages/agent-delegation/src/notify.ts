@@ -215,7 +215,8 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
   });
   try {
     parentHandle.agent.steer(notificationText(row, report, deps.reportCap));
+    row.reportDelivered = true; // 报告全文单一交付点：steer 成功即已交付，task_output 复查不复读
   } catch {
-    /* 父恰在封存：通知丢弃（子会话在盘可查） */
+    /* 父恰在封存：通知丢弃（子会话在盘可查）——未置位，task_output 仍可全文兜底 */
   }
 }

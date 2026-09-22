@@ -143,6 +143,8 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
 - `task_output` / `task_stop`（agent 源——件14 经 task-tools 暴露）：**仅 owner**
   （callerSession === row.parent），task_id = agentId 精确（**不支持 main 与跨进程**）；
   not-owner 经 probe denied 通道透传，源内 not-found 回落 task-tools 统一词表。
+  task_output 完成态复查不复读已交付全文（reportDelivered——状态头 + session 指针）；
+  running 快照照常（block/timeout 等待 + `last output so far`，同一 reportCap）。
 - `agent_message` / `list_agents`：**开放寻址**（规格 SendMessage 语义）——进程内任意 live
   子代理（含兄弟）、本机任意 live 会话（box 域，仅会话级——**子代理不跨进程直接寻址**，
   见 §5.3）；子代理可用 `to:"main"` 回父（§5.2 分支 1）。
@@ -161,9 +163,11 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
   busy→步边界；父 idle→唤醒。父已 dispose → not-found。
 - **完成通知**：agentStatus 监听 → armed/idle → 子 WAL 末 turn/end 全字段透传
   （kind/message/code/cause/reason——`docs/SUBAGENT-FAILURE-NOTIFICATION.md`）+ 本轮
-  assistant 全文（`summaryLines` 截断，与 task_output 报告同一 reportCap——通知即全文
-  交付，主代理无需二次调 task_output 取报告）+ `session:` 行（子会话档案指针）+ usage
-  → `[agent-notification]` steer 注入父 → 释槽。异常终态显式成败：completed →
+  assistant 全文（`summaryLines` 截断，与 task_output 报告同一 reportCap）+ `session:`
+  行（子会话档案指针）+ usage → `[agent-notification]` steer 注入父 → 释槽。通知即
+  报告唯一交付点：steer 成功置 `reportDelivered`，task_output 完成复查不复读全文
+  （状态头 + session 指针）——同份内容不重复进父上下文；steer 失败/tearing-down
+  未置位，task_output 仍可全文兜底。异常终态显式成败：completed →
   `finished: completed`；aborted → `stopped: <cause>`；error/max-tokens/blocked/
   interrupted → `failed: <原因句>`
   （max-tokens 区分有无摘要、error 带 message/code、blocked 带 preStep reject 原因、
