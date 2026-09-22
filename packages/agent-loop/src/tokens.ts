@@ -95,6 +95,28 @@ export const agentTurnStopping = defineSerial<{ readonly session: SessionId; rea
   "agent/turn-stopping",
 );
 
+/** 收束窗口（docs/AGENT-MESSAGE.md / docs/OUTPUT-TOKEN-CONTINUATION.md 契约）：无工具 settle
+ *  即将结束 turn 的**通用时点**（scheduleTools flow none 之后、settleConclude 之前）——内核
+ *  不识「截断」，何时续跑的判定完全归插件。「tool_use 在场不续跑」由结构保证（带工具的
+ *  settle 执行工具进下一步，收束点不可达）。无应答（undefined）→ 现行收束路径原样（真
+ *  opt-in）。中间件纪律：必须调 next；放弃用 fail 应答而非 throw；让位 = 透传下游。 */
+export type TurnConcludeDecision =
+  | { readonly kind: "resume"; readonly source: string; readonly instruction: string }
+  | { readonly kind: "fail"; readonly message: string; readonly code: string };
+
+export const agentTurnConclude = defineWaterfall<
+  {
+    readonly session: SessionId;
+    readonly turn: number;
+    readonly step: number;
+    readonly stopReason: "stop" | "max-tokens";
+    readonly content: readonly ContentBlock[];
+    readonly rawReason?: string;
+    readonly signal: AbortSignal;
+  },
+  TurnConcludeDecision | undefined
+>("agent/turn-conclude");
+
 /** F0②：assistant 落账前纠（幻觉强形态）——settle 与 append 之间；落的是改写后版本 */
 export interface AssistantSettlement {
   readonly content: readonly ContentBlock[];

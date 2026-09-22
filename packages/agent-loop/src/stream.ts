@@ -104,9 +104,10 @@ export async function raceIdleChunk<T>(pending: Promise<T>, idleMs: number): Pro
 }
 
 /** 结算判定：message（stop/max-tokens，或有内容的 abort）/ attempt（错误、空完成、无 finish 流）。
- *  attempt 携 code/retryAfterMs 透传给 RequestFailure——重试件的可重试判定与快车道输入 */
+ *  attempt 携 code/retryAfterMs 透传给 RequestFailure——重试件的可重试判定与快车道输入。
+ *  message 携 rawReason（provider 原生 stop reason——收束窗口载荷的诊断与判定输入）。 */
 export type Settlement =
-  | { readonly kind: "message"; readonly stopReason: "stop" | "max-tokens"; readonly interrupted?: true }
+  | { readonly kind: "message"; readonly stopReason: "stop" | "max-tokens"; readonly rawReason?: string; readonly interrupted?: true }
   | { readonly kind: "attempt"; readonly error: string; readonly code?: string; readonly retryAfterMs?: number };
 
 export function settleStream(accum: StreamAccumulator, streamThrew: unknown, signalAborted: boolean): Settlement {
@@ -124,7 +125,9 @@ export function settleStream(accum: StreamAccumulator, streamThrew: unknown, sig
       ...(finish.retryAfterMs !== undefined ? { retryAfterMs: finish.retryAfterMs } : {}),
     };
   }
-  if (finish.kind === "max-tokens") return { kind: "message", stopReason: "max-tokens" };
+  if (finish.kind === "max-tokens") {
+    return { kind: "message", stopReason: "max-tokens", ...(finish.rawReason !== undefined ? { rawReason: finish.rawReason } : {}) };
+  }
   if (!accum.hasContent) return { kind: "attempt", error: "empty completion" };
   return { kind: "message", stopReason: "stop" };
 }

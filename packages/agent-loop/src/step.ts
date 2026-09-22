@@ -31,6 +31,9 @@ export interface DriverDeps {
   readonly dispatchRequest: (payload: unknown, dial: Dial) => Promise<Dial>;
   readonly dispatchRequestError: (payload: unknown) => Promise<{ readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined>;
   readonly dispatchTurnStopping: (payload: unknown) => Promise<void>;
+  /** 收束窗口派发（agentTurnConclude——docs/OUTPUT-TOKEN-CONTINUATION.md：无工具 settle
+   *  即将结束 turn 的通用时点；final = undefined 即现行收束路径） */
+  readonly dispatchTurnConclude: (payload: unknown) => Promise<unknown>;
   /** F0② assistant 落账前纠（final = 原样透传） */
   readonly dispatchAssistantSettle: (payload: unknown) => Promise<unknown>;
   /** F0③ 流拦截（final = runtime.stream 原样） */
@@ -92,7 +95,13 @@ export type StepEntry =
   | { readonly kind: "blocked"; readonly reason?: string }
   | { readonly kind: "empty" };
 
-export type AssistantSettled = { readonly content: readonly ContentBlock[]; readonly stopReason: "stop" | "max-tokens"; readonly interrupted?: true };
+export type AssistantSettled = {
+  readonly content: readonly ContentBlock[];
+  readonly stopReason: "stop" | "max-tokens";
+  /** provider 原生 stop reason（LlmFinish.rawReason 透传——收束窗口载荷的诊断与判定输入） */
+  readonly rawReason?: string;
+  readonly interrupted?: true;
+};
 
 export type ToolFlow =
   | { readonly kind: "none" } // 无 tool_use：不调度
@@ -147,6 +156,28 @@ function rejectReasonOf(decision: unknown): string | undefined {
   if (typeof decision !== "object" || decision === null) return undefined;
   const reason = (decision as { reason?: unknown }).reason;
   return typeof reason === "string" && reason !== "" ? reason : undefined;
+}
+
+/** 续写步入口（收束窗口 resume 决策后的下一步——docs/OUTPUT-TOKEN-CONTINUATION.md 契约·
+ *  内核机制节）：不领收件箱（暂停吸收排队输入——保序关键：续写请求的末条消息必须是
+ *  指令）；仍派发 agentPreStep（claim: []——压缩检查面保持）。返回闭集 {enter}|{blocked}，
+ *  empty 不可达（现行 empty 仅 step0 可达是 beginStep 实现巧合，非契约——driver 不得对
+ *  续写步套用 empty→completed 早退）；reject 跳回灌（无可回灌，防「未领却重放 insert」
+ *  审计噪音）；rewrite 输出忽略（无可改写批次）。 */
+export async function concludeStepEntry(scope: TurnScope, step: number): Promise<StepEntry> {
+  const { deps, controller, turn } = scope;
+  const session = deps.session;
+  const decision = await deps.dispatchPreStep({
+    session: session.id,
+    turn,
+    step,
+    messages: session.deriveMessages(),
+    claim: [],
+    signal: controller.signal,
+  });
+  if (isEnterDecision(decision)) return { kind: "enter", entries: [] };
+  const reason = rejectReasonOf(decision);
+  return { kind: "blocked", ...(reason !== undefined ? { reason } : {}) };
 }
 
 /** 回灌：step0 领取 = next-turn 队首 + next-step 全部；step≥1 = next-step 全部。分原 target 落 insert */
@@ -330,6 +361,20 @@ function appendAttemptLedger(session: Session, spec: { readonly turn: number; re
   });
 }
 
+/** ok 出口消息构造：rawReason（provider 原生 stop reason——收束窗口载荷）与 interrupted
+ *  的可选字段折叠收口于此（runAttempt 复杂度治理） */
+function settledMessageOf(
+  settled: { readonly content: readonly ContentBlock[]; readonly stopReason: "stop" | "max-tokens" },
+  settlement: { readonly rawReason?: string; readonly interrupted?: true },
+): AssistantSettled {
+  return {
+    content: settled.content,
+    stopReason: settled.stopReason,
+    ...(settlement.rawReason !== undefined ? { rawReason: settlement.rawReason } : {}),
+    ...(settlement.interrupted === true ? { interrupted: true } : {}),
+  };
+}
+
 export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
   const { scope, schemas, step } = input;
   const { deps, turn } = scope;
@@ -432,10 +477,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
       surfaceOp: "append",
     });
     deps.emitStreamFrame(turn, step, { phase: "end", kind: "message" });
-    return {
-      kind: "ok",
-      message: { content: settled.content, stopReason: settled.stopReason, ...(settlement.interrupted === true ? { interrupted: true } : {}) },
-    };
+    return { kind: "ok", message: settledMessageOf(settled, settlement) };
   }
 }
 

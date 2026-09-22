@@ -3,6 +3,7 @@
 // 垃圾输入一律返回失败理由，不抛不崩。
 
 import { applySurfaceEvent, isSurfaceEventType } from "./surface.ts";
+import { AGENT_MESSAGE_KINDS } from "./agent-message.ts";
 import type { SessionEvent, SessionEventType, SurfaceEventType, SurfaceNode, SurfaceOp } from "./types.ts";
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -239,6 +240,14 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     d["commandId"] !== "" &&
     (d["kind"] === "success" || d["kind"] === "error") &&
     (d["text"] === undefined || isStr(d["text"])),
+  "agent/message": (d) =>
+    isObj(d) &&
+    isCount(d["turn"]) &&
+    isCount(d["step"]) &&
+    isStr(d["source"]) &&
+    d["source"] !== "" &&
+    AGENT_MESSAGE_KINDS.has(d["kind"] as string) &&
+    isContentBlocks(d["content"], false), // text-only 起步（image 通道后开走 AGENT-MESSAGE §4 场景 B）
 };
 
 /** 形状门：未知词条 / 形状不符 → 返回失败理由（data 须为已物化快照或 JSON.parse 产物） */

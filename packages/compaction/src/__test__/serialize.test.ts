@@ -136,6 +136,28 @@ describe("serializeConversation（块角色标注）", () => {
     expect(text).toContain("more characters truncated");
   });
 
+  it("agent/message 分流（docs/AGENT-MESSAGE.md §3 矩阵）：directive 跳过不进摘要；content 内容行保留", () => {
+    const agentMessageNode = (seq: number, kind: "directive" | "content", text: string) => ({
+      seq,
+      event: {
+        type: "agent/message",
+        seq,
+        time: 1,
+        data: { turn: 0, step: 0, source: kind === "directive" ? "output-continuation" : "delegation-report", kind, content: [{ type: "text", text }] },
+        surfaceOp: "append",
+      },
+    }) as never;
+    const nodes = [
+      userNode(0, "问题"),
+      agentMessageNode(1, "directive", "Output token limit hit. Resume directly — no apology"),
+      agentMessageNode(2, "content", "子代理审计完成：发现 3 个缺陷（A/B/C）"),
+    ];
+    const text = serializeConversation(nodes);
+    expect(text).toContain("[User]: 问题");
+    expect(text).not.toContain("Output token limit hit"); // 指令（喊话）跳过——过期作废
+    expect(text).toContain("[Agent message]: 子代理审计完成"); // 情报保留——压缩后必须存活
+  });
+
   it("assistant 多 text 块有分隔（原文块边界不粘连）", () => {
     const nodes = [
       {

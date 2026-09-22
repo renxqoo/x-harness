@@ -15,16 +15,18 @@ export {
   agentRequestError,
   agentStatus,
   agentToolStream,
+  agentTurnConclude,
   agentTurnStopping,
   agentAssistantSettle,
   agentLlmStream,
 } from "./tokens.ts";
-export type { AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestFailure } from "./tokens.ts";
+export type { AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestFailure, TurnConcludeDecision } from "./tokens.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";
 export { foldInbox } from "./inbox.ts";
 export { chainsNextTurn } from "./driver.ts";
 export { lastRequestContext } from "./request.ts";
 export type { InboxState } from "./inbox.ts";
 export { interruptedTurnClosers } from "./repair.ts";
+export { isFailDecision, isResumeDecision } from "./continuation.ts";
 export { createTailSnapshot, isSnapshotNode, snapshotEnvelope, SNAPSHOT_SUPERSEDES } from "./snapshot.ts";
 export type { TailSnapshotSpec } from "./snapshot.ts";

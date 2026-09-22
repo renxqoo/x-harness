@@ -41,3 +41,5 @@ export { sessionPlugin } from "./plugin.ts";
 export { isSafeSessionId, validateSessionEvents } from "./gates.ts";
 export { mintSessionId } from "./id.ts";
 export { anchorIndexOf } from "./surface.ts";
+export { AGENT_MESSAGE_KINDS, agentMessageData, isAgentContent, isAgentDirective } from "./agent-message.ts";
+export type { AgentMessageEvent, AgentMessageInput, AgentMessageKind } from "./agent-message.ts";

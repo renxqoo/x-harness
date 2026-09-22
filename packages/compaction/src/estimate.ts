@@ -33,7 +33,8 @@ export function estimateMessage(message: SurfaceMessage): number {
   }
 }
 
-/** 投影节点估算（与 estimateMessage 同口径；直接读事件 data，不经过消息派生） */
+/** 投影节点估算（与 estimateMessage 同口径；直接读事件 data，不经过消息派生）。
+ *  agent/message 计 content 块（模型可见——投影 user 角色，占用同口径） */
 export function nodeTokens(node: SurfaceNode): number {
   const event = node.event;
   switch (event.type) {
@@ -44,5 +45,7 @@ export function nodeTokens(node: SurfaceNode): number {
       return estimateBlocks(event.data.content);
     case "tool/result":
       return estimateText(event.data.content);
+    case "agent/message":
+      return estimateBlocks(event.data.content);
   }
 }
