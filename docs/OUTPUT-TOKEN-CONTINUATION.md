@@ -287,18 +287,18 @@
 
 ## 验收清单
 
-- [ ] 截断信号归一：归一 length ∨ 原生三词表（error 救回带内容前置）；带 tool_use 的 settle 不经收束窗口（结构保证）
-- [ ] overflow：`context-overflow` 码（400 文案优先于状态码）+ compaction 自愈恰一次；llm-retry 不重试该码；纯 413 保持 `http-413`
-- [ ] agent/message 类型：形状门正反例（source/kind/text-only）；投影 user 角色；UI 隐藏 = 类型语义（镜像泛型外发）；serialize directive 跳过 / content 内容行；cut 非候选
-- [ ] 窗口契约：无工具 settle 恰派发一次（stop 与 max-tokens 都经窗口）、载荷纯事实；undefined → 现行行为逐字节回归（真 opt-in）；非法形状 fail-loud；next 纪律契约测试
-- [ ] partial 保存先于判定：放弃路径 4 条 partial 全落账，stopReason 逐条 `max-tokens`
-- [ ] 指令载体：续写请求 messages 末条 = 指令（来自投影非拼接）；WAL 有对应 agent/message{directive}；后续请求持续含之（持久语义）；自愈重试不重复落
-- [ ] resume 出口不变量：`turnEnds === undefined`，续写成功轮 `turn/end{completed}`，链式不断
-- [ ] 续写步：不领取不落批次、empty 不可达、rewrite 忽略、reject 不回灌；括号/openStep 记账配对（含 fail）
-- [ ] 插件策略：stopReason 判定（stop 让位/max-tokens 进计数）；WAL 折叠计数（段内上限缺省 3、stop 复位、turn 边界不串、按 source 精确计数）；=max → fail；0 禁用；signal 断让位
-- [ ] 暂停吸收与保序：续写请求不含排队条目且指令为末条；stopping 窗口不搁浅；send_now 延迟语义核对通过
-- [ ] 放弃：error 终态（插件 message/code）+ UI `agent/error` + `settled{ok:false}`；cancel 竞态按 aborted
-- [ ] delegation 第四批：报告以 agent/message{content} 落账、UI 不再出现 user/message 形态报告、模型可见性不变、reportDelivered 语义不破（复读/异常窗口回归）
-- [ ] `max-tokens + tool_use` 现行为逐字节回归
-- [ ] 四门全绿 + 覆盖率 ≥90/85 只升不降，数字如实报告；e2e 旅程默认门通过
-- [ ] 对抗审查（文档轮已完成清零 + 代码轮）问题清零
+- [x] 截断信号归一：归一 length ∨ 原生三词表（error 救回带内容前置）；带 tool_use 的 settle 不经收束窗口（结构保证）
+- [x] overflow：`context-overflow` 码（400 文案优先于状态码）+ compaction 自愈恰一次；llm-retry 不重试该码；纯 413 保持 `http-413`
+- [x] agent/message 类型：形状门正反例（source/kind/text-only）；投影 user 角色；UI 隐藏 = 类型语义（镜像泛型外发）；serialize directive 跳过 / content 内容行；cut 非候选
+- [x] 窗口契约：无工具 settle 恰派发一次（stop 与 max-tokens 都经窗口）、载荷纯事实；undefined → 现行行为逐字节回归（真 opt-in）；非法形状 fail-loud；next 纪律契约测试
+- [x] partial 保存先于判定：放弃路径 4 条 partial 全落账，stopReason 逐条 `max-tokens`
+- [x] 指令载体：续写请求 messages 末条 = 指令（来自投影非拼接）；WAL 有对应 agent/message{directive}；后续请求持续含之（持久语义）；自愈重试不重复落
+- [x] resume 出口不变量：`turnEnds === undefined`，续写成功轮 `turn/end{completed}`，链式不断
+- [x] 续写步：不领取不落批次、empty 不可达、rewrite 忽略、reject 不回灌；括号/openStep 记账配对（含 fail）
+- [x] 插件策略：stopReason 判定（stop 让位/max-tokens 进计数）；WAL 折叠计数（段内上限缺省 3、stop 复位、turn 边界不串、按 source 精确计数）；=max → fail；0 禁用；signal 断让位
+- [x] 暂停吸收与保序：续写请求不含排队条目且指令为末条；stopping 窗口不搁浅；send_now 延迟语义核对通过
+- [x] 放弃：error 终态（插件 message/code）+ UI `agent/error` + `settled{ok:false}`；cancel 竞态按 aborted
+- [x] delegation 第四批：报告以 agent/message{content} 落账、UI 不再出现 user/message 形态报告、模型可见性不变、reportDelivered 语义不破（复读/异常窗口回归）
+- [x] `max-tokens + tool_use` 现行为逐字节回归
+- [x] 四门全绿 + 覆盖率 ≥90/85 只升不降，数字如实报告；e2e 旅程默认门通过
+- [x] 对抗审查（文档轮已完成清零 + 代码轮）问题清零
