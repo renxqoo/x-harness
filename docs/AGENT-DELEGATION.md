@@ -49,7 +49,7 @@ not-found 词表见 docs/TASKS.md §1。）
 ### 2.2 限额与预算
 
 maxDepth 缺省 3 / maxConcurrent 缺省 10（occupied 口径：登记占、完成通知/stop 释、message
-复活复占）/ reportCap 缺省 8000 / 通知摘要 200 / **maxResident 缺省 32**（idle 子驻留上限，
+复活复占）/ reportCap 缺省 34000 / 通知摘要 200 / **maxResident 缺省 32**（idle 子驻留上限，
 最旧档化：dispose 子会话（WAL 在盘）+摘行，配合 §6.2 惰性复活天然可恢复——防完成子无限
 驻留累积）/ mailbox 定时参数全部可注入（pollIntervalMs 300 / heartbeatMs 10_000 /
 graceMs 30_000 / staleMs 7d / now()——测试确定性收口，§11）。

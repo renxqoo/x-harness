@@ -33,7 +33,7 @@ import type { AgentFinishedPayload, AgentSpawnedPayload } from "./tokens.ts";
 
 const DEFAULT_MAX_DEPTH = 3;
 const DEFAULT_MAX_CONCURRENT = 10;
-const DEFAULT_REPORT_CAP = 8_000;
+const DEFAULT_REPORT_CAP = 34_000;
 const DEFAULT_MAX_RESIDENT = 32;
 
 /** 配置垃圾值 fail-fast（非负安全整数） */

@@ -8,7 +8,7 @@ import { sessionStore } from "@x-harness/session";
 import { toolsExecute } from "@x-harness/tools";
 import type { World } from "./world.ts";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, typesOf, agentIdOf, sessionOf } from "./world.ts";
-import { createAgentDelegationPlugin } from "../plugin.ts";
+import { createAgentDelegationPlugin, validateOptions } from "../plugin.ts";
 
 const modelOf = (event: { readonly data: unknown } | undefined): string | undefined =>
   event === undefined ? undefined : (event.data as { model?: string }).model;
@@ -187,6 +187,10 @@ describe("门禁（X7/X8/X17/X20）", () => {
     expect(() => createAgentDelegationPlugin({ maxConcurrent: 1.5 })).toThrow();
     expect(() => createAgentDelegationPlugin({ maxDepth: Number.NaN })).toThrow();
     expect(() => createAgentDelegationPlugin({ agentsDirs: [""] })).toThrow();
+  });
+
+  it("缺省上限口径：reportCap 34000 / depth 3 / concurrent 10 / resident 32", () => {
+    expect(validateOptions({})).toEqual({ maxDepth: 3, maxConcurrent: 10, reportCap: 34_000, maxResident: 32 });
   });
 
   it("无 session 调用方（非 agent 宿主直调）→ invalid-args（落档裁决）", async () => {
