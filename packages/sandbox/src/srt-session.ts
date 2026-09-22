@@ -23,7 +23,6 @@ export interface SrtSessionHandle {
 
 interface SrtSessionShared {
   attach(member: SrtMember): Promise<SrtSessionHandle>;
-  activeMembers(): number;
 }
 
 const EMPTY_BASELINE: SrtFilesystem = { denyRead: [], allowWrite: [], denyWrite: [] };
@@ -61,7 +60,6 @@ function createSrtSessionShared(runtime: SrtRuntime): SrtSessionShared {
         refreshNetwork: refresh,
       };
     },
-    activeMembers: () => members.size,
   };
 }
 
