@@ -16,8 +16,11 @@ describe("decideContinuation（count/max 矩阵与判定）", () => {
     expect(GIVE_UP).toEqual({ kind: "fail", message: "The model's response exceeded the output token maximum.", code: "output-token-limit" });
   });
 
-  it("内容前置：零内容截断让位（空 partial 无可接续点——走现行粘性路径）", () => {
+  it("可续写信号（回归·用户实报 MiMo 思考型截断）：content 空但有 thinking → 续写；两者皆空才让位", () => {
+    // 预算全烧在思考上、正文零产出——指令「拆小块」正是对症，必须续写而非静默收轮
+    expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [], hasThinking: true, count: 0, max: 3 })?.kind).toBe("resume");
     expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [], count: 0, max: 3 })).toBeUndefined();
+    expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [], hasThinking: true, count: 3, max: 3 })).toEqual(GIVE_UP);
   });
 
   it("max=0 → 首次截断即放弃；非截断让位；signal 断让位", () => {

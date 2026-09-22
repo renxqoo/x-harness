@@ -22,9 +22,11 @@ export const DEFAULT_MAX_OUTPUT_CONTINUATIONS = 3;
 
 export interface ContinuationDecideInput {
   readonly stopReason: "stop" | "max-tokens";
-  /** 本次 settle 的内容块（内容前置：零内容截断没有可接续的 partial——空 assistant 在
-   *  pi-context 被丢弃成「双 user 相邻 + 指令对着不存在的中断」，让位走现行收束路径） */
+  /** 本次 settle 的内容块（可续写信号之一；两者皆空才让位——空 assistant 在 pi-context
+   *  被丢弃成「指令对着不存在的中断」，走现行收束路径） */
   readonly content: readonly unknown[];
+  /** 思考型截断信号（预算烧在 thinking、content 空——指令「拆小块」正是对症，可续） */
+  readonly hasThinking?: true;
   readonly signal: AbortSignal;
   /** 本 turn 内最近一次 stop settle 之后的续写数（WAL 折叠——count.ts） */
   readonly count: number;
@@ -36,7 +38,7 @@ export interface ContinuationDecideInput {
 export function decideContinuation(input: ContinuationDecideInput): TurnConcludeDecision | undefined {
   if (input.signal.aborted) return undefined;
   if (input.stopReason !== "max-tokens") return undefined;
-  if (input.content.length === 0) return undefined;
+  if (input.content.length === 0 && input.hasThinking !== true) return undefined;
   if (input.count < input.max) {
     return { kind: "resume", source: OUTPUT_CONTINUATION_SOURCE, instruction: OUTPUT_CONTINUATION_INSTRUCTION };
   }

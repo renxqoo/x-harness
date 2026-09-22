@@ -62,6 +62,7 @@ export async function concludeWindow(scope: TurnScope, step: number, assistant: 
     stopReason: assistant.stopReason,
     content: assistant.content,
     ...(assistant.rawReason !== undefined ? { rawReason: assistant.rawReason } : {}),
+    ...(assistant.hasThinking === true ? { hasThinking: true } : {}),
     signal: controller.signal,
   });
   if (isResumeDecision(decision)) {

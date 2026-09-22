@@ -90,7 +90,7 @@
   - **第四批以外的 delegation 面**（子代理失败通知通道、task_output 复查面）——第四批只迁报告投递载体；其余 delegation 行为不动。
   - **agent/message 宿主写入 API 的最终形态**——inject 通道改型 or delegation 直写，第四批小方案探查投递时序后钉死（见实施顺序第四批前置）。
   - **`max-tokens + tool_use` 的粘性收轮**（工具结果滞留，由下次 kick step0 消化）——存量语义（AGENT-LOOP-DRIVER.md §1.5 已档），按用户裁决维持；滞留改良归未来需求（挂账：driver.ts max-tokens 分支）。
-  - **done 路径零内容 + max-tokens**（如 MiMo length+0 输入溢出）——不改 done 路径判定；策略插件**内容前置**（零内容截断无可接续点：空 assistant 在 pi-context 被丢弃成「双 user 相邻 + 指令对着不存在的中断」——审查中-1/P8 处置后与救回路径论证对齐）。
+  - **done 路径 content 空 + max-tokens 的两变体**（用户实报回归钉死）：①**思考型截断**（预算全烧 thinking、正文零产出——thinking 档 max 的典型形态）→ `hasThinking` 载荷透传，策略视思考为可续写信号照常 resume（指令「拆小块」对症；thinking 落盘不回传——续写请求为 user+指令，模型重思考）；②**真零输出**（usage.output===0 且 length——输入压力退化）→ llm 层归 context-overflow 走自愈（压缩腾位→重试），不落静默粘性收轮。两变体皆空（无 usage 的真空）→ 让位现行粘性路径。
   - **指令持久留存的 token 成本与 emergency 吞指令退化**——指令留存投影随后续请求直到压缩吞掉（control 不进摘要，有界；~45 token/次）；emergency 自愈（keep=0）可能把指令本身摘进被替换区间且 directive 不进摘要 → 重试请求无指令，续写退化为普通 continue——已知退化（崩溃级路径，非主路径）。
   - **跨版本读侧**——旧运行时读含 `agent/message` 的新 WAL 整卷拒（SESSION.md §7 既定政策），无跨版本承诺，同版读写。
   - **计数跨 turn 持久化**——spec 收尾归零；崩溃中断的续写轮由 resume 侧 interruptedTurnClosers 闭轮，残留 agent/message 为 directive 类（摘要跳过、UI 隐藏），对后续请求仅少量 token 尾巴，无行为后果。
@@ -284,6 +284,15 @@
 - 确认面（12 项）：纯未标批逐字节等价、origin 端到端完整（insertData→WAL→fold→回灌→材料化）、
   gates 正反例、notify≡steer 唤醒同构、deliver 等价（reportDelivered/emitFinished/孤儿/tearing-down）、
   recastOne 逐类型等价（seq 连续/system 特赦）、假绿抽查通过、inject 删净、消费面就位、fork 种子分流。
+
+## 审查处置（用户实报回归轮——session 20260922T221035-o9my4m turn4）
+
+- 症状：thinking 档 max 的请求 max-tokens 收轮、无续写。诊断：content=[] 但 thinking 在场——**思考型截断**
+  被批 3 审查加的「内容前置」误杀（它只看 content 块）。修正：AssistantSettled/TurnConcludePayload 增
+  `hasThinking`，策略前置放宽为「content 空且无 thinking 才让位」——思考型照常续写。
+- 同轮补：done 路径 `length + usage.output===0` → context-overflow（合法上限命中必有 output>0；零输出
+  是输入压力退化）——自愈「压缩腾位→重试」取代静默粘性收轮。
+- 回归测试 ×3：pi-events 零输出分类 / policy 思考型矩阵 / 机制 thinking-only 端到端续写。
 
 ## 验收清单
 

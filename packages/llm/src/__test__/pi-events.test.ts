@@ -205,6 +205,21 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
 });
 
 describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透传 / error 救回 / overflow 分类）", () => {
+  it("回归（用户实报 MiMo 零输出截断）：done length + usage.output===0 → context-overflow（自愈可期），不落静默粘性收轮", async () => {
+    expect(
+      await collect([assistantEvent({ type: "done", reason: "length", message: { usage: { input: 141174, output: 0, cacheRead: 0, cacheWrite: 0 } } })]),
+    ).toEqual([
+      { type: "usage", usage: { input: 141174, output: 0 } },
+      { type: "finish", finish: { kind: "error", message: "length stop with zero output (context window overflow)", code: "context-overflow" } },
+    ]);
+    // output>0 = 合法输出上限命中 → 正常 max-tokens（续写路径）
+    expect(
+      await collect([assistantEvent({ type: "done", reason: "length", message: { usage: { input: 10, output: 8192, cacheRead: 0, cacheWrite: 0 } } })]),
+    ).toEqual([{ type: "usage", usage: { input: 10, output: 8192 } }, { type: "finish", finish: { kind: "max-tokens" } }]);
+    // usage 缺席 = 信息不足不分类 → 保持 max-tokens
+    expect(await collect([assistantEvent({ type: "done", reason: "length", message: {} })])).toEqual([{ type: "finish", finish: { kind: "max-tokens" } }]);
+  });
+
   it("done：length → max-tokens 透传 rawReason 三态；无 rawStopReason 字段缺席", async () => {
     for (const raw of ["max_tokens", "length", "incomplete.max_output_tokens"]) {
       expect(await collect([assistantEvent({ type: "done", reason: "length", message: { rawStopReason: raw } })])).toEqual([

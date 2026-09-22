@@ -7,6 +7,7 @@ import { agentMessageData, AGENT_MESSAGE_KINDS } from "@x-harness/session";
 import { errorText } from "@x-harness/core";
 import { foldInbox, insertData } from "./inbox.ts";
 import { concludeWindow } from "./continuation.ts";
+import { runAttempt } from "./attempt.ts";
 import {
   anchorSystem,
   appendEvent,
@@ -19,7 +20,6 @@ import {
   maybeResume,
   mergeOutcome,
   abortedOutcome,
-  runAttempt,
   scheduleTools,
   settleConclude,
 } from "./step.ts";

@@ -112,6 +112,8 @@ export interface TurnConcludePayload {
   readonly stopReason: "stop" | "max-tokens";
   readonly content: readonly ContentBlock[];
   readonly rawReason?: string;
+  /** 思考型截断信号（本次 settle 有 thinking 产出但 content 空——预算烧在思考上仍是可续写） */
+  readonly hasThinking?: true;
   readonly signal: AbortSignal;
 }
 

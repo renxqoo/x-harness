@@ -86,6 +86,30 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     await handle.dispose();
   });
 
+  it("回归（用户实报思考型截断）：thinking-only max-tokens → 续写触发（hasThinking 载荷透传）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { calls, off } = registerConclude(world, (p) => (p.stopReason === "max-tokens" ? resumeOf() : undefined));
+    world.fake.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "thinking-delta", text: "长思考……预算全花在这里" };
+        yield { type: "usage", usage: { input: 141174, output: 8192 } };
+        yield { type: "finish", finish: { kind: "max-tokens" } }; // content 空、thinking 在场
+      })(),
+    );
+    world.fake.scripts.push(textScript("正文"));
+    const { agent, handle } = await spawn(world);
+    agent.followup("q");
+    await agent.whenIdle();
+
+    expect(calls[0]).toMatchObject({ stopReason: "max-tokens", hasThinking: true }); // 载荷透传
+    expect(agentMessages(agent, "agent/message")).toHaveLength(1); // 续写触发——不再静默收轮
+    expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "completed" } });
+    expect(world.fake.calls[1]?.messages.at(-1)).toMatchObject({ role: "user" }); // 续写请求末条=指令
+    off();
+    await handle.dispose();
+  });
+
   it("无决策回归：max-tokens 无工具 → 粘性收轮、无 agent/message（现行行为逐字节）", async () => {
     const world = await makeWorld();
     worlds.push(world);

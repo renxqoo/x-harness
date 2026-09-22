@@ -201,6 +201,18 @@ function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, o
   return chunks;
 }
 
+/** done 终态帧（piChunks 复杂度治理）：length + usage.output===0 → context-overflow（零输出
+ *  截断——pi overflow.js Case 3 同源，MiMo 截输入塞满窗口致无输出空间；合法的输出上限命中
+ *  必有 output>0）；length → max-tokens（携 rawReason）；其余 stop。 */
+function doneFinish(message: { usage?: { output?: number }; rawStopReason?: string }, reason: string): LlmChunk {
+  if (reason !== "length") return { type: "finish", finish: { kind: "stop" } };
+  if ((message.usage?.output ?? -1) === 0) {
+    return { type: "finish", finish: { kind: "error", message: "length stop with zero output (context window overflow)", code: "context-overflow" } };
+  }
+  const raw = message.rawStopReason;
+  return { type: "finish", finish: { kind: "max-tokens", ...(raw !== undefined ? { rawReason: raw } : {}) } };
+}
+
 export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, options: PiChunkOptions): AsyncGenerator<LlmChunk> {
   const emittedText = new Map<number, string>(); // contentIndex → 已发 delta 拼接（终态校正用）
   let sawContent = false; // text/toolcall 已发（thinking 不计——与 loop 侧 StreamAccumulator.hasContent 同口径；error 救回的内容前置判定用）
@@ -219,13 +231,7 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
       const event = next.value;
       if (event.type === "done") {
         yield* foldUsage(event.message.usage);
-        const raw = event.message.rawStopReason;
-        yield {
-          type: "finish",
-          finish: event.reason === "length"
-            ? { kind: "max-tokens", ...(raw !== undefined ? { rawReason: raw } : {}) }
-            : { kind: "stop" },
-        };
+        yield doneFinish(event.message, event.reason);
         return;
       }
       if (event.type === "error") {
