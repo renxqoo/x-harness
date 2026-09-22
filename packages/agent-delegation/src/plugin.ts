@@ -188,7 +188,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         pendingEffects.push(() => startDrain(consumer as MailboxConsumer, service.timing.pollIntervalMs, options.onWarn));
       }
 
-      const notifier = createNotifier({ loop, store, getRow: (session) => lineage.bySession(session), isTearingDown: () => tearingDown, adoptOrphan, emitFinished });
+      const notifier = createNotifier({ loop, store, reportCap: limits.reportCap, getRow: (session) => lineage.bySession(session), isTearingDown: () => tearingDown, adoptOrphan, emitFinished });
       const offStatus = ctx.on(agentStatus, (payload) => {
         notifier(payload);
         if (payload.status === "idle") evictIdle();

@@ -30,7 +30,7 @@ export interface DelegationOptions {
   readonly maxDepth?: number;
   /** 缺省 10；按父计 occupied 子数（登记占、完成通知/stop 释放） */
   readonly maxConcurrent?: number;
-  /** 缺省 34000；task_output（agent 源）报告截断上界 */
+  /** 缺省 34000；报告截断统一上界——完成通知/finished 事件/运行中快照/task_output 同一 cap */
   readonly reportCap?: number;
   /** 启动期 worktree 对账清扫开关（缺省开；测试装置可关防跨装置互扫） */
   readonly worktreeSweep?: boolean;

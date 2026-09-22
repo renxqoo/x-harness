@@ -157,6 +157,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     const notifier = createNotifier({
       loop,
       store,
+      reportCap: 34_000,
       getRow: (session) => (session === row.sessionId ? row : undefined),
       isTearingDown: () => false,
       adoptOrphan: async () => {},
@@ -249,11 +250,10 @@ describe("五态通知词表（表驱动——docs/SUBAGENT-FAILURE-NOTIFICATION
     ];
     for (const row0 of table) {
       expect(failureDetail(row0.report)).toBe(row0.detail);
-      const text = notificationText(row, row0.report);
+      const text = notificationText(row, row0.report, 1000);
       expect(text).toContain(`agent-abcd1234 ${row0.head}`);
       expect(text).toContain(row0.head === "finished" ? "finished: completed\n" : `${row0.head}: ${row0.detail}\n`);
       expect(text).toContain("session: 20260920T130824-ljcg3f");
-      expect(text).toContain("task_output");
       const report = reportText(row, row0.report, 1000);
       expect(report).toContain("session: 20260920T130824-ljcg3f");
       if (row0.head !== "finished") expect(report).toContain(`${row0.detail}\n`);
@@ -264,7 +264,7 @@ describe("五态通知词表（表驱动——docs/SUBAGENT-FAILURE-NOTIFICATION
     expect(failureDetail({ status: "weird-kind", summary: undefined, usage: undefined })).toBe("turn ended abnormally (unknown reason kind)");
   });
 
-  it("childReport：summary 全文捕获（200 截断归展示层）/usage 捕获/无 turn-end fail-closed；原因字段从 turn/end 透传", async () => {
+  it("childReport：summary 全文捕获（通知与 task_output 同一 cap）/usage 捕获/无 turn-end fail-closed；原因字段从 turn/end 透传", async () => {
     const { childReport, notificationText } = await import("../notify.ts");
     const { reportText } = await import("../verbs.ts");
     const long = "x".repeat(300);
@@ -274,15 +274,18 @@ describe("五态通知词表（表驱动——docs/SUBAGENT-FAILURE-NOTIFICATION
     ] as never;
     const report = childReport(events);
     expect(report.status).toBe("completed");
-    expect(report.summary).toBe(long); // 全文——在此截断会让 reportCap 层形同虚设（全文恒 200+…）
+    expect(report.summary).toBe(long); // 全文——数据层不截，截断统一在消费方（summaryLines + reportCap）
     expect(report.usage).toEqual({ input: 5, output: 6 });
     const row = { agentId: "a", sessionId: "s1" } as never;
-    const text = notificationText(row, report);
-    expect(text).toContain(`summary: ${"x".repeat(200)}…`); // 通知摘要行：展示层 200
-    expect(text).not.toContain("x".repeat(201));
+    const text = notificationText(row, report, 1000);
+    expect(text).toContain(`summary: ${long}`); // 通知即全文（与报告同一 cap）
     expect(text).toContain("usage:");
-    expect(text).toContain("task_output");
-    expect(reportText(row, report, 1000)).toContain(long); // 报告层：全文按 reportCap 截
+    expect(reportText(row, report, 1000)).toContain(long); // task_output 同口径全文
+    const capped = notificationText(row, report, 100);
+    expect(capped).toContain(`summary: ${"x".repeat(100)}`); // 超 cap 截断
+    expect(capped).toContain("truncated at 100");
+    expect(capped).toContain("agent_message");
+    expect(capped).not.toContain("task_output"); // 引导不指向二次读同一 cap 的内容
     const bare = childReport([{ type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], stopReason: "stop" } }] as never);
     expect(bare.status).toBe("error");
     const passthrough = childReport([

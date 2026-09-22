@@ -1,24 +1,25 @@
 // 完成通知（docs/AGENT-DELEGATION.md §5.1）：agentStatus 监听 → 子 idle 且 armed → 读子 WAL
 // 末 turn/end 全字段透传（kind/message/code/cause/reason——docs/SUBAGENT-FAILURE-NOTIFICATION.md：
-// 异常终态显式回传，主代理不解读状态词）+ 本轮 assistant 摘要 + session id 行 → steer 注入
-// 父；tearing-down 门（级联期丢弃）；孤儿子收养处置（父 get 缺位 → cancel+dispose+摘行）；
+// 异常终态显式回传，主代理不解读状态词）+ 本轮 assistant 全文（reportCap 统一上界）+ session
+// id 行 → steer 注入父；通知即全文交付，模型不需要再调 task_output 取报告；tearing-down 门
+// （级联期丢弃）；孤儿子收养处置（父 get 缺位 → cancel+dispose+摘行）；
 // 子会话缺档 → 占位通知如实送达（不静默丢 completion）。
 
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
 import type { ChildRow } from "./lineage.ts";
 
-/** 通知/事件/快照侧摘要展示上界（§2.2「通知摘要 200」）；报告全文走 reportText 的 reportCap 层 */
-export const NOTICE_SUMMARY_CAP = 200;
-
-/** 展示层截断：通知文本、finished 事件、运行中快照的预览；报告全文归 reportText（reportCap） */
-export function noticeSummary(text: string): string {
-  return text.length > NOTICE_SUMMARY_CAP ? `${text.slice(0, NOTICE_SUMMARY_CAP)}…` : text;
+/** 报告正文行组——完成通知与 task_output 同一 cap 同一口径：全文直送；超 cap 截断 +
+ *  agent_message 追问引导（二次读同一 cap 下的内容只会多付一份上下文，故引导不指向 task_output）。 */
+export function summaryLines(summary: string, cap: number): string[] {
+  if (summary.length <= cap) return [summary];
+  return [summary.slice(0, cap), `[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics]`];
 }
 
 export interface NotifyDeps {
   readonly loop: AgentLoopService;
   readonly store: SessionStore;
+  readonly reportCap: number;
   /** 活查询（登记后立即可见——快照会让新子永远收不到通知臂） */
   readonly getRow: (session: SessionId) => ChildRow | undefined;
   isTearingDown: () => boolean;
@@ -79,8 +80,7 @@ export function childReport(events: readonly SessionEvent[]): ChildReport {
 }
 
 /** 本轮（turn/end 之前最近的）assistant 全文 + usage；越界无消息 → 双缺席（键恒在）。
- *  summary 存不截断原文——截断是展示层职责（noticeSummary 200 / reportText 的 reportCap），
- *  在此截断会让 reportCap 层形同虚设（全文恒 200+…）。 */
+ *  summary 存不截断原文——截断是消费方职责（通知/事件/报告统一 summaryLines + reportCap）。 */
 function lastAssistantOf(events: readonly SessionEvent[], turnEndAt: number): { summary: string | undefined; usage: unknown } {
   for (let i = turnEndAt - 1; i >= 0; i--) {
     const event = events[i] as SessionEvent;
@@ -135,11 +135,14 @@ function outcomeHead(agentId: string, report: ChildReport): string {
   return `[agent-notification] agent ${agentId} failed: ${failureDetail(report)}`;
 }
 
-export function notificationText(row: ChildRow, report: ChildReport): string {
+/** 通知铸文本：全文直送（与 task_output 报告同一 cap——二次调用只多付一份上下文） */
+export function notificationText(row: ChildRow, report: ChildReport, cap: number): string {
   const lines = [outcomeHead(row.agentId, report), `session: ${String(row.sessionId)}`];
-  if (report.summary !== undefined) lines.push(`summary: ${noticeSummary(report.summary)}`);
+  if (report.summary !== undefined) {
+    const [head, ...rest] = summaryLines(report.summary, cap);
+    lines.push(`summary: ${head}`, ...rest);
+  }
   if (report.usage !== undefined) lines.push(`usage: ${JSON.stringify(report.usage)}`);
-  lines.push(`(use task_output with agentId "${row.agentId}" for the full report)`);
   return lines.join("\n");
 }
 
@@ -191,23 +194,27 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
     return;
   }
   const childSession = deps.store.get(row.sessionId);
-  const text = childSession === undefined ? archivedNotificationText(row) : notificationText(row, childReport(childSession.events()));
   if (childSession === undefined) {
     // 封存缺档：completion 事实仍送达（idle 边沿已证跑完一轮）
     deps.emitFinished({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, outcome: "completed", detail: "session-archived (no report available)" });
-  } else {
-    const report = childReport(childSession.events());
-    deps.emitFinished({
-      parent: row.parent,
-      agentId: row.agentId,
-      sessionId: row.sessionId,
-      outcome: outcomeOf(report.status),
-      detail: failureDetail(report),
-      ...(report.summary !== undefined ? { summary: noticeSummary(report.summary) } : {}),
-    });
+    try {
+      parentHandle.agent.steer(archivedNotificationText(row));
+    } catch {
+      /* 父恰在封存：通知丢弃（子会话在盘可查） */
+    }
+    return;
   }
+  const report = childReport(childSession.events());
+  deps.emitFinished({
+    parent: row.parent,
+    agentId: row.agentId,
+    sessionId: row.sessionId,
+    outcome: outcomeOf(report.status),
+    detail: failureDetail(report),
+    ...(report.summary !== undefined ? { summary: summaryLines(report.summary, deps.reportCap).join("\n") } : {}),
+  });
   try {
-    parentHandle.agent.steer(text);
+    parentHandle.agent.steer(notificationText(row, report, deps.reportCap));
   } catch {
     /* 父恰在封存：通知丢弃（子会话在盘可查） */
   }

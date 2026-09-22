@@ -49,7 +49,8 @@ not-found 词表见 docs/TASKS.md §1。）
 ### 2.2 限额与预算
 
 maxDepth 缺省 3 / maxConcurrent 缺省 10（occupied 口径：登记占、完成通知/stop 释、message
-复活复占）/ reportCap 缺省 34000 / 通知摘要 200 / **maxResident 缺省 32**（idle 子驻留上限，
+复活复占）/ reportCap 缺省 34000（报告截断统一上界——完成通知/finished 事件/运行中快照/
+task_output 同一 cap）/ **maxResident 缺省 32**（idle 子驻留上限，
 最旧档化：dispose 子会话（WAL 在盘）+摘行，配合 §6.2 惰性复活天然可恢复——防完成子无限
 驻留累积）/ mailbox 定时参数全部可注入（pollIntervalMs 300 / heartbeatMs 10_000 /
 graceMs 30_000 / staleMs 7d / now()——测试确定性收口，§11）。
@@ -160,9 +161,11 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
   busy→步边界；父 idle→唤醒。父已 dispose → not-found。
 - **完成通知**：agentStatus 监听 → armed/idle → 子 WAL 末 turn/end 全字段透传
   （kind/message/code/cause/reason——`docs/SUBAGENT-FAILURE-NOTIFICATION.md`）+ 本轮
-  assistant 摘要 ≤200 + `session:` 行（子会话档案指针）+ usage → `[agent-notification]`
-  steer 注入父 → 释槽。异常终态显式成败：completed → `finished: completed`；aborted →
-  `stopped: <cause>`；error/max-tokens/blocked/interrupted → `failed: <原因句>`
+  assistant 全文（`summaryLines` 截断，与 task_output 报告同一 reportCap——通知即全文
+  交付，主代理无需二次调 task_output 取报告）+ `session:` 行（子会话档案指针）+ usage
+  → `[agent-notification]` steer 注入父 → 释槽。异常终态显式成败：completed →
+  `finished: completed`；aborted → `stopped: <cause>`；error/max-tokens/blocked/
+  interrupted → `failed: <原因句>`
   （max-tokens 区分有无摘要、error 带 message/code、blocked 带 preStep reject 原因、
   interrupted 为 repair 残卷铸造态——docs/SUBAGENT-FAILURE-NOTIFICATION.md 词表）——
   主代理不猜、不轮询、不解读状态词。子会话缺档时投递 `session-archived` 占位通知

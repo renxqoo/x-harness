@@ -245,7 +245,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     await parent.dispose();
   });
 
-  it("task_output 全文报告不再被通知摘要 200 连带截断（症状：默认 reportCap 形同虚设，全文恒 200+…）", async () => {
+  it("完成通知直接携带全文报告（与 task_output 同一 reportCap，模型无需二次调用取报告）", async () => {
     const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } })); // 缺省 reportCap 34000
     const parent = await spawnParent(world);
     const long = "y".repeat(300);
@@ -254,12 +254,13 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     const agentId = agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const output = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: parent.agent.session.id });
-    expect(output.content).toContain(long); // 末轮全文——非通知口径的 200 预览
-    expect(output.content).not.toContain("truncated at");
     const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
-    await vi.waitFor(() => expect(lastNotice()).toContain(`summary: ${"y".repeat(200)}…`), { timeout: 5_000 }); // 通知仍是 200 预览（轻量信号口径不变）
-    expect(lastNotice()).not.toContain("y".repeat(201));
+    await vi.waitFor(() => expect(lastNotice()).toContain(`summary: ${long}`), { timeout: 5_000 }); // 通知即全文
+    expect(lastNotice()).not.toContain("truncated at");
+    expect(lastNotice()).not.toContain("task_output"); // 不再引导二次调用取报告
+    const output = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: parent.agent.session.id });
+    expect(output.content).toContain(long); // 显式查询同口径全文
+    expect(output.content).not.toContain("truncated at");
     await parent.dispose();
   });
 

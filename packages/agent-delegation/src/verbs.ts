@@ -11,7 +11,7 @@ import type { ReviveOutcome } from "./revive.ts";
 import { evaluateCleanup } from "./worktree.ts";
 import type { CrossDeps } from "./crossmsg.ts";
 import { sendCross } from "./crossmsg.ts";
-import { childReport, failureDetail, noticeSummary } from "./notify.ts";
+import { childReport, failureDetail, summaryLines } from "./notify.ts";
 import type { ChildReport } from "./notify.ts";
 import type { ChildView } from "./types.ts";
 
@@ -132,7 +132,7 @@ export async function output(deps: VerbDeps, caller: SessionId | undefined, inpu
   if (childSession === undefined) return { ok: false, reason: notFound(input.task_id) };
   if (row.running) {
     const soFar = childReport(childSession.events());
-    const tail = soFar.summary === undefined ? "" : `; last output so far: ${noticeSummary(soFar.summary)}`;
+    const tail = soFar.summary === undefined ? "" : `; last output so far: ${summaryLines(soFar.summary, deps.reportCap).join("\n")}`;
     return { ok: true, text: `agent ${row.agentId} is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.${tail}` };
   }
   return { ok: true, text: reportText(row, childReport(childSession.events()), deps.reportCap) };
@@ -241,13 +241,13 @@ function reportHead(row: ChildRow, report: ChildReport): string {
 }
 
 /** 报告铸文本：与通知同词表（docs/SUBAGENT-FAILURE-NOTIFICATION.md——异常终态显式
- *  failed/stopped + 原因句 + session 行）+ cap 截断 + agent_message 追问引导
- *  （无文件指针——任务体系未并入，U2） */
+ *  failed/stopped + 原因句 + session 行）+ 正文行组与通知同一 summaryLines 口径（同一
+ *  reportCap——完成通知已带全文，此面仅在需要显式查询时使用；无文件指针——任务体系
+ *  未并入，U2） */
 export function reportText(row: ChildRow, report: ChildReport, cap: number): string {
   const lines = [reportHead(row, report), `session: ${String(row.sessionId)}`];
   if (report.summary === undefined) lines.push("(no assistant output in the last turn)");
-  else if (report.summary.length <= cap) lines.push(report.summary);
-  else lines.push(report.summary.slice(0, cap), `[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics]`);
+  else lines.push(...summaryLines(report.summary, cap));
   return lines.join("\n");
 }
 

@@ -22,17 +22,18 @@ function wireLog(ctx: import("@x-harness/core").Context): EventLog {
 }
 
 describe("agentSpawned/agentFinished 发射矩阵", () => {
-  it("正常完成：spawned 一发 + finished{completed} 一发（detail=completed，summary 透传）", async () => {
+  it("正常完成：spawned 一发 + finished{completed} 一发（detail=completed，summary 全文透传）", async () => {
     const world = await makeWorld(await workerOptions());
     const log = wireLog(world.ctx);
     const parent = await spawnParent(world);
-    world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "child result text")]);
+    const full = `${"z".repeat(250)}-tail`;
+    world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, full)]);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
     await vi.waitFor(() => expect(log.finished).toHaveLength(1), { timeout: 5_000 });
     expect(log.spawned).toHaveLength(1);
     expect(log.spawned[0]).toMatchObject({ parent: parent.agent.session.id, agentId: agentIdOf(spawned.content), sessionId: sessionOf(spawned.content), type: "worker", depth: 1 });
     expect(log.finished[0]).toMatchObject({ outcome: "completed", detail: "completed", agentId: agentIdOf(spawned.content) });
-    expect(log.finished[0]?.summary).toContain("child result text");
+    expect(log.finished[0]?.summary).toBe(full); // 事件 summary 全文——与通知/task_output 同一 reportCap
     await parent.dispose();
   });
 
