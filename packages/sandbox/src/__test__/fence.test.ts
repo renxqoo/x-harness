@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { GrantsRegistry } from "@x-harness/permission";
-import { DEFAULT_DENY_READ, fenceFor } from "../fence.ts";
+import { homedir } from "node:os";
+import { CHILD_TMPDIR, DEFAULT_DENY_READ, fenceFor } from "../fence.ts";
 import type { FenceBase } from "../fence.ts";
 
 const base: FenceBase = { root: "/w/root" };
@@ -14,21 +15,21 @@ const OTHER = "s-2" as never;
 describe("fenceFor base 形态", () => {
   it("writable = root + tmpdir；denyRead 默认底线表；denyWrite = root/.git", () => {
     const f = fenceFor(base, new GrantsRegistry(), undefined);
-    expect(f.writable).toEqual([resolve("/w/root"), tmpdir()]);
+    expect(f.writable).toEqual([resolve("/w/root"), tmpdir(), CHILD_TMPDIR]);
     expect(f.denyRead).toEqual(DEFAULT_DENY_READ);
     expect(f.denyWrite).toEqual([resolve("/w/root/.git")]);
     expect(f.allowedDomains).toEqual([]);
   });
 
-  it("宿主附加并入：writableExtra/denyReadExtra/protectedPaths/allowedDomains", () => {
+  it("宿主附加并入：writableExtra/denyReadExtra/protectedPaths/allowedDomains；~/ 形态在 writable/denyWrite 展开为家目录绝对路径", () => {
     const f = fenceFor(
-      { root: "/w/root", writableExtra: ["/x"], denyReadExtra: ["~/.gnupg"], protectedPaths: ["/p"], allowedDomains: ["a.test"] },
+      { root: "/w/root", writableExtra: ["/x", "~/wx", "~"], denyReadExtra: ["~/.gnupg"], protectedPaths: ["/p", "~/px"], allowedDomains: ["a.test"] },
       new GrantsRegistry(),
       undefined,
     );
-    expect(f.writable).toEqual([resolve("/w/root"), tmpdir(), "/x"]);
-    expect(f.denyRead).toEqual([...DEFAULT_DENY_READ, "~/.gnupg"]);
-    expect(f.denyWrite).toEqual([resolve("/w/root/.git"), "/p"]);
+    expect(f.writable).toEqual([resolve("/w/root"), tmpdir(), CHILD_TMPDIR, "/x", resolve(homedir(), "wx"), homedir()]);
+    expect(f.denyRead).toEqual([...DEFAULT_DENY_READ, "~/.gnupg"]); // denyRead 保留 ~ 原样交 srt 展开
+    expect(f.denyWrite).toEqual([resolve("/w/root/.git"), "/p", resolve(homedir(), "px")]);
     expect(f.allowedDomains).toEqual(["a.test"]);
   });
 
@@ -48,7 +49,7 @@ describe("fenceFor × grants", () => {
     grants.recordDomain(SID, "ok.test", "allow");
     grants.recordDomain(SID, "no.test", "deny");
     const f = fenceFor(base, grants, SID);
-    expect(f.writable).toEqual([resolve("/w/root"), tmpdir(), "/grant/a"]);
+    expect(f.writable).toEqual([resolve("/w/root"), tmpdir(), CHILD_TMPDIR, "/grant/a"]);
     expect(f.allowedDomains).toEqual(["ok.test"]);
   });
 
@@ -75,7 +76,7 @@ describe("fenceFor × grants", () => {
     grants.addExtraRoot(SID, "/w/root/inside");
     grants.addExtraRoot(SID, "/outside");
     const f = fenceFor(base, grants, SID);
-    expect(f.writable).toEqual(["/wt/dir", tmpdir(), "/outside"]);
+    expect(f.writable).toEqual(["/wt/dir", tmpdir(), CHILD_TMPDIR, "/outside"]);
     expect(f.denyWrite).toEqual(["/wt/dir/.git"]);
   });
 

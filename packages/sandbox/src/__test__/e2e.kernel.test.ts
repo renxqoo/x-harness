@@ -23,6 +23,7 @@ interface World {
 async function withWorld(options: Partial<Parameters<typeof createSandboxPlugin>[0]>, fn: (w: World) => Promise<void>): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "xh-sbxe2e-"));
   mkdirSync(join(root, ".git"));
+  let dispose: () => Promise<void> = async () => {};
   try {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [
@@ -30,11 +31,12 @@ async function withWorld(options: Partial<Parameters<typeof createSandboxPlugin>
       createPermissionPlugin({ root }),
       createSandboxPlugin({ root, ...options }, realSrtRuntime),
     ]);
-    const dispose = async (): Promise<void> => {
+    dispose = async (): Promise<void> => {
       for (const d of [...unload].reverse()) await d();
     };
     await fn({ ctx, root, dispose });
   } finally {
+    await dispose().catch(() => {}); // 断言失败也必须拆卸——成员滞留会拖垮同进程后续用例
     rmSync(root, { recursive: true, force: true });
   }
 }
@@ -81,7 +83,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       expect(r.code).toBe(0);
       expect(r.out).toContain("payload");
       rmSync(tmpFile, { force: true });
-      await w.dispose();
     });
   }, 30_000);
 
@@ -92,7 +93,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       expect(r.code).not.toBe(0);
       expect(r.err).toContain("Operation not permitted");
       rmSync(outside, { force: true });
-      await w.dispose();
     });
   }, 30_000);
 
@@ -101,7 +101,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       const r = await run(w, `ls ~/.ssh/`);
       expect(r.code).not.toBe(0);
       expect(r.err).toContain("Operation not permitted");
-      await w.dispose();
     });
   }, 30_000);
 
@@ -112,7 +111,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       expect(denied.err).toContain("Operation not permitted");
       const allowed = await run(w, `echo ok > beside-git.txt`);
       expect(allowed.code).toBe(0);
-      await w.dispose();
     });
   }, 30_000);
 
@@ -120,7 +118,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
     await withWorld({}, async (w) => {
       const r = await run(w, `curl -s --max-time 8 https://example.com > /dev/null 2>&1; echo curl_exit=$?`);
       expectCurlDenied(r);
-      await w.dispose();
     });
   }, 60_000);
 
@@ -132,7 +129,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       w.ctx.use(permissionGrants).recordDomain(sid, "example.com", "allow");
       const after = await run(w, `curl -s --max-time 10 https://example.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
       expect(after.out).toContain("curl_exit=0");
-      await w.dispose();
     });
   }, 60_000);
 
@@ -146,7 +142,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       const fsr = await run(w, `echo full > ${outside} && echo WROTE`, sid);
       expect(fsr.out).toContain("WROTE");
       rmSync(outside, { force: true });
-      await w.dispose();
     });
   }, 60_000);
 
@@ -156,7 +151,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       await withWorld({}, async (w) => {
         const r = await run(w, `echo got=[$MY_E2E_SECRET_TOKEN]`);
         expect(r.out.trim()).toBe("got=[]");
-        await w.dispose();
       });
     } finally {
       delete process.env.MY_E2E_SECRET_TOKEN;
@@ -171,14 +165,13 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       const exited = await spawned.proc.exited;
       expect(exited).not.toBe(0);
       await spawned.proc.settled; // 不挂起
-      await w.dispose();
     });
   }, 30_000);
 
   it("拆卸后 spawn fail-fast（sandbox_unavailable——绝不裸跑）", async () => {
     await withWorld({}, async (w) => {
       const env = w.ctx.use(execEnv); // 先捕获——dispose 后服务下线，语义面向已持引用的调用方
-      await w.dispose();
+      await w.dispose(); // 本用例语义要求测试内先拆（withWorld finally 的拆卸是兜底）
       const r = await env.spawn({ argv: ["/bin/true"], cwd: w.root });
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.reason.kind).toBe("sandbox_unavailable");

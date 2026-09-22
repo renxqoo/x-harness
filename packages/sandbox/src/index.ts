@@ -7,7 +7,7 @@ export { commandOf, shellQuoteWord } from "./shell-quote.ts";
 export { scrubEnv } from "./scrub-env.ts";
 export { mergeAllowlists, sameDomainSet } from "./allowlist.ts";
 export type { SrtFilesystem, SrtRuntime, SrtWrapRequest } from "./srt-runtime.ts";
-export { realSrtRuntime } from "./srt-runtime.ts";
+export { realSrtRuntime, platformDepErrors } from "./srt-runtime.ts";
 export type { SrtMember, SrtSessionHandle } from "./srt-session.ts";
 export { srtSessionOf } from "./srt-session.ts";
 export type { SandboxEnvDeps, SandboxEnvHandle } from "./env.ts";

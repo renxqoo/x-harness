@@ -1,7 +1,8 @@
 // 围栏执行环境（docs/SANDBOX.md §1/§3）：fs 面直通 base（执法在 gate/permission——两层口径
 // 裁决不变）；spawn 面 = fenceFor(session) → 白名单热切换 → srt wrap → base.spawn(清洗 env)。
 // srt 返回的 env 不采用（宿主 process.env 未清洗）；代理/TMPDIR 注入经 wrapped 命令内 env 前缀
-// 叠加在我们传入的清洗 env 之上。活句柄登记供拆卸契约（两段杀 → settled；逃逸复查自杀）。
+// 叠加在我们传入的清洗 env 之上。围栏跳全 try 收殓为判别联合（srt wrap 可抛——shell 缺席/
+// 半初始化——契约不许裸 rejection 逃逸）。活句柄登记供拆卸契约（两段杀 → settled；逃逸复查自杀）。
 
 import { randomUUID } from "node:crypto";
 import type { SessionId } from "@x-harness/session";
@@ -45,21 +46,26 @@ export function createSandboxEnv(deps: SandboxEnvDeps): SandboxEnvHandle {
     if (deps.isTornDown()) return unavailable("sandbox plugin is disposed — refusing to run unfenced");
     if (req.argv.length === 0) return { ok: false, reason: { kind: "not_found", detail: "empty argv" } };
     const fence = deps.fenceOf(req.session);
-    deps.syncAllowlist(req.session);
-    const commandId = `${req.session ?? "anon"}:${randomUUID()}`;
-    const wrapped = await deps.runtime.wrap({
-      command: commandOf(req.argv),
-      fs: { denyRead: fence.denyRead, allowWrite: fence.writable, denyWrite: fence.denyWrite },
-      cwd: req.cwd,
-      commandId,
-    });
+    let wrapped: readonly string[];
+    try {
+      deps.syncAllowlist(req.session);
+      wrapped = await deps.runtime.wrap({
+        command: commandOf(req.argv),
+        fs: { denyRead: fence.denyRead, allowWrite: fence.writable, denyWrite: fence.denyWrite },
+        cwd: req.cwd,
+        commandId: `${req.session ?? "anon"}:${randomUUID()}`,
+      });
+    } catch (error) {
+      return unavailable(`sandbox wrap failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     if (deps.isTornDown()) return unavailable("sandbox plugin is disposed — refusing to run unfenced");
     const spawned = await deps.base.spawn({ ...req, argv: wrapped, env: scrubEnv(envOf(req)) });
     if (spawned.ok) {
       if (deps.isTornDown()) {
         // 拆卸窗口逃逸复查：围栏已拆而 spawn 已成——立即两段杀自杀，不交还调用方
         await spawned.proc.kill("term");
-        setTimeout(() => void spawned.proc.kill("kill"), 5_000);
+        const killTimer = setTimeout(() => void spawned.proc.kill("kill"), 5_000);
+        spawned.proc.settled.then(() => clearTimeout(killTimer));
         return unavailable("sandbox plugin is disposed — refusing to run unfenced");
       }
       live.add(spawned.proc);

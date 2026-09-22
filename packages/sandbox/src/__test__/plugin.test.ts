@@ -22,6 +22,7 @@ interface FakeRuntime {
   readonly starts: SrtFilesystem[];
   readonly syncs: string[][];
   readonly resets: number;
+  set failReset(value: boolean);
   setWrap(impl: (command: string) => readonly string[] | Promise<readonly string[]>): void;
   setDeps(errors: readonly string[]): void;
 }
@@ -31,6 +32,7 @@ function makeFakeRuntime(): FakeRuntime {
   const syncs: string[][] = [];
   let resets = 0;
   let deps: readonly string[] = [];
+  let failReset = false;
   let wrapImpl: (command: string) => readonly string[] | Promise<readonly string[]> = (command) => ["/bin/sh", "-c", command];
   const rt: SrtRuntime = {
     checkDeps: async () => deps,
@@ -43,6 +45,7 @@ function makeFakeRuntime(): FakeRuntime {
     wrap: async ({ command }) => wrapImpl(command),
     reset: async () => {
       resets += 1;
+      if (failReset) throw new Error("reset boom");
     },
   };
   return {
@@ -51,6 +54,9 @@ function makeFakeRuntime(): FakeRuntime {
     syncs,
     get resets() {
       return resets;
+    },
+    set failReset(value: boolean) {
+      failReset = value;
     },
     setWrap: (impl) => {
       wrapImpl = impl;
@@ -157,7 +163,7 @@ describe("spawn 面（假 runtime 管道）", () => {
     }
   });
 
-  it("白名单热切换序列：同集不切；域名授权即时生效；sessionDisposed 收缩并集；networkOff 恒空", async () => {
+  it("白名单热切换序列：同集不切；域名授权即时生效；sessionDisposed 即时收缩（不等下一次 spawn）", async () => {
     const root = mkdtempSync(join(tmpdir(), "xh-sbxnet-"));
     const fake = makeFakeRuntime();
     try {
@@ -171,12 +177,63 @@ describe("spawn 面（假 runtime 管道）", () => {
       grants.recordDomain(sid, "a.test", "allow");
       await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // sync#2: [a.test]
       expect(fake.syncs).toEqual([[], ["a.test"]]);
-      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // 同集不切
-      expect(fake.syncs).toEqual([[], ["a.test"]]);
-      ctx.emit(sessionDisposed, { session: sid });
-      await env.spawn({ argv: ["/bin/true"], cwd: root }); // 会话逐出→并集收缩 sync#3: []
+      ctx.emit(sessionDisposed, { session: sid }); // 逐出→收缩立即落表（sync#3: []）
+      expect(fake.syncs).toEqual([[], ["a.test"], []]);
+      await env.spawn({ argv: ["/bin/true"], cwd: root }); // 收缩后同集不切
       expect(fake.syncs).toEqual([[], ["a.test"], []]);
       await dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("并发首装串行化：两个世界 Promise.all 装配——共享启动恰一次（双启动=代理泄漏）", async () => {
+    const rootA = mkdtempSync(join(tmpdir(), "xh-sbxpar1-"));
+    const rootB = mkdtempSync(join(tmpdir(), "xh-sbxpar2-"));
+    const fake = makeFakeRuntime();
+    try {
+      const [a, b] = await Promise.all([assemble(rootA, fake), assemble(rootB, fake)]);
+      expect(fake.starts).toHaveLength(1);
+      await a.dispose();
+      await b.dispose();
+      expect(fake.resets).toBe(1);
+    } finally {
+      rmSync(rootA, { recursive: true, force: true });
+      rmSync(rootB, { recursive: true, force: true });
+    }
+  });
+
+  it("wrap 抛错收殓为判别联合 sandbox_unavailable（不裸 rejection——ExecEnv 契约）", async () => {
+    const root = mkdtempSync(join(tmpdir(), "xh-sbxthr-"));
+    const fake = makeFakeRuntime();
+    try {
+      const { ctx, dispose } = await assemble(root, fake);
+      fake.setWrap(() => {
+        throw new Error("shell not found in PATH");
+      });
+      const r = await ctx.use(execEnv).spawn({ argv: ["/bin/true"], cwd: root });
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.reason.kind).toBe("sandbox_unavailable");
+        expect(r.reason.detail).toContain("shell not found");
+      }
+      await dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("detach（reset）抛错不阻断服务下线：服务已摘除、错误聚合上抛", async () => {
+    const root = mkdtempSync(join(tmpdir(), "xh-sbxrth-"));
+    const fake = makeFakeRuntime();
+    fake.failReset = true;
+    try {
+      const { ctx, dispose } = await assemble(root, fake);
+      const env = ctx.use(execEnv);
+      await expect(dispose()).rejects.toThrow(/reset boom/);
+      expect(ctx.tryUse(execEnv)).toBeUndefined(); // offs 已执行——半拆卸不泄漏服务
+      const after = await env.spawn({ argv: ["/bin/true"], cwd: root });
+      expect(after.ok).toBe(false); // fail-fast 照常
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

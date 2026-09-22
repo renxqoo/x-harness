@@ -38,8 +38,23 @@ const filesystemOf = (fs: SrtFilesystem) => ({
   denyWrite: [...fs.denyWrite],
 });
 
+/** 平台依赖自探（纯函数表驱动）：darwin 查 sandbox-exec（srt 的 darwin 分支什么都不查）；
+ *  非 POSIX 目标直接不可用；linux 的 bwrap/rg/socat 检查归 srt（调用方委托）。 */
+export function platformDepErrors(
+  platform: string,
+  which: (command: string) => string | null,
+): readonly string[] {
+  if (platform === "darwin") return which("sandbox-exec") === null ? ["sandbox-exec not found in PATH"] : [];
+  if (platform !== "linux") return [`unsupported platform: ${platform}`];
+  return [];
+}
+
 export const realSrtRuntime: SrtRuntime = {
-  checkDeps: async () => (await SandboxManager.checkDependenciesAsync()).errors,
+  checkDeps: async () => {
+    const own = platformDepErrors(process.platform, (command) => Bun.which(command));
+    if (own.length > 0 || process.platform !== "linux") return own;
+    return (await SandboxManager.checkDependenciesAsync()).errors;
+  },
   start: async (fs) => {
     await SandboxManager.initialize({
       filesystem: filesystemOf(fs),

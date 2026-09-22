@@ -3,6 +3,9 @@
 // srt 会话：引用计数生命周期（首个 attach 探测+启动、末个 detach 后 reset），网络白名单
 // 取跨实例并集（与跨会话并集同一边界：srt 单代理无连接归属——进程级白名单语义，落档已知边界）。
 // 共享点按 runtime 实例键控（WeakMap）：真 runtime 全进程一组，注入假体各组独立。
+// attach/detach 经 promise 链互斥串行：并发首装不双启动（srt initialize 防重入守卫在
+// checkDeps await 之后才落位——穿透即双代理泄漏）；末实例 detach 的 reset 在飞期新 attach
+// 不得插入（srt reset 末尾同步清模块状态——迟到交错会抹掉新会话）。
 // 文件面无共享态：每次 wrap 全量 per-exec 传入。基线剖面取最紧空集（fail-closed——真值恒随
 // per-exec fence 走）。
 
@@ -30,36 +33,47 @@ const EMPTY_BASELINE: SrtFilesystem = { denyRead: [], allowWrite: [], denyWrite:
 function createSrtSessionShared(runtime: SrtRuntime): SrtSessionShared {
   const members = new Set<SrtMember>();
   let lastApplied: readonly string[] | undefined;
+  let ops: Promise<void> = Promise.resolve(); // attach/detach 互斥链
+  const enqueue = <T>(op: () => Promise<T>): Promise<T> => {
+    const run = ops.then(op, op);
+    ops = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  };
   const refresh = (): void => {
     if (members.size === 0) return;
     const next = mergeAllowlists([...members].map((m) => m.effectiveAllowlist()));
     if (lastApplied === undefined || !sameDomainSet(lastApplied, next)) {
-      lastApplied = next;
       runtime.syncNetwork(next);
+      lastApplied = next; // sync 成功后才置位——失败时保持旧集，下次重算重试
     }
   };
   return {
-    attach: async (member) => {
-      if (members.size === 0) {
-        const errors = await runtime.checkDeps();
-        if (errors.length > 0) throw new Error(`sandbox dependencies unavailable: ${errors.join(", ")}`);
-        await runtime.start(EMPTY_BASELINE);
-        lastApplied = undefined;
-      }
-      members.add(member);
-      return {
-        detach: async () => {
-          members.delete(member);
-          if (members.size === 0) {
-            lastApplied = undefined;
-            await runtime.reset();
-          } else {
-            refresh(); // 余量成员并集收缩
-          }
-        },
-        refreshNetwork: refresh,
-      };
-    },
+    attach: (member) =>
+      enqueue(async () => {
+        if (members.size === 0) {
+          const errors = await runtime.checkDeps();
+          if (errors.length > 0) throw new Error(`sandbox dependencies unavailable: ${errors.join(", ")}`);
+          await runtime.start(EMPTY_BASELINE);
+          lastApplied = undefined;
+        }
+        members.add(member);
+        return {
+          detach: () =>
+            enqueue(async () => {
+              members.delete(member);
+              if (members.size === 0) {
+                lastApplied = undefined;
+                await runtime.reset();
+              } else {
+                refresh(); // 余量成员并集收缩
+              }
+            }),
+          refreshNetwork: refresh,
+        };
+      }),
   };
 }
 
