@@ -8,7 +8,13 @@ import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
 import type { ChildRow } from "./lineage.ts";
 
-const SUMMARY_CAP = 200;
+/** 通知/事件/快照侧摘要展示上界（§2.2「通知摘要 200」）；报告全文走 reportText 的 reportCap 层 */
+export const NOTICE_SUMMARY_CAP = 200;
+
+/** 展示层截断：通知文本、finished 事件、运行中快照的预览；报告全文归 reportText（reportCap） */
+export function noticeSummary(text: string): string {
+  return text.length > NOTICE_SUMMARY_CAP ? `${text.slice(0, NOTICE_SUMMARY_CAP)}…` : text;
+}
 
 export interface NotifyDeps {
   readonly loop: AgentLoopService;
@@ -72,7 +78,9 @@ export function childReport(events: readonly SessionEvent[]): ChildReport {
   return { status, ...lastAssistantOf(events, turnEndAt), ...reasonFields(turnEnd?.reason) };
 }
 
-/** 本轮（turn/end 之前最近的）assistant 摘要 + usage；越界无消息 → 双缺席（键恒在） */
+/** 本轮（turn/end 之前最近的）assistant 全文 + usage；越界无消息 → 双缺席（键恒在）。
+ *  summary 存不截断原文——截断是展示层职责（noticeSummary 200 / reportText 的 reportCap），
+ *  在此截断会让 reportCap 层形同虚设（全文恒 200+…）。 */
 function lastAssistantOf(events: readonly SessionEvent[], turnEndAt: number): { summary: string | undefined; usage: unknown } {
   for (let i = turnEndAt - 1; i >= 0; i--) {
     const event = events[i] as SessionEvent;
@@ -83,9 +91,7 @@ function lastAssistantOf(events: readonly SessionEvent[], turnEndAt: number): { 
       .filter((block) => block.type === "text")
       .map((block) => block.text ?? "")
       .join("");
-    let summary: string | undefined;
-    if (text !== "") summary = text.length > SUMMARY_CAP ? `${text.slice(0, SUMMARY_CAP)}…` : text;
-    return { summary, usage: data.usage };
+    return { summary: text === "" ? undefined : text, usage: data.usage };
   }
   return { summary: undefined, usage: undefined };
 }
@@ -131,7 +137,7 @@ function outcomeHead(agentId: string, report: ChildReport): string {
 
 export function notificationText(row: ChildRow, report: ChildReport): string {
   const lines = [outcomeHead(row.agentId, report), `session: ${String(row.sessionId)}`];
-  if (report.summary !== undefined) lines.push(`summary: ${report.summary}`);
+  if (report.summary !== undefined) lines.push(`summary: ${noticeSummary(report.summary)}`);
   if (report.usage !== undefined) lines.push(`usage: ${JSON.stringify(report.usage)}`);
   lines.push(`(use task_output with agentId "${row.agentId}" for the full report)`);
   return lines.join("\n");
@@ -197,7 +203,7 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
       sessionId: row.sessionId,
       outcome: outcomeOf(report.status),
       detail: failureDetail(report),
-      ...(report.summary !== undefined ? { summary: report.summary } : {}),
+      ...(report.summary !== undefined ? { summary: noticeSummary(report.summary) } : {}),
     });
   }
   try {

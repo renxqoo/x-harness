@@ -264,8 +264,9 @@ describe("五态通知词表（表驱动——docs/SUBAGENT-FAILURE-NOTIFICATION
     expect(failureDetail({ status: "weird-kind", summary: undefined, usage: undefined })).toBe("turn ended abnormally (unknown reason kind)");
   });
 
-  it("childReport：长摘要截断/usage 捕获/无 turn-end fail-closed；原因字段从 turn/end 透传", async () => {
+  it("childReport：summary 全文捕获（200 截断归展示层）/usage 捕获/无 turn-end fail-closed；原因字段从 turn/end 透传", async () => {
     const { childReport, notificationText } = await import("../notify.ts");
+    const { reportText } = await import("../verbs.ts");
     const long = "x".repeat(300);
     const events = [
       { type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: long }], usage: { input: 5, output: 6 }, stopReason: "stop" } },
@@ -273,11 +274,15 @@ describe("五态通知词表（表驱动——docs/SUBAGENT-FAILURE-NOTIFICATION
     ] as never;
     const report = childReport(events);
     expect(report.status).toBe("completed");
-    expect(report.summary?.length).toBe(201);
+    expect(report.summary).toBe(long); // 全文——在此截断会让 reportCap 层形同虚设（全文恒 200+…）
     expect(report.usage).toEqual({ input: 5, output: 6 });
-    const text = notificationText({ agentId: "a", sessionId: "s1" } as never, report);
+    const row = { agentId: "a", sessionId: "s1" } as never;
+    const text = notificationText(row, report);
+    expect(text).toContain(`summary: ${"x".repeat(200)}…`); // 通知摘要行：展示层 200
+    expect(text).not.toContain("x".repeat(201));
     expect(text).toContain("usage:");
     expect(text).toContain("task_output");
+    expect(reportText(row, report, 1000)).toContain(long); // 报告层：全文按 reportCap 截
     const bare = childReport([{ type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], stopReason: "stop" } }] as never);
     expect(bare.status).toBe("error");
     const passthrough = childReport([

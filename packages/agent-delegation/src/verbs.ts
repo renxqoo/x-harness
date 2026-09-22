@@ -11,7 +11,7 @@ import type { ReviveOutcome } from "./revive.ts";
 import { evaluateCleanup } from "./worktree.ts";
 import type { CrossDeps } from "./crossmsg.ts";
 import { sendCross } from "./crossmsg.ts";
-import { childReport, failureDetail } from "./notify.ts";
+import { childReport, failureDetail, noticeSummary } from "./notify.ts";
 import type { ChildReport } from "./notify.ts";
 import type { ChildView } from "./types.ts";
 
@@ -132,7 +132,7 @@ export async function output(deps: VerbDeps, caller: SessionId | undefined, inpu
   if (childSession === undefined) return { ok: false, reason: notFound(input.task_id) };
   if (row.running) {
     const soFar = childReport(childSession.events());
-    const tail = soFar.summary === undefined ? "" : `; last output so far: ${soFar.summary}`;
+    const tail = soFar.summary === undefined ? "" : `; last output so far: ${noticeSummary(soFar.summary)}`;
     return { ok: true, text: `agent ${row.agentId} is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.${tail}` };
   }
   return { ok: true, text: reportText(row, childReport(childSession.events()), deps.reportCap) };
