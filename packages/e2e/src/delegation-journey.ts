@@ -88,7 +88,7 @@ export async function runDelegationJourney(): Promise<void> {
     // ① 通知进入父上下文并被子消化（两条合法路径：父 idle → 唤醒第二 turn；父 busy → 步边界续航）
     const parentEvents = made.value.agent.session.events();
     const userTexts = parentEvents
-      .filter((e) => e.type === "user/message")
+      .filter((e) => e.type === "agent/message") // 通知载体已迁 agent/message（AGENT-MESSAGE §5 迁移地图）
       .map((e) => JSON.stringify(e.data))
       .join("\n");
     must(userTexts.includes("[agent-notification]"), "通知文本进入父上下文");

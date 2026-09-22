@@ -26,6 +26,7 @@
     "@x-harness/session": "workspace:*",
     "@x-harness/session-checkpoint": "workspace:*",
     "@x-harness/session-persistence-jsonl": "workspace:*",
-    "@x-harness/skill": "workspace:*"
+    "@x-harness/skill": "workspace:*",
+    "@x-harness/todo-tools": "workspace:*"
   }
 }

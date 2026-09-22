@@ -28,6 +28,7 @@ import {
 } from "@x-harness/harness";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { createSkillPlugin } from "@x-harness/skill";
+import { createTodoToolsPlugin } from "@x-harness/todo-tools";
 import type { World } from "@x-harness/harness";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { LlmAdapter, ThinkingLevel } from "@x-harness/llm";
@@ -245,6 +246,7 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
     ...loopKit(),
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
     ...checkpointKit(),
+    createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
     createAgentDelegationPlugin({ agentsDirs }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     dialHookPlugin(),

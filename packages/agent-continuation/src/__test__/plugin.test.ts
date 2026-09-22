@@ -131,7 +131,7 @@ describe("agent-continuation 插件全链（真装配，缺省 max=3）", () => 
     const { agent, handle } = await spawn(fixture);
     agent.followup("q");
     await agent.whenIdle();
-    const reason = (agent.session.events().at(-1)?.data as { reason: { kind: string; message: string } }).reason;
+    const reason = (agent.session.events().at(-1) as unknown as { data: { reason: { kind: string; message: string } } }).data.reason;
     expect(reason.kind).toBe("error");
     expect(reason.message).toMatch(/without calling next/);
     off();
