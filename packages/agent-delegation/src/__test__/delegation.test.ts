@@ -9,6 +9,7 @@ import { toolsExecute } from "@x-harness/tools";
 import type { World } from "./world.ts";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, typesOf, agentIdOf, sessionOf } from "./world.ts";
 import { createAgentDelegationPlugin, validateOptions } from "../plugin.ts";
+import { forkSeed } from "../lineage.ts";
 
 const modelOf = (event: { readonly data: unknown } | undefined): string | undefined =>
   event === undefined ? undefined : (event.data as { model?: string }).model;
@@ -78,9 +79,10 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
     expect(spawned.content).toContain("stays stable across restarts"); // 修订A：agentId 即持久身份引导
     const turnCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
     await vi.waitFor(() => expect(turnCount()).toBe(2), { timeout: 5_000 });
-    const userMessages = parent.agent.session.events().filter((e) => e.type === "user/message");
-    expect(userMessages.length).toBe(3); // 快照（类型清单）+ 首话 + 通知
-    const notification = JSON.stringify(userMessages.find((e) => JSON.stringify((e.data as unknown as { content?: Array<{ text?: string }> }).content).includes("[agent-notification]"))?.data);
+    const agentMessages = parent.agent.session.events().filter((e) => e.type === "agent/message");
+    expect(agentMessages.length).toBe(1); // 通知（内部消息载体——docs/AGENT-MESSAGE.md §5）；快照与首话仍为 user/message
+    expect(parent.agent.session.events().filter((e) => e.type === "user/message" && e.surfaceOp === "append")).toHaveLength(2);
+    const notification = JSON.stringify(agentMessages[0]?.data);
     expect(notification).toContain("[agent-notification]");
     expect(notification).toContain(agentId);
     expect(notification).toContain("completed");
@@ -238,7 +240,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     const agentId = agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 10"), { timeout: 5_000 }); // 通知：全文经 cap 截断
     expect(lastNotice()).toContain("agent_message");
     const output = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: parent.agent.session.id });
@@ -257,7 +259,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     const agentId = agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain(`summary: ${long}`), { timeout: 5_000 }); // 通知即全文
     expect(lastNotice()).not.toContain("truncated at");
     expect(lastNotice()).not.toContain("task_output"); // 不再引导二次调用取报告
@@ -315,6 +317,23 @@ describe("fork 重铸（X14）", () => {
     expect(seedTypes).toContain("assistant/message");
     const childHeader = child?.events().find((e) => e.type === "request/header");
     expect((childHeader?.data as { model?: string } | undefined)?.model).toBe(PARENT_MODEL);
+    await parent.dispose();
+  });
+
+  it("fork 种子 agent/message 分流重铸：content（兄弟报告事实）继承、directive 丢弃", async () => {
+    const world = await makeWorld(await workerOptions());
+    const parent = await spawnParent(world);
+    const session = parent.agent.session;
+    session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "q" }] }, { surfaceOp: "append" });
+    session.append("turn/start", { turn: 0 });
+    session.append("agent/message", { turn: 0, step: 0, source: "delegation-report", kind: "content", content: [{ type: "text", text: "sibling report fact" }] }, { surfaceOp: "append" });
+    session.append("agent/message", { turn: 0, step: 0, source: "output-continuation", kind: "directive", content: [{ type: "text", text: "Output token limit hit..." }] }, { surfaceOp: "append" });
+    session.append("assistant/message", { turn: 0, step: 0, content: [{ type: "text", text: "a" }], stopReason: "stop" }, { surfaceOp: "append" });
+    session.append("turn/end", { turn: 0, reason: { kind: "completed" } });
+    const seed = forkSeed(session);
+    const recast = seed.filter((e) => e.type === "agent/message");
+    expect(recast).toHaveLength(1); // content 继承、directive 丢弃（docs/AGENT-MESSAGE.md §5）
+    expect(recast[0]?.data).toMatchObject({ source: "delegation-report", kind: "content", content: [{ type: "text", text: "sibling report fact" }] });
     await parent.dispose();
   });
 

@@ -111,7 +111,7 @@ export const agentLoopPlugin = {
         },
         followup: driver.followup,
         steer: driver.steer,
-        inject: driver.inject,
+        notify: driver.notify,
         cancel: driver.cancel,
         whenIdle: driver.whenIdle,
       };

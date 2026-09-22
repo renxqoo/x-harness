@@ -2,7 +2,8 @@
 // 唤醒与取消边界（sticky 取消以 kick 边界为界——cancel 后再 followup 必须可用）、
 // 逃逸 throw 单次收轮；步相位函数在 step.ts。
 
-import type { ImageBlock, InboxEntry, Session, SessionId } from "@x-harness/session";
+import type { AgentMessageKind, ContentBlock, ImageBlock, InboxEntry, Session, SessionId } from "@x-harness/session";
+import { agentMessageData, AGENT_MESSAGE_KINDS } from "@x-harness/session";
 import { errorText } from "@x-harness/core";
 import { foldInbox, insertData } from "./inbox.ts";
 import { concludeWindow } from "./continuation.ts";
@@ -33,11 +34,32 @@ function entryOutcome(entry: StepEntry): TurnOutcome | undefined {
   return undefined;
 }
 
+/** 步内批次材料化（docs/AGENT-MESSAGE.md §4 场景 C）：连续未标条目合并一条 user/message
+ *  （现状形态零漂移）；带 origin 条目逐条材料化为 agent/message（UI 类型隐藏、摘要按 kind
+ *  分流——delegation 报告等内部消息经 notify 入队）。事件序 = 条目序（保序）。 */
 function appendUserBatch(scope: TurnScope, step: number, entry: StepEntry): void {
   const { deps, turn } = scope;
   if (entry.kind !== "enter" || entry.entries.length === 0) return;
-  const content = entry.entries.flatMap((item) => [...item.content]);
-  appendSurfaceEvent(deps.session, { type: "user/message", data: { turn, step, content }, surfaceOp: "append" });
+  const session = deps.session;
+  let plain: ContentBlock[] = []; // 未标条目累积（user 域——image 块合法，原样搬运）
+  const flushPlain = (): void => {
+    if (plain.length === 0) return; // 例外：全空 content 条目（唯 preStep 改写可达）不再落空 user/message——语义改进，非漂移
+    appendSurfaceEvent(session, { type: "user/message", data: { turn, step, content: plain }, surfaceOp: "append" });
+    plain = [];
+  };
+  for (const item of entry.entries) {
+    if (item.origin === undefined) {
+      plain = [...plain, ...item.content];
+      continue;
+    }
+    flushPlain();
+    appendSurfaceEvent(session, {
+      type: "agent/message",
+      data: agentMessageData({ turn, step, source: item.origin.source, kind: item.origin.kind, content: item.content }),
+      surfaceOp: "append",
+    });
+  }
+  flushPlain();
 }
 
 /** 链式条件：未取消、终态 completed、收件箱有存货（next-turn ∨ next-step）——
@@ -170,7 +192,7 @@ function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown>
 export function createDriver(deps: DriverDeps): {
   readonly followup: (text: string, options?: { images?: readonly ImageBlock[] }) => void;
   readonly steer: (text: string, options?: { images?: readonly ImageBlock[] }) => void;
-  readonly inject: (text: string) => void;
+  readonly notify: (source: string, kind: AgentMessageKind, text: string) => void;
   readonly cancel: (cause: string, options?: { keepInbox?: boolean }) => void;
   readonly whenIdle: () => Promise<void>;
   readonly status: () => "idle" | "running";
@@ -308,9 +330,12 @@ export function createDriver(deps: DriverDeps): {
       appendEvent(session, "agent/inbox/spliced", insertData("next-step", userBlocks(text, options)));
       wake();
     },
-    inject: (text: string) => {
-      if (typeof text !== "string") return;
-      appendEvent(session, "agent/inbox/spliced", insertData("next-step", [{ type: "text", text }]));
+    /** 内部消息注入（docs/AGENT-MESSAGE.md §5）：next-step 排队 + 唤醒（steer 同款边界
+     *  语义）——领取时材料化为 agent/message{source,kind}，UI 不展示、摘要按 kind 分流 */
+    notify: (source: string, kind: AgentMessageKind, text: string) => {
+      if (typeof text !== "string" || typeof source !== "string" || source === "" || !AGENT_MESSAGE_KINDS.has(kind)) return; // 垃圾输入降级：不落账不唤醒（steer 守卫同款完备）
+      appendEvent(session, "agent/inbox/spliced", insertData("next-step", [{ type: "text", text }], { source, kind }));
+      wake();
     },
     cancel: (cause: string, options?: { keepInbox?: boolean }) => {
       const safeCause = cause === "" ? "cancelled" : cause;

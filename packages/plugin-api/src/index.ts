@@ -14,7 +14,11 @@ import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
 
 // —— 上下文域 ——
 
-/** pre-step 改写：fn 收当前生效领取批次（链上前者改写版或原始 claim），输出即落账版 */
+/** pre-step 改写：fn 收当前生效领取批次（链上前者改写版或原始 claim），输出即落账版。
+ *  改写须保留 entry.origin（docs/AGENT-MESSAGE.md §4 场景 C）——含 origin 的条目领取时
+ *  材料化为 agent/message（内部消息：UI 隐藏、摘要按 kind 分流），典型写法
+ *  `claim.map(e => ({ id: e.id, content: [...] }))` 会丢 origin 使内部消息降级为
+ *  user/message（UI 泄漏成用户发言）——改写时按需透传或显式去除。 */
 export function transformMessages(ctx: Context, fn: (claim: readonly InboxEntry[]) => readonly InboxEntry[] | Promise<readonly InboxEntry[]>): Disposer {
   return ctx.on(agentPreStep, async (payload, next) => {
     const decision = await next(payload);

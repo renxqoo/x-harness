@@ -146,6 +146,10 @@ export function notificationText(row: ChildRow, report: ChildReport, cap: number
   return lines.join("\n");
 }
 
+/** 报告投递 source（docs/AGENT-MESSAGE.md §5 迁移地图）：材料化为 agent/message{kind:content}
+ *  ——模型可见（投影 user 角色）、UI 不当用户发言展示、压缩摘要保留报告事实 */
+export const DELEGATION_REPORT_SOURCE = "delegation-report";
+
 /** 缺档占位（子会话已封存且档案不可读——completion 事实仍送达；session 行照带——档案指针） */
 export function archivedNotificationText(row: ChildRow): string {
   return `[agent-notification] agent ${row.agentId} finished: session-archived (no report available)\nsession: ${String(row.sessionId)}`;
@@ -198,7 +202,7 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
     // 封存缺档：completion 事实仍送达（idle 边沿已证跑完一轮）
     deps.emitFinished({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, outcome: "completed", detail: "session-archived (no report available)" });
     try {
-      parentHandle.agent.steer(archivedNotificationText(row));
+      parentHandle.agent.notify(DELEGATION_REPORT_SOURCE, "content", archivedNotificationText(row));
     } catch {
       /* 父恰在封存：通知丢弃（子会话在盘可查） */
     }
@@ -214,8 +218,8 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
     ...(report.summary !== undefined ? { summary: summaryLines(report.summary, deps.reportCap).join("\n") } : {}),
   });
   try {
-    parentHandle.agent.steer(notificationText(row, report, deps.reportCap));
-    row.reportDelivered = true; // 报告全文单一交付点：steer 成功即已交付，task_output 复查不复读
+    parentHandle.agent.notify(DELEGATION_REPORT_SOURCE, "content", notificationText(row, report, deps.reportCap));
+    row.reportDelivered = true; // 报告全文单一交付点：入队成功即已交付（材料化载体 agent/message），task_output 复查不复读
   } catch {
     /* 父恰在封存：通知丢弃（子会话在盘可查）——未置位，task_output 仍可全文兜底 */
   }

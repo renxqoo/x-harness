@@ -41,7 +41,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     expect(messaged.isError).toBeUndefined();
     expect(messaged.content).toContain("Delivered");
     await vi.waitFor(() => expect(turnCountOf(parent)).toBe(3), { timeout: 5_000 });
-    const lastNotification = JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
+    const lastNotification = JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
     // settleStream 把 finish.code 前缀折进 attempt 错误串（"test:boom"）——通知如实透传该串
     expect(lastNotification).toContain(`agent ${agentId} failed: test:boom`);
     expect(lastNotification).toContain(`session: ${String(sessionOf(spawned.content))}`);
@@ -63,7 +63,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
       })(),
     ]);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "diagnose", subagent_type: "worker" }, session: parent.agent.session.id });
-    const lastUserText = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
+    const lastUserText = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
     await vi.waitFor(() => expect(lastUserText()).toContain("[agent-notification]"), { timeout: 5_000 });
     const lastNotification = lastUserText();
     const agentId = agentIdOf(spawned.content);
@@ -113,7 +113,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     await parent.dispose();
   });
 
-  it("父 busy 时通知步边界消费：turn 数不变，当前 turn 后续 step 的 user/message 含通知", async () => {
+  it("父 busy 时通知步边界消费：turn 数不变，当前 turn 后续 step 的 agent/message 含通知", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
     let releaseParent!: () => void;
@@ -140,9 +140,9 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     await parent.agent.whenIdle();
     const events = parent.agent.session.events();
     expect(events.filter((e) => e.type === "turn/start")).toHaveLength(1);
-    const stepUsers = events.filter((e) => e.type === "user/message");
-    expect(stepUsers.length).toBeGreaterThanOrEqual(2);
-    expect(JSON.stringify(stepUsers.at(-1)?.data)).toContain("[agent-notification]");
+    const stepNotices = events.filter((e) => e.type === "agent/message");
+    expect(stepNotices.length).toBe(1); // 步边界消费的通知（内部消息载体，恰一条）
+    expect(JSON.stringify(stepNotices[0]?.data)).toContain("[agent-notification]");
     expect(events.at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await parent.dispose();
   });
@@ -167,7 +167,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     notifier({ session: row.sessionId, status: "idle" }); // store.get(session-x) undefined → 占位路径
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "consume")]);
     const lastUserText = (): string => {
-      const events = parent.agent.session.events().filter((e) => e.type === "user/message");
+      const events = parent.agent.session.events().filter((e) => e.type === "agent/message");
       return JSON.stringify(events.at(-1)?.data);
     };
     await vi.waitFor(() => expect(lastUserText()).toContain("session-archived"), { timeout: 5_000 });

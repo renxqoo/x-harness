@@ -82,49 +82,60 @@ type SurfaceLikeEvent = SessionEvent;
 function recastSurface(events: readonly SurfaceLikeEvent[]): SessionEvent[] {
   const seed: SessionEvent[] = [];
   for (const event of events) {
-    const data = event.data as Record<string, unknown>;
-    switch (event.type) {
-      case "system/message":
-        seed.push(mint({ seq: seed.length, type: "system/message", data: { turn: 0, step: 0, text: data["text"] ?? "" } }));
-        break;
-      case "user/message":
-        seed.push(mint({ seq: seed.length, type: "user/message", data: { turn: 0, step: 0, content: data["content"] ?? [] } }));
-        break;
-      case "assistant/message":
-        seed.push(
-          mint({
-            seq: seed.length,
-            type: "assistant/message",
-            data: {
-              turn: 0,
-              step: 0,
-              content: data["content"] ?? [],
-              ...(data["usage"] !== undefined ? { usage: data["usage"] } : {}),
-              ...(data["stopReason"] !== undefined ? { stopReason: data["stopReason"] } : {}),
-            },
-          }),
-        );
-        break;
-      case "tool/result":
-        seed.push(
-          mint({
-            seq: seed.length,
-            type: "tool/result",
-            data: {
-              turn: 0,
-              step: 0,
-              callId: data["callId"] ?? "",
-              content: data["content"] ?? "",
-              ...(data["isError"] === true ? { isError: true } : {}),
-            },
-          }),
-        );
-        break;
-      default:
-        break;
-    }
+    const recast = recastOne(event, seed.length); // seq = 种子位置（envelope 校验要求连续）
+    if (recast !== undefined) seed.push(recast);
   }
   return seed;
+}
+
+/** assistant/message 重铸 data（recastOne 复杂度治理） */
+function assistantRecastData(data: Record<string, unknown>): Record<string, unknown> {
+  return {
+    turn: 0,
+    step: 0,
+    content: data["content"] ?? [],
+    ...(data["usage"] !== undefined ? { usage: data["usage"] } : {}),
+    ...(data["stopReason"] !== undefined ? { stopReason: data["stopReason"] } : {}),
+  };
+}
+
+/** agent/message 重铸 data：仅 content（AGENT-MESSAGE.md §5——兄弟报告是事实）；directive 返回 undefined（过期作废） */
+function agentMessageRecast(data: Record<string, unknown>): { readonly turn: number; readonly step: number; readonly source: string; readonly kind: "content"; readonly content: unknown } | undefined {
+  if (data["kind"] !== "content") return undefined;
+  return { turn: 0, step: 0, source: typeof data["source"] === "string" ? data["source"] : "", kind: "content", content: data["content"] ?? [] };
+}
+
+/** 单事件重铸（recastSurface 复杂度治理）：未知/不进种子的类型返回 undefined。
+ *  agent/message 仅 content 重铸（AGENT-MESSAGE.md §5——兄弟报告是事实）；directive
+ *  丢弃（协议指令过期作废，与摘要跳过同口径）。 */
+function recastOne(event: SurfaceLikeEvent, seq: number): SessionEvent | undefined {
+  const data = event.data as Record<string, unknown>;
+  switch (event.type) {
+    case "system/message":
+      return mint({ seq, type: "system/message", data: { turn: 0, step: 0, text: data["text"] ?? "" } });
+    case "user/message":
+      return mint({ seq, type: "user/message", data: { turn: 0, step: 0, content: data["content"] ?? [] } });
+    case "assistant/message":
+      return mint({ seq, type: "assistant/message", data: assistantRecastData(data) });
+    case "tool/result":
+      return mint({
+        seq,
+        type: "tool/result",
+        data: {
+          turn: 0,
+          step: 0,
+          callId: data["callId"] ?? "",
+          content: data["content"] ?? "",
+          ...(data["isError"] === true ? { isError: true } : {}),
+        },
+      });
+    case "agent/message": {
+      const recast = agentMessageRecast(data);
+      return recast === undefined ? undefined : mint({ seq, type: "agent/message", data: recast });
+    }
+    default:
+      return undefined;
+  }
 }
 
 function mint(spec: { seq: number; type: string; data: unknown }): SessionEvent {

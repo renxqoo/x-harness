@@ -56,7 +56,7 @@ packages/plugin-api/src/index.ts                ← 宿主面再导出（agentMe
 | --- | --- | --- | --- |
 | 内核 | agent-loop（循环语义的一部分） | driver 内直接 `session.append("agent/message", agentMessageData(...), {surfaceOp:"append"})` | 续写指令（resume 决策应用） |
 | 插件 | 任何插件 | `ctx.use(sessionStore)` 取会话后同款 append（compaction 落 replace 事件同模式） | delegation（第四批后） |
-| 宿主/通道 | driver.inject 通道 | 形态待第四批探查钉死（inject 改型直写 vs 保留 inbox 语义另立写入点） | 见 §4 场景 C |
+| 宿主/通道 | `agent.notify(source, kind, text)`（driver API） | next-step 排队 + 唤醒（steer 同款边界语义），领取时按条目 origin 材料化为 agent/message | delegation（第四批已迁） |
 
 ## §3 消费方矩阵
 
@@ -80,15 +80,14 @@ source 命名空间纪律：`"<域>-<含义>"`（如 `output-continuation`、`de
 唯一需要动子系统的路径：扩 `AGENT_MESSAGE_KINDS` 闭集 + serialize 一处分支 + gate 一处校验 + 消费方矩阵一行。
 纪律：必须独立小方案（本文件修订 + 审查轮），禁止顺手扩——闭集的价值在于它小。
 
-**场景 C：新投递模式（如「等父模型安全边界再喂」的延迟投递）**
-现存的排队语义（inbox next-step）落账为 `user/message`；若内部消息需要同等排队，候选形态是「inbox 条目材料化类型扩展」（claim 时按条目标记落 agent/message 而非 user/message）。
-open axis：delegation 第四批探查结论决定是否需要——**需要才设计**，本文件届时修订。
+**场景 C：延迟投递（已落地）**
+内部消息复用 inbox 排队语义：`InboxEntry.origin?: { source, kind }` 材料化标记——`agent.notify(source, kind, text)` 入队（next-step + 唤醒，steer 同款步边界），领取时带 origin 条目落 `agent/message`、无 origin 条目落 `user/message`（现状零漂移）；混批按条目序保序材料化。原 driver.inject（零消费者死 API）已删除。
 
 ## §5 存量流盘点与迁移地图
 
 | 流 | 现状载体 | 迁移 | 归属 |
 | --- | --- | --- | --- |
-| delegation 完成通知（报告全文 + 缺档占位 + 异常终态透传） | `parentHandle.agent.steer(...)` → next-step → 领取 → **user/message**（notify.ts 两个交付点） | → `agent/message{source:"delegation-report", kind:"content"}`；reportDelivered 记账点随载体迁移；tearing-down 门 / 孤儿收养 / task_output 复查不复读语义不动 | 截断续写功能第四批 |
+| delegation 完成通知（报告全文 + 缺档占位 + 异常终态透传） | ~~steer → user/message~~ | ✅ 已迁 `notify("delegation-report", "content", ...)` → `agent/message`（第四批落地）；reportDelivered = 入队成功；tearing-down/孤儿收养/复查不复读不变；fork 种子 content 继承、directive 丢弃 | 已完成 |
 | 跨会话空闲通知（notify_when_idle 的 `[Cross-session idle notice]`） | 跨进程邮箱 → 主会话（交付点待探查确认是否同为 steer/user-message 形态） | → `agent/message{source:"cross-session-notice", kind:"directive"}`（过期作废的时点性通知） | 候选：delegation 迁移批内探查后定 |
 | 续写指令（本功能） | —（新流） | 直接落 `agent/message{source:"output-continuation", kind:"directive"}` | 截断续写功能第三批 |
 | 后续候选（示意） | — | 技能装载通知 `skill-notice/content`、预算告警 `budget-warning/directive` | 场景 A 零阻力接入 |

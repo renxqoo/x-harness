@@ -121,7 +121,7 @@ export interface SessionEventData {
     readonly step: number;
     /** 来源标签（开放词表·写入方命名空间，只作诊断——消费方禁止按 source 分支） */
     readonly source: string;
-    readonly kind: "directive" | "content";
+    readonly kind: AgentMessageKind;
     readonly content: readonly ContentBlock[];
   };
 }
@@ -147,9 +147,17 @@ export interface TodoSnapshotEventData {
 
 export type InboxTarget = "next-turn" | "next-step";
 
+/** 内部消息语义类闭集（docs/AGENT-MESSAGE.md §1——单一真相在此，agent-message.ts 复用）：
+ *  directive = 指令（照做完作废，摘要跳过）；content = 内容（压缩后必须存活，摘要保留） */
+export type AgentMessageKind = "directive" | "content";
+
 export interface InboxEntry {
   readonly id: string;
   readonly content: readonly ContentBlock[];
+  /** 材料化类型标记（docs/AGENT-MESSAGE.md §4 场景 C）：领取时带 origin 的条目落
+   *  agent/message（source/kind 如此），无 origin 落 user/message（现状零漂移）——
+   *  排队/唤醒语义与普通条目完全一致，仅落账载体不同 */
+  readonly origin?: { readonly source: string; readonly kind: AgentMessageKind };
 }
 
 export type InboxSpliceData =

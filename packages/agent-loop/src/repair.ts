@@ -66,7 +66,10 @@ function trailingClaims(events: readonly SessionEvent[]): Array<{ target: string
       const data = event.data;
       if (data.op === "claim" && i > lastUserIndex) claims.push({ target: data.target, claimed: data.claimed });
       if (data.op === "clear") claims.length = 0;
-    } else if (event.type === "user/message") {
+    } else if (event.type === "user/message" || event.type === "agent/message") {
+      // 消费标记 = 批次已材料化（user/message 或 agent/message——带 origin 条目落内部消息
+      // 载体，纯 notify 批次不产 user/message；漏认 agent/message 会把已交付的内部消息
+      // 当 trailing claim 复活重投——docs/AGENT-MESSAGE.md §4 场景 C 回归钉死）
       lastUserIndex = i;
       claims.length = 0;
     }

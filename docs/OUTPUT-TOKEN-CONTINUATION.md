@@ -136,7 +136,7 @@
 1. **llm 信号归一批**：types/pi-events + 表驱动测试（独立可回滚，纯加法；http-413 既有用例中带 overflow 文案者预期改判 `context-overflow`）。
 2. **类型与内核机制批**：session（agent-message.ts 单一真相模块 + types/gates/surface 第 5 类 + 测试）+ agent-loop（tokens/continuation/stream/step/driver/plugin 接线）+ 机制测试（假策略中间件驱动 resume/fail/无决策三态 + 窗口结构保证回归）+ compaction serialize 分流。
 3. **插件与收尾批**：agent-continuation 包 + harness kit + 两处装配 + 插件策略测试 + compaction 自愈触发词表 + e2e 旅程 + 文档（delegation 节除外）+ 对抗审查（代码 diff 轮）。
-4. **delegation 迁移批（用户裁决并入）**：前置探查投递时序（next-step 边界控制 / reportDelivered 记账 / inject API 形态三问）→ 小方案钉死载体迁移细节 → 实现 + 回归（投递/复读/异常窗口）→ 独立对抗审查 → 文档收尾。
+4. **delegation 迁移批（用户裁决并入）**：探查三问落锤——①投递时点：保留 inbox 排队+唤醒语义（直接落卷不会唤醒空闲父代理），载体经条目材料化（InboxEntry.origin → 领取时落 agent/message）；②reportDelivered：记账点不变（入队成功即交付）；③inject 为零消费者死 API——删除，新增 `agent.notify(source, kind, text)`（排队+唤醒+材料化标记）。fork 种子 content 继承/directive 丢弃。
 
 每批四门全绿独立提交；无过渡态（max-tokens 无工具分支被「派发钩子，无应答走旧路径」取代；旧路径仅作无插件缺省语义存续，非双轨：同一分支点，策略外置）。
 
@@ -264,6 +264,26 @@
 - P9 next 纪律契约测试缺失 → 采纳：插件包补「不调 next → 内核 throw → error 收轮」用例。
 - 挂账（第四批）：agent-delegation/lineage.ts recastSurface default 静默丢 agent/message——父轮 directive 不进子种子正确，delegation 迁移 content 时需补 case。
 - 确认面（两审合计 20+ 项）：hasContent 双侧口径一致、粘性重排逐路径等价、TurnState 无丢失读写、出口不变量结构成立、出口闭集、steer 不搁浅、指令末条结构保证、存量消费方中性扫描（cut/occupancy/scavenger/repair/telemetry/archive）、嵌套压缩竞态「摘 partial 留指令」不可达、自愈词表行为等价、测试非假绿——无需改动。
+
+## 审查处置（批 4 轮，1 子代理，问题清零——delegation 迁移 diff）
+
+- P1 崩溃复活双交付（高）：trailingClaims 只认 user/message 作消费标记——纯 notify 批次材料化只落
+  agent/message，崩溃恢复把已交付报告当 trailing claim 复活重投 → 采纳：agent/message 同为消费标记
+  （repair.ts）+ 回归测试（纯内部消息批次消费后崩溃不复活）。
+- P2 notify 守卫不完备（中）：非串 source/越界 kind 会 append-failed throw 而非降级 → 采纳：守卫补
+  typeof source + AGENT_MESSAGE_KINDS 闭集（与 steer 同款完备）。
+- P3 preStep 改写丢 origin 契约缺口（中低）：transformMessages 典型写法丢 origin → 内部消息降级
+  user/message（UI 泄漏）→ 采纳：plugin-api docblock + tokens 契约注明「改写须保留 entry.origin」。
+- P4 门不一致（低）：inbox 条目 origin+image 过门但 agent/message 门 text-only → 材料化中途炸 →
+  采纳：带 origin 条目入口即 text-only 收口（失败点不后移）。
+- P5 纯未标空批例外（低）：全空 content 条目（唯 preStep 改写可达）不再落空 user/message → 采纳为
+  语义改进，注释钉明。
+- P6 plain 类型谎言（信息）：cast 标错类型（运行时不丢块）→ 采纳：plain 收敛 ContentBlock[]。
+- 混批三事件交错形态（steer,notify,steer → user,agent,user）确证代码正确、测试补强留为小缺口（前缀
+  序已钉）。
+- 确认面（12 项）：纯未标批逐字节等价、origin 端到端完整（insertData→WAL→fold→回灌→材料化）、
+  gates 正反例、notify≡steer 唤醒同构、deliver 等价（reportDelivered/emitFinished/孤儿/tearing-down）、
+  recastOne 逐类型等价（seq 连续/system 特赦）、假绿抽查通过、inject 删净、消费面就位、fork 种子分流。
 
 ## 验收清单
 

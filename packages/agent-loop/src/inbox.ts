@@ -1,7 +1,7 @@
 // 收件箱投影（docs/AGENT-LOOP-DRIVER.md §1.3）：agent/inbox/spliced 事件的纯函数折叠。
 // 判重按「当前在场」——claim 移除后同 id 再 insert 重新入队（repair 回灌依赖）。
 
-import type { ContentBlock, InboxEntry, InboxTarget, SessionEvent, SessionId } from "@x-harness/session";
+import type { AgentMessageKind, ContentBlock, InboxEntry, InboxTarget, SessionEvent, SessionId } from "@x-harness/session";
 
 export interface InboxState {
   readonly nextTurn: readonly InboxEntry[];
@@ -62,8 +62,14 @@ export function foldInbox(events: readonly SessionEvent[]): InboxState {
 }
 
 /** insert 事件 data 构造（id 铸 uuid；每次 splice 单 entry 全块——图文必须同 entry
- *  同轮消费：claimTurnBatch 的 next-turn 只领队首，逐块分目会把后续块拆到链式后续轮） */
-export function insertData(target: InboxTarget, contents: readonly ContentBlock[]): {
+ *  同轮消费：claimTurnBatch 的 next-turn 只领队首，逐块分目会把后续块拆到链式后续轮）。
+ *  origin 在场 = 材料化标记：领取时落 agent/message（docs/AGENT-MESSAGE.md §4 场景 C），
+ *  排队/唤醒语义与普通条目一致 */
+export function insertData(
+  target: InboxTarget,
+  contents: readonly ContentBlock[],
+  origin?: { readonly source: string; readonly kind: AgentMessageKind },
+): {
   readonly op: "insert";
   readonly target: InboxTarget;
   readonly entries: InboxEntry[];
@@ -71,7 +77,7 @@ export function insertData(target: InboxTarget, contents: readonly ContentBlock[
   return {
     op: "insert",
     target,
-    entries: contents.length === 0 ? [] : [{ id: crypto.randomUUID(), content: contents }],
+    entries: contents.length === 0 ? [] : [{ id: crypto.randomUUID(), content: contents, ...(origin !== undefined ? { origin } : {}) }],
   };
 }
 

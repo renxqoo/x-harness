@@ -50,7 +50,10 @@ export const myPlugin: Plugin = {
   新来源（source 开放，命名空间 `"<域>-<含义>"`，如 `delegation-report`）零登记接入，三消费方
   （模型/UI/摘要）零改动；消费方禁止按 source 分支；kind 闭集 `{directive（指令——摘要跳过）,
   content（内容——摘要保留）}`，扩闭集走 docs/AGENT-MESSAGE.md §4 场景 B 独立小方案。
-  已知来源登记（纯文档）：`output-continuation`（agent-continuation 插件）。
+  已知来源登记（纯文档）：`output-continuation`（agent-continuation 插件·directive）、
+  `delegation-report`（agent-delegation 完成通知·content）。
+- **内部消息投递 API**：`agent.notify(source, kind, text)`——next-step 排队 + 唤醒（steer
+  同款步边界），领取时材料化为 `agent/message{source, kind}`。
 - **收束窗口** `agentTurnConclude`（waterfall）：无工具 settle 即将结束 turn 的通用时点——
   续跑类策略（如输出截断续写）挂此窗口。中间件纪律：**必须调 next 至少一次**（内核违约
   throw 逃逸收轮）；让位 = 透传 `await next(payload)` 下游结果；放弃用 `{kind:"fail", message,

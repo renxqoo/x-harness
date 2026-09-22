@@ -110,10 +110,20 @@ function isInboxSpliceData(data: unknown): boolean {
   }
 }
 
+/** 条目材料化标记门（docs/AGENT-MESSAGE.md §4 场景 C）：source 非空 + kind 闭集 */
+function isEntryOrigin(value: unknown): boolean {
+  return isObj(value) && isStr(value["source"]) && value["source"] !== "" && AGENT_MESSAGE_KINDS.has(value["kind"] as string);
+}
+
 function isInboxEntries(value: unknown): boolean {
   return (
     Array.isArray(value) &&
-    value.every((entry) => isObj(entry) && isStr(entry["id"]) && entry["id"] !== "" && isContentBlocks(entry["content"], true))
+    value.every((entry) => {
+      if (!isObj(entry) || !isStr(entry["id"]) || entry["id"] === "" || !isContentBlocks(entry["content"], true)) return false;
+      // 带 origin 的条目将材料化为 agent/message（text-only 门）——入口同口径收口，
+      // 失败点不后移到运行中段（材料化 append 才炸 → 整轮 error）
+      return entry["origin"] === undefined || (isEntryOrigin(entry["origin"]) && isTextOnlyBlocks(entry["content"]));
+    })
   );
 }
 

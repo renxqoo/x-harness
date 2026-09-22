@@ -2,15 +2,13 @@
 // 模型可见（投影 user 角色）、UI 按类型隐藏（类型白名单，非标记）、压缩按 kind 分流。
 // 构造器与消费谓词全部经本模块；消费方禁止按 source 分支、禁止自定义 kind 判断。
 
-import type { ContentBlock, SessionEvent, SessionEventData } from "./types.ts";
+import type { AgentMessageKind, ContentBlock, SessionEvent, SessionEventData } from "./types.ts";
 
 /** kind 闭集（docs/AGENT-MESSAGE.md §1）：判定问题 =「压缩后模型还需要记得吗」——
  *  directive = 指令（告诉模型怎么做，照做完作废 → 摘要跳过）；
  *  content = 内容（事实/结果，压缩后必须存活 → 摘要保留）。
  *  扩闭集走子系统修订程序（§4 场景 B——独立小方案），禁止顺手扩。 */
-export const AGENT_MESSAGE_KINDS: ReadonlySet<string> = new Set(["directive", "content"]);
-
-export type AgentMessageKind = "directive" | "content";
+export const AGENT_MESSAGE_KINDS: ReadonlySet<string> = new Set(["directive", "content"]); // 与 types.ts AgentMessageKind 闭集同源（词表单一出口）
 
 export interface AgentMessageInput {
   readonly turn: number;

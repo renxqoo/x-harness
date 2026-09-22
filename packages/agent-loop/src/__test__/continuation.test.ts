@@ -263,6 +263,24 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     await handle.dispose();
   });
 
+  it("批次材料化保序：steer→user/message、notify→agent/message 按入队序落账（docs/AGENT-MESSAGE.md §4 场景 C）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { agent, handle } = await spawn(world);
+    world.fake.scripts.push(textScript("ack"));
+    agent.steer("user steer first");
+    agent.notify("delegation-report", "content", "report second");
+    await agent.whenIdle();
+    const surface = agent.session.surface().map((node) => node.event);
+    const userAt = surface.findIndex((e) => e.type === "user/message" && JSON.stringify(e.data.content).includes("user steer first"));
+    const agentAt = surface.findIndex((e) => e.type === "agent/message" && JSON.stringify(e.data.content).includes("report second"));
+    expect(userAt).toBeGreaterThan(-1);
+    expect(agentAt).toBeGreaterThan(userAt); // 条目序 = 落账序（保序）
+    expect(agent.session.events().filter((e) => e.type === "user/message").length).toBe(1);
+    expect(agent.session.events().filter((e) => e.type === "agent/message").length).toBe(1);
+    await handle.dispose();
+  });
+
   it("续写步 preStep 否决 → blocked 收轮（无回灌 insert 噪音）", async () => {
     const world = await makeWorld();
     worlds.push(world);

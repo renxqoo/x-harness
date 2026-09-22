@@ -164,9 +164,11 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
 - **完成通知**：agentStatus 监听 → armed/idle → 子 WAL 末 turn/end 全字段透传
   （kind/message/code/cause/reason——`docs/SUBAGENT-FAILURE-NOTIFICATION.md`）+ 本轮
   assistant 全文（`summaryLines` 截断，与 task_output 报告同一 reportCap）+ `session:`
-  行（子会话档案指针）+ usage → `[agent-notification]` steer 注入父 → 释槽。通知即
-  报告唯一交付点：steer 成功置 `reportDelivered`，task_output 完成复查不复读全文
-  （状态头 + session 指针）——同份内容不重复进父上下文；steer 失败/tearing-down
+  行（子会话档案指针）+ usage → `[agent-notification]` **notify 注入父**（内部消息载体
+  `agent/message{source:"delegation-report", kind:"content"}`——排队/唤醒语义与 steer 同款
+  步边界；材料化后 UI 不当用户发言展示、压缩摘要保留报告事实，docs/AGENT-MESSAGE.md §5）→
+  释槽。通知即报告唯一交付点：入队成功置 `reportDelivered`，task_output 完成复查不复读全文
+  （状态头 + session 指针）——同份内容不重复进父上下文；入队失败/tearing-down
   未置位，task_output 仍可全文兜底。异常终态显式成败：completed →
   `finished: completed`；aborted → `stopped: <cause>`；error/max-tokens/blocked/
   interrupted → `failed: <原因句>`
