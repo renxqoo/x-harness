@@ -204,6 +204,93 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   });
 });
 
+describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透传 / error 救回 / overflow 分类）", () => {
+  it("done：length → max-tokens 透传 rawReason 三态；无 rawStopReason 字段缺席", async () => {
+    for (const raw of ["max_tokens", "length", "incomplete.max_output_tokens"]) {
+      expect(await collect([assistantEvent({ type: "done", reason: "length", message: { rawStopReason: raw } })])).toEqual([
+        { type: "finish", finish: { kind: "max-tokens", rawReason: raw } },
+      ]);
+    }
+    expect(await collect([assistantEvent({ type: "done", reason: "length", message: {} })])).toEqual([
+      { type: "finish", finish: { kind: "max-tokens" } },
+    ]);
+  });
+
+  it("error 救回：rawStopReason ∈ 三词表 + 流内有 text 内容 → max-tokens 终态（partial 先行保留）", async () => {
+    for (const raw of ["max_tokens", "max_output_tokens", "model_context_window_exceeded"]) {
+      expect(
+        await collect([
+          assistantEvent({ type: "text_start", contentIndex: 0, partial: { content: [] } }),
+          assistantEvent({ type: "text_delta", contentIndex: 0, delta: "half " }),
+          assistantEvent({ type: "error", reason: "error", error: { errorMessage: `Provider finish_reason: ${raw}`, rawStopReason: raw } }),
+        ]),
+      ).toEqual([
+        { type: "text-delta", text: "half " },
+        { type: "finish", finish: { kind: "max-tokens", rawReason: raw } },
+      ]);
+    }
+  });
+
+  it("error 救回：toolcall 内容同算（截断前已交付完整调用）", async () => {
+    expect(
+      await collect([
+        assistantEvent({ type: "toolcall_end", contentIndex: 0, toolCall: { type: "toolCall", id: "t1", name: "add", arguments: { a: 1 } } }),
+        assistantEvent({ type: "error", reason: "error", error: { errorMessage: "Provider finish_reason: max_tokens", rawStopReason: "max_tokens" } }),
+      ]),
+    ).toEqual([
+      { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' },
+      { type: "finish", finish: { kind: "max-tokens", rawReason: "max_tokens" } },
+    ]);
+  });
+
+  it("error 救回内容前置：零内容（仅 thinking / 全空）不救回——model_context_window_exceeded 零内容落 context-overflow", async () => {
+    expect(
+      await collect([
+        assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "思考不算内容" }),
+        assistantEvent({
+          type: "error",
+          reason: "error",
+          error: { errorMessage: "Provider finish_reason: model_context_window_exceeded", rawStopReason: "model_context_window_exceeded" },
+        }),
+      ]),
+    ).toEqual([{ type: "thinking-delta", text: "思考不算内容" }, { type: "finish", finish: { kind: "error", message: "Provider finish_reason: model_context_window_exceeded", code: "context-overflow" } }]);
+    expect(
+      await collect([
+        assistantEvent({ type: "error", reason: "error", error: { errorMessage: "Provider finish_reason: model_context_window_exceeded", rawStopReason: "model_context_window_exceeded" } }),
+      ]),
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "Provider finish_reason: model_context_window_exceeded", code: "context-overflow" } }]);
+  });
+
+  it("overflow 文本分类优先于状态码：400+文案 → context-overflow（非 http-400）；413 request_too_large → context-overflow", async () => {
+    expect(
+      await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "prompt is too long: 213462 tokens > 200000 maximum" } })], {
+        failureInfo: () => ({ status: 400 }),
+      }),
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "prompt is too long: 213462 tokens > 200000 maximum", code: "context-overflow" } }]);
+    expect(
+      await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}' } })], {
+        failureInfo: () => ({ status: 413 }),
+      }),
+    ).toEqual([
+      { type: "finish", finish: { kind: "error", message: '413 {"error":{"type":"request_too_large","message":"Request exceeds the maximum size"}}', code: "context-overflow" } },
+    ]);
+  });
+
+  it("overflow 负例：纯 413 无 overflow 文案保持 http-413；throttling 排除集不误判；其它既有分类不漂移", async () => {
+    expect(
+      await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "gateway rejected" } })], {
+        failureInfo: () => ({ status: 413 }),
+      }),
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "gateway rejected", code: "http-413" } }]);
+    expect(
+      await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "Throttling error: Too many tokens, please wait before trying again." } })]),
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "Throttling error: Too many tokens, please wait before trying again.", code: "network" } }]);
+    expect(await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "fetch failed" } })])).toEqual([
+      { type: "finish", finish: { kind: "error", message: "fetch failed", code: "network" } },
+    ]);
+  });
+});
+
 describe("classifyErrorText（词边界负例全表）", () => {
   it("正例：状态码/网络词族", () => {
     expect(classifyErrorText("HTTP 429 too many")).toBe("http-429");

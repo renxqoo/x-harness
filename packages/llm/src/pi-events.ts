@@ -4,7 +4,7 @@
 // P10 初值（anthropic 方言，emitStartInitials）：text/thinking_start 时 partial 非空初值补发 delta；
 // toolcall 无身份（openai 方言首块缺 id）缓冲至 toolcall_end 补发；text/thinking_end 终态校正补发缺失尾段。
 
-import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
+import { isContextOverflow, type AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { LlmChunk, TokenUsage } from "./types.ts";
 
 /** usage 折算（docs/LLM-PI.md 契约 4 修订——保留明细）：input 仍含 cache 总量
@@ -145,13 +145,31 @@ function blockChunks(event: AssistantMessageEvent, state: BlockState): LlmChunk[
   return [];
 }
 
-/** error 终态：abort 抛 AbortError（豁免）；usage 先行；rawStopReason 判 refusal/sensitive/
- *  content_filter 落无 code（不可重试）；状态码在场落 http-<status>，否则文案分类 */
-function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, options: PiChunkOptions): LlmChunk[] {
+/** 原生输出上限词表：pi `openai-completions mapStopReason` 对非标 finish_reason 全落
+ *  default→error（`max_tokens` 即中招）——这些原生值随 partial 内容到达 error 事件时，
+ *  语义是输出截断而非请求失败，在 errorChunks 救回为 max-tokens 终态（与
+ *  refusal/sensitive/content_filter 同点归一，docs/OUTPUT-TOKEN-CONTINUATION.md 批1）。 */
+const OUTPUT_LIMIT_RAW_REASONS: ReadonlySet<string> = new Set(["max_tokens", "max_output_tokens", "model_context_window_exceeded"]);
+
+/** error 终态：abort 抛 AbortError（豁免）；usage 先行；rawStopReason 判定序——
+ *  ① 输出上限救回（须流内已有内容：零内容的截断错误落 ②/③错误链，防空 assistant/message
+ *    与「指令对着不存在的中断」的续写）；② overflow 文本分类（`context-overflow`，优先于
+ *    状态码——主力 provider 的输入溢出是 HTTP 400 + overflow 文案，落 http-400 则既不可重试
+ *    也不自愈）；③ refusal/sensitive/content_filter 落无 code（不可重试）；④ 状态码在场落
+ *    http-<status>；⑤ 文案分类兜底。 */
+function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, options: PiChunkOptions, hasContent: boolean): LlmChunk[] {
   if (event.reason === "aborted" || options.signal.aborted) throw new DOMException("aborted", "AbortError");
   const chunks = [...foldUsage(event.error.usage)]; // 失败尝试已见 usage 随流落账（token-meter 计费）
   const message = event.error.errorMessage ?? "pi stream error";
   const rawStop = (event.error as { rawStopReason?: string }).rawStopReason;
+  if (rawStop !== undefined && OUTPUT_LIMIT_RAW_REASONS.has(rawStop) && hasContent) {
+    chunks.push({ type: "finish", finish: { kind: "max-tokens", rawReason: rawStop } });
+    return chunks;
+  }
+  if (isContextOverflow({ ...event.error, stopReason: "error" })) { // stopReason 合成：error 事件的消息定义上即错误终态（isContextOverflow 文案分支要求该字段在场）
+    chunks.push({ type: "finish", finish: { kind: "error", message, code: "context-overflow" } });
+    return chunks;
+  }
   const nonRetryable = rawStop === "refusal" || rawStop === "sensitive" || rawStop === "content_filter";
   const info = options.failureInfo();
   let code: string | undefined;
@@ -172,6 +190,7 @@ function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, o
 
 export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, options: PiChunkOptions): AsyncGenerator<LlmChunk> {
   const emittedText = new Map<number, string>(); // contentIndex → 已发 delta 拼接（终态校正用）
+  let sawContent = false; // text/toolcall 已发（thinking 不计——与 loop 侧 StreamAccumulator.hasContent 同口径；error 救回的内容前置判定用）
   const state: BlockState = {
     emittedText,
     emitStartInitials: options.emitStartInitials === true,
@@ -187,21 +206,31 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
       const event = next.value;
       if (event.type === "done") {
         yield* foldUsage(event.message.usage);
-        yield { type: "finish", finish: event.reason === "length" ? { kind: "max-tokens" } : { kind: "stop" } };
+        const raw = event.message.rawStopReason;
+        yield {
+          type: "finish",
+          finish: event.reason === "length"
+            ? { kind: "max-tokens", ...(raw !== undefined ? { rawReason: raw } : {}) }
+            : { kind: "stop" },
+        };
         return;
       }
       if (event.type === "error") {
-        yield* errorChunks(event, options);
+        yield* errorChunks(event, options, sawContent);
         return;
       }
       if (event.type === "toolcall_end") {
-        yield* toolCallChunks(event);
+        const toolChunks = toolCallChunks(event);
+        sawContent = sawContent || toolChunks.length > 0;
+        yield* toolChunks;
         continue;
       }
       if (event.type === "toolcall_start" || event.type === "toolcall_delta") {
         continue; // 分片不透传——end 单帧出口（见 toolCallChunks）
       }
-      yield* blockChunks(event, state);
+      const chunks = blockChunks(event, state);
+      sawContent = sawContent || chunks.some((chunk) => chunk.type === "text-delta");
+      yield* chunks;
     }
   } finally {
     // 提前 break/throw 时尽力终止上游迭代器（fire-and-forget——pi 的 EventStream 挂在内部

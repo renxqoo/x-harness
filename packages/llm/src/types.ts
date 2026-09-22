@@ -31,11 +31,17 @@ export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max";
 
 export type LlmFinish =
   | { readonly kind: "stop" }
-  | { readonly kind: "max-tokens" }
+  | {
+      readonly kind: "max-tokens";
+      /** provider 原生 stop reason（pi `AssistantMessage.rawStopReason` 透传）——诊断与
+       *  截断判定共用（anthropic `max_tokens` / openai `length` / responses `incomplete.max_output_tokens`） */
+      readonly rawReason?: string;
+    }
   | {
       readonly kind: "error";
       readonly message: string;
-      /** 失败词表（闭集）：`http-<status>` / `network` / `no-adapter` */
+      /** 失败词表（闭集）：`http-<status>` / `network` / `no-adapter` / `context-overflow`（上下文
+       *  窗口溢出——输入侧，由 compaction 自愈消费，llm-retry 不可重试） */
       readonly code?: string;
       /** 仅 429/503 的 Retry-After（毫秒，小数秒已折算；HTTP-date 解析失败视为缺席） */
       readonly retryAfterMs?: number;
