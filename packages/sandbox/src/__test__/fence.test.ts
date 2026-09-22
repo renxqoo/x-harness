@@ -39,6 +39,7 @@ describe("fenceFor base 形态", () => {
     grants.recordDomain(SID, "a.test", "allow");
     const f = fenceFor({ root: "/w/root", networkOff: true }, grants, SID);
     expect(f.allowedDomains).toEqual([]);
+    expect(f.unfenced).toBe(false); // 宿主 kill switch 压过总括——壳仍在
   });
 });
 
@@ -65,6 +66,7 @@ describe("fenceFor × grants", () => {
     const f = fenceFor(base, grants, SID);
     expect(f.writable[0]).toBe("/");
     expect(f.allowedDomains).toEqual(["*"]);
+    expect(f.unfenced).toBe(true); // 裁决⑤修订：完全访问=不套壳
     // 底线不豁免：denyRead/denyWrite 仍在场
     expect(f.denyRead).toEqual(DEFAULT_DENY_READ);
     expect(f.denyWrite).toEqual([resolve("/w/root/.git")]);

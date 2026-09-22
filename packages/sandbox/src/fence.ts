@@ -18,6 +18,8 @@ export interface Fence {
   readonly denyWrite: readonly string[];
   /** 会话网络白名单（fenceFacts/全局并集原料）；networkOff 恒空、unrestricted 恒 ['*'] */
   readonly allowedDomains: readonly string[];
+  /** unrestricted 会话 = 免内核包裹直通（裁决⑤修订：完全访问=不套壳，不只放宽壳内内容） */
+  readonly unfenced: boolean;
 }
 
 export interface FenceBase {
@@ -33,6 +35,10 @@ export interface FenceBase {
    *  false=收回 stricter 档（本机服务对沙箱内进程不可达）。进程级会话参数：实例间不一致
    *  = 装配期冲突 fail-fast。仅 darwin 剖面消费（linux netns 的 lo 天然在隔离命名空间内）。 */
   readonly allowLocalBinding?: boolean;
+  /** 宿主受信命令词表（argv0 basename，如 ['bw']）：sh -c 载荷经 parseBash 全段解析、
+   *  每段 argv0 都在表内 → 免内核包裹直通 + env 不清洗（GUI/系统服务类工具内核围栏表达
+   *  不了，执法归 permission 工具面——bash 裁决管线照常拦截提权/注入）。缺省空。 */
+  readonly trustedCommands?: readonly string[];
 }
 
 /** 内核面默认拒读底线（用户裁决②）：full 档不豁免——只可经 denyReadExtra 增不可减 */
@@ -72,8 +78,8 @@ export function fenceFor(base: FenceBase, grants: GrantsRegistry, session: Sessi
   ].map(expand);
   const denyRead = [...DEFAULT_DENY_READ, ...(base.denyReadExtra ?? [])];
   const denyWrite = [expand(`${override?.dir ?? base.root}/.git`), ...(base.protectedPaths ?? []).map(expand)];
-  if (base.networkOff === true) return { writable, denyRead, denyWrite, allowedDomains: [] };
-  if (unrestricted) return { writable, denyRead, denyWrite, allowedDomains: ["*"] };
+  if (base.networkOff === true) return { writable, denyRead, denyWrite, allowedDomains: [], unfenced: false };
+  if (unrestricted) return { writable, denyRead, denyWrite, allowedDomains: ["*"], unfenced: true };
   const allowedDomains = [...new Set([...(base.allowedDomains ?? []), ...grants.allowedDomainsOf(session)])];
-  return { writable, denyRead, denyWrite, allowedDomains };
+  return { writable, denyRead, denyWrite, allowedDomains, unfenced: false };
 }

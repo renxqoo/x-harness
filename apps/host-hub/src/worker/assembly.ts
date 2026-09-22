@@ -235,7 +235,13 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
     ...promptKit(),
     ...durableSessionKit({ root: fields.sessionsRoot }),
     ...toolboxKit({ root: cwd }),
-    ...fenceKit({ root: cwd, ...(fields.permissionMode !== undefined ? { mode: fields.permissionMode } : {}) }),
+    ...fenceKit({
+      root: cwd,
+      ...(fields.permissionMode !== undefined ? { mode: fields.permissionMode } : {}),
+      // bw（Browser Use on Bun.WebView）：GUI 浏览器工具——内核围栏表达不了（mach 服务/
+      // WebView 直连网络/自带 BW_API_KEY），执法归 permission 工具面，此处免包裹直通
+      trustedCommands: ["bw"],
+    }),
     ...(fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : []),
     ...meterKit(),
     ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider } }),

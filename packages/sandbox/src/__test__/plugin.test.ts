@@ -21,6 +21,7 @@ interface FakeRuntime {
   readonly rt: SrtRuntime;
   readonly starts: SrtFilesystem[];
   readonly bindings: boolean[];
+  readonly wraps: string[];
   readonly syncs: string[][];
   readonly resets: number;
   set failReset(value: boolean);
@@ -31,6 +32,7 @@ interface FakeRuntime {
 function makeFakeRuntime(): FakeRuntime {
   const starts: SrtFilesystem[] = [];
   const bindings: boolean[] = [];
+  const wraps: string[] = [];
   const syncs: string[][] = [];
   let resets = 0;
   let deps: readonly string[] = [];
@@ -45,7 +47,10 @@ function makeFakeRuntime(): FakeRuntime {
     syncNetwork: (domains) => {
       syncs.push([...domains]);
     },
-    wrap: async ({ command }) => wrapImpl(command),
+    wrap: async ({ command }) => {
+      wraps.push(command);
+      return wrapImpl(command);
+    },
     reset: async () => {
       resets += 1;
       if (failReset) throw new Error("reset boom");
@@ -55,6 +60,7 @@ function makeFakeRuntime(): FakeRuntime {
     rt,
     starts,
     bindings,
+    wraps,
     syncs,
     get resets() {
       return resets;
@@ -259,6 +265,61 @@ describe("spawn 面（假 runtime 管道）", () => {
     } finally {
       rmSync(rootA, { recursive: true, force: true });
       rmSync(rootB, { recursive: true, force: true });
+    }
+  });
+
+  it("unrestricted 直通：wrap 不触、env 不清洗（KEY 类工具键达子进程）、白名单热切换不触", async () => {
+    const root = mkdtempSync(join(tmpdir(), "xh-sbxunf-"));
+    const fake = makeFakeRuntime();
+    try {
+      const { ctx, dispose } = await assemble(root, fake);
+      ctx.use(permissionGrants).setUnrestricted(true);
+      const spawned = await ctx.use(execEnv).spawn({
+        argv: ["/bin/sh", "-c", "echo k=[$BW_PROBE_KEY]"],
+        cwd: root,
+        env: { PATH: process.env.PATH ?? "/bin", BW_PROBE_KEY: "tool-key-ok" },
+        session: "s-full" as never,
+      });
+      if (!spawned.ok) throw new Error(spawned.reason.detail);
+      const out = (await drain(spawned.proc.stdout)).trim();
+      await spawned.proc.settled;
+      expect(out).toBe("k=[tool-key-ok]"); // 免清洗——工具键直达（bw 症状的回归锚）
+      expect(fake.wraps).toEqual([]); // 不触内核包裹
+      expect(fake.syncs).toEqual([]); // 免包裹路径不热切换
+      await dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("trustedCommands 直通：词表内命令免包裹+env 不清洗；词表外照旧包裹清洗", async () => {
+    const root = mkdtempSync(join(tmpdir(), "xh-sbxtrc-"));
+    const fake = makeFakeRuntime();
+    try {
+      const { ctx, dispose } = await assemble(root, fake, { trustedCommands: ["echo"] });
+      const trusted = await ctx.use(execEnv).spawn({
+        argv: ["/bin/sh", "-c", "echo k=[$TRUSTED_PROBE_KEY]"],
+        cwd: root,
+        env: { PATH: process.env.PATH ?? "/bin", TRUSTED_PROBE_KEY: "trusted-ok" },
+      });
+      if (!trusted.ok) throw new Error(trusted.reason.detail);
+      const outT = (await drain(trusted.proc.stdout)).trim();
+      await trusted.proc.settled;
+      expect(outT).toBe("k=[trusted-ok]");
+      expect(fake.wraps).toEqual([]);
+      const fenced = await ctx.use(execEnv).spawn({
+        argv: ["/bin/sh", "-c", "printf 'k=[%s]' \"$UNTRUSTED_KEY\""],
+        cwd: root,
+        env: { PATH: process.env.PATH ?? "/bin", UNTRUSTED_KEY: "leak" },
+      });
+      if (!fenced.ok) throw new Error(fenced.reason.detail);
+      const outF = (await drain(fenced.proc.stdout)).trim();
+      await fenced.proc.settled;
+      expect(outF).toBe("k=[]"); // 词表外：清洗照旧
+      expect(fake.wraps).toHaveLength(1); // 包裹照旧
+      await dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

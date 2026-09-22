@@ -12,7 +12,18 @@
 1. **旧 `packages/sandbox-local` 整体废弃**——full 档网络被拒 + bash 执行失败，完全不可用；不参考不复制，直接删除。
 2. **sandbox 只实现围栏（sandbox），不实现权限**——一切裁决/授权/broker ask 归 `packages/permission`（本件不动 permission 任何行为）。sandbox 仅消费 permission 的 grants **数据面**（extraRoots / domains / unrestricted / rootOverride 事实）合成围栏。
 3. **引擎 = `@anthropic-ai/sandbox-runtime`（srt）**：OS 级围栏（darwin seatbelt / linux bwrap / win WFP）+ 域名白名单代理，库形态嵌入。
-4. **回环放行缺省开启**（`allowLocalBinding`，可显式关）——沙箱内本地工作流（跑测试起本地服务器/dev server）必须可用；实测旧缺省（回环 bind 全拒）令 agent 会话内 `bun test` 17 文件 EADDRINUSE 假失败、任务不可做。srt 剖面三规则：bind/inbound 放行 + **仅 loopback 出站直连**——外网域名白名单不受影响；本机 TCP 服务（本地数据库/管理口）对沙箱内进程**可达**是该档的已知边界，unix socket（docker.sock 等）仍拒。仅 darwin 剖面消费（linux netns 的 lo 天然在隔离命名空间内）。
+4. **回环放行缺省开启**（`allowLocalBinding`，可显式关）——详见下条与 §3。**裁决⑤修订（同日，
+用户实报 bw 症状驱动）**：unrestricted（full 档总括）= **免内核包裹直通**（原实现只放宽壳内内容
+——writable '/' + 域名 '*'——壳本身仍套着，GUI/mach/WebView 直连网络/env 清洗四样照杀工具：
+「完全访问」意志没传导到包裹层，与 full 网络被拒同根的第三次症状）。直通面 env 不清洗（总括
+授权下宿主工具键可达是「完全访问」的固有含义）；rootOverride（worktree）会话不受总括——照旧
+围栏（件13 隔离不变）；networkOff 宿主 kill switch 压过总括（壳仍在）。
+5. **宿主受信命令词表 `trustedCommands`**（缺省空；host-hub 装配 `['bw']`）：GUI/系统服务类
+工具（浏览器等）内核围栏根本表达不了——执法归属 permission 工具面（bash 裁决管线照常拦截
+提权/注入/硬拒），spawn 面经 parseBash（permission 单一解析真相）**全段** argv0 匹配：每段都
+在词表内才免包裹直通 + env 不清洗；混入非受信段/动态展开/命令替换内嵌/解析失败 → 一律照旧
+围栏（fail-closed）。
+6. **回环放行缺省开启**（`allowLocalBinding`，可显式关）——沙箱内本地工作流（跑测试起本地服务器/dev server）必须可用；实测旧缺省（回环 bind 全拒）令 agent 会话内 `bun test` 17 文件 EADDRINUSE 假失败、任务不可做。srt 剖面三规则：bind/inbound 放行 + **仅 loopback 出站直连**——外网域名白名单不受影响；本机 TCP 服务（本地数据库/管理口）对沙箱内进程**可达**是该档的已知边界，unix socket（docker.sock 等）仍拒。仅 darwin 剖面消费（linux netns 的 lo 天然在隔离命名空间内）。
 
 **默认裁决（否决窗口）**：
 - 新包名 `@x-harness/sandbox`（目录 `packages/sandbox`）；插件名 `sandbox`（tool-core softInject 同步换名）。
@@ -34,6 +45,7 @@ export interface SandboxOptions {
   readonly allowedDomains?: readonly string[]; // 宿主预授权域名（永不 ask——无 ask 面）
   readonly networkOff?: boolean;            // true=网络全断（白名单恒空、不并入授权）
   readonly allowLocalBinding?: boolean;     // 回环放行（缺省 true——用户裁决④；false=收回 stricter 档）
+  readonly trustedCommands?: readonly string[]; // 宿主受信命令（argv0 basename 词表——免包裹直通+env 不清洗）
 }
 
 export function createSandboxPlugin(options: SandboxOptions): Plugin;
@@ -106,6 +118,12 @@ interface Fence {
 - `allowedDomains` = networkOff ? [] : ([…allowedDomains 配置, …grants.allowedDomainsOf(session)]；
   isUnrestricted → `["*"]`)。
 
+**免包裹直通（两通道，任一命中即原生执行）**：① unrestricted 会话（`fence.unfenced`——裁决⑤
+修订）；② 宿主受信命令（`trustedCommands` 词表 + parseBash 全段 argv0 匹配，trusted.ts）。直通面
+原样 argv + **不清洗 env**（工具键直达；permission 工具面裁决照常先行——sandbox 只决定内核包裹
+去留）+ 显式物化 env（Bun.spawn 缺省继承是启动快照而非运行期 process.env——平台坑，不物化则
+运行期新增的工具键到不了子进程）。活句柄登记/逃逸复查/拆卸 fail-fast 与包裹路径完全一致。
+
 **回环剖面（进程级会话参数）**：`allowLocalBinding`（缺省 true）在 attach 期烙进 srt `network` 剖面
 （darwin 三规则：`(allow network-bind (local ip "*:*"))` + inbound + `(allow network-outbound (remote ip "localhost:*"))`
 ——出站仅 loopback，外网白名单执法不受影响）。热切换 `updateConfig` 经 network 展开承袭该字段。实例间
@@ -158,7 +176,9 @@ srt 违规记录/调试日志可归因到会话（消费面后续件；现在仅
   ["/"]+["*"]/networkOff 空/域并集去重/`~/` 展开两形/CHILD_TMPDIR 在场）；shellQuote（空串/
   空格/单引号/换行/utf-8）；scrubEnv（KEY|PASSWORD|SECRET|TOKEN 命中与误伤邻词）；
   mergeAllowlists/sameDomainSet。
-- **插件生命周期**：apply（依赖 ok→attach→init）；依赖缺失 throw（注入缝）；**并发首装串行化**
+- **插件生命周期**：apply（依赖 ok→attach→init）；依赖缺失 throw（注入缝）；**并发首装串行化**；
+  **unrestricted/trustedCommands 直通**（wrap 不触、KEY 类 env 直达、词表外照旧包裹清洗——
+  bw 症状回归锚）；**trusted 全段匹配表**（混段/动态/注入内嵌/引号内 ; 段不误判）；
   （Promise.all 双世界恰一次 start）；多实例共享（并集/先退收缩/末退 reset/顺序复用）；
   **wrap 抛错收殓判别联合**；**detach 抛错不阻断服务下线**；dispose 后 spawn fail-fast；
   活句柄两段杀+settled；拆卸窗口逃逸自杀（wrap 期/spawn 期两窗口）；

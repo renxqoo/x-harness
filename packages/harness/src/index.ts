@@ -135,10 +135,13 @@ export const toolboxKit = (o: {
   ];
 };
 
-/** 围栏（permission 路径/审批 + sandbox execEnv）；mode 缺省 auto 由 permission 包落定 */
-export const fenceKit = (o: { readonly root: string; readonly mode?: ModeKnob }): readonly Plugin[] => [
+/** 围栏（permission 路径/审批 + sandbox execEnv）；mode 缺省 auto 由 permission 包落定。
+ *  trustedCommands：宿主受信命令词表（免内核包裹直通——GUI/系统服务类工具，如 bw）。 */
+export const fenceKit = (
+  o: { readonly root: string; readonly mode?: ModeKnob; readonly trustedCommands?: readonly string[] },
+): readonly Plugin[] => [
   createPermissionPlugin({ root: o.root, ...(o.mode !== undefined ? { mode: o.mode } : {}) }),
-  createSandboxPlugin({ root: o.root }),
+  createSandboxPlugin({ root: o.root, ...(o.trustedCommands !== undefined ? { trustedCommands: o.trustedCommands } : {}) }),
 ];
 
 /** 子代理委派 */

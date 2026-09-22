@@ -195,6 +195,21 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
     });
   }, 30_000);
 
+  it("unrestricted 直通回归：KEY 类工具键原样达子进程（普通会话被清洗——区分对）", async () => {
+    process.env.BW_PROBE_KEY = "tool-key-probe";
+    try {
+      await withWorld({}, async (w) => {
+        const fenced = await run(w, `echo k=[$BW_PROBE_KEY]`);
+        expect(fenced.out.trim()).toBe("k=[]"); // 围栏会话：清洗照旧
+        w.ctx.use(permissionGrants).setUnrestricted(true);
+        const raw = await run(w, `echo k=[$BW_PROBE_KEY]`, "s-raw" as never as SessionId);
+        expect(raw.out.trim()).toBe("k=[tool-key-probe]"); // 总括=不套壳不清洗（bw 症状回归锚）
+      });
+    } finally {
+      delete process.env.BW_PROBE_KEY;
+    }
+  }, 30_000);
+
   it("拆卸后 spawn fail-fast（sandbox_unavailable——绝不裸跑）", async () => {
     await withWorld({}, async (w) => {
       const env = w.ctx.use(execEnv); // 先捕获——dispose 后服务下线，语义面向已持引用的调用方

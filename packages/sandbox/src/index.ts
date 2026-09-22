@@ -10,6 +10,7 @@ export type { SrtFilesystem, SrtRuntime, SrtWrapRequest } from "./srt-runtime.ts
 export { realSrtRuntime, platformDepErrors } from "./srt-runtime.ts";
 export type { SrtMember, SrtSessionHandle } from "./srt-session.ts";
 export { srtSessionOf } from "./srt-session.ts";
+export { isTrustedCommand } from "./trusted.ts";
 export type { SandboxEnvDeps, SandboxEnvHandle } from "./env.ts";
 export { createSandboxEnv } from "./env.ts";
 export type { SandboxOptions } from "./plugin.ts";
