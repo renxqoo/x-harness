@@ -83,6 +83,11 @@ interface AdapterCoreOptions {
 function piAdapter(core: AdapterCoreOptions): LlmAdapter {
   const name = core.name ?? (core.api === "anthropic-messages" ? "anthropic-compat" : "openai-compat");
   const doFetch = core.fetch ?? fetch;
+  // 系统提示词角色钉死 system：上游 useDeveloperRole = reasoning && supportsDeveloperRole，
+  // 名单外 baseUrl 探测恒 true，推理模型经任意中转即产 developer 角色——严格 serde 网关
+  // （role 枚举无 developer）直接 422。system 全端点通吃（OpenAI 原生收 system 自动升格）；
+  // 逐字段 ?? 合并，其余 compat 位仍走 baseUrl 探测（deepseek 思考形状等不变）。
+  const compatOverride = core.api === "openai-completions" ? { compat: { supportsDeveloperRole: false } } : {};
   // openai 侧走 streamSimple：reasoning（ThinkingLevel）只挂在该 options 面上，且经
   // clampThinkingLevel 按模型词表钳制后映射 reasoningEffort（max→模型支持则保留）
   const dial =
@@ -132,11 +137,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: core.contextWindow ?? 200_000,
           maxTokens: effectiveMaxTokens ?? DEFAULT_MAX_TOKENS,
-          // 系统提示词角色钉死 system：上游 useDeveloperRole = reasoning && supportsDeveloperRole，
-          // 名单外 baseUrl 探测恒 true，推理模型经任意中转即产 developer 角色——严格 serde 网关
-          // （role 枚举无 developer）直接 422。system 全端点通吃（OpenAI 原生收 system 自动升格）；
-          // 逐字段 ?? 合并，其余 compat 位仍走 baseUrl 探测（deepseek 思考形状等不变）。
-          ...(core.api === "openai-completions" ? { compat: { supportsDeveloperRole: false } } : {}),
+          ...compatOverride,
         };
         const options: Record<string, unknown> = {
           apiKey: core.apiKey,
