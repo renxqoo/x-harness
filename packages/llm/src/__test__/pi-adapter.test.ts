@@ -106,7 +106,7 @@ describe("pi-adapter 注入层", () => {
     expect(seen[3]?.model["maxTokens"]).toBe(128);
   });
 
-  it("思考等级注入（anthropic）：low/medium/high → thinkingEnabled+effort+预算；off/缺省不发；openai 恒不注入", async () => {
+  it("思考等级注入（anthropic）：low/medium/high → thinkingEnabled+effort+预算；off/缺省不发；openai 走 reasoning（streamSimple）", async () => {
     const seen: Array<Record<string, unknown>> = [];
     const anthropicStream: PiStreamFn = async function* (_model, _context, options) {
       seen.push(options as Record<string, unknown>);
@@ -132,7 +132,10 @@ describe("pi-adapter 注入层", () => {
     };
     const openaiAdapter = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn: openaiStream });
     await collect(openaiAdapter.stream(request({ thinking: "high" })));
-    expect(Object.hasOwn(openaiSeen[0] as object, "thinkingEnabled")).toBe(false);
+    expect(openaiSeen[0]?.["reasoning"]).toBe("high"); // openai：reasoning 透传（streamSimple 面钳制后映射 reasoningEffort）
+    expect(Object.hasOwn(openaiSeen[0] as object, "thinkingEnabled")).toBe(false); // anthropic 专属形状不串协议
+    await collect(openaiAdapter.stream(request({ thinking: "off" })));
+    expect(Object.hasOwn(openaiSeen[1] as object, "reasoning")).toBe(false); // off 不发
   });
 
   it("同步抛折算：错误文案分类（api key → 无 code；连接类 → network）；abort 同步抛透传", async () => {

@@ -6,7 +6,7 @@
 
 import type { AssistantMessageEvent, Context, Model } from "@earendil-works/pi-ai";
 import { stream as streamAnthropicMessages } from "@earendil-works/pi-ai/api/anthropic-messages";
-import { stream as streamOpenaiCompletions } from "@earendil-works/pi-ai/api/openai-completions";
+import { streamSimple as streamOpenaiSimple } from "@earendil-works/pi-ai/api/openai-completions";
 import type { LlmAdapter, LlmChunk, LlmRequest } from "./types.ts";
 import { toPiContext } from "./pi-context.ts";
 import { classifyErrorText, piChunks } from "./pi-events.ts";
@@ -45,10 +45,22 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** 思考等级 → pi options 注入片段（仅 anthropic-messages；缺省/off 不发——上游默认行为决定） */
-function thinkingOptions(thinking: LlmRequest["thinking"], api: AdapterCoreOptions["api"]): Record<string, unknown> {
-  if (thinking === undefined || thinking === "off" || api !== "anthropic-messages") return {};
-  return { thinkingEnabled: true, effort: thinking, thinkingBudgetTokens: THINKING_BUDGETS[thinking] };
+/**
+ * 思考等级 → pi options 注入片段（缺省/off 不发——上游默认行为决定）。
+ * - anthropic-messages：thinkingEnabled+effort+thinkingBudgetTokens（docs/LLM-PI.md 契约 6）。
+ * - openai-completions：reasoning 参数走 streamSimple 的 clampThinkingLevel → reasoningEffort，
+ *   上游按 baseUrl 兼容表自动分流（deepseek/zai/qwen/openrouter 等私有思考形状），
+ *   不兼容端点自行忽略未知参数（挂账兑付：原「openai 恒不注入」已撤）。
+ */
+function thinkingOptions(
+  thinking: LlmRequest["thinking"],
+  api: AdapterCoreOptions["api"],
+): Record<string, unknown> {
+  if (thinking === undefined || thinking === "off") return {};
+  if (api === "anthropic-messages") {
+    return { thinkingEnabled: true, effort: thinking, thinkingBudgetTokens: THINKING_BUDGETS[thinking] };
+  }
+  return { reasoning: thinking };
 }
 
 interface AdapterCoreOptions {
@@ -71,10 +83,12 @@ interface AdapterCoreOptions {
 function piAdapter(core: AdapterCoreOptions): LlmAdapter {
   const name = core.name ?? (core.api === "anthropic-messages" ? "anthropic-compat" : "openai-compat");
   const doFetch = core.fetch ?? fetch;
+  // openai 侧走 streamSimple：reasoning（ThinkingLevel）只挂在该 options 面上，且经
+  // clampThinkingLevel 按模型词表钳制后映射 reasoningEffort（max→模型支持则保留）
   const dial =
     core.api === "anthropic-messages"
       ? (streamAnthropicMessages as unknown as PiStreamFn)
-      : (streamOpenaiCompletions as unknown as PiStreamFn);
+      : (streamOpenaiSimple as unknown as PiStreamFn);
   return {
     name,
     contextWindow: core.contextWindow, // 缺失 B 修复：适配器携带窗口（运行时 contextWindowOf 可查）

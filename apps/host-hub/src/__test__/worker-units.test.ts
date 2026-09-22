@@ -99,14 +99,17 @@ describe("worker-catalog 解析", () => {
     expect(resolveWorkerCatalog({}).providers).toEqual([]);
   });
 
-  test("thinking 校验：reasoning:false / openai 协议 / 缺席档案", () => {
+  test("thinking 校验：reasoning:false / openai 协议放行 / 缺席档案", () => {
     const catalog = scriptCatalog();
     expect(thinkingUnsupported(catalog, { provider: "script", model: "script-1" }, "high")).toBeUndefined();
     expect(thinkingUnsupported(catalog, { provider: "script", model: "script-1" }, "off")).toBeUndefined();
     expect(thinkingUnsupported(catalog, { provider: "gone", model: "x" }, "low")).toBe("model does not support thinking");
+    // openai 协议思考已接通（pi-adapter reasoning 注入）——协议门撤除，仅余 reasoning:false 门
     const openaiLike = { providers: [{ provider: "o", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m"] }], default: { provider: "o", model: "m" }, modelMeta: {} };
     const oc = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify(openaiLike) });
-    expect(thinkingUnsupported(oc, { provider: "o", model: "m" }, "low")).toBe("model does not support thinking");
+    expect(thinkingUnsupported(oc, { provider: "o", model: "m" }, "low")).toBeUndefined();
+    const openaiNoReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "o2", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m2"] }], default: { provider: "o2", model: "m2" }, modelMeta: { m2: { reasoning: false } } }) });
+    expect(thinkingUnsupported(openaiNoReason, { provider: "o2", model: "m2" }, "low")).toBe("model does not support thinking");
     const noReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "a", protocol: "anthropic", baseUrl: "https://a", apiKey: "", models: ["m"] }], default: { provider: "a", model: "m" }, modelMeta: { m: { reasoning: false } } }) });
     expect(thinkingUnsupported(noReason, { provider: "a", model: "m" }, "low")).toBe("model does not support thinking");
   });

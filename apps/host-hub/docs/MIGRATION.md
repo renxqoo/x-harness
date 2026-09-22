@@ -93,7 +93,7 @@ minus 迁移源已声明的不移植域，minus 本仓声明差异（§4 + §6�
 | get_models/set_model_override/models/add/remove | 目录 = providers.json 超集（provider 档案 + models 名单 + modelOverrides 节）；get_models source: preset\|custom | x-harness 目录形状 |
 | auth/list | 全目录成员 + `{type: "api-key"\|"preset-env"\|"none"}`（源仅列有存 key 者且恒 "api-key"） | credentials 叠加模型 |
 | set_model | 经 dial meta + waterfall 下一 turn 生效（源同构）；保留 thinking 档 × 目标不兼容 → 写前拒（文案 DESIGN 附录 A）；未知名 fail-closed 清单 = 档案 models | 词表差异 |
-| set/get_thinking_level | 词表 `off\|low\|medium\|high\|max`（源无 max）；无值态归一 `"off"`（源线缆值 `"unset"`）；`model does not support thinking` 判据 = 目录 reasoning + protocol（openai 拒）；budget 校验退役（归内核 llm 拨号层） | 内核 ThinkingLevel |
+| set/get_thinking_level | 词表 `off\|low\|medium\|high\|max`（源无 max）；无值态归一 `"off"`（源线缆值 `"unset"`）；`model does not support thinking` 判据 = 目录 reasoning（openai 协议门已撤——pi-adapter 注入 reasoning）；budget 校验退役（归内核 llm 拨号层） | 内核 ThinkingLevel |
 | permission/set_mode/get_mode | 词表 `plan\|auto\|full`（源 plan\|default\|acceptEdits\|fullAuto）；即时切 = decide 面 + grants 授权面原子同步（源 controller 仅 decide 面——升级）；其余语义同构（即时/落盘/四态 source；controller.set 后置于 flush 成功） | 内核 ModeKnob + 服务面 |
 | agents/list/create/remove | 条目 `{name, description, source: builtin\|project\|user, model?}`；frontmatter = x-harness delegation 格式（name/description/model/tools + body） | delegation 加载器 |
 | skills/list/set_enabled/remove | source 词表 `builtin\|user\|project`（源 skill-builtin/skill-user/skill-project）；目录 = .x-harness/skills；stillDisabled by 恒 "user" | skill 包约定 |

@@ -53,7 +53,8 @@ export function thinkingUnsupported(catalog: WorkerCatalog, dial: DialFact, thin
   if (thinking === undefined || thinking === "off") return undefined;
   const provider = catalogEntryOf(catalog, dial);
   if (provider === undefined) return "model does not support thinking";
-  if (provider.protocol === "openai") return "model does not support thinking"; // 协议映射缺席（挂账）
+  // openai 协议思考已接通（pi-adapter 注入 reasoning → streamSimple 钳制映射 reasoningEffort，
+  // 上游按 baseUrl 兼容表分流私有思考形状）——协议判据撤除，仅余目录 reasoning 标志门
   if (catalog.modelMeta[dial.model]?.reasoning === false) return "model does not support thinking";
   return undefined;
 }

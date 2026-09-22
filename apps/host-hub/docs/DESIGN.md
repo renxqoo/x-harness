@@ -389,7 +389,7 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   写入 dial.thinking）。**set_thinking_level** `{threadId, level}` — 先词表校验
   （`invalid thinking level`）后流式拒（`thread is streaming`；判定面 = 受理窗口同
   prompt：turn 在飞 ∨ send 在飞）→ 模型兼容校验（`model does not support thinking`
-  ——目录 reasoning 标志 + protocol 映射：openai 协议 non-off 档拒绝）→ append +
+  ——目录 reasoning 标志（openai 协议门已撤：pi-adapter 注入 reasoning，上游按 baseUrl 兼容表分流）→ append +
   flush，下一 turn 生效。**get_thinking_level** `{threadId}`（observer）→ `{level,
   source: "session"|"project"|"user"|"off"}`（**无值态归一 `"off"`——迁移源线缆值
   `"unset"`，归一为有意变更**，MIGRATION §4）。
