@@ -15,6 +15,8 @@ import { mergeAllowlists, sameDomainSet } from "./allowlist.ts";
 export interface SrtMember {
   /** 本实例当前网络面有效白名单（off→[]；unrestricted→['*']；否则 base∪会话授权） */
   effectiveAllowlist(): readonly string[];
+  /** 回环放行（进程级会话参数——实例间不一致=装配期冲突 fail-fast） */
+  localBinding(): boolean;
 }
 
 export interface SrtSessionHandle {
@@ -33,6 +35,7 @@ const EMPTY_BASELINE: SrtFilesystem = { denyRead: [], allowWrite: [], denyWrite:
 function createSrtSessionShared(runtime: SrtRuntime): SrtSessionShared {
   const members = new Set<SrtMember>();
   let lastApplied: readonly string[] | undefined;
+  let localBinding: boolean | undefined; // 会话级剖面参数（start 时烙进 srt config）
   let ops: Promise<void> = Promise.resolve(); // attach/detach 互斥链
   const enqueue = <T>(op: () => Promise<T>): Promise<T> => {
     const run = ops.then(op, op);
@@ -53,10 +56,16 @@ function createSrtSessionShared(runtime: SrtRuntime): SrtSessionShared {
   return {
     attach: (member) =>
       enqueue(async () => {
+        if (localBinding !== undefined && localBinding !== member.localBinding()) {
+          throw new Error(
+            `sandbox allowLocalBinding conflict in this process: session started with ${String(localBinding)}, member declares ${String(member.localBinding())} — host policy must be uniform`,
+          );
+        }
         if (members.size === 0) {
           const errors = await runtime.checkDeps();
           if (errors.length > 0) throw new Error(`sandbox dependencies unavailable: ${errors.join(", ")}`);
-          await runtime.start(EMPTY_BASELINE);
+          localBinding = member.localBinding();
+          await runtime.start(EMPTY_BASELINE, localBinding);
           lastApplied = undefined;
         }
         members.add(member);
@@ -66,6 +75,7 @@ function createSrtSessionShared(runtime: SrtRuntime): SrtSessionShared {
               members.delete(member);
               if (members.size === 0) {
                 lastApplied = undefined;
+                localBinding = undefined;
                 await runtime.reset();
               } else {
                 refresh(); // 余量成员并集收缩

@@ -12,6 +12,7 @@
 1. **旧 `packages/sandbox-local` 整体废弃**——full 档网络被拒 + bash 执行失败，完全不可用；不参考不复制，直接删除。
 2. **sandbox 只实现围栏（sandbox），不实现权限**——一切裁决/授权/broker ask 归 `packages/permission`（本件不动 permission 任何行为）。sandbox 仅消费 permission 的 grants **数据面**（extraRoots / domains / unrestricted / rootOverride 事实）合成围栏。
 3. **引擎 = `@anthropic-ai/sandbox-runtime`（srt）**：OS 级围栏（darwin seatbelt / linux bwrap / win WFP）+ 域名白名单代理，库形态嵌入。
+4. **回环放行缺省开启**（`allowLocalBinding`，可显式关）——沙箱内本地工作流（跑测试起本地服务器/dev server）必须可用；实测旧缺省（回环 bind 全拒）令 agent 会话内 `bun test` 17 文件 EADDRINUSE 假失败、任务不可做。srt 剖面三规则：bind/inbound 放行 + **仅 loopback 出站直连**——外网域名白名单不受影响；本机 TCP 服务（本地数据库/管理口）对沙箱内进程**可达**是该档的已知边界，unix socket（docker.sock 等）仍拒。仅 darwin 剖面消费（linux netns 的 lo 天然在隔离命名空间内）。
 
 **默认裁决（否决窗口）**：
 - 新包名 `@x-harness/sandbox`（目录 `packages/sandbox`）；插件名 `sandbox`（tool-core softInject 同步换名）。
@@ -32,6 +33,7 @@ export interface SandboxOptions {
   readonly protectedPaths?: readonly string[]; // denyWrite 附加
   readonly allowedDomains?: readonly string[]; // 宿主预授权域名（永不 ask——无 ask 面）
   readonly networkOff?: boolean;            // true=网络全断（白名单恒空、不并入授权）
+  readonly allowLocalBinding?: boolean;     // 回环放行（缺省 true——用户裁决④；false=收回 stricter 档）
 }
 
 export function createSandboxPlugin(options: SandboxOptions): Plugin;
@@ -104,6 +106,11 @@ interface Fence {
 - `allowedDomains` = networkOff ? [] : ([…allowedDomains 配置, …grants.allowedDomainsOf(session)]；
   isUnrestricted → `["*"]`)。
 
+**回环剖面（进程级会话参数）**：`allowLocalBinding`（缺省 true）在 attach 期烙进 srt `network` 剖面
+（darwin 三规则：`(allow network-bind (local ip "*:*"))` + inbound + `(allow network-outbound (remote ip "localhost:*"))`
+——出站仅 loopback，外网白名单执法不受影响）。热切换 `updateConfig` 经 network 展开承袭该字段。实例间
+取值不一致 = 装配期冲突 fail-fast throw（宿主级策略事实上应进程内一致）；会话末实例退出释放后可换值重启。
+
 **文件面（per-exec）**：每次 spawn 以 `customConfig.filesystem = { denyRead, allowWrite, denyWrite }`
 整体传入（srt 语义：per-call 字段级 ?? 回退——传全量防会话级残值混入）；linux glob 写面被剥、
 darwin 原生 glob（我们只传具体路径，无跨平台分歧）。
@@ -158,7 +165,8 @@ srt 违规记录/调试日志可归因到会话（消费面后续件；现在仅
   **sessionDisposed 即时收缩**。
 - **真内核 e2e（darwin 默认门，零 skip——依赖缺失=红）**：界内写通/越根写 EPERM/拒读
   ~/.ssh EPERM/.git 写拒而同根他处可写/空表网络拒/授权热切换放行/unrestricted ["*"] 全通 +
-  越根写放开/env 清洗/组杀与 settled 在 wrapper 下/拆卸后 spawn 拒。linux 真内核腿 in-repo
+  越根写放开/env 清洗/组杀与 settled 在 wrapper 下/拆卸后 spawn 拒/**回环两腿（缺省档 bind+自连
+  可用——用户裁决④回归锚；allowLocalBinding:false bind 拒）**。linux 真内核腿 in-repo
   不可达（darwin 开发机）——代码面零平台分支（平台差异收敛在 srt 内），known-untested 标注延续。
 - **覆盖率**：行/语句/函数 ≥90、分支 ≥85（平台分支不在本包——可达；禁 mock 凑数）。
 

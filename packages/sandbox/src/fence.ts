@@ -28,6 +28,11 @@ export interface FenceBase {
   readonly allowedDomains?: readonly string[];
   /** true=网络全断（白名单恒空、压过 unrestricted——宿主级 kill switch） */
   readonly networkOff?: boolean;
+  /** 回环放行（bind/inbound + 仅 loopback 出站直连；外网白名单不受影响）。缺省 true——
+   *  用户裁决④（2026-09-23）：沙箱内本地工作流（起测试服务器/dev server）必须可用；
+   *  false=收回 stricter 档（本机服务对沙箱内进程不可达）。进程级会话参数：实例间不一致
+   *  = 装配期冲突 fail-fast。仅 darwin 剖面消费（linux netns 的 lo 天然在隔离命名空间内）。 */
+  readonly allowLocalBinding?: boolean;
 }
 
 /** 内核面默认拒读底线（用户裁决②）：full 档不豁免——只可经 denyReadExtra 增不可减 */

@@ -54,6 +54,7 @@ export function createSandboxPlugin(options: SandboxOptions, runtime: SrtRuntime
             ...[...seen].map((k) => grants.allowedDomainsOf(sessionOfKey(k))),
           ]);
         },
+        localBinding: () => options.allowLocalBinding ?? true, // 缺省开——用户裁决④
       };
       const session = srtSessionOf(runtime);
       const handle: SrtSessionHandle = await session.attach(member); // 依赖缺失在此 fail-closed throw

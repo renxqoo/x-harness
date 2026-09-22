@@ -70,11 +70,38 @@ function expectCurlDenied(r: RunResult): void {
   expect(["7", "35", "56"]).toContain(m![1]);
 }
 
+/** 正向网络腿容错：真外网在并行负载下偶发超时（28）——重试一次，拒绝形态不在此列 */
+async function runCurlUntilSettled(w: World, command: string, session?: SessionId): Promise<RunResult> {
+  let r = await run(w, command, session);
+  if (/curl_exit=28/.test(r.out)) r = await run(w, command, session);
+  return r;
+}
+
+/** 围栏内起本地服务器 + 回环自连——用户裁决④的回归锚（沙箱内跑测试/dev server 的最小形态） */
+const LOOPBACK_SCRIPT =
+  `bun -e 'const s=Bun.serve({port:0,fetch:()=>new Response("loop-ok")});` +
+  `const r=await fetch("http://127.0.0.1:"+s.port);console.log(await r.text());s.stop(true);process.exit(0)'`;
+
 describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
   it("依赖在场：seatbelt 探测零错误（缺席=本文件红，不静默）", async () => {
     const errors = await realSrtRuntime.checkDeps();
     expect(errors).toEqual([]);
   });
+
+  it("回环放行（缺省档）：围栏内 bind + loopback 自连可用——本地工作流通道（用户裁决④）", async () => {
+    await withWorld({}, async (w) => {
+      const r = await run(w, LOOPBACK_SCRIPT);
+      expect(r.code, `out=${r.out} err=${r.err}`).toBe(0);
+      expect(r.out.trim()).toBe("loop-ok");
+    });
+  }, 30_000);
+
+  it("回环关闭（allowLocalBinding:false）：bind 被剖面拒——stricter 档 kill switch", async () => {
+    await withWorld({ allowLocalBinding: false }, async (w) => {
+      const r = await run(w, LOOPBACK_SCRIPT);
+      expect(r.code).not.toBe(0);
+    });
+  }, 30_000);
 
   it("界内写通 + 读回；tmpdir 可写", async () => {
     await withWorld({}, async (w) => {
@@ -127,7 +154,7 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       const before = await run(w, `curl -s --max-time 8 https://example.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
       expectCurlDenied(before);
       w.ctx.use(permissionGrants).recordDomain(sid, "example.com", "allow");
-      const after = await run(w, `curl -s --max-time 10 https://example.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
+      const after = await runCurlUntilSettled(w, `curl -s --max-time 15 https://example.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
       expect(after.out).toContain("curl_exit=0");
     });
   }, 60_000);
@@ -136,7 +163,7 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
     await withWorld({}, async (w) => {
       w.ctx.use(permissionGrants).setUnrestricted(true);
       const sid = "s-full" as never as SessionId;
-      const net = await run(w, `curl -s --max-time 10 https://www.anthropic.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
+      const net = await runCurlUntilSettled(w, `curl -s --max-time 15 https://www.anthropic.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
       expect(net.out).toContain("curl_exit=0");
       const outside = "/tmp/xh-sbx-full-write.txt";
       const fsr = await run(w, `echo full > ${outside} && echo WROTE`, sid);

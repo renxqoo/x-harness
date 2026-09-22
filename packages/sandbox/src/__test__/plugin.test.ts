@@ -20,6 +20,7 @@ import type { SrtFilesystem, SrtRuntime } from "../srt-runtime.ts";
 interface FakeRuntime {
   readonly rt: SrtRuntime;
   readonly starts: SrtFilesystem[];
+  readonly bindings: boolean[];
   readonly syncs: string[][];
   readonly resets: number;
   set failReset(value: boolean);
@@ -29,6 +30,7 @@ interface FakeRuntime {
 
 function makeFakeRuntime(): FakeRuntime {
   const starts: SrtFilesystem[] = [];
+  const bindings: boolean[] = [];
   const syncs: string[][] = [];
   let resets = 0;
   let deps: readonly string[] = [];
@@ -36,8 +38,9 @@ function makeFakeRuntime(): FakeRuntime {
   let wrapImpl: (command: string) => readonly string[] | Promise<readonly string[]> = (command) => ["/bin/sh", "-c", command];
   const rt: SrtRuntime = {
     checkDeps: async () => deps,
-    start: async (fs) => {
+    start: async (fs, allowLocalBinding) => {
       starts.push(fs);
+      bindings.push(allowLocalBinding);
     },
     syncNetwork: (domains) => {
       syncs.push([...domains]);
@@ -51,6 +54,7 @@ function makeFakeRuntime(): FakeRuntime {
   return {
     rt,
     starts,
+    bindings,
     syncs,
     get resets() {
       return resets;
@@ -109,6 +113,7 @@ describe("createSandboxPlugin 装配", () => {
       expect(facts?.forSession(undefined)).toEqual({ writable: expect.arrayContaining([root, tmpdir()]), allowedDomains: [] });
       expect(fake.starts).toHaveLength(1);
       expect(fake.starts[0]).toEqual({ denyRead: [], allowWrite: [], denyWrite: [] });
+      expect(fake.bindings).toEqual([true]); // 缺省开——用户裁决④（沙箱内本地工作流可用）
       await dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -236,6 +241,24 @@ describe("spawn 面（假 runtime 管道）", () => {
       expect(after.ok).toBe(false); // fail-fast 照常
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allowLocalBinding：显式 false 传入 start；实例间不一致=装配期冲突 fail-fast；会话释放后可重启新值", async () => {
+    const rootA = mkdtempSync(join(tmpdir(), "xh-sbxlb1-"));
+    const rootB = mkdtempSync(join(tmpdir(), "xh-sbxlb2-"));
+    const fake = makeFakeRuntime();
+    try {
+      const strict = await assemble(rootA, fake, { allowLocalBinding: false });
+      expect(fake.bindings).toEqual([false]);
+      await expect(assemble(rootB, fake, { allowLocalBinding: true })).rejects.toThrow(/allowLocalBinding conflict/);
+      await strict.dispose();
+      const relaxed = await assemble(rootB, fake); // 会话已释放——新值可启动
+      expect(fake.bindings).toEqual([false, true]);
+      await relaxed.dispose();
+    } finally {
+      rmSync(rootA, { recursive: true, force: true });
+      rmSync(rootB, { recursive: true, force: true });
     }
   });
 

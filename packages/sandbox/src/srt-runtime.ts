@@ -22,8 +22,9 @@ export interface SrtWrapRequest {
 export interface SrtRuntime {
   /** 依赖探测（darwin=seatbelt / linux=bwrap）；返回错误清单，空=可用 */
   checkDeps(): Promise<readonly string[]>;
-  /** 以基线剖面启动（网络恒 strict 空白名单——围栏恒在；授权域名经 syncNetwork 热切换注入） */
-  start(fs: SrtFilesystem): Promise<void>;
+  /** 以基线剖面启动（网络恒 strict 空白名单——围栏恒在；授权域名经 syncNetwork 热切换注入；
+   *  allowLocalBinding 进 network 剖面——darwin 三规则：bind/inbound 放行 + 仅 loopback 出站） */
+  start(fs: SrtFilesystem, allowLocalBinding: boolean): Promise<void>;
   /** 网络白名单热切换（srt 每请求生效——在跑子进程下一次连接即见新表） */
   syncNetwork(allowedDomains: readonly string[]): void;
   /** 命令文本 → 围栏 argv（外层 /bin/bash -c 承载） */
@@ -55,15 +56,15 @@ export const realSrtRuntime: SrtRuntime = {
     if (own.length > 0 || process.platform !== "linux") return own;
     return (await SandboxManager.checkDependenciesAsync()).errors;
   },
-  start: async (fs) => {
+  start: async (fs, allowLocalBinding) => {
     await SandboxManager.initialize({
       filesystem: filesystemOf(fs),
-      network: { allowedDomains: [], deniedDomains: [], strictAllowlist: true },
+      network: { allowedDomains: [], deniedDomains: [], strictAllowlist: true, allowLocalBinding },
     });
   },
   syncNetwork: (allowedDomains) => {
     const config = SandboxManager.getConfig();
-    if (config === undefined) return; // 未启动——生命周期由 plugin claim/release 保证
+    if (config === undefined) return; // 未启动——生命周期由共享会话引用计数保证
     SandboxManager.updateConfig({
       ...config,
       network: { ...config.network, allowedDomains: [...allowedDomains] },
