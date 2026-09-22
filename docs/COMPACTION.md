@@ -70,7 +70,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin;
 
 - `agentPreStep`：`autoTriggerEnabled` 为真时测占用（§1.4）→ `shouldCompact` 为真 →
   `compact(trigger:"auto")`；恒 `return next(payload)`（永不 reject）。
-- `agentRequestError`：next 透传后，`failure.code === "http-413"` 且本 (session,turn,step)
+- `agentRequestError`：next 透传后，`failure.code` 命中窗口溢出闭集 `WINDOW_OVERFLOW_CODES = { "http-413", "context-overflow" }`（context-overflow = llm 层 overflow 文案分类码——主力 provider 输入溢出为 400+文案，docs/OUTPUT-TOKEN-CONTINUATION.md）且本 (session,turn,step)
   未自愈过（per-session `lastHealed` 键）→ ①实测 servedWindow（= 当前占用测量值）落
   `request/context {provider, model, contextWindow}`（写失败仅告警不阻断自愈；
   provider/model 取末次 request/context 或 request/header 的 provider/model，均缺席则跳过
@@ -135,6 +135,9 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin;
   `"error"` → 软失败告警；abort（联动 turn signal）→ 静默。空闲看门狗超时 → abort 同静默路径。
 - 中和面（提示词注入防线，参照系 C1/C2/C3）：`</` 转义、包裹开标签全角化、角色行前缀
   破坏（含 U+2028/2029 行边界）；作用于会话序列化、previous-summary、账本回嵌。
+  `agent/message`（内部消息，表面第 5 类）按 kind 分流：directive 跳过（协议指令过期作废——
+  摘要不留伪装成发言的噪音）；content 序列化为 `[Agent message]` 内容行（实质事实必须
+  存活于摘要）——docs/AGENT-MESSAGE.md §3 矩阵。
   **标签与前缀名单单一来源**（常量表导出）+ 词表锁测试；**截头后二遍中和**（cap 可能切掉
   行首破坏位——中和幂等变体在 cap 之后再跑一遍）。
 
@@ -319,7 +322,7 @@ L2 零 LLM 落账（守卫/复测门/重锚）、空闲清理、接管仲裁、�
 | 不处理项 | 归属 |
 | --- | --- |
 | 逐结果限流（参照系 L0） | agent-loop 既有 `maxToolResultChars`（tool-calls.ts 截断 + 标记已在线）——同一事实不二实现 |
-| 413 以外的窗口类错误（provider 400 文案） | 未来按需扩 code 词表再裁决；本件只认 `http-413` |
+| ~~413 以外的窗口类错误（provider 400 文案）~~ | 已收口：llm 层分类 `context-overflow` + 自愈词表 `WINDOW_OVERFLOW_CODES` 两码皆收（docs/OUTPUT-TOKEN-CONTINUATION.md） |
 | 摘要质量本身 | 提示词工程面，随实测迭代 |
 | 多窗口模型舰队（同装配异窗） | `contextWindow` 必填 + per-session `request/context` 收窄（min）；逐 agent 独立窗口归未来装配面裁决 |
 | 跨进程压缩协调 | 不支持（session 单写者前提） |

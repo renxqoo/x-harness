@@ -151,27 +151,40 @@ function blockChunks(event: AssistantMessageEvent, state: BlockState): LlmChunk[
  *  refusal/sensitive/content_filter 同点归一，docs/OUTPUT-TOKEN-CONTINUATION.md 批1）。 */
 const OUTPUT_LIMIT_RAW_REASONS: ReadonlySet<string> = new Set(["max_tokens", "max_output_tokens", "model_context_window_exceeded"]);
 
+/** 输出上限词处置（errorChunks 复杂度治理）：有内容 → 救回 max-tokens；零内容 →
+ *  context-overflow（确定性失败不盲重试；输入压力由 compaction 自愈恰一次兜底）；
+ *  非输出上限词 → undefined 走后续判定链 */
+function outputLimitFinish(rawStop: string | undefined, hasContent: boolean, message: string): LlmChunk | undefined {
+  if (rawStop === undefined || !OUTPUT_LIMIT_RAW_REASONS.has(rawStop)) return undefined;
+  if (hasContent) return { type: "finish", finish: { kind: "max-tokens", rawReason: rawStop } };
+  return { type: "finish", finish: { kind: "error", message, code: "context-overflow" } };
+}
+
 /** error 终态：abort 抛 AbortError（豁免）；usage 先行；rawStopReason 判定序——
- *  ① 输出上限救回（须流内已有内容：零内容的截断错误落 ②/③错误链，防空 assistant/message
- *    与「指令对着不存在的中断」的续写）；② overflow 文本分类（`context-overflow`，优先于
- *    状态码——主力 provider 的输入溢出是 HTTP 400 + overflow 文案，落 http-400 则既不可重试
- *    也不自愈）；③ refusal/sensitive/content_filter 落无 code（不可重试）；④ 状态码在场落
- *    http-<status>；⑤ 文案分类兜底。 */
+ *  ① 输出上限救回（须流内已有内容：零内容截断没有可接续的 partial，防空 assistant/message
+ *    与「指令对着不存在的中断」的续写）；② 零内容输出上限词 → context-overflow（确定性失败
+ *    不可盲重试；若为输入压力由 compaction 自愈恰一次兜底）；③ overflow 文本分类
+ *    （`context-overflow`，优先于状态码——主力 provider 的输入溢出是 HTTP 400 + overflow 文案，
+ *    落 http-400 则既不可重试也不自愈；但 429/503 状态码在场时跳过——限流文案（"too many
+ *    tokens" 等）会误命中宽泛溢出 pattern，瞬态错误不得换走 emergency 压缩）；④
+ *  refusal/sensitive/content_filter 落无 code（不可重试）；⑤ 状态码在场落 http-<status>；
+ *  ⑥ 文案分类兜底。 */
 function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, options: PiChunkOptions, hasContent: boolean): LlmChunk[] {
   if (event.reason === "aborted" || options.signal.aborted) throw new DOMException("aborted", "AbortError");
   const chunks = [...foldUsage(event.error.usage)]; // 失败尝试已见 usage 随流落账（token-meter 计费）
   const message = event.error.errorMessage ?? "pi stream error";
   const rawStop = (event.error as { rawStopReason?: string }).rawStopReason;
-  if (rawStop !== undefined && OUTPUT_LIMIT_RAW_REASONS.has(rawStop) && hasContent) {
-    chunks.push({ type: "finish", finish: { kind: "max-tokens", rawReason: rawStop } });
+  const info = options.failureInfo();
+  const rescued = outputLimitFinish(rawStop, hasContent, message);
+  if (rescued !== undefined) {
+    chunks.push(rescued);
     return chunks;
   }
-  if (isContextOverflow({ ...event.error, stopReason: "error" })) { // stopReason 合成：error 事件的消息定义上即错误终态（isContextOverflow 文案分支要求该字段在场）
+  if (info.status !== 429 && info.status !== 503 && isContextOverflow({ ...event.error, stopReason: "error" })) { // stopReason 合成：error 事件的消息定义上即错误终态（isContextOverflow 文案分支要求该字段在场）
     chunks.push({ type: "finish", finish: { kind: "error", message, code: "context-overflow" } });
     return chunks;
   }
   const nonRetryable = rawStop === "refusal" || rawStop === "sensitive" || rawStop === "content_filter";
-  const info = options.failureInfo();
   let code: string | undefined;
   if (nonRetryable) code = undefined;
   else if (info.status !== undefined) code = `http-${String(info.status)}`;

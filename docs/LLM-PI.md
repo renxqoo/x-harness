@@ -11,7 +11,9 @@
 2. 工厂名与签名：`createAnthropicCompatAdapter` / `createOpenaiCompatAdapter`
    （`{ name?, baseUrl, apiKey, fetch?, maxOutputTokens?, contextWindow?, streamFn? }`——`fetch` 经 pi `options.fetch` 原样透传，
    scene-server 真身测试形态续命）、`llmPlugin`、token、adapter-plugin 工厂。
-3. 错误码闭集：`http-<status>` / `network` / `no-adapter` + `retryAfterMs`（llm-retry 依赖面）。
+3. 已知局限：z.ai 偶以 429 rate-limit 文案报真输入溢出——限流保护（429/503 跳过 overflow 文本分类）
+   会把它留在 http-429 可重试链，自愈不触发（pi isContextOverflow 排除集同源局限）；由水位压缩兜底。
+   错误码闭集：`http-<status>` / `network` / `no-adapter` / `context-overflow`（输入溢出文案分类——compaction 自愈消费）+ `retryAfterMs`（llm-retry 依赖面）。max-tokens 终态携 `rawReason?`（pi rawStopReason 透传——anthropic `max_tokens`/openai `length`/responses `incomplete.max_output_tokens`；errorChunks 对非标 finish_reason（`max_tokens`/`max_output_tokens`/`model_context_window_exceeded`）在有流内内容时救回 max-tokens——docs/OUTPUT-TOKEN-CONTINUATION.md 批1）。
 4. usage 折算：pi `Usage` cacheRead+cacheWrite 折入 input；全零不发 usage 帧（守卫保留）。
 5. 流帧语义：finish 恰一次；thinking-delta 只透传（落账收集由 agent-loop 承担——docs/STREAM-PARTIAL-PERSISTENCE.md）；请求前已 abort → throw（豁免路径不变）。
 

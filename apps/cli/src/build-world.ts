@@ -21,6 +21,7 @@ import {
   fenceKit,
   inlineSessionKit,
   llmKit,
+  continuationKit,
   loopKit,
   meterKit,
   promptKit,
@@ -136,6 +137,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
       default: RETRY_POLICY,
     }),
     ...loopKit(),
+    ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
     ...checkpointKit(),
     ...delegationKit(),
     ...skillKit(),

@@ -9,6 +9,8 @@ import type { Context, Disposer, Plugin, Result } from "@x-harness/core";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { AgentLoopService } from "@x-harness/agent-loop";
+import { createContinuationPlugin } from "@x-harness/agent-continuation";
+import type { ContinuationOptions } from "@x-harness/agent-continuation";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
@@ -102,6 +104,10 @@ export function telemetryKitWithHandle(o: {
 
 /** 驱动循环（五服务之一） */
 export const loopKit = (): readonly Plugin[] => [agentLoopPlugin];
+
+/** 输出截断续写策略（docs/OUTPUT-TOKEN-CONTINUATION.md）：agentTurnConclude 窗口的缺省策略件——
+ *  count < max → resume（续写指令经内核以 agent/message{directive} 落卷）；否则可恢复错误收轮 */
+export const continuationKit = (options?: ContinuationOptions): readonly Plugin[] => [createContinuationPlugin(options)];
 
 /** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替）；appends 归宿主后置 */
 export const promptKit = (base?: Plugin): readonly Plugin[] => [

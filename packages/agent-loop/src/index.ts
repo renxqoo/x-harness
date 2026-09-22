@@ -20,7 +20,7 @@ export {
   agentAssistantSettle,
   agentLlmStream,
 } from "./tokens.ts";
-export type { AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestFailure, TurnConcludeDecision } from "./tokens.ts";
+export type { AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestFailure, TurnConcludeDecision, TurnConcludePayload } from "./tokens.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";
 export { foldInbox } from "./inbox.ts";
 export { chainsNextTurn } from "./driver.ts";

@@ -42,6 +42,22 @@ export const myPlugin: Plugin = {
 
 **洋葱纪律**（框架已内建，写裸中间件时才需要知道）：中间件必须调 `next`；否决一律「先 next 后 deny」（内层副作用保留，最外层否决胜）。
 
+## 1.5 内部消息（agent/message）与收束窗口（agentTurnConclude）
+
+- **内部消息**（harness → 模型的注入消息：模型可见经投影 user 角色、UI 按类型隐藏、压缩按
+  kind 分流）：写入 = `session.append("agent/message", agentMessageData({turn, step, source, kind, content}), {surfaceOp:"append"})`
+  ——构造器/谓词单一真相在 `@x-harness/session`（agent-message.ts）。**扩展契约（开闭）**：
+  新来源（source 开放，命名空间 `"<域>-<含义>"`，如 `delegation-report`）零登记接入，三消费方
+  （模型/UI/摘要）零改动；消费方禁止按 source 分支；kind 闭集 `{directive（指令——摘要跳过）,
+  content（内容——摘要保留）}`，扩闭集走 docs/AGENT-MESSAGE.md §4 场景 B 独立小方案。
+  已知来源登记（纯文档）：`output-continuation`（agent-continuation 插件）。
+- **收束窗口** `agentTurnConclude`（waterfall）：无工具 settle 即将结束 turn 的通用时点——
+  续跑类策略（如输出截断续写）挂此窗口。中间件纪律：**必须调 next 至少一次**（内核违约
+  throw 逃逸收轮）；让位 = 透传 `await next(payload)` 下游结果；放弃用 `{kind:"fail", message,
+  code}` 应答而非 throw；返回垃圾形状 fail-loud。**冲突优先级**：装配序在后者（更内层）的非 undefined
+  应答胜——要覆盖缺省策略的自定义件必须装配在 `continuationKit()` **之后**（与 compaction 自愈对
+  llm-retry 的让位语义同构）。参考实现：`@x-harness/agent-continuation`。
+
 ## 2. 工具插件：createToolPlugin 快路径
 
 ```ts

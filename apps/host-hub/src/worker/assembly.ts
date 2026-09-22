@@ -20,6 +20,7 @@ import {
   durableSessionKit,
   fenceKit,
   llmKit,
+  continuationKit,
   loopKit,
   meterKit,
   promptKit,
@@ -242,6 +243,7 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
     ...autoCompactKit({ contextWindow }),
     ...llmKit(adapters, { default: RETRY_POLICY }),
     ...loopKit(),
+    ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
     ...checkpointKit(),
     createAgentDelegationPlugin({ agentsDirs }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),

@@ -169,6 +169,11 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     const steerMessages = (world.fake.calls[2]?.messages ?? []).map((m) => JSON.stringify(m));
     expect(steerMessages.some((m) => m.includes("late steer"))).toBe(true); // stopping 窗口消化（不搁浅）
     expect(world.fake.calls).toHaveLength(3);
+    // 三元全序：截断 partial < 指令 < steer（保序结构钉死——防未来重构挪位不红）
+    const third = world.fake.calls[2]?.messages ?? [];
+    const at = (needle: string): number => third.findIndex((m) => JSON.stringify(m).includes(needle));
+    expect(at("half")).toBeLessThan(at(INSTRUCTION));
+    expect(at(INSTRUCTION)).toBeLessThan(at("late steer"));
     off();
     await handle.dispose();
   });

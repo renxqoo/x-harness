@@ -104,18 +104,17 @@ export type TurnConcludeDecision =
   | { readonly kind: "resume"; readonly source: string; readonly instruction: string }
   | { readonly kind: "fail"; readonly message: string; readonly code: string };
 
-export const agentTurnConclude = defineWaterfall<
-  {
-    readonly session: SessionId;
-    readonly turn: number;
-    readonly step: number;
-    readonly stopReason: "stop" | "max-tokens";
-    readonly content: readonly ContentBlock[];
-    readonly rawReason?: string;
-    readonly signal: AbortSignal;
-  },
-  TurnConcludeDecision | undefined
->("agent/turn-conclude");
+export interface TurnConcludePayload {
+  readonly session: SessionId;
+  readonly turn: number;
+  readonly step: number;
+  readonly stopReason: "stop" | "max-tokens";
+  readonly content: readonly ContentBlock[];
+  readonly rawReason?: string;
+  readonly signal: AbortSignal;
+}
+
+export const agentTurnConclude = defineWaterfall<TurnConcludePayload, TurnConcludeDecision | undefined>("agent/turn-conclude");
 
 /** F0②：assistant 落账前纠（幻觉强形态）——settle 与 append 之间；落的是改写后版本 */
 export interface AssistantSettlement {

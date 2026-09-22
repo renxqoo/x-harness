@@ -4,6 +4,7 @@
 import { runAgentJourney } from "./agent-journey.ts";
 import { runCliJourney } from "./cli-journey.ts";
 import { runCompactionJourney } from "./compaction-journey.ts";
+import { runOutputContinuationJourney } from "./output-continuation-journey.ts";
 import { runCrudScenario } from "./crud-scenario.ts";
 import { runDelegationJourney } from "./delegation-journey.ts";
 import { runCrossProcessJourney, runReviveJourney, runWorktreeJourney } from "./delegation-journeys.ts";
@@ -14,6 +15,7 @@ try {
   await runCrudScenario();
   await runAgentJourney();
   await runCompactionJourney();
+  await runOutputContinuationJourney();
   await runDelegationJourney();
   await runToolboxJourney();
   await runTodoJourney();

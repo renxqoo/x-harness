@@ -102,6 +102,13 @@ open axis：delegation 第四批探查结论决定是否需要——**需要才�
 - **迁移流（各自批次）**：模型可见性不变（calls 断言）+ UI 形态变化（不再出现 user/message 载体）+ 流自身语义回归（delegation：reportDelivered / 复读 / 异常窗口）。
 - **e2e**：真装配旅程断言 WAL 事件序与 get_entries 类型呈现。
 
+## §7.1 已知代价（审查落档）
+
+- **搁浅指令**：directive 落卷后若续写步被 preStep 否决（blocked）或续写 attempt 致命失败（error 收轮），
+  该指令从未被消费却永久留在投影——**下一次压缩吞掉之前，后续每条请求都带着这条过期喊话**（"Resume
+  directly…"紧跟新问题，模型可能续写半截答案而非答新问题）。WAL 不可变无法回收；directive 不进摘要故
+  下次压缩即消失。已知接受面（docs/OUTPUT-TOKEN-CONTINUATION.md 审查处置·代码轮 P7/低-3）。
+
 ## §7 裁决记录
 
 - **类型级 UI 隐藏，而非标记字段**（用户裁决）：标记要求每个消费方记得检查，遗忘面大；类型白名单让新类型默认不可见——隐藏是结构性默认，不是检查项。

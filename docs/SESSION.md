@@ -32,7 +32,7 @@ const store = ctx.use(sessionStore);
 | `sessionFlush` | parallel | `{ session: SessionId }` | — | store.flush 派发；all-settled，聚合错误经 flush 的 Result 上浮 |
 | `sessionDisposed` | emit | `{ session: SessionId }` | none | store.dispose 移除后广播，恰好一次 |
 
-### 1.3 事件信封与词表（闭合，17 词条）
+### 1.3 事件信封与词表（闭合，21 词条）
 
 ```ts
 type SessionEvent = { type; seq; time; data }
@@ -40,7 +40,7 @@ type SessionEvent = { type; seq; time; data }
 ```
 
 - `seq` 单调连续，由 Session 独占分配（= 落账时日志长度）；`time` 为 Unix 毫秒。**物化先行**：append/seed/header 一律先 `materializeJson`（单一 JSON 值域权威——稀疏数组/原型污染/Symbol 键/显式 undefined/非有限数与 -0 全拒；getter 单遍定影，门与存储不可能见到不同值），门只看快照形状，快照深冻入账——调用方对象永不被就地冻结。
-- **surface 词条**（产模型可见消息，仅此 4 类可携带 surfaceOp）：`system/message`、`user/message`、`assistant/message`、`tool/result`。
+- **surface 词条**（产模型可见消息，仅此 5 类可携带 surfaceOp）：`system/message`、`user/message`、`assistant/message`、`tool/result`、`agent/message`（内部消息——模型可见经投影 user 角色、UI 按类型隐藏、压缩按 kind 分流；契约单一真相见 [AGENT-MESSAGE.md](./AGENT-MESSAGE.md)）。
 - **log-only 词条**：`turn/start`、`turn/end`、`step/start`、`step/end`、`assistant/attempt`、`tool/call`、`request/header`、`request/context`、`llm/retry`、`session/end-seed`、`autocompact/checkpoint`、`todo/snapshot`。
 
 | 词条 | data 形状 | 事实 |

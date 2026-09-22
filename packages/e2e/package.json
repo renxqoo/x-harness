@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@x-harness/agent-continuation": "workspace:*",
     "@x-harness/agent-delegation": "workspace:*",
     "@x-harness/agent-loop": "workspace:*",
     "@x-harness/autocompact": "workspace:*",

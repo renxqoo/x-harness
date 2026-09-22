@@ -44,6 +44,7 @@ export interface AgentLoopService {
 | `agentRequest` | waterfall | `{ session, turn, step, dial, signal }`（dial=当前折叠拨号）→ 拨号 `{model, provider?, temperature?, maxTokens?, thinking?}`（thinking 词表 off/low/medium/high——llm 侧注入 anthropic thinking 参数） | none |
 | `agentRequestError` | waterfall | `{ session, turn, step, failure, signal }` → `{kind:"retry"} \| undefined`（缺省终态） | none |
 | `agentTurnStopping` | serial | `{ session, turn, signal }`——窗口后重读收件箱定续航（数据驱动） | none |
+| `agentTurnConclude` | waterfall | `{ session, turn, step, stopReason, content, rawReason?, signal }` → `{kind:"resume", source, instruction} \| {kind:"fail", message, code} \| undefined`（收束窗口：无工具 settle 即将结束 turn 的通用时点——内核不识「截断」，判定归插件；undefined = 现行收束路径；续写指令经内核以 agent/message{directive} 落卷，docs/OUTPUT-TOKEN-CONTINUATION.md / AGENT-MESSAGE.md；中间件必调 next、不得以 throw 表达策略） | none |
 | `agentAssistantSettle` | waterfall | `{ session, turn, step, content, stopReason, interrupted? }` → 同形（落账前纠：改写版即落账版） | none |
 | `agentLlmStream` | waterfall | `{ request }` → `AsyncIterable<LlmChunk>`（agent 层流包裹，final = llm.stream；全局回放/路由类拦截用 llm 包 llm/stream root 层） | none |
 
@@ -96,14 +97,24 @@ turn()（逃逸 throw——中间件违约/append 失败——在 turn 内 catch
     流结算（stream.ts）：请求体 = session.deriveMessages()（纯折叠不变量）→ llmRuntime.stream：
       finish stop → append assistant/message{content,thinking?,usage?,stopReason:"stop"}（surface append；
         thinking=本 attempt 思考全文，落盘不回传——STREAM-PARTIAL-PERSISTENCE）
-      finish max-tokens → 同上 stopReason:"max-tokens"；turnEnds 粘性 max-tokens
+      finish max-tokens → 同上 stopReason:"max-tokens"（Settlement 透传 rawReason）
       finish error / 流抛 / 流无 finish（P14 兜底）/ finish stop 但零文本零工具（空结算，视同流错误）→ append assistant/attempt{error=`code:message`, content?=已收增量, thinking?=已收思考, usage?} → waterfall agentRequestError
         {retry} → 重进 attempt（不重落 system/user/header）；否则 fatal：源于 abort（signal 已断）按 {aborted} 收尾，
         其余 turnEnds={error}；均先闭 step/end 再跳出
       中途 abort 且已有部分文本 → append assistant/message{…, interrupted:true, thinking?}；无文本 → attempt（thinking 照落；终态仍 aborted）
     assistant 的 tool_use 块 → tool-calls.ts 调度（§1.5）；additionalContexts → insert next-step；concludesTurn → {completed}
     工具相位结束查 signal.aborted → 直达 turnEnds={aborted}
-    stopReason 判定：stop 且无工具→{completed}；有工具且未 conclude→null（下一步）；max-tokens→粘性
+    收束窗口（无工具 settle 即将结束 turn 的通用时点——docs/OUTPUT-TOKEN-CONTINUATION.md）：
+      waterfall agentTurnConclude（载荷纯事实 stopReason/content/rawReason?）→
+      {resume} → append agent/message{source,kind:directive,content:instruction}（内部消息：投影携带、
+        UI 类型隐藏、压缩跳过——AGENT-MESSAGE.md）→ 置续写步标志 continue（出口不变量 turnEnds===undefined——
+        粘性残留会把续写成功的轮误收 max-tokens）；{fail} → 闭括号后 turnEnds={error,message,code}（abort 竞态
+        fatalOutcome 覆盖）；垃圾形状 fail-loud；undefined → 现行路径。「有 tool_use 不续跑」由结构保证（带工具
+        settle 进下一步，收束点不可达）
+    续写步（resume 后的下一步）：不领收件箱（暂停吸收排队输入——保序：续写请求末条=指令）、不落 user 批次；
+      仍派发 agentPreStep（claim:[]——压缩检查面）；返回闭集 {enter}|{blocked}（empty 不可达）；reject 不回灌、
+      rewrite 忽略
+    stopReason 判定：stop 且无工具→{completed}；有工具且未 conclude→null（下一步）；max-tokens→粘性（无决策/带工具路径）
     concludesTurn × additionalContexts（P16 优先级）：contexts 非空时 conclude 延后——本步继续（上下文需模型消化），
       下一步若又跑工具则 pendingConclude 复位（工具结果也是待消化上下文，不半途强制收轮），
       无工具步结束且无新 contexts 时收轮（pendingConclude 标志）

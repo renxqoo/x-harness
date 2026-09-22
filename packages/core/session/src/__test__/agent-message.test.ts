@@ -75,6 +75,7 @@ describe("agent/message 形状门（gates——AGENT-MESSAGE.md §1 词表纪律
       agentMessageEvent(0, { kind: "meta" }),
       agentMessageEvent(0, { source: "" }),
       agentMessageEvent(0, { content: [{ type: "image", data: "abc", mediaType: "image/png" }] }),
+      agentMessageEvent(0, { content: [{ type: "tool_use", callId: "c", name: "t", input: "{}" }] }), // text-only 契约：tool_use 同拒
       { type: "agent/message", seq: 0, time: 1, data: { turn: 0, step: 1, source: "s", kind: "directive" } }, // 缺 content
     ]) {
       expect(validateSessionEvents([bad as never])).toMatch(/^corrupt-envelope:0:shape:agent\/message$/);

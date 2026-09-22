@@ -54,7 +54,9 @@ export interface LlmRuntime {
    `{type:"finish", finish:{kind:"error", message, code, retryAfterMs?}}` 收尾流——**不裸 throw**。
    code 词表（闭集）：`http-<status>`（如 `http-429`）、`network`（连接拒绝/读体中断/EOF 截断——
    截断归网络类可重试；适配器在流自然结束且未发过 finish 时补 `finish{error, code:"network",
-   message:"stream ended without finish"}`，驱动的无-finish 兜底仅防违约适配器）、`no-adapter`。
+   message:"stream ended without finish"}`，驱动的无-finish 兜底仅防违约适配器）、`no-adapter`、
+   `context-overflow`（输入侧窗口溢出文案分类——pi isContextOverflow 文本模式，优先于状态码：主力
+   provider 的输入溢出为 400+文案；compaction 自愈消费，llm-retry 不可重试——docs/OUTPUT-TOKEN-CONTINUATION.md）。
    `retryAfterMs` 仅 HTTP 429/503 带 `Retry-After` 头（秒，小数折算；HTTP-date 形态解析失败视为
    缺席）时出现——重试件的快车道输入。
 

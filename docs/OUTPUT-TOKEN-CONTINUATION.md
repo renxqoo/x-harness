@@ -90,7 +90,7 @@
   - **第四批以外的 delegation 面**（子代理失败通知通道、task_output 复查面）——第四批只迁报告投递载体；其余 delegation 行为不动。
   - **agent/message 宿主写入 API 的最终形态**——inject 通道改型 or delegation 直写，第四批小方案探查投递时序后钉死（见实施顺序第四批前置）。
   - **`max-tokens + tool_use` 的粘性收轮**（工具结果滞留，由下次 kick step0 消化）——存量语义（AGENT-LOOP-DRIVER.md §1.5 已档），按用户裁决维持；滞留改良归未来需求（挂账：driver.ts max-tokens 分支）。
-  - **done 路径零内容 + max-tokens**（如 MiMo length+0 输入溢出）——现行已落空 `assistant/message` 收轮，不改 done 路径判定；续写判定不设内容前置（空 partial 续写无害，压缩检查先行兜底）。
+  - **done 路径零内容 + max-tokens**（如 MiMo length+0 输入溢出）——不改 done 路径判定；策略插件**内容前置**（零内容截断无可接续点：空 assistant 在 pi-context 被丢弃成「双 user 相邻 + 指令对着不存在的中断」——审查中-1/P8 处置后与救回路径论证对齐）。
   - **指令持久留存的 token 成本与 emergency 吞指令退化**——指令留存投影随后续请求直到压缩吞掉（control 不进摘要，有界；~45 token/次）；emergency 自愈（keep=0）可能把指令本身摘进被替换区间且 directive 不进摘要 → 重试请求无指令，续写退化为普通 continue——已知退化（崩溃级路径，非主路径）。
   - **跨版本读侧**——旧运行时读含 `agent/message` 的新 WAL 整卷拒（SESSION.md §7 既定政策），无跨版本承诺，同版读写。
   - **计数跨 turn 持久化**——spec 收尾归零；崩溃中断的续写轮由 resume 侧 interruptedTurnClosers 闭轮，残留 agent/message 为 directive 类（摘要跳过、UI 隐藏），对后续请求仅少量 token 尾巴，无行为后果。
@@ -249,6 +249,21 @@
 - delegation 迁移与宿主写入 API 挂账另立需求（涉投递边界语义与 reportDelivered 记账）。
 - kind 值命名修正 control → directive（用户质询暴露歧义：「control」读作「系统内部消息」会误吞子代理报告类；directive=指令（喊话，过期作废）/ content=内容（情报，必须归档），UI 隐藏仍是整个类型的语义、与 kind 无关）。
 - delegation 迁移从挂账提入第四批（用户裁决）：报告载体迁移 + reportDelivered 记账点迁移 + 投递时序等价性验证；批内先探查后小方案，独立审查轮保留。
+
+## 审查处置（代码轮，2 并行子代理，问题清零——批 1-3 diff）
+
+- P1 限流误吞（中高）：overflow 文本分类先于状态码会把 429+「too many tokens」类限流文案误判 context-overflow → 不重试 + emergency 压缩 → 采纳：429/503 状态码在场时跳过 overflow 文本分类（限流与溢出码 400/413 干净分离）；回归测试钉死网关转发无前缀形态。
+- P3/零内容救回落空归 network（中）：rawStop ∈ 三词表且零内容 → context-overflow（确定性失败不盲重试；输入压力由自愈恰一次兜底）→ 采纳。
+- 中-1/P8 done 零内容续写自相矛盾（中）：策略加内容前置（content.length===0 → 让位现行粘性路径）→ 采纳；问题域措辞同步。
+- P6/低-2 gate 放行 tool_use 块（低）：越约块被三消费方静默吞成无痕数据损失 → 采纳：isTextOnlyBlocks fail-closed + 测试补 tool_use 反例。
+- P5 store 缺席 count=0 fail-open（低）：理论上开无限续写面 → 采纳：会话不可寻址即让位（不把「读不到账本」当「账本为零」）。
+- P4 双策略件优先级未文档化（中低）→ 采纳：PLUGIN-AUTHORING §1.5 补「装配序在后者应答胜；覆盖件须装配在 continuationKit 之后」。
+- P7/低-3 搁浅指令「无行为后果」措辞乐观 → 采纳：AGENT-MESSAGE §7.1 已知代价点名 blocked/fatal 确定性残留路径。
+- P2 z.ai 429 文案真溢出（pi 库局限）→ 采纳：LLM-PI.md 已知局限记录，水位压缩兜底。
+- 低-4 三元全序断言缺口 → 采纳：暂停吸收用例补 partial < 指令 < steer 下标断言。
+- P9 next 纪律契约测试缺失 → 采纳：插件包补「不调 next → 内核 throw → error 收轮」用例。
+- 挂账（第四批）：agent-delegation/lineage.ts recastSurface default 静默丢 agent/message——父轮 directive 不进子种子正确，delegation 迁移 content 时需补 case。
+- 确认面（两审合计 20+ 项）：hasContent 双侧口径一致、粘性重排逐路径等价、TurnState 无丢失读写、出口不变量结构成立、出口闭集、steer 不搁浅、指令末条结构保证、存量消费方中性扫描（cut/occupancy/scavenger/repair/telemetry/archive）、嵌套压缩竞态「摘 partial 留指令」不可达、自愈词表行为等价、测试非假绿——无需改动。
 
 ## 验收清单
 

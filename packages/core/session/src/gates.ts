@@ -117,6 +117,12 @@ function isInboxEntries(value: unknown): boolean {
   );
 }
 
+/** 内部消息 content 门（AGENT-MESSAGE.md §1 text-only 起步）：越约块（tool_use/image）
+ *  会被三处消费方静默丢弃（serialize/pi-context 只读 text）——fail-closed 拒，不做无痕数据损失 */
+function isTextOnlyBlocks(value: unknown): boolean {
+  return Array.isArray(value) && value.every((block) => isObj(block) && block["type"] === "text" && isStr(block["text"]));
+}
+
 /** todo/snapshot 词条门常量：status 闭合词表 + 可选串字段名 */
 const TODO_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress", "completed"]);
 const TODO_SNAPSHOT_TEXT_KEYS = ["description", "activeForm", "owner"] as const;
@@ -247,7 +253,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isStr(d["source"]) &&
     d["source"] !== "" &&
     AGENT_MESSAGE_KINDS.has(d["kind"] as string) &&
-    isContentBlocks(d["content"], false), // text-only 起步（image 通道后开走 AGENT-MESSAGE §4 场景 B）
+    isTextOnlyBlocks(d["content"]), // text-only 起步（AGENT-MESSAGE.md §1；tool_use/image 后开走 §4 场景 B）
 };
 
 /** 形状门：未知词条 / 形状不符 → 返回失败理由（data 须为已物化快照或 JSON.parse 产物） */

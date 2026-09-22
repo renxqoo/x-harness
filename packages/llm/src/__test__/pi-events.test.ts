@@ -276,6 +276,20 @@ describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透
     ]);
   });
 
+  it("限流保护：429/503 状态码在场时跳过 overflow 文本分类（『too many tokens』等限流文案不得换走 emergency 压缩）", async () => {
+    // Bedrock ThrottlingException 经网关转发无前缀形态——曾误命中 /too many tokens/i
+    expect(
+      await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "Too many tokens, please wait before trying again." } })], {
+        failureInfo: () => ({ status: 429 }),
+      }),
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "Too many tokens, please wait before trying again.", code: "http-429" } }]);
+    expect(
+      await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "prompt is too long" } })], {
+        failureInfo: () => ({ status: 503 }),
+      }),
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "prompt is too long", code: "http-503" } }]);
+  });
+
   it("overflow 负例：纯 413 无 overflow 文案保持 http-413；throttling 排除集不误判；其它既有分类不漂移", async () => {
     expect(
       await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "gateway rejected" } })], {

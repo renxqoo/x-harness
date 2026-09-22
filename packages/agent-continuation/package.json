@@ -1,0 +1,17 @@
+{
+  "name": "@x-harness/agent-continuation",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/agent-loop": "workspace:*",
+    "@x-harness/core": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/system-prompt": "workspace:*",
+    "@x-harness/tools": "workspace:*"
+  }
+}

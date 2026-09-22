@@ -144,4 +144,25 @@ describe("http-413 紧急自愈", () => {
       await world.ctx.dispose();
     }
   });
+
+  it("context-overflow 码同触发自愈（docs/OUTPUT-TOKEN-CONTINUATION.md：主力 provider 输入溢出为 400+文案分类码）；纯 http-400 不触发", async () => {
+    const world = await makeWorld();
+    try {
+      const session = await seeded(world, "heal-overflow");
+      session.append("request/context", { provider: "p", model: "m" });
+      world.llm.scripts.push(textScript("EMERGENCY-SUM"));
+      const landed: string[] = [];
+      world.ctx.on(compactionLanded, (payload) => landed.push(payload.trigger));
+
+      const healed = await dispatchError(world, { session: session.id, failure: { message: "prompt is too long", code: "context-overflow" } });
+      expect(healed).toEqual({ kind: "retry" });
+      expect(landed).toEqual(["emergency"]);
+
+      // 状态码直报形态（无 overflow 文案）不属词表——放行不动作
+      const plain400 = await dispatchError(world, { session: session.id, failure: { message: "bad request", code: "http-400" } });
+      expect(plain400).toBeUndefined();
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
 });
