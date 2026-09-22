@@ -224,3 +224,65 @@ function makeRuntimeStub(): Parameters<typeof createWorkerCommands>[0] {
     pendingSends: 0,
   };
 }
+
+
+describe("queue/drop、queue/send_now 单条分支（stub 直调——streaming_window 防御面）", () => {
+  /** 带一条 next-turn 排队条目的最小会话 stub（foldInbox 投影所需的最小事件面）。 */
+  function makeQueuedSession() {
+    const appends: Array<{ type: string; data: unknown }> = [];
+    const insert = {
+      type: "agent/inbox/spliced",
+      seq: 1,
+      time: 1,
+      data: { op: "insert", target: "next-turn", entries: [{ id: "f1", content: [{ type: "text", text: "q" }] }] },
+    };
+    const session = {
+      id: "t1",
+      events: () => [insert],
+      append: (type: string, data: unknown) => {
+        appends.push({ type, data });
+        return { ok: true as const };
+      },
+    };
+    return { session, appends };
+  }
+
+  function stubWithSession(pendingSends: number) {
+    const rt = makeRuntimeStub();
+    const { session, appends } = makeQueuedSession();
+    rt.state.threadId = "t1";
+    rt.state.handle = { agent: { session } } as never;
+    rt.pendingSends = pendingSends;
+    const out: string[] = [];
+    rt.emitLine = (line) => out.push(line);
+    return { rt, appends, out };
+  }
+
+  test("空闲且无在飞 send（streaming_window）：拒绝且不落任何 WAL 事件（防御分支直测）", async () => {
+    const { rt, appends, out } = stubWithSession(0);
+    const handlers = createWorkerCommands(rt);
+    await handlers.get("queue/send_now")?.({ id: "r1", threadId: "t1", entryId: "f1" });
+    const frame = JSON.parse(out[0] ?? "{}") as { success?: boolean; error?: { code?: string } };
+    expect(frame.success).toBe(false);
+    expect(frame.error?.code).toBe("streaming_window");
+    expect(appends).toEqual([]); // 拒绝路径不写收件箱（条目留在队列）
+  });
+
+  test("在飞 send 覆盖窗口（pendingSends>0）：retarget 落 WAL 且 entry 原样跨队列", async () => {
+    const { rt, appends, out } = stubWithSession(1);
+    const handlers = createWorkerCommands(rt);
+    await handlers.get("queue/send_now")?.({ id: "r2", threadId: "t1", entryId: "f1" });
+    const frame = JSON.parse(out[0] ?? "{}") as { success?: boolean };
+    expect(frame.success).toBe(true);
+    expect(appends).toEqual([{ type: "agent/inbox/spliced", data: { op: "retarget", id: "f1", to: "next-step" } }]);
+  });
+
+  test("queue/drop 空闲可删（无轮次要求）：drop 落 WAL", async () => {
+    const { rt, appends, out } = stubWithSession(0);
+    const handlers = createWorkerCommands(rt);
+    await handlers.get("queue/drop")?.({ id: "r3", threadId: "t1", entryId: "f1" });
+    const frame = JSON.parse(out[0] ?? "{}") as { success?: boolean };
+    expect(frame.success).toBe(true);
+    expect(appends).toEqual([{ type: "agent/inbox/spliced", data: { op: "drop", target: "next-turn", dropped: ["f1"], reason: "client-drop" } }]);
+  });
+});

@@ -28,6 +28,46 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
     expect(state.nextTurn).toHaveLength(1);
   });
 
+  it("drop 按目标队列单条移除（queue/drop 直写）；未知 id 幂等忽略", () => {
+    const a = insertData("next-turn", [{ type: "text", text: "a" }]);
+    const b = insertData("next-step", [{ type: "text", text: "b" }]);
+    const idA = (a.entries[0] as { id: string }).id;
+    const state = foldInbox([
+      ev(0, a),
+      ev(1, b),
+      ev(2, { op: "drop", target: "next-turn", dropped: [idA, "msg_missing"], reason: "client-drop" }),
+    ]);
+    expect(state.nextTurn).toHaveLength(0);
+    expect(state.nextStep).toHaveLength(1);
+  });
+
+  it("drop 只动目标队列：next-turn 的 drop 不波及 next-step 同文本条目", () => {
+    const a = insertData("next-turn", [{ type: "text", text: "dup" }]);
+    const b = insertData("next-step", [{ type: "text", text: "dup" }]);
+    const idA = (a.entries[0] as { id: string }).id;
+    const state = foldInbox([ev(0, a), ev(1, b), ev(2, { op: "drop", target: "next-turn", dropped: [idA], reason: "client-drop" })]);
+    expect(state.nextTurn).toHaveLength(0);
+    expect(state.nextStep).toHaveLength(1);
+  });
+
+  it("retarget 单条改道：entry 本体与 id 原样跨队列移动（queue/send_now 直写）", () => {
+    const a = insertData("next-turn", [{ type: "text", text: "later" }]);
+    const idA = (a.entries[0] as { id: string }).id;
+    const state = foldInbox([ev(0, a), ev(1, { op: "retarget", id: idA, to: "next-step" })]);
+    expect(state.nextTurn).toHaveLength(0);
+    expect(state.nextStep).toEqual([{ id: idA, content: [{ type: "text", text: "later" }] }]);
+    // 改回 next-turn 幂等可逆（fold 只认事件序）
+    const back = foldInbox([ev(0, a), ev(1, { op: "retarget", id: idA, to: "next-step" }), ev(2, { op: "retarget", id: idA, to: "next-turn" })]);
+    expect(back.nextTurn).toEqual([{ id: idA, content: [{ type: "text", text: "later" }] }]);
+  });
+
+  it("retarget 未知 id 幂等忽略", () => {
+    const a = insertData("next-turn", [{ type: "text", text: "a" }]);
+    const state = foldInbox([ev(0, a), ev(1, { op: "retarget", id: "msg_missing", to: "next-step" })]);
+    expect(state.nextTurn).toHaveLength(1);
+    expect(state.nextStep).toHaveLength(0);
+  });
+
   it("claimTurnBatch：next-turn 队首 + next-step 全部；claimStepBatch：next-step 全部", () => {
     const state = {
       nextTurn: [

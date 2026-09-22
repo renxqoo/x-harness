@@ -74,6 +74,41 @@ function isInboxTarget(value: unknown): boolean {
   return value === "next-turn" || value === "next-step";
 }
 
+/** id 字符串数组（claim.claimed / drop.dropped 共用形状）。 */
+function isIdList(value: unknown): boolean {
+  return Array.isArray(value) && value.every((id) => isStr(id) && id !== "");
+}
+
+/** claim 消费（按 turn 记账）：target + turn + claimed。 */
+function isInboxClaim(d: Record<string, unknown>): boolean {
+  return isInboxTarget(d["target"]) && isCount(d["turn"]) && isIdList(d["claimed"]);
+}
+
+/** drop 单条移除（queue/drop 直写）：target + dropped + reason。 */
+function isInboxDrop(d: Record<string, unknown>): boolean {
+  return isInboxTarget(d["target"]) && isIdList(d["dropped"]) && isStr(d["reason"]) && d["reason"] !== "";
+}
+
+/** 收件箱拼接五 op 的形状门（insert/claim/clear/drop/retarget）。 */
+function isInboxSpliceData(data: unknown): boolean {
+  if (!isObj(data)) return false;
+  const d = data as Record<string, unknown>;
+  switch (d["op"]) {
+    case "insert":
+      return isInboxTarget(d["target"]) && isInboxEntries(d["entries"]);
+    case "claim":
+      return isInboxClaim(d);
+    case "clear": // 清双队列，无 target
+      return isStr(d["reason"]) && d["reason"] !== "";
+    case "drop":
+      return isInboxDrop(d);
+    case "retarget": // 单条改道（queue/send_now 直写）
+      return isStr(d["id"]) && d["id"] !== "" && isInboxTarget(d["to"]);
+    default:
+      return false;
+  }
+}
+
 function isInboxEntries(value: unknown): boolean {
   return (
     Array.isArray(value) &&
@@ -190,24 +225,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     d["ledger"] !== "" &&
     isCount(d["coveredSeq"]) &&
     (d["stale"] === undefined || d["stale"] === true),
-  "agent/inbox/spliced": (d) => {
-    if (!isObj(d)) return false;
-    switch (d["op"]) {
-      case "insert":
-        return isInboxTarget(d["target"]) && isInboxEntries(d["entries"]);
-      case "claim":
-        return (
-          isInboxTarget(d["target"]) &&
-          isCount(d["turn"]) &&
-          Array.isArray(d["claimed"]) &&
-          d["claimed"].every((id) => isStr(id) && id !== "")
-        );
-      case "clear": // 清双队列，无 target
-        return isStr(d["reason"]) && d["reason"] !== "";
-      default:
-        return false;
-    }
-  },
+  "agent/inbox/spliced": isInboxSpliceData,
   "todo/snapshot": (d) => {
     if (!isObj(d) || !isCount(d["seq"])) return false;
     const ids = todoSnapshotTaskIds(d["tasks"], d["seq"]);

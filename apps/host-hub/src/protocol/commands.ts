@@ -1,4 +1,4 @@
-// 对外命令面（DESIGN §3，56 个）：wire 入参的松类型（解析与校验在处理器逐字段做）。
+// 对外命令面（DESIGN §3，58 个）：wire 入参的松类型（解析与校验在处理器逐字段做）。
 // 本文件持命令名封闭集与共享入参形状；分组仅作文档注记——路由事实在 internal.ts。
 import type { WireImage } from "../shared/images.ts";
 
@@ -66,6 +66,8 @@ export const COMMAND_NAMES: readonly string[] = [
   "follow_up",
   "abort",
   "clear_queue",
+  "queue/drop",
+  "queue/send_now",
   "compact",
   "get_state",
   "get_inflight",

@@ -81,12 +81,12 @@ spawn("<host-hub bin>", [], { env: { ...process.env, HUB_AGENT_DIR: <配置目�
 - 错误形态：`{"success":false,"error":"<英文中性>"}`；错误文案词表 = 封闭清单
   （附录 A）；单条命令失败绝不退出进程。
 
-## 3. 命令集（56 个——迁移源 55 + thread/delete（BATCH2）；分组见各节）
+## 3. 命令集（58 个——迁移源 55 + thread/delete（BATCH2）+ queue/drop、queue/send_now（单条队列操作）；分组见各节）
 
 | 组 | 命令 | host 本地/worker |
 | --- | --- | --- |
 | 线程生命周期 | thread/start、thread/resume、thread/register、thread/stop、thread/delete、thread/retire、thread/set_keepalive、thread/list、thread/list_saved | host |
-| 对话驱动 | prompt、steer、follow_up、abort、clear_queue、compact | worker |
+| 对话驱动 | prompt、steer、follow_up、abort、clear_queue、queue/drop、queue/send_now、compact | worker |
 | 状态与历史 | get_state、get_inflight、get_messages、get_entries、get_tree、get_session_stats、set_session_name、get_commands、get_fork_messages | worker（§3.4 矩阵） |
 | 收敛读口 | get_subagents、get_pending_dialogs | worker（非 live 空形态） |
 | 会话树/分叉 | fork、clone | worker |
@@ -206,7 +206,7 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   model——迁移源为 modelId 单字段，改名声明 MIGRATION §4**）= `session/meta{dial}`
   尾值 → `request/header` 尾值 → 装配缺省；isCompacting 仅反映 worker 发起的手动
   压缩（自动压缩在 step 内部，经 `compaction/*` 事件可观察——声明性边界）；
-  queue = `foldInbox(events)` 文本数组 `{steering:[], followUp:[]}`；isCompacting =
+  queue = `foldInbox(events)` 条目数组 `{steering:[{id,text}], followUp:[{id,text}]}`（id = inbox entry id——queue/drop、queue/send_now 的单条寻址键）；isCompacting =
   命令执行中谓词（BATCH3 起数据源 = 桥对 command/run|done 的计数——本批唯一命令是
   compact，语义等价）。
 - **get_inflight** `{threadId}` → `{turnStartSeq, turnStartedAt, message, toolOutputs,
@@ -723,7 +723,7 @@ maxTokens` 退役——预算钳制归内核 llm 拨号层。）
 | workspace/trust | `{trusted: [...]}`（无参列表形态）；设/撤形态无 data |
 | thread/list | `[{threadId, cwd, sessionPath, state, idleMs, rssBytes, keepalive, isStreaming}]` |
 | thread/list_saved | `{sessions: SessionSummary[]}`（§3.1 折叠形状） |
-| clear_queue | `{steering: string[], followUp: string[]}` |
+| clear_queue | `{steering: {id,text}[], followUp: {id,text}[]}`（queue/drop、queue/send_now 无 data） |
 | compact（含 /compact 拦截） | `{summary, replacedCount, summaryTokens}` |
 | get_state | `{model, isStreaming, isCompacting, sessionId, sessionName, sessionFile, messageCount, queue}` |
 | get_inflight | `{turnStartSeq, turnStartedAt, message, toolOutputs, bash}` |

@@ -9,7 +9,7 @@ import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { Type } from "@sinclair/typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { agentLoopPlugin, agentLoopServiceToken, agentPreStep, agentRequest, agentRequestError, agentStatus, agentTurnStopping } from "../index.ts";
+import { agentLoopPlugin, agentLoopServiceToken, agentPreStep, agentRequest, agentRequestError, agentStatus, agentTurnStopping, chainsNextTurn } from "../index.ts";
 import { errorScript, fakeAdapter, makeWorld, resetWorlds, spawn, textScript, toolScript, types, worlds } from "./world.ts";
 
 beforeEach(() => {
@@ -448,5 +448,27 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     agent.followup("hi");
     await handle.dispose();
     expect(agent.session.append("turn/start", { turn: 99 })).toMatchObject({ ok: false, reason: "session-disposed" });
+  });
+});
+
+describe("chainsNextTurn（收轮链式条件——steer/send_now 收轮竞态搁浅防线）", () => {
+  const insertNextStep = (text: string) => ({ type: "agent/inbox/spliced", seq: 0, time: 0, data: { op: "insert", target: "next-step", entries: [{ id: `s-${text}`, content: [{ type: "text", text }] }] } });
+  const sessionOf = (events: unknown[]) => ({ events: () => events }) as never as Parameters<typeof chainsNextTurn>[2];
+  const completed = { kind: "completed" as const };
+
+  it("completed + 仅 next-step 有货 → 链式（最后一步已过领取点的 steer 不搁浅）", () => {
+    expect(chainsNextTurn(undefined, completed, sessionOf([insertNextStep("late")]))).toBe(true);
+  });
+
+  it("completed + 收件箱空 → 不链；next-turn 有货 → 链式（既有语义不变）", () => {
+    expect(chainsNextTurn(undefined, completed, sessionOf([]))).toBe(false);
+    expect(chainsNextTurn(undefined, completed, sessionOf([{ type: "agent/inbox/spliced", seq: 0, time: 0, data: { op: "insert", target: "next-turn", entries: [{ id: "t", content: [{ type: "text", text: "x" }] }] } }]))).toBe(true);
+  });
+
+  it("异常终态（error/max-tokens）与 cancelled 一律不链：排队消息原地保留", () => {
+    const stocked = sessionOf([insertNextStep("late")]);
+    expect(chainsNextTurn(undefined, { kind: "error", message: "boom" }, stocked)).toBe(false);
+    expect(chainsNextTurn(undefined, { kind: "max-tokens" }, stocked)).toBe(false);
+    expect(chainsNextTurn("client-abort", completed, stocked)).toBe(false);
   });
 });

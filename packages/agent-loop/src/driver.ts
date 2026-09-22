@@ -38,12 +38,15 @@ function appendUserBatch(scope: TurnScope, step: number, entry: StepEntry): void
   appendSurfaceEvent(deps.session, { type: "user/message", data: { turn, step, content }, surfaceOp: "append" });
 }
 
-/** 链式条件：未取消、终态 completed、有 next-turn——异常终态（error/max-tokens/aborted/
- *  blocked）一律不链：排队消息原地保留（下次 kick 的 step0 消费），立即 idle 让失败通知出。 */
-function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutcome | undefined, session: Session): boolean {
+/** 链式条件：未取消、终态 completed、收件箱有存货（next-turn ∨ next-step）——
+ *  异常终态（error/max-tokens/aborted/blocked）一律不链：排队消息原地保留（下次 kick
+ *  的 step0 消费），立即 idle 让失败通知出。next-step 计入链式：steer/send_now 在
+ *  收轮判定之后到达（最后一步已过领取点）时消息不得搁浅在 next-step。 */
+export function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutcome | undefined, session: Session): boolean {
   if (cancelled !== undefined) return false;
   if (turnEnds !== undefined && turnEnds.kind !== "completed") return false;
-  return foldInbox(session.events()).nextTurn.length > 0;
+  const inbox = foldInbox(session.events());
+  return inbox.nextTurn.length > 0 || inbox.nextStep.length > 0;
 }
 
 /** 逃逸路径的括号收尾：step/end 闭不上为止（已封存），错误路径括号形状一致 */

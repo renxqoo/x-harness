@@ -4,7 +4,7 @@
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { hubError } from "../shared/errors.ts";
 import { projectEntries } from "../shared/entries-project.ts";
-import { foldQueueText } from "../shared/inbox-fold.ts";
+import { foldQueue } from "../shared/inbox-fold.ts";
 import { WORKER_RESPONSE_SOFT_CAP } from "../shared/limits.ts";
 import { entryWindow } from "./entries-window.ts";
 import { listCommands } from "./command-listing.ts";
@@ -31,7 +31,7 @@ function handleGetState(rt: WorkerRuntime, input: CommandInput): void {
       sessionName: titleOf(events) ?? "",
       sessionFile: rt.state.sessionPath,
       messageCount,
-      queue: foldQueueText(events),
+      queue: foldQueue(events),
     },
   });
 }

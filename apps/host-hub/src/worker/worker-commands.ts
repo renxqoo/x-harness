@@ -7,6 +7,7 @@
 // title/permission-mode/clear）一律 append+flush。
 import type { ImageBlock, Session, SessionId } from "@x-harness/session";
 import type { AgentHandle } from "@x-harness/agent-loop";
+import { foldInbox } from "@x-harness/agent-loop";
 import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
@@ -14,7 +15,7 @@ import { hubError, errorOfCause } from "../shared/errors.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
-import { foldQueueText } from "../shared/inbox-fold.ts";
+import { findQueueEntryTarget, foldQueue } from "../shared/inbox-fold.ts";
 import { parseCommand } from "@x-harness/commands";
 import { normalizeImages } from "../shared/images.ts";
 import type { WireImage } from "../shared/images.ts";
@@ -411,7 +412,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
   handlers.set("clear_queue", async (input) => {
     const session = requireThread(rt, { ...input, command: "clear_queue" });
     if (session === undefined) return;
-    const before = foldQueueText(session.events()); // 先取后清——返回被清文本
+    const before = foldQueue(session.events()); // 先取后清——返回被清文本
     const append = session.append("agent/inbox/spliced", { op: "clear", reason: "client-clear" });
     if (!append.ok) {
       respond(rt, { id: input.id, command: "clear_queue", error: hubError("io_failed", append.reason) });
@@ -423,6 +424,67 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "clear_queue", data: before });
+  });
+
+  // 单条队列命令寻址键 = entryId（inbox entry id，get_state.queue 投影携带；命令 id
+  // 字段是请求回执 id，两者不同名）。未知 entryId 按 state_conflict 拒绝（已消费/
+  // 已清空的竞态，消费方自行收敛），不重放队列镜像。
+  handlers.set("queue/drop", async (input) => {
+    const session = requireThread(rt, { ...input, command: "queue/drop" });
+    if (session === undefined) return;
+    const entryId = typeof input.entryId === "string" ? input.entryId : "";
+    if (entryId === "") {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("invalid_input", "queue entryId required") });
+      return;
+    }
+    const target = findQueueEntryTarget(session.events(), entryId);
+    if (target === undefined) {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("state_conflict", `queue entry not found: ${entryId}`) });
+      return;
+    }
+    const append = session.append("agent/inbox/spliced", { op: "drop", target, dropped: [entryId], reason: "client-drop" });
+    if (!append.ok) {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("io_failed", append.reason) });
+      return;
+    }
+    const flushed = await rt.state.world?.store.flush(session.id);
+    if (flushed !== undefined && !flushed.ok) {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("io_failed", flushed.reason) });
+      return;
+    }
+    respond(rt, { id: input.id, command: "queue/drop" });
+  });
+
+  // 立即改向：next-turn 条目 retarget 进 next-step——运行中轮的下一步边界领取注入；
+  // 轮若在命令到达前已收尾，retarget 后的 next-step 存货由链式条件兜底（step0 领取），
+  // 空闲且无在飞 send 时无轮可改向，按受理窗口族拒绝（条目留在 followUp 队列不动）。
+  handlers.set("queue/send_now", async (input) => {
+    const session = requireThread(rt, { ...input, command: "queue/send_now" });
+    if (session === undefined) return;
+    const entryId = typeof input.entryId === "string" ? input.entryId : "";
+    if (entryId === "") {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("invalid_input", "queue entryId required") });
+      return;
+    }
+    if (!foldInbox(session.events()).nextTurn.some((entry) => entry.id === entryId)) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("state_conflict", `queue entry not in follow-up queue: ${entryId}`) });
+      return;
+    }
+    if (!rt.bridge.isStreaming() && rt.pendingSends === 0) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("streaming_window", "no running turn to steer into") });
+      return;
+    }
+    const append = session.append("agent/inbox/spliced", { op: "retarget", id: entryId, to: "next-step" });
+    if (!append.ok) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("io_failed", append.reason) });
+      return;
+    }
+    const flushed = await rt.state.world?.store.flush(session.id);
+    if (flushed !== undefined && !flushed.ok) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("io_failed", flushed.reason) });
+      return;
+    }
+    respond(rt, { id: input.id, command: "queue/send_now" });
   });
 
   handlers.set("compact", async (input) => {

@@ -32,6 +32,8 @@ export const THREAD_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "follow_up",
   "abort",
   "clear_queue",
+  "queue/drop",
+  "queue/send_now",
   "compact",
   "get_state",
   "get_inflight",

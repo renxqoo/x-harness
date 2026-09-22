@@ -233,6 +233,16 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     );
     expect(gateEvent("agent/inbox/spliced", { op: "clear", reason: "" })).toBe("shape:agent/inbox/spliced");
     expect(gateEvent("agent/inbox/spliced", { op: "noop", target: "next-turn" })).toBe("shape:agent/inbox/spliced");
+    // drop 单条移除（queue/drop 直写）：合法过门；空 id 串/空 reason/坏 target 拒
+    expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-turn", dropped: ["msg_1"], reason: "client-drop" })).toBeUndefined();
+    expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-step", dropped: [], reason: "client-drop" })).toBeUndefined();
+    expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-turn", dropped: [""], reason: "client-drop" })).toBe("shape:agent/inbox/spliced");
+    expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-turn", dropped: ["msg_1"], reason: "" })).toBe("shape:agent/inbox/spliced");
+    expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "side-queue", dropped: ["msg_1"], reason: "r" })).toBe("shape:agent/inbox/spliced");
+    // retarget 单条改道（queue/send_now 直写）：合法过门；空 id/坏 to 拒
+    expect(gateEvent("agent/inbox/spliced", { op: "retarget", id: "msg_1", to: "next-step" })).toBeUndefined();
+    expect(gateEvent("agent/inbox/spliced", { op: "retarget", id: "", to: "next-step" })).toBe("shape:agent/inbox/spliced");
+    expect(gateEvent("agent/inbox/spliced", { op: "retarget", id: "msg_1", to: "next-page" })).toBe("shape:agent/inbox/spliced");
   });
 });
 

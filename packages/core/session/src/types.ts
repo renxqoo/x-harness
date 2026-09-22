@@ -144,7 +144,11 @@ export interface InboxEntry {
 export type InboxSpliceData =
   | { readonly op: "insert"; readonly target: InboxTarget; readonly entries: readonly InboxEntry[] }
   | { readonly op: "claim"; readonly target: InboxTarget; readonly turn: number; readonly claimed: readonly string[] }
-  | { readonly op: "clear"; readonly reason: string };
+  | { readonly op: "clear"; readonly reason: string }
+  /** 单条移除（queue/drop 命令直写；被删消息不进上下文，与 claim 严格区分） */
+  | { readonly op: "drop"; readonly target: InboxTarget; readonly dropped: readonly string[]; readonly reason: string }
+  /** 单条改道（queue/send_now：next-turn 队首改为当前轮步边界注入；entry 本体与 id 原样保留） */
+  | { readonly op: "retarget"; readonly id: string; readonly to: InboxTarget };
 
 export type SessionEventType = keyof SessionEventData;
 /** 产模型可见消息的词条：仅此 4 类可携带 surfaceOp */

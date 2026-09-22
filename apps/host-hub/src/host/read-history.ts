@@ -8,7 +8,7 @@ import { isSafeSessionId } from "@x-harness/session";
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import type { SessionEvent } from "@x-harness/session";
 import { projectEntries } from "../shared/entries-project.ts";
-import { foldQueueText } from "../shared/inbox-fold.ts";
+import { foldQueue } from "../shared/inbox-fold.ts";
 import { foldDial } from "../shared/meta-fold.ts";
 import { titleOf } from "../worker/meta-state.ts";
 import { entryWindow, type EntryLine } from "../worker/entries-window.ts";
@@ -92,7 +92,7 @@ export function createDirectRead(deps: DirectReadDeps) {
         sessionName: titleOf(events) ?? "",
         sessionFile: `${deps.sessionsRoot}/${threadId}/events.jsonl`,
         messageCount,
-        queue: foldQueueText(events),
+        queue: foldQueue(events),
       };
     },
     /** 会话头直读（resume 预检/唤醒 cwd 复核面） */
