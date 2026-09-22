@@ -16,7 +16,7 @@
    readline 交互 + ANSI 流式打印。
 3. **模型接入 = providers.json 多档案**：`~/.x-harness/providers.json` 声明多 provider，
    `/model` 运行时切换、`--list-models` 列出。
-4. **默认装配 = 全部无条件**：含 sandbox-local 与 agent-delegation；flag 只做工具白/黑名单减法。
+4. **默认装配 = 全部无条件**：含 sandbox（围栏）与 agent-delegation；flag 只做工具白/黑名单减法。
    例外：`--no-session` 略去 jsonl 持久化插件（内存会话语义必然，见 §2.5）。
 
 **明确不处理**（归属落档）：
@@ -198,7 +198,7 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
 裁决与依据：
 
 - **数组序硬约束**：tool-* 的 env 是 apply 时同步 `tryUse(execEnv)`，围栏 execEnv 的提供者
-  sandbox 必须排在 tool-* 之前（topo 只管 inject，此处靠数组序；sandbox-local 单测同序
+  sandbox 必须排在 tool-* 之前（topo 只管 inject，此处靠数组序；sandbox 单测同序
   `[tools, permission, sandbox, …]`）。
 - **多 provider 不用适配器插件工厂**：`createAnthropicCompatLlm` 插件名固定
   `llm-anthropic-compat`，多实例重名被 loadPlugins 拒；宿主在 loadPlugins 后用裸

@@ -12,5 +12,8 @@
     "@x-harness/exec-env": "workspace:*",
     "@x-harness/permission": "workspace:*",
     "@x-harness/session": "workspace:*"
+  },
+  "devDependencies": {
+    "@x-harness/tools": "workspace:*"
   }
 }

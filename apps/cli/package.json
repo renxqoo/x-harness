@@ -14,7 +14,6 @@
     "@x-harness/llm": "workspace:*",
     "@x-harness/llm-retry": "workspace:*",
     "@x-harness/permission": "workspace:*",
-    "@x-harness/sandbox-local": "workspace:*",
     "@x-harness/session": "workspace:*",
     "@x-harness/session-checkpoint": "workspace:*",
     "@x-harness/session-persistence-jsonl": "workspace:*",

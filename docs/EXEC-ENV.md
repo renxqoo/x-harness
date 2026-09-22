@@ -15,7 +15,7 @@
 // packages/core/exec-env（@x-harness/exec-env）——契约 + localEnv 原生实现（无围栏）
 export const execEnv = defineService<ExecEnv>("exec-env");
 
-// packages/sandbox-local（@x-harness/sandbox-local）——围栏执行环境 provider
+// packages/sandbox（@x-harness/sandbox）——围栏执行环境 provider（srt 引擎，docs/SANDBOX.md）
 export function createSandboxPlugin(options: SandboxOptions): Plugin;   // inject ["permission"]
 // provides: execEnv（围栏版）+ fenceFacts（围栏事实快照，permission 界内判定用；同一解析函数产物）
 
@@ -134,6 +134,8 @@ admit 对授权根内路径**同样执行词法+物理双查**（realpath 复核
 用例**移植**为 localEnv 注错缝的 conformance 用例（注入强度不降）。
 
 ## 4. sandbox-local：围栏（argv 改写 + 会话代理网络）
+
+> 本节为历史设计记录：该实现已整体废弃删除；当前围栏实现见 **docs/SANDBOX.md**（@x-harness/sandbox，srt 引擎；fs/proc 契约与 fenceFacts 面不变，网络面改纯白名单无 ask）。
 
 **confine 是纯函数**：`confine(argv, fence) → { argv, meta }`，表驱动可测。注入点在
 `createSandboxPlugin` 组装的 env 构造期。

@@ -8,10 +8,10 @@ describe("shellQuoteWord", () => {
     ["plain", "'plain'"],
     ["", "''"],
     ["with space", "'with space'"],
-    ["it's", `'it'\''s'`],
-    ["a'b'c", `'a'\''b'\''c'`],
+    ["it's", "'it'\\''s'"],
+    ["a'b'c", "'a'\\''b'\\''c'"],
     ["$(rm -rf /)", `'$(rm -rf /)'`],
-    ["back`tick`", "'back`tick`"],
+    ["back`tick`", "'back`tick`'"],
     ["换行\n注入", `'换行\n注入'`],
     ["emoji🔐", "'emoji🔐'"],
   ])("%s → %s", (word, quoted) => {
@@ -28,12 +28,12 @@ describe("commandOf", () => {
     expect(commandOf([])).toBe("");
   });
 
-  it("词法往返：真 sh 下 exec 还原原 argv（含空格/引号/元字符）", async () => {
-    const argv = ["echo", "a b", "it's", "$HOME", "`x`", "换行词"];
+  it("词法往返：真 sh 下 exec 还原原 argv（$HOME/`x` 单引号内不展开——注入中和是词法的安全语义）", async () => {
+    const argv = ["echo", "a b", "it's", "$HOME", "`x`", "ok词"];
     const proc = Bun.spawn(["/bin/sh", "-c", commandOf(argv)]);
     const code = await proc.exited;
-    expect(code).toBe(0);
     const out = await new Response(proc.stdout).text();
-    expect(out.split("\n").slice(0, -1)).toEqual(argv.slice(1));
+    expect(code).toBe(0);
+    expect(out.trimEnd()).toBe("a b it's $HOME `x` ok词");
   });
 });

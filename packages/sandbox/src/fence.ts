@@ -52,9 +52,9 @@ export function fenceFor(base: FenceBase, grants: GrantsRegistry, session: Sessi
     tmpdir(),
     ...(base.writableExtra ?? []),
     ...extraRoots,
-  ].map(resolve);
+  ].map((p) => resolve(p));
   const denyRead = [...DEFAULT_DENY_READ, ...(base.denyReadExtra ?? [])];
-  const denyWrite = [resolve(override?.dir ?? base.root, ".git"), ...(base.protectedPaths ?? [])].map(resolve);
+  const denyWrite = [resolve(override?.dir ?? base.root, ".git"), ...(base.protectedPaths ?? [])].map((p) => resolve(p));
   if (base.networkOff === true) return { writable, denyRead, denyWrite, allowedDomains: [] };
   if (unrestricted) return { writable, denyRead, denyWrite, allowedDomains: ["*"] };
   const allowedDomains = [...new Set([...(base.allowedDomains ?? []), ...grants.allowedDomainsOf(session)])];

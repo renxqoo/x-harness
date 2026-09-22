@@ -607,7 +607,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | 子代理委派/预算/通知 | @x-harness/agent-delegation（hub 只消费 delegationView + 中继事件） |
 | 会话 WAL/写锁/fork/恢复 | @x-harness/session + session-persistence-jsonl（hub 只围栏与路由） |
 | 命令注册/dispatch | **已支持（BATCH3）**：内核 `@x-harness/commands` 注册面 + kit 自声明（compact）+ execute 分路；未注册词形仍交模型（skill 分发面） |
-| sandbox/远程工作区 | @x-harness/sandbox-local（fenceKit 装配面） |
+| sandbox/远程工作区 | @x-harness/sandbox（fenceKit 装配面，srt 引擎） |
 | 后端注册表/能力协商 | 单一后端（hello 握手：`{protocolVersion:1, backendId:"x-harness"}`） |
 | OAuth 交互式登录 | auth/set_api_key 单通道 |
 | 跨机器/远程接入 | stdio 单机限定 |

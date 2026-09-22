@@ -58,7 +58,7 @@ describe("fenceFor × grants", () => {
     expect(fenceFor(base, grants, SID).allowedDomains).toEqual([]);
   });
 
-  it("unrestricted：writable 前置 / 与 allowedDomains=["*"]（full 档全通）", () => {
+  it("unrestricted：writable 前置 / 与 allowedDomains=['*']（full 档全通）", () => {
     const grants = new GrantsRegistry();
     grants.setUnrestricted(true);
     const f = fenceFor(base, grants, SID);

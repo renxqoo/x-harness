@@ -93,21 +93,25 @@ interface Fence {
 整体传入（srt 语义：per-call 字段级 ?? 回退——传全量防会话级残值混入）；linux glob 写面被剥、
 darwin 原生 glob（我们只传具体路径，无跨平台分歧）。
 
-**网络面（进程级 + live-swap）**：initialize 恒带 `network: { allowedDomains: [], deniedDomains: [],
-strictAllowlist: true }`（= 围栏恒在，空表=全断）；**无 ask 回调**。每次 spawn 前重算全局白名单
-= networkOff ? [] : （任一会话 unrestricted 态 → `["*"]`；否则 宿主 allowedDomains ∪ 各会话授权并集），
-与当前生效集 diff 有变才 `updateConfig`（srt 语义：网络配置每请求热读——授权对在跑子进程的
-下一次连接即时生效；授权即时生效通道，probe 实证）。
+**网络面（进程级 + live-swap）**：启动恒带 `network: { allowedDomains: [], deniedDomains: [],
+strictAllowlist: true }`（= 围栏恒在，空表=全断）；**无 ask 回调**。每次 spawn 前重算白名单
+= 各活实例有效表并集（实例内：networkOff ? [] : 宿主 allowedDomains ∪ 该实例已见会话授权域名；
+grants unrestricted 态 → `["*"]`），与当前生效集 diff 有变才 `updateConfig`（srt 语义：网络配置
+每请求热读——授权对在跑子进程的下一次连接即时生效；授权即时生效通道，probe 实证）。
 
-**生命周期（进程单例）**：srt `SandboxManager` 是模块级单例——本包以模块级占用标志管理：
-apply 期 claim（已被占用 → throw fail-closed：两实例共享单例=配置互污）；dispose 期
-reset() + 释放；顺序复用（apply→dispose→apply）成立（probe2 实证 reset 后换配置再 init 正常）。
+**生命周期（进程共享 + 引用计数）**：srt `SandboxManager` 是模块级单例，而一个进程并行装配
+多个世界（测试生态/host-hub worker）是常态——多插件实例经 `srt-session` 共享点共用唯一 srt
+会话（按 runtime 实例 WeakMap 键控）：首个 attach 探测依赖 + 以**最紧空集基线**启动（文件面真值
+恒随 per-exec fence 走，基线 fail-closed）；末个 detach 才 `reset()`；中间退出只收缩白名单。
+网络白名单取**跨实例并集**（与跨会话并集同边界：srt 单代理无连接归属——进程级白名单语义，
+落档已知边界；共享世界/测试生态的多世界形态因此天然支持）。顺序复用（attach→detach→attach）
+成立（reset 后换配置再 init，probe 实证）。
 
-**fail-closed**：apply 期 `checkDependenciesAsync()`（darwin seatbelt / linux bwrap+rg）errors 非空 →
+**fail-closed**：attach 期 `checkDependenciesAsync()`（darwin seatbelt / linux bwrap）errors 非空 →
 throw 拒启；linux 的 denyRead glob 展开需 rg——`Bun.which("rg")` 探测，缺席即依赖错误。
 运行期 wrapper 失效 = 子进程非零退出（EPERM/stderr 可见），spawn 面不裸跑。
 **拆卸后** srt wrap 调用不再发生（tornDown 先行检查——reset 后 wrap 会产出**无围栏** argv，
-probe2 实证，绝不可走）。
+probe 实证，绝不可走）。
 
 **commandId 归因**：每次 wrap 传 `commandId = "${session ?? "anon"}:${randomUUID()}"`——
 srt 违规记录/调试日志可归因到会话（消费面后续件；现在仅登记）。

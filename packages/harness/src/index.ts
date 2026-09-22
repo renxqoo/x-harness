@@ -23,7 +23,7 @@ import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
 import type { ModeKnob } from "@x-harness/permission";
-import { createSandboxPlugin } from "@x-harness/sandbox-local";
+import { createSandboxPlugin } from "@x-harness/sandbox";
 import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session";
 import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
