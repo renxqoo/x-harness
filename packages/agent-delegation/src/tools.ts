@@ -52,12 +52,12 @@ const messageSchema = Type.Object({
     description: "Recipient: a name from ListAgents (append its ' [ref]' only when a listing or an error shows one), a teammate name, 'main', or a background agent's agentId",
   }),
   message: Type.String({
-    pattern: "^[\\s\\S]{0,300}$",
+    pattern: "^[\\s\\S]{0,3000}$",
     description: "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention.",
   }),
   summary: Type.Optional(Type.String({
-    maxLength: 200,
-    description: 'A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of `message`). Truncated to 200 characters rather than rejected.',
+    maxLength: 500,
+    description: 'A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of `message`). Truncated to 500 characters rather than rejected.',
   })),
   notify_when_idle: Type.Optional(Type.Boolean({
     description: "Ask a session ON THIS MACHINE to send you ONE notice when it next goes idle (finishes its turn with nothing queued) or exits — opt-in, one-shot, no polling. With a message: deliver it now AND subscribe. Without a message (omit it): a pure subscription that costs the other session nothing.",
