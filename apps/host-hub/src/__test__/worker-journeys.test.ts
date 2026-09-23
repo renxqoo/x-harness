@@ -394,7 +394,7 @@ describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.m
     expect(res.error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
   });
 
-  test("resume 统计域=装配后事件（固化现状：不含历史 usage）", async () => {
+  test("resume 全历史 WAL 口径（症状回归：重开会话数值不丢——含拨号窗口）", async () => {
     const w = await spawn([{ reply: "x" }]);
     const threadId = await start(w);
     w.send({ type: "prompt", id: "p1", threadId, message: "question" });
@@ -409,7 +409,8 @@ describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.m
     w.send({ type: "get_token_analytics", id: "ta1", threadId: newId });
     const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
     const data = res.data as { breakdown: Record<string, number> };
-    expect(data.breakdown["lastReportedInput"]).toBe(0); // 历史不重放
-    expect(data.breakdown["totalOutputTokens"]).toBe(0);
+    expect(data.breakdown["lastReportedInput"]).toBe(64); // WAL 全历史实报——重开不丢
+    expect(data.breakdown["totalOutputTokens"]).toBe(17);
+    expect(data.breakdown["contextWindow"]).toBe(200_000); // resume 拨号历史在场（script adapter 窗口）
   });
 });

@@ -4,7 +4,7 @@ import type { Context, Plugin } from "@x-harness/core";
 import type { LlmAdapter, LlmChunk, LlmRequest } from "@x-harness/llm";
 import { textScript } from "@x-harness/testkit";
 import { createLocalEnv } from "@x-harness/exec-env";
-import { createAgentWorld, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, toolboxKit } from "@x-harness/harness";
+import { createAgentWorld, durableSessionKit, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, toolboxKit } from "@x-harness/harness";
 import type { World } from "@x-harness/harness";
 
 export interface TestWorld {
@@ -26,6 +26,8 @@ function scriptAdapterFactory(calls: LlmRequest[], scripts: Array<AsyncGenerator
 export interface TestWorldOptions {
   /** 覆盖适配器集（多适配器/窗口申报用例）；缺省单 "fake" 无窗口申报 */
   readonly adapters?: readonly LlmAdapter[];
+  /** 持久会话根（在场 = durable 会话 kit——resume 两阶段用例）；缺省内存会话 */
+  readonly durableRoot?: string;
 }
 
 /** 最小可跑世界：内存会话 + 全工具箱（local env）+ 假 llm + 挂被测插件 */
@@ -38,10 +40,11 @@ export async function makeTestWorld(plugins: readonly Plugin[] = [], options: Te
   const { PathGate } = await import("@x-harness/tool-core");
   const adapters =
     options.adapters ?? [{ name: "fake", stream: scriptAdapterFactory(calls, scripts) }];
+  const sessionPlugins = options.durableRoot !== undefined ? durableSessionKit({ root: options.durableRoot }) : inlineSessionKit();
   const built = await createAgentWorld({
     plugins: [
       ...promptKit(),
-      ...inlineSessionKit(),
+      ...sessionPlugins,
       ...toolboxKit({ root, gate: new PathGate(root), env: createLocalEnv(root) }),
       ...meterKit(),
       ...llmKit([...adapters]),

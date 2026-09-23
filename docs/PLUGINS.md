@@ -78,9 +78,10 @@ export const BUILTIN_PLUGINS = { "token-analytics": { module: "@x-harness/token-
   （`capability_*` 先例；进 HUB_ERROR_CODES 码表，`get_host_info.errorCodes` 自动携带）；
 - 取用：`world.ctx.use(pluginManagerService).serviceToken("token-analytics")` 按名取
   token（host-hub 源码不 import 插件包符号——类型用本地结构形状；真解耦）；
-- 统计域语义（固化现状，非缺陷）：**装配后事件**——resume 线程不含历史 usage
-  （tapSessionEvents 只见装配后 append）；子代理会话的 usage 计入全局累计与
-  lastReportedInput（per-session 经 sessionOutput 隔离）；
+- 统计域 = **会话全历史（WAL 权威）**：每次查询直接折叠所询会话事件日志——
+  resume/重开的会话立即有全历史实报值（与 get_session_stats 同成本模型）；
+  作用域：lastReportedInput/缓存观测 = 所询会话口径（子代理轮不污染主线程
+  读数）；totalOutputTokens = world 全会话累计；插件无 per-world 可变状态；
 - 数据口径（实报优先律）：`total` = LLM 实报 input（输入侧——cache 读/写计入，
   不含 output；无实报时退 systemPrompt+tools 估算下限）；分项恒为估算
   （messages = 实报 − 前两项估算，负值归零）；估算器 CJK 感知（汉字 1 字 ≈ 1

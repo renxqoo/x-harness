@@ -451,7 +451,6 @@
       "dependencies": {
         "@x-harness/core": "workspace:*",
         "@x-harness/llm": "workspace:*",
-        "@x-harness/plugin-api": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/tools": "workspace:*",

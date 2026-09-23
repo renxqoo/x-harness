@@ -147,3 +147,45 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
     expect(loadable.softInject).toEqual(["llm"]);
   });
 });
+
+describe("resume 全历史（WAL 权威——症状回归：重开会话数值不丢）", () => {
+  it("两阶段：跑轮→拆世界→新世界 resume→breakdown 全历史实报在场（含拨号窗口）", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = await mkdtemp(join(tmpdir(), "xh-tka-durable-"));
+    const adapter = { name: "glm", contextWindow: 1_000_000, stream: () => usageScript({ input: 500, output: 20, cacheRead: 400, cacheWrite: 60 }) };
+    try {
+      // 阶段一：durable 世界跑一轮（usage 落盘）
+      const phase1 = await makeTestWorld([tokenAnalyticsPlugin({})], { adapters: [adapter], durableRoot: root });
+      const made = await phase1.world.loop.create({ agent: { model: "glm-5.3", provider: "glm" } });
+      expect(made.ok).toBe(true);
+      if (!made.ok) throw new Error(made.reason);
+      const sid = made.value.agent.session.id;
+      made.value.agent.followup("hi");
+      await made.value.agent.whenIdle();
+      const flushed = await phase1.world.store.flush(sid);
+      expect(flushed.ok).toBe(true);
+      await made.value.dispose();
+      await phase1.cleanup();
+
+      // 阶段二：全新世界（插件重装载）resume 同会话——数值不再归零
+      const phase2 = await makeTestWorld([tokenAnalyticsPlugin({})], { adapters: [adapter], durableRoot: root });
+      const resumed = await phase2.world.loop.resume({ id: sid, agent: { model: "glm-5.3", provider: "glm" } });
+      expect(resumed.ok).toBe(true);
+      if (!resumed.ok) throw new Error(resumed.reason);
+      const b = phase2.ctx.use(tokenAnalyticsService).breakdown(sid);
+      expect(b.lastReportedInput).toBe(500); // WAL 全历史实报——不是 0
+      expect(b.total).toBe(500);
+      expect(b.cacheHitRate).toBe(400 / 500);
+      expect(b.totalCacheRead).toBe(400);
+      expect(b.totalCacheWrite).toBe(60);
+      expect(phase2.ctx.use(tokenAnalyticsService).sessionOutput(sid)).toBe(20);
+      expect(b.contextWindow).toBe(1_000_000); // resume 拨号历史在场——窗口首轮前即精确
+      await resumed.value.dispose();
+      await phase2.cleanup();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 20_000);
+});
