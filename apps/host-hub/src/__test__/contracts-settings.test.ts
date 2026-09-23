@@ -60,9 +60,9 @@ describe("settings-store", () => {
     expect(validateSettingValue("thinking.default", "huge").ok).toBe(false);
     expect(validateSettingValue("skills.disabled", ["a"]).ok).toBe(true);
     expect(validateSettingValue("skills.disabled", "a").ok).toBe(false);
-    // plugins.disabled：词表校验进单点（未知名成员拒——安全向回到全装载）
-    expect(validateSettingValue("plugins.disabled", ["token-analytics"])).toEqual({ ok: true, key: "plugins.disabled" });
-    expect(validateSettingValue("plugins.disabled", ["token-analytics", "nonexistent"]).ok).toBe(false);
+    // plugins.disabled：形状校验单点（非空字符串数组；词表成员校验放宽到 builtin ∪
+    // 已装 vendor 名——vendor 名单运行时读，admin 层收口；文件面回到形状门）
+    expect(validateSettingValue("plugins.disabled", ["token-analytics", "some-vendor"])).toEqual({ ok: true, key: "plugins.disabled" });
     expect(validateSettingValue("plugins.disabled", [""]).ok).toBe(false);
     expect(validateSettingValue("plugins.disabled", "token-analytics").ok).toBe(false);
     expect(validateSettingValue("unknown.key", 1)).toEqual({ ok: false, error: { code: "invalid_input", message: "unknown setting key: unknown.key" } });
@@ -77,10 +77,14 @@ describe("settings-store", () => {
     const mixed = join(dir, "mixed.json");
     await Bun.write(mixed, JSON.stringify({ "thinking.default": "low", "permission.defaultMode": "bogus", other: 1 }));
     expect(await readSettingsFile(mixed)).toEqual({ "thinking.default": "low" });
-    // 未知名成员 → 整键丢弃（文件面与命令面同判定）
+    // plugins.disabled 坏形状（非数组成员）→ 丢弃；合法形状（含 vendor 名——运行时
+    // 名单）保留——词表成员校验已放宽，文件面形状门兜底
     const badPlugin = join(dir, "bad-plugin.json");
-    await Bun.write(badPlugin, JSON.stringify({ "plugins.disabled": ["token-analytics", "ghost"] }));
+    await Bun.write(badPlugin, JSON.stringify({ "plugins.disabled": ["ok-name", ""] }));
     expect(await readSettingsFile(badPlugin)).toEqual({});
+    const okPlugin = join(dir, "ok-plugin.json");
+    await Bun.write(okPlugin, JSON.stringify({ "plugins.disabled": ["token-analytics", "vendor-x"] }));
+    expect(await readSettingsFile(okPlugin)).toEqual({ "plugins.disabled": ["token-analytics", "vendor-x"] });
   });
 
   test("路径单源：用户级/项目级", async () => {

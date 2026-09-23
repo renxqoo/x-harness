@@ -117,6 +117,14 @@ export const COMMAND_NAMES: readonly string[] = [
   "set_rss_retire_bytes",
   "workspace/trust",
   "thread/delete",
+  "plugins/list",
+  "plugins/inspect",
+  "plugins/install",
+  "plugins/uninstall",
+  "plugins/set_enabled",
+  "plugins/remove",
+  "plugins/hot_install",
+  "plugins/hot_uninstall",
 ] as const;
 
 export function isKnownCommand(type: string): boolean {

@@ -33,6 +33,8 @@ export const HUB_ERROR_CODES = [
   "bash_denied",
   "protocol", // parse failure/shutting down/invalid id/worker died 等协议级
   "compact_rejected", // compaction 命令词表（packages/compaction 内层穿透）
+  "plugin_install_failed", // 插件热装失败（装载器 Result err——message 带引擎 reason）
+  "plugin_uninstall_failed", // 插件热卸失败（依赖未清/引擎 err）
 ] as const;
 
 export type HubErrorCode = (typeof HUB_ERROR_CODES)[number];

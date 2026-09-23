@@ -31,6 +31,8 @@ import type { InflightRegistry, InflightState } from "./inflight.ts";
 import { doFork, registerThreadCommands, serializedLifecycle } from "./thread-commands.ts";
 import { registerReadCommands } from "./worker-read-commands.ts";
 import { registerMetaCommands } from "./worker-meta-commands.ts";
+import { handleHotInstall, handleHotUninstall } from "./plugins-hot.ts";
+import { registerBashCommands } from "./bash-commands.ts";
 
 
 export interface WorkerState {
@@ -156,19 +158,6 @@ function imagesGate(rt: WorkerRuntime, images: WireImage[] | undefined): string 
 /** WireImage（wire 形状）→ Agent face images 选项（字段同形直传） */
 function imageOptions(images: WireImage[] | undefined): { images: readonly ImageBlock[] } | undefined {
   return images === undefined ? undefined : { images: [...images] };
-}
-
-/** bash 直执行失败族映射（bash-exec reason 闭词表对拍）：准入拒/中止 → bash_denied、
- *  并发容量 → thread_limit、请求形状 → invalid_input、id 占用 → state_conflict；
- *  词表外（平台缺席/spawn 异常等）→ internal，原文保留 */
-function bashOutcomeError(reason: string): HubErrorShape {
-  if (reason === "permission denied" || reason === "aborted before execution started") return hubError("bash_denied", reason);
-  if (reason === "too many concurrent direct bash executions (limit reached)") return hubError("thread_limit", reason);
-  if (reason === "concurrent direct bash requires a command id" || reason === "invalid command: required" || reason.startsWith("invalid timeoutMs:")) {
-    return hubError("invalid_input", reason);
-  }
-  if (reason === "bash command id is already in use") return hubError("state_conflict", reason);
-  return hubError("internal", reason);
 }
 
 /** delegation 投递失败族映射（agent-delegation reason 前缀词表对拍）：寻址/参数
@@ -543,33 +532,6 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     respond(rt, { id: input.id, command: "set_model" });
   });
 
-  handlers.set("bash", async (input) => {
-    if (requireThread(rt, { ...input, command: "bash" }) === undefined) return;
-    const outcome = await rt.bash.exec({
-      command: typeof input.command === "string" ? input.command : "",
-      ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
-      ...(input.excludeFromContext === true ? { excludeFromContext: true } : {}),
-      ...(typeof input.id === "string" && input.id !== "" ? { id: input.id } : {}), // id 缺省回落 = 请求 id（DESIGN §3.7）
-    });
-    if (!outcome.ok) {
-      respond(rt, { id: input.id, command: "bash", error: bashOutcomeError(outcome.reason) });
-      return;
-    }
-    respond(rt, {
-      id: input.id,
-      command: "bash",
-      // 解构判别联合（ok 字段不进 data 面）
-      data: { output: outcome.output, exitCode: outcome.exitCode, cancelled: outcome.cancelled, truncated: outcome.truncated, ...(outcome.fullOutputPath !== undefined ? { fullOutputPath: outcome.fullOutputPath } : {}) },
-    });
-  });
-
-  handlers.set("abort_bash", wrapSyncHandler((input) => {
-    if (requireThread(rt, { ...input, command: "abort_bash" }) === undefined) return;
-    rt.bash.abortAdmissions();
-    rt.bash.abortRunning(typeof input.id === "string" && input.id !== "" ? input.id : undefined);
-    respond(rt, { id: input.id, command: "abort_bash" });
-  }));
-
   // ui_response：弹窗应答路由进 broker（未知/晚到静默忽略）。无 response 帧——
   // host 对客户端恒 ack，worker 侧重复应答会破坏恰一响应
   handlers.set("ui_response", wrapSyncHandler((input) => {
@@ -600,6 +562,9 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
 
   registerReadCommands(rt, handlers);
   registerMetaCommands(rt, handlers);
+  handlers.set("plugins/hot_install", (input) => handleHotInstall(rt, input));
+  handlers.set("plugins/hot_uninstall", (input) => handleHotUninstall(rt, input));
+  registerBashCommands(rt, handlers);
 
   return handlers;
 }

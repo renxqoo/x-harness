@@ -68,6 +68,7 @@
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/todo-tools": "workspace:*",
         "@x-harness/token-analytics": "workspace:*",
+        "@x-harness/tools": "workspace:*",
       },
     },
     "packages/agent-continuation": {
@@ -507,7 +508,6 @@
       },
       "devDependencies": {
         "@sinclair/typebox": "^0.34.0",
-        "@x-harness/tool-read": "workspace:*",
       },
     },
     "packages/tool-grep": {

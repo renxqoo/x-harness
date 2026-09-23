@@ -10,7 +10,6 @@ import type { ThinkingLevel } from "@x-harness/llm";
 import { activeAtomicPaths, atomicWriteJson, updateJson } from "./atomic-file.ts";
 import { hubError, type HubErrorShape } from "./errors.ts";
 import { hubLog } from "./hub-log.ts";
-import { isBuiltinPluginName } from "./plugins-catalog.ts";
 
 export interface HubSettings {
   "permission.defaultMode"?: ProfileId;
@@ -45,7 +44,7 @@ export function validateSettingValue(key: string, value: unknown): { ok: true; k
     "permission.profiles": profilesValueValid,
     "thinking.default": (value) => typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel),
     "skills.disabled": (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item !== ""),
-    "plugins.disabled": (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item !== "" && isBuiltinPluginName(item)),
+    "plugins.disabled": (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item !== ""),
   };
   const validator = validators[key];
   if (validator === undefined) {

@@ -55,6 +55,8 @@ export const THREAD_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "subagent/steer",
   "set_thinking_level",
   "get_thinking_level",
+  "plugins/hot_install",
+  "plugins/hot_uninstall",
 ]);
 
 /** host 单点注册但带 threadId 形态交池转发的命令（DESIGN §3.9——处理在 worker，

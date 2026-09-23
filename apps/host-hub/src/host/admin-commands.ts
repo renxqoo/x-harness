@@ -22,6 +22,8 @@ import { addModel, removeModel } from "./models-admin.ts";
 import { createUserAgentType, removeUserAgentType } from "./agents-admin.ts";
 import { knownSkillNames, listSkills, removeSkill, setSkillEnabled } from "./skills-admin.ts";
 import { inspectSkillSources, installSkill } from "./skills-install.ts";
+import { builtinNotRemovable, listPlugins, setPluginEnabled } from "./plugins-admin.ts";
+import { inspectPluginSources, installPlugin, removePlugin } from "./plugins-install.ts";
 import { SKILL_IMPORT_MAX_BYTES, SKILL_IMPORT_MAX_ENTRIES } from "../shared/limits.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import type { TrustStore } from "./trust-store.ts";
@@ -253,6 +255,45 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
     handlers.set("skills/inspect", async (input, id) => {
       const outcome = await inspectSkillSources({ sourcePaths: input.sourcePaths });
       deps.respond(id, "skills/inspect", outcome.ok ? { data: { results: outcome.results } } : { error: outcome.error });
+    });
+    handlers.set("plugins/list", async (_input, id) => {
+      const outcome = await listPlugins({ agentDir: deps.agentDir });
+      deps.respond(id, "plugins/list", { data: { plugins: outcome.plugins } });
+    });
+    handlers.set("plugins/inspect", async (input, id) => {
+      const outcome = await inspectPluginSources({ sourcePaths: input.sourcePaths });
+      deps.respond(id, "plugins/inspect", outcome.ok ? { data: { results: outcome.results } } : { error: outcome.error });
+    });
+    handlers.set("plugins/install", async (input, id) => {
+      const outcome = await installPlugin({
+        sourcePath: input.sourcePath,
+        overwrite: input.overwrite,
+        origin: input.origin === "agent" ? "agent" : "manual",
+        agentDir: deps.agentDir,
+      });
+      deps.respond(id, "plugins/install", outcome.ok ? { data: { plugin: outcome.plugin } } : { error: outcome.error });
+    });
+    handlers.set("plugins/uninstall", async (input, id) => {
+      const outcome = await removePlugin({ name: input.name, agentDir: deps.agentDir });
+      deps.respond(id, "plugins/uninstall", outcome.ok ? {} : { error: outcome.error });
+    });
+    handlers.set("plugins/set_enabled", async (input, id) => {
+      const outcome = await setPluginEnabled({
+        agentDir: deps.agentDir,
+        name: typeof input.name === "string" ? input.name : "",
+        enabled: input.enabled === true,
+      });
+      deps.respond(id, "plugins/set_enabled", outcome.ok ? {} : { error: outcome.error });
+    });
+    handlers.set("plugins/remove", async (input, id) => {
+      const name = typeof input.name === "string" ? input.name : "";
+      if (builtinNotRemovable(name)) {
+        const reason = `builtin plugin is not removable: ${name} (disable it instead)`;
+        deps.respond(id, "plugins/remove", { error: hubError("state_conflict", reason) });
+        return;
+      }
+      const outcome = await removePlugin({ name, agentDir: deps.agentDir });
+      deps.respond(id, "plugins/remove", outcome.ok ? {} : { error: outcome.error });
     });
     handlers.set("skills/install", async (input, id) => {
       const outcome = await installSkill({
