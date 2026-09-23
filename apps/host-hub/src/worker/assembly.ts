@@ -43,6 +43,8 @@ import { catalogEntryOf, resolveWorkerCatalog } from "../shared/worker-catalog.t
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import { thinkingLevelOf, thinkingUnsupported } from "./meta-state.ts";
 import { META_KEY_THINKING } from "./meta-state.ts";
+import { installExternalPlugins, uninstallExternalPlugins } from "./external-plugins.ts";
+import type { ExternalPluginsDeps } from "./external-plugins.ts";
 
 /** llm-retry 缺省策略（apps/cli 同款——确定性退避） */
 export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0 };
@@ -69,6 +71,10 @@ export interface AssemblyFields {
   permissionMode?: "plan" | "auto" | "full";
   /** skills 禁用名单（hub-settings skills.disabled——装配期快照） */
   skillsDisabled?: string[];
+  /** 外部插件装载锚：审计目录 + 缺席跳过（测试直连装配无 agentDir——不兜底 cwd） */
+  agentDir?: string;
+  /** plugins 禁用名单（hub-settings plugins.disabled——装配期快照；缺省全装载） */
+  pluginsDisabled?: string[];
 }
 
 export interface AssemblyResult {
@@ -90,8 +96,10 @@ export interface AssemblyResult {
 }
 
 export interface AssemblyDeps {
-  /** world 插件配方整体替换（测试缝） */
-  readonly worldPlugins: (fields: AssemblyFields) => readonly Plugin[];
+  /** world 插件配方整体替换（测试缝——缺省用内置配方） */
+  readonly worldPlugins?: (fields: AssemblyFields) => readonly Plugin[];
+  /** 外部插件装载缝（测试注入 resolve/loadModule——降级分支覆盖面） */
+  readonly externalPlugins?: ExternalPluginsDeps;
 }
 
 function userAgentsDir(): string {
@@ -214,6 +222,20 @@ function materializeThinking(fields: AssemblyFields, catalog: WorkerCatalog, dia
   return thinking;
 }
 
+/** 外部插件装载步骤（docs/PLUGINS.md 契约 4）：会话创建前——usage 计数覆盖第一
+ *  步；agentDir 缺席（直连装配）跳过；单件失败降级不打挂装配 */
+async function installExternals(world: World, fields: AssemblyFields, deps?: AssemblyDeps): Promise<void> {
+  if (fields.agentDir === undefined) return;
+  await installExternalPlugins(
+    {
+      ctx: world.ctx,
+      agentDir: fields.agentDir,
+      ...(fields.pluginsDisabled !== undefined ? { disabled: fields.pluginsDisabled } : {}),
+    },
+    deps?.externalPlugins,
+  );
+}
+
 export async function assembleWorkerAgent(fields: AssemblyFields, deps?: AssemblyDeps): Promise<AssemblyResult> {
   const env = fields.env ?? process.env;
   const script = env["HUB_WORKER_PROVIDER"] === "script" ? createScriptAdapter(scriptFromEnv(env)) : undefined;
@@ -254,10 +276,12 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     dialHookPlugin(),
   ];
-  const plugins: readonly Plugin[] = deps?.worldPlugins(fields) ?? defaultPlugins;
+  const plugins: readonly Plugin[] = deps?.worldPlugins?.(fields) ?? defaultPlugins;
 
   const world = await createAgentWorld({ plugins });
   if (!world.ok) throw new Error(world.reason);
+
+  await installExternals(world.value, fields, deps);
 
   const agentOptions = {
     provider: dial.provider,
@@ -295,10 +319,12 @@ async function createSession(world: World, plan: { fields: AssemblyFields; agent
 const tornDownWorlds = new WeakSet<object>();
 
 /** world 收殓（幂等——stop/fork/shutdown 并发收殓不双跑插件 disposer）：
- *  handle dispose 由调用方先行；此处收殓插件卸载与 ctx */
+ *  handle dispose 由调用方先行；外部插件先逐个 uninstall（审计落盘，失败不短路），
+ *  此处收殓插件卸载与 ctx */
 export async function teardownWorld(world: World): Promise<void> {
   if (tornDownWorlds.has(world)) return;
   tornDownWorlds.add(world);
+  await uninstallExternalPlugins(world.ctx);
   for (const disposer of world.unload) await disposer();
   await world.ctx.dispose();
 }

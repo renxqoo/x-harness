@@ -23,10 +23,12 @@
     "@x-harness/llm-retry": "workspace:*",
     "@x-harness/md-frontmatter": "workspace:*",
     "@x-harness/permission": "workspace:*",
+    "@x-harness/plugin-manager": "workspace:*",
     "@x-harness/session": "workspace:*",
     "@x-harness/session-checkpoint": "workspace:*",
     "@x-harness/session-persistence-jsonl": "workspace:*",
     "@x-harness/skill": "workspace:*",
-    "@x-harness/todo-tools": "workspace:*"
+    "@x-harness/todo-tools": "workspace:*",
+    "@x-harness/token-analytics": "workspace:*"
   }
 }

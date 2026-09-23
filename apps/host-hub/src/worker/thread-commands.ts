@@ -128,10 +128,12 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
   const initialMode = params.paramMode ?? settings["permission.defaultMode"] ?? "auto";
   const assembled = await assembleWorkerAgent({
     ...plan.fields,
+    agentDir: rt.agentDir, // 外部插件装载锚（fork 重装配同经本腿——三路同源）
     confirm: (fields) => rt.broker.confirm(rt.state.threadId === "" ? "unassigned" : rt.state.threadId, fields),
     ...(settings["thinking.default"] !== undefined ? { thinkingDefault: settings["thinking.default"] } : {}),
     permissionMode: initialMode,
     ...(settings["skills.disabled"] !== undefined ? { skillsDisabled: settings["skills.disabled"] } : {}),
+    ...(settings["plugins.disabled"] !== undefined ? { pluginsDisabled: settings["plugins.disabled"] } : {}),
   });
   // 写前校验前置到接线前：拒绝发生在 state 落位之前——命令失败不残留半开线程
   const paramLevel = params.paramLevel;

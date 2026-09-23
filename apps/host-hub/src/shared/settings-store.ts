@@ -9,11 +9,13 @@ import type { ThinkingLevel } from "@x-harness/llm";
 import { activeAtomicPaths, atomicWriteJson, updateJson } from "./atomic-file.ts";
 import { hubError, type HubErrorShape } from "./errors.ts";
 import { hubLog } from "./hub-log.ts";
+import { builtinPluginNames, isBuiltinPluginName } from "./plugins-catalog.ts";
 
 export interface HubSettings {
   "permission.defaultMode"?: ModeKnob;
   "thinking.default"?: ThinkingLevel;
   "skills.disabled"?: string[];
+  "plugins.disabled"?: string[];
 }
 
 export type HubSettingsKey = keyof HubSettings;
@@ -43,11 +45,19 @@ export function validateSettingValue(key: string, value: unknown): { ok: true; k
     }
     return { ok: true, key };
   }
+  // 词表校验进本单点（与 skills.disabled 的 admin-commands 位点刻意不同）：文件面
+  // 与命令面同判定，未知名成员 → 整键拒/丢（安全向：回到全装载）
+  if (key === "plugins.disabled") {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item === "" || !isBuiltinPluginName(item))) {
+      return { ok: false, error: hubError("invalid_input", `invalid setting value: plugins.disabled must be an array of builtin plugin names (${builtinPluginNames().join(", ")})`) };
+    }
+    return { ok: true, key };
+  }
   return { ok: false, error: hubError("invalid_input", `unknown setting key: ${key}`) };
 }
 
 function isKnownKey(key: string): key is HubSettingsKey {
-  return key === "permission.defaultMode" || key === "thinking.default" || key === "skills.disabled";
+  return key === "permission.defaultMode" || key === "thinking.default" || key === "skills.disabled" || key === "plugins.disabled";
 }
 
 /** 读指定路径设置文件（坏文件/缺席降级空表——坏文件带 stderr 诊断；逐键校验丢弃坏值） */
@@ -142,10 +152,13 @@ export function mergeSettings(user: HubSettings, project: HubSettings): { values
       sources[key] = "user";
     }
   }
-  const union = [...new Set([...(user["skills.disabled"] ?? []), ...(project["skills.disabled"] ?? [])])].sort();
-  if (union.length > 0) {
-    values["skills.disabled"] = union;
-    sources["skills.disabled"] = "union";
+  const unionKeys: Array<keyof HubSettings> = ["skills.disabled", "plugins.disabled"];
+  for (const key of unionKeys) {
+    const union = [...new Set([...(user[key] ?? []), ...(project[key] ?? [])])].sort();
+    if (union.length > 0) {
+      (values[key] as unknown) = union;
+      sources[key] = "union";
+    }
   }
   return { values, sources };
 }

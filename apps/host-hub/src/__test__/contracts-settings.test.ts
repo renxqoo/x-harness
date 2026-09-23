@@ -60,6 +60,11 @@ describe("settings-store", () => {
     expect(validateSettingValue("thinking.default", "huge").ok).toBe(false);
     expect(validateSettingValue("skills.disabled", ["a"]).ok).toBe(true);
     expect(validateSettingValue("skills.disabled", "a").ok).toBe(false);
+    // plugins.disabled：词表校验进单点（未知名成员拒——安全向回到全装载）
+    expect(validateSettingValue("plugins.disabled", ["token-analytics"])).toEqual({ ok: true, key: "plugins.disabled" });
+    expect(validateSettingValue("plugins.disabled", ["token-analytics", "nonexistent"]).ok).toBe(false);
+    expect(validateSettingValue("plugins.disabled", [""]).ok).toBe(false);
+    expect(validateSettingValue("plugins.disabled", "token-analytics").ok).toBe(false);
     expect(validateSettingValue("unknown.key", 1)).toEqual({ ok: false, error: { code: "invalid_input", message: "unknown setting key: unknown.key" } });
   });
 
@@ -72,6 +77,10 @@ describe("settings-store", () => {
     const mixed = join(dir, "mixed.json");
     await Bun.write(mixed, JSON.stringify({ "thinking.default": "low", "permission.defaultMode": "bogus", other: 1 }));
     expect(await readSettingsFile(mixed)).toEqual({ "thinking.default": "low" });
+    // 未知名成员 → 整键丢弃（文件面与命令面同判定）
+    const badPlugin = join(dir, "bad-plugin.json");
+    await Bun.write(badPlugin, JSON.stringify({ "plugins.disabled": ["token-analytics", "ghost"] }));
+    expect(await readSettingsFile(badPlugin)).toEqual({});
   });
 
   test("路径单源：用户级/项目级", async () => {
@@ -92,19 +101,21 @@ describe("settings-store", () => {
     expect(activeSettingPaths()).toBe(0);
   });
 
-  test("合并视图：覆盖型项目胜；名单并集；来源标注", () => {
-    const user = { "permission.defaultMode": "auto" as const, "thinking.default": "low" as const, "skills.disabled": ["a", "b"] };
-    const project = { "permission.defaultMode": "full" as const, "skills.disabled": ["b", "c"] };
+  test("合并视图：覆盖型项目胜；名单并集（skills/plugins 同律）；来源标注", () => {
+    const user = { "permission.defaultMode": "auto" as const, "thinking.default": "low" as const, "skills.disabled": ["a", "b"], "plugins.disabled": ["token-analytics"] };
+    const project = { "permission.defaultMode": "full" as const, "skills.disabled": ["b", "c"], "plugins.disabled": [] };
     const merged = mergeSettings(user, project);
     expect(merged.values).toEqual({
       "permission.defaultMode": "full",
       "thinking.default": "low",
       "skills.disabled": ["a", "b", "c"],
+      "plugins.disabled": ["token-analytics"],
     });
     expect(merged.sources).toEqual({
       "permission.defaultMode": "project",
       "thinking.default": "user",
       "skills.disabled": "union",
+      "plugins.disabled": "union",
     });
     expect(mergeSettings({}, {}).values).toEqual({});
   });
