@@ -211,7 +211,7 @@ function buildAskPayload(fields: {
     tool,
     reason: decision.reason,
     options: optionsOf(decision),
-    ...(decision.memorizable === true && tool === "bash" ? { suggestedRule: decision.suggestedRule ?? suggestedRuleOf(commandOf()) } : {}),
+    ...(decision.memorizable === true ? { suggestedRule: decision.suggestedRule ?? (tool === "bash" ? suggestedRuleOf(commandOf()) : undefined) } : {}),
     ...(session !== undefined ? { session } : {}),
   };
 }

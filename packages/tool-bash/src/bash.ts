@@ -98,7 +98,7 @@ async function bash(input: {
   if (ctx.signal.aborted) return { content: "aborted: tool call aborted before dispatch", isError: true }; // pre-abort 零 spawn
 
     if (args.run_in_background === true) {
-    const started = await tasks.start({ command: args.command, cwd, session: ctx.session, env });
+    const started = await tasks.start({ command: args.command, cwd, session: ctx.session, env, ...(ctx.exec !== undefined ? { exec: ctx.exec } : {}) });
     if (!started.ok) return { content: started.reason, isError: true };
     return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — it keeps running across turns; poll its output and state via the task layer` };
   }

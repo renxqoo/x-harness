@@ -53,6 +53,30 @@
 - 每条申报变更都有对应红→绿断言锚（permission-flag 旅程、adjudicate 钉表、
   bash-loosening reason 快照）。
 
-## 4. 挂账
+## 4. 对抗审查处置表（实施后独立会话复审——4 阻断 + 12 应修 + 4 可留）
+
+| # | 发现 | 处置 |
+| --- | --- | --- |
+| 1 | 写类无界内校验（界外写零交互直通） | 已修：classifyPipeline 增 roots；写动词文件型操作数越根逐出（audit-v2-fixes 回归锚） |
+| 2 | awk/sed/curl/wget/npx 混入只读表 | 已修：全部逐出（网络/流编辑形态一律问）；npx 家族删除 |
+| 3 | ask 批准后执行指令丢失（恒 contained 无升级） | 已修：plugin 按终局裁决 execOf 现算 |
+| 4 | CLI escalate 弹窗不展示命令 | 已修：command 行强制渲染 |
+| 5 | 升级配额只记 allow | 已修：问询时即消耗 |
+| 6 | escalate 应答 memory 静默丢弃 | 已修：桥内 session 桶/持久面兑现 |
+| 7 | 敏感面对 fenced 档也 ask（与矩阵矛盾） | 已修：fenced 交内核执法不问 |
+| 8 | 敏感面精确记忆死写 | 已修：同命令原文 grant 精确豁免（泛化不豁免） |
+| 9 | settings 同键合并丢 deny | 已修：冲突 deny 胜 |
+| 10 | 持久写失败静默+审计失真 | 已修：降级 session+事件标注 degraded |
+| 11 | 非bash/无建议记忆空操作 | 已修：Write 界外 `Write(dir/**)`/未知工具 `Tool(name)` 建议串 |
+| 12 | grant 命令面无守门 | 已修：万配/硬拒族/wrapper·解释器前缀拒（GRANT_BLOCKED_HEADS） |
+| 13 | 自定义档位不可达 | 已修：defaultMode 文件内交叉接受 + set_mode 值域∪自定义（thread/start 入参限内置——申报） |
+| 14 | 后台任务丢执行指令 | 已修：tasks.start 透传 exec |
+| 15 | 敏感面旗值逃逸（@/key=） | 已修：旗值归一后扫描 |
+| 16 | list 缺持久层/remove 缺 trusted 门 | 已修：并入两作用域；project 腿 trusted 门 |
+| 17 | fenceSuspect 签名偏宽 | 维持（U14 已申报残余面；弹窗材料齐全为兜底） |
+| 18 | SANDBOX.md 词表残留 | 已清 |
+| 19/20 | 死语句/微冗余 | 已清 |
+
+## 5. 挂账
 
 无（U9 零挂账）。企业策略层维持问题域外（DESIGN §7）。

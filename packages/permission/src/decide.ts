@@ -93,7 +93,7 @@ export function decideFor(input: DecideInput): Decision {
     if (denied !== undefined) return { verdict: "deny", reason: `rule:${denied.pattern}`, resolvedBy: `rule:${denied.origin}` };
     const allowed = toolRules.find((rule) => rule.verdict === "allow");
     if (allowed !== undefined) return { verdict: "allow", reason: `rule:${allowed.pattern}`, resolvedBy: `rule:${allowed.origin}` };
-    return { verdict: "ask", reason: `unknown tool:${input.tool}`, resolvedBy: "default:ask", memorizable: true };
+    return { verdict: "ask", reason: `unknown tool:${input.tool}`, resolvedBy: "default:ask", memorizable: true, suggestedRule: `Tool(${input.tool}):allow` };
   }
   return decidePathTool({ ...input, ruleTool, rules, roots: pathRoots });
 }
@@ -137,7 +137,7 @@ function decidePathTool(input: PathDecisionInput): Decision {
   }
   // 界外：ask——批准落账目标父目录（会话语义）+ 可记忆
   const dir = path === "" ? input.root : path.slice(0, Math.max(path.lastIndexOf("/"), 1));
-  return { verdict: "ask", reason: `outside-root:${String(((input.args ?? {}) as { path?: unknown }).path ?? "")}`, resolvedBy: "outside-root", grant: { kind: "extraRoot", dir }, memorizable: true };
+  return { verdict: "ask", reason: `outside-root:${String(((input.args ?? {}) as { path?: unknown }).path ?? "")}`, resolvedBy: "outside-root", grant: { kind: "extraRoot", dir }, memorizable: true, suggestedRule: `${input.ruleTool}(${dir}/**):allow` };
 }
 
 /** path 归一：缺省=工作区根（镜像 toolbox grep 的 schema 缺省——不因缺参坠落 ask） */

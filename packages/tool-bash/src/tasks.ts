@@ -157,7 +157,7 @@ export class BackgroundTasks {
     return n;
   }
 
-  async start(input: { readonly command: string; readonly cwd: string; readonly session: SessionId | undefined; readonly env: ExecEnv }): Promise<TaskResult<{ readonly id: string }>> {
+  async start(input: { readonly command: string; readonly cwd: string; readonly session: SessionId | undefined; readonly env: ExecEnv; readonly exec?: "direct" | "contained" }): Promise<TaskResult<{ readonly id: string }>> {
     if (this.runningOf(input.session) >= this.limits.maxConcurrent) {
       return {
         ok: false,
@@ -171,6 +171,7 @@ export class BackgroundTasks {
         argv: ["/bin/sh", "-c", input.command],
         cwd: input.cwd,
         ...(input.session !== undefined ? { session: input.session } : {}),
+        ...(input.exec !== undefined ? { exec: input.exec } : {}), // 执行指令透传（对抗审查 #14）
       });
       if (!spawned.ok) {
         return { ok: false, reason: `SPAWN_FAILED: ${spawned.reason.kind}: ${spawned.reason.detail}` };

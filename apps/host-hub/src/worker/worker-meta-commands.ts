@@ -76,7 +76,11 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
     const session = requireThread(rt, { ...input, command: "permission/set_mode" });
     if (session === undefined) return;
     const mode = input.mode;
-    if (typeof mode !== "string" || !PERMISSION_MODES.includes(mode)) {
+    // 值域 = 内置 ∪ 当前 settings 自定义档（对抗审查 #13——自定义档经 set_mode 可达）
+    const userSettings = await readHubSettings(rt.agentDir);
+    const projectSettings = rt.state.trusted ? await readProjectSettings(rt.state.cwd) : {};
+    const customIds = [...(userSettings["permission.profiles"] ?? []), ...(projectSettings["permission.profiles"] ?? [])].map((row) => row.id);
+    if (typeof mode !== "string" || (!PERMISSION_MODES.includes(mode) && !customIds.includes(mode))) {
       respond(rt, { id: input.id, command: "permission/set_mode", error: hubError("invalid_input", `invalid permission mode: ${String(mode)}`) });
       return;
     }

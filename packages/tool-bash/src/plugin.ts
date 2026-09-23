@@ -6,7 +6,8 @@
 import { createHash } from "node:crypto";
 import type { Plugin } from "@x-harness/core";
 import type { ExecEnv } from "@x-harness/exec-env";
-import { permissionBroker } from "@x-harness/permission";
+import { permissionBroker, permissionGrantStore, permissionGrants } from "@x-harness/permission";
+import { parseRules } from "@x-harness/permission";
 import { sessionDisposed } from "@x-harness/session";
 import { createToolPlugin } from "@x-harness/tool-core";
 import { PathGate } from "@x-harness/tool-core";
@@ -74,8 +75,28 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
       escalate: { command: fields.command, failureText: fields.failureText },
       ...(fields.session !== undefined ? { session: fields.session } : {}),
     });
+    if (reply.verdict === "allow" && reply.memory !== undefined) {
+      await settleEscalateMemory(fields, reply);
+    }
     return reply.verdict;
   };
+
+  /** 升级批准的记忆梯度兑现（对抗审查 #6）：session→授权桶；project/user→持久面 */
+  async function settleEscalateMemory(fields: { readonly command: string; readonly session?: import("@x-harness/session").SessionId }, reply: import("@x-harness/permission").AskReply): Promise<void> {
+    const raw = reply.ruleOverride?.trim() ?? `Bash(${fields.command}):allow`;
+    try {
+      const entry = parseRules([raw], "session")[0];
+      if (entry === undefined || entry.verdict !== "allow") return;
+      if (reply.memory === "session") {
+        worldCtx?.tryUse(permissionGrants)?.addRule(fields.session, { ...entry, origin: "session", nature: "grant", at: Date.now() });
+      } else if (reply.memory === "project" || reply.memory === "user") {
+        await worldCtx?.tryUse(permissionGrantStore)?.write(reply.memory, { tool: entry.tool, pattern: entry.pattern, verdict: "allow", nature: "grant", at: Date.now() });
+      }
+    } catch {
+      // 坏规则串静默不落（fail-closed——升级执行不受记忆失败影响）
+    }
+  }
+
   return createToolPlugin({
     name: "tool-bash",
     envOption: env,

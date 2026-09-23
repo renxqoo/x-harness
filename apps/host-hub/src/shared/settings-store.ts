@@ -101,6 +101,14 @@ export async function readSettingsFile(path: string): Promise<HubSettings> {
       if (verdict.ok) out[key] = value as never;
     } // 未知键/坏值静默丢弃（文件面历史事实不崩命令面）
   }
+  // 自定义档位可达性（对抗审查 #13）：defaultMode 指向同文件 permission.profiles 内的
+  // 合法行时接受（值域 = 内置 ∪ 本文件自定义行；拼错 id 仍被丢弃——fail-closed）
+  const mode = out["permission.defaultMode"];
+  if (mode === undefined && typeof parsed["permission.defaultMode"] === "string") {
+    const profiles = Array.isArray(parsed["permission.profiles"]) ? (parsed["permission.profiles"] as unknown[]) : [];
+    const hit = profiles.some((row) => typeof row === "object" && row !== null && (row as { id?: unknown }).id === parsed["permission.defaultMode"] && profileRowValid(row));
+    if (hit) out["permission.defaultMode"] = parsed["permission.defaultMode"] as never;
+  }
   return out;
 }
 
