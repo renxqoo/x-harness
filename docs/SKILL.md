@@ -19,8 +19,11 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   （本子系统不消费正文，仅供模型读取）。此语义 = 共享包 `md-frontmatter`
   的实际行为（与 agent-delegation 迁移后单一实现一致）。
 - `SKILL.md` 大小上限 1MB（读前 stat）：超限拒注册 + 告警。
-- 目录解析：插件参数 `skillsDirs` > 环境变量 `X_HARNESS_SKILLS_DIRS`（冒号分隔，
-  空串元素过滤）> 缺省 `[<cwd>/.x-harness/skills, ~/.x-harness/skills]`。
+- 目录解析：**插件必收 `skillsDirs`（零目录知识——不自持缺省/env/路径常量）**，
+  由宿主边沿用统一入口 `resolveSkillDirs(configured?)` 解析后传入：
+  `configured` > 环境变量 `X_HARNESS_SKILLS_DIRS`（冒号分隔，空串元素过滤）>
+  缺省 `[projectSkillsDirOf(cwd), userSkillsDirOf()]`（路径常量单源本包导出，
+  宿主管理面/装配面同源引用）。
   **`skillsDirs: []` = 显式零**（不扫描、不注入）。注意：与姊妹实现
   `resolveAgentDirs` 的 `[]` 落空回退 env 行为**有意不同**（显式零供嵌入方/测试
   表达关闭——差异在此钉死，防照抄）。列表序即优先序：同名 skill 前者胜（项目域

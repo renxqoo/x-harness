@@ -266,3 +266,25 @@ describe("createSkillPlugin 注入", () => {
     expect(world.session.surface()).toHaveLength(0);
   });
 });
+
+describe("插件零目录知识契约（skillsDirs 必收——不自持缺省/env）", () => {
+  it("env 与 cwd 项目根在场也不被插件消费：[] 显式零恒无快照（目录决定权在宿主边沿）", async () => {
+    const original = process.env["X_HARNESS_SKILLS_DIRS"];
+    process.env["X_HARNESS_SKILLS_DIRS"] = "/definitely/not/scanned";
+    try {
+      const stub: Plugin = {
+      name: "agent-loop",
+      apply: (ctx: Context) => {
+        ctx.provide(agentLoopServiceToken, { get: () => undefined } as unknown as AgentLoopService);
+      },
+    };
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [stub, createSkillPlugin({ skillsDirs: [] })]);
+    for (const d of unload) await d();
+    await ctx.dispose();
+    } finally {
+      if (original === undefined) delete process.env["X_HARNESS_SKILLS_DIRS"];
+      else process.env["X_HARNESS_SKILLS_DIRS"] = original;
+    }
+  });
+});

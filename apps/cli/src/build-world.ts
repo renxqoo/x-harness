@@ -40,6 +40,7 @@ import type { ModelResolution } from "./resolve-model.ts";
 export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0 };
 
 import type { World } from "@x-harness/harness";
+import { resolveSkillDirs } from "@x-harness/skill";
 export type { World };
 
 export interface WorldOptions {
@@ -147,7 +148,8 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
     ...checkpointKit(),
     ...delegationKit(),
-    ...skillKit(),
+    // 目录由 CLI 边沿统一解析（resolveSkillDirs：显式 > env > 项目/用户根）——插件零目录知识
+    ...skillKit({ skillsDirs: resolveSkillDirs() }),
     // 快照装配位写死：紧随 skillKit（docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）
     createFactsSnapshotPlugin({ cwd: options.cwd, ...(options.factsNow !== undefined ? { now: options.factsNow } : {}), ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}) }),
   ];

@@ -5,13 +5,13 @@
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentLoopServiceToken, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
-import { loadSkills, resolveSkillDirs } from "./loader.ts";
+import { loadSkills } from "./loader.ts";
 import type { SkillLoadResult } from "./types.ts";
 import { renderSkillsBlock } from "./render.ts";
 import type { SkillPluginOptions } from "./types.ts";
 
-export function createSkillPlugin(options: SkillPluginOptions = {}): Plugin {
-  const dirs = resolveSkillDirs(options.skillsDirs);
+export function createSkillPlugin(options: SkillPluginOptions): Plugin { // 目录必收——无缺省形态
+  const dirs = options.skillsDirs; // 宿主边沿已解析（resolveSkillDirs 统一入口）——插件零目录知识
   return {
     name: "skill",
     inject: ["agent-loop"],

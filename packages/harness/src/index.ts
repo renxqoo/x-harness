@@ -187,7 +187,8 @@ export const compactionKit = (options: CompactionOptions): readonly Plugin[] => 
 export const autoCompactKit = (options: AutoCompactOptions): readonly Plugin[] => [createAutoCompactPlugin(options)];
 
 /** 技能装载 */
-export const skillKit = (): readonly Plugin[] => [createSkillPlugin()];
+/** 技能插件（目录必收——宿主边沿用 @x-harness/skill 的 resolveSkillDirs 统一解析） */
+export const skillKit = (o: { readonly skillsDirs: readonly string[]; readonly disabled?: readonly string[] }): readonly Plugin[] => [createSkillPlugin(o)];
 
 /** 用量计量（五服务之一） */
 export const meterKit = (): readonly Plugin[] => [tokenMeterPlugin];

@@ -8,11 +8,23 @@ import { join } from "node:path";
 import { inspectSkillDir, skillNameMismatch } from "./inspect.ts";
 import type { SkillLoadResult, SkillMeta } from "./types.ts";
 
+/** 用户技能根（homeDir 注入缝：测试隔离目录；缺省真实 HOME） */
+export function userSkillsDirOf(homeDir: string = homedir()): string {
+  return join(homeDir, ".x-harness", "skills");
+}
+
+/** 项目技能根 */
+export function projectSkillsDirOf(cwd: string): string {
+  return join(cwd, ".x-harness", "skills");
+}
+
+/** 目录解析统一入口（宿主边沿消费——插件不自持缺省）：显式传入 > env 覆盖 >
+ *  [项目根, 用户根] 缺省。路径常量单源于本模块（宿主管理面/装配面同源引用）。 */
 export function resolveSkillDirs(configured?: readonly string[]): readonly string[] {
   if (configured !== undefined) return [...configured];
   const env = process.env["X_HARNESS_SKILLS_DIRS"];
   if (env !== undefined && env !== "") return env.split(":").filter((dir) => dir !== "");
-  return [join(process.cwd(), ".x-harness", "skills"), join(homedir(), ".x-harness", "skills")];
+  return [projectSkillsDirOf(process.cwd()), userSkillsDirOf()];
 }
 
 export async function loadSkills(dirs: readonly string[]): Promise<SkillLoadResult> {
