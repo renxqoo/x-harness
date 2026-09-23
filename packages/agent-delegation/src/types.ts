@@ -40,6 +40,10 @@ export interface DelegationOptions {
   readonly maxResident?: number;
   /** 类型加载/邮箱投递等非致命告警出口（缺省静默降级） */
   readonly onWarn?: (message: string) => void;
+  /** 裸模型名 → 归属 provider 反查（宿主接装配目录快照；缺省不反查——model 覆盖
+   *  的 provider 回落覆盖序，兼容纯内核部署）。跨 provider 联动（串线修复）：类型
+   *  .md 只写 model 不写 provider 时按目录归属联动，不再静默继承父 provider。 */
+  readonly resolveProviderOf?: (model: string) => string | undefined;
 }
 
 export type ChildView =

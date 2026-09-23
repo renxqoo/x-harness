@@ -141,18 +141,60 @@ function mint(spec: { seq: number; type: string; data: unknown }): SessionEvent 
   return { type: spec.type, seq: spec.seq, time: Date.now(), data: spec.data, surfaceOp: "append" } as SessionEvent;
 }
 
-/** 模型/线路覆盖序（docs/AGENT-DELEGATION.md §7.3）：按次 > 类型定义 > 父 options > 父末次 header */
+/**
+ * `provider/model` 复合串拆解（主应用设置界面写入 .md 的形态）：首个 `/` 切分，
+ * 首段 = provider、余下全段 = model。裸模型名/退化形态（空段）返回 undefined——
+ * 按裸名透传不误拆。与主应用 parseModelKey 同一词法（单一真相两域各持）。
+ */
+export function splitDialRef(ref: string): { provider: string; model: string } | undefined {
+  const index = ref.indexOf("/");
+  if (index <= 0 || index === ref.length - 1) return undefined;
+  return { provider: ref.slice(0, index), model: ref.slice(index + 1) };
+}
+
+/**
+ * 模型/线路覆盖序（docs/AGENT-DELEGATION.md §7.3）：按次 > 类型定义 > 父 options > 父末次 header。
+ * 跨 provider 联动（串线修复）：model 命中复合串 `provider/model` 时 provider 跟随拆解值
+ * （显式 provider 字段仍恒胜）；裸模型名经 resolveProviderOf 目录反查归属——查得即联动，
+ * 查不到回落覆盖序（兼容既有部署）。model 与 provider 必须同源，否则请求打到父端点带子
+ * 模型名（上游 4xx / no-adapter——「子代理模型与主 agent 不同即报错」的机制）。
+ */
 export function inheritDial(
   parentHandle: AgentHandle,
   chain: {
     readonly type?: LoadedAgentType;
     readonly lastHeader?: { model?: string; provider?: string };
     readonly override?: { model?: string; provider?: string };
+    /** 裸模型名 → 归属 provider 反查（宿主接目录快照；缺省不反查——纯内核部署兼容） */
+    readonly resolveProviderOf?: (model: string) => string | undefined;
   },
 ): { model?: string; provider?: string } {
   const model = chain.override?.model ?? chain.type?.model ?? parentHandle.agent.options.model ?? chain.lastHeader?.model;
-  const provider = chain.override?.provider ?? chain.type?.provider ?? parentHandle.agent.options.provider ?? chain.lastHeader?.provider;
-  return { ...(model !== undefined ? { model } : {}), ...(provider !== undefined ? { provider } : {}) };
+  if (model === undefined) return {};
+  const composite = splitDialRef(model);
+  const provider = foldProvider(chain, { parentProvider: parentHandle.agent.options.provider, model, fromComposite: composite?.provider });
+  return { model: composite?.model ?? model, ...(provider !== undefined ? { provider } : {}) };
+}
+
+/** provider 折叠（inheritDial 复杂度治理）：显式字段（override/type）> 复合串拆解 >
+ *  目录反查（裸模型名归属联动）> 父 options > 父末次 header。 */
+function foldProvider(
+  chain: {
+    readonly type?: LoadedAgentType;
+    readonly lastHeader?: { model?: string; provider?: string };
+    readonly override?: { model?: string; provider?: string };
+    readonly resolveProviderOf?: (model: string) => string | undefined;
+  },
+  spec: { readonly parentProvider: string | undefined; readonly model: string; readonly fromComposite: string | undefined },
+): string | undefined {
+  const explicit = chain.override?.provider ?? chain.type?.provider;
+  if (explicit !== undefined) return explicit;
+  if (spec.fromComposite !== undefined) return spec.fromComposite;
+  if (chain.resolveProviderOf !== undefined) {
+    const resolved = chain.resolveProviderOf(spec.model);
+    if (resolved !== undefined) return resolved;
+  }
+  return spec.parentProvider ?? chain.lastHeader?.provider;
 }
 
 /** 沿树只收窄：type.tools ∩ 调用方白名单；undefined=全集 */

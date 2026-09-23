@@ -259,6 +259,15 @@ export function contextWindowOf(catalog: WorkerCatalog, dial: { provider: string
   return catalog.modelMeta[dial.model]?.contextWindow ?? catalogEntryOf(catalog, dial)?.contextWindow ?? FALLBACK_CONTEXT_WINDOW;
 }
 
+/** 裸模型名 → 唯一归属 provider（多 provider 同名 = 歧义不联动——回落覆盖序；
+ *  agent_spawn/类型 .md 只写 model 不写 provider 时的串线修复面） */
+function providerOfModel(catalog: WorkerCatalog): (model: string) => string | undefined {
+  return (model) => {
+    const owners = catalog.providers.filter((p) => p.models.includes(model));
+    return owners.length === 1 ? owners[0]?.provider : undefined;
+  };
+}
+
 /** thinking.default 物化（fork 全量 dial 不物化；不兼容丢弃并告警——不让 hub
  *  默认打挂装配） */
 function materializeThinking(fields: AssemblyFields, catalog: WorkerCatalog, dial: { provider: string; model: string }): ThinkingLevel | undefined {
@@ -304,8 +313,9 @@ function defaultWorkerPlugins(resolved: {
   readonly contextWindow: number;
   readonly dial: { provider: string; model: string };
   readonly facts: BasePromptFacts;
+  readonly catalog: WorkerCatalog;
 }): readonly Plugin[] {
-  const { fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts } = resolved;
+  const { fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog } = resolved;
   return [
     // base 系统提示词（与 CLI 同源 @x-harness/harness——身份/守则/环境块 + facts 插值）
     ...promptKit(createBasePromptPlugin(facts)),
@@ -334,7 +344,7 @@ function defaultWorkerPlugins(resolved: {
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
     ...checkpointKit(),
     createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
-    createAgentDelegationPlugin({ agentsDirs }),
+    createAgentDelegationPlugin({ agentsDirs, resolveProviderOf: providerOfModel(catalog) }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     dialHookPlugin(),
   ];
@@ -355,7 +365,7 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
   const adapters = buildAdapters(catalog, script);
   const contextWindow = contextWindowOf(catalog, dial);
 
-  const defaultPlugins: readonly Plugin[] = defaultWorkerPlugins({ fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts });
+  const defaultPlugins: readonly Plugin[] = defaultWorkerPlugins({ fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog });
 
   const plugins: readonly Plugin[] = deps?.worldPlugins?.(fields) ?? defaultPlugins;
 

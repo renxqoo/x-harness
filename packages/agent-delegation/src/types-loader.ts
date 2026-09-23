@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseFlat, splitFrontmatter } from "@x-harness/md-frontmatter";
 import type { LoadedAgentType } from "./types.ts";
+import { splitDialRef } from "./lineage.ts";
 
 export interface TypeLoadResult {
   readonly types: Readonly<Record<string, LoadedAgentType>>;
@@ -84,6 +85,17 @@ export function loadAgentTypes(dirs: readonly string[]): TypeLoadResult {
   return { types, warnings };
 }
 
+/** model/provider 字段拆解（parseFile 复杂度治理）：model 命中复合串 `provider/model`
+ *  （主应用设置界面写入形态）拆出双段；显式 provider 字段恒胜（拆解值不覆盖显式声明）。 */
+function dialFieldsOf(fields: ReadonlyMap<string, string>): { model?: string; provider?: string } {
+  const rawModel = fields.get("model");
+  const composite = rawModel !== undefined ? splitDialRef(rawModel) : undefined;
+  return {
+    ...(composite?.model ?? rawModel !== undefined ? { model: composite?.model ?? rawModel } : {}),
+    ...(fields.get("provider") ?? composite?.provider !== undefined ? { provider: fields.get("provider") ?? composite?.provider } : {}),
+  };
+}
+
 type ParseOutcome = LoadedAgentType | string; // string = 拒注册告警
 
 function parseFile(path: string, stem: string): ParseOutcome {
@@ -103,11 +115,12 @@ function parseFile(path: string, stem: string): ParseOutcome {
   if (name !== stem) return `agents: ${path} name '${name}' must match filename '${stem}'`;
   if (RESERVED.has(name)) return `agents: ${path} reserved type name '${name}'`;
   const tools = fields.get("tools");
+  const { model, provider } = dialFieldsOf(fields);
   const type: LoadedAgentType = {
     name,
     description,
-    ...(fields.get("model") !== undefined ? { model: fields.get("model") } : {}),
-    ...(fields.get("provider") !== undefined ? { provider: fields.get("provider") } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(provider !== undefined ? { provider } : {}),
     ...(tools !== undefined ? { tools: tools.split(",").map((t) => t.trim()).filter((t) => t !== "") } : {}),
     prompt: matter.body,
   };

@@ -122,6 +122,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         emitSpawned,
         emitFinished,
         ...(grants !== undefined ? { setRootOverride: (session: import("@x-harness/session").SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
+        ...(options.resolveProviderOf !== undefined ? { resolveProviderOf: options.resolveProviderOf } : {}),
       };
       // 启动期对账清扫（§8.3——崩溃泄漏兜底）；测试可关（worktreeSweep:false）
       if (options.worktreeSweep !== false) {
