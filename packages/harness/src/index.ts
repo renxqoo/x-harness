@@ -1,7 +1,8 @@
 // 装配方 kit 目录 + createAgentWorld（SDK-MIGRATION-F1）：任意插件集的装配机制——
 // kit = 内部接线正确的插件组（gate/observed 共享、adapter 注册插件化）；顺序由
-// inject/softInject topo 声明式保证（数组序无关）。S3：门面零业务内容——基础段经
-// promptKit(base) 注入、adapters/审批/providers 全是宿主注入参数；appends 留宿主
+// inject/softInject topo 声明式保证（数组序无关）。基础段正文与 facts 探测共享于
+// 本包（base-prompt.ts——apps/cli 与 apps/host-hub 两宿主同源，经 promptKit(base)
+// 注入世界）；adapters/审批/providers 全是宿主注入参数；appends 留宿主
 // 后置注册（F-02 尾序契约）。
 
 import { Database } from "bun:sqlite";
@@ -109,7 +110,14 @@ export const loopKit = (): readonly Plugin[] => [agentLoopPlugin];
  *  count < max → resume（续写指令经内核以 agent/message{directive} 落卷）；否则可恢复错误收轮 */
 export const continuationKit = (options?: ContinuationOptions): readonly Plugin[] => [createContinuationPlugin(options)];
 
-/** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替）；appends 归宿主后置 */
+/** 基础段插件 + facts 探测（两宿主同源消费面；正文见 base-prompt.ts，探测见 base-prompt-probe.ts） */
+export { createBasePromptPlugin } from "./base-prompt.ts";
+export type { BasePromptFacts } from "./base-prompt.ts";
+export { probeBaseFacts } from "./base-prompt-probe.ts";
+export type { ProbeFactsInput } from "./base-prompt-probe.ts";
+
+/** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替；常规装配传
+ *  createBasePromptPlugin(probeBaseFacts(...)));appends 归宿主后置 */
 export const promptKit = (base?: Plugin): readonly Plugin[] => [
   systemPromptPlugin,
   ...(base !== undefined ? [base] : []),

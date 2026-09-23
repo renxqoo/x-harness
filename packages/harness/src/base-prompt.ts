@@ -1,7 +1,9 @@
-// CLI 基础提示词（业务内容——归上层宿主；内核仅持锚点词汇表 wellKnown，ELEVATION
-// 后核销修正 1）：单一 base/core 段（身份/守则/环境块）+ facts 变量；facts 由宿主探测
-// 传入，入口归一（换行压空格——注入面收口）。锚点纯静态：日期已迁边沿注入快照通道
-// （docs/TAIL-SNAPSHOT-CHANNEL.md——易变事实出锚点，漂移不再打穿缓存前缀）。
+// 基础提示词（共享宿主内容——apps/cli 与 apps/host-hub 两宿主同源消费；内核
+// @x-harness/system-prompt 仅持锚点词汇表 wellKnown）：单一 base/core 段
+// （身份/守则/环境块）+ facts 变量；facts 由宿主探测传入（probeBaseFacts——
+// base-prompt-probe.ts 的 fs IO 边），入口归一（换行压空格——注入面收口）。
+// 锚点纯静态：日期已迁边沿注入快照通道（docs/TAIL-SNAPSHOT-CHANNEL.md——易变
+// 事实出锚点，漂移不再打穿缓存前缀）。
 
 import type { Disposer, Plugin } from "@x-harness/core";
 import { systemPrompt, wellKnown } from "@x-harness/system-prompt";
@@ -153,7 +155,7 @@ export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromp
 /** 基础段插件：inject system-prompt（硬依赖——无注册表的基础内容无意义，topo 保序） */
 export function createBasePromptPlugin(facts: BasePromptFacts): Plugin {
   return {
-    name: "cli-base-prompt",
+    name: "base-prompt",
     inject: ["system-prompt"],
     apply: (ctx) => registerBasePrompt(ctx.use(systemPrompt), facts),
   };

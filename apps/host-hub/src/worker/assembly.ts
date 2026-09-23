@@ -18,12 +18,14 @@ import {
   checkpointKit,
   compactionKit,
   createAgentWorld,
+  createBasePromptPlugin,
   durableSessionKit,
   fenceKit,
   llmKit,
   continuationKit,
   loopKit,
   meterKit,
+  probeBaseFacts,
   promptKit,
   toolboxKit,
 } from "@x-harness/harness";
@@ -252,6 +254,7 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
   const dial = resolveAssemblyDial(fields, catalog, script !== undefined);
   const thinking = materializeThinking(fields, catalog, dial);
   const cwd = fields.cwd ?? process.cwd();
+  const facts = probeBaseFacts({ cwd, platform: process.platform, env });
   const dirs = trustedDirsOf(fields, cwd);
   const skillsDirs = dirs.skillsDirs;
   const agentsDirs = dirs.agentsDirs;
@@ -260,7 +263,8 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
   const contextWindow = contextWindowOf(catalog, dial);
 
   const defaultPlugins: readonly Plugin[] = [
-    ...promptKit(),
+    // base 系统提示词（与 CLI 同源 @x-harness/harness——身份/守则/环境块 + facts 插值）
+    ...promptKit(createBasePromptPlugin(facts)),
     ...durableSessionKit({ root: fields.sessionsRoot }),
     ...toolboxKit({ root: cwd }),
     ...fenceKit({

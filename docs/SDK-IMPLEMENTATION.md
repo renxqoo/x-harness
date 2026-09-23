@@ -16,14 +16,14 @@
 |---|---|---|---|
 | packages/harness（新上层包） | **新建** | build-world 逻辑迁入：createAgentWorld + World 接口 + RETRY_POLICY 缺省；选项化 adapters/broker/prompt{basePlugin,appends}/persist/retryPolicy | F0 |
 | apps/cli build-world.ts | **改写为消费者** | 保留 adapterOptionsOf/buildAdapters（providers 探测归宿主）+ broker 装配 + 薄封装（re-export World/createAgentWorld 或直接转调）；main.ts 不动接口 | F0 |
-| apps/cli base-prompt.ts | 原位 | basePlugin 经 options.prompt 注入门面 | F0 |
+| 基础提示词正文（原 apps/cli base-prompt.ts） | 迁 packages/harness | `base-prompt.ts` + `base-prompt-probe.ts`（facts 探测）；两宿主同源，经 `promptKit(createBasePromptPlugin(...))` 注入 | F0 |
 | packages/testkit（新） | **新建** | textScript/scriptedAdapter/fakeTool；纯函数零装置 | F2 |
 | e2e 四 journey | **改写** | 样板换 testkit（断言零语义变化） | F2 |
 | docs/PLUGIN-AUTHORING.md | **新建** | 五块结构（DESIGN §2.3）；Where-new-behavior-goes 总表 | F1 |
 
 ## 3. 拆分决策
 
-- harness 包依赖 = CLI 现依赖减 apps 层（broker/providers/facts）；**不依赖** apps/cli（S3：basePlugin 注入）。
+- harness 包依赖 = CLI 现依赖减 apps 层（broker/providers）；**不依赖** apps/cli。基础段正文与 facts 探测共享于 harness（S3 演进：basePlugin 内容两宿主同源，注入仍经 promptKit(base)）。
 - appends 注册逻辑（无边落尾链）从 apps/cli cli-prompt-sections.ts **迁入 harness**（机制归门面）；`registerAppendSections` 留 CLI 转用或直接内联——迁入后 CLI 删除本地版。
 - testkit 依赖 llm（类型 LlmChunk/LlmAdapter/LlmRequest）+ tools（ToolDefinition）+ typebox（devDep 不需要——inputSchema 手写对象？否：fakeTool 用 Type.Object({})，需 typebox 依赖）。
 

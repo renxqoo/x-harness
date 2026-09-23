@@ -5,6 +5,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { systemPrompt } from "@x-harness/system-prompt";
 import { assembleWorkerAgent, contextWindowOf } from "../worker/assembly.ts";
 import { createBashExec } from "../worker/bash-exec.ts";
 import { createWorkerCommands } from "../worker/worker-commands.ts";
@@ -57,6 +58,28 @@ describe("assembly 装配面", () => {
     const world = assembled.world;
     for (const disposer of world.unload) await disposer();
     await world.ctx.dispose(); // teardownWorld 同径（重复 dispose 幂等面不在此断言）
+  }, 20_000);
+
+  test("base 系统提示词装配：身份段 + facts 插值（{{}} 无残留）——与 CLI 同源", async () => {
+    const agentDir = await tempDir("hub-baseprompt-");
+    const assembled = await assembleWorkerAgent({
+      sessionsRoot: join(agentDir, "sessions"),
+      cwd: agentDir,
+      trusted: false,
+      dial: { provider: "script", model: "script-1" },
+      env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) },
+    });
+    const text = assembled.world.ctx.use(systemPrompt).assemble().text;
+    expect(text.indexOf("You are Agent")).toBe(0);
+    expect(text).toContain(`- Working directory: ${agentDir}`);
+    expect(text).toContain("- Is a git repository: no"); // 临时目录非 git 工作区
+    expect(text).toContain(`- Platform: ${process.platform}`);
+    expect(text).toContain("- Shell: unknown"); // 测试 env 无 SHELL——垃圾降级不空值
+    expect(text).not.toContain("{{");
+    await assembled.handle.dispose();
+    const world = assembled.world;
+    for (const disposer of world.unload) await disposer();
+    await world.ctx.dispose();
   }, 20_000);
 
   test("thinking.default openai 渠道保留（协议无条件拒已撤——仅目录 reasoning:false 拒）", async () => {

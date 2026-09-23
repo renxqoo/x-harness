@@ -140,6 +140,6 @@ export interface ToolRegistry {
 
 ## 8. 后核销修正（2026-09-20，用户复审）
 
-- **修正 1（分层失误）**：§2.1.1 原把 `basePromptPlugin`（整篇基础提示词 + facts 归一）放在内核包——业务内容入内核，违反本设计自己的「零领域知识」判据。修正：内核仅持 `wellKnown` 锚点词汇表（= dsh SECTION_ORDERS 槽位同构——名字治理非内容）；`base.ts` 全量迁 apps/cli（`apps/cli/src/base-prompt.ts`，唯一消费者；第二宿主出现时再抽包）。tool-core 测试改手工注册槽位段（不依赖内容）。四门全绿（145/1730）。
+- **修正 1（分层失误）**：§2.1.1 原把 `basePromptPlugin`（整篇基础提示词 + facts 归一）放在内核包——业务内容入内核，违反本设计自己的「零领域知识」判据。修正：内核仅持 `wellKnown` 锚点词汇表（= dsh SECTION_ORDERS 槽位同构——名字治理非内容）；正文先迁 apps/cli（唯一消费者期），第二宿主 host-hub 出现后落 **packages/harness 共享**（`packages/harness/src/base-prompt.ts`——上层 kit 层，仍在内核组之外）。tool-core 测试改手工注册槽位段（不依赖内容）。四门全绿（145/1730）。
 - **复核 2（维持原判）**：tool-core 不进内核组——依赖 permission（上层）+ PathGate/ObservedRegistry/guidance 停靠均为工具箱层策略件；进内核需先倒置 permission 依赖，不值。
 - **复核 3（维持原判）**：session 契约在内核（dsh core/session 同构——spine）；提供方（persistence-jsonl/checkpoint/mailbox）留上层，与 dsh session 组一致。

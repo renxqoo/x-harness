@@ -1,5 +1,5 @@
-// basePromptPlugin 全套（docs/SYSTEM-PROMPT.md §1.4/§3）：facts 插值、入口归一（注入面
-// 收口/垃圾降级）、baseCore 锚点可用性、注销回收、inject topo 装配。
+// createBasePromptPlugin 全套（docs/SYSTEM-PROMPT.md §1.4/§3）：facts 插值、入口归一
+// （注入面收口/垃圾降级）、baseCore 锚点可用性、注销回收、inject topo 装配。
 
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";

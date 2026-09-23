@@ -16,6 +16,7 @@ import {
   checkpointKit,
   compactionKit,
   createAgentWorld,
+  createBasePromptPlugin,
   delegationKit,
   durableSessionKit,
   fenceKit,
@@ -29,8 +30,7 @@ import {
   toolboxKit,
   telemetryKit,
 } from "@x-harness/harness";
-import { createBasePromptPlugin } from "./base-prompt.ts";
-import type { BasePromptFacts } from "./base-prompt.ts";
+import type { BasePromptFacts } from "@x-harness/harness";
 import { createFactsSnapshotPlugin } from "./snapshot-facts.ts";
 import type { ProvidersConfig, ProviderProfile } from "./providers-file.ts";
 import type { ModelResolution } from "./resolve-model.ts";

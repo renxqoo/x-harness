@@ -10,7 +10,8 @@ import type { World } from "./build-world.ts";
 import { buildInitialMessage } from "./build-initial-message.ts";
 import { createTerminalBrokerPlugin } from "./broker-terminal.ts";
 import type { BrokerIO } from "./broker-terminal.ts";
-import { promptFactsOf, registerAppendSections } from "./cli-prompt-sections.ts";
+import { probeBaseFacts } from "@x-harness/harness";
+import { registerAppendSections } from "./cli-prompt-sections.ts";
 import { defaultSessionRoot, harnessHome, providersPath } from "./harness-home.ts";
 import { parseCliArgs, usageText } from "./parse-cli-args.ts";
 import type { CliArgs } from "./parse-cli-args.ts";
@@ -173,7 +174,7 @@ async function openWorld(input: {
     compaction: {},
     persist: !args.noSession,
     // --system-prompt 整体替换时不装基础段（装配方裁决；静态串优先是包契约）
-    promptFacts: args.systemPrompt === undefined ? promptFactsOf(io) : undefined,
+    promptFacts: args.systemPrompt === undefined ? probeBaseFacts(io) : undefined,
     config,
     resolution,
     ...(args.permission !== undefined ? { permission: args.permission } : {}),

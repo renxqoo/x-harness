@@ -1,8 +1,8 @@
-// 追加段链 + 环境事实探测（docs/CLI.md §2.5）：基础段归 @x-harness/system-prompt
-// （包内 base-plugin.test 覆盖）；本层只测 appends 链（落尾语义/注销回收/与工具段共序）
-// 与 promptFactsOf（isGit 祖先上寻/shell 归一——date 已迁快照通道）。
+// 追加段链（docs/CLI.md §2.5）：基础段归 @x-harness/harness base-prompt.ts（包内
+// base-prompt.test 覆盖）；本层只测 appends 链（落尾语义/注销回收/与工具段共序）
+// 与 CLI 形态世界组装回归（W1 审查 M-1 处置——等价验收工件）。
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -10,13 +10,13 @@ import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { wellKnown, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
-import { createBasePromptPlugin } from "../base-prompt.ts";
-import type { BasePromptFacts } from "../base-prompt.ts";
+import { createBasePromptPlugin } from "@x-harness/harness";
+import type { BasePromptFacts } from "@x-harness/harness";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
 import { bashGuidance } from "@x-harness/tool-bash";
 import { PathGate, createToolPlugin } from "@x-harness/tool-core";
-import { promptFactsOf, registerAppendSections } from "../cli-prompt-sections.ts";
+import { registerAppendSections } from "../cli-prompt-sections.ts";
 
 const FACTS: BasePromptFacts = { cwd: "/tmp/proj", isGit: false, platform: "darwin", shell: "zsh" };
 
@@ -56,29 +56,6 @@ describe("registerAppendSections", () => {
     const after = prompt.assemble().text;
     expect(after).not.toContain("GONE");
     expect(after).toContain("You are Agent");
-  });
-});
-
-describe("promptFactsOf（宿主探测）", () => {
-  it("isGit 祖先上寻（worktree file 形态算）；shell 换行归一；date 已迁快照通道不在 facts", () => {
-    const root = mkdtempSync(join(tmpdir(), "xh-facts-"));
-    try {
-      expect(promptFactsOf({ cwd: root, platform: "darwin", env: {} }).isGit).toBe(false);
-      writeFileSync(join(root, ".git"), "gitdir: /elsewhere\n"); // worktree file 形态
-      mkdirSync(join(root, "sub"));
-      const facts = promptFactsOf({ cwd: join(root, "sub"), platform: "darwin", env: { SHELL: "/bin/zsh\n" } });
-      expect(facts.isGit).toBe(true); // 自 sub 上寻命中
-      expect(facts.shell).toBe("/bin/zsh"); // 换行被入口归一压掉
-      expect("date" in facts).toBe(false); // 日期已迁快照通道（TAIL-SNAPSHOT-CHANNEL）
-      expect(facts.cwd).toBe(join(root, "sub"));
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  it("env.SHELL 缺席 → unknown（垃圾降级，绝不空值）", () => {
-    const facts = promptFactsOf({ cwd: "/w", platform: "linux", env: {} });
-    expect(facts.shell).toBe("unknown");
   });
 });
 

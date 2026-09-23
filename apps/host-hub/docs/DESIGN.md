@@ -524,10 +524,13 @@ stopReason/usage）；跨步/重连对账以 WAL 为准（get_entries since=turn
 
 ## 5. worker 侧装配与语义映射
 
-worker = `createAgentWorld` + kit 配方（`promptKit` / `durableSessionKit` /
-`toolboxKit` / `fenceKit` / `meterKit` / `compactionKit`+`autoCompactKit` /
-`llmKit(adapters)` / `loopKit` / `checkpointKit` / `delegationKit` / `skillKit`）+
-`loop.create/resume` 单会话。trusted 决定 skills/agents project 级目录与项目级设置
+worker = `createAgentWorld` + kit 配方（`promptKit(createBasePromptPlugin(
+probeBaseFacts(...)))`——base 系统提示词与 CLI 同源（@x-harness/harness
+base-prompt.ts：身份/守则/环境块 + facts=cwd/isGit/platform/shell 进程探测插值）/
+`durableSessionKit` / `toolboxKit` / `fenceKit` / `meterKit` / `compactionKit`+
+`autoCompactKit` / `llmKit(adapters)` / `loopKit` / `checkpointKit` /
+`delegationKit` / `skillKit`）+ `loop.create/resume` 单会话。trusted 决定
+skills/agents project 级目录与项目级设置
 装载（workspace=cwd 显式锚）。permission 即时面经 `ctx.use(permissionMode)` 服务
 （插件恒提供，§3.9）。
 
