@@ -161,7 +161,7 @@ describe("inflight 状态机", () => {
 describe("event-bridge 观察面", () => {
   test("未装配不外发（threadId 空）；childBusy 默认 false", () => {
     const lines: string[] = [];
-    const bridge = createEventBridge({ emitLine: (line) => lines.push(line), threadId: () => "", inflight: createInflightState() });
+    const bridge = createEventBridge({ emitLine: (line) => lines.push(line), threadId: () => "", inflight: createInflightState(), pendingSends: () => 0, mainEvents: () => undefined });
     bridge.emitSettled("s1", true);
     expect(lines).toEqual([]); // 无盖章不外发
     expect(bridge.childBusy()).toBe(false);

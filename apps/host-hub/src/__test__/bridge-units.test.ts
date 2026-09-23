@@ -5,7 +5,7 @@ import { createContext } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { sessionDisposed, sessionEvent } from "@x-harness/session";
 import type { SessionEvent } from "@x-harness/session";
-import { agentAssistantStream, agentToolStream } from "@x-harness/agent-loop";
+import { agentAssistantStream, agentStatus, agentToolStream } from "@x-harness/agent-loop";
 import { agentFinished, agentSpawned } from "@x-harness/agent-delegation";
 import { llmStream } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
@@ -36,6 +36,8 @@ function makeBridge() {
     emitLine: (line) => frames.push(JSON.parse(line) as Frame),
     threadId: () => "main-1",
     inflight: inflight as never,
+    pendingSends: () => 0,
+    mainEvents: () => undefined,
   });
   return { bridge, frames, inflightCalls, readPartial: () => partialSnapshot };
 }
@@ -183,5 +185,65 @@ describe("命令执行中计数（BATCH3 §2.4——busy 面/清账面）", () =
     expect(w.bridge.commandBusy()).toBe(true);
     w.bridge.unsubscribe(); // fork 重装配清账
     expect(w.bridge.commandBusy()).toBe(false);
+  });
+});
+
+describe("内部驱动轮 settled 合成（delegation notify 等无驱动命令的 kick）", () => {
+  function rig(events: SessionEvent[], pending = 0): { frames: Frame[]; ctx: Context; setPending: (n: number) => void } {
+    const frames: Frame[] = [];
+    let pend = pending;
+    const bridge = createEventBridge({
+      emitLine: (line) => frames.push(JSON.parse(line) as Frame),
+      threadId: () => "main-1",
+      inflight: { turnStart: () => {}, turnEnd: () => {}, toolOutput: () => {}, toolDone: () => {}, partial: () => {}, snapshot: () => ({ turnStartSeq: null, turnStartedAt: null, message: null, toolOutputs: [] }) } as never,
+      pendingSends: () => pend,
+      mainEvents: () => events,
+    });
+    const ctx = createContext();
+    bridge.wire(ctx);
+    return { frames, ctx, setPending: (n) => (pend = n) };
+  }
+
+  test("主会话 idle 边沿且无 pendingSends → 合成 settled{sendId:\"\"}（completed→ok:true）且恰一次", async () => {
+    const events = [ev(10, "turn/start", { turn: 5 }), ev(11, "turn/end", { turn: 5, reason: { kind: "completed" } })];
+    const r = rig(events);
+    // 轮经 WAL 事件面（游标登记）——内部 kick 的真实时序：turn 已收尾，idle 边沿到达
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    const settled = r.frames.find((f) => f.name === "settled");
+    expect(settled?.payload).toEqual({ sendId: "", ok: true });
+    r.frames.length = 0;
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false); // 恰一次
+  });
+
+  test("error 终态 → ok:false + reason 透传；子会话 idle 边沿不触发", async () => {
+    const events = [ev(20, "turn/start", { turn: 6 }), ev(21, "turn/end", { turn: 6, reason: { kind: "error", message: "llm died" } })];
+    const r = rig(events);
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
+    r.ctx.emit(agentStatus, { session: CHILD, status: "idle" }); // 子会话 idle：不触发
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false);
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.find((f) => f.name === "settled")?.payload).toEqual({ sendId: "", ok: false, reason: "llm died" });
+  });
+
+  test("pendingSends>0（驱动轮在飞）→ 不合成；驱动结算后的 idle 兜底补发（客户端去重）", async () => {
+    const events = [ev(30, "turn/start", { turn: 7 }), ev(31, "turn/end", { turn: 7, reason: { kind: "completed" } })];
+    const r = rig(events, 1);
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false); // 驱动轮：settled 由 settleAfter 兑付
+    r.setPending(0);
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(true);
+  });
+
+  test("无主会话轮的窗口（游标空）→ idle 不合成", async () => {
+    const r = rig([]);
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false);
   });
 });

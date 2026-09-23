@@ -73,6 +73,8 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     emitLine: (line) => void writer.write(line),
     threadId: () => state.threadId,
     inflight: inflightState,
+    pendingSends: () => rt.pendingSends,
+    mainEvents: () => state.handle?.agent.session.events(),
   });
   const bash = createBashExec({
     session: () => {

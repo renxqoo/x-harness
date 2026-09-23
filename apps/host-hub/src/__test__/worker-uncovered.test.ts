@@ -288,7 +288,7 @@ function makeRuntimeStub(): Parameters<typeof createWorkerCommands>[0] {
     bash,
     inflight: createInflightRegistry(),
     inflightState: createInflightState(),
-    bridge: createEventBridge({ emitLine: () => {}, threadId: () => "", inflight: createInflightState() }),
+    bridge: createEventBridge({ emitLine: () => {}, threadId: () => "", inflight: createInflightState(), pendingSends: () => 0, mainEvents: () => undefined }),
     triggerShutdown: () => {},
     env: {},
     pendingSends: 0,
