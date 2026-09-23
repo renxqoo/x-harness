@@ -111,6 +111,13 @@ describe("loadSkills", () => {
     expect(result.warnings.map((warning) => warning.startsWith("skills: ") && warning.includes(join(root, name, "SKILL.md")))).toContain(true);
   });
 
+  it("告警逐字透传形态判定单点（name 与目录名不符——真实机器常见症状：tavily 声明 tavily-cli）", async () => {
+    await writeSkill("tavily", "name: tavily-cli\ndescription: CLI");
+    const result = await loadSkills([root]);
+    expect(result.skills).toEqual({});
+    expect(result.warnings).toEqual([`skills: ${join(root, "tavily", "SKILL.md")} name 'tavily-cli' must match directory name 'tavily'`]);
+  });
+
   it("根下普通文件（非目录）静默忽略、无告警", async () => {
     await writeSkill("alpha", "name: alpha\ndescription: does A");
     await writeFile(join(root, "README.md"), "not a skill");

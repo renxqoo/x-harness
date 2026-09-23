@@ -1,4 +1,5 @@
-// host 管理命令面（DESIGN §3.9）：settings/models/agents/skills 命令注册
+// host 管理命令面（DESIGN §3.9）：settings/models/agents/skills（含技能导入——
+// docs/SKILL-INSTALL.md）命令注册
 // （settings/get·set 与 skills/set_enabled 含项目级 cwd 形态）+ workspace/trust
 // 信任注册表管理 + permission 双域分叉（无 threadId 全局本地；live 交池
 // HOST_RELAYED——返回 false 由调用方交池；parked/dead 直答）。
@@ -20,6 +21,8 @@ import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import { addModel, removeModel } from "./models-admin.ts";
 import { createUserAgentType, removeUserAgentType } from "./agents-admin.ts";
 import { knownSkillNames, listSkills, removeSkill, setSkillEnabled } from "./skills-admin.ts";
+import { inspectSkillSources, installSkill } from "./skills-install.ts";
+import { SKILL_IMPORT_MAX_BYTES, SKILL_IMPORT_MAX_ENTRIES } from "../shared/limits.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import type { TrustStore } from "./trust-store.ts";
 
@@ -31,6 +34,11 @@ export interface AdminCommandsDeps {
   table: ThreadTable;
   trust: TrustStore;
   respond: (id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }) => void;
+}
+
+/** skills 面作用域（HOME 注入缝 + 已过信任门禁的 cwd）——技能命令共用同一形态 */
+function skillsScopeOf(deps: AdminCommandsDeps, cwd?: string): { homeDir?: string; cwd?: string } {
+  return { ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}), ...(cwd !== undefined ? { cwd } : {}) };
 }
 
 /** 信任 cwd 全集（注册表 ∪ live trusted——规范化）——skills/remove 的 project 判定用 */
@@ -120,7 +128,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         const values = await readHubSettings(deps.agentDir);
         // 陈旧名单惰性滤除：未知名不回显（不写回——盘上事实不动）
         if (values["skills.disabled"] !== undefined) {
-          const known = new Set(await knownSkillNames());
+          const known = new Set(await knownSkillNames(skillsScopeOf(deps)));
           values["skills.disabled"] = values["skills.disabled"].filter((name) => known.has(name));
         }
         deps.respond(id, "settings/get", { data: { values } });
@@ -135,7 +143,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       const [user, project] = await Promise.all([readHubSettings(deps.agentDir), readProjectSettings(gate.cwd)]);
       const merged = mergeSettings(user, project);
       if (merged.values["skills.disabled"] !== undefined) {
-        const known = new Set(await knownSkillNames(gate.cwd));
+        const known = new Set(await knownSkillNames(skillsScopeOf(deps, gate.cwd)));
         merged.values["skills.disabled"] = merged.values["skills.disabled"].filter((name) => known.has(name));
       }
       deps.respond(id, "settings/get", { data: { values: merged.values, sources: merged.sources, raw: { project, user } } });
@@ -155,7 +163,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       }
       if (verdict.key === "skills.disabled") {
         // 名单键白名单收紧（只收合并清单内的名字——cwd 形态含 project 层）
-        const known = new Set(await knownSkillNames(gate?.ok ? gate.cwd : undefined));
+        const known = new Set(await knownSkillNames(skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined)));
         const unknown = (input.value as string[]).filter((name) => !known.has(name));
       if (unknown.length > 0) {
         deps.respond(id, "settings/set", { error: hubError("invalid_input", `invalid setting value: skills.disabled contains unknown skill: ${unknown.join(", ")}`) });
@@ -212,7 +220,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         deps.respond(id, "skills/list", { error: gate.error });
         return;
       }
-      const outcome = await listSkills({ agentDir: deps.agentDir, ...(gate?.ok === true ? { cwd: gate.cwd } : {}) });
+      const outcome = await listSkills({ agentDir: deps.agentDir, ...skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined) });
       deps.respond(id, "skills/list", { data: { skills: outcome.skills } });
     });
     handlers.set("skills/set_enabled", async (input, id) => {
@@ -226,7 +234,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         agentDir: deps.agentDir,
         name: typeof input.name === "string" ? input.name : "",
         enabled: input.enabled === true,
-        ...(gate?.ok === true ? { cwd: gate.cwd } : {}),
+        ...skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined),
       });
       // 带 cwd 形态：enable 后并集仍含 → stillDisabled 回显（by 恒 user 级）
       const extra = outcome.ok && gate?.ok === true && outcome.stillDisabled !== undefined
@@ -238,8 +246,23 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       const outcome = await removeSkill({
         name: typeof input.name === "string" ? input.name : "",
         trustedCwds: await trustedCwdsOf(deps),
+        ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}),
       });
       deps.respond(id, "skills/remove", outcome.ok ? {} : { error: outcome.error });
+    });
+    handlers.set("skills/inspect", async (input, id) => {
+      const outcome = await inspectSkillSources({ sourcePaths: input.sourcePaths });
+      deps.respond(id, "skills/inspect", outcome.ok ? { data: { results: outcome.results } } : { error: outcome.error });
+    });
+    handlers.set("skills/install", async (input, id) => {
+      const outcome = await installSkill({
+        sourcePath: input.sourcePath,
+        name: input.name,
+        overwrite: input.overwrite,
+        limits: { maxBytes: SKILL_IMPORT_MAX_BYTES, maxEntries: SKILL_IMPORT_MAX_ENTRIES },
+        ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}),
+      });
+      deps.respond(id, "skills/install", outcome.ok ? { data: outcome.skill } : { error: outcome.error });
     });
   }
 

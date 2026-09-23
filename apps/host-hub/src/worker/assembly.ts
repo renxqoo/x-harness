@@ -5,6 +5,7 @@
 // session/meta 尾值改写（内核自动落 request/header 与 request/context）。
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { projectSkillsDirOf, userSkillsDirOf } from "../shared/skills-paths.ts";
 import type { Plugin } from "@x-harness/core";
 import type { Context, Disposer } from "@x-harness/core";
 import { mintSessionId, sessionStore } from "@x-harness/session";
@@ -93,10 +94,6 @@ export interface AssemblyDeps {
   readonly worldPlugins: (fields: AssemblyFields) => readonly Plugin[];
 }
 
-function userSkillsDir(): string {
-  return join(homedir(), ".x-harness", "skills");
-}
-
 function userAgentsDir(): string {
   return join(homedir(), ".x-harness", "agents");
 }
@@ -110,10 +107,10 @@ export function builtinTypesDir(): string {
  *  skills/agents 同序一致，DESIGN §5） */
 function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: string[]; agentsDirs: string[] } {
   if (!fields.trusted) {
-    return { skillsDirs: [userSkillsDir()], agentsDirs: [builtinTypesDir(), userAgentsDir()] };
+    return { skillsDirs: [userSkillsDirOf()], agentsDirs: [builtinTypesDir(), userAgentsDir()] };
   }
   return {
-    skillsDirs: [join(cwd, ".x-harness", "skills"), userSkillsDir()],
+    skillsDirs: [projectSkillsDirOf(cwd), userSkillsDirOf()],
     agentsDirs: [join(cwd, ".x-harness", "agents"), userAgentsDir(), builtinTypesDir()],
   };
 }

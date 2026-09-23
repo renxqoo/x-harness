@@ -1,11 +1,11 @@
 // 覆盖收口 III：skills-admin removeSkill 分支、dialogs 坏形状/超时/denyAll、
 // inflight 喂入、event-bridge childBusy/unsubscribe、compactSkipError 映射表。
 import { afterAll, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { removeSkill, setSkillEnabled } from "../host/skills-admin.ts";
+import { loadSkills } from "@x-harness/skill";
+import { listSkills, removeSkill, setSkillEnabled } from "../host/skills-admin.ts";
 import { createDialogBroker } from "../worker/dialogs.ts";
 import { createBashExec } from "../worker/bash-exec.ts";
 import type { PendingDialog } from "../worker/dialogs.ts";
@@ -23,21 +23,71 @@ afterAll(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("skills-admin removeSkill 分支", () => {
-  test("project 级 → not user-defined；真 user 级 → 删（隔离 user 目录注入）", async () => {
+describe("skills-admin（HOME 注入缝——user 技能根可隔离）", () => {
+  test("project 级遮蔽 → not user-defined；未知名 → unknown skill", async () => {
     const projectCwd = await tempDir("hub-rm-");
     const skillDir = join(projectCwd, ".x-harness", "skills", "beta");
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, "SKILL.md"), "---\nname: beta\ndescription: B\n---\nbody", "utf8");
-    const projectRemoval = await removeSkill({ name: "beta", trustedCwds: [projectCwd] });
+    // user 根（注入 HOME）为空 → beta 属 project 级：删除是 user 级专属 → 拒
+    const home = await tempDir("hub-home-");
+    const projectRemoval = await removeSkill({ name: "beta", trustedCwds: [projectCwd], homeDir: home });
     expect(projectRemoval).toEqual({ ok: false, error: { code: "state_conflict", message: "skill not user-defined: beta" } });
-    // user 级真删路径：os.homedir() 在 Bun 下不随 HOME env 翻转（进程启动期定值），
-    // 真实 user 目录不可测试隔离——该分支由 process smoke 的设置面旅程覆盖（真进程
-    // 可设 HOME）。此处补 unknown-skill 拒面：
-    const ghost = await removeSkill({ name: "ghost-skill", trustedCwds: [] });
+    const ghost = await removeSkill({ name: "ghost-skill", trustedCwds: [], homeDir: home });
     expect(ghost).toEqual({ ok: false, error: { code: "state_conflict", message: expect.stringContaining("unknown skill: ghost-skill") } });
-    void homedir;
-    void setSkillEnabled;
+  });
+
+  test("user 级移除 = 删技能目录（回归：旧实现只删 SKILL.md，残留目录 + 捆绑文件，且每次装载告警）", async () => {
+    const home = await tempDir("hub-home-");
+    const root = join(home, ".x-harness", "skills");
+    const skillDir = join(root, "beta");
+    await mkdir(join(skillDir, "references"), { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "---\nname: beta\ndescription: B\n---\nbody", "utf8");
+    await writeFile(join(skillDir, "references", "guide.md"), "# guide", "utf8");
+    expect(await removeSkill({ name: "beta", trustedCwds: [], homeDir: home })).toEqual({ ok: true });
+    expect(await stat(skillDir).catch(() => undefined)).toBeUndefined(); // 目录整体（含捆绑文件）消失
+    expect(await loadSkills([root])).toEqual({ skills: {}, warnings: [] }); // 装载零告警
+  });
+
+  test("symlink 技能移除：删链接不删目标（dotfiles/stow 摆放实体不受影响）", async () => {
+    const home = await tempDir("hub-home-");
+    const outside = await tempDir("hub-out-");
+    const root = join(home, ".x-harness", "skills");
+    await writeFile(join(outside, "SKILL.md"), "---\nname: linked\ndescription: L\n---\n", "utf8");
+    await mkdir(root, { recursive: true });
+    await symlink(outside, join(root, "linked"));
+    expect(await removeSkill({ name: "linked", trustedCwds: [], homeDir: home })).toEqual({ ok: true });
+    expect(await stat(join(root, "linked")).catch(() => undefined)).toBeUndefined();
+    expect((await stat(join(outside, "SKILL.md"))).isFile()).toBe(true);
+  });
+
+  test("回归：set_enabled 带 cwd 在全新项目（无 .x-harness 目录）也能落盘 + enable 后并集残留 → stillDisabled by user（DESIGN §3.9）", async () => {
+    const home = await tempDir("hub-home-");
+    const agentDir = await tempDir("hub-agent-");
+    const projectCwd = await tempDir("hub-proj-");
+    const root = join(home, ".x-harness", "skills");
+    await mkdir(join(root, "alpha"), { recursive: true });
+    await writeFile(join(root, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: A\n---\n", "utf8");
+    // user 名单禁用
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false })).toEqual({ ok: true });
+    // 带 cwd 再禁用 → 项目级名单落盘（自身无残留提示——by 只报 user 级残留）
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false, cwd: projectCwd })).toEqual({ ok: true });
+    // 带 cwd 启用：项目级条目删除，但 user 名单仍含 → stillDisabled by user
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: true, cwd: projectCwd })).toEqual({ ok: true, stillDisabled: "user" });
+    const project = JSON.parse(await readFile(join(projectCwd, ".x-harness", "hub-settings.json"), "utf8")) as { "skills.disabled"?: string[] };
+    expect(project["skills.disabled"]).toEqual([]);
+  });
+
+  test("list/set_enabled 走注入 HOME：user 层真读真写（含 project 层并集）", async () => {
+    const home = await tempDir("hub-home-");
+    const agentDir = await tempDir("hub-agent-");
+    const root = join(home, ".x-harness", "skills");
+    await mkdir(join(root, "alpha"), { recursive: true });
+    await writeFile(join(root, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: A\n---\n", "utf8");
+    const listed = await listSkills({ agentDir, homeDir: home });
+    expect(listed.skills).toEqual([{ name: "alpha", source: "user", path: join(root, "alpha", "SKILL.md"), disabled: false }]);
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false })).toEqual({ ok: true });
+    expect((await listSkills({ agentDir, homeDir: home })).skills[0]?.disabled).toBe(true);
   });
 });
 
