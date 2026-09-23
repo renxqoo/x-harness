@@ -443,6 +443,25 @@
         "@sinclair/typebox": "^0.34.0",
       },
     },
+    "packages/token-analytics": {
+      "name": "@x-harness/token-analytics",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/llm": "workspace:*",
+        "@x-harness/plugin-api": "workspace:*",
+        "@x-harness/session": "workspace:*",
+        "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/exec-env": "workspace:*",
+        "@x-harness/harness": "workspace:*",
+        "@x-harness/testkit": "workspace:*",
+        "@x-harness/tool-core": "workspace:*",
+      },
+    },
     "packages/token-meter": {
       "name": "@x-harness/token-meter",
       "version": "0.0.1",
@@ -829,6 +848,8 @@
     "@x-harness/testkit": ["@x-harness/testkit@workspace:packages/testkit"],
 
     "@x-harness/todo-tools": ["@x-harness/todo-tools@workspace:packages/todo-tools"],
+
+    "@x-harness/token-analytics": ["@x-harness/token-analytics@workspace:packages/token-analytics"],
 
     "@x-harness/token-meter": ["@x-harness/token-meter@workspace:packages/token-meter"],
 

@@ -1,12 +1,14 @@
-// ㉓ Token 分析：系统提示词/工具/消息分项 token 估算 + 上下文余量 + 缓存观测。
+// Token 分析：系统提示词/工具/消息分项 token 估算 + 上下文余量 + 缓存观测。
 // 真实场景：终端用户看 /context 命令——"我用了多少、还剩多少、缓存率怎样"。
 //
-// **两个内核缺失在此暴露**（见文件末尾注释）：
-// A. 缓存率不可算——foldUsage 把 cacheRead/cacheWrite 并入 input 后丢弃明细
-// B. 上下文窗口不可查——contextWindow 在 adapter 配置里，运行时无服务暴露
+// 统计域 = 装载后事件：tapSessionEvents 只见本 world 装配后的 append（resume 线程
+// 不重放历史 usage）；子代理会话的 usage 计入全局累计与 lastReportedInput
+// （per-session 经 sessionOutput 按键隔离）——docs/PLUGINS.md 契约 5。
+// 模块实例跨 world 共享（装载经模块缓存复用），一切 per-world 状态只住 apply
+// 闭包——模块级零可变状态（docs/PLUGINS.md 契约 1 不变式）。
 
-import type { Disposer, Plugin } from "@x-harness/core";
-import type { Context } from "@x-harness/core";
+import type { Context, Disposer, Plugin } from "@x-harness/core";
+import { defineService } from "@x-harness/core";
 import { systemPrompt } from "@x-harness/system-prompt";
 import { toolRegistry } from "@x-harness/tools";
 import { tapSessionEvents } from "@x-harness/plugin-api";
@@ -32,8 +34,8 @@ export interface TokenBreakdown {
   lastReportedInput: number;
   /** LLM 实报 output token（累计） */
   totalOutputTokens: number;
-  /** 精确缓存命中率 = cacheRead / input（LLM 实报——TokenUsage 扩展后可用） */
-  cacheHitRate: number; // 0-1：cacheRead / lastReportedInput
+  /** 精确缓存命中率 = cacheRead / lastReportedInput（LLM 实报） */
+  cacheHitRate: number;
   /** 缓存命中的 token 累计（节省的重新计算量） */
   totalCacheRead: number;
   /** 缓存写入的 token 累计 */
@@ -41,7 +43,8 @@ export interface TokenBreakdown {
 }
 
 export interface TokenAnalyticsOptions {
-  /** 上下文窗口缺省：从 llmRuntime.contextWindowOf() 查（缺失 B 已修）；查不到（无适配器/多适配器未点名）时由此参数兜底 */
+  /** 上下文窗口缺省：从 llmRuntime.contextWindowOf() 查；查不到（无适配器/多适配器
+   *  未点名）时由此参数兜底 */
   readonly contextWindow?: number;
   /** 多适配器时点名查哪个的窗口 */
   readonly provider?: string;
@@ -87,7 +90,7 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
         }
       });
 
-      // 暴露分析面（能力插件模式——其他插件/host 可消费）
+      // 暴露分析面（能力插件模式——token 随本包发布，其他插件/host 依赖包取对象身份）
       const analytics = {
         breakdown(sessionId?: SessionId): TokenBreakdown {
           // 系统提示词（含技能段——skill 经 section 注册）
@@ -139,16 +142,4 @@ export interface TokenAnalyticsService {
   sessionOutput(session: SessionId): number;
 }
 
-// 模块级 token（能力插件模式——不 import @x-harness/core 的 defineService 避免循环）
-import { defineService } from "@x-harness/core";
 export const tokenAnalyticsService = defineService<TokenAnalyticsService>("token-analytics");
-
-/*
- * ── 内核缺失修复记录 ─────────────────────────────────────────────────
- * A. 缓存率 ✅ 已修：TokenUsage 增 cacheRead/cacheWrite（pre-stable 扩展），
- *    foldUsage 保留明细（input 仍含 cache 总量——旧消费方不变）。
- *    cacheHitRate = lastCacheRead / lastReportedInput（精确——LLM 实报）。
- * B. 上下文窗口 ✅ 已修：LlmAdapter 增 contextWindow 可选 + LlmRuntime 增
- *    contextWindowOf(provider) 查询。三级兜底：参数 > runtime > 200k 缺省。
- * ────────────────────────────────────────────────────────────────────
- */

@@ -1,0 +1,24 @@
+{
+  "name": "@x-harness/token-analytics",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/core": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/plugin-api": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/system-prompt": "workspace:*",
+    "@x-harness/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.0",
+    "@x-harness/exec-env": "workspace:*",
+    "@x-harness/harness": "workspace:*",
+    "@x-harness/testkit": "workspace:*",
+    "@x-harness/tool-core": "workspace:*"
+  }
+}
