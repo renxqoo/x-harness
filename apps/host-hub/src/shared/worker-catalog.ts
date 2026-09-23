@@ -8,13 +8,16 @@ import type { DialFact } from "./meta-fold.ts";
 export interface WorkerCatalog {
   readonly providers: readonly AssemblyProvider[];
   readonly default: DialFact;
-  /** 逐模型元数据（reasoning 面——thinking 校验判据；input 面——images 能力门判据） */
-  readonly modelMeta: Readonly<Record<string, { readonly reasoning?: boolean; readonly input?: readonly ("text" | "image")[] }>>;
+  /** 逐模型元数据（reasoning 面——thinking 校验判据；input 面——images 能力门判据；
+   *  contextWindow 面——窗口解析模型级优先） */
+  readonly modelMeta: Readonly<Record<string, WorkerModelMeta>>;
 }
 
 export interface WorkerModelMeta {
   readonly reasoning?: boolean;
   readonly input?: readonly ("text" | "image")[];
+  /** 模型级上下文窗口（窗口解析模型级优先——同档案多模型窗口不同的精确面） */
+  readonly contextWindow?: number;
 }
 
 /** 快照 JSON 形状（host buildAssemblySnapshot 产出与此处消费同契约） */

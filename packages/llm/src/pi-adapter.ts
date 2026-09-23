@@ -77,6 +77,13 @@ interface AdapterCoreOptions {
   /** 逐模型输入模态（缺省 ["text"]）：Model 按请求查表——openai 协议在 input 缺
    *  "image" 时把图降级为占位文本，能力须如实申报；anthropic 协议不消费此字段 */
   readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
+  /** 逐模型上下文窗口（目录 modelMeta）：runtime contextWindowOf 按模型精确解析 */
+  readonly contextWindowByModel?: Readonly<Record<string, number>>;
+}
+
+/** Model 条目窗口：模型级（contextWindowByModel）> 档案级 > 200k（仅元数据面） */
+function effectiveContextWindow(core: AdapterCoreOptions, model: string): number {
+  return core.contextWindowByModel?.[model] ?? core.contextWindow ?? 200_000;
 }
 
 /** 单 attempt 装配：onResponse 捕获状态与 retry-after；同步抛折算；abort 豁免交给 piChunks */
@@ -97,6 +104,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
   return {
     name,
     contextWindow: core.contextWindow, // 缺失 B 修复：适配器携带窗口（运行时 contextWindowOf 可查）
+    ...(core.contextWindowByModel !== undefined ? { contextWindowByModel: core.contextWindowByModel } : {}),
     stream: (request: LlmRequest): AsyncIterable<LlmChunk> => {
       async function* generate(): AsyncGenerator<LlmChunk> {
         request.signal.throwIfAborted();
@@ -135,7 +143,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           reasoning: true,
           input: [...(core.inputByModel?.[request.model] ?? ["text" as const])],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-          contextWindow: core.contextWindow ?? 200_000,
+          contextWindow: effectiveContextWindow(core, request.model),
           maxTokens: effectiveMaxTokens ?? DEFAULT_MAX_TOKENS,
           ...compatOverride,
         };
@@ -184,6 +192,8 @@ export interface AnthropicCompatOptions {
   readonly contextWindow?: number;
   /** 逐模型输入模态（缺省 ["text"]）——能力如实透传 */
   readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
+  /** 逐模型上下文窗口（模型级 > 档案级 contextWindow） */
+  readonly contextWindowByModel?: Readonly<Record<string, number>>;
   /** 测试注入：离线事件剧本（缺省走 pi api-level stream 真身） */
   readonly streamFn?: PiStreamFn;
 }
@@ -200,6 +210,7 @@ export function createAnthropicCompatAdapter(options: AnthropicCompatOptions): L
     provider: "anthropic",
     maxOutputTokens: options.maxOutputTokens,
     inputByModel: options.inputByModel,
+    contextWindowByModel: options.contextWindowByModel,
   });
 }
 
@@ -214,6 +225,8 @@ export interface OpenaiCompatOptions {
   /** 逐模型输入模态（缺省 ["text"]）——openai 协议在 input 缺 "image" 时把图降级为
    *  占位文本，vision 模型必须显式申报 */
   readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
+  /** 逐模型上下文窗口（模型级 > 档案级 contextWindow） */
+  readonly contextWindowByModel?: Readonly<Record<string, number>>;
   readonly streamFn?: PiStreamFn;
 }
 
@@ -229,6 +242,7 @@ export function createOpenaiCompatAdapter(options: OpenaiCompatOptions): LlmAdap
     provider: "openai",
     maxOutputTokens: options.maxOutputTokens,
     inputByModel: options.inputByModel,
+    contextWindowByModel: options.contextWindowByModel,
   });
 }
 

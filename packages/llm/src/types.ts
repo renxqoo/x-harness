@@ -72,8 +72,10 @@ export interface LlmRequest {
 
 export interface LlmAdapter {
   readonly name: string;
-  /** 适配器的上下文窗口（pi-ai adapter 配置——缺失 B 修复：运行时可查询，插件不再要求宿主注入） */
+  /** 档案级上下文窗口（pi-ai adapter 配置——缺失 B 修复：运行时可查询，插件不再要求宿主注入） */
   readonly contextWindow?: number;
+  /** 逐模型窗口（目录 modelMeta——同档案多模型窗口不同时精确到模型；缺模型回退档案级） */
+  readonly contextWindowByModel?: Readonly<Record<string, number>>;
   /** 恰一个 finish 收尾（P14：无 finish 流按 error 结算归 loop 兜底；适配器违约自担测试） */
   stream(request: LlmRequest): AsyncIterable<LlmChunk>;
 }
@@ -83,6 +85,7 @@ export interface LlmRuntime {
   registerAdapter(adapter: LlmAdapter): () => void;
   /** 经 llm/stream waterfall 派发；失败归一为 error finish 流（abort 豁免——throw AbortError） */
   stream(request: LlmRequest): AsyncIterable<LlmChunk>;
-  /** 上下文窗口查询（缺失 B 修复）：按适配器名查其 contextWindow；未知返回 undefined（消费方自行兜底） */
-  contextWindowOf(provider?: string): number | undefined;
+  /** 上下文窗口查询（缺失 B 修复）：模型级（contextWindowByModel）> 档案级（contextWindow）；
+   *  provider 未点名时仅唯一适配器世界可答。未知返回 undefined（消费方自行兜底） */
+  contextWindowOf(provider?: string, model?: string): number | undefined;
 }

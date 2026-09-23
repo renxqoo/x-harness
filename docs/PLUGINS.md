@@ -81,6 +81,14 @@ export const BUILTIN_PLUGINS = { "token-analytics": { module: "@x-harness/token-
 - 统计域语义（固化现状，非缺陷）：**装配后事件**——resume 线程不含历史 usage
   （tapSessionEvents 只见装配后 append）；子代理会话的 usage 计入全局累计与
   lastReportedInput（per-session 经 sessionOutput 隔离）；
+- 数据口径（实报优先律）：`total` = LLM 实报 input（输入侧——cache 读/写计入，
+  不含 output；无实报时退 systemPrompt+tools 估算下限）；分项恒为估算
+  （messages = 实报 − 前两项估算，负值归零）；估算器 CJK 感知（汉字 1 字 ≈ 1
+  token，其余 ≈ 4 chars/token——中文为主的提示词不再被 chars/3.5 系统性低估）；
+- 窗口解析序：参数 > 会话拨号查表（`llmRuntime.contextWindowOf(provider, model)`
+  ——模型级 contextWindowByModel > 档案级；拨号来源 session/meta{dial} >
+  request/context|request/header，与宿主 foldDial 同律）> 200k 兜底；装配后未轮
+  的多适配器会话无拨号事实 → 兜底 200k（首轮后即精确）；
 - `COMMAND_NAMES` 封闭集 60 → 61（头注同步）。
 
 ## 问题域

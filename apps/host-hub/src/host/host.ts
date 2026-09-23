@@ -89,9 +89,15 @@ export async function runHost(boot: HostBoot): Promise<void> {
     const catalogNow = await readCatalog(boot.agentDir);
     const creds = await credentials.read();
     const providers = buildAssemblySnapshot(catalogNow, creds.keys, env);
-    const modelMeta: Record<string, { reasoning?: boolean; input?: ("text" | "image")[] }> = {};
+    const modelMeta: Record<string, { reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number }> = {};
     for (const entry of catalogNow.entries) {
-      modelMeta[entry.model] = { reasoning: entry.reasoning, ...(entry.input !== undefined ? { input: [...entry.input] } : {}) };
+      // contextWindow 为目录已解析值（模型级 > 档案级——entryOf 单点）：模型窗口解析与
+      // compaction/analytics 面共源
+      modelMeta[entry.model] = {
+        reasoning: entry.reasoning,
+        ...(entry.input !== undefined ? { input: [...entry.input] } : {}),
+        ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
+      };
     }
     const defaults = resolveDefaultDial(catalogNow);
     snapshotCache = {

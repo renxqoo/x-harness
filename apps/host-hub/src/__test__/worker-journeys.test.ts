@@ -371,7 +371,10 @@ describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.m
     expect(data.breakdown["lastReportedInput"]).toBe(64); // script adapter 实报
     expect(data.breakdown["totalOutputTokens"]).toBe(17); // 16 + "x".length
     expect(data.breakdown["contextWindow"]).toBe(200_000); // script adapter 申报
-    expect(data.breakdown["total"]).toBe(data.breakdown["systemPrompt"]! + data.breakdown["tools"]! + data.breakdown["messages"]!);
+    // 实报优先律：total = 实报 input（分项估算偏大时 messages 归零，不再凑分项和）
+    expect(data.breakdown["total"]).toBe(64);
+    expect(data.breakdown["messages"]).toBe(0);
+    expect(data.breakdown["remaining"]).toBe(200_000 - 64);
     expect(data.sessionOutput).toBe(17);
   });
 

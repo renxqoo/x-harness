@@ -124,15 +124,17 @@ function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: strin
 }
 
 /** adapters 构造：快照 → compat adapters（name = 档案名——dial.provider 精确匹配）；
- *  inputByModel 按档案模型过滤（Model 按请求查表申报输入模态——openai 协议在
- *  input 缺 "image" 时把图降级为占位文本，能力须如实透传） */
+ *  inputByModel/contextWindowByModel 按档案模型过滤（Model 按请求查表申报输入模态
+ *  与窗口——openai 协议在 input 缺 "image" 时把图降级为占位文本，能力须如实透传） */
 function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined): LlmAdapter[] {
   if (script !== undefined) return [script];
   return catalog.providers.map((p) => {
     const inputByModel: Record<string, readonly ("text" | "image")[]> = {};
+    const contextWindowByModel: Record<string, number> = {};
     for (const model of p.models) {
-      const input = catalog.modelMeta[model]?.input;
-      if (input !== undefined) inputByModel[model] = input;
+      const meta = catalog.modelMeta[model];
+      if (meta?.input !== undefined) inputByModel[model] = meta.input;
+      if (meta?.contextWindow !== undefined) contextWindowByModel[model] = meta.contextWindow;
     }
     const options = {
       name: p.provider,
@@ -141,6 +143,7 @@ function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined
       ...(p.contextWindow !== undefined ? { contextWindow: p.contextWindow } : {}),
       ...(p.maxOutputTokens !== undefined ? { maxOutputTokens: p.maxOutputTokens } : {}),
       ...(Object.keys(inputByModel).length > 0 ? { inputByModel } : {}),
+      ...(Object.keys(contextWindowByModel).length > 0 ? { contextWindowByModel } : {}),
     };
     return p.protocol === "anthropic" ? createAnthropicCompatAdapter(options) : createOpenaiCompatAdapter(options);
   });
@@ -204,9 +207,10 @@ function resolveAssemblyDial(fields: AssemblyFields, catalog: WorkerCatalog, scr
   return { ...catalog.default };
 }
 
-/** 拨号条目的窗口（compaction/autocompact 装配面——档案级 > 兜底） */
-function contextWindowOf(catalog: WorkerCatalog, dial: { provider: string; model: string }): number {
-  return catalogEntryOf(catalog, dial)?.contextWindow ?? FALLBACK_CONTEXT_WINDOW;
+/** 拨号条目的窗口（compaction/autocompact/analytics 共源——模型级（modelMeta）>
+ *  档案级 > 兜底；与 buildAdapters 的 contextWindowByModel 同一解析序） */
+export function contextWindowOf(catalog: WorkerCatalog, dial: { provider: string; model: string }): number {
+  return catalog.modelMeta[dial.model]?.contextWindow ?? catalogEntryOf(catalog, dial)?.contextWindow ?? FALLBACK_CONTEXT_WINDOW;
 }
 
 /** thinking.default 物化（fork 全量 dial 不物化；不兼容丢弃并告警——不让 hub

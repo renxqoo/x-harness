@@ -5,7 +5,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleWorkerAgent } from "../worker/assembly.ts";
+import { assembleWorkerAgent, contextWindowOf } from "../worker/assembly.ts";
 import { createBashExec } from "../worker/bash-exec.ts";
 import { createWorkerCommands } from "../worker/worker-commands.ts";
 import { createDialogBroker } from "../worker/dialogs.ts";
@@ -22,6 +22,19 @@ async function tempDir(prefix: string): Promise<string> {
 }
 afterAll(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("assembly 窗口解析（模型级 > 档案级 > 兜底——compaction/analytics 共源）", () => {
+  test("modelMeta 模型级胜档案级；档案级胜 128k 兜底", () => {
+    const catalog = {
+      providers: [{ provider: "glm", protocol: "anthropic", baseUrl: "https://x", apiKey: "k", models: ["glm-5.3", "glm-air"], contextWindow: 1_000_000 }],
+      default: { provider: "glm", model: "glm-5.3" },
+      modelMeta: { "glm-air": { contextWindow: 128_000 } },
+    };
+    expect(contextWindowOf(catalog as never, { provider: "glm", model: "glm-5.3" })).toBe(1_000_000); // 档案级
+    expect(contextWindowOf(catalog as never, { provider: "glm", model: "glm-air" })).toBe(128_000); // 模型级
+    expect(contextWindowOf({ providers: [], default: { provider: "", model: "" }, modelMeta: {} } as never, { provider: "x", model: "y" })).toBe(128_000); // 兜底
+  });
 });
 
 describe("assembly 装配面", () => {
