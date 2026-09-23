@@ -42,8 +42,9 @@
   supersession 次行 + body。**谓词单源**（L10）：`isSnapshotNode(node)` 从 agent-loop
   导出（compaction 已依赖 agent-loop），四重合取判定——append op ∧ 单 text 块 ∧
   信封首行 ∧ supersession 次行（F5/M11 收紧伪造面；用户刻意伪造四条的残余后果仅
-  「该消息不作切口候选」——保守方向无安全面，落档接受）。skill 维持现状渲染
-  （预锚豁免，不入信封体系——评审 F9：其豁免仅在生产常量语义上成立，表述如实）。
+  「该消息不作切口候选」——保守方向无安全面，落档接受）。skill 清单同入统一信封
+  （kind="skills"，预锚落位不变）——展示面与切口谓词单点识别，全部边沿注入快照
+  共用一套信封形态。
 
 ### 三条快照
 

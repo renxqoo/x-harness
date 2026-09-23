@@ -1,9 +1,10 @@
 // skill 插件（docs/SKILL.md §1.3）：装配期一次性装载（快照进程常量，零快照无痕）
 // + running 边沿幂等注入（createTailSnapshot 共用原语——缺席即尾部 append 一条
 // user/message；在场即跳过。skill 块为进程常量：首 kick 预锚注入后永不重注入）。
+// 注入体铸 snapshotEnvelope 信封：展示面与切口谓词（isSnapshotNode）单点识别跳过。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
-import { agentLoopServiceToken, createTailSnapshot } from "@x-harness/agent-loop";
+import { agentLoopServiceToken, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
 import { loadSkills, resolveSkillDirs } from "./loader.ts";
 import type { SkillLoadResult } from "./types.ts";
 import { renderSkillsBlock } from "./render.ts";
@@ -30,8 +31,9 @@ export function createSkillPlugin(options: SkillPluginOptions = {}): Plugin {
       const skills = disabled.size === 0 ? loaded.skills : Object.fromEntries(Object.entries(loaded.skills).filter(([name]) => !disabled.has(name)));
       const block = renderSkillsBlock(skills);
       if (block === "") return; // 零快照无痕：不注册监听、不追加任何事件
+      const envelope = snapshotEnvelope("skills", block);
       const loop = ctx.use(agentLoopServiceToken);
-      return createTailSnapshot({ ctx, loop, spec: { id: "skills", render: () => block, onWarn: warn } });
+      return createTailSnapshot({ ctx, loop, spec: { id: "skills", render: () => envelope, onWarn: warn } });
     },
   };
 }

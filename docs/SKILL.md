@@ -61,7 +61,9 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   apply 完成即快照可用）；此后进程内不再读盘、不刷新（快照进程常量）。
 - **注入（无状态幂等）**：快照非空时经 `createTailSnapshot` 共用原语
   （@x-harness/agent-loop，docs/TAIL-SNAPSHOT-CHANNEL.md）注册 running 边沿监听：
-  render（进程常量块）→ 在场判定（仅扫 append 型 user/message 单 text 块的全文
+  render（进程常量信封体 `snapshotEnvelope("skills", 块)`——信封是跨包识别的
+  单一真相：展示面与切口谓词一律经 `isSnapshotNode` 跳过清单帧，UI 不展示）→
+  在场判定（仅扫 append 型 user/message 单 text 块的全文
   精确匹配——replace 型摘要节点不扫）→ 缺席同步追加
   `session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: 块 }] }, { surfaceOp: "append" })`，
   在场跳过。**无插件状态**（无 Set/Map）：幂等性由在场判定自身保证。
@@ -167,6 +169,7 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
 | 13 | symlink 目录跟随加载（skill 名 = 链接名）；根不可读（非缺席）告警——处置收口审查 F1/F4 | 默认裁决（否决窗口，审查处置） |
 | 14 | onWarn 缺省写 stderr + apply 兜底空快照（结构保证）——处置收口审查 P1-1/P3-2 | 默认裁决（否决窗口，审查处置） |
 | 15 | 渲染防护收口：截断按码点（代理对不截半）、中和大小写不敏感含开标签、清洗扩 Cf 类——处置收口审查 F3/F5 | 默认裁决（否决窗口，审查处置） |
+| 16 | 清单注入体铸 `snapshotEnvelope("skills", …)` 统一信封——展示面/切口谓词按 `isSnapshotNode` 单点识别跳过（症状：技能清单在 UI 当普通消息展示） | 用户裁决 |
 
 备注（落档）：裁决 4 的原始动机（动态数据防 system prompt 前缀抖动）随裁决 3
 （不重载）已消解——静态快照入 system prompt 亦无 cache 成本。放置维持 user
