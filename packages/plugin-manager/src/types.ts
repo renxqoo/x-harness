@@ -82,6 +82,8 @@ export interface CreatePluginManagerDeps {
   readonly applyTimeoutMs?: number;
   /** worker 模式单次 RPC 超时（缺省 60s；超时 = 击杀 + 记录 + 平台继续） */
   readonly runtimeTimeoutMs?: number;
+  /** P1 引擎层强制点：vendor 根内路径恒 worker 模式（process 请求 = 装载拒） */
+  readonly vendorRoots?: readonly string[];
   /** worker 模式可桥接 token 白名单（内核词表自动含）；未注册 token 的监听 = 装载拒 */
   readonly tokens?: readonly AnyToken[];
   /** 内核 API 版本门（缺省 1；manifest.apiVersion 不匹配 = 拒） */

@@ -145,7 +145,21 @@ export interface Plugin {
   /** 软依赖（S0，SDK-DESIGN §2.1）：点名插件**在场**则排其后；缺席则无约束不报错——
    *  apply 期 tryUse 停靠的声明式时序（反混乱五原则之五）。软-软环 = 约束矛盾 throw。 */
   readonly softInject?: readonly string[];
-  apply(ctx: Context): Disposer | void | Promise<Disposer | void>;
+  /**
+   * 能力注入面（B 路线第三方插件）：装载器组装的按名 facade——插件零 @x-harness/* import
+   * 也能钩世界。可选参：内核插件只收 ctx（真 token 直连），不受影响。
+   */
+  apply(ctx: Context, capabilities?: PluginCapabilities): Disposer | void | Promise<Disposer | void>;
+}
+
+/** 按名能力面（plugin-manager capabilities.ts 组装；core 只声明形状——依赖方向：实现住 plugin-manager） */
+export interface PluginCapabilities {
+  use<T = unknown>(name: string): T;
+  tryUse<T = unknown>(name: string): T | undefined;
+  waitFor<T = unknown>(name: string): Promise<T>;
+  provide<T = unknown>(name: string, impl: T): Disposer;
+  on(name: string, listener: (payload: unknown) => void): Disposer;
+  emit(name: string, payload: unknown): void;
 }
 
 /** 监听器错误归宿：注入式 sink 而非 logger 服务（C5：自举序） */

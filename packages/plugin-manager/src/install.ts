@@ -13,6 +13,8 @@ import type { Registry } from "./registry.ts";
 import type { ApprovalGate } from "./approval.ts";
 import type { ErrorLog } from "./error-log.ts";
 import { validateModule } from "./validate-module.ts";
+import { createProcessCapabilities } from "./capabilities.ts";
+import type { PluginCapabilities } from "./capabilities.ts";
 import { wrapPluginForErrorRouting } from "./wrapper.ts";
 import type {
   CreatePluginManagerDeps,
@@ -24,7 +26,10 @@ import type {
   UninstallInput,
 } from "./types.ts";
 
+/** P1 引擎层强制点：vendor 根内路径恒 worker 模式（编排层覆写是第一层，此处第二层——
+ * 不可信代码即使绕过编排层也进不了主进程） */
 export interface InstallerDeps extends CreatePluginManagerDeps {
+  readonly vendorRoots?: readonly string[];
   readonly registry: Registry;
   readonly errorLog: ErrorLog;
   readonly approvalGate: ApprovalGate;
@@ -40,6 +45,13 @@ function resolveWithinRoots(roots: readonly string[], inputPath: string): Result
     }
   }
   return { ok: false, reason: `path outside roots: ${inputPath}` };
+}
+
+function isWithinAnyRoot(roots: readonly string[], inputPath: string): boolean {
+  return roots.some((root) => {
+    const rel = relative(resolve(root), inputPath);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  });
 }
 
 export interface Installer {
@@ -148,7 +160,18 @@ export function createInstaller(deps: InstallerDeps): Installer {
     const scope = platform.scope({ agentId: `plugin:${name}` });
     // 裁决 10：token 注册表——本插件提供的 token 收集在案，卸载时按身份清理（与 worker 桥同语义）
     const provided: { name: string; token: AnyToken }[] = [];
+    // caps.provide 与 wrapper provide 两路共用：collision 门 + provided 账本（卸载清理闭环）
+    const onCapabilityToken = (token: AnyToken): void => {
+      const existing = deps.tokenTable.get(token.name);
+      if (existing !== undefined && existing !== token) {
+        throw new Error(`token name collision: "${token.name}" already registered by a different module (token identity is object-based — share via the defining package)`);
+      }
+      deps.tokenTable.set(token.name, token);
+      provided.push({ name: token.name, token });
+    };
+    const capabilities: PluginCapabilities = createProcessCapabilities(platform, deps.tokenTable, onCapabilityToken);
     const wrapped = wrapPluginForErrorRouting(plugin, {
+      capabilities,
       sink: (where, message) => logError({ plugin: name, phase: "runtime", where, message }),
       root: platform, // 裁决 9：注册落位 root，回卷链 scope
       onToken: (token) => {
@@ -311,6 +334,11 @@ export function createInstaller(deps: InstallerDeps): Installer {
         return { ok: false, reason: approved.reason };
       }
       const mode = input.mode ?? deps.mode ?? "process";
+      if (isWithinAnyRoot(deps.vendorRoots ?? [], path) && mode === "process") {
+        const reason = `vendor plugin path requires worker mode: ${path}`;
+        installFailed("?", reason);
+        return { ok: false, reason };
+      }
       if (mode === "worker") return installWorker(path, input.replace === true);
 
       const mod = await loadModule(path);

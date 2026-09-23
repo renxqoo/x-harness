@@ -4,7 +4,7 @@
 //   注册落位——provide/on 落平台 root（可见性向上：chain-up 决定子层注册对平台不可见），
 //              disposer 链进插件 scope（回卷向下：scope dispose 收编 root 注册）。
 
-import type { AnyToken, Chain, ChainMiddleware, Context, Disposer, EventToken, Plugin, ScopeFilter, ServiceToken } from "@x-harness/core";
+import type { AnyToken, Chain, ChainMiddleware, Context, Disposer, EventToken, Plugin, PluginCapabilities, ScopeFilter, ServiceToken } from "@x-harness/core";
 import { pluginEvent } from "@x-harness/core";
 
 /** thenable 判定（#18）：then+catch 双检——仅有 then 的普通对象不是可等待的 Promise */
@@ -19,11 +19,13 @@ function isThenable(value: unknown): value is Promise<unknown> {
 
 export type ErrorSink = (where: string, message: string) => void;
 
-/** 错误路由依赖：sink（归属记录）、root（注册落位层）、onToken（token 注册表收集） */
+/** 错误路由依赖：sink（归属记录）、root（注册落位层）、onToken（token 注册表收集）、
+ * capabilities（B 路线按名能力面——apply 第二参透传） */
 export interface ErrorRoutingDeps {
   readonly sink: ErrorSink;
   readonly root: Context;
   readonly onToken?: (token: AnyToken) => void;
+  readonly capabilities?: PluginCapabilities;
 }
 
 export function wrapPluginForErrorRouting(plugin: Plugin, deps: ErrorRoutingDeps): Plugin {
@@ -31,7 +33,7 @@ export function wrapPluginForErrorRouting(plugin: Plugin, deps: ErrorRoutingDeps
     name: plugin.name, // inject 刻意丢弃：跨插件依赖语义归 plugin-manager（loadPlugins 只认同批）
     apply: (scope: Context) => {
       const wrapped = wrapContext(scope, { ...deps, pluginName: plugin.name });
-      return plugin.apply(wrapped);
+      return plugin.apply(wrapped, deps.capabilities);
     },
   };
 }
