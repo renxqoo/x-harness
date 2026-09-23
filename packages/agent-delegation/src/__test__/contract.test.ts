@@ -64,13 +64,13 @@ describe("参数面对账（与规格参数表一致）", () => {
     expect(spawnProps["isolation"]?.description).toContain("remote");
   });
 
-  it("agent_message ↔ SendMessage：to/message 必填带 pattern；summary ≤200；notify_when_idle 布尔", () => {
+  it("agent_message ↔ SendMessage：to/message 必填带 pattern；summary ≤500；notify_when_idle 布尔", () => {
     const message = tools.find((t) => t.name === "agent_message")?.inputSchema as unknown as { required?: string[]; properties: Record<string, never> };
     expect((message.required ?? []) as string[]).toEqual(["to", "message"]);
     const p = propsOf("agent_message");
     expect(p["to"]?.pattern).toBe("^[^\\n\\r]*$");
-    expect(p["message"]?.pattern).toBe("^[\\s\\S]{0,300}$");
-    expect(p["summary"]?.maxLength).toBe(200);
+    expect(p["message"]?.pattern).toBe("^[\\s\\S]{0,3000}$");
+    expect(p["summary"]?.maxLength).toBe(500);
     expect(p["summary"]?.description).toContain("not transmitted");
     expect(p["notify_when_idle"]?.description).toContain("ONE notice");
   });

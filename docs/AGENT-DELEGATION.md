@@ -33,7 +33,7 @@ Control/agent-team/统一后台任务体系（bash 后台、输出文件指针�
 | 工具 | 入参 | 行为要点 |
 | --- | --- | --- |
 | `agent_spawn` | `{description, prompt, subagent_type?, model?, isolation?}` | description 必填（3-5 词任务简述）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；isolation 仅 `"worktree"`（§8）。返回 `{agentId, sessionId}` + 反轮询引导；后台运行，完成时 `[agent-notification]`（§5.1） |
-| `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——agentId/box 名为无换行原子串）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,300}$`，长内容走文件中转）；summary ≤200 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
+| `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——agentId/box 名为无换行原子串）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,3000}$`，长内容走文件中转）；summary ≤500 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
 | `list_agents` | `{}` | 行格式双形态：子代理行 `kind=subagent <agentId> session=<id> type=<t> depth=<n> status=<running\|idle\|stopped>`；本机会话行 `<box名> [<ref>] kind=local-session status=<...>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档） |
 
 （停动词已迁出——件14 修订C + TASK-PUSH 修订：`task_stop` 由 @x-harness/task-tools 提供，

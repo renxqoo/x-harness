@@ -36,7 +36,7 @@ export interface MessageInput {
   readonly notify_when_idle?: boolean;
 }
 
-const SUMMARY_CAP = 200;
+const SUMMARY_CAP = 500;
 
 export async function message(deps: VerbDeps, caller: SessionId | undefined, input: MessageInput): Promise<VerbOutcome> {
   if (input.to === "") return { ok: false, reason: "invalid-args:to must be a non-empty string" };
