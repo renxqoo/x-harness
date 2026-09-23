@@ -1,4 +1,4 @@
-// 邮箱插件：root/timing 解析（缺省值唯一居所）+ 服务 provide。
+// 邮箱插件：服务 provide（root 必收——插件零目录知识；timing 缺省唯一居所）。
 
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,9 @@ export function defaultTiming(): MailboxTiming {
   return { pollIntervalMs: 300, heartbeatMs: 10_000, graceMs: 30_000, staleMs: 7 * 24 * 3_600_000, now: () => Date.now() };
 }
 
-function resolveRoot(custom?: string): string {
+/** 邮箱根统一解析（宿主边沿消费——插件不自持缺省）：显式传入 > env 覆盖 >
+ *  `~/.x-harness/mailbox` 缺省。 */
+export function resolveMailboxDir(custom?: string): string {
   if (custom !== undefined && custom !== "") return custom;
   const env = process.env["X_HARNESS_MAILBOX_DIR"];
   if (env !== undefined && env !== "") return env;
@@ -20,16 +22,17 @@ function resolveRoot(custom?: string): string {
 }
 
 export interface MailboxPluginOptions {
-  readonly root?: string;
+  /** 邮箱根（必收——插件零目录知识，宿主边沿用 resolveMailboxDir 统一解析） */
+  readonly root: string;
   readonly timing?: MailboxTiming;
   readonly onWarn?: (message: string) => void;
 }
 
-export function createMailboxPlugin(options: MailboxPluginOptions = {}): Plugin {
+export function createMailboxPlugin(options: MailboxPluginOptions): Plugin {
   return {
     name: "session-mailbox",
     apply: (ctx): Disposer => ctx.provide(mailboxService, createMailboxService({
-      root: resolveRoot(options.root),
+      root: options.root,
       timing: options.timing ?? defaultTiming(),
       onWarn: options.onWarn,
     })),

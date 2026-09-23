@@ -17,7 +17,9 @@ export interface LoadedAgentType {
 
 export interface DelegationOptions {
   /** 类型目录（优先级降序）；缺省 = X_HARNESS_AGENTS_DIRS > <cwd>/.x-harness/agents > ~/.x-harness/agents */
-  readonly agentsDirs?: readonly string[];
+  /** agent 类型目录（必收——插件零目录知识，宿主边沿用 resolveAgentDirs 统一解析；
+   *  `[]` = 显式零：不装载任何类型） */
+  readonly agentsDirs: readonly string[];
   /** 跨进程邮箱配置（缺省 = 纯进程内部署：跨进程寻址与 notify_when_idle 拒 invalid-args；
    *  root/timing 由 session-mailbox 插件装配给——单一真相，此处不重复） */
   readonly mailbox?: {

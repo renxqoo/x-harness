@@ -5,5 +5,5 @@ export type { ChildView, DelegationOptions, LoadedAgentType } from "./types.ts";
 export { delegationView } from "./view.ts";
 export type { DelegationView } from "./view.ts";
 export type { MessageInput, VerbOutcome } from "./verbs.ts";
-export { loadAgentTypes, resolveAgentDirs, typesFingerprint } from "./types-loader.ts";
+export { loadAgentTypes, projectAgentsDirOf, resolveAgentDirs, typesFingerprint, userAgentsDirOf } from "./types-loader.ts";
 export type { TypeLoadResult } from "./types-loader.ts";

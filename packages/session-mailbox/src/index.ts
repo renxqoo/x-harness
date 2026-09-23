@@ -1,4 +1,4 @@
-export { createMailboxPlugin, defaultTiming } from "./plugin.ts";
+export { createMailboxPlugin, resolveMailboxDir } from "./plugin.ts";
 export type { MailboxPluginOptions } from "./plugin.ts";
 export { createMailboxService, validateTiming } from "./service.ts";
 export { mailboxService } from "./tokens.ts";

@@ -18,7 +18,7 @@ import { reviveByAgentId } from "./revive.ts";
 import { evaluateCleanup, sweepWorktrees } from "./worktree.ts";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
-import { loadAgentTypes, resolveAgentDirs, typesFingerprint } from "./types-loader.ts";
+import { loadAgentTypes, typesFingerprint } from "./types-loader.ts";
 import type { DelegationOptions, LoadedAgentType } from "./types.ts";
 import { createNotifier } from "./notify.ts";
 import { spawnAgent } from "./spawn.ts";
@@ -37,7 +37,7 @@ const DEFAULT_REPORT_CAP = 34_000;
 const DEFAULT_MAX_RESIDENT = 32;
 
 /** 配置垃圾值 fail-fast（非负安全整数） */
-export function validateOptions(options: DelegationOptions): { maxDepth: number; maxConcurrent: number; reportCap: number; maxResident: number } {
+export function validateOptions(options: Pick<DelegationOptions, "maxDepth" | "maxConcurrent" | "reportCap" | "maxResident">): { maxDepth: number; maxConcurrent: number; reportCap: number; maxResident: number } {
   const sane = (value: number) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
   const maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
@@ -48,9 +48,6 @@ export function validateOptions(options: DelegationOptions): { maxDepth: number;
   }
   if (!sane(maxResident) || maxResident === 0) {
     throw new Error("agent-delegation: maxResident must be a positive safe integer");
-  }
-  if (options.agentsDirs !== undefined && (!Array.isArray(options.agentsDirs) || options.agentsDirs.some((dir) => typeof dir !== "string" || dir === ""))) {
-    throw new Error("agent-delegation: agentsDirs must be an array of non-empty strings");
   }
   return { maxDepth, maxConcurrent, reportCap, maxResident };
 }
@@ -66,9 +63,12 @@ export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>
   return `<system-reminder>\nAvailable agent types:\n${lines.join("\n")}\n</system-reminder>`;
 }
 
-export function createAgentDelegationPlugin(options: DelegationOptions = {}): Plugin {
+export function createAgentDelegationPlugin(options: DelegationOptions): Plugin { // agentsDirs 必收——目录决定权在宿主边沿
+  if (!Array.isArray(options.agentsDirs) || options.agentsDirs.some((dir) => typeof dir !== "string" || dir === "")) {
+    throw new Error("agent-delegation: agentsDirs must be an array of non-empty strings");
+  }
   const limits = validateOptions(options);
-  const dirs = resolveAgentDirs(options.agentsDirs);
+  const dirs = options.agentsDirs;
   return {
     name: "agent-delegation",
     inject: ["session", "tools", "agent-loop", "task-tools"],

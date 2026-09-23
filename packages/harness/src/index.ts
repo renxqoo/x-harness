@@ -169,7 +169,8 @@ export const fenceKit = (
 ];
 
 /** 子代理委派 */
-export const delegationKit = (): readonly Plugin[] => [createAgentDelegationPlugin()];
+/** 子代理委派（agentsDirs 必收——宿主边沿用 @x-harness/agent-delegation 的 resolveAgentDirs 统一解析） */
+export const delegationKit = (o: { readonly agentsDirs: readonly string[] }): readonly Plugin[] => [createAgentDelegationPlugin(o)];
 
 /** 请求前 WAL 屏障（独立 kit——与 delegation 零共享面） */
 export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];

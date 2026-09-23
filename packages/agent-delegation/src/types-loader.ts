@@ -17,11 +17,23 @@ export interface TypeLoadResult {
 
 const RESERVED = new Set(["fork", "main"]);
 
+/** 用户 agents 根（homeDir 注入缝：测试隔离目录；缺省真实 HOME） */
+export function userAgentsDirOf(homeDir: string = homedir()): string {
+  return join(homeDir, ".x-harness", "agents");
+}
+
+/** 项目 agents 根 */
+export function projectAgentsDirOf(cwd: string): string {
+  return join(cwd, ".x-harness", "agents");
+}
+
+/** 目录解析统一入口（宿主边沿消费——插件不自持缺省）：非空显式传入 > env 覆盖 >
+ *  [项目根, 用户根] 缺省（`[]` = 显式零——与 skill 的 resolveSkillDirs 语义对齐）。 */
 export function resolveAgentDirs(configured?: readonly string[]): readonly string[] {
-  if (configured !== undefined && configured.length > 0) return configured;
+  if (configured !== undefined && configured.length > 0) return [...configured];
   const env = process.env["X_HARNESS_AGENTS_DIRS"];
   if (env !== undefined && env !== "") return env.split(":").filter((dir) => dir !== "");
-  return [join(process.cwd(), ".x-harness", "agents"), join(homedir(), ".x-harness", "agents")];
+  return [projectAgentsDirOf(process.cwd()), userAgentsDirOf()];
 }
 
 /** 目录指纹（mtime 探测——kick 边沿重载的变更判据） */

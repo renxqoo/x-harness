@@ -185,9 +185,9 @@ describe("门禁（X7/X8/X17/X20）", () => {
   });
 
   it("配置垃圾值构造期 throw（X7）", () => {
-    expect(() => createAgentDelegationPlugin({ maxDepth: -1 })).toThrow();
-    expect(() => createAgentDelegationPlugin({ maxConcurrent: 1.5 })).toThrow();
-    expect(() => createAgentDelegationPlugin({ maxDepth: Number.NaN })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxDepth: -1 })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxConcurrent: 1.5 })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxDepth: Number.NaN })).toThrow();
     expect(() => createAgentDelegationPlugin({ agentsDirs: [""] })).toThrow();
   });
 

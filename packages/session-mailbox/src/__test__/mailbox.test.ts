@@ -7,7 +7,7 @@ import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { createContext } from "@x-harness/core";
 import { createMailboxService, validateTiming } from "../service.ts";
-import { createMailboxPlugin, defaultTiming } from "../plugin.ts";
+import { createMailboxPlugin, resolveMailboxDir, defaultTiming } from "../plugin.ts";
 import { mailboxService } from "../tokens.ts";
 import type { BoxManifest, MailboxTiming } from "../types.ts";
 
@@ -248,24 +248,20 @@ describe("session-mailbox", () => {
     expect(() => validateTiming(defaultTiming())).not.toThrow();
   });
 
-  it("插件装配：provide 服务、root 三级解析（custom > env > 缺省）", async () => {
+  it("插件装配：provide 服务、root 原样使用（零目录知识）+ 统一解析器三级形态", async () => {
     const custom = await mkdtemp(join(tmpdir(), "xh-mailbox-"));
     const ctx = createContext();
     createMailboxPlugin({ root: custom, timing: makeTiming() }).apply(ctx);
-    expect(ctx.use(mailboxService).root).toBe(custom);
-
+    expect(ctx.use(mailboxService).root).toBe(custom); // 原样透传——不解析不兜底
     const envRoot = await mkdtemp(join(tmpdir(), "xh-mailbox-env-"));
     process.env["X_HARNESS_MAILBOX_DIR"] = envRoot;
     try {
-      const ctx2 = createContext();
-      createMailboxPlugin({ timing: makeTiming() }).apply(ctx2);
-      expect(ctx2.use(mailboxService).root).toBe(envRoot);
+      expect(resolveMailboxDir()).toBe(envRoot); // env > 缺省（宿主边沿统一入口）
     } finally {
       delete process.env["X_HARNESS_MAILBOX_DIR"];
     }
-    const ctx3 = createContext();
-    createMailboxPlugin({ timing: makeTiming() }).apply(ctx3);
-    expect(ctx3.use(mailboxService).root).toBe(join(homedir(), ".x-harness", "mailbox"));
+    expect(resolveMailboxDir()).toBe(join(homedir(), ".x-harness", "mailbox"));
+    expect(resolveMailboxDir(custom)).toBe(custom); // 显式传入恒胜
   });
 
   it("投递：坏名 invalid-args；信封形状坏（合法 JSON 缺字段）丢弃走 onWarn", async () => {

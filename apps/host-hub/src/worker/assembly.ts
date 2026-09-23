@@ -3,7 +3,6 @@
 // 装配快照（adapter.name = 档案名），测试 = script-adapter（HUB_WORKER_PROVIDER=script
 // + HUB_WORKER_SCRIPT JSON 剧本）。dial/thinking 经 agentRequest waterfall 挂点从
 // session/meta 尾值改写（内核自动落 request/header 与 request/context）。
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { projectSkillsDirOf, userSkillsDirOf } from "../shared/skills-paths.ts";
 import type { Plugin } from "@x-harness/core";
@@ -29,7 +28,7 @@ import {
   promptKit,
   toolboxKit,
 } from "@x-harness/harness";
-import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
+import { createAgentDelegationPlugin, userAgentsDirOf } from "@x-harness/agent-delegation";
 import { createSkillPlugin } from "@x-harness/skill";
 import { createTodoToolsPlugin } from "@x-harness/todo-tools";
 import type { BasePromptFacts, World } from "@x-harness/harness";
@@ -112,7 +111,7 @@ export interface AssemblyDeps {
 }
 
 function userAgentsDir(): string {
-  return join(homedir(), ".x-harness", "agents");
+  return userAgentsDirOf(); // 路径常量单源 @x-harness/agent-delegation（防宿主散写漂移）
 }
 
 /** 内置 agents 类型目录（随包分发——装载序末位；迁移源 builtin 层等价物） */
