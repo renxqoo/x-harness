@@ -12,6 +12,7 @@ import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
 import type { DirectRead } from "./read-history.ts";
 import { deleteSession } from "./session-delete.ts";
+import { taskLogsRootOf } from "@x-harness/harness";
 import { listSavedSessions } from "./saved-query.ts";
 import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
@@ -260,7 +261,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   async function handleThreadDelete(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
     const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
-    const result = await deleteSession({ table: deps.table, sessionsRoot: deps.sessionsRoot, agentDir: deps.agentDir }, sessionPath);
+    const result = await deleteSession({ table: deps.table, sessionsRoot: deps.sessionsRoot, taskLogsRoot: taskLogsRootOf(deps.sessionsRoot), agentDir: deps.agentDir }, sessionPath);
     if (!result.ok) respond(id, "thread/delete", { error: result.reason });
     else respond(id, "thread/delete", { data: { removed: result.removed } });
   }

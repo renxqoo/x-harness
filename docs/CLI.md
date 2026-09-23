@@ -348,7 +348,7 @@ coverage include 扩 `apps/*/src/**`；不接受为凑数排除）。
 - [x] providers.json：多 provider 注册、/model 切换（副作用提示）、--list-models、default
       缺省链、校验错例全表
 - [x] 装配：全量 17 插件 + N adapter，数组序护栏（sandbox 先于 tool-*）、--no-session 条件化
-- [x] 工具面：read/write/bash/grep/task_output/task_stop/delegation 工具在册；--tools/-xt/-nt 生效
+- [x] 工具面：read/write/bash/grep/task_stop/delegation 工具在册；--tools/-xt/-nt 生效
 - [x] 权限：界内 auto allow、ask 经 broker、非 TTY deny+警告、broker 缺席退化 deny 不崩
 - [x] thinking 四级、token 用量显示（/session + turn 行，含 resume 冷启动折叠）
 - [x] compact：保锚点折叠、fold 后 turn 摘要仍在、abort 可取消

@@ -1,7 +1,7 @@
 // bash 工具（docs/TOOLBOX.md §4 + docs/EXEC-ENV.md §3/§6）：进程生命周期经 env.spawn
 // （detached 组杀/settle 观测面/host-exit 清场——全在 exec-env；本文件只留两段杀节奏策略）；
 // 双流全程并发消费；截断保尾+spill（0700/wx 0600/随机名）；退出码非 isError；
-// run_in_background → BackgroundTasks 登记簿（tasks.ts）立返任务 id。
+// run_in_background → BackgroundTasks 登记簿（tasks.ts）立返任务 id + 日志路径。
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -65,7 +65,7 @@ export function createBashTool(input: BashToolInput): ToolDefinition {
       " - IMPORTANT: Avoid using this tool to run `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or after you have verified that a dedicated tool cannot accomplish your task. Instead, use the appropriate dedicated tool as this will provide a much better experience for the user.\n" +
       " - Command output is displayed to you, not reliably to the user.\n" +
       " - `timeout` is in milliseconds: default 120000, max 600000.\n" +
-      " - `run_in_background` runs the command detached: it keeps running across turns; poll its output and state via the task layer (task_output). No `&` needed.",
+      " - `run_in_background` runs the command detached: it keeps running across turns; output appends to a log file (path returned — read or grep it for progress); a [task-notification] arrives when it finishes. No `&` needed.",
     inputSchema: Type.Object({
       command: Type.String({ description: "The command to execute" }),
       timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: "Optional timeout in milliseconds" })),
@@ -100,7 +100,7 @@ async function bash(input: {
     if (args.run_in_background === true) {
     const started = await tasks.start({ command: args.command, cwd, session: ctx.session, env, ...(ctx.exec !== undefined ? { exec: ctx.exec } : {}) });
     if (!started.ok) return { content: started.reason, isError: true };
-    return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — it keeps running across turns; poll its output and state via the task layer` };
+    return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — output appends to ${started.value.logPath}; a [task-notification] will arrive on completion; stop it with task_stop` };
   }
   const timeoutMs = Math.min(args.timeout ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
   const result = await runCommand({ command: args.command, cwd, timeoutMs, limits, env, ctx });

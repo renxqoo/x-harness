@@ -20,7 +20,6 @@ export interface ChildRow {
   armed: boolean; // 通知臂（running 置；通知后复位）
   running: boolean;
   stopped: boolean;
-  reportDelivered: boolean; // 报告全文已交付（通知 steer 成功置；task_output 复查据此不复读——同份内容只进父上下文一次）
   worktree?: string;
 }
 

@@ -1,13 +1,14 @@
-// 工具面 + 三态路由（docs/TASKS.md §1.1/§1.2）：入口前置校验（空/换行/无调用方/main）→
-// 逐源 probe（denied 终结透传、miss 续走、单源异常按 miss 计隔离）→ 源动词 →
-// 迟到 not-found 回落统一词表。block 归一化点在本层：显式传源，源不猜缺省。
+// 工具面 + 三态路由（docs/TASKS.md §1.1/§1.2 + docs/TASK-PUSH-DESIGN.md §2.1）：task_stop 单工具（读面归日志文件与
+// [task-notification] 推送）。入口前置
+// 校验（空/换行/无调用方/main）→ 逐源 probe（denied 终结透传、miss 续走、单源异常按
+// miss 计隔离）→ 源动词 → 迟到 not-found 回落统一词表。
 
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import type { ToolDefinition } from "@x-harness/tools";
 import type { SessionId } from "@x-harness/session";
-import type { TaskHub, TaskOutputOptions, TaskOutcome, TaskProbe, TaskSource } from "./tokens.ts";
-import { TASK_OUTPUT_DESCRIPTION, TASK_STOP_DESCRIPTION } from "./descriptions.ts";
+import type { TaskHub, TaskOutcome, TaskProbe, TaskSource } from "./tokens.ts";
+import { TASK_STOP_DESCRIPTION } from "./descriptions.ts";
 
 const CALLER_MISSING = "invalid-args:task tools are only available inside an agent session";
 
@@ -15,13 +16,6 @@ const CALLER_MISSING = "invalid-args:task tools are only available inside an age
 export function notFoundText(taskId: string): string {
   return `not-found:${taskId}; no such task in any source (agent tasks: use list_agents; bash ids come from bash run_in_background; bash tasks are session-scoped)`;
 }
-
-const outputSchema = Type.Object({
-  task_id: Type.String({ description: "The task ID to get output for" }),
-  offset: Type.Optional(Type.Number({ minimum: 0, description: "Byte offset to resume reading from (the previous response's nextOffset) — bash tasks; ignored for agents" })),
-  block: Type.Optional(Type.Boolean({ description: "Whether to wait for completion. Default true; pass false to poll a long-running task's progress instead of waiting" })),
-  timeout: Type.Optional(Type.Number({ minimum: 0, maximum: 600000, description: "Max wait time in ms (0 = immediate snapshot)" })),
-});
 
 const stopSchema = Type.Object({
   task_id: Type.String({ description: "The ID of the background task to stop" }),
@@ -36,7 +30,7 @@ function precheck(taskId: string, caller: SessionId | undefined): string | undef
   return undefined;
 }
 
-/** 路由核：单源 probe/output 抛错按 miss 计 + onWarn 留痕（单源 bug 不打穿另一源） */
+/** 路由核：单源 probe/stop 抛错按 miss 计 + onWarn 留痕（单源 bug 不打穿另一源） */
 async function route(input: {
   readonly hub: TaskHub;
   readonly onWarn: (message: string) => void;
@@ -72,20 +66,7 @@ function cast(out: TaskOutcome): { content: string; isError?: true } {
 }
 
 export function createTaskTools(hub: TaskHub, onWarn: (message: string) => void = () => {}): ToolDefinition[] {
-  const parallel = (): boolean => true;
   return [
-    {
-      name: "task_output",
-      description: TASK_OUTPUT_DESCRIPTION,
-      inputSchema: outputSchema,
-      execute: async (args: Static<typeof outputSchema>, ctx) => {
-        const bad = precheck(args.task_id, ctx.session);
-        if (bad !== undefined) return { content: bad, isError: true };
-        const opts: TaskOutputOptions = { offset: args.offset, block: args.block ?? true, timeout: args.timeout };
-        return cast(await route({ hub, onWarn, taskId: args.task_id, caller: ctx.session as SessionId, run: (source) => source.output(args.task_id, ctx.session, opts) }));
-      },
-      isConcurrencySafe: parallel,
-    },
     {
       name: "task_stop",
       description: TASK_STOP_DESCRIPTION,

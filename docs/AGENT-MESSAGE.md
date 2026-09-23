@@ -87,7 +87,8 @@ source 命名空间纪律：`"<域>-<含义>"`（如 `output-continuation`、`de
 
 | 流 | 现状载体 | 迁移 | 归属 |
 | --- | --- | --- | --- |
-| delegation 完成通知（报告全文 + 缺档占位 + 异常终态透传） | ~~steer → user/message~~ | ✅ 已迁 `notify("delegation-report", "content", ...)` → `agent/message`（第四批落地）；reportDelivered = 入队成功；tearing-down/孤儿收养/复查不复读不变；fork 种子 content 继承、directive 丢弃 | 已完成 |
+| delegation 完成通知（报告全文 + 缺档占位 + 异常终态透传） | ~~steer → user/message~~ | ✅ 已迁 `notify("delegation-report", "content", ...)` → `agent/message`（第四批落地）；tearing-down/孤儿收养不变；fork 种子 content 继承、directive 丢弃 | 已完成 |
+| bash 后台任务完成通知（[task-notification] 状态行 + 日志路径 + 尾部切片） | —（新流） | `notify("bash-task", "content", ...)` → `agent/message`（task-tools 通知臂——TASK-PUSH 落地；登记见 PLUGIN-AUTHORING 已知来源表） | 已完成 |
 | 跨会话空闲通知（notify_when_idle 的 `[Cross-session idle notice]`） | 跨进程邮箱 → 主会话（交付点待探查确认是否同为 steer/user-message 形态） | → `agent/message{source:"cross-session-notice", kind:"directive"}`（过期作废的时点性通知） | 候选：delegation 迁移批内探查后定 |
 | 续写指令（本功能） | —（新流） | 直接落 `agent/message{source:"output-continuation", kind:"directive"}` | 截断续写功能第三批 |
 | 后续候选（示意） | — | 技能装载通知 `skill-notice/content`、预算告警 `budget-warning/directive` | 场景 A 零阻力接入 |
@@ -98,7 +99,7 @@ source 命名空间纪律：`"<域>-<含义>"`（如 `output-continuation`、`de
 
 - **session（子系统本体）**：`agentMessageData` 构造器形状；gate 正反例（source 非空、kind 闭集、image 拒、缺字段）；投影 user 角色；既有四类投影零扰回归。
 - **compaction**：serialize 用谓词分流（directive 跳过 / content 内容行）；cut 非候选回归。
-- **迁移流（各自批次）**：模型可见性不变（calls 断言）+ UI 形态变化（不再出现 user/message 载体）+ 流自身语义回归（delegation：reportDelivered / 复读 / 异常窗口）。
+- **迁移流（各自批次）**：模型可见性不变（calls 断言）+ UI 形态变化（不再出现 user/message 载体）+ 流自身语义回归（delegation：：通知直送 / 异常窗口）。
 - **e2e**：真装配旅程断言 WAL 事件序与 get_entries 类型呈现。
 
 ## §7.1 已知代价（审查落档）

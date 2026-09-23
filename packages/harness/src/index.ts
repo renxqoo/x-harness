@@ -123,22 +123,28 @@ export const promptKit = (base?: Plugin): readonly Plugin[] => [
   ...(base !== undefined ? [base] : []),
 ];
 
-/** 工具箱（tools 注册表 + read/write/bash/grep/task-tools；gate/observed 共享实例内包；env 透传给无围栏世界） */
+/** bash 后台任务日志根推导（与 sessionsRoot 同级——宿主装配与 session-delete 级联同源） */
+export { taskLogsRootOf } from "./task-logs.ts";
+
+/** 工具箱（tools 注册表 + read/write/bash/grep/task-tools；gate/observed 共享实例内包；env 透传给无围栏世界；
+ *  taskLogDir = bash 后台任务日志根——传宿主数据目录即会话档案一致性，read/grep 放行为系统固有读根） */
 export const toolboxKit = (o: {
   readonly root: string;
   readonly gate?: PathGate;
   readonly observed?: ObservedRegistry;
   readonly env?: ExecEnv;
+  readonly taskLogDir?: string;
 }): readonly Plugin[] => {
   const gate = o.gate ?? new PathGate(o.root); // 接线内包：read/write 必须共享 gate+observed（漏配症状 FS_NOT_OBSERVED）
   const observed = o.observed ?? new ObservedRegistry();
   const env = o.env !== undefined ? { env: o.env } : {};
+  const systemRoots = o.taskLogDir !== undefined ? { systemRoots: [o.taskLogDir] } : {};
   return [
     toolsPlugin,
-    createReadPlugin({ gate, observed, ...env }),
+    createReadPlugin({ gate, observed, ...env, ...systemRoots }),
     createWritePlugin({ gate, observed, ...env }),
-    createBashPlugin({ gate, ...env }),
-    createGrepPlugin({ gate, ...env }),
+    createBashPlugin({ gate, ...env, ...(o.taskLogDir !== undefined ? { taskLimits: { taskLogDir: o.taskLogDir } } : {}) }),
+    createGrepPlugin({ gate, ...env, ...systemRoots }),
     createTaskToolsPlugin(),
   ];
 };

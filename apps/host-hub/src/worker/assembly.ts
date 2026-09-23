@@ -26,6 +26,7 @@ import {
   meterKit,
   probeBaseFacts,
   promptKit,
+  taskLogsRootOf,
   toolboxKit,
 } from "@x-harness/harness";
 import { createAgentDelegationPlugin, userAgentsDirOf } from "@x-harness/agent-delegation";
@@ -309,7 +310,8 @@ function defaultWorkerPlugins(resolved: {
     // base 系统提示词（与 CLI 同源 @x-harness/harness——身份/守则/环境块 + facts 插值）
     ...promptKit(createBasePromptPlugin(facts)),
     ...durableSessionKit({ root: fields.sessionsRoot }),
-    ...toolboxKit({ root: cwd }),
+    // taskLogDir = 宿主数据目录下 task-logs（会话档案一致性——session-delete 级联同源推导）
+    ...toolboxKit({ root: cwd, taskLogDir: taskLogsRootOf(fields.sessionsRoot) }),
     // 围栏（PERMISSION-V2）：裁决产出执行指令，sandbox 照办；保护路径双挡 settings 文件（U13）；
     // bw 类 GUI 工具不再需要豁免词表——直通档天然免包裹（U1/U5）
     ...fenceKit({

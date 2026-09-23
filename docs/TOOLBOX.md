@@ -39,7 +39,7 @@ createGrepPlugin({ gate, env?, rgPath? });              // name "tool-grep"；rg
 配对契约从「同工厂成对装配」改为「装配方穿引同一实例」：**read+write 必须共享同一
 gate+observed 实例**（错穿症状 FS_NOT_OBSERVED——fail-closed 不假绿；e2e 旅程是成对装配的
 行为背书）。任务动词消费方（task-tools）经 `createBashPlugin({ tasks })` 穿引同一
-BackgroundTasks——tool-bash 公开导出 BackgroundTasks/TaskRead/TaskSnapshot/defaultLimits/
+BackgroundTasks——tool-bash 公开导出 BackgroundTasks/TaskSnapshot/defaultLimits/
 defaultTaskLimits（bash 源消费面）。**第 5 个命令 = 新包 + createToolPlugin，内核与其余命令包零改动。**
 
 四个工具经 `toolRegistry.register` 注册（inject ["tools"]）。并发档（交集 35）：read/grep 声明
@@ -112,7 +112,8 @@ defaultTaskLimits（bash 源消费面）。**第 5 个命令 = 新包 + createTo
 **Schema**：`{ command: string, timeout?: int >0（上限 600_000——maxTimeoutMs 可配收紧）,
 run_in_background?: boolean }`。工具 description 对齐 Claude Code 文案（用户裁决——模型侧
 契约沿用其训练分布），两处与实际行为相反的从句按本仓事实修正：cwd 每调用重置为 root
-（非 persists——本仓无持久 shell），后台为拉模式（poll task_output，非 re-invoke 唤醒）。
+（非 persists——本仓无持久 shell），后台为文件日志 + 完成推送（日志路径随返回值、
+  [task-notification] 完成注入，无轮询动词）。
 无缺省超时的三参考共识 vs 我仓无宿主看门狗——**有意偏离**：缺省墙钟 120s（可配），文档落档。
 
 **行为**：
@@ -152,20 +153,24 @@ run_in_background?: boolean }`。工具 description 对齐 Claude Code 文案（
 - 状态机 `running → completed | failed | killed | timed-out`：墙钟帽（缺省 600s）到点两段杀
   （TERM→5s→KILL，同前台节奏）→ `timed-out`；`stop()` 幂等（已终态返回当前快照）→ `killed`；
   退出码 0/非 0 → completed/failed（信号死折算 128+n，同前台）；
-- 输出：双流**按到达序并流**进单缓冲（单字节偏移增量读——`read(session, id, offset)` 返回
-  切片 + nextOffset + more；伪 offset 回退到字符首字节（不跳数据）、非有限 offset 归 0、
-  ANSI/裸 \r 清洗与前台同口径；`[stderr]` 分节是前台语义，后台不保留）；**保留帽 spill**
-  触发口径=fullCapBytes（缺省 64MB 可配）超帽停累积并 spill 已保留部分（前台是 30KB 展示
-  截断触发——各自口径）；pumps 全 EOF 后才 finalize（bytes/终态/spill 不缺尾）；
+- 输出：双流**按到达序并流**流式落盘单日志文件（`<taskLogDir>/<sessionKey>/bash-task-<id>.log`
+  ——返回值携带路径，读面 = read/grep 工具；宿主传宿主数据目录即会话档案一致性，缺省进程
+  临时目录）；单 WriteStream 单写者保序；ANSI/裸 \r 清洗为**跨 chunk 状态机**（转义序列与
+  \r 均可劈 chunk 边界——写入侧清洗，read 面即净文本）；**写帽** fullCapBytes（缺省 64MB
+  可配）超帽停写 + droppedBytes 计数 + truncated 态（字节精确、截断点 UTF-8 续字节回退）；
+  写失败置 writeError 不静默（通知面注记 log incomplete）；pumps 全 EOF + 日志落盘收尾后才
+  finalize（onSettled 订阅者读文件无撕裂尾）；
 - 清场与登记生命周期：sessionDisposed → 该会话任务两段杀并**清桶逐出**（会话生命周期即
-  登记生命周期——终态任务保留到会话终结，供 task_output 轮询，无跨会话累积）；装配 dispose →
+  登记生命周期——磁盘日志随宿主数据寿命，不随登记簿：宿主 session-delete 级联清理
+  task-logs/<id>/）；装配 dispose →
   全部**直接 KILL**（收尾窗口不留给 teardown——env 层兜底）；host-exit 由 env 进程登记覆盖；
   **单装配假设**：一插件一装配（同一 BackgroundTasks 实例多处 apply 共享登记簿，teardown
   互杀不支持）；
   并发帽含在途 spawn 占位（检查与登记隔 await——防 TOCTOU 越帽）；
-- **读/停的模型侧动词不建 bash 专属工具（用户裁决）**——通用任务层 `task_output`/
-  `task_stop`（跨任务源，task-tools 包），本登记簿经 `createBashPlugin({ tasks })` 穿引的
-  BackgroundTasks 实例供给（tool-bash 公开面）。
+- **停的模型侧动词不建 bash 专属工具（用户裁决）**——通用任务层 `task_stop`（跨任务源，
+  task-tools 包），本登记簿经停靠（或 `createBashPlugin({ tasks })` 穿引）的 BackgroundTasks
+  实例供给（tool-bash 公开面）；读面 = 日志文件（read/grep）+ 完成推送（[task-notification]，
+  task-tools 通知臂停泊 onSettled）。
 
 **不做（落档）**：流式 progress 转发（无消费面）；受信 env 注入；60s 无输出
 hung-kill（缺省墙钟已兜底挂死——有意以墙钟替代双时间线，简化）；KILL 宽限可配（5s 常数与
@@ -266,8 +271,8 @@ respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows ta
 
 ## 7. 不处理（归属）
 
-图片/多模态（ContentBlock 契约扩展时）；sandbox/审批流（安全产品线）；通用任务动词
-task_output/task_stop（未来任务件——跨任务源消费 tasks 句柄，不建 bash 专属工具，用户裁决）；
+图片/多模态（ContentBlock 契约扩展时）；sandbox/审批流（安全产品线）；通用停动词
+task_stop 归任务件 task-tools（跨任务源；读面=文件+推送，TASK-PUSH-DESIGN）；
 流式 progress（观察面消费方出现时）；会话 cwd（宿主件写入 SessionHeader.cwd 后挂——届时
 bash 已固定 root 无 workdir）；exit 标记 round-trip（UI 状态面出现时）；TOCTOU 窗口（门 check 与 I/O 之间
 换 symlink——接受，防护归安全产品线）；**rg 获取全链**（安装/下载/sidecar 拼装归制品与
@@ -311,9 +316,10 @@ read !isFile 全拒（P3——FIFO 阻塞）；Bun.spawn signal 选项禁用（�
 
 - 长任务正解 = run_in_background 后台化（前台墙钟维持 120s——排他档防钉死；前台超时文案补
   run_in_background 指引）；后台墙钟帽与前台等待上限语义解耦（缺省 600s 可配）
-- **不建 bash 专属 job 读/停工具**——通用任务动词 task_output/task_stop 归未来任务件（跨任务源
-  消费 `createToolbox().tasks` 句柄）；登记簿先落地：会话键控/五态状态机/字节偏移增量读（伪
-  offset 回退到字符首字节，不跳数据）/每会话并发帽/两段杀节奏与前台同款/dispose 直接 KILL
+- **不建 bash 专属 job 读/停工具**——通用任务动词归任务件（跨任务源消费 tasks 句柄；
+  时为 task_output/task_stop 两动词，后经 TASK-PUSH 收窄为 task_stop 单动词——读面归
+  日志文件与 [task-notification] 推送）；登记簿先落地：会话键控/五态状态机/每会话并发帽/
+  两段杀节奏与前台同款/dispose 直接 KILL
 - ChannelCollector/pump/writeSpill 抽 collect.ts（前台与后台共用——单源）
 
 ## 8. 验收清单

@@ -36,9 +36,9 @@ Control/agent-team/统一后台任务体系（bash 后台、输出文件指针�
 | `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——agentId/box 名为无换行原子串）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,300}$`，长内容走文件中转）；summary ≤200 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
 | `list_agents` | `{}` | 行格式双形态：子代理行 `kind=subagent <agentId> session=<id> type=<t> depth=<n> status=<running\|idle\|stopped>`；本机会话行 `<box名> [<ref>] kind=local-session status=<...>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档） |
 
-（读/停动词已迁出——件14 修订C：`task_output`/`task_stop` 由 @x-harness/task-tools 提供，
-经 TaskHub 路由到 agent 源（本包 agentTaskSource 注册）与 bash 源；schema/铸文/统一
-not-found 词表见 docs/TASKS.md §1。）
+（停动词已迁出——件14 修订C + TASK-PUSH 修订：`task_stop` 由 @x-harness/task-tools 提供，
+经 TaskHub 路由到 agent 源（本包 agentTaskSource 注册）与 bash 源；报告读面 = 完成通知
+推送（本表无读动词）；schema/统一 not-found 词表见 docs/TASKS.md §1。）
 
 错误词表（判别联合 reason，中性英文，统一 `area:detail`）：`invalid-args:*`（参数形状/未知
 类型/to 含换行/notify_when_idle 越权或非 box 目标）、`not-found:*`（寻址落空，带形态与清单
@@ -49,8 +49,7 @@ not-found 词表见 docs/TASKS.md §1。）
 ### 2.2 限额与预算
 
 maxDepth 缺省 3 / maxConcurrent 缺省 10（occupied 口径：登记占、完成通知/stop 释、message
-复活复占）/ reportCap 缺省 34000（报告截断统一上界——完成通知/finished 事件/运行中快照/
-task_output 同一 cap）/ **maxResident 缺省 32**（idle 子驻留上限，
+复活复占）/ reportCap 缺省 34000（报告截断统一上界——完成通知/finished 事件同一 cap）/ **maxResident 缺省 32**（idle 子驻留上限，
 最旧档化：dispose 子会话（WAL 在盘）+摘行，配合 §6.2 惰性复活天然可恢复——防完成子无限
 驻留累积）/ mailbox 定时参数全部可注入（pollIntervalMs 300 / heartbeatMs 10_000 /
 graceMs 30_000 / staleMs 7d / now()——测试确定性收口，§11）。
@@ -140,11 +139,9 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
 
 ### 4.4 属主边界（管理面红线）
 
-- `task_output` / `task_stop`（agent 源——件14 经 task-tools 暴露）：**仅 owner**
+- `task_stop`（agent 源——件14 经 task-tools 暴露）：**仅 owner**
   （callerSession === row.parent），task_id = agentId 精确（**不支持 main 与跨进程**）；
   not-owner 经 probe denied 通道透传，源内 not-found 回落 task-tools 统一词表。
-  task_output 完成态复查不复读已交付全文（reportDelivered——状态头 + session 指针）；
-  running 快照照常（block/timeout 等待 + `last output so far`，同一 reportCap）。
 - `agent_message` / `list_agents`：**开放寻址**（规格 SendMessage 语义）——进程内任意 live
   子代理（含兄弟）、本机任意 live 会话（box 域，仅会话级——**子代理不跨进程直接寻址**，
   见 §5.3）；子代理可用 `to:"main"` 回父（§5.2 分支 1）。
@@ -163,13 +160,13 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
   busy→步边界；父 idle→唤醒。父已 dispose → not-found。
 - **完成通知**：agentStatus 监听 → armed/idle → 子 WAL 末 turn/end 全字段透传
   （kind/message/code/cause/reason——`docs/SUBAGENT-FAILURE-NOTIFICATION.md`）+ 本轮
-  assistant 全文（`summaryLines` 截断，与 task_output 报告同一 reportCap）+ `session:`
+  assistant 全文（`summaryLines` 截断，reportCap 统一上界）+ `session:`
   行（子会话档案指针）+ usage → `[agent-notification]` **notify 注入父**（内部消息载体
   `agent/message{source:"delegation-report", kind:"content"}`——排队/唤醒语义与 steer 同款
   步边界；材料化后 UI 不当用户发言展示、压缩摘要保留报告事实，docs/AGENT-MESSAGE.md §5）→
-  释槽。通知即报告唯一交付点：入队成功置 `reportDelivered`，task_output 完成复查不复读全文
-  （状态头 + session 指针）——同份内容不重复进父上下文；入队失败/tearing-down
-  未置位，task_output 仍可全文兜底。异常终态显式成败：completed →
+  释槽。通知即报告唯一交付点（全文直送——具体信息走 agent_message 追问）；入队失败/
+  tearing-down 窗口通知丢弃（emitFinished 事件面仍发射，子会话 WAL 在盘可查）。
+  异常终态显式成败：completed →
   `finished: completed`；aborted → `stopped: <cause>`；error/max-tokens/blocked/
   interrupted → `failed: <原因句>`
   （max-tokens 区分有无摘要、error 带 message/code、blocked 带 preStep reject 原因、
@@ -190,7 +187,7 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
    resume 复活（沿用原 id）→ 命中；否则 not-found（附 agentId 形态与 list_agents 引导）
 ```
 
-task_output/task_stop（agent 源）的 task_id = agentId 精确（nameaddr 分支 2；不支持 main
+task_stop（agent 源）的 task_id = agentId 精确（nameaddr 分支 2；不支持 main
 与跨进程），再过 owner 校验（§4.4）。**跨进程域只解析会话（box）**：`to` 落在 box 域 = 消息进对端进程的宿主 main 会话；
 子代理跨进程发送以父 box 为出址（from=父 box），回信进父进程 main 会话——规格「子代理
 的发送走父会话地址、回复送回父会话对话」原文语义。
@@ -417,8 +414,8 @@ status 边沿即时重写）；notify_when_idle（订阅时已 idle 立即投、
 重载+prompt 刷新断言、untyped/fork/空正文子见清单的机制事实断言）；worktree（真 git 仓
 fixture：路径在 repo 外、子写落 worktree、主仓 read/write/grep 不可达、bash 命令体写主仓
 被 fence 拒【fence 在场】、无改动清理、有改动保留+路径文案、git 失败 spawn 拒无残留、启动
-期清扫崩溃泄漏、并发 spawn 串行、extraRoot 批原根子树被守卫拒）；task_output（agent 源）block/timeout
-（完成即回/超时回 running 快照/block=false 立即——经 task-tools 工具面调用，路由/词表/bash 源用例在 task-tools 包内）；驻留档化（超 maxResident 最旧 dispose、
+期清扫崩溃泄漏、并发 spawn 串行、extraRoot 批原根子树被守卫拒）；task_stop（agent 源）
+（经 task-tools 工具面调用，路由/词表/bash 源用例在 task-tools 包内）；驻留档化（超 maxResident 最旧 dispose、
 可按名复活）；**描述-schema 双向对账**（正向：schema 每字段名以词边界正则出现在
 description；反向：description 引用的参数名 ⊆ schema 字段——锚=正则规则写死在用例里）；
 mailboxTiming 注入（fake now/短间隔驱动 liveness/回收/心跳用例，无真 sleep）。

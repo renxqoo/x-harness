@@ -1,5 +1,6 @@
-// bash 源测试（docs/TASKS.md §3）：probe 会话键控 / offset 增量连续 / block 语义（终态后切片、
-// timeout=0 零等待、超时回乐观快照）/ stop 收敛终态非 mid-kill / 已终态 already finished / evict 竞态。
+// bash 源测试（docs/TASKS.md §3 + docs/TASK-PUSH-DESIGN.md §2.1）：probe 会话键控 /
+// stop 收敛终态非 mid-kill / 已终态 already finished / evict 竞态（读面归日志文件——
+// 输出断言见 tool-bash log-sink/tasks 测试）。
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,24 +11,27 @@ import type { ExecEnv } from "@x-harness/exec-env";
 import type { SessionId } from "@x-harness/session";
 import { BackgroundTasks, defaultTaskLimits } from "@x-harness/tool-bash";
 import type { BackgroundTasks as BackgroundTasksType } from "@x-harness/tool-bash";
-import { bashTaskSource, bashReadText } from "../source-bash.ts";
+import { bashTaskSource } from "../source-bash.ts";
 
 const sid = (v: string): SessionId => v as SessionId;
 const SESSION = sid("bash-src");
 
 let root: string;
+let logRoot: string;
 let env: ExecEnv;
 let tasks: BackgroundTasksType;
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "xh-bashsrc-"));
+  logRoot = mkdtempSync(join(tmpdir(), "xh-bashsrc-logs-"));
   env = createLocalEnv(root);
-  tasks = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir: root }));
+  tasks = new BackgroundTasks(defaultTaskLimits({ taskLogDir: logRoot }));
 });
 
 afterEach(() => {
   tasks.stopAll();
   rmSync(root, { recursive: true, force: true });
+  rmSync(logRoot, { recursive: true, force: true });
 });
 
 async function start(command: string, session: SessionId = SESSION): Promise<string> {
@@ -36,10 +40,16 @@ async function start(command: string, session: SessionId = SESSION): Promise<str
   return made.value.id;
 }
 
-const nextOffsetOf = (text: string): number => {
-  const hit = text.match(/nextOffset=(\d+)/);
-  if (hit === null) throw new Error(`no nextOffset in: ${text}`);
-  return Number(hit[1]);
+const waitSettledOf = async (session: SessionId, id: string): Promise<void> => {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const snap = tasks.list(session).find((t) => t.id === id);
+    if (snap === undefined || snap.endedAt !== undefined) return;
+    if (Date.now() > deadline) throw new Error("settle timeout");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50);
+    });
+  }
 };
 
 describe("bash task source probe", () => {
@@ -49,58 +59,6 @@ describe("bash task source probe", () => {
     expect(source.probe(id, SESSION)).toEqual({ kind: "hit" });
     expect(source.probe(id, sid("other"))).toEqual({ kind: "miss" });
     expect(source.probe("t-doesnotexist", SESSION)).toEqual({ kind: "miss" });
-  });
-});
-
-describe("bash task source output", () => {
-  it("block=true waits for the terminal state then slices (no torn tail)", async () => {
-    const source = bashTaskSource(tasks);
-    const id = await start("printf 'partial'; sleep 0.2; printf '%s' '-tail'");
-    const out = await source.output(id, SESSION, { block: true, timeout: 10_000 });
-    expect(out.ok).toBe(true);
-    if (!out.ok) throw new Error(out.reason);
-    expect(out.text).toContain("completed exit=0");
-    expect(out.text).toContain("partial-tail");
-    expect(out.text).toContain("more=false");
-  });
-
-  it("offset chains incrementally: nextOffset drives continuity", async () => {
-    const source = bashTaskSource(tasks);
-    const id = await start("sleep 0.2; printf '0123456789'");
-    await source.output(id, SESSION, { block: true, timeout: 10_000 });
-    const whole = await source.output(id, SESSION, { block: false });
-    if (!whole.ok) throw new Error(whole.reason);
-    const mid = nextOffsetOf(whole.text) - 4; // 尾部 4 字节留给第二轮
-    const rest = await source.output(id, SESSION, { block: false, offset: mid });
-    if (!rest.ok) throw new Error(rest.reason);
-    expect(rest.text).toContain("6789");
-    expect(nextOffsetOf(rest.text)).toBe(nextOffsetOf(whole.text));
-  });
-
-  it("timeout=0 is a zero-wait immediate snapshot of a running task", async () => {
-    const source = bashTaskSource(tasks);
-    const id = await start("sleep 1");
-    const began = Date.now();
-    const out = await source.output(id, SESSION, { block: true, timeout: 0 });
-    expect(Date.now() - began).toBeLessThan(400);
-    expect(out.ok).toBe(true);
-    if (out.ok) expect(out.text).toContain("running exit=null");
-  });
-
-  it("block=true past its timeout returns the honest running snapshot", async () => {
-    const source = bashTaskSource(tasks);
-    const id = await start("sleep 2");
-    const out = await source.output(id, SESSION, { block: true, timeout: 60 });
-    expect(out.ok).toBe(true);
-    if (out.ok) expect(out.text).toContain("running exit=null");
-  });
-
-  it("reports the unified-eligible not-found after the session bucket is evicted", async () => {
-    const source = bashTaskSource(tasks);
-    const id = await start("sleep 0.05");
-    tasks.evict(SESSION);
-    const out = await source.output(id, SESSION, { block: false });
-    expect(out).toEqual({ ok: false, reason: `not-found:${id}` }); // 路由层回落统一词表
   });
 });
 
@@ -120,13 +78,13 @@ describe("bash task source stop", () => {
   it("an already-finished task stops with the already finished prefix (no false Stopped)", async () => {
     const source = bashTaskSource(tasks);
     const id = await start("sleep 0.05");
-    await source.output(id, SESSION, { block: true, timeout: 10_000 });
+    await waitSettledOf(SESSION, id);
     const out = await source.stop(id, SESSION);
     expect(out.ok).toBe(true);
-    if (out.ok) {
-      expect(out.text).toContain("already finished");
-      expect(out.text).toContain("completed exit=0");
-    }
+    if (!out.ok) throw new Error(out.reason);
+    expect(out.text).toContain("already finished");
+    expect(out.text).toContain("completed exit=0");
+    expect(out.text).toContain("bytes="); // 状态行与通知首行同口径（bytes 在场）
   });
 
   it("a task evicted mid-stop resolves to not-found (unified fallback at the router)", async () => {
@@ -144,21 +102,5 @@ describe("bash task source stop", () => {
     tasks.evict(SESSION); // 收敛窗内（waitSettled 首拍后）记录被逐出——settled=undefined 走 list 回落
     const out = await stopping;
     expect(out).toEqual({ ok: false, reason: `not-found:${id}` });
-  });
-});
-
-describe("bash read text casting", () => {
-  it("caps the command head at 80 chars and carries spill hints", () => {
-    const long = "x".repeat(120);
-    const text = bashReadText({
-      snapshot: { id: "t-aa", command: long, state: "failed", exitCode: 3, startedAt: 1, endedAt: 2, bytes: 4, truncated: true, spillPath: "/tmp/spill-1" },
-      text: "body",
-      nextOffset: 4,
-      more: false,
-    });
-    expect(text).toContain(`t-aa (${"x".repeat(80)}…): failed exit=3 bytes=4`);
-    expect(text).toContain("retention cap");
-    expect(text).toContain("/tmp/spill-1");
-    expect(text).toContain("nextOffset=4; more=false");
   });
 });

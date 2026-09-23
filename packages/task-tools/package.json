@@ -10,10 +10,18 @@
     "@x-harness/core": "workspace:*",
     "@x-harness/session": "workspace:*",
     "@x-harness/tool-bash": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/agent-loop": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0",
-    "@x-harness/exec-env": "workspace:*"
+    "@x-harness/exec-env": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/testkit": "workspace:*",
+    "@x-harness/core": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/tool-bash": "workspace:*",
+    "@x-harness/system-prompt": "workspace:*"
   }
 }

@@ -1,7 +1,7 @@
 // 完成通知（docs/AGENT-DELEGATION.md §5.1）：agentStatus 监听 → 子 idle 且 armed → 读子 WAL
 // 末 turn/end 全字段透传（kind/message/code/cause/reason——docs/SUBAGENT-FAILURE-NOTIFICATION.md：
 // 异常终态显式回传，主代理不解读状态词）+ 本轮 assistant 全文（reportCap 统一上界）+ session
-// id 行 → steer 注入父；通知即全文交付，模型不需要再调 task_output 取报告；tearing-down 门
+// id 行 → steer 注入父；通知即报告唯一交付面；tearing-down 门
 // （级联期丢弃）；孤儿子收养处置（父 get 缺位 → cancel+dispose+摘行）；
 // 子会话缺档 → 占位通知如实送达（不静默丢 completion）。
 
@@ -9,8 +9,8 @@ import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
 import type { ChildRow } from "./lineage.ts";
 
-/** 报告正文行组——完成通知与 task_output 同一 cap 同一口径：全文直送；超 cap 截断 +
- *  agent_message 追问引导（二次读同一 cap 下的内容只会多付一份上下文，故引导不指向 task_output）。 */
+/** 报告正文行组：全文直送；超 cap 截断 + agent_message 追问引导（通知是报告唯一交付面——
+ *  追具体信息走对话，无二次读动词）。 */
 export function summaryLines(summary: string, cap: number): string[] {
   if (summary.length <= cap) return [summary];
   return [summary.slice(0, cap), `[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics]`];
@@ -135,7 +135,7 @@ function outcomeHead(agentId: string, report: ChildReport): string {
   return `[agent-notification] agent ${agentId} failed: ${failureDetail(report)}`;
 }
 
-/** 通知铸文本：全文直送（与 task_output 报告同一 cap——二次调用只多付一份上下文） */
+/** 通知铸文本：全文直送（超 cap 由 summaryLines 截断——全文是报告唯一交付面） */
 export function notificationText(row: ChildRow, report: ChildReport, cap: number): string {
   const lines = [outcomeHead(row.agentId, report), `session: ${String(row.sessionId)}`];
   if (report.summary !== undefined) {
@@ -219,8 +219,7 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
   });
   try {
     parentHandle.agent.notify(DELEGATION_REPORT_SOURCE, "content", notificationText(row, report, deps.reportCap));
-    row.reportDelivered = true; // 报告全文单一交付点：入队成功即已交付（材料化载体 agent/message），task_output 复查不复读
   } catch {
-    /* 父恰在封存：通知丢弃（子会话在盘可查）——未置位，task_output 仍可全文兜底 */
+    /* 父恰在封存：通知丢弃（子会话在盘可查） */
   }
 }

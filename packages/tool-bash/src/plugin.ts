@@ -19,8 +19,9 @@ import { backgroundTasks } from "./tokens.ts";
 /** 前台执行限额（部分字段——缺省补齐；defaultTimeoutMs > maxTimeoutMs 装配期 throw） */
 export type BashLimitsOptions = Partial<Pick<BashLimits, "defaultTimeoutMs" | "maxTimeoutMs" | "maxOutputBytes" | "spillDir">>;
 
-/** 后台任务限额（部分字段——缺省补齐于前台 limits 之上） */
-export type TaskLimitsOptions = { readonly maxConcurrentTasks?: number; readonly taskTimeoutMs?: number; readonly fullCapBytes?: number };
+/** 后台任务限额（部分字段——缺省补齐；taskLogDir 缺省进程临时目录，宿主传宿主数据目录
+ *  即会话档案一致性——TASK-PUSH-DESIGN §2.2） */
+export type TaskLimitsOptions = { readonly maxConcurrentTasks?: number; readonly taskTimeoutMs?: number; readonly fullCapBytes?: number; readonly taskLogDir?: string };
 
 /** bash 使用守则（docs/TOOLBOX.md §4）：sandbox 围栏下的行事约束——denied domain 是 fence
  *  不是 obstacle。裸 local（无围栏）返回空串：无守则可说（空串不落 def） */
@@ -53,7 +54,7 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
     throw new Error("tool-bash: pass either tasks (external registry) or taskLimits, not both");
   }
   const limits = defaultLimits(input.limits ?? {});
-  const tasks = input.tasks ?? new BackgroundTasks(defaultTaskLimits(input.taskLimits ?? {}, limits));
+  const tasks = input.tasks ?? new BackgroundTasks(defaultTaskLimits(input.taskLimits ?? {}));
   // on-failure 升级面（PERMISSION-V2-DESIGN §3）：broker 惰性解析（tryUse——无 permission
   // 的世界优雅降级无升级）；配额=命令文本哈希 per session 至多一次（防同文本重试刷弹窗）
   let worldCtx: import("@x-harness/core").Context | undefined;
@@ -105,7 +106,7 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
     // 使用守则（工厂参数投稿，D3）：仅 sandbox 围栏下有话可说——裸 local 无围栏语义，零守则
     guidance: bashGuidance,
     // 会话终结：该会话后台任务两段杀并清桶（登记生命周期=会话生命周期）；装配拆卸：全部直接 KILL；
-    // 生效登记簿 provide 为服务——task-tools 停靠（bash 工具与 task_output/task_stop 同一实例）
+    // 生效登记簿 provide 为服务——task-tools 停靠（bash 源 + 完成通知臂同一实例）
     attach: (ctx) => {
       worldCtx = ctx; // 升级桥的 broker 惰性解析锚（apply 序无关——每调用 tryUse）
       const offProvide = ctx.provide(backgroundTasks, tasks);

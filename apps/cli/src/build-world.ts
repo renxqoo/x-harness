@@ -26,6 +26,7 @@ import {
   continuationKit,
   loopKit,
   meterKit,
+  taskLogsRootOf,
   promptKit,
   skillKit,
   toolboxKit,
@@ -129,7 +130,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
-    ...toolboxKit({ root: options.cwd }),
+    ...toolboxKit({ root: options.cwd, ...(options.persist ? { taskLogDir: taskLogsRootOf(options.sessionRoot) } : {}) }),
     ...fenceKit({
       root: options.cwd,
       mode: options.permission ?? "sandboxed-auto", // CLI 缺省围栏优先（U6——Codex 姿势）

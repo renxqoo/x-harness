@@ -51,7 +51,8 @@ export const myPlugin: Plugin = {
   （模型/UI/摘要）零改动；消费方禁止按 source 分支；kind 闭集 `{directive（指令——摘要跳过）,
   content（内容——摘要保留）}`，扩闭集走 docs/AGENT-MESSAGE.md §4 场景 B 独立小方案。
   已知来源登记（纯文档）：`output-continuation`（agent-continuation 插件·directive）、
-  `delegation-report`（agent-delegation 完成通知·content）。
+  `delegation-report`（agent-delegation 完成通知·content）、`bash-task`（task-tools
+  bash 任务完成通知·content）。
 - **内部消息投递 API**：`agent.notify(source, kind, text)`——next-step 排队 + 唤醒（steer
   同款步边界），领取时材料化为 `agent/message{source, kind}`。
 - **收束窗口** `agentTurnConclude`（waterfall）：无工具 settle 即将结束 turn 的通用时点——

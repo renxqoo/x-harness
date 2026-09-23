@@ -116,7 +116,7 @@ describe("错误词表（分号口径对齐件14）", () => {
   });
 });
 
-describe("匿名桶与跨会话隔离（与件14 task_output 拒无 session 同向——清单随会话）", () => {
+describe("匿名桶与跨会话隔离（与件14 任务动词拒无 session 同向——清单随会话）", () => {
   it("无 session 直连：四工具全通过（非 agent 调用方可用）", async () => {
     const { dispatch } = await makeWorld();
     await dispatch(call("task_create", { subject: "A" }));

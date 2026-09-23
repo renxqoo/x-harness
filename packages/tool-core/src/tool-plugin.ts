@@ -1,8 +1,8 @@
 // 工具插件工厂（docs/TOOLBOX.md §0）：四命令包共用的装配面——env 三级解析
 // （工厂参数 > execEnv 服务 > 装配期 throw——fail-closed）、gate/env 根一致性 fail-closed
-// （错配=执法面漂移：fs 执法在 gate、围栏在 env.root——审查 F9）、会话授权根
-// （permissionGrants.extraRootsOf/rootOverrideOf）注入工具、sessionDisposed 逐出观察桶
-// （仅传 observed 的 read/write 挂——桶只由它们产生）。
+// （错配=执法面漂移：fs 执法在 gate、围栏在 env.root——审查 F9）、读根注入工具
+// （systemRoots 装配期系统固有读根 + permissionGrants.extraRootsOf/rootOverrideOf
+// 用户授权根）、sessionDisposed 逐出观察桶（仅传 observed 的 read/write 挂——桶只由它们产生）。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { toolRegistry } from "@x-harness/tools";
@@ -23,6 +23,9 @@ export interface ToolPluginInput {
   readonly name: string;
   readonly envOption?: ExecEnv;
   readonly gate: PathGate;
+  /** 系统固有读根（装配期静态——与 permission 的用户授权根语义分立）：任务日志子树等
+   *  系统产物目录的读面放行（docs/TASK-PUSH-DESIGN.md §2.3）；授权/撤销 UI 面零污染 */
+  readonly systemRoots?: readonly string[];
   /** 观察登记（read/write 穿引同一实例）：在场挂 sessionDisposed 逐出；bash/grep 不传 */
   readonly observed?: ObservedRegistry;
   /** 装配期附加生命周期（env 解析后调用；返回的 Disposer 随插件拆卸执行） */
@@ -45,7 +48,7 @@ function dockGuidance(ctx: Context, toolName: string, text: string | undefined):
 }
 
 export function createToolPlugin(input: ToolPluginInput): Plugin {
-  const { make, name, envOption, gate, observed, attach, guidance } = input;
+  const { make, name, envOption, gate, systemRoots, observed, attach, guidance } = input;
   return {
     name,
     inject: ["tools"],
@@ -61,7 +64,8 @@ export function createToolPlugin(input: ToolPluginInput): Plugin {
         throw new Error(`${name} env.root (${env.root}) does not match gate root (${gate.root}) — refusing ambiguous confinement`);
       }
       const grants = ctx.tryUse(permissionGrants); // 会话授权根（permission 缺席=无扩展）
-      const extraRootsOf: ExtraRootsOf = (session) => grants?.extraRootsOf(session as never) ?? [];
+      const staticRoots = systemRoots ?? [];
+      const extraRootsOf: ExtraRootsOf = (session) => [...staticRoots, ...(grants?.extraRootsOf(session as never) ?? [])];
       const rootOverrideOf: RootOverrideOf = (session) => grants?.rootOverrideOf(session as never);
       const made = make(env, extraRootsOf, rootOverrideOf);
       let text: string | undefined;

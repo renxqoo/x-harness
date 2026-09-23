@@ -1,11 +1,11 @@
-// agent 任务源（docs/TASKS.md §4-2）：verbs 的 output/stop 包成 TaskSource 注册进
-// task-tools 的 hub。probe = nameaddr 解析 + owner 预检——denied（not-owner）终结透传，
-// miss 续走 bash 源；无效调用方判定在工具入口前置完成，此处为全量防御。
+// agent 任务源（docs/TASKS.md §4-2 + docs/TASK-PUSH-DESIGN.md §2.1）：verbs 的 stop 包成
+// TaskSource 注册进 task-tools 的 hub（报告读面归 [agent-notification] 推送）。probe = nameaddr 解析 + owner 预检——denied（not-owner）终结透传，miss 续走
+// bash 源；无效调用方判定在工具入口前置完成，此处为全量防御。
 
 import type { SessionId } from "@x-harness/session";
 import type { TaskProbe, TaskSource } from "@x-harness/task-tools";
 import type { VerbDeps } from "./verbs.ts";
-import { output, stop } from "./verbs.ts";
+import { stop } from "./verbs.ts";
 import { resolveAddress } from "./nameaddr.ts";
 
 const ONLY_IN_SESSION = "invalid-args:agent tools are only available inside an agent session";
@@ -21,16 +21,10 @@ export function agentTaskSource(deps: VerbDeps): TaskSource {
       if (resolved.kind === "miss") return { kind: "miss" };
       if (resolved.kind === "main") return { kind: "denied", reason: MAIN_IS_NOT_A_TASK };
       if (caller !== resolved.row.parent) {
-        return { kind: "denied", reason: `not-owner:${resolved.row.agentId}; you can only read/stop sub-agents you spawned` };
+        return { kind: "denied", reason: `not-owner:${resolved.row.agentId}; you can only stop/message sub-agents you spawned` };
       }
       return { kind: "hit" };
     },
-    output: (taskId, caller, opts) =>
-      output(deps, caller, {
-        task_id: taskId,
-        ...(opts.block !== undefined ? { block: opts.block } : {}),
-        ...(opts.timeout !== undefined ? { timeout: opts.timeout } : {}),
-      }),
     stop: (taskId, caller) => stop(deps, caller, { taskId }),
   };
 }

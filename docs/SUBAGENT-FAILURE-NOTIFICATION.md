@@ -58,7 +58,7 @@ idle 可唤醒。** 对照现状四处断裂：
   做生命周期决策（dispose 压掉 replay + clear 掉锁存的排队消息）。锁存唤醒 replay
   本身是用户主动唤醒语义（飞行中新 followup 到达），照常放行——与「失败子代理 idle
   可唤醒」同向。
-- **task_output 同口径**：reportText 失败路径显式 `failed: <原因句>` / `stopped: <cause>`，
+- **通知同口径**：notificationText 失败路径显式 `failed: <原因句>` / `stopped: <cause>`，
   一切终态带 `session: <id>` 行；占位通知（子会话缺档）同样带 session 行。
 - **失败子代理保持 idle 可唤醒**：不 dispose、不自动 stop；worktree 清理维持显式
   task_stop 触发（既有语义不动）。
@@ -80,11 +80,11 @@ idle 可唤醒。** 对照现状四处断裂：
 
 - **五态表驱动**（agent-delegation 纯函数直测）：completed / max-tokens（有/无摘要）/
   error（message+code）/ aborted（cause）/ blocked（reason）/ interrupted ×
-  notificationText / reportText —— 断言 failed/stopped/finished 前缀、原因句字段透传、
+  notificationText —— 断言 failed/stopped/finished 前缀、原因句字段透传、
   `session:` 行（词面断言带 `\n` 边界防前缀假绿）。
 - **症状回归**（用例名注明症状）：子代理 max-tokens 空产出（content:[]——本案形态）→
-  通知含 `failed:` + `no summary` + 子会话 session id；主代理零轮询即知成败；task_output
-  同口径；失败子 list 状态 idle + agent_message 可投递（不 dispose 不自动 stop 锚）。
+  通知含 `failed:` + `no summary` + 子会话 session id；主代理零轮询即知成败；
+  失败子 list 状态 idle + agent_message 可投递（不 dispose 不自动 stop 锚）。
 - **世界级旅程**（notify-path 装置）：子 error turn → 父收到的通知含 `failed: <message>`
   与 session id（既有用例断言 `finished: error` 处翻转为新词表）；占位通知带 session 行。
 - **驱动层**：preStep reject → turn/end 落 `{kind:"blocked", reason:"guard"}`（既有

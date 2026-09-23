@@ -128,7 +128,7 @@ describe("on-failure 升级流（bash 工具）", () => {
 });
 
 function makeTool(root: string, env: ExecEnv, escalate: BashEscalate) {
-  const tasks = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir: root }));
+  const tasks = new BackgroundTasks(defaultTaskLimits({ taskLogDir: root }));
   return createBashTool({
     gate: new PathGate(root),
     limits: { defaultTimeoutMs: 5_000, maxTimeoutMs: 10_000, maxOutputBytes: 30_000, spillDir: root },

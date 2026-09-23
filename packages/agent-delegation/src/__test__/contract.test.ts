@@ -1,6 +1,6 @@
 // 契约对账（docs/AGENT-DELEGATION.md §2.3——修订B 逐字口径）：本包三段工具 description
 // 与规格源文档逐字符一致（重同步纪律的机械锚）；参数面与规格参数表一致（形状/必填/pattern/上限）。
-// task_output/task_stop 的跨源口径归 @x-harness/task-tools（件14）——对账在其包内。
+// task_stop 的跨源口径归 @x-harness/task-tools（件14）——对账在其包内。
 
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
@@ -75,7 +75,7 @@ describe("参数面对账（与规格参数表一致）", () => {
     expect(p["notify_when_idle"]?.description).toContain("ONE notice");
   });
 
-  it("list_agents 无参数；工具面只有本包三工具（task_output/task_stop 归 task-tools）", () => {
+  it("list_agents 无参数；工具面只有本包三工具（task_stop 归 task-tools）", () => {
     expect(Object.keys(propsOf("list_agents"))).toEqual([]);
     expect(tools.map((t) => t.name).sort()).toEqual(["agent_message", "agent_spawn", "list_agents"]);
   });

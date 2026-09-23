@@ -9,7 +9,7 @@ import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin } from "@x-harness/session";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { createLocalEnvPlugin } from "@x-harness/exec-env";
-import { BackgroundTasks, bashGuidance, createBashPlugin, defaultLimits, defaultTaskLimits, backgroundTasks } from "../index.ts";
+import { BackgroundTasks, bashGuidance, createBashPlugin, defaultTaskLimits, backgroundTasks } from "../index.ts";
 
 let roots: string[] = [];
 
@@ -32,12 +32,19 @@ describe("backgroundTasks service", () => {
   it("external tasks are provided as-is (the effective instance, not a copy)", async () => {
     const root = mkdtempSync(join(tmpdir(), "xh-bashsvc-"));
     roots = [...roots, root];
-    const external = new BackgroundTasks(defaultTaskLimits({}, defaultLimits({ spillDir: root })));
+    const external = new BackgroundTasks(defaultTaskLimits({ taskLogDir: root }));
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin({ tasks: external })]);
     expect(ctx.tryUse(backgroundTasks)).toBe(external); // 引用同一——task-tools 停靠即共享
     await ctx.dispose();
     void unload;
+  });
+});
+
+describe("defaultTaskLimits（缺省形态——裸 SDK 世界：进程级临时日志根）", () => {
+  it("taskLogDir 缺省落 mkdtemp（x-harness-tasks- 前缀）；显式传参原样生效", () => {
+    expect(defaultTaskLimits().taskLogDir).toContain("x-harness-tasks-");
+    expect(defaultTaskLimits({ taskLogDir: "/explicit/root" }).taskLogDir).toBe("/explicit/root");
   });
 });
 

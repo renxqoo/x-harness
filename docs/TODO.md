@@ -4,7 +4,8 @@
 > 各节撤销指针见文内注记；两轮四路审查处置见 §9/§10/§13.6/§14）
 > 级别：中（todo-tools 新包 + 4 个 LLM 可见新工具 + e2e 旅程）
 > 规格：`/Users/wrr/work/claude-tool/task-tools.md`（Claude Code Task 工具族中的 4 个
-> 任务清单动词；另 2 个后台任务动词已由件14 task_output/task_stop 兑现）。
+> 任务清单动词；后台任务动词归件14 任务件，时为 task_output/task_stop 两动词——后经
+> TASK-PUSH 收窄为 task_stop 单动词）。
 > 用户指令（2026-09-19）：实现 Task 插件（todo 待办事项），**参数和提示词与规格一样**。
 > 上游落档兑现：TASKS.md §9「任务枚举/清单工具（/tasks 面）→ 后续任务件」即本件。
 
@@ -41,7 +42,7 @@ todo 清单四动词落地为独立插件 `@x-harness/todo-tools`：`task_create
 - per-param description 逐字取规格 Schema description 列（用户指令：参数一样），§6 全量对账。
 
 **并发档**：四工具全 parallel（store 操作全同步、execute 无 await 竞态窗口——
-`isConcurrencySafe: () => true`，对齐 task_output 先例；同步性由 §6 并发组用例钉死）。
+`isConcurrencySafe: () => true`；同步性由 §6 并发组用例钉死）。
 
 ### 1.2 状态与更新语义
 
@@ -71,7 +72,7 @@ todo 清单四动词落地为独立插件 `@x-harness/todo-tools`：`task_create
   BackgroundTasks 会话键控的差异落档：后台任务是**进程资源**（有属主/杀灭边界），
   todo 清单是**协作载体**（属主是清单内容的一个字段，不是访问边界）；
 - 无 session 调用方（非 agent）可用（对齐 read/write「非 agent 调用方可用」先例；
-  与件14 task_output 拒无 session 的口径**有意相反**——那边 task_id 属主判定需要
+  与件14 任务动词拒无 session 的口径**有意相反**——那边 task_id 属主判定需要
   session，本件清单无属主边界）；
 - **不持久化**：清单生命周期 = 插件装配生命周期；会话 resume / 进程重启后清单为空
   （对齐 TASKS.md §9「任务持久化/跨重启任务面 → 后续件」先例）。

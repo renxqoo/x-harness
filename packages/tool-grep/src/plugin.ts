@@ -13,14 +13,17 @@ export interface GrepPluginInput {
   readonly env?: ExecEnv;
   /** rg 显式路径（解析链最高优先级） */
   readonly rgPath?: string;
+  /** 系统固有读根（装配期静态——任务日志子树等系统产物目录，TASK-PUSH-DESIGN §2.3） */
+  readonly systemRoots?: readonly string[];
 }
 
 export function createGrepPlugin(input: GrepPluginInput): Plugin {
-  const { gate, env, rgPath } = input;
+  const { gate, env, rgPath, systemRoots } = input;
   return createToolPlugin({
     name: "tool-grep",
     envOption: env,
     gate,
+    ...(systemRoots !== undefined ? { systemRoots } : {}),
     make: (resolved, extraRootsOf, rootOverrideOf) => createGrepTool({ gate, options: { rgPath }, env: resolved, extraRootsOf, rootOverrideOf }),
   });
 }

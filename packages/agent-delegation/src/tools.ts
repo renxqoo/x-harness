@@ -1,6 +1,7 @@
 // 工具族（docs/AGENT-DELEGATION.md §2.1/§3.2.1）：spawn(exclusive)/message/list(parallel)。
-// schema 与 description 逐字段对账（§2.3）。读/停动词 task_output/task_stop 归
-// @x-harness/task-tools（件14）——本包经 agentTaskSource 注册 agent 源。
+// schema 与 description 逐字段对账（§2.3）。停动词 task_stop 归
+// @x-harness/task-tools（件14）——本包经 agentTaskSource 注册 agent 源；报告读面归
+// [agent-notification] 推送。
 
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";

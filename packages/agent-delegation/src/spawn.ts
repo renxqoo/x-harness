@@ -122,7 +122,6 @@ async function buildChild(
     armed: false,
     running: false,
     stopped: false,
-    reportDelivered: false,
     ...(worktree.plan !== undefined ? { worktree: worktree.plan.path } : {}),
   };
   if (worktree.plan !== undefined && deps.setRootOverride !== undefined) {

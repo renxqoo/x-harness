@@ -76,9 +76,41 @@ describe("createAgentWorld + kits（F1）", () => {
     ];
     const ctx = createContext();
     const unload = await loadPlugins(ctx, plugins);
-    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "bash", "grep", "task_output", "task_stop"]);
+    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "bash", "grep", "task_stop"]);
     for (const dispose of unload) await dispose();
     await ctx.dispose();
+  });
+
+  it("toolboxKit taskLogDir 透传：bash 后台日志落在传入根下", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-3"));
+    const logRoot = mkdtempSync(join(tmpdir(), "xh-kits-logs-"));
+    try {
+      const plugins: readonly Plugin[] = [
+        ...inlineSessionKit(),
+        ...toolboxKit({ root, env: createLocalEnv(root), taskLogDir: logRoot }),
+      ];
+      const ctx = createContext();
+      const unload = await loadPlugins(ctx, plugins);
+      const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+      const r = await reg.dispatch({ callId: "k1", name: "bash", args: { command: "echo kit-log", run_in_background: true }, signal: new AbortController().signal, session: "s-kit" as never });
+      expect(r.isError).toBeUndefined();
+      expect(r.content).toContain(logRoot); // 日志路径在传入根下（透传链 bash taskLimits ✓）
+      const logPath = (r.content.match(/output appends to ([^;]+);/) ?? ["", ""])[1] ?? "";
+      const { backgroundTasks } = await import("@x-harness/tool-bash");
+      const tasks = ctx.use(backgroundTasks);
+      const deadline = Date.now() + 5_000;
+      while ((tasks.list("s-kit" as never)[0]?.endedAt) === undefined && Date.now() < deadline) {
+        await new Promise((resolve) => { setTimeout(resolve, 25); });
+      }
+      const allowed = await reg.dispatch({ callId: "k2", name: "read", args: { path: logPath }, signal: new AbortController().signal, session: "s-kit" as never });
+      expect(allowed.isError).toBeUndefined(); // read 经 systemRoots 放行（透传链 read ✓）
+      expect(allowed.content).toContain("kit-log");
+      for (const dispose of unload) await dispose();
+      await ctx.dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(logRoot, { recursive: true, force: true });
+    }
   });
 });
 
