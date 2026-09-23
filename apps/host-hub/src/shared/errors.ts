@@ -18,6 +18,7 @@ export const HUB_ERROR_CODES = [
   // 能力
   "capability_thinking",
   "capability_images",
+  "capability_plugin", // 线程在场而外部插件缺席（禁用/装载失败——docs/PLUGINS.md 契约 5）
   "images_too_many",
   "model_unavailable",
   // 会话状态

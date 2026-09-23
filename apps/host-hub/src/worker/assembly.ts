@@ -223,17 +223,22 @@ function materializeThinking(fields: AssemblyFields, catalog: WorkerCatalog, dia
 }
 
 /** 外部插件装载步骤（docs/PLUGINS.md 契约 4）：会话创建前——usage 计数覆盖第一
- *  步；agentDir 缺席（直连装配）跳过；单件失败降级不打挂装配 */
+ *  步；agentDir 缺席（直连装配）静默跳过；任何失败降级不打挂装配（防御性兜底
+ *  ——installExternalPlugins 内部已逐件捕获，此处兜未来新增抛错点） */
 async function installExternals(world: World, fields: AssemblyFields, deps?: AssemblyDeps): Promise<void> {
   if (fields.agentDir === undefined) return;
-  await installExternalPlugins(
-    {
-      ctx: world.ctx,
-      agentDir: fields.agentDir,
-      ...(fields.pluginsDisabled !== undefined ? { disabled: fields.pluginsDisabled } : {}),
-    },
-    deps?.externalPlugins,
-  );
+  try {
+    await installExternalPlugins(
+      {
+        ctx: world.ctx,
+        agentDir: fields.agentDir,
+        ...(fields.pluginsDisabled !== undefined ? { disabled: fields.pluginsDisabled } : {}),
+      },
+      deps?.externalPlugins,
+    );
+  } catch (error) {
+    process.stderr.write(`hub:worker: external plugins load failed: ${String(error)}\n`);
+  }
 }
 
 export async function assembleWorkerAgent(fields: AssemblyFields, deps?: AssemblyDeps): Promise<AssemblyResult> {

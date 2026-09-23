@@ -1,6 +1,6 @@
 # PLUGINS：正式插件区与 host-hub 装载 方案
 
-> 状态：定稿（经对抗审查修订——13 项发现全部处置，见「裁决·审查修订」）
+> 状态：已核销（实施于 622efe9/e9e9ae9/本提交；两轮对抗审查 13+9 项发现全处置）
 > 级别：中（跨层新增外部契约：插件包 / hub 设置 / worker 装配 / 协议命令）
 
 首个正式插件 `token-analytics` 从 plugin-examples 示例集升格为独立包，host-hub 经
@@ -50,18 +50,19 @@ export const BUILTIN_PLUGINS = { "token-analytics": { module: "@x-harness/token-
 - 时序：`createAgentWorld` 成功后、`createSession` 前——usage 计数覆盖会话第一步；
   start/resume/fork 三路径共用 `assembleWorkerAgent`，时序均成立；
 - 注入点（唯一）：`assembleThread` 公共腿——`fields.agentDir`（rt.agentDir）+
-  `fields.pluginsDisabled`（settings 快照）同构注入；**doFork 直连重装配同样补
-  fields**（agentDir 取 rt.agentDir；pluginsDisabled 走 rt 快照——同 thinkingFallback
-  先例）；
-- `agentDir` 缺席（测试直连装配等场景）→ 跳过外部插件装载 + stderr 告警（降级，
-  不写 cwd、不挂装配）；
+  `fields.pluginsDisabled` 与 settings 同构注入；**doFork 重装配同经公共腿**——
+  start/resume/fork 三路同源**现读** settings（与 skills.disabled 先例一致；快照
+  语义仅 thinkingFallback/permissionModeSource）；
+- `agentDir` 缺席（测试直连装配等场景）→ 静默跳过外部插件装载（不写 cwd、不挂
+  装配；该分支是测试常态路径，不噪）；
 - 途经：`loadPlugins(world.ctx, [createPluginManager({ ctx: world.ctx, ... })])` 后
   逐个 `svc.install({ path, mode: "process" })`；
 - 安全参数：`roots = [dirname(解析路径)]`、`approveInstall = 解析路径集合精确匹配`、
   `audit = <agentDir>/plugins/audit.jsonl`（显式传——plugin-manager 缺省审计写
   `roots[0]`，会污染插件包源码目录）；
-- 失败降级：单件 install 失败 / 解析失败 / 词表未知名 → stderr 告警 + 跳过
-  （装配不挂）；
+- 失败降级：单件 install 失败（Result 或 **promise 拒绝**——loadModule 抛错）/
+  解析失败 / 词表未知名 → stderr 告警 + 跳过（装配不挂；assembly 另有防御性
+  兜底捕获）；
 - 测试缝：`deps = { resolveModule?, loadModule? }` 可注入（同 AssemblyDeps 形态）——
   降级分支的覆盖率落点；
 - 卸载时序：`teardownWorld` 先 `world.ctx.tryUse(pluginManagerService)`（undefined
@@ -195,10 +196,12 @@ plugin-manager（装载机制）+ token-analytics（仅 node_modules 链接供 r
 
 ## 验收清单
 
-- [ ] 契约 1-5 逐条（包导出面/settings 键/词表/装载时序与降级/命令应答形状与分族）
-- [ ] 不处理清单归属逐条落档
-- [ ] 并发/一致性预算逐条（装载恰一次/模块缓存复用与零可变状态/tap O(1)/
+- [x] 契约 1-5 逐条（包导出面/settings 键/词表/装载时序与降级/命令应答形状与分族）
+- [x] 不处理清单归属逐条落档
+- [x] 并发/一致性预算逐条（装载恰一次/模块缓存复用与零可变状态/tap O(1)/
       breakdown ≤10ms/uninstall 单线程不短路）
-- [ ] 四门全绿 + 覆盖率数字如实报告（行/语句/函数 ≥90、分支 ≥85 不降）
-- [ ] 零双轨核验：plugin-examples 无 token-analytics 残留引用
-- [ ] agent-app 侧镜像同步挂账明示
+- [x] 四门全绿 + 覆盖率数字如实报告（行/语句/函数 ≥90、分支 ≥85 不降）——
+  2436 用例；语句 90.94 / 分支 86.28 / 函数 91.68 / 行 92.99
+- [x] 零双轨核验：plugin-examples 无 token-analytics 残留引用（grep 零命中）
+- [x] agent-app 侧镜像同步挂账明示（错误码表 capability_plugin + 命令清单
+      get_token_analytics + COMMAND_NAMES 计数 61——跨仓库待同步）

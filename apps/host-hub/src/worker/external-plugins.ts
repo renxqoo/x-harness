@@ -53,9 +53,15 @@ export async function installExternalPlugins(input: InstallExternalPluginsInput,
   ]);
   const svc = input.ctx.use(pluginManagerService);
   for (const { name, path } of entries) {
-    const installed = await svc.install({ path, mode: "process" });
-    if (!installed.ok) {
-      process.stderr.write(`hub:worker: plugin "${name}" install failed: ${installed.reason}\n`);
+    // install 可能 reject（loadModule 拒绝——包缺失/顶层抛错），与 Result 失败
+    // 同降级律：stderr 告警跳过，装配不挂（docs/PLUGINS.md 契约 4）
+    try {
+      const installed = await svc.install({ path, mode: "process" });
+      if (!installed.ok) {
+        process.stderr.write(`hub:worker: plugin "${name}" install failed: ${installed.reason}\n`);
+      }
+    } catch (error) {
+      process.stderr.write(`hub:worker: plugin "${name}" install rejected: ${String(error)}\n`);
     }
   }
 }
