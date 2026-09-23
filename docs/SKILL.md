@@ -36,11 +36,18 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
 
 - `@x-harness/md-frontmatter`（新，纯函数包，最底层）：
   `splitFrontmatter(text) → { head, body } | undefined`；
-  `parseFlat(head) → Map<string, string> | undefined`。
+  `parseFlat(head) → Map<string, string> | undefined`；
+  `replaceFlatField(text, key, value) → string | undefined`（头内该键最后一次出现的行
+  替换——与 parseFlat last-wins 同义；无 frontmatter/键缺席/键值形态非法 → undefined）。
 - `@x-harness/skill`（新）：
   - `SkillMeta { name; description; path }`——path 为 SKILL.md 绝对路径；
   - `resolveSkillDirs(configured?) → readonly string[]`；
   - `loadSkills(dirs) → Promise<{ skills: Record<string, SkillMeta>; warnings: string[] }>`；
+  - `inspectSkillDir(dir) → Promise<{ ok: true; name; description; path } | { ok: false;
+    problem: SkillProblem; message }>`——**形态判定单点**（装载器、host 命令面、安装
+    写后复检共用；`SkillProblem` = not_found/unreadable/not_regular_file/too_large/
+    no_frontmatter/frontmatter_not_flat/missing_fields）；`skillNameMismatch(dir, name)`
+    ——目录名对齐规则（本文件的注册条件，不属于解析条件），不齐返回告警文案；
   - `renderSkillsBlock(skills) → string`——空表 → `""`；否则
     `<system-reminder>\n### Available skills\n- name: description (path)\n…\n</system-reminder>`
     （按 name 排序）。渲染防护（三字段同洗）：name/description/path 去换行与
@@ -100,7 +107,9 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   - 内容披露 = 模型经 read 工具读 SKILL.md/捆绑文件（permission/PathGate 统辖，
     用户域首读 ask 一次入会话 extraRoots——既有语义，skill 无特权无特防）；
   - 触发 = 模型自主（无专用工具、无 slash 集成，命令闭集不动）；
-  - 安装/marketplace = 手工放目录即安装；plugin-manager 接 CLI 为独立挂账话题；
+  - 安装 = 手工放目录（内核零安装面）**或** host 管理面 `skills/install` 拷贝导入
+    （docs/SKILL-INSTALL.md——安装面归 host 命令面，内核只判定形态）；
+    marketplace/归档包（zip/git/npm）安装 = 独立挂账话题；
   - 热重载 = 不做，增改 skill 下次进程启动生效；
   - skill 层权限策略 = 零（deny-write 收紧提议已撤销，统一治理）；
   - system prompt = 不含任何 skill 字节（进程生命周期内字节稳定——KV cache 前缀

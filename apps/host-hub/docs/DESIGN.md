@@ -81,7 +81,7 @@ spawn("<host-hub bin>", [], { env: { ...process.env, HUB_AGENT_DIR: <配置目�
 - 错误形态：`{"success":false,"error":"<英文中性>"}`；错误文案词表 = 封闭清单
   （附录 A）；单条命令失败绝不退出进程。
 
-## 3. 命令集（58 个——迁移源 55 + thread/delete（BATCH2）+ queue/drop、queue/send_now（单条队列操作）；分组见各节）
+## 3. 命令集（60 个——迁移源 55 + thread/delete（BATCH2）+ queue/drop、queue/send_now（单条队列操作）+ skills/inspect、skills/install（技能导入，docs/SKILL-INSTALL.md）；分组见各节）
 
 | 组 | 命令 | host 本地/worker |
 | --- | --- | --- |
@@ -95,7 +95,7 @@ spawn("<host-hub bin>", [], { env: { ...process.env, HUB_AGENT_DIR: <配置目�
 | 直执行 | bash、abort_bash | worker |
 | 对话框 | ui_response | host 路由 |
 | agents | agents/list、agents/create、agents/remove、subagent/steer | host / worker |
-| skills | skills/list、skills/set_enabled、skills/remove | host |
+| skills | skills/list、skills/set_enabled、skills/remove、skills/inspect、skills/install | host |
 | 设置 | settings/get、settings/set | host |
 | 思考档 | set_thinking_level、get_thinking_level | worker |
 | 权限 | permission/set_mode、permission/get_mode | host 单点注册（带 threadId 形态交池转发） |
@@ -393,7 +393,15 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   `{name, enabled, cwd?}` — 校验名 ∈ 现扫合并清单；带 cwd 写项目级名单（enable 后
   并集仍含 → `data:{stillDisabled:true, by:"user"}`——by 恒 user 级：带 cwd enable
   后并集残留只能来自 user 名单）；**skills/remove** `{name}` — 仅 user 级文件
-  （project/builtin → `skill not user-defined`；删 user 遮蔽后 builtin 同名复活）。
+  （project/builtin → `skill not user-defined`；删 user 遮蔽后 builtin 同名复活；移除 =
+  删技能目录——直接子项围栏，symlink 技能只删链接；`skill not user-defined`/`unknown skill`
+  之外的新增失败面 = 目录外拒删的 `internal`）。**skills/inspect** `{sourcePaths: string[]}`
+  （1..200 条绝对路径）→ `{results: [{sourcePath, state: "ready"|"rename", name, description}
+  | {sourcePath, state: "blocked", problem}]}`（按入参序；`rename` = 声明名 ≠ 目录名，可装，
+  目标名 = 声明名）；**skills/install** `{sourcePath, name?, overwrite?}` → `{name, path,
+  skippedEntries}`（path = 副本 SKILL.md，与 skills/list 同形态）——形态判定走内核
+  `inspectSkillDir` 单点（零规则复制），拷贝跳过 symlink/奇异条目并计数，覆盖 = 备份 +
+  同卷 rename 原子换入 + 失败回滚，就位前对暂存副本做装载器复检。详见 docs/SKILL-INSTALL.md。
 - **思考档**：会话值 = `session/meta{key:"thinking"}`（last-wins，resume 天然恢复）；
   生效通路 = worker 装配的 **agentRequest waterfall 挂点插件**（每 step 从事件尾折叠
   写入 dial.thinking）。**set_thinking_level** `{threadId, level}` — 先词表校验
@@ -754,6 +762,8 @@ maxTokens` 退役——预算钳制归内核 llm 拨号层。）
 | agents/create | `{path}` |
 | skills/list | `{skills: [{name, source, path, disabled}]}` |
 | skills/set_enabled | ack（enable 后并集仍含 → `{stillDisabled:true, by:"user"}`） |
+| skills/inspect | `{results: [{sourcePath, state, name?, description?, problem?}]}`（入参序） |
+| skills/install | `{name, path, skippedEntries}` |
 | settings/get | `{values}`（无 cwd）/ `{values, sources, raw}`（带 cwd） |
 | get_thinking_level | `{level, source: "session"\|"project"\|"user"\|"off"}` |
 | permission/get_mode | `{mode, source: "session"\|"project"\|"user"\|"default"}` |

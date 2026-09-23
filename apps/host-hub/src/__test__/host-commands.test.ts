@@ -4,7 +4,7 @@
 // agents-admin/direct-reads/旋钮/host_info 矩阵。
 import { EventEmitter } from "node:events";
 import { afterAll, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHost } from "../host/host.ts";
@@ -49,6 +49,8 @@ interface HostFixture {
   client: string[];
   agentDir: string;
   sessionsRoot: string;
+  /** 隔离 HOME（skills/agents 管理面的 user 目录根） */
+  home: string;
   workers: FakeWorker[];
   send(cmd: unknown): void;
 }
@@ -128,7 +130,7 @@ async function startHost(env: Record<string, string | undefined> = {}): Promise<
       };
     },
   });
-  return { input, client, agentDir, sessionsRoot, workers, send: (cmd) => input.send(cmd) };
+  return { input, client, agentDir, sessionsRoot, home, workers, send: (cmd) => input.send(cmd) };
 }
 
 /** thread/start 手驱：spawn → hello → 控制应答（表落实） */
@@ -435,25 +437,80 @@ describe("host 本地命令（注入 IO）", () => {
     expect(a?.lastSeq).toBe(2); // 无 meta——事件 [turn,user,turnend] 共 3 条
   });
 
-  test("get_commands 信任门禁目录与 skills-admin 矩阵（list/开关/remove 遮蔽复活）", async () => {
+  test("skills 面旅程（隔离 HOME）：list 见 user 层 → inspect 三态 → install 落盘 → set_enabled → remove 目录删除", async () => {
     const f = await startHost();
-    // 真 user skills 目录造两个 skill（homedir 下——测试隔离受限，走 knownSkillNames
-    // 白名单拒面；写实体放 project 形态验证）
-    f.send({ type: "skills/set_enabled", id: "se1", name: "no-such-skill", enabled: false });
-    const unknown = await waitResponse(f.client, "skills/set_enabled", "se1");
+    const skillsRoot = join(f.home, ".x-harness", "skills");
+    // 源技能：一个 ready（声明名 = 目录名）+ 一个 rename（声明名 ≠ 目录名），另加捆绑文件
+    const srcRoot = await tempDir("hub-skills-src-");
+    const ready = join(srcRoot, "alpha");
+    await mkdir(ready, { recursive: true });
+    await writeFile(join(ready, "SKILL.md"), "---\nname: alpha\ndescription: A\n---\nbody", "utf8");
+    await writeFile(join(ready, "helper.sh"), "echo hi\n", "utf8");
+    const rename = join(srcRoot, "tavily");
+    await mkdir(rename, { recursive: true });
+    await writeFile(join(rename, "SKILL.md"), "---\nname: tavily-cli\ndescription: CLI\n---\nbody", "utf8");
+    const blocked = join(srcRoot, "ghost");
+    await mkdir(blocked, { recursive: true });
+
+    f.send({ type: "skills/inspect", id: "si1", sourcePaths: [ready, rename, blocked] });
+    const inspected = await waitResponse(f.client, "skills/inspect", "si1");
+    expect(inspected["data"]).toEqual({
+      results: [
+        { sourcePath: ready, state: "ready", name: "alpha", description: "A" },
+        { sourcePath: rename, state: "rename", name: "tavily-cli", description: "CLI" },
+        { sourcePath: blocked, state: "blocked", problem: "not_found" },
+      ],
+    });
+    // 垃圾入参（相对路径）→ invalid_input
+    f.send({ type: "skills/inspect", id: "si2", sourcePaths: ["relative"] });
+    expect(errOf(await waitResponse(f.client, "skills/inspect", "si2")).code).toBe("invalid_input");
+
+    f.send({ type: "skills/install", id: "in1", sourcePath: ready });
+    const installed = await waitResponse(f.client, "skills/install", "in1");
+    expect(installed["data"]).toEqual({ name: "alpha", path: join(skillsRoot, "alpha", "SKILL.md"), skippedEntries: 0 });
+    // 落盘事实：捆绑文件同拷、临时树清空
+    expect((await stat(join(skillsRoot, "alpha", "helper.sh"))).isFile()).toBe(true);
+    expect(await readdir(join(f.home, ".x-harness", ".tmp"))).toEqual([]);
+    // rename 档：目标目录名 = 声明名
+    f.send({ type: "skills/install", id: "in2", sourcePath: rename });
+    expect((await waitResponse(f.client, "skills/install", "in2"))["data"]).toEqual({ name: "tavily-cli", path: join(skillsRoot, "tavily-cli", "SKILL.md"), skippedEntries: 0 });
+
+    f.send({ type: "skills/list", id: "sl1" });
+    const listed = await waitResponse(f.client, "skills/list", "sl1");
+    // 序 = 目录 readdir 序（不排序——按名归一后比对集合）
+    const listedSkills = (listed["data"] as { skills: Array<{ name: string; source: string; path: string; disabled: boolean }> }).skills;
+    expect([...listedSkills].sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: "alpha", source: "user", path: join(skillsRoot, "alpha", "SKILL.md"), disabled: false },
+      { name: "tavily-cli", source: "user", path: join(skillsRoot, "tavily-cli", "SKILL.md"), disabled: false },
+    ]);
+    // 同名再装未 overwrite → name_conflict；带 overwrite → 换入
+    f.send({ type: "skills/install", id: "in3", sourcePath: ready });
+    expect(errOf(await waitResponse(f.client, "skills/install", "in3")).code).toBe("name_conflict");
+    f.send({ type: "skills/install", id: "in4", sourcePath: ready, overwrite: true });
+    expect((await waitResponse(f.client, "skills/install", "in4"))["success"]).toBe(true);
+
+    // 开关（隔离 HOME 的 user 名单）+ 信任门禁
+    f.send({ type: "skills/set_enabled", id: "se1", name: "alpha", enabled: false });
+    expect((await waitResponse(f.client, "skills/set_enabled", "se1"))["success"]).toBe(true);
+    f.send({ type: "skills/list", id: "sl2" });
+    expect(((await waitResponse(f.client, "skills/list", "sl2"))["data"] as { skills: Array<{ name: string; disabled: boolean }> }).skills.find((skill) => skill.name === "alpha")?.disabled).toBe(true);
+    f.send({ type: "skills/list", id: "sl3", cwd: "/untrusted" });
+    expect(errOf(await waitResponse(f.client, "skills/list", "sl3")).code).toBe("trust_required");
+    f.send({ type: "skills/set_enabled", id: "se2", name: "no-such-skill", enabled: false });
+    const unknown = await waitResponse(f.client, "skills/set_enabled", "se2");
     expect(errOf(unknown).code).toBe("state_conflict");
     expect(errOf(unknown).message).toContain("unknown skill");
-    f.send({ type: "skills/remove", id: "sr1", name: "no-such-skill" });
-    const removeUnknown = await waitResponse(f.client, "skills/remove", "sr1");
+
+    // 移除 = 删技能目录（回归：残留目录会让每次装载告警）
+    f.send({ type: "skills/remove", id: "sr1", name: "alpha" });
+    expect((await waitResponse(f.client, "skills/remove", "sr1"))["success"]).toBe(true);
+    expect(await stat(join(skillsRoot, "alpha")).catch(() => undefined)).toBeUndefined();
+    f.send({ type: "skills/remove", id: "sr2", name: "no-such-skill" });
+    const removeUnknown = await waitResponse(f.client, "skills/remove", "sr2");
     expect(errOf(removeUnknown).code).toBe("state_conflict");
     expect(errOf(removeUnknown).message).toContain("unknown skill");
-    f.send({ type: "skills/list", id: "sl1", cwd: "/untrusted" });
-    const gated = await waitResponse(f.client, "skills/list", "sl1");
-    expect(errOf(gated).code).toBe("trust_required");
-    f.send({ type: "skills/list", id: "sl2" });
-    const listed = await waitResponse(f.client, "skills/list", "sl2");
-    expect(listed["success"]).toBe(true);
   });
+
 });
 
 describe("thread/delete（BATCH2 §4——host 命令面旅程）", () => {
