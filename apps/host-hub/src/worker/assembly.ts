@@ -333,7 +333,12 @@ function defaultWorkerPlugins(resolved: {
       ...(fields.permissionUserRules !== undefined ? { rules: fields.permissionUserRules } : {}),
       ...(fields.permissionProjectRules !== undefined ? { projectRules: fields.permissionProjectRules } : {}),
       ...(fields.customProfiles !== undefined ? { customProfiles: fields.customProfiles } : {}),
-      protectedPaths: [...(fields.agentDir !== undefined ? [userSettingsPath(fields.agentDir)] : []), projectSettingsPath(cwd)],
+      // 插件域整树写保护（对抗审查 3a）：registry/proposals/vendor/.tmp 是装载信任链的
+      // 盘上事实——agent 经 bash 直写即可伪造审批（confirmed）或顶替词表件（vendor 撞名）
+      protectedPaths: [
+        ...(fields.agentDir !== undefined ? [userSettingsPath(fields.agentDir), join(fields.agentDir, "plugins")] : []),
+        projectSettingsPath(cwd),
+      ],
     }),
     ...(fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : []),
     ...(fields.agentDir !== undefined ? [permissionGrantStorePlugin({ agentDir: fields.agentDir, cwd, trusted: fields.trusted })] : []),

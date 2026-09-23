@@ -16,7 +16,7 @@ import type {
   ServiceToken,
 } from "@x-harness/core";
 import type { MainToWorker, WorkerToMain } from "./protocol.ts";
-import { createCapabilities, syntheticServiceToken } from "../capabilities.ts";
+import { createCapabilities, META_TOKEN_NAMES, syntheticServiceToken } from "../capabilities.ts";
 
 const port = parentPort;
 if (port === null) throw new Error("plugin host must run as a worker thread");
@@ -205,6 +205,12 @@ function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: un
       });
     },
     on(token: AnyToken, fn: unknown, opts?: { readonly prepend?: boolean }): Disposer {
+      // 元能力名拒收（对抗审查 2a）：装载生命周期信封（plugin/*、service/provided、
+      // context/disposing）对第三方件不可见——与 capabilities.ts META 判定同源
+      //（名字是唯一载体，双侧一致；caps.on 已在 capabilities 层拒，此处封 ctx.on 旁路）
+      if (META_TOKEN_NAMES.has(token.name)) {
+        throw new Error(`listening on meta token not allowed in worker mode: ${token.name}`);
+      }
       tokenByName.set(token.name, token);
       send({ t: "listening", token: token.name, mode: "mode" in token ? token.mode : "unknown" });
       const wrapped = (payload: unknown): unknown => {

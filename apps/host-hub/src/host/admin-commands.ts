@@ -23,7 +23,7 @@ import { createUserAgentType, removeUserAgentType } from "./agents-admin.ts";
 import { knownSkillNames, listSkills, removeSkill, setSkillEnabled } from "./skills-admin.ts";
 import { inspectSkillSources, installSkill } from "./skills-install.ts";
 import { builtinNotRemovable, listPlugins, setPluginEnabled } from "./plugins-admin.ts";
-import { inspectPluginSources, installPlugin, removePlugin } from "./plugins-install.ts";
+import { hashTree, inspectPluginSources, installPlugin, removePlugin } from "./plugins-install.ts";
 import { createPluginProposalStore } from "../shared/plugin-proposals.ts";
 import { SKILL_IMPORT_MAX_BYTES, SKILL_IMPORT_MAX_ENTRIES } from "../shared/limits.ts";
 import type { ThreadTable } from "./thread-table.ts";
@@ -302,6 +302,13 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         }
         if (proposal.sourcePath !== input.sourcePath) {
           deps.respond(id, "plugins/install", { error: hubError("invalid_input", `proposal source mismatch: ${proposal.sourcePath} != ${String(input.sourcePath)}`) });
+          return;
+        }
+        // TOCTOU 封口（对抗审查 3b）：审批哈希 = propose 时刻指纹；实装前对源树复哈希
+        // 对拍——confirm 与 install 之间源树被改写（含 agent 自改）即拒
+        const rehashed = await hashTree(input.sourcePath);
+        if (rehashed !== proposal.sha256) {
+          deps.respond(id, "plugins/install", { error: hubError("invalid_input", `proposal source changed after approval (sha256 mismatch: ${rehashed} != ${proposal.sha256}) — propose again`) });
           return;
         }
       }

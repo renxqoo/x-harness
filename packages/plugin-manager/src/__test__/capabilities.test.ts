@@ -298,3 +298,68 @@ describe("worker 模式：apply(ctx, caps) 经桥", () => {
     await expect(impl.echo("hi")).resolves.toBe("echo:hi");
   });
 });
+
+// ── 对抗审查 2a 回归：ctx.on 旁路封口（worker 与 process 两侧）───────────────
+
+describe("META token 旁路封口（ctx.on 直听元能力名 = 拒）", () => {
+  it("worker 模式：插件经 ctx.on 监听 plugin/loaded → 装载拒（apply 失败留痕）", async () => {
+    const ctx = createContext();
+    const root = await mkdtemp(join(tmpdir(), "pm-meta-"));
+    tempDirs.push(root);
+    await writeFile(
+      join(root, "meta-listener.ts"),
+      [
+        "export default {",
+        '  name: "meta-listener",',
+        "  apply(ctx) {",
+        `    ctx.on({ kind: "event", mode: "emit", name: "plugin/loaded", freeze: "none" }, () => {});`,
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    await loadPlugins(ctx, [
+      createPluginManager({
+        ctx,
+        roots: [root],
+        approveInstall: () => true,
+        mode: "worker",
+        applyTimeoutMs: 10_000,
+        runtimeTimeoutMs: 5_000,
+        audit: { append: async () => {} },
+      }),
+    ]);
+    const svc = ctx.use(pluginManagerService);
+    const out = await svc.install({ path: join(root, "meta-listener.ts"), mode: "worker" });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toContain("meta token");
+  }, 15_000);
+
+  it("process 模式：wrapper on 同判定（plugin/event 拒）", async () => {
+    const ctx = createContext({ onListenerError: () => {} });
+    const root = await mkdtemp(join(tmpdir(), "pm-meta2-"));
+    tempDirs.push(root);
+    await writeFile(
+      join(root, "meta2.ts"),
+      [
+        "export default {",
+        '  name: "meta2",',
+        "  apply(ctx) {",
+        `    ctx.on({ kind: "event", mode: "emit", name: "plugin/event", freeze: "shell" }, () => {});`,
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    await loadPlugins(ctx, [
+      createPluginManager({
+        ctx,
+        roots: [root],
+        approveInstall: () => true,
+        audit: { append: async () => {} },
+      }),
+    ]);
+    const svc = ctx.use(pluginManagerService);
+    const out = await svc.install({ path: join(root, "meta2.ts"), mode: "process" });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toContain("meta token");
+  });
+});

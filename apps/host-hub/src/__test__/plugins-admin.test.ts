@@ -7,9 +7,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createContext } from "@x-harness/core";
 import { pluginManagerService } from "@x-harness/plugin-manager";
+import { createPluginProposalStore } from "../shared/plugin-proposals.ts";
 import { readVendorRegistry, registryPath, updateVendorRegistry, vendorNameBlocked, vendorRootOf } from "../shared/plugins-registry.ts";
 import { BUILTIN_PLUGINS, enabledPlugins, knownPluginNames, vendorLoadable } from "../shared/plugins-catalog.ts";
-import { hashTree, inspectPluginSource, installPlugin, removePlugin } from "../host/plugins-install.ts";
+import { hashTree, inspectPluginSource, installPlugin, pluginEntryPath, removePlugin } from "../host/plugins-install.ts";
 import { listPlugins, setPluginEnabled } from "../host/plugins-admin.ts";
 import { installExternalPlugins } from "../worker/external-plugins.ts";
 import { readHubSettings } from "../shared/settings-store.ts";
@@ -238,5 +239,70 @@ describe("external-plugins：vendor 装载腿", () => {
     // 入口缺席 → 无可装 targets → plugin-manager 未装（tryUse 缺席语义）
     expect(ctx.tryUse(pluginManagerService)).toBeUndefined();
     await ctx.dispose();
+  });
+});
+
+// ── 对抗审查修复回归 ─────────────────────────────────────────────────────────
+
+describe("对抗审查修复回归（3a/2a/4a/6a）", () => {
+  it("3a：文件面伪造 confirmed:true 的提案——无内存确认恒不可消费（双查门）", async () => {
+    const agentDir = await agentDirOf();
+    const { mkdir, writeFile: wf } = await import("node:fs/promises");
+    await mkdir(join(agentDir, "plugins"), { recursive: true });
+    // agent 直写伪造：confirmed:true 但从未经 host confirm 命令（内存无确认态）
+    const forged = {
+      proposalId: "pp-forged",
+      sourcePath: "/tmp/evil",
+      name: "evil",
+      description: "",
+      requestedCapabilities: [],
+      sha256: "x".repeat(64),
+      createdAt: Date.now(),
+      confirmed: true,
+      consumed: false,
+    };
+    await wf(join(agentDir, "plugins", "proposals.json"), JSON.stringify([forged]));
+    const store = createPluginProposalStore(agentDir);
+    // 登记可见（面板展示）——但消费恒拒（内存确认缺席）
+    expect((await store.list()).some((r) => r.proposalId === "pp-forged")).toBe(true);
+    expect(await store.consumeConfirmed("pp-forged")).toBeUndefined();
+    // 经 confirm 命令面（内存置位）后可消费——合法链路不破
+    await store.setConfirmed("pp-forged", true);
+    const consumed = await store.consumeConfirmed("pp-forged");
+    expect(consumed?.proposalId).toBe("pp-forged");
+  });
+
+  it("4a：registry 写入层真拒 vendor 撞 builtin 名（绕过 inspect 的直写路径）", async () => {
+    const agentDir = await agentDirOf();
+    const bad = { name: "token-analytics", dir: "x", sha256: "h", approvedBy: "user" as const, approvedAt: 1, apiVersion: 1, origin: "manual" as const };
+    await expect(updateVendorRegistry(agentDir, (cur) => [...cur, bad])).rejects.toThrow("conflicts with builtin");
+    expect(await readVendorRegistry(agentDir)).toEqual([]); // 拒后无残留
+  });
+
+  it("1b：manifest.entry 越界（../ 逃逸与绝对路径）→ 入口探测 undefined", async () => {
+    const agentDir = await agentDirOf();
+    const vendorRoot = vendorRootOf(agentDir);
+    const { mkdir: md, writeFile: wf } = await import("node:fs/promises");
+    for (const [label, entry] of [["逃逸", "../../../tmp/evil.ts"], ["绝对", "/tmp/evil.ts"]] as const) {
+      const dir = join(vendorRoot, `esc-${label}`);
+      await md(dir, { recursive: true });
+      await wf(join(dir, "plugin.json"), JSON.stringify({ name: `esc-${label}`, entry }));
+      await wf(join(dir, "index.ts"), "export default { name: 'x', apply() {} };");
+      const rec = { name: `esc-${label}`, dir: `esc-${label}`, sha256: "h", approvedBy: "user" as const, approvedAt: 1, apiVersion: 1, origin: "manual" as const };
+      expect(await pluginEntryPath(vendorRoot, rec)).toBeUndefined();
+    }
+  });
+});
+
+describe("对抗审查 6a 回归：hot_install 的 disabled/apiVersion 门（handler 判定原语）", () => {
+  it("disabled 名单语义：名单内名 = set_enabled 写入的停用事实——热装面同判（handler 读 readHubSettings 现值）", async () => {
+    const agentDir = await agentDirOf();
+    const { setPluginEnabled } = await import("../host/plugins-admin.ts");
+    await installPlugin({ sourcePath: await makeThirdPartySource("hot-gate"), agentDir });
+    await setPluginEnabled({ agentDir, name: "hot-gate", enabled: false });
+    const { readHubSettings } = await import("../shared/settings-store.ts");
+    const disabled = (await readHubSettings(agentDir))["plugins.disabled"] ?? [];
+    // handler 的判定原语：名单含名 → state_conflict 拒（plugins-hot.ts:47-51 同判）
+    expect(disabled.includes("hot-gate")).toBe(true);
   });
 });

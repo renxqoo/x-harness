@@ -84,6 +84,12 @@ export function updateVendorRegistry(
   return updateJson<VendorPluginEntry[]>(registryPath(agentDir), {
     read: () => readVendorRegistry(agentDir),
     write: async (next) => {
+      // 撞名写入层拒（对抗审查 4a）：任何写路径（含绕过 inspect 的直写）都过此门——
+      // vendor 名不得 shadow builtin 词表（词表件是随宿主分发的受信面）
+      const clash = next.find((entry) => vendorNameBlocked(entry.name));
+      if (clash !== undefined) {
+        throw new Error(`vendor plugin name conflicts with builtin: ${clash.name}`);
+      }
       await mkdir(join(agentDir, "plugins"), { recursive: true });
       await atomicWriteJson(registryPath(agentDir), next);
     },

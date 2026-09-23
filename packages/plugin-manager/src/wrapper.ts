@@ -6,6 +6,7 @@
 
 import type { AnyToken, Chain, ChainMiddleware, Context, Disposer, EventToken, Plugin, PluginCapabilities, ScopeFilter, ServiceToken } from "@x-harness/core";
 import { pluginEvent } from "@x-harness/core";
+import { META_TOKEN_NAMES } from "./capabilities.ts";
 
 /** thenable 判定（#18）：then+catch 双检——仅有 then 的普通对象不是可等待的 Promise */
 function isThenable(value: unknown): value is Promise<unknown> {
@@ -71,6 +72,11 @@ function wrapContext(scope: Context, deps: WrapContextDeps): Context {
     tryUse: <T>(token: ServiceToken<T>): T | undefined => scope.tryUse(token),
     waitFor: <T>(token: ServiceToken<T>): Promise<T> => scope.waitFor(token),
     on: (token: AnyToken, fn: unknown, opts?: { readonly prepend?: boolean }): Disposer => {
+      // 元能力名拒收（对抗审查 2a）：与 worker 侧 host.ts 同判定——caps.on 之外
+      // 的 ctx.on 旁路同封（装载生命周期信封对第三方件不可见）
+      if (META_TOKEN_NAMES.has(token.name)) {
+        throw new Error(`listening on meta token not allowed: ${token.name}`);
+      }
       onToken?.(token);
       const mode = "mode" in token ? token.mode : "emit";
       const original = fn as (payload: unknown) => unknown;

@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { inspectThirdParty } from "@x-harness/plugin-manager";
 import type { ThirdPartyManifest } from "@x-harness/plugin-manager";
 import { errorOfCause, hubError, type HubErrorShape } from "../shared/errors.ts";
@@ -275,13 +275,20 @@ export async function removePlugin(input: { name?: unknown; agentDir: string }):
 }
 
 /** 装载入口文件探测：manifest.entry 缺省 index.ts（worker boot 的 pluginPath） */
+/** manifest.entry 相对路径围栏（对抗审查 1b）：须落在 <vendorRoot>/<dir>/ 之内——
+ *  绝对路径与 ../ 逃逸拒（词法判定；引擎 roots+approveInstall 是第二层） */
+function entryWithin(rel: string): boolean {
+  if (rel === "" || isAbsolute(rel)) return false;
+  const normalized = rel.split("/").filter((part) => part !== "" && part !== ".");
+  return normalized.length > 0 && !normalized.includes("..");
+}
+
 export async function pluginEntryPath(vendorRoot: string, entry: VendorPluginEntry): Promise<string | undefined> {
-  const manifestFile = join(vendorRoot, entry.dir, "plugin.json");
   const manifest = await readManifest(join(vendorRoot, entry.dir));
-  void manifestFile;
   const rel = typeof (manifest as { entry?: unknown } | null)?.["entry"] === "string"
     ? ((manifest as { entry: string }).entry)
     : "index.ts";
+  if (!entryWithin(rel)) return undefined;
   const file = join(vendorRoot, entry.dir, rel);
   const info = await lstat(file).catch(() => undefined);
   return info !== undefined && info.isFile() ? file : undefined;

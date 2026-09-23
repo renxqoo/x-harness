@@ -5,7 +5,8 @@
 import { pluginManagerService } from "@x-harness/plugin-manager";
 import { hubError } from "../shared/errors.ts";
 import { readVendorRegistry, vendorRootOf } from "../shared/plugins-registry.ts";
-import { BUILTIN_PLUGINS } from "../shared/plugins-catalog.ts";
+import { BUILTIN_PLUGINS, isBuiltinPluginName, vendorLoadable } from "../shared/plugins-catalog.ts";
+import { readHubSettings } from "../shared/settings-store.ts";
 import { pluginEntryPath } from "../host/plugins-install.ts";
 import { respond, requireThread } from "./worker-commands.ts";
 import type { CommandInput, WorkerRuntime } from "./worker-commands.ts";
@@ -41,6 +42,25 @@ export async function handleHotInstall(rt: WorkerRuntime, input: CommandInput): 
   if (world === undefined || svc === undefined) {
     respond(rt, { id: input.id, command: "plugins/hot_install", error: hubError("capability_plugin", "plugin manager not available in this world") });
     return;
+  }
+  // disabled 名单与 apiVersion 门镜像（对抗审查 6a/6b）：set_enabled 写的停用语义在
+  // 热装面同判——绕过名单直发热装不可达；拒载口径与 plugins/list 同源（vendorLoadable）
+  const settings = await readHubSettings(rt.agentDir);
+  if ((settings["plugins.disabled"] ?? []).includes(name)) {
+    respond(rt, { id: input.id, command: "plugins/hot_install", error: hubError("state_conflict", `plugin is disabled: ${name} (enable it first)`) });
+    return;
+  }
+  if (isBuiltinPluginName(name) === false) {
+    const vendorEntry = (await readVendorRegistry(rt.agentDir)).find((row) => row.name === name);
+    if (vendorEntry === undefined) {
+      respond(rt, { id: input.id, command: "plugins/hot_install", error: hubError("state_conflict", `unknown or unresolved plugin: ${name}`) });
+      return;
+    }
+    const loadable = vendorLoadable(vendorEntry);
+    if (!loadable.ok) {
+      respond(rt, { id: input.id, command: "plugins/hot_install", error: hubError("plugin_install_failed", loadable.reason) });
+      return;
+    }
   }
   const target = await resolveHotInstallPath(rt, name);
   if (target === undefined) {
