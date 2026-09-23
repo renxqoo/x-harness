@@ -97,7 +97,7 @@ describe("抽查处置：bash 硬化族", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 60_000,
@@ -117,7 +117,7 @@ describe("抽查处置：bash 硬化族", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 60_000,
@@ -160,7 +160,7 @@ describe("抽查处置：bash 硬化族", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 30_000,

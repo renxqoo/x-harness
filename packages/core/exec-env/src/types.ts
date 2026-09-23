@@ -48,6 +48,9 @@ export interface SpawnRequest {
   readonly env?: Readonly<Record<string, string>>;
   /** 围栏解析键；所有 spawn 调用点（含 rg）必须透传 ctx.session */
   readonly session?: SessionId;
+  /** 执行指令（permission 裁决产物——dispatch 管线服务端透传）：direct=免包裹直通；
+   *  contained/缺席=围栏内包裹（fail-safe 缺省）。rootOverride 隔离会话恒包裹。 */
+  readonly exec?: "direct" | "contained";
 }
 
 export type SpawnFailure =

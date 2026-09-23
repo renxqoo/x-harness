@@ -4,7 +4,7 @@
 
 import type { Plugin } from "@x-harness/core";
 import { permissionBroker } from "@x-harness/permission";
-import type { AskRequest } from "@x-harness/permission";
+import type { AskPayload, AskReply } from "@x-harness/permission";
 
 export interface BrokerIO {
   /** stdin 是否可交互（TTY）；false = print 管道形态 */
@@ -15,19 +15,35 @@ export interface BrokerIO {
   readonly question: (prompt: string) => Promise<string | undefined>;
 }
 
-/** 裁决纯函数：y/yes（大小写不敏感）= allow，其余一切（含缺席/EOF）= deny */
-export function decideApproval(answer: string | undefined): "allow" | "deny" {
+/** 裁决纯函数：y/yes=allow-once；s/p/u=记忆作用域（选项在场时）；其余一切（含缺席/EOF）= deny */
+export function decideApproval(answer: string | undefined, options: readonly ("once" | "session" | "project" | "user")[]): AskReply {
   const trimmed = answer?.trim().toLowerCase();
-  return trimmed === "y" || trimmed === "yes" ? "allow" : "deny";
+  if (trimmed === "y" || trimmed === "yes") return { verdict: "allow" };
+  if (trimmed === "s" && options.includes("session")) return { verdict: "allow", memory: "session" };
+  if (trimmed === "p" && options.includes("project")) return { verdict: "allow", memory: "project" };
+  if (trimmed === "u" && options.includes("user")) return { verdict: "allow", memory: "user" };
+  return { verdict: "deny" };
 }
 
-async function askWith(io: BrokerIO, input: AskRequest): Promise<"allow" | "deny"> {
+/** 提示文案：记忆梯度在场时展开按键面 */
+export function approvalPromptOf(input: AskPayload): string {
+  const memoryKeys: string[] = [];
+  if (input.options.includes("session")) memoryKeys.push("[s] session");
+  if (input.options.includes("project")) memoryKeys.push("[p] project");
+  if (input.options.includes("user")) memoryKeys.push("[u] always");
+  return memoryKeys.length > 0 ? `[y/N ${memoryKeys.join(" ")}]` : "[y/N] ";
+}
+
+async function askWith(io: BrokerIO, input: AskPayload): Promise<AskReply> {
   if (!io.interactive) {
     io.write(`permission denied (non-interactive stdin): ${input.tool} — ${input.reason}`);
-    return "deny";
+    return { verdict: "deny" };
   }
   io.write(`allow ${input.tool}? — ${input.reason}`);
-  return decideApproval(await io.question("[y/N] "));
+  if (input.suggestedRule !== undefined) io.write(`  suggested rule: ${input.suggestedRule}`);
+  if (input.escalate !== undefined) io.write(`  sandboxed run failed:
+${input.escalate.failureText}`);
+  return decideApproval(await io.question(approvalPromptOf(input)), input.options);
 }
 
 export function createTerminalBrokerPlugin(io: BrokerIO): Plugin {

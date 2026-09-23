@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decideFor } from "../decide.ts";
+import { resolveProfile } from "../profiles.ts";
+const AUTO_PROFILE = resolveProfile("auto");
 
 
 describe("控制类工具直通（isControlTool——todo 清单类，对齐 Codex is_builtin_control_tool）", () => {
@@ -10,7 +12,7 @@ describe("控制类工具直通（isControlTool——todo 清单类，对齐 Cod
       control: true,
       userRules: [],
       sessionRules: [],
-      mode: "auto",
+      profile: AUTO_PROFILE,
       root: "/w",
       extraRoots: [],
     });
@@ -23,7 +25,7 @@ describe("控制类工具直通（isControlTool——todo 清单类，对齐 Cod
       args: {},
       userRules: [],
       sessionRules: [],
-      mode: "auto",
+      profile: AUTO_PROFILE,
       root: "/w",
       extraRoots: [],
     });

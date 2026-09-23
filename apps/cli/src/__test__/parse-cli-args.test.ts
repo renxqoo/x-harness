@@ -2,7 +2,7 @@
 // `--` 分流/@ 前缀/枚举闭集/可选值 flag。
 
 import { describe, expect, it } from "vitest";
-import { MODE_KNOBS } from "@x-harness/permission";
+import { PROFILE_IDS } from "@x-harness/permission";
 import { parseCliArgs, usageText } from "../parse-cli-args.ts";
 
 function ok(argv: string[]) {
@@ -117,8 +117,8 @@ describe("枚举闭集", () => {
   });
 
   it("--permission 垃圾值/空附值 → 词表完整错误文案", () => {
-    expect(fail(["--permission", "fast"])).toContain('expected plan | auto | full (got "fast")');
-    expect(fail(["--permission="])).toContain('expected plan | auto | full (got "")');
+    expect(fail(["--permission", "fast"])).toContain('expected plan | auto | edit-confirm | full | sandboxed-auto (got "fast")');
+    expect(fail(["--permission="])).toContain('expected plan | auto | edit-confirm | full | sandboxed-auto (got "")');
   });
 
   it("--permission 邻接 flag-like token 作值消费（arity 1 必取）→ 枚举闭集报错；末尾缺 token → requires a value", () => {
@@ -175,7 +175,7 @@ describe("usageText", () => {
     expect(text).toContain("exit codes");
   });
 
-  it("帮助文本含 --permission 完整词表行（期望串与 MODE_KNOBS 同源生成——扩档时本用例红提醒 usage 同步）", () => {
-    expect(usageText("x-harness")).toContain(`--permission <${MODE_KNOBS.join("|")}>`);
+  it("帮助文本含 --permission 完整词表行（期望串与 PROFILE_IDS 同源生成——扩档时本用例红提醒 usage 同步）", () => {
+    expect(usageText("x-harness")).toContain(`--permission <${PROFILE_IDS.join("|")}>`);
   });
 });

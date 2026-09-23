@@ -129,7 +129,7 @@ describe("命令词法（内核单源——BATCH3 迁移：hub 侧词法删除�
 describe("词表封闭性（meta-state）", () => {
   test("thinking/permission 词表与内核对齐", () => {
     expect(THINKING_LEVELS).toEqual(["off", "low", "medium", "high", "max"]);
-    expect(PERMISSION_MODES).toEqual(["plan", "auto", "full"]);
+    expect(PERMISSION_MODES).toEqual(["plan", "auto", "edit-confirm", "full", "sandboxed-auto"]);
   });
 });
 

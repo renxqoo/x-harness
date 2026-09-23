@@ -59,7 +59,7 @@ export const THREAD_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
 
 /** host 单点注册但带 threadId 形态交池转发的命令（DESIGN §3.9——处理在 worker，
  *  host 持无 threadId 的全局形态；routeLine 的线程域判定 = THREAD_SCOPED ∪ 本集） */
-export const HOST_RELAYED_THREAD_COMMANDS: ReadonlySet<string> = new Set(["permission/set_mode", "permission/get_mode"]);
+export const HOST_RELAYED_THREAD_COMMANDS: ReadonlySet<string> = new Set(["permission/set_mode", "permission/get_mode", "permission/grant", "permission/list_rules", "permission/remove_rule"]);
 
 /** 观察者命令：不重置 worker idle 计时（轮询客户端不阻止收编）——worker 侧清单 */
 export const OBSERVER_COMMANDS: ReadonlySet<string> = new Set([
@@ -76,6 +76,7 @@ export const OBSERVER_COMMANDS: ReadonlySet<string> = new Set([
   "get_pending_dialogs",
   "get_thinking_level",
   "permission/get_mode",
+  "permission/list_rules",
 ]);
 
 /** 驱动命令：受理后必有恰一 settled（sendId = 命令 id）——host 据此登记在飞 */

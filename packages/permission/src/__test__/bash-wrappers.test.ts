@@ -6,12 +6,15 @@ import { describe, expect, it } from "vitest";
 import { adjudicateBash } from "../bash/adjudicate.ts";
 import { parseBash } from "../bash/ast.ts";
 import { parseRule } from "../rules/parse.ts";
+import { resolveProfile } from "../profiles.ts";
+const AUTO_PROFILE = resolveProfile("auto");
+const FULL_PROFILE = resolveProfile("full");
 
 const ROOT = "/w/app";
 const FENCE = { writable: [ROOT], allowedDomains: [] };
 const WIDE = [parseRule("Bash(*):allow", "user")];
-const wide = { rules: WIDE, mode: "auto" as const, root: ROOT, extraRoots: [], fence: FENCE };
-const fenced = { rules: [] as ReturnType<typeof parseRule>[], mode: "auto" as const, root: ROOT, extraRoots: [], fence: FENCE };
+const wide = { rules: WIDE, profile: AUTO_PROFILE, root: ROOT, extraRoots: [], fence: FENCE };
+const fenced = { rules: [] as ReturnType<typeof parseRule>[], profile: AUTO_PROFILE, root: ROOT, extraRoots: [], fence: FENCE };
 
 describe("剥离家族 × sudo（WIDE harness——硬拒不可被 allow 越过）", () => {
   it.each([
@@ -149,7 +152,7 @@ describe("payload 提取（xargs/find -exec/parallel——§14.2 边界 3）", (
     const out = adjudicateBash({ ...wide, command: "ls | xargs" });
     expect(out.verdict).toBe("ask");
     expect(out.reason).toBe("injection:xargs-shell");
-    expect(adjudicateBash({ ...wide, command: "ls | xargs", mode: "full" }).verdict).toBe("allow");
+    expect(adjudicateBash({ ...wide, command: "ls | xargs", profile: FULL_PROFILE }).verdict).toBe("allow");
   });
   it("find -exec 空 payload：`find . -exec \\;` → injection:find-exec", () => {
     const out = adjudicateBash({ ...wide, command: "find . -exec \\;" });
@@ -187,9 +190,9 @@ describe("恒 ask 表 it.each 全词（不透明信任类——fence 无规则 h
 });
 
 describe("裸解释器与裸 awk（无操作数无代码旗——同现行放行）", () => {
-  it("bash / awk 无实参界内 allow", () => {
+  it("bash 无实参界内 allow；awk 已逐出只读表（对抗审查 #2）→ ask", () => {
     expect(adjudicateBash({ ...fenced, command: "bash" }).verdict).toBe("allow");
-    expect(adjudicateBash({ ...fenced, command: "awk" }).verdict).toBe("allow");
+    expect(adjudicateBash({ ...fenced, command: "awk" }).verdict).toBe("ask");
   });
 });
 
@@ -262,7 +265,7 @@ describe("full 档矩阵（裁决⑤：完全访问——唯提权/密码类直�
     ["sudo id"], ["doas id"], ["su - root"], ["env -i sudo id"], ["timeout 5 sudo id"],
     ["bash -c 'sudo id'"], ["if true; then sudo id; fi"], ["ls | xargs sudo rm"], ["echo $(sudo id)"],
   ])("%s → deny（含包装/控制流/载荷/替换内嵌形）", (command) => {
-    const out = adjudicateBash({ ...wide, command, mode: "full" });
+    const out = adjudicateBash({ ...wide, command, profile: FULL_PROFILE });
     expect(out).toMatchObject({ verdict: "deny", reason: "hard-deny:sudo", resolvedBy: "mode:full" });
   });
   it.each([
@@ -270,10 +273,10 @@ describe("full 档矩阵（裁决⑤：完全访问——唯提权/密码类直�
     ["echo $(whoami)"], ["bash x.sh"], ["cat $X > /etc/passwd"], ["cmd < ~/.ssh/id_rsa"],
     ["cat <<EOF\n$(rm -rf /)\nEOF"], ["ls | xargs sh"], ["echo 'oops"], ["node -e 'x'"],
   ])("%s → allow（硬拒其余形态/注入/不透明/重定向/畸形在 full 全不拦——围栏承载）", (command) => {
-    expect(adjudicateBash({ ...wide, command, mode: "full" }).verdict).toBe("allow");
+    expect(adjudicateBash({ ...wide, command, profile: FULL_PROFILE }).verdict).toBe("allow");
   });
   it("畸形含提权词 → deny；full 档网络命令放行（域控由代理层承载）", () => {
-    expect(adjudicateBash({ ...wide, command: "echo 'oops sudo", mode: "full" })).toMatchObject({ verdict: "deny", reason: "hard-deny:sudo" });
-    expect(adjudicateBash({ ...wide, command: "curl x", mode: "full" }).verdict).toBe("allow");
+    expect(adjudicateBash({ ...wide, command: "echo 'oops sudo", profile: FULL_PROFILE })).toMatchObject({ verdict: "deny", reason: "hard-deny:sudo" });
+    expect(adjudicateBash({ ...wide, command: "curl x", profile: FULL_PROFILE }).verdict).toBe("allow");
   });
 });

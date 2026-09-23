@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv, ProcHandle } from "@x-harness/exec-env";
+import { fenceSuspectOf } from "@x-harness/sandbox";
 import { PathGate } from "@x-harness/tool-core";
 import type { RootOverrideOf } from "@x-harness/tool-core";
 import type { BackgroundTasks } from "./tasks.ts";
@@ -51,10 +52,11 @@ export interface BashToolInput {
   readonly rootOverrideOf?: RootOverrideOf;
   readonly env: ExecEnv;
   readonly tasks: BackgroundTasks;
+  readonly escalate?: BashEscalate;
 }
 
 export function createBashTool(input: BashToolInput): ToolDefinition {
-  const { gate, limits, env, tasks, rootOverrideOf } = input;
+  const { gate, limits, env, tasks, rootOverrideOf, escalate } = input;
   return {
     name: "bash",
     description:
@@ -69,9 +71,14 @@ export function createBashTool(input: BashToolInput): ToolDefinition {
       timeout: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS, description: "Optional timeout in milliseconds" })),
       run_in_background: Type.Optional(Type.Boolean({ description: "Set to true to run this command in the background." })),
     }),
-    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, tasks, rootOverrideOf, ctx, args: args as { command: string; timeout?: number; run_in_background?: boolean } }),
+    execute: async (args, ctx: ToolExecContext) => bash({ gate, limits, env, tasks, rootOverrideOf, escalate, ctx, args: args as { command: string; timeout?: number; run_in_background?: boolean } }),
   };
 }
+
+/** on-failure 升级桥（plugin 层注入——permissionBroker 结构化 ask 的 escalate 形态）：
+ *  缺席=无升级面（contained 失败即定案）；配额（每命令文本 per session 至多一次）在
+ *  plugin 层持有。 */
+export type BashEscalate = (fields: { readonly command: string; readonly failureText: string; readonly session?: ToolExecContext["session"] }) => Promise<"allow" | "deny">;
 
 async function bash(input: {
   readonly gate: PathGate;
@@ -79,10 +86,11 @@ async function bash(input: {
   readonly env: ExecEnv;
   readonly tasks: BackgroundTasks;
   readonly rootOverrideOf?: RootOverrideOf;
+  readonly escalate?: BashEscalate;
   readonly ctx: ToolExecContext;
   readonly args: { command: string; timeout?: number; run_in_background?: boolean };
 }): Promise<{ content: string; isError?: true }> {
-  const { gate, limits, env, tasks, ctx, args, rootOverrideOf } = input;
+  const { gate, limits, env, tasks, ctx, args, rootOverrideOf, escalate } = input;
   const cwd = rootOverrideOf?.(ctx.session)?.dir ?? gate.root; // bash 无路径参数——cwd 即会话根（件13 接缝 4）
   if (PathGate.hasNul(args.command)) {
     return { content: "NUL_IN_ARGUMENT: command contains NUL", isError: true };
@@ -95,7 +103,33 @@ async function bash(input: {
     return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — it keeps running across turns; poll its output and state via the task layer` };
   }
   const timeoutMs = Math.min(args.timeout ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
-  return render(await runCommand({ command: args.command, cwd, timeoutMs, limits, env, ctx }));
+  const result = await runCommand({ command: args.command, cwd, timeoutMs, limits, env, ctx });
+  const escalated = await tryEscalate({ command: args.command, cwd, timeoutMs, limits, env, ctx, escalate, result });
+  if (escalated !== undefined) return escalated;
+  return render(result);
+}
+
+/** on-failure 升级流（PERMISSION-V2-DESIGN §3）：contained 失败 + fenceSuspect 归因 + 升级资格
+ *  （on-failure 档）→ escalate ask → 批准后同命令 direct 重执行一次；其余形态返回 undefined（定案） */
+async function tryEscalate(input: {
+  readonly command: string;
+  readonly cwd: string;
+  readonly timeoutMs: number;
+  readonly limits: BashLimits;
+  readonly env: ExecEnv;
+  readonly ctx: ToolExecContext;
+  readonly escalate?: BashEscalate;
+  readonly result: RunResult;
+}): Promise<{ content: string; isError?: true } | undefined> {
+  const { command, cwd, timeoutMs, limits, env, ctx, escalate, result } = input;
+  if (escalate === undefined || ctx.exec !== "contained" || ctx.escalatable !== true) return undefined;
+  if (result.spawnError !== undefined || result.timedOut || result.aborted) return undefined;
+  if (!fenceSuspectOf(result.exitCode, result.stderr)) return undefined;
+  const verdict = await escalate({ command, failureText: result.stderr.slice(0, 2000), session: ctx.session });
+  if (verdict !== "allow" || ctx.signal.aborted) return undefined;
+  const retry = await runCommand({ command, cwd, timeoutMs, limits, env, ctx: { ...ctx, exec: "direct" } });
+  const rendered = render(retry);
+  return { ...rendered, content: `[escalated: retried outside the sandbox after user approval]\n${rendered.content}` };
 }
 
 interface RunResult {
@@ -116,7 +150,7 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
   // 原始字节流口径（ANSI 清洗是结算时态）
   const out = new ChannelCollector(ctx.onOutput !== undefined ? { onChunk: ctx.onOutput } : {});
   const err = new ChannelCollector(ctx.onOutput !== undefined ? { onChunk: ctx.onOutput } : {});
-  const spawned = await env.spawn({ argv: ["/bin/sh", "-c", command], cwd, ...(ctx.session !== undefined ? { session: ctx.session } : {}) });
+  const spawned = await env.spawn({ argv: ["/bin/sh", "-c", command], cwd, ...(ctx.session !== undefined ? { session: ctx.session } : {}), ...(ctx.exec !== undefined ? { exec: ctx.exec } : {}) });
   if (!spawned.ok) {
     return { stdout: "", stderr: "", exitCode: null, timeoutMs, timedOut: false, aborted: false, spawnError: `${spawned.reason.kind}: ${spawned.reason.detail}`, spillPath: undefined, truncated: false };
   }

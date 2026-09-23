@@ -94,7 +94,7 @@ export async function twoStageKillGroup(pid: number, graceMs = FORK_GRACE_SIGTER
 export interface BashExecDeps {
   session: () => { session: Session; flush: () => Promise<unknown> } | undefined;
   cwd: () => string;
-  confirm: (fields: { tool: string; summary: string; reason: string }, signal?: AbortSignal) => Promise<boolean>;
+  confirm: (fields: { tool: string; summary: string; reason: string }, signal?: AbortSignal) => Promise<import("./dialogs.ts").ConfirmAnswer>;
   emitEvent: (name: string, payload: unknown) => void;
   agentDir: string;
   defaultTimeoutMs: number;
@@ -197,10 +197,11 @@ export function createBashExec(deps: BashExecDeps) {
     admissionAborts.add(onAdmissionAbort);
     let approved: boolean;
     try {
-      approved = await Promise.race([
+      const answer = await Promise.race([
         deps.confirm({ tool: "bash", summary: request.command, reason: "direct execution requested by client" }, cancelSignal.signal),
-        cancelled,
+        cancelled.then((): null => null),
       ]);
+      approved = answer !== null && answer.allowed;
     } finally {
       admissionAborts.delete(onAdmissionAbort);
     }

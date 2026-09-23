@@ -8,7 +8,7 @@ import { createSandboxEnv } from "../env.ts";
 import type { Fence } from "../fence.ts";
 import type { SrtRuntime } from "../srt-runtime.ts";
 
-const FENCE: Fence = { writable: ["/w"], denyRead: ["~/.ssh"], denyWrite: ["/w/.git"], allowedDomains: [], unfenced: false };
+const FENCE: Fence = { writable: ["/w"], denyRead: ["~/.ssh"], denyWrite: ["/w/.git"], allowedDomains: [], unfenced: false, isolated: false };
 
 function makeFakeProc(): ProcHandle & { readonly kills: readonly string[]; settle(): void } {
   const kills: string[] = [];
@@ -62,7 +62,7 @@ describe("createSandboxEnv 拆卸窗口", () => {
         return { ok: true, proc: makeFakeProc() };
       },
     } as unknown as ExecEnv;
-    const { env } = createSandboxEnv({ base, runtime, fenceOf: () => FENCE, syncAllowlist: () => {}, trustedCommands: [], isTornDown: () => tornDown });
+    const { env } = createSandboxEnv({ base, runtime, fenceOf: () => FENCE, syncAllowlist: () => {}, isTornDown: () => tornDown });
     const inFlight = env.spawn({ argv: ["/bin/true"], cwd: "/w" });
     tornDown = true;
     gate.release(["/bin/true"]);
@@ -98,8 +98,7 @@ describe("createSandboxEnv 拆卸窗口", () => {
       runtime,
       fenceOf: () => FENCE,
       syncAllowlist: () => {},
-      trustedCommands: [],
-      isTornDown: () => tornDown,
+            isTornDown: () => tornDown,
     });
     const inFlight = env.spawn({ argv: ["/bin/true"], cwd: "/w" });
     wrapGate.release(["/bin/true"]); // wrap 先过（tornDown 仍 false——post-wrap 检查放行）
@@ -140,8 +139,7 @@ describe("createSandboxEnv 拆卸窗口", () => {
       runtime,
       fenceOf: () => FENCE,
       syncAllowlist: () => {},
-      trustedCommands: [],
-      isTornDown: () => false,
+            isTornDown: () => false,
     });
     const r = await env.spawn({ argv: ["/bin/true"], cwd: "/w" });
     expect(r.ok).toBe(true);

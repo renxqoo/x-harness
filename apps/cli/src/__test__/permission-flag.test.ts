@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LlmAdapter, LlmRequest } from "@x-harness/llm";
 import { permissionDecided } from "@x-harness/permission";
-import type { ModeKnob, PermissionAudit } from "@x-harness/permission";
+import type { ProfileId, PermissionAudit } from "@x-harness/permission";
 import type { SessionId } from "@x-harness/session";
 import type { ToolOutcome } from "@x-harness/tools";
 import { buildWorld } from "../build-world.ts";
@@ -50,7 +50,7 @@ interface Journey {
 }
 
 interface JourneyOptions {
-  readonly permission?: ModeKnob;
+  readonly permission?: ProfileId;
   readonly persist?: boolean;
   readonly sessionRoot?: string;
 }
@@ -116,7 +116,7 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     const j = await makeJourney({ permission: "full" });
     const out = await j.dispatch("write", { path: "made.txt", content: "FULL-MADE" });
     expect(out.isError).not.toBe(true);
-    expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", session: j.session });
+    expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", exec: "direct", session: j.session });
     await expect(readFile(join(j.root, "made.txt"), "utf8")).resolves.toBe("FULL-MADE");
   });
 
@@ -127,7 +127,7 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     const target = join(outsideDir, "f.txt");
     const out = await j.dispatch("write", { path: target, content: "OUTSIDE-FULL" });
     expect(out.isError).not.toBe(true);
-    expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", session: j.session });
+    expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", exec: "direct", session: j.session });
     await expect(readFile(target, "utf8")).resolves.toBe("OUTSIDE-FULL");
   });
 
@@ -141,7 +141,7 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     expect(read.isError).not.toBe(true);
     expect(read.content).toContain("GREP-TARGET-LINE");
     const grep = await j.dispatch("grep", { pattern: "GREP-TARGET", path: outsideDir });
-    expect(j.audits).toContainEqual({ tool: "grep", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", session: j.session });
+    expect(j.audits).toContainEqual({ tool: "grep", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", exec: "direct", session: j.session });
     expect(grep.isError).not.toBe(true); // 剖面缺 sysctl-read 时的症状：SEARCH_FAILED rg SIGABRT
     expect(grep.content).toContain("GREP-TARGET-LINE");
   });
@@ -154,12 +154,12 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
   });
 });
 
-describe("缺省 auto 精确锚", () => {
-  it("不带 permission：界内 allow resolvedBy auto（与 mode:full 精确区分）+ 界外 ask→broker deny（锁缺省非 full）", async () => {
+describe("缺省 sandboxed-auto 精确锚（U6——CLI 围栏优先）", () => {
+  it("不带 permission：界内 allow resolvedBy auto + exec contained（与 mode:full 的 direct 精确区分）+ 界外 ask→broker deny", async () => {
     const j = await makeJourney();
     const inside = await j.dispatch("write", { path: "in.txt", content: "x" });
     expect(inside.isError).not.toBe(true);
-    expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "auto", reason: "in-root", session: j.session });
+    expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "auto", reason: "in-root", exec: "contained", session: j.session });
     const outside = join(tmpdir(), "xh-permflag-outside", "g.txt");
     const blocked = await j.dispatch("write", { path: outside, content: "x" });
     expect(blocked.isError).toBe(true);
@@ -168,7 +168,7 @@ describe("缺省 auto 精确锚", () => {
 });
 
 describe("resume 不继承 mode（mode 是装配事实非会话事实）", () => {
-  it("plan 建档 → 无 flag 恢复即回 auto：界内 write 放行（方案「不处理」表行为锚）", async () => {
+  it("plan 建档 → 无 flag 恢复即回缺省 sandboxed-auto：界内 write 放行（档位是装配事实非会话事实）", async () => {
     const sessionRoot = join(tmpdir(), `xh-permflag-resume-${String(Date.now())}`);
     roots.push(sessionRoot);
     const first = await makeJourney({ permission: "plan", persist: true, sessionRoot });
@@ -187,7 +187,7 @@ describe("resume 不继承 mode（mode 是装配事实非会话事实）", () =>
       second.world.registry.dispatch({ callId: `permflag-r-${String(callSeq += 1)}`, name, args, signal: new AbortController().signal, session: id });
     const allowed = await dispatch("write", { path: "after-resume.txt", content: "x" });
     expect(allowed.isError).not.toBe(true);
-    expect(second.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "auto", reason: "in-root", session: id });
+    expect(second.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "auto", reason: "in-root", exec: "contained", session: id });
   });
 
   it("full 建档 → 无 flag 恢复即回 auto：总括不落会话档，界外 write 回归 ask→deny 链", async () => {

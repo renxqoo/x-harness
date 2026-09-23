@@ -99,19 +99,42 @@ describe("dialogs broker 分支", () => {
     const request = JSON.parse(sent[0] as string) as PendingDialog;
     expect(broker.pendingCount()).toBe(1);
     expect(broker.resolve(request.requestId, "junk")).toBe(true); // 坏形状 → settle(false)
-    await expect(confirmPromise).resolves.toBe(false);
+    await expect(confirmPromise).resolves.toMatchObject({ allowed: false });
     expect(broker.resolve("no-such", { confirmed: true })).toBe(false); // 未知忽略
+    // 结构化应答（PERMISSION-V2 §6.2）：verdict+memory+rule 改写全字段面；布尔退化=once
+    const structuredPromise = broker.confirm("t1", { tool: "bash", reason: "r", options: ["once", "session", "project"], suggestedRule: "Bash(x:*):allow" });
+    const lastRequest = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
+    expect(lastRequest).toBeDefined();
+    if (lastRequest !== undefined) {
+      expect(broker.resolve(lastRequest.requestId, { verdict: "allow", memory: "project", rule: "Bash(y:*):allow" })).toBe(true);
+      await expect(structuredPromise).resolves.toMatchObject({ allowed: true, memory: "project", ruleOverride: "Bash(y:*):allow" });
+    }
+    // 结构化字段帧契约（agent-app 消费面）：options/suggestedRule/escalate 原样进 payload
+    const escalateConfirm = broker.confirm("t1", { tool: "bash", reason: "sandbox failure", options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
+    const escReq = sent.map((line) => JSON.parse(line) as Record<string, unknown>).at(-1); // 帧面平铺（uiRequestFrame 顶层字段）
+    expect(escReq).toMatchObject({ options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
+    const escReqId = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
+    if (escReqId !== undefined) {
+      broker.resolve(escReqId.requestId, { verdict: "deny" });
+      await expect(escalateConfirm).resolves.toMatchObject({ allowed: false });
+    }
+    const boolOnce = broker.confirm("t1", { tool: "read", reason: "r" });
+    const boolReq = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
+    if (boolReq !== undefined) {
+      broker.resolve(boolReq.requestId, { confirmed: true });
+      await expect(boolOnce).resolves.toMatchObject({ allowed: true }); // 布尔退化=once（无记忆）
+    }
     expect(broker.pendingAll()).toEqual([]); // 已结算出队
     // 超时默认拒
     const timeoutPromise = broker.confirm("t1", { tool: "bash", reason: "r" });
-    await expect(timeoutPromise).resolves.toBe(false);
+    await expect(timeoutPromise).resolves.toMatchObject({ allowed: false });
     // denyAll：挂起全部拒绝
     const pending1 = broker.confirm("t1", { tool: "read", reason: "r" });
     const pending2 = broker.confirm("t1", { tool: "write", reason: "r" });
     expect(broker.pendingCount()).toBe(2);
     broker.denyAll();
-    await expect(pending1).resolves.toBe(false);
-    await expect(pending2).resolves.toBe(false);
+    await expect(pending1).resolves.toMatchObject({ allowed: false });
+    await expect(pending2).resolves.toMatchObject({ allowed: false });
   });
 });
 
@@ -173,7 +196,7 @@ describe("审查修复回归（收口处置）", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => "/definitely/missing/cwd",
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 5_000,

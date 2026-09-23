@@ -23,7 +23,7 @@ import { createLlmRetryPlugin } from "@x-harness/llm-retry";
 import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
-import type { ModeKnob } from "@x-harness/permission";
+import type { PermissionProfile, PermissionRule, ProfileId } from "@x-harness/permission";
 import { createSandboxPlugin } from "@x-harness/sandbox";
 import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session";
 import type { SessionArchive, SessionStore } from "@x-harness/session";
@@ -143,13 +143,29 @@ export const toolboxKit = (o: {
   ];
 };
 
-/** 围栏（permission 路径/审批 + sandbox execEnv）；mode 缺省 auto 由 permission 包落定。
- *  trustedCommands：宿主受信命令词表（免内核包裹直通——GUI/系统服务类工具，如 bw）。 */
+/** 围栏（permission 裁决 + sandbox 执行器——PERMISSION-V2-DESIGN §6）。执行指令由裁决
+ *  管线产出（allow→direct|contained 按档位），sandbox 只照办；trustedCommands 词表已删（U1）。
+ *  rules/projectRules=两作用域规则串；protectedPaths=保护写路径（settings 文件等——U13）；
+ *  customProfiles=宿主自定义档位行（已过 mergeCustomProfiles）。 */
 export const fenceKit = (
-  o: { readonly root: string; readonly mode?: ModeKnob; readonly trustedCommands?: readonly string[] },
+  o: {
+    readonly root: string;
+    readonly mode?: ProfileId;
+    readonly rules?: readonly PermissionRule[];
+    readonly projectRules?: readonly PermissionRule[];
+    readonly protectedPaths?: readonly string[];
+    readonly customProfiles?: readonly PermissionProfile[];
+  },
 ): readonly Plugin[] => [
-  createPermissionPlugin({ root: o.root, ...(o.mode !== undefined ? { mode: o.mode } : {}) }),
-  createSandboxPlugin({ root: o.root, ...(o.trustedCommands !== undefined ? { trustedCommands: o.trustedCommands } : {}) }),
+  createPermissionPlugin({
+    root: o.root,
+    ...(o.mode !== undefined ? { mode: o.mode } : {}),
+    ...(o.rules !== undefined ? { rules: o.rules } : {}),
+    ...(o.projectRules !== undefined ? { projectRules: o.projectRules } : {}),
+    ...(o.protectedPaths !== undefined ? { protectedPaths: o.protectedPaths } : {}),
+    ...(o.customProfiles !== undefined ? { customProfiles: o.customProfiles } : {}),
+  }),
+  createSandboxPlugin({ root: o.root, ...(o.protectedPaths !== undefined ? { protectedPaths: o.protectedPaths } : {}) }),
 ];
 
 /** 子代理委派 */

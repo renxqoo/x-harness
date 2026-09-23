@@ -7,7 +7,8 @@
 import type { Plugin, Result } from "@x-harness/core";
 import type { AutoCompactOptions } from "@x-harness/autocompact";
 import type { CompactionOptions } from "@x-harness/compaction";
-import type { ModeKnob } from "@x-harness/permission";
+import { parseRules } from "@x-harness/permission";
+import type { ProfileId } from "@x-harness/permission";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { AnthropicCompatOptions, LlmAdapter, OpenaiCompatOptions } from "@x-harness/llm";
 import type { RetryPolicy } from "@x-harness/llm-retry";
@@ -57,8 +58,10 @@ export interface WorldOptions {
   readonly promptFacts?: BasePromptFacts;
   readonly config: ProvidersConfig;
   readonly resolution: ModelResolution;
-  /** 权限模式档（--permission；缺省 auto 由 permission 包落定） */
-  readonly permission?: ModeKnob;
+  /** 权限档（--permission；缺省 sandboxed-auto——CLI 围栏优先姿势，U6） */
+  readonly permission?: ProfileId;
+  /** 权限规则串（--rules——用户作用域；拼错 fail-closed 拒启） */
+  readonly rules?: readonly string[];
   /** 审批 broker 插件（REPL/print 各自 IO 形态） */
   readonly broker: Plugin;
   /** 持久化 I/O 失败上报；缺省写 stderr */
@@ -125,7 +128,11 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
     ...toolboxKit({ root: options.cwd }),
-    ...fenceKit({ root: options.cwd, ...(options.permission !== undefined ? { mode: options.permission } : {}) }),
+    ...fenceKit({
+      root: options.cwd,
+      mode: options.permission ?? "sandboxed-auto", // CLI 缺省围栏优先（U6——Codex 姿势）
+      ...(options.rules !== undefined && options.rules.length > 0 ? { rules: parseRules(options.rules, "user") } : {}),
+    }),
     options.broker,
     ...meterKit(),
     ...(options.compaction !== undefined ? [...compactionKit(compactionOptionsOf(options)), ...autoCompactKit(autoCompactOptionsOf(options))] : []),

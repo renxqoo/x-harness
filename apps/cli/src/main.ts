@@ -178,6 +178,7 @@ async function openWorld(input: {
     config,
     resolution,
     ...(args.permission !== undefined ? { permission: args.permission } : {}),
+    ...(args.rules !== undefined && args.rules.length > 0 ? { rules: args.rules } : {}),
     broker: createTerminalBrokerPlugin(brokerIO(io, input.interactive, input.ask)),
   });
   if (!built.ok) return { failure: built.reason };

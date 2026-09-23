@@ -88,7 +88,7 @@ async function grep(input: { readonly gate: PathGate; readonly options: GrepOpti
   if (rg === null) {
     return { content: `SEARCH_RG_UNAVAILABLE: ripgrep is required but not found — ${RG_GUIDANCE}`, isError: true };
   }
-  const search: SearchArgs = { pattern, path: admitted.path, glob, literal, ignoreCase, context, limit, signal: ctx.signal, env, session: ctx.session };
+  const search: SearchArgs = { pattern, path: admitted.path, glob, literal, ignoreCase, context, limit, signal: ctx.signal, env, session: ctx.session, exec: ctx.exec };
   return runRg({ ...search, rgPath: rg });
 }
 
@@ -103,6 +103,7 @@ interface SearchArgs {
   readonly signal: AbortSignal;
   readonly env: ExecEnv;
   readonly session: ToolExecContext["session"];
+  readonly exec?: ToolExecContext["exec"];
 }
 
 interface RgLine {
@@ -127,7 +128,7 @@ function rgArgv(a: SearchArgs): string[] {
 
 async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ content: string; isError?: true }> {
   const argv = rgArgv(a);
-  const spawned = await a.env.spawn({ argv: [a.rgPath, ...argv], ...(a.session !== undefined ? { session: a.session } : {}) });
+  const spawned = await a.env.spawn({ argv: [a.rgPath, ...argv], ...(a.session !== undefined ? { session: a.session } : {}), ...(a.exec !== undefined ? { exec: a.exec } : {}) });
   if (!spawned.ok) {
     // 启动失败（二进制缺席等）——与 close(-1) 同终态
     return settleRg({ code: -1, signal: null, selfKilled: false, malformed: false, rawOverflow: false, aborted: a.signal.aborted, stderrTail: spawned.reason.detail, matches: [], limit: a.limit });

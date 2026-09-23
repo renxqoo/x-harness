@@ -6,6 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { systemPrompt } from "@x-harness/system-prompt";
+import { readHubSettings } from "../shared/settings-store.ts";
 import { assembleWorkerAgent, contextWindowOf } from "../worker/assembly.ts";
 import { createBashExec } from "../worker/bash-exec.ts";
 import { createWorkerCommands } from "../worker/worker-commands.ts";
@@ -111,7 +112,7 @@ describe("bash-exec 单元（脱 worker 上下文）", () => {
     return createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => confirmResult,
+      confirm: async () => ({ allowed: confirmResult }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 5_000,
@@ -161,12 +162,43 @@ describe("bash-exec 单元（脱 worker 上下文）", () => {
     expect(otherOutcome.ok === true && otherOutcome.cancelled).toBe(true);
   }, 20_000);
 
+  test("习得持久面（U13）：非 trusted 拒 project 写；user 写落盘去重（grantStore 插件）", async () => {
+    const agentDir = await tempDir("hub-grantstore-");
+    const sessionsRoot = join(agentDir, "sessions");
+    const fields = (trusted: boolean, cwd: string) => ({
+      sessionsRoot,
+      cwd,
+      agentDir,
+      trusted,
+      dial: { provider: "script", model: "script-1" },
+      env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) },
+    });
+    // 非 trusted：project 写被拒（安全向——未信任工作区不得持久授权）
+    const untrusted = await assembleWorkerAgent(fields(false, agentDir));
+    const storeU = untrusted.world.ctx.tryUse(await import("@x-harness/permission").then((m) => m.permissionGrantStore));
+    expect(storeU).toBeDefined();
+    if (storeU !== undefined) {
+      const rejected = await storeU.write("project", { tool: "Bash", pattern: "x:*", verdict: "allow", nature: "grant" });
+      expect(rejected.ok).toBe(false);
+      // trusted=false 仍可写 user 作用域 + 幂等去重
+      const userWrite = await storeU.write("user", { tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 });
+      expect(userWrite.ok).toBe(true);
+      const dup = await storeU.write("user", { tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 2 });
+      expect(dup.ok).toBe(true);
+      const settings = await readHubSettings(agentDir);
+      expect(settings["permission.rules"]).toEqual([{ tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 }]);
+    }
+    await untrusted.handle.dispose();
+    for (const disposer of untrusted.world.unload) await disposer();
+    await untrusted.world.ctx.dispose();
+  }, 20_000);
+
   test("shell 解析失败面（坏 HUB_BASH 注入）", async () => {
     const agentDir = await tempDir("hub-bash3-");
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 5_000,
@@ -225,7 +257,7 @@ function makeRuntimeStub(): Parameters<typeof createWorkerCommands>[0] {
   const bash = createBashExec({
     session: () => undefined,
     cwd: () => "/tmp",
-    confirm: async () => false,
+    confirm: async () => ({ allowed: false }),
     emitEvent: () => {},
     agentDir: "/tmp",
     defaultTimeoutMs: 100,

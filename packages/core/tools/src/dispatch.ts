@@ -38,11 +38,22 @@ function normalizeThrown(error: unknown): string {
   }
 }
 
-/** 决策形状门：非判别形态 → deny invalid-decision（fail-closed） */
+/** 决策形状门：非判别形态 → deny invalid-decision（fail-closed）；allow 的执行指令
+ *  附件白名单校验（exec∈{direct,contained}/escalatable===true），非法值整决策拒 */
 function gateDecision(value: unknown): PreExecuteDecision {
   if (typeof value === "object" && value !== null) {
     const record = value as Record<string, unknown>;
-    if (record["kind"] === "allow") return { kind: "allow" };
+    if (record["kind"] === "allow") {
+      const exec = record["exec"];
+      const escalatable = record["escalatable"];
+      if (exec !== undefined && exec !== "direct" && exec !== "contained") return { kind: "deny", reason: "invalid-decision" };
+      if (escalatable !== undefined && escalatable !== true) return { kind: "deny", reason: "invalid-decision" };
+      return {
+        kind: "allow",
+        ...(exec !== undefined ? { exec: exec as "direct" | "contained" } : {}),
+        ...(escalatable !== undefined ? { escalatable: true } : {}),
+      };
+    }
     if (record["kind"] === "deny" && (record["reason"] === undefined || typeof record["reason"] === "string")) {
       return { kind: "deny", reason: typeof record["reason"] === "string" ? record["reason"] : "" };
     }
@@ -97,7 +108,11 @@ function gateOutcome(raw: unknown): ToolOutcome {
   };
 }
 
-async function runBody(tool: ToolDefinition, request: ToolCallRequest): Promise<ToolOutcome> {
+async function runBody(
+  tool: ToolDefinition,
+  request: ToolCallRequest,
+  allow?: { readonly exec?: "direct" | "contained"; readonly escalatable?: true },
+): Promise<ToolOutcome> {
   let raw: unknown;
   try {
     raw = await tool.execute(request.args, {
@@ -106,6 +121,8 @@ async function runBody(tool: ToolDefinition, request: ToolCallRequest): Promise<
       signal: request.signal,
       ...(request.session !== undefined ? { session: request.session } : {}),
       ...(request.onOutput !== undefined ? { onOutput: request.onOutput } : {}),
+      ...(allow?.exec !== undefined ? { exec: allow.exec } : {}),
+      ...(allow?.escalatable !== undefined ? { escalatable: true } : {}),
     });
   } catch (error) {
     if (request.signal.aborted) return abortedOutcome();
@@ -160,7 +177,7 @@ export function createDispatcher(deps: DispatcherDeps): ToolRegistry["dispatch"]
         if (req.args !== request.args || req.name !== request.name || req.callId !== request.callId || req.session !== request.session) {
           return errorOutcome("request-altered");
         }
-        return runBody(tool, req);
+        return runBody(tool, req, decision.kind === "allow" ? decision : undefined);
       });
     } catch (error) {
       // 逃逸 throw（中间件 bug/内核层回卷/垃圾输入）：归一化为模型可读结果，dispatch 永不 reject

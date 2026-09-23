@@ -99,7 +99,7 @@ describe("进程契约 smoke", () => {
   }, 60_000);
 
   test("命令封闭集 61 锚（真进程无关——词表回归锚随进程面走）", () => {
-    expect(COMMAND_NAMES.length).toBe(61);
+    expect(COMMAND_NAMES.length).toBe(64);
   });
 
   test("stdout 纯净：无 heartbeat/response/event/hub_error/ui_request/thread_* 外的帧型", async () => {

@@ -292,31 +292,32 @@ describe("spawn 面（假 runtime 管道）", () => {
     }
   });
 
-  it("trustedCommands 直通：词表内命令免包裹+env 不清洗；词表外照旧包裹清洗", async () => {
-    const root = mkdtempSync(join(tmpdir(), "xh-sbxtrc-"));
+  it("执行指令分路：exec=direct 免包裹+env 不清洗；contained/缺席照旧包裹清洗", async () => {
+    const root = mkdtempSync(join(tmpdir(), "xh-sbxdir-"));
     const fake = makeFakeRuntime();
     try {
-      const { ctx, dispose } = await assemble(root, fake, { trustedCommands: ["echo"] });
-      const trusted = await ctx.use(execEnv).spawn({
-        argv: ["/bin/sh", "-c", "echo k=[$TRUSTED_PROBE_KEY]"],
+      const { ctx, dispose } = await assemble(root, fake, {});
+      const direct = await ctx.use(execEnv).spawn({
+        argv: ["/bin/sh", "-c", "echo k=[$DIRECT_PROBE_KEY]"],
         cwd: root,
-        env: { PATH: process.env.PATH ?? "/bin", TRUSTED_PROBE_KEY: "trusted-ok" },
+        env: { PATH: process.env.PATH ?? "/bin", DIRECT_PROBE_KEY: "direct-ok" },
+        exec: "direct",
       });
-      if (!trusted.ok) throw new Error(trusted.reason.detail);
-      const outT = (await drain(trusted.proc.stdout)).trim();
-      await trusted.proc.settled;
-      expect(outT).toBe("k=[trusted-ok]");
+      if (!direct.ok) throw new Error(direct.reason.detail);
+      const outD = (await drain(direct.proc.stdout)).trim();
+      await direct.proc.settled;
+      expect(outD).toBe("k=[direct-ok]"); // env 不清洗（受信面自带工具键）
       expect(fake.wraps).toEqual([]);
       const fenced = await ctx.use(execEnv).spawn({
-        argv: ["/bin/sh", "-c", "printf 'k=[%s]' \"$UNTRUSTED_KEY\""],
+        argv: ["/bin/sh", "-c", "echo k=[$FENCED_PROBE_KEY]"],
         cwd: root,
-        env: { PATH: process.env.PATH ?? "/bin", UNTRUSTED_KEY: "leak" },
+        env: { PATH: process.env.PATH ?? "/bin", FENCED_PROBE_KEY: "fenced-ok" },
       });
       if (!fenced.ok) throw new Error(fenced.reason.detail);
       const outF = (await drain(fenced.proc.stdout)).trim();
       await fenced.proc.settled;
-      expect(outF).toBe("k=[]"); // 词表外：清洗照旧
-      expect(fake.wraps).toHaveLength(1); // 包裹照旧
+      expect(outF).toBe("k=[]"); // 包裹路径 scrubEnv 清洗密钥键
+      expect(fake.wraps.length).toBe(1);
       await dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });

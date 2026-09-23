@@ -102,6 +102,15 @@ export class GrantsRegistry {
     return this.bucket(session).rules;
   }
 
+  /** 会话习得规则写入（origin=session——grant 记忆桶；evict 即焚，resume/fork 不复活） */
+  addRule(session: SessionId | undefined, rule: PermissionRule): void {
+    if (this.disposed) return; // fail-closed：seal 后拒新记录
+    const bucket = this.bucket(session);
+    if (!bucket.rules.some((existing) => existing.tool === rule.tool && existing.pattern === rule.pattern)) {
+      bucket.rules.push(rule);
+    }
+  }
+
   /** 域授权单飞：同 (session,domain) 并发只产生一次 ask；异域并行互不阻塞 */
   askDomainOnce(req: {
     readonly session: SessionId | undefined;

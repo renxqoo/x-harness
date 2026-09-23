@@ -69,7 +69,6 @@ export function createSandboxPlugin(options: SandboxOptions, runtime: SrtRuntime
         runtime,
         fenceOf,
         syncAllowlist,
-        trustedCommands: options.trustedCommands ?? [],
         isTornDown: () => tornDown,
       });
 

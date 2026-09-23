@@ -32,17 +32,18 @@ import {
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { createSkillPlugin } from "@x-harness/skill";
 import { createTodoToolsPlugin } from "@x-harness/todo-tools";
-import type { World } from "@x-harness/harness";
+import type { BasePromptFacts, World } from "@x-harness/harness";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { LlmAdapter, ThinkingLevel } from "@x-harness/llm";
+import { permissionBroker, permissionGrantStore } from "@x-harness/permission";
+import type { AskPayload, AskReply, PermissionProfile, PermissionRule, ProfileId, RuleEntry } from "@x-harness/permission";
 import type { RetryPolicy } from "@x-harness/llm-retry";
-import { permissionBroker } from "@x-harness/permission";
-import type { AskRequest } from "@x-harness/permission";
 import { foldDial, metaTailOf } from "../shared/meta-fold.ts";
 import { createScriptAdapter, scriptFromEnv } from "../shared/script-adapter.ts";
 import type { ScriptAdapter } from "../shared/script-adapter.ts";
 import { catalogEntryOf, resolveWorkerCatalog } from "../shared/worker-catalog.ts";
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
+import { projectSettingsPath, updateHubSettings, updateSettingsFile, userSettingsPath } from "../shared/settings-store.ts";
 import { thinkingLevelOf, thinkingUnsupported } from "./meta-state.ts";
 import { META_KEY_THINKING } from "./meta-state.ts";
 import { installExternalPlugins, uninstallExternalPlugins } from "./external-plugins.ts";
@@ -67,10 +68,16 @@ export interface AssemblyFields {
    *  丢弃并告警——不让 hub 默认打挂装配） */
   thinkingDefault?: ThinkingLevel;
   env?: Record<string, string | undefined>;
-  /** 权限 ask 桥：工具 ask → ui_request confirm（无桥 = 内核降级 deny） */
-  confirm?: (fields: { tool: string; reason: string }) => Promise<boolean>;
+  /** 权限 ask 桥：结构化 AskPayload → confirm（无桥 = 内核降级 deny） */
+  confirm?: (fields: { tool: string; reason: string; options?: readonly string[]; suggestedRule?: string; escalate?: { command: string; failureText: string } }) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>;
   /** 会话权限档初值（WAL 尾值 > 本入参 > hub-settings 默认——调用方排好） */
-  permissionMode?: "plan" | "auto" | "full";
+  permissionMode?: ProfileId;
+  /** 用户作用域规则条目（hub-settings permission.rules 的 user 份额——装配期快照） */
+  permissionUserRules?: readonly PermissionRule[];
+  /** 项目作用域规则条目（trusted 门禁后的 project 份额——装配期快照） */
+  permissionProjectRules?: readonly PermissionRule[];
+  /** 自定义档位行（hub-settings permission.profiles——已过形态与保留名校验） */
+  customProfiles?: readonly PermissionProfile[];
   /** skills 禁用名单（hub-settings skills.disabled——装配期快照） */
   skillsDisabled?: string[];
   /** 外部插件装载锚：审计目录 + 缺席跳过（测试直连装配无 agentDir——不兜底 cwd） */
@@ -151,15 +158,52 @@ function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined
   });
 }
 
-/** 权限 ask 桥插件：permissionBroker 服务提供者（confirm → ui_request confirm） */
-function permissionBrokerPlugin(confirm: (fields: { tool: string; reason: string }) => Promise<boolean>): Plugin {
+/** 权限 ask 桥插件：permissionBroker 服务提供者（结构化 AskPayload → ui_request confirm；
+ *  布尔退化应答 = allow-once/deny——记忆梯度由结构化应答承载） */
+function permissionBrokerPlugin(confirm: (fields: { tool: string; reason: string; options?: readonly string[]; suggestedRule?: string; escalate?: { command: string; failureText: string } }) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>): Plugin {
   return {
     name: "hub-permission-broker",
     apply: (ctx: Context): Disposer =>
       ctx.provide(permissionBroker, {
-        ask: async (input: AskRequest): Promise<"allow" | "deny"> => {
-          const approved = await confirm({ tool: input.tool, reason: input.reason });
-          return approved ? "allow" : "deny";
+        ask: async (input: AskPayload): Promise<AskReply> => {
+          const answer = await confirm({
+            tool: input.tool,
+            reason: input.reason,
+            ...(input.options.length > 0 ? { options: input.options } : {}),
+            ...(input.suggestedRule !== undefined ? { suggestedRule: input.suggestedRule } : {}),
+            ...(input.escalate !== undefined ? { escalate: input.escalate } : {}),
+          });
+          return {
+            verdict: answer.allowed ? "allow" : "deny",
+            ...(answer.memory !== undefined ? { memory: answer.memory } : {}),
+            ...(answer.ruleOverride !== undefined && answer.ruleOverride !== "" ? { ruleOverride: answer.ruleOverride } : {}),
+          };
+        },
+      }),
+  };
+}
+
+/** 习得规则持久面插件（U13）：project/user 记忆写入 settings 文件——唯一授权写入入口
+ *  之外的机器面（ask 批准经 permission 插件调此处）；非 trusted 工作区拒 project 写。 */
+function permissionGrantStorePlugin(fields: { readonly agentDir: string; readonly cwd: string; readonly trusted: boolean }): Plugin {
+  return {
+    name: "hub-permission-grant-store",
+    apply: (ctx: Context): Disposer =>
+      ctx.provide(permissionGrantStore, {
+        write: async (scope: "project" | "user", entry: RuleEntry): Promise<{ ok: true } | { ok: false; reason: string }> => {
+          if (scope === "project" && !fields.trusted) return { ok: false, reason: "project scope requires a trusted workspace" };
+          try {
+            const mutate = (current: { "permission.rules"?: RuleEntry[] }): { "permission.rules"?: RuleEntry[] } => {
+              const existing = current["permission.rules"] ?? [];
+              if (existing.some((r) => r.tool === entry.tool && r.pattern === entry.pattern && r.nature === entry.nature)) return current;
+              return { ...current, "permission.rules": [...existing, entry] };
+            };
+            if (scope === "user") await updateHubSettings(fields.agentDir, mutate);
+            else await updateSettingsFile(projectSettingsPath(fields.cwd), mutate);
+            return { ok: true };
+          } catch (error) {
+            return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+          }
         },
       }),
   };
@@ -247,6 +291,54 @@ async function installExternals(world: World, fields: AssemblyFields, deps?: Ass
   }
 }
 
+
+/** 内置配方（DESIGN §5）：base 提示词/会话/工具箱/围栏/审批桥/持久学习面/压缩/循环/
+ *  委派/技能/拨号挂点——字段由 assembleWorkerAgent 解析后传入 */
+function defaultWorkerPlugins(resolved: {
+  readonly fields: AssemblyFields;
+  readonly cwd: string;
+  readonly skillsDirs: readonly string[];
+  readonly agentsDirs: readonly string[];
+  readonly disabled: ReadonlySet<string>;
+  readonly adapters: readonly LlmAdapter[];
+  readonly contextWindow: number;
+  readonly dial: { provider: string; model: string };
+  readonly facts: BasePromptFacts;
+}): readonly Plugin[] {
+  const { fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts } = resolved;
+  return [
+    // base 系统提示词（与 CLI 同源 @x-harness/harness——身份/守则/环境块 + facts 插值）
+    ...promptKit(createBasePromptPlugin(facts)),
+    ...durableSessionKit({ root: fields.sessionsRoot }),
+    ...toolboxKit({ root: cwd }),
+    // 围栏（PERMISSION-V2）：裁决产出执行指令，sandbox 照办；保护路径双挡 settings 文件（U13）；
+    // bw 类 GUI 工具不再需要豁免词表——直通档天然免包裹（U1/U5）
+    ...fenceKit({
+      root: cwd,
+      ...(fields.permissionMode !== undefined ? { mode: fields.permissionMode } : {}),
+      ...(fields.permissionUserRules !== undefined ? { rules: fields.permissionUserRules } : {}),
+      ...(fields.permissionProjectRules !== undefined ? { projectRules: fields.permissionProjectRules } : {}),
+      ...(fields.customProfiles !== undefined ? { customProfiles: fields.customProfiles } : {}),
+      protectedPaths: [...(fields.agentDir !== undefined ? [userSettingsPath(fields.agentDir)] : []), projectSettingsPath(cwd)],
+    }),
+    ...(fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : []),
+    ...(fields.agentDir !== undefined ? [permissionGrantStorePlugin({ agentDir: fields.agentDir, cwd, trusted: fields.trusted })] : []),
+    ...meterKit(),
+    ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider } }),
+    commandsPlugin,
+    commandCompactPlugin,
+    ...autoCompactKit({ contextWindow }),
+    ...llmKit(adapters, { default: RETRY_POLICY }),
+    ...loopKit(),
+    ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
+    ...checkpointKit(),
+    createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
+    createAgentDelegationPlugin({ agentsDirs }),
+    createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
+    dialHookPlugin(),
+  ];
+}
+
 export async function assembleWorkerAgent(fields: AssemblyFields, deps?: AssemblyDeps): Promise<AssemblyResult> {
   const env = fields.env ?? process.env;
   const script = env["HUB_WORKER_PROVIDER"] === "script" ? createScriptAdapter(scriptFromEnv(env)) : undefined;
@@ -262,33 +354,8 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
   const adapters = buildAdapters(catalog, script);
   const contextWindow = contextWindowOf(catalog, dial);
 
-  const defaultPlugins: readonly Plugin[] = [
-    // base 系统提示词（与 CLI 同源 @x-harness/harness——身份/守则/环境块 + facts 插值）
-    ...promptKit(createBasePromptPlugin(facts)),
-    ...durableSessionKit({ root: fields.sessionsRoot }),
-    ...toolboxKit({ root: cwd }),
-    ...fenceKit({
-      root: cwd,
-      ...(fields.permissionMode !== undefined ? { mode: fields.permissionMode } : {}),
-      // bw（Browser Use on Bun.WebView）：GUI 浏览器工具——内核围栏表达不了（mach 服务/
-      // WebView 直连网络/自带 BW_API_KEY），执法归 permission 工具面，此处免包裹直通
-      trustedCommands: ["bw"],
-    }),
-    ...(fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : []),
-    ...meterKit(),
-    ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider } }),
-    commandsPlugin,
-    commandCompactPlugin,
-    ...autoCompactKit({ contextWindow }),
-    ...llmKit(adapters, { default: RETRY_POLICY }),
-    ...loopKit(),
-    ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
-    ...checkpointKit(),
-    createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
-    createAgentDelegationPlugin({ agentsDirs }),
-    createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
-    dialHookPlugin(),
-  ];
+  const defaultPlugins: readonly Plugin[] = defaultWorkerPlugins({ fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts });
+
   const plugins: readonly Plugin[] = deps?.worldPlugins?.(fields) ?? defaultPlugins;
 
   const world = await createAgentWorld({ plugins });

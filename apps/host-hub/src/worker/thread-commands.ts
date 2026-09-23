@@ -41,16 +41,16 @@ export async function workspaceTrusted(agentDir: string, cwd: string, selfTruste
 
 /** 分级设置读取：cwd ∈ 信任集时项目并入。返回合并值 + 来源事实（单次读取——
  *  快照语义无二次窗口） */
-async function effectiveSettings(agentDir: string, cwd: string, trusted: boolean): Promise<{ values: HubSettings; user: HubSettings; projectHit: boolean }> {
+async function effectiveSettings(agentDir: string, cwd: string, trusted: boolean): Promise<{ values: HubSettings; user: HubSettings; project: HubSettings; projectHit: boolean }> {
   const user = await readHubSettings(agentDir);
   const projectHit = await workspaceTrusted(agentDir, cwd, trusted);
-  if (!projectHit) return { values: user, user, projectHit };
+  if (!projectHit) return { values: user, user, project: {}, projectHit };
   const project = await readProjectSettings(cwd);
-  return { values: mergeSettings(user, project).values, user, projectHit };
+  return { values: mergeSettings(user, project).values, user, project, projectHit };
 }
 
 interface SessionParams {
-  paramMode: "plan" | "auto" | "full" | undefined;
+  paramMode: import("@x-harness/permission").ProfileId | undefined;
   paramLevel: string | undefined;
 }
 
@@ -67,7 +67,7 @@ function settingsParamsOf(input: SessionParamsInput): SessionParams {
   const rawLevel = typeof input.thinkingLevel === "string" ? input.thinkingLevel : undefined;
   return {
     // 词表外的垃圾入参静默降级（不落盘——与 thinkingLevel 同口径）
-    paramMode: typeof rawMode === "string" && PERMISSION_MODES.includes(rawMode) ? (rawMode as "plan" | "auto" | "full") : undefined,
+    paramMode: typeof rawMode === "string" && PERMISSION_MODES.includes(rawMode) ? (rawMode as import("@x-harness/permission").ProfileId) : undefined,
     paramLevel: rawLevel !== undefined && THINKING_LEVELS.includes(rawLevel as ThinkingLevel) ? rawLevel : undefined,
   };
 }
@@ -122,7 +122,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
 }): Promise<void> {
   const cwdHint = plan.cwdHint ?? plan.fields.cwd ?? process.cwd();
   const selfTrusted = rt.state.trusted || plan.input.trusted === true;
-  const { values: settings, user: userFile, projectHit } = await effectiveSettings(rt.agentDir, cwdHint, selfTrusted);
+  const { values: settings, user: userFile, project: projectFile, projectHit } = await effectiveSettings(rt.agentDir, cwdHint, selfTrusted);
   applyFallbackSnapshots(rt, { settings, userFile, projectHit });
   const params = settingsParamsOf(plan.input);
   const initialMode = params.paramMode ?? settings["permission.defaultMode"] ?? "auto";
@@ -132,8 +132,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
     confirm: (fields) => rt.broker.confirm(rt.state.threadId === "" ? "unassigned" : rt.state.threadId, fields),
     ...(settings["thinking.default"] !== undefined ? { thinkingDefault: settings["thinking.default"] } : {}),
     permissionMode: initialMode,
-    ...(settings["skills.disabled"] !== undefined ? { skillsDisabled: settings["skills.disabled"] } : {}),
-    ...(settings["plugins.disabled"] !== undefined ? { pluginsDisabled: settings["plugins.disabled"] } : {}),
+    ...permissionFieldsOf(settings, userFile, projectFile) as Partial<import("./assembly.ts").AssemblyFields>,
   });
   // 写前校验前置到接线前：拒绝发生在 state 落位之前——命令失败不残留半开线程
   const paramLevel = params.paramLevel;
@@ -428,4 +427,23 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
     }
     respond(rt, { id: input.id, command: "thread/stop" });
   }));
+}
+
+/** settings → 装配字段映射（skills/plugins 名单 + 规则两作用域 + 自定义档位——装配期快照） */
+function permissionFieldsOf(settings: HubSettings, userFile: HubSettings, projectFile: HubSettings): {
+  skillsDisabled?: readonly string[];
+  pluginsDisabled?: readonly string[];
+  permissionUserRules?: readonly import("@x-harness/permission").PermissionRule[];
+  permissionProjectRules?: readonly import("@x-harness/permission").PermissionRule[];
+  customProfiles?: readonly import("@x-harness/permission").PermissionProfile[];
+} {
+  const userRules = userFile["permission.rules"];
+  const projectRules = projectFile["permission.rules"];
+  return {
+    ...(settings["skills.disabled"] !== undefined ? { skillsDisabled: settings["skills.disabled"] } : {}),
+    ...(settings["plugins.disabled"] !== undefined ? { pluginsDisabled: settings["plugins.disabled"] } : {}),
+    ...(userRules !== undefined && userRules.length > 0 ? { permissionUserRules: userRules.map((entry) => ({ ...entry, origin: "user" as const })) } : {}),
+    ...(projectRules !== undefined && projectRules.length > 0 ? { permissionProjectRules: projectRules.map((entry) => ({ ...entry, origin: "project" as const })) } : {}),
+    ...(settings["permission.profiles"] !== undefined && settings["permission.profiles"].length > 0 ? { customProfiles: settings["permission.profiles"] } : {}),
+  };
 }

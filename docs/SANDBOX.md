@@ -18,7 +18,7 @@
 「完全访问」意志没传导到包裹层，与 full 网络被拒同根的第三次症状）。直通面 env 不清洗（总括
 授权下宿主工具键可达是「完全访问」的固有含义）；rootOverride（worktree）会话不受总括——照旧
 围栏（件13 隔离不变）；networkOff 宿主 kill switch 压过总括（壳仍在）。
-5. **宿主受信命令词表 `trustedCommands`**（缺省空；host-hub 装配 `['bw']`）：GUI/系统服务类
+5. **执行指令直通**（PERMISSION-V2：裁决产物 exec=direct 免包裹——GUI/系统服务类
 工具（浏览器等）内核围栏根本表达不了——执法归属 permission 工具面（bash 裁决管线照常拦截
 提权/注入/硬拒），spawn 面经 parseBash（permission 单一解析真相）**全段** argv0 匹配：每段都
 在词表内才免包裹直通 + env 不清洗；混入非受信段/动态展开/命令替换内嵌/解析失败 → 一律照旧
@@ -45,7 +45,7 @@ export interface SandboxOptions {
   readonly allowedDomains?: readonly string[]; // 宿主预授权域名（永不 ask——无 ask 面）
   readonly networkOff?: boolean;            // true=网络全断（白名单恒空、不并入授权）
   readonly allowLocalBinding?: boolean;     // 回环放行（缺省 true——用户裁决④；false=收回 stricter 档）
-  readonly trustedCommands?: readonly string[]; // 宿主受信命令（argv0 basename 词表——免包裹直通+env 不清洗）
+  // （执行指令经 SpawnRequest.exec 下发——词表机制已删，见 PERMISSION-V2-DESIGN §6.1）
 }
 
 export function createSandboxPlugin(options: SandboxOptions): Plugin;
@@ -119,7 +119,7 @@ interface Fence {
   isUnrestricted → `["*"]`)。
 
 **免包裹直通（两通道，任一命中即原生执行）**：① unrestricted 会话（`fence.unfenced`——裁决⑤
-修订）；② 宿主受信命令（`trustedCommands` 词表 + parseBash 全段 argv0 匹配，trusted.ts）。直通面
+修订）；② 执行指令直通（permission 裁决产物 exec=direct——U1/U15）。直通面
 原样 argv + **不清洗 env**（工具键直达；permission 工具面裁决照常先行——sandbox 只决定内核包裹
 去留）+ 显式物化 env（Bun.spawn 缺省继承是启动快照而非运行期 process.env——平台坑，不物化则
 运行期新增的工具键到不了子进程）。活句柄登记/逃逸复查/拆卸 fail-fast 与包裹路径完全一致。
@@ -177,7 +177,7 @@ srt 违规记录/调试日志可归因到会话（消费面后续件；现在仅
   空格/单引号/换行/utf-8）；scrubEnv（KEY|PASSWORD|SECRET|TOKEN 命中与误伤邻词）；
   mergeAllowlists/sameDomainSet。
 - **插件生命周期**：apply（依赖 ok→attach→init）；依赖缺失 throw（注入缝）；**并发首装串行化**；
-  **unrestricted/trustedCommands 直通**（wrap 不触、KEY 类 env 直达、词表外照旧包裹清洗——
+  **unrestricted/exec=direct 直通**（wrap 不触、KEY 类 env 直达、contained/缺席照旧包裹清洗——
   bw 症状回归锚）；**trusted 全段匹配表**（混段/动态/注入内嵌/引号内 ; 段不误判）；
   （Promise.all 双世界恰一次 start）；多实例共享（并集/先退收缩/末退 reset/顺序复用）；
   **wrap 抛错收殓判别联合**；**detach 抛错不阻断服务下线**；dispose 后 spawn fail-fast；
