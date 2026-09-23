@@ -12,6 +12,7 @@
     "e2e:llm": "bun run src/__test__/llm-e2e.ts"
   },
   "dependencies": {
+    "@sinclair/typebox": "^0.34.0",
     "@x-harness/agent-delegation": "workspace:*",
     "@x-harness/agent-loop": "workspace:*",
     "@x-harness/autocompact": "workspace:*",

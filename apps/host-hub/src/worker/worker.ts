@@ -7,6 +7,7 @@ import { CONFIRM_TIMEOUT_MS, WORKER_LINE_LIMIT, readLimits } from "../shared/lim
 import { OBSERVER_COMMANDS, WORKER_BACKEND_ID, WORKER_PROTOCOL_VERSION } from "../protocol/internal.ts";
 import { responseFrame, hubErrorFrame } from "../protocol/frames.ts";
 import { hubError } from "../shared/errors.ts";
+import { createPluginProposalStore } from "../shared/plugin-proposals.ts";
 import { takeOverStdout } from "../shared/stdout-guard.ts";
 import { createJsonlSplitter } from "../shared/jsonl.ts";
 import { createDialogBroker } from "./dialogs.ts";
@@ -99,8 +100,10 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     onStateChange: () => {},
   });
 
+  const proposals = createPluginProposalStore(boot.agentDir);
   const rt: WorkerRuntime = {
     state,
+    proposals,
     emitLine: (line) => void writer.write(line),
     agentDir: boot.agentDir,
     sessionsRoot: boot.sessionsRoot,

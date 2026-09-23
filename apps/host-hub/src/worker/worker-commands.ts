@@ -80,6 +80,8 @@ export interface WorkerRuntime {
   thinkingFallback?: { level: ThinkingLevel; source: "project" | "user" } | undefined;
   /** permission 回退来源快照（WAL 无会话档时 get_mode 的四态 source） */
   permissionModeSource?: "project" | "user" | "default" | undefined;
+  /** 插件提案暂存面（plugin_propose 工具 ↔ host trusted_source 命令共享；缺省缺席 = 工具不装） */
+  proposals?: import("../shared/plugin-proposals.ts").PluginProposalStore;
 }
 
 export type CommandInput = { id?: string; [key: string]: unknown };

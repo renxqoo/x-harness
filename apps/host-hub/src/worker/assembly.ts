@@ -31,6 +31,7 @@ import {
 } from "@x-harness/harness";
 import { createAgentDelegationPlugin, userAgentsDirOf } from "@x-harness/agent-delegation";
 import { createSkillPlugin } from "@x-harness/skill";
+import { createPluginProposePlugin } from "./plugin-propose.ts";
 import { createTodoToolsPlugin } from "@x-harness/todo-tools";
 import type { BasePromptFacts, World } from "@x-harness/harness";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
@@ -84,6 +85,8 @@ export interface AssemblyFields {
   agentDir?: string;
   /** plugins 禁用名单（hub-settings plugins.disabled——装配期快照；缺省全装载） */
   pluginsDisabled?: string[];
+  /** 插件提案暂存面（plugin_propose 工具登记；host↔worker 同进程共享实例注入） */
+  proposalStore?: import("../shared/plugin-proposals.ts").PluginProposalStore;
 }
 
 export interface AssemblyResult {
@@ -346,6 +349,12 @@ function defaultWorkerPlugins(resolved: {
     createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
     createAgentDelegationPlugin({ agentsDirs, resolveProviderOf: providerOfModel(catalog) }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
+    ...(fields.proposalStore !== undefined
+      ? [createPluginProposePlugin({
+          confirm: (ask) => (fields.confirm !== undefined ? fields.confirm(ask) : Promise.resolve({ allowed: false })),
+          record: (proposal) => fields.proposalStore!.record(proposal),
+        })]
+      : []),
     dialHookPlugin(),
   ];
 }

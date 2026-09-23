@@ -125,6 +125,9 @@ export const COMMAND_NAMES: readonly string[] = [
   "plugins/remove",
   "plugins/hot_install",
   "plugins/hot_uninstall",
+  "plugins/trusted_source/list",
+  "plugins/trusted_source/confirm",
+  "plugins/trusted_source/reject",
 ] as const;
 
 export function isKnownCommand(type: string): boolean {

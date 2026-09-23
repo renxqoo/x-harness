@@ -129,6 +129,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
   const assembled = await assembleWorkerAgent({
     ...plan.fields,
     agentDir: rt.agentDir, // 外部插件装载锚（fork 重装配同经本腿——三路同源）
+    ...(rt.proposals !== undefined ? { proposalStore: rt.proposals } : {}),
     confirm: (fields) => rt.broker.confirm(rt.state.threadId === "" ? "unassigned" : rt.state.threadId, fields),
     ...(settings["thinking.default"] !== undefined ? { thinkingDefault: settings["thinking.default"] } : {}),
     permissionMode: initialMode,

@@ -24,6 +24,7 @@ import { knownSkillNames, listSkills, removeSkill, setSkillEnabled } from "./ski
 import { inspectSkillSources, installSkill } from "./skills-install.ts";
 import { builtinNotRemovable, listPlugins, setPluginEnabled } from "./plugins-admin.ts";
 import { inspectPluginSources, installPlugin, removePlugin } from "./plugins-install.ts";
+import { createPluginProposalStore } from "../shared/plugin-proposals.ts";
 import { SKILL_IMPORT_MAX_BYTES, SKILL_IMPORT_MAX_ENTRIES } from "../shared/limits.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import type { TrustStore } from "./trust-store.ts";
@@ -260,11 +261,50 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       const outcome = await listPlugins({ agentDir: deps.agentDir });
       deps.respond(id, "plugins/list", { data: { plugins: outcome.plugins } });
     });
+    // agent 注册链（§5）：提案列表/确认/拒绝——确认只是数据置位；装载门在 install
+    handlers.set("plugins/trusted_source/list", async (_input, id) => {
+      const store = createPluginProposalStore(deps.agentDir);
+      const proposals = await store.list();
+      deps.respond(id, "plugins/trusted_source/list", { data: { proposals } });
+    });
+    handlers.set("plugins/trusted_source/confirm", async (input, id) => {
+      const proposalId = typeof input.proposalId === "string" ? input.proposalId : "";
+      const store = createPluginProposalStore(deps.agentDir);
+      const done = await store.setConfirmed(proposalId, true);
+      if (!done) {
+        deps.respond(id, "plugins/trusted_source/confirm", { error: hubError("state_conflict", `unknown or expired proposal: ${proposalId}`) });
+        return;
+      }
+      deps.respond(id, "plugins/trusted_source/confirm", {});
+    });
+    handlers.set("plugins/trusted_source/reject", async (input, id) => {
+      const proposalId = typeof input.proposalId === "string" ? input.proposalId : "";
+      const store = createPluginProposalStore(deps.agentDir);
+      const done = await store.setConfirmed(proposalId, false);
+      if (!done) {
+        deps.respond(id, "plugins/trusted_source/reject", { error: hubError("state_conflict", `unknown or expired proposal: ${proposalId}`) });
+        return;
+      }
+      deps.respond(id, "plugins/trusted_source/reject", {});
+    });
     handlers.set("plugins/inspect", async (input, id) => {
       const outcome = await inspectPluginSources({ sourcePaths: input.sourcePaths });
       deps.respond(id, "plugins/inspect", outcome.ok ? { data: { results: outcome.results } } : { error: outcome.error });
     });
     handlers.set("plugins/install", async (input, id) => {
+      // agent 发起源的硬门：必须携带已确认 proposalId（一次性消费——防重放与伪造）
+      if (input.origin === "agent") {
+        const proposalId = typeof input.proposalId === "string" ? input.proposalId : "";
+        const proposal = await createPluginProposalStore(deps.agentDir).consumeConfirmed(proposalId);
+        if (proposal === undefined) {
+          deps.respond(id, "plugins/install", { error: hubError("state_conflict", `unconfirmed or consumed proposal: ${proposalId} (agent-origin installs require a user-confirmed proposal)`) });
+          return;
+        }
+        if (proposal.sourcePath !== input.sourcePath) {
+          deps.respond(id, "plugins/install", { error: hubError("invalid_input", `proposal source mismatch: ${proposal.sourcePath} != ${String(input.sourcePath)}`) });
+          return;
+        }
+      }
       const outcome = await installPlugin({
         sourcePath: input.sourcePath,
         overwrite: input.overwrite,
