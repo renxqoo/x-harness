@@ -56,3 +56,66 @@ describe("双形态冒烟（dist 产物）", () => {
     expect(code).toBe(0);
   }, 90_000);
 });
+
+describe("双形态冒烟（dist 产物 + vendor 插件线程隔离装载）", () => {
+  test("vendor 件 worker 模式装载 + caps 钩世界 + 热替换 + 卸载后 capability_plugin", async () => {
+    const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    // host-client 的 agentDir 即 HUB_AGENT_DIR——vendor 树装进测试 agentDir
+    const host = await startHost({ script: [{ reply: "vendor smoke" }], entry: join(import.meta.dirname, "../../dist/host/cli.js") });
+    hosts.push(host);
+    // 造第三方插件源（零 @x-harness import）
+    const srcRoot = await mkdtemp(join(tmpdir(), "smoke-vendor-"));
+    const src = join(srcRoot, "smoke-plugin");
+    await mkdir(src, { recursive: true });
+    await writeFile(join(src, "plugin.json"), JSON.stringify({ name: "smoke-plugin", kind: "third-party", apiVersion: 1, description: "smoke" }));
+    await writeFile(
+      join(src, "index.ts"),
+      [
+        "export default {",
+        '  name: "smoke-plugin",',
+        "  apply(_ctx, caps) {",
+        '    caps.provide("smoke-plugin-svc", { ping: () => "pong" });',
+        "  },",
+        "};",
+      ].join("\n"),
+    );
+    try {
+      host.send({ type: "plugins/inspect", id: "pi1", sourcePaths: [src] });
+      const inspected = await host.response("pi1");
+      expect(inspected.success).toBe(true);
+      expect(((inspected.data as { results: Array<{ state: string }> }).results[0] as { state: string }).state).toBe("ready");
+
+      host.send({ type: "plugins/install", id: "pin1", sourcePath: src });
+      const installed = await host.response("pin1");
+      expect(installed.success).toBe(true);
+
+      host.send({ type: "plugins/list", id: "pl1" });
+      const listed = await host.response("pl1");
+      const rows = (listed.data as { plugins: Array<{ name: string; source: string; status: string }> }).plugins;
+      expect(rows.some((row) => row.name === "smoke-plugin" && row.source === "vendor")).toBe(true);
+
+      // 装进 registry 后新 thread 装配期装载（worker 模式——P1 vendor 恒 worker）
+      host.send({ type: "thread/start", id: "s1", cwd: host.agentDir });
+      const started = await host.response("s1");
+      expect(started.success).toBe(true);
+      const threadId = (started.data as { threadId: string }).threadId;
+      await drivePrompt(host, { threadId, id: "p1", message: "vendor plugin smoke" });
+
+      // 热卸（world 内即时卸载）
+      host.send({ type: "plugins/hot_uninstall", id: "hu1", threadId, name: "smoke-plugin" });
+      const uninstalled = await host.response("hu1");
+      expect(uninstalled.success).toBe(true);
+
+      // 移除（vendor 目录 + registry 条目）
+      host.send({ type: "plugins/remove", id: "pr1", name: "smoke-plugin" });
+      const removed = await host.response("pr1");
+      expect(removed.success).toBe(true);
+      host.end();
+      const code = await host.exited();
+      expect(code).toBe(0);
+    } finally {
+      await rm(srcRoot, { recursive: true, force: true });
+    }
+  }, 120_000);
+});

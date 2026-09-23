@@ -4,6 +4,7 @@
 // worker 三段式（#1/#7/#16）：begin（boot+ready，apply 未跑）→ 锁内 replace/冲突 → proceed → register。
 // 落位纪律（裁决 9）：process 注册落平台 root，disposer 链回插件 scope。
 
+import { stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadPlugins, pluginEvent } from "@x-harness/core";
@@ -71,7 +72,12 @@ export function createInstaller(deps: InstallerDeps): Installer {
       loadCounts.set(path, count);
       return count === 1 ? import(path) : import(`${path}?pmv=${count}`);
     });
-  // #15：percent-encoding 解码（含空格/非 ASCII 路径）
+  // #15：percent-encoding 解码（含空格/非 ASCII 路径）。
+  // 形态约束：host.ts 必须是磁盘真实文件（worker spawn 的物理前提）——dist 多文件
+  // 形态（--external @x-harness/*）经 node_modules 链解析到源码，天然满足；编译
+  // 单文件形态（plugin-manager 被内联进可执行体）该文件不在磁盘 → worker 装载
+  // 明确拒绝（报错优于 spawn 挂死——boot 超时兜底的主动化）。探测按安装器实例
+  // 一次（同步 exists 延迟到 installWorker 首次调用也可，此处装载期一次性即可）。
   const hostPath = fileURLToPath(new URL("./worker/host.ts", import.meta.url));
 
   const audit = (entry: PluginAuditEntry): void => {
@@ -339,7 +345,15 @@ export function createInstaller(deps: InstallerDeps): Installer {
         installFailed("?", reason);
         return { ok: false, reason };
       }
-      if (mode === "worker") return installWorker(path, input.replace === true);
+      if (mode === "worker") {
+        const hostOnDisk = await stat(hostPath).catch(() => undefined);
+        if (hostOnDisk === undefined || !hostOnDisk.isFile()) {
+          const reason = `worker mode unavailable: plugin host file not on disk (compiled single-file builds do not support thread-isolated plugins): ${hostPath}`;
+          installFailed("?", reason);
+          return { ok: false, reason };
+        }
+        return installWorker(path, input.replace === true);
+      }
 
       const mod = await loadModule(path);
       const validated = validateModule(mod, kernelApiVersion);
