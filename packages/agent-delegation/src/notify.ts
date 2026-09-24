@@ -13,7 +13,8 @@ import type { ChildRow } from "./lineage.ts";
  *  追具体信息走对话，无二次读动词）。 */
 export function summaryLines(summary: string, cap: number): string[] {
   if (summary.length <= cap) return [summary];
-  return [summary.slice(0, cap), `[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics]`];
+  // 件15 批2：追加文件中转半句——截断残余的可靠回传路径（P1：文件中转对模型可见）
+  return [summary.slice(0, cap), `[report truncated at ${String(cap)} chars; use agent_message to ask the agent for specifics, or have it write the full content to a file]`];
 }
 
 export interface NotifyDeps {

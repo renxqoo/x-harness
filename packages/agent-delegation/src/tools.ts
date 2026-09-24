@@ -62,7 +62,7 @@ const messageSchemaOf = (reportCap: number) =>
     }),
     message: Type.String({
       maxLength: reportCap,
-      description: "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention.",
+      description: "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention. For long content, write it to a file and send a short message with the file path instead of inlining it.",
     }),
     summary: Type.Optional(Type.String({
       description: 'A 5-10 word label for your own transcript row (not transmitted — the recipient previews the first line of `message`). Truncated to 500 characters rather than rejected.',

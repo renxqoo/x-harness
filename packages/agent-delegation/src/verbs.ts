@@ -45,9 +45,10 @@ export async function message(deps: VerbDeps, caller: SessionId | undefined, inp
   if (input.notify_when_idle === true) return notifyWhenIdle(deps, caller, input);
   if (input.message === undefined) return { ok: false, reason: "invalid-args:message is required unless notify_when_idle is set" };
   const resolved = resolveAddress(deps.lineage, caller, input.to);
-  if (resolved.kind === "miss") return crossFallback(deps, caller, { input: { ...input, message: input.message as string }, missReason: resolved.reason });
-  if (resolved.kind === "main") return deliverToMain(deps, caller, input.message);
-  return deliverToRow(deps, resolved.row, input.message);
+  // summary 回显统一出口（件15 D7）：三条投递路径（miss→跨进程/复活、main、子行）全覆盖
+  if (resolved.kind === "miss") return echoSummary(await crossFallback(deps, caller, { input: { ...input, message: input.message as string }, missReason: resolved.reason }), input);
+  if (resolved.kind === "main") return echoSummary(deliverToMain(deps, caller, input.message), input);
+  return echoSummary(deliverToRow(deps, resolved.row, input.message), input);
 }
 
 /** notify_when_idle（§4.4/§5.4）：仅根会话 + 仅跨进程 box 目标（进程内子走完成通知） */
@@ -59,12 +60,13 @@ async function notifyWhenIdle(deps: VerbDeps, caller: SessionId, input: MessageI
     return { ok: false, reason: "invalid-args:notify_when_idle targets a local session (cross-process); in-process sub-agents notify you on completion already" };
   }
   if (deps.cross === undefined) return { ok: false, reason: "invalid-args:no local mailbox is configured" };
-  return echoSummary(await sendCross(deps.cross, caller, input), input);
+  return echoSummary(await sendCross(deps.cross, caller, input), input); // notifyWhenIdle 提前分支（不回 message() 出口——此处自包装）
 }
 
-/** summary 截断回显（§2.1：不传输、仅发方可见——等价物=结果回显） */
+/** summary 截断回显（§2.1：不传输、仅发方可见——等价物=结果回显；件15 D7 统一出口
+ *  三投递路径全覆盖 + 空串守卫——schema 已去上限（批1），此处是截断承诺的唯一兑现点） */
 function echoSummary(sent: VerbOutcome, input: MessageInput): VerbOutcome {
-  if (!sent.ok || input.summary === undefined) return sent;
+  if (!sent.ok || input.summary === undefined || input.summary === "") return sent;
   const cut = input.summary.slice(0, SUMMARY_CAP);
   return { ok: true, text: `${sent.text} (summary: ${cut}${input.summary.length > SUMMARY_CAP ? "…" : ""})` };
 }

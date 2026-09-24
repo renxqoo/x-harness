@@ -46,6 +46,7 @@ describe("报告全文单次交付", () => {
     const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 100"), { timeout: 5_000 });
     expect(lastNotice()).toContain("use agent_message to ask the agent for specifics"); // 追问走对话，非读动词
+    expect(lastNotice()).toContain("or have it write the full content to a file"); // 件15 批2：文件中转半句——长内容正解可见
     await parent.dispose();
   });
 });
