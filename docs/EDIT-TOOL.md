@@ -49,15 +49,15 @@ edit(path, edits: [{oldText, newText}, ...])
 
 **TRUNCATED-TOOL-RESCUE 接入**：零改动——rescue-plugin 的 `name.includes("edit")` 分支已在 v1 落地（`new_string` 提取）；edit 工具参数里最大的字符串就是 newText，截断抢救自然生效。方案文档批 2 节的抢救表已在等这个工具。
 
-**系统提示（对抗审查 C 件 4——落点重写）**：用法守则走 `createToolPlugin({ guidance })` 停靠 system-prompt 的 `tool/edit` 段（tool-core tool-plugin.ts:34-47 投稿机制——pi promptGuidelines 4 条的 x-harness 等价物，tool-bash bashGuidance 先例）：唯一性/不重叠合并/最小上下文/对原文匹配非增量。description 只留工具自述；write 的 description 补分流句（for targeted changes prefer edit）。base-prompt.ts:79 已预埋 edit 一词（"Prefer dedicated tools (file read, edit, write)"）——本工具落地使该预埋成为真实承诺，无需改基础段。
+**系统提示（对抗审查 C 件 4——落点重写）**：用法守则走 `createToolPlugin({ guidance })` 停靠 system-prompt 的 `tool/edit` 段（tool-core tool-plugin.ts:34-47 投稿机制——pi promptGuidelines 4 条的 x-harness 等价物，tool-bash bashGuidance 先例）：唯一性/不重叠合并/最小上下文/**非增量匹配（双层说——契约段 + guidance + description 三处，pi edit.ts:37/48 双层同款，A 件 3）**。description 只留工具自述；write 的 description 补分流句（for targeted changes prefer edit）。base-prompt.ts:79 已预埋 edit 一词（"Prefer dedicated tools (file read, edit, write)"）——本工具落地使该预埋成为真实承诺，无需改基础段。
 
 ## 测试口径（对抗审查 C 件 5——按 pi 全集 ~40 例起列）
 
-- **edit-apply 纯函数**：精确命中/多处命中拒/未命中拒/重叠拒/空 oldText 拒/无变化拒；**部分失败不部分落盘**（任一 edit 失败全批拒——原子性断言）；多 edit 逆序应用偏移稳定。
+- **edit-apply 纯函数**：精确命中/多处命中拒/未命中拒/重叠拒/空 oldText 拒/**归一后空 oldText 拒**（NBSP/零宽类单字符经归一变空——pi 对此是 matchLength=0 按位置静默插入，实测缺陷，x-harness 版必须在 fuzzy 判定前显式 EMPTY_OLD_TEXT 拒——对抗审查 A 件 2）/无变化拒；**部分失败不部分落盘**（任一 edit 失败全批拒——原子性断言）；多 edit 逆序应用偏移稳定；**重叠口径 = 归一空间字符串偏移**（pi edit-diff.ts:341-350 同款——行块只做合并分组不做拒绝，否则同行不相交的两 edit 被误拒——A 件 3）；**唯一性口径 = 精确批次按原文字面计数、模糊批次按归一计数**（pi 现状对「精确唯一但归一多处」会拒精确命中——实测 C1；x-harness 放行精确批次、DUPLICATE 文案注明计数口径——A 件 4 裁决）；**模糊命中附带损伤固化为断言**（命中行内匹配区外的智能引号被归一、触碰块内行尾空白被剥——明知接受写成测试，不留未定义行为——A 件 7）。
 - **模糊匹配（13 例规模——pi 踩坑面全集）**：五归一各形（中文引号/智能引号/破折号/NBSP/NFKC/行尾空白）；**精确优先于模糊**（文件同时存在精确命中与可模糊命中处——走精确）；**归一后重复检测**（原文两处经归一变相同 → DUPLICATE 独立触发面）；**模糊替换后与邻行同文的保真**（fuzzy-preserve-duplicate-line——pi 真坑，错则换错位置）；模糊命中未触行字节保真；多 edit 混合精确/模糊。
 - **CRLF/BOM（7 例规模）**：LF oldText 对 CRLF 文件；**跨行尾形态的重复检测**（CRLF 处与 LF 处归一后同文）；CRLF/LF 混合文件多 edit；BOM+CRLF 叠加；BOM round-trip。
 - **edit 工具**：门三态（未读拒/读后改过拒/读后未变过——bash 改后 STALE 链）；越根/穿越拒；目录/非常规文件拒；成功回显含 diff；写后登记（edit→write 连续不拒）。
-- **diff 组装**（三方包背书算法——只测组装面）：上下文 4 行窗口/firstChangedLine 提取/空文件边界。
+- **diff 组装**（三方包背书算法——只测组装面）：**每行带新/旧双轨行号**（pi generateDiffString 形态——超长行内字符级变化在行 diff 下模型靠行号定位；A 件 5）；diff 基底 = LF 归一串（`baseContent: normalizedContent`——pi 同款；fuzzy 批次 diff 显示归一形是已知偏差：模型照抄 diff 文本构造下轮 oldText 会再走 fuzzy 匹配——自洽可接受，记档）；上下文 4 行窗口/firstChangedLine 提取/空文件边界。
 - **装配**：toolboxKit 含 edit；三件套同源（read→edit→write 链路）；guidance 停靠 `tool/edit` 段断言。
 - **回归**：write 既有用例不破；rescue-plugin edit 分支用**真 edit 名 + 真 schema 参数形态**（`{"path":..,"edits":[{"oldText":..,"newText":"半截`）——末条 newText 提取 + note 新文案。
 
