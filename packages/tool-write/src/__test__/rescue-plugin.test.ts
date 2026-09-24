@@ -76,12 +76,18 @@ describe("createTruncatedWriteRescuePlugin（write/edit 命中与让位）", () 
     expect(existsSync(join(root, "out.ts"))).toBe(false); // 目标文件不动
   });
 
-  it("edit 命中 new_string（含 edit 的工具名大小写不敏感）：物化 + edit 文案逐字", async () => {
-    const r = await dispatchPermitted("FileEdit", `{"path":"src/a.ts","new_string":"${LONG}`);
+  it("edit 命中 edits[] 末条 newText（真 schema 形态）：物化 + 数组感知文案逐字", async () => {
+    const raw = `{"path":"src/a.ts","edits":[{"oldText":"const a = 1;","newText":"const a = 2;"},{"oldText":"// tail","newText":"${LONG}`;
+    const r = await dispatchPermitted("edit", raw);
     expect(r).toEqual({
-      note: `Recovered ${String(LONG.length)} chars of the truncated edit's new_string to src/a.ts.partial (draft — src/a.ts NOT modified). Read it, re-issue the edit with the replacement text in smaller pieces, then delete the .partial.`,
+      note: `Recovered ${String(LONG.length)} chars of the last edit's newText in the truncated edit call to src/a.ts.partial (draft — src/a.ts NOT modified). Read it, re-issue the edits in smaller, separate edit calls, then delete the .partial.`,
     });
     expect(readFileSync(join(root, "src/a.ts.partial"), "utf8")).toBe(LONG);
+  });
+
+  it("edit 无 edits 键（形态不符）→ 让位；含 edit 的其它工具名不再误命中", async () => {
+    expect(await dispatchPermitted("edit", `{"path":"a.ts","newText":"${LONG}`)).toBeUndefined(); // 无 edits 键
+    expect(await dispatchPermitted("FileEdit", `{"path":"a.ts","new_string":"${LONG}`)).toBeUndefined(); // 抢救表明为精确名 edit
   });
 
   it("其他工具名（bash）→ 让位（透传 next = undefined，不落盘）", async () => {

@@ -1,5 +1,5 @@
 // 截断 write/edit 半截产出抢救插件（docs/TRUNCATED-TOOL-RESCUE.md 层 2）：挂
-// agentTruncatedTool waterfall，把半截参数里的 content/new_string 前缀物化成
+// agentTruncatedTool waterfall，把半截参数里的 content（write）/末条 newText（edit）前缀物化成
 // <target>.partial sidecar。waterfall 中间件纪律：必调 next、让位 = 透传下游、不以
 // throw 表达策略。
 //
@@ -21,6 +21,7 @@ import type { PermissionRule } from "@x-harness/permission";
 import { relative } from "node:path";
 import { realpathSync } from "node:fs";
 import { extractStringField } from "./extract-string-field.ts";
+import { extractLastEditText } from "./extract-last-edit-text.ts";
 
 /** 微型半截不值得一次 read 往返——低于此字符数不物化（稳定语义代码常量，不进配置面） */
 const MIN_RESCUE_CHARS = 512;
@@ -87,7 +88,9 @@ export function createTruncatedWriteRescuePlugin(input: TruncatedRescueInput): P
           if (downstream !== undefined) return downstream; // 上游中间件已抢救 → 让位
           const kind = toolKindOf(payload.name);
           if (kind === undefined) return downstream;
-          const { path, value } = extractStringField(payload.arguments, kind.field);
+          // write：顶层单键提取；edit：edits[] 数组内末条 newText（截断点大概率在最后的
+          // in-flight 条目——与 pi-events「截断只可能命中最后一个 in-flight 块」同推论）
+          const { path, value } = kind.edit === true ? extractLastEditText(payload.arguments) : extractStringField(payload.arguments, kind.field);
           if (path === undefined || path === "" || value === undefined) return downstream; // 目标不可名/空 path → 无可抢救
           if (value.length < MIN_RESCUE_CHARS) {
             return { note: `truncated arguments too short to be worth a draft (${String(value.length)} chars)` };
@@ -116,8 +119,15 @@ function relPathWithin(absolute: string, root: string, realpathOf: (p: string) =
   return rel.startsWith("..") ? absolute : rel;
 }
 
-/** 抢救表：write 提 content、*edit* 提 new_string（大小写不敏感覆盖 edit 工具命名）；其余工具不在表内 */
-function toolKindOf(name: string): { readonly field: string; readonly note: (f: { readonly chars: number; readonly lines: number; readonly path: string }) => string } | undefined {
+/** 抢救表：write 提顶层 content、edit（精确名）提 edits[] 末条 newText；其余工具不在表内 */
+interface RescueKind {
+  readonly field: string;
+  /** true = edit 形态（edits[] 数组感知提取） */
+  readonly edit?: true;
+  readonly note: (f: { readonly chars: number; readonly lines: number; readonly path: string }) => string;
+}
+
+function toolKindOf(name: string): RescueKind | undefined {
   const lower = name.toLowerCase();
   if (lower === "write") {
     return {
@@ -125,10 +135,11 @@ function toolKindOf(name: string): { readonly field: string; readonly note: (f: 
       note: (f) => `Recovered ${String(f.chars)} chars (${String(f.lines)} lines) of the truncated write to ${f.path}.partial (draft — ${f.path} NOT modified). Read it, produce the remainder as a separate file, assemble with bash, then delete the .partial.`,
     };
   }
-  if (lower.includes("edit")) {
+  if (lower === "edit") {
     return {
-      field: "new_string",
-      note: (f) => `Recovered ${String(f.chars)} chars of the truncated edit's new_string to ${f.path}.partial (draft — ${f.path} NOT modified). Read it, re-issue the edit with the replacement text in smaller pieces, then delete the .partial.`,
+      field: "newText",
+      edit: true,
+      note: (f) => `Recovered ${String(f.chars)} chars of the last edit's newText in the truncated edit call to ${f.path}.partial (draft — ${f.path} NOT modified). Read it, re-issue the edits in smaller, separate edit calls, then delete the .partial.`,
     };
   }
   return undefined;

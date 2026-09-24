@@ -152,7 +152,7 @@ export const agentTruncatedTool = defineWaterfall<
 | 工具 | 提取字段 | 提取器 | sidecar 内容 |
 |---|---|---|---|
 | write | `path` + `content`（单字符串） | 字符串字段提取器 | content 前缀 |
-| edit | `path` + `new_string`（单字符串） | 同一提取器（参数化字段名） | new_string 前缀 |
+| edit | `path` + `edits[].newText`（数组末条——EDIT-TOOL 落地后的真形态） | `extractLastEditText`（数组感知：末条 newText + path 限定 edits 键前顶层段） | 末条 newText 前缀 |
 
 提取器为**一个**参数化纯函数 `extractStringField(raw: string, field: string): { path?: string; value?: string }`——write 传 `"content"`、edit 传 `"new_string"`，扩展点明确（后续工具加行即入表）。
 
