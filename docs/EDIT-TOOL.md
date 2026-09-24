@@ -25,7 +25,7 @@ edit(path, edits: [{oldText, newText}, ...])
 
 ## 实施形态（x-harness 架构对齐）
 
-**新包 packages/tool-edit**（一动词一文件，参照 tool-write 结构）：
+**新包 packages/tool-edit**（TOOLBOX.md §0「一命令一包」——第 5 个命令 = 新包 + createToolPlugin，内核与其余命令包零改动；非「一动词一文件」——那是文件内组织纪律非包边界判据，对抗审查 C 件 2 修正）：
 
 | 文件 | 职责 |
 |---|---|
@@ -39,21 +39,25 @@ edit(path, edits: [{oldText, newText}, ...])
 2. **diff 生成**：引 npm `diff` 依赖（pi 同款 8.x——`diffLines` + `createTwoFilesPatch`）。裁决（用户拍板）：不自写 LCS——边界坑（末行无换行/行内多改动块分割/hunk 合并）三方包已踩平，自写的隐性成本高于一行依赖；pi 同版本号背书。
 3. **错误回显**：pi 用 throw + 全局包装；x-harness 用判别联合 `{content, isError}`（AGENTS.md 风格门）。错误文案带可行动指引（NOT_FOUND 提示精确含空白、DUPLICATE 提示加长上下文、OVERLAP 提示合并——pi 文案风格保留）。
 4. **abort 语义**：pi 的 throwIfAborted 逐 await 检查；x-harness 工具执行面已有 signal 约定（ToolExecContext）——对齐即可，互斥释放走 observed.locked 的 finally（与 write 同构）。
-5. **inputSchema 用 TypeBox**（pi 也是 typebox——直接同构）；pi 的 prepareArguments 模型容错（edits 串/单对象/legacy oldText+newText 顶层字段）**不移植**——那是 pi 对接杂牌模型的兜底，x-harness 的模型面经 TypeBox 校验（违规回显自纠是既有路径，不为单模型开旁门）。
+5. **inputSchema 用 TypeBox**（pi 也是 typebox——直接同构）；pi 的 prepareArguments 模型容错**不移植（对抗审查 C 件 3 修正论据——这是事实题非哲学题）**：pi 容错面向 Opus 4.6/GLM-5.1 的 edits-as-string 方言；x-harness 当前模型面 glm-5.3 无实证此形态——论据落「当前模型面无此形态」而非「不为单模型开旁门」。dial 面（providers.json 任意 anthropic 兼容端点）接入有此方言的模型时，届时按需最小移植 15 行（string→parse、单对象→数组两形，不含 legacy 顶层字段）并记档为方言容错。
 
 **harness 装配**：`toolboxKit` +1 行（`createEditPlugin({ gate, observed, ...env })`——三件套与 read/write 同源实例，漏配症状 FS_NOT_OBSERVED fail-closed 同 write 注释口径）。
 
+**rescue-plugin 归属记档（对抗审查 C 件 2）**：createTruncatedWriteRescuePlugin 住 tool-write 包但覆盖 write+edit 两工具（TRUNCATED-TOOL-RESCUE 定稿时 edit 尚不存在）——**维持不动**：迁移包的 churn 大于命名收益，edit 的提取器升级在原文件内以独立函数追加（extractLastEditText），插件名与归属待第三工具入抢救表时一并重命名（那时才有结构压力）。
+
 **TRUNCATED-TOOL-RESCUE 接入**：零改动——rescue-plugin 的 `name.includes("edit")` 分支已在 v1 落地（`new_string` 提取）；edit 工具参数里最大的字符串就是 newText，截断抢救自然生效。方案文档批 2 节的抢救表已在等这个工具。
 
-**系统提示**：write 的 description 加一句「for targeted changes to part of a file, prefer edit」（引导分流）；edit 的 description 自含用法约束（pi 的 guidelines 文案移植：唯一性/不重叠/最小上下文）。
+**系统提示（对抗审查 C 件 4——落点重写）**：用法守则走 `createToolPlugin({ guidance })` 停靠 system-prompt 的 `tool/edit` 段（tool-core tool-plugin.ts:34-47 投稿机制——pi promptGuidelines 4 条的 x-harness 等价物，tool-bash bashGuidance 先例）：唯一性/不重叠合并/最小上下文/对原文匹配非增量。description 只留工具自述；write 的 description 补分流句（for targeted changes prefer edit）。base-prompt.ts:79 已预埋 edit 一词（"Prefer dedicated tools (file read, edit, write)"）——本工具落地使该预埋成为真实承诺，无需改基础段。
 
-## 测试口径
+## 测试口径（对抗审查 C 件 5——按 pi 全集 ~40 例起列）
 
-- **edit-apply 纯函数**：精确命中/多处命中拒/未命中拒/重叠拒/空 oldText 拒/无变化拒；模糊匹配五归一各一例（智能引号/破折号/NBSP/NFKC/行尾空白）；模糊命中未触行字节保真；CRLF round-trip；多 edit 逆序应用偏移稳定。
-- **edit 工具**：门三态（未读拒/读后改过拒/读后未变过）；越根/穿越拒；目录/非常规文件拒；BOM round-trip；成功回显含 diff；写后登记（edit→write 连续不拒）。
-- **diff 生成**：行级增删改混合/上下文 4 行窗口/空文件边界。
-- **装配**：toolboxKit 含 edit；三件套同源（read→edit→write 链路）。
-- **回归**：write 既有用例不破；rescue-plugin 的 edit 分支用真 edit 名跑一遍（此前只有 FileEdit 假名）。
+- **edit-apply 纯函数**：精确命中/多处命中拒/未命中拒/重叠拒/空 oldText 拒/无变化拒；**部分失败不部分落盘**（任一 edit 失败全批拒——原子性断言）；多 edit 逆序应用偏移稳定。
+- **模糊匹配（13 例规模——pi 踩坑面全集）**：五归一各形（中文引号/智能引号/破折号/NBSP/NFKC/行尾空白）；**精确优先于模糊**（文件同时存在精确命中与可模糊命中处——走精确）；**归一后重复检测**（原文两处经归一变相同 → DUPLICATE 独立触发面）；**模糊替换后与邻行同文的保真**（fuzzy-preserve-duplicate-line——pi 真坑，错则换错位置）；模糊命中未触行字节保真；多 edit 混合精确/模糊。
+- **CRLF/BOM（7 例规模）**：LF oldText 对 CRLF 文件；**跨行尾形态的重复检测**（CRLF 处与 LF 处归一后同文）；CRLF/LF 混合文件多 edit；BOM+CRLF 叠加；BOM round-trip。
+- **edit 工具**：门三态（未读拒/读后改过拒/读后未变过——bash 改后 STALE 链）；越根/穿越拒；目录/非常规文件拒；成功回显含 diff；写后登记（edit→write 连续不拒）。
+- **diff 组装**（三方包背书算法——只测组装面）：上下文 4 行窗口/firstChangedLine 提取/空文件边界。
+- **装配**：toolboxKit 含 edit；三件套同源（read→edit→write 链路）；guidance 停靠 `tool/edit` 段断言。
+- **回归**：write 既有用例不破；rescue-plugin edit 分支用**真 edit 名 + 真 schema 参数形态**（`{"path":..,"edits":[{"oldText":..,"newText":"半截`）——末条 newText 提取 + note 新文案。
 
 ## 不处理（归属）
 
