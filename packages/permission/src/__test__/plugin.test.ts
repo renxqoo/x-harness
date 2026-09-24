@@ -25,7 +25,7 @@ interface Bench {
 }
 
 /** 单装配多 dispatch：broker 可编程（脚本耗尽即 deny）；审计与 ask 全记账 */
-async function bench(root: string, options: { rules?: readonly string[]; mode?: import("../types.ts").ProfileId; brokerScript?: readonly ("allow" | "deny")[]; controlTools?: readonly string[] } = {}): Promise<Bench> {
+async function bench(root: string, options: { rules?: readonly string[]; mode?: import("../types.ts").ProfileId; brokerScript?: readonly ("allow" | "deny")[]; controlTools?: readonly string[]; customProfiles?: readonly import("../types.ts").PermissionProfile[] } = {}): Promise<Bench> {
   const ctx = createContext();
   const audits: { tool: string; verdict: string; resolvedBy?: string }[] = [];
   const asks: { tool: string; reason: string }[] = [];
@@ -44,7 +44,7 @@ async function bench(root: string, options: { rules?: readonly string[]; mode?: 
   };
   const unload = await loadPlugins(ctx, [
     toolsPlugin,
-    createPermissionPlugin({ root, ...(options.rules !== undefined ? { rules: parseRules(options.rules, "user") } : {}), ...(options.mode !== undefined ? { mode: options.mode } : {}) }),
+    createPermissionPlugin({ root, ...(options.rules !== undefined ? { rules: parseRules(options.rules, "user") } : {}), ...(options.mode !== undefined ? { mode: options.mode } : {}), ...(options.customProfiles !== undefined ? { customProfiles: options.customProfiles } : {}) }),
     broker,
   ]);
   ctx.on(permissionDecided, (audit) => audits.push({ tool: audit.tool, verdict: audit.verdict, resolvedBy: audit.resolvedBy }));
@@ -213,6 +213,15 @@ describe("permission 插件（真实管线）", () => {
     svc.set("auto");
     expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false); // 撤销即时收回
     expect(b.ctx.use(permissionGrants).extraRootsOf(undefined)).toEqual([]);
+    for (const d of b.unload) await d();
+  });
+
+  it("症状回归：自定义档 set 曾被预滤为 undefined 静默降级 auto——set 原串经 customProfiles 解析真生效", async () => {
+    const b = await bench(root, { customProfiles: [{ id: "strict", askPolicy: "always", containment: "none", mutationPolicy: "plan-deny" }] });
+    const svc = b.ctx.use(permissionMode);
+    svc.set("strict");
+    expect(svc.get()).toBe("strict"); // 开词表原串保留（非预滤）
+    expect((await b.call("write", { path: "f.txt", content: "x" })).isError).toBe(true); // custom 档 plan-deny 真生效（降级 auto 时界内写会放行）
     for (const d of b.unload) await d();
   });
 

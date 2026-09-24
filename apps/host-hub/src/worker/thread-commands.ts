@@ -19,7 +19,7 @@ import type { AssemblyResult } from "./assembly.ts";
 import { forkInputVerdict, respond, requireThread, sessionOf } from "./worker-commands.ts";
 import type { CommandInput, Handler, WorkerRuntime, WorkerState } from "./worker-commands.ts";
 import type { EventBridge } from "./event-bridge.ts";
-import { PERMISSION_MODES, THINKING_LEVELS, thinkingUnsupported } from "./meta-state.ts";
+import { permissionModeOf, PERMISSION_MODES, THINKING_LEVELS, thinkingUnsupported } from "./meta-state.ts";
 import { META_KEY_PERMISSION, META_KEY_THINKING } from "./meta-state.ts";
 import { foldDial, metaTailOf } from "../shared/meta-fold.ts";
 import { mergeSettings, normalizeCwd, projectSettingsPath, readHubSettings, readProjectSettings } from "../shared/settings-store.ts";
@@ -172,7 +172,7 @@ async function applySessionSettings(rt: WorkerRuntime, fields: { params: Session
   const session = sessionOf(rt);
   if (session === undefined) return;
   const events = session.events();
-  const walModeValid = permissionOf(metaTailOf(events, META_KEY_PERMISSION));
+  const walModeValid = permissionModeOf(metaTailOf(events, META_KEY_PERMISSION));
   if (fields.params.paramMode !== undefined && fields.params.paramMode !== walModeValid) {
     const append = session.append("session/meta", { key: META_KEY_PERMISSION, value: fields.params.paramMode });
     if (!append.ok) throw new CodedError("io_failed", append.reason);
@@ -187,10 +187,6 @@ async function applySessionSettings(rt: WorkerRuntime, fields: { params: Session
   // 即时切档后置到持久化成功；WAL 尾值 > 入参（入参已 append——终值即入参）
   const finalMode = fields.params.paramMode ?? walModeValid;
   if (finalMode !== undefined) rt.state.permissionService?.set(finalMode);
-}
-
-function permissionOf(value: unknown): "plan" | "auto" | "full" | undefined {
-  return typeof value === "string" && PERMISSION_MODES.includes(value) ? (value as "plan" | "auto" | "full") : undefined;
 }
 
 /** resume cwd 回退序：显式入参 > 会话头（header.cwd——未带 cwd 时工作区锚定按

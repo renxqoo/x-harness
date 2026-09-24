@@ -680,7 +680,8 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
   摊平形状；get_subagents ChildView 词表；get_commands source 收缩 skill|builtin；
   images 显式拒绝；get_session_stats cost 在场透传（升级）；compact 响应
   +summaryTokens；providers.json 取代 models.json（形状超集）；permission mode 词表
-  plan|auto|full；thinking 词表 +max、无值态 unset→off 归一；providers 经 env 装配
+  plan|auto|edit-confirm|full|sandboxed-auto（get_mode 响应携 modes 词表单源——UI
+  选择器渲染源）；thinking 词表 +max、无值态 unset→off 归一；providers 经 env 装配
   快照注入；斜杠命令交模型（无 unknown-command settled 面）；subagent/steer 字段
   agentId + 驻留即投递（running 排队/idle 唤醒）+ 新错误文案；auth/list 全目录三态；
   list_saved 查询键收窄 {cwd?}、forkSeq 缺席、updatedAt 派生；撕裂写中段坏行

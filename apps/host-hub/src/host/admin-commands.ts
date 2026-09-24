@@ -17,6 +17,7 @@ import {
   validateSettingValue,
 } from "../shared/settings-store.ts";
 import { metaTailOf } from "../shared/meta-fold.ts";
+import { modeVocabulary } from "../shared/mode-vocab.ts";
 import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import { addModel, removeModel } from "./models-admin.ts";
 import { createUserAgentType, removeUserAgentType } from "./agents-admin.ts";
@@ -70,14 +71,12 @@ async function gatedCwd(trust: TrustStore, table: ThreadTable, raw: string): Pro
 
 type LocalHandler = (input: { type?: unknown; id?: unknown; [key: string]: unknown }, id: string | undefined) => Promise<void> | void;
 
-const PERMISSION_MODES: readonly string[] = ["plan", "auto", "full"];
-
 /** parked/dead 会话的权限档（get_mode 直读——免唤醒）：WAL 尾值 > 项目(trusted)
- *  > 用户 > 内置缺省——source 四态（回退链） */
+ *  > 用户 > 内置缺省——source 四态（回退链）。尾值校验用词表单源（内置五档） */
 async function parkedPermissionMode(deps: AdminCommandsDeps, threadId: string): Promise<{ mode: string; source: "session" | "project" | "user" | "default" }> {
   const snapshot = await createArchiveReader(deps.sessionsRoot).read(threadId as never).catch(() => undefined);
   const mode = snapshot !== undefined && snapshot.ok ? metaTailOf(snapshot.value.events, "permission-mode") : undefined;
-  if (typeof mode === "string" && PERMISSION_MODES.includes(mode)) return { mode, source: "session" };
+  if (typeof mode === "string" && modeVocabulary().includes(mode)) return { mode, source: "session" };
   const entry = deps.table.get(threadId);
   if (entry !== undefined && entry.sessionPath !== null && (entry.trusted || (await deps.trust.isTrusted(entry.cwd, deps.table)))) {
     const project = (await readProjectSettings(entry.cwd))["permission.defaultMode"];
@@ -98,7 +97,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
     if (threadId === "") {
       if (type === "permission/get_mode") {
         const values = await readHubSettings(deps.agentDir);
-        deps.respond(id, type, { data: { mode: values["permission.defaultMode"] ?? "auto", source: "default" } });
+        deps.respond(id, type, { data: { mode: values["permission.defaultMode"] ?? "auto", source: "default", modes: modeVocabulary() } });
         return true;
       }
       const verdict = validateSettingValue("permission.defaultMode", input.mode);
@@ -117,7 +116,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
     }
     if (entry.state === "parked" || entry.state === "dead") {
       if (type === "permission/get_mode") {
-        deps.respond(id, type, { data: await parkedPermissionMode(deps, threadId) });
+        deps.respond(id, type, { data: { ...(await parkedPermissionMode(deps, threadId)), modes: modeVocabulary() } });
       } else {
         deps.respond(id, type, { error: hubError("thread_not_live", "thread not live") });
       }

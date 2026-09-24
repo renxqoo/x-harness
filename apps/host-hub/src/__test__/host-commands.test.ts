@@ -407,10 +407,11 @@ describe("host 本地命令（注入 IO）", () => {
     const bareBuiltin = await waitResponse(f.client, "agents/remove", "ar4");
     expect(errOf(bareBuiltin).code).toBe("state_conflict");
     expect(["agent type not user-defined: code-reviewer", "unknown agent type: code-reviewer"]).toContain(errOf(bareBuiltin).message);
-    // permission 双域：无 threadId get → 全局默认；set 词表校验
+    // permission 双域：无 threadId get → 全局默认；set 词表校验；modes = UI 选择器渲染源（五档单源）
+    const WIRE_MODES = ["plan", "auto", "edit-confirm", "full", "sandboxed-auto"];
     f.send({ type: "permission/get_mode", id: "pg1" });
     const globalGet = await waitResponse(f.client, "permission/get_mode", "pg1");
-    expect(globalGet["data"]).toEqual({ mode: "auto", source: "default" });
+    expect(globalGet["data"]).toEqual({ mode: "auto", source: "default", modes: WIRE_MODES });
     f.send({ type: "permission/set_mode", id: "ps1", mode: "bogus" });
     const badMode = await waitResponse(f.client, "permission/set_mode", "ps1");
     expect(errOf(badMode)).toEqual({ code: "invalid_input", message: "invalid permission mode: bogus" });
@@ -418,7 +419,7 @@ describe("host 本地命令（注入 IO）", () => {
     await waitResponse(f.client, "permission/set_mode", "ps2");
     f.send({ type: "permission/get_mode", id: "pg2" });
     const afterSet = await waitResponse(f.client, "permission/get_mode", "pg2");
-    expect(afterSet["data"]).toEqual({ mode: "full", source: "default" });
+    expect(afterSet["data"]).toEqual({ mode: "full", source: "default", modes: WIRE_MODES });
     // 未知 threadId → Unknown threadId；parked 表项 set → thread not live
     f.send({ type: "permission/get_mode", id: "pg3", threadId: "ghost" });
     const ghostThread = await waitResponse(f.client, "permission/get_mode", "pg3");

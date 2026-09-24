@@ -116,13 +116,13 @@ describe("场景：设置面全旅程（真进程）", () => {
     host.send({ type: "permission/set_mode", id: "pm1", threadId, mode: "full" });
     await host.response("pm1");
     host.send({ type: "permission/get_mode", id: "pm2", threadId });
-    expect(((await host.response("pm2")).data as { mode: string; source: string })).toEqual({ mode: "full", source: "session" });
+    expect(((await host.response("pm2")).data as { mode: string; source: string; modes: string[] })).toEqual({ mode: "full", source: "session", modes: ["plan", "auto", "edit-confirm", "full", "sandboxed-auto"] });
     // retire → parked get_mode 读 WAL（四态 session）
     host.send({ type: "thread/retire", id: "rt1", threadId });
     await host.response("rt1");
     await host.wait((frame) => frame.type === "thread_parked" && frame.threadId === threadId, "parked");
     host.send({ type: "permission/get_mode", id: "pm3", threadId });
-    expect(((await host.response("pm3")).data as { mode: string; source: string })).toEqual({ mode: "full", source: "session" });
+    expect(((await host.response("pm3")).data as { mode: string; source: string; modes: string[] })).toEqual({ mode: "full", source: "session", modes: ["plan", "auto", "edit-confirm", "full", "sandboxed-auto"] });
     // workspace/trust → settings/set 项目级 → settings/get 合并
     const projectCwd = await (await import("node:fs/promises")).mkdtemp(join((await import("node:os")).tmpdir(), "hub-set-"));
     host.send({ type: "workspace/trust", id: "wt1", cwd: projectCwd, trusted: true });

@@ -18,14 +18,14 @@ import type { Decision, DecideInput } from "./decide.ts";
 import { GrantsRegistry } from "./grants.ts";
 import { parseRules } from "./rules/parse.ts";
 import { resolveProfile } from "./profiles.ts";
-import type { ExecDirective, Verdict,  PermissionProfile, ProfileId, RuleEntry } from "./types.ts";
+import type { ExecDirective, Verdict,  PermissionProfile, RuleEntry } from "./types.ts";
 import { permissionBroker, permissionDecided, permissionGrantStore, permissionGrantWritten, permissionGrants, permissionMode, fenceFacts } from "./tokens.ts";
 import type { AskPayload, AskReply, PermissionRule } from "./types.ts";
 
 export interface PermissionOptions {
   readonly root: string;
-  /** 档位 id（内置五档或宿主合并自定义行后的 id）；缺省 auto */
-  readonly mode?: ProfileId;
+  /** 档位 id（内置五档或宿主合并自定义行后的 id——开词表）；缺省 auto */
+  readonly mode?: string;
   /** 宿主自定义档位行（已过 mergeCustomProfiles 校验——装载期 fail-fast 在宿主） */
   readonly customProfiles?: readonly PermissionProfile[];
   /** 用户作用域规则条目（settings 解析态——origin 由本层补 user） */
@@ -55,15 +55,15 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
       const userRules = [...rulesOf(options.rules, "user"), ...protectedRules];
       const projectRules = rulesOf(options.projectRules, "project");
       const grants = new GrantsRegistry();
-      let mode: ProfileId = options.mode ?? "auto";
+      let mode: string = options.mode ?? "auto";
       grants.setUnrestricted(mode === "full"); // 装配期总括授权 → 授权事实（docs/PERMISSION-FULL-UNRESTRICTED.md）
       let tearingDown = false;
 
-      const profileOf = (id: ProfileId): PermissionProfile => resolveProfile(id, options.customProfiles);
+      const profileOf = (id: string): PermissionProfile => resolveProfile(id, options.customProfiles);
 
       const modeService = {
-        get: (): ProfileId => mode,
-        set(next: ProfileId): void {
+        get: (): string => mode,
+        set(next: string): void {
           mode = next;
           grants.setUnrestricted(next === "full"); // decide 面与授权面原子同步
         },

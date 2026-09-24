@@ -7,6 +7,7 @@ import { parseRule } from "@x-harness/permission";
 import { permissionGrantStore, permissionGrants } from "@x-harness/permission";
 import { projectSettingsPath, readHubSettings, readProjectSettings, updateSettingsFile, userSettingsPath } from "../shared/settings-store.ts";
 import { respond, requireThread, wrapSyncHandler } from "./worker-commands.ts";
+import { modeVocabulary } from "../shared/mode-vocab.ts";
 import type { CommandInput, Handler, WorkerRuntime } from "./worker-commands.ts";
 import {
   currentDialOf,
@@ -94,8 +95,9 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
       respond(rt, { id: input.id, command: "permission/set_mode", error: hubError("io_failed", flushed.reason) });
       return;
     }
-    // 即时切档后置到持久化成功（报失败但提权成功是最坏方向——安全不变量）
-    rt.state.permissionService?.set(permissionModeOf(mode) as import("@x-harness/permission").ProfileId);
+    // 即时切档后置到持久化成功（报失败但提权成功是最坏方向——安全不变量）；
+    // 档位 id 开词表原串直传（自定义档经 resolveProfile(customProfiles) 解析——不得预滤）
+    rt.state.permissionService?.set(mode);
     respond(rt, { id: input.id, command: "permission/set_mode" });
   });
 
@@ -111,6 +113,7 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
       data: {
         mode: walMode ?? current ?? "auto",
         source: walMode !== undefined ? "session" : (rt.permissionModeSource ?? "default"),
+        modes: modeVocabulary(),
       },
     });
   }));

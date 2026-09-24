@@ -18,10 +18,12 @@ export const permissionGrantStore = defineService<{
 export const permissionGrants = defineService<import("./grants.ts").GrantsRegistry>("permission/grants");
 
 /** 运行期档位面（插件恒提供）：get 读现值（每裁决消费）；set 原子切换 decide 面
- *  档位 + grants 总括授权（进入 full 即授、离开即撤——网络/extraRoots 授权面同步）。 */
+ *  档位 + grants 总括授权（进入 full 即授、离开即撤——网络/extraRoots 授权面同步）。
+ *  档位 id 是开词表（内置五档 PROFILE_IDS ∪ 宿主自定义档行 id）——垃圾 id 由
+ *  resolveProfile 降级 auto，自定义档行经 customProfiles 解析。 */
 export interface PermissionModeService {
-  get(): import("./types.ts").ProfileId;
-  set(mode: import("./types.ts").ProfileId): void;
+  get(): string;
+  set(mode: string): void;
 }
 export const permissionMode = defineService<PermissionModeService>("permission/mode");
 
