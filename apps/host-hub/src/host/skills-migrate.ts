@@ -4,7 +4,6 @@
 // 逐技能「新根同名跳过」（新根优先——用户可能已在新根重装更新版本），跳过项
 // 不删旧根源（旧根是 CLI 共享目录，非本 hub 私产，永不动删）。
 import { cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { userSkillsDirOf } from "@x-harness/skill";

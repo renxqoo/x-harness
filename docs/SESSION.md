@@ -81,6 +81,16 @@ type ToolRef = { name: string; description?: string };
 - 压缩/滑窗/上下文裁剪 = 追加一个带 replace 的摘要事件——策略归消费方插件，本件只提供原语。
 - `Session.surface(): readonly SurfaceNode[]`（`{ seq, event }`，消费方取 seq 锚点算区间）；`Session.deriveMessages(): readonly SurfaceMessage[]`（`role: system/user/assistant/tool` 的模型可见消息快照）。两者与 `events()` 同为纯函数派生快照，返回冻结数组。
 
+**三视图分域（get_entries `view` 参数，缺省 journal）**——同一 journal 的三种读法，语义边界与谓词纪律：
+
+| 视图 | 内容 | 消费者 |
+|---|---|---|
+| `journal` | 全量 WAL 行原样（含 replace 载体行） | 审计/调试——append-only 事实 |
+| `history` | 压缩前原文投影：单点 replace 载体行滤除（被替换原文永远在场，占位对人是噪音）；区间 replace 载体行降级单行 `compaction/elided`（摘要正文只存在于载体行，整条滤除会产生无标记断裂带） | 人读历史 / UI 收敛读 |
+| effective | `get_messages` 的 surface 折叠消息（`deriveMessages`） | LLM 上下文镜像 |
+
+不变量：① 游标校验/切片/`leafSeq`/`hasMore` 恒在 journal 全集域（`entryWindowViewed` 单入口，worker 与直读两站点共用）——两视图游标互通、`leafSeq` 恒 journal 尾（fork 同域不变量）、history 下 `limit=N` 不保证返回 N 条；② 谓词读 journal 信封 `SessionEvent.surfaceOp`（投影行 data 键不可伪造）；③ 非法 view 值显式 `invalid_input`；④ 修复型 replace 写者（替换撕裂/半截产出的语义修正）当前**不存在**——若未来引入，history 谓词必须重审（滤掉修复行会让历史显示撕裂原文）。
+
 ### 1.5 Store / Session API
 
 ```ts

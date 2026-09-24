@@ -35,6 +35,10 @@ export interface EntriesQuery {
   since?: number;
   before?: number;
   limit?: number;
+  /** 条目视图（docs/SESSION.md 三视图分域）：journal=全量 WAL 行（缺省，字节级兼容）；
+   *  history=压缩前原文投影（单点 replace 载体滤除、区间载体降级 elide 单行）。
+   *  游标/leafSeq/hasMore 恒 journal 域（两视图互通；history 下 limit=N 不保证返回 N 条） */
+  view?: "journal" | "history";
 }
 
 export interface ForkSpec {

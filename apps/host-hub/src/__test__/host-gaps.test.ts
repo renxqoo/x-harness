@@ -162,7 +162,7 @@ describe("read-history fence 与直读", () => {
       // 游标错误 = 真命令失败
       const bad = await direct.readEntries("ok1", { since: 99 });
       expect(bad !== undefined && "error" in bad && bad.error.message).toContain("invalid since cursor");
-      expect(bad !== undefined && "error" in bad && bad.error.code).toBe("invalid_input");
+      expect(bad !== undefined && "error" in bad && bad.error.code).toBe("cursor_stale");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -224,6 +224,10 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   sinceSeq}，截 8 条）：锚时效规则按条判定——只扣减 sinceSeq > 锚 seq 的条目（锚的
   usage 已含其效果的条目停计并剪除；单累计对在混合时序下会把已被旧锚吸收的收益
   重复扣减——切片 2 代码审查处置，§13）。
+- **L1 载体行的读面分域**：占位替换事件是 journal 事实（log-only 追加，永不改写）；
+  `get_entries` 的 `history` 视图不呈现单点载体行、区间载体行降级 `compaction/elided`
+  单行（docs/SESSION.md §1.4 三视图分域）。修复型 replace 写者出现时该谓词必须重审。
+  `get_state.messageCount` 为 journal 口径（载体行亦计入）。
 - **覆盖边界（coveredSeq）= 位置语义**：coveredSeq 定位边界节点、其后为首未覆盖区——
   迭代前缀替换后头部节点携带 journal 尾 seq、其后保留节点 seq 更小，边界推导必须按
   seq 定位节点的**位置**而非数值比较（数值扫描会把保留区整体误判，L2 二次落账因此

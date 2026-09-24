@@ -4,10 +4,9 @@
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { pluginManagerService } from "@x-harness/plugin-manager";
 import { hubError } from "../shared/errors.ts";
-import { projectEntries } from "../shared/entries-project.ts";
 import { foldQueue } from "../shared/inbox-fold.ts";
 import { WORKER_RESPONSE_SOFT_CAP } from "../shared/limits.ts";
-import { entryWindow } from "./entries-window.ts";
+import { entryWindowViewed } from "./entries-window.ts";
 import { listCommands } from "./command-listing.ts";
 import { currentDialOf, titleOf } from "./meta-state.ts";
 import { respond, requireThread, wrapSyncHandler } from "./worker-commands.ts";
@@ -69,10 +68,11 @@ function handleGetMessages(rt: WorkerRuntime, input: CommandInput): void {
 function handleGetEntries(rt: WorkerRuntime, input: CommandInput): void {
   const session = requireThread(rt, { ...input, command: "get_entries" });
   if (session === undefined) return;
-  const result = entryWindow(projectEntries(session.events()), {
+  const result = entryWindowViewed(session.events(), {
     ...(typeof input.since === "number" ? { since: input.since } : {}),
     ...(typeof input.before === "number" ? { before: input.before } : {}),
     ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+    ...(input.view !== undefined ? { view: input.view } : {}),
   });
   if (!result.ok) {
     respond(rt, { id: input.id, command: "get_entries", error: hubError(result.code, result.reason) });

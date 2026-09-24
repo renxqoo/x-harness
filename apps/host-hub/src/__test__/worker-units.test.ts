@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { SessionEvent } from "@x-harness/session";
 import { foldDial, foldMeta, metaTailOf } from "../shared/meta-fold.ts";
 import { entryWindow } from "../worker/entries-window.ts";
-import { projectEntries } from "../shared/entries-project.ts";
+import { historyLines, historyLineOf, parseEntriesView, projectEntries } from "../shared/entries-project.ts";
 import { resolveWorkerCatalog, scriptCatalog, workerCatalogFromEnv, catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
 import { buildAssemblySnapshot, readCatalog } from "../shared/catalog.ts";
 import { imagesUnsupported, thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
@@ -84,6 +84,62 @@ describe("entries-window 游标矩阵（0 基）", () => {
     expect(entryWindow(lines, { limit: 5001 }).ok).toBe(false);
     expect(entryWindow(lines, { since: 99 }).ok).toBe(false);
     expect(entryWindow(lines, { before: 99 }).ok).toBe(false);
+  });
+});
+
+describe("entries-project history 视图谓词（单点滤除/区间降级/append 保留）", () => {
+  const ev = (seq: number, fields: { type: string; data?: Record<string, unknown>; op?: unknown }): SessionEvent =>
+    ({ type: fields.type, seq, time: seq + 1, data: fields.data ?? {}, ...(fields.op !== undefined ? { surfaceOp: fields.op } : {}) }) as SessionEvent;
+
+  test("字符串 append 与无 surfaceOp 行原样保留", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "turn/start", data: { turn: 0 } }),
+    ]);
+    expect(lines.map((l) => l.seq)).toEqual([0, 1]);
+    const first = lines[0];
+    expect(first?.event["type"]).toBe("user/message");
+    expect(first?.event["surfaceOp"]).toBe("append");
+  });
+
+  test("单点 replace 载体（L1 占位/锚点漂移）滤除——被替换原文行仍在", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "tool/result", data: { callId: "c1", content: "原文" }, op: "append" }),
+      ev(2, { type: "tool/result", data: { callId: "c1", content: "[cleared: read x 10 chars]" }, op: { op: "replace", startSeq: 1, endSeq: 1 } }),
+      ev(3, { type: "assistant/message", data: { content: [] }, op: "append" }),
+    ]);
+    expect(lines.map((l) => l.seq)).toEqual([0, 1, 3]);
+    const kept = lines[1];
+    expect(kept?.event["content"]).toBe("原文");
+  });
+
+  test("区间 replace 载体（compaction 摘要/L2 账本）降级单行 elide——保 seq/ts 与区间（被摘原文行保留）", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "user/message", data: { content: [{ type: "text", text: "原文" }] }, op: "append" }),
+      ev(2, { type: "user/message", data: { content: [{ type: "text", text: "被摘要原文" }] }, op: "append" }),
+      ev(3, { type: "user/message", data: { content: [{ type: "text", text: "摘要正文" }] }, op: { op: "replace", startSeq: 1, endSeq: 2 } }),
+      ev(4, { type: "assistant/message", data: { content: [] }, op: "append" }),
+    ]);
+    // history 视图只变换载体行：原文 1/2 保留（history 本义＝压缩前原文），摘要行 3 降级为 elide 标记
+    expect(lines.map((l) => l.seq)).toEqual([0, 1, 2, 3, 4]);
+    const elided = lines[3];
+    expect(elided?.event).toEqual({ type: "compaction/elided", startSeq: 1, endSeq: 2 });
+    expect(elided?.ts).toBe(4);
+  });
+
+  test("historyLineOf 对 data 伪造 surfaceOp 免疫（谓词读 journal 信封）", () => {
+    const forged = ev(5, { type: "user/message", data: { content: [], surfaceOp: { op: "replace", startSeq: 0, endSeq: 0 } }, op: "append" });
+    expect(historyLineOf(forged)?.seq).toBe(5); // 信封是 append → 保留
+  });
+
+  test("parseEntriesView：两合法值放行，其余 undefined", () => {
+    expect(parseEntriesView("journal")).toBe("journal");
+    expect(parseEntriesView("history")).toBe("history");
+    expect(parseEntriesView("Journal")).toBeUndefined();
+    expect(parseEntriesView(1)).toBeUndefined();
+    expect(parseEntriesView(undefined)).toBeUndefined();
   });
 });
 
