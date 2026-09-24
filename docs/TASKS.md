@@ -1,6 +1,10 @@
 # TASKS：通用任务动词件（件 14）
 
-> 状态：**已实施**（方案定稿两路审查 27 项全处置 §10；实施前二次自洽压测 ⑥⑦⑧ 并入；
+> 状态：**已实施，并由 TASK-PUSH 修订**（docs/TASK-PUSH-DESIGN.md——task_output 退役：
+> LLM 面 = task_stop 单工具；bash 读面 = 日志文件 + [task-notification] 推送。本文件
+> §0-§4/§7/§9 为修订后现行规范；§5/§6/§8/§10-§13 为件14 当时的方案/处置/实施记录
+> （历史节保留原文）。）
+> 原始状态：已实施（方案定稿两路审查 27 项全处置 §10；实施前二次自洽压测 ⑥⑦⑧ 并入；
 > 收口审查与四门见文末实施记录）
 > 级别：中（task-tools 新包 + agent-delegation 工具面迁移 + bash 源接入（时为 toolbox，现为
 > tool-bash）+ 测试迁移）
@@ -11,15 +15,17 @@
 > 后 toolbox 拆为一命令一包，bash 源 = @x-harness/tool-bash 的 BackgroundTasks 公开面）**。
 > **用户指令（同日三次）：没有 task-bash——bash 源适配收进 task-tools 本体（工厂参数收
 > bashTasks 句柄）；LLM 面上只有 task_output/task_stop 两个工具，无第三者**。
+> （TASK-PUSH 修订：上句终态已被推翻——现 LLM 面 = task_stop 单工具，见头部状态注。）
 
 ## 0. 目标与边界
 
-消灭「描述承诺 task_output 而工具不存在」的契约缺口，并把读/停动词从 agent-delegation
-拆出为跨源通用面。**终态**：`task_output`/`task_stop` 由独立插件（@x-harness/task-tools）
-提供，经 TaskHub 服务路由到注册的任务源；agent-delegation 注册 `agent` 源（原 agent_output/
-agent_stop 语义迁移——含签名重构，见 §4）；**bash 源在 task-tools 本体内注册**（工厂参数收 `bashTasks: BackgroundTasks`
-公开句柄，桥接适配器为 task-tools 内文件——命令工具包零改动，无独立 bash 插件，
-见 §3）。**LLM 可见面 = task_output + task_stop 两个工具，别无其他**。
+消灭「描述承诺任务动词而工具不存在」的契约缺口，并把停动词从 agent-delegation
+拆出为跨源通用面。**终态（TASK-PUSH 修订后）**：`task_stop` 由独立插件（@x-harness/task-tools）
+提供，经 TaskHub 服务路由到注册的任务源；agent-delegation 注册 `agent` 源；**bash 源在
+task-tools 本体内注册**（服务停靠 backgroundTasks，显式 `bashTasks` 参数为覆盖）。**LLM
+可见面 = task_stop 一个工具，别无其他**。读面无动词：agent 报告 = [agent-notification]
+推送（通知即全文）；bash 输出 = 日志文件（read/grep）+ [task-notification] 完成推送
+（task-tools 通知臂）。
 
 不做（落档 §9）：任务枚举/清单工具、跨源统一 id 铸造、任务持久化、remote 会话源。
 
@@ -29,23 +35,12 @@ agent_stop 语义迁移——含签名重构，见 §4）；**bash 源在 task-t
 
 | 工具 | 入参 | 行为 |
 | --- | --- | --- |
-| `task_output` | `{task_id, offset?, block?, timeout?}`（offset 为非负数，schema `Type.Number` minimum 0——**不用 Integer**：tools validate 按 Kind symbol 派发，integer 是否在派发面未核实；bash 源 headBytes 对非整数/非有限值本就防御性取整归零，垃圾输入降级不崩溃） | task_id：agent 任务的 **agentId 精确**（owner 限定——修订A），或 bash 后台任务 id（会话键控）。**offset 是规格外本仓扩展**（上游三参数 task_id/block/timeout——增量读靠输出文件+Read；本仓 bash 源以 offset/nextOffset 表达，agent 源忽略）。**block 缺省 true**（与上游规格 :113、件13 §2.1、反自旋原则一致——bash 源无完成通知，缺省阻塞正是省轮询手段；拉模式裁决裁的是通知机制非单次调用阻塞缺省）。timeout 缺省 30000、min 0、max 600000；**timeout=0 = 零等待立即快照**。agent 源 block=true = whenIdle race（在飞快照带末轮摘要）；bash 源 block=true = whenSettled 有界等终态（§3.2），到点未完回 running/killed 中间态快照（state 自述） |
 | `task_stop` | `{task_id}` | agent 源：cancel+whenIdle 收敛+幂等+停止非销毁（可再 message 复活）+ worktree 清理评估（kept 带路径）。bash 源：两段杀（term→kill）发起 + **whenSettled 有界收敛后铸终态快照**（KILL_GRACE+余量 8s 上界；超时如实回 mid-kill 快照——state=killed/exit=null 属实瞬态，铸文容忍）；**stop 发起前已终态（endedAt 已置）的任务铸文加 already finished 前缀**——裸 "Stopped" 对 completed 任务是谎言 |
 
 **工具入口前置校验**（不进路由）：task_id 空/含换行/调用方无 session → invalid-args；
 `task_id === "main"` → `invalid-args:task_id 'main' is not a task`（denied 同款终结）。
 
-**offset × block 交互（自洽压测补定义）**：block=true 等的是**终态**（agent=当轮 idle、
-bash=进程 settle），**不是「有新字节」**——带 offset 的增量进度轮询若沿用缺省 block=true，
-长任务（dev server 类）每次读都挂满 30s。裁定：缺省恒 true（可预期性优先，不做「传了
-offset 就隐式改 false」的魔法），**描述明写**「进度轮询长任务传 block:false」；bash 源
-block=true 的返回 = 终态后从 offset 起的切片（语义自洽：先 settle 再切片）。
-
 返回铸文：
-- agent 源读：件13 reportText 口径（末轮 reason 全集 + reportCap 截断 + agent_message
-  追问引导）。
-- bash 源读：`task <id> (<command 截 80 字符>): <state> exit=<code|null> bytes=<n>` 头 +
-  text 切片 + 尾注（`nextOffset=<n>; more=<bool>`；truncated/spill 全文路径提示）。
 - 停止：源各自终态文案；agent 源保留「可再 message」与 worktree kept 注记。
 
 错误词表（跨源统一）：全 miss → `not-found:<task_id>; no such task in any source (agent
@@ -54,7 +49,7 @@ session-scoped)`（提示语按双源齐备写——纯 bash/纯 agent 装配下
 静态文案不做装配态分叉）；**源内 definite 错误（not-owner 等）经 denied 通道透传原文案**。命中后
 行消失的迟到 not-found（档化/逐出竞态）回落统一词表——两套口径并存如实说明。
 
-并发声明（沿件13）：task_output = parallel；task_stop = exclusive。
+并发声明（沿件13）：task_stop = exclusive。
 
 ### 1.2 TaskHub 服务与三态路由
 
@@ -66,7 +61,6 @@ export type TaskProbe =
 export interface TaskSource {
   readonly kind: "agent" | "bash";                                 // 闭合词表
   probe(taskId: string, caller: SessionId | undefined): TaskProbe;
-  output(taskId: string, caller: SessionId | undefined, opts: { offset?: number; block?: boolean; timeout?: number }): Promise<Outcome<Text>>;
   stop(taskId: string, caller: SessionId | undefined): Promise<Outcome<Text>>;
 }
 export interface TaskHub {
@@ -87,88 +81,51 @@ export interface TaskHub {
 ## 2. 包边界与依赖
 
 ```text
-packages/task-tools（新；依赖 core + session[SessionId] + tools[ToolDefinition] +
-  tool-bash[BackgroundTasks 类型与适配——命令工具包公开面]）
+packages/task-tools（依赖 core + session[SessionId] + tools[ToolDefinition] +
+  tool-bash[BackgroundTasks 类型与适配] + agent-loop[服务停靠——通知臂]）
   tokens.ts（taskHub）
   plugin.ts：createTaskToolsPlugin(options?: { bashTasks?: BackgroundTasks })——
     name "task-tools"，inject ["tools"]（拓扑保证 registry 先行）；provide hub +
-    注册两工具；bashTasks 在场则一并注册 bash 源（摘除经 ctx.effect）
+    注册 task_stop；bash 源停靠 backgroundTasks 服务（显式参数覆盖）；通知臂二级
+    停靠 agentLoopServiceToken（任一缺席对应臂不挂——纯工具世界零通知）
   tools.ts（工具面 + 三态路由 + 铸文）
+  cast.ts（commandHead/stateLine——stop 回执与通知首行同源）
   source-bash.ts（bash 源适配器 + 外置 waitSettled——§3）
+  notify-bash.ts（完成通知臂：onSettled → 读日志尾部 → notify("bash-task","content")——
+    TASK-PUSH-DESIGN §2.4）
   __test__/
 
-agent-delegation：inject 增 "task-tools"（硬依赖：无 hub 装配即失败——output/stop 是
-  子代理面一部分，不静默降级）；verbs.output/stop 改造为 agent TaskSource（session 提参
-  签名重构，非直通）。
+agent-delegation：inject 增 "task-tools"（硬依赖：无 hub 装配即失败——stop 是
+  子代理面一部分，不静默降级）；verbs.stop 为 agent TaskSource（session 提参签名）。
 
-命令工具包（时为 toolbox，现拆为 tool-bash 等）：**零改动**——tasks 句柄与 read/stop
-  公开面（TOOLBOX.md §4「本登记簿经 createBashPlugin({ tasks }) 穿引实例供给」即本接线）。
+命令工具包（tool-bash）：登记簿文件化（日志落盘 + onSettled 订阅 + taskLogDir 配置——
+  TOOLBOX.md §4 与 TASK-PUSH-DESIGN §2.2 为现行规范）。
 ```
 
-依赖方向：agent-delegation → task-tools → core/tools/session/tool-bash（另有 agent-delegation
-→ tool-core，test-only——worktree 隔离用例消费 PathGate/admitSession 公开面）；tool-bash 不依赖
-任务层。无环。装配：bash 后台任务要进 task_output 面 = `createBashPlugin({ gate, tasks })`
-与 `createTaskToolsPlugin({ bashTasks: tasks })` 穿引同一 BackgroundTasks 实例（未传 →
-bash id 落统一 not-found——装配纪律落档
-§9）。一 hub 一 bash 源（重名 kind throw fail-fast）。
+依赖方向：agent-delegation → task-tools → core/tools/session/tool-bash/agent-loop（软
+停靠）；tool-bash 不依赖任务层。无环。装配：bash 后台任务进 task_stop 面 = 服务停靠
+共享生效登记簿（缺省；或 `createBashPlugin({ tasks })` 与 `createTaskToolsPlugin({
+bashTasks: tasks })` 穿引同一实例）。一 hub 一 bash 源（重名 kind throw fail-fast）。
 
-## 3. bash 侧怎么改（task-tools 内适配——命令工具包零改动，无独立插件）
+## 3. bash 源（task-tools 内适配——登记簿文件化后的对接）
 
-### 3.1 接线（装配层传句柄）
+- `bashTaskSource(tasks)`（task-tools/src/source-bash.ts）：
+  - `probe`：`tasks.list(caller).some(t => t.id === id)` → hit；否则 miss（会话键控即属主面）。
+  - `stop`：tasks.stop 发起两段杀 → `waitSettled(...)` 外置收敛 → 终态快照铸文
+    （stateLine 与通知首行同源——cast.ts）。
+- 读面不在本层：日志文件（read/grep，宿主经 systemRoots 放行——TASK-PUSH-DESIGN §2.3）
+  + [task-notification] 完成推送（notify-bash.ts 通知臂）。
 
-宿主装配：`const tasks = new BackgroundTasks(defaultTaskLimits({}, limits));
-loadPlugins(ctx, [..., createBashPlugin({ gate, tasks }),
-createTaskToolsPlugin({ bashTasks: tasks }), ...])`——工厂参数直取
-BackgroundTasks 公开句柄（TOOLBOX.md §4「本登记簿经 createBashPlugin({ tasks }) 穿引实例
-供给」的原设计兑现）；task-tools apply 即 `ctx.use 自身 provide 的 hub` 注册
-`bashTaskSource(bashTasks)`，摘除经 ctx.effect。无命令包内 tryUse/waitFor 时序问题
-（原 B-P0-2 装配序脆弱性随工厂注入消解）。
+## 4. agent-delegation 侧
 
-`bashTaskSource(tasks)`（task-tools/src/source-bash.ts）：
-- `probe`：`tasks.list(caller).some(t => t.id === id)` → hit；否则 miss（会话键控即属主面；
-  **不用 read 判定**——read 每次 Buffer.from(full) 全量重编码保留缓冲，与 §3.2 同一成本论据）。
-- `output`：read(caller, id, offset ?? 0) → §1.1 bash 铸文。
-- `stop`：tasks.stop 发起两段杀 → `waitSettled(...)` 外置收敛 → 终态快照铸文。
-
-### 3.2 外置等待原语（不改 tasks.ts——命令工具包零改动约束）
-
-`waitSettled(tasks, session, id, timeoutMs)`（source-bash.ts 内）：
-- **收敛判据 = `snapshot.endedAt !== undefined`**（endedAt 只在 finalize 置位——五条终态
-  路径唯一收口，天生规避 stop/timeout 乐观置态期的 mid-kill 撕裂快照；state 字段是
-  乐观面不可用作判据）。
-- 实现 = **内存态轮询，但轮询面用 `tasks.list(session)` 而非 `tasks.read(..., 0)`**
-  （25ms 间隔）——read 每次调用 `Buffer.from(full, "utf8")` 全量重编码整个保留缓冲
-  （fullCap 64MB × 每秒 40 次 ≈ GB/s memcpy，非「可忽略」）；list 只读 rec 字段拼
-  snapshot 不碰缓冲区。settle 后才做唯一一次真 read 切片。纯内存 Map 查询无 fs。
-  超时回当前快照（state 自述）。
-- 与审查 B-P1-3 原设计（登记簿内 waiters/finalize 单点释放）的取舍：外置轮询为满足
-  「命令工具包零改动」约束的等价实现——撕裂快照防护同效（判据同为 finalize 产物），
-  代价是 25ms 粒度的唤醒延迟（相对 KILL_GRACE 5s 可忽略）；登记簿内原语不建。
-- rec 已被 evict 的竞态：list 中 id 消失 → 停止等待，最终 read miss → 如实返回 miss
-  口径（stop 收敛期极罕见，统一词表兜底）。
-
-### 3.3 文案
-
-toolbox 的 bash 描述既有 "poll its output and state via the task layer (task_output)"
-提法不动（对方在途文案，归属 toolbox）——兑现关系：装配传 bashTasks 后为真；装配了
-task-tools 但未传 bashTasks：bash id 落统一 not-found（文案含 bash ids 来源提示，
-模型可自纠）；task-tools 均未装配：描述提法失信属非常规部署（落档 §9 装配纪律）。
-
-## 4. agent-delegation 侧怎么改
-
-1. `tools.ts` 删两工具注册；`descriptions.ts` 删 AGENT_OUTPUT/AGENT_STOP_DESCRIPTION
-   （task-tools 重写为跨源口径）。`delegationTools` 剩 agent_spawn/agent_message/list_agents。
-2. `verbs.ts` output/stop 保留为内部实现但**签名重构**：ToolExecContext → `caller:
-   SessionId | undefined` 提参（无效调用方判定上移工具入口前置）；包 `agentTaskSource(
-   verbDeps): TaskSource`——probe = nameaddr 分支 2/3/4 解析 + owner 预检（not-owner →
-   denied；`main` → denied invalid-args；解析 miss → miss）。
+1. `tools.ts` 只注册 agent_spawn/agent_message/list_agents。
+2. `verbs.ts` stop 保留（`caller: SessionId | undefined` 提参）；包 `agentTaskSource(
+   verbDeps): TaskSource`——probe = nameaddr 解析 + owner 预检（not-owner → denied；
+   `main` → denied invalid-args；解析 miss → miss）。
 3. plugin：inject 增 "task-tools"；apply `ctx.effect(ctx.use(taskHub).registerSource(
-   agentTaskSource(...)))`（摘除经 effect——apply 中途 throw 回卷也摘）。
-4. **双轨残留清理**：`notify.ts` 通知尾注「(use agent_output with agentId ... for the
-   full report)」、`types.ts` 注释（reportCap「agent_output 报告截断上界」）——两处同步改
-   task_output（spawn.ts 修订A 时已无 agent_output 文案，方案早前所记三处为二处）；
-   验收 grep 锚：src 全仓 `agent_output|agent_stop` 清零（docs 历史节除外）。
-5. `list_agents` 不动（子代理视图，非任务清单——落档 §9）。
+   agentTaskSource(...)))`。
+4. `list_agents` 不动（子代理视图，非任务清单——落档 §9）。
+5. 报告读面 = [agent-notification] 推送（AGENT-DELEGATION §5.1——通知即全文）。
 
 ## 5. 测试计划（迁移文件与断言不变式逐条）
 
@@ -221,9 +178,9 @@ B. delegation 迁移（工具摘除 + 源注册 + 签名重构 + 双轨文案清
 | 跨源统一 id 铸造/全局注册表 | 定序路由已闭环；第二真相反伤 | 不建 |
 | 任务持久化/跨重启任务面 | 登记簿生命周期=会话（TOOLBOX.md 既有裁决） | 后续件 |
 | remote 会话源（规格 TaskOutput/Stop 覆盖 remote session） | kind 闭合 agent\|bash；remote 无基建 | 云接入件 |
-| task_output 不继承规格 DEPRECATED 定位（件13 U2 裁决随迁——本工具为一等读面） | 无文件指针替代路径 | 本件裁定 |
+| ~~task_output 不继承规格 DEPRECATED 定位~~ | ~~无文件指针替代路径~~ TASK-PUSH 修订：日志文件路径即一等读面（上游 BashOutput 废弃同路线） | TASK-PUSH 裁定 |
 | TaskStop 的 shell_id（规格已弃用参数）与 teammate 形态（name@team） | 不实现 | 本件裁定 |
-| bash 后台任务进 task_output 面需装配时传 bashTasks 句柄 | 未传 → bash id 落统一 not-found（文案含来源提示可自纠）；bash 描述静态提法兑现依赖装配 | 装配纪律 |
+| bash 后台任务进 task_stop 面 = 服务停靠共享生效登记簿 | 停靠缺省；显式 bashTasks 覆盖（一实例双注册 fail-fast） | 装配纪律 |
 | 一 ctx 一 tool-bash 装配（一 bash 源） | 重名 kind throw 已 fail-fast | 单装配纪律 |
 | waitSettled 为内存轮询（25ms）而非登记簿内 waiters | toolbox 零改动约束（用户二次裁决）下的等价实现——撕裂防护同效（endedAt 判据），代价唤醒粒度 | 本件裁定 |
 | contract.test 逐字对账读绝对路径 /Users/wrr/work/claude-tool/…（规格在本仓外无副本） | 其他 checkout 上该用例必挂——机器绑定是既有取舍（件13 起即如此） | 后续件（规格入仓或环境探测） |
@@ -361,3 +318,16 @@ worktree kept 逐字等价）、三态路由（denied 不遮蔽/统一词表/迟
 §2 依赖图注与 §9「装配纪律」行的手工穿引口径由本节取代；显式参数路径（自定义限额/宿主
 自管生命周期）继续有效。测试：task-tools plugin.test 停靠/序无关两用例 + tool-bash
 service.test 自建与外穿双形态。
+
+## 14. TASK-PUSH 实施记录（2026-09-24）
+
+- 删除面：task_output 工具/schema/描述、TaskSource.output、TaskOutputOptions、
+  verbs.output/reportText/reportHead/raceIdle、reportDelivered 整链（lineage/spawn/
+  revive/notify）、tasks.read/TaskRead/headBytes/spill。
+- 新增面：tool-bash log-sink（单写队列/ANSI-CR 状态机/写帽/IO 失败面）+ onSettled
+  + taskLogDir；task-tools notify-bash 通知臂（双停靠）+ cast 铸文共享；tool-core
+  systemRoots；harness toolboxKit taskLogDir 透传 + taskLogsRootOf；host-hub
+  session-delete 级联清理（前置顺序裁决）+ worker 装配；e2e toolbox-journey 推送制改写。
+- 文档同变：TOOLBOX/AGENT-DELEGATION/AGENT-MESSAGE/SUBAGENT-FAILURE-NOTIFICATION/
+  CLI/TODO/PLUGIN-AUTHORING + 本文件现行节改写（历史节保留）。
+- 方案与对抗审查 28 项处置：docs/TASK-PUSH-DESIGN.md。

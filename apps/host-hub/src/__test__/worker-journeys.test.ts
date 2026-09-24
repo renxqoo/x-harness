@@ -22,6 +22,18 @@ async function spawn(script: readonly ScriptStep[] = []): Promise<ScriptWorker> 
   return w;
 }
 
+/** 大回复夹具：同体量非重复长文（重复单字符循环会被 llm-repetition-guard 正当截流） */
+function nonRepetitive(length: number): string {
+  const alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let out = "";
+  let counter = 0;
+  while (out.length < length) {
+    out += `${alphabet}${String(counter % 97)};`;
+    counter += 1;
+  }
+  return out.slice(0, length);
+}
+
 async function start(w: ScriptWorker, id = "s1"): Promise<string> {
   w.send({ type: "thread/start", id });
   const started = await waitResponse(w.captured.lines, "thread/start", id);
@@ -301,7 +313,7 @@ describe("子代理实时事件面（BATCH2 §3——去轮询：推送全覆盖
 
 describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", () => {
   test("成功三元组（compact 协议命令 + customInstructions 透传）", async () => {
-    const huge = "h".repeat(60000);
+    const huge = nonRepetitive(60_000);
     const w = await spawn([
       { reply: huge },
       { reply: huge },
@@ -328,7 +340,7 @@ describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", (
   });
 
   test("双发第二响应 already in progress + abort 归一串 compaction aborted（prompt 拦截路径）", async () => {
-    const huge = "h".repeat(60000);
+    const huge = nonRepetitive(60_000);
     const w = await spawn([
       { reply: huge },
       { reply: huge },
@@ -351,5 +363,66 @@ describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", (
     await waitResponse(w.captured.lines, "abort", "ab-1");
     const aborted = await waitResponse(w.captured.lines, "prompt", "cmd-1");
     expect(aborted.error).toEqual({ code: "compact_rejected", message: "compaction aborted" });
+  });
+});
+
+describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.md 契约 5）", () => {
+  test("happy path：prompt 后实报数字在场（script usage 64/16+len）；12 字段 + sessionOutput", async () => {
+    const w = await spawn([{ reply: "x" }]);
+    const threadId = await start(w);
+    w.send({ type: "prompt", id: "p1", threadId, message: "question" });
+    await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === "p1");
+    w.send({ type: "get_token_analytics", id: "ta1", threadId });
+    const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
+    expect(res.success).toBe(true);
+    const data = res.data as { breakdown: Record<string, number>; sessionOutput: number };
+    expect(Object.keys(data.breakdown).sort()).toEqual([
+      "cacheHitRate", "contextWindow", "lastReportedInput", "messages", "remaining",
+      "systemPrompt", "tools", "total", "totalCacheRead", "totalCacheWrite", "totalOutputTokens", "utilization",
+    ]);
+    expect(data.breakdown["lastReportedInput"]).toBe(64); // script adapter 实报
+    expect(data.breakdown["totalOutputTokens"]).toBe(17); // 16 + "x".length
+    expect(data.breakdown["contextWindow"]).toBe(200_000); // script adapter 申报
+    // 实报优先律：total = 实报 input（分项估算偏大时 messages 归零，不再凑分项和）
+    expect(data.breakdown["total"]).toBe(64);
+    expect(data.breakdown["messages"]).toBe(0);
+    expect(data.breakdown["remaining"]).toBe(200_000 - 64);
+    expect(data.sessionOutput).toBe(17);
+  });
+
+  test("capability_plugin：plugins.disabled 禁用 → 线程在场而插件缺席", async () => {
+    const w = await spawn([]);
+    await writeFile(join(w.agentDir, "hub-settings.json"), JSON.stringify({ "plugins.disabled": ["token-analytics"] }));
+    const threadId = await start(w);
+    w.send({ type: "get_token_analytics", id: "ta1", threadId });
+    const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
+    expect(res.error).toEqual({ code: "capability_plugin", message: "token analytics plugin not loaded" });
+  });
+
+  test("unknown_thread 先行：无线程不被能力族劫持（自愈语义保真）", async () => {
+    const w = await spawn([]);
+    w.send({ type: "get_token_analytics", id: "ta1", threadId: "no-such-thread" });
+    const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
+    expect(res.error).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
+  });
+
+  test("resume 全历史 WAL 口径（症状回归：重开会话数值不丢——含拨号窗口）", async () => {
+    const w = await spawn([{ reply: "x" }]);
+    const threadId = await start(w);
+    w.send({ type: "prompt", id: "p1", threadId, message: "question" });
+    await waitEvent(w.captured.lines, "settled", (p) => (p as { sendId?: string }).sendId === "p1");
+    const sessionPath = join(w.sessionsRoot, threadId, "events.jsonl");
+    w.send({ type: "thread/stop", id: "sp1", threadId });
+    await waitResponse(w.captured.lines, "thread/stop", "sp1");
+    w.send({ type: "thread/resume", id: "r1", sessionPath });
+    const resumed = await waitResponse(w.captured.lines, "thread/resume", "r1");
+    expect(resumed.success).toBe(true);
+    const newId = (resumed.data as { threadId: string }).threadId;
+    w.send({ type: "get_token_analytics", id: "ta1", threadId: newId });
+    const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
+    const data = res.data as { breakdown: Record<string, number> };
+    expect(data.breakdown["lastReportedInput"]).toBe(64); // WAL 全历史实报——重开不丢
+    expect(data.breakdown["totalOutputTokens"]).toBe(17);
+    expect(data.breakdown["contextWindow"]).toBe(200_000); // resume 拨号历史在场（script adapter 窗口）
   });
 });

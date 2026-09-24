@@ -2,11 +2,11 @@
 // 弹窗只读查询（表内现值或事件日志折叠）；set_session_name 为标题直写会话
 // （append+flush）。failure 路径单点经共享 respond。
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
+import { pluginManagerService } from "@x-harness/plugin-manager";
 import { hubError } from "../shared/errors.ts";
-import { projectEntries } from "../shared/entries-project.ts";
-import { foldQueueText } from "../shared/inbox-fold.ts";
+import { foldQueue } from "../shared/inbox-fold.ts";
 import { WORKER_RESPONSE_SOFT_CAP } from "../shared/limits.ts";
-import { entryWindow } from "./entries-window.ts";
+import { entryWindowViewed } from "./entries-window.ts";
 import { listCommands } from "./command-listing.ts";
 import { currentDialOf, titleOf } from "./meta-state.ts";
 import { respond, requireThread, wrapSyncHandler } from "./worker-commands.ts";
@@ -31,7 +31,7 @@ function handleGetState(rt: WorkerRuntime, input: CommandInput): void {
       sessionName: titleOf(events) ?? "",
       sessionFile: rt.state.sessionPath,
       messageCount,
-      queue: foldQueueText(events),
+      queue: foldQueue(events),
     },
   });
 }
@@ -68,10 +68,11 @@ function handleGetMessages(rt: WorkerRuntime, input: CommandInput): void {
 function handleGetEntries(rt: WorkerRuntime, input: CommandInput): void {
   const session = requireThread(rt, { ...input, command: "get_entries" });
   if (session === undefined) return;
-  const result = entryWindow(projectEntries(session.events()), {
+  const result = entryWindowViewed(session.events(), {
     ...(typeof input.since === "number" ? { since: input.since } : {}),
     ...(typeof input.before === "number" ? { before: input.before } : {}),
     ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+    ...(input.view !== undefined ? { view: input.view } : {}),
   });
   if (!result.ok) {
     respond(rt, { id: input.id, command: "get_entries", error: hubError(result.code, result.reason) });
@@ -190,6 +191,34 @@ function handleGetSessionStats(rt: WorkerRuntime, input: CommandInput): void {
   });
 }
 
+/** 插件分析面（本地结构形状——host-hub 不 import 插件包；经 plugin-manager token
+ *  按名注册表取服务，真解耦——docs/PLUGINS.md 契约 5）。统计域 = 装配后事件
+ *  （resume 不含历史；子代理 usage 计入全局累计） */
+interface TokenAnalyticsFace {
+  breakdown(sessionId?: string): Record<string, number>;
+  sessionOutput(session: string): number;
+}
+
+function handleGetTokenAnalytics(rt: WorkerRuntime, input: CommandInput): void {
+  const session = requireThread(rt, { ...input, command: "get_token_analytics" });
+  if (session === undefined) return; // unknown_thread 分族先行（自愈语义不可劫持）
+  const world = rt.state.world;
+  const svc = world?.ctx.tryUse(pluginManagerService);
+  const token = svc?.serviceToken("token-analytics");
+  // tryUse 而非 use：收殓窗口（uninstall 回卷中、token 表未清）下 use 会抛——
+  // 能力缺席一律 capability_plugin，不被 internal 兜底族劫持
+  const analytics = world !== undefined && token !== undefined ? (world.ctx.tryUse(token) as unknown as TokenAnalyticsFace | undefined) : undefined;
+  if (analytics === undefined) {
+    respond(rt, { id: input.id, command: "get_token_analytics", error: hubError("capability_plugin", "token analytics plugin not loaded") });
+    return;
+  }
+  respond(rt, {
+    id: input.id,
+    command: "get_token_analytics",
+    data: { breakdown: analytics.breakdown(rt.state.threadId), sessionOutput: analytics.sessionOutput(rt.state.threadId) },
+  });
+}
+
 async function handleSetSessionName(rt: WorkerRuntime, input: CommandInput): Promise<void> {
   const session = requireThread(rt, { ...input, command: "set_session_name" });
   if (session === undefined) return;
@@ -252,6 +281,15 @@ function handleGetPendingDialogs(rt: WorkerRuntime, input: CommandInput): void {
   respond(rt, { id: input.id, command: "get_pending_dialogs", data: { dialogs: rt.broker.pendingAll() } });
 }
 
+/** 插件装载快照（host plugins/list 归并输入）：pluginManagerService.list() 的
+ *  本 thread 视图——name/mode/status。观察者命令：不重置 idle 计时。 */
+function handleGetPlugins(rt: WorkerRuntime, input: CommandInput): void {
+  if (requireThread(rt, { ...input, command: "get_plugins" }) === undefined) return;
+  const svc = rt.state.world?.ctx.tryUse(pluginManagerService);
+  const loaded = svc === undefined ? [] : svc.list().map((record) => ({ name: record.name, mode: record.mode, status: record.status }));
+  respond(rt, { id: input.id, command: "get_plugins", data: { loaded } });
+}
+
 /** 读侧命令注册（注册表由 worker-commands 组装——保持单点分派面） */
 export function registerReadCommands(rt: WorkerRuntime, handlers: Map<string, Handler>): void {
   handlers.set("get_state", wrapSyncHandler((input) => handleGetState(rt, input)));
@@ -260,9 +298,11 @@ export function registerReadCommands(rt: WorkerRuntime, handlers: Map<string, Ha
   handlers.set("get_entries", wrapSyncHandler((input) => handleGetEntries(rt, input)));
   handlers.set("get_tree", (input) => handleGetTree(rt, input));
   handlers.set("get_session_stats", wrapSyncHandler((input) => handleGetSessionStats(rt, input)));
+  handlers.set("get_token_analytics", wrapSyncHandler((input) => handleGetTokenAnalytics(rt, input)));
   handlers.set("set_session_name", (input) => handleSetSessionName(rt, input));
   handlers.set("get_commands", (input) => handleGetCommands(rt, input));
   handlers.set("get_fork_messages", wrapSyncHandler((input) => handleGetForkMessages(rt, input)));
   handlers.set("get_subagents", (input) => handleGetSubagents(rt, input));
+  handlers.set("get_plugins", wrapSyncHandler((input) => handleGetPlugins(rt, input)));
   handlers.set("get_pending_dialogs", wrapSyncHandler((input) => handleGetPendingDialogs(rt, input)));
 }

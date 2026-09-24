@@ -1,20 +1,34 @@
 // skill 目录装载（docs/SKILL.md §1.1）：子目录 + SKILL.md 扫描；列表序即优先序
-// （同名前者胜）；垃圾输入拒注册 + 告警降级；一次性装载，无指纹无重载。
+// （同名前者胜）；垃圾输入拒注册 + 告警降级；一次性装载，无指纹无重载。形态判定
+// （解析 + 问题归类）在 inspect.ts 单点实现，本文件只管扫描序与注册条件。
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
-import { parseFlat, splitFrontmatter } from "@x-harness/md-frontmatter";
+import { join } from "node:path";
+import { inspectSkillDir, skillNameMismatch } from "./inspect.ts";
 import type { SkillLoadResult, SkillMeta } from "./types.ts";
 
-const SKILL_FILE = "SKILL.md";
-const MAX_BYTES = 1024 * 1024;
+/** 用户技能根（homeDir 注入缝：测试隔离目录；缺省真实 HOME）。
+ *  agentDir 派生缝：宿主进程传配置目录时用户根落在 <agentDir>/skills——
+ *  打包发行态（agent-app 等，agentDir=~/.pai/agent）技能与 app 数据区同区；
+ *  缺省（x-harness CLI 独立运行）保持 ~/.x-harness/skills 共享目录不变。 */
+export function userSkillsDirOf(homeDir: string = homedir(), agentDir?: string): string {
+  if (agentDir !== undefined && agentDir !== "") return join(agentDir, "skills");
+  return join(homeDir, ".x-harness", "skills");
+}
 
+/** 项目技能根 */
+export function projectSkillsDirOf(cwd: string): string {
+  return join(cwd, ".x-harness", "skills");
+}
+
+/** 目录解析统一入口（宿主边沿消费——插件不自持缺省）：显式传入 > env 覆盖 >
+ *  [项目根, 用户根] 缺省。路径常量单源于本模块（宿主管理面/装配面同源引用）。 */
 export function resolveSkillDirs(configured?: readonly string[]): readonly string[] {
   if (configured !== undefined) return [...configured];
   const env = process.env["X_HARNESS_SKILLS_DIRS"];
   if (env !== undefined && env !== "") return env.split(":").filter((dir) => dir !== "");
-  return [join(process.cwd(), ".x-harness", "skills"), join(homedir(), ".x-harness", "skills")];
+  return [projectSkillsDirOf(process.cwd()), userSkillsDirOf()];
 }
 
 export async function loadSkills(dirs: readonly string[]): Promise<SkillLoadResult> {
@@ -34,12 +48,18 @@ export async function loadSkills(dirs: readonly string[]): Promise<SkillLoadResu
     for (const entry of entries) {
       // 普通文件/断链静默忽略；symlink 目录跟随（stat 解引用——stow/dotfiles 摆放可用）
       if (!entry.isDirectory() && !(entry.isSymbolicLink() && (await resolvesToDir(join(dir, entry.name))))) continue;
-      const loaded = await parseSkillDir(join(dir, entry.name));
-      if (typeof loaded === "string") {
-        warnings.push(loaded);
+      const path = join(dir, entry.name);
+      const inspected = await inspectSkillDir(path);
+      if (!inspected.ok) {
+        warnings.push(inspected.message);
         continue;
       }
-      skills[entry.name] = loaded;
+      const mismatch = skillNameMismatch(path, inspected.name);
+      if (mismatch !== undefined) {
+        warnings.push(mismatch);
+        continue;
+      }
+      skills[entry.name] = { name: inspected.name, description: inspected.description, path: inspected.path };
     }
   }
   return { skills, warnings };
@@ -48,34 +68,4 @@ export async function loadSkills(dirs: readonly string[]): Promise<SkillLoadResu
 async function resolvesToDir(path: string): Promise<boolean> {
   const info = await stat(path).catch(() => undefined);
   return info?.isDirectory() ?? false;
-}
-
-type ParseOutcome = SkillMeta | string; // string = 拒注册告警
-
-async function parseSkillDir(dir: string): Promise<ParseOutcome> {
-  const file = join(dir, SKILL_FILE);
-  let info;
-  try {
-    info = await stat(file);
-  } catch (error) {
-    return `skills: unreadable ${file} (${(error as { code?: string }).code ?? "io"})`;
-  }
-  if (!info.isFile()) return `skills: ${file} is not a regular file`;
-  if (info.size > MAX_BYTES) return `skills: ${file} exceeds 1MB limit (${info.size} bytes)`;
-  let text: string;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (error) {
-    return `skills: unreadable ${file} (${(error as { code?: string }).code ?? "io"})`;
-  }
-  if (Buffer.byteLength(text, "utf8") > MAX_BYTES) return `skills: ${file} exceeds 1MB limit`;
-  const matter = splitFrontmatter(text);
-  if (matter === undefined) return `skills: ${file} has no frontmatter`;
-  const fields = parseFlat(matter.head);
-  if (fields === undefined) return `skills: ${file} frontmatter is not flat key: value lines`;
-  const name = fields.get("name");
-  const description = fields.get("description");
-  if (name === undefined || description === undefined) return `skills: ${file} missing required name/description`;
-  if (name !== basename(dir)) return `skills: ${file} name '${name}' must match directory name '${basename(dir)}'`;
-  return { name, description, path: file };
 }

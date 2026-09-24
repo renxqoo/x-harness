@@ -36,6 +36,7 @@ export const agentToolStream = defineEvent<{
 }>("agent/tool-stream", { freeze: "none" });
 
 /** F0①：enter 可携重写消息（落账走重写版——「模型可见必落盘」保持：重写版即日志版）；
+ *  改写须保留 entry.origin——带 origin 条目材料化为 agent/message（AGENT-MESSAGE §4C）；
  *  step0 改写为空 = 闭 turn（领取项被中间件显式清除）。
  *  reject.reason 声明为强形态；waterfall 不校验输出形状——内核按弱形态防御
  *  （null/undefined/垃圾决策在 beginStep 形状收窄，如实按无 reason 落）。 */
@@ -76,24 +77,84 @@ export interface RequestFailure {
   readonly code?: string;
   /** 429/503 的 Retry-After（毫秒）——重试件快车道（docs/LLM.md §1.2） */
   readonly retryAfterMs?: number;
+  /** provider 原生 stop/错误 reason（LlmFinish.rawReason 三级透传之一——消费端区分
+   *  「真错误 vs 未救回的边缘截断形态」的判定输入，docs/WORK-ERROR-RECOVERY.md C4） */
+  readonly rawReason?: string;
 }
 
-export const agentRequestError = defineWaterfall<
-  {
-    readonly session: SessionId;
-    readonly turn: number;
-    readonly step: number;
-    readonly failure: RequestFailure;
-    readonly signal: AbortSignal;
-  },
-  /** retry 可携 dial 补丁（pre-stable 扩展——plugin-examples ⑨ dogfood 发现：重试不重派
-   *  agentRequest，降级类插件无处改 retry 的模型；补丁在重试分支就地合并） */
-  { readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined
->("agent/request-error");
+/** agentRequestError 决策集（docs/WORK-ERROR-RECOVERY.md C1）：retry = 重拨（可携 dial 补丁
+ *  ——pre-stable 扩展，补丁在重试分支就地合并）；respond-to-model = 错误落卷为模型可见消息、
+ *  下一轮应对（不重拨）；fail = 显式收轮（终态带 code）；undefined = 让位 → 现行 fatal 缺省。 */
+export type RequestErrorDecision =
+  | { readonly kind: "retry"; readonly dial?: Partial<Dial> }
+  | { readonly kind: "respond-to-model"; readonly content: string }
+  | { readonly kind: "fail"; readonly message: string; readonly code: string };
+
+export interface RequestErrorPayload {
+  readonly session: SessionId;
+  readonly turn: number;
+  readonly step: number;
+  readonly failure: RequestFailure;
+  readonly signal: AbortSignal;
+}
+
+export const agentRequestError = defineWaterfall<RequestErrorPayload, RequestErrorDecision | undefined>("agent/request-error");
 
 export const agentTurnStopping = defineSerial<{ readonly session: SessionId; readonly turn: number; readonly signal: AbortSignal }>(
   "agent/turn-stopping",
 );
+
+/** 收束窗口（docs/AGENT-MESSAGE.md / docs/OUTPUT-TOKEN-CONTINUATION.md 契约；WER 批 A 扩面）：
+ *  即将结束 turn 的**通用时点**（scheduleTools 完成之后、settleConclude 之前——带工具路径
+ *  的派发点在 tool/result 全部落账后）。内核不识「截断」，何时续跑的判定完全归插件；
+ *  hasTools/truncatedCount 是纯事实载荷，「带工具是否续跑」由插件守门（agent-continuation
+ *  缺省让位 final——等价旧带工具粘性）。无应答（undefined）→ 现行收束路径原样（真 opt-in）。
+ *  中间件纪律：必须调 next；放弃用 fail 应答而非 throw；让位 = 透传下游。 */
+export type TurnConcludeDecision =
+  | { readonly kind: "resume"; readonly source: string; readonly instruction: string }
+  | { readonly kind: "fail"; readonly message: string; readonly code: string };
+
+export interface TurnConcludePayload {
+  readonly session: SessionId;
+  readonly turn: number;
+  readonly step: number;
+  readonly stopReason: "stop" | "max-tokens";
+  readonly content: readonly ContentBlock[];
+  readonly rawReason?: string;
+  /** 思考型截断信号（本次 settle 有 thinking 产出但 content 空——预算烧在思考上仍是可续写） */
+  readonly hasThinking?: true;
+  /** 本次 settle 有已执行的工具调用（ran 流派发面恒 true；全截断配对流 false——续写接手
+   *  是既有语义，截断事实在 truncatedCount。守门事实：是否续跑归插件裁决） */
+  readonly hasTools?: boolean;
+  /** 本次 settle 中被截断配对、未执行的 tool_use 数（scheduleTools 分区事实） */
+  readonly truncatedCount?: number;
+  readonly signal: AbortSignal;
+}
+
+export const agentTurnConclude = defineWaterfall<TurnConcludePayload, TurnConcludeDecision | undefined>("agent/turn-conclude");
+
+/** 抢救/文案窗口（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5 + docs/WORK-ERROR-RECOVERY.md C3）：
+ *  截断 tool_use 配对收场前的通用时点——插件在此做副作用（半截产出抢救）或替换合成文案。
+ *  内核零策略：合成 result 的缺省文案是协议短事实（`truncated: not executed`），面向模型的
+ *  行为指令长文归文案插件（@x-harness/truncation-messages）。
+ *  载荷纯事实（arguments 为 llm 层原文出口的半截 JSON 原文）。应答两种形态（WER C3 并存
+ *  裁决）：{ note } = 追加附注（抢救件语义不变）；{ content } = **替换性**完整文案——与
+ *  { note } 同答时 content 生效、note 丢弃（替换优先于追加）。undefined = 无应答，走内核
+ *  短事实。形状门在内核（note/content 非空 string）：垃圾忽略走缺省——抢救与文案都是增益
+ *  非契约，fail-loud 会把插件 bug 放大成收轮事故。 */
+export interface TruncatedToolPayload {
+  readonly session: SessionId;
+  readonly turn: number;
+  readonly step: number;
+  readonly callId: string;
+  readonly name: string;
+  readonly arguments: string;
+  readonly signal: AbortSignal;
+}
+
+export type TruncatedToolDecision = { readonly note: string } | { readonly content: string } | undefined;
+
+export const agentTruncatedTool = defineWaterfall<TruncatedToolPayload, TruncatedToolDecision>("agent/truncated-tool");
 
 /** F0②：assistant 落账前纠（幻觉强形态）——settle 与 append 之间；落的是改写后版本 */
 export interface AssistantSettlement {

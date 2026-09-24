@@ -33,7 +33,7 @@ describe("agentSpawned/agentFinished 发射矩阵", () => {
     expect(log.spawned).toHaveLength(1);
     expect(log.spawned[0]).toMatchObject({ parent: parent.agent.session.id, agentId: agentIdOf(spawned.content), sessionId: sessionOf(spawned.content), type: "worker", depth: 1 });
     expect(log.finished[0]).toMatchObject({ outcome: "completed", detail: "completed", agentId: agentIdOf(spawned.content) });
-    expect(log.finished[0]?.summary).toBe(full); // 事件 summary 全文——与通知/task_output 同一 reportCap
+    expect(log.finished[0]?.summary).toBe(full); // 事件 summary 全文——与通知同一 reportCap
     await parent.dispose();
   });
 

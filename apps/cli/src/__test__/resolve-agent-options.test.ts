@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../parse-cli-args.ts";
 import { agentOptionsForCreate, agentOptionsForResume, resolveToolNames } from "../resolve-agent-options.ts";
 
-const REGISTERED = ["read", "write", "bash", "grep", "task_output", "task_stop"];
+const REGISTERED = ["read", "write", "bash", "grep", "task_stop"];
 
 function args(argv: string[]) {
   const parsed = parseCliArgs(argv);
@@ -19,7 +19,7 @@ describe("resolveToolNames（表驱动——restriction 输入源）", () => {
     { name: "缺省 = 全部注册工具", argv: [], expected: REGISTERED },
     { name: "--no-tools = 全禁", argv: ["--no-tools"], expected: [] },
     { name: "--tools 白名单", argv: ["--tools", "read,grep"], expected: ["read", "grep"] },
-    { name: "--exclude-tools 从全集减", argv: ["--exclude-tools", "bash,write"], expected: ["read", "grep", "task_output", "task_stop"] },
+    { name: "--exclude-tools 从全集减", argv: ["--exclude-tools", "bash,write"], expected: ["read", "grep", "task_stop"] },
     { name: "--tools + --exclude-tools 白后减", argv: ["--tools", "read,write,bash", "--exclude-tools", "write"], expected: ["read", "bash"] },
     { name: "--tools 含未注册名（发送面无此 schema，如实保留）", argv: ["--tools", "read,nope"], expected: ["read", "nope"] },
   ];

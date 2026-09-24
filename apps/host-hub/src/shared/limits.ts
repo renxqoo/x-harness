@@ -30,6 +30,12 @@ export const TOOL_STREAM_MIN_INTERVAL_MS = 25; // agent/tool-stream 帧尾沿合
 export const PROMPT_IMAGE_DATA_MAX = 5 * 1024 * 1024; // 单图 base64 串长上限
 export const PROMPT_IMAGES_MAX = 8; // 单 prompt 图像张数上限
 export const PROMPT_IMAGES_TOTAL_MAX = 12 * 1024 * 1024; // 单 prompt 图像总字节上限（16MiB 行限内的诚实余量）
+export const SKILL_INSPECT_MAX_PATHS = 200; // skills/inspect 单批候选上限
+export const PLUGIN_INSPECT_MAX_PATHS = 200; // plugins/inspect 单批候选上限
+export const PLUGIN_IMPORT_MAX_BYTES = 64 * 1024 * 1024; // 插件导入拷贝累计字节上限
+export const PLUGIN_IMPORT_MAX_ENTRIES = 4096; // 插件导入拷贝条目上限
+export const SKILL_IMPORT_MAX_BYTES = 64 * 1024 * 1024; // 技能导入拷贝累计字节上限
+export const SKILL_IMPORT_MAX_ENTRIES = 4096; // 技能导入拷贝条目上限
 export const WORKER_RESPONSE_SOFT_CAP = 100 * 1024 * 1024; // worker 单响应软上限（超限 failure 引导 get_entries——防 128MiB 行限击穿杀 worker）
 
 const RSS_FLOOR = 256 * 1024 * 1024;

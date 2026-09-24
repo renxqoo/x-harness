@@ -42,6 +42,8 @@ interface LiveSlot {
   retireReason: RetireOrigin;
   spawnDeadline: ReturnType<typeof setTimeout> | undefined;
   helloOk: boolean;
+  /** host→worker 内部查询等待面（@hub-internal: id → 等待者；close 结算兑现空应答） */
+  internalQueries: Map<string, { resolve: (data: unknown) => void }>;
 }
 
 /** retiring 重放队列上限（风暴丢行：重发可重试——retiring 本就重评） */
@@ -96,6 +98,8 @@ export function createWorkerPool(deps: PoolDeps) {
       pendingCommands.delete(sendId);
     }
     slot.resumeWaiter?.resolve(false);
+    for (const waiter of slot.internalQueries.values()) waiter.resolve(undefined);
+    slot.internalQueries.clear();
     if (slot.spawnDeadline !== undefined) clearTimeout(slot.spawnDeadline);
   }
 
@@ -194,7 +198,16 @@ export function createWorkerPool(deps: PoolDeps) {
         pendingCommands.delete(id);
         if (!success) slot.drivingIds.delete(id); // 受理前被拒：无 settled 义务
       },
-      onControlResponse: (frame) => routeControl({ slot, rebind, trusted, cwd }, frame),
+      onControlResponse: (frame) => {
+        // host→worker 内部查询应答：按 id 兑现等待者（不进 control 路由、不转发）
+        const waiter = frame.id !== undefined ? slot.internalQueries.get(frame.id) : undefined;
+        if (waiter !== undefined) {
+          if (frame.id !== undefined) slot.internalQueries.delete(frame.id);
+          waiter.resolve(frame.data);
+          return false; // 内部查询应答不转发
+        }
+        return routeControl({ slot, rebind, trusted, cwd }, frame);
+      },
       onSettled: (sendId) => {
         slot.drivingIds.delete(sendId);
         pendingCommands.delete(sendId);
@@ -240,6 +253,7 @@ export function createWorkerPool(deps: PoolDeps) {
       retireReason: "manual",
       spawnDeadline: undefined,
       helloOk: false,
+      internalQueries: new Map(),
     };
   }
 
@@ -484,6 +498,41 @@ export function createWorkerPool(deps: PoolDeps) {
     slotOf(threadId)?.worker.kill(FORK_GRACE_SIGTERM_MS);
   }
 
+  /** host→worker 内部查询（尽力而为）：对全部 live worker 发同型命令，聚合应答
+   *  data。worker 死亡/超时 → 该路 undefined（查询面不阻塞管理面）；应答经
+   *  internal id 命名空间回流（routeLine 拒客户端冒用同前缀）。 */
+  async function queryLiveWorkers(type: string, timeoutMs: number): Promise<unknown[]> {
+    const results: unknown[] = [];
+    const live = liveThreadIds();
+    if (live.length === 0) return results;
+    const waits: Array<Promise<void>> = [];
+    for (const threadId of live) {
+      const slot = slotOf(threadId);
+      if (slot === undefined) continue;
+      const id = nextInternalId();
+      const wait = new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          const waiter = slot.internalQueries.get(id);
+          if (waiter !== undefined) {
+            slot.internalQueries.delete(id);
+            waiter.resolve(undefined);
+          }
+        }, timeoutMs);
+        slot.internalQueries.set(id, {
+          resolve: (data) => {
+            clearTimeout(timer);
+            if (data !== undefined && data !== null) results.push(data);
+            resolve();
+          },
+        });
+      });
+      waits.push(wait);
+      void slot.worker.write(JSON.stringify({ id, type, threadId }));
+    }
+    await Promise.all(waits);
+    return results;
+  }
+
   function liveThreadIds(): string[] {
     return [...byThread.keys()].filter((id) => !id.startsWith("@pending"));
   }
@@ -507,6 +556,7 @@ export function createWorkerPool(deps: PoolDeps) {
     beginThread,
     beginKnown,
     deliverRaw,
+    queryLiveWorkers,
     slotOf,
     retireThread,
     killStale,

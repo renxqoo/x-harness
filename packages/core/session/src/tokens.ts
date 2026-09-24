@@ -41,3 +41,17 @@ export const sessionFlush = defineParallel<{ readonly session: SessionId }>("ses
 
 /** store.dispose 移除并封存写权后广播，恰好一次 */
 export const sessionDisposed = defineEvent<{ readonly session: SessionId }>("session/disposed", { freeze: "none" });
+
+// ---- 词表单一出口（WER 批 D——C6：gates 校验字面量与 types 联合类型双写会漂移；
+// llm 扩档位时新值被门拒 → 整卷假 corrupt，fail-closed 放大。三词表在此单点定义） ----
+
+/** request/header thinking 档位闭集（与 @x-harness/llm 的 ThinkingLevel 同源——
+ *  llm 侧经此 import，不再自带联合） */
+export const THINKING_LEVELS = ["off", "low", "medium", "high", "max"] as const;
+export type ThinkingLevelValue = (typeof THINKING_LEVELS)[number];
+
+/** todo/snapshot 词条 status 闭集（docs/TODO.md §13.2） */
+export const TODO_SNAPSHOT_STATUS_VALUES = ["pending", "in_progress", "completed"] as const;
+
+/** inbox 路由目标闭集（队列消费序机制——领队首/全领由调用方语义，值域在此单点） */
+export const INBOX_TARGET_VALUES = ["next-turn", "next-step"] as const;

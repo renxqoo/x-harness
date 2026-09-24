@@ -73,7 +73,7 @@ async function startHost(): Promise<{ input: FakeInput; client: string[]; agentD
   void runHost({
     agentDir,
     sessionsRoot,
-    env: {},
+    env: { HUB_SKILLS_MIGRATION: "0", HUB_AGENTS_MIGRATION: "0" },
     input: input as unknown as NodeJS.ReadStream,
     exit: () => {},
     emitOverride: (line) => client.push(line),
@@ -263,7 +263,7 @@ describe("host 流程补面", () => {
     void runHost({
       agentDir,
       sessionsRoot,
-      env: {},
+      env: { HUB_SKILLS_MIGRATION: "0", HUB_AGENTS_MIGRATION: "0" },
       input: input as unknown as NodeJS.ReadStream,
       exit: () => {},
       emitOverride: (line) => client.push(line),
@@ -358,7 +358,7 @@ describe("host 流程补面", () => {
     void runHost({
       agentDir,
       sessionsRoot,
-      env: {},
+      env: { HUB_SKILLS_MIGRATION: "0", HUB_AGENTS_MIGRATION: "0" },
       input: input as unknown as NodeJS.ReadStream,
       exit: (code) => {
         exited = code;

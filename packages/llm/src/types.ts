@@ -1,6 +1,7 @@
 // LLM 契约类型（docs/LLM.md §1.1）：LlmChunk 流、失败契约（结构化 code/retryAfterMs）、适配器与 runtime。
 
 import type { SessionId, SurfaceMessage } from "@x-harness/session";
+import { THINKING_LEVELS } from "@x-harness/session";
 import type { ToolSchema } from "@x-harness/tools";
 
 export interface UsageCost {
@@ -27,18 +28,29 @@ export interface TokenUsage {
 /** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high/max → anthropic 侧
  *  thinkingEnabled + effort + 预算（THINKING_BUDGETS；max=自适应模型无约束思考，
  *  pi AnthropicEffort 原生含 max——老预算型模型预算同 high）；openai 侧不注入 */
-export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max";
+// 档位值域单一出口在 @x-harness/session tokens（THINKING_LEVELS）——llm 侧联合类型与 core 门校验同源，防扩档位漂移
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number]; // as const 出真联合（非 string）——单一出口双轨
 
 export type LlmFinish =
   | { readonly kind: "stop" }
-  | { readonly kind: "max-tokens" }
+  | {
+      readonly kind: "max-tokens";
+      /** provider 原生 stop reason（pi `AssistantMessage.rawStopReason` 透传）——诊断与
+       *  截断判定共用（anthropic `max_tokens` / openai `length` / responses `incomplete.max_output_tokens`） */
+      readonly rawReason?: string;
+    }
   | {
       readonly kind: "error";
       readonly message: string;
-      /** 失败词表（闭集）：`http-<status>` / `network` / `no-adapter` */
+      /** 失败词表（闭集）：`http-<status>` / `network` / `no-adapter` / `context-overflow` /
+       *  `non-retryable`（refusal/sensitive/content_filter 与鉴权文案——重试换不来新结果） /
+       *  `repetition`（llm-repetition-guard 复读截流——docs/LLM-REPETITION-GUARD.md，宿主词表按需增列） */
       readonly code?: string;
       /** 仅 429/503 的 Retry-After（毫秒，小数秒已折算；HTTP-date 解析失败视为缺席） */
       readonly retryAfterMs?: number;
+      /** provider 原生 stop/错误 reason（pi `AssistantMessage.rawStopReason` 透传）——诊断
+       *  事实（供消费端区分「真错误 vs 未救回的边缘截断形态」），非处置信号 */
+      readonly rawReason?: string;
     };
 
 export type LlmChunk =
@@ -66,8 +78,10 @@ export interface LlmRequest {
 
 export interface LlmAdapter {
   readonly name: string;
-  /** 适配器的上下文窗口（pi-ai adapter 配置——缺失 B 修复：运行时可查询，插件不再要求宿主注入） */
+  /** 档案级上下文窗口（pi-ai adapter 配置——缺失 B 修复：运行时可查询，插件不再要求宿主注入） */
   readonly contextWindow?: number;
+  /** 逐模型窗口（目录 modelMeta——同档案多模型窗口不同时精确到模型；缺模型回退档案级） */
+  readonly contextWindowByModel?: Readonly<Record<string, number>>;
   /** 恰一个 finish 收尾（P14：无 finish 流按 error 结算归 loop 兜底；适配器违约自担测试） */
   stream(request: LlmRequest): AsyncIterable<LlmChunk>;
 }
@@ -77,6 +91,7 @@ export interface LlmRuntime {
   registerAdapter(adapter: LlmAdapter): () => void;
   /** 经 llm/stream waterfall 派发；失败归一为 error finish 流（abort 豁免——throw AbortError） */
   stream(request: LlmRequest): AsyncIterable<LlmChunk>;
-  /** 上下文窗口查询（缺失 B 修复）：按适配器名查其 contextWindow；未知返回 undefined（消费方自行兜底） */
-  contextWindowOf(provider?: string): number | undefined;
+  /** 上下文窗口查询（缺失 B 修复）：模型级（contextWindowByModel）> 档案级（contextWindow）；
+   *  provider 未点名时仅唯一适配器世界可答。未知返回 undefined（消费方自行兜底） */
+  contextWindowOf(provider?: string, model?: string): number | undefined;
 }

@@ -1,6 +1,6 @@
 // write 工具（docs/TOOLBOX.md §3 + docs/EXEC-ENV.md §3）：观察门+版本 CAS（会话键控；版本由
-// ExecEnv 产出——write 侧 env.stat）；同路径进程内互斥；原子写 env.writeFileAtomic（D1 mode
-// 承袭、temp+rename、失败清残留——均在 env 实现）；BOM round-trip；写后自登记。
+// ExecEnv 产出——write 侧 env.stat）；同锁键（realpath）进程内互斥；原子写 env.writeFileAtomic
+// （temp+rename、失败清残留——在 env 实现）；BOM round-trip；写后自登记。
 
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
@@ -26,7 +26,7 @@ export function createWriteTool(input: WriteToolInput): ToolDefinition {
   return {
     name: "write",
     description:
-      "Write a whole file (create or overwrite) within the workspace root. Overwriting an existing file requires reading it first in the same session (and it must not have changed since). Parent directories are created automatically.",
+      "Write a whole file (create or overwrite) within the workspace root. Overwriting an existing file requires reading it first in the same session (and it must not have changed since). Parent directories are created automatically. For targeted changes to part of a file, prefer the edit tool.",
     inputSchema: Type.Object({
       path: Type.String({ description: "File path (relative to workspace root or absolute inside it)" }),
       content: Type.String({ description: "Full file content (empty string writes an empty file)" }),
@@ -43,7 +43,8 @@ async function write(input: { readonly gate: PathGate; readonly observed: Observ
   const admitted = await admitSession({ gate, realpath: env.realpath, session: ctx.session, extraRootsOf, rootOverrideOf, target: args.path });
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const path = admitted.path;
-  return observed.locked(path, async () => {
+  const lockKey = await env.realpath(path); // 锁键与 I/O 键解耦（symlink 别名同锁）
+  return observed.locked(lockKey, async () => {
     const st = await env.stat(path);
     let preExisting = false;
     let observedVersion: ReturnType<ObservedRegistry["lookup"]> = undefined;

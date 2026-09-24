@@ -7,11 +7,10 @@ import { realpath } from "node:fs/promises";
 import { isSafeSessionId } from "@x-harness/session";
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import type { SessionEvent } from "@x-harness/session";
-import { projectEntries } from "../shared/entries-project.ts";
-import { foldQueueText } from "../shared/inbox-fold.ts";
+import { foldQueue } from "../shared/inbox-fold.ts";
 import { foldDial } from "../shared/meta-fold.ts";
 import { titleOf } from "../worker/meta-state.ts";
-import { entryWindow, type EntryLine } from "../worker/entries-window.ts";
+import { entryWindowViewed, type EntryLine } from "../worker/entries-window.ts";
 import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import { DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
 
@@ -67,11 +66,13 @@ export function createDirectRead(deps: DirectReadDeps) {
   return {
     /** get_entries 直读：档案行 + 窗口；档案缺失/超限 → undefined（回落唤醒）。
      *  窗口拒绝 = 游标/limit 输入校验族（entries-window 单真相，与唤醒路径同码） */
-    async readEntries(threadId: string, query: { since?: number; before?: number; limit?: number }): Promise<{ entries: EntryLine[]; leafSeq: number; hasMore: boolean } | { error: HubErrorShape } | undefined> {
+    async readEntries(threadId: string, query: { since?: number; before?: number; limit?: number; view?: unknown }): Promise<{ entries: EntryLine[]; leafSeq: number; hasMore: boolean } | { error: HubErrorShape } | undefined> {
       const loaded = await load(threadId);
       if (loaded === undefined || loaded.events.length === 0) return undefined;
-      const window = entryWindow(projectEntries(loaded.events), query);
-      return window.ok ? { entries: window.entries, leafSeq: window.leafSeq, hasMore: window.hasMore } : { error: hubError("invalid_input", window.reason) };
+      // code 透传（与 worker 路径闭合——cursor_stale 是重同步信号，不得折叠为
+      // invalid_input；存量分叉随 view 落地一并收口）
+      const window = entryWindowViewed(loaded.events, query);
+      return window.ok ? { entries: window.entries, leafSeq: window.leafSeq, hasMore: window.hasMore } : { error: hubError(window.code, window.reason) };
     },
     /** get_state 直读投影（与唤醒路径形状闭合——queue 经 WAL 折叠，未消费 inbox
      *  push 不因离线而「假空」；dial 双源折叠，无任何事实时 provider 空串） */
@@ -92,7 +93,7 @@ export function createDirectRead(deps: DirectReadDeps) {
         sessionName: titleOf(events) ?? "",
         sessionFile: `${deps.sessionsRoot}/${threadId}/events.jsonl`,
         messageCount,
-        queue: foldQueueText(events),
+        queue: foldQueue(events),
       };
     },
     /** 会话头直读（resume 预检/唤醒 cwd 复核面） */

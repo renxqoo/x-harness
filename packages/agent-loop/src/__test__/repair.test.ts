@@ -70,6 +70,26 @@ describe("interruptedTurnClosers（docs/AGENT-LOOP-DRIVER §1.6，DSH repair.spe
     expect(data?.callId).toBe("b");
   });
 
+  it("回归（AGENT-MESSAGE §4C）：纯内部消息批次消费后崩溃不复活——agent/message 也是消费标记", () => {
+    // 纯 notify 批次材料化只落 agent/message（无 user/message）——trailingClaims 漏认会把
+    // 已交付的 delegation 报告当 trailing claim 复活重投（双交付破坏「同份内容只进父上下文一次」）
+    const insertReport = {
+      op: "insert" as const,
+      target: "next-step" as const,
+      entries: [{ id: "r1", content: [{ type: "text", text: "[agent-notification] report" }], origin: { source: "delegation-report", kind: "content" as const } }],
+    };
+    const log = [
+      ev({ seq: 0, type: "turn/start", data: { turn: 0 } }),
+      ev({ seq: 1, type: "agent/inbox/spliced", data: insertReport }),
+      ev({ seq: 2, type: "agent/inbox/spliced", data: { op: "claim", target: "next-step", turn: 0, claimed: ["r1"] } }),
+      ev({ seq: 3, type: "agent/message", data: { turn: 0, step: 1, source: "delegation-report", kind: "content", content: [{ type: "text", text: "[agent-notification] report" }] }, surfaceOp: "append" }), // 已材料化=已消费
+      // 崩溃：此后无 user/message
+    ];
+    const closers = interruptedTurnClosers(log);
+    expect(closers.some((c) => c.type === "agent/inbox/spliced" && (c.data as { op?: string }).op === "insert")).toBe(false); // 不复活
+    expect(closers.some((c) => c.type === "turn/end")).toBe(true);
+  });
+
   it("claim 回灌：末次 user/message 之后的 claim 连续段，last-insert-wins；旧 claim 不误伤", () => {
     const insertA = { op: "insert" as const, target: "next-turn" as const, entries: [{ id: "x1", content: [{ type: "text", text: "v1" }] }] };
     const insertA2 = { op: "insert" as const, target: "next-turn" as const, entries: [{ id: "x1", content: [{ type: "text", text: "v2" }] }] };

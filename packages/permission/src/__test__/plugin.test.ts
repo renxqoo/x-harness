@@ -14,6 +14,7 @@ import type { ToolOutcome } from "@x-harness/tools";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { createPermissionPlugin, permissionBroker, permissionDecided, permissionGrants, permissionMode } from "../index.ts";
+import { parseRules } from "../index.ts";
 
 interface Bench {
   readonly ctx: Context;
@@ -24,7 +25,7 @@ interface Bench {
 }
 
 /** 单装配多 dispatch：broker 可编程（脚本耗尽即 deny）；审计与 ask 全记账 */
-async function bench(root: string, options: { rules?: readonly string[]; mode?: "plan" | "auto" | "full"; brokerScript?: readonly ("allow" | "deny")[]; controlTools?: readonly string[] } = {}): Promise<Bench> {
+async function bench(root: string, options: { rules?: readonly string[]; mode?: import("../types.ts").ProfileId; brokerScript?: readonly ("allow" | "deny")[]; controlTools?: readonly string[]; customProfiles?: readonly import("../types.ts").PermissionProfile[] } = {}): Promise<Bench> {
   const ctx = createContext();
   const audits: { tool: string; verdict: string; resolvedBy?: string }[] = [];
   const asks: { tool: string; reason: string }[] = [];
@@ -37,13 +38,13 @@ async function bench(root: string, options: { rules?: readonly string[]; mode?: 
           asks.push({ tool: input.tool, reason: input.reason });
           const verdict = options.brokerScript?.[at] ?? "deny";
           at += 1;
-          return verdict;
+          return { verdict };
         },
       }),
   };
   const unload = await loadPlugins(ctx, [
     toolsPlugin,
-    createPermissionPlugin({ root, ...(options.rules !== undefined ? { rules: options.rules } : {}), ...(options.mode !== undefined ? { mode: options.mode } : {}) }),
+    createPermissionPlugin({ root, ...(options.rules !== undefined ? { rules: parseRules(options.rules, "user") } : {}), ...(options.mode !== undefined ? { mode: options.mode } : {}), ...(options.customProfiles !== undefined ? { customProfiles: options.customProfiles } : {}) }),
     broker,
   ]);
   ctx.on(permissionDecided, (audit) => audits.push({ tool: audit.tool, verdict: audit.verdict, resolvedBy: audit.resolvedBy }));
@@ -89,9 +90,8 @@ describe("permission 插件（真实管线）", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("拼错规则 fail-closed 拒启（apply throw）", async () => {
-    const ctx = createContext();
-    await expect(loadPlugins(ctx, [toolsPlugin, createPermissionPlugin({ root, rules: ["Bash(broken"] })])).rejects.toThrow(/unparseable/);
+  it("拼错规则 fail-closed 拒启（解析边沿 throw——规则串解析归宿主边）", () => {
+    expect(() => parseRules(["Bash(broken"], "user")).toThrow(/unparseable/);
   });
 
   it("默认拒读表：read .env / .ssh/id_rsa → deny（user-origin deny 压过一切；不触发 ask）", async () => {
@@ -136,9 +136,12 @@ describe("permission 插件（真实管线）", () => {
 
   it("bash：auto 档无规则 → ask→批→allow；allow 规则 → 零交互；deny 规则直接 deny", async () => {
     const b = await bench(root, { brokerScript: ["allow"] });
-    const asked = await b.call("bash", { command: "ls" }, "s1" as SessionId);
-    expect(asked.content).toBe("ran"); // 无规则 → ask → 批 → 放行
+    const asked = await b.call("bash", { command: "mytool run" }, "s1" as SessionId);
+    expect(asked.content).toBe("ran"); // 未分类 → ask → 批 → 放行
     expect(b.asks).toHaveLength(1);
+    const zeroTouch = await b.call("bash", { command: "git status" }, "s1" as SessionId);
+    expect(zeroTouch.content).toBe("ran");
+    expect(b.asks).toHaveLength(1); // 分类器零交互（U4——不新增 ask）
     for (const d of b.unload) await d();
 
     const b2 = await bench(root, { rules: ["Bash(git status):allow"], brokerScript: [] });
@@ -213,6 +216,15 @@ describe("permission 插件（真实管线）", () => {
     for (const d of b.unload) await d();
   });
 
+  it("症状回归：自定义档 set 曾被预滤为 undefined 静默降级 auto——set 原串经 customProfiles 解析真生效", async () => {
+    const b = await bench(root, { customProfiles: [{ id: "strict", askPolicy: "always", containment: "none", mutationPolicy: "plan-deny" }] });
+    const svc = b.ctx.use(permissionMode);
+    svc.set("strict");
+    expect(svc.get()).toBe("strict"); // 开词表原串保留（非预滤）
+    expect((await b.call("write", { path: "f.txt", content: "x" })).isError).toBe(true); // custom 档 plan-deny 真生效（降级 auto 时界内写会放行）
+    for (const d of b.unload) await d();
+  });
+
   it("full 档拒读表仍压过：.env 与家目录 ~/.ssh 读拒（deny 规则先于 full 短路）", async () => {
     const full = await bench(root, { mode: "full" });
     const env = await full.call("read", { path: ".env" });
@@ -235,7 +247,7 @@ describe("permission 插件（真实管线）", () => {
           ask: async (input) => {
             asks.push({ reason: input.reason });
             at += 1;
-            return at <= 1 ? "allow" : "deny"; // 首批后耗尽
+            return { verdict: at <= 1 ? "allow" : "deny" }; // 首批后耗尽
           },
         }),
     };

@@ -31,6 +31,8 @@ export interface SpawnDeps {
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
   /** permission 授权面（isolation=worktree 的根替换落账）；缺位时 worktree 隔离拒 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
+  /** 裸模型名 → 归属 provider 反查（宿主接目录快照；缺省不反查——inheritDial 串线修复） */
+  readonly resolveProviderOf?: (model: string) => string | undefined;
 }
 
 export type SpawnOutcome = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string };
@@ -122,7 +124,6 @@ async function buildChild(
     armed: false,
     running: false,
     stopped: false,
-    reportDelivered: false,
     ...(worktree.plan !== undefined ? { worktree: worktree.plan.path } : {}),
   };
   if (worktree.plan !== undefined && deps.setRootOverride !== undefined) {
@@ -165,6 +166,7 @@ function childAgentOptions(
     type: spec.named,
     lastHeader: lastHeaderOf(deps, spec.caller),
     override: spec.isFork ? undefined : { model: spec.input.model }, // fork 忽略 model 参数（规格原文）
+    ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
   });
   return {
     ...dial,
@@ -239,6 +241,8 @@ function spawnText(row: ChildRow, freshFork: boolean): string {
   return (
     `Spawned ${row.agentId} (type '${row.type}', session ${String(row.sessionId)}). ` +
     `It runs in the background; an [agent-notification] message will arrive on completion. ` +
+    `End your turn to wait for it — the notification wakes you if idle and is injected at your next step boundary if busy; ` +
+    `do NOT poll (no sleep loops, no repeated list_agents to check whether it is done). ` +
     `Address it by this agentId — it stays stable across restarts.${forkNote}`
   );
 }

@@ -38,6 +38,11 @@ export interface CompactionOptions {
 
 const DEFAULT_RESERVE = 16_384;
 const DEFAULT_KEEP_RECENT = 20_000;
+
+/** 窗口溢出码闭集（自愈唤醒词表——docs/OUTPUT-TOKEN-CONTINUATION.md compaction 节）：
+ *  `http-413` = 状态码直报；`context-overflow` = llm 层 overflow 文案分类（主力 provider
+ *  的输入溢出是 400+文案，落 http-400 则自愈永不触发）。新溢出形态只加词表项。 */
+const WINDOW_OVERFLOW_CODES: ReadonlySet<string> = new Set(["http-413", "context-overflow"]);
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
 
 function isFiniteNumber(value: unknown): value is number {
@@ -220,7 +225,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
       ): Promise<{ readonly kind: "retry" } | undefined> => {
         const downstream = await next(payload); // 先行：下游（llm-retry 等）已裁决 retry 则让位
         if (downstream !== undefined) return downstream;
-        if (payload.failure.code !== "http-413") return downstream;
+        if (payload.failure.code === undefined || !WINDOW_OVERFLOW_CODES.has(payload.failure.code)) return downstream;
         const key = `${String(payload.turn)}:${String(payload.step)}`;
         if (healed.get(payload.session) === key) return downstream; // 同 (turn,step) 恰自愈一次
         healed.set(payload.session, key);

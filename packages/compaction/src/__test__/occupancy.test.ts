@@ -134,6 +134,22 @@ describe("领取未落账批次（pendingClaimTokens）", () => {
     expect(pendingClaimTokens([logEvent("agent/inbox/spliced", 0, { op: "claim", target: "next-turn", turn: 1, claimed: [] }) as never])).toBe(0);
   });
 
+  it("交错免疫：claim 后夹非消费事件（drop/retarget）仍按其后 claim 计数——客户端单条命令窗口", () => {
+    const events = [
+      logEvent("agent/inbox/spliced", 0, { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: textOf(5) }] }] }) as never,
+      logEvent("agent/inbox/spliced", 1, { op: "claim", target: "next-turn", turn: 1, claimed: ["u1"] }) as never,
+      logEvent("agent/inbox/spliced", 2, { op: "drop", target: "next-step", dropped: ["s9"], reason: "client-drop" }) as never,
+      logEvent("agent/inbox/spliced", 3, { op: "retarget", id: "s8", to: "next-step" }) as never,
+    ];
+    expect(pendingClaimTokens(events as SessionEvent[])).toBe(5);
+    // user/message 落账后 pending 归零（其后无新 claim）
+    const settled = [
+      ...events,
+      logEvent("user/message", 4, { turn: 1, step: 0, content: [{ type: "text", text: "u1" }] }) as never,
+    ];
+    expect(pendingClaimTokens(settled as SessionEvent[])).toBe(0);
+  });
+
   it("回归（BATCH2 审 H2）：image 块计 IMAGE_TOKENS——413 防线对图不盲", () => {
     const events = [
       logEvent("agent/inbox/spliced", 0, {

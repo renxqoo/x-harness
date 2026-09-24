@@ -22,6 +22,12 @@ export interface ToolExecContext {
    *  结果权威仍 = 返回值（「结果即返回值」不变量不动）。实现方自负不抛（观察面纪律）；
    *  可被中间件替换/包裹（与 signal 同类） */
   readonly onOutput?: (delta: string) => void;
+  /** 执行指令（permission 裁决产物，dispatch 管线服务端透传——模型入参不可达）：
+   *  direct=直通执行；contained=围栏内执行；缺席=参与面缺省（fail-safe 归 contained） */
+  readonly exec?: "direct" | "contained";
+  /** on-failure 升级资格（档位 askPolicy=on-failure 且本次 contained——工具侧据此
+   *  在围栏疑似打挂时发起 escalate ask） */
+  readonly escalatable?: true;
 }
 
 export interface ToolOutcome {
@@ -78,7 +84,11 @@ export interface ToolCallRequest {
   readonly onOutput?: (delta: string) => void;
 }
 
-export type PreExecuteDecision = { readonly kind: "allow" } | { readonly kind: "deny"; readonly reason: string };
+/** pre-execute 决策：allow 可携执行指令（permission 裁决产物——dispatch 管线服务端独占，
+ *  gateDecision 白名单校验透传；缺席 = 无指令参与面） */
+export type PreExecuteDecision =
+  | { readonly kind: "allow"; readonly exec?: "direct" | "contained"; readonly escalatable?: true }
+  | { readonly kind: "deny"; readonly reason: string };
 
 /** 会话层工具收窄：可见名白名单或 "deny-all"（全禁） */
 export type ToolFilter = readonly string[] | "deny-all";

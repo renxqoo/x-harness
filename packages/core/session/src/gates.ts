@@ -3,6 +3,8 @@
 // 垃圾输入一律返回失败理由，不抛不崩。
 
 import { applySurfaceEvent, isSurfaceEventType } from "./surface.ts";
+import { INBOX_TARGET_VALUES, THINKING_LEVELS, TODO_SNAPSHOT_STATUS_VALUES } from "./tokens.ts";
+import { AGENT_MESSAGE_KINDS } from "./agent-message.ts";
 import type { SessionEvent, SessionEventType, SurfaceEventType, SurfaceNode, SurfaceOp } from "./types.ts";
 
 const SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -71,18 +73,69 @@ function isToolRefs(value: unknown): boolean {
 }
 
 function isInboxTarget(value: unknown): boolean {
-  return value === "next-turn" || value === "next-step";
+  return (INBOX_TARGET_VALUES as readonly string[]).includes(value as string);
+}
+
+/** id 字符串数组（claim.claimed / drop.dropped 共用形状）。 */
+function isIdList(value: unknown): boolean {
+  return Array.isArray(value) && value.every((id) => isStr(id) && id !== "");
+}
+
+/** claim 消费（按 turn 记账）：target + turn + claimed。 */
+function isInboxClaim(d: Record<string, unknown>): boolean {
+  return isInboxTarget(d["target"]) && isCount(d["turn"]) && isIdList(d["claimed"]);
+}
+
+/** drop 单条移除（queue/drop 直写）：target + dropped + reason。 */
+function isInboxDrop(d: Record<string, unknown>): boolean {
+  return isInboxTarget(d["target"]) && isIdList(d["dropped"]) && isStr(d["reason"]) && d["reason"] !== "";
+}
+
+/** 收件箱拼接五 op 的形状门（insert/claim/clear/drop/retarget）。 */
+function isInboxSpliceData(data: unknown): boolean {
+  if (!isObj(data)) return false;
+  const d = data as Record<string, unknown>;
+  switch (d["op"]) {
+    case "insert":
+      return isInboxTarget(d["target"]) && isInboxEntries(d["entries"]);
+    case "claim":
+      return isInboxClaim(d);
+    case "clear": // 清双队列，无 target
+      return isStr(d["reason"]) && d["reason"] !== "";
+    case "drop":
+      return isInboxDrop(d);
+    case "retarget": // 单条改道（queue/send_now 直写）
+      return isStr(d["id"]) && d["id"] !== "" && isInboxTarget(d["to"]);
+    default:
+      return false;
+  }
+}
+
+/** 条目材料化标记门（docs/AGENT-MESSAGE.md §4 场景 C）：source 非空 + kind 闭集 */
+function isEntryOrigin(value: unknown): boolean {
+  return isObj(value) && isStr(value["source"]) && value["source"] !== "" && AGENT_MESSAGE_KINDS.has(value["kind"] as string);
 }
 
 function isInboxEntries(value: unknown): boolean {
   return (
     Array.isArray(value) &&
-    value.every((entry) => isObj(entry) && isStr(entry["id"]) && entry["id"] !== "" && isContentBlocks(entry["content"], true))
+    value.every((entry) => {
+      if (!isObj(entry) || !isStr(entry["id"]) || entry["id"] === "" || !isContentBlocks(entry["content"], true)) return false;
+      // 带 origin 的条目将材料化为 agent/message（text-only 门）——入口同口径收口，
+      // 失败点不后移到运行中段（材料化 append 才炸 → 整轮 error）
+      return entry["origin"] === undefined || (isEntryOrigin(entry["origin"]) && isTextOnlyBlocks(entry["content"]));
+    })
   );
 }
 
+/** 内部消息 content 门（AGENT-MESSAGE.md §1 text-only 起步）：越约块（tool_use/image）
+ *  会被三处消费方静默丢弃（serialize/pi-context 只读 text）——fail-closed 拒，不做无痕数据损失 */
+function isTextOnlyBlocks(value: unknown): boolean {
+  return Array.isArray(value) && value.every((block) => isObj(block) && block["type"] === "text" && isStr(block["text"]));
+}
+
 /** todo/snapshot 词条门常量：status 闭合词表 + 可选串字段名 */
-const TODO_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set(["pending", "in_progress", "completed"]);
+const TODO_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set<string>(TODO_SNAPSHOT_STATUS_VALUES);
 const TODO_SNAPSHOT_TEXT_KEYS = ["description", "activeForm", "owner"] as const;
 
 /** todo/snapshot 词条门子函数（docs/TODO.md §13.2）：tasks 数组级校验 + id 收集（含 seq 下界）；失败 undefined */
@@ -156,14 +209,15 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isCount(d["step"]) &&
     isStr(d["callId"]) &&
     isStr(d["content"]) &&
-    (d["isError"] === undefined || d["isError"] === true),
+    (d["isError"] === undefined || d["isError"] === true) &&
+    (d["synthetic"] === undefined || d["synthetic"] === true),
   "request/header": (d) =>
     isObj(d) &&
     isStr(d["model"]) &&
     (d["provider"] === undefined || isStr(d["provider"])) &&
     (d["temperature"] === undefined || typeof d["temperature"] === "number") &&
     (d["maxTokens"] === undefined || isCount(d["maxTokens"])) &&
-    (d["thinking"] === undefined || ["off", "low", "medium", "high", "max"].includes(d["thinking"] as string)) &&
+    (d["thinking"] === undefined || (THINKING_LEVELS as readonly string[]).includes(d["thinking"] as string)) &&
     isToolRefs(d["tools"]),
   "request/context": (d) =>
     isObj(d) && isStr(d["provider"]) && isStr(d["model"]) && (d["contextWindow"] === undefined || isCount(d["contextWindow"])),
@@ -190,24 +244,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     d["ledger"] !== "" &&
     isCount(d["coveredSeq"]) &&
     (d["stale"] === undefined || d["stale"] === true),
-  "agent/inbox/spliced": (d) => {
-    if (!isObj(d)) return false;
-    switch (d["op"]) {
-      case "insert":
-        return isInboxTarget(d["target"]) && isInboxEntries(d["entries"]);
-      case "claim":
-        return (
-          isInboxTarget(d["target"]) &&
-          isCount(d["turn"]) &&
-          Array.isArray(d["claimed"]) &&
-          d["claimed"].every((id) => isStr(id) && id !== "")
-        );
-      case "clear": // 清双队列，无 target
-        return isStr(d["reason"]) && d["reason"] !== "";
-      default:
-        return false;
-    }
-  },
+  "agent/inbox/spliced": isInboxSpliceData,
   "todo/snapshot": (d) => {
     if (!isObj(d) || !isCount(d["seq"])) return false;
     const ids = todoSnapshotTaskIds(d["tasks"], d["seq"]);
@@ -221,6 +258,14 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     d["commandId"] !== "" &&
     (d["kind"] === "success" || d["kind"] === "error") &&
     (d["text"] === undefined || isStr(d["text"])),
+  "agent/message": (d) =>
+    isObj(d) &&
+    isCount(d["turn"]) &&
+    isCount(d["step"]) &&
+    isStr(d["source"]) &&
+    d["source"] !== "" &&
+    AGENT_MESSAGE_KINDS.has(d["kind"] as string) &&
+    isTextOnlyBlocks(d["content"]), // text-only 起步（AGENT-MESSAGE.md §1；tool_use/image 后开走 §4 场景 B）
 };
 
 /** 形状门：未知词条 / 形状不符 → 返回失败理由（data 须为已物化快照或 JSON.parse 产物） */

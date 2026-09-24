@@ -81,12 +81,12 @@ spawn("<host-hub bin>", [], { env: { ...process.env, HUB_AGENT_DIR: <配置目�
 - 错误形态：`{"success":false,"error":"<英文中性>"}`；错误文案词表 = 封闭清单
   （附录 A）；单条命令失败绝不退出进程。
 
-## 3. 命令集（56 个——迁移源 55 + thread/delete（BATCH2）；分组见各节）
+## 3. 命令集（60 个——迁移源 55 + thread/delete（BATCH2）+ queue/drop、queue/send_now（单条队列操作）+ skills/inspect、skills/install（技能导入，docs/SKILL-INSTALL.md）；分组见各节）
 
 | 组 | 命令 | host 本地/worker |
 | --- | --- | --- |
 | 线程生命周期 | thread/start、thread/resume、thread/register、thread/stop、thread/delete、thread/retire、thread/set_keepalive、thread/list、thread/list_saved | host |
-| 对话驱动 | prompt、steer、follow_up、abort、clear_queue、compact | worker |
+| 对话驱动 | prompt、steer、follow_up、abort、clear_queue、queue/drop、queue/send_now、compact | worker |
 | 状态与历史 | get_state、get_inflight、get_messages、get_entries、get_tree、get_session_stats、set_session_name、get_commands、get_fork_messages | worker（§3.4 矩阵） |
 | 收敛读口 | get_subagents、get_pending_dialogs | worker（非 live 空形态） |
 | 会话树/分叉 | fork、clone | worker |
@@ -95,7 +95,7 @@ spawn("<host-hub bin>", [], { env: { ...process.env, HUB_AGENT_DIR: <配置目�
 | 直执行 | bash、abort_bash | worker |
 | 对话框 | ui_response | host 路由 |
 | agents | agents/list、agents/create、agents/remove、subagent/steer | host / worker |
-| skills | skills/list、skills/set_enabled、skills/remove | host |
+| skills | skills/list、skills/set_enabled、skills/remove、skills/inspect、skills/install | host |
 | 设置 | settings/get、settings/set | host |
 | 思考档 | set_thinking_level、get_thinking_level | worker |
 | 权限 | permission/set_mode、permission/get_mode | host 单点注册（带 threadId 形态交池转发） |
@@ -182,6 +182,16 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   append `agent/inbox/spliced {op:"clear", reason:"client-clear"}` + flush（**不用
   agent.cancel**——那是 abort 语义；clear 事件是 driver 同款机制事件，折叠器天然
   清空）。
+- **queue/drop** `{threadId, entryId}` — 单条移除：entryId 所在队列直接 append
+  `agent/inbox/spliced {op:"drop", target, dropped:[entryId], reason:"client-drop"}`
+  + flush。寻址键 = get_state.queue 投影的 entry id；不在队（已消费/已清空/未知）→
+  `state_conflict`；空 entryId → `invalid_input`。空闲可用（无轮次要求）。
+- **queue/send_now** `{threadId, entryId}` — 立即改向：仅 next-turn 条目可改（不在
+  next-turn → `state_conflict`）；须有可注入的运行中轮（`bridge.isStreaming() ||
+  pendingSends > 0`），否则 `streaming_window` 拒绝且**不落 WAL**（条目原地保留）。
+  放行即 append `{op:"retarget", id:entryId, to:"next-step"}` + flush——运行中轮的
+  下一步边界领取注入；轮恰收尾则由 stopping 窗口重读/下次 kick 的 step0 领取兜底。
+  无 settled 义务（不进 DRIVING、不加 pendingSends）。
 - **compact** `{threadId, customInstructions?}` — 薄壳（BATCH3 起）：合成 `/compact`
   行（customInstructions 有则拼）走与 prompt 拦截同一条内核 execute 路（单一执行路径
   ——busy 前置/skip 归一/成功三元组全在 compaction 包的 commandCompactPlugin）；响应
@@ -206,7 +216,7 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   model——迁移源为 modelId 单字段，改名声明 MIGRATION §4**）= `session/meta{dial}`
   尾值 → `request/header` 尾值 → 装配缺省；isCompacting 仅反映 worker 发起的手动
   压缩（自动压缩在 step 内部，经 `compaction/*` 事件可观察——声明性边界）；
-  queue = `foldInbox(events)` 文本数组 `{steering:[], followUp:[]}`；isCompacting =
+  queue = `foldInbox(events)` 条目数组 `{steering:[{id,text}], followUp:[{id,text}]}`（id = inbox entry id——queue/drop、queue/send_now 的单条寻址键）；isCompacting =
   命令执行中谓词（BATCH3 起数据源 = 桥对 command/run|done 的计数——本批唯一命令是
   compact，语义等价）。
 - **get_inflight** `{threadId}` → `{turnStartSeq, turnStartedAt, message, toolOutputs,
@@ -221,12 +231,19 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   软上限 100MiB（JSON 串长累计）——超限 failure `response too large; use get_entries`
   （多轮携图全量投影可超 128MiB worker 行限，有界失败优于 worker 被杀）；非 live 走
   §3.4 矩表。
-- **get_entries** `{threadId, since?, before?, limit?}` → `{entries, leafSeq, hasMore}` —
+- **get_entries** `{threadId, since?, before?, limit?, view?}` → `{entries, leafSeq, hasMore}` —
   seq 游标（**seq = WAL 行号 = 数组下标，0 基**，会话内单调、跨重启/跨压缩恒稳定）。
   排他语义：`since` = 该 seq 之后（排他，等价 index+1 起前向）；`before` = 该 seq
   之前（排他，至 index-1 止后向）；`since` 越过 `before` 收敛空窗；limit 正整数
   ≤5000 取最近 N（缺省 = 全量）；hasMore 恒返回；entries =
   `[{seq, ts, event}]`（event = `{type, ...data}` 摊平形状；surfaceOp 随附）。
+  `view`（缺省 `journal`；非法值 failure `invalid_input`）：`journal` = 全量 WAL 行；
+  `history` = 压缩前原文投影——游标校验/leafSeq/hasMore 恒 journal 全集域（两视图
+  游标互通），条目面 L1 占位族（`tool/result` 单点 replace 载体）滤除、其余 replace
+  载体降级单行 `{type:"compaction/elided", startSeq, endSeq}`（**读面合成类型**——
+  内核事件词表无此词条，仅出现在 wire entries；判别式消费者须按未知类型容错）。
+  history 下 limit=N 不保证返回 N 条（可至 0 条 + hasMore=true——空页时无条目游标
+  可推进，客户端应直接以 leafSeq 续拉）。分域详见 docs/SESSION.md §1.4。
 - **get_tree** `{threadId}` → `{ancestors, children, leafSeq}` — 会话 fork 谱系
   （hub 实现：ancestors 沿 header.parentSession 链**不含自身**；children =
   parentSession === id 的 headers，**排除子代理会话**（header.agentId 滤除）；
@@ -345,7 +362,10 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   model?}`（source = user|project|builtin）。
 - **agents/create** `{name, description, systemPrompt, model?, tools?}` → `{path}` —
   frontmatter 严格集渲染（round-trip 复析保证：description 拒换行与字段形态行、
-  systemPrompt 空串拒）；写 `<~/.x-harness/agents>/<name>.md`；同名 user 文件拒。
+  systemPrompt 空串拒）；写用户根 `<name>.md`（agentDir 派生缝在场时
+  `<agentDir>/agents`，缺省 `~/.x-harness/agents`——与 skills 同序，路径常量单源
+  @x-harness/agent-delegation）；同名 user 文件拒。启动序一次性迁移旧共享根
+  （幂等哨兵 `.agents-migrated`，env 关闭缝 `HUB_AGENTS_MIGRATION=0`）。
   **agents/remove** `{name}` — 现扫定 source，user 才删。
 - **subagent/steer** `{threadId, agentId, message}` — worker 侧 gate（经
   `delegationView` 服务面直调，不走工具 dispatch）：目标非驻留 → failure
@@ -383,13 +403,21 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   `{name, enabled, cwd?}` — 校验名 ∈ 现扫合并清单；带 cwd 写项目级名单（enable 后
   并集仍含 → `data:{stillDisabled:true, by:"user"}`——by 恒 user 级：带 cwd enable
   后并集残留只能来自 user 名单）；**skills/remove** `{name}` — 仅 user 级文件
-  （project/builtin → `skill not user-defined`；删 user 遮蔽后 builtin 同名复活）。
+  （project/builtin → `skill not user-defined`；删 user 遮蔽后 builtin 同名复活；移除 =
+  删技能目录——直接子项围栏，symlink 技能只删链接；`skill not user-defined`/`unknown skill`
+  之外的新增失败面 = 目录外拒删的 `internal`）。**skills/inspect** `{sourcePaths: string[]}`
+  （1..200 条绝对路径）→ `{results: [{sourcePath, state: "ready"|"rename", name, description}
+  | {sourcePath, state: "blocked", problem}]}`（按入参序；`rename` = 声明名 ≠ 目录名，可装，
+  目标名 = 声明名）；**skills/install** `{sourcePath, name?, overwrite?}` → `{name, path,
+  skippedEntries}`（path = 副本 SKILL.md，与 skills/list 同形态）——形态判定走内核
+  `inspectSkillDir` 单点（零规则复制），拷贝跳过 symlink/奇异条目并计数，覆盖 = 备份 +
+  同卷 rename 原子换入 + 失败回滚，就位前对暂存副本做装载器复检。详见 docs/SKILL-INSTALL.md。
 - **思考档**：会话值 = `session/meta{key:"thinking"}`（last-wins，resume 天然恢复）；
   生效通路 = worker 装配的 **agentRequest waterfall 挂点插件**（每 step 从事件尾折叠
   写入 dial.thinking）。**set_thinking_level** `{threadId, level}` — 先词表校验
   （`invalid thinking level`）后流式拒（`thread is streaming`；判定面 = 受理窗口同
   prompt：turn 在飞 ∨ send 在飞）→ 模型兼容校验（`model does not support thinking`
-  ——目录 reasoning 标志 + protocol 映射：openai 协议 non-off 档拒绝）→ append +
+  ——目录 reasoning 标志（openai 协议门已撤：pi-adapter 注入 reasoning，上游按 baseUrl 兼容表分流）→ append +
   flush，下一 turn 生效。**get_thinking_level** `{threadId}`（observer）→ `{level,
   source: "session"|"project"|"user"|"off"}`（**无值态归一 `"off"`——迁移源线缆值
   `"unset"`，归一为有意变更**，MIGRATION §4）。
@@ -506,11 +534,20 @@ stopReason/usage）；跨步/重连对账以 WAL 为准（get_entries since=turn
 
 ## 5. worker 侧装配与语义映射
 
-worker = `createAgentWorld` + kit 配方（`promptKit` / `durableSessionKit` /
-`toolboxKit` / `fenceKit` / `meterKit` / `compactionKit`+`autoCompactKit` /
-`llmKit(adapters)` / `loopKit` / `checkpointKit` / `delegationKit` / `skillKit`）+
-`loop.create/resume` 单会话。trusted 决定 skills/agents project 级目录与项目级设置
-装载（workspace=cwd 显式锚）。permission 即时面经 `ctx.use(permissionMode)` 服务
+worker = `createAgentWorld` + kit 配方（`promptKit(createBasePromptPlugin(
+probeBaseFacts(...)))`——base 系统提示词与 CLI 同源（@x-harness/harness
+base-prompt.ts：身份/守则/环境块 + facts=cwd/isGit/platform/shell 进程探测插值）/
+`durableSessionKit` / `toolboxKit` / `fenceKit` / `meterKit` / `compactionKit`+
+`autoCompactKit` / `llmKit(adapters)` / `loopKit` / `checkpointKit` /
+`delegationKit` / `skillKit`）+ 日期/项目指令快照插件（与 CLI 同源
+@x-harness/harness `createFactsSnapshotPlugin`——装配位紧随 skill 装配：每 kick
+边沿注入 `Today's date` 与工作区 `AGENTS.md`/`CLAUDE.md`（AGENTS.md 前、同内容
+去重、单件 64KB 上限、缺席零注入；docs/TAIL-SNAPSHOT-CHANNEL.md A/C'））+
+`loop.create/resume` 单会话。trusted 决定
+skills/agents project 级目录与项目级设置
+装载（workspace=cwd 显式锚）；skills/agents 用户根同走 agentDir 派生缝
+（`<agentDir>/{skills,agents}`；缺省 `~/.x-harness/...` 共享——单源
+`userSkillsDirOf`/`userAgentsDirOf`）。permission 即时面经 `ctx.use(permissionMode)` 服务
 （插件恒提供，§3.9）。
 
 | 迁移源（@my-agent） | host-hub（@x-harness） |
@@ -597,7 +634,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | 子代理委派/预算/通知 | @x-harness/agent-delegation（hub 只消费 delegationView + 中继事件） |
 | 会话 WAL/写锁/fork/恢复 | @x-harness/session + session-persistence-jsonl（hub 只围栏与路由） |
 | 命令注册/dispatch | **已支持（BATCH3）**：内核 `@x-harness/commands` 注册面 + kit 自声明（compact）+ execute 分路；未注册词形仍交模型（skill 分发面） |
-| sandbox/远程工作区 | @x-harness/sandbox-local（fenceKit 装配面） |
+| sandbox/远程工作区 | @x-harness/sandbox（fenceKit 装配面，srt 引擎） |
 | 后端注册表/能力协商 | 单一后端（hello 握手：`{protocolVersion:1, backendId:"x-harness"}`） |
 | OAuth 交互式登录 | auth/set_api_key 单通道 |
 | 跨机器/远程接入 | stdio 单机限定 |
@@ -647,7 +684,8 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
   摊平形状；get_subagents ChildView 词表；get_commands source 收缩 skill|builtin；
   images 显式拒绝；get_session_stats cost 在场透传（升级）；compact 响应
   +summaryTokens；providers.json 取代 models.json（形状超集）；permission mode 词表
-  plan|auto|full；thinking 词表 +max、无值态 unset→off 归一；providers 经 env 装配
+  plan|auto|edit-confirm|full|sandboxed-auto（get_mode 响应携 modes 词表单源——UI
+  选择器渲染源）；thinking 词表 +max、无值态 unset→off 归一；providers 经 env 装配
   快照注入；斜杠命令交模型（无 unknown-command settled 面）；subagent/steer 字段
   agentId + 驻留即投递（running 排队/idle 唤醒）+ 新错误文案；auth/list 全目录三态；
   list_saved 查询键收窄 {cwd?}、forkSeq 缺席、updatedAt 派生；撕裂写中段坏行
@@ -723,7 +761,7 @@ maxTokens` 退役——预算钳制归内核 llm 拨号层。）
 | workspace/trust | `{trusted: [...]}`（无参列表形态）；设/撤形态无 data |
 | thread/list | `[{threadId, cwd, sessionPath, state, idleMs, rssBytes, keepalive, isStreaming}]` |
 | thread/list_saved | `{sessions: SessionSummary[]}`（§3.1 折叠形状） |
-| clear_queue | `{steering: string[], followUp: string[]}` |
+| clear_queue | `{steering: {id,text}[], followUp: {id,text}[]}`（queue/drop、queue/send_now 无 data） |
 | compact（含 /compact 拦截） | `{summary, replacedCount, summaryTokens}` |
 | get_state | `{model, isStreaming, isCompacting, sessionId, sessionName, sessionFile, messageCount, queue}` |
 | get_inflight | `{turnStartSeq, turnStartedAt, message, toolOutputs, bash}` |
@@ -744,6 +782,8 @@ maxTokens` 退役——预算钳制归内核 llm 拨号层。）
 | agents/create | `{path}` |
 | skills/list | `{skills: [{name, source, path, disabled}]}` |
 | skills/set_enabled | ack（enable 后并集仍含 → `{stillDisabled:true, by:"user"}`） |
+| skills/inspect | `{results: [{sourcePath, state, name?, description?, problem?}]}`（入参序） |
+| skills/install | `{name, path, skippedEntries}` |
 | settings/get | `{values}`（无 cwd）/ `{values, sources, raw}`（带 cwd） |
 | get_thinking_level | `{level, source: "session"\|"project"\|"user"\|"off"}` |
 | permission/get_mode | `{mode, source: "session"\|"project"\|"user"\|"default"}` |

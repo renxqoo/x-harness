@@ -1,6 +1,7 @@
 // 子代理契约类型（docs/AGENT-DELEGATION.md §1/§2/§7）：类型唯一来源 = .md 文件（U4 裁决）。
 
 import type { SessionId } from "@x-harness/session";
+import type { InlineTypeResource } from "./types-inline.ts";
 
 /** .md 加载出的子代理类型（frontmatter + 正文） */
 export interface LoadedAgentType {
@@ -17,7 +18,12 @@ export interface LoadedAgentType {
 
 export interface DelegationOptions {
   /** 类型目录（优先级降序）；缺省 = X_HARNESS_AGENTS_DIRS > <cwd>/.x-harness/agents > ~/.x-harness/agents */
-  readonly agentsDirs?: readonly string[];
+  /** agent 类型目录（必收——插件零目录知识，宿主边沿用 resolveAgentDirs 统一解析；
+   *  `[]` = 显式零：不装载任何类型） */
+  readonly agentsDirs: readonly string[];
+  /** 内联 builtin 类型层（随 bundle 内联分发的资源——宿主从生成数据模块传入）；
+   *  优先级最低（盘上目录同名遮蔽），缺席 = 无内联层 */
+  readonly builtinTypes?: readonly InlineTypeResource[];
   /** 跨进程邮箱配置（缺省 = 纯进程内部署：跨进程寻址与 notify_when_idle 拒 invalid-args；
    *  root/timing 由 session-mailbox 插件装配给——单一真相，此处不重复） */
   readonly mailbox?: {
@@ -30,7 +36,7 @@ export interface DelegationOptions {
   readonly maxDepth?: number;
   /** 缺省 10；按父计 occupied 子数（登记占、完成通知/stop 释放） */
   readonly maxConcurrent?: number;
-  /** 缺省 34000；报告截断统一上界——完成通知/finished 事件/运行中快照/task_output 同一 cap */
+  /** 缺省 34000；报告截断统一上界——完成通知/finished 事件同一 cap */
   readonly reportCap?: number;
   /** 启动期 worktree 对账清扫开关（缺省开；测试装置可关防跨装置互扫） */
   readonly worktreeSweep?: boolean;
@@ -38,6 +44,10 @@ export interface DelegationOptions {
   readonly maxResident?: number;
   /** 类型加载/邮箱投递等非致命告警出口（缺省静默降级） */
   readonly onWarn?: (message: string) => void;
+  /** 裸模型名 → 归属 provider 反查（宿主接装配目录快照；缺省不反查——model 覆盖
+   *  的 provider 回落覆盖序，兼容纯内核部署）。跨 provider 联动（串线修复）：类型
+   *  .md 只写 model 不写 provider 时按目录归属联动，不再静默继承父 provider。 */
+  readonly resolveProviderOf?: (model: string) => string | undefined;
 }
 
 export type ChildView =

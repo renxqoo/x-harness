@@ -46,6 +46,7 @@ export function createParkedReads(deps: ParkedReadDeps) {
       ...(typeof input.since === "number" ? { since: input.since } : {}),
       ...(typeof input.before === "number" ? { before: input.before } : {}),
       ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+      ...(input.view !== undefined ? { view: input.view } : {}),
     };
     const entries = await deps.direct.readEntries(entry.threadId, query);
     if (entries === undefined) return false;

@@ -31,6 +31,40 @@ async function makeRuntime() {
   return { ctx, runtime: ctx.use(llmRuntime), cleanup: async () => { await ctx.dispose(); void unload; } };
 }
 
+describe("contextWindowOf 窗口查询（模型级 > 档案级 > 无名单适配器）", () => {
+  it("点名 provider：模型级（contextWindowByModel）胜档案级；缺模型回退档案级", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      const off = runtime.registerAdapter({
+        ...textAdapter("glm"),
+        contextWindow: 1_000_000,
+        contextWindowByModel: { "glm-air": 128_000 },
+      } as never);
+      expect(runtime.contextWindowOf("glm", "glm-air")).toBe(128_000);
+      expect(runtime.contextWindowOf("glm", "glm-max")).toBe(1_000_000);
+      expect(runtime.contextWindowOf("glm")).toBe(1_000_000);
+      off();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it("症状回归（多适配器无名查表不可答）：点名后可答；单适配器无名可答", async () => {
+    const { runtime, cleanup } = await makeRuntime();
+    try {
+      const offA = runtime.registerAdapter({ ...textAdapter("a"), contextWindow: 111_111 } as never);
+      expect(runtime.contextWindowOf()).toBe(111_111); // 单适配器无名可答
+      const offB = runtime.registerAdapter({ ...textAdapter("b"), contextWindow: 222_222 } as never);
+      expect(runtime.contextWindowOf()).toBeUndefined(); // 多适配器无名不可答（消费方须带会话拨号点名）
+      expect(runtime.contextWindowOf("b")).toBe(222_222);
+      offA();
+      offB();
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
 describe("LlmRuntime 注册生命周期（docs/LLM.md §3）", () => {
   it("重名 throw；名称/形状垃圾 throw；disposer 身份守卫注销后可重注册", async () => {
     const { runtime, cleanup } = await makeRuntime();

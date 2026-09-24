@@ -22,7 +22,7 @@ const userTextsOf = (world: World, session: SessionId): string =>
     .use(sessionStore)
     .get(session)
     ?.events()
-    .filter((e) => e.type === "user/message")
+    .filter((e) => e.type === "user/message" || e.type === "agent/message")
     .map((e) => JSON.stringify(e.data))
     .join("\n") ?? "";
 

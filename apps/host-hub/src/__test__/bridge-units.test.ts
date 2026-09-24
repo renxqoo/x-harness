@@ -5,7 +5,7 @@ import { createContext } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { sessionDisposed, sessionEvent } from "@x-harness/session";
 import type { SessionEvent } from "@x-harness/session";
-import { agentAssistantStream, agentToolStream } from "@x-harness/agent-loop";
+import { agentAssistantStream, agentStatus, agentToolStream } from "@x-harness/agent-loop";
 import { agentFinished, agentSpawned } from "@x-harness/agent-delegation";
 import { llmStream } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
@@ -36,6 +36,8 @@ function makeBridge() {
     emitLine: (line) => frames.push(JSON.parse(line) as Frame),
     threadId: () => "main-1",
     inflight: inflight as never,
+    pendingSends: () => 0,
+    mainEvents: () => undefined,
   });
   return { bridge, frames, inflightCalls, readPartial: () => partialSnapshot };
 }
@@ -183,5 +185,113 @@ describe("命令执行中计数（BATCH3 §2.4——busy 面/清账面）", () =
     expect(w.bridge.commandBusy()).toBe(true);
     w.bridge.unsubscribe(); // fork 重装配清账
     expect(w.bridge.commandBusy()).toBe(false);
+  });
+});
+
+describe("内部驱动轮 settled 合成（delegation notify 等无驱动命令的 kick）", () => {
+  function rig(events: SessionEvent[], pending = 0): { frames: Frame[]; ctx: Context; setPending: (n: number) => void } {
+    const frames: Frame[] = [];
+    let pend = pending;
+    const bridge = createEventBridge({
+      emitLine: (line) => frames.push(JSON.parse(line) as Frame),
+      threadId: () => "main-1",
+      inflight: { turnStart: () => {}, turnEnd: () => {}, toolOutput: () => {}, toolDone: () => {}, partial: () => {}, snapshot: () => ({ turnStartSeq: null, turnStartedAt: null, message: null, toolOutputs: [] }) } as never,
+      pendingSends: () => pend,
+      mainEvents: () => events,
+    });
+    const ctx = createContext();
+    bridge.wire(ctx);
+    return { frames, ctx, setPending: (n) => (pend = n) };
+  }
+
+  test("主会话 idle 边沿且无 pendingSends → 合成 settled{sendId:\"\"}（completed→ok:true）且恰一次", async () => {
+    const events = [ev(10, "turn/start", { turn: 5 }), ev(11, "turn/end", { turn: 5, reason: { kind: "completed" } })];
+    const r = rig(events);
+    // 轮经 WAL 事件面（游标登记）——内部 kick 的真实时序：turn 已收尾，idle 边沿到达
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    const settled = r.frames.find((f) => f.name === "settled");
+    expect(settled?.payload).toEqual({ sendId: "", ok: true });
+    r.frames.length = 0;
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false); // 恰一次
+  });
+
+  test("error 终态 → ok:false + reason 透传；子会话 idle 边沿不触发", async () => {
+    const events = [ev(20, "turn/start", { turn: 6 }), ev(21, "turn/end", { turn: 6, reason: { kind: "error", message: "llm died" } })];
+    const r = rig(events);
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
+    r.ctx.emit(agentStatus, { session: CHILD, status: "idle" }); // 子会话 idle：不触发
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false);
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.find((f) => f.name === "settled")?.payload).toEqual({ sendId: "", ok: false, reason: "llm died" });
+  });
+
+  test("pendingSends>0（驱动轮在飞）→ 不合成；驱动结算后的 idle 兜底补发（客户端去重）", async () => {
+    const events = [ev(30, "turn/start", { turn: 7 }), ev(31, "turn/end", { turn: 7, reason: { kind: "completed" } })];
+    const r = rig(events, 1);
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
+    r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false); // 驱动轮：settled 由 settleAfter 兑付
+    r.setPending(0);
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(true);
+  });
+
+  test("无主会话轮的窗口（游标空）→ idle 不合成", async () => {
+    const r = rig([]);
+    r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false);
+  });
+});
+
+describe("观察面原文保真（TRUNCATED-TOOL-RESCUE 层 1 前置——截断流下 inflight.partial 钉子）", () => {
+  async function wired(): Promise<{ ctx: Context } & ReturnType<typeof makeBridge>> {
+    const made = makeBridge();
+    const ctx = createContext();
+    made.bridge.wire(ctx);
+    return { ctx, ...made };
+  }
+  test("截断流：tool-call-delta 的半截原文 argumentsDelta 逐字进 partial 快照（不被规范化/修补回退）", async () => {
+    const w = await wired();
+    const raw = '{"path":"big.ts","content":"写了一半的内容——引号未闭';
+    const stream = await w.ctx.dispatch(
+      llmStream,
+      { model: "m", session: MAIN, tools: [], messages: [], signal: new AbortController().signal } as LlmRequest,
+      async () =>
+        chunksOf([
+          { type: "tool-call-delta", index: 0, callId: "c1", name: "write", argumentsDelta: raw },
+          { type: "usage", usage: { input: 1, output: 2 } },
+          { type: "finish", finish: { kind: "max-tokens" } },
+        ]),
+    );
+    for await (const _ of stream) void _; // 拉穿流（tap 在迭代中喂 partial + 发帧）
+    const snap = w.readPartial() as { content?: Array<{ type: string; text?: string }> };
+    expect(snap).not.toBeNull();
+    const toolBlock = snap.content?.find((b) => b.type === "tool_use_partial");
+    expect(toolBlock?.text).toBe(raw); // 半截原文逐字——观察面看到的即模型真实交付（修补版回退在此断言下会红）
+    // llm/chunk 帧同步透传原文（下游消费者与预览同源）
+    const toolFrame = w.frames.filter((f) => f.name === "llm/chunk").map((f) => (f.payload as { chunk?: { argumentsDelta?: string } }).chunk?.argumentsDelta).filter(Boolean);
+    expect(toolFrame).toEqual([raw]);
+  });
+
+  test("正常流：完整 arguments 照旧（回归钉死——观察面不因截断改造变化）", async () => {
+    const w = await wired();
+    const stream = await w.ctx.dispatch(
+      llmStream,
+      { model: "m", session: MAIN, tools: [], messages: [], signal: new AbortController().signal } as LlmRequest,
+      async () =>
+        chunksOf([
+          { type: "tool-call-delta", index: 0, callId: "c1", name: "bash", argumentsDelta: '{"command":"ls"}' },
+          { type: "finish", finish: { kind: "stop" } },
+        ]),
+    );
+    for await (const _ of stream) void _;
+    const snap = w.readPartial() as { content?: Array<{ type: string; text?: string }> };
+    const toolBlock = snap.content?.find((b) => b.type === "tool_use_partial");
+    expect(toolBlock?.text).toBe('{"command":"ls"}');
   });
 });

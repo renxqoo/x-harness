@@ -4,7 +4,7 @@ import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { loadSkills, resolveSkillDirs } from "../loader.ts";
+import { loadSkills, resolveSkillDirs, userSkillsDirOf } from "../loader.ts";
 
 let root: string;
 
@@ -23,6 +23,21 @@ async function writeSkill(name: string, frontmatter: string | null, body = "inst
   if (frontmatter !== null) await writeFile(join(dir, "SKILL.md"), `---\n${frontmatter}\n---\n${body}`);
   return dir;
 }
+
+describe("userSkillsDirOf（agentDir 派生缝）", () => {
+  it("agentDir 在场：用户根 = <agentDir>/skills（打包发行态数据区）", () => {
+    expect(userSkillsDirOf(undefined, "/data/.pai/agent")).toBe("/data/.pai/agent/skills");
+  });
+
+  it("agentDir 缺席/空串：回落 ~/.x-harness/skills（CLI 独立运行共享目录不变）", () => {
+    expect(userSkillsDirOf(undefined, undefined)).toBe(join(homedir(), ".x-harness", "skills"));
+    expect(userSkillsDirOf(undefined, "")).toBe(join(homedir(), ".x-harness", "skills"));
+  });
+
+  it("homeDir 注入缝仍生效（测试隔离目录）", () => {
+    expect(userSkillsDirOf("/tmp/iso")).toBe("/tmp/iso/.x-harness/skills");
+  });
+});
 
 describe("resolveSkillDirs", () => {
   const ORIGINAL = process.env["X_HARNESS_SKILLS_DIRS"];
@@ -109,6 +124,13 @@ describe("loadSkills", () => {
     const result = await loadSkills([root]);
     expect(result.skills).toEqual({});
     expect(result.warnings.map((warning) => warning.startsWith("skills: ") && warning.includes(join(root, name, "SKILL.md")))).toContain(true);
+  });
+
+  it("告警逐字透传形态判定单点（name 与目录名不符——真实机器常见症状：tavily 声明 tavily-cli）", async () => {
+    await writeSkill("tavily", "name: tavily-cli\ndescription: CLI");
+    const result = await loadSkills([root]);
+    expect(result.skills).toEqual({});
+    expect(result.warnings).toEqual([`skills: ${join(root, "tavily", "SKILL.md")} name 'tavily-cli' must match directory name 'tavily'`]);
   });
 
   it("根下普通文件（非目录）静默忽略、无告警", async () => {

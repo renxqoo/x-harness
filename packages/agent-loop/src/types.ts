@@ -34,8 +34,9 @@ export interface Agent {
   followup(text: string, options?: { images?: readonly ImageBlock[] }): void;
   /** insert next-step + 唤醒；images 语义同 followup */
   steer(text: string, options?: { images?: readonly ImageBlock[] }): void;
-  /** insert next-step 不唤醒（通知注入通道——单一用途，纯文本） */
-  inject(text: string): void;
+  /** 内部消息注入（docs/AGENT-MESSAGE.md §5 迁移地图）：next-step 排队 + 唤醒，领取时
+   *  材料化为 agent/message{source, kind}（UI 类型隐藏、摘要按 kind 分流） */
+  notify(source: string, kind: import("@x-harness/session").AgentMessageKind, text: string): void;
   /** 缺省 append clear 事件后 abort；置 per-kick sticky 取消；cause 空串护栏 */
   cancel(cause: string, options?: { keepInbox?: boolean }): void;
   /** 收敛循环（do/while 重查，跟替换驱动） */

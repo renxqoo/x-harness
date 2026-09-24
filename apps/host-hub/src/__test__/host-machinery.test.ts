@@ -146,7 +146,7 @@ describe("skills-admin project 级（真目录）", () => {
     // 信任登记（真实 trust store——project 门禁通路）
     const trust = createTrustStore(agentDir);
     await trust.trust(projectCwd);
-    expect(await knownSkillNames(projectCwd)).toContain("alpha");
+    expect(await knownSkillNames({ cwd: projectCwd })).toContain("alpha");
     const listed = await listSkills({ agentDir, cwd: projectCwd });
     const alpha = listed.skills.find((skill) => skill.name === "alpha");
     expect(alpha).toMatchObject({ source: "project", disabled: false });

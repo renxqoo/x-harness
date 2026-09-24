@@ -9,6 +9,7 @@ import { toolsExecute } from "@x-harness/tools";
 import type { World } from "./world.ts";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, typesOf, agentIdOf, sessionOf } from "./world.ts";
 import { createAgentDelegationPlugin, validateOptions } from "../plugin.ts";
+import { forkSeed } from "../lineage.ts";
 
 const modelOf = (event: { readonly data: unknown } | undefined): string | undefined =>
   event === undefined ? undefined : (event.data as { model?: string }).model;
@@ -78,9 +79,10 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
     expect(spawned.content).toContain("stays stable across restarts"); // 修订A：agentId 即持久身份引导
     const turnCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
     await vi.waitFor(() => expect(turnCount()).toBe(2), { timeout: 5_000 });
-    const userMessages = parent.agent.session.events().filter((e) => e.type === "user/message");
-    expect(userMessages.length).toBe(3); // 快照（类型清单）+ 首话 + 通知
-    const notification = JSON.stringify(userMessages.find((e) => JSON.stringify((e.data as unknown as { content?: Array<{ text?: string }> }).content).includes("[agent-notification]"))?.data);
+    const agentMessages = parent.agent.session.events().filter((e) => e.type === "agent/message");
+    expect(agentMessages.length).toBe(1); // 通知（内部消息载体——docs/AGENT-MESSAGE.md §5）；快照与首话仍为 user/message
+    expect(parent.agent.session.events().filter((e) => e.type === "user/message" && e.surfaceOp === "append")).toHaveLength(2);
+    const notification = JSON.stringify(agentMessages[0]?.data);
     expect(notification).toContain("[agent-notification]");
     expect(notification).toContain(agentId);
     expect(notification).toContain("completed");
@@ -183,9 +185,9 @@ describe("门禁（X7/X8/X17/X20）", () => {
   });
 
   it("配置垃圾值构造期 throw（X7）", () => {
-    expect(() => createAgentDelegationPlugin({ maxDepth: -1 })).toThrow();
-    expect(() => createAgentDelegationPlugin({ maxConcurrent: 1.5 })).toThrow();
-    expect(() => createAgentDelegationPlugin({ maxDepth: Number.NaN })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxDepth: -1 })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxConcurrent: 1.5 })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxDepth: Number.NaN })).toThrow();
     expect(() => createAgentDelegationPlugin({ agentsDirs: [""] })).toThrow();
   });
 
@@ -207,22 +209,19 @@ describe("门禁（X7/X8/X17/X20）", () => {
 });
 
 describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
-  it("属主边界（§4.4）：output/stop 限 owner；message 开放寻址（他父可唤醒）", async () => {
+  it("属主边界（§4.4）：stop 限 owner；message 开放寻址（他父可唤醒）", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
     const stranger = await spawnParent(world);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x" }, session: parent.agent.session.id });
     const agentId = agentIdOf(spawned.content);
-    const hijackRead = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: stranger.agent.session.id });
-    expect(hijackRead.isError).toBe(true);
-    expect(hijackRead.content).toContain("not-owner");
     const hijackStop = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: stranger.agent.session.id });
     expect(hijackStop.isError).toBe(true);
     expect(hijackStop.content).toContain("not-owner");
     const openMessage = await callTool({ world, name: "agent_message", args: { to: agentId, message: "hi" }, session: stranger.agent.session.id });
     expect(openMessage.isError).toBeUndefined(); // 开放寻址：兄弟/他父可发（§4.4）
     expect(openMessage.content).toContain("Delivered");
-    const unknown = await callTool({ world, name: "task_output", args: { task_id: "agent-ffffffff", block: true }, session: parent.agent.session.id });
+    const unknown = await callTool({ world, name: "task_stop", args: { task_id: "agent-ffffffff" }, session: parent.agent.session.id });
     expect(unknown.isError).toBe(true);
     expect(unknown.content).toContain("not-found");
     expect(unknown.content).toContain("no such task in any source"); // 件14 统一词表
@@ -230,40 +229,17 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     await stranger.dispose();
   });
 
-  it("报告全文单次交付（X11）：通知携带全文（cap 截断带 agent_message 引导）；task_output 复查不复读", async () => {
+  it("报告全文单次交付（X11）：通知携带全文（cap 截断带 agent_message 引导）", async () => {
     const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }, { reportCap: 10 }));
     const parent = await spawnParent(world);
     world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "0123456789ABCDEF")]);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
-    const agentId = agentIdOf(spawned.content);
+    void agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 10"), { timeout: 5_000 }); // 通知：全文经 cap 截断
     expect(lastNotice()).toContain("agent_message");
-    const output = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: parent.agent.session.id });
-    expect(output.content).toContain("completed"); // 状态头仍在
-    expect(output.content).toContain("already delivered"); // 复查不复读
-    expect(output.content).not.toContain("0123456789ABCDEF");
-    await parent.dispose();
-  });
-
-  it("报告全文单次交付：完成通知直送全文（与 reportCap 同一上界）；task_output 复查不复读（同份内容只进父上下文一次）", async () => {
-    const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } })); // 缺省 reportCap 34000
-    const parent = await spawnParent(world);
-    const long = "y".repeat(300);
-    world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, long)]);
-    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
-    const agentId = agentIdOf(spawned.content);
-    const childSession = sessionOf(spawned.content);
-    await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
-    await vi.waitFor(() => expect(lastNotice()).toContain(`summary: ${long}`), { timeout: 5_000 }); // 通知即全文
-    expect(lastNotice()).not.toContain("truncated at");
-    expect(lastNotice()).not.toContain("task_output"); // 不再引导二次调用取报告
-    const output = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true }, session: parent.agent.session.id });
-    expect(output.content).toContain("already delivered"); // 全文已随通知交付——task_output 不复读（单次交付专项见 report-delivery.test.ts）
-    expect(output.content).not.toContain(long);
     await parent.dispose();
   });
 
@@ -294,6 +270,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     await parent.dispose();
     await other.dispose();
   });
+
 });
 
 describe("fork 重铸（X14）", () => {
@@ -315,6 +292,23 @@ describe("fork 重铸（X14）", () => {
     expect(seedTypes).toContain("assistant/message");
     const childHeader = child?.events().find((e) => e.type === "request/header");
     expect((childHeader?.data as { model?: string } | undefined)?.model).toBe(PARENT_MODEL);
+    await parent.dispose();
+  });
+
+  it("fork 种子 agent/message 分流重铸：content（兄弟报告事实）继承、directive 丢弃", async () => {
+    const world = await makeWorld(await workerOptions());
+    const parent = await spawnParent(world);
+    const session = parent.agent.session;
+    session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "q" }] }, { surfaceOp: "append" });
+    session.append("turn/start", { turn: 0 });
+    session.append("agent/message", { turn: 0, step: 0, source: "delegation-report", kind: "content", content: [{ type: "text", text: "sibling report fact" }] }, { surfaceOp: "append" });
+    session.append("agent/message", { turn: 0, step: 0, source: "output-continuation", kind: "directive", content: [{ type: "text", text: "Output token limit hit..." }] }, { surfaceOp: "append" });
+    session.append("assistant/message", { turn: 0, step: 0, content: [{ type: "text", text: "a" }], stopReason: "stop" }, { surfaceOp: "append" });
+    session.append("turn/end", { turn: 0, reason: { kind: "completed" } });
+    const seed = forkSeed(session);
+    const recast = seed.filter((e) => e.type === "agent/message");
+    expect(recast).toHaveLength(1); // content 继承、directive 丢弃（docs/AGENT-MESSAGE.md §5）
+    expect(recast[0]?.data).toMatchObject({ source: "delegation-report", kind: "content", content: [{ type: "text", text: "sibling report fact" }] });
     await parent.dispose();
   });
 
@@ -499,23 +493,6 @@ describe("并行池三 spawn（exclusive 串行下计数不超）", () => {
     expect(denied).toHaveLength(1);
     expect(String(denied[0]?.data.content)).toContain("concurrency limit reached (2 busy");
     release();
-    await parent.dispose();
-  });
-});
-
-// —— W2A：restriction 生命周期（ELEVATION-MIGRATION-W2A §5 泄漏回归）——
-
-describe("restriction 生命周期（W2A）", () => {
-  it("子代理终结（dispose → sessionDisposed）自动注销其会话层 restriction——无泄漏", async () => {
-    const world = await makeWorld(await makeOptions({ narrow: { tools: ["allowed_tool"] } }));
-    world.registry.register({ name: "allowed_tool", inputSchema: Type.Object({}), execute: async () => ({ content: "ok" }) });
-    const parent = await spawnParent(world);
-    const child = await callTool({ world, name: "agent_spawn", args: { description: "c", prompt: "c", subagent_type: "narrow" }, session: parent.agent.session.id });
-    const childSession = sessionOf(child.content);
-    expect(world.registry.restrictionOf(childSession)).toEqual(["allowed_tool"]); // 在场
-    const childHandle = world.loop.get(childSession);
-    if (childHandle !== undefined) await childHandle.dispose();
-    expect(world.registry.restrictionOf(childSession)).toBeUndefined(); // 终结即注销
     await parent.dispose();
   });
 });

@@ -19,7 +19,7 @@ const eventsOf = (world: World, session: SessionId): readonly ReturnType<Session
 /** user/message 的原文本块拼接（信封断言用——JSON.stringify 会转义引号） */
 const userTextsOf = (world: World, session: SessionId): string =>
   eventsOf(world, session)
-    .filter((e) => e.type === "user/message")
+    .filter((e) => e.type === "user/message" || e.type === "agent/message")
     .flatMap((e) => ((e.data as unknown as { content?: Array<{ type?: string; text?: string }> }).content ?? [])
       .filter((block) => block.type === "text")
       .map((block) => block.text ?? ""))

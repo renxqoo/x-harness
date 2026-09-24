@@ -1,4 +1,4 @@
-// plugin-examples：20 个真实场景参考插件（架构自洽验证集——每个插件就是一次表面走查）。
+// plugin-examples：19 个真实场景参考插件（架构自洽验证集——每个插件就是一次表面走查）。
 // 全部可用 @x-harness/plugin-api 纯函数 archetype 表达（个别直用 token 面以验证双入口）。
 
 export { destructiveGuardPlugin } from "./destructive-guard.ts";
@@ -22,5 +22,3 @@ export { scopedPersonaPlugin } from "./scoped-persona.ts";
 export { sessionGuardPlugin } from "./session-guard.ts";
 export { webFetchPlugin } from "./web-fetch.ts";
 export type { Fetcher } from "./web-fetch.ts";
-export { tokenAnalyticsPlugin, tokenAnalyticsService } from "./token-analytics.ts";
-export type { TokenBreakdown, TokenAnalyticsOptions, TokenAnalyticsService } from "./token-analytics.ts";

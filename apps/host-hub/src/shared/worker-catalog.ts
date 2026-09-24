@@ -8,13 +8,16 @@ import type { DialFact } from "./meta-fold.ts";
 export interface WorkerCatalog {
   readonly providers: readonly AssemblyProvider[];
   readonly default: DialFact;
-  /** 逐模型元数据（reasoning 面——thinking 校验判据；input 面——images 能力门判据） */
-  readonly modelMeta: Readonly<Record<string, { readonly reasoning?: boolean; readonly input?: readonly ("text" | "image")[] }>>;
+  /** 逐模型元数据（reasoning 面——thinking 校验判据；input 面——images 能力门判据；
+   *  contextWindow 面——窗口解析模型级优先） */
+  readonly modelMeta: Readonly<Record<string, WorkerModelMeta>>;
 }
 
 export interface WorkerModelMeta {
   readonly reasoning?: boolean;
   readonly input?: readonly ("text" | "image")[];
+  /** 模型级上下文窗口（窗口解析模型级优先——同档案多模型窗口不同的精确面） */
+  readonly contextWindow?: number;
 }
 
 /** 快照 JSON 形状（host buildAssemblySnapshot 产出与此处消费同契约） */
@@ -24,15 +27,37 @@ interface SnapshotJson {
   readonly modelMeta?: Readonly<Record<string, WorkerModelMeta>>;
 }
 
+/** 逐模型输出上限形状：值须正整数（垃圾成员剔除——provider 整体保留） */
+function validMaxByModel(raw: unknown): Readonly<Record<string, number>> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [model, value] of Object.entries(raw)) {
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) out[model] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function validProviders(raw: readonly AssemblyProvider[] | undefined): readonly AssemblyProvider[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (p) =>
-      typeof p?.provider === "string" && p.provider !== "" &&
-      (p.protocol === "anthropic" || p.protocol === "openai") &&
-      typeof p.baseUrl === "string" &&
-      Array.isArray(p.models),
-  ) as readonly AssemblyProvider[];
+  const out: AssemblyProvider[] = [];
+  for (const p of raw) {
+    if (
+      typeof p?.provider !== "string" || p.provider === "" ||
+      (p.protocol !== "anthropic" && p.protocol !== "openai") ||
+      typeof p.baseUrl !== "string" ||
+      !Array.isArray(p.models)
+    ) {
+      continue;
+    }
+    // 逐模型输出上限整字段净化：垃圾形状（非对象/全垃圾成员）剔除字段本身，不透传
+    const { maxOutputTokensByModel: rawByModel, ...rest } = p;
+    const maxOutputTokensByModel = validMaxByModel(rawByModel);
+    out.push({
+      ...rest,
+      ...(maxOutputTokensByModel !== undefined ? { maxOutputTokensByModel } : {}),
+    });
+  }
+  return out;
 }
 
 /** 从 env 解析快照；缺席/坏 JSON → 空目录（thread/start 显式 modelId 即失败——

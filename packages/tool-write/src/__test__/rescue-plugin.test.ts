@@ -1,0 +1,245 @@
+// 抢救插件测试（docs/TRUNCATED-TOOL-RESCUE.md 层 2 测试口径）：真 waterfall 派发面
+// （createContext + ctx.on 消费者 + dispatch）+ 真 PathGate/admitSession 授权面 +
+// createLocalEnv 落盘断言。文案逐字断言（方案原文）；授权面攻击（越根/穿越/绝对路径）
+// 与同名不覆盖、abort 竞态。
+
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { createContext, loadPlugins } from "@x-harness/core";
+import { agentTruncatedTool } from "@x-harness/agent-loop";
+import type { TruncatedToolPayload } from "@x-harness/agent-loop";
+import { createLocalEnv } from "@x-harness/exec-env";
+import { ObservedRegistry, PathGate } from "@x-harness/tool-core";
+import { createTruncatedWriteRescuePlugin } from "../rescue-plugin.ts";
+import { createPermissionPlugin } from "@x-harness/permission";
+import { toolsPlugin } from "@x-harness/tools";
+
+/** 物化路径装配：抢救件 + permission 件（full 档——in-root write 直通 allow）同装 */
+async function dispatchPermitted(name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
+  const c = createContext();
+  ctx = c;
+  const gate = new PathGate(root);
+  const observed = new ObservedRegistry();
+  const env = createLocalEnv(root);
+  const unload = await loadPlugins(c, [
+    toolsPlugin,
+    createPermissionPlugin({ root, mode: "full" }),
+    createTruncatedWriteRescuePlugin({ gate, observed, env, permission: { root } }),
+  ]);
+  c.effect(() => { for (const off of unload) off(); });
+  return c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name, arguments: args, signal: new AbortController().signal } as TruncatedToolPayload, async () => undefined);
+}
+
+let root = "";
+let ctx: ReturnType<typeof createContext> | undefined;
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "xh-rescue-"));
+});
+afterEach(async () => {
+  if (ctx !== undefined) await ctx.dispose().catch(() => {});
+  ctx = undefined;
+  rmSync(root, { recursive: true, force: true });
+});
+
+const SESSION = "sess-a" as never;
+const LONG = "x".repeat(600); // 体积下限 512 之上
+const SHORT = "x".repeat(511);
+
+/** note-only 应答收窄（本件恒返 {note}——content 替换形态归文案插件） */
+function noteOf(decision: unknown): string {
+  expect(decision).toMatchObject({ note: expect.any(String) });
+  return (decision as { readonly note: string }).note;
+}
+
+/** 真装配：插件挂进 context，经 ctx.dispatch(agentTruncatedTool) 走全链（含 next 链） */
+async function dispatch(name: string, args: string, signal?: AbortSignal): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
+  const c = createContext();
+  ctx = c;
+  const unload = await loadPlugins(c, [createTruncatedWriteRescuePlugin({ gate: new PathGate(root), observed: new ObservedRegistry(), env: createLocalEnv(root) })]);
+  c.effect(() => { for (const off of unload) off(); });
+  return c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name, arguments: args, signal: signal ?? new AbortController().signal } as TruncatedToolPayload, async () => undefined);
+}
+
+/** dispatch 上游已应答形态（让位链验证：downstream 非空 → 透传不抢救） */
+async function dispatchWithUpstream(name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
+  const c = createContext();
+  ctx = c;
+  const unload = await loadPlugins(c, [createTruncatedWriteRescuePlugin({ gate: new PathGate(root), observed: new ObservedRegistry(), env: createLocalEnv(root) })]);
+  c.effect(() => { for (const off of unload) off(); });
+  return c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name, arguments: args, signal: new AbortController().signal } as TruncatedToolPayload, async () => ({ note: "upstream already handled" }));
+}
+
+describe("createTruncatedWriteRescuePlugin（write/edit 命中与让位）", () => {
+  it("write 命中 content：物化 + write 文案逐字（chars/lines/path）", async () => {
+    const body = ["alpha", "beta", "gamma"].join("\n").padEnd(600, "!");
+    const r = await dispatchPermitted("write", `{"path":"out.ts","content":"${body}`);
+    expect(r).toEqual({
+      note: `Recovered ${String(body.length)} chars (${String(body.split("\n").length)} lines) of the truncated write to out.ts.partial (draft — out.ts NOT modified). Read it, produce the remainder as a separate file, assemble with bash, then delete the .partial.`,
+    });
+    expect(readFileSync(join(root, "out.ts.partial"), "utf8")).toBe(body);
+    expect(existsSync(join(root, "out.ts"))).toBe(false); // 目标文件不动
+  });
+
+  it("edit 命中 edits[] 末条 newText（真 schema 形态）：物化 + 数组感知文案逐字", async () => {
+    const raw = `{"path":"src/a.ts","edits":[{"oldText":"const a = 1;","newText":"const a = 2;"},{"oldText":"// tail","newText":"${LONG}`;
+    const r = await dispatchPermitted("edit", raw);
+    expect(r).toEqual({
+      note: `Recovered ${String(LONG.length)} chars of the last edit's newText in the truncated edit call to src/a.ts.partial (draft — src/a.ts NOT modified). Read it, re-issue the edits in smaller, separate edit calls, then delete the .partial.`,
+    });
+    expect(readFileSync(join(root, "src/a.ts.partial"), "utf8")).toBe(LONG);
+  });
+
+  it("edit 无 edits 键（形态不符）→ 让位；含 edit 的其它工具名不再误命中", async () => {
+    expect(await dispatchPermitted("edit", `{"path":"a.ts","newText":"${LONG}`)).toBeUndefined(); // 无 edits 键
+    expect(await dispatchPermitted("FileEdit", `{"path":"a.ts","new_string":"${LONG}`)).toBeUndefined(); // 抢救表明为精确名 edit
+  });
+
+  it("其他工具名（bash）→ 让位（透传 next = undefined，不落盘）", async () => {
+    const r = await dispatch("bash", `{"command":"echo ${LONG}"`);
+    expect(r).toBeUndefined();
+    expect(existsSync(join(root, "command.partial"))).toBe(false);
+  });
+
+  it("提取失败（无字段键）→ 让位", async () => {
+    expect(await dispatch("write", '{"path":"a.ts","con')).toBeUndefined();
+  });
+
+  it("path 半截 → 让位（无法命名目标）", async () => {
+    expect(await dispatch("write", `{"content":"${LONG}","path":"a.t`)).toBeUndefined();
+  });
+
+  it("体积下限（< 512 chars）→ 不物化但告知（N 占位实际数）", async () => {
+    const r = await dispatch("write", `{"path":"small.txt","content":"${SHORT}`);
+    expect(r).toEqual({ note: `truncated arguments too short to be worth a draft (${String(SHORT.length)} chars)` });
+    expect(existsSync(join(root, "small.txt.partial"))).toBe(false);
+  });
+
+  it("上游中间件已应答 → 透传其 note（让位）", async () => {
+    const r = await dispatchWithUpstream("write", `{"path":"up.txt","content":"${LONG}`);
+    expect(r).toEqual({ note: "upstream already handled" });
+    expect(existsSync(join(root, "up.txt.partial"))).toBe(false);
+  });
+
+  it("signal.aborted → 透传 next（abort 竞态不写盘）", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const r = await dispatch("write", `{"path":"ab.txt","content":"${LONG}`, controller.signal);
+    expect(r).toBeUndefined();
+    expect(existsSync(join(root, "ab.txt.partial"))).toBe(false);
+  });
+});
+
+describe("createTruncatedWriteRescuePlugin（授权面攻击——sidecar 与 write 同源过门）", () => {
+  it("path=../outside.txt（穿越）→ 门拒 → 降级 note（不落盘）", async () => {
+    const r = await dispatch("write", `{"path":"../outside.txt","content":"${LONG}`);
+    expect(r).toEqual({ note: "target outside workspace boundary, draft not saved" });
+    expect(existsSync(join(root, "..", "outside.txt.partial"))).toBe(false);
+  });
+
+  it("绝对路径越根（/tmp/xh-escape.txt）→ 门拒 → 降级 note（不落盘）", async () => {
+    const r = await dispatch("write", `{"path":"/etc/xh-escape.txt","content":"${LONG}`);
+    expect(r).toEqual({ note: "target outside workspace boundary, draft not saved" });
+    expect(existsSync("/etc/xh-escape.txt.partial")).toBe(false);
+  });
+
+  it("workspace 内合法 → 物化成功（内容断言 = value）", async () => {
+    const r = await dispatchPermitted("write", `{"path":"inner/deep/ok.txt","content":"${LONG}`);
+    expect(noteOf(r)).toContain("Recovered");
+    expect(readFileSync(join(root, "inner/deep/ok.txt.partial"), "utf8")).toBe(LONG);
+  });
+
+  it("同名 .partial 已存在 → 拒绝覆盖（原内容不变）", async () => {
+    writeFileSync(join(root, "keep.txt.partial"), "precious");
+    const r = await dispatchPermitted("write", `{"path":"keep.txt","content":"${LONG}`);
+    expect(r).toEqual({ note: "draft exists at keep.txt.partial, not overwritten" });
+    expect(readFileSync(join(root, "keep.txt.partial"), "utf8")).toBe("precious");
+  });
+});
+
+describe("createTruncatedWriteRescuePlugin（字节保真 round-trip）", () => {
+  it("中文/转义字符：物化字节 = 解码后 value 的 utf8（round-trip）", async () => {
+    // raw 是半截 JSON 原文（值内一切特殊字符以 JSON 转义形在场——提取器按转义规则解码）
+    const decoded = `中文\n\t"quoted"\\slash😀\n${LONG}`;
+    const encoded = JSON.stringify(decoded).slice(1, -1); // 同一字符串的 JSON 转义形（去外层引号）
+    const r = await dispatchPermitted("write", `{"path":"zh.txt","content":"${encoded}`);
+    expect(noteOf(r)).toContain(`Recovered ${String(decoded.length)} chars`);
+    expect(readFileSync(join(root, "zh.txt.partial"), "utf8")).toBe(decoded);
+    expect(readFileSync(join(root, "zh.txt.partial"))).toEqual(Buffer.from(decoded, "utf8"));
+  });
+});
+
+describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
+  /** 任意档位装配：抢救件在 permission 之后（apply 序=服务可达） */
+  type ModeSpec = { readonly mode: "full" | "plan" | "auto" | "edit-confirm"; readonly rules?: { tool: string; pattern: string; verdict: "allow" | "deny" }[] };
+
+  async function dispatchWithMode(spec: ModeSpec, name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
+    const c = createContext();
+    ctx = c;
+    const unload = await loadPlugins(c, [
+      toolsPlugin,
+      createPermissionPlugin({ root, mode: spec.mode, ...(spec.rules !== undefined ? { rules: spec.rules as never } : {}) }),
+      createTruncatedWriteRescuePlugin({ gate: new PathGate(root), observed: new ObservedRegistry(), env: createLocalEnv(root), permission: { root, ...(spec.rules !== undefined ? { rules: spec.rules as never } : {}) } }),
+    ]);
+    c.effect(() => { for (const off of unload) off(); });
+    return c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name, arguments: args, signal: new AbortController().signal } as TruncatedToolPayload, async () => undefined);
+  }
+
+  it("plan 档硬闸：mutationPolicy plan-deny → 抢救不落盘（plan 模式零写入承诺不破）", async () => {
+    const r = await dispatchWithMode({ mode: "plan" }, "write", `{"path":"plan-out.ts","content":"${LONG}`);
+    expect(r).toEqual({ note: "target not permitted for rescue write, draft not saved" });
+    expect(existsSync(join(root, "plan-out.ts.partial"))).toBe(false);
+  });
+
+  it("deny 规则命中（.git 内）→ 抢救不落盘（write 同源 DEFAULT_DENY_WRITE 面生效）", async () => {
+    const r = await dispatchWithMode({ mode: "full" }, "write", `{"path":".git/hooks/pre-commit","content":"${LONG}`);
+    expect(r).toEqual({ note: "target not permitted for rescue write, draft not saved" });
+    expect(existsSync(join(root, ".git/hooks/pre-commit.partial"))).toBe(false);
+  });
+
+  it("edit-confirm 档界内写 → 不弹窗直接不救（ask 类裁决不走抢救旁路；模型重发完整调用走正常面板）", async () => {
+    const r = await dispatchWithMode({ mode: "edit-confirm" }, "write", `{"path":"ask-out.ts","content":"${LONG}`);
+    expect(r).toEqual({ note: "target not permitted for rescue write, draft not saved" });
+    expect(existsSync(join(root, "ask-out.ts.partial"))).toBe(false);
+  });
+
+  it("auto 档界内写（auto-in-root）→ 裁决 allow → 物化（与 write 工具同源放行语义）", async () => {
+    const r = await dispatchWithMode({ mode: "auto" }, "write", `{"path":"auto-out.ts","content":"${LONG}`);
+    expect(noteOf(r)).toContain("Recovered");
+    expect(readFileSync(join(root, "auto-out.ts.partial"), "utf8")).toBe(LONG);
+  });
+
+  it("无 permission 装配的世界 → 不物化（无裁决面即无写盘授权，base 文案兜底）", async () => {
+    const r = await dispatch("write", `{"path":"noperm.txt","content":"${LONG}`);
+    expect(r).toBeUndefined();
+    expect(existsSync(join(root, "noperm.txt.partial"))).toBe(false);
+  });
+});
+
+describe("createTruncatedWriteRescuePlugin（物化失败降级）", () => {
+  it("writeFileAtomic 失败（只读目录）→ 不 throw、返回 undefined（纯 base 文案兜底）", async () => {
+    const c = createContext();
+    ctx = c;
+    const gate = new PathGate(root);
+    const observed = new ObservedRegistry();
+    const roDir = join(root, "ro");
+    const { mkdirSync, chmodSync } = await import("node:fs");
+    mkdirSync(roDir, { recursive: true });
+    const env = createLocalEnv(root);
+    const unload = await loadPlugins(c, [
+      await import("@x-harness/tools").then((m) => m.toolsPlugin),
+      createPermissionPlugin({ root, mode: "full" }),
+      createTruncatedWriteRescuePlugin({ gate, observed, env, permission: { root } }),
+    ]);
+    c.effect(() => { for (const off of unload) off(); });
+    chmodSync(roDir, 0o500); // 只读目录——物化必失败
+    try {
+      const r = await c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"ro/x.txt","content":"${LONG}`, signal: new AbortController().signal } as TruncatedToolPayload, async () => undefined);
+      expect(r).toBeUndefined();
+      expect(existsSync(join(root, "ro/x.txt.partial"))).toBe(false);
+    } finally {
+      chmodSync(roDir, 0o700);
+    }
+  });
+});

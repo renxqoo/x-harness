@@ -19,7 +19,8 @@ import {
   agentRequestError,
   agentStatus,
   agentToolStream,
-  agentTurnStopping, agentAssistantSettle, agentLlmStream} from "./tokens.ts";
+  agentTurnConclude,
+  agentTurnStopping, agentAssistantSettle, agentLlmStream, agentTruncatedTool} from "./tokens.ts";
 import type { Agent, AgentHandle, AgentLoopService, AgentOptions, CreateAgentOptions, ResumeAgentOptions } from "./types.ts";
 
 const DEFAULT_MAX_PARALLEL = 10;
@@ -90,6 +91,10 @@ export const agentLoopPlugin = {
         dispatchRequestError: (payload) =>
           agentScope.dispatch(agentRequestError, payload as never, async () => undefined),
         dispatchTurnStopping: (payload) => agentScope.dispatch(agentTurnStopping, payload as never),
+        // 收束窗口（agentTurnConclude）：final = undefined（无插件应答即现行收束路径——真 opt-in）
+        dispatchTurnConclude: (payload) => agentScope.dispatch(agentTurnConclude, payload as never, async () => undefined),
+        // 抢救窗口（agentTruncatedTool）：final = undefined（无插件应答即无附注——真 opt-in）
+        dispatchTruncatedTool: (payload) => agentScope.dispatch(agentTruncatedTool, payload as never, async () => undefined),
         // F0② 落账前纠：final = 原样透传（content/stopReason——interrupted 内核独占，终审 2.2）
         dispatchAssistantSettle: (payload) =>
           agentScope.dispatch(agentAssistantSettle, payload as never, async (p) => ({
@@ -108,7 +113,7 @@ export const agentLoopPlugin = {
         },
         followup: driver.followup,
         steer: driver.steer,
-        inject: driver.inject,
+        notify: driver.notify,
         cancel: driver.cancel,
         whenIdle: driver.whenIdle,
       };

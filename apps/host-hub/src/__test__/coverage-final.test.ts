@@ -1,11 +1,11 @@
 // 覆盖收口 III：skills-admin removeSkill 分支、dialogs 坏形状/超时/denyAll、
 // inflight 喂入、event-bridge childBusy/unsubscribe、compactSkipError 映射表。
 import { afterAll, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { homedir } from "node:os";
 import { join } from "node:path";
-import { removeSkill, setSkillEnabled } from "../host/skills-admin.ts";
+import { loadSkills } from "@x-harness/skill";
+import { listSkills, removeSkill, setSkillEnabled } from "../host/skills-admin.ts";
 import { createDialogBroker } from "../worker/dialogs.ts";
 import { createBashExec } from "../worker/bash-exec.ts";
 import type { PendingDialog } from "../worker/dialogs.ts";
@@ -23,21 +23,72 @@ afterAll(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("skills-admin removeSkill 分支", () => {
-  test("project 级 → not user-defined；真 user 级 → 删（隔离 user 目录注入）", async () => {
+describe("skills-admin（HOME 注入缝——user 技能根可隔离）", () => {
+  test("project 级遮蔽 → not user-defined；未知名 → unknown skill", async () => {
     const projectCwd = await tempDir("hub-rm-");
     const skillDir = join(projectCwd, ".x-harness", "skills", "beta");
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, "SKILL.md"), "---\nname: beta\ndescription: B\n---\nbody", "utf8");
-    const projectRemoval = await removeSkill({ name: "beta", trustedCwds: [projectCwd] });
+    // user 根（注入 HOME）为空 → beta 属 project 级：删除是 user 级专属 → 拒
+    const home = await tempDir("hub-home-");
+    const projectRemoval = await removeSkill({ name: "beta", trustedCwds: [projectCwd], homeDir: home });
     expect(projectRemoval).toEqual({ ok: false, error: { code: "state_conflict", message: "skill not user-defined: beta" } });
-    // user 级真删路径：os.homedir() 在 Bun 下不随 HOME env 翻转（进程启动期定值），
-    // 真实 user 目录不可测试隔离——该分支由 process smoke 的设置面旅程覆盖（真进程
-    // 可设 HOME）。此处补 unknown-skill 拒面：
-    const ghost = await removeSkill({ name: "ghost-skill", trustedCwds: [] });
+    const ghost = await removeSkill({ name: "ghost-skill", trustedCwds: [], homeDir: home });
     expect(ghost).toEqual({ ok: false, error: { code: "state_conflict", message: expect.stringContaining("unknown skill: ghost-skill") } });
-    void homedir;
-    void setSkillEnabled;
+  });
+
+  test("user 级移除 = 删技能目录（回归：旧实现只删 SKILL.md，残留目录 + 捆绑文件，且每次装载告警）", async () => {
+    const home = await tempDir("hub-home-");
+    const root = join(home, ".x-harness", "skills");
+    const skillDir = join(root, "beta");
+    await mkdir(join(skillDir, "references"), { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "---\nname: beta\ndescription: B\n---\nbody", "utf8");
+    await writeFile(join(skillDir, "references", "guide.md"), "# guide", "utf8");
+    expect(await removeSkill({ name: "beta", trustedCwds: [], homeDir: home })).toEqual({ ok: true });
+    expect(await stat(skillDir).catch(() => undefined)).toBeUndefined(); // 目录整体（含捆绑文件）消失
+    expect(await loadSkills([root])).toEqual({ skills: {}, warnings: [] }); // 装载零告警
+  });
+
+  test("symlink 技能移除：删链接不删目标（dotfiles/stow 摆放实体不受影响）", async () => {
+    const home = await tempDir("hub-home-");
+    const outside = await tempDir("hub-out-");
+    const root = join(home, ".x-harness", "skills");
+    await writeFile(join(outside, "SKILL.md"), "---\nname: linked\ndescription: L\n---\n", "utf8");
+    await mkdir(root, { recursive: true });
+    await symlink(outside, join(root, "linked"));
+    expect(await removeSkill({ name: "linked", trustedCwds: [], homeDir: home })).toEqual({ ok: true });
+    expect(await stat(join(root, "linked")).catch(() => undefined)).toBeUndefined();
+    expect((await stat(join(outside, "SKILL.md"))).isFile()).toBe(true);
+  });
+
+  test("回归：set_enabled 带 cwd 在全新项目（无 .x-harness 目录）也能落盘 + enable 后并集残留 → stillDisabled by user（DESIGN §3.9）", async () => {
+    const home = await tempDir("hub-home-");
+    const agentDir = await tempDir("hub-agent-");
+    const projectCwd = await tempDir("hub-proj-");
+    // agentDir 派生缝：agentDir 在场时 user 根 = <agentDir>/skills（homeDir 注入缝退居次位）
+    const root = join(agentDir, "skills");
+    await mkdir(join(root, "alpha"), { recursive: true });
+    await writeFile(join(root, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: A\n---\n", "utf8");
+    // user 名单禁用
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false })).toEqual({ ok: true });
+    // 带 cwd 再禁用 → 项目级名单落盘（自身无残留提示——by 只报 user 级残留）
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false, cwd: projectCwd })).toEqual({ ok: true });
+    // 带 cwd 启用：项目级条目删除，但 user 名单仍含 → stillDisabled by user
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: true, cwd: projectCwd })).toEqual({ ok: true, stillDisabled: "user" });
+    const project = JSON.parse(await readFile(join(projectCwd, ".x-harness", "hub-settings.json"), "utf8")) as { "skills.disabled"?: string[] };
+    expect(project["skills.disabled"]).toEqual([]);
+  });
+
+  test("list/set_enabled 走注入 HOME：user 层真读真写（含 project 层并集）", async () => {
+    const home = await tempDir("hub-home-");
+    const agentDir = await tempDir("hub-agent-");
+    const root = join(agentDir, "skills");
+    await mkdir(join(root, "alpha"), { recursive: true });
+    await writeFile(join(root, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: A\n---\n", "utf8");
+    const listed = await listSkills({ agentDir, homeDir: home });
+    expect(listed.skills).toEqual([{ name: "alpha", source: "user", path: join(root, "alpha", "SKILL.md"), disabled: false }]);
+    expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false })).toEqual({ ok: true });
+    expect((await listSkills({ agentDir, homeDir: home })).skills[0]?.disabled).toBe(true);
   });
 });
 
@@ -49,19 +100,42 @@ describe("dialogs broker 分支", () => {
     const request = JSON.parse(sent[0] as string) as PendingDialog;
     expect(broker.pendingCount()).toBe(1);
     expect(broker.resolve(request.requestId, "junk")).toBe(true); // 坏形状 → settle(false)
-    await expect(confirmPromise).resolves.toBe(false);
+    await expect(confirmPromise).resolves.toMatchObject({ allowed: false });
     expect(broker.resolve("no-such", { confirmed: true })).toBe(false); // 未知忽略
+    // 结构化应答（PERMISSION-V2 §6.2）：verdict+memory+rule 改写全字段面；布尔退化=once
+    const structuredPromise = broker.confirm("t1", { tool: "bash", reason: "r", options: ["once", "session", "project"], suggestedRule: "Bash(x:*):allow" });
+    const lastRequest = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
+    expect(lastRequest).toBeDefined();
+    if (lastRequest !== undefined) {
+      expect(broker.resolve(lastRequest.requestId, { verdict: "allow", memory: "project", rule: "Bash(y:*):allow" })).toBe(true);
+      await expect(structuredPromise).resolves.toMatchObject({ allowed: true, memory: "project", ruleOverride: "Bash(y:*):allow" });
+    }
+    // 结构化字段帧契约（agent-app 消费面）：summary/options/suggestedRule/escalate 原样进 payload
+    const escalateConfirm = broker.confirm("t1", { tool: "bash", summary: "mytool run", reason: "sandbox failure", options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
+    const escReq = sent.map((line) => JSON.parse(line) as Record<string, unknown>).at(-1); // 帧面平铺（uiRequestFrame 顶层字段）
+    expect(escReq).toMatchObject({ summary: "mytool run", options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
+    const escReqId = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
+    if (escReqId !== undefined) {
+      broker.resolve(escReqId.requestId, { verdict: "deny" });
+      await expect(escalateConfirm).resolves.toMatchObject({ allowed: false });
+    }
+    const boolOnce = broker.confirm("t1", { tool: "read", reason: "r" });
+    const boolReq = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
+    if (boolReq !== undefined) {
+      broker.resolve(boolReq.requestId, { confirmed: true });
+      await expect(boolOnce).resolves.toMatchObject({ allowed: true }); // 布尔退化=once（无记忆）
+    }
     expect(broker.pendingAll()).toEqual([]); // 已结算出队
     // 超时默认拒
     const timeoutPromise = broker.confirm("t1", { tool: "bash", reason: "r" });
-    await expect(timeoutPromise).resolves.toBe(false);
+    await expect(timeoutPromise).resolves.toMatchObject({ allowed: false });
     // denyAll：挂起全部拒绝
     const pending1 = broker.confirm("t1", { tool: "read", reason: "r" });
     const pending2 = broker.confirm("t1", { tool: "write", reason: "r" });
     expect(broker.pendingCount()).toBe(2);
     broker.denyAll();
-    await expect(pending1).resolves.toBe(false);
-    await expect(pending2).resolves.toBe(false);
+    await expect(pending1).resolves.toMatchObject({ allowed: false });
+    await expect(pending2).resolves.toMatchObject({ allowed: false });
   });
 });
 
@@ -88,7 +162,7 @@ describe("inflight 状态机", () => {
 describe("event-bridge 观察面", () => {
   test("未装配不外发（threadId 空）；childBusy 默认 false", () => {
     const lines: string[] = [];
-    const bridge = createEventBridge({ emitLine: (line) => lines.push(line), threadId: () => "", inflight: createInflightState() });
+    const bridge = createEventBridge({ emitLine: (line) => lines.push(line), threadId: () => "", inflight: createInflightState(), pendingSends: () => 0, mainEvents: () => undefined });
     bridge.emitSettled("s1", true);
     expect(lines).toEqual([]); // 无盖章不外发
     expect(bridge.childBusy()).toBe(false);
@@ -123,7 +197,7 @@ describe("审查修复回归（收口处置）", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => "/definitely/missing/cwd",
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 5_000,

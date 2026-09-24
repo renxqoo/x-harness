@@ -7,41 +7,52 @@
 import type { Plugin, Result } from "@x-harness/core";
 import type { AutoCompactOptions } from "@x-harness/autocompact";
 import type { CompactionOptions } from "@x-harness/compaction";
-import type { ModeKnob } from "@x-harness/permission";
+import { parseRules } from "@x-harness/permission";
+import type { PermissionRule } from "@x-harness/permission";
+import type { ProfileId } from "@x-harness/permission";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { AnthropicCompatOptions, LlmAdapter, OpenaiCompatOptions } from "@x-harness/llm";
 import type { RetryPolicy } from "@x-harness/llm-retry";
+import { DEFAULT_RETRYABLE_CODES } from "@x-harness/llm-retry";
 import {
   autoCompactKit,
   checkpointKit,
   compactionKit,
   createAgentWorld,
+  createBasePromptPlugin,
   delegationKit,
   durableSessionKit,
   fenceKit,
   inlineSessionKit,
   llmKit,
+  continuationKit,
+  errorRecoveryKit,
+  truncationMessagesKit,
   loopKit,
   meterKit,
+  taskLogsRootOf,
   promptKit,
   skillKit,
   toolboxKit,
   telemetryKit,
 } from "@x-harness/harness";
-import { createBasePromptPlugin } from "./base-prompt.ts";
-import type { BasePromptFacts } from "./base-prompt.ts";
-import { createFactsSnapshotPlugin } from "./snapshot-facts.ts";
+import type { BasePromptFacts } from "@x-harness/harness";
+import { createFactsSnapshotPlugin } from "@x-harness/harness";
 import type { ProvidersConfig, ProviderProfile } from "./providers-file.ts";
 import type { ModelResolution } from "./resolve-model.ts";
 
 /** llm-retry 缺省策略（docs/CLI.md §2.5 裁决；不暴露 CLI flag；jitterRatio 契约为整数 0|1——取 0 确定性退避） */
-export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0 };
+export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
 
 import type { World } from "@x-harness/harness";
+import { resolveAgentDirs } from "@x-harness/agent-delegation";
+import { resolveSkillDirs } from "@x-harness/skill";
 export type { World };
 
 export interface WorldOptions {
   readonly cwd: string;
+  /** 内置 rg 目录（缺省 harness home 的 bin/——根配置 X_HARNESS_HOME 同源；None = 不启用内置级） */
+  readonly rgBinDir?: string;
   /** 遥测库路径（telemetryKit 路径形态——kit 开连接并收殓）；undefined = 不装遥测 */
   readonly telemetryPath?: string;
   /** 压缩装配面（docs/COMPACTION.md）：水位/413 自愈/手动 /compact 三面全开。
@@ -56,8 +67,10 @@ export interface WorldOptions {
   readonly promptFacts?: BasePromptFacts;
   readonly config: ProvidersConfig;
   readonly resolution: ModelResolution;
-  /** 权限模式档（--permission；缺省 auto 由 permission 包落定） */
-  readonly permission?: ModeKnob;
+  /** 权限档（--permission；缺省 sandboxed-auto——CLI 围栏优先姿势，U6） */
+  readonly permission?: ProfileId;
+  /** 权限规则串（--rules——用户作用域；拼错 fail-closed 拒启） */
+  readonly rules?: readonly string[];
   /** 审批 broker 插件（REPL/print 各自 IO 形态） */
   readonly broker: Plugin;
   /** 持久化 I/O 失败上报；缺省写 stderr */
@@ -92,6 +105,11 @@ export function autoCompactOptionsOf(options: Pick<WorldOptions, "config" | "res
   return { contextWindow: compactionOptionsOf(options).contextWindow };
 }
 
+/** 抢救件 permission 面（fenceKit 同源——用户规则单点解析两处消费） */
+function rescuePermissionOf(options: Pick<WorldOptions, "rules">): { readonly rules?: PermissionRule[] } {
+  return options.rules !== undefined && options.rules.length > 0 ? { rules: parseRules(options.rules, "user") } : {};
+}
+
 /** providers.json → adapter 集；--api-key 覆盖只折进所绑定档案（docs/CLI.md §2.1） */
 export function buildAdapters(config: ProvidersConfig, resolution: ModelResolution): readonly LlmAdapter[] {
   const override = resolution.defaults.apiKey !== undefined ? resolution.apiKeyProvider : undefined;
@@ -117,14 +135,34 @@ export function compactionOptionsOf(options: Pick<WorldOptions, "config" | "reso
 /** 缺省档窗缺席时的水位分母兜底（保守小窗——宁可早压不可撞 413；真实窗由 servedWindow 收敛） */
 const FALLBACK_CONTEXT_WINDOW = 128_000;
 
+/** rg 内置目录穿透项（rgBinDir 在场才启用）：toolboxKit 解析链第三级 + fenceKit 写保护
+ *  （用户可写目录里的可执行文件直接以宿主身份执行——与 hub <agentDir>/bin 同面）。 */
+function rgBinDirOf(options: WorldOptions): { readonly rgBinDir: string } | { readonly absent: true } {
+  return options.rgBinDir !== undefined ? { rgBinDir: options.rgBinDir } : { absent: true };
+}
+
 export async function buildWorld(options: WorldOptions): Promise<Result<World>> {
   try {
   const adapters = options.adapters ?? buildAdapters(options.config, options.resolution); // 终审 F1-2：构造错误走 Result 面（不逃逸 throw）
+  const rgBin = rgBinDirOf(options);
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
-    ...toolboxKit({ root: options.cwd }),
-    ...fenceKit({ root: options.cwd, ...(options.permission !== undefined ? { mode: options.permission } : {}) }),
+    ...truncationMessagesKit(), // 截断文案外层（先注册）——toolboxKit 抢救件内层先执行写盘，本件合成 content+note（对抗审查终审 P1：反序 content 短路写盘）
+    ...toolboxKit({
+      root: options.cwd,
+      ...rgBin,
+      ...(options.persist ? { taskLogDir: taskLogsRootOf(options.sessionRoot) } : {}),
+      // permission 面与 fenceKit 同源（用户规则共享——抢救件 write 同源裁决）
+      permission: rescuePermissionOf(options),
+    }),
+    ...fenceKit({
+      root: options.cwd,
+      mode: options.permission ?? "sandboxed-auto", // CLI 缺省围栏优先（U6——Codex 姿势）
+      ...(options.rules !== undefined && options.rules.length > 0 ? { rules: parseRules(options.rules, "user") } : {}),
+      // rg 内置目录写保护（与 hub <agentDir>/bin 同面）：用户可写目录里的可执行文件直接以宿主身份执行
+      ...("rgBinDir" in rgBin ? { protectedPaths: [rgBin.rgBinDir] } : {}),
+    }),
     options.broker,
     ...meterKit(),
     ...(options.compaction !== undefined ? [...compactionKit(compactionOptionsOf(options)), ...autoCompactKit(autoCompactOptionsOf(options))] : []),
@@ -136,9 +174,13 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
       default: RETRY_POLICY,
     }),
     ...loopKit(),
+    ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
+    ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llm-retry 后注册（后手见事件））
     ...checkpointKit(),
-    ...delegationKit(),
-    ...skillKit(),
+    // agent 类型目录由 CLI 边沿统一解析（resolveAgentDirs：显式 > env > 项目/用户根）
+    ...delegationKit({ agentsDirs: resolveAgentDirs() }),
+    // 目录由 CLI 边沿统一解析（resolveSkillDirs：显式 > env > 项目/用户根）——插件零目录知识
+    ...skillKit({ skillsDirs: resolveSkillDirs() }),
     // 快照装配位写死：紧随 skillKit（docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）
     createFactsSnapshotPlugin({ cwd: options.cwd, ...(options.factsNow !== undefined ? { now: options.factsNow } : {}), ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}) }),
   ];

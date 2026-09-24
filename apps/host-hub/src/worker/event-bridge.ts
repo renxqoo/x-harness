@@ -25,6 +25,10 @@ export interface EventBridgeDeps {
   emitLine: (line: string) => void;
   threadId: () => string;
   inflight: InflightState;
+  /** 驱动命令在飞计数（worker-commands settleAfter 记账）——内部 settled 合成的豁免判据 */
+  pendingSends: () => number;
+  /** 主会话事件读口（内部 settled 合成的 turn/end 扫描） */
+  mainEvents: () => readonly SessionEvent[] | undefined;
 }
 
 /** 在途 assistant partial 累积器：text/thinking（assistant-stream chunk——唯一文本源）+
@@ -79,6 +83,16 @@ function sessionPayload(event: SessionEvent, session: string): Record<string, un
   return { seq: event.seq, time: event.time, ...(event.data as Record<string, unknown>), session };
 }
 
+/** turn/end → settled 面（与 worker-commands settleAfter 扫描同构）：error/blocked →
+ *  ok:false + message/reason 透传（缺席兜底 kind 词），其余终态 → ok:true。 */
+function settleOfTurnEnd(event: SessionEvent): { ok: boolean; reason: string | undefined } {
+  const reason = (event.data as { reason?: { kind?: string; message?: string; reason?: string } }).reason;
+  const kind = reason?.kind;
+  if (kind !== "error" && kind !== "blocked") return { ok: true, reason: undefined };
+  const detail = kind === "error" ? reason?.message : reason?.reason;
+  return { ok: false, reason: detail !== undefined && detail !== "" ? detail : kind };
+}
+
 export function createEventBridge(deps: EventBridgeDeps): EventBridge {
   const offs: Array<() => void> = [];
   let streaming = false;
@@ -90,6 +104,29 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
   // 命令执行中计数（BATCH3 §2.4）：主会话 command/run|done 边沿维护——心跳 busy 面；
   // 清账面：sessionDisposed（done 落账在封存后丢失的兜底）+ unsubscribe（fork 重装配）
   let commandBusyCount = 0;
+  // 内部 settled 合成域：主会话最近 turn/start 的 seq（扫描区间下界）。内部 kick
+  // （delegation notify 等）无驱动命令 → settleAfter 不登记 → settled 债务无人兑付，
+  // 客户端 loading 永挂。idle 边沿且 pendingSends===0（驱动轮由 settleAfter 负责）时
+  // 扫描新区间 turn/end 合成一次 settled（sendId 空串——host 对账对空 id 无害）。
+  let turnScanFrom: number | null = null;
+
+  function emitInternalSettled(): void {
+    const threadId = deps.threadId();
+    const events = deps.mainEvents();
+    if (threadId === "" || events === undefined) return;
+    if (deps.pendingSends() > 0) return; // 驱动轮在飞：settled 由 settleAfter 兑付
+    const from = turnScanFrom;
+    if (from === null) return; // 本窗口无主会话轮（如纯命令轮）
+    turnScanFrom = null; // 恰一次：链式轮的下一 turn/start 会重置游标
+    let settled = { ok: true, reason: undefined as string | undefined };
+    for (const event of events) {
+      if (event.seq < from || event.type !== "turn/end") continue;
+      settled = settleOfTurnEnd(event);
+    }
+    deps.emitLine(
+      eventFrame({ threadId, name: "settled", payload: { sendId: "", ok: settled.ok, ...(settled.reason !== undefined ? { reason: settled.reason } : {}) } }),
+    );
+  }
 
   function emit(name: string, payload: unknown): void {
     const threadId = deps.threadId();
@@ -177,6 +214,7 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
         streaming = true;
         partial.reset();
         deps.inflight.turnStart(event.seq, event.time);
+        turnScanFrom = event.seq; // 内部 settled 合成游标（轮首）
       }
     } else if (event.type === "turn/end") {
       settleOwnerStreams(owner); // 轮边界：该会话在途尾巴冲净（含子会话——不丢弃增量）
@@ -240,6 +278,7 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
           if (threadId !== "" && String(payload.session) !== threadId) {
             childStatuses.set(String(payload.session), payload.status); // 子会话边沿（busy 面）
           }
+          if (String(payload.session) === threadId && payload.status === "idle") emitInternalSettled();
           emit(agentStatus.name, payload);
         }),
         ctx.on(agentError, (payload) => emit(agentError.name, payload)),
@@ -269,6 +308,7 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
       for (const off of offs.splice(0)) off();
       streaming = false;
       commandBusyCount = 0;
+      turnScanFrom = null;
       childStatuses.clear();
       childNames.clear(); // fork 重键 = wire 重接空置重建（新装配无子）
       partial.reset();

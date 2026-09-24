@@ -60,6 +60,11 @@ describe("settings-store", () => {
     expect(validateSettingValue("thinking.default", "huge").ok).toBe(false);
     expect(validateSettingValue("skills.disabled", ["a"]).ok).toBe(true);
     expect(validateSettingValue("skills.disabled", "a").ok).toBe(false);
+    // plugins.disabled：形状校验单点（非空字符串数组；词表成员校验放宽到 builtin ∪
+    // 已装 vendor 名——vendor 名单运行时读，admin 层收口；文件面回到形状门）
+    expect(validateSettingValue("plugins.disabled", ["token-analytics", "some-vendor"])).toEqual({ ok: true, key: "plugins.disabled" });
+    expect(validateSettingValue("plugins.disabled", [""]).ok).toBe(false);
+    expect(validateSettingValue("plugins.disabled", "token-analytics").ok).toBe(false);
     expect(validateSettingValue("unknown.key", 1)).toEqual({ ok: false, error: { code: "invalid_input", message: "unknown setting key: unknown.key" } });
   });
 
@@ -72,6 +77,14 @@ describe("settings-store", () => {
     const mixed = join(dir, "mixed.json");
     await Bun.write(mixed, JSON.stringify({ "thinking.default": "low", "permission.defaultMode": "bogus", other: 1 }));
     expect(await readSettingsFile(mixed)).toEqual({ "thinking.default": "low" });
+    // plugins.disabled 坏形状（非数组成员）→ 丢弃；合法形状（含 vendor 名——运行时
+    // 名单）保留——词表成员校验已放宽，文件面形状门兜底
+    const badPlugin = join(dir, "bad-plugin.json");
+    await Bun.write(badPlugin, JSON.stringify({ "plugins.disabled": ["ok-name", ""] }));
+    expect(await readSettingsFile(badPlugin)).toEqual({});
+    const okPlugin = join(dir, "ok-plugin.json");
+    await Bun.write(okPlugin, JSON.stringify({ "plugins.disabled": ["token-analytics", "vendor-x"] }));
+    expect(await readSettingsFile(okPlugin)).toEqual({ "plugins.disabled": ["token-analytics", "vendor-x"] });
   });
 
   test("路径单源：用户级/项目级", async () => {
@@ -92,19 +105,21 @@ describe("settings-store", () => {
     expect(activeSettingPaths()).toBe(0);
   });
 
-  test("合并视图：覆盖型项目胜；名单并集；来源标注", () => {
-    const user = { "permission.defaultMode": "auto" as const, "thinking.default": "low" as const, "skills.disabled": ["a", "b"] };
-    const project = { "permission.defaultMode": "full" as const, "skills.disabled": ["b", "c"] };
+  test("合并视图：覆盖型项目胜；名单并集（skills/plugins 同律）；来源标注", () => {
+    const user = { "permission.defaultMode": "auto" as const, "thinking.default": "low" as const, "skills.disabled": ["a", "b"], "plugins.disabled": ["token-analytics"] };
+    const project = { "permission.defaultMode": "full" as const, "skills.disabled": ["b", "c"], "plugins.disabled": [] };
     const merged = mergeSettings(user, project);
     expect(merged.values).toEqual({
       "permission.defaultMode": "full",
       "thinking.default": "low",
       "skills.disabled": ["a", "b", "c"],
+      "plugins.disabled": ["token-analytics"],
     });
     expect(merged.sources).toEqual({
       "permission.defaultMode": "project",
       "thinking.default": "user",
       "skills.disabled": "union",
+      "plugins.disabled": "union",
     });
     expect(mergeSettings({}, {}).values).toEqual({});
   });

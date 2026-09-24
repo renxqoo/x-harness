@@ -4,7 +4,7 @@
 // agents-admin/direct-reads/旋钮/host_info 矩阵。
 import { EventEmitter } from "node:events";
 import { afterAll, describe, expect, test } from "vitest";
-import { mkdtemp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHost } from "../host/host.ts";
@@ -49,6 +49,8 @@ interface HostFixture {
   client: string[];
   agentDir: string;
   sessionsRoot: string;
+  /** 隔离 HOME（skills/agents 管理面的 user 目录根） */
+  home: string;
   workers: FakeWorker[];
   send(cmd: unknown): void;
 }
@@ -100,7 +102,7 @@ async function startHost(env: Record<string, string | undefined> = {}): Promise<
     homeDir: home,
     agentDir,
     sessionsRoot,
-    env,
+    env: { HUB_SKILLS_MIGRATION: "0", HUB_AGENTS_MIGRATION: "0", ...env },
     input: input as unknown as NodeJS.ReadStream,
     exit: () => {},
     emitOverride: (line) => client.push(line),
@@ -128,7 +130,7 @@ async function startHost(env: Record<string, string | undefined> = {}): Promise<
       };
     },
   });
-  return { input, client, agentDir, sessionsRoot, workers, send: (cmd) => input.send(cmd) };
+  return { input, client, agentDir, sessionsRoot, home, workers, send: (cmd) => input.send(cmd) };
 }
 
 /** thread/start 手驱：spawn → hello → 控制应答（表落实） */
@@ -217,6 +219,8 @@ describe("host 本地命令（注入 IO）", () => {
       { type: "assistant/message", seq: 2, time: 3, data: { turn: 0, step: 0, content: [{ type: "text", text: "hi" }] }, surfaceOp: "append" },
       { type: "session/meta", seq: 3, time: 4, data: { key: "title", value: "saved thread" } },
       { type: "turn/end", seq: 4, time: 5, data: { turn: 0, reason: { kind: "completed" } } },
+      // L1 占位载体（单点 tool/result replace）——view 域管线断言的观测面
+      { type: "tool/result", seq: 5, time: 6, data: { turn: 0, step: 0, callId: "c1", content: "[cleared: read /x 5 chars]" }, surfaceOp: { op: "replace", startSeq: 2, endSeq: 2 } },
     ];
     await writeFile(join(dir, "events.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
     f.send({ type: "thread/register", id: "rg1", sessionPath: join(dir, "events.jsonl") });
@@ -230,7 +234,7 @@ describe("host 本地命令（注入 IO）", () => {
     const spawnCount = f.workers.length;
     f.send({ type: "get_state", id: "gs1", threadId: sid });
     const state = await waitResponse(f.client, "get_state", "gs1");
-    const sd = state["data"] as { sessionName: string; messageCount: number; sessionId: string; queue: { steering: string[]; followUp: string[] } };
+    const sd = state["data"] as { sessionName: string; messageCount: number; sessionId: string; queue: { steering: Array<{ id: string; text: string }>; followUp: Array<{ id: string; text: string }> } };
     expect(sd.sessionName).toBe("saved thread");
     expect(sd.messageCount).toBe(2);
     expect(sd.sessionId).toBe(sid);
@@ -240,9 +244,20 @@ describe("host 本地命令（注入 IO）", () => {
     f.send({ type: "get_entries", id: "ge1", threadId: sid, since: 1, limit: 2 });
     const entries = await waitResponse(f.client, "get_entries", "ge1");
     const ed = entries["data"] as { entries: Array<{ seq: number }>; leafSeq: number; hasMore: boolean };
-    expect(ed.leafSeq).toBe(4);
-    expect(ed.entries.map((e) => e.seq)).toEqual([3, 4]); // since=1 排他 → [2,3,4]；limit 2 取最近 → [3,4]
+    expect(ed.leafSeq).toBe(5);
+    expect(ed.entries.map((e) => e.seq)).toEqual([4, 5]); // since=1 排他 → [2..5]；limit 2 取最近 → [4,5]
     expect(ed.hasMore).toBe(true);
+    // view=history 管线旅程（parked 直读全链）：载体行滤除、leafSeq 恒 journal 尾
+    f.send({ type: "get_entries", id: "geh1", threadId: sid, view: "history" });
+    const hist = await waitResponse(f.client, "get_entries", "geh1");
+    const hd = hist["data"] as { entries: Array<{ seq: number; event: Record<string, unknown> }>; leafSeq: number };
+    expect(hd.entries.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4]); // 载体 5 滤除
+    expect(hd.leafSeq).toBe(5); // 全集域
+    expect(hd.entries.every((e) => e.event["type"] !== "tool/result" || String(e.event["content"]).startsWith("[cleared:") === false)).toBe(true);
+    // 非法 view 管线旅程：显式 invalid_input failure 帧
+    f.send({ type: "get_entries", id: "geb1", threadId: sid, view: "Journal" });
+    const bad = await waitResponse(f.client, "get_entries", "geb1");
+    expect(bad["error"]).toMatchObject({ code: "invalid_input" });
     // 收敛读空形态
     f.send({ type: "get_inflight", id: "gi1", threadId: sid });
     const inflight = await waitResponse(f.client, "get_inflight", "gi1");
@@ -364,7 +379,9 @@ describe("host 本地命令（注入 IO）", () => {
     expect(errOf(noDesc).message).toContain("description required");
     f.send({ type: "agents/create", id: "ac2", name: "researcher", description: "does research", systemPrompt: "you research things", model: "script-1" });
     const created = await waitResponse(f.client, "agents/create", "ac2");
-    expect((created["data"] as { path: string }).path).toContain("researcher.md");
+    // agentDir 派生缝：host-hub 运行态 user 根 = <agentDir>/agents（与 skills 同序；
+    // 与 worker 装配/agents-list 同源——写读同区）
+    expect((created["data"] as { path: string }).path).toBe(join(f.agentDir, "agents", "researcher.md"));
     f.send({ type: "agents/list", id: "al1" });
     const listed = await waitResponse(f.client, "agents/list", "al1");
     const agents = (listed["data"] as { agents: Array<{ name: string; source: string; model?: string }> }).agents;
@@ -390,10 +407,11 @@ describe("host 本地命令（注入 IO）", () => {
     const bareBuiltin = await waitResponse(f.client, "agents/remove", "ar4");
     expect(errOf(bareBuiltin).code).toBe("state_conflict");
     expect(["agent type not user-defined: code-reviewer", "unknown agent type: code-reviewer"]).toContain(errOf(bareBuiltin).message);
-    // permission 双域：无 threadId get → 全局默认；set 词表校验
+    // permission 双域：无 threadId get → 全局默认；set 词表校验；modes = UI 选择器渲染源（五档单源）
+    const WIRE_MODES = ["plan", "auto", "edit-confirm", "full", "sandboxed-auto"];
     f.send({ type: "permission/get_mode", id: "pg1" });
     const globalGet = await waitResponse(f.client, "permission/get_mode", "pg1");
-    expect(globalGet["data"]).toEqual({ mode: "auto", source: "default" });
+    expect(globalGet["data"]).toEqual({ mode: "auto", source: "default", modes: WIRE_MODES });
     f.send({ type: "permission/set_mode", id: "ps1", mode: "bogus" });
     const badMode = await waitResponse(f.client, "permission/set_mode", "ps1");
     expect(errOf(badMode)).toEqual({ code: "invalid_input", message: "invalid permission mode: bogus" });
@@ -401,7 +419,7 @@ describe("host 本地命令（注入 IO）", () => {
     await waitResponse(f.client, "permission/set_mode", "ps2");
     f.send({ type: "permission/get_mode", id: "pg2" });
     const afterSet = await waitResponse(f.client, "permission/get_mode", "pg2");
-    expect(afterSet["data"]).toEqual({ mode: "full", source: "default" });
+    expect(afterSet["data"]).toEqual({ mode: "full", source: "default", modes: WIRE_MODES });
     // 未知 threadId → Unknown threadId；parked 表项 set → thread not live
     f.send({ type: "permission/get_mode", id: "pg3", threadId: "ghost" });
     const ghostThread = await waitResponse(f.client, "permission/get_mode", "pg3");
@@ -435,25 +453,82 @@ describe("host 本地命令（注入 IO）", () => {
     expect(a?.lastSeq).toBe(2); // 无 meta——事件 [turn,user,turnend] 共 3 条
   });
 
-  test("get_commands 信任门禁目录与 skills-admin 矩阵（list/开关/remove 遮蔽复活）", async () => {
+  test("skills 面旅程（隔离 HOME）：list 见 user 层 → inspect 三态 → install 落盘 → set_enabled → remove 目录删除", async () => {
     const f = await startHost();
-    // 真 user skills 目录造两个 skill（homedir 下——测试隔离受限，走 knownSkillNames
-    // 白名单拒面；写实体放 project 形态验证）
-    f.send({ type: "skills/set_enabled", id: "se1", name: "no-such-skill", enabled: false });
-    const unknown = await waitResponse(f.client, "skills/set_enabled", "se1");
+    // agentDir 派生缝：host-hub 运行态 user 根 = <agentDir>/skills（homeDir 注入缝
+    // 仅 CLI 直调面生效——此处 runHost 带 agentDir，优先级更高）
+    const skillsRoot = join(f.agentDir, "skills");
+    // 源技能：一个 ready（声明名 = 目录名）+ 一个 rename（声明名 ≠ 目录名），另加捆绑文件
+    const srcRoot = await tempDir("hub-skills-src-");
+    const ready = join(srcRoot, "alpha");
+    await mkdir(ready, { recursive: true });
+    await writeFile(join(ready, "SKILL.md"), "---\nname: alpha\ndescription: A\n---\nbody", "utf8");
+    await writeFile(join(ready, "helper.sh"), "echo hi\n", "utf8");
+    const rename = join(srcRoot, "tavily");
+    await mkdir(rename, { recursive: true });
+    await writeFile(join(rename, "SKILL.md"), "---\nname: tavily-cli\ndescription: CLI\n---\nbody", "utf8");
+    const blocked = join(srcRoot, "ghost");
+    await mkdir(blocked, { recursive: true });
+
+    f.send({ type: "skills/inspect", id: "si1", sourcePaths: [ready, rename, blocked] });
+    const inspected = await waitResponse(f.client, "skills/inspect", "si1");
+    expect(inspected["data"]).toEqual({
+      results: [
+        { sourcePath: ready, state: "ready", name: "alpha", description: "A" },
+        { sourcePath: rename, state: "rename", name: "tavily-cli", description: "CLI" },
+        { sourcePath: blocked, state: "blocked", problem: "not_found" },
+      ],
+    });
+    // 垃圾入参（相对路径）→ invalid_input
+    f.send({ type: "skills/inspect", id: "si2", sourcePaths: ["relative"] });
+    expect(errOf(await waitResponse(f.client, "skills/inspect", "si2")).code).toBe("invalid_input");
+
+    f.send({ type: "skills/install", id: "in1", sourcePath: ready });
+    const installed = await waitResponse(f.client, "skills/install", "in1");
+    expect(installed["data"]).toEqual({ name: "alpha", path: join(skillsRoot, "alpha", "SKILL.md"), skippedEntries: 0 });
+    // 落盘事实：捆绑文件同拷、临时树清空
+    expect((await stat(join(skillsRoot, "alpha", "helper.sh"))).isFile()).toBe(true);
+    expect(await readdir(join(f.agentDir, ".tmp"))).toEqual([]);
+    // rename 档：目标目录名 = 声明名
+    f.send({ type: "skills/install", id: "in2", sourcePath: rename });
+    expect((await waitResponse(f.client, "skills/install", "in2"))["data"]).toEqual({ name: "tavily-cli", path: join(skillsRoot, "tavily-cli", "SKILL.md"), skippedEntries: 0 });
+
+    f.send({ type: "skills/list", id: "sl1" });
+    const listed = await waitResponse(f.client, "skills/list", "sl1");
+    // 序 = 目录 readdir 序（不排序——按名归一后比对集合）
+    const listedSkills = (listed["data"] as { skills: Array<{ name: string; source: string; path: string; disabled: boolean }> }).skills;
+    expect([...listedSkills].sort((a, b) => a.name.localeCompare(b.name))).toEqual([
+      { name: "alpha", source: "user", path: join(skillsRoot, "alpha", "SKILL.md"), disabled: false },
+      { name: "tavily-cli", source: "user", path: join(skillsRoot, "tavily-cli", "SKILL.md"), disabled: false },
+    ]);
+    // 同名再装未 overwrite → name_conflict；带 overwrite → 换入
+    f.send({ type: "skills/install", id: "in3", sourcePath: ready });
+    expect(errOf(await waitResponse(f.client, "skills/install", "in3")).code).toBe("name_conflict");
+    f.send({ type: "skills/install", id: "in4", sourcePath: ready, overwrite: true });
+    expect((await waitResponse(f.client, "skills/install", "in4"))["success"]).toBe(true);
+
+    // 开关（隔离 HOME 的 user 名单）+ 信任门禁
+    f.send({ type: "skills/set_enabled", id: "se1", name: "alpha", enabled: false });
+    expect((await waitResponse(f.client, "skills/set_enabled", "se1"))["success"]).toBe(true);
+    f.send({ type: "skills/list", id: "sl2" });
+    expect(((await waitResponse(f.client, "skills/list", "sl2"))["data"] as { skills: Array<{ name: string; disabled: boolean }> }).skills.find((skill) => skill.name === "alpha")?.disabled).toBe(true);
+    f.send({ type: "skills/list", id: "sl3", cwd: "/untrusted" });
+    expect(errOf(await waitResponse(f.client, "skills/list", "sl3")).code).toBe("trust_required");
+    f.send({ type: "skills/set_enabled", id: "se2", name: "no-such-skill", enabled: false });
+    const unknown = await waitResponse(f.client, "skills/set_enabled", "se2");
     expect(errOf(unknown).code).toBe("state_conflict");
     expect(errOf(unknown).message).toContain("unknown skill");
-    f.send({ type: "skills/remove", id: "sr1", name: "no-such-skill" });
-    const removeUnknown = await waitResponse(f.client, "skills/remove", "sr1");
+
+    // 移除 = 删技能目录（回归：残留目录会让每次装载告警）
+    f.send({ type: "skills/remove", id: "sr1", name: "alpha" });
+    expect((await waitResponse(f.client, "skills/remove", "sr1"))["success"]).toBe(true);
+    expect(await stat(join(skillsRoot, "alpha")).catch(() => undefined)).toBeUndefined();
+    f.send({ type: "skills/remove", id: "sr2", name: "no-such-skill" });
+    const removeUnknown = await waitResponse(f.client, "skills/remove", "sr2");
     expect(errOf(removeUnknown).code).toBe("state_conflict");
     expect(errOf(removeUnknown).message).toContain("unknown skill");
-    f.send({ type: "skills/list", id: "sl1", cwd: "/untrusted" });
-    const gated = await waitResponse(f.client, "skills/list", "sl1");
-    expect(errOf(gated).code).toBe("trust_required");
-    f.send({ type: "skills/list", id: "sl2" });
-    const listed = await waitResponse(f.client, "skills/list", "sl2");
-    expect(listed["success"]).toBe(true);
   });
+
 });
 
 describe("thread/delete（BATCH2 §4——host 命令面旅程）", () => {

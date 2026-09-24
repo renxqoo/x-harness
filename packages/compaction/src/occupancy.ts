@@ -103,13 +103,34 @@ export function lastRoute(events: readonly SessionEvent[]): { readonly provider:
   return undefined;
 }
 
-/** 领取未落账批次估算：pre-step 时 beginStep 已把 claim 落为日志尾事件——按 claim 的
- *  id 集回查 insert 事件还原本步待落 user 批次文本（大粘贴不过闸直冲 413 的防线）。
- *  同 id 多次 insert 取末次（repair 回灌后重领的现行内容） */
+/** 末条 user/message 之后未消费的 claim id 集（repair.trailingClaims 同款谓词：非消费
+ *  事件——drop/retarget/clear/meta——交错不重置；clear 与新 user/message 撤销其后资格）。 */
+function pendingClaimIds(events: readonly SessionEvent[]): Set<string> {
+  let lastUserIndex = -1;
+  const ids = new Set<string>();
+  for (const [i, event] of events.entries()) {
+    if (event.type === "agent/inbox/spliced") {
+      const data = event.data;
+      if (data.op === "claim" && i > lastUserIndex) {
+        for (const id of data.claimed) ids.add(id);
+      } else if (data.op === "clear") {
+        ids.clear();
+      }
+    } else if (event.type === "user/message") {
+      lastUserIndex = i;
+      ids.clear();
+    }
+  }
+  return ids;
+}
+
+/** 领取未落账批次估算：pre-step 时 beginStep 已把 claim 落为日志事件——按「末条
+ *  user/message 之后的全部 claim」（agent-loop repair.trailingClaims 同款谓词：对
+ *  drop/retarget/clear/meta 等非消费事件交错免疫）回查 insert 事件还原本步待落 user
+ *  批次文本（大粘贴不过闸直冲 413 的防线）。同 id 多次 insert 取末次（repair 回灌后
+ *  重领的现行内容） */
 export function pendingClaimTokens(events: readonly SessionEvent[]): number {
-  const last = events[events.length - 1];
-  if (last === undefined || last.type !== "agent/inbox/spliced" || last.data.op !== "claim") return 0;
-  const ids = new Set(last.data.claimed);
+  const ids = pendingClaimIds(events);
   if (ids.size === 0) return 0;
   const contentById = new Map<string, readonly ContentBlock[]>();
   for (const event of events) {

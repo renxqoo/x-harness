@@ -1,5 +1,5 @@
 // 单步相位（docs/AGENT-LOOP-DRIVER.md §1.4–§1.5）：beginStep（领取+否决+回灌同 id）/ anchorSystem /
-// dialStep（拨号+header）/ runAttempt（流结算+retry）/ scheduleTools / settleConclude / stopping 续航。
+// dialStep（拨号+header）/ scheduleTools / settleConclude / stopping 续航（runAttempt 流结算在 attempt.ts）。
 // driver.ts 持生命周期编排（kick/turn 循环），本文件只装一个 step 的相位函数与共享原语。
 
 import { createHash } from "node:crypto";
@@ -10,11 +10,10 @@ import type { SystemPromptService } from "@x-harness/system-prompt";
 import type { ToolRegistry } from "@x-harness/tools";
 import { claimStepBatch, claimTurnBatch, foldInbox, insertData } from "./inbox.ts";
 import type { InboxState } from "./inbox.ts";
-import { executeToolCalls } from "./tool-calls.ts";
+import { executeToolCalls, isTruncatedArguments, mustAppendPair, TRUNCATED_TOOL_MESSAGE } from "./tool-calls.ts";
 import type { ToolCallOutcomeCollected, ToolCallSpec } from "./tool-calls.ts";
-import { raceIdleChunk, settleStream, StreamAccumulator } from "./stream.ts";
 import { foldDial, headerChanged, lastRequestContext, toToolRefs } from "./request.ts";
-import type { Dial } from "./tokens.ts";
+import type { Dial, RequestErrorDecision } from "./tokens.ts";
 
 export interface DriverDeps {
   readonly session: Session;
@@ -29,8 +28,16 @@ export interface DriverDeps {
   readonly emitToolStream?: (callId: string, delta: string) => void;
   readonly dispatchPreStep: (payload: unknown) => Promise<unknown>;
   readonly dispatchRequest: (payload: unknown, dial: Dial) => Promise<Dial>;
-  readonly dispatchRequestError: (payload: unknown) => Promise<{ readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined>;
+  /** request-error 窗口派发（agentRequestError——docs/WORK-ERROR-RECOVERY.md C1 决策集）：
+   *  final = undefined（让位 → fatal 缺省） */
+  readonly dispatchRequestError: (payload: unknown) => Promise<RequestErrorDecision | undefined>;
   readonly dispatchTurnStopping: (payload: unknown) => Promise<void>;
+  /** 收束窗口派发（agentTurnConclude——docs/OUTPUT-TOKEN-CONTINUATION.md：无工具 settle
+   *  即将结束 turn 的通用时点；final = undefined 即现行收束路径） */
+  readonly dispatchTurnConclude: (payload: unknown) => Promise<unknown>;
+  /** 抢救窗口派发（agentTruncatedTool——截断 tool_use 配对前的通用时点；
+   *  final = undefined（无插件应答即无附注）） */
+  readonly dispatchTruncatedTool: (payload: unknown) => Promise<unknown>;
   /** F0② assistant 落账前纠（final = 原样透传） */
   readonly dispatchAssistantSettle: (payload: unknown) => Promise<unknown>;
   /** F0③ 流拦截（final = runtime.stream 原样） */
@@ -92,11 +99,22 @@ export type StepEntry =
   | { readonly kind: "blocked"; readonly reason?: string }
   | { readonly kind: "empty" };
 
-export type AssistantSettled = { readonly content: readonly ContentBlock[]; readonly stopReason: "stop" | "max-tokens"; readonly interrupted?: true };
+export type AssistantSettled = {
+  readonly content: readonly ContentBlock[];
+  readonly stopReason: "stop" | "max-tokens";
+  /** provider 原生 stop reason（LlmFinish.rawReason 透传——收束窗口载荷的诊断与判定输入） */
+  readonly rawReason?: string;
+  /** 本 attempt 有思考产出（旁路字段 thinking 落盘不回传——收束窗口判定输入：思考型截断
+   *  预算烧在 thinking、content 空，仍是可续写信号） */
+  readonly hasThinking?: true;
+  readonly interrupted?: true;
+};
 
+/** hasTools = 有已执行的工具调用（ran 流恒 true；none 流恒 false——全截断配对流的续写接手
+ *  是既有语义，截断事实走 truncatedCount）；truncatedCount = 截断配对未执行数（分区事实）。 */
 export type ToolFlow =
-  | { readonly kind: "none" } // 无 tool_use：不调度
-  | { readonly kind: "ran"; readonly collected: ToolCallOutcomeCollected }
+  | { readonly kind: "none"; readonly hasTools: boolean; readonly truncatedCount: number }
+  | { readonly kind: "ran"; readonly collected: ToolCallOutcomeCollected; readonly hasTools: boolean; readonly truncatedCount: number }
   | { readonly kind: "aborted" };
 
 /** 领取 + preStep 否决；reject 回灌已领批次（保原 id 与原 target——repair 的 trailing-claim 按旧 id 回灌依赖同 id 判重） */
@@ -147,6 +165,28 @@ function rejectReasonOf(decision: unknown): string | undefined {
   if (typeof decision !== "object" || decision === null) return undefined;
   const reason = (decision as { reason?: unknown }).reason;
   return typeof reason === "string" && reason !== "" ? reason : undefined;
+}
+
+/** 续写步入口（收束窗口 resume 决策后的下一步——docs/OUTPUT-TOKEN-CONTINUATION.md 契约·
+ *  内核机制节）：不领收件箱（暂停吸收排队输入——保序关键：续写请求的末条消息必须是
+ *  指令）；仍派发 agentPreStep（claim: []——压缩检查面保持）。返回闭集 {enter}|{blocked}，
+ *  empty 不可达（现行 empty 仅 step0 可达是 beginStep 实现巧合，非契约——driver 不得对
+ *  续写步套用 empty→completed 早退）；reject 跳回灌（无可回灌，防「未领却重放 insert」
+ *  审计噪音）；rewrite 输出忽略（无可改写批次）。 */
+export async function concludeStepEntry(scope: TurnScope, step: number): Promise<StepEntry> {
+  const { deps, controller, turn } = scope;
+  const session = deps.session;
+  const decision = await deps.dispatchPreStep({
+    session: session.id,
+    turn,
+    step,
+    messages: session.deriveMessages(),
+    claim: [],
+    signal: controller.signal,
+  });
+  if (isEnterDecision(decision)) return { kind: "enter", entries: [] };
+  const reason = rejectReasonOf(decision);
+  return { kind: "blocked", ...(reason !== undefined ? { reason } : {}) };
 }
 
 /** 回灌：step0 领取 = next-turn 队首 + next-step 全部；step≥1 = next-step 全部。分原 target 落 insert */
@@ -273,180 +313,66 @@ export async function dialStep(scope: TurnScope, step: number): Promise<DialStep
   return { kind: "dial", dial, schemas };
 }
 
-interface AttemptInput {
-  readonly scope: TurnScope;
-  readonly dial: Dial;
-  readonly schemas: readonly unknown[];
-  readonly step: number;
+/** 抢救/文案应答形状门（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5 裁决⑥ + WER C3）：应答是
+ *  object 且 content 为非空 string → 替换文案（与 note 同答时 content 生效、note 丢弃——
+ *  替换优先于追加）；否则 note 为非空 string → 追加附注；其余（undefined/垃圾）走内核短
+ *  事实——抢救与文案都是增益非契约，fail-loud 会把插件 bug 放大成收轮事故。 */
+function truncatedToolContent(decision: unknown, base: string): string {
+  if (typeof decision !== "object" || decision === null) return base;
+  const asDecision = decision as { content?: unknown; note?: unknown };
+  if (typeof asDecision.content === "string" && asDecision.content !== "") return asDecision.content;
+  if (typeof asDecision.note === "string" && asDecision.note !== "") return `${base}\n${asDecision.note}`;
+  return base;
 }
 
-type AttemptResult =
-  | { readonly kind: "ok"; readonly message: AssistantSettled }
-  | { readonly kind: "fatal"; readonly outcome: TurnOutcome };
-
-/** 流结算（attempt 循环）：abort 赛跑、三分支结算、request-error retry */
-/** 看门狗守卫的流汲取：逐 chunk 间隔计时；超时注入 finish{error,code:network}（走 finish
- *  分支携带 code——throw 路径无 code 会导致 llm-retry 不重试；不抛 AbortError 防误判取消）。
- *  超时后 pending 的迭代推进由 raceIdleChunk 附挂 catch 收殓；iterator.return 尽力收殓
- *  （挂起流可能永不落定——LLM-PI 契约，泄漏止损靠 abort signal） */
-async function drainGuarded(input: {
-  readonly iterator: AsyncIterator<LlmChunk>;
-  readonly idleMs: number;
-  readonly onTimeout: () => void;
-  readonly turnSignal: AbortSignal;
-  readonly push: (chunk: LlmChunk) => void;
-  readonly emit: (chunk: LlmChunk) => void;
-}): Promise<void> {
-  try {
-    for (;;) {
-      const next = await raceIdleChunk(input.iterator.next(), input.idleMs);
-      if (next.timedOut) {
-        input.onTimeout(); // 掐底层 fetch
-        input.push({ type: "finish", finish: { kind: "error", message: "stream idle timeout", code: "network" } });
-        return;
-      }
-      if (next.value.done === true) return;
-      const chunk = next.value.value;
-      if (input.turnSignal.aborted) return; // 收口审查 3.2：弃单后迟到帧守卫（不 push 不 emit）
-      input.push(chunk);
-      input.emit(chunk);
-    }
-  } finally {
-    void input.iterator.return?.(undefined as never).catch(() => {}); // 正常/异常/超时退出均尽力收殓（幂等）
-  }
-}
-
-/** attempt 落账：error + 截止错误时已收增量（content/thinking——STREAM-PARTIAL-PERSISTENCE，
- *  不丢弃上游已交付数据）+ usage（token-meter 失败尝试计费，docs/TOKEN-METER.md §1） */
-function appendAttemptLedger(session: Session, spec: { readonly turn: number; readonly step: number; readonly error: string; readonly accum: StreamAccumulator }): void {
-  const partialContent = [...spec.accum.textBlock, ...spec.accum.toolUseBlocks];
-  appendEvent(session, "assistant/attempt", {
-    turn: spec.turn,
-    step: spec.step,
-    error: spec.error,
-    ...(partialContent.length > 0 ? { content: partialContent } : {}),
-    ...(spec.accum.thinkingText !== "" ? { thinking: spec.accum.thinkingText } : {}),
-    ...(spec.accum.usageSnapshot !== undefined ? { usage: spec.accum.usageSnapshot } : {}),
-  });
-}
-
-export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
-  const { scope, schemas, step } = input;
-  const { deps, turn } = scope;
+/** 截断调用配对收场（docs/TRUNCATED-TOOL-RESCUE.md 层 1）：先经抢救窗口（abort 竞态下
+ *  signal 已断跳过派发、note 丢弃——aborted 全序格盖过抢救增益），再双通道配对落账
+ *  （tool/call 非 surface + tool/result 必须 surface——否则投影缺 tool 消息、配对失效）。
+ *  不 dispatch——半截参数不可执行（模式 2a 静默损坏的截断点）。 */
+async function pairTruncatedCalls(
+  scope: TurnScope,
+  at: { readonly turn: number; readonly step: number },
+  calls: readonly ToolCallSpec[],
+): Promise<void> {
+  const { deps, controller } = scope;
   const session = deps.session;
-  let dial = input.dial; // 可变：retry 携 dial 补丁时就地合并（requestError pre-stable 扩展）
-  const signal = scope.controller.signal;
-  for (;;) {
-    const accum = new StreamAccumulator();
-    let threw: unknown;
-    deps.emitStreamFrame(turn, step, { phase: "start" });
-    // abort 与流消费赛跑：悬停的流在 cancel 后必须被打断（部分文本保序结算）；监听器赛后拆净
-    let onAbort: (() => void) | undefined;
-    const aborted = new Promise<never>((_, reject) => {
-      onAbort = () => reject(new DOMException("aborted", "AbortError"));
-      if (signal.aborted) onAbort();
-      else signal.addEventListener("abort", onAbort, { once: true });
+  for (const call of calls) {
+    const decision = controller.signal.aborted
+      ? undefined
+      : await deps.dispatchTruncatedTool({ session: session.id, turn: at.turn, step: at.step, callId: call.callId, name: call.name, arguments: call.arguments, signal: controller.signal });
+    // dispatch await 期间 abort → 丢弃 note 走 base 文案（插件副作用可能已发生——盘上
+    // sidecar 无害；aborted 全序格盖过抢救增益，配对仍落账保投影闭合）
+    const content = controller.signal.aborted
+      ? undefined
+      : truncatedToolContent(decision, TRUNCATED_TOOL_MESSAGE);
+    mustAppendPair(session, at, {
+      callId: call.callId,
+      name: call.name,
+      arguments: call.arguments,
+      content: content ?? TRUNCATED_TOOL_MESSAGE,
     });
-    const consume = async (): Promise<void> => {
-      // attempt 级止损信号：turn 取消联动穿透；看门狗超时只断本请求（不动 turn——取消语义独占）。
-      // 换绑 dispatchLlmStream 的 signal 使 abort 打得到底层 fetch（否则挂死流继续泄漏在生成器里）
-      const attempt = new AbortController();
-      const onTurnAbort = (): void => attempt.abort();
-      if (signal.aborted) attempt.abort();
-      else signal.addEventListener("abort", onTurnAbort, { once: true });
-      try {
-        const stream = await deps.dispatchLlmStream({ // F0③（agent/llm-stream）：agent 层流包裹（final = runtime.stream；全局面在 llm 包 llm/stream）
-          model: dial.model,
-          ...(dial.provider !== undefined ? { provider: dial.provider } : {}),
-          session: session.id, // 流 tap 归属判据（子代理流过滤——BATCH2 §3）
-          ...(dial.temperature !== undefined ? { temperature: dial.temperature } : {}),
-          ...(dial.maxTokens !== undefined ? { maxTokens: dial.maxTokens } : {}),
-          ...(dial.thinking !== undefined ? { thinking: dial.thinking } : {}),
-          tools: schemas as never,
-          messages: session.deriveMessages(), // 请求体纯折叠不变量
-          signal: attempt.signal,
-        });
-        if (stream === null || typeof (stream as AsyncIterable<LlmChunk>)[Symbol.asyncIterator] !== "function") {
-          throw new Error("agent/llm-stream middleware must return an AsyncIterable (fresh per call——重试重派时中间件须幂等)"); // 收口审查 3.3：可读契约失败（非 TypeError 伪装 LLM 故障）
-        }
-        await drainGuarded({
-          iterator: stream[Symbol.asyncIterator](),
-          idleMs: deps.options.streamIdleTimeoutMs,
-          onTimeout: () => attempt.abort(),
-          turnSignal: signal,
-          push: (chunk) => accum.push(chunk),
-          emit: (chunk) => {
-            if (chunk.type === "text-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "text", text: chunk.text });
-            else if (chunk.type === "thinking-delta") deps.emitStreamFrame(turn, step, { phase: "chunk", kind: "thinking", text: chunk.text });
-          },
-        });
-      } finally {
-        signal.removeEventListener("abort", onTurnAbort); // per-attempt 监听不跨尝试累积
-      }
-    };
-    try {
-      await Promise.race([consume(), aborted]);
-    } catch (error) {
-      threw = error;
-    } finally {
-      if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
-    }
-    const settlement = settleStream(accum, threw, signal.aborted);
-    if (settlement.kind === "attempt") {
-      appendAttemptLedger(session, { turn, step, error: settlement.error, accum });
-      deps.emitStreamFrame(turn, step, { phase: "end", kind: "attempt" });
-      const retry = await deps.dispatchRequestError({
-        session: session.id,
-        turn,
-        step,
-        failure: {
-          message: settlement.error,
-          ...(settlement.code !== undefined ? { code: settlement.code } : {}),
-          ...(settlement.retryAfterMs !== undefined ? { retryAfterMs: settlement.retryAfterMs } : {}),
-        },
-        signal,
-      });
-      if (retry?.kind === "retry" && !signal.aborted) {
-        if (retry.dial !== undefined) dial = { ...dial, ...retry.dial }; // 降级补丁（不重派 agentRequest——dsh 同口径）
-        continue; // 不重落 system/user/header
-      }
-      return { kind: "fatal", outcome: { kind: "error", message: settlement.error } };
-    }
-    const usage = accum.usageSnapshot;
-    // F0②：assistant 落账前纠——改写版即落账版（「模型可见必落盘」保持）。形状门在
-    // settleAssistant 内（收口审查 2.1）；输出契约只 content/stopReason——interrupted 由
-    // 内核独占（收口审查 2.2）。thinking 为落盘旁路字段（不过纠中间件、不进投影——
-    // docs/STREAM-PARTIAL-PERSISTENCE.md）。
-    const settled = await settleAssistant({ deps, sessionId: session.id, turn, step, accum, settlement, signal });
-    appendSurfaceEvent(session, {
-      type: "assistant/message",
-      data: {
-        turn,
-        step,
-        content: settled.content,
-        ...(accum.thinkingText !== "" ? { thinking: accum.thinkingText } : {}),
-        ...(usage !== undefined ? { usage } : {}),
-        stopReason: settled.stopReason,
-        ...(settlement.interrupted === true ? { interrupted: true } : {}),
-      },
-      surfaceOp: "append",
-    });
-    deps.emitStreamFrame(turn, step, { phase: "end", kind: "message" });
-    return {
-      kind: "ok",
-      message: { content: settled.content, stopReason: settled.stopReason, ...(settlement.interrupted === true ? { interrupted: true } : {}) },
-    };
   }
 }
 
-/** 工具调度：contexts 回灌 next-step；abort 感知 */
+/** 工具调度：contexts 回灌 next-step；abort 感知；max-tokens 截断分区（截断集配对不执行、
+ *  执行集照常；执行集空且截断集非空 → none——收束窗口可达）。返回携带 hasTools/
+ *  truncatedCount 纯事实（收束窗口载荷——派发点在本函数返回后，tool/result 已全落账）。 */
 export async function scheduleTools(scope: TurnScope, step: number, assistant: AssistantSettled): Promise<ToolFlow> {
   const { deps, controller, turn } = scope;
   const session = deps.session;
-  const specs: ToolCallSpec[] = assistant.content
+  let specs: ToolCallSpec[] = assistant.content
     .filter((block): block is Extract<ContentBlock, { type: "tool_use" }> => block.type === "tool_use")
     .map((block) => ({ callId: block.callId, name: block.name, arguments: block.input }));
-  if (specs.length === 0) return { kind: "none" };
+  if (specs.length === 0) return { kind: "none", hasTools: false, truncatedCount: 0 };
+  const specsTotal = specs.length;
+  if (assistant.stopReason === "max-tokens") {
+    const truncated: ToolCallSpec[] = [];
+    const runnable: ToolCallSpec[] = [];
+    for (const spec of specs) (isTruncatedArguments(spec.arguments) ? truncated : runnable).push(spec);
+    await pairTruncatedCalls(scope, { turn, step }, truncated);
+    if (runnable.length === 0) return { kind: "none", hasTools: false, truncatedCount: truncated.length }; // 全截断：收束窗口可达（零执行——hasTools=false，截断数入载荷）
+    specs = runnable; // 混合 case：截断的已配对，完整照常执行
+  }
   const collected = await executeToolCalls(
     {
       session,
@@ -467,7 +393,7 @@ export async function scheduleTools(scope: TurnScope, step: number, assistant: A
     appendEvent(session, "agent/inbox/spliced", insertData("next-step", context));
   }
   if (controller.signal.aborted) return { kind: "aborted" };
-  return { kind: "ran", collected };
+  return { kind: "ran", collected, hasTools: true, truncatedCount: assistant.stopReason === "max-tokens" ? specsTotal - specs.length : 0 };
 }
 
 interface ConcludeInput {
@@ -510,40 +436,6 @@ export async function maybeResume(scope: TurnScope, turnEnds: TurnOutcome | unde
   return (await stoppingResumes(scope)) ? undefined : turnEnds;
 }
 
-
-/** F0② 落账前纠派发（含形状门）。注：**不与 abort 赛跑**——中断是合法完成态（部分消息结算
- *  必须照常落账）；中间件挂起防护与 preStep/request 同契约（waterfall 不得无限挂起——文档承载）。
- *  输出契约只 content/stopReason：interrupted 由内核独占（收口审查 2.2）。 */
-async function settleAssistant(spec: {
-  readonly deps: DriverDeps;
-  readonly sessionId: import("@x-harness/session").SessionId;
-  readonly turn: number;
-  readonly step: number;
-  readonly accum: StreamAccumulator;
-  readonly settlement: { stopReason: "stop" | "max-tokens"; interrupted?: true };
-  readonly signal: AbortSignal;
-}): Promise<{ content: readonly ContentBlock[]; stopReason: "stop" | "max-tokens" }> {
-  const settled = await spec.deps.dispatchAssistantSettle({
-    session: spec.sessionId,
-    turn: spec.turn,
-    step: spec.step,
-    content: [...spec.accum.textBlock, ...spec.accum.toolUseBlocks],
-    stopReason: spec.settlement.stopReason,
-    ...(spec.settlement.interrupted === true ? { interrupted: true } : {}),
-    signal: spec.signal,
-  }) as { content?: unknown; stopReason?: unknown };
-  if (!isSettlementShape(settled)) {
-    throw new Error(`agent/assistant-settle output shape invalid: stopReason must be "stop" | "max-tokens" (got ${JSON.stringify(settled?.stopReason)})`);
-  }
-  return settled;
-}
-
-/** settle 输出形状门（收口审查 2.1）：content 数组 + stopReason 闭集 */
-function isSettlementShape(value: unknown): value is { content: readonly ContentBlock[]; stopReason: "stop" | "max-tokens" } {
-  if (typeof value !== "object" || value === null) return false;
-  const v = value as { content?: unknown; stopReason?: unknown };
-  return Array.isArray(v.content) && (v.stopReason === "stop" || v.stopReason === "max-tokens");
-}
 
 /** 改写条目形状门（收口审查 1.4）：{ id: string, content: ContentBlock[] } 数组 */
 function isRewrittenEntries(value: unknown): value is readonly InboxEntry[] {

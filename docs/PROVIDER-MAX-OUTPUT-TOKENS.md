@@ -23,9 +23,9 @@
   `OpenaiCompatOptions.maxOutputTokens?`（新增）。
 - 注入语义（两协议同一实现）：
   - `effective = request.maxTokens ?? options.maxOutputTokens`（请求显式值恒胜档案配置）；
-  - anthropic：`options.maxTokens` 恒注入（协议必填），值 = `effective ?? DEFAULT_MAX_TOKENS(8192)`；
+  - anthropic：`effective` 在场才注入 `options.maxTokens`（**全缺席不注入——本地 8192 兜底已废除**，wire 省略 `max_tokens`，服务端默认接管）；
   - openai：仅 `effective !== undefined` 才注入——配置在场即显式注入，配置与请求双缺席则不发（现状保持）；
-  - pi Model 条目元数据 `maxTokens: effective ?? 8192`（两协议同构；openai+配置为新状态，非「现状保持」——审查 F3 更正）。
+  - pi Model 条目元数据 `maxTokens: effective`（缺席 undefined——与注入同源；本地兜底废除后两协议对称）。
 
 **装配（apps/cli build-world.ts）**
 
@@ -39,7 +39,7 @@
   - dial 层显式上限（`AgentOptions.maxTokens` → request/header 落账）——已有通道（compaction summarizer 在用），档案级配置走 adapter 兜底层，不进会话事件流、不参与 foldDial 粘性。已知不变量：CLI 宿主不设 dial.maxTokens，故 header 粘性恒不遮蔽档案值；该不变量由 agent-loop `request.test.ts` 既有「header 回填」用例补 maxTokens 一格钉死（防未来 flag 落地时活化）；
   - compaction 的 `summarizer.maxOutputTokens`（摘要面输出上限）——同名不同物，类型面无共享 import，不动；
   - `request.maxTokens` 的 0/负值无正值门——**存量缺口，登记挂账**（位置：agent-loop step.ts 校验只查 isInteger；该包现有他人 in-flight 改动，不越界代修）；
-  - `DEFAULT_MAX_TOKENS = 8192`——anthropic 协议必填的最后兜底，保持。
+  - ~~`DEFAULT_MAX_TOKENS = 8192`~~——已废除（实施后用户裁决）：全缺席不注入，服务端默认接管；本地硬编码兜底会顶掉真实配置（事故形态）。
 
 ## 并发/一致性预算
 

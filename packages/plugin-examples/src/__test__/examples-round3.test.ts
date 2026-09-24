@@ -2,7 +2,6 @@
 
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { Type } from "@sinclair/typebox";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin } from "@x-harness/tools";
@@ -10,7 +9,6 @@ import { textScript } from "@x-harness/testkit";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { makeTestWorld, textsOf, AGENT } from "../test-world.ts";
 import { sessionGuardPlugin } from "../session-guard.ts";
-import { tokenAnalyticsPlugin, tokenAnalyticsService } from "../token-analytics.ts";
 import { scopedPersonaPlugin } from "../scoped-persona.ts";
 
 
@@ -123,45 +121,3 @@ describe("㉒ 性能预算实测（DESIGN §4）", () => {
   });
 });
 
-describe("㉓ Token 分析（六面组合 + 两缺失暴露）", () => {
-  it("分项估算 + 上下文余量 + 输出累计 + 指纹稳定性", async () => {
-    const tw = await makeTestWorld([tokenAnalyticsPlugin({ contextWindow: 100_000 })]);
-    const svc = tw.ctx.use(tokenAnalyticsService);
-    // 注册一个基础段让 systemPrompt 项有值
-    tw.world.prompt.section({ name: "test-base", text: "You are a test agent for token analytics." });
-    // 注册一个工具让 tools 项有值
-    tw.world.registry.register({
-      name: "probe",
-      inputSchema: Type.Object({}),
-      execute: async () => ({ content: "ok" }),
-    });
-    // 跑一轮（产生 usage 事件）
-    tw.scripts.push(
-      (async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
-        yield { type: "text-delta", text: "answer" };
-        yield { type: "usage", usage: { input: 500, output: 20 } };
-        yield { type: "finish", finish: { kind: "stop" } };
-      })(),
-    );
-    const made = await tw.world.loop.create({ agent: { ...AGENT } });
-    expect(made.ok).toBe(true);
-    if (!made.ok) throw new Error(made.reason);
-    made.value.agent.followup("test");
-    await made.value.agent.whenIdle();
-
-    const b = svc.breakdown();
-    expect(b.systemPrompt).toBeGreaterThan(0); // 有 base 段
-    expect(b.tools).toBeGreaterThan(0); // 有注册工具
-    expect(b.lastReportedInput).toBe(500); // LLM 实报
-    expect(b.totalOutputTokens).toBe(20); // 输出累计
-    expect(b.contextWindow).toBe(100_000); // 宿主注入
-    expect(b.remaining).toBe(100_000 - b.total); // 余量 = 窗口 - 占用
-    expect(b.utilization).toBeGreaterThan(0);
-    expect(b.utilization).toBeLessThan(1);
-    expect(b.cacheHitRate).toBeGreaterThanOrEqual(0); // 精确缓存率（LLM 实报 cacheRead）
-    // 按会话独立计
-    expect(svc.sessionOutput(made.value.agent.session.id)).toBe(20);
-    await made.value.dispose();
-    await tw.cleanup();
-  });
-});

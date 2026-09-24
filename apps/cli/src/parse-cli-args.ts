@@ -3,8 +3,8 @@
 // 枚举/互斥在 finalize 闭口；位置参数按 @ 前缀分流 file/messages。
 
 import type { Result } from "@x-harness/core";
-import { MODE_KNOBS } from "@x-harness/permission";
-import type { ModeKnob } from "@x-harness/permission";
+import { PROFILE_IDS } from "@x-harness/permission";
+import type { ProfileId } from "@x-harness/permission";
 import { THINKING_LEVELS } from "./providers-file.ts";
 import type { ThinkingLevelCli } from "./providers-file.ts";
 
@@ -21,7 +21,9 @@ export interface CliArgs {
   readonly provider?: string;
   readonly model?: string;
   readonly thinking?: ThinkingLevelCli;
-  readonly permission?: ModeKnob;
+  readonly permission?: ProfileId;
+  /** 权限规则串（--rules 逗号分隔——`Bash(git status):allow` 形态；拼错 fail-closed 拒启） */
+  readonly rules?: readonly string[];
   readonly apiKey?: string;
   readonly tools?: readonly string[];
   readonly excludeTools?: readonly string[];
@@ -51,6 +53,7 @@ const FLAG_SPECS: readonly FlagSpec[] = [
   { long: "--model", arity: 1 },
   { long: "--thinking", arity: 1 },
   { long: "--permission", arity: 1 },
+  { long: "--rules", arity: 1 },
   { long: "--api-key", arity: 1 },
   { long: "--tools", short: "-t", arity: 1 },
   { long: "--exclude-tools", short: "-xt", arity: 1 },
@@ -230,8 +233,12 @@ function checkEnums(raw: RawArgs): Result<true> {
     return { ok: false, reason: `--thinking: expected ${THINKING_LEVELS.join(" | ")} (got "${thinking}")` };
   }
   const permission = flagValue(raw, "--permission");
-  if (permission !== undefined && !(MODE_KNOBS as readonly string[]).includes(permission)) {
-    return { ok: false, reason: `--permission: expected ${MODE_KNOBS.join(" | ")} (got "${permission}")` };
+  if (permission !== undefined && !(PROFILE_IDS as readonly string[]).includes(permission)) {
+    return { ok: false, reason: `--permission: expected ${PROFILE_IDS.join(" | ")} (got "${permission}")` };
+  }
+  const rulesFlag = flagValue(raw, "--rules");
+  if (rulesFlag !== undefined && rulesFlag.trim() === "") {
+    return { ok: false, reason: `--rules: expected comma-separated permission rules (got "")` };
   }
   return { ok: true, value: true };
 }
@@ -265,7 +272,11 @@ function finalize(raw: RawArgs): Result<CliArgs> {
   const thinking = flagValue(raw, "--thinking");
   if (thinking !== undefined) args.thinking = thinking as ThinkingLevelCli;
   const permission = flagValue(raw, "--permission");
-  if (permission !== undefined) args.permission = permission as ModeKnob;
+  if (permission !== undefined) args.permission = permission as ProfileId;
+  const rulesFlag = flagValue(raw, "--rules");
+  if (rulesFlag !== undefined && rulesFlag.trim() !== "") {
+    args.rules = rulesFlag.split(",").map((rule) => rule.trim()).filter((rule) => rule !== "");
+  }
   copy.value("--api-key", "apiKey");
   copy.list("--tools", "tools");
   copy.list("--exclude-tools", "excludeTools");
@@ -304,7 +315,8 @@ tools:
   -nt, --no-tools           disable all tools
 
 permission:
-  --permission <plan|auto|full>  tool permission mode (default auto)
+  --permission <plan|auto|edit-confirm|full|sandboxed-auto>  permission profile (default sandboxed-auto)
+  --rules <r1,r2>                permission rules, e.g. 'Bash(git status):allow' (user scope)
 
 prompt:
   --system-prompt <text>    replace the system prompt

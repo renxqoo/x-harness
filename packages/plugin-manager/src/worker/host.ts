@@ -16,6 +16,7 @@ import type {
   ServiceToken,
 } from "@x-harness/core";
 import type { MainToWorker, WorkerToMain } from "./protocol.ts";
+import { createCapabilities, META_TOKEN_NAMES, syntheticServiceToken } from "../capabilities.ts";
 
 const port = parentPort;
 if (port === null) throw new Error("plugin host must run as a worker thread");
@@ -85,7 +86,7 @@ async function handleBoot(message: Extract<MainToWorker, { t: "boot" }>): Promis
   }
   pendingPlugin = {
     name: plugin.name,
-    apply: plugin.apply as (ctx: Context) => unknown,
+    apply: plugin.apply as (ctx: Context, capabilities?: unknown) => unknown,
   };
   send({
     t: "ready",
@@ -142,10 +143,10 @@ async function handleShutdown(): Promise<void> {
   send({ t: "shutdown-ack" });
 }
 
-let pendingPlugin: { name: string; apply: (ctx: Context) => unknown } | undefined;
+let pendingPlugin: { name: string; apply: (ctx: Context, capabilities?: unknown) => unknown } | undefined;
 
 /** 插件的 Context 视图：真实注册落在 worker 内核 + 协议镜像给 main */
-function bridged(plugin: { name: string; apply: (ctx: Context) => unknown }): Parameters<typeof loadPlugins>[1][number] {
+function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: unknown) => unknown }): Parameters<typeof loadPlugins>[1][number] {
   const wrapper = {
     provide<T>(token: ServiceToken<T>, impl: T): Disposer {
       tokenByName.set(token.name, token);
@@ -204,6 +205,12 @@ function bridged(plugin: { name: string; apply: (ctx: Context) => unknown }): Pa
       });
     },
     on(token: AnyToken, fn: unknown, opts?: { readonly prepend?: boolean }): Disposer {
+      // 元能力名拒收（对抗审查 2a）：装载生命周期信封（plugin/*、service/provided、
+      // context/disposing）对第三方件不可见——与 capabilities.ts META 判定同源
+      //（名字是唯一载体，双侧一致；caps.on 已在 capabilities 层拒，此处封 ctx.on 旁路）
+      if (META_TOKEN_NAMES.has(token.name)) {
+        throw new Error(`listening on meta token not allowed in worker mode: ${token.name}`);
+      }
       tokenByName.set(token.name, token);
       send({ t: "listening", token: token.name, mode: "mode" in token ? token.mode : "unknown" });
       const wrapped = (payload: unknown): unknown => {
@@ -252,11 +259,27 @@ function bridged(plugin: { name: string; apply: (ctx: Context) => unknown }): Pa
       return ctx.scope(filter);
     },
   } as unknown as Context;
+  // worker 侧 caps：名字直通 wrapper（wrapper 内 local 直取 / 平台 RPC 按名过线——
+  // main 侧 tokenTable 真身份解析，worker 内不持有平台 token 对象）。元能力名在
+  // capabilities.ts 单点排除，worker 侧同判定（名字是唯一载体，双侧一致）。
+  const capabilities = createCapabilities({
+    // resolveToken 只服务 use/tryUse/waitFor 的存在性判定（kind 门）；on/emit 的
+    // EventToken 由 capabilities.ts 构造。真实存在性在 main 侧 tokenTable——RPC 缺席
+    // 报 no platform service，worker 不猜。
+    resolveToken: (name) => syntheticServiceToken(name),
+    useToken: (token) => wrapper.use(token as ServiceToken<unknown>),
+    tryUseToken: (token) => wrapper.tryUse(token as ServiceToken<unknown>),
+    waitForToken: (token) => wrapper.waitFor(token as ServiceToken<unknown>),
+    provideToken: (token, impl) => wrapper.provide(token as ServiceToken<unknown>, impl),
+    onToken: (token, listener) =>
+      (wrapper.on as (t: AnyToken, f: unknown) => Disposer)(token, listener),
+    emitToken: (token, payload) => wrapper.emit(token as EventToken<unknown>, payload),
+  });
   // inject 刻意丢弃：跨插件依赖语义归 main 侧 plugin-manager
   return {
     name: plugin.name,
     apply: (): void | Disposer | Promise<void | Disposer> => {
-      const out = plugin.apply(wrapper);
+      const out = plugin.apply(wrapper, capabilities);
       if (out === undefined || out === null) return undefined;
       return out as Disposer;
     },

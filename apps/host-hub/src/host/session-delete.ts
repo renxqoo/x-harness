@@ -1,9 +1,10 @@
-// 会话删除（BATCH2-DESIGN §4）：围栏（词法 + realpath）→ 活族先拒（占用表纯读——
-// live worker 持活锁，词表正确串 already open 先于 lock 探活）→ 目录缺席幂等（活族
-// 不因缺席放行）→ lock 探活（跨 host 防线，兼覆盖「创建中 header 未落」窗口）→
-// 子代理拒删 → 血缘级联集 + trash 预建 → **状态变更段（同步表操作与 rename 发起之间
-// 零 await）**：撤表 → 原子 rename-to-trash（sessionsRoot 即刻消失）→ 异步 rm（trash
-// 残迹 tmp-sweep 兜底）。幂等：目标不在 = success。
+// 会话删除（BATCH2-DESIGN §4 + docs/TASK-PUSH-DESIGN.md §2.3）：围栏（词法 + realpath）→
+// 活族先拒（占用表纯读——live worker 持活锁，词表正确串 already open 先于 lock 探活）→
+// 目录缺席幂等（活族不因缺席放行）→ lock 探活（跨 host 防线，兼覆盖「创建中 header 未落」
+// 窗口）→ 子代理拒删 → 血缘级联集 + trash 预建 → 任务日志 vanish **前置**（表操作之前——
+// 失败 = io_failed 整体可重试：表未动、会话目录未动，幂等）→ **状态变更段（同步表操作与
+// rename 发起之间零 await）**：撤表 → 原子 rename-to-trash（sessionsRoot 即刻消失）→
+// 异步 rm（trash 残迹 tmp-sweep 兜底）。幂等：目标不在 = success。
 import { mkdir, readFile, rename, rm, stat, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -15,6 +16,8 @@ import { fenceSessionPath } from "./read-history.ts";
 export interface DeleteDeps {
   readonly table: ThreadTable;
   readonly sessionsRoot: string;
+  /** bash 后台任务日志根（taskLogsRootOf 单源推导）——随会话档案级联清理 */
+  readonly taskLogsRoot: string;
   readonly agentDir: string;
 }
 
@@ -40,7 +43,7 @@ async function lockHeldByLiveProcess(dir: string): Promise<boolean> {
   }
 }
 
-/** 子代理会话判据：header.json 带 agentId（归 delegation 生命周期管理——task_output/
+/** 子代理会话判据：header.json 带 agentId（归 delegation 生命周期管理——完成通知/
  *  惰性复活依赖档案）；header 缺失/损坏 = 孤儿目录，仍可删 */
 async function isSubagentSession(dir: string): Promise<boolean> {
   const raw = await readFile(join(dir, "header.json"), "utf8").catch(() => undefined);
@@ -82,6 +85,30 @@ async function descendantIds(sessionsRoot: string, rootId: string): Promise<stri
 }
 
 type VanishOutcome = "renamed" | "absent" | "failed";
+
+/** 任务日志前置 vanish（表操作之前）：返回 false = 失败（调用方 io_failed 拒或留痕跳过） */
+async function vanishTaskLogs(deps: DeleteDeps, id: string): Promise<boolean> {
+  const outcome = await vanishToTrash(join(deps.taskLogsRoot, id), deps.agentDir, `${id}.logs`);
+  return outcome !== "failed";
+}
+
+/** 子孙级联：任务日志与会话目录依次 vanish（各自失败 stderr 留痕不静默）；返回已删 id 集 */
+async function cascadeChildren(deps: DeleteDeps, children: readonly string[]): Promise<string[]> {
+  const removed: string[] = [];
+  for (const child of children) {
+    if (!(await vanishTaskLogs(deps, child))) {
+      process.stderr.write(`hub: session-delete task-logs cascade skipped ${child}\n`); // 不静默
+    }
+    const outcome = await vanishToTrash(join(deps.sessionsRoot, child), deps.agentDir, child);
+    if (outcome === "renamed") {
+      removed.push(child);
+      withdrawTableEntry(deps.table, join(deps.sessionsRoot, child, "events.jsonl")); // 子表卫生
+    } else if (outcome === "failed") {
+      process.stderr.write(`hub: session-delete cascade skipped ${child}\n`); // 不静默
+    }
+  }
+  return removed;
+}
 
 /** 原子消失单目录：rename → `<agentDir>/trash/<id>.<pid>.<rand>`（名字碰撞换随机重试）。
  *  rename 保留原 mtime——touch 至当下使 trash 的 1h 回收窗真实（否则旧 mtime 恒过线，
@@ -132,7 +159,10 @@ export async function deleteSession(deps: DeleteDeps, sessionPath: string): Prom
     // 目录缺席（幂等路径）：活族不因缺席放行（外部 rm 后 worker 仍活——先 stop）
     if (isLiveFamily(holderState())) return { ok: false, reason: hubError("already_open", "already open") };
     withdrawTableEntry(deps.table, canonicalPath); // 表残留一并撤
-    return { ok: true, removed: [] };
+    if (!(await vanishTaskLogs(deps, fence.threadId))) {
+      return { ok: false, reason: hubError("io_failed", "delete failed: task-logs rename") };
+    }
+    return { ok: true, removed: [] }; // 会话目录已不在——task-logs 侧一并幂等清（子孙孤儿沿 §9 后续件）
   }
   // 活族先拒（纯读）：live worker 持活锁——先于 lock 探活给词表正确串
   if (isLiveFamily(holderState())) return { ok: false, reason: hubError("already_open", "already open") };
@@ -145,21 +175,18 @@ export async function deleteSession(deps: DeleteDeps, sessionPath: string): Prom
   const children = await descendantIds(deps.sessionsRoot, fence.threadId);
   await mkdir(join(deps.agentDir, "trash"), { recursive: true }).catch(() => {}); // 预建——状态变更段零 await
 
+  // —— 任务日志前置清理（表操作之前）：失败 = io_failed 整体可重试（表未动、会话目录
+  //    未动——两根各自 rename 各自原子，前置顺序兑现「不可回滚段放最后」——
+  if (!(await vanishTaskLogs(deps, fence.threadId))) {
+    return { ok: false, reason: hubError("io_failed", "delete failed: task-logs rename") };
+  }
+
   // —— 状态变更段：同步表操作与 rename 发起之间零 await（穿窗收敛分析 DESIGN §4.2）——
   withdrawTableEntry(deps.table, canonicalPath); // 活族已拒——此处只剩 parked/dead/无表项
 
-  const removed: string[] = [];
   const vanished = await vanishToTrash(dir, deps.agentDir, fence.threadId);
   if (vanished === "failed") return { ok: false, reason: hubError("io_failed", "delete failed: rename") };
-  if (vanished === "renamed") removed.push(fence.threadId);
-  for (const child of children) {
-    const outcome = await vanishToTrash(join(deps.sessionsRoot, child), deps.agentDir, child);
-    if (outcome === "renamed") {
-      removed.push(child);
-      withdrawTableEntry(deps.table, join(deps.sessionsRoot, child, "events.jsonl")); // 子表卫生
-    } else if (outcome === "failed") {
-      process.stderr.write(`hub: session-delete cascade skipped ${child}\n`); // 不静默
-    }
-  }
+  const removed = vanished === "renamed" ? [fence.threadId] : [];
+  removed.push(...(await cascadeChildren(deps, children)));
   return { ok: true, removed };
 }

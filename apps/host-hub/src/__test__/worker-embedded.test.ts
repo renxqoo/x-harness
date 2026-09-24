@@ -21,6 +21,17 @@ async function spawn(script: readonly ScriptStep[]): Promise<ScriptWorker> {
   return w;
 }
 
+/** get_state 队列投影读取（单条队列命令测试的寻址键来源） */
+async function queueView(
+  worker: ScriptWorker,
+  threadId: string,
+  requestId: string,
+): Promise<{ steering: Array<{ id: string; text: string }>; followUp: Array<{ id: string; text: string }> }> {
+  worker.send({ type: "get_state", id: requestId, threadId });
+  const state = await waitResponse(worker.captured.lines, "get_state", requestId);
+  return (state.data as { queue: { steering: Array<{ id: string; text: string }>; followUp: Array<{ id: string; text: string }> } }).queue;
+}
+
 /** text-only 目录 worker：快照通道（非 script 模式）注入无 input 声明的模型——
  *  能力门拒绝路径的嵌入式装置（prompt 在 LLM 调用前被拒，不打网络） */
 async function spawnTextOnlyWorker(): Promise<ScriptWorker> {
@@ -96,9 +107,88 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "clear_queue", id: "cq1", threadId });
     const cleared = await waitResponse(worker.captured.lines, "clear_queue", "cq1");
     expect(cleared.success).toBe(true);
-    expect((cleared.data as { steering: string[]; followUp: string[] }).steering).toContain("steer-text");
-    expect((cleared.data as { steering: string[]; followUp: string[] }).followUp).toContain("later-text");
+    const clearedView = cleared.data as { steering: Array<{ id: string; text: string }>; followUp: Array<{ id: string; text: string }> };
+    expect(clearedView.steering.map((entry) => entry.text)).toContain("steer-text");
+    expect(clearedView.followUp.map((entry) => entry.text)).toContain("later-text");
     // abort 收敛：settled ok（abort 不取消 settled）
+    worker.send({ type: "abort", id: "ab1", threadId });
+    await waitResponse(worker.captured.lines, "abort", "ab1");
+    await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
+  });
+
+  test("queue/drop 单条移除：目标条目出队、其余保留、重复删除 state_conflict（entryId 寻址）", async () => {
+    const worker = await spawn([{ delayMs: 60_000 }, { reply: "never" }]);
+    worker.send({ type: "thread/start", id: "s1" });
+    const started = await waitResponse(worker.captured.lines, "thread/start", "s1");
+    const threadId = (started.data as { threadId: string }).threadId;
+    worker.send({ type: "prompt", id: "p1", threadId, message: "first" });
+    await waitResponse(worker.captured.lines, "prompt", "p1");
+    await waitEvent(worker.captured.lines, "turn/start");
+    worker.send({ type: "steer", id: "st1", threadId, message: "steer-text" });
+    await waitResponse(worker.captured.lines, "steer", "st1");
+    worker.send({ type: "follow_up", id: "fu1", threadId, message: "later-text" });
+    await waitResponse(worker.captured.lines, "follow_up", "fu1");
+    // 读口带 id：queue 投影的 entry id 是单条命令的寻址键
+    const view = await queueView(worker, threadId, "g0");
+    const steerId = view.steering.find((entry) => entry.text === "steer-text")?.id ?? "";
+    expect(steerId).not.toBe("");
+    // 单条删除：steer 条目出队，followUp 不动
+    worker.send({ type: "queue/drop", id: "qd1", threadId, entryId: steerId });
+    const dropped = await waitResponse(worker.captured.lines, "queue/drop", "qd1");
+    expect(dropped.success).toBe(true);
+    const after = await queueView(worker, threadId, "g1");
+    expect(after.steering.map((entry) => entry.text)).toEqual([]);
+    expect(after.followUp.map((entry) => entry.text)).toContain("later-text");
+    // 重复删除同 entryId：已出队 → state_conflict（恰一失败应答）
+    worker.send({ type: "queue/drop", id: "qd2", threadId, entryId: steerId });
+    const again = await waitResponse(worker.captured.lines, "queue/drop", "qd2");
+    expect(again.success).toBe(false);
+    expect((again.error as { code?: string }).code).toBe("state_conflict");
+    // 空 entryId 形状拒
+    worker.send({ type: "queue/drop", id: "qd3", threadId, entryId: "" });
+    const blank = await waitResponse(worker.captured.lines, "queue/drop", "qd3");
+    expect((blank.error as { code?: string }).code).toBe("invalid_input");
+    // abort 收敛
+    worker.send({ type: "abort", id: "ab1", threadId });
+    await waitResponse(worker.captured.lines, "abort", "ab1");
+    await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
+  });
+
+  test("queue/send_now 立即改向：next-turn 条目 retarget 进 next-step 跳队；非 followUp 条目/未知 entryId 拒绝", async () => {
+    const worker = await spawn([{ delayMs: 60_000 }, { reply: "never" }]);
+    worker.send({ type: "thread/start", id: "s1" });
+    const started = await waitResponse(worker.captured.lines, "thread/start", "s1");
+    const threadId = (started.data as { threadId: string }).threadId;
+    worker.send({ type: "prompt", id: "p1", threadId, message: "first" });
+    await waitResponse(worker.captured.lines, "prompt", "p1");
+    await waitEvent(worker.captured.lines, "turn/start");
+    // 两条 followUp 排队；send_now 改向第二条 → 跳到 next-step（先于队首消费）
+    worker.send({ type: "follow_up", id: "fu1", threadId, message: "first-queued" });
+    await waitResponse(worker.captured.lines, "follow_up", "fu1");
+    worker.send({ type: "follow_up", id: "fu2", threadId, message: "second-queued" });
+    await waitResponse(worker.captured.lines, "follow_up", "fu2");
+    const view = await queueView(worker, threadId, "g0");
+    const secondId = view.followUp.find((entry) => entry.text === "second-queued")?.id ?? "";
+    expect(secondId).not.toBe("");
+    worker.send({ type: "queue/send_now", id: "sn1", threadId, entryId: secondId });
+    const sent = await waitResponse(worker.captured.lines, "queue/send_now", "sn1");
+    expect(sent.success).toBe(true);
+    const after = await queueView(worker, threadId, "g1");
+    expect(after.steering.map((entry) => entry.text)).toEqual(["second-queued"]);
+    expect(after.followUp.map((entry) => entry.text)).toEqual(["first-queued"]);
+    // steer 条目（已在 next-step）不可改向
+    worker.send({ type: "steer", id: "st1", threadId, message: "steer-text" });
+    await waitResponse(worker.captured.lines, "steer", "st1");
+    const steerView = await queueView(worker, threadId, "g2");
+    const steerId = steerView.steering.find((entry) => entry.text === "steer-text")?.id ?? "";
+    worker.send({ type: "queue/send_now", id: "sn2", threadId, entryId: steerId });
+    const wrongQueue = await waitResponse(worker.captured.lines, "queue/send_now", "sn2");
+    expect((wrongQueue.error as { code?: string }).code).toBe("state_conflict");
+    // 未知 entryId 拒
+    worker.send({ type: "queue/send_now", id: "sn3", threadId, entryId: "msg_missing" });
+    const missing = await waitResponse(worker.captured.lines, "queue/send_now", "sn3");
+    expect((missing.error as { code?: string }).code).toBe("state_conflict");
+    // abort 收敛
     worker.send({ type: "abort", id: "ab1", threadId });
     await waitResponse(worker.captured.lines, "abort", "ab1");
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");

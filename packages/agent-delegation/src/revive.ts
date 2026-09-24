@@ -59,7 +59,6 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
     armed: false,
     running: false,
     stopped: false,
-    reportDelivered: false,
     ...(worktree !== undefined ? { worktree } : {}),
   };
   deps.lineage.register(row);

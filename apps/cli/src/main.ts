@@ -10,7 +10,8 @@ import type { World } from "./build-world.ts";
 import { buildInitialMessage } from "./build-initial-message.ts";
 import { createTerminalBrokerPlugin } from "./broker-terminal.ts";
 import type { BrokerIO } from "./broker-terminal.ts";
-import { promptFactsOf, registerAppendSections } from "./cli-prompt-sections.ts";
+import { probeBaseFacts } from "@x-harness/harness";
+import { registerAppendSections } from "./cli-prompt-sections.ts";
 import { defaultSessionRoot, harnessHome, providersPath } from "./harness-home.ts";
 import { parseCliArgs, usageText } from "./parse-cli-args.ts";
 import type { CliArgs } from "./parse-cli-args.ts";
@@ -164,6 +165,8 @@ async function openWorld(input: {
   const { args, config, resolution, io } = input;
   const built = await buildWorld({
     cwd: io.cwd,
+    // 内置 rg 随根配置走（X_HARNESS_HOME 覆盖 → ~/.x-harness；fetch:rg 安装层同源放置）
+    rgBinDir: join(harnessHome(io.env), "bin"),
     sessionRoot: args.sessionDir ?? defaultSessionRoot(io.env),
     // 本地遥测常开（OTel 落库 = harness home/telemetry.db；--no-session 时 inline 会话同样遥测）
     telemetryPath: join(harnessHome(io.env), "telemetry.db"),
@@ -173,10 +176,11 @@ async function openWorld(input: {
     compaction: {},
     persist: !args.noSession,
     // --system-prompt 整体替换时不装基础段（装配方裁决；静态串优先是包契约）
-    promptFacts: args.systemPrompt === undefined ? promptFactsOf(io) : undefined,
+    promptFacts: args.systemPrompt === undefined ? probeBaseFacts(io) : undefined,
     config,
     resolution,
     ...(args.permission !== undefined ? { permission: args.permission } : {}),
+    ...(args.rules !== undefined && args.rules.length > 0 ? { rules: args.rules } : {}),
     broker: createTerminalBrokerPlugin(brokerIO(io, input.interactive, input.ask)),
   });
   if (!built.ok) return { failure: built.reason };

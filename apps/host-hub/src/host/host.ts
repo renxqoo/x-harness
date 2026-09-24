@@ -9,6 +9,8 @@ import { buildAssemblySnapshot, ensureAgentDir, readCatalog, resolveDefaultDial 
 import { cleanupBashOutputs } from "../worker/bash-exec.ts";
 import { createCredentials } from "./credentials.ts";
 import { cleanupTmpResidue } from "./tmp-sweep.ts";
+import { migrateLegacySkills } from "./skills-migrate.ts";
+import { migrateLegacyAgentTypes } from "./agents-migrate.ts";
 import { createThreadTable } from "./thread-table.ts";
 import { createWorkerPool } from "./worker-pool.ts";
 import { createSweep } from "./thread-retire.ts";
@@ -37,6 +39,8 @@ export async function runHost(boot: HostBoot): Promise<void> {
   const env = boot.env ?? process.env;
   const limits = readLimits(env);
   await ensureAgentDir(boot.agentDir);
+  await migrateLegacySkills(boot.agentDir, undefined, env); // 一次性搬运旧共享根技能（幂等哨兵；env 关闭缝；先于清扫/装配）
+  await migrateLegacyAgentTypes(boot.agentDir, undefined, env); // 同法：agents 类型根（agentDir 派生缝存量腿）
   await cleanupBashOutputs(boot.agentDir); // 启动清扫超 7 天溢写文件
   await cleanupTmpResidue(boot.agentDir); // 启动清扫原子写残留
   let shuttingDown = false;
@@ -89,9 +93,15 @@ export async function runHost(boot: HostBoot): Promise<void> {
     const catalogNow = await readCatalog(boot.agentDir);
     const creds = await credentials.read();
     const providers = buildAssemblySnapshot(catalogNow, creds.keys, env);
-    const modelMeta: Record<string, { reasoning?: boolean; input?: ("text" | "image")[] }> = {};
+    const modelMeta: Record<string, { reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number }> = {};
     for (const entry of catalogNow.entries) {
-      modelMeta[entry.model] = { reasoning: entry.reasoning, ...(entry.input !== undefined ? { input: [...entry.input] } : {}) };
+      // contextWindow 为目录已解析值（模型级 > 档案级——entryOf 单点）：模型窗口解析与
+      // compaction/analytics 面共源
+      modelMeta[entry.model] = {
+        reasoning: entry.reasoning,
+        ...(entry.input !== undefined ? { input: [...entry.input] } : {}),
+        ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
+      };
     }
     const defaults = resolveDefaultDial(catalogNow);
     snapshotCache = {

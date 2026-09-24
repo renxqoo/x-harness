@@ -42,8 +42,9 @@
   supersession 次行 + body。**谓词单源**（L10）：`isSnapshotNode(node)` 从 agent-loop
   导出（compaction 已依赖 agent-loop），四重合取判定——append op ∧ 单 text 块 ∧
   信封首行 ∧ supersession 次行（F5/M11 收紧伪造面；用户刻意伪造四条的残余后果仅
-  「该消息不作切口候选」——保守方向无安全面，落档接受）。skill 维持现状渲染
-  （预锚豁免，不入信封体系——评审 F9：其豁免仅在生产常量语义上成立，表述如实）。
+  「该消息不作切口候选」——保守方向无安全面，落档接受）。skill 清单同入统一信封
+  （kind="skills"，预锚落位不变）——展示面与切口谓词单点识别，全部边沿注入快照
+  共用一套信封形态。
 
 ### 三条快照
 
@@ -57,7 +58,8 @@
   （readdirSync/statSync/readFileSync——评审 H2 裁决：同步红线优先，kick 边沿同步
   探测+渲染，类型变更**当轮 kick 可见**，不留一 kick 滞后；agents 目录几十个小文件
   的同步扫描与 C' 的 readFileSync 同成本类）。无类型 → 空串零注入。
-- **C' 项目指令快照**（apps/cli 新装配件，**装配位写死：紧随 skillKit**）：
+- **C' 项目指令快照**（apps/cli + apps/host-hub 两宿主装配，插件单源
+  @x-harness/harness `createFactsSnapshotPlugin`，**装配位写死：紧随 skill 装配**）：
   每 kick 同步读 `cwd/AGENTS.md` 与 `cwd/CLAUDE.md`，**内容哈希去重**（软链/同内容
   只注一份，M8）；合并单条（AGENTS.md 在前）；幂等同上。**上限 64KB**（评审 H3 从
   256KB 下调：≈16k token，仍远超合理指令体量；**单件口径**——合计上界 2×单件为

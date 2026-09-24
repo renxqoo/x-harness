@@ -213,7 +213,7 @@ describe("并发档声明（§6 横切——真实 registry 口径）", () => {
 describe("装配期 fail-closed（收口审查 P1：tasks/taskLimits 同传曾静默忽略）", () => {
   it("tasks 与 taskLimits 同传 → throw（装配矛盾拒绝，不静默取一）", () => {
     const gate = new PathGate(root);
-    const tasks = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir }));
+    const tasks = new BackgroundTasks(defaultTaskLimits({ taskLogDir: spillDir }));
     expect(() => createBashPlugin({ gate, tasks, taskLimits: { taskTimeoutMs: 1_000 } })).toThrow(/not both/);
   });
 

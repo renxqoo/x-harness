@@ -9,6 +9,7 @@ const SURFACE_TYPES: ReadonlySet<string> = new Set<string>([
   "user/message",
   "assistant/message",
   "tool/result",
+  "agent/message",
 ]);
 
 export function isSurfaceEventType(type: string): type is SurfaceEventType {
@@ -82,6 +83,9 @@ export function surfaceToMessages(nodes: readonly SurfaceNode[]): SurfaceMessage
           content: event.data.content,
           ...(event.data.isError !== undefined ? { isError: event.data.isError } : {}),
         };
+      case "agent/message":
+        // 协议事实：provider 只有 user/assistant 角色，harness 注入一律 user 角色（docs/AGENT-MESSAGE.md §1）
+        return { role: "user", content: event.data.content };
     }
     })
     .filter((message): message is SurfaceMessage => message !== NULL_MARKER);

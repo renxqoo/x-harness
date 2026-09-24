@@ -20,7 +20,6 @@ export interface ChildRow {
   armed: boolean; // 通知臂（running 置；通知后复位）
   running: boolean;
   stopped: boolean;
-  reportDelivered: boolean; // 报告全文已交付（通知 steer 成功置；task_output 复查据此不复读——同份内容只进父上下文一次）
   worktree?: string;
 }
 
@@ -82,67 +81,120 @@ type SurfaceLikeEvent = SessionEvent;
 function recastSurface(events: readonly SurfaceLikeEvent[]): SessionEvent[] {
   const seed: SessionEvent[] = [];
   for (const event of events) {
-    const data = event.data as Record<string, unknown>;
-    switch (event.type) {
-      case "system/message":
-        seed.push(mint({ seq: seed.length, type: "system/message", data: { turn: 0, step: 0, text: data["text"] ?? "" } }));
-        break;
-      case "user/message":
-        seed.push(mint({ seq: seed.length, type: "user/message", data: { turn: 0, step: 0, content: data["content"] ?? [] } }));
-        break;
-      case "assistant/message":
-        seed.push(
-          mint({
-            seq: seed.length,
-            type: "assistant/message",
-            data: {
-              turn: 0,
-              step: 0,
-              content: data["content"] ?? [],
-              ...(data["usage"] !== undefined ? { usage: data["usage"] } : {}),
-              ...(data["stopReason"] !== undefined ? { stopReason: data["stopReason"] } : {}),
-            },
-          }),
-        );
-        break;
-      case "tool/result":
-        seed.push(
-          mint({
-            seq: seed.length,
-            type: "tool/result",
-            data: {
-              turn: 0,
-              step: 0,
-              callId: data["callId"] ?? "",
-              content: data["content"] ?? "",
-              ...(data["isError"] === true ? { isError: true } : {}),
-            },
-          }),
-        );
-        break;
-      default:
-        break;
-    }
+    const recast = recastOne(event, seed.length); // seq = 种子位置（envelope 校验要求连续）
+    if (recast !== undefined) seed.push(recast);
   }
   return seed;
+}
+
+/** assistant/message 重铸 data（recastOne 复杂度治理） */
+function assistantRecastData(data: Record<string, unknown>): Record<string, unknown> {
+  return {
+    turn: 0,
+    step: 0,
+    content: data["content"] ?? [],
+    ...(data["usage"] !== undefined ? { usage: data["usage"] } : {}),
+    ...(data["stopReason"] !== undefined ? { stopReason: data["stopReason"] } : {}),
+  };
+}
+
+/** agent/message 重铸 data：仅 content（AGENT-MESSAGE.md §5——兄弟报告是事实）；directive 返回 undefined（过期作废） */
+function agentMessageRecast(data: Record<string, unknown>): { readonly turn: number; readonly step: number; readonly source: string; readonly kind: "content"; readonly content: unknown } | undefined {
+  if (data["kind"] !== "content") return undefined;
+  return { turn: 0, step: 0, source: typeof data["source"] === "string" ? data["source"] : "", kind: "content", content: data["content"] ?? [] };
+}
+
+/** 单事件重铸（recastSurface 复杂度治理）：未知/不进种子的类型返回 undefined。
+ *  agent/message 仅 content 重铸（AGENT-MESSAGE.md §5——兄弟报告是事实）；directive
+ *  丢弃（协议指令过期作废，与摘要跳过同口径）。 */
+function recastOne(event: SurfaceLikeEvent, seq: number): SessionEvent | undefined {
+  const data = event.data as Record<string, unknown>;
+  switch (event.type) {
+    case "system/message":
+      return mint({ seq, type: "system/message", data: { turn: 0, step: 0, text: data["text"] ?? "" } });
+    case "user/message":
+      return mint({ seq, type: "user/message", data: { turn: 0, step: 0, content: data["content"] ?? [] } });
+    case "assistant/message":
+      return mint({ seq, type: "assistant/message", data: assistantRecastData(data) });
+    case "tool/result":
+      return mint({
+        seq,
+        type: "tool/result",
+        data: {
+          turn: 0,
+          step: 0,
+          callId: data["callId"] ?? "",
+          content: data["content"] ?? "",
+          ...(data["isError"] === true ? { isError: true } : {}),
+        },
+      });
+    case "agent/message": {
+      const recast = agentMessageRecast(data);
+      return recast === undefined ? undefined : mint({ seq, type: "agent/message", data: recast });
+    }
+    default:
+      return undefined;
+  }
 }
 
 function mint(spec: { seq: number; type: string; data: unknown }): SessionEvent {
   return { type: spec.type, seq: spec.seq, time: Date.now(), data: spec.data, surfaceOp: "append" } as SessionEvent;
 }
 
-/** 模型/线路覆盖序（docs/AGENT-DELEGATION.md §7.3）：按次 > 类型定义 > 父 options > 父末次 header */
+/**
+ * `provider/model` 复合串拆解（主应用设置界面写入 .md 的形态）：首个 `/` 切分，
+ * 首段 = provider、余下全段 = model。裸模型名/退化形态（空段）返回 undefined——
+ * 按裸名透传不误拆。与主应用 parseModelKey 同一词法（单一真相两域各持）。
+ */
+export function splitDialRef(ref: string): { provider: string; model: string } | undefined {
+  const index = ref.indexOf("/");
+  if (index <= 0 || index === ref.length - 1) return undefined;
+  return { provider: ref.slice(0, index), model: ref.slice(index + 1) };
+}
+
+/**
+ * 模型/线路覆盖序（docs/AGENT-DELEGATION.md §7.3）：按次 > 类型定义 > 父 options > 父末次 header。
+ * 跨 provider 联动（串线修复）：model 命中复合串 `provider/model` 时 provider 跟随拆解值
+ * （显式 provider 字段仍恒胜）；裸模型名经 resolveProviderOf 目录反查归属——查得即联动，
+ * 查不到回落覆盖序（兼容既有部署）。model 与 provider 必须同源，否则请求打到父端点带子
+ * 模型名（上游 4xx / no-adapter——「子代理模型与主 agent 不同即报错」的机制）。
+ */
 export function inheritDial(
   parentHandle: AgentHandle,
   chain: {
     readonly type?: LoadedAgentType;
     readonly lastHeader?: { model?: string; provider?: string };
     readonly override?: { model?: string; provider?: string };
+    /** 裸模型名 → 归属 provider 反查（宿主接目录快照；缺省不反查——纯内核部署兼容） */
+    readonly resolveProviderOf?: (model: string) => string | undefined;
   },
 ): { model?: string; provider?: string } {
   const model = chain.override?.model ?? chain.type?.model ?? parentHandle.agent.options.model ?? chain.lastHeader?.model;
-  const provider = chain.override?.provider ?? chain.type?.provider ?? parentHandle.agent.options.provider ?? chain.lastHeader?.provider;
-  return { ...(model !== undefined ? { model } : {}), ...(provider !== undefined ? { provider } : {}) };
+  if (model === undefined) return {};
+  const composite = splitDialRef(model);
+  const provider = foldProvider(chain, { parentProvider: parentHandle.agent.options.provider, model, fromComposite: composite?.provider });
+  return { model: composite?.model ?? model, ...(provider !== undefined ? { provider } : {}) };
+}
+
+/** provider 折叠（inheritDial 复杂度治理）：显式字段（override/type）> 复合串拆解 >
+ *  目录反查（裸模型名归属联动）> 父 options > 父末次 header。 */
+function foldProvider(
+  chain: {
+    readonly type?: LoadedAgentType;
+    readonly lastHeader?: { model?: string; provider?: string };
+    readonly override?: { model?: string; provider?: string };
+    readonly resolveProviderOf?: (model: string) => string | undefined;
+  },
+  spec: { readonly parentProvider: string | undefined; readonly model: string; readonly fromComposite: string | undefined },
+): string | undefined {
+  const explicit = chain.override?.provider ?? chain.type?.provider;
+  if (explicit !== undefined) return explicit;
+  if (spec.fromComposite !== undefined) return spec.fromComposite;
+  if (chain.resolveProviderOf !== undefined) {
+    const resolved = chain.resolveProviderOf(spec.model);
+    if (resolved !== undefined) return resolved;
+  }
+  return spec.parentProvider ?? chain.lastHeader?.provider;
 }
 
 /** 沿树只收窄：type.tools ∩ 调用方白名单；undefined=全集 */

@@ -2,7 +2,7 @@
 // 协议词表封闭性（COMMAND_NAMES 与四集合包含关系）。
 import { describe, expect, test } from "vitest";
 import { classifyResponseHead, responseLine } from "../shared/frame-classify.ts";
-import { hubError } from "../shared/errors.ts";
+import { HUB_ERROR_CODES, hubError } from "../shared/errors.ts";
 import { COMMAND_NAMES } from "../protocol/commands.ts";
 import { DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS, OBSERVER_COMMANDS, THREAD_SCOPED_COMMANDS } from "../protocol/internal.ts";
 
@@ -39,12 +39,17 @@ describe("frame-classify（key 顺序契约）", () => {
 });
 
 describe("协议词表封闭性", () => {
-  test("56 命令；四集合成员都在命令表内", () => {
-    expect(COMMAND_NAMES.length).toBe(56);
-    expect(new Set(COMMAND_NAMES).size).toBe(56);
+  test("72 命令；四集合成员都在命令表内", () => {
+    expect(COMMAND_NAMES.length).toBe(76);
+    expect(new Set(COMMAND_NAMES).size).toBe(76);
     for (const set of [THREAD_SCOPED_COMMANDS, OBSERVER_COMMANDS, DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS]) {
       for (const name of set) expect(COMMAND_NAMES.includes(name)).toBe(true);
     }
+    // get_token_analytics：线程域 + 观察者（docs/PLUGINS.md 契约 5——漏加无其他网）
+    expect(THREAD_SCOPED_COMMANDS.has("get_token_analytics")).toBe(true);
+    expect(OBSERVER_COMMANDS.has("get_token_analytics")).toBe(true);
+    // 能力族码在表：host 侧 isHubErrorShape 按码表成员校验，误删即静默丢形状
+    expect(HUB_ERROR_CODES).toContain("capability_plugin");
   });
 
   test("驱动 ⊂ 线程域；观察者 ⊂ 线程域 ∪ 转发白名单；转发白名单 ∩ 线程域 = 空", () => {

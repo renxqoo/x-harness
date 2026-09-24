@@ -67,9 +67,17 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     expect(captured?.headers["accept-encoding"]).toBe("identity"); // SSE 不协商压缩
     expect(String(captured?.headers["anthropic-version"])).toBeTruthy();
     expect(captured?.body["stream"]).toBe(true);
-    expect(captured?.body["max_tokens"]).toBe(8192);
+    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false); // 全缺席不注入——wire 省略，服务端默认接管（本地兜底废除）
     expect(captured?.body["system"]).toEqual([{ type: "text", text: "sys" }]); // pi wire 形态：system 块数组
     expect(JSON.stringify(captured?.body)).not.toContain("cache_control"); // cacheRetention none
+  });
+
+  it("maxOutputTokensByModel 命中：该模型请求体 max_tokens = 逐模型值（wire 面断言）", async () => {
+    srv = await startSceneServer();
+    srv.nextScene({ status: 200, chunks: anthropicFullFlow() });
+    const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test", maxOutputTokensByModel: { "big-x": 32_768 } });
+    await collect(adapter.stream(request({ model: "big-x" })));
+    expect(srv.captured()?.body["max_tokens"]).toBe(32_768); // 逐模型值直达 wire
   });
 
   it("非 2xx：429 + retry-after 头 → http-429 + retryAfterMs（onResponse 捕获）", async () => {
@@ -124,7 +132,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test" });
     const chunks = await collect(adapter.stream(request({})));
     expect(chunks).toEqual([
-      { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' }, // 单帧全量出口
+      { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' }, // end 即放行单帧全量出口（判定不依赖终态——abort 窗口零丢失）
       { type: "usage", usage: { input: 5, output: 9, totalTokens: 14 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);

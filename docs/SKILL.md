@@ -19,8 +19,11 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   （本子系统不消费正文，仅供模型读取）。此语义 = 共享包 `md-frontmatter`
   的实际行为（与 agent-delegation 迁移后单一实现一致）。
 - `SKILL.md` 大小上限 1MB（读前 stat）：超限拒注册 + 告警。
-- 目录解析：插件参数 `skillsDirs` > 环境变量 `X_HARNESS_SKILLS_DIRS`（冒号分隔，
-  空串元素过滤）> 缺省 `[<cwd>/.x-harness/skills, ~/.x-harness/skills]`。
+- 目录解析：**插件必收 `skillsDirs`（零目录知识——不自持缺省/env/路径常量）**，
+  由宿主边沿用统一入口 `resolveSkillDirs(configured?)` 解析后传入：
+  `configured` > 环境变量 `X_HARNESS_SKILLS_DIRS`（冒号分隔，空串元素过滤）>
+  缺省 `[projectSkillsDirOf(cwd), userSkillsDirOf()]`（路径常量单源本包导出，
+  宿主管理面/装配面同源引用）。
   **`skillsDirs: []` = 显式零**（不扫描、不注入）。注意：与姊妹实现
   `resolveAgentDirs` 的 `[]` 落空回退 env 行为**有意不同**（显式零供嵌入方/测试
   表达关闭——差异在此钉死，防照抄）。列表序即优先序：同名 skill 前者胜（项目域
@@ -36,11 +39,18 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
 
 - `@x-harness/md-frontmatter`（新，纯函数包，最底层）：
   `splitFrontmatter(text) → { head, body } | undefined`；
-  `parseFlat(head) → Map<string, string> | undefined`。
+  `parseFlat(head) → Map<string, string> | undefined`；
+  `replaceFlatField(text, key, value) → string | undefined`（头内该键最后一次出现的行
+  替换——与 parseFlat last-wins 同义；无 frontmatter/键缺席/键值形态非法 → undefined）。
 - `@x-harness/skill`（新）：
   - `SkillMeta { name; description; path }`——path 为 SKILL.md 绝对路径；
   - `resolveSkillDirs(configured?) → readonly string[]`；
   - `loadSkills(dirs) → Promise<{ skills: Record<string, SkillMeta>; warnings: string[] }>`；
+  - `inspectSkillDir(dir) → Promise<{ ok: true; name; description; path } | { ok: false;
+    problem: SkillProblem; message }>`——**形态判定单点**（装载器、host 命令面、安装
+    写后复检共用；`SkillProblem` = not_found/unreadable/not_regular_file/too_large/
+    no_frontmatter/frontmatter_not_flat/missing_fields）；`skillNameMismatch(dir, name)`
+    ——目录名对齐规则（本文件的注册条件，不属于解析条件），不齐返回告警文案；
   - `renderSkillsBlock(skills) → string`——空表 → `""`；否则
     `<system-reminder>\n### Available skills\n- name: description (path)\n…\n</system-reminder>`
     （按 name 排序）。渲染防护（三字段同洗）：name/description/path 去换行与
@@ -54,7 +64,9 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   apply 完成即快照可用）；此后进程内不再读盘、不刷新（快照进程常量）。
 - **注入（无状态幂等）**：快照非空时经 `createTailSnapshot` 共用原语
   （@x-harness/agent-loop，docs/TAIL-SNAPSHOT-CHANNEL.md）注册 running 边沿监听：
-  render（进程常量块）→ 在场判定（仅扫 append 型 user/message 单 text 块的全文
+  render（进程常量信封体 `snapshotEnvelope("skills", 块)`——信封是跨包识别的
+  单一真相：展示面与切口谓词一律经 `isSnapshotNode` 跳过清单帧，UI 不展示）→
+  在场判定（仅扫 append 型 user/message 单 text 块的全文
   精确匹配——replace 型摘要节点不扫）→ 缺席同步追加
   `session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: 块 }] }, { surfaceOp: "append" })`，
   在场跳过。**无插件状态**（无 Set/Map）：幂等性由在场判定自身保证。
@@ -100,7 +112,9 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
   - 内容披露 = 模型经 read 工具读 SKILL.md/捆绑文件（permission/PathGate 统辖，
     用户域首读 ask 一次入会话 extraRoots——既有语义，skill 无特权无特防）；
   - 触发 = 模型自主（无专用工具、无 slash 集成，命令闭集不动）；
-  - 安装/marketplace = 手工放目录即安装；plugin-manager 接 CLI 为独立挂账话题；
+  - 安装 = 手工放目录（内核零安装面）**或** host 管理面 `skills/install` 拷贝导入
+    （docs/SKILL-INSTALL.md——安装面归 host 命令面，内核只判定形态）；
+    marketplace/归档包（zip/git/npm）安装 = 独立挂账话题；
   - 热重载 = 不做，增改 skill 下次进程启动生效；
   - skill 层权限策略 = 零（deny-write 收紧提议已撤销，统一治理）；
   - system prompt = 不含任何 skill 字节（进程生命周期内字节稳定——KV cache 前缀
@@ -158,6 +172,7 @@ skill = 目录里的 SKILL.md 资产（frontmatter 元数据 + 指令正文 + �
 | 13 | symlink 目录跟随加载（skill 名 = 链接名）；根不可读（非缺席）告警——处置收口审查 F1/F4 | 默认裁决（否决窗口，审查处置） |
 | 14 | onWarn 缺省写 stderr + apply 兜底空快照（结构保证）——处置收口审查 P1-1/P3-2 | 默认裁决（否决窗口，审查处置） |
 | 15 | 渲染防护收口：截断按码点（代理对不截半）、中和大小写不敏感含开标签、清洗扩 Cf 类——处置收口审查 F3/F5 | 默认裁决（否决窗口，审查处置） |
+| 16 | 清单注入体铸 `snapshotEnvelope("skills", …)` 统一信封——展示面/切口谓词按 `isSnapshotNode` 单点识别跳过（症状：技能清单在 UI 当普通消息展示） | 用户裁决 |
 
 备注（落档）：裁决 4 的原始动机（动态数据防 system prompt 前缀抖动）随裁决 3
 （不重载）已消解——静态快照入 system prompt 亦无 cache 成本。放置维持 user

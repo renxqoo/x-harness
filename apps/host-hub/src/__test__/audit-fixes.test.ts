@@ -13,8 +13,8 @@ import { spawnScriptWorker, waitResponse } from "./kit/worker-harness.ts";
 import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import type { HostHandle } from "./kit/host-client.ts";
 import { startHost, drivePrompt } from "./kit/host-client.ts";
-import { builtinTypesDir } from "../worker/assembly.ts";
-import { loadAgentTypes } from "@x-harness/agent-delegation";
+import { builtinAgentTypes } from "../worker/assembly.ts";
+import { loadAgentTypes, parseInlineTypes, userAgentsDirOf } from "@x-harness/agent-delegation";
 import { createThreadTable } from "../host/thread-table.ts";
 
 const roots: string[] = [];
@@ -97,7 +97,7 @@ describe("抽查处置：bash 硬化族", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 60_000,
@@ -117,7 +117,7 @@ describe("抽查处置：bash 硬化族", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 60_000,
@@ -160,7 +160,7 @@ describe("抽查处置：bash 硬化族", () => {
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 30_000,
@@ -233,18 +233,27 @@ describe("抽查处置：转发计时锚（<1ms 量级——源 regressions-unit
 });
 
 describe("抽查处置：builtin 类型装载（agents/list 层）", () => {
-  test("随包三类型经 builtinTypesDir 装载（frontmatter name = 文件名）", () => {
-    const loaded = loadAgentTypes([builtinTypesDir()]);
-    expect(Object.keys(loaded.types).sort()).toEqual(["code-reviewer", "explore", "general-purpose"]);
+  test("随包内置类型经内联资源装载（frontmatter name = 文件名）", () => {
+    const loaded = parseInlineTypes(builtinAgentTypes());
+    expect(Object.keys(loaded.types).sort()).toEqual(["explore", "general-purpose"]);
     expect(loaded.warnings).toEqual([]);
+  });
+
+  test("内联资源与 agent-types/ 源同步（生成器产物无漂移）", async () => {
+    const { readdir, readFile } = await import("node:fs/promises");
+    const dir = join(import.meta.dirname, "../../agent-types");
+    const files = (await readdir(dir)).filter((f) => f.endsWith(".md")).sort();
+    const sources = await Promise.all(files.map(async (f) => ({ stem: f.slice(0, -3), text: await readFile(join(dir, f), "utf8") })));
+    expect(builtinAgentTypes()).toEqual(sources);
   });
 
   test("装载序 project > user > builtin（同名前者胜）", () => {
     const table = createThreadTable();
     void table;
-    const merged = loadAgentTypes([join(process.env["HOME"] ?? "", ".x-harness", "agents"), builtinTypesDir()]);
-    // builtin 的 general-purpose 在场（user 未覆盖时）
-    expect(merged.types["general-purpose"]).toBeDefined();
+    const diskLoaded = loadAgentTypes([userAgentsDirOf()]);
+    // 内联 builtin 的 general-purpose 在场（user 未覆盖时）；user 同名遮蔽 builtin
+    const merged = { ...parseInlineTypes(builtinAgentTypes()).types, ...diskLoaded.types };
+    expect(merged["general-purpose"]).toBeDefined();
   });
 });
 

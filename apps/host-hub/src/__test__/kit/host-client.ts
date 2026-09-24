@@ -46,8 +46,14 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
     env: {
       ...process.env,
       HUB_AGENT_DIR: agentDir,
+      HUB_SESSIONS_ROOT: join(agentDir, "sessions"),
+      // 环境防污染：宿主 shell 的 hub 变量（冒烟/开发残留）不得泄漏进测试子进程
+      HUB_WORKER_DISPATCHED: undefined,
       HUB_WORKER_PROVIDER: "script",
       HUB_WORKER_SCRIPT: JSON.stringify(options.script),
+      // 环境防污染：真实旧共享根（~/.x-harness/{skills,agents}）不迁移进沙箱 agentDir
+      HUB_SKILLS_MIGRATION: "0",
+      HUB_AGENTS_MIGRATION: "0",
       ...options.env,
     } as NodeJS.ProcessEnv,
     stdio: ["pipe", "pipe", "pipe"],

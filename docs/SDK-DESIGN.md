@@ -19,7 +19,7 @@
 | S4 | World 形状沿用（ctx/unload/store/archive/loop/prompt/meter/registry） | 避免双类型 |
 | S5 | **新增内核原语 `Plugin.softInject`**："在场则排后，缺席则无约束"的声明式软依赖——任意组合安全性的结构基础 | 本设计（见 §2.1） |
 | S6（修订） | T1 全量（F0 拦截面三缺口 + F0.5 token 治理 + 契约规矩）；**T2 四 seam 降级**：settings/state/credentials/telemetry 经「需动底层才能实现吗」检验——全部零地基改动可写成纯插件 → 不进底层议程，降为 F2 能力插件模式章 + 真实需求时一方参考插件 | 2026-09-20 对话（「底层开放基础接口，不过度实现」） |
-| S7 | seam 形态 = **自包含上层包**（服务 token + 类型 + 缺省提供方 + 插件，permission/sandbox-local 同款模式）——不动内核，契约随包走 | 设计裁决 |
+| S7 | seam 形态 = **自包含上层包**（服务 token + 类型 + 缺省提供方 + 插件，permission/sandbox 同款模式）——不动内核，契约随包走 | 设计裁决 |
 
 ## 2. 外部契约
 
@@ -40,7 +40,7 @@ export interface Plugin {
 - **软-软环裁决（F-04）**：双向软依赖（A softInject B 且 B softInject A）= 约束矛盾 → **throw**（诚实暴露；数组序世界不失败是偶然不是语义）。硬+软重复声明同一插件：第二次 visit 命中 done 短路，无害。自软锚 throw（cyclic 文案）。
 - **主张收窄（F-05）**：softInject 消灭的是 **apply 期服务停靠约束**；中间件注册序（同 waterfall 上多监听器的相对序）与无边 prompt 尾序是另两个顺序面——前者由"序敏感插件硬 inject 协作方"惯例承载（作者文档），后者由后置注册惯例承载（F-02）。
 - **采纳方（F-01 处置——A2 原审计"两条"失真，实为五处 apply 期停靠）**：
-  - tool-core：`["system-prompt", "sandbox-local", "permission"]`（guidance 停靠 / execEnv 停靠 / **permissionGrants apply 期闭包捕获**——tool-plugin.ts:59-61 晚注册 permission = 会话授权根静默丢失，反例 1）
+  - tool-core：`["system-prompt", "sandbox", "permission"]`（guidance 停靠 / execEnv 停靠 / **permissionGrants apply 期闭包捕获**——tool-plugin.ts:59-61 晚注册 permission = 会话授权根静默丢失，反例 1）
   - agent-delegation：`["permission", "session-persistence-jsonl"]` + 工厂条件并入 `options.mailbox !== undefined ? ["session-mailbox"] : []`（grants setRootOverride 静默 / archive tryUse 复活禁用 / mailbox 在场假阴性 throw——plugin.ts:109/128/170-172，反例 2-4）
   - env 缺席仍 fail-closed throw 不变。数组序硬约束从"世界知识"降为"插件自声明"。
 - 否决项更新：inject（硬失败，缺席世界炸）、waitFor（异步拆卸竞态）维持否决——softInject 为第三形态：同步、声明式、缺席无害。
@@ -53,7 +53,7 @@ export const inlineSessionKit = (): Plugin[];                                  /
 export const durableSessionKit = (o: { root: string; onIoError? }): Plugin[];   // + jsonl 持久化/archive
 export const llmKit = (adapters: readonly LlmAdapter[], retry?: RetryPolicy | Record<string, RetryPolicy>): Plugin[];  // llm-retry + llm + N 个 adapter 注册插件（**名按 adapter.name/index 铸唯一**——F-06：固定名多实例会重名 throw；retry 支持 per-provider map——F-07.3）
 export const toolboxKit = (o?: { gate?: PathGate; observed?: ObservedRegistry; env?: ExecEnv }): Plugin[]; // tools + read/write/bash/grep/task-tools（共享实例接线内包；env 透传给无围栏世界——F-07.2）
-export const fenceKit = (o: { root: string }): Plugin[];                       // permission + sandbox-local
+export const fenceKit = (o: { root: string }): Plugin[];                       // permission + sandbox
 export const delegationKit = (): Plugin[];                                     // agent-delegation
 export const checkpointKit = (): Plugin[];                                     // session-checkpoint（**独立 kit**——F-11：与 delegation 零共享面，绑死则"要 delegation 不要 flush 屏障"不可表达）
 export const skillKit = (): Plugin[];                                          // skill
@@ -110,7 +110,7 @@ export const llmStream = defineWaterfall<LlmRequest, AsyncGenerator<LlmChunk>>("
 
 ## 7. 能力插件模式（原 T2 四 seam——降级裁决）
 
-**检验标准**：「这个能力需要动底层才能实现吗？」settings/state/credentials/telemetry 四者全部**否**——service token 定义在上层包 + `ctx.provide` 即成能力 seam（permission/sandbox-local 同款形态），底层零改动。故不设地基波次，F2 作者文档立「能力插件模式」范式（token 定义/提供方可选换/消费方 tryUse 优雅降级），真实消费者出现时作一方参考插件实现（可换可弃非平台承诺）。原 §7.1-7.4 契约草案降为模式示例素材。
+**检验标准**：「这个能力需要动底层才能实现吗？」settings/state/credentials/telemetry 四者全部**否**——service token 定义在上层包 + `ctx.provide` 即成能力 seam（permission/sandbox 同款形态），底层零改动。故不设地基波次，F2 作者文档立「能力插件模式」范式（token 定义/提供方可选换/消费方 tryUse 优雅降级），真实消费者出现时作一方参考插件实现（可换可弃非平台承诺）。原 §7.1-7.4 契约草案降为模式示例素材。
 
 ## 8. 契约稳定性规矩（并入 F2 作者文档）
 

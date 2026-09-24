@@ -3,7 +3,7 @@
 // 可见）+ 血缘/通知/动词接线；dispose 级联（tearing-down 门先行）。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
-import { agentLoopServiceToken, agentStatus, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
+import { agentLoopServiceToken, agentStatus, agentTruncatedTool, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
 import { sessionStore } from "@x-harness/session";
 import { toolRegistry } from "@x-harness/tools";
 import { mailboxService } from "@x-harness/session-mailbox";
@@ -18,7 +18,8 @@ import { reviveByAgentId } from "./revive.ts";
 import { evaluateCleanup, sweepWorktrees } from "./worktree.ts";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
-import { loadAgentTypes, resolveAgentDirs, typesFingerprint } from "./types-loader.ts";
+import { loadAgentTypes, typesFingerprint } from "./types-loader.ts";
+import { parseInlineTypes } from "./types-inline.ts";
 import type { DelegationOptions, LoadedAgentType } from "./types.ts";
 import { createNotifier } from "./notify.ts";
 import { spawnAgent } from "./spawn.ts";
@@ -27,6 +28,7 @@ import { listAgents, message, stop } from "./verbs.ts";
 import type { VerbDeps } from "./verbs.ts";
 import { agentTaskSource } from "./task-source.ts";
 import { delegationTools } from "./tools.ts";
+import { delegationRescueNote } from "./rescue-note.ts";
 import { delegationView } from "./view.ts";
 import { agentFinished, agentSpawned } from "./tokens.ts";
 import type { AgentFinishedPayload, AgentSpawnedPayload } from "./tokens.ts";
@@ -37,7 +39,7 @@ const DEFAULT_REPORT_CAP = 34_000;
 const DEFAULT_MAX_RESIDENT = 32;
 
 /** 配置垃圾值 fail-fast（非负安全整数） */
-export function validateOptions(options: DelegationOptions): { maxDepth: number; maxConcurrent: number; reportCap: number; maxResident: number } {
+export function validateOptions(options: Pick<DelegationOptions, "maxDepth" | "maxConcurrent" | "reportCap" | "maxResident">): { maxDepth: number; maxConcurrent: number; reportCap: number; maxResident: number } {
   const sane = (value: number) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
   const maxConcurrent = options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
@@ -48,9 +50,6 @@ export function validateOptions(options: DelegationOptions): { maxDepth: number;
   }
   if (!sane(maxResident) || maxResident === 0) {
     throw new Error("agent-delegation: maxResident must be a positive safe integer");
-  }
-  if (options.agentsDirs !== undefined && (!Array.isArray(options.agentsDirs) || options.agentsDirs.some((dir) => typeof dir !== "string" || dir === ""))) {
-    throw new Error("agent-delegation: agentsDirs must be an array of non-empty strings");
   }
   return { maxDepth, maxConcurrent, reportCap, maxResident };
 }
@@ -66,9 +65,12 @@ export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>
   return `<system-reminder>\nAvailable agent types:\n${lines.join("\n")}\n</system-reminder>`;
 }
 
-export function createAgentDelegationPlugin(options: DelegationOptions = {}): Plugin {
+export function createAgentDelegationPlugin(options: DelegationOptions): Plugin { // agentsDirs 必收——目录决定权在宿主边沿
+  if (!Array.isArray(options.agentsDirs) || options.agentsDirs.some((dir) => typeof dir !== "string" || dir === "")) {
+    throw new Error("agent-delegation: agentsDirs must be an array of non-empty strings");
+  }
   const limits = validateOptions(options);
-  const dirs = resolveAgentDirs(options.agentsDirs);
+  const dirs = options.agentsDirs;
   return {
     name: "agent-delegation",
     inject: ["session", "tools", "agent-loop", "task-tools"],
@@ -81,13 +83,21 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
 
       let current: Readonly<Record<string, LoadedAgentType>> = {};
       let fingerprint = "";
+      // 内联 builtin 层（bundle 内联资源——无盘上可变面，不参与指纹；装载恒定）垫底：
+      // 盘上同名前者胜，内联层仅补缺席
+      const inline = options.builtinTypes !== undefined ? parseInlineTypes(options.builtinTypes) : undefined;
       const refreshTypes = (): void => {
         const next = typesFingerprint(dirs);
-        if (next === fingerprint) return;
-        fingerprint = next;
-        const loaded = loadAgentTypes(dirs);
-        current = loaded.types;
-        for (const warning of loaded.warnings) options.onWarn?.(warning);
+        if (next !== fingerprint) {
+          fingerprint = next;
+          const loaded = loadAgentTypes(dirs);
+          current = loaded.types;
+          for (const warning of loaded.warnings) options.onWarn?.(warning);
+        }
+        if (inline !== undefined) {
+          current = { ...inline.types, ...current };
+          for (const warning of inline.warnings) options.onWarn?.(warning);
+        }
       };
       refreshTypes(); // 装配期全量——apply 完成即类型可用（loadPlugins 语义）
 
@@ -122,6 +132,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
         emitSpawned,
         emitFinished,
         ...(grants !== undefined ? { setRootOverride: (session: import("@x-harness/session").SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
+        ...(options.resolveProviderOf !== undefined ? { resolveProviderOf: options.resolveProviderOf } : {}),
       };
       // 启动期对账清扫（§8.3——崩溃泄漏兜底）；测试可关（worktreeSweep:false）
       if (options.worktreeSweep !== false) {
@@ -220,10 +231,15 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
       // agent 源注册（件14）：硬依赖 task-tools（inject 声明——无 hub 装配即失败，output/stop
       // 是子代理面一部分，不静默降级）；摘除经 effect——apply 中途 throw 回卷也摘
       ctx.effect(ctx.use(taskHub).registerSource(agentTaskSource(verbDeps)));
+      const offRescueNote = ctx.on(
+        agentTruncatedTool,
+        delegationRescueNote(), // 件15 批3：message/spawn 截断的换策略指引（note-only 零副作用）
+      );
       const offs = delegationTools({
         spawn: (execCtx, input: SpawnInput) => spawnAgent(spawnDeps, execCtx, input),
         message: (execCtx, input) => message(verbDeps, execCtx.session, input),
         list: (execCtx) => listAgents(verbDeps, execCtx.session),
+        reportCap: limits.reportCap, // 件15 D1 恒等：message 上限 = reportCap（单旋钮）
       }).map((tool) => registry.register(tool));
       // 宿主直调服务面（delegationView）：与工具面同一动词实现——不经工具 dispatch 的
       // 权限裁决与文本解析（hub get_subagents/subagent-steer/abort 级联消费）
@@ -238,6 +254,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions = {}): Pl
 
       return () => {
         tearingDown = true; // 通知门先行：级联 cancel 的 abort 通知不得 steer 复活父
+        offRescueNote();
         offStatus();
         offTypesSnapshot();
         offView();

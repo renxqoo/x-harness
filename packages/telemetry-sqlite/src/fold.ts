@@ -343,7 +343,15 @@ function onToolResult(hit: Hit): void {
         endMs: event.time,
         statusCode: data["isError"] === true ? "ERROR" : "OK",
         statusMessage: null,
-        attributes: { "tool.call_id": callId, "tool.result": str(data["content"]), "xh.turn": open.turn, "xh.step": open.step },
+        // tool.synthetic = harness 合成结果（截断配对等——docs/TRUNCATED-TOOL-RESCUE.md 裁决⑧）：
+        // 在场才记——截断事故率经属性过滤可观测（spanName 加后缀便于直接检索）
+        attributes: {
+          "tool.call_id": callId,
+          "tool.result": str(data["content"]),
+          "xh.turn": open.turn,
+          "xh.step": open.step,
+          ...(data["synthetic"] === true ? { "tool.synthetic": true } : {}),
+        },
       }),
     );
   }

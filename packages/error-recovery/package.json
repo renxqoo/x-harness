@@ -1,0 +1,18 @@
+{
+  "name": "@x-harness/error-recovery",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/agent-loop": "workspace:*",
+    "@x-harness/core": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/llm-retry": "workspace:*",
+    "@x-harness/system-prompt": "workspace:*",
+    "@x-harness/tools": "workspace:*"
+  }
+}

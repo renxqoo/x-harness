@@ -7,9 +7,6 @@ import type { TaskSource } from "../tokens.ts";
 const stub = (kind: "agent" | "bash"): TaskSource => ({
   kind,
   probe: () => ({ kind: "miss" }),
-  output: () => {
-    throw new Error("unused");
-  },
   stop: () => {
     throw new Error("unused");
   },

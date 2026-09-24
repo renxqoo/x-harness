@@ -1,6 +1,10 @@
 # full 档总括授权根治（授权事实三面铺开）方案
 
 > 状态：已实施（2026-09-20 定稿前与收口前各双路对抗审查，处置记录见文末两节）
+> 修订（2026-09-23，docs/SANDBOX.md 裁决⑤修订）：unrestricted 会话的围栏面语义已升级为
+> **免内核包裹直通**（原「writable 含 /、网络 '*'」的壳内放宽表述为历史记录——壳本身仍套
+> 着会杀 GUI/mach/直连网络类工具，与总括意志相悖）；env 亦不清洗。worktree 隔离与 networkOff
+> kill switch 语义不变。
 > 级别：中（跨 packages/permission + packages/sandbox-local + apps/cli；扩展 EXEC-ENV
 > §5 裁决⑤「full=完全访问」的语义边界——**用户裁决（2026-09-20）：治本方向 = 启动期
 > 总括授权翻译为授权事实，经既有授权管道铺开，执法层零改动**）

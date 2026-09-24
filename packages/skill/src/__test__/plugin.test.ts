@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context, Disposer, Plugin } from "@x-harness/core";
-import { agentLoopServiceToken, agentStatus } from "@x-harness/agent-loop";
+import { agentLoopServiceToken, agentStatus, isSnapshotNode, snapshotEnvelope } from "@x-harness/agent-loop";
 import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { Session, SessionId } from "@x-harness/session";
@@ -110,7 +110,7 @@ describe("createSkillPlugin 注入", () => {
 
   it("running 注入：surface[0] 为清单块，deriveMessages 首位含块", async () => {
     await writeAlpha();
-    const block = renderSkillsBlock((await loadSkills([skillsDir])).skills);
+    const block = snapshotEnvelope("skills", renderSkillsBlock((await loadSkills([skillsDir])).skills));
     const world = await makeWorld(true);
     running(world.ctx, world.session.id);
     const surface = world.session.surface();
@@ -118,6 +118,14 @@ describe("createSkillPlugin 注入", () => {
     expect(textBlocksOf(world.session)).toEqual([block]);
     const messages = world.session.deriveMessages();
     expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: block }] });
+  });
+
+  it("清单帧入快照信封：isSnapshotNode 判 true——展示面跳过技能列表不展示（症状：技能清单在 UI 当普通消息展示）", async () => {
+    const world = await makeWorld(true);
+    running(world.ctx, world.session.id);
+    const node = world.session.surface()[0];
+    if (node === undefined) throw new Error("injected block node missing");
+    expect(isSnapshotNode(node)).toBe(true);
   });
 
   it("同步红线：注入事件先于当轮 turn/start 落账", async () => {
@@ -153,7 +161,7 @@ describe("createSkillPlugin 注入", () => {
   it("预置同块（fork 继承语义）不再注入", async () => {
     const world = await makeWorld(true);
     expect(textBlocksOf(world.session)).toHaveLength(0);
-    const expected = renderSkillsBlock((await loadSkills([skillsDir])).skills);
+    const expected = snapshotEnvelope("skills", renderSkillsBlock((await loadSkills([skillsDir])).skills));
     world.session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: expected }] }, { surfaceOp: "append" });
     running(world.ctx, world.session.id);
     expect(textBlocksOf(world.session)).toEqual([expected]);
@@ -256,5 +264,27 @@ describe("createSkillPlugin 注入", () => {
     await Promise.all(world.unload.map((off) => off()));
     running(world.ctx, world.session.id);
     expect(world.session.surface()).toHaveLength(0);
+  });
+});
+
+describe("插件零目录知识契约（skillsDirs 必收——不自持缺省/env）", () => {
+  it("env 与 cwd 项目根在场也不被插件消费：[] 显式零恒无快照（目录决定权在宿主边沿）", async () => {
+    const original = process.env["X_HARNESS_SKILLS_DIRS"];
+    process.env["X_HARNESS_SKILLS_DIRS"] = "/definitely/not/scanned";
+    try {
+      const stub: Plugin = {
+      name: "agent-loop",
+      apply: (ctx: Context) => {
+        ctx.provide(agentLoopServiceToken, { get: () => undefined } as unknown as AgentLoopService);
+      },
+    };
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [stub, createSkillPlugin({ skillsDirs: [] })]);
+    for (const d of unload) await d();
+    await ctx.dispose();
+    } finally {
+      if (original === undefined) delete process.env["X_HARNESS_SKILLS_DIRS"];
+      else process.env["X_HARNESS_SKILLS_DIRS"] = original;
+    }
   });
 });

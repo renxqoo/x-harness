@@ -18,7 +18,7 @@ function userTextsOfWorld(world: World, session: import("@x-harness/session").Se
     .use(sessionStore)
     .get(session)
     ?.events()
-    .filter((e) => e.type === "user/message")
+    .filter((e) => e.type === "user/message" || e.type === "agent/message")
     .map((e) => JSON.stringify(e.data))
     .join("\n") ?? "";
 }
@@ -112,7 +112,7 @@ describe("main 通道（§5.1/§5.2-1）", () => {
 });
 
 describe("task_id 按号（output/stop）与 block/timeout", () => {
-  it("output/stop 按 agentId 生效（owner 限定）", async () => {
+  it("stop 按 agentId 生效（owner 限定）", async () => {
     const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }, { maxConcurrent: 5 }));
     const parent = await spawnParent(world);
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
@@ -123,13 +123,10 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
     expect(stopped.isError).toBeUndefined();
     const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
     expect(listed.content).toContain("status=stopped");
-    const output = await callTool({ world, name: "task_output", args: { task_id: idA, block: false }, session: parent.agent.session.id });
-    expect(output.isError).toBeUndefined();
-    expect(output.content).toContain(idA);
     await parent.dispose();
   });
 
-  it("block/timeout：在飞子 block=true 超时 → running 快照；完成后 block → 报告", async () => {
+  it("慢子完成 → 通知全文到达（反轮询范式：无同步等待动词，交付走推送）", async () => {
     const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }));
     const parent = await spawnParent(world);
     let release!: () => void;
@@ -144,21 +141,15 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
       })(),
     ]);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
-    const agentId = agentIdOf(spawned.content);
-    await vi.waitFor(async () => {
+    void agentIdOf(spawned.content); // spawn 语法面（agentId 消费在通知断言）
+    const running = async (): Promise<void> => {
       const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
       expect(listed.content).toContain("status=running");
-    }, { timeout: 5_000 });
-    const waited = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true, timeout: 50 }, session: parent.agent.session.id });
-    expect(waited.isError).toBeUndefined();
-    expect(waited.content).toContain("still running");
-    expect(waited.content).toContain("waited 50ms");
+    };
+    await vi.waitFor(running, { timeout: 5_000 });
     release();
-    const done = await callTool({ world, name: "task_output", args: { task_id: agentId, block: true, timeout: 5_000 }, session: parent.agent.session.id });
-    expect(done.content).toContain("completed");
-    expect(done.content).toContain("already delivered"); // 全文已随通知交付——复查不复读
-    const notice = JSON.stringify(parent.agent.session.events().filter((e) => e.type === "user/message").at(-1)?.data);
-    expect(notice).toContain("slow child finished"); // 全文在通知里（交付未丢失）
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
+    await vi.waitFor(() => expect(lastNotice()).toContain("slow child finished"), { timeout: 5_000 }); // 全文在通知里（推送交付）
     await parent.dispose();
   });
 });

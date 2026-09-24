@@ -151,6 +151,17 @@ export function resolveDefaultDial(catalog: ModelsCatalog): { provider: string; 
   return first !== undefined ? { provider: first.provider, model: first.model } : undefined;
 }
 
+/** 逐模型输出上限（entries 已解析值单源：模型级 meta 与 modelOverrides 都已折进
+ *  entry.maxTokens——快照重算优先级会与 get_models 展示面漂移，此处只查表） */
+function maxOutputTokensByModelOf(catalog: ModelsCatalog, profile: HubProviderProfile): Readonly<Record<string, number>> | undefined {
+  const ids = new Set(profile.models.map(modelId));
+  const byModel: Record<string, number> = {};
+  for (const entry of catalog.entries) {
+    if (entry.provider === profile.name && ids.has(entry.model) && entry.maxTokens !== undefined) byModel[entry.model] = entry.maxTokens;
+  }
+  return Object.keys(byModel).length > 0 ? byModel : undefined;
+}
+
 /** worker 装配快照构造（DESIGN §3.6）：apiKey 解析序 = credentials > 档案字面 >
  *  apiKeyEnv 环境变量；快照经 HUB_WORKER_PROVIDERS 单通道注入（worker 不读文件） */
 export function buildAssemblySnapshot(
@@ -161,6 +172,7 @@ export function buildAssemblySnapshot(
   return catalog.profiles.map((profile) => {
     const apiKeyEnv = profile.apiKeyEnv; // 无声明不回退全局 env 键（凭据外送面关闭）
     const apiKey = firstDefined(credentials[profile.name], profile.apiKey, apiKeyEnv !== undefined ? env[apiKeyEnv] : undefined) ?? "";
+    const maxOutputTokensByModel = maxOutputTokensByModelOf(catalog, profile);
     return {
       provider: profile.name,
       protocol: profile.protocol,
@@ -169,6 +181,7 @@ export function buildAssemblySnapshot(
       models: profile.models.map(modelId),
       ...(profile.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
       ...(profile.maxOutputTokens !== undefined ? { maxOutputTokens: profile.maxOutputTokens } : {}),
+      ...(maxOutputTokensByModel !== undefined ? { maxOutputTokensByModel } : {}),
     };
   });
 }

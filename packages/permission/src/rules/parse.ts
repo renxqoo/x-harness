@@ -3,7 +3,7 @@
 
 import type { PermissionRule, RuleOrigin, RuleTool, Verdict } from "../types.ts";
 
-const TOOLS: readonly RuleTool[] = ["Bash", "Read", "Write", "Grep"];
+const TOOLS: readonly RuleTool[] = ["Bash", "Read", "Write", "Grep", "Tool"];
 const VERDICTS: readonly Verdict[] = ["allow", "deny", "ask"];
 
 export function parseRule(text: string, origin: RuleOrigin): PermissionRule {

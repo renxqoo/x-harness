@@ -1,7 +1,7 @@
 // F1 kit 形状 + createAgentWorld（SDK-MIGRATION-F1 §3）：乱序插件集仍正确（软约束生效）、
 // 五服务缺席 fail-closed、失败自清理、最小世界端到端跑一轮。
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
@@ -10,12 +10,11 @@ import type { Plugin } from "@x-harness/core";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { compactionRunner } from "@x-harness/compaction";
 import { sessionPlugin } from "@x-harness/session";
-import { autoCompactKit, compactionKit } from "../index.ts";
 import { PathGate } from "@x-harness/tool-core";
 import { textScript } from "@x-harness/testkit";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { Database } from "bun:sqlite";
-import { createAgentWorld, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, telemetryKit, telemetryKitWithHandle, toolboxKit } from "../index.ts";
+import { autoCompactKit, compactionKit, createAgentWorld, fenceKit, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, telemetryKit, telemetryKitWithHandle, toolboxKit } from "../index.ts";
 import { createBunSqliteExecutor } from "@x-harness/telemetry-sqlite";
 
 let root = "";
@@ -76,9 +75,77 @@ describe("createAgentWorld + kits（F1）", () => {
     ];
     const ctx = createContext();
     const unload = await loadPlugins(ctx, plugins);
-    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "bash", "grep", "task_output", "task_stop"]);
+    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "edit", "bash", "grep", "task_stop"]); // edit 在 write 之后（三件套同源相邻）
     for (const dispose of unload) await dispose();
     await ctx.dispose();
+  });
+
+  it("toolboxKit taskLogDir 透传：bash 后台日志落在传入根下", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-3"));
+    const logRoot = mkdtempSync(join(tmpdir(), "xh-kits-logs-"));
+    try {
+      const plugins: readonly Plugin[] = [
+        ...inlineSessionKit(),
+        ...toolboxKit({ root, env: createLocalEnv(root), taskLogDir: logRoot }),
+      ];
+      const ctx = createContext();
+      const unload = await loadPlugins(ctx, plugins);
+      const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+      const r = await reg.dispatch({ callId: "k1", name: "bash", args: { command: "echo kit-log", run_in_background: true }, signal: new AbortController().signal, session: "s-kit" as never });
+      expect(r.isError).toBeUndefined();
+      expect(r.content).toContain(logRoot); // 日志路径在传入根下（透传链 bash taskLimits ✓）
+      const logPath = (r.content.match(/output appends to ([^;]+);/) ?? ["", ""])[1] ?? "";
+      const { backgroundTasks } = await import("@x-harness/tool-bash");
+      const tasks = ctx.use(backgroundTasks);
+      const deadline = Date.now() + 5_000;
+      while ((tasks.list("s-kit" as never)[0]?.endedAt) === undefined && Date.now() < deadline) {
+        await new Promise((resolve) => { setTimeout(resolve, 25); });
+      }
+      const allowed = await reg.dispatch({ callId: "k2", name: "read", args: { path: logPath }, signal: new AbortController().signal, session: "s-kit" as never });
+      expect(allowed.isError).toBeUndefined(); // read 经 systemRoots 放行（透传链 read ✓）
+      expect(allowed.content).toContain("kit-log");
+      for (const dispose of unload) await dispose();
+      await ctx.dispose();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(logRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("toolboxKit 截断抢救件（TRUNCATED-TOOL-RESCUE 层 2 装配）", () => {
+  it("env 传入 → 抢救件在装配内：agentTruncatedTool 派发物化 sidecar（gate 同源过门）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-rescue-"));
+    const plugins: readonly Plugin[] = [...inlineSessionKit(), ...fenceKit({ root, mode: "full" }), ...toolboxKit({ root, env: createLocalEnv(root), permission: { } })];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const { agentTruncatedTool } = await import("@x-harness/agent-loop");
+    const body = "y".repeat(600);
+    const r = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"draft.txt","content":"${body}`, signal: new AbortController().signal } as never, async () => undefined);
+    expect(r).toEqual({ note: `Recovered 600 chars (1 lines) of the truncated write to draft.txt.partial (draft — draft.txt NOT modified). Read it, produce the remainder as a separate file, assemble with bash, then delete the .partial.` });
+    expect(readFileSync(join(root, "draft.txt.partial"), "utf8")).toBe(body);
+    const denied = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c2", name: "write", arguments: `{"path":"../esc.txt","content":"${body}`, signal: new AbortController().signal } as never, async () => undefined);
+    expect(denied).toEqual({ note: "target outside workspace boundary, draft not saved" }); // gate 与 write 同源
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+    rmSync(root, { recursive: true, force: true });
+    root = "";
+  });
+
+  it("env 经 execEnv 服务提供（三级解析第二档）→ 抢救件仍不装配：工厂参数档是唯一注入面，不静默读服务（与 read/write 的 envOption 语义同源）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-rescue2-"));
+    const { execEnv } = await import("@x-harness/exec-env");
+    const ctx = createContext();
+    ctx.provide(execEnv, createLocalEnv(root));
+    const unload = await loadPlugins(ctx, [...inlineSessionKit(), ...toolboxKit({ root })]);
+    const { agentTruncatedTool } = await import("@x-harness/agent-loop");
+    const r = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"d.txt","content":"${"z".repeat(600)}`, signal: new AbortController().signal } as never, async () => undefined);
+    expect(r).toBeUndefined(); // 无抢救件应答 → 只有 base 文案（真 opt-in）
+    expect(existsSync(join(root, "d.txt.partial"))).toBe(false);
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+    rmSync(root, { recursive: true, force: true });
+    root = "";
   });
 });
 
@@ -195,6 +262,78 @@ describe("autoCompactKit（分层自动压缩接入）", () => {
     const landed: string[] = [];
     ctx.on(autocompactL1Cleared, (payload: unknown) => landed.push(String((payload as { session: string }).session)));
     expect(ctx.use(compactionRunner).summarizer?.model).toBe("sum"); // CP 面单一真相源在场(runner.summarizer)
+    await ctx.dispose();
+  });
+});
+
+describe("toolboxKit edit 装配（EDIT-TOOL 批 3）", () => {
+  it("toolboxKit 含 edit 插件：注册表列出 edit，guidance 落 def 与 system-prompt tool/edit 段", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-edit-"));
+    const plugins: readonly Plugin[] = [
+      ...inlineSessionKit(),
+      ...promptKit(),
+      ...toolboxKit({ root, env: createLocalEnv(root) }),
+    ];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+    expect(reg.schemas().map((s) => s.name)).toContain("edit"); // 装配齐
+    const def = reg.get("edit");
+    expect(def?.description).toContain("unique"); // description 自含用法
+    // guidance 数据位：四则守则落 def（registry.get 可读——D3）
+    const guidance = def?.guidance ?? "";
+    expect(guidance).toContain("must be unique in the original file");
+    expect(guidance).toContain("matched against the original file, not after earlier edits");
+    expect(guidance).toContain("merge them into one edit");
+    expect(guidance).toContain("as small as possible while still unique");
+    // guidance 停靠 system-prompt tool/edit 段（assemble 文本在场，位于 base 段之后）
+    const { systemPrompt } = await import("@x-harness/system-prompt");
+    const prompt = ctx.use(systemPrompt);
+    const text = prompt.assemble().text;
+    expect(text).toContain("## Edit");
+    // 拆卸即回收
+    for (const dispose of unload) await dispose();
+    expect(prompt.assemble().text).not.toContain("## Edit");
+    await ctx.dispose();
+  });
+
+  it("三件套同源：toolboxKit 内 read→edit→write 链路打通（共享 gate+observed）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-edit2-"));
+    const plugins: readonly Plugin[] = [
+      ...inlineSessionKit(),
+      ...toolboxKit({ root, env: createLocalEnv(root) }),
+    ];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+    const signal = new AbortController().signal;
+    const session = "s-edit-chain" as never;
+    const { writeFileSync, readFileSync } = await import("node:fs");
+    writeFileSync(`${root}/flow.txt`, "alpha\nbeta\ngamma\n");
+    const seen = await reg.dispatch({ callId: "e1", name: "read", args: { path: "flow.txt" }, signal, session });
+    expect(seen.isError).toBeUndefined();
+    const edited = await reg.dispatch({ callId: "e2", name: "edit", args: { path: "flow.txt", edits: [{ oldText: "beta", newText: "BETA" }] }, signal, session });
+    expect(edited.isError).toBeUndefined();
+    expect(edited.content).toContain("Edited flow.txt (1 replacement)");
+    expect(edited.content).toContain("+2 BETA");
+    const written = await reg.dispatch({ callId: "e3", name: "write", args: { path: "flow.txt", content: "done\n" }, signal, session });
+    expect(written.isError).toBeUndefined();
+    expect(readFileSync(`${root}/flow.txt`, "utf8")).toBe("done\n");
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+
+  it("write description 分流句在场（edit 落地后的 write 自述）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-edit3-"));
+    const plugins: readonly Plugin[] = [
+      ...inlineSessionKit(),
+      ...toolboxKit({ root, env: createLocalEnv(root) }),
+    ];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+    expect(reg.get("write")?.description).toContain("prefer the edit tool");
+    for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
 });

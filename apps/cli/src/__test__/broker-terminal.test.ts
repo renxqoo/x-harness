@@ -4,11 +4,11 @@
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { permissionBroker } from "@x-harness/permission";
-import type { AskRequest } from "@x-harness/permission";
+import type { AskPayload } from "@x-harness/permission";
 import { createTerminalBrokerPlugin, decideApproval } from "../broker-terminal.ts";
 import type { BrokerIO } from "../broker-terminal.ts";
 
-const ASK: AskRequest = { tool: "bash", reason: "network fetch: api.example.com" };
+const ASK: AskPayload = { tool: "bash", reason: "network fetch: api.example.com", options: ["once", "session"] };
 
 describe("decideApproval（表驱动）", () => {
   const cases: readonly { readonly answer: string | undefined; readonly expected: "allow" | "deny" }[] = [
@@ -25,7 +25,7 @@ describe("decideApproval（表驱动）", () => {
   ];
   for (const testCase of cases) {
     it(`${JSON.stringify(testCase.answer)} → ${testCase.expected}`, () => {
-      expect(decideApproval(testCase.answer)).toBe(testCase.expected);
+      expect(decideApproval(testCase.answer, ["once", "session"]).verdict).toBe(testCase.expected);
     });
   }
 });
@@ -40,16 +40,16 @@ describe("broker 形态", () => {
   it("交互：提示行含工具与理由；y → allow", async () => {
     const lines: string[] = [];
     const broker = makeBroker({ interactive: true, write: (line) => lines.push(line), question: () => Promise.resolve("y") });
-    expect(await broker.ask(ASK)).toBe("allow");
+    expect((await broker.ask(ASK)).verdict).toBe("allow");
     expect(lines[0]).toContain("allow bash?");
     expect(lines[0]).toContain("network fetch");
   });
 
   it("交互：n / EOF（接口被强制关闭）→ deny", async () => {
     const denied = makeBroker({ interactive: true, write: () => {}, question: () => Promise.resolve("n") });
-    expect(await denied.ask(ASK)).toBe("deny");
+    expect((await denied.ask(ASK)).verdict).toBe("deny");
     const eof = makeBroker({ interactive: true, write: () => {}, question: () => Promise.resolve(undefined) });
-    expect(await eof.ask(ASK)).toBe("deny");
+    expect((await eof.ask(ASK)).verdict).toBe("deny");
   });
 
   it("非交互（print 管道）：不提问，显式警告行 + deny", async () => {
@@ -63,7 +63,7 @@ describe("broker 形态", () => {
         return Promise.resolve("y");
       },
     });
-    expect(await broker.ask(ASK)).toBe("deny");
+    expect((await broker.ask(ASK)).verdict).toBe("deny");
     expect(questioned).toBe(false);
     expect(lines[0]).toContain("non-interactive");
     expect(lines[0]).toContain("bash");

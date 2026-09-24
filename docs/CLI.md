@@ -16,7 +16,7 @@
    readline 交互 + ANSI 流式打印。
 3. **模型接入 = providers.json 多档案**：`~/.x-harness/providers.json` 声明多 provider，
    `/model` 运行时切换、`--list-models` 列出。
-4. **默认装配 = 全部无条件**：含 sandbox-local 与 agent-delegation；flag 只做工具白/黑名单减法。
+4. **默认装配 = 全部无条件**：含 sandbox（围栏）与 agent-delegation；flag 只做工具白/黑名单减法。
    例外：`--no-session` 略去 jsonl 持久化插件（内存会话语义必然，见 §2.5）。
 
 **明确不处理**（归属落档）：
@@ -54,7 +54,7 @@ x-harness [flags] [message...] [@file...]
 | `--provider <name>` | 覆盖 providers.json default.provider | — |
 | `--model <model>` | 覆盖 default.model | — |
 | `--thinking <off\|low\|medium\|high\|max>` | 思考等级 | default.thinking（缺省 off；max=自适应模型无约束思考） |
-| `--permission <plan\|auto\|full>` | 权限模式档（docs/EXEC-ENV.md §5：plan=write/bash 全拒；auto=全流程审批；full=完全访问——总括授权三面铺开，docs/PERMISSION-FULL-UNRESTRICTED.md：工具/围栏/网络面，deny 规则与提权硬拒仍压顶）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | auto |
+| `--permission <plan\|auto\|edit-confirm\|full\|sandboxed-auto>` | 权限模式档（语义见下方「权限档位」表；规则词汇表 docs/EXEC-ENV.md §5）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | sandboxed-auto |
 | `--api-key <key>` | 运行时覆盖**所选 provider** 档案的 apiKey（仅装配期生效；/model 切到其他档案不跟随） | — |
 | `--tools <a,b>` | 工具白名单 | 全部注册工具 |
 | `--exclude-tools <a,b>` | 工具黑名单（白名单基础上再减） | — |
@@ -63,6 +63,16 @@ x-harness [flags] [message...] [@file...]
 | `--append-system-prompt <text>`（可重复） | 追加 section | — |
 | `--list-models [search]` | 列 providers.json 模型后退出 | — |
 | `--version` / `--help` | 短路退出 | — |
+
+**权限档位**（裁决梯与规则面 docs/EXEC-ENV.md §5）：
+
+| 档 | 语义 |
+| --- | --- |
+| plan | 变更硬闸：bash 与 write/edit 工具无条件拒；read/grep 走规则 |
+| auto | 界内自动（只读类 bash 与界内合成写直通）；界外路径、无法预测的 bash、写编辑类审批 |
+| edit-confirm | **编辑确认**：搜索/查看类 bash（只读观察动词、git 只读子命令、find 纯检索形态）与 read/grep 免确认直通；write/edit 工具、变更类 bash（含构建/测试类脚本——脚本内容不可预测）、无法预测的 bash 与界外路径一律审批 |
+| full | 完全访问：总括授权三面铺开（docs/PERMISSION-FULL-UNRESTRICTED.md：工具/围栏/网络面）；deny 规则与提权硬拒仍压顶 |
+| sandboxed-auto | auto 裁决语义 + 围栏执行（contained）；围栏执行失败才升级审批（on-failure） |
 
 - `--` 之后：`@` 开头进 fileArgs，其余进 messages；stdin 管道内容拼在初始消息最前。
 - **互斥校验**（violation → exit 2）：`-r` 与 `-p`（选择 UI 不可用）；`--no-session` 与
@@ -171,7 +181,7 @@ x-harness [flags] [message...] [@file...]
 sessionPlugin
 createJsonlSessionPersistence({ root: sessionDir })        // --no-session 时略去；provide sessionArchive
 toolsPlugin
-createPermissionPlugin({ root: cwd, mode: --permission 档 })  // 经 fenceKit 透传；缺省 auto（permission 包内落定）
+createPermissionPlugin({ root: cwd, mode: --permission 档 })  // 经 fenceKit 透传；缺省 sandboxed-auto（build-world 缺省围栏优先）
 createSandboxPlugin({ root: cwd })                          // inject permission; provide 围栏 execEnv
 createReadPlugin({ gate: PathGate(cwd), observed })         // env 走围栏 execEnv（apply 时 tryUse）
 createWritePlugin({ gate, observed })                       // read/write 共享同一 gate+observed
@@ -198,7 +208,7 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
 裁决与依据：
 
 - **数组序硬约束**：tool-* 的 env 是 apply 时同步 `tryUse(execEnv)`，围栏 execEnv 的提供者
-  sandbox 必须排在 tool-* 之前（topo 只管 inject，此处靠数组序；sandbox-local 单测同序
+  sandbox 必须排在 tool-* 之前（topo 只管 inject，此处靠数组序；sandbox 单测同序
   `[tools, permission, sandbox, …]`）。
 - **多 provider 不用适配器插件工厂**：`createAnthropicCompatLlm` 插件名固定
   `llm-anthropic-compat`，多实例重名被 loadPlugins 拒；宿主在 loadPlugins 后用裸
@@ -213,9 +223,12 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   probe 失败（无 wrapper / linux 无 socat）= 装配期 throw = 进程 exit 1 + stderr 说明
   （fail-closed，预期行为；平台矩阵见 §2.1）。
 - **gate 一致性**：PathGate(cwd) 与围栏 execEnv root=cwd 满足 tool-core 根一致性校验。
-- **系统提示词**：基础段归本 app 的 `base-prompt.ts`（`createBasePromptPlugin`——业务内容在上层；内核 `@x-harness/system-prompt` 仅持注册表与 `wellKnown` 锚点词汇表）（section
-  `base/core`：身份/守则/环境块；facts=cwd/isGit/platform/shell/date 由宿主探测传入，
-  入口归一压换行——注入面收口，date 会话内定格防午夜缓存断裂）；工具守则段由 tool-core
+- **系统提示词**：基础段归 `@x-harness/harness`（`createBasePromptPlugin`——两宿主
+  apps/cli/apps/host-hub 同源共享；内核 `@x-harness/system-prompt` 仅持注册表与
+  `wellKnown` 锚点词汇表）（section
+  `base/core`：身份/守则/环境块；facts=cwd/isGit/platform/shell 由宿主探测传入
+  （`probeBaseFacts`——同包），入口归一压换行——注入面收口；日期已迁边沿注入快照
+  通道）；工具守则段由 tool-core
   在 apply 期直接停靠（D3 投稿式）：section `tool/<name>`（锚 wellKnown.baseCore；
   bash 围栏守则在 sandbox env 下才有文本，local 零段）；装配序硬约束 system-prompt
   先于带 guidance 的 tool-*（D6，头注）。`--system-prompt` 整体替换时不装基础段
@@ -345,7 +358,7 @@ coverage include 扩 `apps/*/src/**`；不接受为凑数排除）。
 - [x] providers.json：多 provider 注册、/model 切换（副作用提示）、--list-models、default
       缺省链、校验错例全表
 - [x] 装配：全量 17 插件 + N adapter，数组序护栏（sandbox 先于 tool-*）、--no-session 条件化
-- [x] 工具面：read/write/bash/grep/task_output/task_stop/delegation 工具在册；--tools/-xt/-nt 生效
+- [x] 工具面：read/write/bash/grep/task_stop/delegation 工具在册；--tools/-xt/-nt 生效
 - [x] 权限：界内 auto allow、ask 经 broker、非 TTY deny+警告、broker 缺席退化 deny 不崩
 - [x] thinking 四级、token 用量显示（/session + turn 行，含 resume 冷启动折叠）
 - [x] compact：保锚点折叠、fold 后 turn 摘要仍在、abort 可取消

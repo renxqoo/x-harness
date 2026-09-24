@@ -4,6 +4,7 @@
 // worker 三段式（#1/#7/#16）：begin（boot+ready，apply 未跑）→ 锁内 replace/冲突 → proceed → register。
 // 落位纪律（裁决 9）：process 注册落平台 root，disposer 链回插件 scope。
 
+import { stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadPlugins, pluginEvent } from "@x-harness/core";
@@ -13,6 +14,8 @@ import type { Registry } from "./registry.ts";
 import type { ApprovalGate } from "./approval.ts";
 import type { ErrorLog } from "./error-log.ts";
 import { validateModule } from "./validate-module.ts";
+import { createProcessCapabilities } from "./capabilities.ts";
+import type { PluginCapabilities } from "./capabilities.ts";
 import { wrapPluginForErrorRouting } from "./wrapper.ts";
 import type {
   CreatePluginManagerDeps,
@@ -24,7 +27,10 @@ import type {
   UninstallInput,
 } from "./types.ts";
 
+/** P1 引擎层强制点：vendor 根内路径恒 worker 模式（编排层覆写是第一层，此处第二层——
+ * 不可信代码即使绕过编排层也进不了主进程） */
 export interface InstallerDeps extends CreatePluginManagerDeps {
+  readonly vendorRoots?: readonly string[];
   readonly registry: Registry;
   readonly errorLog: ErrorLog;
   readonly approvalGate: ApprovalGate;
@@ -40,6 +46,13 @@ function resolveWithinRoots(roots: readonly string[], inputPath: string): Result
     }
   }
   return { ok: false, reason: `path outside roots: ${inputPath}` };
+}
+
+function isWithinAnyRoot(roots: readonly string[], inputPath: string): boolean {
+  return roots.some((root) => {
+    const rel = relative(resolve(root), inputPath);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  });
 }
 
 export interface Installer {
@@ -59,7 +72,12 @@ export function createInstaller(deps: InstallerDeps): Installer {
       loadCounts.set(path, count);
       return count === 1 ? import(path) : import(`${path}?pmv=${count}`);
     });
-  // #15：percent-encoding 解码（含空格/非 ASCII 路径）
+  // #15：percent-encoding 解码（含空格/非 ASCII 路径）。
+  // 形态约束：host.ts 必须是磁盘真实文件（worker spawn 的物理前提）——dist 多文件
+  // 形态（--external @x-harness/*）经 node_modules 链解析到源码，天然满足；编译
+  // 单文件形态（plugin-manager 被内联进可执行体）该文件不在磁盘 → worker 装载
+  // 明确拒绝（报错优于 spawn 挂死——boot 超时兜底的主动化）。探测按安装器实例
+  // 一次（同步 exists 延迟到 installWorker 首次调用也可，此处装载期一次性即可）。
   const hostPath = fileURLToPath(new URL("./worker/host.ts", import.meta.url));
 
   const audit = (entry: PluginAuditEntry): void => {
@@ -148,7 +166,18 @@ export function createInstaller(deps: InstallerDeps): Installer {
     const scope = platform.scope({ agentId: `plugin:${name}` });
     // 裁决 10：token 注册表——本插件提供的 token 收集在案，卸载时按身份清理（与 worker 桥同语义）
     const provided: { name: string; token: AnyToken }[] = [];
+    // caps.provide 与 wrapper provide 两路共用：collision 门 + provided 账本（卸载清理闭环）
+    const onCapabilityToken = (token: AnyToken): void => {
+      const existing = deps.tokenTable.get(token.name);
+      if (existing !== undefined && existing !== token) {
+        throw new Error(`token name collision: "${token.name}" already registered by a different module (token identity is object-based — share via the defining package)`);
+      }
+      deps.tokenTable.set(token.name, token);
+      provided.push({ name: token.name, token });
+    };
+    const capabilities: PluginCapabilities = createProcessCapabilities(platform, deps.tokenTable, onCapabilityToken);
     const wrapped = wrapPluginForErrorRouting(plugin, {
+      capabilities,
       sink: (where, message) => logError({ plugin: name, phase: "runtime", where, message }),
       root: platform, // 裁决 9：注册落位 root，回卷链 scope
       onToken: (token) => {
@@ -311,7 +340,20 @@ export function createInstaller(deps: InstallerDeps): Installer {
         return { ok: false, reason: approved.reason };
       }
       const mode = input.mode ?? deps.mode ?? "process";
-      if (mode === "worker") return installWorker(path, input.replace === true);
+      if (isWithinAnyRoot(deps.vendorRoots ?? [], path) && mode === "process") {
+        const reason = `vendor plugin path requires worker mode: ${path}`;
+        installFailed("?", reason);
+        return { ok: false, reason };
+      }
+      if (mode === "worker") {
+        const hostOnDisk = await stat(hostPath).catch(() => undefined);
+        if (hostOnDisk === undefined || !hostOnDisk.isFile()) {
+          const reason = `worker mode unavailable: plugin host file not on disk (compiled single-file builds do not support thread-isolated plugins): ${hostPath}`;
+          installFailed("?", reason);
+          return { ok: false, reason };
+        }
+        return installWorker(path, input.replace === true);
+      }
 
       const mod = await loadModule(path);
       const validated = validateModule(mod, kernelApiVersion);

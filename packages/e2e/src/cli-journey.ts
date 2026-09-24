@@ -321,7 +321,7 @@ async function journeyPermission(server: FakeServer, home: string, cwd: string):
   // 用法面：垃圾档位 exit 2 + 词表完整文案（真进程 parse 层）
   const bad = await runCli({ argv: ["--permission", "bogus", "-p", "hi"], home, cwd });
   must(bad.exitCode === 2, `--permission 垃圾值应 exit 2（got ${String(bad.exitCode)}）`);
-  must(bad.stderr.includes("expected plan | auto | full"), `stderr 应含词表文案（got: ${bad.stderr.slice(0, 120)}）`);
+  must(bad.stderr.includes("expected plan | auto | edit-confirm | full | sandboxed-auto"), `stderr 应含词表文案（got: ${bad.stderr.slice(0, 120)}）`);
 
   // 生效面：plan 档 write 工具调用被拒 → tool_result(is_error) 回流 → 第二轮请求 → 终答
   // （真 argv → main.openWorld → buildWorld → fenceKit 折入的端到端锚——进程内测试覆盖不到的接线）

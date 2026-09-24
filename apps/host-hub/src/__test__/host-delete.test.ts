@@ -7,15 +7,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createThreadTable } from "../host/thread-table.ts";
 import { deleteSession } from "../host/session-delete.ts";
+import { taskLogsRootOf } from "@x-harness/harness";
 import { cleanupTmpResidue } from "../host/tmp-sweep.ts";
 
-async function fixture(): Promise<{ root: string; sessionsRoot: string; agentDir: string; table: ReturnType<typeof createThreadTable> }> {
+async function fixture(): Promise<{ root: string; sessionsRoot: string; taskLogsRoot: string; agentDir: string; table: ReturnType<typeof createThreadTable> }> {
   const root = await mkdtemp(join(tmpdir(), "hub-delete-"));
   const sessionsRoot = join(root, "sessions");
   const agentDir = join(root, "agent");
   await mkdir(sessionsRoot, { recursive: true });
   await mkdir(agentDir, { recursive: true });
-  return { root, sessionsRoot, agentDir, table: createThreadTable() };
+  return { root, sessionsRoot, taskLogsRoot: taskLogsRootOf(sessionsRoot), agentDir, table: createThreadTable() };
 }
 
 async function makeSession(sessionsRoot: string, id: string, header: Record<string, unknown> = { id, createdAt: 1, cwd: "/w" }): Promise<void> {
@@ -108,6 +109,33 @@ describe("thread/delete 状态矩阵", () => {
     if (!result.ok) return;
     expect([...result.removed].sort()).toEqual(["c1", "g1", "p"]);
     await expect(stat(join(f.sessionsRoot, "other"))).resolves.toBeTruthy(); // 无血缘不动
+  });
+
+  test("任务日志级联：root 与血缘子孙的 task-logs/<id>/ 随档案一并清（无血缘不动）", async () => {
+    const f = await fixture();
+    await makeSession(f.sessionsRoot, "p");
+    await makeSession(f.sessionsRoot, "c1", { id: "c1", createdAt: 1, cwd: "/w", agentId: "agent-1", parentSession: "p" });
+    await makeSession(f.sessionsRoot, "other", { id: "other", createdAt: 1, cwd: "/w", agentId: "agent-3", parentSession: "someone-else" });
+    for (const id of ["p", "c1", "other"]) {
+      await mkdir(join(f.taskLogsRoot, id), { recursive: true });
+      await writeFile(join(f.taskLogsRoot, id, "bash-task-t-aa.log"), "out\n", "utf8");
+    }
+    const result = await deleteSession(f, pathOf(f.root, "p"));
+    expect(result.ok).toBe(true);
+    await expect(stat(join(f.taskLogsRoot, "p"))).rejects.toThrow(); // root 日志随档案清
+    await expect(stat(join(f.taskLogsRoot, "c1"))).rejects.toThrow(); // 子孙日志级联清
+    await expect(stat(join(f.taskLogsRoot, "other"))).resolves.toBeTruthy(); // 无血缘不动
+  });
+
+  test("任务日志 vanish 失败 → io_failed 整体可重试（会话目录与表未动）", async () => {
+    const f = await fixture();
+    await makeSession(f.sessionsRoot, "t-log");
+    const blocked = join(f.root, "blocked-file");
+    await writeFile(blocked, "x", "utf8");
+    const broken = { ...f, taskLogsRoot: join(blocked, "sub") }; // 路径被文件占用——rename 必败
+    const result = await deleteSession(broken, pathOf(f.root, "t-log"));
+    expect(result).toEqual({ ok: false, reason: { code: "io_failed", message: "delete failed: task-logs rename" } });
+    await expect(stat(join(f.sessionsRoot, "t-log", "events.jsonl"))).resolves.toBeTruthy(); // 会话档案未动——可重试
   });
 
   test("trash 原子性：删除后 sessionsRoot 即刻干净；rm 尾 + 崩溃残迹由 tmp-sweep 回收", async () => {

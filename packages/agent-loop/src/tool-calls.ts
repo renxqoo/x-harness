@@ -32,6 +32,27 @@ export interface SchedulerDeps {
 
 const ABORTED_BEFORE_DISPATCH = "tool call aborted before dispatch";
 
+/** 截断配对内核文案（docs/WORK-ERROR-RECOVERY.md C3）：协议性短事实——判别符式陈述，
+ *  策略（行为指令、重发引导、拆分建议）归文案插件（@x-harness/truncation-messages 的
+ *  替换性 content）。插件缺席时本短事实即合成 result 全文（保底非死代码——「无插件世界」
+ *  测试钉死）。 */
+export const TRUNCATED_TOOL_MESSAGE = "truncated: not executed";
+
+/** 输出截断的 tool_use 参数判定：input 是 tool/call 契约的 arguments 原文串。
+ *  "" = 零字符截断；JSON.parse 失败 = 半截；成功（含非 object 的合法 JSON）= 完整
+ *  ——非 object 合法 JSON 是模型 bug 不是截断，归既有 TypeBox 违规回显自纠路径。
+ *  前置契约（docs/TRUNCATED-TOOL-RESCUE.md 层 1 前置）：llm 层 pi-events 出口保证截断
+ *  终态下发缓冲原文（未经 pi-ai partial-json 修补）——本判定才可依赖 JSON.parse 失败。 */
+export function isTruncatedArguments(input: string): boolean {
+  if (input === "") return true;
+  try {
+    JSON.parse(input);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 /** onOutput 构造（池/排他共用）：调度方发射面自包裹——观察者异常不得杀死工具执行 */
 function onOutputOf(deps: SchedulerDeps, callId: string): ((delta: string) => void) | undefined {
   if (deps.emitToolStream === undefined) return undefined;
@@ -52,7 +73,17 @@ interface DenyCheck {
   readonly step: number;
 }
 
-/** 白名单外调用：拦截在执行面并配对落账（isError 结果） */
+/** 截断/拒绝共用的配对落账原语：tool/call 非 surface（账面）+ tool/result surface 通道
+ *  （投影）——双通道缺一不可（缺 tool/result 投影则配对失效、缺 tool/call 则 repair 误判未启动）。 */
+export function mustAppendPair(
+  session: Session,
+  at: { readonly turn: number; readonly step: number },
+  spec: { readonly callId: string; readonly name: string; readonly arguments: string; readonly content: string },
+): void {
+  mustAppend(session, "tool/call", { ...at, callId: spec.callId, name: spec.name, arguments: spec.arguments });
+  mustAppendSurface(session, "tool/result", { ...at, callId: spec.callId, content: spec.content, isError: true, synthetic: true });
+}
+
 function denyNotAllowed(check: DenyCheck): boolean {
   if (check.allowed === undefined || check.allowed.has(check.call.name)) return false;
   const at = { turn: check.turn, step: check.step };

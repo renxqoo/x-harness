@@ -1,0 +1,19 @@
+{
+  "name": "@x-harness/sandbox",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.77",
+    "@x-harness/core": "workspace:*",
+    "@x-harness/exec-env": "workspace:*",
+    "@x-harness/permission": "workspace:*",
+    "@x-harness/session": "workspace:*"
+  },
+  "devDependencies": {
+    "@x-harness/tools": "workspace:*"
+  }
+}

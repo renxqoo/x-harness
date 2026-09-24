@@ -7,6 +7,7 @@
 // title/permission-mode/clear）一律 append+flush。
 import type { ImageBlock, Session, SessionId } from "@x-harness/session";
 import type { AgentHandle } from "@x-harness/agent-loop";
+import { foldInbox } from "@x-harness/agent-loop";
 import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
@@ -14,7 +15,7 @@ import { hubError, errorOfCause } from "../shared/errors.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
-import { foldQueueText } from "../shared/inbox-fold.ts";
+import { findQueueEntryTarget, foldQueue } from "../shared/inbox-fold.ts";
 import { parseCommand } from "@x-harness/commands";
 import { normalizeImages } from "../shared/images.ts";
 import type { WireImage } from "../shared/images.ts";
@@ -30,6 +31,8 @@ import type { InflightRegistry, InflightState } from "./inflight.ts";
 import { doFork, registerThreadCommands, serializedLifecycle } from "./thread-commands.ts";
 import { registerReadCommands } from "./worker-read-commands.ts";
 import { registerMetaCommands } from "./worker-meta-commands.ts";
+import { handleHotInstall, handleHotUninstall } from "./plugins-hot.ts";
+import { registerBashCommands } from "./bash-commands.ts";
 
 
 export interface WorkerState {
@@ -77,6 +80,8 @@ export interface WorkerRuntime {
   thinkingFallback?: { level: ThinkingLevel; source: "project" | "user" } | undefined;
   /** permission 回退来源快照（WAL 无会话档时 get_mode 的四态 source） */
   permissionModeSource?: "project" | "user" | "default" | undefined;
+  /** 插件提案暂存面（plugin_propose 工具 ↔ host trusted_source 命令共享；缺省缺席 = 工具不装） */
+  proposals?: import("../shared/plugin-proposals.ts").PluginProposalStore;
 }
 
 export type CommandInput = { id?: string; [key: string]: unknown };
@@ -157,19 +162,6 @@ function imageOptions(images: WireImage[] | undefined): { images: readonly Image
   return images === undefined ? undefined : { images: [...images] };
 }
 
-/** bash 直执行失败族映射（bash-exec reason 闭词表对拍）：准入拒/中止 → bash_denied、
- *  并发容量 → thread_limit、请求形状 → invalid_input、id 占用 → state_conflict；
- *  词表外（平台缺席/spawn 异常等）→ internal，原文保留 */
-function bashOutcomeError(reason: string): HubErrorShape {
-  if (reason === "permission denied" || reason === "aborted before execution started") return hubError("bash_denied", reason);
-  if (reason === "too many concurrent direct bash executions (limit reached)") return hubError("thread_limit", reason);
-  if (reason === "concurrent direct bash requires a command id" || reason === "invalid command: required" || reason.startsWith("invalid timeoutMs:")) {
-    return hubError("invalid_input", reason);
-  }
-  if (reason === "bash command id is already in use") return hubError("state_conflict", reason);
-  return hubError("internal", reason);
-}
-
 /** delegation 投递失败族映射（agent-delegation reason 前缀词表对拍）：寻址/参数
  *  → invalid_input（无会话文件重锚面——不得误用 unknown_thread 触发自愈）、
  *  not-live → thread_not_live、busy 容量 → thread_limit、其余 → internal 原文保留 */
@@ -181,13 +173,16 @@ function delegationError(reason: string): HubErrorShape {
 }
 
 /** settled 收敛面：kick 时打事件长度标记，whenIdle 后扫描新区间的 turn/end——
- *  error/blocked 收敛 → ok:false（否则 ok:true）；abort/clear 不取消 settled。 */
-function settleAfter(rt: WorkerRuntime, id: string | undefined): void {
-  if (id === undefined) return; // 无 id 无从关联——不发 settled
+ *  error/blocked 收敛 → ok:false（否则 ok:true）；abort/clear 不取消 settled。
+ *  受理记账（pendingSends +1）在登记成功时同步进行：无 id 的 driving 命令无从
+ *  关联 settled、也就无人减账——不入账，否则受理窗口（pendingSends>0）永久敞开。 */
+export function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
+  if (id === undefined) return false; // 无 id 无从关联——不发 settled
   const handle = rt.state.handle;
-  if (handle === undefined) return;
+  if (handle === undefined) return false;
   const threadIdAtKick = rt.state.threadId; // fork 替换后旧输入的 settled 仍按 kick 时线程盖章
   const marker = handle.agent.session.events().length;
+  rt.pendingSends += 1;
   void handle.agent
     .whenIdle()
     .then(() => {
@@ -214,6 +209,7 @@ function settleAfter(rt: WorkerRuntime, id: string | undefined): void {
       rt.pendingSends = Math.max(0, rt.pendingSends - 1);
       rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ok: false, reason: "settle-failed" });
     });
+  return true;
 }
 
 /** 命令分路（BATCH3-DESIGN §2.4）：内核 execute 未命中 → false（调用方走原路径——
@@ -281,7 +277,6 @@ function promptStreamingBranch(
     return;
   }
   respond(rt, { id: input.id, command: "prompt" });
-  rt.pendingSends += 1;
   settleAfter(rt, input.id);
 }
 
@@ -334,8 +329,8 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "prompt" });
-    rt.pendingSends += 1;
     settleAfter(rt, input.id);
+
   });
 
   handlers.set("steer", async (input) => {
@@ -362,8 +357,8 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "steer" });
-    rt.pendingSends += 1; // 受理窗口覆盖（与 prompt 全路径同口径）
-    settleAfter(rt, input.id);
+    settleAfter(rt, input.id); // 受理窗口覆盖（与 prompt 全路径同口径）
+
   });
 
   handlers.set("follow_up", async (input) => {
@@ -390,8 +385,8 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "follow_up" });
-    rt.pendingSends += 1;
     settleAfter(rt, input.id);
+
   });
 
   handlers.set("abort", async (input) => {
@@ -411,7 +406,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
   handlers.set("clear_queue", async (input) => {
     const session = requireThread(rt, { ...input, command: "clear_queue" });
     if (session === undefined) return;
-    const before = foldQueueText(session.events()); // 先取后清——返回被清文本
+    const before = foldQueue(session.events()); // 先取后清——返回被清文本
     const append = session.append("agent/inbox/spliced", { op: "clear", reason: "client-clear" });
     if (!append.ok) {
       respond(rt, { id: input.id, command: "clear_queue", error: hubError("io_failed", append.reason) });
@@ -423,6 +418,67 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "clear_queue", data: before });
+  });
+
+  // 单条队列命令寻址键 = entryId（inbox entry id，get_state.queue 投影携带；命令 id
+  // 字段是请求回执 id，两者不同名）。未知 entryId 按 state_conflict 拒绝（已消费/
+  // 已清空的竞态，消费方自行收敛），不重放队列镜像。
+  handlers.set("queue/drop", async (input) => {
+    const session = requireThread(rt, { ...input, command: "queue/drop" });
+    if (session === undefined) return;
+    const entryId = typeof input.entryId === "string" ? input.entryId : "";
+    if (entryId === "") {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("invalid_input", "queue entryId required") });
+      return;
+    }
+    const target = findQueueEntryTarget(session.events(), entryId);
+    if (target === undefined) {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("state_conflict", `queue entry not found: ${entryId}`) });
+      return;
+    }
+    const append = session.append("agent/inbox/spliced", { op: "drop", target, dropped: [entryId], reason: "client-drop" });
+    if (!append.ok) {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("io_failed", append.reason) });
+      return;
+    }
+    const flushed = await rt.state.world?.store.flush(session.id);
+    if (flushed !== undefined && !flushed.ok) {
+      respond(rt, { id: input.id, command: "queue/drop", error: hubError("io_failed", flushed.reason) });
+      return;
+    }
+    respond(rt, { id: input.id, command: "queue/drop" });
+  });
+
+  // 立即改向：next-turn 条目 retarget 进 next-step——运行中轮的下一步边界领取注入；
+  // 轮若在命令到达前已收尾，retarget 后的 next-step 存货由链式条件兜底（step0 领取），
+  // 空闲且无在飞 send 时无轮可改向，按受理窗口族拒绝（条目留在 followUp 队列不动）。
+  handlers.set("queue/send_now", async (input) => {
+    const session = requireThread(rt, { ...input, command: "queue/send_now" });
+    if (session === undefined) return;
+    const entryId = typeof input.entryId === "string" ? input.entryId : "";
+    if (entryId === "") {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("invalid_input", "queue entryId required") });
+      return;
+    }
+    if (!foldInbox(session.events()).nextTurn.some((entry) => entry.id === entryId)) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("state_conflict", `queue entry not in follow-up queue: ${entryId}`) });
+      return;
+    }
+    if (!rt.bridge.isStreaming() && rt.pendingSends === 0) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("streaming_window", "no running turn to steer into") });
+      return;
+    }
+    const append = session.append("agent/inbox/spliced", { op: "retarget", id: entryId, to: "next-step" });
+    if (!append.ok) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("io_failed", append.reason) });
+      return;
+    }
+    const flushed = await rt.state.world?.store.flush(session.id);
+    if (flushed !== undefined && !flushed.ok) {
+      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("io_failed", flushed.reason) });
+      return;
+    }
+    respond(rt, { id: input.id, command: "queue/send_now" });
   });
 
   handlers.set("compact", async (input) => {
@@ -478,33 +534,6 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     respond(rt, { id: input.id, command: "set_model" });
   });
 
-  handlers.set("bash", async (input) => {
-    if (requireThread(rt, { ...input, command: "bash" }) === undefined) return;
-    const outcome = await rt.bash.exec({
-      command: typeof input.command === "string" ? input.command : "",
-      ...(typeof input.timeoutMs === "number" ? { timeoutMs: input.timeoutMs } : {}),
-      ...(input.excludeFromContext === true ? { excludeFromContext: true } : {}),
-      ...(typeof input.id === "string" && input.id !== "" ? { id: input.id } : {}), // id 缺省回落 = 请求 id（DESIGN §3.7）
-    });
-    if (!outcome.ok) {
-      respond(rt, { id: input.id, command: "bash", error: bashOutcomeError(outcome.reason) });
-      return;
-    }
-    respond(rt, {
-      id: input.id,
-      command: "bash",
-      // 解构判别联合（ok 字段不进 data 面）
-      data: { output: outcome.output, exitCode: outcome.exitCode, cancelled: outcome.cancelled, truncated: outcome.truncated, ...(outcome.fullOutputPath !== undefined ? { fullOutputPath: outcome.fullOutputPath } : {}) },
-    });
-  });
-
-  handlers.set("abort_bash", wrapSyncHandler((input) => {
-    if (requireThread(rt, { ...input, command: "abort_bash" }) === undefined) return;
-    rt.bash.abortAdmissions();
-    rt.bash.abortRunning(typeof input.id === "string" && input.id !== "" ? input.id : undefined);
-    respond(rt, { id: input.id, command: "abort_bash" });
-  }));
-
   // ui_response：弹窗应答路由进 broker（未知/晚到静默忽略）。无 response 帧——
   // host 对客户端恒 ack，worker 侧重复应答会破坏恰一响应
   handlers.set("ui_response", wrapSyncHandler((input) => {
@@ -535,6 +564,9 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
 
   registerReadCommands(rt, handlers);
   registerMetaCommands(rt, handlers);
+  handlers.set("plugins/hot_install", (input) => handleHotInstall(rt, input));
+  handlers.set("plugins/hot_uninstall", (input) => handleHotUninstall(rt, input));
+  registerBashCommands(rt, handlers);
 
   return handlers;
 }

@@ -32,7 +32,7 @@ const store = ctx.use(sessionStore);
 | `sessionFlush` | parallel | `{ session: SessionId }` | — | store.flush 派发；all-settled，聚合错误经 flush 的 Result 上浮 |
 | `sessionDisposed` | emit | `{ session: SessionId }` | none | store.dispose 移除后广播，恰好一次 |
 
-### 1.3 事件信封与词表（闭合，17 词条）
+### 1.3 事件信封与词表（闭合，21 词条）
 
 ```ts
 type SessionEvent = { type; seq; time; data }
@@ -40,7 +40,7 @@ type SessionEvent = { type; seq; time; data }
 ```
 
 - `seq` 单调连续，由 Session 独占分配（= 落账时日志长度）；`time` 为 Unix 毫秒。**物化先行**：append/seed/header 一律先 `materializeJson`（单一 JSON 值域权威——稀疏数组/原型污染/Symbol 键/显式 undefined/非有限数与 -0 全拒；getter 单遍定影，门与存储不可能见到不同值），门只看快照形状，快照深冻入账——调用方对象永不被就地冻结。
-- **surface 词条**（产模型可见消息，仅此 4 类可携带 surfaceOp）：`system/message`、`user/message`、`assistant/message`、`tool/result`。
+- **surface 词条**（产模型可见消息，仅此 5 类可携带 surfaceOp）：`system/message`、`user/message`、`assistant/message`、`tool/result`、`agent/message`（内部消息——模型可见经投影 user 角色、UI 按类型隐藏、压缩按 kind 分流；契约单一真相见 [AGENT-MESSAGE.md](./AGENT-MESSAGE.md)）。
 - **log-only 词条**：`turn/start`、`turn/end`、`step/start`、`step/end`、`assistant/attempt`、`tool/call`、`request/header`、`request/context`、`llm/retry`、`session/end-seed`、`autocompact/checkpoint`、`todo/snapshot`。
 
 | 词条 | data 形状 | 事实 |
@@ -80,6 +80,16 @@ type ToolRef = { name: string; description?: string };
 - 区间按**位置**不按数值成员：迭代前缀替换（压缩/滑窗）落地后头部节点携带 journal 尾 seq、其后保留节点 seq 更小，摘除集不再是数值连续区间（docs/COMPACTION.md §2.A）。**对既有档案等价**：此变更前唯一 replace 写者是单点替换 `[seq,seq]`，两种语义对全部已产档案重放恒等。
 - 压缩/滑窗/上下文裁剪 = 追加一个带 replace 的摘要事件——策略归消费方插件，本件只提供原语。
 - `Session.surface(): readonly SurfaceNode[]`（`{ seq, event }`，消费方取 seq 锚点算区间）；`Session.deriveMessages(): readonly SurfaceMessage[]`（`role: system/user/assistant/tool` 的模型可见消息快照）。两者与 `events()` 同为纯函数派生快照，返回冻结数组。
+
+**三视图分域（get_entries `view` 参数，缺省 journal）**——同一 journal 的三种读法，语义边界与谓词纪律：
+
+| 视图 | 内容 | 消费者 |
+|---|---|---|
+| `journal` | 全量 WAL 行原样（含 replace 载体行） | 审计/调试——append-only 事实 |
+| `history` | 压缩前原文投影：L1 占位族（`tool/result` 单点载体——scavenger 唯一写者）滤除（被替换原文永远在场，占位对人是噪音）；其余 replace 载体（compaction 摘要 / L2 账本 / 锚点漂移，含 1 节点区间——切口护栏 `end===start` 可达）降级单行 `compaction/elided`（摘要正文只存在于载体行，整条滤除会产生无标记断裂带） | 人读历史 / UI 收敛读 |
+| effective | `get_messages` 的 surface 折叠消息（`deriveMessages`）——**非 view 取值**（走 get_messages 命令） | LLM 上下文镜像 |
+
+不变量：① 游标校验/切片/`leafSeq`/`hasMore` 恒在 journal 全集域（`entryWindowViewed` 单入口，worker 与直读两站点共用）——两视图游标互通、`leafSeq` 恒 journal 尾（fork 同域不变量）、history 下 `limit=N` 不保证返回 N 条；② 谓词读 journal 信封 `SessionEvent.surfaceOp`（投影行 data 键不可伪造）；③ 非法 view 值显式 `invalid_input`；④ 修复型 replace 写者（替换撕裂/半截产出的语义修正）当前**不存在**——若未来引入，history 谓词必须重审（滤掉修复行会让历史显示撕裂原文）。
 
 ### 1.5 Store / Session API
 

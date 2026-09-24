@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseFlat, splitFrontmatter } from "@x-harness/md-frontmatter";
 import type { LoadedAgentType } from "./types.ts";
+import { splitDialRef } from "./lineage.ts";
 
 export interface TypeLoadResult {
   readonly types: Readonly<Record<string, LoadedAgentType>>;
@@ -17,11 +18,28 @@ export interface TypeLoadResult {
 
 const RESERVED = new Set(["fork", "main"]);
 
+/** 用户 agents 根（homeDir 注入缝：测试隔离目录；缺省真实 HOME）。
+ *  agentDir 派生缝：宿主进程传配置目录时用户根落在 <agentDir>/agents——与
+ *  @x-harness/skill 的 userSkillsDirOf 同构（打包发行态 agent-app 等，
+ *  agentDir=~/.pai/agent 时 agents 与 app 数据区同区）；缺省（x-harness CLI
+ *  独立运行）保持 ~/.x-harness/agents 共享目录不变。 */
+export function userAgentsDirOf(homeDir: string = homedir(), agentDir?: string): string {
+  if (agentDir !== undefined && agentDir !== "") return join(agentDir, "agents");
+  return join(homeDir, ".x-harness", "agents");
+}
+
+/** 项目 agents 根 */
+export function projectAgentsDirOf(cwd: string): string {
+  return join(cwd, ".x-harness", "agents");
+}
+
+/** 目录解析统一入口（宿主边沿消费——插件不自持缺省）：非空显式传入 > env 覆盖 >
+ *  [项目根, 用户根] 缺省（`[]` = 显式零——与 skill 的 resolveSkillDirs 语义对齐）。 */
 export function resolveAgentDirs(configured?: readonly string[]): readonly string[] {
-  if (configured !== undefined && configured.length > 0) return configured;
+  if (configured !== undefined && configured.length > 0) return [...configured];
   const env = process.env["X_HARNESS_AGENTS_DIRS"];
   if (env !== undefined && env !== "") return env.split(":").filter((dir) => dir !== "");
-  return [join(process.cwd(), ".x-harness", "agents"), join(homedir(), ".x-harness", "agents")];
+  return [projectAgentsDirOf(process.cwd()), userAgentsDirOf()];
 }
 
 /** 目录指纹（mtime 探测——kick 边沿重载的变更判据） */
@@ -72,6 +90,17 @@ export function loadAgentTypes(dirs: readonly string[]): TypeLoadResult {
   return { types, warnings };
 }
 
+/** model/provider 字段拆解（parseFile 复杂度治理）：model 命中复合串 `provider/model`
+ *  （主应用设置界面写入形态）拆出双段；显式 provider 字段恒胜（拆解值不覆盖显式声明）。 */
+function dialFieldsOf(fields: ReadonlyMap<string, string>): { model?: string; provider?: string } {
+  const rawModel = fields.get("model");
+  const composite = rawModel !== undefined ? splitDialRef(rawModel) : undefined;
+  return {
+    ...(composite?.model ?? rawModel !== undefined ? { model: composite?.model ?? rawModel } : {}),
+    ...(fields.get("provider") ?? composite?.provider !== undefined ? { provider: fields.get("provider") ?? composite?.provider } : {}),
+  };
+}
+
 type ParseOutcome = LoadedAgentType | string; // string = 拒注册告警
 
 function parseFile(path: string, stem: string): ParseOutcome {
@@ -91,11 +120,12 @@ function parseFile(path: string, stem: string): ParseOutcome {
   if (name !== stem) return `agents: ${path} name '${name}' must match filename '${stem}'`;
   if (RESERVED.has(name)) return `agents: ${path} reserved type name '${name}'`;
   const tools = fields.get("tools");
+  const { model, provider } = dialFieldsOf(fields);
   const type: LoadedAgentType = {
     name,
     description,
-    ...(fields.get("model") !== undefined ? { model: fields.get("model") } : {}),
-    ...(fields.get("provider") !== undefined ? { provider: fields.get("provider") } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(provider !== undefined ? { provider } : {}),
     ...(tools !== undefined ? { tools: tools.split(",").map((t) => t.trim()).filter((t) => t !== "") } : {}),
     prompt: matter.body,
   };

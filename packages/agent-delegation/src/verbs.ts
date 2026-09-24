@@ -1,7 +1,7 @@
 // 动词族（docs/AGENT-DELEGATION.md §2.1/§4.4/§5.1/§5.2）：message 开放寻址（nameaddr 解析 +
-// main 通道信封包装 + 唤醒入口重验父存活）；output/stop 仅 owner（task_id = agentId——件14 起
-// 经 task-tools 的 task_output/task_stop 暴露，本文件为其 agent 源实现）；output 带 block/timeout
-// 等待语义；list 自子树视图。
+// main 通道信封包装 + 唤醒入口重验父存活）；stop 仅 owner（task_id = agentId——件14 起
+// 经 task-tools 的 task_stop 暴露，本文件为其 agent 源实现；报告读面归 [agent-notification]
+// 推送）；list 自子树视图。
 
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionStore, SessionId } from "@x-harness/session";
@@ -11,8 +11,6 @@ import type { ReviveOutcome } from "./revive.ts";
 import { evaluateCleanup } from "./worktree.ts";
 import type { CrossDeps } from "./crossmsg.ts";
 import { sendCross } from "./crossmsg.ts";
-import { childReport, failureDetail, summaryLines } from "./notify.ts";
-import type { ChildReport } from "./notify.ts";
 import type { ChildView } from "./types.ts";
 
 export interface VerbDeps {
@@ -29,7 +27,7 @@ export interface VerbDeps {
   readonly reviveByName?: (caller: SessionId, agentId: string) => Promise<ReviveOutcome>;
 }
 
-export type VerbOutcome = { readonly ok: true; readonly text: string } | { ok: false; readonly reason: string };
+export type VerbOutcome = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string };
 
 export interface MessageInput {
   readonly to: string;
@@ -38,13 +36,7 @@ export interface MessageInput {
   readonly notify_when_idle?: boolean;
 }
 
-const SUMMARY_CAP = 200;
-
-export interface OutputInput {
-  readonly task_id: string;
-  readonly block?: boolean;
-  readonly timeout?: number;
-}
+const SUMMARY_CAP = 500;
 
 export async function message(deps: VerbDeps, caller: SessionId | undefined, input: MessageInput): Promise<VerbOutcome> {
   if (input.to === "") return { ok: false, reason: "invalid-args:to must be a non-empty string" };
@@ -53,9 +45,10 @@ export async function message(deps: VerbDeps, caller: SessionId | undefined, inp
   if (input.notify_when_idle === true) return notifyWhenIdle(deps, caller, input);
   if (input.message === undefined) return { ok: false, reason: "invalid-args:message is required unless notify_when_idle is set" };
   const resolved = resolveAddress(deps.lineage, caller, input.to);
-  if (resolved.kind === "miss") return crossFallback(deps, caller, { input: { ...input, message: input.message as string }, missReason: resolved.reason });
-  if (resolved.kind === "main") return deliverToMain(deps, caller, input.message);
-  return deliverToRow(deps, resolved.row, input.message);
+  // summary 回显统一出口（件15 D7）：三条投递路径（miss→跨进程/复活、main、子行）全覆盖
+  if (resolved.kind === "miss") return echoSummary(await crossFallback(deps, caller, { input: { ...input, message: input.message as string }, missReason: resolved.reason }), input);
+  if (resolved.kind === "main") return echoSummary(deliverToMain(deps, caller, input.message), input);
+  return echoSummary(deliverToRow(deps, resolved.row, input.message), input);
 }
 
 /** notify_when_idle（§4.4/§5.4）：仅根会话 + 仅跨进程 box 目标（进程内子走完成通知） */
@@ -67,12 +60,13 @@ async function notifyWhenIdle(deps: VerbDeps, caller: SessionId, input: MessageI
     return { ok: false, reason: "invalid-args:notify_when_idle targets a local session (cross-process); in-process sub-agents notify you on completion already" };
   }
   if (deps.cross === undefined) return { ok: false, reason: "invalid-args:no local mailbox is configured" };
-  return echoSummary(await sendCross(deps.cross, caller, input), input);
+  return echoSummary(await sendCross(deps.cross, caller, input), input); // notifyWhenIdle 提前分支（不回 message() 出口——此处自包装）
 }
 
-/** summary 截断回显（§2.1：不传输、仅发方可见——等价物=结果回显） */
+/** summary 截断回显（§2.1：不传输、仅发方可见——等价物=结果回显；件15 D7 统一出口
+ *  三投递路径全覆盖 + 空串守卫——schema 已去上限（批1），此处是截断承诺的唯一兑现点） */
 function echoSummary(sent: VerbOutcome, input: MessageInput): VerbOutcome {
-  if (!sent.ok || input.summary === undefined) return sent;
+  if (!sent.ok || input.summary === undefined || input.summary === "") return sent;
   const cut = input.summary.slice(0, SUMMARY_CAP);
   return { ok: true, text: `${sent.text} (summary: ${cut}${input.summary.length > SUMMARY_CAP ? "…" : ""})` };
 }
@@ -116,31 +110,6 @@ function deliverToMain(deps: VerbDeps, caller: SessionId, text: string): VerbOut
     return { ok: false, reason: "not-found:main; the parent conversation is sealing" };
   }
   return { ok: true, text: "Delivered to main (the parent conversation)." };
-}
-
-export async function output(deps: VerbDeps, caller: SessionId | undefined, input: OutputInput): Promise<VerbOutcome> {
-  const found = ownerRow(deps, caller, input.task_id);
-  if (!found.ok) return found;
-  const row = found.value;
-  const childHandle = deps.loop.get(row.sessionId);
-  if (childHandle === undefined) return { ok: false, reason: notFound(input.task_id) };
-  const timeout = input.timeout ?? 30_000;
-  if (input.block !== false && timeout > 0) {
-    await raceIdle(childHandle.agent.whenIdle(), timeout); // 到点未完 → 如实回 running 快照
-  }
-  const childSession = deps.store.get(row.sessionId);
-  if (childSession === undefined) return { ok: false, reason: notFound(input.task_id) };
-  if (row.running) {
-    const soFar = childReport(childSession.events());
-    const tail = soFar.summary === undefined ? "" : `; last output so far: ${summaryLines(soFar.summary, deps.reportCap).join("\n")}`;
-    return { ok: true, text: `agent ${row.agentId} is still running (waited ${String(timeout)}ms); the [agent-notification] will arrive on completion.${tail}` };
-  }
-  const report = childReport(childSession.events());
-  if (row.reportDelivered) {
-    // 全文已随 [agent-notification] 交付——复读只重复占用父上下文；保留状态头与档案指针
-    return { ok: true, text: [reportHead(row, report), `session: ${String(row.sessionId)}`, "(full report already delivered via the [agent-notification]; use agent_message to ask the agent for specifics)"].join("\n") };
-  }
-  return { ok: true, text: reportText(row, report, deps.reportCap) };
 }
 
 export interface StopInput {
@@ -188,7 +157,7 @@ function ownerRow(deps: VerbDeps, caller: SessionId | undefined, taskId: string)
   if (resolved.kind === "main") return { ok: false, reason: "invalid-args:task_id 'main' is not a task" };
   const row = resolved.row;
   if (caller !== row.parent) {
-    return { ok: false, reason: `not-owner:${row.agentId}; you can only read/stop sub-agents you spawned` };
+    return { ok: false, reason: `not-owner:${row.agentId}; you can only stop/message sub-agents you spawned` };
   }
   return { ok: true, value: row };
 }
@@ -218,42 +187,10 @@ export async function listAgents(deps: VerbDeps, caller: SessionId | undefined):
   return rows;
 }
 
-function raceIdle(whenIdle: Promise<void>, timeoutMs: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(() => {
-      void idle.then(() => {});
-      resolve();
-    }, timeoutMs);
-    timer.unref?.();
-    const idle = whenIdle.then(() => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-}
-
 function viewStatus(row: ChildRow): "stopped" | "running" | "idle" {
   if (row.running) return "running"; // 停止后再 message 复活的子如实显示 running
   if (row.stopped) return "stopped";
   return "idle";
-}
-
-/** 报告首行：与通知 outcomeHead 同口径（正常 completed / aborted stopped / 其余 failed + 原因句） */
-function reportHead(row: ChildRow, report: ChildReport): string {
-  if (report.status === "completed") return `agent ${row.agentId} last turn: completed`;
-  if (report.status === "aborted") return `agent ${row.agentId} stopped: ${failureDetail(report)}`;
-  return `agent ${row.agentId} failed: ${failureDetail(report)}`;
-}
-
-/** 报告铸文本：与通知同词表（docs/SUBAGENT-FAILURE-NOTIFICATION.md——异常终态显式
- *  failed/stopped + 原因句 + session 行）+ 正文行组与通知同一 summaryLines 口径（同一
- *  reportCap——完成通知已带全文，此面仅在需要显式查询时使用；无文件指针——任务体系
- *  未并入，U2） */
-export function reportText(row: ChildRow, report: ChildReport, cap: number): string {
-  const lines = [reportHead(row, report), `session: ${String(row.sessionId)}`];
-  if (report.summary === undefined) lines.push("(no assistant output in the last turn)");
-  else lines.push(...summaryLines(report.summary, cap));
-  return lines.join("\n");
 }
 
 export function notFound(target: string): string {

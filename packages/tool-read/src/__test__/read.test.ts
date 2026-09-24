@@ -146,6 +146,28 @@ describe("read（docs/TOOLBOX.md §2——交集 read 10 条）", () => {
   });
 });
 
+describe("systemRoots 放行（系统固有读根——gate root 外任务日志根；TASK-PUSH-DESIGN §2.3）", () => {
+  it("传入 systemRoots：日志根内文件可读；对照（未传形态在 beforeEach 装配）：gate root 外拒", async () => {
+    const logRoot = mkdtempSync(join(tmpdir(), "xh-read-logs-"));
+    try {
+      writeFileSync(join(logRoot, "bash-task.log"), "log-body-line\n");
+      const ctx = createContext();
+      const unload = await loadPlugins(ctx, [toolsPlugin, createReadPlugin({ gate: new PathGate(root), observed: new ObservedRegistry(), env: createLocalEnv(root), systemRoots: [logRoot] })]);
+      const reg = ctx.use(toolRegistry);
+      const allowed = await reg.dispatch({ callId: "sr1", name: "read", args: { path: join(logRoot, "bash-task.log") }, signal: new AbortController().signal });
+      expect(allowed.isError).toBeUndefined();
+      expect(allowed.content).toContain("log-body-line");
+      await ctx.dispose();
+      void unload;
+      // 缺省装配（beforeEach）在 gate root 外 fail-closed——不因本特性松弛
+      const denied = await read({ path: join(logRoot, "bash-task.log") });
+      expect(denied.isError).toBe(true);
+    } finally {
+      rmSync(logRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("并发档声明（§6 横切——真实 registry 口径）", () => {
   it("read 并行（isConcurrencySafe）", async () => {
     expect(registry.concurrencyOf("read", {})).toBe("parallel");

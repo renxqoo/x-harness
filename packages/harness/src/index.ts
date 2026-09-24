@@ -1,7 +1,8 @@
 // 装配方 kit 目录 + createAgentWorld（SDK-MIGRATION-F1）：任意插件集的装配机制——
 // kit = 内部接线正确的插件组（gate/observed 共享、adapter 注册插件化）；顺序由
-// inject/softInject topo 声明式保证（数组序无关）。S3：门面零业务内容——基础段经
-// promptKit(base) 注入、adapters/审批/providers 全是宿主注入参数；appends 留宿主
+// inject/softInject topo 声明式保证（数组序无关）。基础段正文与 facts 探测共享于
+// 本包（base-prompt.ts——apps/cli 与 apps/host-hub 两宿主同源，经 promptKit(base)
+// 注入世界）；adapters/审批/providers 全是宿主注入参数；appends 留宿主
 // 后置注册（F-02 尾序契约）。
 
 import { Database } from "bun:sqlite";
@@ -9,7 +10,13 @@ import type { Context, Disposer, Plugin, Result } from "@x-harness/core";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { AgentLoopService } from "@x-harness/agent-loop";
+import { createContinuationPlugin } from "@x-harness/agent-continuation";
+import type { ContinuationOptions } from "@x-harness/agent-continuation";
+import { createErrorRecoveryPlugin } from "@x-harness/error-recovery";
+import type { ErrorRecoveryOptions } from "@x-harness/error-recovery";
+import { createDefaultTruncationMessages } from "@x-harness/truncation-messages";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
+import type { DelegationOptions } from "@x-harness/agent-delegation";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
 import { createAutoCompactPlugin } from "@x-harness/autocompact";
@@ -18,10 +25,11 @@ import { createCompactionPlugin } from "@x-harness/compaction";
 import type { CompactionOptions } from "@x-harness/compaction";
 import { createLlmRetryPlugin } from "@x-harness/llm-retry";
 import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
+import { createRepetitionGuardPlugin } from "@x-harness/llm-repetition-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
-import type { ModeKnob } from "@x-harness/permission";
-import { createSandboxPlugin } from "@x-harness/sandbox-local";
+import type { PermissionProfile, PermissionRule, ProfileId } from "@x-harness/permission";
+import { createSandboxPlugin } from "@x-harness/sandbox";
 import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session";
 import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
@@ -39,7 +47,8 @@ import { ObservedRegistry, PathGate } from "@x-harness/tool-core";
 import type { ExecEnv } from "@x-harness/exec-env";
 import { createGrepPlugin } from "@x-harness/tool-grep";
 import { createReadPlugin } from "@x-harness/tool-read";
-import { createWritePlugin } from "@x-harness/tool-write";
+import { createTruncatedWriteRescuePlugin, createWritePlugin } from "@x-harness/tool-write";
+import { createEditPlugin } from "@x-harness/tool-edit";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolRegistry } from "@x-harness/tools";
 
@@ -103,40 +112,111 @@ export function telemetryKitWithHandle(o: {
 /** 驱动循环（五服务之一） */
 export const loopKit = (): readonly Plugin[] => [agentLoopPlugin];
 
-/** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替）；appends 归宿主后置 */
+/** 输出截断续写策略（docs/OUTPUT-TOKEN-CONTINUATION.md）：agentTurnConclude 窗口的缺省策略件——
+ *  count < max → resume（续写指令经内核以 agent/message{directive} 落卷）；否则可恢复错误收轮 */
+export const continuationKit = (options?: ContinuationOptions): readonly Plugin[] => [createContinuationPlugin(options)];
+
+/** 工作错误恢复 L2 策略（docs/WORK-ERROR-RECOVERY.md C5）：挂 agentRequestError +
+ *  agentTurnConclude——分族计数、respond 自愈、达限 fail。装配契约：须在 llmKit
+ *  （llm-retry）之后注册（链上后手）——L1 重试期本件应答被覆盖不计（防预烧）。 */
+export const errorRecoveryKit = (options?: ErrorRecoveryOptions): readonly Plugin[] => [createErrorRecoveryPlugin(options)];
+
+/** 截断配对缺省文案（WER C3）：agentTruncatedTool 窗口的替换性完整文案——装配序须在
+ *  抢救件（toolboxKit 的 rescue）之后注册（链上后手见内层）——kit 数组序即注册序。 */
+export const truncationMessagesKit = (): readonly Plugin[] => [createDefaultTruncationMessages()];
+
+/** 基础段插件 + facts 探测（两宿主同源消费面；正文见 base-prompt.ts，探测见 base-prompt-probe.ts） */
+export { createBasePromptPlugin } from "./base-prompt.ts";
+export type { BasePromptFacts } from "./base-prompt.ts";
+export { probeBaseFacts } from "./base-prompt-probe.ts";
+export type { ProbeFactsInput } from "./base-prompt-probe.ts";
+
+/** 日期 + 项目指令快照插件（两宿主同源消费面——AGENTS.md/CLAUDE.md 边沿注入；
+ *  装配位各自写死：紧随 skill 装配，docs/TAIL-SNAPSHOT-CHANNEL.md A/C'） */
+export { createFactsSnapshotPlugin, readInstructionFiles, renderDateSnapshot, localToday, INSTRUCTIONS_CAP_BYTES } from "./snapshot-facts.ts";
+export type { FactsSnapshotOptions, InstructionRead } from "./snapshot-facts.ts";
+
+/** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替；常规装配传
+ *  createBasePromptPlugin(probeBaseFacts(...)));appends 归宿主后置 */
 export const promptKit = (base?: Plugin): readonly Plugin[] => [
   systemPromptPlugin,
   ...(base !== undefined ? [base] : []),
 ];
 
-/** 工具箱（tools 注册表 + read/write/bash/grep/task-tools；gate/observed 共享实例内包；env 透传给无围栏世界） */
+/** bash 后台任务日志根推导（与 sessionsRoot 同级——宿主装配与 session-delete 级联同源） */
+export { taskLogsRootOf } from "./task-logs.ts";
+
+/** 工具箱（tools 注册表 + read/write/bash/grep/task-tools；gate/observed 共享实例内包；env 透传给无围栏世界；
+ *  taskLogDir = bash 后台任务日志根——传宿主数据目录即会话档案一致性，read/grep 放行为系统固有读根）
+ *  + 截断 write/edit 半截产出抢救件（agentTruncatedTool 窗口；sidecar 授权面与 write 同源三件套） */
 export const toolboxKit = (o: {
   readonly root: string;
   readonly gate?: PathGate;
   readonly observed?: ObservedRegistry;
   readonly env?: ExecEnv;
+  readonly taskLogDir?: string;
+  /** 内置 rg 目录（根配置推导——宿主 harness home 的 bin/；grep 解析链第三级） */
+  readonly rgBinDir?: string;
+  /** permission 裁决面（抢救件 write 同源裁决；宿主与 fenceKit 同源传入） */
+  readonly permission?: {
+    readonly rules?: readonly import("@x-harness/permission").PermissionRule[];
+    readonly projectRules?: readonly import("@x-harness/permission").PermissionRule[];
+    readonly protectedWrite?: readonly string[];
+  };
 }): readonly Plugin[] => {
   const gate = o.gate ?? new PathGate(o.root); // 接线内包：read/write 必须共享 gate+observed（漏配症状 FS_NOT_OBSERVED）
   const observed = o.observed ?? new ObservedRegistry();
   const env = o.env !== undefined ? { env: o.env } : {};
+  const systemRoots = o.taskLogDir !== undefined ? { systemRoots: [o.taskLogDir] } : {};
   return [
     toolsPlugin,
-    createReadPlugin({ gate, observed, ...env }),
+    createReadPlugin({ gate, observed, ...env, ...systemRoots }),
     createWritePlugin({ gate, observed, ...env }),
-    createBashPlugin({ gate, ...env }),
-    createGrepPlugin({ gate, ...env }),
+    createEditPlugin({ gate, observed, ...env }),
+    ...(o.env !== undefined
+      ? [createTruncatedWriteRescuePlugin({
+          gate,
+          observed,
+          env: o.env,
+          ...(o.permission !== undefined
+            ? { permission: { root: o.root, ...(o.permission.rules !== undefined ? { rules: o.permission.rules } : {}), ...(o.permission.projectRules !== undefined ? { projectRules: o.permission.projectRules } : {}), ...(o.permission.protectedWrite !== undefined ? { protectedWrite: o.permission.protectedWrite } : {}) } }
+            : {}),
+        })]
+      : []),
+    createBashPlugin({ gate, ...env, ...(o.taskLogDir !== undefined ? { taskLimits: { taskLogDir: o.taskLogDir } } : {}) }),
+    createGrepPlugin({ gate, ...env, ...systemRoots, ...(o.rgBinDir !== undefined ? { rgBinDir: o.rgBinDir } : {}) }),
     createTaskToolsPlugin(),
   ];
 };
 
-/** 围栏（permission 路径/审批 + sandbox execEnv）；mode 缺省 auto 由 permission 包落定 */
-export const fenceKit = (o: { readonly root: string; readonly mode?: ModeKnob }): readonly Plugin[] => [
-  createPermissionPlugin({ root: o.root, ...(o.mode !== undefined ? { mode: o.mode } : {}) }),
-  createSandboxPlugin({ root: o.root }),
+/** 围栏（permission 裁决 + sandbox 执行器——PERMISSION-V2-DESIGN §6）。执行指令由裁决
+ *  管线产出（allow→direct|contained 按档位），sandbox 只照办；trustedCommands 词表已删（U1）。
+ *  rules/projectRules=两作用域规则串；protectedPaths=保护写路径（settings 文件等——U13）；
+ *  customProfiles=宿主自定义档位行（已过 mergeCustomProfiles）。 */
+export const fenceKit = (
+  o: {
+    readonly root: string;
+    readonly mode?: ProfileId;
+    readonly rules?: readonly PermissionRule[];
+    readonly projectRules?: readonly PermissionRule[];
+    readonly protectedPaths?: readonly string[];
+    readonly customProfiles?: readonly PermissionProfile[];
+  },
+): readonly Plugin[] => [
+  createPermissionPlugin({
+    root: o.root,
+    ...(o.mode !== undefined ? { mode: o.mode } : {}),
+    ...(o.rules !== undefined ? { rules: o.rules } : {}),
+    ...(o.projectRules !== undefined ? { projectRules: o.projectRules } : {}),
+    ...(o.protectedPaths !== undefined ? { protectedPaths: o.protectedPaths } : {}),
+    ...(o.customProfiles !== undefined ? { customProfiles: o.customProfiles } : {}),
+  }),
+  createSandboxPlugin({ root: o.root, ...(o.protectedPaths !== undefined ? { protectedPaths: o.protectedPaths } : {}) }),
 ];
 
-/** 子代理委派 */
-export const delegationKit = (): readonly Plugin[] => [createAgentDelegationPlugin()];
+/** 子代理委派（agentsDirs 必收——宿主边沿用 @x-harness/agent-delegation 的 resolveAgentDirs 统一解析；
+ *  件15 D5：签名透传 DelegationOptions——reportCap/maxDepth 等经装配入口可达（message 上限恒等 reportCap）） */
+export const delegationKit = (o: DelegationOptions): readonly Plugin[] => [createAgentDelegationPlugin(o)];
 
 /** 请求前 WAL 屏障（独立 kit——与 delegation 零共享面） */
 export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];
@@ -154,7 +234,8 @@ export const compactionKit = (options: CompactionOptions): readonly Plugin[] => 
 export const autoCompactKit = (options: AutoCompactOptions): readonly Plugin[] => [createAutoCompactPlugin(options)];
 
 /** 技能装载 */
-export const skillKit = (): readonly Plugin[] => [createSkillPlugin()];
+/** 技能插件（目录必收——宿主边沿用 @x-harness/skill 的 resolveSkillDirs 统一解析） */
+export const skillKit = (o: { readonly skillsDirs: readonly string[]; readonly disabled?: readonly string[] }): readonly Plugin[] => [createSkillPlugin(o)];
 
 /** 用量计量（五服务之一） */
 export const meterKit = (): readonly Plugin[] => [tokenMeterPlugin];
@@ -167,6 +248,7 @@ export const llmKit = (
   ...(retry !== undefined ? [createLlmRetryPlugin({ providers: retry.providers ?? {}, ...(retry.default !== undefined ? { default: retry.default } : {}) })] : []),
   llmPlugin,
   createReplayGuardPlugin(), // llm/stream 重放容错（docs/LLM-REPLAY-GUARD.md）：上游断流从头重发时下游/UI 干净单份
+  createRepetitionGuardPlugin(), // llm/stream 复读检测（docs/LLM-REPETITION-GUARD.md）：模型行内复读截流 → error{code:repetition}；注册序在 replay-guard 后 = 链上更靠消费端
   ...adapters.map((adapter, index): Plugin => ({
     name: `llm-adapter-${String(index)}-${adapter.name}`,
     inject: ["llm"], // 终审 F1-1：apply 期 use llmRuntime 的硬依赖声明式时序（与在库 adapter-plugin 同款）

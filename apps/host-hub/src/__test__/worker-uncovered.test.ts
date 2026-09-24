@@ -5,7 +5,9 @@ import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assembleWorkerAgent } from "../worker/assembly.ts";
+import { systemPrompt } from "@x-harness/system-prompt";
+import { readHubSettings } from "../shared/settings-store.ts";
+import { assembleWorkerAgent, contextWindowOf } from "../worker/assembly.ts";
 import { createBashExec } from "../worker/bash-exec.ts";
 import { createWorkerCommands } from "../worker/worker-commands.ts";
 import { createDialogBroker } from "../worker/dialogs.ts";
@@ -22,6 +24,19 @@ async function tempDir(prefix: string): Promise<string> {
 }
 afterAll(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe("assembly 窗口解析（模型级 > 档案级 > 兜底——compaction/analytics 共源）", () => {
+  test("modelMeta 模型级胜档案级；档案级胜 128k 兜底", () => {
+    const catalog = {
+      providers: [{ provider: "glm", protocol: "anthropic", baseUrl: "https://x", apiKey: "k", models: ["glm-5.3", "glm-air"], contextWindow: 1_000_000 }],
+      default: { provider: "glm", model: "glm-5.3" },
+      modelMeta: { "glm-air": { contextWindow: 128_000 } },
+    };
+    expect(contextWindowOf(catalog as never, { provider: "glm", model: "glm-5.3" })).toBe(1_000_000); // 档案级
+    expect(contextWindowOf(catalog as never, { provider: "glm", model: "glm-air" })).toBe(128_000); // 模型级
+    expect(contextWindowOf({ providers: [], default: { provider: "", model: "" }, modelMeta: {} } as never, { provider: "x", model: "y" })).toBe(128_000); // 兜底
+  });
 });
 
 describe("assembly 装配面", () => {
@@ -46,7 +61,29 @@ describe("assembly 装配面", () => {
     await world.ctx.dispose(); // teardownWorld 同径（重复 dispose 幂等面不在此断言）
   }, 20_000);
 
-  test("thinking.default 不兼容丢弃（openai 协议拒 thinking——materialize 告警面）", async () => {
+  test("base 系统提示词装配：身份段 + facts 插值（{{}} 无残留）——与 CLI 同源", async () => {
+    const agentDir = await tempDir("hub-baseprompt-");
+    const assembled = await assembleWorkerAgent({
+      sessionsRoot: join(agentDir, "sessions"),
+      cwd: agentDir,
+      trusted: false,
+      dial: { provider: "script", model: "script-1" },
+      env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) },
+    });
+    const text = assembled.world.ctx.use(systemPrompt).assemble().text;
+    expect(text.indexOf("You are Agent")).toBe(0);
+    expect(text).toContain(`- Working directory: ${agentDir}`);
+    expect(text).toContain("- Is a git repository: no"); // 临时目录非 git 工作区
+    expect(text).toContain(`- Platform: ${process.platform}`);
+    expect(text).toContain("- Shell: unknown"); // 测试 env 无 SHELL——垃圾降级不空值
+    expect(text).not.toContain("{{");
+    await assembled.handle.dispose();
+    const world = assembled.world;
+    for (const disposer of world.unload) await disposer();
+    await world.ctx.dispose();
+  }, 20_000);
+
+  test("thinking.default openai 渠道保留（协议无条件拒已撤——仅目录 reasoning:false 拒）", async () => {
     const agentDir = await tempDir("hub-asm2-");
     const sessionsRoot = join(agentDir, "sessions");
     const snapshot = JSON.stringify({
@@ -60,7 +97,9 @@ describe("assembly 装配面", () => {
       thinkingDefault: "high",
       env: { HUB_WORKER_PROVIDERS: snapshot },
     });
-    expect(assembled.thinking).toBeUndefined(); // 丢弃并告警（stderr）
+    // 5d6bd1e 撤「openai 协议无条件拒 thinking」（capability_thinking 误拒根治）：
+    // openai 渠道的 thinking 缺省现在原样保留，仅目录 reasoning:false 才拒
+    expect(assembled.thinking).toBe("high");
     expect(assembled.dial).toEqual({ provider: "o", model: "m" });
     await assembled.handle.dispose();
     for (const disposer of assembled.world.unload) await disposer();
@@ -73,7 +112,7 @@ describe("bash-exec 单元（脱 worker 上下文）", () => {
     return createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => confirmResult,
+      confirm: async () => ({ allowed: confirmResult }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 5_000,
@@ -123,12 +162,43 @@ describe("bash-exec 单元（脱 worker 上下文）", () => {
     expect(otherOutcome.ok === true && otherOutcome.cancelled).toBe(true);
   }, 20_000);
 
+  test("习得持久面（U13）：非 trusted 拒 project 写；user 写落盘去重（grantStore 插件）", async () => {
+    const agentDir = await tempDir("hub-grantstore-");
+    const sessionsRoot = join(agentDir, "sessions");
+    const fields = (trusted: boolean, cwd: string) => ({
+      sessionsRoot,
+      cwd,
+      agentDir,
+      trusted,
+      dial: { provider: "script", model: "script-1" },
+      env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) },
+    });
+    // 非 trusted：project 写被拒（安全向——未信任工作区不得持久授权）
+    const untrusted = await assembleWorkerAgent(fields(false, agentDir));
+    const storeU = untrusted.world.ctx.tryUse(await import("@x-harness/permission").then((m) => m.permissionGrantStore));
+    expect(storeU).toBeDefined();
+    if (storeU !== undefined) {
+      const rejected = await storeU.write("project", { tool: "Bash", pattern: "x:*", verdict: "allow", nature: "grant" });
+      expect(rejected.ok).toBe(false);
+      // trusted=false 仍可写 user 作用域 + 幂等去重
+      const userWrite = await storeU.write("user", { tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 });
+      expect(userWrite.ok).toBe(true);
+      const dup = await storeU.write("user", { tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 2 });
+      expect(dup.ok).toBe(true);
+      const settings = await readHubSettings(agentDir);
+      expect(settings["permission.rules"]).toEqual([{ tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 }]);
+    }
+    await untrusted.handle.dispose();
+    for (const disposer of untrusted.world.unload) await disposer();
+    await untrusted.world.ctx.dispose();
+  }, 20_000);
+
   test("shell 解析失败面（坏 HUB_BASH 注入）", async () => {
     const agentDir = await tempDir("hub-bash3-");
     const bash = createBashExec({
       session: () => undefined,
       cwd: () => agentDir,
-      confirm: async () => true,
+      confirm: async () => ({ allowed: true }),
       emitEvent: () => {},
       agentDir,
       defaultTimeoutMs: 5_000,
@@ -187,7 +257,7 @@ function makeRuntimeStub(): Parameters<typeof createWorkerCommands>[0] {
   const bash = createBashExec({
     session: () => undefined,
     cwd: () => "/tmp",
-    confirm: async () => false,
+    confirm: async () => ({ allowed: false }),
     emitEvent: () => {},
     agentDir: "/tmp",
     defaultTimeoutMs: 100,
@@ -218,9 +288,71 @@ function makeRuntimeStub(): Parameters<typeof createWorkerCommands>[0] {
     bash,
     inflight: createInflightRegistry(),
     inflightState: createInflightState(),
-    bridge: createEventBridge({ emitLine: () => {}, threadId: () => "", inflight: createInflightState() }),
+    bridge: createEventBridge({ emitLine: () => {}, threadId: () => "", inflight: createInflightState(), pendingSends: () => 0, mainEvents: () => undefined }),
     triggerShutdown: () => {},
     env: {},
     pendingSends: 0,
   };
 }
+
+
+describe("queue/drop、queue/send_now 单条分支（stub 直调——streaming_window 防御面）", () => {
+  /** 带一条 next-turn 排队条目的最小会话 stub（foldInbox 投影所需的最小事件面）。 */
+  function makeQueuedSession() {
+    const appends: Array<{ type: string; data: unknown }> = [];
+    const insert = {
+      type: "agent/inbox/spliced",
+      seq: 1,
+      time: 1,
+      data: { op: "insert", target: "next-turn", entries: [{ id: "f1", content: [{ type: "text", text: "q" }] }] },
+    };
+    const session = {
+      id: "t1",
+      events: () => [insert],
+      append: (type: string, data: unknown) => {
+        appends.push({ type, data });
+        return { ok: true as const };
+      },
+    };
+    return { session, appends };
+  }
+
+  function stubWithSession(pendingSends: number) {
+    const rt = makeRuntimeStub();
+    const { session, appends } = makeQueuedSession();
+    rt.state.threadId = "t1";
+    rt.state.handle = { agent: { session } } as never;
+    rt.pendingSends = pendingSends;
+    const out: string[] = [];
+    rt.emitLine = (line) => out.push(line);
+    return { rt, appends, out };
+  }
+
+  test("空闲且无在飞 send（streaming_window）：拒绝且不落任何 WAL 事件（防御分支直测）", async () => {
+    const { rt, appends, out } = stubWithSession(0);
+    const handlers = createWorkerCommands(rt);
+    await handlers.get("queue/send_now")?.({ id: "r1", threadId: "t1", entryId: "f1" });
+    const frame = JSON.parse(out[0] ?? "{}") as { success?: boolean; error?: { code?: string } };
+    expect(frame.success).toBe(false);
+    expect(frame.error?.code).toBe("streaming_window");
+    expect(appends).toEqual([]); // 拒绝路径不写收件箱（条目留在队列）
+  });
+
+  test("在飞 send 覆盖窗口（pendingSends>0）：retarget 落 WAL 且 entry 原样跨队列", async () => {
+    const { rt, appends, out } = stubWithSession(1);
+    const handlers = createWorkerCommands(rt);
+    await handlers.get("queue/send_now")?.({ id: "r2", threadId: "t1", entryId: "f1" });
+    const frame = JSON.parse(out[0] ?? "{}") as { success?: boolean };
+    expect(frame.success).toBe(true);
+    expect(appends).toEqual([{ type: "agent/inbox/spliced", data: { op: "retarget", id: "f1", to: "next-step" } }]);
+  });
+
+  test("queue/drop 空闲可删（无轮次要求）：drop 落 WAL", async () => {
+    const { rt, appends, out } = stubWithSession(0);
+    const handlers = createWorkerCommands(rt);
+    await handlers.get("queue/drop")?.({ id: "r3", threadId: "t1", entryId: "f1" });
+    const frame = JSON.parse(out[0] ?? "{}") as { success?: boolean };
+    expect(frame.success).toBe(true);
+    expect(appends).toEqual([{ type: "agent/inbox/spliced", data: { op: "drop", target: "next-turn", dropped: ["f1"], reason: "client-drop" } }]);
+  });
+});

@@ -1,4 +1,4 @@
-// Session 契约类型：事件信封判别联合、18 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
+// Session 契约类型：事件信封判别联合、21 词条闭合词表、surface 投影、仓库接口（docs/SESSION.md §1）
 
 import type { Result } from "@x-harness/core";
 
@@ -72,7 +72,9 @@ export interface SessionEventData {
     readonly usage?: unknown;
   };
   readonly "tool/call": { readonly turn: number; readonly step: number; readonly callId: string; readonly name: string; readonly arguments: string };
-  readonly "tool/result": { readonly turn: number; readonly step: number; readonly callId: string; readonly content: string; readonly isError?: true };
+  /** synthetic: true = harness 合成结果（截断配对/未启动合成等——docs/TRUNCATED-TOOL-RESCUE.md
+   *  裁决⑧）；缺席 = 真实执行结果。机器可辨标记，不靠 content 前缀反推。 */
+  readonly "tool/result": { readonly turn: number; readonly step: number; readonly callId: string; readonly content: string; readonly isError?: true; readonly synthetic?: true };
   readonly "request/header": {
     readonly model: string;
     readonly provider?: string;
@@ -113,6 +115,17 @@ export interface SessionEventData {
    *  run 的 args 缺席 = 命令定义 recordInput:false；悬挂 run（无 done）合法——torn 卷可恢复 */
   readonly "command/run": { readonly commandId: string; readonly name: string; readonly args?: string };
   readonly "command/done": { readonly commandId: string; readonly kind: "success" | "error"; readonly text?: string };
+  /** 内部消息（docs/AGENT-MESSAGE.md——表面第 5 类）：harness → 模型的注入消息。
+   *  模型可见（投影 user 角色）、UI 按类型隐藏、压缩按 kind 分流（directive 跳过 /
+   *  content 保留）；构造器与消费谓词的单一真相在 agent-message.ts */
+  readonly "agent/message": {
+    readonly turn: number;
+    readonly step: number;
+    /** 来源标签（开放词表·写入方命名空间，只作诊断——消费方禁止按 source 分支） */
+    readonly source: string;
+    readonly kind: AgentMessageKind;
+    readonly content: readonly ContentBlock[];
+  };
 }
 
 /** todo 快照内单任务（docs/TODO.md §13.2）：id 十进制规范形、status 三值闭合（无 deleted——物理移除不进快照） */
@@ -136,19 +149,32 @@ export interface TodoSnapshotEventData {
 
 export type InboxTarget = "next-turn" | "next-step";
 
+/** 内部消息语义类闭集（docs/AGENT-MESSAGE.md §1——单一真相在此，agent-message.ts 复用）：
+ *  directive = 指令（照做完作废，摘要跳过）；content = 内容（压缩后必须存活，摘要保留） */
+export type AgentMessageKind = "directive" | "content";
+
 export interface InboxEntry {
   readonly id: string;
   readonly content: readonly ContentBlock[];
+  /** 材料化类型标记（docs/AGENT-MESSAGE.md §4 场景 C）：领取时带 origin 的条目落
+   *  agent/message（source/kind 如此），无 origin 落 user/message（现状零漂移）——
+   *  排队/唤醒语义与普通条目完全一致，仅落账载体不同 */
+  readonly origin?: { readonly source: string; readonly kind: AgentMessageKind };
 }
 
 export type InboxSpliceData =
   | { readonly op: "insert"; readonly target: InboxTarget; readonly entries: readonly InboxEntry[] }
   | { readonly op: "claim"; readonly target: InboxTarget; readonly turn: number; readonly claimed: readonly string[] }
-  | { readonly op: "clear"; readonly reason: string };
+  | { readonly op: "clear"; readonly reason: string }
+  /** 单条移除（queue/drop 命令直写；被删消息不进上下文，与 claim 严格区分） */
+  | { readonly op: "drop"; readonly target: InboxTarget; readonly dropped: readonly string[]; readonly reason: string }
+  /** 单条改道（queue/send_now：next-turn 队首改为当前轮步边界注入；entry 本体与 id 原样保留） */
+  | { readonly op: "retarget"; readonly id: string; readonly to: InboxTarget };
 
 export type SessionEventType = keyof SessionEventData;
-/** 产模型可见消息的词条：仅此 4 类可携带 surfaceOp */
-export type SurfaceEventType = "system/message" | "user/message" | "assistant/message" | "tool/result";
+/** 产模型可见消息的词条：仅此 5 类可携带 surfaceOp（agent/message 为内部消息第 5 类，
+ *  docs/AGENT-MESSAGE.md——投影 user 角色、UI 类型级隐藏、压缩按 kind 分流） */
+export type SurfaceEventType = "system/message" | "user/message" | "assistant/message" | "tool/result" | "agent/message";
 export type LogOnlyEventType = Exclude<SessionEventType, SurfaceEventType>;
 
 export type SurfaceOp = "append" | { readonly op: "replace"; readonly startSeq: number; readonly endSeq: number };

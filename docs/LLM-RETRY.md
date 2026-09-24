@@ -37,7 +37,8 @@ export function createLlmRetryPlugin(options: {
    最小部署形态）→ 取 `default` 策略**；无 default 才 `next`。
 2. 可重试判定：`failure.code ∈ retryableCodes`（缺省集 `["http-408","http-429","http-500",
    "http-502","http-503","http-504","network"]`；精确整串匹配——code 是结构化词表，无子串
-   误命中面）→ 否则 `next`。
+   误命中面；`repetition`（llm-repetition-guard 截流码）不在库缺省集——宿主按需在
+   retryableCodes 增列，apps/cli 与 host-hub 的 RETRY_POLICY 即此（docs/LLM-REPETITION-GUARD.md §3））→ 否则 `next`。
 3. 预算判定：已重试次数（见持久语义）≥ maxRetries → `next`（缺省终态 error）。
 4. 退避计算：`retry`（本次为第几次重试）；`failure.retryAfterMs` 存在且 ≤ maxDelayMs →
    原样采用（0 合法=立即重试；小数秒折算由适配器完成）；> maxDelayMs → 放弃（next）；

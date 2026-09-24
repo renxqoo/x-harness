@@ -3,6 +3,8 @@
 // 按目录快照判据：词表外 / reasoning:false / openai 协议（映射缺席挂账）。
 import type { SessionEvent } from "@x-harness/session";
 import type { ThinkingLevel } from "@x-harness/llm";
+import type { ProfileId } from "@x-harness/permission";
+import { PROFILE_IDS } from "@x-harness/permission";
 import { foldDial } from "../shared/meta-fold.ts";
 import { metaTailOf } from "../shared/meta-fold.ts";
 
@@ -17,14 +19,14 @@ export const META_KEY_PERMISSION = "permission-mode";
 export const META_KEY_TITLE = "title";
 
 export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "low", "medium", "high", "max"];
-export const PERMISSION_MODES: readonly string[] = ["plan", "auto", "full"];
+export const PERMISSION_MODES: readonly string[] = [...PROFILE_IDS];
 
 export function thinkingLevelOf(value: unknown): ThinkingLevel | undefined {
   return typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel) ? (value as ThinkingLevel) : undefined;
 }
 
-export function permissionModeOf(value: unknown): "plan" | "auto" | "full" | undefined {
-  return typeof value === "string" && PERMISSION_MODES.includes(value) ? (value as "plan" | "auto" | "full") : undefined;
+export function permissionModeOf(value: unknown): ProfileId | undefined {
+  return typeof value === "string" && PERMISSION_MODES.includes(value) ? (value as ProfileId) : undefined;
 }
 
 /** dial 双源读（meta 显式 > request/header 隐式 > 装配 fallback） */
@@ -38,7 +40,7 @@ export function currentThinkingOf(events: readonly SessionEvent[], optionsThinki
 }
 
 /** permission 会话值（meta 尾值 > 装配初值） */
-export function currentPermissionOf(events: readonly SessionEvent[], initial: "plan" | "auto" | "full"): "plan" | "auto" | "full" {
+export function currentPermissionOf(events: readonly SessionEvent[], initial: ProfileId): ProfileId {
   return permissionModeOf(metaTailOf(events, META_KEY_PERMISSION)) ?? initial;
 }
 
@@ -53,7 +55,8 @@ export function thinkingUnsupported(catalog: WorkerCatalog, dial: DialFact, thin
   if (thinking === undefined || thinking === "off") return undefined;
   const provider = catalogEntryOf(catalog, dial);
   if (provider === undefined) return "model does not support thinking";
-  if (provider.protocol === "openai") return "model does not support thinking"; // 协议映射缺席（挂账）
+  // openai 协议思考已接通（pi-adapter 注入 reasoning → streamSimple 钳制映射 reasoningEffort，
+  // 上游按 baseUrl 兼容表分流私有思考形状）——协议判据撤除，仅余目录 reasoning 标志门
   if (catalog.modelMeta[dial.model]?.reasoning === false) return "model does not support thinking";
   return undefined;
 }

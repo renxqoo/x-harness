@@ -230,3 +230,39 @@ describe("S0 乱序装配探针（softInject——数组序颠倒在场合约束
     await ctx.dispose();
   });
 });
+
+describe("systemRoots（系统固有读根——装配期静态，与 permission 授权根分立；TASK-PUSH-DESIGN §2.3）", () => {
+  it("缺省（未传）= 现行为不变：extraRootsOf 只含授权根（permission 缺席 = 空）", async () => {
+    const seen: string[][] = [];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [
+      toolsPlugin,
+      createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: (_env, extraRootsOf) => { seen.push([...extraRootsOf(undefined)]); return probe(); } }),
+    ]);
+    expect(seen).toEqual([[]]);
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+
+  it("静态根 ∪ 授权根（静态根在前；permission 缺席只有静态根）", async () => {
+    const logRoot = mkdtempSync(join(tmpdir(), "xh-tp-logs-"));
+    try {
+      const seen: string[][] = [];
+      const ctx = createContext();
+      const unload = await loadPlugins(ctx, [
+        toolsPlugin,
+        createToolPlugin({
+          name: "tool-probe", gate, envOption: createLocalEnv(root), systemRoots: [logRoot],
+          make: (_env, extraRootsOf) => { seen.push([...extraRootsOf("s1" as never)]); return probe(); },
+        }),
+        { name: "permission", apply: (c) => c.provide(permissionGrants, { extraRootsOf: () => ["/granted/extra"], rootOverrideOf: () => undefined } as never) },
+      ]);
+      expect(seen).toEqual([[logRoot, "/granted/extra"]]); // 并集、静态根在前
+      for (const dispose of unload) await dispose();
+      await ctx.dispose();
+    } finally {
+      rmSync(logRoot, { recursive: true, force: true });
+    }
+  });
+
+});

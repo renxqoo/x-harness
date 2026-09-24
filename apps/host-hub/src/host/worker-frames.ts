@@ -4,6 +4,7 @@
 // settled 事件的 sendId 轻量提取（在飞驱动对账用）。
 import { WORKER_BACKEND_ID, WORKER_PROTOCOL_VERSION } from "../protocol/internal.ts";
 import { classifyResponseHead } from "../shared/frame-classify.ts";
+import { INTERNAL_ID_PREFIX } from "../protocol/internal.ts";
 import { isHubErrorShape, type HubErrorShape } from "../shared/errors.ts";
 
 /** 表更新先于转发的控制命令集（响应携带路由事实） */
@@ -88,7 +89,9 @@ export function createFrameRelay(deps: FrameRelayDeps): FrameRelay {
       return true; // 未分类行 parse 兜底（不杀——转发保守面）
     }
     deps.onResponse(head.id, head.success); // pending 核销（数据+控制同面——恰一对账）
-    if (CONTROL_COMMANDS.has(head.command)) {
+    // internal 命名空间应答（host→worker 查询）：恒走控制面按 id 兑现等待者——
+    // 数据面透传会把它发给客户端（垃圾帧）且等待表永不收口
+    if (CONTROL_COMMANDS.has(head.command) || (head.id !== undefined && head.id.startsWith(INTERNAL_ID_PREFIX))) {
       let data: unknown;
       let error: HubErrorShape | undefined;
       try {

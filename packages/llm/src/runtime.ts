@@ -79,11 +79,18 @@ export function createLlmRuntime(deps: RuntimeDeps): LlmRuntime {
         }
       })();
     },
-    contextWindowOf: (provider?: string): number | undefined => {
-      // 缺失 B 修复：按适配器查 contextWindow；唯一适配器缺省取之，多适配器须点名
-      if (provider !== undefined) return adapters.get(provider)?.contextWindow;
-      if (adapters.size === 1) return [...adapters.values()][0]?.contextWindow;
-      return undefined;
+    contextWindowOf: (provider?: string, model?: string): number | undefined => {
+      // 缺失 B 修复：按适配器查 contextWindow；唯一适配器缺省取之，多适配器须点名。
+      // 窗口粒度：模型级（contextWindowByModel——目录 modelMeta 注入）> 档案级。
+      let adapter;
+      if (provider !== undefined) adapter = adapters.get(provider);
+      else if (adapters.size === 1) adapter = [...adapters.values()][0];
+      if (adapter === undefined) return undefined;
+      if (model !== undefined) {
+        const byModel = adapter.contextWindowByModel?.[model];
+        if (byModel !== undefined) return byModel;
+      }
+      return adapter.contextWindow;
     },
   };
 }

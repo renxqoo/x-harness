@@ -1,11 +1,15 @@
 // worker 单元件（无进程）：meta-fold 折叠矩阵、entries-window 游标矩阵、main 入口
-// 导入（词表/常量面）、catalog-types 形状、script 模式快照。
-import { describe, expect, test } from "vitest";
+// 导入（词表/常量面）、catalog-types 形状、script 模式快照、装配快照 round-trip。
+import { afterAll, describe, expect, test } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SessionEvent } from "@x-harness/session";
 import { foldDial, foldMeta, metaTailOf } from "../shared/meta-fold.ts";
 import { entryWindow } from "../worker/entries-window.ts";
-import { projectEntries } from "../shared/entries-project.ts";
+import { historyLineOf, parseEntriesView, projectEntries } from "../shared/entries-project.ts";
 import { resolveWorkerCatalog, scriptCatalog, workerCatalogFromEnv, catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
+import { buildAssemblySnapshot, readCatalog } from "../shared/catalog.ts";
 import { imagesUnsupported, thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
 import { parseCommand } from "@x-harness/commands";
 import { withinResponseBudget } from "../worker/worker-read-commands.ts";
@@ -13,6 +17,16 @@ import * as workerMain from "../worker/main.ts";
 import type { HubProviderProfile } from "../shared/catalog-types.ts";
 
 void workerMain;
+
+const roots: string[] = [];
+async function tempRoot(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  roots.push(dir);
+  return dir;
+}
+afterAll(async () => {
+  await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 function meta(seq: number, key: string, value: unknown): SessionEvent {
   return { type: "session/meta", seq, time: seq, data: { key, value } } as SessionEvent;
@@ -73,6 +87,83 @@ describe("entries-window 游标矩阵（0 基）", () => {
   });
 });
 
+describe("entries-project history 视图谓词（单点滤除/区间降级/append 保留）", () => {
+  const ev = (seq: number, fields: { type: string; data?: Record<string, unknown>; op?: unknown }): SessionEvent =>
+    ({ type: fields.type, seq, time: seq + 1, data: fields.data ?? {}, ...(fields.op !== undefined ? { surfaceOp: fields.op } : {}) }) as SessionEvent;
+
+  const historyLines = (events: readonly SessionEvent[]): { seq: number; ts: number; event: Record<string, unknown> }[] => {
+    const lines: { seq: number; ts: number; event: Record<string, unknown> }[] = [];
+    for (const event of events) {
+      const line = historyLineOf(event);
+      if (line !== undefined) lines.push(line);
+    }
+    return lines;
+  };
+
+  test("字符串 append 与无 surfaceOp 行原样保留", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "turn/start", data: { turn: 0 } }),
+    ]);
+    expect(lines.map((l) => l.seq)).toEqual([0, 1]);
+    const first = lines[0];
+    expect(first?.event["type"]).toBe("user/message");
+    expect(first?.event["surfaceOp"]).toBe("append");
+  });
+
+  test("单点 replace 载体（L1 占位/锚点漂移）滤除——被替换原文行仍在", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "tool/result", data: { callId: "c1", content: "原文" }, op: "append" }),
+      ev(2, { type: "tool/result", data: { callId: "c1", content: "[cleared: read x 10 chars]" }, op: { op: "replace", startSeq: 1, endSeq: 1 } }),
+      ev(3, { type: "assistant/message", data: { content: [] }, op: "append" }),
+    ]);
+    expect(lines.map((l) => l.seq)).toEqual([0, 1, 3]);
+    const kept = lines[1];
+    expect(kept?.event["content"]).toBe("原文");
+  });
+
+  test("区间 replace 载体（compaction 摘要/L2 账本）降级单行 elide——保 seq/ts 与区间（被摘原文行保留）", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "user/message", data: { content: [{ type: "text", text: "原文" }] }, op: "append" }),
+      ev(2, { type: "user/message", data: { content: [{ type: "text", text: "被摘要原文" }] }, op: "append" }),
+      ev(3, { type: "user/message", data: { content: [{ type: "text", text: "摘要正文" }] }, op: { op: "replace", startSeq: 1, endSeq: 2 } }),
+      ev(4, { type: "assistant/message", data: { content: [] }, op: "append" }),
+    ]);
+    // history 视图只变换载体行：原文 1/2 保留（history 本义＝压缩前原文），摘要行 3 降级为 elide 标记
+    expect(lines.map((l) => l.seq)).toEqual([0, 1, 2, 3, 4]);
+    const elided = lines[3];
+    expect(elided?.event).toEqual({ type: "compaction/elided", startSeq: 1, endSeq: 2 });
+    expect(elided?.ts).toBe(4);
+  });
+
+  test("1 节点区间 compaction 摘要降级 elide（不因 startSeq===endSeq 被滤）——写者类型分类回归", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "user/message", data: { content: [{ type: "text", text: "唯一被摘节点" }] }, op: { op: "replace", startSeq: 1, endSeq: 1 } }),
+      ev(2, { type: "assistant/message", data: { content: [] }, op: "append" }),
+    ]);
+    // user/message 载体即使单点也降级（摘要正文只在此行）——只有 tool/result 占位族才滤除
+    expect(lines.map((l) => l.seq)).toEqual([0, 1, 2]);
+    const elided = lines[1];
+    expect(elided?.event).toEqual({ type: "compaction/elided", startSeq: 1, endSeq: 1 });
+  });
+
+  test("historyLineOf 对 data 伪造 surfaceOp 免疫（谓词读 journal 信封）", () => {
+    const forged = ev(5, { type: "user/message", data: { content: [], surfaceOp: { op: "replace", startSeq: 0, endSeq: 0 } }, op: "append" });
+    expect(historyLineOf(forged)?.seq).toBe(5); // 信封是 append → 保留
+  });
+
+  test("parseEntriesView：两合法值放行，其余 undefined", () => {
+    expect(parseEntriesView("journal")).toBe("journal");
+    expect(parseEntriesView("history")).toBe("history");
+    expect(parseEntriesView("Journal")).toBeUndefined();
+    expect(parseEntriesView(1)).toBeUndefined();
+    expect(parseEntriesView(undefined)).toBeUndefined();
+  });
+});
+
 describe("worker-catalog 解析", () => {
   test("缺席/坏 JSON/坏形状 → 空目录（显式可观察）；合法快照解析 + default 回落链", () => {
     expect(workerCatalogFromEnv({}).providers).toEqual([]);
@@ -93,20 +184,62 @@ describe("worker-catalog 解析", () => {
     expect(noDefault.default).toEqual({ provider: "p1", model: "m1" });
   });
 
+  test("快照 round-trip：host buildAssemblySnapshot → HUB_WORKER_PROVIDERS JSON → worker 侧解析保形（maxOutputTokensByModel 单源值直达装配面）", async () => {
+    const dir = await tempRoot("hub-rt-");
+    await Bun.write(join(dir, "providers.json"), JSON.stringify({
+      providers: [{
+        name: "p",
+        protocol: "anthropic",
+        baseUrl: "https://p.example",
+        models: [{ id: "with-meta", maxTokens: 12_000 }, "bare"],
+        maxOutputTokens: 4_000,
+      }],
+      modelOverrides: { "p::with-meta": { maxOutputTokens: 99_999 } },
+    }));
+    const catalog = await readCatalog(dir);
+    const providers = buildAssemblySnapshot(catalog, { p: "cred" }, {});
+    const parsed = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers, default: { provider: "p", model: "with-meta" } }) });
+    expect(parsed.providers[0]?.maxOutputTokensByModel).toEqual({ "with-meta": 99_999, bare: 4_000 });
+    expect(parsed.providers[0]?.maxOutputTokens).toBe(4_000);
+  });
+
+  test("maxOutputTokensByModel 垃圾形状静默剔除（非对象/非正整数值——provider 保留）", () => {
+    const snapshot = JSON.stringify({
+      providers: [{
+        provider: "p",
+        protocol: "anthropic",
+        baseUrl: "https://p",
+        apiKey: "",
+        models: ["good", "bad", "neg", "frac", "str"],
+        maxOutputTokensByModel: { good: 8_192, bad: "x", neg: -1, frac: 1.5, str: 0, ok2: 33_000 },
+      }],
+    });
+    const catalog = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: snapshot });
+    expect(catalog.providers[0]?.maxOutputTokensByModel).toEqual({ good: 8_192, ok2: 33_000 });
+    // 整字段垃圾（数组/全垃圾成员）→ 字段剔除不崩
+    const arrShape = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p", protocol: "anthropic", baseUrl: "https://p", apiKey: "", models: ["m"], maxOutputTokensByModel: ["m"] }] }) });
+    expect(arrShape.providers[0] && Object.hasOwn(arrShape.providers[0], "maxOutputTokensByModel")).toBe(false);
+    const allJunk = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p", protocol: "anthropic", baseUrl: "https://p", apiKey: "", models: ["m"], maxOutputTokensByModel: { m: "x" } }] }) });
+    expect(allJunk.providers[0] && Object.hasOwn(allJunk.providers[0], "maxOutputTokensByModel")).toBe(false);
+  });
+
   test("script 模式快照 + resolveWorkerCatalog 注入缝", () => {
     expect(scriptCatalog().default).toEqual({ provider: "script", model: "script-1" });
     expect(resolveWorkerCatalog({ HUB_WORKER_PROVIDER: "script" }).providers[0]?.provider).toBe("script");
     expect(resolveWorkerCatalog({}).providers).toEqual([]);
   });
 
-  test("thinking 校验：reasoning:false / openai 协议 / 缺席档案", () => {
+  test("thinking 校验：reasoning:false / openai 协议放行 / 缺席档案", () => {
     const catalog = scriptCatalog();
     expect(thinkingUnsupported(catalog, { provider: "script", model: "script-1" }, "high")).toBeUndefined();
     expect(thinkingUnsupported(catalog, { provider: "script", model: "script-1" }, "off")).toBeUndefined();
     expect(thinkingUnsupported(catalog, { provider: "gone", model: "x" }, "low")).toBe("model does not support thinking");
+    // openai 协议思考已接通（pi-adapter reasoning 注入）——协议门撤除，仅余 reasoning:false 门
     const openaiLike = { providers: [{ provider: "o", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m"] }], default: { provider: "o", model: "m" }, modelMeta: {} };
     const oc = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify(openaiLike) });
-    expect(thinkingUnsupported(oc, { provider: "o", model: "m" }, "low")).toBe("model does not support thinking");
+    expect(thinkingUnsupported(oc, { provider: "o", model: "m" }, "low")).toBeUndefined();
+    const openaiNoReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "o2", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m2"] }], default: { provider: "o2", model: "m2" }, modelMeta: { m2: { reasoning: false } } }) });
+    expect(thinkingUnsupported(openaiNoReason, { provider: "o2", model: "m2" }, "low")).toBe("model does not support thinking");
     const noReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "a", protocol: "anthropic", baseUrl: "https://a", apiKey: "", models: ["m"] }], default: { provider: "a", model: "m" }, modelMeta: { m: { reasoning: false } } }) });
     expect(thinkingUnsupported(noReason, { provider: "a", model: "m" }, "low")).toBe("model does not support thinking");
   });
@@ -126,7 +259,7 @@ describe("命令词法（内核单源——BATCH3 迁移：hub 侧词法删除�
 describe("词表封闭性（meta-state）", () => {
   test("thinking/permission 词表与内核对齐", () => {
     expect(THINKING_LEVELS).toEqual(["off", "low", "medium", "high", "max"]);
-    expect(PERMISSION_MODES).toEqual(["plan", "auto", "full"]);
+    expect(PERMISSION_MODES).toEqual(["plan", "auto", "edit-confirm", "full", "sandboxed-auto"]);
   });
 });
 

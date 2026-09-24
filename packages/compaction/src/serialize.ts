@@ -2,6 +2,7 @@
 // 纯文本形态（块角色化标注——摘要模型看得见工具脉络；单工具结果/入参截断防单条
 // 大输出淹没对话）；内容进提示词数据区前过三防线中和。
 
+import { isAgentDirective } from "@x-harness/session";
 import type { SurfaceNode } from "@x-harness/session";
 
 const TOOL_RESULT_MAX_CHARS = 2_000;
@@ -153,6 +154,18 @@ function toolResultPart(data: Record<string, unknown>): string[] {
   return [`[Tool result]: ${neutralizeForSummary(truncateForSummary(text, TOOL_RESULT_MAX_CHARS - 300))}`];
 }
 
+/** 内部消息行（docs/AGENT-MESSAGE.md §3 矩阵）：directive 跳过（协议指令照做完作废——
+ *  进摘要只会留下伪装成发言的过期噪音）；content 内容行保留（实质事实必须存活于摘要） */
+function agentMessagePart(node: SurfaceNode): string[] {
+  if (isAgentDirective(node.event)) return [];
+  const texts: string[] = [];
+  for (const block of contentOf(node.event.data as Record<string, unknown>)) {
+    const record = block as Record<string, unknown>;
+    if (record["type"] === "text" && typeof record["text"] === "string") texts.push(record["text"]);
+  }
+  return texts.length > 0 ? [`[Agent message]: ${neutralizeForSummary(texts.join("\n"))}`] : [];
+}
+
 /** 单节点 → 提示词行（块角色化标注；内容一律过 neutralizeForSummary——数据区标签
  *  不可关闭、角色行首不可伪造；tool_use 入参与 tool 结果截断带标注） */
 function partOf(node: SurfaceNode): string[] {
@@ -166,6 +179,8 @@ function partOf(node: SurfaceNode): string[] {
       return assistantPart(contentOf(data));
     case "tool/result":
       return toolResultPart(data);
+    case "agent/message":
+      return agentMessagePart(node);
   }
 }
 

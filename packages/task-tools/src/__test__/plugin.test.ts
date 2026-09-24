@@ -1,5 +1,5 @@
-// 插件装配测试（docs/TASKS.md §2）：provide hub + 双工具注册/并发声明 + 摘除回卷 +
-// bashTasks 在场的端到端接缝（真登记簿句柄 → task_output/task_stop）。
+// 插件装配测试（docs/TASKS.md §2 + docs/TASK-PUSH-DESIGN.md §2.1）：provide hub + 单工具
+// 注册/并发声明 + 摘除回卷 + bashTasks 在场的端到端接缝（真登记簿句柄 → task_stop）。
 
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,40 +30,26 @@ async function assemble(bashTasks?: BackgroundTasksType) {
 }
 
 describe("task-tools plugin assembly", () => {
-  it("provides the hub and registers exactly task_output/task_stop with declared concurrency", async () => {
+  it("provides the hub and registers exactly task_stop with the exclusive concurrency declaration", async () => {
     const { ctx, registry } = await assemble();
     expect(ctx.tryUse(taskHub)).toBeDefined();
-    expect(registry.get("task_output")).toBeDefined();
     expect(registry.get("task_stop")).toBeDefined();
-    expect(registry.schemas().map((schema) => schema.name).filter((name) => name.startsWith("task_"))).toEqual(["task_output", "task_stop"]);
-    expect(registry.concurrencyOf("task_output", { task_id: "x" })).toBe("parallel");
+    expect(registry.schemas().map((schema) => schema.name).filter((name) => name.startsWith("task_"))).toEqual(["task_stop"]);
     expect(registry.concurrencyOf("task_stop", { task_id: "x" })).toBe("exclusive");
     await ctx.dispose();
-    expect(registry.get("task_output")).toBeUndefined(); // 摘除回卷
-    expect(registry.get("task_stop")).toBeUndefined();
+    expect(registry.get("task_stop")).toBeUndefined(); // 摘除回卷
   });
 
-  it("end-to-end bash seam: a registry-started task is read and stopped through the tools", async () => {
+  it("end-to-end bash seam: a registry-started task is stopped through the tool", async () => {
     const root = mkdtempSync(join(tmpdir(), "xh-tasktools-"));
     roots = [...roots, root];
-    const boxTasks = new BackgroundTasks(defaultTaskLimits({}, { maxOutputBytes: 30_000, spillDir: root }));
+    const boxTasks = new BackgroundTasks(defaultTaskLimits({ taskLogDir: root }));
     const { ctx, registry } = await assemble(boxTasks);
     const session = sid("plugin-e2e");
-    const started = await boxTasks.start({ command: "sleep 0.2; echo seam-marker", cwd: root, session, env: createLocalEnv(root) });
-    expect(started.ok).toBe(true);
-    if (!started.ok) throw new Error(started.reason);
-
-    const read = await registry.dispatch({ callId: "c1", name: "task_output", args: { task_id: started.value.id }, signal: new AbortController().signal, session });
-    expect(read.isError).toBeUndefined();
-    expect(read.content).toContain("seam-marker");
-    expect(read.content).toContain(`task ${started.value.id} (`);
-    expect(read.content).toContain("completed exit=0");
-    expect(read.content).toContain("more=false");
-
     const long = await boxTasks.start({ command: "sleep 30", cwd: root, session, env: createLocalEnv(root) });
     expect(long.ok).toBe(true);
     if (!long.ok) throw new Error(long.reason);
-    const stopped = await registry.dispatch({ callId: "c2", name: "task_stop", args: { task_id: long.value.id }, signal: new AbortController().signal, session });
+    const stopped = await registry.dispatch({ callId: "c1", name: "task_stop", args: { task_id: long.value.id }, signal: new AbortController().signal, session });
     expect(stopped.isError).toBeUndefined();
     expect(stopped.content).toContain("killed");
     expect(stopped.content).not.toContain("mid-kill"); // whenSettled 收敛后铸终态
@@ -76,10 +62,15 @@ describe("task-tools plugin assembly", () => {
     const session = sid("dock");
     const started = await ctx.use(backgroundTasks).start({ command: "echo dock-ok", cwd: process.cwd(), session, env: createLocalEnv(process.cwd()) });
     expect(started.ok).toBe(true);
-    const read = await ctx.use(toolRegistry).dispatch({ callId: "c1", name: "task_output", args: { task_id: started.ok ? started.value.id : "", block: true, timeout: 5_000 }, signal: new AbortController().signal, session });
-    expect(read.isError).toBeUndefined();
-    expect(read.content).toContain("dock-ok");
-    expect(read.content).toContain("completed exit=0");
+    const tasks = ctx.use(backgroundTasks);
+    const id = started.ok ? started.value.id : "";
+    const deadline = Date.now() + 5_000;
+    while ((tasks.list(session).find((t) => t.id === id)?.endedAt) === undefined && Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, 25); });
+    }
+    const stopped = await ctx.use(toolRegistry).dispatch({ callId: "c1", name: "task_stop", args: { task_id: id }, signal: new AbortController().signal, session });
+    expect(stopped.isError).toBeUndefined();
+    expect(stopped.content).toContain("already finished"); // echo 已终态——幂等停带 already 前缀
     await ctx.dispose(); // dispose 两段杀在途任务
     void unload;
   });
@@ -90,19 +81,42 @@ describe("task-tools plugin assembly", () => {
     const session = sid("dock-2");
     const started = await ctx.use(backgroundTasks).start({ command: "echo dock-order-ok", cwd: process.cwd(), session, env: createLocalEnv(process.cwd()) });
     expect(started.ok).toBe(true);
-    const read = await ctx.use(toolRegistry).dispatch({ callId: "c1", name: "task_output", args: { task_id: started.ok ? started.value.id : "", block: true, timeout: 5_000 }, signal: new AbortController().signal, session });
-    expect(read.isError).toBeUndefined();
-    expect(read.content).toContain("dock-order-ok");
+    const tasks = ctx.use(backgroundTasks);
+    const id = started.ok ? started.value.id : "";
+    const deadline = Date.now() + 5_000;
+    while ((tasks.list(session).find((t) => t.id === id)?.endedAt) === undefined && Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, 25); });
+    }
+    const stopped = await ctx.use(toolRegistry).dispatch({ callId: "c1", name: "task_stop", args: { task_id: id }, signal: new AbortController().signal, session });
+    expect(stopped.isError).toBeUndefined();
+    expect(stopped.content).toContain("already finished");
     await ctx.dispose();
     void unload;
   });
 
   it("without bashTasks the hub answers unified not-found for bash-shaped ids", async () => {
     const { ctx, registry } = await assemble();
-    const out = await registry.dispatch({ callId: "c1", name: "task_output", args: { task_id: "t-ab12cd34ef56" }, signal: new AbortController().signal, session: sid("s") });
+    const out = await registry.dispatch({ callId: "c1", name: "task_stop", args: { task_id: "t-ab12cd34ef56" }, signal: new AbortController().signal, session: sid("s") });
     expect(out.isError).toBe(true);
     expect(out.content).toContain("no such task in any source");
     await ctx.dispose();
+  });
+
+  it("纯工具世界（无 agent-loop）：通知臂不挂——settle 后无 throw/无 stderr（负面断言：无观察通道，命名如实）", async () => {
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin(), createTaskToolsPlugin()]);
+    const session = sid("no-loop");
+    const started = await ctx.use(backgroundTasks).start({ command: "echo no-loop", cwd: process.cwd(), session, env: createLocalEnv(process.cwd()) });
+    expect(started.ok).toBe(true);
+    const tasks = ctx.use(backgroundTasks);
+    const id = started.ok ? started.value.id : "";
+    const deadline = Date.now() + 5_000;
+    while ((tasks.list(session).find((t) => t.id === id)?.endedAt) === undefined && Date.now() < deadline) {
+      await new Promise((resolve) => { setTimeout(resolve, 25); });
+    }
+    expect(tasks.list(session).find((t) => t.id === id)?.state).toBe("completed"); // 任务面完好
+    await ctx.dispose(); // 若停靠 reject 未吞会在此炸（unhandled rejection）
+    void unload;
   });
 
   it("double assembly fails fast (duplicate tool name in the same registry)", async () => {

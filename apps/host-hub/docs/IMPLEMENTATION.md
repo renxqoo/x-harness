@@ -40,7 +40,7 @@
 | host-commands.ts | 重写 | thread/* 全生命周期 + get_models/set_model_override + auth/* + get_host_info/旋钮 + ui_response 路由 + agents/list（loadAgentTypes）；目录层换 providers.json 超集 |
 | admin-commands.ts | 重写（同构） | settings/get/set 双级形态 + workspace/trust + models/add/remove 路由 |
 | models-admin.ts | 重写 | providers.json 超集校验/窄合并/原子写 |
-| skills-admin.ts / agents-admin.ts | 重写 | x-harness 目录约定（~/.x-harness/{skills,agents}、<cwd>/.x-harness/...）；agents frontmatter 严格集 round-trip |
+| skills-admin.ts / agents-admin.ts | 重写 | x-harness 目录约定（agentDir 派生缝在场时 `<agentDir>/{skills,agents}`，缺省 ~/.x-harness/{skills,agents}、<cwd>/.x-harness/...）；agents frontmatter 严格集 round-trip；agents-migrate.ts 存量腿（哨兵 .agents-migrated，env 关闭缝 HUB_AGENTS_MIGRATION=0） |
 | trust-store.ts | 重写（同构） | trusted-workspaces.json 读写（串行链 + 原子写）；注册表 ∪ live 集合判定 |
 
 ### 2.2 worker 命令簇（贴内核——重写，行为映射见 MIGRATION §2）

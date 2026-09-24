@@ -1,4 +1,4 @@
-// 进程契约 smoke（MIGRATION §5 smoke.test 移植）：56 命令矩阵黑盒——真 host 进程 +
+// 进程契约 smoke（MIGRATION §5 smoke.test 移植）：60 命令矩阵黑盒——真 host 进程 +
 // 真 worker 子进程（script 模式）。恰一响应/id 回显/command 字段/错误文案对照
 // DESIGN 附录 A/心跳/stdout 纯净/EOF exit 0/转发计时。
 import { afterAll, describe, expect, test } from "vitest";
@@ -56,7 +56,7 @@ describe("进程契约 smoke", () => {
     expect(aliveOf(pids).some(Boolean)).toBe(false);
   }, 60_000);
 
-  test("56 命令矩阵：全命令恰一响应 + id 回显 + command 字段（unknown 拒；关闭期 shutting down）", async () => {
+  test("58 命令矩阵：全命令恰一响应 + id 回显 + command 字段（unknown 拒；关闭期 shutting down）", async () => {
     const host = await startHost({ script: [] });
     hostsClosed.push(host);
     // host 本地域命令（无会话形态）
@@ -66,6 +66,13 @@ describe("进程契约 smoke", () => {
       const frame = await host.response(`m-${command}`);
       expect(frame.command).toBe(command); // command 字段恒字符串
       expect(frame.success).toBe(true);
+    }
+    // 技能导入面：垃圾入参（无 sourcePath）恰好一响应（真进程注册完整性）
+    for (const command of ["skills/inspect", "skills/install"]) {
+      host.send({ type: command, id: `m-${command}` });
+      const frame = await host.response(`m-${command}`);
+      expect(frame.command).toBe(command);
+      expect((frame.error as { code: string }).code).toBe("invalid_input");
     }
     // 线程域无 threadId → threadId required
     for (const command of ["prompt", "get_state", "fork", "bash"]) {
@@ -91,8 +98,8 @@ describe("进程契约 smoke", () => {
     await host.exited();
   }, 60_000);
 
-  test("命令封闭集 56 锚（真进程无关——词表回归锚随进程面走）", () => {
-    expect(COMMAND_NAMES.length).toBe(56);
+  test("命令封闭集 76 锚（真进程无关——词表回归锚随进程面走）", () => {
+    expect(COMMAND_NAMES.length).toBe(76);
   });
 
   test("stdout 纯净：无 heartbeat/response/event/hub_error/ui_request/thread_* 外的帧型", async () => {
