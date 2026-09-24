@@ -1,7 +1,7 @@
 // 件15 批3：rescue-note 用例组（docs/DELEGATION-LONG-CONTENT.md §3）——命中/让位/abort/
 // 白名单外 + 装配后 waterfall 注册面（plugin apply 挂接可见）。
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { agentTruncatedTool } from "@x-harness/agent-loop";
 import { delegationRescueNote } from "../rescue-note.ts";
 import { makeWorld, spawnParent, callTool, PARENT_MODEL, makeOptions } from "./world.ts";

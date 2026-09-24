@@ -33,7 +33,7 @@ Control/agent-team/统一后台任务体系（bash 后台、输出文件指针�
 | 工具 | 入参 | 行为要点 |
 | --- | --- | --- |
 | `agent_spawn` | `{description, prompt, subagent_type?, model?, isolation?}` | description 必填（3-5 词任务简述）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；isolation 仅 `"worktree"`（§8）。返回 `{agentId, sessionId}` + 反轮询引导（结束 turn 等通知——通知唤醒/步边界注入，禁 sleep/list_agents 轮询等待）；后台运行，完成时 `[agent-notification]`（§5.1） |
-| `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——agentId/box 名为无换行原子串）；message **可选**（省略+notify_when_idle=纯订阅；给值时 pattern `^[\s\S]{0,3000}$`，长内容走文件中转）；summary ≤500 **超长截断不拒**、仅出现在发方工具结果回显——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
+| `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——agentId/box 名为无换行原子串）；message **可选**（省略+notify_when_idle=纯订阅；给值时 `maxLength = reportCap`（缺省 34000）——件15 D1 恒等单旋钮/D6 maxLength 载体（报错为直接数字），长内容走文件中转——参数 description 与截断尾注均有引导）；summary 无 schema 上限、verb 层 `SUMMARY_CAP=500` **截断不拒**（D7——description 承诺兑现），仅出现在发方工具结果回显（三条投递路径统一出口）——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
 | `list_agents` | `{}` | 行格式双形态：子代理行 `kind=subagent <agentId> session=<id> type=<t> depth=<n> status=<running\|idle\|stopped>`；本机会话行 `<box名> [<ref>] kind=local-session status=<...>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档）；结果含 running 子代理行时尾附一行等待提示（结束 turn 等通知，禁 sleep/list_agents 轮询——反轮询执法的读面补强） |
 
 （停动词已迁出——件14 修订C + TASK-PUSH 修订：`task_stop` 由 @x-harness/task-tools 提供，
@@ -467,7 +467,7 @@ F. archive 惰性复活 + 驻留档化 + e2e 三旅程 + 全量四门。
 | ~~类型变更 kick 边沿粒度~~ | 已根治（types-loader 同步 fs + 快照 render 当轮拾取，docs/TAIL-SNAPSHOT-CHANNEL.md） | 本件内核销 |
 | fork 复制剔除开放轮（末 turn/end 切口） | X14 工程裁决（在飞轮不可安全复制） | 本件内裁定 |
 | 通知合并 digest / 信封闭合标签中和 | 沿旧落档（X3/X18） | 挂账 |
-| message 300 上限的「文件中转」专建通道 | 复用现有 write/read | 不建 |
+| ~~message 300 上限~~（件15：上限 = reportCap（34000）恒等；「文件中转」专建通道仍不建——复用现有 write/read，引导已进 description/截断尾注） | 复用现有 write/read | 不建 |
 | mailbox 跨机/加密/鉴权 | 本机信任域（0700） | 云接入件一并 |
 
 ## 14. 对抗审查处置（两路并行，41 条全处置）
@@ -582,3 +582,20 @@ output/stop 签名提参 `caller: SessionId | undefined`，经路由层调用）
 本体内经工厂参数 `bashTasks: BackgroundTasks` 接线（toolbox 零改动——用户三次裁决）。
 通知尾注与 reportCap 注释的 agent_output 提法同步改 task_output。方案与处置全记录：
 docs/TASKS.md（件14）。
+
+## 18. 修订D（2026-09-24 件15：长内容回传通道——cap 同源 + 文件中转引导 + 截断抢救附注 + summary 承诺兑现）
+
+规格漂移史清账：message 上限四处口径（本文件 §2.1 的 3000 / §13 的 300 / 规格源 300 /
+代码 34000）归一为 **maxLength = reportCap（缺省 34000）**。裁决（docs/DELEGATION-LONG-CONTENT.md §5，
+D1-D7）：D1 message 上限 ≡ reportCap 恒等单旋钮（截断-追问闭环的结构保证——追问回复
+空间恒 ≥ 被截断报告残余，宿主调 cap 两面同步）；D5 `delegationKit` 签名放宽透传
+DelegationOptions（宿主经装配入口可达 reportCap——原窄化签名使 P3 宿主场景不可达）；
+D6 载体弃 pattern 用 maxLength（`^[\s\S]{0,N}$` 与 maxLength 语义严格等价——TypeBox
+maxLength 报错是直接数字，pattern 把数字埋在正则语法里，可读性改进）；D7 summary 去
+schema 上限、verb 层 SUMMARY_CAP=500 兑现 description 的截断承诺（元数据吸收性截断 vs
+message 真实负载的保护性拒绝——方向相反是原则性差异），echoSummary 统一出口三投递路径
+全覆盖。文件中转引导（P1）：message 参数 description 追加中转句、报告截断尾注追加
+中转半句、agentTruncatedTool waterfall 挂 note-only 抢救附注（agent_message/agent_spawn
+截断的换策略指引——纠正 base 文案 "Re-issue" 对消息类负载的错误指引；注记进
+docs/TRUNCATED-TOOL-RESCUE.md 层 2 抢救表形态：note-only 零物化，白名单与 write/edit
+抢救件不相交）。参数 description 的中转句系本仓扩展（工具级三段 description 逐字锚不动）。

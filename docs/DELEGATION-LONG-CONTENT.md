@@ -1,6 +1,6 @@
 # 子代理长内容回传通道（件15）：cap 同源 + 文件中转引导 + 截断抢救附注 + summary 承诺兑现
 
-> 状态：**方案定稿（D1-D6 用户裁决通过、D7 用户裁决通过纳入；按批实施）**
+> 状态：**已实施（批 1-4 落地；四门 + e2e 默认门全绿；对抗审查见 §6 处置注记）**
 > 级别：中（agent-delegation 包内改 4 文件 + 新 1 文件 + 测试；harness delegationKit 签名一行放宽（D5）；CLI/host-hub 零改动）
 > 关联：docs/AGENT-DELEGATION.md（件13——§2.1 参数面/§2.2 预算/修订B 逐字纪律）；
 > docs/AGENT-MESSAGE.md（通知载体）；docs/TRUNCATED-TOOL-RESCUE.md（agentTruncatedTool
@@ -241,12 +241,12 @@ PathGate 边界）。
 
 ## 8. 验收清单
 
-- [ ] 批 1-4 全部四门绿，独立提交可回滚
-- [ ] contract.test：maxLength 随 reportCap 变化双断言绿；summary maxLength 缺席断言绿；工具级逐字锚未动
-- [ ] delegationKit 签名透传 DelegationOptions（D5）
-- [ ] D7 用例绿：601 字符 summary 投递成功 + 回显截断；三路径回显全覆盖；空串无附注
-- [ ] rescue-note 用例组全绿（命中/让位/abort/白名单外）
-- [ ] e2e 长内容旅程进默认门绿（拒绝回显含具体上限数字 → 文件中转 → 父收路径 → 尾注两半句）
-- [ ] AGENT-DELEGATION §2.1 与代码同口径（message maxLength + summary 截断）；修订D 落档；本件状态「已实施」
+- [x] 批 1-4 全部四门绿，独立提交可回滚（批1 267ddb1 / 批2 / 批3 / 批4 各自独立提交）
+- [x] contract.test：maxLength 双断言（34000/1000）绿；summary maxLength 缺席 + 'Truncated to 500' 锚词绿；工具级逐字锚未动
+- [x] delegationKit 签名透传 DelegationOptions（D5）
+- [x] D7 用例绿（summary-echo.test.ts：601 字符截断+省略号 / 空串守卫 / main 通道覆盖）
+- [x] rescue-note 用例组全绿（rescue-note.test.ts 六用例——含装配后 waterfall 派发可见；让位用例曾抓到实现缺 downstream 非空判断，已修
+- [x] e2e 长内容旅程进默认门绿（long-content-journey.ts：'Expected string length less or equal to 120' 数字回显 → relay-payload.md 落盘 → 父 WAL 含 <cross-session-message> 路径 → 尾注两半句 + truncated at 120）
+- [x] AGENT-DELEGATION §2.1/§13 口径归一 + §18 修订D 落档；本件状态「已实施」
 - [ ] 对抗审查偏差清单清零（修掉或引用本件已裁决节号）
 - [ ] 覆盖率行/语句/函数 ≥90、分支 ≥85 只升不降，数字如实报告
