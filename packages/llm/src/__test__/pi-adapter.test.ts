@@ -39,7 +39,7 @@ function doneEvent(): DoneEvent {
 }
 
 describe("pi-adapter 注入层", () => {
-  it("anthropic 工厂：identity 头/单 attempt/cacheRetention none/maxTokens 缺省 8192/apiKey/signal 透传", async () => {
+  it("anthropic 工厂：identity 头/单 attempt/cacheRetention none/maxTokens 全缺席不注入（wire 省略——服务端默认，本地硬编码兜底已废除）/apiKey/signal 透传", async () => {
     const seen: Array<{ model: { api: string; id: string; baseUrl: string; provider: string; maxTokens: number }; context: Context; options: Record<string, unknown> }> = [];
     const streamFn: PiStreamFn = async function* (model, context, options) {
       seen.push({ model: model as never, context, options: options as Record<string, unknown> });
@@ -62,8 +62,8 @@ describe("pi-adapter 注入层", () => {
     expect((first.options["headers"] as Record<string, string>)["accept-encoding"]).toBe("identity");
     expect(first.options["maxRetries"]).toBe(0);
     expect(first.options["cacheRetention"]).toBe("none");
-    expect(first.options["maxTokens"]).toBe(8192); // 协议必填缺省
-    expect(first.model.maxTokens).toBe(8192); // model 条目与 options 同源
+    expect(Object.hasOwn(first.options, "maxTokens")).toBe(false); // 全缺席不注入——本地兜底废除（曾以 8192 顶掉目录真实配置）
+    expect(first.model.maxTokens).toBeUndefined(); // model 条目同源缺席
     expect(first.options["signal"]).toBe(controller.signal);
     expect((first.model as Record<string, unknown>)["compat"]).toBeUndefined(); // anthropic 协议不挂 compat（无 developer/system 之分）
   });
@@ -106,7 +106,7 @@ describe("pi-adapter 注入层", () => {
     const adapter = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn });
     await collect(adapter.stream(request({})));
     expect(Object.hasOwn(seen[0]!.options, "maxTokens")).toBe(false); // 双缺席：wire 不带
-    expect(seen[0]?.model["maxTokens"]).toBe(8192); // 元数据面协议无关兜底（不对称钉死）
+    expect(seen[0]?.model["maxTokens"]).toBeUndefined(); // 同源缺席（兜底废除——两协议对称）
     await collect(adapter.stream(request({ maxTokens: 128 })));
     expect(seen[1]?.options["maxTokens"]).toBe(128);
     expect(seen[1]?.model["maxTokens"]).toBe(128);
@@ -228,7 +228,7 @@ describe("maxOutputTokensByModel 逐模型输出上限折叠（请求显式 > �
     expect(seen[1]?.model["maxTokens"]).toBe(4096);
   });
 
-  it("byModel 缺席模型回落档案级；档案级也无 → anthropic 协议链末端 DEFAULT_MAX_TOKENS", async () => {
+  it("byModel 缺席模型回落档案级；档案级也无 → 不注入（wire 省略——服务端默认，无本地兜底）", async () => {
     const seen: Array<Record<string, unknown>> = [];
     const streamFn: PiStreamFn = async function* (_model, _context, options) {
       seen.push(options as Record<string, unknown>);
@@ -236,10 +236,10 @@ describe("maxOutputTokensByModel 逐模型输出上限折叠（请求显式 > �
     };
     const fallback = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokensByModel: { "big-x": 32_768 }, streamFn });
     await collect(fallback.stream(request({ model: "plain-y" })));
-    expect(seen[0]?.["maxTokens"]).toBe(8192); // 档案级缺席 → DEFAULT_MAX_TOKENS（anthropic 必填）
+    expect(Object.hasOwn(seen[0] ?? {}, "maxTokens")).toBe(false); // 档案级缺席 → 不注入（服务端默认接管）
     const none = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn });
     await collect(none.stream(request({ model: "plain-y" })));
-    expect(seen[1]?.["maxTokens"]).toBe(8192);
+    expect(Object.hasOwn(seen[1] ?? {}, "maxTokens")).toBe(false);
   });
 
   it("请求显式 maxTokens 恒胜 byModel（逐模型配置不压过请求显式值）", async () => {

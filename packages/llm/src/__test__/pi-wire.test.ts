@@ -67,7 +67,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     expect(captured?.headers["accept-encoding"]).toBe("identity"); // SSE 不协商压缩
     expect(String(captured?.headers["anthropic-version"])).toBeTruthy();
     expect(captured?.body["stream"]).toBe(true);
-    expect(captured?.body["max_tokens"]).toBe(8192);
+    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false); // 全缺席不注入——wire 省略，服务端默认接管（本地兜底废除）
     expect(captured?.body["system"]).toEqual([{ type: "text", text: "sys" }]); // pi wire 形态：system 块数组
     expect(JSON.stringify(captured?.body)).not.toContain("cache_control"); // cacheRetention none
   });

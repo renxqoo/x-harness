@@ -22,7 +22,7 @@ import { relative } from "node:path";
 import { realpathSync } from "node:fs";
 import { extractStringField } from "./extract-string-field.ts";
 
-/** 微型半截不值得一次 read 往返——低于此字符数不物化（代码常量，与 DEFAULT_MAX_TOKENS 同口径） */
+/** 微型半截不值得一次 read 往返——低于此字符数不物化（稳定语义代码常量，不进配置面） */
 const MIN_RESCUE_CHARS = 512;
 
 export interface TruncatedRescueInput {

@@ -189,7 +189,7 @@ Recovered ${chars} chars of the truncated edit's new_string to ${target}.partial
 
 ### 层 0｜上游旋钮
 
-- **0a**：核对 GLM-5.3 真实输出上限 ≥ 34k；有空间则调 preset（host-hub shared/presets.ts）。`DEFAULT_MAX_TOKENS = 8192` **不动**（全局兜底抬高对低上限 provider 是 400 风暴）。
+- **0a**：核对 GLM-5.3 真实输出上限 ≥ 34k；有空间则调 preset（host-hub shared/presets.ts）。**本地兜底 `DEFAULT_MAX_TOKENS = 8192` 已废除**（实施后用户裁决）：折叠链全缺席 → 不注入，wire 面省略 `max_tokens`——服务端默认接管；本地硬编码会顶掉目录/服务端的真实意图（曾以 8192 顶掉 56000 配置的事故形态即此病）。
 - **0b（接线断口修复）**：`CatalogEntry.maxTokens`（模型级 meta + `modelOverrides`）进请求。链路：`buildAssemblySnapshot` 增 `maxOutputTokensByModel`（**从 entries 取已解析值——`entryOf` + `applyOverride` 单源，不得重算优先级**，否则与 `get_models` 展示面漂移、`set_model_override` 命令面与请求面两个真相）→ `AssemblyProvider` 扩形 → worker `buildAdapters` 透传 → pi-adapter `AdapterCoreOptions` 增 `maxOutputTokensByModel?: Record<string, number>`，折叠序 `request.maxTokens ?? byModel[request.model] ?? core.maxOutputTokens ?? DEFAULT`（anthropic 协议链末端兜底不变）。CLI 面不受影响（其 providers.json 模型是裸 id 无元数据）。
 
 ## 不变量与裁决点（全部已闭合）
@@ -213,7 +213,7 @@ Recovered ${chars} chars of the truncated edit's new_string to ${target}.partial
 
 - `maxOutputContinuations`（既有，缺省 3）——截断续写次数，含本件新接续的全截断 case；
 - sidecar 抢救无开关——授权面拒绝时自然降级（note 说明），无静默配置面；
-- `formatArgsEcho` 截断阈值（2_000）与体积下限（512）为代码常量——与 `DEFAULT_MAX_TOKENS` 同口径（不值得配置面的稳定语义）。
+- `formatArgsEcho` 截断阈值（2_000）与体积下限（512）为代码常量——稳定语义不进配置面。
 
 ## 问题域
 
@@ -221,7 +221,7 @@ Recovered ${chars} chars of the truncated edit's new_string to ${target}.partial
 - 不处理（归属）：
   - bash heredoc 半截抢救——v2（自由文本形态，提取器结构不同，等独立需求）；
   - 通用 partial-JSON 库——参数化单字段提取器已覆盖 v1 表；通用化等第三个消费者出现再抽；
-  - `DEFAULT_MAX_TOKENS` 全局兜底值——不动（低上限 provider 400 风暴）；
+  - ~~`DEFAULT_MAX_TOKENS` 全局兜底值~~——已废除（全缺席不注入，服务端默认接管；400 风暴论证失效：服务端默认本就是 provider 自己的合法值）；
   - 续参数拼接（模型只输出剩余半截、harness 拼接执行）——不可行且不做：工具参数是协议结构化输出，模型没有被训练过「以纯文本续写上一轮参数 JSON 片段」；拼接点在 JSON 字符串中间（转义状态/引号闭合）逐字符精确接上不可靠；工业实践一致丢弃/重试，无人做拼接；
   - Codex 式盲重试——已否决：确定性截断重发同形请求只会再截；
   - `.partial` 自动清扫——误删风险 > 残留垃圾；模型用后删（note 指令）+ 同名不覆盖兜住损失面；

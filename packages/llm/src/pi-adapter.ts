@@ -18,9 +18,6 @@ export type PiStreamFn = (
   options?: Record<string, unknown>,
 ) => AsyncIterable<AssistantMessageEvent>;
 
-/** 协议硬约束：anthropic max_tokens 必填；Agent 写大文件负载下 4096 易截断误判收轮 */
-export const DEFAULT_MAX_TOKENS = 8192;
-
 /** 思考预算（docs/LLM-PI.md 契约）：等级 → thinkingBudgetTokens（老预算型模型生效；
  *  自适应模型由 effort 决定）。与 my-agent provider-pi 同表。 */
 export const THINKING_BUDGETS: Record<"low" | "medium" | "high" | "max", number> = {
@@ -136,10 +133,10 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           }
           return response;
         }) as typeof fetch;
-        // anthropic 协议必填恒注入（链末端 DEFAULT_MAX_TOKENS 兜底）；openai 仅折叠值
-        // 在场才发（双缺席不发）
+        // 折叠链全缺席 → 不注入：pi 侧 options.maxTokens ?? model.maxTokens 均 undefined →
+        // wire 面省略 max_tokens（anthropic 走服务端默认，openai 同）——本地硬编码兜底
+        // 会顶掉目录/服务端的真实意图（曾以 8192 顶掉 56000 配置的事故形态）
         const effectiveMaxTokens = effectiveMaxOutputTokens(core, request);
-        const injectMaxTokens = effectiveMaxTokens !== undefined || core.api === "anthropic-messages";
         // Model 条目按请求构造：id/name = request.model（请求体的 model 字段来源——适配器名
         // 只作 provider 注册键，绝不进请求体）；maxTokens 与 options 同源
         const model = {
@@ -152,7 +149,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           input: [...(core.inputByModel?.[request.model] ?? ["text" as const])],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: effectiveContextWindow(core, request.model),
-          maxTokens: effectiveMaxTokens ?? DEFAULT_MAX_TOKENS,
+          maxTokens: effectiveMaxTokens,
           ...compatOverride,
         };
         const options: Record<string, unknown> = {
@@ -161,7 +158,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           signal: request.signal,
           maxRetries: 0, // 单 attempt：重试职责在 llm-retry waterfall（SDK 缺省 2 必须显式归零）
           cacheRetention: "none", // 保持 wire 无 cache_control 标记（缓存启用另裁决）
-          ...(injectMaxTokens ? { maxTokens: effectiveMaxTokens ?? DEFAULT_MAX_TOKENS } : {}),
+          ...(effectiveMaxTokens !== undefined ? { maxTokens: effectiveMaxTokens } : {}),
           ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
           ...thinkingOptions(request.thinking, core.api),
           fetch: capturingFetch,
@@ -194,7 +191,7 @@ export interface AnthropicCompatOptions {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly fetch?: typeof fetch;
-  /** 输出上限：请求未显式带 maxTokens 时生效；双缺席链末端 DEFAULT_MAX_TOKENS（协议必填） */
+  /** 输出上限：请求未显式带 maxTokens 时生效；全缺席不注入（wire 省略——服务端默认） */
   readonly maxOutputTokens?: number;
   /** 逐模型输出上限（目录已解析值——模型级 meta 与 overrides 单源）：优先于档案级 */
   readonly maxOutputTokensByModel?: Readonly<Record<string, number>>;
