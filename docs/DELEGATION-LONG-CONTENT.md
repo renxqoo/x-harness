@@ -255,11 +255,11 @@ reportCap 单源/echoSummary 无双重包装/双重 dispose 幂等/文案面）�
 
 | 项 | 理由 | 归属 |
 | --- | --- | --- |
-| message 前缀 sidecar 物化 | 无自然 path 字段；需发明落盘约定 | 后续（若 note-only 指引实测不足再立项） |
+| message 前缀 sidecar 物化 | 无自然 path 字段；需发明落盘约定 | 后续（若 note-only 指引实测不足再立项）。**复核注记（2026-09-25）**：对照组 write 侧的写盘短路已由 0200229 修复（装配序对调 + 文案件升格合成者——sidecar 物化在 write 面已真落地）；agent_message 自身挂账理由不变（仍无 path 字段、note-only 已覆盖自救），维持挂账 |
 | TRUNCATED_TOOL_MESSAGE base 文案 | note 补位已够；动 base 影响全工具面 | 不改（本件内裁定） |
 | P6 纯内存部署追问落空 | 依赖 archive 部署形态 | 部署纪律（文档已声明） |
 | bash heredoc 抢救 | 沿 TRUNCATED-TOOL-RESCUE v2 挂账 | 既有挂账 |
-| dispatchWaterfall 无条件 deepFreeze 冻结 AbortSignal（create-context.ts:457）——node 运行时下 turn 中 dispose→cancel→abort 抛 TypeError（bun 全绿依赖单运行时；件15 新增第二个 signal-bearing 消费者扩大暴露面但行为不变，审查 B#4） | 非本件引入（tool-write 抢救件先在）；候选修法：freeze 降 shellFreeze / deepFreeze 跳过 AbortSignal 子树 / 仓声明 bun-only + CI 钉运行时 | core/context 后续件 |
+| dispatchWaterfall 无条件 deepFreeze 冻结 AbortSignal（create-context.ts:161 runWaterfall——IMPL 裁决 7 恒 deep）——node 运行时下 turn 中 dispose→cancel→abort 抛 TypeError（件15 新增第二个 signal-bearing 消费者扩大暴露面但行为不变，审查 B#4） | 非本件引入（tool-write 抢救件先在）；候选修法：freeze 降 shellFreeze / deepFreeze 跳过 AbortSignal 子树 / 仓声明 bun-only + CI 钉运行时 | core/context 后续件。**复核确认仍存在（2026-09-25，双运行时实测）**：bun v1.4.2 下 abort 正常（不走向量写）；node v24 `--experimental-strip-types` 直跑 freeze.ts 同载荷复现 `TypeError: Cannot assign to read only property 'Symbol(kAborted)'`；代码自 W0 迁包（7057c0d）后未动，风险边界不变（test 脚本钉 `bunx --bun`；炸点= node 直跑/宿主嵌 node + turn 中 dispose） |
 
 ## 8. 验收清单
 
