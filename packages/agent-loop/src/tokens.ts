@@ -105,11 +105,12 @@ export const agentTurnStopping = defineSerial<{ readonly session: SessionId; rea
   "agent/turn-stopping",
 );
 
-/** 收束窗口（docs/AGENT-MESSAGE.md / docs/OUTPUT-TOKEN-CONTINUATION.md 契约）：无工具 settle
- *  即将结束 turn 的**通用时点**（scheduleTools flow none 之后、settleConclude 之前）——内核
- *  不识「截断」，何时续跑的判定完全归插件。「tool_use 在场不续跑」由结构保证（带工具的
- *  settle 执行工具进下一步，收束点不可达）。无应答（undefined）→ 现行收束路径原样（真
- *  opt-in）。中间件纪律：必须调 next；放弃用 fail 应答而非 throw；让位 = 透传下游。 */
+/** 收束窗口（docs/AGENT-MESSAGE.md / docs/OUTPUT-TOKEN-CONTINUATION.md 契约；WER 批 A 扩面）：
+ *  即将结束 turn 的**通用时点**（scheduleTools 完成之后、settleConclude 之前——带工具路径
+ *  的派发点在 tool/result 全部落账后）。内核不识「截断」，何时续跑的判定完全归插件；
+ *  hasTools/truncatedCount 是纯事实载荷，「带工具是否续跑」由插件守门（agent-continuation
+ *  缺省让位 final——等价旧带工具粘性）。无应答（undefined）→ 现行收束路径原样（真 opt-in）。
+ *  中间件纪律：必须调 next；放弃用 fail 应答而非 throw；让位 = 透传下游。 */
 export type TurnConcludeDecision =
   | { readonly kind: "resume"; readonly source: string; readonly instruction: string }
   | { readonly kind: "fail"; readonly message: string; readonly code: string };
@@ -123,6 +124,11 @@ export interface TurnConcludePayload {
   readonly rawReason?: string;
   /** 思考型截断信号（本次 settle 有 thinking 产出但 content 空——预算烧在思考上仍是可续写） */
   readonly hasThinking?: true;
+  /** 本次 settle 有已执行的工具调用（ran 流派发面恒 true；全截断配对流 false——续写接手
+   *  是既有语义，截断事实在 truncatedCount。守门事实：是否续跑归插件裁决） */
+  readonly hasTools?: boolean;
+  /** 本次 settle 中被截断配对、未执行的 tool_use 数（scheduleTools 分区事实） */
+  readonly truncatedCount?: number;
   readonly signal: AbortSignal;
 }
 

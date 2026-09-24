@@ -40,3 +40,33 @@ describe("summary 回显统一出口（件15 D7）", () => {
     await parent.dispose();
   });
 });
+
+describe("summary 回显跨进程路径（件15 D7——审查 A P1-3 补）", () => {
+  it("box 域投递（crossFallback→sendCross）→ 回显含 summary（三路径之 cross）", async () => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const root = await mkdtemp(join(tmpdir(), "xh-summary-cross-"));
+    try {
+      const { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL } = await import("./world.ts");
+      const options = await makeOptions({});
+      const alpha = await makeWorld({ ...options, mailbox: { box: "alpha", mainSession: "main-1" as import("@x-harness/session").SessionId } }, root);
+      const beta = await makeWorld({ ...options, mailbox: { box: "beta", mainSession: "main-2" as import("@x-harness/session").SessionId } }, root);
+      try {
+        const alphaMain = await spawnParent(alpha, PARENT_MODEL, "main-1" as import("@x-harness/session").SessionId);
+        await spawnParent(beta, PARENT_MODEL, "main-2" as import("@x-harness/session").SessionId);
+        const sent = await callTool({ world: alpha, name: "agent_message", args: { to: "beta", message: "cross ping", summary: "cross label" }, session: alphaMain.agent.session.id });
+        expect(sent.isError).toBeUndefined();
+        expect(sent.content).toContain("(summary: cross label)"); // cross 路径回显覆盖（外层统一出口包住 sendCross 返回）
+        await alphaMain.dispose();
+        await alpha.cleanup();
+        await beta.cleanup();
+      } finally {
+        await alpha.disposePlugins().catch(() => {});
+        await beta.disposePlugins().catch(() => {});
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+});

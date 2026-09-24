@@ -222,6 +222,19 @@ PathGate 边界）。
 
 ## 6. 对抗审查处置（两路并行，已完成）
 
+路A（契约/语义/假绿面）：核心恒等（D1/D5/D6/D7 主体/逐字锚/白名单/引导面）11 维核验
+通过。偏差处置：P1-1「e2e 默认门红」**复核否决**——toolbox 旅程 grep 断言失败系环境性
+（rg 子进程链依赖 env node，裸 shell PATH 缺失时 exited 127；带 PATH 复跑 e2e 全绿、
+tool-grep 单测 26/26 绿、件15 diff 零涉及 grep）——非假绿非回归，验收勾选维持；P1-2
+「复活路径回显遗漏」**复核否决**——message() 外层 `echoSummary(await crossFallback(...))`
+包住 crossFallback 内部全部 return（含 revive→deliverToRow），覆盖对称；P1-3 cross 路径
+零断言——**采纳**：summary-echo.test 补 box 域双宿主用例（`(summary: cross label)` 绿）；
+P2-1 e2e 断言加 `/message:` 字段路径前缀锚——**采纳**；P2-2 装配面用例未走真截断链——
+**采纳**：补真链路用例（半截 tool-call-delta + finish max-tokens → 内核 pairTruncatedCalls
+→ 配对 result 含 base 文案 + note，七用例全绿）；P3-1 让位/abort 判断序——语义等价
+（均透传），维持现状落档；P3-2 尾注三段未断言同通知共存——**采纳**（jsonl 中通知文本
+可多次落卷，改 find 首条 + 三段共存断言）。
+
 路B（并发/生命周期/资源面）11 维度：核心机制 7 维（waterfall 生命周期/链序共存/abort 竞态/
 reportCap 单源/echoSummary 无双重包装/双重 dispose 幂等/文案面）核验通过；偏差 #1 e2e
 断言失败不回卷 ctx（已修——finally 补 ctx.dispose，delegation-journey 同病顺手修）/
@@ -257,5 +270,5 @@ reportCap 单源/echoSummary 无双重包装/双重 dispose 幂等/文案面）�
 - [x] rescue-note 用例组全绿（rescue-note.test.ts 六用例——含装配后 waterfall 派发可见；让位用例曾抓到实现缺 downstream 非空判断，已修
 - [x] e2e 长内容旅程进默认门绿（long-content-journey.ts：'Expected string length less or equal to 120' 数字回显 → relay-payload.md 落盘 → 父 WAL 含 <cross-session-message> 路径 → 尾注两半句 + truncated at 120）
 - [x] AGENT-DELEGATION §2.1/§13 口径归一 + §18 修订D 落档；本件状态「已实施」
-- [ ] 对抗审查偏差清单清零（修掉或引用本件已裁决节号）
+- [x] 对抗审查偏差清单清零（两路 22 维度：采纳 7 条全处置——A P1-3/P2-1/P2-2/P3-2 修码、B #1/#2/#3 修码、B #4 挂账；否决 2 条附复核证据——A P1-1 环境性、A P1-2 控制流覆盖对称；A P3-1 语义等价落档）
 - [ ] 覆盖率行/语句/函数 ≥90、分支 ≥85 只升不降，数字如实报告

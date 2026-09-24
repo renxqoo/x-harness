@@ -110,9 +110,11 @@ export type AssistantSettled = {
   readonly interrupted?: true;
 };
 
+/** hasTools = 有已执行的工具调用（ran 流恒 true；none 流恒 false——全截断配对流的续写接手
+ *  是既有语义，截断事实走 truncatedCount）；truncatedCount = 截断配对未执行数（分区事实）。 */
 export type ToolFlow =
-  | { readonly kind: "none" } // 无 tool_use：不调度
-  | { readonly kind: "ran"; readonly collected: ToolCallOutcomeCollected }
+  | { readonly kind: "none"; readonly hasTools: boolean; readonly truncatedCount: number }
+  | { readonly kind: "ran"; readonly collected: ToolCallOutcomeCollected; readonly hasTools: boolean; readonly truncatedCount: number }
   | { readonly kind: "aborted" };
 
 /** 领取 + preStep 否决；reject 回灌已领批次（保原 id 与原 target——repair 的 trailing-claim 按旧 id 回灌依赖同 id 判重） */
@@ -348,21 +350,23 @@ async function pairTruncatedCalls(
 }
 
 /** 工具调度：contexts 回灌 next-step；abort 感知；max-tokens 截断分区（截断集配对不执行、
- *  执行集照常；执行集空且截断集非空 → none——收束窗口可达，续写接手） */
+ *  执行集照常；执行集空且截断集非空 → none——收束窗口可达）。返回携带 hasTools/
+ *  truncatedCount 纯事实（收束窗口载荷——派发点在本函数返回后，tool/result 已全落账）。 */
 export async function scheduleTools(scope: TurnScope, step: number, assistant: AssistantSettled): Promise<ToolFlow> {
   const { deps, controller, turn } = scope;
   const session = deps.session;
   let specs: ToolCallSpec[] = assistant.content
     .filter((block): block is Extract<ContentBlock, { type: "tool_use" }> => block.type === "tool_use")
     .map((block) => ({ callId: block.callId, name: block.name, arguments: block.input }));
-  if (specs.length === 0) return { kind: "none" };
+  if (specs.length === 0) return { kind: "none", hasTools: false, truncatedCount: 0 };
+  const specsTotal = specs.length;
   if (assistant.stopReason === "max-tokens") {
     const truncated: ToolCallSpec[] = [];
     const runnable: ToolCallSpec[] = [];
     for (const spec of specs) (isTruncatedArguments(spec.arguments) ? truncated : runnable).push(spec);
     await pairTruncatedCalls(scope, { turn, step }, truncated);
-    if (runnable.length === 0) return { kind: "none" }; // 全截断：收束窗口可达（续写指令引导重发）
-    specs = runnable; // 混合 case：截断的已配对，完整照常执行（粘性收轮语义不变）
+    if (runnable.length === 0) return { kind: "none", hasTools: false, truncatedCount: truncated.length }; // 全截断：收束窗口可达（零执行——hasTools=false，截断数入载荷）
+    specs = runnable; // 混合 case：截断的已配对，完整照常执行
   }
   const collected = await executeToolCalls(
     {
@@ -384,7 +388,7 @@ export async function scheduleTools(scope: TurnScope, step: number, assistant: A
     appendEvent(session, "agent/inbox/spliced", insertData("next-step", context));
   }
   if (controller.signal.aborted) return { kind: "aborted" };
-  return { kind: "ran", collected };
+  return { kind: "ran", collected, hasTools: true, truncatedCount: assistant.stopReason === "max-tokens" ? specsTotal - specs.length : 0 };
 }
 
 interface ConcludeInput {

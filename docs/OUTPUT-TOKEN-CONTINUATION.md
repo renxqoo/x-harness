@@ -38,8 +38,8 @@
 **agentTurnConclude waterfall 钩子（内核机制，agent-loop tokens.ts 新词条——通用收束窗口，内核不识「截断」）**
 
 - 词条样板 = `agentRequestError`（defineWaterfall 双类型参数 + 输出 union|undefined）——**不是** agentTurnStopping（defineSerial 串行事件；dispatch 无 final，照抄则无插件时每次派发即 throw）。与 agentTurnStopping 对偶：那个是 completed 收尾前的 inbox 注入窗口，这个是 settle 收束点的续跑决策窗口。
-- **派发点 = 通用时点（循环结构事实，非功能判定）**：scheduleTools 得 flow none（无工具执行）之后、settleConclude 之前；interrupted/aborted/error/blocked 终态不经过此点（内核终态语义）。「tool_use 在场不续写」由此成为**结构保证**：带工具的 settle 执行工具、进下一步，收束点不可达。判定（何种 stopReason/rawReason 可续）完全归插件——钩子名与派发点不含截断语义，未来非截断策略（如完成度检查清单再跑一轮）可直接复用本窗口。
-- 载荷（纯事实，无判断、无计数）：`{ session, turn, step, stopReason, content, rawReason?, signal }`。
+- **派发点 = 通用时点（循环结构事实，非功能判定）**：scheduleTools 完成（无工具执行 flow none，或带工具 flow ran 且 max-tokens——派发点在 tool/result 全部落账之后）、settleConclude 之前；interrupted/aborted/error/blocked 终态不经过此点（内核终态语义）；ran 且 stop 的工具步不经过此点（非收束时点——进下一步消化工具结果）。带工具亦派发（WER 批 A）；「带工具不续跑」由 **agent-continuation hasTools 判据守门**（让位 final 等价旧粘性——`stopReason==="max-tokens" && hasTools → undefined`，内核让位粘性落同款终态）。判定（何种 stopReason/rawReason/hasTools 可续）完全归插件——钩子名与派发点不含截断语义，未来非截断策略（如完成度检查清单再跑一轮）可直接复用本窗口。
+- 载荷（纯事实，无判断、无计数）：`{ session, turn, step, stopReason, content, rawReason?, hasThinking?, hasTools?, truncatedCount?, signal }`（hasTools/truncatedCount 为 WER 批 A 增的分区事实）。
 - 返回形状门在 driver，两分处置：
   - `undefined`（中间件全让位）→ 现行收束路径原样（stop→completed；max-tokens→粘性收轮）——「无插件行为逐字节等于现状」只需此支成立；
   - 非 undefined 但形状不符（含 `resume` 而 instruction 非非空串、`fail` 而 message/code 非非空串）→ **fail-loud：error 收轮**（同 isDialShape/bad-dial 惯例——垃圾静默降级令插件 bug 无痕）。
@@ -52,7 +52,7 @@
 - resume 决策应用：append `agent/message{source:"output-continuation", kind:"directive", content:[{type:"text",text:instruction}]}`（表面事件，投影自动携带——**请求体纯折叠不变量原封不动，无尾部拼接机制**）；置 turn 级 `nextStepIsContinuation = true`（唯一新内核状态，一个布尔）；append `step/end` + `openStep = -1` 后 `continue` 外层步循环（跳过 settleConclude）。**出口不变量：`turnEnds === undefined`**——不得执行/保留现行粘性赋值（OUTCOME_RANK 下 completed 永远压不过已置的 max-tokens，粘性残留会把续写成功的轮误收为 max-tokens 终态：chainsNextTurn 断链、delegation notify 误报失败）。
 - fail 决策应用：append `step/end`（同 dialFailure/fatal 分支形状）后置 `turnEnds = fatalOutcome(controller, cancelled, { kind:"error", message, code })`——复用 abort 覆盖（cancel 竞态按 aborted 收轮，与 fatal 同口径）——break。fail 的持久化记录 = `turn/end{reason:error, message, code}`（不另造审计事件）。
 - 两分支共同前置：本次 settle 的 partial 已由 runAttempt 先行落账（保存先于判定）。
-- 无决策（undefined）：现行路径原样——粘性 max-tokens 照现行语义置（带工具 settle 在工具分支置、无工具 settle 在收束点后置），stop 无工具 → settleConclude → completed → stopping 窗口。带 tool_use 的 settle 不经收束点（结构保证）。
+- 无决策（undefined）：现行路径原样——粘性 max-tokens 由让位统一置（无工具与带工具路径同走 `pass.sticky = stopReason==="max-tokens"`，与旧「带工具粘性」等价终态）；stop 无工具 → settleConclude → completed → stopping 窗口。带 tool_use 的 settle 亦经收束点（WER 批 A——守门归插件）。
 - 续写步形态（`nextStepIsContinuation` 在场的下一个 step，消费后复位）：新相位函数（不复用 beginStep）——不领收件箱、不落 `user/message` 批次（**保序关键**：续写请求的末条消息必须是指令，排队 steer 不得插进指令与截断点之间）、reject 时跳过回灌（无可回灌，防「未领却重放 insert」审计噪音）、rewrite 输出忽略（无可改写批次；AGENT-LOOP-DRIVER §1.2 同步注明）；照常 `anchorSystem`（幂等）、`dialStep`（header 不变零落账）、`agentPreStep` 派发（claim: `[]`——压缩检查面保持）。**返回闭集 `{enter} | {blocked}`，empty 不可达**——driver 侧续写步不得套用 `empty → completed` 早退（现行 empty 仅 step0 可达是 beginStep 实现巧合，非契约）；step 号照常递增。
 - 内核**不计数**：计数与复位规则（3 次上限、stop 复位、turn 归零）是策略，归插件（WAL 折叠，见策略插件节）。
 
@@ -170,11 +170,11 @@
 
 **agent-loop 内核机制（假策略中间件 + scriptedAdapter + calls 捕获）**
 
-- 窗口契约：无工具 settle 收束点派发恰一次、载荷 {turn, step, stopReason, content, rawReason?}；stop settle 同样经窗口（让位 → 现状不变）；带 tool_use settle **不派发**（结构保证钉死）；undefined → 旧路径；非法形状 → fail-loud；signal 断 → 让位。
+- 窗口契约：无工具 settle 收束点派发恰一次、载荷 {turn, step, stopReason, content, rawReason?, hasThinking?, hasTools?, truncatedCount?}；stop settle 同样经窗口（让位 → 现状不变）；带 tool_use 的 max-tokens settle 亦派发（WER 批 A——派发点在 tool/result 落账后，事件序断言）；undefined → 旧路径；非法形状 → fail-loud；signal 断 → 让位。
 - resume 应用：**续写请求的 messages 末条恰为指令 user 消息**（calls 断言，文本=插件 instruction；来源=投影非拼接——WAL 中有对应 agent/message）；`agent/message{kind:"directive"}` 恰一条；**turn/end `{kind:"completed"}`**（出口不变量）；后续 turn 的请求仍含该指令（持久载体语义钉死）+ 空收件箱续写步仍发请求（empty 不可达）。
 - fail 应用：turn/end `{kind:"error", message/code = 插件给定}`；partial 全落账；step/end 括号配对完整（含 fail 步）。
 - 无决策：现行行为逐字节回归（stop→completed 走 stopping 窗口；max-tokens→粘性收轮、无 agent/message、无续写）。
-- 带工具的 max-tokens settle：工具执行、粘性收轮、不经窗口（回归钉死）。
+- 带工具的 max-tokens settle：工具执行、窗口派发后让位 → 粘性收轮（agent-continuation hasTools 守门，回归钉死——与旧行为等价终态）。
 - 暂停吸收与保序：截断后 steer 入队 → 续写请求不含该条目且**指令为末条**（顺序断言）；续写完成后 stopping 窗口消化条目（不搁浅）。
 - 续写返回 stop + tool_use：工具步后请求体含指令（持久载体——非陈旧泄漏，断言其位置在截断 partial 之后）。
 - abort 于续写流：interrupted partial 落账 + aborted 收轮；fail 竞态：截断结算后 cancel 落入分支内 → aborted 收轮（fatalOutcome 复用）。
@@ -296,7 +296,7 @@
 
 ## 验收清单
 
-- [x] 截断信号归一：归一 length ∨ 原生三词表（error 救回带内容前置）；带 tool_use 的 settle 不经收束窗口（结构保证）
+- [x] 截断信号归一：归一 length ∨ 原生三词表（error 救回带内容前置）；带 tool_use 亦派发收束窗口，agent-continuation hasTools 判据守门（让位 final 等价旧粘性——WER 批 A）
 - [x] overflow：`context-overflow` 码（400 文案优先于状态码）+ compaction 自愈恰一次；llm-retry 不重试该码；纯 413 保持 `http-413`
 - [x] agent/message 类型：形状门正反例（source/kind/text-only）；投影 user 角色；UI 隐藏 = 类型语义（镜像泛型外发）；serialize directive 跳过 / content 内容行；cut 非候选
 - [x] 窗口契约：无工具 settle 恰派发一次（stop 与 max-tokens 都经窗口）、载荷纯事实；undefined → 现行行为逐字节回归（真 opt-in）；非法形状 fail-loud；next 纪律契约测试
@@ -308,6 +308,6 @@
 - [x] 暂停吸收与保序：续写请求不含排队条目且指令为末条；stopping 窗口不搁浅；send_now 延迟语义核对通过
 - [x] 放弃：error 终态（插件 message/code）+ UI `agent/error` + `settled{ok:false}`；cancel 竞态按 aborted
 - [x] delegation 第四批：报告以 agent/message{content} 落账、UI 不再出现 user/message 形态报告、模型可见性不变、reportDelivered 语义不破（复读/异常窗口回归）
-- [x] `max-tokens + tool_use` 现行为逐字节回归
+- [x] `max-tokens + tool_use` 终态等价回归（派发后让位 → 粘性 max-tokens 收轮）
 - [x] 四门全绿 + 覆盖率 ≥90/85 只升不降，数字如实报告；e2e 旅程默认门通过
 - [x] 对抗审查（文档轮已完成清零 + 代码轮）问题清零

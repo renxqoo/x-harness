@@ -26,6 +26,14 @@ function textScript(text: string, finish: "stop" | "max-tokens"): AsyncGenerator
   })();
 }
 
+function toolScript(spec: { readonly callId: string; readonly name: string; readonly args: string; readonly finish?: "stop" | "max-tokens" }): AsyncGenerator<LlmChunk> {
+  return (async function* (): AsyncGenerator<LlmChunk> {
+    yield { type: "tool-call-delta", index: 0, callId: spec.callId, name: spec.name, argumentsDelta: spec.args };
+    yield { type: "usage", usage: { input: 1, output: 2 } };
+    yield { type: "finish", finish: { kind: spec.finish ?? "stop" } };
+  })();
+}
+
 interface Fixture {
   readonly ctx: ReturnType<typeof createContext>;
   readonly loop: AgentLoopService;
@@ -174,6 +182,53 @@ describe("agent-continuation 插件全链（真装配，缺省 max=3）", () => 
     off();
     await handle.dispose();
     await fixture.dispose();
+  });
+
+  it("默认装配翻转钉死（WER 批 A）：完整工具块 max-tokens → 窗口派发、hasTools 让位 → 粘性 max-tokens（与旧行为等价终态）", async () => {
+    const fixture = await makeFixture();
+    fixture.ctx.use(toolRegistry).register({ name: "add", inputSchema: Type.Object({}), execute: async () => ({ content: "3" }) });
+    const conclude: Array<Record<string, unknown>> = [];
+    const off = fixture.ctx.on(agentTurnConclude, (async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
+      const downstream = await next(payload);
+      conclude.push(payload as Record<string, unknown>);
+      return downstream;
+    }) as never);
+    fixture.scripts.push(toolScript({ callId: "c1", name: "add", args: "{}", finish: "max-tokens" }));
+    const { agent, handle } = await spawn(fixture);
+    agent.followup("q");
+    await agent.whenIdle();
+
+    expect(fixture.calls).toHaveLength(1); // 无续写请求
+    expect(conclude).toHaveLength(1); // 窗口派发达（带工具不再结构不可达）
+    expect(conclude[0]).toMatchObject({ stopReason: "max-tokens", hasTools: true, truncatedCount: 0 }); // 事实载荷
+    const events = agent.session.events();
+    expect(events.filter((e) => e.type === "tool/result")).toHaveLength(1); // 工具照常执行
+    expect(events.filter((e) => e.type === "agent/message")).toHaveLength(0); // 插件让位：无指令
+    expect(events.at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } }); // 旧粘性终态等价
+    off();
+    await handle.dispose();
+    await fixture.dispose();
+  });
+
+  it("无插件世界等价（回归）：同流不装本插件 → 同样粘性 max-tokens 终态、无续写", async () => {
+    const ctx = createContext();
+    const calls: LlmRequest[] = [];
+    const scripts: AsyncGenerator<LlmChunk>[] = [];
+    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin]);
+    const off = ctx.use(llmRuntime).registerAdapter({ name: "fake", stream: (request) => { calls.push(request); return scripts.shift() ?? textScript("(no script)", "stop"); } });
+    ctx.effect(off);
+    ctx.use(toolRegistry).register({ name: "add", inputSchema: Type.Object({}), execute: async () => ({ content: "3" }) });
+    scripts.push(toolScript({ callId: "c1", name: "add", args: "{}", finish: "max-tokens" }));
+    const made = await ctx.use(agentLoopServiceToken).create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    made.value.agent.followup("q");
+    await made.value.agent.whenIdle();
+    expect(calls).toHaveLength(1);
+    expect(made.value.agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } });
+    await made.value.dispose();
+    await ctx.dispose();
+    void unload;
   });
 
   it("stop 正常完成：插件让位——零 agent/message、现行行为不变", async () => {

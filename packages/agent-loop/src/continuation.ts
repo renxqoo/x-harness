@@ -65,10 +65,15 @@ export type ConcludeFlow =
   | { readonly kind: "fail"; readonly message: string; readonly code: string }
   | { readonly kind: "pass"; readonly sticky: boolean };
 
-/** 收束窗口派发（无工具 settle 即将结束 turn 的通用时点）：垃圾形状 fail-loud
- *  （isDialShape/bad-dial 惯例——静默降级令插件 bug 无痕）。 */
-export async function concludeWindow(scope: TurnScope, step: number, assistant: AssistantSettled): Promise<ConcludeFlow> {
+/** 收束窗口派发（即将结束 turn 的通用时点；spec 携工具事实——派发点在 tool/result 全落账后）：
+ *  垃圾形状 fail-loud（isDialShape/bad-dial 惯例——静默降级令插件 bug 无痕）。 */
+export async function concludeWindow(
+  scope: TurnScope,
+  step: number,
+  spec: { readonly assistant: AssistantSettled; readonly hasTools: boolean; readonly truncatedCount: number },
+): Promise<ConcludeFlow> {
   const { deps, controller, turn } = scope;
+  const assistant = spec.assistant;
   const decision = await deps.dispatchTurnConclude({
     session: deps.session.id,
     turn,
@@ -77,6 +82,8 @@ export async function concludeWindow(scope: TurnScope, step: number, assistant: 
     content: assistant.content,
     ...(assistant.rawReason !== undefined ? { rawReason: assistant.rawReason } : {}),
     ...(assistant.hasThinking === true ? { hasThinking: true } : {}),
+    hasTools: spec.hasTools,
+    truncatedCount: spec.truncatedCount,
     signal: controller.signal,
   });
   if (isResumeDecision(decision)) {
@@ -87,5 +94,5 @@ export async function concludeWindow(scope: TurnScope, step: number, assistant: 
   if (decision !== undefined) {
     throw new Error(`agent/turn-conclude output shape invalid (got ${JSON.stringify(decision).slice(0, 80)})`);
   }
-  return { kind: "pass", sticky: assistant.stopReason === "max-tokens" };
+  return { kind: "pass", sticky: assistant.stopReason === "max-tokens" }; // 让位粘性：带工具路径经此落旧终态
 }

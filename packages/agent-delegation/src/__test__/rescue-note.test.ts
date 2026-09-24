@@ -4,9 +4,10 @@
 import { describe, expect, it } from "vitest";
 import { agentTruncatedTool } from "@x-harness/agent-loop";
 import { delegationRescueNote } from "../rescue-note.ts";
-import { makeWorld, spawnParent, makeOptions } from "./world.ts";
-import type { TruncatedToolPayload } from "@x-harness/agent-loop";
+import type { LlmChunk } from "@x-harness/llm";
 import type { SessionId } from "@x-harness/session";
+import { makeWorld, spawnParent, callTool, PARENT_MODEL, CHILD_MODEL, makeOptions } from "./world.ts";
+import type { TruncatedToolPayload } from "@x-harness/agent-loop";
 
 const payloadOf = (over: Partial<TruncatedToolPayload> = {}): TruncatedToolPayload => ({
   session: "s" as SessionId,
@@ -55,7 +56,43 @@ describe("delegationRescueNote（件15 批3）", () => {
     expect(out).toBeUndefined();
   });
 
-  it("装配后 waterfall 派发可见（plugin apply 挂接面——dispatch 真 tool_use 截断经内核配对）", async () => {
+  it("真截断链路：半截 tool-call-delta + finish max-tokens → 配对 result 含换策略 note（内核 pairTruncatedCalls 全链）", async () => {
+    // worker 类型子用 CHILD_MODEL（.md frontmatter）——脚本桶按 model 分派
+    const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }));
+    const parent = await spawnParent(world);
+    world.scripts.set(PARENT_MODEL, [
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "tool-call-delta", index: 0, callId: "sp1", name: "agent_spawn", argumentsDelta: JSON.stringify({ description: "d", prompt: "x", subagent_type: "worker" }) };
+        yield { type: "finish", finish: { kind: "stop" } };
+      })(),
+    ]);
+    world.scripts.set(CHILD_MODEL, [
+      (async function* (): AsyncGenerator<LlmChunk> {
+        // 半截 agent_message 参数（无闭合 JSON）+ max-tokens 终态 → 内核截断集配对
+        yield { type: "tool-call-delta", index: 0, callId: "m1", name: "agent_message", argumentsDelta: '{"to":"main","message":"aaaa' };
+        yield { type: "finish", finish: { kind: "max-tokens" } };
+      })(),
+    ]);
+    parent.agent.followup("delegate");
+    await parent.agent.whenIdle();
+    const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
+    const childSession = (listed.content.match(/session=([A-Za-z0-9._-]+)/) ?? ["", ""])[1] as SessionId;
+    expect(childSession).not.toBe("");
+    const childHandle = world.loop.get(childSession);
+    expect(childHandle).toBeDefined();
+    if (childHandle !== undefined) {
+      await childHandle.agent.whenIdle();
+      const results = childHandle.agent.session.events().filter((e) => e.type === "tool/result").map((e) => JSON.stringify(e.data));
+      const hit = results.find((r) => r.includes("m1"));
+      expect(hit).toBeDefined();
+      expect(hit).toContain("write it to a file"); // rescue note 附进配对 result（经内核 pairTruncatedCalls）
+      expect(hit).toContain("cut off");
+      expect(hit).toContain("arguments truncated by output token limit"); // base 文案在前、note 追加
+    }
+    await parent.dispose();
+  });
+
+  it("装配后 waterfall 派发可见（plugin apply 挂接面——handler 注册面直发）", async () => {
     const world = await makeWorld(await makeOptions({}));
     const parent = await spawnParent(world);
     // 直接经 ctx waterfall 派发：装配世界内 agent_message 截断 payload 有 delegation note

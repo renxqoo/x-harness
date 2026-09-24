@@ -1,5 +1,5 @@
 // 收束窗口机制测试（docs/OUTPUT-TOKEN-CONTINUATION.md 契约·测试口径「agent-loop 内核机制」节）：
-// 窗口契约（派发时点/载荷纯事实/结构保证/垃圾 fail-loud）、resume 应用（指令载体/出口不变量）、
+// 窗口契约（派发时点/载荷纯事实/带工具派发守门/垃圾 fail-loud）、resume 应用（指令载体/出口不变量）、
 // fail 应用（error 终态/括号配对）、无决策逐字节回归、暂停吸收与保序、持久载体、
 // abort/竞态/自愈重试带指令、续写步 preStep 否决。策略本体（3 次计数等）在 agent-continuation 包测。
 
@@ -24,6 +24,8 @@ interface ConcludePayload {
   readonly stopReason: "stop" | "max-tokens";
   readonly content: readonly unknown[];
   readonly rawReason?: string;
+  readonly hasTools?: boolean;
+  readonly truncatedCount?: number;
 }
 
 /** 注册假策略中间件（next 纪律：让位 = 透传下游；decide 垃圾由用例自带） */
@@ -61,7 +63,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     await agent.whenIdle();
 
     expect(calls).toHaveLength(2); // 第一次 max-tokens 截断、第二次 stop 收尾（插件让位 → 现状路径）
-    expect(calls[0]).toMatchObject({ turn: 0, step: 0, stopReason: "max-tokens", rawReason: "max_tokens" });
+    expect(calls[0]).toMatchObject({ turn: 0, step: 0, stopReason: "max-tokens", rawReason: "max_tokens", hasTools: false, truncatedCount: 0 });
     expect(calls[0]?.content).toEqual([{ type: "text", text: "half" }]);
     expect(calls[1]).toMatchObject({ stopReason: "stop" });
 
@@ -119,16 +121,18 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     agent.followup("q");
     await agent.whenIdle();
     expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ hasTools: false, truncatedCount: 0 }); // 无工具事实
     expect(agentMessages(agent, "agent/message")).toHaveLength(0);
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } });
     off();
     await handle.dispose();
   });
 
-  it("结构保证：带 tool_use 的 max-tokens settle 执行工具、粘性收轮、窗口不派发", async () => {
+  it("带工具派发（WER 批 A）：max-tokens + tool_use → 窗口可达（hasTools/truncatedCount 事实）、tool/result 先于派发、让位后粘性收轮", async () => {
     const world = await makeWorld();
     worlds.push(world);
-    const { calls, off } = registerConclude(world, () => resumeOf());
+    // 假策略按 hasTools 守门（agent-continuation 缺省判据的镜像）——带工具让位 final
+    const { calls, off } = registerConclude(world, (p) => (p.stopReason === "max-tokens" && p.hasTools !== true ? resumeOf() : undefined));
     world.tools.register({ name: "add", inputSchema: Type.Object({}), execute: async () => ({ content: "3" }) });
     world.fake.scripts.push((async function* (): AsyncGenerator<LlmChunk> {
       yield { type: "tool-call-delta", index: 0, callId: "c1", name: "add", argumentsDelta: "{}" };
@@ -137,9 +141,15 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     const { agent, handle } = await spawn(world);
     agent.followup("q");
     await agent.whenIdle();
-    expect(calls).toHaveLength(0); // 收束点不可达
+    expect(calls).toHaveLength(1); // 收束点可达（带工具亦派发）
+    expect(calls[0]).toMatchObject({ turn: 0, step: 0, stopReason: "max-tokens", hasTools: true, truncatedCount: 0 }); // 纯事实载荷
     expect(agentMessages(agent, "tool/result")).toHaveLength(1); // 工具照常执行
-    expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } }); // 粘性
+    // 事件序：tool/result 全落账先于窗口派发（派发点规格——C5 判定的输入前提）
+    const seq = types(agent);
+    expect(seq.indexOf("tool/result")).toBeLessThan(seq.indexOf("step/end"));
+    expect(agentMessages(agent, "agent/message")).toHaveLength(0); // 让位：无指令
+    expect(world.fake.calls).toHaveLength(1); // 无续写请求
+    expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } }); // 粘性（让位 final 等价）
     off();
     await handle.dispose();
   });
@@ -390,7 +400,7 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     await handle.dispose();
   });
 
-  it("混合：完整调用照常执行、截断的配对不执行；flow ran → 粘性收轮（窗口不派发）", async () => {
+  it("混合：完整调用照常执行、截断的配对不执行；ran 流派发后让位 → 粘性收轮（truncatedCount 事实）", async () => {
     const world = await makeWorld();
     worlds.push(world);
     let ran = 0;
@@ -420,9 +430,10 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     // 完整调用恰执行一次、截断调用零执行
     ran = events.filter((e) => e.type === "tool/call").length;
     expect(ran).toBe(2); // 两条 tool/call 都落账（截断的账面 + 完整的账面）
-    // 粘性收轮：无第二次模型调用、收束窗口不派发
+    // 让位后粘性收轮：无第二次模型调用；窗口派发达（混合流 truncatedCount=1 事实）
     expect(world.fake.calls).toHaveLength(1);
-    expect(concludeCalls).toHaveLength(0);
+    expect(concludeCalls).toHaveLength(1);
+    expect(concludeCalls[0]).toMatchObject({ stopReason: "max-tokens", hasTools: true, truncatedCount: 1 });
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "max-tokens" } });
     off();
     await handle.dispose();
@@ -447,8 +458,9 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     expect(result).toMatchObject({ callId: "c1", content: "wrote" });
     expect(result?.["isError"]).toBeUndefined(); // 照常执行非截断配对
     expect(result?.["synthetic"]).toBeUndefined();
-    expect(world.fake.calls).toHaveLength(1); // 粘性：无续写
-    expect(concludeCalls).toHaveLength(0);
+    expect(world.fake.calls).toHaveLength(1); // 让位粘性：无续写
+    expect(concludeCalls).toHaveLength(1);
+    expect(concludeCalls[0]).toMatchObject({ hasTools: true, truncatedCount: 0 }); // 全完整：零截断事实
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "max-tokens" } });
     off();
     await handle.dispose();

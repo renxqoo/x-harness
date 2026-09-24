@@ -124,18 +124,18 @@ export async function runLongContentJourney(): Promise<void> {
     const childDisk = await childEvents();
 
     // ① schema 拒绝路径：超长 message 拒绝回显含具体上限数字（D4——maxLength 载体直接数字）
-    must(childDisk.includes("Expected string length less or equal to 120"), "超长 message 拒绝回显含上限数字 120");
+    must(childDisk.includes("/message: Expected string length less or equal to 120"), "超长 message 拒绝回显含字段路径与上限数字（审查 A P2-1 前缀锚——防他工具同 cap 巧合）");
     // ② 文件中转：write 落盘 + 短 message 投递成功
     must(existsSync(join(root, relayPath)), "中转文件在盘");
     // ③ 父收路径消息（<cross-session-message> 含路径）
     const parentDisk = readFileSync(join(root, "longcontent-parent", "events.jsonl"), "utf8");
     must(parentDisk.includes(`<cross-session-message from=\\"`) && parentDisk.includes(relayPath), "父 WAL 收到含路径的跨会话消息");
-    // ④ 报告超 cap 截断尾注两半句
-    const notice = parentDisk.includes("use agent_message to ask the agent for specifics");
-    const noticeFile = parentDisk.includes("or have it write the full content to a file");
-    must(notice, "截断尾注含追问半句");
-    must(noticeFile, "截断尾注含文件中转半句");
-    must(parentDisk.includes("truncated at 120"), "截断尾注含 cap 数字");
+    // ④ 报告超 cap 截断尾注（三段同一通知内共存——审查 A P3-2：防分属不同行巧合通过；
+    //    jsonl 中 agent/message 通知与投影引用可致同文本多次落卷，取第一条断言三段共存）
+    const notice = (parentDisk.split("\n").find((line) => line.includes("truncated at 120")) ?? "").replace(/\\n/g, "\n");
+    must(notice !== "", "截断尾注在场");
+    must(notice.includes("use agent_message to ask the agent for specifics"), "尾注含追问半句");
+    must(notice.includes("or have it write the full content to a file"), "尾注含文件中转半句");
 
     await ctx.dispose();
     console.log("长内容旅程：超限拒绝（数字回显）→ 文件中转 → 父收路径 → 截断尾注两半句 通过");

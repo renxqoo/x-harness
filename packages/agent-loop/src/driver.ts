@@ -153,8 +153,9 @@ async function enterStep(spec: { readonly scope: TurnScope; readonly step: numbe
 }
 
 /** 步收尾（turn 复杂度治理——工具调度 → 收束窗口 → settleConclude → stopping 续航收口于此）：
- *  收束窗口 = 无工具 settle 即将结束 turn 的通用时点（内核不识「截断」，判定归插件；带
- *  tool_use 的 settle 执行工具进下一步，收束点不可达——「有工具不续跑」是结构保证）。 */
+ *  收束窗口 = 即将结束 turn 的通用时点（内核不识「截断」，判定归插件）。带工具的 ran 流
+ *  仅 max-tokens 时派发（工具结果已全落账——派发点在 scheduleTools 之后）——hasTools 守门
+ *  归 agent-continuation（WER 批 A：让位 final 等价旧带工具粘性）。 */
 async function concludeStep(spec: ConcludeStepSpec): Promise<StepFlow> {
   const { scope, turn, step, state, assistant, cancelled } = spec;
   const { deps, controller } = scope;
@@ -164,8 +165,9 @@ async function concludeStep(spec: ConcludeStepSpec): Promise<StepFlow> {
     closeStepOutcome({ session, state, turn, step }, abortedOutcome(cancelled));
     return { kind: "break" };
   }
-  if (tools.kind === "none") {
-    const flow = await concludeWindow(scope, step, assistant);
+  const concludeWindowDue = tools.kind === "none" || (tools.kind === "ran" && assistant.stopReason === "max-tokens");
+  if (concludeWindowDue) {
+    const flow = await concludeWindow(scope, step, { assistant, hasTools: tools.hasTools, truncatedCount: tools.truncatedCount });
     if (flow.kind === "resume") {
       // 指令已落卷（agent/message{directive}）；出口不变量：turnEnds 保持 undefined
       // （粘性残留会把续写成功的轮误收 max-tokens 终态——chainsNextTurn 断链/delegation 误报）
@@ -179,9 +181,7 @@ async function concludeStep(spec: ConcludeStepSpec): Promise<StepFlow> {
       state.turnEnds = mergeOutcome(state.turnEnds, fatalOutcome(controller, cancelled, { kind: "error", message: flow.message, code: flow.code }));
       return { kind: "break" };
     }
-    if (flow.sticky) state.turnEnds = mergeOutcome(state.turnEnds, { kind: "max-tokens" }); // 无决策路径：现行粘性
-  } else if (assistant.stopReason === "max-tokens") {
-    state.turnEnds = mergeOutcome(state.turnEnds, { kind: "max-tokens" }); // 带工具路径：现行粘性（行为等价重排）
+    if (flow.sticky) state.turnEnds = mergeOutcome(state.turnEnds, { kind: "max-tokens" }); // 无决策路径：现行粘性（含带工具让位）
   }
   const settled = settleConclude({ current: state.turnEnds, flow: tools, assistant, pendingConclude: state.pendingConclude, session });
   state.turnEnds = settled.turnEnds;

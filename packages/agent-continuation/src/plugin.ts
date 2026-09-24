@@ -29,7 +29,7 @@ export const createContinuationPlugin = (options?: ContinuationOptions): Plugin 
         const live = store.get(payload.session);
         if (live === undefined) return downstream; // 会话不可寻址 → 让位走现行收束路径（不把「读不到账本」当「账本为零」fail-open）
         const count = continuationsSinceStop(live.events(), payload.turn);
-        return decideContinuation({ stopReason: payload.stopReason, content: payload.content, hasThinking: payload.hasThinking, signal: payload.signal, count, max }) ?? downstream;
+        return decideContinuation({ stopReason: payload.stopReason, content: payload.content, hasThinking: payload.hasThinking, hasTools: payload.hasTools, truncatedCount: payload.truncatedCount, signal: payload.signal, count, max }) ?? downstream;
       });
     },
   } satisfies Plugin;

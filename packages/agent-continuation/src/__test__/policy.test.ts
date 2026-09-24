@@ -23,6 +23,12 @@ describe("decideContinuation（count/max 矩阵与判定）", () => {
     expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [], hasThinking: true, count: 3, max: 3 })).toEqual(GIVE_UP);
   });
 
+  it("带工具让位（WER 批 A）：hasTools=true → undefined——计数再低也不续（工具结果待消化，让位 final 等价旧粘性）", () => {
+    expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [{ type: "text", text: "partial" }], hasTools: true, truncatedCount: 1, count: 0, max: 3 })).toBeUndefined();
+    expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [], hasThinking: true, hasTools: true, count: 0, max: 3 })).toBeUndefined();
+    expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [{ type: "text", text: "partial" }], hasTools: false, count: 0, max: 3 })?.kind).toBe("resume"); // 无工具不受扰
+  });
+
   it("max=0 → 首次截断即放弃；非截断让位；signal 断让位", () => {
     expect(decideContinuation({ stopReason: "max-tokens", signal: idleSignal(), content: [{ type: "text", text: "partial" }], count: 0, max: 0 })).toEqual(GIVE_UP);
     expect(decideContinuation({ stopReason: "stop", signal: idleSignal(), content: [{ type: "text", text: "partial" }], count: 0, max: 3 })).toBeUndefined();
