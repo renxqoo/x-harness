@@ -36,7 +36,7 @@ L3 真退出（收紧）：fatal 收轮，终态携带累计失败摘要
 | V7 | llm/pi-events.ts:55-79 | refusal/鉴权落无 code——「无码」成为隐式不可重试信号（语义双载） | 边缘 | 低 | 显式 `non-retryable` 事实码 |
 | V8 | llm/pi-adapter.ts:23-28 | THINKING_BUDGETS 数值（2048/8192/16384 调参策略数） | 边缘 | 低 | 接受为适配器缺省或挪模型目录（低优先，随触碰收口） |
 
-合规确认（不动的面）：V5 分区机制、gates synthetic 三态门（「语法归 core、语义归写方」）、deny 决策链（形态门 vs 内容 100% 归 permission）、投影降 {}（真相在 journal，派生层降级不销毁证据）、telemetry fold 形状、装配面（toolboxKit 装配条件/RETRY_POLICY 在 apps/cli 属合法层）。
+合规确认（不动的面——对抗审查 C 补两条）：inbox 领取序（next-turn 只领队首 + next-step 全部）= 队列消费序机制、投递目标策略在调用方（agent-delegation）；host-hub worker 看门狗/entries-window = 宿主层合法豁免（RETRY_POLICY 同判）；V5 分区机制、gates synthetic 三态门（「语法归 core、语义归写方」）、deny 决策链（形态门 vs 内容 100% 归 permission）、投影降 {}（真相在 journal，派生层降级不销毁证据）、telemetry fold 形状、装配面（toolboxKit 装配条件/RETRY_POLICY 在 apps/cli 属合法层）。
 
 ## 契约
 
@@ -63,18 +63,24 @@ driver.ts:158-159 删除；带工具 max-tokens 与无工具路径同走 conclud
 - 新 `createDefaultTruncationMessages()` 内置插件（住 agent-continuation 或独立）：挂 agentTruncatedTool，返回**完整替换文案**（现行 TRUNCATED_TOOL_MESSAGE 行为指令句 + 场景化建议）；窗口应答形状从 `{note}（追加）` 升格 `{content}（替换）| {note}（追加）`——rescue-plugin 的 note 语义不变。
 - `formatArgsEcho(args, max = 2_000)` 参数化。
 
-### C4｜pi-events 处置序下放（V4）
+### C4｜pi-events 处置序下放（V4）+ rawReason 管道（对抗审查 B P0）
 
-errorChunks 改纯事实归一：rawReason/statusCode/overflow 命中各为独立输出字段；「救回 max-tokens / context-overflow / 429-503 保护」判定序移出——落点：救回判定随 C1/C2 进消费端（error-recovery 插件）；「不盲重试」由 llm-retry 词表口径表达。llm 层契约注释重写（删除 compaction 语义引用）。
+**字段管道前置（阻断级）**：现状 `LlmFinish{kind:"error"}` 不带 rawReason（pi-events.ts:257-262）、`Settlement` attempt 分支无 rawReason（stream.ts:110-111）——救回移消费端后，openai 方言 max_tokens 走 error 路径只剩 message 文本，消费端**无机器可判字段**。管道拆修：pi-events error finish 增 `rawReason`（error 事件 payload 已有 rawStopReason——透传）→ settleStream attempt 分支增 `rawReason?` → RequestFailure 增 `rawReason?`——三级透传，用例钉死。
+
+errorChunks 改纯事实归一：rawReason/statusCode/overflow 命中各为独立输出字段；「救回 max-tokens / context-overflow / 429-503 保护」判定序移出——落点：救回判定随 C1/C2 进消费端（error-recovery 插件，经上述管道拿 rawReason）；「不盲重试」由 llm-retry 词表口径表达。llm 层契约注释重写（删除 compaction 语义引用）。
 
 ### C5｜error-recovery 插件（L2 策略体，新包 packages/error-recovery）
 
 - 挂 agentRequestError + agentTurnConclude 双窗口：
   - **requestError**：重试耗尽后分类——可恢复类（工具连续失败跟随的错误/http-4xx 语义类/网络细节）→ `respond-to-model`（错误摘要 + "if this error persists, stop and report" 第二次起附加）；环境死错（auth 过期/context 超限且 compaction 已自愈过）→ `fail`；
   - **turnConclude**（经 C2 可达的新入口）：`stopReason===max-tokens && hasTools && 工具结果全 isError` → `resume`（指令复用续写轨道 + 失败摘要）；
-- 计数器：连续同类失败 ×3 升 fail；任一真实成功（工具成功执行/模型合法新调用）清零——「同类」键 = code 或 stopReason+isError 组合。
-- 装配：harness/cli +1 行（与 llm-retry/agent-continuation 并列）。
-- 配置：`maxConsecutiveFailures`（缺省 3）——**装配面参数**（RETRY_POLICY 同款形态），非内核常量。
+- 计数器（语义钉死——对抗审查 B P0）：连续同类失败 ×3 升 fail；**清零条件 = 工具成功执行 或 stop 无错结算**（「模型合法新调用」不作为清零条件——新调用失败 = 递增不清零，否则 flaky 工具永不升 fail）；「同类」键 = code（requestError 面）/ toolName+isError（工具面），**禁 callId**（新 callId 永不达 3）。
+- respond 消息载体（B P1）：落 `agent/message{kind:"content", source:"error-recovery"}`（UI 隐藏、**摘要可见**——错误须存活于压缩摘要，落 user/message 会污染 UI）；错误文本过脱敏层（URL/凭据模式剔除——pi errorMessage 含 fetch 端点信息，现状 llm/retry 落 WAL 无脱敏先例，respond 面新增脱敏并同款补齐 llm/retry）；respond 面遥测打标。
+- 成本裁决（B P2）：**网络/5xx 类不 respond 直接 fail**——llm-retry 已试 ×3，再 respond 只烧 token；仅工具级/语义 4xx 类进 respond。
+- 窗口链序（C 审查）：error-recovery 挂 agentRequestError 须声明「llm-retry 耗尽后」观察方式——经装配序（llm-retry 先注册先应答 retry，耗尽后让位 undefined，error-recovery 后手见事件）；写进插件装配契约。
+- compaction 自愈账本（C 审查）：死类判定「context 超限且 compaction 已自愈过」需读自愈状态——通道 = journal 派生事实（扫描卷内 compaction 事件），C5 实现细节节成文。
+- 装配：**三处**（harness kit + apps/cli/build-world + apps/host-hub/worker/assembly）。
+- 配置：`maxConsecutiveFailures`（缺省 3）+ **recoverable/dead 分类词表覆写面**（RETRY_POLICY retryableCodes 同款——宿主可纳 auth 过期等，堵 V8 同病）——装配面参数。
 
 ### C6｜词表收口（V6）+ 显式 non-retryable（V7）
 
@@ -106,11 +112,10 @@ gates.ts 词表字面量下沉 core/session/tokens.ts 常量（ThinkingLevel/TOD
 - 词表：ThinkingLevel 扩档位 → gates 不再假 corrupt。
 - e2e：模拟「工具连续失败 ×3」全路径（L2 接管 → 第 4 次 fail 收轮）；「失败后模型自愈成功」计数清零。
 
-## 拆分与实施顺序
+## 拆分与实施顺序（对抗审查 C 批序重排——原子交付）
 
-1. **批 A**（内核接口三处）：C1 决策集 + C2 窗口可达 + fatal code 透传（缺省行为不变用例钉死）。
-2. **批 B**（llm 层）：C4 处置序下放 + C7 显式码。
-3. **批 C**（插件）：error-recovery + 文案插件 + 装配 + C5 配置面。
-4. **批 D**（收尾）：C6 词表收口 + formatArgsEcho 参数化 + 文档同步（OUTPUT-TOKEN-CONTINUATION/AGENT-LOOP-DRIVER/LLM-RETRY 关联节）。
+1. **批 A**（内核接口 + 守门原子交付）：C1 决策集 + C2 窗口可达 + fatal code 透传 + **agent-continuation 的 hasTools 让位改动同批落地**（内核改道与插件守门必须原子——continuationKit 经 harness:113 默认装配，批 A 单独落地会让旧插件见 max-tokens+非空 content 即 resume，带工具行为从粘性 final 翻转为续写，中间态不可交付）。OUTPUT-TOKEN-CONTINUATION 验收清单/测试口径两处「结构保证」条目同步改写（带工具亦派发）；PLUGIN-AUTHORING agentTurnConclude 节迁移注记。
+2. **批 B+C 合并**（llm 下放与消费端同批）：C4 rawReason 管道 + 处置序下放 + C7 显式码 + error-recovery + 文案插件（独立包 packages/truncation-messages——C 审查裁决：先例 = delegation rescue 文案住域包，agentTruncatedTool 窗口的域主即该插件，并入 agent-continuation 是错域）+ 装配三处（harness kit + apps/cli/build-world + apps/host-hub/worker/assembly——C 审查抓的第三装配点）+ C5 配置面。
+3. **批 D**（收尾）：C6 词表收口 + formatArgsEcho 参数化 + 文档同步。
 
-无迁移面（决策集/字段全向前扩展；缺省路径行为不变）。
+**迁移面声明（修正）**：无插件世界行为不变；**装配世界（主流形态）批 A 即行为翻转**（带工具 max-tokens：粘性 final → agent-continuation hasTools 判断后仍不续）——新行为回归用例钉死，非「无迁移面」。
