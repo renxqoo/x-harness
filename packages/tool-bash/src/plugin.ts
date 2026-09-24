@@ -6,7 +6,7 @@
 import { createHash } from "node:crypto";
 import type { Plugin } from "@x-harness/core";
 import type { ExecEnv } from "@x-harness/exec-env";
-import { permissionBroker, permissionGrantStore, permissionGrants } from "@x-harness/permission";
+import { permissionBroker, permissionGrantStore, permissionGrants, summaryOf } from "@x-harness/permission";
 import { parseRules } from "@x-harness/permission";
 import { sessionDisposed } from "@x-harness/session";
 import { createToolPlugin } from "@x-harness/tool-core";
@@ -69,8 +69,10 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
     if (bucketNow.has(commandKey)) return "deny";
     bucketNow.add(commandKey);
     escalated.set(sessionKey, bucketNow);
+    const summary = summaryOf(fields); // 目标描述单源（permission）——确认条主文案与工具面 ask 同式
     const reply = await broker.ask({
       tool: "bash",
+      ...(summary !== undefined ? { summary } : {}),
       reason: "sandbox failure — retry outside the sandbox?",
       options: ["once", "session", "project", "user"],
       escalate: { command: fields.command, failureText: fields.failureText },

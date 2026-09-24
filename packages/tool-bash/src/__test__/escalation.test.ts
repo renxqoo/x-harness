@@ -150,14 +150,14 @@ describe("端到端：全真世界升级流（permission sandboxed-auto → disp
     const root = mkdtempSync(join2(tmp2(), "xh-esc-e2e-"));
     try {
       const recorder = makeRecorder(root);
-      const asks: { reason: string; options: string[]; escalate?: { command: string; failureText: string } }[] = [];
+      const asks: { reason: string; options: string[]; summary?: string; escalate?: { command: string; failureText: string } }[] = [];
       let at = 0;
       const broker = {
         name: "test-broker",
         apply: (c: import("@x-harness/core").Context) =>
           c.provide(permissionBroker, {
             ask: async (input: import("@x-harness/permission").AskPayload) => {
-              asks.push({ reason: input.reason, options: [...input.options], ...(input.escalate !== undefined ? { escalate: input.escalate } : {}) });
+              asks.push({ reason: input.reason, options: [...input.options], ...(input.summary !== undefined ? { summary: input.summary } : {}), ...(input.escalate !== undefined ? { escalate: input.escalate } : {}) });
               at += 1;
               return { verdict: at <= 1 ? "allow" : "deny" };
             },
@@ -175,6 +175,7 @@ describe("端到端：全真世界升级流（permission sandboxed-auto → disp
       expect(first.content).toContain("[escalated: retried outside the sandbox after user approval]");
       expect(asks).toHaveLength(1);
       expect(asks[0]?.options).toEqual(["once", "session", "project", "user"]);
+      expect(asks[0]?.summary).toBe("mytool run"); // 目标描述单源（summaryOf）——确认条主文案
       expect(asks[0]?.escalate?.command).toBe("mytool run");
       expect(asks[0]?.escalate?.failureText).toContain("Operation not permitted");
       expect(recorder.spawns).toEqual([{ exec: "contained" }, { exec: "direct" }]);

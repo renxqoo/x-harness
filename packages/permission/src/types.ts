@@ -65,9 +65,12 @@ export const DEFAULT_DENY_READ: readonly string[] = ["~/.ssh/**", "~/.aws/**", "
 /** 受保护路径默认写拒（.git 内部）；宿主经 protectedPaths 追加（含 settings 文件——U13） */
 export const DEFAULT_DENY_WRITE: readonly string[] = ["**/.git/**"];
 
-/** ask 载荷（结构化往返——broker 输入侧）：options 按命中类裁剪（拒记类只余 once） */
+/** ask 载荷（结构化往返——broker 输入侧）：summary=目标描述（确认条主文案）；
+ *  options 按命中类裁剪（拒记类只余 once） */
 export interface AskPayload {
   readonly tool: string;
+  /** 目标描述（确认条主文案——路径类=<path>、bash=<command>；构造不出则缺席，见 summaryOf） */
+  readonly summary?: string;
   readonly reason: string;
   readonly options: readonly ("once" | "session" | "project" | "user")[];
   readonly suggestedRule?: string;

@@ -44,6 +44,7 @@ export { adjudicateBash, suggestedRuleOf, writableRoots, withinAny } from "./bas
 export type { BashAdjudication, BashPipelineInput } from "./bash/adjudicate.ts";
 export { decideFor } from "./decide.ts";
 export type { Decision, DecideInput } from "./decide.ts";
+export { summaryOf } from "./ask-summary.ts";
 export { GrantsRegistry } from "./grants.ts";
 export { createPermissionPlugin } from "./plugin.ts";
 export type { PermissionOptions } from "./plugin.ts";

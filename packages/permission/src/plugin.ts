@@ -12,6 +12,7 @@ import type { SessionId } from "@x-harness/session";
 import { toolsPreExecute } from "@x-harness/tools";
 import type { PreExecuteDecision } from "@x-harness/tools";
 import { decideFor, execOf } from "./decide.ts";
+import { summaryOf } from "./ask-summary.ts";
 import { suggestedRuleOf } from "./bash/adjudicate.ts";
 import type { Decision, DecideInput } from "./decide.ts";
 import { GrantsRegistry } from "./grants.ts";
@@ -107,12 +108,12 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
         }
       };
 
-      const ask = async (fields: { tool: string; decision: Decision; session: SessionId | undefined; commandOf: () => string }): Promise<"allow" | "deny"> => {
-        const { tool, decision, session, commandOf } = fields;
+      const ask = async (fields: { tool: string; args: unknown; decision: Decision; session: SessionId | undefined; commandOf: () => string }): Promise<"allow" | "deny"> => {
+        const { tool, args, decision, session, commandOf } = fields;
         if (tearingDown) return "deny";
         const broker = ctx.tryUse(permissionBroker);
         if (broker === undefined) return "deny"; // broker 缺席 → ask 退化 deny（fail-closed）
-        const payload: AskPayload = buildAskPayload({ tool, decision, session, commandOf, optionsOf: memoryOptionsOf });
+        const payload: AskPayload = buildAskPayload({ tool, args, decision, session, commandOf, optionsOf: memoryOptionsOf });
         let reply: AskReply;
         try {
           reply = await broker.ask(payload);
@@ -159,7 +160,7 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
             const args = (payload.args ?? {}) as { command?: unknown };
             return typeof args.command === "string" ? args.command : payload.name;
           };
-          const answer = await ask({ tool: payload.name, decision, session: payload.session, commandOf });
+          const answer = await ask({ tool: payload.name, args: payload.args, decision, session: payload.session, commandOf });
           finalVerdict = answer === "allow" ? "allow" : "deny";
           finalReason = answer === "allow" ? `${decision.reason} (approved)` : decision.reason;
         }
@@ -198,17 +199,21 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
   };
 }
 
-/** ask 载荷构造（模块级纯函数——参数对象形态避开 max-params） */
+/** ask 载荷构造（模块级纯函数——参数对象形态避开 max-params）：summary=目标描述（确认条
+ *  主文案——确认方一眼可见要动哪个文件/跑哪条命令） */
 function buildAskPayload(fields: {
   tool: string;
+  args: unknown;
   decision: Decision;
   session: SessionId | undefined;
   commandOf: () => string;
   optionsOf: (d: Decision) => AskPayload["options"];
 }): AskPayload {
-  const { tool, decision, session, commandOf, optionsOf } = fields;
+  const { tool, args, decision, session, commandOf, optionsOf } = fields;
+  const summary = summaryOf(args);
   return {
     tool,
+    ...(summary !== undefined ? { summary } : {}),
     reason: decision.reason,
     options: optionsOf(decision),
     ...(decision.memorizable === true ? { suggestedRule: decision.suggestedRule ?? (tool === "bash" ? suggestedRuleOf(commandOf()) : undefined) } : {}),

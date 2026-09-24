@@ -110,10 +110,10 @@ describe("dialogs broker 分支", () => {
       expect(broker.resolve(lastRequest.requestId, { verdict: "allow", memory: "project", rule: "Bash(y:*):allow" })).toBe(true);
       await expect(structuredPromise).resolves.toMatchObject({ allowed: true, memory: "project", ruleOverride: "Bash(y:*):allow" });
     }
-    // 结构化字段帧契约（agent-app 消费面）：options/suggestedRule/escalate 原样进 payload
-    const escalateConfirm = broker.confirm("t1", { tool: "bash", reason: "sandbox failure", options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
+    // 结构化字段帧契约（agent-app 消费面）：summary/options/suggestedRule/escalate 原样进 payload
+    const escalateConfirm = broker.confirm("t1", { tool: "bash", summary: "mytool run", reason: "sandbox failure", options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
     const escReq = sent.map((line) => JSON.parse(line) as Record<string, unknown>).at(-1); // 帧面平铺（uiRequestFrame 顶层字段）
-    expect(escReq).toMatchObject({ options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
+    expect(escReq).toMatchObject({ summary: "mytool run", options: ["once", "session"], suggestedRule: "Bash(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
     const escReqId = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
     if (escReqId !== undefined) {
       broker.resolve(escReqId.requestId, { verdict: "deny" });

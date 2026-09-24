@@ -50,6 +50,8 @@ import { projectSettingsPath, updateHubSettings, updateSettingsFile, userSetting
 import { thinkingLevelOf, thinkingUnsupported } from "./meta-state.ts";
 import { META_KEY_THINKING } from "./meta-state.ts";
 import { installExternalPlugins, uninstallExternalPlugins } from "./external-plugins.ts";
+import type { ConfirmFields } from "./dialogs.ts";
+import { confirmFieldsOf } from "./ask-confirm-fields.ts";
 import type { ExternalPluginsDeps } from "./external-plugins.ts";
 
 /** llm-retry 缺省策略（apps/cli 同款——确定性退避） */
@@ -72,7 +74,7 @@ export interface AssemblyFields {
   thinkingDefault?: ThinkingLevel;
   env?: Record<string, string | undefined>;
   /** 权限 ask 桥：结构化 AskPayload → confirm（无桥 = 内核降级 deny） */
-  confirm?: (fields: { tool: string; reason: string; options?: readonly string[]; suggestedRule?: string; escalate?: { command: string; failureText: string } }) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>;
+  confirm?: (fields: ConfirmFields) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>;
   /** 会话权限档初值（WAL 尾值 > 本入参 > hub-settings 默认——调用方排好） */
   permissionMode?: ProfileId;
   /** 用户作用域规则条目（hub-settings permission.rules 的 user 份额——装配期快照） */
@@ -170,19 +172,13 @@ function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined
 
 /** 权限 ask 桥插件：permissionBroker 服务提供者（结构化 AskPayload → ui_request confirm；
  *  布尔退化应答 = allow-once/deny——记忆梯度由结构化应答承载） */
-function permissionBrokerPlugin(confirm: (fields: { tool: string; reason: string; options?: readonly string[]; suggestedRule?: string; escalate?: { command: string; failureText: string } }) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>): Plugin {
+function permissionBrokerPlugin(confirm: (fields: ConfirmFields) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>): Plugin {
   return {
     name: "hub-permission-broker",
     apply: (ctx: Context): Disposer =>
       ctx.provide(permissionBroker, {
         ask: async (input: AskPayload): Promise<AskReply> => {
-          const answer = await confirm({
-            tool: input.tool,
-            reason: input.reason,
-            ...(input.options.length > 0 ? { options: input.options } : {}),
-            ...(input.suggestedRule !== undefined ? { suggestedRule: input.suggestedRule } : {}),
-            ...(input.escalate !== undefined ? { escalate: input.escalate } : {}),
-          });
+          const answer = await confirm(confirmFieldsOf(input));
           return {
             verdict: answer.allowed ? "allow" : "deny",
             ...(answer.memory !== undefined ? { memory: answer.memory } : {}),
