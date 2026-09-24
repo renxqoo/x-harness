@@ -3,7 +3,7 @@
 // 可见）+ 血缘/通知/动词接线；dispose 级联（tearing-down 门先行）。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
-import { agentLoopServiceToken, agentStatus, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
+import { agentLoopServiceToken, agentStatus, agentTruncatedTool, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
 import { sessionStore } from "@x-harness/session";
 import { toolRegistry } from "@x-harness/tools";
 import { mailboxService } from "@x-harness/session-mailbox";
@@ -27,6 +27,7 @@ import { listAgents, message, stop } from "./verbs.ts";
 import type { VerbDeps } from "./verbs.ts";
 import { agentTaskSource } from "./task-source.ts";
 import { delegationTools } from "./tools.ts";
+import { delegationRescueNote } from "./rescue-note.ts";
 import { delegationView } from "./view.ts";
 import { agentFinished, agentSpawned } from "./tokens.ts";
 import type { AgentFinishedPayload, AgentSpawnedPayload } from "./tokens.ts";
@@ -221,6 +222,10 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
       // agent 源注册（件14）：硬依赖 task-tools（inject 声明——无 hub 装配即失败，output/stop
       // 是子代理面一部分，不静默降级）；摘除经 effect——apply 中途 throw 回卷也摘
       ctx.effect(ctx.use(taskHub).registerSource(agentTaskSource(verbDeps)));
+      const offRescueNote = ctx.on(
+        agentTruncatedTool,
+        delegationRescueNote(), // 件15 批3：message/spawn 截断的换策略指引（note-only 零副作用）
+      );
       const offs = delegationTools({
         spawn: (execCtx, input: SpawnInput) => spawnAgent(spawnDeps, execCtx, input),
         message: (execCtx, input) => message(verbDeps, execCtx.session, input),
@@ -240,6 +245,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
 
       return () => {
         tearingDown = true; // 通知门先行：级联 cancel 的 abort 通知不得 steer 复活父
+        offRescueNote();
         offStatus();
         offTypesSnapshot();
         offView();
