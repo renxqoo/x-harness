@@ -30,13 +30,13 @@ const CHILD_MODEL = "e2e-child-model";
 export async function runLongContentJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-longcontent-"));
   const agentsDir = await mkdtemp(join(tmpdir(), "xh-longcontent-agents-"));
+  const ctx = createContext();
   try {
     const { writeFile } = await import("node:fs/promises");
     await writeFile(
       join(agentsDir, "worker.md"),
       `---\nname: worker\ndescription: relay worker\nmodel: ${CHILD_MODEL}\n---\nyou are the worker`,
     );
-    const ctx = createContext();
     const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
     const env = createLocalEnv(root);
     const gate = new PathGate(root);
@@ -61,7 +61,13 @@ export async function runLongContentJourney(): Promise<void> {
             yield { type: "finish", finish: { kind: "error", message: `no-script-bucket:${request.model}`, code: "test" } };
           })();
         }
-        return bucket.shift() as AsyncGenerator<LlmChunk>;
+        const next = bucket.shift();
+        if (next === undefined) {
+          return (async function* (): AsyncGenerator<LlmChunk> {
+            yield { type: "finish", finish: { kind: "error", message: `bucket-empty:${request.model}`, code: "test" } };
+          })();
+        }
+        return next;
       },
     });
     ctx.effect(off);
@@ -134,6 +140,8 @@ export async function runLongContentJourney(): Promise<void> {
     await ctx.dispose();
     console.log("长内容旅程：超限拒绝（数字回显）→ 文件中转 → 父收路径 → 截断尾注两半句 通过");
   } finally {
+    // must 断言失败也回卷 ctx（jsonl 句柄/级联 cancel/定时器——审查 B#1 泄漏窗口）后再清目录
+    await ctx.dispose().catch(() => {});
     await rm(root, { recursive: true, force: true }).catch(() => {});
     await rm(agentsDir, { recursive: true, force: true }).catch(() => {});
   }

@@ -220,7 +220,15 @@ PathGate 边界）。
 | D6 | message 上限载体弃 pattern 用 maxLength | **通过** | `^[\s\S]{0,N}$` 与 `maxLength: N` 语义严格等价（该 pattern 只做长度约束、`[\s\S]` 收一切字符，UTF-16 code units 同口径）；TypeBox maxLength 报错是直接数字（`Expected string length less or equal to N`，0.34.52 errors/function.js:113），pattern 报错把数字埋在正则语法里（`to match '^[\s\S]{0,N}$'`，:117）——对模型可解析性更强，P2 可读性改进而非根治不可见；规格源 pattern 形态差异落档修订D |
 | D7 | summary 去 schema maxLength，verb 层兑现截断承诺 + echoSummary 统一出口 | **通过（用户裁决纳入）** | summary 是装饰性元数据（不传输不落对端仅发方回显）——超长拒绝是误伤（501 字符 label 否决整个调用的真实投递）；description 已承诺截断语义，schema 去限让承诺为真；方向与 D6 相反是原则性差异（真实负载保护性拒绝 vs 元数据吸收性截断）；echoSummary 三路径全覆盖兑现 docs §2.1「等价物=结果回显」 |
 
-## 6. 对抗审查预案（批 4 收口前）
+## 6. 对抗审查处置（两路并行，已完成）
+
+路B（并发/生命周期/资源面）11 维度：核心机制 7 维（waterfall 生命周期/链序共存/abort 竞态/
+reportCap 单源/echoSummary 无双重包装/双重 dispose 幂等/文案面）核验通过；偏差 #1 e2e
+断言失败不回卷 ctx（已修——finally 补 ctx.dispose，delegation-journey 同病顺手修）/
+#2 桶耗尽无守卫（已修——双守卫 no-script-bucket/bucket-empty）/#3 死导入（已删）/
+#4 deepFreeze 冻 AbortSignal（挂账 §7——非本件引入，归 core/context）。
+
+## 6b. 对抗审查预案（历史——批 4 收口前制定）
 
 - 路 A（契约面）：schema 工厂化后 reportCap 注入链是否单源（装配 vs 测试装置双真相？）；
   逐字锚是否真的未被波及；note 让位链与 tool-write 抢救件的共存（装配序敏感性——白名单
@@ -238,6 +246,7 @@ PathGate 边界）。
 | TRUNCATED_TOOL_MESSAGE base 文案 | note 补位已够；动 base 影响全工具面 | 不改（本件内裁定） |
 | P6 纯内存部署追问落空 | 依赖 archive 部署形态 | 部署纪律（文档已声明） |
 | bash heredoc 抢救 | 沿 TRUNCATED-TOOL-RESCUE v2 挂账 | 既有挂账 |
+| dispatchWaterfall 无条件 deepFreeze 冻结 AbortSignal（create-context.ts:457）——node 运行时下 turn 中 dispose→cancel→abort 抛 TypeError（bun 全绿依赖单运行时；件15 新增第二个 signal-bearing 消费者扩大暴露面但行为不变，审查 B#4） | 非本件引入（tool-write 抢救件先在）；候选修法：freeze 降 shellFreeze / deepFreeze 跳过 AbortSignal 子树 / 仓声明 bun-only + CI 钉运行时 | core/context 后续件 |
 
 ## 8. 验收清单
 

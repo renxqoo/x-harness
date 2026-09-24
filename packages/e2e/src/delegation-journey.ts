@@ -24,12 +24,12 @@ const CHILD_MODEL = "e2e-child-model";
 export async function runDelegationJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-delegation-"));
   const agentsDir = await mkdtemp(join(tmpdir(), "xh-delegation-agents-"));
+  const ctx = createContext();
   try {
     await writeFile(
       join(agentsDir, "worker.md"),
       `---\nname: worker\ndescription: counting worker\nmodel: ${CHILD_MODEL}\n---\nyou are the worker`,
     );
-    const ctx = createContext();
     const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
     const unload = await loadPlugins(ctx, [
       sessionPlugin,
@@ -124,6 +124,7 @@ export async function runDelegationJourney(): Promise<void> {
     void unload;
     console.log("子代理旅程：父 spawn → 子完成 → 通知唤醒父消费 → 双会话落盘 通过");
   } finally {
+    await ctx.dispose().catch(() => {}); // must 断言失败也回卷（审查 B#1——与长内容旅程同病顺手修）
     await rm(root, { recursive: true, force: true }).catch(() => {});
     await rm(agentsDir, { recursive: true, force: true }).catch(() => {});
   }

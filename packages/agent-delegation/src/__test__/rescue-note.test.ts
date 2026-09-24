@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import { agentTruncatedTool } from "@x-harness/agent-loop";
 import { delegationRescueNote } from "../rescue-note.ts";
-import { makeWorld, spawnParent, callTool, PARENT_MODEL, makeOptions } from "./world.ts";
+import { makeWorld, spawnParent, makeOptions } from "./world.ts";
 import type { TruncatedToolPayload } from "@x-harness/agent-loop";
 import type { SessionId } from "@x-harness/session";
 
@@ -72,7 +72,6 @@ describe("delegationRescueNote（件15 批3）", () => {
       async () => undefined,
     ) as { note: string } | undefined;
     expect(other).toBeUndefined();
-    void callTool; void PARENT_MODEL;
     await parent.dispose();
   });
 });
