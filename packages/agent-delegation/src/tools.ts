@@ -55,7 +55,7 @@ const messageSchema = Type.Object({
     description: "Recipient: a name from ListAgents (append its ' [ref]' only when a listing or an error shows one), a teammate name, 'main', or a background agent's agentId",
   }),
   message: Type.String({
-    pattern: "^[\\s\\S]{0,3000}$",
+    pattern: "^[\\s\\S]{0,34000}$",
     description: "Plain text message content. The recipient's human sees only the FIRST LINE as a one-line preview until they expand it, so make the first line a clear, self-contained sentence saying what this is about — not a greeting, preamble, or bare @-mention.",
   }),
   summary: Type.Optional(Type.String({
