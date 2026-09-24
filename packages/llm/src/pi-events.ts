@@ -133,7 +133,8 @@ function holdEndChunks(event: Extract<AssistantMessageEvent, { type: "toolcall_e
  *  成功 = 完整，发 stringify（有 end 修补对象用之——与旧出口逐字节同形；合成帧无修补
  *  对象时以原文 parse 产物归一，出口仍为合法全量 JSON）。 */
 function argumentsDeltaFor(raw: string | undefined, normalized: unknown): string {
-  if (raw === undefined || raw === "") return JSON.stringify(normalized);
+  if (raw === undefined) return JSON.stringify(normalized);
+  if (raw === "") return ""; // 零字符截断原样出口——下游 isTruncatedArguments("") 命中截断分支（折成 "{}" 会让空参真实执行）
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -300,13 +301,14 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
       emittedText.set(index, (emittedText.get(index) ?? "") + delta);
     },
   };
-  /** 暂存帧放行（恰一次——flushed 标志幂等）：全终态 flush 义务的公共出口，
-   *  完整性判定不依赖 done reason（对缓冲原文 JSON.parse 即判）。 */
+  /** 暂存帧兜底放行（恰一次——flushed 标志幂等）：end 即发后 pending 恒空，此出口
+   *  仅防御非终态路径的结构完整性；emitted 集保证不与 end 放行重发。 */
   let flushed = false;
   function* flushPending(): Generator<LlmChunk> {
     if (flushed) return;
     flushed = true;
     for (const [index, held] of [...toolState.pending.entries()].sort(([a], [b]) => a - b)) {
+      if (toolState.emitted.has(index)) continue;
       toolState.emitted.add(index);
       yield pendingChunkAt(index, held, toolState.rawArgs.get(index));
     }
@@ -320,6 +322,9 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
       if (event.type === "done") {
         yield* foldUsage(event.message.usage);
         yield* flushPending();
+        const synthesized = synthesizeMissingChunks(toolState); // 无 end 块（违约流防御层）：合成帧不得晚于 finish（头注「done/error 后停发」）
+        sawContent = sawContent || synthesized.length > 0;
+        yield* synthesized;
         yield doneFinish(event.message, event.reason);
         return;
       }
@@ -335,8 +340,14 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
         return;
       }
       if (event.type === "toolcall_end") {
-        toolState.holdEnd(event); // 暂存不立即发——终态裁决（截断流发原文，正常流逐字节不变）
+        // end 即放行（不暂存）：完整性判定只依赖该块自己的缓冲原文（JSON.parse 即判，
+        // 不依赖流终态）——早发消灭 abort/看门狗窗口丢帧（end 后终态前的暂存帧会随
+        // 消费侧 fire-and-forget return() 蒸发）。截断块此时缓冲已齐（end = 该块分片
+        // 终点），判据与终态裁决完全同源。
+        const held = holdEndChunks(event);
+        toolState.emitted.add(event.contentIndex);
         sawContent = true;
+        yield pendingChunkAt(event.contentIndex, held, toolState.rawArgs.get(event.contentIndex));
         continue;
       }
       if (event.type === "toolcall_start") {
