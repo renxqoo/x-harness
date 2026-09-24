@@ -362,7 +362,10 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
   model?}`（source = user|project|builtin）。
 - **agents/create** `{name, description, systemPrompt, model?, tools?}` → `{path}` —
   frontmatter 严格集渲染（round-trip 复析保证：description 拒换行与字段形态行、
-  systemPrompt 空串拒）；写 `<~/.x-harness/agents>/<name>.md`；同名 user 文件拒。
+  systemPrompt 空串拒）；写用户根 `<name>.md`（agentDir 派生缝在场时
+  `<agentDir>/agents`，缺省 `~/.x-harness/agents`——与 skills 同序，路径常量单源
+  @x-harness/agent-delegation）；同名 user 文件拒。启动序一次性迁移旧共享根
+  （幂等哨兵 `.agents-migrated`，env 关闭缝 `HUB_AGENTS_MIGRATION=0`）。
   **agents/remove** `{name}` — 现扫定 source，user 才删。
 - **subagent/steer** `{threadId, agentId, message}` — worker 侧 gate（经
   `delegationView` 服务面直调，不走工具 dispatch）：目标非驻留 → failure
@@ -538,7 +541,9 @@ base-prompt.ts：身份/守则/环境块 + facts=cwd/isGit/platform/shell 进程
 `autoCompactKit` / `llmKit(adapters)` / `loopKit` / `checkpointKit` /
 `delegationKit` / `skillKit`）+ `loop.create/resume` 单会话。trusted 决定
 skills/agents project 级目录与项目级设置
-装载（workspace=cwd 显式锚）。permission 即时面经 `ctx.use(permissionMode)` 服务
+装载（workspace=cwd 显式锚）；skills/agents 用户根同走 agentDir 派生缝
+（`<agentDir>/{skills,agents}`；缺省 `~/.x-harness/...` 共享——单源
+`userSkillsDirOf`/`userAgentsDirOf`）。permission 即时面经 `ctx.use(permissionMode)` 服务
 （插件恒提供，§3.9）。
 
 | 迁移源（@my-agent） | host-hub（@x-harness） |

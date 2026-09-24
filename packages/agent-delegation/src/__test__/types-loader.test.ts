@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { loadAgentTypes, resolveAgentDirs, typesFingerprint } from "../types-loader.ts";
+import { loadAgentTypes, resolveAgentDirs, typesFingerprint, userAgentsDirOf } from "../types-loader.ts";
 
 let dirs: string[] = [];
 
@@ -26,6 +26,14 @@ describe("resolveAgentDirs（三级解析）", () => {
       delete process.env["X_HARNESS_AGENTS_DIRS"];
     }
     expect(resolveAgentDirs()).toEqual([join(process.cwd(), ".x-harness", "agents"), join(homedir(), ".x-harness", "agents")]);
+  });
+});
+
+describe("userAgentsDirOf（agentDir 派生缝——与 userSkillsDirOf 同构）", () => {
+  it("agentDir 在场 → <agentDir>/agents；空串归缺席；缺席 → ~/.x-harness/agents", () => {
+    expect(userAgentsDirOf("/home/u", "/app/data")).toBe("/app/data/agents");
+    expect(userAgentsDirOf("/home/u", "")).toBe(join("/home/u", ".x-harness", "agents"));
+    expect(userAgentsDirOf("/home/u")).toBe(join("/home/u", ".x-harness", "agents"));
   });
 });
 

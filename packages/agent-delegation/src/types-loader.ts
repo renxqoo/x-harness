@@ -18,8 +18,13 @@ export interface TypeLoadResult {
 
 const RESERVED = new Set(["fork", "main"]);
 
-/** 用户 agents 根（homeDir 注入缝：测试隔离目录；缺省真实 HOME） */
-export function userAgentsDirOf(homeDir: string = homedir()): string {
+/** 用户 agents 根（homeDir 注入缝：测试隔离目录；缺省真实 HOME）。
+ *  agentDir 派生缝：宿主进程传配置目录时用户根落在 <agentDir>/agents——与
+ *  @x-harness/skill 的 userSkillsDirOf 同构（打包发行态 agent-app 等，
+ *  agentDir=~/.pai/agent 时 agents 与 app 数据区同区）；缺省（x-harness CLI
+ *  独立运行）保持 ~/.x-harness/agents 共享目录不变。 */
+export function userAgentsDirOf(homeDir: string = homedir(), agentDir?: string): string {
+  if (agentDir !== undefined && agentDir !== "") return join(agentDir, "agents");
   return join(homeDir, ".x-harness", "agents");
 }
 

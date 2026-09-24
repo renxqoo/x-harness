@@ -102,7 +102,7 @@ async function startHost(env: Record<string, string | undefined> = {}): Promise<
     homeDir: home,
     agentDir,
     sessionsRoot,
-    env: { HUB_SKILLS_MIGRATION: "0", ...env },
+    env: { HUB_SKILLS_MIGRATION: "0", HUB_AGENTS_MIGRATION: "0", ...env },
     input: input as unknown as NodeJS.ReadStream,
     exit: () => {},
     emitOverride: (line) => client.push(line),
@@ -379,7 +379,9 @@ describe("host 本地命令（注入 IO）", () => {
     expect(errOf(noDesc).message).toContain("description required");
     f.send({ type: "agents/create", id: "ac2", name: "researcher", description: "does research", systemPrompt: "you research things", model: "script-1" });
     const created = await waitResponse(f.client, "agents/create", "ac2");
-    expect((created["data"] as { path: string }).path).toContain("researcher.md");
+    // agentDir 派生缝：host-hub 运行态 user 根 = <agentDir>/agents（与 skills 同序；
+    // 与 worker 装配/agents-list 同源——写读同区）
+    expect((created["data"] as { path: string }).path).toBe(join(f.agentDir, "agents", "researcher.md"));
     f.send({ type: "agents/list", id: "al1" });
     const listed = await waitResponse(f.client, "agents/list", "al1");
     const agents = (listed["data"] as { agents: Array<{ name: string; source: string; model?: string }> }).agents;

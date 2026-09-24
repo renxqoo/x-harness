@@ -19,7 +19,7 @@ import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
 import { createModelsAuthCommands } from "./models-auth.ts";
 import { builtinTypesDir } from "../worker/assembly.ts";
 import { createAdminCommands } from "./admin-commands.ts";
-import { userAgentsDirOf } from "./agents-admin.ts";
+import { userAgentsDirOf } from "@x-harness/agent-delegation"; // 路径常量单源内核包（防宿主散写漂移）
 import { createTrustStore } from "./trust-store.ts";
 import type { TrustStore } from "./trust-store.ts";
 
@@ -315,7 +315,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   async function handleAgentsList(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
     // 目录栈（低→高）：user（恒在）；trusted 线程含 project 级（同名 project 覆盖
     //  user——来源按装载序分账：project 目录装载的条目标 project）
-    const userDir = userAgentsDirOf(deps.homeDir);
+    const userDir = userAgentsDirOf(deps.homeDir, deps.agentDir); // agentDir 派生缝在场时 = <agentDir>/agents（与 skills 同序）
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const entry = threadId !== "" ? deps.table.get(threadId) : undefined;
     const projectDir = entry !== undefined && entry.trusted ? join(entry.cwd, ".x-harness", "agents") : undefined;

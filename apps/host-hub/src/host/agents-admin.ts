@@ -1,19 +1,13 @@
 // agents 类型管理面（DESIGN §3.8）：create（frontmatter 严格集渲染——round-trip
-// 复析保证：description 拒换行与字段形态行、systemPrompt 空串拒；写
-// <~/.x-harness/agents>/<name>.md；同名 user 文件拒）/ remove（现扫定 source，
-// user 才删）。frontmatter = x-harness delegation 装载格式（name/description/
-// model/tools + body）。
-import { homedir } from "node:os";
+// 复析保证：description 拒换行与字段形态行、systemPrompt 空串拒；写用户根
+// <name>.md；同名 user 文件拒）/ remove（现扫定 source，user 才删）。frontmatter =
+// x-harness delegation 装载格式（name/description/model/tools + body）。
+// 目录约定单源 @x-harness/agent-delegation（agentDir 派生缝在场时用户根 =
+// <agentDir>/agents——与 worker 装配/agents-list 同源；缺省 ~/.x-harness/agents）。
 import { join } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
-import { loadAgentTypes } from "@x-harness/agent-delegation";
+import { loadAgentTypes, userAgentsDirOf } from "@x-harness/agent-delegation";
 import { hubError, type HubErrorShape } from "../shared/errors.ts";
-
-/** homeDir 注入缝：缺省真实 HOME；测试注入隔离目录（bun 的 os.homedir() 启动即缓存，
- *  进程内 HOME 重定向无效——与本文件直调的进程内测试配套）。 */
-export function userAgentsDirOf(homeDir: string = homedir()): string {
-  return join(homeDir, ".x-harness", "agents");
-}
 
 /** frontmatter 字段形态行（防 description/systemPrompt 注入 frontmatter 结构） */
 const FIELD_LINE = /^[a-zA-Z-]+:/;
@@ -81,22 +75,27 @@ function agentTypeSpecOf(input: { [key: string]: unknown }): { ok: true; spec: {
   return { ok: true, spec: { name, description, systemPrompt, ...(model !== undefined ? { model } : {}), ...(provider !== undefined ? { provider } : {}), ...(tools !== undefined && tools.length > 0 ? { tools } : {}) } };
 }
 
-export async function createUserAgentType(input: { [key: string]: unknown }, homeDir?: string): Promise<{ ok: true; path: string } | { ok: false; error: HubErrorShape }> {
+/** 目录解析（homeDir/agentDir 双注入缝——agentDir 在场时优先，与 worker 装配同序） */
+function userDirOf(homeDir?: string, agentDir?: string): string {
+  return userAgentsDirOf(homeDir, agentDir);
+}
+
+export async function createUserAgentType(input: { [key: string]: unknown }, homeDir?: string, agentDir?: string): Promise<{ ok: true; path: string } | { ok: false; error: HubErrorShape }> {
   const spec = agentTypeSpecOf(input);
   if (!spec.ok) return spec;
   const { name } = spec.spec;
   const rendered = renderAgentType(spec.spec);
   if (!rendered.ok) return rendered;
   // round-trip 复析：渲染产物必须能被装载器读回同名类型（保证用户拿到的文件可用）
-  const path = join(userAgentsDirOf(homeDir), `${name}.md`);
-  const existing = await loadAgentTypes([userAgentsDirOf(homeDir)]);
+  const path = join(userDirOf(homeDir, agentDir), `${name}.md`);
+  const existing = await loadAgentTypes([userDirOf(homeDir, agentDir)]);
   if (existing.types[name] !== undefined) {
     return { ok: false, error: hubError("name_conflict", `agent type already exists: ${name}`) };
   }
   const { mkdir } = await import("node:fs/promises");
-  await mkdir(userAgentsDirOf(homeDir), { recursive: true });
+  await mkdir(userDirOf(homeDir, agentDir), { recursive: true });
   await writeFile(path, rendered.text, "utf8");
-  const reloaded = await loadAgentTypes([userAgentsDirOf(homeDir)]);
+  const reloaded = await loadAgentTypes([userDirOf(homeDir, agentDir)]);
   if (reloaded.types[name] === undefined) {
     await rm(path, { force: true }).catch(() => undefined);
     return { ok: false, error: hubError("invalid_input", "invalid agent type: rendered file failed round-trip parse") };
@@ -104,11 +103,11 @@ export async function createUserAgentType(input: { [key: string]: unknown }, hom
   return { ok: true, path };
 }
 
-export async function removeUserAgentType(name: string, homeDir?: string): Promise<{ ok: true } | { ok: false; error: HubErrorShape }> {
+export async function removeUserAgentType(name: string, homeDir?: string, agentDir?: string): Promise<{ ok: true } | { ok: false; error: HubErrorShape }> {
   // 判据 = user 文件本身在不在（与 create 同口径）：user 级同名 builtin 是合法遮蔽
   // （create 只扫 user 目录不拒 builtin 名）——遮蔽档可删，删后 builtin 恢复可见；
   // user 文件不在且 builtin 在 = builtin 档不可删（随包事实）
-  const userDir = userAgentsDirOf(homeDir);
+  const userDir = userDirOf(homeDir, agentDir);
   const loaded = await loadAgentTypes([userDir]);
   if (loaded.types[name] === undefined) {
     const { builtinTypesDir } = await import("../worker/assembly.ts");

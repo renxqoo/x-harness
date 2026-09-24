@@ -211,11 +211,11 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       deps.respond(id, "models/remove", outcome.ok ? {} : { error: outcome.error });
     });
     handlers.set("agents/create", async (input, id) => {
-      const outcome = await createUserAgentType(input, deps.homeDir);
+      const outcome = await createUserAgentType(input, deps.homeDir, deps.agentDir);
       deps.respond(id, "agents/create", outcome.ok ? { data: { path: outcome.path } } : { error: outcome.error });
     });
     handlers.set("agents/remove", async (input, id) => {
-      const outcome = await removeUserAgentType(typeof input.name === "string" ? input.name : "", deps.homeDir);
+      const outcome = await removeUserAgentType(typeof input.name === "string" ? input.name : "", deps.homeDir, deps.agentDir);
       deps.respond(id, "agents/remove", outcome.ok ? {} : { error: outcome.error });
     });
     handlers.set("skills/list", async (input, id) => {

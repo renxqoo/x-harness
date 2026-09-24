@@ -51,6 +51,9 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
       HUB_WORKER_DISPATCHED: undefined,
       HUB_WORKER_PROVIDER: "script",
       HUB_WORKER_SCRIPT: JSON.stringify(options.script),
+      // 环境防污染：真实旧共享根（~/.x-harness/{skills,agents}）不迁移进沙箱 agentDir
+      HUB_SKILLS_MIGRATION: "0",
+      HUB_AGENTS_MIGRATION: "0",
       ...options.env,
     } as NodeJS.ProcessEnv,
     stdio: ["pipe", "pipe", "pipe"],

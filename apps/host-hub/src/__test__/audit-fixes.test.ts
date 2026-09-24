@@ -14,7 +14,7 @@ import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import type { HostHandle } from "./kit/host-client.ts";
 import { startHost, drivePrompt } from "./kit/host-client.ts";
 import { builtinTypesDir } from "../worker/assembly.ts";
-import { loadAgentTypes } from "@x-harness/agent-delegation";
+import { loadAgentTypes, userAgentsDirOf } from "@x-harness/agent-delegation";
 import { createThreadTable } from "../host/thread-table.ts";
 
 const roots: string[] = [];
@@ -233,16 +233,16 @@ describe("抽查处置：转发计时锚（<1ms 量级——源 regressions-unit
 });
 
 describe("抽查处置：builtin 类型装载（agents/list 层）", () => {
-  test("随包三类型经 builtinTypesDir 装载（frontmatter name = 文件名）", () => {
+  test("随包内置类型经 builtinTypesDir 装载（frontmatter name = 文件名）", () => {
     const loaded = loadAgentTypes([builtinTypesDir()]);
-    expect(Object.keys(loaded.types).sort()).toEqual(["code-reviewer", "explore", "general-purpose"]);
+    expect(Object.keys(loaded.types).sort()).toEqual(["explore", "general-purpose"]);
     expect(loaded.warnings).toEqual([]);
   });
 
   test("装载序 project > user > builtin（同名前者胜）", () => {
     const table = createThreadTable();
     void table;
-    const merged = loadAgentTypes([join(process.env["HOME"] ?? "", ".x-harness", "agents"), builtinTypesDir()]);
+    const merged = loadAgentTypes([userAgentsDirOf(), builtinTypesDir()]);
     // builtin 的 general-purpose 在场（user 未覆盖时）
     expect(merged.types["general-purpose"]).toBeDefined();
   });

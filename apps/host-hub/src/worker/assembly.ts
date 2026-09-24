@@ -118,8 +118,9 @@ export interface AssemblyDeps {
   readonly externalPlugins?: ExternalPluginsDeps;
 }
 
-function userAgentsDir(): string {
-  return userAgentsDirOf(); // 路径常量单源 @x-harness/agent-delegation（防宿主散写漂移）
+function userAgentsDir(fields: AssemblyFields): string {
+  // agentDir 派生缝同 skills：宿主配置目录在场 → <agentDir>/agents（单源内核包）
+  return userAgentsDirOf(undefined, fields.agentDir);
 }
 
 /** 内置 agents 类型目录（随包分发——装载序末位；迁移源 builtin 层等价物） */
@@ -132,13 +133,15 @@ export function builtinTypesDir(): string {
 function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: string[]; agentsDirs: string[] } {
   // agentDir 派生缝：打包发行态（HUB_AGENT_DIR 注入，如 ~/.pai/agent）用户技能根
   // 落 <agentDir>/skills 与 app 数据区同区；缺省（CLI 独立）~/.x-harness/skills 共享。
+  // agents 用户根同法（<agentDir>/agents——skills/agents 同序同源）。
   const userSkills = userSkillsDirOf(undefined, fields.agentDir);
+  const userAgents = userAgentsDir(fields);
   if (!fields.trusted) {
-    return { skillsDirs: [userSkills], agentsDirs: [builtinTypesDir(), userAgentsDir()] };
+    return { skillsDirs: [userSkills], agentsDirs: [builtinTypesDir(), userAgents] };
   }
   return {
     skillsDirs: [projectSkillsDirOf(cwd), userSkills],
-    agentsDirs: [join(cwd, ".x-harness", "agents"), userAgentsDir(), builtinTypesDir()],
+    agentsDirs: [join(cwd, ".x-harness", "agents"), userAgents, builtinTypesDir()],
   };
 }
 
