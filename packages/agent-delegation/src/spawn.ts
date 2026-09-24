@@ -241,6 +241,8 @@ function spawnText(row: ChildRow, freshFork: boolean): string {
   return (
     `Spawned ${row.agentId} (type '${row.type}', session ${String(row.sessionId)}). ` +
     `It runs in the background; an [agent-notification] message will arrive on completion. ` +
+    `End your turn to wait for it — the notification wakes you if idle and is injected at your next step boundary if busy; ` +
+    `do NOT poll (no sleep loops, no repeated list_agents to check whether it is done). ` +
     `Address it by this agentId — it stays stable across restarts.${forkNote}`
   );
 }
