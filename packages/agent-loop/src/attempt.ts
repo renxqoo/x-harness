@@ -7,6 +7,8 @@ import type { ContentBlock, Session } from "@x-harness/session";
 import type { Dial } from "./tokens.ts";
 import type { DriverDeps, TurnOutcome, TurnScope } from "./step.ts";
 import type { AssistantSettled } from "./step.ts";
+import { agentMessageData } from "@x-harness/session";
+import { isFailRequestDecision, isRespondDecision } from "./continuation.ts";
 import { appendEvent, appendSurfaceEvent } from "./step.ts";
 import { raceIdleChunk, settleStream, StreamAccumulator } from "./stream.ts";
 
@@ -19,9 +21,12 @@ export interface AttemptInput {
   readonly step: number;
 }
 
-type AttemptResult =
+export type AttemptResult =
   | { readonly kind: "ok"; readonly message: AssistantSettled }
-  | { readonly kind: "fatal"; readonly outcome: TurnOutcome };
+  | { readonly kind: "fatal"; readonly outcome: TurnOutcome }
+  /** respond-to-model 已落卷（agent/message）：无 assistant settle 可收束——driver 直接过
+   *  concludeStep 进下一迭代（复用 ok 分支会携不存在的 settle 进收束窗口，stopReason 悬空）。 */
+  | { readonly kind: "continue" };
 
 /** 流结算（attempt 循环）：abort 赛跑、三分支结算、request-error retry */
 /** 看门狗守卫的流汲取：逐 chunk 间隔计时；超时注入 finish{error,code:network}（走 finish
@@ -83,6 +88,50 @@ function settledMessageOf(
     ...(hasThinking ? { hasThinking: true } : {}),
     ...(settlement.interrupted === true ? { interrupted: true } : {}),
   };
+}
+
+/** request-error 决策应用（docs/WORK-ERROR-RECOVERY.md C1）：respond-to-model → 错误落卷
+ *  agent/message{kind:"content", source:"error-recovery"}（模型可见、UI 类型隐藏、摘要保留）
+ *  + continue；fail → fatal 带 code；垃圾形状 fail-loud；undefined → 现行 fatal 缺省
+ *  （settlement.code 透传——终态不再丢 code）。retry 归调用方（携 dial 补丁重进循环）。 */
+/** retry 决策提取（dial 补丁载体——applyRequestError 不处理 retry 路径） */
+function retryDialOf(decision: unknown): { readonly dial?: Partial<Dial> } | undefined {
+  if (typeof decision !== "object" || decision === null) return undefined;
+  const v = decision as { kind?: unknown };
+  return v.kind === "retry" ? (decision as { readonly dial?: Partial<Dial> }) : undefined;
+}
+
+/** 让位缺省：现行 fatal 语义（code 透传——终态不再丢 settlement.code） */
+function defaultFailure(failure: { readonly error: string; readonly code?: string }): AttemptResult {
+  return { kind: "fatal", outcome: { kind: "error", message: failure.error, ...(failure.code !== undefined ? { code: failure.code } : {}) } };
+}
+
+function applyRequestError(
+  session: Session,
+  spec: { readonly turn: number; readonly step: number; readonly error: string; readonly code?: string },
+  decision: unknown,
+): AttemptResult {
+  if (isRespondDecision(decision)) {
+    appendSurfaceEvent(session, {
+      type: "agent/message",
+      data: agentMessageData({
+        turn: spec.turn,
+        step: spec.step,
+        source: "error-recovery",
+        kind: "content",
+        content: [{ type: "text", text: decision.content }],
+      }),
+      surfaceOp: "append",
+    });
+    return { kind: "continue" };
+  }
+  if (isFailRequestDecision(decision)) {
+    return { kind: "fatal", outcome: { kind: "error", message: decision.message, code: decision.code } };
+  }
+  if (decision !== undefined) {
+    throw new Error(`agent/request-error output shape invalid (got ${JSON.stringify(decision).slice(0, 80)})`);
+  }
+  return defaultFailure(spec);
 }
 
 export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
@@ -150,7 +199,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
     if (settlement.kind === "attempt") {
       appendAttemptLedger(session, { turn, step, error: settlement.error, accum });
       deps.emitStreamFrame(turn, step, { phase: "end", kind: "attempt" });
-      const retry = await deps.dispatchRequestError({
+      const decision = await deps.dispatchRequestError({
         session: session.id,
         turn,
         step,
@@ -161,11 +210,14 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         },
         signal,
       });
-      if (retry?.kind === "retry" && !signal.aborted) {
+      const failure = { error: settlement.error, ...(settlement.code !== undefined ? { code: settlement.code } : {}) } as const;
+      const retry = retryDialOf(decision);
+      if (retry !== undefined) {
+        if (signal.aborted) return defaultFailure(failure); // retry 撞上 abort：不重拨（现行缺省收口）
         if (retry.dial !== undefined) dial = { ...dial, ...retry.dial }; // 降级补丁（不重派 agentRequest——dsh 同口径）
         continue; // 不重落 system/user/header
       }
-      return { kind: "fatal", outcome: { kind: "error", message: settlement.error } };
+      return applyRequestError(session, { turn, step, ...failure }, decision);
     }
     const usage = accum.usageSnapshot;
     // F0②：assistant 落账前纠——改写版即落账版（「模型可见必落盘」保持）。形状门在

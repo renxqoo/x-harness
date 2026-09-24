@@ -4,7 +4,7 @@
 
 import { agentMessageData } from "@x-harness/session";
 import type { Session } from "@x-harness/session";
-import type { TurnConcludeDecision } from "./tokens.ts";
+import type { RequestErrorDecision, TurnConcludeDecision } from "./tokens.ts";
 import type { AssistantSettled, TurnScope } from "./step.ts";
 import { appendSurfaceEvent } from "./step.ts";
 
@@ -13,6 +13,20 @@ export function isResumeDecision(value: unknown): value is Extract<TurnConcludeD
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   return v["kind"] === "resume" && typeof v["source"] === "string" && v["source"] !== "" && typeof v["instruction"] === "string" && v["instruction"] !== "";
+}
+
+/** request-error respond 应答形状门（非空 content——垃圾 fail-loud 收轮，isResumeDecision 同惯例） */
+export function isRespondDecision(value: unknown): value is Extract<RequestErrorDecision, { kind: "respond-to-model" }> {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return v["kind"] === "respond-to-model" && typeof v["content"] === "string" && v["content"] !== "";
+}
+
+/** request-error fail 应答形状门（非空 message + 非空 code） */
+export function isFailRequestDecision(value: unknown): value is Extract<RequestErrorDecision, { kind: "fail" }> {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return v["kind"] === "fail" && typeof v["message"] === "string" && v["message"] !== "" && typeof v["code"] === "string" && v["code"] !== "";
 }
 
 /** fail 应答形状门（非空 message + 非空 code） */

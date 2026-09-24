@@ -13,7 +13,7 @@ import type { InboxState } from "./inbox.ts";
 import { executeToolCalls, isTruncatedArguments, mustAppendPair, TRUNCATED_TOOL_MESSAGE } from "./tool-calls.ts";
 import type { ToolCallOutcomeCollected, ToolCallSpec } from "./tool-calls.ts";
 import { foldDial, headerChanged, lastRequestContext, toToolRefs } from "./request.ts";
-import type { Dial } from "./tokens.ts";
+import type { Dial, RequestErrorDecision } from "./tokens.ts";
 
 export interface DriverDeps {
   readonly session: Session;
@@ -28,7 +28,9 @@ export interface DriverDeps {
   readonly emitToolStream?: (callId: string, delta: string) => void;
   readonly dispatchPreStep: (payload: unknown) => Promise<unknown>;
   readonly dispatchRequest: (payload: unknown, dial: Dial) => Promise<Dial>;
-  readonly dispatchRequestError: (payload: unknown) => Promise<{ readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined>;
+  /** request-error 窗口派发（agentRequestError——docs/WORK-ERROR-RECOVERY.md C1 决策集）：
+   *  final = undefined（让位 → fatal 缺省） */
+  readonly dispatchRequestError: (payload: unknown) => Promise<RequestErrorDecision | undefined>;
   readonly dispatchTurnStopping: (payload: unknown) => Promise<void>;
   /** 收束窗口派发（agentTurnConclude——docs/OUTPUT-TOKEN-CONTINUATION.md：无工具 settle
    *  即将结束 turn 的通用时点；final = undefined 即现行收束路径） */

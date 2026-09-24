@@ -8,6 +8,7 @@ import { errorText } from "@x-harness/core";
 import { foldInbox, insertData } from "./inbox.ts";
 import { concludeWindow } from "./continuation.ts";
 import { runAttempt } from "./attempt.ts";
+import type { AttemptResult } from "./attempt.ts";
 import {
   anchorSystem,
   appendEvent,
@@ -95,6 +96,30 @@ interface TurnState {
 
 /** 步终态短路闭括号（dialFailure/fatal/interrupted/tools-aborted 同形：merge → step/end；
  *  break 由调用方） */
+/** attempt 结果三分流（turn 复杂度治理）：fatal → 闭 step 以终态收轮；continue
+ *  （respond-to-model 已落卷）→ 无 settle 可收束、直接下一迭代；interrupted → aborted 收尾
+ *  （部分内容已保序落账）；ok → 携 settle 进收束窗口。 */
+function attemptAftermath(spec: {
+  readonly scope: TurnScope;
+  readonly state: TurnState;
+  readonly turn: number;
+  readonly step: number;
+  readonly attempt: AttemptResult;
+  readonly cancelled: string | undefined;
+}): { readonly kind: "break" } | { readonly kind: "continue" } | { readonly kind: "ok"; readonly message: AssistantSettled } {
+  const { scope, state, turn, step, attempt, cancelled } = spec;
+  if (attempt.kind === "fatal") {
+    closeStepOutcome({ session: scope.deps.session, state, turn, step }, fatalOutcome(scope.controller, cancelled, attempt.outcome));
+    return { kind: "break" };
+  }
+  if (attempt.kind === "continue") return { kind: "continue" };
+  if (attempt.message.interrupted === true) {
+    closeStepOutcome({ session: scope.deps.session, state, turn, step }, abortedOutcome(cancelled));
+    return { kind: "break" };
+  }
+  return { kind: "ok", message: attempt.message };
+}
+
 function closeStepOutcome(spec: { readonly session: Session; readonly state: TurnState; readonly turn: number; readonly step: number }, outcome: TurnOutcome): void {
   spec.state.turnEnds = mergeOutcome(spec.state.turnEnds, outcome);
   appendEvent(spec.session, "step/end", { turn: spec.turn, step: spec.step });
@@ -279,16 +304,10 @@ export function createDriver(deps: DriverDeps): {
           break;
         }
         const attempt = await runAttempt({ scope, dial: dialed.dial, schemas: dialed.schemas, step });
-        if (attempt.kind === "fatal") {
-          closeStepOutcome({ session, state, turn: turnNumber, step }, fatalOutcome(controller, cancelled, attempt.outcome));
-          break;
-        }
-        if (attempt.message.interrupted === true) {
-          // 中断的消息：turn 以 aborted 收尾（部分内容已保序落账）
-          closeStepOutcome({ session, state, turn: turnNumber, step }, abortedOutcome(cancelled));
-          break;
-        }
-        const flow = await concludeStep({ scope, turn: turnNumber, step, state, assistant: attempt.message, cancelled });
+        const aftermath = attemptAftermath({ scope, state, turn: turnNumber, step, attempt, cancelled });
+        if (aftermath.kind === "break") break;
+        if (aftermath.kind === "continue") continue; // respond 已落卷：无 settle 可收束，直接进下一迭代（不过 concludeStep）
+        const flow = await concludeStep({ scope, turn: turnNumber, step, state, assistant: aftermath.message, cancelled });
         if (flow.kind === "resume") {
           continuationStep = true;
           continue; // 收束窗口续跑：下一步为续写步

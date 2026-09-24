@@ -77,7 +77,18 @@ export interface RequestFailure {
   readonly code?: string;
   /** 429/503 的 Retry-After（毫秒）——重试件快车道（docs/LLM.md §1.2） */
   readonly retryAfterMs?: number;
+  /** provider 原生 stop/错误 reason（LlmFinish.rawReason 三级透传之一——消费端区分
+   *  「真错误 vs 未救回的边缘截断形态」的判定输入，docs/WORK-ERROR-RECOVERY.md C4） */
+  readonly rawReason?: string;
 }
+
+/** agentRequestError 决策集（docs/WORK-ERROR-RECOVERY.md C1）：retry = 重拨（可携 dial 补丁
+ *  ——pre-stable 扩展，补丁在重试分支就地合并）；respond-to-model = 错误落卷为模型可见消息、
+ *  下一轮应对（不重拨）；fail = 显式收轮（终态带 code）；undefined = 让位 → 现行 fatal 缺省。 */
+export type RequestErrorDecision =
+  | { readonly kind: "retry"; readonly dial?: Partial<Dial> }
+  | { readonly kind: "respond-to-model"; readonly content: string }
+  | { readonly kind: "fail"; readonly message: string; readonly code: string };
 
 export const agentRequestError = defineWaterfall<
   {
@@ -87,9 +98,7 @@ export const agentRequestError = defineWaterfall<
     readonly failure: RequestFailure;
     readonly signal: AbortSignal;
   },
-  /** retry 可携 dial 补丁（pre-stable 扩展——plugin-examples ⑨ dogfood 发现：重试不重派
-   *  agentRequest，降级类插件无处改 retry 的模型；补丁在重试分支就地合并） */
-  { readonly kind: "retry"; readonly dial?: Partial<Dial> } | undefined
+  RequestErrorDecision | undefined
 >("agent/request-error");
 
 export const agentTurnStopping = defineSerial<{ readonly session: SessionId; readonly turn: number; readonly signal: AbortSignal }>(

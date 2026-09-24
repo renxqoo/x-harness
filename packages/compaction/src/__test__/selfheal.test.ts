@@ -7,17 +7,20 @@ import { agentRequestError } from "@x-harness/agent-loop";
 import { compactionLanded, compactionRunner, compactionServedWindow } from "../tokens.ts";
 import { makeWorld, seedTurn, sid, textScript } from "./helpers.ts";
 
-type Decision = { readonly kind: "retry" } | undefined;
+import type { RequestErrorDecision } from "@x-harness/agent-loop";
+
+type Decision = Extract<RequestErrorDecision, { kind: "retry" }> | undefined;
 
 async function dispatchError(
   world: Awaited<ReturnType<typeof makeWorld>>,
   fields: { readonly session: ReturnType<typeof sid>; readonly failure: { message: string; code?: string }; readonly turn?: number; readonly step?: number },
 ): Promise<Decision> {
-  return world.ctx.dispatch(
+  const decision = await world.ctx.dispatch(
     agentRequestError,
     { session: fields.session, turn: fields.turn ?? 3, step: fields.step ?? 1, failure: fields.failure, signal: new AbortController().signal } as never,
     async () => undefined as never,
   );
+  return decision?.kind === "retry" ? decision : undefined; // 自愈件只观察本件应答（respond/fail 属他件决策面）
 }
 
 async function seeded(world: Awaited<ReturnType<typeof makeWorld>>, id: string) {

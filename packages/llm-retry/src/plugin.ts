@@ -38,7 +38,7 @@ type RequestErrorPayload = {
   readonly signal: AbortSignal;
 };
 
-type RecoveryDecision = { readonly kind: "retry" } | undefined;
+type RecoveryDecision = { readonly kind: "retry" } | { readonly kind: "respond-to-model"; readonly content: string } | { readonly kind: "fail"; readonly message: string; readonly code: string } | undefined;
 
 const DEFAULT_PROVIDER_KEY = "(default)";
 
