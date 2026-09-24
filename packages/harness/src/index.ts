@@ -13,6 +13,7 @@ import type { AgentLoopService } from "@x-harness/agent-loop";
 import { createContinuationPlugin } from "@x-harness/agent-continuation";
 import type { ContinuationOptions } from "@x-harness/agent-continuation";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
+import type { DelegationOptions } from "@x-harness/agent-delegation";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
 import { createAutoCompactPlugin } from "@x-harness/autocompact";
@@ -193,9 +194,9 @@ export const fenceKit = (
   createSandboxPlugin({ root: o.root, ...(o.protectedPaths !== undefined ? { protectedPaths: o.protectedPaths } : {}) }),
 ];
 
-/** 子代理委派 */
-/** 子代理委派（agentsDirs 必收——宿主边沿用 @x-harness/agent-delegation 的 resolveAgentDirs 统一解析） */
-export const delegationKit = (o: { readonly agentsDirs: readonly string[] }): readonly Plugin[] => [createAgentDelegationPlugin(o)];
+/** 子代理委派（agentsDirs 必收——宿主边沿用 @x-harness/agent-delegation 的 resolveAgentDirs 统一解析；
+ *  件15 D5：签名透传 DelegationOptions——reportCap/maxDepth 等经装配入口可达（message 上限恒等 reportCap）） */
+export const delegationKit = (o: DelegationOptions): readonly Plugin[] => [createAgentDelegationPlugin(o)];
 
 /** 请求前 WAL 屏障（独立 kit——与 delegation 零共享面） */
 export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];

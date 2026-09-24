@@ -225,6 +225,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         spawn: (execCtx, input: SpawnInput) => spawnAgent(spawnDeps, execCtx, input),
         message: (execCtx, input) => message(verbDeps, execCtx.session, input),
         list: (execCtx) => listAgents(verbDeps, execCtx.session),
+        reportCap: limits.reportCap, // 件15 D1 恒等：message 上限 = reportCap（单旋钮）
       }).map((tool) => registry.register(tool));
       // 宿主直调服务面（delegationView）：与工具面同一动词实现——不经工具 dispatch 的
       // 权限裁决与文本解析（hub get_subagents/subagent-steer/abort 级联消费）
