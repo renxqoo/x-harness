@@ -90,6 +90,8 @@ export interface InstallSkillSpec {
   readonly overwrite?: unknown;
   /** user 技能根的 HOME 注入缝（缺省真实 HOME） */
   readonly homeDir?: string;
+  /** 配置目录派生缝（user 根 = <agentDir>/skills；缺省 ~/.x-harness/skills） */
+  readonly agentDir?: string;
   readonly limits: SkillImportLimits;
 }
 
@@ -195,13 +197,17 @@ async function planInstall(input: InstallSkillSpec): Promise<{ ok: true; plan: I
   if (!inspected.ok) return { ok: false, error: hubError("invalid_input", `invalid skill source: ${inspected.problem}: ${sourcePath}`) };
   const target = input.name === undefined ? inspected.name : input.name;
   if (typeof target !== "string" || !isSkillName(target)) return { ok: false, error: hubError("invalid_input", `invalid skill name: ${String(input.name)}`) };
-  // 生效性：装载器侧用户技能根（真实 HOME）不在生效技能目录集（X_HARNESS_SKILLS_DIRS
-  // 覆盖）→ 装进用户根也读不到：明拒，而不是装成「看不见的技能」
-  const loaderRoot = userSkillsDirOf();
-  if (!resolveSkillDirs().some((dir) => resolve(dir) === resolve(loaderRoot))) {
-    return { ok: false, error: hubError("state_conflict", `skills root ${loaderRoot} is not an effective skill directory (X_HARNESS_SKILLS_DIRS overrides it)`) };
+  // 生效性（仅 CLI 独立形态——agentDir 派生缺席时）：装载器侧用户技能根不在生效
+  // 技能目录集（X_HARNESS_SKILLS_DIRS 覆盖）→ 装进用户根也读不到：明拒。
+  // agentDir 在场（host-hub 运行态）装载序恒含 <agentDir>/skills（assembly
+  // trustedDirsOf 同源派生），无「装了读不到」形态，检查跳过。
+  if (input.agentDir === undefined) {
+    const loaderRoot = userSkillsDirOf();
+    if (!resolveSkillDirs().some((dir) => resolve(dir) === resolve(loaderRoot))) {
+      return { ok: false, error: hubError("state_conflict", `skills root ${loaderRoot} is not an effective skill directory (X_HARNESS_SKILLS_DIRS overrides it)`) };
+    }
   }
-  const root = userSkillsDirOf(input.homeDir);
+  const root = userSkillsDirOf(input.homeDir, input.agentDir);
   const targetDir = join(root, target);
   const targetReal = await realpath(targetDir).catch(() => undefined);
   // 自装自（realpath 比对——symlink 别名同判）

@@ -126,11 +126,14 @@ export function builtinTypesDir(): string {
 /** trusted 门禁目录（project > user > builtin——x-harness 内核装载序「前者胜」；
  *  skills/agents 同序一致，DESIGN §5） */
 function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: string[]; agentsDirs: string[] } {
+  // agentDir 派生缝：打包发行态（HUB_AGENT_DIR 注入，如 ~/.pai/agent）用户技能根
+  // 落 <agentDir>/skills 与 app 数据区同区；缺省（CLI 独立）~/.x-harness/skills 共享。
+  const userSkills = userSkillsDirOf(undefined, fields.agentDir);
   if (!fields.trusted) {
-    return { skillsDirs: [userSkillsDirOf()], agentsDirs: [builtinTypesDir(), userAgentsDir()] };
+    return { skillsDirs: [userSkills], agentsDirs: [builtinTypesDir(), userAgentsDir()] };
   }
   return {
-    skillsDirs: [projectSkillsDirOf(cwd), userSkillsDirOf()],
+    skillsDirs: [projectSkillsDirOf(cwd), userSkills],
     agentsDirs: [join(cwd, ".x-harness", "agents"), userAgentsDir(), builtinTypesDir()],
   };
 }

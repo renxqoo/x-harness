@@ -16,11 +16,16 @@ export interface SkillsScope {
   readonly homeDir?: string;
   /** 项目级技能根（`<cwd>/.x-harness/skills`）——调用方已过信任门禁 */
   readonly cwd?: string;
+  /** 配置目录派生缝：在场时 user 根 = <agentDir>/skills（打包发行态数据区——
+   *  agent-app 等宿主传 HUB_AGENT_DIR）；缺省回落 ~/.x-harness/skills（CLI 共享）。 */
+  readonly agentDir?: string;
 }
 
 /** 合并清单（+ disabled 标注来源）——list 与 knownSkillNames 共用 */
 async function scanSkills(scope: SkillsScope): Promise<{ name: string; source: "user" | "project"; path: string }[]> {
-  const dirs: Array<{ dir: string; source: "user" | "project" }> = [{ dir: userSkillsDirOf(scope.homeDir), source: "user" }];
+  const dirs: Array<{ dir: string; source: "user" | "project" }> = [
+    { dir: userSkillsDirOf(scope.homeDir, scope.agentDir), source: "user" },
+  ];
   if (scope.cwd !== undefined) dirs.push({ dir: projectSkillsDirOf(scope.cwd), source: "project" });
   const byName = new Map<string, { name: string; source: "user" | "project"; path: string }>();
   // 目录列表序即优先序（前者胜——与内核 skill 装载器/运行时装配同序一致）
@@ -104,7 +109,7 @@ export interface RemoveSkillSpec extends SkillsScope {
 export async function removeSkill(input: RemoveSkillSpec): Promise<{ ok: true } | { ok: false; error: HubErrorShape }> {
   // 现扫定 source：user 目录在场才可删；project 级 → not user-defined（删除是
   // user 级专属——防误删项目共享资产）；删 user 遮蔽后同名复活（builtin 同构）
-  const root = userSkillsDirOf(input.homeDir);
+  const root = userSkillsDirOf(input.homeDir, input.agentDir);
   const userLoaded = await loadSkills([root]);
   const userSkill = userLoaded.skills[input.name];
   if (userSkill === undefined) {
@@ -114,7 +119,7 @@ export async function removeSkill(input: RemoveSkillSpec): Promise<{ ok: true } 
         return { ok: false, error: hubError("state_conflict", `skill not user-defined: ${input.name}`) };
       }
     }
-    const known = new Set(await knownSkillNames({ homeDir: input.homeDir }));
+    const known = new Set(await knownSkillNames({ homeDir: input.homeDir, ...(input.agentDir !== undefined ? { agentDir: input.agentDir } : {}) }));
     return { ok: false, error: hubError("state_conflict", `unknown skill: ${input.name} (available: ${[...known].sort().join(", ")})`) };
   }
   // 移除 = 删技能目录（不只是 SKILL.md——否则残留目录 + 捆绑文件，且每次装载对

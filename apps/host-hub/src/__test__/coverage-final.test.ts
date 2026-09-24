@@ -65,7 +65,8 @@ describe("skills-admin（HOME 注入缝——user 技能根可隔离）", () => 
     const home = await tempDir("hub-home-");
     const agentDir = await tempDir("hub-agent-");
     const projectCwd = await tempDir("hub-proj-");
-    const root = join(home, ".x-harness", "skills");
+    // agentDir 派生缝：agentDir 在场时 user 根 = <agentDir>/skills（homeDir 注入缝退居次位）
+    const root = join(agentDir, "skills");
     await mkdir(join(root, "alpha"), { recursive: true });
     await writeFile(join(root, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: A\n---\n", "utf8");
     // user 名单禁用
@@ -81,7 +82,7 @@ describe("skills-admin（HOME 注入缝——user 技能根可隔离）", () => 
   test("list/set_enabled 走注入 HOME：user 层真读真写（含 project 层并集）", async () => {
     const home = await tempDir("hub-home-");
     const agentDir = await tempDir("hub-agent-");
-    const root = join(home, ".x-harness", "skills");
+    const root = join(agentDir, "skills");
     await mkdir(join(root, "alpha"), { recursive: true });
     await writeFile(join(root, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: A\n---\n", "utf8");
     const listed = await listSkills({ agentDir, homeDir: home });

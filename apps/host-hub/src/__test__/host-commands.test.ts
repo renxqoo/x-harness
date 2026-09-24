@@ -439,7 +439,9 @@ describe("host 本地命令（注入 IO）", () => {
 
   test("skills 面旅程（隔离 HOME）：list 见 user 层 → inspect 三态 → install 落盘 → set_enabled → remove 目录删除", async () => {
     const f = await startHost();
-    const skillsRoot = join(f.home, ".x-harness", "skills");
+    // agentDir 派生缝：host-hub 运行态 user 根 = <agentDir>/skills（homeDir 注入缝
+    // 仅 CLI 直调面生效——此处 runHost 带 agentDir，优先级更高）
+    const skillsRoot = join(f.agentDir, "skills");
     // 源技能：一个 ready（声明名 = 目录名）+ 一个 rename（声明名 ≠ 目录名），另加捆绑文件
     const srcRoot = await tempDir("hub-skills-src-");
     const ready = join(srcRoot, "alpha");
@@ -470,7 +472,7 @@ describe("host 本地命令（注入 IO）", () => {
     expect(installed["data"]).toEqual({ name: "alpha", path: join(skillsRoot, "alpha", "SKILL.md"), skippedEntries: 0 });
     // 落盘事实：捆绑文件同拷、临时树清空
     expect((await stat(join(skillsRoot, "alpha", "helper.sh"))).isFile()).toBe(true);
-    expect(await readdir(join(f.home, ".x-harness", ".tmp"))).toEqual([]);
+    expect(await readdir(join(f.agentDir, ".tmp"))).toEqual([]);
     // rename 档：目标目录名 = 声明名
     f.send({ type: "skills/install", id: "in2", sourcePath: rename });
     expect((await waitResponse(f.client, "skills/install", "in2"))["data"]).toEqual({ name: "tavily-cli", path: join(skillsRoot, "tavily-cli", "SKILL.md"), skippedEntries: 0 });

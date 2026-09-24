@@ -8,8 +8,12 @@ import { join } from "node:path";
 import { inspectSkillDir, skillNameMismatch } from "./inspect.ts";
 import type { SkillLoadResult, SkillMeta } from "./types.ts";
 
-/** 用户技能根（homeDir 注入缝：测试隔离目录；缺省真实 HOME） */
-export function userSkillsDirOf(homeDir: string = homedir()): string {
+/** 用户技能根（homeDir 注入缝：测试隔离目录；缺省真实 HOME）。
+ *  agentDir 派生缝：宿主进程传配置目录时用户根落在 <agentDir>/skills——
+ *  打包发行态（agent-app 等，agentDir=~/.pai/agent）技能与 app 数据区同区；
+ *  缺省（x-harness CLI 独立运行）保持 ~/.x-harness/skills 共享目录不变。 */
+export function userSkillsDirOf(homeDir: string = homedir(), agentDir?: string): string {
+  if (agentDir !== undefined && agentDir !== "") return join(agentDir, "skills");
   return join(homeDir, ".x-harness", "skills");
 }
 
