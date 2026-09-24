@@ -1,6 +1,6 @@
 # 截断 tool_use 识别与半截产出抢救方案
 
-> 状态：**已定稿（实施就绪）**——全部 8 项裁决已闭合（见裁决表）；双轮对抗审查（实现事实核查 + 架构攻击）全部处置并入（附录 A）
+> 状态：**已实施（四批落地 + 三轮对抗审查处置完毕）**——全部 8 项裁决闭合（裁决表）；实施轮三份对抗审查（正确性/安全/测试质量）的关键修正已回写正文（层 1 前置 2-4「end 即放行」、层 2「双层授权面」——附录 A）
 > 关联：docs/OUTPUT-TOKEN-CONTINUATION.md（截断续写——本件补其「tool_use 在场」缺口）；docs/STREAM-PARTIAL-PERSISTENCE.md（上游已交付数据不丢弃——本件修其一处违例）；docs/AGENT-LOOP-DRIVER.md §1.5；docs/LLM-PI.md（pi-events 出口契约）；docs/PROVIDER-MAX-OUTPUT-TOKENS.md（0b 接线同源）
 > 级别：中偏高（llm 层 pi-events 出口改造 + agent-loop 内核收口 + 新 waterfall 词条 + tool-write/tool-edit 侧插件 + hub 目录接线修复 + dispatch 回显截断）
 > 来源：事故——大文件 write 在 arguments 中途撞输出 token 上限；深挖 pi-ai 源码发现更严重的**静默数据损坏**（模式 2a）。
@@ -58,15 +58,12 @@
 改造：
 
 1. **原文缓冲**：pi-events 内按 contentIndex 缓冲 `toolcall_delta` 的 `delta` 原文拼接（`event.delta`——anthropic 方言即 `partial_json` 分片）。**缓冲与暂存队列是 generator 局部状态**（每次 piChunks 调用新建——attempt 循环每次新流新实例，防跨 attempt 泄漏）。
-2. **终态感知出口（done 路径）**：`toolcall_end` 到达时**暂存不立即发**；`done` 事件到达时已知终态（`reason === "length"`）——
-   - **截断终态**：对该流内各块，以**缓冲原文**判完整性（`JSON.parse` 成败）：失败的块以**原文本身**（未经 partial-json 修补、未经 re-stringify）作为 `argumentsDelta` 发出；成功的块照旧发 `JSON.stringify(对象)`。
-   - **正常终态**：全部照旧（修补产物无损——完整 parse 路径本就等价于原文）。
-3. **全终态 flush 义务（不只 done 一条路）**：任何终态（done / error / abort throw / 看门狗超时注入）都必须先 flush 暂存帧再发终态，无一条路径允许暂存帧蒸发。块的完整性判定**不依赖 done reason**（对缓冲原文 `JSON.parse` 即判）——判为半截的块发原文，完整的发 stringify：
-   - **abort / 非救回 error / 看门狗超时**：flush 全部暂存帧——interrupted message 结算（abort 且有内容 → `settleStream` message 分支）的 tool_use 落账面由此保持（STREAM-PARTIAL-PERSISTENCE 既有行为不回归；否则本批会把既有 interrupted 落账面打破）。abort 半截块现状收场 = 不调度（driver.ts interrupted 分支直接 break）+ repair.ts resume 合成配对——出口行为**明文裁决为 flush 原文判定版**，块消失与修补污染回归两头都不发生。
-   - **error 救回路径（errorChunks 的 OUTPUT_LIMIT_RAW_REASONS 救回）——分方言事实（审查 A 1d 核实）**：
-     - **openai-completions**：`finish_reason:"max_tokens"` 走 mapStopReason default → throw 前 `:485-487` 已对全部块跑 `finishBlock` → `toolcall_end` **已 push**——pi-events 在 error 帧到达时按截断终态放行缓冲即可，「同待遇」**成立**。
-     - **anthropic-messages**：error 事件是异常路径（stopReason error → throw → catch `:628`）；截断的 in-flight 块**没有 toolcall_end**（content_block_stop 未到），且 pi 侧 catch `:622-624` 已 `delete block.partialJson`——**toolcall_end 暂存机制在该方言 error 路径上是空承诺**。处置：从 `toolcall_start` 身份（partial.content[contentIndex] 累积块——id/name 在 content_block_start 已定）+ 原文缓冲**直接合成**该块的 tool-call-delta 帧（完整性同判据），不依赖 toolcall_end。
-4. **块序保持**：tool-call-delta 帧发出次序维持原 contentIndex 序（缓冲不打乱）。
+2. **end 即放行（对抗审查 A 1A/1B 修正——原「暂存到终态」设计已否决）**：`toolcall_end` 到达时**立即以缓冲原文判完整性并放行**——`JSON.parse` 失败的块以**原文本身**（未经 partial-json 修补、未经 re-stringify）作为 `argumentsDelta` 发出；成功的块照旧发 `JSON.stringify(对象)`；`raw === ""`（零字符截断）原样发空串（**不得折成 `"{}"`**——下游 `isTruncatedArguments("")` 命中截断分支，折成 `"{}"` 会让空参工具真实执行）。判定只依赖该块自己的缓冲原文（end = 该块分片终点，缓冲已齐），**不依赖流终态**——原「暂存到 done」的设计会让「end 已到、终态未到」窗口内的块随消费侧 fire-and-forget `return()` 蒸发（attempt.ts drainGuarded 的 abort/看门狗路径），是行为回归。帧序与改造前一致（tool-call-delta 在 usage/finish 之前）。
+3. **终态合成义务（无 end 块的兜底）**：done / error / catch 路径在发终态帧前对「有 `toolcall_start` 身份 + 有原文缓冲 + 无 end」的块**直接合成** tool-call-delta 帧（`emitted` 集幂等，合成不晚于 finish——头注「done/error 后停发」）：
+   - **openai-completions error 救回**（OUTPUT_LIMIT_RAW_REASONS）：`finish_reason:"max_tokens"` 走 throw 前 `finishBlock` 已对全部块跑过 → `toolcall_end` 已 push → end 即放行覆盖，「同待遇」**成立**。
+   - **anthropic-messages error 路径**：error 事件是异常路径（stopReason error → throw → catch `:628`）；截断的 in-flight 块**没有 toolcall_end**（content_block_stop 未到），且 pi 侧 catch `:622-624` 已 `delete block.partialJson`——从 `toolcall_start` 身份（partial.content[contentIndex] 累积块——id/name 在 content_block_start 已定）+ 原文缓冲**直接合成**，不依赖 toolcall_end。零字符原文不合成（无内容可救——不造无主帧）。
+   - **abort / 非救回 error / 看门狗超时**：end 已放行的块零丢失（无暂存窗口）；in-flight 无 end 块经 catch/finally 的合成兜底尽力送达（消费侧弃单守卫丢弃属既有语义）。interrupted message 结算的 tool_use 落账面保持。
+4. **块序**：end 即放行保持事件到达序；合成帧（无 end 兜底）按 contentIndex 升序。
 
 **精确化推论**：截断只可能命中**最后一个 in-flight 块**（前面的块 `content_block_stop` 已到，原文完整）——混合 case 天然精确：完整调用不受牵连照常执行，只有真正半截的那个被标嫌疑。
 
@@ -168,11 +165,11 @@ export const agentTruncatedTool = defineWaterfall<
 - 前置依赖：输入是层 1 前置发出的**原文**（转义状态真实）——修补版无法可靠提取（partial-json 闭合引号后字符串边界已失真；模式 2b 下修补版干脆丢键）。
 - **体积下限**：提取值 < 512 字符 → 不物化（note 说明 `too short to be worth a draft`）——微型半截不值得一次 read 往返。
 
-**物化（含授权面——审查 B P0①处置）**：sidecar 写入**必须过与 write 工具同源的授权面**，不得走裸 `env.writeFileAtomic`——`path` 是从模型半截参数提取的**未经校验的模型产物**，裸写即绕过越根/`../` 穿越/worktree/permission 全部授权面。插件注入 `gate + observed + env` 三件套（与 `createWriteTool` 同源）：
+**物化（双层授权面——审查 B P0① + 实施轮加固）**：sidecar 写入**必须过与 write 工具同源的双层授权面**，不得走裸 `env.writeFileAtomic`——`path` 是从模型半截参数提取的**未经校验的模型产物**，裸写即绕过越根/`../` 穿越/permission/deny 规则/plan-deny/protectedPaths 全部授权面（恶意/抽风模型可**主动制造截断**把「deny 的 X 写不进去」降级成「X.partial 随便写」）：
 
-1. `admitSession(gate, realpath, session, extraRootsOf, rootOverrideOf, target: path + ".partial")`——**后缀拼接在门判定之前**，对最终 sidecar 路径整体过门（词法+物理双查）；
-2. 拒绝（越根/穿越）→ 跳过物化，note 说明 `target outside workspace, draft not saved`；
-3. 通过 → `env.writeFileAtomic(admittedPath, …)`。**不登记 ObservedRegistry**（sidecar 不是观察-写流程，不参与版本 CAS）；**不覆盖已存在文件**——`stat(admittedPath)` 命中已存在文件即拒绝物化（note 说明 `draft exists, not overwritten`）：`<target>.partial` 可能是目标文件的有意命名（模型/用户先例），抢救物化静默覆盖它是数据丢失通道，宁可放弃抢救。目标文件本身**不动**——write 覆盖语义写一半即破坏现场（模式 2a 现状正是干了这个）。
+1. **PathGate 层**：`admitSession(gate, realpath, session, extraRootsOf, rootOverrideOf, target: path + ".partial")`——**后缀拼接在门判定之前**，对最终 sidecar 路径整体过门（词法+物理双查）。拒绝 → 跳过物化，note 说明 `target outside workspace boundary, draft not saved`。
+2. **permission 层**：`decideFor` 纯函数以 `tool: "write"`、`args.path = admitted.path`（realpath 归一回裁决树——macOS `/var` symlink 前缀差异会使 globMatch 失配）同源裁决：deny 规则/plan-deny 硬闸/protectedPaths/ask 档全部生效；非 allow → note 说明 `target not permitted for rescue write, draft not saved`（**ask 档不弹窗直接不救**——抢救是增益非契约，模型重发完整调用走正常面板）。规则集/档位/围栏事实经 `permissionGrants`/`permissionMode`/`fenceFacts` 服务令牌运行期消费（插件 tryUse——装配序 permission 件先于抢救件）；**无 permission 装配的世界不物化**（无裁决面即无写盘授权）。装配面：`toolboxKit` 增可选 `permission` 面（root/rules/projectRules/protectedWrite），两宿主与 `fenceKit` 同源接线（hub 保护路径透传 protectedWrite、CLI 用户规则单点解析）。
+3. 通过 → `env.writeFileAtomic(admittedPath, …)`。**不登记 ObservedRegistry**（sidecar 不是观察-写流程，不参与版本 CAS）；**不覆盖已存在文件**——`stat(admittedPath)` 命中已存在文件即拒绝物化（note 说明 `draft exists, not overwritten`）：`<target>.partial` 可能是目标文件的有意命名（模型/用户先例），抢救物化静默覆盖它是数据丢失通道，宁可放弃抢救。目标文件本身**不动**——write 覆盖语义写一半即破坏现场（模式 2a 现状正是干了这个）。`path === ""` 让位（空目标名不可救）。
 
 **note 文案（write）**：
 
