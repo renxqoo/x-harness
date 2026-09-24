@@ -58,7 +58,8 @@
   （readdirSync/statSync/readFileSync——评审 H2 裁决：同步红线优先，kick 边沿同步
   探测+渲染，类型变更**当轮 kick 可见**，不留一 kick 滞后；agents 目录几十个小文件
   的同步扫描与 C' 的 readFileSync 同成本类）。无类型 → 空串零注入。
-- **C' 项目指令快照**（apps/cli 新装配件，**装配位写死：紧随 skillKit**）：
+- **C' 项目指令快照**（apps/cli + apps/host-hub 两宿主装配，插件单源
+  @x-harness/harness `createFactsSnapshotPlugin`，**装配位写死：紧随 skill 装配**）：
   每 kick 同步读 `cwd/AGENTS.md` 与 `cwd/CLAUDE.md`，**内容哈希去重**（软链/同内容
   只注一份，M8）；合并单条（AGENTS.md 在前）；幂等同上。**上限 64KB**（评审 H3 从
   256KB 下调：≈16k token，仍远超合理指令体量；**单件口径**——合计上界 2×单件为

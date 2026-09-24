@@ -18,6 +18,7 @@ import {
   compactionKit,
   createAgentWorld,
   createBasePromptPlugin,
+  createFactsSnapshotPlugin,
   durableSessionKit,
   fenceKit,
   llmKit,
@@ -377,6 +378,9 @@ function defaultWorkerPlugins(resolved: {
     createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
     createAgentDelegationPlugin({ agentsDirs, builtinTypes: builtinAgentTypes(), resolveProviderOf: providerOfModel(catalog) }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
+    // 日期 + 项目指令快照（与 CLI 同源 @x-harness/harness）：装配位紧随 skill 装配
+    // （docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）；cwd = 装配工作区
+    createFactsSnapshotPlugin({ cwd }),
     ...(fields.proposalStore !== undefined
       ? [createPluginProposePlugin({
           confirm: (ask) => (fields.confirm !== undefined ? fields.confirm(ask) : Promise.resolve({ allowed: false })),

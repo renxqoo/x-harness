@@ -539,7 +539,11 @@ probeBaseFacts(...)))`——base 系统提示词与 CLI 同源（@x-harness/harn
 base-prompt.ts：身份/守则/环境块 + facts=cwd/isGit/platform/shell 进程探测插值）/
 `durableSessionKit` / `toolboxKit` / `fenceKit` / `meterKit` / `compactionKit`+
 `autoCompactKit` / `llmKit(adapters)` / `loopKit` / `checkpointKit` /
-`delegationKit` / `skillKit`）+ `loop.create/resume` 单会话。trusted 决定
+`delegationKit` / `skillKit`）+ 日期/项目指令快照插件（与 CLI 同源
+@x-harness/harness `createFactsSnapshotPlugin`——装配位紧随 skill 装配：每 kick
+边沿注入 `Today's date` 与工作区 `AGENTS.md`/`CLAUDE.md`（AGENTS.md 前、同内容
+去重、单件 64KB 上限、缺席零注入；docs/TAIL-SNAPSHOT-CHANNEL.md A/C'））+
+`loop.create/resume` 单会话。trusted 决定
 skills/agents project 级目录与项目级设置
 装载（workspace=cwd 显式锚）；skills/agents 用户根同走 agentDir 派生缝
 （`<agentDir>/{skills,agents}`；缺省 `~/.x-harness/...` 共享——单源

@@ -37,7 +37,7 @@ import {
   telemetryKit,
 } from "@x-harness/harness";
 import type { BasePromptFacts } from "@x-harness/harness";
-import { createFactsSnapshotPlugin } from "./snapshot-facts.ts";
+import { createFactsSnapshotPlugin } from "@x-harness/harness";
 import type { ProvidersConfig, ProviderProfile } from "./providers-file.ts";
 import type { ModelResolution } from "./resolve-model.ts";
 

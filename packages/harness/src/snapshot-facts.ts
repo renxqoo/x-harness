@@ -2,7 +2,8 @@
 // 走边沿注入（createTailSnapshot 共用原语——首份预锚、变更重注入尾部、内容维幂等）。
 // 日期按天一条（clock 可注入——测试假钟）；项目指令每 kick 同步重读 cwd 下
 // AGENTS.md/CLAUDE.md（AGENTS.md 在前、内容去重、64KB 上限以读到 buffer 长度为准）。
-// worktree 语义（评审处置 M7）：全部会话注入主进程 cwd 的指令文件——per-session
+// apps/cli 与 apps/host-hub 两宿主同源消费（装配位各自写死：紧随 skill 装配）。
+// worktree 语义（评审处置 M7）：全部会话注入宿主装配 cwd 的指令文件——per-session
 // cwd 是 delegation 独立契约面，另件。
 
 import { readFileSync } from "node:fs";
@@ -43,8 +44,8 @@ export interface InstructionRead {
 }
 
 /** 同步读取并合并指令文件：AGENTS.md 在前；同内容（软链/复制）去重；超限/读取失败
- *  整文件拒注 + 告警（fail-open 可见——ENOENT 缺席合法静默，其余 IO 错误不吞）。
- *  纯函数面（IO 仅 readFileSync）——单测直测。 */
+ * 整文件拒注 + 告警（fail-open 可见——ENOENT 缺席合法静默，其余 IO 错误不吞）。
+ * 纯函数面（IO 仅 readFileSync）——单测直测。 */
 export function readInstructionFiles(cwd: string, capBytes: number = INSTRUCTIONS_CAP_BYTES): InstructionRead {
   const bodies: string[] = [];
   const warnings: string[] = [];
@@ -83,10 +84,10 @@ export interface FactsSnapshotOptions {
   readonly onWarn?: (message: string) => void;
 }
 
-/** 日期 + 项目指令快照插件：装配位紧随 skillKit（build-world 写死——落位互序的单一真相） */
+/** 日期 + 项目指令快照插件：装配位紧随 skill 装配（两宿主写死——落位互序的单一真相） */
 export function createFactsSnapshotPlugin(options: FactsSnapshotOptions): Plugin {
   return {
-    name: "cli-facts-snapshot",
+    name: "facts-snapshot",
     inject: ["agent-loop"],
     apply: (ctx): Disposer => {
       const loop = ctx.use(agentLoopServiceToken);

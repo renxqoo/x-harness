@@ -131,6 +131,11 @@ export type { BasePromptFacts } from "./base-prompt.ts";
 export { probeBaseFacts } from "./base-prompt-probe.ts";
 export type { ProbeFactsInput } from "./base-prompt-probe.ts";
 
+/** 日期 + 项目指令快照插件（两宿主同源消费面——AGENTS.md/CLAUDE.md 边沿注入；
+ *  装配位各自写死：紧随 skill 装配，docs/TAIL-SNAPSHOT-CHANNEL.md A/C'） */
+export { createFactsSnapshotPlugin, readInstructionFiles, renderDateSnapshot, localToday, INSTRUCTIONS_CAP_BYTES } from "./snapshot-facts.ts";
+export type { FactsSnapshotOptions, InstructionRead } from "./snapshot-facts.ts";
+
 /** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替；常规装配传
  *  createBasePromptPlugin(probeBaseFacts(...)));appends 归宿主后置 */
 export const promptKit = (base?: Plugin): readonly Plugin[] => [
