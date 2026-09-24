@@ -315,3 +315,14 @@ describe("并发档声明", () => {
     expect(registry.concurrencyOf("edit", {})).toBe("exclusive");
   });
 });
+
+describe("TOCTOU 二次版本比对（对抗审查终审——fd fstat 与观察版本）", () => {
+  it("read 过门后文件被外部改（bash 旁路），edit 的 fd 读捕获新版本 → FS_STALE_VERSION 不匹配未见内容", async () => {
+    writeFileSync(join(root, "f.txt"), "line1\nline2\n");
+    await call("read", { path: "f.txt" }); // 登记观察（fd 版本）
+    writeFileSync(join(root, "f.txt"), "line1\nCHANGED-BY-BASH\n"); // read 之后、edit 之前旁路改
+    const r = await call("edit", EDIT("f.txt", [{ oldText: "line1", newText: "x" }]));
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("FS_STALE_VERSION"); // 旧实现的 stat 门也拒（mtime 变）——本断言同时覆盖 fd 二次比对路径（万一 stat 粒度漏，fd fstat 兜住）
+  });
+});

@@ -82,8 +82,15 @@ async function editLocked(input: { readonly observed: ObservedRegistry; readonly
   if (ObservedRegistry.stale(observedVersion, { ...st.stat.version, hadBom: observedVersion.hadBom })) {
     return failure(`FS_STALE_VERSION: ${args.path} changed since it was read; re-read then retry`);
   }
-  const raw = await readWholeFile(env, path);
-  if (raw === undefined) return failure(`FS_READ_FAILED: i/o error while reading ${args.path}`);
+  const whole = await readWholeFile(env, path);
+  if (whole === undefined) return failure(`FS_READ_FAILED: i/o error while reading ${args.path}`);
+  // fd fstat 与观察版本二次比对（对抗审查 TOCTOU）：stat 门到 fd 读之间的窗口内文件被
+  // 改（bash 进程内写不经 observed.locked）——此处拒 STALE，防 oldText 匹配模型未见过
+  // 的新内容并落盘。版本取 fd fstat 原子时刻（EXEC-ENV §3 D2 根治原语）
+  if (ObservedRegistry.stale(observedVersion, { ...whole.version, hadBom: observedVersion.hadBom })) {
+    return failure(`FS_STALE_VERSION: ${args.path} changed since it was read; re-read then retry`);
+  }
+  const raw = whole.text;
   const { bom, text } = splitBom(raw);
   const ending = detectLineEnding(text);
   const normalized = normalizeToLF(text);
@@ -98,8 +105,8 @@ async function editLocked(input: { readonly observed: ObservedRegistry; readonly
   return { finalPayload, baseText: applied.baseContent, newText: applied.newContent, failure: undefined };
 }
 
-/** 整文件读取（openRead 句柄面流式拼装——版本取 fd fstat，与 read 工具同源实现面） */
-async function readWholeFile(env: ExecEnv, path: string): Promise<string | undefined> {
+/** 整文件读取（openRead 句柄面流式拼装）——返回 fd fstat 版本（观察门二次比对用） */
+async function readWholeFile(env: ExecEnv, path: string): Promise<{ readonly text: string; readonly version: import("@x-harness/exec-env").FileVersion } | undefined> {
   const open = await env.openRead(path);
   if (!open.ok) return undefined;
   const chunks: Uint8Array[] = [];
@@ -121,7 +128,7 @@ async function readWholeFile(env: ExecEnv, path: string): Promise<string | undef
     buffer.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return buffer.toString("utf8");
+  return { text: buffer.toString("utf8"), version: open.version };
 }
 
 function writeFailText(result: Extract<import("@x-harness/exec-env").WriteFileResult, { ok: false }>, display: string): string {

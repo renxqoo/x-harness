@@ -152,9 +152,14 @@ export function applyReplacementsPreservingUnchangedLines(
   originalContent: string,
   baseContent: string,
   replacements: Replacement[],
-): string {
+): string | undefined {
   const originalLines = splitLinesWithEndings(originalContent);
   const baseLines = getLineSpans(baseContent);
+  if (originalLines.length !== baseLines.length) {
+    // 行数失配守卫（pi 同款 throw 的判别联合化）：归一（NFKC 拆组合字符等）使行数漂移时
+    // 行块对位语义不成立——静默继续会错贴行（corrupt），显式拒走 apply 错误面
+    return undefined;
+  }
   const groups: Array<{ startLine: number; endLine: number; replacements: Replacement[] }> = [];
   const sorted = [...replacements].sort((a, b) => a.matchIndex - b.matchIndex);
   for (const replacement of sorted) {
@@ -297,9 +302,13 @@ export function applyEditsToNormalizedContent(
     return { ok: false, reason: overlap };
   }
 
-  const newContent = usedFuzzyMatch
+  const applied = usedFuzzyMatch
     ? applyReplacementsPreservingUnchangedLines(normalizedContent, base, matched.matched)
     : applyReplacements(base, matched.matched);
+  if (applied === undefined) {
+    return { ok: false, reason: `LINE_COUNT_MISMATCH: normalization changed the line count of ${path}; cannot preserve unchanged lines. Re-read the file and retry with exact oldText.` };
+  }
+  const newContent = applied;
 
   if (normalizedContent === newContent) {
     return { ok: false, reason: `NO_CHANGE: replacements produced identical content in ${path}` };
