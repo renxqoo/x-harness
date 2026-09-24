@@ -155,6 +155,8 @@ export const toolboxKit = (o: {
   readonly observed?: ObservedRegistry;
   readonly env?: ExecEnv;
   readonly taskLogDir?: string;
+  /** 内置 rg 目录（根配置推导——宿主 harness home 的 bin/；grep 解析链第三级） */
+  readonly rgBinDir?: string;
   /** permission 裁决面（抢救件 write 同源裁决；宿主与 fenceKit 同源传入） */
   readonly permission?: {
     readonly rules?: readonly import("@x-harness/permission").PermissionRule[];
@@ -182,7 +184,7 @@ export const toolboxKit = (o: {
         })]
       : []),
     createBashPlugin({ gate, ...env, ...(o.taskLogDir !== undefined ? { taskLimits: { taskLogDir: o.taskLogDir } } : {}) }),
-    createGrepPlugin({ gate, ...env, ...systemRoots }),
+    createGrepPlugin({ gate, ...env, ...systemRoots, ...(o.rgBinDir !== undefined ? { rgBinDir: o.rgBinDir } : {}) }),
     createTaskToolsPlugin(),
   ];
 };

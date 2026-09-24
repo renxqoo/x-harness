@@ -1,6 +1,7 @@
 # TOOLBOX：read / write / bash / grep 四命令插件（件 10；一命令一包——用户裁决）
 
-> 状态：已实施（单测全绿 + e2e 四工具旅程；grep 为 rg 硬依赖单路径——裁决与获取形态对照见 §5）
+> 状态：已实施（单测全绿 + e2e 四工具旅程；grep 为 rg 硬依赖单路径——四级解析链与按平台矩阵
+> 内置获取形态（fetch:rg + 安装器放置根配置 bin/）见 §5）
 > 级别：中（文件系统/进程副作用、注入面、并发互斥、原子性）
 > 包：`packages/tool-core`（共享内核）+ `packages/tool-read` / `tool-write` / `tool-bash` /
 > `tool-grep`（一命令一插件包；原 `packages/toolbox` 已删除，无兼容层）
@@ -30,7 +31,7 @@ createBashPlugin({ gate, env?, limits?, tasks?, taskLimits? }); // name "tool-ba
 //   tasks: BackgroundTasks（任务动词消费方穿引同一实例；缺省自建——与 taskLimits 互斥，同传装配期 throw）；
 //   taskLimits: { maxConcurrentTasks?（并发帽缺省 3）, taskTimeoutMs?（墙钟缺省 600s）,
 //                fullCapBytes?（保留帽缺省 64MB）}——部分字段缺省补齐
-createGrepPlugin({ gate, env?, rgPath? });              // name "tool-grep"；rgPath 解析链最高优先级
+createGrepPlugin({ gate, env?, rgPath?, rgBinDir? });    // name "tool-grep"；解析链：rgPath > env X_HARNESS_RG_PATH > rgBinDir > PATH
 ```
 
 装配序契约：execEnv/permissionGrants 提供者（sandbox/permission 插件）须**先于**命令插件装配
@@ -191,11 +192,29 @@ trustedDependencies 开口；其 pkg 发行形态实为 `<exe>-rg` sidecar）；
 性能崖藏进生产路径，且双路径对齐是永久维护税）。触发条件落档：未来若发公开裸 CLI
 （匿名用户首次运行、无制品层），获取模型切换为运行时下载（pi 式）是独立产品裁决。
 
+**获取形态（用户裁决：按平台矩阵内置）**：打包期 `bun run fetch:rg`（`scripts/fetch-rg.ts`）
+钉死 15.1.0 + 四目标 sha256（darwin arm64/x64、linux arm64-gnu、linux x64-musl——15.1.0
+无 x64-gnu 官方资产，musl 静态二进制 glibc/musl 通吃），缺省当前平台、`--target <triple>`
+交叉覆盖（什么平台打什么包）；staging 落 `apps/host-hub/dist/bin/`（rg 0755 + rg.json
+manifest 幂等）。桌面安装器把 `dist/bin/rg` 原样放进根配置的 agent 目录（如 
+`.pai/agent/bin/`——目录不是写死事实，运行时由 `X_HARNESS_HOME` / `HUB_AGENT_DIR` 根配置链
+推导）；不进 bundle、不进 `bun build --compile` 单文件（asar 内不可 exec；放置全归安装层，
+运行时无自装）。fetch:rg 不进 build 门（build 零网络依赖）；打包序 = `fetch:rg && build`。
+同目录并发跑不同 target 是打包机误用（矩阵每平台一个产物目录）——最坏序留下
+rg/manifest 平台错配，下次 isUpToDate 不匹配自动重取自愈（已知落档）。
+
 **rg 解析链**（单一顺序）：`createGrepPlugin({ rgPath })` 显式 → env `X_HARNESS_RG_PATH` →
-PATH 探测（`Bun.which("rg")`）。全失败 → `SEARCH_RG_UNAVAILABLE` + 三条修复指引
-（安装 rg：`brew install ripgrep` / `apt install ripgrep`；设 `X_HARNESS_RG_PATH`；
-`createGrepPlugin({ rgPath })`）。显式给出但不可执行 → spawn 失败归
-`SEARCH_FAILED: failed to start rg`（附同款指引）。
+`rgBinDir` 内置目录（装配方从根配置推导：CLI = `<X_HARNESS_HOME>/bin`，hub = `<agentDir>/bin`
+（assembly 内单源派生——外部显式传 rgBinDir 优先，重定位制品逃生口）；目录内定文件名
+`rg`，真文件在场（statSync——目录冒名/死链不采信）即中，先于 PATH——制品内版本确定
+可复现，PATH 只做兜底）→ PATH 探测（`Bun.which("rg")`）。全失败 → `SEARCH_RG_UNAVAILABLE`
++ 修复指引
+（安装 rg：`brew install ripgrep` / `apt install ripgrep`；内置放置：`bun run fetch:rg` 后
+置于 harness home bin/；设 `X_HARNESS_RG_PATH`；`createGrepPlugin({ rgPath })`）。显式给出
+但不可执行 → spawn 失败归 `SEARCH_FAILED: failed to start rg`（附同款指引）。
+**内置目录写保护**（对抗审查 #1）：`bin/` 归 fenceKit protectedPaths（与 settings/plugins
+同面）——用户可写目录里的可执行文件直接以宿主身份脱离沙箱执行，agent 经 bash 直写木马
+rg 的路堵死；CLI 与 hub 装配各挂各的（hub 连 `plugins/` 一并——同源同面）。
 
 **执行**：纯 argv 向量（无 shell 层）：`rg --json --no-config --no-messages --hidden --no-ignore
 [skip globs] [--fixed-strings] [-i] [-g glob] [-C N] --regexp=<pattern> -- <path>`
@@ -220,7 +239,8 @@ more, or refine the pattern`（交集 30——计满即停，不补尾 context�
 1MB → `SEARCH_RAW_OUTPUT_OVERFLOW`（D41）。glob 校验 brace-aware：顶层逗号拒、负向 `!` 拒、
 `*.{ts,tsx}` 放行（D38）。limit/offset 超上限 → 校验层拒绝（与非法值同口径——与参考的钳制有意不同）。
 
-**不做（落档）**：rg 获取（安装/下载/sidecar 拼装全归制品与宿主层——解析链只负责找）；
+**不做（落档）**：rg 运行时放置（fetch:rg 只落打包 staging `dist/bin/`；桌面安装器把 rg 放进
+根配置 agent 目录 `bin/` 的动作归安装层——运行时无自装、无下载）；
 respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows target（整仓 POSIX-only）。
 
 ## 6. 测试口径（交集 38 条逐条 + 回归源；一命令一包各自落 `__test__`）
@@ -258,12 +278,18 @@ respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows ta
   `!` 拒——rg 无关契约不随 rg skip）/上下文行格式/500 字符截断/limit 提示/**2MB 大文件流式命中
   tripwire**/abort（管线归一口径）/binary 目录搜索跳过/**分歧面 fixture**（node_modules 跳过、
   隐藏文件搜到、真 .gitignore 不生效、越根 symlink 不跟——越根外目录存活到 afterEach 非
-  dangling）/**rg 缺席时真 rg 用例显式 skip 并计数汇报**（不静默消失）；**解析链**：rgPath 显式 >
-  env `X_HARNESS_RG_PATH` > PATH（真 dispatch 双向验证：显式胜 env、env 生效）；全缺席 →
-  `SEARCH_RG_UNAVAILABLE` 带三条修复指引（回归：缺席曾静默落 JS 兜底产出弱化结果——子进程
+  dangling）/**rg 缺席时真 rg 用例显式 skip 并计数汇报**（不静默消失）；**解析链四级**：rgPath 显式 >
+  env `X_HARNESS_RG_PATH` > rgBinDir 内置目录 > PATH（真 dispatch 验证：显式胜 env、env 生效、
+  内置目录胜 PATH——假 rg 文件名恰为 rg 置于 rgBinDir；resolveRg 注入单测覆盖四级序与空串/空目录
+  边角）；全缺席 →
+  `SEARCH_RG_UNAVAILABLE` 带修复指引（回归：缺席曾静默落 JS 兜底产出弱化结果——子进程
   剥 PATH 构造真缺席 + resolveRg 注入单测双覆盖）；显式 rgPath 不可执行 → failed to start rg
   带指引；**假 rg 注入装置（rgPath 指向脚本）**：malformed/RAW_OVERFLOW/中途 abort/exit 2+
   literal 提示/argv 矩阵——确定性装置；parseRgLine/settleRg 纯函数单测。
+- fetch-rg（scripts/__test__/fetch-rg.test.ts，零网络）：平台矩阵四键/win32 拒、sha256 表
+  定长、URL/成员路径布局、--target 矩阵键与 triple 两形态、不支持平台与未知 target
+  fail-closed、manifest 幂等四态（一致/缺席/损坏/交叉重打包不匹配/rg 缺席）；fetchRg 全链
+  由打包机实跑背书（下载/sha 校验/tar 抽取/0755/manifest 落盘）。
 - 横切：并发档声明单包各自断言（read/grep parallel、write/bash exclusive——原联合用例按
   一命令一包拆分，联合装配由 e2e 旅程背书）/非 agent 调用方可用。
 - e2e（默认门加旅程）：write→read 回环 + bash 真命令 + grep 命中 + 后台立返，四工具经真实
@@ -275,10 +301,11 @@ respect .gitignore（`--no-ignore` 声明）；多 glob/负向 glob；Windows ta
 task_stop 归任务件 task-tools（跨任务源；读面=文件+推送，TASK-PUSH-DESIGN）；
 流式 progress（观察面消费方出现时）；会话 cwd（宿主件写入 SessionHeader.cwd 后挂——届时
 bash 已固定 root 无 workdir）；exit 标记 round-trip（UI 状态面出现时）；TOCTOU 窗口（门 check 与 I/O 之间
-换 symlink——接受，防护归安全产品线）；**rg 获取全链**（安装/下载/sidecar 拼装归制品与
-宿主层——安装时下载与运行时下载的形态对照及不采纳理由见 §5）；跨进程文件锁（CAS 限同进程）；
+换 symlink——接受，防护归安全产品线）；**rg 桌面安装器放置**（安装器把 staging `dist/bin/rg`
+放进根配置 agent 目录 `bin/` 的动作——打包期 fetch:rg 已归仓内 scripts，桌面安装器布局归
+宿主；形态对照及不采纳理由见 §5）；跨进程文件锁（CAS 限同进程）；
 spill 清理（保留为恢复产物；宿主可清）；**POSIX-only**（/bin/sh、负 pid 组杀——Windows 不支持）；
-解析链信任前提（env 与 PATH 探测的目录不可写——rgPath/env 显式指定是逃生口）；resume 后观察
+解析链信任前提（env、rgBinDir 与 PATH 探测的目录不可写——rgPath/env 显式指定是逃生口）；resume 后观察
 登记清零（fail-closed：续写后首笔覆盖写需重读——落档）；两层截断方向相反（内层字节保尾/外层
 字符保头）——有意设计勿「对齐」；配对纪律 fail-closed（read+write 须穿引同一 gate+observed
 实例——漏装 read 插件或错穿实例 → 覆盖写全拒 FS_NOT_OBSERVED，新建不受影响）。

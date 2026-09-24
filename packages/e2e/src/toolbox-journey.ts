@@ -8,7 +8,8 @@
 // （bash 源与通知臂接线自动探测点）。
 import { scriptedAdapter, textScript } from "@x-harness/testkit";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { RG_TARGETS, targetKeyOf } from "../../../scripts/fetch-rg.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -50,9 +51,37 @@ async function waitUntil(probe: () => boolean, ms: number, what: string): Promis
   }
 }
 
+/** rg 目录解析（TOOLBOX.md §5 四级链 e2e 装配口径）：优先 staging 内置二进制
+ *  （fetch:rg 产物——剥 PATH 的 CI/沙箱环境与 PATH 上坏 shim 场景天然免疫），且须
+ *  manifest 平台与当前平台一致（交叉 fetch 后忘换回的 staging 不得压过 PATH 真 rg）；
+ *  缺席/平台不符落 X_HARNESS_RG_PATH → PATH。全缺席 fail-fast 报可行动指引。 */
+function resolveJourneyRgBinDir(): string | undefined {
+  const stagedRg = join(import.meta.dirname, "../../../apps/host-hub/dist/bin");
+  const staged = readStagedPlatform(stagedRg);
+  if (staged !== undefined && existsSync(join(stagedRg, "rg"))) {
+    const local = targetKeyOf(process.platform, process.arch);
+    if (local !== null && staged === local) return stagedRg;
+    process.stderr.write(`e2e: staged rg platform ${staged} ≠ local ${local}（交叉 fetch 残留？）——落 PATH\n`);
+  }
+  must(Bun.which("rg") !== null, "e2e 需要 ripgrep：bun run fetch:rg（内置 staging），或 brew install ripgrep / apt install ripgrep，或设 X_HARNESS_RG_PATH");
+  return undefined;
+}
+
+/** staging manifest 平台键读取（rg.json 缺席/损坏 → null——staging 不完整时不得采信） */
+function readStagedPlatform(stagedRg: string): string | undefined {
+  try {
+    const manifest = JSON.parse(readFileSync(join(stagedRg, "rg.json"), "utf8")) as { readonly target?: string };
+    const target = manifest.target;
+    if (typeof target !== "string") return undefined;
+    const hit = Object.entries(RG_TARGETS).find(([, t]) => t.triple === target);
+    return hit === undefined ? undefined : hit[0];
+  } catch {
+    return undefined;
+  }
+}
+
 export async function runToolboxJourney(): Promise<void> {
-  // grep 是 rg 硬依赖（TOOLBOX.md §5）——缺席 = 环境配置错误，fail-fast 报可行动指引
-  must(Bun.which("rg") !== null, "e2e 需要 ripgrep：brew install ripgrep / apt install ripgrep，或设 X_HARNESS_RG_PATH");
+  const rgBinDir = resolveJourneyRgBinDir();
   const root = await mkdtemp(join(tmpdir(), "xh-toolbox-e2e-"));
   const logRoot = await mkdtemp(join(tmpdir(), "xh-toolbox-logs-")); // 工作区外——read/grep 放行测 systemRoots 语义
   try {
@@ -70,7 +99,7 @@ export async function runToolboxJourney(): Promise<void> {
       createReadPlugin({ gate, observed, env, systemRoots: [logRoot] }),
       createWritePlugin({ gate, observed, env }),
       createBashPlugin({ gate, env, limits, taskLimits: { taskLogDir: logRoot } }),
-      createGrepPlugin({ gate, env, systemRoots: [logRoot] }),
+      createGrepPlugin({ gate, env, systemRoots: [logRoot], rgBinDir }),
       createTaskToolsPlugin(), // 服务停靠：bash 源 + 完成通知臂（与 bash 插件/agent-loop 共享，装配序无关）
       llmPlugin,
       agentLoopPlugin,

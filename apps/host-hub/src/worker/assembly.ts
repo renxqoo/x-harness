@@ -88,8 +88,12 @@ export interface AssemblyFields {
   customProfiles?: readonly PermissionProfile[];
   /** skills 禁用名单（hub-settings skills.disabled——装配期快照） */
   skillsDisabled?: string[];
-  /** 外部插件装载锚：审计目录 + 缺席跳过（测试直连装配无 agentDir——不兜底 cwd） */
+  /** 外部插件装载锚：审计目录 + 缺席跳过（测试直连装配无 agentDir——不兜底 cwd）；
+   *  在场时同源派生 bin/ 写保护与 rgBinDir（rg 内置级单源） */
   agentDir?: string;
+  /** 内置 rg 目录（<agentDir>/bin——装配内部从 agentDir 单源派生；外部显式传入时以
+   *  传入为准（重定位制品的宿主逃生口），同值幂等） */
+  rgBinDir?: string;
   /** plugins 禁用名单（hub-settings plugins.disabled——装配期快照；缺省全装载） */
   pluginsDisabled?: string[];
   /** 插件提案暂存面（plugin_propose 工具登记；host↔worker 同进程共享实例注入） */
@@ -338,6 +342,7 @@ function defaultWorkerPlugins(resolved: {
     ...truncationMessagesKit(), // 截断文案外层（先注册）——toolboxKit 抢救件内层先执行写盘，本件合成 content+note（对抗审查终审 P1）
     ...toolboxKit({
       root: cwd,
+      ...(fields.rgBinDir !== undefined ? { rgBinDir: fields.rgBinDir } : {}),
       taskLogDir: taskLogsRootOf(fields.sessionsRoot),
       permission: {
         ...(fields.permissionUserRules !== undefined ? { rules: fields.permissionUserRules } : {}),
@@ -357,9 +362,10 @@ function defaultWorkerPlugins(resolved: {
       ...(fields.permissionProjectRules !== undefined ? { projectRules: fields.permissionProjectRules } : {}),
       ...(fields.customProfiles !== undefined ? { customProfiles: fields.customProfiles } : {}),
       // 插件域整树写保护（对抗审查 3a）：registry/proposals/vendor/.tmp 是装载信任链的
-      // 盘上事实——agent 经 bash 直写即可伪造审批（confirmed）或顶替词表件（vendor 撞名）
+      // 盘上事实——agent 经 bash 直写即可伪造审批（confirmed）或顶替词表件（vendor 撞名）。
+      // bin/ 同面（rg 内置级）：用户可写目录里的可执行文件直接以宿主身份脱离沙箱执行——写保护
       protectedPaths: [
-        ...(fields.agentDir !== undefined ? [userSettingsPath(fields.agentDir), join(fields.agentDir, "plugins")] : []),
+        ...(fields.agentDir !== undefined ? [userSettingsPath(fields.agentDir), join(fields.agentDir, "plugins"), join(fields.agentDir, "bin")] : []),
         projectSettingsPath(cwd),
       ],
     }),
@@ -391,6 +397,14 @@ function defaultWorkerPlugins(resolved: {
   ];
 }
 
+/** rgBinDir 单源（rg 内置级）：外部显式传入优先（重定位逃生口）；缺席时从 agentDir
+ *  派生 <agentDir>/bin（空串 agentDir 不派生——避免 cwd 相对探测） */
+function derivedRgBinDir(fields: AssemblyFields): string | undefined {
+  if (fields.rgBinDir !== undefined) return fields.rgBinDir;
+  if (fields.agentDir !== undefined && fields.agentDir !== "") return join(fields.agentDir, "bin");
+  return undefined;
+}
+
 export async function assembleWorkerAgent(fields: AssemblyFields, deps?: AssemblyDeps): Promise<AssemblyResult> {
   const env = fields.env ?? process.env;
   const script = env["HUB_WORKER_PROVIDER"] === "script" ? createScriptAdapter(scriptFromEnv(env)) : undefined;
@@ -406,7 +420,8 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
   const adapters = buildAdapters(catalog, script);
   const contextWindow = contextWindowOf(catalog, dial);
 
-  const defaultPlugins: readonly Plugin[] = defaultWorkerPlugins({ fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog });
+  const rgBinDir = derivedRgBinDir(fields);
+  const defaultPlugins: readonly Plugin[] = defaultWorkerPlugins({ fields: { ...fields, ...(rgBinDir !== undefined ? { rgBinDir } : {}) }, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog });
 
   const plugins: readonly Plugin[] = deps?.worldPlugins?.(fields) ?? defaultPlugins;
 

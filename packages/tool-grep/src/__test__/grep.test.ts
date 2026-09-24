@@ -35,9 +35,9 @@ function seedWorkspace(root: string): void {
   symlinkSync(join(outside, "outside-target.txt"), join(root, "link-to-outside.txt"));
 }
 
-async function makeRegistry(root: string, opts: { rgPath?: string } = {}): Promise<{ registry: ToolRegistry; cleanup: () => Promise<void> }> {
+async function makeRegistry(root: string, opts: { rgPath?: string; rgBinDir?: string } = {}): Promise<{ registry: ToolRegistry; cleanup: () => Promise<void> }> {
   const ctx = createContext();
-  const unload = await loadPlugins(ctx, [toolsPlugin, createGrepPlugin({ gate: new PathGate(root), env: createLocalEnv(root), rgPath: opts.rgPath })]);
+  const unload = await loadPlugins(ctx, [toolsPlugin, createGrepPlugin({ gate: new PathGate(root), env: createLocalEnv(root), rgPath: opts.rgPath, rgBinDir: opts.rgBinDir })]);
   return {
     registry: ctx.use(toolRegistry),
     cleanup: async () => {
@@ -262,15 +262,56 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     }
   });
 
-  it("resolveRg 三级与缺席态（注入构造——Bun.which 缓存启动期 PATH，运行时改 env 不生效）", async () => {
+  it("resolveRg 四级与缺席态（注入构造——Bun.which 缓存启动期 PATH，运行时改 env 不生效）", async () => {
     const { resolveRg } = await import("../grep.ts");
+    mkdirSync(join(root, "bin"));
+    writeFileSync(join(root, "bin", "rg"), "#!/bin/sh\n"); // 内置级在场（内容不要求可执行——解析只看在场）
+    const rgBinDir = join(root, "bin");
     const whichFound = (command: string): string | null => (command === "rg" ? "/usr/local/bin/rg" : null);
     const whichMisses = (): string | null => null;
-    expect(resolveRg("/opt/rg", { X_HARNESS_RG_PATH: "/env/rg" }, whichFound)).toBe("/opt/rg"); // 显式最优先
-    expect(resolveRg("", { X_HARNESS_RG_PATH: "/env/rg" }, whichFound)).toBe("/env/rg"); // 空串显式跳过
-    expect(resolveRg(undefined, { X_HARNESS_RG_PATH: "" }, whichFound)).toBe("/usr/local/bin/rg"); // 空 env 落 PATH
-    expect(resolveRg(undefined, {}, whichMisses)).toBeNull(); // 全缺席 = 配置错误（fail-closed 前提）
-    expect(resolveRg(undefined, { X_HARNESS_RG_PATH: "/env/rg" }, whichMisses)).toBe("/env/rg"); // env 在 which 缺席时仍可达
+    expect(resolveRg({ explicit: "/opt/rg", env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichFound, rgBinDir })).toBe("/opt/rg"); // 显式最优先
+    expect(resolveRg({ explicit: "", env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichFound, rgBinDir })).toBe("/env/rg"); // 空串显式跳过；env 次之
+    expect(resolveRg({ env: { X_HARNESS_RG_PATH: "" }, which: whichFound, rgBinDir })).toBe(join(rgBinDir, "rg")); // 空 env 落内置目录（先于 PATH）
+    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: join(root, "no-such-bin") })).toBe("/usr/local/bin/rg"); // 内置缺席落 PATH
+    expect(resolveRg({ env: {}, which: whichMisses })).toBeNull(); // 全缺席 = 配置错误（fail-closed 前提）
+    expect(resolveRg({ env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichMisses })).toBe("/env/rg"); // env 在 which 缺席时仍可达
+    expect(resolveRg({ env: {}, which: whichMisses, rgBinDir: "" })).toBeNull(); // 空内置目录串不启用
+  });
+
+  it("rgBinDir 内置目录真 dispatch：目录内 rg 被选用（假 rg 文件名恰为 rg）；PATH rg 被盖过", async () => {
+    // 目录内 rg 吐内置标记；若误落 PATH 级则真 rg 执行产出真命中——断言内置级胜出。
+    // env X_HARNESS_RG_PATH 压过内置级——save/restore 防开发机设了该变量时本用例假红
+    const saved = process.env.X_HARNESS_RG_PATH;
+    delete process.env.X_HARNESS_RG_PATH;
+    try {
+      const binDir = join(root, "agent-bin");
+      mkdirSync(binDir);
+      writeFileSync(join(binDir, "rg"), "#!/bin/sh\necho '{\"type\":\"match\",\"data\":{\"path\":{\"text\":\"app.ts\"},\"line_number\":1,\"lines\":{\"text\":\"from-bundled-dir\"}}}'\nexit 0\n");
+      chmodSync(join(binDir, "rg"), 0o755);
+      const made = await makeRegistry(root, { rgBinDir: binDir });
+      cleanups.push(made.cleanup);
+      const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts" });
+      expect(r.isError).toBeUndefined();
+      expect(r.content).toContain("from-bundled-dir"); // 走的就是目录内 rg
+    } finally {
+      if (saved === undefined) delete process.env.X_HARNESS_RG_PATH;
+      else process.env.X_HARNESS_RG_PATH = saved;
+    }
+  });
+
+  it("内置目录在场但 rg 缺席 → 不启用该级，落 PATH（根配置目录可为空）；rg 为目录/死链同落 PATH", async () => {
+    const emptyDir = join(root, "empty-bin-x");
+    mkdirSync(emptyDir);
+    const dirAsRg = join(root, "dir-as-rg-bin");
+    mkdirSync(join(dirAsRg, "rg"), { recursive: true }); // 目录冒名 rg
+    const deadDir = join(root, "dead-link-bin");
+    mkdirSync(deadDir);
+    symlinkSync(join(root, "no-such-target"), join(deadDir, "rg")); // 死链
+    const { resolveRg } = await import("../grep.ts");
+    const whichFound = (command: string): string | null => (command === "rg" ? "/usr/local/bin/rg" : null);
+    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: emptyDir })).toBe("/usr/local/bin/rg");
+    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: dirAsRg })).toBe("/usr/local/bin/rg"); // 目录非文件
+    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: deadDir })).toBe("/usr/local/bin/rg"); // 死链非在场文件
   });
 
   it("显式 rgPath 不可执行 → SEARCH_FAILED: failed to start rg 带修复指引", async () => {

@@ -51,6 +51,8 @@ export type { World };
 
 export interface WorldOptions {
   readonly cwd: string;
+  /** 内置 rg 目录（缺省 harness home 的 bin/——根配置 X_HARNESS_HOME 同源；None = 不启用内置级） */
+  readonly rgBinDir?: string;
   /** 遥测库路径（telemetryKit 路径形态——kit 开连接并收殓）；undefined = 不装遥测 */
   readonly telemetryPath?: string;
   /** 压缩装配面（docs/COMPACTION.md）：水位/413 自愈/手动 /compact 三面全开。
@@ -133,15 +135,23 @@ export function compactionOptionsOf(options: Pick<WorldOptions, "config" | "reso
 /** 缺省档窗缺席时的水位分母兜底（保守小窗——宁可早压不可撞 413；真实窗由 servedWindow 收敛） */
 const FALLBACK_CONTEXT_WINDOW = 128_000;
 
+/** rg 内置目录穿透项（rgBinDir 在场才启用）：toolboxKit 解析链第三级 + fenceKit 写保护
+ *  （用户可写目录里的可执行文件直接以宿主身份执行——与 hub <agentDir>/bin 同面）。 */
+function rgBinDirOf(options: WorldOptions): { readonly rgBinDir: string } | { readonly absent: true } {
+  return options.rgBinDir !== undefined ? { rgBinDir: options.rgBinDir } : { absent: true };
+}
+
 export async function buildWorld(options: WorldOptions): Promise<Result<World>> {
   try {
   const adapters = options.adapters ?? buildAdapters(options.config, options.resolution); // 终审 F1-2：构造错误走 Result 面（不逃逸 throw）
+  const rgBin = rgBinDirOf(options);
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
     ...truncationMessagesKit(), // 截断文案外层（先注册）——toolboxKit 抢救件内层先执行写盘，本件合成 content+note（对抗审查终审 P1：反序 content 短路写盘）
     ...toolboxKit({
       root: options.cwd,
+      ...rgBin,
       ...(options.persist ? { taskLogDir: taskLogsRootOf(options.sessionRoot) } : {}),
       // permission 面与 fenceKit 同源（用户规则共享——抢救件 write 同源裁决）
       permission: rescuePermissionOf(options),
@@ -150,6 +160,8 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
       root: options.cwd,
       mode: options.permission ?? "sandboxed-auto", // CLI 缺省围栏优先（U6——Codex 姿势）
       ...(options.rules !== undefined && options.rules.length > 0 ? { rules: parseRules(options.rules, "user") } : {}),
+      // rg 内置目录写保护（与 hub <agentDir>/bin 同面）：用户可写目录里的可执行文件直接以宿主身份执行
+      ...("rgBinDir" in rgBin ? { protectedPaths: [rgBin.rgBinDir] } : {}),
     }),
     options.broker,
     ...meterKit(),

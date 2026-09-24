@@ -1,8 +1,10 @@
 // grep 工具（docs/TOOLBOX.md §5）：rg 硬依赖单路径（解析链 rgPath → env X_HARNESS_RG_PATH →
-// PATH 探测；缺席 fail-closed 报修复指引——绝不静默降级）。纯 argv 向量注入安全；
-// selfKilled 达限即停成功终态；--json 事件组装；malformed 流 fail-closed。
+// rgBinDir 内置目录 → PATH 探测；缺席 fail-closed 报修复指引——绝不静默降级）。纯 argv 向量
+// 注入安全；selfKilled 达限即停成功终态；--json 事件组装；malformed 流 fail-closed。
 
+import { statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
+import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
@@ -16,23 +18,43 @@ const RAW_CAP = 1_000_000;
 /** 目录搜索跳过集（`--glob !node_modules --glob !.git`；不尊重 gitignore——--no-ignore 声明） */
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
 
-const RG_GUIDANCE = "install ripgrep (brew install ripgrep / apt install ripgrep), set X_HARNESS_RG_PATH, or pass rgPath to createGrepPlugin";
+const RG_GUIDANCE = "install ripgrep (brew install ripgrep / apt install ripgrep), place the bundled binary under <harness home>/bin/rg (bun run fetch:rg), set X_HARNESS_RG_PATH, or pass rgPath to createGrepPlugin";
 
 export interface GrepOptions {
   readonly rgPath?: string;
+  /** 内置 rg 目录（装配方从根配置推导——harness home 的 bin/；包本身不认识任何根配置）。
+   *  目录内定文件名 rg；在场（existsSync）即解析为 <dir>/rg，先于 PATH 探测。 */
+  readonly rgBinDir?: string;
 }
 
-/** rg 解析链：显式 rgPath → env X_HARNESS_RG_PATH → PATH 探测（PATH 目录不可写的信任前提落档 §7）。
+export interface ResolveRgInput {
+  readonly explicit?: string;
+  readonly rgBinDir?: string;
+  readonly env?: Record<string, string | undefined>;
+  readonly which?: (command: string) => string | null;
+}
+
+/** rg 解析链：显式 rgPath → env X_HARNESS_RG_PATH → rgBinDir 内置目录 → PATH 探测
+ *  （PATH 目录不可写的信任前提落档 §7；rgBinDir 同前提——目录归属宿主数据区）。
  *  env/which 可注入——Bun.which 缓存启动期 PATH，运行时改 env 不生效，缺席态只能注入构造 */
-export function resolveRg(
-  explicit: string | undefined,
-  env: Record<string, string | undefined> = process.env,
-  which: (command: string) => string | null = (command) => Bun.which(command),
-): string | null {
-  if (explicit !== undefined && explicit !== "") return explicit;
+export function resolveRg(input: ResolveRgInput): string | null {
+  if (input.explicit !== undefined && input.explicit !== "") return input.explicit;
+  const env = input.env ?? process.env;
   const fromEnv = env.X_HARNESS_RG_PATH;
   if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
+  const dir = input.rgBinDir;
+  if (dir !== undefined && dir !== "" && isFile(join(dir, "rg"))) return join(dir, "rg");
+  const which = input.which ?? ((command: string) => Bun.which(command));
   return which("rg");
+}
+
+/** rg 在场判定：真文件（非目录/非死链——statSync 跟随符号链接，死链 false 落 PATH）。 */
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export interface GrepToolInput {
@@ -84,7 +106,7 @@ async function grep(input: { readonly gate: PathGate; readonly options: GrepOpti
   const ignoreCase = (args["ignore_case"] as boolean | undefined) === true;
   const st = await env.stat(admitted.path); // 存在性门（目录/文件都合法——rg 自行分派）
   if (!st.ok) return { content: `FS_NOT_FOUND: ${targetRaw} does not exist`, isError: true };
-  const rg = resolveRg(options.rgPath);
+  const rg = resolveRg({ explicit: options.rgPath, rgBinDir: options.rgBinDir });
   if (rg === null) {
     return { content: `SEARCH_RG_UNAVAILABLE: ripgrep is required but not found — ${RG_GUIDANCE}`, isError: true };
   }
