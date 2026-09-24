@@ -57,6 +57,7 @@ export const THREAD_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "get_thinking_level",
   "plugins/hot_install",
   "plugins/hot_uninstall",
+  "get_plugins",
 ]);
 
 /** host 单点注册但带 threadId 形态交池转发的命令（DESIGN §3.9——处理在 worker，
@@ -75,6 +76,7 @@ export const OBSERVER_COMMANDS: ReadonlySet<string> = new Set([
   "get_commands",
   "get_fork_messages",
   "get_subagents",
+  "get_plugins",
   "get_pending_dialogs",
   "get_thinking_level",
   "permission/get_mode",

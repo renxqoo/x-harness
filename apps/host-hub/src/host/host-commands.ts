@@ -404,7 +404,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   handlers.set("set_idle_retire_ms", handleSetIdleRetireMs);
   handlers.set("set_rss_retire_bytes", handleSetRssRetireBytes);
   handlers.set("ui_response", handleUiResponse);
-  const admin = createAdminCommands({ agentDir: deps.agentDir, sessionsRoot: deps.sessionsRoot, table: deps.table, trust, respond, ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}) });
+  const admin = createAdminCommands({ agentDir: deps.agentDir, sessionsRoot: deps.sessionsRoot, table: deps.table, trust, respond, pool: deps.pool, ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}) });
   admin.register(handlers);
   const permissionDual = admin.permissionDual;
 

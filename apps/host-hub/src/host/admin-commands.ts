@@ -36,12 +36,14 @@ export interface AdminCommandsDeps {
   sessionsRoot: string;
   table: ThreadTable;
   trust: TrustStore;
+  /** live worker 池（plugins/list 聚合装载态用；缺席 = 无 live 会话，全 unloaded）。 */
+  pool?: { queryLiveWorkers(type: string, timeoutMs: number): Promise<unknown[]> };
   respond: (id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }) => void;
 }
 
 /** skills 面作用域（HOME 注入缝 + 已过信任门禁的 cwd）——技能命令共用同一形态 */
-function skillsScopeOf(deps: AdminCommandsDeps, cwd?: string): { homeDir?: string; cwd?: string } {
-  return { ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}), ...(cwd !== undefined ? { cwd } : {}) };
+function skillsScopeOf(deps: AdminCommandsDeps, cwd?: string): { homeDir?: string; cwd?: string; agentDir: string } {
+  return { ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}), ...(cwd !== undefined ? { cwd } : {}), agentDir: deps.agentDir };
 }
 
 /** 信任 cwd 全集（注册表 ∪ live trusted——规范化）——skills/remove 的 project 判定用 */
@@ -223,7 +225,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         deps.respond(id, "skills/list", { error: gate.error });
         return;
       }
-      const outcome = await listSkills({ agentDir: deps.agentDir, ...skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined) });
+      const outcome = await listSkills(skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined));
       deps.respond(id, "skills/list", { data: { skills: outcome.skills } });
     });
     handlers.set("skills/set_enabled", async (input, id) => {
@@ -234,7 +236,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         return;
       }
       const outcome = await setSkillEnabled({
-        agentDir: deps.agentDir,
         name: typeof input.name === "string" ? input.name : "",
         enabled: input.enabled === true,
         ...skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined),
@@ -249,6 +250,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       const outcome = await removeSkill({
         name: typeof input.name === "string" ? input.name : "",
         trustedCwds: await trustedCwdsOf(deps),
+        agentDir: deps.agentDir,
         ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}),
       });
       deps.respond(id, "skills/remove", outcome.ok ? {} : { error: outcome.error });
@@ -257,8 +259,35 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       const outcome = await inspectSkillSources({ sourcePaths: input.sourcePaths });
       deps.respond(id, "skills/inspect", outcome.ok ? { data: { results: outcome.results } } : { error: outcome.error });
     });
+    /** live worker 装载快照聚合：逐 worker get_plugins 应答的 loaded 并集。 */
+    const collectLoadedSnapshot = async (): Promise<Array<{ name: string; mode: string; status: string }>> => {
+      if (deps.pool === undefined) return [];
+      try {
+        const replies = await deps.pool.queryLiveWorkers("get_plugins", 2_000);
+        const merged = new Map<string, { name: string; mode: string; status: string }>();
+        for (const reply of replies) {
+          const rows = (reply as { loaded?: unknown }).loaded;
+          if (!Array.isArray(rows)) continue;
+          for (const row of rows) {
+            const record = row as { name?: unknown; mode?: unknown; status?: unknown };
+            if (typeof record.name !== "string" || typeof record.mode !== "string" || typeof record.status !== "string") continue;
+            // active 优先：任一 worker 装载成功即视为可用（failed 不遮 active）
+            const existing = merged.get(record.name);
+            if (existing === undefined || (existing.status !== "active" && record.status === "active")) {
+              merged.set(record.name, { name: record.name, mode: record.mode, status: record.status });
+            }
+          }
+        }
+        return [...merged.values()];
+      } catch {
+        return []; // 查询面尽力而为：失败退化为 unloaded 视图，不阻塞管理面
+      }
+    };
     handlers.set("plugins/list", async (_input, id) => {
-      const outcome = await listPlugins({ agentDir: deps.agentDir });
+      // 装载态归并输入：live worker 快照聚合（无 live 会话/查询失败 → 全 unloaded，
+      // 与「新会话装配前」语义一致——unloaded 不代表故障）
+      const loaded = await collectLoadedSnapshot();
+      const outcome = await listPlugins({ agentDir: deps.agentDir, ...(loaded.length > 0 ? { loaded } : {}) });
       deps.respond(id, "plugins/list", { data: { plugins: outcome.plugins } });
     });
     // agent 注册链（§5）：提案列表/确认/拒绝——确认只是数据置位；装载门在 install
@@ -348,6 +377,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         name: input.name,
         overwrite: input.overwrite,
         limits: { maxBytes: SKILL_IMPORT_MAX_BYTES, maxEntries: SKILL_IMPORT_MAX_ENTRIES },
+        agentDir: deps.agentDir,
         ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}),
       });
       deps.respond(id, "skills/install", outcome.ok ? { data: outcome.skill } : { error: outcome.error });

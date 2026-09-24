@@ -46,6 +46,9 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
     env: {
       ...process.env,
       HUB_AGENT_DIR: agentDir,
+      HUB_SESSIONS_ROOT: join(agentDir, "sessions"),
+      // 环境防污染：宿主 shell 的 hub 变量（冒烟/开发残留）不得泄漏进测试子进程
+      HUB_WORKER_DISPATCHED: undefined,
       HUB_WORKER_PROVIDER: "script",
       HUB_WORKER_SCRIPT: JSON.stringify(options.script),
       ...options.env,

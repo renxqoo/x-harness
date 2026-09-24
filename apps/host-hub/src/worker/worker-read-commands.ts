@@ -281,6 +281,15 @@ function handleGetPendingDialogs(rt: WorkerRuntime, input: CommandInput): void {
   respond(rt, { id: input.id, command: "get_pending_dialogs", data: { dialogs: rt.broker.pendingAll() } });
 }
 
+/** 插件装载快照（host plugins/list 归并输入）：pluginManagerService.list() 的
+ *  本 thread 视图——name/mode/status。观察者命令：不重置 idle 计时。 */
+function handleGetPlugins(rt: WorkerRuntime, input: CommandInput): void {
+  if (requireThread(rt, { ...input, command: "get_plugins" }) === undefined) return;
+  const svc = rt.state.world?.ctx.tryUse(pluginManagerService);
+  const loaded = svc === undefined ? [] : svc.list().map((record) => ({ name: record.name, mode: record.mode, status: record.status }));
+  respond(rt, { id: input.id, command: "get_plugins", data: { loaded } });
+}
+
 /** 读侧命令注册（注册表由 worker-commands 组装——保持单点分派面） */
 export function registerReadCommands(rt: WorkerRuntime, handlers: Map<string, Handler>): void {
   handlers.set("get_state", wrapSyncHandler((input) => handleGetState(rt, input)));
@@ -294,5 +303,6 @@ export function registerReadCommands(rt: WorkerRuntime, handlers: Map<string, Ha
   handlers.set("get_commands", (input) => handleGetCommands(rt, input));
   handlers.set("get_fork_messages", wrapSyncHandler((input) => handleGetForkMessages(rt, input)));
   handlers.set("get_subagents", (input) => handleGetSubagents(rt, input));
+  handlers.set("get_plugins", wrapSyncHandler((input) => handleGetPlugins(rt, input)));
   handlers.set("get_pending_dialogs", wrapSyncHandler((input) => handleGetPendingDialogs(rt, input)));
 }

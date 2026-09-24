@@ -80,6 +80,7 @@ export const COMMAND_NAMES: readonly string[] = [
   "get_commands",
   "get_fork_messages",
   "get_subagents",
+  "get_plugins",
   "get_pending_dialogs",
   "fork",
   "clone",
