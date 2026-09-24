@@ -65,7 +65,7 @@ function locateValueQuote(raw: string, field: string): number | undefined {
  *  path undefined（无法命名目标）。字段完整但更后的键截断 → value 完整返回。 */
 export function extractStringField(raw: string, field: string): { readonly path?: string; readonly value?: string } {
   const valueAt = locateValueQuote(raw, field);
-  if (valueAt === undefined) return {};
+  if (valueAt === undefined) return {}; // 无字段键/值非字符串/键名截断 → 无可抢救（path 单独在场不构成目标）
   const pathAt = locateValueQuote(raw, "path");
   if (pathAt === undefined) return { value: scanString(raw, valueAt).value };
   const path = scanString(raw, pathAt);

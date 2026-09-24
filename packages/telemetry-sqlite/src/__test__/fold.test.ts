@@ -430,3 +430,19 @@ function replayScript(): SessionEvent[] {
     ev("turn/end", { turn: 0, reason: { kind: "error", message: "e" } }),
   ];
 }
+
+describe("tool span synthetic 标记（TRUNCATED-TOOL-RESCUE 裁决⑧——截断事故率可观测）", () => {
+  it("tool/result 带 synthetic:true → span 属性 tool.synthetic 在场；缺席不记", () => {
+    const { state } = foldOf();
+    applyEvent(state, ev("turn/start", { turn: 0 }));
+    applyEvent(state, ev("step/start", { turn: 0, step: 0 }));
+    applyEvent(state, ev("tool/call", { turn: 0, step: 0, callId: "t1", name: "write", arguments: '{"path":"a"' }));
+    applyEvent(state, ev("tool/call", { turn: 0, step: 0, callId: "t2", name: "bash", arguments: '{"command":"ls"}' }));
+    const r1 = applyEvent(state, ev("tool/result", { turn: 0, step: 0, callId: "t1", content: "truncated", isError: true, synthetic: true }));
+    const r2 = applyEvent(state, ev("tool/result", { turn: 0, step: 0, callId: "t2", content: "out" }));
+    const synthetic = r1.spans.find((s) => s.name === "tool.write");
+    const real = r2.spans.find((s) => s.name === "tool.bash");
+    expect(synthetic?.attributes).toMatchObject({ "tool.synthetic": true, "tool.result": "truncated" });
+    expect(real?.attributes).not.toHaveProperty("tool.synthetic");
+  });
+});

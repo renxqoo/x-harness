@@ -204,3 +204,30 @@ describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
     expect(existsSync(join(root, "noperm.txt.partial"))).toBe(false);
   });
 });
+
+describe("createTruncatedWriteRescuePlugin（物化失败降级）", () => {
+  it("writeFileAtomic 失败（只读目录）→ 不 throw、返回 undefined（纯 base 文案兜底）", async () => {
+    const c = createContext();
+    ctx = c;
+    const gate = new PathGate(root);
+    const observed = new ObservedRegistry();
+    const roDir = join(root, "ro");
+    const { mkdirSync, chmodSync } = await import("node:fs");
+    mkdirSync(roDir, { recursive: true });
+    const env = createLocalEnv(root);
+    const unload = await loadPlugins(c, [
+      await import("@x-harness/tools").then((m) => m.toolsPlugin),
+      createPermissionPlugin({ root, mode: "full" }),
+      createTruncatedWriteRescuePlugin({ gate, observed, env, permission: { root } }),
+    ]);
+    c.effect(() => { for (const off of unload) off(); });
+    chmodSync(roDir, 0o500); // 只读目录——物化必失败
+    try {
+      const r = await c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"ro/x.txt","content":"${LONG}`, signal: new AbortController().signal } as TruncatedToolPayload, async () => undefined);
+      expect(r).toBeUndefined();
+      expect(existsSync(join(root, "ro/x.txt.partial"))).toBe(false);
+    } finally {
+      chmodSync(roDir, 0o700);
+    }
+  });
+});

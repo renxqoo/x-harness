@@ -68,3 +68,20 @@ describe("extractStringField（参数化：content + new_string）", () => {
     });
   }
 });
+
+describe("extractStringField 边界补强（对抗审查 C 覆盖缺口）", () => {
+  it("反斜杠截尾：值以孤立反斜杠结束 → 已解码前缀照常返回", () => {
+    const r = extractStringField('{"path":"a.txt","content":"abc\\', "content");
+    expect(r).toEqual({ path: "a.txt", value: "abc" });
+  });
+
+  it("键名完整但截在冒号前 → 续找不误命中、无字段值返回（path 单独在场不构成可抢救——契约 {}）", () => {
+    const r = extractStringField('{"path":"a.txt","content"', "content");
+    expect(r).toEqual({});
+  });
+
+  it("非法转义 \\q → 按原字符收（保真——无效转义不丢字符）", () => {
+    const r = extractStringField('{"path":"a.txt","content":"x\\qy"', "content");
+    expect(r.value).toBe("xqy");
+  });
+});

@@ -333,7 +333,9 @@ async function pairTruncatedCalls(
     const decision = controller.signal.aborted
       ? undefined
       : await deps.dispatchTruncatedTool({ session: session.id, turn: at.turn, step: at.step, callId: call.callId, name: call.name, arguments: call.arguments, signal: controller.signal });
-    const note = rescueNoteOf(decision);
+    // dispatch await 期间 abort → 丢弃 note 走 base 文案（插件副作用可能已发生——盘上
+    // sidecar 无害；aborted 全序格盖过抢救增益，配对仍落账保投影闭合）
+    const note = controller.signal.aborted ? undefined : rescueNoteOf(decision);
     mustAppendPair(session, at, {
       callId: call.callId,
       name: call.name,
