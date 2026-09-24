@@ -3,10 +3,12 @@
 // 唤醒路径共用单真相（形状闭合）。seq = 0 基数组下标（内核 WAL 行号）。
 // view 域纪律（docs/SESSION.md 三视图分域）：游标校验/切片/leafSeq/hasMore 恒在
 // **全集**（journal 行）上做——entryWindow 本体不接受 view（历史调用面零改动）；
-// history 视图经 entryWindowViewed 只变换**返回条目**（单点 replace 载体滤除、区间
-// 载体降级 elide，谓词读 journal 信封——投影行 data 键不可伪造）。两视图游标互通，
-// leafSeq 恒 journal 尾（fork 同域不变量）；history 视图 limit=N 不保证返回 N 条，
-// hasMore 仍是 journal 域真值。
+// history 视图经 entryWindowViewed 只变换**返回条目**（L1 占位族载体滤除、其余
+// replace 载体降级 elide，谓词读 journal 信封——投影行 data 键不可伪造）。两视图
+// 游标互通，leafSeq 恒 journal 尾（fork 同域不变量）；history 视图 limit=N 不保证
+// 返回 N 条，hasMore 仍是 journal 域真值；截断窗全为载体行时回补尾部窗口外最近
+// 一条保留行（防 entries:[] ∧ hasMore:true 的游标活锁——客户端唯一推进信号是
+// 返回条目的 last seq）。
 import { historyLineOf, parseEntriesView, projectEntries, type EntryLine } from "../shared/entries-project.ts";
 import type { SessionEvent } from "@x-harness/session";
 
@@ -58,22 +60,51 @@ export interface ViewedQuery extends WindowQuery {
   view?: unknown;
 }
 
-/** 双视图单入口（worker 与直读共用）：journal 全集窗口 → history 时按原信封变换返回条目 */
-export function entryWindowViewed(events: readonly SessionEvent[], query: ViewedQuery): WindowResult {
-  if (query.view !== undefined && parseEntriesView(query.view) === undefined) {
-    return { ok: false, code: "invalid_input", reason: `invalid view: ${String(query.view)}` };
+/** 非法 view 值的可辨析预览（对象型 String() 会得 [object Object]） */
+function safePreview(value: unknown): string {
+  if (typeof value === "string") return value;
+  try {
+    const text = JSON.stringify(value) ?? String(value);
+    return text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  } catch {
+    return String(value);
   }
-  const windowed = entryWindow(projectEntries(events), query);
-  if (!windowed.ok) return windowed;
-  if (parseEntriesView(query.view) !== "history") return windowed;
-  const bySeq = new Map<number, SessionEvent>();
-  for (const event of events) bySeq.set(event.seq, event);
+}
+
+/** history 条目变换（seq === 数组下标是内核不变量——session.ts seq: log.length 分配
+ *  + gates seed 校验连续；无第二份索引 Map） */
+function historyEntriesOf(events: readonly SessionEvent[], windowed: readonly EntryLine[]): EntryLine[] {
   const entries: EntryLine[] = [];
-  for (const line of windowed.entries) {
-    const event = bySeq.get(line.seq);
+  for (const line of windowed) {
+    const event = events[line.seq];
     if (event === undefined) continue; // 不可达（同源投影）；防御性跳过
     const kept = historyLineOf(event);
     if (kept !== undefined) entries.push(kept);
+  }
+  return entries;
+}
+
+/** 双视图单入口（worker 与直读共用）：journal 全集窗口 → history 时按原信封变换返回条目 */
+export function entryWindowViewed(events: readonly SessionEvent[], query: ViewedQuery): WindowResult {
+  const view = parseEntriesView(query.view);
+  if (query.view !== undefined && view === undefined) {
+    return { ok: false, code: "invalid_input", reason: `invalid view: ${safePreview(query.view)}` };
+  }
+  const windowed = entryWindow(projectEntries(events), query);
+  if (!windowed.ok || view !== "history") return windowed;
+  const entries = historyEntriesOf(events, windowed.entries);
+  // 活锁防（截断窗全为载体行）：entries 空而 hasMore 真 → 回补窗口外（limit 截去段）
+  // 最近一条保留行，客户端以它推进游标；无 limit 或真到 journal 尾则维持空窗语义
+  if (entries.length === 0 && windowed.hasMore) {
+    const projected = projectEntries(events);
+    const firstSeq = windowed.entries[0]?.seq;
+    for (let seq = firstSeq !== undefined ? firstSeq - 1 : -1; seq >= 0; seq -= 1) {
+      const event = events[seq];
+      if (event === undefined) continue;
+      const kept = historyLineOf(event);
+      if (kept !== undefined) return { ok: true, entries: [kept], leafSeq: windowed.leafSeq, hasMore: windowed.hasMore };
+    }
+    return { ok: true, entries: [], leafSeq: windowed.leafSeq, hasMore: windowed.hasMore };
   }
   return { ok: true, entries, leafSeq: windowed.leafSeq, hasMore: windowed.hasMore };
 }

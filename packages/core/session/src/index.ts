@@ -39,7 +39,7 @@ export {
   sessionDisposed,
 } from "./tokens.ts";
 export { sessionPlugin } from "./plugin.ts";
-export { isSafeSessionId, validateSessionEvents } from "./gates.ts";
+export { isSafeSessionId, parseSurfaceOp, validateSessionEvents } from "./gates.ts";
 export { mintSessionId } from "./id.ts";
 export { anchorIndexOf } from "./surface.ts";
 export { AGENT_MESSAGE_KINDS, agentMessageData, isAgentContent, isAgentDirective } from "./agent-message.ts";

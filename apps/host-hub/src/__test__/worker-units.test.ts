@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { SessionEvent } from "@x-harness/session";
 import { foldDial, foldMeta, metaTailOf } from "../shared/meta-fold.ts";
 import { entryWindow } from "../worker/entries-window.ts";
-import { historyLines, historyLineOf, parseEntriesView, projectEntries } from "../shared/entries-project.ts";
+import { historyLineOf, parseEntriesView, projectEntries } from "../shared/entries-project.ts";
 import { resolveWorkerCatalog, scriptCatalog, workerCatalogFromEnv, catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
 import { buildAssemblySnapshot, readCatalog } from "../shared/catalog.ts";
 import { imagesUnsupported, thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
@@ -91,6 +91,15 @@ describe("entries-project history 视图谓词（单点滤除/区间降级/appen
   const ev = (seq: number, fields: { type: string; data?: Record<string, unknown>; op?: unknown }): SessionEvent =>
     ({ type: fields.type, seq, time: seq + 1, data: fields.data ?? {}, ...(fields.op !== undefined ? { surfaceOp: fields.op } : {}) }) as SessionEvent;
 
+  const historyLines = (events: readonly SessionEvent[]): { seq: number; ts: number; event: Record<string, unknown> }[] => {
+    const lines: { seq: number; ts: number; event: Record<string, unknown> }[] = [];
+    for (const event of events) {
+      const line = historyLineOf(event);
+      if (line !== undefined) lines.push(line);
+    }
+    return lines;
+  };
+
   test("字符串 append 与无 surfaceOp 行原样保留", () => {
     const lines = historyLines([
       ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
@@ -127,6 +136,18 @@ describe("entries-project history 视图谓词（单点滤除/区间降级/appen
     const elided = lines[3];
     expect(elided?.event).toEqual({ type: "compaction/elided", startSeq: 1, endSeq: 2 });
     expect(elided?.ts).toBe(4);
+  });
+
+  test("1 节点区间 compaction 摘要降级 elide（不因 startSeq===endSeq 被滤）——写者类型分类回归", () => {
+    const lines = historyLines([
+      ev(0, { type: "user/message", data: { content: [] }, op: "append" }),
+      ev(1, { type: "user/message", data: { content: [{ type: "text", text: "唯一被摘节点" }] }, op: { op: "replace", startSeq: 1, endSeq: 1 } }),
+      ev(2, { type: "assistant/message", data: { content: [] }, op: "append" }),
+    ]);
+    // user/message 载体即使单点也降级（摘要正文只在此行）——只有 tool/result 占位族才滤除
+    expect(lines.map((l) => l.seq)).toEqual([0, 1, 2]);
+    const elided = lines[1];
+    expect(elided?.event).toEqual({ type: "compaction/elided", startSeq: 1, endSeq: 1 });
   });
 
   test("historyLineOf 对 data 伪造 surfaceOp 免疫（谓词读 journal 信封）", () => {

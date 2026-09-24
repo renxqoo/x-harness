@@ -219,6 +219,8 @@ describe("host 本地命令（注入 IO）", () => {
       { type: "assistant/message", seq: 2, time: 3, data: { turn: 0, step: 0, content: [{ type: "text", text: "hi" }] }, surfaceOp: "append" },
       { type: "session/meta", seq: 3, time: 4, data: { key: "title", value: "saved thread" } },
       { type: "turn/end", seq: 4, time: 5, data: { turn: 0, reason: { kind: "completed" } } },
+      // L1 占位载体（单点 tool/result replace）——view 域管线断言的观测面
+      { type: "tool/result", seq: 5, time: 6, data: { turn: 0, step: 0, callId: "c1", content: "[cleared: read /x 5 chars]" }, surfaceOp: { op: "replace", startSeq: 2, endSeq: 2 } },
     ];
     await writeFile(join(dir, "events.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
     f.send({ type: "thread/register", id: "rg1", sessionPath: join(dir, "events.jsonl") });
@@ -242,9 +244,20 @@ describe("host 本地命令（注入 IO）", () => {
     f.send({ type: "get_entries", id: "ge1", threadId: sid, since: 1, limit: 2 });
     const entries = await waitResponse(f.client, "get_entries", "ge1");
     const ed = entries["data"] as { entries: Array<{ seq: number }>; leafSeq: number; hasMore: boolean };
-    expect(ed.leafSeq).toBe(4);
-    expect(ed.entries.map((e) => e.seq)).toEqual([3, 4]); // since=1 排他 → [2,3,4]；limit 2 取最近 → [3,4]
+    expect(ed.leafSeq).toBe(5);
+    expect(ed.entries.map((e) => e.seq)).toEqual([4, 5]); // since=1 排他 → [2..5]；limit 2 取最近 → [4,5]
     expect(ed.hasMore).toBe(true);
+    // view=history 管线旅程（parked 直读全链）：载体行滤除、leafSeq 恒 journal 尾
+    f.send({ type: "get_entries", id: "geh1", threadId: sid, view: "history" });
+    const hist = await waitResponse(f.client, "get_entries", "geh1");
+    const hd = hist["data"] as { entries: Array<{ seq: number; event: Record<string, unknown> }>; leafSeq: number };
+    expect(hd.entries.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4]); // 载体 5 滤除
+    expect(hd.leafSeq).toBe(5); // 全集域
+    expect(hd.entries.every((e) => e.event["type"] !== "tool/result" || String(e.event["content"]).startsWith("[cleared:") === false)).toBe(true);
+    // 非法 view 管线旅程：显式 invalid_input failure 帧
+    f.send({ type: "get_entries", id: "geb1", threadId: sid, view: "Journal" });
+    const bad = await waitResponse(f.client, "get_entries", "geb1");
+    expect(bad["error"]).toMatchObject({ code: "invalid_input" });
     // 收敛读空形态
     f.send({ type: "get_inflight", id: "gi1", threadId: sid });
     const inflight = await waitResponse(f.client, "get_inflight", "gi1");

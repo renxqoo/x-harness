@@ -231,12 +231,19 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
   软上限 100MiB（JSON 串长累计）——超限 failure `response too large; use get_entries`
   （多轮携图全量投影可超 128MiB worker 行限，有界失败优于 worker 被杀）；非 live 走
   §3.4 矩表。
-- **get_entries** `{threadId, since?, before?, limit?}` → `{entries, leafSeq, hasMore}` —
+- **get_entries** `{threadId, since?, before?, limit?, view?}` → `{entries, leafSeq, hasMore}` —
   seq 游标（**seq = WAL 行号 = 数组下标，0 基**，会话内单调、跨重启/跨压缩恒稳定）。
   排他语义：`since` = 该 seq 之后（排他，等价 index+1 起前向）；`before` = 该 seq
   之前（排他，至 index-1 止后向）；`since` 越过 `before` 收敛空窗；limit 正整数
   ≤5000 取最近 N（缺省 = 全量）；hasMore 恒返回；entries =
   `[{seq, ts, event}]`（event = `{type, ...data}` 摊平形状；surfaceOp 随附）。
+  `view`（缺省 `journal`；非法值 failure `invalid_input`）：`journal` = 全量 WAL 行；
+  `history` = 压缩前原文投影——游标校验/leafSeq/hasMore 恒 journal 全集域（两视图
+  游标互通），条目面 L1 占位族（`tool/result` 单点 replace 载体）滤除、其余 replace
+  载体降级单行 `{type:"compaction/elided", startSeq, endSeq}`（**读面合成类型**——
+  内核事件词表无此词条，仅出现在 wire entries；判别式消费者须按未知类型容错）。
+  history 下 limit=N 不保证返回 N 条（可至 0 条 + hasMore=true——空页时无条目游标
+  可推进，客户端应直接以 leafSeq 续拉）。分域详见 docs/SESSION.md §1.4。
 - **get_tree** `{threadId}` → `{ancestors, children, leafSeq}` — 会话 fork 谱系
   （hub 实现：ancestors 沿 header.parentSession 链**不含自身**；children =
   parentSession === id 的 headers，**排除子代理会话**（header.agentId 滤除）；

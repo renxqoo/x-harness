@@ -35,6 +35,15 @@ describe("场景：契约", () => {
     host.send({ type: "get_inflight", id: "i1", threadId });
     const inflight = await host.response("i1");
     expect(inflight.data).toEqual({ turnStartSeq: null, turnStartedAt: null, message: null, toolOutputs: [], bash: null });
+    // view 域 live 管线旅程：journal/history 同 thread 恒等 leafSeq，非法 view 显式 failure
+    host.send({ type: "get_entries", id: "vj", threadId, view: "journal" });
+    const vjournal = (await host.response("vj")).data as { entries: Array<{ seq: number }>; leafSeq: number };
+    host.send({ type: "get_entries", id: "vh", threadId, view: "history" });
+    const vhistory = (await host.response("vh")).data as { entries: Array<{ seq: number }>; leafSeq: number };
+    expect(vhistory.leafSeq).toBe(vjournal.leafSeq); // 全集域恒等
+    host.send({ type: "get_entries", id: "vb", threadId, view: 42 });
+    const vbad = await host.response("vb");
+    expect(vbad.error).toMatchObject({ code: "invalid_input" });
   }, 90_000);
 
   test("bash 直执行全旅程：流式 bash_execution_update + 信封 WAL + abort_bash 弹窗期", async () => {
