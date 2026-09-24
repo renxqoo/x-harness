@@ -152,13 +152,13 @@ describe("pi-adapter 注入层", () => {
     expect(Object.hasOwn(openaiSeen[1] as object, "reasoning")).toBe(false); // off 不发
   });
 
-  it("同步抛折算：错误文案分类（api key → 无 code；连接类 → network）；abort 同步抛透传", async () => {
+  it("同步抛折算：错误文案分类（api key → non-retryable；连接类 → network）；abort 同步抛透传", async () => {
     const throwing: PiStreamFn = (): AsyncIterable<AssistantMessageEvent> => {
       throw new Error("Invalid API key provided");
     };
     const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "", streamFn: throwing });
     expect(await collect(adapter.stream(request({})))).toEqual([
-      { type: "finish", finish: { kind: "error", message: "Invalid API key provided" } },
+      { type: "finish", finish: { kind: "error", message: "Invalid API key provided", code: "non-retryable" } },
     ]);
     const netThrow: PiStreamFn = (): AsyncIterable<AssistantMessageEvent> => {
       throw new Error("fetch failed");

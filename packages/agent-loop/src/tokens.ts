@@ -90,16 +90,15 @@ export type RequestErrorDecision =
   | { readonly kind: "respond-to-model"; readonly content: string }
   | { readonly kind: "fail"; readonly message: string; readonly code: string };
 
-export const agentRequestError = defineWaterfall<
-  {
-    readonly session: SessionId;
-    readonly turn: number;
-    readonly step: number;
-    readonly failure: RequestFailure;
-    readonly signal: AbortSignal;
-  },
-  RequestErrorDecision | undefined
->("agent/request-error");
+export interface RequestErrorPayload {
+  readonly session: SessionId;
+  readonly turn: number;
+  readonly step: number;
+  readonly failure: RequestFailure;
+  readonly signal: AbortSignal;
+}
+
+export const agentRequestError = defineWaterfall<RequestErrorPayload, RequestErrorDecision | undefined>("agent/request-error");
 
 export const agentTurnStopping = defineSerial<{ readonly session: SessionId; readonly turn: number; readonly signal: AbortSignal }>(
   "agent/turn-stopping",
@@ -134,11 +133,15 @@ export interface TurnConcludePayload {
 
 export const agentTurnConclude = defineWaterfall<TurnConcludePayload, TurnConcludeDecision | undefined>("agent/turn-conclude");
 
-/** 抢救窗口（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5）：截断 tool_use 配对收场前的通用时点
- *  ——插件在此做副作用（半截产出抢救）并返回附注；内核零工具语义（何时/如何抢救归插件）。
- *  载荷纯事实（arguments 为 llm 层原文出口的半截 JSON 原文）；应答 { note } 附进合成
- *  result 文案，undefined = 无抢救价值（只有 base 文案）。形状门在内核（note 非空 string）：
- *  垃圾忽略附注走 base——抢救是增益非契约，fail-loud 会把插件 bug 放大成收轮事故。 */
+/** 抢救/文案窗口（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5 + docs/WORK-ERROR-RECOVERY.md C3）：
+ *  截断 tool_use 配对收场前的通用时点——插件在此做副作用（半截产出抢救）或替换合成文案。
+ *  内核零策略：合成 result 的缺省文案是协议短事实（`truncated: not executed`），面向模型的
+ *  行为指令长文归文案插件（@x-harness/truncation-messages）。
+ *  载荷纯事实（arguments 为 llm 层原文出口的半截 JSON 原文）。应答两种形态（WER C3 并存
+ *  裁决）：{ note } = 追加附注（抢救件语义不变）；{ content } = **替换性**完整文案——与
+ *  { note } 同答时 content 生效、note 丢弃（替换优先于追加）。undefined = 无应答，走内核
+ *  短事实。形状门在内核（note/content 非空 string）：垃圾忽略走缺省——抢救与文案都是增益
+ *  非契约，fail-loud 会把插件 bug 放大成收轮事故。 */
 export interface TruncatedToolPayload {
   readonly session: SessionId;
   readonly turn: number;
@@ -149,7 +152,9 @@ export interface TruncatedToolPayload {
   readonly signal: AbortSignal;
 }
 
-export const agentTruncatedTool = defineWaterfall<TruncatedToolPayload, { readonly note: string } | undefined>("agent/truncated-tool");
+export type TruncatedToolDecision = { readonly note: string } | { readonly content: string } | undefined;
+
+export const agentTruncatedTool = defineWaterfall<TruncatedToolPayload, TruncatedToolDecision>("agent/truncated-tool");
 
 /** F0②：assistant 落账前纠（幻觉强形态）——settle 与 append 之间；落的是改写后版本 */
 export interface AssistantSettlement {

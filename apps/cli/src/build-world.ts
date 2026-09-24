@@ -25,6 +25,8 @@ import {
   inlineSessionKit,
   llmKit,
   continuationKit,
+  errorRecoveryKit,
+  truncationMessagesKit,
   loopKit,
   meterKit,
   taskLogsRootOf,
@@ -159,6 +161,8 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     }),
     ...loopKit(),
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
+    ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llmKit 后注册防预烧）
+    ...truncationMessagesKit(), // 截断配对替换文案（WER C3——toolboxKit 抢救件后手）
     ...checkpointKit(),
     // agent 类型目录由 CLI 边沿统一解析（resolveAgentDirs：显式 > env > 项目/用户根）
     ...delegationKit({ agentsDirs: resolveAgentDirs() }),

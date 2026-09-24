@@ -373,7 +373,7 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     expect(toolCall?.data).toMatchObject({ callId: "c1", name: "write", arguments: '{"path":"a.txt","content":"写一半' });
     const toolResult = events.find((e) => e.type === "tool/result");
     expect(toolResult?.data).toMatchObject({ callId: "c1", isError: true, synthetic: true });
-    expect(String(toolResult?.data.content)).toContain("arguments truncated by output token limit");
+    expect(String(toolResult?.data.content)).toContain("truncated: not executed");
     expect(String(toolResult?.data.content)).toContain("Recovered 12 chars");
     // 抢救窗口在配对之前派发（载荷纯事实：半截原文）
     expect(rescueCalls).toHaveLength(1);
@@ -426,7 +426,7 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     expect(okResult.isError).toBeUndefined(); // 真实执行结果（非合成）
     expect(okResult.synthetic).toBeUndefined();
     expect(byId.get("cut1")).toMatchObject({ isError: true, synthetic: true }); // 截断配对
-    expect(String(byId.get("cut1")?.["content"])).toContain("arguments truncated by output token limit");
+    expect(String(byId.get("cut1")?.["content"])).toContain("truncated: not executed");
     // 完整调用恰执行一次、截断调用零执行
     ran = events.filter((e) => e.type === "tool/call").length;
     expect(ran).toBe(2); // 两条 tool/call 都落账（截断的账面 + 完整的账面）

@@ -38,6 +38,13 @@ describe("TypeBox 校验封装（docs/TOOLS.md §1.4）", () => {
     expect(violationsOf(Type.Object({ a: Type.String() }), "{bad json")).toBeDefined();
   });
 
+  it("formatArgsEcho 参数化（WER C3）：max 覆写生效、缺省 2_000 不变", () => {
+    const long = { blob: "x".repeat(50) };
+    expect(formatArgsEcho(long, 10)).toBe(`${JSON.stringify(long).slice(0, 10)}…[${String(JSON.stringify(long).length)} chars truncated]`);
+    expect(formatArgsEcho({ a: 1 }, 10)).toBe(JSON.stringify({ a: 1 })); // 限内不截断
+    expect(formatArgsEcho(long).startsWith('{"blo')).toBe(true); // 缺省路径不变
+  });
+
   it("formatArgsEcho：循环引用与 undefined 兜底", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic["self"] = cyclic;

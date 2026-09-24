@@ -206,6 +206,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
         failure: {
           message: settlement.error,
           ...(settlement.code !== undefined ? { code: settlement.code } : {}),
+          ...(settlement.rawReason !== undefined ? { rawReason: settlement.rawReason } : {}),
           ...(settlement.retryAfterMs !== undefined ? { retryAfterMs: settlement.retryAfterMs } : {}),
         },
         signal,

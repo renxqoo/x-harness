@@ -19,6 +19,7 @@
     "@x-harness/commands": "workspace:*",
     "@x-harness/compaction": "workspace:*",
     "@x-harness/core": "workspace:*",
+    "@x-harness/error-recovery": "workspace:*",
     "@x-harness/harness": "workspace:*",
     "@x-harness/llm": "workspace:*",
     "@x-harness/llm-retry": "workspace:*",
@@ -32,6 +33,7 @@
     "@x-harness/system-prompt": "workspace:*",
     "@x-harness/todo-tools": "workspace:*",
     "@x-harness/token-analytics": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/truncation-messages": "workspace:*"
   }
 }

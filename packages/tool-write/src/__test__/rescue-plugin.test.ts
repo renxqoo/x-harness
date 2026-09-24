@@ -17,7 +17,7 @@ import { createPermissionPlugin } from "@x-harness/permission";
 import { toolsPlugin } from "@x-harness/tools";
 
 /** 物化路径装配：抢救件 + permission 件（full 档——in-root write 直通 allow）同装 */
-async function dispatchPermitted(name: string, args: string): Promise<{ readonly note: string } | undefined> {
+async function dispatchPermitted(name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
   const c = createContext();
   ctx = c;
   const gate = new PathGate(root);
@@ -47,8 +47,14 @@ const SESSION = "sess-a" as never;
 const LONG = "x".repeat(600); // 体积下限 512 之上
 const SHORT = "x".repeat(511);
 
+/** note-only 应答收窄（本件恒返 {note}——content 替换形态归文案插件） */
+function noteOf(decision: unknown): string {
+  expect(decision).toMatchObject({ note: expect.any(String) });
+  return (decision as { readonly note: string }).note;
+}
+
 /** 真装配：插件挂进 context，经 ctx.dispatch(agentTruncatedTool) 走全链（含 next 链） */
-async function dispatch(name: string, args: string, signal?: AbortSignal): Promise<{ readonly note: string } | undefined> {
+async function dispatch(name: string, args: string, signal?: AbortSignal): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
   const c = createContext();
   ctx = c;
   const unload = await loadPlugins(c, [createTruncatedWriteRescuePlugin({ gate: new PathGate(root), observed: new ObservedRegistry(), env: createLocalEnv(root) })]);
@@ -57,7 +63,7 @@ async function dispatch(name: string, args: string, signal?: AbortSignal): Promi
 }
 
 /** dispatch 上游已应答形态（让位链验证：downstream 非空 → 透传不抢救） */
-async function dispatchWithUpstream(name: string, args: string): Promise<{ readonly note: string } | undefined> {
+async function dispatchWithUpstream(name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
   const c = createContext();
   ctx = c;
   const unload = await loadPlugins(c, [createTruncatedWriteRescuePlugin({ gate: new PathGate(root), observed: new ObservedRegistry(), env: createLocalEnv(root) })]);
@@ -140,7 +146,7 @@ describe("createTruncatedWriteRescuePlugin（授权面攻击——sidecar 与 wr
 
   it("workspace 内合法 → 物化成功（内容断言 = value）", async () => {
     const r = await dispatchPermitted("write", `{"path":"inner/deep/ok.txt","content":"${LONG}`);
-    expect(r?.note).toContain("Recovered");
+    expect(noteOf(r)).toContain("Recovered");
     expect(readFileSync(join(root, "inner/deep/ok.txt.partial"), "utf8")).toBe(LONG);
   });
 
@@ -158,7 +164,7 @@ describe("createTruncatedWriteRescuePlugin（字节保真 round-trip）", () => 
     const decoded = `中文\n\t"quoted"\\slash😀\n${LONG}`;
     const encoded = JSON.stringify(decoded).slice(1, -1); // 同一字符串的 JSON 转义形（去外层引号）
     const r = await dispatchPermitted("write", `{"path":"zh.txt","content":"${encoded}`);
-    expect(r?.note).toContain(`Recovered ${String(decoded.length)} chars`);
+    expect(noteOf(r)).toContain(`Recovered ${String(decoded.length)} chars`);
     expect(readFileSync(join(root, "zh.txt.partial"), "utf8")).toBe(decoded);
     expect(readFileSync(join(root, "zh.txt.partial"))).toEqual(Buffer.from(decoded, "utf8"));
   });
@@ -168,7 +174,7 @@ describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
   /** 任意档位装配：抢救件在 permission 之后（apply 序=服务可达） */
   type ModeSpec = { readonly mode: "full" | "plan" | "auto" | "edit-confirm"; readonly rules?: { tool: string; pattern: string; verdict: "allow" | "deny" }[] };
 
-  async function dispatchWithMode(spec: ModeSpec, name: string, args: string): Promise<{ readonly note: string } | undefined> {
+  async function dispatchWithMode(spec: ModeSpec, name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
     const c = createContext();
     ctx = c;
     const unload = await loadPlugins(c, [
@@ -200,7 +206,7 @@ describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
 
   it("auto 档界内写（auto-in-root）→ 裁决 allow → 物化（与 write 工具同源放行语义）", async () => {
     const r = await dispatchWithMode({ mode: "auto" }, "write", `{"path":"auto-out.ts","content":"${LONG}`);
-    expect(r?.note).toContain("Recovered");
+    expect(noteOf(r)).toContain("Recovered");
     expect(readFileSync(join(root, "auto-out.ts.partial"), "utf8")).toBe(LONG);
   });
 

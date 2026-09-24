@@ -23,20 +23,28 @@ const payloadOf = (over: Partial<TruncatedToolPayload> = {}): TruncatedToolPaylo
 const nextNone = async (): Promise<undefined> => undefined;
 const nextNote = async (): Promise<{ readonly note: string }> => ({ note: "upstream already rescued" });
 
+/** note-only 应答收窄（本件恒返 {note}——content 替换形态归文案插件） */
+function noteOf(decision: unknown): string {
+  expect(decision).toMatchObject({ note: expect.any(String) });
+  return (decision as { readonly note: string }).note;
+}
+
 describe("delegationRescueNote（件15 批3）", () => {
   it("agent_message 命中 → note 在场且含换策略锚词（file path / cut off）", async () => {
     const out = await delegationRescueNote()(payloadOf({ name: "agent_message" }), nextNone);
-    expect(out?.note).toContain("cut off");
-    expect(out?.note).toContain("write it to a file");
-    expect(out?.note).toContain("file path");
-    expect(out?.note).toContain("Do not re-send it from memory");
+    const note = noteOf(out);
+    expect(note).toContain("cut off");
+    expect(note).toContain("write it to a file");
+    expect(note).toContain("file path");
+    expect(note).toContain("Do not re-send it from memory");
   });
 
   it("agent_spawn 命中 → note 在场且含任务简报锚词", async () => {
     const out = await delegationRescueNote()(payloadOf({ name: "agent_spawn" }), nextNone);
-    expect(out?.note).toContain("NOT executed");
-    expect(out?.note).toContain("write it to a file");
-    expect(out?.note).toContain("references the file path");
+    const note = noteOf(out);
+    expect(note).toContain("NOT executed");
+    expect(note).toContain("write it to a file");
+    expect(note).toContain("references the file path");
   });
 
   it("白名单外（write/bash）→ undefined 透传（让位给既有抢救面）", async () => {
@@ -46,7 +54,7 @@ describe("delegationRescueNote（件15 批3）", () => {
 
   it("downstream 已有 note → 让位不覆盖（链式纪律）", async () => {
     const out = await delegationRescueNote()(payloadOf({ name: "agent_message" }), nextNote);
-    expect(out?.note).toBe("upstream already rescued");
+    expect(noteOf(out)).toBe("upstream already rescued");
   });
 
   it("abort → 透传 downstream（竞态不发指引）", async () => {
@@ -87,7 +95,7 @@ describe("delegationRescueNote（件15 批3）", () => {
       expect(hit).toBeDefined();
       expect(hit).toContain("write it to a file"); // rescue note 附进配对 result（经内核 pairTruncatedCalls）
       expect(hit).toContain("cut off");
-      expect(hit).toContain("arguments truncated by output token limit"); // base 文案在前、note 追加
+      expect(hit).toContain("truncated: not executed"); // 内核协议短事实在前、note 以 \n 追加（WER C3）
     }
     await parent.dispose();
   });
@@ -101,7 +109,7 @@ describe("delegationRescueNote（件15 批3）", () => {
       payloadOf({ session: parent.agent.session.id, name: "agent_message" }),
       async () => undefined,
     ) as { note: string } | undefined;
-    expect(dispatched?.note).toContain("write it to a file");
+    expect(noteOf(dispatched)).toContain("write it to a file");
     // 白名单外仍 undefined（世界内无 write 抢救件装配）
     const other = await world.ctx.dispatch(
       agentTruncatedTool,

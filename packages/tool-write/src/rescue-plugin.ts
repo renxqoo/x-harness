@@ -12,7 +12,7 @@
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentTruncatedTool } from "@x-harness/agent-loop";
-import type { TruncatedToolPayload } from "@x-harness/agent-loop";
+import type { TruncatedToolDecision, TruncatedToolPayload } from "@x-harness/agent-loop";
 import { admitSession } from "@x-harness/tool-core";
 import type { ExtraRootsOf, ObservedRegistry, PathGate, RootOverrideOf } from "@x-harness/tool-core";
 import type { ExecEnv } from "@x-harness/exec-env";
@@ -82,7 +82,7 @@ export function createTruncatedWriteRescuePlugin(input: TruncatedRescueInput): P
       };
       return ctx.on(
         agentTruncatedTool,
-        async (payload: TruncatedToolPayload, next: (input: TruncatedToolPayload) => Promise<{ readonly note: string } | undefined>) => {
+        async (payload: TruncatedToolPayload, next: (input: TruncatedToolPayload) => Promise<TruncatedToolDecision>) => {
           const downstream = await next(payload);
           if (payload.signal.aborted) return downstream; // abort 竞态：不写盘（aborted 全序格盖过抢救）
           if (downstream !== undefined) return downstream; // 上游中间件已抢救 → 让位

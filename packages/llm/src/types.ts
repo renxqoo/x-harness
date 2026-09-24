@@ -40,11 +40,14 @@ export type LlmFinish =
   | {
       readonly kind: "error";
       readonly message: string;
-      /** 失败词表（闭集）：`http-<status>` / `network` / `no-adapter` / `context-overflow`（上下文
-       *  窗口溢出——输入侧，由 compaction 自愈消费，llm-retry 不可重试） */
+      /** 失败词表（闭集）：`http-<status>` / `network` / `no-adapter` / `context-overflow` /
+       *  `non-retryable`（refusal/sensitive/content_filter 与鉴权文案——重试换不来新结果） */
       readonly code?: string;
       /** 仅 429/503 的 Retry-After（毫秒，小数秒已折算；HTTP-date 解析失败视为缺席） */
       readonly retryAfterMs?: number;
+      /** provider 原生 stop/错误 reason（pi `AssistantMessage.rawStopReason` 透传）——诊断
+       *  事实（供消费端区分「真错误 vs 未救回的边缘截断形态」），非处置信号 */
+      readonly rawReason?: string;
     };
 
 export type LlmChunk =

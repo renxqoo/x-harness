@@ -171,8 +171,7 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
         } catch (error) {
           if (request.signal.aborted) throw error; // abort 豁免：透传 AbortError
           const message = errorMessage(error);
-          const code = classifyErrorText(message);
-          yield { type: "finish", finish: { kind: "error", message, ...(code !== undefined ? { code } : {}) } };
+          yield { type: "finish", finish: { kind: "error", message, code: classifyErrorText(message) } };
           return;
         }
         yield* piChunks(events, {

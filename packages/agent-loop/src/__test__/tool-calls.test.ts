@@ -91,10 +91,8 @@ describe("isTruncatedArguments（docs/TRUNCATED-TOOL-RESCUE.md 裁决④）", ()
     expect(isTruncatedArguments("[1,2]")).toBe(false);
   });
 
-  it("文案契约：TRUNCATED_TOOL_MESSAGE 承担投影降级 {} 断层的解释义务（裁决⑦）——不重发/拆分引导逐字钉死", () => {
-    expect(TRUNCATED_TOOL_MESSAGE).toBe(
-      "arguments truncated by output token limit — call not executed. The arguments echoed in your tool_use above are NOT shown faithfully (truncated/may render as {}); do not treat them as the full payload you sent. Re-issue the call; for large file writes, split the content into smaller pieces.",
-    );
+  it("文案契约（WER C3）：内核 TRUNCATED_TOOL_MESSAGE = 协议短事实——行为指令句已外提文案插件（@x-harness/truncation-messages）", () => {
+    expect(TRUNCATED_TOOL_MESSAGE).toBe("truncated: not executed");
   });
 });
 

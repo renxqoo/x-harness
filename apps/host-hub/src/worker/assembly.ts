@@ -22,6 +22,8 @@ import {
   fenceKit,
   llmKit,
   continuationKit,
+  errorRecoveryKit,
+  truncationMessagesKit,
   loopKit,
   meterKit,
   probeBaseFacts,
@@ -367,6 +369,8 @@ function defaultWorkerPlugins(resolved: {
     ...llmKit(adapters, { default: RETRY_POLICY }),
     ...loopKit(),
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
+    ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llmKit 后注册防预烧）
+    ...truncationMessagesKit(), // 截断配对替换文案（WER C3——toolboxKit 抢救件后手）
     ...checkpointKit(),
     createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
     createAgentDelegationPlugin({ agentsDirs, resolveProviderOf: providerOfModel(catalog) }),

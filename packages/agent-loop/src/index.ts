@@ -21,7 +21,7 @@ export {
   agentLlmStream,
   agentTruncatedTool,
 } from "./tokens.ts";
-export type { TruncatedToolPayload, AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestErrorDecision, RequestFailure, TurnConcludeDecision, TurnConcludePayload } from "./tokens.ts";
+export type { TruncatedToolDecision, TruncatedToolPayload, AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestErrorDecision, RequestErrorPayload, RequestFailure, TurnConcludeDecision, TurnConcludePayload } from "./tokens.ts";
 export { isTruncatedArguments, TRUNCATED_TOOL_MESSAGE } from "./tool-calls.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";
 export { foldInbox } from "./inbox.ts";

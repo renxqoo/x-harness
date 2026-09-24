@@ -27,9 +27,8 @@ function danglingToolClosers(events: readonly SessionEvent[], mint: Mint): Sessi
     .filter((call) => !answered.has(call.callId))
     .sort((a, b) => a.callIndex - b.callIndex)
     .map((call) => {
-      const content = dispatched.has(call.callId)
-        ? "tool outcome unknown: external state may have changed; verify before retrying"
-        : "tool call not started: retry if still needed";
+      // 协议短事实（WER C3）：已派发/未启动两态判别符；恢复引导文案归策略层
+      const content = dispatched.has(call.callId) ? "tool outcome unknown" : "tool call not started";
       return mint("tool/result", { turn: call.turn, step: call.step, callId: call.callId, content, isError: true }, "append");
     });
 }

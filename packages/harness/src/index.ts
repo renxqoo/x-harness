@@ -12,6 +12,9 @@ import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import { createContinuationPlugin } from "@x-harness/agent-continuation";
 import type { ContinuationOptions } from "@x-harness/agent-continuation";
+import { createErrorRecoveryPlugin } from "@x-harness/error-recovery";
+import type { ErrorRecoveryOptions } from "@x-harness/error-recovery";
+import { createDefaultTruncationMessages } from "@x-harness/truncation-messages";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import type { DelegationOptions } from "@x-harness/agent-delegation";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -111,6 +114,15 @@ export const loopKit = (): readonly Plugin[] => [agentLoopPlugin];
 /** 输出截断续写策略（docs/OUTPUT-TOKEN-CONTINUATION.md）：agentTurnConclude 窗口的缺省策略件——
  *  count < max → resume（续写指令经内核以 agent/message{directive} 落卷）；否则可恢复错误收轮 */
 export const continuationKit = (options?: ContinuationOptions): readonly Plugin[] => [createContinuationPlugin(options)];
+
+/** 工作错误恢复 L2 策略（docs/WORK-ERROR-RECOVERY.md C5）：挂 agentRequestError +
+ *  agentTurnConclude——分族计数、respond 自愈、达限 fail。装配契约：须在 llmKit
+ *  （llm-retry）之后注册（链上后手）——L1 重试期本件应答被覆盖不计（防预烧）。 */
+export const errorRecoveryKit = (options?: ErrorRecoveryOptions): readonly Plugin[] => [createErrorRecoveryPlugin(options)];
+
+/** 截断配对缺省文案（WER C3）：agentTruncatedTool 窗口的替换性完整文案——装配序须在
+ *  抢救件（toolboxKit 的 rescue）之后注册（链上后手见内层）——kit 数组序即注册序。 */
+export const truncationMessagesKit = (): readonly Plugin[] => [createDefaultTruncationMessages()];
 
 /** 基础段插件 + facts 探测（两宿主同源消费面；正文见 base-prompt.ts，探测见 base-prompt-probe.ts） */
 export { createBasePromptPlugin } from "./base-prompt.ts";

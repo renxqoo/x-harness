@@ -84,6 +84,31 @@ describe("attempt 改道（C1：respond/fail/让位三路）", () => {
     await handle.dispose();
   });
 
+  it("rawReason 三级透传（WER C4）：error finish 携 rawReason → attempt 结算 → RequestFailure.failure.rawReason 到达插件面", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const { agent, handle } = await spawn(world);
+    let seenRaw: string | undefined | "unset" = "unset";
+    let seenCode: string | undefined | "unset" = "unset";
+    const off = world.ctx.on(agentRequestError, async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
+      const downstream = await next(payload);
+      if (downstream !== undefined) return downstream;
+      const failure = (payload as { failure: { code?: string; rawReason?: string } }).failure;
+      seenRaw = failure.rawReason;
+      seenCode = failure.code;
+      return { kind: "fail", message: "stop", code: "test" };
+    });
+    world.fake.scripts.push((async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
+      yield { type: "finish", finish: { kind: "error", message: "boom", code: "http-500", rawReason: "model_context_window_exceeded" } };
+    })());
+    agent.followup("hi");
+    await agent.whenIdle();
+    off();
+    expect(seenRaw).toBe("model_context_window_exceeded");
+    expect(seenCode).toBe("http-500");
+    await handle.dispose();
+  });
+
   it("undefined 让位 → 现行 fatal 缺省；settlement.code 不再丢失（透传进终态）", async () => {
     const world = await makeWorld();
     worlds.push(world);

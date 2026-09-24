@@ -160,19 +160,19 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
     ]);
   });
 
-  it("回归：refusal 真身文案（\"The model refused…\"）与 rawStopReason 均落无 code 不可重试", async () => {
+  it("回归：refusal 真身文案（\"The model refused…\"）与 rawStopReason 均落显式 non-retryable（不可重试）", async () => {
     // pi 真身文案不含 "refusal" 子串（含 "refused"）——旧词表匹配曾漏判落 network 可重试
     const byText = await collect([
       assistantEvent({ type: "error", reason: "error", error: { errorMessage: "The model refused to complete the request" } }),
     ]);
     expect(byText).toEqual([
-      { type: "finish", finish: { kind: "error", message: "The model refused to complete the request" } },
+      { type: "finish", finish: { kind: "error", message: "The model refused to complete the request", code: "non-retryable" } }, // 文案路径无 rawStopReason——rawReason 缺席
     ]);
     // rawStopReason 判定优先于文案分类与已捕获状态码
     const byRaw = await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "anything", rawStopReason: "refusal" } })], {
       failureInfo: () => ({ status: 500 }),
     });
-    expect(byRaw).toEqual([{ type: "finish", finish: { kind: "error", message: "anything" } }]);
+    expect(byRaw).toEqual([{ type: "finish", finish: { kind: "error", message: "anything", code: "non-retryable", rawReason: "refusal" } }]); // rawStopReason 在场随终态透传
   });
 
   it("未知 stop_reason 口径锁定：pi 对未知 reason 折 \"Unhandled stop reason\" 错误 → network（语义变更，docs/LLM-PI.md）", async () => {
@@ -187,7 +187,7 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
       { type: "finish", finish: { kind: "error", message: "Connection error.", code: "network" } },
     ]);
     expect(await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "request refusal" } })])).toEqual([
-      { type: "finish", finish: { kind: "error", message: "request refusal" } }, // 无 code 不可重试
+      { type: "finish", finish: { kind: "error", message: "request refusal", code: "non-retryable" } }, // 显式 non-retryable 事实码
     ]);
     expect(await collect([{ type: "mystery" } as never])).toEqual([
       { type: "finish", finish: { kind: "error", message: "stream ended without finish", code: "network" } },
@@ -291,18 +291,25 @@ describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透
     ]);
   });
 
-  it("限流保护：429/503 状态码在场时跳过 overflow 文本分类（『too many tokens』等限流文案不得换走 emergency 压缩）", async () => {
-    // Bedrock ThrottlingException 经网关转发无前缀形态——曾误命中 /too many tokens/i
+  it("overflow 分类无保护序：限流文案命中 overflow pattern 时 429/503 在场也照报 context-overflow（瞬态甄别归消费端 retryableCodes——出口层不代编排）", async () => {
+    // Bedrock ThrottlingException 经网关转发无前缀形态——曾误命中 /too many tokens/i；
+    // llm 层只报事实，llm-retry 按 retryableCodes 优先重试（C4 处置序下放）
     expect(
       await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "Too many tokens, please wait before trying again." } })], {
         failureInfo: () => ({ status: 429 }),
       }),
-    ).toEqual([{ type: "finish", finish: { kind: "error", message: "Too many tokens, please wait before trying again.", code: "http-429" } }]);
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "Too many tokens, please wait before trying again.", code: "context-overflow" } }]);
     expect(
       await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "prompt is too long" } })], {
         failureInfo: () => ({ status: 503 }),
       }),
-    ).toEqual([{ type: "finish", finish: { kind: "error", message: "prompt is too long", code: "http-503" } }]);
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "prompt is too long", code: "context-overflow" } }]);
+    // 未命中 overflow pattern 的 429/503 照旧落 http-<status>（重试快车道输入不丢）
+    expect(
+      await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "rate limited" } })], {
+        failureInfo: () => ({ status: 429 }),
+      }),
+    ).toEqual([{ type: "finish", finish: { kind: "error", message: "rate limited", code: "http-429" } }]);
   });
 
   it("overflow 负例：纯 413 无 overflow 文案保持 http-413；throttling 排除集不误判；其它既有分类不漂移", async () => {
@@ -329,13 +336,13 @@ describe("classifyErrorText（词边界负例全表）", () => {
     expect(classifyErrorText("overloaded_error")).toBe("network");
   });
 
-  it("负例：数值子串不误杀；鉴权/refusal 落无 code", () => {
+  it("负例：数值子串不误杀；鉴权/refusal 落显式 non-retryable", () => {
     expect(classifyErrorText("used 14290 tokens")).toBe("network"); // 不是 429
     expect(classifyErrorText("econnrefused 127.0.0.1:14001")).toBe("network");
     expect(classifyErrorText("request id 15003 failed")).toBe("network");
-    expect(classifyErrorText("invalid api key")).toBeUndefined();
+    expect(classifyErrorText("invalid api key")).toBe("non-retryable");
     expect(classifyErrorText("401 Unauthorized")) .toBe("http-401");
-    expect(classifyErrorText("content_filter blocked")).toBeUndefined();
-    expect(classifyErrorText("stop reason refusal")).toBeUndefined();
+    expect(classifyErrorText("content_filter blocked")).toBe("non-retryable");
+    expect(classifyErrorText("stop reason refusal")).toBe("non-retryable");
   });
 });

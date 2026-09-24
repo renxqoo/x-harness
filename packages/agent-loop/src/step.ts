@@ -313,13 +313,16 @@ export async function dialStep(scope: TurnScope, step: number): Promise<DialStep
   return { kind: "dial", dial, schemas };
 }
 
-/** 抢救附注形状门（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5 裁决⑥）：应答是 object 且 note
- *  为非空 string 才采用；其余（undefined/垃圾）忽略附注走 base 文案——抢救是增益非契约，
- *  fail-loud 会把插件 bug 放大成收轮事故。 */
-function rescueNoteOf(decision: unknown): string | undefined {
-  if (typeof decision !== "object" || decision === null) return undefined;
-  const note = (decision as { note?: unknown }).note;
-  return typeof note === "string" && note !== "" ? note : undefined;
+/** 抢救/文案应答形状门（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5 裁决⑥ + WER C3）：应答是
+ *  object 且 content 为非空 string → 替换文案（与 note 同答时 content 生效、note 丢弃——
+ *  替换优先于追加）；否则 note 为非空 string → 追加附注；其余（undefined/垃圾）走内核短
+ *  事实——抢救与文案都是增益非契约，fail-loud 会把插件 bug 放大成收轮事故。 */
+function truncatedToolContent(decision: unknown, base: string): string {
+  if (typeof decision !== "object" || decision === null) return base;
+  const asDecision = decision as { content?: unknown; note?: unknown };
+  if (typeof asDecision.content === "string" && asDecision.content !== "") return asDecision.content;
+  if (typeof asDecision.note === "string" && asDecision.note !== "") return `${base}\n${asDecision.note}`;
+  return base;
 }
 
 /** 截断调用配对收场（docs/TRUNCATED-TOOL-RESCUE.md 层 1）：先经抢救窗口（abort 竞态下
@@ -339,12 +342,14 @@ async function pairTruncatedCalls(
       : await deps.dispatchTruncatedTool({ session: session.id, turn: at.turn, step: at.step, callId: call.callId, name: call.name, arguments: call.arguments, signal: controller.signal });
     // dispatch await 期间 abort → 丢弃 note 走 base 文案（插件副作用可能已发生——盘上
     // sidecar 无害；aborted 全序格盖过抢救增益，配对仍落账保投影闭合）
-    const note = controller.signal.aborted ? undefined : rescueNoteOf(decision);
+    const content = controller.signal.aborted
+      ? undefined
+      : truncatedToolContent(decision, TRUNCATED_TOOL_MESSAGE);
     mustAppendPair(session, at, {
       callId: call.callId,
       name: call.name,
       arguments: call.arguments,
-      content: note === undefined ? TRUNCATED_TOOL_MESSAGE : `${TRUNCATED_TOOL_MESSAGE}\n${note}`,
+      content: content ?? TRUNCATED_TOOL_MESSAGE,
     });
   }
 }

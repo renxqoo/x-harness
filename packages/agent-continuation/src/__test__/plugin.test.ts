@@ -103,7 +103,7 @@ describe("截断 tool_use 接续（TRUNCATED-TOOL-RESCUE 层 1：全截断 → �
     const events = agent.session.events();
     const result = events.find((e) => e.type === "tool/result")?.data as Record<string, unknown>;
     expect(result).toMatchObject({ callId: "t1", isError: true, synthetic: true });
-    expect(String(result?.["content"])).toContain("arguments truncated by output token limit");
+    expect(String(result?.["content"])).toContain("truncated: not executed");
     expect(executed).toBe(0); // 半截调用不执行
     // 续写接手：第二次模型调用发生、指令以 agent/message{directive} 落卷、恰一条
     expect(fixture.calls).toHaveLength(2);

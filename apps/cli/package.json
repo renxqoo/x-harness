@@ -9,6 +9,7 @@
     "@x-harness/autocompact": "workspace:*",
     "@x-harness/compaction": "workspace:*",
     "@x-harness/core": "workspace:*",
+    "@x-harness/error-recovery": "workspace:*",
     "@x-harness/exec-env": "workspace:*",
     "@x-harness/harness": "workspace:*",
     "@x-harness/llm": "workspace:*",
@@ -26,7 +27,8 @@
     "@x-harness/tool-grep": "workspace:*",
     "@x-harness/tool-read": "workspace:*",
     "@x-harness/tool-write": "workspace:*",
-    "@x-harness/tools": "workspace:*"
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/truncation-messages": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0"

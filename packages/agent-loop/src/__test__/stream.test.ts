@@ -86,6 +86,10 @@ describe("settleStream（docs/AGENT-LOOP-DRIVER §1.4）", () => {
     const throttled = new StreamAccumulator();
     throttled.push({ type: "finish", finish: { kind: "error", message: "slow down", code: "http-429", retryAfterMs: 2500 } });
     expect(settleStream(throttled, undefined, false)).toEqual({ kind: "attempt", error: "http-429:slow down", code: "http-429", retryAfterMs: 2500 });
+    // rawReason 透传（WER C4 三级管道之二）：provider 原生 stop reason 随 attempt 结算透传
+    const withRaw = new StreamAccumulator();
+    withRaw.push({ type: "finish", finish: { kind: "error", message: "boom", code: "http-500", rawReason: "max_tokens" } });
+    expect(settleStream(withRaw, undefined, false)).toEqual({ kind: "attempt", error: "http-500:boom", code: "http-500", rawReason: "max_tokens" });
   });
 
   it("流无 finish → attempt；finish stop 零内容 → 空结算 attempt", () => {

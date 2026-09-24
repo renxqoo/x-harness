@@ -59,12 +59,11 @@ export function violationsOf(schema: TSchema, value: unknown): string | undefine
   return errors.map((error) => `${error.path === "" ? "/" : error.path}: ${error.message}`).join("; ");
 }
 
-/** 违规回显截断（docs/TRUNCATED-TOOL-RESCUE.md 批 1a）：全量回显对超长 args（如半截
- *  write 原文）会把已烧掉的输出再按输入侧收一遍税——头 2_000 字符 + 尾标（与
- *  maxToolResultChars 同哲学），N 为截断前总字符数。 */
-const ARGS_ECHO_MAX_CHARS = 2_000;
-
-export function formatArgsEcho(args: unknown): string {
+/** 违规回显截断（docs/TRUNCATED-TOOL-RESCUE.md 批 1a + WER C3 参数化后门）：全量回显对
+ *  超长 args（如半截 write 原文）会把已烧掉的输出再按输入侧收一遍税——头 2_000 字符 +
+ *  尾标（与 maxToolResultChars 同哲学），N 为截断前总字符数。max 参数化（缺省 2_000 不变
+ *  ——调参归调用方，内核不持策略）。 */
+export function formatArgsEcho(args: unknown, max = 2_000): string {
   // Symbol：stringify 返回 undefined；BigInt：stringify 直接抛——两者都能无损文本化
   if (typeof args === "symbol" || typeof args === "bigint") return String(args);
   let text: string;
@@ -73,6 +72,6 @@ export function formatArgsEcho(args: unknown): string {
   } catch {
     return "<unserializable args>";
   }
-  if (text.length <= ARGS_ECHO_MAX_CHARS) return text;
-  return `${text.slice(0, ARGS_ECHO_MAX_CHARS)}…[${String(text.length)} chars truncated]`;
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…[${String(text.length)} chars truncated]`;
 }

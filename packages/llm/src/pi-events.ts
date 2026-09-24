@@ -51,8 +51,8 @@ function initialTextAt(partial: { content?: unknown } | undefined, index: number
 }
 
 /** 错误文案分类（fetch 包装层未捕获状态时的兜底）。词边界匹配防数值子串误杀（"used 14290 tokens" ≠ 429）；
- *  refusal/sensitive/content_filter 与鉴权文案落无 code（不可重试）。 */
-export function classifyErrorText(message: string): string | undefined {
+ *  refusal/sensitive/content_filter 与鉴权文案显式落 non-retryable（不可重试事实码）。 */
+export function classifyErrorText(message: string): string {
   const lower = message.toLowerCase();
   const status = [429, 500, 502, 503, 504, 401, 403].find((code) =>
     new RegExp(`(?:^|[^0-9])${String(code)}(?:[^0-9]|$)`).test(lower),
@@ -60,10 +60,10 @@ export function classifyErrorText(message: string): string | undefined {
   if (status !== undefined) return `http-${String(status)}`;
   // 词边界 "refus" 覆盖 pi 真身文案 "The model refused…"（不含 "refusal" 子串），且不误伤
   // ECONNREFUSED（连接拒绝是可重试 network 错误）
-  if (/\brefus/.test(lower) || lower.includes("sensitive") || lower.includes("content_filter")) return undefined;
-  // 鉴权类文案落无 code（不可重试）：重试换不来新凭证
+  if (/\brefus/.test(lower) || lower.includes("sensitive") || lower.includes("content_filter")) return "non-retryable";
+  // 鉴权类文案：重试换不来新凭证——显式 non-retryable
   if (lower.includes("api key") || lower.includes("authentication") || lower.includes("unauthorized") || lower.includes("permission")) {
-    return undefined;
+    return "non-retryable";
   }
   if (
     lower.includes("timeout") ||
@@ -213,9 +213,10 @@ function blockChunks(event: AssistantMessageEvent, state: BlockState): LlmChunk[
  *  refusal/sensitive/content_filter 同点归一，docs/OUTPUT-TOKEN-CONTINUATION.md 批1）。 */
 const OUTPUT_LIMIT_RAW_REASONS: ReadonlySet<string> = new Set(["max_tokens", "max_output_tokens", "model_context_window_exceeded"]);
 
-/** 输出上限词处置（errorChunks 复杂度治理）：有内容 → 救回 max-tokens；零内容 →
- *  context-overflow（确定性失败不盲重试；输入压力由 compaction 自愈恰一次兜底）；
- *  非输出上限词 → undefined 走后续判定链 */
+/** 输出上限词处置（errorChunks 复杂度治理）：有内容 → 救回 max-tokens（wire 归一——
+ *  mapStopReason 把输出上限折 error 是 pi 方言事实）；零内容 → context-overflow 终态
+ *  分类（零内容截断无 partial 可接续——事实归一，处置序归消费端）；非输出上限词 →
+ *  undefined 走后续判定链 */
 function outputLimitFinish(rawStop: string | undefined, hasContent: boolean, message: string): LlmChunk | undefined {
   if (rawStop === undefined || !OUTPUT_LIMIT_RAW_REASONS.has(rawStop)) return undefined;
   if (hasContent) return { type: "finish", finish: { kind: "max-tokens", rawReason: rawStop } };
@@ -224,13 +225,11 @@ function outputLimitFinish(rawStop: string | undefined, hasContent: boolean, mes
 
 /** error 终态：abort 抛 AbortError（豁免）；usage 先行；rawStopReason 判定序——
  *  ① 输出上限救回（须流内已有内容：零内容截断没有可接续的 partial，防空 assistant/message
- *    与「指令对着不存在的中断」的续写）；② 零内容输出上限词 → context-overflow（确定性失败
- *    不可盲重试；若为输入压力由 compaction 自愈恰一次兜底）；③ overflow 文本分类
- *    （`context-overflow`，优先于状态码——主力 provider 的输入溢出是 HTTP 400 + overflow 文案，
- *    落 http-400 则既不可重试也不自愈；但 429/503 状态码在场时跳过——限流文案（"too many
- *    tokens" 等）会误命中宽泛溢出 pattern，瞬态错误不得换走 emergency 压缩）；④
- *  refusal/sensitive/content_filter 落无 code（不可重试）；⑤ 状态码在场落 http-<status>；
- *  ⑥ 文案分类兜底。 */
+ *    与「指令对着不存在的中断」的续写）；② 零内容输出上限词 → context-overflow 终态分类；③
+ *    overflow 文本分类（优先于状态码——主力 provider 的输入溢出是 HTTP 400 + overflow 文案；
+ *    状态码在场也照报 context-overflow——限流文案误命中的甄别归消费端重试词表）；④
+ *    refusal/sensitive/content_filter 落 non-retryable；⑤ 状态码在场落 http-<status>；⑥ 文案
+ *    分类兜底。rawStopReason 在场即随终态透传（rawReason——诊断事实，非处置信号）。 */
 function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, options: PiChunkOptions, hasContent: boolean): LlmChunk[] {
   if (event.reason === "aborted" || options.signal.aborted) throw new DOMException("aborted", "AbortError");
   const chunks = [...foldUsage(event.error.usage)]; // 失败尝试已见 usage 随流落账（token-meter 计费）
@@ -242,13 +241,13 @@ function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, o
     chunks.push(rescued);
     return chunks;
   }
-  if (info.status !== 429 && info.status !== 503 && isContextOverflow({ ...event.error, stopReason: "error" })) { // stopReason 合成：error 事件的消息定义上即错误终态（isContextOverflow 文案分支要求该字段在场）
-    chunks.push({ type: "finish", finish: { kind: "error", message, code: "context-overflow" } });
+  if (isContextOverflow({ ...event.error, stopReason: "error" })) { // stopReason 合成：error 事件的消息定义上即错误终态（isContextOverflow 文案分支要求该字段在场）
+    chunks.push({ type: "finish", finish: { kind: "error", message, code: "context-overflow", ...(rawStop !== undefined ? { rawReason: rawStop } : {}) } });
     return chunks;
   }
   const nonRetryable = rawStop === "refusal" || rawStop === "sensitive" || rawStop === "content_filter";
-  let code: string | undefined;
-  if (nonRetryable) code = undefined;
+  let code: string;
+  if (nonRetryable) code = "non-retryable";
   else if (info.status !== undefined) code = `http-${String(info.status)}`;
   else code = classifyErrorText(message);
   chunks.push({
@@ -256,8 +255,9 @@ function errorChunks(event: Extract<AssistantMessageEvent, { type: "error" }>, o
     finish: {
       kind: "error",
       message,
-      ...(code !== undefined ? { code } : {}),
+      code,
       ...(info.retryAfterMs !== undefined ? { retryAfterMs: info.retryAfterMs } : {}),
+      ...(rawStop !== undefined ? { rawReason: rawStop } : {}),
     },
   });
   return chunks;

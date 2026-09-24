@@ -32,11 +32,11 @@ export interface SchedulerDeps {
 
 const ABORTED_BEFORE_DISPATCH = "tool call aborted before dispatch";
 
-/** 截断配对通用文案（docs/TRUNCATED-TOOL-RESCUE.md 层 1）：内核配对收场的协议性说明，
- *  非任何工具的专属语义——插件抢救附注（agentTruncatedTool 的 note）以 "\n" 追加其后。
- *  住本文件而非 step.ts：与配对落账原语（mustAppend/mustAppendSurface）同装截断域。 */
-export const TRUNCATED_TOOL_MESSAGE =
-  "arguments truncated by output token limit — call not executed. The arguments echoed in your tool_use above are NOT shown faithfully (truncated/may render as {}); do not treat them as the full payload you sent. Re-issue the call; for large file writes, split the content into smaller pieces.";
+/** 截断配对内核文案（docs/WORK-ERROR-RECOVERY.md C3）：协议性短事实——判别符式陈述，
+ *  策略（行为指令、重发引导、拆分建议）归文案插件（@x-harness/truncation-messages 的
+ *  替换性 content）。插件缺席时本短事实即合成 result 全文（保底非死代码——「无插件世界」
+ *  测试钉死）。 */
+export const TRUNCATED_TOOL_MESSAGE = "truncated: not executed";
 
 /** 输出截断的 tool_use 参数判定：input 是 tool/call 契约的 arguments 原文串。
  *  "" = 零字符截断；JSON.parse 失败 = 半截；成功（含非 object 的合法 JSON）= 完整
