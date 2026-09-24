@@ -35,7 +35,9 @@ edit(path, edits: [{oldText, newText}, ...])
 
 **与 pi 的关键差异（按 x-harness 既有裁决重写，非照抄）**：
 
-1. **授权/门/CAS 全套**：pi 的 edit 只有 cwd resolve——无 PathGate/无观察门。x-harness 版走 write 同款完整管线：`admitSession`（越根/穿越拒）→ `observed.locked(path)`（同路径互斥——**取代 pi 的 file-mutation-queue 模块级 Map**：x-harness 已有进程内互斥原语，observed.locked 就是干这个的，且键含会话语义）→ **FS_NOT_OBSERVED/FS_STALE_VERSION 门**（编辑前必须本会话读过且未变——与 write 覆盖同门；edit 语义天然是「改刚看过的东西」，门语义比 write 更贴）→ `env.writeFileAtomic`（原子写）→ `observed.record` 写后登记（edit→write 连续操作不被自己的门拒）。
+1. **授权/门/CAS 全套**：pi 的 edit 只有 cwd resolve——无 PathGate/无观察门。x-harness 版走 write 同款完整管线：`admitSession`（越根/穿越拒）→ **锁键归一**：`observed.locked` 的键从词法路径改为 realpath（对抗审查 B1——symlink 别名 `/var/f` 与 `/private/var/f` 现双锁并发，edit 的读-改-写在双锁下**后写丢前写全部改动**，烈度高于 write 覆盖竞态；锁键与 I/O 键解耦——I/O 仍用 admit 返回的词法路径，锁键 realpath 在锁前取一次）→ **FS_NOT_OBSERVED/FS_STALE_VERSION 门**（编辑前必须本会话读过且未变——与 write 覆盖同门；edit 语义天然是「改刚看过的东西」，门语义比 write 更贴）→ `env.writeFileAtomic`（原子写，写前一次 `ctx.signal.aborted` 检查——判别联合 aborted 态，非 pi 的 throw 式）→ `observed.record` 写后登记（edit→write 连续操作不被自己的门拒）。锁键归一在 ObservedRegistry 层落——**write 同步受益**（同病一并修）。
+   - **diff 移锁外（B3）**：`observed.locked` 回调只返回 `{baseText, newText, path}`，diff/patch/回显组装在锁外做——两输入已定字符串无竞态，避免大文件 LCS 拖长互斥持锁（bash 同路径排队面）。
+   - **NOT_FOUND 文案（B2b）**：错误文案补「file changed since read, re-read first」半句——同会话 write→edit 后 oldText 基于旧文时引导 re-read 而非盲重试。
 2. **diff 生成**：引 npm `diff` 依赖（pi 同款 8.x——`diffLines` + `createTwoFilesPatch`）。裁决（用户拍板）：不自写 LCS——边界坑（末行无换行/行内多改动块分割/hunk 合并）三方包已踩平，自写的隐性成本高于一行依赖；pi 同版本号背书。
 3. **错误回显**：pi 用 throw + 全局包装；x-harness 用判别联合 `{content, isError}`（AGENTS.md 风格门）。错误文案带可行动指引（NOT_FOUND 提示精确含空白、DUPLICATE 提示加长上下文、OVERLAP 提示合并——pi 文案风格保留）。
 4. **abort 语义**：pi 的 throwIfAborted 逐 await 检查；x-harness 工具执行面已有 signal 约定（ToolExecContext）——对齐即可，互斥释放走 observed.locked 的 finally（与 write 同构）。
@@ -62,6 +64,8 @@ edit(path, edits: [{oldText, newText}, ...])
 ## 不处理（归属）
 
 - replace_all/正则形态——oldText 唯一性约束下不需要（真需要时模型自己多 edit 或 write）；
+- HFS+/秒级 mtime 文件系统的同秒等长原地写漏检（B2a 记档）——版本三元 {ino,size,mtimeNs} 在纳秒级文件系统（APFS/ext4）闭合，秒级粒度的理论漏口现实面窄；
+- CRLF restore 压倒模型行内 LF 意图（B5 记档）——与契约「CRLF 文件改完还是 CRLF」一致：文件行尾一致性优先，模型在工具 JSON 里表达行尾意图本就不可靠（真要 LF 用 bash）；detectLineEnding 首见启发式移植保留；同会话并行 batch write+edit 同文件的序不定（继承 write 覆盖固有语义）；
 - 多文件原子编辑——跨文件事务是 write/edit 都没有的语义，单独议题；
 - pi 的 EditOperations 注入面（SSH 远程编辑委托）——x-harness 的 ExecEnv 就是那个抽象，已有。
 
