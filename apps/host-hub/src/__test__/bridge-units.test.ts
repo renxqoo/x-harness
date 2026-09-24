@@ -247,3 +247,51 @@ describe("内部驱动轮 settled 合成（delegation notify 等无驱动命令�
     expect(r.frames.some((f) => f.name === "settled")).toBe(false);
   });
 });
+
+describe("观察面原文保真（TRUNCATED-TOOL-RESCUE 层 1 前置——截断流下 inflight.partial 钉子）", () => {
+  async function wired(): Promise<{ ctx: Context } & ReturnType<typeof makeBridge>> {
+    const made = makeBridge();
+    const ctx = createContext();
+    made.bridge.wire(ctx);
+    return { ctx, ...made };
+  }
+  test("截断流：tool-call-delta 的半截原文 argumentsDelta 逐字进 partial 快照（不被规范化/修补回退）", async () => {
+    const w = await wired();
+    const raw = '{"path":"big.ts","content":"写了一半的内容——引号未闭';
+    const stream = await w.ctx.dispatch(
+      llmStream,
+      { model: "m", session: MAIN, tools: [], messages: [], signal: new AbortController().signal } as LlmRequest,
+      async () =>
+        chunksOf([
+          { type: "tool-call-delta", index: 0, callId: "c1", name: "write", argumentsDelta: raw },
+          { type: "usage", usage: { input: 1, output: 2 } },
+          { type: "finish", finish: { kind: "max-tokens" } },
+        ]),
+    );
+    for await (const _ of stream) void _; // 拉穿流（tap 在迭代中喂 partial + 发帧）
+    const snap = w.readPartial() as { content?: Array<{ type: string; text?: string }> };
+    expect(snap).not.toBeNull();
+    const toolBlock = snap.content?.find((b) => b.type === "tool_use_partial");
+    expect(toolBlock?.text).toBe(raw); // 半截原文逐字——观察面看到的即模型真实交付（修补版回退在此断言下会红）
+    // llm/chunk 帧同步透传原文（下游消费者与预览同源）
+    const toolFrame = w.frames.filter((f) => f.name === "llm/chunk").map((f) => (f.payload as { chunk?: { argumentsDelta?: string } }).chunk?.argumentsDelta).filter(Boolean);
+    expect(toolFrame).toEqual([raw]);
+  });
+
+  test("正常流：完整 arguments 照旧（回归钉死——观察面不因截断改造变化）", async () => {
+    const w = await wired();
+    const stream = await w.ctx.dispatch(
+      llmStream,
+      { model: "m", session: MAIN, tools: [], messages: [], signal: new AbortController().signal } as LlmRequest,
+      async () =>
+        chunksOf([
+          { type: "tool-call-delta", index: 0, callId: "c1", name: "bash", argumentsDelta: '{"command":"ls"}' },
+          { type: "finish", finish: { kind: "stop" } },
+        ]),
+    );
+    for await (const _ of stream) void _;
+    const snap = w.readPartial() as { content?: Array<{ type: string; text?: string }> };
+    const toolBlock = snap.content?.find((b) => b.type === "tool_use_partial");
+    expect(toolBlock?.text).toBe('{"command":"ls"}');
+  });
+});
