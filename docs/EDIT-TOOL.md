@@ -36,10 +36,7 @@ edit(path, edits: [{oldText, newText}, ...])
 **与 pi 的关键差异（按 x-harness 既有裁决重写，非照抄）**：
 
 1. **授权/门/CAS 全套**：pi 的 edit 只有 cwd resolve——无 PathGate/无观察门。x-harness 版走 write 同款完整管线：`admitSession`（越根/穿越拒）→ `observed.locked(path)`（同路径互斥——**取代 pi 的 file-mutation-queue 模块级 Map**：x-harness 已有进程内互斥原语，observed.locked 就是干这个的，且键含会话语义）→ **FS_NOT_OBSERVED/FS_STALE_VERSION 门**（编辑前必须本会话读过且未变——与 write 覆盖同门；edit 语义天然是「改刚看过的东西」，门语义比 write 更贴）→ `env.writeFileAtomic`（原子写）→ `observed.record` 写后登记（edit→write 连续操作不被自己的门拒）。
-2. **diff 生成**：回显统一 diff 需要文本 diff 库。x-harness 零 diff 依赖——两个选项：
-   - **A（采纳）**：自写轻量 line-diff（LCS，300 行内，专注行级 + 上下文 4 行——pi 的 generateDiffString 形态）住 tool-edit 包内；
-   - B：引 npm `diff` 依赖（pi 同款）。
-   选 A 的理由：一个工具包拖一个通用 diff 依赖不成比例；行级 LCS 是封闭问题、测试口径清晰；未来第二消费方（如 PR 预览面）出现再抽到共享包——「通用化等第二个消费者」是仓库既有裁决口径。
+2. **diff 生成**：引 npm `diff` 依赖（pi 同款 8.x——`diffLines` + `createTwoFilesPatch`）。裁决（用户拍板）：不自写 LCS——边界坑（末行无换行/行内多改动块分割/hunk 合并）三方包已踩平，自写的隐性成本高于一行依赖；pi 同版本号背书。
 3. **错误回显**：pi 用 throw + 全局包装；x-harness 用判别联合 `{content, isError}`（AGENTS.md 风格门）。错误文案带可行动指引（NOT_FOUND 提示精确含空白、DUPLICATE 提示加长上下文、OVERLAP 提示合并——pi 文案风格保留）。
 4. **abort 语义**：pi 的 throwIfAborted 逐 await 检查；x-harness 工具执行面已有 signal 约定（ToolExecContext）——对齐即可，互斥释放走 observed.locked 的 finally（与 write 同构）。
 5. **inputSchema 用 TypeBox**（pi 也是 typebox——直接同构）；pi 的 prepareArguments 模型容错（edits 串/单对象/legacy oldText+newText 顶层字段）**不移植**——那是 pi 对接杂牌模型的兜底，x-harness 的模型面经 TypeBox 校验（违规回显自纠是既有路径，不为单模型开旁门）。
