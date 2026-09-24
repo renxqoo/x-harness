@@ -67,6 +67,22 @@ describe("TypeBox 校验封装（docs/TOOLS.md §1.4）", () => {
     expect(() => probeSchema(numberGarbage)).toThrow("not-object");
   });
 
+
+  it("formatArgsEcho：超长回显截断（批 1a）——头 2000 + 尾标 N=总字符数；≤2000 原样", () => {
+    const long = { data: "x".repeat(5_000) };
+    const full = JSON.stringify(long) as string;
+    expect(formatArgsEcho(long)).toBe(`${full.slice(0, 2_000)}…[${String(full.length)} chars truncated]`);
+    const exact = { data: "y".repeat(2_000 - '{"data":""}'.length) }; // stringify 恰 2000——边界原样
+    expect((JSON.stringify(exact) as string).length).toBe(2_000);
+    expect(formatArgsEcho(exact)).toBe(JSON.stringify(exact));
+    const justOver = { data: "z".repeat(2_000 - '{"data":""}'.length + 1) }; // 2001——截断
+    const over = JSON.stringify(justOver) as string;
+    expect(formatArgsEcho(justOver)).toBe(`${over.slice(0, 2_000)}…[2001 chars truncated]`);
+    // Symbol/BigInt 短路不破（截断不碰 String(args) 路径）
+    expect(formatArgsEcho(Symbol("s"))).toBe("Symbol(s)");
+    expect(formatArgsEcho(10n)).toBe("10");
+  });
+
   it("formatArgsEcho：Symbol/BigInt 根值回显不误报 undefined（F7 回归）", () => {
     expect(formatArgsEcho(Symbol("s"))).toBe("Symbol(s)");
     expect(formatArgsEcho(10n)).toBe("10");

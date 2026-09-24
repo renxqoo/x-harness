@@ -132,8 +132,8 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test" });
     const chunks = await collect(adapter.stream(request({})));
     expect(chunks).toEqual([
-      { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' }, // 单帧全量出口
       { type: "usage", usage: { input: 5, output: 9, totalTokens: 14 } },
+      { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' }, // 单帧全量出口（终态前 flush——payload 字节不变）
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });

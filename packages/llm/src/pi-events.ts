@@ -2,7 +2,10 @@
 // 终态恰一次（done/error 后停发）；abort 豁免（reason aborted / signal 已断 → throw AbortError，
 // 对齐 runtime isAbortLike）；error 事件先发 usage（error.usage 折算——失败尝试计费）再发 error finish；
 // P10 初值（anthropic 方言，emitStartInitials）：text/thinking_start 时 partial 非空初值补发 delta；
-// toolcall 无身份（openai 方言首块缺 id）缓冲至 toolcall_end 补发；text/thinking_end 终态校正补发缺失尾段。
+// toolcall 无身份（openai 方言首块缺 id）缓冲至 toolcall_end 补发；text/thinking_end 终态校正补发缺失尾段；
+// toolcall 原文出口（docs/TRUNCATED-TOOL-RESCUE.md 层 1 前置）：delta 原文按块缓冲、end 帧暂存，
+// 全终态（done/error/throw/break）flush——缓冲原文 parse 失败的块发原文（未经 pi 修补），
+// 成功的照旧 stringify；正常流帧形状逐字节不变。
 
 import { isContextOverflow, type AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { LlmChunk, TokenUsage } from "./types.ts";
@@ -91,22 +94,80 @@ function missingTail(content: string, emitted: string): string {
   return "";
 }
 
-/** toolcall 出口适配：pi 的 toolcall_end 携带完整调用（id/name/arguments）——end 时发
- *  一帧完整 chunk（argumentsDelta = 全量 JSON 文本）；start/delta 分片不透传（x-harness
- *  无工具分片消费者——流帧只广播 text/thinking，累积器只关心最终 input）。
- *  arguments 非对象/缺席落 {}（与 pi-context parseToolInput 同口径——空参数执行防线）。 */
-function toolCallChunks(event: Extract<AssistantMessageEvent, { type: "toolcall_end" }>): LlmChunk[] {
+/** toolcall 出口状态（piChunks generator 局部——每次调用新实例，防跨 attempt 泄漏）：
+ *  rawArgs 按 contentIndex 拼接 delta 原文（anthropic 即 partial_json 分片，未经修补）；
+ *  identity 记 toolcall_start 时 partial.content[contentIndex] 的累积块 id/name（anthropic
+ *  error 路径无 toolcall_end 时的合成身份来源）；pending 暂存 toolcall_end 帧——终态裁决后
+ *  放行（docs/TRUNCATED-TOOL-RESCUE.md 层 1 前置）。 */
+interface ToolCallState {
+  readonly rawArgs: Map<number, string>;
+  readonly identity: Map<number, { callId: string; name: string }>;
+  readonly pending: Map<number, { callId: string; name: string; args: unknown }>;
+  /** 已放行/已合成的块（contentIndex 集）——flush 与合成互斥幂等，终态双路径不重发 */
+  readonly emitted: Set<number>;
+  appendRaw(index: number, delta: string): void;
+  noteIdentity(event: Extract<AssistantMessageEvent, { type: "toolcall_start" }>): void;
+  holdEnd(event: Extract<AssistantMessageEvent, { type: "toolcall_end" }>): void;
+}
+
+/** toolcall_start 的块身份：partial.content[index] 累积 toolCall 块的 id/name
+ *  （content_block_start 已定；缺席方言如 openai 返回 undefined——身份由 end 兜底） */
+function identityAt(partial: { content?: unknown } | undefined, index: number): { callId: string; name: string } | undefined {
+  const block = blockAt(partial, index);
+  if (block === undefined || block["type"] !== "toolCall") return undefined;
+  const callId = block["id"];
+  const name = block["name"];
+  return typeof callId === "string" && typeof name === "string" ? { callId, name } : undefined;
+}
+
+/** toolcall 出口适配：pi 的 toolcall_end 携带完整调用（id/name/arguments）——end 帧
+ *  暂存不立即发，终态裁决放行（见 pendingChunkAt）。arguments 非对象/缺席落 {}
+ *  （与 pi-context parseToolInput 同口径——空参数执行防线）。 */
+function holdEndChunks(event: Extract<AssistantMessageEvent, { type: "toolcall_end" }>): { callId: string; name: string; args: unknown } {
   const args = event.toolCall.arguments;
-  const normalized = typeof args === "object" && args !== null && !Array.isArray(args) ? args : {};
-  return [
-    {
-      type: "tool-call-delta",
-      index: event.contentIndex,
-      callId: event.toolCall.id,
-      name: event.toolCall.name,
-      argumentsDelta: JSON.stringify(normalized),
-    },
-  ];
+  return { callId: event.toolCall.id, name: event.toolCall.name, args: typeof args === "object" && args !== null && !Array.isArray(args) ? args : {} };
+}
+
+/** 完整性裁决（docs/TRUNCATED-TOOL-RESCUE.md 裁决④）：缓冲原文 JSON.parse 成败——
+ *  失败 = 半截，发原文本身（未经修补、未经 re-stringify，下游判定与提取才有真转义态）；
+ *  成功 = 完整，发 stringify（有 end 修补对象用之——与旧出口逐字节同形；合成帧无修补
+ *  对象时以原文 parse 产物归一，出口仍为合法全量 JSON）。 */
+function argumentsDeltaFor(raw: string | undefined, normalized: unknown): string {
+  if (raw === undefined || raw === "") return JSON.stringify(normalized);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw; // 半截：发原文本身（未修补未 re-stringify）
+  }
+  return JSON.stringify(normalized !== undefined ? normalized : parsed); // 完整：出口仍全量 JSON
+}
+
+/** 暂存帧放行（contentIndex 升序）：全终态 flush 义务的公共出口——done{stop/toolUse} 与
+ *  flush 原文判定版共用；已 flush 幂等（flushed 标志在 ToolCallState 之外由 piChunks 持有）。 */
+function pendingChunkAt(index: number, held: { callId: string; name: string; args: unknown }, raw: string | undefined): LlmChunk {
+  return {
+    type: "tool-call-delta",
+    index,
+    callId: held.callId,
+    name: held.name,
+    argumentsDelta: argumentsDeltaFor(raw, held.args),
+  };
+}
+
+/** anthropic error 路径合成（该方言截断块无 toolcall_end——content_block_stop 未到，
+ *  pi 侧 catch 已 delete block.partialJson，暂存机制空承诺）：有身份 + 有原文 + 无 end
+ *  的块直接从缓冲原文合成帧（完整性同判据），不依赖 toolcall_end。 */
+function synthesizeMissingChunks(state: ToolCallState): LlmChunk[] {
+  const chunks: LlmChunk[] = [];
+  for (const [index, raw] of [...state.rawArgs.entries()].sort(([a], [b]) => a - b)) {
+    if (state.emitted.has(index) || state.pending.has(index) || raw === "") continue;
+    const identity = state.identity.get(index);
+    if (identity === undefined) continue;
+    state.emitted.add(index);
+    chunks.push({ type: "tool-call-delta", index, callId: identity.callId, name: identity.name, argumentsDelta: argumentsDeltaFor(raw, undefined) });
+  }
+  return chunks;
 }
 
 interface BlockState {
@@ -216,6 +277,22 @@ function doneFinish(message: { usage?: { output?: number }; rawStopReason?: stri
 export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, options: PiChunkOptions): AsyncGenerator<LlmChunk> {
   const emittedText = new Map<number, string>(); // contentIndex → 已发 delta 拼接（终态校正用）
   let sawContent = false; // text/toolcall 已发（thinking 不计——与 loop 侧 StreamAccumulator.hasContent 同口径；error 救回的内容前置判定用）
+  const toolState: ToolCallState = {
+    rawArgs: new Map(),
+    identity: new Map(),
+    pending: new Map(),
+    emitted: new Set<number>(),
+    appendRaw: (index, delta) => {
+      toolState.rawArgs.set(index, (toolState.rawArgs.get(index) ?? "") + delta);
+    },
+    noteIdentity: (event) => {
+      const identity = identityAt(event.partial, event.contentIndex);
+      if (identity !== undefined) toolState.identity.set(event.contentIndex, identity);
+    },
+    holdEnd: (event) => {
+      toolState.pending.set(event.contentIndex, holdEndChunks(event));
+    },
+  };
   const state: BlockState = {
     emittedText,
     emitStartInitials: options.emitStartInitials === true,
@@ -223,6 +300,17 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
       emittedText.set(index, (emittedText.get(index) ?? "") + delta);
     },
   };
+  /** 暂存帧放行（恰一次——flushed 标志幂等）：全终态 flush 义务的公共出口，
+   *  完整性判定不依赖 done reason（对缓冲原文 JSON.parse 即判）。 */
+  let flushed = false;
+  function* flushPending(): Generator<LlmChunk> {
+    if (flushed) return;
+    flushed = true;
+    for (const [index, held] of [...toolState.pending.entries()].sort(([a], [b]) => a - b)) {
+      toolState.emitted.add(index);
+      yield pendingChunkAt(index, held, toolState.rawArgs.get(index));
+    }
+  }
   const iterator = events[Symbol.asyncIterator]();
   try {
     for (;;) {
@@ -231,29 +319,50 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
       const event = next.value;
       if (event.type === "done") {
         yield* foldUsage(event.message.usage);
+        yield* flushPending();
         yield doneFinish(event.message, event.reason);
         return;
       }
       if (event.type === "error") {
+        // error 终态前放行暂存帧 + 合成 anthropic 无 end 块（openai 方言 end 已入暂存；
+        //  anthropic 截断块靠 identity+rawArgs 合成）——判定不依赖 reason（同判据）。
+        //  放行/合成帧先于 errorChunks 结算 sawContent（合成块即流内已交付内容——救回前置成立）
+        yield* flushPending();
+        const synthesized = synthesizeMissingChunks(toolState);
+        sawContent = sawContent || synthesized.length > 0;
+        yield* synthesized;
         yield* errorChunks(event, options, sawContent);
         return;
       }
       if (event.type === "toolcall_end") {
-        const toolChunks = toolCallChunks(event);
-        sawContent = sawContent || toolChunks.length > 0;
-        yield* toolChunks;
+        toolState.holdEnd(event); // 暂存不立即发——终态裁决（截断流发原文，正常流逐字节不变）
+        sawContent = true;
         continue;
       }
-      if (event.type === "toolcall_start" || event.type === "toolcall_delta") {
-        continue; // 分片不透传——end 单帧出口（见 toolCallChunks）
+      if (event.type === "toolcall_start") {
+        toolState.noteIdentity(event);
+        continue; // 分片不透传——end 单帧出口（见 pendingChunkAt）
+      }
+      if (event.type === "toolcall_delta") {
+        toolState.appendRaw(event.contentIndex, event.delta);
+        continue;
       }
       const chunks = blockChunks(event, state);
       sawContent = sawContent || chunks.some((chunk) => chunk.type === "text-delta");
       yield* chunks;
     }
+  } catch (error) {
+    // 上游异常 unwinding 时 finally 的 yield 不可达（异常路径 generator finally 不恢复执行）——
+    // 此处 flush 后 rethrow，与 break/return 路径（finally flush）共同闭合全终态 flush 义务
+    yield* flushPending();
+    yield* synthesizeMissingChunks(toolState);
+    throw error;
   } finally {
-    // 提前 break/throw 时尽力终止上游迭代器（fire-and-forget——pi 的 EventStream 挂在内部
-    // await 时 await return() 会 pending 到下一事件；流止损靠 abort signal，见 LLM-PI.md 契约）
+    // 提前 break/return（消费者 break、看门狗 return()、abort）：flush 暂存帧（幂等）+
+    // 尽力终止上游迭代器（fire-and-forget——pi 的 EventStream 挂在内部 await 时
+    // await return() 会 pending 到下一事件；流止损靠 abort signal，见 LLM-PI.md 契约）
+    yield* flushPending();
+    yield* synthesizeMissingChunks(toolState);
     void iterator.return?.(undefined as never).catch(() => {});
   }
   // 事件流自然耗尽无终态（防御层：pi 词表保证 done/error 收尾，此处兜底违约流）
