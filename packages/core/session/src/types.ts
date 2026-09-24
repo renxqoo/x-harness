@@ -72,7 +72,9 @@ export interface SessionEventData {
     readonly usage?: unknown;
   };
   readonly "tool/call": { readonly turn: number; readonly step: number; readonly callId: string; readonly name: string; readonly arguments: string };
-  readonly "tool/result": { readonly turn: number; readonly step: number; readonly callId: string; readonly content: string; readonly isError?: true };
+  /** synthetic: true = harness 合成结果（截断配对/未启动合成等——docs/TRUNCATED-TOOL-RESCUE.md
+   *  裁决⑧）；缺席 = 真实执行结果。机器可辨标记，不靠 content 前缀反推。 */
+  readonly "tool/result": { readonly turn: number; readonly step: number; readonly callId: string; readonly content: string; readonly isError?: true; readonly synthetic?: true };
   readonly "request/header": {
     readonly model: string;
     readonly provider?: string;

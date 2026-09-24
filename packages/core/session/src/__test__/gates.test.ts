@@ -182,6 +182,13 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("turn/end", { turn: 0, reason: { kind: "blocked", reason: 5 } })).toBe("shape:turn/end");
   });
 
+  it("tool/result synthetic 可选（TRUNCATED-TOOL-RESCUE 裁决⑧——在场必须 true；缺席 = 真实执行结果）", () => {
+    expect(gateEvent("tool/result", { turn: 0, step: 0, callId: "c1", content: "x", synthetic: true })).toBeUndefined();
+    expect(gateEvent("tool/result", { turn: 0, step: 0, callId: "c1", content: "x" })).toBeUndefined();
+    expect(gateEvent("tool/result", { turn: 0, step: 0, callId: "c1", content: "x", synthetic: false })).toBe("shape:tool/result");
+    expect(gateEvent("tool/result", { turn: 0, step: 0, callId: "c1", content: "x", synthetic: "true" })).toBe("shape:tool/result");
+  });
+
   it("assistant thinking/attempt content 可选（STREAM-PARTIAL-PERSISTENCE——截断已收内容落盘）", () => {
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinking: "thought" })).toBeUndefined();
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [] })).toBeUndefined();

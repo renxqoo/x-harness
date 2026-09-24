@@ -13,5 +13,8 @@
     "@x-harness/session": "workspace:*",
     "@x-harness/system-prompt": "workspace:*",
     "@x-harness/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@sinclair/typebox": "^0.34.0"
   }
 }

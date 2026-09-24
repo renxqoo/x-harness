@@ -3,6 +3,8 @@
 // 四连截断放弃旅程（缺省 max=3）。不引用他包 __test__ 私有文件，装置自建。
 
 import { describe, expect, it } from "vitest";
+import { Type } from "@sinclair/typebox";
+import { toolRegistry } from "@x-harness/tools";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { agentTurnConclude } from "@x-harness/agent-loop";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -70,6 +72,41 @@ async function spawn(fixture: Fixture): Promise<{ agent: Agent; handle: AgentHan
   if (!made.ok) throw new Error(made.reason);
   return { agent: made.value.agent, handle: made.value };
 }
+
+describe("截断 tool_use 接续（TRUNCATED-TOOL-RESCUE 层 1：全截断 → 收束窗口可达 → 续写接手）", () => {
+  it("半截 write + max-tokens → 配对合成结果（不执行）、resume、指令落卷、续写请求末条为指令", async () => {
+    const fixture = await makeFixture();
+    fixture.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "tool-call-delta", index: 0, callId: "t1", name: "write", argumentsDelta: '{"path":"a.txt","content":"写一半' };
+        yield { type: "finish", finish: { kind: "max-tokens" } };
+      })(),
+      textScript("done", "stop"),
+    );
+    const made = await fixture.loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) throw new Error(made.reason);
+    const agent = made.value.agent;
+    let executed = 0;
+    fixture.ctx.use(toolRegistry).register({ name: "write", inputSchema: Type.Object({}), execute: async () => { executed += 1; return { content: "should not run" }; } });
+    agent.followup("q");
+    await agent.whenIdle();
+
+    const events = agent.session.events();
+    const result = events.find((e) => e.type === "tool/result")?.data as Record<string, unknown>;
+    expect(result).toMatchObject({ callId: "t1", isError: true, synthetic: true });
+    expect(String(result?.["content"])).toContain("arguments truncated by output token limit");
+    expect(executed).toBe(0); // 半截调用不执行
+    // 续写接手：第二次模型调用发生、指令以 agent/message{directive} 落卷、恰一条
+    expect(fixture.calls).toHaveLength(2);
+    const directives = events.filter((e) => e.type === "agent/message");
+    expect(directives).toHaveLength(1);
+    // 投影末条为指令（续写请求协议合法：指令在 tool 配对结果之后）
+    const last = fixture.calls[1]?.messages.at(-1);
+    expect(JSON.stringify(last)).toContain(OUTPUT_CONTINUATION_INSTRUCTION);
+    await made.value.dispose();
+  });
+});
 
 describe("agent-continuation 插件全链（真装配，缺省 max=3）", () => {
   it("两段截断→stop：resume ×2 后续写完成——指令恰进续写请求末条、turn completed、agent/message 恰 2 条", async () => {

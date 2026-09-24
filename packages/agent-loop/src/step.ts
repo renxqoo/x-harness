@@ -10,7 +10,7 @@ import type { SystemPromptService } from "@x-harness/system-prompt";
 import type { ToolRegistry } from "@x-harness/tools";
 import { claimStepBatch, claimTurnBatch, foldInbox, insertData } from "./inbox.ts";
 import type { InboxState } from "./inbox.ts";
-import { executeToolCalls } from "./tool-calls.ts";
+import { executeToolCalls, isTruncatedArguments, mustAppendPair, TRUNCATED_TOOL_MESSAGE } from "./tool-calls.ts";
 import type { ToolCallOutcomeCollected, ToolCallSpec } from "./tool-calls.ts";
 import { foldDial, headerChanged, lastRequestContext, toToolRefs } from "./request.ts";
 import type { Dial } from "./tokens.ts";
@@ -33,6 +33,9 @@ export interface DriverDeps {
   /** 收束窗口派发（agentTurnConclude——docs/OUTPUT-TOKEN-CONTINUATION.md：无工具 settle
    *  即将结束 turn 的通用时点；final = undefined 即现行收束路径） */
   readonly dispatchTurnConclude: (payload: unknown) => Promise<unknown>;
+  /** 抢救窗口派发（agentTruncatedTool——截断 tool_use 配对前的通用时点；
+   *  final = undefined（无插件应答即无附注）） */
+  readonly dispatchTruncatedTool: (payload: unknown) => Promise<unknown>;
   /** F0② assistant 落账前纠（final = 原样透传） */
   readonly dispatchAssistantSettle: (payload: unknown) => Promise<unknown>;
   /** F0③ 流拦截（final = runtime.stream 原样） */
@@ -306,14 +309,57 @@ export async function dialStep(scope: TurnScope, step: number): Promise<DialStep
   return { kind: "dial", dial, schemas };
 }
 
-/** 工具调度：contexts 回灌 next-step；abort 感知 */
+/** 抢救附注形状门（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5 裁决⑥）：应答是 object 且 note
+ *  为非空 string 才采用；其余（undefined/垃圾）忽略附注走 base 文案——抢救是增益非契约，
+ *  fail-loud 会把插件 bug 放大成收轮事故。 */
+function rescueNoteOf(decision: unknown): string | undefined {
+  if (typeof decision !== "object" || decision === null) return undefined;
+  const note = (decision as { note?: unknown }).note;
+  return typeof note === "string" && note !== "" ? note : undefined;
+}
+
+/** 截断调用配对收场（docs/TRUNCATED-TOOL-RESCUE.md 层 1）：先经抢救窗口（abort 竞态下
+ *  signal 已断跳过派发、note 丢弃——aborted 全序格盖过抢救增益），再双通道配对落账
+ *  （tool/call 非 surface + tool/result 必须 surface——否则投影缺 tool 消息、配对失效）。
+ *  不 dispatch——半截参数不可执行（模式 2a 静默损坏的截断点）。 */
+async function pairTruncatedCalls(
+  scope: TurnScope,
+  at: { readonly turn: number; readonly step: number },
+  calls: readonly ToolCallSpec[],
+): Promise<void> {
+  const { deps, controller } = scope;
+  const session = deps.session;
+  for (const call of calls) {
+    const decision = controller.signal.aborted
+      ? undefined
+      : await deps.dispatchTruncatedTool({ session: session.id, turn: at.turn, step: at.step, callId: call.callId, name: call.name, arguments: call.arguments, signal: controller.signal });
+    const note = rescueNoteOf(decision);
+    mustAppendPair(session, at, {
+      callId: call.callId,
+      name: call.name,
+      arguments: call.arguments,
+      content: note === undefined ? TRUNCATED_TOOL_MESSAGE : `${TRUNCATED_TOOL_MESSAGE}\n${note}`,
+    });
+  }
+}
+
+/** 工具调度：contexts 回灌 next-step；abort 感知；max-tokens 截断分区（截断集配对不执行、
+ *  执行集照常；执行集空且截断集非空 → none——收束窗口可达，续写接手） */
 export async function scheduleTools(scope: TurnScope, step: number, assistant: AssistantSettled): Promise<ToolFlow> {
   const { deps, controller, turn } = scope;
   const session = deps.session;
-  const specs: ToolCallSpec[] = assistant.content
+  let specs: ToolCallSpec[] = assistant.content
     .filter((block): block is Extract<ContentBlock, { type: "tool_use" }> => block.type === "tool_use")
     .map((block) => ({ callId: block.callId, name: block.name, arguments: block.input }));
   if (specs.length === 0) return { kind: "none" };
+  if (assistant.stopReason === "max-tokens") {
+    const truncated: ToolCallSpec[] = [];
+    const runnable: ToolCallSpec[] = [];
+    for (const spec of specs) (isTruncatedArguments(spec.arguments) ? truncated : runnable).push(spec);
+    await pairTruncatedCalls(scope, { turn, step }, truncated);
+    if (runnable.length === 0) return { kind: "none" }; // 全截断：收束窗口可达（续写指令引导重发）
+    specs = runnable; // 混合 case：截断的已配对，完整照常执行（粘性收轮语义不变）
+  }
   const collected = await executeToolCalls(
     {
       session,

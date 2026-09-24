@@ -9,7 +9,7 @@ import { Type } from "@sinclair/typebox";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolRegistry } from "@x-harness/tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { executeToolCalls } from "../tool-calls.ts";
+import { executeToolCalls, isTruncatedArguments, TRUNCATED_TOOL_MESSAGE } from "../tool-calls.ts";
 import type { ToolCallSpec } from "../tool-calls.ts";
 
 interface Harness {
@@ -67,6 +67,36 @@ function scheduler(h: Harness, over: Partial<Parameters<typeof executeToolCalls>
 }
 
 const spec = (callId: string, args: string): ToolCallSpec => ({ callId, name: "t", arguments: args });
+
+describe("isTruncatedArguments（docs/TRUNCATED-TOOL-RESCUE.md 裁决④）", () => {
+  it("零字符截断：空串 → true", () => {
+    expect(isTruncatedArguments("")).toBe(true);
+  });
+
+  it("半截：JSON.parse 失败的原文 → true（层 1 前置：llm 层发缓冲原文未经修补）", () => {
+    expect(isTruncatedArguments('{"path":"a.txt","content":"写一半')).toBe(true);
+    expect(isTruncatedArguments('{"path":')).toBe(true);
+    expect(isTruncatedArguments("{")).toBe(true);
+  });
+
+  it("完整：合法 JSON object → false", () => {
+    expect(isTruncatedArguments('{"path":"a.txt","content":"全文"}')).toBe(false);
+    expect(isTruncatedArguments("{}")).toBe(false);
+  });
+
+  it("非 object 合法 JSON：归模型 bug 路径非截断 → false（TypeBox 违规回显自纠）", () => {
+    expect(isTruncatedArguments("5")).toBe(false);
+    expect(isTruncatedArguments('"text"')).toBe(false);
+    expect(isTruncatedArguments("null")).toBe(false);
+    expect(isTruncatedArguments("[1,2]")).toBe(false);
+  });
+
+  it("文案契约：TRUNCATED_TOOL_MESSAGE 承担投影降级 {} 断层的解释义务（裁决⑦）——不重发/拆分引导逐字钉死", () => {
+    expect(TRUNCATED_TOOL_MESSAGE).toBe(
+      "arguments truncated by output token limit — call not executed. The arguments echoed in your tool_use above are NOT shown faithfully (truncated/may render as {}); do not treat them as the full payload you sent. Re-issue the call; for large file writes, split the content into smaller pieces.",
+    );
+  });
+});
 
 describe("executeToolCalls（docs/AGENT-LOOP-DRIVER §1.5）", () => {
   it("排他屏障：无 isConcurrencySafe 的工具串行执行（前一个完成后下一个才 dispatch）", async () => {

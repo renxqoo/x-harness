@@ -6,7 +6,7 @@
 import { Type } from "@sinclair/typebox";
 import { describe, expect, it, beforeEach } from "vitest";
 import type { LlmChunk } from "@x-harness/llm";
-import { agentPreStep, agentRequestError, agentTurnConclude } from "../index.ts";
+import { agentPreStep, agentRequestError, agentTruncatedTool, agentTurnConclude, TRUNCATED_TOOL_MESSAGE } from "../index.ts";
 import type { TurnConcludeDecision } from "../index.ts";
 import type { Agent } from "../index.ts";
 import { errorScript, makeWorld, resetWorlds, spawn, textScript, toolScript, types, worlds } from "./world.ts";
@@ -326,6 +326,187 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     expect(inserts).toHaveLength(1); // 仅 followup 的 insert——续写步 reject 无回灌噪音
     off();
     offPre();
+    await handle.dispose();
+  });
+});
+
+
+describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", () => {
+  /** 半截 tool call 脚本：arguments 是真半截 JSON 原文（层 1 前置出口）+ max-tokens 终态 */
+  function truncatedToolScript(callId: string, name: string, args: string): AsyncGenerator<LlmChunk> {
+    return (async function* (): AsyncGenerator<LlmChunk> {
+      yield { type: "tool-call-delta", index: 0, callId, name, argumentsDelta: args };
+      yield { type: "finish", finish: { kind: "max-tokens" } };
+    })();
+  }
+
+  it("全截断 → {kind:none}：配对落账（tool/call 非 surface、tool/result surface+isError+synthetic+文案含 note）、不 dispatch、收束窗口派发、续写指令落卷", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    world.tools.register({ name: "write", inputSchema: Type.Object({}), execute: async () => ({ content: "should not run" }) });
+    const { calls: concludeCalls, off } = registerConclude(world, (p) => (p.stopReason === "max-tokens" ? resumeOf() : undefined));
+    const rescueCalls: Array<Record<string, unknown>> = [];
+    const offRescue = world.ctx.on(agentTruncatedTool, async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
+      const downstream = await next(payload);
+      rescueCalls.push(payload as Record<string, unknown>);
+      return downstream === undefined ? { note: "Recovered 12 chars of the truncated write." } : downstream;
+    });
+    world.fake.scripts.push(truncatedToolScript("c1", "write", '{"path":"a.txt","content":"写一半'));
+    world.fake.scripts.push(textScript("done"));
+    const { agent, handle } = await spawn(world);
+    agent.followup("q");
+    await agent.whenIdle();
+
+    // 不 dispatch：write 未执行，回显是截断配对文案
+    const events = agent.session.events();
+    const toolCall = events.find((e) => e.type === "tool/call");
+    expect(toolCall?.data).toMatchObject({ callId: "c1", name: "write", arguments: '{"path":"a.txt","content":"写一半' });
+    const toolResult = events.find((e) => e.type === "tool/result");
+    expect(toolResult?.data).toMatchObject({ callId: "c1", isError: true, synthetic: true });
+    expect(String(toolResult?.data.content)).toContain("arguments truncated by output token limit");
+    expect(String(toolResult?.data.content)).toContain("Recovered 12 chars");
+    // 抢救窗口在配对之前派发（载荷纯事实：半截原文）
+    expect(rescueCalls).toHaveLength(1);
+    expect(rescueCalls[0]).toMatchObject({ callId: "c1", name: "write", arguments: '{"path":"a.txt","content":"写一半' });
+    // 双通道：tool/call 只在 WAL（非 surface）、tool/result 在投影（surface append）——缺 tool/result
+    // 投影则配对失效（模型看不到应答）
+    const surfaceTypes = agent.session.surface().map((node) => node.event.type);
+    expect(surfaceTypes).toContain("tool/result");
+    expect(surfaceTypes).not.toContain("tool/call");
+    // 事件序：半截 assistant → tool/call → tool/result → 指令（配对先于续写指令落卷）
+    const seq = types(agent);
+    const at = (t: string, from: number): number => seq.indexOf(t, from);
+    const assistantAt = seq.indexOf("assistant/message");
+    expect(at("tool/call", assistantAt)).toBeGreaterThan(assistantAt);
+    expect(at("tool/result", assistantAt)).toBeGreaterThan(at("tool/call", assistantAt));
+    expect(at("agent/message", assistantAt)).toBeGreaterThan(at("tool/result", assistantAt));
+    // 收束窗口可达（截断步派发一次；续写成功 stop 步再派发一次）+ 指令落卷 + 第二次模型调用
+    expect(concludeCalls).toHaveLength(2);
+    expect(concludeCalls[0]?.stopReason).toBe("max-tokens");
+    expect(agentMessages(agent, "agent/message")).toHaveLength(1);
+    expect(world.fake.calls).toHaveLength(2);
+    off();
+    offRescue();
+    await handle.dispose();
+  });
+
+  it("混合：完整调用照常执行、截断的配对不执行；flow ran → 粘性收轮（窗口不派发）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    let ran = 0;
+    world.tools.register({ name: "write", inputSchema: Type.Object({}), execute: async () => ({ content: "wrote" }) });
+    const { calls: concludeCalls, off } = registerConclude(world, () => undefined);
+    world.fake.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "tool-call-delta", index: 0, callId: "ok1", name: "write", argumentsDelta: '{"path":"b.txt","content":"全文"}' };
+        yield { type: "tool-call-delta", index: 1, callId: "cut1", name: "write", argumentsDelta: '{"path":"a.txt","content":"写一半' };
+        yield { type: "finish", finish: { kind: "max-tokens" } };
+      })(),
+    );
+    const { agent, handle } = await spawn(world);
+    agent.followup("q");
+    await agent.whenIdle();
+
+    const events = agent.session.events();
+    const results = events.filter((e) => e.type === "tool/result");
+    expect(results).toHaveLength(2);
+    const byId = new Map(results.map((e) => [(e.data as { callId: string }).callId, e.data as Record<string, unknown>]));
+    const okResult = byId.get("ok1") as { content: string; isError?: true; synthetic?: true };
+    expect(okResult).toMatchObject({ content: "wrote" }); // 完整照常执行
+    expect(okResult.isError).toBeUndefined(); // 真实执行结果（非合成）
+    expect(okResult.synthetic).toBeUndefined();
+    expect(byId.get("cut1")).toMatchObject({ isError: true, synthetic: true }); // 截断配对
+    expect(String(byId.get("cut1")?.["content"])).toContain("arguments truncated by output token limit");
+    // 完整调用恰执行一次、截断调用零执行
+    ran = events.filter((e) => e.type === "tool/call").length;
+    expect(ran).toBe(2); // 两条 tool/call 都落账（截断的账面 + 完整的账面）
+    // 粘性收轮：无第二次模型调用、收束窗口不派发
+    expect(world.fake.calls).toHaveLength(1);
+    expect(concludeCalls).toHaveLength(0);
+    expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "max-tokens" } });
+    off();
+    await handle.dispose();
+  });
+
+  it("全完整 max-tokens（回归）：不分区、照常执行、粘性收轮不变", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    world.tools.register({ name: "write", inputSchema: Type.Object({}), execute: async () => ({ content: "wrote" }) });
+    const { calls: concludeCalls, off } = registerConclude(world, () => undefined);
+    world.fake.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "tool-call-delta", index: 0, callId: "c1", name: "write", argumentsDelta: '{"path":"a.txt","content":"全文"}' };
+        yield { type: "finish", finish: { kind: "max-tokens" } };
+      })(),
+    );
+    const { agent, handle } = await spawn(world);
+    agent.followup("q");
+    await agent.whenIdle();
+
+    const result = agent.session.events().find((e) => e.type === "tool/result")?.data as Record<string, unknown>;
+    expect(result).toMatchObject({ callId: "c1", content: "wrote" });
+    expect(result?.["isError"]).toBeUndefined(); // 照常执行非截断配对
+    expect(result?.["synthetic"]).toBeUndefined();
+    expect(world.fake.calls).toHaveLength(1); // 粘性：无续写
+    expect(concludeCalls).toHaveLength(0);
+    expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "max-tokens" } });
+    off();
+    await handle.dispose();
+  });
+
+  it("形状门（裁决⑥）：note 非空串采用；垃圾应答（非 object/空串/无 note）忽略走 base 文案", async () => {
+    for (const garbage of [undefined, null, "x", 5, {}, { note: "" }, { note: 7 }]) {
+      const world = await makeWorld();
+      worlds.push(world);
+      world.tools.register({ name: "write", inputSchema: Type.Object({}), execute: async () => ({ content: "should not run" }) });
+      const { off } = registerConclude(world, () => undefined);
+      const offRescue = world.ctx.on(agentTruncatedTool, async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
+        await next(payload);
+        return garbage as never;
+      });
+      world.fake.scripts.push(
+        (async function* (): AsyncGenerator<LlmChunk> {
+          yield { type: "tool-call-delta", index: 0, callId: "c1", name: "write", argumentsDelta: '{"path":"a.txt","content":"写一半' };
+          yield { type: "finish", finish: { kind: "max-tokens" } };
+        })(),
+      );
+      const { agent, handle } = await spawn(world);
+      agent.followup("q");
+      await agent.whenIdle();
+      const result = agent.session.events().find((e) => e.type === "tool/result")?.data as { content: string };
+      expect(result.content, `garbage=${JSON.stringify(garbage)}`).toBe(TRUNCATED_TOOL_MESSAGE); // 纯 base 文案
+      off();
+      offRescue();
+      await handle.dispose();
+    }
+  });
+
+  it("abort 竞态：signal 已断 → 抢救窗口不派发（note 丢弃）、配对照常落账", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    world.tools.register({ name: "write", inputSchema: Type.Object({}), execute: async () => ({ content: "should not run" }) });
+    const { off } = registerConclude(world, () => undefined);
+    let dispatched = 0;
+    const offRescue = world.ctx.on(agentTruncatedTool, async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
+      dispatched += 1;
+      return next(payload);
+    });
+    const made = await spawn(world);
+    world.fake.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "tool-call-delta", index: 0, callId: "c1", name: "write", argumentsDelta: '{"path":"a.txt","content":"写一半' };
+        made.agent.cancel("test"); // 流中取消：finish 未到，settle 前置 signal 已断
+        yield { type: "finish", finish: { kind: "max-tokens" } };
+      })(),
+    );
+    const { agent, handle } = made;
+    agent.followup("q");
+    await agent.whenIdle();
+    expect(dispatched).toBe(0); // 未派发（aborted 全序格盖过抢救增益）
+    const result = agent.session.events().find((e) => e.type === "tool/result")?.data as { content?: string } | undefined;
+    expect(result?.content).toBeUndefined(); // abort 路径 interrupted 分支收场（配对由 repair 合成）
+    off();
+    offRescue();
     await handle.dispose();
   });
 });

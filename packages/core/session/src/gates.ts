@@ -208,7 +208,8 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isCount(d["step"]) &&
     isStr(d["callId"]) &&
     isStr(d["content"]) &&
-    (d["isError"] === undefined || d["isError"] === true),
+    (d["isError"] === undefined || d["isError"] === true) &&
+    (d["synthetic"] === undefined || d["synthetic"] === true),
   "request/header": (d) =>
     isObj(d) &&
     isStr(d["model"]) &&

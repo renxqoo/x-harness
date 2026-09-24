@@ -119,6 +119,16 @@ export interface TurnConcludePayload {
 
 export const agentTurnConclude = defineWaterfall<TurnConcludePayload, TurnConcludeDecision | undefined>("agent/turn-conclude");
 
+/** 抢救窗口（docs/TRUNCATED-TOOL-RESCUE.md 层 1.5）：截断 tool_use 配对收场前的通用时点
+ *  ——插件在此做副作用（半截产出抢救）并返回附注；内核零工具语义（何时/如何抢救归插件）。
+ *  载荷纯事实（arguments 为 llm 层原文出口的半截 JSON 原文）；应答 { note } 附进合成
+ *  result 文案，undefined = 无抢救价值（只有 base 文案）。形状门在内核（note 非空 string）：
+ *  垃圾忽略附注走 base——抢救是增益非契约，fail-loud 会把插件 bug 放大成收轮事故。 */
+export const agentTruncatedTool = defineWaterfall<
+  { readonly session: SessionId; readonly turn: number; readonly step: number; readonly callId: string; readonly name: string; readonly arguments: string; readonly signal: AbortSignal },
+  { readonly note: string } | undefined
+>("agent/truncated-tool");
+
 /** F0②：assistant 落账前纠（幻觉强形态）——settle 与 append 之间；落的是改写后版本 */
 export interface AssistantSettlement {
   readonly content: readonly ContentBlock[];

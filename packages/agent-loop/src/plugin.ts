@@ -20,7 +20,7 @@ import {
   agentStatus,
   agentToolStream,
   agentTurnConclude,
-  agentTurnStopping, agentAssistantSettle, agentLlmStream} from "./tokens.ts";
+  agentTurnStopping, agentAssistantSettle, agentLlmStream, agentTruncatedTool} from "./tokens.ts";
 import type { Agent, AgentHandle, AgentLoopService, AgentOptions, CreateAgentOptions, ResumeAgentOptions } from "./types.ts";
 
 const DEFAULT_MAX_PARALLEL = 10;
@@ -93,6 +93,8 @@ export const agentLoopPlugin = {
         dispatchTurnStopping: (payload) => agentScope.dispatch(agentTurnStopping, payload as never),
         // 收束窗口（agentTurnConclude）：final = undefined（无插件应答即现行收束路径——真 opt-in）
         dispatchTurnConclude: (payload) => agentScope.dispatch(agentTurnConclude, payload as never, async () => undefined),
+        // 抢救窗口（agentTruncatedTool）：final = undefined（无插件应答即无附注——真 opt-in）
+        dispatchTruncatedTool: (payload) => agentScope.dispatch(agentTruncatedTool, payload as never, async () => undefined),
         // F0② 落账前纠：final = 原样透传（content/stopReason——interrupted 内核独占，终审 2.2）
         dispatchAssistantSettle: (payload) =>
           agentScope.dispatch(agentAssistantSettle, payload as never, async (p) => ({

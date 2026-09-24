@@ -19,8 +19,10 @@ export {
   agentTurnStopping,
   agentAssistantSettle,
   agentLlmStream,
+  agentTruncatedTool,
 } from "./tokens.ts";
 export type { AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestFailure, TurnConcludeDecision, TurnConcludePayload } from "./tokens.ts";
+export { isTruncatedArguments, TRUNCATED_TOOL_MESSAGE } from "./tool-calls.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";
 export { foldInbox } from "./inbox.ts";
 export { chainsNextTurn } from "./driver.ts";
