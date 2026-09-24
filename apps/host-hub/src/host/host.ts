@@ -9,6 +9,7 @@ import { buildAssemblySnapshot, ensureAgentDir, readCatalog, resolveDefaultDial 
 import { cleanupBashOutputs } from "../worker/bash-exec.ts";
 import { createCredentials } from "./credentials.ts";
 import { cleanupTmpResidue } from "./tmp-sweep.ts";
+import { migrateLegacySkills } from "./skills-migrate.ts";
 import { createThreadTable } from "./thread-table.ts";
 import { createWorkerPool } from "./worker-pool.ts";
 import { createSweep } from "./thread-retire.ts";
@@ -37,6 +38,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
   const env = boot.env ?? process.env;
   const limits = readLimits(env);
   await ensureAgentDir(boot.agentDir);
+  await migrateLegacySkills(boot.agentDir, undefined, env); // 一次性搬运旧共享根技能（幂等哨兵；env 关闭缝；先于清扫/装配）
   await cleanupBashOutputs(boot.agentDir); // 启动清扫超 7 天溢写文件
   await cleanupTmpResidue(boot.agentDir); // 启动清扫原子写残留
   let shuttingDown = false;

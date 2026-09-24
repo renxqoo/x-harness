@@ -102,7 +102,7 @@ async function startHost(env: Record<string, string | undefined> = {}): Promise<
     homeDir: home,
     agentDir,
     sessionsRoot,
-    env,
+    env: { HUB_SKILLS_MIGRATION: "0", ...env },
     input: input as unknown as NodeJS.ReadStream,
     exit: () => {},
     emitOverride: (line) => client.push(line),
