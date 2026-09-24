@@ -332,6 +332,7 @@ function defaultWorkerPlugins(resolved: {
     ...durableSessionKit({ root: fields.sessionsRoot }),
     // taskLogDir = 宿主数据目录下 task-logs（会话档案一致性——session-delete 级联同源推导）；
     // permission 面与 fenceKit 同源（规则/保护路径共享——抢救件 write 同源裁决）
+    ...truncationMessagesKit(), // 截断文案外层（先注册）——toolboxKit 抢救件内层先执行写盘，本件合成 content+note（对抗审查终审 P1）
     ...toolboxKit({
       root: cwd,
       taskLogDir: taskLogsRootOf(fields.sessionsRoot),
@@ -370,7 +371,6 @@ function defaultWorkerPlugins(resolved: {
     ...loopKit(),
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
     ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llmKit 后注册防预烧）
-    ...truncationMessagesKit(), // 截断配对替换文案（WER C3——toolboxKit 抢救件后手）
     ...checkpointKit(),
     createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
     createAgentDelegationPlugin({ agentsDirs, resolveProviderOf: providerOfModel(catalog) }),

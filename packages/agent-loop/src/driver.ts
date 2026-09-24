@@ -306,7 +306,14 @@ export function createDriver(deps: DriverDeps): {
         const attempt = await runAttempt({ scope, dial: dialed.dial, schemas: dialed.schemas, step });
         const aftermath = attemptAftermath({ scope, state, turn: turnNumber, step, attempt, cancelled });
         if (aftermath.kind === "break") break;
-        if (aftermath.kind === "continue") continue; // respond 已落卷：无 settle 可收束，直接进下一迭代（不过 concludeStep）
+        if (aftermath.kind === "continue") {
+          // respond 已落卷：无 settle 可收束，直接进下一迭代（不过 concludeStep）。
+          // step/end 必须闭合（repair 配对不变量——悬空 step/start 违反 WAL 步配对）；
+          // 不携终态（turnEnds 保持 undefined——respond 非失败终态，等待下一迭代自然收）
+          appendEvent(session, "step/end", { turn: turnNumber, step });
+          state.openStep = -1;
+          continue;
+        }
         const flow = await concludeStep({ scope, turn: turnNumber, step, state, assistant: aftermath.message, cancelled });
         if (flow.kind === "resume") {
           continuationStep = true;

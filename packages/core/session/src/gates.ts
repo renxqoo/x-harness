@@ -73,7 +73,7 @@ function isToolRefs(value: unknown): boolean {
 }
 
 function isInboxTarget(value: unknown): boolean {
-  return INBOX_TARGET_VALUES.includes(value as string);
+  return (INBOX_TARGET_VALUES as readonly string[]).includes(value as string);
 }
 
 /** id 字符串数组（claim.claimed / drop.dropped 共用形状）。 */
@@ -135,7 +135,7 @@ function isTextOnlyBlocks(value: unknown): boolean {
 }
 
 /** todo/snapshot 词条门常量：status 闭合词表 + 可选串字段名 */
-const TODO_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set(TODO_SNAPSHOT_STATUS_VALUES);
+const TODO_SNAPSHOT_STATUSES: ReadonlySet<string> = new Set<string>(TODO_SNAPSHOT_STATUS_VALUES);
 const TODO_SNAPSHOT_TEXT_KEYS = ["description", "activeForm", "owner"] as const;
 
 /** todo/snapshot 词条门子函数（docs/TODO.md §13.2）：tasks 数组级校验 + id 收集（含 seq 下界）；失败 undefined */
@@ -217,7 +217,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     (d["provider"] === undefined || isStr(d["provider"])) &&
     (d["temperature"] === undefined || typeof d["temperature"] === "number") &&
     (d["maxTokens"] === undefined || isCount(d["maxTokens"])) &&
-    (d["thinking"] === undefined || THINKING_LEVELS.includes(d["thinking"] as string)) &&
+    (d["thinking"] === undefined || (THINKING_LEVELS as readonly string[]).includes(d["thinking"] as string)) &&
     isToolRefs(d["tools"]),
   "request/context": (d) =>
     isObj(d) && isStr(d["provider"]) && isStr(d["model"]) && (d["contextWindow"] === undefined || isCount(d["contextWindow"])),

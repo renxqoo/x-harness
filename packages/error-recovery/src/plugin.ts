@@ -45,9 +45,16 @@ interface Counters {
   total: number;
 }
 
-/** requestError 纯决策（无副作用——计数写入 own）：死类（auth/context-overflow 已自愈）与
- *  skip 族（5xx/网络——L1 已退避耗尽，再 respond 只烧 token）直收 fail；达限（分族
- *  maxFamily / 总 maxTotal）fail；其余 respond（脱敏摘要 + 自愈指引）。 */
+/** L1 可重试码集（与 llm-retry DEFAULT_RETRYABLE_CODES 同源——防预烧的真实实现：
+ *  这些码在 L1 重试期到达本插件时决策必被外层 retry 覆盖（副作用已落——洋葱链
+ *  内层先执行），故直接让位不构造决策不计数；仅不可重试码（外层必让位）才计数。
+ *  两侧词表不互依（策略包间），漂移由两侧测试共同钉死（对抗审查终审 P0-1）。 */
+const L1_RETRYABLE_CODES: ReadonlySet<string> = new Set(["network", "http-408", "http-429", "http-500", "http-502", "http-503", "http-504"]);
+
+/** requestError 纯决策（计数仅在决策必生效时发生——L1 可重试码让位）：
+ *  死类（auth/context-overflow 已自愈）与 skip 族（5xx/网络——L1 已退避耗尽，
+ *  再 respond 只烧 token）直收 fail；达限（分族 maxFamily / 总 maxTotal）fail；
+ *  其余 respond（脱敏摘要 + 自愈指引）。 */
 function decideRecovery(input: {
   readonly failure: RequestFailure;
   readonly own: Counters;
@@ -55,8 +62,12 @@ function decideRecovery(input: {
   readonly actions: Readonly<Record<ErrorFamily, FamilyAction>>;
   readonly maxFamily: number;
   readonly maxTotal: number;
-}): RequestErrorDecision {
-  const family = classifyFailure(input.failure.code);
+}): RequestErrorDecision | undefined {
+  const code = input.failure.code;
+  if (code !== undefined && L1_RETRYABLE_CODES.has(code) && input.failure.rawReason === undefined) {
+    return undefined; // L1 会 retry 覆盖——让位不计数（rawReason 在场=救回截断面，L1 不覆盖）
+  }
+  const family = classifyFailure(code);
   const action = input.actions[family];
   const nextFamily = (input.own.byFamily.get(family) ?? 0) + 1;
   const nextTotal = input.own.total + 1;

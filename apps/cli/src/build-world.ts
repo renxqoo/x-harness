@@ -138,6 +138,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
+    ...truncationMessagesKit(), // 截断文案外层（先注册）——toolboxKit 抢救件内层先执行写盘，本件合成 content+note（对抗审查终审 P1：反序 content 短路写盘）
     ...toolboxKit({
       root: options.cwd,
       ...(options.persist ? { taskLogDir: taskLogsRootOf(options.sessionRoot) } : {}),
@@ -161,8 +162,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     }),
     ...loopKit(),
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
-    ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llmKit 后注册防预烧）
-    ...truncationMessagesKit(), // 截断配对替换文案（WER C3——toolboxKit 抢救件后手）
+    ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llm-retry 后注册（后手见事件））
     ...checkpointKit(),
     // agent 类型目录由 CLI 边沿统一解析（resolveAgentDirs：显式 > env > 项目/用户根）
     ...delegationKit({ agentsDirs: resolveAgentDirs() }),
