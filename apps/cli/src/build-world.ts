@@ -8,6 +8,7 @@ import type { Plugin, Result } from "@x-harness/core";
 import type { AutoCompactOptions } from "@x-harness/autocompact";
 import type { CompactionOptions } from "@x-harness/compaction";
 import { parseRules } from "@x-harness/permission";
+import type { PermissionRule } from "@x-harness/permission";
 import type { ProfileId } from "@x-harness/permission";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { AnthropicCompatOptions, LlmAdapter, OpenaiCompatOptions } from "@x-harness/llm";
@@ -99,6 +100,11 @@ export function autoCompactOptionsOf(options: Pick<WorldOptions, "config" | "res
   return { contextWindow: compactionOptionsOf(options).contextWindow };
 }
 
+/** 抢救件 permission 面（fenceKit 同源——用户规则单点解析两处消费） */
+function rescuePermissionOf(options: Pick<WorldOptions, "rules">): { readonly rules?: PermissionRule[] } {
+  return options.rules !== undefined && options.rules.length > 0 ? { rules: parseRules(options.rules, "user") } : {};
+}
+
 /** providers.json → adapter 集；--api-key 覆盖只折进所绑定档案（docs/CLI.md §2.1） */
 export function buildAdapters(config: ProvidersConfig, resolution: ModelResolution): readonly LlmAdapter[] {
   const override = resolution.defaults.apiKey !== undefined ? resolution.apiKeyProvider : undefined;
@@ -130,7 +136,12 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
-    ...toolboxKit({ root: options.cwd, ...(options.persist ? { taskLogDir: taskLogsRootOf(options.sessionRoot) } : {}) }),
+    ...toolboxKit({
+      root: options.cwd,
+      ...(options.persist ? { taskLogDir: taskLogsRootOf(options.sessionRoot) } : {}),
+      // permission 面与 fenceKit 同源（用户规则共享——抢救件 write 同源裁决）
+      permission: rescuePermissionOf(options),
+    }),
     ...fenceKit({
       root: options.cwd,
       mode: options.permission ?? "sandboxed-auto", // CLI 缺省围栏优先（U6——Codex 姿势）

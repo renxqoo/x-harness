@@ -135,6 +135,12 @@ export const toolboxKit = (o: {
   readonly observed?: ObservedRegistry;
   readonly env?: ExecEnv;
   readonly taskLogDir?: string;
+  /** permission 裁决面（抢救件 write 同源裁决；宿主与 fenceKit 同源传入） */
+  readonly permission?: {
+    readonly rules?: readonly import("@x-harness/permission").PermissionRule[];
+    readonly projectRules?: readonly import("@x-harness/permission").PermissionRule[];
+    readonly protectedWrite?: readonly string[];
+  };
 }): readonly Plugin[] => {
   const gate = o.gate ?? new PathGate(o.root); // 接线内包：read/write 必须共享 gate+observed（漏配症状 FS_NOT_OBSERVED）
   const observed = o.observed ?? new ObservedRegistry();
@@ -144,7 +150,16 @@ export const toolboxKit = (o: {
     toolsPlugin,
     createReadPlugin({ gate, observed, ...env, ...systemRoots }),
     createWritePlugin({ gate, observed, ...env }),
-    ...(o.env !== undefined ? [createTruncatedWriteRescuePlugin({ gate, observed, env: o.env })] : []),
+    ...(o.env !== undefined
+      ? [createTruncatedWriteRescuePlugin({
+          gate,
+          observed,
+          env: o.env,
+          ...(o.permission !== undefined
+            ? { permission: { root: o.root, ...(o.permission.rules !== undefined ? { rules: o.permission.rules } : {}), ...(o.permission.projectRules !== undefined ? { projectRules: o.permission.projectRules } : {}), ...(o.permission.protectedWrite !== undefined ? { protectedWrite: o.permission.protectedWrite } : {}) } }
+            : {}),
+        })]
+      : []),
     createBashPlugin({ gate, ...env, ...(o.taskLogDir !== undefined ? { taskLimits: { taskLogDir: o.taskLogDir } } : {}) }),
     createGrepPlugin({ gate, ...env, ...systemRoots }),
     createTaskToolsPlugin(),

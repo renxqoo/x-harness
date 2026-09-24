@@ -10,12 +10,11 @@ import type { Plugin } from "@x-harness/core";
 import { createLocalEnv } from "@x-harness/exec-env";
 import { compactionRunner } from "@x-harness/compaction";
 import { sessionPlugin } from "@x-harness/session";
-import { autoCompactKit, compactionKit } from "../index.ts";
 import { PathGate } from "@x-harness/tool-core";
 import { textScript } from "@x-harness/testkit";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { Database } from "bun:sqlite";
-import { createAgentWorld, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, telemetryKit, telemetryKitWithHandle, toolboxKit } from "../index.ts";
+import { autoCompactKit, compactionKit, createAgentWorld, fenceKit, inlineSessionKit, llmKit, loopKit, meterKit, promptKit, telemetryKit, telemetryKitWithHandle, toolboxKit } from "../index.ts";
 import { createBunSqliteExecutor } from "@x-harness/telemetry-sqlite";
 
 let root = "";
@@ -117,7 +116,7 @@ describe("createAgentWorld + kits（F1）", () => {
 describe("toolboxKit 截断抢救件（TRUNCATED-TOOL-RESCUE 层 2 装配）", () => {
   it("env 传入 → 抢救件在装配内：agentTruncatedTool 派发物化 sidecar（gate 同源过门）", async () => {
     root = mkdtempSync(join(tmpdir(), "xh-kits-rescue-"));
-    const plugins: readonly Plugin[] = [...inlineSessionKit(), ...toolboxKit({ root, env: createLocalEnv(root) })];
+    const plugins: readonly Plugin[] = [...inlineSessionKit(), ...fenceKit({ root, mode: "full" }), ...toolboxKit({ root, env: createLocalEnv(root), permission: { } })];
     const ctx = createContext();
     const unload = await loadPlugins(ctx, plugins);
     const { agentTruncatedTool } = await import("@x-harness/agent-loop");

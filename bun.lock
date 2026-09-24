@@ -544,6 +544,7 @@
         "@x-harness/agent-loop": "workspace:*",
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
+        "@x-harness/permission": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
