@@ -42,7 +42,7 @@ import { ObservedRegistry, PathGate } from "@x-harness/tool-core";
 import type { ExecEnv } from "@x-harness/exec-env";
 import { createGrepPlugin } from "@x-harness/tool-grep";
 import { createReadPlugin } from "@x-harness/tool-read";
-import { createWritePlugin } from "@x-harness/tool-write";
+import { createTruncatedWriteRescuePlugin, createWritePlugin } from "@x-harness/tool-write";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolRegistry } from "@x-harness/tools";
 
@@ -127,7 +127,8 @@ export const promptKit = (base?: Plugin): readonly Plugin[] => [
 export { taskLogsRootOf } from "./task-logs.ts";
 
 /** 工具箱（tools 注册表 + read/write/bash/grep/task-tools；gate/observed 共享实例内包；env 透传给无围栏世界；
- *  taskLogDir = bash 后台任务日志根——传宿主数据目录即会话档案一致性，read/grep 放行为系统固有读根） */
+ *  taskLogDir = bash 后台任务日志根——传宿主数据目录即会话档案一致性，read/grep 放行为系统固有读根）
+ *  + 截断 write/edit 半截产出抢救件（agentTruncatedTool 窗口；sidecar 授权面与 write 同源三件套） */
 export const toolboxKit = (o: {
   readonly root: string;
   readonly gate?: PathGate;
@@ -143,6 +144,7 @@ export const toolboxKit = (o: {
     toolsPlugin,
     createReadPlugin({ gate, observed, ...env, ...systemRoots }),
     createWritePlugin({ gate, observed, ...env }),
+    ...(o.env !== undefined ? [createTruncatedWriteRescuePlugin({ gate, observed, env: o.env })] : []),
     createBashPlugin({ gate, ...env, ...(o.taskLogDir !== undefined ? { taskLimits: { taskLogDir: o.taskLogDir } } : {}) }),
     createGrepPlugin({ gate, ...env, ...systemRoots }),
     createTaskToolsPlugin(),

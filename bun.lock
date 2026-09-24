@@ -83,6 +83,9 @@
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+      },
     },
     "packages/agent-delegation": {
       "name": "@x-harness/agent-delegation",
@@ -538,6 +541,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@sinclair/typebox": "^0.34.0",
+        "@x-harness/agent-loop": "workspace:*",
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/tool-core": "workspace:*",

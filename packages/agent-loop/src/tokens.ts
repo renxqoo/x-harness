@@ -124,10 +124,17 @@ export const agentTurnConclude = defineWaterfall<TurnConcludePayload, TurnConclu
  *  载荷纯事实（arguments 为 llm 层原文出口的半截 JSON 原文）；应答 { note } 附进合成
  *  result 文案，undefined = 无抢救价值（只有 base 文案）。形状门在内核（note 非空 string）：
  *  垃圾忽略附注走 base——抢救是增益非契约，fail-loud 会把插件 bug 放大成收轮事故。 */
-export const agentTruncatedTool = defineWaterfall<
-  { readonly session: SessionId; readonly turn: number; readonly step: number; readonly callId: string; readonly name: string; readonly arguments: string; readonly signal: AbortSignal },
-  { readonly note: string } | undefined
->("agent/truncated-tool");
+export interface TruncatedToolPayload {
+  readonly session: SessionId;
+  readonly turn: number;
+  readonly step: number;
+  readonly callId: string;
+  readonly name: string;
+  readonly arguments: string;
+  readonly signal: AbortSignal;
+}
+
+export const agentTruncatedTool = defineWaterfall<TruncatedToolPayload, { readonly note: string } | undefined>("agent/truncated-tool");
 
 /** F0②：assistant 落账前纠（幻觉强形态）——settle 与 append 之间；落的是改写后版本 */
 export interface AssistantSettlement {

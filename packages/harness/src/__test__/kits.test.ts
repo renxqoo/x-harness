@@ -1,7 +1,7 @@
 // F1 kit 形状 + createAgentWorld（SDK-MIGRATION-F1 §3）：乱序插件集仍正确（软约束生效）、
 // 五服务缺席 fail-closed、失败自清理、最小世界端到端跑一轮。
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, afterEach } from "vitest";
@@ -111,6 +111,42 @@ describe("createAgentWorld + kits（F1）", () => {
       rmSync(root, { recursive: true, force: true });
       rmSync(logRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe("toolboxKit 截断抢救件（TRUNCATED-TOOL-RESCUE 层 2 装配）", () => {
+  it("env 传入 → 抢救件在装配内：agentTruncatedTool 派发物化 sidecar（gate 同源过门）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-rescue-"));
+    const plugins: readonly Plugin[] = [...inlineSessionKit(), ...toolboxKit({ root, env: createLocalEnv(root) })];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const { agentTruncatedTool } = await import("@x-harness/agent-loop");
+    const body = "y".repeat(600);
+    const r = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"draft.txt","content":"${body}`, signal: new AbortController().signal } as never, async () => undefined);
+    expect(r).toEqual({ note: `Recovered 600 chars (1 lines) of the truncated write to draft.txt.partial (draft — draft.txt NOT modified). Read it, produce the remainder as a separate file, assemble with bash, then delete the .partial.` });
+    expect(readFileSync(join(root, "draft.txt.partial"), "utf8")).toBe(body);
+    const denied = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c2", name: "write", arguments: `{"path":"../esc.txt","content":"${body}`, signal: new AbortController().signal } as never, async () => undefined);
+    expect(denied).toEqual({ note: "target outside workspace boundary, draft not saved" }); // gate 与 write 同源
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+    rmSync(root, { recursive: true, force: true });
+    root = "";
+  });
+
+  it("env 经 execEnv 服务提供（三级解析第二档）→ 抢救件仍不装配：工厂参数档是唯一注入面，不静默读服务（与 read/write 的 envOption 语义同源）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-rescue2-"));
+    const { execEnv } = await import("@x-harness/exec-env");
+    const ctx = createContext();
+    ctx.provide(execEnv, createLocalEnv(root));
+    const unload = await loadPlugins(ctx, [...inlineSessionKit(), ...toolboxKit({ root })]);
+    const { agentTruncatedTool } = await import("@x-harness/agent-loop");
+    const r = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"d.txt","content":"${"z".repeat(600)}`, signal: new AbortController().signal } as never, async () => undefined);
+    expect(r).toBeUndefined(); // 无抢救件应答 → 只有 base 文案（真 opt-in）
+    expect(existsSync(join(root, "d.txt.partial"))).toBe(false);
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+    rmSync(root, { recursive: true, force: true });
+    root = "";
   });
 });
 
