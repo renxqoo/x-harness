@@ -37,6 +37,9 @@ export {
   sessionEvent,
   sessionFlush,
   sessionDisposed,
+  THINKING_LEVELS,
+  TODO_SNAPSHOT_STATUS_VALUES,
+  INBOX_TARGET_VALUES,
 } from "./tokens.ts";
 export { sessionPlugin } from "./plugin.ts";
 export { isSafeSessionId, parseSurfaceOp, validateSessionEvents } from "./gates.ts";

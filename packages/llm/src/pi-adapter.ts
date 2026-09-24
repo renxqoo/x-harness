@@ -55,7 +55,7 @@ function thinkingOptions(
 ): Record<string, unknown> {
   if (thinking === undefined || thinking === "off") return {};
   if (api === "anthropic-messages") {
-    return { thinkingEnabled: true, effort: thinking, thinkingBudgetTokens: THINKING_BUDGETS[thinking] };
+    return { thinkingEnabled: true, effort: thinking, thinkingBudgetTokens: THINKING_BUDGETS[thinking as keyof typeof THINKING_BUDGETS] };
   }
   return { reasoning: thinking };
 }

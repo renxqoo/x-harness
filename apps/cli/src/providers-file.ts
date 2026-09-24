@@ -4,9 +4,12 @@
 
 import type { Result } from "@x-harness/core";
 import { readFile } from "node:fs/promises";
+import { THINKING_LEVELS as SESSION_THINKING_LEVELS } from "@x-harness/session";
+import type { ThinkingLevel } from "@x-harness/llm";
 
 export type ProviderProtocol = "anthropic" | "openai";
-export type ThinkingLevelCli = "off" | "low" | "medium" | "high" | "max";
+// 档位值域单一出口 @x-harness/session（WER 批 D C6）——与 core 门校验同源防漂移
+export type ThinkingLevelCli = ThinkingLevel;
 
 const PROTOCOLS: readonly ProviderProtocol[] = ["anthropic", "openai"];
 
@@ -32,7 +35,7 @@ export interface ProvidersConfig {
 }
 
 /** 词表导出：--thinking/default.thinking 共用同一闭集（单一真相） */
-export const THINKING_LEVELS: readonly ThinkingLevelCli[] = ["off", "low", "medium", "high", "max"];
+export const THINKING_LEVELS: readonly ThinkingLevelCli[] = SESSION_THINKING_LEVELS as readonly ThinkingLevelCli[];
 
 function isObj(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

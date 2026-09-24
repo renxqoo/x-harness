@@ -1,6 +1,7 @@
 // LLM 契约类型（docs/LLM.md §1.1）：LlmChunk 流、失败契约（结构化 code/retryAfterMs）、适配器与 runtime。
 
 import type { SessionId, SurfaceMessage } from "@x-harness/session";
+import { THINKING_LEVELS } from "@x-harness/session";
 import type { ToolSchema } from "@x-harness/tools";
 
 export interface UsageCost {
@@ -27,7 +28,8 @@ export interface TokenUsage {
 /** 思考等级闭集（docs/LLM-PI.md）：off=不发 thinking 参数；low/medium/high/max → anthropic 侧
  *  thinkingEnabled + effort + 预算（THINKING_BUDGETS；max=自适应模型无约束思考，
  *  pi AnthropicEffort 原生含 max——老预算型模型预算同 high）；openai 侧不注入 */
-export type ThinkingLevel = "off" | "low" | "medium" | "high" | "max";
+// 档位值域单一出口在 @x-harness/session tokens（THINKING_LEVELS）——llm 侧联合类型与 core 门校验同源，防扩档位漂移
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export type LlmFinish =
   | { readonly kind: "stop" }
