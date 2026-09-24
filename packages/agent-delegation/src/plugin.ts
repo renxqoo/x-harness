@@ -19,6 +19,7 @@ import { evaluateCleanup, sweepWorktrees } from "./worktree.ts";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
 import { loadAgentTypes, typesFingerprint } from "./types-loader.ts";
+import { parseInlineTypes } from "./types-inline.ts";
 import type { DelegationOptions, LoadedAgentType } from "./types.ts";
 import { createNotifier } from "./notify.ts";
 import { spawnAgent } from "./spawn.ts";
@@ -82,13 +83,21 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
 
       let current: Readonly<Record<string, LoadedAgentType>> = {};
       let fingerprint = "";
+      // 内联 builtin 层（bundle 内联资源——无盘上可变面，不参与指纹；装载恒定）垫底：
+      // 盘上同名前者胜，内联层仅补缺席
+      const inline = options.builtinTypes !== undefined ? parseInlineTypes(options.builtinTypes) : undefined;
       const refreshTypes = (): void => {
         const next = typesFingerprint(dirs);
-        if (next === fingerprint) return;
-        fingerprint = next;
-        const loaded = loadAgentTypes(dirs);
-        current = loaded.types;
-        for (const warning of loaded.warnings) options.onWarn?.(warning);
+        if (next !== fingerprint) {
+          fingerprint = next;
+          const loaded = loadAgentTypes(dirs);
+          current = loaded.types;
+          for (const warning of loaded.warnings) options.onWarn?.(warning);
+        }
+        if (inline !== undefined) {
+          current = { ...inline.types, ...current };
+          for (const warning of inline.warnings) options.onWarn?.(warning);
+        }
       };
       refreshTypes(); // 装配期全量——apply 完成即类型可用（loadPlugins 语义）
 

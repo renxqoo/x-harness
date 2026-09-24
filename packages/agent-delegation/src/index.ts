@@ -7,3 +7,5 @@ export type { DelegationView } from "./view.ts";
 export type { MessageInput, VerbOutcome } from "./verbs.ts";
 export { loadAgentTypes, projectAgentsDirOf, resolveAgentDirs, typesFingerprint, userAgentsDirOf } from "./types-loader.ts";
 export type { TypeLoadResult } from "./types-loader.ts";
+export { parseInlineType, parseInlineTypes } from "./types-inline.ts";
+export type { InlineTypeResource } from "./types-inline.ts";

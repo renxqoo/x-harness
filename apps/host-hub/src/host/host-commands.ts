@@ -3,7 +3,7 @@
 // → unknown command（池侧统一拒）；缺 threadId 由池侧判（线程域命令）。
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { loadAgentTypes } from "@x-harness/agent-delegation";
+import { loadAgentTypes, parseInlineTypes } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
 import { clampIdleRetireMs, clampRssRetireBytes, DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
 import { HUB_ERROR_CODES, hubError, type HubErrorShape } from "../shared/errors.ts";
@@ -17,7 +17,7 @@ import { listSavedSessions } from "./saved-query.ts";
 import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
 import { createModelsAuthCommands } from "./models-auth.ts";
-import { builtinTypesDir } from "../worker/assembly.ts";
+import { builtinAgentTypes } from "../worker/assembly.ts";
 import { createAdminCommands } from "./admin-commands.ts";
 import { userAgentsDirOf } from "@x-harness/agent-delegation"; // 路径常量单源内核包（防宿主散写漂移）
 import { createTrustStore } from "./trust-store.ts";
@@ -314,27 +314,29 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   async function handleAgentsList(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
     // 目录栈（低→高）：user（恒在）；trusted 线程含 project 级（同名 project 覆盖
-    //  user——来源按装载序分账：project 目录装载的条目标 project）
+    // user——来源按装载序分账：project 目录装载的条目标 project）；builtin 层为内联
+    // 资源（随 bundle 分发——与 worker 装配同源），同名可被盘上层遮蔽
     const userDir = userAgentsDirOf(deps.homeDir, deps.agentDir); // agentDir 派生缝在场时 = <agentDir>/agents（与 skills 同序）
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const entry = threadId !== "" ? deps.table.get(threadId) : undefined;
     const projectDir = entry !== undefined && entry.trusted ? join(entry.cwd, ".x-harness", "agents") : undefined;
-    const builtinDir = builtinTypesDir(); // 随包内置类型（最低优先——assembly 单源）
-    const dirs = [builtinDir, userDir, ...(projectDir !== undefined ? [projectDir] : [])];
+    const builtin = parseInlineTypes(builtinAgentTypes());
+    const dirs = [userDir, ...(projectDir !== undefined ? [projectDir] : [])];
     const projectLoaded = projectDir !== undefined ? loadAgentTypes([projectDir]) : undefined;
-    const userLoaded = loadAgentTypes([builtinDir, userDir]);
+    const userLoaded = loadAgentTypes([userDir]);
     const merged = loadAgentTypes(dirs);
     const sourceOf = (name: string): "builtin" | "user" | "project" => {
       if (projectLoaded?.types[name] !== undefined) return "project";
       if (userLoaded.types[name] !== undefined) return "user";
       return "builtin";
     };
-    const types = Object.values(merged.types).map((def) => ({
+    const types = Object.values({ ...builtin.types, ...merged.types }).map((def) => ({
       name: def.name,
       description: def.description,
       source: sourceOf(def.name),
       ...(def.model !== undefined ? { model: def.model } : {}),
     }));
+    for (const warning of builtin.warnings) process.stderr.write(`hub:host: ${warning}\n`);
     respond(id, "agents/list", { data: { agents: types } });
   }
 

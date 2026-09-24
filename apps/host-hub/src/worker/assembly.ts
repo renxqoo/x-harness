@@ -32,6 +32,7 @@ import {
   toolboxKit,
 } from "@x-harness/harness";
 import { createAgentDelegationPlugin, userAgentsDirOf } from "@x-harness/agent-delegation";
+import { BUILTIN_AGENT_TYPES } from "./agent-types-data.ts";
 import { createSkillPlugin } from "@x-harness/skill";
 import { createPluginProposePlugin } from "./plugin-propose.ts";
 import { createTodoToolsPlugin } from "@x-harness/todo-tools";
@@ -123,13 +124,14 @@ function userAgentsDir(fields: AssemblyFields): string {
   return userAgentsDirOf(undefined, fields.agentDir);
 }
 
-/** 内置 agents 类型目录（随包分发——装载序末位；迁移源 builtin 层等价物） */
-export function builtinTypesDir(): string {
-  return join(import.meta.dirname, "../../agent-types");
+/** 内置 agents 类型层（构建期内联进 bundle 的资源模块——任意运行形态恒装载，
+ *  不依赖盘上 agent-types 目录布局） */
+export function builtinAgentTypes(): readonly import("@x-harness/agent-delegation").InlineTypeResource[] {
+  return BUILTIN_AGENT_TYPES;
 }
 
-/** trusted 门禁目录（project > user > builtin——x-harness 内核装载序「前者胜」；
- *  skills/agents 同序一致，DESIGN §5） */
+/** trusted 门禁目录（project > user——x-harness 内核装载序「前者胜」；
+ *  skills/agents 同序一致，DESIGN §5；builtin 层为内联资源不占目录位） */
 function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: string[]; agentsDirs: string[] } {
   // agentDir 派生缝：打包发行态（HUB_AGENT_DIR 注入，如 ~/.pai/agent）用户技能根
   // 落 <agentDir>/skills 与 app 数据区同区；缺省（CLI 独立）~/.x-harness/skills 共享。
@@ -137,11 +139,11 @@ function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: strin
   const userSkills = userSkillsDirOf(undefined, fields.agentDir);
   const userAgents = userAgentsDir(fields);
   if (!fields.trusted) {
-    return { skillsDirs: [userSkills], agentsDirs: [builtinTypesDir(), userAgents] };
+    return { skillsDirs: [userSkills], agentsDirs: [userAgents] };
   }
   return {
     skillsDirs: [projectSkillsDirOf(cwd), userSkills],
-    agentsDirs: [join(cwd, ".x-harness", "agents"), userAgents, builtinTypesDir()],
+    agentsDirs: [join(cwd, ".x-harness", "agents"), userAgents],
   };
 }
 
@@ -372,7 +374,7 @@ function defaultWorkerPlugins(resolved: {
     ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llmKit 后注册防预烧）
     ...checkpointKit(),
     createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
-    createAgentDelegationPlugin({ agentsDirs, resolveProviderOf: providerOfModel(catalog) }),
+    createAgentDelegationPlugin({ agentsDirs, builtinTypes: builtinAgentTypes(), resolveProviderOf: providerOfModel(catalog) }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     ...(fields.proposalStore !== undefined
       ? [createPluginProposePlugin({

@@ -110,8 +110,9 @@ export async function removeUserAgentType(name: string, homeDir?: string, agentD
   const userDir = userDirOf(homeDir, agentDir);
   const loaded = await loadAgentTypes([userDir]);
   if (loaded.types[name] === undefined) {
-    const { builtinTypesDir } = await import("../worker/assembly.ts");
-    const builtin = loadAgentTypes([builtinTypesDir()]);
+    const { builtinAgentTypes } = await import("../worker/assembly.ts");
+    const { parseInlineTypes } = await import("@x-harness/agent-delegation");
+    const builtin = parseInlineTypes(builtinAgentTypes());
     if (builtin.types[name] !== undefined) {
       return { ok: false, error: hubError("state_conflict", `agent type not user-defined: ${name}`) };
     }

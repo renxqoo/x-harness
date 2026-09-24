@@ -1,6 +1,7 @@
 // 子代理契约类型（docs/AGENT-DELEGATION.md §1/§2/§7）：类型唯一来源 = .md 文件（U4 裁决）。
 
 import type { SessionId } from "@x-harness/session";
+import type { InlineTypeResource } from "./types-inline.ts";
 
 /** .md 加载出的子代理类型（frontmatter + 正文） */
 export interface LoadedAgentType {
@@ -20,6 +21,9 @@ export interface DelegationOptions {
   /** agent 类型目录（必收——插件零目录知识，宿主边沿用 resolveAgentDirs 统一解析；
    *  `[]` = 显式零：不装载任何类型） */
   readonly agentsDirs: readonly string[];
+  /** 内联 builtin 类型层（随 bundle 内联分发的资源——宿主从生成数据模块传入）；
+   *  优先级最低（盘上目录同名遮蔽），缺席 = 无内联层 */
+  readonly builtinTypes?: readonly InlineTypeResource[];
   /** 跨进程邮箱配置（缺省 = 纯进程内部署：跨进程寻址与 notify_when_idle 拒 invalid-args；
    *  root/timing 由 session-mailbox 插件装配给——单一真相，此处不重复） */
   readonly mailbox?: {

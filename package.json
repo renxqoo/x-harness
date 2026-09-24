@@ -15,7 +15,7 @@
     "check:kernel-deps": "bun scripts/check-kernel-deps.ts",
     "lint": "oxlint .",
     "lint:fix": "oxlint --fix .",
-    "build": "bun build packages/core/context/src/index.ts --outdir packages/core/context/dist --target bun && bun build apps/host-hub/src/host/cli.ts apps/host-hub/src/worker/main.ts --outdir apps/host-hub/dist --target bun --format esm --external \"@x-harness/*\"",
+    "build": "bun apps/host-hub/scripts/gen-agent-types.ts && bun build packages/core/context/src/index.ts --outdir packages/core/context/dist --target bun && bun build apps/host-hub/src/host/cli.ts apps/host-hub/src/worker/main.ts --outdir apps/host-hub/dist --target bun --format esm --external \"@x-harness/*\"",
     "check": "bun run typecheck && bun run check:kernel-deps && bun run lint && bun run build && bun run test && bun run e2e",
     "e2e:real": "bun packages/e2e/src/real.ts"
   },
