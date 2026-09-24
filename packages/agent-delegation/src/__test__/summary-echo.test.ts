@@ -48,7 +48,7 @@ describe("summary 回显跨进程路径（件15 D7——审查 A P1-3 补）", (
     const { join } = await import("node:path");
     const root = await mkdtemp(join(tmpdir(), "xh-summary-cross-"));
     try {
-      const { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL } = await import("./world.ts");
+      const { makeWorld, spawnParent, callTool, PARENT_MODEL } = await import("./world.ts");
       const options = await makeOptions({});
       const alpha = await makeWorld({ ...options, mailbox: { box: "alpha", mainSession: "main-1" as import("@x-harness/session").SessionId } }, root);
       const beta = await makeWorld({ ...options, mailbox: { box: "beta", mainSession: "main-2" as import("@x-harness/session").SessionId } }, root);

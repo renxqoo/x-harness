@@ -25,6 +25,7 @@ import { createCompactionPlugin } from "@x-harness/compaction";
 import type { CompactionOptions } from "@x-harness/compaction";
 import { createLlmRetryPlugin } from "@x-harness/llm-retry";
 import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
+import { createRepetitionGuardPlugin } from "@x-harness/llm-repetition-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
 import type { PermissionProfile, PermissionRule, ProfileId } from "@x-harness/permission";
@@ -240,6 +241,7 @@ export const llmKit = (
   ...(retry !== undefined ? [createLlmRetryPlugin({ providers: retry.providers ?? {}, ...(retry.default !== undefined ? { default: retry.default } : {}) })] : []),
   llmPlugin,
   createReplayGuardPlugin(), // llm/stream 重放容错（docs/LLM-REPLAY-GUARD.md）：上游断流从头重发时下游/UI 干净单份
+  createRepetitionGuardPlugin(), // llm/stream 复读检测（docs/LLM-REPETITION-GUARD.md）：模型行内复读截流 → error{code:repetition}；注册序在 replay-guard 后 = 链上更靠消费端
   ...adapters.map((adapter, index): Plugin => ({
     name: `llm-adapter-${String(index)}-${adapter.name}`,
     inject: ["llm"], // 终审 F1-1：apply 期 use llmRuntime 的硬依赖声明式时序（与在库 adapter-plugin 同款）

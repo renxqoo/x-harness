@@ -22,6 +22,18 @@ async function spawn(script: readonly ScriptStep[] = []): Promise<ScriptWorker> 
   return w;
 }
 
+/** 大回复夹具：同体量非重复长文（重复单字符循环会被 llm-repetition-guard 正当截流） */
+function nonRepetitive(length: number): string {
+  const alphabet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  let out = "";
+  let counter = 0;
+  while (out.length < length) {
+    out += `${alphabet}${String(counter % 97)};`;
+    counter += 1;
+  }
+  return out.slice(0, length);
+}
+
 async function start(w: ScriptWorker, id = "s1"): Promise<string> {
   w.send({ type: "thread/start", id });
   const started = await waitResponse(w.captured.lines, "thread/start", id);
@@ -301,7 +313,7 @@ describe("子代理实时事件面（BATCH2 §3——去轮询：推送全覆盖
 
 describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", () => {
   test("成功三元组（compact 协议命令 + customInstructions 透传）", async () => {
-    const huge = "h".repeat(60000);
+    const huge = nonRepetitive(60_000);
     const w = await spawn([
       { reply: huge },
       { reply: huge },
@@ -328,7 +340,7 @@ describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", (
   });
 
   test("双发第二响应 already in progress + abort 归一串 compaction aborted（prompt 拦截路径）", async () => {
-    const huge = "h".repeat(60000);
+    const huge = nonRepetitive(60_000);
     const w = await spawn([
       { reply: huge },
       { reply: huge },

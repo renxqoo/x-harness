@@ -67,6 +67,7 @@ retryableCodes 与退避快车道；裸 throw 丢结构（前版 RequestFailure 
 
 - `llmRuntime` 服务：registerAdapter + `stream(request)`——**经 `llm/stream` waterfall 派发**
   （中间件位——@x-harness/llm-replay-guard 挂此：上游断流从头重发的容错，docs/LLM-REPLAY-GUARD.md）
+  （中间件位——@x-harness/llm-repetition-guard 挂此：模型行内复读截流，docs/LLM-REPETITION-GUARD.md）
   （中间件位：回放/路由/计量后续挂此），final = 解析适配器（provider 匹配名；缺省唯一）→
   `adapter.stream(request)`；未解析 → 产出 `finish{kind:"error", code:"no-adapter",
   message:"no-adapter:<provider|none-registered|ambiguous-N>"}` 收尾流（消费方 fail-closed：

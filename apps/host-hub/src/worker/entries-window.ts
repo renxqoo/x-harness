@@ -96,7 +96,6 @@ export function entryWindowViewed(events: readonly SessionEvent[], query: Viewed
   // 活锁防（截断窗全为载体行）：entries 空而 hasMore 真 → 回补窗口外（limit 截去段）
   // 最近一条保留行，客户端以它推进游标；无 limit 或真到 journal 尾则维持空窗语义
   if (entries.length === 0 && windowed.hasMore) {
-    const projected = projectEntries(events);
     const firstSeq = windowed.entries[0]?.seq;
     for (let seq = firstSeq !== undefined ? firstSeq - 1 : -1; seq >= 0; seq -= 1) {
       const event = events[seq];

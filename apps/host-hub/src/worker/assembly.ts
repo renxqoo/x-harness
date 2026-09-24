@@ -51,12 +51,13 @@ import { projectSettingsPath, updateHubSettings, updateSettingsFile, userSetting
 import { thinkingLevelOf, thinkingUnsupported } from "./meta-state.ts";
 import { META_KEY_THINKING } from "./meta-state.ts";
 import { installExternalPlugins, uninstallExternalPlugins } from "./external-plugins.ts";
+import { DEFAULT_RETRYABLE_CODES } from "@x-harness/llm-retry";
 import type { ConfirmFields } from "./dialogs.ts";
 import { confirmFieldsOf } from "./ask-confirm-fields.ts";
 import type { ExternalPluginsDeps } from "./external-plugins.ts";
 
 /** llm-retry 缺省策略（apps/cli 同款——确定性退避） */
-export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0 };
+export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
 
 const FALLBACK_CONTEXT_WINDOW = 128_000;
 

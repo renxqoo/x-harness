@@ -43,7 +43,8 @@ export type LlmFinish =
       readonly kind: "error";
       readonly message: string;
       /** 失败词表（闭集）：`http-<status>` / `network` / `no-adapter` / `context-overflow` /
-       *  `non-retryable`（refusal/sensitive/content_filter 与鉴权文案——重试换不来新结果） */
+       *  `non-retryable`（refusal/sensitive/content_filter 与鉴权文案——重试换不来新结果） /
+       *  `repetition`（llm-repetition-guard 复读截流——docs/LLM-REPETITION-GUARD.md，宿主词表按需增列） */
       readonly code?: string;
       /** 仅 429/503 的 Retry-After（毫秒，小数秒已折算；HTTP-date 解析失败视为缺席） */
       readonly retryAfterMs?: number;

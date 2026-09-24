@@ -13,6 +13,7 @@ import type { ProfileId } from "@x-harness/permission";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { AnthropicCompatOptions, LlmAdapter, OpenaiCompatOptions } from "@x-harness/llm";
 import type { RetryPolicy } from "@x-harness/llm-retry";
+import { DEFAULT_RETRYABLE_CODES } from "@x-harness/llm-retry";
 import {
   autoCompactKit,
   checkpointKit,
@@ -41,7 +42,7 @@ import type { ProvidersConfig, ProviderProfile } from "./providers-file.ts";
 import type { ModelResolution } from "./resolve-model.ts";
 
 /** llm-retry 缺省策略（docs/CLI.md §2.5 裁决；不暴露 CLI flag；jitterRatio 契约为整数 0|1——取 0 确定性退避） */
-export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0 };
+export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
 
 import type { World } from "@x-harness/harness";
 import { resolveAgentDirs } from "@x-harness/agent-delegation";

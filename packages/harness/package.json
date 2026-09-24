@@ -17,6 +17,7 @@
     "@x-harness/exec-env": "workspace:*",
     "@x-harness/llm": "workspace:*",
     "@x-harness/llm-replay-guard": "workspace:*",
+    "@x-harness/llm-repetition-guard": "workspace:*",
     "@x-harness/llm-retry": "workspace:*",
     "@x-harness/permission": "workspace:*",
     "@x-harness/sandbox": "workspace:*",
