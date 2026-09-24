@@ -1,50 +1,12 @@
 // 安全分类器（docs/PERMISSION-V2-DESIGN.md §4.4——P1 显式交付物）：裁决梯末段对
 // 静态命令的三分类。fail-closed 铁律：未知动词不得入只读类（对抗用例钉死——
 // find -delete/dd/tar -x 类破坏形态必须在未分类桶落 ask/contained）。
+// 只读动词白名单与其逐动词例外条件的单一真相在 readonly-verbs.ts（独立审计面）。
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { ParsedCommand } from "./bash/ast.ts";
-
-/** 纯只读动词白名单（basename）：无副作用观察类。保守维护——新增动词必须过
- *  对抗审查（写副作用动词混入 = 直通档无界破坏面） */
-const READONLY_VERBS: ReadonlySet<string> = new Set([
-  "ls", "cat", "head", "tail", "wc", "pwd", "echo", "which", "file", "stat", "du", "df",
-  "ps", "env", "printenv", "whoami", "uname", "date", "id", "hostname", "sort", "uniq",
-  "cut", "tr", "diff", "cmp", "tree", "basename", "dirname", "realpath", "readlink",
-  "jq", "true", "false", "test", "sleep", "grep", "rg", "find", "column",
-  "md5sum", "sha1sum", "sha256sum", "git",
-]);
-// 注：awk/sed（程序体/w 命令=任意代码与任意路径写）、curl/wget（缺省落盘/上传实参）
-// 不入只读表——网络与流编辑形态一律走未分类 ask（对抗审查 #2：写副作用动词禁入只读类）。
-
-/** git 只读子命令（git 家族动词面大——push/push-like 一律不入选） */
-const GIT_READONLY_SUBS: ReadonlySet<string> = new Set([
-  "status", "diff", "log", "show", "branch", "tag", "remote", "describe", "rev-parse",
-  "shortlog", "reflog", "ls-files", "ls-remote", "ls-tree", "cat-file", "blame", "var", "version",
-]);
-
-/** find 例外条件：无 -delete/-exec/-execdir/-ok/-fprintf*（纯检索） */
-function findReadonly(argv: readonly string[]): boolean {
-  return !argv.some((word) => word === "-delete" || word === "-exec" || word === "-execdir" || word === "-ok" || word.startsWith("-fprintf"));
-}
-
-/** git 家族判定：git <sub>（sub 只读）或 git 自身旗标形态（git --version） */
-function gitReadonly(argv: readonly string[]): boolean {
-  const sub = argv.find((word, index) => index > 0 && !word.startsWith("-"));
-  if (sub === undefined) return true;
-  return GIT_READONLY_SUBS.has(sub);
-}
-
-/** 单命令只读判定（argv 干净词面——wrappers 已剥） */
-function commandReadonly(argv: readonly string[]): boolean {
-  if (argv.length === 0) return true; // 纯重定向宿主的只读性由重定向面单独裁决
-  const verb = argv[0] ?? "";
-  const base = verb.includes("/") ? (verb.split("/").filter(Boolean).pop() ?? verb) : verb;
-  if (base === "git") return gitReadonly(argv);
-  if (base === "find") return findReadonly(argv);
-  return READONLY_VERBS.has(base);
-}
+import { basenameOfWord, commandReadonly, findCarrierSafe } from "./readonly-verbs.ts";
 
 /** 界内合成写安全动词（basename 或 家族×子命令）：直通档下界内写自动（U5 姿势——
  *  破坏性动词 rm/mkfs/dd/chmod 永不入选，落未分类 ask） */
@@ -66,8 +28,7 @@ const WRITE_SAFE_FAMILY: ReadonlyMap<string, ReadonlySet<string>> = new Map([
 /** 单命令写安全判定 */
 function commandWriteSafe(argv: readonly string[]): boolean {
   if (argv.length === 0) return false;
-  const verb = argv[0] ?? "";
-  const base = verb.includes("/") ? (verb.split("/").filter(Boolean).pop() ?? verb) : verb;
+  const base = basenameOfWord(argv[0] ?? "");
   if (WRITE_SAFE_VERBS.has(base)) return true;
   const family = WRITE_SAFE_FAMILY.get(base);
   if (family === undefined) return false;
@@ -87,10 +48,6 @@ const CARRIER_SKIP: ReadonlySet<string> = new Set([
 const TRANSPORT_STRIP: ReadonlySet<string> = new Set([
   "env", "nohup", "timeout", "nice", "stdbuf", "setsid", "command", "builtin",
 ]);
-
-function basenameOfWord(word: string): string {
-  return word.includes("/") ? (word.split("/").filter(Boolean).pop() ?? word) : word;
-}
 
 export type CommandClass = "readonly" | "write" | "unclassified";
 
@@ -115,6 +72,19 @@ function stripTransport(argv: readonly string[]): readonly string[] {
   }
 }
 
+/** 载体段跳过判定（前提=载荷已提取为独立段）：opaque 段（watch 等 RUNNERS）载荷未提取
+ *  不得跳；find 段仅在 -exec 族载荷已提取且留段无写形态时豁免——-delete/-fprint* 留段
+ *  副作用不得随载体直通（findCarrierSafe） */
+function carrierSkipOf(cmd: ParsedCommand, base: string, multiSegment: boolean): boolean {
+  if (!multiSegment || !CARRIER_SKIP.has(base) || cmd.opaque !== undefined) return false;
+  return base !== "find" || findCarrierSafe(cmd.argv);
+}
+
+/** 裸载体（无操作数，stdin 即闭）——只读径 */
+function bareCarrier(base: string, argv: readonly string[]): boolean {
+  return argv.length === 1 && (CARRIER_SKIP.has(base) || TRANSPORT_STRIP.has(base));
+}
+
 /** 管线级分类（全段一致才入类——任一段未分类即管线未分类；只读段混写段=写）：
  *  调用前置条件=全段静态（dynamic/injection/ask 已在上游拦截）且重定向面已单独裁决。
  *  传输动词段的语义在其载荷（独立段或内联后缀）。 */
@@ -124,8 +94,8 @@ export function classifyPipeline(commands: readonly ParsedCommand[], hasOutputRe
   for (const cmd of commands) {
     if (cmd.argv.length === 0) continue; // 重定向宿主由 hasOutputRedirect 汇总
     const base = basenameOfWord(cmd.argv[0] ?? "");
-    if (multiSegment && CARRIER_SKIP.has(base)) continue;
-    if (cmd.argv.length === 1 && (CARRIER_SKIP.has(base) || TRANSPORT_STRIP.has(base))) continue; // 裸载体（stdin 即闭）——只读径
+    if (carrierSkipOf(cmd, base, multiSegment)) continue;
+    if (bareCarrier(base, cmd.argv)) continue;
     const effective = stripTransport(cmd.argv);
     if (effective.length === 0) continue; // 纯载体（无载荷/操作数）——只读径
     const cls = segmentClass(effective, roots);

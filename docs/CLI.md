@@ -54,7 +54,7 @@ x-harness [flags] [message...] [@file...]
 | `--provider <name>` | 覆盖 providers.json default.provider | — |
 | `--model <model>` | 覆盖 default.model | — |
 | `--thinking <off\|low\|medium\|high\|max>` | 思考等级 | default.thinking（缺省 off；max=自适应模型无约束思考） |
-| `--permission <plan\|auto\|full>` | 权限模式档（docs/EXEC-ENV.md §5：plan=write/bash 全拒；auto=全流程审批；full=完全访问——总括授权三面铺开，docs/PERMISSION-FULL-UNRESTRICTED.md：工具/围栏/网络面，deny 规则与提权硬拒仍压顶）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | auto |
+| `--permission <plan\|auto\|edit-confirm\|full\|sandboxed-auto>` | 权限模式档（语义见下方「权限档位」表；规则词汇表 docs/EXEC-ENV.md §5）。REPL 与 `-p` 共用；mode 是进程装配事实，不落会话档 | sandboxed-auto |
 | `--api-key <key>` | 运行时覆盖**所选 provider** 档案的 apiKey（仅装配期生效；/model 切到其他档案不跟随） | — |
 | `--tools <a,b>` | 工具白名单 | 全部注册工具 |
 | `--exclude-tools <a,b>` | 工具黑名单（白名单基础上再减） | — |
@@ -63,6 +63,16 @@ x-harness [flags] [message...] [@file...]
 | `--append-system-prompt <text>`（可重复） | 追加 section | — |
 | `--list-models [search]` | 列 providers.json 模型后退出 | — |
 | `--version` / `--help` | 短路退出 | — |
+
+**权限档位**（裁决梯与规则面 docs/EXEC-ENV.md §5）：
+
+| 档 | 语义 |
+| --- | --- |
+| plan | 变更硬闸：bash 与 write/edit 工具无条件拒；read/grep 走规则 |
+| auto | 界内自动（只读类 bash 与界内合成写直通）；界外路径、无法预测的 bash、写编辑类审批 |
+| edit-confirm | **编辑确认**：搜索/查看类 bash（只读观察动词、git 只读子命令、find 纯检索形态）与 read/grep 免确认直通；write/edit 工具、变更类 bash（含构建/测试类脚本——脚本内容不可预测）、无法预测的 bash 与界外路径一律审批 |
+| full | 完全访问：总括授权三面铺开（docs/PERMISSION-FULL-UNRESTRICTED.md：工具/围栏/网络面）；deny 规则与提权硬拒仍压顶 |
+| sandboxed-auto | auto 裁决语义 + 围栏执行（contained）；围栏执行失败才升级审批（on-failure） |
 
 - `--` 之后：`@` 开头进 fileArgs，其余进 messages；stdin 管道内容拼在初始消息最前。
 - **互斥校验**（violation → exit 2）：`-r` 与 `-p`（选择 UI 不可用）；`--no-session` 与
@@ -171,7 +181,7 @@ x-harness [flags] [message...] [@file...]
 sessionPlugin
 createJsonlSessionPersistence({ root: sessionDir })        // --no-session 时略去；provide sessionArchive
 toolsPlugin
-createPermissionPlugin({ root: cwd, mode: --permission 档 })  // 经 fenceKit 透传；缺省 auto（permission 包内落定）
+createPermissionPlugin({ root: cwd, mode: --permission 档 })  // 经 fenceKit 透传；缺省 sandboxed-auto（build-world 缺省围栏优先）
 createSandboxPlugin({ root: cwd })                          // inject permission; provide 围栏 execEnv
 createReadPlugin({ gate: PathGate(cwd), observed })         // env 走围栏 execEnv（apply 时 tryUse）
 createWritePlugin({ gate, observed })                       // read/write 共享同一 gate+observed

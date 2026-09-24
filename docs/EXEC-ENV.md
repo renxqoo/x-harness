@@ -191,7 +191,9 @@ socat 按档位探测，缺席 → throw；探测与代理创建顺序防 fd 泄
 
 **规则语法**：`Bash(git push:*)` 前缀段规则 / `Read(~/.ssh/**)`、`Write(…)`、`Grep(…)` 路径 glob /
 verdict ∈ allow|deny|ask / origin ∈ user|session（后来源同 verdict 覆盖；**deny 压过一切**——含
-full 档）；词法开放但**拼错 fail-closed 拒启**。
+full 档）；词法开放但**拼错 fail-closed 拒启**。路径 glob 按工具族匹配：`Write` 族含
+write/edit 两工具（文件变更同族——`Write(…)` 规则与默认写拒表同时治理 edit），`Read`/`Grep`
+各管自身工具。
 
 **bash 命令裁决管线**（纯函数；解析底座=tree-sitter-bash AST——§14，段词法器已删）：
 1. **deny 规则**（词面前缀匹配）确定性拒绝；

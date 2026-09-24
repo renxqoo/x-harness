@@ -1,6 +1,7 @@
-// 工具面决策入口（docs/PERMISSION-V2-DESIGN.md §3/§4.2）：read/grep/write 路径面（默认拒读
-// 表注入 → deny 压过 allow；界内 auto/confirm；界外 ask[grant=父目录入 extraRoots]）+
-// bash 走裁决管线 + 通用 Tool 规则面（任意工具名通配）+ 未知工具保守 ask。
+// 工具面决策入口（docs/PERMISSION-V2-DESIGN.md §3/§4.2）：read/grep/write/edit 路径面
+// （edit 归写族；默认拒读表注入 → deny 压过 allow；界内 auto/confirm；界外
+// ask[grant=父目录入 extraRoots]）+ bash 走裁决管线 + 通用 Tool 规则面（任意工具名
+// 通配）+ 无专属面工具按档位缺省（full 直通；其余保守 ask）。
 // 执行指令 = f(裁决, 档位 containment)：allow → direct|contained；ask/deny 无指令。
 
 import { resolve } from "node:path";
@@ -60,6 +61,16 @@ export function execOf(verdict: Verdict, profile: PermissionProfile): ExecDirect
   return profile.containment === "fenced" ? "contained" : "direct";
 }
 
+/** 路径工具族归属（工具名 → 规则工具族，单一登记面）：edit 归写族——文件变更面与
+ *  write 同源共享 deny 保护面/plan 硬闸/confirm-all 询问/full 短路/界内外 grant 语义。
+ *  新增路径工具必须在此登记；漏登记落无专属面缺省（fail-closed 保守 ask）。 */
+const PATH_TOOL_OF: ReadonlyMap<string, "Read" | "Write" | "Grep"> = new Map([
+  ["read", "Read"],
+  ["write", "Write"],
+  ["edit", "Write"],
+  ["grep", "Grep"],
+]);
+
 export function decideFor(input: DecideInput): Decision {
   // 控制类工具（agent 自我组织/控制面行为——todo 清单类）：非环境副作用，裁决面直通
   if (input.control === true) return { verdict: "allow", reason: "control tool", resolvedBy: "control-tool" };
@@ -85,14 +96,17 @@ export function decideFor(input: DecideInput): Decision {
       ...(adjudication.suggestedRule !== undefined ? { suggestedRule: adjudication.suggestedRule } : {}),
     };
   }
-  const ruleTool = ruleToolOf(input.tool);
+  const ruleTool = PATH_TOOL_OF.get(input.tool);
   if (ruleTool === undefined) {
-    // 通用 Tool 规则面（P2——任意工具名通配匹配）：显式权威先于保守 ask
+    // 通用 Tool 规则面（P2——任意工具名通配匹配）：显式权威先于档位缺省
     const toolRules = rules.filter((rule) => rule.tool === "Tool" && toolWildcardMatch(rule.pattern, input.tool));
     const denied = toolRules.find((rule) => rule.verdict === "deny");
     if (denied !== undefined) return { verdict: "deny", reason: `rule:${denied.pattern}`, resolvedBy: `rule:${denied.origin}` };
     const allowed = toolRules.find((rule) => rule.verdict === "allow");
     if (allowed !== undefined) return { verdict: "allow", reason: `rule:${allowed.pattern}`, resolvedBy: `rule:${allowed.origin}` };
+    // full 短路：无专属面工具按总括缺省直通（§4.2 unrestricted 行——「never=不问，full 全
+    // direct」）；deny 规则仍压过。保守 ask 只属于未分类缺省会产生询问的档位（auto 系/plan）。
+    if (isFullProfile(input.profile)) return { verdict: "allow", reason: "full mode", resolvedBy: "mode:full", exec: "direct" };
     return { verdict: "ask", reason: `unknown tool:${input.tool}`, resolvedBy: "default:ask", memorizable: true, suggestedRule: `Tool(${input.tool}):allow` };
   }
   return decidePathTool({ ...input, ruleTool, rules, roots: pathRoots });
@@ -103,13 +117,6 @@ function toolWildcardMatch(pattern: string, tool: string): boolean {
   if (!pattern.includes("*")) return pattern === tool;
   const regex = new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`);
   return regex.test(tool);
-}
-
-function ruleToolOf(tool: string): "Read" | "Write" | "Grep" | undefined {
-  if (tool === "read") return "Read";
-  if (tool === "write") return "Write";
-  if (tool === "grep") return "Grep";
-  return undefined;
 }
 
 interface PathDecisionInput extends DecideInput {

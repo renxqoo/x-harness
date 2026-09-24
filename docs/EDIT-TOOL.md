@@ -36,6 +36,7 @@ edit(path, edits: [{oldText, newText}, ...])
 **与 pi 的关键差异（按 x-harness 既有裁决重写，非照抄）**：
 
 1. **授权/门/CAS 全套**：pi 的 edit 只有 cwd resolve——无 PathGate/无观察门。x-harness 版走 write 同款完整管线：`admitSession`（越根/穿越拒）→ **锁键归一**：`observed.locked` 的键从词法路径改为 realpath（对抗审查 B1——symlink 别名 `/var/f` 与 `/private/var/f` 现双锁并发，edit 的读-改-写在双锁下**后写丢前写全部改动**，烈度高于 write 覆盖竞态；锁键与 I/O 键解耦——I/O 仍用 admit 返回的词法路径，锁键 realpath 在锁前取一次）→ **FS_NOT_OBSERVED/FS_STALE_VERSION 门**（编辑前必须本会话读过且未变——与 write 覆盖同门；edit 语义天然是「改刚看过的东西」，门语义比 write 更贴）→ `env.writeFileAtomic`（原子写，写前一次 `ctx.signal.aborted` 检查——判别联合 aborted 态，非 pi 的 throw 式）→ `observed.record` 写后登记（edit→write 连续操作不被自己的门拒）。锁键归一在 ObservedRegistry 层落——**write 同步受益**（同病一并修）。
+   - **裁决面归写族**：permission decideFor 路径面把 edit 登记为 `Write` 族（PATH_TOOL_OF 单一登记面）——plan 硬闸/deny 保护面（`.git`/protectedPaths）/confirm-all 询问/full 短路/界内外 grant 语义与 write 全共享（`Write(…)` 规则同时治理 edit）。
    - **diff 移锁外（B3）**：`observed.locked` 回调只返回 `{baseText, newText, path}`，diff/patch/回显组装在锁外做——两输入已定字符串无竞态，避免大文件 LCS 拖长互斥持锁（bash 同路径排队面）。
    - **NOT_FOUND 文案（B2b）**：错误文案补「file changed since read, re-read first」半句——同会话 write→edit 后 oldText 基于旧文时引导 re-read 而非盲重试。
 2. **diff 生成**：引 npm `diff` 依赖（pi 同款 8.x——`diffLines` + `createTwoFilesPatch`）。裁决（用户拍板）：不自写 LCS——边界坑（末行无换行/行内多改动块分割/hunk 合并）三方包已踩平，自写的隐性成本高于一行依赖；pi 同版本号背书。

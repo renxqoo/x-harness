@@ -1,7 +1,8 @@
 // PERMISSION-V2 核心矩阵与不变式（DESIGN §4.2 执行矩阵 / §9 九不变式）：
 // 裁决类 × 档位 containment → {verdict, exec}；plan 硬闸先于规则；习得不越敏感面；
 // 显式 ask 压习得；拒记集（NEVER_MEMORIZE）选项裁剪；结构化 ask 记忆写入三面；
-// 审计 exec 随行；escalatable 资格。
+// 审计 exec 随行；escalatable 资格；edit 归写族（PATH_TOOL_OF 登记面）；
+// 无专属面工具按档位缺省（full 直通）。
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
@@ -49,6 +50,11 @@ describe("执行矩阵（§4.2——f(裁决类, containment)）", () => {
   it("edit-confirm：界内合成写 ask（不越 root 问）；auto 档同命令 direct", () => {
     expect(bash("mkdir build", PROFILES.editConfirm)).toMatchObject({ verdict: "ask", memorizable: true });
     expect(bash("mkdir build", PROFILES.auto)).toMatchObject({ verdict: "allow", exec: "direct" });
+  });
+
+  it("症状回归：printf 纯输出动词曾在 edit-confirm 档被问（落无法预测桶）——只读白名单补齐免问；sort -o 写形态仍问", () => {
+    expect(bash("printf 'x'", PROFILES.editConfirm)).toMatchObject({ verdict: "allow", resolvedBy: "classifier:readonly" });
+    expect(bash("sort -o out.txt in.txt", PROFILES.editConfirm)).toMatchObject({ verdict: "ask", resolvedBy: "default:ask" });
   });
 
   it("full：短路现口径（sudo deny；injection/rm-rf-root 过）；exec direct", () => {
@@ -223,6 +229,15 @@ describe("插件级：结构化 ask 往返 + 记忆写入 + 审计 exec（§6.2/
     for (const d of b.unload) await d();
   });
 
+  it("症状回归：full 档 edit 工具调用弹确认（ask 计数非 0）——现零 ask 直跑", async () => {
+    const b = await bench({ mode: "full" });
+    const out = await b.call("edit", { path: "src/a.ts", edits: [{ oldText: "a", newText: "b" }] });
+    expect(out.content).toBe("ran");
+    expect(b.asks).toHaveLength(0);
+    expect(b.audits[0]).toMatchObject({ tool: "edit", verdict: "allow", exec: "direct", resolvedBy: "mode:full" });
+    for (const d of b.unload) await d();
+  });
+
   it("settings 保护路径（U13）：Write 工具面 deny settings 文件", async () => {
     const settingsPath = join(root, ".x-harness", "hub-settings.json");
     const b = await bench({ rules: [], protectedPaths: [settingsPath] });
@@ -239,6 +254,33 @@ describe("通用 Tool 规则面（P2——任意工具名通配）", () => {
     expect(input([parseRule("Tool(web*):allow", "user")])).toMatchObject({ verdict: "allow", resolvedBy: "rule:user" });
     expect(input([parseRule("Tool(web*):allow", "user"), parseRule("Tool(webfetch):deny", "user")])).toMatchObject({ verdict: "deny" });
     expect(input([])).toMatchObject({ verdict: "ask", resolvedBy: "default:ask", memorizable: true });
+  });
+
+  it("症状回归：无专属面工具曾在 full 档弹确认（保守 ask 不看档）——现直通；Tool deny 仍压过", () => {
+    const input = (rules: readonly PermissionRule[]) => decideFor({ tool: "webfetch", args: {}, userRules: rules, sessionRules: [], profile: PROFILES.full, root: ROOT, extraRoots: [] });
+    expect(input([])).toMatchObject({ verdict: "allow", exec: "direct", resolvedBy: "mode:full" });
+    expect(input([parseRule("Tool(web*):deny", "user")])).toMatchObject({ verdict: "deny" });
+  });
+});
+
+describe("edit 裁决面（写族登记——PATH_TOOL_OF）", () => {
+  const edit = (args: unknown, profile: ReturnType<typeof resolveProfile>, rules: readonly PermissionRule[] = []): Decision =>
+    decideFor({ tool: "edit", args, userRules: rules, sessionRules: [], profile, root: ROOT, extraRoots: [] });
+
+  it("症状回归：edit 曾在 full 档弹确认（落未知工具保守 ask）——现写族 full 短路 direct", () => {
+    expect(edit({ path: "src/a.ts" }, PROFILES.full)).toMatchObject({ verdict: "allow", exec: "direct", resolvedBy: "mode:full" });
+  });
+
+  it("症状回归：edit 曾绕过写族防线（plan 硬闸可被批准落盘/.git 写拒与 Write deny 规则不生效）", () => {
+    expect(edit({ path: "src/a.ts" }, PROFILES.plan)).toMatchObject({ verdict: "deny", resolvedBy: "mode:plan" });
+    expect(edit({ path: ".git/hooks/pre-commit" }, PROFILES.full)).toMatchObject({ verdict: "deny" });
+    expect(edit({ path: "src/a.ts" }, PROFILES.full, [parseRule("Write(src/**):deny", "user")])).toMatchObject({ verdict: "deny", resolvedBy: "rule:user" });
+  });
+
+  it("与 write 同构：edit-confirm 界内 ask；auto 界内 direct；界外 ask 带 extraRoot grant", () => {
+    expect(edit({ path: "src/a.ts" }, PROFILES.editConfirm)).toMatchObject({ verdict: "ask", resolvedBy: "edit-confirm", memorizable: true });
+    expect(edit({ path: "src/a.ts" }, PROFILES.auto)).toMatchObject({ verdict: "allow", exec: "direct" });
+    expect(edit({ path: "/elsewhere/b.ts" }, PROFILES.auto)).toMatchObject({ verdict: "ask", resolvedBy: "outside-root", grant: { kind: "extraRoot", dir: "/elsewhere" }, memorizable: true });
   });
 });
 
