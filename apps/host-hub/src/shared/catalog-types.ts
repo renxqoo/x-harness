@@ -59,4 +59,7 @@ export interface AssemblyProvider {
   readonly models: readonly string[];
   readonly contextWindow?: number;
   readonly maxOutputTokens?: number;
+  /** 逐模型输出上限（entries 已解析值——模型级 meta 与 modelOverrides 经 entryOf+
+   *  applyOverride 单源；快照不重算优先级，与 get_models 展示面一致） */
+  readonly maxOutputTokensByModel?: Readonly<Record<string, number>>;
 }

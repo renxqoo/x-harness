@@ -1,11 +1,15 @@
 // worker 单元件（无进程）：meta-fold 折叠矩阵、entries-window 游标矩阵、main 入口
-// 导入（词表/常量面）、catalog-types 形状、script 模式快照。
-import { describe, expect, test } from "vitest";
+// 导入（词表/常量面）、catalog-types 形状、script 模式快照、装配快照 round-trip。
+import { afterAll, describe, expect, test } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SessionEvent } from "@x-harness/session";
 import { foldDial, foldMeta, metaTailOf } from "../shared/meta-fold.ts";
 import { entryWindow } from "../worker/entries-window.ts";
 import { projectEntries } from "../shared/entries-project.ts";
 import { resolveWorkerCatalog, scriptCatalog, workerCatalogFromEnv, catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
+import { buildAssemblySnapshot, readCatalog } from "../shared/catalog.ts";
 import { imagesUnsupported, thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
 import { parseCommand } from "@x-harness/commands";
 import { withinResponseBudget } from "../worker/worker-read-commands.ts";
@@ -13,6 +17,16 @@ import * as workerMain from "../worker/main.ts";
 import type { HubProviderProfile } from "../shared/catalog-types.ts";
 
 void workerMain;
+
+const roots: string[] = [];
+async function tempRoot(prefix: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  roots.push(dir);
+  return dir;
+}
+afterAll(async () => {
+  await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 function meta(seq: number, key: string, value: unknown): SessionEvent {
   return { type: "session/meta", seq, time: seq, data: { key, value } } as SessionEvent;
@@ -91,6 +105,45 @@ describe("worker-catalog 解析", () => {
     // default 缺席 → 首档案首模型回落
     const noDefault = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p1", protocol: "openai", baseUrl: "https://p1", models: ["m1"] }] }) });
     expect(noDefault.default).toEqual({ provider: "p1", model: "m1" });
+  });
+
+  test("快照 round-trip：host buildAssemblySnapshot → HUB_WORKER_PROVIDERS JSON → worker 侧解析保形（maxOutputTokensByModel 单源值直达装配面）", async () => {
+    const dir = await tempRoot("hub-rt-");
+    await Bun.write(join(dir, "providers.json"), JSON.stringify({
+      providers: [{
+        name: "p",
+        protocol: "anthropic",
+        baseUrl: "https://p.example",
+        models: [{ id: "with-meta", maxTokens: 12_000 }, "bare"],
+        maxOutputTokens: 4_000,
+      }],
+      modelOverrides: { "p::with-meta": { maxOutputTokens: 99_999 } },
+    }));
+    const catalog = await readCatalog(dir);
+    const providers = buildAssemblySnapshot(catalog, { p: "cred" }, {});
+    const parsed = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers, default: { provider: "p", model: "with-meta" } }) });
+    expect(parsed.providers[0]?.maxOutputTokensByModel).toEqual({ "with-meta": 99_999, bare: 4_000 });
+    expect(parsed.providers[0]?.maxOutputTokens).toBe(4_000);
+  });
+
+  test("maxOutputTokensByModel 垃圾形状静默剔除（非对象/非正整数值——provider 保留）", () => {
+    const snapshot = JSON.stringify({
+      providers: [{
+        provider: "p",
+        protocol: "anthropic",
+        baseUrl: "https://p",
+        apiKey: "",
+        models: ["good", "bad", "neg", "frac", "str"],
+        maxOutputTokensByModel: { good: 8_192, bad: "x", neg: -1, frac: 1.5, str: 0, ok2: 33_000 },
+      }],
+    });
+    const catalog = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: snapshot });
+    expect(catalog.providers[0]?.maxOutputTokensByModel).toEqual({ good: 8_192, ok2: 33_000 });
+    // 整字段垃圾（数组/全垃圾成员）→ 字段剔除不崩
+    const arrShape = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p", protocol: "anthropic", baseUrl: "https://p", apiKey: "", models: ["m"], maxOutputTokensByModel: ["m"] }] }) });
+    expect(arrShape.providers[0] && Object.hasOwn(arrShape.providers[0], "maxOutputTokensByModel")).toBe(false);
+    const allJunk = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p", protocol: "anthropic", baseUrl: "https://p", apiKey: "", models: ["m"], maxOutputTokensByModel: { m: "x" } }] }) });
+    expect(allJunk.providers[0] && Object.hasOwn(allJunk.providers[0], "maxOutputTokensByModel")).toBe(false);
   });
 
   test("script 模式快照 + resolveWorkerCatalog 注入缝", () => {

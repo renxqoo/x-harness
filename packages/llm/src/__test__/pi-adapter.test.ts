@@ -203,6 +203,70 @@ describe("parseRetryAfterMs", () => {
   });
 });
 
+describe("maxOutputTokensByModel 逐模型输出上限折叠（请求显式 > 逐模型 > 档案级）", () => {
+  it("byModel 命中：该模型请求带 byModel 值（档案级与缺席模型回落各自成立）；model 条目与注入同源", async () => {
+    const seen: Array<{ id: string; options: Record<string, unknown>; model: Record<string, unknown> }> = [];
+    const streamFn: PiStreamFn = async function* (model, _context, options) {
+      seen.push({ id: (model as { id: string }).id, options: options as Record<string, unknown>, model: model as unknown as Record<string, unknown> });
+      yield doneEvent();
+    };
+    const adapter = createAnthropicCompatAdapter({
+      baseUrl: "http://x",
+      apiKey: "k",
+      maxOutputTokens: 4096, // 档案级在场：byModel 命中模型不走此值
+      maxOutputTokensByModel: { "big-x": 32_768 },
+      streamFn,
+    });
+    await collect(adapter.stream(request({ model: "big-x" })));
+    await collect(adapter.stream(request({ model: "plain-y" })));
+    // big-x：逐模型值生效；plain-y：不在 byModel → 回落档案级
+    expect(seen[0]?.id).toBe("big-x");
+    expect(seen[0]?.options["maxTokens"]).toBe(32_768);
+    expect(seen[0]?.model["maxTokens"]).toBe(32_768); // Model 条目与请求注入同源
+    expect(seen[1]?.id).toBe("plain-y");
+    expect(seen[1]?.options["maxTokens"]).toBe(4096);
+    expect(seen[1]?.model["maxTokens"]).toBe(4096);
+  });
+
+  it("byModel 缺席模型回落档案级；档案级也无 → anthropic 协议链末端 DEFAULT_MAX_TOKENS", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const streamFn: PiStreamFn = async function* (_model, _context, options) {
+      seen.push(options as Record<string, unknown>);
+      yield doneEvent();
+    };
+    const fallback = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokensByModel: { "big-x": 32_768 }, streamFn });
+    await collect(fallback.stream(request({ model: "plain-y" })));
+    expect(seen[0]?.["maxTokens"]).toBe(8192); // 档案级缺席 → DEFAULT_MAX_TOKENS（anthropic 必填）
+    const none = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn });
+    await collect(none.stream(request({ model: "plain-y" })));
+    expect(seen[1]?.["maxTokens"]).toBe(8192);
+  });
+
+  it("请求显式 maxTokens 恒胜 byModel（逐模型配置不压过请求显式值）", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const streamFn: PiStreamFn = async function* (_model, _context, options) {
+      seen.push(options as Record<string, unknown>);
+      yield doneEvent();
+    };
+    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokensByModel: { "big-x": 32_768 }, streamFn });
+    await collect(adapter.stream(request({ model: "big-x", maxTokens: 512 })));
+    expect(seen[0]?.["maxTokens"]).toBe(512);
+  });
+
+  it("openai 工厂：byModel 命中才发；byModel 与档案级双缺席不发（协议语义不变）", async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const streamFn: PiStreamFn = async function* (_model, _context, options) {
+      seen.push(options as Record<string, unknown>);
+      yield { ...doneEvent(), message: { ...doneEvent().message, api: "openai-completions" } } as never;
+    };
+    const adapter = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokensByModel: { "big-x": 32_768 }, streamFn });
+    await collect(adapter.stream(request({ model: "big-x" })));
+    expect(seen[0]?.["maxTokens"]).toBe(32_768); // byModel 命中 = 显式注入
+    await collect(adapter.stream(request({ model: "plain-y" })));
+    expect(Object.hasOwn(seen[1] as object, "maxTokens")).toBe(false); // 双缺席：wire 不带
+  });
+});
+
 describe("Model.input 按请求查表（BATCH2-DESIGN §1.1——openai 协议缺 image 声明会把图降级为占位文本）", () => {
   it("inputByModel 命中 → 逐模型模态；缺席模型 → 缺省 [text]", async () => {
     const seen: Array<{ id: string; input: string[] }> = [];

@@ -27,15 +27,37 @@ interface SnapshotJson {
   readonly modelMeta?: Readonly<Record<string, WorkerModelMeta>>;
 }
 
+/** 逐模型输出上限形状：值须正整数（垃圾成员剔除——provider 整体保留） */
+function validMaxByModel(raw: unknown): Readonly<Record<string, number>> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [model, value] of Object.entries(raw)) {
+    if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) out[model] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function validProviders(raw: readonly AssemblyProvider[] | undefined): readonly AssemblyProvider[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter(
-    (p) =>
-      typeof p?.provider === "string" && p.provider !== "" &&
-      (p.protocol === "anthropic" || p.protocol === "openai") &&
-      typeof p.baseUrl === "string" &&
-      Array.isArray(p.models),
-  ) as readonly AssemblyProvider[];
+  const out: AssemblyProvider[] = [];
+  for (const p of raw) {
+    if (
+      typeof p?.provider !== "string" || p.provider === "" ||
+      (p.protocol !== "anthropic" && p.protocol !== "openai") ||
+      typeof p.baseUrl !== "string" ||
+      !Array.isArray(p.models)
+    ) {
+      continue;
+    }
+    // 逐模型输出上限整字段净化：垃圾形状（非对象/全垃圾成员）剔除字段本身，不透传
+    const { maxOutputTokensByModel: rawByModel, ...rest } = p;
+    const maxOutputTokensByModel = validMaxByModel(rawByModel);
+    out.push({
+      ...rest,
+      ...(maxOutputTokensByModel !== undefined ? { maxOutputTokensByModel } : {}),
+    });
+  }
+  return out;
 }
 
 /** 从 env 解析快照；缺席/坏 JSON → 空目录（thread/start 显式 modelId 即失败——

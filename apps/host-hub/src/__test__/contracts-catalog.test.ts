@@ -122,6 +122,49 @@ describe("catalog", () => {
     expect(catalog.entries.some((e) => e.provider === "")).toBe(false);
   });
 
+  test("装配快照 maxOutputTokensByModel：模型级 meta 与 modelOverrides 都进快照；模型级胜档案级；与 get_models 展示值同源", async () => {
+    const dir = await tempDir();
+    await Bun.write(join(dir, "providers.json"), JSON.stringify({
+      providers: [
+        {
+          name: "p",
+          protocol: "anthropic",
+          baseUrl: "https://p.example",
+          models: [
+            { id: "with-meta", maxTokens: 12_000 }, // 模型级 meta
+            "bare-model", // 裸 id：档案级缺省解析后仍进 byModel（entries 已解析值）
+            { id: "no-limit" }, // 模型级缺席且档案级缺席 → 不进 byModel
+          ],
+          maxOutputTokens: 4_000, // 档案级：bare-model 的解析值
+        },
+      ],
+      modelOverrides: { "p::with-meta": { maxOutputTokens: 99_999 } }, // override 覆写 meta
+    }));
+    const catalog = await readCatalog(dir);
+    const snap = buildAssemblySnapshot(catalog, {}, {});
+    const byName = new Map(snap.map((p) => [p.provider, p]));
+    // no-limit 也解析为档案级 4_000（entries 已解析值单源——模型级缺席回落档案级）
+    expect(byName.get("p")?.maxOutputTokensByModel).toEqual({ "with-meta": 99_999, "bare-model": 4_000, "no-limit": 4_000 });
+    // 同源断言：快照值 = get_models 展示面 entry.maxTokens（entryOf+applyOverride 单源）
+    const shown = new Map(catalog.entries.filter((e) => e.provider === "p").map((e) => [e.model, e.maxTokens]));
+    for (const [model, value] of Object.entries(byName.get("p")?.maxOutputTokensByModel ?? {})) {
+      expect(shown.get(model)).toBe(value);
+    }
+    expect(shown.get("with-meta")).toBe(99_999); // override 值胜模型级 meta（展示与快照同值）
+    expect(byName.get("p")?.maxOutputTokens).toBe(4_000); // 档案级字段保持原样（profile 级兜底面不变）
+  });
+
+  test("装配快照 maxOutputTokensByModel：档案无任何模型级值时不发该字段", async () => {
+    const dir = await tempDir();
+    await Bun.write(join(dir, "providers.json"), JSON.stringify({
+      providers: [{ name: "q", protocol: "openai", baseUrl: "https://q.example", models: ["m1"] }],
+    }));
+    const catalog = await readCatalog(dir);
+    const snap = buildAssemblySnapshot(catalog, {}, {});
+    const q = snap.find((p) => p.provider === "q");
+    expect(q && Object.hasOwn(q, "maxOutputTokensByModel")).toBe(false);
+  });
+
   test("装配快照 apiKey 解析序：credentials > 档案字面 > apiKeyEnv env > 空", async () => {
     const dir = await tempDir();
     await Bun.write(join(dir, "providers.json"), JSON.stringify({

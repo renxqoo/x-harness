@@ -72,6 +72,14 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     expect(JSON.stringify(captured?.body)).not.toContain("cache_control"); // cacheRetention none
   });
 
+  it("maxOutputTokensByModel 命中：该模型请求体 max_tokens = 逐模型值（wire 面断言）", async () => {
+    srv = await startSceneServer();
+    srv.nextScene({ status: 200, chunks: anthropicFullFlow() });
+    const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test", maxOutputTokensByModel: { "big-x": 32_768 } });
+    await collect(adapter.stream(request({ model: "big-x" })));
+    expect(srv.captured()?.body["max_tokens"]).toBe(32_768); // 逐模型值直达 wire
+  });
+
   it("非 2xx：429 + retry-after 头 → http-429 + retryAfterMs（onResponse 捕获）", async () => {
     srv = await startSceneServer();
     srv.nextScene({ status: 429, headers: { "retry-after": "2.5" }, chunks: ["data: {}"] });

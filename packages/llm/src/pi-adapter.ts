@@ -74,6 +74,9 @@ interface AdapterCoreOptions {
   readonly provider: string;
   /** 档案级输出上限：请求未显式带 maxTokens 时生效（请求显式值恒胜） */
   readonly maxOutputTokens?: number;
+  /** 逐模型输出上限（目录已解析值——模型级 meta 与 overrides 单源）：折叠序在档案
+   *  级之前、请求显式值之后 */
+  readonly maxOutputTokensByModel?: Readonly<Record<string, number>>;
   /** 逐模型输入模态（缺省 ["text"]）：Model 按请求查表——openai 协议在 input 缺
    *  "image" 时把图降级为占位文本，能力须如实申报；anthropic 协议不消费此字段 */
   readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
@@ -84,6 +87,11 @@ interface AdapterCoreOptions {
 /** Model 条目窗口：模型级（contextWindowByModel）> 档案级 > 200k（仅元数据面） */
 function effectiveContextWindow(core: AdapterCoreOptions, model: string): number {
   return core.contextWindowByModel?.[model] ?? core.contextWindow ?? 200_000;
+}
+
+/** 输出上限折叠：请求显式值 > 逐模型（目录已解析值）> 档案级（undefined = 未折叠出值） */
+function effectiveMaxOutputTokens(core: AdapterCoreOptions, request: LlmRequest): number | undefined {
+  return request.maxTokens ?? core.maxOutputTokensByModel?.[request.model] ?? core.maxOutputTokens;
 }
 
 /** 单 attempt 装配：onResponse 捕获状态与 retry-after；同步抛折算；abort 豁免交给 piChunks */
@@ -128,9 +136,9 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
           }
           return response;
         }) as typeof fetch;
-        // 输出上限折叠：请求显式值恒胜档案配置；anthropic 协议必填恒注入（链末端
-        // DEFAULT_MAX_TOKENS 兜底）；openai 仅折叠值在场才发（双缺席不发）
-        const effectiveMaxTokens = request.maxTokens ?? core.maxOutputTokens;
+        // anthropic 协议必填恒注入（链末端 DEFAULT_MAX_TOKENS 兜底）；openai 仅折叠值
+        // 在场才发（双缺席不发）
+        const effectiveMaxTokens = effectiveMaxOutputTokens(core, request);
         const injectMaxTokens = effectiveMaxTokens !== undefined || core.api === "anthropic-messages";
         // Model 条目按请求构造：id/name = request.model（请求体的 model 字段来源——适配器名
         // 只作 provider 注册键，绝不进请求体）；maxTokens 与 options 同源
@@ -188,6 +196,8 @@ export interface AnthropicCompatOptions {
   readonly fetch?: typeof fetch;
   /** 输出上限：请求未显式带 maxTokens 时生效；双缺席链末端 DEFAULT_MAX_TOKENS（协议必填） */
   readonly maxOutputTokens?: number;
+  /** 逐模型输出上限（目录已解析值——模型级 meta 与 overrides 单源）：优先于档案级 */
+  readonly maxOutputTokensByModel?: Readonly<Record<string, number>>;
   /** pi Context 模型条目必填；缺省 200_000（仅元数据面，不参与钳制） */
   readonly contextWindow?: number;
   /** 逐模型输入模态（缺省 ["text"]）——能力如实透传 */
@@ -209,6 +219,7 @@ export function createAnthropicCompatAdapter(options: AnthropicCompatOptions): L
     api: "anthropic-messages",
     provider: "anthropic",
     maxOutputTokens: options.maxOutputTokens,
+    maxOutputTokensByModel: options.maxOutputTokensByModel,
     inputByModel: options.inputByModel,
     contextWindowByModel: options.contextWindowByModel,
   });
@@ -222,6 +233,8 @@ export interface OpenaiCompatOptions {
   readonly contextWindow?: number;
   /** 输出上限：请求未显式带 maxTokens 时注入；双缺席不发（openai 无协议必填） */
   readonly maxOutputTokens?: number;
+  /** 逐模型输出上限（目录已解析值——模型级 meta 与 overrides 单源）：优先于档案级 */
+  readonly maxOutputTokensByModel?: Readonly<Record<string, number>>;
   /** 逐模型输入模态（缺省 ["text"]）——openai 协议在 input 缺 "image" 时把图降级为
    *  占位文本，vision 模型必须显式申报 */
   readonly inputByModel?: Readonly<Record<string, readonly ("text" | "image")[]>>;
@@ -241,6 +254,7 @@ export function createOpenaiCompatAdapter(options: OpenaiCompatOptions): LlmAdap
     api: "openai-completions",
     provider: "openai",
     maxOutputTokens: options.maxOutputTokens,
+    maxOutputTokensByModel: options.maxOutputTokensByModel,
     inputByModel: options.inputByModel,
     contextWindowByModel: options.contextWindowByModel,
   });

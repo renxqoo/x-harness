@@ -139,8 +139,9 @@ function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: strin
 }
 
 /** adapters 构造：快照 → compat adapters（name = 档案名——dial.provider 精确匹配）；
- *  inputByModel/contextWindowByModel 按档案模型过滤（Model 按请求查表申报输入模态
- *  与窗口——openai 协议在 input 缺 "image" 时把图降级为占位文本，能力须如实透传） */
+ *  inputByModel/contextWindowByModel/maxOutputTokensByModel 按档案模型过滤（Model 按
+ *  请求查表申报输入模态/窗口/输出上限——openai 协议在 input 缺 "image" 时把图降级为
+ *  占位文本，能力须如实透传；maxOutputTokensByModel 是 host 目录已解析值单源） */
 function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined): LlmAdapter[] {
   if (script !== undefined) return [script];
   return catalog.providers.map((p) => {
@@ -159,6 +160,7 @@ function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined
       ...(p.maxOutputTokens !== undefined ? { maxOutputTokens: p.maxOutputTokens } : {}),
       ...(Object.keys(inputByModel).length > 0 ? { inputByModel } : {}),
       ...(Object.keys(contextWindowByModel).length > 0 ? { contextWindowByModel } : {}),
+      ...(p.maxOutputTokensByModel !== undefined ? { maxOutputTokensByModel: p.maxOutputTokensByModel } : {}),
     };
     return p.protocol === "anthropic" ? createAnthropicCompatAdapter(options) : createOpenaiCompatAdapter(options);
   });
