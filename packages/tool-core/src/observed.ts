@@ -1,6 +1,6 @@
 // 观察版本登记（docs/TOOLBOX.md §3 + docs/EXEC-ENV.md §3）：会话键控（跨会话不可借用观察）；
 // 版本元组 {ino,size,mtimeNs} 由 ExecEnv 产出（read=openRead fd 版本，write=env.stat——
-// temp+rename 换 inode 必须可比）；同路径进程内互斥（promise chain）。
+// temp+rename 换 inode 必须可比）；同锁键进程内互斥（promise chain）。
 
 export interface FileVersion {
   readonly ino: string;
@@ -42,12 +42,17 @@ export class ObservedRegistry {
     this.bySession.delete(session ?? "_anon");
   }
 
-  /** 同绝对路径进程内互斥：check→temp→rename 临界区串行化 */
-  async locked<T>(path: string, critical: () => Promise<T>): Promise<T> {
-    const previous = this.chains.get(path) ?? Promise.resolve();
+  /**
+   * 同锁键进程内互斥：check→temp→rename 临界区串行化。锁键取 realpath（编辑方在进锁
+   * 前调 env.realpath 一次）——symlink 别名（/var/f 与 /private/var/f）词法上是两条路径、
+   * 物理上是同一文件，按词法键分链会让读-改-写双锁并发后写丢前写。I/O 路径与锁键解耦：
+   * 文件操作仍走 admit 返回的词法路径。
+   */
+  async locked<T>(lockKey: string, critical: () => Promise<T>): Promise<T> {
+    const previous = this.chains.get(lockKey) ?? Promise.resolve();
     const run = previous.then(critical, critical);
     this.chains.set(
-      path,
+      lockKey,
       run.then(
         () => {},
         () => {},

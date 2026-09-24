@@ -43,6 +43,7 @@ import type { ExecEnv } from "@x-harness/exec-env";
 import { createGrepPlugin } from "@x-harness/tool-grep";
 import { createReadPlugin } from "@x-harness/tool-read";
 import { createTruncatedWriteRescuePlugin, createWritePlugin } from "@x-harness/tool-write";
+import { createEditPlugin } from "@x-harness/tool-edit";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolRegistry } from "@x-harness/tools";
 
@@ -150,6 +151,7 @@ export const toolboxKit = (o: {
     toolsPlugin,
     createReadPlugin({ gate, observed, ...env, ...systemRoots }),
     createWritePlugin({ gate, observed, ...env }),
+    createEditPlugin({ gate, observed, ...env }),
     ...(o.env !== undefined
       ? [createTruncatedWriteRescuePlugin({
           gate,

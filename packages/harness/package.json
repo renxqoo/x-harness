@@ -32,6 +32,7 @@
     "@x-harness/tool-grep": "workspace:*",
     "@x-harness/tool-read": "workspace:*",
     "@x-harness/tool-write": "workspace:*",
+    "@x-harness/tool-edit": "workspace:*",
     "@x-harness/tools": "workspace:*"
   },
   "devDependencies": {

@@ -247,6 +247,7 @@
         "@x-harness/token-meter": "workspace:*",
         "@x-harness/tool-bash": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
+        "@x-harness/tool-edit": "workspace:*",
         "@x-harness/tool-grep": "workspace:*",
         "@x-harness/tool-read": "workspace:*",
         "@x-harness/tool-write": "workspace:*",
@@ -524,6 +525,10 @@
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tools": "workspace:*",
         "diff": "^8.0.4",
+      },
+      "devDependencies": {
+        "@x-harness/tool-read": "workspace:*",
+        "@x-harness/tool-write": "workspace:*",
       },
     },
     "packages/tool-grep": {

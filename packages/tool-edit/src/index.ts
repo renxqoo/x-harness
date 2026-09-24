@@ -1,5 +1,9 @@
-// tool-edit 公共面：edit 纯函数域 + diff 组装（工具本体 edit.ts/plugin.ts 属后续批次）。
+// tool-edit 公共面：edit 工具本体 + 插件装配 + 纯函数域（匹配/行尾/BOM）+ diff 组装。
 
+export { createEditTool } from "./edit.ts";
+export type { EditToolInput } from "./edit.ts";
+export { createEditPlugin, editGuidance } from "./plugin.ts";
+export type { EditPluginInput } from "./plugin.ts";
 export {
   splitBom,
   detectLineEnding,

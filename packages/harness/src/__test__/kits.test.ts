@@ -75,7 +75,7 @@ describe("createAgentWorld + kits（F1）", () => {
     ];
     const ctx = createContext();
     const unload = await loadPlugins(ctx, plugins);
-    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "bash", "grep", "task_stop"]);
+    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "edit", "bash", "grep", "task_stop"]); // edit 在 write 之后（三件套同源相邻）
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
@@ -262,6 +262,78 @@ describe("autoCompactKit（分层自动压缩接入）", () => {
     const landed: string[] = [];
     ctx.on(autocompactL1Cleared, (payload: unknown) => landed.push(String((payload as { session: string }).session)));
     expect(ctx.use(compactionRunner).summarizer?.model).toBe("sum"); // CP 面单一真相源在场(runner.summarizer)
+    await ctx.dispose();
+  });
+});
+
+describe("toolboxKit edit 装配（EDIT-TOOL 批 3）", () => {
+  it("toolboxKit 含 edit 插件：注册表列出 edit，guidance 落 def 与 system-prompt tool/edit 段", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-edit-"));
+    const plugins: readonly Plugin[] = [
+      ...inlineSessionKit(),
+      ...promptKit(),
+      ...toolboxKit({ root, env: createLocalEnv(root) }),
+    ];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+    expect(reg.schemas().map((s) => s.name)).toContain("edit"); // 装配齐
+    const def = reg.get("edit");
+    expect(def?.description).toContain("unique"); // description 自含用法
+    // guidance 数据位：四则守则落 def（registry.get 可读——D3）
+    const guidance = def?.guidance ?? "";
+    expect(guidance).toContain("must be unique in the original file");
+    expect(guidance).toContain("matched against the original file, not after earlier edits");
+    expect(guidance).toContain("merge them into one edit");
+    expect(guidance).toContain("as small as possible while still unique");
+    // guidance 停靠 system-prompt tool/edit 段（assemble 文本在场，位于 base 段之后）
+    const { systemPrompt } = await import("@x-harness/system-prompt");
+    const prompt = ctx.use(systemPrompt);
+    const text = prompt.assemble().text;
+    expect(text).toContain("## Edit");
+    // 拆卸即回收
+    for (const dispose of unload) await dispose();
+    expect(prompt.assemble().text).not.toContain("## Edit");
+    await ctx.dispose();
+  });
+
+  it("三件套同源：toolboxKit 内 read→edit→write 链路打通（共享 gate+observed）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-edit2-"));
+    const plugins: readonly Plugin[] = [
+      ...inlineSessionKit(),
+      ...toolboxKit({ root, env: createLocalEnv(root) }),
+    ];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+    const signal = new AbortController().signal;
+    const session = "s-edit-chain" as never;
+    const { writeFileSync, readFileSync } = await import("node:fs");
+    writeFileSync(`${root}/flow.txt`, "alpha\nbeta\ngamma\n");
+    const seen = await reg.dispatch({ callId: "e1", name: "read", args: { path: "flow.txt" }, signal, session });
+    expect(seen.isError).toBeUndefined();
+    const edited = await reg.dispatch({ callId: "e2", name: "edit", args: { path: "flow.txt", edits: [{ oldText: "beta", newText: "BETA" }] }, signal, session });
+    expect(edited.isError).toBeUndefined();
+    expect(edited.content).toContain("Edited flow.txt (1 replacement)");
+    expect(edited.content).toContain("+2 BETA");
+    const written = await reg.dispatch({ callId: "e3", name: "write", args: { path: "flow.txt", content: "done\n" }, signal, session });
+    expect(written.isError).toBeUndefined();
+    expect(readFileSync(`${root}/flow.txt`, "utf8")).toBe("done\n");
+    for (const dispose of unload) await dispose();
+    await ctx.dispose();
+  });
+
+  it("write description 分流句在场（edit 落地后的 write 自述）", async () => {
+    root = mkdtempSync(join(tmpdir(), "xh-kits-edit3-"));
+    const plugins: readonly Plugin[] = [
+      ...inlineSessionKit(),
+      ...toolboxKit({ root, env: createLocalEnv(root) }),
+    ];
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, plugins);
+    const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
+    expect(reg.get("write")?.description).toContain("prefer the edit tool");
+    for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
 });
