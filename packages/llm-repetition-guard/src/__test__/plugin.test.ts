@@ -33,7 +33,7 @@ describe("repetitionGuardStream 流包装", () => {
 
   it("症状：text 通道复读截流——重复帧后收 error finish{code:repetition}，后续帧不再放行", async () => {
     const out = await collect(
-      repetitionGuardStream(script([text("开场白。"), text("cleaner".repeat(6)), text("这段永远不该出现")])),
+      repetitionGuardStream(script([text("开场白。"), text("cleaner".repeat(26)), text("这段永远不该出现")])),
     );
     const last = out[out.length - 1];
     expect(last?.type).toBe("finish");
@@ -61,7 +61,7 @@ describe("repetitionGuardStream 流包装", () => {
   });
 
   it("hit 饱和不重复报：一次流内恰一个 error finish", async () => {
-    const out = await collect(repetitionGuardStream(script([text("cleaner".repeat(20))])));
+    const out = await collect(repetitionGuardStream(script([text("cleaner".repeat(26))])));
     expect(out.filter((chunk) => chunk.type === "finish")).toHaveLength(1);
   });
 
@@ -93,7 +93,7 @@ describe("插件装配（llm/stream waterfall）", () => {
         inject: ["llm"],
         apply: (c) => c.use(llmRuntime).registerAdapter({
           name: "fake",
-          stream: () => script([text("cleaner".repeat(8)), finishStop]),
+          stream: () => script([text("cleaner".repeat(26)), finishStop]),
         }),
       },
     ]);
@@ -117,7 +117,7 @@ describe("插件装配（llm/stream waterfall）", () => {
         inject: ["llm"],
         apply: (c) => c.use(llmRuntime).registerAdapter({
           name: "fake",
-          stream: () => script([text("cleaner".repeat(8)), finishStop]),
+          stream: () => script([text("cleaner".repeat(26)), finishStop]),
         }),
       },
     ]);
@@ -125,6 +125,6 @@ describe("插件装配（llm/stream waterfall）", () => {
     for await (const chunk of ctx.use(llmRuntime).stream({ model: "m", tools: [], messages: [], signal: new AbortController().signal })) {
       out.push(chunk);
     }
-    expect(out).toEqual([text("cleaner".repeat(8)), finishStop]);
+    expect(out).toEqual([text("cleaner".repeat(26)), finishStop]);
   });
 });

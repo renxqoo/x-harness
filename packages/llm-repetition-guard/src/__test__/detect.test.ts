@@ -20,16 +20,16 @@ describe("RepetitionDetector 两档触发", () => {
     expect(hit?.span).toBeGreaterThanOrEqual(SHORT_UNIT_SPAN);
   });
 
-  it("k=6 单元 ×6 命中（主闸下限位）：6 字单元原地连抄 6 次", () => {
+  it("k=6 单元 ×26 命中（主闸阈值位）：长单元原地连抄 >25 次", () => {
     const fuse = new RepetitionDetector();
     push(fuse, "剪刀石头布".repeat(34)); // k=3 保险丝：3×34=102 ≥100 触发
     expect(fuse.hit()).toBeDefined();
     const detector = new RepetitionDetector();
-    push(detector, "研究研究到底".repeat(6)); // k=6 主闸下限位 ×6
+    push(detector, "研究研究到底".repeat(26)); // k=6 主闸：×26 达阈（>25）
     expect(detector.hit()?.unit).toBe("研究研究到底");
   });
 
-  it("k∈[2,5] 短单元 ×6 不触发（宁可漏：My×5 / Clean×6 / Exit×5 实测形态全放行）", () => {
+  it("k∈[2,5] 短单元 ×6 不触发（宁可漏：My×5 / Clean×6 / Exit×5 实测形态全放行；新主闸阈 >25 下长单元低次同样放行）", () => {
     for (const unit of ["My", "Now", "Exit", "Docs", "Clean", "3043", "Tests"]) {
       const detector = new RepetitionDetector();
       push(detector, unit.repeat(6));
@@ -104,7 +104,7 @@ describe("排除面（不误判）", () => {
 describe("流式边界", () => {
   it("跨 delta 帧切开的重复单元仍命中（帧边界不对齐单元边界）", () => {
     const detector = new RepetitionDetector();
-    const repeated = "deploy".repeat(8); // k=6 主闸
+    const repeated = "deploy".repeat(26); // k=6 主闸：×26 达阈
     for (const char of repeated) push(detector, char); // 单字符帧
     expect(detector.hit()?.unit).toBe("deploy");
   });
@@ -112,7 +112,7 @@ describe("流式边界", () => {
   it("空 delta 跳过（replay-guard HOLD 期零宽保活帧不参与游程）", () => {
     const detector = new RepetitionDetector();
     detector.push("");
-    push(detector, "cleaner".repeat(6));
+    push(detector, "cleaner".repeat(26));
     detector.push("");
     expect(detector.hit()?.unit).toBe("cleaner");
   });
@@ -120,13 +120,13 @@ describe("流式边界", () => {
   it("尾窗裁剪不丢长游程：巨型单 delta 超窗后游程仍在窗内可判", () => {
     const detector = new RepetitionDetector();
     push(detector, "前置说明文字若干，不构成重复。".repeat(4));
-    push(detector, "truncate".repeat(50)); // k=8 ×50——span 400，尾窗 384 内可见 ≥6 连
+    push(detector, "truncate".repeat(50)); // k=8 ×50——span 400，尾窗 1664 内完整可见
     expect(detector.hit()?.unit).toBe("truncate");
   });
 
   it("attempt 结束状态归零：新实例不携带上一 attempt 的游程（跨消息句式复用不误报）", () => {
     const first = new RepetitionDetector();
-    push(first, "cleaner".repeat(6));
+    push(first, "cleaner".repeat(26));
     expect(first.hit()).toBeDefined();
     const second = new RepetitionDetector();
     push(second, "cleaner 工具的输出如下");
