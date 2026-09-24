@@ -51,30 +51,33 @@ tokens.ts 决策类型从 `{kind:"retry"} | undefined` 扩为：
 | undefined                                        // 让位 → final（现行 fatal 语义成为缺省）
 ```
 
-attempt.ts:168 改道：按决策分派——respond-to-model → appendSurfaceEvent 落模型可见错误消息 + 返回 message 分支继续 loop（模型下一轮看到错误）；fail → fatal（带 code）；undefined → 现行 fatal（缺省安全，无插件时行为不变）。形状门同 isResumeDecision 风格（fail-loud 垃圾收轮）。
+attempt.ts:168 改道（对抗审查 A P0——返回形状重写）：**新增 `AttemptResult` 分支 `{kind:"continue"}`**——respond-to-model → appendSurfaceEvent 落 `agent/message{kind:"content", source:"error-recovery", content: 脱敏后错误文本}`（AGENT_MESSAGE_KINDS 既有 kind，摘要可见）+ 返回 `{kind:"continue"}` 令 driver **直接进下一迭代、不过 concludeStep**（复用 ok/message 分支会携不存在的 assistant settle 进收束窗口——stopReason 语义悬空，A 审查证实的结构错位）；fail → fatal（带 code）；undefined → 现行 fatal（缺省安全）。形状门同 isResumeDecision 风格（fail-loud 垃圾收轮）。
+
+**waterfall 链序事实（A 核实）**：runWaterfall 是洋葱链非首答获胜——llm-retry 先 `await next()` 再以 retry 覆盖，故重试期 respond 被吞、耗尽后生效（互斥成立）；但 **error-recovery 的计数在 L1 重试期已被下游链路走满**——修：计数仅在自身应答未被覆盖（respond/fail 真生效）时递增，或仅对不可重试码计数（实现二选一随批 B+C 定，测试钉死「L1 三次重试不预烧 L2 预算」）。
 
 ### C2｜收束窗口全路径可达（V1——L2 的截断入口）
 
-driver.ts:158-159 删除；带工具 max-tokens 与无工具路径同走 concludeWindow 派发。payload 增纯事实字段 `hasTools: boolean`、`truncatedCount: number`（分区已有数据，透传）。粘性语义（「有工具时倾向不续」）移 agent-continuation 的决策逻辑：`hasTools && 无完整结果待消化 → 不 resume（让位 final）`——与 ZCode `toolCallCount > 0 → none` 同判，但从内核裁决变插件决策。新插件 error-recovery 可对「工具全失败 + max-tokens」答 resume。
+driver.ts:158-159 删除；带工具 max-tokens 与无工具路径同走 concludeWindow 派发——**ran 流新增派发点，位置规格：tool/result 全部落账之后**（C5「工具结果全 isError」判定的输入前提；工具前派发则判定无输入）。payload 增纯事实字段 `hasTools: boolean`、`truncatedCount: number`（分区已有数据，透传）；`ContinuationDecideInput` 增 `hasTools?`（贯通 policy 判据）。**改动面补 agent-continuation（A/C 双审确认的遗漏）**：policy.ts 判据 `hasTools && 无完整结果待消化 → undefined（让位 final）`——与 ZCode `toolCallCount > 0 → none` 同判，从内核裁决变插件决策；批 A 原子交付（见拆分节）。新插件 error-recovery 可对「工具全失败 + max-tokens」答 resume。「让位 final 等价」回归测试在**默认装配**（含 agent-continuation）下钉死。
 
 ### C3｜文案外提（V2）
 
 - 内核只落协议短事实：tool-calls 配对文案改 `truncated: not executed`；repair 两句改 `outcome unknown` / `not started`；`tool-not-allowed:` 维持（判别符短码）。
-- 新 `createDefaultTruncationMessages()` 内置插件（住 agent-continuation 或独立）：挂 agentTruncatedTool，返回**完整替换文案**（现行 TRUNCATED_TOOL_MESSAGE 行为指令句 + 场景化建议）；窗口应答形状从 `{note}（追加）` 升格 `{content}（替换）| {note}（追加）`——rescue-plugin 的 note 语义不变。
+- 新 `createDefaultTruncationMessages()` 独立包（packages/truncation-messages——C 审查裁决落点）：挂 agentTruncatedTool，返回 `{content}` **替换性**完整文案（行为指令句 + 场景化建议）。
+- **并存裁决（A P2）**：内核短事实 = **插件缺席时的保底**（非恒定前缀——缺省装配文案插件在场则 WAL 落插件文案，短事实路径由「无插件世界」测试钉死非死代码）；应答 `{content}` 与 `{note}` 同答时 **content 生效、note 丢弃**（替换优先于追加——rescue-plugin 单返 note 的既有语义不变，两插件同时在场时文案插件先答 content、rescue 后答 note 的链序由装配序定，装配契约写明）。
 - `formatArgsEcho(args, max = 2_000)` 参数化。
 
-### C4｜pi-events 处置序下放（V4）+ rawReason 管道（对抗审查 B P0）
+### C4｜pi-events 救回收窄为 wire 归一（V4 重裁——对抗审查 A P0：处置序下放两头不沾）
 
-**字段管道前置（阻断级）**：现状 `LlmFinish{kind:"error"}` 不带 rawReason（pi-events.ts:257-262）、`Settlement` attempt 分支无 rawReason（stream.ts:110-111）——救回移消费端后，openai 方言 max_tokens 走 error 路径只剩 message 文本，消费端**无机器可判字段**。管道拆修：pi-events error finish 增 `rawReason`（error 事件 payload 已有 rawStopReason——透传）→ settleStream attempt 分支增 `rawReason?` → RequestFailure 增 `rawReason?`——三级透传，用例钉死。
+**重裁**：OUTPUT_LIMIT_RAW_REASONS 词表与「error→finish{max-tokens} 救回」**留在 llm 层**——判定收窄为方言 wire 归一（openai mapStopReason 把 max_tokens 折 error 是 pi 的方言事实，归一为跨方言一致的 finish 语义属适配器职责，与 refusal/sensitive 归一同性质）。A 审查证实的下放不可行性：救回发生在 chunk 出口（早于 settleStream/attempt），agentRequestError 面无法重建 max-tokens settle；C1 决策集无「以截断 settle 落 partial」表达；C5 挂载面不含 agentLlmStream——三重断裂。**V4 违宪项收窄为**：救回判定序中的「429/503 保护序 + 零内容→context-overflow」两处编排语义（引用 compaction/llm-retry 的推理）——处置：保护序删除（429/503 在场时溢出 pattern 命中照报——消费端 llm-retry 按 retryableCodes 自会优先重试，无需出口层代编排）；零内容→context-overflow 维持（它是终态分类非编排）。llm 契约注释删除 compaction 语义引用。
 
-errorChunks 改纯事实归一：rawReason/statusCode/overflow 命中各为独立输出字段；「救回 max-tokens / context-overflow / 429-503 保护」判定序移出——落点：救回判定随 C1/C2 进消费端（error-recovery 插件，经上述管道拿 rawReason）；「不盲重试」由 llm-retry 词表口径表达。llm 层契约注释重写（删除 compaction 语义引用）。
+**字段管道（保留 B P0——C5 分类输入）**：`LlmFinish{kind:"error"}` 增 `rawReason?`（error 事件 payload 已有 rawStopReason——透传）→ `Settlement` attempt 分支增 `rawReason?` → `RequestFailure` 增 `rawReason?`——三级透传供 error-recovery 区分「真错误 vs 未救回的边缘截断形态」，用例钉死。
 
 ### C5｜error-recovery 插件（L2 策略体，新包 packages/error-recovery）
 
 - 挂 agentRequestError + agentTurnConclude 双窗口：
   - **requestError**：重试耗尽后分类——可恢复类（工具连续失败跟随的错误/http-4xx 语义类/网络细节）→ `respond-to-model`（错误摘要 + "if this error persists, stop and report" 第二次起附加）；环境死错（auth 过期/context 超限且 compaction 已自愈过）→ `fail`；
   - **turnConclude**（经 C2 可达的新入口）：`stopReason===max-tokens && hasTools && 工具结果全 isError` → `resume`（指令复用续写轨道 + 失败摘要）；
-- 计数器（语义钉死——对抗审查 B P0）：连续同类失败 ×3 升 fail；**清零条件 = 工具成功执行 或 stop 无错结算**（「模型合法新调用」不作为清零条件——新调用失败 = 递增不清零，否则 flaky 工具永不升 fail）；「同类」键 = code（requestError 面）/ toolName+isError（工具面），**禁 callId**（新 callId 永不达 3）。
+- 计数器（语义钉死——B P0 + A P1 双审）：**键 = 错误族四桶**（transport-retryable / http-4xx / auth / context-overflow——裸 code 分桶则 429/network 交替永不达 3，A 实锤）+ **不分族总连续失败上限 ×5 封顶交替循环**；分族 ×3 升 fail；**清零条件 = 工具成功执行 或 assistant 正常 stop**（「模型合法新调用」不作清零——新调用失败=递增，flaky 工具与反复撞错场景（事故画像）都会正确升级）；工具面键 = toolName+isError，**禁 callId**。
 - respond 消息载体（B P1）：落 `agent/message{kind:"content", source:"error-recovery"}`（UI 隐藏、**摘要可见**——错误须存活于压缩摘要，落 user/message 会污染 UI）；错误文本过脱敏层（URL/凭据模式剔除——pi errorMessage 含 fetch 端点信息，现状 llm/retry 落 WAL 无脱敏先例，respond 面新增脱敏并同款补齐 llm/retry）；respond 面遥测打标。
 - 成本裁决（B P2）：**网络/5xx 类不 respond 直接 fail**——llm-retry 已试 ×3，再 respond 只烧 token；仅工具级/语义 4xx 类进 respond。
 - 窗口链序（C 审查）：error-recovery 挂 agentRequestError 须声明「llm-retry 耗尽后」观察方式——经装配序（llm-retry 先注册先应答 retry，耗尽后让位 undefined，error-recovery 后手见事件）；写进插件装配契约。
@@ -111,6 +114,7 @@ gates.ts 词表字面量下沉 core/session/tokens.ts 常量（ThinkingLevel/TOD
 - pi-events：事实字段独立输出；旧判定序删除后的回归（救回行为由消费端测试背书）。
 - 词表：ThinkingLevel 扩档位 → gates 不再假 corrupt。
 - e2e：模拟「工具连续失败 ×3」全路径（L2 接管 → 第 4 次 fail 收轮）；「失败后模型自愈成功」计数清零。
+- 交替错误（429/network 各 2 次）不达分族阈值但触总上限 ×5；respond 消息的投影形状断言（deriveMessages 模型可见性）；L1 重试期不预烧 L2 计数（llm-retry 覆盖链序）；带工具 ran 流派发点在 tool/result 落账后（事件序断言）。
 
 ## 拆分与实施顺序（对抗审查 C 批序重排——原子交付）
 
