@@ -401,14 +401,20 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
         },
       } as never;
       const finished: unknown[] = [];
-      const outcome = await kickChild(twins.world.ctx === undefined ? {} as never : {
+      const kickDeps = {
         onWarn: (m: string) => warnings.push(m),
         emitFinished: (p: unknown) => finished.push(p),
         workspaceRoot: repo,
-      } as never, { row, handle: sealing, prompt: "x" });
+      } as unknown as Parameters<typeof kickChild>[0]; // kickChild 消费面仅此三项（纯函数面——四轮复审②stub 类型收口）
+      const outcome = await kickChild(kickDeps, { row, handle: sealing, prompt: "x" });
       expect(outcome.ok).toBe(false); // 同步错误结果——非谎报成功（发现1 契约）
       if (!outcome.ok) expect(outcome.reason).toContain("kick failed");
       expect(finished).toHaveLength(1); // finished 闭环在场（事件幽灵防线）
+      // 接线锚（四轮复审①盲区）：buildChild 收尾层必须把 finishSpawn 失败结果返回而非丢弃
+      // ——三轮被修的 void bug 若回归（无条件 return ok:true），此断言红。二次 kick 会再发
+      // finished——放 finished 断言之后，不再断言其次数
+      const wired = await (await import("../spawn.ts")).finishSpawn(kickDeps, { row, handle: sealing, prompt: "x", freshFork: false });
+      expect(wired.ok).toBe(false);
       await sleep(100); // fire-and-forget 清理落定
       expect(existsSync(plan.plan.path)).toBe(false); // 净树尽力清理
       const branches = await exec("git", ["-C", repo, "branch", "--list", "x-harness/agent-kick01"]);

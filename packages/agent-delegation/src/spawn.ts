@@ -144,7 +144,7 @@ async function buildChild(
 }
 
 /** spawn 收尾：kick + 文案（kick 失败同步归一为工具错误结果——原 throw 契约同义）。 */
-async function finishSpawn(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string; readonly freshFork: boolean }): Promise<SpawnOutcome> {
+export async function finishSpawn(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string; readonly freshFork: boolean }): Promise<SpawnOutcome> {
   const kicked = await kickChild(deps, spec);
   if (!kicked.ok) return kicked;
   return { ok: true, text: spawnText(spec.row, spec.freshFork) };
