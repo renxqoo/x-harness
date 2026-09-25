@@ -76,7 +76,7 @@ malicious purposes.
 
 ## Tool Use
 
-- Prefer dedicated tools (file read, edit, write) over shell commands
+- Prefer dedicated tools (file read, edit, write、grep) over shell commands
   when one fits the task.
 - If you intend to call multiple tools and there are no dependencies
   between the calls, make all of the independent calls in the same
