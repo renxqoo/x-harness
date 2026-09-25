@@ -17,6 +17,7 @@ import { createStreamRenderer } from "./render-stream.ts";
 import { runSlashCommand } from "./slash-commands.ts";
 import type { SlashDeps, SlashDial } from "./slash-commands.ts";
 import type { World } from "./build-world.ts";
+import { delegationView } from "@x-harness/agent-delegation";
 import type { SessionId } from "@x-harness/session";
 import { sessionEvent } from "@x-harness/session";
 import pkg from "../package.json";
@@ -108,6 +109,31 @@ async function makeNext(input: MakeNextInput & { readonly world: import("./build
   return made;
 }
 
+/** 切换收尾：flush 屏障 + mailbox 重绑 + dial 更新 + 文案（reopen 复杂度纪律抽出） */
+async function finalizeSwitch(deps: {
+  readonly world: import("./build-world.ts").World;
+  readonly handle: AgentHandle;
+  readonly io: { readonly write: (text: string) => void };
+  readonly quit: (code?: number) => void;
+  readonly newSession: boolean;
+  readonly onDial: (dial: SlashDial) => void;
+}): Promise<string> {
+  const { world, handle, io, quit } = deps;
+  const flushed = await world.store.flush(handle.agent.session.id);
+  if (!flushed.ok) {
+    quit(1);
+    return `fatal: switched session cannot persist: ${flushed.reason}`;
+  }
+  // 跨进程邮箱重绑（AGENT-DELEGATION §5.3 宿主接线）：信封路由/出站身份/状态镜像随新会话
+  // 换目标——失败仅告警（跨进程收件降级为不可达，进程内子代理与对话不受影响）
+  const rebound = await world.ctx.tryUse(delegationView)?.rebindMailbox(handle.agent.session.id);
+  if (rebound !== undefined && !rebound.ok) io.write(`warning: mailbox rebind failed (${rebound.reason}) — cross-session messaging may misroute\n`);
+  const dial = dialOf(handle.agent.options);
+  deps.onDial(dial);
+  if (deps.newSession) return `new session ${handle.agent.session.id} (${dial.provider ?? "?"}/${dial.model ?? "?"})`;
+  return `switched to ${dial.provider ?? "?"}/${dial.model ?? "?"} (session ${handle.agent.session.id})`;
+}
+
 export async function runRepl(input: ReplInput): Promise<number> {
   const { world, io } = input;
   // 注册工具名快照：restriction 重演的基集（makeNext 单点用——F-2 处置）
@@ -175,16 +201,8 @@ export async function runRepl(input: ReplInput): Promise<number> {
         return `fatal: session switch failed: ${made.reason}`;
       }
       handle = made.value;
-      const flushed = await world.store.flush(handle.agent.session.id);
-      if (!flushed.ok) {
-        quit(1);
-        return `fatal: switched session cannot persist: ${flushed.reason}`;
-      }
-      dial = dialOf(handle.agent.options);
-      if (over.newSession === true) {
-        return `new session ${handle.agent.session.id} (${dial.provider ?? "?"}/${dial.model ?? "?"})`;
-      }
-      return `switched to ${dial.provider ?? "?"}/${dial.model ?? "?"} (session ${handle.agent.session.id})`;
+      const finalized = await finalizeSwitch({ world, handle: made.value, io, quit, newSession: over.newSession === true, onDial: (next) => { dial = next; } });
+      return finalized;
     } finally {
       switching = false;
     }

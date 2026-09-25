@@ -12,7 +12,8 @@ export interface CrossDeps {
   readonly service: MailboxService;
   readonly loop: AgentLoopService;
   readonly box: string;
-  readonly mainSession: SessionId;
+  /** 宿主 main 会话（可重绑引用——与 mailbox-consumer 同源，REPL 会话切换时换目标） */
+  readonly mainRef: { current: SessionId };
   readonly lineage: Lineage;
 }
 
@@ -74,7 +75,7 @@ export async function sendCross(deps: CrossDeps, caller: SessionId | undefined, 
 
 /** 已空闲的即时通知：本进程 main 直投（true=送达） */
 async function deliverNoticeLocally(deps: CrossDeps, target: string): Promise<boolean> {
-  const mainHandle = deps.loop.get(deps.mainSession);
+  const mainHandle = deps.loop.get(deps.mainRef.current);
   if (mainHandle === undefined) return false;
   try {
     mainHandle.agent.steer(`<cross-session-message from="${target}">[Cross-session idle notice] ${target} is already idle</cross-session-message>`);

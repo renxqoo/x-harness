@@ -34,6 +34,8 @@ import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session"
 import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
+import { createMailboxPlugin } from "@x-harness/session-mailbox";
+import type { MailboxPluginOptions } from "@x-harness/session-mailbox";
 import { createSkillPlugin } from "@x-harness/skill";
 import { systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
 import type { SystemPromptService } from "@x-harness/system-prompt";
@@ -217,6 +219,11 @@ export const fenceKit = (
 /** 子代理委派（agentsDirs 必收——宿主边沿用 @x-harness/agent-delegation 的 resolveAgentDirs 统一解析；
  *  件15 D5：签名透传 DelegationOptions——reportCap/maxDepth 等经装配入口可达（message 上限恒等 reportCap）） */
 export const delegationKit = (o: DelegationOptions): readonly Plugin[] => [createAgentDelegationPlugin(o)];
+
+/** 跨进程邮箱服务（docs/AGENT-DELEGATION.md §5.3 宿主接线）：root 必收——宿主边沿用
+ *  resolveMailboxDir 统一解析（X_HARNESS_MAILBOX_DIR 覆盖 > ~/.x-harness/mailbox）。
+ *  与 delegationKit 的 mailbox:{box,mainSession} 配对使用；单独装配仅提供服务面。 */
+export const mailboxKit = (o: MailboxPluginOptions): readonly Plugin[] => [createMailboxPlugin(o)];
 
 /** 请求前 WAL 屏障（独立 kit——与 delegation 零共享面） */
 export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];

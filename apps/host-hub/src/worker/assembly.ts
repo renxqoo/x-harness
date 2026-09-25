@@ -26,6 +26,7 @@ import {
   errorRecoveryKit,
   truncationMessagesKit,
   loopKit,
+  mailboxKit,
   meterKit,
   probeBaseFacts,
   promptKit,
@@ -33,6 +34,7 @@ import {
   toolboxKit,
 } from "@x-harness/harness";
 import { createAgentDelegationPlugin, userAgentsDirOf } from "@x-harness/agent-delegation";
+import { resolveMailboxDir } from "@x-harness/session-mailbox";
 import { BUILTIN_AGENT_TYPES } from "./agent-types-data.ts";
 import { createSkillPlugin } from "@x-harness/skill";
 import { createPluginProposePlugin } from "./plugin-propose.ts";
@@ -331,8 +333,11 @@ function defaultWorkerPlugins(resolved: {
   readonly dial: { provider: string; model: string };
   readonly facts: BasePromptFacts;
   readonly catalog: WorkerCatalog;
+  /** main 会话 id（mailbox 接线——AGENT-DELEGATION §5.3 宿主接线：box 名与信封路由目的地由它派生；
+   *  create 路径由 assembleWorkerAgent 先铸，resume 路径 = fields.resumeId） */
+  readonly mainSessionId: string;
 }): readonly Plugin[] {
-  const { fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog } = resolved;
+  const { fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog, mainSessionId } = resolved;
   return [
     // base 系统提示词（与 CLI 同源 @x-harness/harness——身份/守则/环境块 + facts 插值）
     ...promptKit(createBasePromptPlugin(facts)),
@@ -371,6 +376,9 @@ function defaultWorkerPlugins(resolved: {
     }),
     ...(fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : []),
     ...(fields.agentDir !== undefined ? [permissionGrantStorePlugin({ agentDir: fields.agentDir, cwd, trusted: fields.trusted })] : []),
+    // 跨进程邮箱服务（AGENT-DELEGATION §5.3 宿主接线）——提供 mailboxService；与
+    // delegation 的装配时序由 softInject topo 声明式保证，此处仅声明式相邻摆放
+    ...mailboxKit({ root: mailboxRootOfWorker(fields.env ?? process.env), onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`) }),
     ...meterKit(),
     ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider } }),
     commandsPlugin,
@@ -387,6 +395,8 @@ function defaultWorkerPlugins(resolved: {
       workspaceRoot: cwd,
       builtinTypes: builtinAgentTypes(),
       resolveProviderOf: providerOfModel(catalog),
+      // mailbox 接线（AGENT-DELEGATION §5.3）：box = xh-<id>（会话 id 跨进程唯一）
+      mailbox: { box: `xh-${mainSessionId}`, mainSession: mainSessionId as never },
       onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
     }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
@@ -401,6 +411,14 @@ function defaultWorkerPlugins(resolved: {
       : []),
     dialHookPlugin(),
   ];
+}
+
+/** 跨进程邮箱根（AGENT-DELEGATION §5.3）：worker env 注入优先（fields.env 是宿主边沿的
+ *  环境真相——测试装置经注入 env 隔离 mailbox root，不走 process.env） */
+function mailboxRootOfWorker(env: Record<string, string | undefined>): string {
+  const custom = env["X_HARNESS_MAILBOX_DIR"];
+  if (custom !== undefined && custom !== "") return custom;
+  return resolveMailboxDir();
 }
 
 /** rgBinDir 单源（rg 内置级）：外部显式传入优先（重定位逃生口）；缺席时从 agentDir
@@ -427,7 +445,9 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
   const contextWindow = contextWindowOf(catalog, dial);
 
   const rgBinDir = derivedRgBinDir(fields);
-  const defaultPlugins: readonly Plugin[] = defaultWorkerPlugins({ fields: { ...fields, ...(rgBinDir !== undefined ? { rgBinDir } : {}) }, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog });
+  // mailbox 接线：main 会话 id 先铸（create）或复用（resume）——装配需要它派生 box 名
+  const mainSessionId = fields.resumeId ?? String(mintSessionId());
+  const defaultPlugins: readonly Plugin[] = defaultWorkerPlugins({ fields: { ...fields, ...(rgBinDir !== undefined ? { rgBinDir } : {}) }, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog, mainSessionId });
 
   const plugins: readonly Plugin[] = deps?.worldPlugins?.(fields) ?? defaultPlugins;
 
@@ -441,7 +461,7 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
     model: dial.model,
     ...(thinking !== undefined ? { thinking } : {}),
   };
-  const created = await createSession(world.value, { fields, agentOptions, cwd });
+  const created = await createSession(world.value, { fields, agentOptions, cwd, mainSessionId });
   if (!created.ok) {
     await teardownWorld(world.value);
     throw new Error(created.reason);
@@ -459,13 +479,13 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
   };
 }
 
-async function createSession(world: World, plan: { fields: AssemblyFields; agentOptions: { provider: string; model: string; thinking?: ThinkingLevel }; cwd: string }) {
+async function createSession(world: World, plan: { fields: AssemblyFields; agentOptions: { provider: string; model: string; thinking?: ThinkingLevel }; cwd: string; mainSessionId: string }) {
   if (plan.fields.resumeId !== undefined) {
     return world.loop.resume({ id: plan.fields.resumeId as never, agent: plan.agentOptions });
   }
   return world.loop.create({
     agent: plan.agentOptions,
-    session: { header: { id: mintSessionId(), createdAt: Date.now(), cwd: plan.cwd } },
+    session: { header: { id: plan.mainSessionId as never, createdAt: Date.now(), cwd: plan.cwd } },
   });
 }
 

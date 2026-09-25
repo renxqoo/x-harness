@@ -7,6 +7,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mintSessionId } from "@x-harness/session";
 import type { LlmAdapter, LlmChunk, LlmRequest } from "@x-harness/llm";
 import { autoCompactOptionsOf, buildWorld, compactionOptionsOf } from "../build-world.ts";
 import type { World } from "../build-world.ts";
@@ -62,6 +63,10 @@ afterEach(async () => {
 async function makeFixture(scripts: LlmChunk[][], persist: boolean): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), "xh-compact-"));
   const built = await buildWorld({
+    mainSessionId: mintSessionId(),
+
+    mailboxRoot: join(root, "mailbox"),
+
     cwd: root,
     sessionRoot: join(root, "sessions"),
     compaction: { contextWindow: 200_000 }, // 手动 /compact 走 compactionRunner（生产路径）

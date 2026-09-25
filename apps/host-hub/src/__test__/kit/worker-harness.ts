@@ -93,7 +93,8 @@ export interface SpawnOptions {
   env?: Record<string, string | undefined>;
 }
 
-/** 内嵌 worker：temp agentDir + script 模式 env + 注入 IO */
+/** 内嵌 worker：temp agentDir + script 模式 env + 注入 IO；mailbox root 指 temp 目录
+ *  （跨进程邮箱接线后 discover 会真扫盘——不隔离会看到同机其他测试/真实会话的箱） */
 export async function spawnScriptWorker(over: SpawnOptions = {}): Promise<ScriptWorker> {
   const agentDir = await mkdtemp(join(tmpdir(), "hub-worker-"));
   const sessionsRoot = join(agentDir, "sessions");
@@ -108,6 +109,7 @@ export async function spawnScriptWorker(over: SpawnOptions = {}): Promise<Script
     sessionsRoot,
     env: {
       HUB_WORKER_PROVIDER: "script",
+      X_HARNESS_MAILBOX_DIR: join(agentDir, "mailbox"),
       ...(over.script !== undefined ? { HUB_WORKER_SCRIPT: JSON.stringify(over.script) } : {}),
       ...over.env,
     },

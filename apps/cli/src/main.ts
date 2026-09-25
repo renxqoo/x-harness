@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { SessionId } from "@x-harness/session";
+import { mintSessionId } from "@x-harness/session";
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { buildWorld } from "./build-world.ts";
 import type { World } from "./build-world.ts";
@@ -152,6 +153,32 @@ function brokerIO(io: CliIO, interactive: boolean, ask: (prompt: string) => Prom
   };
 }
 
+/** 会话建立收尾（appends 注册 + restriction + flush 屏障；失败自清理收进本函数） */
+async function establishSession(plan: {
+  readonly world: World;
+  readonly made: AgentHandle;
+  readonly args: CliArgs;
+  readonly registered: readonly string[];
+  readonly fresh: boolean;
+}): Promise<{ readonly handle: AgentHandle } | { readonly failure: string }> {
+  const { world, made, args, registered, fresh } = plan;
+  if (!args.systemPrompt) {
+    world.ctx.effect(registerAppendSections(world.prompt, args.appendSystemPrompts));
+  }
+  // 工具面 restriction（ELEVATION-DESIGN §2.2，W2A）：create 恒注册（无 flag=全量快照——
+  // 血缘分级的名单恒可读）；resume 带 flag 才注册（无 flag=显式全集，与现状等价）
+  if (fresh || args.noTools || args.tools !== undefined || args.excludeTools !== undefined) {
+    world.registry.scoped(made.agent.session.id).restrict(resolveToolNames(args, registered));
+  }
+  const flushed = await world.store.flush(made.agent.session.id);
+  if (!flushed.ok) {
+    await made.dispose().catch(() => {});
+    await world.ctx.dispose().catch(() => {});
+    return { failure: flushed.reason };
+  }
+  return { handle: made };
+}
+
 /** 装配世界 + 建立/恢复初始会话 + flush 屏障（session-locked 快速失败）；失败自清理 */
 async function openWorld(input: {
   readonly args: CliArgs;
@@ -163,6 +190,9 @@ async function openWorld(input: {
   readonly ask: (prompt: string) => Promise<string | undefined>;
 }): Promise<{ readonly world: World; readonly handle: AgentHandle } | { readonly failure: string }> {
   const { args, config, resolution, io } = input;
+  // mailbox 接线（AGENT-DELEGATION §5.3）：会话 id 装配期先铸（create）或复用（resume）——
+  // buildWorld 需要 mainSessionId 派生 box 名与信封路由目的地，loop.create 的缺省铸号不可达
+  const mainSessionId = input.resumeId ?? mintSessionId();
   const built = await buildWorld({
     cwd: io.cwd,
     // 内置 rg 随根配置走（X_HARNESS_HOME 覆盖 → ~/.x-harness；fetch:rg 安装层同源放置）
@@ -182,32 +212,21 @@ async function openWorld(input: {
     ...(args.permission !== undefined ? { permission: args.permission } : {}),
     ...(args.rules !== undefined && args.rules.length > 0 ? { rules: args.rules } : {}),
     broker: createTerminalBrokerPlugin(brokerIO(io, input.interactive, input.ask)),
+    mainSessionId,
   });
   if (!built.ok) return { failure: built.reason };
   const world = built.value;
   const registered = world.registry.schemas().map((schema: { name: string }) => schema.name);
   const made = input.resumeId === undefined
-    ? await world.loop.create({ agent: agentOptionsForCreate(args, resolution.defaults) })
+    ? await world.loop.create({ session: { id: mainSessionId }, agent: agentOptionsForCreate(args, resolution.defaults) })
     : await world.loop.resume({ id: input.resumeId, agent: agentOptionsForResume(args, resolution.overrides) });
   if (!made.ok) {
     await world.ctx.dispose().catch(() => {});
     return { failure: made.reason };
   }
-  if (!args.systemPrompt) {
-    world.ctx.effect(registerAppendSections(world.prompt, args.appendSystemPrompts));
-  }
-  // 工具面 restriction（ELEVATION-DESIGN §2.2，W2A）：create 恒注册（无 flag=全量快照——
-  // 血缘分级的名单恒可读）；resume 带 flag 才注册（无 flag=显式全集，与现状等价）
-  if (input.resumeId === undefined || args.noTools || args.tools !== undefined || args.excludeTools !== undefined) {
-    world.registry.scoped(made.value.agent.session.id).restrict(resolveToolNames(args, registered));
-  }
-  const flushed = await world.store.flush(made.value.agent.session.id);
-  if (!flushed.ok) {
-    await made.value.dispose().catch(() => {});
-    await world.ctx.dispose().catch(() => {});
-    return { failure: flushed.reason };
-  }
-  return { world, handle: made.value };
+  const established = await establishSession({ world, made: made.value, args, registered, fresh: input.resumeId === undefined });
+  if ("failure" in established) return { failure: established.failure };
+  return { world, handle: established.handle };
 }
 
 export async function cliMain(argv: readonly string[], io: CliIO): Promise<number> {
@@ -281,6 +300,19 @@ async function printMain(context: MainContext): Promise<number> {
     io.stderr(`startup failed: ${opened.failure}\n`);
     return 1;
   }
+  // 信号清理（^C/管道打断）：默认终止不留邮箱陈尸箱——cancel + dispose 尽力收尾后退出。
+  // dispose 后 handle/world 均已封存，退出码统一 130（SIGINT 惯例）
+  let signalled = 0;
+  const onSignalCleanup = (code: number): void => {
+    signalled = code;
+    try {
+      opened.handle.agent.cancel("signalled");
+    } catch {
+      /* 已在收尾路径 */
+    }
+  };
+  process.once("SIGINT", () => onSignalCleanup(130));
+  process.once("SIGTERM", () => onSignalCleanup(143));
   const code = await runPrintMode({
     ctx: opened.world.ctx,
     handle: opened.handle,
@@ -293,6 +325,10 @@ async function printMain(context: MainContext): Promise<number> {
   });
   await opened.handle.dispose().catch(() => {});
   await opened.world.ctx.dispose().catch(() => {});
+  if (signalled !== 0) {
+    io.stderr(`interrupted\n`);
+    return signalled;
+  }
   return code;
 }
 

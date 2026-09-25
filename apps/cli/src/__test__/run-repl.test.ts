@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, describe, expect, it } from "vitest";
+import { mintSessionId } from "@x-harness/session";
 import type { LlmAdapter, LlmChunk, LlmRequest } from "@x-harness/llm";
 import { buildWorld } from "../build-world.ts";
 import type { World } from "../build-world.ts";
@@ -98,6 +99,10 @@ async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean; permis
   const output: string[] = [];
   const signalCbs: Partial<Record<"SIGINT" | "SIGTERM" | "SIGHUP", () => void>> = {};
   const built = await buildWorld({
+    mainSessionId: mintSessionId(),
+
+    mailboxRoot: join(root, "mailbox"),
+
     cwd: root,
     sessionRoot: join(root, "sessions"),
     persist,
@@ -236,6 +241,10 @@ describe("runRepl × 工具 flag（W2B 挂账收口——makeNext 重演矩阵�
     const stdin = new PassThrough();
     const output: string[] = [];
     const built = await buildWorld({
+      mainSessionId: mintSessionId(),
+
+      mailboxRoot: join(root, "mailbox"),
+
       cwd: root,
       sessionRoot: join(root, "sessions"),
       persist: true,

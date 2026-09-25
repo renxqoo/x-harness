@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { mintSessionId } from "@x-harness/session";
 import type { LlmAdapter, LlmChunk, LlmRequest } from "@x-harness/llm";
 import { localToday, renderDateSnapshot } from "@x-harness/harness";
 import { buildWorld } from "../build-world.ts";
@@ -58,6 +59,10 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
     let clockMs = Date.UTC(2026, 8, 21, 12); // UTC 正午锚点（时区可移植）
     const captured: LlmRequest[] = [];
     const built = await buildWorld({
+      mainSessionId: mintSessionId(),
+
+      mailboxRoot: join(dir, "mailbox"),
+
       cwd: dir,
       sessionRoot: join(dir, "sessions"),
       persist: false,
@@ -131,6 +136,10 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
     const clockMs2 = Date.UTC(2026, 8, 22, 12);
     const captured2: LlmRequest[] = [];
     const built2 = await buildWorld({
+      mainSessionId: mintSessionId(),
+
+      mailboxRoot: join(dir2, "mailbox"),
+
       cwd: dir2,
       sessionRoot: join(dir2, "sessions"),
       persist: false,

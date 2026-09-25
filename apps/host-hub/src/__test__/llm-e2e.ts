@@ -47,7 +47,8 @@ async function main(): Promise<void> {
   );
   const entry = join(import.meta.dirname, "../host/cli.ts");
   const proc = spawn(process.execPath, [entry], {
-    env: { ...process.env, HUB_AGENT_DIR: agentDir } as NodeJS.ProcessEnv,
+    // mailbox 随 agentDir 隔离（真实 LLM 旅程同样真开箱——不污染 ~/.x-harness/mailbox）
+    env: { ...process.env, HUB_AGENT_DIR: agentDir, X_HARNESS_MAILBOX_DIR: join(agentDir, "mailbox") } as NodeJS.ProcessEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines: Frame[] = [];

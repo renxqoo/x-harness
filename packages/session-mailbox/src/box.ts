@@ -73,7 +73,13 @@ export async function openBox(deps: BoxDeps, name: string): Promise<BoxHandle> {
       timer.unref?.();
       return () => clearInterval(timer);
     },
-    close: () => removeDir(dir),
+    // 所有权 CAS：仅 manifest 仍属本 bootId 才删（认领竞态另一端——超宽限被对端认领后，
+    // 本句柄的关箱不得删掉对端的新箱；与 reclaimBox 的复验同思想，开箱/关箱侧对称）
+    close: async () => {
+      const current = await readManifest(dir);
+      if (current?.bootId !== bootId) return; // 已被认领/重开——目录属新持有者
+      await removeDir(dir);
+    },
   };
 }
 

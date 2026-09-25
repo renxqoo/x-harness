@@ -199,7 +199,7 @@ describe("consumer 降级路径（§5.3 at-most-once 如实）", () => {
       timing: { pollIntervalMs: 20, heartbeatMs: 5000, graceMs: 30000, staleMs: 1, now: () => Date.now() },
     };
     const raced = await sendCross(
-      { service: stub as never, loop: world.loop, box: "lone", mainSession: "main-x" as SessionId, lineage: { bySession: () => undefined } as never },
+      { service: stub as never, loop: world.loop, box: "lone", mainRef: { current: "main-x" as SessionId }, lineage: { bySession: () => undefined } as never },
       "main-x" as SessionId,
       { to: "flaky", message: "x" },
     );
@@ -236,7 +236,7 @@ describe("notify_when_idle 闭窗分支（stub 直测——复查翻转与 main 
       timing: { pollIntervalMs: 20, heartbeatMs: 5000, graceMs: 30000, staleMs: 1, now: () => Date.now() },
     };
     const out = await sendCross(
-      { service: stub as never, loop: world.loop, box: "watcher", mainSession: main.agent.session.id, lineage: { bySession: () => undefined } as never },
+      { service: stub as never, loop: world.loop, box: "watcher", mainRef: { current: main.agent.session.id }, lineage: { bySession: () => undefined } as never },
       main.agent.session.id,
       { to: "flipper", message: "ping", notify_when_idle: true },
     );
@@ -256,7 +256,7 @@ describe("notify_when_idle 闭窗分支（stub 直测——复查翻转与 main 
       timing: { pollIntervalMs: 20, heartbeatMs: 5000, graceMs: 30000, staleMs: 1, now: () => Date.now() },
     };
     const out = await sendCross(
-      { service: stub as never, loop: world.loop, box: "watcher2", mainSession: "main-none" as never, lineage: { bySession: () => undefined } as never },
+      { service: stub as never, loop: world.loop, box: "watcher2", mainRef: { current: "main-none" as never }, lineage: { bySession: () => undefined } as never },
       "main-none2" as never,
       { to: "idlebox", message: "ping", notify_when_idle: true },
     );

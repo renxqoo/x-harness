@@ -14,7 +14,12 @@ import { taskHub } from "@x-harness/task-tools";
 import type { CrossDeps } from "./crossmsg.ts";
 import { createMailboxConsumer, startDrain } from "./mailbox-consumer.ts";
 import type { MailboxConsumer } from "./mailbox-consumer.ts";
+import type { BoxHandle } from "@x-harness/session-mailbox";
 import { reviveByAgentId } from "./revive.ts";
+import type { ReviveOutcome } from "./revive.ts";
+import { createMailboxBinding } from "./rebind.ts";
+import type { MailboxBinding } from "./rebind.ts";
+import type { Lineage } from "./lineage.ts";
 import { evaluateCleanup, liveTreePaths, sweepWorktrees, unregisterLiveTree } from "./worktree.ts";
 import { cleanupRepoTopOf } from "./verbs.ts";
 import { isAbsolute } from "node:path";
@@ -67,6 +72,149 @@ export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>
   return `<system-reminder>\nAvailable agent types:\n${lines.join("\n")}\n</system-reminder>`;
 }
 
+/** verbDeps 装配（§3——apply 复杂度纪律抽出） */
+function verbDepsOf(deps: {
+  readonly loop: import("@x-harness/agent-loop").AgentLoopService;
+  readonly store: import("@x-harness/session").SessionStore;
+  readonly lineage: Lineage;
+  readonly reportCap: number;
+  readonly workspaceRoot: string;
+  readonly onWarn?: (message: string) => void;
+  readonly lockDegraded: import("./lockfile.ts").LockDegraded | undefined;
+  readonly adoptOrphan: (row: ChildRow) => Promise<void>;
+  readonly emitFinished: (payload: AgentFinishedPayload) => void;
+  readonly revive: ((caller: SessionId, agentId: string) => Promise<ReviveOutcome>) | undefined;
+}): VerbDeps {
+  const { loop, store, lineage, reportCap, workspaceRoot, onWarn, lockDegraded, adoptOrphan, emitFinished, revive } = deps;
+  return {
+    loop,
+    store,
+    lineage,
+    reportCap,
+    workspaceRoot,
+    ...(onWarn !== undefined ? { onWarn } : {}),
+    ...(lockDegraded !== undefined ? { lockDegraded } : {}),
+    adoptOrphan,
+    emitFinished,
+    reviveByName: revive,
+  };
+}
+
+/** 内联 builtin 类型层合并（§7——盘上同名遮蔽，内联层仅补缺席） */
+function mergeInlineTypes(deps: { readonly inline: { readonly types: Readonly<Record<string, LoadedAgentType>>; readonly warnings: readonly string[] }; readonly current: Readonly<Record<string, LoadedAgentType>>; readonly onWarn?: (message: string) => void }): Readonly<Record<string, LoadedAgentType>> {
+  for (const warning of deps.inline.warnings) deps.onWarn?.(warning);
+  return { ...deps.inline.types, ...deps.current };
+}
+
+/** 孤儿子收养处置（§4.1 不变量④）：cancel+dispose 子 + worktree 清理 + 摘行 */
+async function adoptOrphanOf(deps: {
+  readonly loop: import("@x-harness/agent-loop").AgentLoopService;
+  readonly lineage: Lineage;
+  readonly row: ChildRow;
+  readonly cleanupQuietly: (plan: { readonly path: string; readonly branch: string; readonly repoTop: string }) => Promise<void>;
+  readonly workspaceRoot: string;
+}): Promise<void> {
+  const { loop, lineage, row, cleanupQuietly, workspaceRoot } = deps;
+  const childHandle = loop.get(row.sessionId);
+  if (childHandle !== undefined) {
+    childHandle.agent.cancel("parent-gone");
+    await childHandle.agent.whenIdle();
+    await childHandle.dispose();
+  }
+  if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
+  lineage.drop(row.sessionId);
+}
+
+/** teardown 级联处置（单行——dispose 序列的行级工厂）：句柄缺席仍清 worktree（复审③次级） */
+async function cascadeDispose(deps: {
+  readonly loop: import("@x-harness/agent-loop").AgentLoopService;
+  readonly row: ChildRow;
+  readonly cleanupQuietly: (plan: { readonly path: string; readonly branch: string; readonly repoTop: string }) => Promise<void>;
+  readonly workspaceRoot: string;
+}): Promise<void> {
+  const { loop, row, cleanupQuietly, workspaceRoot } = deps;
+  const childHandle = loop.get(row.sessionId);
+  if (childHandle === undefined) {
+    // 会话句柄缺席（agent-loop 先回卷等）：行仍持清理事实——worktree 照清 + 摘除，
+    // 不因句柄缺席漏清（A 路复审③次级）
+    if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
+    return;
+  }
+  childHandle.agent.cancel("delegation-disposed");
+  await childHandle.agent.whenIdle();
+  await childHandle.dispose();
+  if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
+}
+
+/** revive deps 装配（§6.2——apply 复杂度纪律抽出） */
+function reviveDepsOf(deps: {
+  readonly archive: import("@x-harness/session").SessionArchive;
+  readonly loop: import("@x-harness/agent-loop").AgentLoopService;
+  readonly registry: import("@x-harness/tools").ToolRegistry;
+  readonly lineage: Lineage;
+  readonly types: () => Readonly<Record<string, LoadedAgentType>>;
+  readonly emitSpawned: (payload: AgentSpawnedPayload) => void;
+  readonly grants: import("@x-harness/permission").GrantsRegistry | undefined;
+  readonly onWarn?: (message: string) => void;
+}): Parameters<typeof reviveByAgentId>[0] {
+  const { archive, loop, registry, lineage, types, emitSpawned, grants, onWarn } = deps;
+  return {
+    archive,
+    loop,
+    registry,
+    lineage,
+    types,
+    parentModelOf: (session: SessionId) => loop.get(session)?.agent.options.model,
+    parentIdleTimeoutOf: (session: SessionId) => loop.get(session)?.agent.options.streamIdleTimeoutMs,
+    parentToolsOf: (session: SessionId) => registry.restrictionOf(session),
+    emitSpawned,
+    ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
+    ...(onWarn !== undefined ? { onWarn } : {}),
+  };
+}
+
+/** 启动期 worktree 对账清扫（§8.3）——apply 复杂度纪律抽出；fire-and-forget */
+function startupSweep(deps: { readonly workspaceRoot: string; readonly lockDegraded: import("./lockfile.ts").LockDegraded | undefined; readonly onWarn?: (message: string) => void }): void {
+  void sweepWorktrees(liveTreePaths(), deps.workspaceRoot, deps.lockDegraded === undefined ? {} : { onDegraded: deps.lockDegraded }) // 进程级活树集（含他装配实例——A 路 #5）
+    .then((kept) => {
+      for (const item of kept) {
+        if (item.kind === "kept-dirty") deps.onWarn?.(`agents: worktree kept after startup sweep (has changes): ${item.path}`);
+        else deps.onWarn?.(`agents: worktree cleanup failed during startup sweep (${item.path}) — dir/branch may leak`);
+      }
+    })
+    .catch(() => {});
+}
+
+/** mailbox 开箱装配（§5.3）：consumer + cross + 回卷注册序列——apply 的 mailbox 段收拢
+ *  （复杂度纪律）；真重名活箱构造期 throw（fail-fast）。 */
+async function openMailbox(deps: {
+  readonly service: import("@x-harness/session-mailbox").MailboxService;
+  readonly loop: import("@x-harness/agent-loop").AgentLoopService;
+  readonly lineage: Lineage;
+  readonly binding: MailboxBinding;
+  readonly mailbox: { readonly box: string; readonly mainSession: SessionId };
+  readonly onWarn?: (message: string) => void;
+}): Promise<{
+  readonly consumer: MailboxConsumer;
+  readonly cross: CrossDeps;
+  readonly registrations: ReadonlyArray<() => Disposer>;
+}> {
+  const { service, loop, lineage, binding, mailbox, onWarn } = deps;
+  const boxHandle = await service.open(mailbox.box);
+  binding.boxRef.current = boxHandle;
+  const consumer = createMailboxConsumer({ service, loop, boxRef: binding.boxRef as { current: BoxHandle }, mainRef: binding.mainRef, ...(onWarn !== undefined ? { onWarn } : {}) });
+  const cross: CrossDeps = { service, loop, box: mailbox.box, mainRef: binding.mainRef, lineage };
+  const registrations: ReadonlyArray<() => Disposer> = [
+    () => () => consumer.shutdown(),
+    () => {
+      binding.setHeartbeat(boxHandle.startHeartbeat());
+      return () => binding.setHeartbeat(undefined);
+    },
+    () => startDrain(consumer, service.timing.pollIntervalMs, onWarn),
+  ];
+  return { consumer, cross, registrations };
+}
+
 /** lockfile 降级闭包派生（A 路复审⑤实例私有——随本插件装配的 onWarn，不设模块级全局） */
 function lockDegradedOf(onWarn: DelegationOptions["onWarn"]): import("./lockfile.ts").LockDegraded | undefined {
   return onWarn === undefined ? undefined : (reason) => onWarn(reason);
@@ -89,6 +237,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
     softInject: ["permission", "session-persistence-jsonl", ...(options.mailbox !== undefined ? ["session-mailbox"] : [])],
     apply: async (ctx: Context): Promise<Disposer> => {
       const lockDegraded = lockDegradedOf(options.onWarn); // N5 可观测 + 复审⑤实例私有
+      const onWarn = options.onWarn; // apply 内归一（六处条件 spread 收敛——复杂度纪律）
       const loop = ctx.use(agentLoopServiceToken);
       const store = ctx.use(sessionStore);
       const registry = ctx.use(toolRegistry);
@@ -100,16 +249,15 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
       const inline = options.builtinTypes !== undefined ? parseInlineTypes(options.builtinTypes) : undefined;
       const refreshTypes = (): void => {
         const next = typesFingerprint(dirs);
-        if (next !== fingerprint) {
-          fingerprint = next;
-          const loaded = loadAgentTypes(dirs);
-          current = loaded.types;
-          for (const warning of loaded.warnings) options.onWarn?.(warning);
+        if (next === fingerprint) {
+          if (inline !== undefined) current = mergeInlineTypes({ inline, current, onWarn: options.onWarn });
+          return;
         }
-        if (inline !== undefined) {
-          current = { ...inline.types, ...current };
-          for (const warning of inline.warnings) options.onWarn?.(warning);
-        }
+        fingerprint = next;
+        const loaded = loadAgentTypes(dirs);
+        current = loaded.types;
+        for (const warning of loaded.warnings) options.onWarn?.(warning);
+        if (inline !== undefined) current = mergeInlineTypes({ inline, current, onWarn: options.onWarn });
       };
       refreshTypes(); // 装配期全量——apply 完成即类型可用（loadPlugins 语义）
 
@@ -127,16 +275,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         if (result === undefined || result.kind !== "kept-dirty") unregisterLiveTree(plan.path);
       };
 
-      const adoptOrphan = async (row: ChildRow): Promise<void> => {
-        const childHandle = loop.get(row.sessionId);
-        if (childHandle !== undefined) {
-          childHandle.agent.cancel("parent-gone");
-          await childHandle.agent.whenIdle();
-          await childHandle.dispose();
-        }
-        if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
-        lineage.drop(row.sessionId);
-      };
+      const adoptOrphan = (row: ChildRow): Promise<void> => adoptOrphanOf({ loop, lineage, row, cleanupQuietly, workspaceRoot });
 
       const grants = ctx.tryUse(permissionGrants);
       // 生命周期事件发射面（BATCH2 §3）：root 层 emit——宿主桥（hub event-bridge）可观察
@@ -149,50 +288,25 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         lineage,
         limits,
         workspaceRoot,
-        ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
+        ...(onWarn !== undefined ? { onWarn } : {}),
         ...(lockDegraded !== undefined ? { lockDegraded } : {}),
         types: () => current,
         isTearingDown: () => tearingDown,
         emitSpawned,
         emitFinished,
-        ...(grants !== undefined ? { setRootOverride: (session: import("@x-harness/session").SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
+        ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
         ...(options.resolveProviderOf !== undefined ? { resolveProviderOf: options.resolveProviderOf } : {}),
       };
-      // 启动期对账清扫（§8.3——崩溃泄漏兜底）；livePaths = 本进程活行（误删防线第一层）；测试可关（worktreeSweep:false）
-      if (options.worktreeSweep !== false) {
-        void sweepWorktrees(liveTreePaths(), workspaceRoot, lockDegraded === undefined ? {} : { onDegraded: lockDegraded }) // 进程级活树集（含他装配实例——A 路 #5）
-          .then((kept) => {
-            for (const item of kept) {
-              if (item.kind === "kept-dirty") options.onWarn?.(`agents: worktree kept after startup sweep (has changes): ${item.path}`);
-              else options.onWarn?.(`agents: worktree cleanup failed during startup sweep (${item.path}) — dir/branch may leak`);
-            }
-          })
-          .catch(() => {});
-      }
+      // types 快照刷新（§7.2）：refreshTypes 是类型装载的单一入口（spawnDeps/快照注入两消费方）
+      // 启动期对账清扫（§8.3——崩溃泄漏兜底）；测试可关（worktreeSweep:false）
+      if (options.worktreeSweep !== false) startupSweep({ workspaceRoot, lockDegraded, onWarn });
       const archive = ctx.tryUse(sessionArchive);
       const revive = archive === undefined
         ? undefined
-        : (caller: SessionId, agentId: string) => reviveByAgentId(
-            {
-              archive,
-              loop,
-              registry,
-              lineage,
-              types: () => current,
-              parentModelOf: (session: SessionId) => loop.get(session)?.agent.options.model,
-              parentIdleTimeoutOf: (session: SessionId) => loop.get(session)?.agent.options.streamIdleTimeoutMs,
-              parentToolsOf: (session: SessionId) => registry.restrictionOf(session),
-              emitSpawned,
-              ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
-              ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
-            },
-            caller,
-            agentId,
-          );
+        : (caller: SessionId, agentId: string) => reviveByAgentId(reviveDepsOf({ archive, loop, registry, lineage, types: () => current, emitSpawned, grants, onWarn }), caller, agentId);
 
       /** 驻留档化（§2.2）：idle/stopped 子超 maxResident → 最旧 dispose（WAL 在盘可按
-       *  agentId 复活；stopped 计入驻留防无限累积）。**archive 缺席（纯内存部署）跳过——
-       *  无盘可回时踢出=永久丢失，宁可驻留内存不静默毁约「可再 message」（修订A 处置） */
+       *  agentId 复活；stopped 计入驻留防无限累积）。archive 缺席跳过（纯内存部署不毁约）。 */
       const evictIdle = (): void => {
         if (archive === undefined) return;
         const idle = lineage.rows().filter((row) => !row.occupied && !row.running);
@@ -208,40 +322,46 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         }
       };
 
-      let verbDeps: VerbDeps = {
-        loop,
-        store,
-        lineage,
-        reportCap: limits.reportCap,
-        workspaceRoot,
-        ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
-        ...(lockDegraded !== undefined ? { lockDegraded } : {}),
-        adoptOrphan,
-        emitFinished,
-        reviveByName: revive,
-      };
+      let verbDeps: VerbDeps = verbDepsOf({ loop, store, lineage, reportCap: limits.reportCap, workspaceRoot, onWarn, lockDegraded, adoptOrphan, emitFinished, revive });
 
       let consumer: ReturnType<typeof createMailboxConsumer> | undefined;
       let cross: CrossDeps | undefined;
+      // mailbox 可变绑定面（rebind.ts 工厂）：mainRef/boxRef/setHeartbeat/rebind 单点铸造
+      const binding = createMailboxBinding({
+        loop,
+        mailbox: options.mailbox,
+        readCross: () => cross,
+        swapCross: (next) => {
+          cross = next;
+          if (next !== undefined) verbDeps = { ...verbDeps, cross };
+        },
+        ...(onWarn !== undefined ? { onWarn } : {}),
+      });
       if (options.mailbox !== undefined) {
         const service = ctx.tryUse(mailboxService);
         if (service === undefined) throw new Error("agent-delegation: options.mailbox requires the session-mailbox plugin to be assembled");
-        const boxHandle = await service.open(options.mailbox.box); // 真重名活箱构造期 throw（装配 fail-fast）
-        consumer = createMailboxConsumer({ service, loop, box: boxHandle, mainSession: options.mailbox.mainSession, onWarn: options.onWarn });
-        cross = { service, loop, box: options.mailbox.box, mainSession: options.mailbox.mainSession, lineage };
+        const made = await openMailbox({
+          service,
+          loop,
+          lineage,
+          binding,
+          mailbox: options.mailbox,
+          ...(onWarn !== undefined ? { onWarn } : {}),
+        });
+        consumer = made.consumer;
+        cross = made.cross;
         verbDeps = { ...verbDeps, cross };
         // §5.3 回卷序（注册序 = 回卷逆序）：注册 [shutdown, 心跳, drain] → LIFO 回卷得
-        // 停 drain → 停心跳 → 结算+关箱——关箱后再无 drain/心跳拍（对已删目录的写窗口归零）
-        pendingEffects.push(() => () => (consumer as MailboxConsumer).shutdown());
-        pendingEffects.push(() => boxHandle.startHeartbeat());
-        pendingEffects.push(() => startDrain(consumer as MailboxConsumer, service.timing.pollIntervalMs, options.onWarn));
+        // 停 drain → 停心跳 → 结算+关箱——关箱后再无 drain/心跳拍（对已删目录的写窗口归零）。
+        // 心跳停止面走绑定工厂（rebind 停旧起新；dispose 时停的是当前心跳）
+        for (const register of made.registrations) pendingEffects.push(register);
       }
 
       const notifier = createNotifier({ loop, store, reportCap: limits.reportCap, getRow: (session) => lineage.bySession(session), isTearingDown: () => tearingDown, adoptOrphan, emitFinished });
       const offStatus = ctx.on(agentStatus, (payload) => {
         notifier(payload);
         if (payload.status === "idle") evictIdle();
-        if (consumer !== undefined && options.mailbox !== undefined && payload.session === options.mailbox.mainSession) {
+        if (consumer !== undefined && payload.session === binding.mainRef.current) {
           void consumer.mirrorStatus(payload.status).catch(() => {
             /* 镜像失败：心跳兜底 */
           });
@@ -262,7 +382,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
             const body = renderTypesBlock(current);
             return body === "" ? "" : snapshotEnvelope("agent-types", body);
           },
-          ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
+          ...(onWarn !== undefined ? { onWarn } : {}),
         },
       });
       for (const register of pendingEffects) ctx.effect(register());
@@ -288,6 +408,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
           const rows = verbDeps.lineage.rows().filter((row) => row.parent === caller && !row.stopped);
           for (const row of rows) await stop(verbDeps, caller, { taskId: row.agentId, cause });
         },
+        rebindMailbox: binding.rebind,
       });
 
       return () => {
@@ -297,19 +418,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         offTypesSnapshot();
         offView();
         for (const off of offs) off();
-        const cascade = lineage.rows().map(async (row) => {
-          const childHandle = loop.get(row.sessionId);
-          if (childHandle === undefined) {
-            // 会话句柄缺席（agent-loop 先回卷等）：行仍持清理事实——worktree 照清 + 摘除，
-            // 不因句柄缺席漏清（A 路复审③次级）
-            if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
-            return;
-          }
-          childHandle.agent.cancel("delegation-disposed");
-          await childHandle.agent.whenIdle();
-          await childHandle.dispose();
-          if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
-        });
+        const cascade = lineage.rows().map((row) => cascadeDispose({ loop, row, cleanupQuietly, workspaceRoot }));
         // 回卷序：drain/心跳/结算+关箱全经 effect（LIFO 得 §5.3 序：停 drain → 停心跳 → 关箱）；
         // 此处只剩级联 cancel 与快照摘除（tearing-down 门已先行）
         return Promise.allSettled(cascade).then(() => {});

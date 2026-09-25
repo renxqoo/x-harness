@@ -26,6 +26,13 @@ afterAll(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+/** script 模式 env + 独立 mailbox root（跨进程邮箱常开后装配会真开箱——不隔离会写真实 ~/.x-harness） */
+const scriptEnv = async (): Promise<Record<string, string>> => ({
+  HUB_WORKER_PROVIDER: "script",
+  HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]),
+  X_HARNESS_MAILBOX_DIR: join(await tempDir("hub-mb-"), "mailbox"),
+});
+
 describe("assembly 窗口解析（模型级 > 档案级 > 兜底——compaction/analytics 共源）", () => {
   test("modelMeta 模型级胜档案级；档案级胜 128k 兜底", () => {
     const catalog = {
@@ -44,13 +51,13 @@ describe("assembly 装配面", () => {
     const agentDir = await tempDir("hub-asm-");
     const sessionsRoot = join(agentDir, "sessions");
     await expect(
-      assembleWorkerAgent({ sessionsRoot, trusted: false, modelId: "no-such-model", env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) } }),
+      assembleWorkerAgent({ sessionsRoot, trusted: false, modelId: "no-such-model", env: await scriptEnv() }),
     ).rejects.toThrow("unknown model preset: no-such-model");
     const assembled = await assembleWorkerAgent({
       sessionsRoot,
       trusted: false,
       dial: { provider: "script", model: "script-1" },
-      env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) },
+      env: await scriptEnv(),
     });
     expect(assembled.dial).toEqual({ provider: "script", model: "script-1" });
     expect(assembled.scriptAdapter).toBeDefined();
@@ -68,7 +75,7 @@ describe("assembly 装配面", () => {
       cwd: agentDir,
       trusted: false,
       dial: { provider: "script", model: "script-1" },
-      env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) },
+      env: await scriptEnv(),
     });
     const text = assembled.world.ctx.use(systemPrompt).assemble().text;
     expect(text.indexOf("You are Agent")).toBe(0);
@@ -165,13 +172,14 @@ describe("bash-exec 单元（脱 worker 上下文）", () => {
   test("习得持久面（U13）：非 trusted 拒 project 写；user 写落盘去重（grantStore 插件）", async () => {
     const agentDir = await tempDir("hub-grantstore-");
     const sessionsRoot = join(agentDir, "sessions");
+    const scriptEnvOfFields = await scriptEnv();
     const fields = (trusted: boolean, cwd: string) => ({
       sessionsRoot,
       cwd,
       agentDir,
       trusted,
       dial: { provider: "script", model: "script-1" },
-      env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) },
+      env: scriptEnvOfFields,
     });
     // 非 trusted：project 写被拒（安全向——未信任工作区不得持久授权）
     const untrusted = await assembleWorkerAgent(fields(false, agentDir));

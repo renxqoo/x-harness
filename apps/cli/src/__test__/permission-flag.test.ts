@@ -13,6 +13,7 @@ import type { LlmAdapter, LlmRequest } from "@x-harness/llm";
 import { permissionDecided } from "@x-harness/permission";
 import type { ProfileId, PermissionAudit } from "@x-harness/permission";
 import type { SessionId } from "@x-harness/session";
+import { mintSessionId } from "@x-harness/session";
 import type { ToolOutcome } from "@x-harness/tools";
 import { buildWorld } from "../build-world.ts";
 import type { World } from "../build-world.ts";
@@ -67,6 +68,10 @@ async function makeJourney(options: JourneyOptions = {}): Promise<Journey> {
   roots.push(root);
   const sessionRoot = options.sessionRoot ?? join(root, "sessions");
   const built = await buildWorld({
+    mainSessionId: mintSessionId(),
+
+    mailboxRoot: join(root, "mailbox"),
+
     cwd: root,
     sessionRoot,
     persist: options.persist === true,

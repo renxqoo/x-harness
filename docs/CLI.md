@@ -194,11 +194,11 @@ llmPlugin
 systemPromptPlugin
 agentLoopPlugin
 sessionCheckpointPlugin
-createAgentDelegationPlugin({ agentsDirs, workspaceRoot })   // 两目录/锚均必收（宿主边沿解析）；mailbox 缺席=进程内
+createAgentDelegationPlugin({ agentsDirs, workspaceRoot, mailbox: { box, mainSession } })   // 两目录/锚均必收（宿主边沿解析）；mailbox 常开（AGENT-DELEGATION §5.3 宿主接线，mailboxKit 提供 mailboxService，box=xh-<先铸会话 id>）
 createSkillPlugin()                                         // skills 目录扫描 + 会话首轮清单注入（docs/SKILL.md）
 ```
 
-（共 19 个插件（含 cli-permission-broker 审批插件）+ N 个运行时注册的 LLM adapter。）
+（共 20 个插件（含 cli-permission-broker 审批插件与 session-mailbox）+ N 个运行时注册的 LLM adapter。）
 
 skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
 `[<cwd>/.x-harness/skills, ~/.x-harness/skills]`（同名项目域胜）；清单以

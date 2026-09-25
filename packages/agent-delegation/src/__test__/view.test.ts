@@ -2,9 +2,13 @@
 // 结构化 list（非文本解析）、message 投递（idle 唤醒）、stopAll 幂等级联。
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { SessionId } from "@x-harness/session";
 import { delegationView } from "../index.ts";
 import type { ChildView } from "../index.ts";
-import { makeWorld, spawnParent, callTool, textScript, CHILD_MODEL, workerOptions, resetWorlds, agentIdOf } from "./world.ts";
+import { makeWorld, spawnParent, callTool, textScript, CHILD_MODEL, PARENT_MODEL, workerOptions, resetWorlds, agentIdOf } from "./world.ts";
 
 beforeEach(() => {
   resetWorlds();
@@ -59,4 +63,36 @@ describe("delegationView（宿主直调服务面）", () => {
     await view.stopAll(parent.agent.session.id, "host-abort"); // 幂等重放不崩
     await parent.dispose();
   });
+
+  it("rebindMailbox：会话切换换箱（旧箱关、新箱 discover 可见、信封路由到新会话）；mailbox 缺席部署拒", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-rebind-"));
+    const world = await makeWorld({ ...(await workerOptions()), mailbox: { box: "alpha", mainSession: "main-1" as SessionId } }, root);
+    const view = world.ctx.use(delegationView);
+    const first = await spawnParent(world, PARENT_MODEL, "main-1" as SessionId);
+    // 初始箱 = 装配名 alpha（宿主接线后真实形态是 xh-<id>，此处验证 rebind 后换到该形态）
+    const rebound = await view.rebindMailbox(first.agent.session.id);
+    expect(rebound.ok).toBe(true);
+    // 新箱 discover 可见；对端投信经 drain 进新 main（信封路由不再指向装配期 id）
+    const service = world.ctx.use(await import("@x-harness/session-mailbox").then((m) => m.mailboxService));
+    const boxes = await service.discover();
+    expect(boxes.some((box) => box.name === `xh-${String(first.agent.session.id)}`)).toBe(true);
+    expect(boxes.some((box) => box.name === "alpha")).toBe(false); // 旧箱已关
+    const peer = await service.open("peer-of-rebind");
+    const sent = await service.send(`xh-${String(first.agent.session.id)}`, { from: peer.name, message: "after rebind", kind: "message" });
+    expect(sent.ok).toBe(true);
+    const envelopes = await service.drain(`xh-${String(first.agent.session.id)}`);
+    expect(envelopes).toHaveLength(1);
+    await peer.close();
+    await first.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rebindMailbox：mailbox 缺席部署拒 invalid-args（进程内形态不炸）", async () => {
+    const world = await makeWorld(await workerOptions());
+    const view = world.ctx.use(delegationView);
+    const rejected = await view.rebindMailbox("any" as SessionId);
+    expect(rejected.ok).toBe(false);
+    expect(rejected.ok === false && rejected.reason).toContain("no mailbox configured");
+  });
+
 });

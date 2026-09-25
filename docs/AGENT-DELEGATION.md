@@ -233,6 +233,32 @@ subscription expired: <box> gone`）——规格「恒一条通知」的 expired
 
 **box 命名**：装配层指定（宿主 main 会话对外名）；真重名（活 pid）构造期 throw。
 
+**宿主接线（CLI 与 hub worker 常开）**：两宿主均在装配期开箱，box 名 = `xh-<sessionId>`
+（会话 id 跨进程唯一——活箱真重名构造期 throw 的唯一性由铸号保证；`list_agents` 跨进程行
+展示 `xh-<id> [ref]`）。mainSession 的装配次序矛盾（id 在 loop.create 之后才有）由**先铸号**
+解决：CLI 的 openWorld create 路径先 `mintSessionId()` 再 buildWorld（resume 路径直接用
+resumeId）；hub worker 的 assembleWorkerAgent 把 `mintSessionId()` 提到 defaultWorkerPlugins
+之前，create 路径同一 id 传入 `loop.create`。mailbox root = `resolveMailboxDir()`
+（`X_HARNESS_MAILBOX_DIR` 覆盖 > `X_HARNESS_HOME/mailbox`（与 sessions/telemetry 同随根
+配置重定位）> `~/.x-harness/mailbox`）。装配面：`mailboxKit(root)`（harness 包）+
+delegationKit 的 `mailbox: { box, mainSession }`。
+
+**会话切换重绑（rebindMailbox）**：CLI REPL `/new`、`/resume` 切会话后，装配期钉死的
+mainSession 即失配（信封路由到已 dispose 的会话、出站 from 旧箱名、状态镜像冻结）。宿主经
+`delegationView.rebindMailbox(newSessionId)` 重绑：先开新箱 `xh-<新id>`（失败保持旧绑定
+如实失败）→ 三面引用换目标（consumer 信封路由 / cross 通知直投 / agentStatus 镜像，经共享
+mainRef）→ 旧箱尾信尽力取投新会话 → 停旧心跳关旧箱。drain 循环不变（跟随可变 boxRef）。
+
+**关箱所有权 CAS**：`close()` 仅在 manifest.bootId 仍属本句柄时删目录——超宽限（心跳断流
+>30s）被对端认领后，本句柄的关箱不得删掉对端的新箱（与 discover 回收的墓碑复验同思想，
+开箱认领/关箱两侧对称防护）。
+
+**已知取舍**：① 同秒撞名（36⁶≈21.7 亿分之一）= `box-name-taken` fail-closed 起不来，与
+session id 撞名永久拒写同语义，不重试；批量同秒起百进程 ≈0.2%/批。② `xh-<id>` 恒 25 字符
+（铸号 22 + 前缀 3），箱名词表上限 64 不可达；但外部手工构造的长 session id（>61 字符）
+resume 时 fail-closed 报 `bad box name`。③ print 模式（-p）接 SIGINT/SIGTERM 清理（cancel +
+dispose 关箱）——SIGKILL 仍走 7 天陈尸回收。
+
 ### 5.4 notify_when_idle（一次性空闲订阅）
 
 **双向闭窗**（错过 idle 事件窗口的修复）：订阅方（根会话）发起时——(a) 写 subs 前查目标

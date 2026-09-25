@@ -10,9 +10,11 @@ import type { BoxHandle, MailboxService } from "@x-harness/session-mailbox";
 export interface MailboxConsumerDeps {
   readonly service: MailboxService;
   readonly loop: AgentLoopService;
-  readonly box: BoxHandle;
-  /** 宿主 main 会话（信封路由目的地） */
-  readonly mainSession: SessionId;
+  /** 本进程活箱（可变引用：rebind 换箱后 drain/镜像/结算/关箱全跟随新句柄） */
+  readonly boxRef: { current: BoxHandle };
+  /** 宿主 main 会话（信封路由目的地）——可变引用：宿主 REPL 会话切换（/new、/resume）
+   *  后经 rebind 换目标，装配期钉死则切换后信封全部丢失 */
+  readonly mainRef: { current: SessionId };
   readonly onWarn?: (message: string) => void;
 }
 
@@ -28,10 +30,10 @@ export interface MailboxConsumer {
 }
 
 export function createMailboxConsumer(deps: MailboxConsumerDeps): MailboxConsumer {
-  const { service, loop, box, mainSession } = deps;
+  const { service, loop, boxRef, mainRef } = deps;
 
   const deliver = async (from: string, message: string): Promise<void> => {
-    const mainHandle = loop.get(mainSession);
+    const mainHandle = loop.get(mainRef.current);
     if (mainHandle === undefined) {
       deps.onWarn?.(`mailbox: envelope from ${from} dropped (main session not live)`);
       return; // at-most-once：主会话未建/已封存——接受丢失（§5.3）
@@ -46,14 +48,14 @@ export function createMailboxConsumer(deps: MailboxConsumerDeps): MailboxConsume
   /** 单飞：idle 边沿与 teardown 双路径并发结算 → 复用在飞 promise（审查 B-P1-2 恰好一条） */
   let settling: Promise<void> | undefined;
   const settleOnce = async (): Promise<void> => {
-    for (const from of await service.subs.list(box.name)) {
+    for (const from of await service.subs.list(boxRef.current.name)) {
       const sent = await service.send(from, {
-        from: box.name,
-        message: `[Cross-session idle notice] ${box.name} idle at ${String(service.timing.now())}`,
+        from: boxRef.current.name,
+        message: `[Cross-session idle notice] ${boxRef.current.name} idle at ${String(service.timing.now())}`,
         kind: "idle-notice",
       });
       if (!sent.ok) deps.onWarn?.(`mailbox: idle notice to ${from} undeliverable (${sent.reason ?? "?"})`);
-      await service.subs.remove(box.name, from); // 一次性；from 死也摘（订阅随目标存活期终结）
+      await service.subs.remove(boxRef.current.name, from); // 一次性；from 死也摘（订阅随目标存活期终结）
     }
   };
   const settleSubs = (): Promise<void> => {
@@ -65,17 +67,17 @@ export function createMailboxConsumer(deps: MailboxConsumerDeps): MailboxConsume
 
   return {
     drainOnce: async () => {
-      for (const envelope of await service.drain(box.name)) {
+      for (const envelope of await service.drain(boxRef.current.name)) {
         await deliver(envelope.from, envelope.message);
       }
     },
-    mirrorStatus: (status) => box.setStatus(status),
+    mirrorStatus: (status) => boxRef.current.setStatus(status),
     settleSubs,
     shutdown: async () => {
       await settleSubs().catch(() => {
         /* 结算尽力：关箱不被单次投递失败阻塞 */
       });
-      await box.close();
+      await boxRef.current.close();
     },
   };
 }

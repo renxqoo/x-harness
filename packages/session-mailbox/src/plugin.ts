@@ -12,12 +12,15 @@ export function defaultTiming(): MailboxTiming {
   return { pollIntervalMs: 300, heartbeatMs: 10_000, graceMs: 30_000, staleMs: 7 * 24 * 3_600_000, now: () => Date.now() };
 }
 
-/** 邮箱根统一解析（宿主边沿消费——插件不自持缺省）：显式传入 > env 覆盖 >
+/** 邮箱根统一解析（宿主边沿消费——插件不自持缺省）：显式传入 > X_HARNESS_MAILBOX_DIR >
+ *  X_HARNESS_HOME/mailbox（与 sessions/telemetry 同随根配置重定位——harness home 不变式） >
  *  `~/.x-harness/mailbox` 缺省。 */
 export function resolveMailboxDir(custom?: string): string {
   if (custom !== undefined && custom !== "") return custom;
   const env = process.env["X_HARNESS_MAILBOX_DIR"];
   if (env !== undefined && env !== "") return env;
+  const home = process.env["X_HARNESS_HOME"];
+  if (home !== undefined && home !== "") return join(home, "mailbox");
   return join(homedir(), ".x-harness", "mailbox");
 }
 

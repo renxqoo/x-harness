@@ -29,6 +29,7 @@ import {
   errorRecoveryKit,
   truncationMessagesKit,
   loopKit,
+  mailboxKit,
   meterKit,
   taskLogsRootOf,
   promptKit,
@@ -46,6 +47,7 @@ export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, m
 
 import type { World } from "@x-harness/harness";
 import { resolveAgentDirs } from "@x-harness/agent-delegation";
+import { resolveMailboxDir } from "@x-harness/session-mailbox";
 import { resolveSkillDirs } from "@x-harness/skill";
 export type { World };
 
@@ -81,6 +83,12 @@ export interface WorldOptions {
   readonly adapters?: readonly LlmAdapter[];
   /** 测试注入：日期快照 clock（缺省 Date.now——假钟锚按天幂等/跨天新条） */
   readonly factsNow?: () => number;
+  /** main 会话 id（AGENT-DELEGATION §5.3 宿主接线——openWorld 先铸号/复用 resumeId 后传入；
+   *  mailbox box 名与信封路由目的地均由它派生） */
+  readonly mainSessionId: import("@x-harness/session").SessionId;
+  /** 跨进程邮箱根（缺省 resolveMailboxDir：X_HARNESS_MAILBOX_DIR 覆盖 > ~/.x-harness/mailbox；
+   *  测试装置传 temp 目录隔离——生产调用不传） */
+  readonly mailboxRoot?: string;
 }
 
 /** 档案 → adapter options（纯函数；--api-key 覆盖在 buildAdapters 层折入；两协议字段集合同构） */
@@ -142,8 +150,10 @@ function rgBinDirOf(options: WorldOptions): { readonly rgBinDir: string } | { re
 }
 
 /** 委派装配参数（WORKSPACE-ROOT-INJECTION）：git 锚 = CLI 工作目录；告警面接
- *  onIoError，缺省 stderr（main 的 openWorld 不传 onIoError——无兜底则是死接线） */
-function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError">): import("@x-harness/agent-delegation").DelegationOptions {
+ *  onIoError，缺省 stderr（main 的 openWorld 不传 onIoError——无兜底则是死接线）。
+ *  mailbox 接线（AGENT-DELEGATION §5.3 宿主接线）：mainSession 必收——openWorld 先铸号/
+ *  复用 resumeId 后传入（会话 id 装配期已知）；box = xh-<id>（会话 id 跨进程唯一）。 */
+function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError" | "mainSessionId">): import("@x-harness/agent-delegation").DelegationOptions {
   const onWarn = options.onIoError ?? ((message: string) => {
     process.stderr.write(`cli: ${message}\n`);
   });
@@ -151,7 +161,27 @@ function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError">): 
     agentsDirs: resolveAgentDirs(),
     workspaceRoot: options.cwd,
     onWarn,
+    mailbox: { box: `xh-${String(options.mainSessionId)}`, mainSession: options.mainSessionId },
   };
+}
+
+/** 跨进程邮箱根（AGENT-DELEGATION §5.3 宿主接线）：显式传入 > env（resolveMailboxDir 单源） */
+function mailboxRootOf(options: Pick<WorldOptions, "mailboxRoot">): string {
+  return options.mailboxRoot ?? resolveMailboxDir();
+}
+
+/** 可选段插件（compaction/telemetry——两条件位的条件展开收进本函数，降 buildWorld 复杂度） */
+function optionalPluginsOf(options: WorldOptions, adapters: readonly LlmAdapter[]): readonly Plugin[] {
+  return [
+    ...(options.compaction !== undefined ? [...compactionKit(compactionOptionsOf(options)), ...autoCompactKit(autoCompactOptionsOf(options))] : []),
+    ...(options.telemetryPath !== undefined
+      ? telemetryKit({ db: options.telemetryPath, resource: { serviceName: "x-harness-cli" }, onIoError: options.onTelemetryError })
+      : []),
+    ...llmKit(adapters, {
+      providers: Object.fromEntries(options.config.providers.map((profile) => [profile.name, RETRY_POLICY])),
+      default: RETRY_POLICY,
+    }),
+  ];
 }
 
 export async function buildWorld(options: WorldOptions): Promise<Result<World>> {
@@ -161,6 +191,9 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
+    // 跨进程邮箱服务（AGENT-DELEGATION §5.3 宿主接线）——提供 mailboxService；与
+    // delegationKit 的装配时序由 softInject topo 声明式保证，此处仅声明式相邻摆放
+    ...mailboxKit({ root: mailboxRootOf(options), ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}) }),
     ...truncationMessagesKit(), // 截断文案外层（先注册）——toolboxKit 抢救件内层先执行写盘，本件合成 content+note（对抗审查终审 P1：反序 content 短路写盘）
     ...toolboxKit({
       root: options.cwd,
@@ -178,14 +211,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     }),
     options.broker,
     ...meterKit(),
-    ...(options.compaction !== undefined ? [...compactionKit(compactionOptionsOf(options)), ...autoCompactKit(autoCompactOptionsOf(options))] : []),
-    ...(options.telemetryPath !== undefined
-      ? telemetryKit({ db: options.telemetryPath, resource: { serviceName: "x-harness-cli" }, onIoError: options.onTelemetryError })
-      : []),
-    ...llmKit(adapters, {
-      providers: Object.fromEntries(options.config.providers.map((profile) => [profile.name, RETRY_POLICY])),
-      default: RETRY_POLICY,
-    }),
+    ...optionalPluginsOf(options, adapters),
     ...loopKit(),
     ...continuationKit(), // 输出截断续写（docs/OUTPUT-TOKEN-CONTINUATION.md）
     ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llm-retry 后注册（后手见事件））

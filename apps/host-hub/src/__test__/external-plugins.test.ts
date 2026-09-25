@@ -20,7 +20,12 @@ afterAll(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-const SCRIPT_ENV = { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]) };
+/** script 模式 env + 每调用独立 mailbox root（跨进程邮箱常开后装配会真开箱——不隔离会写真实 ~/.x-harness） */
+const scriptEnv = async (): Promise<Record<string, string>> => ({
+  HUB_WORKER_PROVIDER: "script",
+  HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]),
+  X_HARNESS_MAILBOX_DIR: join(await tempDir("hub-mb-"), "mailbox"),
+});
 
 async function auditKinds(agentDir: string): Promise<string[]> {
   const raw = await readFile(join(agentDir, "plugins", "audit.jsonl"), "utf8");
@@ -78,7 +83,7 @@ describe("装配期装载", () => {
       trusted: false,
       agentDir,
       dial: { provider: "script", model: "script-1" },
-      env: SCRIPT_ENV,
+      env: await scriptEnv(),
     });
     const svc = assembled.world.ctx.tryUse(pluginManagerService);
     expect(svc).toBeDefined();
@@ -104,7 +109,7 @@ describe("装配期装载", () => {
       agentDir,
       pluginsDisabled: ["token-analytics"],
       dial: { provider: "script", model: "script-1" },
-      env: SCRIPT_ENV,
+      env: await scriptEnv(),
     });
     expect(assembled.world.ctx.tryUse(pluginManagerService)).toBeUndefined();
     await assembled.handle.dispose();
@@ -117,7 +122,7 @@ describe("装配期装载", () => {
       sessionsRoot: join(await tempDir("hub-plg-na-"), "sessions"),
       trusted: false,
       dial: { provider: "script", model: "script-1" },
-      env: SCRIPT_ENV,
+      env: await scriptEnv(),
     });
     expect(assembled.world.ctx.tryUse(pluginManagerService)).toBeUndefined();
     await assembled.handle.dispose();
@@ -132,7 +137,7 @@ describe("装配期装载", () => {
         trusted: false,
         agentDir,
         dial: { provider: "script", model: "script-1" },
-        env: SCRIPT_ENV,
+        env: await scriptEnv(),
       },
       { externalPlugins: { resolve: () => { throw new Error("resolve boom"); } } },
     );
@@ -149,7 +154,7 @@ describe("装配期装载", () => {
         trusted: false,
         agentDir,
         dial: { provider: "script", model: "script-1" },
-        env: SCRIPT_ENV,
+        env: await scriptEnv(),
       },
       // 坏模块：形状过关但 apply 抛错 → installProcess 失败留痕（registerFailure）
       { externalPlugins: { loadModule: async () => ({ default: { name: "token-analytics", apply: () => { throw new Error("apply boom"); } } }) } },
@@ -173,7 +178,7 @@ describe("降级硬承诺（契约 4：任何装载失败不打挂装配）", ()
         trusted: false,
         agentDir,
         dial: { provider: "script", model: "script-1" },
-        env: SCRIPT_ENV,
+        env: await scriptEnv(),
       },
       { externalPlugins: { loadModule: async () => { throw new Error("reject boom"); } } },
     );
@@ -193,7 +198,7 @@ describe("降级硬承诺（契约 4：任何装载失败不打挂装配）", ()
         trusted: false,
         agentDir,
         dial: { provider: "script", model: "script-1" },
-        env: SCRIPT_ENV,
+        env: await scriptEnv(),
       },
       // 装载成功但 apply 返回的 disposer 卸载时抛错 → uninstall Result 失败
       { externalPlugins: { loadModule: async () => ({ default: { name: "token-analytics", apply: () => () => { throw new Error("unload boom"); } } }) } },
