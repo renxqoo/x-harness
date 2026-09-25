@@ -170,7 +170,7 @@ docs/CLI.md、docs/SDK-DESIGN.md        stale 示意更新
 - [ ] hub 形态 `task_stop` 后 worktree 目录 + 分支双清（经 stop 面锚定）
 - [ ] remove 失败走 onWarn + stop 文案如实（remove-failed ≠ has changes）
 - [ ] existsSync 早退分支的分支删除
-- [x] workspace-not-in-repo 拒绝（GIT_WORK_TREE 异指等注入形态——语义收敛后「无关祖先仓」不可达，见处置记录）
+- [x] workspace-not-in-repo 拒绝（GIT_WORK_TREE 外指形态——真拒绝用例在库；GIT_DIR 注入不声明防御，§13 落档）
 - [ ] repoTop 归属校验（仓内子目录合法通过）
 - [ ] per-repo lockfile：跨进程写互斥 + stale 抢占
 - [ ] resumeCwdOf 空串守卫

@@ -71,7 +71,7 @@ const spawnWorktree = (world: Awaited<ReturnType<typeof worktreeWorld>>) =>
   callTool({ world: world.world, name: "agent_spawn", args: { description: "isolated work", prompt: "x", isolation: "worktree" }, session: world.parent.agent.session.id });
 
 describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 夹具：包级并行档 import/transform 期事件循环饥饿可致 5s 默认超时（N6）
-  it("hub 形态（进程 cwd 在仓外）：repo 外路径建树 + 授权根落账（真隔离）；task_stop 无改动自动清理（树与分支消失）", async () => {
+  it("workspaceRoot 锚定（进程 cwd 非夹具仓）：repo 外路径建树 + 授权根落账（真隔离）；task_stop 无改动自动清理（树与分支消失）", async () => {
     repo = await gitRepo();
     const twins = await worktreeWorld();
     const spawned = await spawnWorktree(twins);
@@ -179,6 +179,32 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     await parent.dispose();
   });
 
+  it("GIT_WORK_TREE 外指 → 仓顶落在工作区外 → workspace-not-in-repo 真拒绝（A 路复审②）", async () => {
+    // 非注入环境（env 未污染）下 ownsWorkspace 恒真——本用例经 env 注入构造唯一可达触发面
+    repo = await gitRepo();
+    const elsewhere = mkdtempSync(join(tmpdir(), "xh-wt-gwt-"));
+    scratch = [...scratch, elsewhere];
+    // execFile 缺省继承 process.env——进程级设置 GIT_WORK_TREE 即可贯通 delegation 的 git 调用
+    const prev = process.env["GIT_WORK_TREE"];
+    process.env["GIT_WORK_TREE"] = elsewhere;
+    try {
+      // 预检注入生效：rev-parse 命中工作区外目录
+      const top = (await exec("git", ["-C", repo, "rev-parse", "--show-toplevel"])).stdout.trim();
+      expect(top).toBe(realpathSync(elsewhere));
+      const options = await makeOptions({}, { workspaceRoot: repo, worktreeSweep: false });
+      const world = await makeWorld(options, undefined, [grantsStub()]);
+      const parent = await spawnParent(world, PARENT_MODEL, "wt-main" as SessionId);
+      world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
+      const refused = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", isolation: "worktree" }, session: parent.agent.session.id });
+      expect(refused.isError).toBe(true);
+      expect(refused.content).toContain("workspace-not-in-repo"); // 唯一可达触发面的真拒绝锚
+      await parent.dispose();
+    } finally {
+      if (prev === undefined) delete process.env["GIT_WORK_TREE"];
+      else process.env["GIT_WORK_TREE"] = prev;
+    }
+  });
+
   it("symlink 逻辑形 workspaceRoot（/var vs /private/var）不再被词法比较误拒——realpath 归一后仓内子目录合法", async () => {
     // P2 回归锚：ownsWorkspace 比较前物理归一。逻辑形 workspaceRoot 对物理形 repoTop
     // 的词法相对判定会把合法工作区误拒 workspace-not-in-repo（B 路 P2 实测 /var 形态）。
@@ -212,8 +238,11 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     expect(noGrants.content).toContain("requires the permission grants service");
     const listed = await callTool({ world: worldNoGrants, name: "list_agents", args: {}, session: parent.agent.session.id });
     expect(listed.content).toContain("(no sub-agents)"); // 不半装（无孤儿行）
-    // 半建产物清理：worktree 目录不残留（grants 前置拒——从未建锁，无需过滤）
-    expect(existsSync(worktreeParent(repo))).toBe(false);
+    // 半建产物清理：共享 worktrees 目录可因他用例/锁父目录预建在场——断言无本仓树残留
+    const { basename: bn } = await import("node:path");
+    const repoName = bn(repo);
+    const leftovers = (await readdir(worktreeParent(repo)).catch(() => [] as string[])).filter((f) => repoName !== undefined && f.startsWith(`${repoName}-agent-`));
+    expect(leftovers).toHaveLength(0);
     await parent.dispose();
   });
 
@@ -237,7 +266,7 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     expect(dirty.ok).toBe(true);
     if (dirty.ok) writeFileSync(join(dirty.plan.path, "CHANGE.md"), "x");
     const aged = (): number => Date.now() + 2 * 3_600_000; // 目录 mtime 判超龄
-    const kept = await sweepWorktrees([], repo, aged);
+    const kept = await sweepWorktrees([], repo, { now: aged });
     expect(kept).toHaveLength(1); // 脏树保留
     expect(kept[0]?.kind).toBe("kept-dirty"); // 形态如实（不谎报）
     if (made.ok) {
@@ -263,7 +292,7 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     expect(made.ok).toBe(true);
     const aged = (): number => Date.now() + 2 * 3_600_000; // 超龄也保护——livePaths 优先于 FRESH_MS
     if (made.ok) {
-      const kept = await sweepWorktrees([made.plan.path], repo, aged);
+      const kept = await sweepWorktrees([made.plan.path], repo, { now: aged });
       expect(kept).toHaveLength(0);
       expect(existsSync(made.plan.path)).toBe(true);
     }
@@ -304,11 +333,11 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     expect(made.ok).toBe(true);
     const aged = (): number => Date.now() + 2 * 3_600_000;
     // 以 repoB 为锚 sweep：不得触碰 repoA 的树（entry 前缀过滤）
-    const kept = await sweepWorktrees([], realpathSync(repoB), aged);
+    const kept = await sweepWorktrees([], realpathSync(repoB), { now: aged });
     expect(kept).toHaveLength(0);
     if (made.ok) expect(existsSync(made.plan.path)).toBe(true); // repoA 的树完好
     // 以 repoA 为锚 sweep：自己的超龄净树照常清理
-    const own = await sweepWorktrees([], physicalA, aged);
+    const own = await sweepWorktrees([], physicalA, { now: aged });
     expect(own).toHaveLength(0);
     if (made.ok) expect(existsSync(made.plan.path)).toBe(false);
   });
@@ -320,11 +349,11 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     if (made.ok) {
       registerLiveTree(made.plan.path); // 模拟另一装配实例的活行（A 路 #5——lineage 私有不可见）
       const aged = (): number => Date.now() + 2 * 3_600_000;
-      const kept = await sweepWorktrees(liveTreePaths(), repo, aged);
+      const kept = await sweepWorktrees(liveTreePaths(), repo, { now: aged });
       expect(kept).toHaveLength(0);
       expect(existsSync(made.plan.path)).toBe(true);
       unregisterLiveTree(made.plan.path);
-      const after = await sweepWorktrees(liveTreePaths(), repo, aged);
+      const after = await sweepWorktrees(liveTreePaths(), repo, { now: aged });
       expect(after).toHaveLength(0);
       expect(existsSync(made.plan.path)).toBe(false); // 摘除后照常清理
     }
@@ -384,17 +413,30 @@ describe("per-repo lockfile（跨进程写互斥）", { timeout: 20_000 }, () =>
     scratch = [...scratch, dir];
     const order: string[] = [];
     const lock = join(dir, "repo-test.lock");
+    // 真确定性（A 路复审⑥——sleep 可被事件循环饥饿吃掉）：a 入临界区后由测试放行，
+    // b 的「未启动」即互斥证据——不依赖任何时间窗假设
+    let aExit: () => void = () => {};
+    const aDone = new Promise<void>((resolve) => {
+      aExit = resolve;
+    });
+    let aEnteredResolve: () => void = () => {};
+    const aEntered = new Promise<void>((resolve) => {
+      aEnteredResolve = resolve;
+    });
     const first = withRepoLock(lock, async () => {
       order.push("a-start");
-      await sleep(60);
+      aEnteredResolve();
+      await aDone; // 测试不放行不出临界区
       order.push("a-end");
     });
-    await sleep(30); // a 先持锁（同 tick 启动则是 mkdir 竞速——顺序非断言面，互斥才是）
+    await aEntered; // a 已在临界区（确定性——非时间假设）
     const second = withRepoLock(lock, async () => {
       order.push("b-start");
-      await sleep(10);
       order.push("b-end");
     });
+    await sleep(30); // 事件循环让 b 有充分机会（若互斥失效它会插进来）
+    expect(order).toEqual(["a-start"]); // b 未入临界区 = 互斥成立
+    aExit();
     await Promise.all([first, second]);
     expect(order).toEqual(["a-start", "a-end", "b-start", "b-end"]); // 不交错
   });

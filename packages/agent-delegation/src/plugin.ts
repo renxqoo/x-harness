@@ -15,7 +15,8 @@ import type { CrossDeps } from "./crossmsg.ts";
 import { createMailboxConsumer, startDrain } from "./mailbox-consumer.ts";
 import type { MailboxConsumer } from "./mailbox-consumer.ts";
 import { reviveByAgentId } from "./revive.ts";
-import { evaluateCleanup, liveTreePaths, setLockDegradedSink, sweepWorktrees, unregisterLiveTree } from "./worktree.ts";
+import { evaluateCleanup, liveTreePaths, sweepWorktrees, unregisterLiveTree } from "./worktree.ts";
+import { cleanupRepoTopOf } from "./verbs.ts";
 import { isAbsolute } from "node:path";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
@@ -66,6 +67,11 @@ export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>
   return `<system-reminder>\nAvailable agent types:\n${lines.join("\n")}\n</system-reminder>`;
 }
 
+/** lockfile 降级闭包派生（A 路复审⑤实例私有——随本插件装配的 onWarn，不设模块级全局） */
+function lockDegradedOf(onWarn: DelegationOptions["onWarn"]): import("./lockfile.ts").LockDegraded | undefined {
+  return onWarn === undefined ? undefined : (reason) => onWarn(reason);
+}
+
 export function createAgentDelegationPlugin(options: DelegationOptions): Plugin { // agentsDirs/workspaceRoot 必收——目录与 git 锚决定权在宿主边沿
   if (!Array.isArray(options.agentsDirs) || options.agentsDirs.some((dir) => typeof dir !== "string" || dir === "")) {
     throw new Error("agent-delegation: agentsDirs must be an array of non-empty strings");
@@ -82,7 +88,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
     // S0 软依赖（F-01）：grants setRootOverride / archive 复活 / mailbox 在场假阴性——在场则排后
     softInject: ["permission", "session-persistence-jsonl", ...(options.mailbox !== undefined ? ["session-mailbox"] : [])],
     apply: async (ctx: Context): Promise<Disposer> => {
-      setLockDegradedSink(options.onWarn); // lockfile 降级可观测（N5）——与清理告警同出口
+      const lockDegraded = lockDegradedOf(options.onWarn); // N5 可观测 + 复审⑤实例私有
       const loop = ctx.use(agentLoopServiceToken);
       const store = ctx.use(sessionStore);
       const registry = ctx.use(toolRegistry);
@@ -114,7 +120,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
 
       /** 清理统一出口：remove-failed 可见化（adoptOrphan/evictIdle/级联共用）+ 活树摘除 */
       const cleanupQuietly = async (plan: { readonly path: string; readonly branch: string; readonly repoTop: string }): Promise<void> => {
-        const result = await evaluateCleanup(plan).catch(() => undefined);
+        const result = await evaluateCleanup(plan, lockDegraded).catch(() => undefined);
         if (result !== undefined && result.kind === "remove-failed") {
           options.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${plan.path}`);
         }
@@ -128,7 +134,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
           await childHandle.agent.whenIdle();
           await childHandle.dispose();
         }
-        if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: row.worktreeRepoTop ?? row.worktree ?? workspaceRoot });
+        if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
         lineage.drop(row.sessionId);
       };
 
@@ -144,6 +150,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         limits,
         workspaceRoot,
         ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
+        ...(lockDegraded !== undefined ? { lockDegraded } : {}),
         types: () => current,
         isTearingDown: () => tearingDown,
         emitSpawned,
@@ -153,7 +160,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
       };
       // 启动期对账清扫（§8.3——崩溃泄漏兜底）；livePaths = 本进程活行（误删防线第一层）；测试可关（worktreeSweep:false）
       if (options.worktreeSweep !== false) {
-        void sweepWorktrees(liveTreePaths(), workspaceRoot) // 进程级活树集（含他装配实例——A 路 #5）
+        void sweepWorktrees(liveTreePaths(), workspaceRoot, lockDegraded === undefined ? {} : { onDegraded: lockDegraded }) // 进程级活树集（含他装配实例——A 路 #5）
           .then((kept) => {
             for (const item of kept) {
               if (item.kind === "kept-dirty") options.onWarn?.(`agents: worktree kept after startup sweep (has changes): ${item.path}`);
@@ -193,7 +200,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
           void (async () => {
             const handle = loop.get(row.sessionId);
             if (handle !== undefined) await handle.dispose();
-            if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: row.worktreeRepoTop ?? row.worktree ?? workspaceRoot });
+            if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
             lineage.drop(row.sessionId);
           })().catch(() => {
             /* 档化尽力：失败行留驻下次再试 */
@@ -208,6 +215,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         reportCap: limits.reportCap,
         workspaceRoot,
         ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
+        ...(lockDegraded !== undefined ? { lockDegraded } : {}),
         adoptOrphan,
         emitFinished,
         reviveByName: revive,
@@ -291,11 +299,16 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         for (const off of offs) off();
         const cascade = lineage.rows().map(async (row) => {
           const childHandle = loop.get(row.sessionId);
-          if (childHandle === undefined) return;
+          if (childHandle === undefined) {
+            // 会话句柄缺席（agent-loop 先回卷等）：行仍持清理事实——worktree 照清 + 摘除，
+            // 不因句柄缺席漏清（A 路复审③次级）
+            if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
+            return;
+          }
           childHandle.agent.cancel("delegation-disposed");
           await childHandle.agent.whenIdle();
           await childHandle.dispose();
-          if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: row.worktreeRepoTop ?? row.worktree ?? workspaceRoot });
+          if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
         });
         // 回卷序：drain/心跳/结算+关箱全经 effect（LIFO 得 §5.3 序：停 drain → 停心跳 → 关箱）；
         // 此处只剩级联 cancel 与快照摘除（tearing-down 门已先行）

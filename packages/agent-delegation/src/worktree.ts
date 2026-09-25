@@ -13,15 +13,6 @@ import { promisify } from "node:util";
 import { repoLockPath, withRepoLock } from "./lockfile.ts";
 import type { LockDegraded } from "./lockfile.ts";
 
-/** lockfile 降级出口（装配注入——N5：四条降级路径可观测）；缺省静默 */
-let lockDegradedSink: LockDegraded | undefined;
-
-export function setLockDegradedSink(sink: LockDegraded | undefined): void {
-  lockDegradedSink = sink;
-}
-
-const lockOpts = (): { readonly onDegraded?: LockDegraded } => (lockDegradedSink === undefined ? {} : { onDegraded: lockDegradedSink });
-
 const exec = promisify(execFile);
 
 /** git 全局串行队列（进程内；跨进程互斥归 per-repo lockfile——方案并发预算） */
@@ -78,16 +69,16 @@ async function repoTopOf(workspaceRoot: string): Promise<{ ok: true; top: string
   }
 }
 
-export async function createWorktree(agentId: string, workspaceRoot: string): Promise<WorktreeOutcome> {
+export async function createWorktree(agentId: string, workspaceRoot: string, onDegraded?: LockDegraded): Promise<WorktreeOutcome> {
   const top = await repoTopOf(workspaceRoot);
   if (!top.ok) return top;
   const branch = `x-harness/${agentId}`;
   const path = join(worktreeParent(top.top), `${basename(top.top)}-${agentId}`);
   try {
-    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["worktree", "add", "-b", branch, path, "HEAD"], { cwd: top.top }), lockOpts().onDegraded);
+    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["worktree", "add", "-b", branch, path, "HEAD"], { cwd: top.top }), onDegraded);
   } catch (error) {
     // 半建兜底（写操作持锁——A 路 #7：并发预算的 branch -D 持锁面不许裸奔）
-    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["branch", "-D", branch], { cwd: top.top }), lockOpts().onDegraded).catch(() => {});
+    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["branch", "-D", branch], { cwd: top.top }), onDegraded).catch(() => {});
     return { ok: false, reason: `git worktree add failed (${errorText(error)})` };
   }
   return { ok: true, plan: { path, branch, repoTop: top.top } };
@@ -102,20 +93,33 @@ export type CleanupResult =
  *  有改动 → 保留（改动不丢）；remove 失败 → remove-failed（onWarn 由调用方接）。
  *  git 写操作锚 plan.repoTop（持久化事实——跨装配 resume/fork 换 cwd 不漂移）+
  *  per-repo lockfile（跨进程写互斥；锁不可重入——sweep 持锁时走 cleanupHeld）。 */
-export async function evaluateCleanup(plan: WorktreePlan): Promise<CleanupResult> {
-  return withRepoLock(repoLockPath(worktreeParent(plan.repoTop), plan.repoTop), () => cleanupHeld(plan), lockOpts().onDegraded);
+export async function evaluateCleanup(plan: WorktreePlan, onDegraded?: LockDegraded): Promise<CleanupResult> {
+  return withRepoLock(repoLockPath(worktreeParent(plan.repoTop), plan.repoTop), () => cleanupHeld(plan), onDegraded);
+}
+
+/** 分支缺席探测（并发清理幂等判别——stderr 文案跨 git 版本不稳，以 --list 为准） */
+async function branchGone(plan: WorktreePlan): Promise<boolean> {
+  const out = await git(["branch", "--list", plan.branch], { cwd: plan.repoTop }).then(
+    (r) => r.stdout,
+    () => "",
+  );
+  return out.trim() === "";
 }
 
 /** 清理本体（调用方已持 repo 锁——sweep 全程持锁时复用，免同锁重入死锁） */
 async function cleanupHeld(plan: WorktreePlan): Promise<CleanupResult> {
   if (!existsSync(plan.path)) {
-    // 目录已被外部删除（rm）：git 仍登记该 worktree（branch -D 报 used by worktree）——
-    // 先 prune 再删分支——第三条泄漏路径
+    // 目录已被外部删除（rm / 并发清理先行者）：git 仍登记该 worktree（branch -D 报
+    // used by worktree）——先 prune 再删分支。分支已不存在（先行者删过）也算幂等达成
+    // （A 路复审④——并发双清理的第二落者不得谎报失败）；其余失败经 stderr 判别。
     const pruned = await git(["worktree", "prune"], { cwd: plan.repoTop })
       .then(() => git(["branch", "-D", plan.branch], { cwd: plan.repoTop }))
       .then(
         () => true,
-        () => false,
+        async (error: unknown) => {
+          const text = (error as { stderr?: string }).stderr ?? "";
+          return /error: branch '[^']+' not found/.test(text) || (await branchGone(plan));
+        },
       );
     return pruned ? { kind: "removed" } : { kind: "remove-failed", path: plan.path, detail: "branch -D failed after worktree dir vanished" };
   }
@@ -184,7 +188,7 @@ export function liveTreePaths(): readonly string[] {
   return [...liveTrees];
 }
 
-export async function sweepWorktrees(livePaths: readonly string[], workspaceRoot: string, now: () => number = Date.now): Promise<readonly SweepKept[]> {
+export async function sweepWorktrees(livePaths: readonly string[], workspaceRoot: string, tail: { readonly now?: () => number; readonly onDegraded?: LockDegraded } = {}): Promise<readonly SweepKept[]> {
   const top = await repoTopOf(workspaceRoot);
   if (!top.ok) return [];
   const parent = worktreeParent(top.top);
@@ -204,7 +208,7 @@ export async function sweepWorktrees(livePaths: readonly string[], workspaceRoot
       const path = join(parent, entry);
       if (livePaths.includes(path)) continue;
       const info = await stat(path).catch(() => undefined);
-      if (info !== undefined && now() - info.mtimeMs < FRESH_MS) continue; // 新鲜树不清
+      if (info !== undefined && (tail.now ?? Date.now)() - info.mtimeMs < FRESH_MS) continue; // 新鲜树不清
       // 分支复原：<repo>-agent-<8hex> → agent-<8hex>（取末段 "-agent-"——仓名含 "agent-"
       // 时 indexOf 会错位命中仓名内首段；agentId 恒为 8hex 后缀，lastIndexOf 才是分隔处）
       const at = entry.lastIndexOf("-agent-");
@@ -215,7 +219,7 @@ export async function sweepWorktrees(livePaths: readonly string[], workspaceRoot
       if (result.kind !== "removed") kept.push({ path, kind: result.kind });
     }
     return kept;
-  }, lockOpts().onDegraded);
+  }, tail.onDegraded);
 }
 
 function errorText(error: unknown): string {

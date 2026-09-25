@@ -321,8 +321,9 @@ AgentOptions 无字段，落档 §13。
 进程 cwd 是应用启动目录，绝不可作锚）；写操作（worktree add/remove、branch -D）锚
 `WorktreePlan.repoTop`（spawn 时落账的持久化事实——清理/复活跨装配 resume/fork 换 cwd
 不漂移）。rev-parse 找到的仓顶须是 workspaceRoot 自身或其祖先（物理归一比较——symlink
-逻辑形不误拒；含工作区的祖先仓即工作区的仓，接受为隔离基座），仓顶落在工作区之外
-（GIT_WORK_TREE 异指等注入形态）拒 `workspace-not-in-repo`。
+逻辑形不误拒；含工作区的祖先仓即工作区的仓，接受为隔离基座），仓顶落在工作区之外拒
+`workspace-not-in-repo`（GIT_WORK_TREE 外指形态可触发；GIT_DIR 注入形态 toplevel 落在
+工作区内——不声明防御，落档 §13）。
 
 **并发互斥（两层）**：进程内 git 互斥队列（gitChain——并发 spawn 依赖 git 内部锁未验证，
 串行消除风险）+ **跨进程 per-repo lockfile**（`<worktreeParent>/repo-<hash>.lock/` 目录锁
@@ -484,6 +485,7 @@ F. archive 惰性复活 + 驻留档化 + e2e 三旅程 + 全量四门。
 | 档案级锁（跨进程双开 resume 的机械拦截） | 依赖宿主部署纪律（box 唯一+会话归父进程） | 挂账 |
 | 未装配 sandbox-local 时 bash 命令体不在隔离执法面 | fence 是内核层唯一执法点 | 部署纪律 + description 规范层 |
 | sweep 跨进程误删残余风险（他进程活树超 FRESH_MS 窗且无 mtime 更新） | 跨进程 live 集共享需跨进程 lineage 注册表 | 任务体系件 |
+| GIT_DIR 注入换隔离基座（toplevel 落工作区内，归属校验放行） | 环境注入面归部署纪律；原「不处理」清单已裁定无需求 | 部署纪律 |
 | per-repo lockfile 误抢窗（stale 判定与他者创建竞态） | 最坏效果=并行 git 写（等同无锁现状，不劣化）；mkdir 原子性 + pid 复核已收敛 | 本件内裁定 |
 | ~~类型变更 kick 边沿粒度~~ | 已根治（types-loader 同步 fs + 快照 render 当轮拾取，docs/TAIL-SNAPSHOT-CHANNEL.md） | 本件内核销 |
 | fork 复制剔除开放轮（末 turn/end 切口） | X14 工程裁决（在飞轮不可安全复制） | 本件内裁定 |

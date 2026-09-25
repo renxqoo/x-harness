@@ -19,7 +19,11 @@ function pidAlive(pid: number): boolean {
 
 /** 创建窗口上限：mkdir 成功到 pid 文件落盘之间，等锁方按「被持」等待；超过该窗
  *  仍无 pid 文件 = 创建者 crash 在窗口内（永远写不出 pid）——判 stale 可抢。
- *  正常路径窗口 <10ms，30s 上限有充分余量。 */
+ *  正常路径窗口 <10ms，30s 上限有充分余量。
+ *  权衡（A 路复审⑨落档）：创建者被 >30s 事件循环停顿（重载/换页）时等锁方会误判
+ *  stale 抢占，恢复后的 writeFile 覆盖新持锁者 pid → 短暂双持锁。最坏效果收敛于
+ *  「并行 git 写」= 无锁基线（git ref 锁兜底），不挂死不越基线——接受，不再收窄
+ *  （收窄则慢机正常创建被误抢，同理不优于现状）。 */
 const CREATING_WINDOW_MS = 30_000;
 
 /** 锁持有者判定：pid 文件内容为活 pid 才算被持。pid 文件缺失 = 创建中窗口
@@ -35,10 +39,6 @@ async function lockHolder(lockDir: string, opts: { readonly creatingCountsAsHeld
   }
   const pid = Number.parseInt(raw.trim(), 10);
   return Number.isSafeInteger(pid) && pid > 0 && pidAlive(pid) ? pid : undefined;
-}
-
-export interface RepoLock {
-  readonly release: () => Promise<void>;
 }
 
 /** 等锁上限：到顶降级直跑临界区（无锁现状不劣化——挂死比无锁更糟，A 路 #6）。
@@ -70,9 +70,15 @@ export async function withRepoLock<T>(lockDir: string, critical: () => Promise<T
       await mkdir(lockDir, { recursive: false }); // EEXIST 即被持/残留
     } catch (error) {
       const code = (error as { code?: unknown }).code;
+      if (code === "ENOENT" && Date.now() <= deadline) {
+        // 瞬时形态（父目录刚被并发方删走——mkdir(recursive) 与 mkdir(lockDir) 之间）：
+        // 一次自愈重试（重建父）再试，不当永久错误（A 路复审⑦）
+        await mkdir(dirname(lockDir), { recursive: true }).catch(() => {});
+        continue;
+      }
       if (code !== "EEXIST") {
         // 非竞争性失败（权限/只读等环境性错误）——自旋无出路，降级直跑（不劣化于无锁）
-        return runUnlocked(`mkdir ${String(code)}`);
+        return runUnlocked(`mkdir ${String(code ?? "unknown error")}`);
       }
       // pid 文件缺失 = 创建者仍在写（本进程同 tick 并发 or 极短窗口）——不能判 stale
       const holder = await lockHolder(lockDir, { creatingCountsAsHeld: true });

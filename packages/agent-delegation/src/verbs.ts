@@ -22,6 +22,8 @@ export interface VerbDeps {
   readonly workspaceRoot: string;
   /** 清理失败可见化出口（remove-failed 走此——不再静默吞） */
   readonly onWarn?: (message: string) => void;
+  /** lockfile 降级出口（A 路复审⑤——实例私有闭包，stop 清理的锁降级可见） */
+  readonly lockDegraded?: import("./lockfile.ts").LockDegraded;
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
   /** 周期终结事件发射面（BATCH2 §3——stop 对 idle 子无 armed-idle 边沿，同步发射） */
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
@@ -146,7 +148,7 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
     });
   }
   const cleanup = row.worktree !== undefined
-    ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await repoTopOf(deps, row) })
+    ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, deps.workspaceRoot) }, deps.lockDegraded)
     : { kind: "removed" as const };
   if (cleanup.kind !== "kept-dirty") {
     if (row.worktree !== undefined) unregisterLiveTree(row.worktree); // 终局摘除（kept-dirty 树仍活——可复活；N1 泄漏红线）
@@ -156,17 +158,18 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
   return { ok: true, text: `Stopped ${row.agentId}; it can be messaged again with agent_message.${worktreeNote}` };
 }
 
-/** stop 清理的 repoTop：行有 plan 事实（spawn/复活落账）优先；缺席时读 worktree
- *  自身 .git gitdir 归位主仓顶（worktree ≠ 仓顶——裸传路径会让 remove 成功后
- *  branch -D 的 cwd 落在已删目录（ENOENT）→ 目录已删分支泄漏，N4）；最后落
- *  workspaceRoot（与 plugin 三处同链）。 */
-async function repoTopOf(deps: VerbDeps, row: ChildRow): Promise<string> {
+/** 清理 repoTop 三段链（A 路复审①——单一真相，stop 与 plugin 级联共用）：
+ *  1) 行落账事实（spawn/revive 落 worktreeRepoTop）；
+ *  2) 缺席时读 worktree 自身 .git gitdir 归位主仓顶（worktree ≠ 仓顶——裸传路径
+ *     会让 remove 成功后 branch -D 的 cwd 落在已删目录（ENOENT）→ 分支泄漏）；
+ *  3) 树损坏读不出时落 workspaceRoot。 */
+export async function cleanupRepoTopOf(row: { readonly worktree?: string; readonly worktreeRepoTop?: string }, workspaceRoot: string): Promise<string> {
   if (row.worktreeRepoTop !== undefined && row.worktreeRepoTop !== "") return row.worktreeRepoTop;
   if (row.worktree !== undefined) {
     const top = await mainRepoTopOf(row.worktree);
     if (top !== undefined) return top;
   }
-  return deps.workspaceRoot;
+  return workspaceRoot;
 }
 
 /** stop 尾注按清理形态分支（CleanupResult 判别拆分——失败不得谎报 has changes） */

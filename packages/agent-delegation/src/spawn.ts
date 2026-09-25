@@ -28,6 +28,8 @@ export interface SpawnDeps {
   readonly workspaceRoot: string;
   /** 清理失败可见化出口（spawnFailed/abortSpawn） */
   readonly onWarn?: (message: string) => void;
+  /** lockfile 降级出口（A 路复审⑤——实例私有闭包） */
+  readonly lockDegraded?: import("./lockfile.ts").LockDegraded;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly isTearingDown: () => boolean;
   /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
@@ -141,9 +143,11 @@ async function buildChild(
   return { ok: true, text: spawnText(row, isFork && !forked) };
 }
 
-/** kick 子代理（spawn 收尾）：失败 → finished 闭环 + 释放占槽后重抛（dispatch 归一为
- *  工具错误结果）。armed 恒 false——armed-idle 通知门永不可达，不闭环即事件幽灵 +
- *  占槽永久泄漏（BATCH2 审 H3） */
+/** kick 子代理（spawn 收尾）：失败 → finished 闭环 + worktree 清理 + 摘除登记后重抛
+ *  （dispatch 归一为工具错误结果）。armed 恒 false——armed-idle 通知门永不可达，不闭环
+ *  即事件幽灵 + 占槽永久泄漏（BATCH2 审 H3）。行在 kick 失败时未注册（register 随后
+ *  才到）——无 dispose 级联兜底，若不在此清理：纯内存部署 evictIdle 恒跳过（无
+ *  archive），登记簿永久持有该路径 → sweep 永久跳过 = 泄漏树免死金牌（A 路复审③）。 */
 function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string }): void {
   try {
     spec.handle.agent.followup(spec.prompt);
@@ -157,6 +161,17 @@ function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly han
       outcome: "failed",
       detail: `kick failed: ${error instanceof Error ? error.message : String(error)}`,
     });
+    if (spec.row.worktree !== undefined) {
+      // 尽力清理 + 摘除（同步上下文——fire-and-forget；失败经 onWarn 可见）
+      void evaluateCleanup({ path: spec.row.worktree, branch: `x-harness/${spec.row.agentId}`, repoTop: spec.row.worktreeRepoTop ?? spec.row.worktree ?? deps.workspaceRoot }, deps.lockDegraded)
+        .then((result) => {
+          if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${spec.row.worktree}`);
+          if (result.kind !== "kept-dirty") unregisterLiveTree(spec.row.worktree as string);
+        })
+        .catch(() => {
+          unregisterLiveTree(spec.row.worktree as string);
+        });
+    }
     throw error;
   }
 }
@@ -183,7 +198,7 @@ function childAgentOptions(
 /** create 失败收尾：半建 worktree 清理 + 统一词表；remove-failed 经 onWarn 可见化 */
 function spawnFailed(reason: string, plan: WorktreePlan | undefined, deps: SpawnDeps): SpawnOutcome {
   if (plan !== undefined) {
-    void evaluateCleanup(plan)
+    void evaluateCleanup(plan, deps.lockDegraded)
       .then((result) => {
         if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${plan.path}`);
         if (result.kind !== "kept-dirty") unregisterLiveTree(plan.path); // 防御摘除（此路径登记尚未发生=no-op；保留树属活树）
@@ -200,7 +215,7 @@ function spawnFailed(reason: string, plan: WorktreePlan | undefined, deps: Spawn
 async function prepareWorktree(deps: SpawnDeps, agentId: string, isolation: string | undefined): Promise<{ ok: true; plan?: WorktreePlan } | { ok: false; reason: string }> {
   if (isolation !== "worktree") return { ok: true };
   if (deps.setRootOverride === undefined) return { ok: false, reason: "spawn-failed:worktree requires the permission grants service" };
-  const made = await createWorktree(agentId, deps.workspaceRoot);
+  const made = await createWorktree(agentId, deps.workspaceRoot, deps.lockDegraded);
   if (!made.ok) return { ok: false, reason: `spawn-failed:worktree ${made.reason}` };
   return { ok: true, plan: made.plan };
 }
@@ -246,7 +261,7 @@ async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandl
   });
   await input.childHandle.dispose();
   if (input.plan !== undefined) {
-    const result = await evaluateCleanup(input.plan).catch(() => undefined);
+    const result = await evaluateCleanup(input.plan, input.deps.lockDegraded).catch(() => undefined);
     if (result !== undefined && result.kind === "remove-failed") {
       input.deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${input.plan.path}`);
     }
