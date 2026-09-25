@@ -24,6 +24,8 @@ export interface SpawnDeps {
   readonly registry: ToolRegistry;
   readonly lineage: Lineage;
   readonly limits: { readonly maxDepth: number; readonly maxConcurrent: number };
+  /** git 调用锚（docs/WORKSPACE-ROOT-INJECTION.md）——worktree 探测/建树的 cwd 基准 */
+  readonly workspaceRoot: string;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly isTearingDown: () => boolean;
   /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
@@ -124,7 +126,7 @@ async function buildChild(
     armed: false,
     running: false,
     stopped: false,
-    ...(worktree.plan !== undefined ? { worktree: worktree.plan.path } : {}),
+    ...(worktree.plan !== undefined ? { worktree: worktree.plan.path, worktreeRepoTop: worktree.plan.repoTop } : {}),
   };
   if (worktree.plan !== undefined && deps.setRootOverride !== undefined) {
     deps.setRootOverride(childHandle.agent.session.id, worktree.plan.path, worktree.plan.repoTop);
@@ -177,7 +179,7 @@ function childAgentOptions(
 
 /** create 失败收尾：半建 worktree 清理 + 统一词表 */
 function spawnFailed(reason: string, plan: WorktreePlan | undefined): SpawnOutcome {
-  if (plan !== undefined) void evaluateCleanup({ path: plan.path, branch: plan.branch }).catch(() => {});
+  if (plan !== undefined) void evaluateCleanup(plan).catch(() => {});
   return { ok: false, reason: `spawn-failed:${reason}` };
 }
 
@@ -186,7 +188,7 @@ function spawnFailed(reason: string, plan: WorktreePlan | undefined): SpawnOutco
 async function prepareWorktree(deps: SpawnDeps, agentId: string, isolation: string | undefined): Promise<{ ok: true; plan?: WorktreePlan } | { ok: false; reason: string }> {
   if (isolation !== "worktree") return { ok: true };
   if (deps.setRootOverride === undefined) return { ok: false, reason: "spawn-failed:worktree requires the permission grants service" };
-  const made = await createWorktree(agentId);
+  const made = await createWorktree(agentId, deps.workspaceRoot);
   if (!made.ok) return { ok: false, reason: `spawn-failed:worktree ${made.reason}` };
   return { ok: true, plan: made.plan };
 }
@@ -231,7 +233,7 @@ async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandl
     detail: "spawn cancelled before dispatch",
   });
   await input.childHandle.dispose();
-  if (input.plan !== undefined) await evaluateCleanup({ path: input.plan.path, branch: input.plan.branch }).catch(() => {});
+  if (input.plan !== undefined) await evaluateCleanup(input.plan).catch(() => {});
   input.deps.lineage.drop(input.row.sessionId);
   return { ok: false, reason: "aborted:spawn cancelled before dispatch" };
 }

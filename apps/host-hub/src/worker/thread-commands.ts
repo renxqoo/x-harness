@@ -193,7 +193,10 @@ async function applySessionSettings(rt: WorkerRuntime, fields: { params: Session
  *  会话事实恢复，不落 host 进程 cwd）> worker 现值 */
 export function resumeCwdOf(input: { cwd?: unknown; [key: string]: unknown }, assembled: AssemblyResult, fallback: string): string {
   if (typeof input.cwd === "string" && input.cwd !== "") return input.cwd;
-  return assembled.handle.agent.session.header.cwd ?? fallback;
+  // 空串守卫与 preReadCwd 同口径：损坏档案 header.cwd="" 不得产出垃圾 workspaceRoot
+  const headerCwd = assembled.handle.agent.session.header.cwd;
+  if (typeof headerCwd === "string" && headerCwd !== "") return headerCwd;
+  return fallback;
 }
 
 /** fork/clone 共享体（DESIGN §3.5）：校验 → flush → store.fork（返回已打开会话——

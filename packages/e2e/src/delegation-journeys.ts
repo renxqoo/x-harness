@@ -36,7 +36,7 @@ interface Harness {
   readonly unload: Promise<unknown>;
 }
 
-async function assemble(input: { readonly agentsDir: string; readonly mailboxRoot?: string; readonly box?: string; readonly persistence?: string; readonly grants?: boolean }): Promise<Harness> {
+async function assemble(input: { readonly agentsDir: string; readonly workspaceRoot: string; readonly mailboxRoot?: string; readonly box?: string; readonly persistence?: string; readonly grants?: boolean }): Promise<Harness> {
   const ctx = createContext();
   const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
   const plugins: Plugin[] = [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin];
@@ -50,6 +50,7 @@ async function assemble(input: { readonly agentsDir: string; readonly mailboxRoo
     createTaskToolsPlugin(),
     createAgentDelegationPlugin({
       agentsDirs: [input.agentsDir],
+      workspaceRoot: input.workspaceRoot,
       ...(input.mailboxRoot !== undefined && input.box !== undefined ? { mailbox: { box: input.box, mainSession: "alpha-main" as SessionId } } : {}),
     }),
   ]);
@@ -96,7 +97,7 @@ export async function runCrossProcessJourney(): Promise<void> {
     while (!existsSync(join(mailboxRoot, "peer", "manifest.json")) && Date.now() < deadline) await sleep(100);
     must(existsSync(join(mailboxRoot, "peer", "manifest.json")), "peer box 就绪");
 
-    const harness = await assemble({ agentsDir, mailboxRoot, box: "alpha" });
+    const harness = await assemble({ agentsDir, workspaceRoot: process.cwd(), mailboxRoot, box: "alpha" });
     const loop = harness.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken);
     const made = await loop.create({ session: { id: "alpha-main" as SessionId }, agent: { model: "alpha-model", provider: "fake" } });
     if (!made.ok) throw new Error(`alpha main 创建失败：${made.reason}`);
@@ -141,19 +142,19 @@ export async function runCrossProcessJourney(): Promise<void> {
 export async function runWorktreeJourney(): Promise<void> {
   const repo = mkdtempSync(join(tmpdir(), "xh-e2e-wt-"));
   const physical = realpathSync(repo);
-  const prevCwd = process.cwd();
   try {
-    process.chdir(repo);
-    await exec("git", ["init"]);
-    await exec("git", ["config", "user.email", "e2e@t"]);
-    await exec("git", ["config", "user.name", "e2e"]);
+    // hub 形态：进程 cwd 停在仓外（x-harness 仓根），仅 workspaceRoot 指向真仓——
+    // 夹具 git 全 -C 显式（ambient cwd 会写错仓）
+    await exec("git", ["-C", repo, "init"]);
+    await exec("git", ["-C", repo, "config", "user.email", "e2e@t"]);
+    await exec("git", ["-C", repo, "config", "user.name", "e2e"]);
     writeFileSync(join(repo, "SEED.md"), "seed\n");
-    await exec("git", ["add", "."]);
-    await exec("git", ["commit", "-m", "seed"]);
+    await exec("git", ["-C", repo, "add", "."]);
+    await exec("git", ["-C", repo, "commit", "-m", "seed"]);
 
     const agentsDir = await mkdtemp(join(tmpdir(), "xh-e2e-wt-agents-"));
     await writeAgentMd(agentsDir);
-    const harness = await assemble({ agentsDir, grants: true });
+    const harness = await assemble({ agentsDir, workspaceRoot: physical, grants: true });
     const loop = harness.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken);
     const made = await loop.create({ agent: { model: "parent-model", provider: "fake" } });
     if (!made.ok) throw new Error(`parent 创建失败：${made.reason}`);
@@ -175,7 +176,7 @@ export async function runWorktreeJourney(): Promise<void> {
     must(!stopped.isError, `stop（实际：${stopped.content}）`);
     await sleep(100);
     must(!existsSync(wtPath), "无改动 worktree 自动清理");
-    const branches = await exec("git", ["branch", "--list", `x-harness/${agentId}`]);
+    const branches = await exec("git", ["-C", repo, "branch", "--list", `x-harness/${agentId}`]);
     must(branches.stdout.trim() === "", "临时分支删除");
     await made.value.dispose();
     await harness.ctx.dispose();
@@ -183,7 +184,6 @@ export async function runWorktreeJourney(): Promise<void> {
     await rm(agentsDir, { recursive: true, force: true }).catch(() => {});
     console.log("worktree 旅程：repo 外建树 + 主仓不污染 + 无改动自动清理 通过");
   } finally {
-    process.chdir(prevCwd);
     await rm(join(dirname(physical), ".x-harness-worktrees"), { recursive: true, force: true }).catch(() => {});
     await rm(repo, { recursive: true, force: true }).catch(() => {});
   }
@@ -195,7 +195,7 @@ export async function runReviveJourney(): Promise<void> {
   const agentsDir = await mkdtemp(join(tmpdir(), "xh-e2e-revive-agents-"));
   await writeAgentMd(agentsDir);
   try {
-    const first = await assemble({ agentsDir, persistence: persistenceRoot });
+    const first = await assemble({ agentsDir, workspaceRoot: process.cwd(), persistence: persistenceRoot });
     const loop1 = first.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken);
     const parentMade = await loop1.create({ session: { id: "revive-parent" as SessionId }, agent: { model: "parent-model", provider: "fake" } });
     if (!parentMade.ok) throw new Error(`revive parent 创建失败：${parentMade.reason}`);
@@ -215,7 +215,7 @@ export async function runReviveJourney(): Promise<void> {
     await first.ctx.dispose(); // 全灭（进程消失模拟）
     void first.unload;
 
-    const second = await assemble({ agentsDir, persistence: persistenceRoot });
+    const second = await assemble({ agentsDir, workspaceRoot: process.cwd(), persistence: persistenceRoot });
     const loop2 = second.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken);
     const resumedParent = await loop2.resume({ id: "revive-parent" as SessionId, agent: { model: "parent-model", provider: "fake" } });
     if (!resumedParent.ok) throw new Error(`父档案 resume 失败：${resumedParent.reason}`);

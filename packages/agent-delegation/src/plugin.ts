@@ -16,6 +16,7 @@ import { createMailboxConsumer, startDrain } from "./mailbox-consumer.ts";
 import type { MailboxConsumer } from "./mailbox-consumer.ts";
 import { reviveByAgentId } from "./revive.ts";
 import { evaluateCleanup, sweepWorktrees } from "./worktree.ts";
+import { isAbsolute } from "node:path";
 import { createLineage } from "./lineage.ts";
 import type { ChildRow } from "./lineage.ts";
 import { loadAgentTypes, typesFingerprint } from "./types-loader.ts";
@@ -65,12 +66,16 @@ export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>
   return `<system-reminder>\nAvailable agent types:\n${lines.join("\n")}\n</system-reminder>`;
 }
 
-export function createAgentDelegationPlugin(options: DelegationOptions): Plugin { // agentsDirs 必收——目录决定权在宿主边沿
+export function createAgentDelegationPlugin(options: DelegationOptions): Plugin { // agentsDirs/workspaceRoot 必收——目录与 git 锚决定权在宿主边沿
   if (!Array.isArray(options.agentsDirs) || options.agentsDirs.some((dir) => typeof dir !== "string" || dir === "")) {
     throw new Error("agent-delegation: agentsDirs must be an array of non-empty strings");
   }
-  const limits = validateOptions(options);
+  const limits = validateOptions(options); // 先于 workspaceRoot 校验：X7 垃圾配置用例不因缺新字段先炸而失覆盖
+  if (typeof options.workspaceRoot !== "string" || options.workspaceRoot === "" || !isAbsolute(options.workspaceRoot)) {
+    throw new Error("agent-delegation: workspaceRoot must be an absolute path");
+  }
   const dirs = options.agentsDirs;
+  const workspaceRoot = options.workspaceRoot;
   return {
     name: "agent-delegation",
     inject: ["session", "tools", "agent-loop", "task-tools"],
@@ -113,7 +118,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
           await childHandle.agent.whenIdle();
           await childHandle.dispose();
         }
-        if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` }).catch(() => {});
+        if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: row.worktreeRepoTop ?? workspaceRoot }).catch(() => {});
         lineage.drop(row.sessionId);
       };
 
@@ -127,6 +132,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         registry,
         lineage,
         limits,
+        workspaceRoot,
         types: () => current,
         isTearingDown: () => tearingDown,
         emitSpawned,
@@ -134,9 +140,12 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         ...(grants !== undefined ? { setRootOverride: (session: import("@x-harness/session").SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
         ...(options.resolveProviderOf !== undefined ? { resolveProviderOf: options.resolveProviderOf } : {}),
       };
-      // 启动期对账清扫（§8.3——崩溃泄漏兜底）；测试可关（worktreeSweep:false）
+      // 启动期对账清扫（§8.3——崩溃泄漏兜底）；livePaths = 本进程活行（误删防线第一层）；测试可关（worktreeSweep:false）
       if (options.worktreeSweep !== false) {
-        void sweepWorktrees([])
+        void sweepWorktrees(
+          lineage.rows().filter((row) => row.worktree !== undefined && (row.occupied || row.running)).map((row) => row.worktree as string),
+          workspaceRoot,
+        )
           .then((kept) => {
             for (const path of kept) options.onWarn?.(`agents: worktree kept after startup sweep (has changes): ${path}`);
           })
@@ -173,7 +182,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
           void (async () => {
             const handle = loop.get(row.sessionId);
             if (handle !== undefined) await handle.dispose();
-            if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` }).catch(() => {});
+            if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: row.worktreeRepoTop ?? workspaceRoot }).catch(() => {});
             lineage.drop(row.sessionId);
           })().catch(() => {
             /* 档化尽力：失败行留驻下次再试 */
@@ -181,7 +190,17 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         }
       };
 
-      let verbDeps: VerbDeps = { loop, store, lineage, reportCap: limits.reportCap, adoptOrphan, emitFinished, reviveByName: revive };
+      let verbDeps: VerbDeps = {
+        loop,
+        store,
+        lineage,
+        reportCap: limits.reportCap,
+        workspaceRoot,
+        ...(options.onWarn !== undefined ? { onWarn: options.onWarn } : {}),
+        adoptOrphan,
+        emitFinished,
+        reviveByName: revive,
+      };
 
       let consumer: ReturnType<typeof createMailboxConsumer> | undefined;
       let cross: CrossDeps | undefined;
@@ -265,7 +284,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
           childHandle.agent.cancel("delegation-disposed");
           await childHandle.agent.whenIdle();
           await childHandle.dispose();
-          if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` }).catch(() => {});
+          if (row.worktree !== undefined) await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: row.worktreeRepoTop ?? workspaceRoot }).catch(() => {});
         });
         // 回卷序：drain/心跳/结算+关箱全经 effect（LIFO 得 §5.3 序：停 drain → 停心跳 → 关箱）；
         // 此处只剩级联 cancel 与快照摘除（tearing-down 门已先行）

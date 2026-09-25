@@ -194,7 +194,7 @@ llmPlugin
 systemPromptPlugin
 agentLoopPlugin
 sessionCheckpointPlugin
-createAgentDelegationPlugin()                               // agentsDirs 走缺省链；mailbox 缺席=进程内
+createAgentDelegationPlugin({ agentsDirs, workspaceRoot })   // 两目录/锚均必收（宿主边沿解析）；mailbox 缺席=进程内
 createSkillPlugin()                                         // skills 目录扫描 + 会话首轮清单注入（docs/SKILL.md）
 ```
 

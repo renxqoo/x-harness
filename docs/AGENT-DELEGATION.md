@@ -32,7 +32,7 @@ Control/agent-team/统一后台任务体系（bash 后台、输出文件指针�
 
 | 工具 | 入参 | 行为要点 |
 | --- | --- | --- |
-| `agent_spawn` | `{description, prompt, subagent_type?, model?, isolation?}` | description 必填（3-5 词任务简述）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；isolation 仅 `"worktree"`（§8）。返回 `{agentId, sessionId}` + 反轮询引导（结束 turn 等通知——通知唤醒/步边界注入，禁 sleep/list_agents 轮询等待）；后台运行，完成时 `[agent-notification]`（§5.1） |
+| `agent_spawn` | `{description, prompt, subagent_type?, model?, isolation?}` | description 必填（3-5 词任务简述）；prompt 必填非空；subagent_type=已注册 .md 类型名或保留名 `fork`，缺省=untyped 通用代理（如实表述，非规格的显式 general-purpose 类型）；model 按次覆盖、**任意 model-id 字符串**（规格是 Claude 专属 enum，本仓开放——差异标注）；isolation 仅 `"worktree"`（§8）；schema 不设 additionalProperties: false（规格有；本仓校验层探活不支持布尔节点——实现层口径，同 docs/TODO.md §2② 先例）。返回 `{agentId, sessionId}` + 反轮询引导（结束 turn 等通知——通知唤醒/步边界注入，禁 sleep/list_agents 轮询等待）；后台运行，完成时 `[agent-notification]`（§5.1） |
 | `agent_message` | `{to, message?, summary?, notify_when_idle?}` | to 必填、**单行**（pattern `^[^\n\r]*$`——agentId/box 名为无换行原子串）；message **可选**（省略+notify_when_idle=纯订阅；给值时 `maxLength = reportCap`（缺省 34000）——件15 D1 恒等单旋钮/D6 maxLength 载体（报错为直接数字），长内容走文件中转——参数 description 与截断尾注均有引导）；summary 无 schema 上限、verb 层 `SUMMARY_CAP=500` **截断不拒**（D7——description 承诺兑现），仅出现在发方工具结果回显（三条投递路径统一出口）——**不进信封不落对端**（规格 not transmitted；本仓无 transcript 行展示面，等价物=结果回显）；notify_when_idle 仅根会话且仅跨进程 box 目标（§5.4）。对应规格 SendMessage 语义（进程内 + 本机跨进程） |
 | `list_agents` | `{}` | 行格式双形态：子代理行 `kind=subagent <agentId> session=<id> type=<t> depth=<n> status=<running\|idle\|stopped>`；本机会话行 `<box名> [<ref>] kind=local-session status=<...>`；两类对象：本会话子代理 + 本机其他会话（§5.3）；status 是**本仓生命周期词表**（running=规格 busy，命名差异落档 §13），与 turn/end reason 词表（completed/aborted/…）是两套口径；跨进程行 status 来自 manifest（只反映对端宿主 main 会话，粒度落档 §13）。规格 channel/q 占位参数不实现（落档）；结果含 running 子代理行时尾附一行等待提示（结束 turn 等通知，禁 sleep/list_agents 轮询——反轮询执法的读面补强） |
 
@@ -314,10 +314,21 @@ AgentOptions 无字段，落档 §13。
 ### 8.1 创建（worktree.ts）
 
 路径 = **repo 外同级** `<repoParent>/.x-harness-worktrees/<repoName>-<agentId>`（避开 .git
-受保护区与主仓工作树污染）。`git rev-parse --git-dir` 确认在仓 → `git worktree add -b
-x-harness/<agentId> <path> HEAD`。**spawn 侧 git 调用经互斥队列串行**（并发 spawn 依赖 git
-内部锁未验证，串行消除风险）。任一步失败 → spawn 拒（`spawn-failed:worktree <原因>`），
-半建产物清理（worktree remove + branch -D 兜底）。
+受保护区与主仓工作树污染）。
+
+**git 调用锚定（docs/WORKSPACE-ROOT-INJECTION.md）**：全部 git 调用显式携带 cwd——探测
+（rev-parse）锚 `DelegationOptions.workspaceRoot`（宿主注入的线程/CLI 工作区根；hub worker
+进程 cwd 是应用启动目录，绝不可作锚）；写操作（worktree add/remove、branch -D）锚
+`WorktreePlan.repoTop`（spawn 时落账的持久化事实——清理/复活跨装配 resume/fork 换 cwd
+不漂移）。rev-parse 找到的仓顶须是 workspaceRoot 自身或其祖先，否则拒
+`workspace-not-in-repo`（无关祖先仓——dotfiles $HOME、外层 monorepo——不得当隔离基座）。
+
+**并发互斥（两层）**：进程内 git 互斥队列（gitChain——并发 spawn 依赖 git 内部锁未验证，
+串行消除风险）+ **跨进程 per-repo lockfile**（`<worktreeParent>/repo-<hash>.lock/` 目录锁
++ pid 文件 + stale 抢占；hub 多 worker 同仓形态下进程内队列互斥蒸发，写操作持锁互斥）。
+
+任一步失败 → spawn 拒（`spawn-failed:worktree <原因>`），半建产物清理（worktree remove +
+branch -D 兜底）。
 
 ### 8.2 授权面（双层执法 + 如实降级声明）
 
@@ -335,8 +346,15 @@ x-harness/<agentId> <path> HEAD`。**spawn 侧 git 调用经互斥队列串行**
 评估时机：子 dispose（teardown 级联/孤儿收养/驻留档化）、`task_stop`、**启动期对账清扫**
 （装配时扫描 worktree 根目录：无 live 行对应的目录——status --porcelain 空 → worktree
 remove + branch -D；非空 → 保留+日志——父进程崩溃泄漏兜底）。评估 = `git -C <path>
-status --porcelain` 空 → remove+branch -D；非空 → 保留，stop/通知文案带路径。完成通知
-不触发清理（子驻留可复活，worktree 即其工作区；驻留档化时评估）。
+status --porcelain` 空 → remove+branch -D（锚 repoTop + per-repo lock）；非空 → 保留，
+stop/通知文案带路径；**remove 失败 → remove-failed 形态（stop 文案如实报失败 +
+onWarn 告警，不谎报 has changes）**；目录已被外部删除 → `worktree prune` 后仍删分支
+（第三条泄漏路径）。清理结局判别三分：`removed` / `kept-dirty` / `remove-failed`。
+完成通知不触发清理（子驻留可复活，worktree 即其工作区；驻留档化时评估）。
+
+**启动清扫误删防线三层**：livePaths（本进程 lineage 活行——经装配接线传入）→ per-repo
+lockfile（跨进程写互斥）→ FRESH_MS 新鲜度窗。残余风险（他进程活树超窗无目录 mtime
+更新仍可被误删——跨进程 live 集共享需跨进程 lineage 注册表）落档 §13。
 
 ## 9. 旧实现审计与逐模块裁决
 
@@ -464,6 +482,8 @@ F. archive 惰性复活 + 驻留档化 + e2e 三旅程 + 全量四门。
 | pid 复用 30s 宽限窗 / NTP 墙钟回拨 | 本机单用户信任域，风险接受 | 挂账 |
 | 档案级锁（跨进程双开 resume 的机械拦截） | 依赖宿主部署纪律（box 唯一+会话归父进程） | 挂账 |
 | 未装配 sandbox-local 时 bash 命令体不在隔离执法面 | fence 是内核层唯一执法点 | 部署纪律 + description 规范层 |
+| sweep 跨进程误删残余风险（他进程活树超 FRESH_MS 窗且无 mtime 更新） | 跨进程 live 集共享需跨进程 lineage 注册表 | 任务体系件 |
+| per-repo lockfile 误抢窗（stale 判定与他者创建竞态） | 最坏效果=并行 git 写（等同无锁现状，不劣化）；mkdir 原子性 + pid 复核已收敛 | 本件内裁定 |
 | ~~类型变更 kick 边沿粒度~~ | 已根治（types-loader 同步 fs + 快照 render 当轮拾取，docs/TAIL-SNAPSHOT-CHANNEL.md） | 本件内核销 |
 | fork 复制剔除开放轮（末 turn/end 切口） | X14 工程裁决（在飞轮不可安全复制） | 本件内裁定 |
 | 通知合并 digest / 信封闭合标签中和 | 沿旧落档（X3/X18） | 挂账 |

@@ -45,7 +45,7 @@ export async function makeOptions(types: Record<string, TypeSpec>, over: Partial
     await writeFile(join(dir, `${name}.md`), `---\n${fields.join("\n")}\n---\n${spec.body ?? ""}`);
   }
   // 测试装置默认关启动清扫（防装置互扫真仓共享目录——审查 A-P1-2）；直测走 sweepWorktrees
-  return { agentsDirs: [dir], worktreeSweep: false, ...over };
+  return { agentsDirs: [dir], workspaceRoot: process.cwd(), worktreeSweep: false, ...over };
 }
 
 export const workerOptions = (): Promise<DelegationOptions> => makeOptions({ worker: { model: CHILD_MODEL, body: "you are a worker" } });

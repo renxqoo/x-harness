@@ -3,13 +3,12 @@
 // depth 用落盘冗余；无档案/不命中 → miss。
 
 import { existsSync } from "node:fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { ToolFilter, ToolRegistry } from "@x-harness/tools";
 import type { SessionArchive, SessionId } from "@x-harness/session";
 import { narrowTools } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
+import { git } from "./worktree.ts";
 import type { LoadedAgentType } from "./types.ts";
 
 export interface ReviveDeps {
@@ -47,7 +46,7 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
   // X15 重放（W2A）：白名单 = 类型 ∩ 复活父当前 restriction——registry 会话层注册
   const effectiveTools = narrowTools(deps.parentToolsOf(caller), named?.tools);
   if (effectiveTools !== undefined) deps.registry.scoped(made.value.agent.session.id).restrict(effectiveTools);
-  const worktree = await replayWorktree(deps, header.agentWorktree, made.value.agent.session.id);
+  const replayed = await replayWorktree(deps, header.agentWorktree, made.value.agent.session.id);
   const row: ChildRow = {
     agentId, // 沿用落盘 id——agentId 即持久身份，复活不换号
     sessionId: made.value.agent.session.id,
@@ -59,7 +58,7 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
     armed: false,
     running: false,
     stopped: false,
-    ...(worktree !== undefined ? { worktree } : {}),
+    ...(replayed !== undefined ? { worktree: replayed.path, ...(replayed.repoTop !== "" ? { worktreeRepoTop: replayed.repoTop } : {}) } : {}),
   };
   deps.lineage.register(row);
   deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, ...(row.work !== undefined ? { work: row.work } : {}) });
@@ -98,29 +97,23 @@ function revivedOptions(deps: ReviveDeps, caller: SessionId, named: LoadedAgentT
   };
 }
 
-/** worktree 隔离重放（§6.2）：树在 → 重放 rootOverride + 行回填；树已清 → 明示降级继续 */
-async function replayWorktree(deps: ReviveDeps, worktree: string | undefined, session: SessionId): Promise<string | undefined> {
+/** worktree 隔离重放（§6.2）：树在 → 重放 rootOverride + 行回填；树已清 → 明示降级继续。
+ *  仓顶锚 worktree 自身（git -C <worktree> rev-parse——持久化事实，非当次装配
+ *  workspaceRoot：跨仓 resume 时两者可合法不一致，锚当次装配会错位 guard 语义）。 */
+async function replayWorktree(deps: ReviveDeps, worktree: string | undefined, session: SessionId): Promise<{ path: string; repoTop: string } | undefined> {
   if (worktree === undefined) return undefined;
   if (!existsSync(worktree)) {
     deps.onWarn?.(`agents: revived child's worktree is gone (${worktree}) — isolation not replayed`);
     return undefined;
   }
-  if (deps.setRootOverride === undefined) {
-    deps.onWarn?.("agents: worktree child revived without permission grants — isolation not replayed");
-    return worktree; // 行仍记 worktree（清理评估可用）；执法面缺席明示降级
-  }
-  const top = await repoTopOf();
-  if (top.ok) deps.setRootOverride(session, worktree, top.top);
-  return worktree;
-}
-
-const gitExec = promisify(execFile);
-
-async function repoTopOf(): Promise<{ ok: true; top: string } | { ok: false }> {
+  let top: string;
   try {
-    const out = await gitExec("git", ["rev-parse", "--show-toplevel"]);
-    return { ok: true, top: out.stdout.trim() };
+    top = (await git(["rev-parse", "--show-toplevel"], { cwd: worktree })).stdout.trim();
   } catch {
-    return { ok: false };
+    deps.onWarn?.(`agents: revived child's worktree has no readable repo top (${worktree}) — isolation not replayed, cleanup will fall back to workspace root`);
+    return { path: worktree, repoTop: "" };
   }
+  if (deps.setRootOverride !== undefined) deps.setRootOverride(session, worktree, top);
+  else deps.onWarn?.("agents: worktree child revived without permission grants — isolation not replayed");
+  return { path: worktree, repoTop: top };
 }

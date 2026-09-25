@@ -185,10 +185,12 @@ describe("门禁（X7/X8/X17/X20）", () => {
   });
 
   it("配置垃圾值构造期 throw（X7）", () => {
-    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxDepth: -1 })).toThrow();
-    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxConcurrent: 1.5 })).toThrow();
-    expect(() => createAgentDelegationPlugin({ agentsDirs: [], maxDepth: Number.NaN })).toThrow();
-    expect(() => createAgentDelegationPlugin({ agentsDirs: [""] })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "/", maxDepth: -1 })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "/", maxConcurrent: 1.5 })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "/", maxDepth: Number.NaN })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [""], workspaceRoot: "/" })).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "" } as never)).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "relative/path" } as never)).toThrow();
   });
 
   it("缺省上限口径：reportCap 34000 / depth 3 / concurrent 10 / resident 32", () => {

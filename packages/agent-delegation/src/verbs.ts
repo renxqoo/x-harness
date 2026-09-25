@@ -18,6 +18,10 @@ export interface VerbDeps {
   readonly store: SessionStore;
   readonly lineage: Lineage;
   readonly reportCap: number;
+  /** git 调用锚（docs/WORKSPACE-ROOT-INJECTION.md）：stop 清理在行无 plan 事实时的兜底 */
+  readonly workspaceRoot: string;
+  /** 清理失败可见化出口（remove-failed 走此——不再静默吞） */
+  readonly onWarn?: (message: string) => void;
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
   /** 周期终结事件发射面（BATCH2 §3——stop 对 idle 子无 armed-idle 边沿，同步发射） */
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
@@ -141,11 +145,26 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
       detail: input.cause ?? "stopped",
     });
   }
-  const kept = row.worktree !== undefined
-    ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}` })
-    : { removed: true };
-  const worktreeNote = kept.removed ? "" : `; worktree kept (has changes): ${String(kept.path)}`;
+  const cleanup = row.worktree !== undefined
+    ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: repoTopOf(deps, row) })
+    : { kind: "removed" as const };
+  if (cleanup.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${cleanup.detail}): ${cleanup.path}`);
+  const worktreeNote = worktreeNoteOf(cleanup);
   return { ok: true, text: `Stopped ${row.agentId}; it can be messaged again with agent_message.${worktreeNote}` };
+}
+
+/** stop 清理的 repoTop：行有 plan 事实（spawn/复活落账）优先；缺席时以 worktree
+ *  路径兜底（git -C <path> 自归位仓顶——持久化事实，不依赖当次装配）。 */
+function repoTopOf(deps: VerbDeps, row: ChildRow): string {
+  const known = row.worktreeRepoTop !== undefined && row.worktreeRepoTop !== "" ? row.worktreeRepoTop : row.worktree;
+  return known ?? deps.workspaceRoot;
+}
+
+/** stop 尾注按清理形态分支（CleanupResult 判别拆分——失败不得谎报 has changes） */
+function worktreeNoteOf(cleanup: { kind: "removed" } | { kind: "kept-dirty"; path: string } | { kind: "remove-failed"; path: string; detail: string }): string {
+  if (cleanup.kind === "removed") return "";
+  if (cleanup.kind === "kept-dirty") return `; worktree kept (has changes): ${cleanup.path}`;
+  return `; worktree cleanup FAILED (${cleanup.detail}) — dir/branch may leak: ${cleanup.path}`;
 }
 
 function ownerRow(deps: VerbDeps, caller: SessionId | undefined, taskId: string): { ok: true; value: ChildRow } | { ok: false; reason: string } {

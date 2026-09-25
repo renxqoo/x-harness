@@ -141,6 +141,15 @@ function rgBinDirOf(options: WorldOptions): { readonly rgBinDir: string } | { re
   return options.rgBinDir !== undefined ? { rgBinDir: options.rgBinDir } : { absent: true };
 }
 
+/** 委派装配参数（WORKSPACE-ROOT-INJECTION）：git 锚 = CLI 工作目录；告警面接 onIoError */
+function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError">): import("@x-harness/agent-delegation").DelegationOptions {
+  return {
+    agentsDirs: resolveAgentDirs(),
+    workspaceRoot: options.cwd,
+    ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}),
+  };
+}
+
 export async function buildWorld(options: WorldOptions): Promise<Result<World>> {
   try {
   const adapters = options.adapters ?? buildAdapters(options.config, options.resolution); // 终审 F1-2：构造错误走 Result 面（不逃逸 throw）
@@ -178,7 +187,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llm-retry 后注册（后手见事件））
     ...checkpointKit(),
     // agent 类型目录由 CLI 边沿统一解析（resolveAgentDirs：显式 > env > 项目/用户根）
-    ...delegationKit({ agentsDirs: resolveAgentDirs() }),
+    ...delegationKit(delegationOptionsOf(options)),
     // 目录由 CLI 边沿统一解析（resolveSkillDirs：显式 > env > 项目/用户根）——插件零目录知识
     ...skillKit({ skillsDirs: resolveSkillDirs() }),
     // 快照装配位写死：紧随 skillKit（docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）

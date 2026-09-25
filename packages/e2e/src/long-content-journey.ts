@@ -50,7 +50,7 @@ export async function runLongContentJourney(): Promise<void> {
       llmPlugin,
       agentLoopPlugin,
       createTaskToolsPlugin(), // delegation 硬依赖（inject 声明）
-      createAgentDelegationPlugin({ agentsDirs: [agentsDir], reportCap: 120 }), // 小 cap：耦合面即测试面
+      createAgentDelegationPlugin({ agentsDirs: [agentsDir], workspaceRoot: process.cwd(), reportCap: 120 }), // 小 cap：耦合面即测试面
     ]);
     const off = ctx.use(llmRuntime).registerAdapter({
       name: "fake",

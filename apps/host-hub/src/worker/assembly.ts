@@ -382,7 +382,13 @@ function defaultWorkerPlugins(resolved: {
     ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llmKit 后注册防预烧）
     ...checkpointKit(),
     createTodoToolsPlugin(), // todo 清单四工具（task_create/get/list/update——docs/TODO.md §13）
-    createAgentDelegationPlugin({ agentsDirs, builtinTypes: builtinAgentTypes(), resolveProviderOf: providerOfModel(catalog) }),
+    createAgentDelegationPlugin({
+      agentsDirs,
+      workspaceRoot: cwd,
+      builtinTypes: builtinAgentTypes(),
+      resolveProviderOf: providerOfModel(catalog),
+      onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
+    }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     // 日期 + 项目指令快照（与 CLI 同源 @x-harness/harness）：装配位紧随 skill 装配
     // （docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）；cwd = 装配工作区

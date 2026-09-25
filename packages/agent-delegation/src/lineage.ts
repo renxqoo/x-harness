@@ -21,6 +21,9 @@ export interface ChildRow {
   running: boolean;
   stopped: boolean;
   worktree?: string;
+  /** worktree 所属仓顶（spawn 落账的持久化事实——清理锚定不随装配 cwd 漂移；
+   *  复活行回填自 worktree 自身 git 归位，无树/旧档案行可缺席） */
+  worktreeRepoTop?: string;
 }
 
 export function createLineage() {

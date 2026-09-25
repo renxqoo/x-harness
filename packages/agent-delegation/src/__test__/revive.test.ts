@@ -83,7 +83,7 @@ describe("archive 惰性复活（§6.2——修订A：按 agentId）", () => {
       // 类型定义丢失：新装配的 agents 目录无 worker 定义
       const emptyDirOptions = await makeOptions({});
       const agentsDir = emptyDirOptions.agentsDirs?.[0] as string;
-      const after = await makeWorld({ agentsDirs: [agentsDir] }, undefined, [createJsonlSessionPersistence({ root })]);
+      const after = await makeWorld({ agentsDirs: [agentsDir], workspaceRoot: process.cwd() }, undefined, [createJsonlSessionPersistence({ root })]);
       await after.loop.resume({ id: first.parent.agent.session.id, agent: { model: PARENT_MODEL, provider: "fake" } });
       const noType = await callTool({ world: after, name: "agent_message", args: { to: agentId, message: "hi" }, session: first.parent.agent.session.id });
       expect(noType.isError).toBe(true); // worker .md 不在 → 不降级复活

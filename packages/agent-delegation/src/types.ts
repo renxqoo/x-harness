@@ -21,6 +21,11 @@ export interface DelegationOptions {
   /** agent 类型目录（必收——插件零目录知识，宿主边沿用 resolveAgentDirs 统一解析；
    *  `[]` = 显式零：不装载任何类型） */
   readonly agentsDirs: readonly string[];
+  /** 工作区根（必收，绝对路径）：全部 git 调用的 cwd 锚点（docs/WORKSPACE-ROOT-
+   *  INJECTION.md）。不要求是 git 仓根——仓根可为祖先，但无关祖先仓会被
+   *  workspace-not-in-repo 拒绝；不在任何仓内时 isolation:worktree 拒
+   *  not-a-git-repo。hub worker 进程 cwd 是应用启动目录，绝不可作 git 锚。 */
+  readonly workspaceRoot: string;
   /** 内联 builtin 类型层（随 bundle 内联分发的资源——宿主从生成数据模块传入）；
    *  优先级最低（盘上目录同名遮蔽），缺席 = 无内联层 */
   readonly builtinTypes?: readonly InlineTypeResource[];
