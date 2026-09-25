@@ -3,12 +3,14 @@
 // depth 用落盘冗余；无档案/不命中 → miss。
 
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { ToolFilter, ToolRegistry } from "@x-harness/tools";
 import type { SessionArchive, SessionId } from "@x-harness/session";
 import { narrowTools } from "./lineage.ts";
+import { registerLiveTree } from "./worktree.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
-import { git } from "./worktree.ts";
 import type { LoadedAgentType } from "./types.ts";
 
 export interface ReviveDeps {
@@ -47,6 +49,7 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
   const effectiveTools = narrowTools(deps.parentToolsOf(caller), named?.tools);
   if (effectiveTools !== undefined) deps.registry.scoped(made.value.agent.session.id).restrict(effectiveTools);
   const replayed = await replayWorktree(deps, header.agentWorktree, made.value.agent.session.id);
+  if (replayed !== undefined) registerLiveTree(replayed.path); // 活树登记（sweep 误删防线①）
   const row: ChildRow = {
     agentId, // 沿用落盘 id——agentId 即持久身份，复活不换号
     sessionId: made.value.agent.session.id,
@@ -97,20 +100,35 @@ function revivedOptions(deps: ReviveDeps, caller: SessionId, named: LoadedAgentT
   };
 }
 
+/** worktree 所属主仓顶（持久化事实——非当次装配 workspaceRoot，跨仓 resume 不错位）。
+ *  linked worktree 内 rev-parse --show-toplevel 返回 worktree 自身（实测），不能用它；
+ *  .git 文件的 gitdir 行 `gitdir: <mainRepo>/.git/worktrees/<name>` 才是主仓锚。 */
+async function mainRepoTopOf(worktree: string): Promise<string | undefined> {
+  try {
+    const raw = await readFile(join(worktree, ".git"), "utf8");
+    const m = /^gitdir: (.+)\r?$/m.exec(raw.trim());
+    const gitdir = m?.[1];
+    if (gitdir === undefined) return undefined; // .git 是目录（主仓本体）——非本件形态
+    const wt = "/.git/worktrees/";
+    const at = gitdir.lastIndexOf(wt);
+    return at === -1 ? undefined : gitdir.slice(0, at);
+  } catch {
+    return undefined; // .git 缺席/不可读——树损坏
+  }
+}
+
 /** worktree 隔离重放（§6.2）：树在 → 重放 rootOverride + 行回填；树已清 → 明示降级继续。
- *  仓顶锚 worktree 自身（git -C <worktree> rev-parse——持久化事实，非当次装配
- *  workspaceRoot：跨仓 resume 时两者可合法不一致，锚当次装配会错位 guard 语义）。 */
+ *  guard = 主仓 repoTop（与 spawn 侧 setRootOverride(dir=worktree, guard=repoTop) 同构——
+ *  guard 错成 worktree 会让主仓子树的权限批准逃过过滤，打穿 §8.2 隔离）。 */
 async function replayWorktree(deps: ReviveDeps, worktree: string | undefined, session: SessionId): Promise<{ path: string; repoTop: string } | undefined> {
   if (worktree === undefined) return undefined;
   if (!existsSync(worktree)) {
     deps.onWarn?.(`agents: revived child's worktree is gone (${worktree}) — isolation not replayed`);
     return undefined;
   }
-  let top: string;
-  try {
-    top = (await git(["rev-parse", "--show-toplevel"], { cwd: worktree })).stdout.trim();
-  } catch {
-    deps.onWarn?.(`agents: revived child's worktree has no readable repo top (${worktree}) — isolation not replayed, cleanup will fall back to workspace root`);
+  const top = await mainRepoTopOf(worktree);
+  if (top === undefined) {
+    deps.onWarn?.(`agents: revived child's worktree has no readable main repo top (${worktree}) — isolation not replayed, cleanup will fall back to workspace root`);
     return { path: worktree, repoTop: "" };
   }
   if (deps.setRootOverride !== undefined) deps.setRootOverride(session, worktree, top);

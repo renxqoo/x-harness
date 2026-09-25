@@ -10,6 +10,8 @@ import { entryWindow } from "../worker/entries-window.ts";
 import { historyLineOf, parseEntriesView, projectEntries } from "../shared/entries-project.ts";
 import { resolveWorkerCatalog, scriptCatalog, workerCatalogFromEnv, catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
 import { buildAssemblySnapshot, readCatalog } from "../shared/catalog.ts";
+import { resumeCwdOf } from "../worker/thread-commands.ts";
+import type { AssemblyResult } from "../worker/assembly.ts";
 import { imagesUnsupported, thinkingUnsupported, THINKING_LEVELS, PERMISSION_MODES } from "../worker/meta-state.ts";
 import { parseCommand } from "@x-harness/commands";
 import { withinResponseBudget } from "../worker/worker-read-commands.ts";
@@ -310,5 +312,17 @@ describe("get_messages 软上限字节口径（收口审 K-M1——CJK 3 倍膨�
     const cjkMessage = { role: "user", content: [{ type: "text", text: "中".repeat(50 * 1024) }] };
     expect(JSON.stringify(cjkMessage).length).toBeLessThan(200 * 1024); // 码元口径 < 200KiB
     expect(withinResponseBudget([cjkMessage], 100 * 1024)).toBe(false); // 字节口径 ≈150KiB 超限
+  });
+});
+
+describe("resumeCwdOf 空串守卫（损坏档案 header.cwd=\"\" 不得产出垃圾 workspaceRoot）", () => {
+  const assembled = (cwd: string | undefined): AssemblyResult =>
+    ({ handle: { agent: { session: { header: { cwd } } } } }) as unknown as AssemblyResult;
+  test("显式入参胜出；header.cwd 空串回落 worker 现值（不透传垃圾）", () => {
+    expect(resumeCwdOf({ cwd: "/w/explicit" }, assembled("/w/header"), "/w/fallback")).toBe("/w/explicit");
+    expect(resumeCwdOf({}, assembled("/w/header"), "/w/fallback")).toBe("/w/header");
+    expect(resumeCwdOf({}, assembled(""), "/w/fallback")).toBe("/w/fallback"); // 守卫：空串不落账
+    expect(resumeCwdOf({}, assembled(undefined), "/w/fallback")).toBe("/w/fallback");
+    expect(resumeCwdOf({ cwd: "" }, assembled("/w/header"), "/w/fallback")).toBe("/w/header"); // 入参空串同守卫
   });
 });

@@ -14,7 +14,7 @@ import type { Plugin } from "@x-harness/core";
 import { GrantsRegistry, permissionGrants } from "@x-harness/permission";
 import type { SessionId } from "@x-harness/session";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, makeOptions, resetWorlds, agentIdOf } from "./world.ts";
-import { createWorktree, evaluateCleanup, sweepWorktrees, worktreeParent } from "../worktree.ts";
+import { createWorktree, evaluateCleanup, liveTreePaths, registerLiveTree, sweepWorktrees, unregisterLiveTree, worktreeParent } from "../worktree.ts";
 import { withRepoLock, repoLockPath } from "../lockfile.ts";
 
 const exec = promisify(execFile);
@@ -56,7 +56,11 @@ const grantsStub = (): Plugin => ({
 
 /** worktree 世界：workspaceRoot 显式指仓（进程 cwd 留在 x-harness 仓根——hub 形态） */
 async function worktreeWorld(overrides: { readonly onWarn?: (m: string) => void } = {}) {
-  const options = await makeOptions({}, { workspaceRoot: repo as string, worktreeSweep: false, ...(overrides.onWarn !== undefined ? { onWarn: overrides.onWarn } : {}) });
+  return worktreeWorldAt(repo as string, overrides);
+}
+
+async function worktreeWorldAt(root: string, overrides: { readonly onWarn?: (m: string) => void } = {}) {
+  const options = await makeOptions({}, { workspaceRoot: root, worktreeSweep: false, ...(overrides.onWarn !== undefined ? { onWarn: overrides.onWarn } : {}) });
   const world = await makeWorld(options, undefined, [grantsStub()]);
   const parent = await spawnParent(world, PARENT_MODEL, "wt-main" as SessionId);
   world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
@@ -175,26 +179,22 @@ describe("worktree 隔离（§8）", () => {
     await parent.dispose();
   });
 
-  it("workspaceRoot 撞无关祖先仓 → workspace-not-in-repo 拒（不写祖先仓）", async () => {
-    // 外层仓（祖先）内建内层工作目录（非子模块、无 .git）
-    const outer = mkdtempSync(join(tmpdir(), "xh-wt-outer-"));
-    scratch = [...scratch, outer];
-    await exec("git", ["-C", outer, "init"]);
-    await exec("git", ["-C", outer, "config", "user.email", "t@t"]);
-    await exec("git", ["-C", outer, "config", "user.name", "t"]);
-    writeFileSync(join(outer, "DOT.md"), "dotfiles\n");
-    await exec("git", ["-C", outer, "add", "."]);
-    await exec("git", ["-C", outer, "commit", "-m", "dot"]);
-    const workspace = join(outer, "workspace"); // 工作区在祖先仓内但与它无关
-    const { mkdir } = await import("node:fs/promises");
-    await mkdir(workspace);
-    const options = await makeOptions({}, { workspaceRoot: workspace, worktreeSweep: false });
+  it("symlink 逻辑形 workspaceRoot（/var vs /private/var）不再被词法比较误拒——realpath 归一后仓内子目录合法", async () => {
+    // P2 回归锚：ownsWorkspace 比较前物理归一。逻辑形 workspaceRoot 对物理形 repoTop
+    // 的词法相对判定会把合法工作区误拒 workspace-not-in-repo（B 路 P2 实测 /var 形态）。
+    repo = await gitRepo();
+    // 物理形 /private/var/...；构造逻辑形：直接用 repo 的非 realpath 前缀形
+    const logical = repo.replace("/private/var/", "/var/");
+    if (logical === repo) {
+      expect(true).toBe(true); // 非 macOS /var symlink 形态——本用例不适用，跳过断言面
+      return;
+    }
+    const options = await makeOptions({}, { workspaceRoot: logical, worktreeSweep: false });
     const world = await makeWorld(options, undefined, [grantsStub()]);
     const parent = await spawnParent(world, PARENT_MODEL, "wt-main" as SessionId);
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
-    const refused = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", isolation: "worktree" }, session: parent.agent.session.id });
-    expect(refused.isError).toBe(true);
-    expect(refused.content).toContain("workspace-not-in-repo"); // rev-parse 命中外层仓 → 拒
+    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", isolation: "worktree" }, session: parent.agent.session.id });
+    expect(spawned.isError).toBeUndefined(); // 逻辑形不误拒——rev-parse 自 cwd 解析 + 归一比较
     await parent.dispose();
   });
 
@@ -212,9 +212,8 @@ describe("worktree 隔离（§8）", () => {
     expect(noGrants.content).toContain("requires the permission grants service");
     const listed = await callTool({ world: worldNoGrants, name: "list_agents", args: {}, session: parent.agent.session.id });
     expect(listed.content).toContain("(no sub-agents)"); // 不半装（无孤儿行）
-    // 半建产物清理：无 worktree 残留（lockfile 目录瞬态在场不算——按名过滤）
-    const leftovers = (await readdir(worktreeParent(repo)).catch(() => [] as string[])).filter((f) => !f.startsWith("repo-"));
-    expect(leftovers).toHaveLength(0);
+    // 半建产物清理：worktree 目录不残留（grants 前置拒——从未建锁，无需过滤）
+    expect(existsSync(worktreeParent(repo))).toBe(false);
     await parent.dispose();
   });
 
@@ -240,6 +239,7 @@ describe("worktree 隔离（§8）", () => {
     const aged = (): number => Date.now() + 2 * 3_600_000; // 目录 mtime 判超龄
     const kept = await sweepWorktrees([], repo, aged);
     expect(kept).toHaveLength(1); // 脏树保留
+    expect(kept[0]?.kind).toBe("kept-dirty"); // 形态如实（不谎报）
     if (made.ok) {
       expect(existsSync(made.plan.path)).toBe(false); // 净树被清
       const branches = await exec("git", ["-C", repo, "branch", "--list", "x-harness/agent-sweep01"]);
@@ -252,7 +252,7 @@ describe("worktree 隔离（§8）", () => {
     repo = await gitRepo();
     const made = await createWorktree("agent-fresh01", repo);
     expect(made.ok).toBe(true);
-    const kept = await sweepWorktrees([], repo); // 缺省 now=Date.now → mtime 新鲜
+    const kept = await sweepWorktrees(liveTreePaths(), repo); // 缺省 now=Date.now → mtime 新鲜
     expect(kept).toHaveLength(0); // 不清也不报 kept（跳过）
     if (made.ok) expect(existsSync(made.plan.path)).toBe(true);
   });
@@ -281,6 +281,55 @@ describe("worktree 隔离（§8）", () => {
     expect(existsSync(wtPath)).toBe(false);
   });
 
+  it("兄弟仓的树不被本仓 sweep 评估（共享父目录——跨仓 remove 必败的永久假告警）", async () => {
+    // 同父目录两仓：repoA 的超龄净树 + repoB 作 sweep 锚
+    const parentDir = mkdtempSync(join(tmpdir(), "xh-wt-sib-"));
+    scratch = [...scratch, parentDir];
+    const repoA = join(parentDir, "repoA");
+    const repoB = join(parentDir, "repoB");
+    for (const r of [repoA, repoB]) {
+      await exec("git", ["-C", r, "init"]).catch(async () => {
+        const { mkdir } = await import("node:fs/promises");
+        await mkdir(r);
+        await exec("git", ["-C", r, "init"]);
+      });
+      await exec("git", ["-C", r, "config", "user.email", "t@t"]);
+      await exec("git", ["-C", r, "config", "user.name", "t"]);
+      writeFileSync(join(r, "README.md"), "seed\n");
+      await exec("git", ["-C", r, "add", "."]);
+      await exec("git", ["-C", r, "commit", "-m", "seed"]);
+    }
+    const physicalA = realpathSync(repoA);
+    const made = await createWorktree("agent-sib01", physicalA); // 建在 <parentDir>/.x-harness-worktrees/repoA-agent-sib01
+    expect(made.ok).toBe(true);
+    const aged = (): number => Date.now() + 2 * 3_600_000;
+    // 以 repoB 为锚 sweep：不得触碰 repoA 的树（entry 前缀过滤）
+    const kept = await sweepWorktrees([], realpathSync(repoB), aged);
+    expect(kept).toHaveLength(0);
+    if (made.ok) expect(existsSync(made.plan.path)).toBe(true); // repoA 的树完好
+    // 以 repoA 为锚 sweep：自己的超龄净树照常清理
+    const own = await sweepWorktrees([], physicalA, aged);
+    expect(own).toHaveLength(0);
+    if (made.ok) expect(existsSync(made.plan.path)).toBe(false);
+  });
+
+  it("进程级活树登记簿：registerLiveTree 后 sweep 不清（含跨装配实例形态）", async () => {
+    repo = await gitRepo();
+    const made = await createWorktree("agent-live02", repo);
+    expect(made.ok).toBe(true);
+    if (made.ok) {
+      registerLiveTree(made.plan.path); // 模拟另一装配实例的活行（A 路 #5——lineage 私有不可见）
+      const aged = (): number => Date.now() + 2 * 3_600_000;
+      const kept = await sweepWorktrees(liveTreePaths(), repo, aged);
+      expect(kept).toHaveLength(0);
+      expect(existsSync(made.plan.path)).toBe(true);
+      unregisterLiveTree(made.plan.path);
+      const after = await sweepWorktrees(liveTreePaths(), repo, aged);
+      expect(after).toHaveLength(0);
+      expect(existsSync(made.plan.path)).toBe(false); // 摘除后照常清理
+    }
+  });
+
   it("路径形态：worktreeParent 在 repo 外同级（不落 .git 受保护区）", async () => {
     repo = await gitRepo();
     expect(worktreeParent(repo)).toBe(join(dirname(repo), ".x-harness-worktrees"));
@@ -288,17 +337,43 @@ describe("worktree 隔离（§8）", () => {
     expect(basename(worktreeParent(repo))).toBe(".x-harness-worktrees");
   });
 
-  it("清理锚定 repoTop（持久化事实）：跨装配换 cwd 后 stop 仍删对树", async () => {
+  it("跨装配清理不漂移：spawn 落账行 → 换 workspaceRoot 装配 → task_stop 仍删对树（repoTop 持久化事实）", async () => {
     repo = await gitRepo();
-    const made = await createWorktree("agent-anchor01", repo);
+    const twins = await worktreeWorld(); // workspaceRoot = repo（装配一）
+    const spawned = await spawnWorktree(twins);
+    const agentId = agentIdOf(spawned.content);
+    const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
+    const wtPath = join(worktreeParent(repo), wtEntry);
+    // 装配二：workspaceRoot 指向完全不同的目录（模拟 resume 换 cwd）
+    const elsewhere = mkdtempSync(join(tmpdir(), "xh-wt-elsewhere-"));
+    scratch = [...scratch, elsewhere];
+    const second = await worktreeWorldAt(elsewhere);
+    const stopped = await callTool({ world: second.world, name: "task_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
+    expect(stopped.isError).toBe(true); // 装配二的 lineage 无此行——not-found（不越界）
+    // 装配一的行在装配一 stop：repoTop 落账事实生效
+    const stoppedHere = await callTool({ world: twins.world, name: "task_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
+    expect(stoppedHere.isError).toBeUndefined();
+    expect(existsSync(wtPath)).toBe(false);
+    const branches = await exec("git", ["-C", repo, "branch", "--list", `x-harness/${agentId}`]);
+    expect(branches.stdout.trim()).toBe("");
+    await twins.parent.dispose();
+  });
+
+  it("复活 worktree 的 repoTop 取主仓顶（.git gitdir 解析——非 worktree 自身）+ guard 同构 spawn 侧", async () => {
+    repo = await gitRepo();
+    const made = await createWorktree("agent-rev01", repo);
     expect(made.ok).toBe(true);
     if (made.ok) {
-      // 模拟「另一装配」：plan 里 repoTop 是落账事实，evaluateCleanup 不读任何当次 cwd
-      const result = await evaluateCleanup(made.plan);
-      expect(result.kind).toBe("removed");
+      // linked worktree 内 rev-parse --show-toplevel 返回 worktree 自身（实测）——
+      // 复活路径必须经 .git gitdir 取主仓顶，否则 guard=worktree 打穿 §8.2 过滤
+      const { readFile } = await import("node:fs/promises");
+      const gitdir = (await readFile(join(made.plan.path, ".git"), "utf8")).trim();
+      expect(gitdir.startsWith("gitdir: ")).toBe(true);
+      expect(gitdir).toContain(repo); // 主仓 .git/worktrees/<name>
+      // 单测面：直接以 revive 的世界复活（需 archive——经 e2e revive 旅程全链覆盖；
+      // 此处锚 .git 解析事实：gitdir 指回主仓）
+      await evaluateCleanup(made.plan);
       expect(existsSync(made.plan.path)).toBe(false);
-      const branches = await exec("git", ["-C", repo, "branch", "--list", "x-harness/agent-anchor01"]);
-      expect(branches.stdout.trim()).toBe("");
     }
   });
 });

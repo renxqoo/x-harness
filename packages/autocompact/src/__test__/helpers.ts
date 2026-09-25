@@ -85,6 +85,8 @@ export const COMPACTION_BASE = {
 export const AUTOCOMPACT_BASE = {
   contextWindow: 1_000,
   checkpointPct: 60,
+  l1Pct: 89, // eff=900 → l1=l2=801、warn=701（单线形态——各区分界断言沿旧线保持）
+  l2Pct: 89,
   warnBufferTokens: 100,
   compactBufferTokens: 100,
   checkpointMinSegmentTokens: 1,

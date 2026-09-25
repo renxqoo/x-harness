@@ -31,14 +31,17 @@ export function alignDownToTurnStart(nodes: readonly SurfaceNode[], ceiling: num
   return cut;
 }
 
-/** L2 落账。liveBudget = max(500, floor((有效窗 − min(账本, 账本预算)) × factor) − 2k)
- *  （factor=1 首次；复测门传 1 − min(0.8, 超幅比 + 0.05)——收缩不放大保留区）；
+/** L2 落账。liveBudget = max(500, floor((L2线 − min(账本, 账本预算)) × factor) − 2k)
+ *  （基准 = L2 触发线非全窗：预算内即落账后占用必低于 L2 线——不与 90%+ 强制压缩带
+ *  相撞；factor=1 首次；复测门传 1 − min(0.8, 超幅比 + 0.05)——收缩不放大保留区）；
  *  覆盖域守卫：cut 对齐 min(预算切点, 账本覆盖边界) 之下最近真轮起点。 */
 export function escalateL2(fields: {
   readonly state: CheckpointState;
   readonly session: Session;
   readonly nodes: readonly SurfaceNode[];
   readonly effectiveWindow: number;
+  /** L2 触发线（活口预算基准——非全窗） */
+  readonly l2Line: number;
   readonly ledgerBudgetTokens: number;
   readonly liveBudgetFactor?: number;
   readonly coverageGuard?: boolean;
@@ -52,7 +55,7 @@ export function escalateL2(fields: {
   // files 文本计入预算（落账文本含 files——漏算会让 L2 头部超账本预算）
   const ledgerTok = ledgerTokens(state.ledger, filesText); // 审计问题 7：不向下钳位——实测超预算时活口应偏小（保守方向），钳位方向与保守性相反
   const factor = fields.liveBudgetFactor ?? 1;
-  const liveBudget = Math.max(500, Math.floor((fields.effectiveWindow - ledgerTok) * factor) - 2_000);
+  const liveBudget = Math.max(500, Math.floor((fields.l2Line - ledgerTok) * factor) - 2_000);
   // 保留头 = 锚点（session anchorIndexOf 共用谓词）及其之前——预锚注入（skill 清单
   // 等）与 system 锚点豁免 L2 替换；切口候选/对齐同步以保留头为下界
   const start = anchorIndexOf(nodes) + 1;

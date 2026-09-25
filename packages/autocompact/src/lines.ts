@@ -1,10 +1,16 @@
 // 线条域：上下文窗口的预算分区（warn/L2/CP 三条水位线 + 有效窗口推导）
-// min(主窗, servedWindow) − 摘要输出预留；L1 线 = L2 线；警告线只触发预算外推不
-// 落账（前缀缓存裁决）。装配期值域 fail-fast；servedWindow 收缩的运行期复算走
-// refitLines 降级（纯本地通道），不抛出（运行期事实非装配错误）。
+// min(主窗, servedWindow) − 摘要输出预留；L1/L2 线为窗口百分比（缺省 60%/80%
+// ——早线免费清工具结果，账本层居中，90% 强制压缩归 compaction）；警告线只
+// 触发预算外推不落账（前缀缓存裁决）。装配期值域 fail-fast；servedWindow 收缩的
+// 运行期复算走 refitLines 降级（纯本地通道），不抛出（运行期事实非装配错误）。
 
 /** 预留中摘要输出上限的封顶（min(摘要面 maxOutputTokens, 20k)） */
 export const SUMMARIZER_RESERVE_CAP = 20_000;
+
+/** L1 线缺省百分比（旧工具结果免费清层） */
+export const DEFAULT_L1_PCT = 70;
+/** L2 线缺省百分比（账本查表替换层） */
+export const DEFAULT_L2_PCT = 85;
 
 export interface LineInput {
   readonly contextWindow: number;
@@ -12,6 +18,10 @@ export interface LineInput {
   /** 摘要面输出上限（缺席 → 预留归零：纯本地通道不被不存在的总结面挤压） */
   readonly summarizerMaxOutput?: number;
   readonly checkpointPct: number;
+  /** L1 触发百分比（1–99，缺省 60）：占用 > 有效窗 × pct% → 清旧工具结果 */
+  readonly l1Pct?: number;
+  /** L2 触发百分比（1–99，缺省 80）：占用 > 有效窗 × pct% → 账本替换前缀 */
+  readonly l2Pct?: number;
   readonly warnBufferTokens: number;
   readonly compactBufferTokens: number;
 }
@@ -31,19 +41,21 @@ export function computeLines(input: LineInput): Lines {
   const base = Math.min(input.contextWindow, input.servedWindow ?? input.contextWindow);
   const reserve = input.summarizerMaxOutput === undefined ? 0 : Math.min(input.summarizerMaxOutput, SUMMARIZER_RESERVE_CAP);
   const effectiveWindow = base - reserve;
-  const l1Line = effectiveWindow - input.compactBufferTokens;
-  const warnLine = l1Line - input.warnBufferTokens;
+  const l1Line = (effectiveWindow * (input.l1Pct ?? DEFAULT_L1_PCT)) / 100;
+  const l2Line = (effectiveWindow * (input.l2Pct ?? DEFAULT_L2_PCT)) / 100;
+  const warnLine = l2Line - input.warnBufferTokens;
   return {
     effectiveWindow,
     cpWatermark: (effectiveWindow * input.checkpointPct) / 100,
     warnLine,
     l1Line,
-    l2Line: l1Line,
+    l2Line,
     degraded: false,
   };
 }
 
-/** 装配期值域 fail-fast：0 < CP < 警告 < L1 < 有效窗口，账本预算 ≤ 25% 有效窗口。
+/** 装配期值域 fail-fast：0 < CP ≤ L1 ≤ 警告 < L2 < 有效窗口（L1/L2 为独立百分比
+ *  线——L1 ≤ L2 分层单调；同值允许 = 旧单线形态），账本预算 ≤ 25% 有效窗口。
  *  崩坏点（缺省 buffer）：窗口 ≤102.5k 线序倒置、≤53k 警告线转负——静默接受会把
  *  阈值压成「恒触发」压缩机 */
 export function assertLinesDomain(fields: {
@@ -56,25 +68,31 @@ export function assertLinesDomain(fields: {
     !Number.isFinite(lines.effectiveWindow) ||
     lines.effectiveWindow <= 0 ||
     lines.warnLine <= 0 ||
-    !(lines.cpWatermark < lines.warnLine) ||
-    !(lines.warnLine < lines.l1Line) ||
-    !(lines.l1Line < lines.effectiveWindow) ||
+    !(lines.cpWatermark <= lines.l1Line) ||
+    !(lines.l1Line <= lines.l2Line) ||
+    !(lines.warnLine < lines.l2Line) ||
+    !(lines.l2Line < lines.effectiveWindow) ||
     !(checkpointPct > 0 && checkpointPct < 100) ||
     ledgerBudgetTokens > lines.effectiveWindow * 0.25;
   if (invalid) {
     throw new Error(
-      `autocompact config invalid: require 0 < cp(${lines.cpWatermark.toFixed(0)}) < warn` +
-        `(${lines.warnLine.toFixed(0)}) < l1(${lines.l1Line.toFixed(0)}) < effectiveWindow` +
-        `(${lines.effectiveWindow.toFixed(0)}) and ledgerBudget <= 25% effectiveWindow` +
+      `autocompact config invalid: require 0 < cp(${lines.cpWatermark.toFixed(0)}) <= l1(${lines.l1Line.toFixed(0)}) <= l2(${lines.l2Line.toFixed(0)}) < effectiveWindow` +
+        ` and warn(${lines.warnLine.toFixed(0)}) < l2 and ledgerBudget <= 25% effectiveWindow` +
         ` (ledgerBudget=${String(ledgerBudgetTokens)})`,
     );
   }
 }
 
-/** servedWindow 收缩后的线序修复：buffer 按窗宽百分比自适应，防线降级为纯 L0/L1
- *  本地通道（CP 关闭；L2 由账本就绪判定自然不触发）。运行期事实，不抛出。 */
+/** servedWindow 收缩后的线序修复：buffer 按窗宽百分比自适应，防线降级为纯本地
+ *  通道（CP 关闭；L1/L2 合并单线）。运行期事实，不抛出。 */
 export function refitLines(lines: Lines): Lines {
-  if (lines.cpWatermark < lines.warnLine && lines.warnLine < lines.l1Line && lines.l1Line < lines.effectiveWindow && lines.warnLine > 0) {
+  if (
+    lines.cpWatermark <= lines.l1Line &&
+    lines.l1Line <= lines.l2Line &&
+    lines.l2Line < lines.effectiveWindow &&
+    lines.warnLine > 0 &&
+    lines.warnLine < lines.l2Line
+  ) {
     return lines;
   }
   const buffer = Math.max(2_000, Math.floor(lines.effectiveWindow * 0.02));

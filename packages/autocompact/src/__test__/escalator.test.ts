@@ -57,7 +57,7 @@ describe("escalateL2", () => {
       const state = stateWithLedger();
       state.armed = true;
       state.coveredSeq = session.surface().at(-2)?.seq ?? -1; // 账本已覆盖全前缀（fold 恢复形态）
-      const result = escalateL2({ state, session, nodes: session.surface(), effectiveWindow: 900, ledgerBudgetTokens: 200, emit: () => {} });
+      const result = escalateL2({ state, session, nodes: session.surface(), effectiveWindow: 900, l2Line: 850, ledgerBudgetTokens: 200, emit: () => {} });
       expect(result.ok).toBe(true);
       expect(world.llm.calls).toHaveLength(0); // 零 LLM
       const head = session.deriveMessages()[0] as { content: ReadonlyArray<{ text: string }> };
@@ -86,7 +86,7 @@ describe("escalateL2", () => {
       const state = stateWithLedger();
       const nodes = session.surface();
       state.coveredSeq = nodes[1]?.seq ?? -1; // 仅覆盖 turn-0
-      const result = escalateL2({ state, session, nodes, effectiveWindow: 900, ledgerBudgetTokens: 200, emit: () => {} });
+      const result = escalateL2({ state, session, nodes, effectiveWindow: 900, l2Line: 850, ledgerBudgetTokens: 200, emit: () => {} });
       expect(result.ok).toBe(true);
       const kept = session.surface().length;
       expect(kept).toBeGreaterThanOrEqual(nodes.length - 3); // 只替换已覆盖前缀（宽预算不吞未收编区）
@@ -112,6 +112,7 @@ describe("escalateL2", () => {
           session: made.value,
           nodes: made.value.surface(),
           effectiveWindow: 5_000,
+          l2Line: 4_250,
           ledgerBudgetTokens: 200,
           liveBudgetFactor: factor,
           emit: () => {},
@@ -130,21 +131,21 @@ describe("escalateL2", () => {
     try {
       const empty = await world.store.create({ id: sid("l2-empty") });
       if (!empty.ok) throw new Error(empty.reason);
-      expect(escalateL2({ state: emptyCheckpointState(), session: empty.value, nodes: empty.value.surface(), effectiveWindow: 900, ledgerBudgetTokens: 200, emit: () => {} }).ok).toBe(false);
+      expect(escalateL2({ state: emptyCheckpointState(), session: empty.value, nodes: empty.value.surface(), effectiveWindow: 900, l2Line: 850, ledgerBudgetTokens: 200, emit: () => {} }).ok).toBe(false);
 
       const sealed = await world.store.create({ id: sid("l2-sealed") });
       if (!sealed.ok) throw new Error(sealed.reason);
       seedTurn(sealed.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3) } });
       seedTurn(sealed.value, { turn: 1, user: textOf(3), assistant: { text: textOf(3) } });
       world.store.dispose(sealed.value.id); // 封存写权
-      expect(escalateL2({ state: stateWithLedger(), session: sealed.value, nodes: sealed.value.surface(), effectiveWindow: 900, ledgerBudgetTokens: 200, emit: () => {} }).ok).toBe(false);
+      expect(escalateL2({ state: stateWithLedger(), session: sealed.value, nodes: sealed.value.surface(), effectiveWindow: 900, l2Line: 850, ledgerBudgetTokens: 200, emit: () => {} }).ok).toBe(false);
 
       const tiny = await world.store.create({ id: sid("l2-tiny") });
       if (!tiny.ok) throw new Error(tiny.reason);
       seedTurn(tiny.value, { turn: 0, user: "u", assistant: { text: "a" } });
       seedTurn(tiny.value, { turn: 1, user: "u", assistant: { text: "a" } });
       // 巨窗全放得下 → findCutPoint 无切口 → 无进展
-      expect(escalateL2({ state: stateWithLedger(), session: tiny.value, nodes: tiny.value.surface(), effectiveWindow: 1_000_000, ledgerBudgetTokens: 200, emit: () => {} }).ok).toBe(false);
+      expect(escalateL2({ state: stateWithLedger(), session: tiny.value, nodes: tiny.value.surface(), effectiveWindow: 1_000_000, l2Line: 950_000, ledgerBudgetTokens: 200, emit: () => {} }).ok).toBe(false);
     } finally {
       await world.ctx.dispose();
     }
@@ -167,7 +168,7 @@ describe("escalateL2", () => {
       }
       const state = stateWithLedger();
       state.coveredSeq = session.surface().at(-2)?.seq ?? -1; // 覆盖全前缀
-      const result = escalateL2({ state, session, nodes: session.surface(), effectiveWindow: 900, ledgerBudgetTokens: 200, emit: () => {} });
+      const result = escalateL2({ state, session, nodes: session.surface(), effectiveWindow: 900, l2Line: 850, ledgerBudgetTokens: 200, emit: () => {} });
       expect(result.ok).toBe(true);
       // 保留区内若含 tool_use 则其 tool/result 必同区（切口在真轮起点=配对安全构造）
       const messages = session.deriveMessages();
@@ -205,7 +206,7 @@ describe("L2 头部守卫（预锚注入——skill 清单形态缺陷回归）"
       const state = stateWithLedger();
       state.armed = true;
       state.coveredSeq = session.surface().at(-2)?.seq ?? -1; // 账本已覆盖全前缀
-      const result = escalateL2({ state, session, nodes: session.surface(), effectiveWindow: 900, ledgerBudgetTokens: 200, emit: () => {} });
+      const result = escalateL2({ state, session, nodes: session.surface(), effectiveWindow: 900, l2Line: 850, ledgerBudgetTokens: 200, emit: () => {} });
       expect(result.ok).toBe(true);
       const messages = session.deriveMessages();
       // 修复前：start=0（nodes[0] 非 system）→ 预锚块与锚点被账本摘要连坐替换

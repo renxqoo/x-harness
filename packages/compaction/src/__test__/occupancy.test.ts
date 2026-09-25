@@ -81,11 +81,11 @@ describe("锚口径（measureContext）", () => {
   });
 });
 
-describe("shouldCompact（严格大于——reserve 是绝对预留非百分比）", () => {
+describe("shouldCompact（严格大于——水位是窗口百分比强制压缩带）", () => {
   it("边界表", () => {
-    expect(shouldCompact(901, 1_000, 100)).toBe(true);
-    expect(shouldCompact(900, 1_000, 100)).toBe(false);
-    expect(shouldCompact(500, 1_000, 100)).toBe(false);
+    expect(shouldCompact(901, 1_000, 90)).toBe(true);
+    expect(shouldCompact(900, 1_000, 90)).toBe(false);
+    expect(shouldCompact(500, 1_000, 90)).toBe(false);
   });
 });
 

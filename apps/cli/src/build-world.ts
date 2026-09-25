@@ -141,12 +141,16 @@ function rgBinDirOf(options: WorldOptions): { readonly rgBinDir: string } | { re
   return options.rgBinDir !== undefined ? { rgBinDir: options.rgBinDir } : { absent: true };
 }
 
-/** 委派装配参数（WORKSPACE-ROOT-INJECTION）：git 锚 = CLI 工作目录；告警面接 onIoError */
+/** 委派装配参数（WORKSPACE-ROOT-INJECTION）：git 锚 = CLI 工作目录；告警面接
+ *  onIoError，缺省 stderr（main 的 openWorld 不传 onIoError——无兜底则是死接线） */
 function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError">): import("@x-harness/agent-delegation").DelegationOptions {
+  const onWarn = options.onIoError ?? ((message: string) => {
+    process.stderr.write(`cli: ${message}\n`);
+  });
   return {
     agentsDirs: resolveAgentDirs(),
     workspaceRoot: options.cwd,
-    ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}),
+    onWarn,
   };
 }
 

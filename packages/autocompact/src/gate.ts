@@ -21,6 +21,10 @@ import { computeClearPlan, landClearPlan, lastTurnStartIndex } from "./scavenger
 export interface GateConfig extends CheckpointConfig {
   readonly contextWindow: number;
   readonly checkpointPct: number;
+  /** L1 触发百分比（旧工具结果免费清层） */
+  readonly l1Pct: number;
+  /** L2 触发百分比（账本查表替换层） */
+  readonly l2Pct: number;
   readonly checkpointMinSegmentTokens: number;
   readonly clearKeepRecent: number;
   readonly clearableTools: readonly string[];
@@ -44,8 +48,6 @@ export interface GateDeps {
   readonly emitL2Escalated: (session: SessionId, keptNodes: number) => void;
   readonly emitParallelApproach: (session: SessionId, worstStep: number) => void;
   readonly emitCheckpoint: (action: import("./tokens.ts").CheckpointAction, detail?: Record<string, unknown>) => void;
-  /** 熔断还接管 */
-  readonly onBreaker: () => void;
 }
 
 /** servedWindow 变化 → 复算线序；违例（深收缩/小窗）→ refit 降级纯本地通道 */
@@ -58,6 +60,8 @@ function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
     ...(served !== undefined ? { servedWindow: served } : {}),
     ...(deps.face !== undefined ? { summarizerMaxOutput: deps.face.maxOutputTokens } : {}),
     checkpointPct: deps.config.checkpointPct,
+    l1Pct: deps.config.l1Pct,
+    l2Pct: deps.config.l2Pct,
     warnBufferTokens: deps.config.warnBufferTokens,
     compactBufferTokens: deps.config.compactBufferTokens,
   });
@@ -213,7 +217,6 @@ function armOrStartCheckpoint(fields: {
       fileTools: deps.fileTools,
       warn: deps.warn,
       emit: deps.emitCheckpoint,
-      onBreaker: deps.onBreaker,
     },
     stepSignal: payload.signal,
     lastTurnStart: lastStart,
@@ -233,21 +236,21 @@ async function routeZones(fields: {
   readonly payload: { readonly signal: AbortSignal };
 }): Promise<void> {
   const { deps, lines, occupancy, nodes, events, measured, payload } = fields;
-  if (occupancy < lines.warnLine) return;
-  if (occupancy >= lines.l1Line) {
-    await l1AndBeyond({ deps, lines, nodes, events, occupancy, signal: payload.signal });
+  if (occupancy < lines.l1Line) {
+    if (occupancy < lines.warnLine) return;
+    // 警告区（warn→L1 间）：不落账（余量内打断缓存可能净亏）；并行逼近观测 + 放行
+    // 预算外推（预测越窗同样过闸前优化——一步穿窗不等到 L1 线）
+    warnParallelApproach(deps, { occupancy, maxParallel: measured.maxParallel }, lines);
+    const lastStepDelta =
+      deps.state.cache.lastOccupancy === undefined
+        ? deps.config.toolResultCapTokens * Math.max(1, measured.maxParallel)
+        : Math.max(0, occupancy - (deps.state.cache.lastOccupancy ?? 0));
+    if (budgetOverflowPredicted({ occupancy, lastStepDelta, lines })) {
+      await escalateOrJoin({ deps, lines, signal: payload.signal });
+    }
     return;
   }
-  // 警告区：不落账（余量内打断缓存可能净亏）；并行逼近观测 + 放行预算外推
-  // （预测越窗同样过闸前优化——一步穿窗不等到 L1 线）
-  warnParallelApproach(deps, { occupancy, maxParallel: measured.maxParallel }, lines);
-  const lastStepDelta =
-    deps.state.cache.lastOccupancy === undefined
-      ? deps.config.toolResultCapTokens * Math.max(1, measured.maxParallel)
-      : Math.max(0, occupancy - (deps.state.cache.lastOccupancy ?? 0));
-  if (budgetOverflowPredicted({ occupancy, lastStepDelta, lines })) {
-    await escalateOrJoin({ deps, lines, signal: payload.signal });
-  }
+  await l1AndBeyond({ deps, lines, nodes, events, occupancy, signal: payload.signal });
 }
 
 function coverageStartIndex(state: SessionState, nodes: readonly SurfaceNode[]): number {
@@ -257,8 +260,8 @@ function coverageStartIndex(state: SessionState, nodes: readonly SurfaceNode[]):
   return nodes.length;
 }
 
-/** 占用缓存写入（L1/L2 落账后的复评由各分支自行刷新——此处只写安全区/警告区值） */
-/** L1 线以上：预门槛落账 → 复评 → 升级（L2/join）→ 终局放行 */
+/** L1 线以上：预门槛落账 → 复评（压回 L1 线内即止）；仍越 L2 线才升级（账本
+ *  替换/join）——两层分离，免费层不自动消耗付费层 */
 async function l1AndBeyond(fields: {
   readonly deps: GateDeps;
   readonly lines: Lines;
@@ -293,6 +296,9 @@ async function l1AndBeyond(fields: {
       deps.warn(session.id, "l1-no-gain", { gainTokens: plan.gainTokens });
     }
   }
+  // 升级门：免费层落账/退避后仍越 L2 线才动账本替换（两线间的活口留给增长）
+  const post = remeasure(deps);
+  if (post < lines.l2Line) return;
   await escalateOrJoin({ deps, lines, signal });
 }
 
@@ -312,9 +318,9 @@ async function escalateOrJoin(fields: { readonly deps: GateDeps; readonly lines:
     const first = escalateOnce({ deps, lines, liveBudgetFactor: 1 });
     if (first) {
       const after = remeasure(deps);
-      if (after >= lines.l1Line) {
+      if (after >= lines.l2Line) {
         // 复测门：按超出比例收缩活口再落账一次
-        const excessRatio = Math.min(0.8, (after - lines.l1Line) / Math.max(1, lines.effectiveWindow) + 0.05);
+        const excessRatio = Math.min(0.8, (after - lines.l2Line) / Math.max(1, lines.effectiveWindow) + 0.05);
         escalateOnce({ deps, lines, liveBudgetFactor: 1 - excessRatio, coverageGuard: false });
       }
       state.cache.journalSeen = session.events().length;
@@ -344,6 +350,7 @@ function escalateOnce(fields: { readonly deps: GateDeps; readonly lines: Lines; 
     session: deps.session,
     nodes: deps.session.surface(),
     effectiveWindow: lines.effectiveWindow,
+    l2Line: lines.l2Line,
     ledgerBudgetTokens: deps.config.ledgerBudgetTokens,
     liveBudgetFactor: fields.liveBudgetFactor,
     ...(fields.coverageGuard !== undefined ? { coverageGuard: fields.coverageGuard } : {}),

@@ -30,6 +30,10 @@ import type { CheckpointAction } from "./tokens.ts";
 export interface AutoCompactOptions {
   readonly contextWindow: number;
   readonly checkpointPct?: number;
+  /** L1 触发百分比（1–99，缺省 70）：占用 > 有效窗 × pct% → 清旧工具结果（免费层） */
+  readonly l1Pct?: number;
+  /** L2 触发百分比（1–99，缺省 85）：占用 > 有效窗 × pct% → 账本替换前缀（零 LLM） */
+  readonly l2Pct?: number;
   readonly checkpointMinSegmentTokens?: number;
   readonly ledgerBudgetTokens?: number;
   readonly clearKeepRecent?: number;
@@ -51,6 +55,8 @@ type WritableGateConfig = { -readonly [K in keyof GateConfig]: GateConfig[K] };
 
 const DEFAULTS = {
   checkpointPct: 60,
+  l1Pct: 70,
+  l2Pct: 85,
   ledgerBudgetTokens: 16_000,
   clearKeepRecent: 5,
   clearableTools: ["read", "grep", "bash"],
@@ -76,6 +82,8 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
     idleClearMinutes: options.idleClearMinutes ?? DEFAULTS.idleClearMinutes,
     idleClearMinGainTokens: options.idleClearMinGainTokens ?? DEFAULTS.idleClearMinGainTokens,
     checkpointPct: options.checkpointPct ?? DEFAULTS.checkpointPct,
+    l1Pct: options.l1Pct ?? DEFAULTS.l1Pct,
+    l2Pct: options.l2Pct ?? DEFAULTS.l2Pct,
     ledgerBudgetTokens: options.ledgerBudgetTokens ?? DEFAULTS.ledgerBudgetTokens,
     clearKeepRecent: options.clearKeepRecent ?? DEFAULTS.clearKeepRecent,
     clearableTools: options.clearableTools ?? DEFAULTS.clearableTools,
@@ -94,7 +102,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
     softInject: ["llm"], // 审计问题 3：llm 停靠声明式时序（迟到世界防恰一次误判）
     apply: (ctx: Context): Disposer => {
       const store = ctx.use(sessionStore);
-      const runner = ctx.use(compactionRunner);
+      const runner = ctx.use(compactionRunner); // 只读 runner.summarizer（CP 摘要面单一真相）
       let llm: LlmRuntime | undefined;
       void ctx
         .waitFor(llmRuntime)
@@ -109,6 +117,8 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         contextWindow: config.contextWindow,
         ...(face !== undefined ? { summarizerMaxOutput: face.maxOutputTokens } : {}),
         checkpointPct: config.checkpointPct,
+        l1Pct: config.l1Pct,
+        l2Pct: config.l2Pct,
         warnBufferTokens: config.warnBufferTokens,
         compactBufferTokens: config.compactBufferTokens,
       });
@@ -141,20 +151,6 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         return state;
       };
 
-      let takeoverDone = false;
-      const evaluateTakeover = (): void => {
-        if (takeoverDone) return;
-        takeoverDone = true; // 恰一次：跳过后不重试（防抖动）
-        if (face !== undefined && llm !== undefined) {
-          runner.setAutoTriggerEnabled(false); // autocompact 接管水位决策权
-        } else {
-          process.stderr.write("autocompact/takeover-skipped\n");
-        }
-      };
-      const onBreaker = (): void => {
-        runner.setAutoTriggerEnabled(true); // 熔断还接管
-      };
-
       const gateDepsOf = (session: SessionId, state: SessionState) => ({
         config,
         face,
@@ -171,11 +167,9 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         emitL2Escalated: (sid: SessionId, keptNodes: number) => ctx.emit(autocompactL2Escalated, { session: sid, keptNodes }),
         emitParallelApproach: (sid: SessionId, worstStep: number) => ctx.emit(autocompactParallelApproach, { session: sid, worstStep }),
         emitCheckpoint: emitCheckpoint(session),
-        onBreaker,
       });
 
       const onPreStep = async (payload: PreStepPayload, next: (input: PreStepPayload) => Promise<unknown>): Promise<unknown> => {
-        evaluateTakeover(); // 全局恰一次：首个步闸时装配已定，无停靠竞态
         const state = stateOf(payload.session);
         if (state !== undefined) {
           const deps = gateDepsOf(payload.session, state);
@@ -248,11 +242,6 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         await Promise.race([Promise.allSettled(inflight), watchdog]);
         if (watchdogTimer !== undefined) clearTimeout(watchdogTimer);
         states.clear();
-        // 审计问题 2：拆卸还权——autocompact 接管了 compaction 的水位决策权，
-        // 卸载后必须归还（否则 compaction 永久禁用）。与 onBreaker 的还权同款。
-        if (takeoverDone && face !== undefined && llm !== undefined) {
-          runner.setAutoTriggerEnabled(true);
-        }
       };
     },
   };

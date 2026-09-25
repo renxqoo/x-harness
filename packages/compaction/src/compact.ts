@@ -40,6 +40,8 @@ export type CompactionResult =
 
 export interface ResolvedConfig {
   readonly contextWindow: number;
+  /** 水位触发百分比（1–99）：占用 > min(主窗, servedWindow) × pct% → 强制压缩 */
+  readonly triggerPct: number;
   readonly reserveTokens: number;
   readonly keepRecentTokens: number;
   readonly fileTools: FileToolNames;

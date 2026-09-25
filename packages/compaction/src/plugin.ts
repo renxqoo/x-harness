@@ -22,6 +22,8 @@ import { DEFAULT_FILE_TOOLS } from "./file-ops.ts";
 export interface CompactionOptions {
   /** 主模型窗口（装配面事实，必填）：触发分母 = min(contextWindow, 实测 servedWindow) */
   readonly contextWindow: number;
+  /** 水位触发百分比（1–99，缺省 90）：占用 > 分母 × pct% → 强制压缩 */
+  readonly triggerPct?: number;
   readonly reserveTokens?: number;
   readonly keepRecentTokens?: number;
   /** 摘要模型面；缺席 = 软禁用（一次性告警，水位/自愈不动作） */
@@ -38,6 +40,7 @@ export interface CompactionOptions {
 
 const DEFAULT_RESERVE = 16_384;
 const DEFAULT_KEEP_RECENT = 20_000;
+const DEFAULT_TRIGGER_PCT = 92;
 
 /** 窗口溢出码闭集（自愈唤醒词表——docs/OUTPUT-TOKEN-CONTINUATION.md compaction 节）：
  *  `http-413` = 状态码直报；`context-overflow` = llm 层 overflow 文案分类（主力 provider
@@ -60,6 +63,10 @@ function expectNumber(name: string, value: number, min: number): number {
 /** 装配期值域 fail-fast + 缺省解析 */
 function resolveConfig(options: CompactionOptions): ResolvedConfig {
   const contextWindow = expectNumber("contextWindow", options.contextWindow, 1);
+  const triggerPct = expectNumber("triggerPct", options.triggerPct ?? DEFAULT_TRIGGER_PCT, 1);
+  if (triggerPct > 99) {
+    throw new Error("compaction: triggerPct must be <= 99 (threshold would sit at the window edge)");
+  }
   const reserveTokens = expectNumber("reserveTokens", options.reserveTokens ?? DEFAULT_RESERVE, 1);
   if (reserveTokens * 2 > contextWindow) {
     throw new Error("compaction: reserveTokens * 2 must not exceed contextWindow (threshold would be non-positive)");
@@ -68,6 +75,7 @@ function resolveConfig(options: CompactionOptions): ResolvedConfig {
   const idleTimeoutMs = expectNumber("idleTimeoutMs", options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS, 0);
   return {
     contextWindow,
+    triggerPct,
     reserveTokens,
     keepRecentTokens,
     idleTimeoutMs,
@@ -141,7 +149,6 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         })
         .catch(() => {});
 
-      let autoEnabled = true;
       const inflight = new Map<SessionId, Flight>();
       const epochs = new Map<SessionId, number>();
       const healed = new Map<SessionId, string>();
@@ -188,7 +195,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         return runCompact(deps, { trigger: "manual", ...fields, ...at });
       };
 
-      /** 水位触发：占用（含领取未落账批次）> min(主窗, servedWindow) − reserve → 压缩 */
+      /** 水位触发：占用（含领取未落账批次）> min(主窗, servedWindow) × triggerPct% → 强制压缩 */
       const watermark = async (payload: PreStepPayload): Promise<void> => {
         if (llm === undefined || config.summarizer === undefined) {
           if (config.summarizer !== undefined) return; // llm 未停靠（瞬态竞态/缺席）——静默跳过，手动面可见 llm-unavailable
@@ -201,7 +208,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         const occupancy = measureContext(events, session.surface());
         const tokens = occupancy.tokens + pendingClaimTokens(events);
         const effectiveWindow = Math.min(config.contextWindow, lastWindow(events) ?? config.contextWindow);
-        if (!shouldCompact(tokens, effectiveWindow, config.reserveTokens)) return;
+        if (!shouldCompact(tokens, effectiveWindow, config.triggerPct)) return;
         const result = await compact({ session: payload.session, trigger: "auto", turn: payload.turn, step: payload.step, signal: payload.signal });
         if (!result.ok && !NOOP_SILENT_REASONS.has(result.reason)) {
           warnOnce(payload.session, "trigger-noop", { reason: result.reason }); // 阈值成立而未落账：估算失配/无净切口的诊断信号
@@ -209,12 +216,10 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
       };
 
       const onPreStep = async (payload: PreStepPayload, next: (input: PreStepPayload) => Promise<unknown>): Promise<unknown> => {
-        if (autoEnabled) {
-          try {
-            await watermark(payload);
-          } catch (error) {
-            warn(payload.session, "watermark-failed", { message: error instanceof Error ? error.message : String(error) });
-          }
+        try {
+          await watermark(payload);
+        } catch (error) {
+          warn(payload.session, "watermark-failed", { message: error instanceof Error ? error.message : String(error) });
         }
         return next(payload);
       };
@@ -278,9 +283,6 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
       ];
       const offProvide = ctx.provide(compactionRunner, {
         compact: (fields) => compact(fields),
-        setAutoTriggerEnabled: (enabled: boolean) => {
-          autoEnabled = enabled;
-        },
         get summarizer(): SummarizerFace | undefined {
           return config.summarizer;
         },

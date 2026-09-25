@@ -51,6 +51,7 @@ async function assemble(input: { readonly agentsDir: string; readonly workspaceR
     createAgentDelegationPlugin({
       agentsDirs: [input.agentsDir],
       workspaceRoot: input.workspaceRoot,
+      worktreeSweep: false, // 旅程非 sweep 面；workspaceRoot=process.cwd() 指真仓——防误扫真环境（world.ts A-P1-2 同口径）
       ...(input.mailboxRoot !== undefined && input.box !== undefined ? { mailbox: { box: input.box, mainSession: "alpha-main" as SessionId } } : {}),
     }),
   ]);

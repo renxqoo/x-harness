@@ -6,7 +6,7 @@ import type { SessionStore, SessionEvent, SessionId } from "@x-harness/session";
 import type { ToolRegistry, ToolExecContext } from "@x-harness/tools";
 import { forkSeed, inheritDial, mintAgentId, narrowTools } from "./lineage.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
-import { createWorktree, evaluateCleanup } from "./worktree.ts";
+import { createWorktree, evaluateCleanup, registerLiveTree, unregisterLiveTree } from "./worktree.ts";
 import type { WorktreePlan } from "./worktree.ts";
 import type { LoadedAgentType } from "./types.ts";
 
@@ -26,6 +26,8 @@ export interface SpawnDeps {
   readonly limits: { readonly maxDepth: number; readonly maxConcurrent: number };
   /** git 调用锚（docs/WORKSPACE-ROOT-INJECTION.md）——worktree 探测/建树的 cwd 基准 */
   readonly workspaceRoot: string;
+  /** 清理失败可见化出口（spawnFailed/abortSpawn） */
+  readonly onWarn?: (message: string) => void;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly isTearingDown: () => boolean;
   /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
@@ -112,7 +114,7 @@ async function buildChild(
   if (!worktree.ok) return worktree;
 
   const made = await createChildSession(deps, { caller, plan, agentId, typeName, seed: forked ? seed : [], worktree: worktree.plan });
-  if (!made.ok) return spawnFailed(made.reason, worktree.plan);
+  if (!made.ok) return spawnFailed(made.reason, worktree.plan, deps);
   const childHandle = made.value;
   restrictChildTools(deps, { caller, child: childHandle, named });
   const row: ChildRow = {
@@ -128,8 +130,9 @@ async function buildChild(
     stopped: false,
     ...(worktree.plan !== undefined ? { worktree: worktree.plan.path, worktreeRepoTop: worktree.plan.repoTop } : {}),
   };
-  if (worktree.plan !== undefined && deps.setRootOverride !== undefined) {
-    deps.setRootOverride(childHandle.agent.session.id, worktree.plan.path, worktree.plan.repoTop);
+  if (worktree.plan !== undefined) {
+    registerLiveTree(worktree.plan.path); // 活树登记（sweep 误删防线①——跨装配实例共享）
+    deps.setRootOverride?.(childHandle.agent.session.id, worktree.plan.path, worktree.plan.repoTop);
   }
   deps.lineage.register(row);
   deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, work: row.work });
@@ -177,9 +180,18 @@ function childAgentOptions(
   };
 }
 
-/** create 失败收尾：半建 worktree 清理 + 统一词表 */
-function spawnFailed(reason: string, plan: WorktreePlan | undefined): SpawnOutcome {
-  if (plan !== undefined) void evaluateCleanup(plan).catch(() => {});
+/** create 失败收尾：半建 worktree 清理 + 统一词表；remove-failed 经 onWarn 可见化 */
+function spawnFailed(reason: string, plan: WorktreePlan | undefined, deps: SpawnDeps): SpawnOutcome {
+  if (plan !== undefined) {
+    void evaluateCleanup(plan)
+      .then((result) => {
+        if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${plan.path}`);
+        if (result.kind !== "kept-dirty") unregisterLiveTree(plan.path); // 终局摘除（保留树仍属活树——可复活）
+      })
+      .catch(() => {
+        unregisterLiveTree(plan.path);
+      });
+  }
   return { ok: false, reason: `spawn-failed:${reason}` };
 }
 
@@ -233,7 +245,12 @@ async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandl
     detail: "spawn cancelled before dispatch",
   });
   await input.childHandle.dispose();
-  if (input.plan !== undefined) await evaluateCleanup(input.plan).catch(() => {});
+  if (input.plan !== undefined) {
+    const result = await evaluateCleanup(input.plan).catch(() => undefined);
+    if (result !== undefined && result.kind === "remove-failed") {
+      input.deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${result.path}`);
+    }
+  }
   input.deps.lineage.drop(input.row.sessionId);
   return { ok: false, reason: "aborted:spawn cancelled before dispatch" };
 }

@@ -196,3 +196,40 @@ docs/CLI.md、docs/SDK-DESIGN.md        stale 示意更新
 12. resumeCwdOf 空串守卫 → 采纳（hub 同批修）
 
 两路各自明示「未找到问题」的项：同一仓多线程路径/分支 8hex 碰撞（~2^-32 声明接受）、agentsDirs 缺省链无偏差面（CLI 边沿 cwd==process.cwd()）、resolveAgentDirs/probeBaseFacts 显式传参无 ambient 面——维持不动。
+
+## diff 级对抗审查处置记录（B 路 11 条）
+
+| # | 问题 | 处置 |
+| --- | --- | --- |
+| 1 | revive 的 repoTop 用 `rev-parse --show-toplevel` 在 linked worktree 内返回 worktree 自身（实测）→ guard=worktree 打穿 §8.2 过滤 + 清理锚错（锁路径嵌套垃圾目录、branch -D ENOENT、目录已删分支泄漏、文案谎报） | **修**：改读 `.git` 文件 gitdir 行解析主仓顶（`mainRepoTopOf`）；guard 与 spawn 侧同构；回归锚「复活 repoTop 取主仓顶」 |
+| 2 | ownsWorkspace 词法比较不消 symlink（/var vs /private/var）→ hub resumeCwdOf 未归一的逻辑形 cwd 恒误拒 | **修**：比较前 realpath 归一（`physical()`）；symlink 逻辑形回归锚 |
+| 3 | CLI onWarn 死接线（main.ts 不传 onIoError）；plugin 5 处清理失败静默 | **修**：buildWorld 缺省 stderr 兜底；plugin 加 `cleanupQuietly` 统一出口（adoptOrphan/evictIdle/级联）；spawn.ts spawnFailed/abortSpawn 接 onWarn |
+| 4 | lockfile mkdir 非 EEXIST 失败无出路 → task_stop 热循环挂死 | **修**：父目录不可建与非 EEXIST 错误均降级直跑临界区（不劣化于无锁现状） |
+| 5 | sweep `indexOf("agent-")` 对含 "agent-" 的仓名错位（既有 B-P1-4 未根治） | **修**：`lastIndexOf("-agent-")`（agentId 恒为 8hex 后缀） |
+| 6 | 「跨装配清理」测试没换装配没走 stop；resume 空串守卫零测试；表驱动缺 "." | **修**：真换装配 + task_stop 用例（含跨装配 not-found 边界）；worker-units 补 resumeCwdOf 守卫表驱动；"." 入表 |
+| 7 | e2e 四处装配传 process.cwd() 且未关 sweep → 会删真仓 worktree | **修**：四处统一 `worktreeSweep: false`（world.ts A-P1-2 同口径） |
+| 8 | plugin 兜底链（`?? workspaceRoot`）与 verbs（`?? worktree ?? workspaceRoot`）不一致 | **修**：统一三段链（repoTop → worktree 自身 git -C 归位 → workspaceRoot） |
+| 9 | sweep「全程持锁」声明与代码不符（readdir 在锁外） | **修**：readdir 移入锁内临界区 |
+| 10 | lockAgeMs 死导出 | **删** |
+| 11 | worktree 用例贴超时抖动 | 真仓夹具用例已达 21 条全绿；CI 并行档如再现显式放宽 timeout（挂账观察项） |
+
+另：B 路 P2 审查揭示原「无关祖先仓拒」测试的绿靠词法比较 bug（逻辑形 vs 物理形必非「祖先」）。归一修复后语义收敛：物理在仓内必是祖先——「无关祖先仓」在自然文件系统下不可达，`workspace-not-in-repo` 保留为 GIT_DIR 注入等防御面的拒绝词。测试改为 symlink 逻辑形不误拒的回归锚。
+
+## diff 级对抗审查处置记录（A 路 9 条 + 测试口径 3 条）
+
+| # | 问题 | 处置 |
+| --- | --- | --- |
+| 1 | revive repoTop=worktree 自身（rev-parse 在 linked worktree 内的行为）| 与 B 路 #1 同源——已在 B 路处置（.git gitdir 解析） |
+| 2 | 清理可见化只兑现 stop 一条路 + sweep kept 谎报 has changes | 六处清理点全接 onWarn（B 路 #3 同源）；sweep 返回 `SweepKept{path, kind}` 形态对，kept-dirty/remove-failed 分开报 |
+| 3 | sweep 锚 repoTop 但枚举共享父目录——兄弟仓的树被跨仓 remove（必 128）→ 永久假告警 | **修**：entry 前缀过滤（`<repoName>-agent-` 只处理本仓条目）；兄弟仓共存回归锚 |
+| 4 | ownsWorkspace 不消 symlink | 与 B 路 #2 同源——已修（physical 归一） |
+| 5 | livePaths 死接线（apply 时刻 lineage 恒空；同进程重装配互扫） | **修**：进程级活树登记簿（`registerLiveTree`/`unregisterLiveTree`/`liveTreePaths`）——spawn/revive 登记、清理终局摘除、sweep 消费跨实例活树集；回归锚 |
+| 6 | withRepoLock 无超时（pid 复用/只读目录永久挂死）；pidAlive 把 EPERM 当死 | **修**：60s 等锁上限超时降级直跑；writeFile 失败降级直跑；EPERM=活（且修正首版把 ESRCH 误判活的倒置——A 路审查后自查发现的实现笔误） |
+| 7 | createWorktree 半建兜底 branch -D 锁外裸奔 | **修**：入 withRepoLock |
+| 8 | sweep 枚举在临界区外 | 与 B 路 #9 同源——已修（readdir 入锁） |
+| 9 | 清理兜底链两套口径 | 与 B 路 #8 同源——已统一（repoTop → worktree → workspaceRoot 三段链） |
+| 10 | 「hub 形态」测试名虚标（cwd 是 x-harness 仓内而非非 git 仓） | **部分采纳**：测试进程 cwd 无法脱离本仓运行（vitest 必须在仓内跑）；非 git 仓 cwd 形态已由「workspaceRoot 指非仓目录拒 not-a-git-repo」用例等价覆盖（锚的是 workspaceRoot 不是 cwd——修复后语义即如此）。用例名保持但补充此说明 |
+| 11 | 半建产物断言被无必要放宽 | **还原**硬断言（grants 前置拒从未建锁——放宽无据） |
+| 12 | 夹具 realpathSync 遮蔽 symlink 缺陷 | 已由 symlink 逻辑形回归锚补上（B 路 #2 处置附带）；锁互斥用例 30ms sleep 改为确定性先持锁（await 30ms 后启动第二个） |
+
+A 路核实无问题项（mkdir 原子性/stale 竞态/release 复核/重入/装配点/resumeCwdOf/worktree lock 锚）不再重复处置。

@@ -14,8 +14,6 @@ export interface CompactionRunner {
     /** 操作者取消信号（REPL Ctrl+C 等）——联动摘要拨号；水位/自愈路径走触发上下文 signal */
     readonly signal?: AbortSignal;
   }): Promise<CompactionResult>;
-  /** 水位触发权开关（autocompact 接管仲裁用；缺省开） */
-  setAutoTriggerEnabled(enabled: boolean): void;
   /** 解析后的摘要面（autocompact 的 CP 与压缩摘要共用同一模型面——单一真相 + 覆盖注入） */
   readonly summarizer: SummarizerFace | undefined;
 }
