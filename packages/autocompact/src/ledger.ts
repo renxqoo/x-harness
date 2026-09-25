@@ -31,12 +31,23 @@ function unionAppend(oldLines: readonly string[], newLines: readonly string[]): 
   return merged;
 }
 
+/** 节内词表：七节标签名（杂散标签行过滤面——模型输出漏闭标签时，非贪婪
+ *  解析会把后续节的开标签当内容行收进当前节，污染行会被 append-only 永久保留） */
+const LEDGER_TAGS: readonly string[] = ["goals", "decisions", "done", "pending", "verified", "unverified", "current"];
+
+function isTagLine(line: string): boolean {
+  for (const tag of LEDGER_TAGS) {
+    if (line === `<${tag}>` || line === `</${tag}>`) return true;
+  }
+  return false;
+}
+
 function sectionLines(raw: string | undefined): string[] {
   if (raw === undefined) return [];
   return raw
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line !== "" && line !== "(none)" && line !== "-");
+    .filter((line) => line !== "" && line !== "(none)" && line !== "-" && !isTagLine(line));
 }
 
 function tagContent(text: string, tag: string): string | undefined {

@@ -44,7 +44,6 @@ function depsOf(overrides: Partial<CheckpointDeps> & { session: Session; scripts
     emit: (action, detail) => {
       events.push({ action, detail });
     },
-    onBreaker: () => {},
     ...overrides,
   };
   (deps as unknown as { eventsLog: unknown }).eventsLog = events;
@@ -131,9 +130,8 @@ describe("maybeStartCheckpoint / joinInflight", () => {
     }
   });
 
-  it("垃圾输出计败；连续 3 败熔断 + onBreaker（还接管）", async () => {
+  it("垃圾输出计败；连续 3 败熔断（breaker 事件——CP 通道停飞）", async () => {
     const world = await makeWorld();
-    let broke = false;
     try {
       const made = await world.store.create({ id: sid("cp-breaker") });
       if (!made.ok) throw new Error(made.reason);
@@ -141,14 +139,17 @@ describe("maybeStartCheckpoint / joinInflight", () => {
       seedTurn(session, { turn: 0, user: "u0", assistant: { text: "a0" } });
       seedTurn(session, { turn: 1, user: "u1", assistant: { text: "a1" } });
       const state = emptyCheckpointState();
+      const breakerSeen: number[] = [];
       for (let round = 0; round < 3; round += 1) {
-        const deps = depsOf({ session, scripts: [textScript("garbage output")] , onBreaker: () => { broke = true; } });
+        const deps = depsOf({ session, scripts: [textScript("garbage output")], emit: (action, detail) => {
+          if (action === "breaker") breakerSeen.push((detail as { failures: number } | undefined)?.failures ?? -1);
+        } });
         maybeStartCheckpoint({ state, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
         await state.job?.done;
         if (round < 2) expect(state.broken).toBe(false);
       }
       expect(state.broken).toBe(true);
-      expect(broke).toBe(true);
+      expect(breakerSeen).toEqual([3]);
       expect(maybeStartCheckpoint({ state, deps: depsOf({ session, scripts: [] }), stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 2, step: 0 })).toBe(false);
     } finally {
       await world.ctx.dispose();

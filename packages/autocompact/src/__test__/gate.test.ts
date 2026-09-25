@@ -55,13 +55,13 @@ describe("分区放行（eff=900：cp=540 / warn=700 / l1=800）", () => {
   });
 
   it("越 L1 线 + L1 预门槛成立 → redaction 落账回线下放行（零 LLM 调用——纯本地通道）", async () => {
-    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined }); // 无摘要面：eff=1000、l1=900、cp=600
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 95, l2Pct: 95 }, { summarizer: undefined }); // 无摘要面：eff=1000、l1=l2=950、cp=600
     const cleared: string[] = [];
     world.ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
     try {
       const made = await world.store.create({ id: sid("l1") });
       if (!made.ok) throw new Error(made.reason);
-      // 旧工具结果 ~60 token：占用 950 − 60 = 890 < 900
+      // 旧工具结果 ~60 token：占用 950 − 60 = 890 < 950
       seedToolTurn(made.value, { turn: 0, user: "go", tool: "read", callId: "c1", args: JSON.stringify({ path: "/a.ts" }), result: textOf(60) });
       seedToolTurn(made.value, { turn: 1, user: "next", tool: "read", callId: "c2", args: "{}", result: textOf(1), usage: { input: 950, output: 1 } });
       await dispatchPreStep(world, { session: made.value.id });
@@ -146,22 +146,22 @@ describe("CP + L2 旅程（账本就绪 → 越线 L2 零新 CP）", () => {
   });
 });
 
-describe("接管仲裁", () => {
-  it("自面就绪 → 接管：水位超也不自主压缩（无 compactionLanded）；跳过后不再重试", async () => {
+describe("水位权分居（autocompact 不接管 compaction 水位——强制压缩带归 compaction）", () => {
+  it("自面就绪且占用超 compaction 水位（980 > 900）→ compaction 仍自主压缩（compactionLanded 落账）", async () => {
     const world = await makeWorld();
     const landed: string[] = [];
     world.ctx.on(compactionLanded, (payload) => landed.push(payload.trigger));
     try {
-      const session = await seeded(world, "takeover", 980); // 超 compaction 阈值（1000 − 50 = 950）
+      const session = await seeded(world, "pct-forced", 980); // 超 compaction 水位（1000 × 90% = 900）
+      world.llm.scripts.push(textScript("## Goal\nforced\n\n## Progress\n### In Progress\n- [ ] t"));
       await dispatchPreStep(world, { session: session.id });
-      await dispatchPreStep(world, { session: session.id });
-      expect(landed).toEqual([]); // 水位权已接管——无 compaction 落账
+      expect(landed).toEqual(["auto"]); // 水位权在 compaction——强制压缩落账
     } finally {
       await world.ctx.dispose();
     }
   });
 
-  it("自面缺席（摘要面未配置）→ 不接管 + takeover-skipped 恰一次", async () => {
+  it("自面缺席（摘要面未配置）→ 零接管副作用、零拨号（纯本地通道照常）", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const world = await makeWorld({ summarizer: undefined }, { summarizer: undefined });
     try {
@@ -169,7 +169,8 @@ describe("接管仲裁", () => {
       const session = await seeded(world, "skip", 500);
       await dispatchPreStep(world, { session: session.id });
       await dispatchPreStep(world, { session: session.id });
-      expect(stderr.mock.calls.filter((line) => String(line[0]).includes("takeover-skipped"))).toHaveLength(1);
+      expect(world.llm.calls).toHaveLength(0);
+      expect(stderr.mock.calls.filter((line) => String(line[0]).includes("takeover-skipped"))).toHaveLength(0); // 接管面已拆除
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -180,10 +181,10 @@ describe("接管仲裁", () => {
 describe("servedWindow 收缩与生命周期", () => {
   it("假窗口收缩 → refit 降级纯本地通道（禁 L2，release degraded）", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const world = await makeWorld();
+    const world = await makeWorld(); // eff=900、l1=l2=801、warn=701、cp=540
     try {
       const session = await seeded(world, "degraded", 850);
-      session.append("request/context", { provider: "p", model: "m", contextWindow: 300 }); // servedWindow 深收缩
+      session.append("request/context", { provider: "p", model: "m", contextWindow: 120 }); // servedWindow 深收缩：eff=20 < l1/l2 线（线序倒置触发 refit）
       await dispatchPreStep(world, { session: session.id });
       const codes = stderr.mock.calls.map((line) => String(line[0]));
       expect(codes.some((line) => line.includes("lines-degraded"))).toBe(true);
@@ -233,12 +234,12 @@ describe("servedWindow 收缩与生命周期", () => {
   });
 
   it("多会话状态隔离：A 越 L1 线落 L1、B 安全区零落账互不串", async () => {
-    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined });
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 95, l2Pct: 95 }, { summarizer: undefined }); // eff=1000、l1=l2=950
     try {
       const madeA = await world.store.create({ id: sid("iso-a") });
       const madeB = await world.store.create({ id: sid("iso-b") });
       if (!madeA.ok || !madeB.ok) throw new Error("create failed");
-      // A：旧大结果 + 占用 950（≥ l1 900）；B：同形但占用 500（安全区）
+      // A：旧大结果 + 占用 950（≥ l1 950）；B：同形但占用 500（安全区）
       seedToolTurn(madeA.value, { turn: 0, user: "go", tool: "read", callId: "ca", args: "{}", result: textOf(60) });
       seedToolTurn(madeA.value, { turn: 1, user: "next", tool: "read", callId: "cb", args: "{}", result: textOf(1), usage: { input: 950, output: 1 } });
       seedToolTurn(madeB.value, { turn: 0, user: "go", tool: "read", callId: "cc", args: "{}", result: textOf(60) });

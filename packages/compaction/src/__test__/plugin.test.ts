@@ -87,7 +87,7 @@ describe("水位触发（agentPreStep → replace 落账）", () => {
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
       seedTurn(session, { turn: 0, user: "early", assistant: { text: "a0", usage: { input: 100, output: 5 } } });
-      seedTurn(session, { turn: 1, user: "q", assistant: { text: "a", usage: { input: 850, output: 5 } } }); // 锚 850 < 900（单轮无切口——前置一轮）
+      seedTurn(session, { turn: 1, user: "q", assistant: { text: "a", usage: { input: 850, output: 5 } } }); // 锚 850 < 900 水位（单轮无切口——前置一轮）；850+100 粘贴 > 900 触发
       // 模拟 beginStep 的 claim 尾事件：大粘贴（100 token）
       session.append("agent/inbox/spliced", {
         op: "insert",
@@ -184,18 +184,16 @@ describe("manual runner（服务直调）", () => {
     }
   });
 
-  it("setAutoTriggerEnabled(false) → 阈值超也不自主压缩；还回恢复", async () => {
+  it("triggerPct 水位线：百分比强制压缩带（950 > 1000×90% 触发；850 不触发）", async () => {
     const world = await makeWorld();
     try {
-      const made = await world.store.create({ id: sid("toggle") });
+      const made = await world.store.create({ id: sid("pct") });
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500, output: 5 } } });
-      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 950, output: 5 } } });
-      const runner = world.ctx.use(compactionRunner);
-      runner.setAutoTriggerEnabled(false);
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 850, output: 5 } } }); // 850 < 900 水位
       await dispatchPreStep(world, { session: made.value.id });
-      expect(world.llm.calls).toHaveLength(0);
-      runner.setAutoTriggerEnabled(true);
+      expect(world.llm.calls).toHaveLength(0); // 未过线零拨号
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 950, output: 5 } } }); // 950 > 900 水位
       world.llm.scripts.push(textScript("BACK"));
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(1);

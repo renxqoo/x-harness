@@ -12,9 +12,10 @@
 避免每一步都付出摘要成本。两包分工沿用参照系：
 
 - **compaction = 「怎么压」**：切口选择、结构化摘要（累积更新 + 文件账本）、replace 落账、
-  水位触发、413 自愈；暴露 `compactionRunner` 服务（手动压缩入口 + 触发权开关）。
+  水位触发（`triggerPct` 缺省 92% 强制压缩带）、413 自愈；暴露 `compactionRunner` 服务
+  （手动压缩入口）。
 - **autocompact = 「何时动、在哪层动」**：分层防线——CP（后台账本维护，唯一常规摘要面）→
-  L1（旧工具结果无损占位，零 LLM）→ L2（账本+活口零 LLM 落账）→ 水位决策权接管/归还；
+  L1（旧工具结果无损占位，零 LLM）→ L2（账本+活口零 LLM 落账）；
   L3（413 自愈）专属 compaction。
 
 ## 1. 契约
@@ -25,7 +26,9 @@
 export interface CompactionOptions {
   /** 主模型窗口（装配面事实，必填）：触发分母 = min(contextWindow, 实测 servedWindow) */
   readonly contextWindow: number;
-  readonly reserveTokens?: number;      // 缺省 16_384；> 0
+  /** 水位触发百分比（1–99，缺省 92）：占用 > 分母 × pct% → 强制压缩 */
+  readonly triggerPct?: number;
+  readonly reserveTokens?: number;      // 缺省 16_384；> 0（摘要输出预留，不充当水位）
   readonly keepRecentTokens?: number;   // 缺省 20_000；≥ 0
   /** 摘要模型面；缺席 = 软禁用（一次性告警，水位/自愈不动作，手动 compact 返回失败理由） */
   readonly summarizer?: {
@@ -45,7 +48,6 @@ export interface CompactionOptions {
 }
 export interface CompactionRunner {
   compact(fields: { session: SessionId; trigger?: "manual" | "auto" | "emergency"; customInstructions?: string; keepRecentTokens?: number }): Promise<CompactionResult>;
-  setAutoTriggerEnabled(enabled: boolean): void;
   /** 解析后的摘要面（autocompact 的 CP 与压缩摘要共用同一模型面——单一真相 + 覆盖注入） */
   readonly summarizer: { readonly model: string; readonly provider?: string; readonly contextWindow: number; readonly maxOutputTokens: number } | undefined;
 }
@@ -62,14 +64,17 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin;
 ```
 
 装配期 fail-fast（构造时 throw，参照系 assertConfigValueDomain 语义）：非有限数 /
-`contextWindow < 1` / `reserveTokens < 1` / `reserveTokens × 2 > contextWindow` /
-`keepRecentTokens < 0`。垃圾输入不静默穿透（NaN 比较恒 false 的坑不复制）。
+`contextWindow < 1` / `triggerPct ∉ [1,99]` / `reserveTokens < 1` /
+`reserveTokens × 2 > contextWindow` / `keepRecentTokens < 0`。垃圾输入不静默穿透
+（NaN 比较恒 false 的坑不复制）。
 
 **触发与自愈接线**（waterfall 中间件，一律「先调 next、下游已裁决 retry 则让位」纪律，
 与 llm-retry 任意装配序兼容）：
 
-- `agentPreStep`：`autoTriggerEnabled` 为真时测占用（§1.4）→ `shouldCompact` 为真 →
-  `compact(trigger:"auto")`；恒 `return next(payload)`（永不 reject）。
+- `agentPreStep`：测占用（§1.4）→ `shouldCompact` 为真（占用 > min(主窗, servedWindow) ×
+  `triggerPct`% —— 92% 强制压缩带）→ `compact(trigger:"auto")`；恒 `return next(payload)`
+  （永不 reject）。水位决策权求 compaction 独有：autocompact 的 L1/L2 是其前置的零 LLM
+  分层，不再接管/归还水位（`setAutoTriggerEnabled` 已删除）。
 - `agentRequestError`：next 透传后，`failure.code` 命中窗口溢出闭集 `WINDOW_OVERFLOW_CODES = { "http-413", "context-overflow" }`（context-overflow = llm 层 overflow 文案分类码——主力 provider 输入溢出为 400+文案，docs/OUTPUT-TOKEN-CONTINUATION.md）且本 (session,turn,step)
   未自愈过（per-session `lastHealed` 键）→ ①实测 servedWindow（= 当前占用测量值）落
   `request/context {provider, model, contextWindow}`（写失败仅告警不阻断自愈；
@@ -152,6 +157,8 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin;
 export interface AutoCompactOptions {
   readonly contextWindow: number;              // 必填（线序值域校验分母）
   readonly checkpointPct?: number;             // 1–99，缺省 60
+  readonly l1Pct?: number;                     // 1–99，缺省 70（免费层：清旧工具结果）
+  readonly l2Pct?: number;                     // 1–99，缺省 85（账本查表替换层）
   readonly checkpointMinSegmentTokens?: number;// 缺省 20% 有效窗口
   readonly ledgerBudgetTokens?: number;        // ≥500，缺省 16_000；值域 ≤ 25% 有效窗口
   readonly clearKeepRecent?: number;           // 缺省 5
@@ -159,7 +166,7 @@ export interface AutoCompactOptions {
   readonly idleClearMinutes?: number;          // 缺省 60；0 = 关
   readonly idleClearMinGainTokens?: number;    // 缺省 0
   readonly warnBufferTokens?: number;          // 缺省 20_000
-  readonly compactBufferTokens?: number;       // 缺省 13_000
+  readonly compactBufferTokens?: number;       // 缺省 13_000（refit 降级 buffer 参考）
   readonly checkpointMaxRetries?: number;      // 缺省 2
   readonly checkpointIdleTimeoutMs?: number;   // 缺省 120_000；0 = 看门狗关
   /** agent-loop maxToolResultChars 的 token 折算（首步增量缺省与并行逼近告警用）；缺省 25_000（100k chars/4） */
@@ -176,11 +183,12 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
 - **线推导**：`base = min(contextWindow, servedWindow)`（servedWindow = 本件自折叠末次
   `request/context.contextWindow`——**不复用 agent-loop 的 `lastRequestContext`**，它丢弃
   contextWindow 字段）；`reserve = 摘要面在场 ? min(maxOutput, 20_000) : 0`；
-  `effectiveWindow = base − reserve`；`l1Line = l2Line = effectiveWindow − compactBufferTokens`；
-  `warnLine = l1Line − warnBufferTokens`；`cpWatermark = effectiveWindow × checkpointPct`。
-  装配期值域 fail-fast：`0 < cp < warn < l1 < effectiveWindow` 且 ledgerBudget ≤ 25% 有效窗口。
-  servedWindow 运行期深收缩 → `refitLines` 降级（CP 关、buffer 自适应 `max(2_000, 2%窗口)`、
-  degraded 标记 + 一次性告警 + 事件），降级态禁 L2（纯本地通道——L0 归 agent-loop 既有帽）。
+  `effectiveWindow = base − reserve`；`l1Line = effectiveWindow × l1Pct`（缺省 70%——免费层
+  先行）；`l2Line = effectiveWindow × l2Pct`（缺省 85%——账本层居中，与 compaction 92%
+  强制带分层）；`warnLine = l2Line − warnBufferTokens`；`cpWatermark = effectiveWindow × checkpointPct`。
+  装配期值域 fail-fast：`0 < cp ≤ l1 ≤ warn < l2 < effectiveWindow` 且 ledgerBudget ≤ 25% 有效窗口。
+  servedWindow 运行期深收缩 → `refitLines` 降级（CP 关、L1/L2 合并单线、buffer 自适应
+  `max(2_000, 2%窗口)`、degraded 标记 + 一次性告警 + 事件），降级态禁 L2（纯本地通道——L0 归 agent-loop 既有帽）。
 - **占用测量**（复用 §1.4 compaction 纯函数 + 增量面）：
   - `maxParallel` = 尾部 12 个 assistant 消息的 tool_use 峰值（并行度观测面）。
   - **首步增量缺省**：turn 首步无 lastOccupancy 时 `delta = toolResultCapTokens × max(1, maxParallel)`
@@ -210,7 +218,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
     (ii) 失效且重试余量 > 0 → 重锚后**重新拨号**（重试计数 = 模型重拨次数）；
     (iii) 重试耗尽 → **接受 stale patch**（免疫终态，stale:true 落词条）。
   - 单飞行（per-session job 守卫；abort 监听 `{once:true}` + finally 显式移除）；
-    连续 3 败熔断 → 事件 + `runner.setAutoTriggerEnabled(true)` 还水位权。
+    连续 3 败熔断 → breaker 事件 + CP 通道停飞（水位权恒在 compaction，无还权面）。
   - **账本回嵌双轨**：持久化/落账用原文序列化；提示侧序列化**结构标签保持字面半角**
     （patch 解析要求精确标签），仅**行内容**过中和——两轨同源同标签表，词表锁测试锁定。
 - **L1（无损占位，零 LLM）**：候选 = clearable 工具的 `tool/result` 节点、在飞轮整轮豁免
@@ -265,10 +273,10 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   持久化之前；flush 失败告警 `idle-flush-failed` 但 **emit 照发**——落账已成 append-only
   日志事实，与参照系「flush 失败回滚 redaction」的有意分歧：落账不可逆故如实报态）。turnActive/lastTurnEndAt 由 `sessionAuditEvent`
   （turn/start、turn/end；审计通道微任务投递）维护，冷启动由 journal 折叠；L1 落账后的 flush 为 fsync 屏障（append 已由审计实时段先行）。
-- **接管仲裁**：**全局恰一次**，首个 `agentPreStep` 到达时评估（此时装配已定，无停靠竞态）：
-  `compactionRunner` 在场且 CP 模型面就绪（runner.summarizer 或覆盖项 + llm 停靠到位）→
-  `setAutoTriggerEnabled(false)`；否则一次性告警不接管、**此后不再重试**（防抖动）。
-  熔断时归还。
+- **水位权分居**：强制压缩水位（`triggerPct`）恒属 compaction；autocompact 只读
+  `runner.summarizer`（CP 摘要面单一真相），不接管不归还。L1/L2 线（autocompact 自有
+  线序）是 90% 强制带之前的零 LLM 前置层；两层各自按线触发、互不阻塞——
+  L1/L2 落账把占用压回线下时，下一步闸自然不再过 compaction 水位。
 
 ### 1.3 观测面（两包自有 emit token，freeze none）
 
@@ -282,7 +290,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
 `compaction/file-ledger-empty`、`compaction/trigger-noop`（静默理由：瞬态/取消类——
 summarizer-unconfigured/llm-unavailable/aborted）、`compaction/watermark-failed`、
 `compaction/served-window-write-failed`、`autocompact/gate-soft-fail`、
-`autocompact/takeover-skipped`、`autocompact/idle-flush-failed`、
+`autocompact/idle-flush-failed`、
 `autocompact/idle-tick-failed`、`autocompact/lines-degraded`、`autocompact/l1-no-gain`、
 `autocompact/l1-redact-failed`、`autocompact/l2-no-progress`、`autocompact/parallel-approach`、
 `autocompact/budget-gate-release`（理由子词表：`ledger-unready`/`join-unavailable`/`degraded`）、
@@ -320,7 +328,7 @@ summarizer-unconfigured/llm-unavailable/aborted）、`compaction/watermark-faile
 
 **处理**：水位触发压缩、手动压缩、413 紧急自愈 + servedWindow 落账、切口/配额/护栏、
 结构化累积摘要、文件账本、CP 账本维护与恢复（含输入硬界/失效三分支/熔断）、L1 占位、
-L2 零 LLM 落账（守卫/复测门/重锚）、空闲清理、接管仲裁、线推导与降级、并行逼近观测、
+L2 零 LLM 落账（守卫/复测门/重锚）、空闲清理、水位权分居、线推导与降级、并行逼近观测、
 领取批次计入、校准、软失败矩阵（abort 与失败分流）。
 
 **不处理**（归属）：
@@ -427,9 +435,9 @@ session_meta、settings、自定义事件总线）改写为对应本仓面（sur
   与中位因子；L2 活口预算方向性（keep 单调不减）。
 - 装配层：分区放行（安全/警告/L1/L2）零 LLM 断言；L1 预门槛落账回线下；清无可清
   （<1000）退避与可观收益不退避；CP 单飞行/失效三分支（吞段非失败/重试重拨/stale 接受/
-  部分替换失效）/输入预算不拨号/熔断还权/词条落账失败计败；L2 覆盖域守卫/**复测门豁免
-  守卫二次落账**/coveredSeq 重锚/armed 复位/取消在飞 CP/join 兑底；接管仲裁双向 + 恰一次
-  + 跳过后不重试；首步增量缺省与并行逼近告警恰一次；空闲清理端到端（flush 先于 emit/
+  部分替换失效）/输入预算不拨号/熔断停飞/词条落账失败计败；L2 覆盖域守卫/**复测门豁免
+  守卫二次落账**/coveredSeq 重锚/armed 复位/取消在飞 CP/join 兑底；水位权分居（compaction
+  水位恒自主）；首步增量缺省与并行逼近告警恰一次；空闲清理端到端（flush 先于 emit/
   tick 异常不崩）；恢复旅程（checkpoint 词条折叠重建 → 越线 L2 零新 CP）；servedWindow
   收缩线行动 + 降级禁 L2；多会话检查点隔离；软失败全放行；sessionDisposed 取消在飞 CP；
   插件 dispose join 收口。
@@ -470,7 +478,7 @@ session_meta、settings、自定义事件总线）改写为对应本仓面（sur
 ## 10. 验收清单
 
 - [x] §1 契约逐条（选项值域 fail-fast 表 / 跳过理由与 CP 子动作词表锁定测试 /
-      事件时序：L2 落账取消在飞 CP、idle flush 先于 emit、413 自愈恰一次、接管恰一次）
+      事件时序：L2 落账取消在飞 CP、idle flush 先于 emit、413 自愈恰一次、水位恒自主）
 - [x] §2 宿主件修订同批落档（SESSION.md §1.4 位置区间 + 词条表 16、TOKEN-METER.md
       estimateText 口径——切片 1 提交内同批）
 - [x] §6 删除/修复/改进逐条（参照系死代码零随迁；单飞行 join 语义/锚口径合一/
@@ -521,7 +529,7 @@ session_meta、settings、自定义事件总线）改写为对应本仓面（sur
   l1Backoff 精度 → 全部钉入 §1.1–§1.3（采纳）；
 - #14 重大：CP 作业 dispose 不取消不 join → §4 生命周期闭合（sessionDisposed 取消 +
   disposer 取消全部 + 有界 join）（采纳）；
-- #15 轻微：接管评估时点未钉 → 全局恰一次、首个 pre-step 评估、跳过后不重试（采纳）。
+- #15 轻微：接管评估时点未钉 → 曾裁决全局恰一次/首 pre-step 评估；水位权分居后该面整体拆除（§1.2 水位权分居）。
 
 ## 12. 切片 1 代码对抗审查处置（两路并行子 agent，2026-09-19）
 

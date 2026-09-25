@@ -71,9 +71,10 @@ export function measureContext(
   return { tokens: anchorTokens + Math.ceil(trailing * factor), hasAnchor: true, anchorSeq, trailingTokens: trailing, anchorTokens };
 }
 
-/** 触发判定：tokens > contextWindow − reserve（严格大于——reserve 是绝对预留非百分比） */
-export function shouldCompact(contextTokens: number, contextWindow: number, reserveTokens: number): boolean {
-  return contextTokens > contextWindow - reserveTokens;
+/** 触发判定（严格大于）：tokens > contextWindow × pct% —— 水位是窗口百分比
+ *  （强制压缩带）；reserve 是留给摘要落账的绝对预留，不再充当水位 */
+export function shouldCompact(contextTokens: number, contextWindow: number, triggerPct: number): boolean {
+  return contextTokens > (contextWindow * triggerPct) / 100;
 }
 
 /** 末个 request/context 的 contextWindow（servedWindow 读侧）：末词条定当前线路事实，

@@ -99,8 +99,6 @@ export interface CheckpointDeps {
   readonly fileTools: FileToolNames;
   readonly warn: (session: SessionId, code: string, detail?: Record<string, unknown>) => void;
   readonly emit: (action: CheckpointAction, detail?: Record<string, unknown>) => void;
-  /** 熔断回调：还接管（runner.setAutoTriggerEnabled(true) 交还 compaction 水位） */
-  readonly onBreaker: () => void;
 }
 
 /** CP 输入硬界：(CP 窗 − min(输出上限, 20k) − 4k − 账本字符) / 上界费率；
@@ -391,7 +389,6 @@ function acceptPatch(fields: {
     state.consecutiveFailures += 1;
     if (state.consecutiveFailures >= 3) {
       deps.emit("breaker", { failures: state.consecutiveFailures });
-      deps.onBreaker();
     }
     return;
   }
@@ -404,7 +401,6 @@ function failOnce(state: CheckpointState, deps: CheckpointDeps): void {
   if (state.consecutiveFailures < 3) return;
   state.broken = true;
   deps.emit("breaker", { failures: state.consecutiveFailures });
-  deps.onBreaker();
 }
 
 /** 恢复 fold：重放 autocompact/checkpoint 词条（快照式，最后有效者胜）重建账本

@@ -39,17 +39,27 @@ const LINES_200K = computeLines({
   contextWindow: 200_000,
   summarizerMaxOutput: 8_000,
   checkpointPct: 60,
+  l1Pct: 70,
+  l2Pct: 85,
   warnBufferTokens: 20_000,
   compactBufferTokens: 13_000,
 });
 
-describe("线推导（参照系 arbiter 语义）", () => {
-  it("200k/128k 缺省 buffer：0 < CP < 警告 < L1 < 有效窗口；L2 线 = L1 线", () => {
+describe("线推导（百分比线序）", () => {
+  it("缺省线序：L1=70%、L2=85%（免费层先行，账本居中，92% 强制压缩归 compaction）", () => {
+    const d = computeLines({ contextWindow: 100_000, checkpointPct: 60, warnBufferTokens: 5_000, compactBufferTokens: 5_000 });
+    expect(d.l1Line).toBe(70_000);
+    expect(d.l2Line).toBe(85_000);
+    expect(d.warnLine).toBe(80_000);
+    expect(d.degraded).toBe(false);
+  });
+
+  it("200k 窗：0 < CP(60%) ≤ L1(70%) ≤ 警告 < L2(85%) < 有效窗口；L1/L2 为独立百分比线", () => {
     expect(LINES_200K.effectiveWindow).toBe(192_000);
     expect(LINES_200K.cpWatermark).toBe(115_200);
-    expect(LINES_200K.warnLine).toBe(159_000);
-    expect(LINES_200K.l1Line).toBe(179_000);
-    expect(LINES_200K.l2Line).toBe(LINES_200K.l1Line);
+    expect(LINES_200K.l1Line).toBe(134_400);
+    expect(LINES_200K.l2Line).toBe(163_200);
+    expect(LINES_200K.warnLine).toBe(143_200);
     expect(LINES_200K.degraded).toBe(false);
   });
 
@@ -65,9 +75,9 @@ describe("线推导（参照系 arbiter 语义）", () => {
     expect(shrunk.effectiveWindow).toBe(120_000);
   });
 
-  it("装配期值域 fail-fast：线序倒置拒启动（崩坏点 100k 窗 + 20k 预留 → CP > 警告）", () => {
-    const bad = computeLines({ contextWindow: 100_000, summarizerMaxOutput: 20_000, checkpointPct: 60, warnBufferTokens: 20_000, compactBufferTokens: 13_000 });
-    expect(() => assertLinesDomain({ lines: bad, ledgerBudgetTokens: 16_000, checkpointPct: 60 })).toThrow(/autocompact config invalid/);
+  it("装配期值域 fail-fast：线序倒置拒启动（L1 > L2 百分比倒置）", () => {
+    const inverted = computeLines({ contextWindow: 100_000, summarizerMaxOutput: 8_000, checkpointPct: 60, l1Pct: 85, l2Pct: 70, warnBufferTokens: 1_000, compactBufferTokens: 1_000 });
+    expect(() => assertLinesDomain({ lines: inverted, ledgerBudgetTokens: 16_000, checkpointPct: 60 })).toThrow(/autocompact config invalid/);
     expect(() => assertLinesDomain({ lines: LINES_200K, ledgerBudgetTokens: 16_000, checkpointPct: 60 })).not.toThrow();
   });
 
@@ -75,21 +85,22 @@ describe("线推导（参照系 arbiter 语义）", () => {
     expect(() => assertLinesDomain({ lines: LINES_200K, ledgerBudgetTokens: 60_000, checkpointPct: 60 })).toThrow();
   });
 
-  it("refitLines：线序良好不变；违例降级（CP 关、buffer 百分比自适应、degraded 标记）", () => {
-    expect(refitLines(LINES_200K)).toBe(LINES_200K);
-    const broken = { ...LINES_200K, effectiveWindow: 10_000, warnLine: -1, l1Line: 5_000, l2Line: 5_000 };
+  it("refitLines：线序良好不变；违例降级（CP 关、L1/L2 合并单线、buffer 百分比自适应、degraded 标记）", () => {
+    expect(refitLines(LINES_200K)).toEqual(LINES_200K);
+    const broken = { ...LINES_200K, effectiveWindow: 10_000, warnLine: -1, l1Line: 11_000, l2Line: 5_000 };
     const refit = refitLines(broken);
     expect(refit.degraded).toBe(true);
     expect(refit.cpWatermark).toBe(Number.POSITIVE_INFINITY);
     expect(refit.l1Line).toBe(10_000 - Math.max(2_000, 200));
+    expect(refit.l2Line).toBe(refit.l1Line);
     expect(refit.warnLine).toBe(refit.l1Line);
   });
 
-  it("放行预算外推（占用 + 增量×1.5 越窗为真）与 L1 预门槛（收益压回线内才值得落账）", () => {
+  it("放行预算外推（占用 + 增量×1.5 越窗为真）与 L1 预门槛（收益压回 L1 线内才值得落账）", () => {
     expect(budgetOverflowPredicted({ occupancy: 150_000, lastStepDelta: 30_000, lines: LINES_200K })).toBe(true);
     expect(budgetOverflowPredicted({ occupancy: 150_000, lastStepDelta: 20_000, lines: LINES_200K })).toBe(false);
-    expect(l1PreGateWorth({ occupancy: 190_000, gainTokens: 20_000, lines: LINES_200K })).toBe(true);
-    expect(l1PreGateWorth({ occupancy: 190_000, gainTokens: 5_000, lines: LINES_200K })).toBe(false);
+    expect(l1PreGateWorth({ occupancy: 150_000, gainTokens: 20_000, lines: LINES_200K })).toBe(true);
+    expect(l1PreGateWorth({ occupancy: 150_000, gainTokens: 5_000, lines: LINES_200K })).toBe(false);
   });
 });
 
@@ -101,6 +112,15 @@ describe("账本七节（参照系 ledger 语义）", () => {
     expect(patch).toMatchObject({ goals: ["goal-1"], decisions: ["use-bun"], tasksDone: ["task-a"], tasksPending: ["task-b"], factsVerified: ["fact-1"], factsUnverified: ["fact-2"], current: "working on X" });
     expect(parseLedgerPatch("no tags at all")).toBeUndefined();
     expect(parseLedgerPatch("<goals>\n(none)\n</goals>")).toBeUndefined();
+  });
+
+  it("杂散标签行不入节（症状：模型漏闭标签时 <goals> 字面行被收进上一节，append-only 永久污染账本）", () => {
+    // 实测形态：goals 漏闭标签，后续节开标签被非贪婪解析收进 goals
+    const leaky = `<goals>\ngoal-1\n<goals>\n- 另一段目标\n</goals>\n<current>\nmid\n</current>`;
+    expect(parseLedgerPatch(leaky)?.goals).toEqual(["goal-1", "- 另一段目标"]); // 字面 <goals> 行被滤除，内容行保留
+    // 杂散闭标签行同治
+    const strayClose = `<goals>\ngoal-1\n</done>\n</goals>`;
+    expect(parseLedgerPatch(strayClose)?.goals).toEqual(["goal-1"]);
   });
 
   it("机械合并不变量：goals/decisions 行级 append-only；done 吸收 pending；verified 吸收 unverified；重复行去重", () => {
