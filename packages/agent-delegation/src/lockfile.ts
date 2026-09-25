@@ -6,13 +6,14 @@
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-/** pid 存活探测（process.kill 0 信号——对非子进程同样有效） */
+/** pid 存活探测（process.kill 0 信号——对非子进程同样有效）。ESRCH=死（唯一死信号）；
+ *  EPERM=进程在但属他用户（多用户共享机）——视为活（误判死会双临界区；误判活只损吞吐） */
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return (error as { code?: unknown }).code === "EPERM";
   }
 }
 
@@ -40,6 +41,9 @@ export interface RepoLock {
   readonly release: () => Promise<void>;
 }
 
+/** 等锁上限：到顶降级直跑临界区（无锁现状不劣化——挂死比无锁更糟，A 路 #6）。
+ *  正常临界区为秒级 git 调用，60s 覆盖 pid 复用检测窗与慢仓 */
+const LOCK_WAIT_MS = 60_000;
 const RETRY_MS = 25;
 
 /** 持锁执行（自旋等锁 + 临界区 + 必释放）。mkdir 原子性 = 唯一创建者即持锁者；
@@ -47,14 +51,25 @@ const RETRY_MS = 25;
  *  等同无锁现状，不劣化。 */
 export async function withRepoLock<T>(lockDir: string, critical: () => Promise<T>): Promise<T> {
   // 父目录不存在时 mkdir(recursive:false) 恒 ENOENT（与被持互不可分）——先建父
-  await mkdir(dirname(lockDir), { recursive: true }).catch(() => {});
+  const parentReady = await mkdir(dirname(lockDir), { recursive: true }).then(
+    () => true,
+    () => false,
+  ); // 父不可建（只读挂载/权限）→ 无锁可用：直接执行临界区（等同无锁现状，不劣化）
+  if (!parentReady) return await critical();
+  const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
       await mkdir(lockDir, { recursive: false }); // EEXIST 即被持/残留
-    } catch {
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code !== "EEXIST") {
+        // 非竞争性失败（权限/只读等环境性错误）——自旋无出路，降级直跑（不劣化于无锁）
+        return await critical();
+      }
       // pid 文件缺失 = 创建者仍在写（本进程同 tick 并发 or 极短窗口）——不能判 stale
       const holder = await lockHolder(lockDir, { creatingCountsAsHeld: true });
       if (holder !== undefined) {
+        if (Date.now() > deadline) return await critical(); // 超时降级（pid 复用等永久持锁形态——不挂死）
         await new Promise((resolve) => {
           setTimeout(resolve, RETRY_MS);
         });
@@ -68,7 +83,7 @@ export async function withRepoLock<T>(lockDir: string, critical: () => Promise<T
       await writeFile(join(lockDir, "pid"), String(process.pid));
     } catch {
       await rm(lockDir, { recursive: true, force: true }).catch(() => {});
-      continue;
+      return await critical(); // 持续写不可（目录只读等）——自旋无出路，降级直跑
     }
     try {
       return await critical();
@@ -85,10 +100,4 @@ export function repoLockPath(worktreeParentDir: string, repoTop: string): string
   let hash = 0;
   for (const ch of repoTop) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
   return join(worktreeParentDir, `repo-${(hash >>> 0).toString(16)}.lock`);
-}
-
-/** 供诊断面探测锁 mtime */
-export async function lockAgeMs(path: string, now: () => number = Date.now): Promise<number | undefined> {
-  const info = await stat(path).catch(() => undefined);
-  return info === undefined ? undefined : now() - info.mtimeMs;
 }

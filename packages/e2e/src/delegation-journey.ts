@@ -39,7 +39,7 @@ export async function runDelegationJourney(): Promise<void> {
       systemPromptPlugin,
       agentLoopPlugin,
       createTaskToolsPlugin(),
-      createAgentDelegationPlugin({ agentsDirs: [agentsDir], workspaceRoot: process.cwd() }),
+      createAgentDelegationPlugin({ agentsDirs: [agentsDir], workspaceRoot: process.cwd(), worktreeSweep: false }),
     ]);
     const off = ctx.use(llmRuntime).registerAdapter({
       name: "fake",

@@ -191,6 +191,7 @@ describe("门禁（X7/X8/X17/X20）", () => {
     expect(() => createAgentDelegationPlugin({ agentsDirs: [""], workspaceRoot: "/" })).toThrow();
     expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "" } as never)).toThrow();
     expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "relative/path" } as never)).toThrow();
+    expect(() => createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: "." } as never)).toThrow();
   });
 
   it("缺省上限口径：reportCap 34000 / depth 3 / concurrent 10 / resident 32", () => {
