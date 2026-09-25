@@ -1,6 +1,8 @@
 # AGENT-WORKFLOW：验收回炉与任务编排终态（件 16）
 
-> 状态：**方案定稿 v2**（首轮两路对抗审查 A/B 共 17 真缺陷 + 14 风险全处置，处置表 §15）
+> 状态：**方案定稿 v3**（首轮 17 真缺陷+14 风险处置为 v2；二轮复审 12 真缺陷+11 风险处置
+> 为 v3——两轮处置表 §15。核心修正：接缝 3→4（+settle）/豁免 4→5（+settle 失败兜底）/
+> 停机语义按事实重写/恢复二维表细化到四终态/期 1 切 1a-1b 并补实施顺序）
 > 级别：高（agent-workflow-core 新包（纯引擎）+ agent-workflow 新包（插件）+ agent-delegation
 > 三接缝 + task-tools 源让位 + CLI/hub 两宿主装配）
 > 上游关联：件13 AGENT-DELEGATION §1 U1 落档的是 **teammate/name@team 常驻团队寻址（云形态）**。
@@ -67,7 +69,15 @@ packages/agent-workflow/          插件包（IO + 接线；一动词一文件�
 ```
 
 依赖方向：`agent-workflow → { workflow-core, agent-delegation(softInject), task-tools, sandbox, session }`；
-两宿主经 `workflowKit({ root, budgets? })`（harness 包）装配——不装即无此面，行为与现状全等。
+两宿主经 `workflowKit({ root, mainSession, budgets? })`（harness 包）装配——不装即无此面，
+行为与现状全等。`mainSession` 必收（B2-06：§5.1 过滤条件②的判值来源——CLI 先铸 id /
+hub thread 会话 id，mailbox mainSession 先例同构）。
+
+**workflow 插件 dispose 序列（F3——v2 零字，v3 钉死）**：停 Tier B 在飞沙箱进程（abort）→
+journal 屏障 fsync 收尾 → run 锁不显式释放（死锁由 pid 活性接管——显式释放反而引入退出
+竞态）→ 受管行**不** cancel（豁免兑现，§5.4）。装配/回卷序事实：softInject 拓扑 delegation
+先 apply → 回卷 LIFO 时 workflow 先回卷、delegation 后回卷——workflow dispose 时接缝仍
+可用（兜底回收路径可达）。
 
 ## 3. 存储与目录
 
@@ -83,11 +93,15 @@ packages/agent-workflow/          插件包（IO + 接线；一动词一文件�
 - `snapshot = fold(journal.events)`——journal 只落**编排事实**（豁免边界见 §4）
 - 写面工程语言与 session-persistence-jsonl 同款：per-run 串行链、实时段 append + 屏障
   fsync、失败截断回滚保前缀序、撕裂截断到最后换行
-- **run 占有 = lock 持有**（v2：原「header 活」无判据——SessionHeader 无活性字段）；
-  锁持有者 = 该 run 的驱动进程；崩溃后按 pid 活性 + 接管窗重认领
-- **恢复矩阵**（v2 补，journal 异常态的处置）：目录被外部删除 → 等价 run 不存在（子会话
-  WAL 仍在，可手动 revive，onWarn）；header 半写/损坏 → run 冻结 + onWarn（不自动重建）；
-  journal 中行损坏 → 撕裂截断到最后完整行 fold（前缀语义），截断处之后事件丢弃 + onWarn
+- **run 占有 = lock 持有**（v2：原「header 活」无判据）。**锁形态照实 pid-only**（F12/
+  B2-04 修正：lock.ts 实际只有 `${pid}`，无 bootId 无接管窗——v2 的「pid+bootId 同款全套」
+  与照抄对象不符）：活锁拒绝、死锁 rename 原子接管（wx 重建权威，两进程同刻接管恰一胜者，
+  败者拒绝）；pid 复用误判存活 = 拒接管（安全侧，30s 窗落档——与 session 锁同边界）
+- **恢复矩阵**（v2 补；v3 补中段损坏行——B2-05）：目录被外部删除 → 等价 run 不存在（子
+  会话 WAL 仍在，可手动 revive，onWarn）；header 半写/损坏 → run 冻结 + onWarn（不自动
+  重建）；journal **尾部**撕裂 → 截断到最后完整行 fold（前缀语义）+ onWarn；journal
+  **中段**行损坏（完整行但不可解析）→ **run 冻结 + onWarn**（对称 header 损坏——截尾
+  救不了中段，fold 拒绝半途状态，不临场发明跳过语义）
 
 ### 3.2 目录解析（仓库既有模式——插件零目录知识）
 
@@ -121,70 +135,109 @@ agent_message 追问）。`pluginVersion` 消费规则（v2 补，堵 A5-2）：
 
 ### 5.1 启动扫描（作用域过滤，堵 A8/B-07）
 
-plugin.apply 时：扫描 workflowRoot 全部 run → 对每个 run 先 fold 记账 → **只对满足全部
-三条的 run 执行恢复动作**：
+plugin.apply 时：扫描 workflowRoot（先读 header 剪枝——parentSession/run 终态，避免全量
+fold 的启动成本无界增长，F15）→ 对每个 run 先 fold 记账 → **只对满足全部三条的 run 执行
+恢复动作**：
 1. lock 可接管（无锁/死锁）——活锁 run 属他进程驱动，跳过不报错
-2. `header.parentSession === 本进程主会话`（或主会话将 resume 的 id）——他父的 run 跳过
+2. `header.parentSession ∈ 本进程会话管辖集`（= workflowKit 装配时传入的 mainSession
+   [CLI 先铸 id / hub thread 会话 id——mailbox mainSession 先例同构，B2-06]；运行期扩展为
+   本进程 live 会话集，覆盖子代理提交的 run）——他父的 run 跳过
 3. `header.pluginVersion` 与本插件兼容（不符 → 只读不补动作，§4）
 
 跳过即跳过：不失败装配、不改状态——多进程共享 root 安全。
 
+**期 1 工具面限定根会话**（F13 派生）：workflow_submit 仅根会话可用（对齐 notify_when_idle
+仅根会话先例，AGENT-DELEGATION §4.4）——子代理调用 → invalid-args 拒。子代理提交 run 的
+恢复管辖（live 会话集扩展）期 2 开。
+
 ### 5.2 二维窗口表（journal 末事件 × 子会话 WAL 终态，堵 B-02/B-03）
+
+**子会话 WAL 终态判定算法**（F8——扫描器职责，不依赖 loop.resume 副作用）：fold(archive)
+后，若存在开放 `turn/start`（无配对 `turn/end`）→ **合成 interrupted**（与
+interruptedTurnClosers 同构）。终态四分类：completed（末 turn/end{completed}）/ interrupted
+（合成）/ 未起跑（无 user 消息）/ **异常终态**（末 turn/end{error|blocked|max-tokens}）。
 
 | journal 末事件 | 子会话 WAL 终态 | 恢复动作 |
 | --- | --- | --- |
 | `run/created` | （无任务） | 静默续 |
-| `task/submitted` | 无 dispatched 后续 | 重派发（spec 在 journal）；若存在同 agentId 孤儿子会话（spawn 后未落账即崩）→ 经启动清扫语义处理孤儿树（B-03） |
-| `task/dispatched` | 末 `turn/end{completed}` | **直接进验收**（子已干完——不唤醒不重跑，白烧一轮） |
-| `task/dispatched` | `interrupted`（repair 已闭合） | `view.revive` 重建 lineage 行 + **kick 文本唤醒**（loop.resume 不自动 kick——A1）："continue task <taskId>；上下文已恢复" |
-| `task/dispatched` | 从未起跑（无 user 消息） | revive + 重放原 prompt'（prompt 增补从 spec 重铸） |
-| `task/repair-issued` | 任意 | revive + **按幂等标记判**（§8.3）：子 WAL 已含 `[wf <taskId> a<n>]` 标记 → 反馈已送达，等修复；未含 → 补注入 |
-| `verify/started`（Tier B） | — | **无 `verify/result` 配对 → 落 `verify/result{outcome:unknown}`，任务按 fail 处置**（B-10：不盲目重跑——副作用可能已发生）；有 result → 走正常裁决 |
+| `task/submitted` | 无 dispatched 后续 | 重派发（spec 在 journal）；「该父名下不被任何 run journal 引用的子会话/worktree」经 delegation 启动清扫语义回收（B-03/F 复审措辞修正——journal 无 dispatched 即不可知 agentId） |
+| `task/dispatched` | completed | **直接进验收**（不唤醒不重跑） |
+| `task/dispatched` | interrupted | `view.revive(agentId, settlement)` 重建**受管**行 + **kick 文本**（loop.resume 不自动 kick，A1）："continue task <taskId>；上下文已恢复" |
+| `task/dispatched` | 未起跑 | revive + 收件箱已有回灌 prompt（claimReinserts）则仅 kick；收件箱空则重放 prompt'（F7 反向：不双份排队） |
+| `task/dispatched` | **异常终态**（error/blocked/max-tokens） | `task/settled{failed, cause: child-failed}`（detail 透传 failureDetail 同源词表）——**不进验收不烧预算**（F6c：error 终态常无 assistant 文本，抽取必 reject） |
+| `task/repair-issued` | completed（修复轮已干完） | **直接进验收**（F6a：表 v2 折叠「等修复」会悬死） |
+| `task/repair-issued` | interrupted/未起跑 | revive + 按幂等标记判（见下）已材料化 → kick 续修；未材料化 → 补注入 |
+| `task/repair-issued` | 异常终态 | 同 dispatched 行：settled{failed, child-failed} |
+| `verify/started`（Tier B） | — | 无 `verify/result` 配对 → 落 `verify/result{outcome:unknown}`，任务按 fail 处置（B-10 不盲目重跑——副作用可能已发生）；有 result → 正常裁决 |
 | `task/settled` | — | 无 `notify/delivered` → 补投（§5.3）；已投 → 静默 |
-| `run/settled` | — | 静默归档 |
+| `run/settled` | — | 静默归档（run 后迟到 task/verify 事件收编，§7） |
 
-**唤醒/反馈/通知全部幂等**：判据 = 确定性标记（§8.3）在子会话 WAL / 父会话 WAL 中的存在性
-——不依赖 entry id（loop 内部铸造不回传，R1）。
+**幂等判据（F7 修正）**：标记出现在**已材料化消息**（user/message 或 agent/message 事件体）
+中才算「已送达」——inbox insert 事件（agent/inbox/spliced）只证明入队不证明消费（子崩溃于
+消费前则模型从未见过）。kick/反馈/通知全按此判。
 
 ### 5.3 补投触发边沿（堵 B-08）
 
 两宿主装配序都是插件 apply 先于主会话建立——apply 时刻的「死父」无法补投。规则：
 - **apply 时**：只 fold 记账 + 对「不需要父」的动作（revive 续跑、验收执行）立即执行
-- **主会话建立/复活边沿**（sessionCreated 事件 / 宿主 resume 完成回调）：触发重扫 →
-  补投悬置通知（插入序先于用户首条消息处理）+ 派发就绪任务（spawn 需活父句柄）
+- **主会话建立/复活边沿**：sessionCreated 事件（create/resume 两形态同源——resume 也走
+  store.create）。**时序陷阱（F14）**：该事件在 store.birth 内同步发射，此刻 loop 句柄
+  尚未登记（spawn 返回后才进 live）——监听器内必须 `queueMicrotask` 延迟处理（birth 的
+  await 续起与 register 同一微任务链，微任务后句柄必在）。补投插入序：next-step 注入天然
+  排在已排队 followup（next-turn）之后——宿主边沿处理先于向用户提示输入达成
+  「先于用户首条消息处理」的等价效果；断言锚进 §11。
 
 ### 5.4 运行期父会话死亡（W8 的兑现）
 
-受管子代理**不**随父 dispose 中止（豁免孤儿收养，§6-③）；继续跑完 → 验收 → settle →
-通知悬置落 journal；父 resume（任意进程）时按 §5.3 边沿补投。hub worker 停机：受管行
-豁免 stopAll（B-01）——worker 优雅停机落 `run 冻结`（journal 不动，等下次认领续跑）；
-worker 被杀（SIGKILL）同崩溃恢复。
+**「存活」的精确语义（F2 修正——v2 表述与机制事实相反）**：受管行豁免的是 *delegation
+的处置*（收养/档化/级联），**不是**「进程退出后子代理继续跑」——进程退出（CLI 退出、hub
+worker 优雅停机或被杀）时 session disposer 封存全部会话，受管子随进程消亡，在飞 LLM 请求
+中断，子 WAL 留开放轮。两停机形态（优雅/SIGKILL）恢复路径**完全相同**（§5.2 interrupted
+行 → revive+kick），差异仅尾段 flush 干净度。「继续跑完 → 验收 → 通知悬置」仅适用于
+**父会话 dispose 而进程活着**的窗口（REPL /new、hub client-abort）——该窗口内子代理
+确实继续（delegation 不处置它），完成后验收照常，通知悬置落 journal 等父 resume 边沿
+补投。hub 停机对受管行的正确期待：豁免 stopAll 的 cancel（不落 emitFinished 的 stopped
+终态），journal 停在当前事件——下次认领按 §5.2 恢复。
 
-## 6. delegation 接缝（v2：三个，均为原语非策略）
+## 6. delegation 接缝（v3：四个，均为原语非策略）
 
 1. **`delegationView.spawn(caller, input & { settlement?: SettlementToken })`**
    服务面补全（caller 首参与既有四动词同构——R7）。`settlement` 是**不透明 token**（v2：
    弃 SessionId——workflow 无会话身份，SessionId 会与「直达父」路由同键，B-04）：在场的
    子代理行挂受管标记，完成通知改投 token 寻址的结算入口。Tier C critic 的 spawn 同走此面
    （caller = 提交会话——critic 的 parent/占槽/depth 归提交会话记账，其完成投 critic 结算
-   token，不经 to:main 绕道，R7）。
-2. **`delegationView.revive(caller, agentId)`**
-   既有 reviveByAgentId 的服务面出口（v2 新增：原为包内私有，恢复链必需——复制即双真相，
-   B-05/A1）。语义与 message 复活链同源：按 header.agentId 重建 lineage 行 + 拨号/白名单/
-   worktree 重放；类型 .md 缺失 → fail-closed 拒（任务落 `settled{failed, type-def-missing}`）。
-3. **受管行生命周期豁免（W8）**
-   delegation 四处对 managed 行的行为修改（不变量④显式修订，独立单测锚）：
+   token，不经 to:main 绕道，R7）。**服务面无 execCtx**——内部合成 AbortSignal
+   （B2-可实施性补充）。跨服务传函数面先例：permissionBroker.ask。
+2. **`delegationView.revive(caller, agentId, settlement?)`**
+   既有 reviveByAgentId 的服务面出口（v2 新增；**v3 补 settlement 透传**——B2-01：不带它
+   则恢复行是普通行，通知绕过验收、父缺席被收养处死——首轮 A2/B-01 的洞在恢复路径复发）。
+   重建行时 settlement 在场即重建为**受管行**。类型 .md 缺失 → fail-closed 拒（任务落
+   `settled{failed, type-def-missing}`）。deps 侧复用既有 reviveDepsOf 闭包，不泄漏内部结构。
+3. **`delegationView.settle(agentId, cause)`**
+   v3 新增（B2-02：settle 归还无面可调——stopAll 误杀同父直通子、verbs.stop 未上 view、
+   lineage 摘行/worktree 清理是 delegation 私有面）。内部走 verbs.stop 同款序列（cancel →
+   whenIdle → dispose → evaluateCleanup → 摘行），供 workflow 对**单个**受管行做终局归还。
+4. **受管行生命周期豁免（W8；v3 补第五条 settle 失败防线）**
+   delegation 五处对 managed 行的行为修改（不变量④显式修订，独立单测锚）：
    - 孤儿收养（adoptOrphan / deliverToRow 父存活预检）：跳过——受管子不因父缺席被处死
    - evictIdle 档化：跳过——repair 等待窗内不被踢（R9）
-   - stopAll / 插件 dispose 级联：跳过 cancel/dispose/清树——宿主退出受管行存活（B-01）
+   - stopAll / 插件 dispose 级联：跳过 cancel/dispose/清树（B-01；「存活」语义见 §5.4）
    - 完成通知：投 settlement token 而非直达父
-   子代理的最终 dispose/清树/摘行由 **workflow settle 驱动**（run 终态后归还 delegation
-   常规路径；崩溃残留由下次恢复清扫）。
+   - **settlement 投递/落账失败兜底（F1）**：token 投递 throw 或 workflow 侧 journal append
+     失败 → delegation 兜底回收（dispose 子 + 清树 + 摘行 + onWarn；任务由 workflow 恢复
+     边沿落 `settled{failed, cause: settle-failed}`）——豁免不是无条件永久豁免，是
+     「settle 可达时豁免、settle 失联回收」。workflow 插件永不以外部插件（plugin-manager）
+     形态分发——kit 装配同 world 同死，token 失联只剩 journal 失败/回调 throw 两径，均被
+     此条兜住（F4 前提锁定）。
+   子代理的最终 dispose/清树/摘行 = 接缝③ settle 或第五条兜底，二者必经其一。
 
-接缝实现落 agent-delegation 包内（view.ts/plugin.ts/notify.ts/lineage.ts/verbs.ts 五文件），
-每处带独立单测（受管分支 + 普通路径不回归双向断言）。agent-workflow softInject 消费：
-delegation 缺席 → 受管 workflow_submit 拒 invalid-args（运行期 fail-closed）；**恢复期**
-发现 in-flight run 而 delegation/archive 缺席 → run 冻结 + onWarn，不失败装配（R2）。
+接缝实现落 agent-delegation 包内（view.ts/plugin.ts/notify.ts/lineage.ts/verbs.ts/
+task-source.ts 六文件；task-source 的 probe 对 managed 行 miss 是 §9 让位协议的实施位，
+与豁免清单合并点名防漏——B2 复审意见）。每处带独立单测（受管分支 + 普通路径不回归
+双向断言）。agent-workflow softInject 消费（解析动词：softInject 保证 topo 先装 → apply
+期 tryUse 即得，budget-guard softInject agent-loop 先例——B2-07 写明）：delegation 缺席 →
+受管 workflow_submit 拒 invalid-args（运行期 fail-closed）；**恢复期**发现 in-flight run
+而 delegation/archive 缺席 → run 冻结 + onWarn，不失败装配（R2）。
 
 ## 7. 事件词表（闭合 fail-closed；v2 补 dispatch 失败/verify 对/tier 字段）
 
@@ -203,9 +256,12 @@ task/reopened {taskId, attempt}             # Tier C（期 2）
 notify/delivered {taskId, to}
 ```
 
-run 终局后迟到 task 事件的合法性（v2 补，堵 A4-3）：**允许落账**（熔断/取消时在飞任务的
-`task/settled{cancelled}` 天然晚于 `run/settled`）——fold 对 run 终态后的 task 事件收编为
-「run 后事件」，不拒不弃（词表 fail-closed 指类型未知，非时序未知）。
+迟到事件收编规则（v2 堵 A4-3；v3 扩到 task 终态后 verify——F5）：**task 终态后同任务的
+verify/*、run 终态后的 task/* 一律收编为后事件**，不拒不弃（词表 fail-closed 指类型未知，
+非时序未知）——覆盖：task_stop 让位时恰有 Tier B 命令在沙箱跑、熔断级联时在飞 verify。
+cancel/级联路径同步落 `verify/result{outcome:unknown}` 封口（尽力——迟到真实 result 照样
+收编）。cause 词表补：`dispatch-failed | dependency-failed | circuit-break |
+child-failed | settle-failed | type-def-missing | verify-unknown`。
 
 ## 8. 验收器：两层接口 + 三档（v2 修 R3 接口形状）
 
@@ -271,10 +327,17 @@ workflow_submit {
   引导句——规格正文不动、本仓扩展尾部 append，件15 D6 先例；workflow_submit 描述含直通声明）
 - 完成通知 `[workflow-notification]`：outcome/attempts/verdict/证据尾料/子会话指针；
   **每任务一条不聚合**（T1 取舍落档）
-- **task_stop 让位协议（v2 修 A4-2）**：agent 源 probe 对 managed 行返回 miss（kind 让位）
-  → 路由落 workflow 源 → stop = 子 cancel + `run/settled{cancelled}` + journal 落账。
-  期 1 run 单任务：停任务即停 run；多任务语义期 2 定（依赖失败传播同期）
-- task-tools 侧实现动作：kind 词表扩 `workflow`、not-found 文案更新（实现期清单，非方案面）
+- **task_stop 让位协议（v2 修 A4-2；v3 补源协议细节——B2-08/F11-A4）**：agent 源 probe 对
+  managed 行返回 miss（实施位 task-source.ts）→ 路由落 workflow 源（kind 字典序
+  agent<bash<workflow，workflow 恒末源）。**workflow 源协议三则**：① probe 判据 = run 目录
+  header 扫描（taskId ∈ run 且 parentSession === caller；启动扫描的 fold 缓存复用，冷启动
+  单次盘扫）三态 hit/denied/miss；② stop 成功文案 `stopped <taskId> (run settled: cancelled)`；
+  ③ 失败 reason **以 `not-found:` 开头 = 迟到 miss 续走余源**（TaskSource 协议纪律，词表错
+  前缀 = 双源遮蔽换形态复发）。stop 的清理归属：workflow 源 stop → journal 落账 → 调接缝③
+  `view.settle(agentId, cause)`（cancel/清树/摘行 delegation 侧完成，与正常 settle 同路）。
+  期 1 run 单任务：停任务即停 run；多任务语义期 2 定
+- depends_on 引用直通 taskId（agentId 形）的歧义：期 2 落档时给专门文案或支持
+  agentFinished 事件等待（F9 设计债标注）
 
 ## 10. 状态机（fold 规格；v2 补传播规则）
 
@@ -299,17 +362,39 @@ readiness（期 2 全量启用；期 1 单任务退化恒就绪）：depends_on 
 | 插件单测 | journal（读写/撕裂/锁双开/死锁接管/header 损坏冻结）；resolve 三链；W6 直通（**断言 root 无新 run 目录**——A3 假绿面）；Tier A 全旅程（含 prompt 增补在派发文本中的断言）；Tier B（exit≠0 回炉/intent-unknown 处置/沙箱缺席拒/fence 约束）；通知（活父/死父悬置/**sessionCreated 边沿补投**）；幂等（标记存在性判据：重复恢复不双注入） |
 | 崩溃恢复 | §5.2 二维表**逐行** kill -9 旅程断言（含「completed 直接进验收不重跑」「verify unknown 不重跑命令」**副作用计数断言**——B-10） |
 | 并发 | 双进程共享 root：作用域过滤（他 run 不动/活锁跳过/他父跳过）——A8 |
-| 边界 | 恢复期 delegation 缺席 → 冻结不失败（R2）；pluginVersion 不符 → 只读（A5-2）；/new 会话切换 → run 存续可查不重绑（A-R5 落档语义锚） |
+| 边界 | 恢复期 delegation 缺席 → 冻结不失败（R2）；pluginVersion 不符 → 只读（A5-2）；/new 会话切换 → run 存续可查不重绑（A-R5 落档语义锚）；**settlement 投递失败 → 兜底回收路径（F1）**；**hub 优雅停机 → 子随进程消亡 + 恢复走 interrupted 行（F2——断言不停留在「冻结」表述）**；**边沿微任务时序（sessionCreated 后句柄必在，F14）**；**workflow dispose 序列（F3）** |
 | e2e | delegation 旅程回归 + workflow 三档各一条含崩溃窗口 |
 | 假绿对抗 | 描述↔schema↔行为对账双向；「删接线仍绿」抽查（D1 教训制度化） |
 
-## 12. 分期
+## 12. 分期（v3 重切：恢复不外切，切验收面 × 宿主——复审焦点 4 独立判断采纳）
 
-- **期 1（本期）**：core 全量 + journal/锁/resume/resolve + delegation 三接缝（含四处豁免）+
-  workflow_submit + **Tier A + Tier B 完整**（含 §5.2 全窗口恢复旅程）+ 两宿主装配 +
-  workflowKit + task_stop 让位协议。交付即生产可用。
-- **期 2**：Tier C critic + depends_on DAG（readiness/传播规则已就绪）+ feedback_timing
-  step-boundary 参数 + run 随会话切换重绑（rebindMailbox 对齐）+ 多任务 run 的 stop 语义。
+**切分依据**：恢复与豁免是同一语义单元不可拆（W2 生产底线；砍恢复的降级版里豁免面变纯
+泄漏源——不是降级是危险品）；可切的是 Tier B（唯一引入进程外副作用的档：fence/副作用双跑/
+cancel×verify 竞态全在它——两轮复审发现最密集的交互区）与 hub 宿主（worker 停机序专门旅程）。
+
+- **期 1a（最小生产切片）**：core 全量 + journal/锁/resolve + delegation 四接缝五豁免 +
+  workflow_submit（限根会话）+ **Tier A 全旅程** + §5.2 表 Tier A 可达行恢复 + W6 直通 +
+  通知/补投（含边沿微任务时序）+ **CLI 单宿主** + workflowKit。1a 用 Tier A 把
+  journal/锁/状态机/豁免/恢复在真实使用中打磨。
+- **期 1b（验收面与宿主加宽）**：Tier B（intent-result 对/unknown 处置/fence 按子会话/
+  副作用计数断言）+ task_stop 让位（task-tools kind 扩展与源协议）+ **hub 宿主**（停机
+  旅程/fields.env 注入）+ 双进程共享 root 并发用例。
+- **期 2**：Tier C critic + depends_on DAG（含直通 taskId 歧义处置）+ feedback_timing
+  step-boundary + run 随会话切换重绑 + 多任务 run 的 stop 语义 + 子代理提交 run 的管辖扩展。
+
+### 12.5 实施顺序（每步四门 + 独立可回滚——对照件13 六阶段纪律，v2 缺此节被点名）
+
+```
+① workflow-core（纯函数 + 穷举测试——零依赖可先行）
+② journal/锁/resolve（写面 + 恢复矩阵单测——I/O 层独立验证）
+③ delegation 四接缝 + 五豁免（含普通路径不回归双向断言——delegation 包内独立提交）
+④ Tier A 装配 + workflow_submit + W6 直通（CLI）
+⑤ 恢复协议（§5.1/5.2/5.3 全链 + kill -9 旅程）
+⑥ Tier B + task_stop 让位 + hub 宿主（期 1b 起点）
+```
+
+e2e 装置需求（B2-09——三件均有先例可克隆）：kill -9 驱动夹具（cross-peer 式子进程）/
+双进程共享 root 对端/副作用计数装置（约定 append 计数文件）。
 
 ## 13. ZCode 审计结论（设计输入留档）
 
@@ -363,3 +448,31 @@ token 经济性（期 2 参数形态）。
 | A-R9 evictIdle 互作 | 风险 | §6 接缝③ 档化豁免 |
 | T1-T4（通知不聚合/tier 字段/依赖口径/owner 措辞） | 取舍 | §9/§7/§2/§6 各落档 |
 | U1 关系表述 | 焦点 | 头部重写：run 级协作 vs 常驻 teammate，正交+演进关系 |
+
+### 二轮复审处置（v2→v3；A 路 F1-F15 / B 路 B2-01~10）
+
+| 发现 | 级别 | 处置（落点） |
+| --- | --- | --- |
+| F1 settlement 投递/落账失败 → 完成事实永久丢（豁免封死兜底） | 真缺陷 | §6 接缝④第五条：settle 失败兜底回收 + `settled{failed, settle-failed}` |
+| B2-01 revive 不带 settlement → 恢复行绕验收/被处死 | 真缺陷 | §6 接缝②签名加 settlement 透传（重建为受管行） |
+| B2-02 settle 归还无面可调（stopAll 误杀/私有面够不着） | 真缺陷 | §6 接缝③ view.settle(agentId, cause)——接缝 3→4 |
+| A-F2 「优雅停机=冻结/受管行存活」与机制事实相反 | 真缺陷 | §5.4 重写：存活仅限进程内窗口；停机=同崩溃恢复路径 |
+| A-F5 task 终态后 verify 迟到无收编规则 | 真缺陷 | §7 后事件收编扩到 verify/* + cancel 同步落 unknown 封口 |
+| A-F6 repair-issued 行折叠三终态各自悬死（error 终态烧预算） | 真缺陷 | §5.2 行拆细：completed→验收/interrupted→kick/异常终态→settled{child-failed} 不进验收 |
+| A-F7 幂等标记 inbox 未消费 ≠ 已送达 | 真缺陷 | §5.2 幂等判据改「已材料化消息」；未起跑行防双份排队 |
+| A-F8 mid-flight 崩溃盘上无 turn/end 落不进任何行 | 真缺陷 | §5.2 终态判定算法：fold + 开放 turn/start 合成 interrupted（扫描器职责） |
+| A-F12/B2-04 lock「pid+bootId」与 lock.ts 实物不符 | 真缺陷(低) | §3.1 照实 pid-only；pid 复用 30s 窗落档 |
+| A-F13 子代理提交的 run 永无认领者 | 真缺陷 | §5.1 期 1 工具限根会话（notify_when_idle 先例）；live 集扩展期 2 |
+| A-F14/B2-06 sessionCreated 早于句柄登记 / 条件② apply 无值 | 真缺陷 | §5.3 微任务延迟入方案+断言；workflowKit 加 mainSession 参 |
+| B2-03 Tier B×worktree fence/cwd 失配（验收恒假拒） | 真缺陷 | §8.2 cwd 与 fence 都按子会话解析（rootOverride=worktree，比父窄）+ settle 前时序约束 |
+| B2-05 journal 中段行损坏缺处置 | 风险 | §3.1 恢复矩阵补冻结行 |
+| A-F3 workflow 插件 dispose 序列零字 | 风险 | §2 dispose 序列节（沙箱 abort→fsync→锁不显式释放→受管不 cancel） |
+| A-F15 apply 全量 fold 无上界 | 风险 | §5.1 header 剪枝先行 |
+| B2-08 workflow 源 probe/stop 协议未定 | 风险 | §9 源协议三则（判据/文案/not-found 前缀纪律）+ stop 清理归接缝③ |
+| B2-09 e2e 装置缺口三件 | 风险 | §12.5 装置需求点名（kill-9 夹具/双进程对端/副作用计数） |
+| A-F4 token「delegation 活 workflow 死」可达性 | 验证 | 已验证不可达（同 world 同死）——前提锁定写进 §6 接缝④ |
+| B2-07 softInject 宪法张力 / 装配期拒措辞冲突 | 取舍 | §6 解析动词写明（softInject topo 先装 + apply tryUse）；Tier B 统一运行期拒 |
+| B2-10 schema 摘要上限未定 | 取舍 | §8.2 独立小上限 2000 字符 |
+| A-F9 直通 taskId 被 depends_on 引用歧义 | 风险(期2) | §9 设计债标注 |
+| A 焦点4：期 1 过胖 | 判断 | §12 重切 1a（Tier A+恢复+CLI）/1b（Tier B+让位+hub）+ §12.5 实施顺序 |
+| B2 可实施性正面结论 | 验证 | 四豁免精确到行（stopAll 在 plugin.ts:407 非 verbs.ts）；跨服务传回调先例 permissionBroker.ask；锁竞态协议直接适用；TypeBox violationsOf 复用为 Tier A 裁决器 |
