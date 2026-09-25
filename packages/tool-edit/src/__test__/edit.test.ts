@@ -1,5 +1,5 @@
-// edit 工具测试（docs/EDIT-TOOL.md 测试口径）：门三态/越根/穿越/目录/非常规拒、BOM round-trip、
-// CRLF 保真、成功回显 diff、写后登记、abort、锁外 diff、read→edit→write 链路。
+// edit 工具测试（docs/EDIT-TOOL.md 测试口径）：门两态（未读放行/读后改过拒）、越根/穿越/目录/非常规拒、
+// BOM round-trip、CRLF 保真、成功回显 diff、写后登记、abort、锁外 diff、read→edit→write 链路。
 // 装配 read+write+edit 三插件共享同一 gate+observed（三件套同源——配对契约即此形态）。
 
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, readFileSync, utimesSync, readdirSync } from "node:fs";
@@ -63,26 +63,30 @@ const SESSION_A = "sess-a";
 
 const EDIT = (path: string, edits: readonly { oldText: string; newText: string }[]): { path: string; edits: readonly { oldText: string; newText: string }[] } => ({ path, edits });
 
-describe("edit 观察门三态（docs/EDIT-TOOL.md）", () => {
-  it("未读拒 FS_NOT_OBSERVED；read 后过；外部改后拒 FS_STALE_VERSION（bash touch 改 mtime）；重读后过", async () => {
+describe("edit 观察门两态（docs/EDIT-TOOL.md 观察门修订）", () => {
+  it("回归（症状：未读 edit 被 FS_NOT_OBSERVED 拒——纯流程强制）：未读直接 edit 放行，oldText 唯一匹配即内容级 CAS", async () => {
     writeFileSync(join(root, "gated.txt"), "alpha\nbeta\ngamma\n");
-    const denied = await call("edit", EDIT("gated.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
-    expect(denied.isError).toBe(true);
-    expect(denied.content).toContain("FS_NOT_OBSERVED");
-    await call("read", { path: "gated.txt" }, { session: SESSION_A });
-    const ok = await call("edit", EDIT("gated.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
-    expect(ok.isError).toBeUndefined();
+    const direct = await call("edit", EDIT("gated.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
+    expect(direct.isError).toBeUndefined();
     expect(readFileSync(join(root, "gated.txt"), "utf8")).toBe("alpha\nBETA\ngamma\n");
-    // 外部改（mtime 变）→ 陈旧拒
+  });
+
+  it("read 后过；外部改后拒 FS_STALE_VERSION（bash touch 改 mtime）；重读后过", async () => {
     writeFileSync(join(root, "src2.txt"), "alpha\nbeta\ngamma\n");
     await call("read", { path: "src2.txt" }, { session: SESSION_A });
-    execSync(`touch '${join(root, "src2.txt")}'`);
-    const stale = await call("edit", EDIT("src2.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
+    const ok = await call("edit", EDIT("src2.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
+    expect(ok.isError).toBeUndefined();
+    expect(readFileSync(join(root, "src2.txt"), "utf8")).toBe("alpha\nBETA\ngamma\n");
+    // 外部改（mtime 变）→ 陈旧拒
+    writeFileSync(join(root, "src3.txt"), "alpha\nbeta\ngamma\n");
+    await call("read", { path: "src3.txt" }, { session: SESSION_A });
+    execSync(`touch '${join(root, "src3.txt")}'`);
+    const stale = await call("edit", EDIT("src3.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
     expect(stale.isError).toBe(true);
     expect(stale.content).toContain("FS_STALE_VERSION");
     // 重读后过
-    await call("read", { path: "src2.txt" }, { session: SESSION_A });
-    const retried = await call("edit", EDIT("src2.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
+    await call("read", { path: "src3.txt" }, { session: SESSION_A });
+    const retried = await call("edit", EDIT("src3.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
     expect(retried.isError).toBeUndefined();
   });
 
@@ -103,13 +107,20 @@ describe("edit 观察门三态（docs/EDIT-TOOL.md）", () => {
     expect(r.content).toContain("FS_STALE_VERSION");
   });
 
-  it("会话键控：A 会话 read 不给 B 会话 edit 开门", async () => {
+  it("会话键控：B 会话未读直接 edit 放行（内容 CAS 不分会话）；已读会话的陈旧门仍会话键控", async () => {
     writeFileSync(join(root, "s.txt"), "secret\n");
-    await call("read", { path: "s.txt" }, { session: SESSION_A });
-    const hijack = await call("edit", EDIT("s.txt", [{ oldText: "secret", newText: "leaked" }]), { session: "sess-b" });
-    expect(hijack.isError).toBe(true);
-    expect(hijack.content).toContain("FS_NOT_OBSERVED");
-    expect(readFileSync(join(root, "s.txt"), "utf8")).toBe("secret\n");
+    const hijack = await call("edit", EDIT("s.txt", [{ oldText: "secret", newText: "shared" }]), { session: "sess-b" });
+    expect(hijack.isError).toBeUndefined();
+    expect(readFileSync(join(root, "s.txt"), "utf8")).toBe("shared\n");
+    // A 会话 read 旧版本后文件被外部改 → A 的陈旧门仍拒（会话键控保留）
+    writeFileSync(join(root, "s2.txt"), "v1\n");
+    await call("read", { path: "s2.txt" }, { session: SESSION_A });
+    writeFileSync(join(root, "s2.txt"), "v2\n");
+    const stale = await call("edit", EDIT("s2.txt", [{ oldText: "v2", newText: "v3" }]), { session: "sess-b" });
+    expect(stale.isError).toBeUndefined(); // B 未读 → 放行（内容匹配 v2 成功）
+    const deniedA = await call("edit", EDIT("s2.txt", [{ oldText: "v3", newText: "v4" }]), { session: SESSION_A });
+    expect(deniedA.isError).toBe(true);
+    expect(deniedA.content).toContain("FS_STALE_VERSION");
   });
 });
 

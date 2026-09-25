@@ -1,6 +1,6 @@
 # edit 工具（精确文本替换）方案
 
-> 状态：草稿（中级——新工具插件 + 外部契约新增 + 观察门交互）
+> 状态：已实施；修订：观察门三态 → 两态（edit 删未读拒——见下「观察门修订」）
 > 参考实现：/Users/wrr/work/pi/packages/coding-agent/src/core/tools/edit.ts + edit-diff.ts + file-mutation-queue.ts（结构借鉴；实现按 x-harness 架构重写——判别联合/授权面/观察门 CAS/插件装配）
 > 关联：docs/TOOLBOX.md（工具面）、docs/TRUNCATED-TOOL-RESCUE.md 层 2（edit 抢救已在 v1 表内——`new_string` 提取器就位，本工具落地后自然接入）、packages/tool-write（授权/门/CAS 同构参照）
 
@@ -11,6 +11,10 @@
 ## 分级裁决
 
 中级：新工具 + 模型可见契约（schema/prompt 指引）+ 观察门 CAS 交互（读后改语义）+ 文件互斥并发面。
+
+## 观察门修订（三态 → 两态：edit 删未读拒）
+
+edit 的 `FS_NOT_OBSERVED` 分支删除。依据：edit 在锁内自己重读盘上当前内容，`oldText` 唯一匹配本身就是**内容级 CAS**——文件与模型认知不符时匹配失败（NOT_FOUND），匹配成功即证明改的是当前盘上这份；未读拒是纯流程强制，对数据安全零增益（Codex 全工具面无未读拒，安全性内建于补丁上下文匹配，同派先例）。保留：读后改拒 `FS_STALE_VERSION`（stat 门 + fd fstat 二次比对）——仅对本会话 read 过的文件生效，作 mtime 快路径防 TOCTOU；未观察时跳过版本比对直接进内容匹配（内容匹配是更强的 CAS，不构成漏洞）。write 的两态门（未读拒 + 读后改拒）**不变**——整文件覆盖无内在验证面，未读拒保留（Claude Code/ZCode 同派且均在收紧）。多 agent 并发不受影响：realpath 锁互斥、版本 CAS、temp+rename 原子写均与未读拒无关，全部保留。
 
 ## 契约（对模型）
 
@@ -57,7 +61,7 @@ edit(path, edits: [{oldText, newText}, ...])
 - **edit-apply 纯函数**：精确命中/多处命中拒/未命中拒/重叠拒/空 oldText 拒/**归一后空 oldText 拒**（NBSP/零宽类单字符经归一变空——pi 对此是 matchLength=0 按位置静默插入，实测缺陷，x-harness 版必须在 fuzzy 判定前显式 EMPTY_OLD_TEXT 拒——对抗审查 A 件 2）/无变化拒；**部分失败不部分落盘**（任一 edit 失败全批拒——原子性断言）；多 edit 逆序应用偏移稳定；**重叠口径 = 归一空间字符串偏移**（pi edit-diff.ts:341-350 同款——行块只做合并分组不做拒绝，否则同行不相交的两 edit 被误拒——A 件 3）；**唯一性口径 = 精确批次按原文字面计数、模糊批次按归一计数**（pi 现状对「精确唯一但归一多处」会拒精确命中——实测 C1；x-harness 放行精确批次、DUPLICATE 文案注明计数口径——A 件 4 裁决）；**模糊命中附带损伤固化为断言**（命中行内匹配区外的智能引号被归一、触碰块内行尾空白被剥——明知接受写成测试，不留未定义行为——A 件 7）。
 - **模糊匹配（13 例规模——pi 踩坑面全集）**：五归一各形（中文引号/智能引号/破折号/NBSP/NFKC/行尾空白）；**精确优先于模糊**（文件同时存在精确命中与可模糊命中处——走精确）；**归一后重复检测**（原文两处经归一变相同 → DUPLICATE 独立触发面）；**模糊替换后与邻行同文的保真**（fuzzy-preserve-duplicate-line——pi 真坑，错则换错位置）；模糊命中未触行字节保真；多 edit 混合精确/模糊。
 - **CRLF/BOM（7 例规模）**：LF oldText 对 CRLF 文件；**跨行尾形态的重复检测**（CRLF 处与 LF 处归一后同文）；CRLF/LF 混合文件多 edit；BOM+CRLF 叠加；BOM round-trip。
-- **edit 工具**：门三态（未读拒/读后改过拒/读后未变过——bash 改后 STALE 链）；越根/穿越拒；目录/非常规文件拒；成功回显含 diff；写后登记（edit→write 连续不拒）。
+- **edit 工具**：门两态（未读**放行**——oldText 唯一匹配即内容级 CAS；读后改过拒 FS_STALE_VERSION——bash 改后 STALE 链；读后未变过）；越根/穿越拒；目录/非常规文件拒；成功回显含 diff；写后登记（edit→write 连续不拒）。
 - **diff 组装**（三方包背书算法——只测组装面）：**每行带新/旧双轨行号**（pi generateDiffString 形态——超长行内字符级变化在行 diff 下模型靠行号定位；A 件 5）；diff 基底 = LF 归一串（`baseContent: normalizedContent`——pi 同款；fuzzy 批次 diff 显示归一形是已知偏差：模型照抄 diff 文本构造下轮 oldText 会再走 fuzzy 匹配——自洽可接受，记档）；上下文 4 行窗口/firstChangedLine 提取/空文件边界。
 - **装配**：toolboxKit 含 edit；三件套同源（read→edit→write 链路）；guidance 停靠 `tool/edit` 段断言。
 - **回归**：write 既有用例不破；rescue-plugin edit 分支用**真 edit 名 + 真 schema 参数形态**（`{"path":..,"edits":[{"oldText":..,"newText":"半截`）——末条 newText 提取 + note 新文案。
