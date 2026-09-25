@@ -72,7 +72,7 @@ export function abortableScript(text: string): (request: LlmRequest) => AsyncGen
     })();
 }
 
-/** 基准窗：effWin=900（面预留 100）、cp=540、warn=700、l1=l2=800 */
+/** 基准窗：effWin=900（面预留 100）、cp=540、l1=l2=801、warn=701（l1=l2 单线形态） */
 export const FACE: SummarizerFace = { model: "sum", contextWindow: 100_000, maxOutputTokens: 100 };
 
 export const COMPACTION_BASE = {
@@ -88,7 +88,6 @@ export const AUTOCOMPACT_BASE = {
   l1Pct: 89, // eff=900 → l1=l2=801、warn=701（单线形态——各区分界断言沿旧线保持）
   l2Pct: 89,
   warnBufferTokens: 100,
-  compactBufferTokens: 100,
   checkpointMinSegmentTokens: 1,
   ledgerBudgetTokens: 200, // 小窗基准：≤ 25% 有效窗口（900 × 0.25 = 225）
 } as const;

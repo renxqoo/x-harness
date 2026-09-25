@@ -31,7 +31,6 @@ export interface GateConfig extends CheckpointConfig {
   readonly idleClearMinutes: number;
   readonly idleClearMinGainTokens: number;
   readonly warnBufferTokens: number;
-  readonly compactBufferTokens: number;
   readonly toolResultCapTokens: number;
 }
 
@@ -63,7 +62,6 @@ function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
     l1Pct: deps.config.l1Pct,
     l2Pct: deps.config.l2Pct,
     warnBufferTokens: deps.config.warnBufferTokens,
-    compactBufferTokens: deps.config.compactBufferTokens,
   });
   lines = refitLines(lines);
   if (lines.degraded && !cache.warnedDegraded) {

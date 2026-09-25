@@ -31,9 +31,10 @@ function unionAppend(oldLines: readonly string[], newLines: readonly string[]): 
   return merged;
 }
 
-/** 节内词表：七节标签名（杂散标签行过滤面——模型输出漏闭标签时，非贪婪
- *  解析会把后续节的开标签当内容行收进当前节，污染行会被 append-only 永久保留） */
-const LEDGER_TAGS: readonly string[] = ["goals", "decisions", "done", "pending", "verified", "unverified", "current"];
+/** 节内词表：账本全部结构标签（含 files 机械节——杂散标签行过滤面；模型
+ *  输出漏闭标签时，非贪婪解析会把后续节的开标签当内容行收进当前节，污染行
+ *  会被 append-only 永久保留） */
+const LEDGER_TAGS: readonly string[] = ["goals", "decisions", "done", "pending", "verified", "unverified", "current", "files"];
 
 function isTagLine(line: string): boolean {
   for (const tag of LEDGER_TAGS) {

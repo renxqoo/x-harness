@@ -41,7 +41,7 @@ async function seeded(world: Awaited<ReturnType<typeof makeWorld>>, id: string, 
   return made.value;
 }
 
-describe("分区放行（eff=900：cp=540 / warn=700 / l1=800）", () => {
+describe("分区放行（eff=900：cp=540 / warn=701 / l1=l2=801——单线基准形态）", () => {
   it("安全区（< 警告线）→ 原样放行、零拨号零落账", async () => {
     const world = await makeWorld();
     try {
@@ -70,6 +70,24 @@ describe("分区放行（eff=900：cp=540 / warn=700 / l1=800）", () => {
       const clearedNode = made.value.surface().find((node) => node.event.type === "tool/result" && (node.event.data as { content: string }).content.startsWith(PLACEHOLDER_PREFIX));
       expect(clearedNode).toBeDefined();
       expect(made.value.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false); // 无 L2/压缩落账
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("分层行为（缺省 70/85 线序）：L1 落账后占用落在 (l1,l2) 区间 → 不动账本（免费层不消耗付费层）", async () => {
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 70, l2Pct: 85 }, { summarizer: undefined }); // eff=1000：l1=700、l2=850
+    try {
+      const made = await world.store.create({ id: sid("layered") });
+      if (!made.ok) throw new Error(made.reason);
+      // 占用 800（越 l1=700、未越 l2=850）；旧大结果 150 token：落账后 650 < 700
+      seedToolTurn(made.value, { turn: 0, user: "go", tool: "read", callId: "cl", args: "{}", result: textOf(150) });
+      seedToolTurn(made.value, { turn: 1, user: "next", tool: "read", callId: "c2", args: "{}", result: textOf(1), usage: { input: 800, output: 1 } });
+      await dispatchPreStep(world, { session: made.value.id });
+      const cleared = made.value.surface().some((node) => node.event.type === "tool/result" && (node.event.data as { content: string }).content.startsWith(PLACEHOLDER_PREFIX));
+      expect(cleared).toBe(true); // 免费层落账
+      expect(made.value.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false); // 未动账本/压缩
+      expect(world.llm.calls).toHaveLength(0);
     } finally {
       await world.ctx.dispose();
     }
@@ -152,7 +170,7 @@ describe("水位权分居（autocompact 不接管 compaction 水位——强制�
     const landed: string[] = [];
     world.ctx.on(compactionLanded, (payload) => landed.push(payload.trigger));
     try {
-      const session = await seeded(world, "pct-forced", 980); // 超 compaction 水位（1000 × 90% = 900）
+      const session = await seeded(world, "pct-forced", 980); // 超 compaction 水位（1000 × 92% = 920）
       world.llm.scripts.push(textScript("## Goal\nforced\n\n## Progress\n### In Progress\n- [ ] t"));
       await dispatchPreStep(world, { session: session.id });
       expect(landed).toEqual(["auto"]); // 水位权在 compaction——强制压缩落账

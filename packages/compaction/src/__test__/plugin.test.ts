@@ -19,6 +19,9 @@ describe("配置值域 fail-fast（装配期 throw）", () => {
   it.each([
     ["contextWindow < 1", { contextWindow: 0 }],
     ["contextWindow NaN", { contextWindow: Number.NaN }],
+    ["triggerPct < 1", { triggerPct: 0 }],
+    ["triggerPct > 99（水位贴窗边）", { triggerPct: 100 }],
+    ["triggerPct NaN（比较恒 false 静默穿透）", { triggerPct: Number.NaN }],
     ["reserveTokens < 1", { reserveTokens: 0 }],
     ["reserve × 2 > contextWindow（阈值恒负每步必发无进展压缩）", { reserveTokens: 600 }],
     ["keepRecentTokens 负值", { keepRecentTokens: -1 }],
@@ -87,7 +90,7 @@ describe("水位触发（agentPreStep → replace 落账）", () => {
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
       seedTurn(session, { turn: 0, user: "early", assistant: { text: "a0", usage: { input: 100, output: 5 } } });
-      seedTurn(session, { turn: 1, user: "q", assistant: { text: "a", usage: { input: 850, output: 5 } } }); // 锚 850 < 900 水位（单轮无切口——前置一轮）；850+100 粘贴 > 900 触发
+      seedTurn(session, { turn: 1, user: "q", assistant: { text: "a", usage: { input: 850, output: 5 } } }); // 锚 850 < 920 水位（单轮无切口——前置一轮）；850+100 粘贴 > 920 触发
       // 模拟 beginStep 的 claim 尾事件：大粘贴（100 token）
       session.append("agent/inbox/spliced", {
         op: "insert",
@@ -97,7 +100,7 @@ describe("水位触发（agentPreStep → replace 落账）", () => {
       session.append("agent/inbox/spliced", { op: "claim", target: "next-turn", turn: 1, claimed: ["p1"] });
       world.llm.scripts.push(textScript("PASTE-SUMMARY"));
       await dispatchPreStep(world, { session: session.id });
-      expect(world.llm.calls).toHaveLength(1); // 850+100 > 900 → 压缩
+      expect(world.llm.calls).toHaveLength(1); // 850+100 > 920 水位 → 压缩
     } finally {
       await world.ctx.dispose();
     }
@@ -184,16 +187,34 @@ describe("manual runner（服务直调）", () => {
     }
   });
 
-  it("triggerPct 水位线：百分比强制压缩带（950 > 1000×90% 触发；850 不触发）", async () => {
-    const world = await makeWorld();
+  it("92% 缺省水位（不传 triggerPct）：920 边界——915 不触发、930 触发强制压缩", async () => {
+    const world = await makeWorld(); // 缺省 triggerPct=92：水位 = 1000 × 92% = 920
+    try {
+      const made = await world.store.create({ id: sid("pct-default") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500, output: 5 } } });
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 915, output: 5 } } }); // < 920
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(world.llm.calls).toHaveLength(0);
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 930, output: 5 } } }); // > 920
+      world.llm.scripts.push(textScript("BACK"));
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(world.llm.calls).toHaveLength(1);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("显式 triggerPct 水位线：百分比强制压缩带（950 > 1000×95% 触发；850 不触发）", async () => {
+    const world = await makeWorld({ triggerPct: 95 });
     try {
       const made = await world.store.create({ id: sid("pct") });
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500, output: 5 } } });
-      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 850, output: 5 } } }); // 850 < 900 水位
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 850, output: 5 } } }); // 850 < 950 水位
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(0); // 未过线零拨号
-      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 950, output: 5 } } }); // 950 > 900 水位
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 960, output: 5 } } }); // 960 > 950 水位
       world.llm.scripts.push(textScript("BACK"));
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(1);

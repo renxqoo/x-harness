@@ -1,8 +1,10 @@
-// 线条域：上下文窗口的预算分区（warn/L2/CP 三条水位线 + 有效窗口推导）
-// min(主窗, servedWindow) − 摘要输出预留；L1/L2 线为窗口百分比（缺省 60%/80%
-// ——早线免费清工具结果，账本层居中，90% 强制压缩归 compaction）；警告线只
-// 触发预算外推不落账（前缀缓存裁决）。装配期值域 fail-fast；servedWindow 收缩的
-// 运行期复算走 refitLines 降级（纯本地通道），不抛出（运行期事实非装配错误）。
+// 线条域：上下文窗口的预算分区（CP/L1/L2 三条水位线 + 警告带 + 有效窗口推导）
+// min(主窗, servedWindow) − 摘要输出预留；L1/L2 线为窗口百分比（缺省 70%/85%
+// ——免费层先行、账本层居中，compaction 92% 强制压缩带在本件之外接续）；警告带
+// = L1 线下方 warnBufferTokens 区间（只观测与预算外推不落账——前缀缓存裁决；
+// 锚在 L1 保证恒非空——锚在 L2 会让大窗下 warn 越过 l1、警告带恒空）。装配期
+// 值域 fail-fast；servedWindow 收缩的运行期复算走 refitLines 降级（纯本地通道），
+// 不抛出（运行期事实非装配错误）。
 
 /** 预留中摘要输出上限的封顶（min(摘要面 maxOutputTokens, 20k)） */
 export const SUMMARIZER_RESERVE_CAP = 20_000;
@@ -18,12 +20,12 @@ export interface LineInput {
   /** 摘要面输出上限（缺席 → 预留归零：纯本地通道不被不存在的总结面挤压） */
   readonly summarizerMaxOutput?: number;
   readonly checkpointPct: number;
-  /** L1 触发百分比（1–99，缺省 60）：占用 > 有效窗 × pct% → 清旧工具结果 */
+  /** L1 触发百分比（1–99，缺省 70）：占用 > 有效窗 × pct% → 清旧工具结果 */
   readonly l1Pct?: number;
-  /** L2 触发百分比（1–99，缺省 80）：占用 > 有效窗 × pct% → 账本替换前缀 */
+  /** L2 触发百分比（1–99，缺省 85）：占用 > 有效窗 × pct% → 账本替换前缀 */
   readonly l2Pct?: number;
+  /** 警告带宽度（L1 线下方，绝对 token 值） */
   readonly warnBufferTokens: number;
-  readonly compactBufferTokens: number;
 }
 
 export interface Lines {
@@ -32,7 +34,7 @@ export interface Lines {
   readonly cpWatermark: number;
   readonly warnLine: number;
   readonly l1Line: number;
-  /** L2 线 = L1 线（升级条件 = L1 落账后复评仍超） */
+  /** L2 线 ≥ L1 线（升级条件 = 免费层落账后复测仍越 L2） */
   readonly l2Line: number;
   readonly degraded: boolean;
 }
@@ -43,7 +45,7 @@ export function computeLines(input: LineInput): Lines {
   const effectiveWindow = base - reserve;
   const l1Line = (effectiveWindow * (input.l1Pct ?? DEFAULT_L1_PCT)) / 100;
   const l2Line = (effectiveWindow * (input.l2Pct ?? DEFAULT_L2_PCT)) / 100;
-  const warnLine = l2Line - input.warnBufferTokens;
+  const warnLine = l1Line - input.warnBufferTokens;
   return {
     effectiveWindow,
     cpWatermark: (effectiveWindow * input.checkpointPct) / 100,
@@ -54,10 +56,8 @@ export function computeLines(input: LineInput): Lines {
   };
 }
 
-/** 装配期值域 fail-fast：0 < CP ≤ L1 ≤ 警告 < L2 < 有效窗口（L1/L2 为独立百分比
- *  线——L1 ≤ L2 分层单调；同值允许 = 旧单线形态），账本预算 ≤ 25% 有效窗口。
- *  崩坏点（缺省 buffer）：窗口 ≤102.5k 线序倒置、≤53k 警告线转负——静默接受会把
- *  阈值压成「恒触发」压缩机 */
+/** 装配期值域 fail-fast：0 < CP ≤ L1 ≤ L2 < 有效窗口且警告带在 L1 下方
+ *  （warn < l1，由构造保证、此处防外造 Lines 对象），账本预算 ≤ 25% 有效窗口 */
 export function assertLinesDomain(fields: {
   readonly lines: Lines;
   readonly ledgerBudgetTokens: number;
@@ -70,14 +70,14 @@ export function assertLinesDomain(fields: {
     lines.warnLine <= 0 ||
     !(lines.cpWatermark <= lines.l1Line) ||
     !(lines.l1Line <= lines.l2Line) ||
-    !(lines.warnLine < lines.l2Line) ||
     !(lines.l2Line < lines.effectiveWindow) ||
+    !(lines.warnLine < lines.l1Line) ||
     !(checkpointPct > 0 && checkpointPct < 100) ||
     ledgerBudgetTokens > lines.effectiveWindow * 0.25;
   if (invalid) {
     throw new Error(
       `autocompact config invalid: require 0 < cp(${lines.cpWatermark.toFixed(0)}) <= l1(${lines.l1Line.toFixed(0)}) <= l2(${lines.l2Line.toFixed(0)}) < effectiveWindow` +
-        ` and warn(${lines.warnLine.toFixed(0)}) < l2 and ledgerBudget <= 25% effectiveWindow` +
+        ` and 0 < warn(${lines.warnLine.toFixed(0)}) < l1 and ledgerBudget <= 25% effectiveWindow` +
         ` (ledgerBudget=${String(ledgerBudgetTokens)})`,
     );
   }
@@ -91,7 +91,7 @@ export function refitLines(lines: Lines): Lines {
     lines.l1Line <= lines.l2Line &&
     lines.l2Line < lines.effectiveWindow &&
     lines.warnLine > 0 &&
-    lines.warnLine < lines.l2Line
+    lines.warnLine < lines.l1Line
   ) {
     return lines;
   }

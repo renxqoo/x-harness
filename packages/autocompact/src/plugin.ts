@@ -41,7 +41,6 @@ export interface AutoCompactOptions {
   readonly idleClearMinutes?: number;
   readonly idleClearMinGainTokens?: number;
   readonly warnBufferTokens?: number;
-  readonly compactBufferTokens?: number;
   readonly checkpointMaxRetries?: number;
   readonly checkpointIdleTimeoutMs?: number;
   /** agent-loop maxToolResultChars 的 token 折算（首步增量缺省与并行逼近告警用） */
@@ -63,7 +62,6 @@ const DEFAULTS = {
   idleClearMinutes: 60,
   idleClearMinGainTokens: 0,
   warnBufferTokens: 20_000,
-  compactBufferTokens: 13_000,
   checkpointMaxRetries: 2,
   checkpointIdleTimeoutMs: 120_000,
   toolResultCapTokens: 25_000,
@@ -88,7 +86,6 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
     clearKeepRecent: options.clearKeepRecent ?? DEFAULTS.clearKeepRecent,
     clearableTools: options.clearableTools ?? DEFAULTS.clearableTools,
     warnBufferTokens: options.warnBufferTokens ?? DEFAULTS.warnBufferTokens,
-    compactBufferTokens: options.compactBufferTokens ?? DEFAULTS.compactBufferTokens,
     checkpointMaxRetries: options.checkpointMaxRetries ?? DEFAULTS.checkpointMaxRetries,
     checkpointIdleTimeoutMs: options.checkpointIdleTimeoutMs ?? DEFAULTS.checkpointIdleTimeoutMs,
     toolResultCapTokens: options.toolResultCapTokens ?? DEFAULTS.toolResultCapTokens,
@@ -120,7 +117,6 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         l1Pct: config.l1Pct,
         l2Pct: config.l2Pct,
         warnBufferTokens: config.warnBufferTokens,
-        compactBufferTokens: config.compactBufferTokens,
       });
       assertLinesDomain({ lines: probe, ledgerBudgetTokens: config.ledgerBudgetTokens, checkpointPct: config.checkpointPct });
       config.checkpointMinSegmentTokens =

@@ -60,7 +60,7 @@ describe("CP 终态补面", () => {
 describe("警告区预算外推（一步穿窗提前优化）", () => {
   it("占用 + 增量×1.5 预测越窗 → 过闸前优化（此处无账本 → ledger-unready 放行）", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    // warn=700、l1=800：占用 750 + 增量 150×1.5=225 > 900 eff → 预测越窗
+    // 无摘要面窗 eff=1000：warn=791、l1=l2=881；占用 850 + 增量 300×1.5=450 > 1000 eff → 预测越窗
     const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined });
     try {
       const made = await world.store.create({ id: sid("predict") });

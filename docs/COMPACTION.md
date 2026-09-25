@@ -185,8 +185,9 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   contextWindow 字段）；`reserve = 摘要面在场 ? min(maxOutput, 20_000) : 0`；
   `effectiveWindow = base − reserve`；`l1Line = effectiveWindow × l1Pct`（缺省 70%——免费层
   先行）；`l2Line = effectiveWindow × l2Pct`（缺省 85%——账本层居中，与 compaction 92%
-  强制带分层）；`warnLine = l2Line − warnBufferTokens`；`cpWatermark = effectiveWindow × checkpointPct`。
-  装配期值域 fail-fast：`0 < cp ≤ l1 ≤ warn < l2 < effectiveWindow` 且 ledgerBudget ≤ 25% 有效窗口。
+  强制带分层）；`warnLine = l1Line − warnBufferTokens`（警告带锚 L1 下方——恒非空；
+  锚 L2 会让大窗下 warn 越过 l1、警告带恒空）；`cpWatermark = effectiveWindow × checkpointPct`。
+  装配期值域 fail-fast：`0 < cp ≤ l1 ≤ l2 < effectiveWindow` 且 `0 < warn < l1` 且 ledgerBudget ≤ 25% 有效窗口。
   servedWindow 运行期深收缩 → `refitLines` 降级（CP 关、L1/L2 合并单线、buffer 自适应
   `max(2_000, 2%窗口)`、degraded 标记 + 一次性告警 + 事件），降级态禁 L2（纯本地通道——L0 归 agent-loop 既有帽）。
 - **占用测量**（复用 §1.4 compaction 纯函数 + 增量面）：
@@ -275,7 +276,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   （turn/start、turn/end；审计通道微任务投递）维护，冷启动由 journal 折叠；L1 落账后的 flush 为 fsync 屏障（append 已由审计实时段先行）。
 - **水位权分居**：强制压缩水位（`triggerPct`）恒属 compaction；autocompact 只读
   `runner.summarizer`（CP 摘要面单一真相），不接管不归还。L1/L2 线（autocompact 自有
-  线序）是 90% 强制带之前的零 LLM 前置层；两层各自按线触发、互不阻塞——
+  线序）是 92% 强制带之前的零 LLM 前置层；两层各自按线触发、互不阻塞——
   L1/L2 落账把占用压回线下时，下一步闸自然不再过 compaction 水位。
 
 ### 1.3 观测面（两包自有 emit token，freeze none）

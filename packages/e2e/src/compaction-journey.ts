@@ -54,7 +54,6 @@ async function assembleWorld(root: string, options?: { readonly mainDialFails413
       contextWindow: 1_200,
       checkpointPct: 60,
       warnBufferTokens: 100,
-      compactBufferTokens: 100,
       ledgerBudgetTokens: 200,
       checkpointMinSegmentTokens: 1,
       clearableTools: ["read"],
