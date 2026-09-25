@@ -140,20 +140,30 @@ async function buildChild(
   deps.lineage.register(row);
   deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, work: row.work });
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
-  void kickChild(deps, { row, handle: childHandle, prompt: plan.input.prompt }); // fire-and-forget：失败经 throw → dispatch 归一（await 会使 spawn 等清理完才返回，无必要）
-  return { ok: true, text: spawnText(row, isFork && !forked) };
+  return finishSpawn(deps, { row, handle: childHandle, prompt: plan.input.prompt, freshFork: isFork && !forked });
 }
 
-/** kick 子代理（spawn 收尾）：失败 → finished 闭环 + worktree 清理 + 摘除登记后重抛
- *  （dispatch 归一为工具错误结果）。armed 恒 false——armed-idle 通知门永不可达，不闭环
- *  即事件幽灵 + 占槽永久泄漏（BATCH2 审 H3）。register（:139）先于 kick——行已注册，
- *  teardown cascade/evictIdle/stop 幂等三路兜底在场；本清理是**最早的一路**且是纯内存
- *  部署（无 archive → evictIdle 恒跳过）下唯一及时路。与 cascade 双清无害：两落者经
- *  repo 锁串行，第二落者走 branchGone 幂等判别 → removed 不假告警（A 路复审③二轮）。 */
-async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string }): Promise<void> {
+/** spawn 收尾：kick + 文案（kick 失败同步归一为工具错误结果——原 throw 契约同义）。 */
+async function finishSpawn(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string; readonly freshFork: boolean }): Promise<SpawnOutcome> {
+  const kicked = await kickChild(deps, spec);
+  if (!kicked.ok) return kicked;
+  return { ok: true, text: spawnText(spec.row, spec.freshFork) };
+}
+
+/** kick 子代理（spawn 收尾）：失败 → finished 闭环 + worktree 尽力清理 + 摘除登记，
+ *  返回失败原因（不 throw——A 路三轮：throw + async 化 = unhandled rejection 断
+ *  dispatch 归一路；由 buildChild 收返回值归一为工具错误结果，同步错误契约不变）。
+ *  armed 恒 false——armed-idle 通知门永不可达，不闭环即事件幽灵 + 占槽永久泄漏
+ *  （BATCH2 审 H3）。register（:139）先于 kick——行已注册，teardown cascade/evictIdle/
+ *  stop 幂等三路兜底在场；本清理是**最早的一路**且是纯内存部署（无 archive →
+ *  evictIdle 恒跳过）下唯一及时路。与 cascade 双清无害：两落者经 repo 锁串行，
+ *  第二落者走 branchGone 幂等判别 → removed 不假告警（A 路复审③二轮）。 */
+export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string }): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
   try {
     spec.handle.agent.followup(spec.prompt);
+    return { ok: true };
   } catch (error) {
+    const detail = `kick failed: ${error instanceof Error ? error.message : String(error)}`;
     spec.row.occupied = false;
     spec.row.stopped = true; // stopAll 幂等早退守卫——防同一周期二次 finished（收口审 K-M3）
     deps.emitFinished({
@@ -161,10 +171,10 @@ async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readon
       agentId: spec.row.agentId,
       sessionId: spec.row.sessionId,
       outcome: "failed",
-      detail: `kick failed: ${error instanceof Error ? error.message : String(error)}`,
+      detail,
     });
     if (spec.row.worktree !== undefined) {
-      // 尽力清理 + 摘除（同步上下文——fire-and-forget；失败经 onWarn 可见）
+      // 尽力清理 + 摘除（fire-and-forget；失败经 onWarn 可见）
       void evaluateCleanup({ path: spec.row.worktree, branch: `x-harness/${spec.row.agentId}`, repoTop: await cleanupRepoTopOf(spec.row, deps.workspaceRoot) }, deps.lockDegraded)
         .then((result) => {
           if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${spec.row.worktree}`);
@@ -174,7 +184,7 @@ async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readon
           unregisterLiveTree(spec.row.worktree as string);
         });
     }
-    throw error;
+    return { ok: false, reason: `spawn-failed:${detail}` };
   }
 }
 

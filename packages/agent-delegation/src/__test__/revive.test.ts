@@ -234,7 +234,7 @@ describe("worktree 子复活（N2——replayWorktree/mainRepoTopOf 执行覆盖
       }
     } finally {
       await rm(worktreeParent(repoTop), { recursive: true, force: true }).catch(() => {});
-      await rm(dirname(dirname(parent)), { recursive: true, force: true }).catch(() => {}); // 独占根（含仓与 worktrees）
+      await rm(dirname(parent), { recursive: true, force: true }).catch(() => {}); // 独占根 = <T>/xh-rev-wt-p-*（parent 是其下 d-*/——切不可再上一级：那是 tmpdir 本身）
     }
   }, 20_000);
 });

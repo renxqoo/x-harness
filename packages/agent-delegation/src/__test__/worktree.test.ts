@@ -370,6 +370,54 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     }
   });
 
+  it("kick 失败 → spawn 同步错误结果（非谎报成功）+ worktree 尽力清理 + 摘除登记（A 路三轮发现1 回归锚）", async () => {
+    repo = await gitRepo();
+    const warnings: string[] = [];
+    const twins = await worktreeWorld({ onWarn: (m) => warnings.push(m) });
+    // 直接单元面：sealing 句柄——followup 抛错（agent-loop 侧 dispose 后同形）
+    const { kickChild } = await import("../spawn.ts");
+    const plan = await createWorktree("agent-kick01", repo);
+    expect(plan.ok).toBe(true);
+    if (plan.ok) {
+      registerLiveTree(plan.plan.path);
+      const row: import("../lineage.ts").ChildRow = {
+        agentId: "agent-kick01",
+        sessionId: "s-kick" as SessionId,
+        type: "untyped",
+        parent: twins.parent.agent.session.id,
+        depth: 1,
+        occupied: true,
+        armed: false,
+        running: false,
+        stopped: false,
+        worktree: plan.plan.path,
+        worktreeRepoTop: plan.plan.repoTop,
+      };
+      const sealing = {
+        agent: {
+          followup(): never {
+            throw new Error("followup boom");
+          },
+        },
+      } as never;
+      const finished: unknown[] = [];
+      const outcome = await kickChild(twins.world.ctx === undefined ? {} as never : {
+        onWarn: (m: string) => warnings.push(m),
+        emitFinished: (p: unknown) => finished.push(p),
+        workspaceRoot: repo,
+      } as never, { row, handle: sealing, prompt: "x" });
+      expect(outcome.ok).toBe(false); // 同步错误结果——非谎报成功（发现1 契约）
+      if (!outcome.ok) expect(outcome.reason).toContain("kick failed");
+      expect(finished).toHaveLength(1); // finished 闭环在场（事件幽灵防线）
+      await sleep(100); // fire-and-forget 清理落定
+      expect(existsSync(plan.plan.path)).toBe(false); // 净树尽力清理
+      const branches = await exec("git", ["-C", repo, "branch", "--list", "x-harness/agent-kick01"]);
+      expect(branches.stdout.trim()).toBe(""); // 分支同清
+      expect(liveTreePaths()).not.toContain(plan.plan.path); // 摘除登记（免死金牌防线）
+    }
+    await twins.parent.dispose();
+  });
+
   it("路径形态：worktreeParent 在 repo 外同级（不落 .git 受保护区）", async () => {
     repo = await gitRepo();
     expect(worktreeParent(repo)).toBe(join(dirname(repo), ".x-harness-worktrees"));

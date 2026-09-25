@@ -271,3 +271,13 @@ A 路核实无问题项（mkdir 原子性/stale 竞态/release 复核/重入/装
 | ⑧' | 落账锚在 kept-dirty 短路——记对记错断言都过，零检测力 | **修**：换净树形态锚（撤脏文件 → stop → 断言分支消失） |
 | A | 测试夹具跨文件竞态：tmpdir 直下多仓共享同一 `<T>/.x-harness-worktrees`，afterEach 互删（审查方实测包级 25 循环 12 失败；此前两处「适应性放宽」实为竞态补丁） | **根治**：夹具独占父目录（fixtureDir 两级 mkdtemp——各仓 worktrees 目录零共享）；放宽断言还原硬断言；包级 5 连跑全绿 |
 | D-1/D-2/D-3 | ENOENT 自愈无退避 / 锁降级窗双清假告警残余（窄窗语义无损）/ ② 用例 env 隔离前置条件 | D-3 注释补；D-1/D-2 备忘接受（窄窗、不越无锁基线） |
+
+## A 路三轮复审处置记录（发现 1/2/3）
+
+| # | 问题 | 处置 |
+| --- | --- | --- |
+| 1（高） | 自查疑点 1 命中：kickChild async 化 + void 调用断掉 throw→dispatch 归一路（spawn 谎报成功 + unhandled rejection 可崩 Bun worker）；kick 失败路径零测试覆盖 | **修**：kickChild 不再 throw——返回 `{ok:false, reason}`，buildChild await 后归一返回（同步错误契约与改前同义，无 unhandled 面）；补回归锚（sealing stub followup 抛错 → 断言错误结果 + finished 闭环 + 树/分支清 + 摘除登记）；处置表「fire-and-forget 语义不变」更正为「await 归一」 |
+| 2（高） | revive 夹具 finally 的 rm 目标 `dirname(dirname(parent))` = os.tmpdir() 本身——destructive 红线（沙箱实测整删 T 目录；真实环境 .catch 静默 + rm 中途失败侥幸） | **修**：改 `dirname(parent)`（独占根）；注释明示不可再上一级 |
+| 3（低） | 独占根泄漏：revive 侧因发现 2 从未删除（116K/跑真实累积）；worktree 侧 afterEach 与 fire-and-forget 清理竞态留空壳（0 字节恒定） | revive 侧随发现 2 根治；worktree 空壳接受（无累积成本——落档本行） |
+
+审查方验证背书：包级 25 连跑全绿（竞态根治复测）；⑧' 测试时序逐环验证自洽（含锚链兜底分叉）。
