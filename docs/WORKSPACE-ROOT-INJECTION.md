@@ -170,7 +170,7 @@ docs/CLI.md、docs/SDK-DESIGN.md        stale 示意更新
 - [ ] hub 形态 `task_stop` 后 worktree 目录 + 分支双清（经 stop 面锚定）
 - [ ] remove 失败走 onWarn + stop 文案如实（remove-failed ≠ has changes）
 - [ ] existsSync 早退分支的分支删除
-- [ ] workspace-not-in-repo 拒绝（无关祖先仓）
+- [x] workspace-not-in-repo 拒绝（GIT_WORK_TREE 异指等注入形态——语义收敛后「无关祖先仓」不可达，见处置记录）
 - [ ] repoTop 归属校验（仓内子目录合法通过）
 - [ ] per-repo lockfile：跨进程写互斥 + stale 抢占
 - [ ] resumeCwdOf 空串守卫
@@ -211,7 +211,7 @@ docs/CLI.md、docs/SDK-DESIGN.md        stale 示意更新
 | 8 | plugin 兜底链（`?? workspaceRoot`）与 verbs（`?? worktree ?? workspaceRoot`）不一致 | **修**：统一三段链（repoTop → worktree 自身 git -C 归位 → workspaceRoot） |
 | 9 | sweep「全程持锁」声明与代码不符（readdir 在锁外） | **修**：readdir 移入锁内临界区 |
 | 10 | lockAgeMs 死导出 | **删** |
-| 11 | worktree 用例贴超时抖动 | 真仓夹具用例已达 21 条全绿；CI 并行档如再现显式放宽 timeout（挂账观察项） |
+| 11 | worktree 用例贴超时抖动 | 包级并行档（19 文件同跑）stale 抢占用例可复现 5000ms 超时（单文件/单用例 1ms 即完成——并行 import/transform 期事件循环饥饿）；真仓夹具 describe 显式放宽 timeout 20s（N6 复审后改实） |
 
 另：B 路 P2 审查揭示原「无关祖先仓拒」测试的绿靠词法比较 bug（逻辑形 vs 物理形必非「祖先」）。归一修复后语义收敛：物理在仓内必是祖先——「无关祖先仓」在自然文件系统下不可达，`workspace-not-in-repo` 保留为 GIT_DIR 注入等防御面的拒绝词。测试改为 symlink 逻辑形不误拒的回归锚。
 
@@ -233,3 +233,15 @@ docs/CLI.md、docs/SDK-DESIGN.md        stale 示意更新
 | 12 | 夹具 realpathSync 遮蔽 symlink 缺陷 | 已由 symlink 逻辑形回归锚补上（B 路 #2 处置附带）；锁互斥用例 30ms sleep 改为确定性先持锁（await 30ms 后启动第二个） |
 
 A 路核实无问题项（mkdir 原子性/stale 竞态/release 复核/重入/装配点/resumeCwdOf/worktree lock 锚）不再重复处置。
+
+## B 路验收复审处置记录（第二轮 N1–N7）
+
+| # | 问题 | 处置 |
+| --- | --- | --- |
+| N1 | 活树登记簿只增不减（task_stop/abortSpawn 不摘除——内存泄漏红线） | **修**：stop 非 kept-dirty 即摘除（kept-dirty 树仍活可复活）；abortSpawn 同（登记晚于 createChildSession，abort 可达）；spawnFailed 摘除注释诚实化（该路径登记未发生=no-op） |
+| N2 | mainRepoTopOf 全套件零执行覆盖（回归锚只断言 git 行为，未执行解析器；e2e revive 旅程 spawn 不带 isolation） | **修**：revive.test.ts 增 worktree 子复活用例（真走 replayWorktree，断言 rootOverrideOf(child).guard === 主仓顶 非 worktree 路径 + 行落账 worktreeRepoTop） |
+| N3 | 三处契约面仍描述已不可达的「无关祖先仓拒」 | **修**：types.ts / AGENT-DELEGATION §8.1 / 本方案验收清单同批改为收敛语义（祖先仓=工作区的仓接受；防御面=GIT_WORK_TREE 异指注入） |
+| N4 | 兜底链中段 `?? row.worktree` 非 repoTop（worktree≠仓顶——remove 成功后 branch -D 的 cwd 是已删目录 → 分支泄漏） | **修**：中段改 mainRepoTopOf(worktree)（失败落 workspaceRoot）；stop 侧同链 |
+| N5 | lockfile 四条降级路径零观测 | **修**：withRepoLock 增可选 onDegraded；两装配点接 stderr（hub 既有 onWarn 同链） |
+| N6 | #11 处置不实（包级并行仍超时；「21 条」过期） | **修**：真仓夹具 describe 放宽 timeout 20s；处置表复现条件改实（本表 #11 行） |
+| N7 | 病态命名理论边（仓恰名 `<A>-agent-*` 撞前缀；仓名以 `-agent-<8hex>` 结尾错位） | **落档** §13 已知理论边——需刻意命名，接受 |

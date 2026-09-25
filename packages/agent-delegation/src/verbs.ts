@@ -8,7 +8,7 @@ import type { SessionStore, SessionId } from "@x-harness/session";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { resolveAddress } from "./nameaddr.ts";
 import type { ReviveOutcome } from "./revive.ts";
-import { evaluateCleanup } from "./worktree.ts";
+import { evaluateCleanup, mainRepoTopOf, unregisterLiveTree } from "./worktree.ts";
 import type { CrossDeps } from "./crossmsg.ts";
 import { sendCross } from "./crossmsg.ts";
 import type { ChildView } from "./types.ts";
@@ -146,18 +146,27 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
     });
   }
   const cleanup = row.worktree !== undefined
-    ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: repoTopOf(deps, row) })
+    ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await repoTopOf(deps, row) })
     : { kind: "removed" as const };
+  if (cleanup.kind !== "kept-dirty") {
+    if (row.worktree !== undefined) unregisterLiveTree(row.worktree); // 终局摘除（kept-dirty 树仍活——可复活；N1 泄漏红线）
+  }
   if (cleanup.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${cleanup.detail}): ${cleanup.path}`);
   const worktreeNote = worktreeNoteOf(cleanup);
   return { ok: true, text: `Stopped ${row.agentId}; it can be messaged again with agent_message.${worktreeNote}` };
 }
 
-/** stop 清理的 repoTop：行有 plan 事实（spawn/复活落账）优先；缺席时以 worktree
- *  路径兜底（git -C <path> 自归位仓顶——持久化事实，不依赖当次装配）。 */
-function repoTopOf(deps: VerbDeps, row: ChildRow): string {
-  const known = row.worktreeRepoTop !== undefined && row.worktreeRepoTop !== "" ? row.worktreeRepoTop : row.worktree;
-  return known ?? deps.workspaceRoot;
+/** stop 清理的 repoTop：行有 plan 事实（spawn/复活落账）优先；缺席时读 worktree
+ *  自身 .git gitdir 归位主仓顶（worktree ≠ 仓顶——裸传路径会让 remove 成功后
+ *  branch -D 的 cwd 落在已删目录（ENOENT）→ 目录已删分支泄漏，N4）；最后落
+ *  workspaceRoot（与 plugin 三处同链）。 */
+async function repoTopOf(deps: VerbDeps, row: ChildRow): Promise<string> {
+  if (row.worktreeRepoTop !== undefined && row.worktreeRepoTop !== "") return row.worktreeRepoTop;
+  if (row.worktree !== undefined) {
+    const top = await mainRepoTopOf(row.worktree);
+    if (top !== undefined) return top;
+  }
+  return deps.workspaceRoot;
 }
 
 /** stop 尾注按清理形态分支（CleanupResult 判别拆分——失败不得谎报 has changes） */

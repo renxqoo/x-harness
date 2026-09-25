@@ -70,7 +70,7 @@ async function worktreeWorldAt(root: string, overrides: { readonly onWarn?: (m: 
 const spawnWorktree = (world: Awaited<ReturnType<typeof worktreeWorld>>) =>
   callTool({ world: world.world, name: "agent_spawn", args: { description: "isolated work", prompt: "x", isolation: "worktree" }, session: world.parent.agent.session.id });
 
-describe("worktree 隔离（§8）", () => {
+describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 夹具：包级并行档 import/transform 期事件循环饥饿可致 5s 默认超时（N6）
   it("hub 形态（进程 cwd 在仓外）：repo 外路径建树 + 授权根落账（真隔离）；task_stop 无改动自动清理（树与分支消失）", async () => {
     repo = await gitRepo();
     const twins = await worktreeWorld();
@@ -378,7 +378,7 @@ describe("worktree 隔离（§8）", () => {
   });
 });
 
-describe("per-repo lockfile（跨进程写互斥）", () => {
+describe("per-repo lockfile（跨进程写互斥）", { timeout: 20_000 }, () => {
   it("互斥：持锁期间第二个临界区等待（串行执行）", async () => {
     const dir = mkdtempSync(join(tmpdir(), "xh-lock-"));
     scratch = [...scratch, dir];

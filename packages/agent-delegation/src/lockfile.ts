@@ -46,16 +46,24 @@ export interface RepoLock {
 const LOCK_WAIT_MS = 60_000;
 const RETRY_MS = 25;
 
+/** 降级出口（N5）：互斥失效（超时/环境性错误）时上报——运维面可见，缺省静默 */
+export type LockDegraded = (reason: string) => void;
+
 /** 持锁执行（自旋等锁 + 临界区 + 必释放）。mkdir 原子性 = 唯一创建者即持锁者；
  *  stale（持锁进程死亡）抢占经 rm 重建。误抢最坏效果 = 与他进程 git 写并行，
- *  等同无锁现状，不劣化。 */
-export async function withRepoLock<T>(lockDir: string, critical: () => Promise<T>): Promise<T> {
+ *  等同无锁现状，不劣化（降级经 onDegraded 可观测）。 */
+export async function withRepoLock<T>(lockDir: string, critical: () => Promise<T>, onDegraded?: LockDegraded): Promise<T> {
+  const degraded = (reason: string): void => onDegraded?.(`agents: repo lock degraded (${reason}): ${lockDir}`);
+  const runUnlocked = (reason: string): Promise<T> => {
+    degraded(reason);
+    return critical();
+  };
   // 父目录不存在时 mkdir(recursive:false) 恒 ENOENT（与被持互不可分）——先建父
   const parentReady = await mkdir(dirname(lockDir), { recursive: true }).then(
     () => true,
     () => false,
   ); // 父不可建（只读挂载/权限）→ 无锁可用：直接执行临界区（等同无锁现状，不劣化）
-  if (!parentReady) return await critical();
+  if (!parentReady) return runUnlocked("parent dir unwritable");
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
     try {
@@ -64,12 +72,12 @@ export async function withRepoLock<T>(lockDir: string, critical: () => Promise<T
       const code = (error as { code?: unknown }).code;
       if (code !== "EEXIST") {
         // 非竞争性失败（权限/只读等环境性错误）——自旋无出路，降级直跑（不劣化于无锁）
-        return await critical();
+        return runUnlocked(`mkdir ${String(code)}`);
       }
       // pid 文件缺失 = 创建者仍在写（本进程同 tick 并发 or 极短窗口）——不能判 stale
       const holder = await lockHolder(lockDir, { creatingCountsAsHeld: true });
       if (holder !== undefined) {
-        if (Date.now() > deadline) return await critical(); // 超时降级（pid 复用等永久持锁形态——不挂死）
+        if (Date.now() > deadline) return runUnlocked("wait timeout"); // 超时降级（pid 复用等永久持锁形态——不挂死）
         await new Promise((resolve) => {
           setTimeout(resolve, RETRY_MS);
         });
@@ -83,7 +91,7 @@ export async function withRepoLock<T>(lockDir: string, critical: () => Promise<T
       await writeFile(join(lockDir, "pid"), String(process.pid));
     } catch {
       await rm(lockDir, { recursive: true, force: true }).catch(() => {});
-      return await critical(); // 持续写不可（目录只读等）——自旋无出路，降级直跑
+      return runUnlocked("pid file unwritable"); // 持续写不可（目录只读等）——自旋无出路，降级直跑
     }
     try {
       return await critical();

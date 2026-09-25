@@ -186,7 +186,7 @@ function spawnFailed(reason: string, plan: WorktreePlan | undefined, deps: Spawn
     void evaluateCleanup(plan)
       .then((result) => {
         if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${plan.path}`);
-        if (result.kind !== "kept-dirty") unregisterLiveTree(plan.path); // 终局摘除（保留树仍属活树——可复活）
+        if (result.kind !== "kept-dirty") unregisterLiveTree(plan.path); // 防御摘除（此路径登记尚未发生=no-op；保留树属活树）
       })
       .catch(() => {
         unregisterLiveTree(plan.path);
@@ -248,8 +248,9 @@ async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandl
   if (input.plan !== undefined) {
     const result = await evaluateCleanup(input.plan).catch(() => undefined);
     if (result !== undefined && result.kind === "remove-failed") {
-      input.deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${result.path}`);
+      input.deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${input.plan.path}`);
     }
+    if (result === undefined || result.kind !== "kept-dirty") unregisterLiveTree(input.plan.path); // 登记晚于 134——abort 摘除（N1）
   }
   input.deps.lineage.drop(input.row.sessionId);
   return { ok: false, reason: "aborted:spawn cancelled before dispatch" };

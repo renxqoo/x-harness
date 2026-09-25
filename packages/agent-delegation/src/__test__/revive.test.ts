@@ -11,6 +11,28 @@ import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, resetWorlds, sessionOf } from "./world.ts";
 import type { World } from "./world.ts";
+import type { Plugin } from "@x-harness/core";
+import { GrantsRegistry, permissionGrants } from "@x-harness/permission";
+import { execFile } from "node:child_process";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { promisify } from "node:util";
+import { worktreeParent } from "../worktree.ts";
+
+const exec = promisify(execFile);
+
+const grantsStub = (): Plugin => ({
+  name: "grants-stub",
+  apply: (ctx) => ctx.provide(permissionGrants, new GrantsRegistry()),
+});
+
+/** worktree 子复活装置：真 git 仓 + jsonl 持久化 + grants（rootOverride 落账面） */
+async function worktreePersistedWorld(root: string, repoTop: string) {
+  const options = await makeOptions({}, { workspaceRoot: repoTop, worktreeSweep: false });
+  const world = await makeWorld(options, undefined, [grantsStub(), createJsonlSessionPersistence({ root })]);
+  const parent = await spawnParent(world, PARENT_MODEL, "wtp" as never);
+  world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
+  return { world, parent };
+}
 
 beforeEach(() => {
   resetWorlds();
@@ -148,4 +170,56 @@ describe("驻留档化（§2.2 maxResident）", () => {
       await rm(root, { recursive: true, force: true }).catch(() => {});
     }
   });
+});
+
+describe("worktree 子复活（N2——replayWorktree/mainRepoTopOf 执行覆盖）", () => {
+  it("复活重放 rootOverride：guard=主仓顶（非 worktree 路径）+ 行落账 worktreeRepoTop", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "xh-rev-wt-"));
+    const repoTop = realpathSync(dir);
+    try {
+      await exec("git", ["-C", repoTop, "init"]);
+      await exec("git", ["-C", repoTop, "config", "user.email", "t@t"]);
+      await exec("git", ["-C", repoTop, "config", "user.name", "t"]);
+      writeFileSync(join(repoTop, "SEED.md"), "seed\n");
+      await exec("git", ["-C", repoTop, "add", "."]);
+      await exec("git", ["-C", repoTop, "commit", "-m", "seed"]);
+
+      const persistence = mkdtempSync(join(tmpdir(), "xh-rev-wt-store-"));
+      try {
+        // 装配一：spawn worktree 子 + flush 落盘 + 拆卸
+        const first = await worktreePersistedWorld(persistence, repoTop);
+        const spawned = await callTool({ world: first.world, name: "agent_spawn", args: { description: "iso work", prompt: "x", isolation: "worktree" }, session: first.parent.agent.session.id });
+        expect(spawned.isError).toBeUndefined();
+        const agentId = (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] as string;
+        const childSession = sessionOf(spawned.content);
+        const { readdir } = await import("node:fs/promises");
+        const wtEntry = (await readdir(worktreeParent(repoTop))).find((f) => f.includes(agentId)) ?? "";
+        const wtPath = join(worktreeParent(repoTop), wtEntry);
+        writeFileSync(join(wtPath, "DIRTY.md"), "keep me\n"); // 弄脏：teardown 级联评估 kept-dirty 保留——复活时树必须在场
+        await first.world.ctx.use(sessionStore).flush(childSession);
+        await first.world.ctx.use(sessionStore).flush(first.parent.agent.session.id);
+        await first.world.disposePlugins();
+
+        // 装配二：父从档案 resume → agent_message 复活子 → replayWorktree 重放
+        const second = await worktreePersistedWorld(persistence, repoTop);
+        await second.world.loop.resume({ id: first.parent.agent.session.id, agent: { model: PARENT_MODEL, provider: "fake" } });
+        const revived = await callTool({ world: second.world, name: "agent_message", args: { to: agentId, message: "continue" }, session: first.parent.agent.session.id });
+        expect(revived.isError).toBeUndefined();
+        const listed = await callTool({ world: second.world, name: "list_agents", args: {}, session: first.parent.agent.session.id });
+        expect(listed.content).toContain(agentId); // 复活行在场（worktree 列不展示——隔离事实在 grants/行落账面）
+
+        // N2 核心：guard 必须是主仓顶——worktree 自身路径会打穿 §8.2 extraRoots 过滤
+        const grants = second.world.ctx.tryUse(permissionGrants);
+        expect(grants?.rootOverrideOf(childSession)).toEqual({ dir: wtPath, guard: repoTop });
+        await second.parent.dispose();
+        await second.world.disposePlugins();
+        await rm(wtPath, { recursive: true, force: true }).catch(() => {});
+      } finally {
+        await rm(persistence, { recursive: true, force: true }).catch(() => {});
+      }
+    } finally {
+      await rm(worktreeParent(repoTop), { recursive: true, force: true }).catch(() => {});
+      await rm(repoTop, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 20_000);
 });

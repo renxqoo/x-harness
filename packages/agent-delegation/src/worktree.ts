@@ -8,9 +8,19 @@
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { repoLockPath, withRepoLock } from "./lockfile.ts";
+import type { LockDegraded } from "./lockfile.ts";
+
+/** lockfile 降级出口（装配注入——N5：四条降级路径可观测）；缺省静默 */
+let lockDegradedSink: LockDegraded | undefined;
+
+export function setLockDegradedSink(sink: LockDegraded | undefined): void {
+  lockDegradedSink = sink;
+}
+
+const lockOpts = (): { readonly onDegraded?: LockDegraded } => (lockDegradedSink === undefined ? {} : { onDegraded: lockDegradedSink });
 
 const exec = promisify(execFile);
 
@@ -74,10 +84,10 @@ export async function createWorktree(agentId: string, workspaceRoot: string): Pr
   const branch = `x-harness/${agentId}`;
   const path = join(worktreeParent(top.top), `${basename(top.top)}-${agentId}`);
   try {
-    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["worktree", "add", "-b", branch, path, "HEAD"], { cwd: top.top }));
+    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["worktree", "add", "-b", branch, path, "HEAD"], { cwd: top.top }), lockOpts().onDegraded);
   } catch (error) {
     // 半建兜底（写操作持锁——A 路 #7：并发预算的 branch -D 持锁面不许裸奔）
-    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["branch", "-D", branch], { cwd: top.top })).catch(() => {});
+    await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["branch", "-D", branch], { cwd: top.top }), lockOpts().onDegraded).catch(() => {});
     return { ok: false, reason: `git worktree add failed (${errorText(error)})` };
   }
   return { ok: true, plan: { path, branch, repoTop: top.top } };
@@ -93,7 +103,7 @@ export type CleanupResult =
  *  git 写操作锚 plan.repoTop（持久化事实——跨装配 resume/fork 换 cwd 不漂移）+
  *  per-repo lockfile（跨进程写互斥；锁不可重入——sweep 持锁时走 cleanupHeld）。 */
 export async function evaluateCleanup(plan: WorktreePlan): Promise<CleanupResult> {
-  return withRepoLock(repoLockPath(worktreeParent(plan.repoTop), plan.repoTop), () => cleanupHeld(plan));
+  return withRepoLock(repoLockPath(worktreeParent(plan.repoTop), plan.repoTop), () => cleanupHeld(plan), lockOpts().onDegraded);
 }
 
 /** 清理本体（调用方已持 repo 锁——sweep 全程持锁时复用，免同锁重入死锁） */
@@ -139,7 +149,24 @@ export interface SweepKept {
   readonly kind: "kept-dirty" | "remove-failed";
 }
 
-/** 进程级活树登记簿（A 路 #5）：livePaths 若只取本插件实例的 lineage，apply 时刻恒空
+/** worktree 所属主仓顶（持久化事实）。linked worktree 内 rev-parse --show-toplevel
+ *  返回 worktree 自身（实测）——不能用它；.git 文件的 gitdir 行
+ *  `gitdir: <mainRepo>/.git/worktrees/<name>` 才是主仓锚。 */
+export async function mainRepoTopOf(worktree: string): Promise<string | undefined> {
+  try {
+    const raw = await readFile(join(worktree, ".git"), "utf8");
+    const m = /^gitdir: (.+)\r?$/m.exec(raw.trim());
+    const gitdir = m?.[1];
+    if (gitdir === undefined) return undefined; // .git 是目录（主仓本体）——非本件形态
+    const wt = "/.git/worktrees/";
+    const at = gitdir.lastIndexOf(wt);
+    return at === -1 ? undefined : gitdir.slice(0, at);
+  } catch {
+    return undefined; // .git 缺席/不可读——树损坏
+  }
+}
+
+/** 进程级活树登记簿（A 路 #5）：livePaths 若只取本插件实例的 lineage， apply 时刻恒空
  *  （行只在装配后由 spawn/revive 注册）——同进程 resume/fork 重装配的新实例会误扫旧
  *  实例的活树。登记簿跨实例共享：spawn/revive 建树登记，清理/拆卸摘除。 */
 const liveTrees = new Set<string>();
@@ -188,7 +215,7 @@ export async function sweepWorktrees(livePaths: readonly string[], workspaceRoot
       if (result.kind !== "removed") kept.push({ path, kind: result.kind });
     }
     return kept;
-  });
+  }, lockOpts().onDegraded);
 }
 
 function errorText(error: unknown): string {

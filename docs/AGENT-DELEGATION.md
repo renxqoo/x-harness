@@ -320,8 +320,9 @@ AgentOptions 无字段，落档 §13。
 （rev-parse）锚 `DelegationOptions.workspaceRoot`（宿主注入的线程/CLI 工作区根；hub worker
 进程 cwd 是应用启动目录，绝不可作锚）；写操作（worktree add/remove、branch -D）锚
 `WorktreePlan.repoTop`（spawn 时落账的持久化事实——清理/复活跨装配 resume/fork 换 cwd
-不漂移）。rev-parse 找到的仓顶须是 workspaceRoot 自身或其祖先，否则拒
-`workspace-not-in-repo`（无关祖先仓——dotfiles $HOME、外层 monorepo——不得当隔离基座）。
+不漂移）。rev-parse 找到的仓顶须是 workspaceRoot 自身或其祖先（物理归一比较——symlink
+逻辑形不误拒；含工作区的祖先仓即工作区的仓，接受为隔离基座），仓顶落在工作区之外
+（GIT_WORK_TREE 异指等注入形态）拒 `workspace-not-in-repo`。
 
 **并发互斥（两层）**：进程内 git 互斥队列（gitChain——并发 spawn 依赖 git 内部锁未验证，
 串行消除风险）+ **跨进程 per-repo lockfile**（`<worktreeParent>/repo-<hash>.lock/` 目录锁

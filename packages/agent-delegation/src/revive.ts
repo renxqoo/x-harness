@@ -3,13 +3,11 @@
 // depth 用落盘冗余；无档案/不命中 → miss。
 
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { ToolFilter, ToolRegistry } from "@x-harness/tools";
 import type { SessionArchive, SessionId } from "@x-harness/session";
 import { narrowTools } from "./lineage.ts";
-import { registerLiveTree } from "./worktree.ts";
+import { mainRepoTopOf, registerLiveTree } from "./worktree.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import type { LoadedAgentType } from "./types.ts";
 
@@ -98,23 +96,6 @@ function revivedOptions(deps: ReviveDeps, caller: SessionId, named: LoadedAgentT
     ...(named !== undefined && named.prompt !== "" ? { systemPrompt: named.prompt } : {}),
     ...(idle !== undefined ? { streamIdleTimeoutMs: idle } : {}), // loop.get 落空（会话不在场）时缺省回落
   };
-}
-
-/** worktree 所属主仓顶（持久化事实——非当次装配 workspaceRoot，跨仓 resume 不错位）。
- *  linked worktree 内 rev-parse --show-toplevel 返回 worktree 自身（实测），不能用它；
- *  .git 文件的 gitdir 行 `gitdir: <mainRepo>/.git/worktrees/<name>` 才是主仓锚。 */
-async function mainRepoTopOf(worktree: string): Promise<string | undefined> {
-  try {
-    const raw = await readFile(join(worktree, ".git"), "utf8");
-    const m = /^gitdir: (.+)\r?$/m.exec(raw.trim());
-    const gitdir = m?.[1];
-    if (gitdir === undefined) return undefined; // .git 是目录（主仓本体）——非本件形态
-    const wt = "/.git/worktrees/";
-    const at = gitdir.lastIndexOf(wt);
-    return at === -1 ? undefined : gitdir.slice(0, at);
-  } catch {
-    return undefined; // .git 缺席/不可读——树损坏
-  }
 }
 
 /** worktree 隔离重放（§6.2）：树在 → 重放 rootOverride + 行回填；树已清 → 明示降级继续。
