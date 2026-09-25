@@ -39,6 +39,40 @@ function doneEvent(): DoneEvent {
 }
 
 describe("pi-adapter 注入层", () => {
+  it("首字重复症状「四四」（anthropic 方言）：pi 的 partial 是共享可变引用，生产者在消费者读 start 前已推进 block.text——start 帧读初值必污染，修复后 start 帧零产出，正文拼接零重复", async () => {
+    // 真实竞态形态（pi anthropic-messages.js push 的是 partial: output 同一对象）：
+    // start 入队 → 生产者处理首条 delta（block.text 已推进）入队 → 消费者才读 start。
+    const output = { content: [{ type: "text", text: "" }] };
+    const streamFn: PiStreamFn = async function* () {
+      yield { type: "text_start", contentIndex: 0, partial: output } as never;
+      output.content[0] = { type: "text", text: "四" };
+      yield { type: "text_delta", contentIndex: 0, delta: "四", partial: output } as never;
+      output.content[0] = { type: "text", text: "四门全绿。" };
+      yield { type: "text_end", contentIndex: 0, content: "四门全绿。", partial: output } as never;
+      yield doneEvent();
+    };
+    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", streamFn });
+    const chunks = await collect(adapter.stream(request()));
+    const text = chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => (chunk as { text: string }).text).join("");
+    expect(text).toBe("四门全绿。");
+  });
+
+  it("首字重复症状（thinking 通道同款）：start 不读共享引用，尾段由 end 终态校正补齐", async () => {
+    const output = { content: [{ type: "thinking", thinking: "" }] };
+    const streamFn: PiStreamFn = async function* () {
+      yield { type: "thinking_start", contentIndex: 0, partial: output } as never;
+      output.content[0] = { type: "thinking", thinking: "思" };
+      yield { type: "thinking_delta", contentIndex: 0, delta: "思", partial: output } as never;
+      output.content[0] = { type: "thinking", thinking: "思考完毕" };
+      yield { type: "thinking_end", contentIndex: 0, content: "思考完毕", partial: output } as never;
+      yield doneEvent();
+    };
+    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", streamFn });
+    const chunks = await collect(adapter.stream(request()));
+    const text = chunks.filter((chunk) => chunk.type === "thinking-delta").map((chunk) => (chunk as { text: string }).text).join("");
+    expect(text).toBe("思考完毕");
+  });
+
   it("anthropic 工厂：identity 头/单 attempt/cacheRetention none/maxTokens 全缺席不注入（wire 省略——服务端默认，本地硬编码兜底已废除）/apiKey/signal 透传", async () => {
     const seen: Array<{ model: { api: string; id: string; baseUrl: string; provider: string; maxTokens: number }; context: Context; options: Record<string, unknown> }> = [];
     const streamFn: PiStreamFn = async function* (model, context, options) {

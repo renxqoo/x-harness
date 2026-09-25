@@ -1,4 +1,4 @@
-// pi-events 映射矩阵（docs/LLM-PI.md 测试口径）：事件族全量、P10 初值、toolcall 三形态、
+// pi-events 映射矩阵（docs/LLM-PI.md 测试口径）：事件族全量、start 零产出竞态剧本、toolcall 三形态、
 // usage 折算与全零守卫、终态恰一次、abort rethrow、错误分类负例、防御层。
 
 import { describe, expect, it } from "vitest";
@@ -22,7 +22,7 @@ function doneEvent(): AssistantMessageEvent {
 
 async function collect(
   events: AssistantMessageEvent[],
-  options?: { signal?: AbortSignal; failureInfo?: () => { status?: number; retryAfterMs?: number }; emitStartInitials?: boolean },
+  options?: { signal?: AbortSignal; failureInfo?: () => { status?: number; retryAfterMs?: number } },
 ): Promise<LlmChunk[]> {
   const out: LlmChunk[] = [];
   const iterable = {
@@ -34,48 +34,96 @@ async function collect(
   for await (const chunk of piChunks(iterable, {
     signal: options?.signal ?? idleSignal(),
     failureInfo: options?.failureInfo ?? noFailure,
-    ...(options?.emitStartInitials !== undefined ? { emitStartInitials: options.emitStartInitials } : {}),
   })) {
     out.push(chunk);
   }
   return out;
 }
 
+/** 竞态剧本驱动器：生产者在消费者读走 start 后才推进共享 partial（真实时序——
+ *  pi push 只入队不暂停生产者，SSE 快于消费时必然出现）。队列空时 next 挂起等
+ *  生产者 emit（活队不终止）；脚本结束落哨兵让消费者收尾。脚本内的 await 会饿死
+ *  消费者（微任务链被脚本独占）——调度器每帧后强制 setImmediate 让消费者跑一拍。 */
+async function collectRacy(
+  script: (emit: (event: AssistantMessageEvent) => void, yieldToConsumer: () => Promise<void>) => Promise<void>,
+): Promise<LlmChunk[]> {
+  const queue: AssistantMessageEvent[] = [];
+  let parkedResolve: (() => void) | undefined;
+  let scriptDone = false;
+  const emit = (event: AssistantMessageEvent): void => {
+    queue.push(event);
+    if (parkedResolve !== undefined) {
+      const wake = parkedResolve;
+      parkedResolve = undefined;
+      wake(); // 唤醒挂起的消费者（对齐 pi EventStream.push 的 waiter 语义）
+    }
+  };
+  const yieldToConsumer = async (): Promise<void> => {
+    await new Promise<void>((resolve) => {
+      setImmediate(() => resolve());
+    });
+    await new Promise<void>((resolve) => {
+      setImmediate(() => resolve());
+    });
+  };
+  const iterable = {
+    [Symbol.asyncIterator]: (): AsyncIterator<AssistantMessageEvent> => ({
+      next: async (): Promise<IteratorResult<AssistantMessageEvent>> =>
+        new Promise((resolve) => {
+          const tick = (): void => {
+            if (queue.length > 0) resolve({ done: false, value: queue.shift() as AssistantMessageEvent });
+            else if (scriptDone) resolve({ done: true, value: undefined });
+            else parkedResolve = tick; // 队列空且脚本未完：挂起等 emit 唤醒
+          };
+          tick();
+        }),
+    }),
+  };
+  const collected: LlmChunk[] = [];
+  const consumer = (async () => {
+    for await (const chunk of piChunks(iterable, { signal: idleSignal(), failureInfo: noFailure })) collected.push(chunk);
+  })();
+  await script(emit, yieldToConsumer);
+  scriptDone = true;
+  parkedResolve?.();
+  await consumer;
+  return collected;
+}
+
 describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
-  it("P10 初值（emitStartInitials=true，anthropic 方言）：start 非空初值补发 delta；空 delta 跳过；关闭时不读 partial", async () => {
-    const chunks = await collect(
-      [
-        assistantEvent({ type: "thinking_start", contentIndex: 0, partial: { content: [{ type: "thinking", thinking: "思" }] } }),
-        assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "" }), // 空 delta 跳过
-        assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "考" }),
-        assistantEvent({ type: "thinking_end", contentIndex: 0, content: "思考" }),
-        assistantEvent({ type: "text_start", contentIndex: 1, partial: { content: [{ type: "thinking", thinking: "x" }, { type: "text", text: "he" }] } }),
-        assistantEvent({ type: "text_delta", contentIndex: 1, delta: "llo" }),
-        assistantEvent({ type: "text_end", contentIndex: 1, content: "hello" }),
-        doneEvent(),
-      ],
-      { emitStartInitials: true },
-    );
-    expect(chunks).toEqual([
-      { type: "thinking-delta", text: "思" },
-      { type: "thinking-delta", text: "考" },
-      { type: "text-delta", text: "he" },
-      { type: "text-delta", text: "llo" },
-      { type: "finish", finish: { kind: "stop" } },
-    ]);
-    // openai 方言（emitStartInitials 缺省 false）：start 不读 partial（pi 同步块已变异），只透传 delta
-    const openai = await collect([
-      assistantEvent({ type: "text_start", contentIndex: 0, partial: { content: [{ type: "text", text: "he" }] } }),
-      assistantEvent({ type: "text_delta", contentIndex: 0, delta: "he" }),
-      assistantEvent({ type: "text_delta", contentIndex: 0, delta: "llo" }),
-      assistantEvent({ type: "text_end", contentIndex: 0, content: "hello" }),
-      doneEvent(),
-    ]);
-    expect(openai).toEqual([
-      { type: "text-delta", text: "he" },
-      { type: "text-delta", text: "llo" },
-      { type: "finish", finish: { kind: "stop" } },
-    ]);
+  it("start 事件不读 partial（首字重复症状「四四门全绿」，真实竞态时序复现）：pi 的 partial 是共享可变引用，消费者挂起等网络时单 burst 内到达 content_block_start+首条 delta——消费者醒来读 start 帧时 block.text 已含首字，start 帧补发初值必把已发 delta 重发一遍", async () => {
+    const output = { content: [{ type: "text", text: "" }] };
+    const chunks = await collectRacy(async (emit, yieldToConsumer) => {
+      await yieldToConsumer(); // ① 消费者启动并挂起（等网络——真实态）
+      // ② 同步 burst：同一 SSE 缓冲段内 start + 首条 delta（pi 解析循环在同一 burst
+      //    内 push start、推进 block.text、push delta）
+      emit(assistantEvent({ type: "text_start", contentIndex: 0, partial: output }));
+      (output.content[0] as { text: string }).text = "四";
+      emit(assistantEvent({ type: "text_delta", contentIndex: 0, delta: "四", partial: output }));
+      await yieldToConsumer(); // ③ 消费者此刻才读 start（读到污染初值）
+      (output.content[0] as { text: string }).text = "四门全绿。";
+      emit(assistantEvent({ type: "text_delta", contentIndex: 0, delta: "门全绿。", partial: output }));
+      emit(assistantEvent({ type: "text_end", contentIndex: 0, content: "四门全绿。", partial: output }));
+      emit(doneEvent());
+    });
+    const textDeltas = chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => (chunk as { text: string }).text);
+    expect(textDeltas.join("")).toBe("四门全绿。");
+  });
+
+  it("thinking 通道同款（真实竞态时序）：start 不读 partial，首帧零产出，尾段由 end 终态校正补齐", async () => {
+    const output = { content: [{ type: "thinking", thinking: "" }] };
+    const chunks = await collectRacy(async (emit, yieldToConsumer) => {
+      await yieldToConsumer();
+      emit(assistantEvent({ type: "thinking_start", contentIndex: 0, partial: output }));
+      (output.content[0] as { thinking: string }).thinking = "思";
+      emit(assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "思", partial: output }));
+      await yieldToConsumer();
+      (output.content[0] as { thinking: string }).thinking = "思考完毕";
+      emit(assistantEvent({ type: "thinking_end", contentIndex: 0, content: "思考完毕", partial: output }));
+      emit(doneEvent());
+    });
+    const thinkingDeltas = chunks.filter((chunk) => chunk.type === "thinking-delta").map((chunk) => (chunk as { text: string }).text);
+    expect(thinkingDeltas.join("")).toBe("思考完毕");
   });
 
   it("终态校正：wire 尾段未被 delta 覆盖时补发（text_end/thinking_end）", async () => {

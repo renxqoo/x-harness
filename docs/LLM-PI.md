@@ -34,7 +34,7 @@
      assistant text/tool_use，input STRING→JSON.parse 降 {}；tool 消息→toolResult，toolName 前文
      回查、查无 "unknown"；assistant 重放元数据必填字段补齐（SurfaceMessage 投影无 stopReason，重放恒 stop））。
    - `pi-events.ts`：pi 事件 → `LlmChunk`：
-     - `text_start`/`thinking_start` 读 `partial.content[contentIndex]` 非空初值 → 补发 delta（P10 保真，审查 B5）；
+      - `text_start`/`thinking_start` 零产出——partial 是共享可变引用（pi push 同一 output 对象，同一 SSE 缓冲段内 start 与首条 delta 同 burst 处理），读初值必重发已发 delta（首字重复症状「四四」）；块首段保真由 end 终态校正承担（前缀失配补尾段/后缀失配补头段/零 delta 全文补发）；
      - `text_delta`/`thinking_delta` → 对应 chunk；`toolcall_start` 有身份 → `{index: contentIndex, callId, name}`
        （**语义变更：index 由 wire 原值稀疏变 pi 稠密**——StreamAccumulator 按 index 键聚积，兼容；落档）；
        start/delta 分片不透传——**出口单帧**（用户裁决：pi 的 toolcall_end 已含完整调用，不做工具流处理）；
@@ -118,7 +118,7 @@
 
 ## 测试口径
 
-- 注入层：事件矩阵全量（含 P10 初值、tracker 三形态、deferred/未知 reason、redacted 文案、
+- 注入层：事件矩阵全量（含 start 零产出竞态剧本（首字重复症状回归）、tracker 三形态、deferred/未知 reason、redacted 文案、
   error.usage 先行）；context 矩阵（含 input 降级三态 `[1]`/`null`/`5`、toolName 回查、空 user、
   maxOutputTokens 注入、四角色）；分类表（词边界负例全表）；abort 三用例
   （请求前 throw / error{aborted} rethrow / 流中 signal 断）。

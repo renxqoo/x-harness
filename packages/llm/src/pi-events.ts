@@ -1,11 +1,14 @@
 // pi-events 映射（docs/LLM-PI.md 契约 2）：pi AssistantMessageEvent → LlmChunk。
 // 终态恰一次（done/error 后停发）；abort 豁免（reason aborted / signal 已断 → throw AbortError，
 // 对齐 runtime isAbortLike）；error 事件先发 usage（error.usage 折算——失败尝试计费）再发 error finish；
-// P10 初值（anthropic 方言，emitStartInitials）：text/thinking_start 时 partial 非空初值补发 delta；
 // toolcall 无身份（openai 方言首块缺 id）缓冲至 toolcall_end 补发；text/thinking_end 终态校正补发缺失尾段；
 // toolcall 原文出口（docs/TRUNCATED-TOOL-RESCUE.md 层 1 前置）：delta 原文按块缓冲、end 帧暂存，
 // 全终态（done/error/throw/break）flush——缓冲原文 parse 失败的块发原文（未经 pi 修补），
 // 成功的照旧 stringify；正常流帧形状逐字节不变。
+// text/thinking_start 的 partial 是共享可变引用（pi anthropic 方言 push 的是同一 output 对象，
+// 同一 SSE 缓冲段内 start 与首条 delta 同 burst 处理）——消费时点读到的是「初值+已处理 delta」
+// 的叠加态，读初值必把已发 delta 重发一遍（首字重复症状）。start 帧恒零产出；块首字符保真
+// 由 end 终态校正（missingTail 前缀比对）单一出口承担。
 
 import { isContextOverflow, type AssistantMessageEvent } from "@earendil-works/pi-ai";
 import type { LlmChunk, TokenUsage } from "./types.ts";
@@ -35,19 +38,6 @@ function blockAt(partial: { content?: unknown } | undefined, index: number): Rec
   if (!Array.isArray(content)) return undefined;
   const block = content[index];
   return typeof block === "object" && block !== null ? (block as Record<string, unknown>) : undefined;
-}
-
-/** partial.content[index] 上的文本/思考初值（P10：anthropic 的 start 帧带块初值但不产 delta） */
-function initialTextAt(partial: { content?: unknown } | undefined, index: number, kind: "text" | "thinking"): string | undefined {
-  const block = blockAt(partial, index);
-  if (block === undefined) return undefined;
-  if (kind === "text" && block["type"] === "text" && typeof block["text"] === "string" && block["text"] !== "") {
-    return block["text"];
-  }
-  if (kind === "thinking" && block["type"] === "thinking" && typeof block["thinking"] === "string" && block["thinking"] !== "") {
-    return block["thinking"];
-  }
-  return undefined;
 }
 
 /** 错误文案分类（fetch 包装层未捕获状态时的兜底）。词边界匹配防数值子串误杀（"used 14290 tokens" ≠ 429）；
@@ -82,15 +72,16 @@ export interface PiChunkOptions {
   readonly signal: AbortSignal;
   /** 拨号上下文快照（fetch 包装层捕获非 2xx）：状态码在场时 error 落 http-<status>；retry-after 头毫秒 */
   readonly failureInfo: () => { status?: number; retryAfterMs?: number };
-  /** anthropic true：content_block_start 的非空初值在 start 帧补发（P10）——anthropic 的
-   *  start 与 delta 是不同 SSE 事件、无同步邻接，读 partial 安全；openai false：pi 在同一
-   *  同步块里 push start 并把首帧 append 进 partial（读到的必是已变异值），恒不读。 */
-  readonly emitStartInitials?: boolean;
 }
 
-/** 终态校正：wire 全文 content 以已发拼接为前缀时的缺失尾段（非前缀关系返回空——不强行校正） */
+/** 终态校正：wire 全文 content 与已发拼接的失配段补发。前缀关系 → 补尾段；后缀关系
+ *  （anthropic 方言防御面：content_block_start 携带非空初值——start 帧零产出后首段
+ *  未发）→ 补头段（追加序有损、内容无损；真实 anthropic 服务不产生此形态，兼容网关
+ *  可能）；非包含关系返回空——不强行校正。 */
 function missingTail(content: string, emitted: string): string {
-  if (content.startsWith(emitted) && content.length > emitted.length) return content.slice(emitted.length);
+  if (emitted === "") return content; // 零 delta 块（纯 start 初值）：全文补发
+  if (content.startsWith(emitted)) return content.slice(emitted.length); // 常态：补尾段
+  if (content.endsWith(emitted)) return content.slice(0, content.length - emitted.length); // 防御面：补头段
   return "";
 }
 
@@ -173,17 +164,7 @@ function synthesizeMissingChunks(state: ToolCallState): LlmChunk[] {
 
 interface BlockState {
   readonly emittedText: Map<number, string>;
-  readonly emitStartInitials: boolean;
   append(index: number, delta: string): void;
-}
-
-/** text/thinking 事件族：start 初值（anthropic 方言，state.emitStartInitials）、delta 透传（空跳过）、end 终态校正补尾段 */
-function startChunks(event: Extract<AssistantMessageEvent, { type: "text_start" | "thinking_start" }>, state: BlockState, kind: "text" | "thinking"): LlmChunk[] {
-  if (state.emitStartInitials !== true) return [];
-  const initial = initialTextAt(event.partial, event.contentIndex, kind);
-  if (initial === undefined) return [];
-  state.append(event.contentIndex, initial);
-  return [{ type: kind === "text" ? "text-delta" : "thinking-delta", text: initial }];
 }
 
 function deltaChunks(event: Extract<AssistantMessageEvent, { type: "text_delta" | "thinking_delta" }>, state: BlockState, kind: "text" | "thinking"): LlmChunk[] {
@@ -199,9 +180,10 @@ function endChunks(event: Extract<AssistantMessageEvent, { type: "text_end" | "t
   return [{ type: kind === "text" ? "text-delta" : "thinking-delta", text: missing }];
 }
 
+/** text/thinking 事件族分发：start 零产出（partial 是共享可变引用——见文件头）、delta 透传、end 终态校正 */
 function blockChunks(event: AssistantMessageEvent, state: BlockState): LlmChunk[] {
   const kind: "text" | "thinking" = event.type.startsWith("text") ? "text" : "thinking";
-  if (event.type === "text_start" || event.type === "thinking_start") return startChunks(event, state, kind);
+  if (event.type === "text_start" || event.type === "thinking_start") return [];
   if (event.type === "text_delta" || event.type === "thinking_delta") return deltaChunks(event, state, kind);
   if (event.type === "text_end" || event.type === "thinking_end") return endChunks(event, state, kind);
   return [];
@@ -296,7 +278,6 @@ export async function* piChunks(events: AsyncIterable<AssistantMessageEvent>, op
   };
   const state: BlockState = {
     emittedText,
-    emitStartInitials: options.emitStartInitials === true,
     append: (index, delta) => {
       emittedText.set(index, (emittedText.get(index) ?? "") + delta);
     },

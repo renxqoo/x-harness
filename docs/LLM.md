@@ -111,8 +111,10 @@ anthropic-request/两旧适配器）已删——SSE 解析、流式 tool-call �
 缺席空串), parameters}`；孤立 tool_use 合成空结果、相邻合并等 wire 级配对归 pi transform-messages。
 
 **事件映射（pi-events.ts）**：终态恰一次；`text/thinking_delta` → 对应 delta chunk（空串跳过）；
-- P10 初值（anthropic 方言 `emitStartInitials`）：`text/thinking_start` 的 partial 非空初值补发 delta
-  （openai 恒不读——pi 在同一同步块里把首帧 append 进 partial，读到的必是已变异值）；
+- `text/thinking_start` **零产出**：partial 是共享可变引用（pi push 的是同一 output 对象，同一
+  SSE 缓冲段内 start 与首条 delta 同 burst 处理），消费时点读到「初值+已处理 delta」叠加态，读初值
+  必重发已发 delta（首字重复症状「四四门全绿」）。块首段保真由 end 终态校正单一出口承担：
+  前缀失配补尾段/后缀失配（兼容网关 start 携非空初值）补头段/零 delta 全文补发；
 - toolcall：**出口单帧**——`toolcall_end` 携带完整调用（id/name/arguments），end 时发一帧
   `{index: contentIndex, callId, name, argumentsDelta: 全量 JSON 文本}`（index 为 pi **稠密**索引
   ——语义变更：不再是 wire 原值稀疏；消费方按 index 聚积兼容）；start/delta 分片不透传
@@ -149,7 +151,7 @@ anthropic-request/两旧适配器）已删——SSE 解析、流式 tool-call �
   委托、清理失败外抛恰一次（S21）；waterfall 中间件改写流（包装 chunks）/透传/中间件 throw 传播
   （不吞不改写，S20）。
 - 协议适配器三层装置（docs/LLM-PI.md 测试口径）：
-  - 注入层（工厂 `streamFn?` 注入事件剧本，零网络）：pi-events 事件矩阵 toEqual（P10 初值双方言、
+  - 注入层（工厂 `streamFn?` 注入事件剧本，零网络）：pi-events 事件矩阵 toEqual（start 零产出竞态剧本（首字重复回归）、
     toolcall 三形态、终态恰一次、done reason 全集、usage 折算与全零守卫、error usage 先行、abort
     rethrow、防御层流耗尽/垃圾事件）；pi-context 矩阵（四角色、input 降级三态、toolName 回查、
     空 user 跳过、工具表、maxTokens 注入不对称）；classifyErrorText 词边界负例全表

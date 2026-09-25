@@ -177,7 +177,6 @@ function piAdapter(core: AdapterCoreOptions): LlmAdapter {
         yield* piChunks(events, {
           signal: request.signal,
           failureInfo: () => ({ status, retryAfterMs }),
-          ...(core.api === "anthropic-messages" ? { emitStartInitials: true } : {}),
         });
       }
       return generate();

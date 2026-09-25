@@ -55,8 +55,8 @@ describe("pi 真身冒烟：anthropic-messages", () => {
       ),
     );
     expect(chunks).toEqual([
-      { type: "text-delta", text: "he" }, // P10 初值
-      { type: "text-delta", text: "llo" },
+      { type: "text-delta", text: "llo" }, // start 帧零产出（partial 共享引用不可读——首字重复根治）
+      { type: "text-delta", text: "he" }, // end 终态校正补发非空 start 初值（后缀失配补头段）
       { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2, totalTokens: 24 } }, // 10+5+2 折入+明细+总量
       { type: "finish", finish: { kind: "stop" } },
     ]);
