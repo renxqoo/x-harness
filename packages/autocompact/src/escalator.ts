@@ -32,7 +32,7 @@ export function alignDownToTurnStart(nodes: readonly SurfaceNode[], ceiling: num
 }
 
 /** L2 落账。liveBudget = max(500, floor((L2线 − min(账本, 账本预算)) × factor) − 2k)
- *  （基准 = L2 触发线非全窗：预算内即落账后占用必低于 L2 线——不与 90%+ 强制压缩带
+ *  （基准 = L2 触发线非全窗：预算内即落账后占用必低于 L2 线——不与 compaction 92% 强制压缩带
  *  相撞；factor=1 首次；复测门传 1 − min(0.8, 超幅比 + 0.05)——收缩不放大保留区）；
  *  覆盖域守卫：cut 对齐 min(预算切点, 账本覆盖边界) 之下最近真轮起点。 */
 export function escalateL2(fields: {

@@ -1,5 +1,5 @@
 // autocompact 插件装配（docs/COMPACTION.md §1.2）：步闸（agentPreStep）+ CP 作业 +
-// L1/L2 落账 + 空闲清理定时器 + 接管仲裁（全局恰一次）。per-session 状态随
+// L1/L2 落账 + 空闲清理定时器。per-session 状态随
 // sessionDisposed 摘除并取消在飞 CP；插件 disposer 取消全部作业并有界 join。
 
 import type { Context, Disposer, Plugin } from "@x-harness/core";

@@ -22,7 +22,7 @@ import { DEFAULT_FILE_TOOLS } from "./file-ops.ts";
 export interface CompactionOptions {
   /** 主模型窗口（装配面事实，必填）：触发分母 = min(contextWindow, 实测 servedWindow) */
   readonly contextWindow: number;
-  /** 水位触发百分比（1–99，缺省 90）：占用 > 分母 × pct% → 强制压缩 */
+  /** 水位触发百分比（1–99，缺省 92）：占用 > 分母 × pct% → 强制压缩 */
   readonly triggerPct?: number;
   readonly reserveTokens?: number;
   readonly keepRecentTokens?: number;
