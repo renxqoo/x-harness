@@ -15,6 +15,7 @@
 
 import { describe, expect, it } from "vitest";
 import { NEUTRALIZE_OPEN_TAGS } from "@x-harness/compaction";
+import { estimateText } from "@x-harness/token-meter";
 import {
   assertLinesDomain,
   budgetOverflowPredicted,
@@ -32,7 +33,7 @@ import {
   parseLedgerPatch,
   serializeLedger,
   serializeLedgerForPrompt,
-  trimLedger,
+  trimLedgerWithFiles,
 } from "../ledger.ts";
 
 const LINES_200K = computeLines({
@@ -148,12 +149,25 @@ describe("账本七节（参照系 ledger 语义）", () => {
       parseLedgerPatch(`<goals>\ng\n</goals>\n<done>\nd1\nd2\nd3\n</done>\n<verified>\nv1\nv2\n</verified>\n<current>\ncur\n</current>`) ?? emptyLedger(),
       emptyLedger(),
     );
-    const trimmed = trimLedger(ledger, Math.floor(ledgerTokens(ledger) * 0.6));
+    const trimmed = trimLedgerWithFiles(ledger, Math.floor(ledgerTokens(ledger) * 0.6)).ledger;
     expect(trimmed.tasksDone.length).toBeLessThan(3);
     expect(trimmed.goals).toEqual(["g"]);
     expect(trimmed.current).toBe("cur");
-    const floored = trimLedger(ledger, 1);
+    const floored = trimLedgerWithFiles(ledger, 1).ledger;
     expect(floored.goals).toEqual(["g"]); // 不可裁节保留
+  });
+
+  it("files 预算面（D5 回归）：files 文本超 50% 预算被行级从尾截断——机械清单不再无界增长撞 L2 线", () => {
+    const small = { ...emptyLedger(), goals: ["g"] };
+    const files = ["Files read:", ...Array.from({ length: 200 }, (_, i) => `/repo/dir-${String(i)}/file-${String(i)}.ts`)].join("\n");
+    const result = trimLedgerWithFiles(small, 2_000, files);
+    expect(result.filesText).toBeDefined();
+    expect(estimateText(result.filesText ?? "")).toBeLessThanOrEqual(1_000); // 50% 预算封顶
+    expect(result.filesText ?? "").toContain("file-199.ts"); // 从尾保留——最近文件存活
+    expect(result.filesText ?? "").not.toContain("file-0.ts"); // 最旧行被截
+    // files 在预算内 → 原样
+    const keep = trimLedgerWithFiles(small, 100_000, "Files read:\n/a.ts");
+    expect(keep.filesText).toBe("Files read:\n/a.ts");
   });
 
   it("就绪判定：空账本 false；任一节非空 true", () => {

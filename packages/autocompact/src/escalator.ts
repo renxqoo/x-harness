@@ -31,18 +31,20 @@ export function alignDownToTurnStart(nodes: readonly SurfaceNode[], ceiling: num
   return cut;
 }
 
-/** L2 落账。liveBudget = max(500, floor((L2线 − min(账本, 账本预算)) × factor) − 2k)
- *  （基准 = L2 触发线非全窗：预算内即落账后占用必低于 L2 线——不与 compaction 92% 强制压缩带
- *  相撞；factor=1 首次；复测门传 1 − min(0.8, 超幅比 + 0.05)——收缩不放大保留区）；
- *  覆盖域守卫：cut 对齐 min(预算切点, 账本覆盖边界) 之下最近真轮起点。 */
+/** L2 落账。liveBudget = max(500, floor((L2线 − 账本 − 用户原话配额) × factor) − 2k)
+ *  （基准 = L2 触发线非全窗：主预算预扣 20k 原话配额——配额区在 findCutPoint
+ *  是加性保留，不预扣则落账后占用可越 L2 线撞 compaction 92% 强制带；factor=1
+ *  首次；复测门传 1 − min(0.8, 超幅比 + 0.05)——收缩不放大保留区；对齐余量
+ *  （切口向真轮起点对齐）不另控——单轮超大时 compaction 本就是正确解）；
+ *  覆盖域守卫：cut 对齐 min(预算切点, 账本覆盖边界) 之下最近真轮起点；
+ *  无进展守卫：span 只含上一份摘要（自替换）→ ok:false 交 l2-no-progress
+ *  告警——不落账（账本超线时每步自替换只会烧 journal + 断缓存）。 */
 export function escalateL2(fields: {
   readonly state: CheckpointState;
   readonly session: Session;
   readonly nodes: readonly SurfaceNode[];
-  readonly effectiveWindow: number;
   /** L2 触发线（活口预算基准——非全窗） */
   readonly l2Line: number;
-  readonly ledgerBudgetTokens: number;
   readonly liveBudgetFactor?: number;
   readonly coverageGuard?: boolean;
   readonly emit: (session: SessionId, keptNodes: number) => void;
@@ -53,9 +55,9 @@ export function escalateL2(fields: {
   const filesText = filesTextOf(nodes.slice(0, coveredIndex));
   const ledgerText = serializeLedger(state.ledger, filesText);
   // files 文本计入预算（落账文本含 files——漏算会让 L2 头部超账本预算）
-  const ledgerTok = ledgerTokens(state.ledger, filesText); // 审计问题 7：不向下钳位——实测超预算时活口应偏小（保守方向），钳位方向与保守性相反
+  const ledgerTok = ledgerTokens(state.ledger, filesText); // 不向下钳位——实测超预算时活口应偏小（保守方向，钳位方向与保守性相反）
   const factor = fields.liveBudgetFactor ?? 1;
-  const liveBudget = Math.max(500, Math.floor((fields.l2Line - ledgerTok) * factor) - 2_000);
+  const liveBudget = Math.max(500, Math.floor((fields.l2Line - ledgerTok - USER_QUOTE_TOKENS) * factor) - 2_000);
   // 保留头 = 锚点（session anchorIndexOf 共用谓词）及其之前——预锚注入（skill 清单
   // 等）与 system 锚点豁免 L2 替换；切口候选/对齐同步以保留头为下界
   const start = anchorIndexOf(nodes) + 1;
@@ -72,6 +74,9 @@ export function escalateL2(fields: {
   const startNode = nodes[start];
   const endNode = nodes[end];
   if (startNode === undefined || endNode === undefined) return { ok: false, nodes: undefined };
+  // 无进展守卫：span 只含上一份摘要（replace 型单节点——预算/覆盖域钳死后切点
+  // 退到摘要紧后）→ 摘要替换自己是零进展，交 l2-no-progress 放行而非落账
+  if (end === start && typeof startNode.event.surfaceOp === "object") return { ok: false, nodes: undefined };
   const at = endNode.event.data;
   const appended = session.append(
     "user/message",

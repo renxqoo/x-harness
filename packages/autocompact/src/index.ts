@@ -21,7 +21,7 @@ export {
   serializeLedger,
   serializeLedgerForPrompt,
   ledgerTokens,
-  trimLedger,
+  trimLedgerWithFiles,
   ledgerReady,
 } from "./ledger.ts";
 export type { Ledger } from "./ledger.ts";

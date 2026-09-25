@@ -25,7 +25,7 @@ import {
   type SummarizerFace,
 } from "@x-harness/compaction";
 import { WIDE_TOKENS_PER_CHAR } from "@x-harness/token-meter";
-import { emptyLedger, mergeLedger, parseLedgerPatch, serializeLedger, serializeLedgerForPrompt, trimLedger, ledgerReady, type Ledger } from "./ledger.ts";
+import { emptyLedger, mergeLedger, parseLedgerPatch, serializeLedger, serializeLedgerForPrompt, trimLedgerWithFiles, ledgerReady, type Ledger } from "./ledger.ts";
 import { SUMMARIZER_RESERVE_CAP } from "./lines.ts";
 import { lastTurnStartIndex } from "./scavenger.ts";
 import type { CheckpointAction } from "./tokens.ts";
@@ -366,7 +366,7 @@ function acceptPatch(fields: {
   readonly stale: boolean;
 }): void {
   const { state, job, deps, patch, stale } = fields;
-  state.ledger = trimLedger(mergeLedger(state.ledger, patch), deps.config.ledgerBudgetTokens);
+  state.ledger = trimLedgerWithFiles(mergeLedger(state.ledger, patch), deps.config.ledgerBudgetTokens).ledger;
   // 切口推进到装箱段尾前末节点（boxedEnd 缺席 = 退化路径 → 推进到当前投影尾）；
   // 单调不回退
   const nodes = deps.session.surface();

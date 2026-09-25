@@ -246,16 +246,22 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin;
   重锚到**落账摘要节点自身 seq**（摘要即新边界——二次 L2 单点替换上一份摘要）；
   吞段/外部失真重锚取保守 min（新投影首个切口候选之前节点的 seq）。
 - **L2（零 LLM 落账）**：账本就绪（非熔断且任一节非空）且越线 →
-  - **首次落账（受守卫）**：活口预算 `liveBudget = max(500, floor((effectiveWindow −
-    min(ledgerTokens, ledgerBudget)) × 1) − 2_000)`（factor=1）；`budgetCut = findCutPoint(
-    messages, liveBudget, USER_QUOTE_TOKENS)`；覆盖域守卫 `cut = alignDown(min(budgetCut,
-    coveredSeq 位置))`；**keep 单调不减**（factor 收缩不放大保留区）；replace 前缀落
-    user/message（账本文本 + 续航注入语，§1.1 同形状）；落账后 **coveredSeq 重锚**到新投影
-    首个切口候选、**armed 复位**（防 L2 后 CP 立即重启）、取消在飞 CP（重算是无输入的
+  - **首次落账（受守卫）**：活口预算 `liveBudget = max(500, floor((l2Line − ledgerTokens −
+    USER_QUOTE_TOKENS) × 1) − 2_000)`（基准 = L2 触发线非全窗；主预算预扣 20k 原话配额——
+    配额区在 findCutPoint 是加性保留；ledgerTokens 含 files 文本且不向下钳位）；`budgetCut =
+    findCutPoint(messages, liveBudget, USER_QUOTE_TOKENS)`；覆盖域守卫 `cut = alignDown(min(
+    budgetCut, coveredSeq 位置))`；**keep 单调不减**（factor 收缩不放大保留区）；replace
+    前缀落 user/message（账本文本 + 续航注入语，§1.1 同形状）；落账后 **coveredSeq 重锚**到
+    新投影首个切口候选、**armed 复位**（防 L2 后 CP 立即重启）、取消在飞 CP（重算是无输入的
     幻影调用）。
-  - **复测门**：落账后复测仍越线 → 二次落账 `factor = 1 − min(0.8, (occupancy − l1Line)/
+  - **无进展守卫**：span 只含上一份摘要（replace 型单节点——预算/覆盖域钳死后切点退到
+    摘要紧后）→ ok:false 不落账，交 `l2-no-progress` 告警（账本超线时每步自替换只烧
+    journal + 断缓存）。
+  - **复测门**：落账后复测仍越线 → 二次落账 `factor = 1 − min(0.8, (occupancy − l2Line)/
     effectiveWindow + 0.05)`，**豁免覆盖域守卫**（复测唯一目的是缩活口，钳制只会得
     l2-no-progress——参照系 gate.ts:362-374 裁决）；无进展 → `l2-no-progress` 放行。
+  - **files 预算面**：账本裁剪（trimLedgerWithFiles）files 文本限 50% 账本预算（行级从
+    尾保留——最近文件最相关；机械清单可重构），L2 落账文本消费截断后值。
 - **步闸（agentPreStep）**：安全区放行；警告区不落账（前缀缓存）但预算外推
   （`occupancy + delta × 1.5 > effectiveWindow`，delta = 上步占用差或首步缺省）预测越窗
   则提前走 L1/L2；越线区 L1 预门槛 → escalateOrJoin（L2 落账 / join 在飞 CP 看门狗兑底，

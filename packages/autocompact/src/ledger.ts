@@ -135,11 +135,37 @@ export function ledgerTokens(ledger: Ledger, filesText?: string): number {
   return estimateText(serializeLedger(ledger, filesText));
 }
 
-/** 预算裁剪（超限顺序：最旧 done → 最旧 verified；goals/decisions/pending/current
- *  永不裁——append-only 核心价值与在飞工作不可丢；只剩不可裁节时接受超限） */
-export function trimLedger(ledger: Ledger, budgetTokens: number, filesText?: string): Ledger {
+/** 预算内截断的 files 文本（保留末尾行——最近文件对在飞工作最相关）；空/短 → 原样 */
+function clampFilesText(filesText: string | undefined, budgetTokens: number): string | undefined {
+  if (filesText === undefined || filesText === "") return undefined;
+  if (estimateText(filesText) <= budgetTokens) return filesText;
+  // 行级从尾保留（最近读/改的文件在后）；保留至预算内，至少末行（不可全丢——
+  // L2 落账文本的 files 节是模型对已触文件的唯一记忆面）
+  const lines = filesText.split("\n");
+  const kept: string[] = [];
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (line === undefined) continue;
+    const next = [line, ...kept];
+    if (estimateText(next.join("\n")) > budgetTokens && kept.length > 0) break;
+    kept.unshift(line);
+  }
+  return kept.length > 0 ? kept.join("\n") : undefined;
+}
+
+/** 账本预算裁剪：files 文本先限到 50% 预算（机械清单可重构——重复读文件即可恢复，
+ *  裁剪优先级最低）；再按超限顺序裁 done → verified；goals/decisions/pending/
+ * current 永不裁——append-only 核心价值与在飞工作不可丢；只剩不可裁节时接受超限。
+ * 返回 { ledger, filesText }——files 可能被截断，调用方落账/序列化必须用返回值 */
+export function trimLedgerWithFiles(
+  ledger: Ledger,
+  budgetTokens: number,
+  filesText?: string,
+): { readonly ledger: Ledger; readonly filesText: string | undefined } {
+  const filesBudget = Math.floor(budgetTokens * 0.5);
+  const clampedFiles = clampFilesText(filesText, filesBudget);
   let trimmed: Ledger = { ...ledger, tasksDone: [...ledger.tasksDone], factsVerified: [...ledger.factsVerified] };
-  while (ledgerTokens(trimmed, filesText) > budgetTokens) {
+  while (ledgerTokens(trimmed, clampedFiles) > budgetTokens) {
     if (trimmed.tasksDone.length > 0) {
       trimmed = { ...trimmed, tasksDone: trimmed.tasksDone.slice(1) };
       continue;
@@ -150,7 +176,7 @@ export function trimLedger(ledger: Ledger, budgetTokens: number, filesText?: str
     }
     break;
   }
-  return trimmed;
+  return { ledger: trimmed, filesText: clampedFiles };
 }
 
 /** 账本是否有可承载 L2 的内容 */
