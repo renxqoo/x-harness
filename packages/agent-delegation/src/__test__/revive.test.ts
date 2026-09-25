@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
@@ -14,7 +14,7 @@ import type { World } from "./world.ts";
 import type { Plugin } from "@x-harness/core";
 import { GrantsRegistry, permissionGrants } from "@x-harness/permission";
 import { execFile } from "node:child_process";
-import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { worktreeParent } from "../worktree.ts";
 
@@ -174,7 +174,9 @@ describe("驻留档化（§2.2 maxResident）", () => {
 
 describe("worktree 子复活（N2——replayWorktree/mainRepoTopOf 执行覆盖）", () => {
   it("复活重放 rootOverride：guard=主仓顶（非 worktree 路径）+ 行落账 worktreeRepoTop", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "xh-rev-wt-"));
+    const parent = mkdtempSync(join(mkdtempSync(join(tmpdir(), "xh-rev-wt-p-")), "d-"));
+    const dir = join(parent, "repo");
+    mkdirSync(dir, { recursive: true });
     const repoTop = realpathSync(dir);
     try {
       await exec("git", ["-C", repoTop, "init"]);
@@ -211,16 +213,19 @@ describe("worktree 子复活（N2——replayWorktree/mainRepoTopOf 执行覆盖
         // N2 核心：guard 必须是主仓顶——worktree 自身路径会打穿 §8.2 extraRoots 过滤
         const grants = second.world.ctx.tryUse(permissionGrants);
         expect(grants?.rootOverrideOf(childSession)).toEqual({ dir: wtPath, guard: repoTop });
-        // ⑧ 行落账回归锚：worktreeRepoTop 若记错（如 worktree 自身），stop 的 branch -D
-        // 落错仓 → 分支残留——以「stop 后分支双清」锚定落账事实
+        // ⑧ 行落账回归锚（净树形态——二轮复审C 换锚）：先撤脏文件还原净树，复活行 stop →
+        // remove+branch -D 走 worktreeRepoTop。记错仓（如 worktree 自身）则 branch -D 落
+        // 错处 → 真分支 x-harness/<agentId> 残留主仓——断言「分支消失」才有检测力
+        const { rm: rmFile } = await import("node:fs/promises");
+        await rmFile(join(wtPath, "DIRTY.md")).catch(() => {}); // 还原净树
         const stopped = await callTool({ world: second.world, name: "task_stop", args: { task_id: agentId }, session: first.parent.agent.session.id });
         expect(stopped.isError).toBeUndefined();
-        await rm(wtPath, { recursive: true, force: true }).catch(() => {}); // 弄脏树 kept-dirty——清场（分支断言在 git 侧）
+        expect(stopped.content).not.toContain("FAILED"); // 净树清理成功形态
         const { execFile } = await import("node:child_process");
         const { promisify } = await import("node:util");
         const exec = promisify(execFile);
         const branches = await exec("git", ["-C", repoTop, "branch", "--list", `x-harness/${agentId}`]);
-        expect(branches.stdout.trim()).not.toBe(""); // kept-dirty 分支仍在（stop 保留脏树）
+        expect(branches.stdout.trim()).toBe(""); // 分支随净树双清（记错仓则残留→红）
         await second.parent.dispose();
         await second.world.disposePlugins();
         await rm(wtPath, { recursive: true, force: true }).catch(() => {});
@@ -229,7 +234,7 @@ describe("worktree 子复活（N2——replayWorktree/mainRepoTopOf 执行覆盖
       }
     } finally {
       await rm(worktreeParent(repoTop), { recursive: true, force: true }).catch(() => {});
-      await rm(repoTop, { recursive: true, force: true }).catch(() => {});
+      await rm(dirname(dirname(parent)), { recursive: true, force: true }).catch(() => {}); // 独占根（含仓与 worktrees）
     }
   }, 20_000);
 });

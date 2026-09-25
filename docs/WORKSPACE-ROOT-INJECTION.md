@@ -245,3 +245,29 @@ A 路核实无问题项（mkdir 原子性/stale 竞态/release 复核/重入/装
 | N5 | lockfile 四条降级路径零观测 | **修**：withRepoLock 增可选 onDegraded；两装配点接 stderr（hub 既有 onWarn 同链） |
 | N6 | #11 处置不实（包级并行仍超时；「21 条」过期） | **修**：真仓夹具 describe 放宽 timeout 20s；处置表复现条件改实（本表 #11 行） |
 | N7 | 病态命名理论边（仓恰名 `<A>-agent-*` 撞前缀；仓名以 `-agent-<8hex>` 结尾错位） | **落档** §13 已知理论边——需刻意命名，接受 |
+
+## A 路验收复审处置记录（①–⑩）
+
+| # | 问题 | 处置 |
+| --- | --- | --- |
+| ① | plugin 三处兜底链未统一（N4 病灶在三清理路径存活：裸 worktree 中段 → remove 成功后 branch -D ENOENT → 分支泄漏 + 嵌套锁目录） | **修**：三段链收敛单一函数 `cleanupRepoTopOf`（verbs 导出，stop 与 plugin 三处共用——两链漂移结构性根治） |
+| ② | workspace-not-in-repo 声明与实测不符（GIT_DIR 注入 toplevel 落工作区内、防不住）；验收唯一勾选项无测试 | **修**：三处契约面改实（防御面=GIT_WORK_TREE 外指；GIT_DIR 不声明防御落档 §13 部署纪律）；新增真拒绝用例（进程级 env 注入 → spawn 面断言拒绝词） |
+| ③ | 活树登记簿第 4 条泄漏路径：kick 失败行（纯内存部署 evictIdle 恒跳过）→ 登记簿永久持有 → sweep 永久跳过=泄漏树免死金牌 | **修**：kickChild 失败分支自带清理+摘除（fire-and-forget + onWarn）；teardown cascade 对句柄缺席行不再早退（行自持清理事实，照清+摘除） |
+| ④ | stop 与 evictIdle 并发双清理 → 第二落者 branch -D 已删分支退出 1 → 假 "cleanup failed" 告警 | **修**：早退分支分支已不存在 = 幂等达成（stderr not found 短路 + branch --list 复核）→ removed，不谎报 |
+| ⑤ | lockDegradedSink 模块级全局 last-writer-wins：重装配窗口降级错报新实例、dispose 不复位 | **修**：改 per-call 注入（options 闭包随插件实例），删全局 sink；createWorktree/evaluateCleanup/sweepWorktrees 签名加可选 onDegraded |
+| ⑥ | 锁互斥用例 30ms sleep 假设（处置表声称「确定性」不实） | **修**：受控放行重写（a 入临界区 resolve 测试 → 断言 b 未启动 → 放行 a）——零时间窗假设 |
+| ⑦ | mkdir 非 EEXIST 一律降级：瞬时 ENOENT（父目录被并发删）与永久权限错误不分；code 缺失输出 "mkdir undefined" | **修**：ENOENT 瞬时形态一次自愈重试（重建父再试，deadline 内）；告警串 unknown error 兜底 |
+| ⑧ | N2 用例未断言 worktreeRepoTop 落账（清理锚回归面空） | **修**（二轮换锚）：净树形态——复活后撤脏文件 → stop → 断言分支消失（记错仓则残留→红） |
+| ⑨ | >30s 事件循环停顿下 stale 误抢可致短暂双持锁 | **落档**：权衡写入 CREATING_WINDOW_MS 注释（最坏收敛于无锁基线，收窄同理不优——接受） |
+| ⑩ | RepoLock 接口死导出（与 lockAgeMs 同性质） | **删** |
+| 附 | #10 「hub 形态」用例名与事实不符 | **改名**：「workspaceRoot 锚定（进程 cwd 非夹具仓）」 |
+
+## A 路二轮复审处置记录（①'/③'/⑧'/A/B/C/D）
+
+| # | 问题 | 处置 |
+| --- | --- | --- |
+| ①' | 「无第二实现」证伪：kickChild 内联残留一条裸 worktree 中段（今日不可达死代码，但处置声明不实） | **修**：换用 cleanupRepoTopOf（kickChild 改 async；调用点 fire-and-forget 语义不变） |
+| ③' | kickChild 注释心智模型倒置（register 实先于 kick，三路兜底在场——自清理是「最早的一路」非「唯一的路」）；双清无害机理已被审查方验证为真 | **修写**：注释按真实时序改写（含双清机理：repo 锁串行 + branchGone 幂等） |
+| ⑧' | 落账锚在 kept-dirty 短路——记对记错断言都过，零检测力 | **修**：换净树形态锚（撤脏文件 → stop → 断言分支消失） |
+| A | 测试夹具跨文件竞态：tmpdir 直下多仓共享同一 `<T>/.x-harness-worktrees`，afterEach 互删（审查方实测包级 25 循环 12 失败；此前两处「适应性放宽」实为竞态补丁） | **根治**：夹具独占父目录（fixtureDir 两级 mkdtemp——各仓 worktrees 目录零共享）；放宽断言还原硬断言；包级 5 连跑全绿 |
+| D-1/D-2/D-3 | ENOENT 自愈无退避 / 锁降级窗双清假告警残余（窄窗语义无损）/ ② 用例 env 隔离前置条件 | D-3 注释补；D-1/D-2 备忘接受（窄窗、不越无锁基线） |

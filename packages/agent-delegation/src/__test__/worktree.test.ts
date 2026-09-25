@@ -5,7 +5,7 @@
 
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { readdir, rm } from "node:fs/promises";
@@ -36,10 +36,19 @@ afterEach(async () => {
   repo = undefined;
 });
 
+/** 夹具父目录（A 路二轮A——每仓独占父目录：tmpdir 直下多仓共享同一 <T>/.x-harness-
+ *  worktrees，跨用例 afterEach 互删随机红；独占后各仓 worktrees 目录互不可见） */
+function fixtureDir(tag: string): string {
+  const root = mkdtempSync(join(tmpdir(), `xh-wt-${tag}-p-`)); // 独占根（afterEach rm 一次清尽）
+  return mkdtempSync(join(root, "d-")); // 仓的父——worktreeParent 落在本根内，跨夹具零共享
+}
+
 /** 真仓夹具：git -C 显式（无 ambient cwd 依赖）；返回物理路径（rev-parse 同口径） */
 async function gitRepo(): Promise<string> {
-  const dir = mkdtempSync(join(tmpdir(), "xh-wt-repo-"));
-  scratch = [...scratch, dir];
+  const parent = fixtureDir("repo");
+  scratch = [...scratch, dirname(parent)];
+  const dir = join(parent, "repo");
+  mkdirSync(dir);
   await exec("git", ["-C", dir, "init"]);
   await exec("git", ["-C", dir, "config", "user.email", "t@t"]);
   await exec("git", ["-C", dir, "config", "user.name", "t"]);
@@ -147,8 +156,9 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
   });
 
   it("非 git 仓（workspaceRoot 指向）→ spawn-failed:worktree not-a-git-repo 且无残留分支", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "xh-wt-plain-"));
-    scratch = [...scratch, dir];
+    const dir = join(fixtureDir("plain"), "repo");
+    mkdirSync(dir);
+    scratch = [...scratch, dirname(dir)];
     const physical = realpathSync(dir);
     const options = await makeOptions({}, { workspaceRoot: physical, worktreeSweep: false });
     const world = await makeWorld(options, undefined, [grantsStub()]);
@@ -180,10 +190,13 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
   });
 
   it("GIT_WORK_TREE 外指 → 仓顶落在工作区外 → workspace-not-in-repo 真拒绝（A 路复审②）", async () => {
+    // 前置条件（D-3）：delegation 的 git 走 execFile 继承 process.env——进程级设置
+    // 在用例内生效即贯通；finally 还原不外泄。vitest 并行档（多进程独立 env）同样成立。
     // 非注入环境（env 未污染）下 ownsWorkspace 恒真——本用例经 env 注入构造唯一可达触发面
     repo = await gitRepo();
-    const elsewhere = mkdtempSync(join(tmpdir(), "xh-wt-gwt-"));
-    scratch = [...scratch, elsewhere];
+    const elsewhere = join(fixtureDir("gwt"), "elsewhere");
+    mkdirSync(elsewhere);
+    scratch = [...scratch, dirname(elsewhere)];
     // execFile 缺省继承 process.env——进程级设置 GIT_WORK_TREE 即可贯通 delegation 的 git 调用
     const prev = process.env["GIT_WORK_TREE"];
     process.env["GIT_WORK_TREE"] = elsewhere;
@@ -238,11 +251,8 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     expect(noGrants.content).toContain("requires the permission grants service");
     const listed = await callTool({ world: worldNoGrants, name: "list_agents", args: {}, session: parent.agent.session.id });
     expect(listed.content).toContain("(no sub-agents)"); // 不半装（无孤儿行）
-    // 半建产物清理：共享 worktrees 目录可因他用例/锁父目录预建在场——断言无本仓树残留
-    const { basename: bn } = await import("node:path");
-    const repoName = bn(repo);
-    const leftovers = (await readdir(worktreeParent(repo)).catch(() => [] as string[])).filter((f) => repoName !== undefined && f.startsWith(`${repoName}-agent-`));
-    expect(leftovers).toHaveLength(0);
+    // 半建产物清理：worktree 目录不残留（grants 前置拒从未建树；夹具独占父目录后无共享面）
+    expect(existsSync(worktreeParent(repo))).toBe(false);
     await parent.dispose();
   });
 
@@ -312,8 +322,9 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
 
   it("兄弟仓的树不被本仓 sweep 评估（共享父目录——跨仓 remove 必败的永久假告警）", async () => {
     // 同父目录两仓：repoA 的超龄净树 + repoB 作 sweep 锚
-    const parentDir = mkdtempSync(join(tmpdir(), "xh-wt-sib-"));
-    scratch = [...scratch, parentDir];
+    const parentDir = join(fixtureDir("sib"), "sib");
+    mkdirSync(parentDir);
+    scratch = [...scratch, dirname(parentDir)];
     const repoA = join(parentDir, "repoA");
     const repoB = join(parentDir, "repoB");
     for (const r of [repoA, repoB]) {
@@ -374,8 +385,9 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     const wtEntry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
     const wtPath = join(worktreeParent(repo), wtEntry);
     // 装配二：workspaceRoot 指向完全不同的目录（模拟 resume 换 cwd）
-    const elsewhere = mkdtempSync(join(tmpdir(), "xh-wt-elsewhere-"));
-    scratch = [...scratch, elsewhere];
+    const elsewhere = join(fixtureDir("elsewhere"), "elsewhere");
+    mkdirSync(elsewhere);
+    scratch = [...scratch, dirname(elsewhere)];
     const second = await worktreeWorldAt(elsewhere);
     const stopped = await callTool({ world: second.world, name: "task_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
     expect(stopped.isError).toBe(true); // 装配二的 lineage 无此行——not-found（不越界）

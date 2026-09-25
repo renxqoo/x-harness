@@ -5,6 +5,7 @@ import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionStore, SessionEvent, SessionId } from "@x-harness/session";
 import type { ToolRegistry, ToolExecContext } from "@x-harness/tools";
 import { forkSeed, inheritDial, mintAgentId, narrowTools } from "./lineage.ts";
+import { cleanupRepoTopOf } from "./verbs.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { createWorktree, evaluateCleanup, registerLiveTree, unregisterLiveTree } from "./worktree.ts";
 import type { WorktreePlan } from "./worktree.ts";
@@ -139,16 +140,17 @@ async function buildChild(
   deps.lineage.register(row);
   deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, work: row.work });
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
-  kickChild(deps, { row, handle: childHandle, prompt: plan.input.prompt });
+  void kickChild(deps, { row, handle: childHandle, prompt: plan.input.prompt }); // fire-and-forget：失败经 throw → dispatch 归一（await 会使 spawn 等清理完才返回，无必要）
   return { ok: true, text: spawnText(row, isFork && !forked) };
 }
 
 /** kick 子代理（spawn 收尾）：失败 → finished 闭环 + worktree 清理 + 摘除登记后重抛
  *  （dispatch 归一为工具错误结果）。armed 恒 false——armed-idle 通知门永不可达，不闭环
- *  即事件幽灵 + 占槽永久泄漏（BATCH2 审 H3）。行在 kick 失败时未注册（register 随后
- *  才到）——无 dispose 级联兜底，若不在此清理：纯内存部署 evictIdle 恒跳过（无
- *  archive），登记簿永久持有该路径 → sweep 永久跳过 = 泄漏树免死金牌（A 路复审③）。 */
-function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string }): void {
+ *  即事件幽灵 + 占槽永久泄漏（BATCH2 审 H3）。register（:139）先于 kick——行已注册，
+ *  teardown cascade/evictIdle/stop 幂等三路兜底在场；本清理是**最早的一路**且是纯内存
+ *  部署（无 archive → evictIdle 恒跳过）下唯一及时路。与 cascade 双清无害：两落者经
+ *  repo 锁串行，第二落者走 branchGone 幂等判别 → removed 不假告警（A 路复审③二轮）。 */
+async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string }): Promise<void> {
   try {
     spec.handle.agent.followup(spec.prompt);
   } catch (error) {
@@ -163,7 +165,7 @@ function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly han
     });
     if (spec.row.worktree !== undefined) {
       // 尽力清理 + 摘除（同步上下文——fire-and-forget；失败经 onWarn 可见）
-      void evaluateCleanup({ path: spec.row.worktree, branch: `x-harness/${spec.row.agentId}`, repoTop: spec.row.worktreeRepoTop ?? spec.row.worktree ?? deps.workspaceRoot }, deps.lockDegraded)
+      void evaluateCleanup({ path: spec.row.worktree, branch: `x-harness/${spec.row.agentId}`, repoTop: await cleanupRepoTopOf(spec.row, deps.workspaceRoot) }, deps.lockDegraded)
         .then((result) => {
           if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${spec.row.worktree}`);
           if (result.kind !== "kept-dirty") unregisterLiveTree(spec.row.worktree as string);
