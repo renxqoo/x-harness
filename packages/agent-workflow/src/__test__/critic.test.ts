@@ -10,12 +10,12 @@ import type { Plugin } from "@x-harness/core";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
-import { sessionPlugin, sessionStore as sessionStoreRef } from "@x-harness/session";
+import { sessionPlugin } from "@x-harness/session";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
-import { createAgentDelegationPlugin, delegationView } from "@x-harness/agent-delegation";
+import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { createAgentWorkflowPlugin, workflowView } from "../plugin.ts";
 import { CRITIC_PROPOSAL_SCHEMA, criticDispatchPrompt, criticEvidence, parseCriticProposal } from "../acceptor-critic.ts";
 
@@ -28,64 +28,11 @@ function resetWorlds(): void {
   for (const dispose of disposers.splice(0)) void dispose();
 }
 
-interface Fixture {
-  readonly texts: () => string;
-  readonly submit: (input: Record<string, unknown>) => Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
-  readonly dispose: () => Promise<void>;
-}
 
 /**
  * 装置：worker 类型 = critic（model 同桶——脚本按调用次序供给：任务子 1 轮 → critic 1 轮 → …）
  * 桶序（链：schema→critic）——submit 后依次消耗：[任务首轮, critic#1, (任务修复轮), critic#2, ...]
  */
-async function makeFixture(root: string, bucket: string[]): Promise<Fixture> {
-  const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();
-  scripts.set("critic-model", bucket.map((t) => script(t)));
-  const ctx = createContext();
-  const plugins: readonly Plugin[] = [
-    sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
-    createAgentDelegationPlugin({ agentsDirs: [join(root, "agents")], workspaceRoot: root, worktreeSweep: false }),
-    createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
-  ];
-  await loadPlugins(ctx, plugins);
-  const loop = ctx.use(agentLoopServiceToken);
-  const view = ctx.use(delegationView);
-  // 把 .md critic 类型写盘（delegation 类型解析走 agentsDirs）
-  const { mkdir, writeFile } = await import("node:fs/promises");
-  const agentsDir = join(root, "agents");
-  await mkdir(agentsDir, { recursive: true });
-  await writeFile(join(agentsDir, "reviewer.md"), `---\nname: reviewer\ndescription: test critic\ncritic-model\n---\nYou review deliverables.`);
-  const off = ctx.use(llmRuntime).registerAdapter({
-    name: "fake",
-    stream: async function* (request: LlmRequest): AsyncGenerator<LlmChunk> {
-      for await (const chunk of scripts.get(request.model)?.shift() ?? script("")) yield chunk;
-    },
-  });
-  ctx.effect(off);
-  const parent = await loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "task-model", provider: "fake" } });
-  if (!parent.ok) throw new Error(parent.reason);
-  // 任务子（untyped 继承父 model=task-model）——同桶供给
-  scripts.set("task-model", []);
-  const registry = ctx.use(toolRegistry);
-  const f: Fixture = {
-    texts: () => {
-      return ctx.use(sessionStoreRef).get("main-1" as SessionId)?.events()
-        .filter((e) => e.type === "agent/message" || e.type === "user/message")
-        .map((e) => JSON.stringify(e.data)).join("\n") ?? "";
-    },
-    submit: async (input) => {
-      const made = await registry.dispatch({ callId: `t-${String(Math.random()).slice(2, 8)}`, name: "workflow_submit", args: input, signal: new AbortController().signal, session: "main-1" as SessionId });
-      return made.isError === true ? { ok: false, reason: made.content } : { ok: true, text: made.content };
-    },
-    dispose: async () => {
-      await parent.value.dispose();
-      await ctx.dispose();
-    },
-  };
-  void view;
-  disposers.push(f.dispose);
-  return f;
-}
 
 function script(text: string): AsyncGenerator<LlmChunk> {
   return (async function* () {
@@ -127,23 +74,6 @@ describe("提案解析（W5 自举）", () => {
 });
 
 describe("Tier C 链序（schema→critic 全旅程）", () => {
-  it("首轮合格 + critic pass → 终局 passed；reopen 提案进回炉反馈", async () => {
-    const root = await mkdtemp(join(tmpdir(), "xh-wf-c1-"));
-    // 桶（critic-model）：critic#1 fail(带提案) → critic#2 pass
-    // 桶（task-model）：任务首轮 {"a":1} → 修复轮 {"a":2}
-    const f = await makeFixture(root, [
-      '{"verdict":"fail","reopenProposals":["value should be 2"]}',
-      '{"verdict":"pass"}',
-    ]);
-    // task-model 桶单独供给（makeFixture 建了空桶——直接 push）
-    // 装置限制：无法直接 push——改为整桶重建：见 makeFixture 签名，桶参数只喂 critic-model。
-    // 任务子用 task-model 桶 = 空 → 首轮 error → 走不到 critic。
-    // 该用例改经 schema 单档验证链（critic 全旅程在下一用例用双桶装置）。
-    void f;
-    await rm(root, { recursive: true, force: true });
-    for (const d of disposers.splice(0)) await d().catch(() => {});
-  }, 10_000);
-
   it("critic 全旅程：任务交付→critic fail(提案)→steer 修复→critic pass→passed", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-c2-"));
     const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();

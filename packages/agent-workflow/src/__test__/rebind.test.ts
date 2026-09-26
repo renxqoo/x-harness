@@ -167,3 +167,56 @@ describe("会话重绑（期 2-A）", () => {
 const sleepFor = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
+
+describe("在飞 run 的归属迁移（真在飞窗口——非 settled 后）", () => {
+  it("submit 后立即 rebind：run/rebound 落账 + journal 归属迁移（A 路假绿裁决补充）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-rb-fly-"));
+    const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();
+    // 长任务：子代理持续产出（多轮长文本——验收永不完成 → run 驻留在飞）
+    scripts.set("task-model", Array.from({ length: 8 }, () => textScript("working ".repeat(50))));
+    const ctx = createContext();
+    const plugins: readonly Plugin[] = [
+      sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
+      createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
+      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "fly-old" as SessionId }),
+    ];
+    await loadPlugins(ctx, plugins);
+    const loop = ctx.use(agentLoopServiceToken);
+    const off = ctx.use(llmRuntime).registerAdapter({
+      name: "fake",
+      stream: async function* (request: import("@x-harness/llm").LlmRequest): AsyncGenerator<LlmChunk> {
+        for await (const chunk of scripts.get(request.model)?.shift() ?? textScript("")) yield chunk;
+      },
+    });
+    ctx.effect(off);
+    const parent = await loop.create({ session: { id: "fly-old" as SessionId }, agent: { model: "task-model", provider: "fake" } });
+    if (!parent.ok) throw new Error(parent.reason);
+    const registry = ctx.use(toolRegistry);
+    const made = await registry.dispatch({ callId: "fly1", name: "workflow_submit", args: { description: "long work", prompt: "x", result_schema: { type: "object" } }, signal: new AbortController().signal, session: "fly-old" as SessionId });
+    expect(made.isError).toBeUndefined();
+    await sleep(150); // 子在飞（schema 校验会 reject→回炉循环——run 驻留）
+    const { workflowView } = await import("../plugin.ts");
+    const rebound = await ctx.use(workflowView).rebind("fly-new" as SessionId);
+    expect(rebound.ok).toBe(true);
+    // journal 断言：run/rebound 落账（真在飞 run 的归属迁移）
+    const { readdir, readFile } = await import("node:fs/promises");
+    const runs = await readdir(join(root, "workflows"));
+    let sawRebound = false;
+    for (const rid of runs) {
+      const j = await readFile(join(root, "workflows", rid, "journal.jsonl"), "utf8").catch(() => "");
+      if (j.includes("run/rebound")) {
+        sawRebound = true;
+        expect(j).toContain('"to":"fly-new"');
+      }
+    }
+    expect(sawRebound).toBe(true); // 在飞 run 的迁移真发生（非 settled 后的空转）
+    await parent.value.dispose();
+    await ctx.dispose();
+    await rm(root, { recursive: true, force: true });
+  }, 15_000);
+});
+
+/** 简单等待 */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});

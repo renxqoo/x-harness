@@ -238,6 +238,21 @@ export async function rewriteHeaderParent(root: string, runId: string, next: str
   await rename(temp, target);
 }
 
+/** 只读锁活判定（GC 用——acquire/release 探测会 touch 目录 mtime 引发时钟竞态） */
+async function lockHolderAlive(dir: string): Promise<boolean> {
+  const { readFile } = await import("node:fs/promises");
+  const raw = await readFile(join(dir, "lock"), "utf8").then((t) => t.trim(), () => "");
+  if (raw === "") return false; // 无锁文件——不忙
+  const pid = Number.parseInt(raw, 10);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false; // 垃圾锁——不忙（可接管）
+  try {
+    process.kill(pid, 0);
+    return true; // 持有者活
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== "ESRCH"; // 非 ESRCH（EPERM）保守判活
+  }
+}
+
 /** run 目录 GC（期 2-D3）：settled run 超保留期删除（与 session 目录同策略——
  *  归档价值随时间衰减；非 settled 永不删——在飞事实）。返回删除的 runId 集。 */
 export async function gcRuns(root: string, options: { readonly maxAgeMs: number; readonly now?: () => number }): Promise<readonly string[]> {
@@ -256,19 +271,13 @@ export async function gcRuns(root: string, options: { readonly maxAgeMs: number;
     const info = await stat(dir).catch(() => undefined);
     if (info === undefined || now - info.mtimeMs < options.maxAgeMs) continue;
     // R3 修：锁活在场（他进程驱动/本进程持有）不删——rm 后 append 写已删 inode = 静默丢数据。
-    // 探测在 age 判定**之后**（acquire/release 会 touch 目录 mtime——先探测则 age 恒新）
-    const lockBusy = await acquireRunLock(dir).then((r) => {
-      if (r.kind === "acquired") {
-        void r.lock.release();
-        return false;
-      }
-      return true; // 活锁——skip
-    }, () => false);
+    // 探测只读不写（读 lock 文件判 pid 活——acquire/release 会 touch 目录 mtime，
+    // 与 utimes 回拨的测试时钟竞态导致 GC 判定抖动；只读探测零副作用）
+    const lockBusy = await lockHolderAlive(dir);
     if (lockBusy) continue;
-    await rm(dir, { recursive: true, force: true }).catch(() => {
-      /* 删除尽力：下次 GC 再试 */
-    });
-    removed.push(runId);
+    // R-5 修：rm 失败不计入 removed（返回值与磁盘事实一致——公开导出面不虚报）
+    const gone = await rm(dir, { recursive: true, force: true }).then(() => true, () => false);
+    if (gone) removed.push(runId); // 失败下次 GC 再试
   }
   return removed;
 }

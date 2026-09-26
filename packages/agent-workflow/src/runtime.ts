@@ -287,13 +287,39 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     if (next === mainRef.current) return { ok: true };
     const previous = mainRef.current;
     mainRef.current = next;
+    // D-5 第2层修：判据幂等（header ≠ next 即迁）——半程失败（append 抛错中断）后
+    // 用户再切会话仍能补迁（旧判据 ≠ previous 在半程后永假 → 滞留旧归属）
     for (const run of runs.values()) {
-      if (run.header.parentSession !== String(previous)) continue;
-      await append(run, { type: "run/rebound", from: String(previous), to: String(next) });
+      if (run.header.parentSession === String(next)) continue;
+      await append(run, { type: "run/rebound", from: run.header.parentSession, to: String(next) });
       run.header = { ...run.header, parentSession: String(next) };
       await rewriteHeaderParent(deps.root, run.header.runId, String(next)).catch(() => {
-        /* header 重写尽力：journal 的 run/rebound 事件已保归属事实 */
+        /* header 重写尽力：journal 的 run/rebound 事件已保归属事实（幂等判据下可补迁） */
       });
+    }
+    void previous;
+    // R-2 修：未认领 run（盘上归属滞留）迁移——盘上 header 重写（幂等）+ coldIndex 同步。
+    // busy（他进程驱动）跳过——归属事实由其 journal 的 run/rebound 收敛
+    {
+      const { readdir } = await import("node:fs/promises");
+      const { readRun, rewriteHeaderParent: rewrite, openRunJournal } = await import("./journal.ts");
+      const entries = await readdir(deps.root).catch(() => [] as string[]);
+      for (const runId of entries) {
+        if (runs.has(runId)) continue; // 已认领（内存已迁）
+        const read = await readRun(deps.root, runId);
+        if (read.kind !== "opened" || read.snapshot === undefined) continue;
+        if (read.snapshot.parentSession === String(next)) continue;
+        const opened = await openRunJournal(deps.root, read.header);
+        if (opened.kind !== "opened") continue; // 活锁——他进程驱动
+        // journal 落 run/rebound（append-only 合法）+ header 重写（原子）
+        await opened.writer.append([{ type: "run/rebound", from: read.snapshot.parentSession, to: String(next) }]).catch(() => {});
+        await rewrite(deps.root, runId, String(next)).catch(() => {});
+        await opened.writer.close().catch(() => {});
+      }
+      // coldIndex 同步（新会话可 stop 未认领任务）
+      for (const [taskId, entry] of coldIndex) {
+        if (entry.parent !== String(next)) coldIndex.set(taskId, { parent: String(next) });
+      }
     }
     // 悬置通知补投（新会话在场——恰是 rebind 的调用时机）
     await onSessionAlive(next);
@@ -475,6 +501,12 @@ async function criticTierVerdict(plan: {
       subagent_type: critic.type,
       settlement: {
         onCycleEnd: (report) => {
+          // R-1 修：异常终态（stop/error）不解析不回炉——直接按提案缺失终局（防
+          // 「用户停 critic → 又 spawn 新 critic」的直觉违背循环）
+          if (report.outcome !== "completed") {
+            void finish(report.agentId, () => undefined);
+            return;
+          }
           void finish(agentIdOfManaged(report.agentId), () => {
             const parsed = parseCriticProposal(report.summary ?? "");
             return "proposal" in parsed ? parsed.proposal : undefined;

@@ -211,7 +211,8 @@ describe("openRunJournal 冻结分支（覆盖 55-69）", () => {
     const mismatch = await openRunJournal(root, { ...headerOf("r-drift"), runId: "r-drift", createdAt: 1, pluginVersion: "16.0.0", parentSession: "s", cwd: "/w" });
     // 盘上 header.runId = r-drift 与传入一致 → opened（正例）；漂移用例：
     const drift = await openRunJournal(root, { runId: "r-notexist", parentSession: "s", cwd: "/w", createdAt: 1, pluginVersion: "16.0.0" });
-    expect(drift.kind === "opened" || drift.kind === "frozen").toBe(true); // wx 失败→重读 r-notexist 缺 → frozen
+    expect(drift.kind === "opened" || drift.kind === "frozen").toBe(true);
+    if (drift.kind === "opened") await drift.writer.close(); // fd 泄漏（GC 报错根因）
     if (mismatch.kind === "opened") await mismatch.writer.close();
   });
 });

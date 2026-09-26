@@ -1,9 +1,10 @@
 # AGENT-WORKFLOW：验收回炉与任务编排终态（件 16）
 
-> 状态：**方案定稿 v3.1**（v1→v2→v3 三轮方案审查处置 + 实现终审三路处置——§15 全留档。
-> v3.1 增量：包名对账（workflow-core）/F14 句柄轮询修正/恢复表补 verifying·submitted·
-> settled-未投三行/锁域（撕裂修复持锁限定）/Tier B cwd·超时·上限·沙箱 fail-closed 契约/
-> taskId t-<runId> 前缀化/settlement 兜底实现形态/直通限根取舍落档）
+> 状态：**方案定稿 v3.2**（方案三轮审查 + 实现终审三路 + 期 2 两路对抗审查全处置——§15 留档。
+> v3.1：终审对账（包名/F14/恢复表三行/锁域/Tier B 契约/taskId 前缀/settlement 兜底）。
+> v3.2 增量：期 2 四功能（会话重绑 run/rebound/Tier C critic 自举/depends_on·悬空拒/
+> GC·冷停止·标记收窄）+ 两路处置（critic 预算 reopens 联动/critic 与恢复的活 caller/
+> GC 三防线/幂等迁移判据/critic 异常终态不回炉/未认领 run 迁移）。
 > 级别：高（workflow-core 新包（纯引擎）+ agent-workflow 新包（插件）+ agent-delegation
 > 三接缝 + task-tools 源让位 + CLI/hub 两宿主装配）
 > 上游关联：件13 AGENT-DELEGATION §1 U1 落档的是 **teammate/name@team 常驻团队寻址（云形态）**。
@@ -388,8 +389,12 @@ cancel×verify 竞态全在它——两轮复审发现最密集的交互区）�
 - **期 1b（验收面与宿主加宽）**：Tier B（intent-result 对/unknown 处置/fence 按子会话/
   副作用计数断言）+ task_stop 让位（task-tools kind 扩展与源协议）+ **hub 宿主**（停机
   旅程/fields.env 注入）+ 双进程共享 root 并发用例。
-- **期 2**：Tier C critic + depends_on DAG（含直通 taskId 歧义处置）+ feedback_timing
-  step-boundary + run 随会话切换重绑 + 多任务 run 的 stop 语义 + 子代理提交 run 的管辖扩展。
+- **期 2（已交付）**：会话重绑（run/rebound 归属迁移 + 未认领 run 盘上迁移 + coldIndex 同步）/ Tier C
+  critic（W5 自举提案校验 + reopen 回炉 reopens 预算 + 异常终态不回炉）/ depends_on（形态校验 +
+  悬空 fail-fast 拒 + readiness 四值消费 + 依赖失败传播——多任务 run 的图校验随多任务提交开放）/
+  收尾四项（标记收窄 user/message、冷启动 stop、run GC 三防线、0600 收权含接管路径）。
+- **期 3 候选**：feedback_timing step-boundary（真 in-turn 修复）/ critic 派发超时面 /
+  幂等标记 nonce（自注入伪造根治）/ 多任务 run 提交与图校验。
 
 ### 12.5 实施顺序（每步四门 + 独立可回滚——对照件13 六阶段纪律，v2 缺此节被点名）
 
@@ -419,11 +424,11 @@ token 经济性（期 2 参数形态）。
 | 项 | 状态 |
 | --- | --- |
 | 跨会话记忆沉淀 | 挂账——journal 是事实源，挖掘口开放 |
-| 反馈注入 step-boundary（真 in-turn） | 期 2 参数（W4） |
+| 反馈注入 step-boundary（真 in-turn） | 期 3 候选（W4 参数位保留） |
 | 人工验收/外部 CI Acceptor | 接口开放（W3），按需实现 |
-| run 目录 GC | 挂账——与 session 目录同策略统一收口 |
+| ~~run 目录 GC~~ | **期 2 已交付**（settled+已通知+无活锁 超龄删——三防线） |
 | workflow 级并发上限 | 期 2 随 DAG |
-| run 随 /new、/resume 的重绑 | 期 2（期 1 语义：run 锚 parentSession 存续，新会话可读 journal 查询，不自动重绑——A-R5） |
+| ~~run 随 /new、/resume 的重绑~~ | **期 2 已交付**（run/rebound 事件 + runtime.rebind + workflowView 服务面） |
 | spec 原样落盘的演进语义 | 已接受取舍（§4：裁决可随实现演进，版本不符只读） |
 
 ## 15. 首轮审查处置表（A 路 8 真缺陷 + 9 风险 / B 路 9 真缺陷 + 5 风险；v2 全量处置）
@@ -485,6 +490,23 @@ token 经济性（期 2 参数形态）。
 | A-F9 直通 taskId 被 depends_on 引用歧义 | 风险(期2) | §9 设计债标注 |
 | A 焦点4：期 1 过胖 | 判断 | §12 重切 1a（Tier A+恢复+CLI）/1b（Tier B+让位+hub）+ §12.5 实施顺序 |
 | B2 可实施性正面结论 | 验证 | 四豁免精确到行（stopAll 在 plugin.ts:407 非 verbs.ts）；跨服务传回调先例 permissionBroker.ask；锁竞态协议直接适用；TypeBox violationsOf 复用为 Tier A 裁决器 |
+
+### 期 2 实现对抗审查处置（两路：A 功能正确性 / B 回归边界）
+
+| 发现 | 级别 | 处置 |
+| --- | --- | --- |
+| R1/D-1 critic 预算永不扣减（误落 repair-issued 计 repairs——无界活循环实测 20s 1756 轮） | 真缺陷 | reject 落 task/reopened（reopens 联动）；预算断言假绿修正（critic:budget-exhausted 锚） |
+| R2/D-2/D-3 rebind 后 critic/恢复 caller 冻结（与 R1 叠加为不可收敛死循环） | 真缺陷 | critic 收 mainRef.current；deps.mainSessionRef 回填（reviveAndKick 活 caller） |
+| R3/D-4 GC 删 settled-未通知 run + 锁活竞态 + 扫描 mkdir 竞态 | 真缺陷 | notifiedAll 条件 + 锁探测（序在 age 后——探测 touch mtime）+ 扫描→GC 串行 |
+| D-5 rebind 半程失败永不补迁移（判据 ≠ previous 在中断后永假） | 真缺陷 | 幂等判据（header ≠ next 即迁——失败可补） |
+| K2/D-7 rewriteHeaderParent 非原子 + 0644 放宽 | 真缺陷 | temp+rename 原子写 + mode 0600 |
+| K4/D-6 coldStop 无 finally（fd+锁泄漏） | 真缺陷 | try/finally |
+| R-1 stop critic → 又 spawn 新 critic | 风险 | sink 异常终态直接终局（不回炉） |
+| R-2 未认领 run 归属滞留旧会话 | 风险 | rebind 盘上迁移（busy 跳过）+ coldIndex 同步 |
+| R-5 gcRuns 返回值失实 | 风险 | rm 失败不 push |
+| K1/K3/K6/T2 | 风险 | redispatch 就绪检查/接管 chmod/自依赖拒/阶段叙事清除 |
+| R-3 critic 无超时面 / R-4 自注入伪造 nonce / T-2 run 级 outcome 混合 | 挂账 | 期 3 候选 |
+| 假绿：critic 预算断言碰巧绿 / rebind 在飞迁移零覆盖 / 空转用例虚增 | 假绿 | 断言锚定 + 真在飞窗口用例 + 死用例删除 |
 
 ### 实现终审处置（三路：A 忠实性 / B 并发泄漏 / C 安全假绿——v3.1 全清）
 
