@@ -179,3 +179,15 @@ describe("usageText", () => {
     expect(usageText("x-harness")).toContain(`--permission <${PROFILE_IDS.join("|")}>`);
   });
 });
+
+describe("--workflow-dir（件16 §3.2——A6 回归：flag 曾未注册成死参数）", () => {
+  it("接受值与 = 形式；缺省 undefined", () => {
+    const a = parseCliArgs(["-p", "x", "--workflow-dir", "/wf/root"]);
+    expect(a.ok && a.value.workflowDir).toBe("/wf/root");
+    const b = parseCliArgs(["-p", "x", "--workflow-dir=/wf/equal"]);
+    expect(b.ok && b.value.workflowDir).toBe("/wf/equal");
+    const c = parseCliArgs(["-p", "x"]);
+    expect(c.ok && c.value.workflowDir).toBeUndefined();
+    expect(usageText("x-harness")).toContain("--workflow-dir");
+  });
+});

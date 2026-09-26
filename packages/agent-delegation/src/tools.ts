@@ -23,6 +23,8 @@ export interface ToolDeps {
   readonly list: (ctx: ToolExecContext) => Promise<readonly ChildView[]>;
   /** message 上限（D1 恒等 = reportCap——validateOptions 已算好的注入值） */
   readonly reportCap: number;
+  /** spawn 描述尾部追加（件16 §9 分流引导——装配期组合，规格正文不动） */
+  readonly spawnDescriptionAppend?: string;
 }
 
 const CALLER_MISSING = "agent tools are only available inside an agent session";
@@ -77,7 +79,7 @@ export function delegationTools(deps: ToolDeps): ToolDefinition[] {
   return [
     {
       name: "agent_spawn",
-      description: AGENT_SPAWN_DESCRIPTION,
+      description: deps.spawnDescriptionAppend !== undefined ? `${AGENT_SPAWN_DESCRIPTION}\n${deps.spawnDescriptionAppend}` : AGENT_SPAWN_DESCRIPTION,
       inputSchema: spawnSchema,
       isControlTool: true,
       execute: async (args: Static<typeof spawnSchema>, ctx) => run(await deps.spawn(ctx, args)),

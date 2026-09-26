@@ -328,3 +328,31 @@ describe("通知铸文（notificationText）", () => {
     // 截断归 deliverNotification（summaryLines 活父路径）——铸文侧保持全文（报告全文直送语义）
   });
 });
+
+describe("死父通知悬置 → 边沿补投（A-11）", () => {
+  it("父 dispose 后任务完成 → 通知悬置；onSessionAlive 触发后补投（notify/delivered 落账）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-pend-"));
+    const world = await makeWorld({ root });
+    const parentMade = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "parent-model", provider: "fake" } });
+    if (!parentMade.ok) throw new Error(parentMade.reason);
+    world.scripts.set("parent-model", [TEXT("parent-model", '{"title":"late"}')]);
+    const sent = await world.submit("main-1" as SessionId, { description: "orphan notify", prompt: "x", result_schema: { type: "object", required: ["title"] } });
+    expect(sent.ok).toBe(true);
+    await parentMade.value.dispose(); // 父死（进程活）——子完成路径照常（受管豁免）
+    await sleep(600); // 等 sink 验收 + settleRun（通知悬置）
+    // 边沿：会话复活（新 handle 同 id）→ onSessionAlive 补投
+    // 边沿：复活同 id 会话（store 层同 id create 被拒——经 dispose 后的 store 允许重建）
+    const revived = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "parent-model", provider: "fake" } });
+    if (!revived.ok) throw new Error(revived.reason);
+    await sleep(300);
+    expect(notificationLinesOf(world, "main-1" as SessionId)).toContain("workflow-notification");
+    await revived.value.dispose();
+    await world.dispose();
+    await rm(root, { recursive: true, force: true });
+  }, 15_000);
+});
+
+/** 简单等待 */
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});

@@ -41,7 +41,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
   // ————————————————————————— 受管提交（Tier A 期 1a） —————————————————————————
   const managedSubmit = async (caller: SessionId, input: SubmitInput): Promise<SubmitOutcome> => {
     const runId = String(mintSessionId());
-    const taskId = "t1"; // 期 1a 单任务 run
+    const taskId = `t-${runId}`; // A8：跨 run 唯一（同会话并发多 run 的 stop/notify 判据）
     const spec: TaskSpec = {
       description: input.description,
       prompt: input.prompt,
@@ -64,7 +64,10 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     // 派发：prompt 增补（W5：结构化交付指令——没有它 Tier A 首轮必拒）
     const prompt = dispatchPrompt(input);
     const ref: ManagedTaskRef = { runId, taskId };
-    const spawned = await deps.view!.spawnManaged(caller, { description: input.description, prompt, ...(input.subagent_type !== undefined ? { subagent_type: input.subagent_type } : {}), ...(input.model !== undefined ? { model: input.model } : {}), ...(input.isolation !== undefined ? { isolation: input.isolation } : {}), settlement: settlementOf(ref, onCycleEnd) });
+    const spawned = await deps.view!.spawnManaged(caller, { description: input.description, prompt, ...(input.subagent_type !== undefined ? { subagent_type: input.subagent_type } : {}), ...(input.model !== undefined ? { model: input.model } : {}), ...(input.isolation !== undefined ? { isolation: input.isolation } : {}), settlement: settlementOf(ref, onCycleEnd, async (agentId, error) => {
+        deps.onWarn?.(`workflow: settlement failed for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+        await deps.view?.settle(agentId, "settle-failed").catch(() => {});
+      }) });
     if (!spawned.ok) {
       // dispatch 拒 → 落账终局（A5-1：不卡 submitted 死角）
       await append(run, { type: "task/settled", taskId, outcome: "failed", cause: "dispatch-failed", detail: spawned.reason });
@@ -74,7 +77,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     const agentId = agentIdOfManaged(spawned.text);
     tasks.set(agentId, ref);
     await append(run, { type: "task/dispatched", taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) }); // 真子会话 id（恢复链读档案的锚）
-    return { ok: true, text: spawned.text };
+    return { ok: true, text: `${spawned.text}\n[workflow] taskId: ${taskId} (run ${runId}) — reference it with task_stop; the [workflow-notification] will cite it.` };
   };
 
   // ————————————————————————— 验收回炉闭环（sink 投递） —————————————————————————
@@ -162,13 +165,20 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
   const settleRun = async (run: ActiveRun, outcome: "completed" | "failed" | "cancelled", detail: string): Promise<void> => {
     await append(run, { type: "run/settled", outcome, detail });
     await deliverNotification({ run, deps, append: (event) => append(run, event) });
-    // 受管行归还（接缝③）：终局 dispose/清树/摘行
-    for (const task of Object.values(run.snapshot.tasks)) {
-      if (task.agentId !== undefined && deps.view !== undefined) await deps.view.settle(task.agentId, `run-${outcome}`).catch(() => {});
-      tasks.delete(task.agentId ?? "");
+    // A-11 修：通知悬置（死父——journal 无 notify/delivered）时 run 留驻驱动面，
+    // onSessionAlive 边沿补投后再清；已投（notified 全覆盖）即清
+    const notified = Object.values(run.snapshot.tasks).every((task) => task.status !== "settled" || run.snapshot.notified.has(task.taskId));
+    if (notified) {
+      // 受管行归还（接缝③）：终局 dispose/清树/摘行
+      for (const task of Object.values(run.snapshot.tasks)) {
+        if (task.agentId !== undefined && deps.view !== undefined) await deps.view.settle(task.agentId, `run-${outcome}`).catch(() => {});
+        tasks.delete(task.agentId ?? "");
+      }
+      await run.writer.close().catch(() => {});
+      runs.delete(run.header.runId);
+    } else {
+      await run.writer.close().catch(() => {}); // 悬置：writer 关（锁释放），run 留驻等边沿补投
     }
-    await run.writer.close().catch(() => {});
-    runs.delete(run.header.runId);
   };
 
   const append = async (run: ActiveRun, event: WorkflowEvent): Promise<void> => {
@@ -179,13 +189,26 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
   };
 
   // ————————————————————————— 边沿与生命周期 —————————————————————————
-  const onSessionAlive = async (_session: SessionId): Promise<void> => {
-    // 期 1a：运行期父死通知悬置场景的补投口（恢复协议 §5.3 在 resume.ts 全量实现）
+  const onSessionAlive = async (session: SessionId): Promise<void> => {
+    // F14 修正：sessionCreated 在 store.create 内同步发射，loop 句柄登记在 create 的
+    // await 链后段——补投需句柄在场（notify 经 loop.get），轮询等待（上限 50 拍）
+    for (let i = 0; i < 50 && deps.loop.get(session) === undefined; i++) {
+      await tick(2);
+    }
+    // §5.3 边沿补投（A-11）：悬置 run 投递成功后走归还链（摘行/关卷/出 runs）
     for (const run of runs.values()) {
       if (run.snapshot.status !== "settled") continue;
       const pending = Object.values(run.snapshot.tasks).some((task) => task.status === "settled" && !run.snapshot.notified.has(task.taskId));
       if (!pending) continue;
       await deliverNotification({ run, deps, append: (event) => append(run, event) });
+      const nowNotified = Object.values(run.snapshot.tasks).every((task) => task.status !== "settled" || run.snapshot.notified.has(task.taskId));
+      if (!nowNotified) continue; // 仍悬置（父又死了）——留驻下个边沿
+      for (const task of Object.values(run.snapshot.tasks)) {
+        if (task.agentId !== undefined && deps.view !== undefined) await deps.view.settle(task.agentId, "run-recovered").catch(() => {});
+        tasks.delete(task.agentId ?? "");
+      }
+      await run.writer.close().catch(() => {});
+      runs.delete(run.header.runId);
     }
   };
 
@@ -221,11 +244,48 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       if (caller !== undefined && run.header.parentSession !== String(caller)) {
         return { ok: false, reason: `not-owner:${taskId}; this workflow task belongs to another session` };
       }
+      // D2 修：cancel 时在飞 verify 同步封口（§7——迟到 result 收编尽力）
+      if (task.status === "verifying") await append(run, { type: "verify/result", taskId, tier: "command", attempt: task.verifyAttempts, outcome: "unknown" });
       await append(run, { type: "task/settled", taskId, outcome: "cancelled", cause: "task-stop" });
       await settleRun(run, "cancelled", "stopped by task_stop");
       return { ok: true, text: `stopped ${taskId} (run settled: cancelled)` };
     }
     return { ok: false, reason: `not-found:${taskId}; no in-flight workflow task matches` }; // 迟到 miss 前缀纪律
+  };
+
+  /** 恢复终局摘除（B8）：run 出 runs、agentId 出 tasks——防缓泄与 probe 误 hit */
+  const detach = (runId: string): void => {
+    const run = runs.get(runId);
+    if (run !== undefined) {
+      for (const task of Object.values(run.snapshot.tasks)) {
+        if (task.agentId !== undefined) tasks.delete(task.agentId);
+      }
+      runs.delete(runId);
+    }
+  };
+
+  /** §5.2 行 2：submitted 任务重派发（A3——spec 在 journal；死父悬置返回 false） */
+  const redispatch = async (run: ActiveRun, caller: SessionId): Promise<boolean> => {
+    if (deps.view === undefined) return false;
+    if (deps.loop.get(caller) === undefined) return false; // 死父：悬置（sessionCreated 边沿后再试）
+    for (const task of Object.values(run.snapshot.tasks)) {
+      if (task.status !== "submitted") continue;
+      const prompt = dispatchPrompt({ description: task.spec.description, prompt: task.spec.prompt, ...(task.spec.resultSchema !== undefined ? { result_schema: task.spec.resultSchema } : {}) });
+      const ref: ManagedTaskRef = { runId: run.header.runId, taskId: task.taskId };
+      const spawned = await deps.view.spawnManaged(caller, { description: task.spec.description, prompt, ...(task.spec.subagentType !== undefined ? { subagent_type: task.spec.subagentType } : {}), ...(task.spec.model !== undefined ? { model: task.spec.model } : {}), ...(task.spec.isolation !== undefined ? { isolation: task.spec.isolation } : {}), settlement: settlementOf(ref, onCycleEnd, async (agentId, error) => {
+        deps.onWarn?.(`workflow: settlement failed for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+        await deps.view?.settle(agentId, "settle-failed").catch(() => {});
+      }) });
+      if (!spawned.ok) {
+        await append(run, { type: "task/settled", taskId: task.taskId, outcome: "failed", cause: "dispatch-failed", detail: spawned.reason });
+        continue;
+      }
+      const agentId = agentIdOfManaged(spawned.text);
+      tasks.set(agentId, ref);
+      await append(run, { type: "task/dispatched", taskId: task.taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) });
+      return true;
+    }
+    return false;
   };
 
   /** 恢复协议接线（§5.2）：把恢复的 run 接进驱动面——返回 onCycleEnd 供 resume 侧复用验收闭环 */
@@ -237,7 +297,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     return (agentId, report) => onCycleEnd({ runId: run.header.runId, taskId: tasks.get(agentId)?.taskId ?? "t1" }, report);
   };
 
-  return { submit, onCycleEnd, onSessionAlive, dispose, attach, probeTask, stopTask };
+  return { submit, onCycleEnd, onSessionAlive, dispose, attach, probeTask, stopTask, redispatch, detach };
 }
 
 /** Tier A 档裁决构造（采集+校验+adjudicate） */
@@ -263,6 +323,11 @@ export function commandVerdictOf(verify: { readonly outcome: "passed" | "failed"
   if (plan.used + 1 >= plan.max) return { kind: "fail", reason: `command tier budget exhausted (exit ${String(verify.exitCode)})` };
   return { kind: "reject", violations: [`command exited with code ${String(verify.exitCode)}`] };
 }
+
+/** 短等待（句柄登记轮询拍——F14） */
+const tick = (ms: number): Promise<void> => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
 
 /** 验收链序（§8.2）：schema 先、command 后（B+C 组合序） */
 function tierChain(spec: import("@x-harness/workflow-core").TaskSpec): readonly ("schema" | "command")[] {

@@ -30,7 +30,7 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
       const runtime = createRuntime(deps);
 
       // 启动扫描（§5.1/§5.2）：作用域过滤 + 二维窗口恢复——attach 把恢复 run 接进驱动面
-      void scanAndRecover(deps, (run) => runtime.attach(run)).catch(() => {
+      void scanAndRecover(deps, (run) => ({ onCycleEnd: runtime.attach(run), redispatch: (r, caller) => runtime.redispatch(r, caller), detach: runtime.detach })).catch(() => {
         /* 扫描尽力：损坏 run 在 readRun 内冻结跳过 */
       });
 

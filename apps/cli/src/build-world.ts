@@ -157,7 +157,7 @@ function rgBinDirOf(options: WorldOptions): { readonly rgBinDir: string } | { re
  *  onIoError，缺省 stderr（main 的 openWorld 不传 onIoError——无兜底则是死接线）。
  *  mailbox 接线（AGENT-DELEGATION §5.3 宿主接线）：mainSession 必收——openWorld 先铸号/
  *  复用 resumeId 后传入（会话 id 装配期已知）；box = xh-<id>（会话 id 跨进程唯一）。 */
-function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError" | "mainSessionId">): import("@x-harness/agent-delegation").DelegationOptions {
+function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError" | "mainSessionId" | "workflowDir">): import("@x-harness/agent-delegation").DelegationOptions {
   const onWarn = options.onIoError ?? ((message: string) => {
     process.stderr.write(`cli: ${message}\n`);
   });
@@ -166,6 +166,8 @@ function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError" | "
     workspaceRoot: options.cwd,
     onWarn,
     mailbox: { box: `xh-${String(options.mainSessionId)}`, mainSession: options.mainSessionId },
+    // 件16 §9 分流引导：workflow 装配在场才追加（描述组合——规格正文不动）
+    ...(options.workflowDir !== undefined ? { spawnDescriptionAppend: "For deliverables that must be verified before they count as done (tests passing, a required output structure, or an independent review), use workflow_submit instead — it gates completion on acceptance checks." } : {}),
   };
 }
 

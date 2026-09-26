@@ -21,9 +21,11 @@ export function notificationText(run: ActiveRun): string {
     const head = task.outcome === "completed"
       ? `[workflow-notification] task ${task.taskId} finished: passed (run ${run.header.runId}: ${run.snapshot.outcome ?? "settled"})`
       : `[workflow-notification] task ${task.taskId} failed: ${task.detail ?? task.cause ?? "verification failed"} (run ${run.header.runId}: ${run.snapshot.outcome ?? "settled"})`;
-    lines.push(head, `agent: ${task.agentId ?? "?"}`);
+    // D7 修：agent 会话指针（journal 可查的完整锚）+ attempts 全档口径
+    lines.push(head, `agent: ${task.agentId ?? "?"}`, `session: ${String(task.sessionId ?? "unknown")}`);
     if (task.verdict !== undefined) lines.push(`verdict: ${task.verdict}`);
-    if (task.repairs > 0) lines.push(`attempts: ${String(task.repairs + 1)}`);
+    const attempts = Math.max(task.repairs, task.reopens, task.verifyAttempts);
+    if (attempts > 0) lines.push(`attempts: ${String(attempts + 1)}`);
     if (task.detail !== undefined && task.outcome !== "completed") lines.push(`detail: ${task.detail}`);
   }
   return lines.join("\n");

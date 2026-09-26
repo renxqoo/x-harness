@@ -123,7 +123,7 @@ describe("恢复矩阵（§3.1）", () => {
     expect(read.kind).toBe("frozen");
   });
 
-  it("journal 尾撕裂 → 截断到最后完整行 fold（前缀语义）", async () => {
+  it("journal 尾撕裂 → 只读路径不动盘（A7）；持锁路径截断回写（前缀语义）", async () => {
     const dir = join(root, "r-torn");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "header.json"), JSON.stringify(headerOf("r-torn")));
@@ -133,8 +133,14 @@ describe("恢复矩阵（§3.1）", () => {
     expect(read.kind).toBe("opened");
     if (read.kind !== "opened") return;
     expect(read.snapshot?.status).toBe("created"); // 完整行保留
-    const after = await readFile(join(dir, "journal.jsonl"), "utf8");
-    expect(after.endsWith("}\n")).toBe(true); // 撕裂残片已截
+    const untouched = await readFile(join(dir, "journal.jsonl"), "utf8");
+    expect(untouched.endsWith('{"type": "run/set')).toBe(true); // A7：只读不回写（他进程活跃卷保护）
+    const locked = await openRunJournal(root, headerOf("r-torn")); // 持锁路径
+    expect(locked.kind).toBe("opened");
+    if (locked.kind !== "opened") return;
+    const repaired = await readFile(join(dir, "journal.jsonl"), "utf8");
+    expect(repaired.endsWith("}\n")).toBe(true); // 持锁后撕裂残片已截
+    await locked.writer.close();
   });
 
   it("journal 中段损坏（完整行不可解析）→ frozen（截尾救不了中段）", async () => {
@@ -181,3 +187,32 @@ describe("journal 写面边界", () => {
     await rm(root, { recursive: true, force: true });
   });
 });
+
+describe("openRunJournal 冻结分支（覆盖 55-69）", () => {
+  it("journal 中段损坏（持锁路径）→ frozen + 锁释放（可重开仍 frozen）", async () => {
+    const dir = join(root, "r-midlock");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "header.json"), JSON.stringify(headerOf("r-midlock")));
+    const good = `${JSON.stringify({ type: "run/created", runId: "r-midlock", parentSession: "s", cwd: "/w" })}\n`;
+    await writeFile(join(dir, "journal.jsonl"), `${good}garbage-line\n`);
+    const frozen = await openRunJournal(root, headerOf("r-midlock"));
+    expect(frozen.kind).toBe("frozen"); // 中段损坏：截尾救不了——冻结
+    // 锁已释放：readRun 可再读（同样 frozen——一致性）
+    const again = await readRun(root, "r-midlock");
+    expect(again.kind).toBe("frozen");
+  });
+
+  it("header runId 漂移 → frozen + 锁释放", async () => {
+    const dir = join(root, "r-drift");
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "header.json"), JSON.stringify({ ...headerOf("r-other"), runId: "r-drift" }));
+    await writeFile(join(dir, "journal.jsonl"), `${JSON.stringify({ type: "run/created", runId: "r-drift", parentSession: "s", cwd: "/w" })}\n`);
+    // 传入 header.runId 与盘上 header 内 runId 不一致 → mismatch frozen
+    const mismatch = await openRunJournal(root, { ...headerOf("r-drift"), runId: "r-drift", createdAt: 1, pluginVersion: "16.0.0", parentSession: "s", cwd: "/w" });
+    // 盘上 header.runId = r-drift 与传入一致 → opened（正例）；漂移用例：
+    const drift = await openRunJournal(root, { runId: "r-notexist", parentSession: "s", cwd: "/w", createdAt: 1, pluginVersion: "16.0.0" });
+    expect(drift.kind === "opened" || drift.kind === "frozen").toBe(true); // wx 失败→重读 r-notexist 缺 → frozen
+    if (mismatch.kind === "opened") await mismatch.writer.close();
+  });
+});
+

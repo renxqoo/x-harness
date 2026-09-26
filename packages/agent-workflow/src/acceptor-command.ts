@@ -25,15 +25,20 @@ export async function runAcceptanceCommand(input: {
   readonly command: string;
   readonly cwdOverride?: string;
   readonly childSession: SessionId;
+  /** 验收命令 wall-clock 上限（缺省 120s——比照父 bash 面；测试可注入短窗） */
+  readonly timeoutMs?: number;
+  /** 输出采集内存上限（缺省 1MB——防无界增长；测试可注入小值） */
+  readonly outputLimit?: number;
 }): Promise<VerifyOutcomeResult> {
   const { ctx, run, taskId, attempt, command, childSession } = input;
   await appendRun(run, { type: "verify/started", taskId, tier: "command", attempt }); // intent 先落（崩溃后 unknown 处置依据——§5.2）
-  const env = ctx.tryUse(execEnv);
+  const env = verifyEnv(ctx);
   if (env === undefined) {
+    // D3 修：非沙箱 execEnv（local 裸奔面）缺席 fail-closed——§8.2「无 srt 运行时该档拒」
     await appendRun(run, { type: "verify/result", taskId, tier: "command", attempt, outcome: "unknown" });
-    return { outcome: "unknown", outputTail: "sandbox exec-env unavailable" };
+    return { outcome: "unknown", outputTail: "sandbox exec-env unavailable (acceptance commands require a sandboxed exec env)" };
   }
-  const cwd = input.cwdOverride ?? process.cwd();
+  const cwd = await verifyCwd(ctx, input);
   try {
     const spawned = await env.spawn({
       argv: ["/bin/sh", "-c", command],
@@ -46,8 +51,14 @@ export async function runAcceptanceCommand(input: {
       await appendRun(run, { type: "verify/result", taskId, tier: "command", attempt, outcome: "unknown" });
       return { outcome: "unknown", outputTail: detail };
     }
-    const output = await collectOutput(spawned.proc.stdout, spawned.proc.stderr);
+    // D8 修：wall-clock 超时（两段杀 term→kill）+ 输出采集上限——执行段抽 verifyExecution
+    const timedOut = await raceTimeout(spawned.proc, input.timeoutMs ?? 120_000);
+    const output = await collectOutput(spawned.proc.stdout, spawned.proc.stderr, input.outputLimit ?? 1_000_000);
     const exit = await spawned.proc.exited;
+    if (timedOut) {
+      await appendRun(run, { type: "verify/result", taskId, tier: "command", attempt, outcome: "failed" });
+      return { outcome: "failed", outputTail: `verify command timed out after ${String((input.timeoutMs ?? 120_000) / 1000)}s` };
+    }
     const exitCode = exit.code ?? (exit.signal !== null ? 128 : 1);
     const outcome = exit.code === 0 ? "passed" : "failed";
     await appendRun(run, { type: "verify/result", taskId, tier: "command", attempt, outcome, exitCode });
@@ -69,15 +80,53 @@ async function appendRun(run: ActiveRun, event: WorkflowEvent): Promise<void> {
   run.snapshot = step(run.snapshot, event);
 }
 
-async function collectOutput(stdout: ReadableStream<Uint8Array>, stderr: ReadableStream<Uint8Array>): Promise<string> {
+/** 验收沙箱面（D3：非 sandbox execEnv 拒——local 裸奔面 fail-closed） */
+function verifyEnv(ctx: Context): import("@x-harness/exec-env").ExecEnv | undefined {
+  const env = ctx.tryUse(execEnv);
+  return env !== undefined && env.kind === "sandbox" ? env : undefined;
+}
+
+/** 验收 cwd 解析（D1：显式 > 子会话 rootOverride[worktree] > 宿主 cwd） */
+async function verifyCwd(ctx: Context, input: { readonly cwdOverride?: string; readonly childSession: SessionId }): Promise<string> {
+  if (input.cwdOverride !== undefined) return input.cwdOverride;
+  const grants = ctx.tryUse((await import("@x-harness/permission")).permissionGrants);
+  return grants?.rootOverrideOf(input.childSession)?.dir ?? process.cwd();
+}
+
+/** 超时竞速：exited 先到 false；超时先到 term→kill 两段杀后 true */
+async function raceTimeout(proc: { readonly exited: Promise<unknown>; readonly kill: (phase: "term" | "kill") => Promise<void> }, timeoutMs: number): Promise<boolean> {
+  return Promise.race([
+    proc.exited.then(() => false),
+    new Promise<boolean>((resolve) => {
+      const timer = setTimeout(async () => {
+        await proc.kill("term");
+        setTimeout(() => void proc.kill("kill"), 5_000).unref?.();
+        resolve(true);
+      }, timeoutMs);
+      timer.unref?.();
+      void proc.exited.then(() => clearTimeout(timer));
+    }),
+  ]);
+}
+
+async function collectOutput(stdout: ReadableStream<Uint8Array>, stderr: ReadableStream<Uint8Array>, limit: number): Promise<string> {
   const decoder = new TextDecoder();
   const readAll = async (stream: ReadableStream<Uint8Array>): Promise<string> => {
     const parts: string[] = [];
+    let total = 0;
     const reader = stream.getReader();
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (value !== undefined) parts.push(decoder.decode(value, { stream: true }));
+      if (value === undefined) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        parts.push(decoder.decode(value.subarray(0, Math.max(0, limit - (total - value.byteLength))), { stream: true }));
+        await reader.cancel().catch(() => {});
+        parts.push(`[output capped at ${String(limit)} bytes]`);
+        break;
+      }
+      parts.push(decoder.decode(value, { stream: true }));
     }
     return parts.join("");
   };

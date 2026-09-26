@@ -39,7 +39,7 @@ interface World {
   dispose: () => Promise<void>;
 }
 
-async function makeWorld(root: string, mainSession = "main-1"): Promise<World> {
+export async function makeWorld(root: string, mainSession = "main-1"): Promise<World> {
   const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();
   const ctx = createContext();
   const plugins: readonly Plugin[] = [
@@ -85,14 +85,14 @@ async function makeWorld(root: string, mainSession = "main-1"): Promise<World> {
   return world;
 }
 
-function script(text: string): AsyncGenerator<LlmChunk> {
+export function script(text: string): AsyncGenerator<LlmChunk> {
   return (async function* () {
     yield { type: "text-delta", text } as never;
     yield { type: "finish", finish: { kind: "stop" } } as never;
   })();
 }
 
-const textsOf = (world: World, session: string): string =>
+export const textsOf = (world: World, session: string): string =>
   world.ctx.use(sessionStore).get(session as SessionId)?.events()
     .filter((event) => event.type === "agent/message" || event.type === "user/message")
     .map((event) => JSON.stringify(event.data)).join("\n") ?? "";
@@ -112,7 +112,7 @@ describe("scanAndRecover（§5.1 过滤 + §5.2 窗口）", () => {
     }
 
     const mine = await makeWorld(root, "main-1");
-    const result = await scanAndRecover(mine.deps, (run) => mine.workflow.attach(run));
+    const result = await scanAndRecover(mine.deps, attachOf(mine));
     expect(result.claimed).toBe(1); // 只认领本父
     expect(result.skipped).toBe(1); // 他父跳过
     await mine.dispose();
@@ -130,7 +130,7 @@ describe("scanAndRecover（§5.1 过滤 + §5.2 窗口）", () => {
     await made.writer.close();
 
     const second = await makeWorld(root, "main-1");
-    const result = await scanAndRecover(second.deps, (run) => second.workflow.attach(run));
+    const result = await scanAndRecover(second.deps, attachOf(second));
     expect(result.claimed).toBe(1); // run 认领（journal 可读可写）
     // 无子档案（archive 无该会话）→ 任务留待边沿——run 未终态、无异常
     await second.dispose();
@@ -151,7 +151,7 @@ describe("scanAndRecover（§5.1 过滤 + §5.2 窗口）", () => {
     const second = await makeWorld(root, "main-1");
     const parent = await second.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     if (!parent.ok) throw new Error(parent.reason);
-    const result = await scanAndRecover(second.deps, (run) => second.workflow.attach(run));
+    const result = await scanAndRecover(second.deps, attachOf(second));
     expect(result.claimed).toBe(1);
     await vi.waitFor(() => expect(textsOf(second, "main-1")).toContain("workflow-notification"), { timeout: 5_000 });
     const runs = await readdir(join(root, "workflows"));
@@ -179,7 +179,7 @@ describe("recoverTask 窗口（§5.2 repairing/dispatched——ctx 手造单元�
     if (read.kind !== "opened" || read.snapshot === undefined || world.deps.archive === undefined) throw new Error("fixture");
     const run: ActiveRun = { header: read.header, writer: made.writer, snapshot: read.snapshot };
     void run; // （journal 形态锚——recoverTask 窗口经 scanAndRecover 全链走）
-    const result = await scanAndRecover(world.deps, (r) => world.workflow.attach(r));
+    const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
     await world.dispose();
     await rm(root, { recursive: true, force: true });
@@ -208,7 +208,7 @@ describe("dispatched × completed 窗口（真子档案全链）", () => {
     // 世界二：恢复——dispatched × completed → 直接进验收 → 链全过 → 终局 + 补投
     const second = await makeWorld(root, "main-1");
     await second.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
-    const result = await scanAndRecover(second.deps, (r) => second.workflow.attach(r));
+    const result = await scanAndRecover(second.deps, attachOf(second));
     expect(result.claimed).toBe(1);
     await vi.waitFor(() => expect(textsOf(second, "main-1")).toContain("workflow-notification"), { timeout: 5_000 });
     const after = await rd(path, "utf8");
@@ -244,7 +244,7 @@ describe("dispatched × interrupted 窗口（reviveAndKick 真链）", () => {
     const world = await makeWorld(root, "main-1");
     const parentMade = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     if (!parentMade.ok) throw new Error(parentMade.reason);
-    const result = await scanAndRecover(world.deps, (r) => world.workflow.attach(r));
+    const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
     // revive + kick：kick 指令进了子会话收件箱（跨会话读档案断言）
     await vi.waitFor(() => kickDelivered(join(childDir, "events.jsonl")), { timeout: 5_000 });
@@ -278,7 +278,7 @@ describe("repairing 窗口（§5.2 F6a/F7）", () => {
 
     const world = await makeWorld(root, "main-1");
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
-    const result = await scanAndRecover(world.deps, (r) => world.workflow.attach(r));
+    const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
     // 交付物缺失（无 assistant 文本）→ 抽取 reject → 回炉或终局——断言 journal 推进（不悬死）
     await sleep(300);
@@ -311,7 +311,7 @@ describe("repairing 窗口（§5.2 F6a/F7）", () => {
 
     const world = await makeWorld(root, "main-1");
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
-    const result = await scanAndRecover(world.deps, (r) => world.workflow.attach(r));
+    const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
     await vi.waitFor(() => kickDelivered(join(childDir, "events.jsonl")), { timeout: 5_000 });
     await world.dispose();
@@ -345,7 +345,7 @@ describe("repairing × 反馈已送达（F7 markerMaterialized true）", () => {
 
     const world = await makeWorld(root, "main-1");
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
-    const result = await scanAndRecover(world.deps, (r) => world.workflow.attach(r));
+    const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
     // 标记在场（attempt 1 已送达）→ 不重复注入 attempt 1；验收链重裁 → 新反馈 attempt 2
     await vi.waitFor(() => attemptTwoDelivered(join(childDir, "events.jsonl")), { timeout: 5_000 });
@@ -379,7 +379,7 @@ describe("abnormal 终局链（finalizeAfterRecovery 全走）", () => {
 
     const world = await makeWorld(root, "main-1");
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
-    const result = await scanAndRecover(world.deps, (r) => world.workflow.attach(r));
+    const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
     await vi.waitFor(() => expect(textsOf(world, "main-1")).toContain("workflow-notification"), { timeout: 5_000 });
     const journal = await readFile(join(root, "workflows", "r-ab", "journal.jsonl"), "utf8");
@@ -390,6 +390,48 @@ describe("abnormal 终局链（finalizeAfterRecovery 全走）", () => {
     await rm(root, { recursive: true, force: true });
   });
 });
+
+
+describe("dispatched × completed 专窗（G5——真窗口，非 repairing 误标）", () => {
+  it("journal 恰停在 dispatched、子档案终态 completed → 直接进验收（不 revive 不 kick）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-g5-"));
+    const { openRunJournal, workflowPluginVersion } = await import("../journal.ts");
+    const made = await openRunJournal(join(root, "workflows"), { runId: "r-g5", parentSession: "main-1", cwd: root, createdAt: 1, pluginVersion: workflowPluginVersion() });
+    if (made.kind !== "opened") throw new Error("fixture");
+    await made.writer.append([{ type: "run/created", runId: "r-g5", parentSession: "main-1", cwd: root }]);
+    await made.writer.append([{ type: "task/submitted", taskId: "t1", spec: { description: "d", prompt: "p", resultSchema: { type: "object", required: ["a"] } } }]);
+    const child = "20260101T000000-g5ch";
+    await made.writer.append([{ type: "task/dispatched", taskId: "t1", agentId: "agent-1a2b3c4d", sessionId: child }]);
+    await made.writer.close();
+    const { mkdir, writeFile: wf, readFile: rd } = await import("node:fs/promises");
+    const childDir = join(root, "sessions", child);
+    await mkdir(childDir, { recursive: true });
+    await wf(join(childDir, "header.json"), JSON.stringify({ id: child, parentSession: "main-1", createdAt: 1, cwd: root, agentId: "agent-1a2b3c4d", agentType: "untyped", agentDepth: 1 }));
+    await wf(join(childDir, "events.jsonl"), [
+      JSON.stringify({ type: "user/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: "p" }] } }),
+      JSON.stringify({ type: "turn/start", seq: 1, time: 1, data: { turn: 1 } }),
+      JSON.stringify({ type: "assistant/message", seq: 2, time: 2, surfaceOp: "append", data: { turn: 1, step: 0, content: [{ type: "text", text: '{"a":1}' }] } }),
+      JSON.stringify({ type: "turn/end", seq: 3, time: 3, data: { turn: 1, reason: { kind: "completed" } } }),
+      "",
+    ].join("\n"));
+
+    const world = await makeWorld(root, "main-1");
+    await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
+    const result = await scanAndRecover(world.deps, attachOf(world));
+    expect(result.claimed).toBe(1);
+    // 直接进验收：交付物 {"a":1} 过 schema → 终局 completed + 通知
+    await vi.waitFor(() => expect(textsOf(world, "main-1")).toContain("workflow-notification"), { timeout: 5_000 });
+    const journal = await rd(join(root, "workflows", "r-g5", "journal.jsonl"), "utf8");
+    expect(journal).toContain('"outcome":"completed"');
+    expect(journal).toContain("notify/delivered");
+    // 不 revive/kick：子档案事件卷无新增（无续跑指令注入）
+    const childEventsAfter = await rd(join(childDir, "events.jsonl"), "utf8");
+    expect(childEventsAfter).not.toContain("wf task t1 resume");
+    await world.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
 
 /** kick 送达断言（interrupted 窗口——收件箱落盘可读） */
 async function kickDelivered(eventsPath: string): Promise<void> {
@@ -407,3 +449,8 @@ async function attemptTwoDelivered(eventsPath: string): Promise<void> {
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
+
+/** scanAndRecover 的 attach 适配（onCycleEnd + redispatch——A3 后的复合面） */
+export function attachOf(world: World): (run: ActiveRun) => { readonly onCycleEnd: (agentId: string, report: import("../types.ts").ManagedReport) => Promise<void>; readonly redispatch: (run: ActiveRun, caller: SessionId) => Promise<boolean>; readonly detach: (runId: string) => void } {
+  return (run) => ({ onCycleEnd: world.workflow.attach(run), redispatch: (r, caller) => world.workflow.redispatch(r, caller), detach: world.workflow.detach });
+}

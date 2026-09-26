@@ -102,13 +102,6 @@ function script(text: string): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 等首条 verify/result 落账（回炉用例的修复时机锚） */
-async function firstVerifyDone(readdir: (p: string) => Promise<string[]>, rd: (p: string, enc: BufferEncoding) => Promise<string>, root: string): Promise<void> {
-  const runs = await readdir(join(root, "workflows"));
-  const journal = runs.length > 0 ? await rd(join(root, "workflows", runs[0] ?? "", "journal.jsonl"), "utf8").catch(() => "") : "";
-  if (!journal.includes("verify/result")) throw new Error("first verify not done");
-}
-
 describe("Tier B 命令验收（真实沙箱 exit code）", () => {
   it("命令过 → command:accept 终局；verify intent-result 对落账", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-cmd-"));
@@ -127,20 +120,19 @@ describe("Tier B 命令验收（真实沙箱 exit code）", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("命令 exit≠0 → 回炉（反馈含输出尾）→ 修复（命令写文件后过）", async () => {
+  it("命令 exit≠0 → 回炉（反馈含输出尾）→ 修复后过（计数文件确定性自愈——无 writeFile 竞争）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-cmd2-"));
-    const marker = join(root, "fixed.txt");
+    const countFile = join(root, "runs.count");
+    // 命令自身计数：第 1 次 exit 1（写计数）、第 2 次起 exit 0——回炉轮必然过，无时序竞争
+    const command = `n=$(cat ${countFile} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${countFile}; test $n -ge 2`;
     const f = await fixture(root, [
-      '{"title": "first"}', // 首轮 schema 过、命令 fail（文件不存在）
-      '{"title": "fixed"}', // 回炉轮：命令写文件后 exit 0
+      '{"title": "first"}', // 首轮：命令第 1 次跑 → exit 1 → 回炉
+      '{"title": "fixed"}', // 回炉轮：命令第 2 次跑 → exit 0 → 过
     ]);
-    const sent = await f.submit({ description: "repair me", prompt: "x", acceptance: { command: `test -f ${marker}` } });
+    const sent = await f.submit({ description: "repair me", prompt: "x", acceptance: { command } });
     expect(sent.ok).toBe(true);
-    // 模拟子代理修复动作：回炉反馈到达前把文件写上
-    const { readdir, readFile: rd, writeFile } = await import("node:fs/promises");
-    await vi.waitFor(() => firstVerifyDone(readdir, rd, root), { timeout: 8_000 });
-    await writeFile(marker, "fixed\n"); // 模拟子代理修复动作
     await vi.waitFor(() => expect(f.texts()).toContain("workflow-notification"), { timeout: 15_000 });
+    expect(f.texts()).toContain("finished: passed"); // G4 修：断言修复成功终态（非仅通知到达）
     await f.dispose();
     await rm(root, { recursive: true, force: true });
   });
@@ -162,9 +154,10 @@ describe("task_stop 让位协议（§9）", () => {
     expect(sent.ok).toBe(true);
     const agentId = (sent.ok ? sent.text.match(/agent-[0-9a-f]{8}/)?.[0] : "") ?? "";
     expect(agentId).not.toBe("");
-    // task_stop（agentId 形——受管行 probe miss → workflow 源不认 agentId → 统一 not-found 兜底）
-    // 但任务 id 是 t1：stop t1 走 workflow 源 hit
-    const stopped = await f.stopTask("t1", "main-1" as SessionId);
+    // taskId 从 submit 文本提取（A8：runId 前缀化——不再硬编码 t1）
+    const taskId = sent.ok ? (sent.text.match(/taskId: (\S+) /)?.[1] ?? "") : "";
+    expect(taskId).not.toBe("");
+    const stopped = await f.stopTask(taskId, "main-1" as SessionId);
     expect(stopped.ok).toBe(true);
     expect(stopped.ok === true && stopped.text).toContain("run settled: cancelled");
     await f.dispose();

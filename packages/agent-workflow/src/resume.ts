@@ -57,7 +57,7 @@ export interface RecoveryResult {
 
 /** 启动扫描（§5.1）：三过滤 + header 剪枝；§5.2 二维窗口补动作。
  *  attach 到 runtime（恢复的 run 进 runtime 驱动面——后续通知/验收照常）。 */
-export async function scanAndRecover(deps: WorkflowDeps, attach: (run: ActiveRun) => (agentId: string, report: import("./types.ts").ManagedReport) => Promise<void>): Promise<RecoveryResult> {
+export async function scanAndRecover(deps: WorkflowDeps, attach: (run: ActiveRun) => { readonly onCycleEnd: (agentId: string, report: import("./types.ts").ManagedReport) => Promise<void>; readonly redispatch: (run: ActiveRun, caller: SessionId) => Promise<boolean>; readonly detach: (runId: string) => void }): Promise<RecoveryResult> {
   const { readdir } = await import("node:fs/promises");
   let claimed = 0;
   let skipped = 0;
@@ -79,8 +79,21 @@ export async function scanAndRecover(deps: WorkflowDeps, attach: (run: ActiveRun
       continue;
     }
     const snapshot = read.snapshot;
-    if (snapshot === undefined || snapshot.status === "settled") {
-      skipped += 1; // 静默归档/无任务
+    if (snapshot === undefined) {
+      skipped += 1; // 空卷（run/created 后崩溃）——无任务可驱动
+      continue;
+    }
+    // B5：settled run 存在「已结算未通知」任务 → 认领补投（跨重启悬置通知的唯一收敛路径）
+    const pendingNotify = Object.values(snapshot.tasks).some((task) => task.status === "settled" && !snapshot.notified.has(task.taskId));
+    if (snapshot.status === "settled" && !pendingNotify) {
+      skipped += 1; // 静默归档
+      continue;
+    }
+    // B7：archive 缺席部署的未终态 run → 冻结不认领（writer 释锁 + onWarn——R2 对齐；
+    // 无档案面则恢复动作全部不可达，认领即锁/fd 泄漏）
+    if (deps.archive === undefined && snapshot.status !== "settled") {
+      deps.onWarn?.(`workflow: run ${runId} in-flight but no session archive is assembled — run left for a future process with archive (docs §6 R2)`);
+      skipped += 1;
       continue;
     }
     // 认领：取锁开写面（busy = 他进程驱动——过滤①）
@@ -90,41 +103,76 @@ export async function scanAndRecover(deps: WorkflowDeps, attach: (run: ActiveRun
       continue;
     }
     const run: ActiveRun = { header: read.header, writer: opened.writer, snapshot };
-    if (deps.archive !== undefined) await recoverRun({ ...deps, run, archive: deps.archive, onCycleEnd: attach(run) });
+    const attached = attach(run);
+    await recoverRun({ ...deps, run, archive: deps.archive ?? neverArchive(), onCycleEnd: attached.onCycleEnd, redispatch: attached.redispatch, detach: attached.detach });
     claimed += 1;
   }
   return { claimed, skipped };
 }
 
 /** 单 run 恢复：按 snapshot 逐任务走二维表（期 1a 单任务——t1） */
+/** archive 缺席形态的空档案面（readChildEvents 恒 miss → 任务留待边沿——R2 不失败装配） */
+function neverArchive(): import("@x-harness/session").SessionArchive {
+  return {
+    list: () => [],
+    read: async () => ({ ok: false, reason: "no-archive" }) as never,
+    listHeaders: async () => [],
+  };
+}
+
 /** 恢复上下文（一次构造贯穿恢复链——参数纪律） */
 interface RecoveryCtx extends WorkflowDeps {
   readonly run: ActiveRun;
   readonly archive: import("@x-harness/session").SessionArchive;
   readonly onCycleEnd: (agentId: string, report: import("./types.ts").ManagedReport) => Promise<void>;
+  /** submitted 重派发面（runtime 提供——A3） */
+  readonly redispatch: (run: ActiveRun, caller: SessionId) => Promise<boolean>;
+  /** 恢复终局摘除面（runtime 提供——B8） */
+  readonly detach: (runId: string) => void;
 }
 
 async function recoverRun(ctx: RecoveryCtx): Promise<void> {
+  // A3：submitted 任务重派发（spec 在 journal——run 不悬死；死父悬置等边沿）
+  const hasSubmitted = Object.values(ctx.run.snapshot.tasks).some((task) => task.status === "submitted");
+  if (hasSubmitted) await ctx.redispatch(ctx.run, ctx.run.header.parentSession as SessionId);
   for (const task of Object.values(ctx.run.snapshot.tasks)) {
     if (task.status === "settled") {
-      // settled 无 notify/delivered → 补投（§5.2 末行——落账走真实 writer）
+      // settled 无 notify/delivered → 补投（§5.2 末行 / B5——落账走真实 writer）
       if (!ctx.run.snapshot.notified.has(task.taskId)) {
         await deliverNotification({ run: ctx.run, deps: ctx, append: persistAppend(ctx) });
+      }
+      // 全任务已通知 → run 收尾（close + detach——跨重启悬置通知的终态收敛）
+      const allNotified = Object.values(ctx.run.snapshot.tasks).every((t) => t.status !== "settled" || ctx.run.snapshot.notified.has(t.taskId));
+      if (allNotified && ctx.run.snapshot.status === "settled") {
+        await ctx.run.writer.close().catch(() => {});
+        ctx.detach(ctx.run.header.runId);
       }
       continue;
     }
     const agentId = task.agentId;
     const childSession = task.sessionId; // 真子会话 id（dispatched 落账——读档案的锚）
     if (agentId === undefined || childSession === undefined) continue; // 无锚——留待边沿
+    // D2 修：verifying 态（崩溃在验收命令在飞）→ unknown 封口 + fail 处置——不盲目重跑（B-10）
+    if (task.status === "verifying") {
+      const { closeDanglingVerify } = await import("./acceptor-command.ts");
+      await closeDanglingVerify(ctx.run, task.taskId, task.verifyAttempts);
+      const failed = { type: "task/settled", taskId: task.taskId, outcome: "failed", cause: "verify-unknown", detail: "verification interrupted by crash (command may have run — not retried)" } as const;
+      await ctx.run.writer.append([failed]);
+      ctx.run.snapshot = stepSnapshot(ctx.run.snapshot, failed);
+      await finalizeAfterRecovery(ctx);
+      continue;
+    }
     const childEvents = await readChildEvents(ctx.archive, childSession);
     if (childEvents === undefined) continue;
-    await recoverTask({ ...ctx, task, agentId, terminal: classifyChildTerminal(childEvents), childEvents });
+    await recoverTask({ ...ctx, task, agentId, childSession, terminal: classifyChildTerminal(childEvents), childEvents });
   }
 }
 
 interface TaskRecovery extends RecoveryCtx {
-  readonly task: { readonly taskId: string; readonly agentId?: string; readonly status: string; readonly repairs: number; readonly spec: import("@x-harness/workflow-core").TaskSpec };
+  readonly task: { readonly taskId: string; readonly agentId?: string; readonly sessionId?: string; readonly status: string; readonly repairs: number; readonly spec: import("@x-harness/workflow-core").TaskSpec };
   readonly agentId: string;
+  /** 真子会话 id（D4 修：fence/cwd 锚——deliverToAcceptance 的 report.sessionId 用真值非 agentId） */
+  readonly childSession: string;
   readonly terminal: ChildTerminal;
   readonly childEvents: readonly SessionEvent[];
 }
@@ -159,7 +207,7 @@ async function deliverToAcceptance(ctx: TaskRecovery): Promise<void> {
   const summary = lastAssistantText(ctx.childEvents);
   await ctx.onCycleEnd(ctx.agentId, {
     agentId: ctx.agentId,
-    sessionId: ctx.agentId as SessionId,
+    sessionId: ctx.childSession as SessionId, // D4 修：真子会话（fence 锚——agentId 会回落父 fence）
     outcome: "completed",
     detail: "recovered: deliverable already in child transcript",
     ...(summary !== undefined ? { summary } : {}),
@@ -170,7 +218,14 @@ async function deliverToAcceptance(ctx: TaskRecovery): Promise<void> {
 async function reviveAndKick(ctx: TaskRecovery, kickText: string): Promise<void> {
   if (ctx.view === undefined) return;
   const ref = { runId: ctx.run.header.runId, taskId: ctx.task.taskId };
-  const revived = await ctx.view.reviveManaged(ctx.mainSession, ctx.agentId, settlementOf(ref, (_, report) => ctx.onCycleEnd(report.agentId, report)));
+  const revived = await ctx.view.reviveManaged(ctx.mainSession, ctx.agentId, settlementOf(
+    ref,
+    (_, report) => ctx.onCycleEnd(report.agentId, report),
+    async (agentId, error) => {
+      ctx.onWarn?.(`workflow: settlement failed during recovery for ${agentId}: ${error instanceof Error ? error.message : String(error)}`);
+      await ctx.view?.settle(agentId, "settle-failed").catch(() => {});
+    },
+  ));
   if (revived.kind !== "row") return; // 类型缺失等 fail-closed——留待边沿 onWarn
   const sent = await ctx.view.message(ctx.mainSession, { to: ctx.agentId, message: kickText });
   if (!sent.ok) ctx.onWarn?.(`workflow: recovery kick undeliverable for ${ctx.agentId}: ${sent.reason}`);
@@ -189,6 +244,7 @@ async function finalizeAfterRecovery(ctx: RecoveryCtx): Promise<void> {
     }
   }
   await ctx.run.writer.close().catch(() => {});
+  ctx.detach(ctx.run.header.runId); // B8：恢复终局 run 摘出 runtime maps（缓泄 + probe 误 hit）
 }
 
 /** 恢复路径的持久化 append（writer 落盘 + 快照推进——deliverNotification 的 notify/delivered 落账） */

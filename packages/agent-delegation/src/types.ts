@@ -32,6 +32,9 @@ export interface DelegationOptions {
   /** 内联 builtin 类型层（随 bundle 内联分发的资源——宿主从生成数据模块传入）；
    *  优先级最低（盘上目录同名遮蔽），缺席 = 无内联层 */
   readonly builtinTypes?: readonly InlineTypeResource[];
+  /** spawn 工具描述尾部追加（本仓扩展通道——规格正文不动；workflow 宿主经 kit 组合传入
+   *  分流引导句「需验收的交付用 workflow_submit」——件16 §9 双向写明的另一半） */
+  readonly spawnDescriptionAppend?: string;
   /** 跨进程邮箱配置（缺省 = 纯进程内部署：跨进程寻址与 notify_when_idle 拒 invalid-args；
    *  root/timing 由 session-mailbox 插件装配给——单一真相，此处不重复） */
   readonly mailbox?: {

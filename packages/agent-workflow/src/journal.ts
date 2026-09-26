@@ -55,7 +55,7 @@ export async function openRunJournal(root: string, header: RunHeader): Promise<O
       await acquired.lock.release();
       return { kind: "frozen", reason: `header corrupt or mismatched for run ${header.runId}` };
     }
-    const recovered = await recoverJournal(dir);
+    const recovered = await recoverJournal(dir, true); // 已持锁——撕裂修复回写合法
     if (recovered.kind === "frozen") {
       await acquired.lock.release();
       return recovered;
@@ -75,13 +75,15 @@ export async function readRun(root: string, runId: string): Promise<OpenResult> 
   const dir = join(root, runId);
   const header = await readHeader(dir);
   if (header === undefined) return { kind: "frozen", reason: `header missing for run ${runId}` };
-  const recovered = await recoverJournal(dir);
+  const recovered = await recoverJournal(dir, false); // A7：只读——无锁路径绝不回写
   if (recovered.kind === "frozen") return recovered;
   return { kind: "opened", writer: noopWriter, header, snapshot: recovered.snapshot };
 }
 
-/** 恢复矩阵 journal 侧：尾撕裂截断（前缀语义）；中段损坏冻结 */
-export async function recoverJournal(dir: string): Promise<{ readonly kind: "ok"; readonly snapshot: RunSnapshot | undefined; readonly length: number } | { readonly kind: "frozen"; readonly reason: string }> {
+/** 恢复矩阵 journal 侧：尾撕裂截断（前缀语义）；中段损坏冻结。
+ *  repair=true 时撕裂残片回写盘上（仅限**已持锁**调用——A7：无锁回写会截断他进程
+ *  正在 append 的活跃卷：读者眼里缓冲半行=撕裂，回写即毁卷）；只读路径 repair=false。 */
+export async function recoverJournal(dir: string, repair = false): Promise<{ readonly kind: "ok"; readonly snapshot: RunSnapshot | undefined; readonly length: number } | { readonly kind: "frozen"; readonly reason: string }> {
   let raw: string;
   try {
     raw = await readFile(join(dir, JOURNAL_NAME), "utf8");
@@ -104,8 +106,8 @@ export async function recoverJournal(dir: string): Promise<{ readonly kind: "ok"
     events.push(parsed);
     index += 1;
   }
-  // 尾撕裂：残片非空 → 截断到最后完整行（盘上写回——前缀权威）
-  if (last !== "") {
+  // 尾撕裂：残片非空 → 持锁路径（repair）截断回写；只读路径不动盘（A7——下次持锁者修复）
+  if (repair && last !== "") {
     const prefix = lines.length > 0 ? `${lines.join("\n")}\n` : "";
     await writeFile(join(dir, JOURNAL_NAME), prefix, "utf8");
   }

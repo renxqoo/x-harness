@@ -49,6 +49,10 @@ export interface WorkflowRuntime {
   probeTask(taskId: string, caller: SessionId | undefined): { kind: "hit" } | { kind: "denied"; reason: string } | { kind: "miss" };
   /** task_stop：run settle{cancelled} + 受管行归还；not-found: 前缀 = 迟到 miss 纪律 */
   stopTask(taskId: string, caller: SessionId | undefined): Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
+  /** §5.2 行 2：submitted 任务重派发（spec 在 journal；死父悬置返回 false） */
+  redispatch(run: ActiveRun, caller: SessionId): Promise<boolean>;
+  /** 恢复终局摘除（B8）：run 出驱动面（防缓泄与 probe 误 hit） */
+  detach(runId: string): void;
 }
 
 /** 提交参数（工具 schema 的 TS 形态） */

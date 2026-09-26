@@ -30,6 +30,7 @@ import { parseInlineTypes } from "./types-inline.ts";
 import type { DelegationOptions, LoadedAgentType } from "./types.ts";
 import { createNotifier } from "./notify.ts";
 import { spawnAgent } from "./spawn.ts";
+import type { SpawnDeps } from "./spawn.ts";
 import type { SpawnInput } from "./spawn.ts";
 import { listAgents, message, stop } from "./verbs.ts";
 import type { VerbDeps } from "./verbs.ts";
@@ -145,6 +146,22 @@ async function cascadeDispose(deps: {
   await childHandle.agent.whenIdle();
   await childHandle.dispose();
   if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
+}
+
+/** 工具 deps 构造（件16 §9 描述追加通道——apply 复杂度纪律外移） */
+function toolDepsOf(deps: {
+  readonly spawnDeps: SpawnDeps;
+  readonly verbDeps: VerbDeps;
+  readonly reportCap: number;
+  readonly append?: string;
+}): import("./tools.ts").ToolDeps {
+  return {
+    spawn: (execCtx, input: SpawnInput) => spawnAgent(deps.spawnDeps, execCtx, input),
+    message: (execCtx, input) => message(deps.verbDeps, execCtx.session, input),
+    list: (execCtx) => listAgents(deps.verbDeps, execCtx.session),
+    reportCap: deps.reportCap, // 件15 D1 恒等：message 上限 = reportCap（单旋钮）
+    ...(deps.append !== undefined ? { spawnDescriptionAppend: deps.append } : {}),
+  };
 }
 
 /** 服务面合成 execCtx（件16 接缝①）：spawnAgent 校验链消费 session/signal——
@@ -400,12 +417,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         agentTruncatedTool,
         delegationRescueNote(), // 件15 批3：message/spawn 截断的换策略指引（note-only 零副作用）
       );
-      const offs = delegationTools({
-        spawn: (execCtx, input: SpawnInput) => spawnAgent(spawnDeps, execCtx, input),
-        message: (execCtx, input) => message(verbDeps, execCtx.session, input),
-        list: (execCtx) => listAgents(verbDeps, execCtx.session),
-        reportCap: limits.reportCap, // 件15 D1 恒等：message 上限 = reportCap（单旋钮）
-      }).map((tool) => registry.register(tool));
+      const offs = delegationTools(toolDepsOf({ spawnDeps, verbDeps, reportCap: limits.reportCap, append: options.spawnDescriptionAppend })).map((tool) => registry.register(tool));
       // 宿主直调服务面（delegationView）：与工具面同一动词实现——不经工具 dispatch 的
       // 权限裁决与文本解析（hub get_subagents/subagent-steer/abort 级联消费）
       const offView = ctx.provide(delegationView, {

@@ -51,6 +51,7 @@ const FLAG_SPECS: readonly FlagSpec[] = [
   { long: "--session", arity: 1 },
   { long: "--no-session", arity: 0 },
   { long: "--session-dir", arity: 1 },
+  { long: "--workflow-dir", arity: 1 },
   { long: "--provider", arity: 1 },
   { long: "--model", arity: 1 },
   { long: "--thinking", arity: 1 },
@@ -269,6 +270,7 @@ function finalize(raw: RawArgs): Result<CliArgs> {
   const copy = makeCopier(raw, args);
   copy.value("--session", "session");
   copy.value("--session-dir", "sessionDir");
+  copy.value("--workflow-dir", "workflowDir");
   copy.value("--provider", "provider");
   copy.value("--model", "model");
   const thinking = flagValue(raw, "--thinking");
@@ -303,6 +305,7 @@ session:
   --session <id-prefix>     resume a session by id prefix
   --no-session              in-memory session (nothing is written to disk)
   --session-dir <dir>       session store root (default ~/.x-harness/sessions)
+  --workflow-dir <dir>      workflow journal root (default ~/.x-harness/workflows)
 
 model:
   --provider <name>         override providers.json default provider

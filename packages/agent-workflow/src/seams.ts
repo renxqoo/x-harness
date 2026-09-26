@@ -6,7 +6,11 @@ import type { ManagedReport, ManagedTaskRef } from "./types.ts";
 
 /** settlement sink：受管投递转发到 runtime.onCycleEnd（同步转发——throw 冒泡给
  *  delegation 兜底回收，W8 第五条的触发点） */
-export function settlementOf(task: ManagedTaskRef, onCycleEnd: (task: ManagedTaskRef, report: ManagedReport) => Promise<void>): SettlementSink {
+export function settlementOf(
+  task: ManagedTaskRef,
+  onCycleEnd: (task: ManagedTaskRef, report: ManagedReport) => Promise<void>,
+  onSettleFailed: (agentId: string, error: unknown) => Promise<void>,
+): SettlementSink {
   return {
     onCycleEnd: (report: ManagedCycleReport) => {
       const managed: ManagedReport = {
@@ -16,10 +20,10 @@ export function settlementOf(task: ManagedTaskRef, onCycleEnd: (task: ManagedTas
         detail: report.detail,
         ...(report.summary !== undefined ? { summary: report.summary } : {}),
       };
-      void onCycleEnd(task, managed).catch(() => {
-        // settlement 失败（journal 写失败/回调 throw）：rethrow 由 delegation 兜底回收——
-        // 异步转发无法同步冒泡，改为吞掉（delegation 侧投递即完成）；run 停在当前事件，
-        // 下次恢复边沿按窗口表收敛（F1 的恢复侧兜底）
+      // D5 修：投递失败显式兜底（不再静默吞——W8 第五条的兑现）：受管行 settle 归还
+      // + onWarn。journal 侧由下次恢复边沿按窗口表收敛（run 停在当前事件）。
+      void onCycleEnd(task, managed).catch(async (error) => {
+        await onSettleFailed(report.agentId, error).catch(() => {});
       });
     },
   };
