@@ -2,6 +2,7 @@
 // agentId 唯一身份（8hex 随机，header 落盘跨重启稳定）；双索引；fork 种子 surface 重铸；
 // 模型覆盖序；白名单沿树收窄。
 
+import type { SettlementSink } from "./tokens.ts";
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { ToolFilter } from "@x-harness/tools";
 import type { Session, SessionEvent, SessionId } from "@x-harness/session";
@@ -20,6 +21,9 @@ export interface ChildRow {
   armed: boolean; // 通知臂（running 置；通知后复位）
   running: boolean;
   stopped: boolean;
+  /** 受管标记（件16 接缝①）：settlement 在场 = 生命周期归 workflow——通知投 sink、
+   *  收养/档化/级联豁免（plugin 五豁免）；undefined = 普通行（现状路径逐字节不变） */
+  settlement?: SettlementSink;
   worktree?: string;
   /** worktree 所属仓顶（spawn 落账的持久化事实——清理锚定不随装配 cwd 漂移；
    *  复活行回填自 worktree 自身 git 归位，无树/旧档案行可缺席） */

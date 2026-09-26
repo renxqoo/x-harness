@@ -186,6 +186,24 @@ function outcomeOf(status: string): "completed" | "stopped" | "failed" {
 }
 
 async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
+  // 受管路由（件16 接缝④-4）：settlement 在场 → 投 sink 不查父死活（豁免收养）；
+  // 投递 throw = settle 失联 → 兜底回收由调用侧 onWarn 面（plugin 第五豁免的触发点在此抛出）
+  if (row.settlement !== undefined) {
+    const childSession = deps.store.get(row.sessionId);
+    const report = childSession === undefined ? undefined : childReport(childSession.events());
+    const outcome = report === undefined ? "failed" : outcomeOf(report.status);
+    const detail = report === undefined ? "session-archived (no report available)" : failureDetail(report);
+    row.settlement.onCycleEnd({
+      parent: row.parent,
+      agentId: row.agentId,
+      sessionId: row.sessionId,
+      outcome,
+      detail,
+      ...(report?.summary !== undefined ? { summary: report.summary } : {}),
+      ...(report?.usage !== undefined ? { usage: report.usage } : {}),
+    });
+    return;
+  }
   const parentHandle = deps.loop.get(row.parent);
   if (parentHandle === undefined) {
     deps.emitFinished({

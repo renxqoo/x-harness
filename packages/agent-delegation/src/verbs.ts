@@ -94,7 +94,8 @@ async function crossFallback(deps: VerbDeps, caller: SessionId, plan: { readonly
 function deliverToRow(deps: VerbDeps, row: ChildRow, text: string): VerbOutcome {
   const childHandle = deps.loop.get(row.sessionId);
   if (childHandle === undefined) return { ok: false, reason: notFound(row.agentId) };
-  if (deps.loop.get(row.parent) === undefined) {
+  // 受管豁免（件16 接缝④-1）：settlement 行不因父缺席被收养——生命周期归 workflow
+  if (row.settlement === undefined && deps.loop.get(row.parent) === undefined) {
     void deps.adoptOrphan(row); // 唤醒入口重验：父已死的子不任其烧请求（收养异步收敛）
     return { ok: false, reason: notFound(row.agentId) };
   }

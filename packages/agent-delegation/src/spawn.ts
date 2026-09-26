@@ -10,6 +10,7 @@ import type { ChildRow, Lineage } from "./lineage.ts";
 import { createWorktree, evaluateCleanup, registerLiveTree, unregisterLiveTree } from "./worktree.ts";
 import type { WorktreePlan } from "./worktree.ts";
 import type { LoadedAgentType } from "./types.ts";
+import type { SettlementSink } from "./tokens.ts";
 
 export interface SpawnInput {
   readonly description: string;
@@ -17,6 +18,8 @@ export interface SpawnInput {
   readonly subagent_type?: string;
   readonly model?: string;
   readonly isolation?: string;
+  /** 受管标记（件16 接缝①）：在场 = 完成通知投 sink、生命周期豁免五处（plugin） */
+  readonly settlement?: SettlementSink;
 }
 
 export interface SpawnDeps {
@@ -131,12 +134,10 @@ async function buildChild(
     armed: false,
     running: false,
     stopped: false,
+    ...(plan.input.settlement !== undefined ? { settlement: plan.input.settlement } : {}),
     ...(worktree.plan !== undefined ? { worktree: worktree.plan.path, worktreeRepoTop: worktree.plan.repoTop } : {}),
   };
-  if (worktree.plan !== undefined) {
-    registerLiveTree(worktree.plan.path); // 活树登记（sweep 误删防线①——跨装配实例共享）
-    deps.setRootOverride?.(childHandle.agent.session.id, worktree.plan.path, worktree.plan.repoTop);
-  }
+  registerWorktreeFacts(deps, { plan: worktree.plan, childSession: childHandle.agent.session.id });
   deps.lineage.register(row);
   deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, work: row.work });
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
@@ -220,6 +221,13 @@ function spawnFailed(reason: string, plan: WorktreePlan | undefined, deps: Spawn
       });
   }
   return { ok: false, reason: `spawn-failed:${reason}` };
+}
+
+/** 活树登记 + 授权面落账（buildChild 复杂度纪律抽出） */
+function registerWorktreeFacts(deps: SpawnDeps, plan: { readonly plan: WorktreePlan | undefined; readonly childSession: import("@x-harness/session").SessionId }): void {
+  if (plan.plan === undefined) return;
+  registerLiveTree(plan.plan.path); // 活树登记（sweep 误删防线①——跨装配实例共享）
+  deps.setRootOverride?.(plan.childSession, plan.plan.path, plan.plan.repoTop);
 }
 
 /** worktree 预备（§8.1/§8.2）：repo 外同级路径 + git 串行队列；grants 前置（无授权面

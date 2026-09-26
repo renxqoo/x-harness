@@ -31,3 +31,26 @@ export interface AgentFinishedPayload {
 export const agentSpawned = defineEvent<AgentSpawnedPayload>("agent/spawned", { freeze: "none" });
 
 export const agentFinished = defineEvent<AgentFinishedPayload>("agent/finished", { freeze: "none" });
+
+// ————————————————————————— 件16：受管结算（docs/AGENT-WORKFLOW.md §6 接缝） —————————————————————————
+
+/** 受管子代理的结算入口（不透明 token——workflow 铸造、delegation 只回调不解读）。
+ *  生命周期约定（§6 接缝④）：settlement 在场期间，孤儿收养/档化/级联清理豁免；
+ *  投递 throw = settle 失联 → delegation 兜底回收（W8 第五条）。 */
+export interface SettlementSink {
+  /** 子代理运行周期终结边沿（agentFinished 同源事实 + 完整报告——受管路径不走父 notify） */
+  onCycleEnd(report: ManagedCycleReport): void;
+}
+
+/** 受管投递报告：agentFinished payload 超集（报告全文直送，截断归 sink） */
+export interface ManagedCycleReport {
+  readonly parent: SessionId;
+  readonly agentId: string;
+  readonly sessionId: SessionId;
+  /** completed / stopped / failed（与 AgentFinishedPayload.outcome 同口径） */
+  readonly outcome: "completed" | "stopped" | "failed";
+  readonly detail: string;
+  /** 末轮 assistant 全文（未截断——截断归 sink；缺席 = 无报告） */
+  readonly summary?: string;
+  readonly usage?: unknown;
+}

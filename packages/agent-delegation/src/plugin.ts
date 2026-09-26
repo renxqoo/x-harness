@@ -115,6 +115,7 @@ async function adoptOrphanOf(deps: {
   readonly workspaceRoot: string;
 }): Promise<void> {
   const { loop, lineage, row, cleanupQuietly, workspaceRoot } = deps;
+  if (row.settlement !== undefined) return; // 受管豁免（件16 接缝④-1）：处置归 workflow
   const childHandle = loop.get(row.sessionId);
   if (childHandle !== undefined) {
     childHandle.agent.cancel("parent-gone");
@@ -144,6 +145,12 @@ async function cascadeDispose(deps: {
   await childHandle.agent.whenIdle();
   await childHandle.dispose();
   if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
+}
+
+/** 服务面合成 execCtx（件16 接缝①）：spawnAgent 校验链消费 session/signal——
+ *  服务面无工具上下文，session = caller、signal 恒新鲜（服务面调用方自管取消语义）。 */
+function syntheticExecContext(caller: import("@x-harness/session").SessionId): import("@x-harness/tools").ToolExecContext {
+  return { callId: `view-spawn-${String(caller)}`, name: "agent_spawn", session: caller, signal: new AbortController().signal };
 }
 
 /** revive deps 装配（§6.2——apply 复杂度纪律抽出） */
@@ -309,7 +316,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
        *  agentId 复活；stopped 计入驻留防无限累积）。archive 缺席跳过（纯内存部署不毁约）。 */
       const evictIdle = (): void => {
         if (archive === undefined) return;
-        const idle = lineage.rows().filter((row) => !row.occupied && !row.running);
+        const idle = lineage.rows().filter((row) => !row.occupied && !row.running && row.settlement === undefined); // 受管豁免（件16 接缝④-2）：repair 等待窗不档化
         for (const row of idle.slice(0, Math.max(0, idle.length - limits.maxResident))) {
           void (async () => {
             const handle = loop.get(row.sessionId);
@@ -405,10 +412,32 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         list: (caller) => listAgents(verbDeps, caller),
         message: (caller, input) => message(verbDeps, caller, input),
         stopAll: async (caller, cause) => {
-          const rows = verbDeps.lineage.rows().filter((row) => row.parent === caller && !row.stopped);
+          const rows = verbDeps.lineage.rows().filter((row) => row.parent === caller && !row.stopped && row.settlement === undefined); // 受管豁免（件16 接缝④-3）
           for (const row of rows) await stop(verbDeps, caller, { taskId: row.agentId, cause });
         },
         rebindMailbox: binding.rebind,
+        spawnManaged: (caller, input) => spawnAgent(spawnDeps, syntheticExecContext(caller), { ...input }),
+        reviveManaged: async (caller, agentId, settlement) => {
+          if (revive === undefined) return { kind: "miss" };
+          const outcome = await revive(caller, agentId);
+          if (outcome.kind === "row" && settlement !== undefined) outcome.row.settlement = settlement; // 受管重建（B2-01）
+          return outcome;
+        },
+        settle: async (agentId, cause) => {
+          const row = verbDeps.lineage.rows().find((candidate) => candidate.agentId === agentId);
+          if (row === undefined) return { ok: false, reason: `not-found:${agentId}` };
+          row.stopped = true; // stop 同款 check-and-set 基调（幂等二调走 not-found：行已摘）
+          row.occupied = false;
+          const childHandle = loop.get(row.sessionId);
+          if (childHandle !== undefined) {
+            childHandle.agent.cancel(cause);
+            await childHandle.agent.whenIdle();
+            await childHandle.dispose(); // settle = 终局归还（无 stopped 可复活语义）
+          }
+          if (row.worktree !== undefined) await cleanupQuietly({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, workspaceRoot) });
+          lineage.drop(row.sessionId);
+          return { ok: true };
+        },
       });
 
       return () => {
@@ -418,7 +447,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         offTypesSnapshot();
         offView();
         for (const off of offs) off();
-        const cascade = lineage.rows().map((row) => cascadeDispose({ loop, row, cleanupQuietly, workspaceRoot }));
+        const cascade = lineage.rows().filter((row) => row.settlement === undefined).map((row) => cascadeDispose({ loop, row, cleanupQuietly, workspaceRoot })); // 受管豁免（件16 接缝④-3）：宿主退出不清算受管行
         // 回卷序：drain/心跳/结算+关箱全经 effect（LIFO 得 §5.3 序：停 drain → 停心跳 → 关箱）；
         // 此处只剩级联 cancel 与快照摘除（tearing-down 门已先行）
         return Promise.allSettled(cascade).then(() => {});
