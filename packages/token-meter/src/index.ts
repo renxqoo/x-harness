@@ -5,3 +5,6 @@ export { estimateText, WIDE_TOKENS_PER_CHAR } from "./plugin.ts";
 export { estimateTokensTypical } from "./estimate-typical.ts";
 export { applyEvent, createFoldState, foldUsage, snapshotOf, parseUsageSample } from "./fold.ts";
 export type { RouteUsage, SessionUsage, TurnUsage, UsageSample } from "./fold.ts";
+export { estimateMessage, estimateBlocks, nodeTokens, IMAGE_TOKENS } from "./estimate-nodes.ts";
+export { estimateContextTokens, spanContextTokens, THINKING_COEFF_LEGACY, THINKING_COEFF_TEXT, WIRE_TOKENS_PER_NODE } from "./estimate-context.ts";
+export type { ContextEstimateOptions } from "./estimate-context.ts";
