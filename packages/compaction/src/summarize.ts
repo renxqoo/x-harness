@@ -207,6 +207,10 @@ export async function runTextRequest(input: {
     const stream = input.llm.stream({
       model: input.face.model,
       ...(input.face.provider !== undefined ? { provider: input.face.provider } : {}),
+      // 归属标记：内部作业拨号不得被流 tap 归入任何会话（host-hub tapLlmStream 把
+      // session 缺席判为主会话——摘要/CP 文本流会合成 llm/chunk 进 UI）。后缀
+      // `:summarizer` 不在 SessionId 词法内，恒不命中真实会话
+      session: "internal:summarizer" as never,
       tools: [],
       // 系统提示词先行（不随对话漂移），pi 适配器从 system 角色消息装配
       messages: [

@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { SummarizerFace } from "../summarize.ts";
-import { buildSummarizePrompt, summaryInputMaxChars, summarize } from "../summarize.ts";
+import { buildSummarizePrompt, runTextRequest, summaryInputMaxChars, summarize } from "../summarize.ts";
 import { errorScript, emptyScript, fakeLlm, hangScript, textScript, thinkingOnlyScript, truncatedScript } from "./helpers.ts";
 
 const face: SummarizerFace = { model: "sum", contextWindow: 100_000, maxOutputTokens: 8_000 };
@@ -147,5 +147,24 @@ describe("终态矩阵", () => {
     expect(call?.messages[0]).toMatchObject({ role: "system" });
     expect(call?.messages[1]?.role).toBe("user");
     expect((call?.messages[0] as { text?: string } | undefined)?.text).toContain("summarization assistant");
+  });
+
+  it("症状回归「autocompact 摘要流被 tap 成主会话 llm/chunk 上屏 + loading 永挂」：内部作业拨号必须携带独立 session 归属（≠ 任何会话 id），tap 判 undefined=主会话不得放行", async () => {
+    const fake = fakeLlm();
+    fake.scripts.push(textScript("<goals>ledger patch</goals>"));
+    await runTextRequest({
+      llm: fake.runtime,
+      face,
+      system: "cp",
+      prompt: "<ledger>…</ledger>",
+      idleTimeoutMs: 0,
+      signal,
+    });
+    const call = fake.calls[0];
+    // 独立归属在场且非空——undefined 会被 host-hub tapLlmStream 判成主会话，流即泄漏
+    expect(call?.session).toBeDefined();
+    expect(String(call?.session)).not.toBe("");
+    // 作业 id 形态与真实会话 id 可区分（不撞 SessionId 词法）
+    expect(String(call?.session)).toBe("internal:summarizer");
   });
 });
