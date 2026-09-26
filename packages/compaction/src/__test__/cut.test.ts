@@ -3,6 +3,7 @@
 // 由 surfaceOp 判别替代）。
 
 import { describe, expect, it } from "vitest";
+import type { SurfaceNode } from "@x-harness/session";
 import { findCutPoint, isTurnStartNode, USER_QUOTE_TOKENS } from "../cut.ts";
 import { snapshotEnvelope } from "@x-harness/agent-loop";
 import { assistantNode, systemNode, textOf, toolResultNode, userNode } from "./helpers.ts";
@@ -167,5 +168,66 @@ describe("protectedHead：受保护头部豁免（预锚注入——skill 清单
       userNode(3, "current turn"),
     ];
     expect(findCutPoint(nodes, 0, { userQuoteTokens: 0, protectedHead: 2 })).toBeUndefined();
+  });
+});
+
+// ── CONTEXT-TOKEN-UNIFICATION S6：keepMinTurns 轮次下限护栏（三让位规则） ──
+
+describe("findCutPoint keepMinTurns 护栏（§7.3 组合判定）", () => {
+  const ladderNodes = (turns: number, tokensPerTurn: number): SurfaceNode[] => {
+    const nodes: SurfaceNode[] = [];
+    for (let t = 0; t < turns; t += 1) {
+      nodes.push({ seq: t * 2, event: { type: "user/message", seq: t * 2, time: 1, data: { content: [{ type: "text", text: "u".repeat(tokensPerTurn * 4) }] }, surfaceOp: "append" } as never });
+      nodes.push({ seq: t * 2 + 1, event: { type: "assistant/message", seq: t * 2 + 1, time: 1, data: { content: [{ type: "text", text: "a".repeat(tokensPerTurn * 4) }] } } as never });
+    }
+    return nodes;
+  };
+
+  it("症状回归「大工具轮吃光预算只保 0-2 轮」：末轮巨大（keep 预算一拳耗尽）时护栏把保留区拉到 ≥5 完整轮", () => {
+    // 8 轮：常规轮 ~1 token，末轮 30k token（大工具输出形态）
+    const nodes: SurfaceNode[] = [];
+    for (let t = 0; t < 8; t += 1) {
+      const big = t === 7;
+      nodes.push({ seq: t * 2, event: { type: "user/message", seq: t * 2, time: 1, data: { content: [{ type: "text", text: "u" }] }, surfaceOp: "append" } as never });
+      nodes.push({ seq: t * 2 + 1, event: { type: "assistant/message", seq: t * 2 + 1, time: 1, data: { content: [{ type: "text", text: big ? "x".repeat(30_000 * 4) : "a" }] } } as never });
+    }
+    // 无护栏（旧行为）：keep=20k 在末轮耗尽 → 切口只能落在末轮轮首之后附近 → 保留 ≈1 轮
+    const legacy = findCutPoint(nodes, 20_000, { userQuoteTokens: 0 });
+    expect(legacy).toBeDefined();
+    // 有护栏：保 ≥5 完整轮（切点下标 ≤ 第 3 轮起点=6）
+    const guarded = findCutPoint(nodes, 20_000, { userQuoteTokens: 0, keepMinTurns: 5, windowCapTokens: 250_000 });
+    expect(guarded).toBeDefined();
+    expect(guarded?.cut).toBeLessThanOrEqual(6);
+  });
+
+  it("让位① emergency 豁免：不传 keepMinTurns = 无护栏（keep=0 语义纯净——切口只受预算约束）", () => {
+    const nodes = ladderNodes(8, 1);
+    const emergency = findCutPoint(nodes, 1, { userQuoteTokens: 0 }); // 不传护栏
+    expect(emergency).toBeDefined();
+    // 与显式 keepMinTurns:0 等价
+    expect(findCutPoint(nodes, 1, { userQuoteTokens: 0, keepMinTurns: 0 })).toEqual(emergency);
+  });
+
+  it("让位③ 小窗硬顶：护栏放大后的累计越 cap 即回退纯预算切点（不再拉大保留区）", () => {
+    // 6 轮、每轮 10k token；keep=1（预算秒耗尽）；cap=25k（2.5 轮的量）→ 护栏最多拉到 cap 内
+    const nodes = ladderNodes(6, 10_000);
+    const cut = findCutPoint(nodes, 1, { userQuoteTokens: 0, keepMinTurns: 5, windowCapTokens: 25_000 });
+    expect(cut).toBeDefined();
+    // 保留区累计 ≤ cap + 尾轮（末轮自身已耗尽预算）：切点不得早于第 3 轮（保 ≤4 轮的量级内）
+    expect(cut?.cut).toBeGreaterThanOrEqual(4);
+  });
+
+  it("让位② 切口存在性优先：轮数不足 minTurns 的会话（3 轮）不得无切口——回退纯预算切点", () => {
+    const nodes = ladderNodes(3, 1);
+    const cut = findCutPoint(nodes, 1, { userQuoteTokens: 0, keepMinTurns: 5, windowCapTokens: 1_000_000 });
+    expect(cut).toBeDefined(); // 旧行为下 3 轮小节点 keep=1 也能切；护栏不得把它变 undefined
+  });
+
+  it("轮数充足时护栏零干预：预算自然覆盖 ≥5 轮的场景与无护栏同切口（预算主语义）", () => {
+    const nodes = ladderNodes(8, 1);
+    // keep=12：尾预算自然覆盖 6 轮（>5）——护栏不介入，两切口一字不差
+    const plain = findCutPoint(nodes, 12, { userQuoteTokens: 0 });
+    const guarded = findCutPoint(nodes, 12, { userQuoteTokens: 0, keepMinTurns: 5 });
+    expect(guarded).toEqual(plain);
   });
 });

@@ -26,6 +26,8 @@ export interface CompactionOptions {
   readonly triggerPct?: number;
   readonly reserveTokens?: number;
   readonly keepRecentTokens?: number;
+  /** 轮次下限护栏（缺省 5——best-effort：emergency 豁免 / 切口存在性优先 / 25% 窗硬顶） */
+  readonly keepMinTurns?: number;
   /** 摘要模型面；缺席 = 软禁用（一次性告警，水位/自愈不动作） */
   readonly summarizer?: {
     readonly model: string;
@@ -41,6 +43,9 @@ export interface CompactionOptions {
 const DEFAULT_RESERVE = 16_384;
 const DEFAULT_KEEP_RECENT = 20_000;
 const DEFAULT_TRIGGER_PCT = 92;
+/** 轮次下限护栏缺省（CONTEXT-TOKEN-UNIFICATION §7.3：真实数据背书——受益面 71%
+ *  的会话末 5 轮含大工具轮；5 轮保留量中位 43k / max 233k 不失控） */
+const DEFAULT_KEEP_MIN_TURNS = 5;
 
 /** 窗口溢出码闭集（自愈唤醒词表——docs/OUTPUT-TOKEN-CONTINUATION.md compaction 节）：
  *  `http-413` = 状态码直报；`context-overflow` = llm 层 overflow 文案分类（主力 provider
@@ -72,12 +77,14 @@ function resolveConfig(options: CompactionOptions): ResolvedConfig {
     throw new Error("compaction: reserveTokens * 2 must not exceed contextWindow (threshold would be non-positive)");
   }
   const keepRecentTokens = expectNumber("keepRecentTokens", options.keepRecentTokens ?? DEFAULT_KEEP_RECENT, 0);
+  const keepMinTurns = expectNumber("keepMinTurns", options.keepMinTurns ?? DEFAULT_KEEP_MIN_TURNS, 0);
   const idleTimeoutMs = expectNumber("idleTimeoutMs", options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS, 0);
   return {
     contextWindow,
     triggerPct,
     reserveTokens,
     keepRecentTokens,
+    keepMinTurns,
     idleTimeoutMs,
     summarizer: options.summarizer !== undefined ? resolveSummarizer(options, reserveTokens) : undefined,
     fileTools: options.fileTools ?? DEFAULT_FILE_TOOLS,

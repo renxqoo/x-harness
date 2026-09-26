@@ -475,7 +475,9 @@ describe("预锚注入头部豁免（skill 清单形态——L2 头部守卫缺�
       seedTurn(session, { turn: 2, user: "q2", assistant: { text: "a2", usage: { input: 10, output: 1 } } });
       const runner = world.ctx.use(compactionRunner);
       world.llm.scripts.push(textScript("FIRST-SUMMARY"));
-      const first = await runner.compact({ session: session.id });
+      // 手动压缩不带护栏（keepMinTurns 是水位/自动路径的护栏——§7.3 让位①同源：
+      // 手动指令的保留意图由用户裁量，compactionRunner.compact 的手动面不注入护栏）
+      const first = await runner.compact({ session: session.id, keepMinTurns: 0 });
       if (!first.ok) throw new Error(first.reason);
 
       // 第二次：保护头后仅剩 [FIRST-SUMMARY(replace), 当轮]——修复前护栏被预锚块虚假满足 → 摘要摘摘要

@@ -18,6 +18,10 @@ export interface HubSettings {
   "thinking.default"?: ThinkingLevel;
   "skills.disabled"?: string[];
   "plugins.disabled"?: string[];
+  /** 压缩保留配置（CONTEXT-TOKEN-UNIFICATION §7.3——worker 装配期快照读：
+   *  改设置需 worker 重启/下轮 resume 生效，非热更） */
+  "compaction.keepRecentTokens"?: number;
+  "compaction.keepMinTurns"?: number;
 }
 
 export type HubSettingsKey = keyof HubSettings;
@@ -45,6 +49,8 @@ export function validateSettingValue(key: string, value: unknown): { ok: true; k
     "thinking.default": (value) => typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel),
     "skills.disabled": (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item !== ""),
     "plugins.disabled": (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item !== ""),
+    "compaction.keepRecentTokens": (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+    "compaction.keepMinTurns": (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
   };
   const validator = validators[key];
   if (validator === undefined) {
@@ -75,7 +81,7 @@ function ruleEntryValid(value: unknown): value is RuleEntry {
 }
 
 function isKnownKey(key: string): key is HubSettingsKey {
-  return key === "permission.defaultMode" || key === "permission.rules" || key === "permission.profiles" || key === "thinking.default" || key === "skills.disabled" || key === "plugins.disabled";
+  return key === "permission.defaultMode" || key === "permission.rules" || key === "permission.profiles" || key === "thinking.default" || key === "skills.disabled" || key === "plugins.disabled" || key === "compaction.keepRecentTokens" || key === "compaction.keepMinTurns";
 }
 
 /** 读指定路径设置文件（坏文件/缺席降级空表——坏文件带 stderr 诊断；逐键校验丢弃坏值） */
@@ -178,7 +184,7 @@ export function mergeSettings(user: HubSettings, project: HubSettings): { values
       sources[key] = "user";
     }
   }
-  const unionKeys: Array<keyof HubSettings> = ["skills.disabled", "plugins.disabled"];
+  const unionKeys = ["skills.disabled", "plugins.disabled"] as const;
   for (const key of unionKeys) {
     const union = [...new Set([...(user[key] ?? []), ...(project[key] ?? [])])].sort();
     if (union.length > 0) {

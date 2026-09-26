@@ -10,7 +10,9 @@ import type { CommandResult } from "@x-harness/commands";
 import { compactionRunner } from "./tokens.ts";
 import { previousSummaryOf } from "./compact.ts";
 
-/** 手动压缩保留窗（对齐 kernel compaction 口径——单一真相随 seam 迁入） */
+/** 手动压缩保留窗（历史常量——CONTEXT-TOKEN-UNIFICATION M-5 收编：手动路径不再
+ *  独立覆盖 keepRecentTokens，走 CompactionOptions 缺省（与水位/自愈同源同配置，
+ *  含 keepMinTurns 护栏）；常量保留导出为兼容面，值与 DEFAULT_KEEP_RECENT 对齐锁定） */
 export const COMPACT_KEEP_RECENT_TOKENS = 20_000;
 
 /** compact skip reason 归一（封闭映射——错误词表单源，hub/CLI 共用） */
@@ -48,7 +50,6 @@ export const commandCompactPlugin = {
           const result = await runner.compact({
             session: session.id,
             trigger: "manual",
-            keepRecentTokens: COMPACT_KEEP_RECENT_TOKENS,
             signal,
             ...(customInstructions !== undefined ? { customInstructions } : {}),
           });

@@ -68,6 +68,31 @@ function assistantContent(content: unknown, api: string, modelId: string): Array
   return out;
 }
 
+/** 发送层配对兜底（CONTEXT-TOKEN-UNIFICATION §7.3 三重防线第三层——前两层
+ *  （切口轮首对齐构造保证 + replace 区间完整）已把概率压到 resume/截断边界，此处
+ *  只校验不修复：孤儿 tool result（无对应 tool_use）整块剥除、悬空 tool_use（无
+ *  result——截断边界形态）丢弃，防 400。返回新数组（无孤儿时原引用零拷贝）。 */
+export function ensureToolPairing(messages: PiMessage[]): PiMessage[] {
+  const toolUseIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const block of message.content) {
+      if (block.type === "toolCall") toolUseIds.add(block.id);
+    }
+  }
+  // toolResult 孤儿（无对应 toolCall——resume/截断边界形态）：剥除
+  const filtered = messages.filter((message) => message.role !== "toolResult" || toolUseIds.has(message.toolCallId));
+  // 悬空 toolCall（有 call 无 result）：从 assistant content 剥除（保留其余块；剥空的 assistant 整条丢）
+  const resultIds = new Set(filtered.filter((m) => m.role === "toolResult").map((m) => m.toolCallId));
+  const stripped = filtered.map((message) => {
+    if (message.role !== "assistant") return message;
+    const content = message.content.filter((block) => block.type !== "toolCall" || resultIds.has(block.id));
+    return content.length === message.content.length ? message : { ...message, content };
+  });
+  const final = stripped.filter((message) => message.role !== "assistant" || message.content.length > 0);
+  return final.length === messages.length ? messages : final;
+}
+
 /** 签名载荷（SurfaceMessage.thinkingBlocks → pi ThinkingContent）重建门：
  *  ① 协议门——仅 openai-completions（B-1：anthropic 待真端点实证空文本+签名形态）；
  *  ② provenance 门——origin 与当前路由不匹配（跨模型切换/resume）不重建（维持
@@ -159,7 +184,7 @@ export function toPiContext(
     .join("\n\n");
   return {
     ...(system !== "" ? { systemPrompt: system } : {}),
-    messages: toPiMessages(request.messages, meta),
+    messages: ensureToolPairing(toPiMessages(request.messages, meta)),
     ...(request.tools.length > 0 ? { tools: toPiTools(request.tools) } : {}),
   };
 }
