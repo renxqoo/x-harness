@@ -116,7 +116,7 @@ function must(result: { ok: boolean; reason?: string }): void {
 
 export function seedTurn(
   session: Session,
-  fields: { readonly turn: number; readonly user: string; readonly assistant: { readonly text: string; readonly usage?: { readonly input: number; readonly output: number } } },
+  fields: { readonly turn: number; readonly user: string; readonly assistant: { readonly text: string; readonly thinking?: string; readonly usage?: { readonly input: number; readonly output: number } } },
 ): void {
   const { turn } = fields;
   must(session.append("turn/start", { turn }));
@@ -129,6 +129,7 @@ export function seedTurn(
         turn,
         step: 0,
         content: [{ type: "text", text: fields.assistant.text }],
+        ...(fields.assistant.thinking !== undefined && fields.assistant.thinking !== "" ? { thinking: fields.assistant.thinking } : {}),
         ...(fields.assistant.usage !== undefined ? { usage: fields.assistant.usage } : {}),
         stopReason: "stop",
       },

@@ -7,7 +7,8 @@
 import type { LlmRuntime } from "@x-harness/llm";
 import type { Session, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
 import { anchorIndexOf } from "@x-harness/session";
-import { isTurnStartNode, lastWindow, nodeTokens, type FileToolNames, type SummarizerFace } from "@x-harness/compaction";
+import { isTurnStartNode, lastWindow, type FileToolNames, type SummarizerFace } from "@x-harness/compaction";
+import { estimateContextTokens } from "@x-harness/token-meter";
 import { calibrationFactor, pushCalibrationSample } from "./calibration.ts";
 import { joinInflight, maybeStartCheckpoint } from "./checkpoint.ts";
 import type { CheckpointConfig } from "./checkpoint.ts";
@@ -124,14 +125,10 @@ function warnParallelApproach(deps: GateDeps, watch: { readonly occupancy: numbe
   }
 }
 
-/** 段 token 量（minSegment 门槛判定面） */
+/** 段 token 量（minSegment 门槛判定面；计费域——CONTEXT-TOKEN-UNIFICATION S2 同尺：
+ *  段含 thinking 载荷与 wire 膨胀，与占用判定同域；纯 nodeTokens 低估段量 → 晚触发） */
 function segmentTokens(nodes: readonly SurfaceNode[], from: number): number {
-  let total = 0;
-  for (let i = from; i < nodes.length; i += 1) {
-    const node = nodes[i];
-    if (node !== undefined) total += nodeTokens(node);
-  }
-  return total;
+  return estimateContextTokens(nodes.slice(from));
 }
 
 /** 决策链主体（永不抛出；落账直接经 session——驱动重读投影） */

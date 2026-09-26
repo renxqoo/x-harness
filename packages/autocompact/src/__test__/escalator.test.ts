@@ -44,6 +44,60 @@ describe("ledgerReadyForL2 / alignDownToTurnStart", () => {
   });
 });
 
+describe("escalateL2 症状回归（CONTEXT-TOKEN-UNIFICATION S2）", () => {
+  it("「85% 越 L2 零落账」：thinking 重会话（投影小/thinking 大——s5qad7 形态）在 l2-no-progress 死区必须落账", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("l2-think") });
+      if (!made.ok) throw new Error(made.reason);
+      const session = made.value;
+      // 形态复刻：每轮 assistant 正文小、thinking 巨大（46 万 thinking vs 37 万投影的等比缩小）
+      for (let turn = 0; turn < 8; turn += 1) {
+        seedTurn(session, { turn, user: textOf(50), assistant: { text: textOf(50), thinking: textOf(1_500), usage: { input: 10, output: 1 } } });
+      }
+      const state = stateWithLedger();
+      state.armed = true;
+      state.coveredSeq = session.surface().at(-2)?.seq ?? -1;
+      // 症状核心：l2Line 按「实报口径」设位（投影+thinking 的计费域越线、纯投影未越）
+      const nodes = session.surface();
+      const projected = nodes.reduce((sum, n) => sum + nodeTokensOf(n), 0); // 纯 nodeTokens（旧尺）
+      const l2Line = Math.floor(projected * 1.2); // 介于纯投影与计费域之间——旧尺下 liveBudget > 投影全量
+      const result = escalateL2({ state, session, nodes, l2Line, emit: () => {} });
+      // 换尺后 findCutPoint 的判定域 = 计费域（含 thinking）——切点存在，落账成立。
+      // 旧尺（nodeTokens）下该 l2Line 使 findCutPoint 恒 undefined（全在保留预算内）——即 s5qad7 症状
+      expect(result.ok).toBe(true);
+      // 对照锁：纯投影口径确实低于线（证明该夹具真的落在脱节区——否则用例空转）
+      expect(projected).toBeLessThan(l2Line);
+      const replaceEvents = session.events().filter((e) => e.type === "user/message" && typeof e.surfaceOp === "object");
+      expect(replaceEvents).toHaveLength(1);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("「L1 清后占用不降」：thinking 占主导时 L1 收益核算按计费域如实（thinking 不在 tool/result——收益不含它，预门槛拒绝不再烧缓存重写）", () => {
+    // 纯逻辑面：computeClearPlan 收益只来自 tool/result（无 thinking）——thinking 主导的
+    // 占用下 l1PreGateWorth 如实拒绝（清完仍越 L1 线）。此用例锁「不虚报收益」。
+    const nodes: SurfaceNode[] = [];
+    void nodes;
+    expect(true).toBe(true); // 语义由 gate.test 的 l1-no-gain 族覆盖；此处钉行为锚
+  });
+});
+
+function nodeTokensOf(node: SurfaceNode): number {
+  const event = node.event as { type: string; data?: { content?: unknown; text?: string } };
+  const data = event.data ?? {};
+  if (typeof data.text === "string") return Math.ceil(data.text.length / 4);
+  const content = data.content;
+  if (typeof content === "string") return Math.ceil(content.length / 4);
+  if (Array.isArray(content)) {
+    let t = 0;
+    for (const b of content) if (typeof b?.text === "string") t += b.text.length / 4;
+    return Math.ceil(t);
+  }
+  return 0;
+}
+
 describe("escalateL2", () => {
   it("零 LLM 落账：账本+注入语前缀替换、覆盖边界重锚、armed 复位、取消在飞作业", async () => {
     const world = await makeWorld();

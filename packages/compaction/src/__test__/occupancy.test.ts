@@ -40,12 +40,13 @@ describe("锚口径（measureContext）", () => {
     expect(measureContext(events as SessionEvent[], []).tokens).toBe(700);
   });
 
-  it("尾估：锚 seq 之后的投影节点求和（× 因子向上取整）", () => {
+  it("尾估：锚 seq 之后的投影节点走计费域（thinking 载荷 + wire 膨胀随尾段计入——CONTEXT-TOKEN-UNIFICATION §3.1b 换尺）", () => {
     const events = [logEvent("assistant/message", 0, { content: [], usage: { input: 100 } }) as never];
     const nodes = [userNode(0, textOf(2)), assistantNode(1, textOf(3)), toolResultNode(2, "c", textOf(4))];
     const measured = measureContext(events as SessionEvent[], nodes);
-    expect(measured.tokens).toBe(100 + 3 + 4); // 锚(0) 前的 u0 不计；a1(3)+t2(4) 计
-    expect(measureContext(events as SessionEvent[], nodes, { trailingFactor: 1.5 }).tokens).toBe(100 + Math.ceil(7 * 1.5));
+    expect(measured.tokens).toBe(100 + 3 + 4 + 40 * 2); // 锚(0) 前的 u0 不计；a1(3)+t2(4)+wire(2×40) 计
+    // trailingFactor 通道保留（autocompact calibration 兼容面）——尾估基底已是计费域
+    expect(measureContext(events as SessionEvent[], nodes, { trailingFactor: 1.5 }).tokens).toBe(100 + 3 + 4 + 40 * 2);
   });
 
   it("基线失效（M2 幽灵 token 防线）：压缩落账前的旧锚作废，无锚则当前投影全量纯估", () => {
@@ -55,10 +56,10 @@ describe("锚口径（measureContext）", () => {
       logEvent("assistant/message", 2, { content: [], usage: { input: 300 } }) as never, // 基线后锚——有效
     ];
     const nodes = [userNode(1, textOf(5)), userNode(3, textOf(7))];
-    expect(measureContext(events as SessionEvent[], nodes).tokens).toBe(300 + 7); // 只有锚后的 u3 计尾
-    // 基线后无锚 → 全投影纯估（被替换区天然不在投影内——不产幽灵 token）
+    expect(measureContext(events as SessionEvent[], nodes).tokens).toBe(300 + 7 + 40); // 只有锚后的 u3 计尾（+wire）
+    // 基线后无锚 → 全投影纯估（被替换区天然不在投影内——不产幽灵 token；计费域含 wire）
     const eventsNoAnchor = [logEvent("assistant/message", 0, { content: [], usage: { input: 9_000 } }) as never, landingEvent(1, "s")];
-    expect(measureContext(eventsNoAnchor as SessionEvent[], nodes).tokens).toBe(12);
+    expect(measureContext(eventsNoAnchor as SessionEvent[], nodes).tokens).toBe(12 + 80);
     expect(compactionBaselineSeq(eventsNoAnchor as SessionEvent[])).toBe(1);
   });
 
@@ -75,9 +76,9 @@ describe("锚口径（measureContext）", () => {
     // 保留区 seq < baseline 的节点同样计入（真实投影即模型可见面）；
     // 被替换区天然不在投影内——不产幽灵 token
     const nodes = [systemNode(0, textOf(3)), userNode(1, textOf(2))];
-    expect(measureContext([], nodes).tokens).toBe(5);
+    expect(measureContext([], nodes).tokens).toBe(5 + 80); // +wire 2 节点（计费域换尺）
     const withBaseline = [landingEvent(2, "s"), logEvent("assistant/message", 9, { content: [] }) as never];
-    expect(measureContext(withBaseline as SessionEvent[], nodes).tokens).toBe(5); // 无基线后锚：全投影纯估（含 seq<2 的保留区）
+    expect(measureContext(withBaseline as SessionEvent[], nodes).tokens).toBe(5 + 80); // 无基线后锚：全投影纯估（含 seq<2 的保留区）
   });
 });
 
