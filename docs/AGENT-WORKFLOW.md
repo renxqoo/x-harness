@@ -393,8 +393,25 @@ cancel×verify 竞态全在它——两轮复审发现最密集的交互区）�
   critic（W5 自举提案校验 + reopen 回炉 reopens 预算 + 异常终态不回炉）/ depends_on（形态校验 +
   悬空 fail-fast 拒 + readiness 四值消费 + 依赖失败传播——多任务 run 的图校验随多任务提交开放）/
   收尾四项（标记收窄 user/message、冷启动 stop、run GC 三防线、0600 收权含接管路径）。
-- **期 3 候选**：feedback_timing step-boundary（真 in-turn 修复）/ critic 派发超时面 /
-  幂等标记 nonce（自注入伪造根治）/ 多任务 run 提交与图校验。
+- **期 3 已定路线**（两路对抗审查后修订）：
+  1. **e2e 崩溃旅程**（首位——§11 承诺"三档各一条含崩溃窗口"但 packages/e2e 零 workflow 引用；
+     件 16 最复杂的 §5 恢复协议无跨进程 kill -9 回归）
+  2. **task 级 wall-clock deadline**（类修非点修：child 挂起 + critic 挂起同病——静默 wedge
+     且无用户止损面；政策类比 Tier B timeout→failed→预算内 reject；~1 天按本仓交付节奏）
+  3. 已随路线评审即做（本提交）：通知携带已验收交付物（B-9 第一痛点）/ depends_on 描述
+     诚实化 / T-2 run 级 outcome 语义 / hub 侧分流引导句 / CLI 引导句恒接线
+- **观察项（多任务 run）**：引擎侧已按多任务铸造（fold/readiness/notify 天然多任务），插件面
+  缺口集中（多任务提交面 + dispatch-on-settle 边沿 + 并发窗与 delegation maxConcurrent 协调 +
+  熔断阈值决策——circuitBreak 现硬编码 0 即死码）。触发指标（telemetry 现成可查）：
+  ① workflow_submit 因 depends_on 被拒计数；② 同会话通知→下一提交的链式间隔分布；
+  ③ 每链父会话 turn 数。任一持续超阈值即启动；观察期上限一个里程碑周期。
+- **不做项（挂账+诚实成本）**：
+  - step-boundary 反馈：**无参数位**（feedback_timing 仅存在于本文档两处文字，schema/
+    TaskSpec/铸文/恢复幂等四处均需新增——非"填参数"）；重启条件=实测 repair 轮 token 开销
+    成为主要成本项。真实架构成本：settlement 以 idle 边沿触发验收，in-turn 修复需 mid-turn
+    评价面（接缝重造）。W4 的"期 2 参数"承诺已失效，特此更正。
+  - 幂等 nonce：D1 收窄（user/message 限定）已关主面且残余路径后果自我抵消（伪造=少挨
+    一次 kick）；不独立排期，与多任务 run 捆绑（依赖传播会放大停滞面时一并做）。
 
 ### 12.5 实施顺序（每步四门 + 独立可回滚——对照件13 六阶段纪律，v2 缺此节被点名）
 

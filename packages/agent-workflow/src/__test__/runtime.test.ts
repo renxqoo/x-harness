@@ -152,6 +152,9 @@ describe("workflow_submit：Tier A 受管回炉", () => {
     expect(sent.ok).toBe(true);
     await vi.waitFor(() => expect(parentTextsOf(world, "main-1" as SessionId)).toContain("workflow-notification"), { timeout: 5_000 });
     expect(parentTextsOf(world, "main-1" as SessionId)).toContain("finished: passed");
+    // B-9 回归：已验收交付物随通知回传（deliverable: 行含修复后的 JSON——不在则父代理需复活子会话取数）
+    expect(parentTextsOf(world, "main-1" as SessionId)).toContain("deliverable:");
+    expect(parentTextsOf(world, "main-1" as SessionId)).toContain("fixed value");
     // journal 落账验证：run 目录存在且事件卷含 repair-issued 与终态
     const { readdir, readFile } = await import("node:fs/promises");
     const runs = await readdir(root);

@@ -68,7 +68,7 @@ function settleTask(snapshot: RunSnapshot, event: Extract<WorkflowEvent, { type:
   if (task === undefined) throw new Error(`workflow-core: task/settled for unknown task '${event.taskId}'`);
   if (task.status === "settled") return snapshot; // 幂等（恢复重放同卷）
   const consecutive = event.outcome === "failed" ? snapshot.consecutiveFailures + 1 : 0;
-  const settledTask: TaskState = { ...task, status: "settled", outcome: event.outcome, ...(event.cause !== undefined ? { cause: event.cause } : {}), ...(event.verdict !== undefined ? { verdict: event.verdict } : {}), ...(event.detail !== undefined ? { detail: event.detail } : {}) };
+  const settledTask: TaskState = { ...task, status: "settled", outcome: event.outcome, ...(event.cause !== undefined ? { cause: event.cause } : {}), ...(event.verdict !== undefined ? { verdict: event.verdict } : {}), ...(event.detail !== undefined ? { detail: event.detail } : {}), ...(event.evidence !== undefined ? { evidence: event.evidence } : {}) };
   return { ...snapshot, consecutiveFailures: consecutive, tasks: { ...snapshot.tasks, [event.taskId]: settledTask } };
 }
 
@@ -108,8 +108,14 @@ export function fold(events: readonly WorkflowEvent[]): RunSnapshot | undefined 
 export function runReadyToSettle(snapshot: RunSnapshot): { readonly ready: boolean; readonly outcome: RunOutcome } {
   const tasks = Object.values(snapshot.tasks);
   if (tasks.length === 0 || !tasks.every((task) => task.status === "settled")) return { ready: false, outcome: "completed" };
-  const anyFailed = tasks.some((task) => task.outcome === "failed");
-  return { ready: true, outcome: anyFailed ? "failed" : "completed" };
+  // T-2 修：failed 或 cancelled（依赖失败传播/task-stop）→ run 非 completed——通知文本与
+  // run 级 outcome 不再自相矛盾（"task failed (run: completed)"形态）
+  const anyNotCompleted = tasks.some((task) => task.outcome !== "completed");
+  if (anyNotCompleted) {
+    const anyFailed = tasks.some((task) => task.outcome === "failed");
+    return { ready: true, outcome: anyFailed ? "failed" : "cancelled" };
+  }
+  return { ready: true, outcome: "completed" };
 }
 
 export type { RunOutcome, TaskCause, TaskOutcome };

@@ -127,3 +127,24 @@ describe("runReadyToSettle（§10 终局判定）", () => {
     expect(runReadyToSettle(base()).ready).toBe(false);
   });
 });
+
+describe("runReadyToSettle 的 cancelled 语义（T-2 回归：全 cancelled 的 run 曾报 completed）", () => {
+  const spec: import("../index.ts").TaskSpec = { description: "d", prompt: "p" };
+  it("全 cancelled → run cancelled（非 completed——通知与 run 级 outcome 一致）", () => {
+    const made = base(
+      { type: "task/submitted", taskId: "t1", spec },
+      { type: "task/settled", taskId: "t1", outcome: "cancelled", cause: "task-stop" },
+    );
+    expect(runReadyToSettle(made)).toEqual({ ready: true, outcome: "cancelled" });
+  });
+  it("failed 与 cancelled 混合 → run failed（failed 优先——真失败不被取消稀释）", () => {
+    const spec2: import("../index.ts").TaskSpec = { description: "d", prompt: "p" };
+    const made = base(
+      { type: "task/submitted", taskId: "t1", spec },
+      { type: "task/settled", taskId: "t1", outcome: "failed", cause: "child-failed" },
+      { type: "task/submitted", taskId: "t2", spec: spec2 },
+      { type: "task/settled", taskId: "t2", outcome: "cancelled", cause: "dependency-failed" },
+    );
+    expect(runReadyToSettle(made)).toEqual({ ready: true, outcome: "failed" });
+  });
+});

@@ -18,17 +18,28 @@ export function notificationText(run: ActiveRun): string {
   const lines: string[] = [];
   for (const task of Object.values(run.snapshot.tasks)) {
     if (task.status !== "settled" || run.snapshot.notified.has(task.taskId)) continue;
-    const head = task.outcome === "completed"
-      ? `[workflow-notification] task ${task.taskId} finished: passed (run ${run.header.runId}: ${run.snapshot.outcome ?? "settled"})`
-      : `[workflow-notification] task ${task.taskId} failed: ${task.detail ?? task.cause ?? "verification failed"} (run ${run.header.runId}: ${run.snapshot.outcome ?? "settled"})`;
-    // D7 修：agent 会话指针（journal 可查的完整锚）+ attempts 全档口径
-    lines.push(head, `agent: ${task.agentId ?? "?"}`, `session: ${String(task.sessionId ?? "unknown")}`);
-    if (task.verdict !== undefined) lines.push(`verdict: ${task.verdict}`);
-    const attempts = Math.max(task.repairs, task.reopens, task.verifyAttempts);
-    if (attempts > 0) lines.push(`attempts: ${String(attempts + 1)}`);
-    if (task.detail !== undefined && task.outcome !== "completed") lines.push(`detail: ${task.detail}`);
+    lines.push(...taskNotificationLines(run, task));
   }
   return lines.join("\n");
+}
+
+/** 单任务通知行（notificationText 复杂度纪律拆出） */
+function taskNotificationLines(run: ActiveRun, task: import("@x-harness/workflow-core").TaskState): string[] {
+  const outcomeTag = run.snapshot.outcome ?? "settled";
+  const head = task.outcome === "completed"
+    ? `[workflow-notification] task ${task.taskId} finished: passed (run ${run.header.runId}: ${outcomeTag})`
+    : `[workflow-notification] task ${task.taskId} failed: ${task.detail ?? task.cause ?? "verification failed"} (run ${run.header.runId}: ${outcomeTag})`;
+  const lines = [head, `agent: ${task.agentId ?? "?"}`, `session: ${String(task.sessionId ?? "unknown")}`];
+  if (task.verdict !== undefined) lines.push(`verdict: ${task.verdict}`);
+  const attempts = Math.max(task.repairs, task.reopens, task.verifyAttempts);
+  if (attempts > 0) lines.push(`attempts: ${String(attempts + 1)}`);
+  if (task.evidence !== undefined && task.outcome === "completed") {
+    // B-9：已验收交付物随通知回传（§9 承诺的证据尾料——Tier A 的 JSON/评审过的产物）
+    lines.push("deliverable:");
+    for (const line of summaryLines(task.evidence, 8_000)) lines.push(line);
+  }
+  if (task.detail !== undefined && task.outcome !== "completed") lines.push(`detail: ${task.detail}`);
+  return lines;
 }
 
 export async function deliverNotification(input: { readonly run: ActiveRun; readonly deps: WorkflowDeps; readonly append: (event: WorkflowEvent) => Promise<void> }): Promise<void> {

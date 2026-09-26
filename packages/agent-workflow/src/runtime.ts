@@ -111,8 +111,10 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       const handled = await consumeVerdict({ run, ref, report, spec, verdict: outcome.verdict, tierLabel: tier, violationsForFeedback: outcome.violations, schemaForFeedback: tier === "schema" ? spec.resultSchema : undefined, steerChild, append, finalizeRun });
       if (handled !== "next-tier") return;
     }
-    // 全链 accept → 终局 completed（verdictLabel 记最后过档）
-    await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "completed", verdict: `${verdictLabel}:accept` });
+    // 全链 accept → 终局 completed（verdictLabel 记最后过档 + evidence=已验收交付物——B-9：
+    // 通知回传核心，Tier A 的 JSON 就在这里；截断复用 reportCap 语义）
+    const evidenceTail = report.summary !== undefined ? report.summary.slice(0, 34_000) : undefined;
+    await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "completed", verdict: `${verdictLabel}:accept`, ...(evidenceTail !== undefined ? { evidence: evidenceTail } : {}) });
     await finalizeRun(run);
   };
 
