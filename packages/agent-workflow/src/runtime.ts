@@ -179,7 +179,16 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     tasks.clear();
   };
 
-  return { submit, onCycleEnd, onSessionAlive, dispose };
+  /** 恢复协议接线（§5.2）：把恢复的 run 接进驱动面——返回 onCycleEnd 供 resume 侧复用验收闭环 */
+  const attach = (run: ActiveRun): ((agentId: string, report: ManagedReport) => Promise<void>) => {
+    runs.set(run.header.runId, run);
+    for (const task of Object.values(run.snapshot.tasks)) {
+      if (task.agentId !== undefined) tasks.set(task.agentId, { runId: run.header.runId, taskId: task.taskId });
+    }
+    return (agentId, report) => onCycleEnd({ runId: run.header.runId, taskId: tasks.get(agentId)?.taskId ?? "t1" }, report);
+  };
+
+  return { submit, onCycleEnd, onSessionAlive, dispose, attach };
 }
 
 /** 派发 prompt 增补（W5）：结构化交付指令 + schema 摘要（截断 2000——B2-10 独立上限） */

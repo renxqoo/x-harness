@@ -10,6 +10,7 @@ import { agentLoopServiceToken } from "@x-harness/agent-loop";
 import { delegationView } from "@x-harness/agent-delegation";
 import type { WorkflowOptions } from "./types.ts";
 import { createRuntime } from "./runtime.ts";
+import { scanAndRecover } from "./resume.ts";
 import { workflowSubmitTool } from "./tools.ts";
 
 export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
@@ -23,8 +24,14 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
       const store = ctx.use(sessionStore);
       const registry = ctx.use(toolRegistry);
       const view = ctx.tryUse(delegationView);
+      const archive = ctx.tryUse((await import("@x-harness/session")).sessionArchive);
+      const deps = { ...options, loop, store, view: view ?? undefined, ...(archive !== undefined ? { archive } : {}) };
+      const runtime = createRuntime(deps);
 
-      const runtime = createRuntime({ ...options, loop, store, view: view ?? undefined });
+      // 启动扫描（§5.1/§5.2）：作用域过滤 + 二维窗口恢复——attach 把恢复 run 接进驱动面
+      void scanAndRecover(deps, (run) => runtime.attach(run)).catch(() => {
+        /* 扫描尽力：损坏 run 在 readRun 内冻结跳过 */
+      });
 
       // 边沿补投（§5.3）：sessionCreated（create/resume 同源）——微任务延迟（F14：事件
       // 同步发射早于 loop 句柄登记，同微任务链后句柄必在）；只处理本插件管辖的父会话

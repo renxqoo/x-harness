@@ -22,6 +22,8 @@ export interface WorkflowDeps extends WorkflowOptions {
   readonly loop: AgentLoopService;
   readonly store: SessionStore;
   readonly view: DelegationView | undefined;
+  /** 会话档案面（恢复读子会话 WAL 必需——softInject session-persistence-jsonl 的 tryUse 结果） */
+  readonly archive?: import("@x-harness/session").SessionArchive;
 }
 
 /** 活跃 run 的驱动句柄 */
@@ -40,6 +42,8 @@ export interface WorkflowRuntime {
   onSessionAlive(session: SessionId): Promise<void>;
   /** 插件 dispose（§2 序列：受管不 cancel；journal 尽力 flush） */
   dispose(): Promise<void>;
+  /** 恢复协议接线（§5.2）：恢复 run 接进驱动面；返回该 run 的 onCycleEnd（验收闭环复用） */
+  attach(run: ActiveRun): (agentId: string, report: ManagedReport) => Promise<void>;
 }
 
 /** 提交参数（工具 schema 的 TS 形态） */
