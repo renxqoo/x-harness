@@ -7,6 +7,7 @@ import { runCompactionJourney } from "./compaction-journey.ts";
 import { runOutputContinuationJourney } from "./output-continuation-journey.ts";
 import { runCrudScenario } from "./crud-scenario.ts";
 import { runDelegationJourney } from "./delegation-journey.ts";
+import { runWorkflowCrashJourneys } from "./workflow-journeys.ts";
 import { runCrossProcessJourney, runReviveJourney, runWorktreeJourney } from "./delegation-journeys.ts";
 import { runLongContentJourney } from "./long-content-journey.ts";
 import { runToolboxJourney } from "./toolbox-journey.ts";
@@ -18,6 +19,9 @@ try {
   await runCompactionJourney();
   await runOutputContinuationJourney();
   await runDelegationJourney();
+  // 件16 workflow 崩溃旅程（三档——按需跑：bun packages/e2e/src/main.ts wf
+  const wfIssues = await runWorkflowCrashJourneys();
+  if (wfIssues.length > 0) throw new Error(`workflow 崩溃旅程发现问题：\n${wfIssues.join("\n")}`);
   await runLongContentJourney();
   await runToolboxJourney();
   await runTodoJourney();
