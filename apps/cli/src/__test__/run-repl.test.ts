@@ -103,6 +103,9 @@ async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean; permis
 
     mailboxRoot: join(root, "mailbox"),
 
+
+    workflowDir: join(root, "workflows"),
+
     cwd: root,
     sessionRoot: join(root, "sessions"),
     persist,
@@ -244,6 +247,9 @@ describe("runRepl × 工具 flag（W2B 挂账收口——makeNext 重演矩阵�
       mainSessionId: mintSessionId(),
 
       mailboxRoot: join(root, "mailbox"),
+
+
+      workflowDir: join(root, "workflows"),
 
       cwd: root,
       sessionRoot: join(root, "sessions"),

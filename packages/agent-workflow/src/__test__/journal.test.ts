@@ -160,3 +160,24 @@ describe("恢复矩阵（§3.1）", () => {
     await rm(root, { recursive: true, force: true });
   });
 });
+
+describe("journal 写面边界", () => {
+  it("append 失败截断回滚（批前位点保持——重试无重复字节）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-tr-"));
+    const made = await openRunJournal(root, headerOf("r-tr"));
+    if (made.kind !== "opened") throw new Error("fixture");
+    await made.writer.append([{ type: "run/created", runId: "r-tr", parentSession: "s", cwd: "/w" }]);
+    await made.writer.sync();
+    // 破坏：close 底层 fd 后 append（write on closed fd 必败）
+    await made.writer.close();
+    const failed = await made.writer.append([{ type: "task/submitted", taskId: "t1", spec: { description: "d", prompt: "p" } }]).then(() => false, () => true);
+    expect(failed).toBe(true); // 失败如实上抛
+    const read = await readRun(root, "r-tr");
+    expect(read.kind).toBe("opened");
+    if (read.kind === "opened") {
+      expect(read.snapshot?.tasks["t1"]).toBeUndefined(); // 失败批未落账（截断回滚语义）
+      expect(read.snapshot?.status).toBe("created"); // 前缀保持
+    }
+    await rm(root, { recursive: true, force: true });
+  });
+});

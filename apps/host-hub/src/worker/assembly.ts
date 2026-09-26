@@ -27,6 +27,7 @@ import {
   truncationMessagesKit,
   loopKit,
   mailboxKit,
+  workflowKit,
   meterKit,
   probeBaseFacts,
   promptKit,
@@ -35,6 +36,7 @@ import {
 } from "@x-harness/harness";
 import { createAgentDelegationPlugin, userAgentsDirOf } from "@x-harness/agent-delegation";
 import { resolveMailboxDir } from "@x-harness/session-mailbox";
+import { resolveWorkflowRoot } from "@x-harness/agent-workflow";
 import { BUILTIN_AGENT_TYPES } from "./agent-types-data.ts";
 import { createSkillPlugin } from "@x-harness/skill";
 import { createPluginProposePlugin } from "./plugin-propose.ts";
@@ -379,6 +381,8 @@ function defaultWorkerPlugins(resolved: {
     // 跨进程邮箱服务（AGENT-DELEGATION §5.3 宿主接线）——提供 mailboxService；与
     // delegation 的装配时序由 softInject topo 声明式保证，此处仅声明式相邻摆放
     ...mailboxKit({ root: mailboxRootOfWorker(fields.env ?? process.env), onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`) }),
+    // 验收回炉与任务编排（AGENT-WORKFLOW 件16）——mainSession = worker 托管会话（先铸 id 复用）
+    ...workflowKit(workerWorkflowOptions(fields, mainSessionId)),
     ...meterKit(),
     ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider } }),
     commandsPlugin,
@@ -411,6 +415,16 @@ function defaultWorkerPlugins(resolved: {
       : []),
     dialHookPlugin(),
   ];
+}
+
+/** workflow 装配参数（AGENT-WORKFLOW 件16 宿主接线）：root 从注入 env 解析（测试隔离），
+ *  mainSession = worker 托管会话 id（先铸复用） */
+function workerWorkflowOptions(fields: AssemblyFields, mainSessionId: string): import("@x-harness/agent-workflow").WorkflowOptions {
+  return {
+    root: resolveWorkflowRoot(undefined, fields.env ?? process.env),
+    mainSession: mainSessionId as never,
+    onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
+  };
 }
 
 /** 跨进程邮箱根（AGENT-DELEGATION §5.3）：worker env 注入优先（fields.env 是宿主边沿的

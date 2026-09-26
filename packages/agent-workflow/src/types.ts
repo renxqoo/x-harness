@@ -19,6 +19,7 @@ export interface WorkflowOptions {
 
 /** 驱动面 deps（plugin apply 注入） */
 export interface WorkflowDeps extends WorkflowOptions {
+  readonly ctx: import("@x-harness/core").Context;
   readonly loop: AgentLoopService;
   readonly store: SessionStore;
   readonly view: DelegationView | undefined;
@@ -44,6 +45,10 @@ export interface WorkflowRuntime {
   dispose(): Promise<void>;
   /** 恢复协议接线（§5.2）：恢复 run 接进驱动面；返回该 run 的 onCycleEnd（验收闭环复用） */
   attach(run: ActiveRun): (agentId: string, report: ManagedReport) => Promise<void>;
+  /** task_stop 让位协议（§9）：probe 三态（TaskSource 协议同款） */
+  probeTask(taskId: string, caller: SessionId | undefined): { kind: "hit" } | { kind: "denied"; reason: string } | { kind: "miss" };
+  /** task_stop：run settle{cancelled} + 受管行归还；not-found: 前缀 = 迟到 miss 纪律 */
+  stopTask(taskId: string, caller: SessionId | undefined): Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
 }
 
 /** 提交参数（工具 schema 的 TS 形态） */

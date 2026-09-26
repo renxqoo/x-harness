@@ -35,6 +35,7 @@ import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { createMailboxPlugin } from "@x-harness/session-mailbox";
+import { createAgentWorkflowPlugin } from "@x-harness/agent-workflow";
 import type { MailboxPluginOptions } from "@x-harness/session-mailbox";
 import { createSkillPlugin } from "@x-harness/skill";
 import { systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
@@ -224,6 +225,11 @@ export const delegationKit = (o: DelegationOptions): readonly Plugin[] => [creat
  *  resolveMailboxDir 统一解析（X_HARNESS_MAILBOX_DIR 覆盖 > ~/.x-harness/mailbox）。
  *  与 delegationKit 的 mailbox:{box,mainSession} 配对使用；单独装配仅提供服务面。 */
 export const mailboxKit = (o: MailboxPluginOptions): readonly Plugin[] => [createMailboxPlugin(o)];
+
+/** 验收回炉与任务编排（docs/AGENT-WORKFLOW.md 件16）：root/mainSession 必收——宿主边沿
+ *  用 @x-harness/agent-workflow 的 resolveWorkflowRoot 统一解析；mainSession 与 mailbox
+ *  同源（CLI 先铸 id / hub thread 会话 id）。不装即无此面，行为与现状全等。 */
+export const workflowKit = (o: import("@x-harness/agent-workflow").WorkflowOptions): readonly Plugin[] => [createAgentWorkflowPlugin(o)];
 
 /** 请求前 WAL 屏障（独立 kit——与 delegation 零共享面） */
 export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];

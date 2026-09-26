@@ -20,6 +20,8 @@ export function agentTaskSource(deps: VerbDeps): TaskSource {
       const resolved = resolveAddress(deps.lineage, caller, taskId);
       if (resolved.kind === "miss") return { kind: "miss" };
       if (resolved.kind === "main") return { kind: "denied", reason: MAIN_IS_NOT_A_TASK };
+      // 件16 让位协议（§9）：受管行让位 workflow 源（miss 续走——kind 字典序 workflow 恒末源）
+      if (resolved.row.settlement !== undefined) return { kind: "miss" };
       if (caller !== resolved.row.parent) {
         return { kind: "denied", reason: `not-owner:${resolved.row.agentId}; you can only stop/message sub-agents you spawned` };
       }

@@ -1,6 +1,6 @@
+import type { SessionId } from "@x-harness/session";
 // 受管任务接线（件16 §6 接缝消费面）：settlement sink 铸造 + agentId 解析。
 
-import type { SessionId } from "@x-harness/session";
 import type { ManagedCycleReport, SettlementSink } from "@x-harness/agent-delegation";
 import type { ManagedReport, ManagedTaskRef } from "./types.ts";
 
@@ -32,7 +32,7 @@ export function agentIdOfManaged(spawnText: string): string {
   return hit[0] as string;
 }
 
-/** sessionId 提取（"session <id>"） */
+/** sessionId 提取（"session <id>"）——恢复链读子会话档案的锚 */
 export function sessionOfManaged(spawnText: string): SessionId {
   const hit = /session ([A-Za-z0-9._-]+)/.exec(spawnText);
   if (hit === null) throw new Error(`no session in spawn result: ${spawnText.slice(0, 80)}`);

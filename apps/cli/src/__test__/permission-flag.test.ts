@@ -72,6 +72,9 @@ async function makeJourney(options: JourneyOptions = {}): Promise<Journey> {
 
     mailboxRoot: join(root, "mailbox"),
 
+
+    workflowDir: join(root, "workflows"),
+
     cwd: root,
     sessionRoot,
     persist: options.persist === true,

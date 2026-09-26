@@ -27,3 +27,14 @@ export function feedbackText(plan: FeedbackPlan): string {
 export function continueKickText(taskId: string): string {
   return `[wf task ${taskId} resume] Continue the task — your context has been restored after a restart.`;
 }
+
+/** Tier B 反馈铸文：命令输出尾（无 schema 提示——命令任务的纠正信号是输出） */
+export function commandFeedbackText(taskId: string, attempt: number, outputLines: readonly string[]): string {
+  const output = outputLines.join("\n").slice(-2_000);
+  return [
+    `[wf task ${taskId} attempt ${String(attempt)}]`,
+    `Acceptance command failed (${String(attempt)} of your repair budget). Fix the issue the command reports and finish again.`,
+    "Command output (tail):",
+    output,
+  ].join("\n");
+}

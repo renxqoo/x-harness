@@ -67,6 +67,9 @@ async function makeFixture(scripts: LlmChunk[][], persist: boolean): Promise<Fix
 
     mailboxRoot: join(root, "mailbox"),
 
+
+    workflowDir: join(root, "workflows"),
+
     cwd: root,
     sessionRoot: join(root, "sessions"),
     compaction: { contextWindow: 200_000 }, // 手动 /compact 走 compactionRunner（生产路径）

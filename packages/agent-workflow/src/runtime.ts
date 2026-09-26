@@ -6,9 +6,9 @@ import type { SessionId } from "@x-harness/session";
 import { adjudicate, DEFAULT_BUDGET, extractPayload, runReadyToSettle, validateSubset } from "@x-harness/workflow-core";
 import type { BudgetState, TaskSpec, WorkflowEvent } from "@x-harness/workflow-core";
 import { openRunJournal, workflowPluginVersion } from "./journal.ts";
-import { agentIdOfManaged, settlementOf } from "./seams.ts";
+import { agentIdOfManaged, sessionOfManaged, settlementOf } from "./seams.ts";
 import type { ActiveRun, ManagedReport, ManagedTaskRef, SubmitInput, SubmitOutcome, WorkflowDeps, WorkflowRuntime } from "./types.ts";
-import { feedbackText } from "./feedback.ts";
+import { commandFeedbackText, feedbackText } from "./feedback.ts";
 import { deliverNotification } from "./notify.ts";
 
 export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
@@ -32,9 +32,6 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       const spawned = await deps.view.spawnManaged(caller, { description: input.description, prompt: input.prompt, ...(input.subagent_type !== undefined ? { subagent_type: input.subagent_type } : {}), ...(input.model !== undefined ? { model: input.model } : {}), ...(input.isolation !== undefined ? { isolation: input.isolation } : {}) });
       return spawned.ok ? { ok: true, text: spawned.text } : spawned;
     }
-    if (input.acceptance !== undefined) {
-      return { ok: false, reason: "invalid-args:acceptance (command tier) is not available in this build (period 1b)" };
-    }
     if (caller !== deps.mainSession) {
       return { ok: false, reason: "invalid-args:workflow_submit is only available from the main conversation (sub-agent submission lands in period 2)" };
     }
@@ -52,6 +49,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       ...(input.model !== undefined ? { model: input.model } : {}),
       ...(input.isolation !== undefined ? { isolation: input.isolation } : {}),
       ...(input.result_schema !== undefined ? { resultSchema: input.result_schema } : {}),
+      ...(input.acceptance !== undefined ? { acceptance: { command: input.acceptance.command, ...(input.acceptance.cwd !== undefined ? { cwd: input.acceptance.cwd } : {}) } } : {}),
       ...(input.max_attempts !== undefined ? { maxAttempts: input.max_attempts } : {}),
     };
     const opened = await openRunJournal(deps.root, { runId, parentSession: String(caller), cwd: process.cwd(), createdAt: Date.now(), pluginVersion: workflowPluginVersion() });
@@ -75,7 +73,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     }
     const agentId = agentIdOfManaged(spawned.text);
     tasks.set(agentId, ref);
-    await append(run, { type: "task/dispatched", taskId, agentId, sessionId: agentId }); // sessionId 占位用 agentId 对齐锚（子会话 id 从 spawn 文本取）
+    await append(run, { type: "task/dispatched", taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) }); // 真子会话 id（恢复链读档案的锚）
     return { ok: true, text: spawned.text };
   };
 
@@ -93,38 +91,57 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       return;
     }
 
-    // Tier A 采集：终态文本抽取 + 子集校验
     const spec = task.spec;
-    if (spec.resultSchema === undefined) {
-      // 无验收档却受管（不应达——提交路由已过滤）：按完成结算
-      await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "completed" });
-      await finalizeRun(run);
-      return;
+    const chain = tierChain(spec);
+    // 链序裁决（§8.2 组合）：schema → command；accept 即下一档，reject/fail 即终（consumeVerdict）
+    let verdictLabel = "";
+    for (const tier of chain) {
+      const outcome = tier === "schema"
+        ? await schemaTierVerdict({ task, spec, report, budget })
+        : await commandTierVerdict({ deps, run, ref, task, spec, report, budget });
+      if (outcome === undefined) continue; // 档未配置（防御——tierChain 已过滤）
+      verdictLabel = tier;
+      const handled = await consumeVerdict({ run, ref, report, spec, verdict: outcome.verdict, tierLabel: tier, violationsForFeedback: outcome.violations, schemaForFeedback: tier === "schema" ? spec.resultSchema : undefined, steerChild, append, finalizeRun });
+      if (handled !== "next-tier") return;
     }
-    const payload = extractPayload(report.summary ?? "");
-    const violations = payload === undefined ? [] : validateSubset(spec.resultSchema, payload).map((v) => `${v.path}: ${v.expected}`);
-    const verdict = adjudicate({ tier: "schema", evidence: { kind: "schema", ...(payload !== undefined ? { extracted: payload } : {}), violations }, budget: { ...budget, repairs: spec.maxAttempts ?? budget.repairs }, used: { repairs: task.repairs, reopens: task.reopens } });
+    // 全链 accept → 终局 completed（verdictLabel 记最后过档）
+    await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "completed", verdict: `${verdictLabel}:accept` });
+    await finalizeRun(run);
+  };
 
-    if (verdict.kind === "accept") {
-      await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "completed", verdict: "schema:accept" });
+  /** 裁决消费器：accept→next-tier / fail→终局 / reject→回炉（铸文按档） */
+  const consumeVerdict = async (plan: {
+    readonly run: ActiveRun;
+    readonly ref: { readonly runId: string; readonly taskId: string };
+    readonly report: ManagedReport;
+    readonly spec: import("@x-harness/workflow-core").TaskSpec;
+    readonly verdict: { readonly kind: "accept" } | { readonly kind: "reject"; readonly violations: readonly string[] } | { readonly kind: "fail"; readonly reason: string };
+    readonly tierLabel: "schema" | "command";
+    readonly violationsForFeedback: readonly string[];
+    readonly schemaForFeedback: unknown;
+    readonly steerChild: (ref: { readonly runId: string; readonly taskId: string }, agentId: string, text: string) => Promise<{ ok: true } | { ok: false; reason: string }>;
+    readonly append: (run: ActiveRun, event: WorkflowEvent) => Promise<void>;
+    readonly finalizeRun: (run: ActiveRun) => Promise<void>;
+  }): Promise<"next-tier" | "done"> => {
+    const { run, ref } = plan;
+    if (plan.verdict.kind === "accept") return "next-tier";
+    if (plan.verdict.kind === "fail") {
+      await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "failed", verdict: `${plan.tierLabel}:budget-exhausted`, detail: plan.verdict.reason });
       await finalizeRun(run);
-      return;
+      return "done";
     }
-    if (verdict.kind === "fail") {
-      await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "failed", verdict: "schema:budget-exhausted", detail: verdict.reason });
-      await finalizeRun(run);
-      return;
-    }
-    // reject → 回炉：journal 记 repair + steer 注入（幂等标记首行，§8.3）
-    const attempt = task.repairs + 1;
-    await append(run, { type: "task/repair-issued", taskId: ref.taskId, tier: "schema", attempt, violations: verdict.violations });
-    const sent = await steerChild(ref, report.agentId, feedbackText({ taskId: ref.taskId, attempt, violations: verdict.violations, schema: spec.resultSchema }));
+    const attempt = plan.tierLabel === "command" ? run.snapshot.tasks[ref.taskId]?.verifyAttempts ?? 0 : run.snapshot.tasks[ref.taskId]?.repairs ?? 0;
+    await append(run, { type: "task/repair-issued", taskId: ref.taskId, tier: plan.tierLabel as "schema" | "command", attempt: attempt + 1, violations: plan.violationsForFeedback });
+    const text = plan.tierLabel === "command"
+      ? commandFeedbackText(ref.taskId, attempt + 1, plan.violationsForFeedback)
+      : feedbackText({ taskId: ref.taskId, attempt: attempt + 1, violations: plan.violationsForFeedback, schema: plan.schemaForFeedback });
+    const sent = await plan.steerChild(ref, plan.report.agentId, text);
     if (!sent.ok) {
-      // 反馈送达失败：终局（F1 恢复侧兜底的运行期等价——不再循环）
       await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "failed", cause: "settle-failed", detail: `repair feedback undeliverable: ${sent.reason}` });
       await finalizeRun(run);
-      return;
+      return "done";
     }
+    return "done";
   };
 
   /** repair 反馈注入：经 view.message（受管行豁免父预检） */
@@ -179,6 +196,38 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     tasks.clear();
   };
 
+  /** task_stop 让位协议（§9 三则）：probe 按 run journal 归属（caller === parentSession）；
+   *  stop = run settle{cancelled} + 受管行归还。失败 reason 以 not-found: 开头 = 迟到 miss
+   *  续走余源（TaskSource 协议纪律） */
+  const probeTask = (taskId: string, caller: SessionId | undefined): { kind: "hit" } | { kind: "denied"; reason: string } | { kind: "miss" } => {
+    if (taskId === "") return { kind: "denied", reason: "invalid-args:task_id must be a non-empty string" };
+    if (caller === undefined) return { kind: "denied", reason: "invalid-args:workflow tasks are only available inside an agent session" };
+    for (const run of runs.values()) {
+      const task = run.snapshot.tasks[taskId];
+      if (task === undefined) continue;
+      if (run.header.parentSession !== String(caller)) {
+        return { kind: "denied", reason: `not-owner:${taskId}; this workflow task belongs to another session` };
+      }
+      return { kind: "hit" };
+    }
+    // 冷启动盘扫（run 不在本进程——单次 readdir+readRun）
+    return { kind: "miss" }; // 期 1a：跨进程 stop 不在案（run 锁属他进程）——miss 让路由兜底词表
+  };
+
+  const stopTask = async (taskId: string, caller: SessionId | undefined): Promise<{ ok: true; text: string } | { ok: false; reason: string }> => {
+    for (const run of runs.values()) {
+      const task = run.snapshot.tasks[taskId];
+      if (task === undefined) continue;
+      if (caller !== undefined && run.header.parentSession !== String(caller)) {
+        return { ok: false, reason: `not-owner:${taskId}; this workflow task belongs to another session` };
+      }
+      await append(run, { type: "task/settled", taskId, outcome: "cancelled", cause: "task-stop" });
+      await settleRun(run, "cancelled", "stopped by task_stop");
+      return { ok: true, text: `stopped ${taskId} (run settled: cancelled)` };
+    }
+    return { ok: false, reason: `not-found:${taskId}; no in-flight workflow task matches` }; // 迟到 miss 前缀纪律
+  };
+
   /** 恢复协议接线（§5.2）：把恢复的 run 接进驱动面——返回 onCycleEnd 供 resume 侧复用验收闭环 */
   const attach = (run: ActiveRun): ((agentId: string, report: ManagedReport) => Promise<void>) => {
     runs.set(run.header.runId, run);
@@ -188,7 +237,39 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     return (agentId, report) => onCycleEnd({ runId: run.header.runId, taskId: tasks.get(agentId)?.taskId ?? "t1" }, report);
   };
 
-  return { submit, onCycleEnd, onSessionAlive, dispose, attach };
+  return { submit, onCycleEnd, onSessionAlive, dispose, attach, probeTask, stopTask };
+}
+
+/** Tier A 档裁决构造（采集+校验+adjudicate） */
+async function schemaTierVerdict(plan: { readonly task: { readonly repairs: number; readonly reopens: number }; readonly spec: import("@x-harness/workflow-core").TaskSpec; readonly report: ManagedReport; readonly budget: BudgetState }): Promise<{ readonly verdict: ReturnType<typeof adjudicate>; readonly violations: readonly string[] } | undefined> {
+  if (plan.spec.resultSchema === undefined) return undefined;
+  const payload = extractPayload(plan.report.summary ?? "");
+  const violations = payload === undefined ? [] : validateSubset(plan.spec.resultSchema, payload).map((v) => `${v.path}: ${v.expected}`);
+  const verdict = adjudicate({ tier: "schema", evidence: { kind: "schema", ...(payload !== undefined ? { extracted: payload } : {}), violations }, budget: { ...plan.budget, repairs: plan.spec.maxAttempts ?? plan.budget.repairs }, used: { repairs: plan.task.repairs, reopens: plan.task.reopens } });
+  return { verdict, violations };
+}
+
+/** Tier B 档裁决构造（执行命令 + 预算判定） */
+async function commandTierVerdict(plan: { readonly deps: WorkflowDeps; readonly run: ActiveRun; readonly ref: { readonly runId: string; readonly taskId: string }; readonly task: { readonly verifyAttempts: number }; readonly spec: import("@x-harness/workflow-core").TaskSpec; readonly report: ManagedReport; readonly budget: BudgetState }): Promise<{ readonly verdict: { kind: "accept" } | { kind: "reject"; violations: readonly string[] } | { kind: "fail"; reason: string }; readonly violations: readonly string[] } | undefined> {
+  if (plan.spec.acceptance === undefined) return undefined;
+  const { runAcceptanceCommand } = await import("./acceptor-command.ts");
+  const verify = await runAcceptanceCommand({ ctx: plan.deps.ctx, run: plan.run, taskId: plan.ref.taskId, attempt: plan.task.verifyAttempts + 1, command: plan.spec.acceptance.command, ...(plan.spec.acceptance.cwd !== undefined ? { cwdOverride: plan.spec.acceptance.cwd } : {}), childSession: plan.report.sessionId });
+  return { verdict: commandVerdictOf(verify, { used: plan.task.verifyAttempts, max: plan.spec.maxAttempts ?? plan.budget.verifyAttempts }), violations: [`command exited ${String(verify.exitCode)}:`, verify.outputTail] };
+}
+
+/** Tier B 三值裁决（if 链——嵌套三元禁令） */
+export function commandVerdictOf(verify: { readonly outcome: "passed" | "failed" | "unknown"; readonly exitCode?: number }, plan: { readonly used: number; readonly max: number }): { kind: "accept" } | { kind: "reject"; violations: readonly string[] } | { kind: "fail"; reason: string } {
+  if (verify.outcome === "passed") return { kind: "accept" };
+  if (plan.used + 1 >= plan.max) return { kind: "fail", reason: `command tier budget exhausted (exit ${String(verify.exitCode)})` };
+  return { kind: "reject", violations: [`command exited with code ${String(verify.exitCode)}`] };
+}
+
+/** 验收链序（§8.2）：schema 先、command 后（B+C 组合序） */
+function tierChain(spec: import("@x-harness/workflow-core").TaskSpec): readonly ("schema" | "command")[] {
+  const chain: ("schema" | "command")[] = [];
+  if (spec.resultSchema !== undefined) chain.push("schema");
+  if (spec.acceptance !== undefined) chain.push("command");
+  return chain;
 }
 
 /** 派发 prompt 增补（W5）：结构化交付指令 + schema 摘要（截断 2000——B2-10 独立上限） */

@@ -2,6 +2,7 @@
 // （Tier A 验收闭环）+ W6 直通 + journal/run 生命周期。恢复协议在 resume.ts（§12.5⑤）。
 
 import type { Disposer, Plugin } from "@x-harness/core";
+import type { SessionId } from "@x-harness/session";
 import { sessionCreated } from "@x-harness/session";
 import type { Context } from "@x-harness/core";
 import { sessionStore } from "@x-harness/session";
@@ -18,14 +19,14 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
     name: "agent-workflow",
     inject: ["session", "tools", "agent-loop"],
     // 依赖解析动词（B2-07 写明）：softInject 保证 topo 先装 → apply 期 tryUse 即得
-    softInject: ["agent-delegation"],
+    softInject: ["agent-delegation", "task-tools"],
     apply: async (ctx: Context): Promise<Disposer> => {
       const loop = ctx.use(agentLoopServiceToken);
       const store = ctx.use(sessionStore);
       const registry = ctx.use(toolRegistry);
       const view = ctx.tryUse(delegationView);
       const archive = ctx.tryUse((await import("@x-harness/session")).sessionArchive);
-      const deps = { ...options, loop, store, view: view ?? undefined, ...(archive !== undefined ? { archive } : {}) };
+      const deps = { ctx, ...options, loop, store, view: view ?? undefined, ...(archive !== undefined ? { archive } : {}) };
       const runtime = createRuntime(deps);
 
       // 启动扫描（§5.1/§5.2）：作用域过滤 + 二维窗口恢复——attach 把恢复 run 接进驱动面
@@ -43,10 +44,23 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
         });
       });
 
+      // workflow 任务源（§9 让位协议末源）：probe 按 run journal 归属（caller 匹配 parentSession）；
+      // stop = run settle{cancelled} + 受管行归还（接缝③）
+      const { taskHub } = await import("@x-harness/task-tools");
+      const hub = ctx.tryUse(taskHub);
+      let offSource: (() => void) | undefined;
+      if (hub !== undefined) {
+        offSource = hub.registerSource({
+          kind: "workflow",
+          probe: (taskId: string, caller: SessionId | undefined) => runtime.probeTask(taskId, caller),
+          stop: (taskId: string, caller: SessionId | undefined) => runtime.stopTask(taskId, caller),
+        });
+      }
       const offTool = registry.register(workflowSubmitTool(runtime));
       return () => {
         offCreated();
         offTool();
+        offSource?.();
         void runtime.dispose();
       };
     },

@@ -35,6 +35,8 @@
     "@x-harness/todo-tools": "workspace:*",
     "@x-harness/token-analytics": "workspace:*",
     "@x-harness/tools": "workspace:*",
-    "@x-harness/truncation-messages": "workspace:*"
+    "@x-harness/truncation-messages": "workspace:*",
+    "@x-harness/agent-workflow": "workspace:*",
+    "@x-harness/workflow-core": "workspace:*"
   }
 }

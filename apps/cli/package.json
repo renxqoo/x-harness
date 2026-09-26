@@ -29,7 +29,8 @@
     "@x-harness/tool-read": "workspace:*",
     "@x-harness/tool-write": "workspace:*",
     "@x-harness/tools": "workspace:*",
-    "@x-harness/truncation-messages": "workspace:*"
+    "@x-harness/truncation-messages": "workspace:*",
+    "@x-harness/agent-workflow": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0"

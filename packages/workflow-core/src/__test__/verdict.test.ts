@@ -103,3 +103,19 @@ describe("validateSubset：子集校验（违规指向模型可修改的值）",
     expect(validateSubset({ type: "string", additionalProperties: false, pattern: "^x$" }, "anything")).toEqual([]);
   });
 });
+
+describe("宽松归一与枚举边角（补覆盖）", () => {
+  it("围栏剥层后 JSON 解析 + enum 违规路径 + minLength 边界", () => {
+    // 围栏内 JSON + enum + minLength 组合
+    const payload = extractPayload("结果：\n```\n{\"level\": \"x\", \"name\": \"\"}\n```");
+    expect(payload).toEqual({ level: "x", name: "" });
+    const schema = { type: "object", properties: { level: { enum: ["a", "b"] }, name: { type: "string", minLength: 1 } } };
+    const violations = validateSubset(schema, payload);
+    expect(violations.length).toBe(2); // enum 外 + minLength
+  });
+
+  it("空围栏内容 → undefined（stripCodeFence 空内层）", () => {
+    expect(stripCodeFence("```\n\n```")).toBe("");
+    expect(extractPayload("```\n\n```")).toBeUndefined(); // 空串 parse 失败 → undefined
+  });
+});

@@ -39,6 +39,8 @@ async function assembleFixture(): Promise<{ world: World; mailboxRoot: string; m
   const built = await buildWorld({
     mainSessionId,
     mailboxRoot: join(root, "mailbox"),
+
+    workflowDir: join(root, "workflows"),
     cwd: root,
     sessionRoot: join(root, "sessions"),
     persist: false,

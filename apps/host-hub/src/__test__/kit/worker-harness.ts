@@ -110,6 +110,7 @@ export async function spawnScriptWorker(over: SpawnOptions = {}): Promise<Script
     env: {
       HUB_WORKER_PROVIDER: "script",
       X_HARNESS_MAILBOX_DIR: join(agentDir, "mailbox"),
+      X_HARNESS_WORKFLOW_DIR: join(agentDir, "workflows"),
       ...(over.script !== undefined ? { HUB_WORKER_SCRIPT: JSON.stringify(over.script) } : {}),
       ...over.env,
     },

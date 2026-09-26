@@ -1,7 +1,7 @@
 // 就绪推导单测（件 16 §10）：并发窗、熔断级联、依赖传播（期 2 形态预留验证）。
 
 import { describe, expect, it } from "vitest";
-import { fold, readiness } from "../index.ts";
+import { dependencyVerdict, fold, readiness } from "../index.ts";
 import type { RunSnapshot, TaskOutcome, WorkflowEvent } from "../index.ts";
 
 /** 终态事件工厂（undefined = 未终态） */
@@ -74,5 +74,18 @@ describe("readiness：依赖传播（期 2 形态——期 1 spec 无 depends_on
     const result = readiness(made, { maxInFlight: 5, circuitBreak: 3 });
     expect(result.dispatchable).toHaveLength(2);
     expect(result.dependencyDoomed).toEqual([]);
+  });
+
+  it("dependencyVerdict 四值矩阵：空依赖 ready/未终态 waiting/失败终态 doomed/悬空 orphan/全完成 ready", () => {
+    const tasks = {
+      done: { taskId: "done", spec: { description: "d", prompt: "p" }, status: "settled", repairs: 0, reopens: 0, verifyAttempts: 0, trailing: [], outcome: "completed" },
+      failed: { taskId: "failed", spec: { description: "d", prompt: "p" }, status: "settled", repairs: 0, reopens: 0, verifyAttempts: 0, trailing: [], outcome: "failed" },
+      pending: { taskId: "pending", spec: { description: "d", prompt: "p" }, status: "dispatched", repairs: 0, reopens: 0, verifyAttempts: 0, trailing: [] },
+    } as const;
+    expect(dependencyVerdict([], tasks)).toBe("ready");
+    expect(dependencyVerdict(["pending"], tasks)).toBe("waiting");
+    expect(dependencyVerdict(["failed"], tasks)).toBe("doomed");
+    expect(dependencyVerdict(["ghost"], tasks)).toBe("orphan");
+    expect(dependencyVerdict(["done"], tasks)).toBe("ready");
   });
 });

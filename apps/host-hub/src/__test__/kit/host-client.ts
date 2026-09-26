@@ -50,6 +50,7 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
       // 跨进程邮箱隔离（AGENT-DELEGATION §5.3 宿主接线）：host→worker 全链继承——
       // 不隔离则每次 thread/start 在真实 ~/.x-harness/mailbox 开箱，杀进程旅程留陈尸
       X_HARNESS_MAILBOX_DIR: join(agentDir, "mailbox"),
+      X_HARNESS_WORKFLOW_DIR: join(agentDir, "workflows"),
       // 环境防污染：宿主 shell 的 hub 变量（冒烟/开发残留）不得泄漏进测试子进程
       HUB_WORKER_DISPATCHED: undefined,
       HUB_WORKER_PROVIDER: "script",

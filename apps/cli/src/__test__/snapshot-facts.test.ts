@@ -63,6 +63,9 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
 
       mailboxRoot: join(dir, "mailbox"),
 
+
+      workflowDir: join(dir, "workflows"),
+
       cwd: dir,
       sessionRoot: join(dir, "sessions"),
       persist: false,
@@ -139,6 +142,9 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
       mainSessionId: mintSessionId(),
 
       mailboxRoot: join(dir2, "mailbox"),
+
+
+      workflowDir: join(dir2, "workflows"),
 
       cwd: dir2,
       sessionRoot: join(dir2, "sessions"),

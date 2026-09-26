@@ -1,8 +1,17 @@
-// @x-harness/agent-workflow：件 16 插件包（journal/锁/resolve 先行——§12.5 ②；
-// 插件装配/工具面/接缝消费随后落）。
+// @x-harness/agent-workflow：件 16 插件包（验收回炉与任务编排）。
 
 export { resolveWorkflowRoot } from "./resolve.ts";
 export { acquireRunLock } from "./lock.ts";
 export type { AcquireOutcome, RunLock } from "./lock.ts";
 export { openRunJournal, readRun, workflowPluginVersion } from "./journal.ts";
 export type { JournalWriter, OpenResult, RunHeader } from "./journal.ts";
+export { createAgentWorkflowPlugin } from "./plugin.ts";
+export { commandFeedbackText, feedbackText } from "./feedback.ts";
+export { continueKickText } from "./feedback.ts";
+export { classifyChildTerminal, lastAssistantText, markerMaterialized, scanAndRecover } from "./resume.ts";
+export type { ChildTerminal, RecoveryResult } from "./resume.ts";
+export { runAcceptanceCommand, closeDanglingVerify } from "./acceptor-command.ts";
+export type { VerifyOutcomeResult } from "./acceptor-command.ts";
+export { WORKFLOW_SUBMIT_DESCRIPTION, workflowSubmitTool } from "./tools.ts";
+export { dispatchPrompt, createRuntime } from "./runtime.ts";
+export type { ActiveRun, ManagedReport, ManagedTaskRef, SubmitInput, SubmitOutcome, WorkflowDeps, WorkflowOptions, WorkflowRuntime } from "./types.ts";

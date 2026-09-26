@@ -21,4 +21,4 @@ export { fold, runReadyToSettle, step, UnknownEventError } from "./fold.ts";
 export { adjudicate, adjudicateChain, extractPayload, stripCodeFence, validateSubset } from "./verdict.ts";
 export type { Evidence, Violation } from "./verdict.ts";
 export type { ReadinessInput, ReadinessResult } from "./readiness.ts";
-export { readiness } from "./readiness.ts";
+export { dependencyVerdict, readiness } from "./readiness.ts";

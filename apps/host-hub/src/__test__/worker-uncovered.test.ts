@@ -31,6 +31,7 @@ const scriptEnv = async (): Promise<Record<string, string>> => ({
   HUB_WORKER_PROVIDER: "script",
   HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]),
   X_HARNESS_MAILBOX_DIR: join(await tempDir("hub-mb-"), "mailbox"),
+  X_HARNESS_WORKFLOW_DIR: join(await tempDir("hub-wf-"), "workflows"),
 });
 
 describe("assembly 窗口解析（模型级 > 档案级 > 兜底——compaction/analytics 共源）", () => {

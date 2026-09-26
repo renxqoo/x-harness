@@ -18,6 +18,8 @@ export interface CliArgs {
   readonly session?: string;
   readonly noSession: boolean;
   readonly sessionDir?: string;
+  /** workflow journal 根（--workflow-dir——AGENT-WORKFLOW §3.2） */
+  readonly workflowDir?: string;
   readonly provider?: string;
   readonly model?: string;
   readonly thinking?: ThinkingLevelCli;

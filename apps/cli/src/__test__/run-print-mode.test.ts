@@ -80,6 +80,9 @@ async function makeHarness(scripts: LlmChunk[][], over: { readonly onStreamStart
 
     mailboxRoot: join(root, "mailbox"),
 
+
+    workflowDir: join(root, "workflows"),
+
     cwd: root,
     sessionRoot: join(root, "sessions"),
     persist: false,

@@ -35,7 +35,7 @@ export function readiness(snapshot: RunSnapshot, input: ReadinessInput): Readine
   const window = input.maxInFlight - inFlight.length;
   for (const task of tasks) {
     if (task.status !== "submitted") continue;
-    const verdict = dependencyVerdict(task, snapshot.tasks);
+    const verdict = dependencyVerdict([], snapshot.tasks); // 期 1：无依赖字段恒 ready（期 2 传 spec.dependsOn）
     if (verdict === "doomed") dependencyDoomed.push(task.taskId);
     else if (verdict === "ready" && dispatchable.length < window) dispatchable.push(task.taskId);
     // window 满时其余 ready 任务自然留待下轮（不减 doomed 判定）
@@ -43,9 +43,9 @@ export function readiness(snapshot: RunSnapshot, input: ReadinessInput): Readine
   return { dispatchable, dependencyDoomed, circuitDoomed: [] };
 }
 
-/** 依赖判定：depends_on 全 completed → ready；任一非 completed 终态 → doomed；否则等待 */
-function dependencyVerdict(task: TaskState, tasks: Readonly<Record<string, TaskState>>): "ready" | "waiting" | "doomed" | "orphan" {
-  const deps = task.spec.maxAttempts === undefined ? [] : []; // 期 1：spec 无 depends_on 字段（期 2 扩展 TaskSpec 后启用）
+/** 依赖判定（期 2 形态预留）：depends_on 全 completed → ready；任一非 completed 终态 →
+ *  doomed（§10 传播）；否则 waiting。期 1 spec 无 depends_on 字段——恒 ready（调用处短路）。 */
+export function dependencyVerdict(deps: readonly string[], tasks: Readonly<Record<string, TaskState>>): "ready" | "waiting" | "doomed" | "orphan" {
   if (deps.length === 0) return "ready";
   for (const dep of deps) {
     const target = tasks[dep];

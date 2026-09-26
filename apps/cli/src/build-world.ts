@@ -30,6 +30,7 @@ import {
   truncationMessagesKit,
   loopKit,
   mailboxKit,
+  workflowKit,
   meterKit,
   taskLogsRootOf,
   promptKit,
@@ -48,6 +49,7 @@ export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, m
 import type { World } from "@x-harness/harness";
 import { resolveAgentDirs } from "@x-harness/agent-delegation";
 import { resolveMailboxDir } from "@x-harness/session-mailbox";
+import { resolveWorkflowRoot } from "@x-harness/agent-workflow";
 import { resolveSkillDirs } from "@x-harness/skill";
 export type { World };
 
@@ -89,6 +91,8 @@ export interface WorldOptions {
   /** 跨进程邮箱根（缺省 resolveMailboxDir：X_HARNESS_MAILBOX_DIR 覆盖 > ~/.x-harness/mailbox；
    *  测试装置传 temp 目录隔离——生产调用不传） */
   readonly mailboxRoot?: string;
+  /** workflow journal 根（--workflow-dir；缺省 resolveWorkflowRoot 三段链；测试隔离同上） */
+  readonly workflowDir?: string;
 }
 
 /** 档案 → adapter options（纯函数；--api-key 覆盖在 buildAdapters 层折入；两协议字段集合同构） */
@@ -194,6 +198,8 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     // 跨进程邮箱服务（AGENT-DELEGATION §5.3 宿主接线）——提供 mailboxService；与
     // delegationKit 的装配时序由 softInject topo 声明式保证，此处仅声明式相邻摆放
     ...mailboxKit({ root: mailboxRootOf(options), ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}) }),
+    // 验收回炉与任务编排（AGENT-WORKFLOW 件16）：mainSession 同 mailbox 源（先铸 id 复用）
+    ...workflowKit({ root: resolveWorkflowRoot(options.workflowDir), mainSession: options.mainSessionId, ...(options.onIoError !== undefined ? { onWarn: options.onIoError } : {}) }),
     ...truncationMessagesKit(), // 截断文案外层（先注册）——toolboxKit 抢救件内层先执行写盘，本件合成 content+note（对抗审查终审 P1：反序 content 短路写盘）
     ...toolboxKit({
       root: options.cwd,

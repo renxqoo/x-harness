@@ -198,6 +198,7 @@ async function openWorld(input: {
     // 内置 rg 随根配置走（X_HARNESS_HOME 覆盖 → ~/.x-harness；fetch:rg 安装层同源放置）
     rgBinDir: join(harnessHome(io.env), "bin"),
     sessionRoot: args.sessionDir ?? defaultSessionRoot(io.env),
+    ...(args.workflowDir !== undefined ? { workflowDir: args.workflowDir } : {}),
     // 本地遥测常开（OTel 落库 = harness home/telemetry.db；--no-session 时 inline 会话同样遥测）
     telemetryPath: join(harnessHome(io.env), "telemetry.db"),
     // 上下文压缩常开（裁决 A 三面全开）：水位 + 413 紧急自愈 + /compact 统一走

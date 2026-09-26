@@ -107,13 +107,16 @@ interface RecoveryCtx extends WorkflowDeps {
 async function recoverRun(ctx: RecoveryCtx): Promise<void> {
   for (const task of Object.values(ctx.run.snapshot.tasks)) {
     if (task.status === "settled") {
-      // settled 无 notify/delivered → 补投（§5.2 末行）
-      if (!ctx.run.snapshot.notified.has(task.taskId)) await deliverNotification({ run: ctx.run, deps: ctx, append: async () => {} });
+      // settled 无 notify/delivered → 补投（§5.2 末行——落账走真实 writer）
+      if (!ctx.run.snapshot.notified.has(task.taskId)) {
+        await deliverNotification({ run: ctx.run, deps: ctx, append: persistAppend(ctx) });
+      }
       continue;
     }
     const agentId = task.agentId;
-    if (agentId === undefined) continue; // 无锚——留待边沿
-    const childEvents = await readChildEvents(ctx.archive, agentId);
+    const childSession = task.sessionId; // 真子会话 id（dispatched 落账——读档案的锚）
+    if (agentId === undefined || childSession === undefined) continue; // 无锚——留待边沿
+    const childEvents = await readChildEvents(ctx.archive, childSession);
     if (childEvents === undefined) continue;
     await recoverTask({ ...ctx, task, agentId, terminal: classifyChildTerminal(childEvents), childEvents });
   }
@@ -179,13 +182,21 @@ async function finalizeAfterRecovery(ctx: RecoveryCtx): Promise<void> {
   const event = { type: "run/settled", outcome: ready.outcome, detail: "recovered" } as const;
   await ctx.run.writer.append([event]);
   ctx.run.snapshot = stepSnapshot(ctx.run.snapshot, event);
-  await deliverNotification({ run: ctx.run, deps: ctx, append: async () => {} });
+  await deliverNotification({ run: ctx.run, deps: ctx, append: persistAppend(ctx) });
   if (ctx.view !== undefined) {
     for (const task of Object.values(ctx.run.snapshot.tasks)) {
       if (task.agentId !== undefined) await ctx.view.settle(task.agentId, "run-recovered").catch(() => {});
     }
   }
   await ctx.run.writer.close().catch(() => {});
+}
+
+/** 恢复路径的持久化 append（writer 落盘 + 快照推进——deliverNotification 的 notify/delivered 落账） */
+function persistAppend(ctx: RecoveryCtx): (event: import("@x-harness/workflow-core").WorkflowEvent) => Promise<void> {
+  return async (event) => {
+    await ctx.run.writer.append([event]);
+    ctx.run.snapshot = stepSnapshot(ctx.run.snapshot, event);
+  };
 }
 
 /** fold 单步（避免每函数动态 import） */

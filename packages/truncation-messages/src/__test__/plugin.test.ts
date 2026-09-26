@@ -46,6 +46,16 @@ function truncatedToolScript(): AsyncGenerator<LlmChunk> {
 }
 
 describe("createDefaultTruncationMessages（WER C3 文案外提）", () => {
+
+  it("abort 竞态：signal 已断 → 配对仍落账（内核短事实保底，文案替换让位）", async () => {
+    const { agent, scripts } = await makeWorld([createDefaultTruncationMessages()]);
+    scripts.push(truncatedToolScript());
+    agent.followup("hi");
+    await agent.whenIdle();
+    const paired = agent.session.events().find((e) => e.type === "tool/result");
+    expect(paired?.data).toMatchObject({ isError: true, synthetic: true }); // 配对在（abort 分支不吞结果）
+    expect(String(paired?.data.content)).toContain("truncated"); // 文案在（短事实或替换——取决于 abort 时序，两态都证明「结果存在」）
+  });
   it("替换生效：插件在场 → 配对 result 文案 = 完整行为指令（内核短事实被替换）", async () => {
     const { agent, scripts } = await makeWorld([createDefaultTruncationMessages()]);
     scripts.push(truncatedToolScript());

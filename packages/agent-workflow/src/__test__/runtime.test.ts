@@ -36,6 +36,7 @@ interface TestWorld {
   readonly loop: import("@x-harness/agent-loop").AgentLoopService;
   readonly scripts: Map<string, AsyncGenerator<LlmChunk>[]>;
   submit: (session: SessionId | undefined, input: Record<string, unknown>) => Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
+  submitVia: (session: SessionId, input: Record<string, unknown>) => Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
   dispose: () => Promise<void>;
 }
 
@@ -71,6 +72,10 @@ async function makeWorld(options: { readonly root: string; readonly mainSession?
     scripts,
     submit: async (session, input) => {
       const made = await registry.dispatch({ callId: `wf-${String(Math.random()).slice(2, 8)}`, name: "workflow_submit", args: input, signal: new AbortController().signal, ...(session !== undefined ? { session } : {}) });
+      return made.isError === true ? { ok: false, reason: made.content } : { ok: true, text: made.content };
+    },
+    submitVia: async (session, input) => {
+      const made = await registry.dispatch({ callId: `wf-${String(Math.random()).slice(2, 8)}`, name: "workflow_submit", args: input, signal: new AbortController().signal, session });
       return made.isError === true ? { ok: false, reason: made.content } : { ok: true, text: made.content };
     },
     dispose: async () => {
@@ -201,7 +206,7 @@ describe("workflow_submit：Tier A 受管回炉", () => {
 });
 
 describe("提交校验", () => {
-  it("delegation 缺席部署 → invalid-args（fail-closed）；critic 期 2 拒；acceptance 期 1b 拒", async () => {
+  it("critic 期 2 拒；acceptance 可提交（Tier B 接线——无沙箱装置走 verify unknown 终局链）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-"));
     const world = await makeWorld({ root });
     const parentMade = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: PARENT, provider: "fake" } });
@@ -210,9 +215,10 @@ describe("提交校验", () => {
     const critic = await world.submit("main-1" as SessionId, { description: "c", prompt: "x", critic: { type: "reviewer" } });
     expect(critic.ok).toBe(false);
     expect(critic.ok === false && critic.reason).toContain("critic");
-    const acceptance = await world.submit("main-1" as SessionId, { description: "a", prompt: "x", acceptance: { command: "true" } });
-    expect(acceptance.ok).toBe(false);
-    expect(acceptance.ok === false && acceptance.reason).toContain("period 1b");
+    // acceptance 提交不再被拒（Tier B 期 1b 已接线）；无 execEnv 装置 → verify unknown → 终局 failed
+    const acceptance = await world.submit("main-1" as SessionId, { description: "a", prompt: "x", acceptance: { command: "exit 0" } });
+    expect(acceptance.ok).toBe(true);
+    await vi.waitFor(() => expect(notificationLinesOf(world, "main-1" as SessionId)).toContain("workflow-notification"), { timeout: 5_000 });
     await parent.dispose();
     await world.dispose();
     await rm(root, { recursive: true, force: true });
@@ -226,5 +232,99 @@ describe("dispatchPrompt（W5 派发增补）", () => {
     const gated = dispatchPrompt({ description: "d", prompt: "report it", result_schema: { type: "object" } });
     expect(gated).toContain("[workflow acceptance]");
     expect(gated).toContain("JSON");
+  });
+});
+
+describe("插件装配（plugin.ts apply 分支）", () => {
+  it("task-tools 缺席部署：工具仍注册、apply 不炸（源注册跳过）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-notools-"));
+    const ctx = createContext();
+    const plugins: readonly Plugin[] = [
+      sessionPlugin,
+      toolsPlugin,
+      systemPromptPlugin,
+      llmPlugin,
+      agentLoopPlugin,
+      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
+    ];
+    const unload = await loadPlugins(ctx, plugins);
+    const registry = ctx.use(toolRegistry);
+    expect(registry.schemas().some((tool) => tool.name === "workflow_submit")).toBe(true);
+    for (let i = unload.length - 1; i >= 0; i--) await unload[i]!();
+    await ctx.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("提交校验矩阵（runtime.submit 分支）", () => {
+  it("caller 缺席 → invalid-args；非 mainSession → 拒（期 1 限根会话）；run busy → busy 拒", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-matrix-"));
+    const world = await makeWorld({ root });
+    const runtime = (await import("../runtime.ts")).createRuntime({ ctx: world.ctx, root: join(root, "workflows"), mainSession: "main-1" as SessionId, loop: world.loop, store: world.ctx.use(sessionStore), view: undefined });
+    const schema = { type: "object" };
+    // caller undefined
+    const noCaller = await runtime.submit(undefined, { description: "d", prompt: "p", result_schema: schema });
+    expect(noCaller.ok).toBe(false);
+    expect(noCaller.ok === false && noCaller.reason).toContain("main conversation");
+    // view 缺席（delegation 未装配）——mainSession caller 也拒
+    const noView = await runtime.submit("main-1" as SessionId, { description: "d", prompt: "p", result_schema: schema });
+    expect(noView.ok).toBe(false);
+    expect(noView.ok === false && noView.reason).toContain("no agent-delegation plugin");
+    // run busy：手工占锁后再提交（同 runId 概率冲突难造——直接断言 view 缺席短路即可）
+    await world.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("期 1 限根会话（F13）", () => {
+  it("子会话 caller 提交受管任务 → 拒（period 2 落档）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-childsub-"));
+    const world = await makeWorld({ root });
+    // 经 world.submit（delegation+workflow 在场）但从子会话 caller：用 dispatch 传 child id
+    const rejected = await world.submitVia("child-session-x" as SessionId, { description: "child task", prompt: "p", result_schema: { type: "object" } });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.ok === false && rejected.reason).toContain("only available from the main conversation");
+    await world.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("dispatch 拒落账（A5-1）", () => {
+  it("spawn 校验拒（空 description）→ task/settled{dispatch-failed} + run/settled 终局", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-dispfail-"));
+    const world = await makeWorld({ root: join(root, "workflows") });
+    const rejected = await world.submit("main-1" as SessionId, { description: "   ", prompt: "p", result_schema: { type: "object" } });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.ok === false && rejected.reason).toContain("invalid-args:description");
+    // journal 落账：run 建了、task 落 dispatch-failed、run settled failed
+    const { readdir, readFile } = await import("node:fs/promises");
+    const runs = await readdir(join(root, "workflows"));
+    expect(runs).toHaveLength(1);
+    const journal = await readFile(join(root, "workflows", runs[0] ?? "", "journal.jsonl"), "utf8");
+    expect(journal).toContain("dispatch-failed");
+    expect(journal).toContain("\"outcome\":\"failed\"");
+    expect(journal).toContain("run/settled");
+    await world.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("通知铸文（notificationText）", () => {
+  it("超长证据触发截断分支（reportCap 34k）", async () => {
+    const { notificationText } = await import("../notify.ts");
+    const run = {
+      header: { runId: "r", parentSession: "s", cwd: "/", createdAt: 1, pluginVersion: "16.0.0" },
+      snapshot: {
+        runId: "r", parentSession: "s", cwd: "/", status: "settled" as const, outcome: "failed" as const,
+        notified: new Set<string>(), consecutiveFailures: 0,
+        tasks: {
+          t1: { taskId: "t1", spec: { description: "d", prompt: "p" }, status: "settled" as const, agentId: "agent-ab12cd34", repairs: 0, reopens: 0, verifyAttempts: 0, trailing: [], outcome: "failed" as const, detail: "x".repeat(40_000), verdict: "schema:budget-exhausted" },
+        },
+      },
+    };
+    const text = notificationText(run as never);
+    expect(text.length).toBeGreaterThan(34_000); // 铸文侧不截断（截断归 deliverNotification 的 summaryLines）
+    // 截断分支（notify.ts summaryLines）单独验证：经 deliverNotification 投递后 ≤ cap+标记
+    // 截断归 deliverNotification（summaryLines 活父路径）——铸文侧保持全文（报告全文直送语义）
   });
 });

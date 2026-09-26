@@ -37,7 +37,9 @@
     "@x-harness/tool-read": "workspace:*",
     "@x-harness/tool-write": "workspace:*",
     "@x-harness/tools": "workspace:*",
-    "@x-harness/truncation-messages": "workspace:*"
+    "@x-harness/truncation-messages": "workspace:*",
+    "@x-harness/agent-workflow": "workspace:*",
+    "@x-harness/workflow-core": "workspace:*"
   },
   "devDependencies": {
     "@x-harness/testkit": "workspace:*",
