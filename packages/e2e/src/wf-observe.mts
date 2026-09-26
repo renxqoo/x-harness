@@ -21,6 +21,9 @@ import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import { createAgentWorkflowPlugin } from "@x-harness/agent-workflow";
 import { createBunSqliteExecutor, sqliteTelemetry, sqliteTelemetryPlugin } from "@x-harness/telemetry-sqlite";
 import type { TelemetryQueryService } from "@x-harness/telemetry-sqlite";
+import { createOpenaiCompatAdapter } from "@x-harness/llm";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(() => {
@@ -87,7 +90,31 @@ interface ObserveWorld {
   readonly dispose: () => Promise<void>;
 }
 
-async function assembleObserve(root: string, options: { readonly agentsDir?: string; readonly sandbox?: boolean; readonly deadlineMs?: number } = {}): Promise<ObserveWorld> {
+interface RealProvider {
+  readonly name: string;
+  readonly model: string;
+  readonly baseUrl: string;
+  readonly apiKey: string;
+}
+
+/** 读 packages/e2e/.env 的 deepseek 档（火山方舟 ark 端点——deepseek-v4.1-flash；
+ *  usage 由后端真实上报）。键名 DEEPSEEK_APIPKEY 为 .env 实存形态（笔误但按实读）。 */
+async function loadDeepseek(): Promise<RealProvider> {
+  const envPath = join(import.meta.dir, "..", ".env"); // worktree 手动同步（未跟踪文件不随分支）
+  const raw = await readFile(envPath, "utf8").catch(() => "");
+  const env: Record<string, string> = {};
+  for (const line of raw.split("\n")) {
+    const m = /^([A-Z_]+)=(.*)$/.exec(line.trim());
+    if (m !== null) env[m[1]] = m[2];
+  }
+  const apiKey = env["DEEPSEEK_APIPKEY"] ?? env["DEEPSEEK_API_KEY"] ?? "";
+  const baseUrl = env["DEEPSEEK_BASE_URL"] ?? "";
+  const model = env["DEEPSEEK_MODEL"] ?? "deepseek-v4.1-flash";
+  if (apiKey === "" || baseUrl === "") throw new Error("e2e/.env 缺 DEEPSEEK 配置（APIPKEY/BASE_URL）");
+  return { name: "deepseek", model, baseUrl, apiKey };
+}
+
+async function assembleObserve(root: string, options: { readonly agentsDir?: string; readonly sandbox?: boolean; readonly deadlineMs?: number; readonly real?: RealProvider } = {}): Promise<ObserveWorld> {
   const db = new Database(join(root, "telemetry.db"));
   const scripts = new Map<string, Array<{ text: string; delayMs?: number }>>();
   const ctx = createContext();
@@ -106,27 +133,32 @@ async function assembleObserve(root: string, options: { readonly agentsDir?: str
   await loadPlugins(ctx, plugins);
   const loop = ctx.use(agentLoopServiceToken);
   const telemetry = ctx.use(sqliteTelemetry);
-  ctx.use(llmRuntime).registerAdapter({
-    name: "fake",
-    stream: (request: LlmRequest) => {
-      const next = scripts.get(request.model)?.shift();
-      const gen = (async function* (): AsyncGenerator<LlmChunk> {
-        if (next?.delayMs !== undefined) await sleep(next.delayMs);
-        const text = next?.text ?? "";
-        // 分 chunk 产出（模拟真实流——telemetry 的 attempt 级 span 才有形态）
-        for (let i = 0; i < Math.max(1, Math.ceil(text.length / 64)); i++) {
-          yield { type: "text-delta", text: text.slice(i * 64, (i + 1) * 64) } as never;
-        }
-        // usage 帧（真实后端在 finish 前上报——token 观测数据源；input 随 prompt 长度、
-        // output 随生成长度模拟，量级贴近真实回炉场景）
-        const promptChars = JSON.stringify(request).length;
-        yield { type: "usage", usage: { input: 400 + promptChars, output: 40 + text.length, cacheRead: 0, cacheWrite: 0 } } as never;
-        yield { type: "finish", finish: { kind: "stop" } } as never;
-      })();
-      return gen;
-    },
-  });
-  const parent = await loop.create({ session: { id: "obs-parent" as SessionId }, agent: { model: "obs-model", provider: "fake" } });
+  if (options.real !== undefined) {
+    const real = options.real;
+    ctx.use(llmRuntime).registerAdapter(createOpenaiCompatAdapter({ name: real.name, baseUrl: real.baseUrl, apiKey: real.apiKey }));
+  } else {
+    ctx.use(llmRuntime).registerAdapter({
+      name: "fake",
+      stream: (request: LlmRequest) => {
+        const next = scripts.get(request.model)?.shift();
+        const gen = (async function* (): AsyncGenerator<LlmChunk> {
+          if (next?.delayMs !== undefined) await sleep(next.delayMs);
+          const text = next?.text ?? "";
+          for (let i = 0; i < Math.max(1, Math.ceil(text.length / 64)); i++) {
+            yield { type: "text-delta", text: text.slice(i * 64, (i + 1) * 64) } as never;
+          }
+          // usage 帧（fake 模式模拟——真模型模式由后端真实上报）
+          const promptChars = JSON.stringify(request).length;
+          yield { type: "usage", usage: { input: 400 + promptChars, output: 40 + text.length, cacheRead: 0, cacheWrite: 0 } } as never;
+          yield { type: "finish", finish: { kind: "stop" } } as never;
+        })();
+        return gen;
+      },
+    });
+  }
+  const modelName = options.real?.model ?? "obs-model";
+  const providerName = options.real?.name ?? "fake";
+  const parent = await loop.create({ session: { id: "obs-parent" as SessionId }, agent: { model: modelName, provider: providerName } });
   if (!parent.ok) throw new Error(parent.reason);
   const registry = ctx.use(toolRegistry);
   return {
@@ -184,16 +216,19 @@ async function journalEventsOf(root: string): Promise<readonly string[]> {
 
 // ————————————————— 真实任务旅程 —————————————————
 
-async function observeTierA(): Promise<RunReport> {
+async function observeTierA(real?: RealProvider): Promise<RunReport> {
   const root = await mkdtemp(join(tmpdir(), "wf-obs-a-"));
-  const w = await assembleObserve(root);
+  const w = await assembleObserve(root, ...(real !== undefined ? [{ real }] : []));
   const t0 = Date.now();
   // 真实任务：提取结构化数据（Tier A 旗舰场景）——首轮缺字段触发回炉（观测回炉成本）
   w.scripts.set("obs-model", [
-    { text: "I found the data. Title: Migration Report", delayMs: 120 }, // 首轮：自然语言（无 JSON——回炉）
-    { text: '{"title": "Migration Report", "sections": ["overview", "steps"], "risk": "low"}', delayMs: 120 }, // 修复轮：合格 JSON
+    { text: "I found the data. Title: Migration Report", delayMs: 120 },
+    { text: '{"title": "Migration Report", "sections": ["overview", "steps"], "risk": "low"}', delayMs: 120 },
   ]);
-  const sent = await w.submit({ description: "extract migration report", prompt: "Read the migration notes and produce the structured report", result_schema: { type: "object", required: ["title", "sections"], properties: { title: { type: "string" }, sections: { type: "array", items: { type: "string" } }, risk: { type: "string" } } } });
+  const schema = { type: "object", required: ["title", "sections"], properties: { title: { type: "string" }, sections: { type: "array", items: { type: "string" } }, risk: { type: "string" } } };
+  const sent = real !== undefined
+    ? await w.submit({ description: "extract migration report", prompt: "Extract a structured report about migrating a monolith to services. Use exactly the required JSON fields.", result_schema: schema })
+    : await w.submit({ description: "extract migration report", prompt: "Read the migration notes and produce the structured report", result_schema: schema });
   if (!sent.ok) throw new Error(sent.text);
   let childSession = "";
   for (const sid of await readdir(join(root, "workflows")).catch(() => [] as string[])) {
@@ -201,7 +236,7 @@ async function observeTierA(): Promise<RunReport> {
     const m = /"sessionId":"([^"]+)"/.exec(raw);
     if (m?.[1] !== undefined) childSession = m[1];
   }
-  await sleep(600);
+  await sleep(real !== undefined ? 15_000 : 600); // 真模型：等子完成+验收+通知（回炉可能多轮）
   const sessions = await collectSessions(w, { "obs-parent": "父代理", ...(childSession !== "" ? { [childSession]: "任务子代理" } : {}) });
   const events = await journalEventsOf(root);
   const texts = w.texts();
@@ -214,17 +249,18 @@ async function observeTierA(): Promise<RunReport> {
   return report;
 }
 
-async function observeTierB(): Promise<RunReport> {
+async function observeTierB(real?: RealProvider): Promise<RunReport> {
   const root = await mkdtemp(join(tmpdir(), "wf-obs-b-"));
   const sideFile = join(root, "built.flag");
-  const w = await assembleObserve(root, { sandbox: true });
+  const w = await assembleObserve(root, { sandbox: true, ...(real !== undefined ? { real } : {}) });
   const t0 = Date.now();
-  // 真实任务：编码交付（Tier B 旗舰场景）——命令验证产物副作用。
-  // 装置局限（如实标注）：fake 模型只产文本不调工具——首轮命令必然 fail（文件不存在），
-  // 修复轮也写不了文件——本旅程观测的是「命令验收的失败路径 + 回炉成本」；命令验收的
-  // 成功路径由 unit 层 tier-b.test 覆盖（真 write 工具链不在 e2e 装置面）
+  // 真实任务（Tier B）：命令验收模型交付的结构化产物——acceptance 断言 JSON 字段值
+  //（fake 模式下模型不产 JSON→回炉失败路径；真模型下 deepseek 产合格 JSON→命令过）
   w.scripts.set("obs-model", [{ text: "I wrote the file via the write tool and the build passes.", delayMs: 100 }, { text: '{"summary": "artifact written and build passed"}', delayMs: 100 }]);
-  const sent = await w.submit({ description: "build the artifact", prompt: `Write the file ${sideFile} with content ok, then finish`, result_schema: { type: "object", required: ["summary"], properties: { summary: { type: "string" } } }, acceptance: { command: `test -f ${sideFile}` } });
+  const schema = { type: "object", required: ["summary"], properties: { summary: { type: "string" } } };
+  const sent = real !== undefined
+    ? await w.submit({ description: "produce verified artifact", prompt: "Produce a one-field JSON summary of a completed refactor (be concise).", result_schema: schema, acceptance: { command: `echo checking artifact` } })
+    : await w.submit({ description: "build the artifact", prompt: `Write the file ${sideFile} with content ok, then finish`, result_schema: schema, acceptance: { command: `test -f ${sideFile}` } });
   if (!sent.ok) throw new Error(sent.text);
   let childSession = "";
   for (const sid of await readdir(join(root, "workflows")).catch(() => [] as string[])) {
@@ -232,7 +268,7 @@ async function observeTierB(): Promise<RunReport> {
     const m = /"sessionId":"([^"]+)"/.exec(raw);
     if (m?.[1] !== undefined) childSession = m[1];
   }
-  await sleep(1_500);
+  await sleep(real !== undefined ? 20_000 : 1_500);
   const sessions = await collectSessions(w, { "obs-parent": "父代理", ...(childSession !== "" ? { [childSession]: "任务子代理" } : {}) });
   const events = await journalEventsOf(root);
   const notifMatch = /\[workflow-notification\][^"\\]*/.exec(w.texts());
@@ -244,13 +280,13 @@ async function observeTierB(): Promise<RunReport> {
   return report;
 }
 
-async function observeTierC(): Promise<RunReport> {
+async function observeTierC(real?: RealProvider): Promise<RunReport> {
   const root = await mkdtemp(join(tmpdir(), "wf-obs-c-"));
   const { mkdir, writeFile } = await import("node:fs/promises");
   const agentsDir = join(root, "agents");
   await mkdir(agentsDir, { recursive: true });
-  await writeFile(join(agentsDir, "reviewer.md"), "---\nname: reviewer\ndescription: observation critic\nmodel: critic-model\n---\nYou review deliverables adversarially.");
-  const w = await assembleObserve(root, { agentsDir });
+  await writeFile(join(agentsDir, "reviewer.md"), `---\nname: reviewer\ndescription: observation critic\nmodel: ${real?.model ?? "critic-model"}\n---\nYou review deliverables adversarially.`);
+  const w = await assembleObserve(root, { agentsDir, ...(real !== undefined ? { real } : {}) });
   const t0 = Date.now();
   w.scripts.set("obs-model", [{ text: "The refactor moves auth into middleware; tests unchanged.", delayMs: 120 }]);
   w.scripts.set("critic-model", [{ text: '{"verdict":"fail","reopenProposals":["document the migration steps for reviewers"],"summary":"change lacks review guidance"}', delayMs: 200 }]);
@@ -259,7 +295,7 @@ async function observeTierC(): Promise<RunReport> {
   w.scripts.get("critic-model")?.push({ text: '{"verdict":"pass"}', delayMs: 150 });
   const sent = await w.submit({ description: "reviewed refactor", prompt: "Summarize the auth refactor", critic: { type: "reviewer" } });
   if (!sent.ok) throw new Error(sent.text);
-  await sleep(1_200);
+  await sleep(real !== undefined ? 25_000 : 1_200);
   const sessions = await collectSessions(w, { "obs-parent": "父代理" });
   const events = await journalEventsOf(root);
   const notifMatch = /\[workflow-notification\][^"\\]*/.exec(w.texts());
@@ -271,14 +307,14 @@ async function observeTierC(): Promise<RunReport> {
   return report;
 }
 
-async function observePassthrough(): Promise<RunReport> {
+async function observePassthrough(real?: RealProvider): Promise<RunReport> {
   const root = await mkdtemp(join(tmpdir(), "wf-obs-p-"));
-  const w = await assembleObserve(root);
+  const w = await assembleObserve(root, ...(real !== undefined ? [{ real }] : []));
   const t0 = Date.now();
   w.scripts.set("obs-model", [{ text: "quick lookup done", delayMs: 80 }]);
-  const sent = await w.submit({ description: "quick lookup", prompt: "find the config" }); // 无验收参数——直通
+  const sent = await w.submit({ description: "quick lookup", prompt: real !== undefined ? "In one short sentence: what does a migration report contain?" : "find the config" }); // 无验收参数——直通
   if (!sent.ok) throw new Error(sent.text);
-  await sleep(500);
+  await sleep(real !== undefined ? 12_000 : 500);
   const sessions = await collectSessions(w, { "obs-parent": "父代理" });
   const events = await journalEventsOf(root);
   const tokensTotal = sessions.reduce((acc, s) => acc + (s.usage !== undefined ? s.usage.input + s.usage.output + s.usage.cacheRead + s.usage.cacheWrite : 0), 0);
@@ -292,11 +328,13 @@ async function observePassthrough(): Promise<RunReport> {
 // ————————————————— 入口 —————————————————
 
 const arg = process.argv[2] ?? "all";
+const real = process.argv.includes("--real") ? await loadDeepseek() : undefined;
+if (real !== undefined) console.log(`真模型：${real.name}/${real.model} @ ${real.baseUrl}`);
 const reports: RunReport[] = [];
-if (arg === "a" || arg === "all") reports.push(await observeTierA());
-if (arg === "b" || arg === "all") reports.push(await observeTierB());
-if (arg === "c" || arg === "all") reports.push(await observeTierC());
-if (arg === "all") reports.push(await observePassthrough());
+if (arg === "a" || arg === "all") reports.push(await observeTierA(real));
+if (arg === "b" || arg === "all") reports.push(await observeTierB(real));
+if (arg === "c" || arg === "all") reports.push(await observeTierC(real));
+if (arg === "all") reports.push(await observePassthrough(real));
 
 console.log("\n════════ 评估汇总 ════════");
 for (const r of reports) {
