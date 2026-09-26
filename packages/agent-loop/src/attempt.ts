@@ -61,8 +61,9 @@ async function drainGuarded(input: {
 }
 
 /** attempt 落账：error + 截止错误时已收增量（content/thinking——STREAM-PARTIAL-PERSISTENCE，
- *  不丢弃上游已交付数据）+ usage（token-meter 失败尝试计费，docs/TOKEN-METER.md §1） */
-function appendAttemptLedger(session: Session, spec: { readonly turn: number; readonly step: number; readonly error: string; readonly accum: StreamAccumulator }): void {
+ *  不丢弃上游已交付数据）+ usage（token-meter 失败尝试计费，docs/TOKEN-METER.md §1）。
+ *  签名块同落（档案完整性——L1 只在 thinking_end 产，中断 attempt 通常缺席） */
+function appendAttemptLedger(session: Session, spec: { readonly turn: number; readonly step: number; readonly error: string; readonly accum: StreamAccumulator; readonly origin: { readonly provider: string; readonly model: string } }): void {
   const partialContent = [...spec.accum.textBlock, ...spec.accum.toolUseBlocks];
   appendEvent(session, "assistant/attempt", {
     turn: spec.turn,
@@ -70,8 +71,49 @@ function appendAttemptLedger(session: Session, spec: { readonly turn: number; re
     error: spec.error,
     ...(partialContent.length > 0 ? { content: partialContent } : {}),
     ...(spec.accum.thinkingText !== "" ? { thinking: spec.accum.thinkingText } : {}),
+    ...thinkingBlocksOf(spec.accum, spec.origin),
     ...(spec.accum.usageSnapshot !== undefined ? { usage: spec.accum.usageSnapshot } : {}),
   });
+}
+
+/** ok 出口落账（runAttempt 复杂度治理）：thinking/签名块/usage/interrupted 折叠收口 */
+function appendMessageLedger(
+  session: Session,
+  spec: {
+    readonly turn: number;
+    readonly step: number;
+    readonly accum: StreamAccumulator;
+    readonly usage: unknown;
+    readonly dial: Dial;
+    readonly settled: { readonly content: readonly ContentBlock[]; readonly stopReason: "stop" | "max-tokens" };
+    readonly interrupted: boolean;
+  },
+): void {
+  appendSurfaceEvent(session, {
+    type: "assistant/message",
+    data: {
+      turn: spec.turn,
+      step: spec.step,
+      content: spec.settled.content,
+      ...(spec.accum.thinkingText !== "" ? { thinking: spec.accum.thinkingText } : {}),
+      ...thinkingBlocksOf(spec.accum, { provider: spec.dial.provider ?? "", model: spec.dial.model }),
+      ...(spec.usage !== undefined ? { usage: spec.usage } : {}),
+      stopReason: spec.settled.stopReason,
+      ...(spec.interrupted ? { interrupted: true } : {}),
+    },
+    surfaceOp: "append",
+  });
+}
+
+/** 签名块落账形态（CONTEXT-TOKEN-UNIFICATION §3.1 L3）：origin = 落账时实际路由
+ *  （provenance——L5 重建门比对当前拨号，防跨模型回放）。空清单省略字段。 */
+function thinkingBlocksOf(
+  accum: StreamAccumulator,
+  origin: { readonly provider: string; readonly model: string },
+): { thinkingBlocks: ReadonlyArray<{ signature: string; redacted: boolean; origin: { provider: string; model: string } }> } | {} {
+  const blocks = accum.signatureBlocks;
+  if (blocks.length === 0) return {};
+  return { thinkingBlocks: blocks.map((block) => ({ ...block, origin: { provider: origin.provider, model: origin.model } })) };
 }
 
 /** ok 出口消息构造：rawReason（provider 原生 stop reason——收束窗口载荷）、hasThinking
@@ -197,7 +239,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
     }
     const settlement = settleStream(accum, threw, signal.aborted);
     if (settlement.kind === "attempt") {
-      appendAttemptLedger(session, { turn, step, error: settlement.error, accum });
+      appendAttemptLedger(session, { turn, step, error: settlement.error, accum, origin: { provider: dial.provider ?? "", model: dial.model } });
       deps.emitStreamFrame(turn, step, { phase: "end", kind: "attempt" });
       const decision = await deps.dispatchRequestError({
         session: session.id,
@@ -226,19 +268,7 @@ export async function runAttempt(input: AttemptInput): Promise<AttemptResult> {
     // 内核独占（收口审查 2.2）。thinking 为落盘旁路字段（不过纠中间件、不进投影——
     // docs/STREAM-PARTIAL-PERSISTENCE.md）。
     const settled = await settleAssistant({ deps, sessionId: session.id, turn, step, accum, settlement, signal });
-    appendSurfaceEvent(session, {
-      type: "assistant/message",
-      data: {
-        turn,
-        step,
-        content: settled.content,
-        ...(accum.thinkingText !== "" ? { thinking: accum.thinkingText } : {}),
-        ...(usage !== undefined ? { usage } : {}),
-        stopReason: settled.stopReason,
-        ...(settlement.interrupted === true ? { interrupted: true } : {}),
-      },
-      surfaceOp: "append",
-    });
+    appendMessageLedger(session, { turn, step, accum, usage, dial, settled, interrupted: settlement.interrupted === true });
     deps.emitStreamFrame(turn, step, { phase: "end", kind: "message" });
     return { kind: "ok", message: settledMessageOf(settled, settlement, accum.thinkingText !== "") };
   }

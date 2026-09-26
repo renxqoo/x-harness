@@ -126,6 +126,33 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
     expect(thinkingDeltas.join("")).toBe("思考完毕");
   });
 
+  it("症状回归「多轮工具调用的 reasoning 签名丢失」L1：thinking_end 从 partial 提取签名块（thinking-signature chunk）——openai 加密项与 anthropic 签名同通道", async () => {
+    // pi 在块定形时把签名写进 partial.content[i].thinkingSignature（openai = 序列化
+    // reasoning_details / anthropic = signature 累积）；redacted 标志随块
+    const output = { role: "assistant", content: [{ type: "thinking", thinking: "思考", thinkingSignature: "[{\"type\":\"reasoning.encrypted\",\"data\":\"rs_abc\"}]", redacted: false, index: 0 }], api: "openai-completions", provider: "gpt", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, stopReason: "stop", timestamp: 0 };
+    const chunks = await collectRacy(async (emit) => {
+      emit(assistantEvent({ type: "thinking_start", contentIndex: 0, partial: output }));
+      emit(assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "思", partial: output }));
+      emit(assistantEvent({ type: "thinking_end", contentIndex: 0, content: "思考", partial: output }));
+      emit(doneEvent());
+    });
+    const sig = chunks.find((chunk) => chunk.type === "thinking-signature") as { type: "thinking-signature"; signature: string; redacted: boolean } | undefined;
+    expect(sig).toBeDefined();
+    expect(sig?.signature).toContain("rs_abc");
+    expect(sig?.redacted).toBe(false);
+  });
+
+  it("L1 中断路径：无 thinking_end 的流不产签名 chunk（半截签名不上 wire——完整性门在源头）", async () => {
+    const output = { role: "assistant", content: [{ type: "thinking", thinking: "半截", thinkingSignature: "partial-sig", index: 0 }], api: "openai-completions", provider: "gpt", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, stopReason: "stop", timestamp: 0 };
+    const chunks = await collectRacy(async (emit) => {
+      emit(assistantEvent({ type: "thinking_start", contentIndex: 0, partial: output }));
+      emit(assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "半截", partial: output }));
+      // 无 thinking_end —— abort/error 终态
+      emit(assistantEvent({ type: "error", reason: "error", error: output as never }) as never);
+    }).catch(() => [] as LlmChunk[]);
+    expect(chunks.find((chunk) => chunk.type === "thinking-signature")).toBeUndefined();
+  });
+
   it("终态校正：wire 尾段未被 delta 覆盖时补发（text_end/thinking_end）", async () => {
     const chunks = await collect([
       assistantEvent({ type: "text_start", contentIndex: 0, partial: { content: [] } }),

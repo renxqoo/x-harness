@@ -2,7 +2,7 @@
 // tool_use input 解析降级三态、toolName 前文回查、空 user 跳过、工具表直传。
 
 import { describe, expect, it } from "vitest";
-import { toPiContext } from "../pi-context.ts";
+import { toPiContext, toPiMessages } from "../pi-context.ts";
 import type { LlmRequest } from "../types.ts";
 
 const META = { api: "anthropic-messages", provider: "anthropic", model: "m1" } as const;
@@ -160,5 +160,56 @@ describe("user 携图映射（BATCH2-DESIGN §1.2——mediaType→mimeType 单�
   it("纯图 user（空 text 块被滤）→ 仅 image 内容，整条不跳过", () => {
     const ctx = toPiContext(request([{ role: "user", content: [{ type: "text", text: "" }, { type: "image", data: "aGk=", mediaType: "image/jpeg" }] }]), META);
     expect(ctx.messages).toEqual([{ role: "user", content: [{ type: "image", data: "aGk=", mimeType: "image/jpeg" }], timestamp: 0 }]);
+  });
+});
+
+// ── CONTEXT-TOKEN-UNIFICATION §3.1 L5：签名重建门（协议/provenance/块序） ──
+
+describe("signatureBlocksToContent 经 toPiMessages（L5 重建门）", () => {
+  const baseMeta = { api: "openai-completions", provider: "gpt", model: "gpt-5.6-sol" };
+  const sig = [{ signature: "rs_abc", redacted: false, origin: { provider: "gpt", model: "gpt-5.6-sol" } }];
+
+  it("openai + provenance 匹配：thinking 块重建并居 content 首位（prepend）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }], thinkingBlocks: sig }] as never,
+      baseMeta,
+    );
+    const content = out[0]?.content as Array<{ type: string }>;
+    expect(content[0]?.type).toBe("thinking");
+    expect((content[0] as { thinkingSignature?: string }).thinkingSignature).toBe("rs_abc");
+    expect(content[1]?.type).toBe("text");
+  });
+
+  it("provenance 不匹配（跨模型）：不重建（fail-closed 维持 pi 跨模型降级）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }], thinkingBlocks: sig }] as never,
+      { api: "openai-completions", provider: "other", model: "m2" },
+    );
+    const content = out[0]?.content as Array<{ type: string }>;
+    expect(content.some((b) => b.type === "thinking")).toBe(false);
+  });
+
+  it("anthropic 协议：跳过重建（B-1 裁决——空文本+签名形态待真端点实证）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }], thinkingBlocks: sig }] as never,
+      { api: "anthropic-messages", provider: "gpt", model: "gpt-5.6-sol" },
+    );
+    const content = out[0]?.content as Array<{ type: string }>;
+    expect(content.some((b) => b.type === "thinking")).toBe(false);
+  });
+
+  it("redacted 块：标志随块（回放形态 redacted_thinking 的载荷面）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [], thinkingBlocks: [{ signature: "opaque", redacted: true, origin: { provider: "gpt", model: "gpt-5.6-sol" } }] }] as never,
+      baseMeta,
+    );
+    const block = (out[0]?.content as Array<{ type: string; redacted?: boolean }> | undefined)?.[0];
+    expect(block?.type).toBe("thinking");
+    expect(block?.redacted).toBe(true);
+  });
+
+  it("无签名（旧档）：零改动——content 形状与既有输出一字不差", () => {
+    const out = toPiMessages([{ role: "assistant", content: [{ type: "text", text: "hi" }] }] as never, baseMeta);
+    expect(out[0]?.content).toEqual([{ type: "text", text: "hi" }]);
   });
 });

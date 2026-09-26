@@ -44,7 +44,9 @@ function userContent(content: unknown): Array<TextContent | ImageContent> {
   return out;
 }
 
-/** assistant 块整形：text → TextContent；tool_use → ToolCall（input 解析降 {}） */
+/** assistant 块整形：text → TextContent；tool_use → ToolCall（input 解析降 {}）；
+ *  签名块重建 ThinkingContent（CONTEXT-TOKEN-UNIFICATION §3.1 L5——仅 openai 协议
+ *  且 provenance 匹配当前路由；anthropic 按 B-1 裁决跳过待真端点实证）。 */
 function assistantContent(content: unknown, api: string, modelId: string): Array<TextContent | ThinkingContent | ToolCall> {
   const out: Array<TextContent | ThinkingContent | ToolCall> = [];
   if (!Array.isArray(content)) return out;
@@ -64,6 +66,22 @@ function assistantContent(content: unknown, api: string, modelId: string): Array
   void api;
   void modelId;
   return out;
+}
+
+/** 签名载荷（SurfaceMessage.thinkingBlocks → pi ThinkingContent）重建门：
+ *  ① 协议门——仅 openai-completions（B-1：anthropic 待真端点实证空文本+签名形态）；
+ *  ② provenance 门——origin 与当前路由不匹配（跨模型切换/resume）不重建（维持
+ *    pi 的跨模型降级语义，防路由 meta 伪造使其失效）；缺省 fail-closed 不重建；
+ *  ③ 块序——thinking 块 prepend（协议要求居 content 首位）。 */
+function signatureBlocksToContent(
+  blocks: readonly { signature: string; redacted: boolean; origin: { provider: string; model: string } }[] | undefined,
+  meta: { readonly api: string; readonly provider: string; readonly model: string },
+): ThinkingContent[] {
+  if (blocks === undefined || blocks.length === 0) return [];
+  if (meta.api !== "openai-completions") return [];
+  return blocks
+    .filter((block) => block.origin.provider === meta.provider && block.origin.model === meta.model)
+    .map((block) => ({ type: "thinking" as const, thinking: "", thinkingSignature: block.signature, ...(block.redacted ? { redacted: true } : {}) }));
 }
 
 /** SurfaceMessage → pi wire 消息（空 user 整条跳过；toolName 前文回查） */
@@ -88,7 +106,8 @@ export function toPiMessages(
         break;
       }
       case "assistant": {
-        const content = assistantContent(message.content, meta.api, meta.model);
+        const thinking = signatureBlocksToContent(message.thinkingBlocks, meta);
+        const content = [...thinking, ...assistantContent(message.content, meta.api, meta.model)];
         if (content.length === 0) continue;
         for (const block of content) {
           if (block.type === "toolCall") nameByCallId.set(block.id, block.name);

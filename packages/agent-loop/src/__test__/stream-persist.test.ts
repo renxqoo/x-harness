@@ -3,6 +3,7 @@
 // 症状源：20260920T152852-xx03bt——34000 token 思考流终止后 WAL 零落盘。
 
 import type { LlmChunk } from "@x-harness/llm";
+import { StreamAccumulator } from "../stream.ts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent } from "../index.ts";
 import { makeWorld, resetWorlds, spawn, textScript, worlds } from "./world.ts";
@@ -173,5 +174,25 @@ describe("截断已收内容落盘（STREAM-PARTIAL-PERSISTENCE）", () => {
     expect(secondRequest).toContain("visible answer"); // 可见正文照常回传
     expect(secondRequest).not.toContain("SECRET-THOUGHT"); // 思考落盘不回传
     await handle.dispose();
+  });
+});
+
+// ── CONTEXT-TOKEN-UNIFICATION §3.1 全链路：签名 chunk → 累积 → 落账形态 ──
+
+describe("thinking 签名全链路（L1→L2→L3）", () => {
+  it("症状回归「多轮工具调用的 reasoning 签名丢失」：thinking-signature chunk 进累积器，落账为 thinkingBlocks（含 origin）", () => {
+    const accum = new StreamAccumulator();
+    accum.push({ type: "thinking-delta", text: "思考中" });
+    accum.push({ type: "thinking-signature", signature: "rs_chain", redacted: false });
+    accum.push({ type: "text-delta", text: "结论" });
+    expect(accum.thinkingText).toBe("思考中");
+    expect(accum.signatureBlocks).toEqual([{ signature: "rs_chain", redacted: false }]);
+  });
+
+  it("无签名的流：signatureBlocks 空，落账省略字段（旧档形态不变）", () => {
+    const accum = new StreamAccumulator();
+    accum.push({ type: "thinking-delta", text: "无签名思考" });
+    expect(accum.signatureBlocks).toEqual([]);
+    expect(accum.thinkingText).toBe("无签名思考");
   });
 });

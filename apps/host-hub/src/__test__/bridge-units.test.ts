@@ -84,6 +84,18 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
     expect(w.frames.filter((f) => f.name === "llm/chunk")).toHaveLength(1);
   });
 
+  test("症状回归「签名 blob 推入 UI 流」：thinking-signature chunk 不外发 llm/chunk（H-2——UI 流形状保持既有词表），下游仍收到该 chunk", async () => {
+    const w = await wired();
+    const stream = await w.ctx.dispatch(llmStream, { model: "m", session: MAIN, tools: [], messages: [], signal: new AbortController().signal } as LlmRequest, async () => chunksOf([{ type: "thinking-signature", signature: "rs_ui", redacted: false } as never]));
+    const received: string[] = [];
+    for await (const chunk of stream) {
+      received.push((chunk as { type: string }).type);
+      void chunk;
+    }
+    expect(received).toContain("thinking-signature"); // 下游（累积器）照收
+    expect(w.frames.filter((f) => f.name === "llm/chunk")).toEqual([]); // UI 流零推送
+  });
+
   test("症状回归「autocompact 摘要流泄漏上屏 + loading 永挂」：带独立作业 session（如 xxx-1:summarizer）的拨号不合成 llm/chunk——与子会话流同路径放行", async () => {
     const w = await wired();
     const jobStream = await w.ctx.dispatch(

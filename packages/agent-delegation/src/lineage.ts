@@ -90,12 +90,15 @@ function recastSurface(events: readonly SurfaceLikeEvent[]): SessionEvent[] {
   return seed;
 }
 
-/** assistant/message 重铸 data（recastOne 复杂度治理） */
+/** assistant/message 重铸 data（recastOne 复杂度治理）——thinkingBlocks/thinking 随
+ *  种子携带（CONTEXT-TOKEN-UNIFICATION B-2：fork/子代理的推理连续性不断链） */
 function assistantRecastData(data: Record<string, unknown>): Record<string, unknown> {
   return {
     turn: 0,
     step: 0,
     content: data["content"] ?? [],
+    ...(data["thinking"] !== undefined ? { thinking: data["thinking"] } : {}),
+    ...(data["thinkingBlocks"] !== undefined ? { thinkingBlocks: data["thinkingBlocks"] } : {}),
     ...(data["usage"] !== undefined ? { usage: data["usage"] } : {}),
     ...(data["stopReason"] !== undefined ? { stopReason: data["stopReason"] } : {}),
   };

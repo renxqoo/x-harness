@@ -14,6 +14,7 @@ interface ToolCallAccum {
 export class StreamAccumulator {
   private readonly textParts: string[] = [];
   private readonly thinkingParts: string[] = [];
+  private readonly signatureParts: Array<{ signature: string; redacted: boolean }> = [];
   private readonly calls = new Map<number, ToolCallAccum>();
   private usage: TokenUsage | undefined;
   private finish: LlmFinish | undefined;
@@ -25,6 +26,11 @@ export class StreamAccumulator {
         break;
       case "thinking-delta":
         this.thinkingParts.push(chunk.text); // 落账收集（docs/STREAM-PARTIAL-PERSISTENCE.md——回传面仍不投影）
+        break;
+      case "thinking-signature":
+        // 块定形签名收集（CONTEXT-TOKEN-UNIFICATION §3.1 L2）：仅 thinking_end 产——
+        // 中断流（无 end 帧）天然缺席，完整性门在源头
+        this.signatureParts.push({ signature: chunk.signature, redacted: chunk.redacted });
         break;
       case "tool-call-delta": {
         const existing = this.calls.get(chunk.index);
@@ -57,6 +63,11 @@ export class StreamAccumulator {
   /** 本 attempt 思考全文（增量拼接；无思考=空串）——落盘专用，空结算判定不含思考 */
   get thinkingText(): string {
     return this.thinkingParts.join("");
+  }
+
+  /** 块定形签名清单（落账用；origin 由落账侧钉入——累积层不知路由） */
+  get signatureBlocks(): ReadonlyArray<{ signature: string; redacted: boolean }> {
+    return this.signatureParts;
   }
 
   get settledFinish(): LlmFinish | undefined {

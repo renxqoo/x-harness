@@ -183,13 +183,35 @@ function endChunks(event: Extract<AssistantMessageEvent, { type: "text_end" | "t
   return [{ type: kind === "text" ? "text-delta" : "thinking-delta", text: missing }];
 }
 
-/** text/thinking 事件族分发：start 零产出（partial 是共享可变引用——见文件头）、delta 透传、end 终态校正 */
+/** text/thinking 事件族分发：start 零产出（partial 是共享可变引用——见文件头）、delta 透传、end 终态校正。
+ *  thinking_end 额外提取块定形签名（partial.content[contentIndex].thinkingSignature——
+ *  pi 在块定形前已写入：openai finishBlock 的 applyStreamedReasoningDetails / anthropic
+ *  的 signature_delta 累积）。text_end 不读 partial（无签名面）。 */
 function blockChunks(event: AssistantMessageEvent, state: BlockState): LlmChunk[] {
   const kind: "text" | "thinking" = event.type.startsWith("text") ? "text" : "thinking";
   if (event.type === "text_start" || event.type === "thinking_start") return [];
   if (event.type === "text_delta" || event.type === "thinking_delta") return deltaChunks(event, state, kind);
-  if (event.type === "text_end" || event.type === "thinking_end") return endChunks(event, state, kind);
+  if (event.type === "text_end") return endChunks(event, state, "text");
+  if (event.type === "thinking_end") {
+    const chunks = endChunks(event, state, "thinking");
+    const signature = signatureAt(event.partial, event.contentIndex);
+    if (signature === undefined) return chunks;
+    return [...chunks, signature];
+  }
   return [];
+}
+
+/** 块定形签名提取（CONTENT-TOKEN-UNIFICATION §3.1 L1）：签名空串 = 无载荷
+ *  （上游未报）不产 chunk；redacted 随块（回放形态 redacted_thinking）。 */
+function signatureAt(partial: unknown, contentIndex: number): { type: "thinking-signature"; signature: string; redacted: boolean } | undefined {
+  if (typeof partial !== "object" || partial === null) return undefined;
+  const content = (partial as { content?: unknown }).content;
+  if (!Array.isArray(content)) return undefined;
+  const block = content[contentIndex];
+  if (typeof block !== "object" || block === null) return undefined;
+  const record = block as { thinkingSignature?: unknown; redacted?: unknown };
+  if (typeof record.thinkingSignature !== "string" || record.thinkingSignature === "") return undefined;
+  return { type: "thinking-signature", signature: record.thinkingSignature, redacted: record.redacted === true };
 }
 
 /** 原生输出上限词表：pi `openai-completions mapStopReason` 对非标 finish_reason 全落
