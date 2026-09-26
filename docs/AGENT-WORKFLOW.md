@@ -1,9 +1,10 @@
 # AGENT-WORKFLOW：验收回炉与任务编排终态（件 16）
 
-> 状态：**方案定稿 v3**（首轮 17 真缺陷+14 风险处置为 v2；二轮复审 12 真缺陷+11 风险处置
-> 为 v3——两轮处置表 §15。核心修正：接缝 3→4（+settle）/豁免 4→5（+settle 失败兜底）/
-> 停机语义按事实重写/恢复二维表细化到四终态/期 1 切 1a-1b 并补实施顺序）
-> 级别：高（agent-workflow-core 新包（纯引擎）+ agent-workflow 新包（插件）+ agent-delegation
+> 状态：**方案定稿 v3.1**（v1→v2→v3 三轮方案审查处置 + 实现终审三路处置——§15 全留档。
+> v3.1 增量：包名对账（workflow-core）/F14 句柄轮询修正/恢复表补 verifying·submitted·
+> settled-未投三行/锁域（撕裂修复持锁限定）/Tier B cwd·超时·上限·沙箱 fail-closed 契约/
+> taskId t-<runId> 前缀化/settlement 兜底实现形态/直通限根取舍落档）
+> 级别：高（workflow-core 新包（纯引擎）+ agent-workflow 新包（插件）+ agent-delegation
 > 三接缝 + task-tools 源让位 + CLI/hub 两宿主装配）
 > 上游关联：件13 AGENT-DELEGATION §1 U1 落档的是 **teammate/name@team 常驻团队寻址（云形态）**。
 > 本件提供 **run 级多任务协作**（工作单元的受控流转：验收/回炉/DAG）——无成员身份、无团队
@@ -45,7 +46,7 @@
 ## 2. 架构与包边界
 
 ```
-packages/agent-workflow-core/     纯引擎（零 IO：不依赖 agent-loop/session/delegation）
+packages/workflow-core/          纯引擎（零 IO：不依赖 agent-loop/session/delegation——实现包名；v3 文档曾写 agent-workflow-core）
   types.ts        事件/状态/裁决闭合词表（裁决器接口在此）
   fold.ts         事件折叠 reducer（events → snapshot；纯函数）
   verdict.ts      裁决器：证据 → Verdict、预算扣减、组合器（纯函数）
@@ -169,7 +170,9 @@ interruptedTurnClosers 同构）。终态四分类：completed（末 turn/end{co
 | `task/repair-issued` | interrupted/未起跑 | revive + 按幂等标记判（见下）已材料化 → kick 续修；未材料化 → 补注入 |
 | `task/repair-issued` | 异常终态 | 同 dispatched 行：settled{failed, child-failed} |
 | `verify/started`（Tier B） | — | 无 `verify/result` 配对 → 落 `verify/result{outcome:unknown}`，任务按 fail 处置（B-10 不盲目重跑——副作用可能已发生）；有 result → 正常裁决 |
-| `task/settled` | — | 无 `notify/delivered` → 补投（§5.3）；已投 → 静默 |
+| `verify/started`（verifying 态） | — | `closeDanglingVerify` 落 `verify/result{unknown}` + `settled{failed, verify-unknown}`——**不重跑命令**（B-10；终审 D2 接线：stopTask 取消路径同款同步封口） |
+| `task/submitted`（无锚） | — | **重派发**（spec 在 journal：dispatchPrompt 重铸 + spawnManaged + settlement 挂接——runtime.redispatch）；死父悬置等边沿（终审 A3） |
+| `task/settled` | — | 无 `notify/delivered` → 补投（§5.3）；已投 → 静默。**跨重启**：settled 且未投的 run 被扫描认领补投后收尾关卷（终审 B5——悬置通知的唯一跨重启收敛路径） |
 | `run/settled` | — | 静默归档（run 后迟到 task/verify 事件收编，§7） |
 
 **幂等判据（F7 修正）**：标记出现在**已材料化消息**（user/message 或 agent/message 事件体）
@@ -181,11 +184,11 @@ interruptedTurnClosers 同构）。终态四分类：completed（末 turn/end{co
 两宿主装配序都是插件 apply 先于主会话建立——apply 时刻的「死父」无法补投。规则：
 - **apply 时**：只 fold 记账 + 对「不需要父」的动作（revive 续跑、验收执行）立即执行
 - **主会话建立/复活边沿**：sessionCreated 事件（create/resume 两形态同源——resume 也走
-  store.create）。**时序陷阱（F14）**：该事件在 store.birth 内同步发射，此刻 loop 句柄
-  尚未登记（spawn 返回后才进 live）——监听器内必须 `queueMicrotask` 延迟处理（birth 的
-  await 续起与 register 同一微任务链，微任务后句柄必在）。补投插入序：next-step 注入天然
-  排在已排队 followup（next-turn）之后——宿主边沿处理先于向用户提示输入达成
-  「先于用户首条消息处理」的等价效果；断言锚进 §11。
+  store.create）。**时序陷阱（F14，终审修正）**：该事件在 store.birth 内同步发射，此刻 loop 句柄
+  尚未登记（create 的 await 链后段才 live.set）——微任务延迟对「重建补投」不够（终审实测
+  句柄仍缺位），监听器内必须**轮询等待句柄在场**（2ms × ≤50 拍，runtime.onSessionAlive
+  入口）。补投插入序：next-step 注入天然排在已排队 followup（next-turn）之后——宿主边沿
+  处理先于向用户提示输入达成「先于用户首条消息处理」的等价效果；断言锚进 §11。
 
 ### 5.4 运行期父会话死亡（W8 的兑现）
 
@@ -223,6 +226,10 @@ worker 优雅停机或被杀）时 session disposer 封存全部会话，受管�
    - evictIdle 档化：跳过——repair 等待窗内不被踢（R9）
    - stopAll / 插件 dispose 级联：跳过 cancel/dispose/清树（B-01；「存活」语义见 §5.4）
    - 完成通知：投 settlement token 而非直达父
+   - **settlement 投递/落账失败兜底（F1，终审 D5 实现形态）**：sink 构造收第三参
+     `onSettleFailed(agentId, error)`——异步转发失败无法同步冒泡回 delegation，改为显式
+     兜底回调（`view.settle(agentId, "settle-failed")` 归还受管行 + onWarn；journal 侧由
+     下次恢复边沿按窗口表收敛为 settle-failed）。
    - **settlement 投递/落账失败兜底（F1）**：token 投递 throw 或 workflow 侧 journal append
      失败 → delegation 兜底回收（dispose 子 + 清树 + 摘行 + onWarn；任务由 workflow 恢复
      边沿落 `settled{failed, cause: settle-failed}`）——豁免不是无条件永久豁免，是
@@ -318,7 +325,9 @@ workflow_submit {
   acceptance?: { command: string, cwd?: string },   # Tier B
   critic?: { type: string, focus?: string },   # Tier C（期 2）
   max_attempts?: number                        # 回炉预算统一覆盖
-} → { taskId, runId }（后台异步 + 反轮询引导）
+} → 返回 agent_spawn 同款 spawn 文本 + 尾行回执 `[workflow] taskId: t-<runId> (run <runId>)`
+  （后台异步 + 反轮询引导；taskId = `t-<runId>` 跨 run 唯一——终审 A8：同会话并发多 run 的
+  stop/notify 判据；模型从回执取 taskId 而非结构化对象——与 agent_spawn 契约同构）
 ```
 
 - 校验：三档全缺 → **直通（W6：零 journal、settlement 不设、返回 agentId 双填）**；
@@ -476,3 +485,32 @@ token 经济性（期 2 参数形态）。
 | A-F9 直通 taskId 被 depends_on 引用歧义 | 风险(期2) | §9 设计债标注 |
 | A 焦点4：期 1 过胖 | 判断 | §12 重切 1a（Tier A+恢复+CLI）/1b（Tier B+让位+hub）+ §12.5 实施顺序 |
 | B2 可实施性正面结论 | 验证 | 四豁免精确到行（stopAll 在 plugin.ts:407 非 verbs.ts）；跨服务传回调先例 permissionBroker.ask；锁竞态协议直接适用；TypeBox violationsOf 复用为 Tier A 裁决器 |
+
+### 实现终审处置（三路：A 忠实性 / B 并发泄漏 / C 安全假绿——v3.1 全清）
+
+| 发现 | 级别 | 处置 |
+| --- | --- | --- |
+| C-D1/A4/B3 Tier B cwd 默认宿主 cwd——worktree 任务验错树 | 真缺陷 | cwd 链：显式 > rootOverride（子会话）> 宿主 cwd |
+| C-D2/B2 verify 崩溃窗口重跑命令（B-10 复发） | 真缺陷 | verifying 态 closeDanglingVerify+unknown 封口+终局；stopTask 同步封口 |
+| C-D3 非 sandbox execEnv 裸奔（local 面） | 真缺陷 | env.kind !== sandbox 运行期拒 |
+| C-D4/A5 恢复路径 fence 锚用 agentId | 真缺陷 | deliverToAcceptance 传真 sessionId |
+| C-D5/B1 settlement 失败吞掉（第五豁免未兑现） | 真缺陷 | onSettleFailed 显式兜底回调（settle 归还+onWarn） |
+| C-D6 分流引导句单向缺失 | 真缺陷 | DelegationOptions.spawnDescriptionAppend 通道（kit 组合）+ CLI 接线 |
+| C-D7 通知三处过度承诺（evidence/session/attempts） | 真缺陷 | 铸文补 session 行 + attempts 全档口径 |
+| C-D8/B4 命令无超时/无输出上限 | 真缺陷 | 120s 两段杀 + 1MB 上限（可注入） |
+| A3 submitted 无锚永久 wedged | 真缺陷 | runtime.redispatch 重派发（活父）/悬置（死父） |
+| A6 --workflow-dir 未注册（死参数） | 真缺陷 | FLAG_SPECS/copy/usage + parse 回归 |
+| A7 无锁撕裂回写毁他进程活跃卷 | 真缺陷 | recoverJournal repair 参数（持锁才回写） |
+| A8 taskId 恒 t1 跨 run 歧义 | 真缺陷 | t-<runId> 前缀化 + submit 文本回执 |
+| B5 settled 未投通知跨重启永久丢 | 真缺陷 | 扫描认领补投+收尾（唯一跨重启收敛路径） |
+| B7 archive 缺席认领即锁泄漏 | 真缺陷 | 未终态 run 冻结不认领 + onWarn |
+| B8 恢复终局 run 不摘 maps（缓泄+probe 误 hit） | 真缺陷 | runtime.detach 面 |
+| B-11 settleRun 无条件删 run（悬置丢通知） | 真缺陷 | 悬置感知留驻 + onSessionAlive 补投后归还链 |
+| B9 dispose 未 await（fsync 可能被截断） | 风险 | disposer 返回 promise |
+| C-G1/G2 恒真断言 + 前提不成立（假绿） | 假绿 | 级联豁免真断言；deliverToRow 豁免父真 dispose |
+| C-G3 evictIdle 豁免零覆盖 | 假绿 | maxResident=1 压迫用例 |
+| C-G4 回炉用例时序竞争 + 不断言 passed | 假绿 | 计数文件自愈命令 + passed 终态断言 |
+| C-G5 手术产出 repairing 误标 dispatched | 假绿 | dispatched×completed 专窗（不 revive/kick 断言） |
+| B-F14 微任务假设在重建场景不成立 | 时序 | 句柄轮询等待（2ms×≤50 拍） |
+| A-17 直通未限根会话 | 取舍 | 保持现状落档：直通字节级等价 agent_spawn（对所有会话开放是既有语义的自然延伸，无实害）；F13 限根条款收敛为「受管路径」限根——措辞已在 W6 注明 |
+| C-R2/R3/R4/R5/R6 + A-R9~R19/B-R10~R16 | 风险/取舍 | 逐项核对：R2 幂等标记伪造（方案级——期 2 收窄 user/message 或 nonce）/R3 注入链与 bash 面等宽（已接受）/R4 journal 明文（GC 前建议 chmod 0600）/R5 /new 工具死亡（期 2 重绑）/R6 probeTask 冷启动盘扫（期 2）等——落 §14 |
