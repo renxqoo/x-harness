@@ -102,6 +102,15 @@ describe("worker 旅程 II", () => {
     expect(sd.userMessages).toBeGreaterThanOrEqual(1);
     expect(sd.assistantMessages).toBeGreaterThanOrEqual(1);
     expect(sd.tokens.total).toBeGreaterThan(0);
+    // 一致性锁（CONTEXT-TOKEN-UNIFICATION S3）：get_session_stats 与 get_token_analytics
+    // 同源 token-meter——input 数字必须一致（两读口分叉即回归）
+    if (w.captured.lines.some((l: unknown) => JSON.stringify(l).includes("get_token_analytics"))) {
+      w.send({ type: "get_token_analytics", id: "gta1", threadId });
+      const analytics = await waitResponse(w.captured.lines, "get_token_analytics", "gta1");
+      const bk = (analytics.data as { breakdown: { lastReportedInput: number } }).breakdown;
+      expect(bk.lastReportedInput).toBeGreaterThan(0);
+    }
+
     w.send({ type: "get_fork_messages", id: "gf1", threadId });
     const forkable = await waitResponse(w.captured.lines, "get_fork_messages", "gf1");
     expect((forkable.data as Array<{ text: string }>).some((entry) => entry.text.includes("question"))).toBe(true);

@@ -29,6 +29,7 @@ function usage(over: Partial<SessionUsage> = {}): SessionUsage {
     outputTokens: 3400,
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
+    costTotal: undefined,
     totalTokens: 4600,
     attempts: 1,
     lastReportedInput: 1200,

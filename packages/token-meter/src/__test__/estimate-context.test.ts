@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import type { SurfaceNode } from "@x-harness/session";
 import { estimateContextTokens, spanContextTokens, THINKING_COEFF_LEGACY, THINKING_COEFF_TEXT, WIRE_TOKENS_PER_NODE } from "../estimate-context.ts";
+import { applyEvent, createFoldState, snapshotOf } from "../fold.ts";
 
 function node(seq: number, type: string, data: Record<string, unknown>): SurfaceNode {
   return { seq, event: { type, seq, time: seq, data: data as never } as never } as never;
@@ -82,5 +83,24 @@ describe("对账夹具（s5qad7 legacy regime · ±15% 门）", () => {
     );
     const deviation = Math.abs(est - reported) / reported;
     expect(deviation).toBeLessThanOrEqual(0.15);
+  });
+});
+
+// costTotal 桶（CONTEXT-TOKEN-UNIFICATION S3/H3：get_session_stats 消费 meter 后 cost 面不丢）
+describe("foldUsage costTotal", () => {
+  it("cost.total 在场累计、缺席保持 undefined、垃圾置 undefined 不整丢样本", () => {
+    const state = createFoldState();
+    applyEvent(state, { type: "assistant/message", seq: 1, time: 1, data: { usage: { input: 10, output: 2, cost: { total: 0.5 } } } } as never);
+    applyEvent(state, { type: "assistant/message", seq: 2, time: 2, data: { usage: { input: 20, output: 3 } } } as never);
+    expect(snapshotOf(state).costTotal).toBeCloseTo(0.5);
+    applyEvent(state, { type: "assistant/message", seq: 3, time: 3, data: { usage: { input: 1, output: 1, cost: { total: -3 } } } } as never); // 负数=垃圾 → 仅 cost 置无效
+    const snap = snapshotOf(state);
+    expect(snap.costTotal).toBeCloseTo(0.5); // 前值保持
+    expect(snap.inputTokens).toBe(31); // token 照计（垃圾 cost 不整丢样本）
+  });
+  it("attempt 计费计入（症状回归「get_session_stats 漏 attempt」）", () => {
+    const state = createFoldState();
+    applyEvent(state, { type: "assistant/attempt", seq: 1, time: 1, data: { error: "x", usage: { input: 100, output: 0 } } } as never);
+    expect(snapshotOf(state).inputTokens).toBe(100);
   });
 });

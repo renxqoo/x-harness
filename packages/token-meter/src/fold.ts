@@ -32,6 +32,9 @@ export interface SessionUsage {
   readonly cacheReadTokens: number;
   /** 缓存写入 token 累计（inputTokens 子集明细） */
   readonly cacheWriteTokens: number;
+  /** 计费金额累计（usage.cost.total 在场透传求和——CONTEXT-TOKEN-UNIFICATION H3：
+   *  成本归因是计量事实，get_session_stats 消费 meter 后 cost 面不得静默消失） */
+  readonly costTotal: number | undefined;
   readonly totalTokens: number;
   readonly attempts: number;
   /** 最近一次实报 input（样本 input 字段在场才覆写；0 = 无实报——哨兵无清零路径） */
@@ -58,6 +61,7 @@ export interface FoldState {
   output: number;
   cacheRead: number;
   cacheWrite: number;
+  costTotal: number | undefined;
   attempts: number;
   lastInput: number;
   lastCacheRead: number;
@@ -74,6 +78,7 @@ export function createFoldState(): FoldState {
     output: 0,
     cacheRead: 0,
     cacheWrite: 0,
+    costTotal: undefined,
     attempts: 0,
     lastInput: 0,
     lastCacheRead: 0,
@@ -100,6 +105,8 @@ export interface UsageSample {
   readonly output: number;
   readonly cacheRead: number;
   readonly cacheWrite: number;
+  /** cost.total（在场才透传——非 token 域，垃圾不整丢样本：仅置 undefined） */
+  readonly costTotal: number | undefined;
   /** input 字段显式在场（尾值覆写条件——缺席样本不得清零 lastReportedInput） */
   readonly hasInput: boolean;
   /** cacheRead 字段显式在场（lastReportedCacheRead 覆写条件） */
@@ -133,9 +140,16 @@ export function parseUsageSample(data: unknown): UsageSample | undefined {
     output: output ?? 0,
     cacheRead: cacheRead ?? 0,
     cacheWrite: cacheWrite ?? 0,
+    costTotal: costTotalOf(record),
     hasInput: input !== undefined,
     hasCacheRead: cacheRead !== undefined,
   };
+}
+
+/** cost.total 提取（非 token 域：垃圾不整丢样本，仅置 undefined） */
+function costTotalOf(record: Record<string, unknown>): number | undefined {
+  const raw = (record["cost"] as { total?: unknown } | undefined)?.total;
+  return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : undefined;
 }
 
 function addBucket(
@@ -183,6 +197,10 @@ function accountSample(state: FoldState, ctx: SampleContext): void {
   state.output = nextOutput;
   state.cacheRead = nextCacheRead;
   state.cacheWrite = nextCacheWrite;
+  if (usage.costTotal !== undefined) {
+    const nextCost = (state.costTotal ?? 0) + usage.costTotal;
+    state.costTotal = Number.isSafeInteger(nextCost * 1e6) ? nextCost : state.costTotal; // 浮点累计溢出守卫（幂级放大即停）
+  }
   state.attempts += 1;
   // 尾值三件套按字段在场性覆写（docs/TOKEN-METER.md §1）：input 在场才覆写 input 尾值
   // （{output:N} 样本不得清零哨兵）；cacheRead 在场才覆写缓存尾值；lastUsageAt 在
@@ -244,6 +262,7 @@ export function snapshotOf(state: FoldState): SessionUsage {
     outputTokens: state.output,
     cacheReadTokens: state.cacheRead,
     cacheWriteTokens: state.cacheWrite,
+    costTotal: state.costTotal,
     totalTokens: state.input + state.output, // 缓存字段是 input 子集明细，不入总计（防双计）
     attempts: state.attempts,
     lastReportedInput: state.lastInput,
