@@ -231,7 +231,7 @@ function permissionGrantStorePlugin(fields: { readonly agentDir: string; readonl
 /** dial/thinking 挂点插件（DESIGN §3.6/§3.9）：每 step 从 session/meta 尾值改写
  *  agentRequest 输出 dial（waterfall 是最后写者——优先序成立；内核此后自动落
  *  request/header 与 request/context）。 */
-function dialHookPlugin(): Plugin {
+function dialHookPlugin(catalog: WorkerCatalog): Plugin {
   return {
     name: "hub-dial-hook",
     inject: ["session"],
@@ -244,11 +244,14 @@ function dialHookPlugin(): Plugin {
         // options 透传——resume 后 options 显式值不得压过 WAL 事实
         const folded = foldDial(session.events(), { provider: dial.provider ?? "", model: dial.model });
         const thinking = thinkingLevelOf(metaTailOf(session.events(), META_KEY_THINKING));
+        const effective = { ...dial, ...(folded.model !== "" ? { model: folded.model } : {}), ...(folded.provider !== "" ? { provider: folded.provider } : {}) };
         return {
-          ...dial,
-          ...(folded.model !== "" ? { model: folded.model } : {}),
-          ...(folded.provider !== "" ? { provider: folded.provider } : {}),
+          ...effective,
           ...(thinking !== undefined ? { thinking } : {}),
+          // 实际服务窗随 dial 注入（CONTEXT-TOKEN-UNIFICATION S4）：按【折叠后】
+          // provider/model 查目录（模型级 > 档案级 > 兜底）——内核落 request/context，
+          // 压缩分母 min(主窗, servedWindow) 从此读到真实值
+          contextWindow: contextWindowOf(catalog, { provider: effective.provider ?? "", model: effective.model }),
         };
       }),
   };
@@ -409,7 +412,7 @@ function defaultWorkerPlugins(resolved: {
           record: (proposal) => fields.proposalStore!.record(proposal),
         })]
       : []),
-    dialHookPlugin(),
+    dialHookPlugin(catalog),
   ];
 }
 

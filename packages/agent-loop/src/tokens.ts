@@ -65,6 +65,10 @@ export interface Dial {
   readonly temperature?: number;
   readonly maxTokens?: number;
   readonly thinking?: import("@x-harness/llm").ThinkingLevel;
+  /** 实际服务窗（CONTEXT-TOKEN-UNIFICATION §3.3 S4）：装配侧从模型目录查表注入，
+   *  内核落 request/context——lastWindow（压缩触发分母 min(主窗, servedWindow)）
+   *  从此可读到真实值；缺省不落字段（分母回落主窗，与旧行为一致） */
+  readonly contextWindow?: number;
 }
 
 export const agentRequest = defineWaterfall<
