@@ -65,6 +65,9 @@ export interface TaskState {
   readonly verifyAttempts: number;
   readonly outcome?: TaskOutcome;
   readonly cause?: TaskCause;
+  /** 终态裁决标记（如 schema:accept / schema:budget-exhausted）与详情 */
+  readonly verdict?: string;
+  readonly detail?: string;
   /** 终态后收编的迟到事件（§7 后事件规则——留档不参与状态） */
   readonly trailing: readonly WorkflowEvent[];
 }
