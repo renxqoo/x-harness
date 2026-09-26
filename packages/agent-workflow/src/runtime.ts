@@ -7,6 +7,7 @@ import { adjudicate, DEFAULT_BUDGET, dependencyVerdict, extractPayload, readines
 import type { Evidence } from "@x-harness/workflow-core";
 import type { BudgetState, TaskSpec, WorkflowEvent } from "@x-harness/workflow-core";
 import { openRunJournal, rewriteHeaderParent, workflowPluginVersion } from "./journal.ts";
+import { createDeadlineGuards } from "./task-deadline.ts";
 import { agentIdOfManaged, sessionOfManaged, settlementOf } from "./seams.ts";
 import type { ActiveRun, ManagedReport, ManagedTaskRef, SubmitInput, SubmitOutcome, WorkflowDeps, WorkflowRuntime } from "./types.ts";
 import { commandFeedbackText, criticFeedbackText, feedbackText } from "./feedback.ts";
@@ -83,6 +84,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     const agentId = agentIdOfManaged(spawned.text);
     tasks.set(agentId, ref);
     await append(run, { type: "task/dispatched", taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) }); // 真子会话 id（恢复链读档案的锚）
+    armDeadline(run, taskId); // 挂起类防线武装（dispatch 起算——①②④⑤）
     return { ok: true, text: `${spawned.text}\n[workflow] taskId: ${taskId} (run ${runId}) — reference it with task_stop; the [workflow-notification] will cite it.` };
   };
 
@@ -165,6 +167,9 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     return sent.ok ? { ok: true } : { ok: false, reason: sent.reason };
   };
 
+  // task deadline 三面（task-deadline.ts——行数纪律拆出；deps 域闭包注入）
+  const { armDeadline, clearDeadline, clearAll: deadlineClearAll } = createDeadlineGuards({ taskDeadlineMs: deps.taskDeadlineMs, runs, view: deps.view, append: (run: ActiveRun, event: import("@x-harness/workflow-core").WorkflowEvent) => append(run, event), finalizeRun: (run: ActiveRun) => finalizeRun(run) });
+
   // ————————————————————————— 结算与通知 —————————————————————————
   const finalizeRun = async (run: ActiveRun): Promise<void> => {
     // 期 2-C：依赖失败传播（readiness.dependencyDoomed → 终局 cancelled）+ 就绪派发钩子
@@ -188,6 +193,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     if (notified) {
       // 受管行归还（接缝③）：终局 dispose/清树/摘行
       for (const task of Object.values(run.snapshot.tasks)) {
+        clearDeadline(run.header.runId, task.taskId); // 正常终局同样清闸（挂起防线收口）
         if (task.agentId !== undefined && deps.view !== undefined) await deps.view.settle(task.agentId, `run-${outcome}`).catch(() => {});
         tasks.delete(task.agentId ?? "");
       }
@@ -195,7 +201,8 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       runs.delete(run.header.runId);
     } else {
       // 悬置：writer 保持打开（rebound/边沿补投还要落账——期 2-A 教训：关了就是 EBADF）；
-      // 进程退出路径 dispose 统一关
+      // 任务已终局，闸清；进程退出路径 dispose 统一关
+      for (const task of Object.values(run.snapshot.tasks)) clearDeadline(run.header.runId, task.taskId);
     }
   };
 
@@ -231,7 +238,9 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
   };
 
   const dispose = async (): Promise<void> => {
-    // §2 dispose 序列：受管行不 cancel（豁免兑现）；journal 尽力 flush——run 留待恢复
+    // §2 dispose 序列：受管行不 cancel（豁免兑现）；deadline 闸全清（拆卸后零写盘——⑧）；
+    // journal 尽力 flush——run 留待恢复
+    deadlineClearAll();
     for (const run of runs.values()) await run.writer.close().catch(() => {});
     runs.clear();
     tasks.clear();
@@ -360,6 +369,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       const agentId = agentIdOfManaged(spawned.text);
       tasks.set(agentId, ref);
       await append(run, { type: "task/dispatched", taskId: task.taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) });
+      armDeadline(run, task.taskId); // 恢复重派发同样武装（⑩）
       return true;
     }
     return false;
@@ -370,6 +380,7 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     runs.set(run.header.runId, run);
     for (const task of Object.values(run.snapshot.tasks)) {
       if (task.agentId !== undefined) tasks.set(task.agentId, { runId: run.header.runId, taskId: task.taskId });
+      if (task.status !== "settled") armDeadline(run, task.taskId); // 恢复认领即武装（⑩）
     }
     return (agentId, report) => onCycleEnd({ runId: run.header.runId, taskId: tasks.get(agentId)?.taskId ?? "t1" }, report);
   };

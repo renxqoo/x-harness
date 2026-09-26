@@ -29,7 +29,8 @@ export type TaskCause =
   | "settle-failed"
   | "type-def-missing"
   | "verify-unknown"
-  | "task-stop";
+  | "task-stop"
+  | "task-deadline";
 
 /** 提交参数（spec 原样落 journal——裁决依据；演进取舍见方案 §4） */
 export interface TaskSpec {

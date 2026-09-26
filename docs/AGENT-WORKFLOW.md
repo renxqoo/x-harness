@@ -396,8 +396,13 @@ cancel×verify 竞态全在它——两轮复审发现最密集的交互区）�
 - **期 3 已定路线**（两路对抗审查后修订）：
   1. **e2e 崩溃旅程**（首位——§11 承诺"三档各一条含崩溃窗口"但 packages/e2e 零 workflow 引用；
      件 16 最复杂的 §5 恢复协议无跨进程 kill -9 回归）
-  2. **task 级 wall-clock deadline**（类修非点修：child 挂起 + critic 挂起同病——静默 wedge
-     且无用户止损面；政策类比 Tier B timeout→failed→预算内 reject；~1 天按本仓交付节奏）
+  2. **task 级 wall-clock deadline（已交付——task-deadline.ts）**：`WorkflowOptions.taskDeadlineMs`
+     （缺省 30min），dispatch/redispatch/attach 三点武装；超时 `failed{task-deadline}` **先落账
+     后归还**（落账先行防苏醒路径的双终局竞态）；迟到结算经 runs-miss 守卫收编（不复活不二次
+     通知）；timer unref + dispose clearAll（拆卸后零写盘）。TDD 全谱 10 用例（①child 挂起
+     ②critic 挂起 ③快任务对照 ④回炉慢打转（时间闸赢次数闸）⑤命令挂起先于 120s 截断+副作用
+     未发生 ⑥迟到结算不复活（恰一通知恰一终局）⑦终局后 stop 幂等 ⑧dispose 先于 deadline
+     钉子 ⑩恢复路径武装 ⑪rebind 后通知落新会话）
   3. 已随路线评审即做（本提交）：通知携带已验收交付物（B-9 第一痛点）/ depends_on 描述
      诚实化 / T-2 run 级 outcome 语义 / hub 侧分流引导句 / CLI 引导句恒接线
 - **观察项（多任务 run）**：引擎侧已按多任务铸造（fold/readiness/notify 天然多任务），插件面

@@ -13,6 +13,10 @@ export interface WorkflowOptions {
   readonly mainSession: SessionId;
   /** 预算（缺省 DEFAULT_BUDGET） */
   readonly budget?: BudgetState;
+  /** task 级 wall-clock 总闸（挂起类防线——child 挂起/critic 挂起/回炉慢打转；缺省 30min）。
+   *  dispatch 起算覆盖任务全生命周期；超时 failed{task-deadline} 走完整归还链；
+   *  迟到结算经 runs-miss 守卫天然收编（不复活不二次通知） */
+  readonly taskDeadlineMs?: number;
   /** 非致命告警出口 */
   readonly onWarn?: (message: string) => void;
 }
