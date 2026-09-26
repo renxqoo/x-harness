@@ -47,7 +47,7 @@ export async function openRunJournal(root: string, header: RunHeader): Promise<O
   const acquired = await acquireRunLock(dir);
   if (acquired.kind !== "acquired") return { kind: "busy" };
   try {
-    await writeFile(join(dir, HEADER_NAME), `${JSON.stringify(header, null, 2)}\n`, { flag: "wx" }).catch(() => {
+    await writeFile(join(dir, HEADER_NAME), `${JSON.stringify(header, null, 2)}\n`, { flag: "wx", mode: 0o600 }).catch(() => {
       /* 已在（接管形态）——重读校验 runId 一致性 */
     });
     const readBack = await readHeader(dir);
@@ -60,7 +60,7 @@ export async function openRunJournal(root: string, header: RunHeader): Promise<O
       await acquired.lock.release();
       return recovered;
     }
-    const fh = await open(join(dir, JOURNAL_NAME), "a");
+    const fh = await open(join(dir, JOURNAL_NAME), "a", 0o600); // 期 2-D4：新建即 0600（spec 命令明文面）
     const state: SerialState = { fh, dir, lines: recovered.length };
     const writer = serialWriter(state);
     return { kind: "opened", writer: withLockRelease(writer, acquired.lock), header: readBack, snapshot: recovered.snapshot };
@@ -220,4 +220,34 @@ function withLockRelease(writer: JournalWriter, lock: { readonly release: () => 
       }
     },
   };
+}
+
+/** 会话重绑（期 2-A）：header.parentSession 重写（扫描过滤②/通知目的地下次启动即用新值） */
+export async function rewriteHeaderParent(root: string, runId: string, next: string): Promise<void> {
+  const dir = join(root, runId);
+  const header = await readHeader(dir);
+  if (header === undefined) return;
+  await writeFile(join(dir, HEADER_NAME), `${JSON.stringify({ ...header, parentSession: next }, null, 2)}\n`, "utf8");
+}
+
+/** run 目录 GC（期 2-D3）：settled run 超保留期删除（与 session 目录同策略——
+ *  归档价值随时间衰减；非 settled 永不删——在飞事实）。返回删除的 runId 集。 */
+export async function gcRuns(root: string, options: { readonly maxAgeMs: number; readonly now?: () => number }): Promise<readonly string[]> {
+  const { readdir, stat, rm } = await import("node:fs/promises");
+  const now = options.now?.() ?? Date.now();
+  const removed: string[] = [];
+  const entries = await readdir(root).catch(() => [] as string[]);
+  for (const runId of entries) {
+    const read = await readRun(root, runId);
+    if (read.kind !== "opened" || read.snapshot === undefined) continue;
+    if (read.snapshot.status !== "settled") continue; // 在飞/悬置 run 永不 GC
+    const dir = join(root, runId);
+    const info = await stat(dir).catch(() => undefined);
+    if (info === undefined || now - info.mtimeMs < options.maxAgeMs) continue;
+    await rm(dir, { recursive: true, force: true }).catch(() => {
+      /* 删除尽力：下次 GC 再试 */
+    });
+    removed.push(runId);
+  }
+  return removed;
 }

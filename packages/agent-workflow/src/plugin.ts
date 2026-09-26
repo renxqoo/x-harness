@@ -7,6 +7,7 @@ import { sessionCreated } from "@x-harness/session";
 import type { Context } from "@x-harness/core";
 import { sessionStore } from "@x-harness/session";
 import { toolRegistry } from "@x-harness/tools";
+import { defineService } from "@x-harness/core";
 import { agentLoopServiceToken } from "@x-harness/agent-loop";
 import { delegationView } from "@x-harness/agent-delegation";
 import type { WorkflowOptions } from "./types.ts";
@@ -30,8 +31,13 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
       const runtime = createRuntime(deps);
 
       // 启动扫描（§5.1/§5.2）：作用域过滤 + 二维窗口恢复——attach 把恢复 run 接进驱动面
-      void scanAndRecover(deps, (run) => ({ onCycleEnd: runtime.attach(run), redispatch: (r, caller) => runtime.redispatch(r, caller), detach: runtime.detach })).catch(() => {
+      void scanAndRecover({ ...deps, warmColdIndex: runtime.warmColdIndex }, (run) => ({ onCycleEnd: runtime.attach(run), redispatch: (r, caller) => runtime.redispatch(r, caller), detach: runtime.detach })).catch(() => {
         /* 扫描尽力：损坏 run 在 readRun 内冻结跳过 */
+      });
+
+      // run 目录 GC（期 2-D3）：settled run 超 7 天删除（与 session 目录保留期同量级）
+      void (await import("./journal.ts")).gcRuns(options.root, { maxAgeMs: 7 * 24 * 3_600_000 }).catch(() => {
+        /* GC 尽力：下次启动再试 */
       });
 
       // 边沿补投（§5.3）：sessionCreated（create/resume 同源）——微任务延迟（F14：事件
@@ -56,8 +62,10 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
           stop: (taskId: string, caller: SessionId | undefined) => runtime.stopTask(taskId, caller),
         });
       }
+      const offView = ctx.provide(workflowView, { rebind: runtime.rebind });
       const offTool = registry.register(workflowSubmitTool(runtime));
       return () => {
+        offView();
         offCreated();
         offTool();
         offSource?.();
@@ -68,3 +76,10 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
 }
 
 export type { WorkflowOptions, WorkflowRuntime } from "./types.ts";
+
+/** 宿主直调服务面（期 2-A rebind——run-repl finalizeSwitch 与 rebindMailbox 相邻接线） */
+export interface WorkflowView {
+  /** 会话切换重绑：迁移 run 归属 + 悬置通知补投 */
+  rebind(next: import("@x-harness/session").SessionId): Promise<{ ok: true } | { ok: false; reason: string }>;
+}
+export const workflowView = defineService<WorkflowView>("workflow/view");

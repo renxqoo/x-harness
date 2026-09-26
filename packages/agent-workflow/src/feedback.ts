@@ -38,3 +38,13 @@ export function commandFeedbackText(taskId: string, attempt: number, outputLines
     output,
   ].join("\n");
 }
+
+/** Tier C 反馈铸文：reopen 提案即违规清单（评审意见直达修复者） */
+export function criticFeedbackText(taskId: string, attempt: number, proposals: readonly string[]): string {
+  const list = proposals.length > 0 ? proposals.map((p) => `- ${p}`).join("\n") : "- reviewer rejected the deliverable without specific proposals";
+  return [
+    `[wf task ${taskId} attempt ${String(attempt)}]`,
+    `Independent review rejected the deliverable (${String(attempt)} of your repair budget). Fix the issues below and finish again.`,
+    list,
+  ].join("\n");
+}

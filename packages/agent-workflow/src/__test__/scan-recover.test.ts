@@ -142,7 +142,7 @@ describe("B7：archive 缺席 → 未终态 run 冻结不认领", () => {
     await loadPlugins(ctx, [sp, tp, spp, lp, alp, cttp(), cadp({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false })]);
     const deps = { ctx, root: join(root, "workflows"), mainSession: "main-1" as SessionId, loop: ctx.use(alst), store: ctx.use(st), view: ctx.tryUse((await import("@x-harness/agent-delegation")).delegationView) ?? undefined, onWarn: (m: string) => warnings.push(m) };
     const workflow = createRuntime(deps);
-    const result = await scanAndRecover(deps, (run) => ({ onCycleEnd: workflow.attach(run), redispatch: workflow.redispatch, detach: workflow.detach }));
+    const result = await scanAndRecover({ ...deps, warmColdIndex: workflow.warmColdIndex }, (run) => ({ onCycleEnd: workflow.attach(run), redispatch: workflow.redispatch, detach: workflow.detach }));
     expect(result.claimed).toBe(0); // B7：不认领
     expect(result.skipped).toBe(1);
     expect(warnings.some((w) => w.includes("no session archive"))).toBe(true); // onWarn 可观测
@@ -172,6 +172,34 @@ describe("verifying 崩溃窗口（D2——B-10 副作用双跑防线）", () =>
     expect(journal).toContain('"outcome":"unknown"'); // intent 封口
     expect(journal).toContain("verify-unknown"); // 终局原因
     expect(journal).not.toContain('"outcome":"passed"'); // 命令未被重跑判定通过
+    await world.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("冷启动停止（期 2-D2——coldStop）", () => {
+  it("未认领 run 的任务：task_stop 经盘扫落 settle{cancelled}（journal-only）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-cold-"));
+    const { openRunJournal, workflowPluginVersion } = await import("../journal.ts");
+    const made = await openRunJournal(join(root, "workflows"), { runId: "r-cold", parentSession: "main-1", cwd: root, createdAt: 1, pluginVersion: workflowPluginVersion() });
+    if (made.kind !== "opened") throw new Error("fixture");
+    await made.writer.append([{ type: "run/created", runId: "r-cold", parentSession: "main-1", cwd: root }]);
+    await made.writer.append([{ type: "task/submitted", taskId: "t-cold", spec: { description: "d", prompt: "p" } }]);
+    await made.writer.append([{ type: "task/dispatched", taskId: "t-cold", agentId: "agent-c01d0000", sessionId: "x" }]);
+    await made.writer.close(); // 释放锁——run 未被任何 runtime 认领
+
+    // 冷形态装置：无 archive（扫描不认领 run）——手工 runtime + 显式扫描（coldIndex 预热）
+    const world = await makeWorld(root, "main-1", { noArchive: true });
+    await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
+    await scanAndRecover(world.deps, attachOf(world)); // archive 缺席 → run 不认领但 coldIndex 已预热
+    // 冷路径（probe 命中 coldIndex → stopTask → coldStop 盘扫落账——手工 runtime 单实例）
+    expect(world.workflow.probeTask("t-cold", "main-1" as SessionId)).toEqual({ kind: "hit" }); // 预热生效
+    const stopped = await world.workflow.stopTask("t-cold", "main-1" as SessionId);
+    expect(stopped.ok).toBe(true);
+    expect(stopped.ok === true && stopped.text).toContain("cancelled");
+    const journal = await readFile(join(root, "workflows", "r-cold", "journal.jsonl"), "utf8");
+    expect(journal).toContain('"cause":"task-stop"');
+    expect(journal).toContain("run/settled");
     await world.dispose();
     await rm(root, { recursive: true, force: true });
   });

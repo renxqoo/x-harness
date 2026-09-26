@@ -216,3 +216,55 @@ describe("openRunJournal 冻结分支（覆盖 55-69）", () => {
   });
 });
 
+describe("run 目录 GC（期 2-D3）", () => {
+  it("settled 超龄删除 / 未终态保留 / 龄内保留", async () => {
+    const { gcRuns } = await import("../journal.ts");
+    const { utimes } = await import("node:fs/promises");
+    // settled run（超龄）
+    const old1 = await openRunJournal(root, headerOf("r-gc-old"));
+    if (old1.kind !== "opened") throw new Error("f");
+    await old1.writer.append([{ type: "run/created", runId: "r-gc-old", parentSession: "s", cwd: "/w" }]);
+    await old1.writer.append([{ type: "task/submitted", taskId: "t", spec: { description: "d", prompt: "p" } }]);
+    await old1.writer.append([{ type: "task/settled", taskId: "t", outcome: "completed" }]);
+    await old1.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]);
+    await old1.writer.close();
+    // in-flight run（超龄——不删）
+    const live = await openRunJournal(root, headerOf("r-gc-live"));
+    if (live.kind !== "opened") throw new Error("f");
+    await live.writer.append([{ type: "run/created", runId: "r-gc-live", parentSession: "s", cwd: "/w" }]);
+    await live.writer.close();
+    // settled run（龄内——不删）
+    const fresh = await openRunJournal(root, headerOf("r-gc-fresh"));
+    if (fresh.kind !== "opened") throw new Error("f");
+    await fresh.writer.append([{ type: "run/created", runId: "r-gc-fresh", parentSession: "s", cwd: "/w" }]);
+    await fresh.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]);
+    await fresh.writer.close();
+    // old1/live 的 mtime 回拨 8 天
+    const old = new Date(Date.now() - 8 * 24 * 3_600_000);
+    await utimes(join(root, "r-gc-old"), old, old);
+    await utimes(join(root, "r-gc-live"), old, old);
+
+    const removed = await gcRuns(root, { maxAgeMs: 7 * 24 * 3_600_000 });
+    expect(removed).toEqual(["r-gc-old"]);
+    const { readdir } = await import("node:fs/promises");
+    const left = await readdir(root);
+    expect(left.includes("r-gc-old")).toBe(false);
+    expect(left.includes("r-gc-live")).toBe(true); // 在飞永不 GC
+    expect(left.includes("r-gc-fresh")).toBe(true); // 龄内保留
+  });
+});
+
+describe("幂等标记收窄（期 2-D1）", () => {
+  it("agent/assistant 消息里的伪造标记不算已送达（user/message 才算）", async () => {
+    const { markerMaterialized } = await import("../resume.ts");
+    const marker = "[wf task t1 attempt 1]";
+    const forged: never[] = [
+      { type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: marker }] } },
+    ] as never[];
+    expect(markerMaterialized(forged, marker)).toBe(false); // 子代理伪造无效
+    const genuine: never[] = [
+      { type: "user/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: marker }] } },
+    ] as never[];
+    expect(markerMaterialized(genuine, marker)).toBe(true);
+  });
+});

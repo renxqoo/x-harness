@@ -20,6 +20,8 @@ export interface WorkflowOptions {
 /** 驱动面 deps（plugin apply 注入） */
 export interface WorkflowDeps extends WorkflowOptions {
   readonly ctx: import("@x-harness/core").Context;
+  /** 冷缓存预热面（期 2-D2——runtime 提供；可选：B7 冻结路径也经 deps 预热） */
+  warmColdIndex?: (tasks: Readonly<Record<string, unknown>>, parent: string) => void; // 可变（构造序回填）
   readonly loop: AgentLoopService;
   readonly store: SessionStore;
   readonly view: DelegationView | undefined;
@@ -29,7 +31,8 @@ export interface WorkflowDeps extends WorkflowOptions {
 
 /** 活跃 run 的驱动句柄 */
 export interface ActiveRun {
-  readonly header: RunHeader;
+  /** rebind（期 2-A）迁移归属时可变——journal/header/内存三面同值 */
+  header: RunHeader;
   readonly writer: JournalWriter;
   snapshot: RunSnapshot;
 }
@@ -53,6 +56,10 @@ export interface WorkflowRuntime {
   redispatch(run: ActiveRun, caller: SessionId): Promise<boolean>;
   /** 恢复终局摘除（B8）：run 出驱动面（防缓泄与 probe 误 hit） */
   detach(runId: string): void;
+  /** 会话重绑（期 2-A）：/new、/resume 后迁移 run 归属 + 悬置通知补投（与 rebindMailbox 同构） */
+  rebind(next: SessionId): Promise<{ ok: true } | { ok: false; reason: string }>;
+  /** 冷缓存预热（期 2-D2）：扫描发现的未认领任务登记（task_stop 的 probe 命中面） */
+  warmColdIndex(tasks: Readonly<Record<string, unknown>>, parent: string): void;
 }
 
 /** 提交参数（工具 schema 的 TS 形态） */
@@ -66,6 +73,7 @@ export interface SubmitInput {
   readonly acceptance?: { readonly command: string; readonly cwd?: string };
   readonly critic?: { readonly type: string; readonly focus?: string };
   readonly max_attempts?: number;
+  readonly depends_on?: readonly string[];
 }
 
 export type SubmitOutcome = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string };

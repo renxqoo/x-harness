@@ -206,15 +206,14 @@ describe("workflow_submit：Tier A 受管回炉", () => {
 });
 
 describe("提交校验", () => {
-  it("critic 期 2 拒；acceptance 可提交（Tier B 接线——无沙箱装置走 verify unknown 终局链）", async () => {
+  it("critic 提交可达（期 2-B 解锁）；acceptance 可提交（Tier B 接线）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-"));
     const world = await makeWorld({ root });
     const parentMade = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: PARENT, provider: "fake" } });
     if (!parentMade.ok) throw new Error(parentMade.reason);
     const parent = parentMade.value;
     const critic = await world.submit("main-1" as SessionId, { description: "c", prompt: "x", critic: { type: "reviewer" } });
-    expect(critic.ok).toBe(false);
-    expect(critic.ok === false && critic.reason).toContain("critic");
+    expect(critic.ok).toBe(true); // 期 2-B：critic 档解锁（类型缺失会在 spawn 链拒——此处真派发）
     // acceptance 提交不再被拒（Tier B 期 1b 已接线）；无 execEnv 装置 → verify unknown → 终局 failed
     const acceptance = await world.submit("main-1" as SessionId, { description: "a", prompt: "x", acceptance: { command: "exit 0" } });
     expect(acceptance.ok).toBe(true);

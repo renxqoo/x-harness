@@ -50,6 +50,7 @@ const submitSchema = Type.Object({
     focus: Type.Optional(Type.String({ description: "Review focus" })),
   })),
   max_attempts: Type.Optional(Type.Number({ description: "Override the repair budget (default 3)" })),
+  depends_on: Type.Optional(Type.Array(Type.String(), { description: "Task IDs this task depends on — it dispatches only after all of them settle completed (period 2 DAG)" })),
 });
 
 export function workflowSubmitTool(runtime: WorkflowRuntime): ToolDefinition {

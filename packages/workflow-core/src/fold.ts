@@ -24,6 +24,9 @@ export function step(snapshot: RunSnapshot, event: WorkflowEvent): RunSnapshot {
     case "run/settled":
       if (snapshot.status === "settled") return snapshot; // 幂等（恢复重放同卷）
       return { ...snapshot, status: "settled", outcome: event.outcome, settledDetail: event.detail };
+    case "run/rebound":
+      // 会话重绑（期 2-A）：run 归属迁移——通知目的地/就绪派发随新会话
+      return { ...snapshot, parentSession: event.to };
     case "task/submitted":
       return withTask(snapshot, event.taskId, (task) => task ?? initialTask(event));
     case "task/dispatched":

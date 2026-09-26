@@ -39,7 +39,7 @@ interface World {
   dispose: () => Promise<void>;
 }
 
-export async function makeWorld(root: string, mainSession = "main-1"): Promise<World> {
+export async function makeWorld(root: string, mainSession = "main-1", options: { readonly noArchive?: boolean } = {}): Promise<World> {
   const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();
   const ctx = createContext();
   const plugins: readonly Plugin[] = [
@@ -50,7 +50,7 @@ export async function makeWorld(root: string, mainSession = "main-1"): Promise<W
     agentLoopPlugin,
     createTaskToolsPlugin(),
     createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
-    createJsonlSessionPersistence({ root: join(root, "sessions") }),
+    ...(options.noArchive === true ? [] : [createJsonlSessionPersistence({ root: join(root, "sessions") })]),
     // 不装 workflow 插件（apply 会自动扫描认领——与显式 scanAndRecover 双跑抢锁）；
     // runtime 手工构造，扫描唯一入口 = 测试显式调用
   ];
@@ -59,8 +59,9 @@ export async function makeWorld(root: string, mainSession = "main-1"): Promise<W
   const { createRuntime } = await import("../runtime.ts");
   const view = ctx.tryUse((await import("@x-harness/agent-delegation")).delegationView);
   const archive = ctx.tryUse((await import("@x-harness/session")).sessionArchive);
-  const deps: WorkflowDeps = { ctx, root: join(root, "workflows"), mainSession: mainSession as SessionId, loop, store: ctx.use(sessionStore), view: view ?? undefined, ...(archive !== undefined ? { archive } : {}) };
+  const deps: WorkflowDeps = { ctx, root: join(root, "workflows"), mainSession: mainSession as SessionId, loop, store: ctx.use(sessionStore), view: view ?? undefined,  ...(archive !== undefined ? { archive } : {}) };
   const workflow = createRuntime(deps);
+  deps.warmColdIndex = workflow.warmColdIndex; // 延迟回填（构造序）
   const off = ctx.use(llmRuntime).registerAdapter({
     name: "fake",
     stream: async function* (request: LlmRequest): AsyncGenerator<LlmChunk> {

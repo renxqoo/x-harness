@@ -5,6 +5,7 @@
 export type WorkflowEvent =
   | { readonly type: "run/created"; readonly runId: string; readonly parentSession: string; readonly cwd: string }
   | { readonly type: "run/settled"; readonly outcome: RunOutcome; readonly detail: string }
+  | { readonly type: "run/rebound"; readonly from: string; readonly to: string }
   | { readonly type: "task/submitted"; readonly taskId: string; readonly spec: TaskSpec }
   | { readonly type: "task/dispatched"; readonly taskId: string; readonly agentId: string; readonly sessionId: string }
   | { readonly type: "task/repair-issued"; readonly taskId: string; readonly tier: TierKind; readonly attempt: number; readonly violations?: readonly string[]; readonly output?: string }
@@ -41,6 +42,8 @@ export interface TaskSpec {
   readonly acceptance?: { readonly command: string; readonly cwd?: string };
   readonly critic?: { readonly type: string; readonly focus?: string };
   readonly maxAttempts?: number;
+  /** 依赖的 taskId 集（期 2 DAG——就绪判定在 readiness.dependencyVerdict） */
+  readonly dependsOn?: readonly string[];
 }
 
 // ————————————————————————— 快照（fold 的产出，§10 状态机规格） —————————————————————————

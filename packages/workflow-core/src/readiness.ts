@@ -35,8 +35,8 @@ export function readiness(snapshot: RunSnapshot, input: ReadinessInput): Readine
   const window = input.maxInFlight - inFlight.length;
   for (const task of tasks) {
     if (task.status !== "submitted") continue;
-    const verdict = dependencyVerdict([], snapshot.tasks); // 期 1：无依赖字段恒 ready（期 2 传 spec.dependsOn）
-    if (verdict === "doomed") dependencyDoomed.push(task.taskId);
+    const verdict = dependencyVerdict(task.spec.dependsOn ?? [], snapshot.tasks); // 期 2：spec.dependsOn 真值
+    if (verdict === "doomed" || verdict === "orphan") dependencyDoomed.push(task.taskId); // orphan = 悬空引用（提交校验应拦——兜底同 doomed）
     else if (verdict === "ready" && dispatchable.length < window) dispatchable.push(task.taskId);
     // window 满时其余 ready 任务自然留待下轮（不减 doomed 判定）
   }

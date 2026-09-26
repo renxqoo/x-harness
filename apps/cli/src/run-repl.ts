@@ -18,6 +18,7 @@ import { runSlashCommand } from "./slash-commands.ts";
 import type { SlashDeps, SlashDial } from "./slash-commands.ts";
 import type { World } from "./build-world.ts";
 import { delegationView } from "@x-harness/agent-delegation";
+import { workflowView } from "@x-harness/agent-workflow";
 import type { SessionId } from "@x-harness/session";
 import { sessionEvent } from "@x-harness/session";
 import pkg from "../package.json";
@@ -128,6 +129,9 @@ async function finalizeSwitch(deps: {
   // 换目标——失败仅告警（跨进程收件降级为不可达，进程内子代理与对话不受影响）
   const rebound = await world.ctx.tryUse(delegationView)?.rebindMailbox(handle.agent.session.id);
   if (rebound !== undefined && !rebound.ok) io.write(`warning: mailbox rebind failed (${rebound.reason}) — cross-session messaging may misroute\n`);
+  // workflow run 归属迁移（件16 期 2-A）：切会话后 workflow_submit 复活 + 悬置通知转向新会话
+  const workflowRebound = await world.ctx.tryUse(workflowView)?.rebind(handle.agent.session.id);
+  if (workflowRebound !== undefined && !workflowRebound.ok) io.write(`warning: workflow rebind failed (${workflowRebound.reason}) — pending runs keep the old session\n`);
   const dial = dialOf(handle.agent.options);
   deps.onDial(dial);
   if (deps.newSession) return `new session ${handle.agent.session.id} (${dial.provider ?? "?"}/${dial.model ?? "?"})`;

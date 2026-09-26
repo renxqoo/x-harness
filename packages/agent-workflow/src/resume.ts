@@ -42,7 +42,9 @@ export function classifyChildTerminal(events: readonly SessionEvent[]): ChildTer
 /** 幂等判据（F7）：标记出现在已材料化消息（user/message 或 agent/message 事件体）中 */
 export function markerMaterialized(events: readonly SessionEvent[], marker: string): boolean {
   for (const event of events) {
-    if (event.type !== "user/message" && event.type !== "agent/message" && event.type !== "assistant/message") continue;
+    // 期 2-D1 收窄：只认 user/message（注入通道的事实）——子代理在自己的输出里伪造
+    // 同标记不能再骗恢复层跳过反馈（终审 R2）
+    if (event.type !== "user/message") continue;
     if (JSON.stringify(event.data).includes(marker)) return true;
   }
   return false;
@@ -58,6 +60,7 @@ export interface RecoveryResult {
 /** 启动扫描（§5.1）：三过滤 + header 剪枝；§5.2 二维窗口补动作。
  *  attach 到 runtime（恢复的 run 进 runtime 驱动面——后续通知/验收照常）。 */
 export async function scanAndRecover(deps: WorkflowDeps, attach: (run: ActiveRun) => { readonly onCycleEnd: (agentId: string, report: import("./types.ts").ManagedReport) => Promise<void>; readonly redispatch: (run: ActiveRun, caller: SessionId) => Promise<boolean>; readonly detach: (runId: string) => void }): Promise<RecoveryResult> {
+  const attachWarm: (tasks: Readonly<Record<string, unknown>>, parent: string) => void = deps.warmColdIndex ?? (() => {});
   const { readdir } = await import("node:fs/promises");
   let claimed = 0;
   let skipped = 0;
@@ -68,6 +71,8 @@ export async function scanAndRecover(deps: WorkflowDeps, attach: (run: ActiveRun
       skipped += 1; // frozen（header/journal 损坏）——§3.1 恢复矩阵
       continue;
     }
+    // 期 2-D2：冷缓存登记（未认领 run 的 task_stop probe 命中面——认领与否都先登记）
+    if (read.snapshot !== undefined) attachWarm(read.snapshot.tasks, read.snapshot.parentSession);
     // 过滤②：parentSession 归属（§5.1——期 1 只认 mainSession）
     if (read.header.parentSession !== String(deps.mainSession)) {
       skipped += 1;
