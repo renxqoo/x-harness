@@ -288,32 +288,55 @@ interface TaskResult {
   readonly tokensIn: number;
   readonly tokensOut: number;
   readonly cacheRead: number;
+  readonly steps: number;
+  readonly journalEvents: number;
   readonly journalTail: string;
   readonly deliverable: string;
+}
+
+/** 通知尾的 usage 行解析（两形态统一口径） */
+function usageOfNotification(notifBlock: string): { input?: number; output?: number; cacheRead?: number } | undefined {
+  const m = /usage: (\{[^}]*\})/.exec(notifBlock);
+  return m !== null ? (JSON.parse(m[1]) as { input?: number; output?: number; cacheRead?: number }) : undefined;
+}
+
+/** 子会话轮数（通知 session 行 → 会话事件的 turn/start 计数） */
+function childTurnsOf(w: BenchWorld, notifBlock: string): number {
+  const childIdMatch = /session ([A-Za-z0-9._-]+)/.exec(notifBlock);
+  if (childIdMatch?.[1] === undefined) return 0;
+  const store = w.ctx.use(sessionStore);
+  let turns = 0;
+  for (const e of store.get(childIdMatch[1] as SessionId)?.events() ?? []) {
+    if (e.type === "turn/start") turns += 1;
+  }
+  return turns;
+}
+
+/** 等待完成通知并取末段块（两形态共用——超时返回空串） */
+async function awaitNotification(w: BenchWorld, marker: string, timeoutMs: number): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await sleep(2_000);
+    if (w.texts().includes(marker)) break;
+  }
+  const texts = w.texts();
+  const idx = texts.lastIndexOf(marker);
+  return idx >= 0 ? texts.slice(idx, idx + 6_000) : "";
 }
 
 /** 直通形态：agent_spawn（无验收）——模型把子代理的完成通知文本当交付物 */
 async function runViaSubagent(w: BenchWorld, task: BenchTask): Promise<Omit<TaskResult, "mode" | "run" | "task">> {
   const t0 = Date.now();
   const spawned = await w.dispatch("agent_spawn", { description: task.name, prompt: task.prompt });
-  if (!spawned.ok) return { wallMs: Date.now() - t0, score: 0, scoreDetail: `spawn 失败：${spawned.text.slice(0, 80)}`, llmCalls: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, journalTail: "", deliverable: "" };
-  // 等完成通知（agent-notification——文本里带子代理报告）
-  const deadline = Date.now() + 90_000;
-  while (Date.now() < deadline) {
-    await sleep(2_000);
-    if (w.texts().includes("agent-notification")) break;
-  }
-  const texts = w.texts();
-  const notifIdx = texts.lastIndexOf("agent-notification");
-  const notifBlock = notifIdx >= 0 ? texts.slice(notifIdx, notifIdx + 6_000) : "";
+  if (!spawned.ok) return { wallMs: Date.now() - t0, score: 0, scoreDetail: `spawn 失败：${spawned.text.slice(0, 80)}`, llmCalls: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, steps: 1, journalEvents: 0, journalTail: "", deliverable: "" };
+  const notifBlock = await awaitNotification(w, "agent-notification", 90_000);
+  const childTurns = childTurnsOf(w, notifBlock);
   
   // 子会话 token（从通知里拿 agent id 不可靠——直接找最新 spawned 子会话：经 texts 不可得，
   // 简化：本次基准用父会话 llm.chat 数+token 做两形态共同面，子会话侧由 workflow 形态的
   // journal+spawn 捕获补充。直通形态子会话 token 计入父侧不可行——用通知块近似无意义。
   // 诚实口径：直通形态记录父会话成本（调度开销），子会话成本两形态同源（同模型同 prompt 前缀）。
-  // 子会话成本口径：通知 usage 行（两形态统一——比 telemetry 查询面可靠，sqlite 落盘时序免依赖）
-  const uMatch = /usage: (\{[^}]*\})/.exec(notifBlock);
-  const u = uMatch !== null ? (JSON.parse(uMatch[1]) as { input?: number; output?: number; cacheRead?: number }) : undefined;
+  const u = usageOfNotification(notifBlock);
   return {
     wallMs: Date.now() - t0,
     score: task.score(stripUsage(notifBlock)).points,
@@ -322,6 +345,8 @@ async function runViaSubagent(w: BenchWorld, task: BenchTask): Promise<Omit<Task
     tokensIn: u?.input ?? 0,
     tokensOut: u?.output ?? 0,
     cacheRead: u?.cacheRead ?? 0,
+    steps: 1 + childTurns, // 父 dispatch 1 + 子轮数
+    journalEvents: 0,
     journalTail: "（直通无 journal）",
     deliverable: notifBlock.slice(0, 200),
   };
@@ -331,15 +356,8 @@ async function runViaSubagent(w: BenchWorld, task: BenchTask): Promise<Omit<Task
 async function runViaWorkflow(w: BenchWorld, task: BenchTask): Promise<Omit<TaskResult, "mode" | "run" | "task">> {
   const t0 = Date.now();
   const sent = await w.dispatch("workflow_submit", { description: task.name, prompt: task.prompt, ...(task.schema !== undefined ? { result_schema: task.schema } : {}) });
-  if (!sent.ok) return { wallMs: Date.now() - t0, score: 0, scoreDetail: `提交失败：${sent.text.slice(0, 80)}`, llmCalls: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, journalTail: "", deliverable: "" };
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    await sleep(2_000);
-    if (w.texts().includes("workflow-notification")) break;
-  }
-  const texts = w.texts();
-  const nIdx = texts.lastIndexOf("workflow-notification");
-  const notif = nIdx >= 0 ? texts.slice(nIdx, nIdx + 6_000) : "";
+  if (!sent.ok) return { wallMs: Date.now() - t0, score: 0, scoreDetail: `提交失败：${sent.text.slice(0, 80)}`, llmCalls: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0, steps: 1, journalEvents: 0, journalTail: "", deliverable: "" };
+  const notif = await awaitNotification(w, "workflow-notification", 120_000);
   // journal（回炉轮次证据）
   let journalTail = "";
   for (const rid of await readdir(join(w.root, "workflows")).catch(() => [] as string[])) {
@@ -352,6 +370,8 @@ async function runViaWorkflow(w: BenchWorld, task: BenchTask): Promise<Omit<Task
   let tokensOut = 0;
   let cacheRead = 0;
   let llmCalls = 0;
+  let childTurns = 0;
+  const store = w.ctx.use(sessionStore);
   for (const sid of w.spawnedSessions()) {
     const su = w.tel.usageOf(sid as SessionId);
     if (su !== undefined) {
@@ -360,7 +380,11 @@ async function runViaWorkflow(w: BenchWorld, task: BenchTask): Promise<Omit<Task
       cacheRead += Number(su.cacheRead);
     }
     llmCalls += w.tel.spansOf(sid as SessionId).filter((sp) => sp.name === "llm.chat" && sp.endMs !== null).length;
+    for (const e of store.get(sid as SessionId)?.events() ?? []) {
+      if (e.type === "turn/start") childTurns += 1;
+    }
   }
+  const journalEvents = journalTail.split("→").filter((t) => t !== "" && t !== "?").length;
   // deliverable（通知里的 deliverable: 行——B-9 回传）
   const dm = /deliverable:\\n?([\s\S]{0,600})/.exec(notif) ?? /deliverable":?"?([^"]{0,400})/.exec(notif);
   const deliverable = dm?.[1] ?? "";
@@ -374,6 +398,8 @@ async function runViaWorkflow(w: BenchWorld, task: BenchTask): Promise<Omit<Task
     tokensIn,
     tokensOut,
     cacheRead,
+    steps: 1 + childTurns, // 父 dispatch 1 + 全部子代理轮数（含 critic）
+    journalEvents,
     journalTail,
     deliverable: deliverable.slice(0, 200),
   };
@@ -442,7 +468,8 @@ for (const task of tasks) {
     const avgOut = rs.reduce((a, r) => a + r.tokensOut, 0) / rs.length;
     const avgCalls = rs.reduce((a, r) => a + r.llmCalls, 0) / rs.length;
     const r0 = rs[0]!;
-    console.log(`  ${mode === "subagent" ? "直通" : "workflow"}: 质量 ${(avgScore * 100).toFixed(0)}%（${r0.scoreDetail}）· ${(avgWall / 1000).toFixed(1)}s · 子侧 in ${String(Math.round(avgIn))}/out ${String(Math.round(avgOut))} · llm.chat ${avgCalls.toFixed(1)}`);
+    const avgSteps = rs.reduce((a, r) => a + r.steps, 0) / rs.length;
+    console.log(`  ${mode === "subagent" ? "直通" : "workflow"}: 质量 ${(avgScore * 100).toFixed(0)}%（${r0.scoreDetail}）· ${(avgWall / 1000).toFixed(1)}s · 步骤 ${avgSteps.toFixed(1)} · 子侧 in ${String(Math.round(avgIn))}/out ${String(Math.round(avgOut))} · llm.chat ${avgCalls.toFixed(1)}${mode === "workflow" ? ` · journal ${String(r0.journalEvents)} 事件` : ""}`);
     if (mode === "workflow") console.log(`    journal: ${r0.journalTail}`);
   }
 }
@@ -453,11 +480,12 @@ const agg = (mode: "subagent" | "workflow") => {
   return {
     score: rs.reduce((a, r) => a + r.score, 0) / Math.max(1, rs.length),
     wall: rs.reduce((a, r) => a + r.wallMs, 0) / Math.max(1, rs.length),
+    steps: rs.reduce((a, r) => a + r.steps, 0) / Math.max(1, rs.length),
   };
 };
 const s = agg("subagent");
 const f = agg("workflow");
 console.log(`\n════════════════ 汇总 ════════════════`);
-console.log(`直通:     平均质量 ${(s.score * 100).toFixed(0)}% · 平均 ${(s.wall / 1000).toFixed(1)}s`);
-console.log(`workflow: 平均质量 ${(f.score * 100).toFixed(0)}% · 平均 ${(f.wall / 1000).toFixed(1)}s`);
+console.log(`直通:     平均质量 ${(s.score * 100).toFixed(0)}% · 平均 ${(s.wall / 1000).toFixed(1)}s · 平均步骤 ${s.steps.toFixed(1)}`);
+console.log(`workflow: 平均质量 ${(f.score * 100).toFixed(0)}% · 平均 ${(f.wall / 1000).toFixed(1)}s · 平均步骤 ${f.steps.toFixed(1)}`);
 console.log(`质量差: ${((f.score - s.score) * 100).toFixed(0)}pp · 时延差: ${((f.wall - s.wall) / 1000).toFixed(1)}s`);
