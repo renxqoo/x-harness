@@ -3,7 +3,7 @@
 // 观测面：① 每会话 token 用量（input/output/cache——llm span 聚合）② span 时间线（工具调用
 // 时长/llm attempt 数）③ workflow journal 事件流（回炉次数/验收轮次）④ 与直通对照的成本差。
 
-import { mkdtemp, rm, readdir, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -23,7 +23,6 @@ import { createBunSqliteExecutor, sqliteTelemetry, sqliteTelemetryPlugin } from 
 import type { TelemetryQueryService } from "@x-harness/telemetry-sqlite";
 import { createOpenaiCompatAdapter } from "@x-harness/llm";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(() => {
