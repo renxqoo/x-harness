@@ -187,16 +187,16 @@ describe("manual runner（服务直调）", () => {
     }
   });
 
-  it("92% 缺省水位（不传 triggerPct）：920 边界——915 不触发、930 触发强制压缩", async () => {
-    const world = await makeWorld(); // 缺省 triggerPct=92：水位 = 1000 × 92% = 920
+  it("缺省水位按窗口分档（§7.4：窗 1000 落 ≤300k 首档 → 80%）：800 边界——795 不触发、810 触发强制压缩", async () => {
+    const world = await makeWorld(); // 缺省分档（§7.4 首档 80%）：水位 = 1000 × 80% = 800
     try {
       const made = await world.store.create({ id: sid("pct-default") });
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500, output: 5 } } });
-      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 915, output: 5 } } }); // < 920
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 795, output: 5 } } }); // < 920
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(0);
-      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 930, output: 5 } } }); // > 920
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 810, output: 5 } } }); // > 920
       world.llm.scripts.push(textScript("BACK"));
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(1);

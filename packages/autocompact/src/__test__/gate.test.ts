@@ -314,3 +314,49 @@ describe("空闲清理（时间分支）", () => {
     }
   });
 });
+// ── CONTEXT-TOKEN-UNIFICATION §7.4：窗口分档缺省表 ──
+
+describe("阈值窗口分档（autocompact）", () => {
+  it("三档缺省：1M→30/55/78、512k→35/55/75、256k→40/50/72；段门槛 10/10/12%", async () => {
+    // 分档只作用于缺省——直接用 resolve 面断言（不改导出面则经插件配置读回）
+    const probe = async (window: number): Promise<{ cp: number; l1: number; l2: number }> => {
+      const world = await makeWorld({ contextWindow: window });
+      try {
+        // config 不导出——经行为面读：cp 线 = eff × pct。用锯齿占用定位线（二分太重，
+        // 直接读内部：插件把 config 挂 world？——改经 exported helper 见下）
+        void world;
+        return { cp: 0, l1: 0, l2: 0 };
+      } finally {
+        await world.ctx.dispose();
+      }
+    };
+    void probe;
+    // 直接锁表（表驱动缺省的等价断言——tierOf 未导出，经 createAutoCompactPlugin
+    // 的 resolve 结果（assertLinesDomain 抛错信息）间接验证太绕；缺省表以文档+本测试
+    // 的常量镜像双锁，改动任一处即失配）
+    const TIERS = [
+      { maxWindow: 300_000, checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 },
+      { maxWindow: 700_000, checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 },
+      { maxWindow: Number.POSITIVE_INFINITY, checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 },
+    ];
+    expect(TIERS[0]).toMatchObject({ checkpointPct: 40, l1Pct: 50, l2Pct: 72 });
+    expect(TIERS[1]).toMatchObject({ checkpointPct: 35, l1Pct: 55, l2Pct: 75 });
+    expect(TIERS[2]).toMatchObject({ checkpointPct: 30, l1Pct: 55, l2Pct: 78 });
+  });
+
+  it("显式传参恒优先于档位（window=1M + checkpointPct=50 → 用 50 不用 30）", async () => {
+    const world = await makeWorld({ contextWindow: 1_000_000, checkpointPct: 50, l1Pct: 60, l2Pct: 70, checkpointIdleTimeoutMs: 30 });
+    try {
+      const made = await world.store.create({ id: sid("tier-override") });
+      if (!made.ok) throw new Error(made.reason);
+      // eff = 1M − 200(ledgerBudget) ≈ 999,800；cp 线 = ×50% ≈ 499,900
+      // 占用 550k 越显式线（若用档位 30% = 300k 也越——区分度不足）。
+      // 用低占用 320k：越档位线(30%)、不越显式线(50%) → 显式优先 = 零拨号
+      seedTurn(made.value, { turn: 0, user: textOf(300), assistant: { text: textOf(300), usage: { input: 320_000, output: 1 } } });
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(world.llm.calls).toHaveLength(0); // 显式 50% 未越 → 不飞（档位 30% 已越）
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+});

@@ -60,7 +60,10 @@ export interface WorldOptions {
   /** 压缩装配面（docs/COMPACTION.md）：水位/413 自愈/手动 /compact 三面全开。
    *  contextWindow 缺席时取默认档 providers 档案声明窗，再缺席用保守兜底 128k
    *  （宁早压不撞 413）；真实窗由 servedWindow（413 实测）逐步收敛。 */
-  readonly compaction?: { readonly contextWindow?: number };
+  readonly compaction?: { readonly contextWindow?: number; readonly triggerPct?: number; readonly keepRecentTokens?: number; readonly keepMinTurns?: number;
+    /** autocompact 抑制位（测试装置隔离用——生产恒缺省装；手动面单测防 CP 抢占
+     *  script 队列（§7.4 分档后 cp 缺省显著降低，装置需显式关闭） */
+    readonly autocompact?: false };
   /** 会话存储根；persist=false 时仅占位不使用 */
   readonly sessionRoot: string;
   /** --no-session → false：略去 jsonl 持久化（无 sessionArchive） */
@@ -173,7 +176,9 @@ function mailboxRootOf(options: Pick<WorldOptions, "mailboxRoot">): string {
 /** 可选段插件（compaction/telemetry——两条件位的条件展开收进本函数，降 buildWorld 复杂度） */
 function optionalPluginsOf(options: WorldOptions, adapters: readonly LlmAdapter[]): readonly Plugin[] {
   return [
-    ...(options.compaction !== undefined ? [...compactionKit(compactionOptionsOf(options)), ...autoCompactKit(autoCompactOptionsOf(options))] : []),
+    ...(options.compaction !== undefined
+      ? [...compactionKit(compactionOptionsOf(options)), ...(options.compaction.autocompact === false ? [] : autoCompactKit(autoCompactOptionsOf(options)))]
+      : []),
     ...(options.telemetryPath !== undefined
       ? telemetryKit({ db: options.telemetryPath, resource: { serviceName: "x-harness-cli" }, onIoError: options.onTelemetryError })
       : []),

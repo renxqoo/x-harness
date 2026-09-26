@@ -67,6 +67,32 @@ const DEFAULTS = {
   toolResultCapTokens: 25_000,
 } as const;
 
+/**
+ * 窗口分档阈值表（CONTEXT-TOKEN-UNIFICATION §7.4 定稿——真实会话重放 +
+ * 三家准则合成）：
+ * - CP 越早越省（反直觉但实证）：拨号成本 = 账本 + 新段，段小则每次便宜且
+ *   摘要密度高；armed 空转检查也少（60%/20% 版被滤 155 次 vs 30%/10% 版 6 次）；
+ * - L1 零成本层可以激进（早回收减少后续压力）；
+ * - L2 零 LLM 结构收缩提前无损；
+ * - 水位 = 异常兜底而非常规防线（比 claude 1M 的 96.7% 激进、与 kimi 85% 持平，
+ *   但 L2 已在前面收紧——触发水位说明前层失效）；
+ * - 小窗按绝对余量提前：余量下限不是百分比而是「最大单步暴涨」（实测 29.6k）
+ *   + 摘要输出预留（20k）——256k 档水位 80% = 余 51k > 33k 绝对保险线（claude 准则）。
+ */
+const TIERS = [
+  { maxWindow: 300_000, checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 },
+  { maxWindow: 700_000, checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 },
+  { maxWindow: Number.POSITIVE_INFINITY, checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 },
+] as const;
+
+/** 窗口档位解析：contextWindow 落入的首档（≤300k / ≤700k / 其余）。末档
+ *  Infinity 恒匹配——find 空集运行不可达，解构兜底满足收窄。 */
+const [, , FALLBACK_TIER] = TIERS;
+
+function tierOf(contextWindow: number): (typeof TIERS)[number] {
+  return TIERS.find((tier) => contextWindow <= tier.maxWindow) ?? FALLBACK_TIER;
+}
+
 interface PreStepPayload {
   readonly session: SessionId;
   readonly turn: number;
@@ -75,13 +101,15 @@ interface PreStepPayload {
 }
 
 export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
+  // 窗口档位（阈值分档缺省的判定源；显式传参恒优先——用户/装配覆盖不受档位影响）
+  const tier = tierOf(options.contextWindow);
   const config: WritableGateConfig = {
     contextWindow: options.contextWindow,
     idleClearMinutes: options.idleClearMinutes ?? DEFAULTS.idleClearMinutes,
     idleClearMinGainTokens: options.idleClearMinGainTokens ?? DEFAULTS.idleClearMinGainTokens,
-    checkpointPct: options.checkpointPct ?? DEFAULTS.checkpointPct,
-    l1Pct: options.l1Pct ?? DEFAULTS.l1Pct,
-    l2Pct: options.l2Pct ?? DEFAULTS.l2Pct,
+    checkpointPct: options.checkpointPct ?? tier.checkpointPct,
+    l1Pct: options.l1Pct ?? tier.l1Pct,
+    l2Pct: options.l2Pct ?? tier.l2Pct,
     ledgerBudgetTokens: options.ledgerBudgetTokens ?? DEFAULTS.ledgerBudgetTokens,
     clearKeepRecent: options.clearKeepRecent ?? DEFAULTS.clearKeepRecent,
     clearableTools: options.clearableTools ?? DEFAULTS.clearableTools,
@@ -120,7 +148,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       });
       assertLinesDomain({ lines: probe, ledgerBudgetTokens: config.ledgerBudgetTokens, checkpointPct: config.checkpointPct });
       config.checkpointMinSegmentTokens =
-        options.checkpointMinSegmentTokens ?? Math.floor(probe.effectiveWindow * 0.2);
+        options.checkpointMinSegmentTokens ?? Math.floor(probe.effectiveWindow * (tier.segmentPct / 100));
 
       const warn = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
         const suffix = detail === undefined ? "" : ` ${JSON.stringify(detail)}`;

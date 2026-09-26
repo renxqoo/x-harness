@@ -69,7 +69,7 @@ async function makeFixture(scripts: LlmChunk[][], persist: boolean): Promise<Fix
 
     cwd: root,
     sessionRoot: join(root, "sessions"),
-    compaction: { contextWindow: 200_000 }, // 手动 /compact 走 compactionRunner（生产路径）
+    compaction: { contextWindow: 200_000, triggerPct: 92, autocompact: false }, // 手动 /compact 走 compactionRunner（生产路径）；autocompact:false 装置隔离——§7.4 分档后 cp 缺省显著降低，防 CP 抢占 script 队列
     persist,
     config: CONFIG.config,
     resolution: CONFIG.resolution,

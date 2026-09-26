@@ -41,11 +41,24 @@ export interface CompactionOptions {
 }
 
 const DEFAULT_RESERVE = 16_384;
-const DEFAULT_KEEP_RECENT = 20_000;
-const DEFAULT_TRIGGER_PCT = 92;
 /** 轮次下限护栏缺省（CONTEXT-TOKEN-UNIFICATION §7.3：真实数据背书——受益面 71%
  *  的会话末 5 轮含大工具轮；5 轮保留量中位 43k / max 233k 不失控） */
-const DEFAULT_KEEP_MIN_TURNS = 5;
+
+/** 水位分档缺省表（CONTEXT-TOKEN-UNIFICATION §7.4 定稿）：水位 = 异常兜底而非
+ *  常规防线（L2 已在前收紧）；比 claude 1M 档（96.7%）激进、与 kimi（85%）持平。
+ *  小窗按绝对余量提前：余量 ≥ 最大单步暴涨（实测 29.6k）+ 摘要输出预留（20k）
+ *  = 33k 绝对保险线（claude 准则）——256k 档 80% = 余 51k > 33k。 */
+const TRIGGER_TIERS = [
+  { maxWindow: 300_000, triggerPct: 80, keepRecentTokens: 12_000, keepMinTurns: 3 },
+  { maxWindow: 700_000, triggerPct: 83, keepRecentTokens: 16_000, keepMinTurns: 4 },
+  { maxWindow: Number.POSITIVE_INFINITY, triggerPct: 85, keepRecentTokens: 20_000, keepMinTurns: 5 },
+] as const;
+
+const [, , TRIGGER_FALLBACK] = TRIGGER_TIERS;
+
+function triggerTierOf(contextWindow: number): (typeof TRIGGER_TIERS)[number] {
+  return TRIGGER_TIERS.find((tier) => contextWindow <= tier.maxWindow) ?? TRIGGER_FALLBACK;
+}
 
 /** 窗口溢出码闭集（自愈唤醒词表——docs/OUTPUT-TOKEN-CONTINUATION.md compaction 节）：
  *  `http-413` = 状态码直报；`context-overflow` = llm 层 overflow 文案分类（主力 provider
@@ -68,7 +81,7 @@ function expectNumber(name: string, value: number, min: number): number {
 /** 装配期值域 fail-fast + 缺省解析 */
 function resolveConfig(options: CompactionOptions): ResolvedConfig {
   const contextWindow = expectNumber("contextWindow", options.contextWindow, 1);
-  const triggerPct = expectNumber("triggerPct", options.triggerPct ?? DEFAULT_TRIGGER_PCT, 1);
+  const triggerPct = expectNumber("triggerPct", options.triggerPct ?? triggerTierOf(contextWindow).triggerPct, 1);
   if (triggerPct > 99) {
     throw new Error("compaction: triggerPct must be <= 99 (threshold would sit at the window edge)");
   }
@@ -76,8 +89,8 @@ function resolveConfig(options: CompactionOptions): ResolvedConfig {
   if (reserveTokens * 2 > contextWindow) {
     throw new Error("compaction: reserveTokens * 2 must not exceed contextWindow (threshold would be non-positive)");
   }
-  const keepRecentTokens = expectNumber("keepRecentTokens", options.keepRecentTokens ?? DEFAULT_KEEP_RECENT, 0);
-  const keepMinTurns = expectNumber("keepMinTurns", options.keepMinTurns ?? DEFAULT_KEEP_MIN_TURNS, 0);
+  const keepRecentTokens = expectNumber("keepRecentTokens", options.keepRecentTokens ?? triggerTierOf(contextWindow).keepRecentTokens, 0);
+  const keepMinTurns = expectNumber("keepMinTurns", options.keepMinTurns ?? triggerTierOf(contextWindow).keepMinTurns, 0);
   const idleTimeoutMs = expectNumber("idleTimeoutMs", options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS, 0);
   return {
     contextWindow,

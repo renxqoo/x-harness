@@ -79,12 +79,14 @@ export const COMPACTION_BASE = {
   contextWindow: 1_000,
   reserveTokens: 50,
   keepRecentTokens: 1,
+  keepMinTurns: 5, // 行为面测试钉旧缺省（分档缺省见 compaction 侧专测）
+  triggerPct: 92, // 同上——旅程断言沿旧水位线
   summarizer: { model: "sum", contextWindow: 100_000, maxOutputTokens: 100 },
 } as const;
 
 export const AUTOCOMPACT_BASE = {
   contextWindow: 1_000,
-  checkpointPct: 60,
+  checkpointPct: 60, // 行为面测试显式钉值（缺省分档见 plugin-tiers.test）
   l1Pct: 89, // eff=900 → l1=l2=801、warn=701（单线形态——各区分界断言沿旧线保持）
   l2Pct: 89,
   warnBufferTokens: 100,
