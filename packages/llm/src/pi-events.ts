@@ -25,8 +25,11 @@ export function foldUsage(usage: { input: number; output: number; cacheRead: num
     usage: {
       input,
       output: usage.output,
-      ...(usage.cacheRead > 0 ? { cacheRead: usage.cacheRead } : {}),
-      ...(usage.cacheWrite > 0 ? { cacheWrite: usage.cacheWrite } : {}),
+      // cacheRead/cacheWrite 恒透传（0 也是有效观测——非缺席）：下游尾值口径
+      // （token-meter lastReportedCacheRead）依赖字段在场性区分「命中 0」与
+      // 「后端未报」，剥除 0 键会让尾值滞留上一轮非零值，命中率失真。
+      cacheRead: usage.cacheRead,
+      cacheWrite: usage.cacheWrite,
       ...(usage.totalTokens !== undefined && usage.totalTokens > 0 ? { totalTokens: usage.totalTokens } : {}),
       ...(usage.cost !== undefined && usage.cost.total > 0 ? { cost: usage.cost } : {}),
     } satisfies TokenUsage,

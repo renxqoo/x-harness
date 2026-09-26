@@ -195,7 +195,8 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   it("usage 全零守卫：缺报后端不产噪音帧；foldUsage 直接断言", () => {
     expect(foldUsage({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([]);
     expect(foldUsage(undefined)).toEqual([]);
-    expect(foldUsage({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([{ type: "usage", usage: { input: 1, output: 0 } }]); // 零 cache 不透传
+    // cache 键恒透传（0 = 命中零——有效观测非缺席；剥除会让下游尾值滞留旧轮）
+    expect(foldUsage({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([{ type: "usage", usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } }]);
   });
 
   it("error：usage 先行（失败尝试计费）→ 状态码在场落 http-<status> + retryAfterMs 透传", async () => {
@@ -203,7 +204,7 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
       failureInfo: () => ({ status: 429, retryAfterMs: 2500 }),
     });
     expect(chunks).toEqual([
-      { type: "usage", usage: { input: 3, output: 4 } },
+      { type: "usage", usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "error", message: "rate limited", code: "http-429", retryAfterMs: 2500 } },
     ]);
   });
@@ -257,13 +258,13 @@ describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透
     expect(
       await collect([assistantEvent({ type: "done", reason: "length", message: { usage: { input: 141174, output: 0, cacheRead: 0, cacheWrite: 0 } } })]),
     ).toEqual([
-      { type: "usage", usage: { input: 141174, output: 0 } },
+      { type: "usage", usage: { input: 141174, output: 0, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "error", message: "length stop with zero output (context window overflow)", code: "context-overflow" } },
     ]);
     // output>0 = 合法输出上限命中 → 正常 max-tokens（续写路径）
     expect(
       await collect([assistantEvent({ type: "done", reason: "length", message: { usage: { input: 10, output: 8192, cacheRead: 0, cacheWrite: 0 } } })]),
-    ).toEqual([{ type: "usage", usage: { input: 10, output: 8192 } }, { type: "finish", finish: { kind: "max-tokens" } }]);
+    ).toEqual([{ type: "usage", usage: { input: 10, output: 8192, cacheRead: 0, cacheWrite: 0 } }, { type: "finish", finish: { kind: "max-tokens" } }]);
     // usage 缺席 = 信息不足不分类 → 保持 max-tokens
     expect(await collect([assistantEvent({ type: "done", reason: "length", message: {} })])).toEqual([{ type: "finish", finish: { kind: "max-tokens" } }]);
   });

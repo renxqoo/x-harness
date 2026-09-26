@@ -499,6 +499,7 @@
         "@x-harness/llm": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
+        "@x-harness/token-meter": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {

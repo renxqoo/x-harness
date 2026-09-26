@@ -192,8 +192,9 @@ function handleGetSessionStats(rt: WorkerRuntime, input: CommandInput): void {
 }
 
 /** 插件分析面（本地结构形状——host-hub 不 import 插件包；经 plugin-manager token
- *  按名注册表取服务，真解耦——docs/PLUGINS.md 契约 5）。统计域 = 装配后事件
- *  （resume 不含历史；子代理 usage 计入全局累计） */
+ *  按名注册表取服务，真解耦——docs/PLUGINS.md 契约 5）。统计域 = 会话全历史
+ *  （usage 事实经 token-meter 事实层：resume/重开经冷启动含全历史实报；子代理
+ *  usage 计入全局累计） */
 interface TokenAnalyticsFace {
   breakdown(sessionId?: string): Record<string, number>;
   sessionOutput(session: string): number;

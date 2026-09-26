@@ -6,7 +6,7 @@ import type { Context } from "@x-harness/core";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { Session, SessionEvent, SessionId, SessionStore } from "@x-harness/session";
 import { afterEach, describe, expect, it } from "vitest";
-import { applyEvent, estimateText, foldUsage, snapshotOf } from "../index.ts";
+import { applyEvent, createFoldState, estimateText, estimateTokensTypical, foldUsage, snapshotOf } from "../index.ts";
 import { tokenMeter, tokenMeterPlugin } from "../plugin.ts";
 import type { TokenMeterService } from "../plugin.ts";
 
@@ -82,13 +82,17 @@ describe("记账与归因（docs/TOKEN-METER.md §1——M15/M16/M21）", () => 
         turn: 0,
         inputTokens: 110,
         outputTokens: 20,
-        routes: [{ provider: "p1", model: "m1", inputTokens: 110, outputTokens: 20 }],
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        routes: [{ provider: "p1", model: "m1", inputTokens: 110, outputTokens: 20, cacheReadTokens: 0, cacheWriteTokens: 0 }],
       },
       {
         turn: 1,
         inputTokens: 7,
         outputTokens: 3,
-        routes: [{ provider: "p2", model: "m2", inputTokens: 7, outputTokens: 3 }],
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        routes: [{ provider: "p2", model: "m2", inputTokens: 7, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 }],
       },
     ]);
     // 路线归因到 session 级
@@ -235,12 +239,108 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
     expect(state.attempts).toBe(1); // 溢出后短路
   });
 
-  it("foldUsage 纯函数：snapshotOf 输出冻结", async () => {
-    const state = foldUsage([]);
+  it("foldUsage 纯函数：snapshotOf 输出冻结（顶层 + turn 元素 + routes）", async () => {
+    const state = foldUsage([
+      { type: "request/context", seq: 1, time: 1, surfaceOp: "append", data: { provider: "p", model: "m" } },
+      { type: "assistant/message", seq: 2, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 1, output: 1 }, stopReason: "stop" } },
+    ] as never);
     const snapshot = snapshotOf(state);
     expect(() => {
       (snapshot as unknown as { attempts: number }).attempts = 99;
     }).toThrow();
+    expect(() => {
+      (snapshot.turns[0] as unknown as { inputTokens: number }).inputTokens = 99;
+    }).toThrow();
+    expect(() => {
+      const route = snapshot.turns[0]?.routes[0];
+      if (route !== undefined) (route as unknown as { inputTokens: number }).inputTokens = 99;
+    }).toThrow();
+  });
+});
+
+describe("缓存明细与尾值面（TOKEN-UNIFICATION.md §1.1/§2.3 D3/D10）", () => {
+  function cacheEvents(): SessionEvent[] {
+    return [
+      { type: "turn/start", seq: 1, time: 100, surfaceOp: "append", data: { turn: 0 } },
+      { type: "request/context", seq: 2, time: 100, surfaceOp: "append", data: { provider: "p", model: "m" } },
+      { type: "assistant/message", seq: 3, time: 100, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 500, output: 20, cacheRead: 400, cacheWrite: 60 }, stopReason: "stop" } },
+      { type: "assistant/message", seq: 4, time: 200, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 1000, output: 10, cacheRead: 0 }, stopReason: "stop" } },
+    ] as never;
+  }
+
+  it("N1【B1 症状】cacheRead/cacheWrite 三路（session/route/turn）累计；totalTokens 不含缓存（子集防双计）", () => {
+    const snap = snapshotOf(foldUsage(cacheEvents()));
+    expect(snap.inputTokens).toBe(1500);
+    expect(snap.cacheReadTokens).toBe(400);
+    expect(snap.cacheWriteTokens).toBe(60);
+    expect(snap.totalTokens).toBe(1530); // input+output，缓存不入总计
+    expect(snap.turns[0]).toMatchObject({ inputTokens: 1500, cacheReadTokens: 400, cacheWriteTokens: 60 });
+    expect(snap.turns[0]?.routes[0]).toMatchObject({ inputTokens: 1500, cacheReadTokens: 400, cacheWriteTokens: 60 });
+  });
+
+  it("N2【B2 症状】负 cacheRead / 小数样本整丢（analytics 逐字段宽松曾累计——随消费面顺带修复）", () => {
+    const snap = snapshotOf(foldUsage([
+      { type: "assistant/message", seq: 1, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 100, output: 1, cacheRead: -5 }, stopReason: "stop" } },
+      { type: "assistant/message", seq: 2, time: 2, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 50, output: 1, cacheWrite: 1.5 }, stopReason: "stop" } },
+      { type: "assistant/message", seq: 3, time: 3, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 10, output: 1, cacheRead: 5 }, stopReason: "stop" } },
+    ] as never));
+    expect(snap.inputTokens).toBe(10); // 前两样本整丢
+    expect(snap.cacheReadTokens).toBe(5);
+    expect(snap.cacheWriteTokens).toBe(0);
+    expect(snap.attempts).toBe(1);
+  });
+
+  it("N3 尾值面：字段在场才覆写；{output:N} 不清零哨兵；垃圾样本不更新尾值；命中率点态口径", () => {
+    const events = cacheEvents().concat([
+      // 有效但 input 缺席：不得清零 lastReportedInput/lastCacheRead，不更新 lastUsageAt
+      { type: "assistant/message", seq: 5, time: 300, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { output: 30 }, stopReason: "stop" } },
+      // 垃圾（负 input）：不进账不更新尾值
+      { type: "assistant/message", seq: 6, time: 400, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: -5, output: 1 }, stopReason: "stop" } },
+    ] as never);
+    const snap = snapshotOf(foldUsage(events));
+    expect(snap.lastReportedInput).toBe(1000); // 仍为样本 #4 的 input
+    expect(snap.lastReportedCacheRead).toBe(0); // 仍为样本 #4 的 cacheRead
+    expect(snap.lastUsageAt).toBe(200); // #5 未更新（input/cacheRead 均缺席），#6 垃圾不算
+    // 命中率点态口径（审查①⑦b 症状）：两轮 input=500/1000、cacheRead=400/0 → 0/1000，非累计 400/1000
+    expect(snap.lastReportedCacheRead / snap.lastReportedInput).toBe(0);
+  });
+
+  it("N3 续：尾值哨兵 0 = 无实报（空账本）；cacheRead 在场而 input 缺席时尾值可独立更新", () => {
+    const empty = snapshotOf(createFoldState());
+    expect(empty.lastReportedInput).toBe(0);
+    expect(empty.lastReportedCacheRead).toBe(0);
+    expect(empty.lastUsageAt).toBe(0);
+    const snap = snapshotOf(foldUsage([
+      { type: "assistant/message", seq: 1, time: 50, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 800, output: 1, cacheRead: 700 }, stopReason: "stop" } },
+      { type: "assistant/message", seq: 2, time: 60, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { output: 2, cacheRead: 650 }, stopReason: "stop" } },
+    ] as never));
+    expect(snap.lastReportedInput).toBe(800); // #2 input 缺席不动
+    expect(snap.lastReportedCacheRead).toBe(650); // #2 cacheRead 在场覆写
+    expect(snap.lastUsageAt).toBe(60); // #2 cacheRead 在场 → 更新
+    expect(snap.lastReportedCacheRead / snap.lastReportedInput).toBe(650 / 800);
+  });
+
+  it("尾值随增量折叠与冷启动一致（增量 == 全量含尾值面）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const made = await world.store.create({ id: "tail" as SessionId });
+    if (!made.ok) return;
+    made.value.append("turn/start", { turn: 0 });
+    made.value.append("request/context", { provider: "p", model: "m" });
+    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 500, output: 20, cacheRead: 400, cacheWrite: 60 }, stopReason: "stop" }, appendOp);
+    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 1000, output: 10, cacheRead: 0 }, stopReason: "stop" }, appendOp);
+    const incremental = world.meter.usageOf(made.value.id);
+    // 首次 usageOf 冷启动全量折叠（事件已全落）；断言尾值与末样本一致即等价语义
+    expect(incremental).toMatchObject({ lastReportedInput: 1000, lastReportedCacheRead: 0, inputTokens: 1500 });
+    expect(incremental?.lastUsageAt).toBeGreaterThan(0);
+    expect(incremental).toEqual(snapshotOf(foldUsage(made.value.events())));
+    // 增量续账：审计微任务排空后新样本入账
+    await Promise.resolve();
+    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 300, output: 5, cacheRead: 250 }, stopReason: "stop" }, appendOp);
+    await Promise.resolve();
+    const after = world.meter.usageOf(made.value.id);
+    expect(after).toMatchObject({ inputTokens: 1800, cacheReadTokens: 400 + 250, lastReportedInput: 300, lastReportedCacheRead: 250 });
+    expect(after).toEqual(snapshotOf(foldUsage(made.value.events())));
   });
 });
 
@@ -261,5 +361,27 @@ describe("估算（docs/TOKEN-METER.md §1——CJK 上界口径，压缩件预�
 
   it("非字符串降级 0", () => {
     expect(estimateText(undefined as never)).toBe(0);
+  });
+});
+
+describe("典型值估算（TOKEN-UNIFICATION.md R2——CJK 1/字，码位计长；与上界口径各自持判据）", () => {
+  it.each([
+    ["空串", "", 0],
+    ["ASCII 4 chars/token", "abcd", 1],
+    ["CJK 1 字 1 token", "好".repeat(400), 400],
+    ["代理对按一码位（码位计长）", "😀", 1],
+    ["N5 审查①7a：西里尔非 CJK 走 other 桶 ceil(len/4)——严禁误用宽字符判据", "Привет", 2],
+    ["混合：CJK 逐字 + ASCII /4", "abc你好", 1 + 2],
+  ] as const)("estimateTokensTypical %s", (_name, text, expected) => {
+    expect(estimateTokensTypical(text)).toBe(expected);
+  });
+
+  it("非字符串降级 0（与 estimateText 同律）", () => {
+    expect(estimateTokensTypical(undefined as never)).toBe(0);
+  });
+
+  it("N5 不变式：上界 ≥ 典型值（CJK/非 CJK 非 ASCII/ASCII 三桶逐码位成立）", () => {
+    for (const text of ["你好世界", "Привет мир", "hello world", "好abc😀Привет"])
+      expect(estimateText(text)).toBeGreaterThanOrEqual(estimateTokensTypical(text));
   });
 });

@@ -108,7 +108,7 @@ function turnEndDetail(reason: TurnEndReason): string | undefined {
   return undefined;
 }
 
-/** usage 四字段透传（§1.3：不复制 token-meter 丢缓存字段的形态）；垃圾字段省略不崩 */
+/** usage 四字段透传（§1.3：与 token-meter parseUsageSample 同 fail-closed 精神（逐字段防御透传））；垃圾字段省略不崩 */
 function usageAttrs(usage: unknown): Record<string, number> {
   if (typeof usage !== "object" || usage === null) return {};
   const record = usage as Record<string, unknown>;
