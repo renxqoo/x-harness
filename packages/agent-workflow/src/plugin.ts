@@ -30,15 +30,16 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
       const deps = { ctx, ...options, loop, store, view: view ?? undefined, ...(archive !== undefined ? { archive } : {}) };
       const runtime = createRuntime(deps);
 
-      // 启动扫描（§5.1/§5.2）：作用域过滤 + 二维窗口恢复——attach 把恢复 run 接进驱动面
-      void scanAndRecover({ ...deps, warmColdIndex: runtime.warmColdIndex }, (run) => ({ onCycleEnd: runtime.attach(run), redispatch: (r, caller) => runtime.redispatch(r, caller), detach: runtime.detach })).catch(() => {
-        /* 扫描尽力：损坏 run 在 readRun 内冻结跳过 */
-      });
-
-      // run 目录 GC（期 2-D3）：settled run 超 7 天删除（与 session 目录保留期同量级）
-      void (await import("./journal.ts")).gcRuns(options.root, { maxAgeMs: 7 * 24 * 3_600_000 }).catch(() => {
-        /* GC 尽力：下次启动再试 */
-      });
+      // 启动扫描（§5.1/§5.2）→ GC（期 2-D3）串行：R3 修——并发时 GC 的 rm 与扫描的
+      // openRunJournal mkdir 竞态产生空卷僵尸（readRun 判定后目录被删，打开重建空目录）
+      void (async () => {
+        await scanAndRecover({ ...deps, warmColdIndex: runtime.warmColdIndex }, (run) => ({ onCycleEnd: runtime.attach(run), redispatch: (r, caller) => runtime.redispatch(r, caller), detach: runtime.detach })).catch(() => {
+          /* 扫描尽力：损坏 run 在 readRun 内冻结跳过 */
+        });
+        await (await import("./journal.ts")).gcRuns(options.root, { maxAgeMs: 7 * 24 * 3_600_000 }).catch(() => {
+          /* GC 尽力：下次启动再试 */
+        });
+      })();
 
       // 边沿补投（§5.3）：sessionCreated（create/resume 同源）——微任务延迟（F14：事件
       // 同步发射早于 loop 句柄登记，同微任务链后句柄必在）；只处理本插件管辖的父会话

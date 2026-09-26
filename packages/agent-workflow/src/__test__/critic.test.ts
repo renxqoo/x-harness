@@ -16,7 +16,7 @@ import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { agentLoopPlugin, agentLoopServiceToken } from "@x-harness/agent-loop";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { createAgentDelegationPlugin, delegationView } from "@x-harness/agent-delegation";
-import { createAgentWorkflowPlugin } from "../plugin.ts";
+import { createAgentWorkflowPlugin, workflowView } from "../plugin.ts";
 import { CRITIC_PROPOSAL_SCHEMA, criticDispatchPrompt, criticEvidence, parseCriticProposal } from "../acceptor-critic.ts";
 
 beforeEach(() => {
@@ -187,8 +187,8 @@ describe("Tier C 链序（schema→critic 全旅程）", () => {
   it("预算耗尽：critic 恒 fail → 终局 failed（reopens 上限）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-c3-"));
     const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();
-    scripts.set("critic-model", Array.from({ length: 6 }, () => script('{"verdict":"fail","reopenProposals":["still wrong"]}')));
-    scripts.set("task-model", Array.from({ length: 6 }, (_, i) => script(`attempt ${String(i)}`)));
+    scripts.set("critic-model", Array.from({ length: 4 }, () => script('{"verdict":"fail","reopenProposals":["still wrong"]}')));
+    scripts.set("task-model", Array.from({ length: 4 }, (_, i) => script(`attempt ${String(i)}`)));
     const ctx = createContext();
     const plugins: readonly Plugin[] = [
       sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
@@ -215,9 +215,57 @@ describe("Tier C 链序（schema→critic 全旅程）", () => {
     const { sessionStore } = await import("@x-harness/session");
     const texts = () => ctx.use(sessionStore).get("main-1" as SessionId)?.events().filter((e) => e.type === "user/message" || e.type === "agent/message").map((e) => JSON.stringify(e.data)).join("\n") ?? "";
     await vi.waitFor(() => expect(texts()).toContain("workflow-notification"), { timeout: 15_000 });
-    expect(texts()).toContain("failed"); // reopens=1 耗尽
+    // R1 回归锚：reopens 预算耗尽终局（budget-exhausted）——非脚本耗尽的 child-failed 碰巧形态
+    expect(texts()).toContain("critic:budget-exhausted");
     await parent.value.dispose();
     await ctx.dispose();
     await rm(root, { recursive: true, force: true });
   }, 25_000);
+});
+
+describe("rebind 后 critic 可用（R2 回归：caller 曾用冻结 deps.mainSession → not-found 死循环）", () => {
+  it("切会话后 critic 任务正常评审（派发 caller = 活会话）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-r2c-"));
+    const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();
+    scripts.set("critic-model", [script('{"verdict":"pass"}')]);
+    scripts.set("task-model", [script("the deliverable")]);
+    const ctx = createContext();
+    const { mkdir: mk2, writeFile: wf3 } = await import("node:fs/promises");
+    await mk2(join(root, "agents"), { recursive: true });
+    await wf3(join(root, "agents", "reviewer.md"), `---\nname: reviewer\ndescription: critic\nmodel: critic-model\n---\nYou review.`);
+    const plugins: readonly Plugin[] = [
+      sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
+      createAgentDelegationPlugin({ agentsDirs: [join(root, "agents")], workspaceRoot: root, worktreeSweep: false }),
+      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "old-sess" as SessionId }),
+    ];
+    await loadPlugins(ctx, plugins);
+    const loop = ctx.use(agentLoopServiceToken);
+    const off = ctx.use(llmRuntime).registerAdapter({
+      name: "fake",
+      stream: async function* (request: LlmRequest): AsyncGenerator<LlmChunk> {
+        for await (const chunk of scripts.get(request.model)?.shift() ?? script("")) yield chunk;
+      },
+    });
+    ctx.effect(off);
+    // rebind 到新会话（旧会话从未建——直接迁）
+    await workflowViewPluginRebind(ctx, "new-sess" as SessionId);
+    const parent = await loop.create({ session: { id: "new-sess" as SessionId }, agent: { model: "task-model", provider: "fake" } });
+    if (!parent.ok) throw new Error(parent.reason);
+    const registry = ctx.use(toolRegistry);
+    const made = await registry.dispatch({ callId: "r2c", name: "workflow_submit", args: { description: "post-rebind critic", prompt: "x", critic: { type: "reviewer" } }, signal: new AbortController().signal, session: "new-sess" as SessionId });
+    expect(made.isError).toBeUndefined();
+    const { sessionStore } = await import("@x-harness/session");
+    const texts = () => ctx.use(sessionStore).get("new-sess" as SessionId)?.events().filter((e) => e.type === "user/message" || e.type === "agent/message").map((e) => JSON.stringify(e.data)).join("\n") ?? "";
+    await vi.waitFor(() => expect(texts()).toContain("workflow-notification"), { timeout: 15_000 });
+    expect(texts()).toContain("passed"); // critic pass（活 caller 派发成功）
+    await parent.value.dispose();
+    await ctx.dispose();
+    await rm(root, { recursive: true, force: true });
+  }, 25_000);
+
+  async function workflowViewPluginRebind(ctx: ReturnType<typeof createContext>, next: SessionId): Promise<void> {
+    const view = ctx.tryUse(workflowView);
+    const rebound = await view?.rebind(next);
+    if (rebound !== undefined && !rebound.ok) throw new Error(rebound.reason);
+  }
 });

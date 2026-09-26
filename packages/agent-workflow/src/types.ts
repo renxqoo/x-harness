@@ -22,6 +22,8 @@ export interface WorkflowDeps extends WorkflowOptions {
   readonly ctx: import("@x-harness/core").Context;
   /** 冷缓存预热面（期 2-D2——runtime 提供；可选：B7 冻结路径也经 deps 预热） */
   warmColdIndex?: (tasks: Readonly<Record<string, unknown>>, parent: string) => void; // 可变（构造序回填）
+  /** main 会话可变引用（期 2-A：恢复动作的活 caller——runtime 构造期回填，R2） */
+  mainSessionRef?: { current: SessionId };
   readonly loop: AgentLoopService;
   readonly store: SessionStore;
   readonly view: DelegationView | undefined;

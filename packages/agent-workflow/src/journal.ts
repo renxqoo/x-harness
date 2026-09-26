@@ -3,7 +3,7 @@
 // 恢复矩阵（§3.1）：目录删除=run 不存在；header 损坏=冻结；journal 尾撕裂=截断 fold；
 // journal 中段损坏=冻结（对称 header 损坏——截尾救不了中段）。
 
-import { mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { fold } from "@x-harness/workflow-core";
@@ -60,7 +60,10 @@ export async function openRunJournal(root: string, header: RunHeader): Promise<O
       await acquired.lock.release();
       return recovered;
     }
-    const fh = await open(join(dir, JOURNAL_NAME), "a", 0o600); // 期 2-D4：新建即 0600（spec 命令明文面）
+    // 期 2-D4：新建即 0600 + K3：接管路径对既有 0644 显式收权（只收不放宽——exec-env D1 同口径）
+    await chmod(join(dir, JOURNAL_NAME), 0o600).catch(() => {});
+    await chmod(join(dir, HEADER_NAME), 0o600).catch(() => {});
+    const fh = await open(join(dir, JOURNAL_NAME), "a", 0o600);
     const state: SerialState = { fh, dir, lines: recovered.length };
     const writer = serialWriter(state);
     return { kind: "opened", writer: withLockRelease(writer, acquired.lock), header: readBack, snapshot: recovered.snapshot };
@@ -224,10 +227,15 @@ function withLockRelease(writer: JournalWriter, lock: { readonly release: () => 
 
 /** 会话重绑（期 2-A）：header.parentSession 重写（扫描过滤②/通知目的地下次启动即用新值） */
 export async function rewriteHeaderParent(root: string, runId: string, next: string): Promise<void> {
+  // K2 修：temp+rename 原子写（截断重写在崩溃窗口留残缺 header → run 永久 frozen）
+  const { rename } = await import("node:fs/promises");
   const dir = join(root, runId);
   const header = await readHeader(dir);
   if (header === undefined) return;
-  await writeFile(join(dir, HEADER_NAME), `${JSON.stringify({ ...header, parentSession: next }, null, 2)}\n`, "utf8");
+  const target = join(dir, HEADER_NAME);
+  const temp = join(dir, `${HEADER_NAME}.tmp-${String(process.pid)}`);
+  await writeFile(temp, `${JSON.stringify({ ...header, parentSession: next }, null, 2)}\n`, { mode: 0o600 });
+  await rename(temp, target);
 }
 
 /** run 目录 GC（期 2-D3）：settled run 超保留期删除（与 session 目录同策略——
@@ -241,9 +249,22 @@ export async function gcRuns(root: string, options: { readonly maxAgeMs: number;
     const read = await readRun(root, runId);
     if (read.kind !== "opened" || read.snapshot === undefined) continue;
     if (read.snapshot.status !== "settled") continue; // 在飞/悬置 run 永不 GC
+    // R3 修：通知未全覆盖（死父悬置——B5 补投对象）不 GC——任务结果送达前数据不可销毁
+    const notifiedAll = Object.values(read.snapshot.tasks).every((task) => task.status !== "settled" || read.snapshot?.notified.has(task.taskId));
+    if (!notifiedAll) continue;
     const dir = join(root, runId);
     const info = await stat(dir).catch(() => undefined);
     if (info === undefined || now - info.mtimeMs < options.maxAgeMs) continue;
+    // R3 修：锁活在场（他进程驱动/本进程持有）不删——rm 后 append 写已删 inode = 静默丢数据。
+    // 探测在 age 判定**之后**（acquire/release 会 touch 目录 mtime——先探测则 age 恒新）
+    const lockBusy = await acquireRunLock(dir).then((r) => {
+      if (r.kind === "acquired") {
+        void r.lock.release();
+        return false;
+      }
+      return true; // 活锁——skip
+    }, () => false);
+    if (lockBusy) continue;
     await rm(dir, { recursive: true, force: true }).catch(() => {
       /* 删除尽力：下次 GC 再试 */
     });

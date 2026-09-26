@@ -223,7 +223,8 @@ async function deliverToAcceptance(ctx: TaskRecovery): Promise<void> {
 async function reviveAndKick(ctx: TaskRecovery, kickText: string): Promise<void> {
   if (ctx.view === undefined) return;
   const ref = { runId: ctx.run.header.runId, taskId: ctx.task.taskId };
-  const revived = await ctx.view.reviveManaged(ctx.mainSession, ctx.agentId, settlementOf(
+  const caller = ctx.mainSessionRef?.current ?? ctx.mainSession; // R2：活 caller（rebind 后）
+  const revived = await ctx.view.reviveManaged(caller, ctx.agentId, settlementOf(
     ref,
     (_, report) => ctx.onCycleEnd(report.agentId, report),
     async (agentId, error) => {
@@ -232,7 +233,7 @@ async function reviveAndKick(ctx: TaskRecovery, kickText: string): Promise<void>
     },
   ));
   if (revived.kind !== "row") return; // 类型缺失等 fail-closed——留待边沿 onWarn
-  const sent = await ctx.view.message(ctx.mainSession, { to: ctx.agentId, message: kickText });
+  const sent = await ctx.view.message(caller, { to: ctx.agentId, message: kickText });
   if (!sent.ok) ctx.onWarn?.(`workflow: recovery kick undeliverable for ${ctx.agentId}: ${sent.reason}`);
 }
 

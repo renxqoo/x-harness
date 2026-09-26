@@ -46,11 +46,11 @@ const submitSchema = Type.Object({
     cwd: Type.Optional(Type.String({ description: "Working directory for the command (defaults to the task workspace)" })),
   })),
   critic: Type.Optional(Type.Object({
-    type: Type.String({ description: "Critic agent type (.md definition) — Tier C (period 2)" }),
+    type: Type.String({ description: "Critic agent type (.md definition) — an independent reviewer whose verdict gates completion" }),
     focus: Type.Optional(Type.String({ description: "Review focus" })),
   })),
   max_attempts: Type.Optional(Type.Number({ description: "Override the repair budget (default 3)" })),
-  depends_on: Type.Optional(Type.Array(Type.String(), { description: "Task IDs this task depends on — it dispatches only after all of them settle completed (period 2 DAG)" })),
+  depends_on: Type.Optional(Type.Array(Type.String(), { description: "Task IDs this task depends on — it dispatches only after all of them settle completed" })),
 });
 
 export function workflowSubmitTool(runtime: WorkflowRuntime): ToolDefinition {

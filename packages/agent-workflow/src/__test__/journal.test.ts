@@ -217,7 +217,7 @@ describe("openRunJournal 冻结分支（覆盖 55-69）", () => {
 });
 
 describe("run 目录 GC（期 2-D3）", () => {
-  it("settled 超龄删除 / 未终态保留 / 龄内保留", async () => {
+  it("settled+已通知 超龄删除 / 未终态保留 / 通知悬置保留（R3 症状：GC 曾删活锁 run 致静默丢数据）", async () => {
     const { gcRuns } = await import("../journal.ts");
     const { utimes } = await import("node:fs/promises");
     // settled run（超龄）
@@ -227,6 +227,7 @@ describe("run 目录 GC（期 2-D3）", () => {
     await old1.writer.append([{ type: "task/submitted", taskId: "t", spec: { description: "d", prompt: "p" } }]);
     await old1.writer.append([{ type: "task/settled", taskId: "t", outcome: "completed" }]);
     await old1.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]);
+    await old1.writer.append([{ type: "notify/delivered", taskId: "t", to: "s" }]); // R3：通知全覆盖（GC 前提）
     await old1.writer.close();
     // in-flight run（超龄——不删）
     const live = await openRunJournal(root, headerOf("r-gc-live"));
@@ -251,6 +252,24 @@ describe("run 目录 GC（期 2-D3）", () => {
     expect(left.includes("r-gc-old")).toBe(false);
     expect(left.includes("r-gc-live")).toBe(true); // 在飞永不 GC
     expect(left.includes("r-gc-fresh")).toBe(true); // 龄内保留
+  });
+
+  it("通知悬置（settled 无 notify/delivered）不 GC（R3 症状：GC 曾删 B5 补投对象致通知永久丢）", async () => {
+    const { gcRuns } = await import("../journal.ts");
+    const { utimes } = await import("node:fs/promises");
+    const pending = await openRunJournal(root, headerOf("r-gc-pending"));
+    if (pending.kind !== "opened") throw new Error("f");
+    await pending.writer.append([{ type: "run/created", runId: "r-gc-pending", parentSession: "s", cwd: "/w" }]);
+    await pending.writer.append([{ type: "task/submitted", taskId: "t", spec: { description: "d", prompt: "p" } }]);
+    await pending.writer.append([{ type: "task/settled", taskId: "t", outcome: "completed" }]);
+    await pending.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]); // 无 notify/delivered——悬置
+    await pending.writer.close();
+    const old = new Date(Date.now() - 8 * 24 * 3_600_000);
+    await utimes(join(root, "r-gc-pending"), old, old);
+    const removed = await gcRuns(root, { maxAgeMs: 7 * 24 * 3_600_000 });
+    expect(removed.includes("r-gc-pending")).toBe(false); // 通知未达——数据不可销毁
+    const { readdir } = await import("node:fs/promises");
+    expect((await readdir(root)).includes("r-gc-pending")).toBe(true);
   });
 });
 
