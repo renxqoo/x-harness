@@ -79,9 +79,23 @@ function coerceConfig(raw: Partial<GatewayConfig>): GatewayConfig {
 
 function validateRemote(config: GatewayConfig): string | null {
   if (config.relayUrl.length === 0) return "relayUrl required when remoteEnabled";
-  if (!config.relayUrl.startsWith("wss://")) return "relayUrl must be wss://";
-  if (config.relayKeyFingerprint.length === 0) return "relayKeyFingerprint required when remoteEnabled";
-  return null;
+  if (config.relayUrl.startsWith("wss://")) {
+    // 生产形态：wss + 指纹固化
+    if (config.relayKeyFingerprint.length === 0) return "relayKeyFingerprint required when remoteEnabled";
+    return null;
+  }
+  if (config.relayUrl.startsWith("ws://")) {
+    // 本机开发形态：仅 loopback 允许明文（远程生产形态必须 wss——DESIGN §1.5 TLS 由 LB 终结）
+    let host = "";
+    try {
+      host = new URL(config.relayUrl.replace(/^ws/, "http")).hostname;
+    } catch {
+      return "relayUrl unparseable";
+    }
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]") return "ws:// only allowed for loopback (production must be wss://)";
+    return null;
+  }
+  return "relayUrl must be wss:// (or ws:// loopback for local dev)";
 }
 
 function emptyConfig(): GatewayConfig {

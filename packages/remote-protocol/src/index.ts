@@ -9,3 +9,5 @@ export * from "./pairing.ts";
 export * from "./vocab.ts";
 export * from "./limits.ts";
 export * from "./hex.ts";
+export { acceptKey, WebSocketFrameWriter } from "./ws-frame-writer.ts";
+export { WebSocketFrameReader } from "./ws-frame-reader.ts";

@@ -395,6 +395,13 @@
         "@x-harness/core": "workspace:*",
       },
     },
+    "packages/remote-client": {
+      "name": "@x-harness/remote-client",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/remote-protocol": "workspace:*",
+      },
+    },
     "packages/remote-protocol": {
       "name": "@x-harness/remote-protocol",
       "version": "0.0.1",
@@ -932,6 +939,8 @@
     "@x-harness/plugin-examples": ["@x-harness/plugin-examples@workspace:packages/plugin-examples"],
 
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
+
+    "@x-harness/remote-client": ["@x-harness/remote-client@workspace:packages/remote-client"],
 
     "@x-harness/remote-protocol": ["@x-harness/remote-protocol@workspace:packages/remote-protocol"],
 

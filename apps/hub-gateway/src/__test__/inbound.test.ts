@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 import { newBucket, preflightBytes, preflightCmds, processInboundLine, type InboundSpec } from "../inbound.ts";
 import { startRelay } from "../../../hub-relay/src/main.ts";
 import { startRelayLink } from "../relay-link.ts";
-import { generateSigningKeyPair } from "@x-harness/remote-protocol";
 import { loadOrCreateIdentity } from "../identity.ts";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";

@@ -68,7 +68,11 @@ export class Fanout {
     this.perThreadSeq.set(threadId, seq);
     const body: EventBody = { threadId, name: spec.name, payload: spec.payload, ...(spec.agentName !== undefined ? { agentName: spec.agentName } : {}) };
     for (const target of this.targets.values()) {
-      if (threadId !== "*" && !target.subscribedThreads.has(threadId)) continue;
+      // owner 恒收全部线程事件（全权观察者）；设备按订阅域
+      if (threadId !== "*" && target.tier !== "owner" && !target.subscribedThreads.has(threadId)) {
+        if (typeof process !== "undefined" && process.env["GW_DEBUG"]) process.stderr.write(`fanout skip ${target.target} sub=[${[...target.subscribedThreads].join(",")}] t=${threadId}\n`);
+        continue;
+      }
       const streamId = `ev:${threadId}`;
       const outbox = this.outboxFor(target.target, streamId);
       const { frame } = outbox.enqueue(body, "event", null);
@@ -102,6 +106,11 @@ export class Fanout {
       this.outboxes.set(key, outbox);
     }
     return outbox;
+  }
+
+  /** ACK 水位推进（设备侧 ack 帧 → 对应 outbox 释放） */
+  applyAckFor(targetId: string, streamId: string, upTo: number): void {
+    this.outboxFor(targetId, streamId).applyAck(upTo);
   }
 
   /** coalesce：目标 ACK 积压（简化为投递节流）超阈值时 delta 帧合并 */

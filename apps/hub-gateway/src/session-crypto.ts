@@ -107,8 +107,9 @@ export function createCryptoSessionPool(devicesDir: string, now: () => number): 
 }
 
 /** 配对通道共享 → ratchet 种子（QR 路径：临时 DH；PAKE 路径：共享再混设备长期钥） */
-export function seedFromPairing(channelShared: Uint8Array, deviceLongTermPub: string, gatewayEph: { secret: string }, deviceEphPub: string): Uint8Array | null {
-  const dh = x25519(gatewayEph.secret, deviceEphPub);
+export function seedFromPairing(spec: { channelShared: Uint8Array; deviceLongTermPub: string; gatewayEphemeralSecret: string; deviceEphemeralPub: string }): Uint8Array | null {
+  const { channelShared, deviceLongTermPub } = spec;
+  const dh = x25519(spec.gatewayEphemeralSecret, spec.deviceEphemeralPub);
   if (dh === null) return null;
   const mixed = new Uint8Array(Buffer.concat([Buffer.from(channelShared), Buffer.from(deviceLongTermPub, "utf8"), Buffer.from(dh)]));
   // 混合根：SHA-256 一次（channelShared 已是 HKDF 产物；二次 HKDF 在 deriveInitialChains）

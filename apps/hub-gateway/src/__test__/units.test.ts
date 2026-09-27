@@ -85,9 +85,11 @@ describe("fanout", () => {
     fanout.fanoutEvent({ threadId: "tA", name: "turn/start", payload: {} });
     fanout.fanoutEvent({ threadId: "tA", name: "turn/end", payload: {} });
     fanout.fanoutEvent({ threadId: "tB", name: "turn/start", payload: {} });
-    expect(frames.length).toBe(2);
-    expect(frames[0]!.seq).toBe(1);
-    expect(frames[1]!.seq).toBe(2);
+    // owner 恒收全部线程（含未订阅 tB）；seq 为 per-thread 域（tA: 1,2；tB: 1）
+    expect(frames.length).toBe(3);
+    expect(frames.map((f) => f.seq)).toEqual([1, 2, 1]);
+    const names = frames.map((f) => (f.body as { threadId: string }).threadId);
+    expect(names).toEqual(["tA", "tA", "tB"]);
   });
 
   it("ui_request 广播：read 档被过滤", () => {
@@ -118,13 +120,15 @@ describe("device-registry + 去重日志崩溃恢复", () => {
     await reg.appendCommand("d1", { commandId: "c1", hostId: "g1", bodyHash: "h", ts: 1 });
     expect(reg.dedupLookup("d1", "c1")?.hostId).toBe("g1");
     await reg.appendResponse("d1", "c1", { id: "c1", success: true });
-    expect((reg.dedupLookup("d1", "c1")?.response as { success: boolean }).success).toBe(true);
+    const cached = reg.dedupLookup("d1", "c1")?.response as { success: boolean } | undefined;
+    expect(cached?.success).toBe(true);
     reg.mapHostId("g1", { deviceId: "d1", commandId: "c1" });
     expect(reg.unmapHostId("g1")).toEqual({ deviceId: "d1", commandId: "c1" });
     expect(reg.unmapHostId("g1")).toBeNull();
     // 崩溃恢复：重放 commands.jsonl
     const reg2 = await loadDeviceRegistry(paths);
-    expect((reg2.dedupLookup("d1", "c1")?.response as { success: boolean }).success).toBe(true);
+    const replayed = reg2.dedupLookup("d1", "c1")?.response as { success: boolean } | undefined;
+    expect(replayed?.success).toBe(true);
     expect(reg2.get("d1")?.name).toBe("P");
     expect(reg2.remove("d1")).toBe(true);
   });
@@ -236,7 +240,9 @@ describe("owner-server 残留 socket 清理与坏 JSON 行", () => {
     });
     const { connect } = await import("node:net");
     const sock = connect(handle.socketPath);
-    await new Promise<void>((resolve) => sock.once("connect", resolve));
+    await new Promise<void>((resolve) => {
+      sock.once("connect", () => resolve());
+    });
     sock.destroy();
     await new Promise((r) => {
       setTimeout(r, 200);

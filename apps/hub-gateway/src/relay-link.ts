@@ -3,8 +3,7 @@
 // 协议包零依赖，帧协议属 relay 域共享件）。
 import { connect as netConnect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
-import { WebSocketFrameReader } from "../../hub-relay/src/ws-reader.ts";
-import { WebSocketFrameWriter } from "../../hub-relay/src/ws-writer.ts";
+import { WebSocketFrameReader, WebSocketFrameWriter } from "@x-harness/remote-protocol";
 import { signBytes } from "@x-harness/remote-protocol";
 import { enrollTranscript } from "../../hub-relay/src/auth.ts";
 
@@ -30,7 +29,8 @@ export interface RelayLinkHandle {
 
 export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
   const url = new URL(options.relayUrl.replace(/^wss/, "https").replace(/^ws/, "http"));
-  const port = url.port === "" ? (options.useTls ? 443 : 80) : Number(url.port);
+  const defaultPort = options.useTls ? 443 : 80;
+  const port = url.port === "" ? defaultPort : Number(url.port);
   let socket: import("node:net").Socket | null = null;
   let writer: WebSocketFrameWriter | null = null;
   let stopped = false;
@@ -70,6 +70,10 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
         return;
       }
       reader.push(chunk);
+      // ping → pong（relay 活性探测）
+      reader.onNonText = () => {
+        writer?.writePong();
+      };
       for (const line of reader.drainTextFrames()) options.onFrame(line);
     });
     s.on("error", (error: Error) => {
@@ -88,11 +92,19 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
     s.write(`GET ${url.pathname === "/" ? "/" : url.pathname}${tokenQuery} HTTP/1.1\r\nHost: ${url.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
   }
 
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
   function scheduleReconnect(): void {
     if (stopped) return;
+    // 成功连接后取消 pending 重连（旧 401 循环的 timer 不再叠 dial——抖动环修复）
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
     const delay = backoff + Math.random() * 250;
     backoff = Math.min(backoff * 2, 30_000);
-    setTimeout(() => {
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
       if (stopped) return;
       openConnection();
     }, delay);
@@ -108,11 +120,12 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
     connected: () => writer !== null,
     stop() {
       stopped = true;
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       socket?.destroy();
     },
     async enrollOnce() {
       // 两步 enroll：challenge（nodeId+nonce）→ 签名注册
-      const challengeReply = await httpPost(url, options.useTls, "/api/enroll/challenge", "{}");
+      const challengeReply = await httpPost(url, { useTls: options.useTls, path: "/api/enroll/challenge", body: "{}" });
       if (challengeReply === null || challengeReply.status !== 200) {
         options.log(`enroll challenge failed: ${String(challengeReply?.status)}`);
         return null;
@@ -123,7 +136,7 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
       const transcript = enrollTranscript({ installationId: options.installationId, gatewayKeyPub: options.gatewaySigningPub, nodeId, nonce });
       const sig = signBytes(options.gatewaySigningSecret, new TextEncoder().encode(transcript));
       const body = JSON.stringify({ installationId: options.installationId, gatewayKeyPub: options.gatewaySigningPub, sig, nonce });
-      const reply = await httpPost(url, options.useTls, "/api/enroll", body);
+      const reply = await httpPost(url, { useTls: options.useTls, path: "/api/enroll", body });
       if (reply === null) return null;
       if (reply.status !== 200) {
         options.log(`enroll failed: ${reply.status} ${reply.body.slice(0, 120)}`);
@@ -137,8 +150,10 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
   };
 }
 
-async function httpPost(url: URL, useTls: boolean, path: string, body: string): Promise<{ status: number; body: string } | null> {
-  const port = url.port === "" ? (useTls ? 443 : 80) : Number(url.port);
+async function httpPost(url: URL, spec: { useTls: boolean; path: string; body: string }): Promise<{ status: number; body: string } | null> {
+  const { useTls, path, body } = spec;
+  const defaultPort2 = useTls ? 443 : 80;
+  const port = url.port === "" ? defaultPort2 : Number(url.port);
   return new Promise((resolve) => {
     const s = useTls
       ? tlsConnect({ host: url.hostname, port, servername: url.hostname })
@@ -148,6 +163,7 @@ async function httpPost(url: URL, useTls: boolean, path: string, body: string): 
     s.on("connect", () => {
       s.write(`POST ${path} HTTP/1.1\r\nHost: ${url.host}\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
     });
+    void fail;
     let raw = "";
     s.on("data", (chunk: Buffer) => {
       raw += chunk.toString("utf8");

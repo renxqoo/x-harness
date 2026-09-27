@@ -1,5 +1,6 @@
 // 最小 WebSocket 服务端帧协议（RFC 6455 子集）：握手 Accept、文本帧、ping/pong、
 // close。客户端侧连接（gateway/手机 dial）用同一 Writer/Reader。
+// WebSocket 帧写入器（RFC 6455 子集）：文本/ping/pong/close。
 import { createHash } from "node:crypto";
 import type { Stream } from "node:stream";
 

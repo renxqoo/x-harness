@@ -74,31 +74,45 @@ export function processInboundLine(line: string, spec: InboundSpec): InboundOutc
   if (decrypted.plaintext === null) return { kind: "ratchet-failed", tagFailures: decrypted.tagFailures };
   const frame = parseFrame(decrypted.plaintext);
   if (frame === null) return { kind: "bad-frame" };
-  if (frame.kind === "ack") {
-    const body = frame.body as { acks?: Array<{ streamId: string; upTo: number }> };
-    for (const ack of body.acks ?? []) spec.onAck(ack.streamId, ack.upTo);
-    return { kind: "delivered" };
-  }
-  if (frame.kind === "ui_response") {
-    if (spec.tier === "read") return { kind: "scope-denied", command: "ui_response" };
-    const body = frame.body as { requestId?: string; payload?: Record<string, unknown> };
-    if (typeof body.requestId === "string") spec.onUiResponse(body.requestId, body.payload ?? {});
-    return { kind: "delivered" };
-  }
+  return dispatchFrame(frame, spec, now);
+}
+
+function dispatchFrame(frame: Frame, spec: InboundSpec, now: number): InboundOutcome {
+  if (frame.kind === "ack") return dispatchAck(frame, spec);
+  if (frame.kind === "ui_response") return dispatchUiResponse(frame, spec);
   if (frame.kind !== "command") return { kind: "delivered" };
+  return dispatchCommand(frame, spec, now);
+}
+
+function dispatchAck(frame: Frame, spec: InboundSpec): InboundOutcome {
+  const body = frame.body as { acks?: Array<{ streamId: string; upTo: number }> };
+  for (const ack of body.acks ?? []) spec.onAck(ack.streamId, ack.upTo);
+  return { kind: "delivered" };
+}
+
+function dispatchUiResponse(frame: Frame, spec: InboundSpec): InboundOutcome {
+  if (spec.tier === "read") return { kind: "scope-denied", command: "ui_response" };
+  const body = frame.body as { requestId?: string; payload?: Record<string, unknown> };
+  if (typeof body.requestId === "string") spec.onUiResponse(body.requestId, body.payload ?? {});
+  return { kind: "delivered" };
+}
+
+function dispatchCommand(frame: Frame, spec: InboundSpec, now: number): InboundOutcome {
   if (!preflightCmds(spec.bucket, now)) return { kind: "rate-limited" };
   const body = frame.body as { command?: string; id?: string; args?: Record<string, unknown> };
   const command = typeof body.command === "string" ? body.command : "";
-  if (command.startsWith("gw/")) {
-    if (judgeGwCommand(command, spec.tier) === "allow" && command === "gw/status") {
-      spec.onCommand(frame, command, {});
-      return { kind: "delivered" };
-    }
-    return { kind: "scope-denied", command };
-  }
+  if (command.startsWith("gw/")) return dispatchGwCommand(command, spec, frame);
   const verdict = judgeHostCommand(command, spec.tier);
   if (verdict === "scope-denied" || verdict === "owner-only") return { kind: "scope-denied", command };
   if (verdict !== "allow") return { kind: "unknown-command", command };
   spec.onCommand(frame, command, body.args ?? {});
   return { kind: "delivered" };
+}
+
+function dispatchGwCommand(command: string, spec: InboundSpec, frame: Frame): InboundOutcome {
+  if (judgeGwCommand(command, spec.tier) === "allow" && command === "gw/status") {
+    spec.onCommand(frame, command, {});
+    return { kind: "delivered" };
+  }
+  return { kind: "scope-denied", command };
 }

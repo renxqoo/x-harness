@@ -38,8 +38,8 @@ function makeServer(now: () => number, registered: Array<{ deviceId: string }> =
 
 describe("QR 配对路径", () => {
   it("start→device request→SAS 双向确认→注册（缺省 read scope）", async () => {
-    let ts = Date.now();
-    const { server, identity, registered } = makeServer(() => ts);
+    const clock = { ts: Date.now() };
+    const { server, identity, registered } = makeServer(() => clock.ts);
     const started = await server.startQr("read");
     expect(started.pairingId).toMatch(/^pr_/);
     const qr = JSON.parse(started.qrPayload) as { gwEphemeralPub: string; pairingTicket: string };
@@ -77,10 +77,10 @@ describe("QR 配对路径", () => {
   });
 
   it("过期/未知 pairingId/竞态占用拒绝", async () => {
-    let ts = Date.now();
-    const { server } = makeServer(() => ts);
+    const clock = { ts: Date.now() };
+    const { server } = makeServer(() => clock.ts);
     const started = await server.startQr("read");
-    ts += 121_000;
+    clock.ts += 121_000;
     const expired = await server.handleDeviceRequest({ pairingId: started.pairingId, deviceEphemeralPub: newDeviceEphemeral().pub, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
     expect(expired.ok).toBe(false);
     const unknown = await server.handleDeviceRequest({ pairingId: "pr_ghost", deviceEphemeralPub: "aa", deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
@@ -88,8 +88,8 @@ describe("QR 配对路径", () => {
   });
 
   it("SAS 错 5 次 → 锁定 5min", async () => {
-    let ts = Date.now();
-    const { server } = makeServer(() => ts);
+    const clock = { ts: Date.now() };
+    const { server } = makeServer(() => clock.ts);
     const started = await server.startQr("read");
     const res = await server.handleDeviceRequest({ pairingId: started.pairingId, deviceEphemeralPub: newDeviceEphemeral().pub, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
     if (!res.ok) throw new Error("unreachable");
@@ -100,12 +100,12 @@ describe("QR 配对路径", () => {
     // 第 5 次失败 → 锁定
     const fifth = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: "000000", deviceLongTermPub: "aa" });
     expect(fifth.ok).toBe(false);
-    ts += 60_000;
+    clock.ts += 60_000;
     const locked = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: res.sas, deviceLongTermPub: "aa" });
     expect(locked.ok).toBe(false);
     if (!locked.ok) expect(locked.reason).toBe("locked");
     // 5min 后锁定期过（会话 120s TTL 已先到期——新配对走新会话）
-    ts += 5 * 60_000;
+    clock.ts += 5 * 60_000;
     const after = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: "000000", deviceLongTermPub: "aa" });
     expect(after.ok).toBe(false);
   });
@@ -119,7 +119,7 @@ describe("QR 配对路径", () => {
 
 describe("手输码 PAKE 路径", () => {
   it("PAKE 往返 + SAS 确认注册", async () => {
-    let ts = Date.now();
+    const ts = Date.now();
     const { server, registered } = makeServer(() => ts);
     const started = await server.startManual("read");
     expect(started.manualCode).toMatch(/^\d{8}$/);
@@ -134,7 +134,8 @@ describe("手输码 PAKE 路径", () => {
   });
 
   it("错码 PAKE：SAS 确认失败路径（在线尝试计入）", async () => {
-    const { server } = makeServer(() => Date.now());
+    const ts = { now: Date.now() };
+    const { server } = makeServer(() => ts.now);
     const started = await server.startManual("read");
     const wrong = pakeInitiate("11112222");
     const res = await server.handlePakeInitiate({ pairingId: started.pairingId, messageA: wrong.message, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
@@ -179,7 +180,7 @@ describe("crypto 会话池", () => {
     const shared = x25519(gwEph.secret, devEph.pub)!;
     const session = pool.establish({ deviceId: "d9", sharedSecret: shared, initiator: true });
     // seal 65+ 帧触发批边界持久化
-    const { aeadSeal, buildAad, buildNonce, RatchetSession: RS, deriveInitialChains } = await import("@x-harness/remote-protocol");
+    const { aeadSeal, RatchetSession: RS, deriveInitialChains } = await import("@x-harness/remote-protocol");
     const devInit = deriveInitialChains(x25519(devEph.secret, gwEph.pub)!, false);
     const devRatchet = new RS({ now: Date.now, deviceId: "d9", direction: 1, persist: { persistSendBoundary: async () => {}, persistRecvBoundary: async () => {} } }, devInit);
     for (let i = 0; i < 70; i++) {
@@ -203,9 +204,9 @@ describe("crypto 会话池", () => {
   it("seedFromPairing：DH 失败 null；成功确定性", () => {
     const gwEph = generateBoxKeyPair();
     const devEph = generateBoxKeyPair();
-    expect(seedFromPairing(new Uint8Array(32), "pub", { secret: "zz" }, devEph.pub)).toBeNull();
-    const s1 = seedFromPairing(new Uint8Array(32).fill(3), "pub", { secret: gwEph.secret }, devEph.pub);
-    const s2 = seedFromPairing(new Uint8Array(32).fill(3), "pub", { secret: gwEph.secret }, devEph.pub);
+    expect(seedFromPairing({ channelShared: new Uint8Array(32), deviceLongTermPub: "pub", gatewayEphemeralSecret: "zz", deviceEphemeralPub: devEph.pub })).toBeNull();
+    const s1 = seedFromPairing({ channelShared: new Uint8Array(32).fill(3), deviceLongTermPub: "pub", gatewayEphemeralSecret: gwEph.secret, deviceEphemeralPub: devEph.pub });
+    const s2 = seedFromPairing({ channelShared: new Uint8Array(32).fill(3), deviceLongTermPub: "pub", gatewayEphemeralSecret: gwEph.secret, deviceEphemeralPub: devEph.pub });
     expect(s1).not.toBeNull();
     expect(Buffer.from(s1!).equals(Buffer.from(s2!))).toBe(true);
   });

@@ -1,4 +1,7 @@
+// WebSocket 帧读取器（RFC 6455 子集）：文本帧排空 + 控制帧回调 + 64MiB 上限。
 // 最小 WebSocket 帧读取器（RFC 6455 子集）：文本帧排空 + 控制帧回调。
+const FRAME_MAX_BYTES = 64 * 1024 * 1024;
+
 export class WebSocketFrameReader {
   private buffer = Buffer.alloc(0);
   error: string | null = null;
@@ -37,7 +40,7 @@ export class WebSocketFrameReader {
     } else if (length7 === 127) {
       if (buffer.length < 10) return null;
       const big = buffer.readBigUInt64BE(2);
-      if (big > BigInt(64 * 1024 * 1024)) {
+      if (big > FRAME_MAX_BYTES) {
         this.error = "frame too large";
         return null;
       }

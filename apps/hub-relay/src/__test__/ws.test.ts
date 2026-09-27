@@ -1,8 +1,8 @@
 // ws 帧读写器契约：握手 key、文本帧编解码（掩码/非掩码/分片长度档）、控制帧回调
 import { describe, expect, it } from "vitest";
-import { acceptKey } from "../ws-writer.ts";
-import { WebSocketFrameReader } from "../ws-reader.ts";
-import { WebSocketFrameWriter } from "../ws-writer.ts";
+import { acceptKey } from "@x-harness/remote-protocol";
+import { WebSocketFrameReader } from "@x-harness/remote-protocol";
+import { WebSocketFrameWriter } from "@x-harness/remote-protocol";
 import { Writable } from "node:stream";
 
 describe("握手", () => {

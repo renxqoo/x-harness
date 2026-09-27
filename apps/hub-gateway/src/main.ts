@@ -11,7 +11,10 @@ import { startOwnerServer, type OwnerServerHandle, type OwnerSession } from "./o
 import { classifyHostLine, Fanout, type ClientTarget } from "./fanout.ts";
 import { openAuditLog, type AuditLog } from "./audit.ts";
 import { createHash } from "node:crypto";
-import { judgeGwCommand, judgeHostCommand, parseFrame, type Frame } from "@x-harness/remote-protocol";
+import { aeadSeal, buildAad, buildNonce, decodeEnvelope, encodeEnvelope, judgeGwCommand, judgeHostCommand, parseFrame, type Frame } from "@x-harness/remote-protocol";
+import { startRelayLink, type RelayLinkHandle } from "./relay-link.ts";
+import { createCryptoSessionPool, type CryptoSessionPool } from "./session-crypto.ts";
+import { newBucket, processInboundLine, type RateBucket } from "./inbound.ts";
 
 export interface GatewayOptions {
   agentDir: string;
@@ -28,9 +31,13 @@ export interface GatewayHandle {
   audit: AuditLog;
   ownerServer: OwnerServerHandle;
   host: HostAttach;
+  cryptoSessions: CryptoSessionPool;
+  relayLink: RelayLinkHandle | null;
   stop(): Promise<void>;
   /** 测试面：直接注入 owner 帧 */
   handleOwnerFrame(session: OwnerSession, frame: Frame): Promise<void>;
+  /** 测试面：注入设备帧（经完整入站管线） */
+  ingestDeviceLine(deviceId: string, line: string): Promise<void>;
 }
 
 export async function startGateway(options: GatewayOptions): Promise<GatewayHandle> {
@@ -148,6 +155,160 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   }
 
   host.start();
+  const cryptoSessions = createCryptoSessionPool(paths.devicesDir, now);
+  const deviceBuckets = new Map<string, RateBucket>();
+  const deviceStreams = new Map<string, number>(); // deviceId → 设备命令流 seq
+  const deviceIngestChains = new Map<string, Promise<void>>(); // per-device 串行化解密
+
+  /** 设备帧出站：ratchet seal → L3 信封 → relay-link（未连时丢弃+计数） */
+  async function sendToDevice(deviceId: string, frame: Frame): Promise<void> {
+    const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() => sendToDeviceInner(deviceId, frame));
+    deviceIngestChains.set(deviceId, run.then(
+      () => undefined,
+      () => undefined,
+    ));
+    return run;
+  }
+
+  const devicePending = new Map<string, Frame[]>();
+  const DEVICE_PENDING_MAX = 256;
+
+  /** link 断线窗口的设备帧重发（§1.2 outbox——有界，满则丢最旧） */
+  function flushDevicePending(): void {
+    const link = relayLinkRef;
+    if (link === null || !link.connected()) return;
+    for (const [deviceId, frames] of devicePending) {
+      for (const frame of frames) void sendToDevice(deviceId, frame);
+      devicePending.set(deviceId, []);
+    }
+  }
+
+  async function sendToDeviceInner(deviceId: string, frame: Frame): Promise<void> {
+    const session = cryptoSessions.get(deviceId) ?? (await cryptoSessions.restore(deviceId));
+    const link = relayLinkRef;
+    if (session === null) return;
+    if (link === null || !link.connected()) {
+      const queue = devicePending.get(deviceId) ?? [];
+      queue.push(frame);
+      if (queue.length > DEVICE_PENDING_MAX) queue.splice(0, queue.length - DEVICE_PENDING_MAX);
+      devicePending.set(deviceId, queue);
+      return;
+    }
+    const outcome = await session.ratchet.seal({ plaintext: new TextEncoder().encode(JSON.stringify(frame)), aadFrom: `gw_${identity.installationId}`, aadTo: `dev_${deviceId}` });
+    if (!outcome.ok) return;
+    const key = new Uint8Array(Buffer.from(outcome.keyUsed, "hex"));
+    const ct = aeadSeal({ key, nonce: outcome.nonce, plaintext: new TextEncoder().encode(JSON.stringify(frame)), aad: outcome.aad });
+    const env = encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: `dev_${deviceId}`, payload: Buffer.from(ct).toString("base64") });
+    link.send(env);
+  }
+
+  function deviceSeq(deviceId: string): number {
+    const next = (deviceStreams.get(deviceId) ?? 0) + 1;
+    deviceStreams.set(deviceId, next);
+    return next;
+  }
+
+  /** 设备入站线（relay onFrame → 此处；预解密后走管线执法） */
+  function ingestDeviceLine(deviceId: string, line: string): Promise<void> {
+    // per-device 串行化：ratchet 接收游标顺序推进（并发解密会错位）
+    const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() => ingestDeviceLineInner(deviceId, line));
+    deviceIngestChains.set(deviceId, run.then(
+      () => undefined,
+      () => undefined,
+    ));
+    return run;
+  }
+
+  async function ingestDeviceLineInner(deviceId: string, line: string): Promise<void> {
+    const entry = devices.get(deviceId);
+    if (entry === null) return;
+    const session = cryptoSessions.get(deviceId) ?? (await cryptoSessions.restore(deviceId));
+    if (session === null) return;
+    const env = decodeEnvelope(line);
+    if (env === null) return;
+    // 预解密（接收游标顺序推进；失败计数）
+    const ct = new Uint8Array(Buffer.from(env.payload, "base64"));
+    const epoch = session.ratchet.snapshotRecv().epoch;
+    const index = session.ratchet.snapshotRecv().nextIndex;
+
+    const outcome = await session.ratchet.open({
+      ciphertext: ct,
+      nonce: buildNonce(epoch, 1, index),
+      aad: buildAad(`dev_${deviceId}`, `gw_${identity.installationId}`, epoch),
+      index,
+      epoch,
+    });
+    if (!outcome.ok) return;
+    const plaintext = Buffer.from(outcome.plaintext).toString("utf8");
+    if (fanout.targetOf(deviceId) === null) {
+      fanout.attach({
+        target: deviceId,
+        tier: entry.scope,
+        subscribedThreads: new Set(),
+        send: (frame) => {
+          void sendToDevice(deviceId, frame);
+        },
+      });
+    }
+    const bucket = deviceBuckets.get(deviceId) ?? newBucket();
+    deviceBuckets.set(deviceId, bucket);
+    processInboundLine(line, {
+      deviceId,
+      tier: entry.scope,
+      bucket,
+      decrypt: () => ({ plaintext, tagFailures: 0 }),
+      onCommand(frame, command, args) {
+        const body = frame.body as { id?: string };
+        const commandId = typeof body.id === "string" ? body.id : `auto_${frame.seq}`;
+        void submitCommand({
+          deviceId,
+          commandId,
+          command,
+          args,
+          reply: {
+            send(frameBody) {
+              void sendToDevice(deviceId, { kind: "response", streamId: `cmd:${deviceId}`, seq: deviceSeq(deviceId), body: frameBody });
+            },
+          },
+        });
+      },
+      onUiResponse(requestId, payload) {
+        host.write(JSON.stringify({ type: "ui_response", requestId, payload }));
+        void audit.record("ui_request-settled", { requestId, deviceId, decision: JSON.stringify(payload) });
+      },
+      onAck(streamId, upTo) {
+        fanout.applyAckFor(deviceId, streamId, upTo);
+      },
+      now,
+    });
+  }
+
+  let relayLinkRef: RelayLinkHandle | null = null;
+  if (config.remoteEnabled) {
+    relayLinkRef = startRelayLink({
+      relayUrl: config.relayUrl,
+      installationId: identity.installationId,
+      gatewaySigningSecret: identity.signingSecret,
+      gatewaySigningPub: identity.signingPub,
+      useTls: config.relayUrl.startsWith("wss://"),
+      onFrame: (line) => {
+        // from=dev_<id> → 设备入站线
+        const parsed = JSON.parse(line) as { from?: string };
+        if (typeof parsed.from === "string" && parsed.from.startsWith("dev_")) {
+          void ingestDeviceLine(parsed.from.slice(4), line);
+        }
+      },
+      onStatus: (status, detail) => {
+        log(`relay ${status}: ${detail}`);
+        if (status === "connected") flushDevicePending();
+        fanout.fanoutEvent({ threadId: "*", name: "gateway/presence", payload: { relay: status, detail } });
+      },
+      log,
+    });
+    void relayLinkRef.enrollOnce().then((enrolled) => {
+      if (enrolled === null) log("relay enroll failed (will retry via reconnect)");
+    });
+  }
 
   // ---- owner 通道 ----
   const ownerTarget: ClientTarget & { session: OwnerSession | null } = {
@@ -315,9 +476,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     audit,
     ownerServer,
     host,
+    cryptoSessions,
+    relayLink: relayLinkRef,
     handleOwnerFrame,
+    ingestDeviceLine,
     async stop() {
       await audit.record("gateway-stopped", {});
+      relayLinkRef?.stop();
       await ownerServer.close();
       await host.stop();
     },

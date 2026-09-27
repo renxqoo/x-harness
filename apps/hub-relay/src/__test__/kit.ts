@@ -1,7 +1,6 @@
 // relay 测试装置：真 TCP socket 起服务 + 客户端 WebSocket 连接（同仓 ws.ts 复用）
 import { connect } from "node:net";
-import { acceptKey, WebSocketFrameWriter } from "../ws-writer.ts";
-    import { WebSocketFrameReader } from "../ws-reader.ts";
+import { acceptKey, WebSocketFrameReader, WebSocketFrameWriter } from "@x-harness/remote-protocol";
 import type { RelayHandle } from "../main.ts";
 import { startRelay } from "../main.ts";
 import { randomBytes } from "node:crypto";

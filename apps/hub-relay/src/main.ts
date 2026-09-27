@@ -5,8 +5,8 @@
 // ping/pong/close）——零三方依赖；TLS 由 LB/反代终结（runbook）。
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { acceptKey, WebSocketFrameWriter } from "./ws-writer.ts";
-import { WebSocketFrameReader } from "./ws-reader.ts";
+import { acceptKey, WebSocketFrameWriter } from "@x-harness/remote-protocol";
+import { WebSocketFrameReader } from "@x-harness/remote-protocol";
 import { createMemoryStore } from "./store-memory.ts";
 import { createRedisStore } from "./store-redis.ts";
 import type { RouteStore } from "./store-memory.ts";
@@ -188,6 +188,8 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       writer.writePing();
     }, PING_INTERVAL_MS);
     function teardown(): void {
+      // 只清当前代（旧连接的迟到 close 不抹新连接——单活顶替竞态修复）
+      if (conns.get(connKey) !== conn) return;
       clearInterval(pingTimer);
       conns.delete(connKey);
       byConnId.delete(connId);
