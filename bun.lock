@@ -78,6 +78,13 @@
         "@x-harness/truncation-messages": "workspace:*",
       },
     },
+    "apps/hub-relay": {
+      "name": "@x-harness/hub-relay",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/remote-protocol": "workspace:*",
+      },
+    },
     "packages/agent-continuation": {
       "name": "@x-harness/agent-continuation",
       "version": "0.0.1",
@@ -380,6 +387,10 @@
       "dependencies": {
         "@x-harness/core": "workspace:*",
       },
+    },
+    "packages/remote-protocol": {
+      "name": "@x-harness/remote-protocol",
+      "version": "0.0.1",
     },
     "packages/sandbox": {
       "name": "@x-harness/sandbox",
@@ -893,6 +904,8 @@
 
     "@x-harness/host-hub": ["@x-harness/host-hub@workspace:apps/host-hub"],
 
+    "@x-harness/hub-relay": ["@x-harness/hub-relay@workspace:apps/hub-relay"],
+
     "@x-harness/llm": ["@x-harness/llm@workspace:packages/llm"],
 
     "@x-harness/llm-repetition-guard": ["@x-harness/llm-repetition-guard@workspace:packages/llm-repetition-guard"],
@@ -910,6 +923,8 @@
     "@x-harness/plugin-examples": ["@x-harness/plugin-examples@workspace:packages/plugin-examples"],
 
     "@x-harness/plugin-manager": ["@x-harness/plugin-manager@workspace:packages/plugin-manager"],
+
+    "@x-harness/remote-protocol": ["@x-harness/remote-protocol@workspace:packages/remote-protocol"],
 
     "@x-harness/sandbox": ["@x-harness/sandbox@workspace:packages/sandbox"],
 
