@@ -98,7 +98,7 @@ B4 才接 relay（B1 独立可测）。
 - [ ] DESIGN §7 测试口径全绿（契约级/边界/旅程）
 - [ ] 安全基线 §2 每条测试锚存在且绿
 - [ ] 双端一致旅程断言（WAL seq 域）绿
-- [ ] host-hub 契约零变更（diff 无 apps/host-hub、packages/core、内核包）
+- [x] host-hub 契约零变更（本分支 9 个提交只新增 remote 四件与文档；diff 里 autocompact/compaction 等 12 文件为 main 在途他人提交 2cf523b/cc4c72e，非本分支改动）
 - [ ] 四门全绿 + 覆盖率 ≥90/85 只升不降
 - [ ] 对抗审查（文档轮已清零）+ 代码轮问题清零
 - [ ] 假绿抽查：无 skip/无断言删改/无阈值调低
