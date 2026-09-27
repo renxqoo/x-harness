@@ -126,6 +126,33 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
     expect(thinkingDeltas.join("")).toBe("思考完毕");
   });
 
+  it("症状回归「多轮工具调用的 reasoning 签名丢失」L1：thinking_end 从 partial 提取签名块（thinking-signature chunk）——openai 加密项与 anthropic 签名同通道", async () => {
+    // pi 在块定形时把签名写进 partial.content[i].thinkingSignature（openai = 序列化
+    // reasoning_details / anthropic = signature 累积）；redacted 标志随块
+    const output = { role: "assistant", content: [{ type: "thinking", thinking: "思考", thinkingSignature: "[{\"type\":\"reasoning.encrypted\",\"data\":\"rs_abc\"}]", redacted: false, index: 0 }], api: "openai-completions", provider: "gpt", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, stopReason: "stop", timestamp: 0 };
+    const chunks = await collectRacy(async (emit) => {
+      emit(assistantEvent({ type: "thinking_start", contentIndex: 0, partial: output }));
+      emit(assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "思", partial: output }));
+      emit(assistantEvent({ type: "thinking_end", contentIndex: 0, content: "思考", partial: output }));
+      emit(doneEvent());
+    });
+    const sig = chunks.find((chunk) => chunk.type === "thinking-signature") as { type: "thinking-signature"; signature: string; redacted: boolean } | undefined;
+    expect(sig).toBeDefined();
+    expect(sig?.signature).toContain("rs_abc");
+    expect(sig?.redacted).toBe(false);
+  });
+
+  it("L1 中断路径：无 thinking_end 的流不产签名 chunk（半截签名不上 wire——完整性门在源头）", async () => {
+    const output = { role: "assistant", content: [{ type: "thinking", thinking: "半截", thinkingSignature: "partial-sig", index: 0 }], api: "openai-completions", provider: "gpt", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, stopReason: "stop", timestamp: 0 };
+    const chunks = await collectRacy(async (emit) => {
+      emit(assistantEvent({ type: "thinking_start", contentIndex: 0, partial: output }));
+      emit(assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "半截", partial: output }));
+      // 无 thinking_end —— abort/error 终态
+      emit(assistantEvent({ type: "error", reason: "error", error: output as never }) as never);
+    }).catch(() => [] as LlmChunk[]);
+    expect(chunks.find((chunk) => chunk.type === "thinking-signature")).toBeUndefined();
+  });
+
   it("终态校正：wire 尾段未被 delta 覆盖时补发（text_end/thinking_end）", async () => {
     const chunks = await collect([
       assistantEvent({ type: "text_start", contentIndex: 0, partial: { content: [] } }),
@@ -195,7 +222,8 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   it("usage 全零守卫：缺报后端不产噪音帧；foldUsage 直接断言", () => {
     expect(foldUsage({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([]);
     expect(foldUsage(undefined)).toEqual([]);
-    expect(foldUsage({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([{ type: "usage", usage: { input: 1, output: 0 } }]); // 零 cache 不透传
+    // cache 键恒透传（0 = 命中零——有效观测非缺席；剥除会让下游尾值滞留旧轮）
+    expect(foldUsage({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([{ type: "usage", usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } }]);
   });
 
   it("error：usage 先行（失败尝试计费）→ 状态码在场落 http-<status> + retryAfterMs 透传", async () => {
@@ -203,7 +231,7 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
       failureInfo: () => ({ status: 429, retryAfterMs: 2500 }),
     });
     expect(chunks).toEqual([
-      { type: "usage", usage: { input: 3, output: 4 } },
+      { type: "usage", usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "error", message: "rate limited", code: "http-429", retryAfterMs: 2500 } },
     ]);
   });
@@ -257,13 +285,13 @@ describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透
     expect(
       await collect([assistantEvent({ type: "done", reason: "length", message: { usage: { input: 141174, output: 0, cacheRead: 0, cacheWrite: 0 } } })]),
     ).toEqual([
-      { type: "usage", usage: { input: 141174, output: 0 } },
+      { type: "usage", usage: { input: 141174, output: 0, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "error", message: "length stop with zero output (context window overflow)", code: "context-overflow" } },
     ]);
     // output>0 = 合法输出上限命中 → 正常 max-tokens（续写路径）
     expect(
       await collect([assistantEvent({ type: "done", reason: "length", message: { usage: { input: 10, output: 8192, cacheRead: 0, cacheWrite: 0 } } })]),
-    ).toEqual([{ type: "usage", usage: { input: 10, output: 8192 } }, { type: "finish", finish: { kind: "max-tokens" } }]);
+    ).toEqual([{ type: "usage", usage: { input: 10, output: 8192, cacheRead: 0, cacheWrite: 0 } }, { type: "finish", finish: { kind: "max-tokens" } }]);
     // usage 缺席 = 信息不足不分类 → 保持 max-tokens
     expect(await collect([assistantEvent({ type: "done", reason: "length", message: {} })])).toEqual([{ type: "finish", finish: { kind: "max-tokens" } }]);
   });

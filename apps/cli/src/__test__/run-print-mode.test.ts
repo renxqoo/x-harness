@@ -51,7 +51,7 @@ function scriptAdapter(scripts: LlmChunk[][], onStreamStart?: () => void): LlmAd
 function textScript(text: string): LlmChunk[] {
   return [
     { type: "text-delta", text },
-    { type: "usage", usage: { input: 120, output: 40 } },
+    { type: "usage", usage: { input: 120, output: 40, cacheRead: 90, cacheWrite: 10 } },
     { type: "finish", finish: { kind: "stop" } },
   ];
 }
@@ -171,6 +171,9 @@ describe("runPrintMode json 模式", () => {
     const lines = out.join("").trim().split("\n").map((line) => JSON.parse(line) as { type: string; [key: string]: unknown });
     expect(lines[0]).toMatchObject({ type: "session", id: "print-test" });
     expect(lines.some((line) => line.type === "stream" && line.kind === "text")).toBe(true);
+    // N1 后半（方案 §3.3）：usage 行摊开 token-meter 快照——含缓存明细与尾值（B1 症状面）
+    const usage = lines.find((line) => line.type === "usage");
+    expect(usage).toMatchObject({ inputTokens: 120, outputTokens: 40, cacheReadTokens: 90, cacheWriteTokens: 10, lastReportedInput: 120, lastReportedCacheRead: 90 });
     expect(lines.some((line) => line.type === "usage")).toBe(true);
     const last = lines[lines.length - 1];
     expect(last).toMatchObject({ type: "done", exit: 0 });

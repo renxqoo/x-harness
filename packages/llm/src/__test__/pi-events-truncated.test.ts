@@ -76,7 +76,7 @@ describe("原文缓冲与暂存（docs/TRUNCATED-TOOL-RESCUE.md 层 1 前置 1�
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "write", argumentsDelta: '{"path":"a.txt","content":"x"}' },
       { type: "tool-call-delta", index: 1, callId: "t2", name: "edit", argumentsDelta: '{"path":"b.txt"}' },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
     // 隔离：第二次调用（新流新实例）——同 index 不受前次缓冲污染
@@ -88,7 +88,7 @@ describe("原文缓冲与暂存（docs/TRUNCATED-TOOL-RESCUE.md 层 1 前置 1�
     ]);
     expect(again).toEqual([
       { type: "tool-call-delta", index: 0, callId: "u1", name: "write", argumentsDelta: '{"ok":1}' },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });
@@ -117,7 +117,7 @@ describe("终态感知出口（层 1 前置 2：done 路径裁决）", () => {
     ]);
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "write", argumentsDelta: '{"path":"a.txt","content":"写一半' },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "max-tokens" } },
     ]);
     // 完整块：原文 parse 成功 → stringify（与旧出口逐字节同形）
@@ -129,7 +129,7 @@ describe("终态感知出口（层 1 前置 2：done 路径裁决）", () => {
     ]);
     expect(full).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t2", name: "write", argumentsDelta: '{"path":"a.txt","content":"完整"}' },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "max-tokens" } },
     ]);
   });
@@ -147,7 +147,7 @@ describe("终态感知出口（层 1 前置 2：done 路径裁决）", () => {
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "grep", argumentsDelta: '{"q":"x"}' },
       { type: "tool-call-delta", index: 1, callId: "t2", name: "write", argumentsDelta: '{"path":"out.md","content":"半' },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "max-tokens" } },
     ]);
   });
@@ -163,7 +163,7 @@ describe("终态感知出口（层 1 前置 2：done 路径裁决）", () => {
       ]);
       expect(chunks).toEqual([
         { type: "tool-call-delta", index: 0, callId: "t1", name: "write", argumentsDelta: '{"path":"a","content":"b"}' },
-        { type: "usage", usage: { input: 0, output: 9 } },
+        { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
         { type: "finish", finish: { kind: "stop" } },
       ]);
     }
@@ -171,7 +171,7 @@ describe("终态感知出口（层 1 前置 2：done 路径裁决）", () => {
     const noDelta = await collect([toolEnd(0, { id: "t9", name: "list", arguments: {} }), doneEvent()]);
     expect(noDelta).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t9", name: "list", argumentsDelta: "{}" },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });
@@ -186,7 +186,7 @@ describe("终态感知出口（层 1 前置 2：done 路径裁决）", () => {
     ]);
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "write", argumentsDelta: raw },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "max-tokens" } },
     ]);
   });
@@ -297,7 +297,7 @@ describe("全终态 flush 义务（层 1 前置 3——暂存帧不蒸发）", (
     ]);
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "grep", argumentsDelta: '{"q":"x"}' },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "stop" } },
     ]); // 恰三帧——无重复 tool-call-delta
   });
@@ -409,7 +409,7 @@ describe("done 路径合成帧次序（违约流防御层——无 end 块不得
     ]);
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "write", argumentsDelta: "" },
-      { type: "usage", usage: { input: 0, output: 9 } },
+      { type: "usage", usage: { input: 0, output: 9, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "max-tokens" } },
     ]);
   });

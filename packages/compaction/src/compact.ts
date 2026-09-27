@@ -8,6 +8,7 @@ import { anchorIndexOf } from "@x-harness/session";
 import type { SessionId, SessionStore, SurfaceNode } from "@x-harness/session";
 import { estimateText } from "@x-harness/token-meter";
 import { findCutPoint, USER_QUOTE_TOKENS } from "./cut.ts";
+import { lastWindow } from "./occupancy.ts";
 import {
   accumulateFileOps,
   computeFileLists,
@@ -44,6 +45,8 @@ export interface ResolvedConfig {
   readonly triggerPct: number;
   readonly reserveTokens: number;
   readonly keepRecentTokens: number;
+  /** 轮次下限护栏（CONTEXT-TOKEN-UNIFICATION §7.3——best-effort；emergency 路径豁免） */
+  readonly keepMinTurns: number;
   readonly fileTools: FileToolNames;
   readonly idleTimeoutMs: number;
   readonly summarizer: SummarizerFace | undefined;
@@ -57,6 +60,9 @@ export interface CompactFields {
   readonly trigger: CompactTrigger;
   readonly customInstructions?: string;
   readonly keepRecentTokens?: number;
+  /** 逐调用护栏覆盖（CONTEXT-TOKEN-UNIFICATION §7.3——手动路径传 0 显式豁免；
+   *  缺省用 ResolvedConfig 值） */
+  readonly keepMinTurns?: number;
   readonly turn: number;
   readonly step: number;
   /** 触发上下文的取消信号（水位/自愈 = turn signal；手动可缺席）——联动摘要拨号 */
@@ -246,12 +252,24 @@ async function compactSession(
   const { epoch, nodes } = leg;
   const quote = fields.trigger === "emergency" ? 0 : USER_QUOTE_TOKENS;
   const keep = fields.keepRecentTokens ?? deps.config.keepRecentTokens;
+  // cap 分母与水位同口径（对抗审查 B H-1）：min(装配窗, servedWindow)——装配窗在
+  // C≫S（切模型/子代理覆盖/413 缩窗）时会把保留区放大到仍越水位的量级
+  // （0.25C > 0.85S ⟺ S < 0.294C），落账后占用不降、每步重付 summarize
+  const served = lastWindow(deps.store.get(fields.session)?.events() ?? []) ?? deps.config.contextWindow;
+  const effectiveWindow = Math.min(deps.config.contextWindow, served);
   // 保留头 = 锚点（首个含 text 节点——session anchorIndexOf 共用谓词）及其之前：
   // 预锚注入（skill 清单等）与 system 锚点永不进摘要区间；无锚 → 0。
   // 切口候选同步以 start 为下界（预锚 append 型 user 块不算真轮起点——不进护栏
   // 分母、不占原话配额），防「区间只剩上一份摘要但护栏被预锚块虚假满足」。
   const start = anchorIndexOf(nodes) + 1;
-  const cut = findCutPoint(nodes, keep, { userQuoteTokens: quote, protectedHead: start });
+  const cut = findCutPoint(nodes, keep, {
+    userQuoteTokens: quote,
+    protectedHead: start,
+    // 轮次护栏（§7.3 三让位规则之一）：emergency（413 自愈）豁免——keep=0 语义
+    // 纯净，配额放大保留区会导致自愈重试后仍超窗；硬顶 = 25% 有效窗（与水位同分母——小窗防线）；
+    // 逐调用覆盖（fields.keepMinTurns——手动路径显式豁免位）
+    ...(fields.trigger !== "emergency" ? { keepMinTurns: fields.keepMinTurns ?? deps.config.keepMinTurns, windowCapTokens: Math.floor(effectiveWindow * 0.25) } : {}),
+  });
   if (cut === undefined) return { ok: false, reason: "no-cut-point" };
 
   // 区间 = [保留头之后首节点 .. cut 前末节点]（system 锚点与预锚注入保留；位置区间语义）。

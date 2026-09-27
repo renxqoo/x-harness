@@ -27,9 +27,15 @@ function usage(over: Partial<SessionUsage> = {}): SessionUsage {
   return {
     inputTokens: 1200,
     outputTokens: 3400,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costTotal: undefined,
     totalTokens: 4600,
     attempts: 1,
-    turns: [{ turn: 1, inputTokens: 1200, outputTokens: 3400, routes: [{ provider: "glm", model: "glm-4.7", inputTokens: 1200, outputTokens: 3400 }] }],
+    lastReportedInput: 1200,
+    lastReportedCacheRead: 0,
+    lastUsageAt: 1,
+    turns: [{ turn: 1, inputTokens: 1200, outputTokens: 3400, cacheReadTokens: 0, cacheWriteTokens: 0, routes: [{ provider: "glm", model: "glm-4.7", inputTokens: 1200, outputTokens: 3400, cacheReadTokens: 0, cacheWriteTokens: 0 }] }],
     ...over,
   };
 }
@@ -40,7 +46,7 @@ describe("formatTurnLine", () => {
   });
 
   it("无路线记录（unknown）省略括号段", () => {
-    const bare = usage({ turns: [{ turn: 1, inputTokens: 1200, outputTokens: 3400, routes: [] }] });
+    const bare = usage({ turns: [{ turn: 1, inputTokens: 1200, outputTokens: 3400, cacheReadTokens: 0, cacheWriteTokens: 0, routes: [] }] });
     expect(formatTurnLine(1, bare)).toBe("[turn 1] ↑1.2k ↓3.4k · 4.6k");
   });
 });

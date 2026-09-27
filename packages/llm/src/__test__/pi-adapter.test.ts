@@ -83,7 +83,7 @@ describe("pi-adapter 注入层", () => {
     const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", streamFn });
     const chunks = await collect(adapter.stream(request({ signal: controller.signal })));
     expect(chunks).toEqual([
-      { type: "usage", usage: { input: 1, output: 2, totalTokens: 3 } },
+      { type: "usage", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
     const first = seen[0];

@@ -133,7 +133,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const chunks = await collect(adapter.stream(request({})));
     expect(chunks).toEqual([
       { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' }, // end 即放行单帧全量出口（判定不依赖终态——abort 窗口零丢失）
-      { type: "usage", usage: { input: 5, output: 9, totalTokens: 14 } },
+      { type: "usage", usage: { input: 5, output: 9, cacheRead: 0, cacheWrite: 0, totalTokens: 14 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });
@@ -154,7 +154,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const chunks = await collect(adapter.stream(request({})));
     expect(chunks).toEqual([
       { type: "thinking-delta", text: "[Reasoning redacted]" },
-      { type: "usage", usage: { input: 1, output: 2, totalTokens: 3 } },
+      { type: "usage", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
   });
@@ -217,7 +217,7 @@ describe("pi 真身冒烟：openai-completions", () => {
     expect(chunks).toEqual([
       { type: "text-delta", text: "he" },
       { type: "text-delta", text: "llo" },
-      { type: "usage", usage: { input: 3, output: 4, totalTokens: 7 } },
+      { type: "usage", usage: { input: 3, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 7 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
     const captured = srv.captured();

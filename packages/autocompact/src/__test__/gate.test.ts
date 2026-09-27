@@ -13,6 +13,7 @@
 //   死 token、estimateContextTokens 消息级、L0 truncateToolContent、dist 产物。
 // ---------------------------------------------------------------------------
 
+import { TIERS, tierOf, lineTiersOf } from "../plugin.ts";
 import { describe, expect, it, vi } from "vitest";
 import { agentPreStep } from "@x-harness/agent-loop";
 import { compactionLanded } from "@x-harness/compaction";
@@ -312,5 +313,55 @@ describe("空闲清理（时间分支）", () => {
     } finally {
       await world.ctx.dispose();
     }
+  });
+});
+// ── CONTEXT-TOKEN-UNIFICATION §7.4：窗口分档缺省表 ──
+
+
+// ── CONTEXT-TOKEN-UNIFICATION §7.4：阈值窗口分档（真行为面——TIERS 导出直锁） ──
+
+describe("阈值窗口分档（autocompact）", () => {
+  it("三档表与档位解析：1M→30/55/78、512k→35/55/75、256k(≤300k 档)→40/50/72；段 10/10/12%", () => {
+    const [first, second, third] = TIERS;
+    expect(first).toMatchObject({ checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 });
+    expect(second).toMatchObject({ checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 });
+    expect(third).toMatchObject({ checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 });
+    // 档位边界（≤ 含边界）
+    expect(tierOf(300_000)).toBe(first);
+    expect(tierOf(300_001)).toBe(second);
+    expect(tierOf(700_000)).toBe(second);
+    expect(tierOf(700_001)).toBe(third);
+    expect(tierOf(Number.NaN)).toBe(third); // NaN → 末档兜底（后续 eff 校验 fail-fast）
+  });
+
+  it("层序不变量全档成立（cp ≤ l1 ≤ l2 < eff·l2——assertLinesDomain 不抛）", () => {
+    for (const window of [128_000, 200_000, 256_000, 300_000, 400_000, 512_000, 700_001, 1_000_000]) {
+      expect(() => makeWorld({ contextWindow: window, checkpointIdleTimeoutMs: 30 })).not.toThrow();
+    }
+  });
+
+  it("成组语义（M-1）：三 pct 任一显式 → 缺席参数回落兼容值（60/70/85）非档位", async () => {
+    // 窗 1M（档位 cp30/l1 55）+ 只显式 checkpointPct: 60 → l1 应回落 70（若取档位 55
+    // 则 cp 60 > l1 55 撞装配断言——成组语义防混装）
+    const world = await makeWorld({ contextWindow: 1_000_000, checkpointPct: 60, checkpointIdleTimeoutMs: 30 });
+    try {
+      const made = await world.store.create({ id: sid("group") });
+      if (!made.ok) throw new Error(made.reason);
+      expect(made.ok).toBe(true); // 装配未撞线即成组语义生效
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("缺省档位真行为（H-3 区分度）：档位 l1=55% < 兼容缺省 70%——lineTiersOf 直锁 + 装配不撞线", () => {
+    // 窗 1M 三参全缺席 → 整组档位（30/55/78）；只显式 cp → 成组兼容（60/70/85）
+    const tierDefaults = lineTiersOf({ contextWindow: 1_000_000 } as never);
+    expect(tierDefaults).toEqual({ checkpointPct: 30, l1Pct: 55, l2Pct: 78 });
+    const mixed = lineTiersOf({ contextWindow: 1_000_000, checkpointPct: 60 } as never);
+    expect(mixed).toEqual({ checkpointPct: 60, l1Pct: 70, l2Pct: 85 }); // 成组兼容——防混装撞线
+    // 档位 l1 线（55% × eff）与兼容 l1（70%）的差距即行为区分度：560k 落两者之间
+    const eff = 1_000_000 - 200;
+    expect(560_000).toBeGreaterThan(Math.floor(eff * 0.55)); // 越档位线
+    expect(560_000).toBeLessThan(Math.floor(eff * 0.7)); // 不越兼容线
   });
 });

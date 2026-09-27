@@ -2,7 +2,7 @@
 // tool_use input 解析降级三态、toolName 前文回查、空 user 跳过、工具表直传。
 
 import { describe, expect, it } from "vitest";
-import { toPiContext } from "../pi-context.ts";
+import { toPiContext, toPiMessages } from "../pi-context.ts";
 import type { LlmRequest } from "../types.ts";
 
 const META = { api: "anthropic-messages", provider: "anthropic", model: "m1" } as const;
@@ -62,20 +62,44 @@ describe("toPiContext（docs/LLM-PI.md 契约 2）", () => {
             { type: "tool_use", callId: "d", name: "t", input: "5" },
           ],
         },
+        // 配对结果（S6b 发送层兜底：悬空 tool_use 会被剥——配齐后语义面才是本用例目标）
+        { role: "tool", callId: "a", content: "r" },
+        { role: "tool", callId: "b", content: "r" },
+        { role: "tool", callId: "c", content: "r" },
+        { role: "tool", callId: "d", content: "r" },
       ]),
       META,
     );
-    const calls = (ctx.messages[0] as { content: Array<{ arguments: unknown }> }).content;
+    const assistant = ctx.messages.find((m) => (m as { role?: string }).role === "assistant") as { content: Array<{ arguments: unknown }> };
+    const calls = assistant.content;
     expect(calls.map((call) => call.arguments)).toEqual([{}, {}, {}, {}]);
   });
 
   it("toolName 回查缺席 → \"unknown\"；isError 透传；tool content 缺席归空串", () => {
-    const ctx = toPiContext(request([{ role: "tool", callId: "orphan", content: undefined as never }]), META);
+    // 孤儿 tool result 配对（S6b 发送层兜底）：无对应 tool_use 的结果被剥除——
+    // 原孤儿用例改为配对形态（toolName 回查语义不变）
+    const ctx = toPiContext(
+      request([
+        { role: "assistant", content: [{ type: "tool_use", callId: "orphan", name: "probe", input: "{}" }] },
+        { role: "tool", callId: "orphan", content: undefined as never },
+      ]),
+      META,
+    );
     expect(ctx.messages).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "toolCall", id: "orphan", name: "probe", arguments: {} }],
+        api: META.api,
+        provider: META.provider,
+        model: META.model,
+        usage: expect.any(Object),
+        stopReason: "stop",
+        timestamp: 0,
+      },
       {
         role: "toolResult",
         toolCallId: "orphan",
-        toolName: "unknown",
+        toolName: "probe",
         content: [{ type: "text", text: "" }],
         isError: false,
         timestamp: 0,
@@ -160,5 +184,96 @@ describe("user 携图映射（BATCH2-DESIGN §1.2——mediaType→mimeType 单�
   it("纯图 user（空 text 块被滤）→ 仅 image 内容，整条不跳过", () => {
     const ctx = toPiContext(request([{ role: "user", content: [{ type: "text", text: "" }, { type: "image", data: "aGk=", mediaType: "image/jpeg" }] }]), META);
     expect(ctx.messages).toEqual([{ role: "user", content: [{ type: "image", data: "aGk=", mimeType: "image/jpeg" }], timestamp: 0 }]);
+  });
+});
+
+// ── CONTEXT-TOKEN-UNIFICATION §3.1 L5：签名重建门（协议/provenance/块序） ──
+
+describe("signatureBlocksToContent 经 toPiMessages（L5 重建门）", () => {
+  const baseMeta = { api: "openai-completions", provider: "gpt", model: "gpt-5.6-sol" };
+  const sig = [{ signature: "rs_abc", redacted: false, origin: { provider: "gpt", model: "gpt-5.6-sol" } }];
+
+  it("openai + provenance 匹配：thinking 块重建并居 content 首位（prepend）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }], thinkingBlocks: sig }] as never,
+      baseMeta,
+    );
+    const content = out[0]?.content as Array<{ type: string }>;
+    expect(content[0]?.type).toBe("thinking");
+    expect((content[0] as { thinkingSignature?: string }).thinkingSignature).toBe("rs_abc");
+    expect(content[1]?.type).toBe("text");
+  });
+
+  it("provenance 不匹配（跨模型）：不重建（fail-closed 维持 pi 跨模型降级）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }], thinkingBlocks: sig }] as never,
+      { api: "openai-completions", provider: "other", model: "m2" },
+    );
+    const content = out[0]?.content as Array<{ type: string }>;
+    expect(content.some((b) => b.type === "thinking")).toBe(false);
+  });
+
+  it("anthropic 协议：跳过重建（B-1 裁决——空文本+签名形态待真端点实证）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [{ type: "text", text: "hi" }], thinkingBlocks: sig }] as never,
+      { api: "anthropic-messages", provider: "gpt", model: "gpt-5.6-sol" },
+    );
+    const content = out[0]?.content as Array<{ type: string }>;
+    expect(content.some((b) => b.type === "thinking")).toBe(false);
+  });
+
+  it("redacted 块：标志随块（回放形态 redacted_thinking 的载荷面）", () => {
+    const out = toPiMessages(
+      [{ role: "assistant", content: [], thinkingBlocks: [{ signature: "opaque", redacted: true, origin: { provider: "gpt", model: "gpt-5.6-sol" } }] }] as never,
+      baseMeta,
+    );
+    const block = (out[0]?.content as Array<{ type: string; redacted?: boolean }> | undefined)?.[0];
+    expect(block?.type).toBe("thinking");
+    expect(block?.redacted).toBe(true);
+  });
+
+  it("无签名（旧档）：零改动——content 形状与既有输出一字不差", () => {
+    const out = toPiMessages([{ role: "assistant", content: [{ type: "text", text: "hi" }] }] as never, baseMeta);
+    expect(out[0]?.content).toEqual([{ type: "text", text: "hi" }]);
+  });
+});
+
+// ── CONTEXT-TOKEN-UNIFICATION S6b：发送层配对兜底 ──
+
+describe("ensureToolPairing（发送层兜底——三重防线第三层）", () => {
+  const meta = { api: "openai-completions", provider: "gpt", model: "m" };
+
+  it("症状回归「悬空 tool_use 发送」：截断边界形态（assistant 有 call 无 result）→ call 剥除不进 wire（防 400）", () => {
+    const ctx = toPiContext(
+      request([
+        { role: "user", content: [{ type: "text", text: "q" }] },
+        { role: "assistant", content: [{ type: "tool_use", callId: "dangling", name: "t", input: "{}" }] },
+      ]),
+      meta,
+    );
+    const assistant = ctx.messages.find((m) => (m as { role?: string }).role === "assistant") as { content: Array<{ type: string }> } | undefined;
+    // 剥空后的 assistant 整条丢弃（无 content 的 assistant 也是 400 面）——悬空 call 不进 wire
+    expect(assistant?.content.some((b) => b.type === "toolCall") ?? false).toBe(false);
+  });
+
+  it("孤儿 tool result（无对应 call——resume 边界形态）→ 剥除", () => {
+    const ctx = toPiContext(
+      request([{ role: "tool", callId: "ghost", content: "orphan output" }]),
+      meta,
+    );
+    expect(ctx.messages.some((m) => (m as { role?: string }).role === "toolResult")).toBe(false);
+  });
+
+  it("配对完整时零改动（原数组引用透传——无拷贝无重排）", () => {
+    const ctx = toPiContext(
+      request([
+        { role: "user", content: [{ type: "text", text: "q" }] },
+        { role: "assistant", content: [{ type: "tool_use", callId: "ok", name: "t", input: "{}" }] },
+        { role: "tool", callId: "ok", content: "result" },
+      ]),
+      meta,
+    );
+    expect(ctx.messages).toHaveLength(3);
+    expect((ctx.messages[1] as { content: Array<{ type: string }> }).content[0]?.type).toBe("toolCall");
   });
 });

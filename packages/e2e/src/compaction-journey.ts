@@ -52,7 +52,11 @@ async function assembleWorld(root: string, options?: { readonly mainDialFails413
     }),
     createAutoCompactPlugin({
       contextWindow: 1_200,
+      // 三线整体显式钉值（§7.4 分档后 l1 缺省 50 < 显式 cp 60 会撞 assertLinesDomain——
+      // 夹具锁的是旅程行为而非档位缺省，三线成组取值不与档位混装）
       checkpointPct: 60,
+      l1Pct: 70,
+      l2Pct: 85,
       warnBufferTokens: 100,
       ledgerBudgetTokens: 200,
       checkpointMinSegmentTokens: 1,

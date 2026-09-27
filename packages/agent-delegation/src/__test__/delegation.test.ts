@@ -315,6 +315,30 @@ describe("fork 重铸（X14）", () => {
     await parent.dispose();
   });
 
+  it("症状回归「fork/子代理种子丢 reasoning 签名」：assistantRecastData 携带 thinking/thinkingBlocks——子会话推理连续性不断链（CONTEXT-TOKEN-UNIFICATION B-2）", async () => {
+    const world = await makeWorld(await workerOptions());
+    const parent = await spawnParent(world);
+    const session = parent.agent.session;
+    session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "q" }] }, { surfaceOp: "append" });
+    session.append("turn/start", { turn: 0 });
+    session.append("assistant/message", {
+      turn: 0,
+      step: 0,
+      content: [{ type: "text", text: "a" }],
+      thinking: "思考全文",
+      thinkingBlocks: [{ signature: "rs_seed", redacted: false, origin: { provider: "p1", model: "m1" } }],
+      stopReason: "stop",
+    }, { surfaceOp: "append" });
+    session.append("turn/end", { turn: 0, reason: { kind: "completed" } });
+    const seed = forkSeed(session);
+    const recastAssistant = seed.filter((e) => e.type === "assistant/message");
+    expect(recastAssistant).toHaveLength(1);
+    const data = recastAssistant[0]?.data as { thinking?: string; thinkingBlocks?: Array<{ signature: string }> };
+    expect(data.thinking).toBe("思考全文");
+    expect(data.thinkingBlocks?.[0]?.signature).toBe("rs_seed");
+    await parent.dispose();
+  });
+
   it("父无已完成 turn 的 fork → 全新子并如实告知", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);

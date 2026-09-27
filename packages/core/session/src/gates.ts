@@ -28,6 +28,26 @@ function isCount(value: unknown): value is number {
 
 /** 内容块形状门：user 域（user/message、inbox insert）放行 image；assistant 域拒——
  *  驱动永不铸 assistant image，损坏档案在恢复面 fail-closed（archive-corrupt） */
+/** 签名块数组词表（CONTEXT-TOKEN-UNIFICATION §3.1 L3）：每项 signature 非空串、
+ *  redacted 布尔、origin.provider/model 非空串——垃圾整丢由上层 append 失败承担。 */
+function isThinkingBlocks(value: unknown): value is readonly unknown[] {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every((block) => {
+    if (typeof block !== "object" || block === null) return false;
+    const record = block as Record<string, unknown>;
+    const origin = record["origin"];
+    return (
+      typeof record["signature"] === "string" &&
+      record["signature"] !== "" &&
+      typeof record["redacted"] === "boolean" &&
+      typeof origin === "object" &&
+      origin !== null &&
+      typeof (origin as Record<string, unknown>)["provider"] === "string" &&
+      typeof (origin as Record<string, unknown>)["model"] === "string"
+    );
+  });
+}
+
 function isContentBlocks(value: unknown, allowImage: boolean): boolean {
   return (
     Array.isArray(value) &&
@@ -190,6 +210,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isCount(d["step"]) &&
     isContentBlocks(d["content"], false) &&
     (d["thinking"] === undefined || isStr(d["thinking"])) &&
+    (d["thinkingBlocks"] === undefined || isThinkingBlocks(d["thinkingBlocks"])) &&
     (d["usage"] === undefined || isObj(d["usage"])) &&
     (d["stopReason"] === undefined || isStr(d["stopReason"])) &&
     (d["interrupted"] === undefined || d["interrupted"] === true),
@@ -200,6 +221,7 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     isStr(d["error"]) &&
     (d["content"] === undefined || isContentBlocks(d["content"], false)) &&
     (d["thinking"] === undefined || isStr(d["thinking"])) &&
+    (d["thinkingBlocks"] === undefined || isThinkingBlocks(d["thinkingBlocks"])) &&
     (d["usage"] === undefined || isObj(d["usage"])),
   "tool/call": (d) =>
     isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["callId"]) && isStr(d["name"]) && isStr(d["arguments"]),

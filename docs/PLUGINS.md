@@ -11,14 +11,17 @@
 
 ### 1. 插件包 `@x-harness/token-analytics`（packages/token-analytics/）
 
-- 命名导出与现 plugin-examples 实现逐字等价（零行为变化）：
+- 命名导出（TOKEN-UNIFICATION.md 后 usage 事实层改为消费 token-meter，导出形状不变）：
   `tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin`、
   `tokenAnalyticsService: ServiceToken<TokenAnalyticsService>`、
   类型 `TokenBreakdown / TokenAnalyticsOptions / TokenAnalyticsService`；
+  `inject: ["system-prompt", "tools", "session", "token-meter"]`——token-meter
+  为硬依赖（读不到 = 装配错误；仅 process 模式成立，前提：宿主 build
+  --external @x-harness/* 保 token 身份同 realpath）；
 - 新增 `export default`：零参构造的 Plugin 实例——plugin-manager `validateModule`
   的装载形状（`{ name: "token-analytics", apply }`）。装载面不收 options：
   `contextWindow` 三级兜底（参数 > llmRuntime.contextWindowOf > 200k）已覆盖无参场景；
-- `inject: ["system-prompt", "tools", "session"]`、`softInject: ["llm"]` 不变；
+- `softInject: ["llm"]` 不变（runtime 查窗口，缺席=无适配器世界兑底参数接手）；
 - **不变式：模块级零可变状态**——模块实例与 default 导出 Plugin 跨 world 共享
   （见并发预算），一切 per-world 状态只许住在 apply 闭包。
 
@@ -78,10 +81,17 @@ export const BUILTIN_PLUGINS = { "token-analytics": { module: "@x-harness/token-
   （`capability_*` 先例；进 HUB_ERROR_CODES 码表，`get_host_info.errorCodes` 自动携带）；
 - 取用：`world.ctx.use(pluginManagerService).serviceToken("token-analytics")` 按名取
   token（host-hub 源码不 import 插件包符号——类型用本地结构形状；真解耦）；
-- 统计域 = **会话全历史（WAL 权威）**：每次查询直接折叠所询会话事件日志——
-  resume/重开的会话立即有全历史实报值（与 get_session_stats 同成本模型）；
+- 统计域 = **会话全历史（经 token-meter 事实层——TOKEN-UNIFICATION.md）**：usage
+  事实（累计/尾值/垃圾判定/溢出 fail-closed）全部来自 token-meter 单一真相
+  （事件驱动增量 + 冷启动全量折叠，增量 == 全量由构造保证）——resume/重开
+  会话经 meter 冷启动立即有全历史实报值；查询时序从「append 后同步可见」
+  变为「审计微任务排空后可见」（生产 IPC 跨 macrotask 实际无感）；
   作用域：lastReportedInput/缓存观测 = 所询会话口径（子代理轮不污染主线程
-  读数）；totalOutputTokens = world 全会话累计；插件无 per-world 可变状态；
+  读数）；totalOutputTokens = world 全会话累计；插件无 per-world 可变状态
+  （usage 缓存住 meter 闭包，峰值 = 活会话数）；cacheHitRate =
+  lastReportedCacheRead / lastReportedInput（点态口径——多轮不随累计虚涨）；
+  无参形态缓存累计恒 0、溢出会话排除出聚合（D6/D9）；attempt 带 usage 计入
+  （D1——与 compaction occupancy 同律，失败终态尾值 = 失败请求真实上下文）；
 - 数据口径（实报优先律）：`total` = LLM 实报 input（输入侧——cache 读/写计入，
   不含 output；无实报时退 systemPrompt+tools 估算下限）；分项恒为估算
   （messages = 实报 − 前两项估算，负值归零）；估算器 CJK 感知（汉字 1 字 ≈ 1
@@ -124,7 +134,7 @@ export const BUILTIN_PLUGINS = { "token-analytics": { module: "@x-harness/token-
 
 | 文件 | 职责 |
 |---|---|
-| packages/token-analytics/package.json | 包定义（deps: core/plugin-api/session/llm/system-prompt/tools；dev: harness/testkit） |
+| packages/token-analytics/package.json | 包定义（deps: core/plugin-api/session/llm/system-prompt/tools/token-meter；dev: harness/testkit） |
 | packages/token-analytics/src/token-analytics.ts | 插件实现（迁移；注释去版本叙事只留协议事实） |
 | packages/token-analytics/src/index.ts | barrel + `export default` Plugin 实例 |
 | packages/token-analytics/src/__test__/test-world.ts | 包级测试装置（参照 plugin-examples/src/test-world.ts，testkit scriptedAdapter） |
@@ -151,7 +161,7 @@ export const BUILTIN_PLUGINS = { "token-analytics": { module: "@x-harness/token-
 | apps/host-hub/src/__test__/contracts-frames.test.ts | `length===60` 锚 → 61 |
 | apps/host-hub/src/__test__/smoke.test.ts | `length===60` 锚 → 61 |
 
-依赖方向：token-analytics → 内核六包（与原 examples 同面）；host-hub →
+依赖方向：token-analytics → 内核六包 + token-meter（usage 事实单一真相，TOKEN-UNIFICATION.md）；host-hub →
 plugin-manager（装载机制）+ token-analytics（仅 node_modules 链接供 resolve，
 源码零 import）；settings-store → plugins-catalog（shared 内同层）。
 

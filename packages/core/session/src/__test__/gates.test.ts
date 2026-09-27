@@ -189,6 +189,18 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     expect(gateEvent("tool/result", { turn: 0, step: 0, callId: "c1", content: "x", synthetic: "true" })).toBe("shape:tool/result");
   });
 
+  it("thinkingBlocks 词表（CONTEXT-TOKEN-UNIFICATION §3.1 L3）：合法块过、垃圾整拒、缺席省略", () => {
+    const good = { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "rs_1", redacted: false, origin: { provider: "p", model: "m" } }] };
+    expect(gateEvent("assistant/message", good)).toBeUndefined();
+    expect(gateEvent("assistant/attempt", { turn: 0, step: 0, error: "boom", thinkingBlocks: [{ signature: "rs_1", redacted: true, origin: { provider: "p", model: "m" } }] })).toBeUndefined();
+    // 垃圾：空签名 / redacted 非布尔 / origin 缺 model / 非数组
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "", redacted: false, origin: { provider: "p", model: "m" } }] })).toBe("shape:assistant/message");
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "s", redacted: "no", origin: { provider: "p", model: "m" } }] })).toBe("shape:assistant/message");
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "s", redacted: false, origin: { provider: "p" } }] })).toBe("shape:assistant/message");
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: "x" })).toBe("shape:assistant/message");
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [] })).toBe("shape:assistant/message"); // 空数组=垃圾（缺席才省略）
+  });
+
   it("assistant thinking/attempt content 可选（STREAM-PARTIAL-PERSISTENCE——截断已收内容落盘）", () => {
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinking: "thought" })).toBeUndefined();
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [] })).toBeUndefined();

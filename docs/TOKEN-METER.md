@@ -15,17 +15,33 @@
 ## 1. 契约
 
 ```ts
-export interface RouteUsage { readonly provider: string; readonly model: string; readonly inputTokens: number; readonly outputTokens: number }
-export interface TurnUsage { readonly turn: number; readonly inputTokens: number; readonly outputTokens: number; readonly routes: readonly RouteUsage[] }
+export interface RouteUsage {
+  readonly provider: string; readonly model: string;
+  readonly inputTokens: number; readonly outputTokens: number;
+  readonly cacheReadTokens: number; readonly cacheWriteTokens: number;   // inputTokens 子集明细（非加数）
+}
+export interface TurnUsage {
+  readonly turn: number;
+  readonly inputTokens: number; readonly outputTokens: number;
+  readonly cacheReadTokens: number; readonly cacheWriteTokens: number;
+  readonly routes: readonly RouteUsage[];
+}
 export interface SessionUsage {
-  readonly inputTokens: number; readonly outputTokens: number; readonly totalTokens: number;
-  readonly attempts: number;              // 有 usage 的 assistant/attempt + assistant/message 总数
+  readonly inputTokens: number; readonly outputTokens: number;
+  readonly cacheReadTokens: number; readonly cacheWriteTokens: number;   // 累计缓存明细（input 子集）
+  readonly totalTokens: number;            // = input + output（缓存子集不入总计——防双计）
+  readonly attempts: number;               // 有 usage 的 assistant/attempt + assistant/message 总数
+  readonly lastReportedInput: number;      // 尾值：样本 input 在场才覆写（0 = 无实报哨兵）
+  readonly lastReportedCacheRead: number;  // 尾值：样本 cacheRead 在场才覆写（命中率点态口径分子）
+  readonly lastUsageAt: number;            // 尾值：input 或 cacheRead 在场才更新（事件 time）
   readonly turns: readonly TurnUsage[];
 }
 export interface TokenMeterService {
-  usageOf(sessionId: SessionId): SessionUsage | undefined;   // 未知会话 → undefined
-  estimateText(text: string): number;                        // 上界口径：ASCII/空白 len/4、非 ASCII 1.25/字、向上取整（UTF-16 计长）
+  usageOf(sessionId: SessionId): SessionUsage | undefined;   // 未知会话/溢出 → undefined（fail-closed）
+  estimateText(text: string): number;                        // 上界口径：ASCII/空白 len/4、非 ASCII 1.25/字（预算/压缩面）
 }
+export function estimateTokensTypical(text: string): number; // 典型值口径：CJK 1/字、码位计长（显示/分析面）
+export function parseUsageSample(data: unknown): UsageSample | undefined;  // usage 样本校验单一真相
 export const tokenMeter = defineService<TokenMeterService>("token-meter");
 export const tokenMeterPlugin: Plugin;   // name "token-meter"，inject ["session"]
 ```
@@ -59,16 +75,16 @@ sessionDisposed 摘缓存（防泄漏）。
 单写者：同 id 事件序由 session 单写者保证；折叠幂等（重放同事件不双计——以事件 seq 游标推进）。
 
 session 词表扩展（docs/SESSION.md 同步——词条计数 14→15 一并更新）：`assistant/attempt`
-data 扩可选 `usage?: { input?: number; output?: number }`（此前 attempt 只落 error 文本，
-失败尝试的 usage 现在可计费）。
+data 扩可选 `usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number }`
+（此前 attempt 只落 error 文本，失败尝试的 usage 现在可计费；cache 字段与 message 同形）。
 
 ## 2. 问题域
 
 **处理**：usage 聚合（session/turn/route 三粒度）、失败尝试计费、路线归因、fail-closed
-校验、估算函数、增量+冷启动折叠、缓存生命周期。
+校验、缓存明细折叠（三路子集计数 + 尾值三件套）、估算函数（上界/典型值两口径）、
+增量+冷启动折叠、缓存生命周期。
 **不处理**：成本折算（费率表归计费件）；请求压力投影/压缩水位触发（归后续压缩件——
-estimateText 是它的预留口径）；cache/reasoning 桶细分（TokenUsage 契约只有 input/output——
-扩桶是 LlmChunk 契约变更，届时随压缩件裁决）。
+estimateText 是它的预留口径）；reasoning 桶细分（上游无独立计量）。
 
 ## 3. 测试口径（对照 M15/M16/M21/M22 真缺口）
 
@@ -96,7 +112,10 @@ estimateText 是它的预留口径）；cache/reasoning 桶细分（TokenUsage �
   提前搬会带进无消费方的复杂度）；estimateText 保留为压缩件预留口径（裁决已随
   docs/COMPACTION.md 生效：chars/4 升级为 CJK 上界口径——ASCII/空白 len/4、非 ASCII
   1.25/字；`WIDE_TOKENS_PER_CHAR` 为费率单一真相）；
-- 砍 cache/reasoning 桶（TokenUsage 契约层面只有 input/output，扩桶属跨件契约变更）；
+- ~~砍 cache/reasoning 桶~~ → **修订（TOKEN-UNIFICATION.md）**：cacheRead/cacheWrite
+  明细入账（三路桶 + 会话累计 + 尾值三件套）。LLM 契约 TokenUsage 已携带 cache 字段
+  （pi-events 透传），扩桶的跨件前提已成立；口径：input 含 cache 总量、明细为子集
+  非加数（totalTokens 不变）。reasoning 桶仍不采（上游无独立计量）。
 - 失败尝试计费采纳（M16）——重试的成本可见性是生产必要面（写侧改动由本件认领，见 §1）。
 
 ## 6. 方案审查处置

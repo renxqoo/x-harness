@@ -140,60 +140,50 @@ async function handleGetTree(rt: WorkerRuntime, input: CommandInput): Promise<vo
   }
 }
 
-interface UsageFold {
-  userMessages: number;
-  assistantMessages: number;
-  toolCalls: number;
-  toolResults: number;
-  input: number;
-  output: number;
-  total: number;
-  cost: number | undefined;
-}
-
-/** usage/计数折叠（assistant/message usage 防御性折叠——cost 在场透传） */
-function foldStats(events: readonly { type: string; data?: unknown }[]): UsageFold {
-  const out: UsageFold = { userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0, input: 0, output: 0, total: 0, cost: undefined };
+/** 计数折叠（纯计数面——非 token 域无口径问题；token/cost 面归 token-meter 单一真相）
+ *  CONTEXT-TOKEN-UNIFICATION §3.2：原 foldStats 的 usage 折叠删除——三套折叠归一
+ *  （旧折漏 assistant/attempt 计费、无垃圾校验、total 用 totalTokens ?? input+output
+ *  与 meter 口径分叉）。 */
+function countStats(events: readonly { type: string }[]): { userMessages: number; assistantMessages: number; toolCalls: number; toolResults: number } {
+  const out = { userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0 };
   for (const event of events) {
     if (event.type === "user/message") out.userMessages += 1;
-    else if (event.type === "assistant/message") {
-      out.assistantMessages += 1;
-      foldUsage(out, (event.data as { usage?: unknown }).usage);
-    } else if (event.type === "tool/call") out.toolCalls += 1;
+    else if (event.type === "assistant/message") out.assistantMessages += 1;
+    else if (event.type === "tool/call") out.toolCalls += 1;
     else if (event.type === "tool/result") out.toolResults += 1;
   }
   return out;
 }
 
-function foldUsage(out: UsageFold, usage: unknown): void {
-  if (typeof usage !== "object" || usage === null) return;
-  const u = usage as { input?: number; output?: number; totalTokens?: number; cost?: { total?: number } };
-  out.input += u.input ?? 0;
-  out.output += u.output ?? 0;
-  out.total += u.totalTokens ?? (u.input ?? 0) + (u.output ?? 0);
-  if (u.cost?.total !== undefined) out.cost = (out.cost ?? 0) + u.cost.total; // 在场透传（内核可选携带）
-}
-
 function handleGetSessionStats(rt: WorkerRuntime, input: CommandInput): void {
   const session = requireThread(rt, { ...input, command: "get_session_stats" });
   if (session === undefined) return;
-  const stats = foldStats(session.events());
+  const counts = countStats(session.events());
+  // token/cost 面：token-meter 单一真相（attempt 计费/垃圾整丢/溢出 fail-closed 与
+  // analytics 同律）；未知/溢出会话 → undefined → 全零形态降级（H3——不 500 不悬空）
+  const usage = rt.state.world?.meter.usageOf(session.id);
   respond(rt, {
     id: input.id,
     command: "get_session_stats",
     data: {
-      userMessages: stats.userMessages,
-      assistantMessages: stats.assistantMessages,
-      toolCalls: stats.toolCalls,
-      toolResults: stats.toolResults,
-      tokens: { input: stats.input, output: stats.output, total: stats.total, ...(stats.cost !== undefined ? { cost: stats.cost } : {}) },
+      userMessages: counts.userMessages,
+      assistantMessages: counts.assistantMessages,
+      toolCalls: counts.toolCalls,
+      toolResults: counts.toolResults,
+      tokens: {
+        input: usage?.inputTokens ?? 0,
+        output: usage?.outputTokens ?? 0,
+        total: usage?.totalTokens ?? 0,
+        ...(usage?.costTotal !== undefined ? { cost: usage.costTotal } : {}),
+      },
     },
   });
 }
 
 /** 插件分析面（本地结构形状——host-hub 不 import 插件包；经 plugin-manager token
- *  按名注册表取服务，真解耦——docs/PLUGINS.md 契约 5）。统计域 = 装配后事件
- *  （resume 不含历史；子代理 usage 计入全局累计） */
+ *  按名注册表取服务，真解耦——docs/PLUGINS.md 契约 5）。统计域 = 会话全历史
+ *  （usage 事实经 token-meter 事实层：resume/重开经冷启动含全历史实报；子代理
+ *  usage 计入全局累计） */
 interface TokenAnalyticsFace {
   breakdown(sessionId?: string): Record<string, number>;
   sessionOutput(session: string): number;

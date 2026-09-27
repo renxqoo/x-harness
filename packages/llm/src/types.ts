@@ -56,6 +56,11 @@ export type LlmFinish =
 export type LlmChunk =
   | { readonly type: "text-delta"; readonly text: string }
   | { readonly type: "thinking-delta"; readonly text: string }
+  /** 思考块定形签名（CONTEXT-TOKEN-UNIFICATION §3.1 L1）：openai = 序列化
+   *  reasoning_details 加密项 / anthropic = signature——多轮工具调用的推理连续性
+   *  载荷。只在 thinking_end 提取（中断流无 end 帧 → 半截签名不上 wire——完整性
+   *  门在源头）；UI 流面在 hub tap 剥除（签名 blob 不进渲染层）。 */
+  | { readonly type: "thinking-signature"; readonly signature: string; readonly redacted: boolean }
   | { readonly type: "tool-call-delta"; readonly index: number; readonly callId?: string; readonly name?: string; readonly argumentsDelta?: string }
   | { readonly type: "usage"; readonly usage: TokenUsage }
   | { readonly type: "finish"; readonly finish: LlmFinish };

@@ -3,6 +3,7 @@
 // 阈值不触发、manual runner、单飞行、值域 fail-fast、多会话隔离；改写为 waterfall
 // dispatch + sessionStore 形态）。
 
+import { TRIGGER_TIERS, triggerTierOf } from "../plugin.ts";
 import { describe, expect, it, vi } from "vitest";
 import { agentRequestError } from "@x-harness/agent-loop";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -187,16 +188,16 @@ describe("manual runner（服务直调）", () => {
     }
   });
 
-  it("92% 缺省水位（不传 triggerPct）：920 边界——915 不触发、930 触发强制压缩", async () => {
-    const world = await makeWorld(); // 缺省 triggerPct=92：水位 = 1000 × 92% = 920
+  it("缺省水位按窗口分档（§7.4：窗 1000 落 ≤300k 首档 → 80%）：800 边界——795 不触发、810 触发强制压缩", async () => {
+    const world = await makeWorld(); // 缺省分档（§7.4 首档 80%）：水位 = 1000 × 80% = 800
     try {
       const made = await world.store.create({ id: sid("pct-default") });
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500, output: 5 } } });
-      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 915, output: 5 } } }); // < 920
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 795, output: 5 } } }); // < 920
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(0);
-      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 930, output: 5 } } }); // > 920
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 810, output: 5 } } }); // > 920
       world.llm.scripts.push(textScript("BACK"));
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(1);
@@ -475,7 +476,9 @@ describe("预锚注入头部豁免（skill 清单形态——L2 头部守卫缺�
       seedTurn(session, { turn: 2, user: "q2", assistant: { text: "a2", usage: { input: 10, output: 1 } } });
       const runner = world.ctx.use(compactionRunner);
       world.llm.scripts.push(textScript("FIRST-SUMMARY"));
-      const first = await runner.compact({ session: session.id });
+      // 手动压缩不带护栏（keepMinTurns 是水位/自动路径的护栏——§7.3 让位①同源：
+      // 手动指令的保留意图由用户裁量，compactionRunner.compact 的手动面不注入护栏）
+      const first = await runner.compact({ session: session.id, keepMinTurns: 0 });
       if (!first.ok) throw new Error(first.reason);
 
       // 第二次：保护头后仅剩 [FIRST-SUMMARY(replace), 当轮]——修复前护栏被预锚块虚假满足 → 摘要摘摘要
@@ -485,5 +488,37 @@ describe("预锚注入头部豁免（skill 清单形态——L2 头部守卫缺�
     } finally {
       await world.ctx.dispose();
     }
+  });
+});
+
+// ── §7.4 compaction 分档：83/85 水位档 + keep/minTurns 分档（对抗审查 H-2 补覆盖） ──
+
+describe("水位窗口分档（compaction）", () => {
+  it("512k 与 1M 档边界（80% 首档已有边界用例）：窗 700_001（第三档 85%）——849 不触发、851 触发", async () => {
+    const world = await makeWorld({ contextWindow: 700_001 });
+    try {
+      const made = await world.store.create({ id: sid("tier-85") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500_000, output: 5 } } }); // 基线
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 594_900, output: 5 } } }); // < 700001×85%=595,000.85
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(world.llm.calls).toHaveLength(0);
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 595_500, output: 5 } } }); // > 595,000.85 越线
+      world.llm.scripts.push(textScript("T85"));
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(world.llm.calls).toHaveLength(1);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("keep/minTurns 分档直锁（对抗审查 B H-3——原用例零断言假绿，删除重建）：三档 12k/16k/20k、3/4/5；档位边界 ≤ 含界", () => {
+    const [first, second, third] = TRIGGER_TIERS;
+    expect(first).toMatchObject({ triggerPct: 80, keepRecentTokens: 12_000, keepMinTurns: 3 });
+    expect(second).toMatchObject({ triggerPct: 83, keepRecentTokens: 16_000, keepMinTurns: 4 });
+    expect(third).toMatchObject({ triggerPct: 85, keepRecentTokens: 20_000, keepMinTurns: 5 });
+    expect(triggerTierOf(300_000)).toBe(first);
+    expect(triggerTierOf(300_001)).toBe(second);
+    expect(triggerTierOf(700_001)).toBe(third);
   });
 });

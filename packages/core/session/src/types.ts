@@ -22,6 +22,16 @@ export interface SessionHeader {
   readonly agentWorktree?: string;
 }
 
+/** 思考块签名（CONTEXT-TOKEN-UNIFICATION §3.1 L3）：推理连续性回放载荷——
+ *  openai = 序列化 reasoning_details 加密项 / anthropic = signature。origin =
+ *  落账时实际路由（provenance——防跨模型回放，L5 重建门）。缺席 = 无签名
+ *  （pre-S0 旧档 / 上游未报 / 中断流半截）。 */
+export interface ThinkingSignatureBlock {
+  readonly signature: string;
+  readonly redacted: boolean;
+  readonly origin: { readonly provider: string; readonly model: string };
+}
+
 export type TurnEndReason =
   | { readonly kind: "completed" }
   | { readonly kind: "aborted"; readonly cause?: string }
@@ -57,6 +67,8 @@ export interface SessionEventData {
     readonly content: readonly ContentBlock[];
     /** 本 attempt 思考全文（落盘不回传——docs/STREAM-PARTIAL-PERSISTENCE.md；缺席=无思考） */
     readonly thinking?: string;
+    /** 块定形签名（多 thinking 块各自独立——L1 只在 thinking_end 产，中断流缺席） */
+    readonly thinkingBlocks?: readonly ThinkingSignatureBlock[];
     readonly usage?: unknown;
     readonly stopReason?: string;
     readonly interrupted?: true;
@@ -69,6 +81,7 @@ export interface SessionEventData {
     readonly error: string;
     readonly content?: readonly ContentBlock[];
     readonly thinking?: string;
+    readonly thinkingBlocks?: readonly ThinkingSignatureBlock[];
     readonly usage?: unknown;
   };
   readonly "tool/call": { readonly turn: number; readonly step: number; readonly callId: string; readonly name: string; readonly arguments: string };
@@ -200,7 +213,7 @@ export interface SurfaceNode<K extends SurfaceEventType = SurfaceEventType> {
 export type SurfaceMessage =
   | { readonly role: "system"; readonly text: string }
   | { readonly role: "user"; readonly content: readonly ContentBlock[] }
-  | { readonly role: "assistant"; readonly content: readonly ContentBlock[]; readonly usage?: unknown; readonly stopReason?: string }
+  | { readonly role: "assistant"; readonly content: readonly ContentBlock[]; readonly usage?: unknown; readonly stopReason?: string; readonly thinkingBlocks?: readonly ThinkingSignatureBlock[] }
   | { readonly role: "tool"; readonly callId: string; readonly content: string; readonly isError?: true };
 
 export interface Session {

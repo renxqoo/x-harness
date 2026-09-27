@@ -79,6 +79,10 @@ export interface AssemblyFields {
   /** hub-settings thinking.default 物化（无尾值时的装配回落；与目标模型不兼容时
    *  丢弃并告警——不让 hub 默认打挂装配） */
   thinkingDefault?: ThinkingLevel;
+  /** hub-settings compaction.* 装配期快照（CONTEXT-TOKEN-UNIFICATION §7.3——
+   *  worker 重启/下轮 resume 生效，非热更） */
+  compactionKeepRecentTokens?: number;
+  compactionKeepMinTurns?: number;
   env?: Record<string, string | undefined>;
   /** 权限 ask 桥：结构化 AskPayload → confirm（无桥 = 内核降级 deny） */
   confirm?: (fields: ConfirmFields) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>;
@@ -233,7 +237,7 @@ function permissionGrantStorePlugin(fields: { readonly agentDir: string; readonl
 /** dial/thinking 挂点插件（DESIGN §3.6/§3.9）：每 step 从 session/meta 尾值改写
  *  agentRequest 输出 dial（waterfall 是最后写者——优先序成立；内核此后自动落
  *  request/header 与 request/context）。 */
-function dialHookPlugin(): Plugin {
+function dialHookPlugin(catalog: WorkerCatalog): Plugin {
   return {
     name: "hub-dial-hook",
     inject: ["session"],
@@ -246,11 +250,14 @@ function dialHookPlugin(): Plugin {
         // options 透传——resume 后 options 显式值不得压过 WAL 事实
         const folded = foldDial(session.events(), { provider: dial.provider ?? "", model: dial.model });
         const thinking = thinkingLevelOf(metaTailOf(session.events(), META_KEY_THINKING));
+        const effective = { ...dial, ...(folded.model !== "" ? { model: folded.model } : {}), ...(folded.provider !== "" ? { provider: folded.provider } : {}) };
         return {
-          ...dial,
-          ...(folded.model !== "" ? { model: folded.model } : {}),
-          ...(folded.provider !== "" ? { provider: folded.provider } : {}),
+          ...effective,
           ...(thinking !== undefined ? { thinking } : {}),
+          // 实际服务窗随 dial 注入（CONTEXT-TOKEN-UNIFICATION S4）：按【折叠后】
+          // provider/model 查目录（模型级 > 档案级 > 兜底）——内核落 request/context，
+          // 压缩分母 min(主窗, servedWindow) 从此读到真实值
+          contextWindow: contextWindowOf(catalog, { provider: effective.provider ?? "", model: effective.model }),
         };
       }),
   };
@@ -324,6 +331,27 @@ async function installExternals(world: World, fields: AssemblyFields, deps?: Ass
 
 /** 内置配方（DESIGN §5）：base 提示词/会话/工具箱/围栏/审批桥/持久学习面/压缩/循环/
  *  委派/技能/拨号挂点——字段由 assembleWorkerAgent 解析后传入 */
+/** 插件提案工具装配（defaultWorkerPlugins 复杂度治理）：proposalStore 在场才装。 */
+function proposalPlugins(fields: AssemblyFields): readonly Plugin[] {
+  if (fields.proposalStore === undefined) return [];
+  return [
+    createPluginProposePlugin({
+      confirm: (ask) => (fields.confirm !== undefined ? fields.confirm(ask) : Promise.resolve({ allowed: false })),
+      record: (proposal) => fields.proposalStore!.record(proposal),
+    }),
+  ];
+}
+
+/** confirm 桥装配（复杂度治理）：无桥 = 空。 */
+function brokerPlugins(fields: AssemblyFields): readonly Plugin[] {
+  return fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : [];
+}
+
+/** 权限授权存储装配：agentDir 在场才装。 */
+function grantStorePlugins(fields: AssemblyFields, cwd: string): readonly Plugin[] {
+  return fields.agentDir !== undefined ? [permissionGrantStorePlugin({ agentDir: fields.agentDir, cwd, trusted: fields.trusted })] : [];
+}
+
 function defaultWorkerPlugins(resolved: {
   readonly fields: AssemblyFields;
   readonly cwd: string;
@@ -340,6 +368,11 @@ function defaultWorkerPlugins(resolved: {
   readonly mainSessionId: string;
 }): readonly Plugin[] {
   const { fields, cwd, skillsDirs, agentsDirs, disabled, adapters, contextWindow, dial, facts, catalog, mainSessionId } = resolved;
+  // 压缩保留配置（hub-settings 装配期快照——compactionKit 收敛为单对象展开）
+  const compactionOverrides = {
+    ...(fields.compactionKeepRecentTokens !== undefined ? { keepRecentTokens: fields.compactionKeepRecentTokens } : {}),
+    ...(fields.compactionKeepMinTurns !== undefined ? { keepMinTurns: fields.compactionKeepMinTurns } : {}),
+  };
   return [
     // base 系统提示词（与 CLI 同源 @x-harness/harness——身份/守则/环境块 + facts 插值）
     ...promptKit(createBasePromptPlugin(facts)),
@@ -376,15 +409,15 @@ function defaultWorkerPlugins(resolved: {
         projectSettingsPath(cwd),
       ],
     }),
-    ...(fields.confirm !== undefined ? [permissionBrokerPlugin(fields.confirm)] : []),
-    ...(fields.agentDir !== undefined ? [permissionGrantStorePlugin({ agentDir: fields.agentDir, cwd, trusted: fields.trusted })] : []),
+    ...brokerPlugins(fields),
+    ...grantStorePlugins(fields, cwd),
     // 跨进程邮箱服务（AGENT-DELEGATION §5.3 宿主接线）——提供 mailboxService；与
     // delegation 的装配时序由 softInject topo 声明式保证，此处仅声明式相邻摆放
     ...mailboxKit({ root: mailboxRootOfWorker(fields.env ?? process.env), onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`) }),
     // 验收回炉与任务编排（AGENT-WORKFLOW 件16）——mainSession = worker 托管会话（先铸 id 复用）
     ...workflowKit(workerWorkflowOptions(fields, mainSessionId)),
     ...meterKit(),
-    ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider } }),
+    ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...compactionOverrides }),
     commandsPlugin,
     commandCompactPlugin,
     ...autoCompactKit({ contextWindow }),
@@ -409,13 +442,8 @@ function defaultWorkerPlugins(resolved: {
     // 日期 + 项目指令快照（与 CLI 同源 @x-harness/harness）：装配位紧随 skill 装配
     // （docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）；cwd = 装配工作区
     createFactsSnapshotPlugin({ cwd }),
-    ...(fields.proposalStore !== undefined
-      ? [createPluginProposePlugin({
-          confirm: (ask) => (fields.confirm !== undefined ? fields.confirm(ask) : Promise.resolve({ allowed: false })),
-          record: (proposal) => fields.proposalStore!.record(proposal),
-        })]
-      : []),
-    dialHookPlugin(),
+    ...(proposalPlugins(fields)),
+    dialHookPlugin(catalog),
   ];
 }
 

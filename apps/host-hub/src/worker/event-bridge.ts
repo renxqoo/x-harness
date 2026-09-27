@@ -347,7 +347,9 @@ export function createEventBridge(deps: EventBridgeDeps): EventBridge {
         for await (const chunk of stream) {
           feedPartial(chunk);
           if (chunk.type === "tool-call-delta") deps.inflight.partial(partial.snapshot()); // 工具增量后即发布（否则等下一帧才可见）
-          emit("llm/chunk", { turn: llmTurn, step: llmStep, chunk });
+          // 签名 chunk 不外发（CONTEXT-TOKEN-UNIFICATION H-2）：签名 blob 是协议载荷
+          // 不是渲染面——UI 流（llm/chunk 帧）形状保持既有词表，消费方零改动
+          if (chunk.type !== "thinking-signature") emit("llm/chunk", { turn: llmTurn, step: llmStep, chunk });
           yield chunk;
         }
       },

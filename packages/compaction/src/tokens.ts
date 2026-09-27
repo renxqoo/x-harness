@@ -11,6 +11,8 @@ export interface CompactionRunner {
     readonly trigger?: CompactTrigger;
     readonly customInstructions?: string;
     readonly keepRecentTokens?: number;
+    /** 逐调用护栏覆盖（手动路径显式豁免位——传 0 = 不启用轮次护栏） */
+    readonly keepMinTurns?: number;
     /** 操作者取消信号（REPL Ctrl+C 等）——联动摘要拨号；水位/自愈路径走触发上下文 signal */
     readonly signal?: AbortSignal;
   }): Promise<CompactionResult>;

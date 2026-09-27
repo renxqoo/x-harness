@@ -75,6 +75,7 @@ export function surfaceToMessages(nodes: readonly SurfaceNode[]): SurfaceMessage
           content: event.data.content,
           ...(event.data.usage !== undefined ? { usage: event.data.usage } : {}),
           ...(event.data.stopReason !== undefined ? { stopReason: event.data.stopReason } : {}),
+          ...(event.data.thinkingBlocks !== undefined ? { thinkingBlocks: event.data.thinkingBlocks } : {}),
         };
       case "tool/result":
         return {

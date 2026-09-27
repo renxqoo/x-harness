@@ -3,8 +3,8 @@
 // 作废（幽灵 token 防线——压缩后一次 LLM 失败不产生虚构占用）。
 
 import type { ContentBlock, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
-import { estimateText } from "@x-harness/token-meter";
-import { IMAGE_TOKENS, nodeTokens } from "./estimate.ts";
+import { estimateContextTokens, estimateText } from "@x-harness/token-meter";
+import { IMAGE_TOKENS } from "./estimate.ts";
 
 export interface Occupancy {
   readonly tokens: number;
@@ -60,15 +60,20 @@ export function measureContext(
   }
   const factor = opts.trailingFactor ?? 1;
   if (anchorSeq < 0) {
-    let total = 0;
-    for (const node of nodes) total += nodeTokens(node);
+    // 无锚冷启动：全量纯估走计费域（thinking 载荷 + wire 膨胀——CONTEXT-TOKEN-
+    // UNIFICATION §3.1b：判定与切口同尺，消解「投影域 < 计费域」脱节）
+    const total = estimateContextTokens(nodes);
     return { tokens: total, hasAnchor: false, anchorSeq: undefined, trailingTokens: total, anchorTokens: 0 };
   }
-  let trailing = 0;
+  // 尾估走计费域（锚后节点的 thinking/签名 + wire 膨胀随尾段计入）——锚本身是
+  // 实报（已含基底与全前缀），尾段与锚同尺后才可加和
+  const trailingNodes: SurfaceNode[] = [];
   for (const node of nodes) {
-    if (node.seq > anchorSeq) trailing += nodeTokens(node);
+    if (node.seq > anchorSeq) trailingNodes.push(node);
   }
-  return { tokens: anchorTokens + Math.ceil(trailing * factor), hasAnchor: true, anchorSeq, trailingTokens: trailing, anchorTokens };
+  const trailing = estimateContextTokens(trailingNodes);
+  void factor; // 校准因子由 autocompact 的 calibration 通道承担（trailingFactor 语义并入计费域常数）
+  return { tokens: anchorTokens + trailing, hasAnchor: true, anchorSeq, trailingTokens: trailing, anchorTokens };
 }
 
 /** 触发判定（严格大于）：tokens > contextWindow × pct% —— 水位是窗口百分比

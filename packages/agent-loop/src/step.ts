@@ -270,12 +270,18 @@ function isDialShape(value: unknown): value is Dial {
   return true;
 }
 
-/** provider+model 齐备且位移才落 request/context */
+/** provider+model 齐备且位移才落 request/context（含实际服务窗——S4：压缩分母
+ *  min(主窗, servedWindow) 的 servedWindow 读侧；413 自愈缩窗的持久性依赖
+ *  「位移才落」——无位移步不覆盖缩窗值，路由往返则回目录窗（方向安全）） */
 function appendContextIfShifted(session: Session, dial: Dial): void {
   if (dial.provider === undefined) return;
   const last = lastRequestContext(session.events());
   if (last?.provider !== dial.provider || last?.model !== dial.model) {
-    appendEvent(session, "request/context", { provider: dial.provider, model: dial.model });
+    appendEvent(session, "request/context", {
+      provider: dial.provider,
+      model: dial.model,
+      ...(typeof dial.contextWindow === "number" && Number.isFinite(dial.contextWindow) && dial.contextWindow > 0 ? { contextWindow: dial.contextWindow } : {}),
+    });
   }
 }
 

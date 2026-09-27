@@ -3,6 +3,8 @@
 // 症状源：20260920T152852-xx03bt——34000 token 思考流终止后 WAL 零落盘。
 
 import type { LlmChunk } from "@x-harness/llm";
+import { StreamAccumulator } from "../stream.ts";
+import { agentRequest as agentRequestToken, type Dial } from "../tokens.ts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Agent } from "../index.ts";
 import { makeWorld, resetWorlds, spawn, textScript, worlds } from "./world.ts";
@@ -172,6 +174,67 @@ describe("截断已收内容落盘（STREAM-PARTIAL-PERSISTENCE）", () => {
     const secondRequest = JSON.stringify(world.fake.calls[1]?.messages ?? []);
     expect(secondRequest).toContain("visible answer"); // 可见正文照常回传
     expect(secondRequest).not.toContain("SECRET-THOUGHT"); // 思考落盘不回传
+    await handle.dispose();
+  });
+});
+
+// ── CONTEXT-TOKEN-UNIFICATION §3.1 全链路：签名 chunk → 累积 → 落账形态 ──
+
+describe("thinking 签名全链路（L1→L2→L3）", () => {
+  it("症状回归「多轮工具调用的 reasoning 签名丢失」：thinking-signature chunk 进累积器，落账为 thinkingBlocks（含 origin）", () => {
+    const accum = new StreamAccumulator();
+    accum.push({ type: "thinking-delta", text: "思考中" });
+    accum.push({ type: "thinking-signature", signature: "rs_chain", redacted: false });
+    accum.push({ type: "text-delta", text: "结论" });
+    expect(accum.thinkingText).toBe("思考中");
+    expect(accum.signatureBlocks).toEqual([{ signature: "rs_chain", redacted: false }]);
+  });
+
+  it("无签名的流：signatureBlocks 空，落账省略字段（旧档形态不变）", () => {
+    const accum = new StreamAccumulator();
+    accum.push({ type: "thinking-delta", text: "无签名思考" });
+    expect(accum.signatureBlocks).toEqual([]);
+    expect(accum.thinkingText).toBe("无签名思考");
+  });
+});
+
+// ── CONTEXT-TOKEN-UNIFICATION S4：request/context 落 contextWindow ──
+
+describe("request/context contextWindow（S4）", () => {
+  it("dial 携窗口 → 位移落账含 contextWindow（S4 内核路径：agentRequest 注入窗口，appendContextIfShifted 落字段）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    world.fake.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "text-delta", text: "a" };
+        yield { type: "finish", finish: { kind: "stop" } };
+      })(),
+    );
+    // 模拟 hub dial-hook 的窗口注入（S4 装配行为）：agentRequest waterfall 补 contextWindow
+    const off = world.ctx.on(agentRequestToken, (async (payload: never, next: (p: never) => Promise<Dial>): Promise<Dial> => {
+      const dial = await next(payload);
+      return { ...dial, contextWindow: 123_456 };
+    }) as never) as () => void;
+    const { agent, handle } = await spawn(world);
+    agent.followup("q");
+    await agent.whenIdle();
+    off();
+    const events = agent.session.events().filter((e) => e.type === "request/context");
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    const last = events.at(-1);
+    expect((last as { data: { contextWindow?: number } } | undefined)?.data.contextWindow).toBe(123_456);
+    // 不变量（413 缩窗持久性）：同路由第二轮（无位移）不重落 request/context——
+    // 缩窗值（无论来自 413 自愈还是目录）不被覆盖
+    const before = events.length;
+    world.fake.scripts.push(
+      (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "text-delta", text: "b" };
+        yield { type: "finish", finish: { kind: "stop" } };
+      })(),
+    );
+    agent.followup("q2");
+    await agent.whenIdle();
+    expect(agent.session.events().filter((e) => e.type === "request/context").length).toBe(before);
     await handle.dispose();
   });
 });

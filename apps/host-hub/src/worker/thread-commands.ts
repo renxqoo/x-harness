@@ -132,6 +132,8 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
     ...(rt.proposals !== undefined ? { proposalStore: rt.proposals } : {}),
     confirm: (fields) => rt.broker.confirm(rt.state.threadId === "" ? "unassigned" : rt.state.threadId, fields),
     ...(settings["thinking.default"] !== undefined ? { thinkingDefault: settings["thinking.default"] } : {}),
+    ...(settings["compaction.keepRecentTokens"] !== undefined ? { compactionKeepRecentTokens: settings["compaction.keepRecentTokens"] } : {}),
+    ...(settings["compaction.keepMinTurns"] !== undefined ? { compactionKeepMinTurns: settings["compaction.keepMinTurns"] } : {}),
     permissionMode: initialMode,
     ...permissionFieldsOf(settings, userFile, projectFile) as Partial<import("./assembly.ts").AssemblyFields>,
   });

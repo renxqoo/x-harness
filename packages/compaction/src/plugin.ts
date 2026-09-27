@@ -26,6 +26,8 @@ export interface CompactionOptions {
   readonly triggerPct?: number;
   readonly reserveTokens?: number;
   readonly keepRecentTokens?: number;
+  /** 轮次下限护栏（缺省 5——best-effort：emergency 豁免 / 切口存在性优先 / 25% 窗硬顶） */
+  readonly keepMinTurns?: number;
   /** 摘要模型面；缺席 = 软禁用（一次性告警，水位/自愈不动作） */
   readonly summarizer?: {
     readonly model: string;
@@ -39,8 +41,29 @@ export interface CompactionOptions {
 }
 
 const DEFAULT_RESERVE = 16_384;
-const DEFAULT_KEEP_RECENT = 20_000;
-const DEFAULT_TRIGGER_PCT = 92;
+/** 轮次下限护栏缺省（CONTEXT-TOKEN-UNIFICATION §7.3：真实数据背书——受益面 71%
+ *  的会话末 5 轮含大工具轮；5 轮保留量中位 43k / max 233k 不失控） */
+
+/** 水位分档缺省表（CONTEXT-TOKEN-UNIFICATION §7.4 定稿）：水位 = 异常兜底而非
+ *  常规防线（L2 已在前收紧）；比 claude 1M 档（96.7%）激进、与 kimi（85%）持平。
+ *  小窗按绝对余量提前：余量 ≥ 最大单步暴涨（实测 29.6k）+ 摘要输出预留（20k）
+ *  = 33k 绝对保险线（claude 准则）——256k 档 80% = 余 51k > 33k。 */
+/** 首档绝对余量下限（对抗审查 B M-1）：档位是区间不是单点——165k 以下窗的
+ *  20% 余量 < 33k 保险线（最大单步暴涨 29.6k + 摘要输出预留 ~3.4k 封顶后的
+ *  常量口径）；低窗取 max(百分比, 绝对下限) 保底（兜底窗 128k：25.6k → 33k） */
+const FIRST_TIER_MIN_HEADROOM_TOKENS = 33_000;
+
+export const TRIGGER_TIERS = [
+  { maxWindow: 300_000, triggerPct: 80, keepRecentTokens: 12_000, keepMinTurns: 3 },
+  { maxWindow: 700_000, triggerPct: 83, keepRecentTokens: 16_000, keepMinTurns: 4 },
+  { maxWindow: Number.POSITIVE_INFINITY, triggerPct: 85, keepRecentTokens: 20_000, keepMinTurns: 5 },
+] as const;
+
+const [, , TRIGGER_FALLBACK] = TRIGGER_TIERS;
+
+export function triggerTierOf(contextWindow: number): (typeof TRIGGER_TIERS)[number] {
+  return TRIGGER_TIERS.find((tier) => contextWindow <= tier.maxWindow) ?? TRIGGER_FALLBACK;
+}
 
 /** 窗口溢出码闭集（自愈唤醒词表——docs/OUTPUT-TOKEN-CONTINUATION.md compaction 节）：
  *  `http-413` = 状态码直报；`context-overflow` = llm 层 overflow 文案分类（主力 provider
@@ -63,7 +86,14 @@ function expectNumber(name: string, value: number, min: number): number {
 /** 装配期值域 fail-fast + 缺省解析 */
 function resolveConfig(options: CompactionOptions): ResolvedConfig {
   const contextWindow = expectNumber("contextWindow", options.contextWindow, 1);
-  const triggerPct = expectNumber("triggerPct", options.triggerPct ?? DEFAULT_TRIGGER_PCT, 1);
+  // 首档绝对余量语义（M-1）：余量 = max(pct·窗, 33k)——百分比线低于下限时按
+  // 下限折算（cap 95 防极端小窗撞值域；显式 triggerPct 不受下限约束——用户裁量）
+  const tier = triggerTierOf(contextWindow);
+  const tierTriggerPct = expectNumber("triggerPct", options.triggerPct ?? tier.triggerPct, 1);
+  const headroomPct = Math.ceil(((1 - FIRST_TIER_MIN_HEADROOM_TOKENS / contextWindow) * 100));
+  const triggerPct = tier === TRIGGER_TIERS[0] && options.triggerPct === undefined
+    ? Math.min(Math.max(tierTriggerPct, headroomPct), 95)
+    : tierTriggerPct;
   if (triggerPct > 99) {
     throw new Error("compaction: triggerPct must be <= 99 (threshold would sit at the window edge)");
   }
@@ -71,13 +101,15 @@ function resolveConfig(options: CompactionOptions): ResolvedConfig {
   if (reserveTokens * 2 > contextWindow) {
     throw new Error("compaction: reserveTokens * 2 must not exceed contextWindow (threshold would be non-positive)");
   }
-  const keepRecentTokens = expectNumber("keepRecentTokens", options.keepRecentTokens ?? DEFAULT_KEEP_RECENT, 0);
+  const keepRecentTokens = expectNumber("keepRecentTokens", options.keepRecentTokens ?? triggerTierOf(contextWindow).keepRecentTokens, 0);
+  const keepMinTurns = expectNumber("keepMinTurns", options.keepMinTurns ?? triggerTierOf(contextWindow).keepMinTurns, 0);
   const idleTimeoutMs = expectNumber("idleTimeoutMs", options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS, 0);
   return {
     contextWindow,
     triggerPct,
     reserveTokens,
     keepRecentTokens,
+    keepMinTurns,
     idleTimeoutMs,
     summarizer: options.summarizer !== undefined ? resolveSummarizer(options, reserveTokens) : undefined,
     fileTools: options.fileTools ?? DEFAULT_FILE_TOOLS,

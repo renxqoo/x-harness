@@ -79,12 +79,14 @@ export const COMPACTION_BASE = {
   contextWindow: 1_000,
   reserveTokens: 50,
   keepRecentTokens: 1,
+  keepMinTurns: 5, // 行为面测试钉旧缺省（分档缺省见 compaction 侧专测）
+  triggerPct: 92, // 同上——旅程断言沿旧水位线
   summarizer: { model: "sum", contextWindow: 100_000, maxOutputTokens: 100 },
 } as const;
 
 export const AUTOCOMPACT_BASE = {
   contextWindow: 1_000,
-  checkpointPct: 60,
+  checkpointPct: 60, // 行为面测试显式钉值（缺省分档由 gate.test「阈值窗口分档」族锁）
   l1Pct: 89, // eff=900 → l1=l2=801、warn=701（单线形态——各区分界断言沿旧线保持）
   l2Pct: 89,
   warnBufferTokens: 100,
@@ -116,7 +118,7 @@ function must(result: { ok: boolean; reason?: string }): void {
 
 export function seedTurn(
   session: Session,
-  fields: { readonly turn: number; readonly user: string; readonly assistant: { readonly text: string; readonly usage?: { readonly input: number; readonly output: number } } },
+  fields: { readonly turn: number; readonly user: string; readonly assistant: { readonly text: string; readonly thinking?: string; readonly usage?: { readonly input: number; readonly output: number } } },
 ): void {
   const { turn } = fields;
   must(session.append("turn/start", { turn }));
@@ -129,6 +131,7 @@ export function seedTurn(
         turn,
         step: 0,
         content: [{ type: "text", text: fields.assistant.text }],
+        ...(fields.assistant.thinking !== undefined && fields.assistant.thinking !== "" ? { thinking: fields.assistant.thinking } : {}),
         ...(fields.assistant.usage !== undefined ? { usage: fields.assistant.usage } : {}),
         stopReason: "stop",
       },

@@ -37,8 +37,9 @@ export const tokenMeterPlugin = {
       }
       const session = store.get(sessionId);
       if (session === undefined) return undefined;
-      const state = foldUsage(session.events());
-      cache.set(sessionId, { state, cursor: session.events().length - 1 }); // 溢出也缓存：usageOf 判 undefined（O(1) 短路）
+      const events = session.events();
+      const state = foldUsage(events);
+      cache.set(sessionId, { state, cursor: events.length - 1 }); // 溢出也缓存：usageOf 判 undefined（O(1) 短路）
       if (state.overflowed) return undefined;
       return snapshotOf(state);
     };
