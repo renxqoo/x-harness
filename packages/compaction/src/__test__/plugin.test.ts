@@ -3,6 +3,7 @@
 // 阈值不触发、manual runner、单飞行、值域 fail-fast、多会话隔离；改写为 waterfall
 // dispatch + sessionStore 形态）。
 
+import { TRIGGER_TIERS, triggerTierOf } from "../plugin.ts";
 import { describe, expect, it, vi } from "vitest";
 import { agentRequestError } from "@x-harness/agent-loop";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -511,14 +512,13 @@ describe("水位窗口分档（compaction）", () => {
     }
   });
 
-  it("keep 分档（H-1 透传 + 档位）：窗 256k 档 keep=12k——resolve 面直锁", async () => {
-    // makeWorld 走 BASE keep=1 显式——透传链经 compactionOptionsOf 锁（apps/cli 侧）
-    // 此处锁 plugin 分档缺省：不传 keep 时窗 250k 落首档
-    const world = await makeWorld({ contextWindow: 250_000, keepRecentTokens: undefined as never });
-    // makeWorld merge 后 keep 为 undefined → BASE 的 1 兜底？——BASE 展开顺序 { ...BASE, ...pluginOptions }
-    // undefined 会覆盖 1 吗：{...{a:1}, ...{a:undefined}} → a:undefined ✓
-    // 插件 resolve：options.keepRecentTokens ?? tier.keepRecentTokens → 首档 12_000
-    // （resolve 面无导出口——经水印线行为间接锁：首档 trigger 80% 已由前用例覆盖）
-    await world.ctx.dispose();
+  it("keep/minTurns 分档直锁（对抗审查 B H-3——原用例零断言假绿，删除重建）：三档 12k/16k/20k、3/4/5；档位边界 ≤ 含界", () => {
+    const [first, second, third] = TRIGGER_TIERS;
+    expect(first).toMatchObject({ triggerPct: 80, keepRecentTokens: 12_000, keepMinTurns: 3 });
+    expect(second).toMatchObject({ triggerPct: 83, keepRecentTokens: 16_000, keepMinTurns: 4 });
+    expect(third).toMatchObject({ triggerPct: 85, keepRecentTokens: 20_000, keepMinTurns: 5 });
+    expect(triggerTierOf(300_000)).toBe(first);
+    expect(triggerTierOf(300_001)).toBe(second);
+    expect(triggerTierOf(700_001)).toBe(third);
   });
 });

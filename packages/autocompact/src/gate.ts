@@ -285,8 +285,10 @@ async function l1AndBeyond(fields: {
         if (remeasured < lines.l1Line) return;
       }
     }
-    if (plan.gainTokens < 1_000) {
-      // 清无可清仍超线（或收益不值缓存重写）：退避至下一真轮，防每步空转
+    if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines }))) {
+      // 清无可清仍超线（或收益不值缓存重写 / 清完仍越线——预门槛不过同置退避：
+      // 对抗审查 B L-1，L1 线降到 50-55% 后该带覆盖会话寿命大半，不退避则每步
+      // 全量重算清道夫计划）：退避至下一真轮，防每步空转
       state.cache.l1Backoff = true;
       deps.warn(session.id, "l1-no-gain", { gainTokens: plan.gainTokens });
     }
