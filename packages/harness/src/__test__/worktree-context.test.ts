@@ -55,14 +55,18 @@ describe("createWorktreeContextPlugin（Track U 会话层覆盖）", () => {
     expect(prompt.assemble({ sessionId: "other" }).text).not.toContain(WT);
   });
 
-  it("payload 缺 worktree / 缺 branch → 不注册（双在场门）", async () => {
+  it("payload 缺 worktree → 不注册；worktree 在场但缺 branch（detached HEAD）→ 覆盖层仍注册、分支行省略", async () => {
     const { ctx, prompt } = await rig();
-    ctx.emit(agentSpawned, spawnedPayload({ worktree: WT })); // 缺 branch
-    expect(prompt.assemble({ sessionId: "c1" }).text).not.toContain(WT);
     ctx.emit(agentSpawned, spawnedPayload({ branch: "b" })); // 缺 worktree
     expect(prompt.assemble({ sessionId: "c1" }).text).not.toContain("Git branch: b");
     ctx.emit(agentSpawned, spawnedPayload({ worktree: "", branch: "b" })); // 空串视同缺席
     expect(prompt.assemble({ sessionId: "c1" }).text).not.toContain("Git branch: b");
+    // detached HEAD 树：目录行是底线事实——子必须知道自己在 worktree（回归锚：审查缺口）
+    ctx.emit(agentSpawned, spawnedPayload({ worktree: WT }));
+    const detached = prompt.assemble({ sessionId: "c1" }).text;
+    expect(detached).toContain(`- Working directory: ${WT}`);
+    expect(detached).not.toContain("Git branch:");
+    expect(detached).toContain("You are Agent"); // 全量 base/core 仍在
   });
 
   it("worktreeMain 缺席（submodule/不可读）→ worktree 行与只读句省略、目录行仍在", async () => {

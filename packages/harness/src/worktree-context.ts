@@ -70,10 +70,10 @@ function worktreeCoreText(options: WorktreeContextOptions, payload: { readonly w
   return `${text.slice(0, head)}${worktreeEnvironmentBlock(options.facts, payload)}\n\n${text.slice(tail)}`;
 }
 
-/** Track U 覆盖插件：agentSpawned（worktree+worktree 字段在场门）→ scoped base/core；
+/** Track U 覆盖插件：agentSpawned（worktree 在场门）→ scoped base/core；
  *  agentWorktreeGone → 摘层；sessionDisposed → 登记表清理（层本体由 system-prompt
- *  插件 dropLayer）。双在场门：worktree 与 branch 缺一不注册（branch 缺席 = 树形态
- *  不可判——覆盖无增益且可能误导）。 */
+ *  插件 dropLayer）。branch/worktreeMain 缺席只省略对应行（detached HEAD 的子仍
+ *  需知道自己在 worktree——目录行是底线事实）。 */
 export function createWorktreeContextPlugin(options: WorktreeContextOptions): Plugin {
   return {
     name: "worktree-context",
@@ -83,8 +83,10 @@ export function createWorktreeContextPlugin(options: WorktreeContextOptions): Pl
       const layers = new Map<string, () => void>();
       const onSpawned = (payload: AgentSpawnedPayload): void => {
         if (payload.worktree === undefined || payload.worktree === "") return;
-        if (payload.branch === undefined || payload.branch === "") return;
-        const text = worktreeCoreText(options, { worktree: payload.worktree, branch: payload.branch, ...(payload.worktreeMain !== undefined ? { worktreeMain: payload.worktreeMain } : {}) });
+        // 目录行是底线事实（工作区在哪不依赖 git 可读性）；branch 缺席（detached HEAD/
+        // .git 不可读）只省略分支行——不放弃整个覆盖层（审查缺口：双在场门会让
+        // detached 树的 untyped 子退回主仓 cwd 提示——与执行面矛盾，红测回归锚）
+        const text = worktreeCoreText(options, { worktree: payload.worktree, ...(payload.branch !== undefined && payload.branch !== "" ? { branch: payload.branch } : {}), ...(payload.worktreeMain !== undefined ? { worktreeMain: payload.worktreeMain } : {}) });
         if (text === undefined) return; // 锚漂移（自定义 base 正文）——放弃覆盖，根层照常
         const sessionId = String(payload.sessionId);
         layers.get(sessionId)?.(); // 幂等：复活再发先摘旧层
