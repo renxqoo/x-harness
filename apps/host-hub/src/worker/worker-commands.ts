@@ -15,6 +15,7 @@ import { hubError, errorOfCause } from "../shared/errors.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
+import { createWorkflowHandlers } from "./workflow-commands.ts";
 import { findQueueEntryTarget, foldQueue } from "../shared/inbox-fold.ts";
 import { parseCommand } from "@x-harness/commands";
 import { normalizeImages } from "../shared/images.ts";
@@ -487,6 +488,12 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     const dispatched = await dispatchCommand(rt, input, { command: "compact", line: custom !== undefined ? `/compact ${custom}` : "/compact", imagesPresent: false });
     if (!dispatched) respond(rt, { id: input.id, command: "compact", error: hubError("unknown_command", "unknown command") }); // 无命令面装配的防御分支（hub 恒装配）
   });
+
+  createWorkflowHandlers({
+    rt,
+    respond: (frame) => respond(rt, frame),
+    requireThread: (rtArg, input) => requireThread(rtArg as WorkerRuntime, { ...input, threadId: undefined } as Parameters<typeof requireThread>[1]),
+  }).forEach(([name, handler]) => handlers.set(name, handler));
 
   handlers.set("fork", (input) => serializedLifecycle(() => doFork(rt, input, "fork")));
 
