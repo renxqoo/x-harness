@@ -1,6 +1,6 @@
 # REMOTE-ACCESS 施工图
 
-> 状态：定稿 v3（随 DESIGN v3 同步；三路审查处置见 DESIGN §12）
+> 状态：已实施（B0–B6 全部落地；验收清单核销见 §3）
 > 上游：[REMOTE-ACCESS-DESIGN.md](REMOTE-ACCESS-DESIGN.md)（契约与裁决单一真相）
 > 定位：模块划分、批次划分、测试装置、验收清单。不重复设计，只引用节号。
 

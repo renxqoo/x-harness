@@ -1,6 +1,7 @@
 # REMOTE-ACCESS 设计基线（远程接入：手机远控本地 agent）
 
-> 状态：定稿 v3（三路对抗审查 70 条全处置：安全 5H/9M/2L、一致性 7H/8M/5L、产品 11H/16M/7L；处置映射见文末 §12）
+> 状态：已实施（B0–B6 落地；代码对抗审查进行中——处置后推进已核销）
+> 定稿 v3（三路对抗审查 70 条全处置；处置映射 §12）
 > 级别：大（新子系统、跨机器、安全/高可用/一致性三重语义）
 > 文档族：[REMOTE-ACCESS-IMPLEMENTATION.md](REMOTE-ACCESS-IMPLEMENTATION.md)（施工图）｜
 > [REMOTE-ACCESS-WIRE.md](REMOTE-ACCESS-WIRE.md)（字节级线格式 + 测试向量，随 B0 落）
