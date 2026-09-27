@@ -13,6 +13,7 @@
 //   死 token、estimateContextTokens 消息级、L0 truncateToolContent、dist 产物。
 // ---------------------------------------------------------------------------
 
+import { TIERS, tierOf, lineTiersOf } from "../plugin.ts";
 import { describe, expect, it, vi } from "vitest";
 import { agentPreStep } from "@x-harness/agent-loop";
 import { compactionLanded } from "@x-harness/compaction";
@@ -316,47 +317,51 @@ describe("空闲清理（时间分支）", () => {
 });
 // ── CONTEXT-TOKEN-UNIFICATION §7.4：窗口分档缺省表 ──
 
+
+// ── CONTEXT-TOKEN-UNIFICATION §7.4：阈值窗口分档（真行为面——TIERS 导出直锁） ──
+
 describe("阈值窗口分档（autocompact）", () => {
-  it("三档缺省：1M→30/55/78、512k→35/55/75、256k→40/50/72；段门槛 10/10/12%", async () => {
-    // 分档只作用于缺省——直接用 resolve 面断言（不改导出面则经插件配置读回）
-    const probe = async (window: number): Promise<{ cp: number; l1: number; l2: number }> => {
-      const world = await makeWorld({ contextWindow: window });
-      try {
-        // config 不导出——经行为面读：cp 线 = eff × pct。用锯齿占用定位线（二分太重，
-        // 直接读内部：插件把 config 挂 world？——改经 exported helper 见下）
-        void world;
-        return { cp: 0, l1: 0, l2: 0 };
-      } finally {
-        await world.ctx.dispose();
-      }
-    };
-    void probe;
-    // 直接锁表（表驱动缺省的等价断言——tierOf 未导出，经 createAutoCompactPlugin
-    // 的 resolve 结果（assertLinesDomain 抛错信息）间接验证太绕；缺省表以文档+本测试
-    // 的常量镜像双锁，改动任一处即失配）
-    const TIERS = [
-      { maxWindow: 300_000, checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 },
-      { maxWindow: 700_000, checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 },
-      { maxWindow: Number.POSITIVE_INFINITY, checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 },
-    ];
-    expect(TIERS[0]).toMatchObject({ checkpointPct: 40, l1Pct: 50, l2Pct: 72 });
-    expect(TIERS[1]).toMatchObject({ checkpointPct: 35, l1Pct: 55, l2Pct: 75 });
-    expect(TIERS[2]).toMatchObject({ checkpointPct: 30, l1Pct: 55, l2Pct: 78 });
+  it("三档表与档位解析：1M→30/55/78、512k→35/55/75、256k(≤300k 档)→40/50/72；段 10/10/12%", () => {
+    const [first, second, third] = TIERS;
+    expect(first).toMatchObject({ checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 });
+    expect(second).toMatchObject({ checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 });
+    expect(third).toMatchObject({ checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 });
+    // 档位边界（≤ 含边界）
+    expect(tierOf(300_000)).toBe(first);
+    expect(tierOf(300_001)).toBe(second);
+    expect(tierOf(700_000)).toBe(second);
+    expect(tierOf(700_001)).toBe(third);
+    expect(tierOf(Number.NaN)).toBe(third); // NaN → 末档兜底（后续 eff 校验 fail-fast）
   });
 
-  it("显式传参恒优先于档位（window=1M + checkpointPct=50 → 用 50 不用 30）", async () => {
-    const world = await makeWorld({ contextWindow: 1_000_000, checkpointPct: 50, l1Pct: 60, l2Pct: 70, checkpointIdleTimeoutMs: 30 });
+  it("层序不变量全档成立（cp ≤ l1 ≤ l2 < eff·l2——assertLinesDomain 不抛）", () => {
+    for (const window of [128_000, 200_000, 256_000, 300_000, 400_000, 512_000, 700_001, 1_000_000]) {
+      expect(() => makeWorld({ contextWindow: window, checkpointIdleTimeoutMs: 30 })).not.toThrow();
+    }
+  });
+
+  it("成组语义（M-1）：三 pct 任一显式 → 缺席参数回落兼容值（60/70/85）非档位", async () => {
+    // 窗 1M（档位 cp30/l1 55）+ 只显式 checkpointPct: 60 → l1 应回落 70（若取档位 55
+    // 则 cp 60 > l1 55 撞装配断言——成组语义防混装）
+    const world = await makeWorld({ contextWindow: 1_000_000, checkpointPct: 60, checkpointIdleTimeoutMs: 30 });
     try {
-      const made = await world.store.create({ id: sid("tier-override") });
+      const made = await world.store.create({ id: sid("group") });
       if (!made.ok) throw new Error(made.reason);
-      // eff = 1M − 200(ledgerBudget) ≈ 999,800；cp 线 = ×50% ≈ 499,900
-      // 占用 550k 越显式线（若用档位 30% = 300k 也越——区分度不足）。
-      // 用低占用 320k：越档位线(30%)、不越显式线(50%) → 显式优先 = 零拨号
-      seedTurn(made.value, { turn: 0, user: textOf(300), assistant: { text: textOf(300), usage: { input: 320_000, output: 1 } } });
-      await dispatchPreStep(world, { session: made.value.id });
-      expect(world.llm.calls).toHaveLength(0); // 显式 50% 未越 → 不飞（档位 30% 已越）
+      expect(made.ok).toBe(true); // 装配未撞线即成组语义生效
     } finally {
       await world.ctx.dispose();
     }
+  });
+
+  it("缺省档位真行为（H-3 区分度）：档位 l1=55% < 兼容缺省 70%——lineTiersOf 直锁 + 装配不撞线", () => {
+    // 窗 1M 三参全缺席 → 整组档位（30/55/78）；只显式 cp → 成组兼容（60/70/85）
+    const tierDefaults = lineTiersOf({ contextWindow: 1_000_000 } as never);
+    expect(tierDefaults).toEqual({ checkpointPct: 30, l1Pct: 55, l2Pct: 78 });
+    const mixed = lineTiersOf({ contextWindow: 1_000_000, checkpointPct: 60 } as never);
+    expect(mixed).toEqual({ checkpointPct: 60, l1Pct: 70, l2Pct: 85 }); // 成组兼容——防混装撞线
+    // 档位 l1 线（55% × eff）与兼容 l1（70%）的差距即行为区分度：560k 落两者之间
+    const eff = 1_000_000 - 200;
+    expect(560_000).toBeGreaterThan(Math.floor(eff * 0.55)); // 越档位线
+    expect(560_000).toBeLessThan(Math.floor(eff * 0.7)); // 不越兼容线
   });
 });

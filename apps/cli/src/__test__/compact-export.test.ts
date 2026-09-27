@@ -122,6 +122,16 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
 
 
 
+  it("compactionOptionsOf 显式阈值透传（对抗审查 H-1——收了不用即吞参）", () => {
+    const opts = compactionOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 200_000, triggerPct: 92, keepRecentTokens: 999, keepMinTurns: 7 } });
+    expect(opts.triggerPct).toBe(92);
+    expect(opts.keepRecentTokens).toBe(999);
+    expect(opts.keepMinTurns).toBe(7);
+    // 未传时不携带（档位缺省生效面）
+    const bare = compactionOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 200_000 } });
+    expect("triggerPct" in bare).toBe(false);
+  });
+
   it("autocompact 装配在场:主窗与 compaction 同源派生(autoCompactOptionsOf),CP 摘要面缺省回落 runner.summarizer", async () => {
     // 主窗同源:显式传参档
     expect(autoCompactOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 77_000 } })).toEqual({ contextWindow: 77_000 });

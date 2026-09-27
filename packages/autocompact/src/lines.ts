@@ -1,6 +1,8 @@
 // 线条域：上下文窗口的预算分区（CP/L1/L2 三条水位线 + 警告带 + 有效窗口推导）
-// min(主窗, servedWindow) − 摘要输出预留；L1/L2 线为窗口百分比（缺省 70%/85%
-// ——免费层先行、账本层居中，compaction 92% 强制压缩带在本件之外接续）；警告带
+// min(主窗, servedWindow) − 摘要输出预留；L1/L2 线为窗口百分比——缺省按窗口分档
+// （plugin.ts TIERS，§7.4），本文件的 DEFAULT_L1/L2_PCT 仅作自定义线组内缺席参数
+// 的兼容回落（混装语义见 plugin）；compaction 强制压缩带（分档 80-85%）在本件之外
+// 接续；警告带
 // = L1 线下方 warnBufferTokens 区间（只观测与预算外推不落账——前缀缓存裁决；
 // 锚在 L1 保证恒非空——锚在 L2 会让大窗下 warn 越过 l1、警告带恒空）。装配期
 // 值域 fail-fast；servedWindow 收缩的运行期复算走 refitLines 降级（纯本地通道），
@@ -9,9 +11,9 @@
 /** 预留中摘要输出上限的封顶（min(摘要面 maxOutputTokens, 20k)） */
 export const SUMMARIZER_RESERVE_CAP = 20_000;
 
-/** L1 线缺省百分比（旧工具结果免费清层） */
+/** L1 线兼容回落百分比（自定义线组内缺席时——缺省线组走 plugin.ts 档位） */
 export const DEFAULT_L1_PCT = 70;
-/** L2 线缺省百分比（账本查表替换层） */
+/** L2 线兼容回落百分比（同上） */
 export const DEFAULT_L2_PCT = 85;
 
 export interface LineInput {

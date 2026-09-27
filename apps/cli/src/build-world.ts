@@ -132,14 +132,19 @@ export function buildAdapters(config: ProvidersConfig, resolution: ModelResoluti
  *  真实窗由 servedWindow——413 实测——逐步收敛）。 */
 export function compactionOptionsOf(options: Pick<WorldOptions, "config" | "resolution" | "compaction">): CompactionOptions {
   const profile = options.config.providers.find((p) => p.name === options.resolution.defaults.provider);
+  const compaction = options.compaction ?? {};
   return {
-    contextWindow: options.compaction?.contextWindow ?? profile?.contextWindow ?? FALLBACK_CONTEXT_WINDOW,
+    contextWindow: compaction.contextWindow ?? profile?.contextWindow ?? FALLBACK_CONTEXT_WINDOW,
     summarizer: {
       model: options.resolution.defaults.model,
       ...(options.resolution.defaults.provider !== undefined ? { provider: options.resolution.defaults.provider } : {}),
       ...(profile?.contextWindow !== undefined ? { contextWindow: profile.contextWindow } : {}),
       ...(profile?.maxOutputTokens !== undefined ? { maxOutputTokens: profile.maxOutputTokens } : {}),
     },
+    // 显式阈值透传（§7.4：CLI 装配面与 hub settings 同源——收了不用即吞参）
+    ...(compaction.triggerPct !== undefined ? { triggerPct: compaction.triggerPct } : {}),
+    ...(compaction.keepRecentTokens !== undefined ? { keepRecentTokens: compaction.keepRecentTokens } : {}),
+    ...(compaction.keepMinTurns !== undefined ? { keepMinTurns: compaction.keepMinTurns } : {}),
   };
 }
 

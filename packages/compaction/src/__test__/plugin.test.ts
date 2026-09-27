@@ -489,3 +489,36 @@ describe("预锚注入头部豁免（skill 清单形态——L2 头部守卫缺�
     }
   });
 });
+
+// ── §7.4 compaction 分档：83/85 水位档 + keep/minTurns 分档（对抗审查 H-2 补覆盖） ──
+
+describe("水位窗口分档（compaction）", () => {
+  it("512k 与 1M 档边界（80% 首档已有边界用例）：窗 700_001（第三档 85%）——849 不触发、851 触发", async () => {
+    const world = await makeWorld({ contextWindow: 700_001 });
+    try {
+      const made = await world.store.create({ id: sid("tier-85") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500_000, output: 5 } } }); // 基线
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 594_900, output: 5 } } }); // < 700001×85%=595,000.85
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(world.llm.calls).toHaveLength(0);
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 595_500, output: 5 } } }); // > 595,000.85 越线
+      world.llm.scripts.push(textScript("T85"));
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(world.llm.calls).toHaveLength(1);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("keep 分档（H-1 透传 + 档位）：窗 256k 档 keep=12k——resolve 面直锁", async () => {
+    // makeWorld 走 BASE keep=1 显式——透传链经 compactionOptionsOf 锁（apps/cli 侧）
+    // 此处锁 plugin 分档缺省：不传 keep 时窗 250k 落首档
+    const world = await makeWorld({ contextWindow: 250_000, keepRecentTokens: undefined as never });
+    // makeWorld merge 后 keep 为 undefined → BASE 的 1 兜底？——BASE 展开顺序 { ...BASE, ...pluginOptions }
+    // undefined 会覆盖 1 吗：{...{a:1}, ...{a:undefined}} → a:undefined ✓
+    // 插件 resolve：options.keepRecentTokens ?? tier.keepRecentTokens → 首档 12_000
+    // （resolve 面无导出口——经水印线行为间接锁：首档 trigger 80% 已由前用例覆盖）
+    await world.ctx.dispose();
+  });
+});

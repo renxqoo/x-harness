@@ -11,7 +11,7 @@ import { sessionDisposed, sessionAuditEvent, sessionStore } from "@x-harness/ses
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
 import { cancelJob } from "./checkpoint.ts";
 import { maybeIdleClear } from "./idle.ts";
-import { assertLinesDomain, computeLines } from "./lines.ts";
+import { assertLinesDomain, computeLines, DEFAULT_L1_PCT, DEFAULT_L2_PCT } from "./lines.ts";
 import { runStepGate } from "./gate.ts";
 import type { GateConfig } from "./gate.ts";
 import { makeSessionState, recoverSessionState } from "./session-state.ts";
@@ -53,15 +53,10 @@ export interface AutoCompactOptions {
 type WritableGateConfig = { -readonly [K in keyof GateConfig]: GateConfig[K] };
 
 const DEFAULTS = {
-  checkpointPct: 60,
-  l1Pct: 70,
-  l2Pct: 85,
-  ledgerBudgetTokens: 16_000,
   clearKeepRecent: 5,
   clearableTools: ["read", "grep", "bash"],
   idleClearMinutes: 60,
   idleClearMinGainTokens: 0,
-  warnBufferTokens: 20_000,
   checkpointMaxRetries: 2,
   checkpointIdleTimeoutMs: 120_000,
   toolResultCapTokens: 25_000,
@@ -79,18 +74,33 @@ const DEFAULTS = {
  * - 小窗按绝对余量提前：余量下限不是百分比而是「最大单步暴涨」（实测 29.6k）
  *   + 摘要输出预留（20k）——256k 档水位 80% = 余 51k > 33k 绝对保险线（claude 准则）。
  */
-const TIERS = [
-  { maxWindow: 300_000, checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 },
-  { maxWindow: 700_000, checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 },
-  { maxWindow: Number.POSITIVE_INFINITY, checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 },
+export const TIERS = [
+  // warnBuffer/ledgerBudget 随窗缩（对抗审查 M-2：flat 20k/16k 在小窗抬高可行下限
+  // 且与「阈值随窗缩」语义不一致——首档 l1=50% × 250k = 125k > 20k ✓ 装配不变量保持）
+  { maxWindow: 300_000, checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12, warnBufferTokens: 10_000, ledgerBudgetTokens: 12_000 },
+  { maxWindow: 700_000, checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10, warnBufferTokens: 15_000, ledgerBudgetTokens: 16_000 },
+  { maxWindow: Number.POSITIVE_INFINITY, checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10, warnBufferTokens: 20_000, ledgerBudgetTokens: 16_000 },
 ] as const;
 
 /** 窗口档位解析：contextWindow 落入的首档（≤300k / ≤700k / 其余）。末档
  *  Infinity 恒匹配——find 空集运行不可达，解构兜底满足收窄。 */
 const [, , FALLBACK_TIER] = TIERS;
 
-function tierOf(contextWindow: number): (typeof TIERS)[number] {
+export function tierOf(contextWindow: number): (typeof TIERS)[number] {
   return TIERS.find((tier) => contextWindow <= tier.maxWindow) ?? FALLBACK_TIER;
+}
+
+/** 三线缺省解析（§7.4 成组语义——对抗审查 M-1）：三 pct 任一显式即「自定义线组」，
+ *  缺席参数回落兼容值（60/70/85——与既有调用面历史习惯一致），不与档位混装
+ *  （混装撞 assertLinesDomain 的 cp ≤ l1 序）；整体缺席才整组取档位。 */
+export function lineTiersOf(options: AutoCompactOptions): Pick<WritableGateConfig, "checkpointPct" | "l1Pct" | "l2Pct"> {
+  const tier = tierOf(options.contextWindow);
+  const customLines = options.checkpointPct !== undefined || options.l1Pct !== undefined || options.l2Pct !== undefined;
+  return {
+    checkpointPct: options.checkpointPct ?? (customLines ? 60 : tier.checkpointPct),
+    l1Pct: options.l1Pct ?? (customLines ? DEFAULT_L1_PCT : tier.l1Pct),
+    l2Pct: options.l2Pct ?? (customLines ? DEFAULT_L2_PCT : tier.l2Pct),
+  };
 }
 
 interface PreStepPayload {
@@ -101,23 +111,19 @@ interface PreStepPayload {
 }
 
 export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
-  // 窗口档位（阈值分档缺省的判定源；显式传参恒优先——用户/装配覆盖不受档位影响）
-  const tier = tierOf(options.contextWindow);
   const config: WritableGateConfig = {
     contextWindow: options.contextWindow,
     idleClearMinutes: options.idleClearMinutes ?? DEFAULTS.idleClearMinutes,
     idleClearMinGainTokens: options.idleClearMinGainTokens ?? DEFAULTS.idleClearMinGainTokens,
-    checkpointPct: options.checkpointPct ?? tier.checkpointPct,
-    l1Pct: options.l1Pct ?? tier.l1Pct,
-    l2Pct: options.l2Pct ?? tier.l2Pct,
-    ledgerBudgetTokens: options.ledgerBudgetTokens ?? DEFAULTS.ledgerBudgetTokens,
+    warnBufferTokens: options.warnBufferTokens ?? tierOf(options.contextWindow).warnBufferTokens,
+    ledgerBudgetTokens: options.ledgerBudgetTokens ?? tierOf(options.contextWindow).ledgerBudgetTokens,
+    ...lineTiersOf(options),
     clearKeepRecent: options.clearKeepRecent ?? DEFAULTS.clearKeepRecent,
     clearableTools: options.clearableTools ?? DEFAULTS.clearableTools,
-    warnBufferTokens: options.warnBufferTokens ?? DEFAULTS.warnBufferTokens,
     checkpointMaxRetries: options.checkpointMaxRetries ?? DEFAULTS.checkpointMaxRetries,
     checkpointIdleTimeoutMs: options.checkpointIdleTimeoutMs ?? DEFAULTS.checkpointIdleTimeoutMs,
     toolResultCapTokens: options.toolResultCapTokens ?? DEFAULTS.toolResultCapTokens,
-    // 段门槛缺省 = 20% 有效窗口（apply 期随线推导补齐——依赖摘要面预留）
+    // 段门槛缺省 = 档位 segmentPct × 有效窗（§7.4 分档 10/10/12%——apply 期随线推导补齐，依赖摘要面预留）
     checkpointMinSegmentTokens: 0,
   };
   const fileTools = options.fileTools ?? DEFAULT_FILE_TOOLS;
@@ -147,8 +153,9 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         warnBufferTokens: config.warnBufferTokens,
       });
       assertLinesDomain({ lines: probe, ledgerBudgetTokens: config.ledgerBudgetTokens, checkpointPct: config.checkpointPct });
+      // 段门槛缺省 = 档位 segmentPct × 有效窗（§7.4：10/10/12% 分档——旧 20% 已废）
       config.checkpointMinSegmentTokens =
-        options.checkpointMinSegmentTokens ?? Math.floor(probe.effectiveWindow * (tier.segmentPct / 100));
+        options.checkpointMinSegmentTokens ?? Math.floor(probe.effectiveWindow * (tierOf(options.contextWindow).segmentPct / 100));
 
       const warn = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
         const suffix = detail === undefined ? "" : ` ${JSON.stringify(detail)}`;
