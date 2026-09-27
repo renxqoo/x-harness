@@ -9,6 +9,7 @@ import { cleanupRepoTopOf } from "./verbs.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { createWorktree, evaluateCleanup, registerLiveTree, unregisterLiveTree } from "./worktree.ts";
 import type { WorktreePlan } from "./worktree.ts";
+import { appendWorktreeEnv } from "./worktree-env.ts";
 import type { LoadedAgentType } from "./types.ts";
 import type { SettlementSink } from "./tokens.ts";
 
@@ -139,9 +140,29 @@ async function buildChild(
   };
   registerWorktreeFacts(deps, { plan: worktree.plan, childSession: childHandle.agent.session.id });
   deps.lineage.register(row);
-  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, work: row.work });
+  deps.emitSpawned(spawnedPayloadOf({ row, plan: worktree.plan }));
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
   return finishSpawn(deps, { row, handle: childHandle, prompt: plan.input.prompt, freshFork: isFork && !forked });
+}
+
+/** spawn 发射 payload（worktree 三字段——facts 为新树 .git 解析真值，D6） */
+function spawnedPayloadOf(spec: { readonly row: ChildRow; readonly plan: WorktreePlan | undefined }): { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string; worktree?: string; branch?: string; worktreeMain?: string } {
+  const { row, plan } = spec;
+  return {
+    parent: row.parent,
+    agentId: row.agentId,
+    sessionId: row.sessionId,
+    type: row.type,
+    depth: row.depth,
+    work: row.work,
+    ...(plan !== undefined
+      ? {
+        worktree: plan.path,
+        ...(plan.facts?.branch !== undefined ? { branch: plan.facts.branch } : {}),
+        ...(plan.facts?.worktreeMain !== undefined ? { worktreeMain: plan.facts.worktreeMain } : {}),
+      }
+      : {}),
+  };
 }
 
 /** spawn 收尾：kick + 文案（kick 失败同步归一为工具错误结果——原 throw 契约同义）。 */
@@ -189,11 +210,13 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
   }
 }
 
-/** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt（白名单走 registry 会话层，W2A） */
+/** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt（白名单走 registry 会话层，W2A）。
+ *  worktree 子（Track N，docs/WORKTREE-CONTEXT-AWARENESS §1.4）：类型正文拼环境块——
+ *  静态 systemPrompt 短路 prompt.assemble（step.ts），环境事实只能随 options 定格。 */
 function childAgentOptions(
   deps: SpawnDeps,
   parentHandle: AgentHandle,
-  spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId },
+  spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId; readonly worktree?: WorktreePlan },
 ): { model?: string; provider?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
   const dial = inheritDial(parentHandle, {
     type: spec.named,
@@ -201,9 +224,12 @@ function childAgentOptions(
     override: spec.isFork ? undefined : { model: spec.input.model }, // fork 忽略 model 参数（规格原文）
     ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
   });
+  const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
   return {
     ...dial,
-    ...(spec.named !== undefined && spec.named.prompt !== "" ? { systemPrompt: spec.named.prompt } : {}),
+    ...(persona !== undefined || spec.worktree !== undefined
+      ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona ?? "", { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
+      : {}),
     streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs, // 看门狗透传：子恒继承父 resolved 值（缺省同源——resolveOptions 恒填）
   };
 }
@@ -258,7 +284,7 @@ function createChildSession(
       ...(spec.seed.length > 0 ? { seed: spec.seed } : {}),
       agent: { id: spec.agentId, type: spec.typeName, depth: spec.plan.depth, work: spec.plan.input.description, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
     },
-    agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller }),
+    agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller, ...(spec.worktree !== undefined ? { worktree: spec.worktree } : {}) }),
   });
 }
 

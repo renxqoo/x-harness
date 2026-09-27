@@ -17,6 +17,8 @@ import type { ErrorRecoveryOptions } from "@x-harness/error-recovery";
 import { createDefaultTruncationMessages } from "@x-harness/truncation-messages";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
 import type { DelegationOptions } from "@x-harness/agent-delegation";
+import { createWorktreeContextPlugin } from "./worktree-context.ts";
+import type { BasePromptFacts } from "./base-prompt.ts";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
 import { createAutoCompactPlugin } from "@x-harness/autocompact";
@@ -129,10 +131,14 @@ export const errorRecoveryKit = (options?: ErrorRecoveryOptions): readonly Plugi
 export const truncationMessagesKit = (): readonly Plugin[] => [createDefaultTruncationMessages()];
 
 /** 基础段插件 + facts 探测（两宿主同源消费面；正文见 base-prompt.ts，探测见 base-prompt-probe.ts） */
-export { createBasePromptPlugin } from "./base-prompt.ts";
+export { createBasePromptPlugin, baseCoreText, environmentBlock, normalizeBaseFacts } from "./base-prompt.ts";
 export type { BasePromptFacts } from "./base-prompt.ts";
-export { probeBaseFacts } from "./base-prompt-probe.ts";
-export type { ProbeFactsInput } from "./base-prompt-probe.ts";
+export { probeBaseFacts, probeGitFacts } from "./base-prompt-probe.ts";
+export type { ProbeFactsInput, GitFacts } from "./base-prompt-probe.ts";
+
+/** worktree 子会话提示词覆盖（Track U——docs/WORKTREE-CONTEXT-AWARENESS §1.4） */
+export { createWorktreeContextPlugin } from "./worktree-context.ts";
+export type { WorktreeContextOptions } from "./worktree-context.ts";
 
 /** 日期 + 项目指令快照插件（两宿主同源消费面——AGENTS.md/CLAUDE.md 边沿注入；
  *  装配位各自写死：紧随 skill 装配，docs/TAIL-SNAPSHOT-CHANNEL.md A/C'） */
@@ -218,8 +224,10 @@ export const fenceKit = (
 ];
 
 /** 子代理委派（agentsDirs 必收——宿主边沿用 @x-harness/agent-delegation 的 resolveAgentDirs 统一解析；
- *  件15 D5：签名透传 DelegationOptions——reportCap/maxDepth 等经装配入口可达（message 上限恒等 reportCap）） */
-export const delegationKit = (o: DelegationOptions): readonly Plugin[] => [createAgentDelegationPlugin(o)];
+ *  件15 D5：签名透传 DelegationOptions——reportCap/maxDepth 等经装配入口可达（message 上限恒等 reportCap）。
+ *  facts 必收：Track U worktree 提示词覆盖插件随 delegation 同进退（docs/WORKTREE-
+ *  CONTEXT-AWARENESS §1.4 装配裁决——delegation 缺席部署不装配，事件无发射方） */
+export const delegationKit = (o: DelegationOptions, facts: BasePromptFacts): readonly Plugin[] => [createAgentDelegationPlugin(o), createWorktreeContextPlugin({ facts })];
 
 /** 跨进程邮箱服务（docs/AGENT-DELEGATION.md §5.3 宿主接线）：root 必收——宿主边沿用
  *  resolveMailboxDir 统一解析（X_HARNESS_MAILBOX_DIR 覆盖 > ~/.x-harness/mailbox）。

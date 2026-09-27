@@ -30,6 +30,7 @@ import {
   workflowKit,
   meterKit,
   probeBaseFacts,
+  createWorktreeContextPlugin,
   promptKit,
   taskLogsRootOf,
   toolboxKit,
@@ -124,6 +125,9 @@ export interface AssemblyResult {
   skillsDisabled: ReadonlySet<string>;
   /** script 模式适配器（测试断言面；生产 undefined） */
   scriptAdapter: ScriptAdapter | undefined;
+  /** 装配期 git 事实（thread/start|resume 响应 gitBranch 的单一来源——
+   *  probeBaseFacts 同位点；分支是易变事实，不落 host 表，响应时点快照） */
+  gitBranch: string | undefined;
 }
 
 export interface AssemblyDeps {
@@ -436,6 +440,9 @@ function defaultWorkerPlugins(resolved: {
       mailbox: { box: `xh-${mainSessionId}`, mainSession: mainSessionId as never },
       onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
     }),
+    // worktree 子会话提示词覆盖（Track U——docs/WORKTREE-CONTEXT-AWARENESS §1.4：
+    // hub 直用 delegation 插件不经 kit，本插件须显式接线，否则功能在 hub 缺席）
+    createWorktreeContextPlugin({ facts }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     // 日期 + 项目指令快照（与 CLI 同源 @x-harness/harness）：装配位紧随 skill 装配
     // （docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）；cwd = 装配工作区
@@ -518,6 +525,7 @@ export async function assembleWorkerAgent(fields: AssemblyFields, deps?: Assembl
     skillsDirs,
     skillsDisabled: disabled,
     scriptAdapter: script ?? undefined,
+    gitBranch: facts.gitBranch,
   };
 }
 

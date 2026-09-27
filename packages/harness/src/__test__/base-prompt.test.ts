@@ -73,11 +73,19 @@ describe("basePromptPlugin（docs/SYSTEM-PROMPT.md §1.4）", () => {
     expect(ctx.use(systemPrompt).assemble().text).toContain("You are Agent");
   });
 
-  it("baseCoreText 纯函数不含运行事实（占位由 variable 层注入）", () => {
-    const text = baseCoreText();
+  it("baseCoreText 缺省 facts：{{cwd}} 等占位保留（git 行缺席——变量层注入）", () => {
+    const text = baseCoreText(FACTS);
     expect(text).toContain("{{cwd}}");
     expect(text).toContain("{{isGit}}");
     expect(text).toContain("{{shell}}");
+    expect(text).not.toContain("Git branch"); // git 字段缺席 → 行不渲染
+    expect(text).not.toContain("Git worktree of");
+  });
+
+  it("baseCoreText git 字段在场：分支与主仓行渲染（烘焙非占位）", () => {
+    const text = baseCoreText({ ...FACTS, gitBranch: "feat/x", gitWorktreeMain: "/w/main" });
+    expect(text).toContain("- Git branch: feat/x");
+    expect(text).toContain("- Git worktree of: /w/main");
   });
 });
 

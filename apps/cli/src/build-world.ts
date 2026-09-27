@@ -39,7 +39,7 @@ import {
   telemetryKit,
 } from "@x-harness/harness";
 import type { BasePromptFacts } from "@x-harness/harness";
-import { createFactsSnapshotPlugin } from "@x-harness/harness";
+import { createFactsSnapshotPlugin, probeBaseFacts } from "@x-harness/harness";
 import type { ProvidersConfig, ProviderProfile } from "./providers-file.ts";
 import type { ModelResolution } from "./resolve-model.ts";
 
@@ -199,10 +199,17 @@ function optionalPluginsOf(options: WorldOptions, adapters: readonly LlmAdapter[
   ];
 }
 
+/** delegation kit 的 facts（与 promptFacts 同源；缺席现测——CLI 单源探测不双跑） */
+function delegationFactsOf(options: WorldOptions): BasePromptFacts {
+  return options.promptFacts ?? probeBaseFacts({ cwd: options.cwd, platform: process.platform, env: process.env });
+}
+
 export async function buildWorld(options: WorldOptions): Promise<Result<World>> {
   try {
   const adapters = options.adapters ?? buildAdapters(options.config, options.resolution); // 终审 F1-2：构造错误走 Result 面（不逃逸 throw）
   const rgBin = rgBinDirOf(options);
+  // delegation kit（含 Track U worktree 覆盖插件——facts 与 promptFacts 同源，缺席现测）
+  const delegation = delegationKit(delegationOptionsOf(options), delegationFactsOf(options));
   const plugins: readonly Plugin[] = [
     ...promptKit(options.promptFacts !== undefined ? createBasePromptPlugin(options.promptFacts) : undefined),
     ...(options.persist ? durableSessionKit({ root: options.sessionRoot, onIoError: options.onIoError }) : inlineSessionKit()),
@@ -234,7 +241,7 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     ...errorRecoveryKit(), // 工作错误恢复 L2（docs/WORK-ERROR-RECOVERY.md C5——llm-retry 后注册（后手见事件））
     ...checkpointKit(),
     // agent 类型目录由 CLI 边沿统一解析（resolveAgentDirs：显式 > env > 项目/用户根）
-    ...delegationKit(delegationOptionsOf(options)),
+    ...delegation,
     // 目录由 CLI 边沿统一解析（resolveSkillDirs：显式 > env > 项目/用户根）——插件零目录知识
     ...skillKit({ skillsDirs: resolveSkillDirs() }),
     // 快照装配位写死：紧随 skillKit（docs/TAIL-SNAPSHOT-CHANNEL.md——落位互序单一真相）

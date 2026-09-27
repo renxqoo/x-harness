@@ -9,10 +9,15 @@ import type { Disposer, Plugin } from "@x-harness/core";
 import { systemPrompt, wellKnown } from "@x-harness/system-prompt";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 
-/** 环境事实（宿主探测后传入——进程内静态项） */
+/** 环境事实（宿主探测后传入——进程内静态项）。git 两字段：在场才渲染对应行
+ *  （docs/WORKTREE-CONTEXT-AWARENESS §1.3——键缺席 = 未知，不落 null/空串） */
 export interface BasePromptFacts {
   readonly cwd: string;
   readonly isGit: boolean;
+  /** 当前分支（probeGitFacts 解析；detached/非仓缺席） */
+  readonly gitBranch?: string;
+  /** linked worktree 的主仓顶（.git file gitdir 解析；主仓本体/submodule 形态缺席） */
+  readonly gitWorktreeMain?: string;
   readonly platform: string;
   readonly shell: string;
 }
@@ -27,22 +32,48 @@ function textOf(value: unknown): string {
   return cleaned !== "" ? cleaned : "unknown";
 }
 
-/** 环境归一：垃圾形态降级安全字面量，绝不产出 undefined/空行/带换行值 */
+/** 环境归一：垃圾形态降级安全字面量，绝不产出 undefined/空行/带换行值。
+ *  git 两字段：合法非空 string 才收，否则键省略（在场渲染门在 environmentBlock）。 */
 export function normalizeBaseFacts(input: {
   cwd?: unknown;
   isGit?: unknown;
+  gitBranch?: unknown;
+  gitWorktreeMain?: unknown;
   platform?: unknown;
   shell?: unknown;
 }): BasePromptFacts {
+  const optional = (value: unknown): string | undefined => {
+    const cleaned = typeof value === "string" ? inline(value) : "";
+    return cleaned !== "" ? cleaned : undefined;
+  };
+  const gitBranch = optional(input.gitBranch);
+  const gitWorktreeMain = optional(input.gitWorktreeMain);
   return {
     cwd: textOf(input.cwd),
     isGit: input.isGit === true,
+    ...(gitBranch !== undefined ? { gitBranch } : {}),
+    ...(gitWorktreeMain !== undefined ? { gitWorktreeMain } : {}),
     platform: textOf(input.platform),
     shell: textOf(input.shell),
   };
 }
 
-export function baseCoreText(): string {
+/** 环境块（条件行——git 两字段在场才渲染；下游 worktree-context 覆盖插件同构消费）。
+ *  变量仍全部注册（第三方段 {{cwd}} 等不破）；本块由 base-prompt 源头拼接，
+ *  不走 interpolate 通道——缺席行零残留。 */
+export function environmentBlock(facts: BasePromptFacts): string {
+  const lines = [
+    "You have been invoked in the following environment:",
+    `- Working directory: {{cwd}}`,
+    "- Is a git repository: {{isGit}}",
+  ];
+  if (facts.gitBranch !== undefined) lines.push(`- Git branch: ${facts.gitBranch}`);
+  if (facts.gitWorktreeMain !== undefined) lines.push(`- Git worktree of: ${facts.gitWorktreeMain}`);
+  lines.push("- Platform: {{platform}}", "- Shell: {{shell}}");
+  return lines.join("\n");
+}
+
+export function baseCoreText(facts: BasePromptFacts): string {
   return `You are Agent, an interactive CLI agent that helps users with software
 engineering tasks. Use the instructions below and the tools available to
 you to assist the user.
@@ -115,11 +146,7 @@ malicious purposes.
 
 ## Environment
 
-You have been invoked in the following environment:
-- Working directory: {{cwd}}
-- Is a git repository: {{isGit}}
-- Platform: {{platform}}
-- Shell: {{shell}}
+${environmentBlock(facts)}
 
 ## Context Management
 
@@ -137,7 +164,8 @@ already established in the conversation.
   the change being discussed.`;
 }
 
-/** 注册 base/core 段（锚名 = 内核 wellKnown.baseCore 槽位）与环境变量；返回整体注销器 */
+/** 注册 base/core 段（锚名 = 内核 wellKnown.baseCore 槽位）与环境变量；返回整体注销器。
+ *  变量四件套保留注册（{{cwd}} 等供第三方段引用）；git 两字段烘焙进段文本（条件行）。 */
 export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromptFacts): Disposer {
   const normalized = normalizeBaseFacts(facts);
   const offs = [
@@ -145,7 +173,7 @@ export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromp
     prompt.variable("isGit", normalized.isGit ? "yes" : "no"),
     prompt.variable("platform", normalized.platform),
     prompt.variable("shell", normalized.shell),
-    prompt.section({ name: wellKnown.baseCore, text: baseCoreText() }),
+    prompt.section({ name: wellKnown.baseCore, text: baseCoreText(normalized) }),
   ];
   return () => {
     for (const off of offs) off();

@@ -71,6 +71,8 @@ export type ChildView =
       readonly status: "running" | "idle" | "stopped";
       /** spawn 任务摘要（spawn 在场恒有；复活自 header 回填——旧档案可能缺席） */
       readonly work?: string;
+      /** worktree 根（isolation:worktree 子在场——GUI/宿主展示子代理工作区） */
+      readonly worktree?: string;
     }
   | {
       readonly kind: "local-session";

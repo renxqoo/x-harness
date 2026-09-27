@@ -5,7 +5,9 @@ import { defineEvent } from "@x-harness/core";
 import type { SessionId } from "@x-harness/session";
 
 /** spawn 成功（lineage 登记后）与 revive 复活注册两处发射——桥接方据此播种
- *  session→agentId 归属映射（agentName 面） */
+ *  session→agentId 归属映射（agentName 面）。worktree 三字段：spawn 取 WorktreePlan
+ *  （facts 为新树 .git 解析——D6 单一来源）、revive 取预解析事实；缺席 = 非 worktree
+ *  子或事实不可读（消费方按在场渲染）。 */
 export interface AgentSpawnedPayload {
   readonly parent: SessionId;
   readonly agentId: string;
@@ -14,6 +16,12 @@ export interface AgentSpawnedPayload {
   readonly depth: number;
   /** spawn 任务摘要（与 get_subagents ChildView.work 同源）；复活发射可能缺席（旧档案无此字段） */
   readonly work?: string;
+  /** worktree 根（isolation:worktree 子在场）；行事实与 header.agentWorktree 同源 */
+  readonly worktree?: string;
+  /** worktree 分支（.git file/HEAD 解析；detached/不可读缺席） */
+  readonly branch?: string;
+  /** worktree 主仓顶（gitdir 解析；嵌套形态如实=真主仓；submodule 形态缺席） */
+  readonly worktreeMain?: string;
 }
 
 /** 运行周期终结边沿：**每运行周期恰一次**（非生命周期终态——stop 后可复活，复活再
@@ -31,6 +39,15 @@ export interface AgentFinishedPayload {
 export const agentSpawned = defineEvent<AgentSpawnedPayload>("agent/spawned", { freeze: "none" });
 
 export const agentFinished = defineEvent<AgentFinishedPayload>("agent/finished", { freeze: "none" });
+
+/** worktree 已被清理（stop removed 分支：树与分支已删、子会话驻留——覆盖层须摘除；
+ *  kept-dirty 不发）。freeze:none 同生命周期面——消费方是同进程提示词层，不进 WAL。 */
+export interface AgentWorktreeGonePayload {
+  readonly sessionId: SessionId;
+  readonly agentId: string;
+}
+
+export const agentWorktreeGone = defineEvent<AgentWorktreeGonePayload>("agent/worktree-gone", { freeze: "none" });
 
 // ————————————————————————— 件16：受管结算（docs/AGENT-WORKFLOW.md §6 接缝） —————————————————————————
 

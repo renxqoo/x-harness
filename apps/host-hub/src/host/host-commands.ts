@@ -12,7 +12,7 @@ import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
 import type { DirectRead } from "./read-history.ts";
 import { deleteSession } from "./session-delete.ts";
-import { taskLogsRootOf } from "@x-harness/harness";
+import { taskLogsRootOf, probeGitFacts } from "@x-harness/harness";
 import { listSavedSessions } from "./saved-query.ts";
 import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
@@ -292,16 +292,22 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   function handleThreadList(_input: { [key: string]: unknown }, id: string | undefined): void {
     respond(id, "thread/list", {
-      data: deps.table.list().map((entry) => ({
-        threadId: entry.threadId,
-        cwd: entry.cwd,
-        sessionPath: entry.sessionPath,
-        state: entry.state === "spawning" || entry.state === "retiring" ? "live" : entry.state,
-        idleMs: entry.state === "live" ? entry.idleMs : 0,
-        rssBytes: entry.state === "live" ? entry.rssBytes : null,
-        keepalive: entry.keepalive,
-        isStreaming: entry.state === "live" ? entry.isStreaming : false,
-      })),
+      data: deps.table.list().map((entry) => {
+        // gitBranch 现算（D3：分支易变不落账——每调用探测，GUI 刷新即跟随）；
+        // entry.cwd 脏边（未归一/宿主兜底）经 probeGitFacts 存在性前置 + 键省略降级
+        const branch = probeGitFacts(entry.cwd).branch;
+        return {
+          threadId: entry.threadId,
+          cwd: entry.cwd,
+          sessionPath: entry.sessionPath,
+          state: entry.state === "spawning" || entry.state === "retiring" ? "live" : entry.state,
+          idleMs: entry.state === "live" ? entry.idleMs : 0,
+          rssBytes: entry.state === "live" ? entry.rssBytes : null,
+          keepalive: entry.keepalive,
+          isStreaming: entry.state === "live" ? entry.isStreaming : false,
+          ...(branch !== undefined ? { gitBranch: branch } : {}),
+        };
+      }),
     });
   }
 

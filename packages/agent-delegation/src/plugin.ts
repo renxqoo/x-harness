@@ -38,7 +38,7 @@ import { agentTaskSource } from "./task-source.ts";
 import { delegationTools } from "./tools.ts";
 import { delegationRescueNote } from "./rescue-note.ts";
 import { delegationView } from "./view.ts";
-import { agentFinished, agentSpawned } from "./tokens.ts";
+import { agentFinished, agentSpawned, agentWorktreeGone } from "./tokens.ts";
 import type { AgentFinishedPayload, AgentSpawnedPayload } from "./tokens.ts";
 
 const DEFAULT_MAX_DEPTH = 3;
@@ -84,9 +84,10 @@ function verbDepsOf(deps: {
   readonly lockDegraded: import("./lockfile.ts").LockDegraded | undefined;
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
   readonly emitFinished: (payload: AgentFinishedPayload) => void;
+  readonly emitWorktreeGone?: (payload: import("./tokens.ts").AgentWorktreeGonePayload) => void;
   readonly revive: ((caller: SessionId, agentId: string) => Promise<ReviveOutcome>) | undefined;
 }): VerbDeps {
-  const { loop, store, lineage, reportCap, workspaceRoot, onWarn, lockDegraded, adoptOrphan, emitFinished, revive } = deps;
+  const { loop, store, lineage, reportCap, workspaceRoot, onWarn, lockDegraded, adoptOrphan, emitFinished, emitWorktreeGone, revive } = deps;
   return {
     loop,
     store,
@@ -97,6 +98,7 @@ function verbDepsOf(deps: {
     ...(lockDegraded !== undefined ? { lockDegraded } : {}),
     adoptOrphan,
     emitFinished,
+    ...(emitWorktreeGone !== undefined ? { emitWorktreeGone } : {}),
     reviveByName: revive,
   };
 }
@@ -305,6 +307,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
       // 生命周期事件发射面（BATCH2 §3）：root 层 emit——宿主桥（hub event-bridge）可观察
       const emitSpawned = (payload: AgentSpawnedPayload): void => ctx.emit(agentSpawned, payload);
       const emitFinished = (payload: AgentFinishedPayload): void => ctx.emit(agentFinished, payload);
+      const emitWorktreeGone = (payload: import("./tokens.ts").AgentWorktreeGonePayload): void => ctx.emit(agentWorktreeGone, payload);
       const spawnDeps = {
         loop,
         store,
@@ -346,7 +349,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         }
       };
 
-      let verbDeps: VerbDeps = verbDepsOf({ loop, store, lineage, reportCap: limits.reportCap, workspaceRoot, onWarn, lockDegraded, adoptOrphan, emitFinished, revive });
+      let verbDeps: VerbDeps = verbDepsOf({ loop, store, lineage, reportCap: limits.reportCap, workspaceRoot, onWarn, lockDegraded, adoptOrphan, emitFinished, emitWorktreeGone, revive });
 
       let consumer: ReturnType<typeof createMailboxConsumer> | undefined;
       let cross: CrossDeps | undefined;

@@ -119,7 +119,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
   cwdOf: (assembled: AssemblyResult) => string;
   sessionsRoot?: string;
   cwdHint?: string;
-}): Promise<void> {
+}): Promise<AssemblyResult> {
   const cwdHint = plan.cwdHint ?? plan.fields.cwd ?? process.cwd();
   const selfTrusted = rt.state.trusted || plan.input.trusted === true;
   const { values: settings, user: userFile, project: projectFile, projectHit } = await effectiveSettings(rt.agentDir, cwdHint, selfTrusted);
@@ -150,6 +150,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
   }
   applyAssembly({ rt, assembled, cwd: plan.cwdOf(assembled), sessionsRoot: rt.sessionsRoot });
   await applySessionSettings(rt, { params });
+  return assembled;
 }
 
 /** 回退快照（live 锚定）：来源按「用户级值 vs 合并值 + 项目命中」（单次读取事实；
@@ -317,7 +318,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       const cwd = await normalizeCwd(rawCwd);
       const trusted = input.trusted === true;
       const modelId = typeof input.modelId === "string" ? input.modelId : undefined;
-      await assembleThread(rt, {
+      const assembled = await assembleThread(rt, {
         fields: {
           sessionsRoot: rt.sessionsRoot,
           cwd,
@@ -345,6 +346,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
           threadId: rt.state.threadId,
           cwd,
           sessionPath: rt.state.sessionPath,
+          ...(assembled.gitBranch !== undefined ? { gitBranch: assembled.gitBranch } : {}),
           ...(projectSettingsPresent === true ? { projectSettingsPresent: true } : {}),
         },
       });
@@ -380,7 +382,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       const explicitCwdRaw = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : undefined;
       const explicitCwd = explicitCwdRaw !== undefined ? await normalizeCwd(explicitCwdRaw) : undefined;
       const cwdHint = explicitCwd ?? (await preReadCwd(rt.sessionsRoot, resumeId)) ?? rt.state.cwd;
-      await assembleThread(rt, {
+      const assembled = await assembleThread(rt, {
         fields: {
           sessionsRoot: rt.sessionsRoot,
           // cwd 回退序全链生效（fence/toolbox/trusted 目录根——worker 进程 cwd 不得渗入）
@@ -397,7 +399,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       respond(rt, {
         id: input.id,
         command: "thread/resume",
-        data: { threadId: rt.state.threadId, cwd: rt.state.cwd, sessionPath: rt.state.sessionPath },
+        data: { threadId: rt.state.threadId, cwd: rt.state.cwd, sessionPath: rt.state.sessionPath, ...(assembled.gitBranch !== undefined ? { gitBranch: assembled.gitBranch } : {}) },
       });
     } catch (error) {
       // CodedError 保 code（thinkingLevel rejected → capability_thinking 等），前缀文案保留
