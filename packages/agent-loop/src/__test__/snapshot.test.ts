@@ -4,7 +4,9 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import type { SurfaceNode } from "@x-harness/session";
-import { SNAPSHOT_SUPERSEDES, createTailSnapshot, isSnapshotNode, snapshotEnvelope } from "../snapshot.ts";
+import { SNAPSHOT_SUPERSEDES, createRequestSnapshot, createTailSnapshot, isSnapshotNode, snapshotEnvelope } from "../snapshot.ts";
+import { agentRequest } from "../tokens.ts";
+import type { Dial } from "../tokens.ts";
 import { makeWorld, resetWorlds, spawn, textScript, worlds } from "./world.ts";
 
 beforeEach(() => {
@@ -162,6 +164,96 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     await agent.whenIdle();
     expect(textsOf(agent).filter((t) => t === text)).toHaveLength(2); // replace 节点 1 + append 快照 1——回显不误判在场
     off();
+    await handle.dispose();
+  });
+});
+
+describe("createRequestSnapshot 请求时点注入（agentRequest 派发内——render 收当次 dial）", () => {
+  it("当次请求即携带 + dial 原样透传 + 每 dial 幂等", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const seen: string[] = [];
+    const off = createRequestSnapshot({ ctx: world.ctx, loop: world.loop, spec: { id: "model", render: (dial) => {
+      seen.push(dial.model);
+      return snapshotEnvelope("model", `You are powered by the model ${dial.model}.`);
+    } } });
+    const { agent, handle } = await spawn(world);
+    world.fake.scripts.push(textScript("a"), textScript("b"));
+    agent.followup("first");
+    await agent.whenIdle();
+    // 当次请求即携带（deriveMessages 在整个 dispatch 返回后的 attempt 内——append 仍入当次请求体）
+    expect(JSON.stringify(world.fake.calls[0]?.messages)).toContain("You are powered by the model fake-model.");
+    expect(world.fake.calls[0]?.model).toBe("fake-model"); // dial 原样透传（中间件零改写）
+    agent.followup("second");
+    await agent.whenIdle();
+    expect(seen).toEqual(["fake-model", "fake-model"]); // 每请求派发一次
+    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(1); // 同 dial 幂等：不重复注入
+    off();
+    await handle.dispose();
+  });
+
+  it("render 抛异常 → onWarn 一条、不 append、请求照常；空串零注入", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const warnings: string[] = [];
+    let mode: "throw" | "empty" | "ok" = "throw";
+    const off = createRequestSnapshot({ ctx: world.ctx, loop: world.loop, spec: { id: "x", render: () => {
+      if (mode === "throw") throw new Error("boom");
+      return mode === "empty" ? "" : snapshotEnvelope("x", "body");
+    }, onWarn: (m) => warnings.push(m) } });
+    const { agent, handle } = await spawn(world);
+    world.fake.scripts.push(textScript("a"), textScript("b"), textScript("c"));
+    agent.followup("first"); // render 抛
+    await agent.whenIdle();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("snapshot(x): render failed");
+    expect(JSON.stringify(world.fake.calls[0]?.messages)).not.toContain("<snapshot"); // 请求照常且无注入
+    mode = "empty";
+    agent.followup("second"); // 空串
+    await agent.whenIdle();
+    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(0);
+    mode = "ok";
+    agent.followup("third"); // 正常
+    await agent.whenIdle();
+    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(1);
+    expect(warnings).toHaveLength(1); // 后续无新告警
+    off();
+    await handle.dispose();
+  });
+
+  it("render 收生效 dial（下游末端改写——hub dial-hook 形态）+ 回摆重注入（对抗审查 B1/M1）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const seen: string[] = [];
+    const offSnap = createRequestSnapshot({ ctx: world.ctx, loop: world.loop, spec: { id: "model", render: (dial) => {
+      seen.push(dial.model);
+      return snapshotEnvelope("model", `You are powered by the model ${dial.model}.`);
+    } } });
+    // 下游末端改写（后注册 = 链上后手——hub dial-hook 同形态）：三次请求分别改写为 m-a / m-b / m-a（含回摆）
+    let n = 0;
+    const models = ["m-a", "m-b", "m-a"];
+    const offRewrite = world.ctx.on(agentRequest, async (payload, next): Promise<Dial | undefined> => {
+      const out = await next(payload);
+      return out === undefined ? out : { ...out, model: models[n++] ?? "m-a" };
+    });
+    const { agent, handle } = await spawn(world);
+    world.fake.scripts.push(textScript("a"), textScript("b"), textScript("c"));
+    agent.followup("first");
+    await agent.whenIdle();
+    expect(seen).toEqual(["m-a"]); // B1：渲染用改写后 dial（旧实现收输入 dial=fake-model 必红）
+    expect(JSON.stringify(world.fake.calls[0]?.messages)).toContain("the model m-a.");
+    expect(world.fake.calls[0]?.model).toBe("m-a"); // 实际请求也是改写后值
+    agent.followup("second");
+    await agent.whenIdle();
+    expect(seen).toEqual(["m-a", "m-b"]);
+    agent.followup("third");
+    await agent.whenIdle();
+    expect(seen).toEqual(["m-a", "m-b", "m-a"]); // 回摆形态照常重渲染
+    const snaps = textsOf(agent).filter((t) => t.startsWith("<snapshot")).map((t) => (t.includes("m-a") ? "m-a" : "m-b"));
+    expect(snaps).toEqual(["m-a", "m-b", "m-a"]); // M1：X→Y→X 重注入第三条（旧「全史任一匹配」语义只两条必红）
+    expect(JSON.stringify(world.fake.calls[2]?.messages)).toContain("the model m-a."); // 第三个请求体携带最新行
+    offRewrite();
+    offSnap();
     await handle.dispose();
   });
 });

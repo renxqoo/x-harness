@@ -79,7 +79,7 @@ describe("assembly 装配面", () => {
       env: await scriptEnv(),
     });
     const text = assembled.world.ctx.use(systemPrompt).assemble().text;
-    expect(text.indexOf("You are Agent")).toBe(0);
+    expect(text.indexOf("You are xh")).toBe(0);
     expect(text).toContain(`- Working directory: ${agentDir}`);
     expect(text).toContain("- Is a git repository: no"); // 临时目录非 git 工作区
     expect(text).toContain(`- Platform: ${process.platform}`);

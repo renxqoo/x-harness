@@ -51,7 +51,9 @@ tie-break 保证全序确定）：
   apps/host-hub 两宿主同源消费；dsh 同构：内核 SECTION_ORDERS 槽位 + persona 在
   preset/bundle）。
 - `createBasePromptPlugin(facts)`（@x-harness/harness）：单一 section `base/core`（身份/守则/环境块）+ facts
-  变量（cwd/isGit/platform/shell）；`inject: ["system-prompt"]` 硬依赖 topo 保序。
+  变量（cwd/isGit/platform/shell）；`inject: ["system-prompt"]` 硬依赖 topo 保序。环境块条件展示：
+  facts 全缺席（文本三值降级 unknown 且非 git——宿主零探测）时整段省略（零信息不进 prompt，
+  `baseCoreText(environment?)` 形参）。
   **facts 由宿主探测传入**（`probeBaseFacts` 同包——base-prompt-probe.ts 持 fs IO 边，
   正文面不做 IO）；入口 `normalizeBaseFacts` 归一：换行压空格
   （环境值不得伪造新段落——注入面收口）、垃圾降级 `"unknown"`。日期已迁边沿注入

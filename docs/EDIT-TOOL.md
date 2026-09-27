@@ -54,7 +54,7 @@ edit(path, edits: [{oldText, newText}, ...])
 
 **TRUNCATED-TOOL-RESCUE 接入**：零改动——rescue-plugin 的 `name.includes("edit")` 分支已在 v1 落地（`new_string` 提取）；edit 工具参数里最大的字符串就是 newText，截断抢救自然生效。方案文档批 2 节的抢救表已在等这个工具。
 
-**系统提示（对抗审查 C 件 4——落点重写）**：用法守则走 `createToolPlugin({ guidance })` 停靠 system-prompt 的 `tool/edit` 段（tool-core tool-plugin.ts:34-47 投稿机制——pi promptGuidelines 4 条的 x-harness 等价物，tool-bash bashGuidance 先例）：唯一性/不重叠合并/最小上下文/**非增量匹配（双层说——契约段 + guidance + description 三处，pi edit.ts:37/48 双层同款，A 件 3）**。description 只留工具自述；write 的 description 补分流句（for targeted changes prefer edit）。base-prompt.ts:79 已预埋 edit 一词（"Prefer dedicated tools (file read, edit, write)"）——本工具落地使该预埋成为真实承诺，无需改基础段。
+**系统提示（对抗审查 C 件 4——落点重写）**：用法守则走 `createToolPlugin({ guidance })` 停靠 system-prompt 的 `tool/edit` 段（tool-core tool-plugin.ts:34-47 投稿机制——pi promptGuidelines 4 条的 x-harness 等价物，tool-bash bashGuidance 先例）：唯一性/不重叠合并/最小上下文/**非增量匹配（双层说——契约段 + guidance + description 三处，pi edit.ts:37/48 双层同款，A 件 3）**。description 只留工具自述；write 的 description 补分流句（for targeted changes prefer edit）。base-prompt.ts 的 Tool Use 节已预埋 edit 一词（"Prefer dedicated tools (file read, edit, write, grep)"）——本工具落地使该预埋成为真实承诺，无需改基础段。
 
 ## 测试口径（对抗审查 C 件 5——按 pi 全集 ~40 例起列）
 

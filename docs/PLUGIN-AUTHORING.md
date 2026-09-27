@@ -70,7 +70,7 @@ createToolPlugin({ name: "tool-mine", make: (env, extraRootsOf, rootOverrideOf) 
 ```
 
 陷阱表（每条有代码依据）：
-- **guidance 空串不落段**（local env 的 bash 零守则）；`schemas()` 不含 guidance（LLM 序列化面干净）
+- **guidance 空串不落段**（守则函数返回空串即跳过停靠——bash 的 local 形态现返回非空基础守则，仅 sandbox 附加段按围栏形态分支）；`schemas()` 不含 guidance（LLM 序列化面干净）
 - **gate 根一致 fail-closed**：env.root 与 gate.root 错配 = 装配期 throw（执法面漂移拒绝）
 - **env 三级解析**：工厂参数 > execEnv 服务 > throw
 - **isControlTool** 标记控制类工具（permission 直通）；并发分类器抛错 = exclusive（fail-closed）

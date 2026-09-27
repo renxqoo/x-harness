@@ -31,7 +31,7 @@ describe("registerAppendSections", () => {
     const prompt = await makePrompt();
     registerAppendSections(prompt, ["FIRST-APPEND", "SECOND-APPEND"]);
     const text = prompt.assemble().text;
-    const base = text.indexOf("You are Agent");
+    const base = text.indexOf("You are xh");
     const first = text.indexOf("FIRST-APPEND");
     const second = text.indexOf("SECOND-APPEND");
     expect(base).toBeGreaterThanOrEqual(0);
@@ -44,7 +44,7 @@ describe("registerAppendSections", () => {
     prompt.section({ name: "tool/bash", after: wellKnown.baseCore, text: "## Shell\n\nfence rule" });
     registerAppendSections(prompt, ["TAIL-APPEND"]);
     const text = prompt.assemble().text;
-    expect(text.indexOf("## Shell")).toBeGreaterThan(text.indexOf("You are Agent"));
+    expect(text.indexOf("## Shell")).toBeGreaterThan(text.indexOf("You are xh"));
     expect(text.indexOf("TAIL-APPEND")).toBeGreaterThan(text.indexOf("## Shell"));
   });
 
@@ -55,12 +55,12 @@ describe("registerAppendSections", () => {
     off();
     const after = prompt.assemble().text;
     expect(after).not.toContain("GONE");
-    expect(after).toContain("You are Agent");
+    expect(after).toContain("You are xh");
   });
 });
 
 describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验收工件）", () => {
-  it("生产序世界：base 全段在序 + facts 插值 + local env bash 零段 + 追加段落尾（组合回归锚）", async () => {
+  it("生产序世界：base 全段在序 + facts 插值 + local env bash 基础守则 + 追加段落尾（组合回归锚）", async () => {
     const ctx = createContext();
     const facts: BasePromptFacts = { cwd: "/w/proj", isGit: true, platform: "darwin", shell: "zsh" };
     const root = mkdtempSync(join(tmpdir(), "xh-cli-prompt-"));
@@ -75,7 +75,7 @@ describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验�
       const offAppend = registerAppendSections(prompt, ["EXTRA-RULE"]);
       const text = prompt.assemble().text;
       // base 全段按序（游标单调推进）
-      const order = ["You are Agent", "## Security", "## Conduct", "## Tone", "## Tool Use", "## Making Changes", "## Safety", "## Environment", "## Context Management", "## Output Format"];
+      const order = ["You are xh", "## Security", "## Conduct", "## Tone", "## Tool Use", "## Making Changes", "## Git", "## Safety", "## Environment", "## Context Management", "## Output Format"];
       let cursor = -1;
       for (const part of order) {
         const at = text.indexOf(part);
@@ -85,7 +85,8 @@ describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验�
       expect(text).toContain("- Working directory: /w/proj");
       expect(text).toContain("- Is a git repository: yes");
       expect(text).not.toContain("{{"); // facts 全插值
-      expect(text).not.toContain("## Shell"); // local env → bashGuidance 空串 → 零停靠段（W1 等价语义）
+      expect(text).toContain("no TTY"); // local env → 基础守则（非交互约束）仍停靠
+      expect(text).not.toContain("denied domain"); // 围栏段仅 sandbox 形态
       expect(text.indexOf("EXTRA-RULE")).toBeGreaterThan(cursor); // 追加段落尾
       offAppend();
       for (const dispose of unload) await dispose();

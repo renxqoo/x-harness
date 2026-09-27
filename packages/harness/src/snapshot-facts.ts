@@ -5,11 +5,13 @@
 // apps/cli 与 apps/host-hub 两宿主同源消费（装配位各自写死：紧随 skill 装配）。
 // worktree 语义（评审处置 M7）：全部会话注入宿主装配 cwd 的指令文件——per-session
 // cwd 是 delegation 独立契约面，另件。
+// 模型快照（powered-by 身份行）：请求时点原语（createRequestSnapshot）——dial 取自
+// agentRequest 派发（不经宿主层传），拨号切换首个请求即携带新行。
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Disposer, Plugin } from "@x-harness/core";
-import { agentLoopServiceToken, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
+import { agentLoopServiceToken, createRequestSnapshot, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
 
 /** 指令文件单件上限（字节，以 readFileSync 读到的 buffer 为准——不预 stat，杜绝 TOCTOU；
  *  截断=信息丢失，超限整文件拒注入+告警） */
@@ -35,6 +37,13 @@ function timeZoneLabel(): string {
 /** 日期快照全文（按天唯一——内容维幂等即节流） */
 export function renderDateSnapshot(now: Date): string {
   return snapshotEnvelope("date", `Today's date: ${localToday(now)} (${timeZoneLabel()})`);
+}
+
+/** 模型快照全文（powered-by 身份行）：请求时点注入——render 收 agentRequest waterfall
+ *  **输出** dial（生效值——hub dial-hook 末端改写后；对抗审查 B1），拨号切换后首个请求
+ *  即生效，不经宿主层传 */
+export function renderModelSnapshot(model: string): string {
+  return snapshotEnvelope("model", `You are powered by the model ${model}.`);
 }
 
 export interface InstructionRead {
@@ -98,6 +107,7 @@ export function createFactsSnapshotPlugin(options: FactsSnapshotOptions): Plugin
       const offs = [
         createTailSnapshot({ ctx, loop, spec: { id: "date", render: () => renderDateSnapshot(new Date(now())), onWarn: warn } }),
         createTailSnapshot({ ctx, loop, spec: { id: "project-instructions", render: () => renderInstructionsSnapshot(options.cwd, warn), onWarn: warn } }),
+        createRequestSnapshot({ ctx, loop, spec: { id: "model", render: (dial) => renderModelSnapshot(dial.model), onWarn: warn } }),
       ];
       return () => {
         for (const off of offs) off();

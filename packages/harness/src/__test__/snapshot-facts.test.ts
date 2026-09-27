@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SNAPSHOT_SUPERSEDES, isSnapshotNode } from "@x-harness/agent-loop";
 import type { SurfaceNode } from "@x-harness/session";
-import { INSTRUCTIONS_CAP_BYTES, localToday, readInstructionFiles, renderDateSnapshot } from "../snapshot-facts.ts";
+import { INSTRUCTIONS_CAP_BYTES, localToday, readInstructionFiles, renderDateSnapshot, renderModelSnapshot } from "../snapshot-facts.ts";
 
 let dirs: string[] = [];
 afterEach(() => {
@@ -38,6 +38,15 @@ describe("日期快照（A）", () => {
 
   it("isSnapshotNode 对日期快照消息形态成立（跨包谓词闭环）", () => {
     const node = { seq: 0, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: renderDateSnapshot(at("2026-09-21T10:00:00+08:00")) }] } } } as unknown as SurfaceNode;
+    expect(isSnapshotNode(node)).toBe(true);
+  });
+});
+
+describe("模型快照（powered-by 身份行——请求时点注入）", () => {
+  it("信封 kind=model + 作废声明 + 单行正文；isSnapshotNode 谓词成立", () => {
+    const text = renderModelSnapshot("glm-5.3");
+    expect(text).toBe(`<snapshot kind="model">\n${SNAPSHOT_SUPERSEDES}\nYou are powered by the model glm-5.3.\n</snapshot>`);
+    const node = { seq: 0, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text }] } } } as unknown as SurfaceNode;
     expect(isSnapshotNode(node)).toBe(true);
   });
 });

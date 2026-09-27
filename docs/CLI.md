@@ -228,9 +228,9 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   `wellKnown` 锚点词汇表）（section
   `base/core`：身份/守则/环境块；facts=cwd/isGit/platform/shell 由宿主探测传入
   （`probeBaseFacts`——同包），入口归一压换行——注入面收口；日期已迁边沿注入快照
-  通道）；工具守则段由 tool-core
+  通道；环境块条件展示（facts 全缺席时整段省略——零信息不进 prompt）；工具守则段由 tool-core
   在 apply 期直接停靠（D3 投稿式）：section `tool/<name>`（锚 wellKnown.baseCore；
-  bash 围栏守则在 sandbox env 下才有文本，local 零段）；装配序硬约束 system-prompt
+  bash 守则=非交互约束（无 TTY/stdin 关闭）全形态注入 + 围栏段仅 sandbox 追加）；装配序硬约束 system-prompt
   先于带 guidance 的 tool-*（D6，头注）。`--system-prompt` 整体替换时不装基础段
   （走 AgentOptions.systemPrompt 静态串，优先于 assemble 是包契约）；
   `--append-system-prompt` 追加 section `cli-user-<n>`（无边落尾=全部内置段之后，链式保序）。
