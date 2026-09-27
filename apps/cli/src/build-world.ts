@@ -37,6 +37,7 @@ import {
   skillKit,
   toolboxKit,
   telemetryKit,
+  planKit,
 } from "@x-harness/harness";
 import type { BasePromptFacts } from "@x-harness/harness";
 import { createFactsSnapshotPlugin } from "@x-harness/harness";
@@ -183,6 +184,11 @@ function mailboxRootOf(options: Pick<WorldOptions, "mailboxRoot">): string {
   return options.mailboxRoot ?? resolveMailboxDir();
 }
 
+/** 装配缺省权限档（fenceKit 定档与 planKit 解档目标同源——围栏姿势不因审批漂移） */
+function defaultPermissionOf(options: Pick<WorldOptions, "permission">): import("@x-harness/permission").ProfileId {
+  return options.permission ?? "sandboxed-auto";
+}
+
 /** 可选段插件（compaction/telemetry——两条件位的条件展开收进本函数，降 buildWorld 复杂度） */
 function optionalPluginsOf(options: WorldOptions, adapters: readonly LlmAdapter[]): readonly Plugin[] {
   return [
@@ -221,11 +227,13 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     }),
     ...fenceKit({
       root: options.cwd,
-      mode: options.permission ?? "sandboxed-auto", // CLI 缺省围栏优先（U6——Codex 姿势）
+      mode: defaultPermissionOf(options), // CLI 缺省围栏优先（U6——Codex 姿势）
       ...(options.rules !== undefined && options.rules.length > 0 ? { rules: parseRules(options.rules, "user") } : {}),
       // rg 内置目录写保护（与 hub <agentDir>/bin 同面）：用户可写目录里的可执行文件直接以宿主身份执行
       ...("rgBinDir" in rgBin ? { protectedPaths: [rgBin.rgBinDir] } : {}),
     }),
+    // plan 模式审批件（plan_submit——PERMISSION-MODE-FLAG plan 节）：解档回装配缺省档
+    ...planKit({ liftTo: defaultPermissionOf(options) }),
     options.broker,
     ...meterKit(),
     ...optionalPluginsOf(options, adapters),

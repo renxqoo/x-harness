@@ -213,3 +213,31 @@ e2e 腿对 main.ts 漏折的双红推演）。逐条处置：
 - **不改项**（契约面#4/6）：usageText 静态模板与 `--mode <text|json>` 风格一致
   （残留由 join 生成锚兜底）；e2e message_delta 携带 input_tokens 是改动前
   既有装置形态，无 usage 断言面，不动。
+
+## plan 模式完整流程（2026-09-28 增补——审批协议件）
+
+plan 档从「只读硬闸」补全为完整工作流，三面就位：
+
+- **模型侧告知（权限档快照）**：facts 快照插件（@x-harness/harness
+  `createFactsSnapshotPlugin`）第四条注册——kick 时点 tail snapshot
+  （`kind="permission-mode"`），render 直读 `permissionMode` 服务当前值：plan 档注入
+  行为指引（research read-only、勿尝试写、经 `plan_submit` 呈方案）；其余档渲染
+  `Permission mode: <mode>.` 事实行——**恒渲染**使退出 plan 后新条 supersede 旧指引。
+  permission 服务缺席（纯工具世界）→ 空串零注入。
+- **审批协议（plan_submit 控制工具，@x-harness/tool-plan）**：plan 档的出口。方案文本
+  经 permission broker 问用户（options=["once"]）；**批准 → 解档 liftTo**（宿主装配
+  缺省档：CLI `sandboxed-auto` / hub 合并缺省——围栏姿势不因审批漂移）；**拒绝 → 留档
+  refine**（合法结局非错误）。`isControlTool` 标记（permission 裁决直通——动词自身无
+  环境副作用，不双重问询）。降级面：无 permission 装配 → 非 plan 档直接短路报错；
+  plan 档但 broker 缺席 → 「有闸无门」明确报错，不静默解档。宿主经
+  `planKit({ liftTo })`（@x-harness/harness）装配。
+- **宿主切换面**：hub 既有 `permission/set_mode`（meta 持久化 + 服务即时切）；CLI 新增
+  `/plan` slash（permissionMode 直切内存态——下一裁决即用新档；**会话内有效，CLI resume
+  不折叠档位是已知面**，hub 无此缺口）。
+
+装配序：planKit 紧随 fenceKit（两宿主写死）；plan_submit 服务面 execute 期懒解析
+（broker 是宿主提供件——与 permission 插件内部同款 tryUse 时点，无插件序耦合）。
+
+测试口径：tool-plan 五路 execute 分支（非 plan 档/无服务/有闸无门/批准解档/拒绝留档）
++ isControlTool 标记 + broker 载荷形状；harness 权限档快照 render 两态 + isSnapshotNode
+闭环；CLI slash 闭集十二命令 + /plan 分派。

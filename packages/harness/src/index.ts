@@ -30,6 +30,7 @@ import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
 import type { PermissionProfile, PermissionRule, ProfileId } from "@x-harness/permission";
 import { createSandboxPlugin } from "@x-harness/sandbox";
+import { createPlanSubmitPlugin } from "@x-harness/tool-plan";
 import { sessionPlugin, sessionArchive, sessionStore } from "@x-harness/session";
 import type { SessionArchive, SessionStore } from "@x-harness/session";
 import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
@@ -136,7 +137,7 @@ export type { ProbeFactsInput } from "./base-prompt-probe.ts";
 
 /** 日期 + 项目指令快照插件（两宿主同源消费面——AGENTS.md/CLAUDE.md 边沿注入；
  *  装配位各自写死：紧随 skill 装配，docs/TAIL-SNAPSHOT-CHANNEL.md A/C'） */
-export { createFactsSnapshotPlugin, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, localToday, INSTRUCTIONS_CAP_BYTES } from "./snapshot-facts.ts";
+export { createFactsSnapshotPlugin, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, renderPermissionModeSnapshot, localToday, INSTRUCTIONS_CAP_BYTES } from "./snapshot-facts.ts";
 export type { FactsSnapshotOptions, InstructionRead } from "./snapshot-facts.ts";
 
 /** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替；常规装配传
@@ -191,6 +192,11 @@ export const toolboxKit = (o: {
     createTaskToolsPlugin(),
   ];
 };
+
+/** plan 模式审批件（plan_submit 控制工具——docs/PERMISSION-MODE-FLAG.md plan 节）：
+ *  plan 档出口——方案经 permission broker 问用户，批准解档 liftTo（宿主装配缺省档；
+ *  缺省 auto），拒绝留档 refine。模型侧告知在 facts 快照插件的权限档快照（同文件）。 */
+export const planKit = (o: import("@x-harness/tool-plan").PlanSubmitOptions = {}): readonly Plugin[] => [createPlanSubmitPlugin(o)];
 
 /** 围栏（permission 裁决 + sandbox 执行器——PERMISSION-V2-DESIGN §6）。执行指令由裁决
  *  管线产出（allow→direct|contained 按档位），sandbox 只照办；trustedCommands 词表已删（U1）。

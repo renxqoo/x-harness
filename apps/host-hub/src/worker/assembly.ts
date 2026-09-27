@@ -21,6 +21,7 @@ import {
   createFactsSnapshotPlugin,
   durableSessionKit,
   fenceKit,
+  planKit,
   llmKit,
   continuationKit,
   errorRecoveryKit,
@@ -409,6 +410,9 @@ function defaultWorkerPlugins(resolved: {
         projectSettingsPath(cwd),
       ],
     }),
+    // plan 模式审批件（plan_submit——PERMISSION-MODE-FLAG plan 节）：解档回装配缺省档
+    // （fields.permissionMode 缺席时与 fenceKit 同回落 auto——围栏姿势不因审批漂移）
+    ...planKit({ liftTo: fields.permissionMode ?? "auto" }),
     ...brokerPlugins(fields),
     ...grantStorePlugins(fields, cwd),
     // 跨进程邮箱服务（AGENT-DELEGATION §5.3 宿主接线）——提供 mailboxService；与

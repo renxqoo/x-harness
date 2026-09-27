@@ -301,6 +301,7 @@
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tool-edit": "workspace:*",
         "@x-harness/tool-grep": "workspace:*",
+        "@x-harness/tool-plan": "workspace:*",
         "@x-harness/tool-read": "workspace:*",
         "@x-harness/tool-write": "workspace:*",
         "@x-harness/tools": "workspace:*",
@@ -603,6 +604,19 @@
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tools": "workspace:*",
+      },
+    },
+    "packages/tool-plan": {
+      "name": "@x-harness/tool-plan",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/permission": "workspace:*",
+        "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@sinclair/typebox": "^0.34.0",
+        "@x-harness/testkit": "workspace:*",
       },
     },
     "packages/tool-read": {
@@ -981,6 +995,8 @@
     "@x-harness/tool-edit": ["@x-harness/tool-edit@workspace:packages/tool-edit"],
 
     "@x-harness/tool-grep": ["@x-harness/tool-grep@workspace:packages/tool-grep"],
+
+    "@x-harness/tool-plan": ["@x-harness/tool-plan@workspace:packages/tool-plan"],
 
     "@x-harness/tool-read": ["@x-harness/tool-read@workspace:packages/tool-read"],
 

@@ -19,6 +19,7 @@ import type { SlashDeps, SlashDial } from "./slash-commands.ts";
 import type { World } from "./build-world.ts";
 import { delegationView } from "@x-harness/agent-delegation";
 import { workflowView } from "@x-harness/agent-workflow";
+import { permissionMode } from "@x-harness/permission";
 import type { SessionId } from "@x-harness/session";
 import { sessionEvent } from "@x-harness/session";
 import pkg from "../package.json";
@@ -159,6 +160,22 @@ export function parseWorkflowSubmitArgs(raw: string): { ok: true; input: { descr
   const [first, ...promptWords] = words;
   const description = first ?? "task";
   return { ok: true, input: { description, prompt: promptWords.join(" ") || description, ...(command !== undefined ? { acceptance: { command } } : {}), ...(schema !== undefined ? { result_schema: schema } : {}) } };
+}
+
+/** /plan 命令实现（permissionMode 服务直切——内存态即时生效，下一裁决即用新档；
+ * 会话内有效——CLI resume 不折叠档位是已知面，hub 侧经 permission/set_mode 持久化） */
+export function makePermissionCommands(live: () => { readonly world: World }, defaultMode: string): import("./slash-commands.ts").PermissionCommandDeps {
+  return {
+    planToggle: () => {
+      const svc = live().world.ctx.tryUse(permissionMode);
+      if (svc === undefined) return "permission 服务未装配（此构建无 /plan 面）";
+      const target = svc.get() === "plan" ? defaultMode : "plan";
+      svc.set(target);
+      return target === "plan"
+        ? "plan mode ON — writes denied; the agent researches and submits a plan (plan_submit)"
+        : `plan mode OFF — permission mode: ${target}`;
+    },
+  };
 }
 
 /** /workflow 命令实现（workflowView 直调——期 3 不经模型；world/handle 经 getter 取活引用） */
@@ -333,6 +350,8 @@ export async function runRepl(input: ReplInput): Promise<number> {
     },
     // /workflow 命令面（件16 期 3：不经模型——workflowView 直调）
     workflow: makeWorkflowCommands(() => ({ world, handle })),
+    // /plan 命令面（permissionMode 直切；解档回装配缺省档——围栏姿势不漂移）
+    permission: makePermissionCommands(() => ({ world }), input.args.permission ?? "sandboxed-auto"),
   };
 
   let quitReason: (code: number) => void = () => {};

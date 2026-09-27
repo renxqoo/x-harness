@@ -7,11 +7,14 @@
 // cwd 是 delegation 独立契约面，另件。
 // 模型快照（powered-by 身份行）：请求时点原语（createRequestSnapshot）——dial 取自
 // agentRequest 派发（不经宿主层传），拨号切换首个请求即携带新行。
+// 权限档快照（plan 模式告知）：kick 时点——人在轮间切档（hub permission/set_mode、
+// CLI /plan），下一 kick 采样即够；恒渲染使退出 plan 后新条 supersede 旧指引。
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Disposer, Plugin } from "@x-harness/core";
 import { agentLoopServiceToken, createRequestSnapshot, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
+import { permissionMode } from "@x-harness/permission";
 
 /** 指令文件单件上限（字节，以 readFileSync 读到的 buffer 为准——不预 stat，杜绝 TOCTOU；
  *  截断=信息丢失，超限整文件拒注入+告警） */
@@ -44,6 +47,16 @@ export function renderDateSnapshot(now: Date): string {
  *  即生效，不经宿主层传 */
 export function renderModelSnapshot(model: string): string {
   return snapshotEnvelope("model", `You are powered by the model ${model}.`);
+}
+
+/** 权限档快照全文（plan 模式告知）：plan 档注入行为指引（研究只读 + plan_submit 出口），
+ *  其余档渲染事实行——恒渲染使退出 plan 后新条 supersede 旧指引（档位切换即注入新行，
+ *  人在轮间切档——kick 时点采样即够） */
+export function renderPermissionModeSnapshot(mode: string): string {
+  if (mode === "plan") {
+    return snapshotEnvelope("permission-mode", `You are in plan mode: research and read only. Writes, edits, and mutating commands are denied — do not attempt them. When your plan is ready, present it with the plan_submit tool and wait for the user's approval before making any changes.`);
+  }
+  return snapshotEnvelope("permission-mode", `Permission mode: ${mode}.`);
 }
 
 export interface InstructionRead {
@@ -93,11 +106,13 @@ export interface FactsSnapshotOptions {
   readonly onWarn?: (message: string) => void;
 }
 
-/** 日期 + 项目指令快照插件：装配位紧随 skill 装配（两宿主写死——落位互序的单一真相） */
+/** 日期 + 项目指令 + 权限档快照插件：装配位紧随 skill 装配（两宿主写死——落位互序的单一真相） */
 export function createFactsSnapshotPlugin(options: FactsSnapshotOptions): Plugin {
   return {
     name: "facts-snapshot",
     inject: ["agent-loop"],
+    // S0 软依赖：permission 在场则排后（apply 期 tryUse 即时求值同 tool-core 先例）
+    softInject: ["permission"],
     apply: (ctx): Disposer => {
       const loop = ctx.use(agentLoopServiceToken);
       const now = options.now ?? (() => Date.now());
@@ -108,6 +123,11 @@ export function createFactsSnapshotPlugin(options: FactsSnapshotOptions): Plugin
         createTailSnapshot({ ctx, loop, spec: { id: "date", render: () => renderDateSnapshot(new Date(now())), onWarn: warn } }),
         createTailSnapshot({ ctx, loop, spec: { id: "project-instructions", render: () => renderInstructionsSnapshot(options.cwd, warn), onWarn: warn } }),
         createRequestSnapshot({ ctx, loop, spec: { id: "model", render: (dial) => renderModelSnapshot(dial.model), onWarn: warn } }),
+        // 权限档快照（plan 模式告知）：permission 服务缺席（纯工具世界）→ 空串零注入
+        createTailSnapshot({ ctx, loop, spec: { id: "permission-mode", render: () => {
+          const mode = ctx.tryUse(permissionMode);
+          return mode === undefined ? "" : renderPermissionModeSnapshot(mode.get());
+        }, onWarn: warn } }),
       ];
       return () => {
         for (const off of offs) off();
