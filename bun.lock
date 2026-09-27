@@ -78,6 +78,13 @@
         "@x-harness/truncation-messages": "workspace:*",
       },
     },
+    "apps/hub-gateway": {
+      "name": "@x-harness/hub-gateway",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/remote-protocol": "workspace:*",
+      },
+    },
     "apps/hub-relay": {
       "name": "@x-harness/hub-relay",
       "version": "0.0.1",
@@ -903,6 +910,8 @@
     "@x-harness/harness": ["@x-harness/harness@workspace:packages/harness"],
 
     "@x-harness/host-hub": ["@x-harness/host-hub@workspace:apps/host-hub"],
+
+    "@x-harness/hub-gateway": ["@x-harness/hub-gateway@workspace:apps/hub-gateway"],
 
     "@x-harness/hub-relay": ["@x-harness/hub-relay@workspace:apps/hub-relay"],
 
