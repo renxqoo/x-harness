@@ -92,6 +92,10 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       void handlePairingTicket(req, res);
       return;
     }
+    if (req.method === "POST" && req.url === "/api/enroll/challenge") {
+      void handleEnrollChallenge(req, res);
+      return;
+    }
     if (req.method === "POST" && req.url === "/api/enroll") {
       void handleEnroll(req, res);
       return;
@@ -271,6 +275,11 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk as Buffer);
     return Buffer.concat(chunks).toString("utf8");
+  }
+
+  /** enroll 第一步：拿 nodeId+nonce（转录绑定 relay 节点与新鲜性） */
+  async function handleEnrollChallenge(_req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
+    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ nodeId, nonce: newJti() }));
   }
 
   async function handleEnroll(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {

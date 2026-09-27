@@ -51,6 +51,14 @@ describe("HTTP 面", () => {
     expect(status).toBe(200);
   });
 
+  it("enroll challenge：返回 nodeId+nonce", async () => {
+    const res = await httpPost({ port: relayPort(relay), path: "/api/enroll/challenge", body: {} });
+    expect(res.status).toBe(200);
+    const parsed = JSON.parse(res.body) as { nodeId?: string; nonce?: string };
+    expect(parsed.nodeId).toBe(relay.nodeId);
+    expect(parsed.nonce).toBeTruthy();
+  });
+
   it("enroll：签名有效发 token；坏签名 401；键冲突 409（fail-closed）", async () => {
     const kp = generateSigningKeyPair();
     const nonce = "n1";
