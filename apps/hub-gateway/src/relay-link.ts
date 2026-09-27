@@ -12,6 +12,8 @@ export interface RelayLinkOptions {
   gatewaySigningSecret: string;
   gatewaySigningPub: string;
   useTls: boolean;
+  /** relay 签名钥指纹（sha256 hex；空 = 不校验——本地开发形态；生产必须钉存） */
+  expectedRelayFingerprint?: string;
   onFrame(line: string): void;
   onStatus(status: "connected" | "disconnected", detail: string): void;
   log(message: string): void;
@@ -23,6 +25,8 @@ export interface RelayLinkHandle {
   stop(): void;
   /** 两步 enroll（challenge → 签名注册）→ gateway token */
   enrollOnce(): Promise<{ token: string } | null>;
+  /** 配对准入票据申请（gateway token 鉴权；手机持它连 relay /pairing 面） */
+  requestPairingTicket(pairingId: string): Promise<string | null>;
 }
 
 export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
@@ -69,6 +73,8 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
         }
         options.onStatus("connected", url.host);
         backoff = 1000;
+        // S1'/D5：relay 节点签名钥指纹校验（不符即断连——fail-closed）
+        void verifyRelayFingerprint();
         const rest = buf.subarray(buf.indexOf("\r\n\r\n") + 4);
         if (rest.length > 0) reader.push(rest);
         return;
@@ -115,6 +121,40 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
       if (stopped) return;
       openConnection();
     }, delay);
+  }
+
+  async function verifyRelayFingerprint(): Promise<void> {
+    const expected = options.expectedRelayFingerprint ?? "";
+    if (expected.length === 0) return; // 本地形态显式豁免（生产配置校验在 config.validateRemote）
+    const reply = await httpGet(url, { useTls: options.useTls, path: "/api/node-key" });
+    if (reply === null || reply.status !== 200) {
+      options.log("node-key fetch failed — disconnecting");
+      socket?.destroy();
+      return;
+    }
+    const parsed = JSON.parse(reply.body) as { signingPub?: string };
+    if (typeof parsed.signingPub !== "string") {
+      socket?.destroy();
+      return;
+    }
+    const { createHash } = await import("node:crypto");
+    const actual = createHash("sha256").update(Buffer.from(parsed.signingPub, "hex")).digest("hex");
+    if (actual !== expected) {
+      options.log(`relay fingerprint mismatch (expected ${expected.slice(0, 8)}…, got ${actual.slice(0, 8)}…) — disconnecting`);
+      socket?.destroy();
+    }
+  }
+
+  async function requestPairingTicket(pairingId: string): Promise<string | null> {
+    if (gatewayToken === null) return null;
+    const body = JSON.stringify({ pairingId });
+    const reply = await httpPost(url, { useTls: options.useTls, path: "/api/pairing-ticket", body, token: gatewayToken });
+    if (reply === null || reply.status !== 200) {
+      options.log(`pairing-ticket failed: ${String(reply?.status)}`);
+      return null;
+    }
+    const parsed = JSON.parse(reply.body) as { ticket?: string };
+    return typeof parsed.ticket === "string" ? parsed.ticket : null;
   }
 
   function enrollOnce(): Promise<{ token: string } | null> {
@@ -170,11 +210,12 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
       socket?.destroy();
     },
     enrollOnce,
+    requestPairingTicket,
   };
 }
 
-async function httpPost(url: URL, spec: { useTls: boolean; path: string; body: string }): Promise<{ status: number; body: string } | null> {
-  const { useTls, path, body } = spec;
+async function httpPost(url: URL, spec: { useTls: boolean; path: string; body: string; token?: string }): Promise<{ status: number; body: string } | null> {
+  const { useTls, path, body, token } = spec;
   const defaultPort2 = useTls ? 443 : 80;
   const port = url.port === "" ? defaultPort2 : Number(url.port);
   return new Promise((resolve) => {
@@ -182,36 +223,60 @@ async function httpPost(url: URL, spec: { useTls: boolean; path: string; body: s
     const fail = (): void => resolve(null);
     s.once("error", fail);
     s.on("connect", () => {
-      s.write(`POST ${path} HTTP/1.1\r\nHost: ${url.host}\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+      const auth = token !== undefined ? `Authorization: Bearer ${token}\r\n` : "";
+      s.write(`POST ${path} HTTP/1.1\r\nHost: ${url.host}\r\n${auth}Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
     });
     let raw = "";
     s.on("data", (chunk: Buffer) => {
       raw += chunk.toString("utf8");
     });
     s.on("close", () => {
-      const statusLine = raw.split("\r\n")[0] ?? "";
-      const status = Number(statusLine.split(" ")[1] ?? 0);
-      const headerEnd = raw.indexOf("\r\n\r\n");
-      if (headerEnd < 0) {
-        resolve({ status, body: "" });
-        return;
-      }
-      const head = raw.slice(0, headerEnd);
-      let bodyText = raw.slice(headerEnd + 4);
-      if (head.toLowerCase().includes("transfer-encoding: chunked")) {
-        const parts: string[] = [];
-        let cursor = 0;
-        for (;;) {
-          const lineEnd = bodyText.indexOf("\r\n", cursor);
-          if (lineEnd < 0) break;
-          const size = Number.parseInt(bodyText.slice(cursor, lineEnd), 16);
-          if (Number.isNaN(size) || size === 0) break;
-          parts.push(bodyText.slice(lineEnd + 2, lineEnd + 2 + size));
-          cursor = lineEnd + 2 + size + 2;
-        }
-        bodyText = parts.join("");
-      }
-      resolve({ status, body: bodyText });
+      resolve(decodeHttpResponse(raw));
+    });
+  });
+}
+
+/** HTTP/1.1 响应解包（含 chunked） */
+function decodeHttpResponse(raw: string): { status: number; body: string } {
+  const statusLine = raw.split("\r\n")[0] ?? "";
+  const status = Number(statusLine.split(" ")[1] ?? 0);
+  const headerEnd = raw.indexOf("\r\n\r\n");
+  if (headerEnd < 0) return { status, body: "" };
+  const head = raw.slice(0, headerEnd);
+  let bodyText = raw.slice(headerEnd + 4);
+  if (head.toLowerCase().includes("transfer-encoding: chunked")) {
+    const parts: string[] = [];
+    let cursor = 0;
+    for (;;) {
+      const lineEnd = bodyText.indexOf("\r\n", cursor);
+      if (lineEnd < 0) break;
+      const size = Number.parseInt(bodyText.slice(cursor, lineEnd), 16);
+      if (Number.isNaN(size) || size === 0) break;
+      parts.push(bodyText.slice(lineEnd + 2, lineEnd + 2 + size));
+      cursor = lineEnd + 2 + size + 2;
+    }
+    bodyText = parts.join("");
+  }
+  return { status, body: bodyText };
+}
+
+async function httpGet(url: URL, spec: { useTls: boolean; path: string }): Promise<{ status: number; body: string } | null> {
+  const { useTls, path } = spec;
+  const defaultPort = useTls ? 443 : 80;
+  const port = url.port === "" ? defaultPort : Number(url.port);
+  return new Promise((resolve) => {
+    const s = useTls ? tlsConnect({ host: url.hostname, port, servername: url.hostname }) : netConnect({ host: url.hostname, port });
+    const fail = (): void => resolve(null);
+    s.once("error", fail);
+    s.on("connect", () => {
+      s.write(`GET ${path} HTTP/1.1\r\nHost: ${url.host}\r\nConnection: close\r\n\r\n`);
+    });
+    let raw = "";
+    s.on("data", (chunk: Buffer) => {
+      raw += chunk.toString("utf8");
+    });
+    s.on("close", () => {
+      resolve(decodeHttpResponse(raw));
     });
   });
 }

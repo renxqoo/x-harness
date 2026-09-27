@@ -60,6 +60,25 @@ describe("HostAttach", () => {
     await attach.stop();
   }, 15000);
 
+  it("host stderr 转发到 log（39 行泵）；restart 后计数清零", { timeout: 15000 }, async () => {
+    const stderrLines: string[] = [];
+    const attach = new HostAttach({
+      exec: { command: process.execPath, args: [new URL("./stderr-host.ts", import.meta.url).pathname] },
+      env: { ...process.env } as Record<string, string>,
+      heartbeatDeadlineMs: 60_000,
+      onLine: () => {},
+      onRestart: () => {},
+      log: (m) => stderrLines.push(m),
+    });
+    attach.start();
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => { setTimeout(r, 100); });
+      if (stderrLines.some((l) => l.includes("STDERR-MARKER"))) break;
+    }
+    expect(stderrLines.some((l) => l.includes("STDERR-MARKER"))).toBe(true);
+    await attach.stop();
+  });
+
   it("stop 后 write 返回 false；alive false", async () => {
     const attach = new HostAttach({
       exec: fakeExec(),

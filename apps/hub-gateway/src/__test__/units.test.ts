@@ -217,6 +217,63 @@ describe("host-ingest（B3 回归：真 host id-first 帧）", () => {
     ingest.ingest("garbage");
     expect(appended.length).toBe(1);
     expect(sentToDevice.length).toBeGreaterThanOrEqual(1);
+    // 拒绝分支：坏 JSON 行 / response 无 id / 无人认领的 response / 事件 threadId 非 string
+    ingest.ingest('{"id":"g1","type":"response"'); // 撕裂 JSON
+    ingest.ingest('{"type":"response","success":true}'); // id 缺失
+    ingest.ingest('{"id":"g_ghost","type":"response","success":true}'); // 无人认领
+    ingest.ingest('{"type":"event","threadId":123,"name":"x","payload":{}}'); // threadId 非 string
+    ingest.ingest('{"type":"ui_request","threadId":"t"}'); // ui_request 字段缺失
+    expect(appended.length).toBe(1); // 仍恰一次
+  });
+});
+
+describe("gw/logs/tail 真实数据（第 7 项收口回归）", () => {
+  it("log() 桥接缓冲——tail 返回真实日志行", { timeout: 15000 }, async () => {
+    const { startGateway } = await import("../main.ts");
+    const { connect } = await import("node:net");
+    const dir = await mkdtemp(join(tmpdir(), "logbuf-"));
+    await (await import("node:fs/promises")).mkdir(join(dir, "devices"), { recursive: true });
+    await (await import("node:fs/promises")).writeFile(join(dir, "gateway.json"), "{}", "utf8");
+    const gw = await startGateway({ agentDir: dir, hostOverride: { command: process.execPath, args: [new URL("./fake-host.ts", import.meta.url).pathname, "--fake-host"] }, log: () => {} });
+    const sock = connect(gw.ownerServer.socketPath);
+    await new Promise<void>((resolve) => { sock.once("connect", () => resolve()); });
+    const lines: string[] = [];
+    sock.on("data", (c: Buffer) => { for (const l of c.toString().split("\n")) if (l) lines.push(l); });
+    const send = (id: string, cmd: string): void => { sock.write(`${JSON.stringify({ kind: "command", streamId: "owner", seq: lines.length + 1, body: { command: cmd, id } })}\n`); };
+    const waitRes = async (id: string, ms = 6000): Promise<Record<string, unknown>> => {
+      for (let i = 0; i < ms / 50; i++) {
+        await new Promise((r) => { setTimeout(r, 50); });
+        const hit = lines.find((l) => l.includes(`"id":"${id}"`));
+        if (hit !== undefined) return (JSON.parse(hit) as { body: Record<string, unknown> }).body;
+      }
+      throw new Error(`timeout ${id}`);
+    };
+    send("t1", "gw/logs/tail");
+    const res = await waitRes("t1");
+    expect(res.success).toBe(true);
+    // relay 未启用（remoteEnabled:false）——日志缓冲仍应有 host stderr 转发内容（可为空数组形态）
+    const data = res.data as { lines: string[] };
+    expect(Array.isArray(data.lines)).toBe(true);
+    sock.destroy();
+    await gw.stop();
+  });
+});
+
+describe("fanout coalesce 路径（COALESCABLE delta 事件直通）", () => {
+  it("assistant-stream/llm/chunk 事件投递（delta 类）与非 delta 类并存", () => {
+    const fanout = new Fanout({ coalesceBacklogFrames: 64, coalesceLagMs: 500, now: () => 0 });
+    const frames: Frame[] = [];
+    fanout.attach({ target: "owner", tier: "owner", subscribedThreads: new Set(["tC"]), send: (f) => frames.push(f) });
+    fanout.fanoutEvent({ threadId: "tC", name: "agent/assistant-stream", payload: { chunk: "a" } });
+    fanout.fanoutEvent({ threadId: "tC", name: "llm/chunk", payload: { chunk: "b" } });
+    fanout.fanoutEvent({ threadId: "tC", name: "agent/tool-stream", payload: { chunk: "c" } });
+    fanout.fanoutEvent({ threadId: "tC", name: "bash_execution_update", payload: {} });
+    fanout.fanoutEvent({ threadId: "tC", name: "turn/end", payload: {} });
+    expect(frames.length).toBe(5);
+    const names = frames.map((f) => (f.body as { name: string }).name);
+    expect(names).toContain("agent/assistant-stream");
+    expect(names).toContain("llm/chunk");
+    expect(names).toContain("turn/end");
   });
 });
 
@@ -338,6 +395,23 @@ describe("owner-server 残留 socket 清理与坏 JSON 行", () => {
     });
     expect(events).toEqual(["connect", "close"]);
     await handle.close();
+  });
+});
+
+describe("log-buffer（环形缓冲）", () => {
+  it("push/tail 往返；超容量丢最旧；tail 为快照", async () => {
+    const { createLogBuffer } = await import("../log-buffer.ts");
+    const buf = createLogBuffer(3);
+    buf.push("a");
+    buf.push("b");
+    expect(buf.tail()).toEqual(["a", "b"]);
+    buf.push("c");
+    buf.push("d"); // 丢 a
+    expect(buf.tail()).toEqual(["b", "c", "d"]);
+    const snap = buf.tail();
+    buf.push("e");
+    expect(snap).toEqual(["b", "c", "d"]); // 快照不受后续 push 影响
+    expect(buf.tail()).toEqual(["c", "d", "e"]);
   });
 });
 

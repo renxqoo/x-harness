@@ -212,6 +212,57 @@ describe("WSS 接入与路由", () => {
     expect(gw.raw.destroyed).toBe(true);
   });
 
+  it("显式签名钥注入优先；redis 形态启动；node-key 端点返回注入钥", async () => {
+    const { startRelay } = await import("../main.ts");
+    const kp = generateSigningKeyPair();
+    const relay2 = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "test-secret-16bytes!!", singleInstance: true, signingSecret: kp.secret, signingPub: kp.pub });
+    expect(relay2.nodeSigningPub).toBe(kp.pub);
+    const node = await httpPost({ port: relayPort(relay2), path: "/api/node-key", body: {} });
+    // httpPost 是 POST——node-key 只收 GET。直接 net GET：
+    const { connect } = await import("node:net");
+    const raw = await new Promise<string>((resolve) => {
+      const sock = connect({ host: "127.0.0.1", port: relayPort(relay2) });
+      sock.on("connect", () => sock.write("GET /api/node-key HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
+      let buf = "";
+      sock.on("data", (c: Buffer) => { buf += c.toString(); });
+      sock.on("close", () => resolve(buf));
+    });
+    expect(raw).toContain(kp.pub);
+    void node;
+    await relay2.close();
+    // redis 形态（fake RESP）启动成功
+    const { startFakeRespServer } = await import("./fake-resp.ts");
+    const fake = await startFakeRespServer();
+    const relay3 = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "test-secret-16bytes!!", singleInstance: true, redis: { host: "127.0.0.1", port: fake.port } });
+    expect(relay3.server.listening).toBe(true);
+    await relay3.close();
+    await fake.close();
+  });
+
+  it("pairing ticket 仅 /pairing 路径可用作数据面（其他路径 401）", async () => {
+    const ticket = relay.issuePairingTicket("pr_path");
+    // 非 pairing 路径：kind=pairing 不被接受
+    await expect(dialClient({ port: relayPort(relay), token: ticket, path: "/" })).rejects.toThrow();
+    // pairing 路径可连
+    const ph = await dialClient({ port: relayPort(relay), token: ticket, path: "/pairing" });
+    expect(ph.raw.destroyed).toBe(false);
+    ph.close();
+  });
+
+  it("单活顶替：旧连接 teardown 清 pingTimer（C4 回归——不泄漏定时器句柄）", async () => {
+    const token = relay.issueTestToken({ kind: "device", subject: "single2", installationId });
+    const first = await dialClient({ port: relayPort(relay), token });
+    const second = await dialClient({ port: relayPort(relay), token });
+    await sleep(200);
+    expect(first.raw.destroyed).toBe(true);
+    // 新连接正常收发
+    const gw = await dialClient({ port: relayPort(relay), token: gwToken });
+    second.send(JSON.stringify({ v: 1, from: "dev_single2", to: `gw_${installationId}`, payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
+    await expect(gw.waitLine((l) => l.includes("dev_single2"))).resolves.toBeTruthy();
+    second.close();
+    gw.close();
+  });
+
   it("句柄面：issuePairingTicket 签发可接入；close 后 server 关闭", async () => {
     const ticket = relay.issuePairingTicket("pr_handle");
     expect(ticket.split(".").length).toBe(3);

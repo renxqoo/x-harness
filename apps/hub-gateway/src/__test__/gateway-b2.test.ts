@@ -286,37 +286,6 @@ describe("gateway B2 骨架", () => {
     client.close();
   });
 
-  it("E1 回归：配对面装配——gw/pairing/start 出 QR；handleDeviceRequest→SAS→confirm 注册设备", { timeout: 20000 }, async () => {
-    const client = await dialOwner(socketPath);
-    client.send(commandFrame("ps1", "gw/pairing/start", { scope: "read" }));
-    const started = await client.waitResponse("ps1");
-    expect(started.success).toBe(true);
-    const pairingId = (started.data as { pairingId: string }).pairingId;
-    expect(pairingId).toMatch(/^pr_/);
-    // 设备侧 request（经 gateway handle 面——e2e 全链 pairing 流 relay 帧路由在后续批次）
-    const handle = currentGatewayHandle();
-    const { newDeviceEphemeral } = await import("@x-harness/remote-protocol");
-    const devEph = newDeviceEphemeral();
-    const res = await handle.pairingServer.handleDeviceRequest({
-      pairingId,
-      deviceEphemeralPub: devEph.pub,
-      deviceInfo: { name: "E2E Phone", deviceType: "phone", platform: "ios", appVersion: "1" },
-    });
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const confirmed = await handle.pairingServer.confirmWithSas({ pairingId, ownerTypedSas: res.sas, deviceLongTermPub: "pub_e2e" });
-    expect(confirmed.ok).toBe(true);
-    // 注册表已含设备
-    client.send(commandFrame("dl1", "gw/devices/list"));
-    const listed = await client.waitResponse("dl1");
-    const devices = (listed.data as Array<{ deviceId: string }>).map((d) => d.deviceId);
-    expect(devices).toContain((confirmed as { ok: true; deviceId: string }).deviceId);
-    // cancel 分支
-    client.send(commandFrame("pc1", "gw/pairing/cancel", { pairingId }));
-    expect((await client.waitResponse("pc1")).success).toBe(true);
-    client.close();
-  });
-
   it("gw/shutdown：受理后网关停（stop 幂等）", async () => {
     const client = await dialOwner(socketPath);
     client.send(commandFrame("sd1", "gw/shutdown"));

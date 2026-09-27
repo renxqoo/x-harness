@@ -2,7 +2,7 @@
 // 崩溃恢复（边界预支）、DH 推进、跨代密文拒收——DESIGN §1.3 全锚点
 import { describe, expect, it } from "vitest";
 import { RatchetSession, deriveInitialChains, deriveRekeyChains, type RatchetPersist } from "../ratchet.ts";
-import { aeadSeal, generateBoxKeyPair, x25519 } from "../crypto.ts";
+import { aeadSeal, buildAad, buildNonce, generateBoxKeyPair, x25519 } from "../crypto.ts";
 import { RATCHET_BATCH_FRAMES } from "../limits.ts";
 
 const enc = new TextEncoder();
@@ -186,6 +186,48 @@ describe("乱序与回归", () => {
     const f0 = await gwSeal(gw, "f0");
     const stale = await dev.open({ ciphertext: f0.ct, nonce: f0.nonce, aad: f0.aad, index: f0.index, epoch: f0.epoch + 5 });
     expect(stale).toEqual({ ok: false, reason: "tag-failed" });
+  });
+});
+
+describe("会话辅助面（snapshot/fingerprint/probe/reset）", () => {
+  it("chainFingerprint 随链变化；shouldProbeRekey 阈值；resetTagFailures 归零", async () => {
+    const { gw, dev } = endpoints();
+    const before = gw.chainFingerprint();
+    const g1 = generateBoxKeyPair();
+    const g2 = generateBoxKeyPair();
+    gw.applyDhStep(x25519(g1.secret, g2.pub)!, true);
+    dev.applyDhStep(x25519(g2.secret, g1.pub)!, false);
+    expect(gw.chainFingerprint()).not.toBe(before);
+    expect(gw.shouldProbeRekey()).toBe(false);
+    // tag 失败计数至阈值（顺序 index 的垃圾密文——openInOrder 失败路径每次 +1）
+    const base = dev.snapshotRecv().nextIndex;
+    const epochNow = dev.snapshotRecv().epoch;
+    for (let i = 0; i < 33; i++) {
+      await dev.open({ ciphertext: new Uint8Array(64).fill(1), nonce: buildNonce(epochNow, 0, base + i), aad: buildAad("a", "b", epochNow), index: base + i, epoch: epochNow });
+    }
+    expect(dev.shouldProbeRekey()).toBe(true);
+    dev.resetTagFailures();
+    expect(dev.shouldProbeRekey()).toBe(false);
+    // rekeyTo 注入（rekey.ts 走 deriveRekeyChains；会话面 rekeyTo 为直接注入入口）
+    const root = "cd".repeat(32);
+    gw.rekeyTo({ rootKey: root, sendChainKey: "11".repeat(32), recvChainKey: "22".repeat(32), epoch: 9 });
+    expect(gw.snapshotSend().epoch).toBe(9);
+    expect(gw.snapshotSend().nextIndex).toBe(0);
+  });
+
+  it("restore 的 epoch 撕裂防护（send/recv epoch 不一致抛）", async () => {
+    const { gw, dev, gwPersist } = endpoints();
+    await gwSeal(gw, "x");
+    void dev;
+    void gwPersist;
+    const send = gw.snapshotSend();
+    expect(() =>
+      RatchetSession.restore(
+        { now: () => 0, persist: { persistSendBoundary: async () => {}, persistRecvBoundary: async () => {} }, deviceId: "d", direction: 0 },
+        send,
+        { ...gw.snapshotRecv(), epoch: send.epoch + 5 },
+      ),
+    ).toThrow(/epoch mismatch/);
   });
 });
 

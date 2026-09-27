@@ -149,6 +149,26 @@ describe("手输码 PAKE 路径", () => {
     if (!locked.ok) expect(locked.reason).toBe("locked");
   });
 
+  it("confirmWithSas 拒绝分支：过期/已消费/未建立通道/锁定", async () => {
+    const clock = { ts: Date.now() };
+    const { server } = makeServer(() => clock.ts);
+    // 未建立通道（无 device request 直接 confirm）
+    const s1 = await server.startQr("read");
+    const noChannel = await server.confirmWithSas({ pairingId: s1.pairingId, ownerTypedSas: "123456", deviceLongTermPub: "aa" });
+    expect(noChannel.ok).toBe(false);
+    // 过期
+    clock.ts += 121_000;
+    const expired = await server.confirmWithSas({ pairingId: s1.pairingId, ownerTypedSas: "123456", deviceLongTermPub: "aa" });
+    expect(expired.ok).toBe(false);
+    // 建立后过期
+    const s2 = await server.startQr("read");
+    const req = await server.handleDeviceRequest({ pairingId: s2.pairingId, deviceEphemeralPub: newDeviceEphemeral().pub, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
+    if (!req.ok) throw new Error("unreachable");
+    clock.ts += 121_000;
+    const expired2 = await server.confirmWithSas({ pairingId: s2.pairingId, ownerTypedSas: req.sas, deviceLongTermPub: "aa" });
+    expect(expired2.ok).toBe(false);
+  });
+
   it("E2 回归：过期未消费配对会话被清扫", async () => {
     const clock = { ts: Date.now() };
     const { server } = makeServer(() => clock.ts);

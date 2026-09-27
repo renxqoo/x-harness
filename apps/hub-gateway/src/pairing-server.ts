@@ -47,6 +47,18 @@ export interface PairingServer {
   confirmWithSas(spec: { pairingId: string; ownerTypedSas: string; deviceLongTermPub: string; deviceBoxPub?: string }): Promise<{ ok: true; deviceId: string; ratchetSeed: Uint8Array } | { ok: false; reason: string }>;
   cancel(pairingId: string): void;
   sessionOf(pairingId: string): PairingSession | null;
+  /** 设备配对帧（relay pairing 面：QR request / PAKE 发起 / 设备长期钥呈递） */
+  handlePairingFrame(spec: { pairingId: string; message: { p: string; [key: string]: unknown } }): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }>;
+}
+
+/** 帧载荷里的设备信息规整（缺省降级——垃圾输入不崩） */
+function coerceDeviceInfo(raw: unknown): { name: string; deviceType: string; platform: string; appVersion: string } {
+  if (typeof raw !== "object" || raw === null) {
+    return { name: "device", deviceType: "phone", platform: "unknown", appVersion: "1" };
+  }
+  const rec = raw as Record<string, unknown>;
+  const pick = (key: string, fallback: string): string => (typeof rec[key] === "string" ? (rec[key] as string) : fallback);
+  return { name: pick("name", "device"), deviceType: pick("deviceType", "phone"), platform: pick("platform", "unknown"), appVersion: pick("appVersion", "1") };
 }
 
 export function createPairingServer(options: PairingServerOptions): PairingServer {
@@ -90,6 +102,10 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
     sessions.set(pairingId, session);
     void options.audit.record("pairing-created", { pairingId, mode, scope });
     const ticket = await options.requestPairingTicket(pairingId);
+    if (ticket.length === 0) {
+      sessions.delete(pairingId);
+      return { ok: false, reason: "pairing ticket unavailable (relay enroll pending?)" };
+    }
     return { session, ticket };
   }
 
@@ -198,7 +214,49 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       }
     },
     sessionOf: (pairingId) => sessions.get(pairingId) ?? null,
+    async handlePairingFrame(spec) {
+      const session = sessions.get(spec.pairingId);
+      if (session === undefined) return { ok: false, reason: "no such pairing" };
+      const nowMs = options.now();
+      if (nowMs > session.expiresAt || session.consumed) return { ok: false, reason: "pairing expired" };
+      return pairingFrameInner(this, session, spec);
+    },
   };
 }
 
+
 export { SAS_DIGITS };
+
+/** 配对帧分派（p 消息判别）——handlePairingFrame 的实现体（复杂度拆分件） */
+async function pairingFrameInner(
+  server: PairingServer,
+  session: PairingSession,
+  spec: { pairingId: string; message: { p: string; [key: string]: unknown } },
+): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }> {
+      if (spec.message.p === "request") {
+        const deviceEphemeralPub = typeof spec.message.ephemeralPub === "string" ? spec.message.ephemeralPub : "";
+        if (deviceEphemeralPub.length === 0) return { ok: false, reason: "ephemeralPub required" };
+        const deviceInfo = coerceDeviceInfo(spec.message.deviceInfo);
+        const res = await server.handleDeviceRequest({ pairingId: spec.pairingId, deviceEphemeralPub, deviceInfo });
+        if (!res.ok) return res;
+        return { ok: true, reply: { p: "sas", sas: res.sas, gatewaySignature: res.gatewaySignature } };
+      }
+      if (spec.message.p === "pake-a") {
+        const messageA = typeof spec.message.pakeA === "string" ? spec.message.pakeA : "";
+        if (messageA.length === 0) return { ok: false, reason: "pakeA required" };
+        const deviceInfo = coerceDeviceInfo(spec.message.deviceInfo);
+        const res = await server.handlePakeInitiate({ pairingId: spec.pairingId, messageA, deviceInfo });
+        if (!res.ok) return res;
+        return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm } };
+      }
+      if (spec.message.p === "device-keys") {
+        // 设备长期钥呈递（A6：SAS 确认后由 owner 发起 confirm——此帧暂存钥待 confirm 合并）
+        const longTermPub = typeof spec.message.longTermPub === "string" ? spec.message.longTermPub : "";
+        if (longTermPub.length === 0) return { ok: false, reason: "longTermPub required" };
+        session.deviceEphPub = session.deviceEphPub ?? longTermPub;
+        (session as PairingSession & { deviceLongTermPub?: string }).deviceLongTermPub = longTermPub;
+        return { ok: true, reply: { p: "ack" } };
+      }
+      return { ok: false, reason: "unknown pairing message" };
+
+}

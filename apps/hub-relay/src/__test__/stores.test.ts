@@ -82,6 +82,47 @@ describe("RespClient 重连重放订阅（C6）", () => {
   });
 });
 
+describe("RespClient 并发 ensure 与断连后重连复用", () => {
+  it("并发 ensure 单连接；连接断开后 ensure 重建同连接语义", async () => {
+    const fake = await startFakeRespServer();
+    const { RespClient } = await import("../resp.ts");
+    const client = new RespClient({ host: "127.0.0.1", port: fake.port });
+    // 并发 ensure ×5（connecting 去重路径）
+    await Promise.all([client.ensure(), client.ensure(), client.ensure(), client.ensure(), client.ensure()]);
+    await client.set("k", "v");
+    expect(await client.get("k")).toBe("v");
+    // close 后 ensure 重建（socket destroyed → 重连路径）
+    client.close();
+    await client.ensure();
+    await client.set("k2", "v2");
+    expect(await client.get("k2")).toBe("v2");
+    client.close();
+    await fake.close();
+  });
+
+  it("未连接 send 拒绝；订阅在断连后重连仍生效（subscribeHandlers 保留）", async () => {
+    const { RespClient } = await import("../resp.ts");
+    const fresh = new RespClient({ host: "127.0.0.1", port: 1 });
+    await expect(fresh.get("x")).rejects.toThrow("not connected");
+    fresh.close();
+    const fake = await startFakeRespServer();
+    const client = new RespClient({ host: "127.0.0.1", port: fake.port });
+    await client.ensure();
+    const seen: string[] = [];
+    await client.subscribe("keep-ch", (_c, m) => seen.push(m));
+    client.close();
+    await client.ensure();
+    await client.publish("keep-ch", "after-reconnect");
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      if (fake.received.some((a) => a[0] === "SUBSCRIBE")) break;
+    }
+    expect(fake.received.some((a) => a[0] === "SUBSCRIBE" && a[1] === "keep-ch")).toBe(true);
+    client.close();
+    await fake.close();
+  });
+});
+
 describe("RespClient C6 回归（连接失败排空等待者不楔死）", () => {
   it("连不上时 ensure 拒绝且可重试", async () => {
     const { RespClient } = await import("../resp.ts");

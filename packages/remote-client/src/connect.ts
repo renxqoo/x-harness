@@ -3,7 +3,7 @@
 import { connect as netConnect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { randomBytes } from "node:crypto";
-import { decodeEnvelope, encodeEnvelope, parseFrame, type Frame, type ResponseBody } from "@x-harness/remote-protocol";
+import { ChunkReassemblerPool, decodeEnvelope, encodeEnvelope, parseFrame, type Frame, type ResponseBody } from "@x-harness/remote-protocol";
 import { WebSocketFrameReader, WebSocketFrameWriter } from "@x-harness/remote-protocol";
 
 export interface RemoteCodec {
@@ -28,6 +28,10 @@ export interface RemoteClientOptions {
 export interface RemoteClientHandle {
   sendCommand(spec: { command: string; id: string; args?: Record<string, unknown> }): Promise<boolean>;
   sendFrame(frame: Frame): Promise<boolean>;
+  /** 断线窗口命令重发（重连后调用） */
+  resendOutbox(): Promise<void>;
+  /** outbox 未结算命令 id（观测面） */
+  outboxIds(): string[];
   waitResponse(id: string, timeoutMs?: number): Promise<ResponseBody>;
   frames(): Frame[];
   connected(): boolean;
@@ -40,9 +44,43 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
   const port = url.port === "" ? defaultPort : Number(url.port);
   const frames: Frame[] = [];
   const responseWaiters = new Map<string, (response: ResponseBody) => void>();
-  let writer: WebSocketFrameWriter | null = null;
+  const chunkPool = new ChunkReassemblerPool();
+  // 命令 outbox（§1.2：response 到达前保留；重连后重发）+ ACK 滑动窗口
+  const commandOutbox = new Map<string, Frame>();
+  let ackDebt = 0;
+  let lastAckAt = 0;
   let stopped = false;
-  let nextSeq = 1;
+  let backoff = 1000;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleReconnect(): void {
+    if (stopped) return;
+    if (reconnectTimer !== null) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (stopped) return;
+      // 重拨由外层重建 connectRemote；此处最小实现：标记断线状态（App 端按需重建）。
+      // 参考客户端保持轻量：重连策略属 App 装配层（RECONNECT_BACKOFF_* 常量供其使用）。
+      options.onStatus("disconnected", "awaiting-reconnect");
+    }, backoff);
+    backoff = Math.min(backoff * 2, 30_000);
+  }
+
+  /** 设备→gateway ACK（§1.2：32 帧或 250ms 合并） */
+  function maybeSendAck(): void {
+    ackDebt += 1;
+    const now = Date.now();
+    if (ackDebt < 32 && now - lastAckAt < 250) return;
+    const acks = [...perStreamLastSeq.entries()].map(([streamId, upTo]) => ({ streamId, upTo }));
+    void sendFrameInternal({ kind: "ack", streamId: "ack", seq: ackSeq++, body: { acks } });
+    ackDebt = 0;
+    lastAckAt = now;
+  }
+
+  const perStreamLastSeq = new Map<string, number>();
+  let ackSeq = 1;
+  let writer: WebSocketFrameWriter | null = null;
+    let nextSeq = 1;
 
   async function sendFrameInternal(frame: Frame): Promise<boolean> {
     if (writer === null || stopped) return false;
@@ -64,10 +102,30 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
     if (plaintext === null) return;
     const frame = parseFrame(plaintext);
     if (frame === null) return;
+    if (frame.kind === "chunk") {
+      // chunk 段重组（§1.2）：集齐还原逻辑帧再上抛
+      const body = frame.body as { segmentId: number; segmentCount: number; data: string };
+      const whole = chunkPool.add({ streamId: frame.streamId, seq: frame.seq, segmentId: body.segmentId, segmentCount: body.segmentCount, data: body.data });
+      if (whole === null) return;
+      const wholeFrame = parseFrame(whole);
+      if (wholeFrame === null) return;
+      frames.push(wholeFrame);
+      options.onFrame(wholeFrame);
+      if (wholeFrame.kind === "response") {
+        const body2 = wholeFrame.body as ResponseBody;
+        const waiter = responseWaiters.get(body2.id);
+        responseWaiters.delete(body2.id);
+        waiter?.(body2);
+      }
+      return;
+    }
     frames.push(frame);
     options.onFrame(frame);
+    perStreamLastSeq.set(frame.streamId, Math.max(perStreamLastSeq.get(frame.streamId) ?? 0, frame.seq));
+    maybeSendAck();
     if (frame.kind === "response") {
       const body = frame.body as ResponseBody;
+      commandOutbox.delete(body.id);
       const waiter = responseWaiters.get(body.id);
       responseWaiters.delete(body.id);
       waiter?.(body);
@@ -109,6 +167,7 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
   s.on("close", () => {
     writer = null;
     options.onStatus("disconnected", "closed");
+    scheduleReconnect();
   });
   const key = randomBytes(16).toString("base64");
   s.write(`GET ${url.pathname}?token=${encodeURIComponent(options.relayToken)} HTTP/1.1\r\nHost: ${url.host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
@@ -116,7 +175,17 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
   return {
     sendCommand(spec) {
       const frame: Frame = { kind: "command", streamId: `cmd:${options.deviceId}`, seq: nextSeq++, body: { command: spec.command, id: spec.id, args: spec.args } };
+      commandOutbox.set(spec.id, frame);
       return sendFrameInternal(frame);
+    },
+    /** 断线窗口的命令重发（App 重连后调用；response 未到条目重投） */
+    async resendOutbox(): Promise<void> {
+      for (const frame of commandOutbox.values()) {
+        await sendFrameInternal(frame);
+      }
+    },
+    outboxIds(): string[] {
+      return [...commandOutbox.keys()];
     },
     sendFrame(frame) {
       return sendFrameInternal(frame);
@@ -142,6 +211,7 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
     connected: () => writer !== null,
     stop() {
       stopped = true;
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
       s.destroy();
     },
   };

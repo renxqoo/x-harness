@@ -14,8 +14,11 @@ import { openAuditLog, type AuditLog } from "./audit.ts";
 import { createHash } from "node:crypto";
 
 const OUTBOUND_PAYLOAD_MAX = 12 * 1024 * 1024; // 密文+base64 后上限（DESIGN §3.5）
-import { PAIRING_MAX_CONCURRENT, aeadSeal, buildAad, decodeEnvelope, encodeEnvelope, judgeGwCommand, judgeHostCommand, parseFrame, parseNonce, type Frame } from "@x-harness/remote-protocol";
+import { chunkFrame, PAIRING_MAX_CONCURRENT, aeadSeal, buildAad, decodeEnvelope, encodeEnvelope, judgeHostCommand, parseNonce, rekeyDue, startRekey, type Frame } from "@x-harness/remote-protocol";
 import { createPairingServer } from "./pairing-server.ts";
+import { createLogBuffer } from "./log-buffer.ts";
+import { makeGwDispatcher } from "./gw-dispatch.ts";
+import { makeOwnerDispatcher } from "./owner-dispatch.ts";
 import { newBucket, processInboundLine, type RateBucket } from "./inbound.ts";
 import { startRelayLink, type RelayLinkHandle } from "./relay-link.ts";
 import { createCryptoSessionPool, type CryptoSessionPool } from "./session-crypto.ts";
@@ -24,7 +27,9 @@ export interface GatewayOptions {
   agentDir: string;
   now?(): number;
   log?(message: string): void;
-  hostOverride?: { command: string; args: string[] };
+  hostOverride?: { command: string; args: string[]; env?: Record<string, string> };
+  /** rekey sweep 间隔（缺省 60s；测试注入缩短） */
+  rekeySweepMs?: number;
 }
 
 export interface GatewayHandle {
@@ -47,7 +52,7 @@ export interface GatewayHandle {
 
 export async function startGateway(options: GatewayOptions): Promise<GatewayHandle> {
   const now = options.now ?? Date.now;
-  const log = options.log ?? ((message: string) => process.stderr.write(`gw: ${message}\n`));
+  let handleRef: GatewayHandle | null = null;
   let rawConfig: string | null = null;
   try {
     rawConfig = await readFile(`${options.agentDir}/gateway.json`, "utf8");
@@ -62,16 +67,17 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const threads = await loadThreads(paths.threadsFile);
   const devices = await loadDeviceRegistry(paths);
   const audit = await openAuditLog(paths.auditDir, now);
-  const logLines: string[] = [];
-  const logBuffer = {
-    push(line: string): void {
-      logLines.push(line);
-      if (logLines.length > 500) logLines.splice(0, logLines.length - 500);
-    },
-    tail(): string[] {
-      return [...logLines];
-    },
+  const logBuffer = createLogBuffer();
+  // 日志双写：注入 log 进缓冲（gw/logs/tail 读到真实内容）+ stderr 缺省
+  const userLog = options.log;
+  const stderrSink = (message: string): void => {
+    process.stderr.write(`gw: ${message}\n`);
   };
+  const bufferedLog = (message: string): void => {
+    logBuffer.push(message);
+    (userLog ?? stderrSink)(message);
+  };
+  const log = bufferedLog;
   const fanout = new Fanout({ coalesceBacklogFrames: 64, coalesceLagMs: 500, now });
   // scope 变更即时生效（D4）：tier 恒从注册表现值裁决
   fanout.setTierResolver((target) => {
@@ -136,7 +142,10 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     relayKeyFingerprint: config.relayKeyFingerprint,
     audit,
     now,
-    requestPairingTicket: async () => `ticket_local_${Date.now()}`,
+    requestPairingTicket: async (pairingId) => {
+      const ticket = await relayLinkRef?.requestPairingTicket(pairingId);
+      return ticket ?? "";
+    },
     onRegistered: async (device) => {
       devices.put({
         deviceId: device.deviceId,
@@ -169,6 +178,42 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const devicePending = new Map<string, Frame[]>();
   const DEVICE_PENDING_MAX = 256;
 
+  /** 配对面路由（E1 收口：手机经 relay /pairing 连接的帧——明文 JSON 信封，配对通道密钥层在协议包） */
+  async function ingestPairingFrame(pairingId: string, line: string): Promise<void> {
+    const session = pairingServer.sessionOf(pairingId);
+    if (session === null) {
+      log(`pairing frame for unknown session ${pairingId}`);
+      return;
+    }
+    const env = decodeEnvelope(line);
+    if (env === null) return;
+    let message: { p: string; [key: string]: unknown };
+    try {
+      message = JSON.parse(Buffer.from(env.payload, "base64").toString("utf8")) as { p: string; [key: string]: unknown };
+    } catch {
+      return;
+    }
+    const result = await pairingServer.handlePairingFrame({ pairingId, message });
+    const replyEnvelope = result.ok
+      ? encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: `pairing_${pairingId}`, payload: Buffer.from(JSON.stringify(result.reply)).toString("base64"), nonce: Buffer.alloc(17).toString("base64") })
+      : encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: `pairing_${pairingId}`, payload: Buffer.from(JSON.stringify({ p: "rejected", reason: result.reason })).toString("base64"), nonce: Buffer.alloc(17).toString("base64") });
+    relayLinkRef?.send(replyEnvelope);
+  }
+
+  /** rekey 旅程：发起（签名）→ 设备 accept → 双端换链（epoch++）。本轮实现发起侧落盘 + 通知帧 */
+  async function performRekey(deviceId: string, oldRootKey: string, nextCounter: number): Promise<void> {
+    const started = startRekey({ initiatorSigningSecret: identity.signingSecret, initiatorSigningPub: identity.signingPub, peerCurrentRatchetPub: "", rekeyCounter: nextCounter });
+    const frame: Frame = { kind: "rekey", streamId: `rekey:${deviceId}`, seq: nextSeqFor(`rekey:${deviceId}`), body: started.request };
+    void sendToDevice(deviceId, frame);
+    void oldRootKey;
+    const entry = devices.get(deviceId);
+    if (entry !== null) {
+      entry.rekeyCounter = nextCounter;
+      devices.put(entry);
+    }
+    await audit.record("rekey-performed", { deviceId, rekeyCounter: nextCounter });
+  }
+
   /** link 断线窗口的设备帧重发（§1.2 outbox——有界，满则丢最旧） */
   function flushDevicePending(): void {
     const link = relayLinkRef;
@@ -190,14 +235,35 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       devicePending.set(deviceId, queue);
       return;
     }
-    const outcome = await session.ratchet.seal({ plaintext: new TextEncoder().encode(JSON.stringify(frame)), aadFrom: `gw_${identity.installationId}`, aadTo: `dev_${deviceId}` });
+    // 大帧 chunk 化（§1.2/§3.5）：切片多信封发送，接收端按 (streamId,seq) 重组。
+    // 段阈值内走单帧直发。
+    const segs = chunkFrame(frame);
+    if (segs === null) {
+      await sendSealed({ deviceId, link, ratchet: session.ratchet, frame });
+      return;
+    }
+    for (const seg of segs) {
+      const segFrame: Frame = { kind: "chunk", streamId: seg.streamId, seq: seg.seq, body: { segmentId: seg.segmentId, segmentCount: seg.segmentCount, totalBytes: 0, data: seg.data } };
+      await sendSealed({ deviceId, link, ratchet: session.ratchet, frame: segFrame });
+    }
+  }
+
+  interface SealedSendSpec {
+    deviceId: string;
+    link: RelayLinkHandle;
+    ratchet: import("./session-crypto.ts").DeviceCryptoSession["ratchet"];
+    frame: Frame;
+  }
+
+  async function sendSealed(spec: SealedSendSpec): Promise<void> {
+    const { deviceId, link, ratchet, frame } = spec;
+    const outcome = await ratchet.seal({ plaintext: new TextEncoder().encode(JSON.stringify(frame)), aadFrom: `gw_${identity.installationId}`, aadTo: `dev_${deviceId}` });
     if (!outcome.ok) return;
     const key = new Uint8Array(Buffer.from(outcome.keyUsed, "hex"));
     const ct = aeadSeal({ key, nonce: outcome.nonce, plaintext: new TextEncoder().encode(JSON.stringify(frame)), aad: outcome.aad });
     const payload = Buffer.from(ct).toString("base64");
-    // E4：超限帧不进链路（chunk 重组是显式边界，DESIGN §6）
     if (payload.length > OUTBOUND_PAYLOAD_MAX) {
-      log(`outbound frame exceeds cap (${payload.length}B) — dropped`);
+      log(`outbound segment exceeds cap (${payload.length}B) — dropped`);
       return;
     }
     const env = encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: `dev_${deviceId}`, payload, nonce: Buffer.from(outcome.nonce).toString("base64") });
@@ -287,6 +353,20 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   }
 
   let relayLinkRef: RelayLinkHandle | null = null;
+  // 强制 rekey 调度（S4：暴露窗 ≤2000 帧/24h）
+  const rekeyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  function scheduleRekeyCheck(): void {
+    const timer = setInterval(() => {
+      for (const device of devices.list()) {
+        const session = cryptoSessions.get(device.deviceId);
+        if (session === null) continue;
+        if (rekeyDue(session.ratchet.messagesSinceDhCount(), session.establishedAt, now())) {
+          void performRekey(device.deviceId, session.ratchet.snapshotSend().rootKey, device.rekeyCounter + 1);
+        }
+      }
+    }, options.rekeySweepMs ?? 60_000);
+    rekeyTimers.set("__sweep__", timer);
+  }
   if (config.remoteEnabled) {
     relayLinkRef = startRelayLink({
       relayUrl: config.relayUrl,
@@ -294,11 +374,17 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       gatewaySigningSecret: identity.signingSecret,
       gatewaySigningPub: identity.signingPub,
       useTls: config.relayUrl.startsWith("wss://"),
+      expectedRelayFingerprint: config.relayUrl.startsWith("wss://") ? config.relayKeyFingerprint : "",
       onFrame: (line) => {
         // 坏行不得崩守护进程（C8——入口守卫）
         try {
           const parsed = JSON.parse(line) as { from?: string };
-          if (typeof parsed.from === "string" && parsed.from.startsWith("dev_")) {
+          if (typeof parsed.from !== "string") return;
+          if (parsed.from.startsWith("pairing_")) {
+            void ingestPairingFrame(parsed.from.slice("pairing_".length), line);
+            return;
+          }
+          if (parsed.from.startsWith("dev_")) {
             void ingestDeviceLine(parsed.from.slice(4), line);
           }
         } catch {
@@ -344,60 +430,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     },
   });
 
-  async function handleOwnerFrame(session: OwnerSession, frame: Frame): Promise<void> {
-    if (frame.kind !== "command") {
-      if (frame.kind === "ui_response") {
-        // owner 应答弹窗（先答先得）
-        const body = frame.body as { requestId?: string; payload?: Record<string, unknown> };
-        if (typeof body.requestId === "string") {
-          host.write(JSON.stringify({ type: "ui_response", requestId: body.requestId, payload: body.payload ?? {} }));
-          await audit.record("ui_request-settled", { requestId: body.requestId, deviceId: "owner", decision: JSON.stringify(body.payload ?? {}) });
-        }
-      }
-      return;
-    }
-    const body = frame.body as { command?: string; id?: string; args?: Record<string, unknown> };
-    const command = body.command;
-    const id = body.id;
-    if (typeof command !== "string" || typeof id !== "string") {
-      session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body: { id: "?", command: "?", success: false, error: "invalid command frame" } });
-      return;
-    }
-    // gw/* 本地命令族
-    if (judgeGwCommand(command, "owner") !== "unknown-command") {
-      const result = await handleGwCommand(command, body.args ?? {});
-      session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body: { id, command, success: result.ok, ...(result.ok ? { data: result.data } : { error: result.reason }) } });
-      return;
-    }
-    if (judgeGwCommand(command, "owner") === "unknown-command" && command.startsWith("gw/")) {
-      await audit.record("owner-only-denied", { deviceId: "owner", command });
-      session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body: { id, command, success: false, error: "unknown gw command" } });
-      return;
-    }
-    // host 命令（owner 全权）——与设备共用同一条提交管线
-    // reply 绑定提交会话（C7：旧连接的 response 不投新连接）
-    await submitCommand({
-      deviceId: "owner",
-      commandId: id,
-      command,
-      args: body.args ?? {},
-      ownerSession: session,
-      reply: {
-        send(frameBody) {
-          if (!session.closed) session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body: frameBody });
-        },
-      },
-    });
-  }
-
   interface Reply {
     send(body: unknown): void;
   }
 
   async function submitCommand(spec: { deviceId: string; commandId: string; command: string; args: Record<string, unknown>; reply: Reply; ownerSession?: OwnerSession }): Promise<void> {
     const { deviceId, commandId, command, args, reply, ownerSession } = spec;
-    // scope 执法（owner 全权）
-    // owner 对 host 命令面也走矩阵（矩阵外/未知命令拒——S2 fail-closed 对 owner 同样成立）
+    // scope 执法：owner 对 host 命令面也走矩阵（矩阵外/未知拒——S2 fail-closed 不豁免）
     const verdict = deviceId === "owner" ? judgeHostCommand(command, "owner") : judgeHostCommand(command, tierOf(deviceId));
     if (verdict !== "allow") {
       if (verdict === "owner-only") {
@@ -444,74 +483,48 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     return devices.get(deviceId)?.scope ?? "read";
   }
 
-  type GwResult = { ok: true; data: unknown } | { ok: false; reason: string };
+  scheduleRekeyCheck();
 
-  async function handleGwCommand(command: string, args: Record<string, unknown>): Promise<GwResult> {
-    if (command === "gw/status") {
-      return { ok: true, data: { installationId: identity.installationId, remoteEnabled: config.remoteEnabled, devices: devices.list().length, threads: threads.all().length, hostAlive: host.alive() } };
-    }
-    if (command === "gw/devices/list") return { ok: true, data: devices.list() };
-    if (command === "gw/devices/rename" || command === "gw/devices/set_scope" || command === "gw/devices/revoke") {
-      return handleGwDeviceCommand(command, args);
-    }
-    if (command === "gw/config/get") return { ok: true, data: config };
-    if (command === "gw/config/set") {
-      // 热应用面：仅 remoteEnabled（其余键重启生效——如实返回）
-      if (typeof args.remoteEnabled === "boolean") {
-        config.remoteEnabled = args.remoteEnabled;
-        await audit.record("config-changed", { remoteEnabled: args.remoteEnabled });
-        return { ok: true, data: { ...config, restartRequired: ["relayUrl", "relayKeyFingerprint", "hostBin"] } };
-      }
-      return { ok: false, reason: "restart required for this key" };
-    }
-    if (command === "gw/logs/tail") return { ok: true, data: { lines: logBuffer.tail() } };
-    if (command === "gw/shutdown") {
-      setTimeout(() => {
-        void handle.stop();
-      }, 100);
-      return { ok: true, data: { stopping: true } };
-    }
-    if (command === "gw/pairing/start" || command === "gw/pairing/cancel") {
-      return handleGwPairing(command, args);
-    }
-    return { ok: false, reason: "unknown gw command" };
-  }
+  const handleGwCommand = makeGwDispatcher({
+    identity,
+    config,
+    audit,
+    devices,
+    threads,
+    host,
+    pairingServer,
+    relayLink: () => relayLinkRef,
+    cryptoSessions,
+    fanout,
+    deviceBuckets,
+    deviceIngestChains,
+    devicePending,
+    stopGateway: () => {
+      void Promise.resolve(handleRef).then((h) => h?.stop());
+    },
+    logBuffer,
+  });
 
-  async function handleGwPairing(command: string, args: Record<string, unknown>): Promise<GwResult> {
-    if (command === "gw/pairing/cancel") {
-      const pairingId = args.pairingId;
-      if (typeof pairingId !== "string") return { ok: false, reason: "pairingId required" };
-      pairingServer.cancel(pairingId);
-      return { ok: true, data: { cancelled: true } };
-    }
-    const scope = args.scope === "interact" || args.scope === "full" ? args.scope : "read";
-    const mode = args.mode === "manual" ? "manual" : "qr";
-    const started = mode === "manual" ? await pairingServer.startManual(scope) : await pairingServer.startQr(scope);
-    return { ok: true, data: { pairingId: started.pairingId, qrPayload: "qrPayload" in started ? started.qrPayload : undefined, manualCode: "manualCode" in started ? started.manualCode : undefined, ticket: started.ticket } };
-  }
-
-  async function handleGwDeviceCommand(command: string, args: Record<string, unknown>): Promise<GwResult> {
-    const deviceId = args.deviceId;
-    if (typeof deviceId !== "string") return { ok: false, reason: "deviceId required" };
-    const entry = devices.get(deviceId);
-    if (entry === null) return { ok: false, reason: "no such device" };
-    if (command === "gw/devices/rename") {
-      if (typeof args.name === "string") entry.name = args.name;
-      devices.put(entry);
-      return { ok: true, data: entry };
-    }
-    if (command === "gw/devices/set_scope") {
-      const scope = args.scope;
-      if (scope !== "read" && scope !== "interact" && scope !== "full") return { ok: false, reason: "scope must be read|interact|full" };
-      entry.scope = scope;
-      devices.put(entry);
-      await audit.record("device-scope-changed", { deviceId, scope });
-      return { ok: true, data: entry };
-    }
-    const hit = devices.remove(deviceId);
-    await audit.record("device-revoked", { deviceId });
-    return hit ? { ok: true, data: { deviceId } } : { ok: false, reason: "no such device" };
-  }
+  const handleOwnerFrame = makeOwnerDispatcher({
+    hostWrite: (line) => host.write(line),
+    auditRecord: (event: import("./audit.ts").AuditEvent, detail: Record<string, unknown>) => audit.record(event, detail),
+    handleGwCommand,
+    nextOwnerSeq: () => nextSeqFor("owner"),
+    submitOwnerCommand: async ({ session, commandId, command, args }) => {
+      await submitCommand({
+        deviceId: "owner",
+        commandId,
+        command,
+        args,
+        ownerSession: session,
+        reply: {
+          send(frameBody) {
+            if (!session.closed) session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body: frameBody });
+          },
+        },
+      });
+    },
+  });
 
   const handle: GatewayHandle = {
     identity,
@@ -528,12 +541,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     ingestDeviceLine,
     async stop() {
       await audit.record("gateway-stopped", {});
+      for (const timer of rekeyTimers.values()) clearInterval(timer);
+      rekeyTimers.clear();
       relayLinkRef?.stop();
       await ownerServer.close();
       await host.stop();
     },
   };
+  handleRef = handle;
   return handle;
 }
-
-export { parseFrame };

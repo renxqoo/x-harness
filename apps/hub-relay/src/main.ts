@@ -20,6 +20,9 @@ export interface RelayOptions {
   host: string;
   /** per-deployment HS256 秘密（env 供给；缺省拒绝启动——fail-closed） */
   tokenSecret: string;
+  /** 部署签名钥（可选注入；缺省从 tokenSecret 派生——确定性，指纹可预计算钉存） */
+  signingSecret?: string;
+  signingPub?: string;
   /** 单实例显式声明（允许内存存储） */
   singleInstance: boolean;
   redis?: { host: string; port: number; password?: string };
@@ -39,6 +42,8 @@ export interface RelayHandle {
   server: Server;
   store: RouteStore;
   nodeId: string;
+  /** 节点签名公钥（gateway 指纹比对锚；运营者钉存其 sha256） */
+  nodeSigningPub: string;
   close(): Promise<void>;
   /** 测试面：直接签发 token（生产 token 由 gateway 经 enroll/refresh 线获得） */
   issueTestToken(claims: Omit<TokenClaims, "iat" | "exp" | "jti">): string;
@@ -46,11 +51,28 @@ export interface RelayHandle {
   issuePairingTicket(pairingId: string): string;
 }
 
+/** 部署签名钥解析：显式注入优先；缺省 tokenSecret 派生（HKDF 域分离——确定性可预计算） */
+function nodeCryptoImports(): typeof import("@x-harness/remote-protocol") {
+  // 顶部静态导入会与 routes 循环引用冲突——经 require 局部取（Bun/Node 同步可用）
+  return require("@x-harness/remote-protocol");
+}
+
+function deriveNodeSigningKeys(options: RelayOptions): { secret: string; pub: string } {
+  if (options.signingSecret !== undefined && options.signingPub !== undefined) {
+    return { secret: options.signingSecret, pub: options.signingPub };
+  }
+  const { hkdf, fromSecretSigning } = nodeCryptoImports();
+  const seed = Buffer.from(hkdf({ ikm: new TextEncoder().encode(options.tokenSecret), salt: new Uint8Array(32), info: "xh-relay/node-signing/v1", length: 32 })).toString("hex");
+  return fromSecretSigning(seed);
+}
+
 export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   if (options.tokenSecret.length < 16) {
     throw new Error("relay: token secret must be >= 16 bytes");
   }
   const nodeId = options.nodeId ?? randomUUID();
+  const nodeSigning = deriveNodeSigningKeys(options);
+  const nodeSigningPub = nodeSigning.pub;
   let store: RouteStore;
   if (options.redis !== undefined) {
     store = createRedisStore({ ...options.redis, nodeId });
@@ -96,6 +118,10 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       res.end(JSON.stringify({ ok: true, nodeId, conns: byConnId.size }));
       return;
     }
+    if (req.method === "GET" && req.url === "/api/node-key") {
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ signingPub: nodeSigningPub, nodeId }));
+      return;
+    }
     if (req.method === "POST" && req.url === "/api/pairing-ticket") {
       void handlePairingTicket(req, res);
       return;
@@ -124,7 +150,11 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : new URL(url, "http://x").searchParams.get("token");
     if (token === null || token.length === 0) return null;
     const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
-    if (claims !== null) return claims;
+    // pairing kind 仅配对面路径（D3：任意路径不得当 pairing 数据面连接）
+    if (claims !== null) {
+      if (claims.kind === "pairing") return url.startsWith("/pairing") ? claims : null;
+      return claims;
+    }
     // pairing kind 仅配对面路径；subject=pairingId（单活键按配对面隔离——D3）
     if (url.startsWith("/pairing")) {
       const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
@@ -222,6 +252,13 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     };
   }
 
+  /** L3 地址前缀（token kind → 地址域） */
+  function addressPrefixOf(kind: string): string {
+    if (kind === "gateway") return "gw_";
+    if (kind === "pairing") return "pairing_";
+    return "dev_";
+  }
+
   async function handleLine(from: Conn, line: string): Promise<void> {
     // 帧速率防线（滑动窗口）
     const now = Date.now();
@@ -240,8 +277,9 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     const env = decodeEnvelope(line);
     if (env === null) return;
     // 身份绑定：from 必须等于认证身份（S1''——禁自声明）
-    // L3 地址恒带前缀（dev_/gw_）；token subject 是裸 id——此处重组比对
-    const expectFrom = from.claims.kind === "gateway" ? `gw_${from.claims.subject}` : `dev_${from.claims.subject}`;
+    // L3 地址恒带前缀（dev_/gw_/pairing_）；token subject 是裸 id——此处重组比对
+    const prefix = addressPrefixOf(from.claims.kind);
+    const expectFrom = `${prefix}${from.claims.subject}`;
     if (env.from !== expectFrom) return;
     void routeFrame(from, env.to, line);
   }
@@ -266,6 +304,16 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         return;
       }
       await store.publishCrossNode(routed.installationId, JSON.stringify({ kind: "cross", toInstallation: routed.installationId, line }));
+      return;
+    }
+    if (to.startsWith("pairing_")) {
+      // 配对面：投给持 pairingTicket 的连接（单活键 pairing:<pairingId>）
+      const target = conns.get(`pairing:${to.slice("pairing_".length)}`);
+      if (target !== undefined) {
+        target.send(line);
+        return;
+      }
+      from.send(errorLine("no-route"));
       return;
     }
     if (to.startsWith("gw_")) {
@@ -380,6 +428,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     server,
     store,
     nodeId,
+    nodeSigningPub,
     async close() {
       for (const conn of byConnId.values()) conn.close();
       await new Promise<void>((resolve) => {

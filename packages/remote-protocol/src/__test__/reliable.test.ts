@@ -31,7 +31,7 @@ describe("InboundStream seq 生命周期", () => {
     expect(s.base()).toBe(4);
   });
 
-  it("重排缓冲溢出 → gap", () => {
+  it("重排缓冲溢出 → gap（expect/got 字段）；drain 排空；gap 计数", () => {
     const s = new InboundStream("st_t1");
     s.accept(frame(1));
     for (let i = 3; i < 3 + REORDER_BUFFER_MAX; i++) {
@@ -40,7 +40,17 @@ describe("InboundStream seq 生命周期", () => {
     }
     const overflow = s.accept(frame(REORDER_BUFFER_MAX + 4));
     expect(overflow.kind).toBe("gap");
+    if (overflow.kind === "gap") {
+      expect(overflow.expected).toBe(2);
+      expect(overflow.got).toBe(REORDER_BUFFER_MAX + 4);
+    }
     expect(s.stats().gaps).toBeGreaterThanOrEqual(1);
+    // gap 后重排缓冲仍持有乱序帧：补 2 → accept 内排空（deliver 返回首帧，其余经 drain）
+    const deliver = s.accept(frame(2));
+    expect(deliver.kind).toBe("deliver");
+    let drained = 0;
+    while (s.drain() !== null) drained += 1;
+    expect(s.base()).toBe(REORDER_BUFFER_MAX + 2); // 2..1026 全部按序送达（1027/1028 被 gap 拒）
   });
 
   it("订阅基线：新接入直接采用 baseSeq，无死锁", () => {
@@ -83,6 +93,14 @@ describe("OutboxStream 保留语义", () => {
     o.applyAck(2);
     expect(o.replayFrom(2).length).toBe(1);
     expect(o.lastAckedSeq()).toBe(2);
+  });
+
+  it("enqueue 返回 {seq, frame}（双字段消费）", () => {
+    const o = new OutboxStream("st_e");
+    const enq = o.enqueue({ x: 1 }, "event", null);
+    expect(enq.seq).toBe(1);
+    expect(enq.frame.seq).toBe(1);
+    expect(enq.frame.body).toEqual({ x: 1 });
   });
 
   it("nextSeq 单调；重放窗口上限可判定", () => {

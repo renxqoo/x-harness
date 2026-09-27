@@ -164,6 +164,74 @@ describe("relay-link 对真 relay 旅程", () => {
     await relay.close();
   });
 
+  it("D5 回归：relay 节点指纹不符断连；相符保持连接", { timeout: 15000 }, async () => {
+    const { startRelay } = await import("../../../../apps/hub-relay/src/main.ts");
+    const relay = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "fp-test-secret-16bytes", singleInstance: true });
+    const port = (relay.server.address() as { port: number }).port;
+    const { createHash } = await import("node:crypto");
+    const goodFp = createHash("sha256").update(Buffer.from(relay.nodeSigningPub, "hex")).digest("hex");
+    const statuses: string[] = [];
+    const dir = await mkdtemp(join(tmpdir(), "fp-"));
+    const identity = await loadOrCreateIdentity({ agentDir: dir, installationIdFile: join(dir, "iid"), gatewayIdentityFile: join(dir, "gid.json") });
+    // 错指纹 → 连接后断
+    const badLink = startRelayLink({
+      relayUrl: `ws://127.0.0.1:${port}`,
+      installationId: identity.installationId,
+      gatewaySigningSecret: identity.signingSecret,
+      gatewaySigningPub: identity.signingPub,
+      useTls: false,
+      expectedRelayFingerprint: "deadbeef".repeat(8),
+      onFrame: () => {},
+      onStatus: (st, d) => statuses.push(`bad:${st}:${d.slice(0, 30)}`),
+      log: () => {},
+    });
+    await new Promise((r) => { setTimeout(r, 2500); });
+    expect(statuses.some((x) => x.includes("mismatch") || x.includes("disconnected"))).toBe(true);
+    badLink.stop();
+    // 对指纹 → 保持
+    const goodLink = startRelayLink({
+      relayUrl: `ws://127.0.0.1:${port}`,
+      installationId: identity.installationId,
+      gatewaySigningSecret: identity.signingSecret,
+      gatewaySigningPub: identity.signingPub,
+      useTls: false,
+      expectedRelayFingerprint: goodFp,
+      onFrame: () => {},
+      onStatus: () => {},
+      log: () => {},
+    });
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => { setTimeout(r, 200); });
+      if (goodLink.connected()) break;
+    }
+    expect(goodLink.connected()).toBe(true);
+    await new Promise((r) => { setTimeout(r, 800); });
+    expect(goodLink.connected()).toBe(true);
+    goodLink.stop();
+    await relay.close();
+  });
+
+  it("requestPairingTicket：无 token（未 enroll）返回 null；坏端口同样 null", { timeout: 10000 }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pt-"));
+    const identity = await loadOrCreateIdentity({ agentDir: dir, installationIdFile: join(dir, "iid"), gatewayIdentityFile: join(dir, "gid.json") });
+    const link = startRelayLink({
+      relayUrl: "ws://127.0.0.1:1",
+      installationId: identity.installationId,
+      gatewaySigningSecret: identity.signingSecret,
+      gatewaySigningPub: identity.signingPub,
+      useTls: false,
+      onFrame: () => {},
+      onStatus: () => {},
+      log: () => {},
+    });
+    // 未 enroll（token null）→ 立即 null
+    await expect(link.requestPairingTicket("pr_x")).resolves.toBeNull();
+    // enroll 失败（端口不可达）
+    await expect(link.enrollOnce()).resolves.toBeNull();
+    await expect(link.requestPairingTicket("pr_y")).resolves.toBeNull();
+    link.stop();
+  });
+
   it("enroll 失败路径：坏 URL 返回 null", { timeout: 8000 }, async () => {
     const dir = await mkdtemp(join(tmpdir(), "link2-"));
     const identity = await loadOrCreateIdentity({ agentDir: dir, installationIdFile: join(dir, "iid"), gatewayIdentityFile: join(dir, "gid.json") });

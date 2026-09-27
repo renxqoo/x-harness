@@ -10,6 +10,7 @@ export const FRAME_KINDS = [
   "chunk",
   "pairing",
   "hello",
+  "rekey",
   "bye",
   "error",
 ] as const;

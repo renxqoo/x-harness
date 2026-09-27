@@ -108,6 +108,22 @@ describe("手输码 PAKE", () => {
   });
 });
 
+describe("配对辅助面（线格式契约）", () => {
+  it("derivePakeChannelKey 确定性；mixRatchetRoot 与设备公钥绑定；QR 垃圾输入 null", async () => {
+    const { derivePakeChannelKey } = await import("../pairing.ts");
+    const { pakeInitiate, pakeRespond } = await import("../pake.ts");
+    const a = pakeInitiate("11111111");
+    const b = pakeRespond("11111111", a.message);
+    const k1 = derivePakeChannelKey("ab".repeat(32));
+    expect(k1).toEqual(derivePakeChannelKey("ab".repeat(32)));
+    expect(k1.length).toBe(32);
+    void b;
+    expect(mixRatchetRoot(new Uint8Array(32), "aa")).not.toBeNull();
+    expect(decodeQr("{bad json")).toBeNull();
+    expect(decodeQr("http://x")).toBeNull();
+  });
+});
+
 describe("ratchet 种子", () => {
   it("mixRatchetRoot 确定性且随设备公钥变化", () => {
     const ck = new Uint8Array(32).fill(9);

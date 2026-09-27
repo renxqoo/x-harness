@@ -43,6 +43,36 @@ describe("帧写入", () => {
     expect(head3.readBigUInt64BE(2)).toBe(BigInt(70000));
   });
 
+  it("客户端掩码小帧（RFC 6455 §5.3）：头含 mask 位 + 4B 掩码键", () => {
+    const sink = new Sink();
+    const w = new WebSocketFrameWriter(sink as unknown as import("node:stream").Stream & { write(d: Buffer): boolean }, { clientMask: true });
+    w.writeText("hi");
+    const out = sink.joined();
+    expect(out[1]! & 0x80).toBe(0x80); // mask 位
+    expect(out.length).toBe(2 + 4 + 2); // 头 + 掩码 + 载荷
+    // 服务端可解（reader 掩码分支）
+    const r = new WebSocketFrameReader();
+    r.push(out);
+    expect(r.drainTextFrames()).toEqual(["hi"]);
+  });
+
+  it("客户端掩码中帧（126 档）与大帧（127 档）", () => {
+    const mid = new Sink();
+    const wMid = new WebSocketFrameWriter(mid as unknown as import("node:stream").Stream & { write(d: Buffer): boolean }, { clientMask: true });
+    wMid.writeText("m".repeat(300));
+    const headMid = mid.joined();
+    expect(headMid[1]! & 0x7f).toBe(126);
+    const rMid = new WebSocketFrameReader();
+    rMid.push(headMid);
+    expect(rMid.drainTextFrames()).toEqual(["m".repeat(300)]);
+    const big = new Sink();
+    const wBig = new WebSocketFrameWriter(big as unknown as import("node:stream").Stream & { write(d: Buffer): boolean }, { clientMask: true });
+    wBig.writeText("b".repeat(70000));
+    const rBig = new WebSocketFrameReader();
+    rBig.push(big.joined());
+    expect(rBig.drainTextFrames()).toEqual(["b".repeat(70000)]);
+  });
+
   it("ping/close 帧单字节头", () => {
     const sink = new Sink();
     const w = new WebSocketFrameWriter(sink as unknown as import("node:stream").Stream & { write(d: Buffer): boolean });
