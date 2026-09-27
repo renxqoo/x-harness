@@ -133,8 +133,10 @@ revive 复活同经 agentSpawned → 覆盖自动重建（emitSpawned 在 resume
 - `ChildView` subagent 形态增 `worktree?: string`（lineage 行事实透传）。
 
 **host-hub**：
-- `thread/list` 每行增 `gitBranch?: string`（现算 `probeGitFacts(entry.cwd)`，键省略形态）；
-- `thread/start`/`thread/resume` 响应 data 增 `gitBranch?: string`（worker 装配期
+- `thread/list` 每行增 `gitBranch?: string`（现算 `probeGitFacts(entry.cwd)`，键省略形态；
+  门两重：仅 live 系状态 + cwd 绝对路径——相对串/落表归一前的历史脏数据键省略，
+  防宿主进程所在仓冒充线程分支）；
+- `thread/start`/`thread/resume`/**fork/clone** 响应 data 增 `gitBranch?: string`（worker 装配期
   probeGitFacts 位点；控制响应转发链 `worker-control.ts` 只校验 threadId/sessionPath
   形状，加字段无碍——审查核实）；
 - host 表**不落账**分支（易变事实，落账必陈旧——D3）；
@@ -171,8 +173,10 @@ revive 复活同经 agentSpawned → 覆盖自动重建（emitSpawned 在 resume
 
 ## 3. 并发/一致性预算
 
-无新增并发面。探测同步 fs ≤ 2 小文件读/线程；`thread/list` N ≤ maxThreads 量级。
-分支拒绝落账（D3）。
+无新增并发面。探测同步 fs ≤ 2 小文件读/线程；`thread/list` **仅 live 系行**（spawning/
+live/retiring ≤ maxThreads 32）探测且 cwd 须绝对路径——非 live 表项（parked/dead，1024
+FIFO 深表）不探（dead 行分支是语义噪音；全量同步探测在慢盘 NFS 上饿死 host 事件循环，
+审查实测本地 91ms/1024、慢盘可达分钟级）。分支拒绝落账（D3）。
 
 ## 4. 实施顺序
 

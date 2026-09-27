@@ -130,17 +130,18 @@ function typeOf(deps: ReviveDeps, agentType: string | undefined): LoadedAgentTyp
 }
 
 /** 复活 options：类型 model/systemPrompt 重建（白名单走 registry 会话层重放，W2A）；
- *  模型兜底 = 复活调用方 options（§7.3 序）。worktree 在场：named 正文拼环境块
- *  （Track N——静态 systemPrompt 短路 assemble，事实只能随 options 定格）；
- *  untyped/fork 子走 harness 会话层覆盖（Track U，经 agentSpawned 事件）。 */
+ *  模型兜底 = 复活调用方 options（§7.3 序）。worktree 在场且类型正文非空：正文拼环境块
+ *  （Track N——静态 systemPrompt 短路 assemble，事实只能随 options 定格）；无正文的子
+ *  （untyped/fork/空正文 named）不设静态 systemPrompt——环境事实由 harness 会话层覆盖
+ *  （Track U，经 agentSpawned 事件）；静态块独占会丢全量 base/core（红测回归锚）。 */
 function revivedOptions(spec: { readonly deps: ReviveDeps; readonly caller: SessionId; readonly named: LoadedAgentType | undefined; readonly worktree: WorktreePlan | undefined }): { model?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
   const model = spec.named?.model ?? spec.deps.parentModelOf(spec.caller);
   const idle = spec.deps.parentIdleTimeoutOf(spec.caller); // 看门狗透传：复活子恒继承复活调用方 resolved 值
   const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
   return {
     ...(model !== undefined ? { model } : {}),
-    ...(persona !== undefined || spec.worktree !== undefined
-      ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona ?? "", { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
+    ...(persona !== undefined
+      ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona, { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
       : {}),
     ...(idle !== undefined ? { streamIdleTimeoutMs: idle } : {}), // loop.get 落空（会话不在场）时缺省回落
   };

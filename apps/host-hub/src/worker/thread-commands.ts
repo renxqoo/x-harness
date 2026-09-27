@@ -251,10 +251,12 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   rt.state.permissionService = undefined; // 旧服务随 world 失效——防悬挂
   rt.state.delegation = undefined;
   rt.state.commands = undefined;
+  // 装配结果出 try 作用域（响应 data 的 gitBranch 消费——fork 与 start/resume 同位）
+  let assembled: import("./assembly.ts").AssemblyResult;
   try {
     // 重装配走公共腿（与 start/resume 同构）：dial 挂点/permission 服务/skills
     // 快照全接线；fork 前缀自带 session/meta → WAL 尾值天然继承
-    await assembleThread(rt, {
+    assembled = await assembleThread(rt, {
       fields: {
         sessionsRoot: rt.sessionsRoot,
         cwd: rt.state.cwd,
@@ -277,7 +279,8 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   respond(rt, {
     id: input.id,
     command,
-    data: { threadId: newId, previousThreadId, sessionPath: rt.state.sessionPath },
+    // gitBranch 与 start/resume 同位（装配期快照——fork 重装配 cwd 未变，值同源）
+    data: { threadId: newId, previousThreadId, sessionPath: rt.state.sessionPath, ...(assembled.gitBranch !== undefined ? { gitBranch: assembled.gitBranch } : {}) },
   });
 }
 

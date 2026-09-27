@@ -40,6 +40,8 @@ export interface SpawnDeps {
   /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
   readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string }) => void;
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
+  /** worktree 已清事件发射面（kick 失败清理成功分支——树删会话驻留，提示词覆盖层摘除钩） */
+  readonly emitWorktreeGone?: (payload: { sessionId: SessionId; agentId: string }) => void;
   /** permission 授权面（isolation=worktree 的根替换落账）；缺位时 worktree 隔离拒 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
   /** 裸模型名 → 归属 provider 反查（宿主接目录快照；缺省不反查——inheritDial 串线修复） */
@@ -200,7 +202,11 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
       void evaluateCleanup({ path: spec.row.worktree, branch: `x-harness/${spec.row.agentId}`, repoTop: await cleanupRepoTopOf(spec.row, deps.workspaceRoot) }, deps.lockDegraded)
         .then((result) => {
           if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${spec.row.worktree}`);
-          if (result.kind !== "kept-dirty") unregisterLiveTree(spec.row.worktree as string);
+          if (result.kind !== "kept-dirty") {
+            unregisterLiveTree(spec.row.worktree as string);
+            // 清理成功（树删）而子会话驻留（kick 失败不 dispose）→ 发 gone 摘 Track U 覆盖层
+            if (result.kind === "removed") deps.emitWorktreeGone?.({ sessionId: spec.row.sessionId, agentId: spec.row.agentId });
+          }
         })
         .catch(() => {
           unregisterLiveTree(spec.row.worktree as string);
@@ -227,8 +233,8 @@ function childAgentOptions(
   const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
   return {
     ...dial,
-    ...(persona !== undefined || spec.worktree !== undefined
-      ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona ?? "", { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
+    ...(persona !== undefined
+      ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona, { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
       : {}),
     streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs, // 看门狗透传：子恒继承父 resolved 值（缺省同源——resolveOptions 恒填）
   };

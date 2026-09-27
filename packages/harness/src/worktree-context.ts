@@ -20,26 +20,42 @@ export interface WorktreeContextOptions {
   readonly facts: BasePromptFacts;
 }
 
-/** 子会话 ENV 块（worktree 事实直烘焙——与 base-prompt environmentBlock 同构，
- *  增隔离语义句：主仓在沙箱外，只读参照） */
-function worktreeEnvironmentBlock(payload: { readonly worktree: string; readonly branch?: string; readonly worktreeMain?: string }): string {
+/** 单行归一（与 base-prompt inline 同款口径）：事件 payload 字段未过 normalize——
+ *  压掉换行，环境值不得伪造新段落标题（注入面收口）。 */
+function inline(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+/** 子会话 ENV 块：全部事实直烘焙（worktree 路径/分支/主仓 + facts 的 platform/shell）。
+ *  不用 {{platform}}/{{shell}} 占位——base 插件缺席形态（--system-prompt 整替）下变量
+ *  无注册者会残留原文；烘焙对两形态恒正确（红测回归锚）。增隔离语义句：主仓只读参照。 */
+function worktreeEnvironmentBlock(facts: BasePromptFacts, payload: { readonly worktree: string; readonly branch?: string; readonly worktreeMain?: string }): string {
+  const worktree = inline(payload.worktree);
+  const branch = payload.branch !== undefined ? inline(payload.branch) : "";
+  const main = payload.worktreeMain !== undefined ? inline(payload.worktreeMain) : "";
   const lines = [
     "You have been invoked in the following environment:",
-    `- Working directory: ${payload.worktree}`,
+    `- Working directory: ${worktree}`,
     "- Is a git repository: yes",
   ];
-  if (payload.branch !== undefined && payload.branch !== "") lines.push(`- Git branch: ${payload.branch}`);
-  if (payload.worktreeMain !== undefined && payload.worktreeMain !== "") {
-    lines.push(`- Git worktree of: ${payload.worktreeMain}`);
-    lines.push(`- The main repository at ${payload.worktreeMain} is outside your sandbox: treat it as a read-only reference`);
+  if (branch !== "") lines.push(`- Git branch: ${branch}`);
+  if (main !== "") {
+    lines.push(`- Git worktree of: ${main}`);
+    lines.push(`- The main repository at ${main} is outside your sandbox: treat it as a read-only reference`);
   }
-  lines.push("- Platform: {{platform}}", "- Shell: {{shell}}");
+  lines.push(`- Platform: ${facts.platform}`, `- Shell: ${facts.shell}`);
   return lines.join("\n");
 }
 
+/** ENV 首尾锚（baseCoreText 正文切片的定位串——漂移即放弃覆盖） */
+const ENV_HEAD = "You have been invoked in the following environment:";
+const ENV_TAIL = "## Context Management";
+
 /** 覆盖段全文：完整 base/core（守则/上下文管理/输出格式与根层逐字节同源），仅
- *  Environment 块换 worktree 事实——同名会话段顶替根槽位（registry 合并投影）。 */
-function worktreeCoreText(options: WorktreeContextOptions, payload: { readonly worktree: string; readonly branch?: string; readonly worktreeMain?: string }): string {
+ *  Environment 块换 worktree 事实——同名会话段顶替根槽位（registry 合并投影）。
+ *  锚缺失（宿主自定义/漂移的 base 正文）→ undefined：放弃覆盖（返回混合体会把
+ *  {{cwd}} 占位与 worktree 分支缝成静默错误——红测回归锚），根层原文照常。 */
+function worktreeCoreText(options: WorktreeContextOptions, payload: { readonly worktree: string; readonly branch?: string; readonly worktreeMain?: string }): string | undefined {
   const covered: BasePromptFacts = {
     ...options.facts,
     gitBranch: payload.branch,
@@ -47,11 +63,11 @@ function worktreeCoreText(options: WorktreeContextOptions, payload: { readonly w
   };
   const text = baseCoreText(covered);
   // baseCoreText 的 ENV 块持根层 {{cwd}} 变量形态——覆盖块需烘焙 worktree 路径：
-  // 以 worktreeEnvironmentBlock 替换 environmentBlock 段落（首尾锚唯一）。
-  const head = text.indexOf("You have been invoked in the following environment:");
-  const tail = text.indexOf("## Context Management");
-  if (head === -1 || tail === -1) return text; // 形态漂移防御：保守整文（守则仍在）
-  return `${text.slice(0, head)}${worktreeEnvironmentBlock(payload)}\n\n${text.slice(tail)}`;
+  // 以 worktreeEnvironmentBlock 替换 environmentBlock 段落。
+  const head = text.indexOf(ENV_HEAD);
+  const tail = text.indexOf(ENV_TAIL);
+  if (head === -1 || tail === -1) return undefined;
+  return `${text.slice(0, head)}${worktreeEnvironmentBlock(options.facts, payload)}\n\n${text.slice(tail)}`;
 }
 
 /** Track U 覆盖插件：agentSpawned（worktree+worktree 字段在场门）→ scoped base/core；
@@ -68,12 +84,11 @@ export function createWorktreeContextPlugin(options: WorktreeContextOptions): Pl
       const onSpawned = (payload: AgentSpawnedPayload): void => {
         if (payload.worktree === undefined || payload.worktree === "") return;
         if (payload.branch === undefined || payload.branch === "") return;
+        const text = worktreeCoreText(options, { worktree: payload.worktree, branch: payload.branch, ...(payload.worktreeMain !== undefined ? { worktreeMain: payload.worktreeMain } : {}) });
+        if (text === undefined) return; // 锚漂移（自定义 base 正文）——放弃覆盖，根层照常
         const sessionId = String(payload.sessionId);
         layers.get(sessionId)?.(); // 幂等：复活再发先摘旧层
-        const off = prompt.scoped(sessionId).section({
-          name: wellKnown.baseCore,
-          text: worktreeCoreText(options, { worktree: payload.worktree, branch: payload.branch, ...(payload.worktreeMain !== undefined ? { worktreeMain: payload.worktreeMain } : {}) }),
-        });
+        const off = prompt.scoped(sessionId).section({ name: wellKnown.baseCore, text });
         layers.set(sessionId, off);
       };
       const drop = (sessionId: string): void => {

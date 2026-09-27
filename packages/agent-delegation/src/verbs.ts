@@ -153,12 +153,11 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
   const cleanup = row.worktree !== undefined
     ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, deps.workspaceRoot) }, deps.lockDegraded)
     : { kind: "removed" as const };
-  if (cleanup.kind !== "kept-dirty") {
-    if (row.worktree !== undefined) {
-      unregisterLiveTree(row.worktree); // 终局摘除（kept-dirty 树仍活——可复活；N1 泄漏红线）
-      // 树已删而会话驻留：提示词覆盖层须摘（stop 不 dispose 子会话——sessionDisposed 不可达）
-      deps.emitWorktreeGone?.({ sessionId: row.sessionId, agentId: row.agentId });
-    }
+  if (cleanup.kind === "removed" && row.worktree !== undefined) {
+    unregisterLiveTree(row.worktree); // 终局摘除（kept-dirty 树仍活——可复活；N1 泄漏红线）
+    // 树已删而会话驻留：提示词覆盖层须摘（stop 不 dispose 子会话——sessionDisposed 不可达）。
+    // 门 = removed：remove-failed 树在盘仍活、kept-dirty 可复活——发 gone 会把活树的覆盖层摘错
+    deps.emitWorktreeGone?.({ sessionId: row.sessionId, agentId: row.agentId });
   }
   if (cleanup.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${cleanup.detail}): ${cleanup.path}`);
   const worktreeNote = worktreeNoteOf(cleanup);

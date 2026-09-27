@@ -23,6 +23,7 @@ export type WorktreeFacts = import("./worktree-facts.ts").WorktreeFacts;
 /** 读 worktree 目录的 git 事实（.git file → gitdir → HEAD）；目录缺席/非 worktree
  *  形态/IO 失败 → undefined（降级不判——键缺席即未知） */
 export async function worktreeFactsOf(path: string): Promise<WorktreeFacts | undefined> {
+  if (path === "") return undefined; // 空串 join 出 ".git" 相对 cwd——会解析到进程所在仓（导出面守卫）
   try {
     const raw = await readFile(join(path, ".git"), "utf8");
     const parsed = parseWorktreeGitdir(raw);

@@ -172,6 +172,44 @@ function syntheticExecContext(caller: import("@x-harness/session").SessionId): i
   return { callId: `view-spawn-${String(caller)}`, name: "agent_spawn", session: caller, signal: new AbortController().signal };
 }
 
+
+/** spawnDeps 装配（apply 复杂度纪律抽出——可选面的条件 spread 收敛到纯装配函数） */
+function spawnDepsOf(deps: {
+  readonly loop: import("@x-harness/agent-loop").AgentLoopService;
+  readonly store: import("@x-harness/session").SessionStore;
+  readonly registry: import("@x-harness/tools").ToolRegistry;
+  readonly lineage: Lineage;
+  readonly limits: { readonly maxDepth: number; readonly maxConcurrent: number };
+  readonly workspaceRoot: string;
+  readonly current: () => Readonly<Record<string, LoadedAgentType>>;
+  readonly isTearingDown: () => boolean;
+  readonly emitSpawned: (payload: AgentSpawnedPayload) => void;
+  readonly emitFinished: (payload: AgentFinishedPayload) => void;
+  readonly emitWorktreeGone: (payload: import("./tokens.ts").AgentWorktreeGonePayload) => void;
+  readonly grants: import("@x-harness/permission").GrantsRegistry | undefined;
+  readonly onWarn: ((message: string) => void) | undefined;
+  readonly lockDegraded: import("./lockfile.ts").LockDegraded | undefined;
+  readonly resolveProviderOf: ((model: string) => string | undefined) | undefined;
+}): import("./spawn.ts").SpawnDeps {
+  return {
+    loop: deps.loop,
+    store: deps.store,
+    registry: deps.registry,
+    lineage: deps.lineage,
+    limits: deps.limits,
+    workspaceRoot: deps.workspaceRoot,
+    ...(deps.onWarn !== undefined ? { onWarn: deps.onWarn } : {}),
+    ...(deps.lockDegraded !== undefined ? { lockDegraded: deps.lockDegraded } : {}),
+    types: deps.current,
+    isTearingDown: deps.isTearingDown,
+    emitSpawned: deps.emitSpawned,
+    emitFinished: deps.emitFinished,
+    emitWorktreeGone: deps.emitWorktreeGone,
+    ...(deps.grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => deps.grants?.setRootOverride(session, dir, guard) } : {}),
+    ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
+  };
+}
+
 /** revive deps 装配（§6.2——apply 复杂度纪律抽出） */
 function reviveDepsOf(deps: {
   readonly archive: import("@x-harness/session").SessionArchive;
@@ -308,22 +346,23 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
       const emitSpawned = (payload: AgentSpawnedPayload): void => ctx.emit(agentSpawned, payload);
       const emitFinished = (payload: AgentFinishedPayload): void => ctx.emit(agentFinished, payload);
       const emitWorktreeGone = (payload: import("./tokens.ts").AgentWorktreeGonePayload): void => ctx.emit(agentWorktreeGone, payload);
-      const spawnDeps = {
+      const spawnDeps = spawnDepsOf({
         loop,
         store,
         registry,
         lineage,
         limits,
         workspaceRoot,
-        ...(onWarn !== undefined ? { onWarn } : {}),
-        ...(lockDegraded !== undefined ? { lockDegraded } : {}),
-        types: () => current,
+        current: () => current,
         isTearingDown: () => tearingDown,
         emitSpawned,
         emitFinished,
-        ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
-        ...(options.resolveProviderOf !== undefined ? { resolveProviderOf: options.resolveProviderOf } : {}),
-      };
+        emitWorktreeGone,
+        grants,
+        onWarn,
+        lockDegraded,
+        resolveProviderOf: options.resolveProviderOf,
+      });
       // types 快照刷新（§7.2）：refreshTypes 是类型装载的单一入口（spawnDeps/快照注入两消费方）
       // 启动期对账清扫（§8.3——崩溃泄漏兜底）；测试可关（worktreeSweep:false）
       if (options.worktreeSweep !== false) startupSweep({ workspaceRoot, lockDegraded, onWarn });
