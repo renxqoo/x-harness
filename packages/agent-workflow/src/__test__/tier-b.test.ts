@@ -55,7 +55,7 @@ async function fixture(root: string, scripts: string[]): Promise<Fixture> {
     createPermissionPlugin({ root, mode: "full" as const }),
     createSandboxPlugin({ root }),
     createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
-    createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
+    createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
   ];
   await loadPlugins(ctx, plugins);
   const loop = ctx.use(agentLoopServiceToken);

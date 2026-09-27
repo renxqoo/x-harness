@@ -63,12 +63,12 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
           stop: (taskId: string, caller: SessionId | undefined) => runtime.stopTask(taskId, caller),
         });
       }
-      const offView = ctx.provide(workflowView, { rebind: runtime.rebind });
-      const offTool = registry.register(workflowSubmitTool(runtime));
+      const offView = ctx.provide(workflowView, { rebind: runtime.rebind, submit: runtime.submit });
+      const offTool = options.userCommandOnly === false ? registry.register(workflowSubmitTool(runtime)) : undefined; // 不经模型：工具面缺席（入口=宿主命令/代理间）
       return () => {
         offView();
         offCreated();
-        offTool();
+        offTool?.();
         offSource?.();
         void runtime.dispose();
       };
@@ -78,9 +78,11 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
 
 export type { WorkflowOptions, WorkflowRuntime } from "./types.ts";
 
-/** 宿主直调服务面（期 2-A rebind——run-repl finalizeSwitch 与 rebindMailbox 相邻接线） */
+/** 宿主直调服务面（期 2-A rebind + 期 3 /workflow 命令——均不经模型） */
 export interface WorkflowView {
   /** 会话切换重绑：迁移 run 归属 + 悬置通知补投 */
   rebind(next: import("@x-harness/session").SessionId): Promise<{ ok: true } | { ok: false; reason: string }>;
+  /** 受管任务提交（宿主 /workflow 命令直调——与（缺席的）模型工具同一实现） */
+  submit(caller: import("@x-harness/session").SessionId | undefined, input: import("./types.ts").SubmitInput): Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
 }
 export const workflowView = defineService<WorkflowView>("workflow/view");

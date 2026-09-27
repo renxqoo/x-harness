@@ -86,7 +86,7 @@ describe("Tier C 链序（schema→critic 全旅程）", () => {
     const plugins: readonly Plugin[] = [
       sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
       createAgentDelegationPlugin({ agentsDirs: [join(root, "agents")], workspaceRoot: root, worktreeSweep: false }),
-      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
+      createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
     ];
     const { mkdir: mk, writeFile: wf2 } = await import("node:fs/promises");
     await mk(join(root, "agents"), { recursive: true });
@@ -123,7 +123,7 @@ describe("Tier C 链序（schema→critic 全旅程）", () => {
     const plugins: readonly Plugin[] = [
       sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
       createAgentDelegationPlugin({ agentsDirs: [join(root, "agents")], workspaceRoot: root, worktreeSweep: false }),
-      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId, budget: { repairs: 1, reopens: 1, verifyAttempts: 1 } }),
+      createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "main-1" as SessionId,  budget: { repairs: 1, reopens: 1, verifyAttempts: 1 } }),
     ];
     const { mkdir: mk, writeFile: wf2 } = await import("node:fs/promises");
     await mk(join(root, "agents"), { recursive: true });
@@ -166,7 +166,7 @@ describe("rebind 后 critic 可用（R2 回归：caller 曾用冻结 deps.mainSe
     const plugins: readonly Plugin[] = [
       sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
       createAgentDelegationPlugin({ agentsDirs: [join(root, "agents")], workspaceRoot: root, worktreeSweep: false }),
-      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "old-sess" as SessionId }),
+      createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "old-sess" as SessionId }),
     ];
     await loadPlugins(ctx, plugins);
     const loop = ctx.use(agentLoopServiceToken);

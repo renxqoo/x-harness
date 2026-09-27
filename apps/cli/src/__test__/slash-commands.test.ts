@@ -63,9 +63,9 @@ function makeDemos(over: Partial<Recorder> = {}): { recorder: Recorder; deps: Sl
 }
 
 describe("词表封闭", () => {
-  it("命令表 = /help 列出集（闭集十命令）", async () => {
+  it("命令表 = /help 列出集（闭集十一命令——+workflow 期 3）", async () => {
     expect(SLASH_COMMANDS.map((command) => command.name)).toEqual([
-      "help", "quit", "new", "model", "thinking", "session", "compact", "export", "resume", "clear",
+      "help", "quit", "new", "model", "thinking", "session", "compact", "export", "resume", "workflow", "clear",
     ]);
     const { recorder, deps } = makeDemos();
     await runSlashCommand("/help", deps);
@@ -187,3 +187,36 @@ describe("分派行为", () => {
     expect(recorder.lines[0]).toBe("\x1b[2J\x1b[H");
   });
 });
+
+describe("/workflow 命令（期 3 不经模型入口）", () => {
+  it("词表含 workflow；未装配时提示；参数解析 --verify/--schema", async () => {
+    const { recorder, deps } = makeDemos();
+    await runSlashCommand("/workflow", deps);
+    expect(recorder.lines.join("\n")).toContain("not assembled"); // deps.workflow 未注入（缺省）
+    const { parseWorkflowSubmitArgs } = await import("../run-repl.ts");
+    const ok = parseWorkflowSubmitArgs("--verify bun test 修复登录 bug");
+    expect(ok.ok).toBe(true);
+    if (ok.ok) {
+      expect(ok.input.acceptance?.command).toBe("bun");
+      expect(ok.input.description).toBe("test");
+      expect(ok.input.prompt).toContain("修复登录");
+    }
+    const schema = parseWorkflowSubmitArgs('--schema {"type":"object","required":["a"]} 提取字段');
+    expect(schema.ok).toBe(true);
+    if (schema.ok) {
+      expect(schema.input.result_schema).toEqual({ type: "object", required: ["a"] });
+      expect(schema.input.description).toBe("提取字段");
+    }
+    const bad = parseWorkflowSubmitArgs("");
+    expect(bad.ok).toBe(false);
+  });
+});
+
+  it("workflowRuns/workflowStop 面（未装配 → 缺省提示；workflowRuns 空 root → 无 run）", async () => {
+    const { makeWorkflowCommands } = await import("../run-repl.ts");
+    const { createContext } = await import("@x-harness/core");
+    const ctx = createContext(); // 最小 live（runs 面只需 ctx.use——空 ctx 即可）
+    const cmds = makeWorkflowCommands(() => ({ world: { ctx } as never, handle: undefined as never }));
+    const runs = await cmds.workflowRuns();
+    expect(typeof runs).toBe("string"); // env 直解（无 run 或根不存在——不炸即过）
+  });

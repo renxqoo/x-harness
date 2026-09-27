@@ -51,7 +51,7 @@ async function makeWorld(options: { readonly root: string; readonly mainSession?
     agentLoopPlugin,
     createTaskToolsPlugin(),
     createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: process.cwd(), worktreeSweep: false }),
-    createAgentWorkflowPlugin({ root: options.root, mainSession: (options.mainSession ?? "main-1") as SessionId }),
+    createAgentWorkflowPlugin({ userCommandOnly: false, root: options.root, mainSession: (options.mainSession ?? "main-1") as SessionId }),
   ];
   await loadPlugins(ctx, plugins);
   const loop = ctx.use(agentLoopServiceToken);
@@ -247,7 +247,7 @@ describe("插件装配（plugin.ts apply 分支）", () => {
       systemPromptPlugin,
       llmPlugin,
       agentLoopPlugin,
-      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
+      createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
     ];
     const unload = await loadPlugins(ctx, plugins);
     const registry = ctx.use(toolRegistry);
@@ -357,4 +357,35 @@ describe("死父通知悬置 → 边沿补投（A-11）", () => {
 /** 简单等待 */
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
+});
+
+describe("入口策略（期 3：不经模型）", () => {
+  it("缺省 userCommandOnly=true：workflow_submit 工具不注册给模型（入口=宿主命令/代理间）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-uco-"));
+    const ctx = createContext();
+    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createAgentWorkflowPlugin({ root, mainSession: "m" as SessionId })]); // 缺省=不经模型
+    const names = ctx.use(toolRegistry).schemas().map((t) => t.name);
+    expect(names.includes("workflow_submit")).toBe(false); // 工具面缺席
+    for (let i = unload.length - 1; i >= 0; i--) await unload[i]!();
+    await ctx.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("错误注入分支（覆盖收口——busy/journal 失败）", () => {
+  it("root 为文件路径 → openRunJournal 失败 → 提交拒 spawn-failed:journal（fail-fast 面可达）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-wf-busy-"));
+    const fileAsRoot = join(root, "not-a-dir"); // 文件占位——mkdir 失败
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(fileAsRoot, "x");
+    const world = await makeWorld({ root: fileAsRoot }); // workflow root 指向文件
+    const parentMade = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: PARENT, provider: "fake" } });
+    if (!parentMade.ok) throw new Error(parentMade.reason);
+    const rejected = await world.submit("main-1" as SessionId, { description: "d", prompt: "p", result_schema: { type: "object" } });
+    expect(rejected.ok).toBe(false);
+    expect(rejected.ok === false && rejected.reason).toMatch(/journal|busy/);
+    await parentMade.value.dispose();
+    await world.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
 });

@@ -175,7 +175,6 @@ function delegationOptionsOf(options: Pick<WorldOptions, "cwd" | "onIoError" | "
     onWarn,
     mailbox: { box: `xh-${String(options.mainSessionId)}`, mainSession: options.mainSessionId },
     // 件16 §9 分流引导：workflow 装配在场才追加（描述组合——规格正文不动）
-    spawnDescriptionAppend: "For deliverables that must be verified before they count as done (tests passing, a required output structure, or an independent review), use workflow_submit instead — it gates completion on acceptance checks.", // 件16 §9：workflowKit 恒装配→引导句恒在（B-9：曾误绑 workflowDir——目录参数≠装配在场性）
   };
 }
 

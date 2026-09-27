@@ -44,7 +44,7 @@ async function makeFixture(root: string, mainSession = "sess-old"): Promise<Fixt
   const plugins: readonly Plugin[] = [
     sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
     createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
-    createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: mainSession as SessionId }),
+    createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: mainSession as SessionId }),
   ];
   await loadPlugins(ctx, plugins);
   const loop = ctx.use(agentLoopServiceToken);
@@ -178,7 +178,7 @@ describe("在飞 run 的归属迁移（真在飞窗口——非 settled 后）",
     const plugins: readonly Plugin[] = [
       sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
       createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
-      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "fly-old" as SessionId }),
+      createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "fly-old" as SessionId }),
     ];
     await loadPlugins(ctx, plugins);
     const loop = ctx.use(agentLoopServiceToken);

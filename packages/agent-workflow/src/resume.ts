@@ -109,20 +109,11 @@ export async function scanAndRecover(deps: WorkflowDeps, attach: (run: ActiveRun
     }
     const run: ActiveRun = { header: read.header, writer: opened.writer, snapshot };
     const attached = attach(run);
-    await recoverRun({ ...deps, run, archive: deps.archive ?? neverArchive(), onCycleEnd: attached.onCycleEnd, redispatch: attached.redispatch, detach: attached.detach });
+    await recoverRun({ ...deps, run, archive: deps.archive!, // B7 早退保证非空（archive 缺席的 run 在过滤段 skip）
+      onCycleEnd: attached.onCycleEnd, redispatch: attached.redispatch, detach: attached.detach });
     claimed += 1;
   }
   return { claimed, skipped };
-}
-
-/** 单 run 恢复：按 snapshot 逐任务走二维表（期 1a 单任务——t1） */
-/** archive 缺席形态的空档案面（readChildEvents 恒 miss → 任务留待边沿——R2 不失败装配） */
-function neverArchive(): import("@x-harness/session").SessionArchive {
-  return {
-    list: () => [],
-    read: async () => ({ ok: false, reason: "no-archive" }) as never,
-    listHeaders: async () => [],
-  };
 }
 
 /** 恢复上下文（一次构造贯穿恢复链——参数纪律） */

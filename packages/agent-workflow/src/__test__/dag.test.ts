@@ -69,7 +69,7 @@ describe("提交校验（期 2-C）", () => {
     const plugins: readonly Plugin[] = [
       sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
       createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
-      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
+      createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
     ];
     await loadPlugins(ctx, plugins);
     const loop = ctx.use(agentLoopServiceToken);
@@ -98,7 +98,7 @@ describe("悬空依赖提交拒（期 2 单任务 run 语义）", () => {
     const plugins: readonly Plugin[] = [
       sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createTaskToolsPlugin(),
       createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
-      createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
+      createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "main-1" as SessionId }),
     ];
     await loadPlugins(ctx, plugins);
     const loop = ctx.use(agentLoopServiceToken);

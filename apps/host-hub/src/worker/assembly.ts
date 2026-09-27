@@ -432,8 +432,6 @@ function defaultWorkerPlugins(resolved: {
       workspaceRoot: cwd,
       builtinTypes: builtinAgentTypes(),
       resolveProviderOf: providerOfModel(catalog),
-      // 件16 §9 分流引导（hub 侧——C-D6 另一半）：workflowKit 恒装配于此配方
-      spawnDescriptionAppend: "For deliverables that must be verified before they count as done (tests passing, a required output structure, or an independent review), use workflow_submit instead — it gates completion on acceptance checks.",
       // mailbox 接线（AGENT-DELEGATION §5.3）：box = xh-<id>（会话 id 跨进程唯一）
       mailbox: { box: `xh-${mainSessionId}`, mainSession: mainSessionId as never },
       onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),

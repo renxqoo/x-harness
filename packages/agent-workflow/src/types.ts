@@ -17,6 +17,9 @@ export interface WorkflowOptions {
    *  dispatch 起算覆盖任务全生命周期；超时 failed{task-deadline} 走完整归还链；
    *  迟到结算经 runs-miss 守卫天然收编（不复活不二次通知） */
   readonly taskDeadlineMs?: number;
+  /** 入口策略（期 3 裁决：不经模型）：true（缺省）= workflow_submit 工具不注册给模型——
+   *  入口仅宿主 /workflow 命令 + delegationView.spawn（代理间）；false = 注册（遗留形态） */
+  readonly userCommandOnly?: boolean;
   /** 非致命告警出口 */
   readonly onWarn?: (message: string) => void;
 }

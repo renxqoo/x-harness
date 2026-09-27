@@ -111,6 +111,94 @@ async function makeNext(input: MakeNextInput & { readonly world: import("./build
 }
 
 /** 切换收尾：flush 屏障 + mailbox 重绑 + dial 更新 + 文案（reopen 复杂度纪律抽出） */
+/** --schema 的括号平衡扫描：从 parts[start+1] 起收集到 JSON 闭合——返回 [json, 末索引] */
+function scanSchemaJson(parts: readonly string[], start: number): { readonly json?: unknown; readonly error?: string; readonly end: number } {
+  const joined: string[] = [];
+  let depth = 0;
+  let end = start;
+  for (let k = start + 1; k < parts.length; k++) {
+    const piece = parts[k];
+    if (piece === undefined) continue;
+    joined.push(piece);
+    depth += (piece.match(/{/g) ?? []).length - (piece.match(/}/g) ?? []).length;
+    end = k;
+    if (depth <= 0 && joined.length > 0) break;
+  }
+  try {
+    return { json: JSON.parse(joined.join(" ")) as unknown, end };
+  } catch (error) {
+    return { error: `--schema JSON 无效：${error instanceof Error ? error.message : String(error)}`, end };
+  }
+}
+
+/** /workflow submit 参数解析：--verify <command> | --schema <json> | 其余为描述+任务 */
+export function parseWorkflowSubmitArgs(raw: string): { ok: true; input: { description: string; prompt: string; acceptance?: { command: string }; result_schema?: unknown } } | { ok: false; reason: string } {
+  let command: string | undefined;
+  let schema: unknown;
+  const words: string[] = [];
+  const parts = raw.split(/\s+/).filter((w) => w !== "");
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part === undefined) continue;
+    const next = parts[i + 1];
+    if (part === "--verify" && next !== undefined) {
+      command = next;
+      i += 1;
+      continue;
+    }
+    if (part === "--schema") {
+      const scanned = scanSchemaJson(parts, i);
+      if (scanned.error !== undefined) return { ok: false, reason: scanned.error };
+      schema = scanned.json;
+      i = scanned.end;
+      continue;
+    }
+    words.push(part);
+  }
+  if (words.length === 0) return { ok: false, reason: "usage: /workflow submit [--verify <command>] [--schema <json>] <描述与任务>" };
+  const [first, ...promptWords] = words;
+  const description = first ?? "task";
+  return { ok: true, input: { description, prompt: promptWords.join(" ") || description, ...(command !== undefined ? { acceptance: { command } } : {}), ...(schema !== undefined ? { result_schema: schema } : {}) } };
+}
+
+/** /workflow 命令实现（workflowView 直调——期 3 不经模型；world/handle 经 getter 取活引用） */
+export function makeWorkflowCommands(live: () => { readonly world: World; readonly handle: import("@x-harness/agent-loop").AgentHandle }): import("./slash-commands.ts").WorkflowCommandDeps {
+  return {
+    workflowSubmit: async (args) => {
+      const parsed = parseWorkflowSubmitArgs(args);
+      if (!parsed.ok) return parsed.reason;
+      const { world, handle } = live();
+      const view = world.ctx.tryUse(workflowView);
+      if (view === undefined) return "workflow 插件未装配（此构建无 /workflow 面）";
+      const made = await view.submit(handle.agent.session.id, parsed.input);
+      return made.ok ? made.text : made.reason;
+    },
+    workflowStop: async (taskId) => {
+      const { world, handle } = live();
+      const registry = world.ctx.use((await import("@x-harness/tools")).toolRegistry);
+      const made = await registry.dispatch({ callId: `wf-stop-${String(Math.random()).slice(2, 8)}`, name: "task_stop", args: { task_id: taskId }, signal: new AbortController().signal, session: handle.agent.session.id });
+      return String(made.content);
+    },
+    workflowRuns: async () => {
+      const { world } = live();
+      const { readdir, readFile } = await import("node:fs/promises");
+      const { join } = await import("node:path");
+      const { resolveWorkflowRoot } = await import("@x-harness/agent-workflow");
+      void world;
+      const root = resolveWorkflowRoot();
+      const lines: string[] = [];
+      for (const rid of await readdir(root).catch(() => [] as string[])) {
+        const raw = await readFile(join(root, rid, "journal.jsonl"), "utf8").catch(() => "");
+        if (raw === "") continue;
+        const events = raw.split("\n").filter((l) => l !== "").map((l) => { try { return JSON.parse(l) as { type: string }; } catch { return { type: "?" }; } });
+        const settled = events.some((e) => e.type === "run/settled");
+        lines.push(`${rid}  ${settled ? "settled" : (events[events.length - 1]?.type ?? "?")}`);
+      }
+      return lines.length === 0 ? "（无 run）" : lines.join("\n");
+    },
+  };
+}
+
 async function finalizeSwitch(deps: {
   readonly world: import("./build-world.ts").World;
   readonly handle: AgentHandle;
@@ -243,6 +331,8 @@ export async function runRepl(input: ReplInput): Promise<number> {
       const exported = await exportSession({ store: world.store, sessionRoot: input.sessionRoot, session: handle.agent.session, persist: input.persist, target: path });
       return exported.ok ? `exported to ${exported.value.path}` : exported.reason;
     },
+    // /workflow 命令面（件16 期 3：不经模型——workflowView 直调）
+    workflow: makeWorkflowCommands(() => ({ world, handle })),
   };
 
   let quitReason: (code: number) => void = () => {};

@@ -26,6 +26,8 @@ export interface SlashDeps {
   readonly listMainSessions: () => Promise<readonly SessionHeader[]>;
   readonly compact: (instructions: string | undefined) => Promise<string>;
   readonly exportTo: (path: string) => Promise<string>;
+  /** /workflow 命令面（workflowView 直调——期 3：不经模型） */
+  readonly workflow?: WorkflowCommandDeps;
 }
 
 export type SlashOutcome = "handled" | "quit" | "unknown" | "not-slash";
@@ -47,6 +49,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "compact", usage: "/compact [instructions]", help: "fold history into a summary" },
   { name: "export", usage: "/export <path>", help: "export session events to a jsonl file" },
   { name: "resume", usage: "/resume", help: "pick a saved session to continue" },
+  { name: "workflow", usage: "/workflow <run|stop|submit> ...", help: "managed tasks with acceptance gating" },
   { name: "clear", usage: "/clear", help: "clear the screen" },
 ];
 
@@ -56,6 +59,23 @@ export function isSlashLine(line: string): boolean {
 
 function helpText(): string {
   return SLASH_COMMANDS.map((command) => `${command.usage.padEnd(28)}${command.help}`).join("\n");
+}
+
+/** /workflow 分派：run | stop <taskId> | submit --verify <cmd> [--schema <json>] <描述与任务> */
+async function commandWorkflow(wf: WorkflowCommandDeps, rest: string | undefined): Promise<string> {
+  const text = (rest ?? "").trim();
+  if (text === "" || text === "run" || text === "runs") return await wf.workflowRuns();
+  if (text.startsWith("stop ")) {
+    const taskId = text.slice(5).trim();
+    return taskId === "" ? "usage: /workflow stop <taskId>" : await wf.workflowStop(taskId);
+  }
+  if (text.startsWith("submit")) return await wf.workflowSubmit(text.slice(7).trim());
+  return [
+    "usage:",
+    "  /workflow                       list runs",
+    "  /workflow submit --verify <command> [--schema <json>] <task>",
+    "  /workflow stop <taskId>",
+  ].join("\n");
 }
 
 /** pattern → (provider, model) 命中集：全档案 includes 匹配 */
@@ -126,6 +146,16 @@ async function commandResume(deps: SlashDeps): Promise<void> {
   deps.write(await deps.reopen({ sessionId: picked }));
 }
 
+/** /workflow 子面：run（列出受管任务）/ stop（终局取消）/ submit（带验收提交） */
+export interface WorkflowCommandDeps {
+  /** /workflow submit 直调 workflowView.submit（不经模型——期 3 裁决） */
+  workflowSubmit(args: string): Promise<string>;
+  /** /workflow stop <taskId>：终局取消 */
+  workflowStop(taskId: string): Promise<string>;
+  /** /workflow run[s]：journal 概览（在飞 + 最近终态） */
+  workflowRuns(): Promise<string>;
+}
+
 type Handler = (deps: SlashDeps, rest: string | undefined) => Promise<void> | void;
 
 const HANDLERS: Readonly<Record<string, Handler>> = {
@@ -145,6 +175,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
     deps.write(await deps.exportTo(rest));
   },
   resume: (deps) => commandResume(deps),
+  workflow: async (deps, rest) => deps.workflow === undefined ? deps.write("workflow is not assembled in this build") : deps.write(await commandWorkflow(deps.workflow, rest)),
 };
 
 /** 分派：非 slash 行返回 not-slash；未知命令提示；/quit 返回 quit */

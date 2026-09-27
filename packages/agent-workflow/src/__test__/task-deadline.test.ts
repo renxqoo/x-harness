@@ -86,7 +86,7 @@ async function makeFixture(root: string, options: FixtureOptions = {}): Promise<
     ...(options.sandbox === true ? [createPermissionPlugin({ root, mode: "full" as const }), createSandboxPlugin({ root })] : []),
     ...(options.persistence === true ? [createJsonlSessionPersistence({ root: join(root, "sessions") })] : []),
     createAgentDelegationPlugin({ agentsDirs: options.agentsDir !== undefined ? [options.agentsDir] : [], workspaceRoot: root, worktreeSweep: false }),
-    createAgentWorkflowPlugin({ root: join(root, "workflows"), mainSession: "wf-parent" as SessionId, ...(options.deadlineMs !== undefined ? { taskDeadlineMs: options.deadlineMs } : {}) }),
+    createAgentWorkflowPlugin({ userCommandOnly: false, root: join(root, "workflows"), mainSession: "wf-parent" as SessionId,  ...(options.deadlineMs !== undefined ? { taskDeadlineMs: options.deadlineMs } : {}) }),
   ];
   await loadPlugins(ctx, plugins);
   const loop = ctx.use(agentLoopServiceToken);
