@@ -165,6 +165,15 @@ describe("WSS 接入与路由", () => {
     ).rejects.toThrow(/token secret/);
   });
 
+  it("句柄面：issuePairingTicket 签发可接入；close 后 server 关闭", async () => {
+    const ticket = relay.issuePairingTicket("pr_handle");
+    expect(ticket.split(".").length).toBe(3);
+    const { startRelay } = await import("../main.ts");
+    const one = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "test-secret-16bytes!!", singleInstance: true });
+    await one.close();
+    expect(one.server.listening).toBe(false);
+  });
+
   it("未知目标 → no-route", async () => {
     const gw = await dialClient({ port: relayPort(relay), token: gwToken });
     gw.send(JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "gw_nope", payload: "eA==" }));

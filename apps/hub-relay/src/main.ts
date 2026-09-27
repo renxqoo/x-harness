@@ -3,9 +3,8 @@
 // 单活连接（新连接顶旧）、帧速率防线。
 // 传输层用 node:http upgrade + 自实现 WebSocket 最小服务端帧协议（握手/文本帧/
 // ping/pong/close）——零三方依赖；TLS 由 LB/反代终结（runbook）。
-import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { createConnection } from "node:net";
 import { acceptKey, WebSocketFrameWriter } from "./ws-writer.ts";
 import { WebSocketFrameReader } from "./ws-reader.ts";
 import { createMemoryStore } from "./store-memory.ts";
@@ -375,8 +374,3 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     },
   };
 }
-
-void createHash;
-void createHmac;
-void timingSafeEqual;
-void createConnection;

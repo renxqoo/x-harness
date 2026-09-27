@@ -190,6 +190,62 @@ describe("audit 轮转与封顶", () => {
   });
 });
 
+describe("owner-server 残留 socket 清理与坏 JSON 行", () => {
+  it("残留 socket 文件被清；垃圾行回 bad-frame；close 后 server 关", async () => {
+    const { startOwnerServer } = await import("../owner-server.ts");
+    const dir = await mkdtemp(join(tmpdir(), "owner-"));
+    const socketPath = join(dir, "gateway.sock");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(socketPath, "stale", "utf8"); // 残留
+    const frames: string[] = [];
+    const handle = await startOwnerServer({
+      socketPath,
+      pidFile: join(dir, "gateway.pid"),
+      onFrame: () => {},
+      log: () => {},
+    });
+    const { connect } = await import("node:net");
+    const sock = connect(socketPath);
+    await new Promise<void>((resolve, reject) => {
+      sock.once("connect", resolve);
+      sock.once("error", reject);
+    });
+    sock.on("data", (c: Buffer) => {
+      for (const l of c.toString("utf8").split("\n")) if (l.length > 0) frames.push(l);
+    });
+    sock.write("garbage-not-json\n");
+    await new Promise((r) => {
+      setTimeout(r, 200);
+    });
+    expect(frames.some((f) => f.includes("bad-frame"))).toBe(true);
+    sock.destroy();
+    await handle.close();
+  });
+
+  it("onConnect/onClose 钩子触发", async () => {
+    const { startOwnerServer } = await import("../owner-server.ts");
+    const dir = await mkdtemp(join(tmpdir(), "owner2-"));
+    const events: string[] = [];
+    const handle = await startOwnerServer({
+      socketPath: join(dir, "gateway.sock"),
+      pidFile: join(dir, "gateway.pid"),
+      onFrame: () => {},
+      onConnect: () => events.push("connect"),
+      onClose: () => events.push("close"),
+      log: () => {},
+    });
+    const { connect } = await import("node:net");
+    const sock = connect(handle.socketPath);
+    await new Promise<void>((resolve) => sock.once("connect", resolve));
+    sock.destroy();
+    await new Promise((r) => {
+      setTimeout(r, 200);
+    });
+    expect(events).toEqual(["connect", "close"]);
+    await handle.close();
+  });
+});
+
 describe("identity 恢复旅程", () => {
   it("首启生成 + 二启装载 + installationId 撕裂重建", async () => {
     const { loadOrCreateIdentity } = await import("../identity.ts");

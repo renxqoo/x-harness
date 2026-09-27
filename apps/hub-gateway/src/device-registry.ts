@@ -65,25 +65,29 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
     try {
       const logPath = join(paths.devicesDir, device.deviceId, "commands.jsonl");
       const text = await readFile(logPath, "utf8");
-      const records: CommandLogRecord[] = [];
+      const merged = new Map<string, CommandLogRecord>();
       for (const line of text.split("\n")) {
         if (line.length === 0) continue;
         try {
-          records.push(JSON.parse(line) as CommandLogRecord);
+          const rec = JSON.parse(line) as CommandLogRecord;
+          const prev = merged.get(rec.commandId);
+          merged.set(rec.commandId, prev === undefined || prev.response === undefined ? rec : { ...rec, response: rec.response ?? prev.response });
         } catch {
           // 撕裂尾行跳过（append 半写的容错）
         }
       }
-      commandLog.set(device.deviceId, records.slice(-COMMAND_LOG_RING_MAX));
+      commandLog.set(device.deviceId, [...merged.values()].slice(-COMMAND_LOG_RING_MAX));
     } catch {
       commandLog.set(device.deviceId, []);
     }
   }
-  const persistRegistry = (): void => {
-    void atomicWrite(paths.registryFile, JSON.stringify({ devices: [...byId.values()] }, null, 2));
+  // 注册表写链串行化（并发 atomicWrite 后写者赢会丢设备）
+  let registryWriteTail: Promise<void> = Promise.resolve();
+  const persistRegistry = (): Promise<void> => {
+    registryWriteTail = registryWriteTail.then(() => atomicWrite(paths.registryFile, JSON.stringify({ devices: [...byId.values()] }, null, 2)));
+    return registryWriteTail;
   };
-  await Promise.resolve();
-  persistRegistry();
+  await persistRegistry();
   return {
     list: () => [...byId.values()],
     get: (deviceId) => byId.get(deviceId) ?? null,
@@ -111,11 +115,10 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
       const record = [...list].reverse().find((r) => r.commandId === commandId);
       if (record === undefined) return;
       record.response = response;
+      // append-only 补记（与 appendCommand 同一追加通路——避免重写竞态）
       const logPath = join(paths.devicesDir, deviceId, "commands.jsonl");
-      // 全量重写（环形淘汰语义简单化：重写头部窗口）
-      const kept = list.slice(-COMMAND_LOG_RING_MAX);
-      commandLog.set(deviceId, kept);
-      await atomicWrite(logPath, `${kept.map((r) => JSON.stringify(r)).join("\n")}\n`);
+      await mkdir(join(paths.devicesDir, deviceId), { recursive: true });
+      await appendFile(logPath, `${JSON.stringify(record)}\n`, "utf8");
     },
     dedupLookup(deviceId, commandId) {
       const list = commandLog.get(deviceId) ?? [];

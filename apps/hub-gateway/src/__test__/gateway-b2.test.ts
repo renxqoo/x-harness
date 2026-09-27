@@ -233,4 +233,13 @@ describe("gateway B2 骨架", () => {
     expect(res.error).toBe("unknown-command");
     client.close();
   });
+
+  it("gw/shutdown：受理后网关停（stop 幂等）", async () => {
+    const client = await dialOwner(socketPath);
+    client.send(commandFrame("sd1", "gw/shutdown"));
+    const res = await client.waitResponse("sd1");
+    expect(res.success).toBe(true);
+    await sleep(600);
+    client.close();
+  }, 10000);
 });
