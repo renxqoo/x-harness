@@ -41,8 +41,15 @@ describe("loadConfig 语义", () => {
     const absent = loadConfig(null);
     expect(absent.ok && absent.config.remoteEnabled).toBe(false);
     expect(loadConfig("not-json").ok).toBe(false);
-    expect(loadConfig('{"remoteEnabled":true}').ok).toBe(false);
-    expect(loadConfig('{"remoteEnabled":true,"relayUrl":"ws://x"}').ok).toBe(false);
+    expect(loadConfig('{"remoteEnabled":true}').ok).toBe(false); // 显式 true 才要求 relay
+    const empty = loadConfig('{}');
+    expect(empty.ok && empty.config.remoteEnabled).toBe(false); // E6：缺键=本地形态
+    expect(loadConfig('{"remoteEnabled":true,"relayUrl":"ws://x"}').ok).toBe(false); // ws 非 loopback 拒
+    const loopOk = loadConfig('{"remoteEnabled":true,"relayUrl":"ws://127.0.0.1:1"}');
+    expect(loopOk.ok).toBe(true); // loopback ws 放行（本地开发形态）
+    const wssNoFp = loadConfig('{"remoteEnabled":true,"relayUrl":"wss://r.example.com"}');
+    expect(wssNoFp.ok).toBe(false); // wss 必须指纹
+    expect(loadConfig('{"remoteEnabled":true,"relayUrl":"ftp://x","relayKeyFingerprint":"f"}').ok).toBe(false);
     const ok = loadConfig('{"remoteEnabled":true,"relayUrl":"wss://x","relayKeyFingerprint":"fp"}');
     expect(ok.ok && ok.config.relayUrl).toBe("wss://x");
     // maxDevices 坏值降级 16；logLevel 白名单
@@ -53,7 +60,10 @@ describe("loadConfig 语义", () => {
 });
 
 describe("classifyHostLine 前缀分类", () => {
-  it("八分支", () => {
+  it("八分支 + host id-first response 契约（回归：真 host 响应曾被丢）", () => {
+    // host-hub responseLine 的 key 序（frame-classify.ts 单点同源）
+    expect(classifyHostLine('{"id":"g1","type":"response","command":"thread/list","success":true}')).toBe("response");
+    expect(classifyHostLine('{"id":null,"type":"response","command":"parse","success":false}')).toBe("response");
     expect(classifyHostLine('{"type":"response"')).toBe("response");
     expect(classifyHostLine('{"type":"event"')).toBe("event");
     expect(classifyHostLine('{"type":"ui_request"')).toBe("ui_request");
@@ -150,6 +160,85 @@ describe("device-registry + 去重日志崩溃恢复", () => {
     const reg2 = await loadDeviceRegistry(paths);
     expect(reg2.dedupLookup("d2", "a")?.commandId).toBe("a");
     expect(reg2.dedupLookup("d2", "b")).toBeNull();
+  });
+});
+
+describe("OutboxStream compactOldest（C3 回归）", () => {
+  it("超限收缩丢最旧", async () => {
+    const { OutboxStream, REPLAY_BUFFER_MAX } = await import("@x-harness/remote-protocol");
+    const o = new OutboxStream("s");
+    for (let i = 0; i < REPLAY_BUFFER_MAX + 10; i++) o.enqueue({}, "event", null);
+    expect(o.replayWindowExceeded()).toBe(true);
+    o.compactOldest(REPLAY_BUFFER_MAX);
+    expect(o.replayWindowExceeded()).toBe(false);
+    expect(o.pending().length).toBe(REPLAY_BUFFER_MAX);
+  });
+});
+
+describe("host-ingest（B3 回归：真 host id-first 帧）", () => {
+  it("response 认领回投设备侧；事件/生命周期帧扇出；垃圾行不崩", async () => {
+    const { createHostIngest } = await import("../host-ingest.ts");
+    const { Fanout } = await import("../fanout.ts");
+    const frames: Array<{ deviceId: string; frame: unknown }> = [];
+    const fanout = new Fanout({ coalesceBacklogFrames: 64, coalesceLagMs: 500, now: () => 0 });
+    const pendingByHostId = new Map([["g1", { deviceId: "d1", commandId: "c1", command: "thread/list" }]]);
+    const appended: string[] = [];
+    const deps = {
+      fanout,
+      devices: {
+        appendResponse: async (deviceId: string, commandId: string, response: unknown) => {
+          appended.push(`${deviceId}:${commandId}:${JSON.stringify(response).slice(0, 30)}`);
+        },
+      } as never,
+      threads: { upsert: () => {} } as never,
+      audit: { record: async () => {} } as never,
+      pendingByHostId,
+      sendToDevice: (deviceId: string, frame: unknown) => {
+        frames.push({ deviceId, frame });
+      },
+      replyOwner: () => {},
+    };
+    const ingest = createHostIngest(deps);
+    fanout.attach({ target: "owner", tier: "owner", subscribedThreads: new Set(), send: () => {} });
+    // 事件到 owner（owner 恒收）；设备回投帧走 deps.sendToDevice
+    const sentToDevice: unknown[] = [];
+    deps.sendToDevice = (deviceId: string, frame: unknown) => {
+      sentToDevice.push({ deviceId, frame });
+    };
+    void frames;
+    // 真 host response 帧（id-first——host frame-classify 契约）
+    ingest.ingest('{"id":"g1","type":"response","command":"thread/list","success":true,"data":{"echoed":true}}');
+    // 事件帧
+    ingest.ingest('{"type":"event","threadId":"tA","name":"turn/start","payload":{}}');
+    // 生命周期帧
+    ingest.ingest('{"type":"thread_died","threadId":"tA","reason":"x"}');
+    // heartbeat/垃圾行静默
+    ingest.ingest('{"type":"heartbeat","rssBytes":1,"cpuPercent":0}');
+    ingest.ingest("garbage");
+    expect(appended.length).toBe(1);
+    expect(sentToDevice.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("fanout tier resolver 与 outbox 上限（D4/C3 回归）", () => {
+  it("effectiveTier 走 resolver（scope 变更即时生效）；detach 清 stream 前缀", () => {
+    const fanout = new Fanout({ coalesceBacklogFrames: 64, coalesceLagMs: 500, now: () => 0 });
+    const scopes = new Map<string, "read" | "interact" | "full">([["d1", "read"]]);
+    fanout.setTierResolver((target) => (target === "owner" ? "owner" : (scopes.get(target) ?? "read")));
+    const frames: Frame[] = [];
+    fanout.attach({ target: "d1", tier: "read", subscribedThreads: new Set(["tA"]), send: (f) => frames.push(f) });
+    // read 档：tA 已订阅事件放行；ui_request 拒
+    fanout.fanoutEvent({ threadId: "tA", name: "turn/start", payload: {} });
+    fanout.fanoutUiRequest({ requestId: "r", threadId: "tA", method: "confirm", payload: {} });
+    expect(frames.length).toBe(1);
+    // 升 full：ui_request 放行（无需重连——resolver 现值）
+    scopes.set("d1", "full");
+    fanout.fanoutUiRequest({ requestId: "r2", threadId: "tA", method: "confirm", payload: {} });
+    expect(frames.length).toBe(2);
+    // detach：事件不再投
+    fanout.detach("d1");
+    fanout.fanoutEvent({ threadId: "tA", name: "turn/end", payload: {} });
+    expect(frames.length).toBe(2);
   });
 });
 
@@ -252,6 +341,18 @@ describe("owner-server 残留 socket 清理与坏 JSON 行", () => {
   });
 });
 
+describe("纯函数面（installationAddress/defaultAgentDir）", () => {
+  it("地址前缀与缺省目录派生", async () => {
+    const { installationAddress } = await import("../identity.ts");
+    expect(installationAddress({ installationId: "abc", signingSecret: "s", signingPub: "p", boxSecret: "b", boxPub: "x" })).toBe("gw_abc");
+    const { defaultAgentDir } = await import("../config.ts");
+    process.env["HUB_AGENT_DIR"] = "/tmp/envdir";
+    expect(defaultAgentDir()).toBe("/tmp/envdir");
+    delete process.env["HUB_AGENT_DIR"];
+    expect(defaultAgentDir()).toContain(".x-harness");
+  });
+});
+
 describe("identity 恢复旅程", () => {
   it("首启生成 + 二启装载 + installationId 撕裂重建", async () => {
     const { loadOrCreateIdentity } = await import("../identity.ts");
@@ -269,5 +370,11 @@ describe("identity 恢复旅程", () => {
     const third = await loadOrCreateIdentity(paths);
     expect(third.installationId).toBe(first.installationId);
     expect(third.signingPub).not.toBe(first.signingPub);
+    // identity 文件损坏（坏 JSON）→ 重建新钥
+    const { writeFile: wf } = await import("node:fs/promises");
+    await wf(paths.gatewayIdentityFile, "not-json", "utf8");
+    const fourth = await loadOrCreateIdentity(paths);
+    expect(fourth.installationId).toBe(first.installationId);
+    expect(fourth.signingPub).not.toBe(third.signingPub);
   });
 });

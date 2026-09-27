@@ -12,6 +12,10 @@ export const REVOKE_CHANNEL = "xh-relay:revoke";
 export const ROUTE_KEY_INSTALLATION = "xh-relay:route:installation:";
 export const ROUTE_KEY_DEVICE = "xh-relay:route:device:";
 export const REVOKE_SET_KEY = "xh-relay:revoked";
+/** 跨节点转发频道（pattern 形态——订阅侧按频道名解析目标 installation） */
+export const ROUTE_PATTERN_CHANNEL = "xh-relay:route:";
+/** L3 信封字节门（对齐 DESIGN §3.5 16MiB 线上帧上限） */
+export const ENVELOPE_MAX_BYTES = 16 * 1024 * 1024;
 /** 转发频控：每连接帧速率（帧/s，超限断连——DoS 防线） */
 export const FRAME_RATE_PER_SEC = 200;
 export const FRAME_RATE_BURST = 400;

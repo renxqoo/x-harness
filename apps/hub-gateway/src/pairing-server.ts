@@ -25,6 +25,8 @@ export interface PairingSession {
 export interface PairingServerOptions {
   identity: GatewayIdentity;
   relayUrl: string;
+  /** relay 签名钥指纹（QR 携带——E3：占位符会被手机钉存成假指纹） */
+  relayKeyFingerprint: string;
   audit: AuditLog;
   now(): number;
   /** pairingTicket 申请（经 relay HTTP；测试注入 fake） */
@@ -49,14 +51,14 @@ export interface PairingServer {
 
 export function createPairingServer(options: PairingServerOptions): PairingServer {
   const sessions = new Map<string, PairingSession>();
-  const lockoutUntil = new Map<string, number>(); // per pairingId（relay 侧另有 IP 维度）
 
   const gwLongTerm: GatewayLongTerm = { signingSecret: options.identity.signingSecret, signingPub: options.identity.signingPub };
 
   function sweep(): void {
     const nowMs = options.now();
+    // 过期即删（TTL 是唯一有效性判据——E2：未消费的过期会话不得滞留）
     for (const [id, session] of sessions) {
-      if (session.expiresAt < nowMs && session.consumed) sessions.delete(id);
+      if (session.expiresAt < nowMs) sessions.delete(id);
     }
   }
 
@@ -65,6 +67,9 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
     const live = [...sessions.values()].filter((s) => s.expiresAt > options.now()).length;
     if (live >= options.maxConcurrent) return { ok: false, reason: "too many concurrent pairing sessions" };
     const nowMs = options.now();
+    if (mode === "qr" && options.relayKeyFingerprint.length === 0) {
+      return { ok: false, reason: "relayKeyFingerprint required for QR pairing" };
+    }
     const pairingId = newPairingId();
     const gwEphemeral = newDeviceEphemeral();
     const session: PairingSession = {
@@ -96,7 +101,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       const qrPayload = JSON.stringify({
         v: 1,
         relayUrl: options.relayUrl,
-        relayKeyFingerprint: "fp-relay", // B4 接 config.relayKeyFingerprint
+        relayKeyFingerprint: options.relayKeyFingerprint,
         gatewayKeyFingerprint: options.identity.signingPub,
         pairingId: session.pairingId,
         gwEphemeralPub: session.gwEphemeral.pub,
@@ -141,8 +146,13 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       if (nowMs > session.expiresAt) return Promise.resolve({ ok: false as const, reason: "pairing expired" });
       if (session.consumed) return Promise.resolve({ ok: false as const, reason: "pairing already used" });
       if (session.mode !== "manual" || session.manualCode === null) return Promise.resolve({ ok: false as const, reason: "manual pairing required" });
-      const locked = lockoutUntil.get(spec.pairingId) ?? 0;
-      if (nowMs < locked) return Promise.resolve({ ok: false as const, reason: "locked" });
+      if (nowMs < session.lockedUntil) return Promise.resolve({ ok: false as const, reason: "locked" });
+      session.failedAttempts += 1;
+      if (session.failedAttempts >= PAIRING_MAX_ATTEMPTS) {
+        session.lockedUntil = nowMs + PAIRING_LOCKOUT_MS;
+        void options.audit.record("pairing-failed", { pairingId: session.pairingId, reason: "pake-attempts" });
+        return Promise.resolve({ ok: false as const, reason: "locked" });
+      }
       const resp = gatewayPakeRespond(session.manualCode, spec.messageA, session.pairingId);
       session.channelKey = new Uint8Array(Buffer.from(resp.channel.shared, "hex"));
       session.deviceEphPub = spec.deviceInfo.name; // PAKE 路径无设备临时钥——用 name 占位（转录域）

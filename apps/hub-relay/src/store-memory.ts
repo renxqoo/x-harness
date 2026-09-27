@@ -46,6 +46,8 @@ export function createMemoryStore(nodeId: string): RouteStore & { publishToChann
     },
     async revoke(id) {
       revoked.add(id);
+      // 撤销即时广播（与 store-redis 同语义——单实例直投本地订阅者）
+      this.publishToChannel("*", JSON.stringify({ kind: "revoke", deviceId: id }));
     },
     async publishCrossNode(installationId, message) {
       // 单实例：跨节点广播退化为本地订阅者（同进程直投也走这里，保持单一路径）

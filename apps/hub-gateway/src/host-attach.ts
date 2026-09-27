@@ -1,6 +1,8 @@
 // host-hub 附着（DESIGN §4/§5）：spawn host 进程、stdin/stdout JSONL 泵、心跳死线监督
 // （>10s 杀+拉起）、response 帧分类回调（前缀识别不 parse body——host frame-classify 同思路）。
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
 export interface HostAttachOptions {
@@ -21,12 +23,20 @@ export interface HostHandle {
   alive(): boolean;
 }
 
-/** hostBin 解析序（§3.3）：显式配置 → 仓库 dist → PATH */
+/** hostBin 解析序（§3.3）：显式配置 → 仓库 apps/host-hub 源入口 → 拒启（不得把 gateway 自身当 host——E7） */
 export function resolveHostBin(hostBin: string | null): { command: string; args: string[] } {
   if (hostBin !== null && hostBin.length > 0) {
     return { command: hostBin, args: [] };
   }
-  return { command: process.execPath, args: [process.argv[1] ?? "host-hub"] };
+  // 仓库内形态：monorepo 根下 apps/host-hub/host 入口（bun 直跑 TS 源）
+  const repoRoot = process.cwd();
+  const candidates = [join(repoRoot, "apps/host-hub/src/host/cli.ts")];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return { command: process.execPath, args: [candidate] };
+    }
+  }
+  throw new Error("host-hub binary not found: set gateway.json hostBin explicitly");
 }
 
 const sleep = (ms: number): Promise<void> =>
@@ -71,8 +81,10 @@ export class HostAttach {
     });
     child.on("exit", (code, signal) => {
       if (this.child === child) this.child = null;
-      if (this.deadlined) return; // 重启流程中——重启路径自己拉起
+      if (this.deadlined) return; // 停机/重启流程中——该路径自己负责
+      // 自然退出：有界重试拉起（C1——host 崩一次不能永久失联）
       this.options.onRestart(`host exited code=${String(code)} signal=${String(signal)}`);
+      void this.restart(String(signal ?? code ?? "exit"));
     });
   }
 
@@ -115,6 +127,11 @@ export class HostAttach {
 
   alive(): boolean {
     return this.child !== null && this.child.exitCode === null;
+  }
+
+  /** 测试面：直接杀子进程（exit-拉起路径验证） */
+  killChildForTest(): void {
+    this.child?.kill("SIGKILL");
   }
 
   async stop(): Promise<void> {

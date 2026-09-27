@@ -42,6 +42,8 @@ export interface DeviceRegistry {
   /** pending 映射：hostId → (deviceId, commandId) */
   mapHostId(hostId: string, owner: { deviceId: string; commandId: string }): void;
   unmapHostId(hostId: string): { deviceId: string; commandId: string } | null;
+  /** 在飞映射枚举（启动重建 pending 用） */
+  pendingHostIds(): Array<{ hostId: string; deviceId: string; commandId: string }>;
 }
 
 export async function loadDeviceRegistry(paths: { devicesDir: string; registryFile: string }): Promise<DeviceRegistry> {
@@ -66,6 +68,7 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
       const logPath = join(paths.devicesDir, device.deviceId, "commands.jsonl");
       const text = await readFile(logPath, "utf8");
       const merged = new Map<string, CommandLogRecord>();
+      hostIdMap.clear();
       for (const line of text.split("\n")) {
         if (line.length === 0) continue;
         try {
@@ -76,7 +79,14 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
           // 撕裂尾行跳过（append 半写的容错）
         }
       }
-      commandLog.set(device.deviceId, [...merged.values()].slice(-COMMAND_LOG_RING_MAX));
+      const finalRecords = [...merged.values()].slice(-COMMAND_LOG_RING_MAX);
+      commandLog.set(device.deviceId, finalRecords);
+      // 重放建映射：仅未结算（无 response）的命令
+      for (const rec of finalRecords) {
+        if (rec.hostId !== null && rec.response === undefined) {
+          hostIdMap.set(rec.hostId, { deviceId: device.deviceId, commandId: rec.commandId });
+        }
+      }
     } catch {
       commandLog.set(device.deviceId, []);
     }
@@ -115,6 +125,8 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
       const record = [...list].reverse().find((r) => r.commandId === commandId);
       if (record === undefined) return;
       record.response = response;
+      // 结算即释放映射（hostIdMap 无界增长修复）
+      if (record.hostId !== null) hostIdMap.delete(record.hostId);
       // append-only 补记（与 appendCommand 同一追加通路——避免重写竞态）
       const logPath = join(paths.devicesDir, deviceId, "commands.jsonl");
       await mkdir(join(paths.devicesDir, deviceId), { recursive: true });
@@ -134,6 +146,9 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
       const hit = hostIdMap.get(hostId) ?? null;
       hostIdMap.delete(hostId);
       return hit;
+    },
+    pendingHostIds() {
+      return [...hostIdMap.entries()].map(([hostId, owner]) => ({ hostId, deviceId: owner.deviceId, commandId: owner.commandId }));
     },
   };
 }

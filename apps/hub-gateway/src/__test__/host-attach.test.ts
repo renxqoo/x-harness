@@ -9,10 +9,11 @@ function fakeExec(): { command: string; args: string[] } {
 }
 
 describe("resolveHostBin", () => {
-  it("显式配置优先；缺省走 execPath+argv[1]", () => {
+  it("显式配置优先；缺省解析仓库入口；不可解析拒启（E7 回归：不得把 gateway 自身当 host）", () => {
     expect(resolveHostBin("/opt/host").command).toBe("/opt/host");
-    const fallback = resolveHostBin(null);
-    expect(fallback.command).toBe(process.execPath);
+    // vitest cwd=仓库根 → 解析到 apps/host-hub 入口（bun 直跑 TS 源）
+    const resolved = resolveHostBin(null);
+    expect(resolved.args[0]).toContain("host-hub");
   });
 });
 

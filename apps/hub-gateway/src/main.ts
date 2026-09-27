@@ -8,13 +8,17 @@ import { HostAttach, resolveHostBin } from "./host-attach.ts";
 import { loadThreads, type ThreadsRegistry } from "./threads-registry.ts";
 import { loadDeviceRegistry, type DeviceRegistry } from "./device-registry.ts";
 import { startOwnerServer, type OwnerServerHandle, type OwnerSession } from "./owner-server.ts";
-import { classifyHostLine, Fanout, type ClientTarget } from "./fanout.ts";
+import { Fanout, type ClientTarget } from "./fanout.ts";
+import { createHostIngest } from "./host-ingest.ts";
 import { openAuditLog, type AuditLog } from "./audit.ts";
 import { createHash } from "node:crypto";
-import { aeadSeal, buildAad, buildNonce, decodeEnvelope, encodeEnvelope, judgeGwCommand, judgeHostCommand, parseFrame, type Frame } from "@x-harness/remote-protocol";
+
+const OUTBOUND_PAYLOAD_MAX = 12 * 1024 * 1024; // 密文+base64 后上限（DESIGN §3.5）
+import { PAIRING_MAX_CONCURRENT, aeadSeal, buildAad, decodeEnvelope, encodeEnvelope, judgeGwCommand, judgeHostCommand, parseFrame, parseNonce, type Frame } from "@x-harness/remote-protocol";
+import { createPairingServer } from "./pairing-server.ts";
+import { newBucket, processInboundLine, type RateBucket } from "./inbound.ts";
 import { startRelayLink, type RelayLinkHandle } from "./relay-link.ts";
 import { createCryptoSessionPool, type CryptoSessionPool } from "./session-crypto.ts";
-import { newBucket, processInboundLine, type RateBucket } from "./inbound.ts";
 
 export interface GatewayOptions {
   agentDir: string;
@@ -32,6 +36,7 @@ export interface GatewayHandle {
   ownerServer: OwnerServerHandle;
   host: HostAttach;
   cryptoSessions: CryptoSessionPool;
+  pairingServer: ReturnType<typeof createPairingServer>;
   relayLink: RelayLinkHandle | null;
   stop(): Promise<void>;
   /** 测试面：直接注入 owner 帧 */
@@ -57,12 +62,31 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const threads = await loadThreads(paths.threadsFile);
   const devices = await loadDeviceRegistry(paths);
   const audit = await openAuditLog(paths.auditDir, now);
+  const logLines: string[] = [];
+  const logBuffer = {
+    push(line: string): void {
+      logLines.push(line);
+      if (logLines.length > 500) logLines.splice(0, logLines.length - 500);
+    },
+    tail(): string[] {
+      return [...logLines];
+    },
+  };
   const fanout = new Fanout({ coalesceBacklogFrames: 64, coalesceLagMs: 500, now });
+  // scope 变更即时生效（D4）：tier 恒从注册表现值裁决
+  fanout.setTierResolver((target) => {
+    if (target === "owner") return "owner";
+    return devices.get(target)?.scope ?? "read";
+  });
   await audit.record("gateway-started", { installationId: identity.installationId, remoteEnabled: config.remoteEnabled });
 
   // ---- host 附着（单写者） ----
   const exec = options.hostOverride ?? resolveHostBin(config.hostBin);
-  const pendingByHostId = new Map<string, { deviceId: string; commandId: string; command: string }>();
+  const pendingByHostId = new Map<string, { deviceId: string; commandId: string; command: string; ownerSession?: OwnerSession }>();
+  // B4：崩溃重启后按去重日志重建在飞映射
+  for (const pending of devices.pendingHostIds()) {
+    pendingByHostId.set(pending.hostId, { deviceId: pending.deviceId, commandId: pending.commandId, command: "unknown" });
+  }
   const host = new HostAttach({
     exec,
     env: { ...process.env, HUB_AGENT_DIR: options.agentDir } as Record<string, string>,
@@ -79,75 +103,25 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     log,
   });
 
-  function ingestHostLine(line: string): void {
-    const kind = classifyHostLine(line);
-    if (kind === "heartbeat" || kind === "hub_error" || kind === "unknown") return;
-    if (kind === "response") {
-      ingestResponse(line);
-      return;
-    }
-    if (kind === "event" || kind === "ui_request") {
-      ingestEventOrUi(kind, line);
-      return;
-    }
-    ingestLifecycle(kind, line);
-  }
-
-  function parseLine<T>(line: string): T | null {
-    try {
-      return JSON.parse(line) as T;
-    } catch {
-      return null;
-    }
-  }
-
-  function ingestResponse(line: string): void {
-    const parsed = parseLine<{ id?: unknown; command?: unknown; success?: unknown; data?: unknown; error?: unknown }>(line);
-    if (parsed === null) return;
-    const hostId = typeof parsed.id === "string" ? parsed.id : null;
-    if (hostId === null) return;
-    const pending = pendingByHostId.get(hostId);
-    pendingByHostId.delete(hostId);
-    if (pending === undefined) return; // 无人认领：丢弃+计数（发起者断线）
-    const responseBody = { id: pending.commandId, command: pending.command, success: parsed.success === true, data: parsed.data, error: typeof parsed.error === "string" ? parsed.error : undefined };
-    void devices.appendResponse(pending.deviceId, pending.commandId, responseBody);
-    adoptThreadFromResponse(parsed.data, pending.deviceId);
-    const target = fanout.targetOf(pending.deviceId);
-    target?.send({ kind: "response", streamId: `cmd:${pending.deviceId}`, seq: nextSeqFor(`cmd:${pending.deviceId}`), body: responseBody });
-    void audit.record("command-issued", { deviceId: pending.deviceId, command: pending.command, ok: responseBody.success });
-  }
-
-  /** thread/start|resume|register|fork|clone 的 response data 携带 threadId——认领时建订阅+登记注册表 */
-  function adoptThreadFromResponse(data: unknown, deviceId: string): void {
-    if (typeof data !== "object" || data === null) return;
-    const record = data as Record<string, unknown>;
-    if (typeof record.threadId !== "string") return;
-    const target = fanout.targetOf(deviceId);
-    target?.subscribedThreads.add(record.threadId);
-    if (typeof record.sessionPath === "string") threads.upsert({ threadId: record.threadId, sessionPath: record.sessionPath });
-  }
-
-  function ingestEventOrUi(kind: "event" | "ui_request", line: string): void {
-    const parsed = parseLine<{ threadId?: unknown; name?: unknown; payload?: unknown; requestId?: unknown; method?: unknown }>(line);
-    if (parsed === null) return;
-    if (kind === "event") {
-      if (typeof parsed.threadId === "string" && typeof parsed.name === "string") {
-        fanout.fanoutEvent({ threadId: parsed.threadId, name: parsed.name, payload: parsed.payload });
+  const hostIngest = createHostIngest({
+    fanout,
+    devices,
+    threads,
+    audit,
+    pendingByHostId,
+    sendToDevice: (deviceId, frame) => {
+      void sendToDevice(deviceId, frame);
+    },
+    replyOwner: (pending, body) => {
+      const session = pending.ownerSession as OwnerSession | undefined;
+      if (session !== undefined && !session.closed) {
+        session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body });
       }
-      return;
-    }
-    if (typeof parsed.requestId === "string" && typeof parsed.threadId === "string" && typeof parsed.method === "string") {
-      fanout.fanoutUiRequest({ requestId: parsed.requestId, threadId: parsed.threadId, method: parsed.method, payload: (parsed.payload as Record<string, unknown>) ?? {} });
-    }
-  }
-
-  function ingestLifecycle(kind: "thread_died" | "thread_parked", line: string): void {
-    const parsed = parseLine<{ threadId?: unknown }>(line);
-    if (parsed === null) return;
-    if (typeof parsed.threadId === "string") fanout.fanoutEvent({ threadId: parsed.threadId, name: kind, payload: parsed });
-  }
-
+    },
+  });
+  const ingestHostLine = hostIngest.ingest;
   const seqCounters = new Map<string, number>();
+
   function nextSeqFor(streamId: string): number {
     const next = (seqCounters.get(streamId) ?? 0) + 1;
     seqCounters.set(streamId, next);
@@ -156,8 +130,30 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
 
   host.start();
   const cryptoSessions = createCryptoSessionPool(paths.devicesDir, now);
+  const pairingServer = createPairingServer({
+    identity,
+    relayUrl: config.relayUrl,
+    relayKeyFingerprint: config.relayKeyFingerprint,
+    audit,
+    now,
+    requestPairingTicket: async () => `ticket_local_${Date.now()}`,
+    onRegistered: async (device) => {
+      devices.put({
+        deviceId: device.deviceId,
+        name: device.name,
+        deviceType: device.deviceType,
+        platform: device.platform,
+        appVersion: device.appVersion,
+        longTermPub: device.longTermPub,
+        scope: device.scope,
+        pairedAt: now(),
+        lastSeenAt: now(),
+        rekeyCounter: 0,
+      });
+    },
+    maxConcurrent: PAIRING_MAX_CONCURRENT,
+  });
   const deviceBuckets = new Map<string, RateBucket>();
-  const deviceStreams = new Map<string, number>(); // deviceId → 设备命令流 seq
   const deviceIngestChains = new Map<string, Promise<void>>(); // per-device 串行化解密
 
   /** 设备帧出站：ratchet seal → L3 信封 → relay-link（未连时丢弃+计数） */
@@ -198,14 +194,14 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     if (!outcome.ok) return;
     const key = new Uint8Array(Buffer.from(outcome.keyUsed, "hex"));
     const ct = aeadSeal({ key, nonce: outcome.nonce, plaintext: new TextEncoder().encode(JSON.stringify(frame)), aad: outcome.aad });
-    const env = encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: `dev_${deviceId}`, payload: Buffer.from(ct).toString("base64") });
+    const payload = Buffer.from(ct).toString("base64");
+    // E4：超限帧不进链路（chunk 重组是显式边界，DESIGN §6）
+    if (payload.length > OUTBOUND_PAYLOAD_MAX) {
+      log(`outbound frame exceeds cap (${payload.length}B) — dropped`);
+      return;
+    }
+    const env = encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: `dev_${deviceId}`, payload, nonce: Buffer.from(outcome.nonce).toString("base64") });
     link.send(env);
-  }
-
-  function deviceSeq(deviceId: string): number {
-    const next = (deviceStreams.get(deviceId) ?? 0) + 1;
-    deviceStreams.set(deviceId, next);
-    return next;
   }
 
   /** 设备入站线（relay onFrame → 此处；预解密后走管线执法） */
@@ -226,17 +222,17 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     if (session === null) return;
     const env = decodeEnvelope(line);
     if (env === null) return;
-    // 预解密（接收游标顺序推进；失败计数）
+    // index/epoch 从信封 nonce 反解（WIRE §4 布局）——密文自带序，重复/乱序经 ratchet 三态
     const ct = new Uint8Array(Buffer.from(env.payload, "base64"));
-    const epoch = session.ratchet.snapshotRecv().epoch;
-    const index = session.ratchet.snapshotRecv().nextIndex;
-
+    const nonceBytes = new Uint8Array(Buffer.from(env.nonce, "base64"));
+    const parsed = parseNonce(nonceBytes);
+    if (parsed === null) return;
     const outcome = await session.ratchet.open({
       ciphertext: ct,
-      nonce: buildNonce(epoch, 1, index),
-      aad: buildAad(`dev_${deviceId}`, `gw_${identity.installationId}`, epoch),
-      index,
-      epoch,
+      nonce: nonceBytes,
+      aad: buildAad(`dev_${deviceId}`, `gw_${identity.installationId}`, parsed.epoch),
+      index: parsed.index,
+      epoch: parsed.epoch,
     });
     if (!outcome.ok) return;
     const plaintext = Buffer.from(outcome.plaintext).toString("utf8");
@@ -260,17 +256,24 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       onCommand(frame, command, args) {
         const body = frame.body as { id?: string };
         const commandId = typeof body.id === "string" ? body.id : `auto_${frame.seq}`;
-        void submitCommand({
-          deviceId,
-          commandId,
-          command,
-          args,
-          reply: {
-            send(frameBody) {
-              void sendToDevice(deviceId, { kind: "response", streamId: `cmd:${deviceId}`, seq: deviceSeq(deviceId), body: frameBody });
+        // 提交并入 per-device 串行链（B5a——保序 FIFO）
+        const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() =>
+          submitCommand({
+            deviceId,
+            commandId,
+            command,
+            args,
+            reply: {
+              send(frameBody) {
+                void sendToDevice(deviceId, { kind: "response", streamId: `cmd:${deviceId}`, seq: nextSeqFor(`cmd:${deviceId}`), body: frameBody });
+              },
             },
-          },
-        });
+          }),
+        );
+        deviceIngestChains.set(deviceId, run.then(
+          () => undefined,
+          () => undefined,
+        ));
       },
       onUiResponse(requestId, payload) {
         host.write(JSON.stringify({ type: "ui_response", requestId, payload }));
@@ -292,10 +295,14 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       gatewaySigningPub: identity.signingPub,
       useTls: config.relayUrl.startsWith("wss://"),
       onFrame: (line) => {
-        // from=dev_<id> → 设备入站线
-        const parsed = JSON.parse(line) as { from?: string };
-        if (typeof parsed.from === "string" && parsed.from.startsWith("dev_")) {
-          void ingestDeviceLine(parsed.from.slice(4), line);
+        // 坏行不得崩守护进程（C8——入口守卫）
+        try {
+          const parsed = JSON.parse(line) as { from?: string };
+          if (typeof parsed.from === "string" && parsed.from.startsWith("dev_")) {
+            void ingestDeviceLine(parsed.from.slice(4), line);
+          }
+        } catch {
+          log(`relay frame unparseable (len=${line.length})`);
         }
       },
       onStatus: (status, detail) => {
@@ -368,15 +375,27 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       return;
     }
     // host 命令（owner 全权）——与设备共用同一条提交管线
-    await submitCommand({ deviceId: "owner", commandId: id, command, args: body.args ?? {}, reply: { send(frameBody) { session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body: frameBody }); } } });
+    // reply 绑定提交会话（C7：旧连接的 response 不投新连接）
+    await submitCommand({
+      deviceId: "owner",
+      commandId: id,
+      command,
+      args: body.args ?? {},
+      ownerSession: session,
+      reply: {
+        send(frameBody) {
+          if (!session.closed) session.send({ kind: "response", streamId: "owner", seq: nextSeqFor("owner"), body: frameBody });
+        },
+      },
+    });
   }
 
   interface Reply {
     send(body: unknown): void;
   }
 
-  async function submitCommand(spec: { deviceId: string; commandId: string; command: string; args: Record<string, unknown>; reply: Reply }): Promise<void> {
-    const { deviceId, commandId, command, args, reply } = spec;
+  async function submitCommand(spec: { deviceId: string; commandId: string; command: string; args: Record<string, unknown>; reply: Reply; ownerSession?: OwnerSession }): Promise<void> {
+    const { deviceId, commandId, command, args, reply, ownerSession } = spec;
     // scope 执法（owner 全权）
     // owner 对 host 命令面也走矩阵（矩阵外/未知命令拒——S2 fail-closed 对 owner 同样成立）
     const verdict = deviceId === "owner" ? judgeHostCommand(command, "owner") : judgeHostCommand(command, tierOf(deviceId));
@@ -405,7 +424,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     const bodyHash = createHash("sha256").update(JSON.stringify(args)).digest("hex").slice(0, 16);
     await devices.appendCommand(deviceId, { commandId, hostId, bodyHash, ts: now() });
     devices.mapHostId(hostId, { deviceId, commandId });
-    pendingByHostId.set(hostId, { deviceId, commandId, command });
+    pendingByHostId.set(hostId, { deviceId, commandId, command, ...(ownerSession !== undefined ? { ownerSession } : {}) });
     // 命令订阅建立（thread 域命令）
     const threadId = typeof args.threadId === "string" ? args.threadId : null;
     const target = fanout.targetOf(deviceId);
@@ -413,7 +432,11 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     const line = JSON.stringify({ ...args, type: command, id: hostId });
     const written = host.write(line);
     if (!written) {
-      reply.send({ id: commandId, command, success: false, error: "host unavailable" });
+      // B5b：失败路径立即落 response 进去重缓存并清 pending
+      const failure = { id: commandId, command, success: false, error: "host unavailable" };
+      pendingByHostId.delete(hostId);
+      void devices.appendResponse(deviceId, commandId, failure);
+      reply.send(failure);
     }
   }
 
@@ -432,7 +455,16 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       return handleGwDeviceCommand(command, args);
     }
     if (command === "gw/config/get") return { ok: true, data: config };
-    if (command === "gw/logs/tail") return { ok: true, data: { lines: [] } };
+    if (command === "gw/config/set") {
+      // 热应用面：仅 remoteEnabled（其余键重启生效——如实返回）
+      if (typeof args.remoteEnabled === "boolean") {
+        config.remoteEnabled = args.remoteEnabled;
+        await audit.record("config-changed", { remoteEnabled: args.remoteEnabled });
+        return { ok: true, data: { ...config, restartRequired: ["relayUrl", "relayKeyFingerprint", "hostBin"] } };
+      }
+      return { ok: false, reason: "restart required for this key" };
+    }
+    if (command === "gw/logs/tail") return { ok: true, data: { lines: logBuffer.tail() } };
     if (command === "gw/shutdown") {
       setTimeout(() => {
         void handle.stop();
@@ -440,9 +472,22 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       return { ok: true, data: { stopping: true } };
     }
     if (command === "gw/pairing/start" || command === "gw/pairing/cancel") {
-      return { ok: false, reason: "pairing not wired in this batch" };
+      return handleGwPairing(command, args);
     }
     return { ok: false, reason: "unknown gw command" };
+  }
+
+  async function handleGwPairing(command: string, args: Record<string, unknown>): Promise<GwResult> {
+    if (command === "gw/pairing/cancel") {
+      const pairingId = args.pairingId;
+      if (typeof pairingId !== "string") return { ok: false, reason: "pairingId required" };
+      pairingServer.cancel(pairingId);
+      return { ok: true, data: { cancelled: true } };
+    }
+    const scope = args.scope === "interact" || args.scope === "full" ? args.scope : "read";
+    const mode = args.mode === "manual" ? "manual" : "qr";
+    const started = mode === "manual" ? await pairingServer.startManual(scope) : await pairingServer.startQr(scope);
+    return { ok: true, data: { pairingId: started.pairingId, qrPayload: "qrPayload" in started ? started.qrPayload : undefined, manualCode: "manualCode" in started ? started.manualCode : undefined, ticket: started.ticket } };
   }
 
   async function handleGwDeviceCommand(command: string, args: Record<string, unknown>): Promise<GwResult> {
@@ -477,6 +522,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     ownerServer,
     host,
     cryptoSessions,
+    pairingServer,
     relayLink: relayLinkRef,
     handleOwnerFrame,
     ingestDeviceLine,

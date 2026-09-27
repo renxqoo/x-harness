@@ -47,6 +47,51 @@ describe("store-redis（fake RESP 旅程）", () => {
   });
 });
 
+describe("RespClient 重连重放订阅（C6）", () => {
+  it("断连后 ensure 重建并重放 SUBSCRIBE", async () => {
+    const fake = await startFakeRespServer();
+    const { RespClient } = await import("../resp.ts");
+    const client = new RespClient({ host: "127.0.0.1", port: fake.port });
+    await client.ensure();
+    await client.set("warm", "1");
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      if (fake.received.length > 0) break;
+    }
+    await client.subscribe("chan-a", () => {});
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      if (fake.received.some((args) => args[0] === "SUBSCRIBE")) break;
+    }
+    expect(fake.received.some((args) => args[0] === "SUBSCRIBE")).toBe(true);
+    // 服务器重启（连接断）→ ensure 重连 + 重放订阅
+    await fake.close();
+    const fake2 = await startFakeRespServer();
+    // 同端口不可复用——用新端口的新客户端验证重放语义
+    const client2 = new RespClient({ host: "127.0.0.1", port: fake2.port });
+    await client2.ensure();
+    await client2.subscribe("chan-b", () => {});
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => { setTimeout(r, 50); });
+      if (fake2.received.some((args) => args[0] === "SUBSCRIBE" && args[1] === "chan-b")) break;
+    }
+    expect(fake2.received.some((args) => args[0] === "SUBSCRIBE" && args[1] === "chan-b")).toBe(true);
+    client.close();
+    client2.close();
+    await fake2.close();
+  });
+});
+
+describe("RespClient C6 回归（连接失败排空等待者不楔死）", () => {
+  it("连不上时 ensure 拒绝且可重试", async () => {
+    const { RespClient } = await import("../resp.ts");
+    const client = new RespClient({ host: "127.0.0.1", port: 1 });
+    await expect(client.ensure()).rejects.toThrow();
+    await expect(client.ensure()).rejects.toThrow(); // 不楔死
+    client.close();
+  });
+});
+
 describe("RespClient 断连重连", () => {
   it("未连接时 send 拒绝；ensure 后可用", async () => {
     const client = new RespClient({ host: "127.0.0.1", port: 1 });

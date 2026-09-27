@@ -1,9 +1,9 @@
 // 客户端侧 ratchet codec：RemoteCodec 的双 ratchet 实现（配对产物种子）。
 import {
+  parseNonce,
   RatchetSession,
   aeadSeal,
   buildAad,
-  buildNonce,
   deriveInitialChains,
   type Frame,
 } from "@x-harness/remote-protocol";
@@ -15,8 +15,9 @@ export interface RatchetCodecDeps {
 }
 
 export interface RatchetCodec {
-  seal(frameJson: string): Promise<string | null>;
-  open(payloadBase64: string): Promise<string | null>;
+  /** 返回 {payload, nonce}（L3 信封两字段） */
+  seal(frameJson: string): Promise<{ payload: string; nonce: string } | null>;
+  open(payloadBase64: string, nonceBase64: string): Promise<string | null>;
   ratchet: RatchetSession;
 }
 
@@ -39,19 +40,19 @@ export function createRatchetCodec(deps: RatchetCodecDeps): RatchetCodec {
       if (!outcome.ok) return null;
       const key = new Uint8Array(Buffer.from(outcome.keyUsed, "hex"));
       const ct = aeadSeal({ key, nonce: outcome.nonce, plaintext: new TextEncoder().encode(frameJson), aad: outcome.aad });
-      return Buffer.from(ct).toString("base64");
+      return { payload: Buffer.from(ct).toString("base64"), nonce: Buffer.from(outcome.nonce).toString("base64") };
     },
-    open(payloadBase64) {
-      // 串行化：并发 open 同读 recvIndex 会错位解密（tag 失败连锁）
+    open(payloadBase64, nonceBase64) {
+      // 串行化 + nonce 反解 index/epoch（WIRE §4 布局——密文自带序，乱序/重发三态由 ratchet 裁决）
       const run = openChain.then(async () => {
         const ct = new Uint8Array(Buffer.from(payloadBase64, "base64"));
-        const epoch = ratchet.snapshotRecv().epoch;
-        const index = recvIndex;
-        const aad = buildAad(`gw_${deps.installationId}`, `dev_${deps.deviceId}`, epoch);
-        // gateway 是配对发起侧（direction 0）——其发送帧 nonce 方向位为 0
-        const outcome = await ratchet.open({ ciphertext: ct, nonce: buildNonce(epoch, 0, index), aad, index, epoch });
+        const nonceBytes = new Uint8Array(Buffer.from(nonceBase64, "base64"));
+        const parsed = parseNonce(nonceBytes);
+        if (parsed === null) return null;
+        const aad = buildAad(`gw_${deps.installationId}`, `dev_${deps.deviceId}`, parsed.epoch);
+        const outcome = await ratchet.open({ ciphertext: ct, nonce: nonceBytes, aad, index: parsed.index, epoch: parsed.epoch });
         if (!outcome.ok) return null;
-        recvIndex = outcome.index + 1;
+        recvIndex = Math.max(recvIndex, outcome.index + 1);
         return Buffer.from(outcome.plaintext).toString("utf8");
       });
       openChain = run.then(

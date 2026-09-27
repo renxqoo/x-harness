@@ -20,8 +20,11 @@ export interface RatchetPersist {
 export interface SendBoundary {
   rootKey: string;
   sendChainKey: string;
+  /** 下一帧的发送 index（预支后 = 批首 + 批大小） */
   nextIndex: number;
   epoch: number;
+  /** 落盘时链所处的 index（批首）；restore 需把链推进 (nextIndex - baseIndex) 次 */
+  baseIndex?: number;
 }
 
 export interface RecvBoundary {
@@ -111,7 +114,7 @@ export class RatchetSession {
     return `${this.epoch}:${this.sendChainKey.slice(0, 16)}:${this.recvChainKey.slice(0, 16)}`;
   }
 
-  /** 恢复（崩溃后）：从持久化边界重建 */
+  /** 恢复（崩溃后）：从持久化边界重建——落盘语义是「批首」（链与 index 同位，续发不重叠不回退） */
   static restore(deps: RatchetDeps, send: SendBoundary, recv: RecvBoundary): RatchetSession {
     const s = new RatchetSession(deps, {
       rootKey: send.rootKey,
@@ -121,8 +124,14 @@ export class RatchetSession {
     });
     s.sendNextIndex = send.nextIndex;
     s.batchPersistedThrough = send.nextIndex;
+    // 链对位：落盘链在 baseIndex，推进 (nextIndex - baseIndex) 次到续发位置
+    const base = send.baseIndex ?? send.nextIndex;
+    for (let i = base; i < send.nextIndex; i++) {
+      s.sendChainKey = advanceChain(s.sendChainKey).nextChain;
+    }
     s.recvNextIndex = recv.nextIndex;
     s.lastRecvIndex = recv.lastRecvIndex;
+    s.recvChainKey = recv.recvChainKey;
     if (recv.epoch !== send.epoch) {
       // 持久化组撕裂（同组原子写被破坏）——fail-closed
       throw new Error("ratchet: persisted epoch mismatch");
@@ -135,8 +144,12 @@ export class RatchetSession {
    * 落盘成功才放行。密钥按 index 确定性重派生——重发场景用 reEncryptAt。
    */
   async seal(spec: { plaintext: Uint8Array; aadFrom: string; aadTo: string }): Promise<SealOutcome> {
+    // 批首落盘：{chainKey=批首链, baseIndex=批首, nextIndex=批首+64（预支）}。
+    // 崩溃恢复从 nextIndex 续发（≤64 index 浪费）并按 baseIndex 差值推进链——nonce 与链
+    // 双不复用/错位（A1 处置：杜绝 GCM nonce 复用）。
     if (this.sendNextIndex >= this.batchPersistedThrough) {
       const boundary = this.snapshotSend();
+      boundary.baseIndex = this.sendNextIndex;
       boundary.nextIndex = this.sendNextIndex + RATCHET_BATCH_FRAMES;
       try {
         await this.deps.persist.persistSendBoundary(this.deps.deviceId, boundary);
@@ -144,8 +157,6 @@ export class RatchetSession {
         return { ok: false, reason: "persist-failed" };
       }
       this.batchPersistedThrough = boundary.nextIndex;
-      this.sendChainKey = boundary.sendChainKey;
-      this.rootKey = boundary.rootKey;
       return this.sealWithinBatch({ aadFrom: spec.aadFrom, aadTo: spec.aadTo, boundaryPersisted: true });
     }
     return this.sealWithinBatch({ aadFrom: spec.aadFrom, aadTo: spec.aadTo, boundaryPersisted: false });

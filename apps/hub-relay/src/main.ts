@@ -12,7 +12,7 @@ import { createRedisStore } from "./store-redis.ts";
 import type { RouteStore } from "./store-memory.ts";
 import { decodeEnvelope, encodeEnvelope } from "@x-harness/remote-protocol";
 import { enrollTranscript, issueToken, newJti, verifyToken, type TokenClaims } from "./auth.ts";
-import { FRAME_RATE_BURST, MAX_CONNECTIONS, PAIRING_TICKET_TTL_SECONDS, PING_INTERVAL_MS, PONG_TIMEOUT_MS, TOKEN_TTL_SECONDS } from "./limits.ts";
+import { ENVELOPE_MAX_BYTES, FRAME_RATE_BURST, MAX_CONNECTIONS, PAIRING_TICKET_TTL_SECONDS, PING_INTERVAL_MS, PONG_TIMEOUT_MS, TOKEN_TTL_SECONDS } from "./limits.ts";
 import { verifyBytes } from "@x-harness/remote-protocol";
 
 export interface RelayOptions {
@@ -74,8 +74,16 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         conn?.close();
         return;
       }
-      if (parsed.kind === "cross" && parsed.toInstallation !== undefined && parsed.line !== undefined) {
-        localDeliver.get(parsed.toInstallation)?.(parsed.line);
+      if (parsed.kind === "cross" && parsed.line !== undefined) {
+        // 按 to 前缀分派（D2）：dev_ → 设备连接；gw_ → 网关投递口
+        const env = JSON.parse(parsed.line) as { to?: string };
+        if (typeof env.to === "string" && env.to.startsWith("dev_")) {
+          conns.get(`device:${env.to.slice(4)}`)?.send(parsed.line);
+          return;
+        }
+        if (parsed.toInstallation !== undefined) {
+          localDeliver.get(parsed.toInstallation)?.(parsed.line);
+        }
       }
     } catch {
       // 广播载荷垃圾——忽略（降级不崩）
@@ -111,14 +119,16 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     void handleUpgrade(req, socket, head);
   });
 
-  /** 鉴权与限载判定：返回 claims（pairingTicket 场景为合成 claims）或 null（拒连） */
+  /** 鉴权与限载判定：返回 claims（pairingTicket 场景为合成 claims，subject=pairingId——单活键按配对面隔离） */
   function authorizeUpgrade(url: string, authHeader: string): TokenClaims | null {
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : new URL(url, "http://x").searchParams.get("token");
     if (token === null || token.length === 0) return null;
     const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
     if (claims !== null) return claims;
-    if (url.startsWith("/pairing") && verifyPairingTicket(token)) {
-      return { kind: "pairing", subject: "pairing", iat: 0, exp: 0, jti: "" };
+    // pairing kind 仅配对面路径；subject=pairingId（单活键按配对面隔离——D3）
+    if (url.startsWith("/pairing")) {
+      const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
+      if (claims !== null && claims.kind === "pairing") return claims;
     }
     return null;
   }
@@ -173,7 +183,9 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     byConnId.set(connId, conn);
     if (effectiveClaims.kind === "gateway") {
       localDeliver.set(effectiveClaims.subject, (line) => conn.send(line));
-      await store.putInstallation(effectiveClaims.subject, { gatewayKeyPub: "", nodeId });
+      // 连接路径只更新连接节点——绝不写 gatewayKeyPub（enroll 的 TOFU 钉存不可被覆盖）
+      const existing = await store.getInstallation(effectiveClaims.subject);
+      await store.putInstallation(effectiveClaims.subject, { gatewayKeyPub: existing?.gatewayKeyPub ?? "", nodeId });
     } else if (effectiveClaims.kind === "device") {
       const installationId = effectiveClaims.installationId ?? "";
       if (installationId.length > 0) {
@@ -188,9 +200,9 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       writer.writePing();
     }, PING_INTERVAL_MS);
     function teardown(): void {
-      // 只清当前代（旧连接的迟到 close 不抹新连接——单活顶替竞态修复）
-      if (conns.get(connKey) !== conn) return;
+      // 定时器无条件清（单活顶替后旧连接的 timer 泄漏修复）；表项只清当前代
       clearInterval(pingTimer);
+      if (conns.get(connKey) !== conn) return;
       conns.delete(connKey);
       byConnId.delete(connId);
       if (effectiveClaims.kind === "gateway") localDeliver.delete(effectiveClaims.subject);
@@ -219,6 +231,11 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       return;
     }
     from.frames.push(now);
+    // 帧字节门（E5——16MiB；超限断连防 64MiB 帧洪泛）
+    if (Buffer.byteLength(line) > ENVELOPE_MAX_BYTES) {
+      from.close();
+      return;
+    }
     if (line.length === 0) return;
     const env = decodeEnvelope(line);
     if (env === null) return;
@@ -270,7 +287,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   }
 
   function errorLine(code: string): string {
-    return encodeEnvelope({ v: 1, from: "relay", to: "caller", payload: Buffer.from(JSON.stringify({ code })).toString("base64") });
+    return encodeEnvelope({ v: 1, from: "relay", to: "caller", payload: Buffer.from(JSON.stringify({ code })).toString("base64"), nonce: Buffer.alloc(17).toString("base64") });
   }
 
   async function readBody(req: IncomingMessage): Promise<string> {
@@ -297,8 +314,8 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         return;
       }
       const existing = await store.getInstallation(body.installationId);
-      if (existing !== null && existing.gatewayKeyPub !== "" && existing.gatewayKeyPub !== body.gatewayKeyPub) {
-        // enrollment 冲突：fail-closed 拒绝 + 告警（安全 H3）
+      // 基线空串（连接路径只更 nodeId 时）也视作未钉存；已钉存且不同 → 409（安全 H3 fail-closed）
+      if (existing !== null && existing.gatewayKeyPub.length > 0 && existing.gatewayKeyPub !== body.gatewayKeyPub) {
         res.writeHead(409).end(JSON.stringify({ error: "installation key conflict" }));
         return;
       }
@@ -353,12 +370,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     } catch {
       res.writeHead(400).end();
     }
-  }
-
-  // pairingTicket 验证（upgrade 路径用）
-  function verifyPairingTicket(token: string): boolean {
-    const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
-    return claims !== null && claims.kind === "pairing";
   }
 
   await new Promise<void>((resolve) => {

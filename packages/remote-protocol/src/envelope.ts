@@ -6,6 +6,8 @@ export interface RouteEnvelope {
   to: string;
   /** base64(AES-GCM 密文) */
   payload: string;
+  /** base64(nonce)——WIRE §4 布局；接收方从中反解 epoch/index（重复/乱序三态判据） */
+  nonce: string;
 }
 
 export function encodeEnvelope(env: RouteEnvelope): string {
@@ -27,5 +29,6 @@ export function decodeEnvelope(line: string): RouteEnvelope | null {
     return null;
   }
   if (env.from.length === 0 || env.to.length === 0 || env.payload.length === 0) return null;
-  return { v: env.v, from: env.from, to: env.to, payload: env.payload };
+  if (typeof env.nonce !== "string" || env.nonce.length === 0) return null;
+  return { v: env.v, from: env.from, to: env.to, payload: env.payload, nonce: env.nonce };
 }

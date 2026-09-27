@@ -122,13 +122,45 @@ describe("relay-link 对真 relay 旅程", () => {
     }
     expect(link.connected()).toBe(true);
     // send 面：连上后可发
-    expect(link.send(JSON.stringify({ v: 1, from: `gw_${identity.installationId}`, to: "dev_none", payload: "eA==" }))).toBe(true);
+    expect(link.send(JSON.stringify({ v: 1, from: `gw_${identity.installationId}`, to: "dev_none", payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }))).toBe(true);
     link.stop();
-    await new Promise((r) => {
-      setTimeout(r, 150);
-    });
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => {
+        setTimeout(r, 100);
+      });
+      if (!link.connected()) break;
+    }
     expect(link.connected()).toBe(false);
     expect(link.send("{}")).toBe(false);
+    await relay.close();
+  });
+
+  it("C2 回归：401 握手触发重 enroll（reauthenticate 路径）", { timeout: 12000 }, async () => {
+    const relay = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "gw-link-test-secret!", singleInstance: true });
+    const port = (relay.server.address() as { port: number }).port;
+    const dir = await mkdtemp(join(tmpdir(), "link401-"));
+    const identity = await loadOrCreateIdentity({ agentDir: dir, installationIdFile: join(dir, "iid"), gatewayIdentityFile: join(dir, "gid.json") });
+    let reauth = 0;
+    const link = startRelayLink({
+      relayUrl: `ws://127.0.0.1:${port}`,
+      installationId: identity.installationId,
+      gatewaySigningSecret: identity.signingSecret,
+      gatewaySigningPub: identity.signingPub,
+      useTls: false,
+      onFrame: () => {},
+      onStatus: (status, detail) => {
+        if (status === "disconnected" && detail.includes("401")) reauth += 1;
+      },
+      log: () => {},
+    });
+    // 无 token 拨号 → 401 → 内部自动 enroll → 连接成功
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => { setTimeout(r, 200); });
+      if (link.connected()) break;
+    }
+    expect(link.connected()).toBe(true);
+    expect(reauth).toBeGreaterThanOrEqual(1);
+    link.stop();
     await relay.close();
   });
 

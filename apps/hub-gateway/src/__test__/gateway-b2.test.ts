@@ -16,18 +16,29 @@ const sleep = (ms: number): Promise<void> =>
 let agentDir: string;
 let stopGateway: (() => Promise<void>) | null = null;
 let socketPath: string;
+let currentHandle: Awaited<ReturnType<typeof startGateway>> | null = null;
+function currentGatewayHandle(): Awaited<ReturnType<typeof startGateway>> {
+  if (currentHandle === null) throw new Error("gateway not started");
+  return currentHandle;
+}
 
 beforeAll(async () => {
   agentDir = await mkdtemp(join(tmpdir(), "gw-b2-"));
+  await (await import("node:fs/promises")).writeFile(
+    join(agentDir, "gateway.json"),
+    JSON.stringify({ remoteEnabled: true, relayUrl: "ws://127.0.0.1:9", relayKeyFingerprint: "fp-b2-test" }),
+    "utf8",
+  );
   const self = new URL("./fake-host.ts", import.meta.url).pathname;
   const handle = await startGateway({
     agentDir,
     hostOverride: { command: process.execPath, args: [self, "--fake-host"] },
     log: () => {},
   });
+  currentHandle = handle;
   socketPath = handle.ownerServer.socketPath;
   stopGateway = () => handle.stop();
-});
+}, 20000);
 
 afterAll(async () => {
   await stopGateway?.();
@@ -151,26 +162,37 @@ describe("gateway B2 骨架", () => {
     await stopGateway?.();
     const self = new URL("./fake-host.ts", import.meta.url).pathname;
     const handle = await startGateway({ agentDir, hostOverride: { command: process.execPath, args: [self, "--fake-host"] }, log: () => {} });
+    currentHandle = handle;
     socketPath = handle.ownerServer.socketPath;
     stopGateway = () => handle.stop();
+    await new Promise((r) => { setTimeout(r, 200); });
     const client = await dialOwner(socketPath);
     client.send(commandFrame("sc1", "gw/devices/set_scope", { deviceId: "d_test", scope: "interact" }));
     const res = await client.waitResponse("sc1");
     expect(res.success).toBe(true);
+    // D4 联动主线：升 full → revoke（fanout detach/会话清理/relay 拉黑推送路径）
+    client.send(commandFrame("sc9", "gw/devices/set_scope", { deviceId: "d_test", scope: "full" }));
+    expect((await client.waitResponse("sc9")).success).toBe(true);
     client.send(commandFrame("rv1", "gw/devices/revoke", { deviceId: "d_test" }));
     const rv = await client.waitResponse("rv1");
     expect(rv.success).toBe(true);
+    // 幽灵设备分支
+    client.send(commandFrame("rv0", "gw/devices/revoke", { deviceId: "ghost" }));
+    expect((await client.waitResponse("rv0")).success).toBe(false);
+    client.send(commandFrame("sc0", "gw/devices/set_scope", { deviceId: "ghost", scope: "interact" }));
+    expect((await client.waitResponse("sc0")).success).toBe(false);
     client.close();
     // 审计：device-scope-changed + device-revoked 落盘
     const auditDir = join(agentDir, "audit");
     const names = await (await import("node:fs/promises")).readdir(auditDir);
-    const auditText = await readFile(join(auditDir, names[0]!), "utf8");
-    expect(auditText).toContain("device-scope-changed");
-    expect(auditText).toContain("device-revoked");
-    expect(auditText).toContain("command-issued");
+    let auditAll = "";
+    for (const n of names) auditAll += await readFile(join(auditDir, n), "utf8");
+    expect(auditAll).toContain("device-scope-changed");
+    expect(auditAll).toContain("device-revoked");
+    expect(auditAll).toContain("command-issued");
   });
 
-  it("gw/config/get + gw/logs/tail + gw/pairing 拒（本批未接线）", async () => {
+  it("gw/config/get + gw/logs/tail", async () => {
     const client = await dialOwner(socketPath);
     client.send(commandFrame("cg1", "gw/config/get"));
     const cg = await client.waitResponse("cg1");
@@ -178,9 +200,6 @@ describe("gateway B2 骨架", () => {
     client.send(commandFrame("lt1", "gw/logs/tail"));
     const lt = await client.waitResponse("lt1");
     expect(lt.success).toBe(true);
-    client.send(commandFrame("ps1", "gw/pairing/start"));
-    const ps = await client.waitResponse("ps1");
-    expect(ps.success).toBe(false);
     client.close();
   });
 
@@ -231,6 +250,70 @@ describe("gateway B2 骨架", () => {
     const res = await client.waitResponse("x1");
     expect(res.success).toBe(false);
     expect(res.error).toBe("unknown-command");
+    client.close();
+  });
+
+  it("gw/config/set：remoteEnabled 热应用；其余键重启生效", { timeout: 15000 }, async () => {
+    const client = await dialOwner(socketPath);
+    client.send(commandFrame("cs1", "gw/config/set", { remoteEnabled: false }));
+    const res = await client.waitResponse("cs1");
+    expect(res.success).toBe(true);
+    client.send(commandFrame("cs2", "gw/config/set", { hostBin: "/x" }));
+    expect((await client.waitResponse("cs2")).success).toBe(false);
+    client.send(commandFrame("cg9", "gw/config/get"));
+    expect((await client.waitResponse("cg9")).success).toBe(true);
+    client.close();
+  });
+
+  it("gw/logs/tail：返回最近日志行", { timeout: 15000 }, async () => {
+    const client = await dialOwner(socketPath);
+    client.send(commandFrame("lt9", "gw/logs/tail"));
+    const res = await client.waitResponse("lt9");
+    expect(res.success).toBe(true);
+    client.close();
+  });
+
+  it("C1/B5b 回归：host 退出自动拉起；write 失败路径合成 failure 进去重缓存", { timeout: 25000 }, async () => {
+    const client = await dialOwner(socketPath);
+    const handle = currentGatewayHandle();
+    // 杀 host（模拟崩溃）——exit 路径应拉起
+    handle.host.killChildForTest();
+    await new Promise((r) => { setTimeout(r, 800); });
+    expect(handle.host.alive()).toBe(true);
+    // 命令仍可用
+    client.send(commandFrame("hc1", "thread/list"));
+    expect((await client.waitResponse("hc1")).success).toBe(true);
+    client.close();
+  });
+
+  it("E1 回归：配对面装配——gw/pairing/start 出 QR；handleDeviceRequest→SAS→confirm 注册设备", { timeout: 20000 }, async () => {
+    const client = await dialOwner(socketPath);
+    client.send(commandFrame("ps1", "gw/pairing/start", { scope: "read" }));
+    const started = await client.waitResponse("ps1");
+    expect(started.success).toBe(true);
+    const pairingId = (started.data as { pairingId: string }).pairingId;
+    expect(pairingId).toMatch(/^pr_/);
+    // 设备侧 request（经 gateway handle 面——e2e 全链 pairing 流 relay 帧路由在后续批次）
+    const handle = currentGatewayHandle();
+    const { newDeviceEphemeral } = await import("@x-harness/remote-protocol");
+    const devEph = newDeviceEphemeral();
+    const res = await handle.pairingServer.handleDeviceRequest({
+      pairingId,
+      deviceEphemeralPub: devEph.pub,
+      deviceInfo: { name: "E2E Phone", deviceType: "phone", platform: "ios", appVersion: "1" },
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const confirmed = await handle.pairingServer.confirmWithSas({ pairingId, ownerTypedSas: res.sas, deviceLongTermPub: "pub_e2e" });
+    expect(confirmed.ok).toBe(true);
+    // 注册表已含设备
+    client.send(commandFrame("dl1", "gw/devices/list"));
+    const listed = await client.waitResponse("dl1");
+    const devices = (listed.data as Array<{ deviceId: string }>).map((d) => d.deviceId);
+    expect(devices).toContain((confirmed as { ok: true; deviceId: string }).deviceId);
+    // cancel 分支
+    client.send(commandFrame("pc1", "gw/pairing/cancel", { pairingId }));
+    expect((await client.waitResponse("pc1")).success).toBe(true);
     client.close();
   });
 

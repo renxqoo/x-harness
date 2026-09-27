@@ -23,6 +23,8 @@ function memoryPersist(): RatchetPersist & { sends: number; recvs: number; failN
   };
 }
 
+let lastSendBoundary: import("../ratchet.ts").SendBoundary | null = null;
+
 function endpoints() {
   const gwEph = generateBoxKeyPair();
   const devEph = generateBoxKeyPair();
@@ -32,7 +34,19 @@ function endpoints() {
   const devInit = deriveInitialChains(shared2, false);
   const gwPersist = memoryPersist();
   const devPersist = memoryPersist();
-  const gw = new RatchetSession({ now: () => 0, persist: gwPersist, deviceId: "dev_1", direction: 0 }, gwInit);
+  lastSendBoundary = null;
+  const gw = new RatchetSession({
+    now: () => 0,
+    persist: {
+      ...gwPersist,
+      async persistSendBoundary(id, send) {
+        lastSendBoundary = { ...send };
+        return gwPersist.persistSendBoundary(id, send);
+      },
+    },
+    deviceId: "dev_1",
+    direction: 0,
+  }, gwInit);
   const dev = new RatchetSession({ now: () => 0, persist: devPersist, deviceId: "dev_1", direction: 1 }, devInit);
   return { gw, dev, gwPersist, devPersist };
 }
@@ -92,6 +106,30 @@ describe("双端互发", () => {
     gwPersist.failNext = true;
     const outcome = await gw.seal({ plaintext: enc.encode("x"), aadFrom: "gw_1", aadTo: "dev_1" });
     expect(outcome).toEqual({ ok: false, reason: "persist-failed" });
+  });
+
+  it("回归（A1 症状：恢复后链错位 tag 恒败/nonce 复用）：restore→续发与对端互通且 index 只进", async () => {
+    const { gw, dev, gwPersist } = endpoints();
+    for (let i = 0; i < 70; i++) {
+      const sealed = await gwSeal(gw, `f${i}`);
+      const opened = await dev.open({ ciphertext: sealed.ct, nonce: sealed.nonce, aad: sealed.aad, index: sealed.index, epoch: sealed.epoch });
+      expect(opened.ok).toBe(true);
+    }
+    // 批首落盘形态：{chainKey=批首链, baseIndex=64, nextIndex=128}
+    const persisted = lastSendBoundary ?? gw.snapshotSend();
+    void gwPersist;
+    const restored = RatchetSession.restore(
+      { now: () => 0, persist: gwPersist, deviceId: "dev_1", direction: 0 },
+      persisted,
+      { ...dev.snapshotRecv(), epoch: gw.snapshotSend().epoch },
+    );
+    expect(restored.snapshotSend().nextIndex).toBeGreaterThanOrEqual(128);
+    // 续发 3 帧：对端 skipped-key 吸收（乱序路径）或顺序到达
+    for (let i = 0; i < 3; i++) {
+      const sealed = await gwSeal(restored, `r${i}`);
+      const opened = await dev.open({ ciphertext: sealed.ct, nonce: sealed.nonce, aad: sealed.aad, index: sealed.index, epoch: sealed.epoch });
+      expect(opened.ok).toBe(true);
+    }
   });
 
   it("崩溃恢复：从边界重建后 nonce 不复用（index 续进）", async () => {

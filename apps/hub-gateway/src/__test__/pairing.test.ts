@@ -1,7 +1,7 @@
 // B3 单元与旅程：配对服务器（QR/手输/锁定/SAS 双向）、crypto 会话池（建立/恢复/种子）
 import { describe, expect, it } from "vitest";
 import { createPairingServer } from "../pairing-server.ts";
-import { computeSas, gatewayEstablishChannel, newDeviceEphemeral, pakeInitiate, verifyPairingTranscript } from "@x-harness/remote-protocol";
+import { gatewayEstablishChannel, newDeviceEphemeral, pakeInitiate } from "@x-harness/remote-protocol";
 import type { GatewayIdentity } from "../identity.ts";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,6 +21,7 @@ function makeServer(now: () => number, registered: Array<{ deviceId: string }> =
   const server = createPairingServer({
     identity,
     relayUrl: "wss://relay.test",
+    relayKeyFingerprint: "fp-test",
     audit: {
       async record(event, detail) {
         auditLog.push(`${event}:${JSON.stringify(detail)}`);
@@ -133,6 +134,31 @@ describe("手输码 PAKE 路径", () => {
     expect(registered.length).toBe(1);
   });
 
+  it("A5 回归：PAKE 在线尝试 5 次锁定", async () => {
+    const clock = { ts: Date.now() };
+    const { server } = makeServer(() => clock.ts);
+    const started = await server.startManual("read");
+    for (let i = 0; i < 5; i++) {
+      const wrong = pakeInitiate("00000000");
+      const res = await server.handlePakeInitiate({ pairingId: started.pairingId, messageA: wrong.message, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
+      if (i < 4) expect(res.ok).toBe(true);
+    }
+    // 第 5 次失败后锁定：后续（含正确码）拒
+    const locked = await server.handlePakeInitiate({ pairingId: started.pairingId, messageA: pakeInitiate(started.manualCode).message, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
+    expect(locked.ok).toBe(false);
+    if (!locked.ok) expect(locked.reason).toBe("locked");
+  });
+
+  it("E2 回归：过期未消费配对会话被清扫", async () => {
+    const clock = { ts: Date.now() };
+    const { server } = makeServer(() => clock.ts);
+    const started = await server.startQr("read");
+    clock.ts += 121_000;
+    const second = await server.startQr("read"); // 触发 sweep
+    void second;
+    expect(server.sessionOf(started.pairingId)).toBeNull();
+  });
+
   it("错码 PAKE：SAS 确认失败路径（在线尝试计入）", async () => {
     const ts = { now: Date.now() };
     const { server } = makeServer(() => ts.now);
@@ -230,4 +256,3 @@ describe("配对签名验签（端侧视角）", () => {
   });
 });
 
-export { computeSas, verifyPairingTranscript };

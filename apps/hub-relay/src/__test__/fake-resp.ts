@@ -20,10 +20,54 @@ export function startFakeRespServer(): Promise<FakeRespServer> {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     let buffer = Buffer.alloc(0);
-    socket.on("data", (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
+    // 命令处理器表（一层分派——switch 复杂度拆解）
+    const handlers: Record<string, (rest: string[]) => void> = {
+      AUTH: () => {
+        socket.write("+OK\r\n");
+      },
+      GET: (rest) => {
+        const value = state.get(rest[0] ?? "");
+        socket.write(value === undefined ? "$-1\r\n" : `$${value.length}\r\n${value}\r\n`);
+      },
+      SET: (rest) => {
+        state.set(rest[0] ?? "", rest[1] ?? "");
+        socket.write("+OK\r\n");
+      },
+      DEL: (rest) => {
+        state.delete(rest[0] ?? "");
+        socket.write(":1\r\n");
+      },
+      SADD: (rest) => {
+        const set = sets.get(rest[0] ?? "") ?? new Set<string>();
+        set.add(rest[1] ?? "");
+        sets.set(rest[0] ?? "", set);
+        socket.write(":1\r\n");
+      },
+      SISMEMBER: (rest) => {
+        const hit = sets.get(rest[0] ?? "")?.has(rest[1] ?? "") ?? false;
+        socket.write(hit ? ":1\r\n" : ":0\r\n");
+      },
+      PUBLISH: (rest) => {
+        const [channel, message] = rest;
+        for (const fn of subscribers) fn(channel ?? "", message ?? "");
+        socket.write(":1\r\n");
+      },
+      SUBSCRIBE: () => {
+        // 订阅确认帧不发（client send() 不为 SUBSCRIBE 排 pending——发会错位）
+        subscribers.add((_channel: string, _message: string) => {});
+      },
+    };
+    const handleCommand = (args: string[]): void => {
+      const [verb, ...rest] = args;
+      const handler = handlers[verb ?? ""];
+      if (handler === undefined) {
+        socket.write("-ERR unknown\r\n");
+        return;
+      }
+      handler(rest);
+    };
+    const pump = (): void => {
       for (;;) {
-        // 解析请求命令（array of bulk strings）
         const parsed = parseResp(buffer);
         if (parsed === null) return;
         buffer = buffer.subarray(parsed.consumed);
@@ -31,50 +75,12 @@ export function startFakeRespServer(): Promise<FakeRespServer> {
         if (!Array.isArray(command)) continue;
         const args = command.map(String);
         received.push(args);
-        const [verb, ...rest] = args;
-        switch (verb) {
-          case "AUTH":
-            socket.write("+OK\r\n");
-            break;
-          case "GET": {
-            const value = state.get(rest[0] ?? "");
-            socket.write(value === undefined ? "$-1\r\n" : `$${value.length}\r\n${value}\r\n`);
-            break;
-          }
-          case "SET":
-            state.set(rest[0] ?? "", rest[1] ?? "");
-            socket.write("+OK\r\n");
-            break;
-          case "DEL":
-            state.delete(rest[0] ?? "");
-            socket.write(":1\r\n");
-            break;
-          case "SADD": {
-            const set = sets.get(rest[0] ?? "") ?? new Set<string>();
-            set.add(rest[1] ?? "");
-            sets.set(rest[0] ?? "", set);
-            socket.write(":1\r\n");
-            break;
-          }
-          case "SISMEMBER": {
-            const hit = sets.get(rest[0] ?? "")?.has(rest[1] ?? "") ?? false;
-            socket.write(hit ? ":1\r\n" : ":0\r\n");
-            break;
-          }
-          case "PUBLISH": {
-            const [channel, message] = rest;
-            for (const fn of subscribers) fn(channel ?? "", message ?? "");
-            socket.write(":1\r\n");
-            break;
-          }
-          case "SUBSCRIBE":
-            // 订阅确认帧不发（client send() 不为 SUBSCRIBE 排 pending——发会错位）
-            subscribers.add((_channel: string, _message: string) => {});
-            break;
-          default:
-            socket.write("-ERR unknown\r\n");
-        }
+        handleCommand(args);
       }
+    };
+    socket.on("data", (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      pump();
     });
   });
   return new Promise((resolve) => {

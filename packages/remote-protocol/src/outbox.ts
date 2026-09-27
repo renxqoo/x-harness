@@ -35,6 +35,11 @@ export class OutboxStream {
     return this.entries.filter((e) => !e.acked && e.frame.seq > since).map((e) => e.frame);
   }
 
+  /** 硬上限收缩（无 ACK 消费者兜底——丢最旧保连接；C3） */
+  compactOldest(keep: number): void {
+    while (this.entries.length > keep) this.entries.shift();
+  }
+
   /** ACK 水位推进：释放已确认事件条目 */
   applyAck(upTo: number): number {
     let released = 0;

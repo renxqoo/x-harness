@@ -24,25 +24,38 @@ export class RespClient {
   async ensure(): Promise<void> {
     if (this.socket !== null && !this.socket.destroyed) return;
     if (this.connecting) {
-      await new Promise<void>((resolve) => {
-        this.onceConnected.push(resolve);
+      await new Promise<void>((resolve, reject) => {
+        this.onceConnected.push((error) => {
+          if (error === undefined) resolve();
+          else reject(error);
+        });
       });
       return;
     }
     this.connecting = true;
-    await this.connectOnce();
-    this.connecting = false;
-    for (const fn of this.onceConnected) fn();
-    this.onceConnected = [];
+    try {
+      await this.connectOnce();
+      // 重连成功：重放订阅集（SUBSCRIBE 短连接语义——C6）
+      for (const channel of this.subscribeHandlers.keys()) {
+        this.socket?.write(encodeCommand(["SUBSCRIBE", channel]));
+      }
+    } finally {
+      this.connecting = false;
+      for (const fn of this.onceConnected) fn();
+      this.onceConnected = [];
+    }
   }
 
-  private onceConnected: Array<() => void> = [];
+  private onceConnected: Array<((error?: Error) => void)> = [];
 
   private connectOnce(): Promise<void> {
     return new Promise((resolve, reject) => {
       const socket = connect({ host: this.options.host, port: this.options.port });
       const fail = (error: Error): void => {
         this.socket = null;
+        // 连接失败：排空等待者（否则永久楔死——C6）
+        const waiters = this.onceConnected.splice(0);
+        for (const fn of waiters) (fn as (err?: Error) => void)(error);
         reject(error);
       };
       socket.on("error", fail);

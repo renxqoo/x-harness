@@ -86,6 +86,13 @@ describe("帧读取", () => {
     expect(r.error).not.toBeNull();
   });
 
+  it("F3 回归：RSV 位帧静默不计入文本（不崩）", () => {
+    const r = new WebSocketFrameReader();
+    r.push(Buffer.from([0x91, 0x01, 0x41])); // FIN|RSV1, len1, 'A'
+    expect(r.drainTextFrames()).toEqual([]);
+    expect(r.error).toBe("unsupported rsv bits");
+  });
+
   it("分片到达（半帧不产帧，补齐后产出）", () => {
     const r = new WebSocketFrameReader();
     const frame = Buffer.concat([Buffer.from([0x81, 0x03]), Buffer.from("xyz")]);

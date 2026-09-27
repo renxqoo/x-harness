@@ -77,6 +77,25 @@ describe("HTTP 面", () => {
     expect(conflict.status).toBe(409);
   });
 
+  it("回归（D1 症状：连接抹 enroll 钥→身份劫持）：连接不改钉存钥；异钥 enroll 恒 409", async () => {
+    const kp = generateSigningKeyPair();
+    const nonce = "d1";
+    const t = enrollTranscript({ installationId: "inst_d1", gatewayKeyPub: kp.pub, nodeId: relay.nodeId, nonce });
+    const first = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_d1", gatewayKeyPub: kp.pub, sig: signBytes(kp.secret, new TextEncoder().encode(t)), nonce } });
+    expect(first.status).toBe(200);
+    // gateway 连接（token 主体 inst_d1）
+    const gw = await dialClient({ port: relayPort(relay), token: relay.issueTestToken({ kind: "gateway", subject: "inst_d1" }) });
+    await sleep(200);
+    // 钉存钥仍为原钥
+    expect((await relay.store.getInstallation("inst_d1"))?.gatewayKeyPub).toBe(kp.pub);
+    // 异钥 enroll → 409
+    const other = generateSigningKeyPair();
+    const t2 = enrollTranscript({ installationId: "inst_d1", gatewayKeyPub: other.pub, nodeId: relay.nodeId, nonce });
+    const hijack = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_d1", gatewayKeyPub: other.pub, sig: signBytes(other.secret, new TextEncoder().encode(t2)), nonce } });
+    expect(hijack.status).toBe(409);
+    gw.close();
+  });
+
   it("pairingTicket：仅 gateway token 可申请", async () => {
     const ok = await httpPost({ port: relayPort(relay), path: "/api/pairing-ticket", body: { pairingId: "pr_1" }, token: gwToken });
     expect(ok.status).toBe(200);
@@ -103,9 +122,9 @@ describe("WSS 接入与路由", () => {
     const dev = await dialClient({ port: relayPort(relay), token: devToken });
     // 等 device 路由登记
     await sleep(100);
-    dev.send(JSON.stringify({ v: 1, from: "dev_route_1", to: `gw_${installationId}`, payload: "aGVsbG8=" }));
+    dev.send(JSON.stringify({ v: 1, from: "dev_route_1", to: `gw_${installationId}`, payload: "aGVsbG8=", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     await expect(gw.waitLine((l) => l.includes("dev_route_1"))).resolves.toContain("aGVsbG8=");
-    gw.send(JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "dev_route_1", payload: "cmVwbHk=" }));
+    gw.send(JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "dev_route_1", payload: "cmVwbHk=", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     await expect(dev.waitLine((l) => l.includes("gw_"))).resolves.toContain("cmVwbHk=");
     gw.close();
     dev.close();
@@ -116,7 +135,7 @@ describe("WSS 接入与路由", () => {
     const dev = await dialClient({ port: relayPort(relay), token: relay.issueTestToken({ kind: "device", subject: "bind", installationId }) });
     await sleep(100);
     // dev_bind 冒充别人发
-    dev.send(JSON.stringify({ v: 1, from: "dev_spoofed", to: `gw_${installationId}`, payload: "eA==" }));
+    dev.send(JSON.stringify({ v: 1, from: "dev_spoofed", to: `gw_${installationId}`, payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     await expect(gw.waitLine((l) => l.includes("dev_spoofed"), 800).catch(() => "timeout" as unknown as string)).resolves.toBe("timeout");
     gw.close();
     dev.close();
@@ -135,7 +154,7 @@ describe("WSS 接入与路由", () => {
   it("撤销后：路由到已撤销设备 → no-route", async () => {
     const gw = await dialClient({ port: relayPort(relay), token: gwToken });
     await httpPost({ port: relayPort(relay), path: "/api/revoke", body: { deviceId: "revoked" }, token: gwToken });
-    gw.send(JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "dev_revoked", payload: "eA==" }));
+    gw.send(JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "dev_revoked", payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     const line = await gw.waitLine((l) => Buffer.from((JSON.parse(l) as { payload: string }).payload, "base64").toString("utf8").includes("no-route"));
     expect(line).toBeTruthy();
     gw.close();
@@ -173,6 +192,26 @@ describe("WSS 接入与路由", () => {
     ).rejects.toThrow(/token secret/);
   });
 
+  it("D2 回归：跨节点转发 dev_ 目标分派设备连接（pattern 频道语义）", async () => {
+    // 同节点直投（无跨节点），此用例锚 broadcast 消费面：发布 revoke 广播后设备连接被断
+    const gw = await dialClient({ port: relayPort(relay), token: gwToken });
+    const devToken = relay.issueTestToken({ kind: "device", subject: "bc1", installationId });
+    const dev = await dialClient({ port: relayPort(relay), token: devToken });
+    await sleep(150);
+    await httpPost({ port: relayPort(relay), path: "/api/revoke", body: { deviceId: "bc1" }, token: gwToken });
+    await sleep(400);
+    expect(dev.raw.destroyed).toBe(true);
+    gw.close();
+  });
+
+  it("E5 回归：超 16MiB 信封断连", async () => {
+    const gw = await dialClient({ port: relayPort(relay), token: gwToken });
+    const huge = JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "dev_x", payload: "x".repeat(17 * 1024 * 1024), nonce: "A" });
+    gw.send(huge);
+    await sleep(500);
+    expect(gw.raw.destroyed).toBe(true);
+  });
+
   it("句柄面：issuePairingTicket 签发可接入；close 后 server 关闭", async () => {
     const ticket = relay.issuePairingTicket("pr_handle");
     expect(ticket.split(".").length).toBe(3);
@@ -184,7 +223,7 @@ describe("WSS 接入与路由", () => {
 
   it("未知目标 → no-route", async () => {
     const gw = await dialClient({ port: relayPort(relay), token: gwToken });
-    gw.send(JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "gw_nope", payload: "eA==" }));
+    gw.send(JSON.stringify({ v: 1, from: `gw_${installationId}`, to: "gw_nope", payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     const errLine = await gw.waitLine((l) => Buffer.from((JSON.parse(l) as { payload: string }).payload, "base64").toString("utf8").includes("no-route"));
     expect(errLine).toBeTruthy();
     gw.close();

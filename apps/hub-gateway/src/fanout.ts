@@ -1,12 +1,14 @@
 // 事件扇出与认领式响应路由（DESIGN §1.2.1/§1.2.3）：单写者、全序、id 重映射、
 // 订阅域过滤、WAL seq 域双端一致、coalesce（delta 类帧背压合并）。
 import type { EventBody, Frame } from "@x-harness/remote-protocol";
-import { OutboxStream } from "@x-harness/remote-protocol";
+import { OutboxStream, REPLAY_BUFFER_MAX } from "@x-harness/remote-protocol";
 
 /** host 输出帧前缀分类（不 parse body） */
 export type HostFrameKind = "response" | "event" | "ui_request" | "heartbeat" | "hub_error" | "thread_died" | "thread_parked" | "unknown";
 
+/** host 帧 key 序契约：response 为 id-first（host frame-classify 单点同源）；其余 type-first */
 export function classifyHostLine(line: string): HostFrameKind {
+  if (line.startsWith('{"id":')) return "response"; // host responseLine 恒 id-first（含 null/undefined id）
   if (line.startsWith('{"type":"response"')) return "response";
   if (line.startsWith('{"type":"event"')) return "event";
   if (line.startsWith('{"type":"ui_request"')) return "ui_request";
@@ -25,6 +27,9 @@ export interface ClientTarget {
   send(frame: Frame): void;
 }
 
+/** tier 裁决器（scope 变更即时生效——D4：fanout 不再持过期 tier 拷贝） */
+export type TierResolver = (target: string) => "read" | "interact" | "full" | "owner";
+
 export interface FanoutOptions {
   coalesceBacklogFrames: number;
   coalesceLagMs: number;
@@ -36,6 +41,7 @@ const COALESCABLE = new Set(["agent/assistant-stream", "llm/chunk", "agent/tool-
 
 export class Fanout {
   private readonly targets = new Map<string, ClientTarget>();
+  private tierResolver: TierResolver | null = null;
   private readonly outboxes = new Map<string, OutboxStream>(); // target → per-thread outbox 复用单流
   private readonly perThreadSeq = new Map<string, number>();
   private hostIdCounter = 0;
@@ -46,9 +52,26 @@ export class Fanout {
     this.targets.set(target.target, target);
   }
 
+  /** tier 裁决器注入（scope 变更即时生效） */
+  setTierResolver(resolver: TierResolver | null): void {
+    this.tierResolver = resolver;
+  }
+
+  /** 当前有效 tier（resolver 优先；缺席用 attach 时快照） */
+  effectiveTier(target: string): "read" | "interact" | "full" | "owner" {
+    const stored = this.targets.get(target);
+    if (stored === undefined) return "read";
+    return this.tierResolver !== null ? this.tierResolver(target) : stored.tier;
+  }
+
   detach(targetId: string): void {
     this.targets.delete(targetId);
-    this.outboxes.delete(targetId);
+    for (const key of this.outboxes.keys()) {
+      if (key.startsWith(`${targetId}:`)) this.outboxes.delete(key);
+    }
+    for (const key of this.pendingDeltas.keys()) {
+      if (key.startsWith(`${targetId}:`)) this.pendingDeltas.delete(key);
+    }
   }
 
   targetOf(id: string): ClientTarget | null {
@@ -83,7 +106,7 @@ export class Fanout {
   /** ui_request 广播（scope 过滤——interact 及以上，§1.2.1 M12 处置） */
   fanoutUiRequest(body: { requestId: string; threadId: string; method: string; payload: Record<string, unknown> }): void {
     for (const target of this.targets.values()) {
-      if (target.tier === "read") continue;
+      if (this.effectiveTier(target.target) === "read") continue;
       const streamId = "ui";
       const outbox = this.outboxFor(target.target, streamId);
       const { frame } = outbox.enqueue(body, "ui_request", null);
@@ -104,6 +127,10 @@ export class Fanout {
     if (outbox === undefined) {
       outbox = new OutboxStream(streamId);
       this.outboxes.set(key, outbox);
+    }
+    // C3：outbox 硬上限（owner/无 ACK 客户端不再无界增长——丢最旧保连接）
+    if (outbox.replayWindowExceeded()) {
+      outbox.compactOldest(REPLAY_BUFFER_MAX);
     }
     return outbox;
   }

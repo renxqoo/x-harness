@@ -28,6 +28,11 @@ export class WebSocketFrameReader {
     if (buffer.length < 2) return null;
     const first = buffer[0]!;
     const second = buffer[1]!;
+    // RSV/continuation/未知控制帧拒绝（本实现不支持扩展——显式报错优于静默误读，F3）
+    if ((first & 0x70) !== 0) {
+      this.error = "unsupported rsv bits";
+      return null;
+    }
     const opcode = first & 0x0f;
     const masked = (second & 0x80) !== 0;
     const length7 = second & 0x7f;

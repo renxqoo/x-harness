@@ -2,7 +2,11 @@
 import { describe, expect, it } from "vitest";
 import { encodeCommand, parseResp, RespClient } from "../resp.ts";
 import { startFakeRespServer } from "./fake-resp.ts";
-import { createServer, type Server } from "node:net";
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 describe("RESP 编解码", () => {
   it("命令编码：array of bulk strings", () => {
@@ -38,11 +42,12 @@ describe("RespClient 旅程（fake server）", () => {
     expect(await client.sismember("revoked", "dev_x")).toBe(false);
     const got: Array<[string, string]> = [];
     await client.subscribe("chan-1", (channel, message) => got.push([channel, message]));
-    fake.subscribe((channel: string, message: string) => {
+    const onFakeMessage = (channel: string): void => {
       if (channel === "chan-1") client.publish("noop", "noop").catch(() => {});
-    });
+    };
+    fake.subscribe(onFakeMessage);
     await client.publish("chan-1", "hello");
-    await new Promise((r) => setTimeout(r, 100));
+    await sleep(100);
     client.close();
     await fake.close();
     // subscribe 消息经 client 的 subscribeHandlers 分发（此处仅验证不崩 + 写面全走）

@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import { createRatchetCodec } from "../ratchet-store.ts";
 import { connectRemote } from "../connect.ts";
-import { deriveInitialChains, generateBoxKeyPair, x25519, RatchetSession, aeadSeal, aeadOpen, buildAad, buildNonce, type Frame } from "@x-harness/remote-protocol";
+import { deriveInitialChains, generateBoxKeyPair, x25519, RatchetSession, aeadSeal, buildAad, parseNonce } from "@x-harness/remote-protocol";
 
 function codecPair(): { gw: ReturnType<typeof createRatchetCodec>; dev: ReturnType<typeof createRatchetCodec> } {
   const a = generateBoxKeyPair();
@@ -17,20 +17,21 @@ function codecPair(): { gw: ReturnType<typeof createRatchetCodec>; dev: ReturnTy
   let gwRecv = 0;
   const gw = {
     ratchet: gwRatchet,
-    async seal(frameJson: string): Promise<string | null> {
+    async seal(frameJson: string): Promise<{ payload: string; nonce: string } | null> {
       const outcome = await gwRatchet.seal({ plaintext: new TextEncoder().encode(frameJson), aadFrom: "gw_i1", aadTo: "dev_d1" });
       if (!outcome.ok) return null;
       const key = new Uint8Array(Buffer.from(outcome.keyUsed, "hex"));
       const ct = aeadSeal({ key, nonce: outcome.nonce, plaintext: new TextEncoder().encode(frameJson), aad: outcome.aad });
-      return Buffer.from(ct).toString("base64");
+      return { payload: Buffer.from(ct).toString("base64"), nonce: Buffer.from(outcome.nonce).toString("base64") };
     },
-    async open(payloadBase64: string): Promise<string | null> {
+    async open(payloadBase64: string, nonceBase64: string): Promise<string | null> {
       const ct = new Uint8Array(Buffer.from(payloadBase64, "base64"));
-      const epoch = gwRatchet.snapshotRecv().epoch;
-      const index = gwRecv;
-      const outcome = await gwRatchet.open({ ciphertext: ct, nonce: buildNonce(epoch, 1, index), aad: buildAad("dev_d1", "gw_i1", epoch), index, epoch });
+      const nonceBytes = new Uint8Array(Buffer.from(nonceBase64, "base64"));
+      const parsed = parseNonce(nonceBytes);
+      if (parsed === null) return null;
+      const outcome = await gwRatchet.open({ ciphertext: ct, nonce: nonceBytes, aad: buildAad("dev_d1", "gw_i1", parsed.epoch), index: parsed.index, epoch: parsed.epoch });
       if (!outcome.ok) return null;
-      gwRecv = outcome.index + 1;
+      gwRecv = Math.max(gwRecv, outcome.index + 1);
       return Buffer.from(outcome.plaintext).toString("utf8");
     },
   };
@@ -42,19 +43,23 @@ describe("codec 对称互发", () => {
     const { gw, dev } = codecPair();
     const up1 = await dev.seal(JSON.stringify({ kind: "command", streamId: "c", seq: 1, body: { command: "thread/list", id: "m1" } }));
     expect(up1).not.toBeNull();
-    expect(await gw.open(up1!)).toContain("m1");
+    expect(await gw.open(up1!.payload, up1!.nonce)).toContain("m1");
     const down1 = await gw.seal(JSON.stringify({ kind: "response", streamId: "c", seq: 1, body: { id: "m1", success: true } }));
     expect(down1).not.toBeNull();
-    expect(await dev.open(down1!)).toContain("m1");
+    expect(await dev.open(down1!.payload, down1!.nonce)).toContain("m1");
     const up2 = await dev.seal(JSON.stringify({ kind: "ack", streamId: "c", seq: 2, body: {} }));
-    expect(await gw.open(up2!)).toContain("ack");
+    const up2v = up2!;
+    expect(await gw.open(up2v.payload, up2v.nonce)).toContain("ack");
     const down2 = await gw.seal(JSON.stringify({ kind: "event", streamId: "e", seq: 1, body: { threadId: "t", name: "turn/end" } }));
-    expect(await dev.open(down2!)).toContain("turn/end");
+    const down2v = down2!;
+    expect(await dev.open(down2v.payload, down2v.nonce)).toContain("turn/end");
+    // 重发同帧：L1 拒收（index 回退）——dup 幂等归 L2（去重补 ACK），两层职责分离
+    expect(await gw.open(up2v.payload, up2v.nonce)).toBeNull();
   });
 
   it("codec 垃圾输入 null（解密失败降级）", async () => {
     const { dev } = codecPair();
-    expect(await dev.open(Buffer.from("garbage-bytes").toString("base64"))).toBeNull();
+    expect(await dev.open(Buffer.from("garbage-bytes").toString("base64"), Buffer.alloc(17).toString("base64"))).toBeNull();
   });
 });
 

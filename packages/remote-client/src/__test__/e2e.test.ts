@@ -4,11 +4,11 @@
 import { describe, expect, it, afterAll, beforeAll } from "vitest";
 import { startRelay } from "../../../../apps/hub-relay/src/main.ts";
 import { startGateway } from "../../../../apps/hub-gateway/src/main.ts";
-import { connectRemote, type RemoteClientHandle } from "../connect.ts";
+import { connectRemote } from "../connect.ts";
 import { createRatchetCodec } from "../ratchet-store.ts";
-import { deriveInitialChains, generateBoxKeyPair, x25519 } from "@x-harness/remote-protocol";
+import { generateBoxKeyPair, x25519 } from "@x-harness/remote-protocol";
 import { connect } from "node:net";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 

@@ -38,7 +38,7 @@ export async function dialClient(spec: { port: number; token: string; path?: str
     socket.once("error", reject);
   });
   const reader = new WebSocketFrameReader();
-  const writer = new WebSocketFrameWriter(socket);
+  const writer = new WebSocketFrameWriter(socket, { clientMask: true });
   const key = randomBytes(16).toString("base64");
   socket.write(`GET ${spec.path ?? "/"}?token=${encodeURIComponent(spec.token)} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
   // 读握手响应

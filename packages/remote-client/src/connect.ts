@@ -7,10 +7,10 @@ import { decodeEnvelope, encodeEnvelope, parseFrame, type Frame, type ResponseBo
 import { WebSocketFrameReader, WebSocketFrameWriter } from "@x-harness/remote-protocol";
 
 export interface RemoteCodec {
-  /** 明文帧 JSON → 密文 base64；失败 null（不发） */
-  seal(frameJson: string): Promise<string | null>;
-  /** 密文 base64 → 明文帧 JSON；失败 null（丢弃+计数） */
-  open(payloadBase64: string): Promise<string | null>;
+  /** 明文帧 JSON → {payload, nonce}；失败 null（不发） */
+  seal(frameJson: string): Promise<{ payload: string; nonce: string } | null>;
+  /** 密文 → 明文帧 JSON；失败 null（丢弃+计数） */
+  open(payloadBase64: string, nonceBase64: string): Promise<string | null>;
 }
 
 export interface RemoteClientOptions {
@@ -36,7 +36,8 @@ export interface RemoteClientHandle {
 
 export function connectRemote(options: RemoteClientOptions): RemoteClientHandle {
   const url = new URL(options.relayUrl.replace(/^wss/, "https").replace(/^ws/, "http"));
-  const port = url.port === "" ? (options.useTls ? 443 : 80) : Number(url.port);
+  const defaultPort = options.useTls ? 443 : 80;
+  const port = url.port === "" ? defaultPort : Number(url.port);
   const frames: Frame[] = [];
   const responseWaiters = new Map<string, (response: ResponseBody) => void>();
   let writer: WebSocketFrameWriter | null = null;
@@ -47,7 +48,7 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
     if (writer === null || stopped) return false;
     const sealed = await options.codec.seal(JSON.stringify(frame));
     if (sealed === null) return false;
-    const env = encodeEnvelope({ v: 1, from: `dev_${options.deviceId}`, to: `gw_${options.installationId}`, payload: sealed });
+    const env = encodeEnvelope({ v: 1, from: `dev_${options.deviceId}`, to: `gw_${options.installationId}`, payload: sealed.payload, nonce: sealed.nonce });
     writer.writeText(env);
     return true;
   }
@@ -59,11 +60,8 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
       options.log(`relay: ${env.payload.slice(0, 80)}`);
       return;
     }
-    const plaintext = await options.codec.open(env.payload);
-    if (plaintext === null) {
-      if (typeof process !== "undefined" && process.env["RC_DEBUG"]) process.stderr.write(`codec open null (len=${env.payload.length})\n`);
-      return;
-    }
+    const plaintext = await options.codec.open(env.payload, env.nonce);
+    if (plaintext === null) return;
     const frame = parseFrame(plaintext);
     if (frame === null) return;
     frames.push(frame);
@@ -80,20 +78,24 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
   const reader = new WebSocketFrameReader();
   let handshakeDone = false;
   let buf = Buffer.alloc(0);
+  const onHandshake = (chunk: Buffer): boolean => {
+    buf = Buffer.concat([buf, chunk]);
+    if (!buf.includes("\r\n\r\n")) return false;
+    const head = buf.subarray(0, buf.indexOf("\r\n\r\n")).toString();
+    if (!head.includes("101")) {
+      options.onStatus("disconnected", head.split("\r\n")[0] ?? "handshake failed");
+      return false;
+    }
+    handshakeDone = true;
+    writer = new WebSocketFrameWriter(s, { clientMask: true });
+    options.onStatus("connected", url.host);
+    const rest = buf.subarray(buf.indexOf("\r\n\r\n") + 4);
+    if (rest.length > 0) reader.push(rest);
+    return true;
+  };
   s.on("data", (chunk: Buffer) => {
     if (!handshakeDone) {
-      buf = Buffer.concat([buf, chunk]);
-      if (!buf.includes("\r\n\r\n")) return;
-      const head = buf.subarray(0, buf.indexOf("\r\n\r\n")).toString();
-      if (!head.includes("101")) {
-        options.onStatus("disconnected", head.split("\r\n")[0] ?? "handshake failed");
-        return;
-      }
-      handshakeDone = true;
-      writer = new WebSocketFrameWriter(s);
-      options.onStatus("connected", url.host);
-      const rest = buf.subarray(buf.indexOf("\r\n\r\n") + 4);
-      if (rest.length > 0) reader.push(rest);
+      void onHandshake(chunk);
       return;
     }
     reader.push(chunk);

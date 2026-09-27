@@ -69,7 +69,8 @@ function coerceConfig(raw: Partial<GatewayConfig>): GatewayConfig {
   return {
     relayUrl: typeof raw.relayUrl === "string" ? raw.relayUrl : "",
     relayKeyFingerprint: typeof raw.relayKeyFingerprint === "string" ? raw.relayKeyFingerprint : "",
-    remoteEnabled: raw.remoteEnabled !== false,
+    // 缺键 = false（与文件缺席同缺省——E6：写了配置文件的本地形态不该突然要 relayUrl）
+    remoteEnabled: raw.remoteEnabled === true,
     ownerSocketPath: typeof raw.ownerSocketPath === "string" ? raw.ownerSocketPath : null,
     hostBin: typeof raw.hostBin === "string" ? raw.hostBin : null,
     logLevel: raw.logLevel === "debug" || raw.logLevel === "warn" || raw.logLevel === "error" ? raw.logLevel : "info",

@@ -186,6 +186,16 @@ export function buildNonce(epoch: number, direction: 0 | 1, index: number): Uint
   return nonce;
 }
 
+/** nonce 布局反解（epoch(8 BE)|dir(1)|index(8 BE)）；垃圾返回 null */
+export function parseNonce(nonce: Uint8Array): { epoch: number; index: number; direction: number } | null {
+  if (nonce.length !== 17) return null;
+  const dv = new DataView(nonce.buffer, nonce.byteOffset, nonce.byteLength);
+  const epoch = dv.getBigUint64(0, false);
+  const index = dv.getBigUint64(9, false);
+  if (epoch > BigInt(Number.MAX_SAFE_INTEGER) || index > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return { epoch: Number(epoch), index: Number(index), direction: nonce[8] ?? 0 };
+}
+
 /** AAD = v1|from|to|epoch（L3 头 + 代际） */
 export function buildAad(from: string, to: string, epoch: number): Uint8Array {
   return new Uint8Array(Buffer.from(`v1|${from}|${to}|${epoch}`, "utf8"));

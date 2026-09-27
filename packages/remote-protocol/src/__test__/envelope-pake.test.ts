@@ -5,14 +5,15 @@ import { pakeConfirm, pakeConfirmVerify, pakeInitiate, pakeRespond } from "../pa
 
 describe("L3 信封", () => {
   it("编解码往返；垃圾/缺字段降级 null", () => {
-    const env = { v: 1, from: "dev_1", to: "gw_i1", payload: "QUJD" };
+    const env = { v: 1, from: "dev_1", to: "gw_i1", payload: "QUJD", nonce: Buffer.alloc(17).toString("base64") };
     const line = encodeEnvelope(env);
     expect(decodeEnvelope(line)).toEqual(env);
     expect(decodeEnvelope("")).toBeNull();
     expect(decodeEnvelope("not-json")).toBeNull();
     expect(decodeEnvelope('{"v":2,"from":"a","to":"b","payload":"c"}')).toBeNull();
     expect(decodeEnvelope('{"v":1,"from":"","to":"b","payload":"c"}')).toBeNull();
-    expect(decodeEnvelope('{"v":1,"from":"a","to":"b"}')).toBeNull();
+    expect(decodeEnvelope('{"v":1,"from":"a","to":"b","nonce":"x"}')).toBeNull();
+    expect(decodeEnvelope('{"v":1,"from":"a","to":"b","payload":"c"}')).toBeNull();
     expect(decodeEnvelope('"string"')).toBeNull();
   });
 });
