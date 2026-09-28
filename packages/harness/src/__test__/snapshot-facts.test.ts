@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { SNAPSHOT_SUPERSEDES, isSnapshotNode } from "@x-harness/agent-loop";
 import type { SurfaceNode } from "@x-harness/session";
-import { INSTRUCTIONS_CAP_BYTES, localToday, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, renderPermissionModeSnapshot } from "../snapshot-facts.ts";
+import { INSTRUCTIONS_CAP_BYTES, localToday, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, renderPermissionModeNonOwnerSnapshot, renderPermissionModeSnapshot } from "../snapshot-facts.ts";
 
 let dirs: string[] = [];
 afterEach(() => {
@@ -61,6 +61,14 @@ describe("权限档快照（plan 模式告知——kick 时点注入）", () => 
     expect(renderPermissionModeSnapshot("auto")).toBe(`<snapshot kind="permission-mode">\n${SNAPSHOT_SUPERSEDES}\nPermission mode: auto.\n</snapshot>`);
     const node = { seq: 0, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: planText }] } } } as unknown as SurfaceNode;
     expect(isSnapshotNode(node)).toBe(true);
+  });
+
+  it("非 owner 会话变体：plan 档渲染观察者事实行（无「等批准」指引、不含 You are in plan mode）", () => {
+    const observer = renderPermissionModeNonOwnerSnapshot("plan");
+    expect(observer).toContain('<snapshot kind="permission-mode">');
+    expect(observer).toContain("only the session that entered plan mode can submit");
+    expect(observer).not.toContain("You are in plan mode");
+    expect(renderPermissionModeNonOwnerSnapshot("auto")).toBe(`<snapshot kind="permission-mode">\n${SNAPSHOT_SUPERSEDES}\nPermission mode: auto.\n</snapshot>`);
   });
 });
 

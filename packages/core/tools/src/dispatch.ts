@@ -132,6 +132,12 @@ async function runBody(
   return gateOutcome(raw);
 }
 
+/** 范围型读判定：恒范围声明或谓词按参求值（grep 的目录形——文件目标不做范围判定） */
+function isScopeRead(tool: ToolDefinition, args: unknown): boolean {
+  if (tool.readsSubtree === true) return true;
+  return typeof tool.readsSubtree === "function" && tool.readsSubtree(args) === true;
+}
+
 /** preExecute 载荷：control 标记（isControlTool 工具——permission 直通依据）与 session
  *  缺省不伪造字段 */
 function preExecutePayload(tool: ToolDefinition, request: ToolCallRequest): {
@@ -139,13 +145,19 @@ function preExecutePayload(tool: ToolDefinition, request: ToolCallRequest): {
   readonly name: string;
   readonly args: unknown;
   readonly control?: true;
+  /** 工具类别（ToolDefinition.kind 声明穿引——permission 路由/上层策略面） */
+  readonly kind?: string;
+  /** path 是搜索范围（readsSubtree 声明穿引——内核子树拒读判定用） */
+  readonly readsSubtree?: true;
   readonly session?: SessionId;
 } {
   return {
     callId: request.callId,
     name: request.name,
     args: request.args,
-    ...(tool.isControlTool !== undefined ? { control: true } : {}),
+    ...(tool.isControlTool === true ? { control: true } : {}), // 显式 false ≠ 未声明（K#2——旧 !== undefined 穿引假值即直通）
+    ...(tool.kind !== undefined ? { kind: tool.kind } : {}),
+    ...(isScopeRead(tool, request.args) ? { readsSubtree: true } : {}),
     ...(request.session !== undefined ? { session: request.session } : {}),
   };
 }

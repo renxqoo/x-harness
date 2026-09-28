@@ -9,6 +9,8 @@
   "dependencies": {
     "@x-harness/core": "workspace:*",
     "@x-harness/permission": "workspace:*",
+    "@x-harness/permission-modes": "workspace:*",
+    "@x-harness/session": "workspace:*",
     "@x-harness/tools": "workspace:*"
   },
   "devDependencies": {

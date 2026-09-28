@@ -5,7 +5,7 @@
 // resume 不继承（mode 是装配事实非会话事实——plan/full 建档、无 flag 恢复即回 auto）。
 
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -111,11 +111,13 @@ describe("--permission plan 装配旅程", () => {
     expect(j.audits).toContainEqual({ tool: "write", verdict: "deny", resolvedBy: "mode:plan", reason: "plan mode disallows write", session: j.session });
   });
 
-  it("bash 全拒（mode:plan）——plan 不被 bash 写文件绕过（首次入锚）", async () => {
+  it("bash 写面拒（mode:plan）——plan 不被 bash 写文件绕过；只读命令放行（研究通道）", async () => {
     const j = await makeJourney({ permission: "plan" });
-    const out = await j.dispatch("bash", { command: "echo hi" });
-    expect(out).toMatchObject({ isError: true, content: expect.stringContaining("denied:permission:plan mode disallows bash") });
-    expect(j.audits).toContainEqual({ tool: "bash", verdict: "deny", resolvedBy: "mode:plan", reason: "plan mode disallows bash", session: j.session });
+    const out = await j.dispatch("bash", { command: "echo hi > new.txt" });
+    expect(out).toMatchObject({ isError: true, content: expect.stringContaining("denied:permission:plan mode: output redirect denied") });
+    expect(j.audits).toContainEqual({ tool: "bash", verdict: "deny", resolvedBy: "mode:plan", reason: "plan mode: output redirect denied", session: j.session });
+    const research = await j.dispatch("bash", { command: "git log --oneline -5" });
+    expect(research.isError).toBeUndefined();
   });
 });
 
@@ -141,14 +143,16 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
 
   it("read/grep 界外真读到真搜到（授权根 / + 剖面 sysctl-read 窄许可——完整功能锚）", async () => {
     const j = await makeJourney({ permission: "full" });
-    const outsideDir = await mkdtemp(join(tmpdir(), "xh-permflag-fr-"));
+    const outsideDir = await mkdtemp(join(homedir(), "xh-permflag-fr-")); // 真界外（tmpdir 属 fence.writable——K#9 后为合法写面）
     roots.push(outsideDir);
     const target = join(outsideDir, "note.txt");
     await writeFile(target, "GREP-TARGET-LINE\n", "utf8");
     const read = await j.dispatch("read", { path: target });
     expect(read.isError).not.toBe(true);
     expect(read.content).toContain("GREP-TARGET-LINE");
-    const grep = await j.dispatch("grep", { pattern: "GREP-TARGET", path: outsideDir });
+    // R2（2026-09-28）：文件目标的 grep 走直读规则（full 放行）；目录形搜索命中无锚拒读
+    // 底线（**/.env 类）→ scope-deny ask——full 也不静默放过潜在 .env 收割（回归件在 permission 包）
+    const grep = await j.dispatch("grep", { pattern: "GREP-TARGET", path: target });
     expect(j.audits).toContainEqual({ tool: "grep", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", exec: "direct", session: j.session });
     expect(grep.isError).not.toBe(true); // 剖面缺 sysctl-read 时的症状：SEARCH_FAILED rg SIGABRT
     expect(grep.content).toContain("GREP-TARGET-LINE");
@@ -158,7 +162,7 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     const j = await makeJourney({ permission: "full" });
     const out = await j.dispatch("write", { path: ".git/config", content: "x" });
     expect(out.isError).toBe(true);
-    expect(j.audits).toContainEqual({ tool: "write", verdict: "deny", resolvedBy: "rule:user", reason: "rule:**/.git/**", session: j.session });
+    expect(j.audits).toContainEqual({ tool: "write", verdict: "deny", resolvedBy: "rule:default", reason: "rule:**/.git/**", session: j.session });
   });
 });
 
@@ -168,7 +172,7 @@ describe("缺省 sandboxed-auto 精确锚（U6——CLI 围栏优先）", () => 
     const inside = await j.dispatch("write", { path: "in.txt", content: "x" });
     expect(inside.isError).not.toBe(true);
     expect(j.audits).toContainEqual({ tool: "write", verdict: "allow", resolvedBy: "auto", reason: "in-root", exec: "contained", session: j.session });
-    const outside = join(tmpdir(), "xh-permflag-outside", "g.txt");
+    const outside = join(homedir(), "xh-permflag-outside", "g.txt"); // 真界外（tmpdir 属 fence.writable——K#9 后为合法写面）
     const blocked = await j.dispatch("write", { path: outside, content: "x" });
     expect(blocked.isError).toBe(true);
     expect(j.audits).toContainEqual({ tool: "write", verdict: "deny", resolvedBy: "outside-root", reason: expect.stringContaining("outside-root:"), session: j.session });
@@ -201,7 +205,7 @@ describe("resume 不继承 mode（mode 是装配事实非会话事实）", () =>
   it("full 建档 → 无 flag 恢复即回 auto：总括不落会话档，界外 write 回归 ask→deny 链", async () => {
     const sessionRoot = join(tmpdir(), `xh-permflag-resume-full-${String(Date.now())}`);
     roots.push(sessionRoot);
-    const outsideDir = await mkdtemp(join(tmpdir(), "xh-permflag-rf-"));
+    const outsideDir = await mkdtemp(join(homedir(), "xh-permflag-rf-")); // 真界外（tmpdir 属 fence.writable——K#9 后为合法写面）
     roots.push(outsideDir);
     const target = join(outsideDir, "f.txt");
     const first = await makeJourney({ permission: "full", persist: true, sessionRoot });

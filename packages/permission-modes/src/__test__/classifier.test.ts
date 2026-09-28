@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import { classifyPipeline } from "../classifier.ts";
-import { parseBash } from "../bash/ast.ts";
-import type { ParsedCommand } from "../bash/ast.ts";
+import { parseBash } from "@x-harness/permission";
+import type { ParsedCommand } from "@x-harness/permission";
 
 function commandsOf(source: string): ParsedCommand[] {
   const parsed = parseBash(source);

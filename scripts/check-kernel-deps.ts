@@ -9,10 +9,14 @@
 // @x-harness 上层边（测试用 vitest 等外部库与内核纯净性无关）。
 
 import { builtinModules } from "node:module";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { basename, join, relative } from "node:path";
 
 export const KERNEL_GROUP = ["@x-harness/core", "@x-harness/tools", "@x-harness/system-prompt", "@x-harness/exec-env", "@x-harness/session"] as const;
+/** permission 底层组（2026-09-28 L2 扩面）：permission 是零策略内核插件——生产面只许
+ *  依赖内核组 + tree-sitter 双件（bash 解析器）。策略归上层 permission-modes 等。 */
+const PERMISSION_GROUP = ["@x-harness/permission"] as const;
+const PERMISSION_EXTRA = new Set(["tree-sitter", "tree-sitter-bash"]);
 const EXTERNAL_ALLOWLIST = ["@sinclair/typebox"];
 const BUILTINS = new Set([...builtinModules, ...builtinModules.map((m) => `node:${m}`)]);
 const SCANNABLE_EXT = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".mjs"]);
@@ -54,10 +58,28 @@ interface CheckContext {
   readonly declared: Set<string>;
   /** __test__ 内只查上层边（W0 审查 #9 裁决） */
   readonly testsOnly: boolean;
+  /** permission 底层组口径（允许集 = 内核组 + 自身 + tree-sitter 双件） */
+  readonly permissionGroup?: boolean;
 }
 
 function inGroup(spec: string): boolean {
   return (KERNEL_GROUP as readonly string[]).some((name) => spec === name || spec.startsWith(`${name}/`));
+}
+
+/** permission 组成员集（内核组 + 自身） */
+function inPermissionGroup(spec: string): boolean {
+  return inGroup(spec) || (PERMISSION_GROUP as readonly string[]).some((name) => spec === name || spec.startsWith(`${name}/`));
+}
+
+/** @x-harness 面裁决：组允许集（core=内核组 / permission=内核组+自身）；生产面须声明。
+ *  permission 组测试面单放行 permission-modes（L3 已知 dev 环：内核行为矩阵经内置模式
+ *  件跑——运行时单向由 prod deps 断言；其余上层（tool-plan 等）在测试面同样禁） */
+function groupViolationOf(ctx: CheckContext, spec: string): Violation | undefined {
+  if (ctx.permissionGroup === true && ctx.testsOnly && (spec === "@x-harness/permission-modes" || spec.startsWith("@x-harness/permission-modes/"))) return undefined;
+  const allowed = ctx.permissionGroup === true ? inPermissionGroup(spec) : inGroup(spec);
+  if (!allowed) return { pkg: ctx.pkgName, file: ctx.file, specifier: spec, reason: "upper-layer" };
+  if (!ctx.testsOnly && !ctx.declared.has(spec.split("/").slice(0, 2).join("/"))) return { pkg: ctx.pkgName, file: ctx.file, specifier: spec, reason: "undeclared" };
+  return undefined;
 }
 
 /** 单说明符裁决（./ ../ 包内相对与 node 内置跳过；@x-harness 限内核组；外部限白名单；生产面须声明） */
@@ -65,10 +87,9 @@ function violationOf(ctx: CheckContext, spec: string): Violation | undefined {
   if (spec.startsWith("./") || spec.startsWith("../")) return undefined; // 包内相对
   if (BUILTINS.has(spec) || spec.startsWith("node:")) return undefined;
   if (spec.startsWith("@x-harness/")) {
-    if (!inGroup(spec)) return { pkg: ctx.pkgName, file: ctx.file, specifier: spec, reason: "upper-layer" };
-    if (!ctx.testsOnly && !ctx.declared.has(spec.split("/").slice(0, 2).join("/"))) return { pkg: ctx.pkgName, file: ctx.file, specifier: spec, reason: "undeclared" };
-    return undefined;
+    return groupViolationOf(ctx, spec);
   }
+  if (ctx.permissionGroup === true && PERMISSION_EXTRA.has(spec)) return undefined; // tree-sitter 双件（bash 解析器）
   if (ctx.testsOnly) return undefined; // 测试面外部库不查（vitest 等）
   const base = spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0]!;
   if (!EXTERNAL_ALLOWLIST.includes(base)) return { pkg: ctx.pkgName, file: ctx.file, specifier: spec, reason: "external-not-allowed" };
@@ -79,9 +100,18 @@ function violationOf(ctx: CheckContext, spec: string): Violation | undefined {
 /** 纯函数：违规清单（空 = 通过）。root = 仓根。 */
 export function kernelDependencyViolations(root: string): readonly Violation[] {
   const violations: Violation[] = [];
-  const coreRoot = join(root, "packages", "core");
-  for (const pkg of readdirSync(coreRoot)) {
-    const pkgDir = join(coreRoot, pkg);
+  scanGroup(root, { dir: join(root, "packages", "core"), permissionGroup: false }, violations);
+  scanGroup(root, { dir: join(root, "packages", "permission"), permissionGroup: true }, violations);
+  return violations;
+}
+
+/** 单组扫描：组目录下逐包（manifest 声明集 + 源文件说明符裁决） */
+function scanGroup(root: string, group: { readonly dir: string; readonly permissionGroup: boolean }, violations: Violation[]): void {
+  const { dir: groupDir, permissionGroup } = group;
+  if (!existsSync(groupDir)) return; // 夹具树可只建 core 组（单组测试形态）
+  // 组目录两形：多包目录（packages/core/*）或单包自身（packages/permission——package.json 在组根）
+  const pkgDirs = existsSync(join(groupDir, "package.json")) ? [groupDir] : readdirSync(groupDir).map((entry) => join(groupDir, entry));
+  for (const pkgDir of pkgDirs) {
     if (!statSync(pkgDir).isDirectory()) continue;
     const manifest = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8")) as {
       name?: string;
@@ -89,17 +119,16 @@ export function kernelDependencyViolations(root: string): readonly Violation[] {
       devDependencies?: Record<string, string>;
     };
     const declared = new Set([...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.devDependencies ?? {})]);
-    const pkgName = manifest.name ?? pkg;
+    const pkgName = manifest.name ?? basename(pkgDir);
     for (const file of listSourceFiles(pkgDir)) {
       const rel = relative(root, file);
-      const ctx: CheckContext = { pkgName, file: rel, declared, testsOnly: rel.includes("__test__") };
+      const ctx: CheckContext = { pkgName, file: rel, declared, testsOnly: rel.includes("__test__"), permissionGroup };
       for (const spec of specifiersOf(readFileSync(file, "utf8"))) {
         const violation = violationOf(ctx, spec);
         if (violation !== undefined) violations.push(violation);
       }
     }
   }
-  return violations;
 }
 
 if (import.meta.main) {

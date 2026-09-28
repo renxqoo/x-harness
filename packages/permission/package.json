@@ -14,6 +14,7 @@
     "tree-sitter-bash": "^0.23.0"
   },
   "devDependencies": {
-    "@sinclair/typebox": "^0.34.0"
+    "@sinclair/typebox": "^0.34.0",
+    "@x-harness/permission-modes": "workspace:*"
   }
 }

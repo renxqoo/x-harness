@@ -189,11 +189,13 @@ socat 按档位探测，缺席 → throw；探测与代理创建顺序防 fd 泄
 
 ## 5. permission：完整规则词汇表 + auto 决策 + 拆卸契约（用户裁决④）
 
-**规则语法**：`Bash(git push:*)` 前缀段规则 / `Read(~/.ssh/**)`、`Write(…)`、`Grep(…)` 路径 glob /
-verdict ∈ allow|deny|ask / origin ∈ user|session（后来源同 verdict 覆盖；**deny 压过一切**——含
-full 档）；词法开放但**拼错 fail-closed 拒启**。路径 glob 按工具族匹配：`Write` 族含
-write/edit 两工具（文件变更同族——`Write(…)` 规则与默认写拒表同时治理 edit），`Read`/`Grep`
-各管自身工具。
+**规则语法**（2026-09-28 kind 三分类断代后口径，详见 PERMISSION-V4-DESIGN §7）：
+`Danger(git push:*)` 命令前缀规则 / `Read(~/.ssh/**)`、`Write(…)` 路径 glob / `Tool(名)`
+通用面通配；verdict ∈ allow|deny|ask / origin ∈ user|session（后来源同 verdict 覆盖；**deny 压过
+一切**——含 full 档）；词法闭集但**拼错/断代词条 fail-closed 拒启**（旧 `Bash(...)`/`Grep(...)`
+前缀不再解析——settings 混入旧词条时 hub 单条降级+stderr 点名、CLI 拒启）。路径 glob 按工具
+类别匹配：`Write` 类含 write/edit（文件变更同族），`Read` 类含 read/grep/自定义 reader（拒读
+底线跨工具）。
 
 **bash 命令裁决管线**（纯函数；解析底座=tree-sitter-bash AST——§14，段词法器已删）：
 1. **deny 规则**（词面前缀匹配）确定性拒绝；

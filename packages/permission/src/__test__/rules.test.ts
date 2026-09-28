@@ -159,11 +159,11 @@ describe("globMatch（路径 glob——拒读表/受保护集射程）", () => {
 
 describe("parseRule（拼错 fail-closed 拒启）", () => {
   it("合法形态解析；垃圾 throw", () => {
-    expect(parseRule("Bash(git status):allow", "user")).toEqual({ tool: "Bash", pattern: "git status", verdict: "allow", origin: "user" });
+    expect(parseRule("Danger(git status):allow", "user")).toEqual({ tool: "Danger", pattern: "git status", verdict: "allow", origin: "user" });
     expect(parseRule("Read(~/.ssh/**):deny", "user")).toEqual({ tool: "Read", pattern: "~/.ssh/**", verdict: "deny", origin: "user" });
-    expect(() => parseRule("Bash(git status)", "user")).toThrow();
+    expect(() => parseRule("Danger(git status)", "user")).toThrow();
     expect(() => parseRule("Nope(x):allow", "user")).toThrow();
-    expect(() => parseRule("Bash(x):maybe", "user")).toThrow();
-    expect(() => parseRule("Bash():allow", "user")).toThrow();
+    expect(() => parseRule("Danger(x):maybe", "user")).toThrow();
+    expect(() => parseRule("Danger():allow", "user")).toThrow();
   });
 });

@@ -14,6 +14,7 @@
     "@x-harness/session": "workspace:*"
   },
   "devDependencies": {
+    "@x-harness/permission-modes": "workspace:*",
     "@x-harness/tools": "workspace:*"
   }
 }

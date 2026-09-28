@@ -7,7 +7,7 @@
 
 import { createRequire } from "node:module";
 import type { InjectionKind } from "./injection.ts";
-import { PIPE_FETCHERS, PIPE_SHELLS } from "./injection.ts";
+import { PIPE_FETCHERS, isInterpreterName } from "./injection.ts";
 import { applyCommandPolicy, basenameOf } from "./wrappers.ts";
 
 export interface Redirect {
@@ -349,7 +349,9 @@ function pipelineOf(node: SyntaxNode, ctx: WalkCtx, out: ParsedCommand[]): void 
 
 function pipelineKind(inner: readonly ParsedCommand[], lastIdx: number): InjectionKind | undefined {
   const last = inner[lastIdx];
-  if (last === undefined || last.argv.length === 0 || !PIPE_SHELLS.has(basenameOf(last.argv[0] ?? ""))) return undefined;
+  // B-bug-7：管道末位判定按解释器族（isInterpreterName）——`curl x | node`/`| python` 不再
+  // 漏成 opaque（可记忆 dilute NEVER_MEMORIZE），与 shell 六词表时代口径收严
+  if (last === undefined || last.argv.length === 0 || !isInterpreterName(basenameOf(last.argv[0] ?? ""))) return undefined;
   for (let i = 0; i < lastIdx; i++) {
     const kind = PIPE_FETCHERS.get(basenameOf(inner[i]?.argv[0] ?? ""));
     if (kind !== undefined) return kind;

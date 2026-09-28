@@ -14,6 +14,7 @@ import type { ToolOutcome } from "@x-harness/tools";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { createPermissionPlugin, permissionBroker, permissionDecided, permissionGrants, permissionMode } from "../index.ts";
+import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import { parseRules } from "../index.ts";
 
 interface Bench {
@@ -43,6 +44,7 @@ async function bench(root: string, options: { rules?: readonly string[]; mode?: 
       }),
   };
   const unload = await loadPlugins(ctx, [
+    createPermissionModesPlugin(), // V4 内置模式（base 零策略）
     toolsPlugin,
     createPermissionPlugin({ root, ...(options.rules !== undefined ? { rules: parseRules(options.rules, "user") } : {}), ...(options.mode !== undefined ? { mode: options.mode } : {}), ...(options.customProfiles !== undefined ? { customProfiles: options.customProfiles } : {}) }),
     broker,
@@ -58,7 +60,8 @@ async function bench(root: string, options: { rules?: readonly string[]; mode?: 
   const call = async (name: string, args: unknown, session?: SessionId): Promise<ToolOutcome> => {
     if (!toolNames.has(name)) {
       toolNames.add(name);
-      disposers.push(reg.register({ name, inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) }));
+      const family = (["read","write","edit","grep","bash"] as const).includes(name as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[name as "read"|"write"|"edit"|"grep"|"bash"] : undefined; // stub 模拟 ToolDefinition.kind 声明
+      disposers.push(reg.register({ name, ...(family !== undefined ? { kind: family } : {}), inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) }));
     }
     return reg.dispatch({ callId: `c-${String(asks.length)}-${String(audits.length)}-${name}`, name, args, signal: new AbortController().signal, ...(session !== undefined ? { session } : {}) });
   };
@@ -91,7 +94,7 @@ describe("permission 插件（真实管线）", () => {
   });
 
   it("拼错规则 fail-closed 拒启（解析边沿 throw——规则串解析归宿主边）", () => {
-    expect(() => parseRules(["Bash(broken"], "user")).toThrow(/unparseable/);
+    expect(() => parseRules(["Danger(broken"], "user")).toThrow(/unparseable/);
   });
 
   it("默认拒读表：read .env / .ssh/id_rsa → deny（user-origin deny 压过一切；不触发 ask）", async () => {
@@ -115,7 +118,7 @@ describe("permission 插件（真实管线）", () => {
     for (const d of b.unload) await d();
   });
 
-  it("界外 read：broker 缺席 → deny；批 → allow + extraRoot 落账 + 同会话二次零 ask；异会话不借用", async () => {
+  it("界外 read：broker 缺席 → deny；批 → allow；读不落 root（P-bug-4——二次再问，读授权不扩写面）；异会话不借用", async () => {
     const absent = await bench(root);
     const denied = await absent.call("read", { path: outsideFile }, "sA" as SessionId);
     expect(denied.isError).toBe(true);
@@ -123,12 +126,12 @@ describe("permission 插件（真实管线）", () => {
     expect(absent.asks).toHaveLength(1); // broker 缺席也被问过（退化 deny）
     for (const d of absent.unload) await d();
 
-    const b = await bench(root, { brokerScript: ["allow"] });
+    const b = await bench(root, { brokerScript: ["allow", "allow"] });
     const first = await b.call("read", { path: outsideFile }, "sA" as SessionId);
     expect(first.content).toBe("ran"); // 批准放行
     const second = await b.call("read", { path: outsideFile }, "sA" as SessionId);
     expect(second.content).toBe("ran");
-    expect(b.asks).toHaveLength(1); // extraRoot 已落账——二次零 ask
+    expect(b.asks).toHaveLength(2); // P-bug-4：读批准不落 extraRoot（once≠会话永久；读授权不得扩成写授权）——二次再问
     const stranger = await b.call("read", { path: outsideFile }, "sB" as SessionId);
     expect(stranger.isError).toBe(true); // B 会话不借用（脚本耗尽 → deny）
     for (const d of b.unload) await d();
@@ -144,13 +147,13 @@ describe("permission 插件（真实管线）", () => {
     expect(b.asks).toHaveLength(1); // 分类器零交互（U4——不新增 ask）
     for (const d of b.unload) await d();
 
-    const b2 = await bench(root, { rules: ["Bash(git status):allow"], brokerScript: [] });
+    const b2 = await bench(root, { rules: ["Danger(git status):allow"], brokerScript: [] });
     const zero = await b2.call("bash", { command: "git status" }, "s1" as SessionId);
     expect(zero.content).toBe("ran");
     expect(b2.asks).toHaveLength(0); // 规则放行零交互
     for (const d of b2.unload) await d();
 
-    const b3 = await bench(root, { rules: ["Bash(ls):deny"] });
+    const b3 = await bench(root, { rules: ["Danger(ls):deny"] });
     const denied = await b3.call("bash", { command: "ls" }, "s1" as SessionId);
     expect(denied.isError).toBe(true);
     expect(denied.content).toContain("rule:ls");
@@ -253,7 +256,7 @@ describe("permission 插件（真实管线）", () => {
     };
     const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createPermissionPlugin({ root }), broker]);
     const reg = ctx.use(toolRegistry);
-    reg.register({ name: "read", inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) });
+    reg.register({ name: "read", kind: "Read", inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) });
     const created = await ctx.use(sessionStore).create();
     if (!created.ok) throw new Error("session create failed");
     const session = created.value.id;
@@ -282,7 +285,7 @@ describe("permission 插件（真实管线）", () => {
       { name: "throwing-broker", apply: (c) => c.provide(permissionBroker, { ask: async () => { throw new Error("ui gone"); } }) },
     ]);
     const reg = ctx.use(toolRegistry);
-    reg.register({ name: "read", inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) });
+    reg.register({ name: "read", kind: "Read", inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) });
     const out = await reg.dispatch({ callId: "c", name: "read", args: { path: "/etc/hosts" }, signal: new AbortController().signal });
     expect(out.isError).toBe(true);
     for (const d of unload) await d();

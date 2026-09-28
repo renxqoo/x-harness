@@ -55,6 +55,7 @@ export function createReadTool(input: ReadToolInput): ToolDefinition {
   const rootOverrideOf = input.rootOverrideOf;
   return {
     name: "read",
+    kind: "Read",
     description:
       "Read a text file within the workspace root. Returns numbered lines (offset/limit window, default and max 2000 lines, 50KB byte budget). Long lines are truncated. Use the footer's offset hint to continue reading.",
     inputSchema: Type.Object({

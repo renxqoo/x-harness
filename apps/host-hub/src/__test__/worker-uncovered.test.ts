@@ -187,15 +187,15 @@ describe("bash-exec 单元（脱 worker 上下文）", () => {
     const storeU = untrusted.world.ctx.tryUse(await import("@x-harness/permission").then((m) => m.permissionGrantStore));
     expect(storeU).toBeDefined();
     if (storeU !== undefined) {
-      const rejected = await storeU.write("project", { tool: "Bash", pattern: "x:*", verdict: "allow", nature: "grant" });
+      const rejected = await storeU.write("project", { tool: "Danger", pattern: "x:*", verdict: "allow", nature: "grant" });
       expect(rejected.ok).toBe(false);
       // trusted=false 仍可写 user 作用域 + 幂等去重
-      const userWrite = await storeU.write("user", { tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 });
+      const userWrite = await storeU.write("user", { tool: "Danger", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 });
       expect(userWrite.ok).toBe(true);
-      const dup = await storeU.write("user", { tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 2 });
+      const dup = await storeU.write("user", { tool: "Danger", pattern: "u:*", verdict: "allow", nature: "grant", at: 2 });
       expect(dup.ok).toBe(true);
       const settings = await readHubSettings(agentDir);
-      expect(settings["permission.rules"]).toEqual([{ tool: "Bash", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 }]);
+      expect(settings["permission.rules"]).toEqual([{ tool: "Danger", pattern: "u:*", verdict: "allow", nature: "grant", at: 1 }]);
     }
     await untrusted.handle.dispose();
     for (const disposer of untrusted.world.unload) await disposer();

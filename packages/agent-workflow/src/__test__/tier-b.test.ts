@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { SessionId } from "@x-harness/session";
 import { sessionStore } from "@x-harness/session";
 import { createPermissionPlugin } from "@x-harness/permission";
+import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import { createSandboxPlugin } from "@x-harness/sandbox";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import type { Plugin } from "@x-harness/core";
@@ -52,6 +53,7 @@ async function fixture(root: string, scripts: string[]): Promise<Fixture> {
     llmPlugin,
     agentLoopPlugin,
     createTaskToolsPlugin(),
+    createPermissionModesPlugin(),
     createPermissionPlugin({ root, mode: "full" as const }),
     createSandboxPlugin({ root }),
     createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),

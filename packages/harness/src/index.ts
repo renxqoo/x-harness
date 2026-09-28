@@ -28,6 +28,7 @@ import { createReplayGuardPlugin } from "@x-harness/llm-replay-guard";
 import { createRepetitionGuardPlugin } from "@x-harness/llm-repetition-guard";
 import type { RetryPolicy } from "@x-harness/llm-retry";
 import { createPermissionPlugin } from "@x-harness/permission";
+import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import type { PermissionProfile, PermissionRule, ProfileId } from "@x-harness/permission";
 import { createSandboxPlugin } from "@x-harness/sandbox";
 import { createPlanSubmitPlugin } from "@x-harness/tool-plan";
@@ -137,7 +138,7 @@ export type { ProbeFactsInput } from "./base-prompt-probe.ts";
 
 /** 日期 + 项目指令快照插件（两宿主同源消费面——AGENTS.md/CLAUDE.md 边沿注入；
  *  装配位各自写死：紧随 skill 装配，docs/TAIL-SNAPSHOT-CHANNEL.md A/C'） */
-export { createFactsSnapshotPlugin, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, renderPermissionModeSnapshot, localToday, INSTRUCTIONS_CAP_BYTES } from "./snapshot-facts.ts";
+export { createFactsSnapshotPlugin, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, renderPermissionModeSnapshot, renderPermissionModeNonOwnerSnapshot, localToday, INSTRUCTIONS_CAP_BYTES } from "./snapshot-facts.ts";
 export type { FactsSnapshotOptions, InstructionRead } from "./snapshot-facts.ts";
 
 /** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替；常规装配传
@@ -201,7 +202,7 @@ export const planKit = (o: import("@x-harness/tool-plan").PlanSubmitOptions = {}
 /** 围栏（permission 裁决 + sandbox 执行器——PERMISSION-V2-DESIGN §6）。执行指令由裁决
  *  管线产出（allow→direct|contained 按档位），sandbox 只照办；trustedCommands 词表已删（U1）。
  *  rules/projectRules=两作用域规则串；protectedPaths=保护写路径（settings 文件等——U13）；
- *  customProfiles=宿主自定义档位行（已过 mergeCustomProfiles）。 */
+ *  customProfiles=宿主自定义档位行（settings-store 三层校验现状——U8）。 */
 export const fenceKit = (
   o: {
     readonly root: string;
@@ -212,6 +213,7 @@ export const fenceKit = (
     readonly customProfiles?: readonly PermissionProfile[];
   },
 ): readonly Plugin[] => [
+  createPermissionModesPlugin(), // V4：内置五档模式插件（softInject permission——注册表在场才注册）
   createPermissionPlugin({
     root: o.root,
     ...(o.mode !== undefined ? { mode: o.mode } : {}),

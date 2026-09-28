@@ -6,13 +6,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { argvSensitiveHit } from "../sensitive.ts";
 import { parseBash } from "../bash/ast.ts";
+import { baselineDenyRules } from "../baseline.ts";
+
+/** C①（2026-09-28）：基线表内核单源——测试与中心装配同源 */
+const DENY_READ = baselineDenyRules().filter((r) => r.tool === "Read").map((r) => r.pattern);
+const DENY_WRITE = baselineDenyRules().filter((r) => r.tool === "Write").map((r) => r.pattern);
 
 const ROOT = "/w/app";
 
 function hitOf(source: string, protectedWrite: readonly string[] = []) {
   const parsed = parseBash(source);
   if (!parsed.ok) throw new Error(`unparseable: ${source}`);
-  return argvSensitiveHit(parsed.commands, ROOT, protectedWrite);
+  return argvSensitiveHit(parsed.commands, ROOT, { protectedWrite, denyRead: DENY_READ, denyWrite: DENY_WRITE });
 }
 
 describe("argvSensitiveHit", () => {

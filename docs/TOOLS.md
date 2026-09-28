@@ -70,7 +70,7 @@ dispatch(request) —— 函数体整体 try/catch，任何逃逸 throw → isEr
   1 abort 检查（原始 signal）：已 abort → outcome { content: "aborted", isError, aborted }
   2 lookup：get(name) 未命中 → outcome { content: "unknown-tool:<name>", isError }
     （早退理由：unknown-tool 非权限问题、无 schema 可校验；审计走 loop 的 tool/result 落账）
-  3 pre-execute waterfall（载荷 {callId, name, args}——未校验原始 args，权限策略看原始输入；final = {kind:"allow"}）：
+  3 pre-execute waterfall（载荷 {callId, name, args, control?, kind?, readsSubtree?, session?}——未校验原始 args，权限策略看原始输入；kind=工具三分类声明穿引，readsSubtree=范围型读标记；final = {kind:"allow"}）：
       中间件**必须调 next**（内核 I2 不变量）；拒绝方式 = 调 next 后返回 deny（最外层 deny 胜）。
       返回值形状门：非 {kind:"allow"|"deny"} 判别形态 → deny { reason: "invalid-decision" }（fail-closed）。
       deny → outcome { content: "denied:<reason>", isError }

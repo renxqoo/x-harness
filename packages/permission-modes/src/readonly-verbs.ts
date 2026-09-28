@@ -58,11 +58,21 @@ export function findReadonly(argv: readonly string[]): boolean {
   return !argv.some((word) => word === "-exec" || word === "-execdir" || word === "-ok" || word === "-okdir");
 }
 
-/** find 载体段豁免资格（多段管线）：-exec 族载荷已提取为独立段，且留段自身无写形态——
- *  -delete/-fprint* 留在段里，不得随载体豁免 */
-export function findCarrierSafe(argv: readonly string[]): boolean {
+/** 路径形操作数界内判定注入（classifier 提供——~ 展开与 resolve 归一在彼处） */
+export type InRootOf = (word: string) => boolean;
+
+/** find 载体段豁免资格（多段管线）：-exec 族载荷已提取为独立段、留段自身无写形态，且
+ *  搜索根操作数全界内（P0-1：`find / -name .env -exec cat {}` 的搜索范围从不裁决——
+ *  越根搜索根逐出豁免，整线落未分类 ask） */
+export function findCarrierSafe(argv: readonly string[], inRoot?: InRootOf): boolean {
   const hasExecMarker = argv.some((word) => word === "-exec" || word === "-execdir" || word === "-ok" || word === "-okdir");
-  return hasExecMarker && !findWriteForms(argv);
+  if (!hasExecMarker || findWriteForms(argv)) return false;
+  if (inRoot === undefined) return true; // 纯词面形态（无 roots 校验面）
+  return argv.slice(1).every((word) => {
+    if (word.startsWith("-") || word.startsWith("!") || word === "(" || word === ")") return true;
+    const pathLike = word.includes("/") || word === "~" || word.startsWith("~/") || word === "." || word === "..";
+    return !pathLike || inRoot(word);
+  });
 }
 
 /** git 只读子命令（git 家族动词面大——push/push-like 一律不入选） */
@@ -175,6 +185,12 @@ function hostnameReadonly(argv: readonly string[]): boolean {
   return argv.length === 1;
 }
 
+/** rg 执行钩子例外（B-bug-3）：--pre 对每个被搜文件执行外部程序（含无歧义缩写
+ *  --pre=G 形）——违反本文件铁律「入表动词的任何 argv 形态都不得执行外部程序」，逐出 */
+function rgReadonly(argv: readonly string[]): boolean {
+  return !argv.slice(1).some((word) => word.startsWith("--pre"));
+}
+
 const READONLY_EXCEPT: ReadonlyMap<string, (argv: readonly string[]) => boolean> = new Map([
   ["git", gitReadonly],
   ["find", findReadonly],
@@ -183,6 +199,7 @@ const READONLY_EXCEPT: ReadonlyMap<string, (argv: readonly string[]) => boolean>
   ["tree", treeReadonly],
   ["date", dateReadonly],
   ["hostname", hostnameReadonly],
+  ["rg", rgReadonly],
 ]);
 
 /** 单命令只读判定（argv 干净词面——wrappers 已剥）。非白名单成员一律 false（M5：例外

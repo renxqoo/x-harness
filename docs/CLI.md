@@ -142,7 +142,8 @@ x-harness [flags] [message...] [@file...]
   即时生效；再切回装配缺省档；会话内有效，resume 不折叠档位——hub 侧经
   permission/set_mode 持久化）、`/thinking [level]`、`/session`（会话 id/事件数/token 用量/
   当前模型）、`/compact [instructions]`（总结折叠 surface）、`/export <path>`（导出事件卷
-  副本）、`/resume`（列出主会话选择切换；内存会话下禁用）、`/clear`（清屏 ANSI）。
+  副本）、`/resume`（列出主会话选择切换；内存会话下禁用）、`/workflow <run|stop|submit>`
+  （受管任务——验收回炉编排，docs/AGENT-WORKFLOW.md）、`/clear`（清屏 ANSI）。
 - **/model 语义与副作用**：`handle.dispose()` → `agentLoopService.resume(id, {agent})`（日志
   续写，header 不变；jsonl 续写校验对同 id 二次打开成立——dispose 先 flush）。**副作用
   落档**：dispose 广播 sessionDisposed → 本会话 extraRoot/域名授权 evict、后台任务两段杀、

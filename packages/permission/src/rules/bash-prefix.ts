@@ -18,5 +18,5 @@ export function bashPrefixMatch(pattern: string, words: readonly string[]): bool
 
 /** Bash 规则族匹配：返回全部命中规则（deny 压过 allow 由调用方按裁决序处理） */
 export function bashRuleMatches(rules: readonly PermissionRule[], words: readonly string[]): PermissionRule[] {
-  return rules.filter((rule) => rule.tool === "Bash" && bashPrefixMatch(rule.pattern, words));
+  return rules.filter((rule) => rule.tool === "Danger" && bashPrefixMatch(rule.pattern, words));
 }

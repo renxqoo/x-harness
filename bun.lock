@@ -40,6 +40,7 @@
         "@x-harness/tool-bash": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tool-grep": "workspace:*",
+        "@x-harness/tool-plan": "workspace:*",
         "@x-harness/tool-read": "workspace:*",
         "@x-harness/tool-write": "workspace:*",
         "@x-harness/tools": "workspace:*",
@@ -76,6 +77,7 @@
         "@x-harness/system-prompt": "workspace:*",
         "@x-harness/todo-tools": "workspace:*",
         "@x-harness/token-analytics": "workspace:*",
+        "@x-harness/tool-plan": "workspace:*",
         "@x-harness/tools": "workspace:*",
         "@x-harness/truncation-messages": "workspace:*",
         "@x-harness/workflow-core": "workspace:*",
@@ -147,6 +149,7 @@
         "@sinclair/typebox": "^0.34.0",
         "@x-harness/llm": "workspace:*",
         "@x-harness/permission": "workspace:*",
+        "@x-harness/permission-modes": "workspace:*",
         "@x-harness/session-persistence-jsonl": "workspace:*",
         "@x-harness/system-prompt": "workspace:*",
       },
@@ -287,6 +290,7 @@
         "@x-harness/llm-replay-guard": "workspace:*",
         "@x-harness/llm-retry": "workspace:*",
         "@x-harness/permission": "workspace:*",
+        "@x-harness/permission-modes": "workspace:*",
         "@x-harness/sandbox": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/session-checkpoint": "workspace:*",
@@ -367,6 +371,15 @@
       },
       "devDependencies": {
         "@sinclair/typebox": "^0.34.0",
+        "@x-harness/permission-modes": "workspace:*",
+      },
+    },
+    "packages/permission-modes": {
+      "name": "@x-harness/permission-modes",
+      "version": "0.0.1",
+      "dependencies": {
+        "@x-harness/core": "workspace:*",
+        "@x-harness/permission": "workspace:*",
       },
     },
     "packages/plugin-api": {
@@ -424,6 +437,7 @@
         "@x-harness/session": "workspace:*",
       },
       "devDependencies": {
+        "@x-harness/permission-modes": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
     },
@@ -558,6 +572,7 @@
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/permission": "workspace:*",
+        "@x-harness/permission-modes": "workspace:*",
         "@x-harness/sandbox": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
@@ -612,6 +627,8 @@
       "dependencies": {
         "@x-harness/core": "workspace:*",
         "@x-harness/permission": "workspace:*",
+        "@x-harness/permission-modes": "workspace:*",
+        "@x-harness/session": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
       "devDependencies": {
@@ -639,6 +656,7 @@
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/permission": "workspace:*",
+        "@x-harness/permission-modes": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tools": "workspace:*",
       },
@@ -955,6 +973,8 @@
     "@x-harness/md-frontmatter": ["@x-harness/md-frontmatter@workspace:packages/md-frontmatter"],
 
     "@x-harness/permission": ["@x-harness/permission@workspace:packages/permission"],
+
+    "@x-harness/permission-modes": ["@x-harness/permission-modes@workspace:packages/permission-modes"],
 
     "@x-harness/plugin-api": ["@x-harness/plugin-api@workspace:packages/plugin-api"],
 

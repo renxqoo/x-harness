@@ -410,9 +410,10 @@ function defaultWorkerPlugins(resolved: {
         projectSettingsPath(cwd),
       ],
     }),
-    // plan 模式审批件（plan_submit——PERMISSION-MODE-FLAG plan 节）：解档回装配缺省档
-    // （fields.permissionMode 缺席时与 fenceKit 同回落 auto——围栏姿势不因审批漂移）
-    ...planKit({ liftTo: fields.permissionMode ?? "auto" }),
+    // plan 模式策略件（planControl + plan_submit——PERMISSION-MODE-FLAG plan 节）：
+    // 解档目标规范化（缺省为 plan 时回 auto——假解档防线）；owner 锚定 = 线程主会话
+    //（settings 默认 plan / thread 以 plan 开档的装配期资格）
+    ...planKit({ liftTo: planLiftOf(fields), mainSession: mainSessionId as never }),
     ...brokerPlugins(fields),
     ...grantStorePlugins(fields, cwd),
     // 跨进程邮箱服务（AGENT-DELEGATION §5.3 宿主接线）——提供 mailboxService；与
@@ -473,6 +474,13 @@ function derivedRgBinDir(fields: AssemblyFields): string | undefined {
   if (fields.rgBinDir !== undefined) return fields.rgBinDir;
   if (fields.agentDir !== undefined && fields.agentDir !== "") return join(fields.agentDir, "bin");
   return undefined;
+}
+
+/** plan 档解档目标：装配缺省档，但缺省为 plan 时回 auto（对抗审查 R1/R3——thread 以
+ *  plan 开档/settings 默认 plan 下 liftTo=plan 假解档；hub 无 fenced 缺省档，auto 即
+ *  安全回落） */
+function planLiftOf(fields: Pick<AssemblyFields, "permissionMode">): import("@x-harness/permission").ProfileId {
+  return fields.permissionMode !== undefined && fields.permissionMode !== "plan" ? fields.permissionMode : "auto";
 }
 
 export async function assembleWorkerAgent(fields: AssemblyFields, deps?: AssemblyDeps): Promise<AssemblyResult> {

@@ -260,6 +260,12 @@ export async function cliMain(argv: readonly string[], io: CliIO): Promise<numbe
     return 2;
   }
   const interactive = !args.print && io.stdinIsTTY;
+  // plan 档在非交互面无审批通道（broker 非 TTY 恒 deny）→ 唯一出口成死胡同
+  // （对抗审查 R3-F5——fail-fast 与垃圾档位同款 exit 2 语义）
+  if (!interactive && args.permission === "plan") {
+    io.stderr("plan mode requires an interactive approval channel; unavailable with -p or piped stdin\n");
+    return 2;
+  }
   const plan = await planResumeId(args, io, interactive);
   if (plan.kind === "fail") {
     io.stderr(`${plan.reason}\n`);

@@ -28,7 +28,7 @@ export type HubSettingsKey = keyof HubSettings;
 
 const PERM_MODES: readonly ProfileId[] = [...PROFILE_IDS];
 const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "low", "medium", "high", "max"];
-const RULE_TOOLS: readonly RuleTool[] = ["Bash", "Read", "Write", "Grep", "Tool"];
+const RULE_TOOLS: readonly RuleTool[] = ["Danger", "Read", "Write", "Tool"];
 const RULE_VERDICTS: readonly Verdict[] = ["allow", "deny", "ask"];
 const RULE_NATURES: readonly RuleNature[] = ["handwritten", "grant"];
 /** 项目数据目录名（x-harness 约定：内核 skills/agents 目录同根） */
@@ -104,6 +104,15 @@ export async function readSettingsFile(path: string): Promise<HubSettings> {
     if (isKnownKey(key)) {
       const verdict = validateSettingValue(key, value);
       if (verdict.ok) out[key] = value as never;
+      else if (key === "permission.rules" && Array.isArray(value)) {
+        // R5（2026-09-28）：断代词条（旧 Bash/Grep 前缀）不再整键静默清空——单条降级
+        // + stderr 点名（deny/习得记忆不陪葬；其余键仍整值拒）
+        const kept = value.filter(ruleEntryValid);
+        for (const dropped of value.filter((entry) => !ruleEntryValid(entry))) {
+          hubLog(`settings: dropped invalid permission rule entry (断代词条或畸形——${JSON.stringify(dropped)})`);
+        }
+        if (kept.length > 0) out[key] = kept as never;
+      }
     } // 未知键/坏值静默丢弃（文件面历史事实不崩命令面）
   }
   // 自定义档位可达性（对抗审查 #13）：defaultMode 指向同文件 permission.profiles 内的

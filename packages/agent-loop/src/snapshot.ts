@@ -7,7 +7,7 @@
 // 引入 await 即滑出当轮请求）。
 
 import type { Context, Disposer } from "@x-harness/core";
-import type { Session, SurfaceNode } from "@x-harness/session";
+import type { Session, SessionId, SurfaceNode } from "@x-harness/session";
 import type { AgentLoopService } from "./types.ts";
 import type { Dial } from "./tokens.ts";
 import { agentRequest, agentStatus } from "./tokens.ts";
@@ -66,8 +66,9 @@ function snapshotPresent(session: Session, text: string): boolean {
 export interface TailSnapshotSpec {
   /** 诊断标识（告警文案用） */
   readonly id: string;
-  /** 当前应注入全文（含信封）；空串 = 本次不注入 */
-  readonly render: () => string;
+  /** 当前应注入全文（含信封）；空串 = 本次不注入。收 kick 会话 id——按会话分流的
+   *  快照用（如权限档：委派子会话渲染子代理变体；既有无参实现类型相容不受影响） */
+  readonly render: (session: SessionId) => string;
   /** render 异常 / append 失败的告警面（缺席静默收敛） */
   readonly onWarn?: (message: string) => void;
 }
@@ -86,7 +87,7 @@ export function createTailSnapshot(input: {
     if (session === undefined) return;
     let text: string;
     try {
-      text = spec.render();
+      text = spec.render(payload.session);
     } catch (error) {
       spec.onWarn?.(`snapshot(${spec.id}): render failed (${error instanceof Error ? error.message : String(error)})`);
       return;

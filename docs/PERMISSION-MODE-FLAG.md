@@ -117,8 +117,10 @@ harness 包现有单测零平台依赖的纪律保持；mode 透传断言由 app
 真实 dispatch，broker 非交互恒 deny 形态）
 
 - **plan 腿**：dispatch write（界内）→ deny（reason `plan mode disallows write`）；
-  dispatch bash（`echo hi`）→ deny（`plan mode disallows bash`）——plan bash 全拒
-  首次入锚；
+  dispatch bash 写面（`echo hi > new.txt`）→ deny（`plan mode: output redirect denied`）+
+  只读命令（`git log --oneline`）→ allow（`classifier:readonly (plan)`——研究通道，
+  2026-09-28 裁决：plan bash 由全拒改为**分类器只读放行**，写/未分类/注入/提权/重定向
+  恒拒，见 bash/adjudicate.ts `planBash`）；
 - **full 腿**：dispatch write 界内 → allow（`resolvedBy: "mode:full"`）且真写出
   tmp 文件；dispatch write 界外（路径避开 `**/.git/**` 等 deny glob）→ permission
   allow（mode:full）且真写出（总括授权根治后语义，docs/PERMISSION-FULL-UNRESTRICTED.md）；
@@ -216,6 +218,17 @@ e2e 腿对 main.ts 漏折的双红推演）。逐条处置：
 
 ## plan 模式完整流程（2026-09-28 增补——审批协议件）
 
+> V3 架构注记：plan 档策略已插件化（docs/PERMISSION-V3-DESIGN.md）——permission 内置
+> planDefaultMode（严格缺省：Write 拒 + bash 全拒），tool-plan 后注册 planMode（富策略：
+> bash 只读放行/读保护基线/分类器三态）经 modeRegistry 同 id 后者胜覆盖。纯函数直调方
+> （decideFor/adjudicateBash 无注册表）按旋钮映射内置件——plan 旋钮落严格缺省。
+
+**工具执行矩阵（plan 档）**：read/grep 界内静默放行；**bash 分类器只读放行**
+（`ls/cat/grep/find/rg/git 只读子命令/jq…`——argv 级分类 + 逐段旗面；写类/未分类/
+注入/提权/输出重定向/解析失败一律 deny，未知即拒）；write/edit 无条件拒（先于规则）；
+控制动词默认拒 + plan 插件白名单；其余未登记工具 ask。对照 pi 的行首正则白名单：
+不学其可绕形态，走既有 argv 级分类器（auto 档同源）。
+
 plan 档从「只读硬闸」补全为完整工作流，三面就位：
 
 - **模型侧告知（权限档快照）**：facts 快照插件（@x-harness/harness
@@ -234,6 +247,16 @@ plan 档从「只读硬闸」补全为完整工作流，三面就位：
 - **宿主切换面**：hub 既有 `permission/set_mode`（meta 持久化 + 服务即时切）；CLI 新增
   `/plan` slash（permissionMode 直切内存态——下一裁决即用新档；**会话内有效，CLI resume
   不折叠档位是已知面**，hub 无此缺口）。
+- **委派子代理面（对抗审查 R1/R2 处置）**：plan 档是用户在主会话设的 world 级姿态——
+  子代理（lineage depth>0）不得解档（plan_submit 拒绝 `delegated-session`，审批通道
+  不触）；权限档快照对子会话渲染**子代理变体**（事实行 + 交付指向，不含「等用户批准」
+  指引——无用户语境）。`liftTo` 不变量：解档目标绝不取 plan（宿主规范化：CLI 回
+  sandboxed-auto / hub 回 auto；插件层误配回退 auto——`--permission plan` 启动形态下
+  不再假解档/单向门）。拒绝语义（用户裁决）：deny → `concludesTurn` 收轮等指示——
+  用户下一条消息有内容就带续、没有即终止，工具不自动 refine。plan 档 + 非交互
+  （`-p`/管道）启动 fail-fast exit 2（无审批通道不成死胡同）。workflow submit 在
+  plan 档被拒（acceptance.command 是变更面——R1-F5 单闸在提交入口，模型/人类两
+  入口同漏斗）。
 
 装配序：planKit 紧随 fenceKit（两宿主写死）；plan_submit 服务面 execute 期懒解析
 （broker 是宿主提供件——与 permission 插件内部同款 tryUse 时点，无插件序耦合）。

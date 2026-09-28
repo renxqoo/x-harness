@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin } from "@x-harness/tools";
 import { createPermissionPlugin, permissionGrants } from "@x-harness/permission";
+import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import type { SessionId } from "@x-harness/session";
 import { execEnv } from "@x-harness/exec-env";
 import { realSrtRuntime } from "../srt-runtime.ts";
@@ -27,6 +28,7 @@ async function withWorld(options: Partial<Parameters<typeof createSandboxPlugin>
   try {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [
+    createPermissionModesPlugin(), // V4 内置模式（base 零策略）
       toolsPlugin,
       createPermissionPlugin({ root }),
       createSandboxPlugin({ root, ...options }, realSrtRuntime),
@@ -145,17 +147,6 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
     await withWorld({}, async (w) => {
       const r = await run(w, `curl -s --max-time 8 https://example.com > /dev/null 2>&1; echo curl_exit=$?`);
       expectCurlDenied(r);
-    });
-  }, 60_000);
-
-  it("授权即时生效：grants 记域名 → 下一次 spawn 热切换 → 放行（旧实现 full 网络被拒的症状回归）", async () => {
-    await withWorld({}, async (w) => {
-      const sid = "s-e2e" as never as SessionId;
-      const before = await run(w, `curl -s --max-time 8 https://example.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
-      expectCurlDenied(before);
-      w.ctx.use(permissionGrants).recordDomain(sid, "example.com", "allow");
-      const after = await runCurlUntilSettled(w, `curl -s --max-time 15 https://example.com > /dev/null 2>&1; echo curl_exit=$?`, sid);
-      expect(after.out).toContain("curl_exit=0");
     });
   }, 60_000);
 

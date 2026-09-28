@@ -16,10 +16,10 @@ export type {
   RuleTool,
   Verdict,
 } from "./types.ts";
-export { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE, PROFILE_IDS } from "./types.ts";
-export { BUILTIN_PROFILES, mergeCustomProfiles, profileRowValid, resolveProfile } from "./profiles.ts";
+export { PROFILE_IDS } from "./types.ts";
+export { profileRowValid } from "./profiles.ts";
 export {
-  permissionBroker,
+  permissionAdjudicate, permissionBroker,
   permissionDecided,
   permissionGrantStore,
   permissionGrantWritten,
@@ -31,8 +31,6 @@ export type { PermissionModeService, FenceFactsResolver } from "./tokens.ts";
 export { parseRule, parseRules } from "./rules/parse.ts";
 export { globMatch } from "./rules/glob.ts";
 export { bashPrefixMatch } from "./rules/bash-prefix.ts";
-export { classifyPipeline } from "./classifier.ts";
-export type { CommandClass } from "./classifier.ts";
 export { argvSensitiveHit } from "./sensitive.ts";
 export { suggestRule, exactRule } from "./suggest.ts";
 export { parseBash, parseBashWith, classifyKind } from "./bash/ast.ts";
@@ -46,5 +44,10 @@ export { decideFor } from "./decide.ts";
 export type { Decision, DecideInput } from "./decide.ts";
 export { summaryOf } from "./ask-summary.ts";
 export { GrantsRegistry } from "./grants.ts";
+export { createModeRegistry, modeRegistry, profileDecideOf, resolveProfileOf } from "./modes.ts";
+export { baselineDenyRules, DEFAULT_DENY_READ, DEFAULT_DENY_READ_DIRS, DEFAULT_DENY_WRITE, MEMORY_BLOCKED_HEADS, memoryBlocked } from "./baseline.ts";
+export { bashFactsOf } from "./facts.ts";
+export type { ModeFaces, ModePlugin, ModeRegistry } from "./modes.ts";
+export type { AdjudicationFacts } from "./facts.ts";
 export { createPermissionPlugin } from "./plugin.ts";
 export type { PermissionOptions } from "./plugin.ts";

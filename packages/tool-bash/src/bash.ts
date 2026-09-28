@@ -59,6 +59,7 @@ export function createBashTool(input: BashToolInput): ToolDefinition {
   const { gate, limits, env, tasks, rootOverrideOf, escalate } = input;
   return {
     name: "bash",
+    kind: "Danger",
     description:
       "Executes a bash command and returns its output.\n" +
       " - Working directory resets to the workspace root between calls — use `cd` within a single compound command to change directories; shell state (env vars, functions) does not persist.\n" +

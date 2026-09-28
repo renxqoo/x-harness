@@ -16,11 +16,25 @@ import type { TruncatedToolDecision, TruncatedToolPayload } from "@x-harness/age
 import { admitSession } from "@x-harness/tool-core";
 import type { ExtraRootsOf, ObservedRegistry, PathGate, RootOverrideOf } from "@x-harness/tool-core";
 import type { ExecEnv } from "@x-harness/exec-env";
-import { decideFor, fenceFacts, permissionGrants, permissionMode, resolveProfile } from "@x-harness/permission";
+import { decideFor, fenceFacts, permissionAdjudicate, permissionGrants, permissionMode } from "@x-harness/permission";
+import { knobDecideOf, resolveProfile } from "@x-harness/permission-modes";
 import type { PermissionRule } from "@x-harness/permission";
 import { relative } from "node:path";
 import { realpathSync } from "node:fs";
 import { extractStringField } from "./extract-string-field.ts";
+
+/** V4 纯直调注入（P0-2 修正后的兜底形态）：服务缺席（permission 插件未装配的测试世界）
+ *  才走静态旋钮面——底线已内核化（decideFor 恒合并），基线注入删除 */
+function decideForKnob(input: Parameters<typeof decideFor>[0]): ReturnType<typeof decideFor> {
+  const faces = knobDecideOf(input.profile);
+  return decideFor({
+    ...input,
+    kind: "Write", // 抢救件替 write 工具裁决——同类别自报（dispatch 面由 ToolDefinition.kind 穿引，本直调面同语义）
+    ...(input.modeDecide === undefined && faces.decide !== undefined ? { modeDecide: faces.decide } : {}),
+    ...(input.postureDecide === undefined && faces.posture !== undefined ? { postureDecide: faces.posture } : {}),
+  });
+}
+
 import { extractLastEditText } from "./extract-last-edit-text.ts";
 
 /** 微型半截不值得一次 read 往返——低于此字符数不物化（稳定语义代码常量，不进配置面） */
@@ -58,21 +72,28 @@ export function createTruncatedWriteRescuePlugin(input: TruncatedRescueInput): P
       const grants = ctx.tryUse(permissionGrants);
       const mode = ctx.tryUse(permissionMode);
       const fence = ctx.tryUse(fenceFacts);
+      // P0-2（2026-09-28）：单真相裁决服务优先——与主路径同源（customProfiles/注册表/底线内聚），
+      // 静态旋钮面仅为服务缺席的裸测试世界兜底
+      const adjudicate = ctx.tryUse(permissionAdjudicate);
 
       /** permission 裁决（write 同源面）：deny/plan-deny → "rescue-denied"；ask → 同判不
        *  弹窗（模型重发完整调用走正常面板）；装配面/服务缺席 → undefined（不物化）。
        *  path 判定在 perm.root 树上做——admitted.path 是 realpath 形态（macOS /var →
        *  /private/var），与装配 root 可能不同树前缀，先归一再相对化（见 relPathWithin）。 */
       const rescuePermissionOf = (session: TruncatedToolPayload["session"], absolute: string): "allow" | "rescue-denied" | undefined => {
+        if (adjudicate !== undefined && perm !== undefined) {
+          const decision = adjudicate({ name: "write", kind: "Write", args: { path: relPathWithin(absolute, perm.root, realpathSync) }, session }); // kind 自报同静态路径（dispatch 面由工具声明穿引）
+          return decision.verdict === "allow" ? "allow" : "rescue-denied";
+        }
         if (perm === undefined || grants === undefined || mode === undefined) return undefined;
-        const decision = decideFor({
+        const decision = decideForKnob({
           tool: "write",
           args: { path: relPathWithin(absolute, perm.root, realpathSync) },
           session,
           userRules: perm.rules ?? [],
           ...(perm.projectRules !== undefined && perm.projectRules.length > 0 ? { projectRules: perm.projectRules } : {}),
           sessionRules: grants.rulesOf(session),
-          profile: resolveProfile(mode.get()),
+          profile: resolveProfile(mode.get()) ?? { id: "auto", askPolicy: "on-opaque", containment: "none", mutationPolicy: "auto-in-root" }, // 净化 #5：未知档断代落 auto（与 plugin 层同语义）
           root: perm.root,
           extraRoots: grants.extraRootsOf(session),
           ...(fence !== undefined ? { fence: fence.forSession(session) } : {}),

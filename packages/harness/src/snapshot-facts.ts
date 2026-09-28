@@ -15,6 +15,7 @@ import { join } from "node:path";
 import type { Disposer, Plugin } from "@x-harness/core";
 import { agentLoopServiceToken, createRequestSnapshot, createTailSnapshot, snapshotEnvelope } from "@x-harness/agent-loop";
 import { permissionMode } from "@x-harness/permission";
+import { planControl } from "@x-harness/tool-plan";
 
 /** 指令文件单件上限（字节，以 readFileSync 读到的 buffer 为准——不预 stat，杜绝 TOCTOU；
  *  截断=信息丢失，超限整文件拒注入+告警） */
@@ -55,6 +56,15 @@ export function renderModelSnapshot(model: string): string {
 export function renderPermissionModeSnapshot(mode: string): string {
   if (mode === "plan") {
     return snapshotEnvelope("permission-mode", `You are in plan mode: research and read only. Writes, edits, and mutating commands are denied — do not attempt them. When your plan is ready, present it with the plan_submit tool and wait for the user's approval before making any changes.`);
+  }
+  return snapshotEnvelope("permission-mode", `Permission mode: ${mode}.`);
+}
+
+/** 权限档快照·非 owner 会话变体（对抗审查 R2-F1）：非锚定会话（委派子代理/跨进程 peer）
+ *  无审批资格，plan 指引的「等批准」对其不成立——渲染事实行 + 交付指向 */
+export function renderPermissionModeNonOwnerSnapshot(mode: string): string {
+  if (mode === "plan") {
+    return snapshotEnvelope("permission-mode", `Permission mode: plan (read-only; only the session that entered plan mode can submit a plan for approval — deliver findings there).`);
   }
   return snapshotEnvelope("permission-mode", `Permission mode: ${mode}.`);
 }
@@ -111,7 +121,8 @@ export function createFactsSnapshotPlugin(options: FactsSnapshotOptions): Plugin
   return {
     name: "facts-snapshot",
     inject: ["agent-loop"],
-    // S0 软依赖：permission 在场则排后（apply 期 tryUse 即时求值同 tool-core 先例）
+    // S0 软依赖：permission 在场则排后（服务面 render/kick 期懒解析——排序非功能
+    // 承载，迟到 provide 下一 kick 亦可见）
     softInject: ["permission"],
     apply: (ctx): Disposer => {
       const loop = ctx.use(agentLoopServiceToken);
@@ -123,10 +134,14 @@ export function createFactsSnapshotPlugin(options: FactsSnapshotOptions): Plugin
         createTailSnapshot({ ctx, loop, spec: { id: "date", render: () => renderDateSnapshot(new Date(now())), onWarn: warn } }),
         createTailSnapshot({ ctx, loop, spec: { id: "project-instructions", render: () => renderInstructionsSnapshot(options.cwd, warn), onWarn: warn } }),
         createRequestSnapshot({ ctx, loop, spec: { id: "model", render: (dial) => renderModelSnapshot(dial.model), onWarn: warn } }),
-        // 权限档快照（plan 模式告知）：permission 服务缺席（纯工具世界）→ 空串零注入
-        createTailSnapshot({ ctx, loop, spec: { id: "permission-mode", render: () => {
+        // 权限档快照（plan 模式告知）：permission 服务缺席（纯工具世界）→ 空串零注入；
+        // 非 owner 会话渲染观察者变体（plan 指引的「等批准」仅对锚定会话成立——planControl
+        // owner 判定，planKit 缺席世界无锚 = 全观察者变体）。服务面 render/kick 期懒解析
+        createTailSnapshot({ ctx, loop, spec: { id: "permission-mode", render: (session) => {
           const mode = ctx.tryUse(permissionMode);
-          return mode === undefined ? "" : renderPermissionModeSnapshot(mode.get());
+          if (mode === undefined) return "";
+          if (mode.get() !== "plan") return renderPermissionModeSnapshot(mode.get());
+          return ctx.tryUse(planControl)?.owner === session ? renderPermissionModeSnapshot("plan") : renderPermissionModeNonOwnerSnapshot("plan");
         }, onWarn: warn } }),
       ];
       return () => {
