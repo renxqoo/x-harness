@@ -97,6 +97,40 @@ describe("permission 插件（真实管线）", () => {
     expect(() => parseRules(["Danger(broken"], "user")).toThrow(/unparseable/);
   });
 
+  const readVerdictsOf = (audits: readonly { tool: string; verdict: string }[]): string[] => {
+    const verdicts: string[] = [];
+    for (const a of audits) if (a.tool === "read") verdicts.push(a.verdict);
+    return verdicts;
+  };
+
+  describe("read paths 批量聚合裁决（TURN-REDUCTION.md P1——批量不得绕过任何裁决面）", () => {
+    it("批量混入 .env → 整体 deny（默认拒读表对每条目完整生效）", async () => {
+      const b = await bench(root);
+      const r = await b.call("read", { paths: ["f.txt", ".env"] });
+      expect(r.isError).toBe(true);
+      expect(r.content).toContain("rule:**/.env");
+      expect(b.asks).toHaveLength(0); // deny 不走 ask
+    });
+
+    it("批量含界外条目 → 整体 ask（grant 落账界外父目录；批量不吞界外语义）", async () => {
+      const b = await bench(root);
+      await b.call("read", { paths: ["f.txt", outsideFile] });
+      expect(b.asks.length).toBe(1);
+      const ask = b.asks[0];
+      if (ask === undefined) throw new Error("no ask");
+      expect(ask.reason).toContain("outside-root:");
+      expect(ask.reason).toContain("xh-outside"); // grant 落账的界外条目路径在场
+    });
+
+    it("批量全界内正常文件 → allow 直通（batch in-root；零 ask 零 deny）", async () => {
+      const b = await bench(root);
+      const r = await b.call("read", { paths: ["f.txt", join("sub", "..", "f.txt")] });
+      expect(r.isError).toBeUndefined(); // 占位工具执行成功 = 裁决 allow
+      expect(b.asks).toHaveLength(0);
+      expect(readVerdictsOf(b.audits).includes("allow")).toBe(true);
+    });
+  });
+
   it("默认拒读表：read .env / .ssh/id_rsa → deny（user-origin deny 压过一切；不触发 ask）", async () => {
     const b = await bench(root);
     const env = await b.call("read", { path: ".env" });

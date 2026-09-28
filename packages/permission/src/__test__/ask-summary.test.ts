@@ -64,6 +64,17 @@ describe("ask 载荷带目标描述（插件级贯通）", () => {
     expect(asks[0]).toMatchObject({ tool: "edit", summary: "src/a.ts" });
   });
 
+  it("read 批量形态：paths 数组逐条列出（TURN-REDUCTION P1——确认条里看清每个目标）", async () => {
+    // 界外路径触发 ask（装置 root=/w/app，虚构绝对路径必然界外）
+    const asks = await asksOf("read", { paths: ["/w/app/../a.ts", "/w/app/../sub/b.ts"] });
+    expect(asks[0]?.summary).toBe("/w/app/../a.ts, /w/app/../sub/b.ts");
+  });
+
+  it("paths 混垃圾条目 → 仍列字符串条目（防御层不炸）", async () => {
+    const asks = await asksOf("read", { paths: ["/w/app/../a.ts", 42] });
+    expect(asks[0]?.summary).toBe("/w/app/../a.ts");
+  });
+
   it("命令类目标 summary=命令；无目标标识工具 summary 缺席（不发空壳）", async () => {
     const commandLike = await asksOf("webfetch", { command: "npm test" });
     expect(commandLike[0]?.summary).toBe("npm test");

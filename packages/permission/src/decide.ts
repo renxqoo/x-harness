@@ -144,7 +144,26 @@ interface PathDecisionInput extends DecideInput {
 }
 
 function decidePathTool(input: PathDecisionInput): Decision {
-  const { path, absent } = pathOf(input);
+  // paths 批量形态（read 多文件）：逐条目裁决后聚合——任一 deny → 整体 deny；任一
+  // ask → 整体 ask（首个 ask 胜出，grant/记忆富化随该裁决）；全 allow 才 allow。
+  // 逐条目走同一单路径裁决链（deny 清单/模式短路/界外 ask 语义完整继承——批量不绕过任何一面）。
+  const batch = pathsOf(input);
+  if (batch !== undefined) {
+    let firstAsk: Decision | undefined;
+    for (const entry of batch) {
+      const one = decideOnePath(input, entry.path, false);
+      if (one.verdict === "deny") return one;
+      if (one.verdict === "ask" && firstAsk === undefined) firstAsk = one;
+    }
+    if (firstAsk !== undefined) return firstAsk;
+    return withExec(attributeRule({ verdict: "allow", reason: "batch in-root", resolvedBy: "auto" }, allowRuleOf(input, batch[0]?.path ?? "")), input.profile);
+  }
+  const single = pathOf(input);
+  return decideOnePath(input, single.path, single.absent);
+}
+
+/** 单路径裁决（批量与单路径共用主干；批量条目恒在场——absent 恒 false） */
+function decideOnePath(input: PathDecisionInput, path: string, absent: boolean): Decision {
   const scope = input.pathScope === true && input.kind === "Read";
   const denied = input.rules.find((rule) => rule.tool === input.kind && rule.verdict === "deny" && path !== "" && (globMatch(rule.pattern, path, input.root) || (scope && scopeDenyAnchored(rule.pattern, path, input.root))));
   if (denied !== undefined) {
@@ -193,6 +212,18 @@ function pathOf(input: PathDecisionInput): { readonly path: string; readonly abs
   // R8：范围型读工具（pathScope）缺席 = 以 root 为范围的合法搜索（工具缺省形态，非缺参错误）
   if (typeof args.path === "string" && args.path !== "") return { path: resolve(input.root, args.path), absent: false };
   return input.pathScope === true ? { path: resolve(input.root), absent: false } : { path: input.root, absent: true };
+}
+
+/** paths 批量条目归一（read 多文件形态）；非数组/空 → undefined 走单路径链 */
+function pathsOf(input: PathDecisionInput): readonly { readonly path: string }[] | undefined {
+  const args = (input.args ?? {}) as { paths?: unknown };
+  if (!Array.isArray(args.paths) || args.paths.length === 0) return undefined;
+  const entries: { path: string }[] = [];
+  for (const item of args.paths) {
+    if (typeof item !== "string") continue; // 垃圾条目跳过——schema 层已拒，防御双保险
+    entries.push({ path: resolve(input.root, item) });
+  }
+  return entries.length > 0 ? entries : undefined;
 }
 
 /** R2 无锚底线 ask 位：无目录锚的拒读模式对目录搜索恒可能命中——一次精确范围 ask

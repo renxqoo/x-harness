@@ -56,8 +56,17 @@ defaultTaskLimits（bash 源消费面）。**第 5 个命令 = 新包 + createTo
 
 ## 2. read（read.ts）
 
-**Schema**：`{ path: string, offset?: int ≥1（1 起）, limit?: int ≥1（缺省/上限 2000） }`。
+**Schema**：`{ path?: string, paths?: string[]（2..8 条，批量形态）, offset?: int ≥1（1 起，单 path）, limit?: int ≥1（缺省/上限 2000，单 path） }`。
 非法值（0/负/非整数）→ TypeBox 校验层拒绝（不静默回退第 1 行——交集 4）。
+`path` 与 `paths` 互斥、双缺席、批量×offset/limit 组合 → 工具层 isError 文案（TypeBox 表达不了 XOR，判定在 execute——TURN-REDUCTION.md §1.1A）。
+
+**批量形态（paths，TURN-REDUCTION §1.1A；行为引导措辞已回退——协议能力保留）**：单轮最多 8 文件；输出逐文件 `<file path="…">` 包裹块
+（与单 path 裸输出刻意不同——两形态各自稳定）；聚合字节预算 = 单文件 50KB（逐文件先到先得，预算
+耗尽的文件块给 `re-read with single path` 续读指引——工具层自截，不依赖调度层截断兜底）；
+部分成功语义：单文件失败仅该块错误文案，整体 isError 仅当全部失败；重复路径照读不去重。
+permission 批量裁决（PERMISSION 面）：逐条目同链裁决后聚合——任一 deny → 整体 deny、任一界外 →
+整体 ask（grant 落账界外父目录）、全 allow 才 allow；默认拒读表（.env/.ssh 等）对每条目完整生效；
+ask 确认条 summary 逐条列出所有目标。
 
 **行为**：
 - 逐行流式读取（同步 readSync 逐块 + StringDecoder + 手动行拆——**绝不整读进内存**，pi 整读是

@@ -35,6 +35,9 @@ function usage(over: Partial<SessionUsage> = {}): SessionUsage {
     lastReportedInput: 1200,
     lastReportedCacheRead: 0,
     lastUsageAt: 1,
+    toolUseCalls: 0,
+    toolUseSteps: 0,
+    parallelSteps: 0,
     turns: [{ turn: 1, inputTokens: 1200, outputTokens: 3400, cacheReadTokens: 0, cacheWriteTokens: 0, routes: [{ provider: "glm", model: "glm-4.7", inputTokens: 1200, outputTokens: 3400, cacheReadTokens: 0, cacheWriteTokens: 0 }] }],
     ...over,
   };
