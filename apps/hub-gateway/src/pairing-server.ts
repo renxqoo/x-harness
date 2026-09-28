@@ -220,6 +220,12 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       const session = sessions.get(spec.pairingId);
       if (session === undefined) return { ok: false, reason: "no such pairing" };
       const nowMs = options.now();
+      // device-keys 是配对收尾通道：confirm（consumed）后仍放行——ack 携 relayToken 是
+      // 设备注册的最后一步（其余帧在 consumed 后拒绝）
+      if (spec.message.p === "device-keys") {
+        if (nowMs > session.expiresAt) return { ok: false, reason: "pairing expired" };
+        return pairingFrameInner({ server: this, session, spec, deps: options });
+      }
       if (nowMs > session.expiresAt || session.consumed) return { ok: false, reason: "pairing expired" };
       return pairingFrameInner({ server: this, session, spec, deps: options });
     },
