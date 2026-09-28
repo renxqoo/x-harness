@@ -253,7 +253,7 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
         const deviceInfo = coerceDeviceInfo(spec.message.deviceInfo);
         const res = await server.handlePakeInitiate({ pairingId: spec.pairingId, messageA, deviceInfo });
         if (!res.ok) return res;
-        return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm } };
+        return pakeBReply(res, session.sas);
       }
       if (spec.message.p === "device-keys") {
         const longTermPub = typeof spec.message.longTermPub === "string" ? spec.message.longTermPub : "";
@@ -271,4 +271,9 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
       }
       return { ok: false, reason: "unknown pairing message" };
 
+}
+
+/** pake-b 应答构造（sas 随帧下发——手机端展示与 owner 键入同源）。 */
+function pakeBReply(res: { ok: true; messageB: string; confirm: string }, sas: string | null): { ok: true; reply: { p: string; [key: string]: unknown } } {
+  return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm, ...(sas !== null ? { sas } : {}) } };
 }
