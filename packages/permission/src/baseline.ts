@@ -52,10 +52,15 @@ export function baselineOf(host?: BaselinePolicy): Readonly<Required<BaselinePol
 
 /** 习得闸：这些命令头不习得记忆（红队/上层 P1-4 单源裁决——内核导出，host 命令面同闸消费；
  *  一次「always allow」不得终身放行硬拒族/wrapper·解释器前缀；万配由形态面另拒） */
-export const MEMORY_BLOCKED_HEADS: readonly string[] = [
-  "sudo", "doas", "su", "rm", "mkfs", "dd", "chmod", "chown", "bash", "sh", "zsh", "dash", "ksh",
-  "env", "node", "python", "python3", "perl", "ruby", "php", "osascript", "eval", "xargs", "awk", "sed",
-];
+/** 习得禁习头（单源派生：SUDO_LIKE ∪ 解释器族 ∪ MEMORY_BLOCKED_EXTRA——2026-09-29
+ *  红队 P1-2：旧手抄表漏 bun/deno/ash/nohup/time/exec/source，Danger(bun -e:*) 习得后
+ *  任意代码免问。词表与 injection/hard-deny 单源，不再手工同步） */
+export const MEMORY_BLOCKED_HEADS: readonly string[] = [...new Set([
+  "sudo", "doas", "su", "pkexec", "sudoedit", "gsudo",
+  "rm", "mkfs", "dd", "chmod", "chown",
+  "sh", "bash", "zsh", "dash", "ksh", "ash", "node", "bun", "deno", "python", "python3", "perl", "ruby", "php", "osascript",
+  "env", "nohup", "time", "exec", "eval", "source", ".", "xargs", "awk", "sed", "trap",
+])];
 
 /** 底线规则全集（decideFor 内部恒合并——纯直调方与插件执行面同真相）；拒读但
  *  恒在场（凭据面——总括档不放行），拒写表仅非总括档（full 语义：.git 可写）。
@@ -71,8 +76,15 @@ export function baselineDenyRules(unrestricted = false, baseline?: BaselinePolic
 }
 
 /** 习得闸判定：规则头（首词，滤空白——前导空格形 `Danger( chmod:*)` 同拦，与 bash-prefix
- *  词元化同口径，红队 R9）在禁习表内或空头（畸形串）→ 不落记忆 */
+ *  词元化同口径，红队 R9）在禁习表内或空头（畸形串）→ 不落记忆。
+ *  basename 归一（2026-09-29 红队 P1-1）：/usr/bin/rm、/bin/bash 路径形态首词曾整族
+ *  习得放行；darwin 大小写同归一（Sudo 归一后命中）；万配形 * 拒落（P1-3） */
 export function memoryBlocked(pattern: string): boolean {
   const head = pattern.replace(/:\*$/, "").trim().split(/\s+/).filter((word) => word !== "")[0];
-  return head === undefined || MEMORY_BLOCKED_HEADS.includes(head);
+  if (head === undefined) return true; // 空头（畸形串）不落
+  if (head === "*" || head === "") return true; // 万配形不落（Danger(*):allow 不得一次性放行一切）
+  const base = head.split("/").filter(Boolean).pop() ?? head; // basename 归一：路径形态
+  const folded = process.platform === "darwin" ? base.toLowerCase() : base;
+  if (MEMORY_BLOCKED_HEADS.includes(folded)) return true;
+  return /^python\d/.test(folded); // 版本后缀形（python3.11）同拦
 }

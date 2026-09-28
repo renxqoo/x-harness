@@ -40,8 +40,14 @@ export const autoMode: ModePlugin = {
       const dir = facts.path.slice(0, Math.max(facts.path.lastIndexOf("/"), 1));
       const rootGrantable = dir !== "/" && facts.kind === "Write";
       // R4/内核#3（2026-09-28）：顶层目录（dir==="/"）的 dir/** 模板拼出 `//**` ≡ 全盘
-      // 授权——P-bug-3 同闸，降级为精确路径规则（不泛化）
-      const suggested = dir === "/" ? `${facts.kind}(${facts.path}):allow` : `${facts.kind}(${dir}/**):allow`;
+      // 授权——P-bug-3 同闸，降级为精确路径规则（不泛化）。
+      // glob 注入（2026-09-29 红队 P2-4）：dir/path 含 glob 元字符（* ? [）时模板拼接会
+      // 意外泛化（/w/x*y/** 放行 xZZZy/）——降级为字面转义精确路径（[] 包裹元字符）
+      const hasGlobMeta = (s: string): boolean => s.includes("*") || s.includes("?") || s.includes("[");
+      const literalPath = facts.path.replace(/\*/g, "[*]").replace(/\?/g, "[?]").replace(/\[/g, "[[]");
+      const suggested = dir === "/" || hasGlobMeta(dir)
+        ? `${facts.kind}(${literalPath}):allow`
+        : `${facts.kind}(${dir}/**):allow`;
       return {
         verdict: "ask" as const,
         reason: `outside-root:${facts.path}`,
@@ -118,9 +124,12 @@ export interface KnobDecide {
 
 export function knobDecideOf(profile: { readonly askPolicy: string; readonly containment: string; readonly mutationPolicy?: string }): KnobDecide {
   // P1-2（2026-09-28）：收紧旋钮优先于 full 短路——`{never,none,plan-deny}` 旧映射落
-  // fullMode（声明收紧得最宽，意图反转）；矛盾组合另由 profileRowValid 拒收
+  // fullMode（声明收紧得最宽，意图反转）；矛盾组合另由 profileRowValid 拒收。
+  // always 收紧（2026-09-29 红队 P1-1）：`{always,*,auto-in-root}` 旧落 autoMode 界内写
+  // 零交互——与「恒问」意图反转；映射 edit-confirm（写面恒问，读面 auto）
   if (profile.mutationPolicy === "plan-deny") return planDefaultMode;
   if (profile.mutationPolicy === "confirm-all") return editConfirmMode;
+  if (profile.askPolicy === "always") return editConfirmMode;
   if (profile.askPolicy === "never" && profile.containment === "none") return fullMode;
   if (profile.askPolicy === "on-failure" && profile.containment === "fenced") return sandboxedAutoMode;
   return autoMode;

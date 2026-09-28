@@ -86,9 +86,12 @@ export function decideFor(input: DecideInput): Decision {
   const rules = [...(input.projectRules ?? []), ...input.userRules, ...denyRules, ...input.sessionRules];
   if (input.kind === "Danger") return decideDangerFace(input, rules, denyRules);
   if (input.kind === "Read" || input.kind === "Write") {
-    // 根归一双轨收敛（P-架构5）+ fence.writable 进路径面（K#9——同档同根两面一致）
-    const pathRoots = [resolve(input.root), ...input.extraRoots.map((r) => resolve(input.root, r)), ...(input.fence?.writable ?? []).map((p) => resolve(p))];
-    return decidePathTool({ ...input, kind: input.kind, rules, roots: pathRoots });
+    // 根归一双轨收敛（P-架构5）+ fence.writable 进路径面（K#9——同档同根两面一致；
+    // fence 面不进 outsideRoots 豁免：工作区根集专表 baselineRoots——.env 条件底线只认
+    // root+extraRoots，围栏写通道（tmpdir 等）不构成「项目本地配置」豁免依据，红队 P1-2）
+    const baselineRoots = [resolve(input.root), ...input.extraRoots.map((r) => resolve(input.root, r))];
+    const pathRoots = [...baselineRoots, ...(input.fence?.writable ?? []).map((p) => resolve(p))];
+    return decidePathTool({ ...input, kind: input.kind, rules, roots: pathRoots, baselineRoots });
   }
   return decideToolFace(input, rules);
 }
@@ -152,6 +155,9 @@ interface PathDecisionInput extends DecideInput {
   readonly kind: "Read" | "Write";
   readonly rules: readonly PermissionRule[];
   readonly roots: readonly string[];
+  /** 工作区根集（root+extraRoots——outsideRoots 条件底线专表，不含 fence.writable；
+   *  红队 P1-2：tmpdir 等围栏写通道不构成「项目本地配置」豁免依据） */
+  readonly baselineRoots?: readonly string[];
 }
 
 function decidePathTool(input: PathDecisionInput): Decision {
@@ -176,8 +182,9 @@ function decidePathTool(input: PathDecisionInput): Decision {
 /** 单路径裁决（批量与单路径共用主干；批量条目恒在场——absent 恒 false） */
 function decideOnePath(input: PathDecisionInput, path: string, absent: boolean): Decision {
   const scope = input.pathScope === true && input.kind === "Read";
-  // outsideRoots 条件规则（内核 .env 族底线）：路径在根集内不生效——项目本地配置是常规读写面
-  const conditional = (rule: PermissionRule): boolean => rule.outsideRoots === true && withinAny(path, input.roots);
+  // outsideRoots 条件规则（内核 .env 族底线）：路径在工作区根集（root+extraRoots，不含
+  // fence.writable——红队 P1-2：tmpdir 等围栏写通道不构成豁免）内时不生效
+  const conditional = (rule: PermissionRule): boolean => rule.outsideRoots === true && withinAny(path, input.baselineRoots ?? input.roots);
   const denied = input.rules.find((rule) => rule.tool === input.kind && rule.verdict === "deny" && path !== "" && !conditional(rule) && (globMatch(rule.pattern, path, input.root) || (scope && scopeDenyAnchored(rule.pattern, path, input.root))));
   if (denied !== undefined) {
     return { verdict: "deny", reason: `rule:${denied.pattern}`, resolvedBy: `rule:${denied.origin}` };

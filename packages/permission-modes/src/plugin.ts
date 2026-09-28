@@ -36,6 +36,11 @@ export function createPermissionModesPlugin(): Plugin {
         offResolveProfile();
         offResolve();
         for (const off of offs) off();
+        // 注销重同步（2026-09-29 红队 P1-3）：五档注销后注册表为空——若当前档曾是
+        // full（unrestricted），grants 总括态必须收回，否则 extraRoots=[/"] 粘滞。
+        // modeService.set(get()) 幂等重算（注册表空 → 无 unrestricted 声明 → 收回）
+        const modeService2 = ctx.tryUse(permissionMode);
+        if (modeService2 !== undefined) modeService2.set(modeService2.get());
       };
     },
   };

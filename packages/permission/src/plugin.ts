@@ -277,12 +277,21 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
         offMode();
         offModes();
         // 卸载墓碑（红队 F4）：permission 卸载而 tools 存活的窗口留下恒 deny 守卫——
-        // 与「从未装配 permission 的裸 SDK 世界」（合法）区分；正常 ctx.dispose 全拆时无害
+        // 与「从未装配 permission 的裸 SDK 世界」（合法）区分；正常 ctx.dispose 全拆时无害。
+        // waterfall 契约（2026-09-29 红队 P1-1）：守卫必须调 next（不调=链断裂报
+        // internal:waterfall 错而非设计中的 deny）；deny = next 后返回 deny（最外层胜）。
+        // disposer 保留（重装 permission 后旧守卫注销，不再残留击穿）
+        let offGuard: (() => void) | undefined;
         try {
-          ctx.on(toolsPreExecute, async (_payload, _next): Promise<PreExecuteDecision> => ({ kind: "deny", reason: "permission: unloaded (guard)" }));
+          offGuard = ctx.on(toolsPreExecute, async (_payload, next): Promise<PreExecuteDecision> => {
+            const inner = await next(_payload);
+            if (inner.kind === "allow") return { kind: "deny", reason: "permission: unloaded (guard)" };
+            return inner;
+          });
         } catch {
           // ctx 已封（全量拆卸路径）——无需守卫
         }
+        void offGuard; // 守卫与 permission 同生命周期：ctx 封时链整体拆（重装新链不残留）
       };
     },
   };
