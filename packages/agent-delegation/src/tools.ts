@@ -37,7 +37,7 @@ async function run(result: Promise<VerbOutcome> | VerbOutcome): Promise<{ conten
 function viewLines(view: readonly ChildView[]): string {
   const lines = view.map((row) =>
     row.kind === "subagent"
-      ? `kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}${row.work !== undefined ? ` work=${row.work}` : ""}`
+      ? `kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}${row.work !== undefined ? ` work=${row.work}` : ""}${row.worktree !== undefined ? ` worktree=${row.worktree}` : ""}`
       : `${row.name} [${row.ref}] kind=local-session status=${row.status}`,
   );
   // running 行在场 → 尾附等待提示（反轮询执法读面）：结束 turn 等通知，禁 sleep/list_agents 自旋

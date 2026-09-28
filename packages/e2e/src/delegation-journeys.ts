@@ -17,6 +17,7 @@ import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { createJsonlSessionPersistence } from "@x-harness/session-persistence-jsonl";
 import { systemPromptPlugin } from "@x-harness/system-prompt";
+import { createBasePromptPlugin, createWorktreeContextPlugin } from "@x-harness/harness";
 import { toolsPlugin } from "@x-harness/tools";
 import { agentLoopPlugin } from "@x-harness/agent-loop";
 import { createAgentDelegationPlugin } from "@x-harness/agent-delegation";
@@ -33,13 +34,23 @@ const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
 interface Harness {
   readonly ctx: ReturnType<typeof createContext>;
   readonly scripts: Map<string, Array<AsyncGenerator<LlmChunk>>>;
+  /** 全量 LlmRequest 捕获（system 文本断言面——worktree 子提示词轨道锚） */
+  readonly calls: LlmRequest[];
   readonly unload: Promise<unknown>;
 }
 
-async function assemble(input: { readonly agentsDir: string; readonly workspaceRoot: string; readonly mailboxRoot?: string; readonly box?: string; readonly persistence?: string; readonly grants?: boolean }): Promise<Harness> {
+async function assemble(input: { readonly agentsDir: string; readonly workspaceRoot: string; readonly mailboxRoot?: string; readonly box?: string; readonly persistence?: string; readonly grants?: boolean; readonly promptRig?: { readonly cwd: string } }): Promise<Harness> {
   const ctx = createContext();
   const scripts = new Map<string, Array<AsyncGenerator<LlmChunk>>>();
+  const calls: LlmRequest[] = [];
   const plugins: Plugin[] = [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin];
+  if (input.promptRig !== undefined) {
+    // base/core 根层 + worktree 子覆盖双插件（覆盖/顶替语义检测的前提——根层无同名段
+    // 时覆盖断言恒真，docs/WORKTREE-CONTEXT-AWARENESS §5 e2e 钉）
+    const facts = { cwd: input.promptRig.cwd, isGit: true, platform: process.platform, shell: "unknown" };
+    plugins.push(createBasePromptPlugin(facts));
+    plugins.push(createWorktreeContextPlugin({ facts }));
+  }
   if (input.persistence !== undefined) plugins.splice(1, 0, createJsonlSessionPersistence({ root: input.persistence }));
   if (input.grants === true) plugins.push(grantsPlugin);
   if (input.mailboxRoot !== undefined) {
@@ -57,11 +68,14 @@ async function assemble(input: { readonly agentsDir: string; readonly workspaceR
   ]);
   ctx.use(llmRuntime).registerAdapter({
     name: "fake",
-    stream: (request: LlmRequest) => scripts.get(request.model)?.shift() ?? (async function* (): AsyncGenerator<LlmChunk> {
-      yield { type: "finish", finish: { kind: "error", message: `no-script:${request.model}`, code: "e2e" } };
-    })(),
+    stream: (request: LlmRequest) => {
+      calls.push(request);
+      return scripts.get(request.model)?.shift() ?? (async function* (): AsyncGenerator<LlmChunk> {
+        yield { type: "finish", finish: { kind: "error", message: `no-script:${request.model}`, code: "e2e" } };
+      })();
+    },
   });
-  return { ctx, scripts, unload: Promise.resolve() };
+  return { ctx, scripts, calls, unload: Promise.resolve() };
 }
 
 /** worktree 隔离的授权面（GrantsRegistry 直供——旅程只需 setRootOverride 落账） */
@@ -155,7 +169,8 @@ export async function runWorktreeJourney(): Promise<void> {
 
     const agentsDir = await mkdtemp(join(tmpdir(), "xh-e2e-wt-agents-"));
     await writeAgentMd(agentsDir);
-    const harness = await assemble({ agentsDir, workspaceRoot: physical, grants: true });
+    // promptRig：base 根层 + worktree 覆盖插件（named 子 Track N 静态拼接 + 根层零污染断言面）
+    const harness = await assemble({ agentsDir, workspaceRoot: physical, grants: true, promptRig: { cwd: physical } });
     const loop = harness.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken);
     const made = await loop.create({ agent: { model: "parent-model", provider: "fake" } });
     if (!made.ok) throw new Error(`parent 创建失败：${made.reason}`);
@@ -169,6 +184,16 @@ export async function runWorktreeJourney(): Promise<void> {
     must(entry !== undefined, "worktree 建在 repo 外同级");
     const wtPath = join(wtParent, entry ?? "");
     must(existsSync(join(wtPath, "SEED.md")), "worktree 检出 HEAD");
+    // Track N（named 子静态 systemPrompt 拼接）：子首 LLM 请求 system 文本含 worktree 环境块
+    harness.scripts.set("child-model", [textScript("child in worktree")]);
+    await sleep(400); // 子首步落卷
+    const childCall = harness.calls.find((c) => c.model === "child-model");
+    must(childCall !== undefined, "子首 LLM 请求捕获在场");
+    const systemText = (childCall?.messages.find((m) => m.role === "system") as { text?: string } | undefined)?.text ?? "";
+    must(systemText.includes("you are the e2e worker"), "子 system 含类型正文（Track N 拼接不丢 persona）");
+    must(systemText.includes(`- Working directory: ${wtPath}`), `子 system 含 worktree 路径（实际 system 头 200 字：${systemText.slice(0, 200)}`);
+    must(systemText.includes(`- Git branch: x-harness/${agentId}`), "子 system 含分支行");
+    must(systemText.includes("- Main repository"), "子 system 含主仓行（只读参照）");
     // 主仓 status 干净（worktree 不污染主仓）
     const status = await exec("git", ["-C", repo, "status", "--porcelain"]);
     must(status.stdout.trim() === "", "主仓工作树不受污染");

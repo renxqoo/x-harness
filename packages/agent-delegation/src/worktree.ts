@@ -12,8 +12,31 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { repoLockPath, withRepoLock } from "./lockfile.ts";
 import type { LockDegraded } from "./lockfile.ts";
+import { branchOfHeadText, parseWorktreeGitdir, worktreeMainOfGitdir } from "./worktree-facts.ts";
 
 const exec = promisify(execFile);
+
+/** worktree 环境事实（.git file / HEAD 纯 fs 解析——主仓顶与分支的单一真相；
+ *  harness probeGitFacts 与本包 payload/环境块共源消费） */
+export type WorktreeFacts = import("./worktree-facts.ts").WorktreeFacts;
+
+/** 读 worktree 目录的 git 事实（.git file → gitdir → HEAD）；目录缺席/非 worktree
+ *  形态/IO 失败 → undefined（降级不判——键缺席即未知） */
+export async function worktreeFactsOf(path: string): Promise<WorktreeFacts | undefined> {
+  if (path === "") return undefined; // 空串 join 出 ".git" 相对 cwd——会解析到进程所在仓（导出面守卫）
+  try {
+    const raw = await readFile(join(path, ".git"), "utf8");
+    const parsed = parseWorktreeGitdir(raw);
+    if (parsed === undefined) return undefined; // .git 是目录（主仓本体）/坏文件
+    const head = await readFile(join(parsed.gitdir, "HEAD"), "utf8").catch(() => undefined);
+    const branch = head !== undefined ? branchOfHeadText(head) : undefined;
+    const main = worktreeMainOfGitdir(parsed.gitdir);
+    if (branch === undefined && main === undefined) return undefined;
+    return { ...(branch !== undefined ? { branch } : {}), ...(main !== undefined ? { worktreeMain: main } : {}) };
+  } catch {
+    return undefined;
+  }
+}
 
 /** git 全局串行队列（进程内；跨进程互斥归 per-repo lockfile——方案并发预算） */
 let gitChain: Promise<unknown> = Promise.resolve();
@@ -28,6 +51,9 @@ export interface WorktreePlan {
   readonly path: string;
   readonly branch: string;
   readonly repoTop: string;
+  /** 新树环境事实（spawn 时 .git file 解析——payload/environment 块的单一来源；
+   *  D6：主仓锚取 gitdir 解析非 repoTop（嵌套形态 repoTop=父 worktree）） */
+  readonly facts?: WorktreeFacts;
 }
 
 export type WorktreeOutcome = { ok: true; plan: WorktreePlan } | { ok: false; reason: string };
@@ -81,7 +107,7 @@ export async function createWorktree(agentId: string, workspaceRoot: string, onD
     await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["branch", "-D", branch], { cwd: top.top }), onDegraded).catch(() => {});
     return { ok: false, reason: `git worktree add failed (${errorText(error)})` };
   }
-  return { ok: true, plan: { path, branch, repoTop: top.top } };
+  return { ok: true, plan: { path, branch, repoTop: top.top, facts: await worktreeFactsOf(path) } };
 }
 
 export type CleanupResult =
@@ -155,16 +181,12 @@ export interface SweepKept {
 
 /** worktree 所属主仓顶（持久化事实）。linked worktree 内 rev-parse --show-toplevel
  *  返回 worktree 自身（实测）——不能用它；.git 文件的 gitdir 行
- *  `gitdir: <mainRepo>/.git/worktrees/<name>` 才是主仓锚。 */
+ *  `gitdir: <mainRepo>/.git/worktrees/<name>` 才是主仓锚（解析归 worktree-facts 纯函数）。 */
 export async function mainRepoTopOf(worktree: string): Promise<string | undefined> {
   try {
     const raw = await readFile(join(worktree, ".git"), "utf8");
-    const m = /^gitdir: (.+)\r?$/m.exec(raw.trim());
-    const gitdir = m?.[1];
-    if (gitdir === undefined) return undefined; // .git 是目录（主仓本体）——非本件形态
-    const wt = "/.git/worktrees/";
-    const at = gitdir.lastIndexOf(wt);
-    return at === -1 ? undefined : gitdir.slice(0, at);
+    const parsed = parseWorktreeGitdir(raw);
+    return parsed === undefined ? undefined : worktreeMainOfGitdir(parsed.gitdir);
   } catch {
     return undefined; // .git 缺席/不可读——树损坏
   }

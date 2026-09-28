@@ -12,6 +12,7 @@
     "@x-harness/compaction": "workspace:*",
     "@x-harness/core": "workspace:*",
     "@x-harness/exec-env": "workspace:*",
+    "@x-harness/harness": "workspace:*",
     "@x-harness/llm": "workspace:*",
     "@x-harness/permission": "workspace:*",
     "@x-harness/permission-modes": "workspace:*",

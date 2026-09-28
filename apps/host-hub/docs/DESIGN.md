@@ -112,8 +112,9 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
 ### 3.1 线程生命周期
 
 - **thread/start** `{cwd?, provider?, modelId?, trusted?, permissionMode?, thinkingLevel?}` →
-  `{threadId, cwd, sessionPath}`（+ 可选 `projectSettingsPresent:true`——仅 untrusted
-  且项目设置文件存在时）。cwd 缺省 = host 进程 cwd。threadId = 会话 id（内核
+  `{threadId, cwd, sessionPath, gitBranch?}`（+ 可选 `projectSettingsPresent:true`——仅 untrusted
+  且项目设置文件存在时；gitBranch = 装配期 cwd 的 git 分支快照，键省略 = 非 git 仓/detached
+  ——docs/WORKTREE-CONTEXT-AWARENESS §1.5）。cwd 缺省 = host 进程 cwd。threadId = 会话 id（内核
   `isSafeSessionId` 词法，host 侧 `mintSessionId` 生成）；sessionPath =
   `<agentDir>/sessions/<id>/events.jsonl` 绝对路径。`trusted`（默认 false）决定
   project 级资源（skills/agent-types 目录 + 项目级设置）装载；fork/clone 继承源线程
@@ -138,8 +139,10 @@ skills/list、settings/get、permission/get_mode 无 threadId 形态、workspace
 - **thread/set_keepalive** `{threadId, keepalive}` — 免闲置收编（不免 stale 杀/RSS）；
   不持久化；fork 不继承。
 - **thread/list** → `[{threadId, cwd, sessionPath, state, idleMs, rssBytes, keepalive,
-  isStreaming}]`——isStreaming 来自最近心跳（陈旧度 ≤1s，精确值 get_state）；非 live
-  条目 idleMs=0、rssBytes=null。state：live / parked / dead。非 live 表项 1024 FIFO。
+  isStreaming, gitBranch?}]`——isStreaming 来自最近心跳（陈旧度 ≤1s，精确值 get_state）；非 live
+  条目 idleMs=0、rssBytes=null。gitBranch 每调用现算（分支易变不落账——GUI 刷新即跟随），
+  仅 live 系行探测且 cwd 须绝对路径（落表归一前的历史脏数据键省略——防宿主仓冒充）。
+  state：live / parked / dead。非 live 表项 1024 FIFO。
 - **thread/list_saved** `{cwd?}` → `{sessions: SessionSummary[]}`。**查询键收窄为
   `{cwd?}`**（迁移源 model/forkParent/updatedAfter/updatedBefore/limit/cursor 退役——
   内核 header 无对应事实，全集过滤成本 O(全量读)；客户端全量拉后自滤——有意变更，
@@ -757,9 +760,9 @@ maxTokens` 退役——预算钳制归内核 llm 拨号层。）
 
 | 命令 | data |
 | --- | --- |
-| thread/start / resume / register | `{threadId, cwd, sessionPath}`（start/resume 另含可选 `projectSettingsPresent:true`） |
+| thread/start / resume / fork / clone / register | `{threadId, cwd, sessionPath, gitBranch?}`（start/resume 另含可选 `projectSettingsPresent:true`；gitBranch 为装配期快照，fork/clone 沿用重装配值——键省略 = 非 git 仓/detached） |
 | workspace/trust | `{trusted: [...]}`（无参列表形态）；设/撤形态无 data |
-| thread/list | `[{threadId, cwd, sessionPath, state, idleMs, rssBytes, keepalive, isStreaming}]` |
+| thread/list | `[{threadId, cwd, sessionPath, state, idleMs, rssBytes, keepalive, isStreaming, gitBranch?}]`（gitBranch 现算，仅 live 系 + 绝对 cwd） |
 | thread/list_saved | `{sessions: SessionSummary[]}`（§3.1 折叠形状） |
 | clear_queue | `{steering: {id,text}[], followUp: {id,text}[]}`（queue/drop、queue/send_now 无 data） |
 | compact（含 /compact 拦截） | `{summary, replacedCount, summaryTokens}` |

@@ -1,6 +1,6 @@
 export { createAgentDelegationPlugin, renderTypesBlock, validateOptions } from "./plugin.ts";
-export { agentSpawned, agentFinished } from "./tokens.ts";
-export type { AgentSpawnedPayload, AgentFinishedPayload } from "./tokens.ts";
+export { agentSpawned, agentFinished, agentWorktreeGone } from "./tokens.ts";
+export type { AgentSpawnedPayload, AgentFinishedPayload, AgentWorktreeGonePayload } from "./tokens.ts";
 export type { ManagedCycleReport, SettlementSink } from "./tokens.ts";
 export type { ChildView, DelegationOptions, LoadedAgentType } from "./types.ts";
 export { delegationView } from "./view.ts";
@@ -10,3 +10,8 @@ export { loadAgentTypes, projectAgentsDirOf, resolveAgentDirs, typesFingerprint,
 export type { TypeLoadResult } from "./types-loader.ts";
 export { parseInlineType, parseInlineTypes } from "./types-inline.ts";
 export type { InlineTypeResource } from "./types-inline.ts";
+export { appendWorktreeEnv, worktreeEnvBlock } from "./worktree-env.ts";
+export type { WorktreeEnvInput } from "./worktree-env.ts";
+export { branchOfHeadText, parseWorktreeGitdir, worktreeMainOfGitdir } from "./worktree-facts.ts";
+export type { WorktreeFacts } from "./worktree-facts.ts";
+export { worktreeFactsOf } from "./worktree.ts";

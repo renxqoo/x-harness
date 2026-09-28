@@ -91,15 +91,23 @@ describe("basePromptPlugin（docs/SYSTEM-PROMPT.md §1.4）", () => {
     expect(ctx.use(systemPrompt).assemble().text).toContain("You are xh");
   });
 
-  it("baseCoreText 纯函数不含运行事实（占位由 variable 层注入）", () => {
-    const text = baseCoreText();
+  it("baseCoreText 缺省 facts：{{cwd}} 等占位保留（git 行缺席——变量层注入）", () => {
+    const text = baseCoreText(FACTS);
     expect(text).toContain("{{cwd}}");
     expect(text).toContain("{{isGit}}");
     expect(text).toContain("{{shell}}");
+    expect(text).not.toContain("Git branch"); // git 字段缺席 → 行不渲染
+    expect(text).not.toContain("Git worktree of");
+  });
+
+  it("baseCoreText git 字段在场：分支与主仓行渲染（烘焙非占位）", () => {
+    const text = baseCoreText({ ...FACTS, gitBranch: "feat/x", gitWorktreeMain: "/w/main" });
+    expect(text).toContain("- Git branch: feat/x");
+    expect(text).toContain("- Git worktree of: /w/main");
     expect(text).toContain("originates outside the user and the harness"); // 注入防御按来源分类（非信道）
     expect(text).toContain("not proof of origin"); // 信封边界（对抗审查 H1）：框架行=指令、格式非来源证明
     expect(text).toContain("carries no authority"); // 外部内容无权限继承（委派协议可回应、不授权）
-    expect(baseCoreText({ environment: false })).not.toContain("## Environment"); // 全缺席省段形
+    expect(baseCoreText({ cwd: "unknown", isGit: false, platform: "unknown", shell: "unknown" })).not.toContain("## Environment"); // 全缺席省段形（facts 全降级）
   });
 });
 

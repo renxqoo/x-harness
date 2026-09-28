@@ -10,10 +10,15 @@ import type { Disposer, Plugin } from "@x-harness/core";
 import { systemPrompt, wellKnown } from "@x-harness/system-prompt";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 
-/** 环境事实（宿主探测后传入——进程内静态项） */
+/** 环境事实（宿主探测后传入——进程内静态项）。git 两字段：在场才渲染对应行
+ *  （docs/WORKTREE-CONTEXT-AWARENESS §1.3——键缺席 = 未知，不落 null/空串） */
 export interface BasePromptFacts {
   readonly cwd: string;
   readonly isGit: boolean;
+  /** 当前分支（probeGitFacts 解析；detached/非仓缺席） */
+  readonly gitBranch?: string;
+  /** linked worktree 的主仓顶（.git file gitdir 解析；主仓本体/submodule 形态缺席） */
+  readonly gitWorktreeMain?: string;
   readonly platform: string;
   readonly shell: string;
 }
@@ -28,16 +33,27 @@ function textOf(value: unknown): string {
   return cleaned !== "" ? cleaned : "unknown";
 }
 
-/** 环境归一：垃圾形态降级安全字面量，绝不产出 undefined/空行/带换行值 */
+/** 环境归一：垃圾形态降级安全字面量，绝不产出 undefined/空行/带换行值。
+ *  git 两字段：合法非空 string 才收，否则键省略（在场渲染门在 environmentBlock）。 */
 export function normalizeBaseFacts(input: {
   cwd?: unknown;
   isGit?: unknown;
+  gitBranch?: unknown;
+  gitWorktreeMain?: unknown;
   platform?: unknown;
   shell?: unknown;
 }): BasePromptFacts {
+  const optional = (value: unknown): string | undefined => {
+    const cleaned = typeof value === "string" ? inline(value) : "";
+    return cleaned !== "" ? cleaned : undefined;
+  };
+  const gitBranch = optional(input.gitBranch);
+  const gitWorktreeMain = optional(input.gitWorktreeMain);
   return {
     cwd: textOf(input.cwd),
     isGit: input.isGit === true,
+    ...(gitBranch !== undefined ? { gitBranch } : {}),
+    ...(gitWorktreeMain !== undefined ? { gitWorktreeMain } : {}),
     platform: textOf(input.platform),
     shell: textOf(input.shell),
   };
@@ -48,8 +64,25 @@ function environmentKnown(facts: BasePromptFacts): boolean {
   return facts.isGit || facts.cwd !== "unknown" || facts.platform !== "unknown" || facts.shell !== "unknown";
 }
 
-export function baseCoreText(options: { readonly environment?: boolean } = {}): string {
-  const { environment = true } = options;
+/** 环境块（条件行——git 两字段在场才渲染；下游 worktree-context 覆盖插件同构消费）。
+ *  变量仍全部注册（第三方段 {{cwd}} 等不破）；本块由 base-prompt 源头拼接，
+ *  不走 interpolate 通道——缺席行零残留。 */
+export function environmentBlock(facts: BasePromptFacts): string {
+  const lines = [
+    "## Environment",
+    "",
+    "You have been invoked in the following environment:",
+    `- Working directory: {{cwd}}`,
+    "- Is a git repository: {{isGit}}",
+  ];
+  if (facts.gitBranch !== undefined) lines.push(`- Git branch: ${facts.gitBranch}`);
+  if (facts.gitWorktreeMain !== undefined) lines.push(`- Git worktree of: ${facts.gitWorktreeMain}`);
+  lines.push("- Platform: {{platform}}", "- Shell: {{shell}}");
+  return lines.join("\n");
+}
+
+export function baseCoreText(facts: BasePromptFacts = { cwd: "unknown", isGit: false, platform: "unknown", shell: "unknown" }): string {
+  const environment = environmentKnown(facts);
   const head = `You are xh, an interactive agent that helps users with their tasks by
 working directly in their environment — reading and writing files,
 running commands, and calling tools on their behalf.
@@ -144,13 +177,7 @@ security research, or defensive use cases.
 - Before deleting or overwriting, look at the target. If what you find
   contradicts how it was described, surface that instead of proceeding.`;
 
-  const env = `## Environment
-
-You have been invoked in the following environment:
-- Working directory: {{cwd}}
-- Is a git repository: {{isGit}}
-- Platform: {{platform}}
-- Shell: {{shell}}`;
+  const env = environmentBlock(facts);
 
   const tail = `## Context Management
 
@@ -178,7 +205,7 @@ export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromp
     prompt.variable("isGit", normalized.isGit ? "yes" : "no"),
     prompt.variable("platform", normalized.platform),
     prompt.variable("shell", normalized.shell),
-    prompt.section({ name: wellKnown.baseCore, text: baseCoreText({ environment: environmentKnown(normalized) }) }),
+    prompt.section({ name: wellKnown.baseCore, text: baseCoreText(normalized) }),
   ];
   return () => {
     for (const off of offs) off();

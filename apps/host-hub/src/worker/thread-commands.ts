@@ -119,7 +119,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
   cwdOf: (assembled: AssemblyResult) => string;
   sessionsRoot?: string;
   cwdHint?: string;
-}): Promise<void> {
+}): Promise<AssemblyResult> {
   const cwdHint = plan.cwdHint ?? plan.fields.cwd ?? process.cwd();
   const selfTrusted = rt.state.trusted || plan.input.trusted === true;
   const { values: settings, user: userFile, project: projectFile, projectHit } = await effectiveSettings(rt.agentDir, cwdHint, selfTrusted);
@@ -150,6 +150,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
   }
   applyAssembly({ rt, assembled, cwd: plan.cwdOf(assembled), sessionsRoot: rt.sessionsRoot });
   await applySessionSettings(rt, { params });
+  return assembled;
 }
 
 /** 回退快照（live 锚定）：来源按「用户级值 vs 合并值 + 项目命中」（单次读取事实；
@@ -250,10 +251,12 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   rt.state.permissionService = undefined; // 旧服务随 world 失效——防悬挂
   rt.state.delegation = undefined;
   rt.state.commands = undefined;
+  // 装配结果出 try 作用域（响应 data 的 gitBranch 消费——fork 与 start/resume 同位）
+  let assembled: import("./assembly.ts").AssemblyResult;
   try {
     // 重装配走公共腿（与 start/resume 同构）：dial 挂点/permission 服务/skills
     // 快照全接线；fork 前缀自带 session/meta → WAL 尾值天然继承
-    await assembleThread(rt, {
+    assembled = await assembleThread(rt, {
       fields: {
         sessionsRoot: rt.sessionsRoot,
         cwd: rt.state.cwd,
@@ -276,7 +279,8 @@ export async function doFork(rt: WorkerRuntime, input: CommandInput, command: st
   respond(rt, {
     id: input.id,
     command,
-    data: { threadId: newId, previousThreadId, sessionPath: rt.state.sessionPath },
+    // gitBranch 与 start/resume 同位（装配期快照——fork 重装配 cwd 未变，值同源）
+    data: { threadId: newId, previousThreadId, sessionPath: rt.state.sessionPath, ...(assembled.gitBranch !== undefined ? { gitBranch: assembled.gitBranch } : {}) },
   });
 }
 
@@ -317,7 +321,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       const cwd = await normalizeCwd(rawCwd);
       const trusted = input.trusted === true;
       const modelId = typeof input.modelId === "string" ? input.modelId : undefined;
-      await assembleThread(rt, {
+      const assembled = await assembleThread(rt, {
         fields: {
           sessionsRoot: rt.sessionsRoot,
           cwd,
@@ -345,6 +349,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
           threadId: rt.state.threadId,
           cwd,
           sessionPath: rt.state.sessionPath,
+          ...(assembled.gitBranch !== undefined ? { gitBranch: assembled.gitBranch } : {}),
           ...(projectSettingsPresent === true ? { projectSettingsPresent: true } : {}),
         },
       });
@@ -380,7 +385,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       const explicitCwdRaw = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : undefined;
       const explicitCwd = explicitCwdRaw !== undefined ? await normalizeCwd(explicitCwdRaw) : undefined;
       const cwdHint = explicitCwd ?? (await preReadCwd(rt.sessionsRoot, resumeId)) ?? rt.state.cwd;
-      await assembleThread(rt, {
+      const assembled = await assembleThread(rt, {
         fields: {
           sessionsRoot: rt.sessionsRoot,
           // cwd 回退序全链生效（fence/toolbox/trusted 目录根——worker 进程 cwd 不得渗入）
@@ -397,7 +402,7 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
       respond(rt, {
         id: input.id,
         command: "thread/resume",
-        data: { threadId: rt.state.threadId, cwd: rt.state.cwd, sessionPath: rt.state.sessionPath },
+        data: { threadId: rt.state.threadId, cwd: rt.state.cwd, sessionPath: rt.state.sessionPath, ...(assembled.gitBranch !== undefined ? { gitBranch: assembled.gitBranch } : {}) },
       });
     } catch (error) {
       // CodedError 保 code（thinkingLevel rejected → capability_thinking 等），前缀文案保留

@@ -27,6 +27,8 @@ export interface VerbDeps {
   readonly adoptOrphan: (row: ChildRow) => Promise<void>;
   /** 周期终结事件发射面（BATCH2 §3——stop 对 idle 子无 armed-idle 边沿，同步发射） */
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
+  /** worktree 已清事件发射面（stop removed 分支——会话驻留而树已删，提示词覆盖层摘除钩） */
+  readonly emitWorktreeGone?: (payload: { sessionId: SessionId; agentId: string }) => void;
   /** 跨进程面（未开箱 = 缺省纯进程内：box 域寻址与 notify_when_idle 拒） */
   readonly cross?: CrossDeps;
   /** archive 惰性复活（§6.2——修订A：按 agentId）：caller 自己的历史子 resume 重建；缺席=无档案面 */
@@ -151,8 +153,11 @@ export async function stop(deps: VerbDeps, caller: SessionId | undefined, input:
   const cleanup = row.worktree !== undefined
     ? await evaluateCleanup({ path: row.worktree, branch: `x-harness/${row.agentId}`, repoTop: await cleanupRepoTopOf(row, deps.workspaceRoot) }, deps.lockDegraded)
     : { kind: "removed" as const };
-  if (cleanup.kind !== "kept-dirty") {
-    if (row.worktree !== undefined) unregisterLiveTree(row.worktree); // 终局摘除（kept-dirty 树仍活——可复活；N1 泄漏红线）
+  if (cleanup.kind === "removed" && row.worktree !== undefined) {
+    unregisterLiveTree(row.worktree); // 终局摘除（kept-dirty 树仍活——可复活；N1 泄漏红线）
+    // 树已删而会话驻留：提示词覆盖层须摘（stop 不 dispose 子会话——sessionDisposed 不可达）。
+    // 门 = removed：remove-failed 树在盘仍活、kept-dirty 可复活——发 gone 会把活树的覆盖层摘错
+    deps.emitWorktreeGone?.({ sessionId: row.sessionId, agentId: row.agentId });
   }
   if (cleanup.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${cleanup.detail}): ${cleanup.path}`);
   const worktreeNote = worktreeNoteOf(cleanup);
@@ -207,6 +212,7 @@ export async function listAgents(deps: VerbDeps, caller: SessionId | undefined):
       depth: row.depth,
       status: viewStatus(row),
       ...(row.work !== undefined ? { work: row.work } : {}),
+      ...(row.worktree !== undefined ? { worktree: row.worktree } : {}),
     }));
   // 本机其他会话（§2.1 五类中的 local-session；own box 除外）
   if (deps.cross !== undefined) {

@@ -12,7 +12,8 @@ import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
 import type { DirectRead } from "./read-history.ts";
 import { deleteSession } from "./session-delete.ts";
-import { taskLogsRootOf } from "@x-harness/harness";
+import { taskLogsRootOf, probeGitFacts } from "@x-harness/harness";
+import { isAbsolute, resolve } from "node:path";
 import { listSavedSessions } from "./saved-query.ts";
 import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
@@ -22,6 +23,10 @@ import { createAdminCommands } from "./admin-commands.ts";
 import { userAgentsDirOf } from "@x-harness/agent-delegation"; // 路径常量单源内核包（防宿主散写漂移）
 import { createTrustStore } from "./trust-store.ts";
 import type { TrustStore } from "./trust-store.ts";
+
+/** git 现算的行状态门：live 系（spawning/retiring 是占位过渡态，探测锚 = 成功后的
+ *  归一 cwd，与 live 同源）；parked/dead 不探——parked 是历史快照、dead 行分支是噪音 */
+const LIVE_PROBE_STATES = new Set(["live", "spawning", "retiring"]);
 
 export interface HostCommandsDeps {
   table: ThreadTable;
@@ -147,6 +152,9 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     } else {
       deps.table.insert({
         threadId: shape.threadId,
+        // cwd 落 raw（成功路径 worker normalizeCwd 后回写归一值）；相对串的 git 现算
+        // 由 list 侧绝对路径门键省略（红测回归锚——resolve 会把相对串锚到宿主进程
+        // cwd，冒充仍成立；键省略才是如实形态）
         cwd: typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : process.cwd(),
         sessionPath: shape.sessionPath,
         state: "spawning",
@@ -292,16 +300,24 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   function handleThreadList(_input: { [key: string]: unknown }, id: string | undefined): void {
     respond(id, "thread/list", {
-      data: deps.table.list().map((entry) => ({
-        threadId: entry.threadId,
-        cwd: entry.cwd,
-        sessionPath: entry.sessionPath,
-        state: entry.state === "spawning" || entry.state === "retiring" ? "live" : entry.state,
-        idleMs: entry.state === "live" ? entry.idleMs : 0,
-        rssBytes: entry.state === "live" ? entry.rssBytes : null,
-        keepalive: entry.keepalive,
-        isStreaming: entry.state === "live" ? entry.isStreaming : false,
-      })),
+      data: deps.table.list().map((entry) => {
+        // gitBranch 现算（D3：分支易变不落账——每调用探测，GUI 刷新即跟随）。
+        // 门两重：cwd 绝对路径门（落表归一前的历史脏数据/相对串——探到的是宿主进程
+        // 所在仓，键省略不冒充）+ 仅 live 系状态（dead 行分支是语义噪音且 1024 深表
+        // 全量同步探测在慢盘上饿死 host 事件循环——非 live 不探）
+        const branch = isAbsolute(entry.cwd) && LIVE_PROBE_STATES.has(entry.state) ? probeGitFacts(entry.cwd).branch : undefined;
+        return {
+          threadId: entry.threadId,
+          cwd: entry.cwd,
+          sessionPath: entry.sessionPath,
+          state: entry.state === "spawning" || entry.state === "retiring" ? "live" : entry.state,
+          idleMs: entry.state === "live" ? entry.idleMs : 0,
+          rssBytes: entry.state === "live" ? entry.rssBytes : null,
+          keepalive: entry.keepalive,
+          isStreaming: entry.state === "live" ? entry.isStreaming : false,
+          ...(branch !== undefined ? { gitBranch: branch } : {}),
+        };
+      }),
     });
   }
 

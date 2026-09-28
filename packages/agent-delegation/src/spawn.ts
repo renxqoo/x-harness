@@ -9,6 +9,7 @@ import { cleanupRepoTopOf } from "./verbs.ts";
 import type { ChildRow, Lineage } from "./lineage.ts";
 import { createWorktree, evaluateCleanup, registerLiveTree, unregisterLiveTree } from "./worktree.ts";
 import type { WorktreePlan } from "./worktree.ts";
+import { appendWorktreeEnv } from "./worktree-env.ts";
 import type { LoadedAgentType } from "./types.ts";
 import type { SettlementSink } from "./tokens.ts";
 
@@ -39,6 +40,8 @@ export interface SpawnDeps {
   /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
   readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string }) => void;
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
+  /** worktree 已清事件发射面（kick 失败清理成功分支——树删会话驻留，提示词覆盖层摘除钩） */
+  readonly emitWorktreeGone?: (payload: { sessionId: SessionId; agentId: string }) => void;
   /** permission 授权面（isolation=worktree 的根替换落账）；缺位时 worktree 隔离拒 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
   /** 裸模型名 → 归属 provider 反查（宿主接目录快照；缺省不反查——inheritDial 串线修复） */
@@ -139,9 +142,29 @@ async function buildChild(
   };
   registerWorktreeFacts(deps, { plan: worktree.plan, childSession: childHandle.agent.session.id });
   deps.lineage.register(row);
-  deps.emitSpawned({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, type: row.type, depth: row.depth, work: row.work });
+  deps.emitSpawned(spawnedPayloadOf({ row, plan: worktree.plan }));
   if (execCtx.signal.aborted) return await abortSpawn({ deps, childHandle, row, plan: worktree.plan });
   return finishSpawn(deps, { row, handle: childHandle, prompt: plan.input.prompt, freshFork: isFork && !forked });
+}
+
+/** spawn 发射 payload（worktree 三字段——facts 为新树 .git 解析真值，D6） */
+function spawnedPayloadOf(spec: { readonly row: ChildRow; readonly plan: WorktreePlan | undefined }): { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string; worktree?: string; branch?: string; worktreeMain?: string } {
+  const { row, plan } = spec;
+  return {
+    parent: row.parent,
+    agentId: row.agentId,
+    sessionId: row.sessionId,
+    type: row.type,
+    depth: row.depth,
+    work: row.work,
+    ...(plan !== undefined
+      ? {
+        worktree: plan.path,
+        ...(plan.facts?.branch !== undefined ? { branch: plan.facts.branch } : {}),
+        ...(plan.facts?.worktreeMain !== undefined ? { worktreeMain: plan.facts.worktreeMain } : {}),
+      }
+      : {}),
+  };
 }
 
 /** spawn 收尾：kick + 文案（kick 失败同步归一为工具错误结果——原 throw 契约同义）。 */
@@ -179,7 +202,11 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
       void evaluateCleanup({ path: spec.row.worktree, branch: `x-harness/${spec.row.agentId}`, repoTop: await cleanupRepoTopOf(spec.row, deps.workspaceRoot) }, deps.lockDegraded)
         .then((result) => {
           if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${spec.row.worktree}`);
-          if (result.kind !== "kept-dirty") unregisterLiveTree(spec.row.worktree as string);
+          if (result.kind !== "kept-dirty") {
+            unregisterLiveTree(spec.row.worktree as string);
+            // 清理成功（树删）而子会话驻留（kick 失败不 dispose）→ 发 gone 摘 Track U 覆盖层
+            if (result.kind === "removed") deps.emitWorktreeGone?.({ sessionId: spec.row.sessionId, agentId: spec.row.agentId });
+          }
         })
         .catch(() => {
           unregisterLiveTree(spec.row.worktree as string);
@@ -189,11 +216,13 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
   }
 }
 
-/** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt（白名单走 registry 会话层，W2A） */
+/** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt（白名单走 registry 会话层，W2A）。
+ *  worktree 子（Track N，docs/WORKTREE-CONTEXT-AWARENESS §1.4）：类型正文拼环境块——
+ *  静态 systemPrompt 短路 prompt.assemble（step.ts），环境事实只能随 options 定格。 */
 function childAgentOptions(
   deps: SpawnDeps,
   parentHandle: AgentHandle,
-  spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId },
+  spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId; readonly worktree?: WorktreePlan },
 ): { model?: string; provider?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
   const dial = inheritDial(parentHandle, {
     type: spec.named,
@@ -201,9 +230,12 @@ function childAgentOptions(
     override: spec.isFork ? undefined : { model: spec.input.model }, // fork 忽略 model 参数（规格原文）
     ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
   });
+  const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
   return {
     ...dial,
-    ...(spec.named !== undefined && spec.named.prompt !== "" ? { systemPrompt: spec.named.prompt } : {}),
+    ...(persona !== undefined
+      ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona, { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
+      : {}),
     streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs, // 看门狗透传：子恒继承父 resolved 值（缺省同源——resolveOptions 恒填）
   };
 }
@@ -258,7 +290,7 @@ function createChildSession(
       ...(spec.seed.length > 0 ? { seed: spec.seed } : {}),
       agent: { id: spec.agentId, type: spec.typeName, depth: spec.plan.depth, work: spec.plan.input.description, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
     },
-    agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller }),
+    agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller, ...(spec.worktree !== undefined ? { worktree: spec.worktree } : {}) }),
   });
 }
 
