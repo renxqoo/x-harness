@@ -32,6 +32,8 @@ export interface GwDispatchDeps {
 export interface PairingServerLike {
   startQr(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; qrPayload: string; ticket: string }>;
   startManual(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; manualCode: string; ticket: string }>;
+  /** owner 键入 SAS 确认（配对收尾：注册落账 + ratchet 种子）。 */
+  confirmWithSas(spec: { pairingId: string; ownerTypedSas: string; deviceLongTermPub: string }): Promise<{ ok: true; deviceId: string } | { ok: false; reason: string }>;
   cancel(pairingId: string): void;
 }
 
@@ -61,13 +63,23 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
       }, 100);
       return { ok: true, data: { stopping: true } };
     }
-    if (command === "gw/pairing/start" || command === "gw/pairing/cancel") {
+    if (command === "gw/pairing/start" || command === "gw/pairing/cancel" || command === "gw/pairing/confirm") {
       return handleGwPairing(command, args);
     }
     return { ok: false, reason: "unknown gw command" };
   }
 
   async function handleGwPairing(command: string, args: Record<string, unknown>): Promise<GwResult> {
+    if (command === "gw/pairing/confirm") {
+      const pairingId = args.pairingId;
+      const ownerTypedSas = args.ownerTypedSas;
+      const deviceLongTermPub = args.deviceLongTermPub;
+      if (typeof pairingId !== "string" || typeof ownerTypedSas !== "string" || typeof deviceLongTermPub !== "string") {
+        return { ok: false, reason: "pairingId/ownerTypedSas/deviceLongTermPub required" };
+      }
+      const confirmed = await deps.pairingServer.confirmWithSas({ pairingId, ownerTypedSas, deviceLongTermPub });
+      return confirmed.ok ? { ok: true, data: { deviceId: confirmed.deviceId } } : { ok: false, reason: confirmed.reason };
+    }
     if (command === "gw/pairing/cancel") {
       const pairingId = args.pairingId;
       if (typeof pairingId !== "string") return { ok: false, reason: "pairingId required" };
