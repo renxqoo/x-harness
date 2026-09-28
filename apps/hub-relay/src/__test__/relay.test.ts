@@ -289,7 +289,10 @@ describe("设备 token 签发（WIRE 设备注册收尾）", () => {
     expect(typeof parsed.token).toBe("string");
     const unauthorized = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_new", installationId } });
     expect(unauthorized?.status).toBe(401);
-    const missing = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_ghost", installationId }, token: gwToken });
-    expect(missing?.status).toBe(404);
+    // 未登记设备：gateway 持有效 token 即注册凭据（登记放行）；跨 installation 改绑 409
+    const freshDevice = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_fresh", installationId }, token: gwToken });
+    expect(freshDevice?.status).toBe(200);
+    const rebound = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_fresh", installationId: "inst_other" }, token: gwToken });
+    expect(rebound?.status).toBe(409);
   });
 });

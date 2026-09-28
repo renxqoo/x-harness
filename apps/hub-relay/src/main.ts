@@ -420,11 +420,15 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         return;
       }
       const installationId = body.installationId;
-      // 设备必须已注册且归属该 gateway（路由表查证——冒名/未注册设备不发 token）
+      // 设备路由登记：gateway 持有效 token 即为注册凭据（配对 confirm 已在 gateway 侧
+      // 落账）。已登记设备校验归属一致（冒名/跨 installation 改绑拒绝）；未登记即写入。
       const routed = await store.getDevice(body.deviceId);
-      if (routed === null || routed.installationId !== installationId) {
-        res.writeHead(404).end(JSON.stringify({ error: "device not registered to this installation" }));
+      if (routed !== null && routed.installationId !== installationId) {
+        res.writeHead(409).end(JSON.stringify({ error: "device bound to another installation" }));
         return;
+      }
+      if (routed === null) {
+        await store.putDevice(body.deviceId, { installationId, nodeId });
       }
       const now = Math.floor(Date.now() / 1000);
       const deviceToken = issueToken(options.tokenSecret, { kind: "device", subject: body.deviceId, installationId, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: newJti() });
