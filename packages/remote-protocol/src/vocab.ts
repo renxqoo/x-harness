@@ -76,6 +76,7 @@ export const GW_COMMANDS = [
   "gw/devices/revoke",
   "gw/pairing/start",
   "gw/pairing/cancel",
+  "gw/pairing/confirm",
   "gw/config/get",
   "gw/config/set",
   "gw/logs/tail",
