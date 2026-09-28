@@ -104,12 +104,14 @@ describe("permission 插件（真实管线）", () => {
   };
 
   describe("read paths 批量聚合裁决（TURN-REDUCTION.md P1——批量不得绕过任何裁决面）", () => {
-    it("批量混入 .env → 整体 deny（默认拒读表对每条目完整生效）", async () => {
+    it("批量混入根集外 .env → 整体 deny（.env 底线对根集外每条目完整生效）；根集内 .env 是项目本地配置放行", async () => {
       const b = await bench(root);
-      const r = await b.call("read", { paths: ["f.txt", ".env"] });
+      const r = await b.call("read", { paths: ["f.txt", join(root, "..", "xh-outside", ".env")] });
       expect(r.isError).toBe(true);
-      expect(r.content).toContain("rule:**/.env");
+      expect(r.content).toContain("rule:/**/.env");
       expect(b.asks).toHaveLength(0); // deny 不走 ask
+      const local = await b.call("read", { paths: ["f.txt", ".env"] });
+      expect(local.isError).not.toBe(true); // 根集内项目本地配置——可读（2026-09-28 裁决）
     });
 
     it("批量含界外条目 → 整体 ask（grant 落账界外父目录；批量不吞界外语义）", async () => {
@@ -131,11 +133,13 @@ describe("permission 插件（真实管线）", () => {
     });
   });
 
-  it("默认拒读表：read .env / .ssh/id_rsa → deny（user-origin deny 压过一切；不触发 ask）", async () => {
+  it("拒读底线分层（2026-09-28 裁决）：根集内 .env 可读（项目配置）；根集外 .env 与家目录 ~/.ssh 恒拒；不触发 ask", async () => {
     const b = await bench(root);
-    const env = await b.call("read", { path: ".env" });
-    expect(env.isError).toBe(true);
-    expect(env.content).toContain("rule:**/.env");
+    const localEnv = await b.call("read", { path: ".env" });
+    expect(localEnv.isError).not.toBe(true); // 根集内项目本地配置
+    const outsideEnv = await b.call("read", { path: join(root, "..", "xh-outside", ".env") });
+    expect(outsideEnv.isError).toBe(true);
+    expect(outsideEnv.content).toContain("rule:/**/.env");
     // 默认表 ~/.ssh/** 射程是家目录凭证；工作区内 .ssh 属普通界内文件（允许）——分层语义锁定
     const homeSsh = await b.call("read", { path: join(homedir(), ".ssh", "id_rsa") });
     expect(homeSsh.isError).toBe(true);
@@ -206,6 +210,19 @@ describe("permission 插件（真实管线）", () => {
     for (const d of full.unload) await d();
   });
 
+  it("full 插件执行面（2026-09-28 裁决）：注入/灾难形态/解析失败/.git 写零 ask 直接执行；提权与根集外拒读仍拦（零 ask 拒绝）", async () => {
+    const b = await bench(root, { mode: "full", brokerScript: [] });
+    expect((await b.call("bash", { command: "echo $(whoami)" })).content).toBe("ran"); // 注入不再弹 floor 确认
+    expect(b.asks).toHaveLength(0);
+    expect((await b.call("bash", { command: "rm -rf /" })).content).toBe("ran"); // 灾难形态放行（总括意志——stub 不真执行）
+    expect((await b.call("bash", { command: "echo x > .git/config" })).content).toBe("ran"); // .git 重定向写放行
+    expect((await b.call("bash", { command: "cat .env" })).content).toBe("ran"); // 根集内 .env 项目配置放行
+    expect((await b.call("read", { path: join(root, ".env") })).content).toBe("ran"); // 路径面同放行
+    expect((await b.call("bash", { command: `cat ${join(homedir(), ".ssh", "id_rsa")}` })).isError).toBe(true); // 凭据目录恒拒（任意位置）
+    expect(b.asks).toHaveLength(0); // 全程零确认——恒拒面直接 deny 不经 broker
+    for (const d of b.unload) await d();
+  });
+
   it("模式档 × 总括确立：full 装配 setUnrestricted，auto/plan 不确立", async () => {
     const full = await bench(root, { mode: "full" });
     const grants = full.ctx.use(permissionGrants);
@@ -262,14 +279,13 @@ describe("permission 插件（真实管线）", () => {
     for (const d of b.unload) await d();
   });
 
-  it("full 档拒读表仍压过：.env 与家目录 ~/.ssh 读拒（deny 规则先于 full 短路）", async () => {
+  it("full 档恒拒面：家目录 ~/.ssh 读拒（凭据目录任意位置）；.env 族随总括根集放行（full 授权根=[/]——条件拒止天然满躬，项目本地 .env 同放行）", async () => {
     const full = await bench(root, { mode: "full" });
-    const env = await full.call("read", { path: ".env" });
-    expect(env.isError).toBe(true);
-    expect(env.content).toContain("rule:**/.env");
     const homeSsh = await full.call("read", { path: join(homedir(), ".ssh", "id_rsa") });
     expect(homeSsh.isError).toBe(true);
-    expect(homeSsh.content).toContain("rule:~/.ssh/**"); // 拒因锚（与 .env 腿对称）
+    expect(homeSsh.content).toContain("rule:~/.ssh/**"); // 拒因锚（恒拒表无根集条件）
+    const localEnv = await full.call("read", { path: ".env" });
+    expect(localEnv.isError).not.toBe(true); // 根集内项目本地配置（2026-09-28 裁决）
     for (const d of full.unload) await d();
   });
 

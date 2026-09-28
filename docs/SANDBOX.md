@@ -29,7 +29,7 @@
 - 新包名 `@x-harness/sandbox`（目录 `packages/sandbox`）；插件名 `sandbox`（tool-core softInject 同步换名）。
 - `fenceFacts` 服务仍由 sandbox 提供（消费方 permission 定义 token）：提供**事实快照**不是实现权限——决策/规则/ask 全在 permission。缺席 fenceFacts 时 permission bash 界内 auto 退化（既有语义）。
 - 网络面 = **纯白名单 strictAllowlist，无 CONNECT 期 ask**（用户裁决②的直接推论：ask 是权限交互，归 permission/宿主）。白名单来源：宿主 `allowedDomains` 配置 ∪ 会话域名授权并集 ∪ unrestricted→`["*"]` 全通。表外域名硬拒（curl 可见 403/连接拒绝）。
-- 内核面默认拒读表 = `~/.ssh`、`~/.aws`、`~/.gcp`（具体 `~` 路径形态；与旧语义一致）。`**/.env` 任意深 glob 在 srt 相对模式按**宿主 cwd** 解析、不可靠——`.env` 防护维持工具面（permission DEFAULT_DENY_READ）承载，内核面不表达（延续旧落档）。
+- 内核面默认拒读表 = `~/.ssh`、`~/.aws`、`~/.gcp`（具体 `~` 路径形态；与旧语义一致；full 档不豁免）。`**/.env` 任意深 glob 在 srt 相对模式按**宿主 cwd** 解析、不可靠——`.env` 防护维持工具面（permission DEFAULT_DENY_READ_OUTSIDE 位置条件表——仅工作区根集外拒止，2026-09-28 裁决）承载，内核面不表达（延续旧落档）。
 - `denyWrite`（受保护路径）默认 = 工作区 `.git`（具体路径）；嵌套 `**/.git/**` glob 在 linux 写面被 srt 剥除（darwin 可用）——跨平台一致取具体路径，嵌套 .git 落档工具面承载。
 - 子进程 env 密钥清洗保留（`KEY|PASSWORD|SECRET|TOKEN` 键名过滤，纯函数）；srt credentials 面不接入（§不处理）。
 

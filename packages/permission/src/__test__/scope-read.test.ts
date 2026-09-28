@@ -36,9 +36,14 @@ describe("范围型读：子树拒读判定（R2——.adversarial/rules/04+09 �
     const file = grep({ pattern: "x", path: "/etc/sysctl.conf" }, false); // 谓词形：扩展名目标非范围
     expect(file).not.toMatchObject({ resolvedBy: "scope-deny" });
   });
-  it("缺省 path = 以 root 为范围的合法搜索（R8——旧恒 path-absent 问）", () => {
+  it("缺省 path = 以 root 为范围的合法搜索（R8——旧恒 path-absent 问）；.env 族根集内不再触发范围 ask（2026-09-28 裁决：项目本地配置可读）", () => {
     const out = grep({ pattern: "x" });
     expect(out).not.toMatchObject({ reason: "path-absent:grep" });
-    expect(out.verdict).toBe("ask"); // 无锚底线（**/.env）——一次范围 ask 非缺参错
+    expect(out.verdict).toBe("allow"); // 根集内搜索——无锚 .env 底线不再适用
+  });
+  it("范围在根集外：无锚 .env 底线仍触发范围 ask（凭据收割面拒止）", () => {
+    const out = grep({ pattern: "x", path: "/etc" });
+    expect(out.verdict).toBe("ask");
+    expect(out.reason).toContain("scope-deny");
   });
 });

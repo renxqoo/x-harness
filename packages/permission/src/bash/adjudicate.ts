@@ -15,8 +15,10 @@ import { bashRuleMatches } from "../rules/bash-prefix.ts";
 import { parseBash } from "./ast.ts";
 import type { BashParse, ParsedCommand } from "./ast.ts";
 import { hardDeny } from "./hard-deny.ts";
-import { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE } from "../baseline.ts";
+import { denyTablesOf, denyReadHitOf, denyWritePatternsOf } from "./tables.ts";
+import type { BaselinePolicy } from "../baseline.ts";
 import { argvSensitiveHit } from "../sensitive.ts";
+import { cwdAfter } from "../sensitive.ts";
 import { suggestRule, exactRule } from "../suggest.ts";
 import type { AdjudicationFacts } from "../facts.ts";
 import { bashFactsOf } from "../facts.ts";
@@ -48,6 +50,10 @@ export interface BashPipelineInput {
   readonly postureDecide?: (facts: AdjudicationFacts) => Decision | undefined;
   /** V4 净化 #2：基线拒止规则（permission-modes 产——重定向输入面/敏感面消费其 pattern） */
   readonly denyRules?: readonly PermissionRule[];
+  /** 总括授权事实（DecideInput 同源——各底线面的分流门） */
+  readonly unrestricted?: true;
+  /** 宿主底线覆写（DecideInput 同源——bash 面重定向/敏感/事实面消费） */
+  readonly baseline?: BaselinePolicy;
 }
 
 export function writableRoots(input: { readonly root: string; readonly extraRoots: readonly string[]; readonly fence?: FenceFacts }): string[] {
@@ -74,7 +80,7 @@ function redirectDecision(cmd: ParsedCommand, input: BashPipelineInput, roots: r
     const path = targetPath(redirect.target, input.root);
     if (path === null) return { verdict: "ask", reason: `redirect:${redirect.target}`, resolvedBy: "redirect", memorizable: true };
     if (redirect.face === "input") {
-      const hit = denyReadPatternsOf(input).find((pattern) => globMatch(pattern, path, input.root));
+      const hit = denyReadHitOf(input, path);
       if (hit !== undefined) return { verdict: "deny", reason: `redirect-read:${hit}`, resolvedBy: "redirect-read" };
       continue;
     }
@@ -95,7 +101,7 @@ function withinAny(path: string, roots: readonly string[]): boolean {
 
 /** 单命令裁决：adjudication=管线终止；"rule-allowed"=段被显式规则放行（段级终结——
  *  跳过分类器，其余段照常裁决）；undefined=段通过（进分类器）。 */
-function commandDecision(cmd: ParsedCommand, input: BashPipelineInput, roots: readonly string[]): BashAdjudication | { readonly ruleAllowed: PermissionRule } | undefined {
+function commandDecision(cmd: ParsedCommand, input: BashPipelineInput & { cwd: string }, roots: readonly string[]): BashAdjudication | { readonly ruleAllowed: PermissionRule } | undefined {
   if (cmd.argv.length > 0) {
     const matches = bashRuleMatches(input.rules, cmd.argv);
     const denied = matches.find((rule) => rule.verdict === "deny");
@@ -121,7 +127,7 @@ function commandDecision(cmd: ParsedCommand, input: BashPipelineInput, roots: re
   // 这是执法 delegation 非判决策略（结论 deny 两路同向）。基线表经入参（净化 #2）
   // P1-3/F2（2026-09-28）：判决面恒执法——旧 fenced 让位读的是档位旋钮非围栏事实，且围栏表
   // 是工具表真子集（无 .env glob）；围栏是执行面冗余，不再是判决面替代
-  const sensitive = argvSensitiveHit([cmd], input.root, { protectedWrite: input.protectedWrite ?? [], denyRead: denyReadPatternsOf(input), denyWrite: denyWritePatternsOf(input) });
+  const sensitive = argvSensitiveHit([cmd], input.cwd, denyTablesOf(input));
   if (sensitive !== undefined) {
     // 精确习得豁免：同命令原文的 grant 精确规则放行（U12「精确可记忆」的兑现面——泛化形态不豁免）
     // R3（2026-09-28）：raw 全等旁路——bashPrefixMatch 词元化与 argv 去引号永不一致（引号命令），精确习得按原文比对
@@ -133,15 +139,6 @@ function commandDecision(cmd: ParsedCommand, input: BashPipelineInput, roots: re
   return undefined;
 }
 
-/** 拒止模式提取（C①：底线恒在场 + 调用方追加——敏感面/重定向面消费 pattern；直调/中心装配同源） */
-function denyReadPatternsOf(input: BashPipelineInput): readonly string[] {
-  return [...DEFAULT_DENY_READ, ...(input.denyRules ?? []).filter((rule) => rule.tool === "Read").map((rule) => rule.pattern)];
-}
-
-function denyWritePatternsOf(input: BashPipelineInput): readonly string[] {
-  return [...DEFAULT_DENY_WRITE, ...(input.denyRules ?? []).filter((rule) => rule.tool === "Write").map((rule) => rule.pattern)];
-}
-
 /** bash 面模式分派（deny 规则已由调用点先行——红线 1；facts 统一经 bashFactsOf 生产——
  *  解析失败面补词面提权兜底（full 档畸形命令的 fail-closed 收敛） */
 function bashModeDecision(input: BashPipelineInput): BashAdjudication | undefined {
@@ -151,13 +148,17 @@ function bashModeDecision(input: BashPipelineInput): BashAdjudication | undefine
   const decision = input.modeDecide?.(enriched);
   if (decision === undefined) return undefined;
   if (decision.verdict === "allow") {
-    // 红线 2 钳制（2026-09-28 A① 裁决）：硬拒/注入/解析失败事实在场时，模式 allow（full 与
-    // 任何第三方模式插件）改写为 ask（拒记）——最小 ask 底线在内核，不依赖插件自觉
-    if (facts.hardDenyKind !== undefined || facts.parseFailed !== undefined || (facts.segments ?? []).some((cmd) => cmd.injection !== undefined)) {
+    // 红线 2 钳制（2026-09-28 A① 裁决）：硬拒/注入/解析失败事实在场时，模式 allow（任何
+    // 模式插件）改写为 ask（拒记）——最小 ask 底线在内核，不依赖插件自觉。elevation 事实
+    // （sudo 族）恒在场不经此门（模式件自行 deny——sudo 是跨档恒拒，非钳制面）。
+    // 总括档豁免（2026-09-28 裁决）：full 语义 = 拒读底线与提权外零拦截——灾难形态/
+    // 注入/解析失败放行，用户已声明总括意志
+    if (input.unrestricted !== true && (facts.hardDenyKind !== undefined || facts.parseFailed !== undefined || (facts.segments ?? []).some((cmd) => cmd.injection !== undefined))) {
       return { verdict: "ask", reason: "hard-deny/injection floor", resolvedBy: "red-line:floor" };
     }
     // B① 敏感底线钳制：argv 实参/重定向目标命中拒读/拒写/保护写 → 精确可记忆 ask（U12
-    // 口径）——full/敌意模式不越过；豁免双门：段显式 allow（U16）/ 同命令原文精确习得（U12）
+    // 口径）；豁免双门：段显式 allow（U16）/ 同命令原文精确习得（U12）。总括档（同上
+    // 裁决）：仅拒读表执法且升格 deny（凭据面零触碰，不可批准绕过）
     const floor = sensitiveFloorOf(facts.segments ?? [], input);
     if (floor !== undefined) return floor;
   }
@@ -191,14 +192,16 @@ export function adjudicateBash(input: BashPipelineInput): BashAdjudication {
   const roots = writableRoots(input);
   let sawRuleAllowed: PermissionRule | undefined; // 段级显式放行规则本体（归因真名——P2-5 硬编码消灭）
   const clean: ParsedCommand[] = [];
+  let cwd = input.root; // 段链累积 cwd（cd 后相对词锚定同事实面）
   for (const cmd of parsed.commands) {
-    const verdict = commandDecision(cmd, input, roots);
+    const verdict = commandDecision(cmd, { ...input, cwd }, roots);
     if (typeof verdict === "object" && verdict !== null && "ruleAllowed" in verdict) {
       sawRuleAllowed = verdict.ruleAllowed; // 段级显式放行（U16——可越过 opaque/敏感面，不进分类器）
       continue;
     }
     if (verdict !== undefined) return verdict;
     clean.push(cmd); // 通过段——习得/不透明/分类器只看这些段（规则放行段不豁免兄弟段）
+    cwd = cwdAfter(cmd, cwd);
   }
   return pipelineTail(input, clean, sawRuleAllowed);
 }
@@ -206,7 +209,7 @@ export function adjudicateBash(input: BashPipelineInput): BashAdjudication {
 /** 管线尾段：显式放行整线 allow → 习得 allow → opaque（on-failure 围栏代问/其余问）→ 分类器三分类 × 档位 */
 /** 敏感命中事实（postureFacts 附加形——单次计算） */
 function sensitiveFactOf(clean: readonly ParsedCommand[], input: BashPipelineInput): { sensitiveHit?: { readonly kind: string; readonly pattern: string } } {
-  const hit = argvSensitiveHit(clean, input.root, { protectedWrite: input.protectedWrite ?? [], denyRead: denyReadPatternsOf(input), denyWrite: denyWritePatternsOf(input) });
+  const hit = argvSensitiveHit(clean, input.root, denyTablesOf(input));
   return hit === undefined ? {} : { sensitiveHit: hit };
 }
 
@@ -270,34 +273,49 @@ function preModeSweep(commands: readonly ParsedCommand[], input: BashPipelineInp
   return redirectFloorOf(commands, input);
 }
 
-/** 重定向硬线（B①/红队 #1——模式前）：输入面拒读 deny / 输出面拒写 deny（含零 argv 纯
- *  重定向宿主的 truncate 向量）。硬线与段梯 redirectDecision 同表——模式（含 full）不得越过 */
+/** 重定向硬线（B①/红队 #1——模式前）：输入面拒读 deny 恒在场（凭据面——总括档
+ *  不放行）；输出面拒写 deny 仅非总括档（full 语义：.git 可写，含零 argv 纯重定向宿主） */
 function redirectFloorOf(commands: readonly ParsedCommand[], input: BashPipelineInput): BashAdjudication | undefined {
+  let cwd = input.root; // 段链累积 cwd（cd 后相对词锚定同事实面/敏感面）
   for (const cmd of commands) {
     for (const redirect of cmd.redirects) {
       if (redirect.target === undefined || redirect.target === DEV_NULL) continue;
-      const path = targetPath(redirect.target, input.root);
+      const path = targetPath(redirect.target, cwd);
       if (path === null) continue;
-      const patterns = redirect.face === "input" ? denyReadPatternsOf(input) : denyWritePatternsOf(input);
-      const hit = patterns.find((pattern) => globMatch(pattern, path, input.root));
-      if (hit !== undefined) {
-        return { verdict: "deny", reason: `redirect-${redirect.face === "input" ? "read" : "write"}:${hit}`, resolvedBy: `redirect-${redirect.face === "input" ? "read" : "write"}` };
+      if (redirect.face === "input") {
+        const readHit = denyReadHitOf(input, path);
+        if (readHit !== undefined) return { verdict: "deny", reason: `redirect-read:${readHit}`, resolvedBy: "redirect-read" };
+        continue;
+      }
+      if (input.unrestricted === true) continue; // 总括档：输出拒写面让位
+      const writeHit = denyWritePatternsOf(input).find((pattern) => globMatch(pattern, path, input.root));
+      if (writeHit !== undefined) {
+        return { verdict: "deny", reason: `redirect-write:${writeHit}`, resolvedBy: "redirect-write" };
       }
     }
+    cwd = cwdAfter(cmd, cwd);
   }
   return undefined;
 }
 
 /** 敏感底线钳制（B①——模式 allow 后）：任一段（含零 argv 纯重定向宿主）的 argv 实参/重定向
- *  目标命中拒读表/拒写表/保护写 → 精确可记忆 ask（U12 口径）。豁免：段显式 allow（U16）/原文精确习得。 */
+ *  目标命中拒读表/拒写表/保护写 → 精确可记忆 ask（U12 口径）。豁免：段显式 allow（U16）/原文精确习得。
+ *  总括档：仅拒读表执法且升格 deny（凭据面恒拒——不可批准绕过）；拒写/保护写让位。 */
 function sensitiveFloorOf(commands: readonly ParsedCommand[], input: BashPipelineInput): BashAdjudication | undefined {
-  const tables = { protectedWrite: input.protectedWrite ?? [], denyRead: denyReadPatternsOf(input), denyWrite: denyWritePatternsOf(input) };
+  const tables = input.unrestricted === true
+    ? { ...denyTablesOf(input), protectedWrite: [] as readonly string[], denyWrite: [] as readonly string[] }
+    : denyTablesOf(input);
+  let cwd = input.root; // 段链累积 cwd（cd 后相对词锚定同事实面/段梯——cd ~ && cat .ssh/id_rsa 曾绕过凭据恒拒）
   for (const cmd of commands) {
-    const hit = argvSensitiveHit([cmd], input.root, tables);
-    if (hit === undefined) continue;
+    const hit = argvSensitiveHit([cmd], cwd, tables);
+    if (hit === undefined) {
+      cwd = cwdAfter(cmd, cwd);
+      continue;
+    }
+    if (input.unrestricted === true) return { verdict: "deny", reason: `argv-sensitive:${hit.kind}:${hit.pattern}`, resolvedBy: "argv-sensitive" }; // 拒记 deny——凭据面恒拒
     if (cmd.argv.length > 0) {
-      if (bashRuleMatches(input.rules, cmd.argv).some((rule) => rule.verdict === "allow" && rule.nature !== "grant")) continue; // U16：显式权威越过敏感面
-      if (input.rules.some((rule) => rule.verdict === "allow" && rule.nature === "grant" && rule.pattern === cmd.raw)) continue; // U12：精确习得豁免
+      if (bashRuleMatches(input.rules, cmd.argv).some((rule) => rule.verdict === "allow" && rule.nature !== "grant")) { cwd = cwdAfter(cmd, cwd); continue; } // U16：显式权威越过敏感面
+      if (input.rules.some((rule) => rule.verdict === "allow" && rule.nature === "grant" && rule.pattern === cmd.raw)) { cwd = cwdAfter(cmd, cwd); continue; } // U12：精确习得豁免
     }
     return { verdict: "ask", reason: `argv-sensitive:${hit.kind}:${hit.pattern}`, resolvedBy: "argv-sensitive", memorizable: true, ...(cmd.argv.length > 0 ? { suggestedRule: exactRule(cmd.raw) } : {}) };
   }

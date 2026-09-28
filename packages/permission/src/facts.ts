@@ -9,10 +9,12 @@ import { hardDeny } from "./bash/hard-deny.ts";
 import type { BashPipelineInput } from "./bash/adjudicate.ts";
 import { writableRoots } from "./bash/adjudicate.ts";
 import { argvSensitiveHit } from "./sensitive.ts";
-import { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE } from "./baseline.ts";
+import type { DenyTables } from "./sensitive.ts";
+import { denyReadHitOf, denyTablesOf } from "./bash/tables.ts";
+import { ELEVATION_TEXT } from "./bash/hard-deny.ts";
+import { cwdAfter } from "./sensitive.ts";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { globMatch } from "./rules/glob.ts";
 
 /** 裁决事实（三面共用：tool 无专属面 / path 路径族 / bash 管线） */
 export interface AdjudicationFacts {
@@ -70,48 +72,50 @@ interface SegmentFacts {
   hasOutputRedirect?: true;
 }
 
-/** 段级动词事实（hardDeny/敏感面——首中即记） */
-function verbFactsOf(cmd: import("./bash/ast.ts").ParsedCommand, input: BashPipelineInput, out: SegmentFacts): void {
+/** 段级事实的底线表单源（tables.ts——事实与执法同源，行为不分歧；verbFactsOf 敏感面消费） */
+function tablesOf(input: BashPipelineInput): DenyTables {
+  return denyTablesOf(input);
+}
+
+/** 段级动词事实（hardDeny/敏感面——首中即记；cwd 为累积解析基——cd 链改变相对词锚定） */
+function verbFactsOf(cmd: import("./bash/ast.ts").ParsedCommand, input: BashPipelineInput & { cwd: string }, out: SegmentFacts): void {
   if (cmd.argv.length === 0) return;
   if (out.hardDenyKind === undefined) {
     const kind = hardDeny(cmd.argv);
     if (kind !== undefined || cmd.ask === "hard-deny:sudo") out.hardDenyKind = kind ?? "sudo";
   }
-  if (out.sensitiveHit === undefined) out.sensitiveHit = argvSensitiveHit([cmd], input.root, { protectedWrite: input.protectedWrite ?? [], denyRead: denyReadOf(input), denyWrite: denyWriteOf(input) }) ?? undefined;
+  // 提权词面兜底（2026-09-29 红队 P0 根治）：elevation 事实不再只信 hardDeny 首词命中——
+  // 全段 argv 任意词含提权词即记 hardDenyKind=sudo（载荷形 watch 'sudo id'、git -c 值、
+  // env -S 载荷、$'su'do 拼接词、xargs -I{} sh -c 载荷——full 档提权恒拒面曾整面被绕）
+  if (out.hardDenyKind === undefined && cmd.argv.some((word) => ELEVATION_TEXT.test(word))) out.hardDenyKind = "sudo";
+  if (out.sensitiveHit === undefined) out.sensitiveHit = argvSensitiveHit([cmd], input.cwd, tablesOf(input)) ?? undefined;
 }
 
-/** 段级重定向事实（输出面存在性/输入面拒读表/目标不可解析——首中即记） */
-function redirectFactsOf(cmd: import("./bash/ast.ts").ParsedCommand, input: BashPipelineInput, out: SegmentFacts): void {
+/** 段级重定向事实（输出面存在性/输入面拒读表/目标不可解析——首中即记；cwd 为累积解析基） */
+function redirectFactsOf(cmd: import("./bash/ast.ts").ParsedCommand, input: BashPipelineInput & { cwd: string }, out: SegmentFacts): void {
   for (const redirect of cmd.redirects) {
     if (redirect.target === undefined || redirect.target === DEV_NULL) continue;
     if (redirect.face === "output") {
       out.hasOutputRedirect = true;
       continue;
     }
-    const path = targetOf(redirect.target, input.root);
+    const path = targetOf(redirect.target, input.cwd);
     if (path === null) {
       out.redirectUnresolvable = true;
       continue;
     }
-    const hit = denyReadOf(input).find((pattern) => globMatch(pattern, path, input.root));
+    const hit = denyReadHitOf(input, path);
     if (hit !== undefined && out.redirectReadDeny === undefined) out.redirectReadDeny = hit;
   }
 }
 
-/** 拒止模式提取（C①：底线恒在场 + 调用方追加——与 adjudicate.ts 同源） */
-function denyReadOf(input: BashPipelineInput): readonly string[] {
-  return [...DEFAULT_DENY_READ, ...(input.denyRules ?? []).filter((rule) => rule.tool === "Read").map((rule) => rule.pattern)];
-}
-
-function denyWriteOf(input: BashPipelineInput): readonly string[] {
-  return [...DEFAULT_DENY_WRITE, ...(input.denyRules ?? []).filter((rule) => rule.tool === "Write").map((rule) => rule.pattern)];
-}
-
 function collectSegmentFacts(commands: readonly import("./bash/ast.ts").ParsedCommand[], input: BashPipelineInput): SegmentFacts {
   const out: SegmentFacts = {};
+  let cwd = input.root;
   for (const cmd of commands) {
-    verbFactsOf(cmd, input, out);
-    redirectFactsOf(cmd, input, out);
+    verbFactsOf(cmd, { ...input, cwd }, out);
+    redirectFactsOf(cmd, { ...input, cwd }, out);
+    cwd = cwdAfter(cmd, cwd);
   }
   return out;
 }

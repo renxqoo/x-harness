@@ -94,9 +94,9 @@ permission-modes provide；base 调用时 `tryUse` 懒取，服务缺席（裸�
 ## 8. 对抗审查修复（2026-09-28——8 子代理 117+ 攻击记录的处置记录）
 
 **裁决点（承用户「修复」指令按推荐执行）**：
-- **A① 红线 2 钳制**：硬拒/注入/解析失败事实在场时，模式 allow（full 与任何第三方模式插件）内核改写为 ask（`red-line:floor`，拒记）——修订裁决⑤：full 唯 deny 面=提权，最小 ask 面在内核不靠插件自觉。
-- **B① bash 面底线扩面**：重定向硬线（输入拒读 deny/输出拒写 deny——含零 argv 纯重定向宿主）置于模式判决前；敏感底线（argv+重定向目标）置于模式 allow 的钳制位（严格模式更强判决不被弱化；U16 显式 allow/U12 精确习得豁免保留）。
-- **C① 安全底线词表内核化**（修正 V4 净化 #2）：baseline.ts 恒合并（origin "default"），.env 变体扩形（`.env.*`/`.envrc`）；分类器/五档/旋钮映射留 permission-modes。`baselineDenyRulesOf` token 删除。
+- **A① 红线 2 钳制**：硬拒/注入/解析失败事实在场时，模式 allow（任何第三方模式插件）内核改写为 ask（`red-line:floor`，拒记）——最小 ask 底线在内核不靠插件自觉。**总括档豁免（2026-09-28 用户裁决）**：unrestricted（full）档下灾难形态/注入/解析失败/拒写钳制让位放行——恒拒 = 提权面（模式件判决）与凭据目录拒读（~/.ssh 等任意位置，升格 deny）；.env 族是位置条件拒止（根集外），总括档授权根=[/] 即全盘根集，随总括放行；非总括模式插件钳制全量在场。
+- **B① bash 面底线扩面**：重定向硬线（凭据目录输入拒读 deny 恒在场——总括档不放行；.env 族条件拒止同判；输出拒写 deny 非总括档——full 让位）置于模式判决前；敏感底线（argv+重定向目标）置于模式 allow 的钳制位（严格模式更强判决不被弱化；U16 显式 allow/U12 精确习得豁免保留；总括档仅凭据目录执法且升格 deny，.env 族随根集条件豁免）。
+- **C① 安全底线词表内核化**（修正 V4 净化 #2）：baseline.ts 恒合并（origin "default"），凭据目录表（~/.ssh 等——任意位置拒止）与 .env 族条件表（仅工作区根集外——项目本地配置可读写，2026-09-28 裁决）分列（DEFAULT_DENY_READ / DEFAULT_DENY_READ_OUTSIDE）；分类器/五档/旋钮映射留 permission-modes。`baselineDenyRulesOf` token 删除。
 - **D① ask 规则三面同序**：deny → ask → 模式 → allow → posture——「用户要问」不被档位整线放行吞。
 - **E① escalate 一次性**：批准=重试一次，记忆梯度撤（旧四档落桶跨档 direct 免问且游离 memorizable 门/审计）。
 - **G reply 契约校验**：memory 枚举外/多规则夹带/坏串只批不记。

@@ -12,6 +12,7 @@ import type { SessionId } from "@x-harness/session";
 import { toolsPreExecute } from "@x-harness/tools";
 import type { PreExecuteDecision, ToolKind } from "@x-harness/tools";
 import { decideFor, execOf } from "./decide.ts";
+import type { BaselinePolicy } from "./baseline.ts";
 import { createModeRegistry, modeRegistry, profileDecideOf, resolveProfileOf } from "./modes.ts";
 import type { ModeFaces } from "./modes.ts";
 import { summaryOf } from "./ask-summary.ts";
@@ -37,6 +38,9 @@ export interface PermissionOptions {
   readonly projectRules?: readonly PermissionRule[];
   /** 受保护路径追加（settings 文件等——Write 工具面 deny + argv 敏感面，U13） */
   readonly protectedPaths?: readonly string[];
+  /** 宿主底线覆写（2026-09-29 裁决：内核供机制+缺省值，策略数值宿主定——真有合法越底线
+   *  需求如备份凭据目录/受管 .git 写时装配期覆写；信任边界：宿主面专属，模式插件不可及） */
+  readonly baseline?: BaselinePolicy;
 }
 
 /** 条目作用域补章（settings 解析态无 origin——本层单点盖；session 习得走 grants 桶不经此处） */
@@ -204,6 +208,8 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
         profile,
         root: options.root,
         extraRoots: grants.extraRootsOf(payload.session),
+        ...(grants.isUnrestricted(payload.session) ? { unrestricted: true } : {}), // 与授权/围栏面同一总括事实（setUnrestricted 原子同步）
+        ...(options.baseline !== undefined ? { baseline: options.baseline } : {}), // 宿主底线覆写（装配期单源）
         ...(ctx.tryUse(fenceFacts) !== undefined ? { fence: ctx.tryUse(fenceFacts)?.forSession(payload.session) } : {}),
         ...(options.protectedPaths !== undefined ? { protectedWrite: options.protectedPaths } : {}),
         ...(() => {

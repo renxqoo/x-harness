@@ -193,10 +193,13 @@ describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
     expect(existsSync(join(root, "plan-out.ts.partial"))).toBe(false);
   });
 
-  it("deny 规则命中（.git 内）→ 抢救不落盘（write 同源 DEFAULT_DENY_WRITE 面生效）", async () => {
-    const r = await dispatchWithMode({ mode: "full" }, "write", `{"path":".git/hooks/pre-commit","content":"${LONG}`);
-    expect(r).toEqual({ note: "target not permitted for rescue write, draft not saved" });
+  it("deny 规则命中（.git 内，用户 deny 规则）→ 抢救不落盘（write 同源 deny 面生效）；full 档 .git 写已放行（2026-09-28 裁决：拒写表总括档让位）→ 抢救同源物化", async () => {
+    const denied = await dispatchWithMode({ mode: "full", rules: [{ tool: "Write", pattern: "**/.git/**", verdict: "deny" }] }, "write", `{"path":".git/hooks/pre-commit","content":"${LONG}`);
+    expect(denied).toEqual({ note: "target not permitted for rescue write, draft not saved" });
     expect(existsSync(join(root, ".git/hooks/pre-commit.partial"))).toBe(false);
+    const allowed = await dispatchWithMode({ mode: "full" }, "write", `{"path":".git/hooks/pre-commit","content":"${LONG}`);
+    expect(allowed).not.toEqual({ note: "target not permitted for rescue write, draft not saved" });
+    expect(existsSync(join(root, ".git/hooks/pre-commit.partial"))).toBe(true); // 主路径同源放行 → 抢救物化
   });
 
   it("edit-confirm 档界内写 → 不弹窗直接不救（ask 类裁决不走抢救旁路；模型重发完整调用走正常面板）", async () => {

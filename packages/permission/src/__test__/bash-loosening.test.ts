@@ -68,10 +68,10 @@ describe("reason 快照（§14.5-6——防实现期 reason 词漂移）", () =>
     expect([noFence.verdict, noFence.reason, noFence.resolvedBy]).toEqual(["ask", "no rule matches segment", "default:ask"]);
     expect(pin("sudo id", "auto")).toEqual(["ask", "hard-deny:sudo", "hard-deny"]);
     expect(pin("echo $(x)", "auto")).toEqual(["ask", "injection:command-substitution", "injection"]);
-    expect(pin("echo $(x)", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A① 裁决（2026-09-28）：注入最小 ask 钳制——full 不越过红线 2
-    expect(pin("rm -rf /", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：硬拒形态同钳制
-    expect(pin("sudo id", "full")).toEqual(["deny", "hard-deny:sudo", "mode:full"]); // 提权直接拦截（full 唯一 deny 面）
-    expect(pin("echo 'oops", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：解析失败同钳制
+    expect(pin("echo $(x)", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A① 裁决（2026-09-28）：注入最小 ask 钳制——非总括模式插件不越过红线 2（总括档豁免见 full-unrestricted.test.ts）
+    expect(pin("rm -rf /", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：硬拒形态同钳制（非总括直调面）
+    expect(pin("sudo id", "full")).toEqual(["deny", "hard-deny:sudo", "mode:full"]); // 提权直接拦截（跨档恒拒——总括档同拒，见 full-unrestricted.test.ts）
+    expect(pin("echo 'oops", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：解析失败同钳制（非总括直调面）
     expect(pin("cmd < ~/.ssh/id_rsa", "full")).toEqual(["deny", "redirect-read:~/.ssh/**", "redirect-read"]); // B① 重定向硬线先于模式——full 不越过
     expect(pin("cat $F", "auto")).toEqual(["ask", "dynamic-segment (expansion/glob)", "static"]);
     expect(pin("echo x > /etc/passwd", "auto")).toEqual(["ask", "redirect:/etc/passwd", "redirect"]);
@@ -90,10 +90,13 @@ describe("reason 快照（§14.5-6——防实现期 reason 词漂移）", () =>
 });
 
 describe("输入面双向钉（§14.2 边界 2 / §14.5-7）", () => {
-  it.each(["~/.ssh/id_rsa", "~/.aws/credentials", "~/.gcp/key.json", "sub/.env"])("拒读表全表项：cmd < %s → deny", (target) => {
+  it.each(["~/.ssh/id_rsa", "~/.aws/credentials", "~/.gcp/key.json", "/elsewhere/sub/.env"])("拒读表：cmd < %s → deny（凭据目录任意位置；.env 族根集外）", (target) => {
     const out = adjudicateBash({ ...fenced, command: `cmd < ${target}` });
     expect(out.verdict).toBe("deny");
     expect(out.reason).toMatch(/^redirect-read:/);
+  });
+  it("反向钉：cmd < sub/.env（根集内——项目本地配置）不拒（2026-09-28 裁决）", () => {
+    expect(adjudicateBash({ ...fenced, command: "cmd < sub/.env" }).verdict).not.toBe("deny");
   });
   it("反向钉：`git status < /etc/passwd` 不 deny 不 ask（输入面越根不问——将来补越根必红）", () => {
     expect(adjudicateBash({ ...fenced, command: "git status < /etc/passwd" }).verdict).toBe("allow");

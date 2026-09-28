@@ -55,10 +55,11 @@ describe("plan 富策略·纯函数面（bashFactsOf → planMode.decide）", ()
     expect(decide("cat $F")?.reason).toBe("plan mode: dynamic (shell-expanded) segment denied");
     expect(decide("bash x.sh")?.reason).toContain("opaque segment");
   });
-  it("读保护基线（B-bug-1 细分钉）：敏感面/输入重定向拒读表 → deny", () => {
+  it("读保护基线（B-bug-1 细分钉）：敏感面/输入重定向拒读表 → deny；根集内 .env 是项目配置放行（2026-09-28 裁决）", () => {
     expect(decide("cat ~/.ssh/id_rsa")?.reason).toContain("sensitive path");
     expect(decide("cat < ~/.ssh/id_rsa")?.reason).toBe("redirect-read:~/.ssh/**");
-    expect(decide("cat .env")?.verdict).toBe("deny");
+    expect(decide("cat /elsewhere/.env")?.verdict).toBe("deny"); // 根集外 .env 仍拒（argv 触碰面）
+    expect(decide("cat .env")?.verdict).not.toBe("deny"); // 根集内项目本地配置
   });
   it("提权拒；输出重定向拒（/dev/null 除外）；解析失败拒", () => {
     expect(decide("sudo ls")?.reason).toBe("plan mode: elevation denied");

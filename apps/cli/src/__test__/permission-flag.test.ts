@@ -158,11 +158,17 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     expect(grep.content).toContain("GREP-TARGET-LINE");
   });
 
-  it("deny 规则压过 full：.git 内写仍拒（rule 压过 mode 档的安全底线）", async () => {
+  it("恒拒底线压过 full：~/.ssh 读仍拒（凭据目录任意位置）；.git 写与根集内 .env 已放行（2026-09-28 裁决）", async () => {
     const j = await makeJourney({ permission: "full" });
-    const out = await j.dispatch("write", { path: ".git/config", content: "x" });
-    expect(out.isError).toBe(true);
-    expect(j.audits).toContainEqual({ tool: "write", verdict: "deny", resolvedBy: "rule:default", reason: "rule:**/.git/**", session: j.session });
+    await writeFile(join(j.root, ".env"), "LOCAL-CONFIG=1\n", "utf8"); // 项目本地配置 fixture
+    const readSsh = await j.dispatch("read", { path: join(homedir(), ".ssh", "id_rsa") });
+    expect(readSsh.isError).toBe(true);
+    expect(j.audits).toContainEqual({ tool: "read", verdict: "deny", resolvedBy: "rule:default", reason: "rule:~/.ssh/**", session: j.session });
+    const gitWrite = await j.dispatch("write", { path: ".git/config", content: "x" });
+    expect(gitWrite.isError).not.toBe(true); // 拒写表（.git）总括档让位——用户总括意志覆盖
+    const envRead = await j.dispatch("read", { path: ".env" });
+    expect(envRead.isError).not.toBe(true); // 根集内项目本地配置（2026-09-28 裁决）
+    expect(envRead.content).toContain("LOCAL-CONFIG");
   });
 });
 

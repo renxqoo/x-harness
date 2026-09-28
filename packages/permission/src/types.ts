@@ -20,6 +20,9 @@ export interface PermissionRule {
   readonly verdict: Verdict;
   readonly origin: RuleOrigin;
   readonly nature?: RuleNature;
+  /** 条件形态（内核 .env 族底线专用）：命中路径在工作区根集（root+extraRoots）内时
+   *  规则不生效——项目本地配置是常规读写面，拒止只针对根集外（凭据自 .env 收割） */
+  readonly outsideRoots?: true;
   /** 习得落档时间（epoch ms——审计/管理面展示；手写缺省） */
   readonly at?: number;
 }

@@ -33,8 +33,10 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin;  // 
 不装 sandbox = permission 照常裁决但无围栏（bash 不得界内 auto，见 §6）；只装 localEnvPlugin =
 现状等价（工具可用、无围栏无权限）。
 
-**用户裁决（2026-09-19）**：① 网络面 = **域名表白名单**（用户态代理组件，非布尔开关）；② bash 默认
-敏感拒读表 = **默认在场、宿主可加不可减**（缩减仅经显式 danger 配置）；③ ask-broker = **服务 token +
+**用户裁决（2026-09-19，2026-09-29 底线配置面更新）**：① 网络面 = **域名表白名单**（用户态代理组件，
+非布尔开关）；② bash 默认敏感拒读表 = **默认在场、宿主经 PermissionOptions.baseline（BaselinePolicy：
+denyRead/denyReadOutside/denyWrite 三表——传全集即覆写，缺省=内核内置表）装配期覆写/追加**（内核供
+机制与缺省值，策略数值宿主定；模式插件不可及）；③ ask-broker = **服务 token +
 缺席退化 deny + e2e 可编程假体**（无宿主 CLI 包，库形态）；④ 权限规则词汇表 = **完整版**（段解析 +
 注入检测 + 硬拒底线 + 前缀规则 + 会话授权，对照 my-agent 全量）。
 
@@ -213,13 +215,20 @@ socat 按档位探测，缺席 → throw；探测与代理创建顺序防 fd 泄
    全权归围栏代理层（白名单 + 撞墙 EPERM 自行换路）。
 
 **模式档**（闭集）：`plan`（write/bash 全拒，read/grep 界内 auto）/ `auto`（缺省，全流程）/
-`full`（**完全访问——用户裁决⑤：不拦截任何命令，唯提权/密码类（sudo/doas/su，含包装/载荷/
-$() 内嵌形）直接 deny**；**总括授权（docs/PERMISSION-FULL-UNRESTRICTED.md）：装配期
+`full`（**完全访问——用户裁决（2026-09-28 重申）：恒拒面 = 提权/密码类（sudo/doas/su，含包装/载荷/
+$() 内嵌形）直接 deny，与凭据目录拒读（~/.ssh/**、~/.aws/**、~/.gcp/**——任意位置三面 deny：路径面/
+重定向输入面/argv 触碰面）；其余零拦截零询问**——含 .git 写、注入/命令替换、解析失败、灾难形态
+（rm -rf / 等）、任意位置 .env 族：full 总括授权根为 `/`，根集即全盘，`.env` 族的「仅根集外拒止」
+条件在总括档天然满躬（随总括放行——如需拒止请在用户规则加显式 deny，手写权威仍压过模式）：
+用户 deny/ask 规则仍压过（手写权威）；**总括授权（docs/PERMISSION-FULL-UNRESTRICTED.md）：装配期
 `grants.setUnrestricted()` 把启动期授权意志翻译为授权根 `"/"`，经既有授权管道三面铺开**——
 工具面 read/write/grep 界外可达（PathGate 授权根含 `/`）、围栏面 writable 含 `/`（seatbelt
 `subpath "/"`/bwrap `--bind / /`，auto 档越根写由围栏白名单承载的口径在 full 下由总括覆盖）、
-网络面代理短路（CONNECT 不经 ask、压过逐域负缓存、不记账）。**底线分面口径**：用户 deny 规则
-（.git 写拒、拒读表）仍压过 full；linux tmpfs 遮挂跨 fs 不受 rename 影响；**darwin 已知边界：
+网络面代理短路（CONNECT 不经 ask、压过逐域负缓存、不记账）。**底线分面口径**：提权面与凭据目录
+拒读恒压过 full（提权不可静默、凭据不可泄露）；.env 族是位置条件拒止（根集外）——总括档授权根=[/]
+即全盘根集，随总括放行（围栏侧 denyRead 具体目录表不豁免，仍拦 ~/.ssh 等）；拒写表（.git）与
+注入/解析失败/灾难形态钳制在总括档让位（用户总括意志覆盖）；linux tmpfs 遮挂跨 fs 不受 rename
+影响；**darwin 已知边界：
 全盘写放行使拒读表可被 rename/硬链绕过（`mv ~/.ssh/id_rsa /tmp/x` 后可读）——内核无法表达
 拒写特定路径（§13 先例），接受为 full 的显式边界**。**子代理传导**：共享世界内一切会话（含
 delegation 子、匿名）同为总括态——同一 plugin 闭包与 grants 实例的既成事实；worktree 隔离
@@ -780,6 +789,11 @@ argv 位/裁决序组合/fail-closed 底座/解释器 -c 递归/包装器跳参�
 「find 无终止符取余词」「空 payload 注入」新锚覆盖）。
 
 ### 14.11 用户裁决⑤（2026-09-19）：full 档重定义 + bun 子命令修订
+
+> 2026-09-28 重申（两轮）：full 拦截面先收窄至唯二（提权 + 拒读底线），同日 .env 裁决后恒拒面
+> 定形为「提权 + 凭据目录拒读（~/.ssh 等任意位置）」——.env 族改位置条件拒止（仅根集外），总括档
+> 授权根=[/] 即全盘根集，随总括放行；注入/结构失败/重定向越根/灾难形态不再有 A① 钳制的最小
+> ask（总括档让位）；提权面语义不变。历史裁决记录保留如下。
 
 **full = 完全访问**：裁决管线在 full 档短路为「用户 deny 规则 → 提权/密码类（hard-deny:sudo，
 即 sudo/doas/su——basename 归一，含包装器剥离、`$()`/payload/`bash -c` 再解析内嵌形）→ 其余全过

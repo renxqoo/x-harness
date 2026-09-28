@@ -2,7 +2,7 @@
 // decide（规则引擎前整线策略）；auto/edit-confirm/sandboxed-auto 实现尾段面 posture
 // （规则引擎后：界内放行/分类器三态/opaque 围栏代问）。行为等价锚 = V3 旋钮梯逐分支。
 
-import type { AdjudicationFacts, Decision, ModePlugin } from "@x-harness/permission";
+import type { AdjudicationFacts, Decision, ModePlugin, PermissionProfile } from "@x-harness/permission";
 import { classifyPipeline } from "./classifier.ts";
 
 const allow = (reason: string, resolvedBy: string): Decision => ({ verdict: "allow", reason, resolvedBy });
@@ -129,7 +129,7 @@ export function knobDecideOf(profile: { readonly askPolicy: string; readonly con
 
 /** 档位解析（V4 #7a 迁自 base/profiles.ts——内置行知识归模式包）：内置 > 自定义；
  *  未知 → undefined（调用方显式处置——plugin 层断代告警） */
-export function resolveProfile(id: string, customRows?: readonly import("@x-harness/permission").PermissionProfile[]): import("@x-harness/permission").PermissionProfile | undefined {
+export function resolveProfile(id: string, customRows?: readonly PermissionProfile[]): PermissionProfile | undefined {
   const builtin = BUILTIN_PROFILES.find((p) => p.id === id);
   if (builtin !== undefined) return builtin;
   if (customRows !== undefined) {
@@ -140,7 +140,7 @@ export function resolveProfile(id: string, customRows?: readonly import("@x-harn
 }
 
 /** 出厂档位行（V4 #7a：模式身份数据归本包——base 的 profiles.ts 只留词表/校验） */
-export const BUILTIN_PROFILES: readonly import("@x-harness/permission").PermissionProfile[] = [
+export const BUILTIN_PROFILES: readonly PermissionProfile[] = [
   { id: "plan", askPolicy: "always", containment: "none", mutationPolicy: "plan-deny" },
   { id: "auto", askPolicy: "on-opaque", containment: "none", mutationPolicy: "auto-in-root" },
   { id: "edit-confirm", askPolicy: "on-opaque", containment: "none", mutationPolicy: "confirm-all" },

@@ -27,10 +27,39 @@ function candidatePaths(word: string, root: string): string[] {
 }
 
 /** 单命令敏感命中：argv 实参与重定向目标双面扫描（echo x >> settings 的写向量在重定向面） */
-interface DenyTables {
+export interface DenyTables {
   readonly protectedWrite: readonly string[];
   readonly denyRead: readonly string[];
   readonly denyWrite: readonly string[];
+  /** 条件拒读（.env 族）：路径在 allowRoots 内不命中——项目本地配置可读写 */
+  readonly denyReadOutside?: readonly string[];
+  readonly allowRoots?: readonly string[];
+}
+
+/** 拒读命中（恒拒表直判 + 条件表根集外判）——denyRead 两形态的统一判定面。
+ *  单一真源：tables.ts 的 denyReadHitOf 与本面 argv 扫描都经此判（表单源 + 判定单源——
+ *  重构审查 #3 处置：曾双写同语义豁免判） */
+export function denyReadHit(tables: DenyTables, path: string, root: string): string | undefined {
+  const hit = tables.denyRead.find((pattern: string) => globMatch(pattern, path, root));
+  if (hit !== undefined) return hit;
+  const conditional = tables.denyReadOutside?.find((pattern: string) => globMatch(pattern, path, root));
+  if (conditional === undefined) return undefined;
+  if (tables.allowRoots !== undefined && tables.allowRoots.some((r) => path === r || path.startsWith(r.endsWith("/") ? r : `${r}/`))) return undefined;
+  return conditional;
+}
+
+/** 累积 cwd（2026-09-29 红队 P0-a 根治）：cd 段改变后续段相对词的解析基——旧实现恒以
+ *  root 解析，`cd /etc && cat .env` 的裸词锚定漂移致条件 .env 底线整面可绕。绝对/~/~user
+ *  形不依赖 cwd；动态目标（cd $VAR）保守维持现基。 */
+export function cwdAfter(cmd: ParsedCommand, cwd: string): string {
+  if (cmd.argv[0] !== "cd" || cmd.argv.length < 2) return cwd;
+  const target = cmd.argv[1] ?? "";
+  if (target === "") return cwd; // 裸 cd（回家目录）——不可静态归一到根集内，保守维持现基
+  if (/[$`*?[]/.test(target)) return cwd; // 动态目标不可解析——保守维持现基
+  if (target === "~") return homedir();
+  if (target.startsWith("~/")) return resolve(homedir(), target.slice(2));
+  if (target.startsWith("/")) return resolve(target);
+  return resolve(cwd, target);
 }
 
 function commandSensitiveHit(cmd: ParsedCommand, root: string, tables: DenyTables): { readonly kind: "deny-read" | "protect-write"; readonly pattern: string } | undefined {
@@ -52,7 +81,7 @@ function commandSensitiveHit(cmd: ParsedCommand, root: string, tables: DenyTable
     if (word === "") continue;
     if (/^~[A-Za-z0-9_.-]/.test(word)) return { kind: "deny-read", pattern: word }; // ~user 保守敏感
     for (const path of candidatePaths(word, root)) {
-      const readHit = tables.denyRead.find((pattern: string) => globMatch(pattern, path, root));
+      const readHit = denyReadHit(tables, path, root);
       if (readHit !== undefined) return { kind: "deny-read", pattern: readHit };
       const writeHit = [...tables.denyWrite, ...tables.protectedWrite].find((pattern: string) => protectGlobMatch(pattern, path, root));
       if (writeHit !== undefined) return { kind: "protect-write", pattern: writeHit };
@@ -61,15 +90,18 @@ function commandSensitiveHit(cmd: ParsedCommand, root: string, tables: DenyTable
   return undefined;
 }
 
-/** 管线 argv/重定向敏感面：任一段命中即敏感（读面与写面同向保守） */
+/** 管线 argv/重定向敏感面：任一段命中即敏感（读面与写面同向保守）；逐段累积 cd 后的
+ *  cwd 作相对词解析基（裸词锚定不再漂移） */
 export function argvSensitiveHit(
   commands: readonly ParsedCommand[],
   root: string,
   tables: DenyTables = { protectedWrite: [], denyRead: [], denyWrite: [] },
 ): { readonly kind: "deny-read" | "protect-write"; readonly pattern: string } | undefined {
+  let cwd = root;
   for (const cmd of commands) {
-    const hit = commandSensitiveHit(cmd, root, tables);
+    const hit = commandSensitiveHit(cmd, cwd, tables);
     if (hit !== undefined) return hit;
+    cwd = cwdAfter(cmd, cwd);
   }
   return undefined;
 }

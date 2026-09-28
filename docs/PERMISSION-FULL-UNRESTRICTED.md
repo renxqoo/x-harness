@@ -62,9 +62,13 @@ plugin 在 mode=full 装配期确立；总括授权对外表现为授权根 `"/"
     bind 循环在 `--ro-bind / /` 之后、denyRead/protectedPaths 的 tmpfs 遮挂在
     writable bind 之后——遮挂压顶成立）；
   - 网络面：代理层短路（如上）。
-- **硬底线（如实区分面）**：
-  - permission 裁决层 deny 规则仍压过 full：Write 工具面 `**/.git/**` 写拒、
-    Read/Grep 的 DEFAULT_DENY_READ（`~/.ssh/**`、`**/.env` 等）、提权/密码类硬拒；
+- **硬底线（如实区分面——2026-09-28 用户裁决重申：full 恒拒面 = 提权 + 凭据目录拒读）**：
+  - permission 裁决层恒压过 full 的仅两件：提权/密码类硬拒（sudo/doas/su，含包装/载荷内嵌形）
+    与凭据目录拒读（~/.ssh/~/.aws/~/.gcp——任意位置三面 deny）。.env 族（.env/.env.*/
+    .envrc）是位置条件拒止（仅工作区根集之外——项目本地配置可读写）；full 总括授权根为
+    [/]——根集即全盘，条件恒满足豁免，随总括放行（如需拒止由用户显式 deny 规则承接，手写
+    权威仍压过模式）；拒写表（`**/.git/**`）与注入/解析失败/灾难形态钳制在总括档让位（用户
+    总括意志覆盖）；
   - 围栏层：linux tmpfs 遮挂（denyRead + protectedPaths）跨文件系统，rename 无
     法绕过（EXDEV）；darwin 的 deny-read regex 拒读仍在，**但 subpath "/" 全盘
     写放行使 rename/硬链绕过拒读表成为现实路径（`mv ~/.ssh/id_rsa /tmp/x` 后
@@ -154,8 +158,9 @@ plugin 在 mode=full 装配期确立；总括授权对外表现为授权根 `"/"
   - `evict(session)` 后旗标保持、该会话 `extraRootsOf` 仍 `["/"]`；
   - `seal()` 后 `isUnrestricted` false（拆卸收回）。
 - **plugin 单测**（bench）：mode=full 装配 → `grants.isUnrestricted(undefined)` true；
-  auto/plan → false；full 档拒读表仍压过（`read ~/.ssh/id_rsa` 拒、`read .env`
-  拒——症状名注明 full 档拒读表仍压过）。
+  auto/plan → false；full 档恒拒面仍压过（`read ~/.ssh/id_rsa` 拒——凭据目录任意位置）；
+  `read .env`（根集内）放行——.env 族位置条件拒止随总括根集豁免（2026-09-28
+  裁决后的现行语义；旧锚曾断言拒，已随裁决翻转）。
 - **proxy 单测**（既有装置）：总括态四断言——① 先 `recordDomain(S, d, "deny")`
   再总括 → CONNECT d 仍 200（负缓存被压过，钉短路位序）；② 放行后
   `domainVerdict(S, d) === undefined`（不记账）；③ askDomain 计数 0；④ 非
@@ -193,8 +198,8 @@ plugin 在 mode=full 装配期确立；总括授权对外表现为授权根 `"/"
 - [ ] full 档 bash 界外写真出（darwin 真跑锚——围栏面修复证据）
 - [ ] 围栏剖面形态全链锚（seatbelt 逐行 / bwrap 相对序 / worktree 例外消费面）
 - [ ] full 档网络：代理短路放行、负缓存被压过、不记账、不经 ask（单测四断言）
-- [ ] deny 底线分面口径：工具面 deny 规则压过 full（.git 写拒/拒读表）既有+新增
-      锚全绿；darwin rename 边界显式落档 + 现状锚
+- [ ] deny 底线分面口径：恒拒面（凭据目录）压过 full 既有+新增锚全绿；.env 族位置
+      条件（根集外拒/根集内放行/总括随根集豁免）锚全绿；darwin rename 边界显式落档 + 现状锚
 - [ ] worktree 隔离例外：override 会话总括不注入、逐目录授权保留、代理不短路
 - [ ] seal 收回总括；evict 不清旗标（单测锚）
 - [ ] auto/plan 行为零变化（全部既有用例不动即绿）

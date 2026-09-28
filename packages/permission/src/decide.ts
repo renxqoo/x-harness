@@ -13,6 +13,7 @@ import { globMatch } from "./rules/glob.ts";
 import type { AdjudicationFacts } from "./facts.ts";
 import { adjudicateBash, withinAny } from "./bash/adjudicate.ts";
 import { baselineDenyRules } from "./baseline.ts";
+import type { BaselinePolicy } from "./baseline.ts";
 
 export interface Decision {
   readonly verdict: Verdict;
@@ -61,6 +62,13 @@ export interface DecideInput {
   /** 追加拒止规则（2026-09-28 C①：安全底线表已内核化恒合并——本面仅承载调用方追加项；
    *  路径面规则引擎与 bash 面敏感/重定向面消费） */
   readonly denyRules?: readonly PermissionRule[];
+  /** 总括授权事实（mode=unrestricted 档——plugin 从注册表解析传入）：拒读底线与
+   *  提权外的一切拦截（拒写/灾难形态/注入/解析失败/敏感面 ask）让位放行；纯直调方
+   *  缺省 false（各拦截面全量在场） */
+  readonly unrestricted?: true;
+  /** 宿主底线覆写（BaselinePolicy——缺省内核内置表；传全集即覆写。信任边界：宿主装配
+   *  面专属，模式插件不可及） */
+  readonly baseline?: BaselinePolicy;
 }
 
 /** 执行指令映射（allow → 按档位 containment；ask/deny 无指令）——plugin 批准路径同源复用 */
@@ -72,8 +80,9 @@ export function execOf(verdict: Verdict, profile: PermissionProfile): ExecDirect
 export function decideFor(input: DecideInput): Decision {
   // 控制类工具（agent 自我组织/控制面行为——todo 清单类）：非环境副作用，裁决面直通
   if (input.control === true) return { verdict: "allow", reason: "control tool", resolvedBy: "control-tool" };
-  // C①（2026-09-28）：安全底线恒在场（origin "default"——内核数据面，不随模式插件缺席消失）
-  const denyRules = [...baselineDenyRules(), ...(input.denyRules ?? [])];
+  // C①（2026-09-28）：安全底线恒在场（origin "default"——内核数据面，不随模式插件缺席消失）。
+  // 拆分（2026-09-28 裁决）：full 语义 = 拒读底线与提权外零拦截——拒写表（.git）仅非总括档合并
+  const denyRules = [...baselineDenyRules(input.unrestricted === true, input.baseline), ...(input.denyRules ?? [])];
   const rules = [...(input.projectRules ?? []), ...input.userRules, ...denyRules, ...input.sessionRules];
   if (input.kind === "Danger") return decideDangerFace(input, rules, denyRules);
   if (input.kind === "Read" || input.kind === "Write") {
@@ -102,6 +111,8 @@ function decideDangerFace(input: DecideInput, rules: readonly PermissionRule[], 
     ...(input.modeDecide !== undefined ? { modeDecide: input.modeDecide } : {}),
     ...(input.postureDecide !== undefined ? { postureDecide: input.postureDecide } : {}),
     denyRules,
+    ...(input.unrestricted === true ? { unrestricted: true } : {}),
+    ...(input.baseline !== undefined ? { baseline: input.baseline } : {}),
   });
   return {
     verdict: adjudication.verdict,
@@ -165,7 +176,9 @@ function decidePathTool(input: PathDecisionInput): Decision {
 /** 单路径裁决（批量与单路径共用主干；批量条目恒在场——absent 恒 false） */
 function decideOnePath(input: PathDecisionInput, path: string, absent: boolean): Decision {
   const scope = input.pathScope === true && input.kind === "Read";
-  const denied = input.rules.find((rule) => rule.tool === input.kind && rule.verdict === "deny" && path !== "" && (globMatch(rule.pattern, path, input.root) || (scope && scopeDenyAnchored(rule.pattern, path, input.root))));
+  // outsideRoots 条件规则（内核 .env 族底线）：路径在根集内不生效——项目本地配置是常规读写面
+  const conditional = (rule: PermissionRule): boolean => rule.outsideRoots === true && withinAny(path, input.roots);
+  const denied = input.rules.find((rule) => rule.tool === input.kind && rule.verdict === "deny" && path !== "" && !conditional(rule) && (globMatch(rule.pattern, path, input.root) || (scope && scopeDenyAnchored(rule.pattern, path, input.root))));
   if (denied !== undefined) {
     return { verdict: "deny", reason: `rule:${denied.pattern}`, resolvedBy: `rule:${denied.origin}` };
   }
@@ -230,7 +243,8 @@ function pathsOf(input: PathDecisionInput): readonly { readonly path: string }[]
  *  （memorizable + Read(范围) 建议——习得后同范围免问），不做全域 deny（grep 不废） */
 function scopeDenySoft(input: PathDecisionInput, path: string, scope: boolean): Decision | undefined {
   if (!scope) return undefined;
-  const unanchored = input.rules.find((rule) => rule.tool === "Read" && rule.verdict === "deny" && unanchoredPattern(rule.pattern));
+  // outsideRoots 条件规则（.env 族）：搜索范围在根集内时无「可能命中」——不触发范围 ask
+  const unanchored = input.rules.find((rule) => rule.tool === "Read" && rule.verdict === "deny" && !(rule.outsideRoots === true && withinAny(path, input.roots)) && unanchoredPattern(rule.pattern));
   return unanchored === undefined ? undefined : { verdict: "ask", reason: `scope-deny:${unanchored.pattern}`, resolvedBy: "scope-deny", memorizable: true, suggestedRule: `Read(${path}):allow` };
 }
 
