@@ -23,8 +23,10 @@ export interface GitWatchDirs {
   readonly commonDir: string;
 }
 
-/** 定位 cwd 的监视锚点；非 git/不可判 → undefined（调用方跳过该 cwd） */
+/** 定位 cwd 的监视锚点；非 git/不可判/空串 → undefined（调用方跳过该 cwd）。
+ *  空串必须显式拒：resolve("") 会锚到进程 cwd——宿主所在仓的误锚。 */
 export function gitWatchDirsOf(cwd: string): GitWatchDirs | undefined {
+  if (cwd === "" || !isAbsolute(cwd)) return undefined; // 相对串/spawning raw 不锚
   let dir = resolve(cwd);
   let gitEntry: string | undefined;
   for (;;) {
@@ -94,7 +96,6 @@ interface HeldWatch {
 /** 建服务。watcher 错误（树删/权限）→ 退避重挂（1s/2s/4s…封顶 30s——对账拍也走这里） */
 export function createGitWatchService(options: GitWatchOptions): GitWatchService {
   const debounceMs = options.debounceMs ?? 150;
-  const now = options.now ?? Date.now;
   const held = new Map<string, HeldWatch>(); // 归一化锚键（gitDir\0commonDir）→ watch 组
   const refCount = new Map<string, number>(); // 锚键 → 期望持有数（diff 依据）
   const lastBranch = new Map<string, string | undefined>(); // gitDir → 上次已发分支（同值抑制）
@@ -192,10 +193,12 @@ export function createGitWatchService(options: GitWatchOptions): GitWatchService
       }
       refCount.clear();
       for (const key of expected.keys()) refCount.set(key, 1);
-      // diff：多的收、少的挂
-      for (const key of [...held.keys()]) {
-        if (!expected.has(key)) closeAnchor(key);
+      // diff：多的收、少的挂（先收集目标再收——避免遍历中变异键集）
+      const stale: string[] = [];
+      for (const key of held.keys()) {
+        if (!expected.has(key)) stale.push(key);
       }
+      for (const key of stale) closeAnchor(key);
       for (const [key, dirs] of expected) {
         if (!held.has(key)) openAnchor(key, dirs);
       }
@@ -205,7 +208,8 @@ export function createGitWatchService(options: GitWatchOptions): GitWatchService
       if (debounceHandle !== undefined) clearTimeout(debounceHandle);
       if (retryHandle !== undefined) clearTimeout(retryHandle);
       clearTimeout(timer);
-      for (const key of [...held.keys()]) closeAnchor(key);
+      const keys = [...held.keys()];
+      for (const key of keys) closeAnchor(key);
       refCount.clear();
     },
   };

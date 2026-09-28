@@ -478,6 +478,7 @@ worker 侧**单会话守卫**：threadId ≠ 当前会话 id → failure（纵�
 | `hub_error` | 未捕获异常报告（进程不退出；worker 源带 threadId） |
 | `thread_died` | `{threadId, reason}` 恰一 |
 | `thread_parked` | `{threadId, reason: idle\|manual\|rss}` 恰一 |
+| `event`(name=`git/changed`) | host 自产（非 worker 帧）：`payload {cwd, branch?}`——live 线程 cwd 的 git HEAD/refs 变化（gitdir+commonDir 双目录 watch、150ms 防抖尾沿、同值抑制）；`branch` 键缺席 = detached（已分离语义）；逐 live threadId 出帧（同 gitdir 兄弟会话各一帧、payload 带 cwd 供客户端按 cwd 匹配刷新）。docs/GIT-INTERACTION-REDESIGN §2.1 |
 
 **事件词表（认领集 + 未知透传）**：
 
