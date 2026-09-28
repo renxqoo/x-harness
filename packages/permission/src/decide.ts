@@ -240,7 +240,8 @@ function pathsOf(input: PathDecisionInput): readonly { readonly path: string }[]
   if (!Array.isArray(args.paths) || args.paths.length === 0) return undefined;
   const entries: { path: string }[] = [];
   for (const item of args.paths) {
-    if (typeof item !== "string") continue; // 垃圾条目跳过——schema 层已拒，防御双保险
+    if (typeof item !== "string" || item === "") continue; // 垃圾/空串条目跳过——空串与单路径面
+    // 同判（K#7：resolve(root,"")=root 会造成界内 allow 假象；批量不得比单条宽，红队 P1-5）
     entries.push({ path: resolve(input.root, item) });
   }
   return entries.length > 0 ? entries : undefined;

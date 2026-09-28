@@ -45,7 +45,10 @@ export function suggestRule(parsed: { readonly commands: readonly ParsedCommand[
   return `Danger(${base}:*):allow`;
 }
 
-/** 精确记忆兜底：不泛化形态的落账串（全命令原文——最窄） */
-export function exactRule(command: string): string {
+/** 精确记忆兜底：不泛化形态的落账串（全命令原文——最窄）。
+ *  含 ":*" 子串原文拒记（2026-09-29 红队 P1-4）：`echo deploy:*` 原文落账后与规则前缀
+ *  语法同构，匹配面不可区分——泛化放行 `echo deploy x`；拒记退化每次问（可用性损失换安全） */
+export function exactRule(command: string): string | undefined {
+  if (/\s:?\*/.test(command) || command.includes(":*")) return undefined; // 原文含通配语法形——不可安全精确记忆
   return `Danger(${command}):allow`;
 }
