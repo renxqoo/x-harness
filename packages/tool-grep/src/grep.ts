@@ -71,6 +71,11 @@ export function createGrepTool(input: GrepToolInput): ToolDefinition {
   const rootOverrideOf = input.rootOverrideOf;
   return {
     name: "grep",
+    kind: "Read",
+    readsSubtree: (args: unknown) => {
+      const path = (args as { path?: unknown }).path;
+      return path === undefined || (typeof path === "string" && path !== "" && !/\.[A-Za-z0-9]{1,8}$/.test(path)); // 目录形/缺席=范围（R2 子树判定）；明确文件目标按直读规则
+    },
     description:
       "Search file contents with a regular expression (or literal:true for fixed strings) under a path in the workspace. Returns path:line:text matches with optional context lines. Zero matches is a successful empty result. Use read for full lines.",
     inputSchema: Type.Object({

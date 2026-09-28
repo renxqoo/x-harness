@@ -66,7 +66,7 @@ const systemTextOf = (request: LlmRequest): string =>
   (request.messages.find((m) => m.role === "system") as { text?: string } | undefined)?.text ?? "";
 
 describe("Track U 真实消费路径（untyped worktree 子经 agent_spawn）", { timeout: 30_000 }, () => {
-  it("untyped worktree 子：system 应含完整 base/core（You are Agent）+ worktree ENV（会话层覆盖）", async () => {
+  it("untyped worktree 子：system 应含完整 base/core（You are xh）+ worktree ENV（会话层覆盖）", async () => {
     const repo = await gitRepo();
     const ctx = createContext();
     const calls: LlmRequest[] = [];
@@ -121,7 +121,7 @@ describe("Track U 真实消费路径（untyped worktree 子经 agent_spawn）", 
     const childSystem = childCalls.map(systemTextOf).join("\n@@@\n");
     // 断言 1（Track U 契约 docs/WORKTREE-CONTEXT-AWARENESS §1.4 D2'）：untyped/fork 子
     // 走 prompt.assemble 会话层覆盖——system 应是完整 base/core + worktree ENV
-    expect(childSystem).toContain("You are Agent");
+    expect(childSystem).toContain("You are xh");
     // 断言 2：ENV 块是 worktree 事实
     expect(childSystem).toContain(`- Working directory: ${wtPath}`);
     expect(childSystem).toContain(`- Git branch: x-harness/${agentId}`);

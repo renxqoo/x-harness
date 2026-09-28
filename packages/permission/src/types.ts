@@ -4,9 +4,11 @@
 import type { SessionId } from "@x-harness/session";
 
 export type Verdict = "allow" | "deny" | "ask";
-export type RuleTool = "Bash" | "Read" | "Write" | "Grep" | "Tool";
-/** 规则作用域（存储位置示别）：user/project=设置文件持久层；session=进程授权桶 */
-export type RuleOrigin = "user" | "project" | "session";
+/** 规则命名空间 = 工具类别（kind 声明面）。Danger = 命令语言面（逐次裁决类） */
+export type RuleTool = "Danger" | "Read" | "Write" | "Tool";
+/** 规则作用域（存储位置示别）：user/project=设置文件持久层；session=进程授权桶；
+ *  default=内置基线拒止（V4 净化 #2——permission-modes 产，归因真名不伪装 user） */
+export type RuleOrigin = "user" | "project" | "session" | "default";
 /** 规则性质：handwritten=用户显式手写（可 ask/deny）；grant=习得记忆（恒 allow） */
 export type RuleNature = "handwritten" | "grant";
 
@@ -52,18 +54,15 @@ export type ProfileId = "plan" | "auto" | "edit-confirm" | "full" | "sandboxed-a
  *  自定义档位经宿主 settings 追加行（id 不得撞内置保留名）。 */
 export const PROFILE_IDS = ["plan", "auto", "edit-confirm", "full", "sandboxed-auto"] as const satisfies readonly ProfileId[];
 
-/** 围栏事实快照（sandbox 提供，permission 定义 token 消费；缺席=无围栏装配） */
+/** 围栏事实快照（sandbox 提供，permission 定义 token 消费；缺席=无围栏装配）。
+ *  allowedDomains 面已删（2026-09-28 P3-8：域名授权位删除后生产零写入——死面不养；
+ *  网络白名单归 sandbox options 自持） */
 export interface FenceFacts {
   readonly writable: readonly string[];
-  readonly allowedDomains: readonly string[];
 }
 
-/** bash 段工具面默认拒读表（用户裁决②）——工具面为 user-origin deny 规则注入；
- *  fenced 档 spawn 面由 sandbox 同表执法；直通档由裁决管线 argv 敏感面执法（U12） */
-export const DEFAULT_DENY_READ: readonly string[] = ["~/.ssh/**", "~/.aws/**", "~/.gcp/**", "**/.env"];
-
-/** 受保护路径默认写拒（.git 内部）；宿主经 protectedPaths 追加（含 settings 文件——U13） */
-export const DEFAULT_DENY_WRITE: readonly string[] = ["**/.git/**"];
+/** V4 净化 #2：DEFAULT_DENY_READ/WRITE 表迁 @x-harness/permission-modes（策略数据）。
+ *  本包仅留读形态类型（sandbox 同表执法面经消费方注入——见 sandbox 包消费）；写表全迁。 */
 
 /** ask 载荷（结构化往返——broker 输入侧）：summary=目标描述（确认条主文案）；
  *  options 按命中类裁剪（拒记类只余 once） */

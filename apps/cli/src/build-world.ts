@@ -37,6 +37,7 @@ import {
   skillKit,
   toolboxKit,
   telemetryKit,
+  planKit,
 } from "@x-harness/harness";
 import type { BasePromptFacts } from "@x-harness/harness";
 import { createFactsSnapshotPlugin, probeBaseFacts } from "@x-harness/harness";
@@ -183,6 +184,19 @@ function mailboxRootOf(options: Pick<WorldOptions, "mailboxRoot">): string {
   return options.mailboxRoot ?? resolveMailboxDir();
 }
 
+/** 装配缺省权限档（fenceKit 定档与 planKit 解档目标同源——围栏姿势不因审批漂移） */
+export function defaultPermissionOf(options: Pick<WorldOptions, "permission">): import("@x-harness/permission").ProfileId {
+  return options.permission ?? "sandboxed-auto";
+}
+
+/** plan 档退出目标（/plan toggle 与 planKit liftTo 同源）：装配缺省为 plan 时回
+ *  sandboxed-auto——绝不以 plan 为退出目标（对抗审查 R3-F1/F2：--permission plan 下
+ *  假解档/单向门；CLI 围栏姿势保 fenced） */
+export function planExitModeOf(options: Pick<WorldOptions, "permission">): import("@x-harness/permission").ProfileId {
+  const mode = defaultPermissionOf(options);
+  return mode === "plan" ? "sandboxed-auto" : mode;
+}
+
 /** 可选段插件（compaction/telemetry——两条件位的条件展开收进本函数，降 buildWorld 复杂度） */
 function optionalPluginsOf(options: WorldOptions, adapters: readonly LlmAdapter[]): readonly Plugin[] {
   return [
@@ -228,11 +242,14 @@ export async function buildWorld(options: WorldOptions): Promise<Result<World>> 
     }),
     ...fenceKit({
       root: options.cwd,
-      mode: options.permission ?? "sandboxed-auto", // CLI 缺省围栏优先（U6——Codex 姿势）
+      mode: defaultPermissionOf(options), // CLI 缺省围栏优先（U6——Codex 姿势）
       ...(options.rules !== undefined && options.rules.length > 0 ? { rules: parseRules(options.rules, "user") } : {}),
       // rg 内置目录写保护（与 hub <agentDir>/bin 同面）：用户可写目录里的可执行文件直接以宿主身份执行
       ...("rgBinDir" in rgBin ? { protectedPaths: [rgBin.rgBinDir] } : {}),
     }),
+    // plan 模式策略件（planControl + plan_submit——PERMISSION-MODE-FLAG plan 节）：
+    // 解档目标 = plan 档退出目标；owner 锚定 = 主会话（--permission plan 装配期即有资格）
+    ...planKit({ liftTo: planExitModeOf(options), ...(options.mainSessionId !== undefined ? { mainSession: options.mainSessionId } : {}) }),
     options.broker,
     ...meterKit(),
     ...optionalPluginsOf(options, adapters),

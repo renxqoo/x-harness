@@ -28,6 +28,13 @@ export interface SlashDeps {
   readonly exportTo: (path: string) => Promise<string>;
   /** /workflow 命令面（workflowView 直调——期 3：不经模型） */
   readonly workflow?: WorkflowCommandDeps;
+  /** /plan 命令面（permissionMode 服务直切——内存态即时生效） */
+  readonly permission?: PermissionCommandDeps;
+}
+
+export interface PermissionCommandDeps {
+  /** 切换 plan 档 ↔ 装配缺省档；返回状态文案 */
+  readonly planToggle: () => string;
 }
 
 export type SlashOutcome = "handled" | "quit" | "unknown" | "not-slash";
@@ -44,6 +51,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "quit", usage: "/quit", help: "exit (also Ctrl+C twice / Ctrl+D)" },
   { name: "new", usage: "/new", help: "start a new session (old one stays saved)" },
   { name: "model", usage: "/model [pattern]", help: "list/switch model" },
+  { name: "plan", usage: "/plan", help: "toggle plan mode (read-only research; lift via plan approval)" },
   { name: "thinking", usage: "/thinking [level]", help: `show/set thinking level (${THINKING_LEVELS.join("|")})` },
   { name: "session", usage: "/session", help: "session facts and token usage" },
   { name: "compact", usage: "/compact [instructions]", help: "fold history into a summary" },
@@ -176,6 +184,7 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   },
   resume: (deps) => commandResume(deps),
   workflow: async (deps, rest) => deps.workflow === undefined ? deps.write("workflow is not assembled in this build") : deps.write(await commandWorkflow(deps.workflow, rest)),
+  plan: (deps) => deps.write(deps.permission === undefined ? "permission is not assembled in this build" : deps.permission.planToggle()),
 };
 
 /** 分派：非 slash 行返回 not-slash；未知命令提示；/quit 返回 quit */

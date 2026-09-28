@@ -385,3 +385,55 @@ describe("典型值估算（TOKEN-UNIFICATION.md R2——CJK 1/字，码位计�
       expect(estimateText(text)).toBeGreaterThanOrEqual(estimateTokensTypical(text));
   });
 });
+
+describe("并行度三字段（TURN-REDUCTION.md §1.1C——模型意图面计数，基线 41/42 轮串行即本字段量出）", () => {
+  const message = (blocks: number, usage?: object) =>
+    ({ type: "assistant/message", seq: 1, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: Array.from({ length: blocks }, () => ({ type: "tool_use", callId: "c", name: "read", input: {} })), ...(usage ? { usage } : {}), stopReason: "stop" } }) as never;
+  const attempt = (blocks: number) =>
+    ({ type: "assistant/attempt", seq: 2, time: 2, surfaceOp: "append", data: { turn: 0, step: 0, error: "x", content: Array.from({ length: blocks }, () => ({ type: "tool_use", callId: "c", name: "read", input: {} })) } }) as never;
+
+  interface ParallelExpect {
+    readonly calls: number;
+    readonly steps: number;
+    readonly parallel: number;
+  }
+  it.each([
+    ["空流", [], { calls: 0, steps: 0, parallel: 0 }],
+    ["纯文本消息（0 块）", [message(0)], { calls: 0, steps: 0, parallel: 0 }],
+    ["单块消息 ×1", [message(1)], { calls: 1, steps: 1, parallel: 0 }],
+    ["双块消息（并行）×1", [message(2)], { calls: 2, steps: 1, parallel: 1 }],
+    ["三块 + 一块 + 双块", [message(3), message(1), message(2)], { calls: 6, steps: 3, parallel: 2 }],
+  ] as const)("表驱动：%s", (_name, events, expected: ParallelExpect) => {
+    const snap = snapshotOf(foldUsage(events));
+    expect(snap.toolUseCalls).toBe(expected.calls);
+    expect(snap.toolUseSteps).toBe(expected.steps);
+    expect(snap.parallelSteps).toBe(expected.parallel);
+  });
+
+  it("无 usage 的 message 也计数（计数先于 usage 样本门——错误路径的并行度是诊断目标）", () => {
+    const snap = snapshotOf(foldUsage([message(2)])); // 无 usage 字段
+    expect(snap.toolUseCalls).toBe(2);
+    expect(snap.attempts).toBe(0); // usage 缺席：token 不计但并行度计
+  });
+
+  it("assistant/attempt 的 tool_use 不计（截断重试半成品，重发会在 message 双计）", () => {
+    const snap = snapshotOf(foldUsage([attempt(3), message(1)]));
+    expect(snap.toolUseCalls).toBe(1); // 只计 message
+    expect(snap.toolUseSteps).toBe(1);
+    expect(snap.parallelSteps).toBe(0);
+  });
+
+  it("content 非数组/垃圾形态计 0（降级不崩）", () => {
+    const snap = snapshotOf(foldUsage([
+      { type: "assistant/message", seq: 1, time: 1, surfaceOp: "append", data: { content: "not-array" } } as never,
+      { type: "assistant/message", seq: 2, time: 2, surfaceOp: "append", data: {} } as never,
+    ]));
+    expect(snap.toolUseCalls).toBe(0);
+    expect(snap.toolUseSteps).toBe(0);
+  });
+
+  it("派生指标由消费方计算：avgToolUsePerStep = toolUseCalls / toolUseSteps", () => {
+    const snap = snapshotOf(foldUsage([message(2), message(1), message(1)]));
+    expect(snap.toolUseCalls / snap.toolUseSteps).toBe(4 / 3);
+  });
+});

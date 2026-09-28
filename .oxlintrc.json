@@ -1,6 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
 
+  // 对抗审查红测脚本的临时隔离区（复跑验证后删除）——不进代码纪律面
+  "ignorePatterns": [".adversarial/**"],
+
   // ══════════════════════════════════════════════════════════════════
   // 宪法纪律：每条规则要么 error 且当前零违规，要么不进本文件；
 

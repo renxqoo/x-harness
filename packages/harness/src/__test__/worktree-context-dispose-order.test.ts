@@ -31,7 +31,7 @@ describe("dispose 回卷序（LIFO）下 worktree-context 先卸、system-prompt
     await unload[2]!();
     expect(prompt.assemble({ sessionId: "c1" }).text).not.toContain(WT);
     // 根层不受影响
-    expect(prompt.assemble().text).toContain("You are Agent");
+    expect(prompt.assemble().text).toContain("You are xh");
     await ctx.dispose();
   });
 

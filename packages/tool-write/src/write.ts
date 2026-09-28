@@ -25,6 +25,7 @@ export function createWriteTool(input: WriteToolInput): ToolDefinition {
   const rootOverrideOf = input.rootOverrideOf;
   return {
     name: "write",
+    kind: "Write",
     description:
       "Write a whole file (create or overwrite) within the workspace root. Overwriting an existing file requires reading it first in the same session (and it must not have changed since). Parent directories are created automatically. For targeted changes to part of a file, prefer the edit tool.",
     inputSchema: Type.Object({

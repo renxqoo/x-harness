@@ -53,7 +53,9 @@ tie-break 保证全序确定）：
 - `createBasePromptPlugin(facts)`（@x-harness/harness）：单一 section `base/core`（身份/守则/环境块）+ facts
   变量（cwd/isGit/platform/shell 四件套恒注册——第三方段 `{{cwd}}` 等可引用）；git 两字段
   （gitBranch/gitWorktreeMain）烘焙进 ENV 块条件行（在场才渲染；键缺席 = 未知，
-  docs/WORKTREE-CONTEXT-AWARENESS §1.3）；`inject: ["system-prompt"]` 硬依赖 topo 保序。
+  docs/WORKTREE-CONTEXT-AWARENESS §1.3）；环境块条件展示：facts 全缺席（文本三值降级
+  unknown 且非 git——宿主零探测）时整段省略（零信息不进 prompt，`baseCoreText(facts)`
+  形参）。`inject: ["system-prompt"]` 硬依赖 topo 保序。
   **facts 由宿主探测传入**（`probeBaseFacts` 同包——base-prompt-probe.ts 持 fs IO 边与
   git 事实探测 probeGitFacts（纯 fs 读 .git/HEAD——解析纯函数归 @x-harness/agent-delegation
   worktree-facts），正文面不做 IO）；入口 `normalizeBaseFacts` 归一：换行压空格

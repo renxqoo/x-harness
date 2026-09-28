@@ -40,12 +40,29 @@ export interface ToolOutcome {
   readonly additionalContexts?: readonly { readonly content: readonly TextBlock[] }[];
 }
 
+/** 工具风险分类闭集（kind 声明词汇单一真相源——permission 路由/规则命名空间消费）：
+ *  Read=只读 / Write=写 / Danger=行为不可静态分类需逐次裁决（参数含 command 串） */
+export type ToolKind = "Read" | "Write" | "Danger";
+
 export interface ToolDefinition extends ToolSchema {
   /** 严格 true 才可并行（缺省/抛错/非 true 一律 exclusive——fail-closed） */
   readonly isConcurrencySafe?: (args: unknown) => boolean;
   /** 控制类工具（Codex is_builtin_control_tool 同构语义）：agent 自我组织/控制面行为，
    *  非环境副作用——permission 裁决面直通（声明权在工具定义，安全面只认标记不认名单） */
   readonly isControlTool?: true;
+  /** 工具类别（闭集三分类——工具风险类别，声明权在工具作者）：
+   *  "Read" = 只读（read/grep 类——拒读基线跨工具生效）；"Write" = 写（write/edit 类）；
+   *  "Danger" = 行为不可静态分类需逐次裁决，契约 = 参数含 command 串（bash/shell 类）。
+   *  内核路由：Read/Write → 文件路径模型（glob 规则，规则前缀同类名）；Danger →
+   *  命令语言模型（解析管线，Danger(...) 规则）；**缺席（业务工具不声明）→ 通用面
+   *  恒 ask（fail-closed），可经 Tool(名) 规则授权**。kind 透传 facts 供上层（模式
+   *  插件/宿主）按类分组施策。服务端独占 */
+  readonly kind?: ToolKind;
+  /** path 参数是搜索范围而非单一目标（R2：grep 类目录搜索——范围可覆盖拒读文件）。
+   *  true = 恒范围；谓词 = 按参数判（grep：目录形/缺席才是范围，明确文件目标不是）。
+   *  内核对范围型读做拒读底线的子树判定（有锚相交 deny / 无锚 ask+范围记忆），
+   *  且 path 缺席 = 以 root 为范围的合法搜索（不再 pathAbsent 问） */
+  readonly readsSubtree?: true | ((args: unknown) => boolean);
   /** 使用守则（纯数据）：工具在场才成立的行事约束——经 tool-core 工厂参数投稿为
    *  system-prompt 段（D3；make() 自带此字段仅作数据不触发停靠——W1 审查 L-1 记录）。
    *  不进 LLM 序列化（schemas() 显式子集映射，guidance 不外漏） */
@@ -60,6 +77,8 @@ export function defineTool<T extends TSchema>(def: {
   readonly inputSchema: T;
   readonly isConcurrencySafe?: (args: unknown) => boolean;
   readonly isControlTool?: true;
+  readonly kind?: ToolKind;
+  readonly readsSubtree?: true | ((args: unknown) => boolean);
   execute(args: Static<T>, ctx: ToolExecContext): Promise<ToolOutcome>;
 }): ToolDefinition {
   return {
@@ -68,6 +87,8 @@ export function defineTool<T extends TSchema>(def: {
     inputSchema: def.inputSchema,
     ...(def.isConcurrencySafe !== undefined ? { isConcurrencySafe: def.isConcurrencySafe } : {}),
     ...(def.isControlTool !== undefined ? { isControlTool: def.isControlTool } : {}),
+    ...(def.kind !== undefined ? { kind: def.kind } : {}),
+    ...(def.readsSubtree !== undefined ? { readsSubtree: def.readsSubtree } : {}),
     // 运行时收到的是经 TypeBox 校验的值；静态收窄由本助手的泛型保证
     execute: def.execute as ToolDefinition["execute"],
   };

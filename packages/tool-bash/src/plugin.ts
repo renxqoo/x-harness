@@ -6,8 +6,7 @@
 import { createHash } from "node:crypto";
 import type { Plugin } from "@x-harness/core";
 import type { ExecEnv } from "@x-harness/exec-env";
-import { permissionBroker, permissionGrantStore, permissionGrants, summaryOf } from "@x-harness/permission";
-import { parseRules } from "@x-harness/permission";
+import { permissionBroker, summaryOf } from "@x-harness/permission";
 import { sessionDisposed } from "@x-harness/session";
 import { createToolPlugin } from "@x-harness/tool-core";
 import { PathGate } from "@x-harness/tool-core";
@@ -23,11 +22,19 @@ export type BashLimitsOptions = Partial<Pick<BashLimits, "defaultTimeoutMs" | "m
  *  即会话档案一致性——TASK-PUSH-DESIGN §2.2） */
 export type TaskLimitsOptions = { readonly maxConcurrentTasks?: number; readonly taskTimeoutMs?: number; readonly fullCapBytes?: number; readonly taskLogDir?: string };
 
-/** bash 使用守则（docs/TOOLBOX.md §4）：sandbox 围栏下的行事约束——denied domain 是 fence
- *  不是 obstacle。裸 local（无围栏）返回空串：无守则可说（空串不落 def） */
+/** bash 使用守则（docs/TOOLBOX.md §4）：非交互约束环境无关（无 TTY 且 stdin 关闭——
+ *  交互式命令失败或挂到超时），所有围栏形态共享；sandbox 围栏附加行事约束——denied
+ *  domain 是 fence 不是 obstacle。专用工具优先/cat 清单/cwd-reset 语义在工具
+ *  description——此处不重复。 */
 export function bashGuidance(env: ExecEnv): string {
-  if (env.kind !== "sandbox") return "";
-  return `## Shell
+  const base = `## Shell
+
+Commands run with no TTY and stdin closed: interactive prompts, pagers,
+and editors cannot work — they fail, or hang until the timeout. Use
+non-interactive forms instead: \`git commit -m\` and \`--no-pager\`,
+confirmation flags like \`-y\`, scripts instead of REPL sessions.`;
+  if (env.kind !== "sandbox") return base;
+  return `${base}
 
 Commands run inside an OS-level sandbox with a network domain allowlist.
 A denied domain is a fence, not an obstacle to route around — ask the
@@ -74,38 +81,20 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
       tool: "bash",
       ...(summary !== undefined ? { summary } : {}),
       reason: "sandbox failure — retry outside the sandbox?",
-      options: ["once", "session", "project", "user"],
+      options: ["once"], // E①（2026-09-28）：escalate 语义=一次性重试——记忆梯度撤（旧四档落桶后
+      // 跨档 direct 免问，且游离 permission 的 memorizable 门与 grant-written 审计——收口进契约）
       escalate: { command: fields.command, failureText: fields.failureText },
       ...(fields.session !== undefined ? { session: fields.session } : {}),
     });
-    if (reply.verdict === "allow" && reply.memory !== undefined) {
-      await settleEscalateMemory(fields, reply);
-    }
     return reply.verdict;
   };
-
-  /** 升级批准的记忆梯度兑现（对抗审查 #6）：session→授权桶；project/user→持久面 */
-  async function settleEscalateMemory(fields: { readonly command: string; readonly session?: import("@x-harness/session").SessionId }, reply: import("@x-harness/permission").AskReply): Promise<void> {
-    const raw = reply.ruleOverride?.trim() ?? `Bash(${fields.command}):allow`;
-    try {
-      const entry = parseRules([raw], "session")[0];
-      if (entry === undefined || entry.verdict !== "allow") return;
-      if (reply.memory === "session") {
-        worldCtx?.tryUse(permissionGrants)?.addRule(fields.session, { ...entry, origin: "session", nature: "grant", at: Date.now() });
-      } else if (reply.memory === "project" || reply.memory === "user") {
-        await worldCtx?.tryUse(permissionGrantStore)?.write(reply.memory, { tool: entry.tool, pattern: entry.pattern, verdict: "allow", nature: "grant", at: Date.now() });
-      }
-    } catch {
-      // 坏规则串静默不落（fail-closed——升级执行不受记忆失败影响）
-    }
-  }
 
   return createToolPlugin({
     name: "tool-bash",
     envOption: env,
     gate,
     make: (resolved, _extraRootsOf, rootOverrideOf) => createBashTool({ gate, limits, env: resolved, tasks, rootOverrideOf, escalate }),
-    // 使用守则（工厂参数投稿，D3）：仅 sandbox 围栏下有话可说——裸 local 无围栏语义，零守则
+    // 使用守则（工厂参数投稿，D3）：非交互约束全形态注入；围栏段仅 sandbox 追加
     guidance: bashGuidance,
     // 会话终结：该会话后台任务两段杀并清桶（登记生命周期=会话生命周期）；装配拆卸：全部直接 KILL；
     // 生效登记簿 provide 为服务——task-tools 停靠（bash 源 + 完成通知臂同一实例）

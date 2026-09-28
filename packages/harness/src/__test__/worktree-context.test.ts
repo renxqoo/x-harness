@@ -41,7 +41,7 @@ describe("createWorktreeContextPlugin（Track U 会话层覆盖）", () => {
     expect(covered.text).toContain("- Git worktree of: /w/main-repo");
     expect(covered.text).toContain("outside your sandbox"); // 只读参照句
     expect(covered.text).not.toContain("- Working directory: /w/main-repo"); // 根层 cwd 不出现（变量插值后）
-    expect(covered.text).toContain("You are Agent"); // 守则/上下文管理/输出格式与根层同源（整段覆盖非 ENV 独段）
+    expect(covered.text).toContain("You are xh"); // 守则/上下文管理/输出格式与根层同源（整段覆盖非 ENV 独段）
     // 根层零污染：文本与指纹逐字节不变
     const after = prompt.assemble();
     expect(after.text).toBe(before.text);
@@ -66,7 +66,7 @@ describe("createWorktreeContextPlugin（Track U 会话层覆盖）", () => {
     const detached = prompt.assemble({ sessionId: "c1" }).text;
     expect(detached).toContain(`- Working directory: ${WT}`);
     expect(detached).not.toContain("Git branch:");
-    expect(detached).toContain("You are Agent"); // 全量 base/core 仍在
+    expect(detached).toContain("You are xh"); // 全量 base/core 仍在
   });
 
   it("worktreeMain 缺席（submodule/不可读）→ worktree 行与只读句省略、目录行仍在", async () => {

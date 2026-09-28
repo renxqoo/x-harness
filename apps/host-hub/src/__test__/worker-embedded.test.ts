@@ -355,15 +355,28 @@ describe("worker 内嵌旅程", () => {
     const entries = await waitResponse(worker.captured.lines, "get_entries", "e1");
     const userMsg = (entries.data as { entries: Array<{ event: { type: string; content?: unknown } }> }).entries
       .filter((row) => row.event.type === "user/message")
-      .at(-1); // 末条 = 本 prompt 落账（首条是 running 边沿注入的 agent-types 快照）
+      .filter((row) => {
+        const blocks = (row.event.content as Array<{ type?: string; text?: string }> | undefined) ?? [];
+        return !(blocks.length === 1 && blocks[0]?.type === "text" && (blocks[0]?.text ?? "").startsWith("<snapshot"));
+      })
+      .at(-1); // 末条 = 本 prompt 落账（agent-types 边沿快照在前、model 请求时点快照在批次后——均排除）
     expect(userMsg?.event.content).toEqual([
       { type: "text", text: "hi" },
       { type: "image", data: "aGk=", mediaType: "image/png" },
     ]);
+    // D 模型快照装配级守护（对抗审查 M-1）：facts 插件注册链断裂（漏进 offs/render 写错）必红
+    // （直取 text 块比对——JSON.stringify 会转义引号使 includes 失配）
+    const modelSnap = (entries.data as { entries: Array<{ event: { type: string; content?: unknown } }> }).entries
+      .some((row) => {
+        if (row.event.type !== "user/message") return false;
+        const blocks = (row.event.content as Array<{ type?: string; text?: string }> | undefined) ?? [];
+        return blocks.length === 1 && blocks[0]?.type === "text" && (blocks[0]?.text ?? "").startsWith('<snapshot kind="model">') && (blocks[0]?.text ?? "").includes("the model script-1.");
+      });
+    expect(modelSnap).toBe(true);
     // fork 选点投影：纯图/携图行可见（[image] 标记——不留整行缺席）
     worker.send({ type: "get_fork_messages", id: "f1", threadId });
     const forks = await waitResponse(worker.captured.lines, "get_fork_messages", "f1");
-    const forkRow = JSON.stringify((forks.data as unknown[]).at(-1)); // 末行 = 本 prompt（首行是 agent-types 快照）
+    const forkRow = JSON.stringify((forks.data as unknown[]).filter((row) => !JSON.stringify(row).includes("<snapshot")).at(-1)); // 末行 = 本 prompt（agent-types/model 快照行排除）
     expect(forkRow).toContain("hi");
     expect(forkRow).toContain("[image: image/png]");
     // 形状拒绝（hub 边缘硬拒）

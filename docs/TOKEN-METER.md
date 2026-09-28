@@ -34,6 +34,10 @@ export interface SessionUsage {
   readonly lastReportedInput: number;      // 尾值：样本 input 在场才覆写（0 = 无实报哨兵）
   readonly lastReportedCacheRead: number;  // 尾值：样本 cacheRead 在场才覆写（命中率点态口径分子）
   readonly lastUsageAt: number;            // 尾值：input 或 cacheRead 在场才更新（事件 time）
+  readonly toolUseCalls: number;           // 模型意图面 tool_use 块累计（只认 assistant/message）
+  //   （口径区分：get_session_stats 的 toolCalls 按 tool/call 事件计、含重试派发——两数字不同源）
+  readonly toolUseSteps: number;           // 含 ≥1 块的 assistant/message 数（并行度分母）
+  readonly parallelSteps: number;          // ≥2 块的 assistant/message 数（同块并行步数）
   readonly turns: readonly TurnUsage[];
 }
 export interface TokenMeterService {

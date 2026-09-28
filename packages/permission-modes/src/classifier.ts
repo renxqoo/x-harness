@@ -5,7 +5,7 @@
 
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import type { ParsedCommand } from "./bash/ast.ts";
+import type { ParsedCommand } from "@x-harness/permission";
 import { basenameOfWord, commandReadonly, findCarrierSafe } from "./readonly-verbs.ts";
 
 /** 界内合成写安全动词（basename 或 家族×子命令）：直通档下界内写自动（U5 姿势——
@@ -13,26 +13,31 @@ import { basenameOfWord, commandReadonly, findCarrierSafe } from "./readonly-ver
 const WRITE_SAFE_VERBS: ReadonlySet<string> = new Set(["mkdir", "touch", "cp", "mv", "ln", "tee", "install"]);
 const WRITE_SAFE_FAMILY: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["git", new Set(["add", "commit", "checkout", "switch", "restore", "stash", "pull", "fetch", "merge", "rebase", "clone", "init", "cherry-pick", "reset", "clean", "mv", "rm"])],
-  ["npm", new Set(["install", "add", "ci", "uninstall", "run", "test", "build", "dev", "exec"])],
-  ["pnpm", new Set(["install", "add", "ci", "remove", "run", "test", "build", "dev", "exec"])],
+  ["npm", new Set(["install", "add", "ci", "uninstall", "run", "test", "build", "dev"])],
+  ["pnpm", new Set(["install", "add", "ci", "remove", "run", "test", "build", "dev"])],
   ["yarn", new Set(["install", "add", "remove", "run", "test", "build", "dev"])],
-  ["bun", new Set(["install", "add", "remove", "run", "test", "build", "dev", "x"])],
+  ["bun", new Set(["install", "add", "remove", "run", "test", "build", "dev"])],
   ["cargo", new Set(["build", "test", "check", "run", "fmt", "clippy", "add"])],
   ["go", new Set(["build", "test", "vet", "run", "mod", "fmt"])],
-  ["docker", new Set(["build", "compose", "pull", "logs", "ps"])],
-  ["make", new Set(["*"])],
-  ["uv", new Set(["run", "pip", "sync", "venv", "add"])],
-  ["pip", new Set(["install"])],
+  ["docker", new Set(["build", "pull", "logs", "ps"])],
+  ["uv", new Set(["run", "test"])],
 ]);
+// P1-5（2026-09-28）逐出记录：npm/pnpm/bun 的 exec/x（拉起任意包/命令）、docker compose
+//（down -v 销毁卷）、make *（任意 target=任意命令）、pip/uv pip/sync/add（全局环境写）——
+// 无路径操作数的环境面目标原「界内写」豁免不再成立，一律落未分类 ask。
+// 全局安装旗（-g/--global）同逐出：安装族的 site-packages/全局前缀写不可界内化。
+
+/** 安装族全局旗（-g/--global）：全局前缀写不可界内化——有此旗即逐出写安全类 */
+const GLOBAL_INSTALL = new Set(["npm", "pnpm", "yarn", "bun", "cargo"]);
 
 /** 单命令写安全判定 */
 function commandWriteSafe(argv: readonly string[]): boolean {
   if (argv.length === 0) return false;
   const base = basenameOfWord(argv[0] ?? "");
+  if (GLOBAL_INSTALL.has(base) && argv.some((word) => word === "-g" || word === "--global")) return false;
   if (WRITE_SAFE_VERBS.has(base)) return true;
   const family = WRITE_SAFE_FAMILY.get(base);
   if (family === undefined) return false;
-  if (family.has("*")) return true;
   const sub = argv.find((word, index) => index > 0 && !word.startsWith("-"));
   return sub !== undefined && family.has(sub);
 }
@@ -40,13 +45,15 @@ function commandWriteSafe(argv: readonly string[]): boolean {
 /** 传输动词（wrappers 层载荷提取的载体——bash -c/env/timeout/xargs/eval 等）：
  *  载荷已作为独立命令段在列表内，外层载体不参与分类（跳过）；裸载体无操作数
  *  （stdin 即闭）计只读。解释器文件操作数（bash x.sh）不在此径——上游 opaque 恒 ask。 */
-/** 多段管线中的载体段（载荷已提取为独立段）——整段跳过（内联 argv 不可分类） */
+/** 多段管线中的载体段（载荷已提取为独立段）——整段跳过（内联 argv 不可分类）。
+ *  xargs 已移 TRANSPORT_STRIP（P0-1：内联形 `xargs cat` 的载荷词必须参与分类——
+ *  旧载体豁免让 `find … | xargs cat` 以只读直通读任意文件） */
 const CARRIER_SKIP: ReadonlySet<string> = new Set([
-  "bash", "sh", "zsh", "dash", "ksh", "xargs", "find", "parallel", "eval", "trap", "watch",
+  "bash", "sh", "zsh", "dash", "ksh", "find", "parallel", "eval", "trap", "watch",
 ]);
-/** 单段前缀剥离集：剥动词后跟的旗/时长/赋值词，余部即真命令（env VAR=1 ls / timeout 5 npm test） */
+/** 单段前缀剥离集：剥动词后跟的旗/时长/赋值词，余部即真命令（env VAR=1 ls / timeout 5 npm test / xargs cat） */
 const TRANSPORT_STRIP: ReadonlySet<string> = new Set([
-  "env", "nohup", "timeout", "nice", "stdbuf", "setsid", "command", "builtin",
+  "env", "nohup", "timeout", "nice", "stdbuf", "setsid", "command", "builtin", "xargs",
 ]);
 
 export type CommandClass = "readonly" | "write" | "unclassified";
@@ -75,9 +82,9 @@ function stripTransport(argv: readonly string[]): readonly string[] {
 /** 载体段跳过判定（前提=载荷已提取为独立段）：opaque 段（watch 等 RUNNERS）载荷未提取
  *  不得跳；find 段仅在 -exec 族载荷已提取且留段无写形态时豁免——-delete/-fprint* 留段
  *  副作用不得随载体直通（findCarrierSafe） */
-function carrierSkipOf(cmd: ParsedCommand, base: string, multiSegment: boolean): boolean {
-  if (!multiSegment || !CARRIER_SKIP.has(base) || cmd.opaque !== undefined) return false;
-  return base !== "find" || findCarrierSafe(cmd.argv);
+function carrierSkipOf(cmd: ParsedCommand, base: string, opts: { readonly multiSegment: boolean; readonly roots: readonly string[] }): boolean {
+  if (!opts.multiSegment || !CARRIER_SKIP.has(base) || cmd.opaque !== undefined) return false;
+  return base !== "find" || findCarrierSafe(cmd.argv, (word) => opts.roots.length === 0 || withinRoots(word, opts.roots));
 }
 
 /** 裸载体（无操作数，stdin 即闭）——只读径 */
@@ -94,7 +101,7 @@ export function classifyPipeline(commands: readonly ParsedCommand[], hasOutputRe
   for (const cmd of commands) {
     if (cmd.argv.length === 0) continue; // 重定向宿主由 hasOutputRedirect 汇总
     const base = basenameOfWord(cmd.argv[0] ?? "");
-    if (carrierSkipOf(cmd, base, multiSegment)) continue;
+    if (carrierSkipOf(cmd, base, { multiSegment, roots })) continue;
     if (bareCarrier(base, cmd.argv)) continue;
     const effective = stripTransport(cmd.argv);
     if (effective.length === 0) continue; // 纯载体（无载荷/操作数）——只读径
@@ -106,8 +113,19 @@ export function classifyPipeline(commands: readonly ParsedCommand[], hasOutputRe
   return "readonly";
 }
 
+/** find 搜索根操作数界内判定（P0-1：`find ~ | xargs cat` 的无 -exec 形——词面只读但搜索
+ *  范围越根，载荷 cat 的实参运行期才见。越根搜索根 → 逐出只读类） */
+function findOperandsInRoot(argv: readonly string[], inRoot: (word: string) => boolean): boolean {
+  return argv.slice(1).every((word) => {
+    if (word.startsWith("-") || word.startsWith("!") || word === "(" || word === ")" || word === "{}") return true;
+    const pathLike = word.includes("/") || word === "~" || word.startsWith("~/") || word === "." || word === "..";
+    return !pathLike || inRoot(word);
+  });
+}
+
 /** 单段三分类（roots 空=不做界内校验的纯词面形态） */
 function segmentClass(argv: readonly string[], roots: readonly string[]): CommandClass {
+  if (argv.length > 0 && basenameOfWord(argv[0] ?? "") === "find" && roots.length > 0 && !findOperandsInRoot(argv, (word) => withinRoots(word, roots))) return "unclassified";
   if (commandReadonly(argv)) return "readonly";
   if (!commandWriteSafe(argv)) return "unclassified";
   const inRoot = (word: string): boolean => roots.length === 0 || withinRoots(word, roots);
@@ -123,11 +141,20 @@ function withinRoots(word: string, roots: readonly string[]): boolean {
   return roots.some((root) => target === root || target.startsWith(root.endsWith("/") ? root : `${root}/`));
 }
 
-/** 写安全动词的文件型操作数界内校验（对抗审查 #1：界外写零交互直通——越根操作数逐出写类） */
+/** 写安全动词的文件型操作数界内校验（对抗审查 #1：界外写零交互直通——越根操作数逐出
+ *  写类）。B-bug-2 修正：① 裸 `..`/`.` 也是路径（resolve 后越根即逐出）；② 附着值旗
+ *  （`--target-directory=/etc`、`-t../x`）按 `=` 后的值部判路径形——不再因 `-` 前缀整词跳过 */
 function writeOperandsInRoot(argv: readonly string[], inRoot: (word: string) => boolean): boolean {
+  const valueOf = (word: string): string | undefined => {
+    if (!word.startsWith("-")) return word;
+    const eq = word.indexOf("=");
+    return eq === -1 ? undefined : word.slice(eq + 1);
+  };
   return argv.slice(1).every((word) => {
-    if (word.startsWith("-")) return true;
-    const pathLike = word.includes("/") || word === "~" || word.startsWith("~/");
-    return !pathLike || inRoot(word);
+    const value = valueOf(word);
+    if (value === undefined) return true; // 纯旗词（无附着值）——非路径面
+    if (value === "") return true; // `--target-directory=` 空值——运行时报错形态，非路径
+    const pathLike = value.includes("/") || value === "~" || value.startsWith("~/") || value === ".." || value === ".";
+    return !pathLike || inRoot(value);
   });
 }

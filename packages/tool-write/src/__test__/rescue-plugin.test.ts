@@ -14,6 +14,7 @@ import { createLocalEnv } from "@x-harness/exec-env";
 import { ObservedRegistry, PathGate } from "@x-harness/tool-core";
 import { createTruncatedWriteRescuePlugin } from "../rescue-plugin.ts";
 import { createPermissionPlugin } from "@x-harness/permission";
+import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import { toolsPlugin } from "@x-harness/tools";
 
 /** 物化路径装配：抢救件 + permission 件（full 档——in-root write 直通 allow）同装 */
@@ -25,7 +26,7 @@ async function dispatchPermitted(name: string, args: string): Promise<import("@x
   const env = createLocalEnv(root);
   const unload = await loadPlugins(c, [
     toolsPlugin,
-    createPermissionPlugin({ root, mode: "full" }),
+    createPermissionModesPlugin(), createPermissionPlugin({ root, mode: "full" }),
     createTruncatedWriteRescuePlugin({ gate, observed, env, permission: { root } }),
   ]);
   c.effect(() => { for (const off of unload) off(); });
@@ -179,7 +180,7 @@ describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
     ctx = c;
     const unload = await loadPlugins(c, [
       toolsPlugin,
-      createPermissionPlugin({ root, mode: spec.mode, ...(spec.rules !== undefined ? { rules: spec.rules as never } : {}) }),
+      createPermissionModesPlugin(), createPermissionPlugin({ root, mode: spec.mode, ...(spec.rules !== undefined ? { rules: spec.rules as never } : {}) }),
       createTruncatedWriteRescuePlugin({ gate: new PathGate(root), observed: new ObservedRegistry(), env: createLocalEnv(root), permission: { root, ...(spec.rules !== undefined ? { rules: spec.rules as never } : {}) } }),
     ]);
     c.effect(() => { for (const off of unload) off(); });
@@ -229,7 +230,7 @@ describe("createTruncatedWriteRescuePlugin（物化失败降级）", () => {
     const env = createLocalEnv(root);
     const unload = await loadPlugins(c, [
       await import("@x-harness/tools").then((m) => m.toolsPlugin),
-      createPermissionPlugin({ root, mode: "full" }),
+      createPermissionModesPlugin(), createPermissionPlugin({ root, mode: "full" }),
       createTruncatedWriteRescuePlugin({ gate, observed, env, permission: { root } }),
     ]);
     c.effect(() => { for (const off of unload) off(); });

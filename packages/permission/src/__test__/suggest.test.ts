@@ -12,22 +12,22 @@ function suggestOf(source: string): string | undefined {
 }
 
 describe("suggestRule（泛化边界）", () => {
-  it("字面形态泛化：argv0+字面子命令 → `Bash(v sub:*)`；裸 argv0 → `Bash(v:*)`", () => {
-    expect(suggestOf("npm install lodash")).toBe("Bash(npm install:*):allow");
-    expect(suggestOf("git status")).toBe("Bash(git status:*):allow");
-    expect(suggestOf("make")).toBe("Bash(make:*):allow");
+  it("字面形态泛化：argv0+字面子命令 → `Danger(v sub:*)`；裸 argv0 → `Danger(v:*)`", () => {
+    expect(suggestOf("npm install lodash")).toBe("Danger(npm install:*):allow");
+    expect(suggestOf("git status")).toBe("Danger(git status:*):allow");
+    expect(suggestOf("make")).toBe("Danger(make:*):allow");
   });
 
   it("不泛化面：wrapper/解释器/带路径 argv0/多段管线/动态", () => {
     expect(suggestOf("bash -c 'npm install'")).toBeUndefined();
     expect(suggestOf("node -e 'code'")).toBeUndefined();
-    // env VAR=1 make：wrappers 已剥离成裸 make——泛化 Bash(make:*) 合法（透明载体）
+    // env VAR=1 make：wrappers 已剥离成裸 make——泛化 Danger(make:*) 合法（透明载体）
     expect(suggestOf("/usr/local/bin/mytool run")).toBeUndefined();
     expect(suggestOf("npm install && npm test")).toBeUndefined();
     expect(suggestOf("cat $FILE")).toBeUndefined();
   });
 
   it("精确兜底：不泛化形态的落账串为全命令原文", () => {
-    expect(exactRule("node -e 'code'")).toBe("Bash(node -e 'code'):allow");
+    expect(exactRule("node -e 'code'")).toBe("Danger(node -e 'code'):allow");
   });
 });

@@ -19,13 +19,17 @@ export const permissionGrants = defineService<import("./grants.ts").GrantsRegist
 
 /** 运行期档位面（插件恒提供）：get 读现值（每裁决消费）；set 原子切换 decide 面
  *  档位 + grants 总括授权（进入 full 即授、离开即撤——网络/extraRoots 授权面同步）。
- *  档位 id 是开词表（内置五档 PROFILE_IDS ∪ 宿主自定义档行 id）——垃圾 id 由
- *  resolveProfile 降级 auto，自定义档行经 customProfiles 解析。 */
+ *  档位 id 是开词表（内置五档 PROFILE_IDS ∪ 宿主自定义档行 id）——未知 id 由 plugin
+ *  层断代处置（stderr 告警 + 落 auto——V4 净化 #5：resolveProfile 返回 undefined 不默默选边）。 */
 export interface PermissionModeService {
   get(): string;
   set(mode: string): void;
 }
 export const permissionMode = defineService<PermissionModeService>("permission/mode");
+
+/** 直调方裁决面（permission 插件 provide）：与中间件同一真相（当前档位/注册表/旋钮/底线/
+ *  会话授权全内聚）——抢救件等旁路消费者经 tryUse 取用，不再手抄静态配置（P0-2） */
+export const permissionAdjudicate = defineService<(payload: { readonly name: string; readonly args: unknown; readonly session?: import("@x-harness/session").SessionId; readonly control?: true; readonly kind?: string }) => import("./decide.ts").Decision>("permission/adjudicate");
 
 /** 每裁决一条审计（次数断言；exec 指令与命中来源随行）；会话流持久化归属 session 件 */
 export const permissionDecided = defineEvent<PermissionAudit>("permission/decided", { freeze: "deep" });

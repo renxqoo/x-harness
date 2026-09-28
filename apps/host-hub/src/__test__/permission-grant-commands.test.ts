@@ -94,21 +94,21 @@ async function send(name: string, input: Record<string, unknown>): Promise<void>
 describe("permission/grant", () => {
   test("session 作用域：授权桶写入 + list_rules 可见", async () => {
     harness = await makeHarness();
-    await send("permission/grant", { rule: "Bash(mytool:*):allow", scope: "session" });
+    await send("permission/grant", { rule: "Danger(mytool:*):allow", scope: "session" });
     expect(harness.out.at(-1)?.error).toBeUndefined();
     expect(harness.grants.rulesOf("s-grant" as never)).toHaveLength(1);
     await send("permission/list_rules", {});
     const data = harness.out.at(-1)?.data as { rules: { tool: string; pattern: string; scope: string }[] };
-    expect(data.rules).toEqual([{ tool: "Bash", pattern: "mytool:*", verdict: "allow", nature: "grant", at: expect.any(Number), scope: "session" }]);
+    expect(data.rules).toEqual([{ tool: "Danger", pattern: "mytool:*", verdict: "allow", nature: "grant", at: expect.any(Number), scope: "session" }]);
   });
 
   test("project 作用域：settings 落盘（grantStore 写入）+ remove_rule 删除往返", async () => {
     harness = await makeHarness({ trusted: true });
-    await send("permission/grant", { rule: "Bash(npm install:*):allow", scope: "project" });
+    await send("permission/grant", { rule: "Danger(npm install:*):allow", scope: "project" });
     expect(harness.out.at(-1)?.error).toBeUndefined();
     const stored = await readSettingsFile(projectSettingsPath(harness.cwd));
-    expect(stored["permission.rules"]).toEqual([{ tool: "Bash", pattern: "npm install:*", verdict: "allow", nature: "grant", at: expect.any(Number) }]);
-    await send("permission/remove_rule", { scope: "project", tool: "Bash", pattern: "npm install:*" });
+    expect(stored["permission.rules"]).toEqual([{ tool: "Danger", pattern: "npm install:*", verdict: "allow", nature: "grant", at: expect.any(Number) }]);
+    await send("permission/remove_rule", { scope: "project", tool: "Danger", pattern: "npm install:*" });
     expect(harness.out.at(-1)?.data).toMatchObject({ removed: true });
     const after = await readSettingsFile(projectSettingsPath(harness.cwd));
     expect(after["permission.rules"]).toEqual([]); // 空表——条目已删
@@ -116,11 +116,11 @@ describe("permission/grant", () => {
 
   test("入参守门：非 allow 规则拒；坏形态拒；session 删除引导", async () => {
     harness = await makeHarness();
-    await send("permission/grant", { rule: "Bash(rm:*):deny", scope: "session" });
+    await send("permission/grant", { rule: "Danger(rm:*):deny", scope: "session" });
     expect(harness.out.at(-1)?.error?.message).toContain("allow rules only");
-    await send("permission/grant", { rule: "Bash(broken", scope: "user" });
+    await send("permission/grant", { rule: "Danger(broken", scope: "user" });
     expect(harness.out.at(-1)?.error).toBeDefined();
-    await send("permission/remove_rule", { scope: "session", tool: "Bash", pattern: "x" });
+    await send("permission/remove_rule", { scope: "session", tool: "Danger", pattern: "x" });
     expect(harness.out.at(-1)?.error?.message).toContain("session rules evict");
   });
 });
@@ -129,9 +129,9 @@ describe("permission/grant 服务缺席腿", () => {
   test("无 world（服务未装配）：grant/list 走 internal 空态不崩", async () => {
     harness = await makeHarness();
     harness.rt.state.world = undefined;
-    await send("permission/grant", { rule: "Bash(x:*):allow", scope: "session" });
+    await send("permission/grant", { rule: "Danger(x:*):allow", scope: "session" });
     expect(harness.out.at(-1)?.error?.message).toContain("unavailable");
-    await send("permission/grant", { rule: "Bash(x:*):allow", scope: "project" });
+    await send("permission/grant", { rule: "Danger(x:*):allow", scope: "project" });
     expect(harness.out.at(-1)?.error?.message).toContain("unavailable");
     await send("permission/list_rules", {});
     expect(harness.out.at(-1)?.data).toEqual({ rules: [] });

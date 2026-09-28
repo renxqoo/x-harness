@@ -3,8 +3,9 @@
 // 词表校验先于流式拒）与 permission/set_mode|get_mode（permissionMode 服务即时切 +
 // WAL 持久化——唤醒无回落；controller.set 后置到 flush 成功）。
 import { hubError } from "../shared/errors.ts";
-import { parseRule } from "@x-harness/permission";
+import { memoryBlocked, parseRule } from "@x-harness/permission";
 import { permissionGrantStore, permissionGrants } from "@x-harness/permission";
+import { planControl } from "@x-harness/tool-plan";
 import { projectSettingsPath, readHubSettings, readProjectSettings, updateSettingsFile, userSettingsPath } from "../shared/settings-store.ts";
 import { respond, requireThread, wrapSyncHandler } from "./worker-commands.ts";
 import { modeVocabulary } from "../shared/mode-vocab.ts";
@@ -73,7 +74,24 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
     });
   }));
 
-  handlers.set("permission/set_mode", async (input: CommandInput) => {
+  /** 即时切档应用：plan 进出经 planControl 路由（owner 锚定——plan_submit 资格与快照
+ *  变体的单一真相；exit 携目标档即清锚），其余档直切 permissionService */
+function applyPermissionMode(rt: WorkerRuntime, session: { readonly id: import("@x-harness/session").SessionId }, mode: string): void {
+  const control = rt.state.world?.ctx.tryUse(planControl);
+  if (control !== undefined) {
+    if (mode === "plan") {
+      control.enter(session.id);
+      return;
+    }
+    if (control.isPlan()) {
+      control.exit(session.id, mode as never);
+      return;
+    }
+  }
+  rt.state.permissionService?.set(mode);
+}
+
+handlers.set("permission/set_mode", async (input: CommandInput) => {
     const session = requireThread(rt, { ...input, command: "permission/set_mode" });
     if (session === undefined) return;
     const mode = input.mode;
@@ -97,7 +115,7 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
     }
     // 即时切档后置到持久化成功（报失败但提权成功是最坏方向——安全不变量）；
     // 档位 id 开词表原串直传（自定义档经 resolveProfile(customProfiles) 解析——不得预滤）
-    rt.state.permissionService?.set(mode);
+    applyPermissionMode(rt, session, mode);
     respond(rt, { id: input.id, command: "permission/set_mode" });
   });
 
@@ -129,13 +147,9 @@ function parseRuleStrings(rules: readonly string[]): { ok: true; entries: import
 
 // 习得授权写入（PERMISSION-V2 §6.2）：session=当前会话授权桶；project/user=settings
 // 持久层（project 需 trusted）。NEVER_MEMORIZE 由 verdict=allow + 规则形态面共同守门。
-/** grant 写入守门词表（对抗审查 #12）：万配/硬拒族/wrapper·解释器前缀不得习得 */
-const GRANT_BLOCKED_HEADS: ReadonlySet<string> = new Set([
-  "sudo", "doas", "su", "rm", "mkfs", "dd", "chmod", "chown", "bash", "sh", "zsh", "dash", "ksh",
-  "env", "node", "python", "python3", "perl", "ruby", "php", "osascript", "eval", "xargs", "awk", "sed",
-]);
-
-/** grant 入参裁决：{rule, scope} 形态 + 恒 allow + 万配/硬拒族/wrapper 前缀拒（NEVER_MEMORIZE 命令面） */
+/** grant 入参裁决：{rule, scope} 形态 + 恒 allow + 万配/禁习头拒（NEVER_MEMORIZE 命令面）。
+ *  P1-4/R9（2026-09-28）：禁习头单源内核 MEMORY_BLOCKED_HEADS（permission 导出）——与
+ *  settleMemory 同闸；head 提取滤空白（旧 `Danger( chmod:*)` 前导空格绕过真放行 chmod）。 */
 function grantInputOf(input: CommandInput): { ok: true; scope: "session" | "project" | "user"; tool: import("@x-harness/permission").RuleTool; pattern: string } | { ok: false } {
   const scope = input.scope;
   const rule = input.rule;
@@ -143,11 +157,11 @@ function grantInputOf(input: CommandInput): { ok: true; scope: "session" | "proj
   const parsed = parseRuleStrings([rule]);
   if (!parsed.ok || parsed.entries[0] === undefined || parsed.entries[0].verdict !== "allow") return { ok: false };
   const entry = parsed.entries[0];
-  if (entry.tool === "Bash") {
+  if (entry.tool === "Danger") {
     if (entry.pattern === "*") return { ok: false }; // 万配不习得
-    const head = entry.pattern.replace(/:\*$/, "").split(/\s+/)[0] ?? "";
-    if (GRANT_BLOCKED_HEADS.has(head)) return { ok: false }; // 硬拒族/wrapper·解释器前缀不习得
+    if (memoryBlocked(entry.pattern)) return { ok: false }; // 硬拒族/wrapper·解释器前缀不习得（内核单源——滤空白同口径）
   }
+  if (entry.tool === "Tool") return { ok: false }; // R6：Tool(名) 规则对已声明 kind 的工具不生效——命令面不收死规则
   return { ok: true, scope, tool: entry.tool, pattern: entry.pattern };
 }
 

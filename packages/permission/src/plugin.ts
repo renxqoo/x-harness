@@ -10,23 +10,26 @@ import type { Disposer, Plugin } from "@x-harness/core";
 import { sessionDisposed } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { toolsPreExecute } from "@x-harness/tools";
-import type { PreExecuteDecision } from "@x-harness/tools";
+import type { PreExecuteDecision, ToolKind } from "@x-harness/tools";
 import { decideFor, execOf } from "./decide.ts";
+import { createModeRegistry, modeRegistry, profileDecideOf, resolveProfileOf } from "./modes.ts";
+import type { ModeFaces } from "./modes.ts";
 import { summaryOf } from "./ask-summary.ts";
 import { suggestedRuleOf } from "./bash/adjudicate.ts";
 import type { Decision, DecideInput } from "./decide.ts";
 import { GrantsRegistry } from "./grants.ts";
 import { parseRules } from "./rules/parse.ts";
-import { resolveProfile } from "./profiles.ts";
-import type { ExecDirective, Verdict,  PermissionProfile, RuleEntry } from "./types.ts";
+import type { ExecDirective, Verdict, PermissionProfile, RuleEntry } from "./types.ts";
 import { permissionBroker, permissionDecided, permissionGrantStore, permissionGrantWritten, permissionGrants, permissionMode, fenceFacts } from "./tokens.ts";
+import { memoryBlocked } from "./baseline.ts";
+import { permissionAdjudicate } from "./tokens.ts";
 import type { AskPayload, AskReply, PermissionRule } from "./types.ts";
 
 export interface PermissionOptions {
   readonly root: string;
   /** 档位 id（内置五档或宿主合并自定义行后的 id——开词表）；缺省 auto */
   readonly mode?: string;
-  /** 宿主自定义档位行（已过 mergeCustomProfiles 校验——装载期 fail-fast 在宿主） */
+  /** 宿主自定义档位行（settings-store profileRowValid 校验——U8 以现状为规格；mergeCustomProfiles 已删） */
   readonly customProfiles?: readonly PermissionProfile[];
   /** 用户作用域规则条目（settings 解析态——origin 由本层补 user） */
   readonly rules?: readonly PermissionRule[];
@@ -37,35 +40,85 @@ export interface PermissionOptions {
 }
 
 /** 条目作用域补章（settings 解析态无 origin——本层单点盖；session 习得走 grants 桶不经此处） */
+/** 记忆规则解析（G/F2/P1-4 守门后）：多规则夹带（;/换行）不落；坏串只批不记（批准语义
+ *  不被落账失败反转——tool-bash 同款守门）；习得闸单源（硬拒族/wrapper·解释器头不习得） */
+function parseMemoryRule(raw: string | undefined, scope: "session" | "project" | "user"): RuleEntry | undefined {
+  if (raw === undefined || raw.includes(";") || raw.includes("\n")) return undefined;
+  let parsed: ReturnType<typeof parseRules>;
+  try {
+    parsed = parseRules([raw], scope);
+  } catch {
+    return undefined; // 坏规则串静默不落
+  }
+  const first = parsed[0];
+  if (first === undefined || first.verdict !== "allow" || memoryBlocked(first.pattern)) return undefined;
+  return { tool: first.tool, pattern: first.pattern, verdict: "allow", nature: "grant", at: Date.now() };
+}
+
+/** 执行指令透传尾段：allow + exec 在场 → 附 exec；contained 且模式件声明升级资格 → 附 escalatable
+ *  （L5：注册表件与旋钮面同源——自定义 fenced 档经 knob 面同等获得） */
+function gateWithExec(downstream: PreExecuteDecision, exec: ExecDirective | undefined, faces: ModeFaces | undefined): PreExecuteDecision {
+  if (downstream.kind !== "allow" || exec === undefined) return downstream;
+  const escalatable = exec === "contained" && faces?.escalatable === true;
+  return { ...downstream, exec, ...(escalatable ? { escalatable: true } : {}) };
+}
+
+/** waterfall 载荷 kind（string——类型开放）→ 闭集三分类收窄（dispatch 穿引 ToolDefinition.kind） */
+function narrowKind(kind: string | undefined): ToolKind | undefined {
+  return kind === "Read" || kind === "Write" || kind === "Danger" ? kind : undefined;
+}
+
 function rulesOf(entries: readonly PermissionRule[] | undefined, origin: "user" | "project"): PermissionRule[] {
   return (entries ?? []).map((entry) => ({ ...entry, origin }));
 }
+
+/** 档位断代兜底（U3）：解析服务缺席（裸内核）或真未知 id——显式告警 + 落 auto（非静默降级） */
+const UNRESOLVED_PROFILE: PermissionProfile = { id: "auto", askPolicy: "on-opaque", containment: "none", mutationPolicy: "auto-in-root" };
 
 export function createPermissionPlugin(options: PermissionOptions): Plugin {
   return {
     name: "permission",
     inject: ["tools"],
     apply: (ctx): Disposer => {
+      const protectPattern = (pattern: string): string => {
+        if (pattern.includes("*")) return pattern;
+        // P-bug-5：裸目录形态补递归通配（否则只护目录自身不护嵌套文件——U13 伪造插件面）
+        return pattern.endsWith("/") ? `${pattern}**` : `${pattern}/**`;
+      };
       const protectedRules: PermissionRule[] = (options.protectedPaths ?? []).map((pattern) => ({
         tool: "Write" as const,
-        pattern,
+        pattern: protectPattern(pattern),
         verdict: "deny" as const,
-        origin: "user" as const,
+        origin: "default" as const, // P3-11：宿主保护面真归因（不再伪装用户手写）
       }));
       const userRules = [...rulesOf(options.rules, "user"), ...protectedRules];
       const projectRules = rulesOf(options.projectRules, "project");
       const grants = new GrantsRegistry();
+      // V4 模式注册表（空开——内置五档在 @x-harness/permission-modes，宿主/策略插件后注册）
+      const modes = createModeRegistry();
       let mode: string = options.mode ?? "auto";
-      grants.setUnrestricted(mode === "full"); // 装配期总括授权 → 授权事实（docs/PERMISSION-FULL-UNRESTRICTED.md）
+      grants.setUnrestricted(modes.resolve(mode)?.unrestricted === true); // 装配期总括授权 → 授权事实（P-mix-7：注册表属性）
       let tearingDown = false;
 
-      const profileOf = (id: string): PermissionProfile => resolveProfile(id, options.customProfiles);
+      // 净化 #5：未知档位显式告警 + 断代落 auto（U3——非静默降级）。告警按 id 去重（M2——
+      // 旧实现每裁决两刷）；服务缺席（裸内核）与未知 id 同落 auto
+      const warnedModes = new Set<string>();
+      const profileOf = (id: string): PermissionProfile => {
+        const resolved = ctx.tryUse(resolveProfileOf)?.(id, options.customProfiles);
+        if (resolved !== undefined) return resolved;
+        if (!warnedModes.has(id)) {
+          warnedModes.add(id);
+          process.stderr.write(`permission: mode "${id}" unresolvable (profile service absent or unknown id) — falling back to auto (U3 断代)\n`);
+        }
+        return UNRESOLVED_PROFILE;
+      };
+
 
       const modeService = {
         get: (): string => mode,
         set(next: string): void {
           mode = next;
-          grants.setUnrestricted(next === "full"); // decide 面与授权面原子同步
+          grants.setUnrestricted(modes.resolve(next)?.unrestricted === true); // decide 面与授权面原子同步（P-mix-7）
         },
       };
 
@@ -98,22 +151,19 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
       /** 记忆落账：规则串来源 = 用户改写 > 建议 > 无（不落规则——授权走 extraRoot grant） */
       const settleMemory = async (fields: { reply: AskReply; payload: AskPayload; decision: Decision; session: SessionId | undefined; from: string }): Promise<void> => {
         const { reply, payload, decision, session, from } = fields;
-        if (reply.verdict !== "allow" || reply.memory === undefined || decision.memorizable !== true) return;
-        const raw = reply.ruleOverride?.trim() ?? payload.suggestedRule;
-        if (raw === undefined) return;
-        const parsed = parseRules([raw], reply.memory === "session" ? "session" : reply.memory);
-        const first = parsed[0];
-        if (first !== undefined && first.verdict === "allow") {
-          await writeMemory({ scope: reply.memory, entry: { tool: first.tool, pattern: first.pattern, verdict: "allow", nature: "grant", at: Date.now() }, session, from });
-        }
+        if (reply.verdict !== "allow" || decision.memorizable !== true) return;
+        // G（2026-09-28）：scope 枚举外不落（畸形值不得流向 grant store）
+        if (reply.memory !== "session" && reply.memory !== "project" && reply.memory !== "user") return;
+        const entry = parseMemoryRule(reply.ruleOverride?.trim() ?? payload.suggestedRule, reply.memory);
+        if (entry !== undefined) await writeMemory({ scope: reply.memory, entry, session, from });
       };
 
-      const ask = async (fields: { tool: string; args: unknown; decision: Decision; session: SessionId | undefined; commandOf: () => string }): Promise<"allow" | "deny"> => {
-        const { tool, args, decision, session, commandOf } = fields;
+      const ask = async (fields: { tool: string; args: unknown; decision: Decision; session: SessionId | undefined; commandOf: () => string; kind?: string }): Promise<"allow" | "deny"> => {
+        const { tool, args, decision, session, commandOf, kind } = fields;
         if (tearingDown) return "deny";
         const broker = ctx.tryUse(permissionBroker);
         if (broker === undefined) return "deny"; // broker 缺席 → ask 退化 deny（fail-closed）
-        const payload: AskPayload = buildAskPayload({ tool, args, decision, session, commandOf, optionsOf: memoryOptionsOf });
+        const payload: AskPayload = buildAskPayload({ tool, args, decision, session, commandOf, kind, optionsOf: memoryOptionsOf });
         let reply: AskReply;
         try {
           reply = await broker.ask(payload);
@@ -121,7 +171,8 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
           return "deny"; // broker 抛错 fail-closed
         }
         if (tearingDown) return "deny"; // 在飞 ask 的迟到裁决丢弃（deny 结算语义）
-        if (reply.verdict === "allow" && decision.grant?.kind === "extraRoot") grants.addExtraRoot(session, decision.grant.dir);
+        // P-bug-4a：once 批准不落 root（once≠会话永久）——仅选了记忆档（session/project/user）才落账
+        if (reply.verdict === "allow" && reply.memory !== undefined && decision.grant?.kind === "extraRoot") grants.addExtraRoot(session, decision.grant.dir);
         await settleMemory({ reply, payload, decision, session, from: commandOf() });
         return reply.verdict;
       };
@@ -131,9 +182,21 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
       };
 
       /** decide 入参组装（闭包面：规则集/授权根/围栏事实/保护路径——§3 输入契约单点） */
-      const decideInputOf = (payload: { readonly name: string; readonly args: unknown; readonly session?: SessionId }, profile: PermissionProfile): DecideInput => ({
+      // V4 双面解析：注册表 id 命中 > profileDecideOf 服务（permission-modes provide——
+      // custom profiles 旋钮承接）> 无（base fail-closed 终态）
+      // 面补齐（2026-09-28）：注册表覆盖件缺失的面经旋钮面补——覆盖不得窄于缺省
+      //（planMode 丢 posture 修复：富策略只实现 decide，读面姿态继承旋钮缺省档）
+      const facesOf = (): ModeFaces | undefined => {
+        const plugin = modes.resolve(mode);
+        const knob = ctx.tryUse(profileDecideOf)?.(profileOf(mode));
+        if (plugin === undefined) return knob;
+        return { decide: plugin.decide ?? knob?.decide, posture: plugin.posture ?? knob?.posture, ...(plugin.escalatable === true || knob?.escalatable === true ? { escalatable: true } : {}) };
+      };
+      const decideInputOf = (payload: { readonly name: string; readonly args: unknown; readonly session?: SessionId; readonly control?: true; readonly kind?: string; readonly readsSubtree?: true }, profile: PermissionProfile): DecideInput => ({
         tool: payload.name,
         args: payload.args,
+        ...(narrowKind(payload.kind) !== undefined ? { kind: narrowKind(payload.kind) } : {}),
+        ...(payload.readsSubtree === true ? { pathScope: true } : {}),
         session: payload.session,
         userRules,
         ...(projectRules.length > 0 ? { projectRules } : {}),
@@ -143,7 +206,20 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
         extraRoots: grants.extraRootsOf(payload.session),
         ...(ctx.tryUse(fenceFacts) !== undefined ? { fence: ctx.tryUse(fenceFacts)?.forSession(payload.session) } : {}),
         ...(options.protectedPaths !== undefined ? { protectedWrite: options.protectedPaths } : {}),
+        ...(() => {
+          const faces = facesOf();
+          return {
+            ...(faces?.decide !== undefined ? { modeDecide: faces.decide } : {}),
+            ...(faces?.posture !== undefined ? { postureDecide: faces.posture } : {}),
+          };
+        })(),
       });
+
+      /** 直调方裁决服务（P0-2 单真相）：与中间件同一 decideInputOf/decideFor——抢救件等
+       *  经 tryUse 消费（customProfiles/注册表/底线全内聚），不再各自手抄静态配置面 */
+      const adjudicateDirect = (payload: { readonly name: string; readonly args: unknown; readonly session?: SessionId; readonly control?: true; readonly kind?: string }): Decision =>
+        decideFor(decideInputOf(payload, profileOf(mode)));
+      const offAdjudicate = ctx.provide(permissionAdjudicate, adjudicateDirect);
 
       const offDecide = ctx.on(toolsPreExecute, async (payload, next): Promise<PreExecuteDecision> => {
         if (payload.control === true) {
@@ -160,7 +236,7 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
             const args = (payload.args ?? {}) as { command?: unknown };
             return typeof args.command === "string" ? args.command : payload.name;
           };
-          const answer = await ask({ tool: payload.name, args: payload.args, decision, session: payload.session, commandOf });
+          const answer = await ask({ tool: payload.name, args: payload.args, decision, session: payload.session, commandOf, kind: payload.kind });
           finalVerdict = answer === "allow" ? "allow" : "deny";
           finalReason = answer === "allow" ? `${decision.reason} (approved)` : decision.reason;
         }
@@ -177,23 +253,30 @@ export function createPermissionPlugin(options: PermissionOptions): Plugin {
         const downstream = await next(payload); // 内核 I2：必须调 next
         if (finalVerdict === "deny") return { kind: "deny", reason: `permission:${finalReason}` };
         // 执行指令透传（dispatch 管线内服务端独占面——模型入参不可达）；on-failure 档
-        // contained 执行带升级资格（工具侧 fenceSuspect 时发起 escalate ask）
-        if (downstream.kind === "allow" && exec !== undefined) {
-          const escalatable = exec === "contained" && profile.askPolicy === "on-failure";
-          return { ...downstream, exec, ...(escalatable ? { escalatable: true } : {}) };
-        }
-        return downstream;
+        // contained 执行带升级资格（工具侧 fenceSuspect 时发起 escalate ask）。
+        // L5（2026-09-28）：升级资格注册表/旋钮面同源（自定义 fenced 档经 knob 面同等获得）
+        return gateWithExec(downstream, exec, facesOf());
       });
       const offDisposed = ctx.on(sessionDisposed, ({ session }) => grants.evict(session));
       const offGrants = ctx.provide(permissionGrants, grants);
       const offMode = ctx.provide(permissionMode, modeService);
+      const offModes = ctx.provide(modeRegistry, modes);
       return () => {
         tearingDown = true; // 拒新 ask；在飞 ask 迟到裁决丢弃
         grants.seal();
         offDecide();
+        offAdjudicate();
         offDisposed();
         offGrants();
         offMode();
+        offModes();
+        // 卸载墓碑（红队 F4）：permission 卸载而 tools 存活的窗口留下恒 deny 守卫——
+        // 与「从未装配 permission 的裸 SDK 世界」（合法）区分；正常 ctx.dispose 全拆时无害
+        try {
+          ctx.on(toolsPreExecute, async (_payload, _next): Promise<PreExecuteDecision> => ({ kind: "deny", reason: "permission: unloaded (guard)" }));
+        } catch {
+          // ctx 已封（全量拆卸路径）——无需守卫
+        }
       };
     },
   };
@@ -207,16 +290,19 @@ function buildAskPayload(fields: {
   decision: Decision;
   session: SessionId | undefined;
   commandOf: () => string;
+  kind?: string; // waterfall 载荷原串（判别用 === "Danger"）
   optionsOf: (d: Decision) => AskPayload["options"];
 }): AskPayload {
-  const { tool, args, decision, session, commandOf, optionsOf } = fields;
+  const { tool, args, decision, session, commandOf, kind, optionsOf } = fields;
   const summary = summaryOf(args);
   return {
     tool,
     ...(summary !== undefined ? { summary } : {}),
     reason: decision.reason,
     options: optionsOf(decision),
-    ...(decision.memorizable === true ? { suggestedRule: decision.suggestedRule ?? (tool === "bash" ? suggestedRuleOf(commandOf()) : undefined) } : {}),
+    // 命令面建议规则经 suggestedRuleOf（命令词面泛化）——判据是 kind 分类非工具名
+    //（2026-09-28：非 bash 名的 Danger 工具同获建议——词汇不混入工具名）
+    ...(decision.memorizable === true ? { suggestedRule: decision.suggestedRule ?? (kind === "Danger" ? suggestedRuleOf(commandOf()) : undefined) } : {}),
     ...(session !== undefined ? { session } : {}),
   };
 }

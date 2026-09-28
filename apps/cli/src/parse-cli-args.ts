@@ -24,7 +24,7 @@ export interface CliArgs {
   readonly model?: string;
   readonly thinking?: ThinkingLevelCli;
   readonly permission?: ProfileId;
-  /** 权限规则串（--rules 逗号分隔——`Bash(git status):allow` 形态；拼错 fail-closed 拒启） */
+  /** 权限规则串（--rules 逗号分隔——`Danger(git status:*):allow` 形态（2026-09-28 断代——旧 Bash/Grep 前缀不再解析）；拼错 fail-closed 拒启） */
   readonly rules?: readonly string[];
   readonly apiKey?: string;
   readonly tools?: readonly string[];
@@ -321,7 +321,7 @@ tools:
 
 permission:
   --permission <plan|auto|edit-confirm|full|sandboxed-auto>  permission profile (default sandboxed-auto)
-  --rules <r1,r2>                permission rules, e.g. 'Bash(git status):allow' (user scope)
+  --rules <r1,r2>                permission rules, e.g. 'Danger(git status:*):allow' (user scope)
 
 prompt:
   --system-prompt <text>    replace the system prompt

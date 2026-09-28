@@ -28,13 +28,13 @@ describe("confirmFieldsOf（AskPayload → confirm 弹窗载荷）", () => {
         tool: "bash",
         reason: "sandbox failure — retry outside the sandbox?",
         options: [],
-        suggestedRule: "Bash(x:*):allow",
+        suggestedRule: "Danger(x:*):allow",
         escalate: { command: "mytool run", failureText: "Operation not permitted" },
       }),
     ).toEqual({
       tool: "bash",
       reason: "sandbox failure — retry outside the sandbox?",
-      suggestedRule: "Bash(x:*):allow",
+      suggestedRule: "Danger(x:*):allow",
       escalate: { command: "mytool run", failureText: "Operation not permitted" },
     });
   });

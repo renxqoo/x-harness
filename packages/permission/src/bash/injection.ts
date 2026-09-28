@@ -7,8 +7,7 @@
 
 export type InjectionKind = "command-substitution" | "net-pipe-shell" | "find-exec" | "xargs-shell" | "eval" | "base64-shell";
 
-/** 管道判定：末位 shell 解释器（basename 归一后匹配——/usr/bin/curl | sh 不漏） */
-export const PIPE_SHELLS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "dash", "ksh", "ash"]);
+// 管道末位判定经 isInterpreterName（B-bug-7——旧 PIPE_SHELLS 六词表漏解释器族，已删）
 
 /** 解释器家族（wrappers 旗面规则与管道 stdin 判定共用）：-c 字面量再解析（bash 族）/
  *  文件操作数/stdin/赋值前缀 → opaque */

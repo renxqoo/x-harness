@@ -117,8 +117,10 @@ harness 包现有单测零平台依赖的纪律保持；mode 透传断言由 app
 真实 dispatch，broker 非交互恒 deny 形态）
 
 - **plan 腿**：dispatch write（界内）→ deny（reason `plan mode disallows write`）；
-  dispatch bash（`echo hi`）→ deny（`plan mode disallows bash`）——plan bash 全拒
-  首次入锚；
+  dispatch bash 写面（`echo hi > new.txt`）→ deny（`plan mode: output redirect denied`）+
+  只读命令（`git log --oneline`）→ allow（`classifier:readonly (plan)`——研究通道，
+  2026-09-28 裁决：plan bash 由全拒改为**分类器只读放行**，写/未分类/注入/提权/重定向
+  恒拒，见 bash/adjudicate.ts `planBash`）；
 - **full 腿**：dispatch write 界内 → allow（`resolvedBy: "mode:full"`）且真写出
   tmp 文件；dispatch write 界外（路径避开 `**/.git/**` 等 deny glob）→ permission
   allow（mode:full）且真写出（总括授权根治后语义，docs/PERMISSION-FULL-UNRESTRICTED.md）；
@@ -213,3 +215,52 @@ e2e 腿对 main.ts 漏折的双红推演）。逐条处置：
 - **不改项**（契约面#4/6）：usageText 静态模板与 `--mode <text|json>` 风格一致
   （残留由 join 生成锚兜底）；e2e message_delta 携带 input_tokens 是改动前
   既有装置形态，无 usage 断言面，不动。
+
+## plan 模式完整流程（2026-09-28 增补——审批协议件）
+
+> V3 架构注记：plan 档策略已插件化（docs/PERMISSION-V3-DESIGN.md）——permission 内置
+> planDefaultMode（严格缺省：Write 拒 + bash 全拒），tool-plan 后注册 planMode（富策略：
+> bash 只读放行/读保护基线/分类器三态）经 modeRegistry 同 id 后者胜覆盖。纯函数直调方
+> （decideFor/adjudicateBash 无注册表）按旋钮映射内置件——plan 旋钮落严格缺省。
+
+**工具执行矩阵（plan 档）**：read/grep 界内静默放行；**bash 分类器只读放行**
+（`ls/cat/grep/find/rg/git 只读子命令/jq…`——argv 级分类 + 逐段旗面；写类/未分类/
+注入/提权/输出重定向/解析失败一律 deny，未知即拒）；write/edit 无条件拒（先于规则）；
+控制动词默认拒 + plan 插件白名单；其余未登记工具 ask。对照 pi 的行首正则白名单：
+不学其可绕形态，走既有 argv 级分类器（auto 档同源）。
+
+plan 档从「只读硬闸」补全为完整工作流，三面就位：
+
+- **模型侧告知（权限档快照）**：facts 快照插件（@x-harness/harness
+  `createFactsSnapshotPlugin`）第四条注册——kick 时点 tail snapshot
+  （`kind="permission-mode"`），render 直读 `permissionMode` 服务当前值：plan 档注入
+  行为指引（research read-only、勿尝试写、经 `plan_submit` 呈方案）；其余档渲染
+  `Permission mode: <mode>.` 事实行——**恒渲染**使退出 plan 后新条 supersede 旧指引。
+  permission 服务缺席（纯工具世界）→ 空串零注入。
+- **审批协议（plan_submit 控制工具，@x-harness/tool-plan）**：plan 档的出口。方案文本
+  经 permission broker 问用户（options=["once"]）；**批准 → 解档 liftTo**（宿主装配
+  缺省档：CLI `sandboxed-auto` / hub 合并缺省——围栏姿势不因审批漂移）；**拒绝 → 留档
+  refine**（合法结局非错误）。`isControlTool` 标记（permission 裁决直通——动词自身无
+  环境副作用，不双重问询）。降级面：无 permission 装配 → 非 plan 档直接短路报错；
+  plan 档但 broker 缺席 → 「有闸无门」明确报错，不静默解档。宿主经
+  `planKit({ liftTo })`（@x-harness/harness）装配。
+- **宿主切换面**：hub 既有 `permission/set_mode`（meta 持久化 + 服务即时切）；CLI 新增
+  `/plan` slash（permissionMode 直切内存态——下一裁决即用新档；**会话内有效，CLI resume
+  不折叠档位是已知面**，hub 无此缺口）。
+- **委派子代理面（对抗审查 R1/R2 处置）**：plan 档是用户在主会话设的 world 级姿态——
+  子代理（lineage depth>0）不得解档（plan_submit 拒绝 `delegated-session`，审批通道
+  不触）；权限档快照对子会话渲染**子代理变体**（事实行 + 交付指向，不含「等用户批准」
+  指引——无用户语境）。`liftTo` 不变量：解档目标绝不取 plan（宿主规范化：CLI 回
+  sandboxed-auto / hub 回 auto；插件层误配回退 auto——`--permission plan` 启动形态下
+  不再假解档/单向门）。拒绝语义（用户裁决）：deny → `concludesTurn` 收轮等指示——
+  用户下一条消息有内容就带续、没有即终止，工具不自动 refine。plan 档 + 非交互
+  （`-p`/管道）启动 fail-fast exit 2（无审批通道不成死胡同）。workflow submit 在
+  plan 档被拒（acceptance.command 是变更面——R1-F5 单闸在提交入口，模型/人类两
+  入口同漏斗）。
+
+装配序：planKit 紧随 fenceKit（两宿主写死）；plan_submit 服务面 execute 期懒解析
+（broker 是宿主提供件——与 permission 插件内部同款 tryUse 时点，无插件序耦合）。
+
+测试口径：tool-plan 五路 execute 分支（非 plan 档/无服务/有闸无门/批准解档/拒绝留档）
++ isControlTool 标记 + broker 载荷形状；harness 权限档快照 render 两态 + isSnapshotNode
+闭环；CLI slash 闭集十二命令 + /plan 分派。

@@ -1,4 +1,4 @@
-# 尾部快照通道（日期/类型表/项目指令出锚点）方案
+# 尾部快照通道（日期/类型表/项目指令/模型身份行出锚点）方案
 
 > 状态：已实施（2026-09-21 定稿评审 + 实施收口双路对抗审查，处置见文末两节）
 > 级别：中（跨 agent-loop / agent-delegation / skill / compaction / autocompact / apps-cli；
@@ -46,7 +46,21 @@
   （kind="skills"，预锚落位不变）——展示面与切口谓词单点识别，全部边沿注入快照
   共用一套信封形态。
 
-### 三条快照
+### 四条快照
+
+- **D 模型快照（powered-by 身份行）**（@x-harness/harness `createFactsSnapshotPlugin`
+  同插件注册，两宿主零改动；worker-embedded 旅程有装配级断言）：注入体
+  `You are powered by the model <id>.`，信封 `kind="model"`。**触发时点与其余三条
+  不同**——请求时点原语 `createRequestSnapshot`（agentRequest 派发内，render 收
+  waterfall **输出** dial——下游末端改写如 hub dial-hook 折叠 meta 后的生效值，
+  对抗审查 B1；不经宿主层传）：消息投影（deriveMessages）在整个 dispatch 返回后
+  的 attempt 内，next 返回后同步 append 仍入**当次**请求体——`/model` 切换或 hub
+  重拨后首个请求即携带新行，无滞后轮。幂等 = 同 kind 最新一条匹配（回摆
+  X→Y→X 重注入收敛——对抗审查 M1，A/C' 的指令文件回摆同获修复）。已知偏差
+  （落档于 snapshot.ts docstring）：retry dial 补丁沿用旧行；413 紧急压缩 retry
+  的折叠窗口至下一 step 自愈；append 不享本请求的 checkpoint fsync 屏障；
+  首份注入在锚点后不入 compaction 保护头（每请求自愈补偿）。
+  renderModelSnapshot 纯函数面（@x-harness/harness 导出）。
 
 - **A 日期快照**（apps/cli）：base-prompt 模板删 `- Today's date: {{date}}` 行；
   `promptFactsOf`/`BasePromptFacts` 的 `date` 字段删净（消费面已全量清点：
@@ -212,6 +226,11 @@ compaction 谓词 + autocompact 消费点、文档同变。
 - **F4 在场判定扫 replace 节点**：处置：收窄 append-op（根治）。
 - **F5/M11+L10 信封伪造与双包字面量漂移**：处置：四重谓词 + `isSnapshotNode`
   单源导出；不引入事件 data 字段（量级裁决）；残余伪造面落档（保守方向）。
+  **修订（2026-09-28 对抗审查 H1）**：「保守方向无安全面」的前提曾是信封形文本
+  不携带特权；基础段加入信封授权语义后该前提一度失效——现正文已收敛为边界语义
+  （信封框架行=指令、**内嵌载荷=data**、格式非来源证明、冲突即上报），格式本身
+  不授信，伪造残余后果回到「不作切口候选 + 模型侧不遵从」——评估恢复成立，
+  前提更新为依赖 base-prompt 的边界措辞在位（baseCoreText 纯函数测试锚定）。
 - **M5 同步断言不必然红**：处置：同步点断言形态写死。
 - **M6 轮内缺席窗口**：处置：声明不做步内补注入，窗口落档。
 - **M7/F7 worktree cwd + fork 种子**：处置：主进程 cwd 裁决 + 种子双份收敛落档。

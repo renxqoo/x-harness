@@ -49,18 +49,23 @@ describe("defaultTaskLimits（缺省形态——裸 SDK 世界：进程级临时
 });
 
 describe("bash guidance（纯函数——工厂参数投稿，D3）", () => {
-  it("sandbox env → 围栏守则文本；非 sandbox → 空串", () => {
+  it("sandbox env → 基础守则 + 围栏守则；非 sandbox → 仅基础守则（非交互约束）", () => {
     const fenced = bashGuidance({ kind: "sandbox" } as never);
     expect(fenced).toContain("sandbox");
     expect(fenced).toContain("fence");
-    expect(bashGuidance({ kind: "local" } as never)).toBe("");
+    expect(fenced).toContain("no TTY"); // sandbox 形态双段拼接（基础段在场——对抗审查 Mi-1）
+    const bare = bashGuidance({ kind: "local" } as never);
+    expect(bare).toContain("no TTY");
+    expect(bare).not.toContain("sandbox");
   });
 
-  it("local 装配：guidance 不落 def（registry.get 读不到）", async () => {
+  it("local 装配：基础守则落 def，围栏文案缺席", async () => {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin()]);
     const reg = ctx.tryUse(toolRegistry);
-    expect(reg?.get("bash")?.guidance).toBeUndefined();
+    const guidance = reg?.get("bash")?.guidance;
+    expect(guidance).toContain("no TTY");
+    expect(guidance).not.toContain("sandbox");
     await ctx.dispose();
     void unload;
   });

@@ -6,8 +6,16 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { ParsedCommand } from "./bash/ast.ts";
-import { DEFAULT_DENY_READ, DEFAULT_DENY_WRITE } from "./types.ts";
 import { globMatch } from "./rules/glob.ts";
+
+// 保护面目录感知匹配（P-bug-5）：裸目录 pattern（宿主传入 `<dir>/plugins` 形）只命中
+// 目录自身——嵌套文件 `dir/plugins/evil.sh` 漏网。附加递归通配形态双查；已有通配的
+// pattern 不受影响（叠加后语义等价）
+export function protectGlobMatch(pattern: string, path: string, root: string): boolean {
+  if (globMatch(pattern, path, root)) return true;
+  const dirPattern = pattern.endsWith("/") ? `${pattern}**` : `${pattern}/**`;
+  return globMatch(dirPattern, path, root);
+}
 
 /** 归一候选：绝对/~/相对三类词面（~user 形不可解析 → 视为敏感保守问） */
 function candidatePaths(word: string, root: string): string[] {
@@ -19,7 +27,13 @@ function candidatePaths(word: string, root: string): string[] {
 }
 
 /** 单命令敏感命中：argv 实参与重定向目标双面扫描（echo x >> settings 的写向量在重定向面） */
-function commandSensitiveHit(cmd: ParsedCommand, root: string, protectedWrite: readonly string[]): { readonly kind: "deny-read" | "protect-write"; readonly pattern: string } | undefined {
+interface DenyTables {
+  readonly protectedWrite: readonly string[];
+  readonly denyRead: readonly string[];
+  readonly denyWrite: readonly string[];
+}
+
+function commandSensitiveHit(cmd: ParsedCommand, root: string, tables: DenyTables): { readonly kind: "deny-read" | "protect-write"; readonly pattern: string } | undefined {
   const words: string[] = cmd.argv.slice(1);
   for (const redirect of cmd.redirects) {
     if (redirect.target !== undefined && redirect.target !== "/dev/null") words.push(redirect.target);
@@ -38,9 +52,9 @@ function commandSensitiveHit(cmd: ParsedCommand, root: string, protectedWrite: r
     if (word === "") continue;
     if (/^~[A-Za-z0-9_.-]/.test(word)) return { kind: "deny-read", pattern: word }; // ~user 保守敏感
     for (const path of candidatePaths(word, root)) {
-      const readHit = DEFAULT_DENY_READ.find((pattern) => globMatch(pattern, path, root));
+      const readHit = tables.denyRead.find((pattern: string) => globMatch(pattern, path, root));
       if (readHit !== undefined) return { kind: "deny-read", pattern: readHit };
-      const writeHit = [...DEFAULT_DENY_WRITE, ...protectedWrite].find((pattern) => globMatch(pattern, path, root));
+      const writeHit = [...tables.denyWrite, ...tables.protectedWrite].find((pattern: string) => protectGlobMatch(pattern, path, root));
       if (writeHit !== undefined) return { kind: "protect-write", pattern: writeHit };
     }
   }
@@ -51,10 +65,10 @@ function commandSensitiveHit(cmd: ParsedCommand, root: string, protectedWrite: r
 export function argvSensitiveHit(
   commands: readonly ParsedCommand[],
   root: string,
-  protectedWrite: readonly string[] = [],
+  tables: DenyTables = { protectedWrite: [], denyRead: [], denyWrite: [] },
 ): { readonly kind: "deny-read" | "protect-write"; readonly pattern: string } | undefined {
   for (const cmd of commands) {
-    const hit = commandSensitiveHit(cmd, root, protectedWrite);
+    const hit = commandSensitiveHit(cmd, root, tables);
     if (hit !== undefined) return hit;
   }
   return undefined;

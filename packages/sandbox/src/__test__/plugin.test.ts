@@ -11,6 +11,7 @@ import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { toolsPlugin } from "@x-harness/tools";
 import { createPermissionPlugin, permissionGrants } from "@x-harness/permission";
+import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import { fenceFacts } from "@x-harness/permission";
 import { sessionDisposed } from "@x-harness/session";
 import { execEnv } from "@x-harness/exec-env";
@@ -92,6 +93,7 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<string> {
 async function assemble(root: string, fake: FakeRuntime, options: Partial<Parameters<typeof createSandboxPlugin>[0]> = {}) {
   const ctx: Context = createContext();
   const unload = await loadPlugins(ctx, [
+    createPermissionModesPlugin(), // V4 内置模式（base 零策略）
     toolsPlugin,
     createPermissionPlugin({ root }),
     createSandboxPlugin({ root, ...options }, fake.rt),
@@ -174,7 +176,7 @@ describe("spawn 面（假 runtime 管道）", () => {
     }
   });
 
-  it("白名单热切换序列：同集不切；域名授权即时生效；sessionDisposed 即时收缩（不等下一次 spawn）", async () => {
+  it("白名单同步序列：同集不切；unrestricted 直通不触壳（无新 sync）；sessionDisposed 即时收缩（不等下一次 spawn）", async () => {
     const root = mkdtempSync(join(tmpdir(), "xh-sbxnet-"));
     const fake = makeFakeRuntime();
     try {
@@ -185,13 +187,13 @@ describe("spawn 面（假 runtime 管道）", () => {
       await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // sync#1: []
       await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // 同集不切
       expect(fake.syncs).toEqual([[]]);
-      grants.recordDomain(sid, "a.test", "allow");
-      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // sync#2: [a.test]
-      expect(fake.syncs).toEqual([[], ["a.test"]]);
-      ctx.emit(sessionDisposed, { session: sid }); // 逐出→收缩立即落表（sync#3: []）
-      expect(fake.syncs).toEqual([[], ["a.test"], []]);
-      await env.spawn({ argv: ["/bin/true"], cwd: root }); // 收缩后同集不切
-      expect(fake.syncs).toEqual([[], ["a.test"], []]);
+      grants.setUnrestricted(true);
+      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // unrestricted=unfenced 直通——不经壳，无新 sync（域名授权面已删 P3-8）
+      expect(fake.syncs).toEqual([[]]);
+      // 逐出面已无动态白名单源（域名授权位删除 P3-8）：收缩=同集，按「同集不切」不触新 sync
+      grants.setUnrestricted(false);
+      ctx.emit(sessionDisposed, { session: sid });
+      expect(fake.syncs).toEqual([[]]);
       await dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });

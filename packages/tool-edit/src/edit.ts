@@ -27,6 +27,7 @@ export function createEditTool(input: EditToolInput): ToolDefinition {
   const rootOverrideOf = input.rootOverrideOf;
   return {
     name: "edit",
+    kind: "Write",
     description:
       "Edit a file with exact text replacement (within the workspace root). Each edits[].oldText must match a unique, non-overlapping region of the original file — not after earlier edits are applied. If the file changed since you last read it, the call fails with FS_STALE_VERSION (re-read then retry). If two changes touch the same block or nearby lines, merge them into one edit. Keep oldText as small as possible while still unique; do not pad it with large unchanged regions.",
     inputSchema: Type.Object({

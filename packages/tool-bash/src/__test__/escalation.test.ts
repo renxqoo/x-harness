@@ -143,6 +143,7 @@ describe("端到端：全真世界升级流（permission sandboxed-auto → disp
     const { createContext, loadPlugins } = await import("@x-harness/core");
     const { toolsPlugin, toolRegistry } = await import("@x-harness/tools");
     const { permissionBroker, createPermissionPlugin } = await import("@x-harness/permission");
+    const { createPermissionModesPlugin } = await import("@x-harness/permission-modes");
     const { mkdtempSync, rmSync: rm2 } = await import("node:fs");
     const { tmpdir: tmp2 } = await import("node:os");
     const { join: join2 } = await import("node:path");
@@ -167,14 +168,14 @@ describe("端到端：全真世界升级流（permission sandboxed-auto → disp
       const unload = await loadPlugins(ctx, [
         toolsPlugin,
         (await import("../plugin.ts")).createBashPlugin({ gate: new Gate2(root), env: recorder.env, limits: { defaultTimeoutMs: 5_000, maxTimeoutMs: 10_000, maxOutputBytes: 30_000, spillDir: root } }),
-        createPermissionPlugin({ root, mode: "sandboxed-auto" }),
+        createPermissionModesPlugin(), createPermissionPlugin({ root, mode: "sandboxed-auto" }),
         broker,
       ]);
       const reg = ctx.use(toolRegistry);
       const first = await reg.dispatch({ callId: "e2e-1", name: "bash", args: { command: "mytool run" }, signal: new AbortController().signal });
       expect(first.content).toContain("[escalated: retried outside the sandbox after user approval]");
       expect(asks).toHaveLength(1);
-      expect(asks[0]?.options).toEqual(["once", "session", "project", "user"]);
+      expect(asks[0]?.options).toEqual(["once"]); // E①（2026-09-28）：escalate=一次性重试——记忆梯度撤（旧四档落桶跨档 direct 免问）
       expect(asks[0]?.summary).toBe("mytool run"); // 目标描述单源（summaryOf）——确认条主文案
       expect(asks[0]?.escalate?.command).toBe("mytool run");
       expect(asks[0]?.escalate?.failureText).toContain("Operation not permitted");

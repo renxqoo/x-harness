@@ -1,4 +1,4 @@
-// 路径 glob 匹配（Read/Write/Grep 规则面）：`**` 跨段递归（含目录自身）、`*` 段内、`~` 展开到家目录、
+// 路径 glob 匹配（Read/Write 规则面（Grep 已并入 Read——2026-09-28 断代））：`**` 跨段递归（含目录自身）、`*` 段内、`~` 展开到家目录、
 // 相对 pattern 以 root 解析。段边界语义与 fail-safe 过拒：`/*` 前缀匹配嵌套也命中（my-agent 文档化过拒）。
 
 import { homedir } from "node:os";

@@ -138,9 +138,12 @@ x-harness [flags] [message...] [@file...]
 - **slash 命令表**（闭集）：
   `/help`、`/quit`、`/new`（新会话——生成新唯一 id，旧会话留在档案）、`/model [pattern]`
   （无参 = 编号列出所有 provider 模型选择；带参 = 模糊匹配切换；内存会话下禁用并提示——
-  无 archive 无法 resume 重建）、`/thinking [level]`、`/session`（会话 id/事件数/token 用量/
+  无 archive 无法 resume 重建）、`/plan`（切换 plan 模式——permissionMode 服务直切内存态
+  即时生效；再切回装配缺省档；会话内有效，resume 不折叠档位——hub 侧经
+  permission/set_mode 持久化）、`/thinking [level]`、`/session`（会话 id/事件数/token 用量/
   当前模型）、`/compact [instructions]`（总结折叠 surface）、`/export <path>`（导出事件卷
-  副本）、`/resume`（列出主会话选择切换；内存会话下禁用）、`/clear`（清屏 ANSI）。
+  副本）、`/resume`（列出主会话选择切换；内存会话下禁用）、`/workflow <run|stop|submit>`
+  （受管任务——验收回炉编排，docs/AGENT-WORKFLOW.md）、`/clear`（清屏 ANSI）。
 - **/model 语义与副作用**：`handle.dispose()` → `agentLoopService.resume(id, {agent})`（日志
   续写，header 不变；jsonl 续写校验对同 id 二次打开成立——dispose 先 flush）。**副作用
   落档**：dispose 广播 sessionDisposed → 本会话 extraRoot/域名授权 evict、后台任务两段杀、
@@ -228,9 +231,9 @@ skill 目录解析：`X_HARNESS_SKILLS_DIRS`（冒号分隔）> 缺省
   `wellKnown` 锚点词汇表）（section
   `base/core`：身份/守则/环境块；facts=cwd/isGit/platform/shell 由宿主探测传入
   （`probeBaseFacts`——同包），入口归一压换行——注入面收口；日期已迁边沿注入快照
-  通道）；工具守则段由 tool-core
+  通道；环境块条件展示（facts 全缺席时整段省略——零信息不进 prompt）；工具守则段由 tool-core
   在 apply 期直接停靠（D3 投稿式）：section `tool/<name>`（锚 wellKnown.baseCore；
-  bash 围栏守则在 sandbox env 下才有文本，local 零段）；装配序硬约束 system-prompt
+  bash 守则=非交互约束（无 TTY/stdin 关闭）全形态注入 + 围栏段仅 sandbox 追加）；装配序硬约束 system-prompt
   先于带 guidance 的 tool-*（D6，头注）。`--system-prompt` 整体替换时不装基础段
   （走 AgentOptions.systemPrompt 静态串，优先于 assemble 是包契约）；
   `--append-system-prompt` 追加 section `cli-user-<n>`（无边落尾=全部内置段之后，链式保序）。

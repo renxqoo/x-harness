@@ -10,7 +10,6 @@ import type { FenceBase } from "../fence.ts";
 
 const base: FenceBase = { root: "/w/root" };
 const SID = "s-1" as never;
-const OTHER = "s-2" as never;
 
 describe("fenceFor base 形态", () => {
   it("writable = root + tmpdir；denyRead 默认底线表；denyWrite = root/.git", () => {
@@ -33,10 +32,9 @@ describe("fenceFor base 形态", () => {
     expect(f.allowedDomains).toEqual(["a.test"]);
   });
 
-  it("networkOff：allowedDomains 恒空（压过 unrestricted 与授权）", () => {
+  it("networkOff：allowedDomains 恒空（压过 unrestricted）", () => {
     const grants = new GrantsRegistry();
     grants.setUnrestricted(true);
-    grants.recordDomain(SID, "a.test", "allow");
     const f = fenceFor({ root: "/w/root", networkOff: true }, grants, SID);
     expect(f.allowedDomains).toEqual([]);
     expect(f.unfenced).toBe(false); // 宿主 kill switch 压过总括——壳仍在
@@ -44,20 +42,11 @@ describe("fenceFor base 形态", () => {
 });
 
 describe("fenceFor × grants", () => {
-  it("extraRoots 并入 writable；域名授权并入 allowedDomains（deny 不入白名单）", () => {
+  it("extraRoots 并入 writable", () => {
     const grants = new GrantsRegistry();
     grants.addExtraRoot(SID, "/grant/a");
-    grants.recordDomain(SID, "ok.test", "allow");
-    grants.recordDomain(SID, "no.test", "deny");
     const f = fenceFor(base, grants, SID);
     expect(f.writable).toEqual([resolve("/w/root"), tmpdir(), CHILD_TMPDIR, "/grant/a"]);
-    expect(f.allowedDomains).toEqual(["ok.test"]);
-  });
-
-  it("会话隔离：他域授权不并入本会话", () => {
-    const grants = new GrantsRegistry();
-    grants.recordDomain(OTHER, "other.test", "allow");
-    expect(fenceFor(base, grants, SID).allowedDomains).toEqual([]);
   });
 
   it("unrestricted：writable 前置 / 与 allowedDomains=['*']（full 档全通）", () => {

@@ -70,10 +70,11 @@ createToolPlugin({ name: "tool-mine", make: (env, extraRootsOf, rootOverrideOf) 
 ```
 
 陷阱表（每条有代码依据）：
-- **guidance 空串不落段**（local env 的 bash 零守则）；`schemas()` 不含 guidance（LLM 序列化面干净）
+- **guidance 空串不落段**（守则函数返回空串即跳过停靠——bash 的 local 形态现返回非空基础守则，仅 sandbox 附加段按围栏形态分支）；`schemas()` 不含 guidance（LLM 序列化面干净）
 - **gate 根一致 fail-closed**：env.root 与 gate.root 错配 = 装配期 throw（执法面漂移拒绝）
 - **env 三级解析**：工厂参数 > execEnv 服务 > throw
 - **isControlTool** 标记控制类工具（permission 直通）；并发分类器抛错 = exclusive（fail-closed）
+- **kind** 声明工具类别 `"Read" | "Write" | "Danger"`（闭集——2026-09-28）：Read/Write 走文件路径裁决（`Read(...)`/`Write(...)` 规则），Danger=参数含 command 串的逐次裁决（`Danger(...)` 规则）；不声明=通用面（`Tool(名)` 规则+恒 ask 兜底）。范围型读工具另声明 `readsSubtree`（目录搜索的子树拒读判定）
 - **softInject 已声明**（system-prompt/sandbox-local/permission）——你的世界怎么摆数组序都正确；**自定义 tryUse 停靠请同样声明 `softInject`**（名漂移=静默退化为数组序，无告警——这是已知边界）
 
 ## 3. 提示词投稿面

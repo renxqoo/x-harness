@@ -117,7 +117,7 @@ describe("⑥ 人格覆盖（同名段覆盖 baseCore）", () => {
     const tw = await makeTestWorld([personaOverridePlugin("You are Seraphina, a meticulous research assistant.")]);
     const text = tw.world.prompt.assemble().text;
     expect(text.startsWith("You are Seraphina")).toBe(true);
-    expect(text).not.toContain("You are Agent");
+    expect(text).not.toContain("You are xh");
     await tw.cleanup();
   });
 });

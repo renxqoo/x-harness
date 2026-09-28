@@ -1,18 +1,23 @@
 // 洞回归矩阵（docs/EXEC-ENV.md §14.0/§14.5-1）：手写段词法器的 8+1 实证漏洞逐条锁定。
-// harness 分两档：硬拒/注入/结构失败类 = fence + Bash(*):allow（ask 先于 allow，万配也拦）；
+// harness 分两档：硬拒/注入/结构失败类 = fence + Danger(*):allow（ask 先于 allow，万配也拦）；
 // 不透明信任类 = fence 无规则（opaque 先于界内合成——但可被 allow 规则以用户信任越过，另钉）。
 // reason 逐条钉死（机制锚——防实现漂移成别的 ask 来源）。
 
 import { describe, expect, it } from "vitest";
-import { adjudicateBash } from "../bash/adjudicate.ts";
+import { adjudicateBash as __adjudicateBash } from "../bash/adjudicate.ts";
+import { knobDecideOf } from "@x-harness/permission-modes";
+function adjudicateBash(input: Parameters<typeof __adjudicateBash>[0]): ReturnType<typeof __adjudicateBash> {
+  const faces = knobDecideOf(input.profile);
+  return __adjudicateBash({ ...input, ...(input.modeDecide === undefined && faces.decide !== undefined ? { modeDecide: faces.decide } : {}), ...(input.postureDecide === undefined && faces.posture !== undefined ? { postureDecide: faces.posture } : {}) });
+}
 import { parseRule } from "../rules/parse.ts";
-import { resolveProfile } from "../profiles.ts";
-const AUTO_PROFILE = resolveProfile("auto");
-const FULL_PROFILE = resolveProfile("full");
+import { resolveProfile } from "@x-harness/permission-modes";
+const AUTO_PROFILE = resolveProfile("auto")!;
+const FULL_PROFILE = resolveProfile("full")!;
 
 const ROOT = "/w/app";
 const FENCE = { writable: [ROOT], allowedDomains: [] };
-const WIDE = [parseRule("Bash(*):allow", "user")];
+const WIDE = [parseRule("Danger(*):allow", "user")];
 const wide = { rules: WIDE, profile: AUTO_PROFILE, root: ROOT, extraRoots: [], fence: FENCE };
 const fenced = { rules: [] as ReturnType<typeof parseRule>[], profile: AUTO_PROFILE, root: ROOT, extraRoots: [], fence: FENCE };
 
@@ -70,12 +75,12 @@ describe("审查处置回归（方案 §14.9 采纳项——不可越 allow 类�
   it("A-P0-2/B 空载荷 stdin 填充：`printf … | xargs sh -c`——载荷解释器空 -c 落 opaque", () => {
     askAt(fenced, 'printf "sudo id" | xargs sh -c', "opaque-code:sh");
   });
-  it("A-P0-3 auto 档压制：语句位 `FOO=$(sudo id)` 内层硬拒 ask；full 全过唯提权 deny（裁决⑤）", () => {
+  it("A-P0-3 auto 档压制：语句位 `FOO=$(sudo id)` 内层硬拒 ask；full 唯提权 deny、注入/动态最小 ask（A① 裁决 2026-09-28）", () => {
     const out = adjudicateBash({ ...wide, command: "FOO=$(sudo id)" });
     expect(out.verdict).toBe("ask");
     expect(out.reason).toBe("hard-deny:sudo");
     expect(adjudicateBash({ ...wide, command: "FOO=$(rm -rf $X)" }).reason).toBe("dynamic-segment (expansion/glob)"); // 动态词先行
-    expect(adjudicateBash({ ...wide, command: "FOO=$(rm -rf $X)", profile: FULL_PROFILE }).verdict).toBe("allow");
+    expect(adjudicateBash({ ...wide, command: "FOO=$(rm -rf $X)", profile: FULL_PROFILE }).verdict).toBe("ask"); // A①：动态/注入形态钳制
     expect(adjudicateBash({ ...wide, command: "FOO=$(sudo id)", profile: FULL_PROFILE }).verdict).toBe("deny"); // 内嵌提权仍直接拦
   });
   it("A-P0-4/B-P0-3 ANSI-C 解码：$'\\x73udo' 恒 dynamic → auto ask（allow 万配也不放行——dynamic 先于 allow）", () => {
@@ -96,9 +101,9 @@ describe("审查处置回归（方案 §14.9 采纳项——不可越 allow 类�
 });
 
 describe("不透明信任类（fence 无规则 harness——opaque 先于界内合成；allow 可越另钉）", () => {
-  it("B-P0-1 解释器文件操作数：`bash x.sh` ask；`Bash(bash:*):allow` 用户信任可越", () => {
+  it("B-P0-1 解释器文件操作数：`bash x.sh` ask；`Danger(bash:*):allow` 用户信任可越", () => {
     askAt(fenced, "bash x.sh", "opaque-code:bash");
-    const trusted = adjudicateBash({ ...fenced, command: "bash x.sh", rules: [parseRule("Bash(bash:*):allow", "user")] });
+    const trusted = adjudicateBash({ ...fenced, command: "bash x.sh", rules: [parseRule("Danger(bash:*):allow", "user")] });
     expect(trusted.verdict).toBe("allow");
   });
   it("B-P0-1 stdin 喂解释器：`bash < x.sh` / `sh <<'EOF'` 恒 ask", () => {

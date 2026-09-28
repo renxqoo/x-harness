@@ -19,6 +19,7 @@ import type { SlashDeps, SlashDial } from "./slash-commands.ts";
 import type { World } from "./build-world.ts";
 import { delegationView } from "@x-harness/agent-delegation";
 import { workflowView } from "@x-harness/agent-workflow";
+import { planControl } from "@x-harness/tool-plan";
 import type { SessionId } from "@x-harness/session";
 import { sessionEvent } from "@x-harness/session";
 import pkg from "../package.json";
@@ -159,6 +160,26 @@ export function parseWorkflowSubmitArgs(raw: string): { ok: true; input: { descr
   const [first, ...promptWords] = words;
   const description = first ?? "task";
   return { ok: true, input: { description, prompt: promptWords.join(" ") || description, ...(command !== undefined ? { acceptance: { command } } : {}), ...(schema !== undefined ? { result_schema: schema } : {}) } };
+}
+
+/** /plan 命令实现（planControl 服务——enter 锚定 owner / exit 任意会话可出；策略全在
+ * plan 插件内，本层只做 UX 路由）。会话内有效——CLI resume 不折叠档位是已知面，hub 侧
+ * 经 permission/set_mode 持久化 */
+export function makePermissionCommands(live: () => { readonly world: World; readonly handle: import("@x-harness/agent-loop").AgentHandle }): import("./slash-commands.ts").PermissionCommandDeps {
+  return {
+    planToggle: () => {
+      const { world, handle } = live();
+      const control = world.ctx.tryUse(planControl);
+      if (control === undefined) return "plan 服务未装配（此构建无 /plan 面）";
+      const session = handle.agent.session.id;
+      if (control.isPlan()) {
+        const target = control.exit(session);
+        return `plan mode OFF — permission mode: ${target}`;
+      }
+      control.enter(session);
+      return "plan mode ON — writes denied; the agent researches and submits a plan (plan_submit)";
+    },
+  };
 }
 
 /** /workflow 命令实现（workflowView 直调——期 3 不经模型；world/handle 经 getter 取活引用） */
@@ -333,6 +354,8 @@ export async function runRepl(input: ReplInput): Promise<number> {
     },
     // /workflow 命令面（件16 期 3：不经模型——workflowView 直调）
     workflow: makeWorkflowCommands(() => ({ world, handle })),
+    // /plan 命令面（planControl——owner 锚定在 plan 插件内）
+    permission: makePermissionCommands(() => ({ world, handle })),
   };
 
   let quitReason: (code: number) => void = () => {};

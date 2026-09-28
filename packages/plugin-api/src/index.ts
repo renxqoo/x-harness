@@ -51,7 +51,7 @@ export function transformAssistant(ctx: Context, fn: (s: AssistantSettlement) =>
 /** 工具否决器：返回 deny 则拦截（先 next 后 deny——I2；最外层 deny 胜） */
 export function vetoTools(
   ctx: Context,
-  fn: (call: { readonly callId: string; readonly name: string; readonly args: unknown; readonly session?: SessionId; readonly control?: true }) => { readonly kind: "deny"; readonly reason: string } | undefined,
+  fn: (call: { readonly callId: string; readonly name: string; readonly args: unknown; readonly session?: SessionId; readonly control?: true; readonly kind?: string; readonly readsSubtree?: true }) => { readonly kind: "deny"; readonly reason: string } | undefined,
 ): Disposer {
   return ctx.on(toolsPreExecute, async (payload, next) => {
     const inner = await next(payload);

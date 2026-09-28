@@ -2,17 +2,22 @@
 // 必红。harness：fence 在场（auto 档界内合成面）；dynamic 类另钉 auto ask / full allow 双态。
 
 import { describe, expect, it } from "vitest";
-import { adjudicateBash } from "../bash/adjudicate.ts";
+import { adjudicateBash as __adjudicateBash } from "../bash/adjudicate.ts";
+import { knobDecideOf } from "@x-harness/permission-modes";
+function adjudicateBash(input: Parameters<typeof __adjudicateBash>[0]): ReturnType<typeof __adjudicateBash> {
+  const faces = knobDecideOf(input.profile);
+  return __adjudicateBash({ ...input, ...(input.modeDecide === undefined && faces.decide !== undefined ? { modeDecide: faces.decide } : {}), ...(input.postureDecide === undefined && faces.posture !== undefined ? { postureDecide: faces.posture } : {}) });
+}
 import { parseRule } from "../rules/parse.ts";
-import { resolveProfile } from "../profiles.ts";
+import { resolveProfile } from "@x-harness/permission-modes";
 import type { PermissionProfile } from "../types.ts";
-const PLAN_PROFILE = resolveProfile("plan");
-const AUTO_PROFILE = resolveProfile("auto");
-const FULL_PROFILE = resolveProfile("full");
+const PLAN_PROFILE = resolveProfile("plan")!;
+const AUTO_PROFILE = resolveProfile("auto")!;
+const FULL_PROFILE = resolveProfile("full")!;
 
 const ROOT = "/w/app";
 const FENCE = { writable: [ROOT], allowedDomains: [] };
-const WIDE = [parseRule("Bash(*):allow", "user")];
+const WIDE = [parseRule("Danger(*):allow", "user")];
 const fenced = { rules: [] as ReturnType<typeof parseRule>[], profile: AUTO_PROFILE, root: ROOT, extraRoots: [], fence: FENCE };
 
 describe("放宽锚（防退回假阳性）", () => {
@@ -58,15 +63,16 @@ describe("reason 快照（§14.5-6——防实现期 reason 词漂移）", () =>
       const out = adjudicateBash({ ...fenced, rules, command, profile: PROFILE_OF[mode] });
       return [out.verdict, out.reason, out.resolvedBy];
     };
-    expect(pin("git push", "plan")).toEqual(["deny", "plan mode disallows bash", "mode:plan"]);
+    expect(pin("git push", "plan")).toEqual(["deny", "plan mode disallows bash", "mode:plan"]); // V3 阶段二：纯直调=严格缺省（富策略 tool-plan）
     const noFence = adjudicateBash({ ...fenced, fence: undefined, command: "git push" });
     expect([noFence.verdict, noFence.reason, noFence.resolvedBy]).toEqual(["ask", "no rule matches segment", "default:ask"]);
     expect(pin("sudo id", "auto")).toEqual(["ask", "hard-deny:sudo", "hard-deny"]);
     expect(pin("echo $(x)", "auto")).toEqual(["ask", "injection:command-substitution", "injection"]);
-    expect(pin("echo $(x)", "full")).toEqual(["allow", "full mode", "mode:full"]); // 裁决⑤：注入在 full 不拦
-    expect(pin("rm -rf /", "full")).toEqual(["allow", "full mode", "mode:full"]); // 硬拒其余形态 full 不拦（围栏承载）
-    expect(pin("sudo id", "full")).toEqual(["deny", "hard-deny:sudo", "mode:full"]); // 唯提权直接拦截
-    expect(pin("echo 'oops", "full")).toEqual(["allow", "full mode", "mode:full"]); // 畸形 full 不保守 ask
+    expect(pin("echo $(x)", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A① 裁决（2026-09-28）：注入最小 ask 钳制——full 不越过红线 2
+    expect(pin("rm -rf /", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：硬拒形态同钳制
+    expect(pin("sudo id", "full")).toEqual(["deny", "hard-deny:sudo", "mode:full"]); // 提权直接拦截（full 唯一 deny 面）
+    expect(pin("echo 'oops", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：解析失败同钳制
+    expect(pin("cmd < ~/.ssh/id_rsa", "full")).toEqual(["deny", "redirect-read:~/.ssh/**", "redirect-read"]); // B① 重定向硬线先于模式——full 不越过
     expect(pin("cat $F", "auto")).toEqual(["ask", "dynamic-segment (expansion/glob)", "static"]);
     expect(pin("echo x > /etc/passwd", "auto")).toEqual(["ask", "redirect:/etc/passwd", "redirect"]);
     expect(pin("cmd < ~/.ssh/id_rsa", "auto")).toEqual(["deny", "redirect-read:~/.ssh/**", "redirect-read"]);
@@ -74,10 +80,10 @@ describe("reason 快照（§14.5-6——防实现期 reason 词漂移）", () =>
     expect(pin("nohup", "auto")).toEqual(["ask", "wrapper:nohup", "wrapper"]);
     expect(pin("bash x.sh", "auto")).toEqual(["ask", "opaque-code:bash", "opaque"]); // 无规则 harness——opaque 可被 allow 越过是独立语义
     expect(pin("git status", "auto")).toEqual(["allow", "classifier:readonly", "classifier:readonly"]);
-    expect(pin("ls", "auto", WIDE)).toEqual(["allow", "rule allow", "rule:user"]);
+    expect(pin("ls", "auto", WIDE)).toEqual(["allow", "rule:*", "rule:user"]);
   });
   it("deny 规则压过注入（裁决序重排锚——§14.4：确定性拒绝先于保守 ask）", () => {
-    const rules = [parseRule("Bash(echo:*):deny", "user"), parseRule("Bash(*):allow", "user")];
+    const rules = [parseRule("Danger(echo:*):deny", "user"), parseRule("Danger(*):allow", "user")];
     const out = adjudicateBash({ ...fenced, rules, command: "echo $(whoami)" });
     expect(out).toEqual({ verdict: "deny", reason: "rule:echo:*", resolvedBy: "rule:user" });
   });

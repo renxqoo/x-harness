@@ -173,3 +173,89 @@ describe("并发档声明（§6 横切——真实 registry 口径）", () => {
     expect(registry.concurrencyOf("read", {})).toBe("parallel");
   });
 });
+
+describe("read paths 批量（TURN-REDUCTION.md §1.1A/§2.3 契约矩阵）", () => {
+  beforeEach(() => {
+    writeFileSync(join(root, "a.ts"), "const a = 1;\nconst b = 2;\n");
+    writeFileSync(join(root, "b.ts"), "const c = 3;\n");
+  });
+
+  it("paths 两文件 → 逐文件 <file> 包裹块，内容各自完整", async () => {
+    const r = await read({ paths: ["a.ts", "b.ts"] });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain('<file path="a.ts">');
+    expect(r.content).toContain("const a = 1;");
+    expect(r.content).toContain('<file path="b.ts">');
+    expect(r.content).toContain("const c = 3;");
+  });
+
+  it("单 path 旧形态输出不变（无 <file> 包裹——回归锚）", async () => {
+    const r = await read({ path: "a.ts" });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).not.toContain("<file");
+    expect(r.content).toContain("1: const a = 1;");
+  });
+
+  it("path 与 paths 同给 → 参数互斥错误", async () => {
+    const r = await read({ path: "a.ts", paths: ["b.ts", "a.ts"] });
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("either path or paths");
+  });
+
+  it("双缺席 → 参数错误", async () => {
+    const r = await read({});
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("requires path or paths");
+  });
+
+  it("paths × offset → 互斥拒绝（批量=探索首屏；续读回单 path）", async () => {
+    const r = await read({ paths: ["a.ts", "b.ts"], offset: 1 });
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("does not accept offset/limit");
+  });
+
+  it("paths × limit → 互斥拒绝", async () => {
+    const r = await read({ paths: ["a.ts", "b.ts"], limit: 10 });
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("does not accept offset/limit");
+  });
+
+  it("单条目数组 → schema minItems 拒绝（单文件用 path，避免形状分叉）", async () => {
+    const r = await read({ paths: ["a.ts"] });
+    expect(r.isError).toBe(true); // schema 层拒绝（dispatch TypeBox）
+  });
+
+  it("9 条目 → schema maxItems 拒绝", async () => {
+    const r = await read({ paths: Array.from({ length: 9 }, (_, i) => `${String(i)}.ts`) });
+    expect(r.isError).toBe(true);
+  });
+
+  it("部分成功：b 不存在 → a 块正常 + b 块错误，整体非 isError", async () => {
+    const r = await read({ paths: ["a.ts", "ghost.ts"] });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("const a = 1;");
+    expect(r.content).toContain("FS_NOT_FOUND: ghost.ts");
+  });
+
+  it("全部失败 → 整体 isError", async () => {
+    const r = await read({ paths: ["ghost1.ts", "ghost2.ts"] });
+    expect(r.isError).toBe(true);
+  });
+
+  it("聚合预算：首文件耗尽预算 → 余文件块给续读指引（工具层自截，非调度层）", async () => {
+    // 渲染恰好贴近 50KB 上界（249 行 × 200B/行 ≈ 50.7KB 触发 byteCapped，实际渲染略低于预算）
+    writeFileSync(join(root, "big.ts"), `${"x".repeat(195)}\n`.repeat(260));
+    // 先读一次拿实际渲染字节数，再构造「预算刚好耗尽」的断言：big.ts 渲染后剩余预算 < b.ts 需要的任意字节
+    const big = await read({ path: "big.ts" });
+    expect(big.content).toContain("capped at"); // 首文件确实触顶
+    const r = await read({ paths: ["big.ts", "b.ts"] });
+    expect(r.content).toContain("budget exhausted in this batch");
+    expect(r.content).toContain("re-read with single path");
+  });
+
+  it("重复路径照读不去重（模型显式要求即照办）", async () => {
+    const r = await read({ paths: ["a.ts", "a.ts"] });
+    expect(r.isError).toBeUndefined();
+    expect(r.content.match(/<file path="a\.ts">/g)?.length).toBe(2);
+  });
+});

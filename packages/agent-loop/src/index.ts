@@ -30,5 +30,6 @@ export { lastRequestContext } from "./request.ts";
 export type { InboxState } from "./inbox.ts";
 export { interruptedTurnClosers } from "./repair.ts";
 export { isFailDecision, isFailRequestDecision, isRespondDecision, isResumeDecision } from "./continuation.ts";
-export { createTailSnapshot, isSnapshotNode, snapshotEnvelope, SNAPSHOT_SUPERSEDES } from "./snapshot.ts";
+export { createTailSnapshot, createRequestSnapshot, isSnapshotNode, snapshotEnvelope, SNAPSHOT_SUPERSEDES } from "./snapshot.ts";
+export type { RequestSnapshotSpec } from "./snapshot.ts";
 export type { TailSnapshotSpec } from "./snapshot.ts";

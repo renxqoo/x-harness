@@ -79,6 +79,5 @@ export function fenceFor(base: FenceBase, grants: GrantsRegistry, session: Sessi
   const isolated = override !== undefined;
   if (base.networkOff === true) return { writable, denyRead, denyWrite, allowedDomains: [], unfenced: false, isolated };
   if (unrestricted) return { writable, denyRead, denyWrite, allowedDomains: ["*"], unfenced: true, isolated };
-  const allowedDomains = [...new Set([...(base.allowedDomains ?? []), ...grants.allowedDomainsOf(session)])];
-  return { writable, denyRead, denyWrite, allowedDomains, unfenced: false, isolated };
+  return { writable, denyRead, denyWrite, allowedDomains: base.allowedDomains ?? [], unfenced: false, isolated };
 }

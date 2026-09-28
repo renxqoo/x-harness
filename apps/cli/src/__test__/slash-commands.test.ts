@@ -63,9 +63,9 @@ function makeDemos(over: Partial<Recorder> = {}): { recorder: Recorder; deps: Sl
 }
 
 describe("词表封闭", () => {
-  it("命令表 = /help 列出集（闭集十一命令——+workflow 期 3）", async () => {
+  it("命令表 = /help 列出集（闭集十二命令——+plan 模式）", async () => {
     expect(SLASH_COMMANDS.map((command) => command.name)).toEqual([
-      "help", "quit", "new", "model", "thinking", "session", "compact", "export", "resume", "workflow", "clear",
+      "help", "quit", "new", "model", "plan", "thinking", "session", "compact", "export", "resume", "workflow", "clear",
     ]);
     const { recorder, deps } = makeDemos();
     await runSlashCommand("/help", deps);
@@ -97,6 +97,16 @@ describe("分派行为", () => {
     const { recorder, deps } = makeDemos();
     expect(await runSlashCommand("/quit", deps)).toBe("quit");
     expect(recorder.lines).toEqual([]);
+  });
+
+  it("/plan → permission deps 缺席提示在场；在场走 planToggle 文案", async () => {
+    const absent = makeDemos();
+    await runSlashCommand("/plan", absent.deps);
+    expect(absent.recorder.lines[0]).toContain("permission is not assembled");
+    const { recorder, deps } = makeDemos();
+    (deps as { permission?: { planToggle: () => string } }).permission = { planToggle: () => "plan mode ON — writes denied" };
+    await runSlashCommand("/plan", deps);
+    expect(recorder.lines[0]).toBe("plan mode ON — writes denied");
   });
 
   it("/new → reopen(newSession)", async () => {

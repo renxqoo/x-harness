@@ -15,7 +15,6 @@ import { permissionGrants } from "@x-harness/permission";
 import { fenceFacts } from "@x-harness/permission";
 import { fenceFor } from "./fence.ts";
 import type { FenceBase } from "./fence.ts";
-import { mergeAllowlists } from "./allowlist.ts";
 import { realSrtRuntime } from "./srt-runtime.ts";
 import type { SrtRuntime } from "./srt-runtime.ts";
 import { srtSessionOf } from "./srt-session.ts";
@@ -49,10 +48,7 @@ export function createSandboxPlugin(options: SandboxOptions, runtime: SrtRuntime
           const unrestrictedActive =
             grants.isUnrestricted(undefined) || [...seen].some((k) => grants.isUnrestricted(sessionOfKey(k)));
           if (unrestrictedActive) return ["*"];
-          return mergeAllowlists([
-            options.allowedDomains ?? [],
-            ...[...seen].map((k) => grants.allowedDomainsOf(sessionOfKey(k))),
-          ]);
+          return options.allowedDomains ?? [];
         },
         localBinding: () => options.allowLocalBinding ?? true, // 缺省开——用户裁决④
       };

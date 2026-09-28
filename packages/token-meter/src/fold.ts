@@ -44,6 +44,15 @@ export interface SessionUsage {
   readonly lastReportedCacheRead: number;
   /** 最近一次实报的 session 事件 time（input 或 cacheRead 任一在场才更新；0 = 无） */
   readonly lastUsageAt: number;
+  /** 模型意图面 tool_use 块累计（只认 assistant/message——attempt 的块是截断重试半成品，
+   *  模型重发会在 message 再计；与 get_session_stats 的 toolCalls（tool/call 事件，含重试
+   *  派发）口径不同：这里是模型一.response 里发了几个工具意图） */
+  readonly toolUseCalls: number;
+  /** 含 ≥1 个 tool_use 块的 assistant/message 数（并行度分母；派生指标
+   *  toolUseCalls / toolUseSteps 由消费方计算——快照不存派生值） */
+  readonly toolUseSteps: number;
+  /** ≥2 个 tool_use 块的 assistant/message 数（同块并行发生的步数） */
+  readonly parallelSteps: number;
   readonly turns: readonly TurnUsage[];
 }
 
@@ -66,6 +75,9 @@ export interface FoldState {
   lastInput: number;
   lastCacheRead: number;
   lastUsageAt: number;
+  toolUseCalls: number;
+  toolUseSteps: number;
+  parallelSteps: number;
   overflowed: boolean;
   readonly routes: Map<string, Bucket & { readonly provider: string; readonly model: string }>;
   readonly turns: Map<number, Bucket & { readonly routes: Map<string, Bucket & { readonly provider: string; readonly model: string }> }>;
@@ -83,6 +95,9 @@ export function createFoldState(): FoldState {
     lastInput: 0,
     lastCacheRead: 0,
     lastUsageAt: 0,
+    toolUseCalls: 0,
+    toolUseSteps: 0,
+    parallelSteps: 0,
     overflowed: false,
     routes: new Map(),
     turns: new Map(),
@@ -224,6 +239,17 @@ function accountSample(state: FoldState, ctx: SampleContext): void {
   addBucket(turn.routes, route, bucket);
 }
 
+/** assistant/message 的 content 中 tool_use 块数（模型意图面计数；垃圾形态计 0） */
+function toolUseCountOf(data: Record<string, unknown>): number {
+  const content = data["content"];
+  if (!Array.isArray(content)) return 0;
+  let count = 0;
+  for (const block of content) {
+    if (typeof block === "object" && block !== null && (block as { type?: unknown }).type === "tool_use") count += 1;
+  }
+  return count;
+}
+
 /** 单事件折叠（增量与全量共用）：message/attempt 的有效 usage 计账并按末次 request/context 归因 */
 export function applyEvent(state: FoldState, event: SessionEvent): void {
   if (state.overflowed) return;
@@ -231,6 +257,16 @@ export function applyEvent(state: FoldState, event: SessionEvent): void {
   if (event.type === "request/context") {
     state.route = { provider: String(data["provider"]), model: String(data["model"]) };
     return;
+  }
+  // 并行度计数先于 usage 样本门（无 usage 的 message 也计——错误路径的并行度恰是诊断目标），
+  // 只认 assistant/message（attempt 的 tool_use 是截断重试半成品，重发会在 message 双计）。
+  if (event.type === "assistant/message") {
+    const blocks = toolUseCountOf(data);
+    if (blocks > 0) {
+      state.toolUseCalls += blocks;
+      state.toolUseSteps += 1;
+      if (blocks >= 2) state.parallelSteps += 1;
+    }
   }
   if (event.type !== "assistant/message" && event.type !== "assistant/attempt") return;
   const usage = parseUsageSample(data["usage"]);
@@ -268,6 +304,9 @@ export function snapshotOf(state: FoldState): SessionUsage {
     lastReportedInput: state.lastInput,
     lastReportedCacheRead: state.lastCacheRead,
     lastUsageAt: state.lastUsageAt,
+    toolUseCalls: state.toolUseCalls,
+    toolUseSteps: state.toolUseSteps,
+    parallelSteps: state.parallelSteps,
     turns: Object.freeze(turns),
   });
 }
