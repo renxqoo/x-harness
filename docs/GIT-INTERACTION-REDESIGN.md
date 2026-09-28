@@ -53,7 +53,7 @@
 
 - **`git/changed` 事件**（帧形走现成 eventFrame 通路——审查 F2 契约化）：
   - 帧形状：`{ type:"event", threadId, name:"git/changed", payload:{ cwd, branch? } }` ——**逐 threadId 出帧**（帧契约强制单值 threadId）；payload 带 cwd（同 gitdir 兄弟会话靠 app 侧按 cwd 匹配刷新——审查 5.1②）；**detached 也发**（branch 缺席=已分离语义，防 UI 停在旧分支名——审查 F5）。
-  - watcher 集合与生命周期（审查 F3 单一收敛点）：**表每次变更后重算期望集合 → diff 挂/收**（不按事件点挂钩）；sweep 1s 对账兜底（含 watcher 失效重建——F8 红线）。锚=live 线程（LIVE_PROBE_STATES 同口径）+ 归一后 cwd 的 gitdir **与 commonDir 双目录**（A3/F5：refs 写落 commonDir）；spawning 占位期 cwd raw 串不锚（首次归一回写后进集合）。
+  - watcher 集合与生命周期（审查 F3 单一收敛点）：**reconcile() 重算期望集合 → diff 挂/收**（不按表事件点挂钩——23 个变更点逐挂必漏）；节律 = 1s 对账循环单一驱动（幂等 O(live)，表变更最迟下一拍收敛——git 事件关注的是外部状态而非表变更本身，1s 窗口可接受；watcher 失效重建同拍兜底 F8）。锚=live 线程（LIVE_PROBE_STATES 同口径）+ 归一后 cwd 的 gitdir **与 commonDir 双目录**（A3/F5：refs 写落 commonDir）；spawning 占位期 cwd raw 串不锚（首次归一回写后进集合）。
   - 防抖 150ms 尾沿（F6 统一数字），到期时刻**重读 HEAD** 取值 + 当时 live 集 fan-out（F7：不推事件时刻的陈旧值）；同值抑制（A→B→A 不发）。
   - watcher error → 指数退避重挂（F8）。
 - app 侧消费跳（**方案补全——审查 F2**）：frame-decoder 无需改（复用 type:"event"）→ **event-mapper.ts 名单加 `git/changed`**（不改映射器事件死在主进程）→ UiEvent 新类型 → fold-events 加 case → mobile bridge 同源消费。

@@ -14,10 +14,17 @@ import { migrateLegacyAgentTypes } from "./agents-migrate.ts";
 import { createThreadTable } from "./thread-table.ts";
 import { createWorkerPool } from "./worker-pool.ts";
 import { createSweep } from "./thread-retire.ts";
+import { createGitWatchService, startGitWatchReconcileLoop } from "./git-watch.ts";
+import { eventFrame } from "../protocol/frames.ts";
+import { isAbsolute } from "node:path";
 import { createDirectRead } from "./read-history.ts";
 import { createHostCommands } from "./host-commands.ts";
 import { heartbeatFrame, hubErrorFrame, responseFrame } from "../protocol/frames.ts";
 import { hubError } from "../shared/errors.ts";
+
+/** git watch/探测共用的 live 系状态集（host-commands LIVE_PROBE_STATES 同口径——
+ *  parked 是历史快照不监视，激活重拉兜底归 app 侧） */
+const LIVE_WATCH_STATES = new Set(["live", "spawning", "retiring"]);
 
 export interface HostBoot {
   agentDir: string;
@@ -159,10 +166,22 @@ export async function runHost(boot: HostBoot): Promise<void> {
   const sweep = createSweep({ table, pool, limits: { idleRetireMs: limits.idleRetireMs, workerStaleMs: limits.workerStaleMs, rssRetireBytes: limits.rssRetireBytes } });
   sweep.start();
 
+  // git 变更监视（docs/GIT-INTERACTION-REDESIGN §2.1）：live 线程 gitdir+commonDir 双目录
+  // watch → 150ms 防抖 → 逐线程 git/changed 事件帧。收敛点：表变更 reconcile + 1s 对账兜底。
+  const gitWatch = createGitWatchService({
+    emit: (frame) => emitClient(eventFrame({ threadId: frame.threadId, name: "git/changed", payload: { cwd: frame.cwd, ...(frame.branch !== undefined ? { branch: frame.branch } : {}) } })),
+    liveThreads: () => table.list().filter((entry) => LIVE_WATCH_STATES.has(entry.state) && isAbsolute(entry.cwd)).map((entry) => ({ threadId: entry.threadId, cwd: entry.cwd })),
+    onError: (message) => process.stderr.write(`hub: ${message}\n`),
+  });
+  const stopGitReconcile = startGitWatchReconcileLoop(gitWatch);
+  gitWatch.reconcile();
+
   async function shutdown(): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     sweep.stop();
+    gitWatch.stop();
+    stopGitReconcile();
     clearInterval(heartbeat);
     await pool.shutdownAll();
     await writer.idle(); // 末帧冲刷完成再退出（防截断）

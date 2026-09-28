@@ -13,7 +13,7 @@ import { fenceSessionPath } from "./read-history.ts";
 import type { DirectRead } from "./read-history.ts";
 import { deleteSession } from "./session-delete.ts";
 import { taskLogsRootOf, probeGitFacts } from "@x-harness/harness";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute } from "node:path";
 import { listSavedSessions } from "./saved-query.ts";
 import { normalizeCwd } from "../shared/settings-store.ts";
 import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
