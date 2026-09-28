@@ -12,17 +12,15 @@ import { Fanout, type ClientTarget } from "./fanout.ts";
 import { createHostIngest } from "./host-ingest.ts";
 import { openAuditLog, type AuditLog } from "./audit.ts";
 import { createHash } from "node:crypto";
-
 const OUTBOUND_PAYLOAD_MAX = 12 * 1024 * 1024; // 密文+base64 后上限（DESIGN §3.5）
-import { chunkFrame, PAIRING_MAX_CONCURRENT, aeadSeal, buildAad, decodeEnvelope, encodeEnvelope, judgeHostCommand, parseNonce, rekeyDue, startRekey, type Frame } from "@x-harness/remote-protocol";
-import { createPairingServer } from "./pairing-server.ts";
+import { chunkFrame, aeadSeal, buildAad, decodeEnvelope, encodeEnvelope, judgeHostCommand, parseNonce, rekeyDue, startRekey, type Frame } from "@x-harness/remote-protocol";
+import { assemblePairingServer } from "./pairing-assembly.ts";
 import { createLogBuffer } from "./log-buffer.ts";
 import { makeGwDispatcher } from "./gw-dispatch.ts";
 import { makeOwnerDispatcher } from "./owner-dispatch.ts";
 import { newBucket, processInboundLine, type RateBucket } from "./inbound.ts";
 import { startRelayLink, type RelayLinkHandle } from "./relay-link.ts";
 import { createCryptoSessionPool, type CryptoSessionPool } from "./session-crypto.ts";
-
 export interface GatewayOptions {
   agentDir: string;
   now?(): number;
@@ -31,7 +29,6 @@ export interface GatewayOptions {
   /** rekey sweep 间隔（缺省 60s；测试注入缩短） */
   rekeySweepMs?: number;
 }
-
 export interface GatewayHandle {
   identity: GatewayIdentity;
   threads: ThreadsRegistry;
@@ -41,7 +38,7 @@ export interface GatewayHandle {
   ownerServer: OwnerServerHandle;
   host: HostAttach;
   cryptoSessions: CryptoSessionPool;
-  pairingServer: ReturnType<typeof createPairingServer>;
+  pairingServer: import("./pairing-server.ts").PairingServer;
   relayLink: RelayLinkHandle | null;
   stop(): Promise<void>;
   /** 测试面：直接注入 owner 帧 */
@@ -49,7 +46,6 @@ export interface GatewayHandle {
   /** 测试面：注入设备帧（经完整入站管线） */
   ingestDeviceLine(deviceId: string, line: string): Promise<void>;
 }
-
 export async function startGateway(options: GatewayOptions): Promise<GatewayHandle> {
   const now = options.now ?? Date.now;
   let handleRef: GatewayHandle | null = null;
@@ -108,7 +104,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     },
     log,
   });
-
   const hostIngest = createHostIngest({
     fanout,
     devices,
@@ -127,7 +122,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   });
   const ingestHostLine = hostIngest.ingest;
   const seqCounters = new Map<string, number>();
-
   function nextSeqFor(streamId: string): number {
     const next = (seqCounters.get(streamId) ?? 0) + 1;
     seqCounters.set(streamId, next);
@@ -136,32 +130,8 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
 
   host.start();
   const cryptoSessions = createCryptoSessionPool(paths.devicesDir, now);
-  const pairingServer = createPairingServer({
-    identity,
-    relayUrl: config.relayUrl,
-    relayKeyFingerprint: config.relayKeyFingerprint,
-    audit,
-    now,
-    requestPairingTicket: async (pairingId) => {
-      const ticket = await relayLinkRef?.requestPairingTicket(pairingId);
-      return ticket ?? "";
-    },
-    onRegistered: async (device) => {
-      devices.put({
-        deviceId: device.deviceId,
-        name: device.name,
-        deviceType: device.deviceType,
-        platform: device.platform,
-        appVersion: device.appVersion,
-        longTermPub: device.longTermPub,
-        scope: device.scope,
-        pairedAt: now(),
-        lastSeenAt: now(),
-        rekeyCounter: 0,
-      });
-    },
-    maxConcurrent: PAIRING_MAX_CONCURRENT,
-  });
+  const pairingServer = assemblePairingServer({ identity, config, audit, devices, now, relayLink: () => relayLinkRef });
+
   const deviceBuckets = new Map<string, RateBucket>();
   const deviceIngestChains = new Map<string, Promise<void>>(); // per-device 串行化解密
 
@@ -174,7 +144,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     ));
     return run;
   }
-
   const devicePending = new Map<string, Frame[]>();
   const DEVICE_PENDING_MAX = 256;
 
@@ -223,7 +192,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       devicePending.set(deviceId, []);
     }
   }
-
   async function sendToDeviceInner(deviceId: string, frame: Frame): Promise<void> {
     const session = cryptoSessions.get(deviceId) ?? (await cryptoSessions.restore(deviceId));
     const link = relayLinkRef;
@@ -247,14 +215,12 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       await sendSealed({ deviceId, link, ratchet: session.ratchet, frame: segFrame });
     }
   }
-
   interface SealedSendSpec {
     deviceId: string;
     link: RelayLinkHandle;
     ratchet: import("./session-crypto.ts").DeviceCryptoSession["ratchet"];
     frame: Frame;
   }
-
   async function sendSealed(spec: SealedSendSpec): Promise<void> {
     const { deviceId, link, ratchet, frame } = spec;
     const outcome = await ratchet.seal({ plaintext: new TextEncoder().encode(JSON.stringify(frame)), aadFrom: `gw_${identity.installationId}`, aadTo: `dev_${deviceId}` });
@@ -280,7 +246,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     ));
     return run;
   }
-
   async function ingestDeviceLineInner(deviceId: string, line: string): Promise<void> {
     const entry = devices.get(deviceId);
     if (entry === null) return;
@@ -351,7 +316,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       now,
     });
   }
-
   let relayLinkRef: RelayLinkHandle | null = null;
   // 强制 rekey 调度（S4：暴露窗 ≤2000 帧/24h）
   const rekeyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -429,11 +393,9 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       void handleOwnerFrame(session, frame);
     },
   });
-
   interface Reply {
     send(body: unknown): void;
   }
-
   async function submitCommand(spec: { deviceId: string; commandId: string; command: string; args: Record<string, unknown>; reply: Reply; ownerSession?: OwnerSession }): Promise<void> {
     const { deviceId, commandId, command, args, reply, ownerSession } = spec;
     // scope 执法：owner 对 host 命令面也走矩阵（矩阵外/未知拒——S2 fail-closed 不豁免）
@@ -478,13 +440,11 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       reply.send(failure);
     }
   }
-
   function tierOf(deviceId: string): "read" | "interact" | "full" {
     return devices.get(deviceId)?.scope ?? "read";
   }
 
   scheduleRekeyCheck();
-
   const handleGwCommand = makeGwDispatcher({
     identity,
     config,
@@ -504,7 +464,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     },
     logBuffer,
   });
-
   const handleOwnerFrame = makeOwnerDispatcher({
     hostWrite: (line) => host.write(line),
     auditRecord: (event: import("./audit.ts").AuditEvent, detail: Record<string, unknown>) => audit.record(event, detail),
@@ -525,7 +484,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       });
     },
   });
-
   const handle: GatewayHandle = {
     identity,
     threads,

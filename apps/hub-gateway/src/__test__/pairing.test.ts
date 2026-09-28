@@ -29,6 +29,7 @@ function makeServer(now: () => number, registered: Array<{ deviceId: string }> =
     },
     now,
     requestPairingTicket: async (pairingId) => `ticket_${pairingId}`,
+    requestDeviceToken: async () => "devtok_test",
     onRegistered: async (device) => {
       registered.push({ deviceId: device.deviceId });
     },

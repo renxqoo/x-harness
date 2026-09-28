@@ -280,3 +280,16 @@ describe("WSS 接入与路由", () => {
     gw.close();
   });
 });
+
+describe("设备 token 签发（WIRE 设备注册收尾）", () => {
+  it("gateway 代注册设备签发 kind:device token；未注册设备 404；无 token 401", async () => {
+    const res = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_new", installationId }, token: gwToken });
+    expect(res?.status).toBe(200);
+    const parsed = JSON.parse((res?.body ?? "{}") as string) as { token?: string };
+    expect(typeof parsed.token).toBe("string");
+    const unauthorized = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_new", installationId } });
+    expect(unauthorized?.status).toBe(401);
+    const missing = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_ghost", installationId }, token: gwToken });
+    expect(missing?.status).toBe(404);
+  });
+});

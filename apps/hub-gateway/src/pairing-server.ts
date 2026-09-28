@@ -33,6 +33,8 @@ export interface PairingServerOptions {
   requestPairingTicket(pairingId: string): Promise<string>;
   /** 注册完成回调（登记设备 + 发 relay token——B3 由 relay-link 提供） */
   onRegistered(device: { deviceId: string; name: string; deviceType: string; platform: string; appVersion: string; longTermPub: string; scope: "read" | "interact" | "full" }): Promise<void>;
+  /** 设备连接 token 签发（注册落账后；ack 帧随 token 下发——手机端持久化后连 relay） */
+  requestDeviceToken(deviceId: string): Promise<string | null>;
   maxConcurrent: number;
 }
 
@@ -219,7 +221,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       if (session === undefined) return { ok: false, reason: "no such pairing" };
       const nowMs = options.now();
       if (nowMs > session.expiresAt || session.consumed) return { ok: false, reason: "pairing expired" };
-      return pairingFrameInner(this, session, spec);
+      return pairingFrameInner({ server: this, session, spec, deps: options });
     },
   };
 }
@@ -228,11 +230,15 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
 export { SAS_DIGITS };
 
 /** 配对帧分派（p 消息判别）——handlePairingFrame 的实现体（复杂度拆分件） */
-async function pairingFrameInner(
-  server: PairingServer,
-  session: PairingSession,
-  spec: { pairingId: string; message: { p: string; [key: string]: unknown } },
-): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }> {
+interface PairingFrameSpec {
+  server: PairingServer;
+  session: PairingSession;
+  spec: { pairingId: string; message: { p: string; [key: string]: unknown } };
+  deps: PairingServerOptions;
+}
+
+async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }> {
+  const { server, session, spec, deps: options } = ctx;
       if (spec.message.p === "request") {
         const deviceEphemeralPub = typeof spec.message.ephemeralPub === "string" ? spec.message.ephemeralPub : "";
         if (deviceEphemeralPub.length === 0) return { ok: false, reason: "ephemeralPub required" };
@@ -250,11 +256,17 @@ async function pairingFrameInner(
         return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm } };
       }
       if (spec.message.p === "device-keys") {
-        // 设备长期钥呈递（A6：SAS 确认后由 owner 发起 confirm——此帧暂存钥待 confirm 合并）
         const longTermPub = typeof spec.message.longTermPub === "string" ? spec.message.longTermPub : "";
         if (longTermPub.length === 0) return { ok: false, reason: "longTermPub required" };
         session.deviceEphPub = session.deviceEphPub ?? longTermPub;
         (session as PairingSession & { deviceLongTermPub?: string }).deviceLongTermPub = longTermPub;
+        // owner 已 confirm（会话消费）→ 注册落账 → 代发设备连接 token 随 ack 下发
+        if (session.consumed) {
+          const deviceId = `d_${session.pairingId.slice(3)}`;
+          const token = await options.requestDeviceToken(deviceId);
+          if (token === null) return { ok: false, reason: "device token unavailable" };
+          return { ok: true, reply: { p: "ack", relayToken: token, deviceId } };
+        }
         return { ok: true, reply: { p: "ack" } };
       }
       return { ok: false, reason: "unknown pairing message" };

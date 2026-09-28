@@ -138,6 +138,10 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       void handleRevoke(req, res);
       return;
     }
+    if (req.method === "POST" && req.url === "/api/device-token") {
+      void handleDeviceToken(req, res);
+      return;
+    }
     res.writeHead(404).end();
   });
 
@@ -393,6 +397,38 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       await store.revoke(body.deviceId);
       await store.removeDevice(body.deviceId);
       res.writeHead(200).end(JSON.stringify({ ok: true }));
+    } catch {
+      res.writeHead(400).end();
+    }
+  }
+
+  /** 设备连接 token 签发（WIRE §2 设备注册收尾）：调用方为已注册该设备的 gateway
+   *  （Bearer gateway token）；设备须已在路由表（putDevice——配对注册时写入）。
+   *  返回 kind:device / subject=deviceId / installationId=gateway 的 WS 连接 token。 */
+  async function handleDeviceToken(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
+    try {
+      const auth = req.headers.authorization ?? "";
+      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
+      const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
+      if (claims === null || claims.kind !== "gateway") {
+        res.writeHead(401).end();
+        return;
+      }
+      const body = JSON.parse(await readBody(req)) as { deviceId?: string; installationId?: string };
+      if (typeof body.deviceId !== "string" || body.deviceId.length === 0 || typeof body.installationId !== "string") {
+        res.writeHead(400).end();
+        return;
+      }
+      const installationId = body.installationId;
+      // 设备必须已注册且归属该 gateway（路由表查证——冒名/未注册设备不发 token）
+      const routed = await store.getDevice(body.deviceId);
+      if (routed === null || routed.installationId !== installationId) {
+        res.writeHead(404).end(JSON.stringify({ error: "device not registered to this installation" }));
+        return;
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const deviceToken = issueToken(options.tokenSecret, { kind: "device", subject: body.deviceId, installationId, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: newJti() });
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token: deviceToken, expiresIn: TOKEN_TTL_SECONDS }));
     } catch {
       res.writeHead(400).end();
     }

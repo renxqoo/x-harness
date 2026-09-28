@@ -9,6 +9,8 @@ import { enrollTranscript } from "../../hub-relay/src/auth.ts";
 export interface RelayLinkOptions {
   relayUrl: string;
   installationId: string;
+  /** 本 gateway 的 relay 安装标识（device token 归属域——装配层传 identity.installationId）。 */
+  relayInstallationId?: string;
   gatewaySigningSecret: string;
   gatewaySigningPub: string;
   useTls: boolean;
@@ -27,6 +29,8 @@ export interface RelayLinkHandle {
   enrollOnce(): Promise<{ token: string } | null>;
   /** 配对准入票据申请（gateway token 鉴权；手机持它连 relay /pairing 面） */
   requestPairingTicket(pairingId: string): Promise<string | null>;
+  /** 设备连接 token 签发（WIRE 设备注册收尾：注册落账后 gateway 代设备申请） */
+  requestDeviceToken(deviceId: string): Promise<string | null>;
 }
 
 export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
@@ -145,6 +149,19 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
     }
   }
 
+  async function requestDeviceToken(deviceId: string): Promise<string | null> {
+    if (gatewayToken === null) return null;
+    const installationId = options.relayInstallationId ?? options.installationId;
+    const body = JSON.stringify({ deviceId, installationId });
+    const reply = await httpPost(url, { useTls: options.useTls, path: "/api/device-token", body, token: gatewayToken });
+    if (reply === null || reply.status !== 200) {
+      options.log(`device-token failed: ${String(reply?.status)}`);
+      return null;
+    }
+    const parsed = JSON.parse(reply.body) as { token?: string };
+    return typeof parsed.token === "string" ? parsed.token : null;
+  }
+
   async function requestPairingTicket(pairingId: string): Promise<string | null> {
     if (gatewayToken === null) return null;
     const body = JSON.stringify({ pairingId });
@@ -211,6 +228,7 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
     },
     enrollOnce,
     requestPairingTicket,
+    requestDeviceToken,
   };
 }
 
