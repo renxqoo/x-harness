@@ -23,6 +23,7 @@ import { createLocalEnv } from "@x-harness/exec-env";
 import { ObservedRegistry, PathGate } from "@x-harness/tool-core";
 import { createReadPlugin } from "@x-harness/tool-read";
 import { createPermissionPlugin } from "@x-harness/permission";
+import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import { must } from "./check.ts";
 
 /** 双 tool_use 单响应剧本（不同 index 聚积为两块——stream.ts 按 index 分桶） */
@@ -103,8 +104,9 @@ export async function turnReductionJourney(): Promise<void> {
         systemPromptPlugin,
         agentLoopPlugin,
         tokenMeterPlugin,
-        // permission 真装配：批量聚合裁决链全走（auto 档界内 allow——pathsOf 逐条目
-        // in-root 判定后整体放行；deny/ask 面由 B2 单测背书）
+        // permission 真装配（fenceKit 同款序）：modes 在前（V4 模式注册表），插件在后
+        // ——批量聚合裁决链全走（auto 档界内 allow；deny/ask 面由 B2 单测背书）
+        createPermissionModesPlugin(),
         createPermissionPlugin({ root: readRoot }),
         createReadPlugin({ gate, observed, env: createLocalEnv(readRoot) }),
       ]);

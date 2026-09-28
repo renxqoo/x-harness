@@ -236,6 +236,7 @@
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/llm": "workspace:*",
         "@x-harness/permission": "workspace:*",
+        "@x-harness/permission-modes": "workspace:*",
         "@x-harness/plugin-manager": "workspace:*",
         "@x-harness/sandbox": "workspace:*",
         "@x-harness/session": "workspace:*",
