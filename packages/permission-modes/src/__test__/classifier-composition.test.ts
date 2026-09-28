@@ -5,7 +5,6 @@
 import { describe, expect, it } from "vitest";
 import { classifyPipeline } from "../classifier.ts";
 import { parseBash } from "@x-harness/permission";
-import type { ParsedCommand } from "@x-harness/permission";
 
 const ROOT = "/w/app";
 

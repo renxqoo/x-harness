@@ -572,11 +572,13 @@
         "@x-harness/core": "workspace:*",
         "@x-harness/exec-env": "workspace:*",
         "@x-harness/permission": "workspace:*",
-        "@x-harness/permission-modes": "workspace:*",
         "@x-harness/sandbox": "workspace:*",
         "@x-harness/session": "workspace:*",
         "@x-harness/tool-core": "workspace:*",
         "@x-harness/tools": "workspace:*",
+      },
+      "devDependencies": {
+        "@x-harness/permission-modes": "workspace:*",
       },
     },
     "packages/tool-core": {
