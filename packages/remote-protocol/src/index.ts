@@ -1,0 +1,17 @@
+// @x-harness/remote-protocol 导出面（契约包：零 @x-harness/* 依赖）
+export * from "./frames.ts";
+export * from "./envelope.ts";
+export * from "./reliable.ts";
+export * from "./crypto.ts";
+export * from "./ratchet.ts";
+export * from "./pake.ts";
+export * from "./pairing.ts";
+export * from "./vocab.ts";
+export * from "./limits.ts";
+export * from "./hex.ts";
+export { CHUNK_SEGMENT_BYTES, chunkFrame, ChunkReassemblerPool } from "./chunk.ts";
+export { acceptRekey, finishRekey, rekeyDue, startRekey } from "./rekey.ts";
+export type { RekeyMessage, RekeyOutcome } from "./rekey.ts";
+export type { ChunkSegment } from "./chunk.ts";
+export { acceptKey, WebSocketFrameWriter } from "./ws-frame-writer.ts";
+export { WebSocketFrameReader } from "./ws-frame-reader.ts";
