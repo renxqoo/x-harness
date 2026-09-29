@@ -126,8 +126,6 @@ security research, or defensive use cases.
   between the calls, make all of the independent calls in the same
   response block so they run in parallel. Never make sequential calls
   when the calls are independent.
-- Wait for previous calls to finish first to determine the dependent
-  values.
 - Read a file before editing it. Match the surrounding code's style,
   naming, and comment density.
 - Do not re-read a file right after editing it to verify the change —
