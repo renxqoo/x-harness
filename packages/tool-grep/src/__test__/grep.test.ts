@@ -82,17 +82,17 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
   });
 
   it.skipIf(!HAS_RG)("命中 path:line:text；单文件也带文件名；零命中成功", async () => {
-    const hit = await grepWith(registry, { pattern: "beta", path: "app.ts" });
+    const hit = await grepWith(registry, { pattern: "beta", path: "app.ts", output_mode: "content" });
     expect(hit.isError).toBeUndefined();
     expect(hit.content).toContain("app.ts:2:const beta = alpha + 1;");
-    expect(hit.content).toContain("Found 1 matches");
+    expect(hit.content).toContain("Found 1 match");
     const none = await grepWith(registry, { pattern: "zzz-no-such", path: "app.ts" });
     expect(none.isError).toBeUndefined();
     expect(none.content).toContain("No matches found");
   });
 
   it.skipIf(!HAS_RG)("分歧面 fixture：node_modules 与 .git 跳过、隐藏文件搜到、真 .gitignore 不生效、越根 symlink 不跟", async () => {
-    const r = await grepWith(registry, { pattern: "alpha" });
+    const r = await grepWith(registry, { pattern: "alpha", output_mode: "content" });
     expect(r.content).toContain("app.ts");
     expect(r.content).toContain(".env:1:alpha_secret=hidden-hit");
     expect(r.content).toContain("ignored-build.js");
@@ -103,24 +103,24 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
   });
 
   it.skipIf(!HAS_RG)("上下文行 path-line-text（grep -C 惯例）；ignore_case；literal 逃生", async () => {
-    const ctx = await grepWith(registry, { pattern: "beta", path: "app.ts", context: 1 });
+    const ctx = await grepWith(registry, { pattern: "beta", path: "app.ts", output_mode: "content", context: 1 });
     expect(ctx.content).toMatch(/app\.ts-1-const alpha = 1;/);
     expect(ctx.content).toContain("app.ts:2:const beta = alpha + 1;");
-    const ic = await grepWith(registry, { pattern: "ALPHA", path: "app.ts", ignore_case: true });
+    const ic = await grepWith(registry, { pattern: "ALPHA", path: "app.ts", output_mode: "content", ignore_case: true });
     expect(ic.content).toContain("app.ts:1:");
-    const lit = await grepWith(registry, { pattern: "alpha + 1", path: "app.ts", literal: true });
+    const lit = await grepWith(registry, { pattern: "alpha + 1", path: "app.ts", output_mode: "content", literal: true });
     expect(lit.content).toContain("app.ts:2:");
   });
 
   it.skipIf(!HAS_RG)("limit 达限提示（Use limit=N for more）；limit+context 组合形状", async () => {
     writeFileSync(join(root, "multi.txt"), Array.from({ length: 50 }, (_, i) => `hit${String(i)}\n`).join(""));
-    const r = await grepWith(registry, { pattern: "hit", path: "multi.txt", limit: 3 });
-    expect(r.content).toContain("limit 3 reached");
-    expect(r.content).toContain("Use limit=6 for more");
+    const r = await grepWith(registry, { pattern: "hit", path: "multi.txt", output_mode: "content", head_limit: 3 });
+    expect(r.content).toContain("[Showing results with pagination = limit: 3, offset: 0]");
+    expect(r.content.split("\n").filter((line) => line.includes("multi.txt:")).length).toBe(3);
     const direct = r.content.split("\n").filter((line) => line.includes("multi.txt:"));
     expect(direct.length).toBe(3);
     writeFileSync(join(root, "spread.txt"), "noise\nhit1\nnoise\nhit2\nnoise\nhit3\nnoise\nhit4\n");
-    const spread = await grepWith(registry, { pattern: "hit", path: "spread.txt", limit: 2, context: 1 });
+    const spread = await grepWith(registry, { pattern: "hit", path: "spread.txt", output_mode: "content", head_limit: 2, context: 1 });
     expect(spread.content).toContain("spread.txt:2:hit1");
     expect(spread.content).toContain("spread.txt:4:hit2");
     expect(spread.content).toMatch(/spread\.txt-1-noise/);
@@ -130,31 +130,31 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
 
   it.skipIf(!HAS_RG)("selfKilled 达限即停 → 成功 + limit 页脚（回归 A-P0：曾整体坏死为 SEARCH_FAILED）", async () => {
     writeFileSync(join(root, "many.txt"), Array.from({ length: 300 }, (_, i) => `needle${String(i)}\n`).join(""));
-    const r = await grepWith(registry, { pattern: "needle", path: "many.txt", limit: 5 });
+    const r = await grepWith(registry, { pattern: "needle", path: "many.txt", output_mode: "content", head_limit: 5 });
     expect(r.isError).toBeUndefined();
-    expect(r.content).toContain("limit 5 reached");
-    expect(r.content).toContain("Use limit=10 for more");
+    expect(r.content).toContain("[Showing results with pagination = limit: 5, offset: 0]");
+    expect(r.content.split("\n").filter((line) => /many\.txt:\d+:/.test(line)).length).toBe(5);
   });
 
   it.skipIf(!HAS_RG)("坏正则 → SEARCH_FAILED 带 literal 提示；literal:true 逃生成功", async () => {
-    const bad = await grepWith(registry, { pattern: "(unclosed", path: "app.ts" });
+    const bad = await grepWith(registry, { pattern: "(unclosed", path: "app.ts", output_mode: "content" });
     expect(bad.isError).toBe(true);
     expect(bad.content).toContain("SEARCH_FAILED");
     expect(bad.content).toContain("literal:true");
-    const lit = await grepWith(registry, { pattern: "(unclosed", path: "app.ts", literal: true });
+    const lit = await grepWith(registry, { pattern: "(unclosed", path: "app.ts", output_mode: "content", literal: true });
     expect(lit.isError).toBeUndefined();
     expect(lit.content).toContain("No matches found");
   });
 
   it.skipIf(!HAS_RG)("长行 500 字符截断 + read 引导；glob 过滤命中；brace glob 放行", async () => {
     writeFileSync(join(root, "long.txt"), `${"x".repeat(800)}NEEDLE\n`);
-    const r = await grepWith(registry, { pattern: "NEEDLE", path: "long.txt" });
+    const r = await grepWith(registry, { pattern: "NEEDLE", path: "long.txt", output_mode: "content" });
     expect(r.content).toContain("line truncated, use read for full line");
     expect(r.content).not.toContain("x".repeat(600));
-    const globbed = await grepWith(registry, { pattern: "alpha", glob: "*.ts" });
+    const globbed = await grepWith(registry, { pattern: "alpha", glob: "*.ts", output_mode: "content" });
     expect(globbed.content).toContain("app.ts");
     expect(globbed.content).not.toContain(".env");
-    const brace = await grepWith(registry, { pattern: "beta", glob: "*.{ts,tsx}" });
+    const brace = await grepWith(registry, { pattern: "beta", glob: "*.{ts,tsx}", output_mode: "content" });
     expect(brace.isError).toBeUndefined();
   });
 
@@ -171,9 +171,153 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
 
   it.skipIf(!HAS_RG)("大文件流式扫描照常命中（无整读帽 tripwire：2MB 单文件）", async () => {
     writeFileSync(join(root, "big.txt"), `needle-big\n${"z".repeat(2 * 1024 * 1024)}\n`);
-    const r = await grepWith(registry, { pattern: "needle-big", path: "big.txt" });
+    const r = await grepWith(registry, { pattern: "needle-big", path: "big.txt", output_mode: "content" });
     expect(r.isError).toBeUndefined();
     expect(r.content).toContain("big.txt:1:needle-big");
+  });
+
+  it.skipIf(!HAS_RG)("回归（症状：300 字符短行的 300 submatch 事件 ~13.5KB 曾被逐行帽整行丢弃→谎报 No matches found）：短行多命中正常保留", async () => {
+    writeFileSync(join(root, "submatch-heavy.txt"), `${"a".repeat(300)}\n`);
+    const r = await grepWith(registry, { pattern: "a", path: "submatch-heavy.txt", output_mode: "content" });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("Found 1 match");
+    expect(r.content).toContain("submatch-heavy.txt:1:");
+  });
+
+  it.skipIf(!HAS_RG)("回归（症状：多字节行去留曾随 OS 调度漂移）：12000 字节 CJK 行稳定命中且按 500 预览截断", async () => {
+    writeFileSync(join(root, "cjk.txt"), `${"中".repeat(4_000)}NEEDLE\n`);
+    for (let i = 0; i < 5; i += 1) {
+      const r = await grepWith(registry, { pattern: "NEEDLE", path: "cjk.txt", output_mode: "content" });
+      expect(r.isError).toBeUndefined();
+      expect(r.content).toContain("Found 1 match");
+      expect(r.content).toContain("cjk.txt:1:");
+      expect(r.content).toContain("line truncated, use read for full line");
+    }
+  });
+
+  it.skipIf(!HAS_RG)("回归（症状：latin1/GBK 文件 lines.bytes 事件曾被静默丢弃）：非 UTF-8 文件命中保留（容错解码）", async () => {
+    writeFileSync(join(root, "latin1.txt"), Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x20, 0x4e, 0x45, 0x45, 0x44, 0x4c, 0x45, 0x0a]));
+    const r = await grepWith(registry, { pattern: "NEEDLE", path: "latin1.txt", output_mode: "content" });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("Found 1 match");
+    expect(r.content).toContain("latin1.txt:1:");
+    expect(r.content).toContain("NEEDLE");
+  });
+
+  it.skipIf(!HAS_RG)("回归（症状：密集命中行曾报 SEARCH_RAW_OUTPUT_OVERFLOW 整流报废）：单行 10 万命中不炸流，命中行保留（长事件行页脚提示）", async () => {
+    writeFileSync(join(root, "dense.txt"), `${"z".repeat(100_000)}\nNEEDLE z\n`);
+    const r = await grepWith(registry, { pattern: "NEEDLE|z", path: "dense.txt", output_mode: "content", head_limit: 10 });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("dense.txt:2:NEEDLE z");
+    expect(r.content).toContain("use read");
+  });
+
+  it.skipIf(!HAS_RG)("回归（症状：8KB+ 整块完整行曾被逐行帽误杀）：50 行小命中单 chunk 到达全保留", async () => {
+    writeFileSync(join(root, "multi2.txt"), Array.from({ length: 50 }, (_, i) => `hit${String(i)}\n`).join(""));
+    const r = await grepWith(registry, { pattern: "hit", path: "multi2.txt", output_mode: "content" });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("Found 50 matches");
+    expect(r.content).not.toContain("use read");
+  });
+
+  it.skipIf(!HAS_RG)("默认模式 files_with_matches：文件列表 + 命中数，mtime 新者在前", async () => {
+    writeFileSync(join(root, "old.ts"), "needle\n");
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20);
+    });
+    writeFileSync(join(root, "new.ts"), "needle needle\n");
+    const r = await grepWith(registry, { pattern: "needle", glob: "*.ts", head_limit: 10 });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("Found 2 files with matches");
+    const newIdx = r.content.indexOf("new.ts (1 match)");
+    const oldIdx = r.content.indexOf("old.ts (1 match)");
+    expect(newIdx).toBeGreaterThanOrEqual(0);
+    expect(oldIdx).toBeGreaterThanOrEqual(0);
+    expect(newIdx).toBeLessThan(oldIdx);
+  });
+
+  it.skipIf(!HAS_RG)("count 模式：per-file 计数降序 + 总数头部", async () => {
+    writeFileSync(join(root, "few.ts"), "needle\n");
+    writeFileSync(join(root, "many3.ts"), "needle\nneedle\nneedle\n");
+    const r = await grepWith(registry, { pattern: "needle", glob: "*.ts", output_mode: "count" });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("Found 4 matches across 2 files");
+    const manyIdx = r.content.indexOf("many3.ts:3");
+    const fewIdx = r.content.indexOf("few.ts:1");
+    expect(manyIdx).toBeGreaterThanOrEqual(0);
+    expect(fewIdx).toBeGreaterThanOrEqual(0);
+    expect(manyIdx).toBeLessThan(fewIdx);
+  });
+
+  it.skipIf(!HAS_RG)("content 模式 offset 真分页：第二页不重跑前页内容", async () => {
+    writeFileSync(join(root, "page.txt"), Array.from({ length: 10 }, (_, i) => `row${String(i)}\n`).join(""));
+    const p1 = await grepWith(registry, { pattern: "row", path: "page.txt", output_mode: "content", head_limit: 4 });
+    expect(p1.content).toContain("row0");
+    expect(p1.content).toContain("row3");
+    expect(p1.content).not.toContain("row4");
+    expect(p1.content).toContain("limit: 4, offset: 0");
+    const p2 = await grepWith(registry, { pattern: "row", path: "page.txt", output_mode: "content", head_limit: 4, offset: 4 });
+    expect(p2.content).toContain("row4");
+    expect(p2.content).toContain("row7");
+    expect(p2.content).not.toContain("row0");
+    expect(p2.content).toContain("limit: 4, offset: 4");
+  });
+
+  it.skipIf(!HAS_RG)("相对路径输出：结果行不带工作区绝对路径前缀（省 token）", async () => {
+    writeFileSync(join(root, "relprobe.ts"), "RELNEEDLE here\n");
+    const r = await grepWith(registry, { pattern: "RELNEEDLE", path: "relprobe.ts", output_mode: "content" });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("relprobe.ts:1:RELNEEDLE here");
+    expect(r.content).not.toContain(root);
+  });
+
+  it.skipIf(!HAS_RG)("type 过滤：rg --type 只搜指定类型文件", async () => {
+    writeFileSync(join(root, "t-a.ts"), "TYPEPROBE\n");
+    writeFileSync(join(root, "t-b.md"), "TYPEPROBE\n");
+    const r = await grepWith(registry, { pattern: "TYPEPROBE", type: "ts", output_mode: "content" });
+    expect(r.isError).toBeUndefined();
+    expect(r.content).toContain("t-a.ts:1:TYPEPROBE");
+    expect(r.content).not.toContain("t-b.md");
+  });
+
+  it.skipIf(!HAS_RG)("multiline 跨行匹配：--multiline + dotall 命中跨行 pattern", async () => {
+    writeFileSync(join(root, "ml-probe.ts"), "struct Bar {\n  fieldX: string;\n}\n");
+    const off = await grepWith(registry, { pattern: "Bar \\{.*fieldX", output_mode: "content", glob: "ml-probe.ts" });
+    expect(off.content).toContain("No matches found");
+    const on = await grepWith(registry, { pattern: "Bar \\{.*fieldX", output_mode: "content", glob: "ml-probe.ts", multiline: true });
+    expect(on.isError).toBeUndefined();
+    expect(on.content).toContain("ml-probe.ts:1:struct Bar {");
+    expect(on.content).toContain("fieldX: string;");
+  });
+
+  it.skipIf(!HAS_RG)("回归（对拍 Claude Code 发现：分页曾依赖 rg 并行遍历序，跨调用翻页漏行）：content 排序后分页稳定全覆盖", async () => {
+    for (let i = 0; i < 6; i += 1) writeFileSync(join(root, `pg${String(i)}.txt`), `pghit ${String(i)}\n`);
+    for (let round = 0; round < 3; round += 1) {
+      const all: string[] = [];
+      for (const off of [0, 2, 4]) {
+        const r = await grepWith(registry, { pattern: "pghit", glob: "pg?.txt", output_mode: "content", head_limit: 2, offset: off });
+        for (const line of r.content.split("\n")) if (/pg\d\.txt:\d:/.test(line)) all.push(line);
+      }
+      expect(new Set(all).size, `round ${String(round)}`).toBe(6);
+      expect(all.length, `round ${String(round)}`).toBe(6);
+    }
+  });
+
+  it.skipIf(!HAS_RG)("files_with_matches 分页：offset 跳过前 N 文件（尾部页无页脚）", async () => {
+    for (let i = 0; i < 5; i += 1) {
+      writeFileSync(join(root, `pf${String(i)}.txt`), "pageneedle\n");
+      await new Promise((resolve) => {
+        setTimeout(resolve, 15);
+      });
+    }
+    const r = await grepWith(registry, { pattern: "pageneedle", glob: "pf*.txt", head_limit: 2, offset: 3 });
+    const shown = r.content.split("\n").filter((line) => line.includes(".txt (1 match)"));
+    expect(shown.length).toBe(2);
+    expect(r.content).toContain("pf1.txt");
+    expect(r.content).toContain("pf0.txt");
+    expect(r.content).not.toContain("pf4.txt");
+    expect(r.content).not.toContain("pf3.txt");
+    expect(r.content).not.toContain("pagination");
   });
 
   it.skipIf(!HAS_RG)("二进制文件跳过（目录搜索）：含 pattern 字节的二进制不出错不命中", async () => {
@@ -229,7 +373,7 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     try {
       const made = await makeRegistry(root, { rgPath: first });
       cleanups.push(made.cleanup);
-      const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts" });
+      const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts", output_mode: "content" });
       expect(r.content).toContain("from-explicit");
       expect(r.content).not.toContain("from-env");
     } finally {
@@ -245,7 +389,7 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     try {
       const made = await makeRegistry(root);
       cleanups.push(made.cleanup);
-      const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts" });
+      const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts", output_mode: "content" });
       expect(r.content).toContain("from-env");
     } finally {
       if (saved === undefined) delete process.env.X_HARNESS_RG_PATH;
@@ -279,7 +423,7 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
       chmodSync(join(binDir, "rg"), 0o755);
       const made = await makeRegistry(root, { rgBinDir: binDir });
       cleanups.push(made.cleanup);
-      const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts" });
+      const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts", output_mode: "content" });
       expect(r.isError).toBeUndefined();
       expect(r.content).toContain("from-bundled-dir");
     } finally {
@@ -346,90 +490,6 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     expect(out).toContain("X_HARNESS_RG_PATH");
     expect(out).toContain("rgPath");
   }, 15_000);
-});
-
-describe("grep 假 rg 注入装置（rgPath 假 rg——fail-closed 矩阵）", () => {
-  it("malformed：完整行非 JSON → SEARCH_FAILED（回归：曾静默当零命中——假空比错误危险）", async () => {
-    const made = await makeRegistry(root, { rgPath: fakeRg("echo 'this is not json'; exit 0") });
-    cleanups.push(made.cleanup);
-    const r = await grepWith(made.registry, { pattern: "x", path: "app.ts" });
-    expect(r.isError).toBe(true);
-    expect(r.content).toContain("malformed");
-  });
-
-  it("RAW_OVERFLOW：rg 输出超 1MB 原始帽 → SEARCH_RAW_OUTPUT_OVERFLOW", async () => {
-    const fatLine = JSON.stringify({ type: "match", data: { path: { text: "app.ts" }, line_number: 1, lines: { text: "x".repeat(4_000) } } });
-    const made = await makeRegistry(root, { rgPath: fakeRg(`for i in $(seq 1 300); do echo '${fatLine}'; done; exit 0`) });
-    cleanups.push(made.cleanup);
-    const r = await grepWith(made.registry, { pattern: "x", path: "app.ts", limit: 1000 });
-    expect(r.isError).toBe(true);
-    expect(r.content).toContain("SEARCH_RAW_OUTPUT_OVERFLOW");
-  });
-
-  it("中途 abort：慢速输出中的 rg 被杀 → SEARCH_ABORTED（真时序，非前置 abort）", async () => {
-    const made = await makeRegistry(root, { rgPath: fakeRg("for i in $(seq 1 600); do echo \"tick $i\"; sleep 0.05; done") });
-    cleanups.push(made.cleanup);
-    const controller = new AbortController();
-    const floating = made.registry.dispatch({ callId: `g${String((counter += 1))}`, name: "grep", args: { pattern: "x", path: "app.ts" }, signal: controller.signal });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 200);
-    });
-    controller.abort();
-    const r = await floating;
-    expect(r.isError).toBe(true);
-    expect(r.content).toBe("aborted");
-  }, 10_000);
-
-  it("kill 后残余未解析输出丢弃：abort 杀于半行输出 → 管线归一 aborted（已解析行即终态）", async () => {
-    const made = await makeRegistry(root, { rgPath: fakeRg(`printf torn-half; for i in $(seq 1 600); do sleep 0.05; done`) });
-    cleanups.push(made.cleanup);
-    const controller = new AbortController();
-    const floating = made.registry.dispatch({ callId: `g${String((counter += 1))}`, name: "grep", args: { pattern: "hit", path: "app.ts" }, signal: controller.signal });
-    await new Promise((resolve) => {
-      setTimeout(resolve, 200);
-    });
-    controller.abort();
-    const r = await floating;
-    expect(r.isError).toBe(true);
-    expect(r.content).toBe("aborted");
-  }, 10_000);
-
-  it("argv 矩阵（真 spawn 取证）：--json/--no-config/--no-messages/--hidden/--no-ignore/跳过集/--fixed-strings/--ignore-case/--regexp 惰性/`--` 分隔全在场", async () => {
-    const made = await makeRegistry(root, { rgPath: fakeRg("for a in \"$@\"; do echo \"ARG:$a\" >&2; done; exit 2") });
-    cleanups.push(made.cleanup);
-    const r = await grepWith(made.registry, { pattern: "--pre=payload.sh", path: "app.ts", literal: true, ignore_case: true, context: 2 });
-    expect(r.isError).toBe(true);
-    for (const flag of ["ARG:--json", "ARG:--no-config", "ARG:--no-messages", "ARG:--hidden", "ARG:--no-ignore", "ARG:--glob", "ARG:!node_modules", "ARG:!.git", "ARG:--fixed-strings", "ARG:--ignore-case", "ARG:--context", "ARG:2", "ARG:--regexp", "ARG:--pre=payload.sh", "ARG:--"]) {
-      expect(r.content, flag).toContain(flag);
-    }
-  });
-
-  it("exit 2 + stderr regex 特征 → SEARCH_FAILED 带 literal 提示", async () => {
-    const made = await makeRegistry(root, { rgPath: fakeRg("echo 'regex parse error at 1:1' >&2; exit 2") });
-    cleanups.push(made.cleanup);
-    const r = await grepWith(made.registry, { pattern: "x", path: "app.ts" });
-    expect(r.isError).toBe(true);
-    expect(r.content).toContain("SEARCH_FAILED");
-    expect(r.content).toContain("literal:true");
-  });
-});
-
-describe("rg-line 纯函数", () => {
-  it("parseRgLine 分类：match/context/other/malformed；settleRg malformed/aborted fail-closed", async () => {
-    const { parseRgLine, settleRg } = await import("../grep.ts");
-    const matches: Array<{ path: string; line: number; text: string; isContext: boolean }> = [];
-    expect(parseRgLine(JSON.stringify({ type: "begin", data: { path: { text: "a" } } }), matches)).toBe("other");
-    expect(parseRgLine(JSON.stringify({ type: "match", data: { path: { text: "a.ts" }, line_number: 3, lines: { text: "hit\n" } } }), matches)).toBe("match");
-    expect(parseRgLine(JSON.stringify({ type: "context", data: { path: { text: "a.ts" }, line_number: 2, lines: { text: "near\n" } } }), matches)).toBe("context");
-    expect(parseRgLine("garbage {", matches)).toBe("malformed");
-    expect(matches[0]).toEqual({ path: "a.ts", line: 3, text: "hit", isContext: false });
-    const failed = settleRg({ code: 0, signal: null, selfKilled: false, malformed: true, rawOverflow: false, aborted: false, stderrTail: "", matches: [], limit: 100 });
-    expect(failed.isError).toBe(true);
-    expect(failed.content).toContain("malformed");
-    const aborted = settleRg({ code: 0, signal: null, selfKilled: true, malformed: false, rawOverflow: true, aborted: true, stderrTail: "", matches: [], limit: 100 });
-    expect(aborted.isError).toBe(true);
-    expect(aborted.content).toContain("SEARCH_ABORTED");
-  });
 });
 
 describe("并发档声明（§6 横切——真实 registry 口径）", () => {
