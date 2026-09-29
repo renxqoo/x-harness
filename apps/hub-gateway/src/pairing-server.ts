@@ -8,6 +8,8 @@ import type { AuditLog } from "./audit.ts";
 export interface PairingSession {
   /** 已签发的设备连接 token（单 token 语义——重放 device-keys 返回同一枚） */
   deviceToken: string | null;
+  /** 配对档位（R3 H6：startQr/startManual 的 scope 参数线程化——注册落账用） */
+  scope: "read" | "interact" | "full";
   pairingId: string;
   mode: "qr" | "manual";
   gwEphemeral: { secret: string; pub: string };
@@ -35,8 +37,9 @@ export interface PairingServerOptions {
   requestPairingTicket(pairingId: string): Promise<string>;
   /** 注册完成回调（登记设备 + 发 relay token——B3 由 relay-link 提供） */
   onRegistered(device: { deviceId: string; name: string; deviceType: string; platform: string; appVersion: string; longTermPub: string; scope: "read" | "interact" | "full" }): Promise<void>;
-  /** 设备连接 token 签发（注册落账后；ack 帧随 token 下发——手机端持久化后连 relay） */
-  requestDeviceToken(deviceId: string): Promise<string | null>;
+  /** 设备连接 token 签发（注册落账后；ack 帧随 token 下发——手机端持久化后连 relay；
+   *  deviceLongTermPub 透传钉存——设备 token 续期挑战的验签锚） */
+  requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null>;
   maxConcurrent: number;
 }
 
@@ -90,6 +93,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
     const gwEphemeral = newDeviceEphemeral();
     const session: PairingSession = {
       deviceToken: null,
+      scope,
       pairingId,
       mode,
       gwEphemeral,
@@ -124,6 +128,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
         relayUrl: options.relayUrl,
         relayKeyFingerprint: options.relayKeyFingerprint,
         gatewayKeyFingerprint: options.identity.signingPub,
+        installationId: options.identity.installationId,
         pairingId: session.pairingId,
         gwEphemeralPub: session.gwEphemeral.pub,
         pairingTicket: ticket,
@@ -150,7 +155,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
         gwEphemeralPub: session.gwEphemeral.pub,
         deviceEphemeralPub: spec.deviceEphemeralPub,
         relayUrl: options.relayUrl,
-        scope: "read", // owner 通道发起配对缺省 read（§2.1#1 缓解）
+        scope: session.scope, // R3 H6：配对发起时 owner 选档（缺省 read）
       });
       if (channel === null) return Promise.resolve({ ok: false as const, reason: "channel establishment failed" });
       session.channelKey = channel.channelKey;
@@ -288,7 +293,7 @@ async function deviceKeysReply(ctx: { session: PairingSession; spec: { pairingId
   const deviceId = `d_${session.pairingId.slice(3)}`;
   // 单 token 语义（R2 H6）：首枚缓存重发——重放不再铸造新 jti
   if (session.deviceToken === null) {
-    const token = await deps.requestDeviceToken(deviceId);
+    const token = await deps.requestDeviceToken(deviceId, longTermPub);
     if (token === null) return { ok: false, reason: "device token unavailable" };
     session.deviceToken = token;
   }
