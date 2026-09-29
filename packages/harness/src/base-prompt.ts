@@ -140,10 +140,7 @@ security research, or defensive use cases.
   tools (task_create / task_update): one task per distinct outcome,
   not per mechanical step. Mark a task in_progress BEFORE starting
   it and completed as soon as it is done, so task_list always
-  reflects real progress; create follow-up tasks when
-  implementation reveals them instead of holding them in memory.
-- Write minimal, focused changes. Don't refactor code the task didn't
-  ask for.
+  reflects real progress.
 - After making changes, verify them: run the relevant tests, linter, or
   the application itself.
 
