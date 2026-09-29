@@ -392,12 +392,20 @@ describe("host 本地命令（注入 IO）", () => {
 
   test("thread/list_saved：真实档案折叠（title 派生/updatedAt 序/子代理滤除）", async () => {
     const f = await startHost();
-    const mk = async (sid: string, title: string | undefined, agent?: string): Promise<void> => {
+    const mk = async (sid: string, title: string | undefined, shape?: { agent?: string; withSnapshots?: true }): Promise<void> => {
       const dir = join(f.sessionsRoot, sid);
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, "header.json"), JSON.stringify({ id: sid, createdAt: 1, cwd: "/proj", ...(agent !== undefined ? { agentId: agent } : {}) }), "utf8");
+      await writeFile(join(dir, "header.json"), JSON.stringify({ id: sid, createdAt: 1, cwd: "/proj", ...(shape?.agent !== undefined ? { agentId: shape.agent } : {}) }), "utf8");
+      const snapshot = (kind: string, body: string) => ({
+        type: "user/message",
+        time: 5,
+        data: { turn: 0, step: 0, content: [{ type: "text", text: `<snapshot kind="${kind}">\nThis snapshot supersedes earlier snapshots of this kind.\n${body}\n</snapshot>` }] },
+        surfaceOp: "append",
+      });
       const events = [
         { type: "turn/start", time: 10, data: { turn: 0 } },
+        // 快照先于真话落账（kick 边沿在锚点之前）——title 派生必须跳过
+        ...(shape?.withSnapshots === true ? [snapshot("agent-types", "Available agent types:\n- explore"), snapshot("date", "Today's date: 2026-09-30")] : []),
         { type: "user/message", time: 11, data: { turn: 0, step: 0, content: [{ type: "text", text: "first user message" }] }, surfaceOp: "append" },
         ...(title !== undefined ? [{ type: "session/meta", time: 12, data: { key: "title", value: title } }] : []),
         { type: "turn/end", time: 13, data: { turn: 0, reason: { kind: "completed" } } },
@@ -406,15 +414,19 @@ describe("host 本地命令（注入 IO）", () => {
     };
     await mk("saveda", undefined);
     await mk("savedb", "named thread");
-    await mk("agentchild", undefined, "agent-12345678");
+    await mk("agentchild", undefined, { agent: "agent-12345678" });
+    // 症状回归「对话列表把快照信封当会话标题」：首条落账是注入快照时
+    await mk("snapfirst", undefined, { withSnapshots: true });
     f.send({ type: "thread/list_saved", id: "ls1" });
     const listed = await waitResponse(f.client, "thread/list_saved", "ls1");
     const sessions = (listed["data"] as { sessions: Array<{ id: string; title: string; messageCount: number; lastSeq: number; updatedAt: number }> }).sessions;
-    expect(sessions.map((s) => s.id).sort()).toEqual(["saveda", "savedb"]);
+    expect(sessions.map((s) => s.id).sort()).toEqual(["saveda", "savedb", "snapfirst"]);
     const a = sessions.find((s) => s.id === "saveda");
     expect(a?.title).toBe("first user message");
     expect(a?.messageCount).toBe(1);
     expect(a?.lastSeq).toBe(2);
+    // 快照不再冒充标题（症状：对话列表显示 `<snapshot kind="agent-types">`）
+    expect(sessions.find((s) => s.id === "snapfirst")?.title).toBe("first user message");
   });
 
   test("skills 面旅程（隔离 HOME）：list 见 user 层 → inspect 三态 → install 落盘 → set_enabled → remove 目录删除", async () => {

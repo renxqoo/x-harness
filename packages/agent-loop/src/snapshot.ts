@@ -1,5 +1,5 @@
 import type { Context, Disposer } from "@x-harness/core";
-import type { Session, SessionId, SurfaceNode } from "@x-harness/session";
+import type { Session, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
 import type { AgentLoopService } from "./types.ts";
 import type { Dial } from "./tokens.ts";
 import { agentRequest, agentStatus } from "./tokens.ts";
@@ -10,14 +10,21 @@ export function snapshotEnvelope(kind: string, body: string): string {
   return `<snapshot kind="${kind}">\n${SNAPSHOT_SUPERSEDES}\n${body}\n</snapshot>`;
 }
 
-export function isSnapshotNode(node: SurfaceNode): boolean {
-  const event = node.event;
+/** 快照事件谓词（四重合取：append op ∧ user/message ∧ 单 text 块 ∧ 信封首行 + 作废次行）。
+ *  节点与裸事件两入口共用同一实现（node.event 即判据本体）——宿主只握 SessionEvent
+ *  （saved-query 的 title 派生）时不必冒造 SurfaceNode 形。 */
+export function isSnapshotEvent(event: SessionEvent): boolean {
   if (event.type !== "user/message" || event.surfaceOp !== "append") return false;
   const block = event.data.content[0];
   if (event.data.content.length !== 1 || block?.type !== "text") return false;
   const lines = block.text.split("\n");
   const head = lines[0];
   return typeof head === "string" && head.startsWith('<snapshot kind="') && head.endsWith(">") && lines[1] === SNAPSHOT_SUPERSEDES;
+}
+
+/** 快照节点谓词：即事件谓词（单一实现——两份字面量会漂移） */
+export function isSnapshotNode(node: SurfaceNode): boolean {
+  return isSnapshotEvent(node.event);
 }
 
 function envelopeHead(text: string): string | undefined {

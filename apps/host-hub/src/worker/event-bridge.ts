@@ -59,8 +59,18 @@ export interface EventBridge {
   childBusy(): boolean;
 }
 
+/** session 事件 → wire payload：{seq, time, ...data, session, surfaceOp?}——session 后置（事件
+ *  数据词表无 session 键，不遮蔽；主会话 session === threadId，客户端一条规则过滤归属）。
+ *  surfaceOp 随附（与 get_entries 条目投影 projectEntry 同形）：消费方靠它区分 replace 型
+ *  载体（压缩摘要）与 append 型真话，以及识别边沿注入快照（快照谓词要求 append）。 */
 function sessionPayload(event: SessionEvent, session: string): Record<string, unknown> {
-  return { seq: event.seq, time: event.time, ...(event.data as Record<string, unknown>), session };
+  return {
+    seq: event.seq,
+    time: event.time,
+    ...(event.data as Record<string, unknown>),
+    session,
+    ...(event.surfaceOp !== undefined ? { surfaceOp: event.surfaceOp } : {}),
+  };
 }
 
 function settleOfTurnEnd(event: SessionEvent): { ok: boolean; reason: string | undefined } {

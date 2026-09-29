@@ -1,4 +1,5 @@
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
+import { isSnapshotEvent } from "@x-harness/agent-loop";
 import type { SessionEvent, SessionHeader } from "@x-harness/session";
 import { foldDial, foldMeta } from "../shared/meta-fold.ts";
 import { DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
@@ -18,9 +19,14 @@ export interface SavedSession {
 
 const TITLE_DERIVED_CAP = 80;
 
+/** 首条**真实用户消息**文本（title 派生源——截断到 80 字符）。
+ *  边沿注入快照（agent-types/date/项目指令/技能清单/model/permission-mode）同落
+ *  user/message 且排在真话之前——不过滤会把信封首行当成会话标题。谓词走内核
+ *  单源 isSnapshotEvent（与展示面/切口语义同一判据，禁止本地字面量匹配）。 */
 function derivedTitle(events: readonly SessionEvent[]): string {
   for (const event of events) {
     if (event.type !== "user/message") continue;
+    if (isSnapshotEvent(event)) continue;
     const text = event.data.content
       .filter((block): block is { type: "text"; text: string } => block.type === "text")
       .map((block) => block.text)
