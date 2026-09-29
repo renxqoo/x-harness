@@ -330,3 +330,26 @@ describe("R2 H5/H6 回归：租户执法与 deviceId 格式", () => {
     expect(res?.status).toBe(200);
   });
 });
+
+describe("R2 M12 回归：设备 token 换发（长期钥签名挑战）", () => {
+  it("钉存钥签名换发成功；错钥 401；未钉存 404", async () => {
+    const devKeys = generateSigningKeyPair();
+    const reg = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_beef00000000cafe", deviceLongTermPub: devKeys.pub }, token: gwToken });
+    expect(reg?.status).toBe(200);
+    const nonce = "nonce-test-1";
+    const { enrollTranscript } = await import("../auth.ts");
+    void enrollTranscript;
+    const transcript = `device-refresh|d_beef00000000cafe|${relay.nodeId}|${nonce}`;
+    const sig = signBytes(devKeys.secret, new TextEncoder().encode(transcript));
+    const ok = await httpPost({ port: relayPort(relay), path: "/api/device-token/refresh", body: { deviceId: "d_beef00000000cafe", nonce, sig } });
+    expect(ok?.status).toBe(200);
+    const parsed = JSON.parse((ok?.body ?? "{}") as string) as { token?: string };
+    expect(typeof parsed.token).toBe("string");
+    const wrong = generateSigningKeyPair();
+    const sigBad = signBytes(wrong.secret, new TextEncoder().encode(transcript));
+    const denied = await httpPost({ port: relayPort(relay), path: "/api/device-token/refresh", body: { deviceId: "d_beef00000000cafe", nonce, sig: sigBad } });
+    expect(denied?.status).toBe(401);
+    const unpinned = await httpPost({ port: relayPort(relay), path: "/api/device-token/refresh", body: { deviceId: "d_123400000000abcd", nonce, sig } });
+    expect(unpinned?.status).toBe(404);
+  });
+});

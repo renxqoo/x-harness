@@ -65,3 +65,4 @@
 ## 7. 测试向量
 
 实现互校以仓内测试为准：`packages/remote-protocol/src/__test__/`（crypto.test.ts 的 RFC 向量、ratchet.test.ts 的 N 帧互发、pairing.test.ts 的 SAS/PAKE、ws 帧矩阵）；e2e 旅程 `packages/remote-client/src/__test__/e2e.test.ts`。
+- `POST /api/device-token/refresh` {deviceId, nonce, sig}——设备长期钥签名挑战应答（TOFU 钉存钥验签；15min TTL 的可持续续期路径，M12）。

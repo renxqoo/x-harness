@@ -31,6 +31,12 @@ export function createRedisStore(spec: { host: string; port: number; password?: 
       const raw = await client.get(ROUTE_KEY_DEVICE + id);
       return raw === null ? null : (JSON.parse(raw) as DeviceValue);
     },
+    async getDeviceKey(id) {
+      return client.get(`xh-relay:device-key:${id}`);
+    },
+    async putDeviceKey(id, longTermPub) {
+      await client.set(`xh-relay:device-key:${id}`, longTermPub);
+    },
     async putDevice(id, value) {
       await ready();
       await client.set(ROUTE_KEY_DEVICE + id, JSON.stringify(value));

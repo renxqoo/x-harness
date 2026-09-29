@@ -3,9 +3,11 @@ export interface RouteStore {
   /** installationId → {gatewayKeyPub（enroll 钉存），nodeId（当前连接节点） */
   getInstallation(installationId: string): Promise<{ gatewayKeyPub: string; nodeId: string } | null>;
   putInstallation(installationId: string, value: { gatewayKeyPub: string; nodeId: string }): Promise<void>;
-  /** deviceId → installationId 归属 + 当前连接节点 */
+  /** deviceId → installationId 归属 + 当前连接节点 + 设备长期钥（M12 refresh 验签锚；TOFU 钉存） */
   getDevice(deviceId: string): Promise<{ installationId: string; nodeId: string } | null>;
   putDevice(deviceId: string, value: { installationId: string; nodeId: string }): Promise<void>;
+  getDeviceKey(deviceId: string): Promise<string | null>;
+  putDeviceKey(deviceId: string, longTermPub: string): Promise<void>;
   removeDevice(deviceId: string): Promise<void>;
   /** 撤销名单（deviceId 集合） */
   isRevoked(deviceId: string): Promise<boolean>;
@@ -20,6 +22,7 @@ export interface RouteStore {
 export function createMemoryStore(nodeId: string): RouteStore & { publishToChannel(installationId: string, message: string): void } {
   const installations = new Map<string, { gatewayKeyPub: string; nodeId: string }>();
   const devices = new Map<string, { installationId: string; nodeId: string }>();
+  const deviceKeys = new Map<string, string>();
   const revoked = new Set<string>();
   const subscribers: Array<(installationId: string, message: string) => void> = [];
   return {
@@ -37,6 +40,12 @@ export function createMemoryStore(nodeId: string): RouteStore & { publishToChann
     },
     async putDevice(id, value) {
       devices.set(id, value);
+    },
+    async getDeviceKey(id) {
+      return deviceKeys.get(id) ?? null;
+    },
+    async putDeviceKey(id, longTermPub) {
+      deviceKeys.set(id, longTermPub);
     },
     async removeDevice(id) {
       devices.delete(id);

@@ -142,6 +142,10 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       void handleDeviceToken(req, res);
       return;
     }
+    if (req.method === "POST" && req.url === "/api/device-token/refresh") {
+      void handleDeviceTokenRefresh(req, res);
+      return;
+    }
     res.writeHead(404).end();
   });
 
@@ -426,10 +430,19 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         res.writeHead(401).end();
         return;
       }
-      const body = JSON.parse(await readBody(req)) as { deviceId?: string };
+      const body = JSON.parse(await readBody(req)) as { deviceId?: string; deviceLongTermPub?: string };
       if (typeof body.deviceId !== "string" || !/^d_[0-9a-f]{16}$/.test(body.deviceId)) {
         res.writeHead(400).end(JSON.stringify({ error: "bad deviceId format" }));
         return;
+      }
+      // 设备长期钥 TOFU 钉存（M12 refresh 验签锚）：冲突即拒
+      if (typeof body.deviceLongTermPub === "string" && body.deviceLongTermPub.length > 0) {
+        const pinned = await store.getDeviceKey(body.deviceId);
+        if (pinned === null) await store.putDeviceKey(body.deviceId, body.deviceLongTermPub);
+        else if (pinned !== body.deviceLongTermPub) {
+          res.writeHead(409).end(JSON.stringify({ error: "device key conflict" }));
+          return;
+        }
       }
       // 归属取调用方身份（R2 H5）：body 自声明改绑通道封死；gateway token 即注册凭据
       const installationId = claims.subject;
@@ -446,6 +459,39 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       const now = Math.floor(Date.now() / 1000);
       const deviceToken = issueToken(options.tokenSecret, { kind: "device", subject: body.deviceId, installationId, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: newJti() });
       res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token: deviceToken, expiresIn: TOKEN_TTL_SECONDS }));
+    } catch {
+      res.writeHead(400).end();
+    }
+  }
+
+  /** 设备 token 换发（M12）：设备长期钥签名挑战应答（无需 relay 连接 token——
+   *  签名即所有权证明；15min TTL 到期后的可持续续期路径）。
+   *  挑战源：nodeId + nonce（设备经任意可达途径获取——如 gateway 转发或注册时缓存）。 */
+  async function handleDeviceTokenRefresh(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
+    try {
+      const body = JSON.parse(await readBody(req)) as { deviceId?: string; nonce?: string; sig?: string };
+      if (typeof body.deviceId !== "string" || !/^d_[0-9a-f]{16}$/.test(body.deviceId) || typeof body.nonce !== "string" || typeof body.sig !== "string") {
+        res.writeHead(400).end();
+        return;
+      }
+      const pinnedKey = await store.getDeviceKey(body.deviceId);
+      if (pinnedKey === null) {
+        res.writeHead(404).end(JSON.stringify({ error: "device key not pinned" }));
+        return;
+      }
+      const transcript = `device-refresh|${body.deviceId}|${nodeId}|${body.nonce}`;
+      if (!verifyBytes(pinnedKey, new TextEncoder().encode(transcript), body.sig)) {
+        res.writeHead(401).end(JSON.stringify({ error: "bad signature" }));
+        return;
+      }
+      const routed = await store.getDevice(body.deviceId);
+      if (routed === null) {
+        res.writeHead(404).end(JSON.stringify({ error: "device not registered" }));
+        return;
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const deviceToken = issueToken(options.tokenSecret, { kind: "device", subject: body.deviceId, installationId: routed.installationId, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: newJti() });
+      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token: deviceToken, expiresIn: TOKEN_TTL_SECONDS, nodeId }));
     } catch {
       res.writeHead(400).end();
     }
