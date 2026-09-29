@@ -8,6 +8,7 @@ export interface RouteStore {
   putDevice(deviceId: string, value: { installationId: string; nodeId: string }): Promise<void>;
   getDeviceKey(deviceId: string): Promise<string | null>;
   putDeviceKey(deviceId: string, longTermPub: string): Promise<void>;
+  deleteDeviceKey(deviceId: string): Promise<void>;
   removeDevice(deviceId: string): Promise<void>;
   /** 撤销名单（deviceId 集合） */
   isRevoked(deviceId: string): Promise<boolean>;
@@ -46,6 +47,9 @@ export function createMemoryStore(nodeId: string): RouteStore & { publishToChann
     },
     async putDeviceKey(id, longTermPub) {
       deviceKeys.set(id, longTermPub);
+    },
+    async deleteDeviceKey(id) {
+      deviceKeys.delete(id);
     },
     async removeDevice(id) {
       devices.delete(id);

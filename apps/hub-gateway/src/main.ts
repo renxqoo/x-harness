@@ -450,13 +450,13 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     onPairingConfirmed: async (deviceId, ratchetSeed) => {
       cryptoSessions.establish({ deviceId, sharedSecret: ratchetSeed, initiator: true });
     },
+    relayLink: () => relayLinkRef,
     config,
     audit,
     devices,
     threads,
     host,
     pairingServer,
-    relayLink: () => relayLinkRef,
     cryptoSessions,
     fanout,
     deviceBuckets,

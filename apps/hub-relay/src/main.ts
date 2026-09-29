@@ -224,6 +224,12 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       const existing = await store.getInstallation(effectiveClaims.subject);
       await store.putInstallation(effectiveClaims.subject, { gatewayKeyPub: existing?.gatewayKeyPub ?? "", nodeId });
     } else if (effectiveClaims.kind === "device") {
+      // 撤销执法（R3 M1）：已撤销设备拒连（此前仅路由表 fail-closed——token/连接面纵深缺失）
+      if (await store.isRevoked(effectiveClaims.subject)) {
+        socket.write(errorLine("revoked"));
+        socket.destroy();
+        return;
+      }
       const installationId = effectiveClaims.installationId ?? "";
       if (installationId.length > 0) {
         await store.putDevice(effectiveClaims.subject, { installationId, nodeId });
@@ -411,6 +417,8 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       }
       await store.revoke(body.deviceId);
       await store.removeDevice(body.deviceId);
+      await store.deleteDeviceKey(body.deviceId);
+
       res.writeHead(200).end(JSON.stringify({ ok: true }));
     } catch {
       res.writeHead(400).end();

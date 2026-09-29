@@ -21,6 +21,8 @@ export interface GwDispatchDeps {
   pairingServer: PairingServerLike;
   /** 配对确认回调（ratchet establish——注册落账后由 main 装配注入）。 */
   onPairingConfirmed(deviceId: string, ratchetSeed: Uint8Array): Promise<void>;
+  /** relay 链接访问面（撤销纵深——gw/devices/revoke 经 relay 吊销 token/路由）。 */
+  relayLink(): import("./relay-link.ts").RelayLinkHandle | null;
   relayLink(): RelayLinkHandle | null;
   cryptoSessions: CryptoSessionPool;
   fanout: Fanout;
@@ -116,6 +118,11 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
       return { ok: true, data: entry };
     }
     const hit = deps.devices.remove(deviceId);
+    // relay 侧同步吊销（R3 M1：token/路由即时失效——撤销纵深；relay 失败不阻断本地撤销）
+    await deps.relayLink()?.revokeDevice(deviceId).then(
+      (revoked) => revoked,
+      () => false,
+    );
     await deps.audit.record("device-revoked", { deviceId });
     return hit ? { ok: true, data: { deviceId } } : { ok: false, reason: "no such device" };
   }

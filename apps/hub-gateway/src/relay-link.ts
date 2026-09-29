@@ -31,6 +31,8 @@ export interface RelayLinkHandle {
   requestPairingTicket(pairingId: string): Promise<string | null>;
   /** 设备连接 token 签发（WIRE 设备注册收尾：注册落账后 gateway 代设备申请） */
   requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null>;
+  /** 设备撤销（relay 侧吊销+路由删除——撤销纵深，R3 M1） */
+  revokeDevice(deviceId: string): Promise<boolean>;
 }
 
 export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
@@ -149,6 +151,12 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
     }
   }
 
+  async function revokeDevice(deviceId: string): Promise<boolean> {
+    if (gatewayToken === null) return false;
+    const reply = await httpPost(url, { useTls: options.useTls, path: "/api/revoke", body: JSON.stringify({ deviceId }), token: gatewayToken });
+    return reply !== null && reply.status === 200;
+  }
+
   async function requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null> {
     if (gatewayToken === null) return null;
     const installationId = options.relayInstallationId ?? options.installationId;
@@ -229,6 +237,7 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
     enrollOnce,
     requestPairingTicket,
     requestDeviceToken,
+    revokeDevice,
   };
 }
 
