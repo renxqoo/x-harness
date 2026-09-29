@@ -35,6 +35,11 @@ idle 可唤醒。** 对照现状四处断裂：
 
   不带恢复建议文案（用户裁决——主代理自己知道有 agent_message）；`session:` 行一切
   终态都带（指回 `~/.x-harness/sessions/<id>/events.jsonl` 现场的指针）。
+- **呈现语义**：通知经 `agent/message` 投递，UI 类型级隐藏——用户看不到通知原文，主代理
+  是用户获知子代理结果的唯一通道。主代理消化内容后用自己的话向用户摘要转述（结论先行）；
+  **禁止原文逐字转发、禁止给通知套标签（如 `<agent_notification>`）再输出**——通知是
+  纯文本首行制（`[agent-notification]`），不带标签信封，base/core 提示词已如实
+  两分描述注入形态并明确禁止套标签回显（packages/harness/src/base-prompt.ts 注入形态句）。
 - **原因句词表（单一真相）**：`failureDetail(report)` 纯函数，notificationText 与
   reportText 共用：
   - max-tokens 无摘要 → `hit the output token limit before producing any report (no summary)`；

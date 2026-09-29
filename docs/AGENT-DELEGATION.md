@@ -164,7 +164,9 @@ status：running→`running`；stopped→`stopped`；否则 `idle`（停止后�
   行（子会话档案指针）+ usage → `[agent-notification]` **notify 注入父**（内部消息载体
   `agent/message{source:"delegation-report", kind:"content"}`——排队/唤醒语义与 steer 同款
   步边界；材料化后 UI 不当用户发言展示、压缩摘要保留报告事实，docs/AGENT-MESSAGE.md §5）→
-  释槽。通知即报告唯一交付点（全文直送——具体信息走 agent_message 追问）；入队失败/
+  释槽。通知即报告唯一交付点（全文直送——具体信息走 agent_message 追问）；呈现语义见
+  docs/SUBAGENT-FAILURE-NOTIFICATION.md 契约节（主代理消化后摘要转述，禁止原文回显/套标签）；
+  入队失败/
   tearing-down 窗口通知丢弃（emitFinished 事件面仍发射，子会话 WAL 在盘可查）。
   异常终态显式成败：completed →
   `finished: completed`；aborted → `stopped: <cause>`；error/max-tokens/blocked/

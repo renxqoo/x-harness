@@ -110,4 +110,36 @@ describe("createDefaultTruncationMessages（WER C3 文案外提）", () => {
     expect(String(paired?.data.content)).toBe(TRUNCATED_TOOL_FULL_MESSAGE);
     expect(String(paired?.data.content)).not.toContain("rescue note must lose");
   });
+
+  it("note 合成：抢救件（内层）返回 note → 文案件替换文案吸收 note（行为指令在前、附注在后，下游副作用不丢）", async () => {
+    const rescue: Parameters<typeof loadPlugins>[1][number] = {
+      name: "rescue-inner",
+      apply: (ctx) => ctx.on(agentTruncatedTool, async (payload, next) => {
+        const downstream = await next(payload);
+        return downstream !== undefined ? downstream : { note: "write to /tmp/partial.txt done" };
+      }),
+    };
+    const { agent, scripts } = await makeWorld([createDefaultTruncationMessages(), rescue]);
+    scripts.push(truncatedToolScript());
+    agent.followup("hi");
+    await agent.whenIdle();
+    const paired = agent.session.events().find((e) => e.type === "tool/result");
+    expect(String(paired?.data.content)).toBe(`${TRUNCATED_TOOL_FULL_MESSAGE}\nwrite to /tmp/partial.txt done`); // 合成非二选一
+  });
+
+  it("content 类下游应答透传：更内层文案件已给 content → 本件让位（替换优先于叠加）", async () => {
+    const innerMessage: Parameters<typeof loadPlugins>[1][number] = {
+      name: "inner-content",
+      apply: (ctx) => ctx.on(agentTruncatedTool, async (payload, next) => {
+        const downstream = await next(payload);
+        return downstream !== undefined ? downstream : { content: "inner custom content" };
+      }),
+    };
+    const { agent, scripts } = await makeWorld([createDefaultTruncationMessages(), innerMessage]);
+    scripts.push(truncatedToolScript());
+    agent.followup("hi");
+    await agent.whenIdle();
+    const paired = agent.session.events().find((e) => e.type === "tool/result");
+    expect(String(paired?.data.content)).toBe("inner custom content");
+  });
 });
