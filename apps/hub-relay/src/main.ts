@@ -178,7 +178,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     }
     const claims = authorizeUpgrade(req.url ?? "", req.headers.authorization ?? "");
     if (claims === null) {
-      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.write("HTTP/1.1 401 Unauthorized\r\nX-Relay-Reason: auth\r\n\r\n");
       socket.destroy();
       return;
     }

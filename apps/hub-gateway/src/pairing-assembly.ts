@@ -27,7 +27,7 @@ export function assemblePairingServer(deps: PairingAssemblyDeps): PairingServer 
     audit,
     now,
     requestPairingTicket: async (pairingId) => (await deps.relayLink()?.requestPairingTicket(pairingId)) ?? "",
-    requestDeviceToken: async (deviceId) => (await deps.relayLink()?.requestDeviceToken(deviceId)) ?? null,
+    requestDeviceToken: async (deviceId, deviceLongTermPub) => (await deps.relayLink()?.requestDeviceToken(deviceId, deviceLongTermPub)) ?? null,
     onRegistered: async (device) => {
       devices.put({
         deviceId: device.deviceId,

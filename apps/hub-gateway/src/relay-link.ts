@@ -159,7 +159,6 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
 
   async function requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null> {
     if (gatewayToken === null) return null;
-    const installationId = options.relayInstallationId ?? options.installationId;
     const body = JSON.stringify({ deviceId, ...(deviceLongTermPub !== undefined && deviceLongTermPub.length > 0 ? { deviceLongTermPub } : {}) });
     const reply = await httpPost(url, { useTls: options.useTls, path: "/api/device-token", body, token: gatewayToken });
     if (reply === null || reply.status !== 200) {

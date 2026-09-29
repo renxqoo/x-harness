@@ -155,7 +155,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
         gwEphemeralPub: session.gwEphemeral.pub,
         deviceEphemeralPub: spec.deviceEphemeralPub,
         relayUrl: options.relayUrl,
-        scope: session.scope, // R3 H6：配对发起时 owner 选档（缺省 read）
+        scope: "read", // 转录域常量（R3 复审：与手机验签域同值钉死——session.scope 只进注册落账）
       });
       if (channel === null) return Promise.resolve({ ok: false as const, reason: "channel establishment failed" });
       session.channelKey = channel.channelKey;
@@ -211,7 +211,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
         platform: "unknown",
         appVersion: "1",
         longTermPub: spec.deviceLongTermPub,
-        scope: "read",
+        scope: session.scope, // R3 复审 H6：落账用配对发起档（此前硬编码 read）
       });
       void options.audit.record("pairing-confirmed", { pairingId: session.pairingId, deviceId });
       return Promise.resolve({ ok: true as const, deviceId, ratchetSeed });

@@ -22,7 +22,6 @@ export interface GwDispatchDeps {
   /** 配对确认回调（ratchet establish——注册落账后由 main 装配注入）。 */
   onPairingConfirmed(deviceId: string, ratchetSeed: Uint8Array): Promise<void>;
   /** relay 链接访问面（撤销纵深——gw/devices/revoke 经 relay 吊销 token/路由）。 */
-  relayLink(): import("./relay-link.ts").RelayLinkHandle | null;
   relayLink(): RelayLinkHandle | null;
   cryptoSessions: CryptoSessionPool;
   fanout: Fanout;
