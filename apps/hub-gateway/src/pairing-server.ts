@@ -177,6 +177,11 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       if (nowMs > session.expiresAt) return Promise.resolve({ ok: false as const, reason: "pairing expired" });
       if (session.consumed) return Promise.resolve({ ok: false as const, reason: "pairing already used" });
       if (session.sas === null || session.channelKey === null) return Promise.resolve({ ok: false as const, reason: "pairing not established" });
+      // 设备长期钥缺省取 device-keys 帧已呈递值（owner confirm 与手机呈递的时序解耦——
+      // 桌面 UI 无从知晓手机钥，会话内单源）
+      const presentedPub = (session as PairingSession & { deviceLongTermPub?: string }).deviceLongTermPub;
+      const deviceLongTermPub = spec.deviceLongTermPub.length > 0 ? spec.deviceLongTermPub : presentedPub ?? "";
+      if (deviceLongTermPub.length === 0) return Promise.resolve({ ok: false as const, reason: "device keys not presented" });
       if (spec.ownerTypedSas !== session.sas) {
         session.failedAttempts += 1;
         if (session.failedAttempts >= PAIRING_MAX_ATTEMPTS) {
@@ -187,14 +192,14 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       }
       session.consumed = true;
       const deviceId = `d_${session.pairingId.slice(3)}`;
-      const ratchetSeed = mixRatchetRoot(session.channelKey, spec.deviceLongTermPub);
+      const ratchetSeed = mixRatchetRoot(session.channelKey, deviceLongTermPub);
       void options.onRegistered({
         deviceId,
         name: session.deviceEphPub ?? "device",
         deviceType: "phone",
         platform: "unknown",
         appVersion: "1",
-        longTermPub: spec.deviceLongTermPub,
+        longTermPub: deviceLongTermPub,
         scope: session.scope,
       });
       void options.audit.record("pairing-confirmed", { pairingId: session.pairingId, deviceId });
