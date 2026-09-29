@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmChunk } from "@x-harness/llm";
 import type { AgentHandle } from "@x-harness/agent-loop";
+import { sessionStore } from "@x-harness/session";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, agentIdOf, sessionOf } from "./world.ts";
 import type { World } from "./world.ts";
 import { createNotifier } from "../notify.ts";
@@ -100,6 +101,45 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     expect(denied.isError).toBe(true);
     expect(denied.content).toContain("concurrency limit reached");
     release();
+    await parent.dispose();
+  });
+
+  it("症状回归「task_stop 后 agent_message 重启子代理，list_agents 状态仍 stopped」：running 转移清 stopped，重启后状态如实（running→idle），可再次真停", async () => {
+    const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }, { maxConcurrent: 1 }));
+    const parent = await spawnParent(world);
+    world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "t1")]);
+    parent.agent.followup("go");
+    await parent.agent.whenIdle();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    world.scripts.set(CHILD_MODEL, [
+      textScript(CHILD_MODEL, "first life"),
+      (async function* (): AsyncGenerator<LlmChunk> {
+        await gate;
+        yield { type: "text-delta", text: "second life" };
+        yield { type: "finish", finish: { kind: "stop" } };
+      })(),
+    ]);
+    const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
+    const agentId = agentIdOf(spawned.content);
+    const childSession = sessionOf(spawned.content);
+    const childTurnEnded = async (): Promise<boolean> =>
+      (world.ctx.use(sessionStore).get(childSession)?.events() ?? []).some((e) => e.type === "turn/end");
+    await vi.waitFor(async () => expect(await childTurnEnded()).toBe(true), { timeout: 5_000 });
+    const stopped = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: parent.agent.session.id });
+    expect(stopped.isError).toBeUndefined();
+    expect(await listStatus(world, parent, agentId)).toBe("stopped");
+    const revived = await callTool({ world, name: "agent_message", args: { to: agentId, message: "restart" }, session: parent.agent.session.id });
+    expect(revived.isError).toBeUndefined();
+    expect(revived.content).toContain("Delivered");
+    expect(await listStatus(world, parent, agentId)).toBe("running");
+    release();
+    await vi.waitFor(async () => expect(await listStatus(world, parent, agentId)).toBe("idle"), { timeout: 5_000 });
+    const restopped = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: parent.agent.session.id });
+    expect(restopped.content).not.toContain("already stopped");
+    expect(await listStatus(world, parent, agentId)).toBe("stopped");
     await parent.dispose();
   });
 

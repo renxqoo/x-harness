@@ -134,6 +134,7 @@ export function createNotifier(deps: NotifyDeps): (payload: { session: SessionId
       row.armed = true;
       row.running = true;
       row.occupied = true;
+      row.stopped = false;
       return;
     }
     row.running = false;
