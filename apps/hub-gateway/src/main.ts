@@ -130,7 +130,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
 
   host.start();
   const cryptoSessions = createCryptoSessionPool(paths.devicesDir, now);
-  const pairingServer = assemblePairingServer({ identity, config, audit, devices, now, relayLink: () => relayLinkRef });
+  const pairingServer = assemblePairingServer({ identity, config, audit, devices, now, relayLink: () => relayLinkRef, cryptoSessions });
 
   const deviceBuckets = new Map<string, RateBucket>();
   const deviceIngestChains = new Map<string, Promise<void>>(); // per-device 串行化解密
@@ -447,6 +447,9 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   scheduleRekeyCheck();
   const handleGwCommand = makeGwDispatcher({
     identity,
+    onPairingConfirmed: async (deviceId, ratchetSeed) => {
+      cryptoSessions.establish({ deviceId, sharedSecret: ratchetSeed, initiator: true });
+    },
     config,
     audit,
     devices,

@@ -219,3 +219,54 @@ describe("E1 端到端：手机经 relay 完成配对", () => {
 
 void decodeEnvelope;
 void readFile;
+
+describe('R1 H3 回归：confirm 落账即 establish ratchet 会话', () => {
+  it('owner confirm → cryptoSessions 含该设备（设备首帧可解密）', async () => {
+    const { startRelay } = await import("../../../../apps/hub-relay/src/main.ts");
+    const relay = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "r1-h3-secret-32-bytes!!!!!", singleInstance: true });
+    const relayPortNum = (relay.server.address() as { port: number }).port;
+    const dir = await mkdtemp(join(tmpdir(), "r1-h3-"));
+    await mkdir(join(dir, "devices"), { recursive: true });
+    await writeFile(join(dir, "gateway.json"), JSON.stringify({ remoteEnabled: true, relayUrl: `ws://127.0.0.1:${relayPortNum}`, relayKeyFingerprint: "" }), "utf8");
+    const gw = await startGateway({ agentDir: dir, hostOverride: { command: process.execPath, args: [new URL("./fake-host.ts", import.meta.url).pathname] }, log: () => {} });
+    for (let i = 0; i < 80; i++) {
+      await new Promise((r) => { setTimeout(r, 200); });
+      if (gw.relayLink?.connected()) break;
+    }
+    // owner 发起 + confirm（经 owner 命令面——R1 新增 gw/pairing/confirm 全链）
+    const ownerSock = netConnect(gw.ownerServer.socketPath);
+    await new Promise<void>((resolve, reject) => { ownerSock.once("connect", resolve); ownerSock.once("error", reject); });
+    const ownerLines: string[] = [];
+    ownerSock.on("data", (c: Buffer) => { for (const l of c.toString().split("\n")) if (l) ownerLines.push(l); });
+    const waitOwner = async (id: string, ms = 8000): Promise<Record<string, unknown>> => {
+      for (let i = 0; i < ms / 50; i++) {
+        await new Promise((r) => { setTimeout(r, 50); });
+        const hit = ownerLines.find((l) => l.includes(`"id":"${id}"`));
+        if (hit !== undefined) return JSON.parse(hit).body as Record<string, unknown>;
+      }
+      throw new Error(`owner response timeout: ${id}`);
+    };
+    ownerSock.write(`${JSON.stringify({ kind: "command", streamId: "owner", seq: 1, body: { command: "gw/pairing/start", id: "r1p", args: { scope: "interact", mode: "manual" } } })}\n`);
+    const started = (await waitOwner("r1p")) as { success: boolean; data: { pairingId: string; manualCode: string } };
+    expect(started.success).toBe(true);
+    const { pairingId, manualCode } = started.data;
+    const { generateSigningKeyPair } = await import("@x-harness/remote-protocol");
+    const devKeys = generateSigningKeyPair();
+    // 会话建立：经真协议面 pake-a（channelKey/SAS 就位）
+    const { pakeInitiate } = await import("@x-harness/remote-protocol");
+    const init = pakeInitiate(manualCode);
+    const pakeReply = await gw.pairingServer.handlePairingFrame({ pairingId, message: { p: "pake-a", pakeA: init.message, deviceInfo: { name: "r1h3", deviceType: "phone", platform: "test", appVersion: "1" } } });
+    expect(pakeReply.ok).toBe(true);
+    const sasValue = gw.pairingServer.sessionOf(pairingId)?.sas ?? "000000";
+    // 经 owner 命令面 confirm（真装配链：confirm → onRegistered + onPairingConfirmed establish）
+    ownerSock.write(`${JSON.stringify({ kind: "command", streamId: "owner", seq: 2, body: { command: "gw/pairing/confirm", id: "r1c", args: { pairingId, ownerTypedSas: sasValue, deviceLongTermPub: devKeys.pub } } })}\n`);
+    const confirmed = (await waitOwner("r1c")) as { success: boolean; data: { deviceId: string } };
+    expect(confirmed.success).toBe(true);
+    // establish 落账：cryptoSessions.get 非空（设备首帧可解密）
+    const session = gw.cryptoSessions.get(confirmed.data.deviceId);
+    expect(session).not.toBeNull();
+    ownerSock.destroy();
+    await gw.stop();
+    await relay.close();
+  }, 25000);
+});

@@ -14,10 +14,17 @@ export interface PairingAssemblyDeps {
   devices: DeviceRegistry;
   now(): number;
   relayLink(): RelayLinkHandle | null;
+  /** ratchet 会话池（confirm 落账时 establish——种子单点化）。 */
+  cryptoSessions: { establish(spec: { deviceId: string; sharedSecret: Uint8Array; initiator: boolean }): unknown };
 }
 
 export function assemblePairingServer(deps: PairingAssemblyDeps): PairingServer {
   const { identity, config, audit, devices, now } = deps;
+  const onPairingConfirmed = async (deviceId: string, ratchetSeed: Uint8Array): Promise<void> => {
+    // R1 H3：confirm 落账即 establish（gateway=initiator；种子 = mixRatchetRoot(channelKey, deviceLongTermPub)
+    // ——与设备端同式推导，见协议包 pairing 模块）
+    deps.cryptoSessions.establish({ deviceId, sharedSecret: ratchetSeed, initiator: true });
+  };
   return createPairingServer({
     identity,
     relayUrl: config.relayUrl,
