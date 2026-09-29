@@ -53,15 +53,14 @@ import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import { projectSettingsPath, updateHubSettings, updateSettingsFile, userSettingsPath } from "../shared/settings-store.ts";
 import { thinkingLevelOf, thinkingUnsupported } from "./meta-state.ts";
 import { META_KEY_THINKING } from "./meta-state.ts";
-import { installExternalPlugins, uninstallExternalPlugins } from "./external-plugins.ts";
+import { FALLBACK_CONTEXT_WINDOW } from "@x-harness/token-analytics";
 import { DEFAULT_RETRYABLE_CODES } from "@x-harness/llm-retry";
 import type { ConfirmFields } from "./dialogs.ts";
 import { confirmFieldsOf } from "./ask-confirm-fields.ts";
 import type { ExternalPluginsDeps } from "./external-plugins.ts";
+import { installExternalPlugins, uninstallExternalPlugins } from "./external-plugins.ts";
 
 export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
-
-const FALLBACK_CONTEXT_WINDOW = 128_000;
 
 export interface AssemblyFields {
   sessionsRoot: string;
@@ -124,7 +123,7 @@ function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: strin
   };
 }
 
-function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined): LlmAdapter[] {
+export function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined): LlmAdapter[] {
   if (script !== undefined) return [script];
   return catalog.providers.map((p) => {
     const inputByModel: Record<string, readonly ("text" | "image")[]> = {};

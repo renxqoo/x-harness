@@ -25,7 +25,7 @@
 
 - **I1 hub-protocol 零 @x-harness 依赖**（package.json dependencies 为空；仅 node 内置）
   ——host-hub、hub-client、gateway 共同底座；
-- **I2 host-hub 不依赖 hub-client**（被 spawn 方不依赖 spawn 方——否则测试图成环）；
+- **I2 host-hub 不依赖 hub-client（runtime）**——生产依赖图无环；host-hub 以 devDependencies 引 hub-client 仅限测试装置 dogfood（spawn 的是文件路径非包名，08 R6）；
 - **I3 hub-client core 不 import node:child_process**（传输无关；进程语义只住 process
   传输层）；
 - **I4 hub-protocol 不进内核组**：`scripts/check-kernel-deps.ts` 只把 `packages/core/*`
@@ -50,7 +50,7 @@ remote-protocol / remote-client 是直接样板（[01 §2](01-context.md) 同款
 | 协议包依赖 | 零 dependencies | 同（I1） |
 | 客户端包依赖 | 仅 `@x-harness/remote-protocol: workspace:*` | 同（hub-client 仅依赖 hub-protocol） |
 | 测试组织 | `src/__test__/` 与源文件同名对置（protocol）/按主题（client） | 同（[07 §2](07-testing.md)） |
-| 构建形态 | 源码直出（bun 跑 TS，无 per-package build） | 同——根 build script 不动 |
+| 构建形态 | 源码直出（bun 跑 TS，无 per-package build） | 同——根 build script 不动；**dist 形态变化披露**：host-hub build 的 `--external "@x-harness/*"` 使 dist 内契约文件从相对路径内联变 bare import（运行时依赖 node_modules 链，dist 独立拷贝不再自举——token-analytics 先例） |
 | 覆盖率 | 计入 packages/* 分母（index.ts 除外） | 同——新包自动计入，阈值 90/85 不动 |
 
 ## 3. 设计原则
@@ -67,7 +67,7 @@ remote-protocol / remote-client 是直接样板（[01 §2](01-context.md) 同款
 
 hub-relay 当前只依赖 `@x-harness/remote-protocol`（gateway↔relay WS 链路），**不消费
 host 帧契约**——host 帧在 gateway 处已被 host-ingest 转成 remote Frame。因此本期
-relay 不接入 hub-protocol；入口图的 relay 边是「未来传输扩展时可接入」的占位，
+relay 不接入 hub-protocol；§1 图中的 relay* 边是「未来传输扩展时可接入」的占位，
 不构成本期验收项（防止审查时误判为范围蔓延）。
 
 ## 5. 单写者纪律（线程模型）
@@ -89,16 +89,22 @@ relay 不接入 hub-protocol；入口图的 relay 边是「未来传输扩展时
 | B4 | 事件缓存 | **0**（无 replay buffer——SDK 是热消费；replay 是 gateway/remote 层职责） | 单一真相：gateway OutboxStream 已存在，不复制 |
 | B5 | pending 表上界 | Map 无硬上限；host 侧 PENDING_COMMANDS_CAP=65_536 是真闸门；SDK 侧泄漏检测 = 稳态 `stats().pending` 归零断言 | host 闸门 + 观测兜底 |
 | B6 | 回调内禁 IO | SDK 自身事件回调路径无 IO（log 缝异步 fire-and-forget 除外）；消费端回调阻塞会背压帧分发——同步分发的如实代价，记入包 README | 同步全序的代价显式化 |
-| B7 | 单帧分发耗时 | 事件回调前的工作（parse/classify/查表）O(line)；分帧器**收整帧重写**：不再逐 chunk Buffer.concat 全量拷贝（现状 jsonl.ts:47 对 16MiB 行 × 64KB chunk ≈ 2GiB 累计 memcpy，堵事件循环喂养 B6 死线误杀）——SDK 侧泵用 chunk 链式缓冲（攒 chunk 引用 + 偏移切行，行为与 createJsonlSplitter 逐字节等价，契约测试对拍）；分帧器本体留在 hub-protocol 原样（host 侧自用它没有多连接放大面），SDK 的等价实现同文件对外导出共用 | 恶劣输入下不放大；单源纪律以对拍测试保等价 |
+| B7 | 单帧分发耗时 | 事件回调前的工作（parse/classify/查表）O(line)；SDK 收侧案 = **链式缓冲泵住 hub-protocol jsonl.ts 同文件**（对 createJsonlSplitter 重写其内部缓冲为 chunk 链、公共接口不变——现状逐 chunk Buffer.concat 对 16MiB 行 ≈ 2GiB 累计 memcpy 堵事件循环喂养 B6；host 与 SDK 同源同实现，单源纪律保持，对拍测试钉行为等价） | 恶劣输入下不放大；同文件重写不产生第二份实现 |
 
 ## 7. 传输扩展点（未来，不在本期）
 
 `transport.ts` 纯接口（send/onLine/closed/kill，见 [04 §6](04-hub-client-sdk.md)）。
 未来远程形态 = 新增传输实现文件（如 remote-transport.ts 挂 relay 链）+ connect.ts
-加装配分支；core/events/stats/pool 零改动——这是 core 不 import child_process 的回报。
+加装配分支。**承诺的精确边界**（06 §3 语义约束下）：远程传输不做「重连不换句柄」
+——重连 = 新 connectHub 实例（id 域重置、消费端清 sendId 表的语义不变）；重发/ack/
+连接代次属传输层内部或消费端编排，core 的 pending/死线/id 铸造语义不动；若未来
+需要句柄级重连，那是 core 的重构而非本扩展点涵盖范围（提前落档，防架构债以
+文档形式预埋）。core 不 import child_process 的回报仍成立（进程语义只住 process
+传输层）。
 协议版本策略：client↔host 无版本握手（帧分类是字节级前缀事实）；同仓 monorepo、
-private 包锁步发版，无跨版本兼容承诺；消费端与 host 的版本对齐由部署保证（记入包
-README）。不发明版本协商。
+private 包锁步发版，无跨版本兼容承诺；消费端与 host 的版本对齐由部署保证——
+**错配可观测**：新帧类型遇旧分类器落 unknown 并计入 unknownFramesTotal（05 §2），
+不再是静默吞。不发明版本协商。
 
 ## 8. 错误处理哲学（全库统一）
 
@@ -108,4 +114,4 @@ README）。不发明版本协商。
   "worker died"/"shutting down" 同族，错误码表不扩项；
 - 消费端区分「host 拒了」与「连接断了」：`exit` 事件 + `stats()` 计数
   （callsTransportFailed vs callsBusinessFailed），message 前缀 `hub-client:`；
-- 垃圾输入降级不崩：parse 失败的行按 unknown 分类丢弃+计数（host 侧同款纪律）。
+- 垃圾输入降级不崩：JSON.parse 失败行计 parseErrorsTotal、分类落 unknown 的行计 unknownFramesTotal（两计数器分立，05 §2）。

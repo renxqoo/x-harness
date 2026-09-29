@@ -1,7 +1,29 @@
 import { watch, type FSWatcher } from "node:fs";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { branchOfHeadText, parseWorktreeGitdir, worktreeMainOfGitdir } from "@x-harness/agent-delegation";
+
+function refsSignatureOf(commonDir: string): string {
+  try {
+    const entries = readdirSync(join(commonDir, "refs", "heads"), { recursive: true, withFileTypes: true }) as Array<{ name: string; parentPath?: string; path?: string }>;
+    const heads = entries
+      .filter((e) => !e.name.endsWith(".lock"))
+      .map((e) => {
+        const full = [e.parentPath ?? e.path, e.name].filter(Boolean).join("/");
+        try {
+          return `${e.name}:${readFileSync(full, "utf8").trim()}`;
+        } catch {
+          return e.name;
+        }
+      })
+      .sort()
+      .join("|");
+    const packed = existsSync(join(commonDir, "packed-refs")) ? readFileSync(join(commonDir, "packed-refs"), "utf8") : "";
+    return `${heads}#${String(Buffer.from(packed).length.toString(36))}`;
+  } catch {
+    return "";
+  }
+}
 
 export interface GitWatchDirs {
   readonly gitDir: string;
@@ -84,6 +106,7 @@ export function createGitWatchService(options: GitWatchOptions): GitWatchService
   let stopped = false;
 
   const anchorKey = (dirs: GitWatchDirs): string => `${dirs.gitDir}\0${dirs.commonDir}`;
+  const refsSignatures = new Map<string, string>();
 
   function closeAnchor(key: string): void {
     const watchGroup = held.get(key);
@@ -92,6 +115,7 @@ export function createGitWatchService(options: GitWatchOptions): GitWatchService
     held.delete(key);
     lastBranch.delete(watchGroup.dirs.gitDir);
     pending.delete(watchGroup.dirs.gitDir);
+    refsSignatures.delete(watchGroup.dirs.gitDir);
   }
 
   function openAnchor(key: string, dirs: GitWatchDirs): void {
@@ -145,7 +169,10 @@ export function createGitWatchService(options: GitWatchOptions): GitWatchService
       const anchor = [...held.values()].find((h) => h.dirs.gitDir === gitDir);
       if (anchor === undefined) continue;
       const branch = branchAt(gitDir);
-      if (lastBranch.has(gitDir) && lastBranch.get(gitDir) === branch) continue;
+      const sig = refsSignatureOf(anchor.dirs.commonDir);
+      const refsChanged = sig !== refsSignatures.get(gitDir);
+      refsSignatures.set(gitDir, sig);
+      if (lastBranch.has(gitDir) && lastBranch.get(gitDir) === branch && !refsChanged) continue;
       lastBranch.set(gitDir, branch);
       for (const thread of live) {
         const dirs = gitWatchDirsOf(thread.cwd);

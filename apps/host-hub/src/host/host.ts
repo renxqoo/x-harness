@@ -74,6 +74,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
   const table = createThreadTable();
   const credentials = createCredentials(boot.agentDir);
   let snapshotCache: Record<string, string> = {};
+  let snapshotPayloadText = "";
   const refreshSnapshot = async (): Promise<void> => {
     if (env["HUB_WORKER_PROVIDER"] === "script") {
       snapshotCache = {
@@ -94,13 +95,15 @@ export async function runHost(boot: HostBoot): Promise<void> {
       };
     }
     const defaults = resolveDefaultDial(catalogNow);
-    snapshotCache = {
-      HUB_WORKER_PROVIDERS: JSON.stringify({
-        providers,
-        ...(defaults !== undefined ? { default: defaults } : {}),
-        modelMeta,
-      }),
+    const payload = {
+      providers,
+      ...(defaults !== undefined ? { default: defaults } : {}),
+      modelMeta,
     };
+    snapshotCache = {
+      HUB_WORKER_PROVIDERS: JSON.stringify(payload),
+    };
+    snapshotPayloadText = snapshotCache["HUB_WORKER_PROVIDERS"] ?? "";
   };
   await refreshSnapshot();
 
@@ -145,6 +148,13 @@ export async function runHost(boot: HostBoot): Promise<void> {
         }
       },
       refreshSnapshot,
+      broadcastCatalogReload: () => {
+        if (snapshotPayloadText === "") return;
+        const text = JSON.stringify({ type: "catalog/reload", catalog: JSON.parse(snapshotPayloadText) as unknown });
+        for (const threadId of pool.liveThreadIds()) {
+          void pool.deliverRaw(threadId, text);
+        }
+      },
     },
   );
 

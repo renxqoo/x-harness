@@ -43,6 +43,7 @@ export function fakeLlm(): FakeLlm {
   const runtime: LlmRuntime = {
     registerAdapter: () => () => {},
     contextWindowOf: () => undefined,
+    hasAdapter: () => false,
     stream: (request) => {
       calls.push(request);
       const entry = scripts.shift();

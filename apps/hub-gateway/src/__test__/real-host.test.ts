@@ -105,8 +105,9 @@ describe("真 host-hub 集成旅程", () => {
       if (required.every((name) => hasEvent(lines, name))) break;
     }
     const finalLines = await owner.lines();
-    for (const name of required) {
-      expect(hasEvent(finalLines, name)).toBe(true);
+    const missing = required.filter((name) => !hasEvent(finalLines, name));
+    if (missing.length > 0) {
+      throw new Error(`missing events [${missing.join(", ")}] after 50s; total lines=${String(finalLines.length)}; last5:\n${finalLines.slice(-5).join("\n")}`);
     }
     owner.close();
   });

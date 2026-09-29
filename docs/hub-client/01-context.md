@@ -10,7 +10,7 @@ host-hub 暴露 JSONL 进程协议（stdin 命令 / stdout 帧）。契约目前
 | 存在形态 | 位置 | 现状 | 缺陷 |
 |---|---|---|---|
 | gateway host-attach | `apps/hub-gateway/src/host-attach.ts` | spawn + 心跳死线 + kill&restart | restart 语义耦合 gateway；kill 宽限 2s 硬编码；无对账（gateway 自建 pendingByHostId） |
-| 测试装置 | `apps/host-hub/src/__test__/kit/host-client.ts` | 19 个测试文件消费 | 测试专用、无类型面、不导出、行解析不带超限处理 |
+| 测试装置 | `apps/host-hub/src/__test__/kit/host-client.ts` | 14 个测试文件消费 | 测试专用、无类型面、不导出、行解析不带超限处理 |
 | remote-client | `packages/remote-client/src/connect.ts` | relay 远程链路 | 面向 WS/relay，非本机进程形态；自带重连/重发语义 |
 
 同时 `apps/hub-gateway/src/fanout.ts:6` 的 `classifyHostLine` 是 host 帧分类的**本地镜像**
@@ -23,12 +23,12 @@ host-hub 暴露 JSONL 进程协议（stdin 命令 / stdout 帧）。契约目前
 `apps/host-hub/src/protocol/commands.ts:53` `COMMAND_NAMES` 封闭集。成文时 80 项
 （thread/notify 在途合入：`git diff apps/host-hub/src/protocol/commands.ts`）。
 分四域（域判定依据：`host-commands.ts:370-391` handlers 注册表、`admin-commands.ts:114-357`、
-`parked-reads.ts:6`、`internal.ts:19-81` 三集合）：
+`parked-reads.ts:6`、`internal.ts:19-81`）：
 
-- **host 本地**（约 41）：host-commands 直注册 19（thread/start/resume/register/stop、
+- **host 本地**（40）：host-commands 直注册 19（thread/start/resume/register/stop、
   thread/delete/retire/set_keepalive、thread/list、thread/list_saved、get_models、
   set_model_override、auth 三命令、agents/list、get_host_info、两个旋钮、ui_response）+
-  admin-commands 22（settings/skills/plugins/models/agents 管理面、workspace/trust）；
+  admin-commands 21（settings/skills/plugins/models/agents 管理面、workspace/trust）；
 - **parked/dead 直读**：PARKED_DIRECT_COMMANDS = {get_state, get_entries, get_inflight,
   get_subagents, get_pending_dialogs}（`apps/host-hub/src/host/parked-reads.ts:6`）——
   host 直读盘应答免唤醒 worker；permission/set_mode、permission/get_mode 双形态
@@ -80,14 +80,15 @@ response 头正则（`shared/frame-classify.ts:10`）锚定 `id` 恒首 + `type:
 `apps/host-hub/src/protocol/internal.ts:3` `INTERNAL_ID_PREFIX = "@hub-internal:"`；
 host 侧 routeGateFailure 对该前缀 id 拒绝（`apps/host-hub/src/host/worker-pool.ts:381`）。
 另有 `@pending-` 前缀（worker-pool.ts:295）是 host 内部 threadId 槽位名。**HelloFrame/
-WorkerHeartbeat/WORKER_PROTOCOL_VERSION 是 host↔worker 私有握手**（`worker-frames.ts:33`），
+WorkerHeartbeat/WORKER_PROTOCOL_VERSION 是 host↔worker 私有握手**（类型定义
+`internal.ts:1-17`；hello 校验 worker-frames.ts:33），
 客户端永不见——不进 hub-protocol。
 
 ### 2.5 分帧器
 
 `apps/host-hub/src/shared/jsonl.ts` createJsonlSplitter：LF 唯一分隔、容忍尾 `\r`、
 超限（CLIENT_LINE_LIMIT=16MiB，`shared/limits.ts:10`）恰报一次并丢弃该行、空行跳过、
-flush 残留。client↔host 双侧同源（host.ts:179、worker.ts:197 各挂一个实例）。
+flush 残留。双侧同源（同代码不同实例与上限：host.ts:179 用 CLIENT_LINE_LIMIT=16MiB、worker.ts:171 用 WORKER_LINE_LIMIT=128MiB）。
 
 ### 2.6 生命周期与对账（host 侧事实）
 
@@ -112,9 +113,7 @@ flush 残留。client↔host 双侧同源（host.ts:179、worker.ts:197 各挂�
 maxThreads 缺省 32（env HUB_MAX_THREADS）；超发 `thread_limit "too many live threads"`；
 idleRetireMs 缺省 900_000（15min，`set_idle_retire_ms` 可调，clamp [1s,24h]）；
 rssRetireBytes 0=关；workerStale 30s；workerExitTimeout 10s；bashTimeout 600s
-（`shared/limits.ts:58-67`）。thread/start 的响应（`host-commands.ts:124`）是**受理**
-（beginThread 成功即 `success:true`），threadId 由后续 `turn/start` 事件送达——
-**受理 ≠ 完成**（见 04 §5 二段性）。
+（`shared/limits.ts:58-67`）。thread/start **成功时 host 侧不回 response**（只 registerTrust，`host-commands.ts:168-174`）；唯一 response 由 worker 异步发出且 **data 即含 threadId/cwd/sessionPath**（`thread-commands.ts:298-306`）——**受理 ≠ 完成**（见 04 §5 二段性；threadId 不经事件送达）。
 
 ### 2.8 ui_request 往返
 
@@ -140,7 +139,7 @@ trusted cwd 并集**（`host/admin-commands.ts:42-49`）——共享 host 跨租
   迁移时随单源走；
 - 装置 kit：host-client.ts（真子进程 spawn + 首心跳 ready + 谓词等待器 + stderr 转发）、
   worker-harness.ts（进程内 worker）、pool-fixture.ts（假 spawn 工厂）；
-  `HUB_WORKER_PROVIDER=script` 假 worker 机制定义在 `shared/script-adapter.ts:36`
+  `HUB_WORKER_PROVIDER=script` 假 worker 机制：adapter 工厂 `script-adapter.ts:36`、env 解析 :86
   （ScriptStep 判别联合经 env `HUB_WORKER_SCRIPT` 注入）。
 
 ## 3. 目标
@@ -162,11 +161,11 @@ trusted cwd 并集**（`host/admin-commands.ts:42-49`）——共享 host 跨租
 | 自动重连/重启 | 消费端（D3；pool.onExit 注入；gateway 自持 kill&restart） |
 | 命令级重试 | 幂等性是命令属性（D10：thread/start 重试 already_open、prompt 重试双发） |
 | 远程传输（WS/relay） | 后续传输扩展点（[02 §7](02-architecture.md)）；远程端现走 remote-client |
-| 79+ 命令 data 全量类型 | 增量演进（[05 §5](05-observability.md)） |
+| 全量命令 data 类型 | 增量演进（[05 §5](05-observability.md)）——词表基数不进文档 |
 | host 命令处理器行为 | host-hub（本方案只做契约搬家与客户端新增） |
 | gateway host-attach 迁移 | 后续专项（D6；本期只消灭 fanout 镜像） |
 | ui_response 审批编排 | 消费端（SDK 只透传） |
-| 多节点共享存储 | 部署层专项（[06 §7](06-pool-multiuser.md)） |
+| 多节点共享存储 | 部署层专项（[06 §4](06-pool-multiuser.md)） |
 | 命令合法性复验 | host（unknown_command 单一闸门，SDK 薄而不蠢） |
 | 回放缓冲（replay） | gateway/remote 层职责；SDK 是热消费（[02 §6](02-architecture.md) 预算） |
 
@@ -185,14 +184,15 @@ trusted cwd 并集**（`host/admin-commands.ts:42-49`）——共享 host 跨租
 | D1 | 包位置 `packages/hub-protocol` + `packages/hub-client`（非 apps/） | 库被 apps 依赖；与 remote-protocol/remote-client 分包先例一致；依赖方向干净（host-hub 不得依赖「spawn 它的客户端」） |
 | D2 | `call()` 永不 reject；业务失败 = success:false 分支；传输失败 = 合成同构 response（code=protocol） | HTTP handler 等消费端不需要 try/catch 包一层；错误码表不扩项 |
 | D3 | 不自动重启：暴露 exited + exit 事件 + close()/kill()；重启策略归消费端 | gateway 现有 kill&restart、web 服务端重建策略语义不同，库不该持策略 |
-| D4 | 呼叫超时缺省 60s，逐呼叫 timeoutMs 覆盖（0/Infinity 关闭）；超时结算后晚到响应丢弃+计数 | bash/长命令由调用方显式放宽；晚到不复活已结算 promise |
-| D5 | 命令面只做通用 call(command, args?) + 类型映射表，不手写 79+ 个方法糖 | vocab 单源在 hub-protocol；命名糖等真实用量后增量（防止拍脑袋发明名字） |
+| D4 | 呼叫超时缺省 60s，逐呼叫 timeoutMs 覆盖（0/Infinity 关闭）；超时结算后晚到响应丢弃+计数 | 晚到不复活已结算 promise；命令族缺省见 05 §5 CommandTimeouts |
+| D5 | 命令面只做通用 call(command, args?) + 类型映射表，不手写全量命令方法糖（词表基数不进文档）| vocab 单源在 hub-protocol；命名糖等真实用量后增量（防止拍脑袋发明名字） |
 | D6 | gateway host-attach 整体迁移不在本期；只消灭 fanout 帧分类镜像 | 控制爆炸半径；镜像消灭已拿全契约单源收益 |
 | D7 | createHubPool 池化组件进包（纯逻辑、工厂注入、无重启策略） | 每个服务端消费端都要写；并发去重/退出清理/空闲回收细节易错；纯逻辑可全单测 |
 | D8 | 观测面 = stats() 拉模型 + log 缝 + onRawLine 缝 + 心跳透传；不绑任何 metrics 实现 | 消费端接 Prometheus/日志/trace 自由；库零依赖噪音 |
 | D9 | response data 类型增量标注：第一批高频命令，映射表可扩充；未标注命令 data 落 unknown | 类型住 hub-client（wire 真源仍 host 侧），契约测试抽样对拍；全量一次性标注不可持续 |
 | D10 | 不内置命令重试 | thread/start 重试会 already_open、prompt 重试会双发——幂等性是命令属性；降级重试归消费端按错误码语义 |
 | D11 | 池空闲回收策略注入（idleTtlMs 缺省 0=不回收）；无引用计数 | web 形态 hub 长驻于用户会话而非单请求，TTL 兜底 + 管理面显式 evict 足够 |
+| D12 | call 不暴露自定义 id 参数（id 仅 SDK 铸造、连接内永不复用——不背无用户的特性；bindHub 计活替代 onSettled 缝同属本裁决族） | 第二轮裁决（可维护性视角） |
 
 ## 7. 术语表
 
@@ -202,7 +202,7 @@ trusted cwd 并集**（`host/admin-commands.ts:42-49`）——共享 host 跨租
 | 受理(accept) | host 对有 id 命令回 response 的第一段：表已登记/命令已投递 |
 | 完成(completion) | 第二段：命令实际效果的事实（事件流，如 settled、turn/start） |
 | pending | SDK 侧已发未结算的呼叫表（id → {command, settle, timer}） |
-| 心跳死线 | 超过 heartbeatDeadlineMs 无任何 stdout 帧（不只 heartbeat；01 §7 术语口径以此为准）判 host 失活；close/kill 进行中悬挂 |
+| 心跳死线 | 超过 heartbeatDeadlineMs 无任何 stdout 帧（不只 heartbeat；定义单源 04 §4-5）判 host 失活；close/kill 进行中悬挂 |
 | 槽位(slot) | pool 内 key → hub 句柄的占用格 |
 | 驱动命令 | DRIVING_COMMANDS：prompt/steer/follow_up（settled 事件配对） |
 | 直读 | PARKED_DIRECT_COMMANDS：host 免唤醒直读盘应答 |

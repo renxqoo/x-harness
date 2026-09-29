@@ -14,6 +14,7 @@ export interface TokenBreakdown {
   messages: number;
   total: number;
   contextWindow: number;
+  windowKnown: boolean;
   remaining: number;
   utilization: number;
   lastReportedInput: number;
@@ -32,6 +33,8 @@ interface DialFact {
   readonly provider: string;
   readonly model: string;
 }
+
+export const FALLBACK_CONTEXT_WINDOW = 128_000;
 
 function dialOfMeta(events: readonly SessionEvent[]): DialFact | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
@@ -135,7 +138,9 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
             facts.dial !== undefined
               ? runtime?.contextWindowOf(facts.dial.provider !== "" ? facts.dial.provider : undefined, facts.dial.model)
               : runtime?.contextWindowOf(options.provider);
-          const window = options.contextWindow ?? queried ?? 200_000;
+          const window = options.contextWindow ?? queried;
+          const windowKnown = window !== undefined;
+          const effectiveWindow = window ?? FALLBACK_CONTEXT_WINDOW;
 
           const messages = facts.lastReportedInput > 0 ? Math.max(0, facts.lastReportedInput - systemPromptTokens - toolsTokens) : 0;
           const total = facts.lastReportedInput > 0 ? facts.lastReportedInput : systemPromptTokens + toolsTokens;
@@ -144,9 +149,10 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
             tools: toolsTokens,
             messages,
             total,
-            contextWindow: window,
-            remaining: Math.max(0, window - total),
-            utilization: total / window,
+            contextWindow: effectiveWindow,
+            windowKnown,
+            remaining: windowKnown ? Math.max(0, effectiveWindow - total) : 0,
+            utilization: windowKnown ? total / effectiveWindow : 0,
             lastReportedInput: facts.lastReportedInput,
             totalOutputTokens: facts.outputTokens,
             cacheHitRate: facts.lastReportedInput > 0 ? facts.lastReportedCacheRead / facts.lastReportedInput : 0,

@@ -83,5 +83,9 @@ export function createLlmRuntime(deps: RuntimeDeps): LlmRuntime {
       }
       return adapter.contextWindow;
     },
+    hasAdapter: (provider?: string): boolean => {
+      if (provider === undefined) return adapters.size === 1;
+      return adapters.has(provider);
+    },
   };
 }

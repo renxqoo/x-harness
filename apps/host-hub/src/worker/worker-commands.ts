@@ -23,6 +23,7 @@ import type { BashExec } from "./bash-exec.ts";
 import type { EventBridge } from "./event-bridge.ts";
 import type { InflightRegistry, InflightState } from "./inflight.ts";
 import { doFork, registerThreadCommands, serializedLifecycle } from "./thread-commands.ts";
+import { parseReloadCatalog, swapWorldAdapters } from "./catalog-reload.ts";
 import { registerReadCommands } from "./worker-read-commands.ts";
 import { registerMetaCommands } from "./worker-meta-commands.ts";
 import { handleHotInstall, handleHotUninstall } from "./plugins-hot.ts";
@@ -484,6 +485,17 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     if (requestId === "") return;
     rt.broker.resolve(requestId, input.payload);
   }));
+
+  handlers.set("catalog/reload", async (input) => {
+    const next = parseReloadCatalog(input.catalog);
+    if (next === undefined) {
+      respond(rt, { id: input.id, command: "catalog/reload", error: hubError("invalid_input", "invalid catalog payload") });
+      return;
+    }
+    const swapped = swapWorldAdapters(rt, next);
+    rt.state.catalog = next;
+    respond(rt, { id: input.id, command: "catalog/reload", data: { providers: next.providers.length, adaptersSwapped: swapped } });
+  });
 
   handlers.set("subagent/steer", async (input) => {
     if (requireThread(rt, { ...input, command: "subagent/steer" }) === undefined) return;

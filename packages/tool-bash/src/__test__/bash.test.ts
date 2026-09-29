@@ -8,7 +8,7 @@ import type { ToolRegistry } from "@x-harness/tools";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import { createBashPlugin } from "../plugin.ts";
-import { BackgroundTasks, defaultTaskLimits } from "../tasks.ts";
+import { BackgroundTasks, defaultTaskLimits, type TaskSnapshot } from "../tasks.ts";
 
 let root: string;
 let registry: ToolRegistry;
@@ -140,6 +140,35 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
     const killed = await bash({ command: "kill -9 $$" });
     expect(killed.content).toContain("[exit code: 137]");
   });
+
+  it("回归（超时误报）：速死命令不被迟到调度误判超时——退出码可见（137）", async () => {
+    for (let i = 0; i < 20; i++) {
+      const r = await bash({ command: "kill -9 $$" });
+      expect(r.content).not.toContain("timed out");
+      expect(r.content).toContain("[exit code: 137]");
+    }
+  }, 20_000);
+
+  it("回归（超时误报）：后台任务外部 SIGKILL 死因不冒充 timed-out", async () => {
+    const tasks = new BackgroundTasks(defaultTaskLimits({ taskLogDir: spillDir, taskTimeoutMs: 10_000 }));
+    try {
+      const started = await tasks.start({ command: "sleep 60", cwd: root, session: undefined, env: createLocalEnv(root) });
+      if (!started.ok) throw new Error(started.reason);
+      const settlePromise = new Promise<TaskSnapshot>((resolve) => {
+        const unsub = tasks.onSettled((snap) => {
+          if (snap.id === started.value.id) { unsub(); resolve(snap); }
+        });
+      });
+      await new Promise((r) => { setTimeout(r, 300); });
+      const exec = (await import("node:util")).promisify((await import("node:child_process")).execFile);
+      await exec("pkill", ["-9", "-f", "sleep 60"]);
+      const snap = await settlePromise;
+      expect(snap.state).not.toBe("timed-out");
+      expect(snap.exitCode).toBe(137);
+    } finally {
+      tasks.stopAll();
+    }
+  }, 15_000);
 
   it("大输出场景双流不堵管：stdout+stderr 同发完成（防死锁假挂）", async () => {
     const r = await bash({ command: "seq 1 20000 >&1; seq 1 20000 >&2; echo done" });

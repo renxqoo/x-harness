@@ -85,6 +85,7 @@ export interface ModelsAuthSpec {
   readonly respond: RespondFn;
   readonly emitClient: (line: string) => void;
   readonly refreshSnapshot: () => Promise<void>;
+  readonly broadcastCatalogReload: () => void;
 }
 
 export function createModelsAuthCommands(spec: ModelsAuthSpec): {
@@ -121,6 +122,8 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
       applyOverrideEntry(file, key, verdict);
       return file;
     });
+    await spec.refreshSnapshot();
+    spec.broadcastCatalogReload();
     const refreshed = await readCatalog(spec.agentDir);
     const entry = refreshed.entries.find((e) => e.provider === provider && e.model === modelId);
     spec.respond(id, "set_model_override", { data: { model: modelShapeOf(entry) } });

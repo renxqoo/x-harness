@@ -349,7 +349,7 @@ describe("/compact 命令分路 e2e（BATCH3——方案 §5 承诺断言）", (
 });
 
 describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.md 契约 5）", () => {
-  test("happy path：prompt 后实报数字在场（script usage 64/16+len）；12 字段 + sessionOutput", async () => {
+  test("happy path：prompt 后实报数字在场（script usage 64/16+len）；13 字段 + sessionOutput", async () => {
     const w = await spawn([{ reply: "x" }]);
     const threadId = await start(w);
     w.send({ type: "prompt", id: "p1", threadId, message: "question" });
@@ -357,13 +357,13 @@ describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.m
     w.send({ type: "get_token_analytics", id: "ta1", threadId });
     const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
     expect(res.success).toBe(true);
-    const data = res.data as { breakdown: Record<string, number>; sessionOutput: number };
+    const data = res.data as { breakdown: Record<string, number | boolean>; sessionOutput: number };
     expect(Object.keys(data.breakdown).sort()).toEqual([
-      "cacheHitRate", "contextWindow", "lastReportedInput", "messages", "remaining",
-      "systemPrompt", "tools", "total", "totalCacheRead", "totalCacheWrite", "totalOutputTokens", "utilization",
+      "cacheHitRate", "contextWindow", "lastReportedInput", "messages", "remaining", "systemPrompt", "tools", "total", "totalCacheRead", "totalCacheWrite", "totalOutputTokens", "utilization", "windowKnown",
     ]);
     expect(data.breakdown["lastReportedInput"]).toBe(64);
     expect(data.breakdown["totalOutputTokens"]).toBe(17);
+    expect(data.breakdown["windowKnown"]).toBe(true);
     expect(data.breakdown["contextWindow"]).toBe(200_000);
     expect(data.breakdown["total"]).toBe(64);
     expect(data.breakdown["messages"]).toBe(0);

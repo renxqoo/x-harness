@@ -66,4 +66,5 @@ export interface LlmRuntime {
   registerAdapter(adapter: LlmAdapter): () => void;
   stream(request: LlmRequest): AsyncIterable<LlmChunk>;
   contextWindowOf(provider?: string, model?: string): number | undefined;
+  hasAdapter(provider?: string): boolean;
 }

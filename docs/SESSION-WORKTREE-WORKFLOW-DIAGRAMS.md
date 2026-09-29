@@ -7,14 +7,14 @@
 ```mermaid
 flowchart TB
     subgraph USER["👤 用户"]
-        UI1["新建任务页<br/>开关「在独立 worktree 开始」"]
+        UI1["worktree 启动配置弹窗<br/>「在独立 worktree 开始此任务…」"]
         UI2["会话分支面板<br/>「在此树开始新任务」/「前往」<br/>「合并回主仓」/「清理」"]
         UI3["worktree 会话呈现<br/>[wt] 徽标 · 派生树 chip · 侧栏归并主仓组"]
     end
 
     subgraph APP["agent-app（Electron 客户端）"]
         subgraph RENDER["渲染层（阶段 3 改动）"]
-            SW["开关状态机"]
+            SW["入口禁用态状态机"]
             PANEL["分支面板三动作 + detached 行"]
             CONFIRM["清理确认框（两级呈现）"]
         end
@@ -53,7 +53,7 @@ flowchart TB
 ```mermaid
 flowchart LR
     subgraph ENTRY["三个入口"]
-        A["① 新建页开关<br/>会话出生就在树里"]
+        A["① 新建页启动配置弹窗<br/>会话出生就在树里"]
         B["② 会话内建树<br/>会话留主仓，工作去树里"]
         C["③ 前往<br/>人进树开新上下文"]
     end
@@ -151,7 +151,7 @@ flowchart LR
         direction TB
         A1["contracts：verb ×4 + 命令镜像"]
         A2["api：git-worktree.ts verbs<br/>+ 占用门冷路径 + 锁复刻"]
-        A3["渲染：开关/三动作/确认框/<br/>徽标/chip/i18n 32 key ×2"]
+        A3["渲染：弹窗/三动作/确认框/<br/>徽标/chip/i18n"]
         A4["登记面三张表 + 持久化"]
     end
     E2E["阶段 5：e2e 全旅程<br/>建树→工作→合并→清理<br/>（非零提交树）"]

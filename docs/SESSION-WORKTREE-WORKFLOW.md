@@ -16,7 +16,7 @@
 - 手开的 worktree 在 UI 不可见不可选（工作区弹窗只列「已知目录」；隐藏目录系统对话框不显示）；
 - 会话中的 agent 建了 worktree 分支后，同一会话的 agent 不知道树在哪（Environment 块装配期快照，永不刷新）。
 
-本方案补齐三块：**入口（三形态：新建开关/会话内建树/前往）、可见性（占用表 + list）、生命周期（显式清理）**，并经 `thread/notify` 通用通道让 busy 会话获知树事实。
+本方案补齐三块：**入口（三形态：新建页启动配置弹窗/会话内建树/前往）、可见性（占用表 + list）、生命周期（显式清理）**，并经 `thread/notify` 通用通道让 busy 会话获知树事实。
 
 ### 0.1 核心约束（红线）
 
@@ -137,7 +137,7 @@ Subsequent file operations for this task should use that directory as the workin
 do not modify the main worktree at <cwd>.
 ```
 
-**用户反馈（终审交互 N3/S1 + 二轮 P5 按入口分支）**：建树成功后 UI 反馈**按入口分句**——会话内建树/来源会话在档：「树已建于 <path>；会话空闲时通告将在下条消息生效」（busy 判定在 create 完成时刻重估）；新建页（无来源）：「会话将在 <path> 中开始」（不提通告）。主进程 create 时登记 `threadId → 树路径`（会话内建树入口天然持有发起会话 id）——composer 上下文条据此渲染持久「派生树」chip（点击可前往/清理，**长期指示**显示与实际工作区的分离——二轮 P5：一次性 toast 不足以支撑心智模型）。
+**用户反馈（终审交互 N3/S1 + 二轮 P5 按入口分支）**：建树成功后 UI 反馈**按入口分句**——会话内建树/来源会话在档：「树已建于 <path>；会话空闲时通告将在下条消息生效」（busy 判定在 create 完成时刻重估）；通告未能投递（来源会话非 live / notify 失败）如实降级第三句「树已建于 <path>；会话未在运行，通告未能送达」；新建页（无来源）：「会话将在 <path> 中开始」（不提通告；报在 create→session/start 同链成功时刻，start 失败回滚后不发、改报启动失败）。**反馈通路 = 主进程通告投递结果经 pai:event 通道单发 `worktreeNotice` 事件（kind = busy/idle/deferred）**，渲染层查表成句——busy 判定与投递结果同源（create 完成时刻），渲染层不做二次猜测。主进程 create 时登记 `threadId → 树路径`（会话内建树入口天然持有发起会话 id）——composer 上下文条据此渲染持久「派生树」chip（点击可前往/清理，**长期指示**显示与实际工作区的分离——二轮 P5：一次性 toast 不足以支撑心智模型）。
 
 **origin 条目领取规则（二轮架构 #2——inbox 语义适配，防「纯通告轮」）**：`claimTurnBatch` 现状只领 next-turn 队首（inbox.ts:75）——idle 排队的通告先于用户消息入队会独占首轮 dial（用户消息被推到链式下一轮），恰制造复查 G 要消灭的「只有通告的 LLM 调用」；且 `chainsNextTurn` 对非空 next-turn 恒链式（driver.ts:62）——仅剩 origin 条目也会在任意轮收尾后拉起纯通告轮。**领取规则改为：step0 领取「前导 origin 条目 + 首条非 origin 条目」（前导合并进同批材料化）**。**规则仅约束 next-turn 侧；next-step 侧语义不变**（step0 与步边界均全领——next-turn 仅剩 origin 而 next-step 有 steer 条目时 step0 照领 steer、通告留队，不得搁浅 steer）。**不链式判定 = 两队列析取**：next-turn 与 next-step 均无「非 origin 条目」时 chainsNextTurn 才返回 false（任一队列含非 origin 即链式）。**前导 origin 批量上限 ≤8**：超出**留队列下轮领取**（非丢弃——content 类通告丢最旧 = 丢事实；上限只防单批材料化撑爆，零丢失同样达成）+ 材料化批次末附「另有 N 条排队通告」计数行。
 
@@ -175,9 +175,8 @@ do not modify the main worktree at <cwd>.
 
 | 交互点 | 形态 |
 | --- | --- |
-| 新建任务页开关 | 状态机：cwd 空 → 禁用（「先选择工作区」）；`selectCwd` → 开关与分支名一并重置（沿用 model/thinkingLevel 纪律）；分支视图 loading/failed → 禁用（failed 态原因文案「分支信息不可用」——复查 H）；非 git → 禁用 + 原因；cwd 在树内 → 禁用 + **正向指引文案**（「已在 worktree 中——直接开始即可」，二轮 P10：技术正确不得变成体验突兀）；branchLocked 锁态 → **可用**（worktree add 不动主仓） |
-| 开关开启形态 | 分支名输入（placeholder `feat-<日期>` 连字符）；空名禁用提交；目录段保留可换 |
-| **会话内建树** | 分支面板新增动作「在独立 worktree 开始此任务」：弹分支名输入（同款校验）→ create → busy 时注入通告（§1.3）；树路径登记白名单 |
+| **worktree 启动配置弹窗（创建 worktree 目录）** | 内联开关行退役，功能整体收进弹窗：分支面板动作「在独立 worktree 开始此任务…」（新建页/会话页共用）与 pulse branch-menu 同挂，打开**同一弹窗**（标题「在独立 worktree 开始」；分支名输入（placeholder `feat-登录修复`）；空名禁提交；verb 失败内联呈现、改名重试不关窗）。入口禁用态 = 原开关状态机改挂动作行（loading/failed → 禁用 + 原因（failed 态「分支信息不可用」——复查 H）；非 git → 禁用 + 原因；cwd 在树内 → 禁用 + **正向指引文案**（「已在 worktree 中——直接开始即可」，二轮 P10）；游离 HEAD → 禁用 + 原因；branchLocked 锁态 → **可用**（worktree add 不动主仓） |
+| 弹窗确认两形态 | **新建页 = 装配启动方式（不建树）**：上下文条上方「将在独立 worktree 中开始：<分支>」chip（点击改名、× 撤销；`selectCwd` → chip 与分支名一并重置，沿用 model/thinkingLevel 纪律），提交链 create → session/start（start 失败 → 自动回滚 remove——树必 clean 零提交，门必过）；**会话页/pulse = 立即 create** → busy 时注入通告（§1.3）；两形态树路径同登记白名单 |
 | 创建提交原子性 | 新建页：create 成功 → session/start；start 失败 → 自动回滚 remove（树必 clean 零提交，门必过）。**已知残留落档**（复查 #10）：回滚触发点在渲染层，窗口关闭/进程崩溃于两步之间仍可留孤儿树——由「清理」双入口兜底（不声称「不留孤儿树」） |
 | 分支面板 worktree 行 | 占用行三动作：「前往」（打开新建任务页预填树 cwd，`openNewTask(cwd)` 既有出口）、「合并回主仓」（§2.1 merge verb；受 branchSwitchLocked 锁域——锁态禁用 + 锁因文案）与「清理」；detached 用户树（branch=null 无占用行）→ **占用表加 detached 行**（path 呈现 + 清理动作；复查 #4 残留闭合；detached 无合并动作——无分支可合） |
 | 清理确认对话框 | **数据源 = `git/worktree/list`**（复查 D）；**两级呈现**（二轮产品 P8——多轮正确性修补不得叠加成 git 专家审查面板）：主句只讲后果与数量（「将永久删除目录与分支 `<b>`；N 个提交未并入任何本地分支」+ 危险态着色）；squash 口径句/同步合并误拒指路句（§1.4 纯同步 merge 形态）/prunable 说明收**折叠详情且条件显示**（unmergedCount>0 才现口径句、对应形态才现指路句）；文案人话化（prunable→「目录已不存在，git 仍有登记」；locked 给解释性人话不甩终端命令；**locked 树禁用清理按钮**（数据流 list 的 locked 字段前置，非点了才报错——二轮 P2-10））；en/zh 双语 |
@@ -210,7 +209,7 @@ do not modify the main worktree at <cwd>.
 
 ## 2. 问题域
 
-**处理**：人类创建/列举/合并回主仓/删除会话级 worktree（verb ×4）；三入口（新建开关/会话内建树/前往）；显式清理（双入口 + 确认框）；busy/idle 会话获知树事实（thread/notify 投递）；白名单独立集合持久化；live 占用门。
+**处理**：人类创建/列举/合并回主仓/删除会话级 worktree（verb ×4）；三入口（新建页启动配置弹窗/会话内建树/前往）；显式清理（双入口 + 确认框）；busy/idle 会话获知树事实（thread/notify 投递）；白名单独立集合持久化；live 占用门。
 
 ### 2.1 merge-back 收编路径（二轮产品 P1 阻断补齐——生命周期闭环的中间环节）
 
@@ -268,7 +267,7 @@ agent-app packages/api/src/verbs/git-branches.ts    ← parseWorktreeRefs 适配
 agent-app packages/api/src/verbs/git-worktree.ts    ← 新文件（create/list/remove 预检链/条件兜底/门/锁复刻/get_subagents 占用探测 + merge 预检双门/--no-ff/冲突面 conflict_files 复用）
 agent-app packages/api/src/verbs/local.ts           ← isKnownCwd 接 userWorktreeDirs
 agent-app apps/electron main                       ← api-routes + userWorktreeDirs 持久化 + busy 通告投递（含 sourceThreadId 定格接线）
-agent-app apps/electron 渲染                        ← 开关/会话内建树/前往/清理确认/i18n 双语
+agent-app apps/electron 渲染                        ← 启动配置弹窗/会话内建树/前往/清理确认/i18n 双语
 agent-app ui/ui-store.ts                            ← openNewTask 扩 sourceThreadId 字段（来源定格）
 agent-app docs/GIT-INTERACTION-REDESIGN.md          ← 关联裁决补记
 ```
@@ -280,7 +279,7 @@ agent-app docs/GIT-INTERACTION-REDESIGN.md          ← 关联裁决补记
 | # | 裁决 | 依据 |
 | --- | --- | --- |
 | D1 | 切换 = 通告（busy 即时注入 / idle next-turn 排队），不是会话迁移 | 用户裁决 R1 + 一审 #2 + 复查 A + 终审交互 N2 |
-| D2 | 三入口分工：新建页开关（会话出生在树里）/ 会话内建树（会话在主仓、工作去树里）/ 前往（人进树开新上下文） | 用户裁决 + 复查 A 补全 |
+| D2 | 三入口分工：新建页启动配置弹窗（会话出生在树里）/ 会话内建树（会话在主仓、工作去树里）/ 前往（人进树开新上下文） | 用户裁决 + 复查 A 补全 |
 | D3 | 用户树独立区 `.x-harness-user-worktrees/<repo>-<encoded(branch)>`；编码：`/`→`-`、拒前导 `-` 与 `..` 段、existsSync 冲突探测；**Windows 保留字符平台支持面落档**（复查 N8：`isValidBranchName` 放行 `<>|"` 等 git 合法字符，若目标含 Windows 需扩编码或收紧字符集——首期平台面 = macOS/Linux，落档） | 一审 F3/P6 + 复审 |
 | D3' | `[wt]` 徽标判据 = cwd 含 `.x-harness-worktrees/` 或 `.x-harness-user-worktrees/` 目录段（两目录名，非路径段数）；消费面三处：runtime 副行（既有正则扩）、composer 项目段徽标、侧栏项目组 | 配套 D3 + 二轮产品 P2 |
 | D4 | 数据安全意图同源、判据按域分治（§1.4）；防漂移 = 共享测试向量 | 一审 F4/F7 |
@@ -293,7 +292,7 @@ agent-app docs/GIT-INTERACTION-REDESIGN.md          ← 关联裁决补记
 | D11 | 白名单独立集合 userWorktreeDirs + 持久化（不进 pickedRoots 信任面） | 复查 #1/E |
 | D12 | live 占用门数据源 = 冷路径：thread/list（cwd，覆盖 live+parked）+ 逐 live 线程 get_subagents（PARKED_DIRECT 成员）；缺席 fail-closed 按占用处理；不进 thread/list 热路径（终审 V2 改判——轮询命令不做 fan-out） | 终审 V2/V4 |
 | D13 | 来源会话判定 = 打开新建页时刻 activeThreadId 定格（sourceThreadId）；非 newTaskCwd 判定；idle 会话通告投 next-turn 排队不唤醒（零额外 LLM 调用） | 终审交互 N1/N2 |
-| D14 | 会话内建树动作挂载面：composer 分支面板（会话页）+ pulse branch-menu（速览，来源 = activeThread）两处；**新建任务页 BranchPanel 不挂**（已有开关，重复入口） | 终审交互 N6 |
+| D14 | worktree 启动配置动作挂载面：composer 分支面板（会话页 + 新建页——内联开关行退役后弹窗入口统一挂 BranchPanel）+ pulse branch-menu（速览，来源 = activeThread）三处共用同一弹窗；确认行为按入口分叉（新建页装配 / 会话页即建） | 终审交互 N6 + 新建页开关退役改判 |
 
 ## 6. 老代码处置清单
 
@@ -311,7 +310,7 @@ agent-app docs/GIT-INTERACTION-REDESIGN.md          ← 关联裁决补记
 | --- | --- | --- | --- |
 | 1 | x-harness | thread/notify 全链（internal/commands/worker-pool/worker-commands host 路由）+ agent-loop target 队列参数与领取规则（types/driver/plugin/inbox/step/repair 落点见 §1.3/§4）+ agent-app 契约镜像（同批） | live 收到 content；**parked/dead/retiring/spawning 四态 → thread_not_live 且无 wake 副作用**（进程数不变断言）；notify 不重置 idle；结算边界到达的通告零额外 dial；idle 会话 next-turn 排队不唤醒；**next-turn 仅剩 origin + next-step 有 steer → step0 领 steer 通告留队** |
 | 2 | agent-app | contracts + verbs（预检链/条件兜底/门/锁复刻/白名单持久化）+ i18n 六新码 | verb 契约测试（判据向量/路径编码表/错误码闭集/**条件兜底不删用户分支**/gone-dir merged 门照评）；双仓锁兼容测试 |
-| 3 | agent-app | 新建页开关（状态机）+ 会话内建树 + 前往 + 分支面板三动作（含 merge-back）+ detached 行 + 清理确认框（两级呈现）+ 会话呈现面（[wt] 徽标三消费点正则扩第二目录名（runtime-worker-row.tsx:114）/composer 徽标/侧栏归并 + 派生树 chip）+ **i18n 全量 en/zh（约 32 key ×2，key 级清单随阶段 3 首提交落档——二轮 P7）** | 组件测试（状态机序列/确认流两级呈现条件显示/i18n 按清单逐 key 断言/占用行数据流 list/merge-back 锁域与冲突面/徽标判据三消费点） |
+| 3 | agent-app | worktree 启动配置弹窗（分支面板/branch-menu 入口 + 原状态机改挂禁用态）+ 新建页 chip + 会话内建树 + 前往 + 分支面板三动作（含 merge-back）+ detached 行 + 清理确认框（两级呈现）+ 会话呈现面（[wt] 徽标三消费点正则扩第二目录名（runtime-worker-row.tsx:114）/composer 徽标/侧栏归并 + 派生树 chip）+ **i18n 全量 en/zh（约 32 key ×2，key 级清单随阶段 3 首提交落档——二轮 P7）** | 组件测试（状态机序列/确认流两级呈现条件显示/i18n 按清单逐 key 断言/占用行数据流 list/merge-back 锁域与冲突面/徽标判据三消费点） |
 | 4 | agent-app | busy 通告投递（thread/notify 消费方）+ AGENT-MESSAGE 来源登记 | 主进程经 HubApi 投递；busy 会话步边界材料化；idle/新建页（无来源）零注入零调用 |
 | 5 | 双仓 | e2e：三入口建树 → start（含失败回滚）→ 前往 → 通告 → **合并回主仓（含树内发起拒/锁拒/冲突面）** → 清理全旅程（非零提交树——零提交树测不出收编链，二轮产品复查 R3） | 既有 e2e 装置扩旅程 |
 
@@ -327,7 +326,7 @@ agent-app docs/GIT-INTERACTION-REDESIGN.md          ← 关联裁决补记
 - **锁兼容**：双仓互斥（同锁路径串行，含**树内 cwd 与主仓 cwd 同锁键**用例）；crash 残留 → 窗口后接管；
 - **通告**：busy 发起/来源会话恰一条 content、材料化 user 投影含模板要素、serialize 保留；
 - **领取规则三缺陷防线（二轮架构复查）**：blocked 步回灌不丢用户消息（step0 领取批含前导 origins + 用户消息 → preStep 拒 → 整批回插断言）；WAL 修复不错靶（混合批崩溃 → 按 insert target 回灌断言 steer 仍走步边界）；replay 不空 kick（仅剩 origin + wakeRequested → 无 turn 括号断言）；前导 origin 上界（9 条排队 → 领 8、余 1 留队下轮领取，零丢失断言 + 批末计数行）；**idle 会话 next-turn 排队不唤醒**（下条消息步边界材料化、零额外 dial）；无来源/前往/清理零注入零 dial；queueMirror 对带 origin 条目的投影形态（不显示为用户转向卡片——实施时验证，若需 UI 过滤落 §1.5 增量）；
-- **UI**：状态机序列（空 cwd/selectCwd 重置/loading/failed 文案/树内禁用/锁态可用）；会话内建树流；前往预填不替换；确认框数据流（list 取数）与 squash 口径句；detached 行清理可达；
+- **UI**：入口禁用态序列（selectCwd 重置/loading/failed 文案/树内正向指引/锁态可用）；弹窗流（空名禁提交/失败内联改名重试/新建页 chip 改名与撤销）；会话内建树流（通告投递结果 busy/idle/deferred 三态分句）；前往预填不替换；确认框数据流（list 取数）与 squash 口径句；detached 行清理可达；
 - **原子性**：create 成功 + start 失败 → 渲染层回滚（回归名「start 失败自动回滚」）+ 崩溃窗口残留落档（双入口兜底断言）；
 - **越权矩阵**：remove 对运行中子代理树（get_subagents 路径命中）→ 拒；live 会话树 → 拒；get_subagents 应答缺席 → fail-closed 拒；verb 不设区门但占用门先行；白名单不含 pickedRoots 面（信任面断言）；白名单 GC（remove 后条目消失、启动过滤陈旧）；
 - **merge-back**（二轮 P1）：主仓锁态 → 拒 worktree_in_use 带会话数；**树内 cwd → 拒 worktree_nested（含另一棵树/树子目录形态）；主仓 detached → 拒 worktree_detached_head**（预检双门独立用例，二轮产品 N4）；冲突 → conflict_files 透传且**不自动 abort**（现场保留断言）；成功 → remove 门 merged=true 放行（建树→工作→合并→清理全链 e2e，非零提交树）；主仓脏 → 既有 dirty/conflict 码；

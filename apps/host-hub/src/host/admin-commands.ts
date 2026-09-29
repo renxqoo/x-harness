@@ -33,6 +33,8 @@ export interface AdminCommandsDeps {
   trust: TrustStore;
   pool?: { queryLiveWorkers(type: string, timeoutMs: number): Promise<unknown[]> };
   respond: (id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }) => void;
+  onCatalogChanged?: () => Promise<void>;
+  broadcastCatalogReload?: () => void;
 }
 
 function skillsScopeOf(deps: AdminCommandsDeps, cwd?: string): { homeDir?: string; cwd?: string; agentDir: string } {
@@ -186,10 +188,18 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
     handlers.set("models/add", async (input, id) => {
       const outcome = await addModel(deps.agentDir, input);
       deps.respond(id, "models/add", outcome.ok ? { data: { model: outcome.model } } : { error: outcome.error });
+      if (outcome.ok && deps.onCatalogChanged !== undefined) {
+        await deps.onCatalogChanged();
+        deps.broadcastCatalogReload?.();
+      }
     });
     handlers.set("models/remove", async (input, id) => {
       const outcome = await removeModel(deps.agentDir, typeof input.id === "string" ? input.id : "");
       deps.respond(id, "models/remove", outcome.ok ? {} : { error: outcome.error });
+      if (outcome.ok && deps.onCatalogChanged !== undefined) {
+        await deps.onCatalogChanged();
+        deps.broadcastCatalogReload?.();
+      }
     });
     handlers.set("agents/create", async (input, id) => {
       const outcome = await createUserAgentType(input, deps.homeDir, deps.agentDir);

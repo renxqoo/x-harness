@@ -1,0 +1,24 @@
+[3ms] fixture: 20260926T191130-5w75d6 已复制到临时 agentDir
+[0ms] --- 阶段A: 首次启动 (等价 app 冷启动): spawn hub host
+[host-stderr] hub: skills migrated 3 from /Users/wrr/.x-harness/skills (skipped: none)
+[1.27s] host ready (first heartbeat)                   1.27s
+[5.00s] --- 阶段A: thread/start 全新会话 (含插件组装)
+[5.30s] thread/start                                   0.30s
+[13.30s] turnEnd wait skipped: turn end timeout
+[13.30s] --- 阶段A: 温热会话上发消息 (对照: 不重启直接发)
+[13.31s] prompt (ack)                                   13ms
+[13.31s] 消息在对话列表可见 (对账命中)                               14ms
+[13.37s] --- host #1 已退出 (等价 app 退出; prompt cache 随进程存活, hub 重启即全冷)
+[0ms] --- 阶段B: 重启 host (等价 app 重启): spawn hub host
+[5.00s] --- 阶段B: parked 会话 resume (等价重启后发消息时 resolveTarget 的懒唤醒)
+[6.36s] thread/resume (懒唤醒, 13MB WAL 读+组装)             1.36s
+[6.37s] get_state (确认表项)                               11ms
+[6.37s] --- 阶段B: resume 后发消息 (用户体感: 回车 → 气泡上屏)
+[6.44s] prompt (ack)                                   68ms
+[6.69s] 消息在对话列表可见 (对账命中)                               0.32s
+[6.79s] 
+[6.79s] == 汇总 (回车 → 气泡可见) ==
+[6.79s] 温热会话 (不重启):    ack 13ms | turn/start 13ms | user/message帧 11ms | 可见 14ms
+[6.79s] 重启后冷路径:         ack 69ms | turn/start 68ms | user/message帧 68ms | 可见 0.32s
+[6.79s] 其中 resume(懒唤醒)占 1.36s, 位于 prompt 之前, 渲染层 await 它
+[6.79s] => 事件帧先于对账到达的差值 = 纯 app 层(事件映射+对账)引入的额外延迟: 温热 2ms / 冷 0.25s

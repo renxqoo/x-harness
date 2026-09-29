@@ -86,9 +86,10 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
       ]),
     });
     const svc = tw.ctx.use(tokenAnalyticsService);
-    expect(svc.breakdown().contextWindow).toBe(200_000);
+    expect(svc.breakdown().windowKnown).toBe(false);
     const sid = await runOneTurn(tw, "glm", "glm-5.3");
     expect(svc.breakdown(sid as never).contextWindow).toBe(1_000_000);
+    expect(svc.breakdown(sid as never).windowKnown).toBe(true);
     await tw.cleanup();
   });
 
@@ -141,7 +142,8 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
     made.value.agent.followup("x");
     await made.value.agent.whenIdle();
     const b = svc.breakdown(made.value.agent.session.id);
-    expect(b.contextWindow).toBe(200_000);
+    expect(b.windowKnown).toBe(false);
+    expect(b.contextWindow).toBe(128_000);
     expect(b.lastReportedInput).toBe(300);
     await made.value.dispose();
     await tw.cleanup();
@@ -163,9 +165,11 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
     await tw.cleanup();
   });
 
-  it("无参兜底：runtime 无窗口申报 → 200k 缺省（参数 > 拨号查表 > 缺省）", async () => {
+  it("无参兜底：runtime 无窗口申报 → windowKnown:false 不套假分母", async () => {
     const tw = await makeTestWorld([tokenAnalyticsPlugin({})]);
-    expect(tw.ctx.use(tokenAnalyticsService).breakdown().contextWindow).toBe(200_000);
+    const b = tw.ctx.use(tokenAnalyticsService).breakdown();
+    expect(b.windowKnown).toBe(false);
+    expect(b.utilization).toBe(0);
     await tw.cleanup();
   });
 

@@ -38,8 +38,8 @@ describe("frame-classify（key 顺序契约）", () => {
 
 describe("协议词表封闭性", () => {
   test("命令词表闭集（thread/notify 后 80——四集合成员都在表内）", () => {
-    expect(COMMAND_NAMES.length).toBe(80);
-    expect(new Set(COMMAND_NAMES).size).toBe(80);
+    expect(COMMAND_NAMES.length).toBe(82);
+    expect(new Set(COMMAND_NAMES).size).toBe(82);
     for (const set of [THREAD_SCOPED_COMMANDS, OBSERVER_COMMANDS, DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS]) {
       for (const name of set) expect(COMMAND_NAMES.includes(name)).toBe(true);
     }

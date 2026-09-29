@@ -143,18 +143,36 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
     return { stdout: "", stderr: "", exitCode: null, timeoutMs, timedOut: false, aborted: false, spawnError: `${spawned.reason.kind}: ${spawned.reason.detail}`, spillPath: undefined, truncated: false };
   }
   const proc: ProcHandle = spawned.proc;
+  let death: { readonly code: number | null; readonly signal: string | null } | undefined;
+  proc.exited.then(
+    (r) => { death = r; },
+    () => { death = { code: null, signal: null }; },
+  );
+  let killIntent: "none" | "timeout" | "abort" = "none";
+  const wasAborted = (): boolean => killIntent === "abort";
   let timedOut = false;
+  let killEscalated = false;
   const wall = setTimeout(() => {
+    if (death !== undefined) return;
+    killIntent = "timeout";
     timedOut = true;
     void proc.kill("term");
   }, timeoutMs);
   const killUpgrade = setTimeout(() => {
+    if (death !== undefined || killIntent !== "timeout") return;
+    killEscalated = true;
     void proc.kill("kill");
   }, timeoutMs + KILL_GRACE_MS);
   let abortUpgrade: ReturnType<typeof setTimeout> | undefined;
   const onAbort = (): void => {
+    if (death !== undefined || killIntent !== "none") return;
+    killIntent = "abort";
     void proc.kill("term");
-    abortUpgrade = setTimeout(() => void proc.kill("kill"), KILL_GRACE_MS);
+    abortUpgrade = setTimeout(() => {
+      if (death !== undefined) return;
+      killEscalated = true;
+      void proc.kill("kill");
+    }, KILL_GRACE_MS);
   };
   ctx.signal.addEventListener("abort", onAbort, { once: true });
   proc.settled.then(() => {
@@ -172,13 +190,14 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
   const stderrText = err.text(limits.maxOutputBytes);
   const truncated = out.truncated || err.truncated;
   const spillPath = truncated ? writeSpill(limits.spillDir, "bash", `${out.full}${err.full === "" ? "" : `\n[stderr]\n${err.full}`}`) : undefined;
+  const externalDeath = exited.code === null && exited.signal === "SIGKILL" && !killEscalated;
   return {
     stdout: stdoutText,
     stderr: stderrText,
     exitCode: renderableCode(exited),
     timeoutMs,
-    timedOut,
-    aborted: ctx.signal.aborted,
+    timedOut: timedOut && !externalDeath,
+    aborted: wasAborted(),
     spawnError: undefined,
     spillPath,
     truncated: out.truncated || err.truncated,

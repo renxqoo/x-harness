@@ -142,7 +142,7 @@ describe("--permission full 装配旅程（总括授权——docs/PERMISSION-FUL
     const read = await j.dispatch("read", { path: target });
     expect(read.isError).not.toBe(true);
     expect(read.content).toContain("GREP-TARGET-LINE");
-    const grep = await j.dispatch("grep", { pattern: "GREP-TARGET", path: target });
+    const grep = await j.dispatch("grep", { pattern: "GREP-TARGET", path: target, output_mode: "content" });
     expect(j.audits).toContainEqual({ tool: "grep", verdict: "allow", resolvedBy: "mode:full", reason: "full mode", exec: "direct", session: j.session });
     expect(grep.isError).not.toBe(true);
     expect(grep.content).toContain("GREP-TARGET-LINE");

@@ -49,6 +49,7 @@ export interface HostCommandsDeps {
 export interface HostCommandContext {
   broadcastToWorkers: (line: string) => void;
   refreshSnapshot: () => Promise<void>;
+  broadcastCatalogReload: () => void;
 }
 
 type LocalHandler = (input: { type?: unknown; id?: unknown; [key: string]: unknown }, id: string | undefined) => Promise<void> | void;
@@ -86,7 +87,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
       }),
     );
   }
-  const modelsAuth = createModelsAuthCommands({ agentDir: deps.agentDir, respond, emitClient: deps.emitClient, refreshSnapshot: ctx.refreshSnapshot });
+  const modelsAuth = createModelsAuthCommands({ agentDir: deps.agentDir, respond, emitClient: deps.emitClient, refreshSnapshot: ctx.refreshSnapshot, broadcastCatalogReload: ctx.broadcastCatalogReload });
   const credentials = modelsAuth.credentials;
   const trust = createTrustStore(deps.agentDir);
   const parkedReads = createParkedReads({ table: deps.table, direct: deps.direct, emitClient: deps.emitClient });
@@ -381,6 +382,11 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   handlers.set("thread/list_saved", handleThreadListSaved);
   handlers.set("get_models", (_input, id) => modelsAuth.getModels(id));
   handlers.set("set_model_override", (input, id) => modelsAuth.setModelOverride(input as { provider?: unknown; modelId?: unknown; contextWindow?: unknown; maxTokens?: unknown; remove?: unknown }, id));
+  handlers.set("models/reload", async (_input, id) => {
+    await ctx.refreshSnapshot();
+    ctx.broadcastCatalogReload();
+    respond(id, "models/reload", {});
+  });
   handlers.set("auth/list", (_input, id) => modelsAuth.authList(id));
   handlers.set("auth/set_api_key", (input, id) => modelsAuth.authSetApiKey(input, id));
   handlers.set("auth/remove_key", (input, id) => modelsAuth.authRemoveKey(input, id));
@@ -389,7 +395,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   handlers.set("set_idle_retire_ms", handleSetIdleRetireMs);
   handlers.set("set_rss_retire_bytes", handleSetRssRetireBytes);
   handlers.set("ui_response", handleUiResponse);
-  const admin = createAdminCommands({ agentDir: deps.agentDir, sessionsRoot: deps.sessionsRoot, table: deps.table, trust, respond, pool: deps.pool, ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}) });
+  const admin = createAdminCommands({ agentDir: deps.agentDir, sessionsRoot: deps.sessionsRoot, table: deps.table, trust, respond, pool: deps.pool, ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}), onCatalogChanged: ctx.refreshSnapshot, broadcastCatalogReload: ctx.broadcastCatalogReload });
   admin.register(handlers);
   const permissionDual = admin.permissionDual;
 

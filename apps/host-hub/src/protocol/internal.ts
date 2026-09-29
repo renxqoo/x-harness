@@ -55,6 +55,7 @@ export const THREAD_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "plugins/hot_install",
   "plugins/hot_uninstall",
   "get_plugins",
+  "catalog/reload",
 ]);
 
 export const HOST_RELAYED_THREAD_COMMANDS: ReadonlySet<string> = new Set(["permission/set_mode", "permission/get_mode", "permission/grant", "permission/list_rules", "permission/remove_rule"]);

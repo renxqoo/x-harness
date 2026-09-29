@@ -78,8 +78,8 @@ function renderableExit(code: number | null, signal: string | null): number | nu
   return null;
 }
 
-function finalState(intent: TaskRec["intent"], exitCode: number | null): TaskState {
-  if (intent === "timeout") return "timed-out";
+function finalState(intent: TaskRec["intent"], exitCode: number | null, externalDeath: boolean): TaskState {
+  if (intent === "timeout" && !externalDeath) return "timed-out";
   if (intent === "stop") return "killed";
   return exitCode === 0 ? "completed" : "failed";
 }
@@ -198,6 +198,7 @@ export class BackgroundTasks {
         finalize: () => {},
       };
       let settled = false;
+      let killEscalated = false;
       const wall = setTimeout(() => {
         if (rec.state === "running") {
           rec.intent = "timeout";
@@ -205,6 +206,8 @@ export class BackgroundTasks {
         }
       }, this.limits.timeoutMs);
       const upgrade = setTimeout(() => {
+        if (rec.intent !== "timeout") return;
+        killEscalated = true;
         void proc.kill("kill");
       }, this.limits.timeoutMs + KILL_GRACE_MS);
       const clearTimers = (): void => {
@@ -218,7 +221,8 @@ export class BackgroundTasks {
         clearTimers();
         rec.exitCode = renderableExit(code, signal);
         rec.endedAt = Date.now();
-        rec.state = finalState(rec.intent, rec.exitCode);
+        const externalDeath = code === null && signal === "SIGKILL" && !killEscalated;
+        rec.state = finalState(rec.intent, rec.exitCode, externalDeath);
         this.emitSettled(rec);
       };
       const pumps = [pumpToSink(proc.stdout, sink), pumpToSink(proc.stderr, sink)];
