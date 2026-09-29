@@ -357,17 +357,16 @@ describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.m
     w.send({ type: "get_token_analytics", id: "ta1", threadId });
     const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
     expect(res.success).toBe(true);
-    const data = res.data as { breakdown: Record<string, number | boolean>; sessionOutput: number };
+    const data = res.data as { breakdown: Record<string, number>; sessionOutput: number };
+    // 分项估算（systemPrompt/tools/messages/remaining/utilization/windowKnown）已删——
+    // 只留占用与窗口两个真值面
     expect(Object.keys(data.breakdown).sort()).toEqual([
-      "cacheHitRate", "contextWindow", "lastReportedInput", "messages", "remaining", "systemPrompt", "tools", "total", "totalCacheRead", "totalCacheWrite", "totalOutputTokens", "utilization", "windowKnown",
+      "cacheHitRate", "contextWindow", "lastReportedInput", "total", "totalCacheRead", "totalCacheWrite", "totalOutputTokens",
     ]);
     expect(data.breakdown["lastReportedInput"]).toBe(64);
     expect(data.breakdown["totalOutputTokens"]).toBe(17);
-    expect(data.breakdown["windowKnown"]).toBe(true);
     expect(data.breakdown["contextWindow"]).toBe(200_000);
     expect(data.breakdown["total"]).toBe(64);
-    expect(data.breakdown["messages"]).toBe(0);
-    expect(data.breakdown["remaining"]).toBe(200_000 - 64);
     expect(data.sessionOutput).toBe(17);
   });
 

@@ -85,8 +85,9 @@ function adapterOf(profile: ProviderProfile, apiKey: string): LlmAdapter {
   return profile.protocol === "anthropic" ? createAnthropicCompatAdapter(options) : createOpenaiCompatAdapter(options);
 }
 
-export function autoCompactOptionsOf(options: Pick<WorldOptions, "config" | "resolution" | "compaction">): AutoCompactOptions {
-  return { contextWindow: compactionOptionsOf(options).contextWindow };
+export function autoCompactOptionsOf(options: Pick<WorldOptions, "config" | "resolution" | "compaction">): AutoCompactOptions | undefined {
+  const compaction = compactionOptionsOf(options);
+  return compaction === undefined ? undefined : { contextWindow: compaction.contextWindow };
 }
 
 function rescuePermissionOf(options: Pick<WorldOptions, "rules">): { readonly rules?: PermissionRule[] } {
@@ -98,11 +99,15 @@ export function buildAdapters(config: ProvidersConfig, resolution: ModelResoluti
   return config.providers.map((profile) => adapterOf(profile, profile.name === override ? resolution.defaults.apiKey ?? profile.apiKey : profile.apiKey));
 }
 
-export function compactionOptionsOf(options: Pick<WorldOptions, "config" | "resolution" | "compaction">): CompactionOptions {
+export function compactionOptionsOf(options: Pick<WorldOptions, "config" | "resolution" | "compaction">): CompactionOptions | undefined {
   const profile = options.config.providers.find((p) => p.name === options.resolution.defaults.provider);
   const compaction = options.compaction ?? {};
+  // 窗口缺失（模型/档案都未配）→ 返回 undefined，调用方跳过压缩装配——
+  // 不套 128k 假分母（压缩阈值会建在错误的分母上）
+  const contextWindow = compaction.contextWindow ?? profile?.contextWindow;
+  if (contextWindow === undefined) return undefined;
   return {
-    contextWindow: compaction.contextWindow ?? profile?.contextWindow ?? FALLBACK_CONTEXT_WINDOW,
+    contextWindow,
     summarizer: {
       model: options.resolution.defaults.model,
       ...(options.resolution.defaults.provider !== undefined ? { provider: options.resolution.defaults.provider } : {}),
@@ -114,8 +119,6 @@ export function compactionOptionsOf(options: Pick<WorldOptions, "config" | "reso
     ...(compaction.keepMinTurns !== undefined ? { keepMinTurns: compaction.keepMinTurns } : {}),
   };
 }
-
-const FALLBACK_CONTEXT_WINDOW = 128_000;
 
 function rgBinDirOf(options: WorldOptions): { readonly rgBinDir: string } | { readonly absent: true } {
   return options.rgBinDir !== undefined ? { rgBinDir: options.rgBinDir } : { absent: true };
@@ -147,10 +150,10 @@ export function planExitModeOf(options: Pick<WorldOptions, "permission">): impor
 }
 
 function optionalPluginsOf(options: WorldOptions, adapters: readonly LlmAdapter[]): readonly Plugin[] {
+  const compaction = options.compaction === undefined ? undefined : compactionOptionsOf(options);
+  const autoCompact = compaction === undefined || options.compaction?.autocompact === false ? undefined : autoCompactOptionsOf(options);
   return [
-    ...(options.compaction !== undefined
-      ? [...compactionKit(compactionOptionsOf(options)), ...(options.compaction.autocompact === false ? [] : autoCompactKit(autoCompactOptionsOf(options)))]
-      : []),
+    ...(compaction !== undefined ? [...compactionKit(compaction), ...(autoCompact !== undefined ? autoCompactKit(autoCompact) : [])] : []),
     ...(options.telemetryPath !== undefined
       ? telemetryKit({ db: options.telemetryPath, resource: { serviceName: "x-harness-cli" }, onIoError: options.onTelemetryError })
       : []),

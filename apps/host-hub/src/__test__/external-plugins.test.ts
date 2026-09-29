@@ -82,10 +82,11 @@ describe("装配期装载", () => {
     expect(svc).toBeDefined();
     const token = svc?.serviceToken("token-analytics");
     expect(token).toBeDefined();
-    const analytics = assembled.world.ctx.use(token!) as { breakdown: () => { contextWindow: number; utilization: number } };
+    const analytics = assembled.world.ctx.use(token!) as { breakdown: () => { contextWindow?: number; total: number } };
     const breakdown = analytics.breakdown();
     expect(breakdown.contextWindow).toBe(200_000);
-    expect(typeof breakdown.utilization).toBe("number");
+    // 分项/utilization 已删——只留占用与窗口两个真值面
+    expect(typeof breakdown.total).toBe("number");
 
     await assembled.handle.dispose();
     await teardownWorld(assembled.world);

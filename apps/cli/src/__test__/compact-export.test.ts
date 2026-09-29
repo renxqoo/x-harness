@@ -122,33 +122,34 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
 
   it("compactionOptionsOf 显式阈值透传（对抗审查 H-1——收了不用即吞参）", () => {
     const opts = compactionOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 200_000, triggerPct: 92, keepRecentTokens: 999, keepMinTurns: 7 } });
-    expect(opts.triggerPct).toBe(92);
-    expect(opts.keepRecentTokens).toBe(999);
-    expect(opts.keepMinTurns).toBe(7);
+    expect(opts?.triggerPct).toBe(92);
+    expect(opts?.keepRecentTokens).toBe(999);
+    expect(opts?.keepMinTurns).toBe(7);
     const bare = compactionOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 200_000 } });
-    expect("triggerPct" in bare).toBe(false);
+    expect(bare !== undefined && "triggerPct" in bare).toBe(false);
   });
 
   it("autocompact 装配在场:主窗与 compaction 同源派生(autoCompactOptionsOf),CP 摘要面缺省回落 runner.summarizer", async () => {
     expect(autoCompactOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 77_000 } })).toEqual({ contextWindow: 77_000 });
     const base = { config: CONFIG.config, resolution: CONFIG.resolution } as Parameters<typeof autoCompactOptionsOf>[0];
-    expect(autoCompactOptionsOf(base).contextWindow).toBe(compactionOptionsOf(base).contextWindow);
+    expect(autoCompactOptionsOf(base)).toBeUndefined(); // 未配窗口 → 压缩链条整体不装配
     const fixture = await makeFixture([textScript("a-1")], false);
     const handle = await makeAgent(fixture, "auto-in");
     expect(fixture.world.ctx.use(compactionRunner).summarizer).toBeDefined();
     await handle.dispose();
   });
 
-  it("主窗链三档:显式传参 > providers 声明窗 > 保守兜底 128k——contextWindow 必须吃 providers.json 声明(修复:恒兜底忽略声明窗)", async () => {
+  it("主窗链两档:显式传参 > providers 声明窗;都未配则整体不装配(不再套 128k 假分母)", async () => {
     const base: Parameters<typeof compactionOptionsOf>[0] = { config: CONFIG.config, resolution: CONFIG.resolution };
-    expect(compactionOptionsOf(base).contextWindow).toBe(128_000);
+    // 未配窗口 → undefined（不再落 128k——压缩阈值会建在假分母上）
+    expect(compactionOptionsOf(base)).toBeUndefined();
     const withWindow: Parameters<typeof compactionOptionsOf>[0] = {
       config: { ...CONFIG.config, providers: [{ ...CONFIG.config.providers[0]!, contextWindow: 999_000 }] },
       resolution: CONFIG.resolution,
     };
-    expect(compactionOptionsOf(withWindow).contextWindow).toBe(999_000);
+    expect(compactionOptionsOf(withWindow)?.contextWindow).toBe(999_000);
     const explicit: Parameters<typeof compactionOptionsOf>[0] = { ...base, compaction: { contextWindow: 50_000 } };
-    expect(compactionOptionsOf(explicit).contextWindow).toBe(50_000);
+    expect(compactionOptionsOf(explicit)?.contextWindow).toBe(50_000);
   });
 
   it("生产参数(缺省 keepRecentTokens=20k):小会话 → no-cut-point(nothing to compact);大粘贴越过保留区 → 真折叠", async () => {

@@ -48,12 +48,11 @@ import type { RetryPolicy } from "@x-harness/llm-retry";
 import { foldDial, metaTailOf } from "../shared/meta-fold.ts";
 import { createScriptAdapter, scriptFromEnv } from "../shared/script-adapter.ts";
 import type { ScriptAdapter } from "../shared/script-adapter.ts";
-import { catalogEntryOf, resolveWorkerCatalog } from "../shared/worker-catalog.ts";
+import { catalogEntryOf, modelMetaOf, resolveWorkerCatalog } from "../shared/worker-catalog.ts";
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import { projectSettingsPath, updateHubSettings, updateSettingsFile, userSettingsPath } from "../shared/settings-store.ts";
 import { thinkingLevelOf, thinkingUnsupported } from "./meta-state.ts";
 import { META_KEY_THINKING } from "./meta-state.ts";
-import { FALLBACK_CONTEXT_WINDOW } from "@x-harness/token-analytics";
 import { DEFAULT_RETRYABLE_CODES } from "@x-harness/llm-retry";
 import type { ConfirmFields } from "./dialogs.ts";
 import { confirmFieldsOf } from "./ask-confirm-fields.ts";
@@ -129,7 +128,7 @@ export function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | un
     const inputByModel: Record<string, readonly ("text" | "image")[]> = {};
     const contextWindowByModel: Record<string, number> = {};
     for (const model of p.models) {
-      const meta = catalog.modelMeta[model];
+      const meta = modelMetaOf(catalog, { provider: p.provider, model });
       if (meta?.input !== undefined) inputByModel[model] = meta.input;
       if (meta?.contextWindow !== undefined) contextWindowByModel[model] = meta.contextWindow;
     }
@@ -225,8 +224,8 @@ function resolveAssemblyDial(fields: AssemblyFields, catalog: WorkerCatalog, scr
   return { ...catalog.default };
 }
 
-export function contextWindowOf(catalog: WorkerCatalog, dial: { provider: string; model: string }): number {
-  return catalog.modelMeta[dial.model]?.contextWindow ?? catalogEntryOf(catalog, dial)?.contextWindow ?? FALLBACK_CONTEXT_WINDOW;
+export function contextWindowOf(catalog: WorkerCatalog, dial: { provider: string; model: string }): number | undefined {
+  return modelMetaOf(catalog, dial)?.contextWindow ?? catalogEntryOf(catalog, dial)?.contextWindow;
 }
 
 function providerOfModel(catalog: WorkerCatalog): (model: string) => string | undefined {
@@ -289,7 +288,8 @@ function defaultWorkerPlugins(resolved: {
   readonly agentsDirs: readonly string[];
   readonly disabled: ReadonlySet<string>;
   readonly adapters: readonly LlmAdapter[];
-  readonly contextWindow: number;
+  /** 上下文窗口；undefined = 模型/档案都没配（压缩面跳过装配，不套假分母） */
+  readonly contextWindow: number | undefined;
   readonly dial: { provider: string; model: string };
   readonly facts: BasePromptFacts;
   readonly catalog: WorkerCatalog;
@@ -335,10 +335,10 @@ function defaultWorkerPlugins(resolved: {
     ...workflowKit(workerWorkflowOptions(fields, mainSessionId)),
     ...meterKit(),
     ...telemetryPluginsOf(fields),
-    ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...compactionOverrides }),
+    ...(contextWindow !== undefined
+      ? [...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...compactionOverrides }), ...autoCompactKit({ contextWindow }), commandCompactPlugin]
+      : []),
     commandsPlugin,
-    commandCompactPlugin,
-    ...autoCompactKit({ contextWindow }),
     ...llmKit(adapters, { default: RETRY_POLICY }),
     ...loopKit(),
     ...continuationKit(),

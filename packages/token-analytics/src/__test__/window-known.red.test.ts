@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { LlmAdapter, LlmChunk } from "@x-harness/llm";
 import { tokenAnalyticsPlugin, tokenAnalyticsService } from "../index.ts";
-import { AGENT, makeTestWorld } from "./test-world.ts";
+import { makeTestWorld } from "./test-world.ts";
 import type { TestWorld } from "./test-world.ts";
 
 function usageScript(usage: { input: number; output: number }, text = "answer"): AsyncGenerator<LlmChunk> {
@@ -16,36 +16,38 @@ function adaptersOf(scripts: never[], spec: { name: string; contextWindow?: numb
   return spec.map((s) => ({ name: s.name, stream: () => scripts.shift() ?? usageScript({ input: 1, output: 1 }), ...(s.contextWindow !== undefined ? { contextWindow: s.contextWindow } : {}) }));
 }
 
-describe("token-analytics 窗口未知显式化(症状:未配窗口模型显示 153% 误导百分比)", () => {
-  it("runtime 查不到窗口时 breakdown 报 windowKnown:false,不再静默套 200k 假分母", async () => {
+describe("token-analytics 窗口解析（症状：未配窗口模型被套 128k 假分母显示误导百分比）", () => {
+  it("runtime 查不到窗口 → contextWindow 缺席，不套假分母（128k/200k 都不得出现）", async () => {
     const scripts: never[] = [];
     const tw: TestWorld = await makeTestWorld([tokenAnalyticsPlugin({})], {
       adapters: adaptersOf(scripts, [{ name: "mimo" }]),
     });
     const svc = tw.ctx.use(tokenAnalyticsService);
-    expect(svc.breakdown().windowKnown).toBe(false);
+    const b = svc.breakdown();
+    expect(b.contextWindow).toBeUndefined();
+    expect(b.contextWindow).not.toBe(128_000);
+    expect(b.contextWindow).not.toBe(200_000);
     await tw.cleanup();
   });
 
-  it("runtime 查得到窗口时 windowKnown:true 且分母为实查值", async () => {
+  it("runtime 查得到窗口 → contextWindow 为实查值", async () => {
     const scripts: never[] = [];
     const tw: TestWorld = await makeTestWorld([tokenAnalyticsPlugin({})], {
       adapters: adaptersOf(scripts, [{ name: "glm", contextWindow: 1_000_000 }]),
     });
     const svc = tw.ctx.use(tokenAnalyticsService);
-    const b = svc.breakdown();
-    expect(b.windowKnown).toBe(true);
-    expect(b.contextWindow).toBe(1_000_000);
+    expect(svc.breakdown().contextWindow).toBe(1_000_000);
     await tw.cleanup();
   });
 
-  it("窗口未知时 utilization 不产生误导值(0),known 时正常计算", async () => {
+  it("占用与窗口独立：窗口缺席不影响 total（占用照给，展示层按无窗口不渲染百分比）", async () => {
     const scriptsUnknown: never[] = [];
     const twUnknown: TestWorld = await makeTestWorld([tokenAnalyticsPlugin({})], {
       adapters: adaptersOf(scriptsUnknown, [{ name: "mimo" }]),
     });
     const unknown = twUnknown.ctx.use(tokenAnalyticsService).breakdown();
-    expect(unknown.utilization).toBe(0);
+    expect(unknown.contextWindow).toBeUndefined();
+    expect(Number.isFinite(unknown.total)).toBe(true);
     await twUnknown.cleanup();
 
     const scriptsKnown: never[] = [];
@@ -59,8 +61,8 @@ describe("token-analytics 窗口未知显式化(症状:未配窗口模型显示 
     made.value.agent.followup("t");
     await made.value.agent.whenIdle();
     const known = twKnown.ctx.use(tokenAnalyticsService).breakdown(made.value.agent.session.id as never);
-    expect(known.windowKnown).toBe(true);
-    expect(known.utilization).toBe(500 / 100_000);
+    expect(known.contextWindow).toBe(100_000);
+    expect(known.total).toBe(500);
     await made.value.dispose();
     await twKnown.cleanup();
   });

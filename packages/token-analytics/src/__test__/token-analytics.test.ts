@@ -29,8 +29,8 @@ async function runOneTurn(tw: TestWorld, provider: string, model: string): Promi
   return String(made.value.agent.session.id);
 }
 
-describe("token-analytics 口径（实报优先 + CJK 估算）", () => {
-  it("total = 实报 input 优先（输入侧口径）；messages = 实报 − 分项估算（负值归零）", async () => {
+describe("token-analytics 口径（实报优先 + meter 兜底）", () => {
+  it("total = 实报 input 优先（输入侧口径）；不再自算分项残差", async () => {
     const tw = await makeTestWorld([tokenAnalyticsPlugin({ contextWindow: 100_000 })]);
     const svc = tw.ctx.use(tokenAnalyticsService);
     registerProbeSections(tw);
@@ -38,12 +38,13 @@ describe("token-analytics 口径（实报优先 + CJK 估算）", () => {
     const sid = await runOneTurn(tw, "fake", "fake-model");
 
     const b = svc.breakdown(sid as never);
-    expect(b.systemPrompt).toBeGreaterThan(0);
-    expect(b.tools).toBeGreaterThan(0);
+    // 分项（systemPrompt/tools/messages/remaining/utilization）已删——不再产
+    // “估算相减的残差”（两估之和超实报时会被钳成 0，与 total 自相矛盾）
+    expect("systemPrompt" in b).toBe(false);
+    expect("messages" in b).toBe(false);
+    expect("remaining" in b).toBe(false);
     expect(b.total).toBe(500);
-    expect(b.messages).toBe(Math.max(0, 500 - b.systemPrompt - b.tools));
-    expect(b.remaining).toBe(100_000 - 500);
-    expect(b.utilization).toBe(500 / 100_000);
+    expect(b.contextWindow).toBe(100_000);
     expect(b.lastReportedInput).toBe(500);
     expect(b.totalOutputTokens).toBe(20);
     expect(b.cacheHitRate).toBe(400 / 500);
@@ -53,22 +54,22 @@ describe("token-analytics 口径（实报优先 + CJK 估算）", () => {
     await tw.cleanup();
   });
 
-  it("无实报（未跑轮）：total = systemPrompt+tools 估算下限，messages = 0", async () => {
+  it("无实报（未跑轮）：total 走 meter 计费域估算；无 sessionId 时无 surface 可估 → 0", async () => {
     const tw = await makeTestWorld([tokenAnalyticsPlugin({ contextWindow: 100_000 })]);
-    const b = tw.ctx.use(tokenAnalyticsService).breakdown();
-    expect(b.lastReportedInput).toBe(0);
-    expect(b.messages).toBe(0);
-    expect(b.total).toBe(b.systemPrompt + b.tools);
+    const svc = tw.ctx.use(tokenAnalyticsService);
+    // 无参形态（无 sessionId）：无 surface，退 0（不编造）
+    expect(svc.breakdown().total).toBe(0);
+    // 有会话但未跑轮：surface 只有系统提示词投影——估算为有限值，且不再是
+    // “估算相减的残差”（旧实现只算 sys+tools，漏掉全部消息）
+    const sid = await runOneTurn(tw, "fake", "fake-model");
+    expect(svc.breakdown(sid as never).total).toBe(500); // 已跑轮 = 实报优先
     await tw.cleanup();
   });
 
-  it("CJK 估算：汉字 1 字 ≈ 1 token（ASCII ≈ 4 chars/token）——中文段不再被 /3.5 低估", async () => {
+  it("无参形态（无 sessionId）：无 surface 可估，total 退 0（不编造）", async () => {
     const tw = await makeTestWorld([tokenAnalyticsPlugin({})]);
-    const svc = tw.ctx.use(tokenAnalyticsService);
-    const base = svc.breakdown().systemPrompt;
-    registerProbeSections(tw);
-    const after = svc.breakdown().systemPrompt;
-    expect(after - base).toBeGreaterThanOrEqual(400);
+    const b = tw.ctx.use(tokenAnalyticsService).breakdown();
+    expect(b.total).toBe(0);
     await tw.cleanup();
   });
 });
@@ -86,10 +87,9 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
       ]),
     });
     const svc = tw.ctx.use(tokenAnalyticsService);
-    expect(svc.breakdown().windowKnown).toBe(false);
+    expect(svc.breakdown().contextWindow).toBeUndefined();
     const sid = await runOneTurn(tw, "glm", "glm-5.3");
     expect(svc.breakdown(sid as never).contextWindow).toBe(1_000_000);
-    expect(svc.breakdown(sid as never).windowKnown).toBe(true);
     await tw.cleanup();
   });
 
@@ -142,8 +142,8 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
     made.value.agent.followup("x");
     await made.value.agent.whenIdle();
     const b = svc.breakdown(made.value.agent.session.id);
-    expect(b.windowKnown).toBe(false);
-    expect(b.contextWindow).toBe(128_000);
+    // 未知窗口 = 缺席（不再套 128k 假分母）
+    expect(b.contextWindow).toBeUndefined();
     expect(b.lastReportedInput).toBe(300);
     await made.value.dispose();
     await tw.cleanup();
@@ -165,18 +165,17 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
     await tw.cleanup();
   });
 
-  it("无参兜底：runtime 无窗口申报 → windowKnown:false 不套假分母", async () => {
+  it("无参兜底：runtime 无窗口申报 → contextWindow 缺席，不套假分母", async () => {
     const tw = await makeTestWorld([tokenAnalyticsPlugin({})]);
     const b = tw.ctx.use(tokenAnalyticsService).breakdown();
-    expect(b.windowKnown).toBe(false);
-    expect(b.utilization).toBe(0);
+    expect(b.contextWindow).toBeUndefined();
     await tw.cleanup();
   });
 
   it("default 导出装载形状：{name, apply}——plugin-manager validateModule 面", () => {
     expect(loadable.name).toBe("token-analytics");
     expect(typeof loadable.apply).toBe("function");
-    expect(loadable.inject).toEqual(["system-prompt", "tools", "session", "token-meter"]);
+    expect(loadable.inject).toEqual(["session", "token-meter"]);
     expect(loadable.softInject).toEqual(["llm"]);
   });
 });
@@ -253,7 +252,6 @@ describe("消费 meter 事实层（TOKEN-UNIFICATION.md D1/D2/D6/D9——usage �
     expect(agg.totalOutputTokens).toBe(7);
     const b = svc.breakdown("overflowed" as never);
     expect(b.lastReportedInput).toBe(0);
-    expect(b.total).toBe(b.systemPrompt + b.tools);
     expect(b.totalCacheRead).toBe(0);
     await ok.value.dispose();
     await tw.cleanup();
@@ -265,8 +263,8 @@ describe("消费 meter 事实层（TOKEN-UNIFICATION.md D1/D2/D6/D9——usage �
     expect(b.lastReportedInput).toBe(0);
     expect(b.cacheHitRate).toBe(0);
     expect(b.totalOutputTokens).toBe(0);
-    expect(b.total).toBe(b.systemPrompt + b.tools);
-    expect(Number.isFinite(b.utilization)).toBe(true);
+    expect(b.total).toBe(0);
+    expect(b.contextWindow).toBe(100_000);
     await tw.cleanup();
   });
 

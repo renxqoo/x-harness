@@ -4,7 +4,22 @@ import type { DialFact } from "./meta-fold.ts";
 export interface WorkerCatalog {
   readonly providers: readonly AssemblyProvider[];
   readonly default: DialFact;
+  /** 模型元数据表：键 = `provider\0model`（modelKeyOf）。跨渠道同名模型（如 GLM 与
+   *  GML2 都有 glm-5.3-flash）必须各存一条——单键表会被后写者覆盖，把已配对的
+   *  模型级窗口抹成缺省，落到兜底假值。 */
   readonly modelMeta: Readonly<Record<string, WorkerModelMeta>>;
+}
+
+/** 模型元数据表的组合键（provider 与 model 用 NUL 分隔——与 token-meter 的
+ *  routeKey 同律；模型 id 与渠道名都不会含 NUL）。 */
+export function modelKeyOf(dial: { provider: string; model: string }): string {
+  return `${dial.provider}\u0000${dial.model}`;
+}
+
+/** 模型元数据查表单点（键必须先组合——直取 `modelMeta[dial.model]` 是单键表时期的
+ *  漏法，跨渠道同名会串）。 */
+export function modelMetaOf(catalog: WorkerCatalog, dial: { provider: string; model: string }): WorkerModelMeta | undefined {
+  return catalog.modelMeta[modelKeyOf(dial)];
 }
 
 export interface WorkerModelMeta {
@@ -78,7 +93,7 @@ export function scriptCatalog(): WorkerCatalog {
   return {
     providers: [{ provider: "script", protocol: "anthropic", baseUrl: "script://local", apiKey: "", models: ["script-1"], contextWindow: 200_000 }],
     default: { provider: "script", model: "script-1" },
-    modelMeta: { "script-1": { reasoning: true, input: ["text", "image"] } },
+    modelMeta: { [modelKeyOf({ provider: "script", model: "script-1" })]: { reasoning: true, input: ["text", "image"] } },
   };
 }
 

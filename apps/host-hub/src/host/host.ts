@@ -16,6 +16,7 @@ import { isAbsolute } from "node:path";
 import { createDirectRead } from "./read-history.ts";
 import { createHostCommands } from "./host-commands.ts";
 import { createTelemetryPurge, telemetryDbPathOf } from "./telemetry-purge.ts";
+import { modelKeyOf } from "../shared/worker-catalog.ts";
 import { heartbeatFrame, hubErrorFrame, responseFrame } from "../protocol/frames.ts";
 import { hubError } from "../shared/errors.ts";
 
@@ -88,7 +89,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
     const providers = buildAssemblySnapshot(catalogNow, creds.keys, env);
     const modelMeta: Record<string, { reasoning?: boolean; input?: ("text" | "image")[]; contextWindow?: number }> = {};
     for (const entry of catalogNow.entries) {
-      modelMeta[entry.model] = {
+      modelMeta[modelKeyOf(entry)] = {
         reasoning: entry.reasoning,
         ...(entry.input !== undefined ? { input: [...entry.input] } : {}),
         ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),

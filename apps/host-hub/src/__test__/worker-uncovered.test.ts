@@ -31,15 +31,37 @@ const scriptEnv = async (): Promise<Record<string, string>> => ({
 });
 
 describe("assembly 窗口解析（模型级 > 档案级 > 兜底——compaction/analytics 共源）", () => {
-  test("modelMeta 模型级胜档案级；档案级胜 128k 兜底", () => {
+  test("modelMeta 模型级胜档案级；都未配则 undefined（不再套 128k 假分母）", () => {
     const catalog = {
       providers: [{ provider: "glm", protocol: "anthropic", baseUrl: "https://x", apiKey: "k", models: ["glm-5.3", "glm-air"], contextWindow: 1_000_000 }],
       default: { provider: "glm", model: "glm-5.3" },
-      modelMeta: { "glm-air": { contextWindow: 128_000 } },
+      modelMeta: { "glm\u0000glm-air": { contextWindow: 128_000 } },
     };
     expect(contextWindowOf(catalog as never, { provider: "glm", model: "glm-5.3" })).toBe(1_000_000);
     expect(contextWindowOf(catalog as never, { provider: "glm", model: "glm-air" })).toBe(128_000);
-    expect(contextWindowOf({ providers: [], default: { provider: "", model: "" }, modelMeta: {} } as never, { provider: "x", model: "y" })).toBe(128_000);
+    // 未配窗口 → undefined（症状回归：曾静默套 128k，让压缩阈值与百分比都建在假分母上）
+    expect(contextWindowOf({ providers: [], default: { provider: "", model: "" }, modelMeta: {} } as never, { provider: "x", model: "y" })).toBeUndefined();
+  });
+
+  test("症状回归：跨渠道同名模型不互相覆盖窗口（modelMeta 单键表曾让 GLM 的 1M 被无窗口渠道抹掉）", () => {
+    // 真实形态：GLM 与 GML2 都有 glm-5.3-flash；GML2 未配窗口。
+    // 单键表下 modelMeta["glm-5.3-flash"] 被后写的 GML2 覆盖成 {}，
+    // 解析落到 128k 兜底——用户配的 1M 被吃掉（实测 WAL 落 128000）。
+    const catalog = {
+      providers: [
+        { provider: "GLM", protocol: "anthropic", baseUrl: "https://glm", apiKey: "k", models: ["glm-5.3-flash"] },
+        { provider: "GML2", protocol: "anthropic", baseUrl: "https://glm2", apiKey: "k", models: ["glm-5.3-flash"] },
+      ],
+      default: { provider: "GLM", model: "glm-5.3-flash" },
+      modelMeta: {
+        "GLM\u0000glm-5.3-flash": { contextWindow: 1_000_000, reasoning: true },
+        "GML2\u0000glm-5.3-flash": { reasoning: true },
+      },
+    };
+    // 同名模型各按自己的渠道解析——GLM 必须拿到配的 1M，不被 GML2 抹掉
+    expect(contextWindowOf(catalog as never, { provider: "GLM", model: "glm-5.3-flash" })).toBe(1_000_000);
+    // GML2 未配 → undefined（不再套假值）
+    expect(contextWindowOf(catalog as never, { provider: "GML2", model: "glm-5.3-flash" })).toBeUndefined();
   });
 });
 

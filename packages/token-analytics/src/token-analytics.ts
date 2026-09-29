@@ -2,21 +2,17 @@ import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { defineService } from "@x-harness/core";
 import { sessionStore } from "@x-harness/session";
 import type { SessionEvent, SessionId } from "@x-harness/session";
-import { systemPrompt } from "@x-harness/system-prompt";
-import { toolRegistry } from "@x-harness/tools";
 import { llmRuntime } from "@x-harness/llm";
 import { tokenMeter } from "@x-harness/token-meter";
-import { estimateTokensTypical } from "@x-harness/token-meter";
+import { estimateContextTokens } from "@x-harness/token-meter";
 
 export interface TokenBreakdown {
-  systemPrompt: number;
-  tools: number;
-  messages: number;
+  /** 上下文占用：LLM 实报 input 优先（输入侧口径，含 cache 读/写）；无实报退
+   *  meter 计费域估算（estimateContextTokens——与压缩水位同尺）。 */
   total: number;
-  contextWindow: number;
-  windowKnown: boolean;
-  remaining: number;
-  utilization: number;
+  /** 上下文窗口（会话拨号查表——模型级 > 档案级）。解析不到则**缺席**："未知窗口"
+   *  不是可展示的态（展示层无真窗口时不渲染百分比，不套假分母）。 */
+  contextWindow?: number;
   lastReportedInput: number;
   totalOutputTokens: number;
   cacheHitRate: number;
@@ -33,8 +29,6 @@ interface DialFact {
   readonly provider: string;
   readonly model: string;
 }
-
-export const FALLBACK_CONTEXT_WINDOW = 128_000;
 
 function dialOfMeta(events: readonly SessionEvent[]): DialFact | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
@@ -71,11 +65,9 @@ function dialOfEvents(events: readonly SessionEvent[]): DialFact | undefined {
 export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
   return {
     name: "token-analytics",
-    inject: ["system-prompt", "tools", "session", "token-meter"],
+    inject: ["session", "token-meter"],
     softInject: ["llm"],
     apply: (ctx: Context): Disposer => {
-      const prompt = ctx.use(systemPrompt);
-      const registry = ctx.use(toolRegistry);
       const store = ctx.use(sessionStore);
       const meter = ctx.use(tokenMeter);
       const runtime = ctx.tryUse(llmRuntime);
@@ -126,33 +118,24 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
 
       const analytics = {
         breakdown(sessionId?: SessionId): TokenBreakdown {
-          const assembled = prompt.assemble(sessionId !== undefined ? { sessionId } : undefined);
-
-          const schemas = registry.schemas(sessionId !== undefined ? { sessionId } : undefined);
-          const systemPromptTokens = estimateTokensTypical(assembled.text);
-          const toolsTokens = estimateTokensTypical(JSON.stringify(schemas));
-
           const facts = sessionId !== undefined ? factsOfSession(sessionId) : factsOfAll();
 
-          const queried =
-            facts.dial !== undefined
+          // 窗口：参数 > 会话拨号查表（模型级 > 档案级）> 无名查表。
+          // 解析不到就是 undefined——不套 128k 假分母（"未知"不是可展示的态：
+          // 展示层只在有真窗口时才渲染百分比）。
+          const window =
+            options.contextWindow ??
+            (facts.dial !== undefined
               ? runtime?.contextWindowOf(facts.dial.provider !== "" ? facts.dial.provider : undefined, facts.dial.model)
-              : runtime?.contextWindowOf(options.provider);
-          const window = options.contextWindow ?? queried;
-          const windowKnown = window !== undefined;
-          const effectiveWindow = window ?? FALLBACK_CONTEXT_WINDOW;
+              : runtime?.contextWindowOf(options.provider));
 
-          const messages = facts.lastReportedInput > 0 ? Math.max(0, facts.lastReportedInput - systemPromptTokens - toolsTokens) : 0;
-          const total = facts.lastReportedInput > 0 ? facts.lastReportedInput : systemPromptTokens + toolsTokens;
+          // 占用：LLM 实报 input 优先（乙）；无实报退 meter 计费域估算（与压缩水位同尺）。
+          // 两路都不自己算分项——实测占用含 cache 膨胀与 thinking 载荷，分项残差会互相矛盾。
+          const estimated = sessionId !== undefined ? estimateContextTokens(store.get(sessionId)?.surface() ?? []) : 0;
+          const total = facts.lastReportedInput > 0 ? facts.lastReportedInput : estimated;
           return {
-            systemPrompt: systemPromptTokens,
-            tools: toolsTokens,
-            messages,
             total,
-            contextWindow: effectiveWindow,
-            windowKnown,
-            remaining: windowKnown ? Math.max(0, effectiveWindow - total) : 0,
-            utilization: windowKnown ? total / effectiveWindow : 0,
+            ...(window !== undefined ? { contextWindow: window } : {}),
             lastReportedInput: facts.lastReportedInput,
             totalOutputTokens: facts.outputTokens,
             cacheHitRate: facts.lastReportedInput > 0 ? facts.lastReportedCacheRead / facts.lastReportedInput : 0,

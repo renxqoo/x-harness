@@ -169,7 +169,7 @@ describe("worker-catalog 解析", () => {
     const snapshot = JSON.stringify({
       providers: [{ provider: "p1", protocol: "anthropic", baseUrl: "https://p1", apiKey: "k", models: ["m1", "m2"] }],
       default: { provider: "p1", model: "m2" },
-      modelMeta: { m1: { reasoning: false } },
+      modelMeta: { "p1\u0000m1": { reasoning: false } },
     });
     const catalog = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: snapshot });
     expect(catalog.default).toEqual({ provider: "p1", model: "m2" });
@@ -232,9 +232,9 @@ describe("worker-catalog 解析", () => {
     const openaiLike = { providers: [{ provider: "o", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m"] }], default: { provider: "o", model: "m" }, modelMeta: {} };
     const oc = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify(openaiLike) });
     expect(thinkingUnsupported(oc, { provider: "o", model: "m" }, "low")).toBeUndefined();
-    const openaiNoReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "o2", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m2"] }], default: { provider: "o2", model: "m2" }, modelMeta: { m2: { reasoning: false } } }) });
+    const openaiNoReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "o2", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m2"] }], default: { provider: "o2", model: "m2" }, modelMeta: { "o2\u0000m2": { reasoning: false } } }) });
     expect(thinkingUnsupported(openaiNoReason, { provider: "o2", model: "m2" }, "low")).toBe("model does not support thinking");
-    const noReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "a", protocol: "anthropic", baseUrl: "https://a", apiKey: "", models: ["m"] }], default: { provider: "a", model: "m" }, modelMeta: { m: { reasoning: false } } }) });
+    const noReason = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "a", protocol: "anthropic", baseUrl: "https://a", apiKey: "", models: ["m"] }], default: { provider: "a", model: "m" }, modelMeta: { "a\u0000m": { reasoning: false } } }) });
     expect(thinkingUnsupported(noReason, { provider: "a", model: "m" }, "low")).toBe("model does not support thinking");
   });
 });
@@ -268,11 +268,11 @@ describe("images 能力门（BATCH2-DESIGN §1.1——meta 判据单点）", () 
   const textOnly = {
     providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://x", apiKey: "", models: ["m1"] }],
     default: { provider: "p", model: "m1" },
-    modelMeta: { m1: { reasoning: true } },
+    modelMeta: { "p\u0000m1": { reasoning: true } },
   };
   const vision = {
     ...textOnly,
-    modelMeta: { m1: { reasoning: true, input: ["text", "image"] as ("text" | "image")[] } },
+    modelMeta: { "p\u0000m1": { reasoning: true, input: ["text", "image"] as ("text" | "image")[] } },
   };
 
   test("无 input 声明 / input 缺 image → 拒；声明含 image → 放行", () => {
@@ -283,7 +283,7 @@ describe("images 能力门（BATCH2-DESIGN §1.1——meta 判据单点）", () 
   });
 
   test("scriptCatalog：script-1 声明 image 模态（携图全链测试不经门误拒）", () => {
-    expect(scriptCatalog().modelMeta["script-1"]?.input).toContain("image");
+    expect(scriptCatalog().modelMeta["script\u0000script-1"]?.input).toContain("image");
   });
 });
 

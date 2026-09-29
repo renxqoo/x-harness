@@ -7,7 +7,7 @@ import { metaTailOf } from "../shared/meta-fold.ts";
 
 export { metaTailOf };
 import type { DialFact } from "../shared/meta-fold.ts";
-import { catalogEntryOf } from "../shared/worker-catalog.ts";
+import { catalogEntryOf, modelMetaOf } from "../shared/worker-catalog.ts";
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 
 export const META_KEY_DIAL = "dial";
@@ -47,11 +47,11 @@ export function thinkingUnsupported(catalog: WorkerCatalog, dial: DialFact, thin
   if (thinking === undefined || thinking === "off") return undefined;
   const provider = catalogEntryOf(catalog, dial);
   if (provider === undefined) return "model does not support thinking";
-  if (catalog.modelMeta[dial.model]?.reasoning === false) return "model does not support thinking";
+  if (modelMetaOf(catalog, dial)?.reasoning === false) return "model does not support thinking";
   return undefined;
 }
 
 export function imagesUnsupported(catalog: WorkerCatalog, dial: DialFact): string | undefined {
-  if (catalog.modelMeta[dial.model]?.input?.includes("image") === true) return undefined;
+  if (modelMetaOf(catalog, dial)?.input?.includes("image") === true) return undefined;
   return "invalid images: model does not accept images";
 }
