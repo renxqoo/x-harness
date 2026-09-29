@@ -5,22 +5,22 @@ import { describe, expect, test } from "vitest";
 import { foldQueue } from "../shared/inbox-fold.ts";
 import type { SessionEvent } from "@x-harness/session";
 
-const insertEvent = (seq: number, target: "next-turn" | "next-step", text: string, origin?: { source: string; kind: string }): SessionEvent =>
+const insertEvent = (spec: { seq: number; target: "next-turn" | "next-step"; text: string; origin?: { source: string; kind: string } }): SessionEvent =>
   ({
     type: "agent/inbox/spliced",
     time: 0,
-    seq,
+    seq: spec.seq,
     data: {
       op: "insert",
-      target,
-      entries: [{ id: `e${seq}`, content: [{ type: "text", text }], ...(origin !== undefined ? { origin } : {}) }],
+      target: spec.target,
+      entries: [{ id: `e${spec.seq}`, content: [{ type: "text", text: spec.text }], ...(spec.origin !== undefined ? { origin: spec.origin } : {}) }],
     },
   }) as never;
 
-const notice = (seq: number): SessionEvent => insertEvent(seq, "next-turn", "[git-worktree] branch feat-x checked out at /w/t", { source: "git-worktree", kind: "content" });
+const notice = (seq: number): SessionEvent => insertEvent({ seq, target: "next-turn", text: "[git-worktree] branch feat-x checked out at /w/t", origin: { source: "git-worktree", kind: "content" } });
 
-const userQueue = (seq: number, text: string): SessionEvent => insertEvent(seq, "next-turn", text);
-const steerQueue = (seq: number, text: string): SessionEvent => insertEvent(seq, "next-step", text);
+const userQueue = (seq: number, text: string): SessionEvent => insertEvent({ seq, target: "next-turn", text });
+const steerQueue = (seq: number, text: string): SessionEvent => insertEvent({ seq, target: "next-step", text });
 
 describe("foldQueue origin 过滤", () => {
   test("仅通告排队 → 队列面空（不显示为用户排队卡片）", () => {
@@ -35,7 +35,7 @@ describe("foldQueue origin 过滤", () => {
   });
 
   test("steering 队列同样过滤（busy 会话通告走 next-step）", () => {
-    const busyNotice = insertEvent(0, "next-step", "[git-worktree] notice", { source: "git-worktree", kind: "content" });
+    const busyNotice = insertEvent({ seq: 0, target: "next-step", text: "[git-worktree] notice", origin: { source: "git-worktree", kind: "content" } });
     const view = foldQueue([busyNotice, steerQueue(1, "改用方案 B")]);
     expect(view.steering.map((e) => e.text)).toEqual(["改用方案 B"]);
   });
