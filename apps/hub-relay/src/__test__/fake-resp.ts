@@ -1,7 +1,5 @@
 import { createServer, type Server } from "node:net";
 import { parseResp } from "../resp.ts";
-// fake RESP server（测试装置）：内存语义，覆盖 store-redis 用到的命令子集。
-/** fake RESP server：内存语义（GET/SET/DEL/SADD/SISMEMBER/PUBLISH/SUBSCRIBE） */
 export interface FakeRespServer {
   server: Server;
   port: number;
@@ -20,7 +18,6 @@ export function startFakeRespServer(): Promise<FakeRespServer> {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     let buffer = Buffer.alloc(0);
-    // 命令处理器表（一层分派——switch 复杂度拆解）
     const handlers: Record<string, (rest: string[]) => void> = {
       AUTH: () => {
         socket.write("+OK\r\n");
@@ -53,7 +50,6 @@ export function startFakeRespServer(): Promise<FakeRespServer> {
         socket.write(":1\r\n");
       },
       SUBSCRIBE: () => {
-        // 订阅确认帧不发（client send() 不为 SUBSCRIBE 排 pending——发会错位）
         subscribers.add((_channel: string, _message: string) => {});
       },
     };

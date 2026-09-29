@@ -1,7 +1,3 @@
-// 包装器/解释器/payload 政策矩阵（docs/EXEC-ENV.md §14.2 边界 3/4、§14.5-2/3）：
-// 剥离全家族 × sudo → ask；未知旗 fail-closed；剥后残渣；解释器 -c 再解析与传染；
-// xargs/find -exec payload 良性放行/危险拦；恒 ask 表 it.each 全词。
-
 import { describe, expect, it } from "vitest";
 import { adjudicateBash as __adjudicateBash } from "../bash/adjudicate.ts";
 import { knobDecideOf } from "@x-harness/permission-modes";
@@ -44,7 +40,7 @@ describe("剥离家族 × sudo（WIDE harness——硬拒不可被 allow 越过�
     ["env -u USER sudo id", "env"],
     ["env -- sudo id", "env"],
     ["env X=1 Y=2 sudo id", "env"],
-    ["xargs timeout 5 sudo id", "xargs"], // 嵌套包装器：payload 再过政策
+    ["xargs timeout 5 sudo id", "xargs"],
   ])("%s → 剥离后硬拒（wrapper 家族先于 allow）", (command) => {
     const out = adjudicateBash({ ...wide, command });
     expect(out.verdict).toBe("ask");
@@ -54,20 +50,20 @@ describe("剥离家族 × sudo（WIDE harness——硬拒不可被 allow 越过�
     expect(adjudicateBash({ ...fenced, command: "env -i git status" }).verdict).toBe("allow");
     expect(adjudicateBash({ ...fenced, command: "nohup git status" }).verdict).toBe("allow");
     const timeout = adjudicateBash({ ...fenced, command: "timeout 5 git status" });
-    expect(timeout).toMatchObject({ verdict: "ask", reason: "opaque-code:timeout" }); // 裁决⑥代价：良性运行器形多问
+    expect(timeout).toMatchObject({ verdict: "ask", reason: "opaque-code:timeout" });
     const trusted = adjudicateBash({ ...fenced, command: "timeout 5 git status", rules: [parseRule("Danger(timeout:*):allow", "user")] });
-    expect(trusted.verdict).toBe("allow"); // opaque 类可被 allow 委托
+    expect(trusted.verdict).toBe("allow");
   });
 });
 
 describe("未知旗 fail-closed（§14.2 边界 3——结构失败类，WIDE 也拦）", () => {
   it.each([
-    ["timeout -q 5 sudo id", "hard-deny:sudo"], // §14.12：运行器不再解析旗面——提权词命中优先
+    ["timeout -q 5 sudo id", "hard-deny:sudo"],
     ["nice --weird sudo id", "hard-deny:sudo"],
     ["stdbuf -z 1 sudo id", "hard-deny:sudo"],
     ["watch -dn 5 sudo id", "hard-deny:sudo"],
-    ["env -C / sudo id", "wrapper:env"], // env 保留旗面解析——未知旗 fail-closed
-    ["xargs -Z sudo id", "wrapper:xargs"], // 载体旗面保留
+    ["env -C / sudo id", "wrapper:env"],
+    ["xargs -Z sudo id", "wrapper:xargs"],
   ])("%s → %s（WIDE 也不放行）", (command, reason) => {
     const out = adjudicateBash({ ...wide, command });
     expect(out.verdict).toBe("ask");
@@ -137,7 +133,7 @@ describe("eval/trap 载荷（§14.2 边界 8）", () => {
     expect(literal.reason).toBe("hard-deny:sudo");
     const dynamic = adjudicateBash({ ...fenced, command: "trap '$CMD' EXIT" });
     expect(dynamic.verdict).toBe("ask");
-    expect(dynamic.reason).toBe("injection:eval"); // 延迟执行代码不可见——与 eval 同类不可被 allow 越
+    expect(dynamic.reason).toBe("injection:eval");
   });
 });
 
@@ -157,7 +153,7 @@ describe("payload 提取（xargs/find -exec/parallel——§14.2 边界 3）", (
     const out = adjudicateBash({ ...wide, command: "ls | xargs" });
     expect(out.verdict).toBe("ask");
     expect(out.reason).toBe("injection:xargs-shell");
-    expect(adjudicateBash({ ...wide, command: "ls | xargs", profile: FULL_PROFILE }).verdict).toBe("ask"); // A①（2026-09-28）
+    expect(adjudicateBash({ ...wide, command: "ls | xargs", profile: FULL_PROFILE }).verdict).toBe("ask");
   });
   it("find -exec 空 payload：`find . -exec \\;` → injection:find-exec", () => {
     const out = adjudicateBash({ ...wide, command: "find . -exec \\;" });
@@ -180,12 +176,12 @@ describe("恒 ask 表 it.each 全词（不透明信任类——fence 无规则 h
     ["podman run x", "opaque", "opaque-code:podman"],
     ["kubectl delete all", "opaque", "opaque-code:kubectl"],
     ["osascript -e 'tell app x'", "opaque", "opaque-code:osascript"],
-    ["script -q /dev/null sudo id", "wrapper", "hard-deny:sudo"], // §14.12：运行器提权词——硬 ask
+    ["script -q /dev/null sudo id", "wrapper", "hard-deny:sudo"],
     ["coproc sudo id", "wrapper", "hard-deny:sudo"],
     ["strace sudo id", "wrapper", "hard-deny:sudo"],
     ["ltrace sudo id", "wrapper", "hard-deny:sudo"],
     ["valgrind sudo id", "wrapper", "hard-deny:sudo"],
-    ["strace npm test", "opaque", "opaque-code:strace"], // 干净运行器——可被 allow 委托
+    ["strace npm test", "opaque", "opaque-code:strace"],
   ])("%s → %s", (command, resolvedBy, reason) => {
     const out = adjudicateBash({ ...fenced, command });
     expect(out.verdict).toBe("ask");
@@ -206,7 +202,7 @@ describe("词面重构快照（argv 剥离后的真实形状）", () => {
     const env = parseBash("env -i git status");
     expect(env.ok && env.commands[0]?.argv).toEqual(["git", "status"]);
     const timeout = parseBash("timeout 5 git push");
-    expect(timeout.ok && timeout.commands[0]?.argv).toEqual(["timeout", "5", "git", "push"]); // 运行器 argv 原样
+    expect(timeout.ok && timeout.commands[0]?.argv).toEqual(["timeout", "5", "git", "push"]);
   });
 });
 
@@ -247,7 +243,7 @@ describe("旗面变体补测二（payload/载体尾路径）", () => {
   });
   it("find 无 -exec 族词照常命令裁决；无终止符 payload 取余词（保守过判）", () => {
     expect(adjudicateBash({ ...fenced, command: "find . -name x" }).verdict).toBe("allow");
-    const unterminated = adjudicateBash({ ...wide, command: "find . -exec sudo id" }); // 无 \; —— 余词全当 payload
+    const unterminated = adjudicateBash({ ...wide, command: "find . -exec sudo id" });
     expect(unterminated.reason).toBe("hard-deny:sudo");
   });
 });
@@ -257,7 +253,7 @@ describe("bun 子命令修订（§14.11——落档口径与 make/npm run/yarn �
     expect(adjudicateBash({ ...fenced, command: "bun run test" }).verdict).toBe("allow");
     expect(adjudicateBash({ ...fenced, command: "bun install" }).verdict).toBe("allow");
     expect(adjudicateBash({ ...fenced, command: "bun add vitest" }).verdict).toBe("allow");
-    expect(adjudicateBash({ ...fenced, command: "npm test" }).verdict).toBe("allow"); // 对照组
+    expect(adjudicateBash({ ...fenced, command: "npm test" }).verdict).toBe("allow");
   });
   it("bun 文件形照旧 opaque：`bun x.ts` / `bun build.ts`；`bun x`（任意包执行器）不在子命令集", () => {
     expect(adjudicateBash({ ...fenced, command: "bun x.ts" }).reason).toBe("opaque-code:bun");

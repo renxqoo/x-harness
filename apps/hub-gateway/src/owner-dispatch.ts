@@ -1,4 +1,3 @@
-// owner 通道帧分派（DESIGN §3.2）——main.ts 拆分件；依赖注入（ownerSession 绑定 reply）。
 import { judgeGwCommand, type Frame } from "@x-harness/remote-protocol";
 import type { OwnerSession } from "./owner-server.ts";
 
@@ -14,7 +13,6 @@ export function makeOwnerDispatcher(deps: OwnerDispatchDeps): (session: OwnerSes
   async function handleOwnerFrame(session: OwnerSession, frame: Frame): Promise<void> {
     if (frame.kind !== "command") {
       if (frame.kind === "ui_response") {
-        // owner 应答弹窗（先答先得）
         const body = frame.body as { requestId?: string; payload?: Record<string, unknown> };
         if (typeof body.requestId === "string") {
           deps.hostWrite(JSON.stringify({ type: "ui_response", requestId: body.requestId, payload: body.payload ?? {} }));
@@ -30,7 +28,6 @@ export function makeOwnerDispatcher(deps: OwnerDispatchDeps): (session: OwnerSes
       session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id: "?", command: "?", success: false, error: "invalid command frame" } });
       return;
     }
-    // gw/* 本地命令族
     if (judgeGwCommand(command, "owner") !== "unknown-command") {
       const result = await deps.handleGwCommand(command, body.args ?? {});
       session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id, command, success: result.ok, ...(result.ok ? { data: result.data } : { error: result.reason }) } });
@@ -41,8 +38,6 @@ export function makeOwnerDispatcher(deps: OwnerDispatchDeps): (session: OwnerSes
       session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id, command, success: false, error: "unknown gw command" } });
       return;
     }
-    // host 命令（owner 全权）——与设备共用同一条提交管线
-    // reply 绑定提交会话（C7：旧连接的 response 不投新连接）
     await deps.submitOwnerCommand({ session, commandId: id, command, args: body.args ?? {} });
   }
 

@@ -1,8 +1,3 @@
-// bash 工具（docs/TOOLBOX.md §4 + docs/EXEC-ENV.md §3/§6）：进程生命周期经 env.spawn
-// （detached 组杀/settle 观测面/host-exit 清场——全在 exec-env；本文件只留两段杀节奏策略）；
-// 双流全程并发消费；截断保尾+spill（0700/wx 0600/随机名）；退出码非 isError；
-// run_in_background → BackgroundTasks 登记簿（tasks.ts）立返任务 id + 日志路径。
-
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +15,6 @@ const MAX_TIMEOUT_MS = 600_000;
 const DEFAULT_OUTPUT_BYTES = 30_000;
 const KILL_GRACE_MS = 5_000;
 
-/** POSIX 信号→编号（128+n 渲染——env 层 code null + signal，折算属本层） */
 const SIGNAL_NUM: Readonly<Record<string, number>> = {
   SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGTRAP: 5, SIGABRT: 6, SIGBUS: 7, SIGFPE: 8,
   SIGKILL: 9, SIGUSR1: 10, SIGSEGV: 11, SIGUSR2: 12, SIGPIPE: 13, SIGALRM: 14, SIGTERM: 15,
@@ -76,9 +70,6 @@ export function createBashTool(input: BashToolInput): ToolDefinition {
   };
 }
 
-/** on-failure 升级桥（plugin 层注入——permissionBroker 结构化 ask 的 escalate 形态）：
- *  缺席=无升级面（contained 失败即定案）；配额（每命令文本 per session 至多一次）在
- *  plugin 层持有。 */
 export type BashEscalate = (fields: { readonly command: string; readonly failureText: string; readonly session?: ToolExecContext["session"] }) => Promise<"allow" | "deny">;
 
 async function bash(input: {
@@ -92,26 +83,24 @@ async function bash(input: {
   readonly args: { command: string; timeout?: number; run_in_background?: boolean };
 }): Promise<{ content: string; isError?: true }> {
   const { gate, limits, env, tasks, ctx, args, rootOverrideOf, escalate } = input;
-  const cwd = rootOverrideOf?.(ctx.session)?.dir ?? gate.root; // bash 无路径参数——cwd 即会话根（件13 接缝 4）
+  const cwd = rootOverrideOf?.(ctx.session)?.dir ?? gate.root;
   if (PathGate.hasNul(args.command)) {
     return { content: "NUL_IN_ARGUMENT: command contains NUL", isError: true };
   }
-  if (ctx.signal.aborted) return { content: "aborted: tool call aborted before dispatch", isError: true }; // pre-abort 零 spawn
+  if (ctx.signal.aborted) return { content: "aborted: tool call aborted before dispatch", isError: true };
 
     if (args.run_in_background === true) {
     const started = await tasks.start({ command: args.command, cwd, session: ctx.session, env, ...(ctx.exec !== undefined ? { exec: ctx.exec } : {}) });
     if (!started.ok) return { content: started.reason, isError: true };
     return { content: `Background task ${started.value.id} started (wall clock ${String(tasks.limits.timeoutMs)}ms cap) — output appends to ${started.value.logPath}; a [task-notification] will arrive on completion; stop it with task_stop` };
   }
-  const timeoutMs = Math.min(args.timeout ?? limits.defaultTimeoutMs, limits.maxTimeoutMs); // 运行时复检（schema 上限可被配置收紧）
+  const timeoutMs = Math.min(args.timeout ?? limits.defaultTimeoutMs, limits.maxTimeoutMs);
   const result = await runCommand({ command: args.command, cwd, timeoutMs, limits, env, ctx });
   const escalated = await tryEscalate({ command: args.command, cwd, timeoutMs, limits, env, ctx, escalate, result });
   if (escalated !== undefined) return escalated;
   return render(result);
 }
 
-/** on-failure 升级流（PERMISSION-V2-DESIGN §3）：contained 失败 + fenceSuspect 归因 + 升级资格
- *  （on-failure 档）→ escalate ask → 批准后同命令 direct 重执行一次；其余形态返回 undefined（定案） */
 async function tryEscalate(input: {
   readonly command: string;
   readonly cwd: string;
@@ -147,8 +136,6 @@ interface RunResult {
 
 async function runCommand(input: { readonly command: string; readonly cwd: string; readonly timeoutMs: number; readonly limits: BashLimits; readonly env: ExecEnv; readonly ctx: ToolExecContext }): Promise<RunResult> {
   const { command, cwd, timeoutMs, limits, env, ctx } = input;
-  // 增量通道（BATCH2 §2）：双流逐块经 onChunk 外推（ctx.onOutput——调度方发射面）；
-  // 原始字节流口径（ANSI 清洗是结算时态）
   const out = new ChannelCollector(ctx.onOutput !== undefined ? { onChunk: ctx.onOutput } : {});
   const err = new ChannelCollector(ctx.onOutput !== undefined ? { onChunk: ctx.onOutput } : {});
   const spawned = await env.spawn({ argv: ["/bin/sh", "-c", command], cwd, ...(ctx.session !== undefined ? { session: ctx.session } : {}), ...(ctx.exec !== undefined ? { exec: ctx.exec } : {}) });
@@ -161,7 +148,6 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
     timedOut = true;
     void proc.kill("term");
   }, timeoutMs);
-  // KILL 升级在组级：组长先退 ≠ 组清空——env.settled 是死净观测面，升级定时器只在死净后清理
   const killUpgrade = setTimeout(() => {
     void proc.kill("kill");
   }, timeoutMs + KILL_GRACE_MS);
@@ -181,8 +167,7 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
   await Promise.allSettled(pumps);
   clearTimeout(wall);
   ctx.signal.removeEventListener("abort", onAbort);
-  await proc.settled; // 孙进程收敛（组长退出≠组清空——有界 5s 兜底 KILL 在 env）
-  // 先结算（truncated 标志在 text() 内置位）再决定 spill——顺序反了会漏 spill
+  await proc.settled;
   const stdoutText = out.text(limits.maxOutputBytes);
   const stderrText = err.text(limits.maxOutputBytes);
   const truncated = out.truncated || err.truncated;
@@ -200,7 +185,6 @@ async function runCommand(input: { readonly command: string; readonly cwd: strin
   };
 }
 
-/** 信号死亡 → 128+n（exit code 文案口径；正常退出直取 code） */
 function renderableCode(exited: { readonly code: number | null; readonly signal: string | null }): number | null {
   if (exited.code !== null) return exited.code;
   if (exited.signal !== null) return 128 + (SIGNAL_NUM[exited.signal] ?? 0);

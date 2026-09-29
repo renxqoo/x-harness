@@ -1,6 +1,3 @@
-// plugin-examples：19 个真实场景参考插件（架构自洽验证集——每个插件就是一次表面走查）。
-// 全部可用 @x-harness/plugin-api 纯函数 archetype 表达（个别直用 token 面以验证双入口）。
-
 export { destructiveGuardPlugin } from "./destructive-guard.ts";
 export { budgetGuardPlugin } from "./budget-guard.ts";
 export { hallucinationFixerPlugin } from "./hallucination-fixer.ts";

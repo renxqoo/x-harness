@@ -1,5 +1,3 @@
-// workflow 命令面（件16 期 3）：三 handler 的桩级行为——词表在册（worker-uncovered
-// 全命令断言已覆盖）+ submit 缺装配拒 + 坏 schema JSON 拒 + stop 缺 taskId 拒。
 import { describe, expect, test } from "vitest";
 import { createWorkflowHandlers } from "../worker/workflow-commands.ts";
 
@@ -55,7 +53,6 @@ describe("workflow 命令面", () => {
 
 describe("workflow 命令面（world 在场路径）", () => {
   function makeWorldCtx(provides: Readonly<Record<string, unknown>>): unknown {
-    // 微 ctx：tryUse 按 token 名分发（测试桩——不拉全插件）
     const map = new Map<string, unknown>(Object.entries(provides));
     return {
       ctx: {

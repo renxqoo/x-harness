@@ -1,8 +1,3 @@
-// e2e：输出截断续写全链旅程（docs/OUTPUT-TOKEN-CONTINUATION.md e2e 节，进默认门）。
-// 真实装配 session+jsonl 持久化+tools+llm+system-prompt+agent-loop+agent-continuation 插件；
-// 脚本化假 LLM 适配器。旅程A：两段截断→stop 续写（指令恰进续写请求末条、turn completed、
-// WAL 指令为 agent/message{directive}）。旅程B：四连截断放弃（可恢复 error 终态）+
-// 卷重开 resume 重放确定性（指令在投影、不重复注入）。
 import { textScript } from "@x-harness/testkit";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -73,7 +68,6 @@ function directiveEvents(agent: Agent): Array<{ data: Record<string, unknown> }>
 }
 
 export async function runOutputContinuationJourney(): Promise<void> {
-  // 旅程A：两段截断 → stop 续写完成
   await withWorld(async (world, root) => {
     world.scripts.push(textScript("part one ", "max-tokens"));
     world.scripts.push(textScript("part two ", "max-tokens"));
@@ -98,7 +92,6 @@ export async function runOutputContinuationJourney(): Promise<void> {
     must(JSON.stringify(turnEnd?.data).includes('"completed"'), `journey A: turn must complete, got ${JSON.stringify(turnEnd?.data)}`);
     const sessionId = world.agent.session.id;
 
-    // 旅程B（同卷重开）：resume 重放确定性——指令在投影、不重复注入；续写段语义终止（无新截断）
     await world.ctx.dispose();
     const reopened = await assembleWorld(root, sessionId);
     try {
@@ -116,7 +109,6 @@ export async function runOutputContinuationJourney(): Promise<void> {
     }
   });
 
-  // 旅程C：四连截断 → 放弃（可恢复 error 终态；stopReason 逐条 max-tokens）
   await withWorld(async (world) => {
     for (const segment of ["s1 ", "s2 ", "s3 ", "s4 "]) world.scripts.push(textScript(segment, "max-tokens"));
     world.agent.followup("write forever");

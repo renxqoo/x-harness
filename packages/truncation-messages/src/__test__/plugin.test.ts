@@ -1,6 +1,3 @@
-// 截断配对文案插件（docs/WORK-ERROR-RECOVERY.md C3）三用例：替换生效（真装配全链）/
-// 无插件世界内核短事实保底 / content-note 并存优先级（替换优先于追加）。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import { agentLoopPlugin, agentTruncatedTool, agentLoopServiceToken, TRUNCATED_TOOL_MESSAGE } from "@x-harness/agent-loop";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -17,7 +14,6 @@ afterEach(async () => {
   cleanups = [];
 });
 
-/** 真装配世界（含 agent-loop）：半截 tool-call 脚本走内核 pairTruncatedCalls 全链 */
 async function makeWorld(extra: Parameters<typeof loadPlugins>[1] = []) {
   const ctx = createContext();
   const scripts: Array<AsyncGenerator<LlmChunk>> = [];
@@ -53,8 +49,8 @@ describe("createDefaultTruncationMessages（WER C3 文案外提）", () => {
     agent.followup("hi");
     await agent.whenIdle();
     const paired = agent.session.events().find((e) => e.type === "tool/result");
-    expect(paired?.data).toMatchObject({ isError: true, synthetic: true }); // 配对在（abort 分支不吞结果）
-    expect(String(paired?.data.content)).toContain("truncated"); // 文案在（短事实或替换——取决于 abort 时序，两态都证明「结果存在」）
+    expect(paired?.data).toMatchObject({ isError: true, synthetic: true });
+    expect(String(paired?.data.content)).toContain("truncated");
   });
   it("替换生效：插件在场 → 配对 result 文案 = 完整行为指令（内核短事实被替换）", async () => {
     const { agent, scripts } = await makeWorld([createDefaultTruncationMessages()]);
@@ -124,7 +120,7 @@ describe("createDefaultTruncationMessages（WER C3 文案外提）", () => {
     agent.followup("hi");
     await agent.whenIdle();
     const paired = agent.session.events().find((e) => e.type === "tool/result");
-    expect(String(paired?.data.content)).toBe(`${TRUNCATED_TOOL_FULL_MESSAGE}\nwrite to /tmp/partial.txt done`); // 合成非二选一
+    expect(String(paired?.data.content)).toBe(`${TRUNCATED_TOOL_FULL_MESSAGE}\nwrite to /tmp/partial.txt done`);
   });
 
   it("content 类下游应答透传：更内层文案件已给 content → 本件让位（替换优先于叠加）", async () => {

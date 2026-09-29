@@ -1,8 +1,3 @@
-// host 管理命令面（DESIGN §3.9）：settings/models/agents/skills（含技能导入——
-// docs/SKILL-INSTALL.md）命令注册
-// （settings/get·set 与 skills/set_enabled 含项目级 cwd 形态）+ workspace/trust
-// 信任注册表管理 + permission 双域分叉（无 threadId 全局本地；live 交池
-// HOST_RELAYED——返回 false 由调用方交池；parked/dead 直答）。
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
@@ -31,23 +26,19 @@ import type { ThreadTable } from "./thread-table.ts";
 import type { TrustStore } from "./trust-store.ts";
 
 export interface AdminCommandsDeps {
-  /** user 级 agents 目录的 HOME 注入缝（缺省真实 HOME；测试隔离用）。 */
   homeDir?: string;
   agentDir: string;
   sessionsRoot: string;
   table: ThreadTable;
   trust: TrustStore;
-  /** live worker 池（plugins/list 聚合装载态用；缺席 = 无 live 会话，全 unloaded）。 */
   pool?: { queryLiveWorkers(type: string, timeoutMs: number): Promise<unknown[]> };
   respond: (id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }) => void;
 }
 
-/** skills 面作用域（HOME 注入缝 + 已过信任门禁的 cwd）——技能命令共用同一形态 */
 function skillsScopeOf(deps: AdminCommandsDeps, cwd?: string): { homeDir?: string; cwd?: string; agentDir: string } {
   return { ...(deps.homeDir !== undefined ? { homeDir: deps.homeDir } : {}), ...(cwd !== undefined ? { cwd } : {}), agentDir: deps.agentDir };
 }
 
-/** 信任 cwd 全集（注册表 ∪ live trusted——规范化）——skills/remove 的 project 判定用 */
 async function trustedCwdsOf(deps: AdminCommandsDeps): Promise<string[]> {
   const registry = await deps.trust.list();
   const live: string[] = [];
@@ -57,7 +48,6 @@ async function trustedCwdsOf(deps: AdminCommandsDeps): Promise<string[]> {
   return [...new Set([...registry, ...live])];
 }
 
-/** cwd 形态的门禁与规范化（未过门禁返回结构化拒绝——invalid_input/trust_required） */
 async function gatedCwd(trust: TrustStore, table: ThreadTable, raw: string): Promise<{ ok: true; cwd: string } | { ok: false; error: HubErrorShape }> {
   if (!raw.startsWith("/")) {
     return { ok: false, error: hubError("invalid_input", `invalid workspace path: ${raw}`) };
@@ -71,8 +61,6 @@ async function gatedCwd(trust: TrustStore, table: ThreadTable, raw: string): Pro
 
 type LocalHandler = (input: { type?: unknown; id?: unknown; [key: string]: unknown }, id: string | undefined) => Promise<void> | void;
 
-/** parked/dead 会话的权限档（get_mode 直读——免唤醒）：WAL 尾值 > 项目(trusted)
- *  > 用户 > 内置缺省——source 四态（回退链）。尾值校验用词表单源（内置五档） */
 async function parkedPermissionMode(deps: AdminCommandsDeps, threadId: string): Promise<{ mode: string; source: "session" | "project" | "user" | "default" }> {
   const snapshot = await createArchiveReader(deps.sessionsRoot).read(threadId as never).catch(() => undefined);
   const mode = snapshot !== undefined && snapshot.ok ? metaTailOf(snapshot.value.events, "permission-mode") : undefined;
@@ -88,8 +76,6 @@ async function parkedPermissionMode(deps: AdminCommandsDeps, threadId: string): 
 }
 
 export function createAdminCommands(deps: AdminCommandsDeps) {
-  /** permission 双域分叉：undefined = 非本命令族（继续常规路由）；true = 已应答；
-   *  false = live 形态交池（HOST_RELAYED） */
   async function permissionDual(input: { type?: unknown; id?: unknown; [key: string]: unknown }, id: string | undefined): Promise<boolean | undefined> {
     const type = typeof input.type === "string" ? input.type : "";
     if (type !== "permission/set_mode" && type !== "permission/get_mode") return undefined;
@@ -122,7 +108,7 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       }
       return true;
     }
-    return false; // live/spawning/retiring → 交池转发 worker
+    return false;
   }
 
   function register(handlers: Map<string, LocalHandler>): void {
@@ -130,7 +116,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       const rawCwd = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : undefined;
       if (rawCwd === undefined) {
         const values = await readHubSettings(deps.agentDir);
-        // 陈旧名单惰性滤除：未知名不回显（不写回——盘上事实不动）
         if (values["skills.disabled"] !== undefined) {
           const known = new Set(await knownSkillNames(skillsScopeOf(deps)));
           values["skills.disabled"] = values["skills.disabled"].filter((name) => known.has(name));
@@ -143,7 +128,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         deps.respond(id, "settings/get", { error: gate.error });
         return;
       }
-      // 门禁通过后才扫项目目录
       const [user, project] = await Promise.all([readHubSettings(deps.agentDir), readProjectSettings(gate.cwd)]);
       const merged = mergeSettings(user, project);
       if (merged.values["skills.disabled"] !== undefined) {
@@ -166,7 +150,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         return;
       }
       if (verdict.key === "skills.disabled") {
-        // 名单键白名单收紧（只收合并清单内的名字——cwd 形态含 project 层）
         const known = new Set(await knownSkillNames(skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined)));
         const unknown = (input.value as string[]).filter((name) => !known.has(name));
       if (unknown.length > 0) {
@@ -175,7 +158,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       }
       }
       if (gate?.ok === true) {
-        // 项目级：目录自建 + 整替目标级名单
         await mkdir(dirname(projectSettingsPath(gate.cwd)), { recursive: true });
         await updateSettingsFile(projectSettingsPath(gate.cwd), (current) => ({ ...current, [verdict.key]: input.value as never }));
       } else {
@@ -239,7 +221,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         enabled: input.enabled === true,
         ...skillsScopeOf(deps, gate?.ok === true ? gate.cwd : undefined),
       });
-      // 带 cwd 形态：enable 后并集仍含 → stillDisabled 回显（by 恒 user 级）
       const extra = outcome.ok && gate?.ok === true && outcome.stillDisabled !== undefined
         ? { data: { stillDisabled: true, by: outcome.stillDisabled } }
         : {};
@@ -258,7 +239,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       const outcome = await inspectSkillSources({ sourcePaths: input.sourcePaths });
       deps.respond(id, "skills/inspect", outcome.ok ? { data: { results: outcome.results } } : { error: outcome.error });
     });
-    /** live worker 装载快照聚合：逐 worker get_plugins 应答的 loaded 并集。 */
     const collectLoadedSnapshot = async (): Promise<Array<{ name: string; mode: string; status: string }>> => {
       if (deps.pool === undefined) return [];
       try {
@@ -270,7 +250,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
           for (const row of rows) {
             const record = row as { name?: unknown; mode?: unknown; status?: unknown };
             if (typeof record.name !== "string" || typeof record.mode !== "string" || typeof record.status !== "string") continue;
-            // active 优先：任一 worker 装载成功即视为可用（failed 不遮 active）
             const existing = merged.get(record.name);
             if (existing === undefined || (existing.status !== "active" && record.status === "active")) {
               merged.set(record.name, { name: record.name, mode: record.mode, status: record.status });
@@ -279,17 +258,14 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
         }
         return [...merged.values()];
       } catch {
-        return []; // 查询面尽力而为：失败退化为 unloaded 视图，不阻塞管理面
+        return [];
       }
     };
     handlers.set("plugins/list", async (_input, id) => {
-      // 装载态归并输入：live worker 快照聚合（无 live 会话/查询失败 → 全 unloaded，
-      // 与「新会话装配前」语义一致——unloaded 不代表故障）
       const loaded = await collectLoadedSnapshot();
       const outcome = await listPlugins({ agentDir: deps.agentDir, ...(loaded.length > 0 ? { loaded } : {}) });
       deps.respond(id, "plugins/list", { data: { plugins: outcome.plugins } });
     });
-    // agent 注册链（§5）：提案列表/确认/拒绝——确认只是数据置位；装载门在 install
     handlers.set("plugins/trusted_source/list", async (_input, id) => {
       const store = createPluginProposalStore(deps.agentDir);
       const proposals = await store.list();
@@ -320,7 +296,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
       deps.respond(id, "plugins/inspect", outcome.ok ? { data: { results: outcome.results } } : { error: outcome.error });
     });
     handlers.set("plugins/install", async (input, id) => {
-      // agent 发起源的硬门：必须携带已确认 proposalId（一次性消费——防重放与伪造）
       if (input.origin === "agent") {
         const proposalId = typeof input.proposalId === "string" ? input.proposalId : "";
         const proposal = await createPluginProposalStore(deps.agentDir).consumeConfirmed(proposalId);
@@ -332,8 +307,6 @@ export function createAdminCommands(deps: AdminCommandsDeps) {
           deps.respond(id, "plugins/install", { error: hubError("invalid_input", `proposal source mismatch: ${proposal.sourcePath} != ${String(input.sourcePath)}`) });
           return;
         }
-        // TOCTOU 封口（对抗审查 3b）：审批哈希 = propose 时刻指纹；实装前对源树复哈希
-        // 对拍——confirm 与 install 之间源树被改写（含 agent 自改）即拒
         const rehashed = await hashTree(input.sourcePath);
         if (rehashed !== proposal.sha256) {
           deps.respond(id, "plugins/install", { error: hubError("invalid_input", `proposal source changed after approval (sha256 mismatch: ${rehashed} != ${proposal.sha256}) — propose again`) });

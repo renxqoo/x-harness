@@ -1,6 +1,3 @@
-// 会话解析（docs/CLI.md §2.6 表驱动）：主会话过滤+倒序、前缀三态、continue 候选、
-// planSession 优先序矩阵。
-
 import { describe, expect, it } from "vitest";
 import type { SessionHeader, SessionId } from "@x-harness/session";
 import { continueCandidate, mainSessions, matchPrefix, planSession, planToResult } from "../resolve-session.ts";

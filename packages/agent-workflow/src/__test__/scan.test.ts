@@ -1,6 +1,3 @@
-// scanAndRecover 集成测试（§5.1/§5.2）：作用域过滤三则 + 二维窗口恢复全链
-// （进程内模拟重启：run 造好后 dispose world → 新 world 扫描恢复 → 断言续跑/终局/补投）。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -51,8 +48,6 @@ export async function makeWorld(root: string, mainSession = "main-1", options: {
     createTaskToolsPlugin(),
     createAgentDelegationPlugin({ agentsDirs: [], workspaceRoot: root, worktreeSweep: false }),
     ...(options.noArchive === true ? [] : [createJsonlSessionPersistence({ root: join(root, "sessions") })]),
-    // 不装 workflow 插件（apply 会自动扫描认领——与显式 scanAndRecover 双跑抢锁）；
-    // runtime 手工构造，扫描唯一入口 = 测试显式调用
   ];
   await loadPlugins(ctx, plugins);
   const loop = ctx.use(agentLoopServiceToken);
@@ -61,7 +56,7 @@ export async function makeWorld(root: string, mainSession = "main-1", options: {
   const archive = ctx.tryUse((await import("@x-harness/session")).sessionArchive);
   const deps: WorkflowDeps = { ctx, root: join(root, "workflows"), mainSession: mainSession as SessionId, loop, store: ctx.use(sessionStore), view: view ?? undefined,  ...(archive !== undefined ? { archive } : {}) };
   const workflow = createRuntime(deps);
-  deps.warmColdIndex = workflow.warmColdIndex; // 延迟回填（构造序）
+  deps.warmColdIndex = workflow.warmColdIndex;
   const off = ctx.use(llmRuntime).registerAdapter({
     name: "fake",
     stream: async function* (request: LlmRequest): AsyncGenerator<LlmChunk> {
@@ -78,7 +73,7 @@ export async function makeWorld(root: string, mainSession = "main-1", options: {
     workflow,
     deps,
     dispose: async () => {
-      await workflow.dispose(); // journal writer 显式关（FileHandle GC 保护）
+      await workflow.dispose();
       await ctx.dispose();
     },
   };
@@ -101,7 +96,6 @@ export const textsOf = (world: World, session: string): string =>
 describe("scanAndRecover（§5.1 过滤 + §5.2 窗口）", () => {
   it("他父 run 跳过（过滤②）：claimed=0；本父未终态 run 认领（claimed=1）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-scan-"));
-    // 手造两个未终态 run（journal API 直写——不跑真提交，状态可控）
     const { openRunJournal } = await import("../journal.ts");
     const { workflowPluginVersion } = await import("../journal.ts");
     for (const [runId, parent] of [["r-foreign", "other-main"], ["r-mine", "main-1"]] as const) {
@@ -109,13 +103,13 @@ describe("scanAndRecover（§5.1 过滤 + §5.2 窗口）", () => {
       if (made.kind !== "opened") throw new Error("fixture");
       await made.writer.append([{ type: "run/created", runId, parentSession: parent, cwd: root }]);
       await made.writer.append([{ type: "task/submitted", taskId: "t1", spec: { description: "d", prompt: "p", resultSchema: { type: "object" } } }]);
-      await made.writer.close(); // 释放锁（模拟进程退出）
+      await made.writer.close();
     }
 
     const mine = await makeWorld(root, "main-1");
     const result = await scanAndRecover(mine.deps, attachOf(mine));
-    expect(result.claimed).toBe(1); // 只认领本父
-    expect(result.skipped).toBe(1); // 他父跳过
+    expect(result.claimed).toBe(1);
+    expect(result.skipped).toBe(1);
     await mine.dispose();
     await rm(root, { recursive: true, force: true });
   });
@@ -132,8 +126,7 @@ describe("scanAndRecover（§5.1 过滤 + §5.2 窗口）", () => {
 
     const second = await makeWorld(root, "main-1");
     const result = await scanAndRecover(second.deps, attachOf(second));
-    expect(result.claimed).toBe(1); // run 认领（journal 可读可写）
-    // 无子档案（archive 无该会话）→ 任务留待边沿——run 未终态、无异常
+    expect(result.claimed).toBe(1);
     await second.dispose();
     await rm(root, { recursive: true, force: true });
   });
@@ -179,7 +172,7 @@ describe("recoverTask 窗口（§5.2 repairing/dispatched——ctx 手造单元�
     const read = await (await import("../journal.ts")).readRun(join(root, "workflows"), "r-repair");
     if (read.kind !== "opened" || read.snapshot === undefined || world.deps.archive === undefined) throw new Error("fixture");
     const run: ActiveRun = { header: read.header, writer: made.writer, snapshot: read.snapshot };
-    void run; // （journal 形态锚——recoverTask 窗口经 scanAndRecover 全链走）
+    void run;
     const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
     await world.dispose();
@@ -190,7 +183,6 @@ describe("recoverTask 窗口（§5.2 repairing/dispatched——ctx 手造单元�
 describe("dispatched × completed 窗口（真子档案全链）", () => {
   it("崩溃在验收前：恢复 → deliverToAcceptance → schema 裁决 → 终局+通知", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-full-"));
-    // 世界一：真提交（jsonl 在盘）+ 子真完成
     const first = await makeWorld(root, "main-1");
     await first.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     first.scripts.set("m", [script('{"title":"done"}')]);
@@ -198,7 +190,6 @@ describe("dispatched × completed 窗口（真子档案全链）", () => {
     expect(submitted.ok).toBe(true);
     await vi.waitFor(() => expect(textsOf(first, "main-1")).toContain("workflow-notification"), { timeout: 5_000 });
     await first.dispose();
-    // 手术：截掉 journal 末尾的 settled/notify 行（模拟崩溃在 sink 验收前——dispatched 态）
     const { readFile: rd, writeFile: wr, readdir } = await import("node:fs/promises");
     const runs = await readdir(join(root, "workflows"));
     const path = join(root, "workflows", runs[0] ?? "", "journal.jsonl");
@@ -206,7 +197,6 @@ describe("dispatched × completed 窗口（真子档案全链）", () => {
     const cut = lines.findIndex((line) => line.includes("task/settled"));
     await wr(path, `${lines.slice(0, cut).join("\n")}\n`, "utf8");
 
-    // 世界二：恢复——dispatched × completed → 直接进验收 → 链全过 → 终局 + 补投
     const second = await makeWorld(root, "main-1");
     await second.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     const result = await scanAndRecover(second.deps, attachOf(second));
@@ -223,7 +213,6 @@ describe("dispatched × completed 窗口（真子档案全链）", () => {
 describe("dispatched × interrupted 窗口（reviveAndKick 真链）", () => {
   it("子 WAL 开放轮 → revive 受管行 + kick 续跑指令送达（消息面可断言）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-int-"));
-    // 手造 run（dispatched）+ 子会话档案（user 消息 + 开放 turn/start——崩溃残卷）
     const { openRunJournal, workflowPluginVersion } = await import("../journal.ts");
     const made = await openRunJournal(join(root, "workflows"), { runId: "r-int", parentSession: "main-1", cwd: root, createdAt: 1, pluginVersion: workflowPluginVersion() });
     if (made.kind !== "opened") throw new Error("fixture");
@@ -247,7 +236,6 @@ describe("dispatched × interrupted 窗口（reviveAndKick 真链）", () => {
     if (!parentMade.ok) throw new Error(parentMade.reason);
     const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
-    // revive + kick：kick 指令进了子会话收件箱（跨会话读档案断言）
     await vi.waitFor(() => kickDelivered(join(childDir, "events.jsonl")), { timeout: 5_000 });
     await world.dispose();
     await rm(root, { recursive: true, force: true });
@@ -281,10 +269,9 @@ describe("repairing 窗口（§5.2 F6a/F7）", () => {
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
-    // 交付物缺失（无 assistant 文本）→ 抽取 reject → 回炉或终局——断言 journal 推进（不悬死）
     await sleep(300);
     const journal = await readFile(join(root, "workflows", "r-rep2", "journal.jsonl"), "utf8");
-    expect(journal.length).toBeGreaterThan(0); // 恢复动作推进了状态（不悬死）
+    expect(journal.length).toBeGreaterThan(0);
     await world.dispose();
     await rm(root, { recursive: true, force: true });
   });
@@ -308,7 +295,7 @@ describe("repairing 窗口（§5.2 F6a/F7）", () => {
       JSON.stringify({ type: "user/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: "p" }] } }),
       JSON.stringify({ type: "turn/start", seq: 1, time: 1, data: { turn: 1 } }),
       "",
-    ].join("\n")); // 开放轮：修复中崩溃
+    ].join("\n"));
 
     const world = await makeWorld(root, "main-1");
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
@@ -337,7 +324,6 @@ describe("repairing × 反馈已送达（F7 markerMaterialized true）", () => {
     const childDir = join(root, "sessions", child);
     await mkdir(childDir, { recursive: true });
     await wf(join(childDir, "header.json"), JSON.stringify({ id: child, parentSession: "main-1", createdAt: 1, cwd: root, agentId: "agent-abcd7777", agentType: "untyped", agentDepth: 1 }));
-    // 开放轮 + 反馈标记已材料化（user/message 带 [wf task t1 attempt 1] 前缀）
     await wf(join(childDir, "events.jsonl"), [
       JSON.stringify({ type: "user/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: "[wf task t1 attempt 1] fix $.a" }] } }),
       JSON.stringify({ type: "turn/start", seq: 1, time: 1, data: { turn: 1 } }),
@@ -348,7 +334,6 @@ describe("repairing × 反馈已送达（F7 markerMaterialized true）", () => {
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
-    // 标记在场（attempt 1 已送达）→ 不重复注入 attempt 1；验收链重裁 → 新反馈 attempt 2
     await vi.waitFor(() => attemptTwoDelivered(join(childDir, "events.jsonl")), { timeout: 5_000 });
     await world.dispose();
     await rm(root, { recursive: true, force: true });
@@ -420,12 +405,10 @@ describe("dispatched × completed 专窗（G5——真窗口，非 repairing 误
     await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     const result = await scanAndRecover(world.deps, attachOf(world));
     expect(result.claimed).toBe(1);
-    // 直接进验收：交付物 {"a":1} 过 schema → 终局 completed + 通知
     await vi.waitFor(() => expect(textsOf(world, "main-1")).toContain("workflow-notification"), { timeout: 5_000 });
     const journal = await rd(join(root, "workflows", "r-g5", "journal.jsonl"), "utf8");
     expect(journal).toContain('"outcome":"completed"');
     expect(journal).toContain("notify/delivered");
-    // 不 revive/kick：子档案事件卷无新增（无续跑指令注入）
     const childEventsAfter = await rd(join(childDir, "events.jsonl"), "utf8");
     expect(childEventsAfter).not.toContain("wf task t1 resume");
     await world.dispose();
@@ -434,24 +417,20 @@ describe("dispatched × completed 专窗（G5——真窗口，非 repairing 误
 });
 
 
-/** kick 送达断言（interrupted 窗口——收件箱落盘可读） */
 async function kickDelivered(eventsPath: string): Promise<void> {
   const kicked = await readFile(eventsPath, "utf8");
   expect(kicked).toContain("wf task t1 resume");
 }
 
-/** 第二轮回炉反馈送达断言（F7：attempt 1 已材料化不重复，attempt 2 新注入） */
 async function attemptTwoDelivered(eventsPath: string): Promise<void> {
   const kicked = await readFile(eventsPath, "utf8");
   expect(kicked).toContain("wf task t1 attempt 2");
 }
 
-/** 简单等待（时序锚） */
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
 
-/** scanAndRecover 的 attach 适配（onCycleEnd + redispatch——A3 后的复合面） */
 export function attachOf(world: World): (run: ActiveRun) => { readonly onCycleEnd: (agentId: string, report: import("../types.ts").ManagedReport) => Promise<void>; readonly redispatch: (run: ActiveRun, caller: SessionId) => Promise<boolean>; readonly detach: (runId: string) => void } {
   return (run) => ({ onCycleEnd: world.workflow.attach(run), redispatch: (r, caller) => world.workflow.redispatch(r, caller), detach: world.workflow.detach });
 }

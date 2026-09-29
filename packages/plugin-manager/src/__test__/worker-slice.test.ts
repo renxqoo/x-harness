@@ -1,9 +1,3 @@
-// 大级试运行切片（docs/PLUGIN-MANAGER.md 测试口径 worker-slice）：
-// 验证四条最高风险假设，跑不通则回改方案再全量——验证的是流程本身。
-//   ① bun + vitest 下 node:worker_threads 可用且能加载 TS 模块入口
-//   ② 内核（@x-harness/core）能在 worker 内真实启动
-//   ③ 用户 TS 插件从磁盘动态加载（绝对路径 import + query 缓存 bust）
-//   ④ 消息桥双向（服务 RPC main→worker / svc-call worker→main / 事件投递）+ 卡死击杀真实工作
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -41,7 +35,7 @@ function bootWorker(pluginPath: string, platform: { services: Map<string, unknow
   worker.on("message", (message: WorkerToMain) => {
     received.push(message);
     if (message.t === "ready") {
-      worker.postMessage({ t: "proceed" }); // 三段式：ready 后放行 apply
+      worker.postMessage({ t: "proceed" });
     }
     if (message.t === "svc-call") {
       const impl = platform.services.get(message.service) as Record<string, unknown> | undefined;
@@ -155,14 +149,11 @@ export default {
       await expect(h.wait((m) => m.t === "listening" && m.token === "pm-slice-ping")).resolves.toMatchObject({ mode: "emit" });
       await expect(h.wait((m) => m.t === "apply-done")).resolves.toBeTruthy();
 
-      // main → worker 服务 RPC
       await expect(h.call("pm-slice-svc", "hello", ["world"])).resolves.toBe("hi world from worker");
 
-      // main → worker 事件投递 → 监听器执行 → heard 回流
       h.emitIn("pm-slice-ping", { v: 7 });
       await expect(h.wait((m) => m.t === "heard" && m.token === "pm-slice-ping")).resolves.toMatchObject({ payload: { v: 7 } });
 
-      // 平台存活（main 侧照常）
       const tick = defineEvent<{ v: number }>("pm-slice-platform-alive");
       const heard: number[] = [];
       platform.on(tick, ({ v }) => heard.push(v));
@@ -216,12 +207,10 @@ export default {
     );
     const h = bootWorker(pluginPath, { services: platformServices });
     try {
-      // ready 会在 apply 前发出；apply-done 永远不来
       await expect(h.wait((m) => m.t === "ready")).resolves.toMatchObject({ pluginName: "slice-hang" });
       const applyDone = h.wait((m) => m.t === "apply-done", 600);
       await expect(applyDone).rejects.toThrow("timeout");
-      await h.terminate(); // 击杀
-      // 平台无恙
+      await h.terminate();
       const tick = defineEvent<{ v: number }>("pm-slice-after-kill");
       const heard: number[] = [];
       platform.on(tick, ({ v }) => heard.push(v));

@@ -1,5 +1,3 @@
-// readDir 面 local 腿：kind 矩阵（含 symlink）+ 错误三态。
-
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { mkdtemp, rm, mkdir, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";

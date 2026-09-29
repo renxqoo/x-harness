@@ -1,14 +1,9 @@
-// providers.json 契约（docs/CLI.md §2.2）：多 provider 档案的定位/校验/读取。
-// 解析是纯函数（垃圾输入返回失败理由不抛）；IO 只一层读文件。校验失败错误用中性英文，
-// 退出码归属 main（exit 2）。
-
 import type { Result } from "@x-harness/core";
 import { readFile } from "node:fs/promises";
 import { THINKING_LEVELS as SESSION_THINKING_LEVELS } from "@x-harness/session";
 import type { ThinkingLevel } from "@x-harness/llm";
 
 export type ProviderProtocol = "anthropic" | "openai";
-// 档位值域单一出口 @x-harness/session（WER 批 D C6）——与 core 门校验同源防漂移
 export type ThinkingLevelCli = ThinkingLevel;
 
 const PROTOCOLS: readonly ProviderProtocol[] = ["anthropic", "openai"];
@@ -34,7 +29,6 @@ export interface ProvidersConfig {
   readonly default: DefaultChoice;
 }
 
-/** 词表导出：--thinking/default.thinking 共用同一闭集（单一真相） */
 export const THINKING_LEVELS: readonly ThinkingLevelCli[] = SESSION_THINKING_LEVELS;
 
 function isObj(value: unknown): value is Record<string, unknown> {
@@ -60,7 +54,6 @@ function isHttpUrl(value: string): boolean {
 
 interface FieldError { readonly ok: false; readonly reason: string }
 
-/** 封闭模式校验：未知键显式报错（allowed 集随错误给出）——拼错/字段改名不留静默吞没通道 */
 function rejectUnknownFields(obj: Record<string, unknown>, allowed: readonly string[], label: string): FieldError | undefined {
   for (const key of Object.keys(obj)) {
     if (!allowed.includes(key)) {
@@ -105,7 +98,6 @@ function parseModels(obj: Record<string, unknown>, label: string): Result<readon
 
 const PROFILE_FIELDS: readonly string[] = ["name", "protocol", "baseUrl", "apiKey", "models", "contextWindow", "maxOutputTokens"];
 
-/** 可选数值字段：contextWindow/maxOutputTokens 两协议通用（正整数） */
 function parseOptionalNumbers(obj: Record<string, unknown>, label: string): Result<Pick<ProviderProfile, "contextWindow" | "maxOutputTokens">> {
   const contextWindow = obj.contextWindow;
   if (contextWindow !== undefined && !isPositiveInt(contextWindow)) {
@@ -125,7 +117,6 @@ function parseOptionalNumbers(obj: Record<string, unknown>, label: string): Resu
   };
 }
 
-/** 单档案校验：字段名/闭集/唯一性全部在本层闭口（错误带字段路径便于定位） */
 function parseProfile(raw: unknown, index: number): Result<ProviderProfile> {
   if (!isObj(raw)) return { ok: false, reason: `providers[${index}]: expected an object` };
   const unknown = rejectUnknownFields(raw, PROFILE_FIELDS, `providers[${index}]`);
@@ -156,7 +147,6 @@ function parseProfile(raw: unknown, index: number): Result<ProviderProfile> {
   };
 }
 
-/** default 缺省合成：单档案无 default → 首个 model + thinking off；多档案无 default → 报错 */
 function synthesizeDefault(rawDefault: unknown, providers: readonly ProviderProfile[]): Result<DefaultChoice> {
   if (rawDefault === undefined) {
     const only = providers[0];
@@ -188,7 +178,6 @@ function synthesizeDefault(rawDefault: unknown, providers: readonly ProviderProf
   return { ok: true, value: { provider: providerName, model, thinking } };
 }
 
-/** 纯解析：unknown → ProvidersConfig；全部校验失败以 reason 返回（docs/CLI.md §2.2 逐条） */
 export function parseProvidersConfig(raw: unknown): Result<ProvidersConfig> {
   if (!isObj(raw)) return { ok: false, reason: "providers.json: expected a top-level object" };
   const unknownTop = rejectUnknownFields(raw, ["providers", "default"], "providers.json");
@@ -222,7 +211,6 @@ const EXAMPLE = `{
   }]
 }`;
 
-/** IO 层：读文件 + 解析；缺席/坏 JSON 给出可行动指引（路径 + 示例 + 权限建议） */
 function errnoCode(error: unknown): string | undefined {
   if (typeof error === "object" && error !== null && "code" in error) {
     const code = (error as { code?: unknown }).code;

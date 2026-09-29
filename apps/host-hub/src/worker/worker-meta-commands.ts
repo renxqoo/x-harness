@@ -1,7 +1,3 @@
-// 会话级设置命令（DESIGN §3.9 worker 面）：set/get_thinking_level（session/meta
-// 独立键持久化 + agentRequest 挂点下一 turn 生效——写者 append+flush 直写纪律；
-// 词表校验先于流式拒）与 permission/set_mode|get_mode（permissionMode 服务即时切 +
-// WAL 持久化——唤醒无回落；controller.set 后置到 flush 成功）。
 import { hubError } from "../shared/errors.ts";
 import { memoryBlocked, parseRule } from "@x-harness/permission";
 import { permissionGrantStore, permissionGrants } from "@x-harness/permission";
@@ -31,13 +27,10 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
       respond(rt, { id: input.id, command: "set_thinking_level", error: hubError("invalid_input", `invalid thinking level: ${String(level)}`) });
       return;
     }
-    // 在飞拒 = 受理窗口同口径（pendingSends ∨ streaming）——已 ack 未起跑的 turn
-    // 不得捡新档
     if (rt.pendingSends > 0 || rt.bridge.isStreaming()) {
       respond(rt, { id: input.id, command: "set_thinking_level", error: hubError("streaming_window", "thread is streaming") });
       return;
     }
-    // 写前单点：当前拨号换 thinking（provider/model 原样保留）
     const dial = currentDialOf(session.events(), rt.state.dial);
     const unsupported = thinkingUnsupported(rt.state.catalog, dial, level as never);
     if (unsupported !== undefined) {
@@ -60,7 +53,6 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
   handlers.set("get_thinking_level", wrapSyncHandler((input: CommandInput) => {
     const session = requireThread(rt, { ...input, command: "get_thinking_level" });
     if (session === undefined) return;
-    // 尾值存在 → session；无尾值 → 装配物化归因（user/project 四态溯源）；皆无 → off
     const walLevel = thinkingLevelOf(metaTailOf(session.events(), META_KEY_THINKING));
     if (walLevel !== undefined) {
       respond(rt, { id: input.id, command: "get_thinking_level", data: { level: walLevel, source: "session" } });
@@ -74,8 +66,6 @@ export function registerMetaCommands(rt: WorkerRuntime, handlers: Map<string, Ha
     });
   }));
 
-  /** 即时切档应用：plan 进出经 planControl 路由（owner 锚定——plan_submit 资格与快照
- *  变体的单一真相；exit 携目标档即清锚），其余档直切 permissionService */
 function applyPermissionMode(rt: WorkerRuntime, session: { readonly id: import("@x-harness/session").SessionId }, mode: string): void {
   const control = rt.state.world?.ctx.tryUse(planControl);
   if (control !== undefined) {
@@ -95,7 +85,6 @@ handlers.set("permission/set_mode", async (input: CommandInput) => {
     const session = requireThread(rt, { ...input, command: "permission/set_mode" });
     if (session === undefined) return;
     const mode = input.mode;
-    // 值域 = 内置 ∪ 当前 settings 自定义档（对抗审查 #13——自定义档经 set_mode 可达）
     const userSettings = await readHubSettings(rt.agentDir);
     const projectSettings = rt.state.trusted ? await readProjectSettings(rt.state.cwd) : {};
     const customIds = [...(userSettings["permission.profiles"] ?? []), ...(projectSettings["permission.profiles"] ?? [])].map((row) => row.id);
@@ -113,8 +102,6 @@ handlers.set("permission/set_mode", async (input: CommandInput) => {
       respond(rt, { id: input.id, command: "permission/set_mode", error: hubError("io_failed", flushed.reason) });
       return;
     }
-    // 即时切档后置到持久化成功（报失败但提权成功是最坏方向——安全不变量）；
-    // 档位 id 开词表原串直传（自定义档经 resolveProfile(customProfiles) 解析——不得预滤）
     applyPermissionMode(rt, session, mode);
     respond(rt, { id: input.id, command: "permission/set_mode" });
   });
@@ -122,7 +109,6 @@ handlers.set("permission/set_mode", async (input: CommandInput) => {
   handlers.set("permission/get_mode", wrapSyncHandler((input: CommandInput) => {
     const session = requireThread(rt, { ...input, command: "permission/get_mode" });
     if (session === undefined) return;
-    // source 判据：WAL 有档 → session；否则装配来源快照（四态）
     const walMode = permissionModeOf(metaTailOf(session.events(), META_KEY_PERMISSION));
     const current = rt.state.permissionService?.get();
     respond(rt, {
@@ -136,7 +122,6 @@ handlers.set("permission/set_mode", async (input: CommandInput) => {
     });
   }));
 
-/** 规则串解析校验（命令面与文件面同判定——fail-closed；坏串 invalid_input） */
 function parseRuleStrings(rules: readonly string[]): { ok: true; entries: import("@x-harness/permission").PermissionRule[] } | { ok: false; error: string } {
   try {
     return { ok: true, entries: rules.map((rule) => parseRule(rule, "user")) };
@@ -145,11 +130,6 @@ function parseRuleStrings(rules: readonly string[]): { ok: true; entries: import
   }
 }
 
-// 习得授权写入（PERMISSION-V2 §6.2）：session=当前会话授权桶；project/user=settings
-// 持久层（project 需 trusted）。NEVER_MEMORIZE 由 verdict=allow + 规则形态面共同守门。
-/** grant 入参裁决：{rule, scope} 形态 + 恒 allow + 万配/禁习头拒（NEVER_MEMORIZE 命令面）。
- *  P1-4/R9（2026-09-28）：禁习头单源内核 MEMORY_BLOCKED_HEADS（permission 导出）——与
- *  settleMemory 同闸；head 提取滤空白（旧 `Danger( chmod:*)` 前导空格绕过真放行 chmod）。 */
 function grantInputOf(input: CommandInput): { ok: true; scope: "session" | "project" | "user"; tool: import("@x-harness/permission").RuleTool; pattern: string } | { ok: false } {
   const scope = input.scope;
   const rule = input.rule;
@@ -158,10 +138,10 @@ function grantInputOf(input: CommandInput): { ok: true; scope: "session" | "proj
   if (!parsed.ok || parsed.entries[0] === undefined || parsed.entries[0].verdict !== "allow") return { ok: false };
   const entry = parsed.entries[0];
   if (entry.tool === "Danger") {
-    if (entry.pattern === "*") return { ok: false }; // 万配不习得
-    if (memoryBlocked(entry.pattern)) return { ok: false }; // 硬拒族/wrapper·解释器前缀不习得（内核单源——滤空白同口径）
+    if (entry.pattern === "*") return { ok: false };
+    if (memoryBlocked(entry.pattern)) return { ok: false };
   }
-  if (entry.tool === "Tool") return { ok: false }; // R6：Tool(名) 规则对已声明 kind 的工具不生效——命令面不收死规则
+  if (entry.tool === "Tool") return { ok: false };
   return { ok: true, scope, tool: entry.tool, pattern: entry.pattern };
 }
 
@@ -197,7 +177,6 @@ handlers.set("permission/grant", async (input: CommandInput) => {
   respond(rt, { id: input.id, command: "permission/grant", data: { scope, rule: String(input.rule) } });
 });
 
-// 规则清单：session 授权桶 + settings 两作用域（管理面/对账）
 handlers.set("permission/list_rules", async (input: CommandInput) => {
   const thread = requireThread(rt, { ...input, command: "permission/list_rules" });
   if (thread === undefined) return;
@@ -205,7 +184,6 @@ handlers.set("permission/list_rules", async (input: CommandInput) => {
   const sessionRules = (grants?.rulesOf(rt.state.handle?.agent.session.id) ?? []).map((entry) => ({
     tool: entry.tool, pattern: entry.pattern, verdict: entry.verdict, nature: entry.nature ?? "handwritten", at: entry.at, scope: "session" as const,
   }));
-  // 持久两作用域并入（管理面闭环：先列出才能删）
   const user = await readHubSettings(rt.agentDir);
   const project = rt.state.trusted ? await readProjectSettings(rt.state.cwd) : {};
   const settingsRules = [
@@ -215,7 +193,6 @@ handlers.set("permission/list_rules", async (input: CommandInput) => {
   respond(rt, { id: input.id, command: "permission/list_rules", data: { rules: [...sessionRules, ...settingsRules] } });
 });
 
-// 规则删除：settings 作用域按 (scope,tool,pattern) 定位；session 作用域逐出整条
 handlers.set("permission/remove_rule", async (input: CommandInput) => {
   const thread = requireThread(rt, { ...input, command: "permission/remove_rule" });
   if (thread === undefined) return;

@@ -1,8 +1,3 @@
-// bash 完成通知臂测试（docs/TASK-PUSH-DESIGN.md §2.4/§4）：铸文（首行/bytes/路径/帽与
-// 写失败注记/尾部）、readTail（小文件全文/大文件尾部帽/UTF-8 边界/读失败空串）、
-// listener 丢弃面（匿名/句柄缺席/notify throw 留痕）+ 真装配集成（scripted LLM 驱动
-// 真后台任务 → [task-notification] 材料化为 agent/message{source:bash-task} 且唤醒）。
-
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,9 +50,9 @@ describe("taskNotificationText 铸文", () => {
   });
 
   it("command 超长按码点截 80（emoji 不产生孤立代理项）", () => {
-    const long = `${"😀".repeat(50)}${"y".repeat(60)}`; // 110 码点 > 80
+    const long = `${"😀".repeat(50)}${"y".repeat(60)}`;
     const text = taskNotificationText(snap({ command: long }), "");
-    expect(text).toContain(`(${"😀".repeat(50)}${"y".repeat(30)}…)`); // 截 80 码点 + 省略号
+    expect(text).toContain(`(${"😀".repeat(50)}${"y".repeat(30)}…)`);
   });
 });
 
@@ -71,14 +66,14 @@ describe("readTail", () => {
   it("大文件返回尾部帽内切片（不整读）", async () => {
     const path = join(root, "big.log");
     writeFileSync(path, `${"x".repeat(10_000)}TAIL`);
-    expect(await readTail(path, 100)).toBe(`${"x".repeat(96)}TAIL`); // 帽 100 字节 = 96x + TAIL(4)
+    expect(await readTail(path, 100)).toBe(`${"x".repeat(96)}TAIL`);
   });
 
   it("帽边界劈在多字节字符中间——首部续字节回退到字符边界（残半字符丢弃，不劈字）", async () => {
     const path = join(root, "utf8.log");
-    writeFileSync(path, `${"a".repeat(100)}😀尾部`); // 😀 占 [100,104)、尾 [104,107)、部 [107,110)
-    const tail = await readTail(path, 8); // start0 = 102——落在 😀 的第 3 字节（续字节）
-    expect(tail).toBe("尾部"); // 残缺 😀 后半丢弃，从「尾」字符边界起
+    writeFileSync(path, `${"a".repeat(100)}😀尾部`);
+    const tail = await readTail(path, 8);
+    expect(tail).toBe("尾部");
     expect(tail.startsWith("\uFFFD")).toBe(false);
   });
 
@@ -103,7 +98,7 @@ describe("createBashTaskNotifier 丢弃面（单元）", () => {
     createBashTaskNotifier({ loop })(snap());
     await new Promise((resolve) => {
       setTimeout(resolve, 20);
-    }); // 到达此处即未抛
+    });
   });
 
   it("notify throw（父恰在封存）→ onWarn 留痕不外抛", async () => {
@@ -152,23 +147,20 @@ describe("真装配集成：后台任务完成 → [task-notification] 唤醒亲
           yield { type: "tool-call-delta", index: 0, callId: "tc-bg", name: "bash", argumentsDelta: JSON.stringify({ command: "echo notify-needle", run_in_background: true }) };
           yield { type: "finish", finish: { kind: "stop" } };
         })(),
-        textScript("noted the notification"), // 通知唤醒后的收尾轮
+        textScript("noted the notification"),
       );
-      // 送达路径两路皆可（busy 亲会话步边界消费 / idle 唤醒新轮）——断言面是 WAL 的
-      // agent/message{source:bash-task} 帧：材料化只发生在真实消费的领取步，两路殊途同归
       agent.followup("start a background task");
-      await agent.whenIdle(); // 首轮（起任务）收轮
-      // 通知链：settle → onSettled → tail 读 → notify → 唤醒新轮 → 材料化 agent/message 落 WAL
+      await agent.whenIdle();
       const hasNotice = (): boolean => agent.session.events().some((e) => e.type === "agent/message" && JSON.stringify(e.data).includes(BASH_TASK_NOTIFY_SOURCE));
       await vi.waitFor(() => expect(hasNotice()).toBe(true), { timeout: 5_000 });
       const frame = JSON.stringify(agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
       expect(frame).toContain("[task-notification]");
       expect(frame).toContain("completed exit=0");
-      expect(frame).toContain("notify-needle"); // 尾部切片带到证据
+      expect(frame).toContain("notify-needle");
       const logLine = frame.match(/log: ([^"\\]+)/)?.[0] ?? "";
       expect(logLine).not.toBe("");
       expect(readFileSync(logLine.replace("log: ", ""), "utf8")).toBe("notify-needle\n");
-      await agent.whenIdle(); // 收尾轮（消耗第二脚本）
+      await agent.whenIdle();
       await made.value.dispose();
       await ctx.dispose();
     } finally {

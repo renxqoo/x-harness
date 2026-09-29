@@ -1,4 +1,3 @@
-
 import type {
   EventToken,
   FreezeMode,
@@ -20,7 +19,6 @@ export function defineService<T>(name: string): ServiceToken<T> {
   return Object.freeze({ kind: "service", name }) as ServiceToken<T>;
 }
 
-/** freeze 缺省 "deep"；"shell" = 信封类（壳冻结、data 原引用）；"none" = 高频豁免（§2.3） */
 export function defineEvent<T>(
   name: string,
   opts?: { freeze?: FreezeMode },

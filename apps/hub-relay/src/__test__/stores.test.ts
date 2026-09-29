@@ -1,4 +1,3 @@
-// 共享存储契约：内存实现全接口 + store-redis 经 fake RESP 的旅程 + store-memory 边界
 import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "../store-memory.ts";
 import { createRedisStore } from "../store-redis.ts";
@@ -38,7 +37,6 @@ describe("store-redis（fake RESP 旅程）", () => {
     expect(await store.isRevoked("dev_r")).toBe(true);
     await store.publishCrossNode("inst_r", "cross-1");
     await store.subscribeCrossNode(() => {});
-    // 键名空间断言
     const keys = fake.received.map((args) => args[1] ?? "").filter((k) => k.startsWith("xh-relay:"));
     expect(keys.some((k) => k.includes("route:installation:"))).toBe(true);
     expect(keys.some((k) => k.includes("route:device:"))).toBe(true);
@@ -64,10 +62,8 @@ describe("RespClient 重连重放订阅（C6）", () => {
       if (fake.received.some((args) => args[0] === "SUBSCRIBE")) break;
     }
     expect(fake.received.some((args) => args[0] === "SUBSCRIBE")).toBe(true);
-    // 服务器重启（连接断）→ ensure 重连 + 重放订阅
     await fake.close();
     const fake2 = await startFakeRespServer();
-    // 同端口不可复用——用新端口的新客户端验证重放语义
     const client2 = new RespClient({ host: "127.0.0.1", port: fake2.port });
     await client2.ensure();
     await client2.subscribe("chan-b", () => {});
@@ -87,11 +83,9 @@ describe("RespClient 并发 ensure 与断连后重连复用", () => {
     const fake = await startFakeRespServer();
     const { RespClient } = await import("../resp.ts");
     const client = new RespClient({ host: "127.0.0.1", port: fake.port });
-    // 并发 ensure ×5（connecting 去重路径）
     await Promise.all([client.ensure(), client.ensure(), client.ensure(), client.ensure(), client.ensure()]);
     await client.set("k", "v");
     expect(await client.get("k")).toBe("v");
-    // close 后 ensure 重建（socket destroyed → 重连路径）
     client.close();
     await client.ensure();
     await client.set("k2", "v2");
@@ -128,7 +122,7 @@ describe("RespClient C6 回归（连接失败排空等待者不楔死）", () =>
     const { RespClient } = await import("../resp.ts");
     const client = new RespClient({ host: "127.0.0.1", port: 1 });
     await expect(client.ensure()).rejects.toThrow();
-    await expect(client.ensure()).rejects.toThrow(); // 不楔死
+    await expect(client.ensure()).rejects.toThrow();
     client.close();
   });
 });

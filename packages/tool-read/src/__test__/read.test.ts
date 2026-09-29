@@ -1,6 +1,3 @@
-// read 工具测试（docs/TOOLBOX.md §2/§6——交集 read 10 条）：单包装配 readPlugin；
-// read↔write 配对/CAS 用例归 tool-write（观察门执行面）。
-
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +17,6 @@ beforeEach(async () => {
   root = mkdtempSync(join(tmpdir(), "xh-read-"));
   const gate = new PathGate(root);
   const observed = new ObservedRegistry();
-  // 直接经 registry.dispatch 走完整管线（含 TypeBox 校验层）
   const ctx = createContext();
   const unload = await loadPlugins(ctx, [toolsPlugin, createReadPlugin({ gate, observed, env: createLocalEnv(root) })]);
   registry = ctx.use(toolRegistry);
@@ -51,7 +47,7 @@ describe("read（docs/TOOLBOX.md §2——交集 read 10 条）", () => {
     expect(r1.content).not.toContain("3: three");
     expect(r1.content).toContain("Showing lines 1-2 of 5. Use offset=3 to read on");
     const r2 = await read({ path: "a.txt", offset: 3, limit: 2 });
-    expect(r2.content).toContain("3: three"); // 行号跨窗口连续
+    expect(r2.content).toContain("3: three");
   });
 
   it("offset 越过 EOF → 明确报错（绝不谎报空文件）", async () => {
@@ -88,22 +84,20 @@ describe("read（docs/TOOLBOX.md §2——交集 read 10 条）", () => {
     expect(r.content).not.toContain("2001: line2001");
     expect(r.content).toContain("Use offset=2001 to read on");
     const tail = await read({ path: "big.txt", offset: 2001 });
-    expect(tail.content).not.toContain("Use offset"); // 到 EOF 无页脚
+    expect(tail.content).not.toContain("Use offset");
   });
 
   it("50KB 字节帽双断言：<2000 行 >50KB ASCII → 字节截；中文按 Buffer.byteLength 计不撕裂", async () => {
-    // 1000 行 × 60 ASCII = 60KB < 2000 行 → 字节预算先到
     const ascii = Array.from({ length: 1000 }, () => "a".repeat(60));
     writeFileSync(join(root, "ascii.txt"), `${ascii.join("\n")}\n`);
     const r = await read({ path: "ascii.txt" });
     expect(r.content).toContain("Output capped at 50000 bytes");
-    // 中文：300 行 × 100 字 = 30000 chars 但 90000 bytes → 字节截且行完整（行边界截断不撕裂多字节）
     const chinese = Array.from({ length: 300 }, () => "中".repeat(100));
     writeFileSync(join(root, "cn.txt"), `${chinese.join("\n")}\n`);
     const cn = await read({ path: "cn.txt" });
     expect(cn.content).toContain("Output capped at 50000 bytes");
     for (const line of cn.content.split("\n").filter((l) => /^\d+: /.test(l))) {
-      expect(line.endsWith("�")).toBe(false); // 不出撕裂替换符
+      expect(line.endsWith("�")).toBe(false);
     }
   });
 
@@ -125,7 +119,7 @@ describe("read（docs/TOOLBOX.md §2——交集 read 10 条）", () => {
     writeFileSync(join(root, "nonl.txt"), "end");
     const r2 = await read({ path: "nonl.txt" });
     expect(r2.content).toContain("1: end");
-    expect(r2.content).not.toContain("Use offset"); // 已到 EOF：无续读提示
+    expect(r2.content).not.toContain("Use offset");
   });
 
   it("二进制（首 8KB 含 NUL）→ FS_BINARY_FILE；BOM 剥除展示", async () => {
@@ -139,8 +133,6 @@ describe("read（docs/TOOLBOX.md §2——交集 read 10 条）", () => {
   });
 
   it("非普通文件（字符设备）→ 门优先于类型判定（!isFile 全拒——FIFO 同类归 tool-write 配对测）", async () => {
-    // 根内造字符设备不可行——/dev/null 越根路径反证分层语义：门（PATH_ESCAPES_ROOT）先于
-    // 文件类型判定（fail-closed 分层；根内无设备文件，类型分支由目录用例锁定）
     const r = await read({ path: "/dev/null" });
     expect(r.content).toContain("PATH_ESCAPES_ROOT");
   });
@@ -159,7 +151,6 @@ describe("systemRoots 放行（系统固有读根——gate root 外任务日志
       expect(allowed.content).toContain("log-body-line");
       await ctx.dispose();
       void unload;
-      // 缺省装配（beforeEach）在 gate root 外 fail-closed——不因本特性松弛
       const denied = await read({ path: join(logRoot, "bash-task.log") });
       expect(denied.isError).toBe(true);
     } finally {
@@ -222,7 +213,7 @@ describe("read paths 批量（TURN-REDUCTION.md §1.1A/§2.3 契约矩阵）", (
 
   it("单条目数组 → schema minItems 拒绝（单文件用 path，避免形状分叉）", async () => {
     const r = await read({ paths: ["a.ts"] });
-    expect(r.isError).toBe(true); // schema 层拒绝（dispatch TypeBox）
+    expect(r.isError).toBe(true);
   });
 
   it("9 条目 → schema maxItems 拒绝", async () => {
@@ -243,11 +234,9 @@ describe("read paths 批量（TURN-REDUCTION.md §1.1A/§2.3 契约矩阵）", (
   });
 
   it("聚合预算：首文件耗尽预算 → 余文件块给续读指引（工具层自截，非调度层）", async () => {
-    // 渲染恰好贴近 50KB 上界（249 行 × 200B/行 ≈ 50.7KB 触发 byteCapped，实际渲染略低于预算）
     writeFileSync(join(root, "big.ts"), `${"x".repeat(195)}\n`.repeat(260));
-    // 先读一次拿实际渲染字节数，再构造「预算刚好耗尽」的断言：big.ts 渲染后剩余预算 < b.ts 需要的任意字节
     const big = await read({ path: "big.ts" });
-    expect(big.content).toContain("capped at"); // 首文件确实触顶
+    expect(big.content).toContain("capped at");
     const r = await read({ paths: ["big.ts", "b.ts"] });
     expect(r.content).toContain("budget exhausted in this batch");
     expect(r.content).toContain("re-read with single path");

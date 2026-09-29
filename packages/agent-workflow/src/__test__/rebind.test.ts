@@ -1,6 +1,3 @@
-// 期 2-A 会话重绑测试（run/rebound）：/new 切会话后 workflow_submit 复活（新会话可提交）+
-// 在飞 run 归属迁移（journal/header/通知目的地）+ 悬置通知即时补投。
-
 import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -48,8 +45,6 @@ async function makeFixture(root: string, mainSession = "sess-old"): Promise<Fixt
   ];
   await loadPlugins(ctx, plugins);
   const loop = ctx.use(agentLoopServiceToken);
-  // 单一实例纪律：submit（dispatch→plugin runtime）与 rebind（workflowView→同一 plugin
-  // runtime）必须同实例——手工 createRuntime 会造成双实例 mainRef 不同步
   const { workflowView } = await import("../plugin.ts");
   const workflow = ctx.use(workflowView);
   const off = ctx.use(llmRuntime).registerAdapter({
@@ -70,7 +65,6 @@ async function makeFixture(root: string, mainSession = "sess-old"): Promise<Fixt
       .filter((e) => e.type === "agent/message" || e.type === "user/message")
       .map((e) => JSON.stringify(e.data)).join("\n") ?? "",
     dispose: async () => {
-      // plugin runtime 随 ctx.dispose 收尾（workflowView 面无 dispose——plugin disposer 负责）
       await ctx.dispose();
     },
   };
@@ -86,7 +80,7 @@ describe("run/rebound 事件（fold）", () => {
     ];
     const made = fold(events);
     expect(made?.parentSession).toBe("new");
-    expect(made?.tasks["t"]?.status).toBe("submitted"); // 任务态不受迁移影响
+    expect(made?.tasks["t"]?.status).toBe("submitted");
   });
 });
 
@@ -95,26 +89,21 @@ describe("会话重绑（期 2-A）", () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-rb-"));
     const f = await makeFixture(root, "sess-old");
     await f.loop.create({ session: { id: "sess-old" as SessionId }, agent: { model: "m", provider: "fake" } });
-    // 新会话提交被拒（期 1 语义）
     const denied = await f.submit("sess-new" as SessionId, { description: "d", prompt: "p", result_schema: { type: "object" } });
     expect(denied.ok).toBe(false);
 
-    // 旧会话提交受管任务（在飞——子脚本第二桶留着不消耗 → run 驻留）
     f.scripts.set("m", [textScript('{"a":1}')]);
     const sent = await f.submit("sess-old" as SessionId, { description: "keep flying", prompt: "x", result_schema: { type: "object" } });
     expect(sent.ok).toBe(true);
     await vi.waitFor(() => expect(f.texts("sess-old")).toContain("workflow-notification"), { timeout: 5_000 });
 
-    // rebind：再提交一个挂起 run（死父窗口难造——用直接 rebind 断言归属迁移面）
     const rebound = await f.workflow.rebind("sess-new" as SessionId);
     expect(rebound.ok).toBe(true);
 
-    // 新会话提交门复活
     await f.loop.create({ session: { id: "sess-new" as SessionId }, agent: { model: "m", provider: "fake" } });
     const allowed = await f.submit("sess-new" as SessionId, { description: "after rebind", prompt: "y", result_schema: { type: "object" } });
     expect(allowed.ok).toBe(true);
 
-    // 旧会话再提交被拒（门已迁走）
     const deniedOld = await f.submit("sess-old" as SessionId, { description: "d", prompt: "p", result_schema: { type: "object" } });
     expect(deniedOld.ok).toBe(false);
     await f.dispose();
@@ -129,15 +118,13 @@ describe("会话重绑（期 2-A）", () => {
     f.scripts.set("m", [textScript('{"a":1}')]);
     const sent = await f.submit("sess-old" as SessionId, { description: "orphan", prompt: "x", result_schema: { type: "object", required: ["a"] } });
     expect(sent.ok).toBe(true);
-    await parent.value.dispose(); // 死父——通知悬置
+    await parent.value.dispose();
     await sleepFor(600);
 
-    // 新会话建立 + rebind → 悬置通知即时补投（rebind 内 onSessionAlive）
     await f.loop.create({ session: { id: "sess-new" as SessionId }, agent: { model: "m", provider: "fake" } });
     const rebound = await f.workflow.rebind("sess-new" as SessionId);
     expect(rebound.ok).toBe(true);
     await vi.waitFor(() => expect(f.texts("sess-new")).toContain("workflow-notification"), { timeout: 5_000 });
-    // journal 落 run/rebound + notify/delivered 指向新会话
     const { readdir, readFile } = await import("node:fs/promises");
     const runs = await readdir(join(root, "workflows"));
     let sawRebound = false;
@@ -163,7 +150,6 @@ describe("会话重绑（期 2-A）", () => {
   });
 });
 
-/** 简单等待 */
 const sleepFor = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
@@ -172,7 +158,6 @@ describe("在飞 run 的归属迁移（真在飞窗口——非 settled 后）",
   it("submit 后立即 rebind：run/rebound 落账 + journal 归属迁移（A 路假绿裁决补充）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-rb-fly-"));
     const scripts = new Map<string, AsyncGenerator<LlmChunk>[]>();
-    // 长任务：子代理持续产出（多轮长文本——验收永不完成 → run 驻留在飞）
     scripts.set("task-model", Array.from({ length: 8 }, () => textScript("working ".repeat(50))));
     const ctx = createContext();
     const plugins: readonly Plugin[] = [
@@ -194,11 +179,10 @@ describe("在飞 run 的归属迁移（真在飞窗口——非 settled 后）",
     const registry = ctx.use(toolRegistry);
     const made = await registry.dispatch({ callId: "fly1", name: "workflow_submit", args: { description: "long work", prompt: "x", result_schema: { type: "object" } }, signal: new AbortController().signal, session: "fly-old" as SessionId });
     expect(made.isError).toBeUndefined();
-    await sleep(150); // 子在飞（schema 校验会 reject→回炉循环——run 驻留）
+    await sleep(150);
     const { workflowView } = await import("../plugin.ts");
     const rebound = await ctx.use(workflowView).rebind("fly-new" as SessionId);
     expect(rebound.ok).toBe(true);
-    // journal 断言：run/rebound 落账（真在飞 run 的归属迁移）
     const { readdir, readFile } = await import("node:fs/promises");
     const runs = await readdir(join(root, "workflows"));
     let sawRebound = false;
@@ -209,14 +193,13 @@ describe("在飞 run 的归属迁移（真在飞窗口——非 settled 后）",
         expect(j).toContain('"to":"fly-new"');
       }
     }
-    expect(sawRebound).toBe(true); // 在飞 run 的迁移真发生（非 settled 后的空转）
+    expect(sawRebound).toBe(true);
     await parent.value.dispose();
     await ctx.dispose();
     await rm(root, { recursive: true, force: true });
   }, 15_000);
 });
 
-/** 简单等待 */
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });

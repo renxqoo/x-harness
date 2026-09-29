@@ -1,7 +1,3 @@
-// thread/list_saved 折叠（DESIGN §3.1）：archive headers 扫描 + 逐会话 read 折叠
-// SessionSummary——排除子代理会话（header.agentId 在场即滤除）；title 缺省派生自
-// 首条用户消息截断（继承源语义）；updatedAt = 尾事件 time（recency 序）；查询键
-// 收窄 {cwd?}（全量拉后自滤——MIGRATION §4 声明）；单会话超 64MiB 跳过并 stderr 记。
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import type { SessionEvent, SessionHeader } from "@x-harness/session";
 import { foldDial, foldMeta } from "../shared/meta-fold.ts";
@@ -22,7 +18,6 @@ export interface SavedSession {
 
 const TITLE_DERIVED_CAP = 80;
 
-/** 首条用户消息文本（title 派生源——截断到 80 字符） */
 function derivedTitle(events: readonly SessionEvent[]): string {
   for (const event of events) {
     if (event.type !== "user/message") continue;
@@ -52,7 +47,6 @@ function foldSummary(header: SessionHeader, events: readonly SessionEvent[]): Sa
   };
 }
 
-/** 会话卷字节近似（超限跳过判据） */
 function volumeBytes(events: readonly SessionEvent[]): number {
   let size = 0;
   for (const event of events) size += JSON.stringify(event).length;
@@ -64,7 +58,7 @@ export async function listSavedSessions(sessionsRoot: string, query: { cwd?: str
   const headers = await reader.listHeaders().catch(() => []);
   const out: SavedSession[] = [];
   for (const header of headers) {
-    if (header.agentId !== undefined) continue; // 子代理会话不入客户端清单
+    if (header.agentId !== undefined) continue;
     if (query.cwd !== undefined && header.cwd !== query.cwd) continue;
     const snapshot = await reader.read(header.id).catch(() => undefined);
     if (snapshot === undefined || !snapshot.ok) {
@@ -77,6 +71,6 @@ export async function listSavedSessions(sessionsRoot: string, query: { cwd?: str
     }
     out.push(foldSummary(header, snapshot.value.events));
   }
-  out.sort((a, b) => b.updatedAt - a.updatedAt); // recency 序
+  out.sort((a, b) => b.updatedAt - a.updatedAt);
   return out;
 }

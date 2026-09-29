@@ -1,4 +1,3 @@
-// 删：按 id 删除。
 import type { Plugin } from "@x-harness/core";
 import { defineService } from "@x-harness/core";
 import { crudDb } from "./contracts.ts";

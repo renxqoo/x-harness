@@ -1,7 +1,3 @@
-// PERMISSION-V2 host-hub 集成：settings 三键校验/合并（rules 并集同键项目胜、profiles
-// 保留名拒）、装配接线（settings 规则经 thread 装配进入裁决面）、worker 命令面
-// （permission/grant 写三作用域 + list_rules + remove_rule 落盘删除）。
-
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,7 +25,7 @@ describe("settings 键校验（单点）", () => {
   test("permission.rules：条目形态 + grant 恒 allow；坏形态拒", () => {
     expect(validateSettingValue("permission.rules", [{ tool: "Danger", pattern: "npm install:*", verdict: "allow", nature: "grant", at: 1 }])).toMatchObject({ ok: true });
     expect(validateSettingValue("permission.rules", [{ tool: "Danger", pattern: "x", verdict: "deny", nature: "handwritten" }])).toMatchObject({ ok: true });
-    expect(validateSettingValue("permission.rules", [{ tool: "Danger", pattern: "x", verdict: "deny", nature: "grant" }])).toMatchObject({ ok: false }); // grant 恒 allow
+    expect(validateSettingValue("permission.rules", [{ tool: "Danger", pattern: "x", verdict: "deny", nature: "grant" }])).toMatchObject({ ok: false });
     expect(validateSettingValue("permission.rules", [{ tool: "Fax", pattern: "x", verdict: "allow", nature: "handwritten" }])).toMatchObject({ ok: false });
     expect(validateSettingValue("permission.rules", "Danger(x):allow")).toMatchObject({ ok: false });
   });
@@ -47,7 +43,7 @@ describe("mergeSettings（规则并集语义）", () => {
     const project = { "permission.rules": [{ tool: "Danger" as const, pattern: "a:*", verdict: "deny" as const, nature: "handwritten" as const }] };
     const merged = mergeSettings(user, project).values["permission.rules"] ?? [];
     expect(merged).toHaveLength(2);
-    expect(merged.find((r) => r.pattern === "a:*")?.verdict).toBe("deny"); // 项目覆盖
+    expect(merged.find((r) => r.pattern === "a:*")?.verdict).toBe("deny");
     expect(merged.some((r) => r.pattern === "~/docs/**")).toBe(true);
   });
 });
@@ -56,9 +52,9 @@ describe("坏文件降级与读入", () => {
   test("规则键含坏条目 → 单条降级保留好条目（R5——旧整键静默清空让断代词条陪葬全部 deny）", async () => {
     const dir = await tempDir("xh-setread-");
     const path = join(dir, "hub-settings.json");
-    await writeFile(path, JSON.stringify({ "permission.rules": [{ tool: "Danger", pattern: "ok:*", verdict: "allow", nature: "grant" }, { tool: "Danger", verdict: "allow", nature: "handwritten" }], "unknown.key": 1 }), "utf8"); // 第二条缺 pattern → 单条丢弃（stderr 点名）
+    await writeFile(path, JSON.stringify({ "permission.rules": [{ tool: "Danger", pattern: "ok:*", verdict: "allow", nature: "grant" }, { tool: "Danger", verdict: "allow", nature: "handwritten" }], "unknown.key": 1 }), "utf8");
     const settings = await readSettingsFile(path);
-    expect(settings["permission.rules"]).toEqual([{ tool: "Danger", pattern: "ok:*", verdict: "allow", nature: "grant" }]); // 好条目保留（deny/习得不陪葬）
+    expect(settings["permission.rules"]).toEqual([{ tool: "Danger", pattern: "ok:*", verdict: "allow", nature: "grant" }]);
   });
 
   test("projectSettingsPath 锚（保护路径接线面——U13）", async () => {

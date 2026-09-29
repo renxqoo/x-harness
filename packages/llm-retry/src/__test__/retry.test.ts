@@ -1,6 +1,3 @@
-// llm-retry 全套（docs/LLM-RETRY.md §3，对照 R1–R19 真缺口）：退避表驱动/Retry-After 三态/
-// 预算烧尽/审计事件先于等待/取消与 dispose 排空/委托/上下文干净（R12）。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context, Plugin } from "@x-harness/core";
 import { agentLoopPlugin, agentLoopServiceToken, agentRequestError } from "@x-harness/agent-loop";
@@ -51,7 +48,6 @@ function textFinish(text: string): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 真实装配（假适配器脚本队列）；delay 传 0 让退避立即到点（退避数值由表驱动单测单独覆盖） */
 async function makeWorld(policyOver: Partial<RetryPolicy> = {}, extra: Plugin[] = []): Promise<World> {
   const ctx = createContext();
   const scripts: Array<AsyncGenerator<LlmChunk>> = [];
@@ -90,21 +86,21 @@ async function spawn(world: World) {
 
 describe("退避计算表驱动（docs/LLM-RETRY.md §1——R1/R2/R3）", () => {
   const policy: RetryPolicy = { maxRetries: 5, initialDelayMs: 2_000, maxDelayMs: 10_000, jitterRatio: 0.1 };
-  const mid = (): number => 0.5; // 抖动因子 = 1
+  const mid = (): number => 0.5;
 
   it.each([
     ["指数序列", 1, 2_000],
     ["翻倍", 2, 4_000],
-    ["封顶", 4, 10_000], // 2000×2³=16000 → 硬封顶
+    ["封顶", 4, 10_000],
   ])("%s：retry %d → %d ms", (_name, retry, expected) => {
     expect(backoffDelay({ policy, retry, retryAfterMs: undefined, random: mid })).toBe(expected);
   });
 
   it("抖动上下界：ratio=1 时 factor∈[0,2]，且始终 ≤ maxDelayMs（硬封顶）", () => {
     const wobbly: RetryPolicy = { ...policy, jitterRatio: 1 };
-    expect(backoffDelay({ policy: wobbly, retry: 1, retryAfterMs: undefined, random: () => 0 })).toBe(0); // 下界 0 合法（立即重试）
-    expect(backoffDelay({ policy: wobbly, retry: 1, retryAfterMs: undefined, random: () => 1 })).toBe(2_000 * 2); // 抖动放大但未超 initial×2
-    expect(backoffDelay({ policy: wobbly, retry: 5, retryAfterMs: undefined, random: () => 1 })).toBe(10_000); // 抖动后 min 硬封顶
+    expect(backoffDelay({ policy: wobbly, retry: 1, retryAfterMs: undefined, random: () => 0 })).toBe(0);
+    expect(backoffDelay({ policy: wobbly, retry: 1, retryAfterMs: undefined, random: () => 1 })).toBe(2_000 * 2);
+    expect(backoffDelay({ policy: wobbly, retry: 5, retryAfterMs: undefined, random: () => 1 })).toBe(10_000);
   });
 
   it("Retry-After 三态：≤上限原样（0 合法）/超上限放弃(undefined)/缺席走指数", () => {
@@ -133,8 +129,8 @@ describe("端到端重试（真实装配，R4/R6/R7/R12）", () => {
     world.scripts.push(errorFinish("http-503:upstream", "http-503"), textFinish("recovered"));
     handle.agent.followup("hi");
     await handle.agent.whenIdle();
-    expect(world.calls).toHaveLength(2); // 重试重拨
-    expect(JSON.stringify(world.calls[0]?.messages)).toBe(JSON.stringify(world.calls[1]?.messages)); // 失败诊断与部分输出不进重试上下文
+    expect(world.calls).toHaveLength(2);
+    expect(JSON.stringify(world.calls[0]?.messages)).toBe(JSON.stringify(world.calls[1]?.messages));
     const retryEvent = handle.agent.session.events().find((e) => e.type === "llm/retry");
     expect(retryEvent?.data).toMatchObject({ turn: 0, step: 0, provider: "fake", retry: 1, failure: { code: "http-503" } });
     expect(handle.agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
@@ -161,7 +157,7 @@ describe("端到端重试（真实装配，R4/R6/R7/R12）", () => {
     world.scripts.push(errorFinish("network:x", "network"), errorFinish("network:x", "network"), errorFinish("network:x", "network"));
     handle.agent.followup("hi");
     await handle.agent.whenIdle();
-    expect(world.calls).toHaveLength(3); // 首发 + 2 重试
+    expect(world.calls).toHaveLength(3);
     expect(handle.agent.session.events().filter((e) => e.type === "llm/retry")).toHaveLength(2);
     expect(handle.agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "error" } });
     await handle.dispose();
@@ -171,11 +167,11 @@ describe("端到端重试（真实装配，R4/R6/R7/R12）", () => {
     const world = await makeWorld({ initialDelayMs: 5_000 });
     worlds.push(world);
     const handle = await spawn(world);
-    world.scripts.push(errorFinish("http-429:slow", "http-429", 0), textFinish("ok")); // 0 = 立即重试
+    world.scripts.push(errorFinish("http-429:slow", "http-429", 0), textFinish("ok"));
     handle.agent.followup("hi");
     await handle.agent.whenIdle();
     const retryEvent = handle.agent.session.events().find((e) => e.type === "llm/retry");
-    expect(retryEvent?.data).toMatchObject({ delayMs: 0 }); // 快车道覆盖指数初值
+    expect(retryEvent?.data).toMatchObject({ delayMs: 0 });
     expect(handle.agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await handle.dispose();
   });
@@ -188,12 +184,11 @@ describe("取消与处置（R13/R16/R19）", () => {
     const handle = await spawn(world);
     world.scripts.push(errorFinish("http-503:x", "http-503"));
     handle.agent.followup("hi");
-    // 审计事件已落（先于等待），退避挂起中
     const hasRetryEvent = (): boolean => handle.agent.session.events().some((e) => e.type === "llm/retry");
     await vi.waitFor(() => expect(hasRetryEvent()).toBe(true));
     handle.agent.cancel("user-stop");
     await handle.agent.whenIdle();
-    expect(handle.agent.session.events().filter((e) => e.type === "llm/retry")).toHaveLength(1); // 取消后无新调度
+    expect(handle.agent.session.events().filter((e) => e.type === "llm/retry")).toHaveLength(1);
     expect(handle.agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "aborted", cause: "user-stop" } });
     await handle.dispose();
   });
@@ -219,8 +214,8 @@ describe("取消与处置（R13/R16/R19）", () => {
       scripts.push(errorFinish("http-503:x", "http-503"));
       made.value.agent.followup("hi");
       await vi.waitFor(() => expect(calls).toHaveLength(1));
-      await made.value.dispose(); // dispose：排空在途等待（60s 退避被 abort）
-      expect(calls).toHaveLength(1); // 不重拨
+      await made.value.dispose();
+      expect(calls).toHaveLength(1);
     }
     await ctx.dispose();
     void unload;
@@ -229,7 +224,6 @@ describe("取消与处置（R13/R16/R19）", () => {
 
 describe("委托与策略归属（R8/R10）", () => {
   it("无策略 provider / 无路线记录且有 default → default 生效；均无 → 委托", async () => {
-    // 单元级：直接 dispatch agentRequestError（不经驱动），观察决策
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [
       sessionPlugin,
@@ -239,7 +233,6 @@ describe("委托与策略归属（R8/R10）", () => {
     const made = await store.create({ id: "s1" as SessionId });
     expect(made.ok).toBe(true);
     if (made.ok) {
-      // 无路线记录 → default 策略 → network 可重试
       const decision = await ctx.dispatch(agentRequestError, {
         session: made.value.id,
         turn: 0,
@@ -248,7 +241,6 @@ describe("委托与策略归属（R8/R10）", () => {
         signal: new AbortController().signal,
       } as never, async () => undefined as never);
       expect(decision).toEqual({ kind: "retry" });
-      // 非 retryable code → 委托（undefined）
       const delegated = await ctx.dispatch(agentRequestError, {
         session: made.value.id,
         turn: 0,
@@ -273,13 +265,12 @@ describe("委托与策略归属（R8/R10）", () => {
     }
     expect(made.length).toBe(2);
     if (made.length < 2) return;
-    // 两会话都在 (turn 0, step 0) 失败一次（maxRetries=2）：各自都应获得重试（互不扣减）
     for (let i = 0; i < made.length; i++) {
       world.scripts.push(errorFinish("http-503:x", "http-503"), textFinish("ok"));
     }
     for (const handle of made) handle.agent.followup("hi");
     for (const handle of made) await handle.agent.whenIdle();
-    expect(world.calls).toHaveLength(4); // 每会话 2 次（首发+重试）
+    expect(world.calls).toHaveLength(4);
     for (const handle of made) {
       expect(handle.agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
       await handle.dispose();
@@ -304,7 +295,7 @@ describe("委托与策略归属（R8/R10）", () => {
         failure: { message: "network:x", code: "network" },
         signal: new AbortController().signal,
       } as never, async () => undefined as never);
-      expect(decision).toBeUndefined(); // 不重试
+      expect(decision).toBeUndefined();
     }
     await ctx.dispose();
     void unload;
@@ -342,8 +333,8 @@ describe("委托与策略归属（R8/R10）", () => {
           failure: { message: "network:x", code: "network" },
           signal: new AbortController().signal,
         } as never, async () => undefined as never);
-        expect(decision).toEqual({ kind: "retry" }); // 下游崩不阻断重试
-        expect(traces.some((line) => line.includes("downstream recovery threw"))).toBe(true); // 留痕
+        expect(decision).toEqual({ kind: "retry" });
+        expect(traces.some((line) => line.includes("downstream recovery threw"))).toBe(true);
       }
       brokenDownstream();
     } finally {
@@ -359,7 +350,6 @@ describe("委托与策略归属（R8/R10）", () => {
       sessionPlugin,
       createLlmRetryPlugin({ providers: {}, default: { maxRetries: 1, initialDelayMs: 1, maxDelayMs: 1_000, jitterRatio: 0 } }),
     ]);
-    // prepend：插到监听队列首（外层）——返回值胜过内层重试决策
     const earlier = ctx.on(
       agentRequestError,
       async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
@@ -379,7 +369,7 @@ describe("委托与策略归属（R8/R10）", () => {
         failure: { message: "network:x", code: "network" },
         signal: new AbortController().signal,
       } as never, async () => undefined as never);
-      expect(decision).toBeUndefined(); // 内层 retry 的决策被先注册者否决
+      expect(decision).toBeUndefined();
     }
     earlier();
     await ctx.dispose();

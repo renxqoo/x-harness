@@ -1,18 +1,3 @@
-// 装配层：步闸分区/接管/降级/恢复/生命周期（对照参照系 gate-*/plugin-runtime/
-// resilience/journeys 语义；hook 面改写为 agentPreStep waterfall dispatch）。
-
-
-// ---------------------------------------------------------------------------
-// 对照参照系（my-agent autocompact 186 条用例清单）三态映射（docs/COMPACTION.md §7）：
-// 承接：语义逐条移植到本仓原语（本文件头注释逐 describe 标注对照来源）。
-// 改写：hook 面 step/prepare→agentPreStep waterfall；session_meta servedWindow→
-//   request/context.contextWindow；replaceHead 元数据→surfaceOp/事件 token；
-//   消息计数锚→journal seq；settings→工厂选项；L0 层→不承接（agent-loop
-//   maxToolResultChars 既有面——同一事实单一实现）。
-// 不承接（机制不存在/死代码）：per-assembly 槽机、checkpointState defineState
-//   死 token、estimateContextTokens 消息级、L0 truncateToolContent、dist 产物。
-// ---------------------------------------------------------------------------
-
 import { TIERS, tierOf, lineTiersOf } from "../plugin.ts";
 import { describe, expect, it, vi } from "vitest";
 import { agentPreStep } from "@x-harness/agent-loop";
@@ -33,7 +18,6 @@ async function dispatchPreStep(world: Awaited<ReturnType<typeof makeWorld>>, fie
 
 const PATCH = "<goals>\ngoal-1\n</goals>\n<current>\nstep\n</current>";
 
-/** 占用锚在给定值的会话（l1 线 800 / warn 线 700 / cp 水位 540） */
 async function seeded(world: Awaited<ReturnType<typeof makeWorld>>, id: string, anchorInput: number) {
   const made = await world.store.create({ id: sid(id) });
   if (!made.ok) throw new Error(made.reason);
@@ -56,38 +40,36 @@ describe("分区放行（eff=900：cp=540 / warn=701 / l1=l2=801——单线基�
   });
 
   it("越 L1 线 + L1 预门槛成立 → redaction 落账回线下放行（零 LLM 调用——纯本地通道）", async () => {
-    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 95, l2Pct: 95 }, { summarizer: undefined }); // 无摘要面：eff=1000、l1=l2=950、cp=600
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 95, l2Pct: 95 }, { summarizer: undefined });
     const cleared: string[] = [];
     world.ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
     try {
       const made = await world.store.create({ id: sid("l1") });
       if (!made.ok) throw new Error(made.reason);
-      // 旧工具结果 ~60 token：占用 950 − 60 = 890 < 950
       seedToolTurn(made.value, { turn: 0, user: "go", tool: "read", callId: "c1", args: JSON.stringify({ path: "/a.ts" }), result: textOf(60) });
       seedToolTurn(made.value, { turn: 1, user: "next", tool: "read", callId: "c2", args: "{}", result: textOf(1), usage: { input: 950, output: 1 } });
       await dispatchPreStep(world, { session: made.value.id });
-      expect(world.llm.calls).toHaveLength(0); // 零 LLM
+      expect(world.llm.calls).toHaveLength(0);
       expect(cleared).toEqual(["watermark"]);
       const clearedNode = made.value.surface().find((node) => node.event.type === "tool/result" && (node.event.data as { content: string }).content.startsWith(PLACEHOLDER_PREFIX));
       expect(clearedNode).toBeDefined();
-      expect(made.value.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false); // 无 L2/压缩落账
+      expect(made.value.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false);
     } finally {
       await world.ctx.dispose();
     }
   });
 
   it("分层行为（缺省 70/85 线序）：L1 落账后占用落在 (l1,l2) 区间 → 不动账本（免费层不消耗付费层）", async () => {
-    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 70, l2Pct: 85 }, { summarizer: undefined }); // eff=1000：l1=700、l2=850
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 70, l2Pct: 85 }, { summarizer: undefined });
     try {
       const made = await world.store.create({ id: sid("layered") });
       if (!made.ok) throw new Error(made.reason);
-      // 占用 800（越 l1=700、未越 l2=850）；旧大结果 150 token：落账后 650 < 700
       seedToolTurn(made.value, { turn: 0, user: "go", tool: "read", callId: "cl", args: "{}", result: textOf(150) });
       seedToolTurn(made.value, { turn: 1, user: "next", tool: "read", callId: "c2", args: "{}", result: textOf(1), usage: { input: 800, output: 1 } });
       await dispatchPreStep(world, { session: made.value.id });
       const cleared = made.value.surface().some((node) => node.event.type === "tool/result" && (node.event.data as { content: string }).content.startsWith(PLACEHOLDER_PREFIX));
-      expect(cleared).toBe(true); // 免费层落账
-      expect(made.value.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false); // 未动账本/压缩
+      expect(cleared).toBe(true);
+      expect(made.value.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false);
       expect(world.llm.calls).toHaveLength(0);
     } finally {
       await world.ctx.dispose();
@@ -96,18 +78,18 @@ describe("分区放行（eff=900：cp=540 / warn=701 / l1=l2=801——单线基�
 
   it("清无可清（收益 <1000）→ l1-no-gain 退避 + 账本未就绪放行；终局恒 enter", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined }); // 纯本地通道
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined });
     try {
-      const session = await seeded(world, "nogain", 950); // 无可清工具结果
+      const session = await seeded(world, "nogain", 950);
       const decision = await dispatchPreStep(world, { session: session.id });
-      expect(decision).toEqual({ kind: "enter" }); // 终局恒放行
+      expect(decision).toEqual({ kind: "enter" });
       expect(world.llm.calls).toHaveLength(0);
       const codes = stderr.mock.calls.map((line) => String(line[0]));
       expect(codes.some((line) => line.includes("l1-no-gain"))).toBe(true);
       expect(codes.some((line) => line.includes("budget-gate-release") && line.includes("ledger-unready"))).toBe(true);
       stderr.mockClear();
       await dispatchPreStep(world, { session: session.id });
-      expect(stderr.mock.calls.filter((line) => String(line[0]).includes("l1-no-gain"))).toHaveLength(0); // 本 turn 退避
+      expect(stderr.mock.calls.filter((line) => String(line[0]).includes("l1-no-gain"))).toHaveLength(0);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -127,9 +109,8 @@ describe("CP + L2 旅程（账本就绪 → 越线 L2 零新 CP）", () => {
         seedTurn(made.value, { turn, user: textOf(300), assistant: { text: textOf(300), usage: { input: turn < 2 ? 500 : 850, output: 1 } } });
       }
       world.llm.scripts.push(textScript(PATCH), textScript(PATCH));
-      // 第一次步闸：占用 850 ≥ cp 540 → CP 起飞；≥ l1 800 → L1 无可清 → join 在飞 → 就绪 → L2
       await dispatchPreStep(world, { session: made.value.id });
-      expect(world.llm.calls.length).toBeGreaterThanOrEqual(1); // CP 拨号
+      expect(world.llm.calls.length).toBeGreaterThanOrEqual(1);
       expect(escalated).toHaveLength(1);
       const head = made.value.deriveMessages()[0] as { content: ReadonlyArray<{ text: string }> };
       expect(head.content[0]?.text).toContain("<goals>");
@@ -147,7 +128,6 @@ describe("CP + L2 旅程（账本就绪 → 越线 L2 零新 CP）", () => {
       for (let turn = 0; turn < 4; turn += 1) {
         seedTurn(made.value, { turn, user: textOf(300), assistant: { text: textOf(300), usage: { input: 850, output: 1 } } });
       }
-      // 预置持久化账本快照（覆盖全前缀）——重开会话形态
       const nodes = made.value.surface();
       made.value.append("autocompact/checkpoint", {
         turn: 3,
@@ -156,9 +136,9 @@ describe("CP + L2 旅程（账本就绪 → 越线 L2 零新 CP）", () => {
         coveredSeq: nodes[nodes.length - 2]?.seq ?? -1,
       });
       await dispatchPreStep(world, { session: made.value.id });
-      expect(world.llm.calls).toHaveLength(0); // 零新 CP
+      expect(world.llm.calls).toHaveLength(0);
       const head = made.value.deriveMessages()[0] as { content: ReadonlyArray<{ text: string }> };
-      expect(head.content[0]?.text).toContain("goal-1"); // L2 用恢复的账本落账
+      expect(head.content[0]?.text).toContain("goal-1");
     } finally {
       await world.ctx.dispose();
     }
@@ -171,10 +151,10 @@ describe("水位权分居（autocompact 不接管 compaction 水位——强制�
     const landed: string[] = [];
     world.ctx.on(compactionLanded, (payload) => landed.push(payload.trigger));
     try {
-      const session = await seeded(world, "pct-forced", 980); // 超 compaction 水位（1000 × 92% = 920）
+      const session = await seeded(world, "pct-forced", 980);
       world.llm.scripts.push(textScript("## Goal\nforced\n\n## Progress\n### In Progress\n- [ ] t"));
       await dispatchPreStep(world, { session: session.id });
-      expect(landed).toEqual(["auto"]); // 水位权在 compaction——强制压缩落账
+      expect(landed).toEqual(["auto"]);
     } finally {
       await world.ctx.dispose();
     }
@@ -184,12 +164,11 @@ describe("水位权分居（autocompact 不接管 compaction 水位——强制�
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const world = await makeWorld({ summarizer: undefined }, { summarizer: undefined });
     try {
-      // 覆盖 compaction 的摘要面也置空（runner.summarizer 单一真相面）
       const session = await seeded(world, "skip", 500);
       await dispatchPreStep(world, { session: session.id });
       await dispatchPreStep(world, { session: session.id });
       expect(world.llm.calls).toHaveLength(0);
-      expect(stderr.mock.calls.filter((line) => String(line[0]).includes("takeover-skipped"))).toHaveLength(0); // 接管面已拆除
+      expect(stderr.mock.calls.filter((line) => String(line[0]).includes("takeover-skipped"))).toHaveLength(0);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -200,15 +179,15 @@ describe("水位权分居（autocompact 不接管 compaction 水位——强制�
 describe("servedWindow 收缩与生命周期", () => {
   it("假窗口收缩 → refit 降级纯本地通道（禁 L2，release degraded）", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const world = await makeWorld(); // eff=900、l1=l2=801、warn=701、cp=540
+    const world = await makeWorld();
     try {
       const session = await seeded(world, "degraded", 850);
-      session.append("request/context", { provider: "p", model: "m", contextWindow: 120 }); // servedWindow 深收缩：eff=20 < l1/l2 线（线序倒置触发 refit）
+      session.append("request/context", { provider: "p", model: "m", contextWindow: 120 });
       await dispatchPreStep(world, { session: session.id });
       const codes = stderr.mock.calls.map((line) => String(line[0]));
       expect(codes.some((line) => line.includes("lines-degraded"))).toBe(true);
       expect(codes.some((line) => line.includes("budget-gate-release") && line.includes("degraded"))).toBe(true);
-      expect(session.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false); // 禁 L2
+      expect(session.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -225,13 +204,13 @@ describe("servedWindow 收缩与生命周期", () => {
         seedTurn(made.value, { turn, user: textOf(3), assistant: { text: textOf(3), usage: { input: turn === 0 ? 500 : 550, output: 1 } } });
       }
       world.llm.scripts.push(abortableScript("patch-text"));
-      await dispatchPreStep(world, { session: made.value.id }); // CP 起飞（占用 550 在 cp 与 warn 之间——不进 L1/join）
-      world.store.dispose(made.value.id); // 取消在飞作业（脚本随 signal 快速收尾——取消路径可观测）
+      await dispatchPreStep(world, { session: made.value.id });
+      world.store.dispose(made.value.id);
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 50);
       });
-      expect(made.value.events().some((event) => event.type === "autocompact/checkpoint")).toBe(false); // 无词条落账
-      expect(stderr.mock.calls.some((line) => String(line[0]).includes("checkpoint-failed"))).toBe(false); // 取消非失败
+      expect(made.value.events().some((event) => event.type === "autocompact/checkpoint")).toBe(false);
+      expect(stderr.mock.calls.some((line) => String(line[0]).includes("checkpoint-failed"))).toBe(false);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -246,19 +225,18 @@ describe("servedWindow 收缩与生命周期", () => {
       seedTurn(made.value, { turn, user: textOf(3), assistant: { text: textOf(3), usage: { input: turn === 0 ? 500 : 550, output: 1 } } });
     }
     world.llm.scripts.push(hangScript());
-    await dispatchPreStep(world, { session: made.value.id }); // CP 起飞（挂死流；不进 L1/join）
+    await dispatchPreStep(world, { session: made.value.id });
     const started = Date.now();
-    await world.ctx.dispose(); // disposer：cancel + 5s 有界 join
+    await world.ctx.dispose();
     expect(Date.now() - started).toBeLessThan(5_500);
   });
 
   it("多会话状态隔离：A 越 L1 线落 L1、B 安全区零落账互不串", async () => {
-    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 95, l2Pct: 95 }, { summarizer: undefined }); // eff=1000、l1=l2=950
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, l1Pct: 95, l2Pct: 95 }, { summarizer: undefined });
     try {
       const madeA = await world.store.create({ id: sid("iso-a") });
       const madeB = await world.store.create({ id: sid("iso-b") });
       if (!madeA.ok || !madeB.ok) throw new Error("create failed");
-      // A：旧大结果 + 占用 950（≥ l1 950）；B：同形但占用 500（安全区）
       seedToolTurn(madeA.value, { turn: 0, user: "go", tool: "read", callId: "ca", args: "{}", result: textOf(60) });
       seedToolTurn(madeA.value, { turn: 1, user: "next", tool: "read", callId: "cb", args: "{}", result: textOf(1), usage: { input: 950, output: 1 } });
       seedToolTurn(madeB.value, { turn: 0, user: "go", tool: "read", callId: "cc", args: "{}", result: textOf(60) });
@@ -267,8 +245,8 @@ describe("servedWindow 收缩与生命周期", () => {
       await dispatchPreStep(world, { session: madeB.value.id });
       const clearedOf = (session: { surface: () => ReadonlyArray<{ event: { type: string; data: { content: string } } }> }) =>
         session.surface().some((node) => node.event.type === "tool/result" && node.event.data.content.startsWith(PLACEHOLDER_PREFIX));
-      expect(clearedOf(madeA.value as never)).toBe(true); // A 的 L1 落账
-      expect(clearedOf(madeB.value as never)).toBe(false); // B 安全区不动
+      expect(clearedOf(madeA.value as never)).toBe(true);
+      expect(clearedOf(madeB.value as never)).toBe(false);
     } finally {
       await world.ctx.dispose();
     }
@@ -277,7 +255,7 @@ describe("servedWindow 收缩与生命周期", () => {
 
 describe("空闲清理（时间分支）", () => {
   it("到期 + 有收益 → 定时器落账 redaction（idleClearMinutes 极小值端到端）", async () => {
-    const world = await makeWorld({ idleClearMinutes: 0.001, clearKeepRecent: 0 }); // 60ms 到期；tick 自适应下限 250ms
+    const world = await makeWorld({ idleClearMinutes: 0.001, clearKeepRecent: 0 });
     const cleared: string[] = [];
     world.ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
     try {
@@ -285,7 +263,6 @@ describe("空闲清理（时间分支）", () => {
       if (!made.ok) throw new Error(made.reason);
       seedToolTurn(made.value, { turn: 0, user: "go", tool: "read", callId: "c1", args: JSON.stringify({ path: "/i.ts" }), result: textOf(40) });
       seedToolTurn(made.value, { turn: 1, user: "next", tool: "read", callId: "c2", args: "{}", result: textOf(1), usage: { input: 500, output: 1 } });
-      // 触达会话（建状态）后等待定时器越过到期窗
       await dispatchPreStep(world, { session: made.value.id });
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 400);
@@ -315,10 +292,8 @@ describe("空闲清理（时间分支）", () => {
     }
   });
 });
-// ── CONTEXT-TOKEN-UNIFICATION §7.4：窗口分档缺省表 ──
 
 
-// ── CONTEXT-TOKEN-UNIFICATION §7.4：阈值窗口分档（真行为面——TIERS 导出直锁） ──
 
 describe("阈值窗口分档（autocompact）", () => {
   it("三档表与档位解析：1M→30/55/78、512k→35/55/75、256k(≤300k 档)→40/50/72；段 10/10/12%", () => {
@@ -326,12 +301,11 @@ describe("阈值窗口分档（autocompact）", () => {
     expect(first).toMatchObject({ checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 });
     expect(second).toMatchObject({ checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 });
     expect(third).toMatchObject({ checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 });
-    // 档位边界（≤ 含边界）
     expect(tierOf(300_000)).toBe(first);
     expect(tierOf(300_001)).toBe(second);
     expect(tierOf(700_000)).toBe(second);
     expect(tierOf(700_001)).toBe(third);
-    expect(tierOf(Number.NaN)).toBe(third); // NaN → 末档兜底（后续 eff 校验 fail-fast）
+    expect(tierOf(Number.NaN)).toBe(third);
   });
 
   it("层序不变量全档成立（cp ≤ l1 ≤ l2 < eff·l2——assertLinesDomain 不抛）", () => {
@@ -341,27 +315,23 @@ describe("阈值窗口分档（autocompact）", () => {
   });
 
   it("成组语义（M-1）：三 pct 任一显式 → 缺席参数回落兼容值（60/70/85）非档位", async () => {
-    // 窗 1M（档位 cp30/l1 55）+ 只显式 checkpointPct: 60 → l1 应回落 70（若取档位 55
-    // 则 cp 60 > l1 55 撞装配断言——成组语义防混装）
     const world = await makeWorld({ contextWindow: 1_000_000, checkpointPct: 60, checkpointIdleTimeoutMs: 30 });
     try {
       const made = await world.store.create({ id: sid("group") });
       if (!made.ok) throw new Error(made.reason);
-      expect(made.ok).toBe(true); // 装配未撞线即成组语义生效
+      expect(made.ok).toBe(true);
     } finally {
       await world.ctx.dispose();
     }
   });
 
   it("缺省档位真行为（H-3 区分度）：档位 l1=55% < 兼容缺省 70%——lineTiersOf 直锁 + 装配不撞线", () => {
-    // 窗 1M 三参全缺席 → 整组档位（30/55/78）；只显式 cp → 成组兼容（60/70/85）
     const tierDefaults = lineTiersOf({ contextWindow: 1_000_000 } as never);
     expect(tierDefaults).toEqual({ checkpointPct: 30, l1Pct: 55, l2Pct: 78 });
     const mixed = lineTiersOf({ contextWindow: 1_000_000, checkpointPct: 60 } as never);
-    expect(mixed).toEqual({ checkpointPct: 60, l1Pct: 70, l2Pct: 85 }); // 成组兼容——防混装撞线
-    // 档位 l1 线（55% × eff）与兼容 l1（70%）的差距即行为区分度：560k 落两者之间
+    expect(mixed).toEqual({ checkpointPct: 60, l1Pct: 70, l2Pct: 85 });
     const eff = 1_000_000 - 200;
-    expect(560_000).toBeGreaterThan(Math.floor(eff * 0.55)); // 越档位线
-    expect(560_000).toBeLessThan(Math.floor(eff * 0.7)); // 不越兼容线
+    expect(560_000).toBeGreaterThan(Math.floor(eff * 0.55));
+    expect(560_000).toBeLessThan(Math.floor(eff * 0.7));
   });
 });

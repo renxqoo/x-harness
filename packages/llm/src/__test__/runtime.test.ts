@@ -1,6 +1,3 @@
-// runtime 归一层与适配器解析（docs/LLM.md §1.3 / §3）：no-adapter 错误结算、同步/异步失败归一、
-// abort 豁免、waterfall 改写、提前 break 清理委托、注册生命周期。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import { createAnthropicCompatLlm, createOpenaiCompatLlm, llmPlugin, llmRuntime, llmStream } from "../index.ts";
 import type { LlmChunk, LlmRequest } from "../index.ts";
@@ -53,9 +50,9 @@ describe("contextWindowOf 窗口查询（模型级 > 档案级 > 无名单适配
     const { runtime, cleanup } = await makeRuntime();
     try {
       const offA = runtime.registerAdapter({ ...textAdapter("a"), contextWindow: 111_111 } as never);
-      expect(runtime.contextWindowOf()).toBe(111_111); // 单适配器无名可答
+      expect(runtime.contextWindowOf()).toBe(111_111);
       const offB = runtime.registerAdapter({ ...textAdapter("b"), contextWindow: 222_222 } as never);
-      expect(runtime.contextWindowOf()).toBeUndefined(); // 多适配器无名不可答（消费方须带会话拨号点名）
+      expect(runtime.contextWindowOf()).toBeUndefined();
       expect(runtime.contextWindowOf("b")).toBe(222_222);
       offA();
       offB();
@@ -74,7 +71,7 @@ describe("LlmRuntime 注册生命周期（docs/LLM.md §3）", () => {
       expect(() => runtime.registerAdapter({ name: "", stream: textAdapter("x").stream })).toThrow();
       expect(() => runtime.registerAdapter({ name: "b", stream: "not-fn" as never })).toThrow();
       off();
-      const reRegistered = runtime.registerAdapter(textAdapter("a")); // 注销后同名可重注册
+      const reRegistered = runtime.registerAdapter(textAdapter("a"));
       reRegistered();
     } finally {
       await cleanup();
@@ -144,7 +141,7 @@ describe("失败归一层（docs/LLM.md §1.2/§1.3——不向消费者裸 thro
     const { runtime, cleanup } = await makeRuntime();
     try {
       const abortRightAway = async function* (): AsyncGenerator<LlmChunk> {
-        yield { type: "text-delta", text: "" }; // 不可达：先 throw——require-yield 达标用
+        yield { type: "text-delta", text: "" };
         throw new DOMException("aborted", "AbortError");
       };
       runtime.registerAdapter({ name: "aborting", stream: () => abortRightAway() });

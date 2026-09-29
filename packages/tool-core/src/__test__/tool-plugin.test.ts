@@ -1,7 +1,3 @@
-// 工具插件工厂测试（docs/TOOLBOX.md §0）：env 三级解析缺席/根错配 fail-closed（此前全仓
-// 零覆盖的两条装配期 throw）、注册/卸载往返、observed 在场挂 sessionDisposed 逐出、
-// 缺席不挂（bash/grep 形态）。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,7 +19,6 @@ let observed: ObservedRegistry;
 
 const version: FileVersion = { ino: "1", size: "1", mtimeNs: "1", hadBom: false };
 
-/** 最小可 dispatch 工具（工厂契约只关心 ToolDefinition 形状，不关心语义） */
 const probe = (): ToolDefinition => ({
   name: "probe",
   description: "probe",
@@ -39,7 +34,7 @@ const dispatchProbe = async (): Promise<void> => {
   expect(r.content).toBe("probe-ok");
   for (const dispose of unload) await dispose();
   const gone = await reg.dispatch({ callId: "p2", name: "probe", args: {}, signal: new AbortController().signal });
-  expect(gone.isError).toBe(true); // 卸载后工具不可达
+  expect(gone.isError).toBe(true);
   await ctx.dispose();
 };
 
@@ -86,7 +81,7 @@ describe("createToolPlugin（docs/TOOLBOX.md §0——装配期 fail-closed）",
     expect(observed.lookup("s-evict" as never, join(gate.root, "a.txt"))).toBeDefined();
     const disposed = ctx.use(sessionStore).dispose("s-evict" as never);
     expect(disposed.ok).toBe(true);
-    expect(observed.lookup("s-evict" as never, join(gate.root, "a.txt"))).toBeUndefined(); // 会话终结即逐出
+    expect(observed.lookup("s-evict" as never, join(gate.root, "a.txt"))).toBeUndefined();
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
@@ -104,7 +99,7 @@ describe("createToolPlugin（docs/TOOLBOX.md §0——装配期 fail-closed）",
     const disposed = ctx.use(sessionStore).dispose("s-plain" as never);
     expect(disposed.ok).toBe(true);
     const after = await reg.dispatch({ callId: "p-after", name: "probe", args: {}, signal: new AbortController().signal });
-    expect(after.content).toBe("probe-ok"); // 会话生命周期与工具注册无耦合
+    expect(after.content).toBe("probe-ok");
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
@@ -147,9 +142,9 @@ describe("guidance 投稿（数据位 + 内核直停靠——D3）", () => {
     ]);
     const reg = ctx.use(toolRegistry);
     expect(seenKinds).toEqual(["local"]);
-    expect(reg.get("probe")?.guidance).toBeUndefined(); // 非 sandbox → 空串 → 不落 def
+    expect(reg.get("probe")?.guidance).toBeUndefined();
     const r = await reg.dispatch({ callId: "p1", name: "probe", args: {}, signal: new AbortController().signal });
-    expect(r.content).toBe("probe-ok"); // 工具行为与 guidance 无耦合
+    expect(r.content).toBe("probe-ok");
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
@@ -175,12 +170,12 @@ describe("guidance 投稿（数据位 + 内核直停靠——D3）", () => {
       createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: "## Probe\n\nprobe rule" }),
     ]);
     const prompt = ctx.use(systemPrompt);
-    prompt.section({ name: wellKnown.baseCore, text: "BASE-TAIL-MARKER" }); // 槽位段（内容归上层——内核测试只认锚名）
+    prompt.section({ name: wellKnown.baseCore, text: "BASE-TAIL-MARKER" });
     const text = prompt.assemble().text;
     expect(text).toContain("probe rule");
-    expect(text.indexOf("BASE-TAIL-MARKER")).toBeLessThan(text.indexOf("## Probe")); // 锚 base/core：槽位段之后
+    expect(text.indexOf("BASE-TAIL-MARKER")).toBeLessThan(text.indexOf("## Probe"));
     for (const dispose of unload) await dispose();
-    expect(prompt.assemble().text).not.toContain("probe rule"); // 拆卸即回收（disposer 链先于 prompt 服务回卷）
+    expect(prompt.assemble().text).not.toContain("probe rule");
     await ctx.dispose();
   });
 
@@ -203,12 +198,12 @@ describe("S0 乱序装配探针（softInject——数组序颠倒在场合约束
     const unload = await loadPlugins(ctx, [
       toolsPlugin,
       createToolPlugin({ name: "tool-probe", gate, envOption: createLocalEnv(root), make: () => probe(), guidance: "## Probe\n\nprobe rule" }),
-      systemPromptPlugin, // 数组序在 tool 之后——S0 软依赖拉前
+      systemPromptPlugin,
     ]);
     const prompt = ctx.use(systemPrompt);
     prompt.section({ name: wellKnown.baseCore, text: "BASE" });
     const text = prompt.assemble().text;
-    expect(text).toContain("probe rule"); // 停靠未静默丢失（D6 陷阱已结构性消灭）
+    expect(text).toContain("probe rule");
     expect(text.indexOf("BASE")).toBeLessThan(text.indexOf("## Probe"));
     for (const dispose of unload) await dispose();
     await ctx.dispose();
@@ -221,11 +216,11 @@ describe("S0 乱序装配探针（softInject——数组序颠倒在场合约束
       toolsPlugin,
       createToolPlugin({
         name: "tool-probe", gate, envOption: createLocalEnv(root),
-        make: (_env, extraRootsOf) => { seen.push(...extraRootsOf(undefined)); return probe(); }, // 捕获时序观测点
+        make: (_env, extraRootsOf) => { seen.push(...extraRootsOf(undefined)); return probe(); },
       }),
       { name: "permission", apply: (c) => c.provide(permissionGrants, { extraRootsOf: () => ["GRANTS-CAPTURED"], rootOverrideOf: () => undefined } as never) },
     ]);
-    expect(seen).toEqual(["GRANTS-CAPTURED"]); // 列后仍捕获（缺席对照=空数组——标记判别）
+    expect(seen).toEqual(["GRANTS-CAPTURED"]);
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
@@ -257,7 +252,7 @@ describe("systemRoots（系统固有读根——装配期静态，与 permission
         }),
         { name: "permission", apply: (c) => c.provide(permissionGrants, { extraRootsOf: () => ["/granted/extra"], rootOverrideOf: () => undefined } as never) },
       ]);
-      expect(seen).toEqual([[logRoot, "/granted/extra"]]); // 并集、静态根在前
+      expect(seen).toEqual([[logRoot, "/granted/extra"]]);
       for (const dispose of unload) await dispose();
       await ctx.dispose();
     } finally {

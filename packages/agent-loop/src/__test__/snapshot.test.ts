@@ -1,7 +1,3 @@
-// 边沿注入快照原语（docs/TAIL-SNAPSHOT-CHANNEL.md）：幂等表驱动（在场跳过/缺席注入/
-// 内容变化重注入/render 异常/空串零注入）+ isSnapshotNode 四重谓词 + 同步点断言形态
-// （同步触发返回后立即断言——引入 await 的实现必红）。
-
 import { beforeEach, describe, expect, it } from "vitest";
 import type { SurfaceNode } from "@x-harness/session";
 import { SNAPSHOT_SUPERSEDES, createRequestSnapshot, createTailSnapshot, isSnapshotNode, snapshotEnvelope } from "../snapshot.ts";
@@ -13,7 +9,6 @@ beforeEach(() => {
   resetWorlds();
 });
 
-/** user/message 全部 text 块原文（循环版——避免嵌套回调超限） */
 function textsOf(agent: { session: { events: () => readonly unknown[] } }): string[] {
   const out: string[] = [];
   for (const raw of agent.session.events()) {
@@ -33,11 +28,11 @@ const nodeOf = (text: string, op: "append" | { op: "replace"; startSeq: number; 
 describe("isSnapshotNode 四重谓词（append ∧ user/message ∧ 单 text 块 ∧ 信封首行+作废次行）", () => {
   it("合法快照 → true；四重缺一皆 false", () => {
     expect(isSnapshotNode(nodeOf(snapshotEnvelope("date", "Today's date: 2026-09-21")))).toBe(true);
-    expect(isSnapshotNode(nodeOf("普通用户消息"))).toBe(false); // 无信封首行
-    expect(isSnapshotNode(nodeOf(snapshotEnvelope("date", "x"), { op: "replace", startSeq: 0, endSeq: 0 }))).toBe(false); // replace op
-    expect(isSnapshotNode(nodeOf(`<snapshot kind="date">\n别的次行\nbody\n</snapshot>`))).toBe(false); // 无作废声明次行
+    expect(isSnapshotNode(nodeOf("普通用户消息"))).toBe(false);
+    expect(isSnapshotNode(nodeOf(snapshotEnvelope("date", "x"), { op: "replace", startSeq: 0, endSeq: 0 }))).toBe(false);
+    expect(isSnapshotNode(nodeOf(`<snapshot kind="date">\n别的次行\nbody\n</snapshot>`))).toBe(false);
     const two = { seq: 1, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: snapshotEnvelope("date", "x") }, { type: "text", text: "extra" }] } } } as unknown as SurfaceNode;
-    expect(isSnapshotNode(two)).toBe(false); // 双块
+    expect(isSnapshotNode(two)).toBe(false);
   });
 
   it("snapshotEnvelope 铸形：首行标签 + 次行作废声明 + body + 闭合", () => {
@@ -56,17 +51,16 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     const { agent, handle } = await spawn(world);
     world.fake.scripts.push(textScript("a"), textScript("b"));
     agent.followup("first");
-    // 同步点断言：followup 返回时快照已落 surface（kick 首行 emitStatus 同步扇出）
     expect(textsOf(agent)).toEqual([current]);
     await agent.whenIdle();
-    agent.followup("second"); // 同文本第二次 kick
+    agent.followup("second");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t === current)).toHaveLength(1); // 幂等：不重复注入
-    current = snapshotEnvelope("date", "Today's date: 2026-09-22"); // 内容变化（跨天）
+    expect(textsOf(agent).filter((t) => t === current)).toHaveLength(1);
+    current = snapshotEnvelope("date", "Today's date: 2026-09-22");
     agent.followup("third");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t.includes("2026-09-21"))).toHaveLength(1); // 旧条在场（历史不改写）
-    expect(textsOf(agent).filter((t) => t.includes("2026-09-22"))).toHaveLength(1); // 新条注入
+    expect(textsOf(agent).filter((t) => t.includes("2026-09-21"))).toHaveLength(1);
+    expect(textsOf(agent).filter((t) => t.includes("2026-09-22"))).toHaveLength(1);
     expect(warnings).toEqual([]);
     off();
     await handle.dispose();
@@ -84,17 +78,17 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     const { agent, handle } = await spawn(world);
     world.fake.scripts.push(textScript("a"), textScript("b"));
     const snapshotTexts = (): string[] => textsOf(agent).filter((t) => t.startsWith("<snapshot"));
-    agent.followup("first"); // render 抛
+    agent.followup("first");
     await agent.whenIdle();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("snapshot(x): render failed");
-    expect(textsOf(agent)).toEqual(["first"]); // 精确断言：无任何额外注入（含空 text 块垃圾注入变异）
+    expect(textsOf(agent)).toEqual(["first"]);
     mode = "empty";
-    agent.followup("second"); // 空串
+    agent.followup("second");
     await agent.whenIdle();
     expect(textsOf(agent)).toEqual(["first", "second"]);
     mode = "ok";
-    agent.followup("third"); // 正常
+    agent.followup("third");
     await agent.whenIdle();
     expect(snapshotTexts()).toHaveLength(1);
     off();
@@ -111,14 +105,12 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     agent.followup("hi");
     await agent.whenIdle();
     const surface = agent.session.surface();
-    // 首 kick 预锚落位：快照在 system 锚点之前，本轮 user 批次在锚点之后
     expect(surface[0]?.event.type).toBe("user/message");
     const first = surface[0]?.event.data as unknown as { content: Array<{ text: string }> };
     expect(first.content[0]?.text).toBe(envelope);
     expect(surface[1]?.event.type).toBe("system/message");
-    expect(surface[2]?.event.type).toBe("user/message"); // 本轮 user 批次在锚点之后
+    expect(surface[2]?.event.type).toBe("user/message");
     expect(surface[3]?.event.type).toBe("assistant/message");
-    // 本轮请求即携带：请求体 messages 含快照全文（端到端）
     expect(JSON.stringify(world.fake.calls[0]?.messages)).toContain("Today's date: 2026-09-21");
     off();
     await handle.dispose();
@@ -139,7 +131,7 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     world.fake.scripts.push(textScript("ok"));
     agent.followup("hi");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t === envelope)).toHaveLength(2); // 多块不算在场 → 仍注入单块快照
+    expect(textsOf(agent).filter((t) => t === envelope)).toHaveLength(2);
     off();
     await handle.dispose();
   });
@@ -150,9 +142,8 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     const text = snapshotEnvelope("project-instructions", "instructions body");
     const off = createTailSnapshot({ ctx: world.ctx, loop: world.loop, spec: { id: "pi", render: () => text } });
     const { agent, handle } = await spawn(world);
-    // 预置一条 replace 型摘要节点，内容 = 快照全文（/compact 整段回显形态）
     const appended = agent.session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text }] }, { surfaceOp: { op: "replace", startSeq: 0, endSeq: 0 } });
-    expect(appended.ok).toBe(false); // 端点缺失——先补一个合法 append 节点再 replace
+    expect(appended.ok).toBe(false);
     const seed = agent.session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "seed" }] }, { surfaceOp: "append" });
     if (!seed.ok) throw new Error(seed.reason);
     const seq = agent.session.events().at(-1)?.seq;
@@ -162,7 +153,7 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     world.fake.scripts.push(textScript("a"));
     agent.followup("go");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t === text)).toHaveLength(2); // replace 节点 1 + append 快照 1——回显不误判在场
+    expect(textsOf(agent).filter((t) => t === text)).toHaveLength(2);
     off();
     await handle.dispose();
   });
@@ -181,13 +172,12 @@ describe("createRequestSnapshot 请求时点注入（agentRequest 派发内—�
     world.fake.scripts.push(textScript("a"), textScript("b"));
     agent.followup("first");
     await agent.whenIdle();
-    // 当次请求即携带（deriveMessages 在整个 dispatch 返回后的 attempt 内——append 仍入当次请求体）
     expect(JSON.stringify(world.fake.calls[0]?.messages)).toContain("You are powered by the model fake-model.");
-    expect(world.fake.calls[0]?.model).toBe("fake-model"); // dial 原样透传（中间件零改写）
+    expect(world.fake.calls[0]?.model).toBe("fake-model");
     agent.followup("second");
     await agent.whenIdle();
-    expect(seen).toEqual(["fake-model", "fake-model"]); // 每请求派发一次
-    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(1); // 同 dial 幂等：不重复注入
+    expect(seen).toEqual(["fake-model", "fake-model"]);
+    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(1);
     off();
     await handle.dispose();
   });
@@ -203,20 +193,20 @@ describe("createRequestSnapshot 请求时点注入（agentRequest 派发内—�
     }, onWarn: (m) => warnings.push(m) } });
     const { agent, handle } = await spawn(world);
     world.fake.scripts.push(textScript("a"), textScript("b"), textScript("c"));
-    agent.followup("first"); // render 抛
+    agent.followup("first");
     await agent.whenIdle();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("snapshot(x): render failed");
-    expect(JSON.stringify(world.fake.calls[0]?.messages)).not.toContain("<snapshot"); // 请求照常且无注入
+    expect(JSON.stringify(world.fake.calls[0]?.messages)).not.toContain("<snapshot");
     mode = "empty";
-    agent.followup("second"); // 空串
+    agent.followup("second");
     await agent.whenIdle();
     expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(0);
     mode = "ok";
-    agent.followup("third"); // 正常
+    agent.followup("third");
     await agent.whenIdle();
     expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(1);
-    expect(warnings).toHaveLength(1); // 后续无新告警
+    expect(warnings).toHaveLength(1);
     off();
     await handle.dispose();
   });
@@ -229,7 +219,6 @@ describe("createRequestSnapshot 请求时点注入（agentRequest 派发内—�
       seen.push(dial.model);
       return snapshotEnvelope("model", `You are powered by the model ${dial.model}.`);
     } } });
-    // 下游末端改写（后注册 = 链上后手——hub dial-hook 同形态）：三次请求分别改写为 m-a / m-b / m-a（含回摆）
     let n = 0;
     const models = ["m-a", "m-b", "m-a"];
     const offRewrite = world.ctx.on(agentRequest, async (payload, next): Promise<Dial | undefined> => {
@@ -240,18 +229,18 @@ describe("createRequestSnapshot 请求时点注入（agentRequest 派发内—�
     world.fake.scripts.push(textScript("a"), textScript("b"), textScript("c"));
     agent.followup("first");
     await agent.whenIdle();
-    expect(seen).toEqual(["m-a"]); // B1：渲染用改写后 dial（旧实现收输入 dial=fake-model 必红）
+    expect(seen).toEqual(["m-a"]);
     expect(JSON.stringify(world.fake.calls[0]?.messages)).toContain("the model m-a.");
-    expect(world.fake.calls[0]?.model).toBe("m-a"); // 实际请求也是改写后值
+    expect(world.fake.calls[0]?.model).toBe("m-a");
     agent.followup("second");
     await agent.whenIdle();
     expect(seen).toEqual(["m-a", "m-b"]);
     agent.followup("third");
     await agent.whenIdle();
-    expect(seen).toEqual(["m-a", "m-b", "m-a"]); // 回摆形态照常重渲染
+    expect(seen).toEqual(["m-a", "m-b", "m-a"]);
     const snaps = textsOf(agent).filter((t) => t.startsWith("<snapshot")).map((t) => (t.includes("m-a") ? "m-a" : "m-b"));
-    expect(snaps).toEqual(["m-a", "m-b", "m-a"]); // M1：X→Y→X 重注入第三条（旧「全史任一匹配」语义只两条必红）
-    expect(JSON.stringify(world.fake.calls[2]?.messages)).toContain("the model m-a."); // 第三个请求体携带最新行
+    expect(snaps).toEqual(["m-a", "m-b", "m-a"]);
+    expect(JSON.stringify(world.fake.calls[2]?.messages)).toContain("the model m-a.");
     offRewrite();
     offSnap();
     await handle.dispose();

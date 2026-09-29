@@ -1,6 +1,3 @@
-// ⑫ PII 脱敏：assistant 输出与工具输出中的邮箱/密钥模式打码（transformAssistant × transformToolResult）。
-// 真实场景：日志合规——模型回显用户隐私时先脱敏再落账。
-
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import type { AssistantSettlement } from "@x-harness/agent-loop";

@@ -1,5 +1,3 @@
-// 全量 localEnv（docs/EXEC-ENV.md §2）：read 面（B0′）+ write/readDir/spawn 面（B1）组装成 ExecEnv。
-
 import { resolve } from "node:path";
 import type { ExecEnv } from "../types.ts";
 import { realpathDeep, realpathOrSelf } from "./realpath.ts";
@@ -14,7 +12,6 @@ export function createLocalEnv(root: string): ExecEnv {
   return {
     kind: "local",
     root: rootReal,
-    // 相对入参以 env.root 解析（契约锚定——不落 process.cwd）
     realpath: async (p) => realpathDeep(p, rootReal),
     stat: async (p) => statLocal(p),
     openRead: async (p) => openReadLocal(p),

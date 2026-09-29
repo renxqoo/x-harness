@@ -1,18 +1,12 @@
-// 同包共享的 SSE 假服务器装置（docs/LLM.md §3）：Scene 表驱动——分片写制造撕裂、destroy 断连、
-// afterDone 挂连接（终止符后 trailing / 连接释放断言用）。
 import { createServer, type Server } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 
 export interface Scene {
   readonly status: number;
   readonly headers?: Record<string, string>;
-  /** 每个元素为一次 write（string | 字节片——按 Buffer.subarray 切片制造真撕裂） */
   readonly chunks: readonly (string | Buffer)[];
-  /** 直接断开连接（不写任何响应体） */
   readonly destroy?: boolean;
-  /** 写完 chunks 后延迟断连（读体中断：分片已产出、流中途断） */
   readonly destroyAfterMs?: number;
-  /** 写完 chunks 后延迟追加 trailing 帧且不 end——只有客户端 cancel 能释放 */
   readonly afterDone?: { readonly delayMs: number; readonly frame: string };
 }
 
@@ -55,11 +49,11 @@ export async function startSceneServer(): Promise<SceneServer> {
       res.writeHead(scene.status, { "content-type": "text/event-stream", ...scene.headers });
       for (const piece of scene.chunks) res.write(piece);
       if (scene.destroyAfterMs !== undefined) {
-        setTimeout(() => res.destroy(), scene.destroyAfterMs); // 读体中断：流中途断
+        setTimeout(() => res.destroy(), scene.destroyAfterMs);
         return;
       }
       if (scene.afterDone !== undefined) {
-        setTimeout(() => res.write(scene.afterDone?.frame ?? ""), scene.afterDone.delayMs); // 不 end：等客户端关
+        setTimeout(() => res.write(scene.afterDone?.frame ?? ""), scene.afterDone.delayMs);
         return;
       }
       res.end();

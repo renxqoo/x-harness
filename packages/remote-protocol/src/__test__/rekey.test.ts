@@ -1,4 +1,3 @@
-// rekey 契约（S4）：发起/应答/完成往返、签名验证、到期判定
 import { describe, expect, it } from "vitest";
 import { acceptRekey, finishRekey, rekeyDue, startRekey } from "../rekey.ts";
 import { generateBoxKeyPair, generateSigningKeyPair } from "../crypto.ts";

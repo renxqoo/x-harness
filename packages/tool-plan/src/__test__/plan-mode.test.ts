@@ -1,10 +1,3 @@
-// plan 模式富策略规格（V3 阶段二迁移自 permission/adjudicate.test + audit-v3-security
-// 的富矩阵——C-spec 迁移矩阵：档位策略规格随模式插件）。两面：
-// ① 纯函数面：bashFactsOf 产事实 → planMode.decide 判决（与旧 planBash 行为映射，
-//   差异仅 deny 规则归因由核心先行改 rule:<origin>——U7 同族有意变更）；
-// ② 集成面：真装配（permission + tool-plan）经 modeRegistry 后注册覆盖——plan 富策略
-//   生效（readonly 放行/写拒），严格缺省被覆盖。
-
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -27,7 +20,6 @@ const decide = (command: string, profile = PLAN) => decideOf(bashFactsOf({ comma
 
 const roots: string[] = [];
 
-/** stub bash 工具（集成世界只测裁决面——不装真 tool-bash） */
 const stubBash: import("@x-harness/core").Plugin = {
   name: "stub-bash",
   inject: ["tools"],
@@ -58,8 +50,8 @@ describe("plan 富策略·纯函数面（bashFactsOf → planMode.decide）", ()
   it("读保护基线（B-bug-1 细分钉）：敏感面/输入重定向拒读表 → deny；根集内 .env 是项目配置放行（2026-09-28 裁决）", () => {
     expect(decide("cat ~/.ssh/id_rsa")?.reason).toContain("sensitive path");
     expect(decide("cat < ~/.ssh/id_rsa")?.reason).toBe("redirect-read:~/.ssh/**");
-    expect(decide("cat /elsewhere/.env")?.verdict).toBe("deny"); // 根集外 .env 仍拒（argv 触碰面）
-    expect(decide("cat .env")?.verdict).not.toBe("deny"); // 根集内项目本地配置
+    expect(decide("cat /elsewhere/.env")?.verdict).toBe("deny");
+    expect(decide("cat .env")?.verdict).not.toBe("deny");
   });
   it("提权拒；输出重定向拒（/dev/null 除外）；解析失败拒", () => {
     expect(decide("sudo ls")?.reason).toBe("plan mode: elevation denied");
@@ -83,7 +75,7 @@ describe("plan 富策略·集成面（modeRegistry 后注册覆盖严格缺省�
     const registry = ctx.use(toolRegistry);
     try {
       const research = await registry.dispatch({ callId: "pm-1", name: "bash", args: { command: "git log --oneline -5" }, signal: new AbortController().signal });
-      expect(research.isError).toBeUndefined(); // 富策略：研究通道（严格缺省会拒）
+      expect(research.isError).toBeUndefined();
       const write = await registry.dispatch({ callId: "pm-2", name: "bash", args: { command: "echo hi > new.txt" }, signal: new AbortController().signal });
       expect(write.isError).toBe(true);
       expect(write.content).toContain("plan mode: output redirect denied");

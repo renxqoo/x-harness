@@ -1,8 +1,3 @@
-// bash 插件装配（docs/TOOLBOX.md §0/§4）：createToolPlugin 包 createBashTool；limits/taskLimits
-// 收部分配置（缺省 defaultLimits/defaultTaskLimits 补齐）。生效登记簿（外穿实例或自建）
-// provide 为 backgroundTasks 服务——task-tools 停靠共享（可选依赖，装配序无关）。
-// 生命周期：会话终结 → 该会话后台任务两段杀并清桶；装配拆卸 → 全部直接 KILL。
-
 import { createHash } from "node:crypto";
 import type { Plugin } from "@x-harness/core";
 import type { ExecEnv } from "@x-harness/exec-env";
@@ -15,17 +10,10 @@ import type { BashLimits } from "./bash.ts";
 import { BackgroundTasks, defaultTaskLimits } from "./tasks.ts";
 import { backgroundTasks } from "./tokens.ts";
 
-/** 前台执行限额（部分字段——缺省补齐；defaultTimeoutMs > maxTimeoutMs 装配期 throw） */
 export type BashLimitsOptions = Partial<Pick<BashLimits, "defaultTimeoutMs" | "maxTimeoutMs" | "maxOutputBytes" | "spillDir">>;
 
-/** 后台任务限额（部分字段——缺省补齐；taskLogDir 缺省进程临时目录，宿主传宿主数据目录
- *  即会话档案一致性——TASK-PUSH-DESIGN §2.2） */
 export type TaskLimitsOptions = { readonly maxConcurrentTasks?: number; readonly taskTimeoutMs?: number; readonly fullCapBytes?: number; readonly taskLogDir?: string };
 
-/** bash 使用守则（docs/TOOLBOX.md §4）：非交互约束环境无关（无 TTY 且 stdin 关闭——
- *  交互式命令失败或挂到超时），所有围栏形态共享；sandbox 围栏附加行事约束——denied
- *  domain 是 fence 不是 obstacle。专用工具优先/cat 清单/cwd-reset 语义在工具
- *  description——此处不重复。 */
 export function bashGuidance(env: ExecEnv): string {
   const base = `## Shell
 
@@ -42,13 +30,9 @@ user instead of trying to evade it.`;
 }
 
 export interface BashPluginInput {
-  /** 路径门（缺省 = 当前工作目录围栏——沿 toolbox 时代 createToolbox 的 root 缺省口径，
-   *  无参装配直接可用且不裸奔） */
   readonly gate?: PathGate;
-  /** 执行环境（三级解析：工厂参数 > execEnv 服务 > 装配期 throw——fail-closed） */
   readonly env?: ExecEnv;
   readonly limits?: BashLimitsOptions;
-  /** 后台任务登记簿（显式穿引覆盖服务停靠；缺省自建——两形态都 provide 为共享服务） */
   readonly tasks?: BackgroundTasks;
   readonly taskLimits?: TaskLimitsOptions;
 }
@@ -56,14 +40,11 @@ export interface BashPluginInput {
 export function createBashPlugin(input: BashPluginInput = {}): Plugin {
   const { env } = input;
   const gate = input.gate ?? new PathGate(process.cwd());
-  // tasks（外穿实例）与 taskLimits（自建配置）互斥——同传是装配矛盾，fail-closed 拒绝而非静默取一
   if (input.tasks !== undefined && input.taskLimits !== undefined) {
     throw new Error("tool-bash: pass either tasks (external registry) or taskLimits, not both");
   }
   const limits = defaultLimits(input.limits ?? {});
   const tasks = input.tasks ?? new BackgroundTasks(defaultTaskLimits(input.taskLimits ?? {}));
-  // on-failure 升级面（PERMISSION-V2-DESIGN §3）：broker 惰性解析（tryUse——无 permission
-  // 的世界优雅降级无升级）；配额=命令文本哈希 per session 至多一次（防同文本重试刷弹窗）
   let worldCtx: import("@x-harness/core").Context | undefined;
   const escalated = new Map<string, Set<string>>();
   const escalate: import("./bash.ts").BashEscalate = async (fields) => {
@@ -71,18 +52,16 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
     if (broker === undefined) return "deny";
     const sessionKey = fields.session ?? "_anon";
     const commandKey = createHash("sha256").update(fields.command).digest("hex").slice(0, 16);
-    // 配额在问询时即消耗（deny 也计入——防同文本重试刷弹窗，DESIGN §3）
     const bucketNow = escalated.get(sessionKey) ?? new Set<string>();
     if (bucketNow.has(commandKey)) return "deny";
     bucketNow.add(commandKey);
     escalated.set(sessionKey, bucketNow);
-    const summary = summaryOf(fields); // 目标描述单源（permission）——确认条主文案与工具面 ask 同式
+    const summary = summaryOf(fields);
     const reply = await broker.ask({
       tool: "bash",
       ...(summary !== undefined ? { summary } : {}),
       reason: "sandbox failure — retry outside the sandbox?",
-      options: ["once"], // E①（2026-09-28）：escalate 语义=一次性重试——记忆梯度撤（旧四档落桶后
-      // 跨档 direct 免问，且游离 permission 的 memorizable 门与 grant-written 审计——收口进契约）
+      options: ["once"],
       escalate: { command: fields.command, failureText: fields.failureText },
       ...(fields.session !== undefined ? { session: fields.session } : {}),
     });
@@ -94,12 +73,9 @@ export function createBashPlugin(input: BashPluginInput = {}): Plugin {
     envOption: env,
     gate,
     make: (resolved, _extraRootsOf, rootOverrideOf) => createBashTool({ gate, limits, env: resolved, tasks, rootOverrideOf, escalate }),
-    // 使用守则（工厂参数投稿，D3）：非交互约束全形态注入；围栏段仅 sandbox 追加
     guidance: bashGuidance,
-    // 会话终结：该会话后台任务两段杀并清桶（登记生命周期=会话生命周期）；装配拆卸：全部直接 KILL；
-    // 生效登记簿 provide 为服务——task-tools 停靠（bash 源 + 完成通知臂同一实例）
     attach: (ctx) => {
-      worldCtx = ctx; // 升级桥的 broker 惰性解析锚（apply 序无关——每调用 tryUse）
+      worldCtx = ctx;
       const offProvide = ctx.provide(backgroundTasks, tasks);
       const off = ctx.on(sessionDisposed, ({ session }) => tasks.evict(session));
       return () => {

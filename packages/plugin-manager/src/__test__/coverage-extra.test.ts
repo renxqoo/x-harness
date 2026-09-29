@@ -1,4 +1,3 @@
-// 覆盖补齐：wrapper 委托面 / 文件审计 / worker 崩溃收殓 / 服务冲突 fail-fast。
 import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -80,7 +79,6 @@ export default {
 `,
       "utf8",
     );
-    // 监听/host token 均取自插件模块（同实例 → 同 token 对象——裁决 10 的模块身份载体）
     const mod = (await import(file)) as {
       host: ReturnType<typeof defineService<{ name: string }>>;
       room: ReturnType<typeof defineEvent<{ v: number }>>;
@@ -107,7 +105,6 @@ describe("文件审计（缺省 JSONL）", () => {
     await writeFile(file, `export default { name: "a", apply: () => {} };`, "utf8");
     await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
     await expect(svc.uninstall("a")).resolves.toMatchObject({ ok: true });
-    // uninstall 审计已 await 落盘（生命周期持久性）；install 侧仍 fire-and-forget，读前等一次 flush
     await sleep(150);
     const lines = (await readFile(join(root, ".plugin-manager-audit.jsonl"), "utf8")).trim().split("\n");
     expect(lines.map((l) => JSON.parse(l).kind)).toEqual(["install", "uninstall"]);
@@ -134,12 +131,12 @@ export default {
     const token = svc.serviceToken("pm-c-boom");
     if (token === undefined) throw new Error("token missing");
     const proxy = ctx.use(token as ReturnType<typeof defineService<{ boom(): void }>>);
-    await expect(proxy.boom()).rejects.toBeTruthy(); // worker 死了，RPC 断
-    await sleep(100); // exit 收殓异步
+    await expect(proxy.boom()).rejects.toBeTruthy();
+    await sleep(100);
     expect(svc.list().filter((r) => r.name === "dies")).toHaveLength(0);
     const errors = svc.errors("dies");
     expect(errors.some((e) => e.message.includes("killed") || e.message.includes("exit"))).toBe(true);
-    expect(() => ctx.effect(noop)).not.toThrow(); // 平台存活
+    expect(() => ctx.effect(noop)).not.toThrow();
   });
 
   it("provided 服务撞平台同名 → fail-fast 装载失败", async () => {
@@ -156,7 +153,7 @@ export default {
       "utf8",
     );
     const result = await fresh.svc.install({ path: clash });
-    expect(result).toMatchObject({ ok: true }); // 无冲突基线
+    expect(result).toMatchObject({ ok: true });
     const clash2 = join(fresh.root, "clash2.ts");
     await writeFile(
       clash2,

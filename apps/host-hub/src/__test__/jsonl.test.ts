@@ -1,5 +1,3 @@
-// jsonl 分帧契约矩阵（MIGRATION §5 jsonl 块移植 + HUB 行限）：LF-only、\r、空行、
-// U+2028 不切、粘包半行、字节真值上限、单行单报、flush 尾行。
 import { describe, expect, test } from "vitest";
 import { createJsonlSplitter } from "../shared/jsonl.ts";
 
@@ -38,7 +36,6 @@ describe("jsonl splitter", () => {
 
   test("字节真值上限：多字节字符按 utf-8 字节计", () => {
     const s = createJsonlSplitter({ maxLineBytes: 8 });
-    // 8 字节上限：{"a":"你"} = 1+3+1+1+3+1 = 10 字节超限
     const r = s.feed(Buffer.from('{"a":"你"}\n'));
     expect(r.lines).toEqual([]);
     expect(r.oversize).toBe(1);
@@ -59,7 +56,6 @@ describe("jsonl splitter", () => {
     const s = createJsonlSplitter({ maxLineBytes: 16 * MB });
     s.feed(Buffer.from('{"a":1}\n{"b":'));
     expect(s.flush().lines).toEqual(['{"b":']);
-    // 二次 flush 空
     expect(s.flush().lines).toEqual([]);
   });
 

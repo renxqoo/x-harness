@@ -1,10 +1,6 @@
-// resume 重建（docs/TELEMETRY-SQLITE.md §1.3）：DB 行 → 折叠状态。开合 span 按锚属性配对；
-// 尾 seq 为游标。未闭合 span 保留原样（崩溃可见）——后续配对事件到达时经 UPDATE 补 end。
-
 import { stepKeyOf, type OpenStep, type OpenTool, type OpenTurn, type SessionFold } from "./fold.ts";
 import type { SpanRow } from "./types.ts";
 
-/** 锚属性载荷（xh.turn/xh.step） */
 interface Anchor {
   readonly turn: number;
   readonly step: number;
@@ -12,7 +8,6 @@ interface Anchor {
 
 const anchorNum = (value: unknown): number => (typeof value === "number" ? value : -1);
 
-/** 开合状态收集器（rebuild 的扫描体——闭包封装降低分派复杂度） */
 class OpenStateCollector {
   openTurn: OpenTurn | undefined;
   openStep: OpenStep | undefined;
@@ -43,7 +38,6 @@ class OpenStateCollector {
     }
   }
 
-  /** 闭 llm 行的 lastLlm 追踪（xh.attempt 最大者为「当前 llm span」） */
   private trackClosedLlm(row: SpanRow, anchor: Anchor): void {
     if (row.name !== "llm.chat") return;
     const key = stepKeyOf(anchor.turn, anchor.step);
@@ -56,8 +50,6 @@ class OpenStateCollector {
   }
 }
 
-/** resume 重建（§1.3）：DB 行 → 折叠状态。开合 span 按锚属性配对；尾 seq 为游标。
- *  未闭合 span 保留原样（崩溃可见）——后续配对事件到达时经 UPDATE 补 end。 */
 export function rebuildSessionFold(params: {
   readonly sessionId: string;
   readonly traceId: string;

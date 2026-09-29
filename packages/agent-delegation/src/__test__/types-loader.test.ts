@@ -1,6 +1,3 @@
-// types-loader 纯函数直测（docs/AGENT-DELEGATION.md §7.1/§11.2）：frontmatter 解析、
-// 垃圾输入降级、目录优先级、保留名、指纹探测。
-
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -90,7 +87,7 @@ describe("typesFingerprint（kick 边沿探测判据）", () => {
     await writeFile(join(dir, "a.md"), "---\nname: a\ndescription: x\n---\n");
     const withFile = await typesFingerprint([dir]);
     expect(withFile).toContain("a.md");
-    await mkdir(join(dir, "sub"), { recursive: true }); // 非 .md 目录不计
+    await mkdir(join(dir, "sub"), { recursive: true });
     expect(await typesFingerprint([dir])).toBe(withFile);
     await writeFile(join(dir, "a.md"), "---\nname: a\ndescription: y\n---\n");
     expect(await typesFingerprint([dir])).not.toBe(withFile);

@@ -1,10 +1,6 @@
-// 会话解析（docs/CLI.md §2.6）：--session 前缀 / --continue / --resume 的候选逻辑。
-// 纯函数 + archive 注入；主会话过滤（delegation 子代理同 cwd 落盘，不得当主会话恢复）。
-
 import type { Result } from "@x-harness/core";
 import type { SessionHeader, SessionId } from "@x-harness/session";
 
-/** 主会话 = header.agentId 缺席；按 createdAt 倒序（最新在前） */
 export function mainSessions(headers: readonly SessionHeader[]): readonly SessionHeader[] {
   return headers
     .filter((header) => header.agentId === undefined)
@@ -25,7 +21,6 @@ export function matchPrefix(headers: readonly SessionHeader[], prefix: string): 
   return { status: "ambiguous", candidates: hits.map((header) => header.id) };
 }
 
-/** --continue：当前 cwd 最新主会话；无候选 → undefined（首次使用是常态，非报错） */
 export function continueCandidate(headers: readonly SessionHeader[], cwd: string): SessionId | undefined {
   return mainSessions(headers).find((header) => header.cwd === cwd)?.id;
 }
@@ -36,7 +31,6 @@ export type SessionPlan =
   | { readonly kind: "pick"; readonly headers: readonly SessionHeader[] }
   | { readonly kind: "fail"; readonly reason: string };
 
-/** 启动期会话计划：--no-session/显式 flag 已由 parse 层互斥校验收口，这里只排优先序 */
 export function planSession(args: { readonly session?: string; readonly continueRecent: boolean; readonly resume: boolean }, headers: readonly SessionHeader[], cwd: string): SessionPlan {
   if (args.session !== undefined) {
     const match = matchPrefix(headers, args.session);
@@ -55,7 +49,6 @@ export function planSession(args: { readonly session?: string; readonly continue
   return { kind: "new" };
 }
 
-/** 校验工具：fail/pick 归失败语义（pick 形态由交互调用方先行处理；非交互一律不可达） */
 export function planToResult(plan: SessionPlan): Result<Exclude<SessionPlan, { kind: "fail" } | { kind: "pick" }>> {
   if (plan.kind === "fail") return { ok: false, reason: plan.reason };
   if (plan.kind === "pick") return { ok: false, reason: "pick requires an interactive terminal" };

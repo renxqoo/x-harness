@@ -1,5 +1,3 @@
-// e2e 宿主装配：真实使用场景的平台程序——createContext、提供 sqlite 执行面、挂 plugin-manager。
-// sqlite 是文件库（落隔离 tmp）——数据比插件活得久；安装 roots 指向仓库内真实插件源码目录。
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,10 +10,8 @@ import { pluginManagerService } from "@x-harness/plugin-manager";
 import type { PluginManagerService } from "@x-harness/plugin-manager";
 import { crudDb, type SqliteDb } from "../plugins/contracts.ts";
 
-/** 真实插件源码目录（安装 roots） */
 export const PLUGINS_DIR = fileURLToPath(new URL("../plugins/", import.meta.url));
 
-/** 按文件名取真实插件路径 */
 export function pluginPath(file: string): string {
   return join(PLUGINS_DIR, file);
 }
@@ -32,7 +28,6 @@ export async function createWorld(): Promise<World> {
   const db = new Database(join(dir, "crud.db"));
   try {
     db.run("CREATE TABLE IF NOT EXISTS items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL)");
-    // bun-types 的 run/query 泛型 rest 签名无法直接对上契约参数面——按契约窄化一次
     const typed = db as unknown as {
       run(sql: string, ...params: (string | number | null)[]): void;
       query<T>(sql: string): { all(...params: (string | number | null)[]): T[] };
@@ -46,13 +41,13 @@ export async function createWorld(): Promise<World> {
       createPluginManager({
         ctx,
         roots: [PLUGINS_DIR],
-        approveInstall: () => true, // dev 宿主放行（生产缺省全拒——plugin-manager 的门）
+        approveInstall: () => true,
         mode: "process",
         audit: createFileAudit(join(dir, "audit.jsonl")),
       }),
     ]);
   } catch (error) {
-    db.close(); // 装配失败不留句柄与隔离区
+    db.close();
     await rm(dir, { recursive: true, force: true });
     throw error;
   }
@@ -73,7 +68,6 @@ export async function createWorld(): Promise<World> {
   };
 }
 
-/** 按名取插件服务的糖：拿不到即抛 */
 export function service<T>(world: World, name: string): T {
   const token = world.svc.serviceToken(name);
   if (token === undefined) throw new Error(`service token missing: ${name}`);

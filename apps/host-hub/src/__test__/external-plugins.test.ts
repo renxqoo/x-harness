@@ -1,6 +1,3 @@
-// 外部插件装载契约（docs/PLUGINS.md 契约 3/4）：词表封闭性、缺省全装载、
-// disabled/agentDir 缺席/解析失败/装载失败降级不打挂装配、teardown 审计
-// install→uninstall 恰好各一次。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -20,7 +17,6 @@ afterAll(async () => {
   await Promise.all(roots.map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-/** script 模式 env + 每调用独立 mailbox root（跨进程邮箱常开后装配会真开箱——不隔离会写真实 ~/.x-harness） */
 const scriptEnv = async (): Promise<Record<string, string>> => ({
   HUB_WORKER_PROVIDER: "script",
   HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "x" }]),
@@ -37,9 +33,6 @@ async function auditKinds(agentDir: string): Promise<string[]> {
     .map((line) => (JSON.parse(line) as { kind: string }).kind);
 }
 
-/** 失败路径的 runtime-error/install-failed 审计是 fire-and-forget 追加（plugin-manager
- *  既有语义），落盘时序不定——轮询到连续两次读数一致且足量再断言（迟到的多余条
- *  不可见） */
 async function waitForAudit(agentDir: string, count: number): Promise<string[]> {
   let previous: string[] | undefined;
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -48,7 +41,6 @@ async function waitForAudit(agentDir: string, count: number): Promise<string[]> 
       if (kinds.length >= count && previous !== undefined && JSON.stringify(kinds) === JSON.stringify(previous)) return kinds;
       previous = [...kinds];
     } catch {
-      // 文件未落——继续轮询
     }
     await new Promise((resolve) => {
       setTimeout(resolve, 10);
@@ -90,8 +82,6 @@ describe("装配期装载", () => {
     expect(svc).toBeDefined();
     const token = svc?.serviceToken("token-analytics");
     expect(token).toBeDefined();
-    // 服务可用性：经 token 取分析面（script adapter 申报 contextWindow 200k——
-    // 三级中的 runtime 申报级；200k 兜底级由包级无参用例覆盖）
     const analytics = assembled.world.ctx.use(token!) as { breakdown: () => { contextWindow: number; utilization: number } };
     const breakdown = analytics.breakdown();
     expect(breakdown.contextWindow).toBe(200_000);
@@ -99,7 +89,7 @@ describe("装配期装载", () => {
 
     await assembled.handle.dispose();
     await teardownWorld(assembled.world);
-    expect(await auditKinds(agentDir)).toEqual(["install", "uninstall"]); // 生命周期审计恰好各一次
+    expect(await auditKinds(agentDir)).toEqual(["install", "uninstall"]);
   }, 20_000);
 
   test("plugins.disabled 跳过：manager 与插件均不装载（审计文件缺席）", async () => {
@@ -115,7 +105,7 @@ describe("装配期装载", () => {
     expect(assembled.world.ctx.tryUse(pluginManagerService)).toBeUndefined();
     await assembled.handle.dispose();
     await teardownWorld(assembled.world);
-    await expect(auditKinds(agentDir)).rejects.toThrow(); // 无审计文件
+    await expect(auditKinds(agentDir)).rejects.toThrow();
   }, 20_000);
 
   test("agentDir 缺席跳过（直连装配场景——不兜底 cwd 防审计污染）", async () => {
@@ -157,16 +147,15 @@ describe("装配期装载", () => {
         dial: { provider: "script", model: "script-1" },
         env: await scriptEnv(),
       },
-      // 坏模块：形状过关但 apply 抛错 → installProcess 失败留痕（registerFailure）
       { externalPlugins: { loadModule: async () => ({ default: { name: "token-analytics", apply: () => { throw new Error("apply boom"); } } }) } },
     );
     const svc = assembled.world.ctx.tryUse(pluginManagerService);
-    expect(svc).toBeDefined(); // manager 在场（装载编排不因单件失败缺席）
-    expect(svc?.serviceToken("token-analytics")).toBeUndefined(); // 插件本体失败
+    expect(svc).toBeDefined();
+    expect(svc?.serviceToken("token-analytics")).toBeUndefined();
     expect(svc?.list().map((record) => [record.name, record.status])).toEqual([["token-analytics", "failed"]]);
     await assembled.handle.dispose();
     await teardownWorld(assembled.world);
-    expect((await waitForAudit(agentDir, 3)).sort()).toEqual(["install-failed", "runtime-error", "uninstall"]); // 失败留痕 + 错误路由 + failed 记录清除（落盘顺序不定——多重集）
+    expect((await waitForAudit(agentDir, 3)).sort()).toEqual(["install-failed", "runtime-error", "uninstall"]);
   }, 20_000);
 });
 
@@ -186,7 +175,7 @@ describe("降级硬承诺（契约 4：任何装载失败不打挂装配）", ()
     const svc = assembled.world.ctx.tryUse(pluginManagerService);
     expect(svc).toBeDefined();
     expect(svc?.serviceToken("token-analytics")).toBeUndefined();
-    expect(svc?.list()).toEqual([]); // 拒绝路不进登记簿
+    expect(svc?.list()).toEqual([]);
     await assembled.handle.dispose();
     await teardownWorld(assembled.world);
   }, 20_000);
@@ -201,12 +190,11 @@ describe("降级硬承诺（契约 4：任何装载失败不打挂装配）", ()
         dial: { provider: "script", model: "script-1" },
         env: await scriptEnv(),
       },
-      // 装载成功但 apply 返回的 disposer 卸载时抛错 → uninstall Result 失败
       { externalPlugins: { loadModule: async () => ({ default: { name: "token-analytics", apply: () => () => { throw new Error("unload boom"); } } }) } },
     );
     expect(assembled.world.ctx.tryUse(pluginManagerService)?.list().map((record) => record.status)).toEqual(["active"]);
     await assembled.handle.dispose();
-    await expect(teardownWorld(assembled.world)).resolves.toBeUndefined(); // 失败仅告警，收殓必完成
+    await expect(teardownWorld(assembled.world)).resolves.toBeUndefined();
     const kinds = await waitForAudit(agentDir, 2);
     expect(kinds).toContain("install");
     expect(kinds).toContain("uninstall");

@@ -1,5 +1,3 @@
-// gateway 长期身份（DESIGN §0 三钥模型）：Ed25519 签名 + X25519 加密静态钥。
-// 首启生成；之后每次启动校验文件可读并加载。installationId 同文件组生成。
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile } from "node:fs/promises";
 import { generateBoxKeyPair, generateSigningKeyPair, x25519PublicFromSecret } from "@x-harness/remote-protocol";
@@ -48,7 +46,6 @@ export async function loadOrCreateIdentity(paths: { agentDir: string; installati
     await atomicWrite(paths.gatewayIdentityFile, JSON.stringify(identity, null, 2));
   }
   if (identity.installationId !== installationId) {
-    // 身份组撕裂（手工改文件）：以 installationId 文件为准重建身份
     const signing = generateSigningKeyPair();
     const box = generateBoxKeyPair();
     identity = { installationId, signingSecret: signing.secret, signingPub: signing.pub, boxSecret: box.secret, boxPub: box.pub };

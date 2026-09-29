@@ -33,8 +33,8 @@ describe("内核自举词表封闭性（§6.1：导出常量 == 文档词表，�
     });
     const data = { mutable: true };
     ctx.emit(pluginEvent, { plugin: "x", kind: "k", data, ts: 1 });
-    expect(Object.isFrozen(seen)).toBe(true); // 壳冻结
-    expect(seen?.data).toBe(data); // data 原引用
-    expect(Object.isFrozen(data)).toBe(false); // 信任边界：不承诺不可变
+    expect(Object.isFrozen(seen)).toBe(true);
+    expect(seen?.data).toBe(data);
+    expect(Object.isFrozen(data)).toBe(false);
   });
 });

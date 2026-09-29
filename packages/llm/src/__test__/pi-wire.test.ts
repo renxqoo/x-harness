@@ -1,8 +1,3 @@
-// pi 真身冒烟（docs/LLM-PI.md 测试口径·真身层）：scene-server 假 HTTP/SSE × pi api-level stream 真身——
-// 注入面测不到的 wire 行为在这里防守：非 2xx→http-<status>、retry-after 头捕获、中途断连→network、
-// 请求头硬化（identity/单份 anthropic-version）、wire 体形状（无 cache_control、system 顶层、
-// openai 双缺席不发 max_tokens）、usage 字段级合并。
-
 import { afterEach, describe, expect, it } from "vitest";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "../pi-adapter.ts";
 import type { LlmChunk, LlmRequest } from "../types.ts";
@@ -55,21 +50,21 @@ describe("pi 真身冒烟：anthropic-messages", () => {
       ),
     );
     expect(chunks).toEqual([
-      { type: "text-delta", text: "llo" }, // start 帧零产出（partial 共享引用不可读——首字重复根治）
-      { type: "text-delta", text: "he" }, // end 终态校正补发非空 start 初值（后缀失配补头段）
-      { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2, totalTokens: 24 } }, // 10+5+2 折入+明细+总量
+      { type: "text-delta", text: "llo" },
+      { type: "text-delta", text: "he" },
+      { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2, totalTokens: 24 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
     const captured = srv.captured();
-    expect(captured?.path?.startsWith("/v1/messages")).toBe(true); // pi 对 custom model 追加 ?beta=true
-    expect(captured?.body["model"]).toBe("m"); // 请求体 model = request.model（适配器名不进请求体）
+    expect(captured?.path?.startsWith("/v1/messages")).toBe(true);
+    expect(captured?.body["model"]).toBe("m");
     expect(captured?.headers["x-api-key"]).toBe("k-test");
-    expect(captured?.headers["accept-encoding"]).toBe("identity"); // SSE 不协商压缩
+    expect(captured?.headers["accept-encoding"]).toBe("identity");
     expect(String(captured?.headers["anthropic-version"])).toBeTruthy();
     expect(captured?.body["stream"]).toBe(true);
-    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false); // 全缺席不注入——wire 省略，服务端默认接管（本地兜底废除）
-    expect(captured?.body["system"]).toEqual([{ type: "text", text: "sys" }]); // pi wire 形态：system 块数组
-    expect(JSON.stringify(captured?.body)).not.toContain("cache_control"); // cacheRetention none
+    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false);
+    expect(captured?.body["system"]).toEqual([{ type: "text", text: "sys" }]);
+    expect(JSON.stringify(captured?.body)).not.toContain("cache_control");
   });
 
   it("maxOutputTokensByModel 命中：该模型请求体 max_tokens = 逐模型值（wire 面断言）", async () => {
@@ -77,7 +72,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     srv.nextScene({ status: 200, chunks: anthropicFullFlow() });
     const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test", maxOutputTokensByModel: { "big-x": 32_768 } });
     await collect(adapter.stream(request({ model: "big-x" })));
-    expect(srv.captured()?.body["max_tokens"]).toBe(32_768); // 逐模型值直达 wire
+    expect(srv.captured()?.body["max_tokens"]).toBe(32_768);
   });
 
   it("非 2xx：429 + retry-after 头 → http-429 + retryAfterMs（onResponse 捕获）", async () => {
@@ -95,7 +90,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     srv.nextScene({
       status: 200,
       chunks: anthropicFullFlow().slice(0, 3),
-      destroyAfterMs: 150, // 分片已产出、流中途断
+      destroyAfterMs: 150,
     });
     const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test" });
     const chunks = await collect(adapter.stream(request({})));
@@ -132,7 +127,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
     const adapter = createAnthropicCompatAdapter({ baseUrl: srv.baseUrl, apiKey: "k-test" });
     const chunks = await collect(adapter.stream(request({})));
     expect(chunks).toEqual([
-      { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' }, // end 即放行单帧全量出口（判定不依赖终态——abort 窗口零丢失）
+      { type: "tool-call-delta", index: 0, callId: "t1", name: "add", argumentsDelta: '{"a":1}' },
       { type: "usage", usage: { input: 5, output: 9, cacheRead: 0, cacheWrite: 0, totalTokens: 14 } },
       { type: "finish", finish: { kind: "stop" } },
     ]);
@@ -169,7 +164,7 @@ describe("pi 真身冒烟：anthropic-messages", () => {
       finish: { kind: "error", code: "http-500", message: expect.stringContaining("upstream blew") },
     });
     const version = String(srv.captured()?.headers["anthropic-version"]);
-    expect(version).not.toContain(","); // 单份（node 对重复头 join 成数组含逗号）
+    expect(version).not.toContain(",");
   });
 
   it.each([
@@ -225,7 +220,7 @@ describe("pi 真身冒烟：openai-completions", () => {
     expect(captured?.body["model"]).toBe("m");
     expect(String(captured?.headers["authorization"])).toContain("Bearer");
     expect(captured?.headers["accept-encoding"]).toBe("identity");
-    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false); // 双缺席不发
+    expect(Object.hasOwn(captured?.body ?? {}, "max_tokens")).toBe(false);
     expect(captured?.body["stream"]).toBe(true);
   });
 });

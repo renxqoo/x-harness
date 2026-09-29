@@ -1,13 +1,8 @@
-// 凭据存储（DESIGN §3.6）：<agentDir>/credentials.json（0600，仅 API key）；
-// key 只从 stdin 进、全路径零回显——错误消息经 replaceAll(key,"[redacted]") 兜底
-// 脱敏；写链串行（read-modify-write）；坏文件降级空表（首跑常态）。apiKey 解析
-// 序 = credentials > providers.json 字面 > apiKeyEnv（快照构造在 catalog 单点）。
 import { chmod, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
 export interface Credentials {
-  /** provider → API key（永不出现在任何输出帧） */
   keys: Record<string, string>;
 }
 
@@ -29,11 +24,10 @@ export function createCredentials(agentDir: string) {
       }
       return { keys: {} };
     } catch {
-      return { keys: {} }; // 缺席（首跑）/坏文件：空表降级
+      return { keys: {} };
     }
   }
 
-  /** 串行写链（read-modify-write）：失败在 catch 内复位链（不毒化后续写） */
   async function enqueueWrite(op: () => Promise<void>): Promise<void> {
     try {
       await (writeChain = writeChain.then(op));
@@ -48,8 +42,8 @@ export function createCredentials(agentDir: string) {
       const creds = await read();
       mutate(creds.keys);
       const tmp = tmpPath();
-      await writeFile(tmp, JSON.stringify({ keys: creds.keys }, null, 2), { encoding: "utf8", mode: 0o600 }); // 创建即收紧（0644 窗口消灭）
-      await chmod(tmp, 0o600); // 兜底（umask 收紧不可移植假设）
+      await writeFile(tmp, JSON.stringify({ keys: creds.keys }, null, 2), { encoding: "utf8", mode: 0o600 });
+      await chmod(tmp, 0o600);
       await rename(tmp, path);
     });
   }
@@ -71,7 +65,6 @@ export function createCredentials(agentDir: string) {
 
 export type CredentialStore = ReturnType<typeof createCredentials>;
 
-/** 错误消息脱敏兜底：任何含 key 本体的字符串先替换再外发 */
 export function redact(text: string, secrets: string[]): string {
   let out = text;
   for (const secret of secrets) {

@@ -1,7 +1,3 @@
-// fetch-rg 纯函数、幂等判定与 tar 抽取单测（docs/TOOLBOX.md §5 获取形态）：平台映射 /
-// sha 表 / manifest 幂等 / target 解析 / extractWithTar 真链路（本地 tar 造 fixture——零网络；
-// 网络下载面由打包机实跑背书 fetch:rg）。
-
 import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -118,14 +114,14 @@ describe("fetch-rg 幂等判定（rg.json manifest × 盘上 rg 双在场）", (
     const rgPath = join(dir, "rg");
     mkdirSync(dir, { recursive: true });
     writeFileSync(rgPath, "binary-bytes");
-    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false); // manifest 缺席
+    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false);
     writeFileSync(manifestPath, "not json {");
-    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false); // 损坏
+    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false);
     writeFileSync(manifestPath, JSON.stringify(manifestOf(b)));
-    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false); // 目标不匹配（交叉重打包）
+    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false);
     rmSync(rgPath, { force: true });
     writeFileSync(manifestPath, JSON.stringify(manifestOf(a)));
-    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false); // rg 缺席
+    expect(isUpToDate(manifestPath, rgPath, manifestOf(a))).toBe(false);
   });
 
   it("manifestOf：version/target/sha256 三字段与 RG_VERSION 同源", () => {

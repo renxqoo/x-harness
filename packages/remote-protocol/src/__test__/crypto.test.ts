@@ -1,4 +1,3 @@
-// crypto 契约：往返、指纹、DH 一致性、nonce/AAD 布局、垃圾输入降级
 import { describe, expect, it } from "vitest";
 import {
   aeadOpen,
@@ -27,7 +26,6 @@ describe("签名钥对", () => {
     const sig = signBytes(kp.secret, enc.encode("m1"));
     expect(verifyBytes(kp.pub, enc.encode("m1"), sig)).toBe(true);
     expect(verifyBytes(kp.pub, enc.encode("m2"), sig)).toBe(false);
-    // 错误公钥
     expect(verifyBytes(generateSigningKeyPair().pub, enc.encode("m1"), sig)).toBe(false);
   });
 

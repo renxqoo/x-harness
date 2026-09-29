@@ -1,6 +1,3 @@
-// worker 内嵌装置（MIGRATION §5 worker-harness 移植）：注入 stdin/stdout 跑真
-// runWorker（无进程 spawn——worker 在测试内运行，覆盖率真实计入）；script-adapter
-// 剧本驱动确定性 LLM。
 import { EventEmitter } from "node:events";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -49,7 +46,6 @@ export function framesOf(captured: readonly string[]): Frame[] {
 
 export interface WaitOptions {
   timeoutMs?: number;
-  /** 只扫描该下标之后的帧（历史帧不复用——多次弹窗场景） */
   afterIndex?: number;
 }
 
@@ -93,8 +89,6 @@ export interface SpawnOptions {
   env?: Record<string, string | undefined>;
 }
 
-/** 内嵌 worker：temp agentDir + script 模式 env + 注入 IO；mailbox root 指 temp 目录
- *  （跨进程邮箱接线后 discover 会真扫盘——不隔离会看到同机其他测试/真实会话的箱） */
 export async function spawnScriptWorker(over: SpawnOptions = {}): Promise<ScriptWorker> {
   const agentDir = await mkdtemp(join(tmpdir(), "hub-worker-"));
   const sessionsRoot = join(agentDir, "sessions");

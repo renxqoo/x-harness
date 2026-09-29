@@ -1,16 +1,9 @@
-// 描述与参数对账（docs/TODO.md §2/§6）：正文与规格 blockquote 原文逐字符一致
-// （唯一合法偏离 = 已知工具名替换集）；per-param description 与规格参数表格列全量
-// 逐字一致（表格解析对账——零转录风险）；enum 与必填面从表格列解析对账（防硬编码自证）。
-// spec 快照入仓 fixtures/task-tools.spec.md（来源 /Users/wrr/work/claude-tool/task-tools.md；
-// 上游更新时手动重拷——仓内副本是对账的单一事实源，门禁不绑单机路径）。
-
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import type { SessionStore } from "@x-harness/session";
 import { createTodoStore } from "../store.ts";
 import { createTodoTools } from "../tools.ts";
 
-/** 对账只消费 schema——sessions 传最小 stub（会话面行为由 tools.test 背书） */
 const noSessions = { get: () => undefined } as unknown as SessionStore;
 import {
   TASK_CREATE_DESCRIPTION,
@@ -21,7 +14,6 @@ import {
 
 const SPEC_PATH = new URL("./fixtures/task-tools.spec.md", import.meta.url).pathname;
 
-/** 已知替换集（docs/TODO.md §2①）：本仓注册名——对账时施加于 spec 原文后应逐字符相等 */
 const RENAMES: Array<[RegExp, string]> = [
   [/TaskUpdate/g, "task_update"],
   [/TaskList/g, "task_list"],
@@ -36,7 +28,6 @@ const descriptions: Record<string, string> = {
   task_update: TASK_UPDATE_DESCRIPTION,
 };
 
-/** spec blockquote 原文块抽取（> 前缀剥除，连续块合并） */
 function blockRuns(spec: string): string[] {
   const runs: string[] = [];
   let cur: string[] = [];
@@ -51,7 +42,6 @@ function blockRuns(spec: string): string[] {
   return runs;
 }
 
-/** spec 工具节的参数表行（已剥转义）：[名, 类型, 必填, description] */
 function tableRows(spec: string, section: string): Array<[string, string, string, string]> {
   const start = spec.indexOf(section);
   expect(start, `spec 节在场：${section}`).toBeGreaterThan(-1);
@@ -120,14 +110,11 @@ describe("参数面对账（spec 参数表格解析——description/enum/必填
       }
       return rows.map(([name, type, req]) => [name.replace(/^`|`$/g, ""), type, req] as [string, string, string]);
     };
-    // create 特例：表格 subject 标 ✅ 但规格注记明写 required 数组为空（语义必填在 execute 层——
-    // 方案 §1.1 裁决）；required 空数组是规格原样形态，语义校验由 store 用例背书
     check("task_create", "## 1. TaskCreate", false);
     expect(requiredOf("task_create")).toEqual([]);
     check("task_get", "## 2. TaskGet", true);
     const updateRows = check("task_update", "## 4. TaskUpdate", true);
 
-    // status enum：表格类型列（enum: a \| b \| …）↔ schema Union literals——防漏值/杂值双向漂移
     const statusRow = updateRows.find(([name]) => name === "status");
     if (statusRow === undefined) throw new Error("status 行缺席");
     const specEnum = (statusRow[1] ?? "").replace(/^enum:\s*/, "").split("|").map((v) => v.trim().replace(/`/g, ""));

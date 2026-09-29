@@ -1,4 +1,3 @@
-// hex 编解码（零依赖单点）
 export function toHex(bytes: Uint8Array): string {
   return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("hex");
 }

@@ -1,6 +1,3 @@
-// 期 2-C depends_on DAG 测试：提交校验（重复/空条目拒）+ readiness 真依赖（waiting/doomed/
-// orphan 四值）+ 依赖失败传播终局（dependency-failed）。
-
 import { describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -58,7 +55,7 @@ describe("dependencyVerdict 四值（真 depsOn）", () => {
     });
     const result = readiness(snap, { maxInFlight: 10, circuitBreak: 0 });
     expect(result.dependencyDoomed).toEqual(["a", "b"]);
-    expect(result.dispatchable).toEqual(["d"]); // c waiting
+    expect(result.dispatchable).toEqual(["d"]);
   });
 });
 
@@ -114,10 +111,8 @@ describe("悬空依赖提交拒（期 2 单任务 run 语义）", () => {
     const parent = await loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "m", provider: "fake" } });
     if (!parent.ok) throw new Error(parent.reason);
     const registry = ctx.use(toolRegistry);
-    // depends_on 指向不存在任务（跨 run 悬空）→ 提交成功（静态校验放行——引用形态合法）
-    // → 首轮完成 → readiness 判 orphan → doomed 终局 cancelled{dependency-failed}
     const made = await registry.dispatch({ callId: "d1", name: "workflow_submit", args: { description: "dep task", prompt: "x", depends_on: ["t-ghost-run-task"] }, signal: new AbortController().signal, session: "main-1" as SessionId });
-    expect(made.isError).toBe(true); // 悬空拒——fail-fast 而非运行后 doomed
+    expect(made.isError).toBe(true);
     expect(String(made.content)).toContain("not resolvable");
     await parent.value.dispose();
     await ctx.dispose();

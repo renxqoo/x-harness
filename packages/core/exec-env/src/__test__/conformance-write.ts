@@ -1,6 +1,3 @@
-// write 面契约一致性套件（docs/EXEC-ENV.md §7）：双腿通用用例；mode 承袭（D1）/注错缝/原子残留/
-// symlink 替换为 local-only（内核级语义 local 腿权威）。
-
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

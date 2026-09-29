@@ -1,9 +1,7 @@
-// host-attach 单元：行泵（多行 chunk/半行/CRLF）、心跳死线、重启、写背压、stop
 import { describe, expect, it, vi } from "vitest";
 import { HostAttach, resolveHostBin } from "../host-attach.ts";
 
 function fakeExec(): { command: string; args: string[] } {
-  // bun 起一个回显 host：stdout 按收到的 stdin 行回 response；心跳由测试手动注入
   const self = new URL("./echo-host.ts", import.meta.url).pathname;
   return { command: process.execPath, args: [self] };
 }
@@ -11,7 +9,6 @@ function fakeExec(): { command: string; args: string[] } {
 describe("resolveHostBin", () => {
   it("显式配置优先；缺省解析仓库入口；不可解析拒启（E7 回归：不得把 gateway 自身当 host）", () => {
     expect(resolveHostBin("/opt/host").command).toBe("/opt/host");
-    // vitest cwd=仓库根 → 解析到 apps/host-hub 入口（bun 直跑 TS 源）
     const resolved = resolveHostBin(null);
     expect(resolved.args[0]).toContain("host-hub");
   });

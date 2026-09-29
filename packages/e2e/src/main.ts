@@ -1,6 +1,3 @@
-// e2e 入口：编排真实场景——插件动态注册/销毁（sqlite CRUD）+ agent 全链旅程 + 压缩防线 + 子代理旅程
-// + toolbox 四工具旅程 + CLI 宿主子进程旅程（docs/CLI.md §4 批E）。任一场景失败 → 非零退出码
-// （check 脚本的 e2e 门）。真凭证旅程见 `bun run e2e:real`（opt-in）。
 import { runAgentJourney } from "./agent-journey.ts";
 import { runCliJourney } from "./cli-journey.ts";
 import { runCompactionJourney } from "./compaction-journey.ts";
@@ -20,7 +17,6 @@ try {
   await runCompactionJourney();
   await runOutputContinuationJourney();
   await runDelegationJourney();
-  // 件16 workflow 崩溃旅程（三档——按需跑：bun packages/e2e/src/main.ts wf
   const wfIssues = await runWorkflowCrashJourneys();
   if (wfIssues.length > 0) throw new Error(`workflow 崩溃旅程发现问题：\n${wfIssues.join("\n")}`);
   await runLongContentJourney();

@@ -1,7 +1,3 @@
-// write 工具（docs/TOOLBOX.md §3 + docs/EXEC-ENV.md §3）：观察门+版本 CAS（会话键控；版本由
-// ExecEnv 产出——write 侧 env.stat）；同锁键（realpath）进程内互斥；原子写 env.writeFileAtomic
-// （temp+rename、失败清残留——在 env 实现）；BOM round-trip；写后自登记。
-
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
@@ -44,14 +40,14 @@ async function write(input: { readonly gate: PathGate; readonly observed: Observ
   const admitted = await admitSession({ gate, realpath: env.realpath, session: ctx.session, extraRootsOf, rootOverrideOf, target: args.path });
   if (!admitted.ok) return { content: admitted.reason, isError: true };
   const path = admitted.path;
-  const lockKey = await env.realpath(path); // 锁键与 I/O 键解耦（symlink 别名同锁）
+  const lockKey = await env.realpath(path);
   return observed.locked(lockKey, async () => {
     const st = await env.stat(path);
     let preExisting = false;
     let observedVersion: ReturnType<ObservedRegistry["lookup"]> = undefined;
     if (st.ok) {
       if (st.stat.kind === "dir") return { content: `FS_IS_DIRECTORY: ${args.path} is a directory`, isError: true };
-      if (st.stat.kind !== "file") return { content: `FS_NOT_REGULAR_FILE: ${args.path} is not a regular file`, isError: true }; // FIFO/socket 同拒（rename 语义只对常规文件成立）
+      if (st.stat.kind !== "file") return { content: `FS_NOT_REGULAR_FILE: ${args.path} is not a regular file`, isError: true };
       preExisting = true;
       observedVersion = observed.lookup(ctx.session, path);
       if (observedVersion === undefined) {
@@ -67,7 +63,6 @@ async function write(input: { readonly gate: PathGate; readonly observed: Observ
     const payload = hadBom ? BOM + args.content : args.content;
     const result = await env.writeFileAtomic(path, Buffer.from(payload, "utf8"), { makeParents: true });
     if (!result.ok) return { content: writeFailText(result, args.path), isError: true };
-    // 写后自登记：write→write 连续写不被自己的门拒（rename 后 stat——ino 已换）
     observed.record(ctx.session, path, { ...result.stat.version, hadBom });
     const lines = payload === "" ? 0 : payload.split("\n").length;
     return { content: `Wrote ${args.path} (${String(lines)} line${lines === 1 ? "" : "s"})` };
@@ -75,7 +70,7 @@ async function write(input: { readonly gate: PathGate; readonly observed: Observ
 }
 
 function writeFailText(result: Extract<WriteFileResult, { ok: false }>, display: string): string {
-  if (result.reason === "write_failed") return `FS_WRITE_FAILED: ${result.detail}`; // 先收窄带 detail 的变体
+  if (result.reason === "write_failed") return `FS_WRITE_FAILED: ${result.detail}`;
   if (result.reason === "is_directory") return `FS_IS_DIRECTORY: ${display} is a directory`;
   if (result.reason === "not_regular") return `FS_NOT_REGULAR_FILE: ${display} is not a regular file`;
   if (result.reason === "access_denied") return `FS_ACCESS_DENIED: ${display} is not accessible`;

@@ -1,6 +1,3 @@
-// 测试装置：脚本化假 LlmRuntime + 会话播种 + 世界装配（packages/compaction 专用，
-// 不跨包引用别的包 __test__）。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmRuntime } from "@x-harness/llm";
@@ -42,7 +39,6 @@ export function emptyScript(): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 慢速流：吐一段 delta → 等待 ms → finish（单飞行窗口用） */
 export function slowScript(text: string, ms: number): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LlmChunk> {
     yield { type: "text-delta", text };
@@ -53,7 +49,6 @@ export function slowScript(text: string, ms: number): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 静默挂死流：吐一段 delta 后永悬（看门狗面） */
 export function hangScript(firstText: string): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LlmChunk> {
     yield { type: "text-delta", text: firstText };
@@ -96,7 +91,7 @@ export async function makeWorld(pluginOptions?: Record<string, unknown>) {
   const { createCompactionPlugin } = await import("../plugin.ts");
   const plugin = createCompactionPlugin({ ...BASE_OPTIONS, ...pluginOptions } as never);
   await loadPlugins(ctx, [sessionPlugin, plugin]);
-  ctx.provide(llmRuntime, fake.runtime); // waitFor 停靠（llm 晚装合法形态）
+  ctx.provide(llmRuntime, fake.runtime);
   return { ctx, store: ctx.use(sessionStore), llm: fake };
 }
 
@@ -129,7 +124,6 @@ export function seedTurn(
   must(session.append("turn/end", { turn, reason: { kind: "completed" } }));
 }
 
-/** 从拨号记录提取 user 提示词文本（messages[0] 为 system 提示词） */
 export function promptOf(call: LlmRequest | undefined): string {
   const message = call?.messages.find((item) => item.role === "user");
   const block = message !== undefined && "content" in message ? message.content[0] : undefined;
@@ -140,7 +134,6 @@ export function seedSystem(session: Session, text: string): void {
   must(session.append("system/message", { turn: 0, step: 0, text }, { surfaceOp: "append" }));
 }
 
-/** n token 的 ASCII 文本（len/4 口径恰好 n） */
 export function textOf(tokens: number): string {
   return "a".repeat(tokens * 4);
 }
@@ -183,7 +176,6 @@ export const sid = (v: string): SessionId => v as SessionId;
 
 export type { Context, Session, SessionStore };
 
-/** 水位触发面:直接 dispatch agentPreStep(绕过 agent-loop 整装) */
 export async function dispatchPreStep(
   world: Awaited<ReturnType<typeof makeWorld>>,
   fields: { readonly session: ReturnType<typeof sid>; readonly turn?: number; readonly step?: number },

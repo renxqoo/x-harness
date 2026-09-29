@@ -1,5 +1,3 @@
-// 最小 RESP 客户端（DESIGN §1.5）：GET/SET/DEL/SADD/SMISMEMBER/PUBLISH/SUBSCRIBE。
-// 只实现 relay 用到的子集；连接断开自动重连；命令排队（订阅建立前的写命令照常可用）。
 import { connect, type Socket } from "node:net";
 
 export interface RespOptions {
@@ -35,7 +33,6 @@ export class RespClient {
     this.connecting = true;
     try {
       await this.connectOnce();
-      // 重连成功：重放订阅集（SUBSCRIBE 短连接语义——C6）
       for (const channel of this.subscribeHandlers.keys()) {
         this.socket?.write(encodeCommand(["SUBSCRIBE", channel]));
       }
@@ -53,7 +50,6 @@ export class RespClient {
       const socket = connect({ host: this.options.host, port: this.options.port });
       const fail = (error: Error): void => {
         this.socket = null;
-        // 连接失败：排空等待者（否则永久楔死——C6）
         const waiters = this.onceConnected.splice(0);
         for (const fn of waiters) (fn as (err?: Error) => void)(error);
         reject(error);
@@ -86,7 +82,6 @@ export class RespClient {
       if (parsed === null) return;
       this.buffer = this.buffer.subarray(parsed.consumed);
       const value = parsed.value;
-      // 订阅消息：["message", channel, payload]
       if (Array.isArray(value) && value.length === 3 && value[0] === "message") {
         const channel = String(value[1]);
         const message = String(value[2]);
@@ -144,7 +139,6 @@ export class RespClient {
     if (socket === null || socket.destroyed) {
       throw new Error("resp: not connected");
     }
-    // SUBSCRIBE 不排 pending：确认帧是服务端推送形态（与 message 帧同通路）
     socket.write(encodeCommand(["SUBSCRIBE", channel]));
   }
 
@@ -154,7 +148,6 @@ export class RespClient {
   }
 }
 
-/** RESP 编码（inline 不用，统一 RESP array of bulk strings） */
 export function encodeCommand(args: string[]): Buffer {
   const parts: Buffer[] = [Buffer.from(`*${args.length}\r\n`)];
   for (const arg of args) {
@@ -166,7 +159,6 @@ export function encodeCommand(args: string[]): Buffer {
 
 export type RespValue = string | number | null | Error | RespValue[];
 
-/** RESP 解析（需要的子集：+ - : $ *）；不完整返回 null */
 export function parseResp(input: Buffer): { value: RespValue; consumed: number } | null {
   if (input.length === 0) return null;
   const type = String.fromCharCode(input[0]!);

@@ -1,5 +1,3 @@
-// 用户技能根一次性迁移回归（agentDir 派生缝的存量数据腿）：搬运/同名跳过/
-// 哨兵幂等/旧根不删/根同路径短路/旧根缺席静默。oldRoot 注入缝驱动（沙箱隔离）。
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,9 +34,7 @@ describe("migrateSkillRoot（搬运基元）", () => {
     const { moved, skipped } = await migrateSkillRoot(oldRoot, newRoot);
     expect(moved.sort()).toEqual(["alpha", "beta"]);
     expect(skipped).toEqual([]);
-    // 新根：技能在场（SKILL.md 随树）
     expect(await readFile(join(newRoot, "alpha", "SKILL.md"), "utf8")).toContain("alpha");
-    // 旧根不删（CLI 共享目录永不动删）——包括 loose.md/.staging 全保留
     expect((await readdir(oldRoot)).sort()).toEqual([".staging", "alpha", "beta", "loose.md"]);
   });
 
@@ -73,7 +69,6 @@ describe("migrateLegacySkills（启动序一次性质）", () => {
     expect(await readFile(join(newRoot, "alpha", "SKILL.md"), "utf8")).toContain("alpha");
     expect(await readFile(join(agentDir, ".skills-migrated"), "utf8")).toContain(`migrated from ${oldRoot}`);
 
-    // 幂等：哨兵在场，再种旧根新技能也不搬
     await seedSkill(oldRoot, "late-arrival");
     await migrateLegacySkills(agentDir, oldRoot);
     expect(await readdir(newRoot)).toEqual(["alpha"]);
@@ -92,8 +87,8 @@ describe("migrateLegacySkills（启动序一次性质）", () => {
     const newRoot = userSkillsDirOf(undefined, agentDir);
     await mkdir(newRoot, { recursive: true });
     await seedSkill(newRoot, "self");
-    await migrateLegacySkills(agentDir, newRoot); // override = 新根本身
+    await migrateLegacySkills(agentDir, newRoot);
     expect(await readFile(join(agentDir, ".skills-migrated"), "utf8")).toContain("roots identical");
-    expect(await readdir(newRoot)).toEqual(["self"]); // 无自拷贝副产物
+    expect(await readdir(newRoot)).toEqual(["self"]);
   });
 });

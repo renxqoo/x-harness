@@ -1,5 +1,3 @@
-// 生命周期事件（BATCH2-DESIGN §3）：agentSpawned/agentFinished 发射矩阵——正常完成 /
-// stopAll / stop-idle 子 / 孤儿收养四路径；finished = 每运行周期恰一次（复活后再发）。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, workerOptions, resetWorlds, agentIdOf, sessionOf } from "./world.ts";
 import { agentFinished, agentSpawned } from "../tokens.ts";
@@ -33,7 +31,7 @@ describe("agentSpawned/agentFinished 发射矩阵", () => {
     expect(log.spawned).toHaveLength(1);
     expect(log.spawned[0]).toMatchObject({ parent: parent.agent.session.id, agentId: agentIdOf(spawned.content), sessionId: sessionOf(spawned.content), type: "worker", depth: 1 });
     expect(log.finished[0]).toMatchObject({ outcome: "completed", detail: "completed", agentId: agentIdOf(spawned.content) });
-    expect(log.finished[0]?.summary).toBe(full); // 事件 summary 全文——与通知同一 reportCap
+    expect(log.finished[0]?.summary).toBe(full);
     await parent.dispose();
   });
 
@@ -66,16 +64,15 @@ describe("agentSpawned/agentFinished 发射矩阵", () => {
     const parent = await spawnParent(world);
     world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "quick")]);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
-    await vi.waitFor(() => expect(log.finished).toHaveLength(1), { timeout: 5_000 }); // 首轮完成（deliver 发过一次）
+    await vi.waitFor(() => expect(log.finished).toHaveLength(1), { timeout: 5_000 });
     log.finished.length = 0;
     const agentId = agentIdOf(spawned.content);
     const stopped = await callTool({ world, name: "task_stop", args: { task_id: agentId, cause: "manual" }, session: parent.agent.session.id });
     expect(stopped.isError).toBeUndefined();
-    expect(log.finished).toHaveLength(1); // 同步发射——不等 idle 边沿
+    expect(log.finished).toHaveLength(1);
     expect(log.finished[0]).toMatchObject({ outcome: "stopped" });
     expect(typeof log.finished[0]?.detail).toBe("string");
     expect(log.finished[0]?.detail).not.toBe("");
-    // 幂等早退：再 stop 不双发（stopped 同步置位守卫——kick 失败行同形状，收口审 K-M3/K-L4）
     const again = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: parent.agent.session.id });
     expect(again.content).toContain("already stopped");
     expect(log.finished).toHaveLength(1);
@@ -89,7 +86,6 @@ describe("agentSpawned/agentFinished 发射矩阵", () => {
     world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "orphan work")]);
     await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
     await vi.waitFor(() => expect(log.spawned).toHaveLength(1), { timeout: 5_000 });
-    // 父先走（孤儿路径）：子完成时 deliver 查不到父 → 收养 + finished{failed}
     await parent.dispose();
     await vi.waitFor(() => expect(log.finished).toHaveLength(1), { timeout: 5_000 });
     expect(log.finished[0]).toMatchObject({ outcome: "failed", detail: "parent session gone (agent stopped)" });
@@ -105,7 +101,6 @@ describe("agentSpawned/agentFinished 发射矩阵", () => {
     await vi.waitFor(() => expect(log.finished).toHaveLength(1), { timeout: 5_000 });
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "ok")]);
     world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "second cycle")]);
-    // message 复活（stopped 子 re-message 唤醒；evictIdle 档化后走 revive 链——两路都发 spawned）
     const messaged = await callTool({ world, name: "agent_message", args: { to: agentId, message: "again" }, session: parent.agent.session.id });
     expect(messaged.isError).toBeUndefined();
     await vi.waitFor(() => expect(log.finished).toHaveLength(2), { timeout: 5_000 });

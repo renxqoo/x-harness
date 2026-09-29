@@ -1,5 +1,3 @@
-// llm 插件（docs/LLM.md §1.3）：装配 runtime + llm/stream waterfall 桥。
-
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { createLlmRuntime } from "./runtime.ts";
 import { llmRuntime, llmStream } from "./tokens.ts";

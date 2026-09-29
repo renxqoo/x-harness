@@ -1,5 +1,3 @@
-// script-adapter/entries-project 契约：剧本步消费、耗尽 error-finish、abort 抛
-// AbortError、thinking 记录面；wire 条目投影形状。
 import { describe, expect, test } from "vitest";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
 import { createScriptAdapter, scriptFromEnv } from "../shared/script-adapter.ts";

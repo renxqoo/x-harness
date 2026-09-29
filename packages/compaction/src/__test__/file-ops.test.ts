@@ -1,6 +1,3 @@
-// 文件账本（docs/COMPACTION.md §1.1；对照参照系 pure-file-ops 语义子集：承接往返/
-// 末者胜/累积/工具名对齐，默认名改写为本仓命令 read/write，edited 空集待命令落地）。
-
 import { describe, expect, it } from "vitest";
 import {
   accumulateFileOps,
@@ -62,8 +59,8 @@ describe("文件账本", () => {
           { name: "read", input: { path: "/keep.ts" } },
           { name: "read", input: { path: "/modified.ts" } },
           { name: "write", input: { path: "/modified.ts" } },
-          { name: "bash", input: { command: "ls" } }, // 无 path——不记
-          { name: "read", input: "not-json" }, // 垃圾降级
+          { name: "bash", input: { command: "ls" } },
+          { name: "read", input: "not-json" },
         ]),
       ],
       { readFiles: [], modifiedFiles: [] },

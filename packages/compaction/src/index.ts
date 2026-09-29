@@ -1,5 +1,3 @@
-// compaction 件 barrel（coverage 豁免惯例）。
-
 export { createCompactionPlugin } from "./plugin.ts";
 export type { CompactionOptions } from "./plugin.ts";
 export { compactionDiagnostic, compactionRunner, compactionLanded, compactionServedWindow } from "./tokens.ts";

@@ -1,6 +1,3 @@
-// 用量折叠状态机（docs/TOKEN-METER.md §1）：同一 applyEvent 供增量与冷启动两条路径——
-// 增量 == 全量由构造保证。fail-closed：垃圾样本丢弃不污染账本；聚合溢出整账本作废。
-
 import type { SessionEvent } from "@x-harness/session";
 
 export interface RouteUsage {
@@ -8,9 +5,7 @@ export interface RouteUsage {
   readonly model: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
-  /** 缓存命中 token 累计（inputTokens 的子集明细——非加数，总计口径不变） */
   readonly cacheReadTokens: number;
-  /** 缓存写入 token 累计（inputTokens 的子集明细——非加数，总计口径不变） */
   readonly cacheWriteTokens: number;
 }
 
@@ -18,9 +13,7 @@ export interface TurnUsage {
   readonly turn: number;
   readonly inputTokens: number;
   readonly outputTokens: number;
-  /** 缓存命中 token 累计（inputTokens 子集明细） */
   readonly cacheReadTokens: number;
-  /** 缓存写入 token 累计（inputTokens 子集明细） */
   readonly cacheWriteTokens: number;
   readonly routes: readonly RouteUsage[];
 }
@@ -28,30 +21,16 @@ export interface TurnUsage {
 export interface SessionUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
-  /** 缓存命中 token 累计（inputTokens 子集明细——命中率点态口径见 lastReportedCacheRead） */
   readonly cacheReadTokens: number;
-  /** 缓存写入 token 累计（inputTokens 子集明细） */
   readonly cacheWriteTokens: number;
-  /** 计费金额累计（usage.cost.total 在场透传求和——CONTEXT-TOKEN-UNIFICATION H3：
-   *  成本归因是计量事实，get_session_stats 消费 meter 后 cost 面不得静默消失） */
   readonly costTotal: number | undefined;
   readonly totalTokens: number;
   readonly attempts: number;
-  /** 最近一次实报 input（样本 input 字段在场才覆写；0 = 无实报——哨兵无清零路径） */
   readonly lastReportedInput: number;
-  /** 最近一次实报 cacheRead（样本 cacheRead 在场才覆写，可与 lastReportedInput 不同样本）——
-   * 命中率点态口径的分子（分子分母各取在场尾值，镜像旧 analytics 逐字段尾值语义） */
   readonly lastReportedCacheRead: number;
-  /** 最近一次实报的 session 事件 time（input 或 cacheRead 任一在场才更新；0 = 无） */
   readonly lastUsageAt: number;
-  /** 模型意图面 tool_use 块累计（只认 assistant/message——attempt 的块是截断重试半成品，
-   *  模型重发会在 message 再计；与 get_session_stats 的 toolCalls（tool/call 事件，含重试
-   *  派发）口径不同：这里是模型一.response 里发了几个工具意图） */
   readonly toolUseCalls: number;
-  /** 含 ≥1 个 tool_use 块的 assistant/message 数（并行度分母；派生指标
-   *  toolUseCalls / toolUseSteps 由消费方计算——快照不存派生值） */
   readonly toolUseSteps: number;
-  /** ≥2 个 tool_use 块的 assistant/message 数（同块并行发生的步数） */
   readonly parallelSteps: number;
   readonly turns: readonly TurnUsage[];
 }
@@ -109,38 +88,26 @@ function routeKey(route: { readonly provider: string; readonly model: string }):
   return `${route.provider}\u0000${route.model}`;
 }
 
-/** 安全非负整数才计（0 合法；负数/小数/超安全整数 → 垃圾丢弃） */
 function validToken(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** usage 样本解析结果（单一真相——字段值 + 在场标记；垃圾样本整丢 fail-closed） */
 export interface UsageSample {
   readonly input: number;
   readonly output: number;
   readonly cacheRead: number;
   readonly cacheWrite: number;
-  /** cost.total（在场才透传——非 token 域，垃圾不整丢样本：仅置 undefined） */
   readonly costTotal: number | undefined;
-  /** input 字段显式在场（尾值覆写条件——缺席样本不得清零 lastReportedInput） */
   readonly hasInput: boolean;
-  /** cacheRead 字段显式在场（lastReportedCacheRead 覆写条件） */
   readonly hasCacheRead: boolean;
 }
 
-/** 单字段安全非负整数校验（0 合法；垃圾 → undefined）——parseUsageSample 的逐字段装订 */
 function optionalToken(record: Record<string, unknown>, key: string): number | undefined | "garbage" {
   const value = record[key];
   if (value === undefined) return undefined;
   return validToken(value) ? value : "garbage";
 }
 
-/**
- * usage 样本校验与归一（docs/TOKEN-METER.md §1）。
- * input/output 沿既有必填口径（双双缺席 = 缺席样本）；cacheRead/cacheWrite 可选子集明细。
- * 任一字段垃圾（负数/小数/非安全整数）→ 整样本丢弃（undefined）：input 含 cache 总量，
- * 部分计入会让明细与总量口径错位——样本要么全对，要么全不计。
- */
 export function parseUsageSample(data: unknown): UsageSample | undefined {
   if (typeof data !== "object" || data === null) return undefined;
   const record = data as Record<string, unknown>;
@@ -149,7 +116,7 @@ export function parseUsageSample(data: unknown): UsageSample | undefined {
   const cacheRead = optionalToken(record, "cacheRead");
   const cacheWrite = optionalToken(record, "cacheWrite");
   if (input === "garbage" || output === "garbage" || cacheRead === "garbage" || cacheWrite === "garbage") return undefined;
-  if (input === undefined && output === undefined) return undefined; // {} 空对象视为缺席
+  if (input === undefined && output === undefined) return undefined;
   return {
     input: input ?? 0,
     output: output ?? 0,
@@ -161,7 +128,6 @@ export function parseUsageSample(data: unknown): UsageSample | undefined {
   };
 }
 
-/** cost.total 提取（非 token 域：垃圾不整丢样本，仅置 undefined） */
 function costTotalOf(record: Record<string, unknown>): number | undefined {
   const raw = (record["cost"] as { total?: unknown } | undefined)?.total;
   return typeof raw === "number" && Number.isFinite(raw) && raw >= 0 ? raw : undefined;
@@ -184,8 +150,6 @@ function addBucket(
   }
 }
 
-/** 累计+尾值入账（applyEvent 的有效样本主干——复杂度拆分）。
- *  event 与其 data 同源（data = event.data），合并为单参消除 max-params。 */
 interface SampleContext {
   readonly event: SessionEvent;
   readonly data: Record<string, unknown>;
@@ -205,7 +169,7 @@ function accountSample(state: FoldState, ctx: SampleContext): void {
     !Number.isSafeInteger(nextCacheRead) ||
     !Number.isSafeInteger(nextCacheWrite)
   ) {
-    state.overflowed = true; // 聚合溢出：整账本 fail-closed
+    state.overflowed = true;
     return;
   }
   state.input = nextInput;
@@ -214,12 +178,9 @@ function accountSample(state: FoldState, ctx: SampleContext): void {
   state.cacheWrite = nextCacheWrite;
   if (usage.costTotal !== undefined) {
     const nextCost = (state.costTotal ?? 0) + usage.costTotal;
-    state.costTotal = Number.isSafeInteger(nextCost * 1e6) ? nextCost : state.costTotal; // 浮点累计溢出守卫（幂级放大即停）
+    state.costTotal = Number.isSafeInteger(nextCost * 1e6) ? nextCost : state.costTotal;
   }
   state.attempts += 1;
-  // 尾值三件套按字段在场性覆写（docs/TOKEN-METER.md §1）：input 在场才覆写 input 尾值
-  // （{output:N} 样本不得清零哨兵）；cacheRead 在场才覆写缓存尾值；lastUsageAt 在
-  // input 或 cacheRead 任一在场时更新——三者都是会话级快照语义，不进三路桶。
   if (usage.hasInput) state.lastInput = input;
   if (usage.hasCacheRead) state.lastCacheRead = usage.cacheRead;
   if (usage.hasInput || usage.hasCacheRead) state.lastUsageAt = event.time;
@@ -239,7 +200,6 @@ function accountSample(state: FoldState, ctx: SampleContext): void {
   addBucket(turn.routes, route, bucket);
 }
 
-/** assistant/message 的 content 中 tool_use 块数（模型意图面计数；垃圾形态计 0） */
 function toolUseCountOf(data: Record<string, unknown>): number {
   const content = data["content"];
   if (!Array.isArray(content)) return 0;
@@ -250,7 +210,6 @@ function toolUseCountOf(data: Record<string, unknown>): number {
   return count;
 }
 
-/** 单事件折叠（增量与全量共用）：message/attempt 的有效 usage 计账并按末次 request/context 归因 */
 export function applyEvent(state: FoldState, event: SessionEvent): void {
   if (state.overflowed) return;
   const data = event.data as Record<string, unknown>;
@@ -258,8 +217,6 @@ export function applyEvent(state: FoldState, event: SessionEvent): void {
     state.route = { provider: String(data["provider"]), model: String(data["model"]) };
     return;
   }
-  // 并行度计数先于 usage 样本门（无 usage 的 message 也计——错误路径的并行度恰是诊断目标），
-  // 只认 assistant/message（attempt 的 tool_use 是截断重试半成品，重发会在 message 双计）。
   if (event.type === "assistant/message") {
     const blocks = toolUseCountOf(data);
     if (blocks > 0) {
@@ -270,7 +227,7 @@ export function applyEvent(state: FoldState, event: SessionEvent): void {
   }
   if (event.type !== "assistant/message" && event.type !== "assistant/attempt") return;
   const usage = parseUsageSample(data["usage"]);
-  if (usage === undefined) return; // 缺席/垃圾：不计 token 不计 attempts
+  if (usage === undefined) return;
   accountSample(state, { event, data, usage });
 }
 
@@ -280,7 +237,6 @@ export function foldUsage(events: readonly SessionEvent[]): FoldState {
   return state;
 }
 
-/** 终态快照（冻结）；溢出状态由调用方判定 usageOf → undefined */
 export function snapshotOf(state: FoldState): SessionUsage {
   const turns: TurnUsage[] = [...state.turns.entries()]
     .sort(([a], [b]) => a - b)
@@ -299,7 +255,7 @@ export function snapshotOf(state: FoldState): SessionUsage {
     cacheReadTokens: state.cacheRead,
     cacheWriteTokens: state.cacheWrite,
     costTotal: state.costTotal,
-    totalTokens: state.input + state.output, // 缓存字段是 input 子集明细，不入总计（防双计）
+    totalTokens: state.input + state.output,
     attempts: state.attempts,
     lastReportedInput: state.lastInput,
     lastReportedCacheRead: state.lastCacheRead,

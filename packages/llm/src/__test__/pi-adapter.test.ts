@@ -1,6 +1,3 @@
-// pi-adapter 注入层（docs/LLM-PI.md 测试口径）：streamFn 收到的 model/context/options 断言、
-// 同步抛折算、请求前 abort、parseRetryAfterMs 全态。
-
 import { describe, expect, it } from "vitest";
 import type { AssistantMessageEvent, Context } from "@earendil-works/pi-ai";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter, parseRetryAfterMs } from "../pi-adapter.ts";
@@ -40,8 +37,6 @@ function doneEvent(): DoneEvent {
 
 describe("pi-adapter 注入层", () => {
   it("首字重复症状「四四」（anthropic 方言）：pi 的 partial 是共享可变引用，生产者在消费者读 start 前已推进 block.text——start 帧读初值必污染，修复后 start 帧零产出，正文拼接零重复", async () => {
-    // 真实竞态形态（pi anthropic-messages.js push 的是 partial: output 同一对象）：
-    // start 入队 → 生产者处理首条 delta（block.text 已推进）入队 → 消费者才读 start。
     const output = { content: [{ type: "text", text: "" }] };
     const streamFn: PiStreamFn = async function* () {
       yield { type: "text_start", contentIndex: 0, partial: output } as never;
@@ -89,17 +84,17 @@ describe("pi-adapter 注入层", () => {
     const first = seen[0];
     if (first === undefined) throw new Error("streamFn 未被调用");
     expect(first.model.api).toBe("anthropic-messages");
-    expect(first.model.id).toBe("m"); // id = request.model（请求体 model 来源——回归：适配器名曾误入请求体）
+    expect(first.model.id).toBe("m");
     expect(first.model.baseUrl).toBe("http://x");
     expect(first.model.provider).toBe("anthropic");
     expect(first.options["apiKey"]).toBe("k1");
     expect((first.options["headers"] as Record<string, string>)["accept-encoding"]).toBe("identity");
     expect(first.options["maxRetries"]).toBe(0);
     expect(first.options["cacheRetention"]).toBe("none");
-    expect(Object.hasOwn(first.options, "maxTokens")).toBe(false); // 全缺席不注入——本地兜底废除（曾以 8192 顶掉目录真实配置）
-    expect(first.model.maxTokens).toBeUndefined(); // model 条目同源缺席
+    expect(Object.hasOwn(first.options, "maxTokens")).toBe(false);
+    expect(first.model.maxTokens).toBeUndefined();
     expect(first.options["signal"]).toBe(controller.signal);
-    expect((first.model as Record<string, unknown>)["compat"]).toBeUndefined(); // anthropic 协议不挂 compat（无 developer/system 之分）
+    expect((first.model as Record<string, unknown>)["compat"]).toBeUndefined();
   });
 
   it("openai 工厂：系统提示词角色钉死 system——model.compat.supportsDeveloperRole=false（名单外中转 developer 角色 422 回归锚）", async () => {
@@ -112,7 +107,7 @@ describe("pi-adapter 注入层", () => {
     await collect(adapter.stream(request({})));
     const compat = seen[0]?.model["compat"] as Record<string, unknown> | undefined;
     expect(compat).toBeDefined();
-    expect(compat?.["supportsDeveloperRole"]).toBe(false); // 未知 baseUrl 探测恒 true → 此处必须覆写
+    expect(compat?.["supportsDeveloperRole"]).toBe(false);
   });
 
   it("anthropic 工厂：请求显式 maxTokens 恒胜档案 maxOutputTokens；配置在场填 options 与 model 条目；temperature 透传", async () => {
@@ -139,18 +134,18 @@ describe("pi-adapter 注入层", () => {
     };
     const adapter = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn });
     await collect(adapter.stream(request({})));
-    expect(Object.hasOwn(seen[0]!.options, "maxTokens")).toBe(false); // 双缺席：wire 不带
-    expect(seen[0]?.model["maxTokens"]).toBeUndefined(); // 同源缺席（兜底废除——两协议对称）
+    expect(Object.hasOwn(seen[0]!.options, "maxTokens")).toBe(false);
+    expect(seen[0]?.model["maxTokens"]).toBeUndefined();
     await collect(adapter.stream(request({ maxTokens: 128 })));
     expect(seen[1]?.options["maxTokens"]).toBe(128);
     expect(seen[1]?.model["maxTokens"]).toBe(128);
 
     const configured = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokens: 2048, streamFn });
     await collect(configured.stream(request({})));
-    expect(seen[2]?.options["maxTokens"]).toBe(2048); // 档案配置在场 = 显式注入
+    expect(seen[2]?.options["maxTokens"]).toBe(2048);
     expect(seen[2]?.model["maxTokens"]).toBe(2048);
     await collect(configured.stream(request({ maxTokens: 128 })));
-    expect(seen[3]?.options["maxTokens"]).toBe(128); // 请求显式恒胜档案配置
+    expect(seen[3]?.options["maxTokens"]).toBe(128);
     expect(seen[3]?.model["maxTokens"]).toBe(128);
   });
 
@@ -170,8 +165,8 @@ describe("pi-adapter 注入层", () => {
     expect(seen[0]?.["thinkingBudgetTokens"]).toBe(2048);
     expect(seen[1]?.["effort"]).toBe("high");
     expect(seen[1]?.["thinkingBudgetTokens"]).toBe(16384);
-    expect(Object.hasOwn(seen[2] as object, "thinkingEnabled")).toBe(false); // off 不发
-    expect(Object.hasOwn(seen[3] as object, "thinkingEnabled")).toBe(false); // 缺省不发
+    expect(Object.hasOwn(seen[2] as object, "thinkingEnabled")).toBe(false);
+    expect(Object.hasOwn(seen[3] as object, "thinkingEnabled")).toBe(false);
 
     const openaiSeen: Array<Record<string, unknown>> = [];
     const openaiStream: PiStreamFn = async function* (_model, _context, options) {
@@ -180,10 +175,10 @@ describe("pi-adapter 注入层", () => {
     };
     const openaiAdapter = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn: openaiStream });
     await collect(openaiAdapter.stream(request({ thinking: "high" })));
-    expect(openaiSeen[0]?.["reasoning"]).toBe("high"); // openai：reasoning 透传（streamSimple 面钳制后映射 reasoningEffort）
-    expect(Object.hasOwn(openaiSeen[0] as object, "thinkingEnabled")).toBe(false); // anthropic 专属形状不串协议
+    expect(openaiSeen[0]?.["reasoning"]).toBe("high");
+    expect(Object.hasOwn(openaiSeen[0] as object, "thinkingEnabled")).toBe(false);
     await collect(openaiAdapter.stream(request({ thinking: "off" })));
-    expect(Object.hasOwn(openaiSeen[1] as object, "reasoning")).toBe(false); // off 不发
+    expect(Object.hasOwn(openaiSeen[1] as object, "reasoning")).toBe(false);
   });
 
   it("同步抛折算：错误文案分类（api key → non-retryable；连接类 → network）；abort 同步抛透传", async () => {
@@ -218,7 +213,7 @@ describe("pi-adapter 注入层", () => {
     };
     const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", fetch: fake, streamFn });
     await collect(adapter.stream(request({})));
-    expect(typeof seen[0]?.["fetch"]).toBe("function"); // 包装层（捕获非 2xx 状态与 retry-after）
+    expect(typeof seen[0]?.["fetch"]).toBe("function");
   });
 });
 
@@ -230,7 +225,7 @@ describe("parseRetryAfterMs", () => {
     expect(parseRetryAfterMs("3", now)).toBe(3000);
     expect(parseRetryAfterMs("0", now)).toBe(0);
     expect(parseRetryAfterMs("Wed, 01 Jan 2026 00:00:05 GMT", now)).toBe(5000);
-    expect(parseRetryAfterMs("Wed, 01 Jan 2025 00:00:00 GMT", now)).toBe(0); // 过去=0 立即
+    expect(parseRetryAfterMs("Wed, 01 Jan 2025 00:00:00 GMT", now)).toBe(0);
     expect(parseRetryAfterMs("garbage", now)).toBeUndefined();
     expect(parseRetryAfterMs(undefined, now)).toBeUndefined();
     expect(parseRetryAfterMs("", now)).toBeUndefined();
@@ -247,16 +242,15 @@ describe("maxOutputTokensByModel 逐模型输出上限折叠（请求显式 > �
     const adapter = createAnthropicCompatAdapter({
       baseUrl: "http://x",
       apiKey: "k",
-      maxOutputTokens: 4096, // 档案级在场：byModel 命中模型不走此值
+      maxOutputTokens: 4096,
       maxOutputTokensByModel: { "big-x": 32_768 },
       streamFn,
     });
     await collect(adapter.stream(request({ model: "big-x" })));
     await collect(adapter.stream(request({ model: "plain-y" })));
-    // big-x：逐模型值生效；plain-y：不在 byModel → 回落档案级
     expect(seen[0]?.id).toBe("big-x");
     expect(seen[0]?.options["maxTokens"]).toBe(32_768);
-    expect(seen[0]?.model["maxTokens"]).toBe(32_768); // Model 条目与请求注入同源
+    expect(seen[0]?.model["maxTokens"]).toBe(32_768);
     expect(seen[1]?.id).toBe("plain-y");
     expect(seen[1]?.options["maxTokens"]).toBe(4096);
     expect(seen[1]?.model["maxTokens"]).toBe(4096);
@@ -270,7 +264,7 @@ describe("maxOutputTokensByModel 逐模型输出上限折叠（请求显式 > �
     };
     const fallback = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokensByModel: { "big-x": 32_768 }, streamFn });
     await collect(fallback.stream(request({ model: "plain-y" })));
-    expect(Object.hasOwn(seen[0] ?? {}, "maxTokens")).toBe(false); // 档案级缺席 → 不注入（服务端默认接管）
+    expect(Object.hasOwn(seen[0] ?? {}, "maxTokens")).toBe(false);
     const none = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k", streamFn });
     await collect(none.stream(request({ model: "plain-y" })));
     expect(Object.hasOwn(seen[1] ?? {}, "maxTokens")).toBe(false);
@@ -295,9 +289,9 @@ describe("maxOutputTokensByModel 逐模型输出上限折叠（请求显式 > �
     };
     const adapter = createOpenaiCompatAdapter({ baseUrl: "http://x", apiKey: "k", maxOutputTokensByModel: { "big-x": 32_768 }, streamFn });
     await collect(adapter.stream(request({ model: "big-x" })));
-    expect(seen[0]?.["maxTokens"]).toBe(32_768); // byModel 命中 = 显式注入
+    expect(seen[0]?.["maxTokens"]).toBe(32_768);
     await collect(adapter.stream(request({ model: "plain-y" })));
-    expect(Object.hasOwn(seen[1] as object, "maxTokens")).toBe(false); // 双缺席：wire 不带
+    expect(Object.hasOwn(seen[1] as object, "maxTokens")).toBe(false);
   });
 });
 

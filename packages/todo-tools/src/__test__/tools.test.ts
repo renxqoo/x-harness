@@ -1,6 +1,3 @@
-// 工具面单元（docs/TODO.md §13 修订B）：铸文锚、错误词表、无 session 直连（匿名桶）、
-// 跨 session 隔离（修订B 回归锚）、校验层矩阵、并发档声明、事件流持久化面。
-
 import { describe, expect, it, afterEach } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
@@ -13,7 +10,6 @@ import { createTodoToolsPlugin } from "../plugin.ts";
 import { cardText, listText } from "../tools.ts";
 import type { TodoTask } from "../tokens.ts";
 
-/** 完整装配世界（跨包只用公开面——dispatch 经 toolRegistry 服务拿） */
 async function makeWorld(): Promise<{ ctx: Context; dispatch: (request: ToolCallRequest) => Promise<ToolOutcome> }> {
   const ctx = createContext();
   await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createTodoToolsPlugin()]);
@@ -127,20 +123,18 @@ describe("匿名桶与跨会话隔离（与件14 任务动词拒无 session 同�
 
   it("跨 session 隔离：A 会话建的清单 B 会话不可见（每会话一份——修订B 回归锚）", async () => {
     const { ctx, dispatch } = await makeWorld();
-    // 带真实会话（会话缺席 fail-closed 是独立用例）——两会话各建各的
     await ctx.use(sessionStore).create({ id: "sess-a" as SessionId });
     await ctx.use(sessionStore).create({ id: "sess-b" as SessionId });
     const sessionA = { ...call("task_create", { subject: "A" }), session: "sess-a" as never };
     const made = await dispatch(sessionA);
     expect(made.content).toContain("Created task 1");
-    // B 会话同 id 任务缺席（桶隔离）+ 自建清单 id 各自从 1
     const sessionB = { ...call("task_get", { taskId: "1" }), session: "sess-b" as never };
     const miss = await dispatch(sessionB);
     expect(miss).toMatchObject({ content: "not-found:1; no such task", isError: true });
     const bCreate = await dispatch({ ...call("task_create", { subject: "B-first" }), session: "sess-b" as never });
     expect(bCreate.content).toContain("Created task 1: B-first");
     const aList = await dispatch({ ...call("task_list", {}), session: "sess-a" as never });
-    expect(aList.content).toContain("A"); // A 桶不受 B 桶影响
+    expect(aList.content).toContain("A");
   });
 });
 
@@ -189,12 +183,12 @@ describe("事件流持久化（修订B §13.1/§13.4——append/恢复/失败/�
     await dispatch({ ...call("task_update", { taskId: "1", status: "in_progress" }), session: "s1" as never });
     const events = session.value.events();
     const snaps = events.filter((e) => e.type === "todo/snapshot");
-    expect(snaps.length).toBe(2); // 两次变更各一条；task_update 的 last-wins
+    expect(snaps.length).toBe(2);
     const lastData = JSON.stringify(snaps.at(-1)?.data);
     expect(lastData).toContain('"status":"in_progress"');
     expect(lastData).toBe(JSON.stringify(ctx.use(todoList).snapshotOf("s1" as never)));
     const before = session.value.events().length;
-    await dispatch({ ...call("task_list", {}), session: "s1" as never }); // 读动词不 append
+    await dispatch({ ...call("task_list", {}), session: "s1" as never });
     await dispatch({ ...call("task_get", { taskId: "1" }), session: "s1" as never });
     expect(session.value.events().length).toBe(before);
   });
@@ -208,7 +202,7 @@ describe("事件流持久化（修订B §13.1/§13.4——append/恢复/失败/�
     const snaps = session.value.events().filter((e) => e.type === "todo/snapshot");
     expect(snaps.length).toBe(2);
     const sizes = snaps.map((e) => (e.type === "todo/snapshot" ? e.data.tasks.length : -1)).sort((a, b) => a - b);
-    expect(sizes).toEqual([1, 2]); // 单调包含：一条恰含首任务、一条含两任务
+    expect(sizes).toEqual([1, 2]);
     const ids = ctx.use(todoList).list("s2" as never).map((t) => t.id).sort((a, b) => Number(a) - Number(b));
     expect(ids).toEqual(["1", "2"]);
     const lastData = JSON.stringify(snaps.at(-1)?.data);
@@ -219,12 +213,11 @@ describe("事件流持久化（修订B §13.1/§13.4——append/恢复/失败/�
     const { ctx, dispatch } = await makeWorld();
     const session = await ctx.use(sessionStore).create({ id: "s3" as SessionId });
     if (!session.ok) throw new Error("session create failed");
-    // 预置历史卷（resume 形态）：桶不存在，两路并发首次触达
     session.value.append("todo/snapshot", { seq: 1, tasks: [{ id: "1", subject: "A", status: "pending" }], edges: [] });
     const withSession = (name: string, args: unknown) => dispatch({ ...call(name, args), session: "s3" as never });
     const [listed, created] = await Promise.all([withSession("task_list", {}), withSession("task_create", { subject: "B" })]);
-    expect(listed.content).toContain("1. [pending] A"); // 惰性恢复看到历史
-    expect(created.content).toContain("Created task 2"); // seq 延续
+    expect(listed.content).toContain("1. [pending] A");
+    expect(created.content).toContain("Created task 2");
     expect(ctx.use(todoList).list("s3" as never).length).toBe(2);
   });
 
@@ -232,16 +225,16 @@ describe("事件流持久化（修订B §13.1/§13.4——append/恢复/失败/�
     const { ctx, dispatch } = await makeWorld();
     const session = await ctx.use(sessionStore).create({ id: "s4" as SessionId });
     if (!session.ok) throw new Error("session create failed");
-    ctx.use(todoList).create("s4" as never, { subject: "A", metadata: { n: 1n } }); // 服务面：内存真相（恒不 append）
+    ctx.use(todoList).create("s4" as never, { subject: "A", metadata: { n: 1n } });
     const fail = await dispatch({ ...call("task_update", { taskId: "1", subject: "A2" }), session: "s4" as never });
     expect(fail.isError).toBe(true);
     expect(fail.content).toContain("applied to the in-memory list but not persisted");
     expect(fail.content).toContain("not-json-safe");
-    ctx.use(todoList).update("s4" as never, "1", { metadata: { n: null } }); // 修掉坏值（服务面）
+    ctx.use(todoList).update("s4" as never, "1", { metadata: { n: null } });
     const healed = await dispatch({ ...call("task_update", { taskId: "1", owner: "w" }), session: "s4" as never });
     expect(healed.isError).toBeUndefined();
     const snaps = session.value.events().filter((e) => e.type === "todo/snapshot");
-    expect(snaps.length).toBe(1); // 仅修复后这条成功（此前 append 全拒）
+    expect(snaps.length).toBe(1);
     expect(JSON.stringify(snaps.at(-1)?.data)).not.toContain("1n");
   });
 
@@ -274,7 +267,6 @@ describe("收口审查回补（append 同步性直钉 / 多桶并发 / 自愈变
     const tool = ctx.use(toolRegistry).get("task_create");
     if (tool === undefined) throw new Error("task_create missing");
     const pending = tool.execute({ subject: "Sync-probe" }, { callId: "c-sync", name: "task_create", signal: new AbortController().signal, session: "s-sync" as SessionId });
-    // execute 若无 await 段，此刻（未 await pending）快照已同步入卷；queueMicrotask 延迟形态此处卷为空
     const snapsNow = session.value.events().filter((e) => e.type === "todo/snapshot");
     expect(snapsNow.length).toBe(1);
     expect(await pending).toMatchObject({ content: "Created task 1: Sync-probe (status: pending)" });
@@ -298,7 +290,7 @@ describe("收口审查回补（append 同步性直钉 / 多桶并发 / 自愈变
     expect(listB.content).toContain("B-one");
     expect(listB.content).not.toContain("A-one");
     const snapsB = b.value.events().filter((e) => e.type === "todo/snapshot");
-    expect(snapsB.length).toBe(1); // B 卷只含 B 的变更
+    expect(snapsB.length).toBe(1);
     expect(JSON.stringify(snapsB.at(-1)?.data)).toContain("B-one");
   });
 
@@ -310,7 +302,7 @@ describe("收口审查回补（append 同步性直钉 / 多桶并发 / 自愈变
     const fail = await dispatch({ ...call("task_update", { taskId: "1", owner: "x" }), session: "s-heal2" as SessionId });
     expect(fail.isError).toBe(true);
     const del = await dispatch({ ...call("task_update", { taskId: "1", status: "deleted" }), session: "s-heal2" as SessionId });
-    expect(del.content).toBe("Deleted task 1"); // 坏任务删除后快照 JSON-safe——append 成功
+    expect(del.content).toBe("Deleted task 1");
     const snaps = session.value.events().filter((e) => e.type === "todo/snapshot");
     expect(snaps.length).toBe(1);
     expect(JSON.stringify(snaps.at(-1)?.data)).toContain('"tasks":[]');
@@ -326,9 +318,9 @@ describe("收口审查回补（append 同步性直钉 / 多桶并发 / 自愈变
       dispatch({ ...call("task_list", {}), session: "s-race" as SessionId }),
       dispatch({ ...call("task_create", { subject: "New" }), session: "s-race" as SessionId }),
     ]);
-    expect(out[0]?.content).toContain("2. [in_progress] fresh-last"); // last-wins 非 stale-first
+    expect(out[0]?.content).toContain("2. [in_progress] fresh-last");
     expect(out[0]?.content).not.toContain("stale-first");
-    expect(out[1]?.content).toContain("Created task 3"); // seq=2 延续
+    expect(out[1]?.content).toContain("Created task 3");
     expect(ctx.use(todoList).list("s-race" as SessionId).length).toBe(2);
   });
 
@@ -350,6 +342,6 @@ describe("update 路径的惰性恢复入口（收口回补——首个动作即
     expect(out.content).toContain("Status: in_progress");
     expect(out.content).toContain("Owner: w");
     const snaps = session.value.events().filter((e) => e.type === "todo/snapshot");
-    expect(snaps.length).toBe(2); // 预置 1 + 恢复后更新落账 1
+    expect(snaps.length).toBe(2);
   });
 });

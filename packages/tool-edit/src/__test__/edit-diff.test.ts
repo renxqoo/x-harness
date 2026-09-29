@@ -1,5 +1,3 @@
-// edit diff 组装测试（docs/EDIT-TOOL.md）：双轨行号/上下文窗口/firstChangedLine/空文件。
-
 import { describe, expect, it } from "vitest";
 import { generateDiffString } from "../edit-diff.ts";
 
@@ -49,7 +47,6 @@ describe("generateDiffString 上下文窗口", () => {
     const old = mk(20);
     const now = old.replace("l10", "X");
     const lines = generateDiffString(old, now).diff.split("\n");
-    // 前导 4 行上下文（l5-l8 是 4 行）+ 省略 + 尾随 4 行（l11-l14）
     expect(lines).toContain("  9 l9");
     expect(lines).toContain(" 11 l11");
     expect(lines).toContain("    ...");
@@ -121,7 +118,6 @@ describe("generateDiffString 边界", () => {
 describe("generateDiffString 多处变更中段折叠", () => {
   it("双侧夹变更的上下文块超过 2×contextLines 时折叠中段并双轨同步推进", () => {
     const mk = (n: number): string => `${Array.from({ length: n }, (_, i) => `l${String(i + 1)}`).join("\n")}\n`;
-    // 两处变更（l4 与 l16），中间 l5-l15 共 11 行上下文 > 2×4=8 → 折叠中段
     const old = mk(20);
     const now = old.replace("l4", "X4").replace("l16", "Y16");
     const { diff, firstChangedLine } = generateDiffString(old, now);

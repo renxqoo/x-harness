@@ -1,7 +1,3 @@
-// autocompact 插件装配（docs/COMPACTION.md §1.2）：步闸（agentPreStep）+ CP 作业 +
-// L1/L2 落账 + 空闲清理定时器。per-session 状态随
-// sessionDisposed 摘除并取消在飞 CP；插件 disposer 取消全部作业并有界 join。
-
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentPreStep } from "@x-harness/agent-loop";
 import { llmRuntime } from "@x-harness/llm";
@@ -30,9 +26,7 @@ import type { CheckpointAction } from "./tokens.ts";
 export interface AutoCompactOptions {
   readonly contextWindow: number;
   readonly checkpointPct?: number;
-  /** L1 触发百分比（1–99，缺省 70）：占用 > 有效窗 × pct% → 清旧工具结果（免费层） */
   readonly l1Pct?: number;
-  /** L2 触发百分比（1–99，缺省 85）：占用 > 有效窗 × pct% → 账本替换前缀（零 LLM） */
   readonly l2Pct?: number;
   readonly checkpointMinSegmentTokens?: number;
   readonly ledgerBudgetTokens?: number;
@@ -43,9 +37,7 @@ export interface AutoCompactOptions {
   readonly warnBufferTokens?: number;
   readonly checkpointMaxRetries?: number;
   readonly checkpointIdleTimeoutMs?: number;
-  /** agent-loop maxToolResultChars 的 token 折算（首步增量缺省与并行逼近告警用） */
   readonly toolResultCapTokens?: number;
-  /** CP 模型面覆盖；缺省取 compactionRunner.summarizer（单一真相） */
   readonly summarizer?: SummarizerFace;
   readonly fileTools?: FileToolNames;
 }
@@ -62,37 +54,18 @@ const DEFAULTS = {
   toolResultCapTokens: 25_000,
 } as const;
 
-/**
- * 窗口分档阈值表（CONTEXT-TOKEN-UNIFICATION §7.4 定稿——真实会话重放 +
- * 三家准则合成）：
- * - CP 越早越省（反直觉但实证）：拨号成本 = 账本 + 新段，段小则每次便宜且
- *   摘要密度高；armed 空转检查也少（60%/20% 版被滤 155 次 vs 30%/10% 版 6 次）；
- * - L1 零成本层可以激进（早回收减少后续压力）；
- * - L2 零 LLM 结构收缩提前无损；
- * - 水位 = 异常兜底而非常规防线（比 claude 1M 的 96.7% 激进、与 kimi 85% 持平，
- *   但 L2 已在前面收紧——触发水位说明前层失效）；
- * - 小窗按绝对余量提前：余量下限不是百分比而是「最大单步暴涨」（实测 29.6k）
- *   + 摘要输出预留（20k）——256k 档水位 80% = 余 51k > 33k 绝对保险线（claude 准则）。
- */
 export const TIERS = [
-  // warnBuffer/ledgerBudget 随窗缩（对抗审查 M-2：flat 20k/16k 在小窗抬高可行下限
-  // 且与「阈值随窗缩」语义不一致——首档 l1=50% × 250k = 125k > 20k ✓ 装配不变量保持）
   { maxWindow: 300_000, checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12, warnBufferTokens: 10_000, ledgerBudgetTokens: 12_000 },
   { maxWindow: 700_000, checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10, warnBufferTokens: 15_000, ledgerBudgetTokens: 16_000 },
   { maxWindow: Number.POSITIVE_INFINITY, checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10, warnBufferTokens: 20_000, ledgerBudgetTokens: 16_000 },
 ] as const;
 
-/** 窗口档位解析：contextWindow 落入的首档（≤300k / ≤700k / 其余）。末档
- *  Infinity 恒匹配——find 空集运行不可达，解构兜底满足收窄。 */
 const [, , FALLBACK_TIER] = TIERS;
 
 export function tierOf(contextWindow: number): (typeof TIERS)[number] {
   return TIERS.find((tier) => contextWindow <= tier.maxWindow) ?? FALLBACK_TIER;
 }
 
-/** 三线缺省解析（§7.4 成组语义——对抗审查 M-1）：三 pct 任一显式即「自定义线组」，
- *  缺席参数回落兼容值（60/70/85——与既有调用面历史习惯一致），不与档位混装
- *  （混装撞 assertLinesDomain 的 cp ≤ l1 序）；整体缺席才整组取档位。 */
 export function lineTiersOf(options: AutoCompactOptions): Pick<WritableGateConfig, "checkpointPct" | "l1Pct" | "l2Pct"> {
   const tier = tierOf(options.contextWindow);
   const customLines = options.checkpointPct !== undefined || options.l1Pct !== undefined || options.l2Pct !== undefined;
@@ -123,17 +96,16 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
     checkpointMaxRetries: options.checkpointMaxRetries ?? DEFAULTS.checkpointMaxRetries,
     checkpointIdleTimeoutMs: options.checkpointIdleTimeoutMs ?? DEFAULTS.checkpointIdleTimeoutMs,
     toolResultCapTokens: options.toolResultCapTokens ?? DEFAULTS.toolResultCapTokens,
-    // 段门槛缺省 = 档位 segmentPct × 有效窗（§7.4 分档 10/10/12%——apply 期随线推导补齐，依赖摘要面预留）
     checkpointMinSegmentTokens: 0,
   };
   const fileTools = options.fileTools ?? DEFAULT_FILE_TOOLS;
   return {
     name: "autocompact",
     inject: ["compaction", "session"],
-    softInject: ["llm"], // 审计问题 3：llm 停靠声明式时序（迟到世界防恰一次误判）
+    softInject: ["llm"],
     apply: (ctx: Context): Disposer => {
       const store = ctx.use(sessionStore);
-      const runner = ctx.use(compactionRunner); // 只读 runner.summarizer（CP 摘要面单一真相）
+      const runner = ctx.use(compactionRunner);
       let llm: LlmRuntime | undefined;
       void ctx
         .waitFor(llmRuntime)
@@ -143,7 +115,6 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         .catch((e: unknown) => { process.stderr.write(`autocompact/llm-dock-failed:${String(e)}\n`); });
 
       const face: SummarizerFace | undefined = options.summarizer ?? runner.summarizer;
-      // 装配期值域 fail-fast（含段门槛缺省解析——依赖 face 预留后的有效窗口）
       const probe = computeLines({
         contextWindow: config.contextWindow,
         ...(face !== undefined ? { summarizerMaxOutput: face.maxOutputTokens } : {}),
@@ -153,14 +124,13 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         warnBufferTokens: config.warnBufferTokens,
       });
       assertLinesDomain({ lines: probe, ledgerBudgetTokens: config.ledgerBudgetTokens, checkpointPct: config.checkpointPct });
-      // 段门槛缺省 = 档位 segmentPct × 有效窗（§7.4：10/10/12% 分档——旧 20% 已废）
       config.checkpointMinSegmentTokens =
         options.checkpointMinSegmentTokens ?? Math.floor(probe.effectiveWindow * (tierOf(options.contextWindow).segmentPct / 100));
 
       const warn = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
         const suffix = detail === undefined ? "" : ` ${JSON.stringify(detail)}`;
         process.stderr.write(`autocompact/${code} session=${session}${suffix}\n`);
-        ctx.emit(autocompactDiagnostic, { session, code, ...detail } as never); // 审计问题 4：事件总线可见（不只 stderr）
+        ctx.emit(autocompactDiagnostic, { session, code, ...detail } as never);
       };
       const emitCheckpoint = (session: SessionId) => (action: CheckpointAction, detail?: Record<string, unknown>) => {
         if (action === "breaker") {
@@ -177,7 +147,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         const live = store.get(session);
         if (live === undefined) return undefined;
         const state = makeSessionState(session);
-        recoverSessionState(state, live.events()); // 冷启动：checkpoint fold + 轮活性
+        recoverSessionState(state, live.events());
         states.set(session, state);
         return state;
       };
@@ -211,7 +181,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
 
       const onSessionEvent = ({ session, event }: { session: SessionId; event: SessionEvent }): void => {
         const state = states.get(session);
-        if (state === undefined) return; // 未触达会话不建账（首触步闸冷启动）
+        if (state === undefined) return;
         if (event.type === "turn/start") {
           state.turnActive = true;
           state.cache.lastOccupancy = undefined;
@@ -240,11 +210,11 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         } catch (error) {
           process.stderr.write(
             `autocompact/idle-tick-failed ${JSON.stringify({ error: error instanceof Error ? error.message : String(error) })}\n`,
-          ); // 定时器异常是进程级崩溃面
+          );
         }
       };
       const idleMs = config.idleClearMinutes > 0 ? config.idleClearMinutes * 60_000 : 0;
-      const timer = idleMs > 0 ? setInterval(tickIdle, Math.min(60_000, Math.max(250, idleMs))) : undefined; // 审计 #10：禁用不起定时器
+      const timer = idleMs > 0 ? setInterval(tickIdle, Math.min(60_000, Math.max(250, idleMs))) : undefined;
       timer?.unref?.();
 
       const offs = [
@@ -252,14 +222,13 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         ctx.on(sessionAuditEvent, onSessionEvent as never),
         ctx.on(sessionDisposed, ({ session }: { session: SessionId }) => {
           const state = states.get(session);
-          if (state !== undefined) cancelJob(state.checkpoint); // 落账只会计败告警——取消在先无垃圾观测
+          if (state !== undefined) cancelJob(state.checkpoint);
           states.delete(session);
         }),
       ];
       return async () => {
         for (const off of offs) off();
         if (timer !== undefined) clearInterval(timer);
-        // 在飞 CP 取消 + 有界 join（join-before-close）：迟滞不超过 5s，不吊死拆卸
         const inflight: Array<Promise<void>> = [];
         for (const state of states.values()) {
           if (state.checkpoint.job !== undefined) inflight.push(state.checkpoint.job.done);

@@ -1,6 +1,3 @@
-// agent 动态注册安全闭环（plugin-runtime §5/§9 安全回归）：
-// propose 只产数据（登记 + confirm 请求）/ confirm 应答置位 / 消费一次性 /
-// 源路径不匹配拒 / 绝对路径围栏 / 提案 TTL 作废 / 坏文件降级。
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +13,6 @@ afterEach(async () => {
   for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-/** 起一个带 plugin_propose 工具的世界（confirm 桥可编程；登记进真实文件面 store） */
 async function worldWithPropose(agentDir: string, confirm: (fields: { tool: string; reason: string }) => Promise<{ allowed: boolean }>): Promise<ReturnType<typeof createContext>> {
   const store = createPluginProposalStore(agentDir);
   const ctx = createContext();
@@ -56,12 +52,10 @@ describe("plugin_propose 工具：登记与确认链（端到端）", () => {
     const out = await runPropose(ctx, { sourcePath: source });
     expect(out.isError).toBeUndefined();
     expect(out.content).toContain("pending_install");
-    // confirm 请求面：P2 语义在场（能力授予明示）
     expect(seen).toHaveLength(1);
     expect(seen[0]?.tool).toBe("plugin_propose");
     expect(seen[0]?.reason).toContain("full platform capabilities");
     expect(seen[0]?.reason).toContain("my-plugin");
-    // 工具侧只产数据：文件面已登记、confirmed=false（置位是 host confirm 命令的事）
     const [proposal] = await createPluginProposalStore(agentDir).list();
     expect(proposal?.name).toBe("my-plugin");
     expect(proposal?.confirmed).toBe(false);
@@ -90,14 +84,12 @@ describe("plugin_propose 工具：登记与确认链（端到端）", () => {
     expect(rel.isError).toBe(true);
     const missing = await runPropose(ctx, { sourcePath: "/no/such/dir" });
     expect(missing.isError).toBe(true);
-    // 超预算：1 字节上限——任何内容即超
     const tiny = await mkdtemp(join(tmpdir(), "pp-tiny-"));
     tempDirs.push(tiny);
     await writeFile(join(tiny, "x.txt"), "data");
     const over = await (() => {
       const tool = ctx.use(toolRegistry).get("plugin_propose");
       if (tool === undefined) throw new Error("missing");
-      // 构造超预算执行（maxHashBytes 不在 schema——经插件重装配验证：此处直断 propose 默认路径）
       return tool.execute({ sourcePath: tiny }, { callId: "t", name: "plugin_propose", signal: new AbortController().signal });
     })();
     void over;
@@ -168,12 +160,9 @@ describe("proposals 面板：确认/消费/TTL/降级", () => {
   });
 });
 
-// ── install 硬门（admin-commands 编排层）：agent 源必须携带已确认 proposalId ────
 
 describe("plugins/install agent 源硬门（经 host 命令面真装配）", () => {
   it("未确认提案 → install 拒；确认后过；源路径不匹配拒；消费后重放拒", async () => {
-    // 编排层判定逻辑内联在 admin-commands（host 进程内）——此处直接测 store 面
-    // 供编排的判定原语（consumeConfirmed + sourcePath 比对语义）
     const dir = await mkdtemp(join(tmpdir(), "pp-gate-"));
     tempDirs.push(dir);
     const store = createPluginProposalStore(dir);
@@ -188,14 +177,11 @@ describe("plugins/install agent 源硬门（经 host 命令面真装配）", () 
       confirmed: false,
       consumed: false,
     });
-    // 未确认：消费失败 = install 拒（编排层读此原语）
     expect(await store.consumeConfirmed("pp-ok")).toBeUndefined();
-    // 确认后：消费成功且携带 sourcePath（编排层比对入参）
     await store.setConfirmed("pp-ok", true);
     const consumed = await store.consumeConfirmed("pp-ok");
     expect(consumed?.sourcePath).toBe("/src/good");
-    expect(consumed !== undefined && consumed.sourcePath !== "/src/other").toBe(true); // 不匹配 = 拒
-    // 重放：已消费
+    expect(consumed !== undefined && consumed.sourcePath !== "/src/other").toBe(true);
     expect(await store.consumeConfirmed("pp-ok")).toBeUndefined();
   });
 });

@@ -1,8 +1,3 @@
-// full 总括档语义矩阵（2026-09-28 用户裁决：full = 唯二恒拒——提权 + 拒读底线，其余零拦截
-// 零询问）。症状回归：full 档曾对注入/解析失败/灾难形态弹「hard-deny/injection floor」确认、
-// 对 .git 写/灾难形态 deny——用户总括意志声明后这些面全部让位。直调 harness 与插件执行面的
-// 差异锚：unrestricted 事实由 plugin 层从注册表穿入（decideInputOf），直调缺省 false。
-
 import { describe, expect, it } from "vitest";
 import { homedir } from "node:os";
 import { adjudicateBash as __adjudicateBash } from "../bash/adjudicate.ts";
@@ -29,7 +24,6 @@ function autoBash(command: string) {
   });
 }
 
-/** 直调 harness 补 unrestricted 面（模拟 plugin 层 decideInputOf 穿线后的裁决入参） */
 function fullBash(command: string, rules: readonly ReturnType<typeof parseRule>[] = []) {
   const faces = knobDecideOf(FULL_PROFILE);
   return __adjudicateBash({
@@ -99,14 +93,13 @@ describe("full 总括档：唯二恒拒", () => {
   });
   it("拒读底线不可批准绕过：argv 触碰 deny 无 memorizable（拒记 deny）", () => {
     expect(fullBash("cat ~/.ssh/id_rsa").memorizable).toBeUndefined();
-    // 显式 allow 规则也不越过（拒读底线 > 手写 allow——与路径面同向；deny 规则恒压过一切）
     const out = fullBash("cat ~/.ssh/id_rsa", [parseRule("Danger(*):allow", "user")]);
     expect(out.verdict).toBe("deny");
   });
   it("路径面：拒读底线恒拦（~/.ssh 读 deny——总括档不放行；路径为 tilde 展开后绝对路径，与工具面归一形态一致）", () => {
     const out = decideFor({
       tool: "read",
-      kind: "Read", // dispatch 从 ToolDefinition.kind 穿引——路径面归一前提
+      kind: "Read",
       args: { path: `${homedir()}/.ssh/id_rsa` },
       userRules: [],
       sessionRules: [],
@@ -163,11 +156,11 @@ describe("红队对抗修复（2026-09-29 多子代理审查）——提权面�
 describe("事实面与执法面同源（tables.ts 单源——重构前双写曾致分歧）", () => {
   it("症状回归：plan 档根集内 .env 重定向读误报 redirect-read（事实面缺豁免判）——事实与执法同判不拒", () => {
     const inside = bashFactsOf({ command: "cmd < sub/.env", rules: [], profile: AUTO_PROFILE, root: ROOT, extraRoots: [] });
-    expect(inside.redirectReadDeny).toBeUndefined(); // 根集内 .env：条件表豁免（与执法面 denyReadHitOf 同源）
+    expect(inside.redirectReadDeny).toBeUndefined();
     const outside = bashFactsOf({ command: "cmd < /etc/app/.env", rules: [], profile: AUTO_PROFILE, root: ROOT, extraRoots: [] });
-    expect(outside.redirectReadDeny).toBe("/**/.env"); // 根集外仍命中
+    expect(outside.redirectReadDeny).toBe("/**/.env");
     const ssh = bashFactsOf({ command: "cmd < ~/.ssh/id_rsa", rules: [], profile: AUTO_PROFILE, root: ROOT, extraRoots: [] });
-    expect(ssh.redirectReadDeny).toBe("~/.ssh/**"); // 恒拒表不受豁免影响
+    expect(ssh.redirectReadDeny).toBe("~/.ssh/**");
   });
 });
 

@@ -1,6 +1,3 @@
-// token-meter 全套（docs/TOKEN-METER.md §3，对照 M15/M16/M21/M22 真缺口）：记账矩阵/路线归因/
-// 失败尝试计费/垃圾丢弃/溢出 fail-closed/增量==全量/晚装载/sessionDisposed/估算表。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
@@ -54,7 +51,7 @@ function seedConversation(session: Session): void {
   );
   session.append("turn/start", { turn: 1 });
   session.append("step/start", { turn: 1, step: 0 });
-  session.append("request/context", { provider: "p2", model: "m2" }); // 换线
+  session.append("request/context", { provider: "p2", model: "m2" });
   session.append(
     "assistant/message",
     { turn: 1, step: 0, content: [{ type: "text", text: "ok2" }], usage: { input: 7, output: 3 }, stopReason: "stop" },
@@ -75,7 +72,7 @@ describe("记账与归因（docs/TOKEN-METER.md §1——M15/M16/M21）", () => 
       inputTokens: 117,
       outputTokens: 23,
       totalTokens: 140,
-      attempts: 3, // 1 attempt + 2 message
+      attempts: 3,
     });
     expect(usage?.turns).toEqual([
       {
@@ -95,8 +92,7 @@ describe("记账与归因（docs/TOKEN-METER.md §1——M15/M16/M21）", () => 
         routes: [{ provider: "p2", model: "m2", inputTokens: 7, outputTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0 }],
       },
     ]);
-    // 路线归因到 session 级
-    expect(usage && (usage as unknown as { routes?: unknown }).routes === undefined).toBe(true); // SessionUsage 无顶层 routes 字段（按方案）
+    expect(usage && (usage as unknown as { routes?: unknown }).routes === undefined).toBe(true);
   });
 
   it("无路线记录 → unknown 桶（resume 后首条消息归历史缺位）", async () => {
@@ -123,13 +119,13 @@ describe("记账与归因（docs/TOKEN-METER.md §1——M15/M16/M21）", () => 
     if (!made.ok) return;
     made.value.append("turn/start", { turn: 0 });
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 1, output: 1 }, stopReason: "stop" }, appendOp);
-    made.value.append("assistant/message", { turn: 0, step: 0, content: [], stopReason: "stop" }, appendOp); // 缺席
-    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: {}, stopReason: "stop" }, appendOp); // {} 视为缺席
-    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: -5 }, stopReason: "stop" }, appendOp); // 垃圾：负数
-    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 1.5 }, stopReason: "stop" }, appendOp); // 垃圾：小数
-    made.value.append("assistant/attempt", { turn: 0, step: 0, error: "x", usage: { input: 0, output: 0 } }); // 有效零样本
+    made.value.append("assistant/message", { turn: 0, step: 0, content: [], stopReason: "stop" }, appendOp);
+    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: {}, stopReason: "stop" }, appendOp);
+    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: -5 }, stopReason: "stop" }, appendOp);
+    made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 1.5 }, stopReason: "stop" }, appendOp);
+    made.value.append("assistant/attempt", { turn: 0, step: 0, error: "x", usage: { input: 0, output: 0 } });
     const usage = world.meter.usageOf(made.value.id);
-    expect(usage).toMatchObject({ inputTokens: 1, outputTokens: 1, totalTokens: 2, attempts: 2 }); // 垃圾/缺席/{} 不计
+    expect(usage).toMatchObject({ inputTokens: 1, outputTokens: 1, totalTokens: 2, attempts: 2 });
   });
 
   it("聚合溢出安全整数 → usageOf undefined（fail-closed，M23）", async () => {
@@ -158,7 +154,6 @@ describe("记账与归因（docs/TOKEN-METER.md §1——M15/M16/M21）", () => 
 
 describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/晚装载）", () => {
   it("增量折叠 == 全量折叠（同事件流两种路径断言相等）", async () => {
-    // 路径 A（增量）：装载 meter 后逐条落账
     const worldA = await makeWorld();
     worlds.push(worldA);
     const madeA = await worldA.store.create({ id: "same" as SessionId });
@@ -167,7 +162,6 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
     seedConversation(madeA.value);
     const incremental = worldA.meter.usageOf(madeA.value.id);
 
-    // 路径 B（冷启动）：同事件流作为 seed 一次灌入（构造期不广播），usageOf 全量折叠
     const worldB = await makeWorld();
     worlds.push(worldB);
     const events = madeA.value.events();
@@ -190,9 +184,9 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
       return;
     }
     seedConversation(made.value);
-    const offMeter = tokenMeterPlugin.apply(ctx); // 晚装载：装配期注入已满足，直接 apply
+    const offMeter = tokenMeterPlugin.apply(ctx);
     const meter = ctx.use(tokenMeter);
-    expect(meter.usageOf(made.value.id)).toMatchObject({ attempts: 3, totalTokens: 140 }); // 晚装载不丢历史
+    expect(meter.usageOf(made.value.id)).toMatchObject({ attempts: 3, totalTokens: 140 });
     offMeter();
     await ctx.dispose();
     void unloadSession;
@@ -217,12 +211,10 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
     const made = await world.store.create({ id: "unseen" as SessionId });
     expect(made.ok).toBe(true);
     if (!made.ok) return;
-    // 事件先于 usageOf 到达（插件已装但该会话未冷启动）——监听器必须跳过
     made.value.append("turn/start", { turn: 0 });
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 9, output: 0 }, stopReason: "stop" }, appendOp);
     const usage = world.meter.usageOf(made.value.id);
-    expect(usage).toMatchObject({ attempts: 1, inputTokens: 9 }); // 冷启动全量折叠（含监听器跳过的事件）
-    // 冷启动后增量继续：审计通道微任务投递——投递注册先于断言续段（FIFO），让渡一个微任务即增量可见
+    expect(usage).toMatchObject({ attempts: 1, inputTokens: 9 });
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 1, output: 0 }, stopReason: "stop" }, appendOp);
     await Promise.resolve();
     expect(world.meter.usageOf(made.value.id)).toMatchObject({ attempts: 2, inputTokens: 10 });
@@ -233,10 +225,10 @@ describe("一致性与生命周期（docs/TOKEN-METER.md §1/§3——M14/M17/�
       { type: "assistant/message", seq: 1, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: Number.MAX_SAFE_INTEGER, output: 0 }, stopReason: "stop" } },
       { type: "assistant/message", seq: 2, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 1, output: 0 }, stopReason: "stop" } },
     ] as never);
-    expect(state.overflowed).toBe(true); // 第二次累加溢出
-    expect(state.attempts).toBe(1); // 溢出事件本身不计
+    expect(state.overflowed).toBe(true);
+    expect(state.attempts).toBe(1);
     applyEvent(state, { type: "assistant/message", seq: 3, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 5, output: 0 }, stopReason: "stop" } } as never);
-    expect(state.attempts).toBe(1); // 溢出后短路
+    expect(state.attempts).toBe(1);
   });
 
   it("foldUsage 纯函数：snapshotOf 输出冻结（顶层 + turn 元素 + routes）", async () => {
@@ -273,7 +265,7 @@ describe("缓存明细与尾值面（TOKEN-UNIFICATION.md §1.1/§2.3 D3/D10）"
     expect(snap.inputTokens).toBe(1500);
     expect(snap.cacheReadTokens).toBe(400);
     expect(snap.cacheWriteTokens).toBe(60);
-    expect(snap.totalTokens).toBe(1530); // input+output，缓存不入总计
+    expect(snap.totalTokens).toBe(1530);
     expect(snap.turns[0]).toMatchObject({ inputTokens: 1500, cacheReadTokens: 400, cacheWriteTokens: 60 });
     expect(snap.turns[0]?.routes[0]).toMatchObject({ inputTokens: 1500, cacheReadTokens: 400, cacheWriteTokens: 60 });
   });
@@ -284,7 +276,7 @@ describe("缓存明细与尾值面（TOKEN-UNIFICATION.md §1.1/§2.3 D3/D10）"
       { type: "assistant/message", seq: 2, time: 2, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 50, output: 1, cacheWrite: 1.5 }, stopReason: "stop" } },
       { type: "assistant/message", seq: 3, time: 3, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 10, output: 1, cacheRead: 5 }, stopReason: "stop" } },
     ] as never));
-    expect(snap.inputTokens).toBe(10); // 前两样本整丢
+    expect(snap.inputTokens).toBe(10);
     expect(snap.cacheReadTokens).toBe(5);
     expect(snap.cacheWriteTokens).toBe(0);
     expect(snap.attempts).toBe(1);
@@ -292,16 +284,13 @@ describe("缓存明细与尾值面（TOKEN-UNIFICATION.md §1.1/§2.3 D3/D10）"
 
   it("N3 尾值面：字段在场才覆写；{output:N} 不清零哨兵；垃圾样本不更新尾值；命中率点态口径", () => {
     const events = cacheEvents().concat([
-      // 有效但 input 缺席：不得清零 lastReportedInput/lastCacheRead，不更新 lastUsageAt
       { type: "assistant/message", seq: 5, time: 300, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { output: 30 }, stopReason: "stop" } },
-      // 垃圾（负 input）：不进账不更新尾值
       { type: "assistant/message", seq: 6, time: 400, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: -5, output: 1 }, stopReason: "stop" } },
     ] as never);
     const snap = snapshotOf(foldUsage(events));
-    expect(snap.lastReportedInput).toBe(1000); // 仍为样本 #4 的 input
-    expect(snap.lastReportedCacheRead).toBe(0); // 仍为样本 #4 的 cacheRead
-    expect(snap.lastUsageAt).toBe(200); // #5 未更新（input/cacheRead 均缺席），#6 垃圾不算
-    // 命中率点态口径（审查①⑦b 症状）：两轮 input=500/1000、cacheRead=400/0 → 0/1000，非累计 400/1000
+    expect(snap.lastReportedInput).toBe(1000);
+    expect(snap.lastReportedCacheRead).toBe(0);
+    expect(snap.lastUsageAt).toBe(200);
     expect(snap.lastReportedCacheRead / snap.lastReportedInput).toBe(0);
   });
 
@@ -314,9 +303,9 @@ describe("缓存明细与尾值面（TOKEN-UNIFICATION.md §1.1/§2.3 D3/D10）"
       { type: "assistant/message", seq: 1, time: 50, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { input: 800, output: 1, cacheRead: 700 }, stopReason: "stop" } },
       { type: "assistant/message", seq: 2, time: 60, surfaceOp: "append", data: { turn: 0, step: 0, content: [], usage: { output: 2, cacheRead: 650 }, stopReason: "stop" } },
     ] as never));
-    expect(snap.lastReportedInput).toBe(800); // #2 input 缺席不动
-    expect(snap.lastReportedCacheRead).toBe(650); // #2 cacheRead 在场覆写
-    expect(snap.lastUsageAt).toBe(60); // #2 cacheRead 在场 → 更新
+    expect(snap.lastReportedInput).toBe(800);
+    expect(snap.lastReportedCacheRead).toBe(650);
+    expect(snap.lastUsageAt).toBe(60);
     expect(snap.lastReportedCacheRead / snap.lastReportedInput).toBe(650 / 800);
   });
 
@@ -330,11 +319,9 @@ describe("缓存明细与尾值面（TOKEN-UNIFICATION.md §1.1/§2.3 D3/D10）"
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 500, output: 20, cacheRead: 400, cacheWrite: 60 }, stopReason: "stop" }, appendOp);
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 1000, output: 10, cacheRead: 0 }, stopReason: "stop" }, appendOp);
     const incremental = world.meter.usageOf(made.value.id);
-    // 首次 usageOf 冷启动全量折叠（事件已全落）；断言尾值与末样本一致即等价语义
     expect(incremental).toMatchObject({ lastReportedInput: 1000, lastReportedCacheRead: 0, inputTokens: 1500 });
     expect(incremental?.lastUsageAt).toBeGreaterThan(0);
     expect(incremental).toEqual(snapshotOf(foldUsage(made.value.events())));
-    // 增量续账：审计微任务排空后新样本入账
     await Promise.resolve();
     made.value.append("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 300, output: 5, cacheRead: 250 }, stopReason: "stop" }, appendOp);
     await Promise.resolve();
@@ -353,8 +340,8 @@ describe("估算（docs/TOKEN-METER.md §1——CJK 上界口径，压缩件预�
     ["5 字符", "abcde", 2],
     ["CJK 1.25/字上界（chars/4 口径低估 3-4× 为反例）", "你好世界", 5],
     ["UTF-16 计长（emoji 算 2 单位，上界桶）", "😀", 3],
-    ["混合分段折算：ASCII len/4 + 非 ASCII 1.25", "abc你好", 4], // 3/4=0.75 + 2×1.25=2.5 → 3.25 → ceil 4
-    ["控制空白按 len/4（不进上界桶）", "a\tb\nc", 2], // 5 单位全在 len/4 桶 → ceil(5/4)
+    ["混合分段折算：ASCII len/4 + 非 ASCII 1.25", "abc你好", 4],
+    ["控制空白按 len/4（不进上界桶）", "a\tb\nc", 2],
   ])("estimateText %s", (_name, text, expected) => {
     expect(estimateText(text)).toBe(expected);
   });
@@ -411,14 +398,14 @@ describe("并行度三字段（TURN-REDUCTION.md §1.1C——模型意图面计�
   });
 
   it("无 usage 的 message 也计数（计数先于 usage 样本门——错误路径的并行度是诊断目标）", () => {
-    const snap = snapshotOf(foldUsage([message(2)])); // 无 usage 字段
+    const snap = snapshotOf(foldUsage([message(2)]));
     expect(snap.toolUseCalls).toBe(2);
-    expect(snap.attempts).toBe(0); // usage 缺席：token 不计但并行度计
+    expect(snap.attempts).toBe(0);
   });
 
   it("assistant/attempt 的 tool_use 不计（截断重试半成品，重发会在 message 双计）", () => {
     const snap = snapshotOf(foldUsage([attempt(3), message(1)]));
-    expect(snap.toolUseCalls).toBe(1); // 只计 message
+    expect(snap.toolUseCalls).toBe(1);
     expect(snap.toolUseSteps).toBe(1);
     expect(snap.parallelSteps).toBe(0);
   });

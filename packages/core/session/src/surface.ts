@@ -1,7 +1,3 @@
-// surface 投影：日志的纯函数派生。append 入尾；replace 端点以 seq 定位节点、
-// 摘除两端点位置之间（含）的节点、新节点落 startSeq 端点原位置（docs/SESSION.md §1.4）。
-// 日志永不改写。
-
 import type { SessionEvent, SurfaceEventType, SurfaceMessage, SurfaceNode } from "./types.ts";
 
 const SURFACE_TYPES: ReadonlySet<string> = new Set<string>([
@@ -16,18 +12,10 @@ export function isSurfaceEventType(type: string): type is SurfaceEventType {
   return SURFACE_TYPES.has(type);
 }
 
-/** 锚点下标：首个 data 含顶层 text 字段的节点（system/message 专有形态；含 dormant
- *  空文本锚）；无锚返回 -1。共用谓词——agent-loop anchorSystem 漂移替换、CLI /compact
- *  折叠区间、compaction L2 保留头三处锚定语义由此唯一决定。 */
 export function anchorIndexOf(nodes: readonly SurfaceNode[]): number {
   return nodes.findIndex((node) => (node.event.data as { text?: unknown }).text !== undefined);
 }
 
-/** 投影步进的唯一真相：append 入尾；replace 端点以 seq 定位节点、摘除两端点**位置之间**
- *  （含端点）的全部节点、新节点落 startSeq 端点原位置。区间按位置不按数值成员——迭代
- *  前缀替换（压缩/滑窗）落地后头部节点携带 journal 尾 seq、其后保留节点 seq 更小，摘除集
- *  不再是数值连续区间，数值成员语义不可表达（docs/COMPACTION.md §2.A）。
- *  失败返回理由（端点缺失 / 位置逆序）——append 落账前先算步进，不可行即拒（日志零变动） */
 export type SurfaceStep = { readonly ok: true; readonly nodes: SurfaceNode[] } | { readonly ok: false; readonly reason: string };
 
 export function applySurfaceEvent(nodes: readonly SurfaceNode[], event: SessionEvent<SurfaceEventType>): SurfaceStep {
@@ -45,7 +33,6 @@ export function applySurfaceEvent(nodes: readonly SurfaceNode[], event: SessionE
   return { ok: true, nodes: [...nodes.slice(0, startIdx), { seq: event.seq, event }, ...nodes.slice(endIdx + 1)] };
 }
 
-/** 内部日志（落账前已过步进校验）的全量投影；损坏即抛——fail-closed，不静默算错投影 */
 export function projectSurface(events: readonly SessionEvent[]): readonly SurfaceNode[] {
   let nodes: readonly SurfaceNode[] = [];
   for (const event of events) {
@@ -65,7 +52,7 @@ export function surfaceToMessages(nodes: readonly SurfaceNode[]): SurfaceMessage
     .map(({ event }): SurfaceMessage | NullMarker => {
     switch (event.type) {
       case "system/message":
-        if (event.data.text === "") return NULL_MARKER; // dormant 锚点：空文本不产消息
+        if (event.data.text === "") return NULL_MARKER;
         return { role: "system", text: event.data.text };
       case "user/message":
         return { role: "user", content: event.data.content };
@@ -85,7 +72,6 @@ export function surfaceToMessages(nodes: readonly SurfaceNode[]): SurfaceMessage
           ...(event.data.isError !== undefined ? { isError: event.data.isError } : {}),
         };
       case "agent/message":
-        // 协议事实：provider 只有 user/assistant 角色，harness 注入一律 user 角色（docs/AGENT-MESSAGE.md §1）
         return { role: "user", content: event.data.content };
     }
     })

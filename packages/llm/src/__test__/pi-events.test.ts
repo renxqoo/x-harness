@@ -1,6 +1,3 @@
-// pi-events 映射矩阵（docs/LLM-PI.md 测试口径）：事件族全量、start 零产出竞态剧本、toolcall 三形态、
-// usage 折算与全零守卫、终态恰一次、abort rethrow、错误分类负例、防御层。
-
 import { describe, expect, it } from "vitest";
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
 import { classifyErrorText, foldUsage, piChunks } from "../pi-events.ts";
@@ -40,10 +37,6 @@ async function collect(
   return out;
 }
 
-/** 竞态剧本驱动器：生产者在消费者读走 start 后才推进共享 partial（真实时序——
- *  pi push 只入队不暂停生产者，SSE 快于消费时必然出现）。队列空时 next 挂起等
- *  生产者 emit（活队不终止）；脚本结束落哨兵让消费者收尾。脚本内的 await 会饿死
- *  消费者（微任务链被脚本独占）——调度器每帧后强制 setImmediate 让消费者跑一拍。 */
 async function collectRacy(
   script: (emit: (event: AssistantMessageEvent) => void, yieldToConsumer: () => Promise<void>) => Promise<void>,
 ): Promise<LlmChunk[]> {
@@ -55,7 +48,7 @@ async function collectRacy(
     if (parkedResolve !== undefined) {
       const wake = parkedResolve;
       parkedResolve = undefined;
-      wake(); // 唤醒挂起的消费者（对齐 pi EventStream.push 的 waiter 语义）
+      wake();
     }
   };
   const yieldToConsumer = async (): Promise<void> => {
@@ -73,7 +66,7 @@ async function collectRacy(
           const tick = (): void => {
             if (queue.length > 0) resolve({ done: false, value: queue.shift() as AssistantMessageEvent });
             else if (scriptDone) resolve({ done: true, value: undefined });
-            else parkedResolve = tick; // 队列空且脚本未完：挂起等 emit 唤醒
+            else parkedResolve = tick;
           };
           tick();
         }),
@@ -94,13 +87,11 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   it("start 事件不读 partial（首字重复症状「四四门全绿」，真实竞态时序复现）：pi 的 partial 是共享可变引用，消费者挂起等网络时单 burst 内到达 content_block_start+首条 delta——消费者醒来读 start 帧时 block.text 已含首字，start 帧补发初值必把已发 delta 重发一遍", async () => {
     const output = { content: [{ type: "text", text: "" }] };
     const chunks = await collectRacy(async (emit, yieldToConsumer) => {
-      await yieldToConsumer(); // ① 消费者启动并挂起（等网络——真实态）
-      // ② 同步 burst：同一 SSE 缓冲段内 start + 首条 delta（pi 解析循环在同一 burst
-      //    内 push start、推进 block.text、push delta）
+      await yieldToConsumer();
       emit(assistantEvent({ type: "text_start", contentIndex: 0, partial: output }));
       (output.content[0] as { text: string }).text = "四";
       emit(assistantEvent({ type: "text_delta", contentIndex: 0, delta: "四", partial: output }));
-      await yieldToConsumer(); // ③ 消费者此刻才读 start（读到污染初值）
+      await yieldToConsumer();
       (output.content[0] as { text: string }).text = "四门全绿。";
       emit(assistantEvent({ type: "text_delta", contentIndex: 0, delta: "门全绿。", partial: output }));
       emit(assistantEvent({ type: "text_end", contentIndex: 0, content: "四门全绿。", partial: output }));
@@ -127,8 +118,6 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   });
 
   it("症状回归「多轮工具调用的 reasoning 签名丢失」L1：thinking_end 从 partial 提取签名块（thinking-signature chunk）——openai 加密项与 anthropic 签名同通道", async () => {
-    // pi 在块定形时把签名写进 partial.content[i].thinkingSignature（openai = 序列化
-    // reasoning_details / anthropic = signature 累积）；redacted 标志随块
     const output = { role: "assistant", content: [{ type: "thinking", thinking: "思考", thinkingSignature: "[{\"type\":\"reasoning.encrypted\",\"data\":\"rs_abc\"}]", redacted: false, index: 0 }], api: "openai-completions", provider: "gpt", model: "m", usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, stopReason: "stop", timestamp: 0 };
     const chunks = await collectRacy(async (emit) => {
       emit(assistantEvent({ type: "thinking_start", contentIndex: 0, partial: output }));
@@ -147,7 +136,6 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
     const chunks = await collectRacy(async (emit) => {
       emit(assistantEvent({ type: "thinking_start", contentIndex: 0, partial: output }));
       emit(assistantEvent({ type: "thinking_delta", contentIndex: 0, delta: "半截", partial: output }));
-      // 无 thinking_end —— abort/error 终态
       emit(assistantEvent({ type: "error", reason: "error", error: output as never }) as never);
     }).catch(() => [] as LlmChunk[]);
     expect(chunks.find((chunk) => chunk.type === "thinking-signature")).toBeUndefined();
@@ -157,15 +145,14 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
     const chunks = await collect([
       assistantEvent({ type: "text_start", contentIndex: 0, partial: { content: [] } }),
       assistantEvent({ type: "text_delta", contentIndex: 0, delta: "hel" }),
-      assistantEvent({ type: "text_end", contentIndex: 0, content: "hello" }), // 尾段 "lo" 缺
+      assistantEvent({ type: "text_end", contentIndex: 0, content: "hello" }),
       doneEvent(),
     ]);
     expect(chunks).toEqual([
       { type: "text-delta", text: "hel" },
-      { type: "text-delta", text: "lo" }, // 补发缺失尾段
+      { type: "text-delta", text: "lo" },
       { type: "finish", finish: { kind: "stop" } },
     ]);
-    // 非前缀关系（超发/乱序）不强行校正
     const mismatch = await collect([
       assistantEvent({ type: "text_start", contentIndex: 0, partial: { content: [] } }),
       assistantEvent({ type: "text_delta", contentIndex: 0, delta: "xyz" }),
@@ -181,7 +168,7 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
       assistantEvent({ type: "toolcall_delta", contentIndex: 1, delta: '{"a"' }),
       assistantEvent({ type: "toolcall_delta", contentIndex: 1, delta: ":1}" }),
       assistantEvent({ type: "toolcall_end", contentIndex: 1, toolCall: { type: "toolCall", id: "t1", name: "add", arguments: { a: 1 } } }),
-      assistantEvent({ type: "toolcall_start", contentIndex: 2, partial: { content: [] } }), // openai 无身份方言同样收敛到 end
+      assistantEvent({ type: "toolcall_start", contentIndex: 2, partial: { content: [] } }),
       assistantEvent({ type: "toolcall_delta", contentIndex: 2, delta: '{"b":2}' }),
       assistantEvent({ type: "toolcall_end", contentIndex: 2, toolCall: { type: "toolCall", id: "t2", name: "sub", arguments: { b: 2 } } }),
       doneEvent(),
@@ -203,14 +190,12 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
       { type: "usage", usage: { input: 17, output: 7, cacheRead: 5, cacheWrite: 2 } },
       { type: "finish", finish: { kind: "max-tokens" } },
     ]);
-    // 终态恰一次：done 后的多余事件不产 chunk（finish 恰一帧且为末帧）
     const extra = await collect([
       assistantEvent({ type: "done", reason: "stop", message: { usage } }),
       assistantEvent({ type: "text_delta", contentIndex: 0, delta: "late" }),
     ]);
     expect(extra.filter((c) => c.type === "finish")).toHaveLength(1);
     expect(extra.at(-1)?.type).toBe("finish");
-    // 反方向：error 后 pi 违约补 done——仍恰一 finish 且为末帧
     const afterError = await collect([
       assistantEvent({ type: "error", reason: "error", error: { errorMessage: "x" } }),
       doneEvent(),
@@ -222,7 +207,6 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   it("usage 全零守卫：缺报后端不产噪音帧；foldUsage 直接断言", () => {
     expect(foldUsage({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([]);
     expect(foldUsage(undefined)).toEqual([]);
-    // cache 键恒透传（0 = 命中零——有效观测非缺席；剥除会让下游尾值滞留旧轮）
     expect(foldUsage({ input: 1, output: 0, cacheRead: 0, cacheWrite: 0 })).toEqual([{ type: "usage", usage: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } }]);
   });
 
@@ -237,18 +221,16 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
   });
 
   it("回归：refusal 真身文案（\"The model refused…\"）与 rawStopReason 均落显式 non-retryable（不可重试）", async () => {
-    // pi 真身文案不含 "refusal" 子串（含 "refused"）——旧词表匹配曾漏判落 network 可重试
     const byText = await collect([
       assistantEvent({ type: "error", reason: "error", error: { errorMessage: "The model refused to complete the request" } }),
     ]);
     expect(byText).toEqual([
-      { type: "finish", finish: { kind: "error", message: "The model refused to complete the request", code: "non-retryable" } }, // 文案路径无 rawStopReason——rawReason 缺席
+      { type: "finish", finish: { kind: "error", message: "The model refused to complete the request", code: "non-retryable" } },
     ]);
-    // rawStopReason 判定优先于文案分类与已捕获状态码
     const byRaw = await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "anything", rawStopReason: "refusal" } })], {
       failureInfo: () => ({ status: 500 }),
     });
-    expect(byRaw).toEqual([{ type: "finish", finish: { kind: "error", message: "anything", code: "non-retryable", rawReason: "refusal" } }]); // rawStopReason 在场随终态透传
+    expect(byRaw).toEqual([{ type: "finish", finish: { kind: "error", message: "anything", code: "non-retryable", rawReason: "refusal" } }]);
   });
 
   it("未知 stop_reason 口径锁定：pi 对未知 reason 折 \"Unhandled stop reason\" 错误 → network（语义变更，docs/LLM-PI.md）", async () => {
@@ -263,7 +245,7 @@ describe("piChunks 事件矩阵（docs/LLM-PI.md 契约 2）", () => {
       { type: "finish", finish: { kind: "error", message: "Connection error.", code: "network" } },
     ]);
     expect(await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "request refusal" } })])).toEqual([
-      { type: "finish", finish: { kind: "error", message: "request refusal", code: "non-retryable" } }, // 显式 non-retryable 事实码
+      { type: "finish", finish: { kind: "error", message: "request refusal", code: "non-retryable" } },
     ]);
     expect(await collect([{ type: "mystery" } as never])).toEqual([
       { type: "finish", finish: { kind: "error", message: "stream ended without finish", code: "network" } },
@@ -288,11 +270,9 @@ describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透
       { type: "usage", usage: { input: 141174, output: 0, cacheRead: 0, cacheWrite: 0 } },
       { type: "finish", finish: { kind: "error", message: "length stop with zero output (context window overflow)", code: "context-overflow" } },
     ]);
-    // output>0 = 合法输出上限命中 → 正常 max-tokens（续写路径）
     expect(
       await collect([assistantEvent({ type: "done", reason: "length", message: { usage: { input: 10, output: 8192, cacheRead: 0, cacheWrite: 0 } } })]),
     ).toEqual([{ type: "usage", usage: { input: 10, output: 8192, cacheRead: 0, cacheWrite: 0 } }, { type: "finish", finish: { kind: "max-tokens" } }]);
-    // usage 缺席 = 信息不足不分类 → 保持 max-tokens
     expect(await collect([assistantEvent({ type: "done", reason: "length", message: {} })])).toEqual([{ type: "finish", finish: { kind: "max-tokens" } }]);
   });
 
@@ -368,8 +348,6 @@ describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透
   });
 
   it("overflow 分类无保护序：限流文案命中 overflow pattern 时 429/503 在场也照报 context-overflow（瞬态甄别归消费端 retryableCodes——出口层不代编排）", async () => {
-    // Bedrock ThrottlingException 经网关转发无前缀形态——曾误命中 /too many tokens/i；
-    // llm 层只报事实，llm-retry 按 retryableCodes 优先重试（C4 处置序下放）
     expect(
       await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "Too many tokens, please wait before trying again." } })], {
         failureInfo: () => ({ status: 429 }),
@@ -380,7 +358,6 @@ describe("截断信号归一（docs/OUTPUT-TOKEN-CONTINUATION.md 批1：done 透
         failureInfo: () => ({ status: 503 }),
       }),
     ).toEqual([{ type: "finish", finish: { kind: "error", message: "prompt is too long", code: "context-overflow" } }]);
-    // 未命中 overflow pattern 的 429/503 照旧落 http-<status>（重试快车道输入不丢）
     expect(
       await collect([assistantEvent({ type: "error", reason: "error", error: { errorMessage: "rate limited" } })], {
         failureInfo: () => ({ status: 429 }),
@@ -413,7 +390,7 @@ describe("classifyErrorText（词边界负例全表）", () => {
   });
 
   it("负例：数值子串不误杀；鉴权/refusal 落显式 non-retryable", () => {
-    expect(classifyErrorText("used 14290 tokens")).toBe("network"); // 不是 429
+    expect(classifyErrorText("used 14290 tokens")).toBe("network");
     expect(classifyErrorText("econnrefused 127.0.0.1:14001")).toBe("network");
     expect(classifyErrorText("request id 15003 failed")).toBe("network");
     expect(classifyErrorText("invalid api key")).toBe("non-retryable");

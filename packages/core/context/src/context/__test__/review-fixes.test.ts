@@ -1,4 +1,3 @@
-// 对抗审查问题清单的回归用例（每条注明审查编号；修复没有回归用例 = 没修完）。
 import { describe, expect, it, vi } from "vitest";
 import { deepFreeze } from "../freeze.ts";
 import { createContext } from "../create-context.ts";
@@ -14,7 +13,6 @@ const sleep = (ms: number): Promise<void> =>
 
 const noop = (): void => {};
 
-/** 审查 #10 的僵尸窗口：中间件已返回后经 macrotask 触发 next，错误捕到模块级变量 */
 let zombieNextError: Error | undefined;
 function fireZombieNext(next: (input: number) => Promise<number>, input: number): void {
   setTimeout(() => {
@@ -32,7 +30,7 @@ describe("审查 #1：disposer 抛错不中止回卷（I1 优先），错误聚�
     const order: string[] = [];
     ctx.effect(() => {
       order.push("first");
-    }); // 后注册 → 先回卷
+    });
     ctx.effect(() => {
       throw new Error("boom");
     });
@@ -40,7 +38,7 @@ describe("审查 #1：disposer 抛错不中止回卷（I1 优先），错误聚�
       order.push("last");
     });
     await expect(ctx.dispose()).rejects.toThrow("boom");
-    expect(order).toEqual(["last", "first"]); // 抛错的下一个（last）先执行，first 也执行
+    expect(order).toEqual(["last", "first"]);
   });
 
   it("多个 disposer 抛错 → AggregateError；层状态 disposed、二次 dispose no-op", async () => {
@@ -52,23 +50,23 @@ describe("审查 #1：disposer 抛错不中止回卷（I1 优先），错误聚�
     ctx.effect(() => {
       throw new Error("b");
     });
-    ctx.effect(after); // 最后注册 → 最先回卷（在抛错者之前）
+    ctx.effect(after);
     const caught = await ctx.dispose().catch((error: unknown) => error);
     expect(caught).toBeInstanceOf(AggregateError);
     expect((caught as AggregateError).errors).toHaveLength(2);
     expect(after).toHaveBeenCalledTimes(1);
-    await expect(ctx.dispose()).resolves.toBeUndefined(); // 未卡死在 disposing
-    expect(() => ctx.effect(noop)).toThrow(/disposed/); // 状态确已推进
+    await expect(ctx.dispose()).resolves.toBeUndefined();
+    expect(() => ctx.effect(noop)).toThrow(/disposed/);
   });
 });
 
 describe("审查 #2：deepFreeze 预冻结外壳不阻断子代递归；环引用安全", () => {
   it("预冻结外壳 + 活子代 → 子代也被冻结", () => {
     const nested = { x: 1 };
-    const shell = Object.freeze({ nested }); // 外壳冻结、子代活
+    const shell = Object.freeze({ nested });
     const payload = deepFreeze({ shell });
     expect(Object.isFrozen(payload.shell)).toBe(true);
-    expect(Object.isFrozen(nested)).toBe(true); // 子代递归冻结
+    expect(Object.isFrozen(nested)).toBe(true);
   });
 
   it("环引用不栈溢出", () => {
@@ -90,9 +88,9 @@ describe("审查 #5：disposer 自清理——手动退订后层回卷不再重�
     const heard: number[] = [];
     const stop = ctx.on(token, ({ v }) => heard.push(v));
     stop();
-    stop(); // 幂等
+    stop();
     ctx.emit(token, { v: 1 });
-    await ctx.dispose(); // 层回卷不再复活监听
+    await ctx.dispose();
     ctx.emit(token, { v: 2 });
     expect(heard).toEqual([]);
   });
@@ -103,10 +101,10 @@ describe("审查 #6：provide 先入账后广播——监听器内触发 dispose
     const ctx = createContext();
     const token = defineService<{ n: number }>("svc-race");
     ctx.on(serviceProvided, () => {
-      void ctx.dispose(); // 监听器内触发回卷
+      void ctx.dispose();
     });
     ctx.provide(token, { n: 1 });
-    expect(ctx.tryUse(token)).toBeUndefined(); // 注册已随回卷消失
+    expect(ctx.tryUse(token)).toBeUndefined();
     expect(() => ctx.use(token)).toThrow(/not provided/);
   });
 });
@@ -141,8 +139,8 @@ describe("审查 #8：provide(undefined) 不穿透 nearest-first 遮蔽", () => 
     ctx.provide(token, { n: 1 });
     const child = ctx.scope({ agentId: "a" });
     child.provide(token, undefined as unknown as { n: number });
-    expect(child.use(token)).toBeUndefined(); // 垃圾输入存了 undefined——不穿层
-    expect(ctx.use(token)).toEqual({ n: 1 }); // 父层不受影响
+    expect(child.use(token)).toBeUndefined();
+    expect(ctx.use(token)).toEqual({ n: 1 });
   });
 });
 
@@ -165,8 +163,8 @@ describe("审查 #9：loadPlugins 失败路径 dispose 也抛 → 仍抛 apply �
           },
         },
       ];
-      await expect(loadPlugins(ctx, plugins)).rejects.toThrow("apply boom"); // 根因
-      expect(errorSpy).toHaveBeenCalled(); // dispose 错误被记录而非吞掉
+      await expect(loadPlugins(ctx, plugins)).rejects.toThrow("apply boom");
+      expect(errorSpy).toHaveBeenCalled();
     } finally {
       errorSpy.mockRestore();
     }
@@ -199,11 +197,11 @@ describe("审查 #11：dispatch 的祖先链 live 检查（半拆态窗口）", 
     ctx.effect(
       () =>
         new Promise<void>((resolve) => {
-          releaseParent = resolve; // 父回卷停在这个 disposer 上
+          releaseParent = resolve;
         }),
     );
     const disposing = ctx.dispose();
-    await sleep(0); // 进入 disposing 窗口
+    await sleep(0);
     try {
       await child.dispatch(token, { v: 1 });
     } catch (error) {
@@ -226,7 +224,7 @@ describe("审查 #12：emit 异步监听器 rejection 进 sink（不崩进程）
     });
     ctx.on(token, later);
     expect(() => ctx.emit(token, { v: 1 })).not.toThrow();
-    await sleep(0); // 等 rejection 传播
+    await sleep(0);
     expect(sink).toHaveBeenCalledTimes(1);
     expect(later).toHaveBeenCalledTimes(1);
   });
@@ -239,12 +237,12 @@ describe("审查 #13：分发中退订的快照语义（本次仍执行、下次
     const heard: number[] = [];
     const stopSecond = ctx.on(token, ({ v }) => heard.push(v * 10));
     ctx.on(token, ({ v }) => heard.push(v * 100));
-    ctx.on(token, () => stopSecond()); // 第三个监听者退订第二个
+    ctx.on(token, () => stopSecond());
     ctx.emit(token, { v: 1 });
-    expect(heard).toEqual([10, 100]); // 快照语义：第二个本次仍执行
+    expect(heard).toEqual([10, 100]);
     heard.length = 0;
     ctx.emit(token, { v: 2 });
-    expect(heard).toEqual([200]); // 下次不再执行
+    expect(heard).toEqual([200]);
   });
 
   it("waterfall 迭代中退订后续中间件（快照语义）", async () => {
@@ -256,9 +254,9 @@ describe("审查 #13：分发中退订的快照语义（本次仍执行、下次
       return next(i + 100);
     });
     const out = await ctx.dispatch(token, 1, async (i) => i);
-    expect(out).toBe(102); // 第二个（+100）在快照内仍执行
+    expect(out).toBe(102);
     const again = await ctx.dispatch(token, 1, async (i) => i);
-    expect(again).toBe(101); // 下次只剩第二个
+    expect(again).toBe(101);
   });
 });
 
@@ -271,6 +269,6 @@ describe("审查 #3 补充：sibling 的 service/provided 隔离", () => {
     a.on(serviceProvided, ({ service }) => aHeard.push(service));
     const token = defineService<{ n: number }>("svc-b");
     b.provide(token, { n: 0 });
-    expect(aHeard).toEqual([]); // 兄弟不可见（C3）
+    expect(aHeard).toEqual([]);
   });
 });

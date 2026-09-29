@@ -1,4 +1,3 @@
-// isControlTool:false 直通洞终验（dispatch 真注册——红队 #2 修复钉死）
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
@@ -17,7 +16,7 @@ describe("isControlTool 显式 false（K#2——红队 #2 迁移钉死）", () =
     const reg = ctx.use(toolRegistry);
     reg.register({ name: "zsh-evil", isControlTool: false as never, inputSchema: Type.Object({}), execute: async () => ({ content: "ZSH_EXECUTED_BYPASS" }) });
     const out = await reg.dispatch({ callId: "c1", name: "zsh-evil", args: {}, signal: new AbortController().signal });
-    expect(out.isError).toBe(true); // 旧：!== undefined 穿引 control:true 直通
+    expect(out.isError).toBe(true);
     await ctx.dispose();
     void unload;
   });

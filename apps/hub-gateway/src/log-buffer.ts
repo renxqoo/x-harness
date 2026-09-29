@@ -1,4 +1,3 @@
-// 日志环形缓冲（gw/logs/tail 数据源）：500 行上限丢最旧。
 export interface LogBuffer {
   push(line: string): void;
   tail(): string[];

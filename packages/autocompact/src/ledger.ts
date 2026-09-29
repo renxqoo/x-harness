@@ -1,10 +1,3 @@
-// L2 账本：已收编段的 token 记账（预算裁剪 + 文件文本计入
-// + 覆写 current——整段式摘要的死穴是重述衰减（摘要的摘要），账本用机械合并消灭
-// 它：goals/decisions 行级只增不删（翻案走新增行）、done 吸收 pending、verified 吸收
-// unverified、current 唯一允许覆写（patch 空则保留旧值）。files 节是纯机械面，组装期
-// 拼接。序列化块序 = 缓存友好（稳定前缀在前、覆写节在尾）。patch 解析失败 →
-// undefined（调用方计败——切口不推进，下段更大重发；连续 3 败熔断）。
-
 import { neutralizeForSummary } from "@x-harness/compaction";
 import { estimateText } from "@x-harness/token-meter";
 
@@ -22,7 +15,6 @@ export function emptyLedger(): Ledger {
   return { goals: [], decisions: [], tasksPending: [], tasksDone: [], factsUnverified: [], factsVerified: [], current: "" };
 }
 
-/** 行级 append-only 并集（旧序保持 + 新行去重追加——不删除是账本的反衰减根基） */
 function unionAppend(oldLines: readonly string[], newLines: readonly string[]): string[] {
   const merged = [...oldLines];
   for (const line of newLines) {
@@ -31,9 +23,6 @@ function unionAppend(oldLines: readonly string[], newLines: readonly string[]): 
   return merged;
 }
 
-/** 节内词表：账本全部结构标签（含 files 机械节——杂散标签行过滤面；模型
- *  输出漏闭标签时，非贪婪解析会把后续节的开标签当内容行收进当前节，污染行
- *  会被 append-only 永久保留） */
 const LEDGER_TAGS: readonly string[] = ["goals", "decisions", "done", "pending", "verified", "unverified", "current", "files"];
 
 function isTagLine(line: string): boolean {
@@ -56,8 +45,6 @@ function tagContent(text: string, tag: string): string | undefined {
   return match?.[1];
 }
 
-/** 模型输出 → 账本 patch：七节标签提取；全部缺节（垃圾输出）→ undefined。
- *  current 允许多行（原文保留），其余节按行解析。 */
 export function parseLedgerPatch(text: string): Ledger | undefined {
   const goals = sectionLines(tagContent(text, "goals"));
   const decisions = sectionLines(tagContent(text, "decisions"));
@@ -72,9 +59,6 @@ export function parseLedgerPatch(text: string): Ledger | undefined {
   return { goals, decisions, tasksDone, tasksPending, factsVerified, factsUnverified, current };
 }
 
-/** 机械合并：goals/decisions 行级 append-only；done 并集吸收 pending（完成即出队）；
- *  verified 并集吸收 unverified（验证后归档）；current 覆写（patch 空则保留——模型
- *  漏一节不丢「进行中工作」） */
 export function mergeLedger(old: Ledger, patch: Ledger): Ledger {
   const tasksDone = unionAppend(old.tasksDone, patch.tasksDone);
   const tasksPending = unionAppend(old.tasksPending, patch.tasksPending).filter((line) => !tasksDone.includes(line));
@@ -96,8 +80,6 @@ function renderSection(tag: string, lines: readonly string[]): string {
   return `<${tag}>\n${lines.join("\n")}\n</${tag}>`;
 }
 
-/** 序列化（缓存友好块序）：稳定前缀（goals→decisions→done→pending→verified→
- *  unverified）在前，机械 files 与覆写 current 在尾——连续检查点间前缀命中缓存 */
 export function serializeLedger(ledger: Ledger, filesText?: string): string {
   const parts = [
     renderSection("goals", ledger.goals),
@@ -112,9 +94,6 @@ export function serializeLedger(ledger: Ledger, filesText?: string): string {
   return parts.join("\n\n");
 }
 
-/** 提示词侧序列化：节壳保持字面半角（CP 提示词要求 exact tags——整体中和会把
- *  结构标签全角化，模型镜像全角形则解析必败），内容行逐行过 neutralizeForSummary
- *  （行内毒串仍被封）。落盘快照用 serializeLedger（原文），两轨分离 */
 export function serializeLedgerForPrompt(ledger: Ledger, filesText?: string): string {
   const section = (tag: string, lines: readonly string[]): string => renderSection(tag, lines.map(neutralizeForSummary));
   const parts = [
@@ -130,17 +109,13 @@ export function serializeLedgerForPrompt(ledger: Ledger, filesText?: string): st
   return parts.join("\n\n");
 }
 
-/** 账本 token 量（files 文本与 current 直读计入） */
 export function ledgerTokens(ledger: Ledger, filesText?: string): number {
   return estimateText(serializeLedger(ledger, filesText));
 }
 
-/** 预算内截断的 files 文本（保留末尾行——最近文件对在飞工作最相关）；空/短 → 原样 */
 function clampFilesText(filesText: string | undefined, budgetTokens: number): string | undefined {
   if (filesText === undefined || filesText === "") return undefined;
   if (estimateText(filesText) <= budgetTokens) return filesText;
-  // 行级从尾保留（最近读/改的文件在后）；保留至预算内，至少末行（不可全丢——
-  // L2 落账文本的 files 节是模型对已触文件的唯一记忆面）
   const lines = filesText.split("\n");
   const kept: string[] = [];
   for (let i = lines.length - 1; i >= 0; i -= 1) {
@@ -153,10 +128,6 @@ function clampFilesText(filesText: string | undefined, budgetTokens: number): st
   return kept.length > 0 ? kept.join("\n") : undefined;
 }
 
-/** 账本预算裁剪：files 文本先限到 50% 预算（机械清单可重构——重复读文件即可恢复，
- *  裁剪优先级最低）；再按超限顺序裁 done → verified；goals/decisions/pending/
- * current 永不裁——append-only 核心价值与在飞工作不可丢；只剩不可裁节时接受超限。
- * 返回 { ledger, filesText }——files 可能被截断，调用方落账/序列化必须用返回值 */
 export function trimLedgerWithFiles(
   ledger: Ledger,
   budgetTokens: number,
@@ -179,7 +150,6 @@ export function trimLedgerWithFiles(
   return { ledger: trimmed, filesText: clampedFiles };
 }
 
-/** 账本是否有可承载 L2 的内容 */
 export function ledgerReady(ledger: Ledger): boolean {
   return (
     ledger.goals.length + ledger.decisions.length + ledger.tasksDone.length + ledger.tasksPending.length + ledger.factsVerified.length +

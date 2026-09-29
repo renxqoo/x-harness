@@ -1,16 +1,9 @@
-// pi-context 映射（docs/LLM-PI.md 契约 2）：LlmRequest（SurfaceMessage 投影）→ pi-ai Context。
-// 纯函数、零网络——两协议（anthropic-messages/openai-completions）共用同一 Context 形状。
-// 语义对齐旧 anthropic-request.ts/openai-compat.ts：空 user 跳过；tool_use input STRING →
-// JSON.parse 降 {}；tool 消息 toolName 由前文 assistant 的 tool_use 回查、查无落 "unknown"；
-// assistant 重放元数据必填字段补齐（pi 要求 api/provider/model/usage/stopReason/timestamp）。
-
 import type { Context, Message as PiMessage, Tool as PiTool, ToolCall } from "@earendil-works/pi-ai";
 import type { ImageContent, TextContent, ThinkingContent } from "@earendil-works/pi-ai";
 import type { SurfaceMessage } from "@x-harness/session";
 import type { ToolSchema } from "@x-harness/tools";
 import type { LlmRequest } from "./types.ts";
 
-/** tool_use input：parse 失败或非 plain object（null/数组/原始值）→ {}——pi ToolCall 要对象，垃圾不崩 */
 function parseToolInput(raw: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -18,13 +11,10 @@ function parseToolInput(raw: string): Record<string, unknown> {
       return parsed as Record<string, unknown>;
     }
   } catch {
-    /* 降级 {} */
   }
   return {};
 }
 
-/** user 块整形：text（非空）→ TextContent；image → ImageContent（mediaType 换名 mimeType——
- *  内核字段名对齐 hub wire，pi 侧换名收敛于此单点） */
 function userContent(content: unknown): Array<TextContent | ImageContent> {
   const out: Array<TextContent | ImageContent> = [];
   if (!Array.isArray(content)) return out;
@@ -44,9 +34,6 @@ function userContent(content: unknown): Array<TextContent | ImageContent> {
   return out;
 }
 
-/** assistant 块整形：text → TextContent；tool_use → ToolCall（input 解析降 {}）；
- *  签名块重建 ThinkingContent（CONTEXT-TOKEN-UNIFICATION §3.1 L5——仅 openai 协议
- *  且 provenance 匹配当前路由；anthropic 按 B-1 裁决跳过待真端点实证）。 */
 function assistantContent(content: unknown, api: string, modelId: string): Array<TextContent | ThinkingContent | ToolCall> {
   const out: Array<TextContent | ThinkingContent | ToolCall> = [];
   if (!Array.isArray(content)) return out;
@@ -68,10 +55,6 @@ function assistantContent(content: unknown, api: string, modelId: string): Array
   return out;
 }
 
-/** 发送层配对兜底（CONTEXT-TOKEN-UNIFICATION §7.3 三重防线第三层——前两层
- *  （切口轮首对齐构造保证 + replace 区间完整）已把概率压到 resume/截断边界，此处
- *  只校验不修复：孤儿 tool result（无对应 tool_use）整块剥除、悬空 tool_use（无
- *  result——截断边界形态）丢弃，防 400。返回新数组（无孤儿时原引用零拷贝）。 */
 export function ensureToolPairing(messages: PiMessage[]): PiMessage[] {
   const toolUseIds = new Set<string>();
   for (const message of messages) {
@@ -80,9 +63,7 @@ export function ensureToolPairing(messages: PiMessage[]): PiMessage[] {
       if (block.type === "toolCall") toolUseIds.add(block.id);
     }
   }
-  // toolResult 孤儿（无对应 toolCall——resume/截断边界形态）：剥除
   const filtered = messages.filter((message) => message.role !== "toolResult" || toolUseIds.has(message.toolCallId));
-  // 悬空 toolCall（有 call 无 result）：从 assistant content 剥除（保留其余块；剥空的 assistant 整条丢）
   const resultIds = new Set(filtered.filter((m) => m.role === "toolResult").map((m) => m.toolCallId));
   const stripped = filtered.map((message) => {
     if (message.role !== "assistant") return message;
@@ -93,11 +74,6 @@ export function ensureToolPairing(messages: PiMessage[]): PiMessage[] {
   return final.length === messages.length ? messages : final;
 }
 
-/** 签名载荷（SurfaceMessage.thinkingBlocks → pi ThinkingContent）重建门：
- *  ① 协议门——仅 openai-completions（B-1：anthropic 待真端点实证空文本+签名形态）；
- *  ② provenance 门——origin 与当前路由不匹配（跨模型切换/resume）不重建（维持
- *    pi 的跨模型降级语义，防路由 meta 伪造使其失效）；缺省 fail-closed 不重建；
- *  ③ 块序——thinking 块 prepend（协议要求居 content 首位）。 */
 function signatureBlocksToContent(
   blocks: readonly { signature: string; redacted: boolean; origin: { provider: string; model: string } }[] | undefined,
   meta: { readonly api: string; readonly provider: string; readonly model: string },
@@ -109,20 +85,19 @@ function signatureBlocksToContent(
     .map((block) => ({ type: "thinking" as const, thinking: "", thinkingSignature: block.signature, ...(block.redacted ? { redacted: true } : {}) }));
 }
 
-/** SurfaceMessage → pi wire 消息（空 user 整条跳过；toolName 前文回查） */
 export function toPiMessages(
   messages: readonly SurfaceMessage[],
   meta: { readonly api: string; readonly provider: string; readonly model: string },
 ): PiMessage[] {
   const out: PiMessage[] = [];
-  const nameByCallId = new Map<string, string>(); // 前文 assistant tool_use 的 callId → name 回查
+  const nameByCallId = new Map<string, string>();
   for (const message of messages) {
     switch (message.role) {
       case "system":
-        break; // systemPrompt 收集归调用方
+        break;
       case "user": {
         const content = userContent(message.content);
-        if (content.length === 0) continue; // 空 user 整条跳过（垃圾降级，不换 400）
+        if (content.length === 0) continue;
         out.push({
           role: "user",
           content,
@@ -168,7 +143,7 @@ export function toPiMessages(
 function toPiTools(tools: readonly ToolSchema[]): PiTool[] {
   return tools.map((tool) => ({
     name: tool.name,
-    description: tool.description ?? "", // pi Tool.description 必填——缺席落空串
+    description: tool.description ?? "",
     parameters: tool.inputSchema as PiTool["parameters"],
   }));
 }

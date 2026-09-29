@@ -1,5 +1,3 @@
-// 对外命令面（DESIGN §3，61 个）：wire 入参的松类型（解析与校验在处理器逐字段做）。
-// 本文件持命令名封闭集与共享入参形状；分组仅作文档注记——路由事实在 internal.ts。
 import type { WireImage } from "../shared/images.ts";
 
 export interface CommandInput {
@@ -35,9 +33,6 @@ export interface EntriesQuery {
   since?: number;
   before?: number;
   limit?: number;
-  /** 条目视图（docs/SESSION.md 三视图分域）：journal=全量 WAL 行（缺省，字节级兼容）；
-   *  history=压缩前原文投影（单点 replace 载体滤除、区间载体降级 elide 单行）。
-   *  游标/leafSeq/hasMore 恒 journal 域（两视图互通；history 下 limit=N 不保证返回 N 条） */
   view?: "journal" | "history";
 }
 
@@ -55,7 +50,6 @@ export interface BashSpec {
   id?: string;
 }
 
-/** 全命令名封闭集（smoke 断言依据；新增命令必须先进本表） */
 export const COMMAND_NAMES: readonly string[] = [
   "thread/start",
   "thread/resume",

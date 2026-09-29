@@ -1,10 +1,3 @@
-// worktree 隔离（docs/AGENT-DELEGATION.md §8 + docs/WORKSPACE-ROOT-INJECTION.md）：
-// 路径在 repo 外同级（避开 .git 受保护区与主仓工作树污染）；git 调用显式携带 cwd
-// （探测锚 workspaceRoot——宿主注入；写操作锚 repoTop——spawn 时落账的持久化事实，
-// 跨装配 resume/fork 换 cwd 不漂移）；进程内 gitChain 串行 + 跨进程 per-repo lockfile
-// （hub 多 worker 同仓形态）；清理评估（status --porcelain 空 → worktree remove +
-// branch -D；非空保留）；启动期对账清扫（父进程崩溃泄漏兜底）。
-
 import { execFile } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -16,18 +9,14 @@ import { branchOfHeadText, parseWorktreeGitdir, worktreeMainOfGitdir } from "./w
 
 const exec = promisify(execFile);
 
-/** worktree 环境事实（.git file / HEAD 纯 fs 解析——主仓顶与分支的单一真相；
- *  harness probeGitFacts 与本包 payload/环境块共源消费） */
 export type WorktreeFacts = import("./worktree-facts.ts").WorktreeFacts;
 
-/** 读 worktree 目录的 git 事实（.git file → gitdir → HEAD）；目录缺席/非 worktree
- *  形态/IO 失败 → undefined（降级不判——键缺席即未知） */
 export async function worktreeFactsOf(path: string): Promise<WorktreeFacts | undefined> {
-  if (path === "") return undefined; // 空串 join 出 ".git" 相对 cwd——会解析到进程所在仓（导出面守卫）
+  if (path === "") return undefined;
   try {
     const raw = await readFile(join(path, ".git"), "utf8");
     const parsed = parseWorktreeGitdir(raw);
-    if (parsed === undefined) return undefined; // .git 是目录（主仓本体）/坏文件
+    if (parsed === undefined) return undefined;
     const head = await readFile(join(parsed.gitdir, "HEAD"), "utf8").catch(() => undefined);
     const branch = head !== undefined ? branchOfHeadText(head) : undefined;
     const main = worktreeMainOfGitdir(parsed.gitdir);
@@ -38,7 +27,6 @@ export async function worktreeFactsOf(path: string): Promise<WorktreeFacts | und
   }
 }
 
-/** git 全局串行队列（进程内；跨进程互斥归 per-repo lockfile——方案并发预算） */
 let gitChain: Promise<unknown> = Promise.resolve();
 
 export function git(args: readonly string[], opts: { readonly cwd?: string } = {}): Promise<{ stdout: string; stderr: string }> {
@@ -51,32 +39,23 @@ export interface WorktreePlan {
   readonly path: string;
   readonly branch: string;
   readonly repoTop: string;
-  /** 新树环境事实（spawn 时 .git file 解析——payload/environment 块的单一来源；
-   *  D6：主仓锚取 gitdir 解析非 repoTop（嵌套形态 repoTop=父 worktree）） */
   readonly facts?: WorktreeFacts;
 }
 
 export type WorktreeOutcome = { ok: true; plan: WorktreePlan } | { ok: false; reason: string };
 
-/** worktree 父目录（repo 外同级） */
 export function worktreeParent(repoTop: string): string {
   return join(dirname(repoTop), ".x-harness-worktrees");
 }
 
-/** 物理归一（realpathOrSelf——缺省同 PathGate 构造口径）：词法比较前消 symlink
- *  （macOS /var vs /private/var——逻辑形 workspaceRoot 对物理形 repoTop 会被词法
- *  比较误判「非祖先」，合法子目录误拒 workspace-not-in-repo）。 */
 function physical(p: string): string {
   try {
     return realpathSync(p);
   } catch {
-    return resolve(p); // 不存在（将被 git 失败面处理）——词法形兜底
+    return resolve(p);
   }
 }
 
-/** repoTop 归属校验：仓顶须是 workspaceRoot 自身或其祖先（物理归一后比较——
- *  逻辑形/物理形 symlink 分叉不做归一会把合法工作区误拒）。rev-parse 命中的仓顶
- *  在工作区之外（GIT_DIR 注入等防御面）时拒绝——防隔离基座被静默替换。 */
 function ownsWorkspace(repoTop: string, workspaceRoot: string): boolean {
   const rel = relative(physical(repoTop), physical(workspaceRoot));
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
@@ -103,7 +82,6 @@ export async function createWorktree(agentId: string, workspaceRoot: string, onD
   try {
     await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["worktree", "add", "-b", branch, path, "HEAD"], { cwd: top.top }), onDegraded);
   } catch (error) {
-    // 半建兜底（写操作持锁——A 路 #7：并发预算的 branch -D 持锁面不许裸奔）
     await withRepoLock(repoLockPath(worktreeParent(top.top), top.top), () => git(["branch", "-D", branch], { cwd: top.top }), onDegraded).catch(() => {});
     return { ok: false, reason: `git worktree add failed (${errorText(error)})` };
   }
@@ -115,17 +93,10 @@ export type CleanupResult =
   | { readonly kind: "kept-dirty"; readonly path: string }
   | { readonly kind: "remove-failed"; readonly path: string; readonly detail: string };
 
-/** 清理评估（docs/WORKSPACE-ROOT-INJECTION.md 锚定规则）：无改动 → remove + 分支删除；
- *  有改动 → 保留（改动不丢）；remove 失败 → remove-failed（onWarn 由调用方接）。
- *  「无改动」= 工作树干净且分支无领先提交（commit 后净树仍算有改动——未合并提交
- *  是仅存副本，删分支即数据丢失）。
- *  git 写操作锚 plan.repoTop（持久化事实——跨装配 resume/fork 换 cwd 不漂移）+
- *  per-repo lockfile（跨进程写互斥；锁不可重入——sweep 持锁时走 cleanupHeld）。 */
 export async function evaluateCleanup(plan: WorktreePlan, onDegraded?: LockDegraded): Promise<CleanupResult> {
   return withRepoLock(repoLockPath(worktreeParent(plan.repoTop), plan.repoTop), () => cleanupHeld(plan), onDegraded);
 }
 
-/** 分支缺席探测（并发清理幂等判别——stderr 文案跨 git 版本不稳，以 --list 为准） */
 async function branchGone(plan: WorktreePlan): Promise<boolean> {
   const out = await git(["branch", "--list", plan.branch], { cwd: plan.repoTop }).then(
     (r) => r.stdout,
@@ -134,12 +105,8 @@ async function branchGone(plan: WorktreePlan): Promise<boolean> {
   return out.trim() === "";
 }
 
-/** 清理本体（调用方已持 repo 锁——sweep 全程持锁时复用，免同锁重入死锁） */
 async function cleanupHeld(plan: WorktreePlan): Promise<CleanupResult> {
   if (!existsSync(plan.path)) {
-    // 目录已被外部删除（rm / 并发清理先行者）：git 仍登记该 worktree（branch -D 报
-    // used by worktree）——先 prune 再删分支。分支已不存在（先行者删过）也算幂等达成
-    // （A 路复审④——并发双清理的第二落者不得谎报失败）；其余失败经 stderr 判别。
     const pruned = await git(["worktree", "prune"], { cwd: plan.repoTop })
       .then(() => git(["branch", "-D", plan.branch], { cwd: plan.repoTop }))
       .then(
@@ -155,13 +122,9 @@ async function cleanupHeld(plan: WorktreePlan): Promise<CleanupResult> {
   try {
     status = (await git(["-C", plan.path, "status", "--porcelain"])).stdout;
   } catch {
-    return { kind: "kept-dirty", path: plan.path }; // status 不可判 → 保守保留
+    return { kind: "kept-dirty", path: plan.path };
   }
   if (status.trim() !== "") return { kind: "kept-dirty", path: plan.path };
-  // 提交面检查（数据丢失级回归锚：净树 ≠ 无改动——子代理 commit 后工作区干净，但分支上的
-  // 未合并提交是仅存副本，branch -D 即孤儿化）。判据 = 分支头被其他本地分支包含（头被包含
-  // ⟺ 全部祖先被包含，精确；基线不假设 main：worktree add 的起点是当时 HEAD，可为任意分支）。
-  // 含命令不可判时分支已删（并发先行者）→ 视为无独有提交续走删除；其余失败保守保留
   const others = await git(["branch", "--contains", plan.branch], { cwd: plan.repoTop }).then(
     (r) => r.stdout.split("\n").map((l) => l.replace(/^[*+] /, "").trim()).filter((n) => n !== "" && n !== plan.branch),
     () => null,
@@ -181,33 +144,23 @@ async function cleanupHeld(plan: WorktreePlan): Promise<CleanupResult> {
   return removed ? { kind: "removed" } : { kind: "remove-failed", path: plan.path, detail: "worktree remove reported success but dir remains" };
 }
 
-/** 启动期对账清扫：无 live 行对应的 worktree 目录（崩溃泄漏）——无改动清、有改动保留。
- *  误删防线三层（方案并发预算）：livePaths（本进程活行）+ per-repo lockfile（跨进程写
- *  互斥）+ FRESH_MS 新鲜度窗。残余风险（他进程活树超窗无 mtime 更新）落档 §13。 */
 const FRESH_MS = 3_600_000;
 
-/** sweep 残留项（带形态——kept-dirty 与 remove-failed 分开报，不谎报 has changes） */
 export interface SweepKept {
   readonly path: string;
   readonly kind: "kept-dirty" | "remove-failed";
 }
 
-/** worktree 所属主仓顶（持久化事实）。linked worktree 内 rev-parse --show-toplevel
- *  返回 worktree 自身（实测）——不能用它；.git 文件的 gitdir 行
- *  `gitdir: <mainRepo>/.git/worktrees/<name>` 才是主仓锚（解析归 worktree-facts 纯函数）。 */
 export async function mainRepoTopOf(worktree: string): Promise<string | undefined> {
   try {
     const raw = await readFile(join(worktree, ".git"), "utf8");
     const parsed = parseWorktreeGitdir(raw);
     return parsed === undefined ? undefined : worktreeMainOfGitdir(parsed.gitdir);
   } catch {
-    return undefined; // .git 缺席/不可读——树损坏
+    return undefined;
   }
 }
 
-/** 进程级活树登记簿（A 路 #5）：livePaths 若只取本插件实例的 lineage， apply 时刻恒空
- *  （行只在装配后由 spawn/revive 注册）——同进程 resume/fork 重装配的新实例会误扫旧
- *  实例的活树。登记簿跨实例共享：spawn/revive 建树登记，清理/拆卸摘除。 */
 const liveTrees = new Set<string>();
 
 export function registerLiveTree(path: string): void {
@@ -218,7 +171,6 @@ export function unregisterLiveTree(path: string): void {
   liveTrees.delete(path);
 }
 
-/** 当前活树快照（sweep livePaths 供给——含本进程全部装配实例） */
 export function liveTreePaths(): readonly string[] {
   return [...liveTrees];
 }
@@ -227,25 +179,22 @@ export async function sweepWorktrees(livePaths: readonly string[], workspaceRoot
   const top = await repoTopOf(workspaceRoot);
   if (!top.ok) return [];
   const parent = worktreeParent(top.top);
-  // sweep 持锁全程（枚举+逐树评估+删除一个临界区——他进程 spawn/add 期间 sweep 不入）
   return withRepoLock(repoLockPath(parent, top.top), async () => {
     let entries: readonly string[];
     try {
       entries = await readdir(parent);
     } catch {
-      return []; // 无 worktree 父目录
+      return [];
     }
     const kept: SweepKept[] = [];
-    const ownPrefix = `${basename(top.top)}-agent-`; // 本仓条目前缀（共享父目录里兄弟仓共存——A 路 #3）
+    const ownPrefix = `${basename(top.top)}-agent-`;
     for (const entry of entries) {
-      if (entry.startsWith("repo-") && entry.endsWith(".lock")) continue; // lockfile 非工作树
-      if (!entry.startsWith(ownPrefix)) continue; // 他仓的树不评估（跨仓 remove 必 128 → 永久假告警）
+      if (entry.startsWith("repo-") && entry.endsWith(".lock")) continue;
+      if (!entry.startsWith(ownPrefix)) continue;
       const path = join(parent, entry);
       if (livePaths.includes(path)) continue;
       const info = await stat(path).catch(() => undefined);
-      if (info !== undefined && (tail.now ?? Date.now)() - info.mtimeMs < FRESH_MS) continue; // 新鲜树不清
-      // 分支复原：<repo>-agent-<8hex> → agent-<8hex>（取末段 "-agent-"——仓名含 "agent-"
-      // 时 indexOf 会错位命中仓名内首段；agentId 恒为 8hex 后缀，lastIndexOf 才是分隔处）
+      if (info !== undefined && (tail.now ?? Date.now)() - info.mtimeMs < FRESH_MS) continue;
       const at = entry.lastIndexOf("-agent-");
       if (at === -1) continue;
       const agentId = entry.slice(at + 1);

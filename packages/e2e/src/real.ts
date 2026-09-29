@@ -1,6 +1,3 @@
-// e2e:real——真凭证全链观察脚本（docs/SESSION-CHECKPOINT.md §3，P12：opt-in）：一条「你好」+
-// 自定义输出工具，流式帧实时上屏（agentAssistantStream：思考 dim、正文原色——docs/THINKING-STREAM.md）。
-// env GLM_API_KEY + GLM_BASE_URL + GLM_MODEL 齐备才执行；缺席 = 显式 skip（退出码 0）。不进默认门。
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -18,7 +15,6 @@ import { createLocalEnvPlugin } from "@x-harness/exec-env";
 const API_KEY = process.env.GLM_API_KEY;
 const BASE_URL = process.env.GLM_BASE_URL;
 const MODEL = process.env.GLM_MODEL;
-/** 协议闭集 {openai, anthropic}（缺省 openai；缺席不触发 skip——skip 三变量口径不变） */
 const PROTOCOL = "anthropic";
 
 if (API_KEY === undefined || API_KEY === "" || BASE_URL === undefined || BASE_URL === "" || MODEL === undefined || MODEL === "") {
@@ -29,7 +25,6 @@ if (API_KEY === undefined || API_KEY === "" || BASE_URL === undefined || BASE_UR
 const root = await mkdtemp(join('./', "xh-real-"));
 try {
   const ctx = createContext();
-  // bash 自建登记簿并 provide 为服务；task-tools 停靠共享——两行裸调用（装配序无关）
   const unload = await loadPlugins(ctx, [
     sessionPlugin,
     createJsonlSessionPersistence({ root }),
@@ -42,12 +37,11 @@ try {
     createBashPlugin(),
     createTaskToolsPlugin(),
   ]);
-  // BASE_URL 语义随协议：openai → {baseUrl}/chat/completions；anthropic → {baseUrl}/v1/messages
   const adapter =
     PROTOCOL === "anthropic"
       ? createAnthropicCompatAdapter({ baseUrl: BASE_URL, apiKey: API_KEY })
       : createOpenaiCompatAdapter({ baseUrl: BASE_URL, apiKey: API_KEY });
-  const provider = adapter.name; // provider 名与 adapter.name 精确一致（no-adapter fail-closed）
+  const provider = adapter.name;
   const off = ctx.use(llmRuntime).registerAdapter(adapter);
   ctx.effect(off);
 
@@ -57,9 +51,6 @@ try {
   });
   if (!made.ok) throw new Error(`agent 创建失败：${made.reason}`);
 
-  // 流式帧订阅（先于 followup——事件即发即弃无重放）：思考 dim、正文原色；
-  // kind 切换与 attempt 边界换行。SMOOTH_CPS>0 时显示侧匀速放帧（打字机）——
-  // 上游成坨到达时摊平观感，代价是显示滞后于真实到达（whenIdle 后排干余量）
   const smoothCps = Number(process.env.SMOOTH_CPS ?? "0");
   const tty = process.stdout.isTTY === true;
   let thinkingCount = 0;

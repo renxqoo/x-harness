@@ -1,4 +1,3 @@
-// L3 信封编解码 + PAKE 原语
 import { describe, expect, it } from "vitest";
 import { decodeEnvelope, encodeEnvelope } from "../envelope.ts";
 import { pakeConfirm, pakeConfirmVerify, pakeInitiate, pakeRespond } from "../pake.ts";
@@ -22,7 +21,6 @@ describe("PAKE 原语", () => {
   it("initiate/respond：消息确定、共享一致", () => {
     const a = pakeInitiate("12345678");
     const b = pakeRespond("12345678", a.message);
-    // 双方共享从各自视角可重算（pake 模块内对称派生）
     expect(a.message).not.toBe(b.message);
     expect(b.shared).toMatch(/^[0-9a-f]{64}$/);
   });

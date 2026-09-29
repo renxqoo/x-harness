@@ -1,6 +1,3 @@
-// repl-terminal（docs/CLI.md §2.3 stdin 单所有权）：提问/强制关闭收束未决提问/EOF 退出/
-// 行订阅。PassThrough 驱动，不碰真终端。
-
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { createReplTerminal } from "../repl-terminal.ts";
@@ -56,7 +53,7 @@ describe("createReplTerminal", () => {
     stdin.write("next-command\n");
     await delay(30);
     expect(lines).toEqual(["next-command"]);
-    expect(terminal.cancelPendingQuestion()).toBe(false); // 无挂起时 false
+    expect(terminal.cancelPendingQuestion()).toBe(false);
     stdin.end();
   });
 

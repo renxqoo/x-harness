@@ -1,7 +1,3 @@
-// 流空闲看门狗全链（docs/AGENT-LOOP-DRIVER.md §1.4）：真实装配 + 脚本化假适配器。
-// 症状回归：LLM 流静默挂死（无数据无错误无超时）曾使 turn 永久卡死——看门狗把挂死收敛为
-// 携 code:network 的 attempt → 既有 llm-retry 重拨 → 有界完成；取消语义不受污染。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -20,7 +16,6 @@ function textScript(text: string): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 挂死剧本：吐一帧正文后永久沉默（三起事故同形态） */
 function hangScript(text: string): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LlmChunk> {
     yield { type: "text-delta", text };
@@ -28,7 +23,6 @@ function hangScript(text: string): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 挂死剧本（signal 感知）：适配器真实形态——监听 request.signal，abort 到达即落定并记录 */
 function hangOnSignal(text: string, record: { aborted: boolean }): (request: LlmRequest) => AsyncGenerator<LlmChunk> {
   return (request) =>
     (async function* (): AsyncGenerator<LlmChunk> {
@@ -66,7 +60,6 @@ async function makeWorld(): Promise<World> {
     },
   });
   ctx.effect(off);
-  // 最小重试中间件（llm-retry 的同款挂点）：下游未裁决即重拨——看门狗超时的重试链路端到端背书
   ctx.on(agentRequestError, async (payload, next) => (await next(payload)) ?? ({ kind: "retry" } as const));
   return {
     ctx,
@@ -99,18 +92,17 @@ describe("流空闲看门狗（docs/AGENT-LOOP-DRIVER.md §1.4）", () => {
     await made.value.agent.whenIdle();
     const events = made.value.agent.session.events();
     const attempts = events.filter((e) => e.type === "assistant/attempt");
-    expect(attempts).toHaveLength(1); // 恰一次失败尝试（无重试件装配——单次超时后终态完成需第二次成功）
+    expect(attempts).toHaveLength(1);
     const attemptEvent = attempts[0] as { data: { error?: string; content?: Array<{ type: string; text?: string }> } } | undefined;
     expect(attemptEvent).toBeDefined();
     if (attemptEvent !== undefined) {
       expect(String(attemptEvent.data.error)).toContain("network");
-      // 超时前已收的部分文本随尝试落盘（STREAM-PARTIAL-PERSISTENCE——不进正文但进账）
       expect(attemptEvent.data.content).toEqual([{ type: "text", text: "partial" }]);
     }
-    expect(world.fake.calls).toHaveLength(2); // 真实重拨（新请求）
+    expect(world.fake.calls).toHaveLength(2);
     const final = events.find((e) => e.type === "assistant/message");
     const blocks = ((final ?? { data: undefined }).data as unknown as { content?: Array<{ type: string; text?: string }> } | undefined)?.content ?? [];
-    expect(blocks[0]?.text).toBe("recovered"); // 挂死尝试的部分文本不进正文
+    expect(blocks[0]?.text).toBe("recovered");
     expect(events.at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
   });
 
@@ -137,13 +129,13 @@ describe("流空闲看门狗（docs/AGENT-LOOP-DRIVER.md §1.4）", () => {
     if (!made.ok) return;
     made.value.agent.followup("hi");
     await new Promise((resolve) => {
-      setTimeout(resolve, 10); // 进入挂死窗口
+      setTimeout(resolve, 10);
     });
     made.value.agent.cancel("user");
     await made.value.agent.whenIdle();
     const events = made.value.agent.session.events();
-    expect(events.at(-1)?.data).toMatchObject({ reason: { kind: "aborted" } }); // 取消语义独占——不被超时改写
-    expect(world.fake.calls).toHaveLength(1); // 取消后不重拨
+    expect(events.at(-1)?.data).toMatchObject({ reason: { kind: "aborted" } });
+    expect(world.fake.calls).toHaveLength(1);
   });
 
   it("止损可观察：超时后 attempt 级 signal 确实 abort（掐断底层 fetch——突变删除 abort 曾不红）", async () => {
@@ -156,8 +148,8 @@ describe("流空闲看门狗（docs/AGENT-LOOP-DRIVER.md §1.4）", () => {
     if (!made.ok) return;
     made.value.agent.followup("hi");
     await made.value.agent.whenIdle();
-    expect(record.aborted).toBe(true); // 看门狗超时 → attempt signal abort → 挂死流被打断落定
-    expect(world.fake.calls).toHaveLength(2); // 重拨成功——闭环
+    expect(record.aborted).toBe(true);
+    expect(world.fake.calls).toHaveLength(2);
   });
 
   it("streamIdleTimeoutMs ≤ 0 关闭：直通分支不建计时器（正常流完成）", async () => {

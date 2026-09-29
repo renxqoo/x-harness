@@ -1,10 +1,3 @@
-// 工具族（docs/AGENT-DELEGATION.md §2.1/§3.2.1 + docs/DELEGATION-LONG-CONTENT.md 件15 D6/D7）：
-// spawn(exclusive)/message/list(parallel)。message 上限 = 注入 reportCap（D1 恒等——单旋钮，
-// 截断-追问闭环的结构保证），载体 maxLength（D6——报错为直接数字，pattern 载体数字埋在
-// 正则语法里）；summary 去 schema 上限（D7——元数据吸收性截断，verb 层 SUMMARY_CAP 兑现
-// description 的截断承诺）。停动词 task_stop 归 @x-harness/task-tools（件14）——本包经
-// agentTaskSource 注册 agent 源；报告读面归 [agent-notification] 推送。
-
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
@@ -21,9 +14,7 @@ export interface ToolDeps {
   readonly spawn: (ctx: ToolExecContext, input: SpawnInput) => Promise<VerbOutcome>;
   readonly message: (ctx: ToolExecContext, input: MessageInput) => Promise<VerbOutcome>;
   readonly list: (ctx: ToolExecContext) => Promise<readonly ChildView[]>;
-  /** message 上限（D1 恒等 = reportCap——validateOptions 已算好的注入值） */
   readonly reportCap: number;
-  /** spawn 描述尾部追加（件16 §9 分流引导——装配期组合，规格正文不动） */
   readonly spawnDescriptionAppend?: string;
 }
 
@@ -40,7 +31,6 @@ function viewLines(view: readonly ChildView[]): string {
       ? `kind=subagent ${row.agentId} session=${row.sessionId} type=${row.type} depth=${String(row.depth)} status=${row.status}${row.work !== undefined ? ` work=${row.work}` : ""}${row.worktree !== undefined ? ` worktree=${row.worktree}` : ""}`
       : `${row.name} [${row.ref}] kind=local-session status=${row.status}`,
   );
-  // running 行在场 → 尾附等待提示（反轮询执法读面）：结束 turn 等通知，禁 sleep/list_agents 自旋
   if (view.some((row) => row.status === "running")) {
     lines.push("Agents marked running are still working — end your turn and wait for the [agent-notification] (it wakes you); do not poll with sleep or repeated list_agents calls.");
   }
@@ -55,7 +45,6 @@ const spawnSchema = Type.Object({
   isolation: Type.Optional(Type.Union([Type.Literal("worktree"), Type.Literal("remote")], { description: "Isolation mode. \"worktree\" creates a temporary git worktree so the agent works on an isolated copy of the repo. \"remote\" launches the agent in a remote cloud environment (always runs in background; availability is gated)." })),
 });
 
-/** message schema（工厂内构造——maxLength 按注入 reportCap 插值，件15 批1） */
 const messageSchemaOf = (reportCap: number) =>
   Type.Object({
     to: Type.String({

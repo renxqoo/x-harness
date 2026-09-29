@@ -1,16 +1,7 @@
-// fold 状态机（docs/TELEMETRY-SQLITE.md §1.3 唯一权威词表）：Session 事件 → OTel span/log 行。
-// 增量 == 全量由同一 applyEvent 保证（token-meter 同款纪律）；游标（尾 seq）吸收重放与
-// created 首灌的重复投递。span_id 随机铸造的稳定性由「游标跳过 + DB 重建续链」结构性
-// 保证：已落库事件不重折（seq ≤ cursor 空产出），跨进程 resume 由 rebuildSessionFold
-// 从 DB 行（锚属性 xh.turn/xh.step/xh.attempt/tool.call_id）恢复开合状态与 trace 续链。
-// llm span 拆到 attempt 级（裁决 2C）：assistant/message 与 assistant/attempt 各开各闭；
-// request/header/context 只暂存当前 step 的请求属性，开写锚是 assistant 落账（§1.3）。
-
 import type { SessionEvent, SessionHeader, TurnEndReason } from "@x-harness/session";
 import { newSpanId, newTraceId } from "./ids.ts";
 import type { LogRow, LogSeverity, SpanKind, SpanRow, SpanStatus, TelemetryResource } from "./types.ts";
 
-/** otel_sessions 行（header = SessionHeader 原文 JSON 保真） */
 export interface SessionRowInsert {
   readonly sessionId: string;
   readonly traceId: string;
@@ -18,7 +9,6 @@ export interface SessionRowInsert {
   readonly header: string;
 }
 
-/** 单事件折叠产出：session 行（created 时）+ span 行（开行 OR IGNORE/闭行 UPDATE）+ log 行（OR IGNORE） */
 export interface FoldOutput {
   readonly session?: SessionRowInsert;
   readonly spans: readonly SpanRow[];
@@ -41,15 +31,12 @@ export interface OpenStep {
   readonly parentSpanId: string;
 }
 
-/** 未闭合 tool span（callId 配对键；闭行复用开行的 name/parent——不自指不漂移） */
 export interface OpenTool extends OpenStep {
   readonly name: string;
 }
 
-/** step 键（llm 暂存桶的索引面——fold 与 rebuild 共用） */
 export const stepKeyOf = (turn: number, step: number): string => `${turn}:${step}`;
 
-/** 判别联合经 Record 视图后的安全取值（窄化收口——健康日志字段恒在） */
 const num = (value: unknown): number => (typeof value === "number" && Number.isSafeInteger(value) ? value : -1);
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 const failureOf = (data: Record<string, unknown>): Record<string, unknown> =>
@@ -62,30 +49,23 @@ export interface SessionFold {
   sessionSpanId: string;
   sessionStartMs: number;
   sessionAttrs: Record<string, unknown>;
-  /** 已折叠尾 seq（含）——重放/首灌重复在此吸收 */
   cursor: number;
   openTurn: OpenTurn | undefined;
   openStep: OpenStep | undefined;
   readonly openTools: Map<string, OpenTool>;
-  /** 每 step 首个 request/header 的 ts——llm span 的 start 锚（§1.3：无则 assistant ts） */
   readonly headerTs: Map<string, number>;
-  /** 每 step 暂存的 llm 请求属性（header + context 合并；assistant 落账开 span 时取用） */
   readonly llmAttrs: Map<string, Record<string, unknown>>;
-  /** 每 step 已开 llm span 计数——xh.attempt 锚 */
   readonly llmCount: Map<string, number>;
-  /** 每 step 末个 llm span 行——llm/retry 的归属改写目标（「当前 llm span」） */
   readonly lastLlm: Map<string, SpanRow>;
   sessionClosed: boolean;
 }
 
-/** severity 闭合表（§1.3）：tool/result{isError} → ERROR；llm/retry、assistant/attempt → WARN；其余 INFO */
 export function severityOf(event: SessionEvent): LogSeverity {
   if (event.type === "tool/result" && event.data.isError === true) return "ERROR";
   if (event.type === "llm/retry" || event.type === "assistant/attempt") return "WARN";
   return "INFO";
 }
 
-/** turn/end 六变体 → status 映射（§1.3）：completed=OK；error=ERROR+message；其余=UNSET+reason 属性 */
 function turnEndOf(reason: TurnEndReason): { code: SpanStatus; message: string | null; attrs: Record<string, unknown> } {
   switch (reason.kind) {
     case "completed":
@@ -101,14 +81,12 @@ function turnEndOf(reason: TurnEndReason): { code: SpanStatus; message: string |
   }
 }
 
-/** aborted.cause / blocked.reason 的 detail 属性（其余变体无） */
 function turnEndDetail(reason: TurnEndReason): string | undefined {
   if (reason.kind === "aborted") return reason.cause;
   if (reason.kind === "blocked") return reason.reason;
   return undefined;
 }
 
-/** usage 四字段透传（§1.3：与 token-meter parseUsageSample 同 fail-closed 精神（逐字段防御透传））；垃圾字段省略不崩 */
 function usageAttrs(usage: unknown): Record<string, number> {
   if (typeof usage !== "object" || usage === null) return {};
   const record = usage as Record<string, unknown>;
@@ -166,7 +144,6 @@ function logRow(state: SessionFold, event: SessionEvent, spanId: string | null):
   };
 }
 
-/** log 归属 span：开 step > 开 turn > session span（session 已闭则 NULL——session 级事件） */
 function innermostSpanId(state: SessionFold): string | null {
   return state.openStep?.spanId ?? state.openTurn?.spanId ?? (state.sessionClosed ? null : state.sessionSpanId);
 }
@@ -175,7 +152,6 @@ function parentOf(state: SessionFold): string {
   return state.openStep?.spanId ?? state.openTurn?.spanId ?? state.sessionSpanId;
 }
 
-/** resource 盖章：OTel resource 语义属性摊在 trace 根（session span）——本地库无独立 resource 表 */
 function resourceAttrs(resource: TelemetryResource): Record<string, unknown> {
   const attrs: Record<string, unknown> = {
     "service.name": resource.serviceName,
@@ -185,7 +161,6 @@ function resourceAttrs(resource: TelemetryResource): Record<string, unknown> {
   return attrs;
 }
 
-/** 会话开折：created 时调用。known 提供时为 resume 续链（复用 DB 的 trace/span id——重放不铸新号） */
 export function openSessionFold(
   header: SessionHeader,
   resource: TelemetryResource,
@@ -234,14 +209,12 @@ export function openSessionFold(
   return { state, output };
 }
 
-// —— 各词条折叠子函数（applyEvent 的分派体——平铺 switch 的拆分面） ——
 
 interface Sink {
   readonly spans: SpanRow[];
   readonly logs: LogRow[];
 }
 
-/** 词条处理器统一载荷（max-params 封装规矩：第 4 参 = 缺的抽象） */
 interface Hit {
   readonly state: SessionFold;
   readonly event: SessionEvent;
@@ -264,7 +237,6 @@ function onTurnEnd(hit: Omit<Hit, "data">): void {
   const { state, event, sink } = hit;
   const open = state.openTurn;
   state.openTurn = undefined;
-  // 防御：step 未闭先闭（健康日志括号形状由 driver 落账纪律 + repair 合成保证）
   const step = state.openStep;
   if (step !== undefined && step.turn === open?.turn) {
     state.openStep = undefined;
@@ -283,7 +255,7 @@ function onStepStart(hit: Hit): void {
   const { state, event, data, sink } = hit;
   const stepNum = num(data["step"]);
   const spanId = newSpanId();
-  const parent = parentOf(state); // 先取父锚再置 openStep（自己不当自己的父）
+  const parent = parentOf(state);
   const at: OpenStep = { spanId, turn: state.openTurn?.turn ?? -1, step: stepNum, startMs: event.time, parentSpanId: parent };
   state.openStep = at;
   sink.spans.push(spanRow({ state, spanId, parentSpanId: parent, name: "step", kind: "INTERNAL", startMs: event.time, endMs: null, statusCode: "UNSET", statusMessage: null, attributes: { "xh.turn": at.turn, "xh.step": at.step } }));
@@ -306,7 +278,7 @@ function onToolCall(hit: Hit): void {
   const callId = str(data["callId"]);
   const toolName = str(data["name"]);
   const spanId = newSpanId();
-  const parent = parentOf(state); // 同上：先取父锚
+  const parent = parentOf(state);
   const tool: OpenTool = { spanId, name: toolName, turn: at?.turn ?? -1, step: at?.step ?? -1, startMs: event.time, parentSpanId: parent };
   state.openTools.set(callId, tool);
   sink.spans.push(
@@ -343,8 +315,6 @@ function onToolResult(hit: Hit): void {
         endMs: event.time,
         statusCode: data["isError"] === true ? "ERROR" : "OK",
         statusMessage: null,
-        // tool.synthetic = harness 合成结果（截断配对等——docs/TRUNCATED-TOOL-RESCUE.md 裁决⑧）：
-        // 在场才记——截断事故率经属性过滤可观测（spanName 加后缀便于直接检索）
         attributes: {
           "tool.call_id": callId,
           "tool.result": str(data["content"]),
@@ -388,7 +358,6 @@ function onRequestContext(hit: Hit): void {
   sink.logs.push(logRow(state, event, innermostSpanId(state)));
 }
 
-/** llm span 开且闭（attempt 级）：attributes = 暂存请求属性 + usage 透传；start 锚 = step 首 header ts */
 interface LlmHit {
   readonly state: SessionFold;
   readonly event: SessionEvent;
@@ -449,12 +418,11 @@ function onLlmRetry(hit: Hit): void {
       },
     };
     state.lastLlm.set(key, amended);
-    sink.spans.push(amended); // 闭行改写（UPDATE settle 面——不动首插 rowid）
+    sink.spans.push(amended);
   }
   sink.logs.push(logRow(state, event, innermostSpanId(state)));
 }
 
-/** 单事件折叠（增量 == 全量同一入口）；seq ≤ cursor 的重放返回空产出 */
 export function applyEvent(state: SessionFold, event: SessionEvent): FoldOutput {
   if (event.seq <= state.cursor) return EMPTY;
   state.cursor = event.seq;
@@ -508,7 +476,6 @@ export function applyEvent(state: SessionFold, event: SessionEvent): FoldOutput 
   return { spans: sink.spans, logs: sink.logs };
 }
 
-/** 会话终折：session span 闭合（sessionDisposed / 终排空）；幂等 */
 export function closeSessionFold(state: SessionFold, endMs: number): FoldOutput {
   if (state.sessionClosed) return EMPTY;
   state.sessionClosed = true;

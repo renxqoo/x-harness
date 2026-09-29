@@ -1,6 +1,3 @@
-// grep 工具测试（docs/TOOLBOX.md §5/§6——rg 硬依赖单路径）。
-// 真 rg 语义用例 rg 缺席时显式 skip 计数；协议矩阵走假 rg 注入装置（确定性）；解析链单测注入构造缺席态。
-
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -14,16 +11,14 @@ import { createGrepPlugin } from "../plugin.ts";
 
 const HAS_RG = Bun.which("rg") !== null;
 
-/** 越根外目标目录存活到 afterEach（dangling symlink 会让「不跟」断言变成空转） */
 const outsideRoots: string[] = [];
 
-/** 分歧面 fixture：node_modules/隐藏文件/真 .gitignore/越根 symlink 四类面全播种 */
 function seedWorkspace(root: string): void {
   writeFileSync(join(root, "app.ts"), "const alpha = 1;\nconst beta = alpha + 1;\n");
   mkdirSync(join(root, "lib"), { recursive: true });
   writeFileSync(join(root, "lib/util.ts"), "export const alphaUtil = 'x';\n// no hit here\n");
   writeFileSync(join(root, ".env"), "alpha_secret=hidden-hit\n");
-  writeFileSync(join(root, ".gitignore"), "ignored-build.js\n"); // 真实 .gitignore：--no-ignore 下仍须搜到
+  writeFileSync(join(root, ".gitignore"), "ignored-build.js\n");
   writeFileSync(join(root, "ignored-build.js"), "alpha in gitignored file\n");
   mkdirSync(join(root, "node_modules/pkg"), { recursive: true });
   writeFileSync(join(root, "node_modules/pkg/index.js"), "alpha in node_modules\n");
@@ -67,8 +62,6 @@ afterEach(async () => {
 const grepWith = async (registry: ToolRegistry, args: Record<string, unknown>): Promise<{ content: string; isError?: true }> =>
   registry.dispatch({ callId: `g${String((counter += 1))}`, name: "grep", args, signal: new AbortController().signal });
 
-/** 假 rg 脚本装置：rgPath 注入——确定性覆盖真实 rg 难以稳定构造的流形态与解析优先级；自增唯一名防同测覆写。
- *  body 原样进脚本：单引号须自配对（`echo '<json>'` 合法——JSON.stringify 不产单引号）；奇数个 = 未闭合/注入，拒 */
 let fakeSeq = 0;
 function fakeRg(body: string): string {
   if (((body.match(/'/g) ?? []).length) % 2 !== 0) throw new Error("fakeRg body 单引号未配对——会破壳；检查构造");
@@ -100,18 +93,18 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
 
   it.skipIf(!HAS_RG)("分歧面 fixture：node_modules 与 .git 跳过、隐藏文件搜到、真 .gitignore 不生效、越根 symlink 不跟", async () => {
     const r = await grepWith(registry, { pattern: "alpha" });
-    expect(r.content).toContain("app.ts"); // 正常命中
-    expect(r.content).toContain(".env:1:alpha_secret=hidden-hit"); // 隐藏文件包含（--hidden）
-    expect(r.content).toContain("ignored-build.js"); // .gitignore 不生效（--no-ignore）
-    expect(r.content).not.toContain("node_modules"); // 跳过集
+    expect(r.content).toContain("app.ts");
+    expect(r.content).toContain(".env:1:alpha_secret=hidden-hit");
+    expect(r.content).toContain("ignored-build.js");
+    expect(r.content).not.toContain("node_modules");
     expect(r.content).not.toContain(".git/config");
-    expect(r.content).not.toContain("link-to-outside"); // symlink 不跟随（rg 默认）
-    expect(r.content).not.toContain("outside-target"); // 根外目标不可达
+    expect(r.content).not.toContain("link-to-outside");
+    expect(r.content).not.toContain("outside-target");
   });
 
   it.skipIf(!HAS_RG)("上下文行 path-line-text（grep -C 惯例）；ignore_case；literal 逃生", async () => {
     const ctx = await grepWith(registry, { pattern: "beta", path: "app.ts", context: 1 });
-    expect(ctx.content).toMatch(/app\.ts-1-const alpha = 1;/); // 上文
+    expect(ctx.content).toMatch(/app\.ts-1-const alpha = 1;/);
     expect(ctx.content).toContain("app.ts:2:const beta = alpha + 1;");
     const ic = await grepWith(registry, { pattern: "ALPHA", path: "app.ts", ignore_case: true });
     expect(ic.content).toContain("app.ts:1:");
@@ -125,20 +118,20 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
     expect(r.content).toContain("limit 3 reached");
     expect(r.content).toContain("Use limit=6 for more");
     const direct = r.content.split("\n").filter((line) => line.includes("multi.txt:"));
-    expect(direct.length).toBe(3); // 恰 3 条直接命中
+    expect(direct.length).toBe(3);
     writeFileSync(join(root, "spread.txt"), "noise\nhit1\nnoise\nhit2\nnoise\nhit3\nnoise\nhit4\n");
     const spread = await grepWith(registry, { pattern: "hit", path: "spread.txt", limit: 2, context: 1 });
     expect(spread.content).toContain("spread.txt:2:hit1");
     expect(spread.content).toContain("spread.txt:4:hit2");
-    expect(spread.content).toMatch(/spread\.txt-1-noise/); // 上文 context 行
+    expect(spread.content).toMatch(/spread\.txt-1-noise/);
     const spreadDirect = spread.content.split("\n").filter((line) => /spread\.txt:\d+:/.test(line));
-    expect(spreadDirect.length).toBe(2); // 命中计数不被 context 行稀释
+    expect(spreadDirect.length).toBe(2);
   });
 
   it.skipIf(!HAS_RG)("selfKilled 达限即停 → 成功 + limit 页脚（回归 A-P0：曾整体坏死为 SEARCH_FAILED）", async () => {
     writeFileSync(join(root, "many.txt"), Array.from({ length: 300 }, (_, i) => `needle${String(i)}\n`).join(""));
     const r = await grepWith(registry, { pattern: "needle", path: "many.txt", limit: 5 });
-    expect(r.isError).toBeUndefined(); // 关键：触顶不是失败
+    expect(r.isError).toBeUndefined();
     expect(r.content).toContain("limit 5 reached");
     expect(r.content).toContain("Use limit=10 for more");
   });
@@ -192,7 +185,6 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
 
   it.skipIf(!HAS_RG)("argv 惰性矩阵（回归 P23/D36）：$(...)/反引号/换行/flag-like pattern 全为惰性文本无副作用", async () => {
     const marker = join(root, "pwned");
-    // 反引号 shell 注入样本：charcode 拼装避开 lint 对 ${...}/拼接的误报（测试数据非模板语义）
     const bt = String.fromCharCode(96);
     const dl = String.fromCharCode(36);
     const lb = String.fromCharCode(123);
@@ -201,14 +193,13 @@ describe("grep 真 rg（docs/TOOLBOX.md §5——rg 缺席显式 skip）", () =>
     void backtickTouch;
     for (const hostile of [`$(touch ${marker})`, backtickTouch, "line1\nline2", "--pre=payload.sh", "-n"]) {
       const r = await grepWith(registry, { pattern: hostile, path: "app.ts" });
-      // 惰性 = argv 单元素不进 shell：副作用是唯一硬断言；坏正则走 SEARCH_FAILED 也是合法终态
       expect(r.content, JSON.stringify(hostile)).not.toContain("SPAWN");
     }
     await new Promise((resolve) => {
       setTimeout(resolve, 150);
     });
     const { existsSync } = await import("node:fs");
-    expect(existsSync(marker)).toBe(false); // 无副作用文件产生
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("路径门（rg 无关——门先于解析链）：越根 path 拒绝；路径缺失 → FS_NOT_FOUND（优先于 rg exit 2——不误导向 literal）", async () => {
@@ -265,22 +256,20 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
   it("resolveRg 四级与缺席态（注入构造——Bun.which 缓存启动期 PATH，运行时改 env 不生效）", async () => {
     const { resolveRg } = await import("../grep.ts");
     mkdirSync(join(root, "bin"));
-    writeFileSync(join(root, "bin", "rg"), "#!/bin/sh\n"); // 内置级在场（内容不要求可执行——解析只看在场）
+    writeFileSync(join(root, "bin", "rg"), "#!/bin/sh\n");
     const rgBinDir = join(root, "bin");
     const whichFound = (command: string): string | null => (command === "rg" ? "/usr/local/bin/rg" : null);
     const whichMisses = (): string | null => null;
-    expect(resolveRg({ explicit: "/opt/rg", env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichFound, rgBinDir })).toBe("/opt/rg"); // 显式最优先
-    expect(resolveRg({ explicit: "", env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichFound, rgBinDir })).toBe("/env/rg"); // 空串显式跳过；env 次之
-    expect(resolveRg({ env: { X_HARNESS_RG_PATH: "" }, which: whichFound, rgBinDir })).toBe(join(rgBinDir, "rg")); // 空 env 落内置目录（先于 PATH）
-    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: join(root, "no-such-bin") })).toBe("/usr/local/bin/rg"); // 内置缺席落 PATH
-    expect(resolveRg({ env: {}, which: whichMisses })).toBeNull(); // 全缺席 = 配置错误（fail-closed 前提）
-    expect(resolveRg({ env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichMisses })).toBe("/env/rg"); // env 在 which 缺席时仍可达
-    expect(resolveRg({ env: {}, which: whichMisses, rgBinDir: "" })).toBeNull(); // 空内置目录串不启用
+    expect(resolveRg({ explicit: "/opt/rg", env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichFound, rgBinDir })).toBe("/opt/rg");
+    expect(resolveRg({ explicit: "", env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichFound, rgBinDir })).toBe("/env/rg");
+    expect(resolveRg({ env: { X_HARNESS_RG_PATH: "" }, which: whichFound, rgBinDir })).toBe(join(rgBinDir, "rg"));
+    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: join(root, "no-such-bin") })).toBe("/usr/local/bin/rg");
+    expect(resolveRg({ env: {}, which: whichMisses })).toBeNull();
+    expect(resolveRg({ env: { X_HARNESS_RG_PATH: "/env/rg" }, which: whichMisses })).toBe("/env/rg");
+    expect(resolveRg({ env: {}, which: whichMisses, rgBinDir: "" })).toBeNull();
   });
 
   it("rgBinDir 内置目录真 dispatch：目录内 rg 被选用（假 rg 文件名恰为 rg）；PATH rg 被盖过", async () => {
-    // 目录内 rg 吐内置标记；若误落 PATH 级则真 rg 执行产出真命中——断言内置级胜出。
-    // env X_HARNESS_RG_PATH 压过内置级——save/restore 防开发机设了该变量时本用例假红
     const saved = process.env.X_HARNESS_RG_PATH;
     delete process.env.X_HARNESS_RG_PATH;
     try {
@@ -292,7 +281,7 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
       cleanups.push(made.cleanup);
       const r = await grepWith(made.registry, { pattern: "marker", path: "app.ts" });
       expect(r.isError).toBeUndefined();
-      expect(r.content).toContain("from-bundled-dir"); // 走的就是目录内 rg
+      expect(r.content).toContain("from-bundled-dir");
     } finally {
       if (saved === undefined) delete process.env.X_HARNESS_RG_PATH;
       else process.env.X_HARNESS_RG_PATH = saved;
@@ -303,15 +292,15 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     const emptyDir = join(root, "empty-bin-x");
     mkdirSync(emptyDir);
     const dirAsRg = join(root, "dir-as-rg-bin");
-    mkdirSync(join(dirAsRg, "rg"), { recursive: true }); // 目录冒名 rg
+    mkdirSync(join(dirAsRg, "rg"), { recursive: true });
     const deadDir = join(root, "dead-link-bin");
     mkdirSync(deadDir);
-    symlinkSync(join(root, "no-such-target"), join(deadDir, "rg")); // 死链
+    symlinkSync(join(root, "no-such-target"), join(deadDir, "rg"));
     const { resolveRg } = await import("../grep.ts");
     const whichFound = (command: string): string | null => (command === "rg" ? "/usr/local/bin/rg" : null);
     expect(resolveRg({ env: {}, which: whichFound, rgBinDir: emptyDir })).toBe("/usr/local/bin/rg");
-    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: dirAsRg })).toBe("/usr/local/bin/rg"); // 目录非文件
-    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: deadDir })).toBe("/usr/local/bin/rg"); // 死链非在场文件
+    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: dirAsRg })).toBe("/usr/local/bin/rg");
+    expect(resolveRg({ env: {}, which: whichFound, rgBinDir: deadDir })).toBe("/usr/local/bin/rg");
   });
 
   it("显式 rgPath 不可执行 → SEARCH_FAILED: failed to start rg 带修复指引", async () => {
@@ -320,14 +309,13 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
     const r = await grepWith(made.registry, { pattern: "x", path: "app.ts" });
     expect(r.isError).toBe(true);
     expect(r.content).toContain("failed to start rg");
-    expect(r.content).toContain("X_HARNESS_RG_PATH"); // 指引可行动
+    expect(r.content).toContain("X_HARNESS_RG_PATH");
   });
 
   it("回归（症状：rg 缺席曾静默落 JS 兜底产出弱化结果）：解析链全缺席 → SEARCH_RG_UNAVAILABLE 带三条修复指引", async () => {
-    // Bun.which 缓存本进程启动期 PATH——真缺席态只能子进程构造（新进程读新 PATH）
     mkdirSync(join(root, "empty-bin"));
     const script = join(root, "rg-absent.ts");
-    const repo = resolve(import.meta.dirname, "../../../.."); // 仓根（cwd 无关——W3 F7 根治：从包目录启动 vitest 不再误诊）
+    const repo = resolve(import.meta.dirname, "../../../..");
     writeFileSync(
       script,
       [
@@ -337,7 +325,7 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
         `import { PathGate } from ${JSON.stringify(join(repo, "packages/tool-core/src/paths.ts"))};`,
         `import { createGrepPlugin } from ${JSON.stringify(join(repo, "packages/tool-grep/src/plugin.ts"))};`,
         `const ctx = createContext();`,
-        `const gate = new PathGate(${JSON.stringify(root)});`, // 无 rgPath → env → PATH 链
+        `const gate = new PathGate(${JSON.stringify(root)});`,
         `const unload = await loadPlugins(ctx, [toolsPlugin, createGrepPlugin({ gate, env: createLocalEnv(${JSON.stringify(root)}) })]);`,
         `const reg = ctx.use(toolRegistry);`,
         `const r = await reg.dispatch({ callId: "c", name: "grep", args: { pattern: "x", path: "app.ts" }, signal: new AbortController().signal });`,
@@ -353,8 +341,8 @@ describe("rg 解析链（rgPath 显式 > env X_HARNESS_RG_PATH > PATH）", () =>
       stderr: "pipe",
     });
     const out = await new Response(child.stdout).text();
-    expect(out).toContain("SEARCH_RG_UNAVAILABLE"); // 缺席 = 配置错误，fail-closed
-    expect(out).toContain("brew install ripgrep"); // 三条修复指引可行动
+    expect(out).toContain("SEARCH_RG_UNAVAILABLE");
+    expect(out).toContain("brew install ripgrep");
     expect(out).toContain("X_HARNESS_RG_PATH");
     expect(out).toContain("rgPath");
   }, 15_000);
@@ -373,13 +361,12 @@ describe("grep 假 rg 注入装置（rgPath 假 rg——fail-closed 矩阵）", 
     const fatLine = JSON.stringify({ type: "match", data: { path: { text: "app.ts" }, line_number: 1, lines: { text: "x".repeat(4_000) } } });
     const made = await makeRegistry(root, { rgPath: fakeRg(`for i in $(seq 1 300); do echo '${fatLine}'; done; exit 0`) });
     cleanups.push(made.cleanup);
-    const r = await grepWith(made.registry, { pattern: "x", path: "app.ts", limit: 1000 }); // 300 行 ×4KB≈1.2MB > 1MB，且未达 limit
+    const r = await grepWith(made.registry, { pattern: "x", path: "app.ts", limit: 1000 });
     expect(r.isError).toBe(true);
     expect(r.content).toContain("SEARCH_RAW_OUTPUT_OVERFLOW");
   });
 
   it("中途 abort：慢速输出中的 rg 被杀 → SEARCH_ABORTED（真时序，非前置 abort）", async () => {
-    // 不用裸 sleep 30：孙 sleep 抱住 stdio 管道会拖死 close 事件——慢速 echo 让 sh 自持流、kill 即断
     const made = await makeRegistry(root, { rgPath: fakeRg("for i in $(seq 1 600); do echo \"tick $i\"; sleep 0.05; done") });
     cleanups.push(made.cleanup);
     const controller = new AbortController();
@@ -390,11 +377,10 @@ describe("grep 假 rg 注入装置（rgPath 假 rg——fail-closed 矩阵）", 
     controller.abort();
     const r = await floating;
     expect(r.isError).toBe(true);
-    expect(r.content).toBe("aborted"); // 管线归一（success superseded：执行后取消结果不可信）——工具层文案被接管
+    expect(r.content).toBe("aborted");
   }, 10_000);
 
   it("kill 后残余未解析输出丢弃：abort 杀于半行输出 → 管线归一 aborted（已解析行即终态）", async () => {
-    // 尾部不裸 sleep：孤儿 sleep 抱住 stdio 管道会拖死 close——慢循环让 sh 自持流、kill 即断
     const made = await makeRegistry(root, { rgPath: fakeRg(`printf torn-half; for i in $(seq 1 600); do sleep 0.05; done`) });
     cleanups.push(made.cleanup);
     const controller = new AbortController();
@@ -402,20 +388,19 @@ describe("grep 假 rg 注入装置（rgPath 假 rg——fail-closed 矩阵）", 
     await new Promise((resolve) => {
       setTimeout(resolve, 200);
     });
-    controller.abort(); // kill 时 raw 残留无尾换行的半行
+    controller.abort();
     const r = await floating;
     expect(r.isError).toBe(true);
-    expect(r.content).toBe("aborted"); // 管线归一；撕裂半行不进入解析（不记 malformed——撕裂不是损坏）
+    expect(r.content).toBe("aborted");
   }, 10_000);
 
   it("argv 矩阵（真 spawn 取证）：--json/--no-config/--no-messages/--hidden/--no-ignore/跳过集/--fixed-strings/--ignore-case/--regexp 惰性/`--` 分隔全在场", async () => {
-    // 假 rg 把收到的 argv 逐行吐进 stderr；退出 2 → stderrTail 入 SEARCH_FAILED 文案（可断言）
     const made = await makeRegistry(root, { rgPath: fakeRg("for a in \"$@\"; do echo \"ARG:$a\" >&2; done; exit 2") });
     cleanups.push(made.cleanup);
     const r = await grepWith(made.registry, { pattern: "--pre=payload.sh", path: "app.ts", literal: true, ignore_case: true, context: 2 });
     expect(r.isError).toBe(true);
     for (const flag of ["ARG:--json", "ARG:--no-config", "ARG:--no-messages", "ARG:--hidden", "ARG:--no-ignore", "ARG:--glob", "ARG:!node_modules", "ARG:!.git", "ARG:--fixed-strings", "ARG:--ignore-case", "ARG:--context", "ARG:2", "ARG:--regexp", "ARG:--pre=payload.sh", "ARG:--"]) {
-      expect(r.content, flag).toContain(flag); // flag-like pattern 惰性为 --regexp 的独立值（无 shell 层）
+      expect(r.content, flag).toContain(flag);
     }
   });
 
@@ -441,7 +426,6 @@ describe("rg-line 纯函数", () => {
     const failed = settleRg({ code: 0, signal: null, selfKilled: false, malformed: true, rawOverflow: false, aborted: false, stderrTail: "", matches: [], limit: 100 });
     expect(failed.isError).toBe(true);
     expect(failed.content).toContain("malformed");
-    // aborted 直调语义：管线在 dispatch 层归一，此分支是 execute 直调时的兜底
     const aborted = settleRg({ code: 0, signal: null, selfKilled: true, malformed: false, rawOverflow: true, aborted: true, stderrTail: "", matches: [], limit: 100 });
     expect(aborted.isError).toBe(true);
     expect(aborted.content).toContain("SEARCH_ABORTED");

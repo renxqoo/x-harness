@@ -1,8 +1,3 @@
-// 工具面 + 铸文（docs/TODO.md §13 修订B §1.1/§1.5）：语义校验全在 store（单一真相），
-// 本层铸文 + 持久化编排。execute 体内自惰性恢复起至 append 停是单一同步段（无 await——
-// run-to-completion；并发调用的变更→append 入队序 == 变更序，last-wins 恒正确）。
-// 四工具全 parallel：store 操作全同步、无 await 竞态窗口（并发组用例钉死该前提）。
-
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import type { Session, SessionId, SessionStore } from "@x-harness/session";
@@ -40,7 +35,6 @@ const updateSchema = Type.Object({
   addBlockedBy: Type.Optional(Type.Array(Type.String(), { description: "Task IDs that block this task" })),
 });
 
-/** BigInt 等合法入库值序列化会 throw——降级占位不崩溃（垃圾输入降级口径） */
 function jsonOf(value: Readonly<Record<string, unknown>>): string {
   try {
     return JSON.stringify(value);
@@ -49,7 +43,6 @@ function jsonOf(value: Readonly<Record<string, unknown>>): string {
   }
 }
 
-/** 任务卡片（get/update 回执）：字段缺席省行 */
 export function cardText(task: TodoTask): string {
   const lines = [`Task ${task.id}: ${task.subject}`, `Status: ${task.status}`];
   if (task.owner !== undefined) lines.push(`Owner: ${task.owner}`);
@@ -61,7 +54,6 @@ export function cardText(task: TodoTask): string {
   return lines.join("\n");
 }
 
-/** 全清单（数值 id 升序由 store 保证）：一行一任务 + 三段独立注记 */
 export function listText(tasks: readonly TodoTask[]): string {
   if (tasks.length === 0) return "No tasks";
   return tasks
@@ -76,20 +68,17 @@ export function listText(tasks: readonly TodoTask[]): string {
     .join("\n");
 }
 
-/** 错误铸文：reason 枚举即词表前缀（not-found:<id>; no such task / invalid-args:<详情>） */
 function cast(result: { readonly ok: false; readonly reason: "not-found" | "invalid-args"; readonly message: string }): { content: string; isError?: true } {
   return { content: `${result.reason}:${result.message}`, isError: true };
 }
 
-/** 会话档案句柄解析：带 session 但会话缺席 → fail-closed（四动词统一口径） */
 function sessionLog(sessions: SessionStore, session: SessionId | undefined): { ok: true; log: Session | undefined } | { content: string; isError: true } {
-  if (session === undefined) return { ok: true, log: undefined }; // 匿名桶：合法易失形态
+  if (session === undefined) return { ok: true, log: undefined };
   const log = sessions.get(session);
   if (log === undefined) return { content: `not-found:session '${session as string}'; no such session — todo tools require an existing session`, isError: true };
   return { ok: true, log };
 }
 
-/** 变更后落账：失败时变更已生效——回执明写，防模型盲目重试造成重复任务 */
 function persist(log: Session | undefined, store: TodoList, session: SessionId | undefined): { content: string; isError: true } | undefined {
   if (log === undefined) return undefined;
   const appended = log.append("todo/snapshot", store.snapshotOf(session));

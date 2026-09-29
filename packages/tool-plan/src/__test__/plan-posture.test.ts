@@ -1,7 +1,3 @@
-// plan 富策略读面回归件（H1/F1——.adversarial/{kernel/2, modes/3, e2e/plan-override, upper/u02} 迁移）：
-// planMode（本包）同 id 覆盖 planDefaultMode 后，读面 posture 经旋钮面补齐——界内 Read
-// 恢复 auto 放行（旧：只实现 decide，覆盖后界内读全部弹 ask 且 reason 谎报 outside-root）。
-
 import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -42,7 +38,7 @@ describe("planMode 覆盖的面补齐（注册表 decide + 旋钮 posture——f
     await reg.dispatch({ callId: "pp-b2", name: "bash", args: { command: "npm install" }, signal: new AbortController().signal, session: "s1" as SessionId });
     await reg.dispatch({ callId: "pp-w", name: "write", args: { path: "a.ts", content: "x" }, signal: new AbortController().signal, session: "s1" as SessionId });
     expect(audits[0]).toMatchObject({ verdict: "allow", resolvedBy: "classifier:readonly" });
-    expect(audits[1]?.verdict).toBe("deny"); // plan 档无 broker → ask 退化 deny
+    expect(audits[1]?.verdict).toBe("deny");
     expect(audits[2]).toMatchObject({ verdict: "deny", resolvedBy: "mode:plan" });
     await ctx.dispose();
     void unload;

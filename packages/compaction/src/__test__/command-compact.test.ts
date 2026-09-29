@@ -1,5 +1,3 @@
-// /compact 命令自声明单元（BATCH3-DESIGN §2.3）：注册/拆卸、args→customInstructions、
-// busy 双前置（running/并发）、skip 归一词表、成功 data 三元组、run|done 配对落账。
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
@@ -14,7 +12,6 @@ import { llmRuntime } from "@x-harness/llm";
 async function makeCommandWorld() {
   const ctx = createContext();
   const fake = fakeLlm();
-  // contextWindow 拉大：COMPACT_KEEP_RECENT_TOKENS(20k) 在 1k 窗口下无切点
   await loadPlugins(ctx, [sessionPlugin, createCompactionPlugin({ ...BASE_OPTIONS, contextWindow: 500_000, reserveTokens: 100 } as never), commandsPlugin, commandCompactPlugin]);
   ctx.provide(llmRuntime, fake.runtime);
   return { ctx, store: ctx.use(sessionStore), llm: fake, registry: ctx.use(commandRegistry) };
@@ -37,7 +34,6 @@ describe("/compact 自声明（BATCH3 §2.3）", () => {
       const made = await world.store.create({ id: sid("cc") });
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
-      // 大正文：越过 COMPACT_KEEP_RECENT_TOKENS(20k) 才有切点
       for (const turn of [0, 1, 2, 3, 4, 5]) {
         seedTurn(session, { turn, user: "u".repeat(12000), assistant: { text: "a".repeat(12000), usage: { input: 100, output: 5 } } });
       }
@@ -78,7 +74,6 @@ describe("/compact 自声明（BATCH3 §2.3）", () => {
       for (const turn of [0, 1, 2, 3, 4, 5]) {
         seedTurn(made.value, { turn, user: "u".repeat(12000), assistant: { text: "a".repeat(12000), usage: { input: 100, output: 5 } } });
       }
-      // 慢摘要脚本：第一发在飞，第二发并发进入
       const slow = (async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
         await new Promise((resolve) => {
           setTimeout(resolve, 80);

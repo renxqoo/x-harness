@@ -1,8 +1,3 @@
-// read 工具（docs/TOOLBOX.md §2 + docs/EXEC-ENV.md §3）：ExecEnv 异步流式（绝不整读）；
-// 2000 行/50KB 渲染字节双限；行号连续；行动型页脚；二进制首 8KB 嗅探；!isFile 全拒。
-// 观察版本取自 openRead 的 fd 版本（D2 修复：版本与内容同 inode——stat/open 竞态免疫），
-// 登记先于空文件/越界分支（空文件也是有效观察）。
-
 import { StringDecoder } from "node:string_decoder";
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
@@ -16,8 +11,6 @@ const BYTE_BUDGET = 50_000;
 const BINARY_SNIFF = 8_192;
 const LINE_TRUNCATE = 2_000;
 const BOM = "﻿";
-/** 批量形态上限（TURN-REDUCTION §1.1A）：单轮最多 8 文件；聚合预算仍 = 单文件
- *  BYTE_BUDGET（防单轮巨量回灌——预算在工具层自截，不依赖调度层截断兜底）。 */
 const MAX_BATCH = 8;
 
 interface ReadWindow {
@@ -25,13 +18,11 @@ interface ReadWindow {
   readonly shownLines: number;
   readonly totalLines: number;
   readonly byteCapped: boolean;
-  /** 本窗口的渲染字节预算（批量模式为剩余额度——页脚文案如实反映） */
   readonly budgetBytes: number;
   readonly firstLine: number;
   readonly lastShown: number;
 }
 
-/** io_error 哨兵：环境面 I/O 错误统一折叠为 FS_READ_FAILED，不让 dispatch 吞成 internal */
 class ReadIoError extends Error {}
 
 function openFailText(reason: "not_found" | "not_regular" | "access_denied", display: string): string {
@@ -75,8 +66,6 @@ export function createReadTool(input: ReadToolInput): ToolDefinition {
   };
 }
 
-/** 入口分派：path 与 paths 互斥（TypeBox 表达不了 XOR——判定在 execute 层，
- *  dispatch 先 schema 后 execute）；批量走聚合预算路径，单路径走既有窗口路径。 */
 async function executeRead(input: {
   readonly gate: PathGate;
   readonly observed: ObservedRegistry;
@@ -98,9 +87,6 @@ async function executeRead(input: {
   return readFile({ ...input, args: { path: args.path ?? "", offset: args.offset, limit: args.limit } });
 }
 
-/** 批量读取：逐文件 <file path> 包裹块（与单路径裸输出刻意不同——两形态各自稳定）；
- *  聚合预算 50KB 逐文件先到先得，预算耗尽的文件块给行动型续读指引；
- *  部分成功语义：单文件失败仅该块错误文案，整体 isError 仅当全部失败。 */
 async function readBatch(input: {
   readonly gate: PathGate;
   readonly observed: ObservedRegistry;
@@ -141,7 +127,6 @@ async function readFile(input: {
   readonly rootOverrideOf?: RootOverrideOf;
   readonly ctx: ToolExecContext;
   readonly args: { path: string; offset?: number; limit?: number };
-  /** 批量模式传入剩余预算（单路径缺省 = BYTE_BUDGET）——聚合预算在调用方扣减 */
   readonly byteBudget?: number;
 }): Promise<{ content: string; isError?: true }> {
   const { gate, observed, env, ctx, args, extraRootsOf, rootOverrideOf } = input;
@@ -173,7 +158,6 @@ async function readFile(input: {
   }
 }
 
-/** 嗅探→扫描→登记→终态文案（fd 版本登记先于空文件/越界分支——空文件也是有效观察） */
 async function scanOutcome(input: {
   readonly handle: ReadHandle;
   readonly version: { readonly ino: string; readonly size: string; readonly mtimeNs: string };
@@ -181,16 +165,13 @@ async function scanOutcome(input: {
   readonly env: ReadFace;
   readonly ctx: ToolExecContext;
   readonly args: { path: string };
-  /** admit 后的词法绝对路径——观察登记键（write 侧 lookup 同键） */
   readonly path: string;
   readonly offset: number;
   readonly limit: number;
-  /** 预算上界（批量模式传剩余额度；缺省 = BYTE_BUDGET） */
   readonly byteBudget?: number;
 }): Promise<{ content: string; isError?: true }> {
   const { handle, version, observed, env, ctx, args, path, offset, limit } = input;
   const byteBudget = input.byteBudget ?? BYTE_BUDGET;
-  // 空文件时嗅探测不出 BOM——沿用本会话既往观察（write 侧 BOM round-trip 依据）
   const knownHadBom = observed.lookup(ctx.session, path)?.hadBom ?? false;
   const sniff = await sniffHead(handle);
   if (sniff.binary) return { content: `FS_BINARY_FILE: ${args.path} looks binary (NUL byte in first ${String(BINARY_SNIFF)} bytes)`, isError: true };
@@ -199,7 +180,7 @@ async function scanOutcome(input: {
   if (window === undefined) {
     return { content: `OFFSET_BEYOND_EOF: file has ${String(await countLines(env, path))} lines; offset ${String(offset)} is past the end`, isError: true };
   }
-  observed.record(ctx.session, path, { ...version, hadBom }); // fd 版本（open 时刻）
+  observed.record(ctx.session, path, { ...version, hadBom });
   if (window.totalLines === 0) return { content: "(empty file)" };
   return { content: render(args.path, window) };
 }
@@ -208,7 +189,6 @@ interface Sniff {
   readonly binary: boolean;
   readonly hadBom: boolean;
   readonly sawBytes: boolean;
-  /** 嗅探已读走的字节——扫描窗口从待处理缓冲续读（单句柄顺序流，不重开） */
   readonly pending: Uint8Array[];
 }
 
@@ -233,7 +213,6 @@ async function sniffHead(handle: ReadHandle): Promise<Sniff> {
   };
 }
 
-/** 全文件行数（数到 EOF——total 页脚口径；独立句柄流式，无内存放大） */
 async function countLines(env: ReadFace, path: string): Promise<number> {
   const open = await env.openRead(path);
   if (!open.ok) return 0;
@@ -248,24 +227,19 @@ async function countLines(env: ReadFace, path: string): Promise<number> {
   }
 }
 
-/**
- * 行窗口扫描（异步流式 + 手动行拆）。返回 undefined = offset 越过 EOF。
- * byteCapped = 渲染字节预算先到。pending 为嗅探已读走的缓冲，先于句柄续读消费。
- */
 interface ScanInput {
   readonly handle: ReadHandle;
   readonly pending: readonly Uint8Array[];
   readonly offset: number;
   readonly limit: number;
   readonly hadBom: boolean;
-  /** 渲染字节预算（批量模式传剩余额度；缺省 = BYTE_BUDGET） */
   readonly byteBudget?: number;
 }
 
 async function scanWindow(input: ScanInput): Promise<ReadWindow | undefined> {
   const { handle, pending, offset, limit, hadBom } = input;
   const budget = input.byteBudget ?? BYTE_BUDGET;
-  const decoder = new StringDecoder("utf8"); // chunk 边界撕裂多字节防护
+  const decoder = new StringDecoder("utf8");
   let carry = "";
   let totalLines = 0;
   const rendered: string[] = [];
@@ -298,20 +272,19 @@ async function scanWindow(input: ScanInput): Promise<ReadWindow | undefined> {
       lastShown = totalLines;
     }
   };
-  let awaitingBom = hadBom; // 仅首块判定一次（prefer-const 友好的单变量）
+  let awaitingBom = hadBom;
   const feed = (data: Uint8Array): void => {
     let text = decoder.write(data);
     if (awaitingBom && text.startsWith("﻿")) {
-      text = text.slice(1); // 首块剥 BOM（展示口径；write 侧补回）
+      text = text.slice(1);
     }
     awaitingBom = false;
     if (text.includes("\n")) {
       carry += text;
       carry = drainCarry(carry);
     } else if (carry.length < LINE_TRUNCATE) {
-      carry += text; // 行内累计（截断上限内）——无换行 chunk 不触发全量重扫
+      carry += text;
     }
-    // 行已超截断上限的后续 chunk 丢弃（渲染只保留前 LINE_TRUNCATE 字符）
   };
   for (const data of pending) {
     feed(data);
@@ -326,8 +299,8 @@ async function scanWindow(input: ScanInput): Promise<ReadWindow | undefined> {
     }
   }
   carry += decoder.end();
-  if (carry !== "" && !byteCapped) collect(stripCr(carry)); // 无尾换行的末行
-  if (totalLines > 0 && offset > totalLines) return undefined; // 空文件（0 行）不是越界
+  if (carry !== "" && !byteCapped) collect(stripCr(carry));
+  if (totalLines > 0 && offset > totalLines) return undefined;
   return { rendered, shownLines: rendered.length, totalLines, byteCapped, budgetBytes: budget, firstLine: offset, lastShown };
 }
 

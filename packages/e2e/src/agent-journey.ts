@@ -1,7 +1,3 @@
-// e2e：agent 全链旅程（docs/SESSION-CHECKPOINT.md §2，P12 进默认门）。
-// 真实装配 session+jsonl 持久化+tools+llm+system-prompt+agent-loop+session-checkpoint；
-// 脚本化假 LLM 适配器。旅程：多步工具 turn（checkpoint 证据=流内读盘）→ steer 流中续航 →
-// cancel 悬停流（aborted cause）→ 崩溃残卷 + 进程重开 resume（repair closers + 续卷）。
 import { mkdtemp, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,7 +27,6 @@ interface Journey {
   noteCount: () => number;
 }
 
-/** 裸世界装配：插件 + 假适配器 + 假工具（resume 场景不预建会话——resume 自建 seed 会话） */
 async function assembleWorld(root: string): Promise<Journey> {
   const ctx = createContext();
   const scripts: Array<AsyncGenerator<LlmChunk>> = [];
@@ -58,7 +53,6 @@ async function assembleWorld(root: string): Promise<Journey> {
   return { ctx, agent: undefined as unknown as Journey["agent"], sessionId: undefined as unknown as SessionId, scripts, calls, noteCount: () => notes };
 }
 
-/** 装配并创建 agent（会话 id 固定——跨「进程重开」续卷依赖稳定 id） */
 async function assemble(root: string, id: SessionId): Promise<Journey> {
   const world = await assembleWorld(root);
   const made = await world.ctx.use(agentLoopServiceToken).create({ session: { id }, agent: { model: "fake-model", provider: "fake" } });
@@ -73,7 +67,6 @@ const diskEvents = (root: string, id: string): string => readFileSync(join(root,
 export async function runAgentJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-agent-e2e-"));
   try {
-    // —— 场景 1：多步工具 turn + checkpoint 证据（适配器流内读盘：请求前缀先持久后派发）——
     const j1 = await assemble(root, "main" as SessionId);
     try {
       j1.scripts.push(
@@ -100,7 +93,6 @@ export async function runAgentJourney(): Promise<void> {
       await j1.ctx.dispose();
     }
 
-    // —— 场景 2：steer 流中注入 → 同 turn 续航消化 ——
     const j2 = await assemble(root, "steer" as SessionId);
     try {
       j2.scripts.push(
@@ -120,13 +112,12 @@ export async function runAgentJourney(): Promise<void> {
       await j2.ctx.dispose();
     }
 
-    // —— 场景 3：cancel 悬停流 → interrupted 消息 + aborted cause ——
     const j3 = await assemble(root, "cancel" as SessionId);
     try {
       j3.scripts.push(
         (async function* (): AsyncGenerator<LlmChunk> {
           yield { type: "text-delta", text: "partial" };
-          await new Promise(() => {}); // 悬停流
+          await new Promise(() => {});
           yield { type: "finish", finish: { kind: "stop" } };
         })(),
       );
@@ -150,7 +141,6 @@ export async function runAgentJourney(): Promise<void> {
       await j3.ctx.dispose();
     }
 
-    // —— 场景 4：崩溃残卷（悬空 tool_use + 未闭合括号）→ 进程重开 → resume 修复续用 ——
     const crashedId = "crashed" as SessionId;
     const j4 = await assemble(root, crashedId);
     const log4 = j4.agent.session.append as unknown as (type: string, data: unknown, intent?: unknown) => { ok: boolean; reason?: string };
@@ -162,28 +152,25 @@ export async function runAgentJourney(): Promise<void> {
     );
     const flushed = await j4.ctx.use(sessionStore).flush(crashedId);
     must(flushed.ok, `残卷 flush 落盘（实际：${flushed.ok === false ? flushed.reason : "ok"}）`);
-    await j4.ctx.dispose(); // 「进程死亡」：日志无 turn/end/step/end——repair 的输入
+    await j4.ctx.dispose();
 
-    const j5 = await assembleWorld(root); // 「进程重开」：同 root 新装配（不预建会话——resume 自建）
+    const j5 = await assembleWorld(root);
     try {
       const resumed = await j5.ctx.use(agentLoopServiceToken).resume({ id: crashedId, agent: { model: "fake-model", provider: "fake" } });
       must(resumed.ok, `resume 成功（实际：${resumed.ok === false ? resumed.reason : "ok"}）`);
       if (resumed.ok) {
         const agent = resumed.value.agent;
         const t5 = typesOf(agent);
-        // repair closers 入 seed：合成 tool/result（outcome unknown 两态之「已派发」不可判——此处无 tool/call → not started）+ 括号补齐
         must(t5.includes("tool/result"), "resume：悬空 tool_use 合成结果");
         must(t5.includes("session/end-seed"), "resume：seed 边界标记");
         const synthetic = agent.session.events().find((e) => e.type === "tool/result");
         must(JSON.stringify(synthetic?.data).includes("not started"), "resume：无 tool/call 记录 → not started 文案");
-        // 修复后的会话继续可用
         j5.scripts.push(textScript("reborn"));
         agent.followup("after crash");
         await agent.whenIdle();
         must(typesOf(agent).filter((t) => t === "turn/start").length === 2, "resume 后新 turn 正常开启");
         must(JSON.stringify(agent.session.events().at(-1)?.data).includes('"completed"'), "resume 后 turn completed");
         await resumed.value.dispose();
-        // 续卷：重开进程写的 turn 在盘（同 id 可验证续写）
         const disk = diskEvents(root, crashedId);
         must(disk.includes('"reborn"'), "同 id 续卷：resume 后的事件续写落盘");
       }

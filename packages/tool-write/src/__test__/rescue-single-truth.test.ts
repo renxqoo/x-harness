@@ -1,7 +1,3 @@
-// 抢救件单真相回归件（P0-2——.adversarial/upper/u05 迁移）：permissionAdjudicate 服务优先。
-// 自定义 plan-deny 档下主路径 deny 的写，抢救件同 deny 不物化（旧：静态旋钮面无
-// customProfiles 通道 + 盲注册表 → 断代落 auto → 界内 allow 落盘——越权物化两真相）。
-
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +26,6 @@ afterEach(async () => {
 const SESSION = "sess-truth" as never;
 const LONG = "x".repeat(600);
 
-/** 装配：permission（自定义 my-plan 档=plan-deny）+ modes + 抢救件——服务面在场 */
 async function dispatchCustomPlan(name: string, args: string): Promise<TruncatedToolDecision> {
   const c = createContext();
   ctx = c;
@@ -52,7 +47,7 @@ describe("rescue × permissionAdjudicate 单真相（P0-2）", () => {
   it("自定义 plan-deny 档：主路径 deny 的写 → 抢救同 deny，不物化 .partial（旧：auto 兜底落盘）", async () => {
     const r = await dispatchCustomPlan("write", `{"path":"doc.md","content":"${LONG}`);
     expect(r).toMatchObject({ note: "target not permitted for rescue write, draft not saved" });
-    expect(existsSync(join(root, "doc.md.partial"))).toBe(false); // 越权物化通道封死
+    expect(existsSync(join(root, "doc.md.partial"))).toBe(false);
   });
   it("auto 档（对照）：界内写经服务面 allow → 照常物化——单真相不收紧正常面", async () => {
     const c = createContext();

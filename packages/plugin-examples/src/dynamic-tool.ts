@@ -1,6 +1,3 @@
-// ⑰ 动态工具注册：运行期事件触发 register/unregister（registry 可变性验证）。
-// 真实场景：MCP server 连接后暴露其工具、断开后撤销。
-
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { defineTool, toolRegistry } from "@x-harness/tools";
@@ -15,10 +12,9 @@ export function dynamicToolPlugin(): Plugin {
       const registry = ctx.use(toolRegistry);
       const offs: Disposer[] = [];
       let toolCount = 0;
-      // 会话首条 user/message 后注册一个新工具（模拟 MCP 延迟连接）
       const offTap = tapSessionEvents(ctx, (event) => {
         if (event.type !== "user/message") return;
-        if (toolCount > 0) return; // 只注册一次
+        if (toolCount > 0) return;
         toolCount += 1;
         offs.push(
           registry.register(

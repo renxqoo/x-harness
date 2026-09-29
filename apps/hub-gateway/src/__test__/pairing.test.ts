@@ -1,4 +1,3 @@
-// B3 单元与旅程：配对服务器（QR/手输/锁定/SAS 双向）、crypto 会话池（建立/恢复/种子）
 import { describe, expect, it } from "vitest";
 import { createPairingServer } from "../pairing-server.ts";
 import { gatewayEstablishChannel, newDeviceEphemeral, pakeInitiate } from "@x-harness/remote-protocol";
@@ -46,7 +45,6 @@ describe("QR 配对路径", () => {
     expect(started.pairingId).toMatch(/^pr_/);
     const qr = JSON.parse(started.qrPayload) as { gwEphemeralPub: string; pairingTicket: string };
     expect(qr.gwEphemeralPub).toBeTruthy();
-    // 手机侧：临时钥 + request
     const deviceEph = newDeviceEphemeral();
     const res = await server.handleDeviceRequest({
       pairingId: started.pairingId,
@@ -55,25 +53,21 @@ describe("QR 配对路径", () => {
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    // 手机侧独立验证网关转录签名（钉存 gateway 指纹）
     const channel = gatewayEstablishChannel({
       gwLongTerm: { signingSecret: identity.signingSecret, signingPub: identity.signingPub },
       pairingId: started.pairingId,
-      gwEphemeralSecret: qr.gwEphemeralPub, // 手机侧无 gw 私钥——仅验签
+      gwEphemeralSecret: qr.gwEphemeralPub,
       gwEphemeralPub: qr.gwEphemeralPub,
       deviceEphemeralPub: deviceEph.pub,
       relayUrl: "wss://relay.test",
       scope: "read",
     });
     expect(channel).not.toBeNull();
-    // owner 键入错误 SAS → 拒
     const bad = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: "000000", deviceLongTermPub: generateSigningKeyPair().pub });
     expect(bad.ok).toBe(false);
-    // owner 键入正确 SAS → 注册
     const ok = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: res.sas, deviceLongTermPub: generateSigningKeyPair().pub });
     expect(ok.ok).toBe(true);
     expect(registered.length).toBe(1);
-    // 单次使用
     const again = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: res.sas, deviceLongTermPub: generateSigningKeyPair().pub });
     expect(again.ok).toBe(false);
   });
@@ -99,14 +93,12 @@ describe("QR 配对路径", () => {
       const bad = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: "000000", deviceLongTermPub: "aa" });
       expect(bad.ok).toBe(false);
     }
-    // 第 5 次失败 → 锁定
     const fifth = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: "000000", deviceLongTermPub: "aa" });
     expect(fifth.ok).toBe(false);
     clock.ts += 60_000;
     const locked = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: res.sas, deviceLongTermPub: "aa" });
     expect(locked.ok).toBe(false);
     if (!locked.ok) expect(locked.reason).toBe("locked");
-    // 5min 后锁定期过（会话 120s TTL 已先到期——新配对走新会话）
     clock.ts += 5 * 60_000;
     const after = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: "000000", deviceLongTermPub: "aa" });
     expect(after.ok).toBe(false);
@@ -144,7 +136,6 @@ describe("手输码 PAKE 路径", () => {
       const res = await server.handlePakeInitiate({ pairingId: started.pairingId, messageA: wrong.message, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
       if (i < 4) expect(res.ok).toBe(true);
     }
-    // 第 5 次失败后锁定：后续（含正确码）拒
     const locked = await server.handlePakeInitiate({ pairingId: started.pairingId, messageA: pakeInitiate(started.manualCode).message, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
     expect(locked.ok).toBe(false);
     if (!locked.ok) expect(locked.reason).toBe("locked");
@@ -153,15 +144,12 @@ describe("手输码 PAKE 路径", () => {
   it("confirmWithSas 拒绝分支：过期/已消费/未建立通道/锁定", async () => {
     const clock = { ts: Date.now() };
     const { server } = makeServer(() => clock.ts);
-    // 未建立通道（无 device request 直接 confirm）
     const s1 = await server.startQr("read");
     const noChannel = await server.confirmWithSas({ pairingId: s1.pairingId, ownerTypedSas: "123456", deviceLongTermPub: "aa" });
     expect(noChannel.ok).toBe(false);
-    // 过期
     clock.ts += 121_000;
     const expired = await server.confirmWithSas({ pairingId: s1.pairingId, ownerTypedSas: "123456", deviceLongTermPub: "aa" });
     expect(expired.ok).toBe(false);
-    // 建立后过期
     const s2 = await server.startQr("read");
     const req = await server.handleDeviceRequest({ pairingId: s2.pairingId, deviceEphemeralPub: newDeviceEphemeral().pub, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
     if (!req.ok) throw new Error("unreachable");
@@ -175,7 +163,7 @@ describe("手输码 PAKE 路径", () => {
     const { server } = makeServer(() => clock.ts);
     const started = await server.startQr("read");
     clock.ts += 121_000;
-    const second = await server.startQr("read"); // 触发 sweep
+    const second = await server.startQr("read");
     void second;
     expect(server.sessionOf(started.pairingId)).toBeNull();
   });
@@ -186,10 +174,8 @@ describe("手输码 PAKE 路径", () => {
     const started = await server.startManual("read");
     const wrong = pakeInitiate("11112222");
     const res = await server.handlePakeInitiate({ pairingId: started.pairingId, messageA: wrong.message, deviceInfo: { name: "x", deviceType: "p", platform: "i", appVersion: "1" } });
-    // gateway 用自己的码应答——shared 与手机不一致；confirm 互验失败在手机侧暴露
     expect(res.ok).toBe(true);
     const sas = server.sessionOf(started.pairingId)?.sas ?? "";
-    // 手机侧 SAS（由错码通道算出）与网关 SAS 不同 → owner 键入手机侧 SAS 拒
     if (res.ok) {
       const bad = await server.confirmWithSas({ pairingId: started.pairingId, ownerTypedSas: sas === "000000" ? "111111" : "000000", deviceLongTermPub: "aa" });
       expect(bad.ok).toBe(false);
@@ -212,7 +198,6 @@ describe("crypto 会话池", () => {
     await new Promise((r) => {
       setTimeout(r, 50);
     });
-    // 恢复
     pool.drop("d1");
     const restored = await pool.restore("d1");
     expect(restored).not.toBeNull();
@@ -226,7 +211,6 @@ describe("crypto 会话池", () => {
     const devEph = generateBoxKeyPair();
     const shared = x25519(gwEph.secret, devEph.pub)!;
     const session = pool.establish({ deviceId: "d9", sharedSecret: shared, initiator: true });
-    // seal 65+ 帧触发批边界持久化
     const { aeadSeal, RatchetSession: RS, deriveInitialChains } = await import("@x-harness/remote-protocol");
     const devInit = deriveInitialChains(x25519(devEph.secret, gwEph.pub)!, false);
     const devRatchet = new RS({ now: Date.now, deviceId: "d9", direction: 1, persist: { persistSendBoundary: async () => {}, persistRecvBoundary: async () => {} } }, devInit);
@@ -240,7 +224,6 @@ describe("crypto 会话池", () => {
     await new Promise((r) => {
       setTimeout(r, 80);
     });
-    // 恢复：epoch 与链延续
     pool.drop("d9");
     const restored = await pool.restore("d9");
     expect(restored).not.toBeNull();
@@ -276,4 +259,3 @@ describe("配对签名验签（端侧视角）", () => {
     expect(channel).not.toBeNull();
   });
 });
-

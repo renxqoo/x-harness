@@ -1,16 +1,10 @@
-// spawn 契约实现（docs/EXEC-ENV.md §1/§2）：detached 进程组 + 负 pid 组杀 + host-exit 进程级单例清场
-// + settle 观测面（组长退出≠组清空——孙进程有界收敛 5s 后 SIGKILL 兜底）。语义自 toolbox bash.ts 迁移。
-// 两段杀的节奏（何时 TERM/何时 KILL）是策略，归 bash 工具；本模块只提供动作与观测。
-
 import { statSync } from "node:fs";
 import type { ProcHandle, SpawnRequest, SpawnResult } from "../types.ts";
 
-/** settle 收敛上限：50ms×100=5s；到顶仍活 → SIGKILL 兜底后除名（host-exit 不再兜底——最后防线） */
 const SETTLE_POLL_MS = 50;
 const SETTLE_POLLS = 100;
 const SETTLE_KILL_SIGNAL = "SIGKILL";
 
-/** 进程级单例登记簿 + host-exit 清场（exit handler 仅同步操作；模块存活期不注销——quiescence 语义） */
 const liveGroups = new Set<number>();
 let exitHookInstalled = false;
 function installExitHook(): void {
@@ -21,7 +15,6 @@ function installExitHook(): void {
       try {
         process.kill(-pid, "SIGKILL");
       } catch {
-        /* 组已死 */
       }
     }
   });
@@ -31,13 +24,12 @@ function killGroup(pid: number, signal: "SIGTERM" | "SIGKILL"): void {
   try {
     process.kill(-pid, signal);
   } catch {
-    /* 组已不存在——幂等 */
   }
 }
 
 function groupAlive(pid: number): boolean {
   try {
-    process.kill(-pid, 0); // 0 信号只探测不杀
+    process.kill(-pid, 0);
     return true;
   } catch {
     return false;
@@ -59,7 +51,6 @@ async function settleGroup(pid: number): Promise<void> {
 }
 
 export async function spawnLocal(req: SpawnRequest): Promise<SpawnResult> {
-  // cwd 预检：坏 cwd 与缺二进制在 spawn 错误里同为 ENOENT——预检是唯一判别面（cwd_invalid 分支的来源）
   if (req.cwd !== undefined) {
     let dirOk = false;
     try {
@@ -73,7 +64,7 @@ export async function spawnLocal(req: SpawnRequest): Promise<SpawnResult> {
   try {
     proc = Bun.spawn([...req.argv], {
       ...(req.cwd !== undefined ? { cwd: req.cwd } : {}),
-      ...(req.env !== undefined ? { env: req.env } : {}), // 缺省继承宿主
+      ...(req.env !== undefined ? { env: req.env } : {}),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",
@@ -88,20 +79,19 @@ export async function spawnLocal(req: SpawnRequest): Promise<SpawnResult> {
   }
   const pid = proc.pid;
   if (typeof pid !== "number" || pid <= 0) {
-    return { ok: false, reason: { kind: "io_error", detail: "spawn returned no usable pid" } }; // fail-closed：绝不向未知 pid 组开火
+    return { ok: false, reason: { kind: "io_error", detail: "spawn returned no usable pid" } };
   }
   installExitHook();
   liveGroups.add(pid);
 
   const exited = (async (): Promise<{ code: number | null; signal: string | null }> => {
     try {
-      await proc.exited; // 拒绝面包含：按「已死无码」归一，不让 rejection 外泄（settled 派生自它）
+      await proc.exited;
     } catch {
       return { code: null, signal: null };
     }
     return { code: proc.exitCode ?? null, signal: proc.signalCode ?? null };
   })();
-  // settle 在组长退出即启动（不等消费方 await）——孙进程收敛不等位于策略层
   const settled = exited.then(
     () => settleGroup(pid),
     () => settleGroup(pid),

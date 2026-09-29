@@ -1,4 +1,3 @@
-// 查：列出全部记录。
 import type { Plugin } from "@x-harness/core";
 import { defineService } from "@x-harness/core";
 import { crudDb, type Item } from "./contracts.ts";

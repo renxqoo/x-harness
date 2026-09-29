@@ -1,6 +1,3 @@
-// 工具调度单元（docs/AGENT-LOOP-DRIVER §1.5）：真实 session+tools 装配；
-// 排他屏障/并行池上限切分/model 序落账/abort 未启动合成/截断/args 解析/outcome 归集。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
@@ -114,7 +111,7 @@ describe("executeToolCalls（docs/AGENT-LOOP-DRIVER §1.5）", () => {
     });
     const collected = await scheduler(h)([spec("c1", '{"tag":"a"}'), spec("c2", '{"tag":"b"}')]);
     expect(collected.concludesTurn).toBe(false);
-    expect(order).toEqual(["start:a", "end:a", "start:b", "end:b"]); // 不交错
+    expect(order).toEqual(["start:a", "end:a", "start:b", "end:b"]);
     const events = h.session.events();
     expect(events.filter((e) => e.type === "tool/call").map((e) => e.data.callId)).toEqual(["c1", "c2"]);
     expect(events.filter((e) => e.type === "tool/result").map((e) => e.data.callId)).toEqual(["c1", "c2"]);
@@ -137,12 +134,11 @@ describe("executeToolCalls（docs/AGENT-LOOP-DRIVER §1.5）", () => {
         return { content: `done` };
       },
     });
-    // 乱序完成：第一个最慢
     const collected = await scheduler(h)([spec("c1", '{"delayMs":40}'), spec("c2", '{"delayMs":0}'), spec("c3", '{"delayMs":0}')]);
     expect(collected.additionalContexts).toEqual([]);
-    expect(peak).toBe(3); // 全部并发
+    expect(peak).toBe(3);
     const results = h.session.events().filter((e) => e.type === "tool/result");
-    expect(results.map((e) => e.data.callId)).toEqual(["c1", "c2", "c3"]); // model 序，非完成序
+    expect(results.map((e) => e.data.callId)).toEqual(["c1", "c2", "c3"]);
   });
 
   it("并行池上限切分：maxParallel=2 时峰值不超过 2，三调用分两批", async () => {
@@ -217,11 +213,11 @@ describe("executeToolCalls（docs/AGENT-LOOP-DRIVER §1.5）", () => {
       { callId: "c2", name: "p", arguments: '{"tag":"2"}' },
       { callId: "c3", name: "x", arguments: "{}" },
     ]);
-    expect(trace.slice(0, 2).sort()).toEqual(["p:1", "p:2"]); // 前两个并行同时开跑
-    expect(trace[2]).toBe("x:begin"); // 池完成后排他才启动
+    expect(trace.slice(0, 2).sort()).toEqual(["p:1", "p:2"]);
+    expect(trace[2]).toBe("x:begin");
     expect(trace[3]).toBe("x:end");
     const results = h.session.events().filter((e) => e.type === "tool/result");
-    expect(results.map((e) => (e.data as { callId: string }).callId)).toEqual(["c1", "c2", "c3"]); // model 序
+    expect(results.map((e) => (e.data as { callId: string }).callId)).toEqual(["c1", "c2", "c3"]);
   });
 
   it("abort 未启动：合成 tool call aborted before dispatch，execute 不被调用", async () => {
@@ -266,12 +262,12 @@ describe("executeToolCalls（docs/AGENT-LOOP-DRIVER §1.5）", () => {
       },
     });
     const collected = await scheduler(h)([spec("c1", "")]);
-    expect(seen[0]).toEqual({}); // raw "" → {}
+    expect(seen[0]).toEqual({});
     expect(collected.concludesTurn).toBe(false);
     await scheduler(h)([spec("c2", "not-json")]);
     const results = h.session.events().filter((e) => e.type === "tool/result");
     expect(results[1]?.data).toMatchObject({ callId: "c2", isError: true });
-    expect(String(results[1]?.data.content)).toContain("not-json"); // 违规回显让模型自纠
+    expect(String(results[1]?.data.content)).toContain("not-json");
   });
 
   it("unknown tool：isError 结果成对落账，调度不中断", async () => {

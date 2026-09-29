@@ -1,7 +1,3 @@
-// 驱动生命周期（docs/AGENT-LOOP-DRIVER.md §1.4/§1.7）：单飞行 turn；kick/turn 步循环、
-// 唤醒与取消边界（sticky 取消以 kick 边界为界——cancel 后再 followup 必须可用）、
-// 逃逸 throw 单次收轮；步相位函数在 step.ts。
-
 import type { AgentMessageKind, ContentBlock, ImageBlock, InboxEntry, Session, SessionId } from "@x-harness/session";
 import { agentMessageData, AGENT_MESSAGE_KINDS } from "@x-harness/session";
 import { errorText } from "@x-harness/core";
@@ -28,23 +24,19 @@ import type { AssistantSettled, DriverDeps, ResolvedOptions, StepEntry, TurnOutc
 
 export type { DriverDeps, ResolvedOptions };
 
-/** 步入口早退：空领取 → completed；preStep 否决 → blocked（携否决原因）；enter → undefined 继续 */
 function entryOutcome(entry: StepEntry): TurnOutcome | undefined {
   if (entry.kind === "empty") return { kind: "completed" };
   if (entry.kind === "blocked") return { kind: "blocked", ...(entry.reason !== undefined ? { reason: entry.reason } : {}) };
   return undefined;
 }
 
-/** 步内批次材料化（docs/AGENT-MESSAGE.md §4 场景 C）：连续未标条目合并一条 user/message
- *  （现状形态零漂移）；带 origin 条目逐条材料化为 agent/message（UI 类型隐藏、摘要按 kind
- *  分流——delegation 报告等内部消息经 notify 入队）。事件序 = 条目序（保序）。 */
 function appendUserBatch(scope: TurnScope, step: number, entry: StepEntry): void {
   const { deps, turn } = scope;
   if (entry.kind !== "enter" || entry.entries.length === 0) return;
   const session = deps.session;
-  let plain: ContentBlock[] = []; // 未标条目累积（user 域——image 块合法，原样搬运）
+  let plain: ContentBlock[] = [];
   const flushPlain = (): void => {
-    if (plain.length === 0) return; // 例外：全空 content 条目（唯 preStep 改写可达）不再落空 user/message——语义改进，非漂移
+    if (plain.length === 0) return;
     appendSurfaceEvent(session, { type: "user/message", data: { turn, step, content: plain }, surfaceOp: "append" });
     plain = [];
   };
@@ -63,13 +55,6 @@ function appendUserBatch(scope: TurnScope, step: number, entry: StepEntry): void
   flushPlain();
 }
 
-/** 链式条件：未取消、终态 completed、收件箱有存货（next-turn ∨ next-step）——
- *  异常终态（error/max-tokens/aborted/blocked）一律不链：排队消息原地保留（下次 kick
- *  的 step0 消费），立即 idle 让失败通知出。next-step 析取支是纯防御子句：现驱动流中
- *  completed 收轮前必经 stopping 窗口重读（step.ts stoppingResumes 读1/读2）与下一步
- *  的 claimStepBatch，next-step 存货在那两处已被消费——此分支防未来重构挪动收尾序列
- *  时开真实搁浅口；改道/steer 条目的实际保障 = stopping 窗口 + 下次 kick 的 step0
- *  claimTurnBatch（含 next-step 全部）。 */
 export function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutcome | undefined, session: Session): boolean {
   if (cancelled !== undefined) return false;
   if (turnEnds !== undefined && turnEnds.kind !== "completed") return false;
@@ -77,28 +62,20 @@ export function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutc
   return inbox.nextTurn.length > 0 || inbox.nextStep.length > 0;
 }
 
-/** 逃逸路径的括号收尾：step/end 闭不上为止（已封存），错误路径括号形状一致 */
 function closeOpenStep(session: Session, turnNumber: number, openStep: number): void {
   if (openStep < 0) return;
   try {
     appendEvent(session, "step/end", { turn: turnNumber, step: openStep });
   } catch {
-    /* 已封存：闭不上为止（turn/end 路径同策） */
   }
 }
 
-/** turn 级可变状态穿引对象（turn 复杂度治理——concludeStep 与 turn 共享） */
 interface TurnState {
   turnEnds: TurnOutcome | undefined;
   pendingConclude: boolean;
   openStep: number;
 }
 
-/** 步终态短路闭括号（dialFailure/fatal/interrupted/tools-aborted 同形：merge → step/end；
- *  break 由调用方） */
-/** attempt 结果三分流（turn 复杂度治理）：fatal → 闭 step 以终态收轮；continue
- *  （respond-to-model 已落卷）→ 无 settle 可收束、直接下一迭代；interrupted → aborted 收尾
- *  （部分内容已保序落账）；ok → 携 settle 进收束窗口。 */
 function attemptAftermath(spec: {
   readonly scope: TurnScope;
   readonly state: TurnState;
@@ -126,8 +103,6 @@ function closeStepOutcome(spec: { readonly session: Session; readonly state: Tur
   spec.state.openStep = -1;
 }
 
-/** 步收尾走向：resume = 窗口续跑（调用方置续写步标志 continue）；break = turnEnds 已定；
- *  loop = stopping 续航未触发，进下一迭代 */
 type StepFlow = { readonly kind: "resume" } | { readonly kind: "break" } | { readonly kind: "loop" };
 
 interface ConcludeStepSpec {
@@ -139,9 +114,6 @@ interface ConcludeStepSpec {
   readonly cancelled: string | undefined;
 }
 
-/** 步入口（turn 复杂度治理）：正常步领取收件箱、续写步不领取（暂停吸收排队输入——
- *  docs/OUTPUT-TOKEN-CONTINUATION.md）；早退终态（empty/blocked）合并入 state，返回
- *  undefined 表示调用方应 break */
 async function enterStep(spec: { readonly scope: TurnScope; readonly step: number; readonly continuationStep: boolean; readonly state: TurnState }): Promise<StepEntry | undefined> {
   const entry = spec.continuationStep ? await concludeStepEntry(spec.scope, spec.step) : await beginStep(spec.scope, spec.step, spec.step === 0);
   const early = entryOutcome(entry);
@@ -152,10 +124,6 @@ async function enterStep(spec: { readonly scope: TurnScope; readonly step: numbe
   return entry;
 }
 
-/** 步收尾（turn 复杂度治理——工具调度 → 收束窗口 → settleConclude → stopping 续航收口于此）：
- *  收束窗口 = 即将结束 turn 的通用时点（内核不识「截断」，判定归插件）。带工具的 ran 流
- *  仅 max-tokens 时派发（工具结果已全落账——派发点在 scheduleTools 之后）——hasTools 守门
- *  归 agent-continuation（WER 批 A：让位 final 等价旧带工具粘性）。 */
 async function concludeStep(spec: ConcludeStepSpec): Promise<StepFlow> {
   const { scope, turn, step, state, assistant, cancelled } = spec;
   const { deps, controller } = scope;
@@ -169,8 +137,6 @@ async function concludeStep(spec: ConcludeStepSpec): Promise<StepFlow> {
   if (concludeWindowDue) {
     const flow = await concludeWindow(scope, step, { assistant, hasTools: tools.hasTools, truncatedCount: tools.truncatedCount });
     if (flow.kind === "resume") {
-      // 指令已落卷（agent/message{directive}）；出口不变量：turnEnds 保持 undefined
-      // （粘性残留会把续写成功的轮误收 max-tokens 终态——chainsNextTurn 断链/delegation 误报）
       appendEvent(session, "step/end", { turn, step });
       state.openStep = -1;
       return { kind: "resume" };
@@ -181,19 +147,17 @@ async function concludeStep(spec: ConcludeStepSpec): Promise<StepFlow> {
       state.turnEnds = mergeOutcome(state.turnEnds, fatalOutcome(controller, cancelled, { kind: "error", message: flow.message, code: flow.code }));
       return { kind: "break" };
     }
-    if (flow.sticky) state.turnEnds = mergeOutcome(state.turnEnds, { kind: "max-tokens" }); // 无决策路径：现行粘性（含带工具让位）
+    if (flow.sticky) state.turnEnds = mergeOutcome(state.turnEnds, { kind: "max-tokens" });
   }
   const settled = settleConclude({ current: state.turnEnds, flow: tools, assistant, pendingConclude: state.pendingConclude, session });
   state.turnEnds = settled.turnEnds;
   state.pendingConclude = settled.pendingConclude;
   appendEvent(session, "step/end", { turn, step });
   state.openStep = -1;
-  state.turnEnds = await maybeResume(scope, state.turnEnds); // stopping 续航（仅 completed）
+  state.turnEnds = await maybeResume(scope, state.turnEnds);
   return state.turnEnds !== undefined ? { kind: "break" } : { kind: "loop" };
 }
 
-/** followup/steer 投递块：text 块恒在（空串 text 由 LLM 映射层过滤，WAL 形状稳定——
- *  纯图 prompt 由此支持）+ 结构合法的 image 块（垃圾形状降级丢弃，严格校验在 hub 边缘） */
 function userBlocks(text: string, options: { images?: readonly ImageBlock[] } | undefined) {
   const images = Array.isArray(options?.images)
     ? options.images.filter((block) => block?.type === "image" && typeof block.data === "string" && typeof block.mediaType === "string")
@@ -229,8 +193,6 @@ export function createDriver(deps: DriverDeps): {
   let idle: Array<() => void> = [];
   const failedTurnRef = { turn: 0 };
 
-  // 唤醒不查 cancelled：sticky 取消以 kick 边界为界（kick 头复位）——cancel 后再 followup 必须可用，
-  // 否则一次取消永久砖化；dispose 之后的抑制由 session 封存（append fail-closed）承担
   const wake = (): void => {
     if (phase !== undefined) {
       wakeRequested = true;
@@ -240,7 +202,7 @@ export function createDriver(deps: DriverDeps): {
   };
 
   const notifyIdle = (): void => {
-    if (phase !== undefined) return; // 新 kick 已启动（idle 监听器重入 followup）：由其 finally 收尾通知
+    if (phase !== undefined) return;
     for (const resolve of idle) resolve();
     idle = [];
   };
@@ -251,17 +213,11 @@ export function createDriver(deps: DriverDeps): {
     deps.emitStatus("running");
     try {
       while (cancelled === undefined && (await turn())) {
-        /* 链式 */
       }
     } catch (error) {
-      // turn() 自身兜底后的最后背书（不变量破坏）：不落账只上报
       deps.emitError(failedTurnRef.turn, errorText(error));
     } finally {
       phase = undefined;
-      // 先判 replay 再发 idle：replay 边界不发假 idle——同步监听者（evictIdle 驻留档化/
-      // 邮箱状态镜像）不得在「即将继续」的边界上做生命周期决策（假 idle 可致 dispose 压掉
-      // replay 并 clear 掉锁存的排队消息）。锁存唤醒 replay 仅在收件箱确有 next-turn 时
-      // （链式条件可能已消费——双触发会造空 turn）。
       const replay = wakeRequested && cancelled === undefined && foldInbox(session.events()).nextTurn.length > 0;
       wakeRequested = false;
       if (replay) {
@@ -275,41 +231,37 @@ export function createDriver(deps: DriverDeps): {
 
   async function turn(): Promise<boolean> {
     if (cancelled !== undefined) return false;
-    const controller = new AbortController(); // 新 controller 先换引用后落账（F5）
+    const controller = new AbortController();
     const turnNumber = nextTurnNumber();
     failedTurnRef.turn = turnNumber;
     const scope: TurnScope = { deps, controller, turn: turnNumber };
     phase = { abort: controller, turn: turnNumber };
-    const state: TurnState = { turnEnds: undefined, pendingConclude: false, openStep: -1 }; // openStep：已落 step/start 未落 step/end 的步号（catch 收尾闭括号用）
+    const state: TurnState = { turnEnds: undefined, pendingConclude: false, openStep: -1 };
     try {
       appendEvent(session, "turn/start", { turn: turnNumber });
-      let continuationStep = false; // 下一步为续写步（收束窗口 resume 决策置位；步入口消费——turn 局部唯一新内核状态）
+      let continuationStep = false;
       for (let step = 0; ; step++) {
         if (controller.signal.aborted) {
           state.turnEnds = mergeOutcome(state.turnEnds, abortedOutcome(cancelled));
           break;
         }
-        // 步入口：正常步领取收件箱；续写步不领取（暂停吸收排队输入——docs/OUTPUT-TOKEN-CONTINUATION.md）
         const entry = await enterStep({ scope, step, continuationStep, state });
         if (entry === undefined) break;
         appendEvent(session, "step/start", { turn: turnNumber, step });
         state.openStep = step;
         anchorSystem(scope, step);
         const isContinuationStep = continuationStep;
-        continuationStep = false; // 步入口即消费：后续步默认恢复正常步形态
-        if (!isContinuationStep) appendUserBatch(scope, step, entry); // 续写步不落 user 批次（指令已在投影末条）
+        continuationStep = false;
+        if (!isContinuationStep) appendUserBatch(scope, step, entry);
         const dialed = await dialStep(scope, step);
         if (dialed.kind !== "dial") {
-          closeStepOutcome({ session, state, turn: turnNumber, step }, dialFailure(dialed.kind)); // 错误也闭 step：括号形状一致
+          closeStepOutcome({ session, state, turn: turnNumber, step }, dialFailure(dialed.kind));
           break;
         }
         const attempt = await runAttempt({ scope, dial: dialed.dial, schemas: dialed.schemas, step });
         const aftermath = attemptAftermath({ scope, state, turn: turnNumber, step, attempt, cancelled });
         if (aftermath.kind === "break") break;
         if (aftermath.kind === "continue") {
-          // respond 已落卷：无 settle 可收束，直接进下一迭代（不过 concludeStep）。
-          // step/end 必须闭合（repair 配对不变量——悬空 step/start 违反 WAL 步配对）；
-          // 不携终态（turnEnds 保持 undefined——respond 非失败终态，等待下一迭代自然收）
           appendEvent(session, "step/end", { turn: turnNumber, step });
           state.openStep = -1;
           continue;
@@ -317,12 +269,11 @@ export function createDriver(deps: DriverDeps): {
         const flow = await concludeStep({ scope, turn: turnNumber, step, state, assistant: aftermath.message, cancelled });
         if (flow.kind === "resume") {
           continuationStep = true;
-          continue; // 收束窗口续跑：下一步为续写步
+          continue;
         }
         if (flow.kind === "break") break;
       }
     } catch (error) {
-      // 逃逸 throw（中间件违约/append 失败等）：闭开着的 step 括号后以 error 单次收尾
       state.turnEnds = mergeOutcome(state.turnEnds, { kind: "error", message: errorText(error) });
       closeOpenStep(session, turnNumber, state.openStep);
     } finally {
@@ -347,7 +298,7 @@ export function createDriver(deps: DriverDeps): {
 
   return {
     followup: (text: string, options?: { images?: readonly ImageBlock[] }) => {
-      if (typeof text !== "string") return; // 垃圾输入降级：不落账不唤醒
+      if (typeof text !== "string") return;
       appendEvent(session, "agent/inbox/spliced", insertData("next-turn", userBlocks(text, options)));
       wake();
     },
@@ -356,21 +307,18 @@ export function createDriver(deps: DriverDeps): {
       appendEvent(session, "agent/inbox/spliced", insertData("next-step", userBlocks(text, options)));
       wake();
     },
-    /** 内部消息注入（docs/AGENT-MESSAGE.md §5）：next-step 排队 + 唤醒（steer 同款边界
-     *  语义）——领取时材料化为 agent/message{source,kind}，UI 不展示、摘要按 kind 分流 */
     notify: (source: string, kind: AgentMessageKind, text: string) => {
-      if (typeof text !== "string" || typeof source !== "string" || source === "" || !AGENT_MESSAGE_KINDS.has(kind)) return; // 垃圾输入降级：不落账不唤醒（steer 守卫同款完备）
+      if (typeof text !== "string" || typeof source !== "string" || source === "" || !AGENT_MESSAGE_KINDS.has(kind)) return;
       appendEvent(session, "agent/inbox/spliced", insertData("next-step", [{ type: "text", text }], { source, kind }));
       wake();
     },
     cancel: (cause: string, options?: { keepInbox?: boolean }) => {
       const safeCause = cause === "" ? "cancelled" : cause;
-      cancelled = safeCause; // per-kick sticky（链式窗口防丢）
+      cancelled = safeCause;
       if (options?.keepInbox !== true) {
         try {
           appendEvent(session, "agent/inbox/spliced", { op: "clear", reason: safeCause });
         } catch {
-          /* 已封存：clear 落不上也不阻断 abort */
         }
       }
       phase?.abort.abort();

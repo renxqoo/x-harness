@@ -1,6 +1,3 @@
-// 登记簿服务测试：createBashPlugin 把生效实例（自建/外穿）provide 为 backgroundTasks
-// 服务——task-tools 停靠消费的共享面。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +21,7 @@ describe("backgroundTasks service", () => {
     const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin()]);
     const tasks = ctx.tryUse(backgroundTasks);
     expect(tasks).toBeDefined();
-    expect(tasks?.list(undefined)).toEqual([]); // 同一实例可用（服务面即生效面）
+    expect(tasks?.list(undefined)).toEqual([]);
     await ctx.dispose();
     void unload;
   });
@@ -35,7 +32,7 @@ describe("backgroundTasks service", () => {
     const external = new BackgroundTasks(defaultTaskLimits({ taskLogDir: root }));
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, createLocalEnvPlugin(), createBashPlugin({ tasks: external })]);
-    expect(ctx.tryUse(backgroundTasks)).toBe(external); // 引用同一——task-tools 停靠即共享
+    expect(ctx.tryUse(backgroundTasks)).toBe(external);
     await ctx.dispose();
     void unload;
   });
@@ -53,7 +50,7 @@ describe("bash guidance（纯函数——工厂参数投稿，D3）", () => {
     const fenced = bashGuidance({ kind: "sandbox" } as never);
     expect(fenced).toContain("sandbox");
     expect(fenced).toContain("fence");
-    expect(fenced).toContain("no TTY"); // sandbox 形态双段拼接（基础段在场——对抗审查 Mi-1）
+    expect(fenced).toContain("no TTY");
     const bare = bashGuidance({ kind: "local" } as never);
     expect(bare).toContain("no TTY");
     expect(bare).not.toContain("sandbox");

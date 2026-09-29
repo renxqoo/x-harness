@@ -1,7 +1,3 @@
-// REPL 主循环（docs/CLI.md §2.3/§2.7）：行分派（steer/followup/slash）、Ctrl+C 状态机
-// （running=cancel；ask 挂起=强制关闭提问→deny+cancel；idle 双击 500ms=退出）、
-// 退出清理（当前 handle dispose 后返回，ctx 归 main）。迟到输入一律捕获降级不炸。
-
 import type { AgentHandle, AgentLoopService, AgentOptions } from "@x-harness/agent-loop";
 import { agentAssistantStream } from "@x-harness/agent-loop";
 import type { Result } from "@x-harness/core";
@@ -30,9 +26,6 @@ export interface ReplIO {
   readonly write: (text: string) => void;
   readonly stdin: NodeJS.ReadableStream;
   readonly isTTY: boolean;
-  /** 信号面注入（生产 = process.on）；缺席 = 不接信号（进程默认语义，测试安全）。
-   *  SIGINT 必须接线：规范模式 pty（e2e）下 ^C 由内核直投，readline 的 SIGINT 事件只在
-   *  raw 模式触发——两个来源共用同一状态机，幂等不双触发 */
   readonly onSignal?: (kind: "SIGINT" | "SIGTERM" | "SIGHUP", callback: () => void) => void;
 }
 
@@ -45,15 +38,11 @@ export interface ReplInput {
   readonly sessionRoot: string;
   readonly persist: boolean;
   readonly io: ReplIO;
-  /** 启动后依序执行的初始提示（交互模式的位置参数/管道 stdin 拼接产物） */
   readonly initialPrompts?: readonly string[];
-  /** broker 提问面接线：REPL 终端就绪后回传 question（Ctrl+C 强制关闭 → undefined → deny） */
   readonly wireAsk?: (ask: (prompt: string) => Promise<string | undefined>) => void;
-  /** 退出面接线（stdout EPIPE 等外部断裂触发清理退出） */
   readonly wireQuit?: (quit: (code: number) => void) => void;
 }
 
-/** 行分派纯函数：空行忽略；slash 行透传；running 时普通文本 = steer */
 export type LineAction =
   | { readonly kind: "ignore" }
   | { readonly kind: "steer"; readonly text: string }
@@ -82,37 +71,29 @@ interface MakeNextInput {
   readonly options: AgentOptions;
 }
 
-/** 建立下一会话：newSession → create；指定 id 或当前 id → resume；同会话 resume 失败
- *  （--no-session 无 archive 等）兜底 create 新会话，避免 REPL 无会话可用。
- *  工具面 restriction 重演（终审 B1 处置）：create 语义（/new 与兜底）恒注册全量快照
- *  （W2B §1.1 血缘分级名单恒可读）；resume 语义（/model、/resume）带 flag 才注册，
- *  无 flag = 显式放开（与迁移前 spread undefined 等价——不再误把放开态变受限态） */
 async function makeNext(input: MakeNextInput & { readonly world: import("./build-world.ts").World; readonly args: CliArgs; readonly registered: readonly string[] }): Promise<Result<AgentHandle>> {
   const { loop, over, options, world, args, registered } = input;
   const registerCreate = (sessionId: SessionId): void => {
-    world.registry.scoped(sessionId).restrict(resolveToolNames(args, registered)); // create 语义：恒全量快照
+    world.registry.scoped(sessionId).restrict(resolveToolNames(args, registered));
   };
   if (over.newSession === true) {
-    const made = await loop.create({ agent: options }); // 缺省铸号（mintSessionId 单一来源）
+    const made = await loop.create({ agent: options });
     if (made.ok) registerCreate(made.value.agent.session.id);
     return made;
   }
   const resumed = await loop.resume({ id: over.sessionId ?? input.previousId, agent: options });
   if (resumed.ok) {
-    // resume 语义：带 flag 才注册（无 flag = 显式放开——终审 B1 处置，与迁移前 spread undefined 等价）
     if (args.noTools || args.tools !== undefined || args.excludeTools !== undefined) {
       world.registry.scoped(resumed.value.agent.session.id).restrict(resolveToolNames(args, registered));
     }
     return resumed;
   }
-  if (over.sessionId !== undefined) return resumed; // 指定 id 失败——不兜底（沿用旧契约）
-  const made = await loop.create({ agent: options }); // 兜底 = create 语义恒快照（缺省铸号，mintSessionId 单一来源）
+  if (over.sessionId !== undefined) return resumed;
+  const made = await loop.create({ agent: options });
   if (made.ok) registerCreate(made.value.agent.session.id);
   return made;
 }
 
-/** 切换收尾：flush 屏障 + mailbox 重绑 + dial 更新 + 文案（reopen 复杂度纪律抽出） */
-/** --schema 的括号平衡扫描：从 parts[start+1] 起收集到 JSON 闭合——返回 [json, 末索引] */
 function scanSchemaJson(parts: readonly string[], start: number): { readonly json?: unknown; readonly error?: string; readonly end: number } {
   const joined: string[] = [];
   let depth = 0;
@@ -132,7 +113,6 @@ function scanSchemaJson(parts: readonly string[], start: number): { readonly jso
   }
 }
 
-/** /workflow submit 参数解析：--verify <command> | --schema <json> | 其余为描述+任务 */
 export function parseWorkflowSubmitArgs(raw: string): { ok: true; input: { description: string; prompt: string; acceptance?: { command: string }; result_schema?: unknown } } | { ok: false; reason: string } {
   let command: string | undefined;
   let schema: unknown;
@@ -162,9 +142,6 @@ export function parseWorkflowSubmitArgs(raw: string): { ok: true; input: { descr
   return { ok: true, input: { description, prompt: promptWords.join(" ") || description, ...(command !== undefined ? { acceptance: { command } } : {}), ...(schema !== undefined ? { result_schema: schema } : {}) } };
 }
 
-/** /plan 命令实现（planControl 服务——enter 锚定 owner / exit 任意会话可出；策略全在
- * plan 插件内，本层只做 UX 路由）。会话内有效——CLI resume 不折叠档位是已知面，hub 侧
- * 经 permission/set_mode 持久化 */
 export function makePermissionCommands(live: () => { readonly world: World; readonly handle: import("@x-harness/agent-loop").AgentHandle }): import("./slash-commands.ts").PermissionCommandDeps {
   return {
     planToggle: () => {
@@ -182,7 +159,6 @@ export function makePermissionCommands(live: () => { readonly world: World; read
   };
 }
 
-/** /workflow 命令实现（workflowView 直调——期 3 不经模型；world/handle 经 getter 取活引用） */
 export function makeWorkflowCommands(live: () => { readonly world: World; readonly handle: import("@x-harness/agent-loop").AgentHandle }): import("./slash-commands.ts").WorkflowCommandDeps {
   return {
     workflowSubmit: async (args) => {
@@ -234,11 +210,8 @@ async function finalizeSwitch(deps: {
     quit(1);
     return `fatal: switched session cannot persist: ${flushed.reason}`;
   }
-  // 跨进程邮箱重绑（AGENT-DELEGATION §5.3 宿主接线）：信封路由/出站身份/状态镜像随新会话
-  // 换目标——失败仅告警（跨进程收件降级为不可达，进程内子代理与对话不受影响）
   const rebound = await world.ctx.tryUse(delegationView)?.rebindMailbox(handle.agent.session.id);
   if (rebound !== undefined && !rebound.ok) io.write(`warning: mailbox rebind failed (${rebound.reason}) — cross-session messaging may misroute\n`);
-  // workflow run 归属迁移（件16 期 2-A）：切会话后 workflow_submit 复活 + 悬置通知转向新会话
   const workflowRebound = await world.ctx.tryUse(workflowView)?.rebind(handle.agent.session.id);
   if (workflowRebound !== undefined && !workflowRebound.ok) io.write(`warning: workflow rebind failed (${workflowRebound.reason}) — pending runs keep the old session\n`);
   const dial = dialOf(handle.agent.options);
@@ -249,7 +222,6 @@ async function finalizeSwitch(deps: {
 
 export async function runRepl(input: ReplInput): Promise<number> {
   const { world, io } = input;
-  // 注册工具名快照：restriction 重演的基集（makeNext 单点用——F-2 处置）
   const registeredToolNames = world.registry.schemas().map((schema) => schema.name);
   let handle = input.handle;
   let dial = dialOf(handle.agent.options);
@@ -290,8 +262,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
     }
   };
 
-  /** 换会话/换 dial：先 dispose 现有，再建新（flush 屏障防切进不可持久化会话）；
-   *  失败兜底新建内存态防 REPL 裸奔；switching 互斥防并发 slash 双重切换 */
   let switching = false;
   const buildNextOptions = (over: { readonly dial?: SlashDial }): AgentOptions => {
     const nextDial = { ...dial, ...over.dial };
@@ -335,10 +305,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
     listMainSessions: async () => (world.archive === undefined ? [] : mainSessions(await world.archive.listHeaders())),
     compact: async (instructions) => {
       if (handle.agent.status === "running") return "cannot compact while the agent is running";
-      // 统一走 compactionRunner（docs/COMPACTION.md 手动面）：结构化 checkpoint 摘要 +
-      // 文件账本 + keepRecent 尾保留；dial 参数不入——摘要面是装配期快照（默认档）
-      // 入口条件重铸：Ctrl+C（idle 单击/quit）abort 的永远是「在飞压缩持有的」当前
-      // 控制器——在飞可取消；下一次 /compact 检测到已 abort 则重铸，不被毒化
       if (compactAbort.signal.aborted) compactAbort = new AbortController();
       const result = await world.ctx.use(compactionRunner).compact({
         session: handle.agent.session.id,
@@ -352,9 +318,7 @@ export async function runRepl(input: ReplInput): Promise<number> {
       const exported = await exportSession({ store: world.store, sessionRoot: input.sessionRoot, session: handle.agent.session, persist: input.persist, target: path });
       return exported.ok ? `exported to ${exported.value.path}` : exported.reason;
     },
-    // /workflow 命令面（件16 期 3：不经模型——workflowView 直调）
     workflow: makeWorkflowCommands(() => ({ world, handle })),
-    // /plan 命令面（planControl——owner 锚定在 plan 插件内）
     permission: makePermissionCommands(() => ({ world, handle })),
   };
 
@@ -364,17 +328,13 @@ export async function runRepl(input: ReplInput): Promise<number> {
     quitting = true;
     compactAbort.abort();
     try {
-      handle.agent.cancel("quitting"); // 在飞 turn 立即收尾（whenIdle 才能到达），否则退出挂到流自然结束
+      handle.agent.cancel("quitting");
     } catch {
-      // 已在收尾路径——忽略
     }
     terminal.close();
     quitReason(code);
   };
 
-  // Ctrl+C 状态机（docs/CLI.md §2.3）：ask 挂起 → 强制收束提问（deny）+ cancel turn；
-  // running → cancel；idle → 500ms 双击退出（单击顺带 abort 在飞 compact）。
-  // readline 事件与进程 SIGINT 两来源共用（幂等）
   let lastInterrupt = 0;
   const onInterrupt = (): void => {
     if (quitting) return;
@@ -382,7 +342,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
       try {
         handle.agent.cancel("interrupted");
       } catch {
-        // 已在收尾路径——忽略
       }
       return;
     }
@@ -390,7 +349,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
       try {
         handle.agent.cancel("interrupted");
       } catch {
-        // 已在收尾路径——忽略
       }
       return;
     }
@@ -429,7 +387,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
         io.write("agent is busy — /quit or Ctrl+C to cancel first\n");
         return;
       }
-      // 迟到/异常输入捕获降级（/export 目标不可写、compact abort 等），不炸 REPL
       void runSlashCommand(action.line, slashDeps).then(
         (outcome) => {
           if (outcome === "quit") quit();
@@ -461,7 +418,6 @@ export async function runRepl(input: ReplInput): Promise<number> {
   return code;
 }
 
-/** 压缩 skip 理由 → REPL 文案（docs/COMPACTION.md 跳过词表闭射） */
 function compactFailureText(reason: import("@x-harness/compaction").CompactionSkipReason): string {
   switch (reason) {
     case "no-cut-point":

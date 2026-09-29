@@ -17,7 +17,6 @@ describe("scope 层链（§3）", () => {
     ctx.emit(token, { v: 1 });
     expect(rootHeard).toEqual([1]);
     expect(childHeard).toEqual([]);
-    // 子层 dispose 后不能再注册
     expect(() => child.on(token, noop)).toThrow(/disposed/);
   });
 
@@ -28,8 +27,8 @@ describe("scope 层链（§3）", () => {
     const child = ctx.scope({ agentId: "a" });
     child.on(token, ({ v }) => childHeard.push(v));
     await ctx.dispose();
-    ctx.emit(token, { v: 1 }); // emit 在 dispose 后允许（unwind 边界）
-    expect(childHeard).toEqual([]); // 子层注册已被父回卷带走
+    ctx.emit(token, { v: 1 });
+    expect(childHeard).toEqual([]);
   });
 
   it("孙层链：三层并集可见、depth 排序", () => {
@@ -43,7 +42,6 @@ describe("scope 层链（§3）", () => {
     ctx.on(token, () => order.push("root"));
     leaf.emit(token, { v: 1 });
     expect(order).toEqual(["root", "mid", "leaf"]);
-    // 中间层 emit：leaf 监听者不可见
     order.length = 0;
     mid.emit(token, { v: 1 });
     expect(order).toEqual(["root", "mid"]);
@@ -58,7 +56,7 @@ describe("scope 层链（§3）", () => {
     b.provide(token, { who: "b" });
     expect(a.use(token).who).toBe("a");
     expect(b.use(token).who).toBe("b");
-    expect(ctx.tryUse(token)).toBeUndefined(); // root 无此服务
+    expect(ctx.tryUse(token)).toBeUndefined();
   });
 
   it("disposed 层上 scope/dispatch 拒绝", async () => {

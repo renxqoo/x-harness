@@ -1,6 +1,3 @@
-// 放宽回归锚（docs/EXEC-ENV.md §14.4/§14.5-4）：每条有意放宽钉死——将来退回假阳性/恒 ask
-// 必红。harness：fence 在场（auto 档界内合成面）；dynamic 类另钉 auto ask / full allow 双态。
-
 import { describe, expect, it } from "vitest";
 import { adjudicateBash as __adjudicateBash } from "../bash/adjudicate.ts";
 import { knobDecideOf } from "@x-harness/permission-modes";
@@ -63,22 +60,22 @@ describe("reason 快照（§14.5-6——防实现期 reason 词漂移）", () =>
       const out = adjudicateBash({ ...fenced, rules, command, profile: PROFILE_OF[mode] });
       return [out.verdict, out.reason, out.resolvedBy];
     };
-    expect(pin("git push", "plan")).toEqual(["deny", "plan mode disallows bash", "mode:plan"]); // V3 阶段二：纯直调=严格缺省（富策略 tool-plan）
+    expect(pin("git push", "plan")).toEqual(["deny", "plan mode disallows bash", "mode:plan"]);
     const noFence = adjudicateBash({ ...fenced, fence: undefined, command: "git push" });
     expect([noFence.verdict, noFence.reason, noFence.resolvedBy]).toEqual(["ask", "no rule matches segment", "default:ask"]);
     expect(pin("sudo id", "auto")).toEqual(["ask", "hard-deny:sudo", "hard-deny"]);
     expect(pin("echo $(x)", "auto")).toEqual(["ask", "injection:command-substitution", "injection"]);
-    expect(pin("echo $(x)", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A① 裁决（2026-09-28）：注入最小 ask 钳制——非总括模式插件不越过红线 2（总括档豁免见 full-unrestricted.test.ts）
-    expect(pin("rm -rf /", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：硬拒形态同钳制（非总括直调面）
-    expect(pin("sudo id", "full")).toEqual(["deny", "hard-deny:sudo", "mode:full"]); // 提权直接拦截（跨档恒拒——总括档同拒，见 full-unrestricted.test.ts）
-    expect(pin("echo 'oops", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]); // A①：解析失败同钳制（非总括直调面）
-    expect(pin("cmd < ~/.ssh/id_rsa", "full")).toEqual(["deny", "redirect-read:~/.ssh/**", "redirect-read"]); // B① 重定向硬线先于模式——full 不越过
+    expect(pin("echo $(x)", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]);
+    expect(pin("rm -rf /", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]);
+    expect(pin("sudo id", "full")).toEqual(["deny", "hard-deny:sudo", "mode:full"]);
+    expect(pin("echo 'oops", "full")).toEqual(["ask", "hard-deny/injection floor", "red-line:floor"]);
+    expect(pin("cmd < ~/.ssh/id_rsa", "full")).toEqual(["deny", "redirect-read:~/.ssh/**", "redirect-read"]);
     expect(pin("cat $F", "auto")).toEqual(["ask", "dynamic-segment (expansion/glob)", "static"]);
     expect(pin("echo x > /etc/passwd", "auto")).toEqual(["ask", "redirect:/etc/passwd", "redirect"]);
     expect(pin("cmd < ~/.ssh/id_rsa", "auto")).toEqual(["deny", "redirect-read:~/.ssh/**", "redirect-read"]);
     expect(pin("echo 'oops", "auto")).toEqual(["ask", "unparseable command", "parse"]);
     expect(pin("nohup", "auto")).toEqual(["ask", "wrapper:nohup", "wrapper"]);
-    expect(pin("bash x.sh", "auto")).toEqual(["ask", "opaque-code:bash", "opaque"]); // 无规则 harness——opaque 可被 allow 越过是独立语义
+    expect(pin("bash x.sh", "auto")).toEqual(["ask", "opaque-code:bash", "opaque"]);
     expect(pin("git status", "auto")).toEqual(["allow", "classifier:readonly", "classifier:readonly"]);
     expect(pin("ls", "auto", WIDE)).toEqual(["allow", "rule:*", "rule:user"]);
   });

@@ -1,6 +1,3 @@
-// 件15 批3：rescue-note 用例组（docs/DELEGATION-LONG-CONTENT.md §3）——命中/让位/abort/
-// 白名单外 + 装配后 waterfall 注册面（plugin apply 挂接可见）。
-
 import { describe, expect, it } from "vitest";
 import { agentTruncatedTool } from "@x-harness/agent-loop";
 import { delegationRescueNote } from "../rescue-note.ts";
@@ -23,7 +20,6 @@ const payloadOf = (over: Partial<TruncatedToolPayload> = {}): TruncatedToolPaylo
 const nextNone = async (): Promise<undefined> => undefined;
 const nextNote = async (): Promise<{ readonly note: string }> => ({ note: "upstream already rescued" });
 
-/** note-only 应答收窄（本件恒返 {note}——content 替换形态归文案插件） */
 function noteOf(decision: unknown): string {
   expect(decision).toMatchObject({ note: expect.any(String) });
   return (decision as { readonly note: string }).note;
@@ -65,7 +61,6 @@ describe("delegationRescueNote（件15 批3）", () => {
   });
 
   it("真截断链路：半截 tool-call-delta + finish max-tokens → 配对 result 含换策略 note（内核 pairTruncatedCalls 全链）", async () => {
-    // worker 类型子用 CHILD_MODEL（.md frontmatter）——脚本桶按 model 分派
     const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }));
     const parent = await spawnParent(world);
     world.scripts.set(PARENT_MODEL, [
@@ -76,7 +71,6 @@ describe("delegationRescueNote（件15 批3）", () => {
     ]);
     world.scripts.set(CHILD_MODEL, [
       (async function* (): AsyncGenerator<LlmChunk> {
-        // 半截 agent_message 参数（无闭合 JSON）+ max-tokens 终态 → 内核截断集配对
         yield { type: "tool-call-delta", index: 0, callId: "m1", name: "agent_message", argumentsDelta: '{"to":"main","message":"aaaa' };
         yield { type: "finish", finish: { kind: "max-tokens" } };
       })(),
@@ -93,9 +87,9 @@ describe("delegationRescueNote（件15 批3）", () => {
       const results = childHandle.agent.session.events().filter((e) => e.type === "tool/result").map((e) => JSON.stringify(e.data));
       const hit = results.find((r) => r.includes("m1"));
       expect(hit).toBeDefined();
-      expect(hit).toContain("write it to a file"); // rescue note 附进配对 result（经内核 pairTruncatedCalls）
+      expect(hit).toContain("write it to a file");
       expect(hit).toContain("cut off");
-      expect(hit).toContain("truncated: not executed"); // 内核协议短事实在前、note 以 \n 追加（WER C3）
+      expect(hit).toContain("truncated: not executed");
     }
     await parent.dispose();
   });
@@ -103,14 +97,12 @@ describe("delegationRescueNote（件15 批3）", () => {
   it("装配后 waterfall 派发可见（plugin apply 挂接面——handler 注册面直发）", async () => {
     const world = await makeWorld(await makeOptions({}));
     const parent = await spawnParent(world);
-    // 直接经 ctx waterfall 派发：装配世界内 agent_message 截断 payload 有 delegation note
     const dispatched = await world.ctx.dispatch(
       agentTruncatedTool,
       payloadOf({ session: parent.agent.session.id, name: "agent_message" }),
       async () => undefined,
     ) as { note: string } | undefined;
     expect(noteOf(dispatched)).toContain("write it to a file");
-    // 白名单外仍 undefined（世界内无 write 抢救件装配）
     const other = await world.ctx.dispatch(
       agentTruncatedTool,
       payloadOf({ session: parent.agent.session.id, name: "write" }),

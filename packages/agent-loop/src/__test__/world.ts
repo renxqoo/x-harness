@@ -1,6 +1,3 @@
-// 驱动测试共享装置：真实装配 session+tools+llm+system-prompt + 脚本化假适配器世界
-// （未写脚本时兜底文本——不静默空转）；世界登记与 afterEach 清理集中于此。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -14,7 +11,6 @@ import { agentLoopPlugin, agentLoopServiceToken } from "../index.ts";
 import type { Agent, AgentHandle, AgentLoopService } from "../index.ts";
 import { afterEach, expect } from "vitest";
 
-/** 脚本化假适配器：每次调用弹出一段脚本 */
 export function fakeAdapter(): { scripts: Array<AsyncGenerator<LlmChunk> | ((request: LlmRequest) => AsyncGenerator<LlmChunk>)>; calls: LlmRequest[] } {
   const calls: LlmRequest[] = [];
   const scripts: Array<AsyncGenerator<LlmChunk> | ((request: LlmRequest) => AsyncGenerator<LlmChunk>)> = [];

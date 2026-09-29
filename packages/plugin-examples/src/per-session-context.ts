@@ -1,6 +1,3 @@
-// ⑭ 每会话动态上下文：sessionCreated → scoped section（会话层 prompt 的第一个真实消费者）。
-// 真实场景：每个会话按 header（cwd/血缘/子代理元数据）注入专属上下文——会话终结自动清层（挂账#4 闭环）。
-
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { sessionCreated } from "@x-harness/session";
@@ -18,7 +15,7 @@ export function perSessionContextPlugin(textOf: (header: SessionHeader) => strin
         offs.push(
           prompt.scoped(header.id).section({
             name: "session-context",
-            after: wellKnown.baseCore, // 锚定子集：只锚根层段名
+            after: wellKnown.baseCore,
             text: textOf(header),
           }),
         );

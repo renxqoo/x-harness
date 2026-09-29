@@ -1,5 +1,3 @@
-// 共享测试世界（F1 kits + F3 testkit dogfood）：plugin-examples 全部用例的装置底座。
-
 import type { Context } from "@x-harness/core";
 import { textScript } from "@x-harness/testkit";
 import { createLocalEnv } from "@x-harness/exec-env";
@@ -18,7 +16,6 @@ export interface TestWorld {
   readonly cleanup: () => Promise<void>;
 }
 
-/** 最小可跑世界：内存会话 + 全工具箱（local env）+ 假 llm + 挂被测插件 */
 export async function makeTestWorld(plugins: readonly Plugin[] = []): Promise<TestWorld> {
   const calls: LlmRequest[] = [];
   const scripts: Array<AsyncGenerator<LlmChunk>> = [];
@@ -53,7 +50,6 @@ export async function makeTestWorld(plugins: readonly Plugin[] = []): Promise<Te
 
 export const AGENT = { model: "fake-model", provider: "fake" } as const;
 
-/** 跑一轮并取事件 */
 export async function runTurn(tw: TestWorld, input: string): Promise<readonly { type: string; data: unknown }[]> {
   const made = await tw.world.loop.create({ agent: AGENT });
   if (!made.ok) throw new Error(made.reason);

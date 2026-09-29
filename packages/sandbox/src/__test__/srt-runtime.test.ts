@@ -1,5 +1,3 @@
-// realSrtRuntime 守卫面 + 平台依赖自探表（darwin 自探 sandbox-exec——srt 的 darwin 检查是空操作）。
-
 import { describe, expect, it } from "vitest";
 import { platformDepErrors, realSrtRuntime } from "../srt-runtime.ts";
 

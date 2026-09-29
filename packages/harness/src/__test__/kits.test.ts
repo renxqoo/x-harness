@@ -1,6 +1,3 @@
-// F1 kit 形状 + createAgentWorld（SDK-MIGRATION-F1 §3）：乱序插件集仍正确（软约束生效）、
-// 五服务缺席 fail-closed、失败自清理、最小世界端到端跑一轮。
-
 import { mkdtempSync, rmSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,7 +29,7 @@ describe("createAgentWorld + kits（F1）", () => {
     const env = createLocalEnv(root);
     const plugins: readonly Plugin[] = [
       ...meterKit(),
-      ...toolboxKit({ root, gate, env }), // 数组序在 promptKit 之前——softInject 拉正
+      ...toolboxKit({ root, gate, env }),
       ...inlineSessionKit(),
       ...llmKit([{ name: "fake", stream: () => textScript("kit-hello") }]),
       ...promptKit(),
@@ -50,12 +47,12 @@ describe("createAgentWorld + kits（F1）", () => {
       ((event.data as { content?: readonly { type: string; text?: string }[] }).content ?? []).map((b) => (b as { text?: string }).text ?? "").join("");
     const texts = made.value.agent.session.events().filter((e) => e.type === "assistant/message").map(joined);
     expect(texts).toEqual(["kit-hello"]);
-    expect(world.value.registry.schemas().map((s) => s.name)).toContain("bash"); // toolbox 装齐
+    expect(world.value.registry.schemas().map((s) => s.name)).toContain("bash");
     await world.value.ctx.dispose();
   });
 
   it("五服务缺席 → fail-closed（ok:false + 自清理）", async () => {
-    const result = await createAgentWorld({ plugins: [systemPromptPlugin] }); // 无 session/loop/tools/meter
+    const result = await createAgentWorld({ plugins: [systemPromptPlugin] });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/not provided/);
   });
@@ -75,7 +72,7 @@ describe("createAgentWorld + kits（F1）", () => {
     ];
     const ctx = createContext();
     const unload = await loadPlugins(ctx, plugins);
-    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "edit", "bash", "grep", "task_stop"]); // edit 在 write 之后（三件套同源相邻）
+    expect(ctx.use((await import("@x-harness/tools")).toolRegistry).schemas().map((s) => s.name)).toEqual(["read", "write", "edit", "bash", "grep", "task_stop"]);
     for (const dispose of unload) await dispose();
     await ctx.dispose();
   });
@@ -93,7 +90,7 @@ describe("createAgentWorld + kits（F1）", () => {
       const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
       const r = await reg.dispatch({ callId: "k1", name: "bash", args: { command: "echo kit-log", run_in_background: true }, signal: new AbortController().signal, session: "s-kit" as never });
       expect(r.isError).toBeUndefined();
-      expect(r.content).toContain(logRoot); // 日志路径在传入根下（透传链 bash taskLimits ✓）
+      expect(r.content).toContain(logRoot);
       const logPath = (r.content.match(/output appends to ([^;]+);/) ?? ["", ""])[1] ?? "";
       const { backgroundTasks } = await import("@x-harness/tool-bash");
       const tasks = ctx.use(backgroundTasks);
@@ -102,7 +99,7 @@ describe("createAgentWorld + kits（F1）", () => {
         await new Promise((resolve) => { setTimeout(resolve, 25); });
       }
       const allowed = await reg.dispatch({ callId: "k2", name: "read", args: { path: logPath }, signal: new AbortController().signal, session: "s-kit" as never });
-      expect(allowed.isError).toBeUndefined(); // read 经 systemRoots 放行（透传链 read ✓）
+      expect(allowed.isError).toBeUndefined();
       expect(allowed.content).toContain("kit-log");
       for (const dispose of unload) await dispose();
       await ctx.dispose();
@@ -125,7 +122,7 @@ describe("toolboxKit 截断抢救件（TRUNCATED-TOOL-RESCUE 层 2 装配）", (
     expect(r).toEqual({ note: `Recovered 600 chars (1 lines) of the truncated write to draft.txt.partial (draft — draft.txt NOT modified). Read it, produce the remainder as a separate file, assemble with bash, then delete the .partial.` });
     expect(readFileSync(join(root, "draft.txt.partial"), "utf8")).toBe(body);
     const denied = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c2", name: "write", arguments: `{"path":"../esc.txt","content":"${body}`, signal: new AbortController().signal } as never, async () => undefined);
-    expect(denied).toEqual({ note: "target outside workspace boundary, draft not saved" }); // gate 与 write 同源
+    expect(denied).toEqual({ note: "target outside workspace boundary, draft not saved" });
     for (const dispose of unload) await dispose();
     await ctx.dispose();
     rmSync(root, { recursive: true, force: true });
@@ -140,7 +137,7 @@ describe("toolboxKit 截断抢救件（TRUNCATED-TOOL-RESCUE 层 2 装配）", (
     const unload = await loadPlugins(ctx, [...inlineSessionKit(), ...toolboxKit({ root })]);
     const { agentTruncatedTool } = await import("@x-harness/agent-loop");
     const r = await ctx.dispatch(agentTruncatedTool, { session: "s-r" as never, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"d.txt","content":"${"z".repeat(600)}`, signal: new AbortController().signal } as never, async () => undefined);
-    expect(r).toBeUndefined(); // 无抢救件应答 → 只有 base 文案（真 opt-in）
+    expect(r).toBeUndefined();
     expect(existsSync(join(root, "d.txt.partial"))).toBe(false);
     for (const dispose of unload) await dispose();
     await ctx.dispose();
@@ -170,7 +167,7 @@ describe("telemetryKit（本地遥测接入 F1 kit 目录）", () => {
     const world = await createAgentWorld({ plugins });
     expect(world.ok).toBe(true);
     if (!world.ok) throw new Error(world.reason);
-    expect(world.value.telemetry).toBeDefined(); // 可选服务面：kit 在场即暴露
+    expect(world.value.telemetry).toBeDefined();
     const made = await world.value.loop.create({ agent: AGENT });
     expect(made.ok).toBe(true);
     if (!made.ok) throw new Error(made.reason);
@@ -188,7 +185,7 @@ describe("telemetryKit（本地遥测接入 F1 kit 目录）", () => {
     expect(names).toContain("llm.chat");
     expect(telemetry.usageOf(id)).toEqual({ inputTokens: 8, outputTokens: 4, cacheRead: 1, cacheWrite: 1 });
     expect(telemetry.logsOf(id).length).toBeGreaterThan(3);
-    db.close(); // 宿主自持连接：close 归宿主
+    db.close();
   });
 
   it("路径形态：kit 开库 + 连接收殓（dispose 后库文件完整、句柄 close 幂等路径）", async () => {
@@ -212,11 +209,9 @@ describe("telemetryKit（本地遥测接入 F1 kit 目录）", () => {
     if (!made.ok) throw new Error(made.reason);
     made.value.agent.followup("hi");
     await made.value.agent.whenIdle();
-    // dispose 前查询（dispose 后连接已收殓——查询面归库文件重开）
     const telemetry = world.value.telemetry;
     expect(telemetry?.logsOf(made.value.agent.session.id).length ?? 0).toBeGreaterThan(3);
-    await world.value.ctx.dispose(); // wrapper 组合 teardown：telemetry 终排空 → connection close
-    // 重开验证文件库完整性（WAL checkpoint/恢复面）
+    await world.value.ctx.dispose();
     const reopen = new Database(dbPath);
     const rows = reopen.query("SELECT COUNT(*) AS n FROM otel_logs").get() as { n: number };
     expect(rows.n).toBeGreaterThan(3);
@@ -247,7 +242,7 @@ describe("compactionKit（/compact 插件接入）", () => {
     const ctx = createContext();
     await loadPlugins(ctx, [sessionPlugin, ...compactionKit({ contextWindow: 200_000 })]);
     const runner = ctx.use(compactionRunner);
-    expect(runner.summarizer).toBeUndefined(); // 未配 summarizer → 手动 compact 报 summarizer-unconfigured
+    expect(runner.summarizer).toBeUndefined();
     const result = await runner.compact({ session: "ghost" as never });
     expect(result).toEqual({ ok: false, reason: "session-unknown" });
     await ctx.dispose();
@@ -261,7 +256,7 @@ describe("autoCompactKit（分层自动压缩接入）", () => {
     const { autocompactL1Cleared } = await import("@x-harness/autocompact");
     const landed: string[] = [];
     ctx.on(autocompactL1Cleared, (payload: unknown) => landed.push(String((payload as { session: string }).session)));
-    expect(ctx.use(compactionRunner).summarizer?.model).toBe("sum"); // CP 面单一真相源在场(runner.summarizer)
+    expect(ctx.use(compactionRunner).summarizer?.model).toBe("sum");
     await ctx.dispose();
   });
 });
@@ -277,21 +272,18 @@ describe("toolboxKit edit 装配（EDIT-TOOL 批 3）", () => {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, plugins);
     const reg = ctx.use((await import("@x-harness/tools")).toolRegistry);
-    expect(reg.schemas().map((s) => s.name)).toContain("edit"); // 装配齐
+    expect(reg.schemas().map((s) => s.name)).toContain("edit");
     const def = reg.get("edit");
-    expect(def?.description).toContain("unique"); // description 自含用法
-    // guidance 数据位：四则守则落 def（registry.get 可读——D3）
+    expect(def?.description).toContain("unique");
     const guidance = def?.guidance ?? "";
     expect(guidance).toContain("must be unique in the original file");
     expect(guidance).toContain("matched against the original file, not after earlier edits");
     expect(guidance).toContain("merge them into one edit");
     expect(guidance).toContain("as small as possible while still unique");
-    // guidance 停靠 system-prompt tool/edit 段（assemble 文本在场，位于 base 段之后）
     const { systemPrompt } = await import("@x-harness/system-prompt");
     const prompt = ctx.use(systemPrompt);
     const text = prompt.assemble().text;
     expect(text).toContain("## Edit");
-    // 拆卸即回收
     for (const dispose of unload) await dispose();
     expect(prompt.assemble().text).not.toContain("## Edit");
     await ctx.dispose();

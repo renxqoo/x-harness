@@ -1,9 +1,3 @@
-// 契约对账（docs/AGENT-DELEGATION.md §2.3——修订B 逐字口径 + docs/DELEGATION-LONG-CONTENT.md
-// 件15 批1）：本包三段工具 description 与规格源文档逐字符一致（重同步纪律的机械锚）；
-// 参数面 = 形状/必填/上限对账——message maxLength 按注入 reportCap 插值（D1/D6 恒等单旋钮），
-// summary 无 schema 上限（D7——description 承诺截断语义由 verb 层 SUMMARY_CAP 兑现）。
-// task_stop 的跨源口径归 @x-harness/task-tools（件14）——对账在其包内。
-
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { delegationTools } from "../tools.ts";
@@ -80,7 +74,7 @@ describe("参数面对账（形状/必填/上限——件15 载体双裁决）",
     const p = propsOf("agent_message");
     expect(p["to"]?.pattern).toBe("^[^\\n\\r]*$");
     expect(p["message"]?.maxLength).toBe(34_000);
-    expect(p["message"]?.pattern).toBeUndefined(); // 载体已弃 pattern（D6）
+    expect(p["message"]?.pattern).toBeUndefined();
     expect(propsOf("agent_message", toolsSmallCap)["message"]?.maxLength).toBe(1_000);
   });
 

@@ -1,7 +1,3 @@
-// 内置 agent 类型资源生成器：agent-types/*.md → src/worker/agent-types-data.ts。
-// 生成物是纯 TS 数据模块（字符串字面量）——bundlers/测试器/运行时零特判；构建期内联
-// 进 bundle，worker 运行形态（src 直跑/dist 单文件/打包发行）不再依赖盘上目录布局。
-// 生成物提交进 git（可审计）；.md 源变更加跑本脚本同步。
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 

@@ -1,6 +1,3 @@
-// @file 展开（docs/CLI.md §2.1）：wrap 块形态、BOM 剥离、~ 展开、空文件跳过、
-// 缺席/二进制错误、相对路径解析。read 注入（不落盘）。
-
 import { describe, expect, it } from "vitest";
 import { expandHome, processFileArgs, wrapFileBlock } from "../process-file-args.ts";
 import type { Result } from "@x-harness/core";

@@ -1,6 +1,3 @@
-// 真 host-hub 集成旅程（B3 审查发现「fake-host 集成假绿」的收口验收）：gateway spawn 真
-// host（HUB_WORKER_PROVIDER=script 剧本 LLM——与 host-hub 自测同装置），全链断言：
-// thread/start → WAL 事件扇出 → prompt → 剧本回复 → settled。
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { connect as netConnect } from "node:net";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
@@ -11,7 +8,6 @@ import { startGateway, type GatewayHandle } from "../main.ts";
 let gw: GatewayHandle;
 let agentDir: string;
 
-/** 剧本：第一轮回文本（assistant 消息 + turn end） */
 const script = [
   { reply: "hello from scripted llm" },
 ];
@@ -73,7 +69,6 @@ async function dialOwner(): Promise<OwnerClient> {
                 return;
               }
             } catch {
-              // skip
             }
           }
           if (Date.now() - t0 > timeoutMs) {
@@ -97,13 +92,10 @@ describe("真 host-hub 集成旅程", () => {
     const threadId = (started.data as { threadId?: string }).threadId;
     expect(typeof threadId).toBe("string");
 
-    // prompt（真 worker 跑剧本 LLM）——thread/start 本身不产生事件（WAL 事件由 worker 驱动）
     owner.send(JSON.stringify({ kind: "command", streamId: "owner", seq: 2, body: { command: "prompt", id: "r2", args: { threadId, text: "say hi" } } }));
     const promptRes = await owner.waitResponse("r2");
     expect(promptRes.success).toBe(true);
 
-    // 等事件链完整扇出到 owner：turn/start … assistant/message … settled（剧本一轮）
-    // 稳定事件集：不绑定消息形态名（agent/message vs assistant/message 随 skills 迁移环境而变）
     const required = ["turn/start", "settled"];
     const hasEvent = (lines: string[], name: string): boolean =>
       lines.some((l) => l.includes('"kind":"event"') && l.includes(threadId!) && l.includes(name));

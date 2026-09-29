@@ -1,8 +1,3 @@
-// 清单内核（docs/TODO.md §13 修订B）：会话键控桶 + CRUD + 依赖单源边集 + deleted 清边 +
-// 深拷贝 + 数值序 + 快照导出/惰性恢复。语义校验与最小形状防御单点住本层——工具面只铸文。
-// 深层形状不防：类型即契约，宿主绕过 TypeScript 传垃圾 = 宿主 bug。
-// 匿名桶（无 session 调用方共享单桶——`_anon` 非合法 SessionId，与真实会话 id 空间不相交）。
-
 import type { SessionEvent, SessionId, TodoSnapshotEventData, TodoSnapshotTaskData } from "@x-harness/session";
 import type {
   TodoCreateInput,
@@ -23,17 +18,14 @@ interface TodoRow {
   metadata?: Record<string, unknown>;
 }
 
-/** 会话桶闭包状态三件（快照导出/恢复的完整集合） */
 interface Bucket {
   readonly rows: Map<string, TodoRow>;
-  /** 依赖单源：blocker id → 它阻塞的 id 集合（blockedBy 由全表派生） */
   readonly blocksOf: Map<string, Set<string>>;
   seq: number;
 }
 
 const emptyBucket = (): Bucket => ({ rows: new Map(), blocksOf: new Map(), seq: 0 });
 
-/** 数值序：id 是十进制递增字符串，字典序下 "10" < "2" 会乱序 */
 function byNumericId(a: string, b: string): number {
   return Number(a) - Number(b);
 }
@@ -42,7 +34,6 @@ function reject(reason: TodoReject["reason"], message: string): TodoReject {
   return { ok: false, reason, message };
 }
 
-/** 入库深拷贝：防 caller 引用变异穿透。不可克隆值（函数/symbol）拒——降级不崩溃 */
 function cloneMetadata(value: Record<string, unknown>): { ok: true; value: Record<string, unknown> } | TodoReject {
   try {
     return { ok: true, value: structuredClone(value) };
@@ -57,7 +48,6 @@ function checkTaskId(taskId: string): TodoReject | undefined {
   return undefined;
 }
 
-/** 引用存在性校验：清单中不存在 → unknown；自引用（自阻塞即环）→ 拒；均点名 */
 function checkReferences(input: { readonly rows: ReadonlyMap<string, TodoRow>; readonly taskId: string; readonly label: string; readonly ids: readonly string[] }): TodoReject | undefined {
   for (const id of input.ids) {
     if (!input.rows.has(id)) return reject("invalid-args", `${input.label} references unknown task '${id}'`);
@@ -88,7 +78,6 @@ function rowSnapshot(row: TodoRow, bucket: Bucket): TodoTask {
   };
 }
 
-/** 删除并清边：正向（它阻塞的）整桶删 + 反向（阻塞它的）逐条摘——防悬空 id 渲染 */
 function removeRow(bucket: Bucket, row: TodoRow): void {
   bucket.blocksOf.delete(row.id);
   for (const blocked of bucket.blocksOf.values()) blocked.delete(row.id);
@@ -128,7 +117,6 @@ function bucketList(bucket: Bucket): readonly TodoTask[] {
   return [...bucket.rows.values()].map((row) => rowSnapshot(row, bucket)).sort((a, b) => byNumericId(a.id, b.id));
 }
 
-/** 更新解析段：subject 语义 + metadata 键级合并（不碰行数据——校验全过才应用） */
 function resolveUpdate(row: TodoRow, patch: TodoUpdatePatch): { ok: true; metadata?: Record<string, unknown>; metadataTouched: boolean } | TodoReject {
   if (patch.subject === "") return reject("invalid-args", "subject must be a non-empty string");
   let metadata: Record<string, unknown> | undefined;
@@ -142,21 +130,18 @@ function resolveUpdate(row: TodoRow, patch: TodoUpdatePatch): { ok: true; metada
   return { ok: true, ...(metadata !== undefined ? { metadata } : {}), metadataTouched };
 }
 
-/** 更新赋值段（status 的 deleted 分支已在调用点 early-return——此处只会见到 TodoStatus） */
 function applyUpdateFields(row: TodoRow, patch: TodoUpdatePatch, resolved: { metadata?: Record<string, unknown>; metadataTouched: boolean }): void {
   if (patch.subject !== undefined) row.subject = patch.subject;
   if (patch.description !== undefined) row.description = patch.description;
   if (patch.activeForm !== undefined) row.activeForm = patch.activeForm;
   if (patch.status !== undefined) row.status = patch.status as TodoStatus;
   if (patch.owner !== undefined) row.owner = patch.owner;
-  // 合并删光是合法终态（undefined）——须与「未传 metadata」区分，否则旧值残留
   if (resolved.metadataTouched) {
     if (resolved.metadata !== undefined) row.metadata = resolved.metadata;
     else delete row.metadata;
   }
 }
 
-/** 更新落边段：addBlocks/addBlockedBy 追加去重（调用前引用校验已全过） */
 function applyUpdateEdges(bucket: Bucket, row: TodoRow, patch: TodoUpdatePatch): void {
   if (patch.addBlocks !== undefined) {
     const blocked = bucket.blocksOf.get(row.id) ?? new Set<string>();
@@ -173,15 +158,12 @@ function applyUpdateEdges(bucket: Bucket, row: TodoRow, patch: TodoUpdatePatch):
 }
 
 function bucketUpdate(bucket: Bucket, taskId: string, patch: TodoUpdatePatch): TodoTask | { ok: true; deleted: true } | TodoReject {
-  // taskId 形状已由分发层单点校验（checkTaskId）——此处只面对合法形状
   const row = bucket.rows.get(taskId);
   if (row === undefined) return reject("not-found", `${taskId}; no such task`);
-  // 删除优先：status=deleted 与其余字段同传时余字段静默忽略（无「先改后删」中间态）
   if (patch.status === "deleted") {
     removeRow(bucket, row);
     return { ok: true, deleted: true };
   }
-  // 先验全部字段与依赖引用再应用（部分应用后遇未知 id 回滚是中间态——一次校验原子应用）
   const resolved = resolveUpdate(row, patch);
   if (!resolved.ok) return resolved;
   if (patch.addBlocks !== undefined) {
@@ -197,7 +179,6 @@ function bucketUpdate(bucket: Bucket, taskId: string, patch: TodoUpdatePatch): T
   return rowSnapshot(row, bucket);
 }
 
-/** 桶闭包状态导出（append 铸事件用；metadata 深拷贝隔离卷内冻结对象） */
 function snapshotOfBucket(bucket: Bucket): TodoSnapshotEventData {
   const tasks: TodoSnapshotTaskData[] = [...bucket.rows.values()]
     .sort((a, b) => byNumericId(a.id, b.id))
@@ -217,7 +198,6 @@ function snapshotOfBucket(bucket: Bucket): TodoSnapshotEventData {
   return { seq: bucket.seq, tasks, edges };
 }
 
-/** 恢复：事件卷 data 是 deepFreeze 产物——深拷贝重建可变副本（恢复后 update 变异不 throw） */
 function restoreBucket(bucket: Bucket, data: TodoSnapshotEventData): void {
   const source = structuredClone(data);
   bucket.seq = source.seq;
@@ -241,7 +221,6 @@ function restoreBucket(bucket: Bucket, data: TodoSnapshotEventData): void {
   }
 }
 
-/** 事件卷折尾取最后一条 todo/snapshot（last-wins）；无词条 → undefined（全新桶） */
 export function latestTodoSnapshot(events: readonly SessionEvent[]): TodoSnapshotEventData | undefined {
   let last: TodoSnapshotEventData | undefined;
   for (const event of events) {
@@ -253,7 +232,6 @@ export function latestTodoSnapshot(events: readonly SessionEvent[]): TodoSnapsho
 export function createTodoStore(): TodoList {
   const buckets = new Map<string, Bucket>();
   const keyOf = (session: SessionId | undefined): string => session ?? "_anon";
-  /** 只读探测：桶缺席返回 undefined，零创建副作用——服务面读探测不得劫持工具面惰性恢复 */
   const peekBucket = (session: SessionId | undefined): Bucket | undefined => buckets.get(keyOf(session));
   const ensureBucket = (session: SessionId | undefined): Bucket => {
     const key = keyOf(session);
@@ -295,7 +273,6 @@ export function createTodoStore(): TodoList {
       return bucket === undefined ? { seq: 0, tasks: [], edges: [] } : snapshotOfBucket(bucket);
     },
     restore: (session, eventsOf) => {
-      // 桶在场即跳过（不覆盖内存变更）；缺席才取卷 fold——thunk 化避免桶在场时白拷贝全卷
       if (peekBucket(session) !== undefined) return;
       const last = latestTodoSnapshot(eventsOf());
       if (last !== undefined) restoreBucket(ensureBucket(session), last);
@@ -306,7 +283,6 @@ export function createTodoStore(): TodoList {
   };
 }
 
-/** 键级合并（规格语义）：同名键覆盖；值为 null 删除该键 */
 function mergeMetadata(
   current: Record<string, unknown> | undefined,
   incoming: Record<string, unknown>,

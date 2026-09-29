@@ -1,17 +1,11 @@
-// 模型目录（DESIGN §3.6）：预设 + <agentDir>/providers.json（HubProvidersFile 超集）
-// + modelOverrides 节。host（get_models/热刷新/auth 面）与 worker（装配快照）共用
-// 单份——坏 JSON 降级仅预设（hub_error 由调用方发）；custom 档案同名整档覆盖预设。
 import { join } from "node:path";
 import { PRESET_DEFAULT, PRESET_PROFILES } from "./presets.ts";
 import type { AssemblyProvider, CatalogEntry, HubModelMeta, HubProviderProfile, HubProvidersFile } from "./catalog-types.ts";
 
 export interface ModelsCatalog {
-  /** 合并后的档案（custom 覆盖同名 preset；entries 的展开源） */
   profiles: readonly HubProviderProfile[];
   entries: readonly CatalogEntry[];
-  /** 缺省拨号（file.default > 预设缺省） */
   defaults: { provider: string; model: string };
-  /** 文件不可解析/含非法档案（降级标记——调用方发 hub_error） */
   degraded: boolean;
 }
 
@@ -31,7 +25,6 @@ function validModels(models: unknown): models is HubProviderProfile["models"] {
   });
 }
 
-/** 档案级校验（垃圾档案跳过 + degraded——不静默混入坏端点） */
 function validProfile(raw: unknown): raw is HubProviderProfile {
   if (!isObj(raw)) return false;
   if (typeof raw.name !== "string" || raw.name.trim() === "") return false;
@@ -48,12 +41,10 @@ function firstDefined<T>(...values: readonly (T | undefined)[]): T | undefined {
   return values.find((value) => value !== undefined);
 }
 
-/** 档案展开条目（模型级 meta > 档案级缺省；overrides 应用在 readCatalog 尾部） */
 function entryOf(profile: HubProviderProfile, model: string | HubModelMeta, source: "preset" | "custom"): CatalogEntry {
   const meta: Partial<HubModelMeta> = typeof model === "string" ? {} : model;
   const contextWindow = firstDefined(meta.contextWindow, profile.contextWindow);
   const maxTokens = firstDefined(meta.maxTokens, profile.maxOutputTokens);
-  // input 值域净化：只认 "text"|"image" 成员（拼写错误不静默丢能力也不进 pi Model.input）
   const input = Array.isArray(meta.input)
     ? meta.input.filter((member): member is "text" | "image" => member === "text" || member === "image")
     : undefined;
@@ -97,13 +88,12 @@ async function readProvidersFile(agentDir: string): Promise<{ file: HubProviders
     raw = await Bun.file(join(agentDir, "providers.json")).text();
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    // ENOENT = 首跑常态；其余（不可读）= 降级告警
     return { file: undefined, degraded: code !== "ENOENT" };
   }
   try {
     return { file: JSON.parse(raw) as HubProvidersFile, degraded: false };
   } catch {
-    return { file: undefined, degraded: true }; // 坏 JSON 降级仅预设（调用方发 hub_error）
+    return { file: undefined, degraded: true };
   }
 }
 
@@ -112,9 +102,6 @@ export async function readCatalog(agentDir: string): Promise<ModelsCatalog> {
   const file = read.file;
   const custom = customProfilesOf(file);
   const customNames = new Set(custom.profiles.map((p) => p.name));
-  // custom 同名整档覆盖预设（单一事实 = providers.json；预设只兜底缺席档案）。
-  // custom 档案插入序在预设之前：裸 modelId 撞名（custom 与预设同名模型）时消歧
-  // 命中用户显式配置而非无凭据的预设（resolveDefaultDial/owners[0] 按条目序取首）
   const byName = new Map<string, HubProviderProfile>();
   for (const profile of custom.profiles) byName.set(profile.name, profile);
   for (const preset of PRESET_PROFILES) {
@@ -132,7 +119,6 @@ export async function readCatalog(agentDir: string): Promise<ModelsCatalog> {
   return { profiles: [...byName.values()], entries, defaults: defaultsOf(file), degraded: read.degraded || custom.degraded };
 }
 
-/** overrides 应用：`<provider>::<model>` 与 `<model>` 双键查（宽松匹配，命中即覆写） */
 function applyOverride(entry: CatalogEntry, spec: { provider: string; model: string }, overrides: Record<string, { readonly contextWindow?: number; readonly maxOutputTokens?: number }>): CatalogEntry {
   const o = overrides[`${spec.provider}::${spec.model}`] ?? overrides[spec.model];
   if (o === undefined) return entry;
@@ -143,7 +129,6 @@ function applyOverride(entry: CatalogEntry, spec: { provider: string; model: str
   };
 }
 
-/** 目录缺省拨号解析（entries 内查——defaults 可能被覆写挤出目录，此时回落首条） */
 export function resolveDefaultDial(catalog: ModelsCatalog): { provider: string; model: string } | undefined {
   const exact = catalog.entries.find((e) => e.provider === catalog.defaults.provider && e.model === catalog.defaults.model);
   if (exact !== undefined) return { provider: exact.provider, model: exact.model };
@@ -151,8 +136,6 @@ export function resolveDefaultDial(catalog: ModelsCatalog): { provider: string; 
   return first !== undefined ? { provider: first.provider, model: first.model } : undefined;
 }
 
-/** 逐模型输出上限（entries 已解析值单源：模型级 meta 与 modelOverrides 都已折进
- *  entry.maxTokens——快照重算优先级会与 get_models 展示面漂移，此处只查表） */
 function maxOutputTokensByModelOf(catalog: ModelsCatalog, profile: HubProviderProfile): Readonly<Record<string, number>> | undefined {
   const ids = new Set(profile.models.map(modelId));
   const byModel: Record<string, number> = {};
@@ -162,15 +145,13 @@ function maxOutputTokensByModelOf(catalog: ModelsCatalog, profile: HubProviderPr
   return Object.keys(byModel).length > 0 ? byModel : undefined;
 }
 
-/** worker 装配快照构造（DESIGN §3.6）：apiKey 解析序 = credentials > 档案字面 >
- *  apiKeyEnv 环境变量；快照经 HUB_WORKER_PROVIDERS 单通道注入（worker 不读文件） */
 export function buildAssemblySnapshot(
   catalog: ModelsCatalog,
   credentials: Readonly<Record<string, string>>,
   env: Readonly<Record<string, string | undefined>>,
 ): AssemblyProvider[] {
   return catalog.profiles.map((profile) => {
-    const apiKeyEnv = profile.apiKeyEnv; // 无声明不回退全局 env 键（凭据外送面关闭）
+    const apiKeyEnv = profile.apiKeyEnv;
     const apiKey = firstDefined(credentials[profile.name], profile.apiKey, apiKeyEnv !== undefined ? env[apiKeyEnv] : undefined) ?? "";
     const maxOutputTokensByModel = maxOutputTokensByModelOf(catalog, profile);
     return {
@@ -186,14 +167,12 @@ export function buildAssemblySnapshot(
   });
 }
 
-/** 首跑保障：目录结构自动创建（零配置可启动） */
 export async function ensureAgentDir(agentDir: string): Promise<void> {
   const { mkdir } = await import("node:fs/promises");
   await mkdir(join(agentDir, "sessions"), { recursive: true });
   await mkdir(join(agentDir, "bash-outputs"), { recursive: true });
 }
 
-/** providers.json 路径（models-admin / tmp-sweep 单源） */
 export function providersFilePath(agentDir: string): string {
   return join(agentDir, "providers.json");
 }

@@ -1,7 +1,3 @@
-// agents 类型目录 agentDir 派生回归（真进程）：HUB_AGENT_DIR 注入（agent-app 打包
-// 态形态）时用户 agents 根 = <agentDir>/agents——agents/create 落位、agents/list
-// 可见与 worker 装配装载（类型快照注入）同区。缺省（CLI 独立）保持
-// ~/.x-harness/agents，由 loader 单测背书。
 import { afterAll, describe, expect, test } from "vitest";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -20,7 +16,6 @@ describe("agents 类型目录 agentDir 派生（真进程）", () => {
     const host = await startHost({ script: [{ reply: "agent-probe" }] });
     hostsClosed.push(host);
 
-    // 创建 → 目标应在 <agentDir>/agents（而非 ~/.x-harness/agents）
     host.send({ type: "agents/create", id: "ac1", name: "dirived-agent", description: "agentDir 派生回归类型", systemPrompt: "be helpful" });
     const created = await host.response("ac1");
     expect(created.success).toBe(true);
@@ -28,14 +23,12 @@ describe("agents 类型目录 agentDir 派生（真进程）", () => {
     expect(typePath).toBe(join(host.agentDir, "agents", "dirived-agent.md"));
     expect(typePath.includes(".x-harness")).toBe(false);
 
-    // 清单可见（user 源）
     host.send({ type: "agents/list", id: "al1" });
     const listed = await host.response("al1");
     expect(listed.success).toBe(true);
     const rows = (listed.data as { agents: Array<{ name: string; source: string }> }).agents;
     expect(rows.find((row) => row.name === "dirived-agent")?.source).toBe("user");
 
-    // 装配装载：起会话后 kick 边沿注入的类型快照含该类型（worker 用户根同 <agentDir>/agents）
     host.send({ type: "thread/start", id: "ts1", cwd: host.agentDir });
     const started = await host.response("ts1");
     expect(started.success).toBe(true);
@@ -48,7 +41,6 @@ describe("agents 类型目录 agentDir 派生（真进程）", () => {
     const text = JSON.stringify(entries.data);
     expect(text).toContain("dirived-agent");
 
-    // 落盘副本可读（frontmatter 随行）
     const copy = await readFile(join(host.agentDir, "agents", "dirived-agent.md"), "utf8");
     expect(copy).toContain("agentDir 派生回归类型");
   }, 30_000);

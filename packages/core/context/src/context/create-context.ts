@@ -39,7 +39,6 @@ interface ChainRegistry {
   readonly entries: { layer: Layer; middleware: unknown }[];
 }
 
-/** waitFor 的停靠位：提供层出现在等待者可见链上时解析 */
 interface ServiceWaiter {
   readonly token: ServiceToken<unknown>;
   readonly layer: Layer;
@@ -47,13 +46,11 @@ interface ServiceWaiter {
   reject(error: Error): void;
 }
 
-/** 默认错误归宿：一行留痕（console.error——Node 下即 stderr）；宿主要富日志注入 onListenerError */
 function defaultSink(error: unknown, token: { readonly name: string }): void {
   const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   stderrLine(`[x-harness] listener error on "${token.name}": ${detail}`);
 }
 
-/** emit 冻结档位应用（§2.1）：deep 递归 / shell 一级 / none 原样——dispatch 模式恒 deep（IMPL 裁决 7） */
 function applyEmitFreeze(token: EventToken<unknown>, payload: unknown): unknown {
   if (token.freeze === "deep") return deepFreeze(payload);
   if (token.freeze === "shell") return shellFreeze(payload);
@@ -68,7 +65,6 @@ function assertLive(layer: Layer, verb: string): void {
   }
 }
 
-/** 整条祖先链全 live（dispatch 的 unwind 边界：父层回卷中途的子层派发同属半拆态——§4） */
 function assertChainLive(layer: Layer, verb: string): void {
   for (let cursor: Layer | undefined = layer; cursor !== undefined; cursor = cursor.parent) {
     if (cursor.state !== "live") {
@@ -79,7 +75,6 @@ function assertChainLive(layer: Layer, verb: string): void {
   }
 }
 
-/** 本层 + 全部祖先的集合（chain-up 可见集，C3） */
 function chainSet(layer: Layer): Set<Layer> {
   const set = new Set<Layer>();
   for (let cursor: Layer | undefined = layer; cursor !== undefined; cursor = cursor.parent) {
@@ -88,9 +83,6 @@ function chainSet(layer: Layer): Set<Layer> {
   return set;
 }
 
-/** 层序插入（§10.1 性能债修复：数组恒按 root→leaf 层序，派发免排序）。
- *  默认：插到「深度 ≤ 自身的最后一个条目」之后 = 本层段尾（保注册序）；
- *  prepend：插到「深度 ≥ 自身的第一个条目」之前 = 本层段头（层序仍优先——root 恒先于子层）。 */
 function insertByLayerDepth<T extends { readonly layer: Layer }>(
   entries: T[],
   entry: T,
@@ -115,14 +107,12 @@ function insertByLayerDepth<T extends { readonly layer: Layer }>(
   entries.splice(at, 0, entry);
 }
 
-/** 运行时 token 形状校验：缺 mode/freeze 的伪造对象拒收（对抗审查 #7 修复） */
 function assertEventTokenShape(token: AnyToken): void {
   if (token.kind !== "event" || typeof token.mode !== "string" || typeof token.freeze !== "string") {
     throw new Error(`invalid event token shape for "${String(token?.name ?? "?")}"`);
   }
 }
 
-/** 注册动作入账：disposer 自清理（手动退订同步移出账本，层回卷幂等）+ 注册表空时删除键 */
 function registerEffect(layer: Layer, teardown: () => void, cleanup?: () => void): Disposer {
   const disposer: Disposer = () => {
     const at = layer.effects.indexOf(disposer);
@@ -134,15 +124,12 @@ function registerEffect(layer: Layer, teardown: () => void, cleanup?: () => void
   return disposer;
 }
 
-/** waterfall 一次派发的静态部分：递归全程不变，与逐层变化的 index/input 分离传参 */
 interface WaterfallRun<I, O> {
   readonly name: string;
   readonly middlewares: readonly ChainMiddleware<I, O>[];
   readonly final: (input: I) => Promise<O>;
 }
 
-/** waterfall 合成：next 至少一次（返回未调 = throw）、串行重调合法、并发 = throw（I2）；
- *  中间件返回后 next 失效（僵尸围栏——macrotask 形态；microtask 极限窗口见 §10 已知限制）。 */
 async function runWaterfall<I, O>(run: WaterfallRun<I, O>, index: number, input: I): Promise<O> {
   const middleware = run.middlewares[index];
   if (middleware === undefined) return run.final(input);
@@ -186,14 +173,11 @@ export function createContext(options: ContextOptions = {}): Context {
     effects: [],
     state: "live",
   };
-  // token 对象为键：同名不同 token 互不可见（跨插件隔离域，tokens.ts 注释同口径）
   const services = new Map<AnyToken, Map<Layer, unknown>>();
   const listeners = new Map<AnyToken, ListenerEntry[]>();
   const chains = new WeakMap<Chain<unknown, unknown>, ChainRegistry>();
   const waiters = new Set<ServiceWaiter>();
 
-  /** use/tryUse/waitFor 共用：沿层链 nearest-first 查找。返回命中壳而非裸值——
-   *  「找到 undefined」≠「没找到」（审查 #8：provide(undefined) 遮蔽不穿透） */
   function findVisibleEntry<T>(token: ServiceToken<T>, layer: Layer): { impl: T } | undefined {
     const byLayer = services.get(token);
     if (byLayer === undefined) return undefined;
@@ -203,9 +187,8 @@ export function createContext(options: ContextOptions = {}): Context {
     return undefined;
   }
 
-  /** provide 落账后：解析停靠中且可见层命中的等待者 */
   function settleWaiters(token: ServiceToken<unknown>, providing: Layer): void {
-    const pending = Array.from(waiters); // 快照：解析路径会从 Set 删除成员
+    const pending = Array.from(waiters);
     for (const waiter of pending) {
       if (waiter.token !== token) continue;
       if (!chainSet(waiter.layer).has(providing)) continue;
@@ -220,7 +203,6 @@ export function createContext(options: ContextOptions = {}): Context {
     try {
       sink(error, token);
     } catch {
-      // sink 自身失败静默：错误隔离链不得因观察者再失败而中断（§2.4）
     }
   }
 
@@ -274,8 +256,7 @@ export function createContext(options: ContextOptions = {}): Context {
           throw new Error(`service "${token.name}" already provided on this layer`);
         }
         byLayer.set(layer, impl);
-        settleWaiters(token, layer); // waitFor 停靠者先于事件广播解析（解析即事实，观察是旁路）
-        // 先入账后广播：service/provided 监听者内触发 dispose 时本注册可被回卷（对抗审查 #6 修复）
+        settleWaiters(token, layer);
         const disposer = registerEffect(
           layer,
           () => {
@@ -360,7 +341,6 @@ export function createContext(options: ContextOptions = {}): Context {
         const registry: ChainRegistry = { entries: [] };
         const chain = {
           dispatch(input: I): Promise<O> {
-            // 匿名链无层上下文：owner 主动共享给谁谁就能拦截——全部注册可见（IMPL 裁决 6）
             const middlewares = registry.entries.map(
               (entry) => entry.middleware as ChainMiddleware<I, O>,
             );
@@ -383,7 +363,6 @@ export function createContext(options: ContextOptions = {}): Context {
         }
         const entry = { layer, middleware };
         insertByLayerDepth(registry.entries, entry, registerOpts?.prepend === true);
-        // 层归属消费方：注册入消费方层账本，dispose 时随层回卷（C10）
         return registerEffect(layer, () => {
           const at = registry.entries.indexOf(entry);
           if (at >= 0) registry.entries.splice(at, 1);
@@ -396,10 +375,9 @@ export function createContext(options: ContextOptions = {}): Context {
       },
 
       async dispose(): Promise<void> {
-        if (layer.state !== "live") return; // 幂等（IMPL 裁决 4）
+        if (layer.state !== "live") return;
         layer.state = "disposing";
         emitFrom(layer, contextDisposing, {});
-        // 回卷容错：单个 disposer 抛错不中止回卷（I1 优先），全部完成后聚合上抛（#1 修复）
         const failures: unknown[] = [];
         for (let index = layer.effects.length - 1; index >= 0; index -= 1) {
           const unwind = layer.effects[index];
@@ -412,7 +390,7 @@ export function createContext(options: ContextOptions = {}): Context {
         }
         layer.effects.length = 0;
         layer.state = "disposed";
-        const parked = Array.from(waiters); // 快照：reject 路径会从 Set 删除成员
+        const parked = Array.from(waiters);
         for (const waiter of parked) {
           if (waiter.layer !== layer) continue;
           waiters.delete(waiter);
@@ -433,14 +411,12 @@ export function createContext(options: ContextOptions = {}): Context {
           effects: [],
           state: "live",
         };
-        // scope 创建本身在父层登记 effect：父回卷自动收编未显式 dispose 的子层（§3）
         const childContext = makeContext(child);
         layer.effects.push(() => childContext.dispose());
         return childContext;
       },
     };
 
-    // dispatch 四模式各自独立成函数（复杂度预算），dispatchImpl 只做路由 + unwind 边界执法
     function dispatchWaterfall(
       token: WaterfallToken<unknown, unknown>,
       input: unknown,
@@ -501,8 +477,6 @@ export function createContext(options: ContextOptions = {}): Context {
       const frozen = deepFreeze(payload);
       let firstDeny: GuardDeny | undefined;
       for (const listener of registered) {
-        // 全部执行不短路：deny 只决定结果（首个按注册序胜出），坏守卫按弃权计（C7）；
-        // 返回值形状校验：非 deny 形状按弃权（对抗审查 #7）
         try {
           const verdict = await listener(frozen);
           if (
@@ -520,7 +494,6 @@ export function createContext(options: ContextOptions = {}): Context {
       return firstDeny;
     }
 
-    // dispatch 入口：unwind 边界执法 + 按 token.kind 路由（cast 回重载面）
     async function dispatchImpl(
       token: AnyToken,
       payloadOrInput: unknown,

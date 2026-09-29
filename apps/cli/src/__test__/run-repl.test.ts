@@ -1,7 +1,3 @@
-// REPL 驱动（docs/CLI.md §2.3）：进程内以 PassThrough stdin 驱动完整 runRepl——
-// banner/流式输出/用量行/steer busy 提示/slash 分派//quit 退出码；行分派纯函数表驱动。
-// 退出经 /quit（管道下 Ctrl+C 不可注入——信号面由 e2e 覆盖）。
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,9 +55,7 @@ interface ReplFixture {
   world: World;
   stdin: PassThrough;
   output: string[];
-  /** REPL 主 promise：/quit/EOF/信号后 await 并断言退出码（挂起即用例超时暴露） */
   exitCode: () => Promise<number>;
-  /** 触发已注册的信号回调（REPL 经 onSignal 登记的面） */
   signal: (kind: "SIGINT" | "SIGTERM" | "SIGHUP") => void;
   cleanup: () => Promise<void>;
   waitFor: (marker: string) => Promise<void>;
@@ -111,7 +105,7 @@ async function makeRepl(scripts: LlmChunk[][], over: { persist?: boolean; permis
     persist,
     config: CONFIG.config,
     resolution: CONFIG.resolution,
-    compaction: { contextWindow: 200_000 }, // 生产同型装配(/compact 经 compactionRunner)
+    compaction: { contextWindow: 200_000 },
     ...(over.permission !== undefined ? { permission: over.permission } : {}),
     broker: createTerminalBrokerPlugin({ interactive: true, write: () => {}, question: () => Promise.resolve(undefined) }),
     adapters: [scriptAdapter(scripts)],
@@ -175,7 +169,7 @@ describe("runRepl（管道驱动）", () => {
     await fixture.waitFor("R1");
     await fixture.waitFor("turn 1");
     fixture.stdin.write("/compact\n");
-    await fixture.waitFor("nothing to compact"); // 缺省 keep=20k 下小会话无切口
+    await fixture.waitFor("nothing to compact");
     fixture.stdin.write("/quit\n");
     expect(await fixture.exitCode()).toBe(0);
   });
@@ -219,7 +213,7 @@ describe("runRepl（管道驱动）", () => {
     fixture.stdin.write("/quit\n");
     expect(await fixture.exitCode()).toBe(0);
     const text = fixture.output.join("");
-    expect(text).toContain("note: switching resets"); // 副作用提示
+    expect(text).toContain("note: switching resets");
   });
 });
 
@@ -233,7 +227,7 @@ describe("runRepl × 工具 flag（W2B 挂账收口——makeNext 重演矩阵�
     const out = repl.output.join("");
     const newId = out.slice(out.lastIndexOf("new session ") + "new session ".length).split(" ")[0];
     const restriction = repl.world.registry.restrictionOf(newId as never);
-    expect(restriction).toBeDefined(); // create 语义：恒注册（全量快照——无 flag 时）
+    expect(restriction).toBeDefined();
     repl.stdin.write("/quit\n");
     await repl.exitCode();
     await repl.cleanup();
@@ -262,7 +256,7 @@ describe("runRepl × 工具 flag（W2B 挂账收口——makeNext 重演矩阵�
     if (!built.ok) throw new Error(built.reason);
     const made = await built.value.loop.create({ session: { id: "repl-tools" as never }, agent: { model: "m1" } });
     if (!made.ok) throw new Error(made.reason);
-    built.value.registry.scoped(made.value.agent.session.id).restrict(["read"]); // 模拟 main.openWorld 的初始注册（create 恒注册）
+    built.value.registry.scoped(made.value.agent.session.id).restrict(["read"]);
     const replPromise = runRepl({
       world: built.value,
       handle: made.value,
@@ -284,17 +278,15 @@ describe("runRepl × 工具 flag（W2B 挂账收口——makeNext 重演矩阵�
       }
     };
     await waitFor("type /help");
-    replPromise.catch(() => {}); // 静默收割退出
-    // /model：dispose→同 id resume → 重注册（F-2 场景 5）
+    replPromise.catch(() => {});
     stdin.write("/model m1\n");
     await waitFor("switched to");
-    expect(built.value.registry.restrictionOf(made.value.agent.session.id)).toEqual(["read"]); // 同 id 重演
-    // /new：新 id → create 语义注册白名单
+    expect(built.value.registry.restrictionOf(made.value.agent.session.id)).toEqual(["read"]);
     stdin.write("/new\n");
     await waitFor("new session ");
     const out = output.join("");
     const newId = out.slice(out.lastIndexOf("new session ") + "new session ".length).split(" ")[0];
-    expect(built.value.registry.restrictionOf(newId as never)).toEqual(["read"]); // 不放宽
+    expect(built.value.registry.restrictionOf(newId as never)).toEqual(["read"]);
     stdin.write("/quit\n");
     await replPromise;
     await built.value.ctx.dispose().catch(() => {});
@@ -309,7 +301,7 @@ describe("runRepl × --permission（reopen 保持矩阵——docs/PERMISSION-MOD
     await repl.waitFor("new session ");
     const out = repl.output.join("");
     const newId = out.slice(out.lastIndexOf("new session ") + "new session ".length).split(" ")[0];
-    expect(repl.world.registry.restrictionOf(newId as never)).toBeDefined(); // 提取自检（W2B 同款）：垃圾 id 静默错在此先红
+    expect(repl.world.registry.restrictionOf(newId as never)).toBeDefined();
     const outcome = await repl.world.registry.dispatch({
       callId: "perm-reopen-1",
       name: "write",

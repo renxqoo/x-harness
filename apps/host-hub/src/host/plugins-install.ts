@@ -1,8 +1,3 @@
-// 第三方插件安装面（plugin-runtime §2）：源路径只是拷贝源——inspect 形态检查
-//（manifest + 全源文件零 @x-harness/* import）→ install 全树拷入 vendor 根（.tmp
-// 暂存对装载器永不可见 → 同卷原子 rename 就位 → registry 落账）。哈希 = 就位树
-// 的内容指纹（装载期 pin 比对用）。与 skills-install 完全同构的围栏：绝对路径 +
-// 无控制字符 + symlink 不复制不跟随 + 拷贝限额。
 import { createHash } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import { copyFile, lstat, mkdir, readdir, readFile, rename, rm, stat } from "node:fs/promises";
@@ -14,21 +9,17 @@ import { updateVendorRegistry, vendorNameBlocked, vendorRootOf } from "../shared
 import type { VendorPluginEntry } from "../shared/plugins-registry.ts";
 import { PLUGIN_IMPORT_MAX_BYTES, PLUGIN_IMPORT_MAX_ENTRIES, PLUGIN_INSPECT_MAX_PATHS } from "../shared/limits.ts";
 
-/** 候选三态（wire 形态对齐 skill）：ready = 可装；rename = manifest 名 ≠ 目录名；
- *  blocked = 问题串（宿主本地化） */
 export type PluginCandidate =
   | { readonly sourcePath: string; readonly state: "ready"; readonly manifest: ThirdPartyManifest }
   | { readonly sourcePath: string; readonly state: "rename"; readonly manifest: ThirdPartyManifest }
   | { readonly sourcePath: string; readonly state: "blocked"; readonly problem: string };
 
-/** 绝对路径 + 无控制字符（与 skills-install 同围栏） */
 function absolutePathOf(value: unknown): string | undefined {
   if (typeof value !== "string" || !value.startsWith("/")) return undefined;
   if (value.includes("\0") || value.includes("\n") || value.includes("\r")) return undefined;
   return value;
 }
 
-/** 插件名围栏（vendor 根一级目录名——同 skill 名规则） */
 export function isPluginName(value: string): boolean {
   if (value === "" || value === "." || value === ".." || value.length > 128) return false;
   for (const char of value) {
@@ -39,7 +30,6 @@ export function isPluginName(value: string): boolean {
   return true;
 }
 
-/** 收集目录内全部源文件（symlink/奇异条目跳过——不复制不跟随；与拷贝阶段同口径） */
 async function collectSources(root: string, budget: { entries: number }): Promise<{ ok: true; files: string[] } | { ok: false; error: HubErrorShape }> {
   const files: string[] = [];
   const walk = async (dir: string): Promise<void> => {
@@ -63,7 +53,6 @@ async function collectSources(root: string, budget: { entries: number }): Promis
   return { ok: true, files };
 }
 
-/** 读 manifest（plugin.json；缺席/坏 JSON = blocked） */
 async function readManifest(root: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(join(root, "plugin.json"), "utf8"));
@@ -127,7 +116,6 @@ interface CopyState {
   skipped: number;
 }
 
-/** 递归拷贝（symlink/奇异条目跳过并计数；限额内） */
 async function copyTree(src: string, dest: string, state: CopyState): Promise<void> {
   await mkdir(dest, { recursive: true });
   for (const entry of await readdir(src, { withFileTypes: true })) {
@@ -153,7 +141,6 @@ async function copyTree(src: string, dest: string, state: CopyState): Promise<vo
   }
 }
 
-/** 目录内容指纹（文件路径 + 字节，规范化序——装载期 pin 比对） */
 export async function hashTree(root: string): Promise<string> {
   const hash = createHash("sha256");
   const files: string[] = [];
@@ -183,13 +170,11 @@ export interface InstallPluginSpec {
 
 export interface InstalledPlugin {
   readonly name: string;
-  /** vendor 根内目标目录（装载入口） */
   readonly path: string;
   readonly sha256: string;
   readonly skippedEntries: number;
 }
 
-/** vendor 目录就位（备份换入 + 回滚——同 skill placeStaged 律） */
 async function placeStaged(staging: string, targetDir: string, tmpBase: string): Promise<void> {
   const backup = join(tmpBase, `plugin-import-old-${randomUUID()}`);
   const existed = await lstat(targetDir).catch(() => undefined);
@@ -231,7 +216,6 @@ export async function installPlugin(input: InstallPluginSpec): Promise<{ ok: tru
     await mkdir(vendorRoot, { recursive: true });
     const state: CopyState = { bytes: 0, entries: 0, skipped: 0 };
     await copyTree(sourcePath, staging, state);
-    // 就位树哈希（pin 基准 = 被装载的字节）
     const sha256 = await hashTree(staging);
     await placeStaged(staging, targetDir, tmpBase);
     await updateVendorRegistry(input.agentDir, (current) => [
@@ -254,7 +238,6 @@ export async function installPlugin(input: InstallPluginSpec): Promise<{ ok: tru
   }
 }
 
-/** 移除：vendor 目录 + registry 条目（不触碰装载中的 world——热卸是另一命令的事） */
 export async function removePlugin(input: { name?: unknown; agentDir: string }): Promise<{ ok: true } | { ok: false; error: HubErrorShape }> {
   const name = typeof input.name === "string" ? input.name : "";
   if (!isPluginName(name)) {
@@ -274,9 +257,6 @@ export async function removePlugin(input: { name?: unknown; agentDir: string }):
   return { ok: true };
 }
 
-/** 装载入口文件探测：manifest.entry 缺省 index.ts（worker boot 的 pluginPath） */
-/** manifest.entry 相对路径围栏（对抗审查 1b）：须落在 <vendorRoot>/<dir>/ 之内——
- *  绝对路径与 ../ 逃逸拒（词法判定；引擎 roots+approveInstall 是第二层） */
 function entryWithin(rel: string): boolean {
   if (rel === "" || isAbsolute(rel)) return false;
   const normalized = rel.split("/").filter((part) => part !== "" && part !== ".");

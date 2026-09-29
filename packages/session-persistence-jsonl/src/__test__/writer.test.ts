@@ -110,12 +110,10 @@ describe("openSessionWriter 续写路径（docs/SESSION-RESUME §1.4 Level 2）"
   it("header 不等（键序不同但同值应相等；值不同应拒）", async () => {
     await mkdir(root, { recursive: true });
     await writeLines(root, [JSON.stringify(ev0)]);
-    // 同值不同键序 → 规范化相等 → 续写
     await writeFile(join(root, "header.json"), `${JSON.stringify({ createdAt: 1, id: "w1" })}\n`);
     const ok = await openSessionWriter(root, header, [ev0]);
     expect(ok.prefixLength).toBe(1);
     await ok.writer.close();
-    // 值不同（createdAt）→ session-id-reused
     await writeFile(join(root, "header.json"), `${JSON.stringify({ id: "w1", createdAt: 9 })}\n`);
     const error = await openSessionWriter(root, header, [ev0]).catch((e: unknown) => e);
     expect(isPermanentRejection(error)).toBe(true);
@@ -138,7 +136,6 @@ describe("openSessionWriter 续写路径（docs/SESSION-RESUME §1.4 Level 2）"
   it("残尾完整行缺尾换行 → 收编进 D 由 pending 重写（态二）", async () => {
     await mkdir(root, { recursive: true });
     await writeFile(join(root, "header.json"), `${JSON.stringify(header)}\n`);
-    // ev1 完整但缺 \n：截断后 D=[ev0]，k=1，ev1 在 pending 重写
     await writeFile(join(root, "events.jsonl"), `${JSON.stringify(ev0)}\n${JSON.stringify(ev1)}`);
     const opened = await openSessionWriter(root, header, [ev0, ev1]);
     expect(opened.prefixLength).toBe(1);

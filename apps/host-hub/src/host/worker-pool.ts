@@ -1,12 +1,3 @@
-// worker 池（编排中枢，DESIGN §7）：唤醒/排队循环（retiring 等 close 再重评）；
-// internal id `@hub-internal:` 不可碰撞命名空间按 worker 域键；deliverCommand 先记
-// pendingIds 再写（响应核销 onResponse——失败响应同时核销全局 pendingCommands 与
-// 在飞驱动登记：受理前被拒无 settled 义务）；在飞驱动 id 登记（settled 恰一的
-// host 侧数据源——worker 死亡合成 settled{ok:false,reason:"worker-died"}）；
-// shutdownAll EOF+期限+SIGKILL 不发死亡帧；close 结算（恰一合成 failure /
-// thread_died 恰一 / parked 恰一 / stop 删表无帧；关闭期在飞不补响应不发帧）。
-// thread/start 以 pending 表项起步、应答时落实表；start/resume 失败应答转发后
-// 回收 worker（无会话存在——@pending 撤位经 close 结算）。
 import { DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS, INTERNAL_ID_PREFIX, isThreadScoped } from "../protocol/internal.ts";
 import type { ThreadEntry, ThreadTable } from "./thread-table.ts";
 import { spawnWorker, workerExecPath } from "./worker-process.ts";
@@ -23,11 +14,9 @@ export interface PoolDeps {
   emitClient: (line: string) => void;
   limits: { maxThreads: number; workerExitTimeoutMs: number };
   workerEnv: () => Record<string, string>;
-  /** spawn 注入缝（单测假 worker；缺省真进程） */
   spawn?: typeof spawnWorker;
 }
 
-/** thread_parked reason 域（DESIGN §4）：收编来源 */
 export type RetireOrigin = "manual" | "idle" | "rss";
 
 interface LiveSlot {
@@ -38,17 +27,13 @@ interface LiveSlot {
   drivingIds: Set<string>;
   resumeWaiter: { resolve: (ok: boolean, reason?: HubErrorShape) => void } | undefined;
   retireIntent: "stop" | "retire" | undefined;
-  /** 收编原因（close 结算 thread_parked 帧的 reason——随发起方定值） */
   retireReason: RetireOrigin;
   spawnDeadline: ReturnType<typeof setTimeout> | undefined;
   helloOk: boolean;
-  /** host→worker 内部查询等待面（@hub-internal: id → 等待者；close 结算兑现空应答） */
   internalQueries: Map<string, { resolve: (data: unknown) => void }>;
 }
 
-/** retiring 重放队列上限（风暴丢行：重发可重试——retiring 本就重评） */
 const MAX_REQUEUE_PER_THREAD = 1_024;
-/** retiring 重放队列字节预算（行限 16MiB 下 1024 行可达 16GiB——4MiB 封顶防 OOM） */
 const MAX_REQUEUE_BYTES_PER_THREAD = 4 * 1024 * 1024;
 
 export function createWorkerPool(deps: PoolDeps) {
@@ -59,8 +44,6 @@ export function createWorkerPool(deps: PoolDeps) {
   let pendingSeq = 0;
   let shuttingDown = false;
   const requeue = new Map<string, string[]>();
-  /** in-flight wake 守卫：同线程 wake 单飞——重试间隙的第二唤醒复用首次结果，
-   *  杜绝 byThread 遮蔽/活线程被误判死 */
   const waking = new Map<string, Promise<boolean>>();
 
   function nextInternalId(): string {
@@ -84,7 +67,6 @@ export function createWorkerPool(deps: PoolDeps) {
     );
   }
 
-  /** close 结算债务面：pending 补恰一 failure / 在飞驱动合成 settled / 等待者释放 */
   function releaseSlotDebts(slot: LiveSlot): void {
     for (const id of slot.pendingIds) {
       emitFailure(id, pendingCommands.get(id) ?? "unknown", hubError("protocol", "worker died before responding"));
@@ -103,7 +85,6 @@ export function createWorkerPool(deps: PoolDeps) {
     if (slot.spawnDeadline !== undefined) clearTimeout(slot.spawnDeadline);
   }
 
-  /** close 结算表迁移面：按 retireIntent / helloOk 定 parked|dead|删表（恰一帧） */
   function settleThreadOutcome(slot: LiveSlot, entry: ThreadEntry): void {
     const { threadId } = slot;
     const intent = slot.retireIntent ?? entry.retireIntent;
@@ -118,7 +99,6 @@ export function createWorkerPool(deps: PoolDeps) {
         deps.emitClient(threadDiedFrame(threadId, "retire of unpersisted worker"));
       }
     } else if (slot.helloOk !== true) {
-      // hello 不符/spawn 失败：已落盘表项保 dead（复活可重试），未落盘/挂起项撤位
       if (entry.sessionPath !== null) {
         deps.table.update(threadId, { state: "dead", isStreaming: false });
       } else {
@@ -136,8 +116,6 @@ export function createWorkerPool(deps: PoolDeps) {
     slots.delete(slot.worker.uid);
     byThread.delete(threadId);
     if (shuttingDown) {
-      // 关闭期在飞不补响应、不发死亡帧（连接在关——客户端不再消费）；内部等待
-      // 者与死线仍兑现（悬挂 promise/定时器不外溢）
       slot.resumeWaiter?.resolve(false);
       slot.resumeWaiter = undefined;
       if (slot.spawnDeadline !== undefined) clearTimeout(slot.spawnDeadline);
@@ -153,7 +131,6 @@ export function createWorkerPool(deps: PoolDeps) {
     requeue.delete(threadId);
     requeueBytes.delete(threadId);
     if (queued !== undefined) {
-      // 顺序重放（for-await）：重评路由串行——后续命令见到的表状态按序演进
       void (async () => {
         for (const line of queued) await routeLine(line);
       })();
@@ -183,7 +160,6 @@ export function createWorkerPool(deps: PoolDeps) {
           entry.sessionPath !== null &&
           entry.sessionPath !== beat.sessionPath
         ) {
-          // path→path 变化（唤醒后 worker 落到不同会话 id）：占用重指 + warn
           process.stderr.write(`hub: worker session rekey (${slot.threadId}: ${entry.sessionPath} -> ${beat.sessionPath})\n`);
         }
         deps.table.applyHeartbeat(slot.threadId, beat);
@@ -196,15 +172,14 @@ export function createWorkerPool(deps: PoolDeps) {
         if (id === undefined) return;
         slot.pendingIds.delete(id);
         pendingCommands.delete(id);
-        if (!success) slot.drivingIds.delete(id); // 受理前被拒：无 settled 义务
+        if (!success) slot.drivingIds.delete(id);
       },
       onControlResponse: (frame) => {
-        // host→worker 内部查询应答：按 id 兑现等待者（不进 control 路由、不转发）
         const waiter = frame.id !== undefined ? slot.internalQueries.get(frame.id) : undefined;
         if (waiter !== undefined) {
           if (frame.id !== undefined) slot.internalQueries.delete(frame.id);
           waiter.resolve(frame.data);
-          return false; // 内部查询应答不转发
+          return false;
         }
         return routeControl({ slot, rebind, trusted, cwd }, frame);
       },
@@ -287,17 +262,15 @@ export function createWorkerPool(deps: PoolDeps) {
 
   const requeueBytes = new Map<string, number>();
 
-  /** retiring 重评队列：close 结算后按原序重投递（行数 + 字节双预算） */
   function requeueLine(threadId: string, line: string): void {
     const queue = requeue.get(threadId) ?? [];
     const bytes = (requeueBytes.get(threadId) ?? 0) + line.length;
-    if (queue.length >= MAX_REQUEUE_PER_THREAD || bytes > MAX_REQUEUE_BYTES_PER_THREAD) return; // 风暴丢行：重发可重试（无应答悬挂——retiring 本就重评）
+    if (queue.length >= MAX_REQUEUE_PER_THREAD || bytes > MAX_REQUEUE_BYTES_PER_THREAD) return;
     queue.push(line);
     requeue.set(threadId, queue);
     requeueBytes.set(threadId, bytes);
   }
 
-  /** 在飞槽直接投递（命中即写——返回 false = 无槽需唤醒） */
   function deliverIfLive(threadId: string, line: string, info: { id?: string; type: string }): boolean {
     const slot = slotOf(threadId);
     if (slot === undefined) return false;
@@ -305,7 +278,6 @@ export function createWorkerPool(deps: PoolDeps) {
     return true;
   }
 
-  /** 占用容量 = 表内 live 域 + 在飞 @pending（start 应答未落实的 spawn） */
   function occupiedThreads(): number {
     let pending = 0;
     for (const id of byThread.keys()) {
@@ -323,7 +295,6 @@ export function createWorkerPool(deps: PoolDeps) {
     const slot = spawnSlot(pendingId, trusted, cwd);
     deliverTo(slot.worker.uid, line, pendingCommandInfo(line));
     if (occupiedThreads() > deps.limits.maxThreads) {
-      // 复验（并发竞窗兜底）：杀最新 slot——close 结算对 pending 补恰一 failure
       process.stderr.write("hub: thread budget exceeded after spawn; killing newest\n");
       slot.worker.kill(FORK_GRACE_SIGTERM_MS);
     }
@@ -339,7 +310,7 @@ export function createWorkerPool(deps: PoolDeps) {
 
   async function wake(threadId: string): Promise<boolean> {
     const inflight = waking.get(threadId);
-    if (inflight !== undefined) return inflight; // 单飞守卫：并发 wake 复用首飞
+    if (inflight !== undefined) return inflight;
     const flight = wakeOnce(threadId).finally(() => waking.delete(threadId));
     waking.set(threadId, flight);
     return flight;
@@ -350,8 +321,6 @@ export function createWorkerPool(deps: PoolDeps) {
     if (entry === undefined || entry.sessionPath === null) return false;
     if (deps.table.liveCount() >= deps.limits.maxThreads) return false;
     if (slotOf(threadId) !== undefined) return true;
-    // 有界重试（1s × 12 拍）：覆盖 spawn/IO 瞬态失败（会话锁接管是即时的——
-    // 内核判据 = 持锁 pid 活性；pid 复用误判存活属安全侧失败面，如实可观察）
     for (let attempt = 0; attempt < 12; attempt += 1) {
       if (attempt > 0) await Bun.sleep(1_000);
       deps.table.update(threadId, { state: "spawning" });
@@ -365,8 +334,6 @@ export function createWorkerPool(deps: PoolDeps) {
           clearTimeout(deadline);
           resolve({ ok, ...(reason !== undefined ? { reason } : {}) });
         };
-        // internal resume 死线：心跳存活但装配挂死的 worker 不得永久悬挂唤醒——
-        // 超时按失败结算（kill 由下方失败路径执行）
         const deadline = setTimeout(() => finish(false, hubError("protocol", "resume deadline exceeded")), WORKER_SPAWN_TIMEOUT_MS);
         slot.resumeWaiter = {
           resolve: (ok, reason) => finish(ok, reason),
@@ -385,17 +352,14 @@ export function createWorkerPool(deps: PoolDeps) {
       process.stderr.write(`hub: wake resume failed (attempt ${attempt + 1}): ${verdict.reason?.message ?? "unknown"}\n`);
       slot.worker.kill(FORK_GRACE_SIGTERM_MS);
       await Promise.race([slot.worker.exited, Bun.sleep(FORK_GRACE_SIGTERM_MS + 1_000)]);
-      if (deps.table.get(threadId) === undefined) return false; // 表项已亡（外部删除）
-      if (deps.table.get(threadId)?.state === "parked") return false; // 窗口内被收编
+      if (deps.table.get(threadId) === undefined) return false;
+      if (deps.table.get(threadId)?.state === "parked") return false;
     }
-    // 重试耗尽：终态落 dead（spawning 滞留会永久占预算/挡 resume/逐不出；dead
-    // 可被下一次写命令复活重试）
     process.stderr.write(`hub: wake retries exhausted (${threadId})\n`);
     deps.table.update(threadId, { state: "dead" });
     return false;
   }
 
-  /** 行解析：坏 JSON → parse failure（唯一不带 id 的 failure 面；细节进 stderr） */
   function parseRouteLine(line: string): { id: string | undefined; type: string; threadId: string } | undefined {
     let input: { type?: unknown; id?: unknown; threadId?: unknown };
     try {
@@ -417,8 +381,6 @@ export function createWorkerPool(deps: PoolDeps) {
     if (parsed === undefined) return;
     const { id, type, threadId } = parsed;
     if (id !== undefined && id.startsWith(INTERNAL_ID_PREFIX)) {
-      // internal 命名空间不可冒用：客户端 id 侵入会使响应被误判为内部 ack——
-      // 不转发、恰一 failure
       emitFailure(id, type, hubError("protocol", "invalid id: reserved namespace"));
       return;
     }
@@ -459,7 +421,7 @@ export function createWorkerPool(deps: PoolDeps) {
     if (entry === undefined) return "ok";
     const slot = slotOf(threadId);
     if (slot === undefined) {
-      if (entry.state === "spawning") return "in-flight"; // wake 重试在飞——不 ack（防复活）
+      if (entry.state === "spawning") return "in-flight";
       if (intent === "stop") {
         deps.table.remove(threadId);
       } else if (entry.sessionPath === null) {
@@ -470,8 +432,6 @@ export function createWorkerPool(deps: PoolDeps) {
       return "ok";
     }
     if (intent === "retire" && entry.sessionPath === null) {
-      // live 未落盘（首条消息前）同样拒绝（DESIGN §3.1 lazy-persist 拒绝——不能
-      // 只挡非 live 面）
       return "not-persisted";
     }
     if (slot.retireIntent === undefined) {
@@ -486,8 +446,6 @@ export function createWorkerPool(deps: PoolDeps) {
       const handle = slot.worker;
       setTimeout(() => handle.kill(deps.limits.workerExitTimeoutMs), 0);
     } else if (intent === "stop" && slot.retireIntent === "retire") {
-      // stop 优先于 retire：升级意图——close 按 stop 删表；retire 已 eof（stdin
-      // 关闭），stop 命令无从投递，由拆除死线收口
       slot.retireIntent = "stop";
       deps.table.update(threadId, { retireIntent: "stop" });
     }
@@ -498,9 +456,6 @@ export function createWorkerPool(deps: PoolDeps) {
     slotOf(threadId)?.worker.kill(FORK_GRACE_SIGTERM_MS);
   }
 
-  /** host→worker 内部查询（尽力而为）：对全部 live worker 发同型命令，聚合应答
-   *  data。worker 死亡/超时 → 该路 undefined（查询面不阻塞管理面）；应答经
-   *  internal id 命名空间回流（routeLine 拒客户端冒用同前缀）。 */
   async function queryLiveWorkers(type: string, timeoutMs: number): Promise<unknown[]> {
     const results: unknown[] = [];
     const live = liveThreadIds();

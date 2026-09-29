@@ -1,7 +1,3 @@
-// 跨进程发送与一次性空闲订阅（docs/AGENT-DELEGATION.md §5.2-4b/§5.4）：box 域寻址
-// （裸名唯一活箱 / name [ref] 消歧）；notify_when_idle 双向闭窗（写订阅前后各查一次
-// 目标状态——错过 idle 事件窗口的修复）；仅根会话可用。
-
 import type { AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionId } from "@x-harness/session";
 
@@ -12,7 +8,6 @@ export interface CrossDeps {
   readonly service: MailboxService;
   readonly loop: AgentLoopService;
   readonly box: string;
-  /** 宿主 main 会话（可重绑引用——与 mailbox-consumer 同源，REPL 会话切换时换目标） */
   readonly mainRef: { current: SessionId };
   readonly lineage: Lineage;
 }
@@ -27,7 +22,6 @@ export type CrossOutcome = { readonly ok: true; readonly text: string } | { read
 
 const WITH_REF = /^(.+) \[([0-9a-f]{6})\]$/;
 
-/** box 域解析：裸名唯一活箱（排除自己）；name [ref] 按 box ref 精确 */
 async function resolveBox(deps: CrossDeps, to: string): Promise<{ ok: true; box: LiveBox } | { ok: false; reason: string }> {
   const boxes = (await deps.service.discover()).filter((box) => box.name !== deps.box);
   const refHit = WITH_REF.exec(to);
@@ -38,7 +32,6 @@ async function resolveBox(deps: CrossDeps, to: string): Promise<{ ok: true; box:
     if (hits.length === 1) return { ok: true, box: hits[0] as LiveBox };
     return { ok: false, reason: `not-found:'${to}'; no live local session matches` };
   }
-  // box 名 = 目录名（mkdir 排他）——同 root 无重名，ambiguous 按构造不可达
   const hit = boxes.find((box) => box.name === to);
   return hit === undefined
     ? { ok: false, reason: `not-found:${to}; use list_agents to see addressable agents and sessions` }
@@ -57,8 +50,6 @@ export async function sendCross(deps: CrossDeps, caller: SessionId | undefined, 
   }
 
   if (input.notify_when_idle === true) {
-    // 双向闭窗（§5.4）：(a) 写订阅前已 idle → 立即投 notice 不写订阅；(b) 写后复查翻转。
-    // 「已空闲」的通知直达本进程 main（订阅方是我——不走目标信箱绕行）
     if (target.status === "idle") {
       const noticed = await deliverNoticeLocally(deps, target.name);
       return { ok: true, text: crossText(target.name, input.message !== undefined, noticed) };
@@ -73,7 +64,6 @@ export async function sendCross(deps: CrossDeps, caller: SessionId | undefined, 
   return { ok: true, text: crossText(target.name, input.message !== undefined, false) };
 }
 
-/** 已空闲的即时通知：本进程 main 直投（true=送达） */
 async function deliverNoticeLocally(deps: CrossDeps, target: string): Promise<boolean> {
   const mainHandle = deps.loop.get(deps.mainRef.current);
   if (mainHandle === undefined) return false;

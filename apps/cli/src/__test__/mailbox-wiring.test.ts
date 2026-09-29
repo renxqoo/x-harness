@@ -1,7 +1,3 @@
-// mailbox 宿主接线（AGENT-DELEGATION §5.3）：buildWorld 后 delegation 在装配期真开箱
-// （box = xh-<mainSessionId>、信封路由目的地 = mainSession）；dispose 关箱（目录消失）。
-// 断言对象是 delegation 装配产物本身（discover 扫盘可见），不是复刻派生式——接线被删即红。
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +21,6 @@ const CONFIG = (() => {
   return { config: parsed.value, resolution: resolved.value };
 })();
 
-/** 最小 adapter：拨号不打网络（装配断言不触发请求） */
 const stubAdapter: LlmAdapter = {
   name: "fake",
   stream: () => {
@@ -59,11 +54,10 @@ describe("mailbox 宿主接线", () => {
     const service = world.ctx.tryUse(mailboxService);
     expect(service).toBeDefined();
     expect(service?.root).toBe(mailboxRoot);
-    // 核心断言：箱由 delegation 装配期开启（不是测试自己 open）——buildWorld 返回即可见
     const boxes = await service!.discover();
     const mine = boxes.find((box) => box.name === `xh-${String(mainSessionId)}`);
     expect(mine).toBeDefined();
-    expect(mine?.status).toBe("idle"); // main 会话尚未运行
+    expect(mine?.status).toBe("idle");
     await world.ctx.dispose();
     await rm(mailboxRoot, { recursive: true, force: true });
   });
@@ -82,14 +76,11 @@ describe("mailbox 宿主接线", () => {
   it("信封路由闭环：对端向 xh-<mainSessionId> 投信 → drain 后 steer 进 main 会话（收件人正确）", async () => {
     const { world, mailboxRoot, mainSessionId } = await assembleFixture();
     const service = world.ctx.tryUse(mailboxService);
-    // main 会话必须建立（delegation 路由目的地）——复刻 openWorld 的 create 路径
     const made = await world.loop.create({ session: { id: mainSessionId }, agent: { model: "m1", provider: "glm" } });
     if (!made.ok) throw new Error(made.reason);
-    // 对端（另一箱）投信——模拟跨进程进程 B
     const peer = await service!.open("xh-peer-sender");
     const sent = await service!.send(`xh-${String(mainSessionId)}`, { from: peer.name, message: "ping from peer", kind: "message" });
     expect(sent.ok).toBe(true);
-    // drain 单拍（测试确定性入口——运行期由 300ms 定时器驱动同一函数）
     const envelopes = await service!.drain(`xh-${String(mainSessionId)}`);
     expect(envelopes).toHaveLength(1);
     expect(envelopes[0]?.message).toBe("ping from peer");

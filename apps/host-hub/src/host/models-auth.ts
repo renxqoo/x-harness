@@ -1,5 +1,3 @@
-// host 模型/凭据域处理器（DESIGN §3.6——从 host-commands 按行数预算拆出）：
-// get_models/set_model_override/auth 三命令与校验/覆写 helper 单点。
 import { readCatalog } from "../shared/catalog.ts";
 import { createCredentials, redact } from "./credentials.ts";
 import type { CredentialStore } from "./credentials.ts";
@@ -10,7 +8,6 @@ export interface RespondFn {
   (id: string | undefined, command: string, result: { data?: unknown; error?: HubErrorShape }): void;
 }
 
-/** 非法数值回显的数组元素面：null/undefined 空串、嵌套数组递归（String 语义） */
 function arrayElementText(value: unknown): string {
   if (value === null) return "";
   if (Array.isArray(value)) return value.map(arrayElementText).join(",");
@@ -19,7 +16,6 @@ function arrayElementText(value: unknown): string {
   return String(value);
 }
 
-/** 非法数值回显：保持 String 语义（数组 join/对象 [object Object]——错误文案不变） */
 function invalidValueText(value: unknown): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return value.map(arrayElementText).join(",");
@@ -27,7 +23,6 @@ function invalidValueText(value: unknown): string {
   return String(value);
 }
 
-/** set_model_override 校验段：字段组合与数值合法性（错误文案单点——恒 invalid_input 族） */
 export function validateOverrideInput(
   input: { contextWindow?: unknown; maxTokens?: unknown; remove?: unknown },
 ): { ok: true; remove: boolean; contextWindow: unknown; maxTokens: unknown } | { ok: false; error: HubErrorShape } {
@@ -50,7 +45,6 @@ export function validateOverrideInput(
 
 type OverrideFile = { modelOverrides?: Record<string, { contextWindow?: number; maxOutputTokens?: number }> };
 
-/** overrides 键变更：remove 删键；字段更新后空键自删 */
 function applyOverrideEntry(file: OverrideFile, key: string, fields: { remove: boolean; contextWindow: unknown; maxTokens: unknown }): void {
   file.modelOverrides ??= {};
   if (fields.remove) {
@@ -66,7 +60,6 @@ function applyOverrideEntry(file: OverrideFile, key: string, fields: { remove: b
   else file.modelOverrides[key] = entry;
 }
 
-/** 刷新后模型对象（附录 B 形状——单点构造；reasoning 恒在场随条目透传，input 条件在场） */
 export function modelShapeOf(entry: { model: string; provider: string; contextWindow?: number; maxTokens?: number; reasoning: boolean; input?: ("text" | "image")[]; cost?: Record<string, number>; source: "preset" | "custom" } | undefined): Record<string, unknown> | undefined {
   if (entry === undefined) return undefined;
   return {
@@ -81,7 +74,6 @@ export function modelShapeOf(entry: { model: string; provider: string; contextWi
   };
 }
 
-/** auth/list 三态：有存 key/档案字面 → api-key；仅 env 键名 → preset-env；皆无 → none */
 function authTypeOf(hasLiteral: boolean, hasEnvName: boolean): "api-key" | "preset-env" | "none" {
   if (hasLiteral) return "api-key";
   if (hasEnvName) return "preset-env";
@@ -129,7 +121,6 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
       applyOverrideEntry(file, key, verdict);
       return file;
     });
-    // 热刷新 = 每次读取现算（readCatalog 无缓存）——响应回显刷新后模型对象
     const refreshed = await readCatalog(spec.agentDir);
     const entry = refreshed.entries.find((e) => e.provider === provider && e.model === modelId);
     spec.respond(id, "set_model_override", { data: { model: modelShapeOf(entry) } });
@@ -171,7 +162,7 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
       }
       try {
         await credentials.setKey(provider, apiKey);
-        await spec.refreshSnapshot(); // 新 key 立即可注入后续 spawn
+        await spec.refreshSnapshot();
         spec.respond(id, "auth/set_api_key", {});
       } catch (error) {
         spec.respond(id, "auth/set_api_key", { error: hubError("io_failed", redact(String(error), [apiKey])) });
@@ -180,7 +171,7 @@ export function createModelsAuthCommands(spec: ModelsAuthSpec): {
     async authRemoveKey(input, id) {
       const provider = typeof input.provider === "string" ? input.provider : "";
       await credentials.removeKey(provider);
-      await spec.refreshSnapshot(); // 撤 key 后续 spawn 不再注入
+      await spec.refreshSnapshot();
       spec.respond(id, "auth/remove_key", {});
     },
   };

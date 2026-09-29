@@ -1,6 +1,3 @@
-// e2e：子代理旅程（docs/AGENT-DELEGATION.md §11.3）——独立装配不动既有 assembleWorld：
-// 类型经临时 .md 目录种入（U4）；假适配器按 request.model 分桶路由；父模型调 agent_spawn →
-// 子模型完成 → 父第二 turn 消费通知；断言父子两会话 jsonl 落盘与 header 三字段锚。
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,7 +59,6 @@ export async function runDelegationJourney(): Promise<void> {
         yield { type: "finish", finish: { kind: "stop" } };
       })();
 
-    // 父脚本：第一轮发起 agent_spawn 工具调用；第二轮消费通知后收尾。子脚本：完成任务回报。
     scripts.set(PARENT_MODEL, [
       (async function* (): AsyncGenerator<LlmChunk> {
         yield {
@@ -85,10 +81,9 @@ export async function runDelegationJourney(): Promise<void> {
     made.value.agent.followup("delegate the counting");
     await made.value.agent.whenIdle();
 
-    // ① 通知进入父上下文并被子消化（两条合法路径：父 idle → 唤醒第二 turn；父 busy → 步边界续航）
     const parentEvents = made.value.agent.session.events();
     const userTexts = parentEvents
-      .filter((e) => e.type === "agent/message") // 通知载体已迁 agent/message（AGENT-MESSAGE §5 迁移地图）
+      .filter((e) => e.type === "agent/message")
       .map((e) => JSON.stringify(e.data))
       .join("\n");
     must(userTexts.includes("[agent-notification]"), "通知文本进入父上下文");
@@ -97,7 +92,6 @@ export async function runDelegationJourney(): Promise<void> {
     const finalAssistant = JSON.stringify(parentEvents.filter((e) => e.type === "assistant/message").at(-1)?.data);
     must(finalAssistant.includes("notification received, wrapping up"), "父消化通知后收尾（第二脚本被消费）");
 
-    // ② 子会话存在且完整落盘（spawn 文案中的 sessionId 寻址）
     const listTool = await ctx.use(toolRegistry).dispatch({
       callId: "e2e-list",
       name: "list_agents",
@@ -107,7 +101,6 @@ export async function runDelegationJourney(): Promise<void> {
     });
     const childSession = listTool.content.match(/session=([A-Za-z0-9._-]+)/)?.[1];
     must(childSession !== undefined, `list_agents 返回子 sessionId（实际：${listTool.content}）`);
-    // 读盘前过 flush 屏障（jsonl 排空是异步队列）
     const store = ctx.use(sessionStore);
     await store.flush(childSession as SessionId);
     await store.flush("delegation-parent" as SessionId);
@@ -124,7 +117,7 @@ export async function runDelegationJourney(): Promise<void> {
     void unload;
     console.log("子代理旅程：父 spawn → 子完成 → 通知唤醒父消费 → 双会话落盘 通过");
   } finally {
-    await ctx.dispose().catch(() => {}); // must 断言失败也回卷（审查 B#1——与长内容旅程同病顺手修）
+    await ctx.dispose().catch(() => {});
     await rm(root, { recursive: true, force: true }).catch(() => {});
     await rm(agentsDir, { recursive: true, force: true }).catch(() => {});
   }

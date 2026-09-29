@@ -1,5 +1,3 @@
-// token 格式化（docs/CLI.md §2.3/§4 表驱动）：阶梯换算 + turn 行/session 摘要组装。
-
 import { describe, expect, it } from "vitest";
 import { formatSessionSummary, formatTokens, formatTurnLine } from "../format-usage.ts";
 import type { SessionUsage } from "@x-harness/token-meter";

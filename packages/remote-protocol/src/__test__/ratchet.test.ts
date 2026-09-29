@@ -1,5 +1,3 @@
-// ratchet 契约：双端互发 N 帧、重发重加密、乱序 skipped-key、index 回退硬失败、
-// 崩溃恢复（边界预支）、DH 推进、跨代密文拒收——DESIGN §1.3 全锚点
 import { describe, expect, it } from "vitest";
 import { RatchetSession, deriveInitialChains, deriveRekeyChains, type RatchetPersist } from "../ratchet.ts";
 import { aeadSeal, buildAad, buildNonce, generateBoxKeyPair, x25519 } from "../crypto.ts";
@@ -115,7 +113,6 @@ describe("双端互发", () => {
       const opened = await dev.open({ ciphertext: sealed.ct, nonce: sealed.nonce, aad: sealed.aad, index: sealed.index, epoch: sealed.epoch });
       expect(opened.ok).toBe(true);
     }
-    // 批首落盘形态：{chainKey=批首链, baseIndex=64, nextIndex=128}
     const persisted = lastSendBoundary ?? gw.snapshotSend();
     void gwPersist;
     const restored = RatchetSession.restore(
@@ -124,7 +121,6 @@ describe("双端互发", () => {
       { ...dev.snapshotRecv(), epoch: gw.snapshotSend().epoch },
     );
     expect(restored.snapshotSend().nextIndex).toBeGreaterThanOrEqual(128);
-    // 续发 3 帧：对端 skipped-key 吸收（乱序路径）或顺序到达
     for (let i = 0; i < 3; i++) {
       const sealed = await gwSeal(restored, `r${i}`);
       const opened = await dev.open({ ciphertext: sealed.ct, nonce: sealed.nonce, aad: sealed.aad, index: sealed.index, epoch: sealed.epoch });
@@ -135,13 +131,11 @@ describe("双端互发", () => {
   it("崩溃恢复：从边界重建后 nonce 不复用（index 续进）", async () => {
     const { gw, dev, gwPersist } = endpoints();
     for (let i = 0; i < 10; i++) await gwSeal(gw, `f${i}`);
-    // 崩溃：内存态丢，从持久边界恢复（发送批边界预支 64；接收边界未到批未落盘）
     const restored = RatchetSession.restore(
       { now: () => 0, persist: gwPersist, deviceId: "dev_1", direction: 0 },
       { ...gw.snapshotSend(), nextIndex: RATCHET_BATCH_FRAMES },
       { ...dev.snapshotRecv(), epoch: gw.snapshotSend().epoch },
     );
-    // 恢复后 sendNextIndex 从预支边界起（永不复用已用 index）
     expect(restored.snapshotSend().nextIndex).toBe(RATCHET_BATCH_FRAMES);
     expect(restored.snapshotSend().epoch).toBe(1);
   });
@@ -161,10 +155,8 @@ describe("乱序与回归", () => {
     const f0 = await gwSeal(gw, "f0");
     const f1 = await gwSeal(gw, "f1");
     const f2 = await gwSeal(gw, "f2");
-    // 先收 f2（乱序）→ skipped 派生 f0/f1 钥
     const o2 = await dev.open({ ciphertext: f2.ct, nonce: f2.nonce, aad: f2.aad, index: f2.index, epoch: f2.epoch });
     expect(o2.ok).toBe(true);
-    // 补收 f0/f1 命中 skipped
     const o0 = await dev.open({ ciphertext: f0.ct, nonce: f0.nonce, aad: f0.aad, index: f0.index, epoch: f0.epoch });
     const o1 = await dev.open({ ciphertext: f1.ct, nonce: f1.nonce, aad: f1.aad, index: f1.index, epoch: f1.epoch });
     expect(o0.ok && o1.ok).toBe(true);
@@ -176,7 +168,6 @@ describe("乱序与回归", () => {
     await gwSeal(gw, "f1");
     const late = await dev.open({ ciphertext: f0.ct, nonce: f0.nonce, aad: f0.aad, index: f0.index, epoch: f0.epoch });
     expect(late.ok).toBe(true);
-    // 再收更早 index 的旧帧 → regression
     const again = await dev.open({ ciphertext: f0.ct, nonce: f0.nonce, aad: f0.aad, index: f0.index, epoch: f0.epoch });
     expect(again).toEqual({ ok: false, reason: "regression" });
   });
@@ -199,7 +190,6 @@ describe("会话辅助面（snapshot/fingerprint/probe/reset）", () => {
     dev.applyDhStep(x25519(g2.secret, g1.pub)!, false);
     expect(gw.chainFingerprint()).not.toBe(before);
     expect(gw.shouldProbeRekey()).toBe(false);
-    // tag 失败计数至阈值（顺序 index 的垃圾密文——openInOrder 失败路径每次 +1）
     const base = dev.snapshotRecv().nextIndex;
     const epochNow = dev.snapshotRecv().epoch;
     for (let i = 0; i < 33; i++) {
@@ -208,7 +198,6 @@ describe("会话辅助面（snapshot/fingerprint/probe/reset）", () => {
     expect(dev.shouldProbeRekey()).toBe(true);
     dev.resetTagFailures();
     expect(dev.shouldProbeRekey()).toBe(false);
-    // rekeyTo 注入（rekey.ts 走 deriveRekeyChains；会话面 rekeyTo 为直接注入入口）
     const root = "cd".repeat(32);
     gw.rekeyTo({ rootKey: root, sendChainKey: "11".repeat(32), recvChainKey: "22".repeat(32), epoch: 9 });
     expect(gw.snapshotSend().epoch).toBe(9);

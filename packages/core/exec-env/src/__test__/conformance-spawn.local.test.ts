@@ -1,6 +1,3 @@
-// spawn 面 local-only conformance（docs/EXEC-ENV.md §7）：真子进程——exited 形状、流消费、
-// kill 幂等、settle 孙进程有界收敛（组长退出≠组清空）、spawn 失败判别。内核级语义本腿权威。
-
 import { mkdtemp, rm, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,32 +86,31 @@ describe("spawn conformance（local 真进程）", () => {
     const spawned = await env.spawn({ argv: ["/bin/sh", "-c", "sleep 30"] });
     if (!spawned.ok) throw new Error("spawn failed");
     await spawned.proc.kill("term");
-    await spawned.proc.kill("term"); // 幂等
+    await spawned.proc.kill("term");
     const exited = await spawned.proc.exited;
-    expect(exited.code).not.toBe(0); // 被杀，非正常退出
+    expect(exited.code).not.toBe(0);
     await spawned.proc.settled;
-    await spawned.proc.kill("kill"); // 已死后 no-op 不 throw
+    await spawned.proc.kill("kill");
   });
 
   it("settle：组长速死孙进程仍活——有界收敛（5s 兜底 KILL）后组清空", async () => {
     const env = createLocalEnv(root);
     const marker = join(root, "straggler.marker");
-    // 孙进程 TERM 免疫且沉睡超过收敛上限（30s）——若 settle 兜底 SIGKILL 失效，marker 会在收尾后出现
     const spawned = await env.spawn({
       argv: ["/bin/sh", "-c", `(trap '' TERM; sleep 30 && touch ${JSON.stringify(marker)}) & exit 0`],
     });
     if (!spawned.ok) throw new Error("spawn failed");
     const started = Date.now();
     await spawned.proc.settled;
-    expect(Date.now() - started).toBeLessThan(8_500); // 有界（≤5s 轮询上限+慢 CI 余量）
+    expect(Date.now() - started).toBeLessThan(8_500);
     await new Promise((r) => {
-      setTimeout(r, 300); // KILL 落定余量
+      setTimeout(r, 300);
     });
     const wrote = await readFile(marker, "utf8").then(
       () => true,
       () => false,
     );
-    expect(wrote).toBe(false); // 孙进程被 settle 兜底杀净——无泄漏
+    expect(wrote).toBe(false);
   }, 10_000);
 
   it("spawn ENOENT：argv[0] 缺席 → not_found 判别", async () => {

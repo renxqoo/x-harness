@@ -61,13 +61,11 @@ describe("插件加载器（§5）", () => {
     await expect(
       loadPlugins(ctx, [{ name: "bad-return", apply: () => impostor } as never]),
     ).rejects.toThrow(/plugin "bad-return" apply must return a disposer function or void — got object/);
-    await ctx.dispose(); // 崩在装配期而非 dispose——干净
+    await ctx.dispose();
   });
 
   it("工厂函数冒充插件（漏调用）→ 装配期 fail-fast 并点名调用法", async () => {
     const ctx = createContext();
-    // 形状复刻：命名工厂函数自带 name/Function.prototype.apply，结构上满足 Plugin——
-    // 症状（修复前）：apply 变无参调用工厂，副作用不发生 + 返回对象进 unwind 链崩 dispose
     const createGhost = (): Plugin => ({ name: "ghost", apply: () => {} });
     await expect(loadPlugins(ctx, [createGhost as never])).rejects.toThrow(
       /plugin is a factory function, not a plugin — call it: createGhost\(\)/,
@@ -110,8 +108,8 @@ describe("插件加载器（§5）", () => {
     ];
     await expect(loadPlugins(ctx, plugins)).rejects.toThrow("apply boom");
     expect(errors).toEqual(["bad:Error: apply boom"]);
-    expect(unwound).toHaveBeenCalledTimes(1); // 已加载的回卷
-    expect(() => ctx.on(pluginError, noop)).toThrow(/disposed/); // ctx 整体不可用
+    expect(unwound).toHaveBeenCalledTimes(1);
+    expect(() => ctx.on(pluginError, noop)).toThrow(/disposed/);
   });
 
   it("apply 中途 throw：本插件已捕获的注册逆序回卷（半装状态不泄漏——件15 收口审查发现）", async () => {
@@ -129,7 +127,7 @@ describe("插件加载器（§5）", () => {
         },
       ]),
     ).rejects.toThrow("halfway boom");
-    expect(order).toEqual(["second-out", "first-out"]); // 逆序：throw 前的注册全回卷
+    expect(order).toEqual(["second-out", "first-out"]);
     await ctx.dispose();
   });
 
@@ -150,7 +148,6 @@ describe("插件加载器（§5）", () => {
   });
 });
 
-// —— S0：softInject 软依赖（SDK-DESIGN §2.1）——
 
 describe("softInject（S0——在场则排后，缺席无约束）", () => {
   it("在场：声明者排在软目标之后（数组序颠倒也保序）", async () => {
@@ -158,14 +155,14 @@ describe("softInject（S0——在场则排后，缺席无约束）", () => {
     const late: Plugin = { name: "late", apply: () => { order.push("late"); } };
     const early: Plugin = { name: "early", softInject: ["late"], apply: () => { order.push("early"); } };
     await loadPlugins(createContext(), [early, late]);
-    expect(order).toEqual(["late", "early"]); // 数组序 early 在前——软依赖拉到 late 后
+    expect(order).toEqual(["late", "early"]);
   });
 
   it("缺席：无约束不报错（按数组序）；未知名不进校验 throw", async () => {
     const order: string[] = [];
     const solo: Plugin = { name: "solo", softInject: ["ghost-absent"], apply: () => { order.push("solo"); } };
     await loadPlugins(createContext(), [solo]);
-    expect(order).toEqual(["solo"]); // 缺席软名静默跳过（对照 inject 未知名 → throw）
+    expect(order).toEqual(["solo"]);
   });
 
   it("与 inject 混合：硬先软后；混合环仍被 visiting 栈抓到", async () => {
@@ -174,7 +171,6 @@ describe("softInject（S0——在场则排后，缺席无约束）", () => {
     const c: Plugin = { name: "c", apply: () => {} };
     const unloaded = await loadPlugins(createContext(), [a, b, c]);
     for (const dispose of unloaded) await dispose();
-    // 混合环：a softInject b + b inject a
     const x: Plugin = { name: "x", softInject: ["y"], apply: () => {} };
     const y: Plugin = { name: "y", inject: ["x"], apply: () => {} };
     await expect(loadPlugins(createContext(), [x, y])).rejects.toThrow(/cyclic plugin dependency/);

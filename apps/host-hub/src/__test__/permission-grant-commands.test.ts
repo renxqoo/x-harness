@@ -1,7 +1,3 @@
-// PERMISSION-V2 worker 命令面（worker-meta-commands）：permission/grant 三作用域写入
-// （session=授权桶 / project|user=grantStore 持久面）、permission/list_rules、
-// permission/remove_rule（settings 落盘删除）——stub rt 直驱 handler，不依赖真装配。
-
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -111,7 +107,7 @@ describe("permission/grant", () => {
     await send("permission/remove_rule", { scope: "project", tool: "Danger", pattern: "npm install:*" });
     expect(harness.out.at(-1)?.data).toMatchObject({ removed: true });
     const after = await readSettingsFile(projectSettingsPath(harness.cwd));
-    expect(after["permission.rules"]).toEqual([]); // 空表——条目已删
+    expect(after["permission.rules"]).toEqual([]);
   });
 
   test("入参守门：非 allow 规则拒；坏形态拒；session 删除引导", async () => {

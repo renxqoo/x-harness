@@ -46,7 +46,7 @@ describe("加载器垃圾输入", () => {
   });
 
   it("default sink（未注入时）不炸且后续监听器照常", () => {
-    const ctx = createContext(); // 不注入 onListenerError → defaultSink 走统一 console 留痕
+    const ctx = createContext();
     const token = defineEvent<{ v: number }>("evt-default-sink");
     const later = vi.fn();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

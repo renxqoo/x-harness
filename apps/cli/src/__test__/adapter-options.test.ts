@@ -1,6 +1,3 @@
-// adapterOptionsOf 装配直测（docs/PROVIDER-MAX-OUTPUT-TOKENS.md）：档案字段 → 两工厂选项的
-// 键形态断言（在场携带/缺席不出现——防 spread 键名拼错静默绿）。
-
 import { describe, expect, it } from "vitest";
 import { adapterOptionsOf } from "../build-world.ts";
 import type { ProviderProfile } from "../providers-file.ts";

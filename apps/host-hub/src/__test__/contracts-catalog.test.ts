@@ -1,5 +1,3 @@
-// catalog 契约：预设兜底、custom 覆盖、modelOverrides 双键、坏文件降级、装配快照
-// apiKey 解析序、缺省拨号解析。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -51,12 +49,11 @@ describe("catalog", () => {
     expect(all.map((e) => e.source)).toEqual(["custom", "custom"]);
     const base = all.find((e) => e.model === "glm-5.3");
     expect(base?.baseUrl).toBe("https://proxy.example");
-    expect(base?.contextWindow).toBe(512_000); // 模型级缺席 → 档案级
+    expect(base?.contextWindow).toBe(512_000);
     const air = all.find((e) => e.model === "glm-5.3-air");
-    expect(air?.contextWindow).toBe(128_000); // 模型级胜
-    expect(air?.maxTokens).toBe(16_000); // 模型级缺席 → 档案级
+    expect(air?.contextWindow).toBe(128_000);
+    expect(air?.maxTokens).toBe(16_000);
     expect(air?.apiKeyEnv).toBe("MY_KEY");
-    // file.default 缺席 → 预设缺省
     expect(catalog.defaults).toEqual({ provider: "glm", model: "glm-5.3" });
   });
 
@@ -73,7 +70,6 @@ describe("catalog", () => {
       default: { provider: "gone", model: "x" },
     }));
     const fallback = await readCatalog(dir);
-    // 回落首条 = custom 档案优先序（用户显式配置压过预设——裸 id 撞名消歧同口径）
     expect(resolveDefaultDial(fallback)).toEqual({ provider: "p2", model: "m2" });
   });
 
@@ -96,10 +92,8 @@ describe("catalog", () => {
     }));
     const catalog = await readCatalog(dir);
     const glm = catalog.entries.find((e) => e.model === "glm-5.3");
-    // 复合键命中即整对象生效：裸键不再合并（maxTokens 保持预设 34_000）
     expect(glm?.contextWindow).toBe(64_000);
     expect(glm?.maxTokens).toBe(34_000);
-    // 复合键缺席时裸键生效
     await Bun.write(join(dir, "providers.json"), JSON.stringify({
       providers: [],
       modelOverrides: { "glm-5.3": { maxOutputTokens: 4_096 } },
@@ -131,27 +125,25 @@ describe("catalog", () => {
           protocol: "anthropic",
           baseUrl: "https://p.example",
           models: [
-            { id: "with-meta", maxTokens: 12_000 }, // 模型级 meta
-            "bare-model", // 裸 id：档案级缺省解析后仍进 byModel（entries 已解析值）
-            { id: "no-limit" }, // 模型级缺席且档案级缺席 → 不进 byModel
+            { id: "with-meta", maxTokens: 12_000 },
+            "bare-model",
+            { id: "no-limit" },
           ],
-          maxOutputTokens: 4_000, // 档案级：bare-model 的解析值
+          maxOutputTokens: 4_000,
         },
       ],
-      modelOverrides: { "p::with-meta": { maxOutputTokens: 99_999 } }, // override 覆写 meta
+      modelOverrides: { "p::with-meta": { maxOutputTokens: 99_999 } },
     }));
     const catalog = await readCatalog(dir);
     const snap = buildAssemblySnapshot(catalog, {}, {});
     const byName = new Map(snap.map((p) => [p.provider, p]));
-    // no-limit 也解析为档案级 4_000（entries 已解析值单源——模型级缺席回落档案级）
     expect(byName.get("p")?.maxOutputTokensByModel).toEqual({ "with-meta": 99_999, "bare-model": 4_000, "no-limit": 4_000 });
-    // 同源断言：快照值 = get_models 展示面 entry.maxTokens（entryOf+applyOverride 单源）
     const shown = new Map(catalog.entries.filter((e) => e.provider === "p").map((e) => [e.model, e.maxTokens]));
     for (const [model, value] of Object.entries(byName.get("p")?.maxOutputTokensByModel ?? {})) {
       expect(shown.get(model)).toBe(value);
     }
-    expect(shown.get("with-meta")).toBe(99_999); // override 值胜模型级 meta（展示与快照同值）
-    expect(byName.get("p")?.maxOutputTokens).toBe(4_000); // 档案级字段保持原样（profile 级兜底面不变）
+    expect(shown.get("with-meta")).toBe(99_999);
+    expect(byName.get("p")?.maxOutputTokens).toBe(4_000);
   });
 
   test("装配快照 maxOutputTokensByModel：档案无任何模型级值时不发该字段", async () => {
@@ -177,10 +169,10 @@ describe("catalog", () => {
     const catalog = await readCatalog(dir);
     const snap = buildAssemblySnapshot(catalog, { a: "cred", c: "cred-c" }, { B_KEY: "env-key" });
     const byName = new Map(snap.map((p) => [p.provider, p]));
-    expect(byName.get("a")?.apiKey).toBe("cred"); // credentials 胜档案字面
+    expect(byName.get("a")?.apiKey).toBe("cred");
     expect(byName.get("b")?.apiKey).toBe("env-key");
     expect(byName.get("c")?.apiKey).toBe("cred-c");
-    expect(byName.get("glm")?.apiKey).toBe(""); // 预设 env 缺席 = 空（auth/list 面 none）
+    expect(byName.get("glm")?.apiKey).toBe("");
     expect(byName.get("a")?.models).toEqual(["m1"]);
   });
 });

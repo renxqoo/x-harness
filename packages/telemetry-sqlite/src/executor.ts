@@ -1,7 +1,3 @@
-// bun:sqlite 执行器（bun:sqlite 的唯一触点）：pragmas 统一设置（WAL + synchronous=FULL +
-// busy_timeout）+ 事务边界实现。宿主自持 Database 实例——连接生命周期归宿主，
-// 插件 teardown 只终排空不 close。
-
 import type { Database } from "bun:sqlite";
 import type { SqliteExecutor, SqliteTx, SqlValue } from "./types.ts";
 

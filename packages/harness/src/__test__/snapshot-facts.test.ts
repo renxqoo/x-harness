@@ -1,7 +1,3 @@
-// 日期 + 项目指令快照（docs/TAIL-SNAPSHOT-CHANNEL.md A/C'）纯函数面单测：日期假钟
-// 按天幂等/跨天新条、指令合并序（AGENTS.md 前）/同内容去重/缺席零注入/64KB 上限
-// 以 buffer 长度为准（超限整文件拒注+告警）。注入级旅程在两宿主各自的装配测试。
-
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,8 +28,8 @@ describe("日期快照（A）", () => {
     expect(day1).toContain(SNAPSHOT_SUPERSEDES);
     expect(day1).toContain(`Today's date: ${localToday(noon)} (`);
     expect(localToday(noon)).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(renderDateSnapshot(new Date(noon.getTime() + 30 * 60_000))).toBe(day1); // 同日（+30min 不跨任何时区民事日界；−30 在 UTC-12 会跨日，勿照注补负向断言）
-    expect(renderDateSnapshot(new Date(noon.getTime() + 24 * 3_600_000))).not.toBe(day1); // 跨日新条
+    expect(renderDateSnapshot(new Date(noon.getTime() + 30 * 60_000))).toBe(day1);
+    expect(renderDateSnapshot(new Date(noon.getTime() + 24 * 3_600_000))).not.toBe(day1);
   });
 
   it("isSnapshotNode 对日期快照消息形态成立（跨包谓词闭环）", () => {
@@ -107,7 +103,7 @@ describe("项目指令读取（C'）", () => {
 
   it("读取失败分流：ENOENT 静默、其余 IO 错误告警跳过（fail-open 可见——不与缺席同路吞掉）", () => {
     const dir = makeDir();
-    writeFileSync(join(dir, "AGENTS.md"), "secret", { mode: 0o000 }); // 属主无读权限 → EACCES
+    writeFileSync(join(dir, "AGENTS.md"), "secret", { mode: 0o000 });
     const read = readInstructionFiles(dir);
     expect(read.body).toBe("");
     expect(read.warnings).toHaveLength(1);
@@ -115,6 +111,6 @@ describe("项目指令读取（C'）", () => {
     expect(read.warnings[0]).toContain("unreadable");
     const absent = readInstructionFiles(join(dir, "nope"));
     expect(absent.body).toBe("");
-    expect(absent.warnings).toEqual([]); // ENOENT 静默
+    expect(absent.warnings).toEqual([]);
   });
 });

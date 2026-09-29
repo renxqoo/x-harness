@@ -1,4 +1,3 @@
-// remote-client 单元：codec 对称互发、connect 的 status/handshake 失败路径、waitResponse 兑现
 import { describe, expect, it } from "vitest";
 import { createRatchetCodec } from "../ratchet-store.ts";
 import { connectRemote } from "../connect.ts";
@@ -9,7 +8,6 @@ function codecPair(): { gw: ReturnType<typeof createRatchetCodec>; dev: ReturnTy
   const b = generateBoxKeyPair();
   const shared = x25519(a.secret, b.pub)!;
   const dev = createRatchetCodec({ deviceId: "d1", installationId: "i1", sharedSecret: shared });
-  // 网关侧 codec（方向镜像——用 RatchetSession initiator）
   const gwRatchet = new RatchetSession(
     { now: Date.now, deviceId: "d1", direction: 0, persist: { persistSendBoundary: async () => {}, persistRecvBoundary: async () => {} } },
     deriveInitialChains(shared, true),
@@ -53,7 +51,6 @@ describe("codec 对称互发", () => {
     const down2 = await gw.seal(JSON.stringify({ kind: "event", streamId: "e", seq: 1, body: { threadId: "t", name: "turn/end" } }));
     const down2v = down2!;
     expect(await dev.open(down2v.payload, down2v.nonce)).toContain("turn/end");
-    // 重发同帧：L1 拒收（index 回退）——dup 幂等归 L2（去重补 ACK），两层职责分离
     expect(await gw.open(up2v.payload, up2v.nonce)).toBeNull();
   });
 
@@ -88,7 +85,6 @@ describe("connectRemote 失败路径", () => {
   });
 
   it("已连接帧泵：response 唤醒 waitResponse；frames 快照", async () => {
-    // 用本地起 relay 太重——直接验证 waitResponse 兑现路径经 onFrame 注入
     const { connectRemote: connect } = await import("../connect.ts");
     const client = connect({
       relayUrl: "ws://127.0.0.1:1",

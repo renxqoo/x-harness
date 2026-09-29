@@ -1,6 +1,3 @@
-// fold 穷举单测（件 16 §10 状态机规格——测试即规格）：全事件序合法/非法转移、
-// 后事件收编、幂等、fail-closed。
-
 import { describe, expect, it } from "vitest";
 import { fold, runReadyToSettle, step, UnknownEventError } from "../index.ts";
 import type { RunSnapshot, TaskSpec, WorkflowEvent } from "../index.ts";
@@ -56,7 +53,7 @@ describe("fold：合法主序", () => {
       { type: "task/submitted", taskId: "t4", spec: spec2 },
       { type: "task/settled", taskId: "t4", outcome: "failed", cause: "child-failed" },
     );
-    expect(made.consecutiveFailures).toBe(1); // t3 取消清零后 t4 计 1
+    expect(made.consecutiveFailures).toBe(1);
   });
 });
 
@@ -80,7 +77,7 @@ describe("fold：后事件收编与幂等（§7）", () => {
       { type: "task/settled", taskId: "t1", outcome: "completed" },
     );
     const twice = step(once, { type: "task/settled", taskId: "t1", outcome: "completed" });
-    expect(twice).toBe(once); // 引用相等 = 无操作
+    expect(twice).toBe(once);
     const runOnce = step(once, { type: "run/settled", outcome: "completed", detail: "" });
     const runTwice = step(runOnce, { type: "run/settled", outcome: "completed", detail: "" });
     expect(runTwice).toBe(runOnce);
@@ -93,7 +90,7 @@ describe("fold：后事件收编与幂等（§7）", () => {
       { type: "task/dispatched", taskId: "t1", agentId: "late", sessionId: "late-s" },
     );
     expect(made.tasks["t1"]?.trailing).toHaveLength(1);
-    expect(made.tasks["t1"]?.agentId).toBeUndefined(); // 原状态不被迟到事件改写
+    expect(made.tasks["t1"]?.agentId).toBeUndefined();
   });
 });
 

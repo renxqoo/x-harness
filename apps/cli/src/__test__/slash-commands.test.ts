@@ -1,6 +1,3 @@
-// slash 命令（docs/CLI.md §2.3 词表封闭 + 表驱动）：闭集 = /help 列出集；每命令行为
-// 用假 deps 驱动；未知命令提示；非 slash 行 not-slash。
-
 import { describe, expect, it } from "vitest";
 import type { SessionHeader } from "@x-harness/session";
 import { parseProvidersConfig } from "../providers-file.ts";
@@ -149,7 +146,7 @@ describe("分派行为", () => {
 
     const max = makeDemos();
     await runSlashCommand("/thinking max", max.deps);
-    expect(max.recorder.reopens[0]).toEqual({ dial: { thinking: "max" } }); // max 档合法（五级闭集）
+    expect(max.recorder.reopens[0]).toEqual({ dial: { thinking: "max" } });
 
     const bad = makeDemos();
     await runSlashCommand("/thinking ultra", bad.deps);
@@ -182,7 +179,7 @@ describe("分派行为", () => {
   it("/resume → 列表 + 编号选择 reopen(sessionId)；内存会话拒绝", async () => {
     const resume = makeDemos({ answers: ["2"] });
     await runSlashCommand("/resume", resume.deps);
-    expect(resume.recorder.lines[0]).toContain("sess-2"); // 倒序：2 号位是 createdAt 较新的
+    expect(resume.recorder.lines[0]).toContain("sess-2");
     expect(resume.recorder.reopens[0]).toEqual({ sessionId: "sess-2" });
 
     const memory = makeDemos({ inMemory: true });
@@ -202,7 +199,7 @@ describe("/workflow 命令（期 3 不经模型入口）", () => {
   it("词表含 workflow；未装配时提示；参数解析 --verify/--schema", async () => {
     const { recorder, deps } = makeDemos();
     await runSlashCommand("/workflow", deps);
-    expect(recorder.lines.join("\n")).toContain("not assembled"); // deps.workflow 未注入（缺省）
+    expect(recorder.lines.join("\n")).toContain("not assembled");
     const { parseWorkflowSubmitArgs } = await import("../run-repl.ts");
     const ok = parseWorkflowSubmitArgs("--verify bun test 修复登录 bug");
     expect(ok.ok).toBe(true);
@@ -225,8 +222,8 @@ describe("/workflow 命令（期 3 不经模型入口）", () => {
   it("workflowRuns/workflowStop 面（未装配 → 缺省提示；workflowRuns 空 root → 无 run）", async () => {
     const { makeWorkflowCommands } = await import("../run-repl.ts");
     const { createContext } = await import("@x-harness/core");
-    const ctx = createContext(); // 最小 live（runs 面只需 ctx.use——空 ctx 即可）
+    const ctx = createContext();
     const cmds = makeWorkflowCommands(() => ({ world: { ctx } as never, handle: undefined as never }));
     const runs = await cmds.workflowRuns();
-    expect(typeof runs).toBe("string"); // env 直解（无 run 或根不存在——不炸即过）
+    expect(typeof runs).toBe("string");
   });

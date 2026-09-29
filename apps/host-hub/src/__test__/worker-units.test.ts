@@ -1,5 +1,3 @@
-// worker 单元件（无进程）：meta-fold 折叠矩阵、entries-window 游标矩阵、main 入口
-// 导入（词表/常量面）、catalog-types 形状、script 模式快照、装配快照 round-trip。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -45,7 +43,6 @@ describe("meta-fold（WAL 尾值单源）", () => {
     expect(foldDial([header], { provider: "f", model: "f-model" })).toEqual({ provider: "h-prov", model: "h-model" });
     expect(foldDial([header, meta(1, "dial", { model: "m-model" })], { provider: "f", model: "f-model" })).toEqual({ provider: "f", model: "m-model" });
     expect(foldDial([meta(0, "other", 1)], { provider: "f", model: "f-model" })).toEqual({ provider: "f", model: "f-model" });
-    // 坏形状 meta dial（非对象/空 model）跳过
     expect(foldDial([meta(0, "dial", "junk"), meta(1, "dial", { model: "" })], { provider: "f", model: "f-model" })).toEqual({ provider: "f", model: "f-model" });
   });
 
@@ -133,7 +130,6 @@ describe("entries-project history 视图谓词（单点滤除/区间降级/appen
       ev(3, { type: "user/message", data: { content: [{ type: "text", text: "摘要正文" }] }, op: { op: "replace", startSeq: 1, endSeq: 2 } }),
       ev(4, { type: "assistant/message", data: { content: [] }, op: "append" }),
     ]);
-    // history 视图只变换载体行：原文 1/2 保留（history 本义＝压缩前原文），摘要行 3 降级为 elide 标记
     expect(lines.map((l) => l.seq)).toEqual([0, 1, 2, 3, 4]);
     const elided = lines[3];
     expect(elided?.event).toEqual({ type: "compaction/elided", startSeq: 1, endSeq: 2 });
@@ -146,7 +142,6 @@ describe("entries-project history 视图谓词（单点滤除/区间降级/appen
       ev(1, { type: "user/message", data: { content: [{ type: "text", text: "唯一被摘节点" }] }, op: { op: "replace", startSeq: 1, endSeq: 1 } }),
       ev(2, { type: "assistant/message", data: { content: [] }, op: "append" }),
     ]);
-    // user/message 载体即使单点也降级（摘要正文只在此行）——只有 tool/result 占位族才滤除
     expect(lines.map((l) => l.seq)).toEqual([0, 1, 2]);
     const elided = lines[1];
     expect(elided?.event).toEqual({ type: "compaction/elided", startSeq: 1, endSeq: 1 });
@@ -154,7 +149,7 @@ describe("entries-project history 视图谓词（单点滤除/区间降级/appen
 
   test("historyLineOf 对 data 伪造 surfaceOp 免疫（谓词读 journal 信封）", () => {
     const forged = ev(5, { type: "user/message", data: { content: [], surfaceOp: { op: "replace", startSeq: 0, endSeq: 0 } }, op: "append" });
-    expect(historyLineOf(forged)?.seq).toBe(5); // 信封是 append → 保留
+    expect(historyLineOf(forged)?.seq).toBe(5);
   });
 
   test("parseEntriesView：两合法值放行，其余 undefined", () => {
@@ -181,7 +176,6 @@ describe("worker-catalog 解析", () => {
     expect(catalogEntryOf(catalog, { provider: "p1", model: "m1" })?.baseUrl).toBe("https://p1");
     expect(catalogEntryOf(catalog, { provider: "p1", model: "zz" })).toBeUndefined();
     expect(catalogModelIds(catalog)).toEqual(["m1", "m2"]);
-    // default 缺席 → 首档案首模型回落
     const noDefault = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p1", protocol: "openai", baseUrl: "https://p1", models: ["m1"] }] }) });
     expect(noDefault.default).toEqual({ provider: "p1", model: "m1" });
   });
@@ -218,7 +212,6 @@ describe("worker-catalog 解析", () => {
     });
     const catalog = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: snapshot });
     expect(catalog.providers[0]?.maxOutputTokensByModel).toEqual({ good: 8_192, ok2: 33_000 });
-    // 整字段垃圾（数组/全垃圾成员）→ 字段剔除不崩
     const arrShape = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p", protocol: "anthropic", baseUrl: "https://p", apiKey: "", models: ["m"], maxOutputTokensByModel: ["m"] }] }) });
     expect(arrShape.providers[0] && Object.hasOwn(arrShape.providers[0], "maxOutputTokensByModel")).toBe(false);
     const allJunk = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "p", protocol: "anthropic", baseUrl: "https://p", apiKey: "", models: ["m"], maxOutputTokensByModel: { m: "x" } }] }) });
@@ -236,7 +229,6 @@ describe("worker-catalog 解析", () => {
     expect(thinkingUnsupported(catalog, { provider: "script", model: "script-1" }, "high")).toBeUndefined();
     expect(thinkingUnsupported(catalog, { provider: "script", model: "script-1" }, "off")).toBeUndefined();
     expect(thinkingUnsupported(catalog, { provider: "gone", model: "x" }, "low")).toBe("model does not support thinking");
-    // openai 协议思考已接通（pi-adapter reasoning 注入）——协议门撤除，仅余 reasoning:false 门
     const openaiLike = { providers: [{ provider: "o", protocol: "openai", baseUrl: "https://o", apiKey: "", models: ["m"] }], default: { provider: "o", model: "m" }, modelMeta: {} };
     const oc = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify(openaiLike) });
     expect(thinkingUnsupported(oc, { provider: "o", model: "m" }, "low")).toBeUndefined();
@@ -251,9 +243,9 @@ describe("命令词法（内核单源——BATCH3 迁移：hub 侧词法删除�
   test("命中矩阵（词法面用例随内核包 commands.test.ts 全量覆盖）", () => {
     expect(parseCommand("/compact")).toEqual({ name: "compact", rawInput: "" });
     expect(parseCommand("  /compact keep goals  ")).toEqual({ name: "compact", rawInput: " keep goals" });
-    expect(parseCommand("/COMPACT")).toBeUndefined(); // 大写 → conversation
-    expect(parseCommand("/compactfoo")).toEqual({ name: "compactfoo", rawInput: "" }); // 未注册词形 → registry miss → conversation
-    expect(parseCommand("//compact")).toBeUndefined(); // 注释形态
+    expect(parseCommand("/COMPACT")).toBeUndefined();
+    expect(parseCommand("/compactfoo")).toEqual({ name: "compactfoo", rawInput: "" });
+    expect(parseCommand("//compact")).toBeUndefined();
     expect(parseCommand("plain text")).toBeUndefined();
   });
 });
@@ -310,8 +302,8 @@ describe("get_messages 软上限（BATCH2 审 M6——超 worker 行限以 worke
 describe("get_messages 软上限字节口径（收口审 K-M1——CJK 3 倍膨胀漏判回归）", () => {
   test("预算按 UTF-8 字节：CJK 串按 3 字节/字计，不按码元漏放", () => {
     const cjkMessage = { role: "user", content: [{ type: "text", text: "中".repeat(50 * 1024) }] };
-    expect(JSON.stringify(cjkMessage).length).toBeLessThan(200 * 1024); // 码元口径 < 200KiB
-    expect(withinResponseBudget([cjkMessage], 100 * 1024)).toBe(false); // 字节口径 ≈150KiB 超限
+    expect(JSON.stringify(cjkMessage).length).toBeLessThan(200 * 1024);
+    expect(withinResponseBudget([cjkMessage], 100 * 1024)).toBe(false);
   });
 });
 
@@ -321,8 +313,8 @@ describe("resumeCwdOf 空串守卫（损坏档案 header.cwd=\"\" 不得产出�
   test("显式入参胜出；header.cwd 空串回落 worker 现值（不透传垃圾）", () => {
     expect(resumeCwdOf({ cwd: "/w/explicit" }, assembled("/w/header"), "/w/fallback")).toBe("/w/explicit");
     expect(resumeCwdOf({}, assembled("/w/header"), "/w/fallback")).toBe("/w/header");
-    expect(resumeCwdOf({}, assembled(""), "/w/fallback")).toBe("/w/fallback"); // 守卫：空串不落账
+    expect(resumeCwdOf({}, assembled(""), "/w/fallback")).toBe("/w/fallback");
     expect(resumeCwdOf({}, assembled(undefined), "/w/fallback")).toBe("/w/fallback");
-    expect(resumeCwdOf({ cwd: "" }, assembled("/w/header"), "/w/fallback")).toBe("/w/header"); // 入参空串同守卫
+    expect(resumeCwdOf({ cwd: "" }, assembled("/w/header"), "/w/fallback")).toBe("/w/header");
   });
 });

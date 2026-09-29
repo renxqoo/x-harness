@@ -1,6 +1,3 @@
-// 子代理拨号跨 provider 串线红测（症状：子代理模型与主 agent 不同即报错——model
-// 换了 provider 没换）：①类型 .md 的 `model: provider/model` 复合串（主应用设置界面
-// 写入形态）必须拆解；②裸模型名跨 provider 时 provider 不得静默继承父（目录反查联动）。
 import { describe, expect, it } from "vitest";
 import { inheritDial } from "../lineage.ts";
 import type { AgentHandle } from "@x-harness/agent-loop";

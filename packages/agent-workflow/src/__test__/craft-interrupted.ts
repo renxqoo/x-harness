@@ -1,8 +1,6 @@
 import { join } from "node:path";
 
-// 恢复路径挂起用例的手造中断态任务（task-deadline.test 拆出——行数纪律）。
 
-/** 手造中断态任务（journal dispatched + 子会话档案开放轮——恢复 kick 的锚） */
 export async function craftInterruptedTask(root: string): Promise<void> {
   const { mkdir, writeFile } = await import("node:fs/promises");
   const { openRunJournal, workflowPluginVersion } = await import("../journal.ts");
@@ -22,4 +20,3 @@ export async function craftInterruptedTask(root: string): Promise<void> {
     "",
   ].join("\n"));
 }
-

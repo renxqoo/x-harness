@@ -1,18 +1,14 @@
-// WebSocket 帧读取器（RFC 6455 子集）：文本帧排空 + 控制帧回调 + 64MiB 上限。
-// 最小 WebSocket 帧读取器（RFC 6455 子集）：文本帧排空 + 控制帧回调。
 const FRAME_MAX_BYTES = 64 * 1024 * 1024;
 
 export class WebSocketFrameReader {
   private buffer = Buffer.alloc(0);
   error: string | null = null;
-  /** 非文本帧（ping/pong/close）回调——活性跟踪 */
   onNonText: (() => void) | null = null;
 
   push(chunk: Buffer): void {
     this.buffer = Buffer.concat([this.buffer, chunk]);
   }
 
-  /** 排出全部完整文本帧（服务端帧不掩码；客户端帧掩码——两者都解） */
   drainTextFrames(): string[] {
     const out: string[] = [];
     for (;;) {
@@ -28,7 +24,6 @@ export class WebSocketFrameReader {
     if (buffer.length < 2) return null;
     const first = buffer[0]!;
     const second = buffer[1]!;
-    // RSV/continuation/未知控制帧拒绝（本实现不支持扩展——显式报错优于静默误读，F3）
     if ((first & 0x70) !== 0) {
       this.error = "unsupported rsv bits";
       return null;
@@ -63,9 +58,7 @@ export class WebSocketFrameReader {
     }
     this.buffer = buffer.subarray(offset + maskKey + length);
     if (opcode === 0x1) return { kind: "text", text: payload.toString("utf8") };
-    // 控制帧（ping/pong/close）——回 pong 由 onNonText 挂钩方处理
     this.onNonText?.();
     return { kind: "control" };
   }
 }
-

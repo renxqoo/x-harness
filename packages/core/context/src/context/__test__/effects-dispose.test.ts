@@ -25,7 +25,6 @@ describe("effect 账本与 dispose（§4）", () => {
       order.push("c");
     });
     await ctx.dispose();
-    // 逆序：c（立即）→ b 必须等 c 的 async 完成后 → a 最后
     expect(order).toEqual(["c", "b", "a"]);
   });
 
@@ -78,7 +77,6 @@ describe("effect 账本与 dispose（§4）", () => {
     ctx.on(token, ({ v }) => heard.push(v));
     await ctx.dispose();
     expect((ctx as { tryUse?: unknown }).tryUse).toBeDefined();
-    // dispose 后注册面已拆：再无监听者
     expect(() => ctx.emit(token, { v: 1 })).not.toThrow();
     expect(heard).toEqual([]);
   });
@@ -89,17 +87,17 @@ describe("disposing 进行中（非完成后）的边界（Cordis 对照审计�
     const ctx = createContext();
     const token = defineEvent<{ v: number }>("evt-mid-disposing");
     const heard: number[] = [];
-    ctx.on(token, ({ v }) => heard.push(v)); // 先注册 → 逆序后回卷（窗口期仍活着）
+    ctx.on(token, ({ v }) => heard.push(v));
     let release: (() => void) | undefined;
     ctx.effect(
       () =>
         new Promise<void>((resolve) => {
-          release = resolve; // 后注册 → 先回卷，把 dispose 挂在这里
+          release = resolve;
         }),
     );
 
     const disposing = ctx.dispose();
-    await sleep(0); // 进入 disposing 窗口：promise disposer 在途
+    await sleep(0);
 
     let midRegistration: Error | undefined;
     try {
@@ -107,14 +105,14 @@ describe("disposing 进行中（非完成后）的边界（Cordis 对照审计�
     } catch (error) {
       midRegistration = error as Error;
     }
-    expect(midRegistration?.message).toMatch(/disposing/); // 进行中注册拒绝
+    expect(midRegistration?.message).toMatch(/disposing/);
 
-    expect(() => ctx.emit(token, { v: 1 })).not.toThrow(); // 进行中 emit 允许
-    expect(heard).toEqual([1]); // 未回卷的监听者收到（部分送达）
+    expect(() => ctx.emit(token, { v: 1 })).not.toThrow();
+    expect(heard).toEqual([1]);
 
     release?.();
     await disposing;
     ctx.emit(token, { v: 2 });
-    expect(heard).toEqual([1]); // 回卷完成后不再送达
+    expect(heard).toEqual([1]);
   });
 });

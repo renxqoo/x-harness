@@ -1,5 +1,3 @@
-// B2 单元补齐：threads-registry CRUD/epoch、host-attach 泵/死线/重启、fanout 扇出域与
-// coalesce、config 语义、identity 恢复旅程
 import { describe, expect, it } from "vitest";
 import { loadThreads } from "../threads-registry.ts";
 import { loadConfig } from "../config.ts";
@@ -21,14 +19,12 @@ describe("threads-registry", () => {
     expect(reg.bumpEpoch("t1")).toBe(2);
     expect(reg.remove("t1")).toBe(true);
     expect(reg.remove("t1")).toBe(false);
-    // 落盘往返
     reg.upsert({ threadId: "t2", sessionPath: "/b.jsonl" });
     await new Promise((r) => {
       setTimeout(r, 50);
     });
     const reg2 = await loadThreads(path);
     expect(reg2.get("t2")?.sessionPath).toBe("/b.jsonl");
-    // 坏 JSON 降级空表
     const { writeFile } = await import("node:fs/promises");
     await writeFile(path, "not-json", "utf8");
     const reg3 = await loadThreads(path);
@@ -41,18 +37,17 @@ describe("loadConfig 语义", () => {
     const absent = loadConfig(null);
     expect(absent.ok && absent.config.remoteEnabled).toBe(false);
     expect(loadConfig("not-json").ok).toBe(false);
-    expect(loadConfig('{"remoteEnabled":true}').ok).toBe(false); // 显式 true 才要求 relay
+    expect(loadConfig('{"remoteEnabled":true}').ok).toBe(false);
     const empty = loadConfig('{}');
-    expect(empty.ok && empty.config.remoteEnabled).toBe(false); // E6：缺键=本地形态
-    expect(loadConfig('{"remoteEnabled":true,"relayUrl":"ws://x"}').ok).toBe(false); // ws 非 loopback 拒
+    expect(empty.ok && empty.config.remoteEnabled).toBe(false);
+    expect(loadConfig('{"remoteEnabled":true,"relayUrl":"ws://x"}').ok).toBe(false);
     const loopOk = loadConfig('{"remoteEnabled":true,"relayUrl":"ws://127.0.0.1:1"}');
-    expect(loopOk.ok).toBe(true); // loopback ws 放行（本地开发形态）
+    expect(loopOk.ok).toBe(true);
     const wssNoFp = loadConfig('{"remoteEnabled":true,"relayUrl":"wss://r.example.com"}');
-    expect(wssNoFp.ok).toBe(false); // wss 必须指纹
+    expect(wssNoFp.ok).toBe(false);
     expect(loadConfig('{"remoteEnabled":true,"relayUrl":"ftp://x","relayKeyFingerprint":"f"}').ok).toBe(false);
     const ok = loadConfig('{"remoteEnabled":true,"relayUrl":"wss://x","relayKeyFingerprint":"fp"}');
     expect(ok.ok && ok.config.relayUrl).toBe("wss://x");
-    // maxDevices 坏值降级 16；logLevel 白名单
     const coerced = loadConfig('{"remoteEnabled":false,"maxDevices":-5,"logLevel":"nope"}');
     expect(coerced.ok && coerced.config.maxDevices).toBe(16);
     expect(coerced.ok && coerced.config.logLevel).toBe("info");
@@ -61,7 +56,6 @@ describe("loadConfig 语义", () => {
 
 describe("classifyHostLine 前缀分类", () => {
   it("八分支 + host id-first response 契约（回归：真 host 响应曾被丢）", () => {
-    // host-hub responseLine 的 key 序（frame-classify.ts 单点同源）
     expect(classifyHostLine('{"id":"g1","type":"response","command":"thread/list","success":true}')).toBe("response");
     expect(classifyHostLine('{"id":null,"type":"response","command":"parse","success":false}')).toBe("response");
     expect(classifyHostLine('{"type":"response"')).toBe("response");
@@ -95,7 +89,6 @@ describe("fanout", () => {
     fanout.fanoutEvent({ threadId: "tA", name: "turn/start", payload: {} });
     fanout.fanoutEvent({ threadId: "tA", name: "turn/end", payload: {} });
     fanout.fanoutEvent({ threadId: "tB", name: "turn/start", payload: {} });
-    // owner 恒收全部线程（含未订阅 tB）；seq 为 per-thread 域（tA: 1,2；tB: 1）
     expect(frames.length).toBe(3);
     expect(frames.map((f) => f.seq)).toEqual([1, 2, 1]);
     const names = frames.map((f) => (f.body as { threadId: string }).threadId);
@@ -106,7 +99,6 @@ describe("fanout", () => {
     const { fanout, frames } = makeFanout();
     fanout.attach({ target: "dev_read", tier: "read", subscribedThreads: new Set(["tA"]), send: (f) => frames.push(f) });
     fanout.fanoutUiRequest({ requestId: "r1", threadId: "tA", method: "confirm", payload: {} });
-    // 只有 owner（非 read）收到
     const uiFrames = frames.filter((f) => f.kind === "ui_request");
     expect(uiFrames.length).toBe(1);
   });
@@ -135,7 +127,6 @@ describe("device-registry + 去重日志崩溃恢复", () => {
     reg.mapHostId("g1", { deviceId: "d1", commandId: "c1" });
     expect(reg.unmapHostId("g1")).toEqual({ deviceId: "d1", commandId: "c1" });
     expect(reg.unmapHostId("g1")).toBeNull();
-    // 崩溃恢复：重放 commands.jsonl
     const reg2 = await loadDeviceRegistry(paths);
     const replayed = reg2.dedupLookup("d1", "c1")?.response as { success: boolean } | undefined;
     expect(replayed?.success).toBe(true);
@@ -149,7 +140,6 @@ describe("device-registry + 去重日志崩溃恢复", () => {
     const paths = { devicesDir: join(dir, "devices"), registryFile: join(dir, "devices", "registry.json") };
     const reg = await loadDeviceRegistry(paths);
     expect(reg.dedupLookup("ghost", "x")).toBeNull();
-    // 手工写撕裂日志
     const { mkdir, writeFile } = await import("node:fs/promises");
     await mkdir(join(dir, "devices", "d2"), { recursive: true });
     reg.put({ deviceId: "d2", name: "Q", deviceType: "pc", platform: "mac", appVersion: "1", longTermPub: "bb", scope: "full", pairedAt: 0, lastSeenAt: 0, rekeyCounter: 0 });
@@ -200,30 +190,24 @@ describe("host-ingest（B3 回归：真 host id-first 帧）", () => {
     };
     const ingest = createHostIngest(deps);
     fanout.attach({ target: "owner", tier: "owner", subscribedThreads: new Set(), send: () => {} });
-    // 事件到 owner（owner 恒收）；设备回投帧走 deps.sendToDevice
     const sentToDevice: unknown[] = [];
     deps.sendToDevice = (deviceId: string, frame: unknown) => {
       sentToDevice.push({ deviceId, frame });
     };
     void frames;
-    // 真 host response 帧（id-first——host frame-classify 契约）
     ingest.ingest('{"id":"g1","type":"response","command":"thread/list","success":true,"data":{"echoed":true}}');
-    // 事件帧
     ingest.ingest('{"type":"event","threadId":"tA","name":"turn/start","payload":{}}');
-    // 生命周期帧
     ingest.ingest('{"type":"thread_died","threadId":"tA","reason":"x"}');
-    // heartbeat/垃圾行静默
     ingest.ingest('{"type":"heartbeat","rssBytes":1,"cpuPercent":0}');
     ingest.ingest("garbage");
     expect(appended.length).toBe(1);
     expect(sentToDevice.length).toBeGreaterThanOrEqual(1);
-    // 拒绝分支：坏 JSON 行 / response 无 id / 无人认领的 response / 事件 threadId 非 string
-    ingest.ingest('{"id":"g1","type":"response"'); // 撕裂 JSON
-    ingest.ingest('{"type":"response","success":true}'); // id 缺失
-    ingest.ingest('{"id":"g_ghost","type":"response","success":true}'); // 无人认领
-    ingest.ingest('{"type":"event","threadId":123,"name":"x","payload":{}}'); // threadId 非 string
-    ingest.ingest('{"type":"ui_request","threadId":"t"}'); // ui_request 字段缺失
-    expect(appended.length).toBe(1); // 仍恰一次
+    ingest.ingest('{"id":"g1","type":"response"');
+    ingest.ingest('{"type":"response","success":true}');
+    ingest.ingest('{"id":"g_ghost","type":"response","success":true}');
+    ingest.ingest('{"type":"event","threadId":123,"name":"x","payload":{}}');
+    ingest.ingest('{"type":"ui_request","threadId":"t"}');
+    expect(appended.length).toBe(1);
   });
 });
 
@@ -251,7 +235,6 @@ describe("gw/logs/tail 真实数据（第 7 项收口回归）", () => {
     send("t1", "gw/logs/tail");
     const res = await waitRes("t1");
     expect(res.success).toBe(true);
-    // relay 未启用（remoteEnabled:false）——日志缓冲仍应有 host stderr 转发内容（可为空数组形态）
     const data = res.data as { lines: string[] };
     expect(Array.isArray(data.lines)).toBe(true);
     sock.destroy();
@@ -284,15 +267,12 @@ describe("fanout tier resolver 与 outbox 上限（D4/C3 回归）", () => {
     fanout.setTierResolver((target) => (target === "owner" ? "owner" : (scopes.get(target) ?? "read")));
     const frames: Frame[] = [];
     fanout.attach({ target: "d1", tier: "read", subscribedThreads: new Set(["tA"]), send: (f) => frames.push(f) });
-    // read 档：tA 已订阅事件放行；ui_request 拒
     fanout.fanoutEvent({ threadId: "tA", name: "turn/start", payload: {} });
     fanout.fanoutUiRequest({ requestId: "r", threadId: "tA", method: "confirm", payload: {} });
     expect(frames.length).toBe(1);
-    // 升 full：ui_request 放行（无需重连——resolver 现值）
     scopes.set("d1", "full");
     fanout.fanoutUiRequest({ requestId: "r2", threadId: "tA", method: "confirm", payload: {} });
     expect(frames.length).toBe(2);
-    // detach：事件不再投
     fanout.detach("d1");
     fanout.fanoutEvent({ threadId: "tA", name: "turn/end", payload: {} });
     expect(frames.length).toBe(2);
@@ -332,7 +312,6 @@ describe("audit 轮转与封顶", () => {
     await log.record("host-restarted", { b: 2 });
     const names = await (await import("node:fs/promises")).readdir(dir);
     expect(names.some((n) => n === "2026-09-27.jsonl")).toBe(true);
-    // 跨天
     ts = Date.parse("2026-09-28T00:00:00Z");
     await log.record("config-changed", { c: 3 });
     const names2 = await (await import("node:fs/promises")).readdir(dir);
@@ -346,7 +325,7 @@ describe("owner-server 残留 socket 清理与坏 JSON 行", () => {
     const dir = await mkdtemp(join(tmpdir(), "owner-"));
     const socketPath = join(dir, "gateway.sock");
     const { writeFile } = await import("node:fs/promises");
-    await writeFile(socketPath, "stale", "utf8"); // 残留
+    await writeFile(socketPath, "stale", "utf8");
     const frames: string[] = [];
     const handle = await startOwnerServer({
       socketPath,
@@ -406,11 +385,11 @@ describe("log-buffer（环形缓冲）", () => {
     buf.push("b");
     expect(buf.tail()).toEqual(["a", "b"]);
     buf.push("c");
-    buf.push("d"); // 丢 a
+    buf.push("d");
     expect(buf.tail()).toEqual(["b", "c", "d"]);
     const snap = buf.tail();
     buf.push("e");
-    expect(snap).toEqual(["b", "c", "d"]); // 快照不受后续 push 影响
+    expect(snap).toEqual(["b", "c", "d"]);
     expect(buf.tail()).toEqual(["c", "d", "e"]);
   });
 });
@@ -436,7 +415,6 @@ describe("identity 恢复旅程", () => {
     const second = await loadOrCreateIdentity(paths);
     expect(second.signingPub).toBe(first.signingPub);
     expect(second.installationId).toBe(first.installationId);
-    // 手工撕裂：identity 文件的 installationId 与 installation-id 文件不一致 → 以文件为准重建
     const torn = JSON.parse(await readFile(paths.gatewayIdentityFile, "utf8")) as { installationId: string };
     torn.installationId = "different";
     const { writeFile } = await import("node:fs/promises");
@@ -444,7 +422,6 @@ describe("identity 恢复旅程", () => {
     const third = await loadOrCreateIdentity(paths);
     expect(third.installationId).toBe(first.installationId);
     expect(third.signingPub).not.toBe(first.signingPub);
-    // identity 文件损坏（坏 JSON）→ 重建新钥
     const { writeFile: wf } = await import("node:fs/promises");
     await wf(paths.gatewayIdentityFile, "not-json", "utf8");
     const fourth = await loadOrCreateIdentity(paths);

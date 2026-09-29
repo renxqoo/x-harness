@@ -1,5 +1,3 @@
-// parseFlat 表驱动：键值解析与拒注册形态（无冒号/空键 → 整体 undefined）。
-
 import { describe, expect, it } from "vitest";
 import { parseFlat } from "../parse.ts";
 

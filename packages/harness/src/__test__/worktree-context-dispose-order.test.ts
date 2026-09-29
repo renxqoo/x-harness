@@ -1,11 +1,3 @@
-// 对抗审查红测（7c16b4e harness 面·第 3 批）：dispose 回卷序下的层清理竞态。
-// loadPlugins 的 unload 是 LIFO（后装先卸）：装配序 [system-prompt, base-prompt,
-// worktree-context] → 卸载序 worktree-context → base-prompt → system-prompt。
-// worktree-context 的 disposer 先 off 三个事件监听、再手动调 layers 里的 off()——
-// 这些 off() 是 prompt.scoped().section() 的注销器，操作的是 system-prompt 注册表
-// （此刻仍存活——system-prompt 最后卸）→ 无竞态。本批验证 ctx.dispose 全序 + 单插件
-// unload 单独调用两个形态。
-
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
@@ -27,10 +19,8 @@ describe("dispose 回卷序（LIFO）下 worktree-context 先卸、system-prompt
     const prompt = ctx.use(systemPrompt);
     ctx.emit(agentSpawned, { parent: "p" as never, agentId: "a", sessionId: "c1" as never, type: "untyped", depth: 1, worktree: WT, branch: "b1" });
     expect(prompt.assemble({ sessionId: "c1" }).text).toContain(WT);
-    // unload[2] = worktree-context（LIFO 首位）——卸载后层必须消失
     await unload[2]!();
     expect(prompt.assemble({ sessionId: "c1" }).text).not.toContain(WT);
-    // 根层不受影响
     expect(prompt.assemble().text).toContain("You are xh");
     await ctx.dispose();
   });
@@ -43,8 +33,6 @@ describe("dispose 回卷序（LIFO）下 worktree-context 先卸、system-prompt
       createWorktreeContextPlugin({ facts: FACTS }),
     ]);
     ctx.emit(agentSpawned, { parent: "p" as never, agentId: "a", sessionId: "c1" as never, type: "untyped", depth: 1, worktree: WT, branch: "b1" });
-    // 逆 LIFO 人为调用（异常序形态——健壮性核实）：system-prompt 先卸（注册表闭包仍持 Map，
-    // off() 仍可安全执行——闭包形态无「服务已死」面）
     await unload[0]!();
     await unload[2]!();
     expect(true).toBe(true);
@@ -60,7 +48,7 @@ describe("dispose 回卷序（LIFO）下 worktree-context 先卸、system-prompt
     ]);
     ctx.emit(agentSpawned, { parent: "p" as never, agentId: "a", sessionId: "c1" as never, type: "untyped", depth: 1, worktree: WT, branch: "b1" });
     await ctx.dispose();
-    await ctx.dispose(); // 幂等
+    await ctx.dispose();
     expect(true).toBe(true);
   });
 });

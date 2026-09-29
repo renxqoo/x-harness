@@ -1,7 +1,3 @@
-// task 级 deadline 的 TDD 全谱（先红后绿）：挂起类三形态 + 交互/边界/迟到/恢复/重绑。
-// ① child 挂起 ② critic 挂起 ③ 快任务对照（防误伤）④ 回炉慢打转 ⑤ 验收命令挂起
-// ⑥ 迟到结算不复活 ⑦ 终局后 stop 幂等 ⑧ dispose 先于 deadline（钉子）⑩ 恢复路径挂起 ⑪ rebind 后触发。
-
 import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,7 +34,6 @@ function textScript(text: string, delayMs = 0): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 伪挂起流：首 chunk 喂狗后永挂——不触发上游流静默看门狗（挂起类核心形态） */
 function hangingStream(hangMs = 60_000): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LkmChunk | LlmChunk> {
     yield { type: "text-delta", text: "started" } as never;
@@ -175,15 +170,14 @@ describe("task 级 deadline（TDD 全谱）", () => {
   it("④ 回炉慢打转（每轮正常但总时长无界）：deadline 先于预算耗尽截断", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-hang4-"));
     const f = await makeFixture(root, { deadlineMs: 1_500 });
-    // 每轮 600ms 的无效交付：round1 0.6s → round2 1.2s → round3 进行中 1.5s deadline 触发
     f.scripts.set("pm", Array.from({ length: 5 }, () => textScript("not json", 600)));
     const sent = await f.submit({ description: "slow spin", prompt: "x", result_schema: { type: "object", required: ["a"] } });
     expect(sent.ok).toBe(true);
     await vi.waitFor(() => expect(f.texts()).toContain("workflow-notification"), { timeout: 5_000 });
     expect(f.texts()).toContain("failed");
     const journal = await journalOf(root);
-    expect(journal).toContain("task-deadline"); // 时间闸赢
-    expect(journal).not.toContain("budget-exhausted"); // 非预算终局
+    expect(journal).toContain("task-deadline");
+    expect(journal).not.toContain("budget-exhausted");
     await f.dispose();
     await rm(root, { recursive: true, force: true });
   }, 15_000);
@@ -199,7 +193,7 @@ describe("task 级 deadline（TDD 全谱）", () => {
     expect(f.texts()).toContain("failed");
     expect(await journalOf(root)).toContain("task-deadline");
     const side = await readFile(sideEffect, "utf8").catch(() => "");
-    expect(side).not.toContain("ran"); // 副作用未发生（命令被截断在先）
+    expect(side).not.toContain("ran");
     await f.dispose();
     await rm(root, { recursive: true, force: true });
   }, 20_000);
@@ -207,16 +201,16 @@ describe("task 级 deadline（TDD 全谱）", () => {
   it("⑥ 迟到结算：deadline 终局后挂起子苏醒完成 → 不复活/不二次通知/终局不变（trailing 收编）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-hang6-"));
     const f = await makeFixture(root, { deadlineMs: 1_200 });
-    f.scripts.set("pm", [textScript('{"a":1}', 2_500)]); // 苏醒：2.5s 后交合格交付物（deadline 1.2s 已终局）
+    f.scripts.set("pm", [textScript('{"a":1}', 2_500)]);
     const sent = await f.submit({ description: "late wake", prompt: "x", result_schema: { type: "object", required: ["a"] } });
     expect(sent.ok).toBe(true);
     await vi.waitFor(() => expect(f.texts()).toContain("workflow-notification"), { timeout: 4_000 });
-    await sleep(2_500); // 跨过苏醒点
+    await sleep(2_500);
     const texts = f.texts();
-    expect(texts.match(/workflow-notification/g)?.length ?? 0).toBe(1); // 恰一条通知
-    expect(texts).toContain("wall-clock deadline"); // 终局不被迟到合格交付物翻转（cause 词面经 detail 文案）
+    expect(texts.match(/workflow-notification/g)?.length ?? 0).toBe(1);
+    expect(texts).toContain("wall-clock deadline");
     const journal = await journalOf(root);
-    expect(journal.match(/task\/settled/g)?.length ?? 0).toBe(1); // 恰一次终局
+    expect(journal.match(/task\/settled/g)?.length ?? 0).toBe(1);
     await f.dispose();
     await rm(root, { recursive: true, force: true });
   }, 20_000);
@@ -231,7 +225,7 @@ describe("task 级 deadline（TDD 全谱）", () => {
     await vi.waitFor(() => expect(f.texts()).toContain("workflow-notification"), { timeout: 4_000 });
     const stopped = await f.stop(taskId);
     expect(stopped.ok).toBe(false);
-    expect(stopped.text).toMatch(/not-found/); // run 已结算出表——迟到 miss 前缀纪律
+    expect(stopped.text).toMatch(/not-found/);
     await f.dispose();
     await rm(root, { recursive: true, force: true });
   }, 15_000);
@@ -245,18 +239,18 @@ describe("task 级 deadline（TDD 全谱）", () => {
     await sleep(300);
     await f.ctx.use(sessionStore).flush("wf-parent" as SessionId).catch(() => {});
     const before = await journalOf(root);
-    await f.dispose(); // deadline 之前拆卸
-    await sleep(2_000); // 跨过 deadline 时点
+    await f.dispose();
+    await sleep(2_000);
     const after = await journalOf(root);
-    expect(after).toBe(before); // 拆卸后零写入
+    expect(after).toBe(before);
     await rm(root, { recursive: true, force: true });
   }, 15_000);
 
   it("⑩ 恢复路径挂起：崩溃恢复 kick 后子挂 → deadline（attach 时武装）照样终局", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-hang10-"));
     await craftInterruptedTask(root);
-    const f = await makeFixture(root, { deadlineMs: 1_500, persistence: true }); // plugin apply 自动扫描恢复
-    f.scripts.set("pm", [hangingStream()]); // kick 后挂起
+    const f = await makeFixture(root, { deadlineMs: 1_500, persistence: true });
+    f.scripts.set("pm", [hangingStream()]);
     await vi.waitFor(() => expect(f.texts()).toContain("workflow-notification"), { timeout: 5_000 });
     expect(f.texts()).toContain("failed");
     expect(await journalOf(root)).toContain("task-deadline");
@@ -276,7 +270,7 @@ describe("task 级 deadline（TDD 全谱）", () => {
     expect(rebound?.ok).toBe(true);
     await vi.waitFor(() => expect(f.texts("wf-parent2")).toContain("workflow-notification"), { timeout: 5_000 });
     expect(f.texts("wf-parent2")).toContain("wall-clock deadline");
-    expect(f.texts("wf-parent")).not.toContain("workflow-notification"); // 旧会话不收
+    expect(f.texts("wf-parent")).not.toContain("workflow-notification");
     await second.value.dispose();
     await f.dispose();
     await rm(root, { recursive: true, force: true });

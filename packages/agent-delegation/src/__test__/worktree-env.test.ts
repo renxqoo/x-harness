@@ -1,6 +1,3 @@
-// worktree 子环境块单测（docs/WORKTREE-CONTEXT-AWARENESS.md §1.4 Track N）：
-// named 子 systemPrompt 拼接（类型正文 + 环境块）、键缺席省略行、双缺席仍渲染目录行。
-
 import { describe, expect, it } from "vitest";
 import { appendWorktreeEnv, worktreeEnvBlock } from "../worktree-env.ts";
 

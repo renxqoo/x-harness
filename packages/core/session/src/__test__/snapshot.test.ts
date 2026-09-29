@@ -24,7 +24,7 @@ describe("JSON 脱钩快照（docs/SESSION.md §1.3——DSH json.spec/TOCTOU �
   it("seed 收养脱钩：宿主手造事件事后可改，日志不受影响", () => {
     const seed = [{ type: "turn/start", seq: 0, time: 1, data: { turn: 0 } }] as SessionEvent[];
     const session = createSession({ header, seed, inherited: false, onAppend: () => {} }).session;
-    (seed[0] as { data: { turn: number } }).data.turn = 99; // 宿主对象仍是宿主的
+    (seed[0] as { data: { turn: number } }).data.turn = 99;
     const adopted = session.events()[0];
     expect(adopted).toBeDefined();
     expect((adopted!.data as { turn: number }).turn).toBe(0);
@@ -65,7 +65,7 @@ describe("JSON 脱钩快照（docs/SESSION.md §1.3——DSH json.spec/TOCTOU �
     Object.setPrototypeOf(crafted, { hidden: { deep: 1 } });
     expect(() => materializeJson(crafted)).toThrow();
     const viaNullProto = Object.assign(Object.create(null), { a: 1 });
-    expect(() => materializeJson(viaNullProto)).not.toThrow(); // null 原型的普通 record 合法
+    expect(() => materializeJson(viaNullProto)).not.toThrow();
   });
 
   it("拒绝路径不 mutate 输入", () => {

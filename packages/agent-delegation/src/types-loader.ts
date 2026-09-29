@@ -1,9 +1,3 @@
-// .md 类型加载器（docs/AGENT-DELEGATION.md §7.1）：扁平 frontmatter、保留名拒、
-// 垃圾输入降级（拒注册该文件 + 告警，不 throw 不崩）；目录优先级降序同名前者胜。
-// 同步 fs（docs/TAIL-SNAPSHOT-CHANNEL.md 评审处置 H2）：kick 边沿快照注入的同步
-// 红线要求探测+装载+渲染全同步——类型变更当轮 kick 可见，不留一 kick 滞后；
-// agents 目录几十个小文件的同步扫描与指令 readFileSync 同成本类（本地盘假设）。
-
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -18,23 +12,15 @@ export interface TypeLoadResult {
 
 const RESERVED = new Set(["fork", "main"]);
 
-/** 用户 agents 根（homeDir 注入缝：测试隔离目录；缺省真实 HOME）。
- *  agentDir 派生缝：宿主进程传配置目录时用户根落在 <agentDir>/agents——与
- *  @x-harness/skill 的 userSkillsDirOf 同构（打包发行态 agent-app 等，
- *  agentDir=~/.pai/agent 时 agents 与 app 数据区同区）；缺省（x-harness CLI
- *  独立运行）保持 ~/.x-harness/agents 共享目录不变。 */
 export function userAgentsDirOf(homeDir: string = homedir(), agentDir?: string): string {
   if (agentDir !== undefined && agentDir !== "") return join(agentDir, "agents");
   return join(homeDir, ".x-harness", "agents");
 }
 
-/** 项目 agents 根 */
 export function projectAgentsDirOf(cwd: string): string {
   return join(cwd, ".x-harness", "agents");
 }
 
-/** 目录解析统一入口（宿主边沿消费——插件不自持缺省）：非空显式传入 > env 覆盖 >
- *  [项目根, 用户根] 缺省（`[]` = 显式零——与 skill 的 resolveSkillDirs 语义对齐）。 */
 export function resolveAgentDirs(configured?: readonly string[]): readonly string[] {
   if (configured !== undefined && configured.length > 0) return [...configured];
   const env = process.env["X_HARNESS_AGENTS_DIRS"];
@@ -42,7 +28,6 @@ export function resolveAgentDirs(configured?: readonly string[]): readonly strin
   return [projectAgentsDirOf(process.cwd()), userAgentsDirOf()];
 }
 
-/** 目录指纹（mtime 探测——kick 边沿重载的变更判据） */
 export function typesFingerprint(dirs: readonly string[]): string {
   const marks: string[] = [];
   for (const dir of dirs) {
@@ -57,7 +42,6 @@ export function typesFingerprint(dirs: readonly string[]): string {
       try {
         mtime = String(statSync(join(dir, entry)).mtimeMs);
       } catch {
-        /* stat 失败记 '-'：指纹仍区分在场/缺席 */
       }
       marks.push(`${dir}/${entry}:${mtime}`);
     }
@@ -68,13 +52,12 @@ export function typesFingerprint(dirs: readonly string[]): string {
 export function loadAgentTypes(dirs: readonly string[]): TypeLoadResult {
   const types: Record<string, LoadedAgentType> = {};
   const warnings: string[] = [];
-  // 低优先目录先铺、高优先目录后写覆盖（同名后者胜——方案 §7.1 优先级降序前者胜）
   for (const dir of [...dirs].reverse()) {
     let entries;
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      continue; // 目录缺席合法（未配置任何类型）
+      continue;
     }
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
@@ -90,8 +73,6 @@ export function loadAgentTypes(dirs: readonly string[]): TypeLoadResult {
   return { types, warnings };
 }
 
-/** model/provider 字段拆解（parseFile 复杂度治理）：model 命中复合串 `provider/model`
- *  （主应用设置界面写入形态）拆出双段；显式 provider 字段恒胜（拆解值不覆盖显式声明）。 */
 function dialFieldsOf(fields: ReadonlyMap<string, string>): { model?: string; provider?: string } {
   const rawModel = fields.get("model");
   const composite = rawModel !== undefined ? splitDialRef(rawModel) : undefined;
@@ -101,7 +82,7 @@ function dialFieldsOf(fields: ReadonlyMap<string, string>): { model?: string; pr
   };
 }
 
-type ParseOutcome = LoadedAgentType | string; // string = 拒注册告警
+type ParseOutcome = LoadedAgentType | string;
 
 function parseFile(path: string, stem: string): ParseOutcome {
   let text: string;

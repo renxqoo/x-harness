@@ -1,7 +1,3 @@
-// 413 自愈（docs/COMPACTION.md §1.1；对照参照系 hardening 超限自愈语义子集：承接
-// http 映射 code、自愈恰一次、servedWindow 落账、他件先裁决让位；retriesForCode 口径
-// 改写为 per-session lastHealed 键——同码先被别件重试不烧自愈机会的加严）。
-
 import { describe, expect, it } from "vitest";
 import { agentRequestError } from "@x-harness/agent-loop";
 import { compactionLanded, compactionRunner, compactionServedWindow } from "../tokens.ts";
@@ -20,7 +16,7 @@ async function dispatchError(
     { session: fields.session, turn: fields.turn ?? 3, step: fields.step ?? 1, failure: fields.failure, signal: new AbortController().signal } as never,
     async () => undefined as never,
   );
-  return decision?.kind === "retry" ? decision : undefined; // 自愈件只观察本件应答（respond/fail 属他件决策面）
+  return decision?.kind === "retry" ? decision : undefined;
 }
 
 async function seeded(world: Awaited<ReturnType<typeof makeWorld>>, id: string) {
@@ -51,12 +47,10 @@ describe("http-413 紧急自愈", () => {
       expect(windows).toHaveLength(1);
       const context = session.events().filter((e) => e.type === "request/context").at(-1);
       expect(context?.data.contextWindow).toBe(windows[0]);
-      // keep=0：保留区仅当前在飞轮（cut 落最后真轮起点），投影被压缩
       expect(session.deriveMessages().length).toBeLessThan(session.events().filter((e) => e.type === "user/message" && e.surfaceOp === "append").length + 1);
       const head = session.deriveMessages()[0] as unknown as { content: ReadonlyArray<{ text: string }> };
       expect(head.content[0]?.text).toContain("EMERGENCY-SUM");
 
-      // 同 (turn,step) 再次 413 → 放行（不二次自愈、不二次拨号）
       const second = await dispatchError(world, { session: session.id, failure: { message: "still too large", code: "http-413" } });
       expect(second).toBeUndefined();
       expect(world.llm.calls).toHaveLength(1);
@@ -72,7 +66,6 @@ describe("http-413 紧急自愈", () => {
       session.append("request/context", { provider: "p", model: "m" });
       world.llm.scripts.push(textScript("S1"));
       await dispatchError(world, { session: session.id, failure: { message: "x", code: "http-413" }, turn: 3, step: 1 });
-      // 首次自愈后保留区仅剩当前轮——第二次自愈机会重新获得，但无可切零拨号、仍授 retry
       const again = await dispatchError(world, { session: session.id, failure: { message: "x", code: "http-413" }, turn: 3, step: 2 });
       expect(again).toEqual({ kind: "retry" });
       expect(world.llm.calls).toHaveLength(1);
@@ -89,14 +82,13 @@ describe("http-413 紧急自愈", () => {
       expect(rateLimited).toBeUndefined();
       expect(world.llm.calls).toHaveLength(0);
 
-      // 下游（更晚注册的 recovery 中间件）先裁决 retry → compaction 让位
       const off = world.ctx.on(agentRequestError, (async (payload: unknown, next: (input: unknown) => Promise<Decision>) => {
         await next(payload as never);
         return { kind: "retry" } as Decision;
       }) as never);
       const deferred = await dispatchError(world, { session: session.id, failure: { message: "too large", code: "http-413" } });
       expect(deferred).toEqual({ kind: "retry" });
-      expect(world.llm.calls).toHaveLength(0); // 未压缩——重试权归下游
+      expect(world.llm.calls).toHaveLength(0);
       off();
     } finally {
       await world.ctx.dispose();
@@ -113,7 +105,7 @@ describe("http-413 紧急自愈", () => {
       })());
       const first = await dispatchError(world, { session: session.id, failure: { message: "too large", code: "http-413" } });
       expect(first).toEqual({ kind: "retry" });
-      expect(session.events().some((e) => typeof e.surfaceOp === "object")).toBe(false); // 未落账
+      expect(session.events().some((e) => typeof e.surfaceOp === "object")).toBe(false);
       const second = await dispatchError(world, { session: session.id, failure: { message: "too large", code: "http-413" } });
       expect(second).toBeUndefined();
     } finally {
@@ -139,7 +131,7 @@ describe("http-413 紧急自愈", () => {
     try {
       const session = await seeded(world, "after");
       await dispatchError(world, { session: session.id, failure: { message: "x", code: "http-413" } });
-      seedTurn(session, { turn: 3, user: "t3", assistant: { text: "a3", usage: { input: 100, output: 5 } } }); // 新轮 → 有可切
+      seedTurn(session, { turn: 3, user: "t3", assistant: { text: "a3", usage: { input: 100, output: 5 } } });
       world.llm.scripts.push(textScript("MANUAL-AFTER"));
       const result = await world.ctx.use(compactionRunner).compact({ session: session.id });
       expect(result.ok).toBe(true);
@@ -161,7 +153,6 @@ describe("http-413 紧急自愈", () => {
       expect(healed).toEqual({ kind: "retry" });
       expect(landed).toEqual(["emergency"]);
 
-      // 状态码直报形态（无 overflow 文案）不属词表——放行不动作
       const plain400 = await dispatchError(world, { session: session.id, failure: { message: "bad request", code: "http-400" } });
       expect(plain400).toBeUndefined();
     } finally {

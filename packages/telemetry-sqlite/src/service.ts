@@ -1,7 +1,3 @@
-// 查询服务（docs/TELEMETRY-SQLITE.md §1.1 TelemetryQueryService）：只读三表 + 手动留存治理。
-// usageOf 聚合 llm span 的 gen_ai.usage 四字段（DB 行 = 外部输入，安全整数过滤——垃圾行跳过）；
-// 无 llm span 或全无 usage 字段 → undefined。
-
 import type { LogRow, SessionUsageTotals, SpanRow, SqliteExecutor } from "./types.ts";
 import { decodeSpanRow } from "./writer.ts";
 
@@ -14,7 +10,7 @@ export function createQueryService(db: SqliteExecutor): {
   const spansOf = (sessionId: string): SpanRow[] =>
     db
       .all<Record<string, string | number | bigint | null>>(
-        "SELECT trace_id, span_id, parent_span_id, session_id, name, kind, start_ms, end_ms, status_code, status_message, attributes FROM otel_spans WHERE session_id = ? ORDER BY start_ms, rowid", // rowid = 插入序（同毫秒事件稳定树形序）
+        "SELECT trace_id, span_id, parent_span_id, session_id, name, kind, start_ms, end_ms, status_code, status_message, attributes FROM otel_spans WHERE session_id = ? ORDER BY start_ms, rowid",
         [sessionId],
       )
       .map(decodeSpanRow);
@@ -38,7 +34,7 @@ export function createQueryService(db: SqliteExecutor): {
 
   const usageOf = (sessionId: string): SessionUsageTotals | undefined => {
     const rows = spansOf(sessionId).filter((row) => row.name === "llm.chat");
-    if (rows.length === 0) return undefined; // 无 llm span → undefined（§1.1）
+    if (rows.length === 0) return undefined;
     let inputTokens = 0;
     let outputTokens = 0;
     let cacheRead = 0;
@@ -59,7 +55,7 @@ export function createQueryService(db: SqliteExecutor): {
         }
       }
     }
-    if (!seen) return undefined; // llm span 在但无任何 usage 字段（中断/失败尝试）→ undefined
+    if (!seen) return undefined;
     return { inputTokens, outputTokens, cacheRead, cacheWrite };
   };
 

@@ -1,6 +1,3 @@
-// delegationView 服务面测试（宿主直调——hub get_subagents/subagent-steer/abort 级联消费）：
-// 结构化 list（非文本解析）、message 投递（idle 唤醒）、stopAll 幂等级联。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,7 +26,7 @@ describe("delegationView（宿主直调服务面）", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ kind: "subagent", agentId, type: "untyped", depth: 1 });
     expect(typeof (rows[0] as { sessionId?: string }).sessionId).toBe("string");
-    expect(await view.list(undefined)).toEqual([]); // 无 caller 空形态
+    expect(await view.list(undefined)).toEqual([]);
     await parent.dispose();
   });
 
@@ -60,7 +57,7 @@ describe("delegationView（宿主直调服务面）", () => {
     await vi.waitFor(async () => expect(await view.list(parent.agent.session.id)).toHaveLength(2), { timeout: 5_000 });
     await view.stopAll(parent.agent.session.id, "host-abort");
     await vi.waitFor(async () => expect(settledStatuses(await view.list(parent.agent.session.id))), { timeout: 5_000 });
-    await view.stopAll(parent.agent.session.id, "host-abort"); // 幂等重放不崩
+    await view.stopAll(parent.agent.session.id, "host-abort");
     await parent.dispose();
   });
 
@@ -69,14 +66,12 @@ describe("delegationView（宿主直调服务面）", () => {
     const world = await makeWorld({ ...(await workerOptions()), mailbox: { box: "alpha", mainSession: "main-1" as SessionId } }, root);
     const view = world.ctx.use(delegationView);
     const first = await spawnParent(world, PARENT_MODEL, "main-1" as SessionId);
-    // 初始箱 = 装配名 alpha（宿主接线后真实形态是 xh-<id>，此处验证 rebind 后换到该形态）
     const rebound = await view.rebindMailbox(first.agent.session.id);
     expect(rebound.ok).toBe(true);
-    // 新箱 discover 可见；对端投信经 drain 进新 main（信封路由不再指向装配期 id）
     const service = world.ctx.use(await import("@x-harness/session-mailbox").then((m) => m.mailboxService));
     const boxes = await service.discover();
     expect(boxes.some((box) => box.name === `xh-${String(first.agent.session.id)}`)).toBe(true);
-    expect(boxes.some((box) => box.name === "alpha")).toBe(false); // 旧箱已关
+    expect(boxes.some((box) => box.name === "alpha")).toBe(false);
     const peer = await service.open("peer-of-rebind");
     const sent = await service.send(`xh-${String(first.agent.session.id)}`, { from: peer.name, message: "after rebind", kind: "message" });
     expect(sent.ok).toBe(true);

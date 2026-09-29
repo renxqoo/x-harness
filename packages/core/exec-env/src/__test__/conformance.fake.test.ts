@@ -1,5 +1,3 @@
-// read 面契约 fake 腿：双腿通用套件（缺省 7 字节小块——激进撕裂多字节边界）+ fake-only 注错用例。
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,12 +22,12 @@ describe("read-face conformance fake-only", () => {
     const bad = await env.openRead(join(root, "hello.txt"));
     if (!bad.ok) throw new Error("open failed");
     expect(await bad.handle.read()).toEqual({ ok: false, reason: "io_error" });
-    expect(await bad.handle.read()).toEqual({ ok: false, reason: "io_error" }); // 粘性
+    expect(await bad.handle.read()).toEqual({ ok: false, reason: "io_error" });
     const good = await env.openRead(join(root, "sub", "inner.txt"));
     expect(good.ok).toBe(true);
     if (good.ok) {
       const chunk = await good.handle.read();
-      expect(chunk.ok && chunk.data?.byteLength).toBe(6); // "inner\n" 一次 7B 块读完
+      expect(chunk.ok && chunk.data?.byteLength).toBe(6);
       await good.handle.close();
     }
     await bad.handle.close();

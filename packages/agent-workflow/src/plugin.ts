@@ -1,6 +1,3 @@
-// 件 16 插件装配（docs/AGENT-WORKFLOW.md §2）：workflow_submit 工具面 + 受管任务驱动
-// （Tier A 验收闭环）+ W6 直通 + journal/run 生命周期。恢复协议在 resume.ts（§12.5⑤）。
-
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { SessionId } from "@x-harness/session";
 import { sessionCreated } from "@x-harness/session";
@@ -19,7 +16,6 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
   return {
     name: "agent-workflow",
     inject: ["session", "tools", "agent-loop"],
-    // 依赖解析动词（B2-07 写明）：softInject 保证 topo 先装 → apply 期 tryUse 即得
     softInject: ["agent-delegation", "task-tools"],
     apply: async (ctx: Context): Promise<Disposer> => {
       const loop = ctx.use(agentLoopServiceToken);
@@ -30,29 +26,20 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
       const deps = { ctx, ...options, loop, store, view: view ?? undefined, ...(archive !== undefined ? { archive } : {}) };
       const runtime = createRuntime(deps);
 
-      // 启动扫描（§5.1/§5.2）→ GC（期 2-D3）串行：R3 修——并发时 GC 的 rm 与扫描的
-      // openRunJournal mkdir 竞态产生空卷僵尸（readRun 判定后目录被删，打开重建空目录）
       void (async () => {
         await scanAndRecover({ ...deps, warmColdIndex: runtime.warmColdIndex }, (run) => ({ onCycleEnd: runtime.attach(run), redispatch: (r, caller) => runtime.redispatch(r, caller), detach: runtime.detach })).catch(() => {
-          /* 扫描尽力：损坏 run 在 readRun 内冻结跳过 */
         });
         await (await import("./journal.ts")).gcRuns(options.root, { maxAgeMs: 7 * 24 * 3_600_000 }).catch(() => {
-          /* GC 尽力：下次启动再试 */
         });
       })();
 
-      // 边沿补投（§5.3）：sessionCreated（create/resume 同源）——微任务延迟（F14：事件
-      // 同步发射早于 loop 句柄登记，同微任务链后句柄必在）；只处理本插件管辖的父会话
       const offCreated = ctx.on(sessionCreated, ({ header }) => {
         queueMicrotask(() => {
           void runtime.onSessionAlive(header.id).catch(() => {
-            /* 边沿处理尽力：下个边沿再试 */
           });
         });
       });
 
-      // workflow 任务源（§9 让位协议末源）：probe 按 run journal 归属（caller 匹配 parentSession）；
-      // stop = run settle{cancelled} + 受管行归还（接缝③）
       const { taskHub } = await import("@x-harness/task-tools");
       const hub = ctx.tryUse(taskHub);
       let offSource: (() => void) | undefined;
@@ -64,7 +51,7 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
         });
       }
       const offView = ctx.provide(workflowView, { rebind: runtime.rebind, submit: runtime.submit });
-      const offTool = options.userCommandOnly === false ? registry.register(workflowSubmitTool(runtime)) : undefined; // 不经模型：工具面缺席（入口=宿主命令/代理间）
+      const offTool = options.userCommandOnly === false ? registry.register(workflowSubmitTool(runtime)) : undefined;
       return () => {
         offView();
         offCreated();
@@ -78,11 +65,8 @@ export function createAgentWorkflowPlugin(options: WorkflowOptions): Plugin {
 
 export type { WorkflowOptions, WorkflowRuntime } from "./types.ts";
 
-/** 宿主直调服务面（期 2-A rebind + 期 3 /workflow 命令——均不经模型） */
 export interface WorkflowView {
-  /** 会话切换重绑：迁移 run 归属 + 悬置通知补投 */
   rebind(next: import("@x-harness/session").SessionId): Promise<{ ok: true } | { ok: false; reason: string }>;
-  /** 受管任务提交（宿主 /workflow 命令直调——与（缺席的）模型工具同一实现） */
   submit(caller: import("@x-harness/session").SessionId | undefined, input: import("./types.ts").SubmitInput): Promise<{ ok: true; text: string } | { ok: false; reason: string }>;
 }
 export const workflowView = defineService<WorkflowView>("workflow/view");

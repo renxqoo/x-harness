@@ -1,5 +1,3 @@
-// 真进程 host-client 装置（MIGRATION §5 test/harness 移植）：spawn cli.ts 真进程
-// （script 模式 env）——帧解析/等待器/worker pid 探测。
 import { spawn } from "node:child_process";
 import { execSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
@@ -35,7 +33,6 @@ export interface HostHandle {
 export interface StartHostOptions {
   script: readonly ScriptStep[];
   env?: Record<string, string | undefined>;
-  /** 源码形态入口（缺省 cli.ts）；双形态冒烟传 dist 产物路径 */
   entry?: string;
 }
 
@@ -47,15 +44,11 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
       ...process.env,
       HUB_AGENT_DIR: agentDir,
       HUB_SESSIONS_ROOT: join(agentDir, "sessions"),
-      // 跨进程邮箱隔离（AGENT-DELEGATION §5.3 宿主接线）：host→worker 全链继承——
-      // 不隔离则每次 thread/start 在真实 ~/.x-harness/mailbox 开箱，杀进程旅程留陈尸
       X_HARNESS_MAILBOX_DIR: join(agentDir, "mailbox"),
       X_HARNESS_WORKFLOW_DIR: join(agentDir, "workflows"),
-      // 环境防污染：宿主 shell 的 hub 变量（冒烟/开发残留）不得泄漏进测试子进程
       HUB_WORKER_DISPATCHED: undefined,
       HUB_WORKER_PROVIDER: "script",
       HUB_WORKER_SCRIPT: JSON.stringify(options.script),
-      // 环境防污染：真实旧共享根（~/.x-harness/{skills,agents}）不迁移进沙箱 agentDir
       HUB_SKILLS_MIGRATION: "0",
       HUB_AGENTS_MIGRATION: "0",
       ...options.env,
@@ -143,7 +136,6 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
       }
     },
   };
-  // 就绪：首帧心跳（host 心跳 1Hz——30s 宽放）
   await handle.wait((frame) => frame.type === "heartbeat", "first heartbeat");
   return handle;
 }
@@ -168,7 +160,6 @@ export function aliveOf(pids: readonly number[]): boolean[] {
   });
 }
 
-/** 驱动基元：prompt → 受理 ack + settled 收敛 */
 export async function drivePrompt(host: HostHandle, fields: { threadId: string; id: string; message: string }): Promise<void> {
   host.send({ type: "prompt", id: fields.id, threadId: fields.threadId, message: fields.message });
   const ack = await host.response(fields.id);

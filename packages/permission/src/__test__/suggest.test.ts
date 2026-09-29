@@ -1,6 +1,3 @@
-// 泛化建议器边界（§5.2）：字面 argv0+子命令才泛化；wrapper/解释器字符串载荷/opaque/
-// 多段管线一律不泛化（返回 undefined——记忆退化精确全串）。
-
 import { describe, expect, it } from "vitest";
 import { exactRule, suggestRule } from "../suggest.ts";
 import { parseBash } from "../bash/ast.ts";
@@ -21,7 +18,6 @@ describe("suggestRule（泛化边界）", () => {
   it("不泛化面：wrapper/解释器/带路径 argv0/多段管线/动态", () => {
     expect(suggestOf("bash -c 'npm install'")).toBeUndefined();
     expect(suggestOf("node -e 'code'")).toBeUndefined();
-    // env VAR=1 make：wrappers 已剥离成裸 make——泛化 Danger(make:*) 合法（透明载体）
     expect(suggestOf("/usr/local/bin/mytool run")).toBeUndefined();
     expect(suggestOf("npm install && npm test")).toBeUndefined();
     expect(suggestOf("cat $FILE")).toBeUndefined();

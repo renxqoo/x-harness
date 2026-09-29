@@ -1,7 +1,3 @@
-// 三态路由测试（docs/TASKS.md §1.1/§1.2 + docs/TASK-PUSH-DESIGN.md §2.1）：denied 终结
-// 透传/全 miss 统一词表/迟到 miss 回落/单源异常隔离/入口前置校验。经 ToolDefinition.execute
-// 直调（schema 校验属 registry 面，plugin.test 覆盖）。
-
 import { describe, expect, it } from "vitest";
 import type { SessionId } from "@x-harness/session";
 import { createTaskHub } from "../hub.ts";
@@ -20,7 +16,6 @@ interface SourcePlan {
   readonly throwStop?: boolean;
 }
 
-/** 记录型 stub 源：probe/stop 计数（state 引用直读——闭包自增对外可见） */
 function stubSource(plan: SourcePlan): { source: TaskSource; state: { probes: number; stops: number } } {
   const state = { probes: 0, stops: 0 };
   return {
@@ -71,7 +66,7 @@ describe("task_stop routing", () => {
     const world = face([agent.source, bash.source]);
     const out = await world.stop({ task_id: "agent-ab12cd34" });
     expect(out).toEqual({ content: "not-owner:agent-ab12cd34; you can only stop/message sub-agents you spawned", isError: true });
-    expect(bash.state.probes).toBe(0); // denied 不续走
+    expect(bash.state.probes).toBe(0);
   });
 
   it("all miss falls to the unified not-found wording", async () => {

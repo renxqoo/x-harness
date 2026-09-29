@@ -1,6 +1,3 @@
-// 驱动核心（件16 §9/§10/§8.2 Tier A）：提交路由（直通/受管）→ 派发 → 验收回炉 →
-// 结算 → 通知。恢复协议（§5）在 resume.ts；本文件是运行期闭环。
-
 import { mintSessionId } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import { adjudicate, DEFAULT_BUDGET, dependencyVerdict, extractPayload, readiness, runReadyToSettle, validateSubset } from "@x-harness/workflow-core";
@@ -16,25 +13,18 @@ import { deliverNotification } from "./notify.ts";
 export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
   const budget: BudgetState = deps.budget ?? DEFAULT_BUDGET;
   const runs = new Map<string, ActiveRun>();
-  const tasks = new Map<string, ManagedTaskRef>(); // agentId → task（sink 闭包对齐键）
-  /** 冷缓存（期 2-D2）：taskId → 归属（未认领 run 的 probe/stop 面索引——启动扫描预热；
-   *  认领后运行态优先，本缓存只补未认领形态） */
+  const tasks = new Map<string, ManagedTaskRef>();
   const coldIndex = new Map<string, { readonly parent: string }>();
 
-    /** main 会话可变引用（期 2-A rebind）：submit 门/steer caller/通知目的地全经它——
-   *  与 delegation mailbox 的 mainRef 同构（装配期值 → 运行期可迁） */
   const mainRef: { current: SessionId } = { current: deps.mainSession };
-  deps.mainSessionRef = mainRef; // 回填：恢复侧 reviveAndKick 经它取活 caller（R2）
+  deps.mainSessionRef = mainRef;
 
-  // ————————————————————————— 提交路由 —————————————————————————
   const submit = async (caller: SessionId | undefined, input: SubmitInput): Promise<SubmitOutcome> => {
     if (caller === undefined) return { ok: false, reason: "invalid-args:workflow tools are only available inside the main conversation" };
-    // 期 1 工具面限根会话（F13）：受管路径只认 mainSession（子代理提交 → 拒）
     if (deps.view === undefined) {
       return { ok: false, reason: "invalid-args:no agent-delegation plugin is assembled (workflow requires it)" };
     }
     const gated = input.result_schema !== undefined || input.acceptance !== undefined || input.critic !== undefined || (input.depends_on !== undefined && input.depends_on.length > 0);
-    // W6 直通：零 journal 足迹、不设 settlement、通知物理走 delegation 原路径（字节级等价 agent_spawn）
     if (!gated) {
       const spawned = await deps.view.spawnManaged(caller, { description: input.description, prompt: input.prompt, ...(input.subagent_type !== undefined ? { subagent_type: input.subagent_type } : {}), ...(input.model !== undefined ? { model: input.model } : {}), ...(input.isolation !== undefined ? { isolation: input.isolation } : {}) });
       return spawned.ok ? { ok: true, text: spawned.text } : spawned;
@@ -45,16 +35,13 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     return managedSubmit(caller, input);
   };
 
-  // ————————————————————————— 受管提交（Tier A 期 1a） —————————————————————————
   const managedSubmit = async (caller: SessionId, input: SubmitInput): Promise<SubmitOutcome> => {
     const runId = String(mintSessionId());
-    const taskId = `t-${runId}`; // A8：跨 run 唯一（同会话并发多 run 的 stop/notify 判据）
+    const taskId = `t-${runId}`;
     const spec: TaskSpec = specOf(input);
-    // 期 2-C：depends_on 校验——形态（空/重复）+ 悬空（期 2 单任务 run：跨任务引用在本 run
-    // 内不可解析即悬空——提交即拒，语义透明；多任务 run 开放后此处改为 run 内图校验）
     const depError = validateDependencies(spec.dependsOn ?? []);
     if (depError !== undefined) return { ok: false, reason: depError };
-    const dangling = spec.dependsOn ?? []; // K6：自依赖不再豁免（等待自己完成=死锁——同拒）
+    const dangling = spec.dependsOn ?? [];
     if (dangling.length > 0) {
       return { ok: false, reason: `invalid-args:depends_on entries not resolvable in this run (period 2 single-task runs — cross-task references land with multi-task runs): ${dangling.join(", ")}` };
     }
@@ -67,7 +54,6 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     await append(run, { type: "run/created", runId, parentSession: String(caller), cwd: process.cwd() });
     await append(run, { type: "task/submitted", taskId, spec });
 
-    // 派发：prompt 增补（W5：结构化交付指令——没有它 Tier A 首轮必拒）
     const prompt = dispatchPrompt(input);
     const ref: ManagedTaskRef = { runId, taskId };
     const spawned = await deps.view!.spawnManaged(caller, { description: input.description, prompt, ...(input.subagent_type !== undefined ? { subagent_type: input.subagent_type } : {}), ...(input.model !== undefined ? { model: input.model } : {}), ...(input.isolation !== undefined ? { isolation: input.isolation } : {}), settlement: settlementOf(ref, onCycleEnd, async (agentId, error) => {
@@ -75,7 +61,6 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
         await deps.view?.settle(agentId, "settle-failed").catch(() => {});
       }) });
     if (!spawned.ok) {
-      // dispatch 拒 → 落账终局（A5-1：不卡 submitted 死角）
       await append(run, { type: "task/settled", taskId, outcome: "failed", cause: "dispatch-failed", detail: spawned.reason });
       await settleRun(run, "failed", `dispatch failed: ${spawned.reason}`);
       return spawned;
@@ -83,19 +68,17 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     coldIndex.set(taskId, { parent: String(caller) });
     const agentId = agentIdOfManaged(spawned.text);
     tasks.set(agentId, ref);
-    await append(run, { type: "task/dispatched", taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) }); // 真子会话 id（恢复链读档案的锚）
-    armDeadline(run, taskId); // 挂起类防线武装（dispatch 起算——①②④⑤）
+    await append(run, { type: "task/dispatched", taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) });
+    armDeadline(run, taskId);
     return { ok: true, text: `${spawned.text}\n[workflow] taskId: ${taskId} (run ${runId}) — reference it with task_stop; the [workflow-notification] will cite it.` };
   };
 
-  // ————————————————————————— 验收回炉闭环（sink 投递） —————————————————————————
   const onCycleEnd = async (ref: ManagedTaskRef, report: ManagedReport): Promise<void> => {
     const run = runs.get(ref.runId);
-    if (run === undefined) return; // run 不在本进程驱动（崩溃后他进程/未恢复）——journal 收敛
+    if (run === undefined) return;
     const task = run.snapshot.tasks[ref.taskId];
     if (task === undefined || task.status === "settled") return;
 
-    // 异常终态（F6c）：不进验收不烧预算——直接终局
     if (report.outcome !== "completed") {
       await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "failed", cause: "child-failed", detail: report.detail });
       await finalizeRun(run);
@@ -104,23 +87,19 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
 
     const spec = task.spec;
     const chain = tierChain(spec);
-    // 链序裁决（§8.2 组合）：schema → command；accept 即下一档，reject/fail 即终（consumeVerdict）
     let verdictLabel = "";
     for (const tier of chain) {
       const outcome = await verdictOfTier(tier, { deps, run, ref, task, spec, report, budget, caller: mainRef.current });
-      if (outcome === undefined) continue; // 档未配置（防御——tierChain 已过滤）
+      if (outcome === undefined) continue;
       verdictLabel = tier;
       const handled = await consumeVerdict({ run, ref, report, spec, verdict: outcome.verdict, tierLabel: tier, violationsForFeedback: outcome.violations, schemaForFeedback: tier === "schema" ? spec.resultSchema : undefined, steerChild, append, finalizeRun });
       if (handled !== "next-tier") return;
     }
-    // 全链 accept → 终局 completed（verdictLabel 记最后过档 + evidence=已验收交付物——B-9：
-    // 通知回传核心，Tier A 的 JSON 就在这里；截断复用 reportCap 语义）
     const evidenceTail = report.summary !== undefined ? report.summary.slice(0, 34_000) : undefined;
     await append(run, { type: "task/settled", taskId: ref.taskId, outcome: "completed", verdict: `${verdictLabel}:accept`, ...(evidenceTail !== undefined ? { evidence: evidenceTail } : {}) });
     await finalizeRun(run);
   };
 
-  /** 裁决消费器：accept→next-tier / fail→终局 / reject→回炉（铸文按档） */
   const consumeVerdict = async (plan: {
     readonly run: ActiveRun;
     readonly ref: { readonly runId: string; readonly taskId: string };
@@ -143,8 +122,6 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     }
     const attempt = attemptOf(plan.tierLabel, run.snapshot.tasks[ref.taskId]);
     if (plan.tierLabel === "critic") {
-      // R1 修：critic 回炉落 reopened（reopens 计数——预算判定真实基准；此前误落
-      // repair-issued 计 repairs，budget.reopens − used.reopens 恒不扣 → 无界活循环）
       await append(run, { type: "task/reopened", taskId: ref.taskId, attempt: attempt + 1 });
     } else {
       await append(run, { type: "task/repair-issued", taskId: ref.taskId, tier: plan.tierLabel, attempt: attempt + 1, violations: plan.violationsForFeedback });
@@ -159,7 +136,6 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     return "done";
   };
 
-  /** repair 反馈注入：经 view.message（受管行豁免父预检） */
   const steerChild = async (ref: ManagedTaskRef, agentId: string, text: string): Promise<{ ok: true } | { ok: false; reason: string }> => {
     const run = runs.get(ref.runId);
     if (run === undefined || deps.view === undefined) return { ok: false, reason: "run not driven here" };
@@ -167,12 +143,9 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     return sent.ok ? { ok: true } : { ok: false, reason: sent.reason };
   };
 
-  // task deadline 三面（task-deadline.ts——行数纪律拆出；deps 域闭包注入）
   const { armDeadline, clearDeadline, clearAll: deadlineClearAll } = createDeadlineGuards({ taskDeadlineMs: deps.taskDeadlineMs, runs, view: deps.view, append: (run: ActiveRun, event: import("@x-harness/workflow-core").WorkflowEvent) => append(run, event), finalizeRun: (run: ActiveRun) => finalizeRun(run) });
 
-  // ————————————————————————— 结算与通知 —————————————————————————
   const finalizeRun = async (run: ActiveRun): Promise<void> => {
-    // 期 2-C：依赖失败传播（readiness.dependencyDoomed → 终局 cancelled）+ 就绪派发钩子
     const doomed = readinessOf(run);
     for (const taskId of doomed.dependencyDoomed) {
       const task = run.snapshot.tasks[taskId];
@@ -187,47 +160,37 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
   const settleRun = async (run: ActiveRun, outcome: "completed" | "failed" | "cancelled", detail: string): Promise<void> => {
     await append(run, { type: "run/settled", outcome, detail });
     await deliverNotification({ run, deps, append: (event) => append(run, event) });
-    // A-11 修：通知悬置（死父——journal 无 notify/delivered）时 run 留驻驱动面，
-    // onSessionAlive 边沿补投后再清；已投（notified 全覆盖）即清
     const notified = Object.values(run.snapshot.tasks).every((task) => task.status !== "settled" || run.snapshot.notified.has(task.taskId));
     if (notified) {
-      // 受管行归还（接缝③）：终局 dispose/清树/摘行
       for (const task of Object.values(run.snapshot.tasks)) {
-        clearDeadline(run.header.runId, task.taskId); // 正常终局同样清闸（挂起防线收口）
+        clearDeadline(run.header.runId, task.taskId);
         if (task.agentId !== undefined && deps.view !== undefined) await deps.view.settle(task.agentId, `run-${outcome}`).catch(() => {});
         tasks.delete(task.agentId ?? "");
       }
       await run.writer.close().catch(() => {});
       runs.delete(run.header.runId);
     } else {
-      // 悬置：writer 保持打开（rebound/边沿补投还要落账——期 2-A 教训：关了就是 EBADF）；
-      // 任务已终局，闸清；进程退出路径 dispose 统一关
       for (const task of Object.values(run.snapshot.tasks)) clearDeadline(run.header.runId, task.taskId);
     }
   };
 
   const append = async (run: ActiveRun, event: WorkflowEvent): Promise<void> => {
     await run.writer.append([event]);
-    // 快照推进（fold 单步——驱动侧即时一致）
     const { step } = await import("@x-harness/workflow-core");
     run.snapshot = step(run.snapshot, event);
   };
 
-  // ————————————————————————— 边沿与生命周期 —————————————————————————
   const onSessionAlive = async (session: SessionId): Promise<void> => {
-    // F14 修正：sessionCreated 在 store.create 内同步发射，loop 句柄登记在 create 的
-    // await 链后段——补投需句柄在场（notify 经 loop.get），轮询等待（上限 50 拍）
     for (let i = 0; i < 50 && deps.loop.get(session) === undefined; i++) {
       await tick(2);
     }
-    // §5.3 边沿补投（A-11）：悬置 run 投递成功后走归还链（摘行/关卷/出 runs）
     for (const run of runs.values()) {
       if (run.snapshot.status !== "settled") continue;
       const pending = Object.values(run.snapshot.tasks).some((task) => task.status === "settled" && !run.snapshot.notified.has(task.taskId));
       if (!pending) continue;
       await deliverNotification({ run, deps, append: (event) => append(run, event) });
       const nowNotified = Object.values(run.snapshot.tasks).every((task) => task.status !== "settled" || run.snapshot.notified.has(task.taskId));
-      if (!nowNotified) continue; // 仍悬置（父又死了）——留驻下个边沿
+      if (!nowNotified) continue;
       for (const task of Object.values(run.snapshot.tasks)) {
         if (task.agentId !== undefined && deps.view !== undefined) await deps.view.settle(task.agentId, "run-recovered").catch(() => {});
         tasks.delete(task.agentId ?? "");
@@ -238,17 +201,12 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
   };
 
   const dispose = async (): Promise<void> => {
-    // §2 dispose 序列：受管行不 cancel（豁免兑现）；deadline 闸全清（拆卸后零写盘——⑧）；
-    // journal 尽力 flush——run 留待恢复
     deadlineClearAll();
     for (const run of runs.values()) await run.writer.close().catch(() => {});
     runs.clear();
     tasks.clear();
   };
 
-  /** task_stop 让位协议（§9 三则）：probe 按 run journal 归属（caller === parentSession）；
-   *  stop = run settle{cancelled} + 受管行归还。失败 reason 以 not-found: 开头 = 迟到 miss
-   *  续走余源（TaskSource 协议纪律） */
   const probeTask = (taskId: string, caller: SessionId | undefined): { kind: "hit" } | { kind: "denied"; reason: string } | { kind: "miss" } => {
     if (taskId === "") return { kind: "denied", reason: "invalid-args:task_id must be a non-empty string" };
     if (caller === undefined) return { kind: "denied", reason: "invalid-args:workflow tasks are only available inside an agent session" };
@@ -260,9 +218,6 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       }
       return { kind: "hit" };
     }
-    // 期 2-D2：冷缓存查——未认领 run（他进程持有/崩溃残留）的 stop 也可达：
-    // 启动扫描（plugin apply 的 scanAndRecover）与冷缓存预热建 taskId→parentSession
-    // 索引（内存），probe 同步查（TaskSource 协议）；缓存 miss = 真 miss（诚实）
     const cached = coldIndex.get(taskId);
     if (cached === undefined) return { kind: "miss" };
     if (caller !== undefined && cached.parent !== String(caller)) {
@@ -278,66 +233,51 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       if (caller !== undefined && run.header.parentSession !== String(caller)) {
         return { ok: false, reason: `not-owner:${taskId}; this workflow task belongs to another session` };
       }
-      // D2 修：cancel 时在飞 verify 同步封口（§7——迟到 result 收编尽力）
       if (task.status === "verifying") await append(run, { type: "verify/result", taskId, tier: "command", attempt: task.verifyAttempts, outcome: "unknown" });
       await append(run, { type: "task/settled", taskId, outcome: "cancelled", cause: "task-stop" });
       await settleRun(run, "cancelled", "stopped by task_stop");
       return { ok: true, text: `stopped ${taskId} (run settled: cancelled)` };
     }
-    // 冷启动盘扫（期 2-D2）：未认领 run 的 stop——journal 追加 settle 事件（append-only
-    // 合法：恢复侧 fold 收编）+ 归还受管行（view 在场时）
     const cold = await coldStop(deps, taskId, caller);
     if (cold !== undefined) return cold;
-    return { ok: false, reason: `not-found:${taskId}; no in-flight workflow task matches` }; // 迟到 miss 前缀纪律
+    return { ok: false, reason: `not-found:${taskId}; no in-flight workflow task matches` };
   };
 
-  /** 会话重绑（期 2-A）：/new、/resume 切会话后迁移 run 归属——
-   *  mainSession 门更新 + 在驱动 run 落 run/rebound（journal+header）+ 悬置通知即时补投。
-   *  与 rebindMailbox 相邻接线（run-repl finalizeSwitch）。 */
   const rebind = async (next: SessionId): Promise<{ ok: true } | { ok: false; reason: string }> => {
     if (next === mainRef.current) return { ok: true };
     const previous = mainRef.current;
     mainRef.current = next;
-    // D-5 第2层修：判据幂等（header ≠ next 即迁）——半程失败（append 抛错中断）后
-    // 用户再切会话仍能补迁（旧判据 ≠ previous 在半程后永假 → 滞留旧归属）
     for (const run of runs.values()) {
       if (run.header.parentSession === String(next)) continue;
       await append(run, { type: "run/rebound", from: run.header.parentSession, to: String(next) });
       run.header = { ...run.header, parentSession: String(next) };
       await rewriteHeaderParent(deps.root, run.header.runId, String(next)).catch(() => {
-        /* header 重写尽力：journal 的 run/rebound 事件已保归属事实（幂等判据下可补迁） */
       });
     }
     void previous;
-    // R-2 修：未认领 run（盘上归属滞留）迁移——盘上 header 重写（幂等）+ coldIndex 同步。
-    // busy（他进程驱动）跳过——归属事实由其 journal 的 run/rebound 收敛
     {
       const { readdir } = await import("node:fs/promises");
       const { readRun, rewriteHeaderParent: rewrite, openRunJournal } = await import("./journal.ts");
       const entries = await readdir(deps.root).catch(() => [] as string[]);
       for (const runId of entries) {
-        if (runs.has(runId)) continue; // 已认领（内存已迁）
+        if (runs.has(runId)) continue;
         const read = await readRun(deps.root, runId);
         if (read.kind !== "opened" || read.snapshot === undefined) continue;
         if (read.snapshot.parentSession === String(next)) continue;
         const opened = await openRunJournal(deps.root, read.header);
-        if (opened.kind !== "opened") continue; // 活锁——他进程驱动
-        // journal 落 run/rebound（append-only 合法）+ header 重写（原子）
+        if (opened.kind !== "opened") continue;
         await opened.writer.append([{ type: "run/rebound", from: read.snapshot.parentSession, to: String(next) }]).catch(() => {});
         await rewrite(deps.root, runId, String(next)).catch(() => {});
         await opened.writer.close().catch(() => {});
       }
-      // coldIndex 同步（新会话可 stop 未认领任务）
       for (const [taskId, entry] of coldIndex) {
         if (entry.parent !== String(next)) coldIndex.set(taskId, { parent: String(next) });
       }
     }
-    // 悬置通知补投（新会话在场——恰是 rebind 的调用时机）
     await onSessionAlive(next);
     return { ok: true };
   };
 
-  /** 恢复终局摘除（B8）：run 出 runs、agentId 出 tasks——防缓泄与 probe 误 hit */
   const detach = (runId: string): void => {
     const run = runs.get(runId);
     if (run !== undefined) {
@@ -348,13 +288,11 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
     }
   };
 
-  /** §5.2 行 2：submitted 任务重派发（A3——spec 在 journal；死父悬置返回 false） */
   const redispatch = async (run: ActiveRun, caller: SessionId): Promise<boolean> => {
     if (deps.view === undefined) return false;
-    if (deps.loop.get(caller) === undefined) return false; // 死父：悬置（sessionCreated 边沿后再试）
+    if (deps.loop.get(caller) === undefined) return false;
     for (const task of Object.values(run.snapshot.tasks)) {
       if (task.status !== "submitted") continue;
-      // K1 修：redispatch 派发前判依赖就绪（waiting 不派——依赖满足随任务终态在 finalizeRun 重评）
       if (dependencyVerdict(task.spec.dependsOn ?? [], run.snapshot.tasks) !== "ready") continue;
       const prompt = dispatchPrompt({ description: task.spec.description, prompt: task.spec.prompt, ...(task.spec.resultSchema !== undefined ? { result_schema: task.spec.resultSchema } : {}) });
       const ref: ManagedTaskRef = { runId: run.header.runId, taskId: task.taskId };
@@ -369,30 +307,27 @@ export function createRuntime(deps: WorkflowDeps): WorkflowRuntime {
       const agentId = agentIdOfManaged(spawned.text);
       tasks.set(agentId, ref);
       await append(run, { type: "task/dispatched", taskId: task.taskId, agentId, sessionId: String(sessionOfManaged(spawned.text)) });
-      armDeadline(run, task.taskId); // 恢复重派发同样武装（⑩）
+      armDeadline(run, task.taskId);
       return true;
     }
     return false;
   };
 
-  /** 恢复协议接线（§5.2）：把恢复的 run 接进驱动面——返回 onCycleEnd 供 resume 侧复用验收闭环 */
   const attach = (run: ActiveRun): ((agentId: string, report: ManagedReport) => Promise<void>) => {
     runs.set(run.header.runId, run);
     for (const task of Object.values(run.snapshot.tasks)) {
       if (task.agentId !== undefined) tasks.set(task.agentId, { runId: run.header.runId, taskId: task.taskId });
-      if (task.status !== "settled") armDeadline(run, task.taskId); // 恢复认领即武装（⑩）
+      if (task.status !== "settled") armDeadline(run, task.taskId);
     }
     return (agentId, report) => onCycleEnd({ runId: run.header.runId, taskId: tasks.get(agentId)?.taskId ?? "t1" }, report);
   };
 
-  /** 冷缓存预热（期 2-D2）：启动扫描发现未认领 run 的任务时登记（probe 命中面） */
   const warmColdIndex = (tasks: Readonly<Record<string, unknown>>, parent: string): void => {
     for (const taskId of Object.keys(tasks)) coldIndex.set(taskId, { parent });
   };
   return { submit, onCycleEnd, onSessionAlive, dispose, attach, probeTask, stopTask, redispatch, detach, rebind, warmColdIndex };
 }
 
-/** Tier A 档裁决构造（采集+校验+adjudicate） */
 async function schemaTierVerdict(plan: { readonly task: { readonly repairs: number; readonly reopens: number }; readonly spec: import("@x-harness/workflow-core").TaskSpec; readonly report: ManagedReport; readonly budget: BudgetState }): Promise<{ readonly verdict: ReturnType<typeof adjudicate>; readonly violations: readonly string[] } | undefined> {
   if (plan.spec.resultSchema === undefined) return undefined;
   const payload = extractPayload(plan.report.summary ?? "");
@@ -401,7 +336,6 @@ async function schemaTierVerdict(plan: { readonly task: { readonly repairs: numb
   return { verdict, violations };
 }
 
-/** Tier B 档裁决构造（执行命令 + 预算判定） */
 async function commandTierVerdict(plan: { readonly deps: WorkflowDeps; readonly run: ActiveRun; readonly ref: { readonly runId: string; readonly taskId: string }; readonly task: { readonly verifyAttempts: number }; readonly spec: import("@x-harness/workflow-core").TaskSpec; readonly report: ManagedReport; readonly budget: BudgetState }): Promise<{ readonly verdict: { kind: "accept" } | { kind: "reject"; violations: readonly string[] } | { kind: "fail"; reason: string }; readonly violations: readonly string[] } | undefined> {
   if (plan.spec.acceptance === undefined) return undefined;
   const { runAcceptanceCommand } = await import("./acceptor-command.ts");
@@ -409,14 +343,10 @@ async function commandTierVerdict(plan: { readonly deps: WorkflowDeps; readonly 
   return { verdict: commandVerdictOf(verify, { used: plan.task.verifyAttempts, max: plan.spec.maxAttempts ?? plan.budget.verifyAttempts }), violations: [`command exited ${String(verify.exitCode)}:`, verify.outputTail] };
 }
 
-/** readiness 快照（finalizeRun 依赖传播——readiness 纯函数复用） */
 function readinessOf(run: ActiveRun): { readonly dependencyDoomed: readonly string[] } {
   return readiness(run.snapshot, { maxInFlight: 10_000, circuitBreak: 0 });
 }
 
-/** depends_on 静态校验（期 2-C）：自依赖/重复/跨 run 引用拒（同 run 单任务期 2 形态：
- *  多任务 run 的图校验在多任务提交开放时补全环检测——当前每 run 一任务，跨 run 引用
- *  不可解析即拒）。 */
 function validateDependencies(deps: readonly string[]): string | undefined {
   if (deps.length === 0) return undefined;
   const seen = new Set<string>();
@@ -425,17 +355,15 @@ function validateDependencies(deps: readonly string[]): string | undefined {
     if (seen.has(dep)) return `invalid-args:depends_on has duplicate entry '${dep}'`;
     seen.add(dep);
   }
-  return undefined; // 自依赖/悬空在 managedSubmit 的 taskId 感知段拒（单任务 run 形态）
+  return undefined;
 }
 
-/** 档裁决构造分发（链循环复杂度纪律） */
 async function verdictOfTier(tier: "schema" | "command" | "critic", plan: Parameters<typeof schemaTierVerdict>[0] & Parameters<typeof commandTierVerdict>[0] & Parameters<typeof criticTierVerdict>[0]): Promise<{ readonly verdict: { kind: "accept" } | { kind: "reject"; violations: readonly string[] } | { kind: "fail"; reason: string }; readonly violations: readonly string[] } | undefined> {
   if (tier === "schema") return schemaTierVerdict(plan);
   if (tier === "command") return commandTierVerdict(plan);
   return criticTierVerdict(plan);
 }
 
-/** 提交参数 → journal spec（snake_case→camelCase 归一——managedSubmit 复杂度纪律） */
 function specOf(input: SubmitInput): TaskSpec {
   return {
     description: input.description,
@@ -451,7 +379,6 @@ function specOf(input: SubmitInput): TaskSpec {
   };
 }
 
-/** 反馈铸文分发（consumeVerdict 复杂度纪律） */
 function feedbackTextOf(plan: { readonly tier: "schema" | "command" | "critic"; readonly taskId: string; readonly attempt: number; readonly violations: readonly string[]; readonly schema: unknown }): string {
   const { tier, taskId, attempt, violations } = plan;
   if (tier === "command") return commandFeedbackText(taskId, attempt, violations);
@@ -459,21 +386,18 @@ function feedbackTextOf(plan: { readonly tier: "schema" | "command" | "critic"; 
   return feedbackText({ taskId, attempt, violations, schema: plan.schema });
 }
 
-/** 档对应回炉计数（command=verifyAttempts / critic=reopens / schema=repairs） */
 function attemptOf(tier: "schema" | "command" | "critic", task: { readonly verifyAttempts?: number; readonly reopens?: number; readonly repairs?: number } | undefined): number {
   if (tier === "command") return task?.verifyAttempts ?? 0;
   if (tier === "critic") return task?.reopens ?? 0;
   return task?.repairs ?? 0;
 }
 
-/** critic 档的违规清单（reject 时取 reopen 提案；空提案给占位句） */
 function criticViolationsOf(evidence: Evidence, verdict: { kind: "accept" } | { kind: "reject"; violations: readonly string[] } | { kind: "fail"; reason: string }): readonly string[] {
   if (verdict.kind !== "reject") return [];
   if (evidence.kind === "critic" && evidence.reopenProposals !== undefined && evidence.reopenProposals.length > 0) return evidence.reopenProposals;
   return ["critic rejected without reopen proposals"];
 }
 
-/** Tier C 档裁决构造（期 2-B）：spawn critic 子代理 → 等完成 → 提案解析（W5 自举校验） */
 async function criticTierVerdict(plan: {
   readonly deps: WorkflowDeps;
   readonly run: ActiveRun;
@@ -482,7 +406,6 @@ async function criticTierVerdict(plan: {
   readonly spec: import("@x-harness/workflow-core").TaskSpec;
   readonly report: import("./types.ts").ManagedReport;
   readonly budget: BudgetState;
-  /** R2 修：rebind 后活会话（mainRef.current 传入——非冻结 deps.mainSession） */
   readonly caller: SessionId;
 }): Promise<{ readonly verdict: { kind: "accept" } | { kind: "reject"; violations: readonly string[] } | { kind: "fail"; reason: string }; readonly violations: readonly string[] } | undefined> {
   if (plan.spec.critic === undefined) return undefined;
@@ -492,15 +415,12 @@ async function criticTierVerdict(plan: {
   const { adjudicate } = await import("@x-harness/workflow-core");
   const { agentIdOfManaged } = await import("./seams.ts");
 
-  // critic 派发（独立子代理——caller = mainSession，settlement 归 critic 自己的等待面）
   const dispatch = criticDispatchPrompt({ deliverable, ...(critic.focus !== undefined ? { focus: critic.focus } : {}), originalTask: plan.spec.prompt });
   const proposal = await new Promise<import("./acceptor-critic.ts").CriticProposal | undefined>((resolve) => {
     if (plan.deps.view === undefined) {
       resolve(undefined);
       return;
     }
-    // critic 独立轻量 sink（不经主 onCycleEnd——主链的 runs.get 会对伪 runId miss 挡回）；
-    // 完成即解析提案并归还 critic 行
     let settled = false;
     const finish = async (agentId: string | undefined, parse: () => import("./acceptor-critic.ts").CriticProposal | undefined): Promise<void> => {
       if (settled) return;
@@ -514,8 +434,6 @@ async function criticTierVerdict(plan: {
       subagent_type: critic.type,
       settlement: {
         onCycleEnd: (report) => {
-          // R-1 修：异常终态（stop/error）不解析不回炉——直接按提案缺失终局（防
-          // 「用户停 critic → 又 spawn 新 critic」的直觉违背循环）
           if (report.outcome !== "completed") {
             void finish(report.agentId, () => undefined);
             return;
@@ -531,7 +449,6 @@ async function criticTierVerdict(plan: {
     }).catch(() => resolve(undefined));
   });
   if (proposal === undefined) {
-    // critic 产出不可解析（spawn 拒/终态异常/提案不过 schema）——按 reject 回炉一次，耗尽则 fail
     const invalidVerdict = adjudicate({ tier: "critic", evidence: { kind: "critic" }, budget: { ...plan.budget, reopens: plan.spec.maxAttempts ?? plan.budget.reopens }, used: { repairs: 0, reopens: plan.task.reopens } });
     if (invalidVerdict.kind === "fail") return { verdict: invalidVerdict, violations: ["critic produced no valid proposal"] };
     return { verdict: { kind: "reject", violations: ["critic produced no valid proposal (spawn failed, abnormal end, or output failed schema validation)"] }, violations: ["critic produced no valid proposal"] };
@@ -541,20 +458,16 @@ async function criticTierVerdict(plan: {
   return { verdict, violations: criticViolationsOf(evidence, verdict) };
 }
 
-/** Tier B 三值裁决（if 链——嵌套三元禁令） */
 export function commandVerdictOf(verify: { readonly outcome: "passed" | "failed" | "unknown"; readonly exitCode?: number }, plan: { readonly used: number; readonly max: number }): { kind: "accept" } | { kind: "reject"; violations: readonly string[] } | { kind: "fail"; reason: string } {
   if (verify.outcome === "passed") return { kind: "accept" };
   if (plan.used + 1 >= plan.max) return { kind: "fail", reason: `command tier budget exhausted (exit ${String(verify.exitCode)})` };
   return { kind: "reject", violations: [`command exited with code ${String(verify.exitCode)}`] };
 }
 
-/** 短等待（句柄登记轮询拍——F14） */
 const tick = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
 
-/** 冷启动停止（期 2-D2）：journal 追加终局事件——append-only 合法（fold 收编后事件）；
- *  活锁 run（他进程驱动）不越权——仅死锁/无锁卷可写，写失败如实报 */
 async function coldStop(deps: WorkflowDeps, taskId: string, caller: SessionId | undefined): Promise<{ ok: true; text: string } | { ok: false; reason: string } | undefined> {
   const { readdir } = await import("node:fs/promises");
   const { openRunJournal } = await import("./journal.ts");
@@ -569,10 +482,8 @@ async function coldStop(deps: WorkflowDeps, taskId: string, caller: SessionId | 
     if (caller !== undefined && read.snapshot.parentSession !== String(caller)) {
       return { ok: false, reason: `not-owner:${taskId}; this workflow task belongs to another session` };
     }
-    // 取锁开写面（活锁 = 他进程驱动——不越权）
     const opened = await openRunJournal(deps.root, read.header);
     if (opened.kind !== "opened") return { ok: false, reason: `busy:run ${runId} is driven by another process` };
-    // K4 修：try/finally——append 抛错也关 writer（fd + 锁不泄漏）
     try {
       const before = step(opened.snapshot ?? read.snapshot, { type: "task/settled", taskId, outcome: "cancelled", cause: "task-stop" });
       await opened.writer.append([{ type: "task/settled", taskId, outcome: "cancelled", cause: "task-stop" }]);
@@ -581,14 +492,12 @@ async function coldStop(deps: WorkflowDeps, taskId: string, caller: SessionId | 
     } finally {
       await opened.writer.close().catch(() => {});
     }
-    // 归还受管行（view 在场且行在本进程——通常不在，静默）
     if (deps.view !== undefined && task.agentId !== undefined) await deps.view.settle(task.agentId, "task-stop-cold").catch(() => {});
     return { ok: true, text: `stopped ${taskId} (run settled: cancelled — journal-only, owning process converges)` };
   }
   return undefined;
 }
 
-/** 验收链序（§8.2）：schema 先、command 后（B+C 组合序） */
 function tierChain(spec: import("@x-harness/workflow-core").TaskSpec): readonly ("schema" | "command" | "critic")[] {
   const chain: ("schema" | "command" | "critic")[] = [];
   if (spec.resultSchema !== undefined) chain.push("schema");
@@ -597,7 +506,6 @@ function tierChain(spec: import("@x-harness/workflow-core").TaskSpec): readonly 
   return chain;
 }
 
-/** 派发 prompt 增补（W5）：结构化交付指令 + schema 摘要（截断 2000——B2-10 独立上限） */
 export function dispatchPrompt(input: SubmitInput): string {
   if (input.result_schema === undefined) return input.prompt;
   const schemaText = JSON.stringify(input.result_schema).slice(0, 2000);

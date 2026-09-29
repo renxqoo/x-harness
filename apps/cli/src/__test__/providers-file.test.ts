@@ -1,6 +1,3 @@
-// providers.json 契约（docs/CLI.md §2.2）：解析词表封闭 + default 缺省合成 + IO 错误指引。
-// 表驱动：每条校验规则一个正例/错例；readProvidersConfig 的缺席/坏 JSON 指引单测。
-
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

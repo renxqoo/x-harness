@@ -1,19 +1,3 @@
-// 红测（adversarial——b85e043 plan 模式实现对抗审查，CLI 宿主面）：
-//
-// 1) `--permission plan` 启动形态（build-world.ts defaultPermissionOf → planKit
-//    liftTo="plan"）：plan_submit 被批准后返回 "plan mode lifted"，但 mode.set("plan")
-//    是空操作——write 仍吃 plan 硬闸，模型被告知可实施却被拒（死锁+谎言）。
-//    不变量：plan_submit 批准后，装配缺省档为 plan 的世界里 write 必须放行。
-// 2) /plan toggle（run-repl.ts makePermissionCommands：target = defaultMode）：
-//    `--permission plan` 时 defaultMode === "plan"，从 plan 档 toggle 的目标仍是
-//    plan——切不出 plan 档，文案还宣告 "plan mode OFF"。
-//    不变量：已在 plan 档时 /plan toggle 必须切到非 plan 档。
-// 3) 终端 broker 确认条无会话区分（broker-terminal.ts askWith 忽略 input.session）：
-//    委派共享 world 里子代理的 plan_submit 问询与主会话不可分辨。
-//    不变量：带 session 的 ask，提示行必须含该会话标识。
-//
-// 修好后应绿；当前实现下以下用例为红。
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,7 +26,6 @@ const CONFIG = (() => {
   return { config: parsed.value, resolution: resolved.value };
 })();
 
-// 旅程不跑 LLM turn——adapter 只为装配在场，被调即测试装置错误
 const NULL_ADAPTER: LlmAdapter = {
   name: "glm",
   stream: (_request: LlmRequest) => {
@@ -50,7 +33,6 @@ const NULL_ADAPTER: LlmAdapter = {
   },
 };
 
-// 交互式 broker 自动批准（用户点 y）
 const AUTO_YES_BROKER = createTerminalBrokerPlugin({
   interactive: true,
   write: () => {},
@@ -71,7 +53,6 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true }).catch(() => {});
 });
 
-/** 主会话 id（owner 锚——与生产 main.ts 的 create({ session: { id: mainSessionId } }) 同形态） */
 const JOURNEY_MAIN_ID = mintSessionId();
 
 async function makeJourney(permission: "plan"): Promise<Journey> {
@@ -110,11 +91,9 @@ describe("--permission plan 启动形态（红测）", () => {
   it("plan_submit 批准宣告 lifted 后，write 必须放行——当前仍被 plan 硬闸拦下", async () => {
     const j = await makeJourney("plan");
     const submit = await j.dispatch("plan_submit", { plan: "step 1: read; step 2: write b.txt; step 3: verify" });
-    // 现状证据锚：批准通过且宣告解档（当前实现如此返回）
     expect(submit.isError).toBeUndefined();
     expect(submit.content).toContain("Plan approved");
     expect(submit.content).toContain("lifted");
-    // 不变量：批准后 plan 档必须真的解除——界内 write 放行
     const write = await j.dispatch("write", { path: join(j.root, "b.txt"), content: "x" });
     expect(write.isError).not.toBe(true);
   });
@@ -149,8 +128,3 @@ describe("/plan toggle（makePermissionCommands——planControl 路由 + 插件
     expect(r.mode()).toBe("plan");
   });
 });
-
-// broker 会话区分红测已撤（对抗审查裁决）：blast radius 在工具层关死——depth>0 会话
-// 的 plan_submit 直接拒绝（delegated-session），broker 永远收不到子会话 ask，确认条
-// 无需会话标识。通用「ask 载荷 session 的宿主展示面」另案低优先级（ConfirmFields
-// 无 session 字段——真出现多源 ask 再立项）。

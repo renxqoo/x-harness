@@ -1,7 +1,3 @@
-// 双形态冒烟（MIGRATION §5 双形态移植）：bun build 产物（dist/cli.js）起真 host
-// 进程——产物形态 worker 自举（cli.js 内动态 import worker/main chunk）+
-// /$bunfs/ 分支仅编译单文件形态（本产物为多文件——argv[1] 指向 dist/cli.js 即脚本
-// 形态自解）。全链旅程 + EOF exit 0。
 import { afterAll, describe, expect, test } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,7 +28,6 @@ describe("双形态冒烟（dist 产物）", () => {
   }, 90_000);
 
   test("dist 外部插件装载：get_token_analytics 应答（运行时 resolve——node_modules 链）+ 产物无内联绝对路径", async () => {
-    // 产物断言：resolve 保持运行时调用，未被 bundler 静态内联为本机绝对路径（可迁移性）
     const main = await readFile(join(import.meta.dirname, "../../dist/worker/main.js"), "utf8");
     expect(main).toContain("import.meta.resolve");
     expect(main).not.toMatch(/\/[^"']*packages\/token-analytics\/src\/index\.ts/);
@@ -48,7 +43,7 @@ describe("双形态冒烟（dist 产物）", () => {
     const res = await host.response("ta1");
     expect(res.success).toBe(true);
     const data = res.data as { breakdown: Record<string, number>; sessionOutput: number };
-    expect(data.breakdown["lastReportedInput"]).toBe(64); // script adapter 实报（dist 形态同源）
+    expect(data.breakdown["lastReportedInput"]).toBe(64);
     expect(data.breakdown["totalOutputTokens"]).toBe(16 + "dist analytics".length);
     expect(data.sessionOutput).toBe(16 + "dist analytics".length);
     host.end();
@@ -61,10 +56,8 @@ describe("双形态冒烟（dist 产物 + vendor 插件线程隔离装载）", (
   test("vendor 件 worker 模式装载 + caps 钩世界 + 热替换 + 卸载后 capability_plugin", async () => {
     const { mkdtemp, mkdir, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");
-    // host-client 的 agentDir 即 HUB_AGENT_DIR——vendor 树装进测试 agentDir
     const host = await startHost({ script: [{ reply: "vendor smoke" }], entry: join(import.meta.dirname, "../../dist/host/cli.js") });
     hosts.push(host);
-    // 造第三方插件源（零 @x-harness import）
     const srcRoot = await mkdtemp(join(tmpdir(), "smoke-vendor-"));
     const src = join(srcRoot, "smoke-plugin");
     await mkdir(src, { recursive: true });
@@ -95,19 +88,16 @@ describe("双形态冒烟（dist 产物 + vendor 插件线程隔离装载）", (
       const rows = (listed.data as { plugins: Array<{ name: string; source: string; status: string }> }).plugins;
       expect(rows.some((row) => row.name === "smoke-plugin" && row.source === "vendor")).toBe(true);
 
-      // 装进 registry 后新 thread 装配期装载（worker 模式——P1 vendor 恒 worker）
       host.send({ type: "thread/start", id: "s1", cwd: host.agentDir });
       const started = await host.response("s1");
       expect(started.success).toBe(true);
       const threadId = (started.data as { threadId: string }).threadId;
       await drivePrompt(host, { threadId, id: "p1", message: "vendor plugin smoke" });
 
-      // 热卸（world 内即时卸载）
       host.send({ type: "plugins/hot_uninstall", id: "hu1", threadId, name: "smoke-plugin" });
       const uninstalled = await host.response("hu1");
       expect(uninstalled.success).toBe(true);
 
-      // 移除（vendor 目录 + registry 条目）
       host.send({ type: "plugins/remove", id: "pr1", name: "smoke-plugin" });
       const removed = await host.response("pr1");
       expect(removed.success).toBe(true);

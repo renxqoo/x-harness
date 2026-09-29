@@ -1,11 +1,7 @@
-// workflow 命令面（件16 期 3 不经模型——worker 侧 handler：list 盘读 / submit·stop 经
-// workflowView 与 task_stop 协议链）。从 worker-commands 抽出（行数纪律）。
-
 import { hubError } from "../shared/errors.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { SessionId } from "@x-harness/session";
 
-/** 适配形态（worker-commands 的 respond/requireThread 原签名——不自造中间接口） */
 interface WorkflowDeps {
   readonly rt: unknown;
   readonly respond: (frame: { readonly id: string | undefined; readonly command: string; data?: unknown; error?: HubErrorShape }) => void;
@@ -16,7 +12,6 @@ interface WorkflowDeps {
 
 type RespondFn = (frame: { readonly id: string | undefined; readonly command: string; data?: unknown; error?: HubErrorShape }) => void;
 
-/** submit 参数构造（input → SubmitInput——复杂度纪律抽出） */
 function submitInputOf(input: { readonly [key: string]: unknown }, schema: unknown): import("@x-harness/agent-workflow").SubmitInput {
   return {
     description: typeof input.description === "string" ? input.description : "task",
@@ -26,7 +21,6 @@ function submitInputOf(input: { readonly [key: string]: unknown }, schema: unkno
   };
 }
 
-/** workflow/submit 的 schema 字符串解析（坏 JSON → 错误响应 + null） */
 function safeJson(plan: { readonly raw: string; readonly id: string | undefined; readonly respond: RespondFn }): unknown | null {
   try {
     return JSON.parse(plan.raw) as unknown;
@@ -66,7 +60,7 @@ export function createWorkflowHandlers(deps: WorkflowDeps): ReadonlyArray<readon
       const respondOne: RespondFn = (frame) => deps.respond(frame);
       const schemaRaw = typeof input.resultSchema === "string" && input.resultSchema !== "" ? input.resultSchema : undefined;
       const schema = schemaRaw !== undefined ? safeJson({ raw: schemaRaw, id, respond: respondOne }) : undefined;
-      if (schemaRaw !== undefined && schema === null) return; // 坏 JSON 已应答
+      if (schemaRaw !== undefined && schema === null) return;
       const made = await view.submit(session.id, submitInputOf(input, schema));
       if (!made.ok) {
         deps.respond({ id, command: "workflow/submit", error: hubError("invalid_input", made.reason) });

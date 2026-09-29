@@ -1,8 +1,3 @@
-// relay 主服务（DESIGN §1.5）：WSS/HTTP 接入、token 鉴权（from==认证身份）、
-// 路由转发（同节点直投 / 跨节点 publish）、撤销拉黑（deviceId 键 + 即时广播）、
-// 单活连接（新连接顶旧）、帧速率防线。
-// 传输层用 node:http upgrade + 自实现 WebSocket 最小服务端帧协议（握手/文本帧/
-// ping/pong/close）——零三方依赖；TLS 由 LB/反代终结（runbook）。
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { acceptKey, WebSocketFrameWriter } from "@x-harness/remote-protocol";
@@ -18,12 +13,9 @@ import { verifyBytes } from "@x-harness/remote-protocol";
 export interface RelayOptions {
   port: number;
   host: string;
-  /** per-deployment HS256 秘密（env 供给；缺省拒绝启动——fail-closed） */
   tokenSecret: string;
-  /** 部署签名钥（可选注入；缺省从 tokenSecret 派生——确定性，指纹可预计算钉存） */
   signingSecret?: string;
   signingPub?: string;
-  /** 单实例显式声明（允许内存存储） */
   singleInstance: boolean;
   redis?: { host: string; port: number; password?: string };
   nodeId?: string;
@@ -35,25 +27,20 @@ interface Conn {
   send: (line: string) => void;
   close: () => void;
   lastPong: number;
-  frames: number[]; // 滑动窗口时间戳（帧速率）
+  frames: number[];
 }
 
 export interface RelayHandle {
   server: Server;
   store: RouteStore;
   nodeId: string;
-  /** 节点签名公钥（gateway 指纹比对锚；运营者钉存其 sha256） */
   nodeSigningPub: string;
   close(): Promise<void>;
-  /** 测试面：直接签发 token（生产 token 由 gateway 经 enroll/refresh 线获得） */
   issueTestToken(claims: Omit<TokenClaims, "iat" | "exp" | "jti">): string;
-  /** 测试面：签发 pairingTicket */
   issuePairingTicket(pairingId: string): string;
 }
 
-/** 部署签名钥解析：显式注入优先；缺省 tokenSecret 派生（HKDF 域分离——确定性可预计算） */
 function nodeCryptoImports(): typeof import("@x-harness/remote-protocol") {
-  // 顶部静态导入会与 routes 循环引用冲突——经 require 局部取（Bun/Node 同步可用）
   return require("@x-harness/remote-protocol");
 }
 
@@ -79,15 +66,13 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   } else if (options.singleInstance) {
     store = createMemoryStore(nodeId);
   } else {
-    // 多实例配置下无共享存储 = fail-fast（DESIGN §1.5：禁止架构决策藏进默认值）
     throw new Error("relay: shared store required for multi-instance (pass --redis or --single-instance)");
   }
 
-  const conns = new Map<string, Conn>(); // key: `${kind}:${subject}`（单活顶替）
+  const conns = new Map<string, Conn>();
   const byConnId = new Map<string, Conn>();
-  const localDeliver = new Map<string, (line: string) => void>(); // installationId → 直投口
+  const localDeliver = new Map<string, (line: string) => void>();
 
-  // 跨节点与撤销广播消费
   await store.subscribeCrossNode((_installationId, message) => {
     try {
       const parsed = JSON.parse(message) as { kind?: string; deviceId?: string; line?: string; toInstallation?: string };
@@ -97,7 +82,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         return;
       }
       if (parsed.kind === "cross" && parsed.line !== undefined) {
-        // 按 to 前缀分派（D2）：dev_ → 设备连接；gw_ → 网关投递口
         const env = JSON.parse(parsed.line) as { to?: string };
         if (typeof env.to === "string" && env.to.startsWith("dev_")) {
           conns.get(`device:${env.to.slice(4)}`)?.send(parsed.line);
@@ -108,7 +92,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         }
       }
     } catch {
-      // 广播载荷垃圾——忽略（降级不崩）
     }
   });
 
@@ -116,7 +99,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   void dispatchHttp(req, res);
 });
 
-  /** HTTP 路由表（method+path → handler；GET 无 body 的直答内联）。 */
   const httpRoutes: Array<{ method: string; path: string; handler: (req: IncomingMessage, res: import("node:http").ServerResponse) => void | Promise<void> }> = [
     {
       method: "GET",
@@ -152,17 +134,14 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     void handleUpgrade(req, socket, head);
   });
 
-  /** 鉴权与限载判定：返回 claims（pairingTicket 场景为合成 claims，subject=pairingId——单活键按配对面隔离） */
   function authorizeUpgrade(url: string, authHeader: string): TokenClaims | null {
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : new URL(url, "http://x").searchParams.get("token");
     if (token === null || token.length === 0) return null;
     const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
-    // pairing kind 仅配对面路径（D3：任意路径不得当 pairing 数据面连接）
     if (claims !== null) {
       if (claims.kind === "pairing") return url.startsWith("/pairing") ? claims : null;
       return claims;
     }
-    // pairing kind 仅配对面路径；subject=pairingId（单活键按配对面隔离——D3）
     if (url.startsWith("/pairing")) {
       const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
       if (claims !== null && claims.kind === "pairing") return claims;
@@ -190,7 +169,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     await establishConnection({ claims, key, socket, head });
   }
 
-  /** 连接装配：握手回执、单活顶替、路由登记、ping/pong、数据泵 */
   async function establishConnection(spec: { claims: TokenClaims; key: string; socket: import("node:stream").Duplex; head: Buffer }): Promise<void> {
     const { claims, key, socket, head } = spec;
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${acceptKey(key)}\r\n\r\n`);
@@ -220,11 +198,9 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     byConnId.set(connId, conn);
     if (effectiveClaims.kind === "gateway") {
       localDeliver.set(effectiveClaims.subject, (line) => conn.send(line));
-      // 连接路径只更新连接节点——绝不写 gatewayKeyPub（enroll 的 TOFU 钉存不可被覆盖）
       const existing = await store.getInstallation(effectiveClaims.subject);
       await store.putInstallation(effectiveClaims.subject, { gatewayKeyPub: existing?.gatewayKeyPub ?? "", nodeId });
     } else if (effectiveClaims.kind === "device") {
-      // 撤销执法（R3 M1）：已撤销设备拒连（此前仅路由表 fail-closed——token/连接面纵深缺失）
       if (await store.isRevoked(effectiveClaims.subject)) {
         socket.write(errorLine("revoked"));
         socket.destroy();
@@ -243,7 +219,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       writer.writePing();
     }, PING_INTERVAL_MS);
     function teardown(): void {
-      // 定时器无条件清（单活顶替后旧连接的 timer 泄漏修复）；表项只清当前代
       clearInterval(pingTimer);
       if (conns.get(connKey) !== conn) return;
       conns.delete(connKey);
@@ -265,7 +240,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     };
   }
 
-  /** L3 地址前缀（token kind → 地址域） */
   function addressPrefixOf(kind: string): string {
     if (kind === "gateway") return "gw_";
     if (kind === "pairing") return "pairing_";
@@ -273,7 +247,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   }
 
   async function handleLine(from: Conn, line: string): Promise<void> {
-    // 帧速率防线（滑动窗口）
     const now = Date.now();
     from.frames = from.frames.filter((t) => now - t < 1000);
     if (from.frames.length >= FRAME_RATE_BURST) {
@@ -281,7 +254,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       return;
     }
     from.frames.push(now);
-    // 帧字节门（E5——16MiB；超限断连防 64MiB 帧洪泛）
     if (Buffer.byteLength(line) > ENVELOPE_MAX_BYTES) {
       from.close();
       return;
@@ -289,8 +261,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     if (line.length === 0) return;
     const env = decodeEnvelope(line);
     if (env === null) return;
-    // 身份绑定：from 必须等于认证身份（S1''——禁自声明）
-    // L3 地址恒带前缀（dev_/gw_/pairing_）；token subject 是裸 id——此处重组比对
     const prefix = addressPrefixOf(from.claims.kind);
     const expectFrom = `${prefix}${from.claims.subject}`;
     if (env.from !== expectFrom) return;
@@ -298,8 +268,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   }
 
   async function routeFrame(from: Conn, to: string, line: string): Promise<void> {
-    // L3 地址约定（线格式钉死）：设备地址 = `dev_<deviceId>`（deviceId 不含前缀）、
-    // 网关地址 = `gw_<installationId>`；路由键 = 去前缀后的裸 id（与 token subject 同域）。
     if (to.startsWith("dev_")) {
       const deviceId = to.slice(4);
       if (await store.isRevoked(deviceId)) {
@@ -320,13 +288,10 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       return;
     }
     if (to.startsWith("pairing_")) {
-      // 配对面只收 gateway 身份的帧（R2 P0-3：任意 device/pairing 连接不得向手机配对面
-      // 注入伪造 pake-b/ack——MITM 绕过手输码的注入通道）
       if (from.claims.kind !== "gateway") {
         from.send(errorLine("forbidden"));
         return;
       }
-      // 配对面：投给持 pairingTicket 的连接（单活键 pairing:<pairingId>）
       const target = conns.get(`pairing:${to.slice("pairing_".length)}`);
       if (target !== undefined) {
         target.send(line);
@@ -363,7 +328,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     return Buffer.concat(chunks).toString("utf8");
   }
 
-  /** enroll 第一步：拿 nodeId+nonce（转录绑定 relay 节点与新鲜性） */
   async function handleEnrollChallenge(_req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ nodeId, nonce: newJti() }));
   }
@@ -381,7 +345,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         return;
       }
       const existing = await store.getInstallation(body.installationId);
-      // 基线空串（连接路径只更 nodeId 时）也视作未钉存；已钉存且不同 → 409（安全 H3 fail-closed）
       if (existing !== null && existing.gatewayKeyPub.length > 0 && existing.gatewayKeyPub !== body.gatewayKeyPub) {
         res.writeHead(409).end(JSON.stringify({ error: "installation key conflict" }));
         return;
@@ -409,7 +372,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         res.writeHead(400).end();
         return;
       }
-      // 归属校验（R2 H5）：只能撤销自己名下设备——跨租户 revoke+改绑劫持通道封死
       const routed = await store.getDevice(body.deviceId);
       if (routed === null || routed.installationId !== claims.subject) {
         res.writeHead(409).end(JSON.stringify({ error: "device not bound to this installation" }));
@@ -425,9 +387,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     }
   }
 
-  /** 设备连接 token 签发（WIRE §2 设备注册收尾）：调用方为已注册该设备的 gateway
-   *  （Bearer gateway token）；设备须已在路由表（putDevice——配对注册时写入）。
-   *  返回 kind:device / subject=deviceId / installationId=gateway 的 WS 连接 token。 */
   async function handleDeviceToken(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
     try {
       const auth = req.headers.authorization ?? "";
@@ -442,7 +401,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         res.writeHead(400).end(JSON.stringify({ error: "bad deviceId format" }));
         return;
       }
-      // 设备长期钥 TOFU 钉存（M12 refresh 验签锚）：冲突即拒
       if (typeof body.deviceLongTermPub === "string" && body.deviceLongTermPub.length > 0) {
         const pinned = await store.getDeviceKey(body.deviceId);
         if (pinned === null) await store.putDeviceKey(body.deviceId, body.deviceLongTermPub);
@@ -451,10 +409,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
           return;
         }
       }
-      // 归属取调用方身份（R2 H5）：body 自声明改绑通道封死；gateway token 即注册凭据
       const installationId = claims.subject;
-      // 设备路由登记：gateway 持有效 token 即为注册凭据（配对 confirm 已在 gateway 侧
-      // 落账）。已登记设备校验归属一致（冒名/跨 installation 改绑拒绝）；未登记即写入。
       const routed = await store.getDevice(body.deviceId);
       if (routed !== null && routed.installationId !== installationId) {
         res.writeHead(409).end(JSON.stringify({ error: "device bound to another installation" }));
@@ -471,9 +426,6 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     }
   }
 
-  /** 设备 token 换发（M12）：设备长期钥签名挑战应答（无需 relay 连接 token——
-   *  签名即所有权证明；15min TTL 到期后的可持续续期路径）。
-   *  挑战源：nodeId + nonce（设备经任意可达途径获取——如 gateway 转发或注册时缓存）。 */
   async function handleDeviceTokenRefresh(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
     try {
       const body = JSON.parse(await readBody(req)) as { deviceId?: string; nonce?: string; sig?: string };

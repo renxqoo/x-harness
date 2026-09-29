@@ -56,7 +56,6 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
     const state = foldInbox([ev(0, a), ev(1, { op: "retarget", id: idA, to: "next-step" })]);
     expect(state.nextTurn).toHaveLength(0);
     expect(state.nextStep).toEqual([{ id: idA, content: [{ type: "text", text: "later" }] }]);
-    // 改回 next-turn 幂等可逆（fold 只认事件序）
     const back = foldInbox([ev(0, a), ev(1, { op: "retarget", id: idA, to: "next-step" }), ev(2, { op: "retarget", id: idA, to: "next-turn" })]);
     expect(back.nextTurn).toEqual([{ id: idA, content: [{ type: "text", text: "later" }] }]);
   });

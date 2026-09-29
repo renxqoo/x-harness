@@ -1,7 +1,3 @@
-// CDN 差别对待探针：与 http-dial 完全同头，但把 UA 换成 curl 的。
-// 用法：GLM_API_KEY=... bun packages/e2e/headers-probe.ts
-// 判读：响应头出现 content-encoding → CDN 无视 identity 强压；
-//       帧分布平滑 → CDN 按 UA 差别冲刷（Bun UA 被分到大缓冲路径）→ 修复 = http-dial 设 UA。
 const url = `${process.env.GLM_BASE_URL ?? "https://open.bigmodel.cn/api/anthropic"}/v1/messages`;
 const res = await fetch(url, {
   method: "POST",

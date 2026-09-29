@@ -1,4 +1,3 @@
-// @x-harness/remote-protocol 导出面（契约包：零 @x-harness/* 依赖）
 export * from "./frames.ts";
 export * from "./envelope.ts";
 export * from "./reliable.ts";

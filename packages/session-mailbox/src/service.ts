@@ -1,5 +1,3 @@
-// MailboxService 组装与配置校验（缺省值不在此层——装配层给，方案 §11 单一真相）。
-
 import type { MailboxOptions, MailboxService, MailboxTiming } from "./types.ts";
 import type { BoxDeps } from "./box.ts";
 import type { SendDeps } from "./send.ts";
@@ -8,7 +6,6 @@ import { drainInbox, sendEnvelope } from "./send.ts";
 import { discoverBoxes, reclaimBox } from "./discover.ts";
 import { addSub, listSubs, removeSub } from "./subs.ts";
 
-/** 配置垃圾值 fail-fast（正安全整数 + now 可调用） */
 export function validateTiming(timing: MailboxTiming): void {
   const positive = (value: number) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
   if (!positive(timing.pollIntervalMs) || !positive(timing.heartbeatMs) || !positive(timing.graceMs) || !positive(timing.staleMs)) {

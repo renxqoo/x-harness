@@ -1,7 +1,3 @@
-// compaction 插件装配（docs/COMPACTION.md §1.1）：水位触发（agentPreStep）+ 413 自愈
-// （agentRequestError，next 先行让位纪律）+ compactionRunner 服务。per-session 状态
-//（单飞行/一次性告警/自愈键）随 sessionDisposed 摘除；llm 为 waitFor 可选停靠。
-
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { agentPreStep, agentRequestError } from "@x-harness/agent-loop";
 import type { RequestFailure } from "@x-harness/agent-loop";
@@ -20,15 +16,11 @@ import type { FileToolNames } from "./file-ops.ts";
 import { DEFAULT_FILE_TOOLS } from "./file-ops.ts";
 
 export interface CompactionOptions {
-  /** 主模型窗口（装配面事实，必填）：触发分母 = min(contextWindow, 实测 servedWindow) */
   readonly contextWindow: number;
-  /** 水位触发百分比（1–99，缺省 92）：占用 > 分母 × pct% → 强制压缩 */
   readonly triggerPct?: number;
   readonly reserveTokens?: number;
   readonly keepRecentTokens?: number;
-  /** 轮次下限护栏（缺省 5——best-effort：emergency 豁免 / 切口存在性优先 / 25% 窗硬顶） */
   readonly keepMinTurns?: number;
-  /** 摘要模型面；缺席 = 软禁用（一次性告警，水位/自愈不动作） */
   readonly summarizer?: {
     readonly model: string;
     readonly provider?: string;
@@ -41,16 +33,7 @@ export interface CompactionOptions {
 }
 
 const DEFAULT_RESERVE = 16_384;
-/** 轮次下限护栏缺省（CONTEXT-TOKEN-UNIFICATION §7.3：真实数据背书——受益面 71%
- *  的会话末 5 轮含大工具轮；5 轮保留量中位 43k / max 233k 不失控） */
 
-/** 水位分档缺省表（CONTEXT-TOKEN-UNIFICATION §7.4 定稿）：水位 = 异常兜底而非
- *  常规防线（L2 已在前收紧）；比 claude 1M 档（96.7%）激进、与 kimi（85%）持平。
- *  小窗按绝对余量提前：余量 ≥ 最大单步暴涨（实测 29.6k）+ 摘要输出预留（20k）
- *  = 33k 绝对保险线（claude 准则）——256k 档 80% = 余 51k > 33k。 */
-/** 首档绝对余量下限（对抗审查 B M-1）：档位是区间不是单点——165k 以下窗的
- *  20% 余量 < 33k 保险线（最大单步暴涨 29.6k + 摘要输出预留 ~3.4k 封顶后的
- *  常量口径）；低窗取 max(百分比, 绝对下限) 保底（兜底窗 128k：25.6k → 33k） */
 const FIRST_TIER_MIN_HEADROOM_TOKENS = 33_000;
 
 export const TRIGGER_TIERS = [
@@ -65,9 +48,6 @@ export function triggerTierOf(contextWindow: number): (typeof TRIGGER_TIERS)[num
   return TRIGGER_TIERS.find((tier) => contextWindow <= tier.maxWindow) ?? TRIGGER_FALLBACK;
 }
 
-/** 窗口溢出码闭集（自愈唤醒词表——docs/OUTPUT-TOKEN-CONTINUATION.md compaction 节）：
- *  `http-413` = 状态码直报；`context-overflow` = llm 层 overflow 文案分类（主力 provider
- *  的输入溢出是 400+文案，落 http-400 则自愈永不触发）。新溢出形态只加词表项。 */
 const WINDOW_OVERFLOW_CODES: ReadonlySet<string> = new Set(["http-413", "context-overflow"]);
 const DEFAULT_IDLE_TIMEOUT_MS = 120_000;
 
@@ -75,7 +55,6 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-/** 数值项校验（fail-fast；NaN 比较恒 false 不静默穿透） */
 function expectNumber(name: string, value: number, min: number): number {
   if (!isFiniteNumber(value) || value < min) {
     throw new Error(`compaction: ${name} must be a finite number >= ${String(min)}`);
@@ -83,11 +62,8 @@ function expectNumber(name: string, value: number, min: number): number {
   return value;
 }
 
-/** 装配期值域 fail-fast + 缺省解析 */
 function resolveConfig(options: CompactionOptions): ResolvedConfig {
   const contextWindow = expectNumber("contextWindow", options.contextWindow, 1);
-  // 首档绝对余量语义（M-1）：余量 = max(pct·窗, 33k)——百分比线低于下限时按
-  // 下限折算（cap 95 防极端小窗撞值域；显式 triggerPct 不受下限约束——用户裁量）
   const tier = triggerTierOf(contextWindow);
   const tierTriggerPct = expectNumber("triggerPct", options.triggerPct ?? tier.triggerPct, 1);
   const headroomPct = Math.ceil(((1 - FIRST_TIER_MIN_HEADROOM_TOKENS / contextWindow) * 100));
@@ -145,7 +121,6 @@ interface RequestErrorPayload {
   readonly signal: AbortSignal;
 }
 
-/** 手动压缩的落账 turn/step 来源：在飞轮取当前值，否则末次收轮的 turn + step 0（观测字段） */
 function resolveAt(events: readonly import("@x-harness/session").SessionEvent[]): { turn: number; step: number } {
   let openTurn = -1;
   let step = 0;
@@ -173,7 +148,6 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
     apply: (ctx: Context): Disposer => {
       const store = ctx.use(sessionStore);
       let llm: LlmRuntime | undefined;
-      // llm 为可选停靠：缺席 = 摘要面软禁用；层 dispose 会 reject 停靠者——附 catch 不外溢
       void ctx
         .waitFor(llmRuntime)
         .then((runtime) => {
@@ -194,7 +168,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
       const warn = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
         const suffix = detail === undefined ? "" : ` ${JSON.stringify(detail)}`;
         process.stderr.write(`compaction/${code} session=${session}${suffix}\n`);
-        ctx.emit(compactionDiagnostic, { session, code, ...detail } as never); // 审计 #13：事件总线可见
+        ctx.emit(compactionDiagnostic, { session, code, ...detail } as never);
       };
 
       const deps = {
@@ -227,11 +201,10 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         return runCompact(deps, { trigger: "manual", ...fields, ...at });
       };
 
-      /** 水位触发：占用（含领取未落账批次）> min(主窗, servedWindow) × triggerPct% → 强制压缩 */
       const watermark = async (payload: PreStepPayload): Promise<void> => {
         if (llm === undefined || config.summarizer === undefined) {
-          if (config.summarizer !== undefined) return; // llm 未停靠（瞬态竞态/缺席）——静默跳过，手动面可见 llm-unavailable
-          warnOnce(payload.session, "summarizer-unconfigured"); // 软禁用：不测不压
+          if (config.summarizer !== undefined) return;
+          warnOnce(payload.session, "summarizer-unconfigured");
           return;
         }
         const session = store.get(payload.session);
@@ -243,7 +216,7 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         if (!shouldCompact(tokens, effectiveWindow, config.triggerPct)) return;
         const result = await compact({ session: payload.session, trigger: "auto", turn: payload.turn, step: payload.step, signal: payload.signal });
         if (!result.ok && !NOOP_SILENT_REASONS.has(result.reason)) {
-          warnOnce(payload.session, "trigger-noop", { reason: result.reason }); // 阈值成立而未落账：估算失配/无净切口的诊断信号
+          warnOnce(payload.session, "trigger-noop", { reason: result.reason });
         }
       };
 
@@ -260,11 +233,11 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         payload: RequestErrorPayload,
         next: (input: RequestErrorPayload) => Promise<{ readonly kind: "retry" } | undefined>,
       ): Promise<{ readonly kind: "retry" } | undefined> => {
-        const downstream = await next(payload); // 先行：下游（llm-retry 等）已裁决 retry 则让位
+        const downstream = await next(payload);
         if (downstream !== undefined) return downstream;
         if (payload.failure.code === undefined || !WINDOW_OVERFLOW_CODES.has(payload.failure.code)) return downstream;
         const key = `${String(payload.turn)}:${String(payload.step)}`;
-        if (healed.get(payload.session) === key) return downstream; // 同 (turn,step) 恰自愈一次
+        if (healed.get(payload.session) === key) return downstream;
         healed.set(payload.session, key);
         const session = store.get(payload.session);
         if (session !== undefined) {
@@ -281,9 +254,6 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
             else warn(payload.session, "served-window-write-failed", { reason: appended.reason });
           }
         }
-        // 紧急压缩（keep=0/quote=0）；成败都重试恰一次——重试由驱动重读投影。
-        // join 例外:先等在飞飞行落定再以紧急参数发起新飞行——否则汇入 auto/manual
-        // (keep=20k)的飞行拿不到激进参数,healed 键已耗而重试仍超窗,自愈被稀释
         const inflightFor = inflight.get(payload.session);
         if (inflightFor !== undefined) await inflightFor.promise.catch(() => {});
         await compact({
@@ -297,15 +267,12 @@ export function createCompactionPlugin(options: CompactionOptions): Plugin {
         return { kind: "retry" };
       };
 
-      /** trigger-noop 告警的静默理由：瞬态/取消类不代表估算失配 */
       const NOOP_SILENT_REASONS = new Set<CompactionSkipReason>(["summarizer-unconfigured", "llm-unavailable", "aborted"]);
 
       const offs = [
         ctx.on(agentPreStep, onPreStep as never),
         ctx.on(agentRequestError, onRequestError as never),
         ctx.on(sessionDisposed, ({ session }: { session: SessionId }) => {
-          // inflight 不在此摘：identity 删除（落定回调）自洽，且同 id 重生会话的新飞入不得被误摘。
-          // 世代推进：同 id 重生后，新调用不 join 旧世代的在飞飞行（旧飞行对着已封存句柄）
           epochs.set(session, (epochs.get(session) ?? 0) + 1);
           healed.delete(session);
           for (const key of warned) {

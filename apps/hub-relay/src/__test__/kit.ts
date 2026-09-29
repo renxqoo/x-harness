@@ -1,4 +1,3 @@
-// relay 测试装置：真 TCP socket 起服务 + 客户端 WebSocket 连接（同仓 ws.ts 复用）
 import { connect } from "node:net";
 import { acceptKey, WebSocketFrameReader, WebSocketFrameWriter } from "@x-harness/remote-protocol";
 import type { RelayHandle } from "../main.ts";
@@ -41,7 +40,6 @@ export async function dialClient(spec: { port: number; token: string; path?: str
   const writer = new WebSocketFrameWriter(socket, { clientMask: true });
   const key = randomBytes(16).toString("base64");
   socket.write(`GET ${spec.path ?? "/"}?token=${encodeURIComponent(spec.token)} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
-  // 读握手响应
   await new Promise<void>((resolve, reject) => {
     let buf = Buffer.alloc(0);
     const onData = (chunk: Buffer): void => {
@@ -119,7 +117,6 @@ export async function httpPost(spec: { port: number; path: string; body: unknown
   const head = headerEnd >= 0 ? raw.slice(0, headerEnd) : "";
   let body = headerEnd >= 0 ? raw.slice(headerEnd + 4) : "";
   if (head.toLowerCase().includes("transfer-encoding: chunked")) {
-    // 逐 chunk 解包
     const parts: string[] = [];
     let cursor = 0;
     for (;;) {

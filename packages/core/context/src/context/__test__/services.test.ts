@@ -36,10 +36,10 @@ describe("服务注册表（§1）", () => {
     const token = defineService<Counter>("counter");
     ctx.provide(token, { n: 0 });
     const child = ctx.scope({ agentId: "a" });
-    expect(child.use(token).n).toBe(0); // 继承祖先
-    child.provide(token, { n: 1 }); // 子层遮蔽
+    expect(child.use(token).n).toBe(0);
+    child.provide(token, { n: 1 });
     expect(child.use(token).n).toBe(1);
-    expect(ctx.use(token).n).toBe(0); // 父层不受影响
+    expect(ctx.use(token).n).toBe(0);
   });
 
   it("provide 广播 service/provided（提供层 chain-up：祖先听见、兄弟不可见——C3）", () => {
@@ -51,13 +51,13 @@ describe("服务注册表（§1）", () => {
     const sibling = ctx.scope({ agentId: "sib" });
     sibling.on(serviceProvided, ({ service }) => siblingHeard.push(service));
 
-    ctx.provide(rootToken, { n: 0 }); // root 提供：root 链可见
+    ctx.provide(rootToken, { n: 0 });
     expect(rootHeard).toEqual(["root-counter"]);
-    expect(siblingHeard).toEqual([]); // 兄弟不在提供层祖先链上——不可见
+    expect(siblingHeard).toEqual([]);
 
     const childToken = defineService<Counter>("child-counter");
     const child = ctx.scope({ agentId: "child" });
-    child.provide(childToken, { n: 0 }); // 子层提供：祖先（root）听见
+    child.provide(childToken, { n: 0 });
     expect(rootHeard).toEqual(["root-counter", "child-counter"]);
   });
 
@@ -66,8 +66,8 @@ describe("服务注册表（§1）", () => {
     const token = defineService<Counter>("counter");
     const stop = ctx.provide(token, { n: 0 });
     stop();
-    stop(); // 二次调用 no-op
-    await ctx.dispose(); // 层回卷再跑一次同样 no-op
+    stop();
+    await ctx.dispose();
     expect(ctx.tryUse(token)).toBeUndefined();
   });
 

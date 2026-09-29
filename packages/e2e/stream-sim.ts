@@ -1,8 +1,3 @@
-// 流式管线本地模拟器（零成本，无真实模型）：进程内 anthropic SSE 假服务器 × 全链真实插件栈。
-// 用法：bun packages/e2e/stream-sim.ts [smooth|lump]
-//   smooth = 每帧 8ms 均匀下发（理想上游）；lump = 116 帧/坨、坨间 1.3s（GLM 实测签名）。
-// 观察：smooth 模式下若终端逐帧上屏 → 管线与显示面无罪，「一段一段」只能来自上游到达节奏；
-//       lump 模式复刻观感，可与真实端点行为对照。
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,9 +15,9 @@ import { sessionCheckpointPlugin } from "@x-harness/session-checkpoint";
 const MODE = process.argv[2] === "lump" ? "lump" : "smooth";
 const THINK_FRAMES = 400;
 const TEXT_FRAMES = 300;
-const FRAMES_PER_LUMP = 116; // GLM 实测：每坨 ~116 帧（≈20KB 定长缓冲）
+const FRAMES_PER_LUMP = 116;
 const LUMP_PAUSE_MS = 1300;
-const FRAME_MS = 8; // GLM 实测：平滑段内 ~7-8ms/帧
+const FRAME_MS = 8;
 
 const sleep = (ms: number): Promise<void> =>
   new Promise<void>((resolve) => {
@@ -64,7 +59,7 @@ const server = Bun.serve({
 });
 
 const root = await mkdtemp(join(tmpdir(), "xh-sim-"));
-const withStore = !process.argv.includes("store=off"); // A/B：有无持久化（jsonl+checkpoint）对照
+const withStore = !process.argv.includes("store=off");
 try {
   const ctx = createContext();
   const unload = await loadPlugins(

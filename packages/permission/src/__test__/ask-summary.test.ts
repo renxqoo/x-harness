@@ -1,6 +1,3 @@
-// ask 目标描述（AskPayload.summary）：构造优先序 path → command → pattern，垃圾入参缺席
-// 降级；插件级贯通（症状回归：审批确认文案只有 unknown tool:edit，确认方无从得知要改哪个文件）。
-
 import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -65,7 +62,6 @@ describe("ask 载荷带目标描述（插件级贯通）", () => {
   });
 
   it("read 批量形态：paths 数组逐条列出（TURN-REDUCTION P1——确认条里看清每个目标）", async () => {
-    // 界外路径触发 ask（装置 root=/w/app，虚构绝对路径必然界外）
     const asks = await asksOf("read", { paths: ["/w/app/../a.ts", "/w/app/../sub/b.ts"] });
     expect(asks[0]?.summary).toBe("/w/app/../a.ts, /w/app/../sub/b.ts");
   });

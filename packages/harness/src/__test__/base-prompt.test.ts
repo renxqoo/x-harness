@@ -1,6 +1,3 @@
-// createBasePromptPlugin 全套（docs/SYSTEM-PROMPT.md §1.4/§3）：facts 插值、入口归一
-// （注入面收口/垃圾降级）、baseCore 锚点可用性、注销回收、inject topo 装配。
-
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { wellKnown, systemPrompt, systemPromptPlugin } from "@x-harness/system-prompt";
@@ -19,7 +16,7 @@ describe("basePromptPlugin（docs/SYSTEM-PROMPT.md §1.4）", () => {
     expect(text).toContain("- Platform: darwin");
     expect(text).toContain("- Shell: zsh");
     expect(text).not.toContain("{{");
-    expect(text).not.toContain("Today's date"); // 日期已迁快照通道（TAIL-SNAPSHOT-CHANNEL）
+    expect(text).not.toContain("Today's date");
   });
 
   it("isGit=false 渲染 no", async () => {
@@ -96,7 +93,7 @@ describe("basePromptPlugin（docs/SYSTEM-PROMPT.md §1.4）", () => {
     expect(text).toContain("{{cwd}}");
     expect(text).toContain("{{isGit}}");
     expect(text).toContain("{{shell}}");
-    expect(text).not.toContain("Git branch"); // git 字段缺席 → 行不渲染
+    expect(text).not.toContain("Git branch");
     expect(text).not.toContain("Git worktree of");
   });
 
@@ -104,36 +101,36 @@ describe("basePromptPlugin（docs/SYSTEM-PROMPT.md §1.4）", () => {
     const text = baseCoreText({ ...FACTS, gitBranch: "feat/x", gitWorktreeMain: "/w/main" });
     expect(text).toContain("- Git branch: feat/x");
     expect(text).toContain("- Git worktree of: /w/main");
-    expect(text).toContain("originates outside the user and the harness"); // 注入防御按来源分类（非信道）
-    expect(/not\s+proof\s+of\s+origin/.test(text)).toBe(true); // 信封边界（对抗审查 H1）：框架行=指令、格式非来源证明（折行客忍）
-    expect(text).toContain("carries no authority"); // 外部内容无权限继承（委派协议可回应、不授权）
-    expect(baseCoreText({ cwd: "unknown", isGit: false, platform: "unknown", shell: "unknown" })).not.toContain("## Environment"); // 全缺席省段形（facts 全降级）
+    expect(text).toContain("originates outside the user and the harness");
+    expect(/not\s+proof\s+of\s+origin/.test(text)).toBe(true);
+    expect(text).toContain("carries no authority");
+    expect(baseCoreText({ cwd: "unknown", isGit: false, platform: "unknown", shell: "unknown" })).not.toContain("## Environment");
   });
 
   it("注入形态两分如实描述：标签信封（snapshot/system-reminder/cross-session）与纯文本通知（agent/task-notification）分列，不虚称通知带信封", () => {
     const text = baseCoreText(FACTS);
-    expect(text).toContain("two shapes of internal messages"); // 修正前症状：虚称通知为 envelope-framed，诱发模型自造 <agent_notification> 标签回显
+    expect(text).toContain("two shapes of internal messages");
     expect(text).toContain("<system-reminder>");
     expect(text).toContain("<cross-session-message");
-    expect(text).toContain("[agent-notification]"); // 通知首行词面照实入提示
+    expect(text).toContain("[agent-notification]");
     expect(text).toContain("[task-notification]");
-    expect(text).not.toContain("envelope-framed"); // 旧误述整体退役
+    expect(text).not.toContain("envelope-framed");
   });
 
   it("通知消化语义在场：禁止逐字转发与套标签（症状：主 agent 把子代理通知原文包 <agent_notification> 直接输出）", () => {
     const text = baseCoreText(FACTS);
     expect(text).toContain("brief the user in your own words");
-    expect(/never\s+forward\s+a\s+notice\s+verbatim/.test(text)).toBe(true); // 折行客忍
+    expect(/never\s+forward\s+a\s+notice\s+verbatim/.test(text)).toBe(true);
     expect(text).toContain("never wrap it in tags");
-    expect(text).toContain("the user cannot see directly"); // 转述动机如实告知：通知 UI 隐藏，模型是用户获知通道
+    expect(text).toContain("the user cannot see directly");
   });
 
   it("任务清单配合句在场：复杂任务拆 task_create/task_update，in_progress 先行/completed 即时，task_list 反映真实进度", () => {
     const text = baseCoreText(FACTS);
     expect(text).toContain("For complex tasks");
-    expect(/task\s+tools/.test(text)).toBe(true); // 折行客忍（the task 与 tools 跨行）
+    expect(/task\s+tools/.test(text)).toBe(true);
     expect(text).toContain("task_create / task_update");
-    expect(/in_progress\s+BEFORE/.test(text)).toBe(true); // 折行客忍
+    expect(/in_progress\s+BEFORE/.test(text)).toBe(true);
     expect(text).toContain("completed as soon as it is done");
     expect(text).toContain("real progress");
   });

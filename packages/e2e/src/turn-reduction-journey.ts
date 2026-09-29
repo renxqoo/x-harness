@@ -1,8 +1,3 @@
-// 轮次收敛 e2e 旅程（TURN-REDUCTION.md §2.3 e2e）：
-// 旅程 A：单响应双 tool_use（不同 index）→ 两工具都派发、结果配对、meter 计量
-//         toolUseCalls=2 / parallelSteps=1（lever B 全链验证：协议→调度→计量）。
-// 旅程 B：真 read 工具 paths 批量 → 两文件块 + permission 放行（lever A 执行面）。
-
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,19 +21,17 @@ import { createPermissionPlugin } from "@x-harness/permission";
 import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import { must } from "./check.ts";
 
-/** 双 tool_use 单响应剧本（不同 index 聚积为两块——stream.ts 按 index 分桶） */
 function parallelToolsScript(): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LlmChunk> {
     yield { type: "tool-call-delta", index: 0, callId: "c1", name: "note", argumentsDelta: "{}" };
     yield { type: "tool-call-delta", index: 1, callId: "c2", name: "note", argumentsDelta: "{}" };
-    yield { type: "finish", finish: { kind: "max-tokens" } }; // 工具轮收束形态（对齐 continuation.test 范例——finish 联合无 tool_use）
+    yield { type: "finish", finish: { kind: "max-tokens" } };
   })();
 }
 
 export async function turnReductionJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-turn-"));
   try {
-    // 旅程 A：单响应双 tool_use → 派发 + 计量
     {
       const ctx = createContext();
       const scripts: Array<AsyncGenerator<LlmChunk>> = [];
@@ -80,14 +73,12 @@ export async function turnReductionJourney(): Promise<void> {
         await made.value.dispose();
       }
       } finally {
-        // must 断言失败也回卷（对照 delegation-journey 审查 B#1 纪律）
         for (const d of unload as Disposer[]) await d();
         await ctx.dispose();
       }
       console.log("旅程A：单响应双 tool_use → 派发+配对+meter 计量 通过");
     }
 
-    // 旅程 B：真 read 工具 paths 批量
     {
       const ctx = createContext();
       const scripts: Array<AsyncGenerator<LlmChunk>> = [];
@@ -104,8 +95,6 @@ export async function turnReductionJourney(): Promise<void> {
         systemPromptPlugin,
         agentLoopPlugin,
         tokenMeterPlugin,
-        // permission 真装配（fenceKit 同款序）：modes 在前（V4 模式注册表），插件在后
-        // ——批量聚合裁决链全走（auto 档界内 allow；deny/ask 面由 B2 单测背书）
         createPermissionModesPlugin(),
         createPermissionPlugin({ root: readRoot }),
         createReadPlugin({ gate, observed, env: createLocalEnv(readRoot) }),
@@ -114,7 +103,7 @@ export async function turnReductionJourney(): Promise<void> {
       scripts.push(
         (async function* (): AsyncGenerator<LlmChunk> {
           yield { type: "tool-call-delta", index: 0, callId: "r1", name: "read", argumentsDelta: JSON.stringify({ paths: ["one.ts", "two.ts"] }) };
-          yield { type: "finish", finish: { kind: "max-tokens" } }; // 工具轮收束形态（对齐 continuation.test 范例——finish 联合无 tool_use）
+          yield { type: "finish", finish: { kind: "max-tokens" } };
         })(),
       );
       scripts.push(textScript("batch read done"));

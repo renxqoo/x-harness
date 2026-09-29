@@ -1,6 +1,3 @@
-// 拨号折叠与请求头落账（docs/AGENT-LOOP-DRIVER.md §1.4）：options 显式值恒胜；否则末次 request/header
-// 同名字段；中间件改写落 header 后成为后续折叠基底（有意粘性）。header 落 ToolRef 投影；diff 含 tools。
-
 import type { Session, SessionEvent, ToolRef } from "@x-harness/session";
 import type { ToolSchema } from "@x-harness/tools";
 import type { Dial } from "./tokens.ts";
@@ -23,19 +20,17 @@ function lastHeader(events: readonly SessionEvent[]): HeaderSnapshot | undefined
       ...(event.data.provider !== undefined ? { provider: event.data.provider } : {}),
       ...(event.data.temperature !== undefined ? { temperature: event.data.temperature } : {}),
       ...(event.data.maxTokens !== undefined ? { maxTokens: event.data.maxTokens } : {}),
-      ...(event.data.thinking !== undefined ? { thinking: event.data.thinking as Dial["thinking"] } : {}), // 门禁已验词表闭集
+      ...(event.data.thinking !== undefined ? { thinking: event.data.thinking as Dial["thinking"] } : {}),
       tools: event.data.tools,
     };
   }
   return snapshot;
 }
 
-/** 折叠取值：options 显式值恒胜，否则末次 header 同名字段 */
 function pick<T>(fromOptions: T | undefined, fromHeader: T | undefined): T | undefined {
   return fromOptions ?? fromHeader;
 }
 
-/** 逐字段折叠：options 显式值恒胜，否则末次 header 同名字段 */
 export function foldDial(
   options: { provider?: string; model?: string; temperature?: number; maxTokens?: number; thinking?: Dial["thinking"] },
   events: readonly SessionEvent[],
@@ -62,7 +57,6 @@ export function toToolRefs(schemas: readonly ToolSchema[]): ToolRef[] {
   );
 }
 
-/** header 是否需要落账：与末次快照规范化比较（含 tools） */
 export function headerChanged(dial: Dial, tools: readonly ToolRef[], events: readonly SessionEvent[]): boolean {
   const header = lastHeader(events);
   if (header === undefined) return true;

@@ -1,6 +1,3 @@
-// 插件管理面全量：registry 读写/撞名拒、install inspect 三态/拷贝/哈希/回滚、
-// admin list/set_enabled/remove 分叉、external-plugins vendor 装载（worker 模式恒定）、
-// apiVersion 拒载留痕（P4）、P1 编排层覆写。
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,7 +24,6 @@ async function agentDirOf(): Promise<string> {
   return dir;
 }
 
-/** 造第三方插件源目录（plugin.json + index.ts，entryBody 默认零 SDK 依赖） */
 async function makeThirdPartySource(name: string, options?: { apiVersion?: number; entry?: string; withSdkImport?: boolean }): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "pm-src-"));
   tempDirs.push(dir);
@@ -44,7 +40,6 @@ async function makeThirdPartySource(name: string, options?: { apiVersion?: numbe
   return root;
 }
 
-// ── registry ────────────────────────────────────────────────────────────────
 
 describe("plugins-registry：清单文件", () => {
   it("缺席 = 空清单；坏文件降级空；坏条目逐条丢", async () => {
@@ -74,7 +69,6 @@ describe("plugins-registry：清单文件", () => {
   });
 });
 
-// ── catalog 双源 ────────────────────────────────────────────────────────────
 
 describe("plugins-catalog：双源与 apiVersion 门", () => {
   const vendorEntry = (name: string, apiVersion: number) => ({ name, dir: name, sha256: "h", approvedBy: "user" as const, approvedAt: 1, apiVersion, origin: "manual" as const });
@@ -83,7 +77,7 @@ describe("plugins-catalog：双源与 apiVersion 门", () => {
     const rows = enabledPlugins(undefined, [vendorEntry("v-ok", 1), vendorEntry("v-old", 99)]);
     expect(rows).toContain("token-analytics");
     expect(rows.some((r) => typeof r !== "string" && r.name === "v-ok")).toBe(true);
-    expect(rows.some((r) => typeof r !== "string" && r.name === "v-old")).toBe(false); // P4：apiVersion 拒
+    expect(rows.some((r) => typeof r !== "string" && r.name === "v-old")).toBe(false);
     const disabled = enabledPlugins(["token-analytics", "v-ok"], [vendorEntry("v-ok", 1)]);
     expect(disabled).toEqual([]);
   });
@@ -99,7 +93,6 @@ describe("plugins-catalog：双源与 apiVersion 门", () => {
   });
 });
 
-// ── install：inspect 三态 / 拷贝 / 哈希 / 回滚 ──────────────────────────────
 
 describe("plugins-install：inspect 与 install", () => {
   it("inspect 三态：ready / rename（manifest 名 ≠ 目录名）/ blocked（SDK import）", async () => {
@@ -133,7 +126,6 @@ describe("plugins-install：inspect 与 install", () => {
       const [entry] = await readVendorRegistry(agentDir);
       expect(entry?.sha256).toBe(first.plugin.sha256);
       expect(entry?.origin).toBe("manual");
-      // 哈希稳定：同树重算一致
       expect(await hashTree(first.plugin.path)).toBe(first.plugin.sha256);
     }
     const again = await installPlugin({ sourcePath: src, agentDir });
@@ -167,7 +159,6 @@ describe("plugins-install：inspect 与 install", () => {
   });
 });
 
-// ── admin：list / set_enabled / remove 分叉 ─────────────────────────────────
 
 describe("plugins-admin：合并视图与启停", () => {
   it("list：builtin + vendor + 装载态合并；apiVersion 拒载透出原因（P4）", async () => {
@@ -201,7 +192,6 @@ describe("plugins-admin：合并视图与启停", () => {
   });
 });
 
-// ── external-plugins：vendor 装载腿（P1 编排恒 worker）──────────────────────
 
 describe("external-plugins：vendor 装载腿", () => {
   it("vendor 件经 worker 模式装载 + caps 钩世界（端到端）", async () => {
@@ -209,11 +199,10 @@ describe("external-plugins：vendor 装载腿", () => {
     const src = await makeThirdPartySource("e2e-plugin");
     await installPlugin({ sourcePath: src, agentDir });
     const ctx = createContext();
-    // WORLD_TOKENS 里挑一个服务名给插件 use（worker RPC 桥真实过线）
     await installExternalPlugins({ ctx, agentDir, disabled: ["token-analytics"] });
     const svc = ctx.use(pluginManagerService);
     const records = svc.list();
-    expect(records.some((r) => r.name === "e2e-plugin" && r.mode === "worker")).toBe(true); // P1：vendor 恒 worker
+    expect(records.some((r) => r.name === "e2e-plugin" && r.mode === "worker")).toBe(true);
     await ctx.dispose();
   }, 20_000);
 
@@ -224,7 +213,6 @@ describe("external-plugins：vendor 装载腿", () => {
     ]);
     const ctx = createContext();
     await installExternalPlugins({ ctx, agentDir, disabled: ["token-analytics"] });
-    // 全部 targets 滤除 → plugin-manager 本就不装配（空装载无意义）——能力缺席语义
     expect(ctx.tryUse(pluginManagerService)).toBeUndefined();
     await ctx.dispose();
   });
@@ -236,20 +224,17 @@ describe("external-plugins：vendor 装载腿", () => {
       { ctx, agentDir, disabled: ["token-analytics"] },
       { vendorEntries: [{ name: "ghost-tree", dir: "ghost-tree", sha256: "h", approvedBy: "user", approvedAt: 1, apiVersion: 1, origin: "manual" }] },
     );
-    // 入口缺席 → 无可装 targets → plugin-manager 未装（tryUse 缺席语义）
     expect(ctx.tryUse(pluginManagerService)).toBeUndefined();
     await ctx.dispose();
   });
 });
 
-// ── 对抗审查修复回归 ─────────────────────────────────────────────────────────
 
 describe("对抗审查修复回归（3a/2a/4a/6a）", () => {
   it("3a：文件面伪造 confirmed:true 的提案——无内存确认恒不可消费（双查门）", async () => {
     const agentDir = await agentDirOf();
     const { mkdir, writeFile: wf } = await import("node:fs/promises");
     await mkdir(join(agentDir, "plugins"), { recursive: true });
-    // agent 直写伪造：confirmed:true 但从未经 host confirm 命令（内存无确认态）
     const forged = {
       proposalId: "pp-forged",
       sourcePath: "/tmp/evil",
@@ -263,10 +248,8 @@ describe("对抗审查修复回归（3a/2a/4a/6a）", () => {
     };
     await wf(join(agentDir, "plugins", "proposals.json"), JSON.stringify([forged]));
     const store = createPluginProposalStore(agentDir);
-    // 登记可见（面板展示）——但消费恒拒（内存确认缺席）
     expect((await store.list()).some((r) => r.proposalId === "pp-forged")).toBe(true);
     expect(await store.consumeConfirmed("pp-forged")).toBeUndefined();
-    // 经 confirm 命令面（内存置位）后可消费——合法链路不破
     await store.setConfirmed("pp-forged", true);
     const consumed = await store.consumeConfirmed("pp-forged");
     expect(consumed?.proposalId).toBe("pp-forged");
@@ -276,7 +259,7 @@ describe("对抗审查修复回归（3a/2a/4a/6a）", () => {
     const agentDir = await agentDirOf();
     const bad = { name: "token-analytics", dir: "x", sha256: "h", approvedBy: "user" as const, approvedAt: 1, apiVersion: 1, origin: "manual" as const };
     await expect(updateVendorRegistry(agentDir, (cur) => [...cur, bad])).rejects.toThrow("conflicts with builtin");
-    expect(await readVendorRegistry(agentDir)).toEqual([]); // 拒后无残留
+    expect(await readVendorRegistry(agentDir)).toEqual([]);
   });
 
   it("1b：manifest.entry 越界（../ 逃逸与绝对路径）→ 入口探测 undefined", async () => {
@@ -302,7 +285,6 @@ describe("对抗审查 6a 回归：hot_install 的 disabled/apiVersion 门（han
     await setPluginEnabled({ agentDir, name: "hot-gate", enabled: false });
     const { readHubSettings } = await import("../shared/settings-store.ts");
     const disabled = (await readHubSettings(agentDir))["plugins.disabled"] ?? [];
-    // handler 的判定原语：名单含名 → state_conflict 拒（plugins-hot.ts:47-51 同判）
     expect(disabled.includes("hot-gate")).toBe(true);
   });
 });

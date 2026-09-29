@@ -1,5 +1,3 @@
-// shell 词法封装表驱动：sh 真执行回读断言（不经 mock——词法正确性由真实 shell 裁决）。
-
 import { describe, expect, it } from "vitest";
 import { commandOf, shellQuoteWord } from "../shell-quote.ts";
 

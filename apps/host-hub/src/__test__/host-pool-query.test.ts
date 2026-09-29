@@ -1,6 +1,3 @@
-// worker-pool host→worker 内部查询面（plugins/list 装载态聚合的传输基元）：
-// queryLiveWorkers 发出 internal id 命令、应答按 id 兑现、超时/worker 死亡容错、
-// 无 live 会话空集。真进程行为由 plugins-loaded-status.test.ts 背书。
 import { describe, expect, test } from "vitest";
 import { makePool, until, wakeAndDeliver, wrote } from "./kit/pool-fixture.ts";
 
@@ -24,14 +21,12 @@ describe("queryLiveWorkers（内部查询面）", () => {
 
     const pending = f.pool.queryLiveWorkers("get_plugins", 5_000);
     await until(wrote(worker, '"get_plugins"'));
-    // 应答行携带 internal id（@hub-internal: 前缀）——从写入行里解析回
     const sent = worker?.written.find((line) => line.includes('"get_plugins"')) ?? "";
     const internalId = (JSON.parse(sent) as { id: string }).id;
     expect(internalId.startsWith("@hub-internal:")).toBe(true);
     worker?.onLine(responseLine(internalId, "get_plugins", { loaded: [{ name: "token-analytics", mode: "process", status: "active" }] }));
     const results = await pending;
     expect(results).toEqual([{ loaded: [{ name: "token-analytics", mode: "process", status: "active" }] }] as unknown[]);
-    // internal 应答不进客户端帧流
     expect(f.client.some((line) => line.includes("get_plugins"))).toBe(false);
   });
 

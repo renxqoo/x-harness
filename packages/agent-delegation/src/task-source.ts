@@ -1,7 +1,3 @@
-// agent 任务源（docs/TASKS.md §4-2 + docs/TASK-PUSH-DESIGN.md §2.1）：verbs 的 stop 包成
-// TaskSource 注册进 task-tools 的 hub（报告读面归 [agent-notification] 推送）。probe = nameaddr 解析 + owner 预检——denied（not-owner）终结透传，miss 续走
-// bash 源；无效调用方判定在工具入口前置完成，此处为全量防御。
-
 import type { SessionId } from "@x-harness/session";
 import type { TaskProbe, TaskSource } from "@x-harness/task-tools";
 import type { VerbDeps } from "./verbs.ts";
@@ -20,7 +16,6 @@ export function agentTaskSource(deps: VerbDeps): TaskSource {
       const resolved = resolveAddress(deps.lineage, caller, taskId);
       if (resolved.kind === "miss") return { kind: "miss" };
       if (resolved.kind === "main") return { kind: "denied", reason: MAIN_IS_NOT_A_TASK };
-      // 件16 让位协议（§9）：受管行让位 workflow 源（miss 续走——kind 字典序 workflow 恒末源）
       if (resolved.row.settlement !== undefined) return { kind: "miss" };
       if (caller !== resolved.row.parent) {
         return { kind: "denied", reason: `not-owner:${resolved.row.agentId}; you can only stop/message sub-agents you spawned` };

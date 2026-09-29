@@ -1,7 +1,3 @@
-// 任务日志槽测试（docs/TASK-PUSH-DESIGN.md §2.2/§4）：流式清洗与 cleanAnsi 的全前缀
-// 劈法等价（性质断言——每样本枚举全部切点 + 单字节步进）、写帽字节精确 + UTF-8 边界、
-// 写失败标记不静默、双源交替单写者保序不丢、pumpToSink 跨 chunk UTF-8 撕裂。
-
 import { mkdtempSync, mkdirSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,9 +16,6 @@ afterEach(() => {
 });
 
 describe("StreamCleaner 与 cleanAnsi 的流式等价（全前缀劈法性质断言）", () => {
-  // oracle 边界：cleanAnsi 是三条正则依次全文替换（CSI→OSC→CR），状态机是单趟扫描——
-  // 「未终结 OSC 内嵌完整 CSI」的组合两者不等价（cleanAnsi 先删内嵌 CSI、状态机全保留）。
-  // 流式语义（未终结序列原样保留）才是行为规格，样本刻意避开该组合。
   const ESC = String.fromCharCode(27);
   const BEL = String.fromCharCode(7);
   const samples: readonly string[] = [
@@ -37,9 +30,9 @@ describe("StreamCleaner 与 cleanAnsi 的流式等价（全前缀劈法性质断
     `dangling-esc${ESC}`,
     `${ESC}[12`,
     `${ESC}]osc-no-term`,
-    `${ESC}]a${ESC}\\b${BEL}c`, // ST 后又到 BEL——贪婪正则全删（回溯语义）
-    `${ESC}]a${ESC}\\b${ESC}\\c`, // 双 ST 到 EOF——回溯删到最后 ST
-    `${ESC}[unclosed\nnewline-after`, // CSI 遇非参数非字母——不匹配原样保留
+    `${ESC}]a${ESC}\\b${BEL}c`,
+    `${ESC}]a${ESC}\\b${ESC}\\c`,
+    `${ESC}[unclosed\nnewline-after`,
     `${ESC}z-not-a-sequence`,
   ];
 
@@ -74,7 +67,7 @@ describe("createLogSink 写帽", () => {
   it("字节精确截断 + 截断点 UTF-8 续字节回退（不撕裂多字节字符）+ 前缀保留", async () => {
     const path = join(root, "cap.log");
     const sink = createLogSink(path, 10);
-    sink.accept("€€€€"); // 12 字节 > 帽 10——第 4 个 € 的续字节回退到 9
+    sink.accept("€€€€");
     await sink.close();
     expect(readFileSync(path, "utf8")).toBe("€€€");
     expect(sink.stats().writtenBytes).toBe(9);
@@ -95,7 +88,7 @@ describe("createLogSink 写帽", () => {
   it("帽落在多字节字符起始处回退到 0——如实截空 + truncated", async () => {
     const path = join(root, "cap-zero.log");
     const sink = createLogSink(path, 2);
-    sink.accept("€x"); // € 占 3 字节 > 帽 2——回退到 0
+    sink.accept("€x");
     await sink.close();
     expect(readFileSync(path, "utf8")).toBe("");
     expect(sink.stats().truncated).toBe(true);
@@ -111,7 +104,6 @@ describe("createLogSink 写失败面", () => {
     sink.accept("chunk-one");
     await sink.close();
     expect(sink.stats().writeError).toBeDefined();
-    // 失败标记后的到达如实计数（writtenBytes 是提交口径——失败场景以 writeError 为准）
     sink.accept("late-bytes");
     expect(sink.stats().droppedBytes).toBe("late-bytes".length);
   });
@@ -121,7 +113,6 @@ describe("createLogSink 写失败面", () => {
     mkdirSync(dirPath);
     const sink = createLogSink(dirPath, 1_000);
     sink.accept("chunk");
-    // 等 error 事件落定（writeError 已置、流已 destroyed）——此后的 close 曾永挂（finish/error 均不再发）
     const deadline = Date.now() + 2_000;
     while (sink.stats().writeError === undefined && Date.now() < deadline) {
       await new Promise((resolve) => { setTimeout(resolve, 20); });

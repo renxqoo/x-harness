@@ -1,7 +1,3 @@
-// runPrintMode 进程内集成（docs/CLI.md §2.4）：真装配世界 + 剧本 adapter 驱动完整 turn。
-// text 模式 stdout 纯最终文本/进度走 stderr；json 模式 JSONL 且 done 恰末行；错误退出码 1；
-// 多消息顺序 turn；EPIPE 停写不崩。
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,7 +118,7 @@ describe("runPrintMode text 模式", () => {
     });
     expect(code).toBe(0);
     expect(out).toEqual(["FINAL\n"]);
-    expect(err.join("")).toContain("FINAL"); // 流式进度
+    expect(err.join("")).toContain("FINAL");
   });
 
   it("多消息顺序执行多个 turn", async () => {
@@ -171,7 +167,6 @@ describe("runPrintMode json 模式", () => {
     const lines = out.join("").trim().split("\n").map((line) => JSON.parse(line) as { type: string; [key: string]: unknown });
     expect(lines[0]).toMatchObject({ type: "session", id: "print-test" });
     expect(lines.some((line) => line.type === "stream" && line.kind === "text")).toBe(true);
-    // N1 后半（方案 §3.3）：usage 行摊开 token-meter 快照——含缓存明细与尾值（B1 症状面）
     const usage = lines.find((line) => line.type === "usage");
     expect(usage).toMatchObject({ inputTokens: 120, outputTokens: 40, cacheReadTokens: 90, cacheWriteTokens: 10, lastReportedInput: 120, lastReportedCacheRead: 90 });
     expect(lines.some((line) => line.type === "usage")).toBe(true);
@@ -180,8 +175,6 @@ describe("runPrintMode json 模式", () => {
   });
 
   it("permission 事件行：审批裁决审计事件在订阅期内派发 → JSONL 含 permission 行", async () => {
-    // onStreamStart 在 turn 内（订阅存活期）派发 permissionDecided——permission 插件
-    // 真实裁决路径 emit 的同一 token/payload 形态
     const events: { tool: string; verdict: string; reason: string }[] = [];
     const { harness, run } = await makeHarness([textScript("P")], {
       onStreamStart: () => {
@@ -220,6 +213,6 @@ describe("runPrintMode json 模式", () => {
       }, progressTTY: false,
     });
     expect(code).toBe(1);
-    expect(writes).toBe(1); // 断后不再写
+    expect(writes).toBe(1);
   });
 });

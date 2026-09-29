@@ -1,5 +1,3 @@
-// 纯函数单测：四桶分类 / 族处置表 / 脱敏 / WAL 折叠（compaction 账本、全败判定）。
-
 import { describe, expect, it } from "vitest";
 import { allToolResultsErrored, classifyFailure, DEFAULT_FAMILY_ACTIONS, hasCompactionLedger, sanitizeErrorMessage } from "../index.ts";
 import type { SessionEvent } from "@x-harness/session";

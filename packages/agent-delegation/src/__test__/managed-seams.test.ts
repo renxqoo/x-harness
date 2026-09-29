@@ -1,6 +1,3 @@
-// 件16 接缝单测（docs/AGENT-WORKFLOW.md §6）：spawnManaged/reviveManaged/settle 三动词 +
-// 五豁免（收养/父预检/档化/stopAll 级联/通知改投）——受管分支与普通路径不回归双向断言。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { delegationView } from "../index.ts";
 import type { ManagedCycleReport, SettlementSink } from "../tokens.ts";
@@ -10,14 +7,12 @@ beforeEach(() => {
   resetWorlds();
 });
 
-/** 父会话收到完成通知的等待（普通路径断言） */
 async function waitForNotification(parent: Awaited<ReturnType<typeof spawnParent>>, timeout = 5_000): Promise<void> {
   await vi.waitFor(() => {
     expect(parent.agent.session.events().some((event) => JSON.stringify(event.data).includes("agent-notification"))).toBe(true);
   }, { timeout });
 }
 
-/** sink 收集器（受管投递断言面） */
 function collector(): { readonly sink: SettlementSink; readonly reports: ManagedCycleReport[] } {
   const reports: ManagedCycleReport[] = [];
   return { sink: { onCycleEnd: (report) => reports.push(report) }, reports };
@@ -44,7 +39,6 @@ describe("接缝① spawnManaged", () => {
     expect(reports[0]?.agentId).toBe(agentId);
     expect(reports[0]?.outcome).toBe("completed");
     expect(reports[0]?.summary).toBe("done");
-    // 不直达父：父会话无 [agent-notification]
     const parentText = (parent.agent.session.events().map((e) => JSON.stringify(e.data)).join("\n"));
     expect(parentText).not.toContain("agent-notification");
     await parent.dispose();
@@ -77,9 +71,7 @@ describe("接缝④-1/2：收养与档化豁免", () => {
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "late finish")]);
     const spawned = await view.spawnManaged(parent.agent.session.id, { description: "survivor", prompt: "work", settlement: sink });
     expect(spawned.ok).toBe(true);
-    // 父 dispose（模拟 /new——进程活着）；子已在飞（followup 已 kick）
     await parent.dispose();
-    // 子继续跑完：受管通知投 sink（不因父缺席被收养处死）
     await vi.waitFor(() => expect(reports.length).toBe(1), { timeout: 5_000 });
     expect(reports[0]?.summary).toBe("late finish");
   });
@@ -91,10 +83,10 @@ describe("接缝④-1/2：收养与档化豁免", () => {
     const spawned = await view.spawnManaged(parent.agent.session.id, { description: "managed", prompt: "work", settlement: sink });
     expect(spawned.ok).toBe(true);
     const agentId = spawned.ok ? agentIdOf(spawned.text) : "";
-    await vi.waitFor(() => expect(reports.length).toBe(1), { timeout: 5_000 }); // 首轮完成（子 idle）
-    await parent.dispose(); // 父真死——无豁免时 deliverToRow 会走 adoptOrphan 处死子
+    await vi.waitFor(() => expect(reports.length).toBe(1), { timeout: 5_000 });
+    await parent.dispose();
     const sent = await view.message(parent.agent.session.id, { to: agentId, message: "extra instruction" });
-    expect(sent.ok).toBe(true); // 受管豁免：不因父缺席被收养
+    expect(sent.ok).toBe(true);
   });
 });
 
@@ -108,7 +100,7 @@ describe("接缝③ settle", () => {
     const settled = await view.settle(agentId, "workflow-done");
     expect(settled.ok).toBe(true);
     const listed = await view.list(parent.agent.session.id);
-    expect(listed.some((row) => row.kind === "subagent" && row.agentId === agentId)).toBe(false); // 摘行
+    expect(listed.some((row) => row.kind === "subagent" && row.agentId === agentId)).toBe(false);
     await parent.dispose();
   });
 });
@@ -138,9 +130,8 @@ describe("接缝④-4：stopAll 与级联豁免", () => {
     const rows = await view.list(parent.agent.session.id);
     const managedRow = rows.find((row) => row.kind === "subagent" && row.agentId === managedId);
     const plainRow = rows.find((row) => row.kind === "subagent" && row.agentId === plainId);
-    expect((managedRow as { status?: string } | undefined)?.status).not.toBe("stopped"); // 豁免
-    expect((plainRow as { status?: string } | undefined)?.status).toBe("stopped"); // 普通行照停
-    // 清收：受管行 settle 归还
+    expect((managedRow as { status?: string } | undefined)?.status).not.toBe("stopped");
+    expect((plainRow as { status?: string } | undefined)?.status).toBe("stopped");
     await view.settle(managedId, "cleanup");
     await parent.dispose();
   });
@@ -151,14 +142,11 @@ describe("接缝④-4：stopAll 与级联豁免", () => {
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "cascade window")]);
     const spawned = await view.spawnManaged(parent.agent.session.id, { description: "managed", prompt: "x", settlement: sink });
     expect(spawned.ok).toBe(true);
-    // 在飞窗口内拆卸：级联豁免 = 受管行不被 cancel/dispose/清树（C-F2 语义：拆卸后
-    // 通知监听随插件消亡——sink 不再可达是架构事实，本用例钉「不处死」：拆卸不 throw、
-    // 不因级联把子会话 WAL 从 store 撤除；恢复由下次进程 scanAndRecover 兜）
     const childSession = spawned.ok ? (spawned.text.match(/session (\S+?)\)/)?.[1] ?? "") : "";
     const child = world.loop.get(childSession as never);
     expect(child).toBeDefined();
-    await world.disposePlugins(); // 级联名单不含受管行——不 cancel（拆卸不 throw、无 aborted 风暴）
-    expect(reports.length).toBe(0); // 通知监听随插件摘除（C-F2）——sink 静默是拆卸语义，非处死
+    await world.disposePlugins();
+    expect(reports.length).toBe(0);
   });
 });
 
@@ -174,7 +162,6 @@ describe("接缝④-2：档化豁免（evictIdle）", () => {
     expect(spawned.ok).toBe(true);
     const agentId = spawned.ok ? agentIdOf(spawned.text) : "";
     await vi.waitFor(() => rowVisible(view, parent.agent.session.id, agentId), { timeout: 5_000 });
-    // idle 后 evictIdle 触发（maxResident=0）——受管行豁免：仍在 list（普通行会被 drop）
     const listed = await view.list(parent.agent.session.id);
     expect(listed.some((row) => row.kind === "subagent" && row.agentId === agentId)).toBe(true);
     await view.settle(agentId, "cleanup");
@@ -182,7 +169,6 @@ describe("接缝④-2：档化豁免（evictIdle）", () => {
   });
 });
 
-/** 行可见性等待（档化豁免用例） */
 async function rowVisible(view: import("../index.ts").DelegationView, caller: import("@x-harness/session").SessionId, agentId: string): Promise<void> {
   const rows = await view.list(caller);
   if (!rows.some((row) => row.kind === "subagent" && row.agentId === agentId)) throw new Error("row not visible");

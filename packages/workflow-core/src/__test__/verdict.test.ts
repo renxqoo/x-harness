@@ -1,5 +1,3 @@
-// 裁决器穷举单测（件 16 §8）：三档裁决矩阵、组合链、预算扣减、宽松归一三分支、子集校验。
-
 import { describe, expect, it } from "vitest";
 import { adjudicate, adjudicateChain, extractPayload, stripCodeFence, validateSubset } from "../index.ts";
 import type { Evidence } from "../index.ts";
@@ -51,7 +49,7 @@ describe("adjudicateChain：组合裁决（B+C 链）", () => {
     const ok = adjudicateChain({ tiers: ["schema", "command"], evidenceOfTier: (tier) => (tier === "schema" ? { kind: "schema", extracted: { ok: true }, violations: [] } : { kind: "command", exitCode: 0, output: "" }), budget: BUDGET });
     expect(ok).toEqual({ kind: "accept" });
     const failFast = adjudicateChain({ tiers: ["schema", "command"], evidenceOfTier: (tier) => (tier === "command" ? { kind: "command", exitCode: 2, output: "x" } : undefined), budget: BUDGET, used: { repairs: 3, reopens: 0 } });
-    expect(failFast.kind).toBe("fail"); // command 预算耗尽即终局（前面 schema 缺席跳过）
+    expect(failFast.kind).toBe("fail");
     const reject = adjudicateChain({ tiers: ["schema"], evidenceOfTier: () => ({ kind: "schema", extracted: {}, violations: ["$.x"] }), budget: BUDGET });
     expect(reject.kind).toBe("reject");
   });
@@ -93,10 +91,10 @@ describe("validateSubset：子集校验（违规指向模型可修改的值）",
   it("缺 required / 类型错 / enum 外 / minLength / 数组元素深检——路径化违规", () => {
     const violations = validateSubset(SCHEMA, { title: "", sections: [{ name: "ok" }, { titled: "x" }], level: "z" });
     const paths = violations.map((v) => v.path);
-    expect(paths).toContain("$.title"); // minLength
-    expect(paths).toContain("$.sections[1].name"); // required 缺失
-    expect(paths).toContain("$.level"); // enum
-    expect(violations.every((v) => v.expected.length > 0)).toBe(true); // 每条违规都有「期望什么」
+    expect(paths).toContain("$.title");
+    expect(paths).toContain("$.sections[1].name");
+    expect(paths).toContain("$.level");
+    expect(violations.every((v) => v.expected.length > 0)).toBe(true);
   });
 
   it("超集语法忽略不拒（additionalProperties 等未知关键字零违规）", () => {
@@ -106,16 +104,15 @@ describe("validateSubset：子集校验（违规指向模型可修改的值）",
 
 describe("宽松归一与枚举边角（补覆盖）", () => {
   it("围栏剥层后 JSON 解析 + enum 违规路径 + minLength 边界", () => {
-    // 围栏内 JSON + enum + minLength 组合
     const payload = extractPayload("结果：\n```\n{\"level\": \"x\", \"name\": \"\"}\n```");
     expect(payload).toEqual({ level: "x", name: "" });
     const schema = { type: "object", properties: { level: { enum: ["a", "b"] }, name: { type: "string", minLength: 1 } } };
     const violations = validateSubset(schema, payload);
-    expect(violations.length).toBe(2); // enum 外 + minLength
+    expect(violations.length).toBe(2);
   });
 
   it("空围栏内容 → undefined（stripCodeFence 空内层）", () => {
     expect(stripCodeFence("```\n\n```")).toBe("");
-    expect(extractPayload("```\n\n```")).toBeUndefined(); // 空串 parse 失败 → undefined
+    expect(extractPayload("```\n\n```")).toBeUndefined();
   });
 });

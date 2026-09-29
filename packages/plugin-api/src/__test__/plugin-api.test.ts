@@ -1,6 +1,3 @@
-// P1 糖与裸 token 行为等价性（SDK-MIGRATION-P1 §4）：每 helper 一用例——
-// 变换落账一致/否决配对 deny/流包裹/观察只读。装置最小化（不跑全 loop 的面用裸 dispatch）。
-
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
@@ -17,7 +14,6 @@ import { tapAssistant, tapSessionEvents, transformAssistant, transformDial, tran
 
 const AGENT = { model: "m", provider: "fake" };
 
-/** 前缀包裹（模块级——压嵌套） */
 async function* prefixWrap(prefix: string, inner: AsyncIterable<LlmChunk>): AsyncGenerator<LlmChunk> {
   yield { type: "text-delta", text: prefix };
   for await (const chunk of inner) yield chunk;
@@ -100,7 +96,6 @@ describe("plugin-api（P1 语法糖等价性）", () => {
     expect(denied.isError).toBe(true);
     expect(denied.content).toContain("no-probe");
     offVeto();
-    // transformToolResult（同 ctx 验证变换路径）
     const offT = transformToolResult(ctx, (outcome) => ({ ...outcome, content: `wrapped:${outcome.content}` }));
     const out = await reg.dispatch({ callId: "c2", name: "probe", args: {}, signal: new AbortController().signal });
     expect(out.content).toBe("wrapped:raw");
@@ -122,9 +117,9 @@ describe("plugin-api（P1 语法糖等价性）", () => {
     const events = await run(world, "hi");
     offW(); offA(); offS();
     await world.cleanup();
-    expect(texts(events, "assistant/message")).toEqual(["P-hello"]); // 流包裹进结算
-    expect(seenAssistant).toEqual(["P-hello"]); // 观察只读不改
-    expect(seenSession).toContain("assistant/message"); // 逃生舱收全量
+    expect(texts(events, "assistant/message")).toEqual(["P-hello"]);
+    expect(seenAssistant).toEqual(["P-hello"]);
+    expect(seenSession).toContain("assistant/message");
   });
 
   it("transformDial：拨号参数变换（裸面验证 sugar 形状）", async () => {

@@ -1,4 +1,3 @@
-// echo host（测试装置）：stdin 行 → stdout 回显 response（id 回显）；ECHO_HOST_SILENT=1 时静默（心跳死线用）
 process.stdin.setEncoding("utf8");
 let buffer = "";
 process.stdin.on("data", (chunk: string) => {
@@ -15,7 +14,6 @@ process.stdin.on("data", (chunk: string) => {
       process.stdout.write(`${JSON.stringify({ type: "response", id: parsed.id, command: "echo", success: true, data: { echoed: true } })}\n`);
       process.stdout.write(`${JSON.stringify({ type: "heartbeat", rssBytes: 1, cpuPercent: 0 })}\n`);
     } catch {
-      // 垃圾行丢弃
     }
   }
 });

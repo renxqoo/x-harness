@@ -1,6 +1,3 @@
-// slash 命令表与分派（docs/CLI.md §2.3）：闭集十命令，表即 /help 文档（词表封闭测试锚）。
-// 依赖全注入（REPL 实现 reopen/compact/export 面），本文件只做解析/匹配/输出编排。
-
 import type { SessionHeader, SessionId } from "@x-harness/session";
 import { THINKING_LEVELS } from "./providers-file.ts";
 import type { ProvidersConfig, ThinkingLevelCli } from "./providers-file.ts";
@@ -16,24 +13,18 @@ export interface SlashDeps {
   readonly write: (line: string) => void;
   readonly question: (prompt: string) => Promise<string | undefined>;
   readonly config: ProvidersConfig;
-  /** 当前 dial + 是否内存会话（/model /resume 在内存会话下禁用——无 archive 无法 resume 重建） */
   readonly current: () => { readonly dial: SlashDial; readonly inMemory: boolean };
   readonly usageSummary: () => string;
   readonly sessionFacts: () => string;
-  /** 换会话/换 dial：sessionId = 指定恢复；newSession = /new 新建；仅 dial = 当前会话重建；
-   *  返回成功消息，失败返回错误文本 */
   readonly reopen: (over: { readonly sessionId?: SessionId; readonly newSession?: boolean; readonly dial?: SlashDial }) => Promise<string>;
   readonly listMainSessions: () => Promise<readonly SessionHeader[]>;
   readonly compact: (instructions: string | undefined) => Promise<string>;
   readonly exportTo: (path: string) => Promise<string>;
-  /** /workflow 命令面（workflowView 直调——期 3：不经模型） */
   readonly workflow?: WorkflowCommandDeps;
-  /** /plan 命令面（permissionMode 服务直切——内存态即时生效） */
   readonly permission?: PermissionCommandDeps;
 }
 
 export interface PermissionCommandDeps {
-  /** 切换 plan 档 ↔ 装配缺省档；返回状态文案 */
   readonly planToggle: () => string;
 }
 
@@ -45,7 +36,6 @@ export interface SlashCommand {
   readonly help: string;
 }
 
-/** 命令闭集（= /help 输出，词表封闭断言锚点） */
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   { name: "help", usage: "/help", help: "show this list" },
   { name: "quit", usage: "/quit", help: "exit (also Ctrl+C twice / Ctrl+D)" },
@@ -69,7 +59,6 @@ function helpText(): string {
   return SLASH_COMMANDS.map((command) => `${command.usage.padEnd(28)}${command.help}`).join("\n");
 }
 
-/** /workflow 分派：run | stop <taskId> | submit --verify <cmd> [--schema <json>] <描述与任务> */
 async function commandWorkflow(wf: WorkflowCommandDeps, rest: string | undefined): Promise<string> {
   const text = (rest ?? "").trim();
   if (text === "" || text === "run" || text === "runs") return await wf.workflowRuns();
@@ -86,7 +75,6 @@ async function commandWorkflow(wf: WorkflowCommandDeps, rest: string | undefined
   ].join("\n");
 }
 
-/** pattern → (provider, model) 命中集：全档案 includes 匹配 */
 function matchModels(config: ProvidersConfig, pattern: string): { readonly provider: string; readonly model: string }[] {
   const hits: { provider: string; model: string }[] = [];
   for (const profile of config.providers) {
@@ -123,7 +111,6 @@ async function commandModel(deps: SlashDeps, pattern: string | undefined): Promi
 
 async function commandThinking(deps: SlashDeps, level: string | undefined): Promise<void> {
   if (level !== undefined && level !== "" && deps.current().inMemory) {
-    // 换 thinking 走 dispose→resume 重建，内存会话无 archive → 兜底会丢上下文，禁用
     deps.write("thinking switch requires a persisted session (this one is in-memory)");
     return;
   }
@@ -154,13 +141,9 @@ async function commandResume(deps: SlashDeps): Promise<void> {
   deps.write(await deps.reopen({ sessionId: picked }));
 }
 
-/** /workflow 子面：run（列出受管任务）/ stop（终局取消）/ submit（带验收提交） */
 export interface WorkflowCommandDeps {
-  /** /workflow submit 直调 workflowView.submit（不经模型——期 3 裁决） */
   workflowSubmit(args: string): Promise<string>;
-  /** /workflow stop <taskId>：终局取消 */
   workflowStop(taskId: string): Promise<string>;
-  /** /workflow run[s]：journal 概览（在飞 + 最近终态） */
   workflowRuns(): Promise<string>;
 }
 
@@ -187,7 +170,6 @@ const HANDLERS: Readonly<Record<string, Handler>> = {
   plan: (deps) => deps.write(deps.permission === undefined ? "permission is not assembled in this build" : deps.permission.planToggle()),
 };
 
-/** 分派：非 slash 行返回 not-slash；未知命令提示；/quit 返回 quit */
 export async function runSlashCommand(line: string, deps: SlashDeps): Promise<SlashOutcome> {
   const trimmed = line.trim();
   if (!isSlashLine(trimmed)) return "not-slash";

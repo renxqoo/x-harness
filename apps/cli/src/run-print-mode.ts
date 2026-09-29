@@ -1,7 +1,3 @@
-// -p 非交互执行器（docs/CLI.md §2.4）：text 模式 stdout 仅最终 assistant 文本、进度走
-// stderr；json 模式 stdout JSONL 事件流（session/stream/tool/usage/error/done，done 恰末行）。
-// EPIPE：stdout 写失败即停写并按失败收尾（下游关管道），不崩进程、走清理路径。
-
 import type { AgentHandle } from "@x-harness/agent-loop";
 import { agentAssistantStream, agentError } from "@x-harness/agent-loop";
 import type { AssistantStreamFrame } from "@x-harness/agent-loop";
@@ -16,9 +12,7 @@ import { formatTurnLine } from "./format-usage.ts";
 import type { CliArgs } from "./parse-cli-args.ts";
 
 export interface PrintStreams {
-  /** stdout 写面（text：仅最终文本；json：JSONL 行） */
   readonly out: (text: string) => void;
-  /** stderr 进度写面 */
   readonly err: (text: string) => void;
 }
 
@@ -27,16 +21,12 @@ export interface PrintModeInput {
   readonly handle: AgentHandle;
   readonly meter: TokenMeterService;
   readonly args: CliArgs;
-  /** 首条提示（stdin+@file+首位置参数拼接产物）；与 remaining 并列顺序执行 */
   readonly initialMessage: string | undefined;
-  /** 首条之后的位置参数消息 */
   readonly remainingMessages: readonly string[];
   readonly streams: PrintStreams;
-  /** stderr 是否 TTY（text 进度的 thinking dim 仅 TTY 下打 ANSI） */
   readonly progressTTY: boolean;
 }
 
-/** 运行态：一次 print 执行的共享面（out 已含 EPIPE 停写守卫） */
 interface PrintRun {
   readonly input: PrintModeInput;
   readonly out: (text: string) => void;
@@ -45,7 +35,6 @@ interface PrintRun {
   readonly broken: () => boolean;
 }
 
-/** 观察者面：流帧/工具事件/错误 → json 行或 stderr 进度 */
 interface Observers {
   readonly offs: readonly (() => void)[];
   readonly errorMessage: () => string | undefined;
@@ -58,7 +47,7 @@ function jsonLine(type: string, data: Record<string, unknown>): string {
 function wireObservers(run: PrintRun): Observers {
   const { input, out, json, progress } = run;
   let errorMessage: string | undefined;
-  const toolNames = new Map<string, string>(); // callId → 工具名（tool/result 不带 name）
+  const toolNames = new Map<string, string>();
 
   const onStream = ({ frame }: { frame: AssistantStreamFrame }): void => {
     if (json) {
@@ -86,7 +75,6 @@ function wireObservers(run: PrintRun): Observers {
   const offs = [
     input.ctx.on(agentAssistantStream, onStream),
     input.ctx.on(sessionEvent, onSessionEvent),
-    // 审批裁决审计事件 → json permission 行（docs/CLI.md §2.4）
     input.ctx.on(permissionDecided, (audit) => {
       if (json) out(jsonLine("permission", { tool: audit.tool, verdict: audit.verdict, reason: audit.reason }));
     }),
@@ -103,7 +91,6 @@ interface TurnOutcome {
   readonly stopReason: string | undefined;
 }
 
-/** 最后一条 assistant 消息（最终文本 + 停止原因） */
 function lastAssistant(events: readonly SessionEvent<SessionEventType>[]): TurnOutcome | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
@@ -126,7 +113,6 @@ function emitUsage(run: PrintRun, turnIndex: number): void {
   if (usage !== undefined) run.input.streams.err(`${formatTurnLine(turnIndex, usage)}\n`);
 }
 
-/** 回合循环：逐条 followup + whenIdle + 每回合用量行；返回完成的回合数 */
 async function runPrompts(run: PrintRun, observers: Observers): Promise<number> {
   const { input, out, json, broken } = run;
   const prompts = [...(input.initialMessage !== undefined ? [input.initialMessage] : []), ...input.remainingMessages];
@@ -143,7 +129,6 @@ async function runPrompts(run: PrintRun, observers: Observers): Promise<number> 
   return turnIndex;
 }
 
-/** 收尾：退出码判定 + 终态输出（json：done 恰末行；text：最终文本到 stdout、错误到 stderr） */
 function emitOutcome(run: PrintRun, errorMessage: string | undefined): number {
   const { input, out, json, broken } = run;
   const last = lastAssistant(input.handle.agent.session.events());

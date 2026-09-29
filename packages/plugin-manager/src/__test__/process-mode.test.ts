@@ -1,5 +1,3 @@
-// plugin-manager 全量测试：process 模式（真实文件 + 注入 loader 的校验面）。
-// 平台存活断言贯穿所有失败路径（验收清单锚点）。
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,7 +37,7 @@ async function writePlugin(root: string, name: string, source: string): Promise<
 async function setup(options?: {
   approve?: (path: string) => boolean;
 }): Promise<{ ctx: ReturnType<typeof createContext>; svc: PluginManagerService; root: string }> {
-  const ctx = createContext({ onListenerError: () => {} }); // 安静 sink：预期错误隔离不刷屏
+  const ctx = createContext({ onListenerError: () => {} });
   const root = await makeRoot();
   await loadPlugins(ctx, [
     createPluginManager({
@@ -73,7 +71,7 @@ describe("process 模式：门与校验", () => {
   });
 
   it("审批缺省拒；放行后可装", async () => {
-    const { svc, root } = await setup(); // 无 approve → 缺省拒
+    const { svc, root } = await setup();
     const file = await writePlugin(root, "ok", `export default { name: "ok", apply: () => {} };`);
     const denied = await svc.install({ path: file });
     expect(denied).toMatchObject({ ok: false });
@@ -134,7 +132,6 @@ export default {
 `,
     );
     await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
-    // 落位 root + token 注册表（裁决 9/10）：平台按名取 token 消费插件服务
     const token = svc.token("pm-translate") as ReturnType<typeof defineService<{ tr(s: string): string }>>;
     expect(ctx.use(token).tr("hi")).toBe("<tr>hi");
     expect(svc.serviceToken("pm-translate")).toBe(token);
@@ -189,8 +186,6 @@ export default {
 
   it("重名拒 + replace 重装（contracts 稳定模块承载共享 token 身份）", async () => {
     const { svc, root, ctx } = await setup({ approve: () => true });
-    // 共享 token 住在稳定 contracts 模块（裁决 10：模块身份是 token 身份的载体，
-    // 热换的是实现文件，contracts 不 bust——宿主与 v1/v2 拿到同一批 token 对象）
     await writeFile(
       join(root, "contracts.ts"),
       `import { defineEvent, defineService } from "${CORE_PATH}";
@@ -223,7 +218,7 @@ export default { name: "counter", apply: (c) => { c.on(tick, () => { c.use(state
     );
     await expect(svc.install({ path: fileV2, replace: true })).resolves.toMatchObject({ ok: true });
     ctx.emit(contracts.tick, { v: 1 });
-    expect(ctx.use(contracts.state).n).toBe(10); // 新行为生效，旧监听器已随卸载消失，状态保真
+    expect(ctx.use(contracts.state).n).toBe(10);
   });
 
   it("uninstall 依赖检查：非空拒（列出依赖方）、force 放行", async () => {
@@ -309,7 +304,7 @@ export default {
     await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
     const g = svc.token("pm-guard") as ReturnType<typeof defineGuard<{ v: number }>>;
     const verdict = await ctx.dispatch(g, { v: 1 });
-    expect(verdict).toEqual({ kind: "deny", reason: "legit" }); // 坏守卫按弃权
+    expect(verdict).toEqual({ kind: "deny", reason: "legit" });
     expect((await svc.errors("guardy")).map((e) => e.where)).toContain("pm-guard@guard");
   });
 });
@@ -355,11 +350,11 @@ describe("process 模式：审查修复回归", () => {
 `,
     );
     await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
-    const removed = await svc.uninstall("badunload"); // 不抛——折算 err
+    const removed = await svc.uninstall("badunload");
     expect(removed).toMatchObject({ ok: false });
     expect(removed.ok === false && removed.reason).toContain("unload boom");
-    expect((await svc.list()).filter((r) => r.name === "badunload")).toHaveLength(0); // 登记已清
-    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true }); // 重装不卡死
+    expect((await svc.list()).filter((r) => r.name === "badunload")).toHaveLength(0);
+    await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
     alive(ctx)();
   });
 
@@ -385,7 +380,7 @@ export default { name: "tok", apply: (c) => { c.provide(defineService<{ n(): num
     await expect(svc.install({ path: file })).resolves.toMatchObject({ ok: true });
     expect(svc.serviceToken("pm-p-tok")).toBeDefined();
     await expect(svc.uninstall("tok")).resolves.toMatchObject({ ok: true });
-    expect(svc.serviceToken("pm-p-tok")).toBeUndefined(); // 与 worker 桥 teardown 同语义
+    expect(svc.serviceToken("pm-p-tok")).toBeUndefined();
   });
 
   it("apply 失败同样不留 token 残留", async () => {
@@ -416,7 +411,6 @@ export default { name: "tok-b", apply: (ctx) => ctx.provide(dupToken, { v: 2 }) 
     const b = await svc.install({ path: second });
     expect(b.ok).toBe(false);
     if (!b.ok) expect(b.reason).toMatch(/token name collision: "dup-token"/);
-    // 同插件重装（同模块身份 → 同对象）不受误伤
     const offA = a.ok ? await a.value.unload() : undefined;
     void offA;
     const a2 = await svc.install({ path: first, replace: true });

@@ -1,4 +1,3 @@
-// chunk 传输契约：切片/重组（含大帧）、段乱序/重复/违约形态
 import { describe, expect, it } from "vitest";
 import { CHUNK_SEGMENT_BYTES, ChunkReassemblerPool, chunkFrame, type ChunkSegment } from "../chunk.ts";
 import type { Frame } from "../frames.ts";
@@ -38,7 +37,7 @@ describe("ChunkReassemblerPool", () => {
     const segs = chunkFrame(frame)!;
     const pool = new ChunkReassemblerPool();
     expect(pool.add(segs[1]!)).toBeNull();
-    expect(pool.add(segs[1]!)).toBeNull(); // 重复段
+    expect(pool.add(segs[1]!)).toBeNull();
     expect(pool.size()).toBe(1);
     const whole = pool.add(segs[0]!);
     expect(whole).not.toBeNull();

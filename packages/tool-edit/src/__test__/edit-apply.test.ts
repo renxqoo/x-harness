@@ -1,6 +1,3 @@
-// edit 纯函数域测试（docs/EDIT-TOOL.md 测试口径）：精确/模糊/唯一性/重叠/原子性/
-// 归一附带损伤/CRLF+BOM\u2014\u2014pi 全集起列 + 三审查修正各自的回归断言。
-
 import { describe, expect, it } from "vitest";
 import {
   splitBom,

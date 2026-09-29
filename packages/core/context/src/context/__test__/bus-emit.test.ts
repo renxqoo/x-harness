@@ -80,7 +80,7 @@ describe("emit 派发（§2.2 矩阵第一行）", () => {
     ctx.emit(token, { v: 2 });
     expect(heard).toEqual([1]);
     ctx.on(token, ({ v }) => heard.push(v));
-    expect(heard).toEqual([1]); // 新监听者不回放历史
+    expect(heard).toEqual([1]);
   });
 
   it("chain-up：子层 emit 祖先可见、兄弟不可见（C3）", () => {
@@ -93,8 +93,8 @@ describe("emit 派发（§2.2 矩阵第一行）", () => {
     ctx.on(token, ({ v }) => rootHeard.push(v));
     b.on(token, ({ v }) => bHeard.push(v));
     a.emit(token, { v: 1 });
-    expect(rootHeard).toEqual([1]); // 祖先可见
-    expect(bHeard).toEqual([]); // 兄弟不可见
+    expect(rootHeard).toEqual([1]);
+    expect(bHeard).toEqual([]);
   });
 
   it("监听并集 root→leaf 次序：root 晚注册仍先执行（C2）", () => {
@@ -103,10 +103,9 @@ describe("emit 派发（§2.2 矩阵第一行）", () => {
     const token = defineEvent<{ v: number }>("evt-order");
     const order: string[] = [];
     child.on(token, () => order.push("child"));
-    ctx.on(token, () => order.push("root")); // 晚于 child 注册
-    child.emit(token, { v: 1 }); // 从 child emit：链上并集可见
+    ctx.on(token, () => order.push("root"));
+    child.emit(token, { v: 1 });
     expect(order).toEqual(["root", "child"]);
-    // 从 root emit：child 监听者不可见（chain-up 单向）
     order.length = 0;
     ctx.emit(token, { v: 2 });
     expect(order).toEqual(["root"]);
@@ -161,7 +160,7 @@ describe("层序插入（§10.1 排序债修复的语义锚点）", () => {
     const stopRoot1 = ctx.on(token, () => order.push("root-1"));
     child.on(token, () => order.push("child-1"));
     stopRoot1();
-    ctx.on(token, () => order.push("root-2")); // 交错退订后再插入
+    ctx.on(token, () => order.push("root-2"));
     child.emit(token, { v: 1 });
     expect(order).toEqual(["root-2", "child-1"]);
   });

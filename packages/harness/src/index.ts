@@ -1,10 +1,3 @@
-// 装配方 kit 目录 + createAgentWorld（SDK-MIGRATION-F1）：任意插件集的装配机制——
-// kit = 内部接线正确的插件组（gate/observed 共享、adapter 注册插件化）；顺序由
-// inject/softInject topo 声明式保证（数组序无关）。基础段正文与 facts 探测共享于
-// 本包（base-prompt.ts——apps/cli 与 apps/host-hub 两宿主同源，经 promptKit(base)
-// 注入世界）；adapters/审批/providers 全是宿主注入参数；appends 留宿主
-// 后置注册（F-02 尾序契约）。
-
 import { Database } from "bun:sqlite";
 import type { Context, Disposer, Plugin, Result } from "@x-harness/core";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -59,23 +52,14 @@ import { createEditPlugin } from "@x-harness/tool-edit";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 import type { ToolRegistry } from "@x-harness/tools";
 
-/** 会话（内存态——无持久化无 archive） */
 export const inlineSessionKit = (): readonly Plugin[] => [sessionPlugin];
 
-/** 会话（durable：jsonl 持久化 + archive） */
 export const durableSessionKit = (o: { readonly root: string; readonly onIoError?: (message: string) => void }): readonly Plugin[] => [
   sessionPlugin,
   createJsonlSessionPersistence({ root: o.root, onIoError: o.onIoError }),
 ];
 
-/** 本地遥测（OTel 数据模型 → sqlite；docs/TELEMETRY-SQLITE.md）。db 两种形态：
- *  - SqliteExecutor：宿主自持连接（e2e SqliteDb 契约同款——close 归宿主，插件只拿执行器）；
- *  - 路径串：kit 开 bun:sqlite（pragmas 统一设置），连接随 kit 返回的句柄归宿主——
- *    World teardown 后宿主 close（插件 teardown 只终排空不 close，连接归宿主约定）。
- *  缺省 includeBodies=true 全量保真；onIoError 缺省 stderr。 */
 export interface TelemetryKitHandle {
-  /** 路径形态 = kit 开的连接执行器（含 tx；宿主 teardown 后可不再触碰——close 已由 kit 收殓）；
-   *  执行面形态 = 宿主传入原样透传 */
   readonly db: SqliteExecutor;
   readonly plugins: readonly Plugin[];
 }
@@ -88,7 +72,6 @@ export const telemetryKit = (o: {
   readonly onIoError?: (message: string) => void;
 }): readonly Plugin[] => telemetryKitWithHandle(o).plugins;
 
-/** 带句柄形态：路径开库时宿主持返回的 db（teardown 后 close）；执行面形态句柄即透传 */
 export function telemetryKitWithHandle(o: {
   readonly db: SqliteExecutor | string;
   readonly tx?: SqliteTx;
@@ -100,13 +83,11 @@ export function telemetryKitWithHandle(o: {
   const connection = new Database(o.db);
   const db = createBunSqliteExecutor(connection);
   const inner = sqliteTelemetryPlugin({ db, tx: db.tx, resource: o.resource, includeBodies: o.includeBodies, onIoError: o.onIoError });
-  // wrapper 组合 teardown：先 telemetry（终排空 drainAll）后 close——顺序在同一个 disposer
-  // 体内串行保证（独立插件经 inject topo 会后装先拆，close 抢在终排空前 = closed database）
   const wrapped: Plugin = {
     name: "telemetry-sqlite-path",
     inject: ["session"],
     apply: async (ctx: Context): Promise<Disposer> => {
-      const teardown = await inner.apply(ctx); // Plugin.apply 允许 Promise（loadPlugins await）——组合面同律
+      const teardown = await inner.apply(ctx);
       return async () => {
         await teardown?.();
         connection.close();
@@ -116,66 +97,46 @@ export function telemetryKitWithHandle(o: {
   return { db, plugins: [wrapped] };
 }
 
-/** 驱动循环（五服务之一） */
 export const loopKit = (): readonly Plugin[] => [agentLoopPlugin];
 
-/** 输出截断续写策略（docs/OUTPUT-TOKEN-CONTINUATION.md）：agentTurnConclude 窗口的缺省策略件——
- *  count < max → resume（续写指令经内核以 agent/message{directive} 落卷）；否则可恢复错误收轮 */
 export const continuationKit = (options?: ContinuationOptions): readonly Plugin[] => [createContinuationPlugin(options)];
 
-/** 工作错误恢复 L2 策略（docs/WORK-ERROR-RECOVERY.md C5）：挂 agentRequestError +
- *  agentTurnConclude——分族计数、respond 自愈、达限 fail。装配契约：须在 llmKit
- *  （llm-retry）之后注册（链上后手）——L1 重试期本件应答被覆盖不计（防预烧）。 */
 export const errorRecoveryKit = (options?: ErrorRecoveryOptions): readonly Plugin[] => [createErrorRecoveryPlugin(options)];
 
-/** 截断配对缺省文案（WER C3）：agentTruncatedTool 窗口的替换性完整文案——装配序须在
- *  抢救件（toolboxKit 的 rescue）之后注册（链上后手见内层）——kit 数组序即注册序。 */
 export const truncationMessagesKit = (): readonly Plugin[] => [createDefaultTruncationMessages()];
 
-/** 基础段插件 + facts 探测（两宿主同源消费面；正文见 base-prompt.ts，探测见 base-prompt-probe.ts） */
 export { createBasePromptPlugin, baseCoreText, environmentBlock, normalizeBaseFacts } from "./base-prompt.ts";
 export type { BasePromptFacts } from "./base-prompt.ts";
 export { probeBaseFacts, probeGitFacts } from "./base-prompt-probe.ts";
 export type { ProbeFactsInput, GitFacts } from "./base-prompt-probe.ts";
 
-/** worktree 子会话提示词覆盖（Track U——docs/WORKTREE-CONTEXT-AWARENESS §1.4） */
 export { createWorktreeContextPlugin } from "./worktree-context.ts";
 export type { WorktreeContextOptions } from "./worktree-context.ts";
 
-/** 日期 + 项目指令快照插件（两宿主同源消费面——AGENTS.md/CLAUDE.md 边沿注入；
- *  装配位各自写死：紧随 skill 装配，docs/TAIL-SNAPSHOT-CHANNEL.md A/C'） */
 export { createFactsSnapshotPlugin, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, renderPermissionModeSnapshot, renderPermissionModeNonOwnerSnapshot, localToday, INSTRUCTIONS_CAP_BYTES } from "./snapshot-facts.ts";
 export type { FactsSnapshotOptions, InstructionRead } from "./snapshot-facts.ts";
 
-/** 提示词注册表 + 宿主基础段（base 缺席 = 无基础段，如 --system-prompt 整替；常规装配传
- *  createBasePromptPlugin(probeBaseFacts(...)));appends 归宿主后置 */
 export const promptKit = (base?: Plugin): readonly Plugin[] => [
   systemPromptPlugin,
   ...(base !== undefined ? [base] : []),
 ];
 
-/** bash 后台任务日志根推导（与 sessionsRoot 同级——宿主装配与 session-delete 级联同源） */
 export { taskLogsRootOf } from "./task-logs.ts";
 
-/** 工具箱（tools 注册表 + read/write/bash/grep/task-tools；gate/observed 共享实例内包；env 透传给无围栏世界；
- *  taskLogDir = bash 后台任务日志根——传宿主数据目录即会话档案一致性，read/grep 放行为系统固有读根）
- *  + 截断 write/edit 半截产出抢救件（agentTruncatedTool 窗口；sidecar 授权面与 write 同源三件套） */
 export const toolboxKit = (o: {
   readonly root: string;
   readonly gate?: PathGate;
   readonly observed?: ObservedRegistry;
   readonly env?: ExecEnv;
   readonly taskLogDir?: string;
-  /** 内置 rg 目录（根配置推导——宿主 harness home 的 bin/；grep 解析链第三级） */
   readonly rgBinDir?: string;
-  /** permission 裁决面（抢救件 write 同源裁决；宿主与 fenceKit 同源传入） */
   readonly permission?: {
     readonly rules?: readonly import("@x-harness/permission").PermissionRule[];
     readonly projectRules?: readonly import("@x-harness/permission").PermissionRule[];
     readonly protectedWrite?: readonly string[];
   };
 }): readonly Plugin[] => {
-  const gate = o.gate ?? new PathGate(o.root); // 接线内包：read/write 必须共享 gate+observed（漏配症状 FS_NOT_OBSERVED）
+  const gate = o.gate ?? new PathGate(o.root);
   const observed = o.observed ?? new ObservedRegistry();
   const env = o.env !== undefined ? { env: o.env } : {};
   const systemRoots = o.taskLogDir !== undefined ? { systemRoots: [o.taskLogDir] } : {};
@@ -200,15 +161,8 @@ export const toolboxKit = (o: {
   ];
 };
 
-/** plan 模式审批件（plan_submit 控制工具——docs/PERMISSION-MODE-FLAG.md plan 节）：
- *  plan 档出口——方案经 permission broker 问用户，批准解档 liftTo（宿主装配缺省档；
- *  缺省 auto），拒绝留档 refine。模型侧告知在 facts 快照插件的权限档快照（同文件）。 */
 export const planKit = (o: import("@x-harness/tool-plan").PlanSubmitOptions = {}): readonly Plugin[] => [createPlanSubmitPlugin(o)];
 
-/** 围栏（permission 裁决 + sandbox 执行器——PERMISSION-V2-DESIGN §6）。执行指令由裁决
- *  管线产出（allow→direct|contained 按档位），sandbox 只照办；trustedCommands 词表已删（U1）。
- *  rules/projectRules=两作用域规则串；protectedPaths=保护写路径（settings 文件等——U13）；
- *  customProfiles=宿主自定义档位行（settings-store 三层校验现状——U8）。 */
 export const fenceKit = (
   o: {
     readonly root: string;
@@ -219,7 +173,7 @@ export const fenceKit = (
     readonly customProfiles?: readonly PermissionProfile[];
   },
 ): readonly Plugin[] => [
-  createPermissionModesPlugin(), // V4：内置五档模式插件（softInject permission——注册表在场才注册）
+  createPermissionModesPlugin(),
   createPermissionPlugin({
     root: o.root,
     ...(o.mode !== undefined ? { mode: o.mode } : {}),
@@ -231,63 +185,37 @@ export const fenceKit = (
   createSandboxPlugin({ root: o.root, ...(o.protectedPaths !== undefined ? { protectedPaths: o.protectedPaths } : {}) }),
 ];
 
-/** 子代理委派（agentsDirs 必收——宿主边沿用 @x-harness/agent-delegation 的 resolveAgentDirs 统一解析；
- *  件15 D5：签名透传 DelegationOptions——reportCap/maxDepth 等经装配入口可达（message 上限恒等 reportCap）。
- *  facts 必收：Track U worktree 提示词覆盖插件随 delegation 同进退（docs/WORKTREE-
- *  CONTEXT-AWARENESS §1.4 装配裁决——delegation 缺席部署不装配，事件无发射方） */
 export const delegationKit = (o: DelegationOptions, facts: BasePromptFacts): readonly Plugin[] => [createAgentDelegationPlugin(o), createWorktreeContextPlugin({ facts })];
 
-/** 跨进程邮箱服务（docs/AGENT-DELEGATION.md §5.3 宿主接线）：root 必收——宿主边沿用
- *  resolveMailboxDir 统一解析（X_HARNESS_MAILBOX_DIR 覆盖 > ~/.x-harness/mailbox）。
- *  与 delegationKit 的 mailbox:{box,mainSession} 配对使用；单独装配仅提供服务面。 */
 export const mailboxKit = (o: MailboxPluginOptions): readonly Plugin[] => [createMailboxPlugin(o)];
 
-/** 验收回炉与任务编排（docs/AGENT-WORKFLOW.md 件16）：root/mainSession 必收——宿主边沿
- *  用 @x-harness/agent-workflow 的 resolveWorkflowRoot 统一解析；mainSession 与 mailbox
- *  同源（CLI 先铸 id / hub thread 会话 id）。不装即无此面，行为与现状全等。 */
 export const workflowKit = (o: import("@x-harness/agent-workflow").WorkflowOptions): readonly Plugin[] => [createAgentWorkflowPlugin(o)];
 
-/** 请求前 WAL 屏障（独立 kit——与 delegation 零共享面） */
 export const checkpointKit = (): readonly Plugin[] => [sessionCheckpointPlugin];
 
-/** 上下文压缩（docs/COMPACTION.md）：水位触发 + 413 紧急自愈 + compactionRunner 手动面。
- *  options 透传插件工厂（contextWindow 必填装配期事实；summarizer 缺席 = 手动/自动压缩
- *  软禁用、413 自愈降级为 served-window 记录——插件契约）。摘要面是装配期快照：
- *  运行期 /model 切换不改变摘要拨号（与 maxOutputTokens 同款装配期事实先例）。 */
 export const compactionKit = (options: CompactionOptions): readonly Plugin[] => [createCompactionPlugin(options)];
 
-/** 分层自动压缩（docs/COMPACTION.md §1.2）：CP 后台账本维护 → L1 旧工具结果占位 →
- *  L2 账本落账。inject compaction——CP 模型面缺省取
- *  compactionRunner.summarizer（单一真相，宿主无需重复传）。contextWindow 与
- *  compactionKit 同源（同一主窗事实——两处分母不一致是装配错误面）。 */
 export const autoCompactKit = (options: AutoCompactOptions): readonly Plugin[] => [createAutoCompactPlugin(options)];
 
-/** 技能装载 */
-/** 技能插件（目录必收——宿主边沿用 @x-harness/skill 的 resolveSkillDirs 统一解析） */
 export const skillKit = (o: { readonly skillsDirs: readonly string[]; readonly disabled?: readonly string[] }): readonly Plugin[] => [createSkillPlugin(o)];
 
-/** 用量计量（五服务之一） */
 export const meterKit = (): readonly Plugin[] => [tokenMeterPlugin];
 
-/** LLM 运行时 + 重试 + N 个 adapter 注册插件（名按 index 铸唯一——多实例不撞名） */
 export const llmKit = (
   adapters: readonly LlmAdapter[],
   retry?: { readonly providers?: Record<string, RetryPolicy>; readonly default?: RetryPolicy },
 ): readonly Plugin[] => [
   ...(retry !== undefined ? [createLlmRetryPlugin({ providers: retry.providers ?? {}, ...(retry.default !== undefined ? { default: retry.default } : {}) })] : []),
   llmPlugin,
-  createReplayGuardPlugin(), // llm/stream 重放容错（docs/LLM-REPLAY-GUARD.md）：上游断流从头重发时下游/UI 干净单份
-  createRepetitionGuardPlugin(), // llm/stream 复读检测（docs/LLM-REPETITION-GUARD.md）：模型行内复读截流 → error{code:repetition}；注册序在 replay-guard 后 = 链上更靠消费端
+  createReplayGuardPlugin(),
+  createRepetitionGuardPlugin(),
   ...adapters.map((adapter, index): Plugin => ({
     name: `llm-adapter-${String(index)}-${adapter.name}`,
-    inject: ["llm"], // 终审 F1-1：apply 期 use llmRuntime 的硬依赖声明式时序（与在库 adapter-plugin 同款）
+    inject: ["llm"],
     apply: (ctx: Context): Disposer => ctx.use(llmRuntime).registerAdapter(adapter),
   })),
 ];
 
-/** 装配世界：loadPlugins + 五服务提取 + 失败自清理。**前提：插件集含五服务**
- *  （session/agent-loop/system-prompt/tools/token-meter——缺席 fail-closed throw→dispose→
- *  {ok:false}；最小集直接用 loadPlugins——作者文档记双入口） */
 export interface World {
   readonly ctx: Context;
   readonly unload: readonly Disposer[];
@@ -297,7 +225,6 @@ export interface World {
   readonly prompt: SystemPromptService;
   readonly meter: TokenMeterService;
   readonly registry: ToolRegistry;
-  /** 本地遥测查询面（telemetryKit 在场时可见；缺席 undefined——可选件同 archive） */
   readonly telemetry: TelemetryQueryService | undefined;
 }
 

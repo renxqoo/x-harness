@@ -1,6 +1,3 @@
-// ask → confirm 弹窗载荷映射：summary 目标描述/建议规则/升级语境按在场裁剪进载荷
-// （空 options 不发空壳）；确认条主文案材料自此随权限 ask 全量到帧。
-
 import { describe, expect, test } from "vitest";
 import type { AskPayload } from "@x-harness/permission";
 import { confirmFieldsOf } from "../worker/ask-confirm-fields.ts";

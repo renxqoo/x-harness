@@ -1,5 +1,3 @@
-// 模块形状校验 + 版本门（docs/PLUGIN-MANAGER.md 裁决 6）。
-
 import type { Plugin } from "@x-harness/core";
 import type { Result, ValidatedModule } from "./types.ts";
 
@@ -44,15 +42,10 @@ export function validateModule(
   };
 }
 
-// ── 第三方插件静态检查（inspect 阶段：安装审批前的形态门）──────────────────────
-// 源文件静态扫描（不执行）：裸 @x-harness/* import 断言 + manifest 形状。
-// 这是「拷入 vendor 根」的前置门——不依赖模块执行，纯文本判定。
 
-/** 裸 SDK import 说明符形态（第三方件必须零 @x-harness 依赖——B 路线的前提） */
 const SDK_IMPORT_RE = /(?:^|\n)\s*(?:import|export)[^"'`]*from\s*["'](@x-harness\/[^"']+)["']/;
 const SDK_DYNAMIC_IMPORT_RE = /import\s*\(\s*["'](@x-harness\/[^"']+)["']\s*\)/;
 
-/** 第三方 manifest 形状（inspect 三态的输入） */
 export interface ThirdPartyManifest {
   readonly name: string;
   readonly apiVersion: number;
@@ -62,13 +55,11 @@ export interface ThirdPartyManifest {
 }
 
 export interface ThirdPartyInspectResult {
-  /** 形态检查通过与否 */
   readonly ok: boolean;
   readonly reason?: string;
   readonly manifest?: ThirdPartyManifest;
 }
 
-/** manifest 对象校验（plugins-admin inspect 用；JSON 形状门——不猜不补） */
 export function validateThirdPartyManifest(value: unknown): Result<ThirdPartyManifest, string> {
   if (value === null || typeof value !== "object") {
     return { ok: false, reason: "manifest must be an object" };
@@ -101,7 +92,6 @@ export function validateThirdPartyManifest(value: unknown): Result<ThirdPartyMan
   };
 }
 
-/** 源文本静态扫描：裸/动态 @x-harness/* import → 拒（第三方件零 SDK 依赖红线） */
 export function scanSourceForSdkImports(source: string): string[] {
   const found: string[] = [];
   const staticMatch = SDK_IMPORT_RE.exec(source);
@@ -111,7 +101,6 @@ export function scanSourceForSdkImports(source: string): string[] {
   return [...new Set(found)];
 }
 
-/** inspect 三态合成：manifest 合法 + 全部源文件零 SDK import 才过 */
 export function inspectThirdParty(input: {
   readonly manifest: unknown;
   readonly sources: readonly { readonly path: string; readonly source: string }[];

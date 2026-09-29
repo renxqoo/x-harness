@@ -1,4 +1,3 @@
-
 import { stderrLine } from "../stderr-line.ts";
 import { pluginError, pluginLoaded, pluginUnloaded } from "./vocab.ts";
 import type {
@@ -16,9 +15,6 @@ import type {
 function assertValid(plugins: readonly Plugin[]): void {
   const names = new Set<string>();
   for (const plugin of plugins) {
-    // 工厂函数自带 name 与 Function.prototype.apply，结构上冒充 Plugin 骗过类型检查——
-    // 形状特征：apply 变成「无参调用工厂」（副作用不发生），返回的 Plugin 对象被当
-    // disposer 压进 unwind 链（dispose 期 'unwind is not a function'）。装配期 fail-fast
     const raw: unknown = plugin;
     if (typeof raw === "function") {
       const name = (raw as { readonly name?: string }).name ?? "anonymous";
@@ -45,9 +41,8 @@ function assertValid(plugins: readonly Plugin[]): void {
 }
 
 
-/** Levenshtein 距离（软名近距检测用——短串快速版） */
 function editDistance(a: string, b: string): number {
-  if (Math.abs(a.length - b.length) > 2) return 3; // 快速路径
+  if (Math.abs(a.length - b.length) > 2) return 3;
   const dp: number[] = Array.from({ length: b.length + 1 }, (_, j) => j);
   for (let i = 1; i <= a.length; i++) {
     let prev = dp[0]!;
@@ -61,7 +56,6 @@ function editDistance(a: string, b: string): number {
   return dp[b.length]!;
 }
 
-/** DFS topo：访问序 = 加载序；遇回边（栈中节点）= 循环依赖 */
 function topoOrder(plugins: readonly Plugin[]): Plugin[] {
   const byName = new Map(plugins.map((plugin) => [plugin.name, plugin] as const));
   const ordered: Plugin[] = [];
@@ -76,14 +70,11 @@ function topoOrder(plugins: readonly Plugin[]): Plugin[] {
     for (const dep of plugin.inject ?? []) {
       visit(byName.get(dep) as Plugin, [...stack, plugin.name]);
     }
-    // S0 软依赖：在场才建边（缺席跳过）；双向软依赖经 visiting 栈暴露为环（约束矛盾 fail-fast）
     for (const dep of plugin.softInject ?? []) {
       const target = byName.get(dep);
       if (target !== undefined) {
         visit(target, [...stack, plugin.name]);
       } else {
-        // 近距警告（终审教训：拼错=静默错序——Edit distance ≤2 的未匹配软名提示，
-        // 远距缺席（合法降级）不噪）
         const near = [...byName.keys()].find((n) => editDistance(n, dep) <= 2 && n !== dep);
         if (near !== undefined) {
           stderrLine(`[softInject] plugin "${plugin.name}" declares "${dep}" — did you mean "${near}"?`);
@@ -97,7 +88,6 @@ function topoOrder(plugins: readonly Plugin[]): Plugin[] {
   return ordered;
 }
 
-/** apply 期注册捕获：委托真 ctx + 记录 disposer——单插件卸载的回收清单 */
 function captureRegistrations(ctx: Context, captured: Disposer[]): Context {
   const track = (disposer: Disposer): Disposer => {
     captured.push(disposer);
@@ -120,7 +110,6 @@ function captureRegistrations(ctx: Context, captured: Disposer[]): Context {
     createChain: <I, O>(final: (input: I) => Promise<O>): Chain<I, O> => ctx.createChain(final),
     onChain: <I, O>(chain: Chain<I, O>, middleware: ChainMiddleware<I, O>): Disposer =>
       track(ctx.onChain(chain, middleware)),
-    // effect 只入捕获清单不入层账本：由本插件的 composite（经 ctx.effect 注册）统一兜底回卷
     effect: (disposer: Disposer): void => {
       captured.push(disposer);
     },
@@ -136,8 +125,6 @@ export async function loadPlugins(
 ): Promise<readonly Disposer[]> {
   assertValid(plugins);
   const ordered = topoOrder(plugins);
-  // 装配可等待（§5 并发契约的 quiescence 面）：dispose 经此 effect 自动等本批装配 settle——
-  // 在飞装配的后续注册落进 disposing 层会 fail-fast，但 dispose 本身不与装配竞速死锁
   let release!: () => void;
   const settled = new Promise<void>((resolve) => {
     release = resolve;
@@ -148,8 +135,6 @@ export async function loadPlugins(
     const captured: Disposer[] = [];
     try {
       const disposer = await plugin.apply(captureRegistrations(ctx, captured));
-      // disposer 必须是函数：非函数形态在此静默入账 = dispose 期深处 'unwind is not a
-      // function'——装配期 fail-fast（典型：apply 误返回了插件对象/配置对象）
       if (disposer !== undefined && disposer !== null) {
         if (typeof disposer !== "function") {
           throw new Error(`plugin "${plugin.name}" apply must return a disposer function or void — got ${typeof disposer}`);
@@ -158,9 +143,8 @@ export async function loadPlugins(
       }
       let done = false;
       const unload: Disposer = async () => {
-        if (done) return; // 幂等，且与层回卷共用哨兵——绝不双跑
+        if (done) return;
         done = true;
-        // 与层回卷同律容错：单个 disposer 抛错不中止（其余必回卷），聚合上抛
         const failures: unknown[] = [];
         for (let index = captured.length - 1; index >= 0; index -= 1) {
           const unwind = captured[index];
@@ -171,31 +155,27 @@ export async function loadPlugins(
             failures.push(error);
           }
         }
-        ctx.emit(pluginUnloaded, { plugin: plugin.name }); // 卸载完成（含部分失败）广播
+        ctx.emit(pluginUnloaded, { plugin: plugin.name });
         if (failures.length === 1) throw failures[0];
         if (failures.length > 1) throw new AggregateError(failures, "plugin unload failures");
       };
-      ctx.effect(unload); // 层回卷兜底（手动卸载已跑过则 no-op）
+      ctx.effect(unload);
       unloaders.push(unload);
       ctx.emit(pluginLoaded, { plugin: plugin.name });
     } catch (error) {
-      release(); // 先 settle 装配单元——dispose 的 join effect 等的就是它，后放会自锁
+      release();
       ctx.emit(pluginError, { plugin: plugin.name, error: String(error) });
-      // 本插件已捕获的注册逆序回卷：apply 中途 throw 时 composite 尚未入层账本，
-      // 不在此回卷则半装状态泄漏（throw 前已 provide/register 的服务与工具残留）
       for (let index = captured.length - 1; index >= 0; index -= 1) {
         const unwind = captured[index];
         if (unwind === undefined) continue;
         try {
           await unwind();
         } catch {
-          /* 容错同 unload composite：单个 disposer 抛错不中止回卷 */
         }
       }
       try {
         await ctx.dispose();
       } catch (disposeError) {
-        // 根因优先：apply 错误必须向上抛；回卷错误不吞根因（对抗审查 #9 修复）——留痕走统一 console 通道
         const detail =
           disposeError instanceof Error ? `${disposeError.name}: ${disposeError.message}` : String(disposeError);
         stderrLine(`[x-harness] dispose during plugin load failure also failed: ${detail}`);

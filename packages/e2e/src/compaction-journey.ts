@@ -1,7 +1,3 @@
-// e2e：压缩防线全链旅程（docs/COMPACTION.md §7 e2e 节，进默认门）。
-// 真实装配 session+jsonl+tools+llm+system-prompt+agent-loop+compaction+autocompact；
-// 脚本化假 LLM 适配器。旅程A：长对话灌入 → 水位压缩落账 → 后续请求用压缩投影。
-// 旅程B：假窗口 413 → 紧急自愈重试 + servedWindow 落账 → 任务不中断。
 import { textScript } from "@x-harness/testkit";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -21,7 +17,6 @@ import { compactionLanded, createCompactionPlugin } from "@x-harness/compaction"
 import { autocompactL1Cleared, createAutoCompactPlugin } from "@x-harness/autocompact";
 import { must } from "./check.ts";
 
-/** 摘要拨号脚本：结构化检查点摘要形态（水位触发时由 compaction 摘要面消费） */
 function summaryScript(): AsyncGenerator<LlmChunk> {
   return textScript("## Goal\ndeliver the feature\n\n## Progress\n### In Progress\n- [ ] long task underway");
 }
@@ -52,8 +47,6 @@ async function assembleWorld(root: string, options?: { readonly mainDialFails413
     }),
     createAutoCompactPlugin({
       contextWindow: 1_200,
-      // 三线整体显式钉值（§7.4 分档后 l1 缺省 50 < 显式 cp 60 会撞 assertLinesDomain——
-      // 夹具锁的是旅程行为而非档位缺省，三线成组取值不与档位混装）
       checkpointPct: 60,
       l1Pct: 70,
       l2Pct: 85,
@@ -68,7 +61,6 @@ async function assembleWorld(root: string, options?: { readonly mainDialFails413
     name: "fake",
     stream: (request) => {
       calls.push(request);
-      // 摘要/CP 旁路拨号按提示词特征路由（<conversation> 包裹）；主对话拨号走脚本池
       const isSummaryDial = request.messages.some((message) => {
         if (message.role !== "user" || !("content" in message)) return false;
         const block = message.content[0];
@@ -96,7 +88,6 @@ async function assembleWorld(root: string, options?: { readonly mainDialFails413
 export async function runCompactionJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-compaction-e2e-"));
   try {
-    // —— 旅程 A：长对话灌入 → 水位压缩 → 后续请求投影已缩 ——
     {
       const world = await assembleWorld(root);
       try {
@@ -125,7 +116,6 @@ export async function runCompactionJourney(): Promise<void> {
       console.log("旅程A：长对话 → 水位压缩 → 后续请求投影已缩 通过");
     }
 
-    // —— 旅程 B：假窗口 413 → 紧急自愈重试 + servedWindow 落账 → 任务不中断 ——
     {
       const world = await assembleWorld(root, { mainDialFails413: true, sessionId: "compaction-e2e-413" });
       try {
@@ -134,7 +124,6 @@ export async function runCompactionJourney(): Promise<void> {
         world.scripts.push(textScript("warm"));
         world.agent.followup("warm-up");
         await world.agent.whenIdle();
-        // 主拨号恒 413：紧急压缩 → 重试仍 413 → heal 键命中 → 放行 fatal → turn 收束
         world.agent.followup("burst");
         await world.agent.whenIdle();
         const outcome = world.agent.session.events().at(-1);

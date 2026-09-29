@@ -1,13 +1,3 @@
-// 红测（对抗审查 7c16b4e —— Track N/U 边界）：untyped/fork/空正文 named 的 worktree 子
-// 被 childAgentOptions 拼了「环境块独占」的静态 systemPrompt → step.ts:209
-// `options.systemPrompt ?? assemble` 短路 → 子丢全量 base/core（守则/上下文管理/输出
-// 格式全无），且 harness Track U 会话层覆盖插件（worktree-context.ts，本 commit 新增）
-// 对这类子成为死代码——与 worktree-context.ts:2-4 自身注释「untyped/fork 子走
-// prompt.assemble（无静态 systemPrompt 短路）」及设计文档 §1.4 D2' 直接矛盾。
-// 注意：本文件是攻击 harness 面的红测佐证（Track U 装配后消费不到），放 delegation
-// __test__ 是因需要 agent_spawn 工具面；harness 面的直发红测见
-// packages/harness/src/__test__/worktree-context-adversarial.test.ts。
-
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -76,10 +66,6 @@ describe("红测：Track N 拼接边界（untyped/fork/空正文 named 的 workt
     expect(spawned.isError).toBeUndefined();
     const childSession = sessionOf(spawned.content);
     const child = world.world.loop.get(childSession);
-    // 期望（worktree-context.ts:2-4 注释 / 设计 §1.4 D2'）：untyped 子无 persona →
-    // 不设静态 systemPrompt → assemble + Track U 覆盖 → 子得全量 base/core + worktree ENV。
-    // 现状红：childAgentOptions（spawn.ts:230）persona==undefined 但 worktree!=undefined
-    // 仍拼 appendWorktreeEnv("")，环境块独立成文 → base/core 全丢 + Track U 死代码。
     expect(child?.agent.options.systemPrompt).toBeUndefined();
     await world.parent.dispose();
   });
@@ -156,8 +142,6 @@ describe("红测：Track N 拼接边界（untyped/fork/空正文 named 的 workt
       expect(revived.isError).toBeUndefined();
       const childSession = (revived.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
       const child = second.loop.get(childSession);
-      // 期望：untyped 复活子无 persona → 静态 systemPrompt 缺席（走 assemble/Track U）。
-      // 现状红：revivedOptions（revive.ts:142）同款拼环境块独占串。
       expect(child?.agent.options.systemPrompt).toBeUndefined();
       await second.loop.get(parent.agent.session.id)?.dispose();
       await second.disposePlugins();

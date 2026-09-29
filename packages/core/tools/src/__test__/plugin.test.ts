@@ -1,5 +1,3 @@
-// toolsPlugin 装配集成（docs/TOOLS.md §7 管线交互 + token 词表 + 注册方 effect 绑定模式）。
-
 import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -41,7 +39,7 @@ describe("装配与注册方 effect 绑定模式（docs/TOOLS.md §1.2）", () =
   it("注册 → dispatch → schemas；消费方 effect 绑定演示", async () => {
     const { ctx, tools } = await assemble();
     const off = tools.register(echo);
-    ctx.effect(off); // 注册方契约：绑定到自身层，插件回卷时随层注销
+    ctx.effect(off);
     expect(await tools.dispatch(call("echo", { text: "hi" }))).toEqual({ content: "hi" });
     expect(tools.schemas()[0]?.name).toBe("echo");
     await ctx.dispose();
@@ -122,8 +120,8 @@ describe("管线交互（docs/TOOLS.md §7）", () => {
       return { ...outcome, content: `[wrapped] ${outcome.content}` };
     });
     expect(await tools.dispatch(call("probe", { text: "hi" }))).toEqual({ content: "[wrapped] ok" });
-    expect(frozenArgs).toBe(true); // 内核 deepFreeze 载荷——工具作者只读契约（真实管线验证）
-    expect(signalUsable).toBe(true); // 冻结不破坏 AbortSignal 内部槽
+    expect(frozenArgs).toBe(true);
+    expect(signalUsable).toBe(true);
     off();
   });
 

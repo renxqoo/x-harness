@@ -1,6 +1,3 @@
-// read 面契约 local 腿：双腿通用套件 + local-only 用例（权限/symlink/D2 版本原子性/注错缝）。
-// local 腿对内核级语义权威（fake 腿不得弱化 both 断言——docs/EXEC-ENV.md §7）。
-
 import { mkdtemp, rm, writeFile, rename, chmod, symlink, mkdir } from "node:fs/promises";
 import { openSync } from "node:fs";
 import { execSync } from "node:child_process";
@@ -21,10 +18,8 @@ describe("read-face conformance local-only", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  // root 身份无 EACCES（T9 linux 容器腿）——显式跳过计数，不静默让行
   it.skipIf(process.getuid?.() === 0)("access_denied：父目录 000 → stat/openRead 均拒；文件 000 → 仅 openRead 拒", async () => {
     const env = createLocalEnv(root);
-    // POSIX：stat 只需父目录搜览权——access_denied 必须经父目录构造
     await mkdir(join(root, "denydir"), { recursive: true });
     await writeFile(join(root, "denydir", "f.txt"), "x", "utf8");
     await chmod(join(root, "denydir"), 0o000);
@@ -34,7 +29,6 @@ describe("read-face conformance local-only", () => {
     } finally {
       await chmod(join(root, "denydir"), 0o700);
     }
-    // 文件自身 000：stat 照常（不需文件权限），open 读才被拒——stat/open 不对称语义
     const p = join(root, "secret.txt");
     await writeFile(p, "x", "utf8");
     await chmod(p, 0o000);
@@ -54,7 +48,6 @@ describe("read-face conformance local-only", () => {
       await writeFile(join(outside, "x.txt"), "x", "utf8");
       await symlink(outside, join(root, "link"));
       expect(await env.realpath(join(root, "link", "x.txt"))).toBe(join(await env.realpath(outside), "x.txt"));
-      // 不存在的尾段经 symlink 同样归一到外部物理目录
       expect(await env.realpath(join(root, "link", "ghost.txt"))).toBe(join(await env.realpath(outside), "ghost.txt"));
     } finally {
       await rm(outside, { recursive: true, force: true });
@@ -76,10 +69,10 @@ describe("read-face conformance local-only", () => {
       parts.push(Buffer.from(chunk.data));
     }
     await open.handle.close();
-    expect(Buffer.concat(parts).toString("utf8")).toBe("old-content"); // fd 内容不受路径替换影响
+    expect(Buffer.concat(parts).toString("utf8")).toBe("old-content");
     const fresh = await env.stat(p);
     if (!fresh.ok) throw new Error("stat failed");
-    expect(open.version.ino).not.toBe(fresh.stat.version.ino); // 版本随 inode——CAS 必拒陈旧
+    expect(open.version.ino).not.toBe(fresh.stat.version.ino);
     expect(open.version).not.toEqual(fresh.stat.version);
   });
 
@@ -97,7 +90,7 @@ describe("read-face conformance local-only", () => {
     expect(open.ok).toBe(true);
     if (!open.ok) return;
     expect(await open.handle.read()).toEqual({ ok: false, reason: "io_error" });
-    expect(await open.handle.read()).toEqual({ ok: false, reason: "io_error" }); // 粘性
+    expect(await open.handle.read()).toEqual({ ok: false, reason: "io_error" });
     await open.handle.close();
   });
 
@@ -107,12 +100,12 @@ describe("read-face conformance local-only", () => {
     const fd = openSync(p, "r");
     const handle = new LocalReadHandle(fd, { ioErrorAt: 4 });
     const first = await handle.read();
-    expect(first.ok && first.data?.byteLength).toBe(16); // 首读 served=0 < 4——正常（64KB 单块整读）
+    expect(first.ok && first.data?.byteLength).toBe(16);
     const second = await handle.read();
-    expect(second).toEqual({ ok: false, reason: "io_error" }); // served(16) ≥ ioErrorAt(4)——触发
+    expect(second).toEqual({ ok: false, reason: "io_error" });
     const third = await handle.read();
-    expect(third).toEqual({ ok: false, reason: "io_error" }); // 粘性
+    expect(third).toEqual({ ok: false, reason: "io_error" });
     await handle.close();
-    expect(await handle.read()).toEqual({ ok: true, data: null }); // close 优先于故障
+    expect(await handle.read()).toEqual({ ok: true, data: null });
   });
 });

@@ -1,5 +1,3 @@
-// harness-home 定位（docs/CLI.md §2.1）：X_HARNESS_HOME 覆盖 ~/.x-harness；派生路径同根。
-
 import { describe, expect, it } from "vitest";
 import { harnessHome, defaultSessionRoot, providersPath } from "../harness-home.ts";
 

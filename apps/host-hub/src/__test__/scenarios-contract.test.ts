@@ -1,6 +1,3 @@
-// 场景 e2e：契约旅程（MIGRATION §5 scenarios-contract 对应行）——收敛读重连合并
-// （get_entries{since} + get_inflight 幂等）、bash 直执行全旅程（流式事件/信封/
-// abort_bash）、/compact 拦截、子代理面（真进程 spawn→get_subagents→steer）。
 import { afterAll, describe, expect, test } from "vitest";
 import { drivePrompt, startHost } from "./kit/host-client.ts";
 import type { HostHandle } from "./kit/host-client.ts";
@@ -19,7 +16,6 @@ describe("场景：契约", () => {
     const started = await host.response("s1");
     const threadId = (started.data as { threadId: string }).threadId;
     await drivePrompt(host, { threadId, id: "p1", message: "first" });
-    // 全量 → leafSeq；since 增量
     host.send({ type: "get_entries", id: "e0", threadId });
     const full = (await host.response("e0")).data as { entries: Array<{ seq: number }>; leafSeq: number; hasMore: boolean };
     const firstLeaf = full.leafSeq;
@@ -27,20 +23,18 @@ describe("场景：契约", () => {
     host.send({ type: "get_entries", id: "e1", threadId, since: firstLeaf });
     const delta = (await host.response("e1")).data as { entries: Array<{ seq: number }>; leafSeq: number };
     expect(delta.entries.length).toBeGreaterThan(0);
-    expect(delta.entries[0]?.seq).toBe(firstLeaf + 1); // since 排他（游标后第一条）
-    // 重连水化配方：get_entries{since} + get_inflight 并行拉取幂等（两次同游标结果一致）
+    expect(delta.entries[0]?.seq).toBe(firstLeaf + 1);
     host.send({ type: "get_entries", id: "e2", threadId, since: firstLeaf });
     const delta2 = (await host.response("e2")).data as { entries: Array<{ seq: number }> };
     expect(delta2.entries.map((e) => e.seq)).toEqual(delta.entries.map((e) => e.seq));
     host.send({ type: "get_inflight", id: "i1", threadId });
     const inflight = await host.response("i1");
     expect(inflight.data).toEqual({ turnStartSeq: null, turnStartedAt: null, message: null, toolOutputs: [], bash: null });
-    // view 域 live 管线旅程：journal/history 同 thread 恒等 leafSeq，非法 view 显式 failure
     host.send({ type: "get_entries", id: "vj", threadId, view: "journal" });
     const vjournal = (await host.response("vj")).data as { entries: Array<{ seq: number }>; leafSeq: number };
     host.send({ type: "get_entries", id: "vh", threadId, view: "history" });
     const vhistory = (await host.response("vh")).data as { entries: Array<{ seq: number }>; leafSeq: number };
-    expect(vhistory.leafSeq).toBe(vjournal.leafSeq); // 全集域恒等
+    expect(vhistory.leafSeq).toBe(vjournal.leafSeq);
     host.send({ type: "get_entries", id: "vb", threadId, view: 42 });
     const vbad = await host.response("vb");
     expect(vbad.error).toMatchObject({ code: "invalid_input" });
@@ -53,7 +47,6 @@ describe("场景：契约", () => {
     const started = await host.response("s1");
     const threadId = (started.data as { threadId: string }).threadId;
     await drivePrompt(host, { threadId, id: "p1", message: "hi" });
-    // 弹窗期 abort_bash
     host.send({ type: "bash", id: "b0", threadId, command: "echo late" });
     const req0 = await host.wait((frame) => frame.type === "ui_request" && frame.method === "confirm" && frame.summary === "echo late", "bash confirm 0");
     host.send({ type: "abort_bash", id: "ab0", threadId });
@@ -61,7 +54,6 @@ describe("场景：契约", () => {
     expect(aborted.error).toEqual({ code: "bash_denied", message: "aborted before execution started" });
     await host.response("ab0");
     void req0;
-    // 正常执行：确认 → 流式 → 完成 → 信封
     host.send({ type: "bash", id: "b1", threadId, command: "echo journey-output" });
     await host.wait((frame) => frame.type === "ui_request" && frame.method === "confirm" && frame.summary === "echo journey-output", "bash confirm 1");
     const req1 = host.lines.find((frame) => frame.type === "ui_request" && (frame as { summary?: string }).summary === "echo journey-output");
@@ -70,18 +62,14 @@ describe("场景：契约", () => {
     const data = done.data as { output: string; exitCode: number; cancelled: boolean };
     expect(data.exitCode).toBe(0);
     expect(data.output).toContain("journey-output");
-    // 信封落 WAL（get_entries 尾部可见 [bash] 前缀）
     host.send({ type: "get_entries", id: "e1", threadId, limit: 3 });
     const entries = (await host.response("e1")).data as { entries: Array<{ event: { type: string; content?: Array<{ text?: string }> } }> };
     const envelope = entries.entries.find((entry) => entry.event.type === "user/message" && JSON.stringify(entry.event.content).includes("[bash] $"));
     expect(envelope).toBeDefined();
-    // 执行期 abort_bash（带 id 定向）
     host.send({ type: "bash", id: "b2", threadId, command: "sleep 5" });
     await host.wait((frame) => frame.type === "ui_request" && (frame as { summary?: string }).summary === "sleep 5", "bash confirm 2");
     const req2 = host.lines.filter((frame) => frame.type === "ui_request").at(-1);
     host.send({ type: "ui_response", id: "ur2", requestId: (req2 as unknown as { requestId: string }).requestId, payload: { confirmed: true } });
-    // abort_bash 的定向 id 与命令关联 id 同键（协议设计：定向键即 id）——ack 与 bash
-    // 终态两帧同 id，取「带 cancelled 数据」的那帧
     host.send({ type: "abort_bash", id: "b2", threadId });
     const cancelledFrame = await host.wait((frame) => frame.type === "response" && frame.command === "bash" && frame.id === "b2" && (frame.data as { cancelled?: boolean } | undefined)?.cancelled === true, "bash b2 cancelled");
     expect(cancelledFrame).toBeDefined();
@@ -96,7 +84,7 @@ describe("场景：契约", () => {
     await drivePrompt(host, { threadId, id: "p1", message: "hi" });
     host.send({ type: "prompt", id: "c1", threadId, message: "/compact keep the goals" });
     const compacted = await host.response("c1");
-    expect(compacted.command).toBe("prompt"); // 响应 command 留 prompt
+    expect(compacted.command).toBe("prompt");
     expect(compacted.error).toEqual({ code: "compact_rejected", message: "context too small to compact" });
   }, 60_000);
 

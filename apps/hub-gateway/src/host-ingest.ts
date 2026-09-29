@@ -1,5 +1,3 @@
-// host 帧摄入（DESIGN §1.2.1）：response 认领回投 / 事件与弹窗扇出 / 生命周期帧。
-// 从 main.ts 拆出（一动词一文件）；依赖经 HostIngestDeps 注入。
 import { classifyHostLine } from "./fanout.ts";
 import type { Fanout } from "./fanout.ts";
 import type { DeviceRegistry } from "./device-registry.ts";
@@ -13,7 +11,6 @@ export interface HostIngestDeps {
   audit: AuditLog;
   pendingByHostId: Map<string, { deviceId: string; commandId: string; command: string; ownerSession?: unknown }>;
   sendToDevice(deviceId: string, frame: import("@x-harness/remote-protocol").Frame): void;
-  /** owner 提交命令的 response 回投（owner 通道不走设备链路）；session 由 main 的扩展字段携带 */
   replyOwner(pending: { deviceId: string; commandId: string; command: string; ownerSession?: unknown }, _body: unknown): void;
 }
 
@@ -51,7 +48,7 @@ export function createHostIngest(deps: HostIngestDeps): HostIngest {
     if (hostId === null) return;
     const pending = deps.pendingByHostId.get(hostId);
     deps.pendingByHostId.delete(hostId);
-    if (pending === undefined) return; // 无人认领：丢弃+计数（发起者断线）
+    if (pending === undefined) return;
     const responseBody = { id: pending.commandId, command: pending.command, success: parsed.success === true, data: parsed.data, error: typeof parsed.error === "string" ? parsed.error : undefined };
     void deps.devices.appendResponse(pending.deviceId, pending.commandId, responseBody);
     adoptThreadFromResponse(parsed.data, pending.deviceId);
@@ -60,10 +57,9 @@ export function createHostIngest(deps: HostIngestDeps): HostIngest {
       deps.replyOwner(pending, responseBody);
       return;
     }
-    deps.sendToDevice(pending.deviceId, { kind: "response", streamId: `cmd:${pending.deviceId}`, seq: 0 /* seq 由 main 的认领路径分配 */, body: responseBody });
+    deps.sendToDevice(pending.deviceId, { kind: "response", streamId: `cmd:${pending.deviceId}`, seq: 0, body: responseBody });
   }
 
-  /** thread/start|resume|register|fork|clone 的 response data 携带 threadId——认领时建订阅+登记注册表 */
   function adoptThreadFromResponse(data: unknown, deviceId: string): void {
     if (typeof data !== "object" || data === null) return;
     const record = data as Record<string, unknown>;

@@ -3,7 +3,7 @@ import { decideFor as __decideFor } from "../decide.ts";
 import { knobDecideOf } from "@x-harness/permission-modes";
 function decideFor(input: Parameters<typeof __decideFor>[0]): ReturnType<typeof __decideFor> {
   const faces = knobDecideOf(input.profile);
-  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined; // 测试注入：模拟 dispatch 从 ToolDefinition.kind 穿引
+  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined;
   return __decideFor({ ...input, ...(input.kind === undefined && family !== undefined ? { kind: family } : {}), ...(input.modeDecide === undefined && faces.decide !== undefined ? { modeDecide: faces.decide } : {}), ...(input.postureDecide === undefined && faces.posture !== undefined ? { postureDecide: faces.posture } : {}) });
 }
 import { resolveProfile } from "@x-harness/permission-modes";

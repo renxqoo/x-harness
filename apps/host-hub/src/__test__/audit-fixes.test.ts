@@ -1,6 +1,3 @@
-// 假绿抽查处置回归（核查清单第 1/4/6 项）：shutdownAll 三不补/被拒驱动不合成
-// settled/pool 容量与死线/bash 硬化族（并发超时互不误杀/进程组杀/溢写/7 天清扫）/
-// credentials 面/中继计时锚/builtin 类型装载。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, mkdir, rm, stat, utimes, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -43,7 +40,6 @@ describe("抽查处置：pool 容量与关闭面", () => {
     f.table.insert({ threadId: "t1", cwd: "/w", sessionPath: "/hub/sessions/t1/events.jsonl", state: "parked", trusted: false, keepalive: false });
     await wakeAndDeliver(f, { type: "get_state", id: "g0", threadId: "t1" });
     await until(() => f.table.get("t1") !== undefined && f.pool.slotOf("t1") !== undefined, "slot");
-    // 在飞：未应答 get_entries + 未 settled 驱动
     void f.pool.routeLine(JSON.stringify({ type: "get_entries", id: "e1", threadId: "t1" }));
     void f.pool.routeLine(JSON.stringify({ type: "prompt", id: "p1", threadId: "t1" }));
     const worker = f.spawned[f.spawned.length - 1];
@@ -54,7 +50,6 @@ describe("抽查处置：pool 容量与关闭面", () => {
         resolve();
       }, 80);
     });
-    // 三不补：无 failure 合成、无 worker-died settled、表项不迁 dead
     expect(f.client.some((line) => line.includes("worker died before responding"))).toBe(false);
     expect(f.client.some((line) => line.includes("worker-died"))).toBe(false);
     expect(f.table.get("t1")?.state).not.toBe("dead");
@@ -67,13 +62,12 @@ describe("抽查处置：pool 容量与关闭面", () => {
     const worker = f.spawned[f.spawned.length - 1];
     void f.pool.routeLine(JSON.stringify({ type: "prompt", id: "rej1", threadId: "t1" }));
     await until(wrote(worker, '"rej1"'), "deliver");
-    // worker 拒绝受理（failure 应答——流式中无 streamingBehavior 等）
     worker?.onLine(responseLineOf({ id: "rej1", command: "prompt", success: false, error: hubError("streaming_window", "streamingBehavior required while streaming") }));
     await until(clientHas(f.client, "rej1"), "failure forwarded");
     worker?.close();
     await until(() => f.table.get("t1")?.state === "dead");
     const settledForRejected = f.client.filter((line) => line.includes('"settled"') && line.includes('"rej1"'));
-    expect(settledForRejected).toEqual([]); // 被拒驱动不合成 settled
+    expect(settledForRejected).toEqual([]);
   });
 
   test("retiring 重放队列：live slot 的 stop 走 retiring + 排队命令 close 后重评", async () => {
@@ -81,12 +75,11 @@ describe("抽查处置：pool 容量与关闭面", () => {
     f.table.insert({ threadId: "t1", cwd: "/w", sessionPath: "/hub/sessions/t1/events.jsonl", state: "parked", trusted: false, keepalive: false });
     await wakeAndDeliver(f, { type: "get_state", id: "g0", threadId: "t1" });
     await until(() => f.pool.slotOf("t1") !== undefined, "slot");
-    f.pool.retireThread("t1", "stop"); // live slot → retiring + thread/stop 投递 worker
+    f.pool.retireThread("t1", "stop");
     expect(f.table.get("t1")?.state).toBe("retiring");
     for (let i = 0; i < 3; i += 1) {
       void f.pool.routeLine(JSON.stringify({ type: "prompt", id: `q-${i}`, threadId: "t1" }));
     }
-    // close 时序先于/后于入队皆合法——终态统一为 Unknown threadId（删表重评或直拒）
     await until(clientHas(f.client, "Unknown threadId"), "requeue verdict", 8_000);
   });
 });
@@ -108,7 +101,7 @@ describe("抽查处置：bash 硬化族", () => {
     const shortOutcome = await short;
     expect(shortOutcome.ok === true && shortOutcome.cancelled).toBe(true);
     const longOutcome = await long;
-    expect(longOutcome.ok === true && longOutcome.cancelled).toBe(false); // 未被短命令的超时误杀
+    expect(longOutcome.ok === true && longOutcome.cancelled).toBe(false);
     expect(longOutcome.ok === true && (longOutcome as { output: string }).output === "").toBe(true);
   }, 20_000);
 
@@ -134,7 +127,7 @@ describe("抽查处置：bash 硬化族", () => {
       setTimeout(() => {
         resolve();
       }, 400);
-    }); // 孙进程落 pid 文件
+    });
     const pidText = await Bun.file(grandchild).text().catch(() => "");
     const grandPid = Number(pidText.trim());
     expect(Number.isFinite(grandPid)).toBe(true);
@@ -152,7 +145,7 @@ describe("抽查处置：bash 硬化族", () => {
     } catch {
       grandAlive = false;
     }
-    expect(grandAlive).toBe(false); // 孙进程随组杀全灭
+    expect(grandAlive).toBe(false);
   }, 20_000);
 
   test("溢写：>1MiB 输出落 fullOutputPath（key+rand 文件名）；内联 output 64KiB 截断标记", async () => {
@@ -169,12 +162,12 @@ describe("抽查处置：bash 硬化族", () => {
     const outcome = await bash.exec({ command: `head -c 2097152 /dev/zero | tr '\\0' 'x'`, timeoutMs: 20_000, id: "big" });
     expect(outcome.ok).toBe(true);
     const data = outcome as { output: string; truncated: boolean; fullOutputPath?: string };
-    expect(data.truncated).toBe(true); // 内联 64KiB 截断标记
+    expect(data.truncated).toBe(true);
     expect(Buffer.byteLength(data.output, "utf8")).toBeLessThanOrEqual(64 * 1024 + 8);
     expect(data.fullOutputPath).toBeDefined();
     const spilled = await Bun.file(data.fullOutputPath as string).text();
-    expect(spilled.length).toBe(2 * 1024 * 1024); // 溢写文件含全量
-    expect((data.fullOutputPath as string)).toMatch(/big\.[0-9a-f]{8}\.txt$/); // key+rand 命名
+    expect(spilled.length).toBe(2 * 1024 * 1024);
+    expect((data.fullOutputPath as string)).toMatch(/big\.[0-9a-f]{8}\.txt$/);
   }, 30_000);
 
   test("7 天清扫：超期溢写文件清除、新文件保留", async () => {
@@ -207,7 +200,7 @@ describe("抽查处置：credentials 面", () => {
     const store = createCredentials(agentDir);
     await store.setKey("glm", "sk-abc");
     const info = await stat(join(agentDir, "credentials.json"));
-    expect(info.mode & 0o777).toBe(0o600); // 创建即收紧
+    expect(info.mode & 0o777).toBe(0o600);
     const raw = JSON.parse(await Bun.file(join(agentDir, "credentials.json")).text()) as { keys: Record<string, string> };
     expect(raw.keys).toEqual({ glm: "sk-abc" });
     await store.removeKey("glm");
@@ -228,7 +221,7 @@ describe("抽查处置：转发计时锚（<1ms 量级——源 regressions-unit
     }
     const elapsed = performance.now() - start;
     expect(classified).toBe(2000);
-    expect(elapsed / frames.length).toBeLessThan(1); // ms/帧（热路径预算锚）
+    expect(elapsed / frames.length).toBeLessThan(1);
   });
 });
 
@@ -251,7 +244,6 @@ describe("抽查处置：builtin 类型装载（agents/list 层）", () => {
     const table = createThreadTable();
     void table;
     const diskLoaded = loadAgentTypes([userAgentsDirOf()]);
-    // 内联 builtin 的 general-purpose 在场（user 未覆盖时）；user 同名遮蔽 builtin
     const merged = { ...parseInlineTypes(builtinAgentTypes()).types, ...diskLoaded.types };
     expect(merged["general-purpose"]).toBeDefined();
   });
@@ -288,7 +280,6 @@ describe("抽查处置：worker observer 命令不重置 idle（心跳面）", (
     w.send({ type: "thread/start", id: "s1" });
     const started = await waitResponse(w.captured.lines, "thread/start", "s1");
     const threadId = (started.data as { threadId: string }).threadId;
-    // 观察两个心跳的 idleMs：注入 observer 命令后 idleMs 不归零（继续计时）
     const beatAt = async (): Promise<number> => {
       const beats = w.captured.lines.filter((line) => line.includes('"type":"heartbeat"'));
       const last = JSON.parse(beats.at(-1) as string) as { idleMs: number };
@@ -309,7 +300,7 @@ describe("抽查处置：worker observer 命令不重置 idle（心跳面）", (
       }, 1_100);
     });
     const after = await beatAt();
-    expect(after).toBeGreaterThanOrEqual(before); // observer 不重置 idle——继续增长
+    expect(after).toBeGreaterThanOrEqual(before);
     w.input.end();
   }, 15_000);
 });
@@ -325,16 +316,15 @@ describe("抽查处置：kill -9 复活验证强化（新 worker + 新 turn）",
     for (const pid of pidsBefore) process.kill(pid, "SIGKILL");
     await host.wait((frame) => frame.type === "thread_died" && frame.threadId === threadId, "thread_died");
     const diedCount = host.lines.filter((frame) => frame.type === "thread_died" && frame.threadId === threadId).length;
-    expect(diedCount).toBe(1); // 恰一
-    // 驱动命令 → 唤醒新 worker → 新 turn/start（复活的真证明）
+    expect(diedCount).toBe(1);
     const turnCountBefore = host.lines.filter((frame) => frame.type === "event" && frame.name === "turn/start" && frame.threadId === threadId).length;
     await drivePrompt(host, { threadId, id: "p-revive", message: "revive" });
     const turnCountAfter = host.lines.filter((frame) => frame.type === "event" && frame.name === "turn/start" && frame.threadId === threadId).length;
-    expect(turnCountAfter).toBe(turnCountBefore + 1); // 新 worker 真跑了新 turn
+    expect(turnCountAfter).toBe(turnCountBefore + 1);
     const { workerPids } = await import("./kit/host-client.ts");
     const pidsAfter = workerPids(host.proc.pid as number);
-    expect(pidsAfter.length).toBeGreaterThanOrEqual(1); // 新 worker 在世
-    expect(pidsAfter).not.toEqual(pidsBefore); // 不是旧 pid
+    expect(pidsAfter.length).toBeGreaterThanOrEqual(1);
+    expect(pidsAfter).not.toEqual(pidsBefore);
   }, 60_000);
 });
 
@@ -343,13 +333,12 @@ describe("抽查处置：55 命令矩阵全量恰一（源 smoke 全表驱动移
     const host = await startHost({ script: [{ reply: "matrix" }] });
     hosts.push(host);
     const { COMMAND_NAMES } = await import("../protocol/commands.ts");
-    // 先建线程（worker 命令面可用）
     host.send({ type: "thread/start", id: "boot", cwd: host.agentDir });
     const boot = await host.response("boot");
     const threadId = (boot.data as { threadId: string }).threadId;
     const threadScoped = new Set(["prompt", "steer", "follow_up", "compact", "bash", "fork", "clone", "set_model", "subagent/steer", "set_thinking_level", "thread/stop"]);
     for (const command of COMMAND_NAMES) {
-      if (command === "thread/start" || threadScoped.has(command)) continue; // 已验/替换语义面在场景测试
+      if (command === "thread/start" || threadScoped.has(command)) continue;
       const needsThread = new Set(["get_state", "get_inflight", "get_messages", "get_entries", "get_tree", "get_session_stats", "get_commands", "get_fork_messages", "get_subagents", "get_pending_dialogs", "thread/set_keepalive"]);
       const input: Record<string, unknown> = { type: command, id: `matrix-${command}` };
       if (needsThread.has(command)) input["threadId"] = threadId;
@@ -357,7 +346,6 @@ describe("抽查处置：55 命令矩阵全量恰一（源 smoke 全表驱动移
       const frame = await host.response(`matrix-${command}`);
       expect(frame.command).toBe(command);
       expect(frame.id).toBe(`matrix-${command}`);
-      // 恰一：该 id 的响应帧计数 = 1
       const count = host.lines.filter((f) => f.type === "response" && f.id === `matrix-${command}`).length;
       expect(count).toBe(1);
     }

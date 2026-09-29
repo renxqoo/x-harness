@@ -1,9 +1,7 @@
-// remote-client connect 单元：chunk 重组上抛、ACK 合并发送、outbox 记账/重发、重连调度标记
 import { describe, expect, it, vi } from "vitest";
 import { connectRemote, type RemoteClientHandle, type RemoteCodec } from "../connect.ts";
 import type { Frame } from "@x-harness/remote-protocol";
 
-/** 内存 codec（明文直通——测 connect 层逻辑） */
 function passthroughCodec(): RemoteCodec {
   return {
     seal: async (frameJson) => ({ payload: Buffer.from(frameJson).toString("base64"), nonce: Buffer.alloc(17).toString("base64") }),
@@ -29,7 +27,7 @@ describe("outbox 记账", () => {
   it("sendCommand 入箱；response 到达释放；outboxIds 观测", async () => {
     const client = makeClient();
     const sent = await client.sendCommand({ command: "thread/list", id: "m1" });
-    expect(sent).toBe(false); // 无连接——发送失败但已入箱
+    expect(sent).toBe(false);
     expect(client.outboxIds()).toEqual(["m1"]);
     client.stop();
   });
@@ -37,7 +35,6 @@ describe("outbox 记账", () => {
 
 describe("chunk 重组与 ACK（帧泵内部逻辑经 ingest 通道）", () => {
   it("chunk 段驱动：经 onFrame 模拟（connect 内部 ingest 不可直触——用 codec 层互操作代替）", async () => {
-    // codec 语义单测：chunkFrame 产物经 passthrough codec 往返
     const { chunkFrame, ChunkReassemblerPool, parseFrame } = await import("@x-harness/remote-protocol");
     const big: Frame = { kind: "event", streamId: "ev:t", seq: 1, body: { threadId: "t", name: "n", payload: { blob: "y".repeat(7 * 1024 * 1024) } } };
     const segs = chunkFrame(big, 1024 * 1024)!;

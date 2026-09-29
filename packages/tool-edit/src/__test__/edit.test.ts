@@ -1,7 +1,3 @@
-// edit 工具测试（docs/EDIT-TOOL.md 测试口径）：门两态（未读放行/读后改过拒）、越根/穿越/目录/非常规拒、
-// BOM round-trip、CRLF 保真、成功回显 diff、写后登记、abort、锁外 diff、read→edit→write 链路。
-// 装配 read+write+edit 三插件共享同一 gate+observed（三件套同源——配对契约即此形态）。
-
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, readFileSync, utimesSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -77,14 +73,12 @@ describe("edit 观察门两态（docs/EDIT-TOOL.md 观察门修订）", () => {
     const ok = await call("edit", EDIT("src2.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
     expect(ok.isError).toBeUndefined();
     expect(readFileSync(join(root, "src2.txt"), "utf8")).toBe("alpha\nBETA\ngamma\n");
-    // 外部改（mtime 变）→ 陈旧拒
     writeFileSync(join(root, "src3.txt"), "alpha\nbeta\ngamma\n");
     await call("read", { path: "src3.txt" }, { session: SESSION_A });
     execSync(`touch '${join(root, "src3.txt")}'`);
     const stale = await call("edit", EDIT("src3.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
     expect(stale.isError).toBe(true);
     expect(stale.content).toContain("FS_STALE_VERSION");
-    // 重读后过
     await call("read", { path: "src3.txt" }, { session: SESSION_A });
     const retried = await call("edit", EDIT("src3.txt", [{ oldText: "beta", newText: "BETA" }]), { session: SESSION_A });
     expect(retried.isError).toBeUndefined();
@@ -112,12 +106,11 @@ describe("edit 观察门两态（docs/EDIT-TOOL.md 观察门修订）", () => {
     const hijack = await call("edit", EDIT("s.txt", [{ oldText: "secret", newText: "shared" }]), { session: "sess-b" });
     expect(hijack.isError).toBeUndefined();
     expect(readFileSync(join(root, "s.txt"), "utf8")).toBe("shared\n");
-    // A 会话 read 旧版本后文件被外部改 → A 的陈旧门仍拒（会话键控保留）
     writeFileSync(join(root, "s2.txt"), "v1\n");
     await call("read", { path: "s2.txt" }, { session: SESSION_A });
     writeFileSync(join(root, "s2.txt"), "v2\n");
     const stale = await call("edit", EDIT("s2.txt", [{ oldText: "v2", newText: "v3" }]), { session: "sess-b" });
-    expect(stale.isError).toBeUndefined(); // B 未读 → 放行（内容匹配 v2 成功）
+    expect(stale.isError).toBeUndefined();
     const deniedA = await call("edit", EDIT("s2.txt", [{ oldText: "v3", newText: "v4" }]), { session: SESSION_A });
     expect(deniedA.isError).toBe(true);
     expect(deniedA.content).toContain("FS_STALE_VERSION");
@@ -195,7 +188,6 @@ describe("edit 文本形态保真", () => {
   it("跨行 oldText 的 CRLF 保真（多行替换后整文件行尾风格不变）", async () => {
     writeFileSync(join(root, "crlf2.txt"), "a\r\nb\r\nc\r\nd\r\n");
     await call("read", { path: "crlf2.txt" }, { session: SESSION_A });
-    // 模型给 LF 形多行 oldText（read 渲染层 stripCr 后的形态）
     const r = await call("edit", EDIT("crlf2.txt", [{ oldText: "b\nc", newText: "X\nY" }]), { session: SESSION_A });
     expect(r.isError).toBeUndefined();
     expect(readFileSync(join(root, "crlf2.txt"), "utf8")).toBe("a\r\nX\r\nY\r\nd\r\n");
@@ -223,7 +215,7 @@ describe("edit 回显与登记", () => {
     expect(r.content).toContain("-3 l3");
     expect(r.content).toContain("+2 L2");
     expect(r.content).toContain("+3 L3");
-    expect(r.content).toContain(" 1 l1"); // 上下文行带行号
+    expect(r.content).toContain(" 1 l1");
   });
 
   it("多 edit 回显条数复数；互不相交各自动作", async () => {
@@ -253,7 +245,7 @@ describe("edit 回显与登记", () => {
     await call("read", { path: "flow.txt" }, { session: SESSION_A });
     const e1 = await call("edit", EDIT("flow.txt", [{ oldText: "v1", newText: "v2" }]), { session: SESSION_A });
     expect(e1.isError).toBeUndefined();
-    const e2 = await call("edit", EDIT("flow.txt", [{ oldText: "v2", newText: "v3" }]), { session: SESSION_A }); // edit→edit 也续上
+    const e2 = await call("edit", EDIT("flow.txt", [{ oldText: "v2", newText: "v3" }]), { session: SESSION_A });
     expect(e2.isError).toBeUndefined();
     const w = await call("write", { path: "flow.txt", content: "v4\n" }, { session: SESSION_A });
     expect(w.isError).toBeUndefined();
@@ -287,7 +279,6 @@ describe("edit abort 与锁", () => {
   });
 
   it("锁外 diff：大文件 edit 的 diff 组装不阻断（回显完整）", async () => {
-    // 定宽编号（line-005 不是 line-050 的子串）——oldText 天然唯一，聚焦测 diff 面
     const lines = Array.from({ length: 400 }, (_, i) => `line-${String(i).padStart(3, "0")}`);
     writeFileSync(join(root, "big.txt"), `${lines.join("\n")}\n`);
     await call("read", { path: "big.txt" }, { session: SESSION_A });
@@ -303,7 +294,7 @@ describe("edit abort 与锁", () => {
     const final = readFileSync(join(root, "big.txt"), "utf8").split("\n");
     expect(final[10]).toBe("LINE-TEN");
     expect(final[390]).toBe("LINE-390");
-    expect(final[5]).toBe("line-005"); // 未触行原样
+    expect(final[5]).toBe("line-005");
   });
 
   it("同路径并发 edit 串行化：双 edit 都完成，终态为其中之一的完整应用（无半截交错）", async () => {
@@ -313,7 +304,6 @@ describe("edit abort 与锁", () => {
       call("edit", EDIT("conc.txt", [{ oldText: "x1", newText: "A1" }]), { session: SESSION_A }),
       call("edit", EDIT("conc.txt", [{ oldText: "x5", newText: "B5" }]), { session: SESSION_A }),
     ]);
-    // 前者登记后后者重读门可能拒（stale）——允许一个成功一个 FS_STALE，但不允许两个都失败
     const successes = [a, b].filter((r) => r.isError === undefined).length;
     expect(successes).toBeGreaterThanOrEqual(1);
     const final = readFileSync(join(root, "conc.txt"), "utf8");
@@ -330,10 +320,10 @@ describe("并发档声明", () => {
 describe("TOCTOU 二次版本比对（对抗审查终审——fd fstat 与观察版本）", () => {
   it("read 过门后文件被外部改（bash 旁路），edit 的 fd 读捕获新版本 → FS_STALE_VERSION 不匹配未见内容", async () => {
     writeFileSync(join(root, "f.txt"), "line1\nline2\n");
-    await call("read", { path: "f.txt" }); // 登记观察（fd 版本）
-    writeFileSync(join(root, "f.txt"), "line1\nCHANGED-BY-BASH\n"); // read 之后、edit 之前旁路改
+    await call("read", { path: "f.txt" });
+    writeFileSync(join(root, "f.txt"), "line1\nCHANGED-BY-BASH\n");
     const r = await call("edit", EDIT("f.txt", [{ oldText: "line1", newText: "x" }]));
     expect(r.isError).toBe(true);
-    expect(r.content).toContain("FS_STALE_VERSION"); // 旧实现的 stat 门也拒（mtime 变）——本断言同时覆盖 fd 二次比对路径（万一 stat 粒度漏，fd fstat 兜住）
+    expect(r.content).toContain("FS_STALE_VERSION");
   });
 });

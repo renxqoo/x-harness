@@ -1,6 +1,3 @@
-// edit 回显 diff 组装（docs/EDIT-TOOL.md）：npm diff 的 diffLines 分块 + 上下文窗口 +
-// 每行新旧双轨行号（超长行内字符级变化在行 diff 下模型靠行号定位）。
-
 import { diffLines } from "diff";
 
 export interface DiffStringResult {
@@ -18,7 +15,6 @@ function isChange(chunk: DiffChunk): boolean {
   return chunk.added === true || chunk.removed === true;
 }
 
-/** 分块文本按 \n 切行并弹掉尾空段（尾换行不产生多余空行）。 */
 function splitChunkLines(value: string): string[] {
   const raw = value.split("\n");
   if (raw.length > 0 && raw[raw.length - 1] === "") {
@@ -27,12 +23,10 @@ function splitChunkLines(value: string): string[] {
   return raw;
 }
 
-/** 单行输出：前置空格 + 旧轨行号（上下文行双轨同步，展示取旧轨）。 */
 function contextLine(line: string, lineNum: number, width: number): string {
   return ` ${String(lineNum).padStart(width, " ")} ${line}`;
 }
 
-/** 上下文窗口中间被省略的行，输出对齐宽度的省略号。 */
 function elidedLine(width: number): string {
   return ` ${"".padStart(width, " ")} ...`;
 }
@@ -42,17 +36,11 @@ interface LineCursor {
   newLineNum: number;
 }
 
-/** 两侧计数器同步推进 n 行（上下文块不改两侧行数差）。 */
 function advance(cursor: LineCursor, n: number): void {
   cursor.oldLineNum += n;
   cursor.newLineNum += n;
 }
 
-/**
- * 生成带双轨行号的展示 diff：变更行 `+N `/`-N `（新/旧轨各自计数），上下文行 ` N `
- * 取旧轨行号。上下文窗口默认 4 行，超窗中间以省略行折叠。firstChangedLine 为
- * 新文件首个变更行（无可视变更时 undefined）。
- */
 export function generateDiffString(
   oldContent: string,
   newContent: string,
@@ -104,7 +92,6 @@ interface RenderState {
   width: number;
 }
 
-/** 上下文块四态渲染：双侧夹变更全显或折叠中段；单侧只显窗内；无邻变更整块跳过。 */
 function appendContextWindow(state: RenderState, lines: string[]): void {
   const { output, cursor, hasLeadingChange, hasTrailingChange, contextLines, width } = state;
   if (!hasLeadingChange && !hasTrailingChange) {

@@ -1,5 +1,3 @@
-// per-device 双 ratchet 会话（DESIGN §1.3）：持久化组原子写（写链串行化 + 单调 version
-// 拒旧覆新）——杜绝并发读-改-写回滚 nextIndex。
 import { mkdir, readFile } from "node:fs/promises";
 import { atomicWrite } from "./identity.ts";
 import {
@@ -16,7 +14,6 @@ import { x25519 } from "@x-harness/remote-protocol";
 
 export interface DeviceCryptoSession {
   ratchet: RatchetSession;
-  /** 会话建立时间（强制 rekey 24h 窗） */
   establishedAt: number;
 }
 
@@ -40,7 +37,6 @@ export function createCryptoSessionPool(devicesDir: string, now: () => number): 
   const writeTails = new Map<string, Promise<void>>();
   const versions = new Map<string, number>();
 
-  /** per-device 单写者串行链（读-改-写合流；version 单调拒旧覆新） */
   function enqueuePersist(deviceId: string, patch: { send?: SendBoundary; recv?: RecvBoundary }): Promise<void> {
     const tail = (writeTails.get(deviceId) ?? Promise.resolve()).then(async () => {
       let persisted: PersistedState;
@@ -110,7 +106,6 @@ export function createCryptoSessionPool(devicesDir: string, now: () => number): 
   };
 }
 
-/** 配对通道共享 → ratchet 种子（QR 路径：临时 DH；PAKE 路径：共享再混设备长期钥） */
 export function seedFromPairing(spec: { channelShared: Uint8Array; deviceLongTermPub: string; gatewayEphemeralSecret: string; deviceEphemeralPub: string }): Uint8Array | null {
   const dh = x25519(spec.gatewayEphemeralSecret, spec.deviceEphemeralPub);
   if (dh === null) return null;

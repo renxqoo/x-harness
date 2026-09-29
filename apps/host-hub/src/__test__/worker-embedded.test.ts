@@ -1,7 +1,3 @@
-// worker 内嵌旅程（MIGRATION §5 worker-embedded-commands/races 移植 + x-harness
-// 语义锚）：prompt 双路径/settled 恰一与排序/事件词表/llm-chunk/dial+thinking 挂点
-// （request-header·context 落盘）/fork 旅程/clear_queue/压缩预检/权限即时切/读口形状
-// ——failure 必 emit 表驱动（恰一响应铁律）。
 import { afterAll, describe, expect, test } from "vitest";
 import { spawnScriptWorker, waitEvent, waitFrame, waitResponse } from "./kit/worker-harness.ts";
 import type { ScriptWorker } from "./kit/worker-harness.ts";
@@ -21,7 +17,6 @@ async function spawn(script: readonly ScriptStep[]): Promise<ScriptWorker> {
   return w;
 }
 
-/** get_state 队列投影读取（单条队列命令测试的寻址键来源） */
 async function queueView(
   worker: ScriptWorker,
   threadId: string,
@@ -32,8 +27,6 @@ async function queueView(
   return (state.data as { queue: { steering: Array<{ id: string; text: string }>; followUp: Array<{ id: string; text: string }> } }).queue;
 }
 
-/** text-only 目录 worker：快照通道（非 script 模式）注入无 input 声明的模型——
- *  能力门拒绝路径的嵌入式装置（prompt 在 LLM 调用前被拒，不打网络） */
 async function spawnTextOnlyWorker(): Promise<ScriptWorker> {
   const w = await spawnScriptWorker({
     env: {
@@ -54,7 +47,6 @@ interface DrivePlan {
   message: string;
 }
 
-/** 旅程基元：start → prompt → settled（返回线程上下文） */
 async function drivePrompt(plan: DrivePlan): Promise<{ worker: ScriptWorker; threadId: string; events: string[] }> {
   const worker = await spawn(plan.script);
   worker.send({ type: "thread/start", id: "s1", cwd: worker.agentDir });
@@ -74,14 +66,11 @@ describe("worker 内嵌旅程", () => {
   test("hello 首帧 + thread/start + prompt → settled 恰一 + 事件词表（session 域 + llm/chunk + agent/status）", async () => {
     const { worker, threadId, events } = await drivePrompt({ script: [{ reply: "hello world" }], message: "hi" });
     expect(threadId).toMatch(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
-    // 事件词表锚（DESIGN §4）
     for (const name of ["turn/start", "user/message", "assistant/message", "turn/end", "agent/status", "llm/chunk"]) {
       expect(events, `event ${name}`).toContain(name);
     }
-    // llm/chunk 载荷携带 text-delta
     const chunk = await waitEvent(worker.captured.lines, "llm/chunk", (payload) => (payload as { chunk?: { type?: string } }).chunk?.type === "text-delta");
     expect((chunk.payload as { chunk: { text: string } }).chunk.text).toBe("hello world");
-    // settled 恰一（同 sendId 只一条）
     const settledCount = worker.captured.lines.filter((line) => {
       const frame = JSON.parse(line) as { type: string; name?: string; payload?: { sendId?: string } };
       return frame.type === "event" && frame.name === "settled" && frame.payload?.sendId === "p1";
@@ -94,23 +83,19 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "thread/start", id: "s1" });
     const started = await waitResponse(worker.captured.lines, "thread/start", "s1");
     const threadId = (started.data as { threadId: string }).threadId;
-    // 首 prompt 占住 turn（delay 剧本 hold）
     worker.send({ type: "prompt", id: "p1", threadId, message: "first" });
     await waitResponse(worker.captured.lines, "prompt", "p1");
     await waitEvent(worker.captured.lines, "turn/start");
-    // 流式中显式 steer/follow_up 排队
     worker.send({ type: "steer", id: "st1", threadId, message: "steer-text" });
     await waitResponse(worker.captured.lines, "steer", "st1");
     worker.send({ type: "follow_up", id: "fu1", threadId, message: "later-text" });
     await waitResponse(worker.captured.lines, "follow_up", "fu1");
-    // clear_queue：返回被清文本（steering 含 steer-text）
     worker.send({ type: "clear_queue", id: "cq1", threadId });
     const cleared = await waitResponse(worker.captured.lines, "clear_queue", "cq1");
     expect(cleared.success).toBe(true);
     const clearedView = cleared.data as { steering: Array<{ id: string; text: string }>; followUp: Array<{ id: string; text: string }> };
     expect(clearedView.steering.map((entry) => entry.text)).toContain("steer-text");
     expect(clearedView.followUp.map((entry) => entry.text)).toContain("later-text");
-    // abort 收敛：settled ok（abort 不取消 settled）
     worker.send({ type: "abort", id: "ab1", threadId });
     await waitResponse(worker.captured.lines, "abort", "ab1");
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
@@ -128,27 +113,22 @@ describe("worker 内嵌旅程", () => {
     await waitResponse(worker.captured.lines, "steer", "st1");
     worker.send({ type: "follow_up", id: "fu1", threadId, message: "later-text" });
     await waitResponse(worker.captured.lines, "follow_up", "fu1");
-    // 读口带 id：queue 投影的 entry id 是单条命令的寻址键
     const view = await queueView(worker, threadId, "g0");
     const steerId = view.steering.find((entry) => entry.text === "steer-text")?.id ?? "";
     expect(steerId).not.toBe("");
-    // 单条删除：steer 条目出队，followUp 不动
     worker.send({ type: "queue/drop", id: "qd1", threadId, entryId: steerId });
     const dropped = await waitResponse(worker.captured.lines, "queue/drop", "qd1");
     expect(dropped.success).toBe(true);
     const after = await queueView(worker, threadId, "g1");
     expect(after.steering.map((entry) => entry.text)).toEqual([]);
     expect(after.followUp.map((entry) => entry.text)).toContain("later-text");
-    // 重复删除同 entryId：已出队 → state_conflict（恰一失败应答）
     worker.send({ type: "queue/drop", id: "qd2", threadId, entryId: steerId });
     const again = await waitResponse(worker.captured.lines, "queue/drop", "qd2");
     expect(again.success).toBe(false);
     expect((again.error as { code?: string }).code).toBe("state_conflict");
-    // 空 entryId 形状拒
     worker.send({ type: "queue/drop", id: "qd3", threadId, entryId: "" });
     const blank = await waitResponse(worker.captured.lines, "queue/drop", "qd3");
     expect((blank.error as { code?: string }).code).toBe("invalid_input");
-    // abort 收敛
     worker.send({ type: "abort", id: "ab1", threadId });
     await waitResponse(worker.captured.lines, "abort", "ab1");
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
@@ -162,7 +142,6 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "prompt", id: "p1", threadId, message: "first" });
     await waitResponse(worker.captured.lines, "prompt", "p1");
     await waitEvent(worker.captured.lines, "turn/start");
-    // 两条 followUp 排队；send_now 改向第二条 → 跳到 next-step（先于队首消费）
     worker.send({ type: "follow_up", id: "fu1", threadId, message: "first-queued" });
     await waitResponse(worker.captured.lines, "follow_up", "fu1");
     worker.send({ type: "follow_up", id: "fu2", threadId, message: "second-queued" });
@@ -176,7 +155,6 @@ describe("worker 内嵌旅程", () => {
     const after = await queueView(worker, threadId, "g1");
     expect(after.steering.map((entry) => entry.text)).toEqual(["second-queued"]);
     expect(after.followUp.map((entry) => entry.text)).toEqual(["first-queued"]);
-    // steer 条目（已在 next-step）不可改向
     worker.send({ type: "steer", id: "st1", threadId, message: "steer-text" });
     await waitResponse(worker.captured.lines, "steer", "st1");
     const steerView = await queueView(worker, threadId, "g2");
@@ -184,11 +162,9 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "queue/send_now", id: "sn2", threadId, entryId: steerId });
     const wrongQueue = await waitResponse(worker.captured.lines, "queue/send_now", "sn2");
     expect((wrongQueue.error as { code?: string }).code).toBe("state_conflict");
-    // 未知 entryId 拒
     worker.send({ type: "queue/send_now", id: "sn3", threadId, entryId: "msg_missing" });
     const missing = await waitResponse(worker.captured.lines, "queue/send_now", "sn3");
     expect((missing.error as { code?: string }).code).toBe("state_conflict");
-    // abort 收敛
     worker.send({ type: "abort", id: "ab1", threadId });
     await waitResponse(worker.captured.lines, "abort", "ab1");
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
@@ -202,7 +178,7 @@ describe("worker 内嵌旅程", () => {
     expect(data.model).toEqual({ provider: "script", model: "script-1" });
     expect(data.sessionId).toBe(threadId);
     expect(data.queue).toEqual({ steering: [], followUp: [] });
-    expect(data.messageCount).toBeGreaterThanOrEqual(2); // user + assistant（+ 快照注入面）
+    expect(data.messageCount).toBeGreaterThanOrEqual(2);
 
     worker.send({ type: "get_entries", id: "e1", threadId, limit: 3 });
     const entries = await waitResponse(worker.captured.lines, "get_entries", "e1");
@@ -214,7 +190,7 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "get_commands", id: "c1", threadId });
     const commands = await waitResponse(worker.captured.lines, "get_commands", "c1");
     const listed = commands.data as Array<{ name: string; source: string }>;
-    expect(listed.some((cmd) => cmd.name === "compact" && cmd.source === "command")).toBe(true); // BATCH3：source 词表 builtin→command（内核注册面）
+    expect(listed.some((cmd) => cmd.name === "compact" && cmd.source === "command")).toBe(true);
 
     worker.send({ type: "get_inflight", id: "i1", threadId });
     const inflight = await waitResponse(worker.captured.lines, "get_inflight", "i1");
@@ -231,19 +207,16 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "get_thinking_level", id: "t2", threadId });
     const got = await waitResponse(worker.captured.lines, "get_thinking_level", "t2");
     expect(got.data).toEqual({ level: "high", source: "session" });
-    // 下一 turn 的 request/header 落 thinking
     worker.send({ type: "prompt", id: "p1", threadId, message: "go" });
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
     const header = await waitEvent(worker.captured.lines, "request/header", (payload) => (payload as { thinking?: string }).thinking === "high");
     expect(header).toBeDefined();
-    // 词表外拒
     worker.send({ type: "set_thinking_level", id: "t3", threadId, level: "huge" });
     const bad = await waitResponse(worker.captured.lines, "set_thinking_level", "t3");
     expect(bad.error).toEqual({ code: "invalid_input", message: "invalid thinking level: huge" });
   });
 
   test("显式 thinkingLevel 不被目录支持 → capability_thinking（CodedError 内层穿透：start 直提 / resume 前缀保 code）", async () => {
-    // reasoning:false 快照目录：装配期写前校验拒绝（不打网络）
     const worker = await spawnScriptWorker({
       env: {
         HUB_WORKER_PROVIDER: undefined,
@@ -255,13 +228,10 @@ describe("worker 内嵌旅程", () => {
       },
     });
     workers.push({ input: worker.input });
-    // start 面：assembleThread 抛 CodedError → 外层 catch errorOfCause 保 code
     worker.send({ type: "thread/start", id: "s1", thinkingLevel: "high" });
     const rejected = await waitResponse(worker.captured.lines, "thread/start", "s1");
     expect(rejected.success).toBe(false);
     expect(rejected.error).toEqual({ code: "capability_thinking", message: "thinkingLevel rejected: model does not support thinking" });
-    // resume 面：无档 start 成会话 → stop → 带 thinkingLevel resume → 包装前缀
-    // "cannot resume session: …" 同样保 code
     worker.send({ type: "thread/start", id: "s2" });
     const made = await waitResponse(worker.captured.lines, "thread/start", "s2");
     const madeData = made.data as { threadId: string; sessionPath: string };
@@ -300,18 +270,14 @@ describe("worker 内嵌旅程", () => {
     const { worker, threadId } = await drivePrompt({ script: [{ reply: "origin" }], message: "hello" });
     worker.send({ type: "set_thinking_level", id: "t1", threadId, level: "low" });
     await waitResponse(worker.captured.lines, "set_thinking_level", "t1");
-    // clone = fork at leafSeq：含 dial/thinking meta 尾值的前缀（fork at 早期 seq 不含
-    // 后置 meta——边界语义锚）
     worker.send({ type: "clone", id: "f1", threadId });
     const forked = await waitResponse(worker.captured.lines, "clone", "f1");
     const data = forked.data as { threadId: string; previousThreadId: string };
     expect(data.previousThreadId).toBe(threadId);
     expect(data.threadId).not.toBe(threadId);
-    // 旧 id 命令 → Unknown threadId（单会话守卫——fork 重键结算面，与真缺失分码）
     worker.send({ type: "get_state", id: "g-old", threadId });
     const oldGuard = await waitResponse(worker.captured.lines, "get_state", "g-old");
     expect(oldGuard.error).toEqual({ code: "thread_superseded", message: "Unknown threadId" });
-    // 新线程 thinking 继承（前缀 meta 复制）
     worker.send({ type: "get_thinking_level", id: "t2", threadId: data.threadId });
     const inherited = await waitResponse(worker.captured.lines, "get_thinking_level", "t2");
     expect(inherited.data).toEqual({ level: "low", source: "session" });
@@ -334,7 +300,6 @@ describe("worker 内嵌旅程", () => {
     worker.send({ type: "thread/start", id: "s1" });
     const started = await waitResponse(worker.captured.lines, "thread/start", "s1");
     const threadId = (started.data as { threadId: string }).threadId;
-    // /compact 拦截：上下文太小 → context too small to compact（响应 command 留 prompt）
     worker.send({ type: "prompt", id: "p1", threadId, message: "/compact keep the goals" });
     const compacted = await waitResponse(worker.captured.lines, "prompt", "p1");
     expect(compacted.success).toBe(false);
@@ -350,7 +315,6 @@ describe("worker 内嵌旅程", () => {
     const accepted = await waitResponse(worker.captured.lines, "prompt", "p1");
     expect(accepted.error).toBeUndefined();
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
-    // WAL 投影：user/message 单条携带 [text, image] 全块（单 entry 同轮——拆轮防线回归）
     worker.send({ type: "get_entries", id: "e1", threadId });
     const entries = await waitResponse(worker.captured.lines, "get_entries", "e1");
     const userMsg = (entries.data as { entries: Array<{ event: { type: string; content?: unknown } }> }).entries
@@ -359,13 +323,11 @@ describe("worker 内嵌旅程", () => {
         const blocks = (row.event.content as Array<{ type?: string; text?: string }> | undefined) ?? [];
         return !(blocks.length === 1 && blocks[0]?.type === "text" && (blocks[0]?.text ?? "").startsWith("<snapshot"));
       })
-      .at(-1); // 末条 = 本 prompt 落账（agent-types 边沿快照在前、model 请求时点快照在批次后——均排除）
+      .at(-1);
     expect(userMsg?.event.content).toEqual([
       { type: "text", text: "hi" },
       { type: "image", data: "aGk=", mediaType: "image/png" },
     ]);
-    // D 模型快照装配级守护（对抗审查 M-1）：facts 插件注册链断裂（漏进 offs/render 写错）必红
-    // （直取 text 块比对——JSON.stringify 会转义引号使 includes 失配）
     const modelSnap = (entries.data as { entries: Array<{ event: { type: string; content?: unknown } }> }).entries
       .some((row) => {
         if (row.event.type !== "user/message") return false;
@@ -373,23 +335,19 @@ describe("worker 内嵌旅程", () => {
         return blocks.length === 1 && blocks[0]?.type === "text" && (blocks[0]?.text ?? "").startsWith('<snapshot kind="model">') && (blocks[0]?.text ?? "").includes("the model script-1.");
       });
     expect(modelSnap).toBe(true);
-    // fork 选点投影：纯图/携图行可见（[image] 标记——不留整行缺席）
     worker.send({ type: "get_fork_messages", id: "f1", threadId });
     const forks = await waitResponse(worker.captured.lines, "get_fork_messages", "f1");
-    const forkRow = JSON.stringify((forks.data as unknown[]).filter((row) => !JSON.stringify(row).includes("<snapshot")).at(-1)); // 末行 = 本 prompt（agent-types/model 快照行排除）
+    const forkRow = JSON.stringify((forks.data as unknown[]).filter((row) => !JSON.stringify(row).includes("<snapshot")).at(-1));
     expect(forkRow).toContain("hi");
     expect(forkRow).toContain("[image: image/png]");
-    // 形状拒绝（hub 边缘硬拒）
     worker.send({ type: "prompt", id: "p2", threadId, message: "hi", images: "junk" });
     expect((await waitResponse(worker.captured.lines, "prompt", "p2")).error).toEqual({ code: "invalid_input", message: "invalid images: expected array" });
     worker.send({ type: "prompt", id: "p3", threadId, message: "hi", images: [{}] });
     expect((await waitResponse(worker.captured.lines, "prompt", "p3")).error).toEqual({ code: "invalid_input", message: "invalid images: type must be image" });
-    // 量限拒绝：张数
     worker.send({ type: "prompt", id: "p4", threadId, message: "hi", images: Array.from({ length: 9 }, () => ({ type: "image", data: "aGk=", mediaType: "image/png" })) });
     const tooMany = (await waitResponse(worker.captured.lines, "prompt", "p4")).error as { code?: string; message?: string } | undefined;
     expect(tooMany?.code).toBe("images_too_many");
     expect(tooMany?.message).toContain("invalid images: too many images");
-    // compact 拦截仍拒图（能力门先过——script-1 携 image 模态）
     worker.send({ type: "prompt", id: "p5", threadId, message: "/compact", images: [{ type: "image", data: "aGk=", mediaType: "image/png" }] });
     expect((await waitResponse(worker.captured.lines, "prompt", "p5")).error).toEqual({ code: "invalid_input", message: "invalid images: compact does not accept images" });
   });
@@ -418,17 +376,14 @@ describe("worker 内嵌旅程", () => {
     await waitResponse(worker.captured.lines, "permission/set_mode", "pm1");
     worker.send({ type: "prompt", id: "p1", threadId, message: "run it" });
     await waitResponse(worker.captured.lines, "prompt", "p1");
-    // 增量帧：首个含 part-one 的 agent/tool-stream（25ms 尾沿合并——bash sleep 1s 窗口宽）
     const first = await waitEvent(worker.captured.lines, "agent/tool-stream", (p) => typeof (p as { delta?: string }).delta === "string" && (p as { delta: string }).delta.includes("part-one"));
     expect((first.payload as { callId?: string }).callId).toMatch(/^call-/);
-    // 执行中快照：toolOutputs 非空且含部分输出（原为空占位——BATCH2 §2.1 验收面）
     worker.send({ type: "get_inflight", id: "gi1", threadId });
     const inflight = await waitResponse(worker.captured.lines, "get_inflight", "gi1");
     const outputs = (inflight.data as { toolOutputs: Array<{ output: string }> }).toolOutputs;
     expect(outputs.length).toBeGreaterThanOrEqual(1);
     expect(outputs.some((entry) => entry.output.includes("part-one"))).toBe(true);
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
-    // 帧合并无损：全部 delta 连接含两段输出
     const joined = worker.captured.lines
       .map((line) => JSON.parse(line) as { type?: string; name?: string; payload?: { delta?: string } })
       .filter((f) => f.type === "event" && f.name === "agent/tool-stream")
@@ -436,7 +391,6 @@ describe("worker 内嵌旅程", () => {
       .join("");
     expect(joined).toContain("part-one");
     expect(joined).toContain("part-two");
-    // WAL 终局（结果权威）：tool/result 含全文
     worker.send({ type: "get_entries", id: "e1", threadId });
     const entries = await waitResponse(worker.captured.lines, "get_entries", "e1");
     const toolResult = (entries.data as { entries: Array<{ event: { type: string; content?: string } }> }).entries.find((row) => row.event.type === "tool/result");
@@ -496,7 +450,6 @@ describe("worker 内嵌旅程", () => {
     expect(data.exitCode).toBe(0);
     expect(data.output).toContain("hub-test-42");
     expect(data.cancelled).toBe(false);
-    // 信封落会话（get_entries 后续可见 user/message 含 [bash] 前缀）
     const envelope = await waitEvent(worker.captured.lines, "user/message", (payload) =>
       Array.isArray((payload as { content?: Array<{ text?: string }> }).content) &&
       ((payload as { content: Array<{ text?: string }> }).content[0]?.text ?? "").startsWith("[bash] $"),

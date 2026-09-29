@@ -1,7 +1,3 @@
-// 插件全链集成（真装配：session+tools+llm+system-prompt+agent-loop+本插件；脚本化假适配器）
-// ——docs/OUTPUT-TOKEN-CONTINUATION.md 测试口径「插件与真装配」：两段截断→stop 续写旅程、
-// 四连截断放弃旅程（缺省 max=3）。不引用他包 __test__ 私有文件，装置自建。
-
 import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { toolRegistry } from "@x-harness/tools";
@@ -104,12 +100,10 @@ describe("截断 tool_use 接续（TRUNCATED-TOOL-RESCUE 层 1：全截断 → �
     const result = events.find((e) => e.type === "tool/result")?.data as Record<string, unknown>;
     expect(result).toMatchObject({ callId: "t1", isError: true, synthetic: true });
     expect(String(result?.["content"])).toContain("truncated: not executed");
-    expect(executed).toBe(0); // 半截调用不执行
-    // 续写接手：第二次模型调用发生、指令以 agent/message{directive} 落卷、恰一条
+    expect(executed).toBe(0);
     expect(fixture.calls).toHaveLength(2);
     const directives = events.filter((e) => e.type === "agent/message");
     expect(directives).toHaveLength(1);
-    // 投影末条为指令（续写请求协议合法：指令在 tool 配对结果之后）
     const last = fixture.calls[1]?.messages.at(-1);
     expect(JSON.stringify(last)).toContain(OUTPUT_CONTINUATION_INSTRUCTION);
     await made.value.dispose();
@@ -130,7 +124,6 @@ describe("agent-continuation 插件全链（真装配，缺省 max=3）", () => 
     for (const directive of directives) {
       expect(directive.data).toMatchObject({ source: OUTPUT_CONTINUATION_SOURCE, kind: "directive", content: [{ type: "text", text: OUTPUT_CONTINUATION_INSTRUCTION }] });
     }
-    // 两个续写请求的末条都是指令（投影携带、保序）；第三请求完成后 completed
     for (const request of fixture.calls.slice(1)) {
       expect(request.messages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: OUTPUT_CONTINUATION_INSTRUCTION }] });
     }
@@ -150,7 +143,7 @@ describe("agent-continuation 插件全链（真装配，缺省 max=3）", () => 
 
     expect(fixture.calls).toHaveLength(4);
     expect(agent.session.events().filter((event) => event.type === "agent/message")).toHaveLength(3);
-    expect(agent.session.events().filter((event) => event.type === "assistant/message")).toHaveLength(4); // 保存先于判定
+    expect(agent.session.events().filter((event) => event.type === "assistant/message")).toHaveLength(4);
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "error", message: GIVE_UP.message, code: GIVE_UP.code } });
     await handle.dispose();
     await fixture.dispose();
@@ -198,13 +191,13 @@ describe("agent-continuation 插件全链（真装配，缺省 max=3）", () => 
     agent.followup("q");
     await agent.whenIdle();
 
-    expect(fixture.calls).toHaveLength(1); // 无续写请求
-    expect(conclude).toHaveLength(1); // 窗口派发达（带工具不再结构不可达）
-    expect(conclude[0]).toMatchObject({ stopReason: "max-tokens", hasTools: true, truncatedCount: 0 }); // 事实载荷
+    expect(fixture.calls).toHaveLength(1);
+    expect(conclude).toHaveLength(1);
+    expect(conclude[0]).toMatchObject({ stopReason: "max-tokens", hasTools: true, truncatedCount: 0 });
     const events = agent.session.events();
-    expect(events.filter((e) => e.type === "tool/result")).toHaveLength(1); // 工具照常执行
-    expect(events.filter((e) => e.type === "agent/message")).toHaveLength(0); // 插件让位：无指令
-    expect(events.at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } }); // 旧粘性终态等价
+    expect(events.filter((e) => e.type === "tool/result")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "agent/message")).toHaveLength(0);
+    expect(events.at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } });
     off();
     await handle.dispose();
     await fixture.dispose();

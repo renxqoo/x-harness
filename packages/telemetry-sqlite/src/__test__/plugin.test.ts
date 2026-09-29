@@ -1,7 +1,3 @@
-// B3 集成测（docs/TELEMETRY-SQLITE.md §5 B3/§7）：writer + plugin 临时真库（bun:sqlite 内存库）。
-// 幂等重放 / degraded 闩 / flush 屏障 fail-closed / unload 排空 / 晚装载 fail-closed /
-// created 首灌 / resume 续链 / 查询四面。
-
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Database } from "bun:sqlite";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -64,7 +60,6 @@ async function makeWorld(opts?: { readonly includeBodies?: boolean; readonly plu
   return { ctx, store: ctx.use(sessionStore), telemetry: ctx.use(sqliteTelemetry), exec, ioErrors, unload, db };
 }
 
-/** flush 后再读库（同步落库：内存库即时可见） */
 async function flushed(world: World, s: Session): Promise<void> {
   const result = await world.store.flush(s.id);
   if (!result.ok) throw new Error(result.reason);
@@ -102,7 +97,7 @@ describe("全链路落库", () => {
 
     const logs = world.telemetry.logsOf("s1");
     expect(logs.map((row) => row.eventType)).toEqual(s.events().map((event) => event.type));
-    expect(logs.every((row) => row.body !== null)).toBe(true); // includeBodies 缺省 true
+    expect(logs.every((row) => row.body !== null)).toBe(true);
   });
 
   it("usageOf：llm span 聚合四字段（cache 不丢）", async () => {
@@ -127,7 +122,7 @@ describe("全链路落库", () => {
     const s2 = unwrap(await world.store.create({ id: "u3" as SessionId }));
     turn(s2, 0);
     s2.append("step/start", { turn: 0, step: 0 });
-    s2.append("assistant/message", { turn: 0, step: 0, content: [], stopReason: "stop" }, append); // 无 usage
+    s2.append("assistant/message", { turn: 0, step: 0, content: [], stopReason: "stop" }, append);
     await flushed(world, s2);
     expect(world.telemetry.usageOf("u3")).toBeUndefined();
   });
@@ -153,7 +148,7 @@ describe("全链路落库", () => {
     const cSpans = world.telemetry.spansOf("c");
     expect(pSpans[0]?.traceId).not.toBe(cSpans[0]?.traceId);
     expect(world.telemetry.logsOf("p").length).toBe(1);
-    expect(world.telemetry.logsOf("c").length).toBeGreaterThan(1); // 前缀 + turn1 + end-seed
+    expect(world.telemetry.logsOf("c").length).toBeGreaterThan(1);
   });
 });
 
@@ -164,7 +159,6 @@ describe("幂等与重放（§3：不产生重复行）", () => {
     turn(s, 0);
     await flushed(world, s);
     const before = world.telemetry.logsOf("r1").length;
-    // 重放：手工再次投递同事件（审计通道不重投，模拟异常路径）
     world.ctx.emit(await import("@x-harness/session").then((m) => m.sessionAuditEvent), { session: s.id, event: s.events()[0] as SessionEvent });
     await flushed(world, s);
     expect(world.telemetry.logsOf("r1").length).toBe(before);
@@ -177,7 +171,6 @@ describe("flush 屏障 fail-closed（§1.4）", () => {
     const exec = createBunSqliteExecutor(db);
     const ioErrors: string[] = [];
     const ctx = createContext();
-    // 故障注入：run 计数到 N 后抛
     let failNext = 0;
     const failing: import("../types.ts").SqliteExecutor = {
       run: (sql, params) => {
@@ -197,12 +190,11 @@ describe("flush 屏障 fail-closed（§1.4）", () => {
     const s = unwrap(await world.store.create({ id: "f1" as SessionId }));
     turn(s, 0);
     userMessage(s, { turn: 0, step: 0 }, "x");
-    failNext = 2; // 实时段首 run + flush 段首 run 各失败一次（闩去重上报恰一次）；retry 段无故障
-    const flushResult = await world.store.flush(s.id); // 闩在：flush 排空段也失败（fail-closed 上浮）
+    failNext = 2;
+    const flushResult = await world.store.flush(s.id);
     expect(flushResult.ok).toBe(false);
-    expect(flushResult.ok === false && flushResult.reason).toContain("disk I/O error"); // store 聚合的根因
-    expect(ioErrors.length).toBeGreaterThan(0); // onIoError 上报可见（不静默）
-    // 恢复：故障已过（failNext 耗尽），重试屏障成功且按序补写
+    expect(flushResult.ok === false && flushResult.reason).toContain("disk I/O error");
+    expect(ioErrors.length).toBeGreaterThan(0);
     const retry = await world.store.flush(s.id);
     expect(retry.ok).toBe(true);
     expect(world.telemetry.logsOf("f1").length).toBe(s.events().length);
@@ -211,16 +203,15 @@ describe("flush 屏障 fail-closed（§1.4）", () => {
 
 describe("晚装载 fail-closed（§2）", () => {
   it("created 未达的会话：审计事件只入 pending 不写库；flush 报 telemetry-unopened", async () => {
-    // writer 直接面：插件晚于会话创建装载的等价形态（fold 未开——不建账不静默补灌）
     const db = new Database(":memory:");
     const exec = createBunSqliteExecutor(db);
     ensureSchema(exec);
     const w = createTelemetryWriter({ db: exec, resource: { serviceName: "t" }, includeBodies: true, onIoError: () => {} });
     const event = { type: "turn/start", seq: 0, time: 1, data: { turn: 0 } } as SessionEvent;
-    w.onAuditEvent("orphan" as SessionId, event); // created 未达：不崩不建账
-    await expect(w.flush("orphan" as SessionId)).rejects.toThrow(/telemetry-unopened:orphan/); // fail-closed 上浮
+    w.onAuditEvent("orphan" as SessionId, event);
+    await expect(w.flush("orphan" as SessionId)).rejects.toThrow(/telemetry-unopened:orphan/);
     const q = createQueryService(exec);
-    expect(q.logsOf("orphan")).toEqual([]); // 不静默补灌
+    expect(q.logsOf("orphan")).toEqual([]);
     await w.drainAll();
     db.close();
   });
@@ -232,7 +223,7 @@ describe("unload 排空与首灌（§1.5）", () => {
     const s = unwrap(await world.store.create({ id: "d1" as SessionId }));
     turn(s, 0);
     userMessage(s, { turn: 0, step: 0 }, "bye");
-    world.store.dispose(s.id); // sessionDisposed → 终排空段
+    world.store.dispose(s.id);
     await world.ctx.dispose();
     const spans = world.telemetry.spansOf("d1");
     expect(spans[0]?.name).toBe("session");
@@ -245,13 +236,12 @@ describe("unload 排空与首灌（§1.5）", () => {
     const s = unwrap(await world.store.create({ id: "seed" as SessionId, seed: [{ type: "turn/start", seq: 0, time: 1, data: { turn: 0 } }] }));
     void s;
     await world.ctx.dispose();
-    expect(world.telemetry.logsOf("seed").length).toBeGreaterThanOrEqual(2); // seed + end-seed
+    expect(world.telemetry.logsOf("seed").length).toBeGreaterThanOrEqual(2);
   });
 });
 
 describe("resume 续链（跨重启同库）", () => {
   it("第二次装配：DB 已有会话 → 同 trace 续写不铸新号、游标吸收已落前缀", async () => {
-    // 第一段：写半截（step/tool 未闭）
     const db = new Database(":memory:");
     const exec = createBunSqliteExecutor(db);
     const ctx1 = createContext();
@@ -267,7 +257,6 @@ describe("resume 续链（跨重启同库）", () => {
     await ctx1.dispose();
     const traceBefore = db.query("SELECT trace_id FROM otel_sessions WHERE session_id = 'res'").get() as { trace_id: string };
 
-    // 第二段：同库重开 + resume（seed = 已落事件）
     const ctx2 = createContext();
     const ioErrors2: string[] = [];
     await loadPlugins(ctx2, [sessionPlugin, sqliteTelemetryPlugin({ db: exec, tx: exec.tx, resource: { serviceName: "t" }, onIoError: (m) => ioErrors2.push(m) })]);
@@ -284,11 +273,11 @@ describe("resume 续链（跨重启同库）", () => {
     await ctx2.dispose();
 
     const traceAfter = db.query("SELECT trace_id FROM otel_sessions WHERE session_id = 'res'").get() as { trace_id: string };
-    expect(traceAfter.trace_id).toBe(traceBefore.trace_id); // trace 复用
+    expect(traceAfter.trace_id).toBe(traceBefore.trace_id);
     const spanCount = (db.query("SELECT COUNT(*) AS n FROM otel_spans WHERE session_id = 'res'").get() as { n: number }).n;
     const logCount = (db.query("SELECT COUNT(*) AS n FROM otel_logs WHERE session_id = 'res'").get() as { n: number }).n;
-    expect(logCount).toBe(seed.length + 5); // 前缀不重折：4 显式新事件 + resume end-seed
-    expect(spanCount).toBe(5); // session + turn + step + llm.chat + tool.grep（无重复行）
+    expect(logCount).toBe(seed.length + 5);
+    expect(spanCount).toBe(5);
     db.close();
   });
 });

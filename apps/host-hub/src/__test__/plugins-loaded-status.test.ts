@@ -1,7 +1,3 @@
-// plugins/list 装载态聚合回归（症状：已启用插件恒「待装载」）：host 归并输入必须
-// 来自 live worker 的 get_plugins 快照聚合——admin-commands 曾漏传 spec.loaded，
-// 任何已启用插件在 UI 上永远 unloaded。真进程黑盒：thread/start（装配装载 builtin）
-// → plugins/list 应报 active；无 live 会话时 builtin 报 unloaded。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,11 +25,9 @@ describe("plugins/list 装载态聚合（真进程）", () => {
       return Object.fromEntries(rows.map((row) => [row.name, row.status]));
     };
 
-    // 无 live 会话：builtin（token-analytics）unloaded——装配前语义，非故障
     const before = await statusOf("pl-before");
     expect(before["token-analytics"]).toBe("unloaded");
 
-    // 起会话：装配期装载 builtin → 聚合应报 active
     host.send({ type: "thread/start", id: "ts1", cwd: host.agentDir });
     const started = await host.response("ts1");
     expect(started.success).toBe(true);
@@ -46,7 +40,6 @@ describe("plugins/list 装载态聚合（真进程）", () => {
     const host = await startHost({ script: [{ reply: "vendor-ok" }] });
     hostsClosed.push(host);
 
-    // 造第三方插件源并装入该 host 的 agentDir
     const srcRoot = join(host.agentDir, "src-plugin");
     await mkdir(srcRoot, { recursive: true });
     await writeFile(join(srcRoot, "plugin.json"), JSON.stringify({ name: "agg-probe", kind: "third-party", apiVersion: 1 }));

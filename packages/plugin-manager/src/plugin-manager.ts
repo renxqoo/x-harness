@@ -1,6 +1,3 @@
-// plugin-manager 组装（docs/PLUGIN-MANAGER.md）：平台上开发的第一个插件——无特权，
-// provide pluginManagerService；审计缺省 JSONL 于 roots[0]。
-
 import { join } from "node:path";
 import type { AnyToken, Plugin } from "@x-harness/core";
 import { contextDisposing, pluginError, pluginEvent, pluginLoaded, pluginUnloaded, serviceProvided } from "@x-harness/core";
@@ -20,7 +17,6 @@ export function createPluginManager(deps: CreatePluginManagerDeps): Plugin {
       const audit = deps.audit ?? createFileAudit(join(deps.roots[0] ?? process.cwd(), ".plugin-manager-audit.jsonl"));
       const errorLog = createErrorLog(deps.errorLogLimit ?? 100, audit);
       const approvalGate = createApprovalGate(deps.approveInstall);
-      // 可桥接 token 表：内核自举词表 + 宿主注册（worker 模式监听解析/服务查名）
       const tokenTable = new Map<string, AnyToken>();
       for (const token of [
         serviceProvided,

@@ -1,4 +1,3 @@
-// relay 契约：token 体系（签发/过期/类别）、enroll 冲突 fail-closed、路由、单活、撤销
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { dialClient, httpPost, relayPort, startTestRelay } from "./kit.ts";
 import type { RelayHandle } from "../main.ts";
@@ -67,10 +66,8 @@ describe("HTTP 面", () => {
     const ok = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_a", gatewayKeyPub: kp.pub, sig, nonce } });
     expect(ok.status).toBe(200);
     expect(JSON.parse(ok.body).token).toBeTruthy();
-    // 坏签名
     const bad = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_b", gatewayKeyPub: kp.pub, sig: "00", nonce } });
     expect(bad.status).toBe(401);
-    // 键冲突（同 installationId 不同钥）
     const other = generateSigningKeyPair();
     const t2 = enrollTranscript({ installationId: "inst_a", gatewayKeyPub: other.pub, nodeId: relay.nodeId, nonce });
     const conflict = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_a", gatewayKeyPub: other.pub, sig: signBytes(other.secret, new TextEncoder().encode(t2)), nonce } });
@@ -83,12 +80,9 @@ describe("HTTP 面", () => {
     const t = enrollTranscript({ installationId: "inst_d1", gatewayKeyPub: kp.pub, nodeId: relay.nodeId, nonce });
     const first = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_d1", gatewayKeyPub: kp.pub, sig: signBytes(kp.secret, new TextEncoder().encode(t)), nonce } });
     expect(first.status).toBe(200);
-    // gateway 连接（token 主体 inst_d1）
     const gw = await dialClient({ port: relayPort(relay), token: relay.issueTestToken({ kind: "gateway", subject: "inst_d1" }) });
     await sleep(200);
-    // 钉存钥仍为原钥
     expect((await relay.store.getInstallation("inst_d1"))?.gatewayKeyPub).toBe(kp.pub);
-    // 异钥 enroll → 409
     const other = generateSigningKeyPair();
     const t2 = enrollTranscript({ installationId: "inst_d1", gatewayKeyPub: other.pub, nodeId: relay.nodeId, nonce });
     const hijack = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_d1", gatewayKeyPub: other.pub, sig: signBytes(other.secret, new TextEncoder().encode(t2)), nonce } });
@@ -121,7 +115,6 @@ describe("WSS 接入与路由", () => {
     const gw = await dialClient({ port: relayPort(relay), token: gwToken });
     const devToken = relay.issueTestToken({ kind: "device", subject: "route_1", installationId });
     const dev = await dialClient({ port: relayPort(relay), token: devToken });
-    // 等 device 路由登记
     await sleep(100);
     dev.send(JSON.stringify({ v: 1, from: "dev_route_1", to: `gw_${installationId}`, payload: "aGVsbG8=", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     await expect(gw.waitLine((l) => l.includes("dev_route_1"))).resolves.toContain("aGVsbG8=");
@@ -135,7 +128,6 @@ describe("WSS 接入与路由", () => {
     const gw = await dialClient({ port: relayPort(relay), token: gwToken });
     const dev = await dialClient({ port: relayPort(relay), token: relay.issueTestToken({ kind: "device", subject: "bind", installationId }) });
     await sleep(100);
-    // dev_bind 冒充别人发
     dev.send(JSON.stringify({ v: 1, from: "dev_spoofed", to: `gw_${installationId}`, payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     await expect(gw.waitLine((l) => l.includes("dev_spoofed"), 800).catch(() => "timeout" as unknown as string)).resolves.toBe("timeout");
     gw.close();
@@ -147,7 +139,6 @@ describe("WSS 接入与路由", () => {
     const first = await dialClient({ port: relayPort(relay), token });
     const second = await dialClient({ port: relayPort(relay), token });
     await sleep(150);
-    // 旧连接被关闭
     expect(first.raw.destroyed).toBe(true);
     second.close();
   });
@@ -163,22 +154,17 @@ describe("WSS 接入与路由", () => {
 
   it("HTTP 面错误路径全支路：坏 JSON/缺字段/非 gateway token/多实例无存储拒启", async () => {
     const port = relayPort(relay);
-    // enroll 坏 JSON → 400
     const badJson = await httpPost({ port, path: "/api/enroll", body: "not-json" });
     expect([200, 400]).toContain(badJson.status);
-    // pairing-ticket 无 pairingId → 400（带 token）
     const noField = await httpPost({ port, path: "/api/pairing-ticket", body: {}, token: gwToken });
     expect(noField.status).toBe(400);
-    // pairing-ticket 用 device token → 401
     const devTok = relay.issueTestToken({ kind: "device", subject: "x", installationId });
     const wrongKind = await httpPost({ port, path: "/api/pairing-ticket", body: { pairingId: "p" }, token: devTok });
     expect(wrongKind.status).toBe(401);
-    // revoke 坏 token → 401；缺 deviceId → 400
     const noAuth = await httpPost({ port, path: "/api/revoke", body: { deviceId: "d" } });
     expect(noAuth.status).toBe(401);
     const noDev = await httpPost({ port, path: "/api/revoke", body: {}, token: gwToken });
     expect(noDev.status).toBe(400);
-    // 未知路径 404
     const nf = await httpPost({ port, path: "/api/nope", body: {} });
     expect(nf.status).toBe(404);
   });
@@ -194,7 +180,6 @@ describe("WSS 接入与路由", () => {
   });
 
   it("D2 回归：跨节点转发 dev_ 目标分派设备连接（pattern 频道语义）", async () => {
-    // 同节点直投（无跨节点），此用例锚 broadcast 消费面：发布 revoke 广播后设备连接被断
     const gw = await dialClient({ port: relayPort(relay), token: gwToken });
     const devToken = relay.issueTestToken({ kind: "device", subject: "bc1", installationId });
     const dev = await dialClient({ port: relayPort(relay), token: devToken });
@@ -219,7 +204,6 @@ describe("WSS 接入与路由", () => {
     const relay2 = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "test-secret-16bytes!!", singleInstance: true, signingSecret: kp.secret, signingPub: kp.pub });
     expect(relay2.nodeSigningPub).toBe(kp.pub);
     const node = await httpPost({ port: relayPort(relay2), path: "/api/node-key", body: {} });
-    // httpPost 是 POST——node-key 只收 GET。直接 net GET：
     const { connect } = await import("node:net");
     const raw = await new Promise<string>((resolve) => {
       const sock = connect({ host: "127.0.0.1", port: relayPort(relay2) });
@@ -231,7 +215,6 @@ describe("WSS 接入与路由", () => {
     expect(raw).toContain(kp.pub);
     void node;
     await relay2.close();
-    // redis 形态（fake RESP）启动成功
     const { startFakeRespServer } = await import("./fake-resp.ts");
     const fake = await startFakeRespServer();
     const relay3 = await startRelay({ port: 0, host: "127.0.0.1", tokenSecret: "test-secret-16bytes!!", singleInstance: true, redis: { host: "127.0.0.1", port: fake.port } });
@@ -242,9 +225,7 @@ describe("WSS 接入与路由", () => {
 
   it("pairing ticket 仅 /pairing 路径可用作数据面（其他路径 401）", async () => {
     const ticket = relay.issuePairingTicket("pr_path");
-    // 非 pairing 路径：kind=pairing 不被接受
     await expect(dialClient({ port: relayPort(relay), token: ticket, path: "/" })).rejects.toThrow();
-    // pairing 路径可连
     const ph = await dialClient({ port: relayPort(relay), token: ticket, path: "/pairing" });
     expect(ph.raw.destroyed).toBe(false);
     ph.close();
@@ -256,7 +237,6 @@ describe("WSS 接入与路由", () => {
     const second = await dialClient({ port: relayPort(relay), token });
     await sleep(200);
     expect(first.raw.destroyed).toBe(true);
-    // 新连接正常收发
     const gw = await dialClient({ port: relayPort(relay), token: gwToken });
     second.send(JSON.stringify({ v: 1, from: "dev_single2", to: `gw_${installationId}`, payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }));
     await expect(gw.waitLine((l) => l.includes("dev_single2"))).resolves.toBeTruthy();
@@ -290,7 +270,6 @@ describe("设备 token 签发（WIRE 设备注册收尾）", () => {
     expect(typeof parsed.token).toBe("string");
     const unauthorized = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_aaaa00000000bbbb" } });
     expect(unauthorized?.status).toBe(401);
-    // 未登记设备：gateway 持有效 token 即注册凭据（登记放行——归属即调用方身份）
     const freshDevice = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_f00d00000000beef" }, token: gwToken });
     expect(freshDevice?.status).toBe(200);
   });
@@ -298,7 +277,6 @@ describe("设备 token 签发（WIRE 设备注册收尾）", () => {
 
 describe("R2 H5/H6 回归：租户执法与 deviceId 格式", () => {
   it("revoke 跨租户 409（只能撤自己名下）", async () => {
-    // 第二个 gateway 身份
     const kp2 = generateSigningKeyPair();
     const challenge2 = await httpPost({ port: relayPort(relay), path: "/api/enroll/challenge", body: {} });
     const ch2 = JSON.parse((challenge2?.body ?? "{}") as string) as { nonce: string; nodeId: string };
@@ -306,13 +284,10 @@ describe("R2 H5/H6 回归：租户执法与 deviceId 格式", () => {
     const sig2 = signBytes(kp2.secret, new TextEncoder().encode(transcript2));
     const enroll2 = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_other", gatewayKeyPub: kp2.pub, sig: sig2, nonce: ch2.nonce } });
     const tok2 = (JSON.parse((enroll2?.body ?? "{}") as string) as { token: string }).token;
-    // 主 gateway 登记设备
     const reg = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_abcdef0123456789" }, token: gwToken });
     expect(reg?.status).toBe(200);
-    // 他租户 revoke → 409
     const cross = await httpPost({ port: relayPort(relay), path: "/api/revoke", body: { deviceId: "d_abcdef0123456789" }, token: tok2 });
     expect(cross?.status).toBe(409);
-    // 属主 revoke → 200
     const own = await httpPost({ port: relayPort(relay), path: "/api/revoke", body: { deviceId: "d_abcdef0123456789" }, token: gwToken });
     expect(own?.status).toBe(200);
   });
@@ -325,7 +300,6 @@ describe("R2 H5/H6 回归：租户执法与 deviceId 格式", () => {
   });
 
   it("device-token 归属取调用方身份（body 无 installationId 字段）", async () => {
-    // body 只带 deviceId——归属即 token subject（body 改绑通道封死）
     const res = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_0123456789abcdef" }, token: gwToken });
     expect(res?.status).toBe(200);
   });

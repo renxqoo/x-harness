@@ -1,7 +1,3 @@
-// 插件装配（docs/EXEC-ENV.md §5/§7）：拼错规则拒启 / broker 缺席 ask→deny / ask 批→extraRoot 落账→
-// 同会话二次免问 / deny 压过 allow / 默认拒读表工具面拒 / 审计每裁决一条 / 会话授权隔离 /
-// sessionDisposed 逐出（经 session 插件真实事件）/ 未知工具保守 ask。真实 dispatch 管线全链。
-
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -25,7 +21,6 @@ interface Bench {
   call(name: string, args: unknown, session?: SessionId): Promise<ToolOutcome>;
 }
 
-/** 单装配多 dispatch：broker 可编程（脚本耗尽即 deny）；审计与 ask 全记账 */
 async function bench(root: string, options: { rules?: readonly string[]; mode?: import("../types.ts").ProfileId; brokerScript?: readonly ("allow" | "deny")[]; controlTools?: readonly string[]; customProfiles?: readonly import("../types.ts").PermissionProfile[] } = {}): Promise<Bench> {
   const ctx = createContext();
   const audits: { tool: string; verdict: string; resolvedBy?: string }[] = [];
@@ -44,7 +39,7 @@ async function bench(root: string, options: { rules?: readonly string[]; mode?: 
       }),
   };
   const unload = await loadPlugins(ctx, [
-    createPermissionModesPlugin(), // V4 内置模式（base 零策略）
+    createPermissionModesPlugin(),
     toolsPlugin,
     createPermissionPlugin({ root, ...(options.rules !== undefined ? { rules: parseRules(options.rules, "user") } : {}), ...(options.mode !== undefined ? { mode: options.mode } : {}), ...(options.customProfiles !== undefined ? { customProfiles: options.customProfiles } : {}) }),
     broker,
@@ -60,7 +55,7 @@ async function bench(root: string, options: { rules?: readonly string[]; mode?: 
   const call = async (name: string, args: unknown, session?: SessionId): Promise<ToolOutcome> => {
     if (!toolNames.has(name)) {
       toolNames.add(name);
-      const family = (["read","write","edit","grep","bash"] as const).includes(name as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[name as "read"|"write"|"edit"|"grep"|"bash"] : undefined; // stub 模拟 ToolDefinition.kind 声明
+      const family = (["read","write","edit","grep","bash"] as const).includes(name as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[name as "read"|"write"|"edit"|"grep"|"bash"] : undefined;
       disposers.push(reg.register({ name, ...(family !== undefined ? { kind: family } : {}), inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) }));
     }
     return reg.dispatch({ callId: `c-${String(asks.length)}-${String(audits.length)}-${name}`, name, args, signal: new AbortController().signal, ...(session !== undefined ? { session } : {}) });
@@ -109,9 +104,9 @@ describe("permission 插件（真实管线）", () => {
       const r = await b.call("read", { paths: ["f.txt", join(root, "..", "xh-outside", ".env")] });
       expect(r.isError).toBe(true);
       expect(r.content).toContain("rule:/**/.env");
-      expect(b.asks).toHaveLength(0); // deny 不走 ask
+      expect(b.asks).toHaveLength(0);
       const local = await b.call("read", { paths: ["f.txt", ".env"] });
-      expect(local.isError).not.toBe(true); // 根集内项目本地配置——可读（2026-09-28 裁决）
+      expect(local.isError).not.toBe(true);
     });
 
     it("批量含界外条目 → 整体 ask（grant 落账界外父目录；批量不吞界外语义）", async () => {
@@ -121,13 +116,13 @@ describe("permission 插件（真实管线）", () => {
       const ask = b.asks[0];
       if (ask === undefined) throw new Error("no ask");
       expect(ask.reason).toContain("outside-root:");
-      expect(ask.reason).toContain("xh-outside"); // grant 落账的界外条目路径在场
+      expect(ask.reason).toContain("xh-outside");
     });
 
     it("批量全界内正常文件 → allow 直通（batch in-root；零 ask 零 deny）", async () => {
       const b = await bench(root);
       const r = await b.call("read", { paths: ["f.txt", join("sub", "..", "f.txt")] });
-      expect(r.isError).toBeUndefined(); // 占位工具执行成功 = 裁决 allow
+      expect(r.isError).toBeUndefined();
       expect(b.asks).toHaveLength(0);
       expect(readVerdictsOf(b.audits).includes("allow")).toBe(true);
     });
@@ -136,14 +131,13 @@ describe("permission 插件（真实管线）", () => {
   it("拒读底线分层（2026-09-28 裁决）：根集内 .env 可读（项目配置）；根集外 .env 与家目录 ~/.ssh 恒拒；不触发 ask", async () => {
     const b = await bench(root);
     const localEnv = await b.call("read", { path: ".env" });
-    expect(localEnv.isError).not.toBe(true); // 根集内项目本地配置
+    expect(localEnv.isError).not.toBe(true);
     const outsideEnv = await b.call("read", { path: join(root, "..", "xh-outside", ".env") });
     expect(outsideEnv.isError).toBe(true);
     expect(outsideEnv.content).toContain("rule:/**/.env");
-    // 默认表 ~/.ssh/** 射程是家目录凭证；工作区内 .ssh 属普通界内文件（允许）——分层语义锁定
     const homeSsh = await b.call("read", { path: join(homedir(), ".ssh", "id_rsa") });
     expect(homeSsh.isError).toBe(true);
-    expect(b.asks).toHaveLength(0); // deny 不走 ask
+    expect(b.asks).toHaveLength(0);
     for (const d of b.unload) await d();
   });
 
@@ -161,41 +155,41 @@ describe("permission 插件（真实管线）", () => {
     const denied = await absent.call("read", { path: outsideFile }, "sA" as SessionId);
     expect(denied.isError).toBe(true);
     expect(denied.content).toContain("outside-root");
-    expect(absent.asks).toHaveLength(1); // broker 缺席也被问过（退化 deny）
+    expect(absent.asks).toHaveLength(1);
     for (const d of absent.unload) await d();
 
     const b = await bench(root, { brokerScript: ["allow", "allow"] });
     const first = await b.call("read", { path: outsideFile }, "sA" as SessionId);
-    expect(first.content).toBe("ran"); // 批准放行
+    expect(first.content).toBe("ran");
     const second = await b.call("read", { path: outsideFile }, "sA" as SessionId);
     expect(second.content).toBe("ran");
-    expect(b.asks).toHaveLength(2); // P-bug-4：读批准不落 extraRoot（once≠会话永久；读授权不得扩成写授权）——二次再问
+    expect(b.asks).toHaveLength(2);
     const stranger = await b.call("read", { path: outsideFile }, "sB" as SessionId);
-    expect(stranger.isError).toBe(true); // B 会话不借用（脚本耗尽 → deny）
+    expect(stranger.isError).toBe(true);
     for (const d of b.unload) await d();
   });
 
   it("bash：auto 档无规则 → ask→批→allow；allow 规则 → 零交互；deny 规则直接 deny", async () => {
     const b = await bench(root, { brokerScript: ["allow"] });
     const asked = await b.call("bash", { command: "mytool run" }, "s1" as SessionId);
-    expect(asked.content).toBe("ran"); // 未分类 → ask → 批 → 放行
+    expect(asked.content).toBe("ran");
     expect(b.asks).toHaveLength(1);
     const zeroTouch = await b.call("bash", { command: "git status" }, "s1" as SessionId);
     expect(zeroTouch.content).toBe("ran");
-    expect(b.asks).toHaveLength(1); // 分类器零交互（U4——不新增 ask）
+    expect(b.asks).toHaveLength(1);
     for (const d of b.unload) await d();
 
     const b2 = await bench(root, { rules: ["Danger(git status):allow"], brokerScript: [] });
     const zero = await b2.call("bash", { command: "git status" }, "s1" as SessionId);
     expect(zero.content).toBe("ran");
-    expect(b2.asks).toHaveLength(0); // 规则放行零交互
+    expect(b2.asks).toHaveLength(0);
     for (const d of b2.unload) await d();
 
     const b3 = await bench(root, { rules: ["Danger(ls):deny"] });
     const denied = await b3.call("bash", { command: "ls" }, "s1" as SessionId);
     expect(denied.isError).toBe(true);
     expect(denied.content).toContain("rule:ls");
-    expect(b3.asks).toHaveLength(0); // deny 不问
+    expect(b3.asks).toHaveLength(0);
     for (const d of b3.unload) await d();
   });
 
@@ -205,21 +199,21 @@ describe("permission 插件（真实管线）", () => {
     for (const d of plan.unload) await d();
 
     const full = await bench(root, { mode: "full" });
-    expect((await full.call("bash", { command: "ls whatever" })).content).toBe("ran"); // 未配段全过
-    expect((await full.call("bash", { command: "sudo id" })).isError).toBe(true); // 硬拒底线仍在
+    expect((await full.call("bash", { command: "ls whatever" })).content).toBe("ran");
+    expect((await full.call("bash", { command: "sudo id" })).isError).toBe(true);
     for (const d of full.unload) await d();
   });
 
   it("full 插件执行面（2026-09-28 裁决）：注入/灾难形态/解析失败/.git 写零 ask 直接执行；提权与根集外拒读仍拦（零 ask 拒绝）", async () => {
     const b = await bench(root, { mode: "full", brokerScript: [] });
-    expect((await b.call("bash", { command: "echo $(whoami)" })).content).toBe("ran"); // 注入不再弹 floor 确认
+    expect((await b.call("bash", { command: "echo $(whoami)" })).content).toBe("ran");
     expect(b.asks).toHaveLength(0);
-    expect((await b.call("bash", { command: "rm -rf /" })).content).toBe("ran"); // 灾难形态放行（总括意志——stub 不真执行）
-    expect((await b.call("bash", { command: "echo x > .git/config" })).content).toBe("ran"); // .git 重定向写放行
-    expect((await b.call("bash", { command: "cat .env" })).content).toBe("ran"); // 根集内 .env 项目配置放行
-    expect((await b.call("read", { path: join(root, ".env") })).content).toBe("ran"); // 路径面同放行
-    expect((await b.call("bash", { command: `cat ${join(homedir(), ".ssh", "id_rsa")}` })).isError).toBe(true); // 凭据目录恒拒（任意位置）
-    expect(b.asks).toHaveLength(0); // 全程零确认——恒拒面直接 deny 不经 broker
+    expect((await b.call("bash", { command: "rm -rf /" })).content).toBe("ran");
+    expect((await b.call("bash", { command: "echo x > .git/config" })).content).toBe("ran");
+    expect((await b.call("bash", { command: "cat .env" })).content).toBe("ran");
+    expect((await b.call("read", { path: join(root, ".env") })).content).toBe("ran");
+    expect((await b.call("bash", { command: `cat ${join(homedir(), ".ssh", "id_rsa")}` })).isError).toBe(true);
+    expect(b.asks).toHaveLength(0);
     for (const d of b.unload) await d();
   });
 
@@ -243,7 +237,7 @@ describe("permission 插件（真实管线）", () => {
     const b = await bench(root, { brokerScript: [], controlTools: ["agent_spawn"] });
     const outcome = await b.call("agent_spawn", {});
     expect(outcome.content).toBe("ran");
-    expect(b.asks).toHaveLength(0); // 未标记的未知工具才保守 ask
+    expect(b.asks).toHaveLength(0);
     expect(b.audits).toContainEqual({ tool: "agent_spawn", verdict: "allow", resolvedBy: "control" });
     for (const d of b.unload) await d();
   });
@@ -256,16 +250,16 @@ describe("permission 插件（真实管线）", () => {
 
     svc.set("plan");
     expect(svc.get()).toBe("plan");
-    expect((await b.call("write", { path: "f.txt", content: "x" })).isError).toBe(true); // decide 面读现值
+    expect((await b.call("write", { path: "f.txt", content: "x" })).isError).toBe(true);
     expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
 
     svc.set("full");
-    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(true); // 授权面同步授予
+    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(true);
     expect(b.ctx.use(permissionGrants).extraRootsOf(undefined)).toEqual(["/"]);
     expect((await b.call("bash", { command: "ls whatever" })).content).toBe("ran");
 
     svc.set("auto");
-    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false); // 撤销即时收回
+    expect(b.ctx.use(permissionGrants).isUnrestricted(undefined)).toBe(false);
     expect(b.ctx.use(permissionGrants).extraRootsOf(undefined)).toEqual([]);
     for (const d of b.unload) await d();
   });
@@ -274,8 +268,8 @@ describe("permission 插件（真实管线）", () => {
     const b = await bench(root, { customProfiles: [{ id: "strict", askPolicy: "always", containment: "none", mutationPolicy: "plan-deny" }] });
     const svc = b.ctx.use(permissionMode);
     svc.set("strict");
-    expect(svc.get()).toBe("strict"); // 开词表原串保留（非预滤）
-    expect((await b.call("write", { path: "f.txt", content: "x" })).isError).toBe(true); // custom 档 plan-deny 真生效（降级 auto 时界内写会放行）
+    expect(svc.get()).toBe("strict");
+    expect((await b.call("write", { path: "f.txt", content: "x" })).isError).toBe(true);
     for (const d of b.unload) await d();
   });
 
@@ -283,9 +277,9 @@ describe("permission 插件（真实管线）", () => {
     const full = await bench(root, { mode: "full" });
     const homeSsh = await full.call("read", { path: join(homedir(), ".ssh", "id_rsa") });
     expect(homeSsh.isError).toBe(true);
-    expect(homeSsh.content).toContain("rule:~/.ssh/**"); // 拒因锚（恒拒表无根集条件）
+    expect(homeSsh.content).toContain("rule:~/.ssh/**");
     const localEnv = await full.call("read", { path: ".env" });
-    expect(localEnv.isError).not.toBe(true); // 根集内项目本地配置（2026-09-28 裁决）
+    expect(localEnv.isError).not.toBe(true);
     for (const d of full.unload) await d();
   });
 
@@ -300,7 +294,7 @@ describe("permission 插件（真实管线）", () => {
           ask: async (input) => {
             asks.push({ reason: input.reason });
             at += 1;
-            return { verdict: at <= 1 ? "allow" : "deny" }; // 首批后耗尽
+            return { verdict: at <= 1 ? "allow" : "deny" };
           },
         }),
     };
@@ -314,7 +308,7 @@ describe("permission 插件（真实管线）", () => {
     expect(first.content).toBe("ran");
     await ctx.use(sessionStore).dispose(session);
     const second = await reg.dispatch({ callId: "c2", name: "read", args: { path: outsideFile }, signal: new AbortController().signal, session });
-    expect(second.isError).toBe(true); // 逐出后重新 ask → deny
+    expect(second.isError).toBe(true);
     for (const d of unload) await d();
   });
 

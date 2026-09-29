@@ -1,8 +1,3 @@
-// 对抗审查红测（7c16b4e harness 面·第 2 批）：面 1（layers Map 生命周期边界——
-// 非 worktree 子的 gone 事件 no-op 无泄漏、同 session 反复 emit 复活路径、插件
-// dispose 顺序）；面 4（probeGitFacts 一致性窗口——isGit 与 git facts 两次游走）；
-// 面 6（delegationKit 签名破坏性变更的漏改点——docs/SDK-DESIGN.md:57 仍是旧签名）。
-
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,7 +32,7 @@ describe("面 1：layers Map 无界增长路径", () => {
     const prompt = ctx.use(systemPrompt);
     const before = prompt.assemble().text;
     ctx.emit(agentWorktreeGone, { sessionId: "never-registered" as never, agentId: "agent-x" });
-    expect(prompt.assemble().text).toBe(before); // no-op，无异常
+    expect(prompt.assemble().text).toBe(before);
     await ctx.dispose();
   });
 
@@ -49,7 +44,6 @@ describe("面 1：layers Map 无界增长路径", () => {
     expect(prompt.assemble({ sessionId: "c1" }).text).toContain(WT);
     ctx.emit(sessionDisposed, { session: "c1" as never });
     expect(prompt.assemble({ sessionId: "c1" }).text).not.toContain(WT);
-    // 同 sessionId 再 emit（新会话复用 id——mintSessionId 时间戳形实际不重，但 Map 语义应稳）
     ctx.emit(agentSpawned, spawnedPayload({ worktree: WT, branch: "b2" }));
     expect(prompt.assemble({ sessionId: "c1" }).text).toContain("- Git branch: b2");
     await ctx.dispose();
@@ -73,7 +67,7 @@ describe("面 1：layers Map 无界增长路径", () => {
     const prompt = ctx.use(systemPrompt);
     ctx.emit(agentSpawned, spawnedPayload({ sessionId: childId, worktree: WT, branch: "b1" }));
     expect(prompt.assemble({ sessionId: childId }).text).toContain(WT);
-    await made.value.dispose(); // → sessionDisposed → dropLayer + 插件 Map 清
+    await made.value.dispose();
     expect(prompt.assemble({ sessionId: childId }).text).not.toContain(WT);
     await ctx.dispose();
   });
@@ -87,7 +81,7 @@ describe("面 4：probeGitFacts 一致性窗口与 symlink 口径", () => {
       writeFileSync(join(root, ".git", "HEAD"), "4a1b2c3d4e5f60718293a4b5c6d7e8f901234567\n");
       const facts = probeBaseFacts({ cwd: root, platform: "darwin", env: {} });
       expect(facts.isGit).toBe(true);
-      expect(facts.gitBranch).toBeUndefined(); // detached——键省略
+      expect(facts.gitBranch).toBeUndefined();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -102,7 +96,7 @@ describe("面 4：probeGitFacts 一致性窗口与 symlink 口径", () => {
       const link = join(root, "link");
       symlinkSync(join(root, "sub"), link);
       const facts = probeGitFacts(link);
-      expect(facts.branch).toBe("main"); // resolve 后上寻命中——事实正确
+      expect(facts.branch).toBe("main");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -113,13 +107,11 @@ describe("面 4：probeGitFacts 一致性窗口与 symlink 口径", () => {
     try {
       mkdirSync(join(root, ".git"));
       writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
-      // 模拟竞态：isGitWorkdir（probeBaseFacts 内先跑）与 probeGitFacts 各自游走。
-      // 单线程内无法真正交错——此处锁「两函数独立游走」的结构性事实：
       const a = probeGitFacts(root);
       expect(a).toEqual({ branch: "main" });
       rmSync(join(root, ".git"), { recursive: true, force: true });
       const b = probeGitFacts(root);
-      expect(b).toEqual({}); // 删除后双键省略——与 isGit 无关
+      expect(b).toEqual({});
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -145,7 +137,7 @@ describe("面 5：normalizeBaseFacts optional 归一", () => {
 describe("面 6：delegationKit 签名破坏性变更", () => {
   it("delegationKit 两参与时装配成功（类型面核实——漏改点由 tsc 抓）", async () => {
     const kit = delegationKit({ agentsDirs: [], workspaceRoot: "/w/main" }, FACTS);
-    expect(kit).toHaveLength(2); // delegation + worktree-context 双插件
+    expect(kit).toHaveLength(2);
     expect(kit.map((p) => p.name)).toEqual(["agent-delegation", "worktree-context"]);
   });
 });

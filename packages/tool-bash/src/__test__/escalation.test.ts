@@ -1,7 +1,3 @@
-// on-failure 升级流（PERMISSION-V2-DESIGN §3）：contained 失败 + fenceSuspect 归因 +
-// escalatable 资格 → broker escalate ask → 批准后同命令 direct 重执行一次；配额键=
-// 命令文本哈希 per session（plugin 层）——经工具公开 execute 注入服务端 ctx 字段驱动。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,7 +9,6 @@ import { createBashTool } from "../bash.ts";
 import type { BashEscalate } from "../bash.ts";
 import { BackgroundTasks, defaultTaskLimits } from "../tasks.ts";
 
-/** 可编程 fake env：记录 spawn 的 exec 指令；contained 可编程围栏拒绝，direct 恒成功 */
 function makeRecorder(envRoot = "/w"): { env: ExecEnv; spawns: { exec?: string }[]; failContained: boolean } {
   const spawns: { exec?: string }[] = [];
   const state = { failContained: true };
@@ -84,9 +79,9 @@ describe("on-failure 升级流（bash 工具）", () => {
       const tool = makeTool(root, recorder.env, escalate);
       const out = await tool.execute({ command: "echo probe" }, ctxOf({ exec: "contained", escalatable: true }));
       expect(out.content).toContain("[escalated: retried outside the sandbox after user approval]");
-      expect(out.content).toContain("ok-out"); // direct 重执行的 stdout
-      expect(recorder.spawns).toEqual([{ exec: "contained" }, { exec: "direct" }]); // 恰两次：初围栏 + 升级直通
-      expect(seen[0]?.failureText).toContain("Operation not permitted"); // U14：失败原文强制在场
+      expect(out.content).toContain("ok-out");
+      expect(recorder.spawns).toEqual([{ exec: "contained" }, { exec: "direct" }]);
+      expect(seen[0]?.failureText).toContain("Operation not permitted");
       expect(seen[0]?.command).toBe("echo probe");
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -100,27 +95,23 @@ describe("on-failure 升级流（bash 工具）", () => {
       let calls = 0;
       const tool = makeTool(root, recorder.env, async () => {
         calls += 1;
-        return "deny"; // 升级拒绝——失败定案
+        return "deny";
       });
-      // 非 fenceSuspect（contained 成功）→ 不升级
       recorder.failContained = false;
       const ok = await tool.execute({ command: "echo fine" }, ctxOf({ exec: "contained", escalatable: true }));
       expect(ok.content).toContain("ok-out");
       expect(calls).toBe(0);
-      // 无 escalatable 资格（非 on-failure 档）→ 失败即定案
       recorder.failContained = true;
       const noQual = await tool.execute({ command: "echo q" }, ctxOf({ exec: "contained" }));
       expect(noQual.content).not.toContain("[escalated:");
       expect(calls).toBe(0);
-      // direct 执行失败（无围栏归因面）→ 不升级
       const directRun = await tool.execute({ command: "echo d" }, ctxOf({ exec: "direct" }));
       expect(directRun.content).toContain("ok-out");
       expect(calls).toBe(0);
-      // escalate 拒绝 → 失败定案（不重执行）
       const denied = await tool.execute({ command: "echo n" }, ctxOf({ exec: "contained", escalatable: true }));
       expect(denied.content).not.toContain("[escalated:");
-      expect(calls).toBe(1); // 唯一一次升级问询发生在本腿
-      expect(recorder.spawns.filter((s) => s.exec === "direct").length).toBe(1); // 仅 directRun 腿的直通——拒绝后零重跑
+      expect(calls).toBe(1);
+      expect(recorder.spawns.filter((s) => s.exec === "direct").length).toBe(1);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -175,15 +166,14 @@ describe("端到端：全真世界升级流（permission sandboxed-auto → disp
       const first = await reg.dispatch({ callId: "e2e-1", name: "bash", args: { command: "mytool run" }, signal: new AbortController().signal });
       expect(first.content).toContain("[escalated: retried outside the sandbox after user approval]");
       expect(asks).toHaveLength(1);
-      expect(asks[0]?.options).toEqual(["once"]); // E①（2026-09-28）：escalate=一次性重试——记忆梯度撤（旧四档落桶跨档 direct 免问）
-      expect(asks[0]?.summary).toBe("mytool run"); // 目标描述单源（summaryOf）——确认条主文案
+      expect(asks[0]?.options).toEqual(["once"]);
+      expect(asks[0]?.summary).toBe("mytool run");
       expect(asks[0]?.escalate?.command).toBe("mytool run");
       expect(asks[0]?.escalate?.failureText).toContain("Operation not permitted");
       expect(recorder.spawns).toEqual([{ exec: "contained" }, { exec: "direct" }]);
-      // 配额：同命令再跑（contained 仍失败）——桥直接 deny，不再问
       const second = await reg.dispatch({ callId: "e2e-2", name: "bash", args: { command: "mytool run" }, signal: new AbortController().signal });
       expect(second.content).not.toContain("[escalated:");
-      expect(asks).toHaveLength(1); // 配额生效：第二次零问询
+      expect(asks).toHaveLength(1);
       await ctx.dispose();
       void unload;
     } finally {

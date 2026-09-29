@@ -1,7 +1,3 @@
-// 跨进程接线测试（docs/AGENT-DELEGATION.md §5.2-4b/§5.3/§5.4/§11.2）：双世界共享 mailbox
-// root（同 pid 双 box 模拟跨进程）、信封往返、notify_when_idle 闭窗与订阅结算、三种拒、
-// list local-session 行、teardown 关箱。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -57,7 +53,7 @@ describe("跨进程消息（§5.3 投递时序）", () => {
       expect(userTextsOf(beta, betaMain.agent.session.id)).toContain("cross-session-message");
       expect(userTextsOf(beta, betaMain.agent.session.id)).toContain("ping from alpha");
     }, { timeout: 5_000 });
-    await vi.waitFor(() => expect(beta.scripts.get(PARENT_MODEL)?.length ?? 1).toBe(0), { timeout: 5_000 }); // beta main 被唤醒消费了脚本
+    await vi.waitFor(() => expect(beta.scripts.get(PARENT_MODEL)?.length ?? 1).toBe(0), { timeout: 5_000 });
     await alphaMain.dispose();
     await betaMain.dispose();
     await rm(twins.root, { recursive: true, force: true }).catch(() => {});
@@ -100,7 +96,6 @@ describe("notify_when_idle（§5.4 闭窗与结算）", () => {
     expect(subbed.isError).toBeUndefined();
     expect(subbed.content).toContain("notice was sent immediately");
     await vi.waitFor(() => expect(userTextsOf(alpha, alphaMain.agent.session.id)).toContain("[Cross-session idle notice]"), { timeout: 5_000 });
-    // 不写订阅：beta 的 subs 空
     await alphaMain.dispose();
     await twins.betaMain.dispose();
     await rm(twins.root, { recursive: true, force: true }).catch(() => {});
@@ -121,7 +116,7 @@ describe("notify_when_idle（§5.4 闭窗与结算）", () => {
         yield { type: "finish", finish: { kind: "stop" } };
       })(),
     ]);
-    betaMain.agent.followup("hold busy"); // beta main 进入 running
+    betaMain.agent.followup("hold busy");
     await vi.waitFor(async () => {
       const listed = await callTool({ world: alpha, name: "list_agents", args: {}, session: alphaMain.agent.session.id });
       expect(listed.content).toContain("kind=local-session status=running");
@@ -132,7 +127,7 @@ describe("notify_when_idle（§5.4 闭窗与结算）", () => {
     release();
     await vi.waitFor(() => expect(userTextsOf(alpha, alphaMain.agent.session.id)).toContain("[Cross-session idle notice]"), { timeout: 5_000 });
     const notices = userTextsOf(alpha, alphaMain.agent.session.id).split("[Cross-session idle notice]").length - 1;
-    expect(notices).toBe(1); // 恰好一条
+    expect(notices).toBe(1);
     await alphaMain.dispose();
     await betaMain.dispose();
     await rm(twins.root, { recursive: true, force: true }).catch(() => {});
@@ -141,20 +136,17 @@ describe("notify_when_idle（§5.4 闭窗与结算）", () => {
   it("三种拒：子代理调用 / 未开箱部署 / 纯空发（message 缺且非订阅）", async () => {
     const twins = await makeTwins();
     const { alpha, alphaMain } = twins;
-    // 子代理调用
     const spawned = await callTool({ world: alpha, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: alphaMain.agent.session.id });
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
     const fromChild = await callTool({ world: alpha, name: "agent_message", args: { to: "beta", message: "hi", notify_when_idle: true }, session: childSession });
     expect(fromChild.isError).toBe(true);
     expect(fromChild.content).toContain("only available from the main conversation");
-    // 未开箱部署
     const plain = await makeWorld(await workerOptions());
     const plainMain = await spawnParent(plain);
     const noBox = await callTool({ world: plain, name: "agent_message", args: { to: "beta", message: "hi", notify_when_idle: true }, session: plainMain.agent.session.id });
     expect(noBox.isError).toBe(true);
     expect(noBox.content).toContain("no local mailbox");
     await plainMain.dispose();
-    // message 现为 schema 必填（spec 对齐）——缺参由 TypeBox 拦截且回显字段名
     const empty = await callTool({ world: alpha, name: "agent_message", args: { to: "ghost-box" }, session: alphaMain.agent.session.id });
     expect(empty.isError).toBe(true);
     expect(empty.content).toContain("message");
@@ -170,7 +162,7 @@ describe("teardown（§5.3 关箱序列）", () => {
     const { alpha, beta } = twins;
     await alpha.disposePlugins();
     await vi.waitFor(() => expect(existsSync(join(twins.root, "alpha"))).toBe(false), { timeout: 5_000 });
-    expect(existsSync(join(twins.root, "beta"))).toBe(true); // 他人不动
+    expect(existsSync(join(twins.root, "beta"))).toBe(true);
     await beta.disposePlugins();
     await rm(twins.root, { recursive: true, force: true }).catch(() => {});
   });
@@ -181,16 +173,13 @@ describe("consumer 降级路径（§5.3 at-most-once 如实）", () => {
     const root = await mkdtemp(join(tmpdir(), "xh-cross-"));
     const warns: string[] = [];
     const options = await makeOptions({});
-    // 孤立 consumer：loop 里没有 main 会话
     const world = await makeWorld({ ...options, mailbox: { box: "lone", mainSession: "main-x" as SessionId }, onWarn: (m) => warns.push(m) }, root);
-    // 死箱：raw manifest 死 pid
     const { mkdir, writeFile } = await import("node:fs/promises");
     await mkdir(join(root, "deadbox"), { recursive: true });
     await writeFile(join(root, "deadbox", "manifest.json"), `${JSON.stringify({ pid: 999_999_999, bootId: "aabbccddeeff", status: "idle", updatedTs: Date.now() })}\n`);
     const refused = await callTool({ world: world, name: "agent_message", args: { to: "deadbox", message: "x" }, session: "main-x" as SessionId });
     expect(refused.isError).toBe(true);
-    expect(refused.content).toContain("not-found:deadbox"); // 死箱在发现面即排除
-    // not-live 竞态窗（发现时活、投递时死）：stub 服务直测 sendCross 的 not-live 透传
+    expect(refused.content).toContain("not-found:deadbox");
     const { sendCross } = await import("../crossmsg.ts");
     const stub = {
       discover: async () => [{ name: "flaky", ref: "abc123", status: "running" as const }],
@@ -205,13 +194,12 @@ describe("consumer 降级路径（§5.3 at-most-once 如实）", () => {
     );
     expect(raced.ok).toBe(false);
     expect(raced.ok === false && raced.reason).toContain("not-live:flaky");
-    // 给 lone 箱塞一封信封再 drainOnce 语义验证：main 缺位丢弃
     const { createMailboxService } = await import("@x-harness/session-mailbox");
     const svc2 = createMailboxService({ root, timing: { pollIntervalMs: 20, heartbeatMs: 5_000, graceMs: 30_000, staleMs: 7 * 24 * 3_600_000, now: () => Date.now() } });
     await mkdir(join(root, "lone", "inbox"), { recursive: true });
     await svc2.send("lone", { from: "someone", message: "orphan hello", kind: "message" });
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 100); // 等 drain 定时器打一拍
+      setTimeout(resolve, 100);
     });
     expect(warns.join("\n")).toContain("main session not live");
     await world.disposePlugins();

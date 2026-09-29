@@ -1,6 +1,3 @@
-// spawn 决策流（docs/AGENT-DELEGATION.md §2.1/§7）：校验 → 类型解析（.md/fork/untyped）→
-// 门（depth/concurrent）→ 建子（header 三字段锚 + 断信号防线）→ 返回反轮询引导。
-
 import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
 import type { SessionStore, SessionEvent, SessionId } from "@x-harness/session";
 import type { ToolRegistry, ToolExecContext } from "@x-harness/tools";
@@ -19,7 +16,6 @@ export interface SpawnInput {
   readonly subagent_type?: string;
   readonly model?: string;
   readonly isolation?: string;
-  /** 受管标记（件16 接缝①）：在场 = 完成通知投 sink、生命周期豁免五处（plugin） */
   readonly settlement?: SettlementSink;
 }
 
@@ -29,22 +25,15 @@ export interface SpawnDeps {
   readonly registry: ToolRegistry;
   readonly lineage: Lineage;
   readonly limits: { readonly maxDepth: number; readonly maxConcurrent: number };
-  /** git 调用锚（docs/WORKSPACE-ROOT-INJECTION.md）——worktree 探测/建树的 cwd 基准 */
   readonly workspaceRoot: string;
-  /** 清理失败可见化出口（spawnFailed/abortSpawn） */
   readonly onWarn?: (message: string) => void;
-  /** lockfile 降级出口（A 路复审⑤——实例私有闭包） */
   readonly lockDegraded?: import("./lockfile.ts").LockDegraded;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly isTearingDown: () => boolean;
-  /** 生命周期事件发射面（BATCH2 §3——root 层 ctx.emit 接线，桥接方可观察） */
   readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string }) => void;
   readonly emitFinished: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; outcome: "completed" | "stopped" | "failed"; detail: string; summary?: string }) => void;
-  /** worktree 已清事件发射面（kick 失败清理成功分支——树删会话驻留，提示词覆盖层摘除钩） */
   readonly emitWorktreeGone?: (payload: { sessionId: SessionId; agentId: string }) => void;
-  /** permission 授权面（isolation=worktree 的根替换落账）；缺位时 worktree 隔离拒 */
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
-  /** 裸模型名 → 归属 provider 反查（宿主接目录快照；缺省不反查——inheritDial 串线修复） */
   readonly resolveProviderOf?: (model: string) => string | undefined;
 }
 
@@ -112,7 +101,7 @@ async function buildChild(
   const parentHandle = deps.loop.get(caller);
   if (parentHandle === undefined) return { ok: false, reason: `not-found:parent agent ${String(caller)} is not live` };
 
-  if (execCtx.signal.aborted) return { ok: false, reason: "aborted:spawn cancelled before dispatch" }; // 建树前断信号（审查 B-P2-5 前置）
+  if (execCtx.signal.aborted) return { ok: false, reason: "aborted:spawn cancelled before dispatch" };
   const agentId = mintAgentId();
   const named = plan.resolved.kind === "named" ? plan.resolved.type : undefined;
   const isFork = plan.resolved.kind === "fork";
@@ -147,7 +136,6 @@ async function buildChild(
   return finishSpawn(deps, { row, handle: childHandle, prompt: plan.input.prompt, freshFork: isFork && !forked });
 }
 
-/** spawn 发射 payload（worktree 三字段——facts 为新树 .git 解析真值，D6） */
 function spawnedPayloadOf(spec: { readonly row: ChildRow; readonly plan: WorktreePlan | undefined }): { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string; worktree?: string; branch?: string; worktreeMain?: string } {
   const { row, plan } = spec;
   return {
@@ -167,21 +155,12 @@ function spawnedPayloadOf(spec: { readonly row: ChildRow; readonly plan: Worktre
   };
 }
 
-/** spawn 收尾：kick + 文案（kick 失败同步归一为工具错误结果——原 throw 契约同义）。 */
 export async function finishSpawn(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string; readonly freshFork: boolean }): Promise<SpawnOutcome> {
   const kicked = await kickChild(deps, spec);
   if (!kicked.ok) return kicked;
   return { ok: true, text: spawnText(spec.row, spec.freshFork) };
 }
 
-/** kick 子代理（spawn 收尾）：失败 → finished 闭环 + worktree 尽力清理 + 摘除登记，
- *  返回失败原因（不 throw——A 路三轮：throw + async 化 = unhandled rejection 断
- *  dispatch 归一路；由 buildChild 收返回值归一为工具错误结果，同步错误契约不变）。
- *  armed 恒 false——armed-idle 通知门永不可达，不闭环即事件幽灵 + 占槽永久泄漏
- *  （BATCH2 审 H3）。register（:139）先于 kick——行已注册，teardown cascade/evictIdle/
- *  stop 幂等三路兜底在场；本清理是**最早的一路**且是纯内存部署（无 archive →
- *  evictIdle 恒跳过）下唯一及时路。与 cascade 双清无害：两落者经 repo 锁串行，
- *  第二落者走 branchGone 幂等判别 → removed 不假告警（A 路复审③二轮）。 */
 export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow; readonly handle: AgentHandle; readonly prompt: string }): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
   try {
     spec.handle.agent.followup(spec.prompt);
@@ -189,7 +168,7 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
   } catch (error) {
     const detail = `kick failed: ${error instanceof Error ? error.message : String(error)}`;
     spec.row.occupied = false;
-    spec.row.stopped = true; // stopAll 幂等早退守卫——防同一周期二次 finished（收口审 K-M3）
+    spec.row.stopped = true;
     deps.emitFinished({
       parent: spec.row.parent,
       agentId: spec.row.agentId,
@@ -198,13 +177,11 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
       detail,
     });
     if (spec.row.worktree !== undefined) {
-      // 尽力清理 + 摘除（fire-and-forget；失败经 onWarn 可见）
       void evaluateCleanup({ path: spec.row.worktree, branch: `x-harness/${spec.row.agentId}`, repoTop: await cleanupRepoTopOf(spec.row, deps.workspaceRoot) }, deps.lockDegraded)
         .then((result) => {
           if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${spec.row.worktree}`);
           if (result.kind !== "kept-dirty") {
             unregisterLiveTree(spec.row.worktree as string);
-            // 清理成功（树删）而子会话驻留（kick 失败不 dispose）→ 发 gone 摘 Track U 覆盖层
             if (result.kind === "removed") deps.emitWorktreeGone?.({ sessionId: spec.row.sessionId, agentId: spec.row.agentId });
           }
         })
@@ -216,9 +193,6 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
   }
 }
 
-/** 子 agent options：dial 覆盖序（§7.3）+ 类型正文 systemPrompt（白名单走 registry 会话层，W2A）。
- *  worktree 子（Track N，docs/WORKTREE-CONTEXT-AWARENESS §1.4）：类型正文拼环境块——
- *  静态 systemPrompt 短路 prompt.assemble（step.ts），环境事实只能随 options 定格。 */
 function childAgentOptions(
   deps: SpawnDeps,
   parentHandle: AgentHandle,
@@ -227,7 +201,7 @@ function childAgentOptions(
   const dial = inheritDial(parentHandle, {
     type: spec.named,
     lastHeader: lastHeaderOf(deps, spec.caller),
-    override: spec.isFork ? undefined : { model: spec.input.model }, // fork 忽略 model 参数（规格原文）
+    override: spec.isFork ? undefined : { model: spec.input.model },
     ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
   });
   const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
@@ -236,17 +210,16 @@ function childAgentOptions(
     ...(persona !== undefined
       ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona, { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
       : {}),
-    streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs, // 看门狗透传：子恒继承父 resolved 值（缺省同源——resolveOptions 恒填）
+    streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs,
   };
 }
 
-/** create 失败收尾：半建 worktree 清理 + 统一词表；remove-failed 经 onWarn 可见化 */
 function spawnFailed(reason: string, plan: WorktreePlan | undefined, deps: SpawnDeps): SpawnOutcome {
   if (plan !== undefined) {
     void evaluateCleanup(plan, deps.lockDegraded)
       .then((result) => {
         if (result.kind === "remove-failed") deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${plan.path}`);
-        if (result.kind !== "kept-dirty") unregisterLiveTree(plan.path); // 防御摘除（此路径登记尚未发生=no-op；保留树属活树）
+        if (result.kind !== "kept-dirty") unregisterLiveTree(plan.path);
       })
       .catch(() => {
         unregisterLiveTree(plan.path);
@@ -255,15 +228,12 @@ function spawnFailed(reason: string, plan: WorktreePlan | undefined, deps: Spawn
   return { ok: false, reason: `spawn-failed:${reason}` };
 }
 
-/** 活树登记 + 授权面落账（buildChild 复杂度纪律抽出） */
 function registerWorktreeFacts(deps: SpawnDeps, plan: { readonly plan: WorktreePlan | undefined; readonly childSession: import("@x-harness/session").SessionId }): void {
   if (plan.plan === undefined) return;
-  registerLiveTree(plan.plan.path); // 活树登记（sweep 误删防线①——跨装配实例共享）
+  registerLiveTree(plan.plan.path);
   deps.setRootOverride?.(plan.childSession, plan.plan.path, plan.plan.repoTop);
 }
 
-/** worktree 预备（§8.1/§8.2）：repo 外同级路径 + git 串行队列；grants 前置（无授权面
- *  不建树——防半装泄漏）；create 失败由调用方清理。 */
 async function prepareWorktree(deps: SpawnDeps, agentId: string, isolation: string | undefined): Promise<{ ok: true; plan?: WorktreePlan } | { ok: false; reason: string }> {
   if (isolation !== "worktree") return { ok: true };
   if (deps.setRootOverride === undefined) return { ok: false, reason: "spawn-failed:worktree requires the permission grants service" };
@@ -295,14 +265,11 @@ function createChildSession(
 }
 
 
-/** X15 沿树只收窄（W2A）：narrow 输入源 = 父会话当前 restriction（registry 读回面）；
- *  注册在 child 会话层，sessionDisposed 自动注销 */
 function restrictChildTools(deps: SpawnDeps, spec: { readonly caller: SessionId; readonly child: AgentHandle; readonly named: LoadedAgentType | undefined }): void {
   const effectiveTools = narrowTools(deps.registry.restrictionOf(spec.caller), spec.named?.tools);
   if (effectiveTools !== undefined) deps.registry.scoped(spec.child.agent.session.id).restrict(effectiveTools);
 }
 
-/** execute 内断信号：不遗孤儿子（worktree 一并评估——审查 B-P2-5）；spawned 已发 → finished 收口 */
 async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandle: AgentHandle; readonly row: ChildRow; readonly plan?: WorktreePlan }): Promise<SpawnOutcome> {
   input.deps.emitFinished({
     parent: input.row.parent,
@@ -317,7 +284,7 @@ async function abortSpawn(input: { readonly deps: SpawnDeps; readonly childHandl
     if (result !== undefined && result.kind === "remove-failed") {
       input.deps.onWarn?.(`agents: worktree cleanup failed (${result.detail}): ${input.plan.path}`);
     }
-    if (result === undefined || result.kind !== "kept-dirty") unregisterLiveTree(input.plan.path); // 登记晚于 134——abort 摘除（N1）
+    if (result === undefined || result.kind !== "kept-dirty") unregisterLiveTree(input.plan.path);
   }
   input.deps.lineage.drop(input.row.sessionId);
   return { ok: false, reason: "aborted:spawn cancelled before dispatch" };
@@ -334,7 +301,6 @@ function spawnText(row: ChildRow, freshFork: boolean): string {
   );
 }
 
-/** 父末次 request/header 折叠（全新子无 header——模型/线路继承源） */
 function lastHeaderOf(deps: SpawnDeps, caller: SessionId): { model?: string; provider?: string } | undefined {
   const session = deps.store.get(caller);
   if (session === undefined) return undefined;

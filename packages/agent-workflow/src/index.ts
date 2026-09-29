@@ -1,5 +1,3 @@
-// @x-harness/agent-workflow：件 16 插件包（验收回炉与任务编排）。
-
 export { resolveWorkflowRoot } from "./resolve.ts";
 export { acquireRunLock } from "./lock.ts";
 export type { AcquireOutcome, RunLock } from "./lock.ts";

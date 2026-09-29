@@ -1,5 +1,3 @@
-// fenceFor 合成矩阵（docs/SANDBOX.md §3）：真 GrantsRegistry（纯数据结构，非 mock）。
-
 import { describe, expect, it } from "vitest";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -27,7 +25,7 @@ describe("fenceFor base 形态", () => {
       undefined,
     );
     expect(f.writable).toEqual([resolve("/w/root"), tmpdir(), CHILD_TMPDIR, "/x", resolve(homedir(), "wx"), homedir()]);
-    expect(f.denyRead).toEqual([...DEFAULT_DENY_READ, "~/.gnupg"]); // denyRead 保留 ~ 原样交 srt 展开
+    expect(f.denyRead).toEqual([...DEFAULT_DENY_READ, "~/.gnupg"]);
     expect(f.denyWrite).toEqual([resolve("/w/root/.git"), "/p", resolve(homedir(), "px")]);
     expect(f.allowedDomains).toEqual(["a.test"]);
   });
@@ -37,7 +35,7 @@ describe("fenceFor base 形态", () => {
     grants.setUnrestricted(true);
     const f = fenceFor({ root: "/w/root", networkOff: true }, grants, SID);
     expect(f.allowedDomains).toEqual([]);
-    expect(f.unfenced).toBe(false); // 宿主 kill switch 压过总括——壳仍在
+    expect(f.unfenced).toBe(false);
   });
 });
 
@@ -55,8 +53,7 @@ describe("fenceFor × grants", () => {
     const f = fenceFor(base, grants, SID);
     expect(f.writable[0]).toBe("/");
     expect(f.allowedDomains).toEqual(["*"]);
-    expect(f.unfenced).toBe(true); // 裁决⑤修订：完全访问=不套壳
-    // 底线不豁免：denyRead/denyWrite 仍在场
+    expect(f.unfenced).toBe(true);
     expect(f.denyRead).toEqual(DEFAULT_DENY_READ);
     expect(f.denyWrite).toEqual([resolve("/w/root/.git")]);
   });

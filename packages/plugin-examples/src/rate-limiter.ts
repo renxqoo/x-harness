@@ -1,6 +1,3 @@
-// ⑪ 工具限流：滑动窗口计数否决（vetoTools + 闭包时钟——无定时器，惰性清扫）。
-// 真实场景：防失控 agent 打爆外部 API。
-
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { vetoTools } from "@x-harness/plugin-api";
@@ -8,7 +5,7 @@ import { vetoTools } from "@x-harness/plugin-api";
 export interface RateLimiterOptions {
   readonly maxCallsPerWindow: number;
   readonly windowMs?: number;
-  readonly toolName?: string; // 缺省全部工具
+  readonly toolName?: string;
 }
 
 export function rateLimiterPlugin(options: RateLimiterOptions): Plugin {

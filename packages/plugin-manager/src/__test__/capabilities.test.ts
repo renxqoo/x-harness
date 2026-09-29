@@ -1,5 +1,3 @@
-// capabilities 能力面全量：facade 六方法、元能力排除、tokenTable 收敛、
-// collision 拒、双参 apply（process 真 caps / worker 桥 caps）、P1 引擎层 vendor 拒。
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +18,6 @@ afterEach(async () => {
   for (const dir of tempDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
 
-// ── facade 单元（createCapabilities 直测）────────────────────────────────────
 
 describe("capabilities facade：六方法 + 元能力排除", () => {
   const setup = () => {
@@ -80,7 +77,6 @@ describe("capabilities facade：六方法 + 元能力排除", () => {
     caps.emit("caps-tick", { v: 7 });
     expect(heard).toEqual([7]);
     expect(caps.use<{ hello(): string }>("caps-mine").hello()).toBe("hi");
-    // 卸载隔离：platform.dispose 后注册全回卷（不断言具体 dispose 时序——只断无泄漏异常）
     expect(() => caps.emit("caps-tick", { v: 8 })).not.toThrow();
   });
 
@@ -88,13 +84,12 @@ describe("capabilities facade：六方法 + 元能力排除", () => {
     const { caps, platform, table } = setup();
     const later = defineService<{ late(): string }>("caps-later");
     platform.provide(later, { late: () => "arrived" });
-    table.set("caps-later", later); // 模拟装载层 onToken 登记
+    table.set("caps-later", later);
     await expect(caps.waitFor<{ late(): string }>("caps-later")).resolves.toEqual({ late: expect.any(Function) });
     await expect(caps.waitFor("caps-never")).rejects.toThrow(CapabilityNameError);
   });
 });
 
-// ── process 模式：双参 apply 装载闭环 ────────────────────────────────────────
 
 describe("process 模式：apply(ctx, caps) 双参注入", () => {
   it("第三方件零 @x-harness import，经 caps 钩世界并 provide 服务", async () => {
@@ -153,7 +148,6 @@ describe("process 模式：apply(ctx, caps) 双参注入", () => {
     const svc = ctx.use(pluginManagerService);
     await svc.install({ path: join(root, "prov.ts") });
     expect(svc.serviceToken("prov-svc")).toBeDefined();
-    // 卸载后 tokenTable 清理（install.ts cleanupTokens 闭环）
     const out = await svc.uninstall("prov-demo");
     expect(out.ok).toBe(true);
     expect(svc.serviceToken("prov-svc")).toBeUndefined();
@@ -184,7 +178,6 @@ export default { name: "legacy", apply(ctx) { ctx.provide(legacySvc, { ok: 1 });
   });
 });
 
-// ── P1：引擎层 vendor 根拒 process 装载 ─────────────────────────────────────
 
 describe("P1 引擎层：vendor 根路径恒 worker（第二层防御）", () => {
   it("vendor 根内 + mode:process → 装载拒（即使编排层被绕过）", async () => {
@@ -209,7 +202,6 @@ describe("P1 引擎层：vendor 根路径恒 worker（第二层防御）", () =>
     });
     expect(rejected.ok).toBe(false);
     expect(rejected.ok === false && rejected.reason).toContain("requires worker mode");
-    // 非 vendor 根照常 process（内置件不受影响）
     const file = join(otherRoot, "fine.ts");
     await writeFile(file, `export default { name: "fine", apply() {} };\n`);
     const fine = await svc.install({ path: file, mode: "process" });
@@ -217,7 +209,6 @@ describe("P1 引擎层：vendor 根路径恒 worker（第二层防御）", () =>
   });
 });
 
-// ── 第三方静态检查 ──────────────────────────────────────────────────────────
 
 describe("第三方 inspect：manifest + SDK import 静态扫描", () => {
   const manifest = { name: "demo", apiVersion: 1, kind: "third-party" };
@@ -237,7 +228,6 @@ describe("第三方 inspect：manifest + SDK import 静态扫描", () => {
     expect(scanSourceForSdkImports('const m = await import("@x-harness/core");')).toEqual(["@x-harness/core"]);
     expect(scanSourceForSdkImports('import { x } from "node:path";')).toEqual([]);
     expect(scanSourceForSdkImports('import { x } from "some-lib";')).toEqual([]);
-    // 非 SDK 说明符含 harnes 字样不误伤
     expect(scanSourceForSdkImports('import x from "my-harness-thing";')).toEqual([]);
   });
 
@@ -255,7 +245,6 @@ describe("第三方 inspect：manifest + SDK import 静态扫描", () => {
   });
 });
 
-// ── worker 模式：caps 经桥（RPC 按名过线）───────────────────────────────────
 
 describe("worker 模式：apply(ctx, caps) 经桥", () => {
   it("第三方件 worker 装载，caps.use 平台服务（RPC）+ caps.provide 服务（main 可用）", async () => {
@@ -294,12 +283,10 @@ describe("worker 模式：apply(ctx, caps) 经桥", () => {
     const token = svc.serviceToken("w-third-svc");
     expect(token).toBeDefined();
     const impl = ctx.use(token!) as { echo(v: string): Promise<string> };
-    // 双跳 RPC：main → worker（call）→ worker caps.use 代理 → main（svc-call）→ 回程
     await expect(impl.echo("hi")).resolves.toBe("echo:hi");
   });
 });
 
-// ── 对抗审查 2a 回归：ctx.on 旁路封口（worker 与 process 两侧）───────────────
 
 describe("META token 旁路封口（ctx.on 直听元能力名 = 拒）", () => {
   it("worker 模式：插件经 ctx.on 监听 plugin/loaded → 装载拒（apply 失败留痕）", async () => {

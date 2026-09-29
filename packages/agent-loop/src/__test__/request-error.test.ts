@@ -1,8 +1,3 @@
-// agentRequestError 决策集与 attempt 改道（docs/WORK-ERROR-RECOVERY.md C1）：形状门四路
-// （合法 respond / 合法 fail / content 空 / 垃圾对象）；attempt 改道三路（respond →
-// agent/message 落卷 + continue 进下一迭代、fail → fatal 带 code、undefined → 现行
-// fatal 缺省 + settlement.code 透传修复）。
-
 import { describe, expect, it, beforeEach } from "vitest";
 import { agentRequestError } from "../index.ts";
 import { isFailRequestDecision, isRespondDecision } from "../continuation.ts";
@@ -60,7 +55,6 @@ describe("attempt 改道（C1：respond/fail/让位三路）", () => {
       kind: "content",
       content: [{ type: "text", text: "The request failed with E1. Adjust and retry." }],
     });
-    // 下一迭代照常完成（continue 未收轮）：终态 completed、请求投影末条为错误消息
     expect(events.at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     const lastRequest = world.fake.calls.at(-1);
     const lastRole = lastRequest?.messages.at(-1);

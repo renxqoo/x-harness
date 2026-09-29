@@ -1,9 +1,3 @@
-// edit 工具（docs/EDIT-TOOL.md）：精确文本替换——write 同款授权/门/CAS 管线（admitSession →
-// realpath 锁键互斥 → 观察门两态（未读放行——oldText 唯一匹配即内容级 CAS；读后改拒
-// FS_STALE_VERSION）→ env.stat 判型）；BOM/行尾保真；
-// applyEditsToNormalizedContent 判别联合应用；写前 signal.aborted 检查（aborted 判别态）；
-// 写后自登记；diff/回显在锁外组装（两输入已定字符串无竞态，不拖长互斥持锁）。
-
 import { Type } from "@sinclair/typebox";
 import type { ToolDefinition, ToolExecContext } from "@x-harness/tools";
 import type { ExecEnv } from "@x-harness/exec-env";
@@ -44,7 +38,6 @@ export function createEditTool(input: EditToolInput): ToolDefinition {
   };
 }
 
-/** locked 回调产物：锁内只做 I/O 与登记；diff 组装/回显在锁外 */
 interface EditOutcome {
   readonly finalPayload: string | undefined;
   readonly baseText: string | undefined;
@@ -59,8 +52,8 @@ async function edit(input: { readonly gate: PathGate; readonly observed: Observe
   }
   const admitted = await admitSession({ gate, realpath: env.realpath, session: ctx.session, extraRootsOf, rootOverrideOf, target: args.path });
   if (!admitted.ok) return { content: admitted.reason, isError: true };
-  const path = admitted.path; // I/O 键：词法路径（观察登记/lookup 同键——read 侧登记面）
-  const lockKey = await env.realpath(path); // 锁键：realpath（symlink 别名同锁）
+  const path = admitted.path;
+  const lockKey = await env.realpath(path);
   const outcome = await observed.locked(lockKey, () => editLocked({ observed, env, ctx, args, path }));
   if (outcome.failure !== undefined) return outcome.failure;
   const { finalPayload, baseText, newText } = outcome;
@@ -79,17 +72,12 @@ async function editLocked(input: { readonly observed: ObservedRegistry; readonly
   }
   if (st.stat.kind === "dir") return failure(`FS_IS_DIRECTORY: ${args.path} is a directory`);
   if (st.stat.kind !== "file") return failure(`FS_NOT_REGULAR_FILE: ${args.path} is not a regular file`);
-  // 观察门两态（docs/EDIT-TOOL.md 观察门修订）：未观察 → 放行直进内容匹配（oldText 唯一
-  // 匹配即内容级 CAS——改的是当前盘上这份）；已观察 → 与 stat 版本比对，不符拒陈旧
   const observedVersion = observed.lookup(ctx.session, path);
   if (observedVersion !== undefined && ObservedRegistry.stale(observedVersion, { ...st.stat.version, hadBom: observedVersion.hadBom })) {
     return failure(`FS_STALE_VERSION: ${args.path} changed since it was read; re-read then retry`);
   }
   const whole = await readWholeFile(env, path);
   if (whole === undefined) return failure(`FS_READ_FAILED: i/o error while reading ${args.path}`);
-  // fd fstat 与观察版本二次比对（对抗审查 TOCTOU）：stat 门到 fd 读之间的窗口内文件被
-  // 改（bash 进程内写不经 observed.locked）——此处拒 STALE，防 oldText 匹配模型未见过
-  // 的新内容并落盘。未观察会话跳过（内容匹配即 CAS）。版本取 fd fstat 原子时刻（EXEC-ENV §3 D2 根治原语）
   if (observedVersion !== undefined && ObservedRegistry.stale(observedVersion, { ...whole.version, hadBom: observedVersion.hadBom })) {
     return failure(`FS_STALE_VERSION: ${args.path} changed since it was read; re-read then retry`);
   }
@@ -103,12 +91,10 @@ async function editLocked(input: { readonly observed: ObservedRegistry; readonly
   const finalPayload = bom + restoreLineEndings(applied.newContent, ending);
   const result = await env.writeFileAtomic(path, Buffer.from(finalPayload, "utf8"), { makeParents: false });
   if (!result.ok) return failure(writeFailText(result, args.path));
-  // 写后自登记：edit→write 连续操作不被自己的门拒（rename 后 stat——ino 已换）
   observed.record(ctx.session, path, { ...result.stat.version, hadBom: bom !== "" });
   return { finalPayload, baseText: applied.baseContent, newText: applied.newContent, failure: undefined };
 }
 
-/** 整文件读取（openRead 句柄面流式拼装）——返回 fd fstat 版本（观察门二次比对用） */
 async function readWholeFile(env: ExecEnv, path: string): Promise<{ readonly text: string; readonly version: import("@x-harness/exec-env").FileVersion } | undefined> {
   const open = await env.openRead(path);
   if (!open.ok) return undefined;
@@ -116,7 +102,7 @@ async function readWholeFile(env: ExecEnv, path: string): Promise<{ readonly tex
   try {
     for (;;) {
       const chunk = await open.handle.read();
-      if (!chunk.ok) return undefined; // io_error 绝不折成空串（假空比错误危险）
+      if (!chunk.ok) return undefined;
       if (chunk.data === null) break;
       chunks.push(chunk.data);
     }

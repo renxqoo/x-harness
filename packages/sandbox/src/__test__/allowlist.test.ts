@@ -1,5 +1,3 @@
-// 白名单合并 + 集合等价（docs/SANDBOX.md §3）。
-
 import { describe, expect, it } from "vitest";
 import { mergeAllowlists, sameDomainSet } from "../allowlist.ts";
 

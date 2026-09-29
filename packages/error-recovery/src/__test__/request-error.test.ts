@@ -1,6 +1,3 @@
-// requestError 面（C5）：分族 ×3 升 fail / 总 ×5 封顶交替 / 成功清零 / 5xx 不 respond /
-// 死类直通 / respond 落卷（agent/message{content, error-recovery} + 脱敏）。
-
 import { describe, expect, it } from "vitest";
 import { createErrorRecoveryPlugin } from "../index.ts";
 import { errorFinish, makeRecoveryWorld, textFinish, turnEnd } from "./world.ts";
@@ -13,19 +10,17 @@ describe("error-recovery requestError 面（C5）", () => {
     await world.agent.whenIdle();
     const events = world.agent.session.events();
     const responses = events.filter((e) => e.type === "agent/message" && e.data.source === "error-recovery");
-    expect(responses).toHaveLength(3); // 前 3 次 respond 自愈（第 4 次达族限 >3 升 fail）
+    expect(responses).toHaveLength(3);
     expect(turnEnd(events)?.data).toMatchObject({ reason: { kind: "error", code: "error-recovery-limit" } });
   });
 
   it("总 ×5 封顶交替：429/network 交替各 2 次（skip/fail 直收不 respond）不达分族阈值", async () => {
-    // 429/503 属 transport-retryable → skip 直接 fail（不 respond、不烧 token）——交替断言：
-    // 第一次 429 即 fail 收轮（B P2 成本裁决），终态带 code
     const world = await makeRecoveryWorld([createErrorRecoveryPlugin()]);
     world.scripts.push(errorFinish("rate limited", "http-429"));
     world.agent.followup("hi");
     await world.agent.whenIdle();
     const events = world.agent.session.events();
-    expect(events.filter((e) => e.type === "agent/message" && e.data.source === "error-recovery")).toHaveLength(0); // skip 不 respond
+    expect(events.filter((e) => e.type === "agent/message" && e.data.source === "error-recovery")).toHaveLength(0);
     expect(turnEnd(events)?.data).toMatchObject({ reason: { kind: "error", code: "http-429" } });
   });
 
@@ -38,7 +33,7 @@ describe("error-recovery requestError 面（C5）", () => {
     await world.agent.whenIdle();
     const events = world.agent.session.events();
     expect(events.filter((e) => e.type === "agent/message" && e.data.source === "error-recovery")).toHaveLength(5);
-    expect(turnEnd(events)?.data).toMatchObject({ reason: { kind: "completed" } }); // 5 次均未超限（>maxTotal 才 fail）
+    expect(turnEnd(events)?.data).toMatchObject({ reason: { kind: "completed" } });
   });
 
   it("总封顶第 6 次触顶：4 次 respond 后第 5/6 次交替族混输达 total>5 → fail", async () => {
@@ -59,7 +54,6 @@ describe("error-recovery requestError 面（C5）", () => {
     world.agent.followup("hi");
     await world.agent.whenIdle();
     const events = world.agent.session.events();
-    // 两轮各 respond 1 次（首轮自愈 stop 清零，次轮 1-2 次仍 respond 未达族 ×3）
     expect(turnEnd(events)?.data).toMatchObject({ reason: { kind: "completed" } });
   });
 
@@ -70,7 +64,7 @@ describe("error-recovery requestError 面（C5）", () => {
     await world.agent.whenIdle();
     const events = world.agent.session.events();
     expect(events.filter((e) => e.type === "agent/message" && e.data.source === "error-recovery")).toHaveLength(0);
-    expect(turnEnd(events)?.data).toMatchObject({ reason: { kind: "error", code: "http-401" } }); // 死类直通透传原 code
+    expect(turnEnd(events)?.data).toMatchObject({ reason: { kind: "error", code: "http-401" } });
   });
 
   it("respond 落卷与脱敏：agent/message{kind:content, source:error-recovery}，URL/凭据剔除", async () => {

@@ -1,7 +1,3 @@
-// plan_submit 控制工具（docs/PERMISSION-MODE-FLAG.md plan 节）：五路 execute 分支
-// （非 plan 档 / 无 permission 服务 / plan+无 broker / 批准解档 liftTo / 拒绝留档）
-// + isControlTool 标记（permission 直通依据）+ broker 载荷形状。
-
 import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { createContext, loadPlugins } from "@x-harness/core";
@@ -18,7 +14,6 @@ interface Fixture {
   verdict: "allow" | "deny";
 }
 
-/** 假 permission 面：mode 服务（可变闭包）+ broker（记录载荷、可配 verdict） */
 function fakePermissionPlugin(fixture: Fixture): Plugin {
   return {
     name: "fake-permission",

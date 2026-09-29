@@ -1,7 +1,3 @@
-// 反馈铸文（docs/AGENT-WORKFLOW.md §8.3）：幂等标记首行 + 模型可修的违规 + schema 提示。
-// 幂等判据（F7 修正）：标记出现在子会话 WAL 已材料化消息中 = 已送达。
-
-/** repair 反馈：首行确定性标记（[wf task <taskId> attempt <n>]）——恢复幂等键 */
 export interface FeedbackPlan {
   readonly taskId: string;
   readonly attempt: number;
@@ -23,12 +19,10 @@ export function feedbackText(plan: FeedbackPlan): string {
   ].join("\n");
 }
 
-/** 恢复 kick 文本（§5.2 interrupted 行）：续跑指令带同一标记形态 */
 export function continueKickText(taskId: string): string {
   return `[wf task ${taskId} resume] Continue the task — your context has been restored after a restart.`;
 }
 
-/** Tier B 反馈铸文：命令输出尾（无 schema 提示——命令任务的纠正信号是输出） */
 export function commandFeedbackText(taskId: string, attempt: number, outputLines: readonly string[]): string {
   const output = outputLines.join("\n").slice(-2_000);
   return [
@@ -39,7 +33,6 @@ export function commandFeedbackText(taskId: string, attempt: number, outputLines
   ].join("\n");
 }
 
-/** Tier C 反馈铸文：reopen 提案即违规清单（评审意见直达修复者） */
 export function criticFeedbackText(taskId: string, attempt: number, proposals: readonly string[]): string {
   const list = proposals.length > 0 ? proposals.map((p) => `- ${p}`).join("\n") : "- reviewer rejected the deliverable without specific proposals";
   return [

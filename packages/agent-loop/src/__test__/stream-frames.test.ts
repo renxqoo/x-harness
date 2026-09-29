@@ -1,6 +1,3 @@
-// 流式帧广播全链（docs/THINKING-STREAM.md）：真实装配 + 脚本化假适配器；
-// 帧断言装置必须先于 followup 订阅（事件即发即弃无重放，订晚收空数组）。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -69,7 +66,6 @@ async function spawn(world: FrameWorld): Promise<{ handle: AgentHandle; agent: A
   return { handle: made.value, agent: made.value.agent };
 }
 
-/** 帧收集：必须先于 followup 订阅——事件即发即弃无重放，订晚收空数组 */
 function collectFrames(world: FrameWorld): { frames: AssistantStreamFrame[]; off: () => void } {
   const frames: AssistantStreamFrame[] = [];
   const off = world.ctx.on(agentAssistantStream, (payload: { frame: AssistantStreamFrame }) => {
@@ -120,12 +116,10 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
       { phase: "chunk", kind: "thinking", text: "more" },
       { phase: "chunk", kind: "text", text: "b" },
       { phase: "end", kind: "message" },
-      { phase: "start" }, // 第二步消化工具结果
+      { phase: "start" },
       { phase: "chunk", kind: "text", text: "done" },
       { phase: "end", kind: "message" },
     ]);
-    // 落盘不回传（STREAM-PARTIAL-PERSISTENCE 翻转契约 5）：WAL 含思考哨兵（交错增量拼接），
-    // 第二次请求体不含（投影白名单）
     const walText = JSON.stringify(agent.session.events().map((e: SessionEvent) => e.data));
     expect(walText).toContain("THINK-SENTINELmore");
     expect(JSON.stringify(world.fake.calls[1]?.messages)).not.toContain("THINK-SENTINEL");
@@ -176,7 +170,6 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
       { phase: "chunk", kind: "text", text: "ok" },
       { phase: "end", kind: "message" },
     ]);
-    // attempt 落盘已收思考；重试成功消息不粘连前段思考、请求体不回传
     expect(JSON.stringify(agent.session.events().map((e: SessionEvent) => e.data))).toContain("first-thought");
     const attempt = agent.session.events().find((e) => e.type === "assistant/attempt");
     expect(attempt?.data).toMatchObject({ error: "E1", thinking: "first-thought" });
@@ -187,13 +180,12 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
   });
 
   it("abort 变种：thinking-only → attempt 终态不产消息；thinking+text → interrupted 消息只含 text", async () => {
-    // (a) thinking-only + abort：思考不算 content → 空结算 attempt，无 assistant/message
     const worldA = await makeFrameWorld();
     worlds.push(worldA);
     worldA.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "thinking-delta", text: "hmm" };
-        await new Promise(() => {}); // 悬停流
+        await new Promise(() => {});
       })(),
     );
     const madeA = await spawn(worldA);
@@ -213,14 +205,13 @@ describe("流式帧广播（docs/THINKING-STREAM.md）", () => {
     expect(madeA.agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "aborted", cause: "user" } });
     await madeA.handle.dispose();
 
-    // (b) thinking+text 部分 + abort：interrupted 消息，content 只含 text
     const worldB = await makeFrameWorld();
     worlds.push(worldB);
     worldB.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "thinking-delta", text: "hmm" };
         yield { type: "text-delta", text: "partial" };
-        await new Promise(() => {}); // 悬停流
+        await new Promise(() => {});
       })(),
     );
     const madeB = await spawn(worldB);

@@ -1,6 +1,3 @@
-// readDir 契约实现（docs/EXEC-ENV.md §1）：目录项带 kind（symlink 不跟——walker 跳过依据）；
-// ENOENT/ENOTDIR/EACCES 显式判别，其余降级 not_found（垃圾输入空形态）。
-
 import { readdir } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import type { DirEntry, ReadDirResult } from "../types.ts";

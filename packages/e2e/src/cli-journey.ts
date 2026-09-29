@@ -1,9 +1,3 @@
-// CLI 宿主子进程旅程（docs/CLI.md §4/§5 批E + docs/PERMISSION-MODE-FLAG.md）：真进程装配
-// 全量世界 × 本地假 anthropic SSE 服务器。覆盖：短路命令退出码 / print 文本与 @file /
-// JSONL 事件流形态 / --session resume 上下文延续 / 会话锁双开拒绝 / REPL pty 驱动
-// （darwin：script 伪终端；他平台该腿跳过并注明）/ --permission 用法面与生效面
-// （tool_use 剧本 → plan 档 write 拒 → tool_result 回流）。
-
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,8 +10,6 @@ interface CapturedRequest {
   readonly body: unknown;
 }
 
-/** 单轮剧本：text = 纯文本终答；tool_use = 发起工具调用（stop_reason tool_use，
- *  agent loop 真执行工具并带 tool_result 回流发起下一轮请求） */
 type ScriptedTurn =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "tool_use"; readonly id: string; readonly name: string; readonly input: Record<string, unknown> };
@@ -27,13 +19,10 @@ interface FakeServer {
   readonly requests: CapturedRequest[];
   readonly respond: (text: string) => void;
   readonly respondToolUse: (name: string, input: Record<string, unknown>) => void;
-  /** 排空剧本队列——旅程腿间解耦（中断类腿预入队的剧本可能未被消耗而残留） */
   readonly clearScripted: () => void;
   readonly stop: () => Promise<void>;
 }
 
-/** anthropic wire 假服务器：记录请求体，按队列回剧本（docs/LLM-PI.md wire 形态；
- *  tool_use 帧序同 packages/llm __test__/pi-wire.test.ts 工具流全链路） */
 function startFakeAnthropic(): FakeServer {
   const requests: CapturedRequest[] = [];
   const scripted: ScriptedTurn[] = [];
@@ -69,7 +58,7 @@ function startFakeAnthropic(): FakeServer {
   });
   const port = server.port;
   if (port === undefined) throw new Error("cli-journey: fake server port unavailable");
-  let toolSeq = 0; // tool_use id 全局单调——队列长度推导在「push→排空→再 push」复用时会撞 id
+  let toolSeq = 0;
   return {
     port,
     requests,
@@ -112,7 +101,6 @@ interface CliRequest {
   readonly argv: readonly string[];
   readonly home: string;
   readonly cwd: string;
-  /** 管道 stdin 内容（缺省 = ignore） */
   readonly stdin?: string;
 }
 
@@ -137,7 +125,6 @@ async function runCli(request: CliRequest): Promise<CliRun> {
   return { stdout, stderr, exitCode };
 }
 
-/** pty 转发驱动（python3 标准库；BSD script 要求自身 stdin 是 TTY，管道下不可用） */
 const PTY_DRIVER = `import os, pty, sys, select
 pid, fd = pty.fork()
 if pid == 0:
@@ -175,7 +162,6 @@ const delay = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-/** REPL pty 驱动（需要 python3；缺席平台该腿跳过并注明——REPL 行为另有进程内管道全链测试） */
 async function runReplPty(request: PtyRequest): Promise<CliRun> {
   const { home, cwd, lines, marker } = request;
   if (process.platform !== "darwin") {
@@ -201,13 +187,11 @@ async function runReplPty(request: PtyRequest): Promise<CliRun> {
   while (!collected.join("").includes("x-harness v") && Date.now() < bootDeadline) {
     await delay(20);
   }
-  // 首行必须在 CLI 就绪（信号处理器已注册）后写入；^C 早到会走进程默认终止
   proc.stdin.write(`${first}\n`);
   await proc.stdin.flush();
   while (!collected.join("").includes(marker) && Date.now() < deadline) {
     await delay(20);
   }
-  // 后续行间隔写入：^C 连发会被合并/丢失（内核信号聚合），分开才走双击窗口
   for (const line of rest) {
     await delay(150);
     proc.stdin.write(`${line}\n`);
@@ -250,7 +234,6 @@ async function journeyPrintText(server: FakeServer, home: string, cwd: string): 
   server.respond("CLI-E2E-ANSWER");
   const notePath = join(cwd, "note.txt");
   await writeFile(notePath, "FILE-CONTENT-XYZ", "utf8");
-  // 管道 stdin 拼在初始消息最前 + @file 附加 + 位置参数为空：stdin+@file 组合形态
   const run = await runCli({ argv: ["-p", `@${notePath}`], home, cwd, stdin: "PIPED-STDIN-PROMPT\n" });
   must(run.exitCode === 0, `print text 应 exit 0（stderr: ${run.stderr.slice(0, 200)}）`);
   must(run.stdout.trim() === "CLI-E2E-ANSWER", `stdout 应纯最终文本（got: ${JSON.stringify(run.stdout.slice(0, 100))}）`);
@@ -280,7 +263,6 @@ async function journeyResume(server: FakeServer, home: string, cwd: string): Pro
   const lastBody = JSON.stringify(server.requests[server.requests.length - 1]?.body ?? {});
   must(lastBody.includes("REMEMBER-TOKEN-42"), "resume 后请求应携带首轮上下文（id 前缀恢复 + 日志续读）");
 
-  // --continue：取当前 cwd 最新主会话续聊（上下文延续）
   server.respond("THIRD-OK");
   const third = await runCli({ argv: ["--continue", "-p", "and now?"], home, cwd });
   must(third.exitCode === 0 && third.stdout.trim() === "THIRD-OK", `--continue 应成功（stderr: ${third.stderr.slice(0, 200)}）`);
@@ -294,7 +276,7 @@ async function journeySessionLock(home: string, cwd: string): Promise<void> {
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, "header.json"), `${JSON.stringify({ id, createdAt: Date.now(), cwd })}\n`, "utf8");
   await writeFile(join(dir, "events.jsonl"), "", "utf8");
-  await writeFile(join(dir, "lock"), `${process.pid}\n`, "utf8"); // 本测试进程持有活锁
+  await writeFile(join(dir, "lock"), `${process.pid}\n`, "utf8");
   const run = await runCli({ argv: ["--session", id, "-p", "hi"], home, cwd });
   must(run.exitCode === 1, `活锁双开应 exit 1（got ${String(run.exitCode)}）`);
   must(run.stderr.includes("session-locked"), `stderr 应含 session-locked（got: ${run.stderr.slice(0, 200)}）`);
@@ -308,7 +290,6 @@ async function journeyRepl(server: FakeServer, home: string, cwd: string): Promi
   must(run.stdout.includes("REPL-E2E-ANSWER"), "REPL 应流式输出回答");
   must(run.stdout.includes("type /help"), "REPL 应显示启动横幅");
 
-  // Ctrl+C 状态机：idle 双击（500ms 内两次 ^C）退出——首击提示、次击退出
   server.respond("INTERRUPT-ANSWER");
   const interrupted = await runReplPty({ home, cwd, lines: ["\u0003", "\u0003"], marker: "press Ctrl+C again" });
   if (interrupted.stdout.startsWith("(skipped")) return;
@@ -317,14 +298,11 @@ async function journeyRepl(server: FakeServer, home: string, cwd: string): Promi
 }
 
 async function journeyPermission(server: FakeServer, home: string, cwd: string): Promise<void> {
-  server.clearScripted(); // 中断类腿（^C 双击）可能残留未消耗剧本——腿间解耦
-  // 用法面：垃圾档位 exit 2 + 词表完整文案（真进程 parse 层）
+  server.clearScripted();
   const bad = await runCli({ argv: ["--permission", "bogus", "-p", "hi"], home, cwd });
   must(bad.exitCode === 2, `--permission 垃圾值应 exit 2（got ${String(bad.exitCode)}）`);
   must(bad.stderr.includes("expected plan | auto | edit-confirm | full | sandboxed-auto"), `stderr 应含词表文案（got: ${bad.stderr.slice(0, 120)}）`);
 
-  // 生效面：plan 档 write 工具调用被拒 → tool_result(is_error) 回流 → 第二轮请求 → 终答
-  // （真 argv → main.openWorld → buildWorld → fenceKit 折入的端到端锚——进程内测试覆盖不到的接线）
   server.respondToolUse("write", { path: "e2e-plan.txt", content: "x" });
   server.respond("PLAN-DENIED-HANDLED");
   const run = await runCli({ argv: ["--permission", "plan", "-p", "--mode", "json", "write a file"], home, cwd });
@@ -342,10 +320,8 @@ async function journeyPermission(server: FakeServer, home: string, cwd: string):
   must(secondRequestBody.includes("PLAN-DENIED-HANDLED") === false, "终答文本是第二轮的响应而非请求上下文");
 }
 
-/** full 总括授权生效面（docs/PERMISSION-FULL-UNRESTRICTED.md）：界外 write 真成功——
- *  tool_result 在场 + 非 is_error + 成功输出三重断言；文件真写出（cwd 外 mkdtemp 每次新建） */
 async function journeyPermissionFull(server: FakeServer, home: string, cwd: string): Promise<void> {
-  server.clearScripted(); // 腿间解耦（与 journeyPermission 同约定——不依赖上游腿的剧本消耗精确性）
+  server.clearScripted();
   const outsideDir = await mkdtemp(join(tmpdir(), "xh-cli-full-out-"));
   try {
     server.respondToolUse("write", { path: join(outsideDir, "made.txt"), content: "E2E-FULL-OUTSIDE" });

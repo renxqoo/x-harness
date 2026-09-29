@@ -1,12 +1,9 @@
-// 对抗审查修复回归锚（#1/#2/#3/#8）：界外写封堵 / 写副作用动词逐出只读表 /
-// ask 批准后执行指令现算 / 敏感面精确习得豁免。
-
 import { describe, expect, it } from "vitest";
 import { decideFor as __decideFor } from "../index.ts";
 import { knobDecideOf } from "@x-harness/permission-modes";
 function decideFor(input: Parameters<typeof __decideFor>[0]): ReturnType<typeof __decideFor> {
   const faces = knobDecideOf(input.profile);
-  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined; // 测试注入：模拟 dispatch 从 ToolDefinition.kind 穿引
+  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined;
   return __decideFor({ ...input, ...(input.kind === undefined && family !== undefined ? { kind: family } : {}), ...(input.modeDecide === undefined && faces.decide !== undefined ? { modeDecide: faces.decide } : {}), ...(input.postureDecide === undefined && faces.posture !== undefined ? { postureDecide: faces.posture } : {}) });
 }
 import { resolveProfile } from "@x-harness/permission-modes";
@@ -26,7 +23,7 @@ describe("对抗审查回归锚", () => {
     expect(bash("cp secret /etc/foo").verdict).toBe("ask");
     expect(bash("tee /usr/local/bin/pwn").verdict).toBe("ask");
     expect(bash("mv x ~/").verdict).toBe("ask");
-    expect(bash("mkdir build").verdict).toBe("allow"); // 界内写不误伤
+    expect(bash("mkdir build").verdict).toBe("allow");
   });
 
   it("#2 写副作用动词逐出只读表：awk 程序体/sed -i/裸 curl/wget → ask", () => {
@@ -37,11 +34,9 @@ describe("对抗审查回归锚", () => {
   });
 
   it("#3 ask 批准后执行指令现算：exec 随终局裁决（approval 路径与即时 allow 同式）", () => {
-    // 未分类命令 ask 无 exec；经 plugin 批准后由 execOf 现算（此处锚 execOf 语义）
     const ask = bash("mytool run");
     expect(ask.verdict).toBe("ask");
     expect(ask.exec).toBeUndefined();
-    // 同档位即时 allow 的指令 = 批准后的指令（execOf 单一真相）
     expect(decideFor({ tool: "bash", args: { command: "git status" }, userRules: [], sessionRules: [], profile: AUTO, root: ROOT, extraRoots: [] })).toMatchObject({ exec: "direct" });
     expect(decideFor({ tool: "bash", args: { command: "git status" }, userRules: [], sessionRules: [], profile: resolveProfile("sandboxed-auto")!, root: ROOT, extraRoots: [] })).toMatchObject({ exec: "contained" });
   });
@@ -50,7 +45,7 @@ describe("对抗审查回归锚", () => {
     const exact = [{ ...parseRule("Danger(cat ~/.ssh/id_rsa):allow", "session"), nature: "grant" as const }];
     expect(bash("cat ~/.ssh/id_rsa", exact)).toMatchObject({ verdict: "allow", resolvedBy: "grant:session" });
     const generalized = [{ ...parseRule("Danger(cat:*):allow", "session"), nature: "grant" as const }];
-    expect(bash("cat ~/.ssh/id_rsa", generalized).resolvedBy).toBe("argv-sensitive"); // 泛化不豁免
+    expect(bash("cat ~/.ssh/id_rsa", generalized).resolvedBy).toBe("argv-sensitive");
   });
 
   it("#9 合并层 deny 不灭（settings 同键冲突 deny 胜）— 词面级锚在 host-hub settings 测试", () => {
@@ -62,7 +57,7 @@ describe("对抗审查回归锚", () => {
     const parsed = parseBash("cp a /etc/b");
     if (parsed.ok) {
       expect(classifyPipeline(parsed.commands, false, [ROOT])).toBe("unclassified");
-      expect(classifyPipeline(parsed.commands, false, [])).toBe("write"); // 无 roots=纯词面形态（兼容缝）
+      expect(classifyPipeline(parsed.commands, false, [])).toBe("write");
     }
   });
 });

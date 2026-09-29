@@ -1,5 +1,3 @@
-// gateway B2 骨架旅程：owner 通道 + gw/* 命令族 + host 命令管线（真 fake host 子进程）+
-// 事件扇出 + response 认领 + 去重 + 审计。真 socket 旅程（unix socket 连接）。
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { connect } from "node:net";
 import { mkdtemp, readFile } from "node:fs/promises";
@@ -88,7 +86,6 @@ async function dialOwner(path: string): Promise<OwnerClient> {
                 return;
               }
             } catch {
-              // skip
             }
           }
           if (Date.now() - started > timeoutMs) {
@@ -125,7 +122,6 @@ describe("gateway B2 骨架", () => {
     const res = await client.waitResponse("c1");
     expect(res.success).toBe(true);
     expect((res.data as { threadId?: string }).threadId).toBe("t_fake_1");
-    // 事件扇出（owner 订阅域——thread/start 隐式订阅）
     await sleep(300);
     const lines = await client.lines();
     const events = lines.map((l) => JSON.parse(l) as Frame).filter((f) => f.kind === "event");
@@ -153,12 +149,10 @@ describe("gateway B2 骨架", () => {
   });
 
   it("gw/devices/set_scope + revoke + 审计落盘", { timeout: 15000 }, async () => {
-    // 直接注入设备（注册表面）
     const registryPath = join(agentDir, "devices", "registry.json");
     const { writeFile, mkdir } = await import("node:fs/promises");
     await mkdir(join(agentDir, "devices"), { recursive: true });
     await writeFile(registryPath, JSON.stringify({ devices: [{ deviceId: "d_test", name: "Phone", deviceType: "phone", platform: "ios", appVersion: "1", longTermPub: "aa", scope: "read", pairedAt: 0, lastSeenAt: 0, rekeyCounter: 0 }] }), "utf8");
-    // 重启 gateway 装载注册表
     await stopGateway?.();
     const self = new URL("./fake-host.ts", import.meta.url).pathname;
     const handle = await startGateway({ agentDir, hostOverride: { command: process.execPath, args: [self, "--fake-host"] }, log: () => {} });
@@ -170,19 +164,16 @@ describe("gateway B2 骨架", () => {
     client.send(commandFrame("sc1", "gw/devices/set_scope", { deviceId: "d_test", scope: "interact" }));
     const res = await client.waitResponse("sc1");
     expect(res.success).toBe(true);
-    // D4 联动主线：升 full → revoke（fanout detach/会话清理/relay 拉黑推送路径）
     client.send(commandFrame("sc9", "gw/devices/set_scope", { deviceId: "d_test", scope: "full" }));
     expect((await client.waitResponse("sc9")).success).toBe(true);
     client.send(commandFrame("rv1", "gw/devices/revoke", { deviceId: "d_test" }));
     const rv = await client.waitResponse("rv1");
     expect(rv.success).toBe(true);
-    // 幽灵设备分支
     client.send(commandFrame("rv0", "gw/devices/revoke", { deviceId: "ghost" }));
     expect((await client.waitResponse("rv0")).success).toBe(false);
     client.send(commandFrame("sc0", "gw/devices/set_scope", { deviceId: "ghost", scope: "interact" }));
     expect((await client.waitResponse("sc0")).success).toBe(false);
     client.close();
-    // 审计：device-scope-changed + device-revoked 落盘
     const auditDir = join(agentDir, "audit");
     const names = await (await import("node:fs/promises")).readdir(auditDir);
     let auditAll = "";
@@ -221,7 +212,6 @@ describe("gateway B2 骨架", () => {
     expect(e1.success).toBe(false);
     client.send(commandFrame("e2", "gw/devices/rename", { deviceId: "ghost" }));
     expect((await client.waitResponse("e2")).success).toBe(false);
-    // 先注册一个设备再打坏 scope
     const registryPath = join(agentDir, "devices", "registry.json");
     const { writeFile } = await import("node:fs/promises");
     const current = JSON.parse(await readFile(registryPath, "utf8")) as { devices: unknown[] };
@@ -236,9 +226,7 @@ describe("gateway B2 骨架", () => {
 
   it("坏帧 → error 帧（bad-frame）不崩", async () => {
     const client = await dialOwner(socketPath);
-    // 非法帧形状（未知 kind）：parseFrame 拒 → error 帧
     client.send(JSON.stringify({ kind: "nope", streamId: "owner", seq: 1, body: {} }));
-    // parseFrame 拒未知 kind → owner-server 回 bad-frame error
     const res = await client.waitResponse("__none__", 1500).catch(() => null);
     expect(res).toBeNull();
     client.close();
@@ -276,11 +264,9 @@ describe("gateway B2 骨架", () => {
   it("C1/B5b 回归：host 退出自动拉起；write 失败路径合成 failure 进去重缓存", { timeout: 25000 }, async () => {
     const client = await dialOwner(socketPath);
     const handle = currentGatewayHandle();
-    // 杀 host（模拟崩溃）——exit 路径应拉起
     handle.host.killChildForTest();
     await new Promise((r) => { setTimeout(r, 800); });
     expect(handle.host.alive()).toBe(true);
-    // 命令仍可用
     client.send(commandFrame("hc1", "thread/list"));
     expect((await client.waitResponse("hc1")).success).toBe(true);
     client.close();

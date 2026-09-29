@@ -1,6 +1,3 @@
-// readDir 面契约一致性套件（docs/EXEC-ENV.md §7）：kind 矩阵与错误三态。
-// fake 腿不水化 symlink——symlink kind 断言为 local-only。
-
 import { mkdtemp, rm, writeFile, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

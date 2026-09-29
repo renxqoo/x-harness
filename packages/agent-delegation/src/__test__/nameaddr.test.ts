@@ -1,6 +1,3 @@
-// 寻址终态测试（docs/AGENT-DELEGATION.md §5.2——修订A「去名」：agentId 唯一身份）：
-// main 通道（子→父信封/根拒）、agentId 精确、未知形态引导、task_id 按号、block/timeout。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmChunk } from "@x-harness/llm";
 import { sessionStore } from "@x-harness/session";
@@ -39,7 +36,7 @@ describe("agentId 寻址（§5.2——修订A）", () => {
     const sent = await callTool({ world, name: "agent_message", args: { to: agentId, message: "wake" }, session: parent.agent.session.id });
     expect(sent.isError).toBeUndefined();
     await vi.waitFor(() => expect(turnEndsOf(world, childSession)).toBe(2), { timeout: 5_000 });
-    expect(userTextsOf(world, childSession)).toContain("wake"); // 身份对账：收件到位
+    expect(userTextsOf(world, childSession)).toContain("wake");
     const unknown = await callTool({ world, name: "agent_message", args: { to: "researcher", message: "hi" }, session: parent.agent.session.id });
     expect(unknown.isError).toBe(true);
     expect(unknown.content).toContain("not-found:researcher");
@@ -93,7 +90,6 @@ describe("main 通道（§5.1/§5.2-1）", () => {
     const woke = await callTool({ world, name: "agent_message", args: { to: agentId, message: "report to main" }, session: parent.agent.session.id });
     expect(woke.isError).toBeUndefined();
     await vi.waitFor(() => {
-      // userTextsOf 是 JSON.stringify 空间——内层引号被转义，按转义形态断言
       expect(userTextsOf(world, parent.agent.session.id)).toContain(`<cross-session-message from=\\"${agentId}\\">child asking parent</cross-session-message>`);
     }, { timeout: 5_000 });
     const turnStartCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
@@ -141,7 +137,7 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
       })(),
     ]);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
-    void agentIdOf(spawned.content); // spawn 语法面（agentId 消费在通知断言）
+    void agentIdOf(spawned.content);
     const running = async (): Promise<void> => {
       const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
       expect(listed.content).toContain("status=running");
@@ -149,7 +145,7 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
     await vi.waitFor(running, { timeout: 5_000 });
     release();
     const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
-    await vi.waitFor(() => expect(lastNotice()).toContain("slow child finished"), { timeout: 5_000 }); // 全文在通知里（推送交付）
+    await vi.waitFor(() => expect(lastNotice()).toContain("slow child finished"), { timeout: 5_000 });
     await parent.dispose();
   });
 });

@@ -1,5 +1,3 @@
-// testkit 三用例（SDK-MIGRATION-F3 §3）：剧本形态/捕获与回落参数化/假工具计数。
-
 import { describe, expect, it } from "vitest";
 import type { LlmChunk } from "@x-harness/llm";
 import { fakeTool, scriptedAdapter, textScript } from "../index.ts";
@@ -19,10 +17,10 @@ describe("testkit", () => {
     const calls: unknown[] = [];
     const adapter = scriptedAdapter({ calls: calls as never, scripts: [textScript("first")] });
     expect(await drain(adapter.stream({ model: "m" } as never))).toBe("first");
-    expect(await drain(adapter.stream({ model: "m" } as never))).toBe("(no script)"); // 缺省回落
+    expect(await drain(adapter.stream({ model: "m" } as never))).toBe("(no script)");
     expect(calls).toHaveLength(2);
     const custom = scriptedAdapter({ scripts: [], exhausted: (req) => textScript(`exhausted:${String(req.model)}`) });
-    expect(await drain(custom.stream({ model: "z" } as never))).toBe("exhausted:z"); // 参数化回落
+    expect(await drain(custom.stream({ model: "z" } as never))).toBe("exhausted:z");
   });
 
   it("fakeTool：空 schema 执行 + 计数", async () => {

@@ -1,5 +1,3 @@
-// @x-harness/exec-env：执行环境契约 + localEnv（docs/EXEC-ENV.md）。
-
 export type {
   DirEntry,
   ExecEnv,

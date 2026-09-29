@@ -1,6 +1,3 @@
-// e2e：件13 三旅程（docs/AGENT-DELEGATION.md §11.3）——跨进程（真子进程双宿主）、
-// worktree（真 git 仓 + 工具面隔离 + 无改动清理）、复活（teardown → 新装配档案复活续卷）。
-
 import { textScript } from "@x-harness/testkit";
 import { spawn } from "node:child_process";
 import { execFile } from "node:child_process";
@@ -34,7 +31,6 @@ const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
 interface Harness {
   readonly ctx: ReturnType<typeof createContext>;
   readonly scripts: Map<string, Array<AsyncGenerator<LlmChunk>>>;
-  /** 全量 LlmRequest 捕获（system 文本断言面——worktree 子提示词轨道锚） */
   readonly calls: LlmRequest[];
   readonly unload: Promise<unknown>;
 }
@@ -45,8 +41,6 @@ async function assemble(input: { readonly agentsDir: string; readonly workspaceR
   const calls: LlmRequest[] = [];
   const plugins: Plugin[] = [sessionPlugin, toolsPlugin, llmPlugin, systemPromptPlugin, agentLoopPlugin];
   if (input.promptRig !== undefined) {
-    // base/core 根层 + worktree 子覆盖双插件（覆盖/顶替语义检测的前提——根层无同名段
-    // 时覆盖断言恒真，docs/WORKTREE-CONTEXT-AWARENESS §5 e2e 钉）
     const facts = { cwd: input.promptRig.cwd, isGit: true, platform: process.platform, shell: "unknown" };
     plugins.push(createBasePromptPlugin(facts));
     plugins.push(createWorktreeContextPlugin({ facts }));
@@ -62,7 +56,7 @@ async function assemble(input: { readonly agentsDir: string; readonly workspaceR
     createAgentDelegationPlugin({
       agentsDirs: [input.agentsDir],
       workspaceRoot: input.workspaceRoot,
-      worktreeSweep: false, // 旅程非 sweep 面；workspaceRoot=process.cwd() 指真仓——防误扫真环境（world.ts A-P1-2 同口径）
+      worktreeSweep: false,
       ...(input.mailboxRoot !== undefined && input.box !== undefined ? { mailbox: { box: input.box, mainSession: "alpha-main" as SessionId } } : {}),
     }),
   ]);
@@ -78,7 +72,6 @@ async function assemble(input: { readonly agentsDir: string; readonly workspaceR
   return { ctx, scripts, calls, unload: Promise.resolve() };
 }
 
-/** worktree 隔离的授权面（GrantsRegistry 直供——旅程只需 setRootOverride 落账） */
 const grantsPlugin: Plugin = {
   name: "e2e-grants",
   apply: (ctx) => ctx.provide(permissionGrants, new GrantsRegistry()),
@@ -100,14 +93,12 @@ async function writeAgentMd(dir: string): Promise<void> {
   );
 }
 
-/** 旅程 1：跨进程双宿主——真子进程持 box "peer"，主进程持 box "alpha"，往返 + idle notice */
 export async function runCrossProcessJourney(): Promise<void> {
   const mailboxRoot = await mkdtemp(join(tmpdir(), "xh-e2e-cross-"));
   const agentsDir = await mkdtemp(join(tmpdir(), "xh-e2e-agents-"));
   await writeAgentMd(agentsDir);
   const peer = spawn("bun", [join(import.meta.dir, "cross-peer.ts"), mailboxRoot], { stdio: ["pipe", "inherit", "inherit"] });
   try {
-    // 等 peer 就绪（box manifest 在场）
     const deadline = Date.now() + 15_000;
     while (!existsSync(join(mailboxRoot, "peer", "manifest.json")) && Date.now() < deadline) await sleep(100);
     must(existsSync(join(mailboxRoot, "peer", "manifest.json")), "peer box 就绪");
@@ -118,7 +109,6 @@ export async function runCrossProcessJourney(): Promise<void> {
     if (!made.ok) throw new Error(`alpha main 创建失败：${made.reason}`);
     harness.scripts.set("alpha-model", [textScript("alpha consumed")]);
 
-    // ① alpha → peer：peer 的 main 被唤醒回信（真子进程内执行）
     const registry = harness.ctx.use((await import("@x-harness/tools")).toolRegistry);
     const sent = await registry.dispatch({ callId: "e2e-x1", name: "agent_message", args: { to: "peer", message: "ping from alpha journey" }, signal: new AbortController().signal, session: "alpha-main" as SessionId });
     must(!sent.isError, `alpha → peer 投递（实际：${sent.content}）`);
@@ -126,7 +116,6 @@ export async function runCrossProcessJourney(): Promise<void> {
     while (!userTextsOf(harness, "alpha-main" as SessionId).includes("peer ack from real subprocess") && Date.now() < replyDeadline) await sleep(100);
     must(userTextsOf(harness, "alpha-main" as SessionId).includes("peer ack from real subprocess"), "peer 回信经信封到达 alpha main");
 
-    // ② notify_when_idle：peer 空闲后恰好一条 notice
     const subbed = await registry.dispatch({ callId: "e2e-x2", name: "agent_message", args: { to: "peer", message: "done ping", notify_when_idle: true }, signal: new AbortController().signal, session: "alpha-main" as SessionId });
     must(!subbed.isError, `idle 订阅（实际：${subbed.content}）`);
     const noticeDeadline = Date.now() + 15_000;
@@ -147,19 +136,16 @@ export async function runCrossProcessJourney(): Promise<void> {
       }),
       sleep(5_000).then(() => -1),
     ]);
-    if (exited === -1) peer.kill("SIGKILL"); // 孤儿兜底
+    if (exited === -1) peer.kill("SIGKILL");
     await rm(mailboxRoot, { recursive: true, force: true }).catch(() => {});
     await rm(agentsDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
-/** 旅程 2：worktree——真 git 仓，子写落 worktree、主仓不可达、stop 无改动自动清理 */
 export async function runWorktreeJourney(): Promise<void> {
   const repo = mkdtempSync(join(tmpdir(), "xh-e2e-wt-"));
   const physical = realpathSync(repo);
   try {
-    // hub 形态：进程 cwd 停在仓外（x-harness 仓根），仅 workspaceRoot 指向真仓——
-    // 夹具 git 全 -C 显式（ambient cwd 会写错仓）
     await exec("git", ["-C", repo, "init"]);
     await exec("git", ["-C", repo, "config", "user.email", "e2e@t"]);
     await exec("git", ["-C", repo, "config", "user.name", "e2e"]);
@@ -169,7 +155,6 @@ export async function runWorktreeJourney(): Promise<void> {
 
     const agentsDir = await mkdtemp(join(tmpdir(), "xh-e2e-wt-agents-"));
     await writeAgentMd(agentsDir);
-    // promptRig：base 根层 + worktree 覆盖插件（named 子 Track N 静态拼接 + 根层零污染断言面）
     const harness = await assemble({ agentsDir, workspaceRoot: physical, grants: true, promptRig: { cwd: physical } });
     const loop = harness.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken);
     const made = await loop.create({ agent: { model: "parent-model", provider: "fake" } });
@@ -184,9 +169,8 @@ export async function runWorktreeJourney(): Promise<void> {
     must(entry !== undefined, "worktree 建在 repo 外同级");
     const wtPath = join(wtParent, entry ?? "");
     must(existsSync(join(wtPath, "SEED.md")), "worktree 检出 HEAD");
-    // Track N（named 子静态 systemPrompt 拼接）：子首 LLM 请求 system 文本含 worktree 环境块
     harness.scripts.set("child-model", [textScript("child in worktree")]);
-    await sleep(400); // 子首步落卷
+    await sleep(400);
     const childCall = harness.calls.find((c) => c.model === "child-model");
     must(childCall !== undefined, "子首 LLM 请求捕获在场");
     const systemText = (childCall?.messages.find((m) => m.role === "system") as { text?: string } | undefined)?.text ?? "";
@@ -194,10 +178,8 @@ export async function runWorktreeJourney(): Promise<void> {
     must(systemText.includes(`- Working directory: ${wtPath}`), `子 system 含 worktree 路径（实际 system 头 200 字：${systemText.slice(0, 200)}`);
     must(systemText.includes(`- Git branch: x-harness/${agentId}`), "子 system 含分支行");
     must(systemText.includes("- Main repository"), "子 system 含主仓行（只读参照）");
-    // 主仓 status 干净（worktree 不污染主仓）
     const status = await exec("git", ["-C", repo, "status", "--porcelain"]);
     must(status.stdout.trim() === "", "主仓工作树不受污染");
-    // 无改动 stop → worktree 与分支清理
     const stopped = await registry.dispatch({ callId: "e2e-w2", name: "task_stop", args: { task_id: agentId }, signal: new AbortController().signal, session: made.value.agent.session.id });
     must(!stopped.isError, `stop（实际：${stopped.content}）`);
     await sleep(100);
@@ -215,7 +197,6 @@ export async function runWorktreeJourney(): Promise<void> {
   }
 }
 
-/** 旅程 3：复活——teardown 全灭 → 新装配档案 resume 父 → 按名复活子续卷双落盘 */
 export async function runReviveJourney(): Promise<void> {
   const persistenceRoot = await mkdtemp(join(tmpdir(), "xh-e2e-revive-"));
   const agentsDir = await mkdtemp(join(tmpdir(), "xh-e2e-revive-agents-"));
@@ -233,12 +214,12 @@ export async function runReviveJourney(): Promise<void> {
     must(!spawned.isError, `spawn 子（实际：${spawned.content}）`);
     const agentId = (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] as string;
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
-    await sleep(300); // 子完成 + 通知
+    await sleep(300);
     const store1 = first.ctx.use(sessionStore);
     await store1.flush(childSession);
     await store1.flush("revive-parent" as SessionId);
     await parent.dispose();
-    await first.ctx.dispose(); // 全灭（进程消失模拟）
+    await first.ctx.dispose();
     void first.unload;
 
     const second = await assemble({ agentsDir, workspaceRoot: process.cwd(), persistence: persistenceRoot });
@@ -251,7 +232,6 @@ export async function runReviveJourney(): Promise<void> {
     const registry2 = second.ctx.use((await import("@x-harness/tools")).toolRegistry);
     const woke = await registry2.dispatch({ callId: "e2e-r2", name: "agent_message", args: { to: agentId, message: "rise again" }, signal: new AbortController().signal, session: "revive-parent" as SessionId });
     must(!woke.isError, `按 agentId 复活（实际：${woke.content}）`);
-    // 完成屏障：等复活子真正 idle（steer 的 kick 异步——flush 快照不等 turn，审查 B-P2-9）
     const childHandle = loop2.get(childSession);
     must(childHandle !== undefined, "复活子句柄在场");
     if (childHandle !== undefined) await childHandle.agent.whenIdle();

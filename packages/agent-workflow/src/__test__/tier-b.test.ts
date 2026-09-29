@@ -1,6 +1,3 @@
-// Tier B 命令验收 + 让位协议 + 档组合单测（件16 §8.2/§9）：真实 sandbox 执行 exit code
-// 裁决、verify intent-result 对、schema+command 组合链、task_stop 让位与迟到 miss 纪律。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -112,7 +109,7 @@ describe("Tier B 命令验收（真实沙箱 exit code）", () => {
     const sent = await f.submit({ description: "cmd task", prompt: "work", result_schema: { type: "object", required: ["title"], properties: { title: { type: "string" } } }, acceptance: { command: `echo side >> ${sideEffect} && true` } });
     expect(sent.ok).toBe(true);
     await vi.waitFor(() => expect(f.texts()).toContain("workflow-notification"), { timeout: 15_000 });
-    expect(f.texts()).toContain("passed"); // schema 过 + 命令 exit 0 → 链全过
+    expect(f.texts()).toContain("passed");
     const { readdir } = await import("node:fs/promises");
     const runs = await readdir(join(root, "workflows"));
     const journal = await readFile(join(root, "workflows", runs[0] ?? "", "journal.jsonl"), "utf8");
@@ -125,16 +122,15 @@ describe("Tier B 命令验收（真实沙箱 exit code）", () => {
   it("命令 exit≠0 → 回炉（反馈含输出尾）→ 修复后过（计数文件确定性自愈——无 writeFile 竞争）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-cmd2-"));
     const countFile = join(root, "runs.count");
-    // 命令自身计数：第 1 次 exit 1（写计数）、第 2 次起 exit 0——回炉轮必然过，无时序竞争
     const command = `n=$(cat ${countFile} 2>/dev/null || echo 0); n=$((n+1)); echo $n > ${countFile}; test $n -ge 2`;
     const f = await fixture(root, [
-      '{"title": "first"}', // 首轮：命令第 1 次跑 → exit 1 → 回炉
-      '{"title": "fixed"}', // 回炉轮：命令第 2 次跑 → exit 0 → 过
+      '{"title": "first"}',
+      '{"title": "fixed"}',
     ]);
     const sent = await f.submit({ description: "repair me", prompt: "x", acceptance: { command } });
     expect(sent.ok).toBe(true);
     await vi.waitFor(() => expect(f.texts()).toContain("workflow-notification"), { timeout: 15_000 });
-    expect(f.texts()).toContain("finished: passed"); // G4 修：断言修复成功终态（非仅通知到达）
+    expect(f.texts()).toContain("finished: passed");
     await f.dispose();
     await rm(root, { recursive: true, force: true });
   });
@@ -156,7 +152,6 @@ describe("task_stop 让位协议（§9）", () => {
     expect(sent.ok).toBe(true);
     const agentId = (sent.ok ? sent.text.match(/agent-[0-9a-f]{8}/)?.[0] : "") ?? "";
     expect(agentId).not.toBe("");
-    // taskId 从 submit 文本提取（A8：runId 前缀化——不再硬编码 t1）
     const taskId = sent.ok ? (sent.text.match(/taskId: (\S+) /)?.[1] ?? "") : "";
     expect(taskId).not.toBe("");
     const stopped = await f.stopTask(taskId, "main-1" as SessionId);
@@ -183,7 +178,7 @@ describe("acceptor-command 边界", () => {
     const { openRunJournal, workflowPluginVersion } = await import("../journal.ts");
     const root = await mkdtemp(join(tmpdir(), "xh-wf-ac-"));
     const { createContext } = await import("@x-harness/core");
-    const ctx = createContext(); // 无任何插件——execEnv tryUse miss
+    const ctx = createContext();
     const made = await openRunJournal(join(root, "workflows"), { runId: "r-ac", parentSession: "s", cwd: root, createdAt: 1, pluginVersion: workflowPluginVersion() });
     if (made.kind !== "opened") throw new Error("fixture");
     const { step } = await import("@x-harness/workflow-core");

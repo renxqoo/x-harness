@@ -1,6 +1,3 @@
-// 件15 D7：summary 截断承诺兑现（docs/DELEGATION-LONG-CONTENT.md §3）——schema 去上限
-// （批1）后 verb 层 SUMMARY_CAP 是唯一兑现点；echoSummary 统一出口三投递路径全覆盖。
-
 import { describe, expect, it, vi } from "vitest";
 import { makeWorld, spawnParent, callTool, textScript, CHILD_MODEL, makeOptions, agentIdOf, sessionOf } from "./world.ts";
 
@@ -11,9 +8,9 @@ describe("summary 回显统一出口（件15 D7）", () => {
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
     const longSummary = "s".repeat(601);
     const sent = await callTool({ world, name: "agent_message", args: { to: agentIdOf(spawned.content), message: "ping", summary: longSummary }, session: parent.agent.session.id });
-    expect(sent.isError).not.toBe(true); // 投递成功——元数据超长不否决真实负载
+    expect(sent.isError).not.toBe(true);
     expect(sent.content).toContain(`(summary: ${"s".repeat(500)}…)`);
-    expect(sent.content).not.toContain("s".repeat(501)); // 截断而非全文回显
+    expect(sent.content).not.toContain("s".repeat(501));
     await parent.dispose();
   });
 
@@ -33,10 +30,10 @@ describe("summary 回显统一出口（件15 D7）", () => {
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
     const childSession = sessionOf(spawned.content);
     const turnEnds = (): number => world.loop.get(childSession)?.agent.session.events().filter((e) => e.type === "turn/end").length ?? 0;
-    await vi.waitFor(() => expect(turnEnds()).toBe(1), { timeout: 5_000 }); // 子完成首轮转 idle
+    await vi.waitFor(() => expect(turnEnds()).toBe(1), { timeout: 5_000 });
     const sent = await callTool({ world, name: "agent_message", args: { to: "main", message: "child to parent", summary: "a label" }, session: childSession });
     expect(sent.isError).not.toBe(true);
-    expect(sent.content).toContain("(summary: a label)"); // main 通道（deliverToMain）回显覆盖
+    expect(sent.content).toContain("(summary: a label)");
     await parent.dispose();
   });
 });
@@ -57,7 +54,7 @@ describe("summary 回显跨进程路径（件15 D7——审查 A P1-3 补）", (
         await spawnParent(beta, PARENT_MODEL, "main-2" as import("@x-harness/session").SessionId);
         const sent = await callTool({ world: alpha, name: "agent_message", args: { to: "beta", message: "cross ping", summary: "cross label" }, session: alphaMain.agent.session.id });
         expect(sent.isError).toBeUndefined();
-        expect(sent.content).toContain("(summary: cross label)"); // cross 路径回显覆盖（外层统一出口包住 sendCross 返回）
+        expect(sent.content).toContain("(summary: cross label)");
         await alphaMain.dispose();
         await alpha.cleanup();
         await beta.cleanup();

@@ -1,5 +1,3 @@
-// host 机械件单测：worker-process（真子进程分帧/违例/close 结算/两段杀）、
-// thread-retire sweepOnce 矩阵、tmp-sweep 残留清扫、skills-admin project 级。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, mkdir, rm, utimes, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -44,17 +42,13 @@ describe("worker-process（真子进程）", () => {
       },
     });
     await handle.exited;
-    expect(closed).toBe(1); // close 恰一结算
+    expect(closed).toBe(1);
     expect(lines).toContain('{"type":"hello"}');
     expect(lines).toContain('{"type":"heartbeat"}');
-    expect(lines).toContain('{"type":"event"}}'); // 跨 chunk 重组（50ms 半行 + 120ms 收尾）
-    // 退出后迟到写不崩（stdin error 监听兜底）
+    expect(lines).toContain('{"type":"event"}}');
     await handle.write("late").catch(() => undefined);
   });
 
-  // 超限行违例分支：真子进程 129MiB 单行在本机 Bun 管道下送达量不定（背压忽略
-  // 写者的到达截断——实测多跑非确定），无法确定性断言；整行/残段上限语义已由
-  // shared/jsonl 分帧器矩阵覆盖（同一判据文案），此处不重复真进程复测。
 
   test("workerExecPath 三形态自解：脚本形态带 argv[1] + --internal-worker", () => {
     const exec = workerExecPath();
@@ -93,7 +87,7 @@ describe("thread-retire sweepOnce 矩阵", () => {
     void live;
     void parked;
     f.sweep.sweepOnce();
-    expect(f.killed).toEqual(["stale"]); // parked 不在杀域
+    expect(f.killed).toEqual(["stale"]);
   });
 
   test("idle retire：keepalive/busy 例外；RSS 硬顶无视例外（未落盘 kill）", () => {
@@ -107,9 +101,9 @@ describe("thread-retire sweepOnce 矩阵", () => {
     f.table.insert({ threadId: "fat", cwd: "/w", sessionPath: null, state: "live", trusted: false, keepalive: true });
     f.table.update("fat", { rssBytes: 500 * 1024 * 1024, lastBeatAt: Date.now() });
     f.sweep.sweepOnce();
-    expect(f.retired.map((r) => r.threadId)).toEqual(["idle"]); // keepalive/busy 豁免
+    expect(f.retired.map((r) => r.threadId)).toEqual(["idle"]);
     expect(f.retired[0]?.origin).toBe("idle");
-    expect(f.killed).toEqual(["fat"]); // RSS 未落盘走 kill（thread_died 域）
+    expect(f.killed).toEqual(["fat"]);
   });
 });
 
@@ -143,23 +137,19 @@ describe("skills-admin project 级（真目录）", () => {
     const skillsDir = join(projectCwd, ".x-harness", "skills");
     await mkdir(join(skillsDir, "alpha"), { recursive: true });
     await writeFile(join(skillsDir, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: does A\n---\nbody", "utf8");
-    // 信任登记（真实 trust store——project 门禁通路）
     const trust = createTrustStore(agentDir);
     await trust.trust(projectCwd);
     expect(await knownSkillNames({ cwd: projectCwd })).toContain("alpha");
     const listed = await listSkills({ agentDir, cwd: projectCwd });
     const alpha = listed.skills.find((skill) => skill.name === "alpha");
     expect(alpha).toMatchObject({ source: "project", disabled: false });
-    // disable → list 标注 disabled
     const disabled = await setSkillEnabled({ agentDir, name: "alpha", enabled: false, cwd: projectCwd });
     expect(disabled.ok).toBe(true);
     const afterDisable = await listSkills({ agentDir, cwd: projectCwd });
     expect(afterDisable.skills.find((skill) => skill.name === "alpha")?.disabled).toBe(true);
-    // enable（project 级）→ 复原
     const enabled = await setSkillEnabled({ agentDir, name: "alpha", enabled: true, cwd: projectCwd });
     expect(enabled.ok).toBe(true);
-    expect((enabled as { stillDisabled?: string }).stillDisabled).toBeUndefined(); // user 级无同名
-    // 未信任 cwd → knownSkillNames 只见 user 层（project 不掺）
+    expect((enabled as { stillDisabled?: string }).stillDisabled).toBeUndefined();
     expect(await knownSkillNames()).not.toContain("alpha");
     void homedir;
   });

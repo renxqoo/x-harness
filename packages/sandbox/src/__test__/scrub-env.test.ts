@@ -1,5 +1,3 @@
-// env 密钥清洗表驱动：键名命中/误伤邻词/大小写/值不扫描。
-
 import { describe, expect, it } from "vitest";
 import { scrubEnv } from "../scrub-env.ts";
 

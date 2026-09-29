@@ -1,8 +1,3 @@
-// 插件生命周期（docs/SANDBOX.md §1/§3）：假 srt runtime 注入缝——依赖缺失 fail-closed、双服务
-// 可见、基线剖面、白名单热切换序列（授权即时生效/同集不切/sessionDisposed 收缩/networkOff 恒空）、
-// env 清洗透传、拆卸契约（活句柄两段杀、fail-fast、wrap 期拆卸逃逸复查、单例占用与顺序复用）。
-// 真内核执法面在 e2e.kernel.test.ts（darwin 默认门）。
-
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -93,7 +88,7 @@ async function drain(stream: ReadableStream<Uint8Array>): Promise<string> {
 async function assemble(root: string, fake: FakeRuntime, options: Partial<Parameters<typeof createSandboxPlugin>[0]> = {}) {
   const ctx: Context = createContext();
   const unload = await loadPlugins(ctx, [
-    createPermissionModesPlugin(), // V4 内置模式（base 零策略）
+    createPermissionModesPlugin(),
     toolsPlugin,
     createPermissionPlugin({ root }),
     createSandboxPlugin({ root, ...options }, fake.rt),
@@ -121,7 +116,7 @@ describe("createSandboxPlugin 装配", () => {
       expect(facts?.forSession(undefined)).toEqual({ writable: expect.arrayContaining([root, tmpdir()]), allowedDomains: [] });
       expect(fake.starts).toHaveLength(1);
       expect(fake.starts[0]).toEqual({ denyRead: [], allowWrite: [], denyWrite: [] });
-      expect(fake.bindings).toEqual([true]); // 缺省开——用户裁决④（沙箱内本地工作流可用）
+      expect(fake.bindings).toEqual([true]);
       await dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -129,23 +124,22 @@ describe("createSandboxPlugin 装配", () => {
   });
 
   it("多实例共享 srt 会话：并发第二实例装配成功；域名并集；先退只收缩、末退才 reset", async () => {
-    const fake = makeFakeRuntime(); // 同一 runtime → 同一共享点（WeakMap 键控）
+    const fake = makeFakeRuntime();
     const rootA = mkdtempSync(join(tmpdir(), "xh-sbxm1-"));
     const rootB = mkdtempSync(join(tmpdir(), "xh-sbxm2-"));
     try {
       const a = await assemble(rootA, fake, { allowedDomains: ["a.test"] });
       const b = await assemble(rootB, fake, { allowedDomains: ["b.test"] });
-      // 第二实例 spawn → 跨实例并集热切换
       const spawned = await b.ctx.use(execEnv).spawn({ argv: ["/bin/true"], cwd: rootB });
       expect(spawned.ok).toBe(true);
       expect(fake.syncs.at(-1)).toEqual(["a.test", "b.test"]);
-      expect(fake.resets).toBe(0); // 仍有活实例
-      await a.dispose(); // 先退：收缩白名单（余 b）
       expect(fake.resets).toBe(0);
-      expect(fake.starts).toHaveLength(1); // 共享启动一次
-      await b.dispose(); // 末退：reset
+      await a.dispose();
+      expect(fake.resets).toBe(0);
+      expect(fake.starts).toHaveLength(1);
+      await b.dispose();
       expect(fake.resets).toBe(1);
-      const again = await assemble(rootA, fake); // 释放后可重新启动
+      const again = await assemble(rootA, fake);
       await again.dispose();
     } finally {
       rmSync(rootA, { recursive: true, force: true });
@@ -168,8 +162,8 @@ describe("spawn 面（假 runtime 管道）", () => {
       if (!spawned.ok) throw new Error(spawned.reason.detail);
       const out = (await drain(spawned.proc.stdout)).trim();
       await spawned.proc.settled;
-      expect(out).toBe("v=[] s=[ok]"); // 密钥键剥除；非密钥键透传
-      expect(fake.syncs).toEqual([[]]); // 首次热切换（空表）
+      expect(out).toBe("v=[] s=[ok]");
+      expect(fake.syncs).toEqual([[]]);
       await dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -184,13 +178,12 @@ describe("spawn 面（假 runtime 管道）", () => {
       const grants = ctx.use(permissionGrants);
       const sid = "s-net" as never;
       const env = ctx.use(execEnv);
-      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // sync#1: []
-      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // 同集不切
+      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid });
+      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid });
       expect(fake.syncs).toEqual([[]]);
       grants.setUnrestricted(true);
-      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid }); // unrestricted=unfenced 直通——不经壳，无新 sync（域名授权面已删 P3-8）
+      await env.spawn({ argv: ["/bin/true"], cwd: root, session: sid });
       expect(fake.syncs).toEqual([[]]);
-      // 逐出面已无动态白名单源（域名授权位删除 P3-8）：收缩=同集，按「同集不切」不触新 sync
       grants.setUnrestricted(false);
       ctx.emit(sessionDisposed, { session: sid });
       expect(fake.syncs).toEqual([[]]);
@@ -244,9 +237,9 @@ describe("spawn 面（假 runtime 管道）", () => {
       const { ctx, dispose } = await assemble(root, fake);
       const env = ctx.use(execEnv);
       await expect(dispose()).rejects.toThrow(/reset boom/);
-      expect(ctx.tryUse(execEnv)).toBeUndefined(); // offs 已执行——半拆卸不泄漏服务
+      expect(ctx.tryUse(execEnv)).toBeUndefined();
       const after = await env.spawn({ argv: ["/bin/true"], cwd: root });
-      expect(after.ok).toBe(false); // fail-fast 照常
+      expect(after.ok).toBe(false);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -261,7 +254,7 @@ describe("spawn 面（假 runtime 管道）", () => {
       expect(fake.bindings).toEqual([false]);
       await expect(assemble(rootB, fake, { allowLocalBinding: true })).rejects.toThrow(/allowLocalBinding conflict/);
       await strict.dispose();
-      const relaxed = await assemble(rootB, fake); // 会话已释放——新值可启动
+      const relaxed = await assemble(rootB, fake);
       expect(fake.bindings).toEqual([false, true]);
       await relaxed.dispose();
     } finally {
@@ -285,9 +278,9 @@ describe("spawn 面（假 runtime 管道）", () => {
       if (!spawned.ok) throw new Error(spawned.reason.detail);
       const out = (await drain(spawned.proc.stdout)).trim();
       await spawned.proc.settled;
-      expect(out).toBe("k=[tool-key-ok]"); // 免清洗——工具键直达（bw 症状的回归锚）
-      expect(fake.wraps).toEqual([]); // 不触内核包裹
-      expect(fake.syncs).toEqual([]); // 免包裹路径不热切换
+      expect(out).toBe("k=[tool-key-ok]");
+      expect(fake.wraps).toEqual([]);
+      expect(fake.syncs).toEqual([]);
       await dispose();
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -308,7 +301,7 @@ describe("spawn 面（假 runtime 管道）", () => {
       if (!direct.ok) throw new Error(direct.reason.detail);
       const outD = (await drain(direct.proc.stdout)).trim();
       await direct.proc.settled;
-      expect(outD).toBe("k=[direct-ok]"); // env 不清洗（受信面自带工具键）
+      expect(outD).toBe("k=[direct-ok]");
       expect(fake.wraps).toEqual([]);
       const fenced = await ctx.use(execEnv).spawn({
         argv: ["/bin/sh", "-c", "echo k=[$FENCED_PROBE_KEY]"],
@@ -318,7 +311,7 @@ describe("spawn 面（假 runtime 管道）", () => {
       if (!fenced.ok) throw new Error(fenced.reason.detail);
       const outF = (await drain(fenced.proc.stdout)).trim();
       await fenced.proc.settled;
-      expect(outF).toBe("k=[]"); // 包裹路径 scrubEnv 清洗密钥键
+      expect(outF).toBe("k=[]");
       expect(fake.wraps.length).toBe(1);
       await dispose();
     } finally {
@@ -349,9 +342,9 @@ describe("拆卸契约", () => {
       const spawned = await ctx.use(execEnv).spawn({ argv: ["/bin/sh", "-c", "sleep 30"], cwd: root });
       if (!spawned.ok) throw new Error(spawned.reason.detail);
       const exited = spawned.proc.exited;
-      const env = ctx.use(execEnv); // 先捕获——dispose 后服务下线，语义面向已持引用的调用方
+      const env = ctx.use(execEnv);
       await dispose();
-      expect(await exited).not.toBe(0); // 已被 term 杀
+      expect(await exited).not.toBe(0);
       expect(fake.resets).toBe(1);
       const after = await env.spawn({ argv: ["/bin/true"], cwd: root });
       expect(after.ok).toBe(false);
@@ -376,7 +369,7 @@ describe("拆卸契约", () => {
       const inFlight = ctx.use(execEnv).spawn({ argv: ["/bin/true"], cwd: root });
       await new Promise((r) => {
         setTimeout(r, 20);
-      }); // wrap 已在飞
+      });
       const disposing = dispose();
       await new Promise((r) => {
         setTimeout(r, 20);

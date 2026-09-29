@@ -1,6 +1,3 @@
-// agentLoop 服务单元（docs/AGENT-LOOP-DRIVER §1.1）：resume 修复链（archive 读→closers→seed）、
-// resume 不自动 kick、无 archive fail-closed、inject 不唤醒。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -87,7 +84,6 @@ describe("agentLoop 服务（docs/AGENT-LOOP-DRIVER §1.1）", () => {
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) return;
     const agent: Agent = resumed.value.agent;
-    // seed = 原卷 + closers（tool/result 合成 + step/end + turn/end{interrupted} + end-seed 边界）
     const types = agent.session.events().map((e) => e.type);
     expect(types).toEqual([
       "turn/start",
@@ -100,7 +96,6 @@ describe("agentLoop 服务（docs/AGENT-LOOP-DRIVER §1.1）", () => {
     ]);
     const synthetic = agent.session.events()[3];
     expect(synthetic?.data).toMatchObject({ callId: "c1", isError: true });
-    // F19：resume 不自动 kick
     expect(agent.status).toBe("idle");
     expect(agent.session.events().some((e) => e.type === "turn/start" && e.data.turn === 1)).toBe(false);
     await resumed.value.dispose();
@@ -127,18 +122,18 @@ describe("agentLoop 服务（docs/AGENT-LOOP-DRIVER §1.1）", () => {
     if (!made.ok) return;
     const agent = made.value.agent;
     agent.notify("delegation-report", "content", "sub-agent finished the audit");
-    await agent.whenIdle(); // 唤醒 → 空闲父消费报告
+    await agent.whenIdle();
     const inserted = agent.session.events().find((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "insert");
     expect(inserted?.data).toMatchObject({ op: "insert", target: "next-step", entries: [{ origin: { source: "delegation-report", kind: "content" } }] });
     const materialized = agent.session.events().filter((e) => e.type === "agent/message");
-    expect(materialized).toHaveLength(1); // 材料化：条目落 agent/message（非 user/message）
+    expect(materialized).toHaveLength(1);
     expect(materialized[0]?.data).toMatchObject({
       source: "delegation-report",
       kind: "content",
       content: [{ type: "text", text: "sub-agent finished the audit" }],
     });
-    expect(agent.session.events().some((e) => e.type === "user/message" && e.surfaceOp === "append")).toBe(false); // 纯 notify 批次不产 user/message
-    const request = calls.at(-1)?.messages.at(-1); // 模型可见（投影 user 角色）
+    expect(agent.session.events().some((e) => e.type === "user/message" && e.surfaceOp === "append")).toBe(false);
+    const request = calls.at(-1)?.messages.at(-1);
     expect(request).toEqual({ role: "user", content: [{ type: "text", text: "sub-agent finished the audit" }] });
     await made.value.dispose();
   });

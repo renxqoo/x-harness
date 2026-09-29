@@ -1,6 +1,3 @@
-// Tier C critic 评审验收测试（期 2-B）：提案解析（W5 自举 schema 校验）+ 链序（schema→critic）
-// + reopen 回炉（critic fail → steer 修复 → critic pass）+ 预算耗尽 + critic 产出无效回炉。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,10 +26,6 @@ function resetWorlds(): void {
 }
 
 
-/**
- * 装置：worker 类型 = critic（model 同桶——脚本按调用次序供给：任务子 1 轮 → critic 1 轮 → …）
- * 桶序（链：schema→critic）——submit 后依次消耗：[任务首轮, critic#1, (任务修复轮), critic#2, ...]
- */
 
 function script(text: string): AsyncGenerator<LlmChunk> {
   return (async function* () {
@@ -108,7 +101,7 @@ describe("Tier C 链序（schema→critic 全旅程）", () => {
     const { sessionStore } = await import("@x-harness/session");
     const texts = () => ctx.use(sessionStore).get("main-1" as SessionId)?.events().filter((e) => e.type === "user/message" || e.type === "agent/message").map((e) => JSON.stringify(e.data)).join("\n") ?? "";
     await vi.waitFor(() => expect(texts()).toContain("workflow-notification"), { timeout: 15_000 });
-    expect(texts()).toContain("passed"); // critic 二轮 pass
+    expect(texts()).toContain("passed");
     await parent.value.dispose();
     await ctx.dispose();
     await rm(root, { recursive: true, force: true });
@@ -145,7 +138,6 @@ describe("Tier C 链序（schema→critic 全旅程）", () => {
     const { sessionStore } = await import("@x-harness/session");
     const texts = () => ctx.use(sessionStore).get("main-1" as SessionId)?.events().filter((e) => e.type === "user/message" || e.type === "agent/message").map((e) => JSON.stringify(e.data)).join("\n") ?? "";
     await vi.waitFor(() => expect(texts()).toContain("workflow-notification"), { timeout: 15_000 });
-    // R1 回归锚：reopens 预算耗尽终局（budget-exhausted）——非脚本耗尽的 child-failed 碰巧形态
     expect(texts()).toContain("critic:budget-exhausted");
     await parent.value.dispose();
     await ctx.dispose();
@@ -177,7 +169,6 @@ describe("rebind 后 critic 可用（R2 回归：caller 曾用冻结 deps.mainSe
       },
     });
     ctx.effect(off);
-    // rebind 到新会话（旧会话从未建——直接迁）
     await workflowViewPluginRebind(ctx, "new-sess" as SessionId);
     const parent = await loop.create({ session: { id: "new-sess" as SessionId }, agent: { model: "task-model", provider: "fake" } });
     if (!parent.ok) throw new Error(parent.reason);
@@ -187,7 +178,7 @@ describe("rebind 后 critic 可用（R2 回归：caller 曾用冻结 deps.mainSe
     const { sessionStore } = await import("@x-harness/session");
     const texts = () => ctx.use(sessionStore).get("new-sess" as SessionId)?.events().filter((e) => e.type === "user/message" || e.type === "agent/message").map((e) => JSON.stringify(e.data)).join("\n") ?? "";
     await vi.waitFor(() => expect(texts()).toContain("workflow-notification"), { timeout: 15_000 });
-    expect(texts()).toContain("passed"); // critic pass（活 caller 派发成功）
+    expect(texts()).toContain("passed");
     await parent.value.dispose();
     await ctx.dispose();
     await rm(root, { recursive: true, force: true });

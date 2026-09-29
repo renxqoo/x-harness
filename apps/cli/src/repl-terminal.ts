@@ -1,14 +1,8 @@
-// REPL 终端（docs/CLI.md §2.3 stdin 单所有权）：单一 readline 实例封装——
-// 行订阅、提问（question 先 pause 主 prompt，未决集可被强制收束）、强制关闭
-// （挂起提问 resolve undefined → broker deny 路径）、EOF=退出。
-// Ctrl+C 的业务语义（cancel/双击退出）归 run-repl，本文件只透传 SIGINT 事件。
-
 import readline from "node:readline";
 import { Writable } from "node:stream";
 
 export interface ReplTerminalIO {
   readonly stdin: NodeJS.ReadableStream;
-  /** readline echo/prompt 的写出面（含用户输入回显） */
   readonly write: (text: string) => void;
 }
 
@@ -16,11 +10,8 @@ export interface ReplTerminal {
   onLine(callback: (line: string) => void): void;
   onQuit(callback: () => void): void;
   onInterrupt(callback: () => void): void;
-  /** 提问：主 prompt 暂停 → question → 恢复；接口已关/被强制关闭 → undefined */
   question(prompt: string): Promise<string | undefined>;
-  /** 强制关闭（退出路径）：挂起中的 question 立即 resolve undefined */
   close(): void;
-  /** 只收束挂起中的提问（Ctrl+C ask 路径 → broker deny）；无挂起返回 false */
   cancelPendingQuestion(): boolean;
   showPrompt(): void;
 }
@@ -43,7 +34,6 @@ export function createReplTerminal(io: ReplTerminalIO): ReplTerminal {
     lineCallback?.(line);
   });
   rl.on("close", () => {
-    // EOF（Ctrl+D / 管道关闭）或 close() 已先行收束——只广播一次
     if (closed) return;
     closed = true;
     quitCallback?.();
@@ -91,8 +81,6 @@ export function createReplTerminal(io: ReplTerminalIO): ReplTerminal {
       if (pending.size === 0) return false;
       for (const resolve of pending) resolve(undefined);
       pending.clear();
-      // readline 内部仍挂着 question 回调（僵尸会吞掉用户的下一行）——喂一个换行让它
-      // 自然结清并走 resume/prompt 恢复路径；外层 promise 已收束，回调侧是 no-op
       if (!closed) {
         rl.resume();
         rl.write("\n");

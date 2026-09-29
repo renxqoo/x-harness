@@ -2,8 +2,6 @@
 
 bun 多包（monorepo）项目——生产可用的通用 Agent harness。
 
-> 设计文档：[docs/DESIGN.md](docs/DESIGN.md)（讨论定案记录；`packages/core` 的模块规划见其 §5）。
-
 ## 技术栈
 
 | 工具 | 版本 | 说明 |

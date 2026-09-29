@@ -1,6 +1,3 @@
-// 摘要提示词（pi 成品蓝本，英文原样）。关键设计：结构化检查点格式 + 累积更新
-// （PRESERVE 规则）——连续压缩不丢关键信息。
-
 export const SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
 
 Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
@@ -77,8 +74,5 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
-/** 自动接续注入语：trigger 为 auto/emergency 时追加在摘要落账尾部（文件账本标签之后
- *  ——parseFileOperations 取末次匹配不受污染）；manual 不附加（人工压缩后模型可自然
- *  对话）。提示词纪律：模型可见文本一律英文 */
 export const AUTO_CONTINUATION_NOTE =
   "The message above is an automatic continuation summary generated mid-task. Continue the current work directly. Do not recap the summary to the user and do not ask for confirmation.";

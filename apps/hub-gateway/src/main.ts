@@ -1,6 +1,3 @@
-// gateway 入口与命令管线（DESIGN §1.2.1/§3.2）：装配 identity/config/host-attach/
-// threads-registry/owner-server/fanout/audit；owner gw/* 命令族路由 + host 命令
-// scope 执法 + id 重映射 + 去重日志 + response 认领回投 + host 死亡结算。
 import { readFile } from "node:fs/promises";
 import { derivePaths, loadConfig } from "./config.ts";
 import { loadOrCreateIdentity, type GatewayIdentity } from "./identity.ts";
@@ -12,7 +9,7 @@ import { Fanout, type ClientTarget } from "./fanout.ts";
 import { createHostIngest } from "./host-ingest.ts";
 import { openAuditLog, type AuditLog } from "./audit.ts";
 import { createHash } from "node:crypto";
-const OUTBOUND_PAYLOAD_MAX = 12 * 1024 * 1024; // 密文+base64 后上限（DESIGN §3.5）
+const OUTBOUND_PAYLOAD_MAX = 12 * 1024 * 1024;
 import { chunkFrame, aeadSeal, buildAad, decodeEnvelope, encodeEnvelope, judgeHostCommand, parseNonce, rekeyDue, startRekey, type Frame } from "@x-harness/remote-protocol";
 import { assemblePairingServer } from "./pairing-assembly.ts";
 import { createLogBuffer } from "./log-buffer.ts";
@@ -26,7 +23,6 @@ export interface GatewayOptions {
   now?(): number;
   log?(message: string): void;
   hostOverride?: { command: string; args: string[]; env?: Record<string, string> };
-  /** rekey sweep 间隔（缺省 60s；测试注入缩短） */
   rekeySweepMs?: number;
 }
 export interface GatewayHandle {
@@ -41,9 +37,7 @@ export interface GatewayHandle {
   pairingServer: import("./pairing-server.ts").PairingServer;
   relayLink: RelayLinkHandle | null;
   stop(): Promise<void>;
-  /** 测试面：直接注入 owner 帧 */
   handleOwnerFrame(session: OwnerSession, frame: Frame): Promise<void>;
-  /** 测试面：注入设备帧（经完整入站管线） */
   ingestDeviceLine(deviceId: string, line: string): Promise<void>;
 }
 export async function startGateway(options: GatewayOptions): Promise<GatewayHandle> {
@@ -64,7 +58,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const devices = await loadDeviceRegistry(paths);
   const audit = await openAuditLog(paths.auditDir, now);
   const logBuffer = createLogBuffer();
-  // 日志双写：注入 log 进缓冲（gw/logs/tail 读到真实内容）+ stderr 缺省
   const userLog = options.log;
   const stderrSink = (message: string): void => {
     process.stderr.write(`gw: ${message}\n`);
@@ -75,17 +68,14 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   };
   const log = bufferedLog;
   const fanout = new Fanout({ coalesceBacklogFrames: 64, coalesceLagMs: 500, now });
-  // scope 变更即时生效（D4）：tier 恒从注册表现值裁决
   fanout.setTierResolver((target) => {
     if (target === "owner") return "owner";
     return devices.get(target)?.scope ?? "read";
   });
   await audit.record("gateway-started", { installationId: identity.installationId, remoteEnabled: config.remoteEnabled });
 
-  // ---- host 附着（单写者） ----
   const exec = options.hostOverride ?? resolveHostBin(config.hostBin);
   const pendingByHostId = new Map<string, { deviceId: string; commandId: string; command: string; ownerSession?: OwnerSession }>();
-  // B4：崩溃重启后按去重日志重建在飞映射
   for (const pending of devices.pendingHostIds()) {
     pendingByHostId.set(pending.hostId, { deviceId: pending.deviceId, commandId: pending.commandId, command: "unknown" });
   }
@@ -96,7 +86,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     onLine: (line) => ingestHostLine(line),
     onRestart: (reason) => {
       void audit.record("host-restarted", { reason });
-      // host 死亡结算：pending 合成恰一 failure（§1.2.1 M10）
       for (const [hostId, pending] of pendingByHostId) {
         void devices.appendResponse(pending.deviceId, pending.commandId, { id: pending.commandId, command: pending.command, success: false, error: "host unavailable" });
         pendingByHostId.delete(hostId);
@@ -133,9 +122,8 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const pairingServer = assemblePairingServer({ identity, config, audit, devices, now, relayLink: () => relayLinkRef, cryptoSessions });
 
   const deviceBuckets = new Map<string, RateBucket>();
-  const deviceIngestChains = new Map<string, Promise<void>>(); // per-device 串行化解密
+  const deviceIngestChains = new Map<string, Promise<void>>();
 
-  /** 设备帧出站：ratchet seal → L3 信封 → relay-link（未连时丢弃+计数） */
   async function sendToDevice(deviceId: string, frame: Frame): Promise<void> {
     const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() => sendToDeviceInner(deviceId, frame));
     deviceIngestChains.set(deviceId, run.then(
@@ -147,7 +135,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const devicePending = new Map<string, Frame[]>();
   const DEVICE_PENDING_MAX = 256;
 
-  /** 配对面路由（E1 收口：手机经 relay /pairing 连接的帧——明文 JSON 信封，配对通道密钥层在协议包） */
   async function ingestPairingFrame(pairingId: string, line: string): Promise<void> {
     const session = pairingServer.sessionOf(pairingId);
     if (session === null) {
@@ -169,7 +156,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     relayLinkRef?.send(replyEnvelope);
   }
 
-  /** rekey 旅程：发起（签名）→ 设备 accept → 双端换链（epoch++）。本轮实现发起侧落盘 + 通知帧 */
   async function performRekey(deviceId: string, oldRootKey: string, nextCounter: number): Promise<void> {
     const started = startRekey({ initiatorSigningSecret: identity.signingSecret, initiatorSigningPub: identity.signingPub, peerCurrentRatchetPub: "", rekeyCounter: nextCounter });
     const frame: Frame = { kind: "rekey", streamId: `rekey:${deviceId}`, seq: nextSeqFor(`rekey:${deviceId}`), body: started.request };
@@ -183,7 +169,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     await audit.record("rekey-performed", { deviceId, rekeyCounter: nextCounter });
   }
 
-  /** link 断线窗口的设备帧重发（§1.2 outbox——有界，满则丢最旧） */
   function flushDevicePending(): void {
     const link = relayLinkRef;
     if (link === null || !link.connected()) return;
@@ -203,8 +188,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       devicePending.set(deviceId, queue);
       return;
     }
-    // 大帧 chunk 化（§1.2/§3.5）：切片多信封发送，接收端按 (streamId,seq) 重组。
-    // 段阈值内走单帧直发。
     const segs = chunkFrame(frame);
     if (segs === null) {
       await sendSealed({ deviceId, link, ratchet: session.ratchet, frame });
@@ -236,9 +219,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     link.send(env);
   }
 
-  /** 设备入站线（relay onFrame → 此处；预解密后走管线执法） */
   function ingestDeviceLine(deviceId: string, line: string): Promise<void> {
-    // per-device 串行化：ratchet 接收游标顺序推进（并发解密会错位）
     const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() => ingestDeviceLineInner(deviceId, line));
     deviceIngestChains.set(deviceId, run.then(
       () => undefined,
@@ -253,7 +234,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     if (session === null) return;
     const env = decodeEnvelope(line);
     if (env === null) return;
-    // index/epoch 从信封 nonce 反解（WIRE §4 布局）——密文自带序，重复/乱序经 ratchet 三态
     const ct = new Uint8Array(Buffer.from(env.payload, "base64"));
     const nonceBytes = new Uint8Array(Buffer.from(env.nonce, "base64"));
     const parsed = parseNonce(nonceBytes);
@@ -287,7 +267,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       onCommand(frame, command, args) {
         const body = frame.body as { id?: string };
         const commandId = typeof body.id === "string" ? body.id : `auto_${frame.seq}`;
-        // 提交并入 per-device 串行链（B5a——保序 FIFO）
         const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() =>
           submitCommand({
             deviceId,
@@ -317,7 +296,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     });
   }
   let relayLinkRef: RelayLinkHandle | null = null;
-  // 强制 rekey 调度（S4：暴露窗 ≤2000 帧/24h）
   const rekeyTimers = new Map<string, ReturnType<typeof setTimeout>>();
   function scheduleRekeyCheck(): void {
     const timer = setInterval(() => {
@@ -340,7 +318,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       useTls: config.relayUrl.startsWith("wss://"),
       expectedRelayFingerprint: config.relayUrl.startsWith("wss://") ? config.relayKeyFingerprint : "",
       onFrame: (line) => {
-        // 坏行不得崩守护进程（C8——入口守卫）
         try {
           const parsed = JSON.parse(line) as { from?: string };
           if (typeof parsed.from !== "string") return;
@@ -367,7 +344,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     });
   }
 
-  // ---- owner 通道 ----
   const ownerTarget: ClientTarget & { session: OwnerSession | null } = {
     target: "owner",
     tier: "owner",
@@ -386,7 +362,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       fanout.attach(ownerTarget);
     },
     onClose(session) {
-      // 只清当前会话（旧连接的迟到 close 不抹新会话——竞态修复）
       if (ownerTarget.session === session) ownerTarget.session = null;
     },
     onFrame: (session, frame) => {
@@ -398,7 +373,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   }
   async function submitCommand(spec: { deviceId: string; commandId: string; command: string; args: Record<string, unknown>; reply: Reply; ownerSession?: OwnerSession }): Promise<void> {
     const { deviceId, commandId, command, args, reply, ownerSession } = spec;
-    // scope 执法：owner 对 host 命令面也走矩阵（矩阵外/未知拒——S2 fail-closed 不豁免）
     const verdict = deviceId === "owner" ? judgeHostCommand(command, "owner") : judgeHostCommand(command, tierOf(deviceId));
     if (verdict !== "allow") {
       if (verdict === "owner-only") {
@@ -414,7 +388,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       reply.send({ id: commandId, command, success: false, error: "unknown-command" });
       return;
     }
-    // 去重（write-ahead 崩溃安全）
     const dedup = devices.dedupLookup(deviceId, commandId);
     if (dedup !== null) {
       if (dedup.response !== undefined) reply.send(dedup.response);
@@ -426,14 +399,12 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     await devices.appendCommand(deviceId, { commandId, hostId, bodyHash, ts: now() });
     devices.mapHostId(hostId, { deviceId, commandId });
     pendingByHostId.set(hostId, { deviceId, commandId, command, ...(ownerSession !== undefined ? { ownerSession } : {}) });
-    // 命令订阅建立（thread 域命令）
     const threadId = typeof args.threadId === "string" ? args.threadId : null;
     const target = fanout.targetOf(deviceId);
     if (threadId !== null && target !== null) target.subscribedThreads.add(threadId);
     const line = JSON.stringify({ ...args, type: command, id: hostId });
     const written = host.write(line);
     if (!written) {
-      // B5b：失败路径立即落 response 进去重缓存并清 pending
       const failure = { id: commandId, command, success: false, error: "host unavailable" };
       pendingByHostId.delete(hostId);
       void devices.appendResponse(deviceId, commandId, failure);

@@ -1,18 +1,3 @@
-// 红测（对抗审查——b85e043 权限档快照 × 委派子代理面）：
-// facts 快照插件的 permission-mode 快照注册在 world 根层 ctx.on(agentStatus)——
-// agent-loop 每 agent 一个 scope 子层，emit 从子层沿祖先链可见根层监听者
-// （create-context.ts emitFrom 的 chainSet 过滤）→ 委派子代理（agent-delegation
-// spawn.ts 经同一 loop.create 建子）每次 kick 同样触发快照注入。
-//
-// 后果：主会话在 plan 档时派生的子代理会话被注入完整 plan 行为指引（且预锚在
-// 子会话 compaction 保护头——永不折叠）——「present it with the plan_submit tool
-// and wait for the user's approval」。子代理无用户语境（cc18562 基础段明文
-// 「非交互从句——子代理/-p 无用户语境」），指引命其等待一个不存在的批准方；
-// 原 b85e043 形态下 plan_submit 从子代理会话发起的 broker ask 批准还会抬升
-// 世界档（工作树已有并发修复在 tool-plan 侧拒 depth>0 会话的 plan_submit——
-// 但快照侧指引注入本身未修：模型仍被永久指引去调一个会报错的工具）。
-// 期望行为：子代理会话不得收到 plan 档批准指引。本测试红 = 现状注入。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,7 +20,6 @@ import { createPlanSubmitPlugin } from "@x-harness/tool-plan";
 import { createTaskToolsPlugin } from "@x-harness/task-tools";
 import { createFactsSnapshotPlugin } from "../snapshot-facts.ts";
 
-/** user/message 全部 text 块原文 */
 function textsOf(session: { events: () => readonly unknown[] }): string[] {
   const out: string[] = [];
   for (const raw of session.events()) {
@@ -65,7 +49,6 @@ interface RedWorld {
   readonly cleanup: () => Promise<void>;
 }
 
-/** 预铸父会话 id（planControl owner 锚——create({ session: { id } }) 同形态） */
 const PARENT_SESSION = mintSessionId() as never;
 
 async function makeWorld(mode: string): Promise<{ world: RedWorld; root: string }> {
@@ -123,7 +106,6 @@ interface Rig {
   readonly childSession: SessionId;
 }
 
-/** 装置：主会话 kick（拿 plan 指引）→ agent_spawn 派子代理（子 kick 落快照） */
 async function rigPlanSubagent(mode = "plan"): Promise<Rig> {
   const { world, root } = await makeWorld(mode);
   world.scripts.set("pm", [textScript("ok"), textScript("ok")]);
@@ -171,10 +153,8 @@ describe("权限档快照 × 委派子代理（红测）", () => {
     const child = rig.world.loop.get(rig.childSession);
     if (parent === undefined || child === undefined) throw new Error("handle missing");
 
-    // 装置自检（绿锚）：主会话确实收到 plan 指引——特性本体在主会话面成立
     expect(textsOf(parent.agent.session).some((t) => t.includes(PLAN_GUIDANCE))).toBe(true);
 
-    // 红断言（期望行为）：子代理会话不应收到含「等用户批准」的 plan 指引
     const childGuidance = textsOf(child.agent.session).filter((t) => t.includes(PLAN_GUIDANCE));
     expect(childGuidance).toHaveLength(0);
   });

@@ -1,6 +1,3 @@
-// 驱动状态机全链（docs/AGENT-LOOP-DRIVER §3）：真实装配 session+tools+llm+system-prompt，
-// 脚本化假 LLM 适配器 + 假工具；事件序列逐条断言。共享装置在 ./world.ts。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmChunk } from "@x-harness/llm";
@@ -16,7 +13,6 @@ beforeEach(() => {
   resetWorlds();
 });
 
-/** 末条排队（next-turn insert）条目的 id——stopping 窗口 retarget 测试的寻址键。 */
 function lastQueuedTurnEntryId(session: Session): string {
   const inserts = session
     .events()
@@ -34,9 +30,9 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     agent.followup("hi");
     await agent.whenIdle();
     expect(types(agent)).toEqual([
-      "agent/inbox/spliced", // insert
+      "agent/inbox/spliced",
       "turn/start",
-      "agent/inbox/spliced", // claim
+      "agent/inbox/spliced",
       "step/start",
       "system/message",
       "user/message",
@@ -50,7 +46,6 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     expect(turnEnd?.data).toEqual({ turn: 0, reason: { kind: "completed" } });
     const assistant = agent.session.events().find((e) => e.type === "assistant/message");
     expect(assistant?.data).toMatchObject({ stopReason: "stop", usage: { input: 1, output: 2 } });
-    // 请求体纯折叠不变量
     expect(world.fake.calls[0]?.messages).toEqual(agent.session.deriveMessages().slice(0, -1));
     await handle.dispose();
   });
@@ -81,7 +76,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
       "tool/call",
       "tool/result",
       "step/end",
-      "step/start", // 第二步：无新领取 → 无 claim 无 user/message；header 未变 → 不落
+      "step/start",
       "assistant/message",
       "step/end",
       "turn/end",
@@ -100,7 +95,6 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
         yield { type: "finish", finish: { kind: "stop" } };
       })(),
     );
-    // turn-stopping 监听器：steer 注入（数据驱动续航）；一次性守卫——每次 stopping 都注入会无限续航
     let steered = false;
     const off = world.ctx.on(agentTurnStopping, ({ session, turn }) => {
       void session;
@@ -113,8 +107,8 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     await agent.whenIdle();
     off();
     const eventTypes = types(agent);
-    expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1); // 同一 turn 续航
-    expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2); // 原批次 + steer
+    expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1);
+    expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2);
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await handle.dispose();
   });
@@ -133,19 +127,17 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const off = world.ctx.on(agentTurnStopping, () => {
       if (retargeted) return;
       retargeted = true;
-      // 模拟 queue/send_now 命令在 stopping dispatch await 窗口落 WAL：把运行中排队的
-      // next-turn 条目改道进 next-step——read2 重读非空 → 同轮续航消化
       const entryId = lastQueuedTurnEntryId(agent.session);
       expect(entryId).toBeTruthy();
       agent.session.append("agent/inbox/spliced", { op: "retarget", id: entryId, to: "next-step" });
     });
     agent.followup("go");
-    agent.followup("later question"); // 轮运行中排队（next-turn）
+    agent.followup("later question");
     await agent.whenIdle();
     off();
     const eventTypes = types(agent);
-    expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1); // 同一轮续航消化
-    expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2); // 原批次 + 改道条目
+    expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1);
+    expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2);
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await handle.dispose();
   });
@@ -157,7 +149,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "text-delta", text: "first" };
-        agent.steer("late question"); // 流中注入：模型已产出但未 finish
+        agent.steer("late question");
         yield { type: "finish", finish: { kind: "stop" } };
       })(),
     );
@@ -165,11 +157,11 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     agent.followup("go");
     await agent.whenIdle();
     const eventTypes = types(agent);
-    expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1); // 同 turn 续航，不另起 turn
-    expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2); // 原批次 + 流中 steer 均被消化
-    expect(world.fake.calls).toHaveLength(2); // 第二次请求消化 steer
+    expect(eventTypes.filter((t) => t === "turn/start")).toHaveLength(1);
+    expect(eventTypes.filter((t) => t === "user/message")).toHaveLength(2);
+    expect(world.fake.calls).toHaveLength(2);
     const steered = world.fake.calls[1]?.messages.find((m) => m.role === "user" && JSON.stringify(m.content).includes("late question"));
-    expect(steered).toBeDefined(); // 不搁浅：steer 进入后续请求
+    expect(steered).toBeDefined();
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await handle.dispose();
   });
@@ -180,7 +172,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "text-delta", text: "partial" };
-        await new Promise(() => {}); // 悬停流
+        await new Promise(() => {});
         yield { type: "finish", finish: { kind: "stop" } };
       })(),
     );
@@ -192,7 +184,6 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const assistant = agent.session.events().find((e) => e.type === "assistant/message");
     expect(assistant?.data).toMatchObject({ interrupted: true });
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "aborted", cause: "user" } });
-    // cancel 缺省清收件箱
     const clear = agent.session.events().find((e) => e.type === "agent/inbox/spliced" && e.data.op === "clear");
     expect(clear?.data).toMatchObject({ reason: "user" });
     await handle.dispose();
@@ -206,7 +197,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const off = world.ctx.on(
       agentRequestError,
       async (payload: unknown, next: (input: unknown) => Promise<unknown>): Promise<{ kind: "retry" } | undefined> => {
-        await next(payload); // 内核 I2：必须调 next
+        await next(payload);
         retried += 1;
         return retried <= 1 ? { kind: "retry" } : undefined;
       },
@@ -219,7 +210,6 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const attempts = agent.session.events().filter((e) => e.type === "assistant/attempt");
     expect(attempts.map((e) => (e.data as { error: string }).error)).toEqual(["E_TIMEOUT:E1", "E2"]);
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "error", message: "E2" } });
-    // retry 不重落 system/user/header（§1.4 承诺）：锚点与请求头各恰一条
     const retryTypes = types(agent);
     expect(retryTypes.filter((t) => t === "system/message")).toHaveLength(1);
     expect(retryTypes.filter((t) => t === "user/message")).toHaveLength(1);
@@ -299,9 +289,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const { agent, handle } = await spawn(world);
     agent.followup("hi");
     await agent.whenIdle();
-    // 截断的 tool_use 仍执行且结果落账
     expect(agent.session.events().some((e) => e.type === "tool/result" && (e.data as { callId?: string }).callId === "c1")).toBe(true);
-    // 粘性：无后续 step 消化、无第二次模型调用
     expect(world.fake.calls).toHaveLength(1);
     expect(agent.session.events().filter((e) => e.type === "step/start")).toHaveLength(1);
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "max-tokens" } });
@@ -323,7 +311,6 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     await agent.whenIdle();
     off();
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "blocked", reason: "guard" } });
-    // 回灌（回归：同 id、保原 target）：claim 的 id 原样重新在场——repair trailing-claim 依赖同 id 判重
     const spliced = agent.session.events().filter((e) => e.type === "agent/inbox/spliced");
     const claim = spliced.find((e) => e.data.op === "claim");
     const reinserts = spliced.filter((e) => e.data.op === "insert" && e !== spliced[0]);
@@ -341,7 +328,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "text-delta", text: "partial" };
-        await new Promise(() => {}); // 悬停流
+        await new Promise(() => {});
       })(),
     );
     const { agent, handle } = await spawn(world);
@@ -349,7 +336,6 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     await vi.waitFor(() => expect(world.fake.calls.length).toBe(1));
     agent.cancel("user-stop");
     await agent.whenIdle();
-    // 取消后再 followup：必须能开新 turn（曾因 wake 入口查 cancelled 永久失效）
     world.fake.scripts.push(textScript("ok2"));
     agent.followup("q2");
     await agent.whenIdle();
@@ -364,8 +350,8 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     worlds.push(world);
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
-        await new Promise(() => {}); // 悬停且无产出
-        yield { type: "finish", finish: { kind: "stop" } }; // 不可达：悬停流必被 abort 赛跑打断
+        await new Promise(() => {});
+        yield { type: "finish", finish: { kind: "stop" } };
       })(),
     );
     const { agent, handle } = await spawn(world);
@@ -383,7 +369,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const world = await makeWorld();
     worlds.push(world);
     const off = world.ctx.on(agentPreStep, async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
-      await next(payload); // 内核 I2：先放行再炸
+      await next(payload);
       throw new Error("mw-blew");
     });
     const { agent, handle } = await spawn(world);
@@ -401,7 +387,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     worlds.push(world);
     const off = world.ctx.on(agentRequest, async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
       await next(payload);
-      return undefined as never; // 违约输出：非同形四字段
+      return undefined as never;
     });
     const { agent, handle } = await spawn(world);
     agent.followup("hi");
@@ -428,7 +414,6 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     const { agent, handle } = await spawn(world);
     agent.followup("go");
     await agent.whenIdle();
-    // 三步：fin（conclude 延后）→ plain（消化 ctx 且模型继续）→ done（completed）
     expect(agent.session.events().filter((e) => e.type === "step/start")).toHaveLength(3);
     expect(agent.session.events().filter((e) => e.type === "tool/result")).toHaveLength(2);
     const assistants = agent.session.events().filter((e) => e.type === "assistant/message");
@@ -453,7 +438,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     await agent.whenIdle();
     off();
     expect(agent.session.events().filter((e) => e.type === "turn/start")).toHaveLength(2);
-    expect(agent.status).toBe("idle"); // whenIdle 返回时必须真的 idle
+    expect(agent.status).toBe("idle");
     await handle.dispose();
   });
 
@@ -477,7 +462,7 @@ describe("状态机事件序列（docs/AGENT-LOOP-DRIVER §3）", () => {
     off();
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "blocked", reason: "guard" } });
     const inserts = agent.session.events().filter((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "insert");
-    expect(inserts).toHaveLength(1); // 仅 followup 的 insert：空领取 reject 无回灌噪音
+    expect(inserts).toHaveLength(1);
     await handle.dispose();
   });
 

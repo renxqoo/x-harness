@@ -1,6 +1,3 @@
-// W3「模型可见必落盘」不变量断言（docs/ELEVATION-MIGRATION-W3 §3 三口径）：
-// 开态一致零动作 / 开态失配 throw（fail-loud）/ 关态零介入（含失配也不炸——默认生产形态）。
-
 import { describe, expect, it, afterEach } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
@@ -80,8 +77,6 @@ describe("observePrompt（W3 指纹观测线）", () => {
   });
 });
 
-// —— anchorSystem 级集成（W3 挂账收口：静态串口径 / no-op 漂移 / replace 路径）——
-// TurnScope 手工构造——不需要完整 driver（anchorSystem 只读 deps 的四项面）。
 
 
 
@@ -135,12 +130,12 @@ describe("anchorSystem 级集成（W3 挂账收口——TurnScope 手工构造�
     process.env[ENV_KEY] = "1";
     const f = await makeAnchorFixture();
     try {
-      f.prompt.section({ name: "noise", text: "SHOULD-NOT-APPEAR" }); // 装配内容存在但被静态串短路
+      f.prompt.section({ name: "noise", text: "SHOULD-NOT-APPEAR" });
       anchorSystem(scopeOf(f, "STATIC-OVERRIDE"), 1);
       const projected = f.session.deriveMessages().filter((m) => m.role === "system").map((m) => (m as { text?: string }).text ?? "").join("");
-      expect(projected).toBe("STATIC-OVERRIDE"); // 落账=静态串（assemble 未被咨询）
+      expect(projected).toBe("STATIC-OVERRIDE");
       expect(projected).not.toContain("SHOULD-NOT-APPEAR");
-      expect(() => assertVisibleLogged(f.session, "STATIC-OVERRIDE")).not.toThrow(); // 口径①：比对对象=静态串
+      expect(() => assertVisibleLogged(f.session, "STATIC-OVERRIDE")).not.toThrow();
     } finally {
       delete process.env[ENV_KEY];
       await f.cleanup();
@@ -152,13 +147,13 @@ describe("anchorSystem 级集成（W3 挂账收口——TurnScope 手工构造�
     try {
       let tick = 1;
       const off = f.prompt.section({ name: "lazy", text: () => `TICK=${String(tick)}` });
-      anchorSystem(scopeOf(f), 1); // 首步 append TICK=1
+      anchorSystem(scopeOf(f), 1);
       tick = 2;
-      anchorSystem(scopeOf(f), 2); // 次步 replace → TICK=2
+      anchorSystem(scopeOf(f), 2);
       const all = f.session.events().filter((e) => e.type === "system/message");
       const texts = all.map((e) => (e.data as { text?: string }).text ?? "");
-      expect(texts.some((t) => t.includes("TICK=2"))).toBe(true); // replace 生效（fn 漂移被探测）
-      expect(texts.filter((t) => t.includes("TICK=1")).length).toBe(1); // 旧版仍在事件日志（replace 只改 surface 不删事件）
+      expect(texts.some((t) => t.includes("TICK=2"))).toBe(true);
+      expect(texts.filter((t) => t.includes("TICK=1")).length).toBe(1);
       off();
       await f.cleanup();
     } catch (e) {
@@ -172,12 +167,12 @@ describe("anchorSystem 级集成（W3 挂账收口——TurnScope 手工构造�
     const f = await makeAnchorFixture();
     try {
       f.prompt.section({ name: "steady", text: "SAME" });
-      anchorSystem(scopeOf(f), 1); // append
+      anchorSystem(scopeOf(f), 1);
       const countAfterFirst = f.session.surface().filter((n) => n.event.type === "system/message").length;
-      anchorSystem(scopeOf(f), 2); // 同文本 → no-op（无新 surface 事件）
+      anchorSystem(scopeOf(f), 2);
       const countAfterSecond = f.session.surface().filter((n) => n.event.type === "system/message").length;
-      expect(countAfterSecond).toBe(countAfterFirst); // no-op 确认
-      expect(() => assertVisibleLogged(f.session, f.prompt.assemble({ sessionId: f.session.id }).text)).not.toThrow(); // 投影=当前装配
+      expect(countAfterSecond).toBe(countAfterFirst);
+      expect(() => assertVisibleLogged(f.session, f.prompt.assemble({ sessionId: f.session.id }).text)).not.toThrow();
     } finally {
       delete process.env[ENV_KEY];
       await f.cleanup();

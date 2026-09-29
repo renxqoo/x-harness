@@ -1,5 +1,3 @@
-// 开箱/认领/manifest/心跳/关箱（docs/AGENT-DELEGATION.md §5.3）。
-
 import { join } from "node:path";
 import { mkdir, rm } from "node:fs/promises";
 import {
@@ -28,7 +26,6 @@ async function writeManifest(deps: BoxDeps, name: string, identity: { readonly p
   await atomicWrite(manifestPath(deps.root, name), `${JSON.stringify(manifest)}\n`);
 }
 
-/** 开箱：mkdir 排他；EEXIST → 死箱/超宽限认领（清 inbox/subs 残留并重铸身份）；活箱 throw */
 export async function openBox(deps: BoxDeps, name: string): Promise<BoxHandle> {
   if (!isSafeBoxName(name)) throw new Error(`invalid-args:bad box name '${name}'`);
   const dir = join(deps.root, name);
@@ -38,14 +35,13 @@ export async function openBox(deps: BoxDeps, name: string): Promise<BoxHandle> {
     await mkdir(dir);
     fresh = true;
   } catch {
-    // EEXIST：认领裁决
   }
   if (!fresh) {
     const existing = await readManifest(dir);
     if (!manifestClaimable(existing, deps.timing)) {
       throw new Error(`box-name-taken:${name} (pid ${String(existing?.pid ?? "?")} is live)`);
     }
-    await claimAtomically(dir, name); // 双进程同刻认领——claim 文件 wx 独占裁决（审查 B-P2-7）
+    await claimAtomically(dir, name);
     await clearResidue(dir);
   }
   const bootId = mintBootId();
@@ -67,23 +63,19 @@ export async function openBox(deps: BoxDeps, name: string): Promise<BoxHandle> {
     startHeartbeat: () => {
       const timer = setInterval(() => {
         void writeManifest(deps, name, identity()).catch(() => {
-          /* 心跳失败静默：关箱/认领竞态的自然终态（对端判死接管） */
         });
       }, deps.timing.heartbeatMs);
       timer.unref?.();
       return () => clearInterval(timer);
     },
-    // 所有权 CAS：仅 manifest 仍属本 bootId 才删（认领竞态另一端——超宽限被对端认领后，
-    // 本句柄的关箱不得删掉对端的新箱；与 reclaimBox 的复验同思想，开箱/关箱侧对称）
     close: async () => {
       const current = await readManifest(dir);
-      if (current?.bootId !== bootId) return; // 已被认领/重开——目录属新持有者
+      if (current?.bootId !== bootId) return;
       await removeDir(dir);
     },
   };
 }
 
-/** 认领原子裁决：claim-<pid>-<n> 以 wx 独占创建——并发认领恰一个成功，败者 throw */
 async function claimAtomically(dir: string, name: string): Promise<void> {
   const claimPath = join(dir, `claim-${String(process.pid)}-${String(Date.now())}`);
   try {
@@ -95,7 +87,6 @@ async function claimAtomically(dir: string, name: string): Promise<void> {
   await (await import("node:fs/promises")).rm(claimPath, { force: true });
 }
 
-/** 认领清扫：inbox/subs 全清（崩溃残留的 .proc/.msg/.sub 一并） */
 async function clearResidue(dir: string): Promise<void> {
   await Promise.all([rm(join(dir, "inbox"), { recursive: true, force: true }), rm(join(dir, "subs"), { recursive: true, force: true })]);
 }

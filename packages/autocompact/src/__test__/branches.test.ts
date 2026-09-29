@@ -1,6 +1,3 @@
-// 补面：分支语义（CP 输入硬界/截断计败、join 超时不可得、警告区预算外推、
-// 复测门二次落账、空闲清理单元矩阵、校准偶数中位、L1 落账失败告警）。
-
 import { describe, expect, it, vi } from "vitest";
 import { agentPreStep } from "@x-harness/agent-loop";
 import { calibrationFactor, emptyCalibration, pushCalibrationSample } from "../calibration.ts";
@@ -28,7 +25,7 @@ describe("CP 终态补面", () => {
       expect(first).toEqual({ kind: "enter" });
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 50);
-      }); // CP 作业异步——等其到达预算判定
+      });
       expect(world.llm.calls).toHaveLength(0);
       expect(stderr.mock.calls.some((line) => String(line[0]).includes("cp-input-budget-exhausted"))).toBe(true);
     } finally {
@@ -48,7 +45,7 @@ describe("CP 终态补面", () => {
       }
       world.llm.scripts.push(hangScript());
       const decision = await dispatchPreStep(world, made.value.id);
-      expect(decision).toEqual({ kind: "enter" }); // join 兑底失败仍放行
+      expect(decision).toEqual({ kind: "enter" });
       expect(stderr.mock.calls.some((line) => String(line[0]).includes("join-unavailable"))).toBe(true);
     } finally {
       stderr.mockRestore();
@@ -60,18 +57,16 @@ describe("CP 终态补面", () => {
 describe("警告区预算外推（一步穿窗提前优化）", () => {
   it("占用 + 增量×1.5 预测越窗 → 过闸前优化（此处无账本 → ledger-unready 放行）", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    // 无摘要面窗 eff=1000：warn=791、l1=l2=881；占用 850 + 增量 300×1.5=450 > 1000 eff → 预测越窗
     const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined });
     try {
       const made = await world.store.create({ id: sid("predict") });
       if (!made.ok) throw new Error(made.reason);
-      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 550, output: 1 } } }); // 先低（lastOccupancy 缓存）
+      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 550, output: 1 } } });
       await dispatchPreStep(world, made.value.id);
-      // 无摘要面窗：warn=800、l1=900——850 落警告区；增量 300 ×1.5 = 450 → 1300 > 1000 预测越窗
       seedTurn(made.value, { turn: 1, user: textOf(3), assistant: { text: textOf(3), usage: { input: 850, output: 1 } } });
       await dispatchPreStep(world, made.value.id);
       expect(stderr.mock.calls.some((line) => String(line[0]).includes("budget-gate-release") && String(line[0]).includes("ledger-unready"))).toBe(true);
-      expect(stderr.mock.calls.some((line) => String(line[0]).includes("l1-no-gain"))).toBe(false); // 未进 L1 区
+      expect(stderr.mock.calls.some((line) => String(line[0]).includes("l1-no-gain"))).toBe(false);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -81,7 +76,7 @@ describe("警告区预算外推（一步穿窗提前优化）", () => {
 
 describe("复测门（L2 落账后复评仍越线 → 缩活口二次落账）", () => {
   it("二次落账豁免覆盖域守卫：两次 L2 落账、活口收缩", async () => {
-    const world = await makeWorld({ checkpointIdleTimeoutMs: 30, compactBufferTokens: 300, warnBufferTokens: 50 }); // cp=540 < warn=550 < l1=600
+    const world = await makeWorld({ checkpointIdleTimeoutMs: 30, compactBufferTokens: 300, warnBufferTokens: 50 });
     try {
       const made = await world.store.create({ id: sid("retest") });
       if (!made.ok) throw new Error(made.reason);
@@ -92,7 +87,6 @@ describe("复测门（L2 落账后复评仍越线 → 缩活口二次落账）",
       await dispatchPreStep(world, made.value.id);
       const l2Events = made.value.events().filter((event) => event.type === "user/message" && typeof event.surfaceOp === "object");
       expect(l2Events.length).toBeGreaterThanOrEqual(1);
-      // 复测门触发条件下二次落账（首落后复评仍越线——l1=600 低线保证）
       expect(l2Events.length).toBeLessThanOrEqual(2);
     } finally {
       await world.ctx.dispose();
@@ -140,8 +134,8 @@ describe("空闲清理单元矩阵（maybeIdleClear）", () => {
     expect(appends).toContain("tool/result");
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 10);
-    }); // flush/emit 在微任务链上
-    expect(order).toEqual(["flush", "emit"]); // 观测不抢跑在持久化之前
+    });
+    expect(order).toEqual(["flush", "emit"]);
   });
 
   it("在飞 turn / 未到期 / 关闭 → 不动作", () => {
@@ -188,9 +182,9 @@ describe("并行度观测与增益", () => {
       const { computeClearPlan, landClearPlan } = await import("../scavenger.ts");
       const plan = computeClearPlan(nodes, made.value.events(), { clearableTools: ["read"], clearKeepRecent: 0 });
       expect(plan.entries).toHaveLength(1);
-      world.store.dispose(made.value.id); // 封存写权（对象读面开放——append 必败）
+      world.store.dispose(made.value.id);
       const landed = landClearPlan(made.value, made.value.surface(), plan.entries);
-      expect(landed).toEqual({ landed: 0, gainTokens: 0 }); // 软失败不抛
+      expect(landed).toEqual({ landed: 0, gainTokens: 0 });
     } finally {
       await world.ctx.dispose();
     }
@@ -210,13 +204,12 @@ describe("词表锁与补面", () => {
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 500, output: 1 } } });
       seedTurn(made.value, { turn: 1, user: textOf(3), assistant: { text: textOf(3), usage: { input: 500, output: 1 } } });
-      await dispatchPreStep(world, made.value.id); // 建状态（journalSeen 对齐）
-      // 手动压缩形态的外部前缀替换（无在飞 CP → 切口失真信号）
+      await dispatchPreStep(world, made.value.id);
       const head = made.value.surface()[0];
       if (head !== undefined) {
         made.value.append("user/message", { turn: 9, step: 9, content: [{ type: "text", text: "manual" }] }, { surfaceOp: { op: "replace", startSeq: head.seq, endSeq: head.seq } });
       }
-      await dispatchPreStep(world, made.value.id); // 重锚路径执行——不炸、不误升级
+      await dispatchPreStep(world, made.value.id);
       expect(made.value.events().filter((e) => e.type === "user/message" && typeof e.surfaceOp === "object").length).toBe(1);
     } finally {
       await world.ctx.dispose();
@@ -229,7 +222,6 @@ describe("词表锁与补面", () => {
     try {
       const made = await world.store.create({ id: sid("first-delta") });
       if (!made.ok) throw new Error(made.reason);
-      // 警告区（[800,900)）单次步进：无 lastOccupancy → 缺省增量 = 25000 × 2 并行
       made.value.append("turn/start", { turn: 0 });
       made.value.append("step/start", { turn: 0, step: 0 });
       made.value.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "q" }] }, { surfaceOp: "append" });
@@ -250,10 +242,9 @@ describe("词表锁与补面", () => {
       made.value.append("step/end", { turn: 0, step: 0 });
       made.value.append("turn/end", { turn: 0, reason: { kind: "completed" } });
       await dispatchPreStep(world, made.value.id);
-      // 首步：缺省增量路径预测越窗（parallel-approach 需要 lastOccupancy 在场——首步不告警）
       expect(stderr.mock.calls.some((line) => String(line[0]).includes("ledger-unready"))).toBe(true);
       stderr.mockClear();
-      await dispatchPreStep(world, made.value.id); // 二步：lastOccupancy 已缓存 → 并行逼近告警恰一次
+      await dispatchPreStep(world, made.value.id);
       expect(stderr.mock.calls.filter((line) => String(line[0]).includes("parallel-approach"))).toHaveLength(1);
     } finally {
       stderr.mockRestore();
@@ -270,11 +261,10 @@ describe("词表锁与补面", () => {
         seedTurn(made.value, { turn, user: textOf(3), assistant: { text: textOf(3), usage: { input: turn === 0 ? 500 : 850, output: 1 } } });
       }
       world.llm.scripts.push(textScript("<goals>\norigin-goal\n</goals>"));
-      await dispatchPreStep(world, made.value.id); // CP #1
-      // 追加两轮（新段）后再来一份 patch——首段 goals 必须并入存活
+      await dispatchPreStep(world, made.value.id);
       seedTurn(made.value, { turn: 4, user: textOf(3), assistant: { text: textOf(3), usage: { input: 850, output: 1 } } });
       world.llm.scripts.push(textScript("<goals>\nlater-goal\n</goals>"));
-      await dispatchPreStep(world, made.value.id); // CP #2（新段）
+      await dispatchPreStep(world, made.value.id);
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 60);
       });
@@ -322,6 +312,6 @@ describe("idle flush 失败分支（观测不抢跑的失败面）", () => {
       setTimeout(resolve, 10);
     });
     expect(warns).toContain("idle-flush-failed");
-    expect(order).toEqual(["flush", "emit"]); // 失败不阻断观测（落账已成的事实照报）
+    expect(order).toEqual(["flush", "emit"]);
   });
 });

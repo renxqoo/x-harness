@@ -1,8 +1,3 @@
-// 目录管理（DESIGN §3.6）：models/add（校验：id/provider/protocol/baseUrl 必填、
-// api ∈ {anthropic, openai}、数值正整数；provider 已存在并入 models，否则必带
-// protocol+baseUrl 新建档案）与 models/remove（仅 custom 条目；预设裸名 →
-// unknown model preset；删被预设覆盖的 custom 条目 = 恢复预设视图）。窄合并经
-// updateProvidersFile 串行链 + 原子写。
 import { readCatalog, providersFilePath } from "../shared/catalog.ts";
 import type { HubModelMeta, HubProvidersFile } from "../shared/catalog-types.ts";
 import { atomicWriteJson, readJson, updateJson } from "../shared/atomic-file.ts";
@@ -24,7 +19,6 @@ async function readProvidersFile(agentDir: string): Promise<ProvidersFile> {
     : { providers: [] };
 }
 
-/** providers.json 串行读改写（分链/回收/原子写全在 atomic-file 单点） */
 export function updateProvidersFile(agentDir: string, mutate: (file: ProvidersFile) => ProvidersFile | Promise<ProvidersFile>): Promise<ProvidersFile> {
   const path = providersFilePath(agentDir);
   return updateJson<ProvidersFile>(path, {
@@ -38,15 +32,12 @@ function positiveInt(value: unknown): boolean {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-/** add 的模型对象回显（刷新后完整形状——附录 B；构造单点 = modelShapeOf） */
 async function refreshedModelShape(agentDir: string, provider: string, id: string): Promise<Record<string, unknown> | undefined> {
   const catalog = await readCatalog(agentDir);
   const entry = catalog.entries.find((e) => e.provider === provider && e.model === id);
   return modelShapeOf(entry);
 }
 
-/** 数值/布尔字段校验（单点错误面——恒 invalid_input 族）；input 成员拒绝式校验——
- *  写门不放拼写错误进盘（读侧净化只兜手改文件） */
 function validateFields(input: { [key: string]: unknown }): HubErrorShape | undefined {
   const { contextWindow, maxTokens, reasoning, cost, input: inputModes } = input;
   if (contextWindow !== undefined && !positiveInt(contextWindow)) return hubError("invalid_input", `invalid model entry: contextWindow must be a positive integer (got ${String(contextWindow)})`);
@@ -59,7 +50,6 @@ function validateFields(input: { [key: string]: unknown }): HubErrorShape | unde
   return undefined;
 }
 
-/** 新档案校验（provider 缺席时必带 protocol+baseUrl——恒 invalid_input 族） */
 function validateNewProfile(providerName: string, protocol: unknown, baseUrl: string): HubErrorShape | undefined {
   if (providerName.trim() === "") return hubError("invalid_input", "invalid model entry: provider required for a new profile");
   if (protocol !== "anthropic" && protocol !== "openai") return hubError("invalid_input", "invalid model entry: protocol must be one of anthropic, openai");
@@ -97,13 +87,11 @@ export async function addModel(agentDir: string, input: { [key: string]: unknown
   }
 
   const meta = metaOf(id, input);
-  const bareEntry = Object.keys(meta).length === 1; // 仅 id——落裸串形态
+  const bareEntry = Object.keys(meta).length === 1;
   await updateProvidersFile(agentDir, (file) => {
     const providers = [...file.providers];
     const index = providers.findIndex((profile) => profile.name === providerName);
     if (index === -1) {
-      // 预设名首写：档案从预设继承协议/端点（providers.json 未落该档案——缺省会降级
-      // 坏档案）；全新档案则用入参 protocol/baseUrl
       const seed = existing ?? { protocol: input.protocol as "anthropic" | "openai", baseUrl };
       providers.push({
         name: providerName,

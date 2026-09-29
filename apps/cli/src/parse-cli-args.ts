@@ -1,7 +1,3 @@
-// 命令行参数解析（docs/CLI.md §2.1）：表驱动纯函数，Result 形态（失败理由 = exit 2 文案）。
-// 两段式：scan 收原始 token → finalize 校验成型。词表封闭：flag 集在 FLAG_SPECS、
-// 枚举/互斥在 finalize 闭口；位置参数按 @ 前缀分流 file/messages。
-
 import type { Result } from "@x-harness/core";
 import { PROFILE_IDS } from "@x-harness/permission";
 import type { ProfileId } from "@x-harness/permission";
@@ -18,13 +14,11 @@ export interface CliArgs {
   readonly session?: string;
   readonly noSession: boolean;
   readonly sessionDir?: string;
-  /** workflow journal 根（--workflow-dir——AGENT-WORKFLOW §3.2） */
   readonly workflowDir?: string;
   readonly provider?: string;
   readonly model?: string;
   readonly thinking?: ThinkingLevelCli;
   readonly permission?: ProfileId;
-  /** 权限规则串（--rules 逗号分隔——`Danger(git status:*):allow` 形态（2026-09-28 断代——旧 Bash/Grep 前缀不再解析）；拼错 fail-closed 拒启） */
   readonly rules?: readonly string[];
   readonly apiKey?: string;
   readonly tools?: readonly string[];
@@ -40,7 +34,6 @@ export interface CliArgs {
   readonly fileArgs: readonly string[];
 }
 
-/** 值形态：single = 最后一次出现胜出；multi = 可重复累积 */
 type FlagSpec = { readonly long: string; readonly short?: string; readonly arity: 0 | 1 | "optional"; readonly multi?: boolean };
 
 const FLAG_SPECS: readonly FlagSpec[] = [
@@ -71,7 +64,6 @@ const FLAG_SPECS: readonly FlagSpec[] = [
 const SPEC_BY_LONG = new Map<string, FlagSpec>(FLAG_SPECS.map((spec) => [spec.long, spec]));
 const LONG_BY_SHORT = new Map<string, string>(FLAG_SPECS.flatMap((spec) => (spec.short !== undefined ? [[spec.short, spec.long]] : [])));
 
-/** scan 的中间形态：flag 原始值（boolean / 单值 / 多值累积）+ 位置参数 */
 interface RawArgs {
   readonly flags: Map<string, boolean | string | string[]>;
   readonly messages: string[];
@@ -99,13 +91,11 @@ function flagValue(raw: RawArgs, long: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** 位置参数分流（docs/CLI.md §2.1）：@ 前缀进 fileArgs，其余进 messages */
 function routePositional(token: string, raw: RawArgs): void {
   if (token.startsWith("@")) raw.fileArgs.push(token.slice(1));
   else raw.messages.push(token);
 }
 
-/** 归一 token → [long 名, 附带值]；支持 --flag=value 与短项映射 */
 function normalize(token: string): Result<{ readonly long: string; readonly attached?: string }> {
   if (token.startsWith("--")) {
     const eq = token.indexOf("=");
@@ -126,7 +116,6 @@ function isFlagLike(token: string | undefined): boolean {
   return token !== undefined && token.length > 1 && token.startsWith("-");
 }
 
-/** 消费一个 flag token（含取值），返回消费的 token 数 */
 function consumeFlag(raw: RawArgs, argv: readonly string[], index: number): Result<number> {
   const token = argv[index];
   if (token === undefined) return { ok: false, reason: "unreachable token" };
@@ -146,14 +135,13 @@ function consumeFlag(raw: RawArgs, argv: readonly string[], index: number): Resu
   const value = spec.arity === 1 || !isFlagLike(next) ? next : undefined;
   if (value === undefined) {
     if (spec.arity === 1) return { ok: false, reason: `option ${spec.long} requires a value` };
-    storeFlag(raw, spec.long, true); // 可选值 flag（--list-models）裸用
+    storeFlag(raw, spec.long, true);
     return { ok: true, value: 1 };
   }
   storeFlag(raw, spec.long, value);
   return { ok: true, value: value === next ? 2 : 1 };
 }
 
-/** 主循环：flag 值消费（next token 非 `-` 开头才可作值）+ `--` 后全按位置参数 */
 function scan(argv: readonly string[]): Result<RawArgs> {
   const raw: RawArgs = { flags: new Map(), messages: [], fileArgs: [] };
   let index = 0;
@@ -180,7 +168,6 @@ function splitList(value: string): readonly string[] {
   return value.split(",").map((part) => part.trim()).filter((part) => part.length > 0);
 }
 
-/** 二元互斥表（docs/CLI.md §2.1）；presence = 布尔真或值在场 */
 const CONFLICTS: readonly { readonly a: string; readonly b: string; readonly message: string }[] = [
   { a: "--resume", b: "--print", message: "-r/--resume needs an interactive terminal; use --session or -c with -p" },
   { a: "--no-session", b: "--continue", message: "--no-session cannot be combined with -c/--continue" },
@@ -209,10 +196,8 @@ function checkConflicts(raw: RawArgs): Result<true> {
   return { ok: true, value: true };
 }
 
-/** finalize 的可写构造形态（缺省先行，字段按在场覆写） */
 type WritableArgs = { -readonly [K in keyof CliArgs]: CliArgs[K] };
 
-/** 绑定 raw+args 的字段拷贝器（避免第 4 参数；value = 单值，list = 逗号切分） */
 function makeCopier(raw: RawArgs, args: WritableArgs) {
   return {
     value(long: string, key: keyof CliArgs): void {
@@ -246,7 +231,6 @@ function checkEnums(raw: RawArgs): Result<true> {
   return { ok: true, value: true };
 }
 
-/** 校验枚举闭集 + 组装最终形态（缺省在此落定） */
 function finalize(raw: RawArgs): Result<CliArgs> {
   const conflicts = checkConflicts(raw);
   if (!conflicts.ok) return conflicts;

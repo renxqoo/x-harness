@@ -1,7 +1,3 @@
-
-// 内核统一留痕通道的回归用例：症状 = 旧实现直连 process.stderr，浏览器（无 process
-// 全局）下三处触发点抛 ReferenceError。回归面：defaultSink / softInject 近距警告 /
-// 装配失败回卷兜底，各自验证「无 process 宿主下留痕可达不炸 + 消息完整」+ 通道函数本体。
 import { describe, expect, it, vi } from "vitest";
 import { createContext } from "../create-context.ts";
 import { loadPlugins } from "../load-plugins.ts";
@@ -9,7 +5,6 @@ import { defineEvent } from "../tokens.ts";
 import type { Plugin } from "../types.ts";
 import { stderrLine } from "../../stderr-line.ts";
 
-/** 模拟浏览器宿主：摘掉 process 全局，结束后恢复（断言放窗外，留痕窗口内不给 runner 触 process 的机会） */
 async function withoutProcess(run: () => Promise<void>): Promise<void> {
   const host = globalThis as { process?: unknown };
   const original = host.process;
@@ -21,7 +16,6 @@ async function withoutProcess(run: () => Promise<void>): Promise<void> {
   }
 }
 
-/** 具名抛错监听器/清理器：避免 describe → it → withoutProcess → 箭头回调四层嵌套 */
 function throwFromListener(): void {
   throw new Error("listener炸了");
 }
@@ -38,7 +32,7 @@ describe("stderrLine 宿主无关留痕", () => {
     });
     try {
       await withoutProcess(async () => {
-        const ctx = createContext(); // 不注入 onListenerError → 走 defaultSink
+        const ctx = createContext();
         const boom = defineEvent("boom");
         ctx.on(boom, throwFromListener);
         ctx.emit(boom, {});

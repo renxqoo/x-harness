@@ -1,7 +1,4 @@
-// git/changed 事件集成（host 全链：表 live 线程 → git-watch → emitClient 帧出去）。
-// 装置沿用 thread-git-branch.test.ts 手驱形态（就绪门/spawn 等待/控制应答）。
-
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, expect, test } from "vitest";
 import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -46,7 +43,6 @@ async function waitResponse(client: readonly string[], command: string, id?: str
   }
 }
 
-/** 等 git/changed 事件帧（threadId 域；1s 对账 + 150ms 防抖余量） */
 async function waitGitChanged(client: readonly string[], threadId: string, timeoutMs = 8_000): Promise<{ cwd?: string; branch?: string } | undefined> {
   const started = Date.now();
   for (;;) {
@@ -75,7 +71,6 @@ async function waitReady(f: { client: string[]; send: (cmd: unknown) => void }):
 }
 
 test("host 全链：外部 switch → git/changed 事件帧（payload cwd+branch，threadId 域）", async () => {
-  // 真 git 仓（独立分支——避免 worktree 语义干扰首例）
   const parent = await tempDir("hub-gc-repo-p-");
   const repo = join(parent, "repo");
   await mkdir(repo);
@@ -121,7 +116,6 @@ test("host 全链：外部 switch → git/changed 事件帧（payload cwd+branch
   const send = (cmd: unknown): void => input.send(cmd);
   await waitReady({ client, send });
 
-  // 起 live 线程（cwd=repo）
   send({ type: "thread/start", id: "s1", cwd: repo });
   const started = Date.now();
   let worker: (typeof workers)[number] | undefined;
@@ -139,7 +133,6 @@ test("host 全链：外部 switch → git/changed 事件帧（payload cwd+branch
   const threadId = "t-s1";
   worker.onLine(responseLine({ id: "s1", command: "thread/start", success: true, data: { threadId, cwd: repo, sessionPath: `${sessionsRoot}/${threadId}/events.jsonl` } }));
 
-  // 外部 switch（1s 对账挂 watcher 前等待）
   await new Promise<void>((resolve) => {
     setTimeout(() => resolve(), 1_500);
   });

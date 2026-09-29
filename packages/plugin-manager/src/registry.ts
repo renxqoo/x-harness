@@ -1,11 +1,8 @@
-// 登记簿 + per-name 互斥链 + 依赖图（docs/PLUGIN-MANAGER.md §3 预算：同名 install/uninstall 串行化）。
-
 import type { PluginHandle, PluginRecord, Result } from "./types.ts";
 
 interface RegistryEntry {
   record: PluginRecord;
   unload: (input?: { force?: boolean }) => Promise<Result<undefined, string>>;
-  /** 装载方身份（稳定引用）——晚到击杀按身份删登记，不误删继任者 */
   owner: unknown;
 }
 
@@ -20,7 +17,6 @@ export interface Registry {
   entries(): readonly PluginRecord[];
   put(record: PluginRecord, unload: RegistryEntry["unload"], owner: unknown): void;
   remove(name: string): void;
-  /** 仅当登记的 owner 就是传入者时才移除（装载方身份校验）——晚到击杀不得误删继任者 */
   removeIfOwned(name: string, owner: unknown): boolean;
   dependentsOf(name: string): readonly string[];
   withNameLock<T>(name: string, operation: () => Promise<T>): Promise<T>;
@@ -63,7 +59,7 @@ export function createRegistry(): Registry {
     },
     async withNameLock(name, operation) {
       const previous = locks.get(name) ?? Promise.resolve();
-      const next = previous.then(operation, operation); // 前序成败都继续——互斥是次序保证不是失败传播
+      const next = previous.then(operation, operation);
       locks.set(name, next);
       try {
         return await next;

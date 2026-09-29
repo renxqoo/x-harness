@@ -1,5 +1,3 @@
-// journal/锁/resolve 单测（件 16 §3.1 恢复矩阵 + §3.2 三段链 + 锁三态）。
-
 import { beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -54,7 +52,7 @@ describe("acquireRunLock（三态）", () => {
   it("死锁（持有者=死 pid）→ rename 接管后重建成功", async () => {
     const dir = join(root, "lock-c");
     await mkdir(dir, { recursive: true });
-    await writeFile(join(dir, "lock"), "999999999\n"); // 不存在的大 pid = 死
+    await writeFile(join(dir, "lock"), "999999999\n");
     const taken = await acquireRunLock(dir);
     expect(taken.kind).toBe("acquired");
     if (taken.kind === "acquired") await taken.lock.release();
@@ -89,11 +87,11 @@ describe("openRunJournal（新建/读写/接管）", () => {
     const first = await openRunJournal(root, headerOf("r2"));
     if (first.kind !== "opened") throw new Error("fixture");
     await first.writer.append([{ type: "run/created", runId: "r2", parentSession: "s-parent", cwd: "/w" }]);
-    await first.writer.close(); // 释放锁（进程内模拟重启）
+    await first.writer.close();
     const second = await openRunJournal(root, headerOf("r2"));
     expect(second.kind).toBe("opened");
     if (second.kind !== "opened") return;
-    expect(second.snapshot?.status).toBe("created"); // 前缀在
+    expect(second.snapshot?.status).toBe("created");
     await second.writer.append([{ type: "task/submitted", taskId: "t1", spec: { description: "d", prompt: "p" } }]);
     await second.writer.close();
     const read = await readRun(root, "r2");
@@ -104,7 +102,7 @@ describe("openRunJournal（新建/读写/接管）", () => {
   it("header 不一致（runId 漂移）→ frozen", async () => {
     await openRunJournal(root, headerOf("r3")).then((r) => r.kind === "opened" ? r.writer.close() : undefined);
     const mismatch = await openRunJournal(root, headerOf("r3", "other-parent"));
-    expect(mismatch.kind).toBe("opened"); // header 读回 runId 一致（parentSession 不校验——同 runId 同卷）
+    expect(mismatch.kind).toBe("opened");
     if (mismatch.kind === "opened") await mismatch.writer.close();
   });
 });
@@ -128,18 +126,18 @@ describe("恢复矩阵（§3.1）", () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "header.json"), JSON.stringify(headerOf("r-torn")));
     const good = `${JSON.stringify({ type: "run/created", runId: "r-torn", parentSession: "s-parent", cwd: "/w" })}\n`;
-    await writeFile(join(dir, "journal.jsonl"), `${good}{"type": "run/set`); // 尾半行
+    await writeFile(join(dir, "journal.jsonl"), `${good}{"type": "run/set`);
     const read = await readRun(root, "r-torn");
     expect(read.kind).toBe("opened");
     if (read.kind !== "opened") return;
-    expect(read.snapshot?.status).toBe("created"); // 完整行保留
+    expect(read.snapshot?.status).toBe("created");
     const untouched = await readFile(join(dir, "journal.jsonl"), "utf8");
-    expect(untouched.endsWith('{"type": "run/set')).toBe(true); // A7：只读不回写（他进程活跃卷保护）
-    const locked = await openRunJournal(root, headerOf("r-torn")); // 持锁路径
+    expect(untouched.endsWith('{"type": "run/set')).toBe(true);
+    const locked = await openRunJournal(root, headerOf("r-torn"));
     expect(locked.kind).toBe("opened");
     if (locked.kind !== "opened") return;
     const repaired = await readFile(join(dir, "journal.jsonl"), "utf8");
-    expect(repaired.endsWith("}\n")).toBe(true); // 持锁后撕裂残片已截
+    expect(repaired.endsWith("}\n")).toBe(true);
     await locked.writer.close();
   });
 
@@ -174,15 +172,14 @@ describe("journal 写面边界", () => {
     if (made.kind !== "opened") throw new Error("fixture");
     await made.writer.append([{ type: "run/created", runId: "r-tr", parentSession: "s", cwd: "/w" }]);
     await made.writer.sync();
-    // 破坏：close 底层 fd 后 append（write on closed fd 必败）
     await made.writer.close();
     const failed = await made.writer.append([{ type: "task/submitted", taskId: "t1", spec: { description: "d", prompt: "p" } }]).then(() => false, () => true);
-    expect(failed).toBe(true); // 失败如实上抛
+    expect(failed).toBe(true);
     const read = await readRun(root, "r-tr");
     expect(read.kind).toBe("opened");
     if (read.kind === "opened") {
-      expect(read.snapshot?.tasks["t1"]).toBeUndefined(); // 失败批未落账（截断回滚语义）
-      expect(read.snapshot?.status).toBe("created"); // 前缀保持
+      expect(read.snapshot?.tasks["t1"]).toBeUndefined();
+      expect(read.snapshot?.status).toBe("created");
     }
     await rm(root, { recursive: true, force: true });
   });
@@ -196,8 +193,7 @@ describe("openRunJournal 冻结分支（覆盖 55-69）", () => {
     const good = `${JSON.stringify({ type: "run/created", runId: "r-midlock", parentSession: "s", cwd: "/w" })}\n`;
     await writeFile(join(dir, "journal.jsonl"), `${good}garbage-line\n`);
     const frozen = await openRunJournal(root, headerOf("r-midlock"));
-    expect(frozen.kind).toBe("frozen"); // 中段损坏：截尾救不了——冻结
-    // 锁已释放：readRun 可再读（同样 frozen——一致性）
+    expect(frozen.kind).toBe("frozen");
     const again = await readRun(root, "r-midlock");
     expect(again.kind).toBe("frozen");
   });
@@ -207,12 +203,10 @@ describe("openRunJournal 冻结分支（覆盖 55-69）", () => {
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "header.json"), JSON.stringify({ ...headerOf("r-other"), runId: "r-drift" }));
     await writeFile(join(dir, "journal.jsonl"), `${JSON.stringify({ type: "run/created", runId: "r-drift", parentSession: "s", cwd: "/w" })}\n`);
-    // 传入 header.runId 与盘上 header 内 runId 不一致 → mismatch frozen
     const mismatch = await openRunJournal(root, { ...headerOf("r-drift"), runId: "r-drift", createdAt: 1, pluginVersion: "16.0.0", parentSession: "s", cwd: "/w" });
-    // 盘上 header.runId = r-drift 与传入一致 → opened（正例）；漂移用例：
     const drift = await openRunJournal(root, { runId: "r-notexist", parentSession: "s", cwd: "/w", createdAt: 1, pluginVersion: "16.0.0" });
     expect(drift.kind === "opened" || drift.kind === "frozen").toBe(true);
-    if (drift.kind === "opened") await drift.writer.close(); // fd 泄漏（GC 报错根因）
+    if (drift.kind === "opened") await drift.writer.close();
     if (mismatch.kind === "opened") await mismatch.writer.close();
   });
 });
@@ -221,27 +215,23 @@ describe("run 目录 GC（期 2-D3）", () => {
   it("settled+已通知 超龄删除 / 未终态保留 / 通知悬置保留（R3 症状：GC 曾删活锁 run 致静默丢数据）", async () => {
     const { gcRuns } = await import("../journal.ts");
     const { utimes } = await import("node:fs/promises");
-    // settled run（超龄）
     const old1 = await openRunJournal(root, headerOf("r-gc-old"));
     if (old1.kind !== "opened") throw new Error("f");
     await old1.writer.append([{ type: "run/created", runId: "r-gc-old", parentSession: "s", cwd: "/w" }]);
     await old1.writer.append([{ type: "task/submitted", taskId: "t", spec: { description: "d", prompt: "p" } }]);
     await old1.writer.append([{ type: "task/settled", taskId: "t", outcome: "completed" }]);
     await old1.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]);
-    await old1.writer.append([{ type: "notify/delivered", taskId: "t", to: "s" }]); // R3：通知全覆盖（GC 前提）
+    await old1.writer.append([{ type: "notify/delivered", taskId: "t", to: "s" }]);
     await old1.writer.close();
-    // in-flight run（超龄——不删）
     const live = await openRunJournal(root, headerOf("r-gc-live"));
     if (live.kind !== "opened") throw new Error("f");
     await live.writer.append([{ type: "run/created", runId: "r-gc-live", parentSession: "s", cwd: "/w" }]);
     await live.writer.close();
-    // settled run（龄内——不删）
     const fresh = await openRunJournal(root, headerOf("r-gc-fresh"));
     if (fresh.kind !== "opened") throw new Error("f");
     await fresh.writer.append([{ type: "run/created", runId: "r-gc-fresh", parentSession: "s", cwd: "/w" }]);
     await fresh.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]);
     await fresh.writer.close();
-    // old1/live 的 mtime 回拨 8 天
     const old = new Date(Date.now() - 8 * 24 * 3_600_000);
     await utimes(join(root, "r-gc-old"), old, old);
     await utimes(join(root, "r-gc-live"), old, old);
@@ -251,8 +241,8 @@ describe("run 目录 GC（期 2-D3）", () => {
     const { readdir } = await import("node:fs/promises");
     const left = await readdir(root);
     expect(left.includes("r-gc-old")).toBe(false);
-    expect(left.includes("r-gc-live")).toBe(true); // 在飞永不 GC
-    expect(left.includes("r-gc-fresh")).toBe(true); // 龄内保留
+    expect(left.includes("r-gc-live")).toBe(true);
+    expect(left.includes("r-gc-fresh")).toBe(true);
   });
 
   it("通知悬置（settled 无 notify/delivered）不 GC（R3 症状：GC 曾删 B5 补投对象致通知永久丢）", async () => {
@@ -263,12 +253,12 @@ describe("run 目录 GC（期 2-D3）", () => {
     await pending.writer.append([{ type: "run/created", runId: "r-gc-pending", parentSession: "s", cwd: "/w" }]);
     await pending.writer.append([{ type: "task/submitted", taskId: "t", spec: { description: "d", prompt: "p" } }]);
     await pending.writer.append([{ type: "task/settled", taskId: "t", outcome: "completed" }]);
-    await pending.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]); // 无 notify/delivered——悬置
+    await pending.writer.append([{ type: "run/settled", outcome: "completed", detail: "" }]);
     await pending.writer.close();
     const old = new Date(Date.now() - 8 * 24 * 3_600_000);
     await utimes(join(root, "r-gc-pending"), old, old);
     const removed = await gcRuns(root, { maxAgeMs: 7 * 24 * 3_600_000 });
-    expect(removed.includes("r-gc-pending")).toBe(false); // 通知未达——数据不可销毁
+    expect(removed.includes("r-gc-pending")).toBe(false);
     const { readdir } = await import("node:fs/promises");
     expect((await readdir(root)).includes("r-gc-pending")).toBe(true);
   });
@@ -281,7 +271,7 @@ describe("幂等标记收窄（期 2-D1）", () => {
     const forged: never[] = [
       { type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: marker }] } },
     ] as never[];
-    expect(markerMaterialized(forged, marker)).toBe(false); // 子代理伪造无效
+    expect(markerMaterialized(forged, marker)).toBe(false);
     const genuine: never[] = [
       { type: "user/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: marker }] } },
     ] as never[];

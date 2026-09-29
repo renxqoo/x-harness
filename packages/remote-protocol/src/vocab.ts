@@ -1,7 +1,5 @@
-// scope 执法矩阵（DESIGN §3.1/§3.2 表 = 单一真相；测试从本表生成）。
 export type AccessTier = "read" | "interact" | "full" | "owner";
 
-/** host 命令 → 各档可达性（60 命令全量，DESIGN §3.1） */
 export const HOST_COMMAND_MATRIX: Readonly<Record<string, { read: boolean; interact: boolean; full: boolean; ownerOnly: boolean }>> = {
   "thread/start": { read: false, interact: true, full: true, ownerOnly: false },
   "thread/resume": { read: false, interact: true, full: true, ownerOnly: false },
@@ -67,7 +65,6 @@ export const HOST_COMMAND_MATRIX: Readonly<Record<string, { read: boolean; inter
 
 export const HOST_COMMANDS = Object.keys(HOST_COMMAND_MATRIX);
 
-/** gateway 本地命令族（§3.2）：恒 owner-only（设备侧仅 gw/status 精简版） */
 export const GW_COMMANDS = [
   "gw/status",
   "gw/devices/list",
@@ -86,7 +83,6 @@ export type GwCommand = (typeof GW_COMMANDS)[number];
 
 export type ScopeVerdict = "allow" | "owner-only" | "scope-denied" | "unknown-command";
 
-/** 执法单点：tier=owner 走 owner-only 全放；设备档按矩阵。未知命令默认拒（S2 fail-closed） */
 export function judgeHostCommand(command: string, tier: AccessTier): ScopeVerdict {
   const row = HOST_COMMAND_MATRIX[command];
   if (row === undefined) {
@@ -101,7 +97,6 @@ export function judgeHostCommand(command: string, tier: AccessTier): ScopeVerdic
   return row.read ? "allow" : "scope-denied";
 }
 
-/** gw/* 路由判定：owner 通道全放；设备通道仅 gw/status（精简版由 gateway 组装） */
 export function judgeGwCommand(command: string, tier: AccessTier): ScopeVerdict {
   if (!GW_COMMANDS.includes(command as GwCommand)) return "unknown-command";
   if (tier === "owner") return "allow";

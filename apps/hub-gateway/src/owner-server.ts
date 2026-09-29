@@ -1,5 +1,3 @@
-// owner 通道（DESIGN §3.2/§3.4）：unix socket 0600 明文 IPC + L2 信封（L1 关——本机同用户
-// 即信任域边界）。承载 gw/* 命令族与 host 命令直通（owner 全权）；gw/status 握手探测。
 import { createServer } from "node:net";
 import { chmodSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
 import { GW_COMMANDS, parseFrame, type Frame, type FrameKind } from "@x-harness/remote-protocol";
@@ -23,13 +21,11 @@ export interface OwnerServerHandle {
   socketPath: string;
 }
 
-/** 启动 owner 通道：清残留 socket（pid 探活归桌面 App——服务端只做 bind 前清理） */
 export function startOwnerServer(options: OwnerServerOptions): Promise<OwnerServerHandle> {
   if (existsSync(options.socketPath)) {
     try {
       unlinkSync(options.socketPath);
     } catch {
-      // 残留不可清（权限）——绑定失败如实抛
     }
   }
   writeFileSync(options.pidFile, String(process.pid), { encoding: "utf8" });
@@ -78,7 +74,6 @@ export function startOwnerServer(options: OwnerServerOptions): Promise<OwnerServ
     server.once("error", reject);
     server.listen(options.socketPath, () => {
       try {
-        // 0600 收紧（macOS/Linux；Windows named pipe 映射时 no-op）
         chmodSync(options.socketPath, 0o600);
       } catch {
         options.log("owner socket chmod 0600 failed (platform mapping)");
@@ -91,7 +86,6 @@ export function startOwnerServer(options: OwnerServerOptions): Promise<OwnerServ
   });
 }
 
-/** gw/* 词表校验（owner 命令面执法前置） */
 export function isGwCommand(command: string): command is (typeof GW_COMMANDS)[number] {
   return (GW_COMMANDS as readonly string[]).includes(command);
 }

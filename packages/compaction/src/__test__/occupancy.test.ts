@@ -1,7 +1,3 @@
-// 占用测量（docs/COMPACTION.md §1.4；对照参照系 pure-estimate/stale-anchor 语义子集：
-// 承接锚选取/尾估/严格大于触发/幽灵 token 防线；锚口径改写为 usage.input 单口径 +
-// attempt 纳入（有意分歧）；servedWindow/领取批次为本仓新增防线面）。
-
 import { describe, expect, it } from "vitest";
 import { compactionBaselineSeq, lastRoute, lastWindow, measureContext, pendingClaimTokens, shouldCompact } from "../occupancy.ts";
 import { IMAGE_TOKENS } from "../estimate.ts";
@@ -26,9 +22,9 @@ describe("锚口径（measureContext）", () => {
   it("锚 = usage.input；input ≤ 0/垃圾不可作锚向前取", () => {
     const events = [
       logEvent("assistant/message", 0, { content: [], usage: { input: 500 } }) as never,
-      logEvent("assistant/message", 1, { content: [], usage: { input: 0 } }) as never, // 0 无效
-      logEvent("assistant/message", 2, { content: [] }) as never, // 无 usage
-      logEvent("assistant/attempt", 3, { error: "x" }) as never, // attempt 无 usage
+      logEvent("assistant/message", 1, { content: [], usage: { input: 0 } }) as never,
+      logEvent("assistant/message", 2, { content: [] }) as never,
+      logEvent("assistant/attempt", 3, { error: "x" }) as never,
     ];
     const nodes: SurfaceNode[] = [];
     const measured = measureContext(events as SessionEvent[], nodes);
@@ -44,20 +40,18 @@ describe("锚口径（measureContext）", () => {
     const events = [logEvent("assistant/message", 0, { content: [], usage: { input: 100 } }) as never];
     const nodes = [userNode(0, textOf(2)), assistantNode(1, textOf(3)), toolResultNode(2, "c", textOf(4))];
     const measured = measureContext(events as SessionEvent[], nodes);
-    expect(measured.tokens).toBe(100 + 3 + 4 + 40 * 2); // 锚(0) 前的 u0 不计；a1(3)+t2(4)+wire(2×40) 计
-    // trailingFactor 通道保留（autocompact calibration 兼容面）——尾估基底已是计费域
+    expect(measured.tokens).toBe(100 + 3 + 4 + 40 * 2);
     expect(measureContext(events as SessionEvent[], nodes, { trailingFactor: 1.5 }).tokens).toBe(100 + 3 + 4 + 40 * 2);
   });
 
   it("基线失效（M2 幽灵 token 防线）：压缩落账前的旧锚作废，无锚则当前投影全量纯估", () => {
     const events = [
-      logEvent("assistant/message", 0, { content: [], usage: { input: 9_000 } }) as never, // 压缩前锚——作废
+      logEvent("assistant/message", 0, { content: [], usage: { input: 9_000 } }) as never,
       landingEvent(1, "summary"),
-      logEvent("assistant/message", 2, { content: [], usage: { input: 300 } }) as never, // 基线后锚——有效
+      logEvent("assistant/message", 2, { content: [], usage: { input: 300 } }) as never,
     ];
     const nodes = [userNode(1, textOf(5)), userNode(3, textOf(7))];
-    expect(measureContext(events as SessionEvent[], nodes).tokens).toBe(300 + 7 + 40); // 只有锚后的 u3 计尾（+wire）
-    // 基线后无锚 → 全投影纯估（被替换区天然不在投影内——不产幽灵 token；计费域含 wire）
+    expect(measureContext(events as SessionEvent[], nodes).tokens).toBe(300 + 7 + 40);
     const eventsNoAnchor = [logEvent("assistant/message", 0, { content: [], usage: { input: 9_000 } }) as never, landingEvent(1, "s")];
     expect(measureContext(eventsNoAnchor as SessionEvent[], nodes).tokens).toBe(12 + 80);
     expect(compactionBaselineSeq(eventsNoAnchor as SessionEvent[])).toBe(1);
@@ -68,17 +62,15 @@ describe("锚口径（measureContext）", () => {
       logEvent("assistant/message", 0, { content: [], usage: { input: 100 } }) as never,
       logEvent("assistant/message", 4, { content: [], usage: { input: 50 } }) as never,
     ];
-    expect(measureContext(events as SessionEvent[], []).tokens).toBe(50); // 最新锚胜
+    expect(measureContext(events as SessionEvent[], []).tokens).toBe(50);
     expect(measureContext(events as SessionEvent[], [], { anchorFloor: 5 })).toMatchObject({ tokens: 0, hasAnchor: false });
   });
 
   it("纯估含 system 锚点与保留区旧节点（与参照系从基线事件起估的有意分歧钉死）", () => {
-    // 保留区 seq < baseline 的节点同样计入（真实投影即模型可见面）；
-    // 被替换区天然不在投影内——不产幽灵 token
     const nodes = [systemNode(0, textOf(3)), userNode(1, textOf(2))];
-    expect(measureContext([], nodes).tokens).toBe(5 + 80); // +wire 2 节点（计费域换尺）
+    expect(measureContext([], nodes).tokens).toBe(5 + 80);
     const withBaseline = [landingEvent(2, "s"), logEvent("assistant/message", 9, { content: [] }) as never];
-    expect(measureContext(withBaseline as SessionEvent[], nodes).tokens).toBe(5 + 80); // 无基线后锚：全投影纯估（含 seq<2 的保留区）
+    expect(measureContext(withBaseline as SessionEvent[], nodes).tokens).toBe(5 + 80);
   });
 });
 
@@ -94,8 +86,8 @@ describe("servedWindow 读侧（lastWindow/lastRoute）", () => {
   it("末词条定当前线路：在场取值、缺席/垃圾 → undefined（不回看别的线路纪元）", () => {
     const events = [
       logEvent("request/context", 0, { provider: "p", model: "m1", contextWindow: 50_000 }) as never,
-      logEvent("request/context", 1, { provider: "p", model: "m2" }) as never, // 换线无窗
-      logEvent("request/context", 2, { provider: "p", model: "m2", contextWindow: Number.NaN }) as never, // 垃圾
+      logEvent("request/context", 1, { provider: "p", model: "m2" }) as never,
+      logEvent("request/context", 2, { provider: "p", model: "m2", contextWindow: Number.NaN }) as never,
     ];
     expect(lastWindow(events as SessionEvent[])).toBeUndefined();
     expect(lastWindow([logEvent("request/context", 0, { provider: "p", model: "m", contextWindow: 8_192 }) as never])).toBe(8_192);
@@ -119,7 +111,7 @@ describe("领取未落账批次（pendingClaimTokens）", () => {
     const events = [
       logEvent("agent/inbox/spliced", 0, { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: textOf(5) }] }] }) as never,
       logEvent("agent/inbox/spliced", 1, { op: "insert", target: "next-step", entries: [{ id: "s1", content: [{ type: "text", text: textOf(3) }] }] }) as never,
-      logEvent("agent/inbox/spliced", 2, { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: textOf(7) }] }] }) as never, // 重插（repair 回灌形）
+      logEvent("agent/inbox/spliced", 2, { op: "insert", target: "next-turn", entries: [{ id: "u1", content: [{ type: "text", text: textOf(7) }] }] }) as never,
       logEvent("agent/inbox/spliced", 3, { op: "claim", target: "next-turn", turn: 1, claimed: ["u1", "s1"] }) as never,
     ];
     expect(pendingClaimTokens(events as SessionEvent[])).toBe(7 + 3);
@@ -143,7 +135,6 @@ describe("领取未落账批次（pendingClaimTokens）", () => {
       logEvent("agent/inbox/spliced", 3, { op: "retarget", id: "s8", to: "next-step" }) as never,
     ];
     expect(pendingClaimTokens(events as SessionEvent[])).toBe(5);
-    // user/message 落账后 pending 归零（其后无新 claim）
     const settled = [
       ...events,
       logEvent("user/message", 4, { turn: 1, step: 0, content: [{ type: "text", text: "u1" }] }) as never,

@@ -1,5 +1,3 @@
-// write 面 local 腿：双腿套件 + local-only（D1 mode 承袭回归 / 注错缝 / 原子无残留 / symlink 替换链接本身）。
-
 import { mkdtemp, rm, writeFile, chmod, symlink, readdir, lstat, readFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,10 +26,10 @@ describe("write-face conformance local-only", () => {
     const result = await writeFileAtomicLocal(p, Buffer.from("new"), { makeParents: false });
     expect(result.ok).toBe(true);
     const st = await lstat(p);
-    expect(st.mode & 0o777).toBe(0o644); // 承袭 0644，不漂 0600
+    expect(st.mode & 0o777).toBe(0o644);
     await chmod(p, 0o600);
     await writeFileAtomicLocal(p, Buffer.from("x"), { makeParents: false });
-    expect((await lstat(p)).mode & 0o777).toBe(0o600); // 只收不放宽
+    expect((await lstat(p)).mode & 0o777).toBe(0o600);
   });
 
   it("新建缺省 0600", async () => {
@@ -48,7 +46,7 @@ describe("write-face conformance local-only", () => {
     if (!result.ok && result.reason === "write_failed") expect(result.detail).toContain("EIO");
     else throw new Error("expected write_failed");
     expect(await temps()).toEqual([]);
-    expect(await readFile(p, "utf8")).toBe("original"); // 原文完好
+    expect(await readFile(p, "utf8")).toBe("original");
   });
 
   it("注错缝 short_write 逐字节：内容完整不半截", async () => {
@@ -83,8 +81,8 @@ describe("write-face conformance local-only", () => {
     await symlink(victim, link);
     const result = await writeFileAtomicLocal(link, Buffer.from("viarename"), { makeParents: false });
     expect(result.ok).toBe(true);
-    expect(await readFile(victim, "utf8")).toBe("untouched"); // 不穿透
-    expect((await lstat(link)).isSymbolicLink()).toBe(false); // 链接被替换为常规文件
+    expect(await readFile(victim, "utf8")).toBe("untouched");
+    expect((await lstat(link)).isSymbolicLink()).toBe(false);
     expect(await readFile(link, "utf8")).toBe("viarename");
   });
 });

@@ -1,6 +1,3 @@
-// markdown frontmatter 头体切分：文本须以 `---\n` 开头并以首个 `\n---\n` 闭合；
-// 不满足该形状返回 undefined（调用方按无 frontmatter 降级）。
-
 export interface FrontmatterParts {
   readonly head: string;
   readonly body: string;

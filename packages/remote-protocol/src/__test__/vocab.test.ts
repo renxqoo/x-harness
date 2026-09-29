@@ -1,4 +1,3 @@
-// scope 执法矩阵表驱动（60 命令×4 档全支路）+ gw/* 命令族——DESIGN §3.1/§3.2
 import { describe, expect, it } from "vitest";
 import { GW_COMMANDS, HOST_COMMANDS, HOST_COMMAND_MATRIX, judgeGwCommand, judgeHostCommand } from "../vocab.ts";
 
@@ -19,8 +18,8 @@ describe("host 命令矩阵（60 命令×4 档表驱动全支路）", () => {
         expect(r.interact).toBe(false);
         expect(r.full).toBe(false);
       } else {
-        expect(r.full).toBe(true); // 非 owner-only 恒 full 可达
-        if (r.interact) expect(r.read || !r.interact || true).toBe(true); // interact 可不含 read（写命令）
+        expect(r.full).toBe(true);
+        if (r.interact) expect(r.read || !r.interact || true).toBe(true);
       }
     }
   });

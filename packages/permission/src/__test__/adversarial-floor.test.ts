@@ -1,7 +1,3 @@
-// 对抗审查回归件（2026-09-28 红队/内核面——fail-open 洞修复后钉死）：
-// 纯重定向宿主写保护（红队 #1）、建议串全盘形（内核 #3/R4）、edit-confirm 落账串（F2）、
-// 习得闸单源（P1-4/R9）。迁自 .adversarial/kernel 与 .adversarial/rules 探针的可静态复现子集。
-
 import { describe, expect, it } from "vitest";
 import { adjudicateBash, decideFor, memoryBlocked, parseRules } from "../index.ts";
 import { autoMode, editConfirmMode } from "@x-harness/permission-modes";
@@ -31,7 +27,7 @@ describe("纯重定向宿主写保护（红队 #1——argv==0 段不逃执法�
   });
   it("Danger(*) 万配对零 argv 段不再失明——重定向硬线先行", () => {
     const out = adjudicateBash({ command: "> .git/config", rules: [{ tool: "Danger", pattern: "*", verdict: "deny", nature: "handwritten", origin: "user" }], profile: AUTO, root: ROOT, extraRoots: [] });
-    expect(out.verdict).toBe("deny"); // redirect-write 硬线（模式前）——argv 词元匹配不再唯一通道
+    expect(out.verdict).toBe("deny");
   });
 });
 
@@ -43,7 +39,7 @@ describe("顶层越根建议规则（内核 #3/R4——`//`+`**` ≡ 全盘授�
     const w = withPosture({ kind: "Write", path: "/outside.ts", profile: AUTO, posture: postureOf(autoMode) });
     expect(w.verdict).toBe("ask");
     expect(w.suggestedRule).toBe("Write(/outside.ts):allow");
-    expect(withPosture({ kind: "Read", path: "/etc/passwd", profile: AUTO, posture: postureOf(autoMode) }).suggestedRule).toBe("Read(/etc/**):allow"); // 顶层文件才是精确形
+    expect(withPosture({ kind: "Read", path: "/etc/passwd", profile: AUTO, posture: postureOf(autoMode) }).suggestedRule).toBe("Read(/etc/**):allow");
   });
   it("正常父目录仍 dir/** 形", () => {
     expect(withPosture({ kind: "Read", path: "/elsewhere/a.ts", profile: AUTO, posture: postureOf(autoMode) }).suggestedRule).toBe("Read(/elsewhere/**):allow");

@@ -1,6 +1,3 @@
-// jsonl 读面：list 只认 header.json；read 校验 header 版本/形状后逐行解析事件，
-// 末行残缺（JSON.parse 失败）按崩溃痕迹跳过，中间损坏拒绝（docs/SESSION.md §1.8）。
-
 import { existsSync, readdirSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +10,6 @@ function listIds(root: string): readonly SessionId[] {
   try {
     entries = readdirSync(root, { withFileTypes: true });
   } catch (error) {
-    // 仅「root 尚未创建」视为无档案；权限等环境错误上抛（区分可见性，不静默折叠）
     if ((error as { code?: unknown }).code === "ENOENT") return Object.freeze([] as SessionId[]);
     throw error;
   }
@@ -35,13 +31,13 @@ export function createArchiveReader(root: string): SessionArchive {
         try {
           text = await readFile(join(root, id, "header.json"), "utf8");
         } catch {
-          continue; // list 已探得 header 在场，此处缺失=竞态拆除：跳过
+          continue;
         }
         let json: unknown;
         try {
           json = JSON.parse(text);
         } catch {
-          continue; // 坏档案不阻断发现面（read() 单卷访问时仍 fail-closed）
+          continue;
         }
         if (gateHeader(json, id) !== undefined) continue;
         out.push(json as SessionHeader);
@@ -73,7 +69,6 @@ export function createArchiveReader(root: string): SessionArchive {
       try {
         text = await readFile(join(dir, "events.jsonl"), "utf8");
       } catch {
-        // header 在而 events 缺失 = 外部损坏态（写侧恒先建 events）：fail-closed，不折叠为空会话静默丢史
         return { ok: false, reason: `no-events:${id}` };
       }
       const lines = text.split("\n");
@@ -85,7 +80,7 @@ export function createArchiveReader(root: string): SessionArchive {
         try {
           events.push(JSON.parse(line));
         } catch {
-          if (i === lines.length - 1) break; // 末行残缺 = 崩溃痕迹，跳过
+          if (i === lines.length - 1) break;
           return { ok: false, reason: `corrupt:${id}:line${i}` };
         }
       }

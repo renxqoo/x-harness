@@ -1,5 +1,3 @@
-// 测试装置（packages/autocompact 专用；compaction 面经其公开 barrel 引用）。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import { llmRuntime } from "@x-harness/llm";
@@ -31,7 +29,6 @@ export function hangScript(): AsyncGenerator<LlmChunk> {
   })();
 }
 
-/** 脚本项：生成器或（拿到拨号请求的）生成器工厂——后者可感知 request.signal */
 export type ScriptEntry = AsyncGenerator<LlmChunk> | ((request: LlmRequest) => AsyncGenerator<LlmChunk>);
 
 export interface FakeLlm {
@@ -56,7 +53,6 @@ export function fakeLlm(): FakeLlm {
   return { runtime, calls, scripts };
 }
 
-/** 感知取消的脚本：吐一段 delta 后等待请求 signal 中断再收尾（取消路径可观测） */
 export function abortableScript(text: string): (request: LlmRequest) => AsyncGenerator<LlmChunk> {
   return (request) =>
     (async function* (): AsyncGenerator<LlmChunk> {
@@ -72,26 +68,25 @@ export function abortableScript(text: string): (request: LlmRequest) => AsyncGen
     })();
 }
 
-/** 基准窗：effWin=900（面预留 100）、cp=540、l1=l2=801、warn=701（l1=l2 单线形态） */
 export const FACE: SummarizerFace = { model: "sum", contextWindow: 100_000, maxOutputTokens: 100 };
 
 export const COMPACTION_BASE = {
   contextWindow: 1_000,
   reserveTokens: 50,
   keepRecentTokens: 1,
-  keepMinTurns: 5, // 行为面测试钉旧缺省（分档缺省见 compaction 侧专测）
-  triggerPct: 92, // 同上——旅程断言沿旧水位线
+  keepMinTurns: 5,
+  triggerPct: 92,
   summarizer: { model: "sum", contextWindow: 100_000, maxOutputTokens: 100 },
 } as const;
 
 export const AUTOCOMPACT_BASE = {
   contextWindow: 1_000,
-  checkpointPct: 60, // 行为面测试显式钉值（缺省分档由 gate.test「阈值窗口分档」族锁）
-  l1Pct: 89, // eff=900 → l1=l2=801、warn=701（单线形态——各区分界断言沿旧线保持）
+  checkpointPct: 60,
+  l1Pct: 89,
   l2Pct: 89,
   warnBufferTokens: 100,
   checkpointMinSegmentTokens: 1,
-  ledgerBudgetTokens: 200, // 小窗基准：≤ 25% 有效窗口（900 × 0.25 = 225）
+  ledgerBudgetTokens: 200,
 } as const;
 
 export interface World {
@@ -142,7 +137,6 @@ export function seedTurn(
   must(session.append("turn/end", { turn, reason: { kind: "completed" } }));
 }
 
-/** 工具轮：user → assistant(tool_use) → tool/result（结果可指定大小/工具名） */
 export function seedToolTurn(
   session: Session,
   fields: { readonly turn: number; readonly user: string; readonly tool: string; readonly callId: string; readonly args: string; readonly result: string; readonly usage?: { readonly input: number; readonly output: number } },

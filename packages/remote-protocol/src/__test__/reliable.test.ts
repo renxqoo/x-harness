@@ -1,5 +1,3 @@
-// L2 可靠层契约：重复补 ACK/真重放拒收/乱序/gap/订阅基线/ACK 合并/outbox 保留语义/
-// 分片重组——DESIGN §1.2 全锚点
 import { describe, expect, it } from "vitest";
 import { FrameReassembler, InboundStream, OutboxStream, chunkFrame, parseChunkBody, parseFrame } from "../reliable.ts";
 import { REASSEMBLY_MAX_SEGMENTS, REORDER_BUFFER_MAX } from "../limits.ts";
@@ -13,7 +11,6 @@ describe("InboundStream seq 生命周期", () => {
     const s = new InboundStream("st_t1");
     expect(s.accept(frame(1))).toMatchObject({ kind: "deliver" });
     expect(s.accept(frame(2))).toMatchObject({ kind: "deliver" });
-    // 重复（ACK 丢失重发）
     expect(s.accept(frame(2))).toMatchObject({ kind: "duplicate-ack" });
     expect(s.accept(frame(1))).toMatchObject({ kind: "replay-rejected", seq: 1 });
     expect(s.stats().duplicates).toBe(1);
@@ -25,7 +22,6 @@ describe("InboundStream seq 生命周期", () => {
     expect(s.accept(frame(1))).toMatchObject({ kind: "deliver" });
     expect(s.accept(frame(3))).toMatchObject({ kind: "buffered" });
     expect(s.accept(frame(4))).toMatchObject({ kind: "buffered" });
-    // 补帧 2：accept 内连投 2、3、4（缓冲全部排空）
     expect(s.accept(frame(2))).toMatchObject({ kind: "deliver", frame: { seq: 2 } });
     expect(s.drain()).toBeNull();
     expect(s.base()).toBe(4);
@@ -45,17 +41,15 @@ describe("InboundStream seq 生命周期", () => {
       expect(overflow.got).toBe(REORDER_BUFFER_MAX + 4);
     }
     expect(s.stats().gaps).toBeGreaterThanOrEqual(1);
-    // gap 后重排缓冲仍持有乱序帧：补 2 → accept 内排空（deliver 返回首帧，其余经 drain）
     const deliver = s.accept(frame(2));
     expect(deliver.kind).toBe("deliver");
     let drained = 0;
     while (s.drain() !== null) drained += 1;
-    expect(s.base()).toBe(REORDER_BUFFER_MAX + 2); // 2..1026 全部按序送达（1027/1028 被 gap 拒）
+    expect(s.base()).toBe(REORDER_BUFFER_MAX + 2);
   });
 
   it("订阅基线：新接入直接采用 baseSeq，无死锁", () => {
     const s = new InboundStream("st_t1", 599);
-    // 流已到 600——基线 599 后首帧 600 直接投递
     expect(s.accept(frame(600))).toMatchObject({ kind: "deliver" });
     expect(s.base()).toBe(600);
   });
@@ -67,7 +61,6 @@ describe("InboundStream seq 生命周期", () => {
     expect(s.flushAck()).toEqual({ streamId: "st_t1", upTo: 32 });
     expect(s.flushAck()).toBeNull();
     expect(s.ackDue(1000, 1000)).toBe(false);
-    // 时间到点（帧数不够但超时）
     for (let i = 33; i <= 35; i++) s.accept(frame(i));
     expect(s.ackDue(2000, 1000)).toBe(true);
     expect(s.flushAck()).toEqual({ streamId: "st_t1", upTo: 35 });
@@ -79,7 +72,7 @@ describe("OutboxStream 保留语义", () => {
     const o = new OutboxStream("st_c1");
     const { seq } = o.enqueue({ command: "prompt", id: "m1" }, "command", "dev_1|g1");
     o.applyAck(seq);
-    expect(o.pending().length).toBe(1); // ACK 不释放命令条目
+    expect(o.pending().length).toBe(1);
     expect(o.releaseClaim("dev_1|g1")).toBe(true);
     expect(o.pending().length).toBe(0);
   });

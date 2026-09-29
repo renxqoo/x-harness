@@ -1,5 +1,3 @@
-// ChannelCollector onChunk 单元（BATCH2-DESIGN §2.2）：增量回调点先于保留帽早退
-// （过帽仍流）、观察者 throw 防御性吞掉（pump 存活优先）、空串跳过。
 import { describe, expect, it } from "vitest";
 import { ChannelCollector } from "../collect.ts";
 
@@ -8,8 +6,8 @@ describe("ChannelCollector onChunk", () => {
     const seen: string[] = [];
     const c = new ChannelCollector({ fullCapBytes: 8, onChunk: (t) => seen.push(t) });
     c.push("hello");
-    c.push("-world-xxx"); // 超 8B 帽 → fullCapped 置位
-    c.push("more"); // 已过帽：累积早退，回调仍达
+    c.push("-world-xxx");
+    c.push("more");
     expect(seen).toEqual(["hello", "-world-xxx", "more"]);
     expect(c.fullCapped).toBe(true);
   });

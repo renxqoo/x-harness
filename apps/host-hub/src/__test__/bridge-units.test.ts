@@ -1,5 +1,3 @@
-// 事件桥单元（BATCH2 §3——D1/D2/D3 回归 + agentName 归属 + tool-stream 主/子分流）：
-// 真 createContext + 合成事件/流派发，断言 wire 帧与观察态喂入——不依赖进程与竞态窗口。
 import { describe, expect, test } from "vitest";
 import { createContext } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
@@ -64,7 +62,7 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
   test("D1：子会话 WAL 事件外发带 session 归属但不喂主线程状态；主会话照常喂", async () => {
     const w = await wired();
     w.ctx.emit(sessionEvent, { session: CHILD, event: ev(0, "turn/start", { turn: 5 }) });
-    expect(w.inflightCalls).toEqual([]); // 子 turn 不翻转主 streaming/inflight
+    expect(w.inflightCalls).toEqual([]);
     const childFrame = w.frames.at(-1);
     expect(childFrame?.name).toBe("turn/start");
     expect(childFrame?.payload?.session).toBe("child-9");
@@ -92,8 +90,8 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
       received.push((chunk as { type: string }).type);
       void chunk;
     }
-    expect(received).toContain("thinking-signature"); // 下游（累积器）照收
-    expect(w.frames.filter((f) => f.name === "llm/chunk")).toEqual([]); // UI 流零推送
+    expect(received).toContain("thinking-signature");
+    expect(w.frames.filter((f) => f.name === "llm/chunk")).toEqual([]);
   });
 
   test("症状回归「autocompact 摘要流泄漏上屏 + loading 永挂」：带独立作业 session（如 xxx-1:summarizer）的拨号不合成 llm/chunk——与子会话流同路径放行", async () => {
@@ -104,19 +102,17 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
       async () => chunksOf([{ type: "text-delta", text: "<goals>ledger patch</goals>" }]),
     );
     for await (const _ of jobStream) void _;
-    expect(w.frames.filter((f) => f.name === "llm/chunk")).toEqual([]); // 作业流不进主时间线
-    expect(w.inflightCalls).toEqual([]); // 也不喂在途面
+    expect(w.frames.filter((f) => f.name === "llm/chunk")).toEqual([]);
+    expect(w.inflightCalls).toEqual([]);
   });
 
   test("D3：partial 文本唯一源 = assistant-stream 帧——tap 的 text-delta 不再双计", async () => {
     const w = await wired();
     w.ctx.emit(agentAssistantStream, { session: MAIN, turn: 1, step: 0, frame: { phase: "chunk", kind: "text", text: "abc" } });
     expect(w.readPartial()).toMatchObject({ role: "assistant", content: [{ type: "text", text: "abc" }] });
-    // 同文本经 llm/chunk tap 再流一遍——partial 不得翻倍（回归：正文曾双计）
     const stream = await w.ctx.dispatch(llmStream, { model: "m", session: MAIN, tools: [], messages: [], signal: new AbortController().signal } as LlmRequest, async () => chunksOf([{ type: "text-delta", text: "abc" }]));
     for await (const _ of stream) void _;
     expect(w.readPartial()).toMatchObject({ role: "assistant", content: [{ type: "text", text: "abc" }] });
-    // tap 仍喂 tool-call 增量（工具入参拼接面保留）
     const toolStream = await w.ctx.dispatch(llmStream, { model: "m", session: MAIN, tools: [], messages: [], signal: new AbortController().signal } as LlmRequest, async () => chunksOf([{ type: "tool-call-delta", index: 0, argumentsDelta: '{"a":' }]));
     for await (const _ of toolStream) void _;
     expect(w.readPartial()).toMatchObject({ role: "assistant", content: [{ type: "text", text: "abc" }, { type: "tool_use_partial", text: '{"a":' }] });
@@ -129,10 +125,10 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
     w.ctx.emit(sessionEvent, { session: CHILD, event: ev(1, "assistant/message", { turn: 0, step: 0, content: [] }) });
     expect(w.frames.at(-1)?.agentName).toBe("agent-abc12345");
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(2, "assistant/message", { turn: 0, step: 0, content: [] }) });
-    expect(w.frames.at(-1)?.agentName).toBeUndefined(); // 主会话帧不带
+    expect(w.frames.at(-1)?.agentName).toBeUndefined();
     w.ctx.emit(sessionDisposed, { session: CHILD });
     w.ctx.emit(sessionEvent, { session: CHILD, event: ev(3, "assistant/message", { turn: 0, step: 0, content: [] }) });
-    expect(w.frames.at(-1)?.agentName).toBeUndefined(); // 已清
+    expect(w.frames.at(-1)?.agentName).toBeUndefined();
   });
 
   test("tool-stream 分流：主会话喂 inflight + 帧；子会话仅帧（带归属）+ 结算/轮界冲净不丢弃", async () => {
@@ -140,16 +136,13 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
     w.ctx.emit(agentSpawned, { parent: MAIN, agentId: "agent-abc12345", sessionId: CHILD, type: "explore", depth: 1 });
     w.ctx.emit(agentToolStream, { session: MAIN, callId: "c1", delta: "main-delta" });
     w.ctx.emit(agentToolStream, { session: CHILD, callId: "c1", delta: "child-delta" });
-    expect(w.inflightCalls).toEqual(["toolOutput:c1:main-delta"]); // 子增量不进主 inflight
-    // 结算边沿（主 tool/result）：立即冲净（不等 25ms 定时器）
+    expect(w.inflightCalls).toEqual(["toolOutput:c1:main-delta"]);
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(1, "tool/result", { turn: 0, step: 0, callId: "c1", content: "done" }) });
     const mainFrames = w.frames.filter((f) => f.name === "agent/tool-stream");
     expect(mainFrames).toHaveLength(1);
     expect(mainFrames[0]?.payload).toMatchObject({ session: "main-1", callId: "c1", delta: "main-delta" });
-    // 主轮边界不冲子的 pending（子后台跨父轮运行——收口审 K-H1 回归）
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(2, "turn/end", { turn: 0, reason: { kind: "completed" } }) });
     expect(w.frames.filter((f) => f.name === "agent/tool-stream").some((f) => (f.payload as { session?: string }).session === "child-9")).toBe(false);
-    // 子 tool/result 结算：尾批冲净 + entry 撤（25ms 窗内两 delta 连接合并——无损）
     w.ctx.emit(agentToolStream, { session: CHILD, callId: "c1", delta: "child-delta-2" });
     w.ctx.emit(sessionEvent, { session: CHILD, event: ev(3, "tool/result", { turn: 0, step: 0, callId: "c1", content: "done" }) });
     const childFrames = w.frames.filter((f) => f.name === "agent/tool-stream" && (f.payload as { session?: string }).session === "child-9");
@@ -158,7 +151,7 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
     expect(childFrames[0]?.agentName).toBe("agent-abc12345");
     await new Promise((resolve) => {
       setTimeout(resolve, 60);
-    }); // 结算后无残留发射
+    });
     expect(w.frames.filter((f) => f.name === "agent/tool-stream").length).toBe(2);
   });
 
@@ -168,9 +161,8 @@ describe("事件桥归属（BATCH2 §3 D1/D2/D3 回归）", () => {
     w.ctx.emit(sessionEvent, { session: CHILD, event: ev(0, "turn/start", { turn: 0 }) });
     w.ctx.emit(sessionEvent, { session: CHILD, event: ev(1, "turn/end", { turn: 0, reason: { kind: "completed" } }) });
     const frames = w.frames.filter((f) => f.name === "agent/tool-stream");
-    expect(frames).toHaveLength(1); // 轮边界冲净（不丢弃）
+    expect(frames).toHaveLength(1);
     expect(frames[0]?.payload).toMatchObject({ session: "child-9", callId: "c2", delta: "tail" });
-    // sessionDisposed 兜底：新 pending 在无结算边沿时随会话终结冲净
     w.ctx.emit(agentToolStream, { session: CHILD, callId: "c3", delta: "last" });
     w.ctx.emit(sessionDisposed, { session: CHILD });
     expect(w.frames.filter((f) => f.name === "agent/tool-stream").some((f) => (f.payload as { callId?: string }).callId === "c3")).toBe(true);
@@ -197,17 +189,17 @@ describe("命令执行中计数（BATCH3 §2.4——busy 面/清账面）", () =
     const w = await wiredBridge();
     expect(w.bridge.commandBusy()).toBe(false);
     w.ctx.emit(sessionEvent, { session: CHILD, event: ev(0, "command/run", { commandId: "c-x", name: "compact" }) });
-    expect(w.bridge.commandBusy()).toBe(false); // 子会话不计
+    expect(w.bridge.commandBusy()).toBe(false);
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(1, "command/run", { commandId: "c1", name: "compact" }) });
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(2, "command/run", { commandId: "c2", name: "compact" }) });
     expect(w.bridge.commandBusy()).toBe(true);
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(3, "command/done", { commandId: "c1", kind: "success" }) });
-    expect(w.bridge.commandBusy()).toBe(true); // c2 仍在飞
+    expect(w.bridge.commandBusy()).toBe(true);
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(4, "command/done", { commandId: "c2", kind: "error", text: "x" }) });
     expect(w.bridge.commandBusy()).toBe(false);
     w.ctx.emit(sessionEvent, { session: MAIN, event: ev(5, "command/run", { commandId: "c3", name: "compact" }) });
     expect(w.bridge.commandBusy()).toBe(true);
-    w.bridge.unsubscribe(); // fork 重装配清账
+    w.bridge.unsubscribe();
     expect(w.bridge.commandBusy()).toBe(false);
   });
 });
@@ -231,7 +223,6 @@ describe("内部驱动轮 settled 合成（delegation notify 等无驱动命令�
   test("主会话 idle 边沿且无 pendingSends → 合成 settled{sendId:\"\"}（completed→ok:true）且恰一次", async () => {
     const events = [ev(10, "turn/start", { turn: 5 }), ev(11, "turn/end", { turn: 5, reason: { kind: "completed" } })];
     const r = rig(events);
-    // 轮经 WAL 事件面（游标登记）——内部 kick 的真实时序：turn 已收尾，idle 边沿到达
     r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
     r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
     r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
@@ -239,7 +230,7 @@ describe("内部驱动轮 settled 合成（delegation notify 等无驱动命令�
     expect(settled?.payload).toEqual({ sendId: "", ok: true });
     r.frames.length = 0;
     r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
-    expect(r.frames.some((f) => f.name === "settled")).toBe(false); // 恰一次
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false);
   });
 
   test("error 终态 → ok:false + reason 透传；子会话 idle 边沿不触发", async () => {
@@ -247,7 +238,7 @@ describe("内部驱动轮 settled 合成（delegation notify 等无驱动命令�
     const r = rig(events);
     r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
     r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
-    r.ctx.emit(agentStatus, { session: CHILD, status: "idle" }); // 子会话 idle：不触发
+    r.ctx.emit(agentStatus, { session: CHILD, status: "idle" });
     expect(r.frames.some((f) => f.name === "settled")).toBe(false);
     r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
     expect(r.frames.find((f) => f.name === "settled")?.payload).toEqual({ sendId: "", ok: false, reason: "llm died" });
@@ -259,7 +250,7 @@ describe("内部驱动轮 settled 合成（delegation notify 等无驱动命令�
     r.ctx.emit(sessionEvent, { session: MAIN, event: events[0] as SessionEvent });
     r.ctx.emit(sessionEvent, { session: MAIN, event: events[1] as SessionEvent });
     r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
-    expect(r.frames.some((f) => f.name === "settled")).toBe(false); // 驱动轮：settled 由 settleAfter 兑付
+    expect(r.frames.some((f) => f.name === "settled")).toBe(false);
     r.setPending(0);
     r.ctx.emit(agentStatus, { session: MAIN, status: "idle" });
     expect(r.frames.some((f) => f.name === "settled")).toBe(true);
@@ -292,12 +283,11 @@ describe("观察面原文保真（TRUNCATED-TOOL-RESCUE 层 1 前置——截断
           { type: "finish", finish: { kind: "max-tokens" } },
         ]),
     );
-    for await (const _ of stream) void _; // 拉穿流（tap 在迭代中喂 partial + 发帧）
+    for await (const _ of stream) void _;
     const snap = w.readPartial() as { content?: Array<{ type: string; text?: string }> };
     expect(snap).not.toBeNull();
     const toolBlock = snap.content?.find((b) => b.type === "tool_use_partial");
-    expect(toolBlock?.text).toBe(raw); // 半截原文逐字——观察面看到的即模型真实交付（修补版回退在此断言下会红）
-    // llm/chunk 帧同步透传原文（下游消费者与预览同源）
+    expect(toolBlock?.text).toBe(raw);
     const toolFrame = w.frames.filter((f) => f.name === "llm/chunk").map((f) => (f.payload as { chunk?: { argumentsDelta?: string } }).chunk?.argumentsDelta).filter(Boolean);
     expect(toolFrame).toEqual([raw]);
   });

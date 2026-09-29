@@ -1,4 +1,3 @@
-// L2 分片重组器：单逻辑帧（streamId+seq 定位；DESIGN §1.2 上限集）。
 import { REASSEMBLY_MAX_BYTES, REASSEMBLY_MAX_SEGMENTS } from "./limits.ts";
 import type { ChunkSpec } from "./reliable.ts";
 

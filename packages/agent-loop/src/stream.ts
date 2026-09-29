@@ -1,7 +1,3 @@
-// 流累积与结算（docs/AGENT-LOOP-DRIVER.md §1.4）：text-delta 拼接、thinking-delta 拼接
-// （落盘收集——docs/STREAM-PARTIAL-PERSISTENCE.md，回传面仍不投影）、tool-call-delta 按
-// index 聚积、usage 捕获、finish 三态；结算判定（message / attempt / 空）。
-
 import type { ContentBlock } from "@x-harness/session";
 import type { LlmChunk, LlmFinish, TokenUsage } from "@x-harness/llm";
 
@@ -25,11 +21,9 @@ export class StreamAccumulator {
         this.textParts.push(chunk.text);
         break;
       case "thinking-delta":
-        this.thinkingParts.push(chunk.text); // 落账收集（docs/STREAM-PARTIAL-PERSISTENCE.md——回传面仍不投影）
+        this.thinkingParts.push(chunk.text);
         break;
       case "thinking-signature":
-        // 块定形签名收集（CONTEXT-TOKEN-UNIFICATION §3.1 L2）：仅 thinking_end 产——
-        // 中断流（无 end 帧）天然缺席，完整性门在源头
         this.signatureParts.push({ signature: chunk.signature, redacted: chunk.redacted });
         break;
       case "tool-call-delta": {
@@ -60,12 +54,10 @@ export class StreamAccumulator {
     return this.textParts.join("");
   }
 
-  /** 本 attempt 思考全文（增量拼接；无思考=空串）——落盘专用，空结算判定不含思考 */
   get thinkingText(): string {
     return this.thinkingParts.join("");
   }
 
-  /** 块定形签名清单（落账用；origin 由落账侧钉入——累积层不知路由） */
   get signatureBlocks(): ReadonlyArray<{ signature: string; redacted: boolean }> {
     return this.signatureParts;
   }
@@ -79,7 +71,7 @@ export class StreamAccumulator {
   }
 
   get hasContent(): boolean {
-    return this.text !== "" || this.calls.size > 0; // 拼接后判空——零宽帧（replay-guard 保活）不计内容
+    return this.text !== "" || this.calls.size > 0;
   }
 
   get toolUseBlocks(): ContentBlock[] {
@@ -93,9 +85,6 @@ export class StreamAccumulator {
   }
 }
 
-/** 流空闲看门狗赛跑：idleMs ≤0 直通；超时以 timedOut 哨兵解决（不抛——取消语义独占，
- *  超时注入 finish 的路径在消费方）。败者收殓：超时路径的 pending 随后可能因 abort 传导
- *  而拒绝，附挂 catch 防悬空 rejection */
 type IdleRace<T> = { readonly timedOut: true } | { readonly timedOut: false; readonly value: T };
 
 export async function raceIdleChunk<T>(pending: Promise<T>, idleMs: number): Promise<IdleRace<T>> {
@@ -114,10 +103,6 @@ export async function raceIdleChunk<T>(pending: Promise<T>, idleMs: number): Pro
   }
 }
 
-/** 结算判定：message（stop/max-tokens，或有内容的 abort）/ attempt（错误、空完成、无 finish 流）。
- *  attempt 携 code/rawReason/retryAfterMs 透传给 RequestFailure——重试件可重试判定与
- *  error-recovery 分类（真错误 vs 边缘截断形态）的输入。
- *  message 携 rawReason（provider 原生 stop reason——收束窗口载荷的诊断与判定输入）。 */
 export type Settlement =
   | { readonly kind: "message"; readonly stopReason: "stop" | "max-tokens"; readonly rawReason?: string; readonly interrupted?: true }
   | { readonly kind: "attempt"; readonly error: string; readonly code?: string; readonly rawReason?: string; readonly retryAfterMs?: number };

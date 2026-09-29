@@ -1,6 +1,3 @@
-// CLI 入口（docs/CLI.md §2.1/§3）：解析 → 短路命令 → providers.json → 会话计划 →
-// 装配 → 模式分派（print / REPL）→ 退出清理 → 退出码。进程绑定经 CliIO 注入（可测）。
-
 import { join } from "node:path";
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { SessionId } from "@x-harness/session";
@@ -43,7 +40,6 @@ export interface CliIO {
   readonly platform: string;
 }
 
-/** stdout/stderr EPIPE（下游关管道）静默停写——print 循环对断管自行降级收尾 */
 function guarded(write: (text: string) => void): (text: string) => void {
   return (text) => {
     try {
@@ -54,7 +50,6 @@ function guarded(write: (text: string) => void): (text: string) => void {
   };
 }
 
-/** guarded + 断管回调（REPL：EPIPE 触发清理退出而非继续在死管上跑） */
 function guardedEpipe(write: (text: string) => void, onBroken: () => void): (text: string) => void {
   let broken = false;
   return (text) => {
@@ -69,7 +64,6 @@ function guardedEpipe(write: (text: string) => void, onBroken: () => void): (tex
   };
 }
 
-/** 一次性 readline 的 echo 出面（EPIPE 吞掉，与 guarded 同口径） */
 function epipeSafeWritable(io: CliIO): Writable {
   return new Writable({
     write: (chunk, _encoding, callback) => {
@@ -94,8 +88,6 @@ function listModelsLines(config: ProvidersConfig, search: string | undefined): s
   return lines.length > 0 ? `${lines.join("\n")}\n` : "";
 }
 
-/** 会话计划：archive 纯读探针（不装世界、不占锁）。pick/ambiguous 形态只在交互下可达
- *  （选择 UI 需要 stdin 所有权）；非交互一律 fail（exit 2） */
 type SessionPlanOutcome =
   | { readonly kind: "resume"; readonly id: SessionId }
   | { readonly kind: "new" }
@@ -124,7 +116,6 @@ async function planResumeId(args: CliArgs, io: CliIO, interactive: boolean): Pro
   return { kind: "pick", headers: list };
 }
 
-/** 交互选择（一次性 readline，REPL 接管 stdin 之前完成）：取消/垃圾输入 = 新会话 */
 async function chooseSessionInteractive(plan: { kind: "pick"; headers: readonly import("@x-harness/session").SessionHeader[] } | { kind: "ambiguous"; ids: readonly SessionId[] }, io: CliIO): Promise<SessionId | undefined> {
   const rl = readline.createInterface({ input: io.stdin, output: epipeSafeWritable(io), terminal: false });
   const question = (prompt: string): Promise<string | undefined> =>
@@ -144,7 +135,6 @@ async function chooseSessionInteractive(plan: { kind: "pick"; headers: readonly 
   }
 }
 
-/** broker IO：交互形态的提问面由 REPL 终端经 wireAsk 回填（buildWorld 前先占位） */
 function brokerIO(io: CliIO, interactive: boolean, ask: (prompt: string) => Promise<string | undefined>): BrokerIO {
   return {
     interactive,
@@ -153,7 +143,6 @@ function brokerIO(io: CliIO, interactive: boolean, ask: (prompt: string) => Prom
   };
 }
 
-/** 会话建立收尾（appends 注册 + restriction + flush 屏障；失败自清理收进本函数） */
 async function establishSession(plan: {
   readonly world: World;
   readonly made: AgentHandle;
@@ -165,8 +154,6 @@ async function establishSession(plan: {
   if (!args.systemPrompt) {
     world.ctx.effect(registerAppendSections(world.prompt, args.appendSystemPrompts));
   }
-  // 工具面 restriction（ELEVATION-DESIGN §2.2，W2A）：create 恒注册（无 flag=全量快照——
-  // 血缘分级的名单恒可读）；resume 带 flag 才注册（无 flag=显式全集，与现状等价）
   if (fresh || args.noTools || args.tools !== undefined || args.excludeTools !== undefined) {
     world.registry.scoped(made.agent.session.id).restrict(resolveToolNames(args, registered));
   }
@@ -179,7 +166,6 @@ async function establishSession(plan: {
   return { handle: made };
 }
 
-/** 装配世界 + 建立/恢复初始会话 + flush 屏障（session-locked 快速失败）；失败自清理 */
 async function openWorld(input: {
   readonly args: CliArgs;
   readonly config: ProvidersConfig;
@@ -190,23 +176,15 @@ async function openWorld(input: {
   readonly ask: (prompt: string) => Promise<string | undefined>;
 }): Promise<{ readonly world: World; readonly handle: AgentHandle } | { readonly failure: string }> {
   const { args, config, resolution, io } = input;
-  // mailbox 接线（AGENT-DELEGATION §5.3）：会话 id 装配期先铸（create）或复用（resume）——
-  // buildWorld 需要 mainSessionId 派生 box 名与信封路由目的地，loop.create 的缺省铸号不可达
   const mainSessionId = input.resumeId ?? mintSessionId();
   const built = await buildWorld({
     cwd: io.cwd,
-    // 内置 rg 随根配置走（X_HARNESS_HOME 覆盖 → ~/.x-harness；fetch:rg 安装层同源放置）
     rgBinDir: join(harnessHome(io.env), "bin"),
     sessionRoot: args.sessionDir ?? defaultSessionRoot(io.env),
     ...(args.workflowDir !== undefined ? { workflowDir: args.workflowDir } : {}),
-    // 本地遥测常开（OTel 落库 = harness home/telemetry.db；--no-session 时 inline 会话同样遥测）
     telemetryPath: join(harnessHome(io.env), "telemetry.db"),
-    // 上下文压缩常开（裁决 A 三面全开）：水位 + 413 紧急自愈 + /compact 统一走
-    // compactionRunner；摘要面 = 默认档装配期快照（/model 切换不改摘要拨号——装配期
-    // 事实先例同 maxOutputTokens）；缺省档窗缺席时水位分母用保守兜底窗
     compaction: {},
     persist: !args.noSession,
-    // --system-prompt 整体替换时不装基础段（装配方裁决；静态串优先是包契约）
     promptFacts: args.systemPrompt === undefined ? probeBaseFacts(io) : undefined,
     config,
     resolution,
@@ -260,8 +238,6 @@ export async function cliMain(argv: readonly string[], io: CliIO): Promise<numbe
     return 2;
   }
   const interactive = !args.print && io.stdinIsTTY;
-  // plan 档在非交互面无审批通道（broker 非 TTY 恒 deny）→ 唯一出口成死胡同
-  // （对抗审查 R3-F5——fail-fast 与垃圾档位同款 exit 2 语义）
   if (!interactive && args.permission === "plan") {
     io.stderr("plan mode requires an interactive approval channel; unavailable with -p or piped stdin\n");
     return 2;
@@ -278,7 +254,6 @@ export async function cliMain(argv: readonly string[], io: CliIO): Promise<numbe
   return interactive ? interactiveMain(context) : printMain(context);
 }
 
-/** 主流程共享上下文（参数打包：lint max-params 纪律） */
 interface MainContext {
   readonly args: CliArgs;
   readonly config: ProvidersConfig;
@@ -287,7 +262,6 @@ interface MainContext {
   readonly resumeId: SessionId | undefined;
 }
 
-/** print/管道模式：stdin 管道 + @file + 位置参数 → 单次执行退出 */
 async function printMain(context: MainContext): Promise<number> {
   const { args, config, resolution, io, resumeId } = context;
   const stdin = await readPipedStdin(io.stdin);
@@ -307,15 +281,12 @@ async function printMain(context: MainContext): Promise<number> {
     io.stderr(`startup failed: ${opened.failure}\n`);
     return 1;
   }
-  // 信号清理（^C/管道打断）：默认终止不留邮箱陈尸箱——cancel + dispose 尽力收尾后退出。
-  // dispose 后 handle/world 均已封存，退出码统一 130（SIGINT 惯例）
   let signalled = 0;
   const onSignalCleanup = (code: number): void => {
     signalled = code;
     try {
       opened.handle.agent.cancel("signalled");
     } catch {
-      /* 已在收尾路径 */
     }
   };
   process.once("SIGINT", () => onSignalCleanup(130));
@@ -339,8 +310,6 @@ async function printMain(context: MainContext): Promise<number> {
   return code;
 }
 
-/** 交互 REPL：stdin TTY。一次性选择 UI（-r/歧义前缀）先于 REPL 完成；位置参数/@file/
- *  管道 stdin 拼成初始提示依序 kick；stdout EPIPE 经 wireQuit 触发清理退出 */
 async function interactiveMain(context: MainContext): Promise<number> {
   const { args, config, resolution, io, resumeId } = context;
   const files = await processFileArgs(args.fileArgs);
@@ -348,7 +317,7 @@ async function interactiveMain(context: MainContext): Promise<number> {
     io.stderr(`${files.reason}\n`);
     return 2;
   }
-  const stdin = await readPipedStdin(io.stdin); // TTY 恒空；防御性保持与 print 同构
+  const stdin = await readPipedStdin(io.stdin);
   const initial = buildInitialMessage({ stdin, fileText: files.value.text, firstMessage: args.messages[0] });
   const prompts = [...(initial !== undefined ? [initial] : []), ...args.messages.slice(1)];
   let ask: (prompt: string) => Promise<string | undefined> = () => Promise.resolve(undefined);

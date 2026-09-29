@@ -1,6 +1,3 @@
-// 13 个真实场景插件验证集（架构自洽走查的实体化）：每个用例 = 一次表面走查。
-// 装置 = F1 kits + F3 testkit dogfood（test-world.ts）。
-
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { Database } from "bun:sqlite";
 import { createBunSqliteExecutor, createQueryService, sqliteTelemetryPlugin } from "@x-harness/telemetry-sqlite";
@@ -64,8 +61,8 @@ describe("② 成本上限（tapSessionEvents + cancel）", () => {
       textScript("never"),
     );
     const events = await runTurn(tw, "hi");
-    expect(exceeded.length).toBeGreaterThan(0); // 熔断触发
-    expect(events.some((e) => e.type === "assistant/message")).toBe(true); // 首条已落账
+    expect(exceeded.length).toBeGreaterThan(0);
+    expect(events.some((e) => e.type === "assistant/message")).toBe(true);
     await tw.cleanup();
   });
 });
@@ -96,8 +93,8 @@ describe("④ 死循环纠正（transformAssistant × transformMessages 组合�
     }
     const events = made.value.agent.session.events();
     const all = textsOf(events, "assistant/message").join("|");
-    expect(all).toContain("[loop detected and truncated"); // 第二轮同尾 → 截断
-    expect(textsOf(events, "user/message").some((t) => t.includes("repeating yourself"))).toBe(true); // 第三轮注入
+    expect(all).toContain("[loop detected and truncated");
+    expect(textsOf(events, "user/message").some((t) => t.includes("repeating yourself"))).toBe(true);
     await tw.cleanup();
   });
 });
@@ -136,18 +133,17 @@ describe("⑦ 本地遥测（telemetry-sqlite 生产路径——替代旧 audit-
     })());
     const events = await runTurn(tw, "audit me");
     const query = createQueryService(exec);
-    // 事件流全量落 log 表：从 otel_sessions 提取唯一 session id 再对账
     const sessions = exec.all<{ session_id: string }>("SELECT DISTINCT session_id FROM otel_sessions");
     expect(sessions.length).toBe(1);
     const id = sessions[0]?.["session_id"] ?? "";
     expect(query.logsOf(id).map((row) => row.eventType)).toEqual(events.map((event) => event.type));
-    expect(query.usageOf(id)).toEqual({ inputTokens: 9, outputTokens: 3, cacheRead: 1, cacheWrite: 2 }); // usage 四字段透传
+    expect(query.usageOf(id)).toEqual({ inputTokens: 9, outputTokens: 3, cacheRead: 1, cacheWrite: 2 });
     const names = query.spansOf(id).map((row) => row.name);
     expect(names[0]).toBe("session");
     expect(names).toContain("turn");
     expect(names).toContain("step");
     expect(names).toContain("llm.chat");
-    await tw.cleanup(); // teardown 终排空完成后再关库（插件不持连接——close 归宿主）
+    await tw.cleanup();
     db.close();
   });
 });
@@ -173,7 +169,7 @@ describe("⑨ 模型降级（requestError × request 组合）", () => {
     );
     const events = await runTurn(tw, "q");
     expect(textsOf(events, "assistant/message")).toEqual(["from-backup"]);
-    expect(tw.calls.some((c) => c.model === "backup-model")).toBe(true); // 拨号变换生效
+    expect(tw.calls.some((c) => c.model === "backup-model")).toBe(true);
     await tw.cleanup();
   });
 });
@@ -193,8 +189,8 @@ describe("⑩ 轻量记忆（tap 持久化 × 注入）", () => {
       seed.value.agent.followup("remind me the launch code");
       await seed.value.agent.whenIdle();
       const users = textsOf(seed.value.agent.session.events(), "user/message");
-      expect(users.some((t) => t.includes("Relevant memory") && t.includes("launch code"))).toBe(true); // 注入命中
-      expect(readFileSync(store, "utf8")).toContain("alpha-77"); // 持久化在盘
+      expect(users.some((t) => t.includes("Relevant memory") && t.includes("launch code"))).toBe(true);
+      expect(readFileSync(store, "utf8")).toContain("alpha-77");
     }
     await tw.cleanup();
   });
@@ -213,7 +209,7 @@ describe("⑪ 工具限流（vetoTools 滑窗）", () => {
     const blocked = await call("c");
     expect(blocked.isError).toBe(true);
     expect(blocked.content).toContain("rate limit");
-    await new Promise((r) => { setTimeout(r, 10); }); // 窗口滑过
+    await new Promise((r) => { setTimeout(r, 10); });
     expect((await call("d")).isError).toBeUndefined();
     await ctx.dispose();
   });
@@ -241,9 +237,9 @@ describe("⑬ 新工具插件（createToolPlugin + guidance 投稿 + fetcher 注
     expect(reg.schemas().map((s) => s.name)).toContain("fetch");
     const out = await reg.dispatch({ callId: "f1", name: "fetch", args: { url: "https://example.com/x" }, signal: new AbortController().signal });
     expect(out.content).toContain("body-of:https://example.com/x");
-    expect(tw.world.prompt.assemble().text).toContain("## Web Fetch"); // guidance 投稿停靠
+    expect(tw.world.prompt.assemble().text).toContain("## Web Fetch");
     const bad = await reg.dispatch({ callId: "f2", name: "fetch", args: { url: "ftp://x" }, signal: new AbortController().signal });
-    expect(bad.isError).toBe(true); // 协议门
+    expect(bad.isError).toBe(true);
     await tw.cleanup();
   });
 });
@@ -258,9 +254,9 @@ describe("⑭ 每会话动态上下文（sessionCreated → scoped section + 终
     const withLayer = tw.world.prompt.assemble({ sessionId: sid }).text;
     expect(withLayer).toContain("Context for session");
     expect(withLayer).toContain("cwd=/w/ctx");
-    expect(tw.world.prompt.assemble().text).not.toContain("Context for session"); // 他会话不受污染
-    await made.value.dispose(); // → sessionDisposed → dropLayer
-    expect(tw.world.prompt.assemble({ sessionId: sid }).text).not.toContain("Context for session"); // 清层生效
+    expect(tw.world.prompt.assemble().text).not.toContain("Context for session");
+    await made.value.dispose();
+    expect(tw.world.prompt.assemble({ sessionId: sid }).text).not.toContain("Context for session");
     await tw.cleanup();
   });
 });

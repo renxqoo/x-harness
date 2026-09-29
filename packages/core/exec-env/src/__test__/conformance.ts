@@ -1,13 +1,9 @@
-// read 面契约一致性套件（docs/EXEC-ENV.md §7）：同一套断言跑 local 真盘与内存 fake 双腿；
-// 双腿通用用例在此，local-only / fake-only 用例在各腿测试文件。local 腿对内核级语义权威。
-
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it, beforeAll, afterAll } from "vitest";
 import type { ReadFace } from "../types.ts";
 
-/** 双腿种子（fake 水化与 local 真盘共用同一目录形态） */
 export async function seedReadFace(root: string): Promise<{ readonly big: Buffer; readonly hello: string }> {
   const hello = "hello\nworld\n";
   await writeFile(join(root, "hello.txt"), hello, "utf8");
@@ -16,12 +12,11 @@ export async function seedReadFace(root: string): Promise<{ readonly big: Buffer
   await mkdir(join(root, "sub", "deep"), { recursive: true });
   await writeFile(join(root, "sub", "inner.txt"), "inner\n", "utf8");
   await writeFile(join(root, "sub", "deep", "deeper.txt"), "deeper\n", "utf8");
-  const big = Buffer.from("汉字αβ𝄞行".repeat(20_000), "utf8"); // 多字节（3/4 字节混排）≈160KB——跨 chunk 撕裂
+  const big = Buffer.from("汉字αβ𝄞行".repeat(20_000), "utf8");
   await writeFile(join(root, "big.txt"), big);
   return { big, hello };
 }
 
-/** 双腿通用套件：make 在 root 种子完成后构造被测面 */
 export function readFaceBothSuite(make: (root: string) => ReadFace): () => void {
   return () => {
     let root = "";
@@ -77,10 +72,10 @@ export function readFaceBothSuite(make: (root: string) => ReadFace): () => void 
       }
       expect(Buffer.concat(parts).equals(big)).toBe(true);
       const again = await open.handle.read();
-      expect(again).toEqual({ ok: true, data: null }); // EOF 稳定
+      expect(again).toEqual({ ok: true, data: null });
       await open.handle.close();
       const afterClose = await open.handle.read();
-      expect(afterClose).toEqual({ ok: true, data: null }); // close 后不 throw、不再出数据
+      expect(afterClose).toEqual({ ok: true, data: null });
     });
 
     it("close 幂等", async () => {
@@ -100,17 +95,15 @@ export function readFaceBothSuite(make: (root: string) => ReadFace): () => void 
       const innerReal = await env.realpath(join(root, "sub", "inner.txt"));
       expect(innerReal).toBe(join(subReal, "inner.txt"));
       const tail = await env.realpath(join(root, "sub", "no", "such.txt"));
-      expect(tail).toBe(join(subReal, "no", "such.txt")); // 最深存在祖先 + 词法余段
+      expect(tail).toBe(join(subReal, "no", "such.txt"));
       const deepMissing = await env.realpath(join(root, "ghost-a", "ghost-b", "x.txt"));
       expect(deepMissing).toBe(join(await env.realpath(root), "ghost-a", "ghost-b", "x.txt"));
     });
 
     it("realpath：全不存在路径锚根保留完整尾段（回归：曾丢段）；相对入参以 env.root 解析", async () => {
       const rootReal = await env.realpath(root);
-      // 根自身存在但子段全缺——最深存在祖先=根，尾段必须原样拼接
       const ghost = await env.realpath(join(root, "ghost-a", "ghost-b", "x.txt"));
       expect(ghost).toBe(join(rootReal, "ghost-a", "ghost-b", "x.txt"));
-      // 相对入参锚 env.root（不落 process.cwd）
       const rel = await env.realpath("sub/inner.txt");
       expect(rel).toBe(join(rootReal, "sub", "inner.txt"));
     });

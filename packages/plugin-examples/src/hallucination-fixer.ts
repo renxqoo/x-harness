@@ -1,6 +1,3 @@
-// ③ 幻觉纠正：assistant 落账前检重复段落折叠 + 标记（transformAssistant——上下文出域）。
-// 真实场景：模型复读机/自相矛盾段落的运行时修复。
-
 import type { Disposer, Plugin } from "@x-harness/core";
 import type { Context } from "@x-harness/core";
 import type { AssistantSettlement } from "@x-harness/agent-loop";

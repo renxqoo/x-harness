@@ -1,7 +1,3 @@
-// skills/inspect + skills/install 单测（docs/SKILL-INSTALL.md §7）：候选三态与问题码、
-// 名围栏、拷贝语义（含 symlink 跳过）、覆盖与回滚、限额、生效目录集门禁、写后复检。
-// 隔离靠 homeDir 注入（user 技能根）+ 临时源树；限额注入让小限额可测。
-
 import { chmod, lstat, mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -24,7 +20,6 @@ afterAll(async () => {
 
 const LIMITS: SkillImportLimits = { maxBytes: 1024 * 1024, maxEntries: 64 };
 
-/** 造一个技能目录并返回其路径；frontmatter 为 null 表示不写 SKILL.md */
 async function makeSkill(base: string, dirName: string, frontmatter: string | null): Promise<string> {
   const dir = join(base, dirName);
   await mkdir(dir, { recursive: true });
@@ -95,9 +90,8 @@ describe("installSkill", () => {
     const outcome = await installSkill({ sourcePath: from, homeDir: home, limits: LIMITS });
     expect(outcome).toEqual({ ok: true, skill: { name: "alpha", path: join(root, "alpha", "SKILL.md"), skippedEntries: 0 } });
     expect(await readFile(join(root, "alpha", "references", "guide.md"), "utf8")).toBe("# guide\n");
-    expect((await stat(from)).isDirectory()).toBe(true); // 源不动（复制而非移动）
+    expect((await stat(from)).isDirectory()).toBe(true);
     expect(await loadSkills([root])).toEqual({ skills: { alpha: { name: "alpha", description: "A", path: join(root, "alpha", "SKILL.md") } }, warnings: [] });
-    // 暂存与备份不留残迹
     expect(await readdir(join(home, ".x-harness", ".tmp"))).toEqual([]);
   });
 
@@ -108,7 +102,7 @@ describe("installSkill", () => {
     const outcome = await installSkill({ sourcePath: from, homeDir: home, limits: LIMITS });
     expect(outcome.ok && outcome.skill.name).toBe("tavily-cli");
     expect((await stat(join(home, ".x-harness", "skills", "tavily-cli", "SKILL.md"))).isFile()).toBe(true);
-    expect(await readFile(join(from, "SKILL.md"), "utf8")).toContain("name: tavily-cli"); // 源不动
+    expect(await readFile(join(from, "SKILL.md"), "utf8")).toContain("name: tavily-cli");
   });
 
   it("显式 name 覆盖：只改写副本的 name 行（源文件与其余字段字节不变）", async () => {
@@ -142,7 +136,7 @@ describe("installSkill", () => {
     if (outcome.ok) return;
     expect(outcome.error.code).toBe("invalid_input");
     expect(outcome.error.message).toContain("invalid skill name");
-    expect(await stat(join(home, ".x-harness", "skills")).catch(() => undefined)).toBeUndefined(); // 未落盘（拒在写之前）
+    expect(await stat(join(home, ".x-harness", "skills")).catch(() => undefined)).toBeUndefined();
   });
 
   it.each([
@@ -283,12 +277,10 @@ describe("installSkill", () => {
     expect(outcome.error.code).toBe("state_conflict");
     expect(outcome.error.message).toContain("not an effective skill directory");
     expect(await stat(join(home, ".x-harness", "skills")).catch(() => undefined)).toBeUndefined();
-    // 生效目录集含装载器侧用户根 → 放行
     process.env["X_HARNESS_SKILLS_DIRS"] = `${join(home, "elsewhere")}:${join(homedir(), ".x-harness", "skills")}`;
     expect((await installSkill({ sourcePath: from, homeDir: home, limits: LIMITS })).ok).toBe(true);
   });
 
-  // root 运行时 chmod 不产生 EACCES——权限用例仅在非 root 生效
   it.skipIf(process.getuid?.() === 0)("换入失败（技能根只读）→ io_failed + 暂存清理（不改变既有状态）", async () => {
     const home = await tempDir("xh-home-");
     const src = await tempDir("xh-src-");
@@ -308,7 +300,6 @@ describe("installSkill", () => {
     }
   });
 
-  // root 运行时 chmod 不产生 EACCES——权限用例仅在非 root 生效
   it.skipIf(process.getuid?.() === 0)("嵌套子树内文件不可读 → io_failed + 整树回滚（拷贝失败向上传播）", async () => {
     const home = await tempDir("xh-home-");
     const src = await tempDir("xh-src-");
@@ -322,7 +313,7 @@ describe("installSkill", () => {
       if (outcome.ok) return;
       expect(outcome.error.code).toBe("io_failed");
       expect(await stat(join(home, ".x-harness", "skills", "alpha")).catch(() => undefined)).toBeUndefined();
-      expect(await readdir(join(home, ".x-harness", ".tmp"))).toEqual([]); // 暂存整树回收
+      expect(await readdir(join(home, ".x-harness", ".tmp"))).toEqual([]);
     } finally {
       await chmod(join(from, "references", "locked.md"), 0o644);
     }
@@ -378,8 +369,8 @@ describe("installSkill", () => {
     if (outcome.ok) return;
     expect(outcome.error.code).toBe("io_failed");
     expect(outcome.error.message).toContain("temp path is not a directory");
-    expect(await readdir(elsewhere)).toEqual([]); // 链接目标零写入
-    expect(await stat(join(base, "skills")).catch(() => undefined)).toBeUndefined(); // 技能根都未建
+    expect(await readdir(elsewhere)).toEqual([]);
+    expect(await stat(join(base, "skills")).catch(() => undefined)).toBeUndefined();
   });
 
   it("技能根父路径被文件占位 → io_failed（不崩、不留暂存）", async () => {

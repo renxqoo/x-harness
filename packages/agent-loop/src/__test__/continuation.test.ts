@@ -1,8 +1,3 @@
-// 收束窗口机制测试（docs/OUTPUT-TOKEN-CONTINUATION.md 契约·测试口径「agent-loop 内核机制」节）：
-// 窗口契约（派发时点/载荷纯事实/带工具派发守门/垃圾 fail-loud）、resume 应用（指令载体/出口不变量）、
-// fail 应用（error 终态/括号配对）、无决策逐字节回归、暂停吸收与保序、持久载体、
-// abort/竞态/自愈重试带指令、续写步 preStep 否决。策略本体（3 次计数等）在 agent-continuation 包测。
-
 import { Type } from "@sinclair/typebox";
 import { describe, expect, it, beforeEach } from "vitest";
 import type { LlmChunk } from "@x-harness/llm";
@@ -28,7 +23,6 @@ interface ConcludePayload {
   readonly truncatedCount?: number;
 }
 
-/** 注册假策略中间件（next 纪律：让位 = 透传下游；decide 垃圾由用例自带） */
 function registerConclude(world: World, decide: (payload: ConcludePayload) => unknown): { calls: ConcludePayload[]; off: () => void } {
   const calls: ConcludePayload[] = [];
   const off = world.ctx.on(agentTurnConclude, async (payload: unknown, next: (input: unknown) => Promise<unknown>) => {
@@ -62,7 +56,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     agent.followup("q");
     await agent.whenIdle();
 
-    expect(calls).toHaveLength(2); // 第一次 max-tokens 截断、第二次 stop 收尾（插件让位 → 现状路径）
+    expect(calls).toHaveLength(2);
     expect(calls[0]).toMatchObject({ turn: 0, step: 0, stopReason: "max-tokens", rawReason: "max_tokens", hasTools: false, truncatedCount: 0 });
     expect(calls[0]?.content).toEqual([{ type: "text", text: "half" }]);
     expect(calls[1]).toMatchObject({ stopReason: "stop" });
@@ -77,13 +71,13 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
       content: [{ type: "text", text: INSTRUCTION }],
     });
 
-    expect(world.fake.calls).toHaveLength(2); // 续写请求发生（收件箱全空仍发——empty 不可达）
+    expect(world.fake.calls).toHaveLength(2);
     const messages = world.fake.calls[1]?.messages ?? [];
-    expect(messages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: INSTRUCTION }] }); // 末条=指令（保序）
-    expect(messages.at(-2)).toMatchObject({ role: "assistant" }); // 倒数第二条=截断 partial
+    expect(messages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: INSTRUCTION }] });
+    expect(messages.at(-2)).toMatchObject({ role: "assistant" });
 
     const turnEnd = agent.session.events().at(-1);
-    expect(turnEnd?.data).toEqual({ turn: 0, reason: { kind: "completed" } }); // 出口不变量：粘性不残留
+    expect(turnEnd?.data).toEqual({ turn: 0, reason: { kind: "completed" } });
     off();
     await handle.dispose();
   });
@@ -96,7 +90,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "thinking-delta", text: "长思考……预算全花在这里" };
         yield { type: "usage", usage: { input: 141174, output: 8192 } };
-        yield { type: "finish", finish: { kind: "max-tokens" } }; // content 空、thinking 在场
+        yield { type: "finish", finish: { kind: "max-tokens" } };
       })(),
     );
     world.fake.scripts.push(textScript("正文"));
@@ -104,10 +98,10 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     agent.followup("q");
     await agent.whenIdle();
 
-    expect(calls[0]).toMatchObject({ stopReason: "max-tokens", hasThinking: true }); // 载荷透传
-    expect(agentMessages(agent, "agent/message")).toHaveLength(1); // 续写触发——不再静默收轮
+    expect(calls[0]).toMatchObject({ stopReason: "max-tokens", hasThinking: true });
+    expect(agentMessages(agent, "agent/message")).toHaveLength(1);
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "completed" } });
-    expect(world.fake.calls[1]?.messages.at(-1)).toMatchObject({ role: "user" }); // 续写请求末条=指令
+    expect(world.fake.calls[1]?.messages.at(-1)).toMatchObject({ role: "user" });
     off();
     await handle.dispose();
   });
@@ -121,7 +115,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     agent.followup("q");
     await agent.whenIdle();
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ hasTools: false, truncatedCount: 0 }); // 无工具事实
+    expect(calls[0]).toMatchObject({ hasTools: false, truncatedCount: 0 });
     expect(agentMessages(agent, "agent/message")).toHaveLength(0);
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } });
     off();
@@ -131,7 +125,6 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
   it("带工具派发（WER 批 A）：max-tokens + tool_use → 窗口可达（hasTools/truncatedCount 事实）、tool/result 先于派发、让位后粘性收轮", async () => {
     const world = await makeWorld();
     worlds.push(world);
-    // 假策略按 hasTools 守门（agent-continuation 缺省判据的镜像）——带工具让位 final
     const { calls, off } = registerConclude(world, (p) => (p.stopReason === "max-tokens" && p.hasTools !== true ? resumeOf() : undefined));
     world.tools.register({ name: "add", inputSchema: Type.Object({}), execute: async () => ({ content: "3" }) });
     world.fake.scripts.push((async function* (): AsyncGenerator<LlmChunk> {
@@ -141,15 +134,14 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     const { agent, handle } = await spawn(world);
     agent.followup("q");
     await agent.whenIdle();
-    expect(calls).toHaveLength(1); // 收束点可达（带工具亦派发）
-    expect(calls[0]).toMatchObject({ turn: 0, step: 0, stopReason: "max-tokens", hasTools: true, truncatedCount: 0 }); // 纯事实载荷
-    expect(agentMessages(agent, "tool/result")).toHaveLength(1); // 工具照常执行
-    // 事件序：tool/result 全落账先于窗口派发（派发点规格——C5 判定的输入前提）
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ turn: 0, step: 0, stopReason: "max-tokens", hasTools: true, truncatedCount: 0 });
+    expect(agentMessages(agent, "tool/result")).toHaveLength(1);
     const seq = types(agent);
     expect(seq.indexOf("tool/result")).toBeLessThan(seq.indexOf("step/end"));
-    expect(agentMessages(agent, "agent/message")).toHaveLength(0); // 让位：无指令
-    expect(world.fake.calls).toHaveLength(1); // 无续写请求
-    expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } }); // 粘性（让位 final 等价）
+    expect(agentMessages(agent, "agent/message")).toHaveLength(0);
+    expect(world.fake.calls).toHaveLength(1);
+    expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "max-tokens" } });
     off();
     await handle.dispose();
   });
@@ -171,12 +163,12 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     expect(calls).toHaveLength(4);
     expect(world.fake.calls).toHaveLength(4);
     const partials = agentMessages(agent, "assistant/message");
-    expect(partials).toHaveLength(4); // 保存先于判定：第 4 次 partial 也已落账
+    expect(partials).toHaveLength(4);
     for (const partial of partials) expect((partial as { data: { stopReason?: string } }).data).toMatchObject({ stopReason: "max-tokens" });
-    expect(agentMessages(agent, "agent/message")).toHaveLength(3); // resume ×3
+    expect(agentMessages(agent, "agent/message")).toHaveLength(3);
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "error", message: GIVE_UP.message, code: "output-token-limit" } });
     const seq = types(agent);
-    expect(seq.filter((t) => t === "step/start")).toHaveLength(seq.filter((t) => t === "step/end").length); // 括号配对（含 fail 步）
+    expect(seq.filter((t) => t === "step/start")).toHaveLength(seq.filter((t) => t === "step/end").length);
     off();
     await handle.dispose();
   });
@@ -189,7 +181,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     world.fake.scripts.push(textScript("half", "max-tokens"));
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
-        agent.steer("late steer"); // 流中入队（续写请求已构建——不含它）
+        agent.steer("late steer");
         yield { type: "text-delta", text: " done" };
         yield { type: "finish", finish: { kind: "stop" } };
       })(),
@@ -199,11 +191,10 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     await agent.whenIdle();
 
     const continuationMessages = (world.fake.calls[1]?.messages ?? []).map((m) => JSON.stringify(m));
-    expect(continuationMessages.some((m) => m.includes("late steer"))).toBe(false); // 暂停吸收
+    expect(continuationMessages.some((m) => m.includes("late steer"))).toBe(false);
     const steerMessages = (world.fake.calls[2]?.messages ?? []).map((m) => JSON.stringify(m));
-    expect(steerMessages.some((m) => m.includes("late steer"))).toBe(true); // stopping 窗口消化（不搁浅）
+    expect(steerMessages.some((m) => m.includes("late steer"))).toBe(true);
     expect(world.fake.calls).toHaveLength(3);
-    // 三元全序：截断 partial < 指令 < steer（保序结构钉死——防未来重构挪位不红）
     const third = world.fake.calls[2]?.messages ?? [];
     const at = (needle: string): number => third.findIndex((m) => JSON.stringify(m).includes(needle));
     expect(at("half")).toBeLessThan(at(INSTRUCTION));
@@ -228,7 +219,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     const third = world.fake.calls[2]?.messages ?? [];
     const directiveAt = third.findIndex((m) => m.role === "user" && JSON.stringify(m.content).includes(INSTRUCTION));
     const partialAt = third.findIndex((m) => m.role === "assistant" && JSON.stringify(m.content).includes("half"));
-    expect(directiveAt).toBeGreaterThan(-1); // 持久载体：指令仍在（非陈旧泄漏——位置钉死）
+    expect(directiveAt).toBeGreaterThan(-1);
     expect(directiveAt).toBeGreaterThan(partialAt);
     off();
     await handle.dispose();
@@ -258,15 +249,15 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "text-delta", text: " more" };
-        agent.cancel("user"); // 流中取消：aborted 赛跑路径
-        await new Promise<never>(() => {}); // 悬停流（abort 信号打断汲取）
+        agent.cancel("user");
+        await new Promise<never>(() => {});
       })(),
     );
     agent.followup("q");
     await agent.whenIdle();
 
     const interrupted = agentMessages(agent, "assistant/message").at(-1) as { data: { interrupted?: true } } | undefined;
-    expect(interrupted?.data).toMatchObject({ interrupted: true }); // partial 保序落账
+    expect(interrupted?.data).toMatchObject({ interrupted: true });
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "aborted", cause: "user" } });
     expect(world.fake.calls).toHaveLength(2);
     off();
@@ -288,10 +279,10 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     agent.followup("q");
     await agent.whenIdle();
 
-    expect(world.fake.calls).toHaveLength(3); // 截断 → 失败 → 自愈重试
+    expect(world.fake.calls).toHaveLength(3);
     const retried = world.fake.calls[2]?.messages ?? [];
-    expect(retried.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: INSTRUCTION }] }); // 重试仍是同一续写
-    expect(agentMessages(agent, "agent/message")).toHaveLength(1); // retry 不重复落卷
+    expect(retried.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: INSTRUCTION }] });
+    expect(agentMessages(agent, "agent/message")).toHaveLength(1);
     off();
     offRetry();
     await handle.dispose();
@@ -309,7 +300,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     const userAt = surface.findIndex((e) => e.type === "user/message" && JSON.stringify(e.data.content).includes("user steer first"));
     const agentAt = surface.findIndex((e) => e.type === "agent/message" && JSON.stringify(e.data.content).includes("report second"));
     expect(userAt).toBeGreaterThan(-1);
-    expect(agentAt).toBeGreaterThan(userAt); // 条目序 = 落账序（保序）
+    expect(agentAt).toBeGreaterThan(userAt);
     expect(agent.session.events().filter((e) => e.type === "user/message").length).toBe(1);
     expect(agent.session.events().filter((e) => e.type === "agent/message").length).toBe(1);
     await handle.dispose();
@@ -333,7 +324,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
 
     expect(agent.session.events().at(-1)?.data).toEqual({ turn: 0, reason: { kind: "blocked", reason: "gate" } });
     const inserts = agent.session.events().filter((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "insert");
-    expect(inserts).toHaveLength(1); // 仅 followup 的 insert——续写步 reject 无回灌噪音
+    expect(inserts).toHaveLength(1);
     off();
     offPre();
     await handle.dispose();
@@ -342,7 +333,6 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
 
 
 describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", () => {
-  /** 半截 tool call 脚本：arguments 是真半截 JSON 原文（层 1 前置出口）+ max-tokens 终态 */
   function truncatedToolScript(callId: string, name: string, args: string): AsyncGenerator<LlmChunk> {
     return (async function* (): AsyncGenerator<LlmChunk> {
       yield { type: "tool-call-delta", index: 0, callId, name, argumentsDelta: args };
@@ -367,7 +357,6 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     agent.followup("q");
     await agent.whenIdle();
 
-    // 不 dispatch：write 未执行，回显是截断配对文案
     const events = agent.session.events();
     const toolCall = events.find((e) => e.type === "tool/call");
     expect(toolCall?.data).toMatchObject({ callId: "c1", name: "write", arguments: '{"path":"a.txt","content":"写一半' });
@@ -375,22 +364,17 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     expect(toolResult?.data).toMatchObject({ callId: "c1", isError: true, synthetic: true });
     expect(String(toolResult?.data.content)).toContain("truncated: not executed");
     expect(String(toolResult?.data.content)).toContain("Recovered 12 chars");
-    // 抢救窗口在配对之前派发（载荷纯事实：半截原文）
     expect(rescueCalls).toHaveLength(1);
     expect(rescueCalls[0]).toMatchObject({ callId: "c1", name: "write", arguments: '{"path":"a.txt","content":"写一半' });
-    // 双通道：tool/call 只在 WAL（非 surface）、tool/result 在投影（surface append）——缺 tool/result
-    // 投影则配对失效（模型看不到应答）
     const surfaceTypes = agent.session.surface().map((node) => node.event.type);
     expect(surfaceTypes).toContain("tool/result");
     expect(surfaceTypes).not.toContain("tool/call");
-    // 事件序：半截 assistant → tool/call → tool/result → 指令（配对先于续写指令落卷）
     const seq = types(agent);
     const at = (t: string, from: number): number => seq.indexOf(t, from);
     const assistantAt = seq.indexOf("assistant/message");
     expect(at("tool/call", assistantAt)).toBeGreaterThan(assistantAt);
     expect(at("tool/result", assistantAt)).toBeGreaterThan(at("tool/call", assistantAt));
     expect(at("agent/message", assistantAt)).toBeGreaterThan(at("tool/result", assistantAt));
-    // 收束窗口可达（截断步派发一次；续写成功 stop 步再派发一次）+ 指令落卷 + 第二次模型调用
     expect(concludeCalls).toHaveLength(2);
     expect(concludeCalls[0]?.stopReason).toBe("max-tokens");
     expect(agentMessages(agent, "agent/message")).toHaveLength(1);
@@ -422,15 +406,13 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     expect(results).toHaveLength(2);
     const byId = new Map(results.map((e) => [(e.data as { callId: string }).callId, e.data as Record<string, unknown>]));
     const okResult = byId.get("ok1") as { content: string; isError?: true; synthetic?: true };
-    expect(okResult).toMatchObject({ content: "wrote" }); // 完整照常执行
-    expect(okResult.isError).toBeUndefined(); // 真实执行结果（非合成）
+    expect(okResult).toMatchObject({ content: "wrote" });
+    expect(okResult.isError).toBeUndefined();
     expect(okResult.synthetic).toBeUndefined();
-    expect(byId.get("cut1")).toMatchObject({ isError: true, synthetic: true }); // 截断配对
+    expect(byId.get("cut1")).toMatchObject({ isError: true, synthetic: true });
     expect(String(byId.get("cut1")?.["content"])).toContain("truncated: not executed");
-    // 完整调用恰执行一次、截断调用零执行
     ran = events.filter((e) => e.type === "tool/call").length;
-    expect(ran).toBe(2); // 两条 tool/call 都落账（截断的账面 + 完整的账面）
-    // 让位后粘性收轮：无第二次模型调用；窗口派发达（混合流 truncatedCount=1 事实）
+    expect(ran).toBe(2);
     expect(world.fake.calls).toHaveLength(1);
     expect(concludeCalls).toHaveLength(1);
     expect(concludeCalls[0]).toMatchObject({ stopReason: "max-tokens", hasTools: true, truncatedCount: 1 });
@@ -456,11 +438,11 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
 
     const result = agent.session.events().find((e) => e.type === "tool/result")?.data as Record<string, unknown>;
     expect(result).toMatchObject({ callId: "c1", content: "wrote" });
-    expect(result?.["isError"]).toBeUndefined(); // 照常执行非截断配对
+    expect(result?.["isError"]).toBeUndefined();
     expect(result?.["synthetic"]).toBeUndefined();
-    expect(world.fake.calls).toHaveLength(1); // 让位粘性：无续写
+    expect(world.fake.calls).toHaveLength(1);
     expect(concludeCalls).toHaveLength(1);
-    expect(concludeCalls[0]).toMatchObject({ hasTools: true, truncatedCount: 0 }); // 全完整：零截断事实
+    expect(concludeCalls[0]).toMatchObject({ hasTools: true, truncatedCount: 0 });
     expect(agent.session.events().at(-1)?.data).toMatchObject({ reason: { kind: "max-tokens" } });
     off();
     await handle.dispose();
@@ -486,7 +468,7 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
       agent.followup("q");
       await agent.whenIdle();
       const result = agent.session.events().find((e) => e.type === "tool/result")?.data as { content: string };
-      expect(result.content, `garbage=${JSON.stringify(garbage)}`).toBe(TRUNCATED_TOOL_MESSAGE); // 纯 base 文案
+      expect(result.content, `garbage=${JSON.stringify(garbage)}`).toBe(TRUNCATED_TOOL_MESSAGE);
       off();
       offRescue();
       await handle.dispose();
@@ -507,16 +489,16 @@ describe("scheduleTools 截断分区（docs/TRUNCATED-TOOL-RESCUE.md 层 1）", 
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         yield { type: "tool-call-delta", index: 0, callId: "c1", name: "write", argumentsDelta: '{"path":"a.txt","content":"写一半' };
-        made.agent.cancel("test"); // 流中取消：finish 未到，settle 前置 signal 已断
+        made.agent.cancel("test");
         yield { type: "finish", finish: { kind: "max-tokens" } };
       })(),
     );
     const { agent, handle } = made;
     agent.followup("q");
     await agent.whenIdle();
-    expect(dispatched).toBe(0); // 未派发（aborted 全序格盖过抢救增益）
+    expect(dispatched).toBe(0);
     const result = agent.session.events().find((e) => e.type === "tool/result")?.data as { content?: string } | undefined;
-    expect(result?.content).toBeUndefined(); // abort 路径 interrupted 分支收场（配对由 repair 合成）
+    expect(result?.content).toBeUndefined();
     off();
     offRescue();
     await handle.dispose();

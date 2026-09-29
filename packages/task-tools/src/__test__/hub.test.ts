@@ -1,5 +1,3 @@
-// hub 登记测试（docs/TASKS.md §1.2）：kind 唯一（重名 throw）+ 字典序路由 + 摘除语义。
-
 import { describe, expect, it } from "vitest";
 import { createTaskHub } from "../hub.ts";
 import type { TaskSource } from "../tokens.ts";
@@ -33,7 +31,7 @@ describe("task hub registry", () => {
     off();
     expect(hub.sources()).toEqual([]);
     hub.registerSource(stub("bash"));
-    off(); // 陈旧摘除句柄不得摘掉后来者
+    off();
     expect(hub.sources().map((source) => source.kind)).toEqual(["bash"]);
   });
 });

@@ -1,5 +1,3 @@
-// 20-22 号探针：guard token / 多代理端到端 / 性能预算实测。
-
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
@@ -17,10 +15,8 @@ describe("⑳ guard token（sessionCreateGuard——19 插件零使用的面）"
     const ctx = createContext();
     await loadPlugins(ctx, [sessionPlugin, sessionGuardPlugin({ check: (h) => (h.agentDepth ?? 0) > 3 ? `depth ${String(h.agentDepth)} exceeds limit 3` : undefined })]);
     const store = ctx.use(sessionStore);
-    // 正常创建（depth undefined = 根会话）
     const ok = await store.create({ id: "root-ok" as never });
     expect(ok.ok).toBe(true);
-    // 超深创建被否决
     const denied = await store.create({ id: "too-deep" as never, agent: { id: "a", type: "t", depth: 5 } });
     expect(denied.ok).toBe(false);
     if (!denied.ok) expect(denied.reason).toContain("depth 5 exceeds limit");
@@ -37,7 +33,6 @@ describe("㉑ 多代理端到端（delegation spawn + scoped persona + restricti
         allowedTools: ["read", "grep"],
       }),
     ]);
-    // 手工模拟 delegation spawn（sessionCreated 由 store.create 触发）
     const made = await tw.world.loop.create({
       agent: { ...AGENT },
       session: {
@@ -49,12 +44,10 @@ describe("㉑ 多代理端到端（delegation spawn + scoped persona + restricti
     expect(made.ok).toBe(true);
     if (!made.ok) throw new Error(made.reason);
     const sid = made.value.agent.session.id;
-    // 验证三面联合：scoped prompt + scoped restriction + 独立会话
     const promptText = tw.world.prompt.assemble({ sessionId: sid }).text;
     expect(promptText).toContain("focused researcher");
     expect(tw.world.registry.schemas({ sessionId: sid }).map((s) => s.name)).toEqual(["read", "grep"]);
-    expect(tw.world.prompt.assemble().text).not.toContain("focused researcher"); // 父世界不受污染
-    // 实际跑一轮（scoped faces + loop 全链）
+    expect(tw.world.prompt.assemble().text).not.toContain("focused researcher");
     tw.scripts.push(textScript("research complete"));
     made.value.agent.followup("search for X");
     await made.value.agent.whenIdle();
@@ -69,13 +62,11 @@ describe("㉒ 性能预算实测（DESIGN §4）", () => {
     const ctx = createContext();
     await loadPlugins(ctx, [systemPromptPlugin]);
     const prompt = ctx.use((await import("@x-harness/system-prompt")).systemPrompt);
-    // 注册 100 段（每段 ~500B）
     for (let i = 0; i < 100; i++) {
       prompt.section({ name: `sec-${String(i)}`, text: `${"x".repeat(480)} section ${String(i)}` });
     }
     const text = prompt.assemble().text;
-    expect(text.length).toBeGreaterThan(45000); // ~50KB
-    // 计时（5 次取中位）
+    expect(text.length).toBeGreaterThan(45000);
     const times: number[] = [];
     for (let i = 0; i < 5; i++) {
       const start = performance.now();
@@ -83,7 +74,7 @@ describe("㉒ 性能预算实测（DESIGN §4）", () => {
       times.push(performance.now() - start);
     }
     const median = times.sort((a, b) => a - b)[2] ?? 0;
-    expect(median).toBeLessThan(1.0); // ≤1ms 预算
+    expect(median).toBeLessThan(1.0);
     await ctx.dispose();
   });
 
@@ -104,7 +95,7 @@ describe("㉒ 性能预算实测（DESIGN §4）", () => {
       times.push(performance.now() - start);
     }
     const median = times.sort((a, b) => a - b)[2] ?? 0;
-    expect(median).toBeLessThan(0.1); // ≤0.1ms 预算
+    expect(median).toBeLessThan(0.1);
     await ctx.dispose();
   });
 
@@ -117,7 +108,6 @@ describe("㉒ 性能预算实测（DESIGN §4）", () => {
       times.push(performance.now() - start);
     }
     const median = times.sort((a, b) => a - b)[2] ?? 0;
-    expect(median).toBeLessThan(0.1); // ≤0.1ms 预算
+    expect(median).toBeLessThan(0.1);
   });
 });
-

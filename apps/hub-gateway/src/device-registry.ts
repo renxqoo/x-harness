@@ -1,6 +1,3 @@
-// 设备注册表（DESIGN §3.4）+ 去重日志 commands.jsonl（DESIGN §1.2.1 一致性 H3 处置）。
-// 去重日志 write-ahead：写命令转发 host stdin 之前先 append 落盘；response 到达补记；
-// 重启重放重建去重表 + pending 映射 + response 缓存（崩溃安全，杜绝双 prompt）。
 import { readFile, mkdir } from "node:fs/promises";
 import { appendFile } from "node:fs/promises";
 import { atomicWrite } from "./identity.ts";
@@ -33,16 +30,11 @@ export interface DeviceRegistry {
   get(deviceId: string): DeviceEntry | null;
   put(entry: DeviceEntry): void;
   remove(deviceId: string): boolean;
-  /** 去重日志：提交前 write-ahead（fsync 语义：append 后落） */
   appendCommand(deviceId: string, record: CommandLogRecord): Promise<void>;
-  /** response 到达补记 */
   appendResponse(deviceId: string, commandId: string, response: unknown): Promise<void>;
-  /** 去重查询与缓存 */
   dedupLookup(deviceId: string, commandId: string): CommandLogRecord | null;
-  /** pending 映射：hostId → (deviceId, commandId) */
   mapHostId(hostId: string, owner: { deviceId: string; commandId: string }): void;
   unmapHostId(hostId: string): { deviceId: string; commandId: string } | null;
-  /** 在飞映射枚举（启动重建 pending 用） */
   pendingHostIds(): Array<{ hostId: string; deviceId: string; commandId: string }>;
 }
 
@@ -60,9 +52,8 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
     devices = [];
   }
   const byId = new Map(devices.map((d) => [d.deviceId, d]));
-  const commandLog = new Map<string, CommandLogRecord[]>(); // deviceId → 环形
+  const commandLog = new Map<string, CommandLogRecord[]>();
   const hostIdMap = new Map<string, { deviceId: string; commandId: string }>();
-  // 重放去重日志（崩溃恢复）
   for (const device of devices) {
     try {
       const logPath = join(paths.devicesDir, device.deviceId, "commands.jsonl");
@@ -76,12 +67,10 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
           const prev = merged.get(rec.commandId);
           merged.set(rec.commandId, prev === undefined || prev.response === undefined ? rec : { ...rec, response: rec.response ?? prev.response });
         } catch {
-          // 撕裂尾行跳过（append 半写的容错）
         }
       }
       const finalRecords = [...merged.values()].slice(-COMMAND_LOG_RING_MAX);
       commandLog.set(device.deviceId, finalRecords);
-      // 重放建映射：仅未结算（无 response）的命令
       for (const rec of finalRecords) {
         if (rec.hostId !== null && rec.response === undefined) {
           hostIdMap.set(rec.hostId, { deviceId: device.deviceId, commandId: rec.commandId });
@@ -91,7 +80,6 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
       commandLog.set(device.deviceId, []);
     }
   }
-  // 注册表写链串行化（并发 atomicWrite 后写者赢会丢设备）
   let registryWriteTail: Promise<void> = Promise.resolve();
   const persistRegistry = (): Promise<void> => {
     registryWriteTail = registryWriteTail.then(() => atomicWrite(paths.registryFile, JSON.stringify({ devices: [...byId.values()] }, null, 2)));
@@ -125,9 +113,7 @@ export async function loadDeviceRegistry(paths: { devicesDir: string; registryFi
       const record = [...list].reverse().find((r) => r.commandId === commandId);
       if (record === undefined) return;
       record.response = response;
-      // 结算即释放映射（hostIdMap 无界增长修复）
       if (record.hostId !== null) hostIdMap.delete(record.hostId);
-      // append-only 补记（与 appendCommand 同一追加通路——避免重写竞态）
       const logPath = join(paths.devicesDir, deviceId, "commands.jsonl");
       await mkdir(join(paths.devicesDir, deviceId), { recursive: true });
       await appendFile(logPath, `${JSON.stringify(record)}\n`, "utf8");

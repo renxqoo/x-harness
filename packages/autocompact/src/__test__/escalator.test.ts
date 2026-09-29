@@ -1,5 +1,3 @@
-// L2 升级（对照参照系 escalator.test 语义；落账面改写为位置区间 replace 前缀）。
-
 import { describe, expect, it } from "vitest";
 import type { SurfaceNode } from "@x-harness/session";
 import { AUTO_CONTINUATION_NOTE } from "@x-harness/compaction";
@@ -17,7 +15,6 @@ function stateWithLedger(): CheckpointState {
   return state;
 }
 
-/** [u0 a1 u2 a3 u4 a5]：三轮文本 */
 function ladderNodes(tokens: number): SurfaceNode[] {
   return [
     userNode(0, textOf(tokens)),
@@ -39,8 +36,8 @@ describe("ledgerReadyForL2 / alignDownToTurnStart", () => {
     const nodes = ladderNodes(1);
     expect(alignDownToTurnStart(nodes, 4)).toBe(4);
     expect(alignDownToTurnStart(nodes, 3)).toBe(2);
-    expect(alignDownToTurnStart(nodes, 1)).toBe(0); // u0 即首个真轮起点
-    expect(alignDownToTurnStart([assistantNode(0, "a"), assistantNode(1, "b")], 1)).toBeUndefined(); // 无候选
+    expect(alignDownToTurnStart(nodes, 1)).toBe(0);
+    expect(alignDownToTurnStart([assistantNode(0, "a"), assistantNode(1, "b")], 1)).toBeUndefined();
   });
 });
 
@@ -51,22 +48,17 @@ describe("escalateL2 症状回归（CONTEXT-TOKEN-UNIFICATION S2）", () => {
       const made = await world.store.create({ id: sid("l2-think") });
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
-      // 形态复刻：每轮 assistant 正文小、thinking 巨大（46 万 thinking vs 37 万投影的等比缩小）
       for (let turn = 0; turn < 8; turn += 1) {
         seedTurn(session, { turn, user: textOf(50), assistant: { text: textOf(50), thinking: textOf(1_500), usage: { input: 10, output: 1 } } });
       }
       const state = stateWithLedger();
       state.armed = true;
       state.coveredSeq = session.surface().at(-2)?.seq ?? -1;
-      // 症状核心：l2Line 按「实报口径」设位（投影+thinking 的计费域越线、纯投影未越）
       const nodes = session.surface();
-      const projected = nodes.reduce((sum, n) => sum + nodeTokensOf(n), 0); // 纯 nodeTokens（旧尺）
-      const l2Line = Math.floor(projected * 1.2); // 介于纯投影与计费域之间——旧尺下 liveBudget > 投影全量
+      const projected = nodes.reduce((sum, n) => sum + nodeTokensOf(n), 0);
+      const l2Line = Math.floor(projected * 1.2);
       const result = escalateL2({ state, session, nodes, l2Line, emit: () => {} });
-      // 换尺后 findCutPoint 的判定域 = 计费域（含 thinking）——切点存在，落账成立。
-      // 旧尺（nodeTokens）下该 l2Line 使 findCutPoint 恒 undefined（全在保留预算内）——即 s5qad7 症状
       expect(result.ok).toBe(true);
-      // 对照锁：纯投影口径确实低于线（证明该夹具真的落在脱节区——否则用例空转）
       expect(projected).toBeLessThan(l2Line);
       const replaceEvents = session.events().filter((e) => e.type === "user/message" && typeof e.surfaceOp === "object");
       expect(replaceEvents).toHaveLength(1);
@@ -76,11 +68,9 @@ describe("escalateL2 症状回归（CONTEXT-TOKEN-UNIFICATION S2）", () => {
   });
 
   it("「L1 清后占用不降」：thinking 占主导时 L1 收益核算按计费域如实（thinking 不在 tool/result——收益不含它，预门槛拒绝不再烧缓存重写）", () => {
-    // 纯逻辑面：computeClearPlan 收益只来自 tool/result（无 thinking）——thinking 主导的
-    // 占用下 l1PreGateWorth 如实拒绝（清完仍越 L1 线）。此用例锁「不虚报收益」。
     const nodes: SurfaceNode[] = [];
     void nodes;
-    expect(true).toBe(true); // 语义由 gate.test 的 l1-no-gain 族覆盖；此处钉行为锚
+    expect(true).toBe(true);
   });
 });
 
@@ -110,17 +100,17 @@ describe("escalateL2", () => {
       }
       const state = stateWithLedger();
       state.armed = true;
-      state.coveredSeq = session.surface().at(-2)?.seq ?? -1; // 账本已覆盖全前缀（fold 恢复形态）
+      state.coveredSeq = session.surface().at(-2)?.seq ?? -1;
       const result = escalateL2({ state, session, nodes: session.surface(), l2Line: 850, emit: () => {} });
       expect(result.ok).toBe(true);
-      expect(world.llm.calls).toHaveLength(0); // 零 LLM
+      expect(world.llm.calls).toHaveLength(0);
       const head = session.deriveMessages()[0] as { content: ReadonlyArray<{ text: string }> };
       const text = head.content[0]?.text ?? "";
       expect(text).toContain("<goals>");
       expect(text).toContain("ship-it");
       expect(text).toContain(AUTO_CONTINUATION_NOTE);
       expect(state.armed).toBe(false);
-      expect(state.coveredSeq).toBeGreaterThan(-1); // 重锚到新投影首个真轮起点
+      expect(state.coveredSeq).toBeGreaterThan(-1);
       const replaceEvents = session.events().filter((e) => e.type === "user/message" && typeof e.surfaceOp === "object");
       expect(replaceEvents).toHaveLength(1);
     } finally {
@@ -139,11 +129,11 @@ describe("escalateL2", () => {
       }
       const state = stateWithLedger();
       const nodes = session.surface();
-      state.coveredSeq = nodes[1]?.seq ?? -1; // 仅覆盖 turn-0
+      state.coveredSeq = nodes[1]?.seq ?? -1;
       const result = escalateL2({ state, session, nodes, l2Line: 850, emit: () => {} });
       expect(result.ok).toBe(true);
       const kept = session.surface().length;
-      expect(kept).toBeGreaterThanOrEqual(nodes.length - 3); // 只替换已覆盖前缀（宽预算不吞未收编区）
+      expect(kept).toBeGreaterThanOrEqual(nodes.length - 3);
     } finally {
       await world.ctx.dispose();
     }
@@ -160,7 +150,7 @@ describe("escalateL2", () => {
           seedTurn(made.value, { turn, user: textOf(2_000), assistant: { text: textOf(2_000), usage: { input: 10, output: 1 } } });
         }
         const state = stateWithLedger();
-        state.coveredSeq = made.value.surface().at(-2)?.seq ?? -1; // 覆盖全前缀
+        state.coveredSeq = made.value.surface().at(-2)?.seq ?? -1;
         const outcome = escalateL2({
           state,
           session: made.value,
@@ -170,12 +160,12 @@ describe("escalateL2", () => {
           emit: () => {},
         });
         expect(outcome.ok).toBe(true);
-        results.push(made.value.surface().length); // 保留区节点数
+        results.push(made.value.surface().length);
       } finally {
         await world.ctx.dispose();
       }
     }
-    expect(results[1]).toBeGreaterThanOrEqual(results[0] as number); // 活口收缩 ⇒ 保留区更大
+    expect(results[1]).toBeGreaterThanOrEqual(results[0] as number);
   });
 
   it("空账本 → 不落账；已封存会话（append 失败）→ ok:false；预算内全放得下 → 无进展不落账", async () => {
@@ -189,14 +179,13 @@ describe("escalateL2", () => {
       if (!sealed.ok) throw new Error(sealed.reason);
       seedTurn(sealed.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3) } });
       seedTurn(sealed.value, { turn: 1, user: textOf(3), assistant: { text: textOf(3) } });
-      world.store.dispose(sealed.value.id); // 封存写权
+      world.store.dispose(sealed.value.id);
       expect(escalateL2({ state: stateWithLedger(), session: sealed.value, nodes: sealed.value.surface(), l2Line: 850, emit: () => {} }).ok).toBe(false);
 
       const tiny = await world.store.create({ id: sid("l2-tiny") });
       if (!tiny.ok) throw new Error(tiny.reason);
       seedTurn(tiny.value, { turn: 0, user: "u", assistant: { text: "a" } });
       seedTurn(tiny.value, { turn: 1, user: "u", assistant: { text: "a" } });
-      // 巨窗全放得下 → findCutPoint 无切口 → 无进展
       expect(escalateL2({ state: stateWithLedger(), session: tiny.value, nodes: tiny.value.surface(), l2Line: 950_000, emit: () => {} }).ok).toBe(false);
     } finally {
       await world.ctx.dispose();
@@ -209,7 +198,6 @@ describe("escalateL2", () => {
       const made = await world.store.create({ id: sid("l2-pair") });
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
-      // turn-0：带工具结果；turn-1..3：文本轮
       session.append("turn/start", { turn: 0 });
       session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: textOf(3) }] }, { surfaceOp: "append" });
       session.append("assistant/message", { turn: 0, step: 0, content: [{ type: "tool_use", callId: "c1", name: "read", input: "{}" }], stopReason: "stop" }, { surfaceOp: "append" });
@@ -219,10 +207,9 @@ describe("escalateL2", () => {
         seedTurn(session, { turn, user: textOf(2_000), assistant: { text: textOf(2_000) } });
       }
       const state = stateWithLedger();
-      state.coveredSeq = session.surface().at(-2)?.seq ?? -1; // 覆盖全前缀
+      state.coveredSeq = session.surface().at(-2)?.seq ?? -1;
       const result = escalateL2({ state, session, nodes: session.surface(), l2Line: 850, emit: () => {} });
       expect(result.ok).toBe(true);
-      // 保留区内若含 tool_use 则其 tool/result 必同区（切口在真轮起点=配对安全构造）
       const messages = session.deriveMessages();
       const callIds: string[] = [];
       for (const message of messages) {
@@ -247,7 +234,6 @@ describe("L2 头部守卫（预锚注入——skill 清单形态缺陷回归）"
       const made = await world.store.create({ id: sid("l2-head") });
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
-      // 修复前形态：[skill 块(append user), system 锚点, 轮次……]——nodes[0] 非 system
       const injected = session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: "SKILL-LIST" }] }, { surfaceOp: "append" });
       if (!injected.ok) throw new Error(injected.reason);
       const sys = session.append("system/message", { turn: 0, step: 0, text: "SYS" }, { surfaceOp: "append" });
@@ -257,11 +243,10 @@ describe("L2 头部守卫（预锚注入——skill 清单形态缺陷回归）"
       }
       const state = stateWithLedger();
       state.armed = true;
-      state.coveredSeq = session.surface().at(-2)?.seq ?? -1; // 账本已覆盖全前缀
+      state.coveredSeq = session.surface().at(-2)?.seq ?? -1;
       const result = escalateL2({ state, session, nodes: session.surface(), l2Line: 850, emit: () => {} });
       expect(result.ok).toBe(true);
       const messages = session.deriveMessages();
-      // 修复前：start=0（nodes[0] 非 system）→ 预锚块与锚点被账本摘要连坐替换
       expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "SKILL-LIST" }] });
       expect(messages[1]).toMatchObject({ role: "system", text: "SYS" });
       const summary = messages[2] as { content: ReadonlyArray<{ text: string }> };
@@ -273,10 +258,10 @@ describe("L2 头部守卫（预锚注入——skill 清单形态缺陷回归）"
 
   it("alignDownToTurnStart 扫描下界：预锚块不作对齐目标", () => {
     const nodes = [userNode(0, "SKILL-LIST"), userNode(1, textOf(1)), assistantNode(2, textOf(1)), userNode(3, textOf(1))];
-    expect(alignDownToTurnStart(nodes, 3)).toBe(3); // 缺省全扫：u3 最近
-    expect(alignDownToTurnStart(nodes, 3, 1)).toBe(3); // from=1 跳过预锚块
-    expect(alignDownToTurnStart(nodes, 2, 1)).toBe(1); // ceiling=2 → u1
-    expect(alignDownToTurnStart(nodes, 2, 2)).toBeUndefined(); // 保护头后无候选
+    expect(alignDownToTurnStart(nodes, 3)).toBe(3);
+    expect(alignDownToTurnStart(nodes, 3, 1)).toBe(3);
+    expect(alignDownToTurnStart(nodes, 2, 1)).toBe(1);
+    expect(alignDownToTurnStart(nodes, 2, 2)).toBeUndefined();
   });
 });
 
@@ -287,7 +272,6 @@ describe("无进展守卫与 files 预算（对抗审查 D5/D6 回归）", () =>
       const made = await world.store.create({ id: sid("l2-selfrep") });
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
-      // 先做一次正常 L2 落账（投影头部 = 账本摘要 replace 节点）
       for (let turn = 0; turn < 6; turn += 1) {
         seedTurn(session, { turn, user: textOf(2_000), assistant: { text: textOf(2_000) } });
       }
@@ -295,12 +279,11 @@ describe("无进展守卫与 files 预算（对抗审查 D5/D6 回归）", () =>
       state.coveredSeq = session.surface().at(-2)?.seq ?? -1;
       expect(escalateL2({ state, session, nodes: session.surface(), l2Line: 850, emit: () => {} }).ok).toBe(true);
       const journalLen = session.events().length;
-      // 账本膨胀到吃尽预算：ledgerTok ≥ l2Line → liveBudget 锄到 500 → 切点钳到摘要紧后
       const fat = { ...state.ledger, tasksDone: Array.from({ length: 500 }, (_, i) => `done-item-${String(i)}-${"d".repeat(80)}`) };
       state.ledger = fat;
       const again = escalateL2({ state, session, nodes: session.surface(), l2Line: 850, emit: () => {} });
-      expect(again.ok).toBe(false); // 自替换被拒
-      expect(session.events().length).toBe(journalLen); // 零新落账
+      expect(again.ok).toBe(false);
+      expect(session.events().length).toBe(journalLen);
     } finally {
       await world.ctx.dispose();
     }

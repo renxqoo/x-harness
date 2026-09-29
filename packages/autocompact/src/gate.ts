@@ -1,9 +1,3 @@
-// 步闸：每步 preStep 时测量占用并按水位线路由（warn/L1/L2/CP 四通道）
-// 启动（上升沿 + 段门槛，后台异步不阻塞）→ 警告区预算外推（算而未落——前缀缓存
-// 裁决）→ L1 预门槛落账 → 复评 → L2 升级（零 LLM + 复测门）→ join 兜底。
-// 终局恒放行（步闸永不 reject——有意 413 现场交 compaction 既有 L3 通道；reject
-// 会终结 turn 且请求不发出，L3 永无触发机会）。全程软失败：异常告警后放行。
-
 import type { LlmRuntime } from "@x-harness/llm";
 import type { Session, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
 import { anchorIndexOf } from "@x-harness/session";
@@ -22,9 +16,7 @@ import { computeClearPlan, landClearPlan, lastTurnStartIndex } from "./scavenger
 export interface GateConfig extends CheckpointConfig {
   readonly contextWindow: number;
   readonly checkpointPct: number;
-  /** L1 触发百分比（旧工具结果免费清层） */
   readonly l1Pct: number;
-  /** L2 触发百分比（账本查表替换层） */
   readonly l2Pct: number;
   readonly checkpointMinSegmentTokens: number;
   readonly clearKeepRecent: number;
@@ -39,7 +31,7 @@ export interface GateDeps {
   readonly config: GateConfig;
   readonly face: SummarizerFace | undefined;
   readonly llm: LlmRuntime | undefined;
-  readonly session: Session | undefined; // 审计问题 6：store.get 可能 undefined——类型化替代 as never
+  readonly session: Session | undefined;
   readonly state: SessionState;
   readonly fileTools: FileToolNames;
   readonly warn: (session: SessionId, code: string, detail?: Record<string, unknown>) => void;
@@ -50,7 +42,6 @@ export interface GateDeps {
   readonly emitCheckpoint: (action: import("./tokens.ts").CheckpointAction, detail?: Record<string, unknown>) => void;
 }
 
-/** servedWindow 变化 → 复算线序；违例（深收缩/小窗）→ refit 降级纯本地通道 */
 function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
   const cache = deps.state.cache;
   const served = lastWindow(events);
@@ -77,25 +68,17 @@ function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
   return lines;
 }
 
-/** 校准配对：新锚到达时用「实测锚 / 上次纯预测」的 ratio 推入中位数滚动。
- *  语义修正（审计问题 1）：分子必须是 LLM 实报的 anchorTokens（纯值），不是
- *  trailingTokens（上一步的尾段——与预测的不是同一个量）。符号统一：
- *  lastEstimated 与占用同口径（tokens − gains + pending），消存取对撞。 */
 export function updateCalibration(cache: SessionState["cache"], pair: { readonly trailingTokens: number; readonly gainTokens: number; readonly hasAnchor: boolean; readonly anchorTokens: number }): void {
   if (!pair.hasAnchor) {
-    cache.lastEstimated = pair.trailingTokens + pair.gainTokens; // 纯预测占用（下一步的预估）
+    cache.lastEstimated = pair.trailingTokens + pair.gainTokens;
     return;
   }
   if (cache.lastEstimated !== undefined && cache.lastEstimated > 0 && pair.anchorTokens > 0) {
-    pushCalibrationSample(cache.calibration, pair.anchorTokens / cache.lastEstimated); // 实测锚 / 前次纯预测
+    pushCalibrationSample(cache.calibration, pair.anchorTokens / cache.lastEstimated);
   }
-  cache.lastEstimated = undefined; // 配对一次性消耗
+  cache.lastEstimated = undefined;
 }
 
-/** 外部 compaction 后覆盖边界重锚：任何无在飞作业时的前缀落账（手动 /compact、
- *  L3 紧急）都会使其失真——重锚到当前投影内（保守 min：未收编段重新从活口头
- *  算起，L2 覆盖域守卫恢复有效）。首个候选以锚点谓词定位（预锚注入不计）；
- *  无锚 → 维持跳过首节点的旧口径 */
 function reanchorCoverage(state: SessionState, nodes: readonly SurfaceNode[]): void {
   let targetSeq = -1;
   const anchor = anchorIndexOf(nodes);
@@ -111,7 +94,6 @@ function reanchorCoverage(state: SessionState, nodes: readonly SurfaceNode[]): v
   state.checkpoint.coveredSeq = Math.min(state.checkpoint.coveredSeq, targetSeq);
 }
 
-/** L0 帽 × 观测最大并行度逼近有效窗口 → 告警恰一次（观测面事实交给操作员） */
 function warnParallelApproach(deps: GateDeps, watch: { readonly occupancy: number; readonly maxParallel: number }, lines: Lines): void {
   const cache = deps.state.cache;
   if (cache.warnedParallel) return;
@@ -125,23 +107,19 @@ function warnParallelApproach(deps: GateDeps, watch: { readonly occupancy: numbe
   }
 }
 
-/** 段 token 量（minSegment 门槛判定面；计费域——CONTEXT-TOKEN-UNIFICATION S2 同尺：
- *  段含 thinking 载荷与 wire 膨胀，与占用判定同域；纯 nodeTokens 低估段量 → 晚触发） */
 function segmentTokens(nodes: readonly SurfaceNode[], from: number): number {
   return estimateContextTokens(nodes.slice(from));
 }
 
-/** 决策链主体（永不抛出；落账直接经 session——驱动重读投影） */
 export async function runStepGate(deps: GateDeps, payload: { readonly turn: number; readonly step: number; readonly signal: AbortSignal }): Promise<void> {
   const { state } = deps;
   const session = deps.session;
-  if (session === undefined) return; // 审计问题 6：会话已终结——无决策面直接返回（原 as never 掩盖）
+  if (session === undefined) return;
   try {
     const events = session.events();
     const nodes = session.surface();
     const lines = currentLines(deps, events);
 
-    // 外部 compaction 失真检测：自上次步闸后存在前缀替换落账、或覆盖边界越出投影
     let externalLanding = false;
     for (let i = state.cache.journalSeen; i < events.length; i += 1) {
       const event = events[i];
@@ -173,13 +151,12 @@ export async function runStepGate(deps: GateDeps, payload: { readonly turn: numb
 
     armOrStartCheckpoint({ deps, lines, occupancy, nodes, payload });
     await routeZones({ deps, lines, occupancy, nodes, events, measured, payload });
-    state.cache.lastOccupancy = remeasure(deps); // 无条件覆写（L1/L2 落账后的真实投影——非"各分支自行刷新"）
+    state.cache.lastOccupancy = remeasure(deps);
   } catch (error) {
     deps.warn(session.id, "gate-soft-fail", { error: error instanceof Error ? error.message : String(error) });
   }
 }
 
-/** CP 上升沿再武装（占用比较面——与摘要面可用性无关）+ 段门槛启动（后台异步不阻塞） */
 function armOrStartCheckpoint(fields: {
   readonly deps: GateDeps;
   readonly lines: Lines;
@@ -203,7 +180,7 @@ function armOrStartCheckpoint(fields: {
     deps: {
       llm: deps.llm,
       face: deps.face,
-      session: session as Session, // 已在 runStepGate 顶部守卫非 undefined
+      session: session as Session,
       config: {
         ledgerBudgetTokens: config.ledgerBudgetTokens,
         checkpointMaxRetries: config.checkpointMaxRetries,
@@ -220,7 +197,6 @@ function armOrStartCheckpoint(fields: {
   });
 }
 
-/** 分区路由：安全区放行；警告区预算外推（算而未落——前缀缓存裁决）；L1 线以上升级 */
 async function routeZones(fields: {
   readonly deps: GateDeps;
   readonly lines: Lines;
@@ -233,8 +209,6 @@ async function routeZones(fields: {
   const { deps, lines, occupancy, nodes, events, measured, payload } = fields;
   if (occupancy < lines.l1Line) {
     if (occupancy < lines.warnLine) return;
-    // 警告区（warn→L1 间）：不落账（余量内打断缓存可能净亏）；并行逼近观测 + 放行
-    // 预算外推（预测越窗同样过闸前优化——一步穿窗不等到 L1 线）
     warnParallelApproach(deps, { occupancy, maxParallel: measured.maxParallel }, lines);
     const lastStepDelta =
       deps.state.cache.lastOccupancy === undefined
@@ -255,8 +229,6 @@ function coverageStartIndex(state: SessionState, nodes: readonly SurfaceNode[]):
   return nodes.length;
 }
 
-/** L1 线以上：预门槛落账 → 复评（压回 L1 线内即止）；仍越 L2 线才升级（账本
- *  替换/join）——两层分离，免费层不自动消耗付费层 */
 async function l1AndBeyond(fields: {
   readonly deps: GateDeps;
   readonly lines: Lines;
@@ -268,12 +240,12 @@ async function l1AndBeyond(fields: {
   const { deps, lines, nodes, events, occupancy, signal } = fields;
   const { state, config } = deps;
   const session = deps.session;
-  if (session === undefined) return; // runStepGate 已守卫——此处双保险（routeZones 也被独立测试调用）
+  if (session === undefined) return;
   if (!state.cache.l1Backoff) {
     const plan = computeClearPlan(nodes, events, { clearableTools: config.clearableTools, clearKeepRecent: config.clearKeepRecent });
     if (plan.entries.length > 0 && l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines })) {
       const landed = landClearPlan(session, nodes, plan.entries);
-      if (landed.landed === 0) deps.warn(session.id, "l1-redact-failed"); // 预门槛通过而零落账——不静默
+      if (landed.landed === 0) deps.warn(session.id, "l1-redact-failed");
       if (landed.landed > 0) {
         deps.emitL1Cleared(session.id, "watermark", landed.gainTokens);
         const lastEvent = session.events()[session.events().length - 1];
@@ -286,28 +258,21 @@ async function l1AndBeyond(fields: {
       }
     }
     if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines }))) {
-      // 清无可清仍超线（或收益不值缓存重写 / 清完仍越线——预门槛不过同置退避：
-      // 对抗审查 B L-1，L1 线降到 50-55% 后该带覆盖会话寿命大半，不退避则每步
-      // 全量重算清道夫计划）：退避至下一真轮，防每步空转
       state.cache.l1Backoff = true;
       deps.warn(session.id, "l1-no-gain", { gainTokens: plan.gainTokens });
     }
   }
-  // 升级门：免费层落账/退避后仍越 L2 线才动账本替换（两线间的活口留给增长）
   const post = remeasure(deps);
   if (post < lines.l2Line) return;
   await escalateOrJoin({ deps, lines, signal });
 }
 
-/** L2 升级（零 LLM）+ 复测门（仍越线 → 降活口再落账一次，豁免覆盖域守卫）+
- *  join 兜底；终局恒放行——join 不可得/账本未就绪/升级无进展时交 413 现场 L3 */
 async function escalateOrJoin(fields: { readonly deps: GateDeps; readonly lines: Lines; readonly signal: AbortSignal }): Promise<void> {
   const { deps, lines, signal } = fields;
   const { state, config } = deps;
   const session = deps.session;
   if (session === undefined) return;
   if (lines.degraded) {
-    // servedWindow 深收缩降级纯本地通道——禁 L2（冻结账本不做零 LLM 替换）
     deps.warn(session.id, "budget-gate-release", { reason: "degraded" });
     return;
   }
@@ -316,7 +281,6 @@ async function escalateOrJoin(fields: { readonly deps: GateDeps; readonly lines:
     if (first) {
       const after = remeasure(deps);
       if (after >= lines.l2Line) {
-        // 复测门：按超出比例收缩活口再落账一次
         const excessRatio = Math.min(0.8, (after - lines.l2Line) / Math.max(1, lines.effectiveWindow) + 0.05);
         escalateOnce({ deps, lines, liveBudgetFactor: 1 - excessRatio, coverageGuard: false });
       }
@@ -330,7 +294,6 @@ async function escalateOrJoin(fields: { readonly deps: GateDeps; readonly lines:
     deps.warn(session.id, "budget-gate-release", { reason: "ledger-unready" });
     return;
   }
-  // 未就绪但在飞：join（看门狗 + signal 竞速）——join 到就绪即落账
   const ready = await joinInflight({ state: state.checkpoint, timeoutMs: config.checkpointIdleTimeoutMs, signal });
   if (ready && escalateOnce({ deps, lines, liveBudgetFactor: 1 })) {
     state.cache.journalSeen = session.events().length;

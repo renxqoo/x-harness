@@ -64,7 +64,6 @@ describe("projectSurface / applySurfaceEvent（docs/SESSION.md §1.4 投影语�
     ] as SessionEvent[];
     let nodes = projectSurface(log);
     expect(nodes.map((n) => n.seq)).toEqual([0, 5, 4]);
-    // 位置区间 [5,4]：头部节点 5（journal 尾 seq）与其后的 4 位置相邻——数值逆序、位置有序
     const stepped = applySurfaceEvent(nodes, userEvent(6, { op: "replace", startSeq: 5, endSeq: 4 }));
     expect(stepped.ok).toBe(true);
     if (!stepped.ok) return;
@@ -77,20 +76,17 @@ describe("projectSurface / applySurfaceEvent（docs/SESSION.md §1.4 投影语�
   });
 
   it("迭代前缀替换拓扑（docs/COMPACTION.md §2.A）：头部高 seq 摘除集数值区间不可表达", () => {
-    // 摘除 [summary(尾 seq), 旧保留区节点..k] 数值区间会连带吞掉 k 之后的保留节点——
-    // 位置区间精确表达；startSeq 数值 > endSeq 合法（位置有序即可）
     const log = [
       userEvent(0, "append"),
       userEvent(1, "append"),
       userEvent(2, "append"),
       userEvent(3, "append"),
-      userEvent(4, { op: "replace", startSeq: 0, endSeq: 1 }), // 首次前缀替换：summary@4
+      userEvent(4, { op: "replace", startSeq: 0, endSeq: 1 }),
       userEvent(5, "append"),
       userEvent(6, "append"),
     ] as SessionEvent[];
     let nodes = projectSurface(log);
     expect(nodes.map((n) => n.seq)).toEqual([4, 2, 3, 5, 6]);
-    // 第二次前缀替换：摘除 summary(4) + 保留区前段(2,3)，保留尾部(5,6)
     const stepped = applySurfaceEvent(nodes, userEvent(7, { op: "replace", startSeq: 4, endSeq: 3 }));
     expect(stepped.ok).toBe(true);
     if (!stepped.ok) return;
@@ -104,10 +100,9 @@ describe("projectSurface / applySurfaceEvent（docs/SESSION.md §1.4 投影语�
       userEvent(1, "append"),
       userEvent(2, { op: "replace", startSeq: 0, endSeq: 1 }),
     ] as SessionEvent[];
-    const nodes = projectSurface(log); // [2, ...] 之后挂新节点形成 2 在前、1 在后的拓扑
+    const nodes = projectSurface(log);
     const grown = applySurfaceEvent(nodes, userEvent(3, "append"));
     if (!grown.ok) return;
-    // startSeq=3（位置 1）→ endSeq=2（位置 0）：位置逆序拒绝
     expect(applySurfaceEvent(grown.nodes, userEvent(4, { op: "replace", startSeq: 3, endSeq: 2 }))).toEqual({
       ok: false,
       reason: "replace-range:3>2",

@@ -1,5 +1,3 @@
-// get_commands 目录（DESIGN §3.3）：内核命令注册面（source:"command"——机器拦截的
-// 斜杠动词）+ skills 清单（source:"skill"——模型分发面，未注册词形交模型）统一目录。
 import { loadSkills } from "@x-harness/skill";
 import type { CommandDescriptor } from "@x-harness/commands";
 

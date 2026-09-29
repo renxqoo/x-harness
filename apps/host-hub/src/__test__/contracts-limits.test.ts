@@ -1,5 +1,3 @@
-// limits/images 契约矩阵（MIGRATION §5 对应行移植 + 新增锚）：缺省单点、坏值降级、
-// idle/rss clamp 区间、图片块归一与坏形状整体拒绝。
 import { describe, expect, test } from "vitest";
 import {
   BASH_CONCURRENCY,
@@ -67,13 +65,10 @@ describe("images", () => {
   });
 
   test("量限三条（BATCH2-DESIGN §1.1）：张数 8 / 单图 5MiB / 总量 12MiB", () => {
-    // 张数：9 张合法小块 → too many
     const nine = Array.from({ length: 9 }, () => ({ type: "image", data: "aGk=", mediaType: "image/png" }));
     expect(normalizeImages(nine)).toMatchObject({ ok: false, reason: expect.stringContaining("invalid images: too many images") });
-    // 单图：5MiB+1 base64 字符 → too large
     const big = [{ type: "image", data: "x".repeat(5 * 1024 * 1024 + 1), mediaType: "image/png" }];
     expect(normalizeImages(big)).toMatchObject({ ok: false, reason: expect.stringContaining("invalid images: image too large") });
-    // 总量：3 × 4.2MiB（各在单图限内、合计 12.6MiB > 12MiB）→ too large in total
     const three = Array.from({ length: 3 }, () => ({ type: "image", data: "x".repeat(4_200_000), mediaType: "image/png" }));
     expect(normalizeImages(three)).toMatchObject({ ok: false, reason: expect.stringContaining("invalid images: images too large in total") });
   });

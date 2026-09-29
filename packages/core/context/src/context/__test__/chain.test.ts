@@ -14,7 +14,6 @@ describe("匿名链（§6.2 / C10）", () => {
     const chain = ctx.createChain<number, number>(async (i) => i * 2);
     ctx.onChain(chain, async (i, next) => next(i + 1));
     ctx.onChain(chain, async (i, next) => next(i + 10));
-    // ((1+1)+10)*2
     expect(await chain.dispatch(1)).toBe(24);
   });
 
@@ -35,10 +34,10 @@ describe("匿名链（§6.2 / C10）", () => {
     const consumer = ctx.scope({ agentId: "consumer" });
     consumer.onChain(chain, async (i, next) => next(i + 1));
     expect(await chain.dispatch(1)).toBe(4);
-    await ownerLayer.dispose(); // owner 层回卷不回收链对象
-    expect(await chain.dispatch(1)).toBe(4); // 链与消费方注册都在
+    await ownerLayer.dispose();
+    expect(await chain.dispatch(1)).toBe(4);
     await consumer.dispose();
-    expect(await chain.dispatch(1)).toBe(2); // 只剩链本身
+    expect(await chain.dispatch(1)).toBe(2);
   });
 
   it("onChain 拒绝非 createChain 产物", () => {
@@ -68,8 +67,8 @@ describe("链中间件层序插入（§10.1 修复）", () => {
     const ctx = createContext();
     const child = ctx.scope({ agentId: "c" });
     const chain = ctx.createChain<number, number>(async (i) => i);
-    child.onChain(chain, async (i, next) => next(i + 10)); // child 先注册
-    ctx.onChain(chain, async (i, next) => next(i + 1)); // root 后注册
-    expect(await chain.dispatch(1)).toBe(12); // root(+1) 外层 → child(+10) → final
+    child.onChain(chain, async (i, next) => next(i + 10));
+    ctx.onChain(chain, async (i, next) => next(i + 1));
+    expect(await chain.dispatch(1)).toBe(12);
   });
 });

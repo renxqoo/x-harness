@@ -1,6 +1,3 @@
-// F0 拦截面三专测（docs/SDK-DESIGN §6.1）：①pre-step 改写（改写版即落账版——「模型可见必落盘」）
-// ②assistant 落账前纠 ③流拦截（包裹注入帧）。装置沿用 driver.test 同款。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmChunk, LlmRequest } from "@x-harness/llm";
@@ -56,7 +53,6 @@ async function makeWorld(): Promise<World> {
 
 const AGENT = { model: "fake-model", provider: "fake" };
 
-/** 流包裹：注入前缀帧（模块级——压测试内嵌套回调） */
 async function* prefixStream(prefix: string, inner: AsyncIterable<LlmChunk>): AsyncGenerator<LlmChunk> {
   yield { type: "text-delta", text: prefix };
   for await (const chunk of inner) yield chunk;
@@ -92,9 +88,9 @@ describe("F0 拦截面（SDK-DESIGN §6.1）", () => {
     await made.value.agent.whenIdle();
     off();
     const events = made.value.agent.session.events();
-    expect(surfaceTexts(events, "user/message")).toEqual(["REWRITTEN"]); // 落账=重写版
-    expect(world.calls[0]?.messages.some((m) => JSON.stringify(m).includes("REWRITTEN"))).toBe(true); // 模型可见=重写版
-    expect(surfaceTexts(events, "user/message")).not.toContain("original"); // 原文只留 claim 痕迹
+    expect(surfaceTexts(events, "user/message")).toEqual(["REWRITTEN"]);
+    expect(world.calls[0]?.messages.some((m) => JSON.stringify(m).includes("REWRITTEN"))).toBe(true);
+    expect(surfaceTexts(events, "user/message")).not.toContain("original");
   });
 
   it("② assistant 落账前纠：settle 改写 content → 落账与返回消息均为改写版", async () => {
@@ -122,7 +118,7 @@ describe("F0 拦截面（SDK-DESIGN §6.1）", () => {
     });
     const offSettle = world.ctx.on(agentAssistantSettle, async (payload, next) => {
       const out = await next(payload);
-      return { ...out, content: [{ type: "text", text: "SETTLE-WINS" }] } as never; // 落账前纠覆盖流面
+      return { ...out, content: [{ type: "text", text: "SETTLE-WINS" }] } as never;
     });
     const made = await world.loop.create({ agent: AGENT });
     expect(made.ok).toBe(true);
@@ -131,7 +127,7 @@ describe("F0 拦截面（SDK-DESIGN §6.1）", () => {
     await made.value.agent.whenIdle();
     offStream();
     offSettle();
-    expect(surfaceTexts(made.value.agent.session.events(), "assistant/message")).toEqual(["SETTLE-WINS"]); // settle 胜
+    expect(surfaceTexts(made.value.agent.session.events(), "assistant/message")).toEqual(["SETTLE-WINS"]);
   });
 
   it("③ 流拦截（无 settle 时）：注入帧进结算——流面影响累积与落账", async () => {
@@ -163,8 +159,8 @@ describe("F0 收口审查处置回归", () => {
     await made.value.agent.whenIdle();
     off();
     const events = made.value.agent.session.events();
-    expect(events.some((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "clear")).toBe(true); // durable 清除意图
-    expect(surfaceTexts(events, "user/message")).toEqual([]); // 无 user 落账
+    expect(events.some((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "clear")).toBe(true);
+    expect(surfaceTexts(events, "user/message")).toEqual([]);
   });
 
   it("1.1：载荷含 claim 批次（改写输入源）", async () => {
@@ -197,6 +193,6 @@ describe("F0 收口审查处置回归", () => {
     await made.value.agent.whenIdle();
     off();
     offErr();
-    expect(errors.some((m) => m.includes("pre-step rewrite shape invalid"))).toBe(true); // 可读契约失败经 agentError 面
+    expect(errors.some((m) => m.includes("pre-step rewrite shape invalid"))).toBe(true);
   });
 });

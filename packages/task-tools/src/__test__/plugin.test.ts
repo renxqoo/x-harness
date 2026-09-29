@@ -1,6 +1,3 @@
-// 插件装配测试（docs/TASKS.md §2 + docs/TASK-PUSH-DESIGN.md §2.1）：provide hub + 单工具
-// 注册/并发声明 + 摘除回卷 + bashTasks 在场的端到端接缝（真登记簿句柄 → task_stop）。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,7 +34,7 @@ describe("task-tools plugin assembly", () => {
     expect(registry.schemas().map((schema) => schema.name).filter((name) => name.startsWith("task_"))).toEqual(["task_stop"]);
     expect(registry.concurrencyOf("task_stop", { task_id: "x" })).toBe("exclusive");
     await ctx.dispose();
-    expect(registry.get("task_stop")).toBeUndefined(); // 摘除回卷
+    expect(registry.get("task_stop")).toBeUndefined();
   });
 
   it("end-to-end bash seam: a registry-started task is stopped through the tool", async () => {
@@ -52,8 +49,8 @@ describe("task-tools plugin assembly", () => {
     const stopped = await registry.dispatch({ callId: "c1", name: "task_stop", args: { task_id: long.value.id }, signal: new AbortController().signal, session });
     expect(stopped.isError).toBeUndefined();
     expect(stopped.content).toContain("killed");
-    expect(stopped.content).not.toContain("mid-kill"); // whenSettled 收敛后铸终态
-    await ctx.dispose(); // dispose 两段杀在途任务
+    expect(stopped.content).not.toContain("mid-kill");
+    await ctx.dispose();
   });
 
   it("bare assembly docks tool-bash's registry via the service (no manual threading)", async () => {
@@ -70,8 +67,8 @@ describe("task-tools plugin assembly", () => {
     }
     const stopped = await ctx.use(toolRegistry).dispatch({ callId: "c1", name: "task_stop", args: { task_id: id }, signal: new AbortController().signal, session });
     expect(stopped.isError).toBeUndefined();
-    expect(stopped.content).toContain("already finished"); // echo 已终态——幂等停带 already 前缀
-    await ctx.dispose(); // dispose 两段杀在途任务
+    expect(stopped.content).toContain("already finished");
+    await ctx.dispose();
     void unload;
   });
 
@@ -114,8 +111,8 @@ describe("task-tools plugin assembly", () => {
     while ((tasks.list(session).find((t) => t.id === id)?.endedAt) === undefined && Date.now() < deadline) {
       await new Promise((resolve) => { setTimeout(resolve, 25); });
     }
-    expect(tasks.list(session).find((t) => t.id === id)?.state).toBe("completed"); // 任务面完好
-    await ctx.dispose(); // 若停靠 reject 未吞会在此炸（unhandled rejection）
+    expect(tasks.list(session).find((t) => t.id === id)?.state).toBe("completed");
+    await ctx.dispose();
     void unload;
   });
 

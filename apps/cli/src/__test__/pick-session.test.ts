@@ -1,6 +1,3 @@
-// 编号选择（docs/CLI.md §2.3）：pickIndex 词表（合法/垃圾/取消）、pickSession 映射、
-// 列表格式（截断上限/时间戳/子代理标注）。
-
 import { describe, expect, it } from "vitest";
 import type { SessionHeader } from "@x-harness/session";
 import { formatSessionList, pickIndex, pickSession } from "../pick-session.ts";

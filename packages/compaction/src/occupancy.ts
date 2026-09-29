@@ -1,7 +1,3 @@
-// 占用测量（docs/COMPACTION.md §1.4）：journal 域扫锚（baseline/usage 锚），投影域
-// 估尾（锚 seq 之后的 surface 节点）。真实计量为主、尾部估算补齐；被替换区的旧锚
-// 作废（幽灵 token 防线——压缩后一次 LLM 失败不产生虚构占用）。
-
 import type { ContentBlock, SessionEvent, SessionId, SurfaceNode } from "@x-harness/session";
 import { estimateContextTokens, estimateText } from "@x-harness/token-meter";
 import { IMAGE_TOKENS } from "./estimate.ts";
@@ -11,12 +7,9 @@ export interface Occupancy {
   readonly hasAnchor: boolean;
   readonly anchorSeq: number | undefined;
   readonly trailingTokens: number;
-  /** 纯锚 token（LLM 实报 usage.input——校准配对的分子；不含 trailing×factor 污染） */
   readonly anchorTokens: number;
 }
 
-/** 压缩基线：末个 replace 型 user/message 事件的 seq（compaction 摘要与 autocompact
- *  L2 账本落账都算——累积链跨层连续）；无 → -1 */
 export function compactionBaselineSeq(events: readonly SessionEvent[]): number {
   let baseline = -1;
   for (const event of events) {
@@ -27,7 +20,6 @@ export function compactionBaselineSeq(events: readonly SessionEvent[]): number {
   return baseline;
 }
 
-/** usage 锚的有效性：input 为有限数且 > 0（0 计量与垃圾一样不可作锚） */
 function anchorInput(usage: unknown): number | undefined {
   if (typeof usage !== "object" || usage === null) return undefined;
   const input = (usage as { input?: unknown }).input;
@@ -35,11 +27,6 @@ function anchorInput(usage: unknown): number | undefined {
   return input;
 }
 
-/** 占用测量。锚 = 基线（与 anchorFloor 取大）之后最新的 assistant/message 或
- *  assistant/attempt 且 usage.input 有效者——失败尝试的 input 度量的是同一投影的
- *  已发请求，纳入（docs/COMPACTION.md §1.4 有意分歧落档）。无锚 → 当前投影全量纯估
- *  （比参照系「从基线事件起估」更准：投影即模型可见面，替换区天然不在内）。
- *  trailingFactor 供 autocompact 校准因子接入（缺省 1）。 */
 export function measureContext(
   events: readonly SessionEvent[],
   nodes: readonly SurfaceNode[],
@@ -60,30 +47,22 @@ export function measureContext(
   }
   const factor = opts.trailingFactor ?? 1;
   if (anchorSeq < 0) {
-    // 无锚冷启动：全量纯估走计费域（thinking 载荷 + wire 膨胀——CONTEXT-TOKEN-
-    // UNIFICATION §3.1b：判定与切口同尺，消解「投影域 < 计费域」脱节）
     const total = estimateContextTokens(nodes);
     return { tokens: total, hasAnchor: false, anchorSeq: undefined, trailingTokens: total, anchorTokens: 0 };
   }
-  // 尾估走计费域（锚后节点的 thinking/签名 + wire 膨胀随尾段计入）——锚本身是
-  // 实报（已含基底与全前缀），尾段与锚同尺后才可加和
   const trailingNodes: SurfaceNode[] = [];
   for (const node of nodes) {
     if (node.seq > anchorSeq) trailingNodes.push(node);
   }
   const trailing = estimateContextTokens(trailingNodes);
-  void factor; // 校准因子由 autocompact 的 calibration 通道承担（trailingFactor 语义并入计费域常数）
+  void factor;
   return { tokens: anchorTokens + trailing, hasAnchor: true, anchorSeq, trailingTokens: trailing, anchorTokens };
 }
 
-/** 触发判定（严格大于）：tokens > contextWindow × pct% —— 水位是窗口百分比
- *  （强制压缩带）；reserve 是留给摘要落账的绝对预留，不再充当水位 */
 export function shouldCompact(contextTokens: number, contextWindow: number, triggerPct: number): boolean {
   return contextTokens > (contextWindow * triggerPct) / 100;
 }
 
-/** 末个 request/context 的 contextWindow（servedWindow 读侧）：末词条定当前线路事实，
- *  缺席/垃圾 → undefined（不回看更早词条——那是别的线路纪元） */
 export function lastWindow(events: readonly SessionEvent[]): number | undefined {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const event = events[i];
@@ -94,8 +73,6 @@ export function lastWindow(events: readonly SessionEvent[]): number | undefined 
   return undefined;
 }
 
-/** 末条线路（provider+model 齐备才可写 request/context）：request/context 优先，
- *  否则 request/header（provider 缺席 → undefined，不伪造线路） */
 export function lastRoute(events: readonly SessionEvent[]): { readonly provider: string; readonly model: string } | undefined {
   for (let i = events.length - 1; i >= 0; i -= 1) {
     const event = events[i];
@@ -109,8 +86,6 @@ export function lastRoute(events: readonly SessionEvent[]): { readonly provider:
   return undefined;
 }
 
-/** 末条 user/message 之后未消费的 claim id 集（repair.trailingClaims 同款谓词：非消费
- *  事件——drop/retarget/clear/meta——交错不重置；clear 与新 user/message 撤销其后资格）。 */
 function pendingClaimIds(events: readonly SessionEvent[]): Set<string> {
   let lastUserIndex = -1;
   const ids = new Set<string>();
@@ -130,11 +105,6 @@ function pendingClaimIds(events: readonly SessionEvent[]): Set<string> {
   return ids;
 }
 
-/** 领取未落账批次估算：pre-step 时 beginStep 已把 claim 落为日志事件——按「末条
- *  user/message 之后的全部 claim」（agent-loop repair.trailingClaims 同款谓词：对
- *  drop/retarget/clear/meta 等非消费事件交错免疫）回查 insert 事件还原本步待落 user
- *  批次文本（大粘贴不过闸直冲 413 的防线）。同 id 多次 insert 取末次（repair 回灌后
- *  重领的现行内容） */
 export function pendingClaimTokens(events: readonly SessionEvent[]): number {
   const ids = pendingClaimIds(events);
   if (ids.size === 0) return 0;
@@ -149,7 +119,7 @@ export function pendingClaimTokens(events: readonly SessionEvent[]): number {
     if (content === undefined) continue;
     for (const block of content) {
       if (block.type === "text") tokens += estimateText(block.text);
-      else if (block.type === "image") tokens += IMAGE_TOKENS; // 413 防线对图不盲（与 estimateBlocks 同源常量）
+      else if (block.type === "image") tokens += IMAGE_TOKENS;
     }
   }
   return tokens;

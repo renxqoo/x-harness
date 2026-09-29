@@ -1,6 +1,3 @@
-// parseCliArgs 表驱动（docs/CLI.md §2.1）：flag 生效/缺省/别名/=形式/互斥全错例/未知 flag/
-// `--` 分流/@ 前缀/枚举闭集/可选值 flag。
-
 import { describe, expect, it } from "vitest";
 import { PROFILE_IDS } from "@x-harness/permission";
 import { parseCliArgs, usageText } from "../parse-cli-args.ts";

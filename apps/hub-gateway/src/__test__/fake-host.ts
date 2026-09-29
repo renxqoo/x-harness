@@ -1,5 +1,3 @@
-// fake host 子进程（测试装置）：stdin 命令行 → stdout 回 response/event/heartbeat。
-// 由测试用 process.execPath + [本文件路径, "--fake-host"] spawn。
 if (process.argv.includes("--fake-host")) {
   process.stdin.setEncoding("utf8");
   let buffer = "";
@@ -20,7 +18,6 @@ if (process.argv.includes("--fake-host")) {
           process.stdout.write(`${JSON.stringify({ type: "response", id: cmd.id, command: cmd.type, success: true, data: { echoed: true } })}\n`);
         }
       } catch {
-        // 垃圾行丢弃
       }
     }
   });

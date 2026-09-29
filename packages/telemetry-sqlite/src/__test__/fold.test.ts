@@ -1,7 +1,3 @@
-// B2 fold 单测（docs/TELEMETRY-SQLITE.md §1.3 映射表逐行 + §7 表驱动矩阵）：
-// 17 词条 × span/log 产出、severity 闭合表、TurnEndReason 六变体、usage 四字段透传、
-// 游标重放吸收、resume 重建、includeBodies 开关。纯函数——无 IO。
-
 import { describe, expect, it } from "vitest";
 import type { SessionEvent, SessionHeader, SessionId } from "@x-harness/session";
 import { applyEvent, closeSessionFold, openSessionFold, severityOf } from "../fold.ts";
@@ -71,7 +67,7 @@ describe("turn/step span（§1.3 二三行）", () => {
     expect(stepStart.spans[0]).toMatchObject({ name: "step", kind: "INTERNAL", parentSpanId: turnSpanId, attributes: { "xh.turn": 0, "xh.step": 0 } });
     const end = applyEvent(state, ev("step/end", { turn: 0, step: 0 }));
     const closed = end.spans.find((s) => s.name === "step");
-    expect(closed?.startMs).toBe(stepStart.spans[0]?.startMs); // startMs 不被 end 覆盖
+    expect(closed?.startMs).toBe(stepStart.spans[0]?.startMs);
     expect(closed?.endMs).toBe(end.logs[0]?.tsMs);
   });
 
@@ -140,12 +136,12 @@ describe("llm span（§1.3 request/header|context + assistant + attempt + retry�
     applyEvent(state, ev("turn/start", { turn: 0 }));
     applyEvent(state, ev("step/start", { turn: 0, step: 0 }));
     const headerOut = applyEvent(state, ev("request/header", { model: "gpt-x", provider: "fake", temperature: 0.2, tools: [{ name: "a" }, { name: "b" }] }));
-    expect(headerOut.spans).toHaveLength(0); // 不立即可写 span
+    expect(headerOut.spans).toHaveLength(0);
     const message = applyEvent(state, ev("assistant/message", { turn: 0, step: 0, content: [], usage: { input: 10, output: 5, cacheRead: 2, cacheWrite: 3 }, stopReason: "stop" }));
     expect(message.spans).toHaveLength(1);
     const span = message.spans[0];
     expect(span).toMatchObject({ name: "llm.chat", kind: "CLIENT", statusCode: "OK", endMs: expect.any(Number) });
-    expect(span?.startMs).toBe(headerOut.logs[0]?.tsMs); // start 锚 = step 首 request/header ts
+    expect(span?.startMs).toBe(headerOut.logs[0]?.tsMs);
     expect(span?.attributes).toMatchObject({
       "gen_ai.request.model": "gpt-x",
       "gen_ai.request.temperature": 0.2,
@@ -206,7 +202,7 @@ describe("llm span（§1.3 request/header|context + assistant + attempt + retry�
     applyEvent(state, ev("request/header", { model: "m", tools: [] }));
     applyEvent(state, ev("assistant/attempt", { turn: 0, step: 0, error: "timeout" }));
     const retry = applyEvent(state, ev("llm/retry", { turn: 0, step: 0, provider: "fake", retry: 1, delayMs: 500, failure: { message: "timeout", code: "net" } }));
-    expect(retry.spans).toHaveLength(1); // 改写当前 llm span（REPLACE 面）
+    expect(retry.spans).toHaveLength(1);
     expect(retry.spans[0]?.attributes["llm.retries"]).toEqual([{ index: 1, delay_ms: 500, failure_message: "timeout", failure_code: "net" }]);
     expect(retry.logs[0]).toMatchObject({ severity: "WARN", eventType: "llm/retry" });
   });
@@ -318,7 +314,6 @@ describe("resume 重建（rebuildSessionFold）", () => {
     rec.apply(first.state, ev("step/start", { turn: 0, step: 0 }));
     rec.apply(first.state, ev("tool/call", { turn: 0, step: 0, callId: "c1", name: "bash", arguments: "" }));
     const call = rec.all.find((row) => row.name === "tool.bash");
-    // 崩溃 → DB 行重建（cursor = 已落尾 seq）
     const rebuilt = rebuildSessionFold({
       sessionId: "s1",
       traceId: first.state.traceId,
@@ -331,7 +326,6 @@ describe("resume 重建（rebuildSessionFold）", () => {
     expect(rebuilt.openTurn?.spanId).toBe(first.state.openTurn?.spanId);
     expect(rebuilt.openStep?.spanId).toBe(first.state.openStep?.spanId);
     expect([...rebuilt.openTools.keys()]).toEqual(["c1"]);
-    // 重放同事件（游标吸收）后新到达的 tool/result 补 end 且 startMs 保持
     const result = applyEvent(rebuilt, ev("tool/result", { turn: 0, step: 0, callId: "c1", content: "ok" }));
     const closed = result.spans.find((s) => s.name === "tool.bash");
     expect(closed?.spanId).toBe(call?.spanId);
@@ -373,7 +367,6 @@ describe("词表闭合（常量 == 文档 §1.2/§1.3，双向）", () => {
     applyEvent(state, ev("step/end", { turn: 0, step: 0 }));
     applyEvent(state, ev("turn/end", { turn: 0, reason: { kind: "error", message: "e" } }));
     closeSessionFold(state, 9_999);
-    // 经折回的行收集（重新折叠一遍收集全部行）
     const fresh = foldOf();
     const all: import("../types.ts").SpanRow[] = [];
     for (const e of replayScript()) {
@@ -386,16 +379,13 @@ describe("词表闭合（常量 == 文档 §1.2/§1.3，双向）", () => {
   });
 });
 
-// —— 装置 ——
 
-/** 折叠过程中的行收集器：包 applyEvent 累积 span 行（resume 测试用——DB 行的替身） */
 class SpanRecorder {
   readonly rows: import("../types.ts").SpanRow[] = [];
   apply(state: SessionFold, event: SessionEvent): void {
     this.rows.push(...applyEvent(state, event).spans);
   }
   get all(): readonly import("../types.ts").SpanRow[] {
-    // 去重（REPLACE 面：同 spanId 取末次）后回放
     const byId = new Map<string, import("../types.ts").SpanRow>();
     for (const row of this.rows) byId.set(row.spanId, row);
     return [...byId.values()];

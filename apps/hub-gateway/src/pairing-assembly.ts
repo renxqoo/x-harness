@@ -1,4 +1,3 @@
-// 配对服务装配（main.ts 拆分件）：relay ticket/token 面与设备注册落账的依赖注入。
 import { createPairingServer, type PairingServer } from "./pairing-server.ts";
 import { PAIRING_MAX_CONCURRENT } from "@x-harness/remote-protocol";
 import type { GatewayIdentity } from "./identity.ts";
@@ -14,7 +13,6 @@ export interface PairingAssemblyDeps {
   devices: DeviceRegistry;
   now(): number;
   relayLink(): RelayLinkHandle | null;
-  /** ratchet 会话池（confirm 落账时 establish——种子单点化）。 */
   cryptoSessions: { establish(spec: { deviceId: string; sharedSecret: Uint8Array; initiator: boolean }): unknown };
 }
 

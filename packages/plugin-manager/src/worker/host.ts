@@ -1,8 +1,3 @@
-// worker 侧宿主（docs/PLUGIN-MANAGER.md §4 worker/host.ts，审查批次修复后）：
-// 三段式：boot → 加载/校验模块 → ready（apply 未跑，等 main 的 proceed）→ apply → done。
-// 错误经注入 sink 回流 main（协议 log，审查 #9）；waitFor 平台服务走 svc-wait 桥（#10）。
-// 同步死循环/OOM 崩溃由 main 侧超时 terminate / exit 事件收殓——本文件不做任何自救。
-
 import { parentPort } from "node:worker_threads";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type {
@@ -24,7 +19,6 @@ const send = (message: WorkerToMain): void => {
   port.postMessage(message);
 };
 
-// #9：worker 内核错误经协议回流 main（归属 plugin-manager 的错误日志）
 const ctx = createContext({
   onListenerError: (error, token) => {
     send({ t: "log", entry: { where: `${token.name}@worker`, message: String(error) } });
@@ -65,8 +59,6 @@ async function handle(message: MainToWorker): Promise<void> {
 }
 
 async function handleBoot(message: Extract<MainToWorker, { t: "boot" }>): Promise<void> {
-  // 不加 query bust：每次安装都是全新 worker（独立模块注册表），同路径重装天然拿新模块；
-  // 实测 terminate 热死循环 worker 后，主进程共享解析器对「带 query 的动态 import」粘性失败
   const mod = (await import(message.pluginPath)) as {
     default?: unknown;
     plugin?: unknown;
@@ -93,7 +85,7 @@ async function handleBoot(message: Extract<MainToWorker, { t: "boot" }>): Promis
     pluginName: plugin.name,
     apiVersion: plugin.apiVersion as number | undefined,
     inject: [...(plugin.inject ?? [])],
-  }); // apply 等 main 的 proceed（三段式：main 在 ready 后做锁与 replace）
+  });
 }
 
 async function handleProceed(): Promise<void> {
@@ -145,7 +137,6 @@ async function handleShutdown(): Promise<void> {
 
 let pendingPlugin: { name: string; apply: (ctx: Context, capabilities?: unknown) => unknown } | undefined;
 
-/** 插件的 Context 视图：真实注册落在 worker 内核 + 协议镜像给 main */
 function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: unknown) => unknown }): Parameters<typeof loadPlugins>[1][number] {
   const wrapper = {
     provide<T>(token: ServiceToken<T>, impl: T): Disposer {
@@ -156,11 +147,9 @@ function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: un
     },
     use<T>(token: ServiceToken<T>): T {
       const local = ctx.tryUse(token);
-      if (local !== undefined) return local; // worker 内自给的服务直取
-      // 平台服务在 main：异步 RPC 代理（一切方法调用经 svc-call 往返）
+      if (local !== undefined) return local;
       return new Proxy({} as Record<string, unknown>, {
         get: (_target, method) => {
-          // then/catch 屏蔽：防 await proxy 误判 thenable（get 会返回函数——经典代理陷阱）
           if (method === "then" || method === "catch") return undefined;
           return (...args: unknown[]) =>
             new Promise<unknown>((resolve, reject) => {
@@ -178,7 +167,6 @@ function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: un
     waitFor<T>(token: ServiceToken<T>): Promise<T> {
       const local = ctx.tryUse<T>(token);
       if (local !== undefined) return Promise.resolve(local);
-      // #10：平台服务的停靠等待经 svc-wait 桥——出现后返回异步代理（同 use 语义）
       return new Promise<T>((resolve, reject) => {
         rpcId += 1;
         const id = rpcId;
@@ -187,7 +175,7 @@ function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: un
             resolve(
               new Proxy({} as Record<string, unknown>, {
                 get: (_target, method) => {
-                  if (method === "then" || method === "catch") return undefined; // 同上：屏蔽 thenable
+                  if (method === "then" || method === "catch") return undefined;
                   return (...args: unknown[]) =>
                     new Promise<unknown>((resolveCall, rejectCall) => {
                       rpcId += 1;
@@ -205,9 +193,6 @@ function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: un
       });
     },
     on(token: AnyToken, fn: unknown, opts?: { readonly prepend?: boolean }): Disposer {
-      // 元能力名拒收（对抗审查 2a）：装载生命周期信封（plugin/*、service/provided、
-      // context/disposing）对第三方件不可见——与 capabilities.ts META 判定同源
-      //（名字是唯一载体，双侧一致；caps.on 已在 capabilities 层拒，此处封 ctx.on 旁路）
       if (META_TOKEN_NAMES.has(token.name)) {
         throw new Error(`listening on meta token not allowed in worker mode: ${token.name}`);
       }
@@ -259,13 +244,7 @@ function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: un
       return ctx.scope(filter);
     },
   } as unknown as Context;
-  // worker 侧 caps：名字直通 wrapper（wrapper 内 local 直取 / 平台 RPC 按名过线——
-  // main 侧 tokenTable 真身份解析，worker 内不持有平台 token 对象）。元能力名在
-  // capabilities.ts 单点排除，worker 侧同判定（名字是唯一载体，双侧一致）。
   const capabilities = createCapabilities({
-    // resolveToken 只服务 use/tryUse/waitFor 的存在性判定（kind 门）；on/emit 的
-    // EventToken 由 capabilities.ts 构造。真实存在性在 main 侧 tokenTable——RPC 缺席
-    // 报 no platform service，worker 不猜。
     resolveToken: (name) => syntheticServiceToken(name),
     useToken: (token) => wrapper.use(token as ServiceToken<unknown>),
     tryUseToken: (token) => wrapper.tryUse(token as ServiceToken<unknown>),
@@ -275,7 +254,6 @@ function bridged(plugin: { name: string; apply: (ctx: Context, capabilities?: un
       (wrapper.on as (t: AnyToken, f: unknown) => Disposer)(token, listener),
     emitToken: (token, payload) => wrapper.emit(token as EventToken<unknown>, payload),
   });
-  // inject 刻意丢弃：跨插件依赖语义归 main 侧 plugin-manager
   return {
     name: plugin.name,
     apply: (): void | Disposer | Promise<void | Disposer> => {

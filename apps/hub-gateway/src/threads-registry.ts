@@ -1,5 +1,3 @@
-// 持久线程注册表（DESIGN §1.2.2 一致性 H4 处置）：threads.json（0600 原子写）。
-// start/resume/register 的 response 到达时登记；stop/delete/retire 移除；重启后按表 resume。
 import { readFile } from "node:fs/promises";
 import { atomicWrite } from "./identity.ts";
 
@@ -33,7 +31,6 @@ export async function loadThreads(path: string): Promise<ThreadsRegistry> {
     entries = [];
   }
   const map = new Map(entries.map((e) => [e.threadId, e]));
-  // 序列化恒从 Map 取当前值；写链串行化（并发 atomicWrite 后写者赢会丢更新）
   let writeTail: Promise<void> = Promise.resolve();
   const flush = (): Promise<void> => {
     writeTail = writeTail.then(() => atomicWrite(path, JSON.stringify({ threads: [...map.values()] }, null, 2)));

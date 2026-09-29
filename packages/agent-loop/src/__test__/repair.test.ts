@@ -71,8 +71,6 @@ describe("interruptedTurnClosers（docs/AGENT-LOOP-DRIVER §1.6，DSH repair.spe
   });
 
   it("回归（AGENT-MESSAGE §4C）：纯内部消息批次消费后崩溃不复活——agent/message 也是消费标记", () => {
-    // 纯 notify 批次材料化只落 agent/message（无 user/message）——trailingClaims 漏认会把
-    // 已交付的 delegation 报告当 trailing claim 复活重投（双交付破坏「同份内容只进父上下文一次」）
     const insertReport = {
       op: "insert" as const,
       target: "next-step" as const,
@@ -82,11 +80,10 @@ describe("interruptedTurnClosers（docs/AGENT-LOOP-DRIVER §1.6，DSH repair.spe
       ev({ seq: 0, type: "turn/start", data: { turn: 0 } }),
       ev({ seq: 1, type: "agent/inbox/spliced", data: insertReport }),
       ev({ seq: 2, type: "agent/inbox/spliced", data: { op: "claim", target: "next-step", turn: 0, claimed: ["r1"] } }),
-      ev({ seq: 3, type: "agent/message", data: { turn: 0, step: 1, source: "delegation-report", kind: "content", content: [{ type: "text", text: "[agent-notification] report" }] }, surfaceOp: "append" }), // 已材料化=已消费
-      // 崩溃：此后无 user/message
+      ev({ seq: 3, type: "agent/message", data: { turn: 0, step: 1, source: "delegation-report", kind: "content", content: [{ type: "text", text: "[agent-notification] report" }] }, surfaceOp: "append" }),
     ];
     const closers = interruptedTurnClosers(log);
-    expect(closers.some((c) => c.type === "agent/inbox/spliced" && (c.data as { op?: string }).op === "insert")).toBe(false); // 不复活
+    expect(closers.some((c) => c.type === "agent/inbox/spliced" && (c.data as { op?: string }).op === "insert")).toBe(false);
     expect(closers.some((c) => c.type === "turn/end")).toBe(true);
   });
 
@@ -96,12 +93,11 @@ describe("interruptedTurnClosers（docs/AGENT-LOOP-DRIVER §1.6，DSH repair.spe
     const log = [
       ev({ seq: 0, type: "agent/inbox/spliced", data: insertA }),
       ev({ seq: 1, type: "agent/inbox/spliced", data: { op: "claim", target: "next-turn", turn: 0, claimed: ["x1"] } }),
-      ev({ seq: 2, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: "append" }), // 旧 claim 已消费
+      ev({ seq: 2, type: "user/message", data: { turn: 0, step: 0, content: [] }, surfaceOp: "append" }),
       ev({ seq: 3, type: "turn/end", data: { turn: 0, reason: { kind: "completed" } } }),
       ev({ seq: 4, type: "turn/start", data: { turn: 1 } }),
       ev({ seq: 5, type: "agent/inbox/spliced", data: insertA2 }),
       ev({ seq: 6, type: "agent/inbox/spliced", data: { op: "claim", target: "next-turn", turn: 1, claimed: ["x1"] } }),
-      // 崩溃：claim 后无 user/message
     ];
     const closers = interruptedTurnClosers(log);
     const reinsert = closers.find((c) => c.type === "agent/inbox/spliced");

@@ -1,6 +1,3 @@
-// pi-context 映射矩阵（docs/LLM-PI.md 测试口径）：system 顶层化、四角色转换、
-// tool_use input 解析降级三态、toolName 前文回查、空 user 跳过、工具表直传。
-
 import { describe, expect, it } from "vitest";
 import { toPiContext, toPiMessages } from "../pi-context.ts";
 import type { LlmRequest } from "../types.ts";
@@ -41,7 +38,7 @@ describe("toPiContext（docs/LLM-PI.md 契约 2）", () => {
       {
         role: "toolResult",
         toolCallId: "c1",
-        toolName: "add", // 前文 tool_use 回查
+        toolName: "add",
         content: [{ type: "text", text: "3" }],
         isError: false,
         timestamp: 0,
@@ -62,7 +59,6 @@ describe("toPiContext（docs/LLM-PI.md 契约 2）", () => {
             { type: "tool_use", callId: "d", name: "t", input: "5" },
           ],
         },
-        // 配对结果（S6b 发送层兜底：悬空 tool_use 会被剥——配齐后语义面才是本用例目标）
         { role: "tool", callId: "a", content: "r" },
         { role: "tool", callId: "b", content: "r" },
         { role: "tool", callId: "c", content: "r" },
@@ -76,8 +72,6 @@ describe("toPiContext（docs/LLM-PI.md 契约 2）", () => {
   });
 
   it("toolName 回查缺席 → \"unknown\"；isError 透传；tool content 缺席归空串", () => {
-    // 孤儿 tool result 配对（S6b 发送层兜底）：无对应 tool_use 的结果被剥除——
-    // 原孤儿用例改为配对形态（toolName 回查语义不变）
     const ctx = toPiContext(
       request([
         { role: "assistant", content: [{ type: "tool_use", callId: "orphan", name: "probe", input: "{}" }] },
@@ -187,7 +181,6 @@ describe("user 携图映射（BATCH2-DESIGN §1.2——mediaType→mimeType 单�
   });
 });
 
-// ── CONTEXT-TOKEN-UNIFICATION §3.1 L5：签名重建门（协议/provenance/块序） ──
 
 describe("signatureBlocksToContent 经 toPiMessages（L5 重建门）", () => {
   const baseMeta = { api: "openai-completions", provider: "gpt", model: "gpt-5.6-sol" };
@@ -238,7 +231,6 @@ describe("signatureBlocksToContent 经 toPiMessages（L5 重建门）", () => {
   });
 });
 
-// ── CONTEXT-TOKEN-UNIFICATION S6b：发送层配对兜底 ──
 
 describe("ensureToolPairing（发送层兜底——三重防线第三层）", () => {
   const meta = { api: "openai-completions", provider: "gpt", model: "m" };
@@ -252,7 +244,6 @@ describe("ensureToolPairing（发送层兜底——三重防线第三层）", ()
       meta,
     );
     const assistant = ctx.messages.find((m) => (m as { role?: string }).role === "assistant") as { content: Array<{ type: string }> } | undefined;
-    // 剥空后的 assistant 整条丢弃（无 content 的 assistant 也是 400 面）——悬空 call 不进 wire
     expect(assistant?.content.some((b) => b.type === "toolCall") ?? false).toBe(false);
   });
 

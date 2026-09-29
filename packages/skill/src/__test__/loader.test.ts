@@ -1,5 +1,3 @@
-// loader 表驱动（docs/SKILL.md §1.1/§7）：目录解析矩阵 + 注册/拒注册/上限边界。
-
 import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +14,6 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-/** 写一个 skill 目录并返回其路径；frontmatter 传 null 表示不写 SKILL.md */
 async function writeSkill(name: string, frontmatter: string | null, body = "instructions"): Promise<string> {
   const dir = join(root, name);
   await mkdir(dir, { recursive: true });
@@ -191,7 +188,6 @@ describe("loadSkills", () => {
     expect(result.warnings.some((warning) => warning.includes("is not a regular file"))).toBe(true);
   });
 
-  // root 运行时 chmod 不产生 EACCES——权限用例仅在非 root 生效
   it.skipIf(process.getuid?.() === 0)("SKILL.md 不可读（EACCES）拒注册告警", async () => {
     const dir = await writeSkill("locked", "name: locked\ndescription: x");
     await chmod(join(dir, "SKILL.md"), 0o000);

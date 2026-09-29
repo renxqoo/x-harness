@@ -1,5 +1,3 @@
-// 参考客户端：经 relay 连 gateway（e2e 驱动形态）。传输/L3 信封/L2 outbox 在此；
-// L1 E2E 经 codec 注入（ratchet 会话由装配层建立——两端配对产物，见 e2e 装置）。
 import { connect as netConnect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { randomBytes } from "node:crypto";
@@ -7,9 +5,7 @@ import { ChunkReassemblerPool, decodeEnvelope, encodeEnvelope, parseFrame, type 
 import { WebSocketFrameReader, WebSocketFrameWriter } from "@x-harness/remote-protocol";
 
 export interface RemoteCodec {
-  /** 明文帧 JSON → {payload, nonce}；失败 null（不发） */
   seal(frameJson: string): Promise<{ payload: string; nonce: string } | null>;
-  /** 密文 → 明文帧 JSON；失败 null（丢弃+计数） */
   open(payloadBase64: string, nonceBase64: string): Promise<string | null>;
 }
 
@@ -28,9 +24,7 @@ export interface RemoteClientOptions {
 export interface RemoteClientHandle {
   sendCommand(spec: { command: string; id: string; args?: Record<string, unknown> }): Promise<boolean>;
   sendFrame(frame: Frame): Promise<boolean>;
-  /** 断线窗口命令重发（重连后调用） */
   resendOutbox(): Promise<void>;
-  /** outbox 未结算命令 id（观测面） */
   outboxIds(): string[];
   waitResponse(id: string, timeoutMs?: number): Promise<ResponseBody>;
   frames(): Frame[];
@@ -45,7 +39,6 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
   const frames: Frame[] = [];
   const responseWaiters = new Map<string, (response: ResponseBody) => void>();
   const chunkPool = new ChunkReassemblerPool();
-  // 命令 outbox（§1.2：response 到达前保留；重连后重发）+ ACK 滑动窗口
   const commandOutbox = new Map<string, Frame>();
   let ackDebt = 0;
   let lastAckAt = 0;
@@ -59,14 +52,11 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
       if (stopped) return;
-      // 重拨由外层重建 connectRemote；此处最小实现：标记断线状态（App 端按需重建）。
-      // 参考客户端保持轻量：重连策略属 App 装配层（RECONNECT_BACKOFF_* 常量供其使用）。
       options.onStatus("disconnected", "awaiting-reconnect");
     }, backoff);
     backoff = Math.min(backoff * 2, 30_000);
   }
 
-  /** 设备→gateway ACK（§1.2：32 帧或 250ms 合并） */
   function maybeSendAck(): void {
     ackDebt += 1;
     const now = Date.now();
@@ -103,7 +93,6 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
     const frame = parseFrame(plaintext);
     if (frame === null) return;
     if (frame.kind === "chunk") {
-      // chunk 段重组（§1.2）：集齐还原逻辑帧再上抛
       const body = frame.body as { segmentId: number; segmentCount: number; data: string };
       const whole = chunkPool.add({ streamId: frame.streamId, seq: frame.seq, segmentId: body.segmentId, segmentCount: body.segmentCount, data: body.data });
       if (whole === null) return;
@@ -157,7 +146,6 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
       return;
     }
     reader.push(chunk);
-    // ping → pong（服务端活性探测；不回会被 60s 断线）
     reader.onNonText = () => {
       writer?.writePong();
     };
@@ -178,7 +166,6 @@ export function connectRemote(options: RemoteClientOptions): RemoteClientHandle 
       commandOutbox.set(spec.id, frame);
       return sendFrameInternal(frame);
     },
-    /** 断线窗口的命令重发（App 重连后调用；response 未到条目重投） */
     async resendOutbox(): Promise<void> {
       for (const frame of commandOutbox.values()) {
         await sendFrameInternal(frame);

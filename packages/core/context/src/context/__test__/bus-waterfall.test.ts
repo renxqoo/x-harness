@@ -43,7 +43,7 @@ describe("waterfall 派发（§2.2 第二行 + I2）", () => {
   it("中间件返回未调 next → throw", async () => {
     const ctx = createContext();
     const token = defineWaterfall<number, number>("wf-nocall");
-    ctx.on(token, async (input) => input); // 吞链
+    ctx.on(token, async (input) => input);
     await expect(ctx.dispatch(token, 1, async (i) => i)).rejects.toThrow(
       "returned without calling next()",
     );
@@ -53,8 +53,8 @@ describe("waterfall 派发（§2.2 第二行 + I2）", () => {
     const ctx = createContext();
     const token = defineWaterfall<number, number>("wf-retry");
     ctx.on(token, async (input, next) => {
-      const first = await next(input); // settle
-      if (first < 100) return next(input + 1); // 串行重调
+      const first = await next(input);
+      if (first < 100) return next(input + 1);
       return first;
     });
     const final = vi.fn(async (i: number) => i * 10);
@@ -70,7 +70,7 @@ describe("waterfall 派发（§2.2 第二行 + I2）", () => {
     const token = defineWaterfall<number, number>("wf-concurrent");
     let concurrent: Error | undefined;
     ctx.on(token, async (input, next) => {
-      const first = next(input); // 未 settle
+      const first = next(input);
       try {
         next(input);
       } catch (error) {
@@ -118,8 +118,8 @@ describe("waterfall 派发（§2.2 第二行 + I2）", () => {
     b.on(token, async (i, next) => next(i + 100));
     const fromA = await a.dispatch(token, 1, async (i) => i);
     const fromRoot = await ctx.dispatch(token, 1, async (i) => i);
-    expect(fromA).toBe(2); // a 自己 + 无 root 中间件
-    expect(fromRoot).toBe(1); // root 派发看不见 a/b
+    expect(fromA).toBe(2);
+    expect(fromRoot).toBe(1);
     expect(await b.dispatch(token, 1, async (i) => i)).toBe(101);
   });
 

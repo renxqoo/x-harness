@@ -1,7 +1,3 @@
-// 空闲清理：turn 结束 N 分钟后的 L1 兜底（水位线未触发时回收长尾
-// 到期 + 有收益 → L1 落账 + flush 先于 emit（观测不抢跑在持久化之前——空闲路径
-// 没有别的落盘点替它兜底）。flush 失败吞并告警。
-
 import type { Session, SessionId } from "@x-harness/session";
 import { computeClearPlan, landClearPlan } from "./scavenger.ts";
 import { pushGain } from "./measure.ts";
@@ -9,7 +5,6 @@ import type { SessionState } from "./session-state.ts";
 
 export interface IdleDeps {
   readonly session: Session;
-  /** flush 屏障（store.flush 注入——观测不抢跑在持久化之前） */
   readonly flush: () => Promise<{ ok: boolean; reason?: string }>;
   readonly state: SessionState;
   readonly config: {
@@ -23,7 +18,6 @@ export interface IdleDeps {
   readonly emitL1Cleared: (session: SessionId, trigger: "idle", freedTokens: number) => void;
 }
 
-/** 到期判定 + 落账 + flush-then-emit。返回是否落账。 */
 export function maybeIdleClear(deps: IdleDeps): boolean {
   const { session, state, config } = deps;
   if (config.idleClearMinutes <= 0) return false;
@@ -42,9 +36,6 @@ export function maybeIdleClear(deps: IdleDeps): boolean {
     pushGain(state.gains, { tokens: landed.gainTokens, sinceSeq: lastEvent.seq });
   }
   state.cache.journalSeen = session.events().length;
-  // flush 先于 emit：idle 路径的观测必须不抢跑在持久化之前（落账已成的失败 flush
-  // 不回滚 redaction——append-only 日志事实，emit 照发 + 告警，与参照系回滚语义的
-  // 有意分歧随 docs/COMPACTION.md 落档）；.catch 兜同步抛（定时器异常是进程级崩溃面）
   void deps
     .flush()
     .then((flushed) => {

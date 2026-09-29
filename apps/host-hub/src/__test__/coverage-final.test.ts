@@ -1,5 +1,3 @@
-// 覆盖收口 III：skills-admin removeSkill 分支、dialogs 坏形状/超时/denyAll、
-// inflight 喂入、event-bridge childBusy/unsubscribe、compactSkipError 映射表。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,7 +27,6 @@ describe("skills-admin（HOME 注入缝——user 技能根可隔离）", () => 
     const skillDir = join(projectCwd, ".x-harness", "skills", "beta");
     await mkdir(skillDir, { recursive: true });
     await writeFile(join(skillDir, "SKILL.md"), "---\nname: beta\ndescription: B\n---\nbody", "utf8");
-    // user 根（注入 HOME）为空 → beta 属 project 级：删除是 user 级专属 → 拒
     const home = await tempDir("hub-home-");
     const projectRemoval = await removeSkill({ name: "beta", trustedCwds: [projectCwd], homeDir: home });
     expect(projectRemoval).toEqual({ ok: false, error: { code: "state_conflict", message: "skill not user-defined: beta" } });
@@ -45,8 +42,8 @@ describe("skills-admin（HOME 注入缝——user 技能根可隔离）", () => 
     await writeFile(join(skillDir, "SKILL.md"), "---\nname: beta\ndescription: B\n---\nbody", "utf8");
     await writeFile(join(skillDir, "references", "guide.md"), "# guide", "utf8");
     expect(await removeSkill({ name: "beta", trustedCwds: [], homeDir: home })).toEqual({ ok: true });
-    expect(await stat(skillDir).catch(() => undefined)).toBeUndefined(); // 目录整体（含捆绑文件）消失
-    expect(await loadSkills([root])).toEqual({ skills: {}, warnings: [] }); // 装载零告警
+    expect(await stat(skillDir).catch(() => undefined)).toBeUndefined();
+    expect(await loadSkills([root])).toEqual({ skills: {}, warnings: [] });
   });
 
   test("symlink 技能移除：删链接不删目标（dotfiles/stow 摆放实体不受影响）", async () => {
@@ -65,15 +62,11 @@ describe("skills-admin（HOME 注入缝——user 技能根可隔离）", () => 
     const home = await tempDir("hub-home-");
     const agentDir = await tempDir("hub-agent-");
     const projectCwd = await tempDir("hub-proj-");
-    // agentDir 派生缝：agentDir 在场时 user 根 = <agentDir>/skills（homeDir 注入缝退居次位）
     const root = join(agentDir, "skills");
     await mkdir(join(root, "alpha"), { recursive: true });
     await writeFile(join(root, "alpha", "SKILL.md"), "---\nname: alpha\ndescription: A\n---\n", "utf8");
-    // user 名单禁用
     expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false })).toEqual({ ok: true });
-    // 带 cwd 再禁用 → 项目级名单落盘（自身无残留提示——by 只报 user 级残留）
     expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: false, cwd: projectCwd })).toEqual({ ok: true });
-    // 带 cwd 启用：项目级条目删除，但 user 名单仍含 → stillDisabled by user
     expect(await setSkillEnabled({ agentDir, homeDir: home, name: "alpha", enabled: true, cwd: projectCwd })).toEqual({ ok: true, stillDisabled: "user" });
     const project = JSON.parse(await readFile(join(projectCwd, ".x-harness", "hub-settings.json"), "utf8")) as { "skills.disabled"?: string[] };
     expect(project["skills.disabled"]).toEqual([]);
@@ -99,10 +92,9 @@ describe("dialogs broker 分支", () => {
     const confirmPromise = broker.confirm("t1", { tool: "bash", summary: "ls", reason: "r" });
     const request = JSON.parse(sent[0] as string) as PendingDialog;
     expect(broker.pendingCount()).toBe(1);
-    expect(broker.resolve(request.requestId, "junk")).toBe(true); // 坏形状 → settle(false)
+    expect(broker.resolve(request.requestId, "junk")).toBe(true);
     await expect(confirmPromise).resolves.toMatchObject({ allowed: false });
-    expect(broker.resolve("no-such", { confirmed: true })).toBe(false); // 未知忽略
-    // 结构化应答（PERMISSION-V2 §6.2）：verdict+memory+rule 改写全字段面；布尔退化=once
+    expect(broker.resolve("no-such", { confirmed: true })).toBe(false);
     const structuredPromise = broker.confirm("t1", { tool: "bash", reason: "r", options: ["once", "session", "project"], suggestedRule: "Danger(x:*):allow" });
     const lastRequest = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
     expect(lastRequest).toBeDefined();
@@ -110,9 +102,8 @@ describe("dialogs broker 分支", () => {
       expect(broker.resolve(lastRequest.requestId, { verdict: "allow", memory: "project", rule: "Danger(y:*):allow" })).toBe(true);
       await expect(structuredPromise).resolves.toMatchObject({ allowed: true, memory: "project", ruleOverride: "Danger(y:*):allow" });
     }
-    // 结构化字段帧契约（agent-app 消费面）：summary/options/suggestedRule/escalate 原样进 payload
     const escalateConfirm = broker.confirm("t1", { tool: "bash", summary: "mytool run", reason: "sandbox failure", options: ["once", "session"], suggestedRule: "Danger(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
-    const escReq = sent.map((line) => JSON.parse(line) as Record<string, unknown>).at(-1); // 帧面平铺（uiRequestFrame 顶层字段）
+    const escReq = sent.map((line) => JSON.parse(line) as Record<string, unknown>).at(-1);
     expect(escReq).toMatchObject({ summary: "mytool run", options: ["once", "session"], suggestedRule: "Danger(x:*):allow", escalate: { command: "mytool run", failureText: "Operation not permitted" } });
     const escReqId = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
     if (escReqId !== undefined) {
@@ -123,13 +114,11 @@ describe("dialogs broker 分支", () => {
     const boolReq = sent.map((line) => JSON.parse(line) as { requestId: string }).at(-1);
     if (boolReq !== undefined) {
       broker.resolve(boolReq.requestId, { confirmed: true });
-      await expect(boolOnce).resolves.toMatchObject({ allowed: true }); // 布尔退化=once（无记忆）
+      await expect(boolOnce).resolves.toMatchObject({ allowed: true });
     }
-    expect(broker.pendingAll()).toEqual([]); // 已结算出队
-    // 超时默认拒
+    expect(broker.pendingAll()).toEqual([]);
     const timeoutPromise = broker.confirm("t1", { tool: "bash", reason: "r" });
     await expect(timeoutPromise).resolves.toMatchObject({ allowed: false });
-    // denyAll：挂起全部拒绝
     const pending1 = broker.confirm("t1", { tool: "read", reason: "r" });
     const pending2 = broker.confirm("t1", { tool: "write", reason: "r" });
     expect(broker.pendingCount()).toBe(2);
@@ -147,9 +136,9 @@ describe("inflight 状态机", () => {
     state.toolOutput("c1", "x".repeat(70_000));
     state.toolOutput("c1", "more");
     const withTruncate = state.snapshot().toolOutputs[0];
-    expect(withTruncate?.truncated).toBe(true); // 粘滞
+    expect(withTruncate?.truncated).toBe(true);
     for (let i = 0; i < 12; i += 1) state.toolOutput(`fill-${i}`, "y");
-    expect(state.snapshot().toolOutputs.length).toBeLessThanOrEqual(8); // 满表不挤
+    expect(state.snapshot().toolOutputs.length).toBeLessThanOrEqual(8);
     state.toolDone("c1");
     expect(state.snapshot().toolOutputs.some((entry) => entry.callId === "c1")).toBe(false);
     state.turnEnd();
@@ -164,10 +153,10 @@ describe("event-bridge 观察面", () => {
     const lines: string[] = [];
     const bridge = createEventBridge({ emitLine: (line) => lines.push(line), threadId: () => "", inflight: createInflightState(), pendingSends: () => 0, mainEvents: () => undefined });
     bridge.emitSettled("s1", true);
-    expect(lines).toEqual([]); // 无盖章不外发
+    expect(lines).toEqual([]);
     expect(bridge.childBusy()).toBe(false);
     expect(bridge.isStreaming()).toBe(false);
-    bridge.unsubscribe(); // 幂等
+    bridge.unsubscribe();
   });
 });
 
@@ -181,10 +170,8 @@ describe("addModel 校验矩阵（分支补面）", () => {
     expect((await addModel(agentDir, { id: "m", cost: "bad" })).ok).toBe(false);
     expect((await addModel(agentDir, { id: "m", provider: "newp", protocol: "anthropic", baseUrl: "ftp://x" })).ok).toBe(false);
     expect((await addModel(agentDir, { id: "m", provider: "  ", protocol: "anthropic", baseUrl: "https://x" })).ok).toBe(false);
-    // bare-entry 形态（仅 id + 既有 provider）
     const okBare = await addModel(agentDir, { id: "glm-5.3-air", provider: "glm" });
-    expect(okBare).toMatchObject({ ok: true, model: { id: "glm-5.3-air", provider: "glm", contextWindow: 1_000_000, source: "custom" } }); // bare 追加不带 cost（预设 cost 表只在 preset source 保留）
-    // remove 后空档案自删
+    expect(okBare).toMatchObject({ ok: true, model: { id: "glm-5.3-air", provider: "glm", contextWindow: 1_000_000, source: "custom" } });
     const { removeModel } = await import("../host/models-admin.ts");
     expect((await removeModel(agentDir, "glm-5.3-air")).ok).toBe(true);
   });
@@ -205,7 +192,7 @@ describe("审查修复回归（收口处置）", () => {
       shell: { ok: true, path: "/nonexistent/shell" },
     });
     const outcome = await bash.exec({ command: "echo x", id: "b1" });
-    expect(outcome.ok).toBe(false); // spawn 抛错被 exec 顶层 catch——错误面应答
+    expect(outcome.ok).toBe(false);
   });
 
   test("cM2：准入取消 → 弹窗即时结算（pendingCount 归零——不挂 5min）", async () => {
@@ -227,10 +214,10 @@ describe("审查修复回归（收口处置）", () => {
       }, 30);
     });
     expect(broker.pendingCount()).toBe(1);
-    bash.abortAdmissions(); // 取消——弹窗应即时结算
+    bash.abortAdmissions();
     const outcome = await pending;
     expect(outcome.ok === false && outcome.reason).toBe("aborted before execution started");
-    expect(broker.pendingCount()).toBe(0); // 孤儿弹窗不占 pending/busy 面
+    expect(broker.pendingCount()).toBe(0);
   });
 
   test("M2：get_tree 子孙全收集（孙代在内 + 子代理滤除 + 环防御）", async () => {
@@ -241,8 +228,8 @@ describe("审查修复回归（收口处置）", () => {
       { id: "b", parentSession: "root" },
       { id: "a1", parentSession: "a" },
       { id: "a2", parentSession: "a1" },
-      { id: "agent-x", parentSession: "b", agentId: "agent-12345678" }, // 子代理滤除
-      { id: "loop", parentSession: "loop" }, // 环防御（自环不进集）
+      { id: "agent-x", parentSession: "b", agentId: "agent-12345678" },
+      { id: "loop", parentSession: "loop" },
     ];
     expect(descendantsOf("root", headers).sort()).toEqual(["a", "a1", "a2", "b"]);
     expect(descendantsOf("a", headers).sort()).toEqual(["a1", "a2"]);

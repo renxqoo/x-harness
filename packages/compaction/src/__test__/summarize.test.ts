@@ -1,7 +1,3 @@
-// 摘要 side-call 终态矩阵（docs/COMPACTION.md §1.1；对照参照系 hardening 语义子集：
-// 承接 H1 截断丢弃/H2 输入硬界/H4 provider 错与空输出/abort 静默/看门狗挂死跳过/
-// budget 耗尽不拨号/thinking-only 空摘要；改写为 LlmChunk finish 词表）。
-
 import { describe, expect, it } from "vitest";
 import type { SummarizerFace } from "../summarize.ts";
 import { buildSummarizePrompt, runTextRequest, summaryInputMaxChars, summarize } from "../summarize.ts";
@@ -28,7 +24,7 @@ describe("summaryInputMaxChars（H2 输入硬界）", () => {
   it("分母 = 摘要窗 − reserve − 4_000 − 上份摘要 − 附加指令；按 1.25 折算", () => {
     const base = summaryInputMaxChars({ face, reserveTokens: 10_000 });
     expect(base).toBe(Math.floor((100_000 - 10_000 - 4_000) / 1.25));
-    expect(summaryInputMaxChars({ face: { ...face, contextWindow: 12_000 }, reserveTokens: 10_000 })).toBe(-1_600); // 挂账#4：按摘要窗推导；< 1 = 预算耗尽
+    expect(summaryInputMaxChars({ face: { ...face, contextWindow: 12_000 }, reserveTokens: 10_000 })).toBe(-1_600);
     expect(
       summaryInputMaxChars({ face, reserveTokens: 10_000, previousSummary: "x".repeat(1_000), customInstructions: "y".repeat(500) }),
     ).toBe(Math.floor((100_000 - 10_000 - 4_000 - 1_000 - 500) / 1.25));
@@ -101,11 +97,11 @@ describe("终态矩阵", () => {
 
   it("回归:看门狗在场时操作者取消即时生效——不必等 idleTimeoutMs(适配器不感知 signal 的挂起流)", async () => {
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 25); // 流已挂起后取消(早于 5s 看门狗)
+    setTimeout(() => controller.abort(), 25);
     const startedAt = Date.now();
     const outcome = await run(hangScript("partial"), { idleTimeoutMs: 5_000, signal: controller.signal });
     expect(outcome).toEqual({ ok: false, reason: "aborted" });
-    expect(Date.now() - startedAt).toBeLessThan(2_000); // 未等看门狗即收束
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
   });
 
   it("回归:预 aborted signal 同步拒绝——拨号前即返回 aborted", async () => {
@@ -125,7 +121,7 @@ describe("终态矩阵", () => {
   });
   it("看门狗关闭(ms=0)时 signal 不入赛跑——直通完成(取消靠适配器与终态检查兜底)", async () => {
     const outcome = await run(textScript("plain"), { idleTimeoutMs: 0 });
-    expect(outcome).toEqual({ ok: true, text: "plain" }); // run 包装不传 finish(文本面)
+    expect(outcome).toEqual({ ok: true, text: "plain" });
   });
 
   it("拨号形状：system 提示词先行 + 单 user 提示 + 空 tools/maxTokens", async () => {
@@ -161,10 +157,8 @@ describe("终态矩阵", () => {
       signal,
     });
     const call = fake.calls[0];
-    // 独立归属在场且非空——undefined 会被 host-hub tapLlmStream 判成主会话，流即泄漏
     expect(call?.session).toBeDefined();
     expect(String(call?.session)).not.toBe("");
-    // 作业 id 形态与真实会话 id 可区分（不撞 SessionId 词法）
     expect(String(call?.session)).toBe("internal:summarizer");
   });
 });

@@ -1,12 +1,8 @@
-// L3 路由信封（DESIGN §1.1）：relay 只读 to 转发；from 必须与连接认证身份一致（relay
-// 侧执法）。无 seq——有序性归 WSS，防重放归 L2。
 export interface RouteEnvelope {
   v: number;
   from: string;
   to: string;
-  /** base64(AES-GCM 密文) */
   payload: string;
-  /** base64(nonce)——WIRE §4 布局；接收方从中反解 epoch/index（重复/乱序三态判据） */
   nonce: string;
 }
 
@@ -14,7 +10,6 @@ export function encodeEnvelope(env: RouteEnvelope): string {
   return JSON.stringify(env);
 }
 
-/** 解析失败返回 null（垃圾输入降级，不抛） */
 export function decodeEnvelope(line: string): RouteEnvelope | null {
   if (line.length === 0) return null;
   let parsed: unknown;

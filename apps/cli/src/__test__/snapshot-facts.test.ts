@@ -1,8 +1,3 @@
-// 日期 + 项目指令快照注入级旅程（docs/TAIL-SNAPSHOT-CHANNEL.md A/C'）：buildWorld
-// 真装配端到端——注入/合并序/落位（快照在锚点前、请求体携带）/改文件重注入/假钟
-// 跨天新条/锚点零 replace/旧锚点迁移恰一次 replace。纯函数面单测在
-// packages/harness/src/__test__/snapshot-facts.test.ts。
-
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,7 +51,7 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
     const dir = makeDir();
     writeFileSync(join(dir, "AGENTS.md"), "agents instructions v1");
     writeFileSync(join(dir, "CLAUDE.md"), "claude instructions");
-    let clockMs = Date.UTC(2026, 8, 21, 12); // UTC 正午锚点（时区可移植）
+    let clockMs = Date.UTC(2026, 8, 21, 12);
     const captured: LlmRequest[] = [];
     const built = await buildWorld({
       mainSessionId: mintSessionId(),
@@ -98,43 +93,40 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
       await handle.agent.whenIdle();
       const texts = userTexts();
       const day = localToday(new Date(clockMs));
-      expect(texts.some((t) => t === renderDateSnapshot(new Date(clockMs)))).toBe(true); // 日期快照（假钟当日）
-      expect(texts.some((t) => t.includes("agents instructions v1") && t.includes("claude instructions") && t.includes('<snapshot kind="project-instructions">'))).toBe(true); // 合并序 AGENTS 前
+      expect(texts.some((t) => t === renderDateSnapshot(new Date(clockMs)))).toBe(true);
+      expect(texts.some((t) => t.includes("agents instructions v1") && t.includes("claude instructions") && t.includes('<snapshot kind="project-instructions">'))).toBe(true);
       expect(texts.some((t) => t.includes(day))).toBe(true);
       const surface = handle.agent.session.surface();
-      // 预锚落位（不钉快照条数——agents 目录在场性随机器变）：system 锚点之前全是快照 user/message，
-      // 锚点之后紧接本轮 user 批次
       const anchorIndex = surface.findIndex((n) => n.event.type === "system/message");
       expect(anchorIndex).toBeGreaterThan(0);
       for (const node of surface.slice(0, anchorIndex)) expect(node.event.type === "user/message");
       const afterAnchor = surface[anchorIndex + 1]?.event.data as unknown as { content?: Array<{ text?: string }> };
       expect(afterAnchor.content?.[0]?.text).toBe("one");
-      expect(JSON.stringify(captured[0]?.messages)).toContain("agents instructions v1"); // 本轮请求即携带
+      expect(JSON.stringify(captured[0]?.messages)).toContain("agents instructions v1");
       expect(JSON.stringify(captured[0]?.messages)).toContain("claude instructions");
-      expect(systemCount()).toBe(1); // 锚点恰一条（首 kick 落锚）
+      expect(systemCount()).toBe(1);
 
       writeFileSync(join(dir, "AGENTS.md"), "agents instructions v2");
       handle.agent.followup("two");
       await handle.agent.whenIdle();
       const afterEdit = userTexts();
-      expect(afterEdit.some((t) => t.includes("agents instructions v2"))).toBe(true); // 变更重注入
-      expect(afterEdit.some((t) => t.includes("agents instructions v1"))).toBe(true); // 旧条在场（历史不改写）
-      expect(afterEdit.filter((t) => t.includes("claude instructions")).length).toBeGreaterThanOrEqual(2); // 新旧快照都带 CLAUDE 体
-      expect(systemCount()).toBe(1); // 指令变更零 replace（症状：易变事实变化致全前缀失效）
+      expect(afterEdit.some((t) => t.includes("agents instructions v2"))).toBe(true);
+      expect(afterEdit.some((t) => t.includes("agents instructions v1"))).toBe(true);
+      expect(afterEdit.filter((t) => t.includes("claude instructions")).length).toBeGreaterThanOrEqual(2);
+      expect(systemCount()).toBe(1);
 
-      clockMs += 24 * 3_600_000; // 假钟跨天
+      clockMs += 24 * 3_600_000;
       handle.agent.followup("three");
       await handle.agent.whenIdle();
       const nextDay = localToday(new Date(clockMs));
       expect(nextDay).not.toBe(day);
-      expect(userTexts().some((t) => t.includes(nextDay))).toBe(true); // 跨天新条
-      expect(systemCount()).toBe(1); // 日期翻天零 replace（同症状锚）
+      expect(userTexts().some((t) => t.includes(nextDay))).toBe(true);
+      expect(systemCount()).toBe(1);
       await handle.dispose();
     } finally {
       await world.ctx.dispose().catch(() => {});
     }
 
-    // 迁移锚：旧式锚点（铸着日期）→ 首轮恰一次 replace → 之后稳定
     const dir2 = makeDir();
     const clockMs2 = Date.UTC(2026, 8, 22, 12);
     const captured2: LlmRequest[] = [];
@@ -168,11 +160,11 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
       handle2.agent.followup("one");
       await handle2.agent.whenIdle();
       const systemEvents = handle2.agent.session.events().filter((e) => e.type === "system/message");
-      expect(systemEvents).toHaveLength(2); // 旧锚点 + 恰一次 replace
+      expect(systemEvents).toHaveLength(2);
       expect(systemEvents[1]?.surfaceOp).toMatchObject({ op: "replace" });
       handle2.agent.followup("two");
       await handle2.agent.whenIdle();
-      expect(handle2.agent.session.events().filter((e) => e.type === "system/message")).toHaveLength(2); // 之后稳定
+      expect(handle2.agent.session.events().filter((e) => e.type === "system/message")).toHaveLength(2);
       await handle2.dispose();
     } finally {
       await world2.ctx.dispose().catch(() => {});

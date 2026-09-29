@@ -1,8 +1,3 @@
-// e2e：件16 workflow 崩溃旅程（§11 承诺——三档各一条含崩溃窗口）。
-// 形态：同进程双 world（全灭→重装配档案），对齐 delegation-journeys 的 revive 形态——
-// kill -9 的等价语义（ctx.dispose 后 journal/子会话卷全在盘，新装配扫回）。
-// 发现的异常如实收集为 exports.issues，供收口统计——不在本文件内静默修补。
-
 import { textScript } from "@x-harness/testkit";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,7 +21,6 @@ const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
   setTimeout(() => { resolve(); }, ms);
 });
 
-/** 崩溃旅程发现的异常（如实收集——收口统计输入） */
 export const workflowJourneyIssues: readonly string[] = [];
 const issues: string[] = [];
 function noteIssue(text: string): void {
@@ -98,14 +92,9 @@ async function readJournalTask(root: string): Promise<{ readonly raw: string; re
   return { raw, types };
 }
 
-/**
- * 旅程 A（Tier A schema + 崩溃在子代理完成后、验收前）：
- * 提交 → 子完成 → **全灭** → 重装配 → 恢复应直接进验收（不重跑）→ 终局 completed + 通知 + deliverable。
- */
 export async function runWorkflowCrashTierAJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-e2e-wf-a-"));
   try {
-    // 第一世：提交受管任务（schema 档）
     const first = await assembleWorld({ root });
     const parentMade = await first.loop.create({ session: { id: "wf-parent" as SessionId }, agent: { model: "pm", provider: "fake" } });
     if (!parentMade.ok) throw new Error(`parent 创建失败：${parentMade.reason}`);
@@ -119,14 +108,12 @@ export async function runWorkflowCrashTierAJourney(): Promise<void> {
       session: "wf-parent" as SessionId,
     });
     must(!submitted.isError, `受管提交（实际：${submitted.content}）`);
-    // 等子完成（通知未到父——受管路径 sink 驱动）——趁验收/结算前全灭
     await sleep(400);
     await first.ctx.use(sessionStore).flush("wf-parent" as SessionId).catch(() => {});
     await parentMade.value.dispose();
-    await first.ctx.dispose(); // 全灭（等价 kill -9：journal/子会话卷在盘，内存全失）
+    await first.ctx.dispose();
     void registry1;
 
-    // 第二世：重装配（同 root）→ plugin apply 扫描恢复
     const second = await assembleWorld({ root });
     const resumed = await second.loop.resume({ id: "wf-parent" as SessionId, agent: { model: "pm", provider: "fake" } });
     if (!resumed.ok) {
@@ -134,8 +121,8 @@ export async function runWorkflowCrashTierAJourney(): Promise<void> {
       await second.ctx.dispose();
       return;
     }
-    second.scripts.set("pm", []); // 不再有子脚本——恢复不应重跑子代理（dispatched×completed 窗口直接进验收）
-    await sleep(600); // 恢复 + 验收 + 结算 + 通知
+    second.scripts.set("pm", []);
+    await sleep(600);
     const texts = await parentTexts(second);
     const notified = await waitFor(async () => (await parentTexts(second)).includes("workflow-notification"), "旅程A：恢复后完成通知");
     if (notified) {
@@ -150,15 +137,10 @@ export async function runWorkflowCrashTierAJourney(): Promise<void> {
     await second.ctx.dispose();
   } finally {
     await rm(root, { recursive: true, force: true }).catch(() => {});
-    issues.length = 0; // 旅程 A 专用清空（issues 已在 finally 前被消费）
+    issues.length = 0;
   }
 }
 
-/**
- * 旅程 B（Tier B command + 崩溃在验收命令执行中）：
- * 提交（schema+command）→ 子完成 → 验收命令在飞（长 sleep）→ **全灭** → 重装配 →
- * 恢复应 verify/started 无 result → unknown 封口 + fail 终局（不重跑命令——副作用防线）。
- */
 export async function runWorkflowCrashTierBJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-e2e-wf-b-"));
   const sideEffect = join(root, "side-effect.count");
@@ -168,7 +150,6 @@ export async function runWorkflowCrashTierBJourney(): Promise<void> {
     if (!parentMade.ok) throw new Error(`parent 创建失败：${parentMade.reason}`);
     first.scripts.set("pm", [textScript('{"title":"for command tier"}')]);
     const registry1 = first.ctx.use((await import("@x-harness/tools")).toolRegistry);
-    // 命令带副作用计数：执行一次追加一行（崩溃旅程判定重跑的探针）
     const submitted = await registry1.dispatch({
       callId: "wf-b1",
       name: "workflow_submit",
@@ -182,13 +163,11 @@ export async function runWorkflowCrashTierBJourney(): Promise<void> {
       session: "wf-parent" as SessionId,
     });
     must(!submitted.isError, `受管提交（实际：${submitted.content}）`);
-    await sleep(700); // 子完成 + schema 过 + verify/started 落账 + 命令在飞（sleep 5 未完）
+    await sleep(700);
     await first.ctx.use(sessionStore).flush("wf-parent" as SessionId).catch(() => {});
     await parentMade.value.dispose();
-    await first.ctx.dispose(); // 全灭在命令执行中
+    await first.ctx.dispose();
 
-    // 第二世：恢复 → verifying 态 → unknown 封口 + fail（不重跑——side-effect.count 应恰 0 行：
-    // 命令没跑完就被杀，恢复不重试）
     const second = await assembleWorld({ root });
     const resumed = await second.loop.resume({ id: "wf-parent" as SessionId, agent: { model: "pm", provider: "fake" } });
     if (!resumed.ok) {
@@ -218,11 +197,6 @@ export async function runWorkflowCrashTierBJourney(): Promise<void> {
   }
 }
 
-/**
- * 旅程 C（Tier C critic + 崩溃在 critic 评审后、提案解析前）：
- * 提交（critic 档，reviewer .md 类型）→ 子完成 → critic 完成产出 fail 提案 → **全灭**（提案
- * 未消费）→ 重装配 → 恢复直接进验收链 → critic 重派（只读评审，重跑无害）→ 终局。
- */
 export async function runWorkflowCrashTierCJourney(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "xh-e2e-wf-c-"));
   const agentsDir = join(root, "agents");
@@ -233,9 +207,6 @@ export async function runWorkflowCrashTierCJourney(): Promise<void> {
     const first = await assembleWorld({ root, agentsDir });
     const parentMade = await first.loop.create({ session: { id: "wf-parent" as SessionId }, agent: { model: "pm", provider: "fake" } });
     if (!parentMade.ok) throw new Error(`parent 创建失败：${parentMade.reason}`);
-    // 崩溃窗口对准「critic 评审在飞」：critic 脚本 2s 延迟 + 全灭在 1.5s（装置教训：
-    // 无延迟时整个 fail→reopen→修复→critic#2 链在 900ms 内跑完，崩溃窗根本没命中——
-    // 曾因此把装置脚本不足误判为实现缺陷）
     first.scripts.set("pm", [textScript("the deliverable text")]);
     first.scripts.set("critic-model", [(async function* (): AsyncGenerator<LlmChunk> {
       await sleep(2_000);
@@ -251,13 +222,11 @@ export async function runWorkflowCrashTierCJourney(): Promise<void> {
       session: "wf-parent" as SessionId,
     });
     must(!submitted.isError, `受管提交（实际：${submitted.content}）`);
-    await sleep(1_500); // 子完成 + critic 派发在飞（2s 延迟未完）——崩溃窗命中
+    await sleep(1_500);
     await first.ctx.use(sessionStore).flush("wf-parent" as SessionId).catch(() => {});
     await parentMade.value.dispose();
     await first.ctx.dispose();
 
-    // 第二世：恢复 → dispatched×completed → 直接进验收 → critic 重派（本世 pass——
-    // 只读评审重跑无害；deliverable 是第一世交付物原文）
     const second = await assembleWorld({ root, agentsDir });
     const resumed = await second.loop.resume({ id: "wf-parent" as SessionId }, );
     if (!resumed.ok) {
@@ -265,14 +234,13 @@ export async function runWorkflowCrashTierCJourney(): Promise<void> {
       await second.ctx.dispose();
       return;
     }
-    second.scripts.set("pm", [textScript("irrelevant")]); // 不应被消费（恢复不重跑任务子代理）
+    second.scripts.set("pm", [textScript("irrelevant")]);
     second.scripts.set("critic-model", [textScript('{"verdict":"pass"}')]);
     await sleep(800);
     const notified = await waitFor(async () => (await parentTexts(second)).includes("workflow-notification"), "旅程C：恢复后终局通知", 12_000);
     if (notified) {
       const texts = await parentTexts(second);
       if (!texts.includes("finished: passed")) noteIssue(`旅程C：终局非 passed（critic 二世 pass 应过——实际通知见 journal）`);
-      // 恢复不应重跑任务子代理（第一世修复轮的交付物即验收对象）
       if (!texts.includes("deliverable:")) noteIssue("旅程C：通知未回传 deliverable");
     }
     const journal = await readJournalTask(root);
@@ -286,7 +254,6 @@ export async function runWorkflowCrashTierCJourney(): Promise<void> {
   }
 }
 
-/** 旅程注册面（main.ts 挂接）：三档崩溃旅程 + issues 收集口 */
 export async function runWorkflowCrashJourneys(): Promise<readonly string[]> {
   await runWorkflowCrashTierAJourney();
   await runWorkflowCrashTierBJourney();

@@ -27,7 +27,7 @@ function makeStore(): Harness {
       events.push(event);
     },
     onGuard: async (_header): Promise<GuardDeny | undefined> => {
-      await Promise.resolve(); // 让并发 create 都越过预检查、抵达 birth 二次占用检查
+      await Promise.resolve();
       return guardReason === undefined ? undefined : { kind: "deny", reason: guardReason };
     },
     onCreated: (header) => {
@@ -66,9 +66,9 @@ describe("create（docs/SESSION.md §1.5）", () => {
     const store = createSessionStore(h.hooks);
     const a = unwrap(await store.create());
     const b = unwrap(await store.create());
-    expect(a.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/); // UTC 时间戳-6 位随机（docs/SESSION.md §1.5）
+    expect(a.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/);
     expect(b.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/);
-    expect(a.id).not.toBe(b.id); // 随机段分流 + store Map duplicate 兜底
+    expect(a.id).not.toBe(b.id);
     expect(typeof a.header.createdAt).toBe("number");
     expect(a.header.cwd).toBe(process.cwd());
     expect(h.created).toHaveLength(2);
@@ -141,7 +141,7 @@ describe("create（docs/SESSION.md §1.5）", () => {
     return (async () => {
       const store = createSessionStore(makeStore().hooks);
       expect(await store.create(options)).toEqual({ ok: false, reason: expected });
-      expect(store.list()).toEqual([]); // 零残留
+      expect(store.list()).toEqual([]);
     })();
   });
 
@@ -151,7 +151,7 @@ describe("create（docs/SESSION.md §1.5）", () => {
     const s = unwrap(await store.create({ header: source }));
     source.cwd = "/mutated";
     expect(s.header.cwd).toBe("/old");
-    expect(Object.isFrozen(source)).toBe(false); // 调用方对象不被就地冻结
+    expect(Object.isFrozen(source)).toBe(false);
   });
 
   it("seed 信封含非 JSON 成员（显式 undefined 键/类实例）→ Result 拒绝零残留（G5：曾裸抛 not-json）", async () => {
@@ -212,7 +212,7 @@ describe("fork（docs/SESSION.md §1.5）", () => {
       expect(child.ok).toBe(shouldPass);
       if (shouldPass && child.ok) {
         const prefix = untilSeq === undefined ? 3 : untilSeq + 1;
-        expect(child.value.events()).toHaveLength(prefix + 1); // + end-seed
+        expect(child.value.events()).toHaveLength(prefix + 1);
       }
     })();
   });
@@ -231,11 +231,11 @@ describe("fork（docs/SESSION.md §1.5）", () => {
     const existing = unwrap(await store.create({ id: sid("taken") }));
     const clashed = await store.fork(parent.id, { id: sid("taken") });
     expect(clashed).toEqual({ ok: false, reason: "duplicate:taken" });
-    expect(store.get(sid("taken"))).toBe(existing); // 现有会话不被覆盖
+    expect(store.get(sid("taken"))).toBe(existing);
     for (const bad of [await store.fork(sid("nope")), await store.fork(parent.id, { untilSeq: 99 })]) {
       expect(bad.ok).toBe(false);
     }
-    expect(store.list()).toEqual(["p", "taken"]); // 失败路径零残留
+    expect(store.list()).toEqual(["p", "taken"]);
   });
 });
 

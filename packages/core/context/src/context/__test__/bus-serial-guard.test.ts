@@ -20,7 +20,7 @@ describe("serial 派发（§2.2 第三行）", () => {
     });
     ctx.on(token, ({ v }) => order.push(v * 2));
     await ctx.dispatch(token, { v: 1 });
-    expect(order).toEqual([1, 2]); // 后注册的等前一个 await 完成
+    expect(order).toEqual([1, 2]);
   });
 
   it("监听器错误隔离：进 sink、后续继续", async () => {
@@ -73,8 +73,8 @@ describe("guard 派发（§2.2 第四行 + C7：全部执行不短路）", () =>
       return deny("also-no");
     });
     const verdict = await ctx.dispatch(token, { v: 1 });
-    expect(executed).toEqual(["first", "second", "third"]); // 不短路
-    expect(verdict).toEqual({ kind: "deny", reason: "no" }); // 首个按序
+    expect(executed).toEqual(["first", "second", "third"]);
+    expect(verdict).toEqual({ kind: "deny", reason: "no" });
   });
 
   it("坏守卫按弃权计：错误进 sink，不影响他人与其后 deny", async () => {
@@ -115,7 +115,7 @@ describe("guard 派发（§2.2 第四行 + C7：全部执行不短路）", () =>
       return deny("sync-deny");
     });
     const verdict = await ctx.dispatch(token, { v: 1 });
-    expect(order).toEqual(["async", "sync"]); // 逐个 await
-    expect(verdict).toEqual({ kind: "deny", reason: "async-deny" }); // 首个按序
+    expect(order).toEqual(["async", "sync"]);
+    expect(verdict).toEqual({ kind: "deny", reason: "async-deny" });
   });
 });

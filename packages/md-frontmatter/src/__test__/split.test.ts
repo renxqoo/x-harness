@@ -1,5 +1,3 @@
-// splitFrontmatter 表驱动：头体边界逐字节断言（形状判定的两侧 + 退化形态）。
-
 import { describe, expect, it } from "vitest";
 import { splitFrontmatter } from "../split.ts";
 

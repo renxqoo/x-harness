@@ -1,7 +1,3 @@
-// 流包装与插件装配面（docs/LLM-REPETITION-GUARD.md §1）：pass-through 零扣留（正常流
-// 帧序不变）、命中截流尾随 error finish、text/thinking 通道分域互不串扰、toolcall/usage
-// 直通、插件挂 llm/stream waterfall 全链。症状命名：模型行内复读致文案前缀重复。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
 import type { LlmChunk } from "@x-harness/llm";
@@ -50,7 +46,7 @@ describe("repetitionGuardStream 流包装", () => {
     const out = await collect(
       repetitionGuardStream(script([think("Docs updated."), text("Docs".repeat(40)), finishStop])),
     );
-    expect(out[0]).toEqual(think("Docs updated.")); // 干净 thinking 已放行
+    expect(out[0]).toEqual(think("Docs updated."));
     expect(out[out.length - 1]?.type).toBe("finish");
   });
 
@@ -75,10 +71,10 @@ describe("repetitionGuardStream 流包装", () => {
     })();
     const wrapped = repetitionGuardStream(upstream)[Symbol.asyncIterator]();
     expect((await wrapped.next()).value).toEqual(text("a"));
-    await wrapped.return?.(undefined as never); // 提前退出：seal 后上游不再被拉取
-    const after = await wrapped.next(); // sealed：恒 done
+    await wrapped.return?.(undefined as never);
+    const after = await wrapped.next();
     expect(after.done).toBe(true);
-    expect(pulled).toBe(1); // 上游只被拉到首个帧（b/c 未被消费）
+    expect(pulled).toBe(1);
   });
 });
 

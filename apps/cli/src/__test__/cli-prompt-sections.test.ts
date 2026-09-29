@@ -1,7 +1,3 @@
-// 追加段链（docs/CLI.md §2.5）：基础段归 @x-harness/harness base-prompt.ts（包内
-// base-prompt.test 覆盖）；本层只测 appends 链（落尾语义/注销回收/与工具段共序）
-// 与 CLI 形态世界组装回归（W1 审查 M-1 处置——等价验收工件）。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,7 +62,7 @@ describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验�
     const root = mkdtempSync(join(tmpdir(), "xh-cli-prompt-"));
     try {
       const unload = await loadPlugins(ctx, [
-        systemPromptPlugin, // D6 硬约束：前置于带 guidance 的 tool-*
+        systemPromptPlugin,
         createBasePromptPlugin(facts),
         toolsPlugin,
         createToolPlugin({ name: "tool-bash", gate: new PathGate(root), envOption: createLocalEnv(root), make: () => ({ name: "bash", description: "bash", inputSchema: Type.Object({}), execute: async () => ({ content: "ok" }) }), guidance: bashGuidance }),
@@ -74,7 +70,6 @@ describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验�
       const prompt = ctx.use(systemPrompt);
       const offAppend = registerAppendSections(prompt, ["EXTRA-RULE"]);
       const text = prompt.assemble().text;
-      // base 全段按序（游标单调推进）
       const order = ["You are xh", "## Security", "## Conduct", "## Tone", "## Tool Use", "## Making Changes", "## Git", "## Safety", "## Environment", "## Context Management", "## Output Format"];
       let cursor = -1;
       for (const part of order) {
@@ -84,10 +79,10 @@ describe("CLI 形态世界 prompt 组装（W1 审查 M-1 处置——等价验�
       }
       expect(text).toContain("- Working directory: /w/proj");
       expect(text).toContain("- Is a git repository: yes");
-      expect(text).not.toContain("{{"); // facts 全插值
-      expect(text).toContain("no TTY"); // local env → 基础守则（非交互约束）仍停靠
-      expect(text).not.toContain("denied domain"); // 围栏段仅 sandbox 形态
-      expect(text.indexOf("EXTRA-RULE")).toBeGreaterThan(cursor); // 追加段落尾
+      expect(text).not.toContain("{{");
+      expect(text).toContain("no TTY");
+      expect(text).not.toContain("denied domain");
+      expect(text.indexOf("EXTRA-RULE")).toBeGreaterThan(cursor);
       offAppend();
       for (const dispose of unload) await dispose();
       await ctx.dispose();

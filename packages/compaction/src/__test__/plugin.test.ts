@@ -1,8 +1,3 @@
-// 装配层（docs/COMPACTION.md §1.1；对照参照系 compaction/compaction-surface/
-// hardening-guardrails 语义子集：承接水位触发→落账→投影替换、累积更新、软禁用、
-// 阈值不触发、manual runner、单飞行、值域 fail-fast、多会话隔离；改写为 waterfall
-// dispatch + sessionStore 形态）。
-
 import { TRIGGER_TIERS, triggerTierOf } from "../plugin.ts";
 import { describe, expect, it, vi } from "vitest";
 import { agentRequestError } from "@x-harness/agent-loop";
@@ -60,11 +55,11 @@ describe("水位触发（agentPreStep → replace 落账）", () => {
       const replaceEvents = session.events().filter((e) => e.type === "user/message" && typeof e.surfaceOp === "object");
       expect(replaceEvents).toHaveLength(1);
       const messages = session.deriveMessages();
-      expect(messages[0]).toMatchObject({ role: "system", text: "SYS" }); // system 锚点保留
+      expect(messages[0]).toMatchObject({ role: "system", text: "SYS" });
       const summaryText = (messages[1] as unknown as { content: ReadonlyArray<{ text: string }> }).content[0]?.text ?? "";
       expect(summaryText).toContain("COMPACT-SUMMARY");
-      expect(summaryText).toContain("automatic continuation"); // auto 注入语
-      expect(messages.length).toBeLessThan(5); // 前缀已折叠
+      expect(summaryText).toContain("automatic continuation");
+      expect(messages.length).toBeLessThan(5);
     } finally {
       await world.ctx.dispose();
     }
@@ -91,8 +86,7 @@ describe("水位触发（agentPreStep → replace 落账）", () => {
       if (!made.ok) throw new Error(made.reason);
       const session = made.value;
       seedTurn(session, { turn: 0, user: "early", assistant: { text: "a0", usage: { input: 100, output: 5 } } });
-      seedTurn(session, { turn: 1, user: "q", assistant: { text: "a", usage: { input: 850, output: 5 } } }); // 锚 850 < 920 水位（单轮无切口——前置一轮）；850+100 粘贴 > 920 触发
-      // 模拟 beginStep 的 claim 尾事件：大粘贴（100 token）
+      seedTurn(session, { turn: 1, user: "q", assistant: { text: "a", usage: { input: 850, output: 5 } } });
       session.append("agent/inbox/spliced", {
         op: "insert",
         target: "next-turn",
@@ -101,7 +95,7 @@ describe("水位触发（agentPreStep → replace 落账）", () => {
       session.append("agent/inbox/spliced", { op: "claim", target: "next-turn", turn: 1, claimed: ["p1"] });
       world.llm.scripts.push(textScript("PASTE-SUMMARY"));
       await dispatchPreStep(world, { session: session.id });
-      expect(world.llm.calls).toHaveLength(1); // 850+100 > 920 水位 → 压缩
+      expect(world.llm.calls).toHaveLength(1);
     } finally {
       await world.ctx.dispose();
     }
@@ -129,9 +123,8 @@ describe("累积更新（二次压缩——位置区间拓扑回归）", () => {
       const prompt = promptOf(world.llm.calls[1]);
       expect(prompt).toContain("<previous-summary>");
       expect(prompt).toContain("SUMMARY-1");
-      // 早高 seq 拓扑：第二次 replace 落账成功且投影中 replace 型节点恰一个（新替旧）
       const replaceEvents = session.events().filter((e) => e.type === "user/message" && typeof e.surfaceOp === "object");
-      expect(replaceEvents).toHaveLength(2); // 日志两条（不可变）
+      expect(replaceEvents).toHaveLength(2);
       expect(session.surface().filter((n) => n.event.type === "user/message" && typeof n.event.surfaceOp === "object")).toHaveLength(1);
       const head = session.deriveMessages()[0] as unknown as { content: ReadonlyArray<{ text: string }> };
       expect(head.content[0]?.text).toContain("SUMMARY-2");
@@ -179,25 +172,25 @@ describe("manual runner（服务直调）", () => {
       const head = made.value.deriveMessages()[0] as unknown as { content: ReadonlyArray<{ text: string }> };
       const text = head.content[0]?.text ?? "";
       expect(text).toContain("MANUAL-SUM");
-      expect(text).not.toContain("automatic continuation"); // manual 不附加注入语
-      expect(runner.summarizer?.model).toBe("sum-model"); // 摘要面暴露（单一真相）
-      expect(runner.summarizer?.maxOutputTokens).toBe(80); // 输出上限缺省 floor(0.8 × reserve=100)
-      expect(world.llm.calls[0]?.messages[0]).toMatchObject({ role: "system" }); // 结构化检查点纪律随拨号发送
+      expect(text).not.toContain("automatic continuation");
+      expect(runner.summarizer?.model).toBe("sum-model");
+      expect(runner.summarizer?.maxOutputTokens).toBe(80);
+      expect(world.llm.calls[0]?.messages[0]).toMatchObject({ role: "system" });
     } finally {
       await world.ctx.dispose();
     }
   });
 
   it("缺省水位按窗口分档（§7.4：窗 1000 落 ≤300k 首档 → 80%）：800 边界——795 不触发、810 触发强制压缩", async () => {
-    const world = await makeWorld(); // 缺省分档（§7.4 首档 80%）：水位 = 1000 × 80% = 800
+    const world = await makeWorld();
     try {
       const made = await world.store.create({ id: sid("pct-default") });
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500, output: 5 } } });
-      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 795, output: 5 } } }); // < 920
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 795, output: 5 } } });
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(0);
-      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 810, output: 5 } } }); // > 920
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 810, output: 5 } } });
       world.llm.scripts.push(textScript("BACK"));
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(1);
@@ -212,10 +205,10 @@ describe("manual runner（服务直调）", () => {
       const made = await world.store.create({ id: sid("pct") });
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500, output: 5 } } });
-      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 850, output: 5 } } }); // 850 < 950 水位
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 850, output: 5 } } });
       await dispatchPreStep(world, { session: made.value.id });
-      expect(world.llm.calls).toHaveLength(0); // 未过线零拨号
-      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 960, output: 5 } } }); // 960 > 950 水位
+      expect(world.llm.calls).toHaveLength(0);
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 960, output: 5 } } });
       world.llm.scripts.push(textScript("BACK"));
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(1);
@@ -284,7 +277,7 @@ describe("软失败矩阵（装配层——终态映射与告警面）", () => {
     const bare = createContext();
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
-      await loadPlugins(bare, [sessionPlugin, createCompactionPlugin({ ...BASE_OPTIONS } as never)]); // 不 provide llmRuntime
+      await loadPlugins(bare, [sessionPlugin, createCompactionPlugin({ ...BASE_OPTIONS } as never)]);
       const made = await bare.use(sessionStore).create({ id: sid("bare") });
       if (!made.ok) throw new Error(made.reason);
       seedTurn(made.value, { turn: 0, user: "b0", assistant: { text: "a0", usage: { input: 100, output: 5 } } });
@@ -311,7 +304,7 @@ describe("软失败矩阵（装配层——终态映射与告警面）", () => {
       seedTurn(made.value, { turn: 0, user: textOf(1), assistant: { text: textOf(1), usage: { input: 10, output: 1 } } });
       seedTurn(made.value, { turn: 1, user: textOf(1), assistant: { text: textOf(1), usage: { input: 10, output: 1 } } });
       const result = await world.ctx.use(compactionRunner).compact({ session: made.value.id });
-      expect(result).toEqual({ ok: false, reason: "no-cut-point" }); // cut 只能落首候选 → 护栏拒绝
+      expect(result).toEqual({ ok: false, reason: "no-cut-point" });
     } finally {
       await world.ctx.dispose();
     }
@@ -336,7 +329,7 @@ describe("软失败矩阵（装配层——终态映射与告警面）", () => {
       world.llm.scripts.push(textScript("L-SUM"));
       const first = await world.ctx.use(compactionRunner).compact({ session: made.value.id });
       expect(first.ok).toBe(true);
-      const second = await world.ctx.use(compactionRunner).compact({ session: made.value.id }); // 单轮后无可切
+      const second = await world.ctx.use(compactionRunner).compact({ session: made.value.id });
       expect(second.ok).toBe(false);
       const warns = stderr.mock.calls.filter((line) => String(line[0]).includes("file-ledger-empty"));
       expect(warns).toHaveLength(1);
@@ -392,7 +385,7 @@ describe("自愈边界与告警态回收", () => {
       seedTurn(reborn.value, { turn: 0, user: "q2", assistant: { text: "a", usage: { input: 950, output: 5 } } });
       await dispatchPreStep(world, { session: reborn.value.id });
       const warns = stderr.mock.calls.filter((line) => String(line[0]).includes("summarizer-unconfigured"));
-      expect(warns).toHaveLength(2); // 重生会话不受旧告警态压制
+      expect(warns).toHaveLength(2);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -414,7 +407,7 @@ describe("理由词表封闭性（docs/COMPACTION.md §1.1——词表由测试�
       "replace-failed",
       "aborted",
     ];
-    expect(reasons).toHaveLength(10); // 闭表规模锁
+    expect(reasons).toHaveLength(10);
   });
 
   it("手动压缩在摘要面缺席时返回 summarizer-unconfigured（runner 诊断面）", async () => {
@@ -452,12 +445,11 @@ describe("预锚注入头部豁免（skill 清单形态——L2 头部守卫缺�
       await dispatchPreStep(world, { session: session.id });
 
       const messages = session.deriveMessages();
-      // 修复前：nodes[0] 非 system → start=0 → 区间 [预锚块, system 锚点, ...] 连坐折叠
       expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: "SKILL-LIST" }] });
       expect(messages[1]).toMatchObject({ role: "system", text: "SYS" });
       const summary = messages[2] as unknown as { content: ReadonlyArray<{ text: string }> };
       expect(summary.content[0]?.text ?? "").toContain("COMPACT-SUMMARY");
-      expect(messages.length).toBeLessThan(6); // 前缀已折叠（预锚块+锚点+摘要+当轮消息）
+      expect(messages.length).toBeLessThan(6);
     } finally {
       await world.ctx.dispose();
     }
@@ -476,22 +468,18 @@ describe("预锚注入头部豁免（skill 清单形态——L2 头部守卫缺�
       seedTurn(session, { turn: 2, user: "q2", assistant: { text: "a2", usage: { input: 10, output: 1 } } });
       const runner = world.ctx.use(compactionRunner);
       world.llm.scripts.push(textScript("FIRST-SUMMARY"));
-      // 手动压缩不带护栏（keepMinTurns 是水位/自动路径的护栏——§7.3 让位①同源：
-      // 手动指令的保留意图由用户裁量，compactionRunner.compact 的手动面不注入护栏）
       const first = await runner.compact({ session: session.id, keepMinTurns: 0 });
       if (!first.ok) throw new Error(first.reason);
 
-      // 第二次：保护头后仅剩 [FIRST-SUMMARY(replace), 当轮]——修复前护栏被预锚块虚假满足 → 摘要摘摘要
       const second = await runner.compact({ session: session.id });
       expect(second).toEqual({ ok: false, reason: "no-cut-point" });
-      expect(world.llm.calls).toHaveLength(1); // 第二次零拨号
+      expect(world.llm.calls).toHaveLength(1);
     } finally {
       await world.ctx.dispose();
     }
   });
 });
 
-// ── §7.4 compaction 分档：83/85 水位档 + keep/minTurns 分档（对抗审查 H-2 补覆盖） ──
 
 describe("水位窗口分档（compaction）", () => {
   it("512k 与 1M 档边界（80% 首档已有边界用例）：窗 700_001（第三档 85%）——849 不触发、851 触发", async () => {
@@ -499,11 +487,11 @@ describe("水位窗口分档（compaction）", () => {
     try {
       const made = await world.store.create({ id: sid("tier-85") });
       if (!made.ok) throw new Error(made.reason);
-      seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500_000, output: 5 } } }); // 基线
-      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 594_900, output: 5 } } }); // < 700001×85%=595,000.85
+      seedTurn(made.value, { turn: 0, user: "t0", assistant: { text: "a0", usage: { input: 500_000, output: 5 } } });
+      seedTurn(made.value, { turn: 1, user: "t1", assistant: { text: "a1", usage: { input: 594_900, output: 5 } } });
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(0);
-      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 595_500, output: 5 } } }); // > 595,000.85 越线
+      seedTurn(made.value, { turn: 2, user: "t2", assistant: { text: "a2", usage: { input: 595_500, output: 5 } } });
       world.llm.scripts.push(textScript("T85"));
       await dispatchPreStep(world, { session: made.value.id });
       expect(world.llm.calls).toHaveLength(1);

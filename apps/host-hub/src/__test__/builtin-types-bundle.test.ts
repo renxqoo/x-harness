@@ -1,7 +1,3 @@
-// 打包形态 builtin 类型装载回归：worker 从 dist 产物运行（bundle 内联资源——无盘上
-// agent-types 目录依赖）。历史症状：builtinTypesDir() 按 import.meta.dirname 相对
-// 寻址 `../../agent-types`，dist 布局（dist/host/cli.js）下解析到不存在的路径且
-// 目录缺席静默 continue——agents 清单空。回归锁：内联资源层在任意运行形态恒装载。
 import { afterAll, describe, expect, test } from "vitest";
 import { join } from "node:path";
 
@@ -14,7 +10,6 @@ afterAll(async () => {
   await Promise.all(hosts.map((host) => host.exited().catch(() => -1)));
 });
 
-/** dist 产物入口（bun run build 产物；无该产物的环境先跑 build） */
 function distEntry(): string {
   return join(import.meta.dirname, "../../dist/host/cli.js");
 }

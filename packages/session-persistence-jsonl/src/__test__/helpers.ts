@@ -24,13 +24,11 @@ export async function makeWorld(root: string): Promise<World> {
   return { ctx, store: ctx.use(sessionStore), archive: ctx.use(sessionArchive), unload, ioErrors };
 }
 
-/** 测试用 Result 解包：失败即抛（失败路径另行显式断言） */
 export function unwrap<T>(result: Result<T>): T {
   if (!result.ok) throw new Error(result.reason);
   return result.value;
 }
 
-/** fire-and-forget 路径（created 首灌 / disposed 终排空）的同步点：轮询直到谓词为真 */
 export async function waitUntil(probe: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {

@@ -1,6 +1,3 @@
-// stat 契约实现（docs/EXEC-ENV.md §1）：EACCES/EPERM 显式判别（FS_ACCESS_DENIED 语义依赖），
-// 其余（ENOENT/ENOTDIR/垃圾路径）降级 not_found——垃圾输入返回空形态，不崩溃。
-
 import { statSync } from "node:fs";
 import type { FileStat, FileVersion, StatResult } from "../types.ts";
 

@@ -1,7 +1,3 @@
-// 依赖门禁四用例（docs/ELEVATION-MIGRATION-W0 §5）：正例（组内互依+typebox 合法）；
-// 反例 ×3——上层包经 dependencies、上层包藏 devDependencies（V5 真实违规形态）、
-// 外部说明符未声明。fixture 用临时目录铸最小内核组。
-
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 
 import { tmpdir } from "node:os";
@@ -15,7 +11,6 @@ afterEach(() => {
   root = "";
 });
 
-/** dirName = packages/core/ 下目录名；pkgName = manifest name */
 function corePkg(dirName: string, pkgName: string, opts: {
   deps?: Record<string, string>;
   devDeps?: Record<string, string>;
@@ -49,7 +44,7 @@ describe("check-kernel-deps（内核组纯净性门禁）", () => {
     corePkg("session", "@x-harness/session", { devDeps: { "@x-harness/permission": "workspace:*" }, src: 'import { permissionGrants } from "@x-harness/permission";\n' });
     const violations = kernelDependencyViolations(root);
     expect(violations).toHaveLength(1);
-    expect(violations[0]?.reason).toBe("upper-layer"); // devDeps 藏边同样检出——门禁扫 src 说明符非声明面
+    expect(violations[0]?.reason).toBe("upper-layer");
   });
 
   it("反例：非白名单外部包 / 白名单未声明 → external-not-allowed / undeclared 违规", () => {
@@ -75,8 +70,8 @@ describe("check-kernel-deps（内核组纯净性门禁）", () => {
     corePkg("session", "@x-harness/session");
     const testDir = join(root, "packages/core/session/src/__test__");
     mkdirSync(testDir, { recursive: true });
-    writeFileSync(join(testDir, "x.test.ts"), 'import { describe } from "vitest";\nimport { p } from "@x-harness/permission";\n'); // vitest=测试面外部不检；上层边要检
-    writeFileSync(join(root, "packages/core/session/scripts.js"), 'const q = require("@x-harness/skill");\n'); // 非 ts 扩展也要检
+    writeFileSync(join(testDir, "x.test.ts"), 'import { describe } from "vitest";\nimport { p } from "@x-harness/permission";\n');
+    writeFileSync(join(root, "packages/core/session/scripts.js"), 'const q = require("@x-harness/skill");\n');
     const specs = kernelDependencyViolations(root).map((v) => v.specifier).sort();
     expect(specs).toEqual(["@x-harness/permission", "@x-harness/skill"]);
   });

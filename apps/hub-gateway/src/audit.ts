@@ -1,5 +1,3 @@
-// 审计日志（DESIGN §2.2）：append-only、按天轮转、64MiB/天上限、30 天保留。
-// 审计必须能回答「昨晚谁批准了那条危险命令」。
 import { appendFile, mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -42,7 +40,7 @@ export async function openAuditLog(dir: string, now: () => number): Promise<Audi
       bytes = 0;
       await sweepOldDays(dir, now);
     }
-    if (bytes >= DAY_BYTES_CAP) return; // 单日封顶（丢审计优于打爆磁盘——如实申报）
+    if (bytes >= DAY_BYTES_CAP) return;
     await appendFile(join(dir, `${currentDate}.jsonl`), `${line}\n`, "utf8");
     bytes += Buffer.byteLength(line) + 1;
   };

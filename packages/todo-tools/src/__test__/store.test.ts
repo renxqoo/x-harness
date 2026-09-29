@@ -1,12 +1,8 @@
-// 清单内核单元（docs/TODO.md §1.2/§1.4/§6）：CRUD 语义、数值序、metadata 合并、
-// 依赖单源派生、deleted 清边与优先级、前置校验、深拷贝隔离、并发组。
-
 import { describe, expect, it } from "vitest";
 import type { SessionEvent } from "@x-harness/session";
 import { createTodoStore } from "../store.ts";
 import type { TodoList } from "../tokens.ts";
 
-/** 建任务于指定 store（返回 id 断言用） */
 const make = (store: TodoList, subject = "Fix login bug", extra: Record<string, unknown> = {}): string => {
   const made = store.create(undefined, { subject, ...extra });
   if (!made.ok) throw new Error(`create failed: ${made.reason}`);
@@ -124,7 +120,6 @@ describe("metadata 键级合并", () => {
     expect(got.task.metadata).toEqual({ deep: { nested: 1 } });
     const snap = store.list(undefined)[0];
     if (snap === undefined) throw new Error("unreachable");
-    // 出口对象caller侧改写不回写内核
     (snap as { subject: string }).subject = "hacked";
     expect(store.get(undefined, id)).toMatchObject({ ok: true, task: { subject: "A" } });
   });
@@ -137,7 +132,7 @@ describe("依赖（单源边集，出口双侧派生）", () => {
     make(store, "B");
     make(store, "C");
     store.update(undefined, "3", { addBlockedBy: ["1", "2"] });
-    store.update(undefined, "1", { addBlocks: ["3"] }); // 重复边——去重
+    store.update(undefined, "1", { addBlocks: ["3"] });
     const b = store.get(undefined, "1");
     const c = store.get(undefined, "3");
     if (!b.ok || !c.ok) throw new Error("unreachable");
@@ -159,7 +154,6 @@ describe("依赖（单源边集，出口双侧派生）", () => {
       reason: "invalid-args",
       message: "addBlocks must not reference itself ('1')",
     });
-    // 拒绝后零副作用：2 的依赖未部分落边
     const b = store.get(undefined, "2");
     if (!b.ok) throw new Error("unreachable");
     expect(b.task.blockedBy).toEqual([]);
@@ -226,7 +220,6 @@ describe("并发组（钉死 store 全同步前提——parallel 声明的正确
     await Promise.all(Array.from({ length: 10 }, (_, i) => round(i)));
     const got = store.get(undefined, id);
     if (!got.ok || got.task.owner === undefined) throw new Error("unreachable");
-    // 同源断言：两字段轮次后缀一致——字段级交错（subject=S3+owner=o7 杂交）必挂
     expect(got.task.subject).toMatch(/^S\d$/);
     expect(got.task.subject.slice(1)).toBe(got.task.owner.slice(1));
   });
@@ -270,7 +263,7 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
     expect(list[1]).toMatchObject({ id: "3", blockedBy: ["1"] });
     expect("description" in (list[0] as object)).toBe(false);
     const next = store.create(undefined, { subject: "D" });
-    expect(next).toMatchObject({ ok: true, task: { id: "4" } }); // seq=3 延续
+    expect(next).toMatchObject({ ok: true, task: { id: "4" } });
   });
 
   it("restore 深拷贝：恢复后 update 可变更（卷内冻结对象不穿透为 row 引用）", () => {
@@ -300,9 +293,9 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
     const events = [snapEvent({ seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "pending" }], edges: [["1", "2"]] })];
     store.restore(undefined, () => events);
     const once = store.snapshotOf(undefined);
-    store.restore(undefined, () => events); // 桶在场跳过——快照不变
+    store.restore(undefined, () => events);
     expect(store.snapshotOf(undefined)).toEqual(once);
-    store.evict(undefined as never); // 真幂等：逐出后同卷重 fold 结果全等
+    store.evict(undefined as never);
     store.restore(undefined, () => events);
     expect(store.snapshotOf(undefined)).toEqual(once);
   });
@@ -312,11 +305,11 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
     const a1 = store.create("sess-a" as never, { subject: "A1" });
     expect(a1).toMatchObject({ ok: true, task: { id: "1" } });
     store.evict("sess-a" as never);
-    expect(store.list("sess-a" as never)).toEqual([]); // 逐出生效（非 no-op）
+    expect(store.list("sess-a" as never)).toEqual([]);
     const rebuilt = store.create("sess-a" as never, { subject: "A1-new" });
-    expect(rebuilt).toMatchObject({ ok: true, task: { id: "1" } }); // 新桶 id 从 1 重计
+    expect(rebuilt).toMatchObject({ ok: true, task: { id: "1" } });
     store.evict("sess-x" as never);
-    expect(store.list("sess-a" as never).length).toBe(1); // 键控逐出不波及他桶
+    expect(store.list("sess-a" as never).length).toBe(1);
   });
 
   it("多桶隔离：两会话各自清单、id 各自从 1、依赖跨桶不可引用", () => {
@@ -327,7 +320,6 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
     expect(b1).toMatchObject({ ok: true, task: { id: "1" } });
     expect(store.get("sess-a" as never, "1")).toMatchObject({ ok: true, task: { subject: "A1" } });
     expect(store.list("sess-b" as never).length).toBe(1);
-    // B 桶无 id 2——A 桶的 2 不可跨桶依赖（桶内引用闭合）
     store.create("sess-a" as never, { subject: "A2" });
     expect(store.update("sess-b" as never, "1", { addBlockedBy: ["2"] })).toMatchObject({ ok: false, reason: "invalid-args" });
   });
@@ -335,11 +327,10 @@ describe("快照导出与惰性恢复（修订B §13.1/§13.4）", () => {
   it("服务面读探测零副作用：get/list/snapshotOf 不建桶——工具面惰性恢复不被劫持（收口审查 B-P1-1 回归锚）", () => {
     const store = createTodoStore();
     const events = [snapEvent({ seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "pending" }], edges: [] })];
-    // 宿主经服务面探测（not-found / 空清单）——不得创建空桶
     expect(store.get("s" as never, "1")).toMatchObject({ ok: false, reason: "not-found" });
     expect(store.list("s" as never)).toEqual([]);
     expect(store.snapshotOf("s" as never)).toEqual({ seq: 0, tasks: [], edges: [] });
-    store.restore("s" as never, () => events); // 之后工具面恢复仍生效
+    store.restore("s" as never, () => events);
     expect(store.list("s" as never).length).toBe(2);
   });
 });
@@ -351,16 +342,16 @@ describe("快照往返矩阵（收口审查回补——description/activeForm/ow
     const id2 = make(store, "B", { metadata: { k: [1, { nested: null }] } });
     store.update(undefined, id1, { owner: "w", status: "in_progress" });
     store.update(undefined, id2, { addBlockedBy: [id1] });
-    store.update(undefined, id2, { addBlockedBy: [id1] }); // 已有 1→2；再造多 blocker 排序面
+    store.update(undefined, id2, { addBlockedBy: [id1] });
     const id3 = make(store, "C");
     store.update(undefined, id2, { addBlockedBy: [id3] });
     const snap = store.snapshotOf(undefined);
-    expect(snap.edges.length).toBe(2); // 两个 blocker（1、3）→ 边按数值序导出
+    expect(snap.edges.length).toBe(2);
     const revived = createTodoStore();
     revived.restore(undefined, () => [{ type: "todo/snapshot", data: snap } as SessionEvent]);
-    expect(revived.snapshotOf(undefined)).toEqual(snap); // 导出→恢复→再导出全等
+    expect(revived.snapshotOf(undefined)).toEqual(snap);
     const got = revived.get(undefined, id2);
     expect(got).toMatchObject({ ok: true, task: { blockedBy: [id1, id3], metadata: { k: [1, { nested: null }] } } });
-    expect("activeForm" in (got.ok ? got.task : {})).toBe(false); // 缺席字段恢复后仍缺席
+    expect("activeForm" in (got.ok ? got.task : {})).toBe(false);
   });
 });

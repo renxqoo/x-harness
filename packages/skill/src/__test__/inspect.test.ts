@@ -1,8 +1,3 @@
-// inspectSkillDir / skillNameMismatch 表驱动（docs/SKILL-INSTALL.md §1.1、§7）：七个
-// 问题码逐码一条 + 成功形态 + 目录名对齐规则。断言用**逐字文案**——装载器直接透传
-// inspected.message 作告警，此处即告警文案的单一事实（与 docs/SKILL.md §7 既有口径
-// 逐字一致）。
-
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,7 +86,6 @@ describe("inspectSkillDir", () => {
     expect(await inspectSkillDir(dir)).toEqual({ ok: false, problem: "missing_fields", message: `skills: ${join(dir, "SKILL.md")} missing required name/description` });
   });
 
-  // root 运行时 chmod 不产生 EACCES——权限用例仅在非 root 生效
   it.skipIf(process.getuid?.() === 0)("SKILL.md 不可读（EACCES）→ unreadable（区别于 not_found）", async () => {
     const dir = await writeSkill("locked", "---\nname: locked\ndescription: x\n---\n");
     await chmod(join(dir, "SKILL.md"), 0o000);

@@ -1,6 +1,3 @@
-// 执行指令分路（PERMISSION-V2 §6.1）：exec=direct 免包裹；contained/缺席=fail-safe 包裹；
-// rootOverride 隔离会话恒包裹（U17）；unrestricted 总括直通。fenceSuspect 归因单点。
-
 import { describe, expect, it } from "vitest";
 import { GrantsRegistry } from "@x-harness/permission";
 import { fenceFor } from "../fence.ts";

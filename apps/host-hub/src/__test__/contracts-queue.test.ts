@@ -1,6 +1,3 @@
-// queue 折叠契约（内核 foldInbox 单源 + 条目投影）：insert 折叠双队列、claim 出队、
-// clear 清空（clear_queue 直写与 driver cancel 同机制事件）、drop/retarget 单条操作
-// （queue/drop、queue/send_now 直写）、非 inbox 事件忽略。
 import { describe, expect, test } from "vitest";
 import type { InboxSpliceData, SessionEvent } from "@x-harness/session";
 import { foldQueue } from "../shared/inbox-fold.ts";
@@ -54,7 +51,7 @@ describe("queue 折叠（WAL 单真相）", () => {
   test("折叠覆盖全部写入源——复活恢复场景按 WAL 序重放即正确", () => {
     const view = foldQueue([
       insert(0, { target: "next-turn", id: "1", text: "u1" }),
-      insert(1, { target: "next-turn", id: "2", text: "notify-injected" }), // 子代理通知注入同形
+      insert(1, { target: "next-turn", id: "2", text: "notify-injected" }),
       claim(2, ["1"]),
     ]);
     expect(view.followUp).toEqual([{ id: "2", text: "notify-injected" }]);

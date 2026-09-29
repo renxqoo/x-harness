@@ -1,5 +1,3 @@
-// Tier B 资源边界单测（D8）：wall-clock 超时两段杀 + 输出采集上限——注入短窗/小值验证分支。
-
 import { describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

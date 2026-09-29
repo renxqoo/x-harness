@@ -1,7 +1,3 @@
-// 写路径故障注入：真实磁盘 + FileHandle 原型拦截（DSH jsonl.spec 故障注入技术承接）。
-// 覆盖：append 半写回滚与重试无重复（G1/G2）、dispose 与在飞 flush 串行（G3）、
-// 重生代与在飞终排空链继承（G4）、终排空失败不泄漏 fd（F4）。
-
 import { mkdtemp, open, readFile, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,7 +28,6 @@ interface HandleProto {
   close: () => Promise<void>;
 }
 
-/** 运行时 FileHandle 值导出缺席环境下的原型探测：任何真实句柄共享同一原型 */
 async function fileHandleProto(): Promise<HandleProto> {
   const probe = await open(join(root, "probe"), "a");
   try {
@@ -58,29 +53,28 @@ describe("写路径故障注入（真实 fd + 原型拦截）", () => {
     const originalAppend = proto.appendFile;
     const spy = vi.spyOn(proto, "appendFile");
     spy.mockImplementationOnce(async function (this: FileHandle, data: string) {
-      await originalAppend.call(this, data.slice(0, Math.floor(data.length / 2))); // 半写后崩溃
+      await originalAppend.call(this, data.slice(0, Math.floor(data.length / 2)));
       throw new Error("EIO-injected");
     });
     turn(s, 1);
     const realtimeFailed = async (): Promise<boolean> =>
       world.ioErrors.some((message) => message.includes("session-realtime-append-failed:fi"));
     await waitUntil(realtimeFailed);
-    expect(await readFile(join(root, "fi", "events.jsonl"), "utf8")).toBe(beforeText); // 截断回滚到批前
+    expect(await readFile(join(root, "fi", "events.jsonl"), "utf8")).toBe(beforeText);
 
-    // 降级闩钉力：闩置位后新事件不得再发起任何实时 append 调用（闩缺席则 ev2+ev3 前缀批已发出）
     const callsAfterFailure = spy.mock.calls.length;
     turn(s, 2);
     await new Promise((resolve) => {
-      setImmediate(resolve); // appendFile 调用发生在微任务链内——本时点必已发生或永不发生
+      setImmediate(resolve);
     });
     expect(spy.mock.calls.length).toBe(callsAfterFailure);
 
-    const retried = await world.store.flush(s.id); // spy 已耗尽，真实写
+    const retried = await world.store.flush(s.id);
     expect(retried).toEqual({ ok: true, value: true });
     const text = await readFile(join(root, "fi", "events.jsonl"), "utf8");
     expect(text).toBe(`${beforeText}${JSON.stringify(s.events()[2])}\n${JSON.stringify(s.events()[3])}\n`);
     const read = unwrap(await world.archive.read(sid("fi")));
-    expect(read.events).toEqual(s.events()); // 批次不丢、不重、按日志序（乱序卷结构性不可达——前缀批+回滚）
+    expect(read.events).toEqual(s.events());
   });
 
   it("dispose 与在飞 flush 同链串行：并发落账恰一次、无重复（G3）", async () => {
@@ -101,12 +95,12 @@ describe("写路径故障注入（真实 fd + 原型拦截）", () => {
     const spy = vi.spyOn(proto, "appendFile");
     spy.mockImplementationOnce(async function (this: FileHandle, data: string) {
       enteredResolve();
-      await gate; // 首灌批次悬停：dispose 在此窗口到达
+      await gate;
       return originalAppend.call(this, data);
     });
     const flushP = world.store.flush(s.id);
     await entered;
-    world.store.dispose(s.id); // 终排空必须排在在飞 flush 之后（同链）
+    world.store.dispose(s.id);
     release();
     expect(await flushP).toEqual({ ok: true, value: true });
     await waitUntil(async () => {
@@ -114,9 +108,9 @@ describe("写路径故障注入（真实 fd + 原型拦截）", () => {
       return read.ok && read.value.events.length === 2;
     });
     const read = unwrap(await world.archive.read(sid("race")));
-    expect(read.events).toEqual(s.events()); // 恰一次
+    expect(read.events).toEqual(s.events());
     const seqs = read.events.map((e) => e.seq);
-    expect(new Set(seqs).size).toBe(seqs.length); // 无重复
+    expect(new Set(seqs).size).toBe(seqs.length);
   });
 
   it("重生代与在飞终排空的链继承：resume 竞态下 seq 连续无交错（G4）", async () => {
@@ -139,35 +133,35 @@ describe("写路径故障注入（真实 fd + 原型拦截）", () => {
     const spy = vi.spyOn(proto, "sync");
     spy.mockImplementationOnce(async function (this: FileHandle) {
       enteredResolve();
-      await gate; // 旧代终排空悬停：新代 resume 在此窗口到达
+      await gate;
       return originalSync.call(this);
     });
-    world.store.dispose(gen1.id); // 终排空（空 pending → 仅 sync）被悬停
+    world.store.dispose(gen1.id);
 
     const gen2 = unwrap(await world.store.create({ header: snapshot.header, seed: snapshot.events }));
     turn(gen2, 1);
-    const flushP = world.store.flush(gen2.id); // 新代段落必须排在旧代 close 之后（链继承）
+    const flushP = world.store.flush(gen2.id);
     await entered;
     release();
     expect(await flushP).toEqual({ ok: true, value: true });
     const read = unwrap(await world.archive.read(sid("chain")));
     expect(read.events).toEqual(gen2.events());
     const seqs = read.events.map((e) => e.seq);
-    expect(seqs).toEqual(seqs.map((_, i) => i)); // 连续无交错
+    expect(seqs).toEqual(seqs.map((_, i) => i));
   });
 
   it("终排空失败不泄漏 fd：drain 抛错后 writer.close 仍然执行（F4）", async () => {
     world = await makeWorld(root);
     const s = unwrap(await world.store.create({ id: sid("leak") }));
     turn(s, 0);
-    await world.store.flush(s.id); // writer 已打开
+    await world.store.flush(s.id);
     const failProto = await fileHandleProto();
     vi.spyOn(failProto, "appendFile").mockImplementation(async () => {
-      throw new Error("EIO-permanent"); // 持续性写失败
+      throw new Error("EIO-permanent");
     });
     const closeSpy = vi.spyOn(await fileHandleProto(), "close");
     turn(s, 1);
-    world.store.dispose(s.id); // 终排空失败 → 错误捕获上报，但 close 必须发生
+    world.store.dispose(s.id);
     const leakReported = (): boolean => world.ioErrors.some((message) => message.includes("session-dispose-persist-failed:leak"));
     await waitUntil(async () => leakReported());
     expect(closeSpy.mock.calls.length).toBeGreaterThanOrEqual(1);

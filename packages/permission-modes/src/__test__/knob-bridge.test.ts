@@ -1,7 +1,3 @@
-// 旋钮桥反转回归件（P1-2——.adversarial/upper/u01 迁移）：
-// 收紧旋钮（plan-deny/confirm-all）优先于 full 短路——`{never,none,plan-deny}` 旧映射落
-// fullMode（声明收紧得最宽，意图反转）。矛盾组合另由 profileRowValid 拒收（permission 包测）。
-
 import { describe, expect, it } from "vitest";
 import { autoMode, editConfirmMode, fullMode, knobDecideOf, planDefaultMode, sandboxedAutoMode } from "../modes.ts";
 

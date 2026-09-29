@@ -1,8 +1,3 @@
-// 抢救插件测试（docs/TRUNCATED-TOOL-RESCUE.md 层 2 测试口径）：真 waterfall 派发面
-// （createContext + ctx.on 消费者 + dispatch）+ 真 PathGate/admitSession 授权面 +
-// createLocalEnv 落盘断言。文案逐字断言（方案原文）；授权面攻击（越根/穿越/绝对路径）
-// 与同名不覆盖、abort 竞态。
-
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,7 +12,6 @@ import { createPermissionPlugin } from "@x-harness/permission";
 import { createPermissionModesPlugin } from "@x-harness/permission-modes";
 import { toolsPlugin } from "@x-harness/tools";
 
-/** 物化路径装配：抢救件 + permission 件（full 档——in-root write 直通 allow）同装 */
 async function dispatchPermitted(name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
   const c = createContext();
   ctx = c;
@@ -45,16 +39,14 @@ afterEach(async () => {
 });
 
 const SESSION = "sess-a" as never;
-const LONG = "x".repeat(600); // 体积下限 512 之上
+const LONG = "x".repeat(600);
 const SHORT = "x".repeat(511);
 
-/** note-only 应答收窄（本件恒返 {note}——content 替换形态归文案插件） */
 function noteOf(decision: unknown): string {
   expect(decision).toMatchObject({ note: expect.any(String) });
   return (decision as { readonly note: string }).note;
 }
 
-/** 真装配：插件挂进 context，经 ctx.dispatch(agentTruncatedTool) 走全链（含 next 链） */
 async function dispatch(name: string, args: string, signal?: AbortSignal): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
   const c = createContext();
   ctx = c;
@@ -63,7 +55,6 @@ async function dispatch(name: string, args: string, signal?: AbortSignal): Promi
   return c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name, arguments: args, signal: signal ?? new AbortController().signal } as TruncatedToolPayload, async () => undefined);
 }
 
-/** dispatch 上游已应答形态（让位链验证：downstream 非空 → 透传不抢救） */
 async function dispatchWithUpstream(name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
   const c = createContext();
   ctx = c;
@@ -80,7 +71,7 @@ describe("createTruncatedWriteRescuePlugin（write/edit 命中与让位）", () 
       note: `Recovered ${String(body.length)} chars (${String(body.split("\n").length)} lines) of the truncated write to out.ts.partial (draft — out.ts NOT modified). Read it, produce the remainder as a separate file, assemble with bash, then delete the .partial.`,
     });
     expect(readFileSync(join(root, "out.ts.partial"), "utf8")).toBe(body);
-    expect(existsSync(join(root, "out.ts"))).toBe(false); // 目标文件不动
+    expect(existsSync(join(root, "out.ts"))).toBe(false);
   });
 
   it("edit 命中 edits[] 末条 newText（真 schema 形态）：物化 + 数组感知文案逐字", async () => {
@@ -93,8 +84,8 @@ describe("createTruncatedWriteRescuePlugin（write/edit 命中与让位）", () 
   });
 
   it("edit 无 edits 键（形态不符）→ 让位；含 edit 的其它工具名不再误命中", async () => {
-    expect(await dispatchPermitted("edit", `{"path":"a.ts","newText":"${LONG}`)).toBeUndefined(); // 无 edits 键
-    expect(await dispatchPermitted("FileEdit", `{"path":"a.ts","new_string":"${LONG}`)).toBeUndefined(); // 抢救表明为精确名 edit
+    expect(await dispatchPermitted("edit", `{"path":"a.ts","newText":"${LONG}`)).toBeUndefined();
+    expect(await dispatchPermitted("FileEdit", `{"path":"a.ts","new_string":"${LONG}`)).toBeUndefined();
   });
 
   it("其他工具名（bash）→ 让位（透传 next = undefined，不落盘）", async () => {
@@ -161,9 +152,8 @@ describe("createTruncatedWriteRescuePlugin（授权面攻击——sidecar 与 wr
 
 describe("createTruncatedWriteRescuePlugin（字节保真 round-trip）", () => {
   it("中文/转义字符：物化字节 = 解码后 value 的 utf8（round-trip）", async () => {
-    // raw 是半截 JSON 原文（值内一切特殊字符以 JSON 转义形在场——提取器按转义规则解码）
     const decoded = `中文\n\t"quoted"\\slash😀\n${LONG}`;
-    const encoded = JSON.stringify(decoded).slice(1, -1); // 同一字符串的 JSON 转义形（去外层引号）
+    const encoded = JSON.stringify(decoded).slice(1, -1);
     const r = await dispatchPermitted("write", `{"path":"zh.txt","content":"${encoded}`);
     expect(noteOf(r)).toContain(`Recovered ${String(decoded.length)} chars`);
     expect(readFileSync(join(root, "zh.txt.partial"), "utf8")).toBe(decoded);
@@ -172,7 +162,6 @@ describe("createTruncatedWriteRescuePlugin（字节保真 round-trip）", () => 
 });
 
 describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
-  /** 任意档位装配：抢救件在 permission 之后（apply 序=服务可达） */
   type ModeSpec = { readonly mode: "full" | "plan" | "auto" | "edit-confirm"; readonly rules?: { tool: string; pattern: string; verdict: "allow" | "deny" }[] };
 
   async function dispatchWithMode(spec: ModeSpec, name: string, args: string): Promise<import("@x-harness/agent-loop").TruncatedToolDecision> {
@@ -199,7 +188,7 @@ describe("createTruncatedWriteRescuePlugin（permission 裁决面）", () => {
     expect(existsSync(join(root, ".git/hooks/pre-commit.partial"))).toBe(false);
     const allowed = await dispatchWithMode({ mode: "full" }, "write", `{"path":".git/hooks/pre-commit","content":"${LONG}`);
     expect(allowed).not.toEqual({ note: "target not permitted for rescue write, draft not saved" });
-    expect(existsSync(join(root, ".git/hooks/pre-commit.partial"))).toBe(true); // 主路径同源放行 → 抢救物化
+    expect(existsSync(join(root, ".git/hooks/pre-commit.partial"))).toBe(true);
   });
 
   it("edit-confirm 档界内写 → 不弹窗直接不救（ask 类裁决不走抢救旁路；模型重发完整调用走正常面板）", async () => {
@@ -237,7 +226,7 @@ describe("createTruncatedWriteRescuePlugin（物化失败降级）", () => {
       createTruncatedWriteRescuePlugin({ gate, observed, env, permission: { root } }),
     ]);
     c.effect(() => { for (const off of unload) off(); });
-    chmodSync(roDir, 0o500); // 只读目录——物化必失败
+    chmodSync(roDir, 0o500);
     try {
       const r = await c.dispatch(agentTruncatedTool, { session: SESSION, turn: 1, step: 1, callId: "c1", name: "write", arguments: `{"path":"ro/x.txt","content":"${LONG}`, signal: new AbortController().signal } as TruncatedToolPayload, async () => undefined);
       expect(r).toBeUndefined();

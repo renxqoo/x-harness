@@ -1,6 +1,3 @@
-// 线程域读侧命令（DESIGN §3.3）：会话状态/消息/条目/树/统计/命令清单/子代理/
-// 弹窗只读查询（表内现值或事件日志折叠）；set_session_name 为标题直写会话
-// （append+flush）。failure 路径单点经共享 respond。
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { pluginManagerService } from "@x-harness/plugin-manager";
 import { hubError } from "../shared/errors.ts";
@@ -24,9 +21,9 @@ function handleGetState(rt: WorkerRuntime, input: CommandInput): void {
     id: input.id,
     command: "get_state",
     data: {
-      model: currentDialOf(events, rt.state.dial), // {provider, model} 复合形（字段改名声明 MIGRATION §4）
+      model: currentDialOf(events, rt.state.dial),
       isStreaming: rt.bridge.isStreaming(),
-      isCompacting: rt.bridge.commandBusy(), // 命令执行中（BATCH3：本批唯一命令 compact，语义等价）
+      isCompacting: rt.bridge.commandBusy(),
       sessionId: rt.state.threadId,
       sessionName: titleOf(events) ?? "",
       sessionFile: rt.state.sessionPath,
@@ -38,13 +35,9 @@ function handleGetState(rt: WorkerRuntime, input: CommandInput): void {
 
 function handleGetInflight(rt: WorkerRuntime, input: CommandInput): void {
   if (requireThread(rt, { ...input, command: "get_inflight" }) === undefined) return;
-  // bash 面：最新仍在跑的直执行（null ⇔ 无在跑——§3.3 收尾探测判据）
   respond(rt, { id: input.id, command: "get_inflight", data: { ...rt.inflightState.snapshot(), bash: rt.bash.readLatest() } });
 }
 
-/** get_messages 软上限判定（导出单测面）：预算按 UTF-8 字节累计（CJK 3 倍膨胀下
- *  UTF-16 码元计数会漏判），帧信封/转义留 4KiB 余量——超限以有界 failure 结算
- *  （超 worker 行限 = worker 被杀，thread_died） */
 export function withinResponseBudget(messages: readonly unknown[], cap: number): boolean {
   let budget = cap - 4096;
   for (const message of messages) {
@@ -78,7 +71,6 @@ function handleGetEntries(rt: WorkerRuntime, input: CommandInput): void {
     respond(rt, { id: input.id, command: "get_entries", error: hubError(result.code, result.reason) });
     return;
   }
-  // data 形状与 host 直读路径闭合：解构判别联合，不带 ok 字段
   respond(rt, { id: input.id, command: "get_entries", data: { entries: result.entries, leafSeq: result.leafSeq, hasMore: result.hasMore } });
 }
 
@@ -88,7 +80,6 @@ interface SubtreeWalk {
   readonly children: string[];
 }
 
-/** 全子孙收集（BFS 沿 parentSession——排除子代理会话；环防御 + 深度封顶） */
 export function descendantsOf(root: string, headers: readonly { id: unknown; parentSession?: unknown; agentId?: unknown }[]): string[] {
   const walk: SubtreeWalk = { headers, seen: new Set<string>([root]), children: [] };
   let frontier = [root];
@@ -112,8 +103,6 @@ function expandFrontier(walk: SubtreeWalk, frontier: readonly string[]): string[
   return next;
 }
 
-/** 会话 fork 谱系（DESIGN §3.3）：ancestors 沿 header.parentSession 链（不含自身）；
- *  children = parentSession === id 的 headers（排除子代理会话——header.agentId 滤除） */
 async function handleGetTree(rt: WorkerRuntime, input: CommandInput): Promise<void> {
   const session = requireThread(rt, { ...input, command: "get_tree" });
   if (session === undefined) return;
@@ -124,7 +113,7 @@ async function handleGetTree(rt: WorkerRuntime, input: CommandInput): Promise<vo
     let cursor = byId.get(rt.state.threadId)?.parentSession;
     while (cursor !== undefined) {
       const id = String(cursor);
-      if (ancestors.includes(id)) break; // 环防御（数据面异常不死循环）
+      if (ancestors.includes(id)) break;
       ancestors.push(id);
       cursor = byId.get(id)?.parentSession;
     }
@@ -140,10 +129,6 @@ async function handleGetTree(rt: WorkerRuntime, input: CommandInput): Promise<vo
   }
 }
 
-/** 计数折叠（纯计数面——非 token 域无口径问题；token/cost 面归 token-meter 单一真相）
- *  CONTEXT-TOKEN-UNIFICATION §3.2：原 foldStats 的 usage 折叠删除——三套折叠归一
- *  （旧折漏 assistant/attempt 计费、无垃圾校验、total 用 totalTokens ?? input+output
- *  与 meter 口径分叉）。 */
 function countStats(events: readonly { type: string }[]): { userMessages: number; assistantMessages: number; toolCalls: number; toolResults: number } {
   const out = { userMessages: 0, assistantMessages: 0, toolCalls: 0, toolResults: 0 };
   for (const event of events) {
@@ -159,8 +144,6 @@ function handleGetSessionStats(rt: WorkerRuntime, input: CommandInput): void {
   const session = requireThread(rt, { ...input, command: "get_session_stats" });
   if (session === undefined) return;
   const counts = countStats(session.events());
-  // token/cost 面：token-meter 单一真相（attempt 计费/垃圾整丢/溢出 fail-closed 与
-  // analytics 同律）；未知/溢出会话 → undefined → 全零形态降级（H3——不 500 不悬空）
   const usage = rt.state.world?.meter.usageOf(session.id);
   respond(rt, {
     id: input.id,
@@ -180,10 +163,6 @@ function handleGetSessionStats(rt: WorkerRuntime, input: CommandInput): void {
   });
 }
 
-/** 插件分析面（本地结构形状——host-hub 不 import 插件包；经 plugin-manager token
- *  按名注册表取服务，真解耦——docs/PLUGINS.md 契约 5）。统计域 = 会话全历史
- *  （usage 事实经 token-meter 事实层：resume/重开经冷启动含全历史实报；子代理
- *  usage 计入全局累计） */
 interface TokenAnalyticsFace {
   breakdown(sessionId?: string): Record<string, number>;
   sessionOutput(session: string): number;
@@ -191,12 +170,10 @@ interface TokenAnalyticsFace {
 
 function handleGetTokenAnalytics(rt: WorkerRuntime, input: CommandInput): void {
   const session = requireThread(rt, { ...input, command: "get_token_analytics" });
-  if (session === undefined) return; // unknown_thread 分族先行（自愈语义不可劫持）
+  if (session === undefined) return;
   const world = rt.state.world;
   const svc = world?.ctx.tryUse(pluginManagerService);
   const token = svc?.serviceToken("token-analytics");
-  // tryUse 而非 use：收殓窗口（uninstall 回卷中、token 表未清）下 use 会抛——
-  // 能力缺席一律 capability_plugin，不被 internal 兜底族劫持
   const analytics = world !== undefined && token !== undefined ? (world.ctx.tryUse(token) as unknown as TokenAnalyticsFace | undefined) : undefined;
   if (analytics === undefined) {
     respond(rt, { id: input.id, command: "get_token_analytics", error: hubError("capability_plugin", "token analytics plugin not loaded") });
@@ -250,7 +227,7 @@ function handleGetForkMessages(rt: WorkerRuntime, input: CommandInput): void {
     const text = event.data.content
       .map((block) => {
         if (block.type === "text") return block.text;
-        if (block.type === "image") return `[image: ${block.mediaType}]`; // 纯图行可见性——不留整行缺席
+        if (block.type === "image") return `[image: ${block.mediaType}]`;
         return "";
       })
       .join("");
@@ -271,8 +248,6 @@ function handleGetPendingDialogs(rt: WorkerRuntime, input: CommandInput): void {
   respond(rt, { id: input.id, command: "get_pending_dialogs", data: { dialogs: rt.broker.pendingAll() } });
 }
 
-/** 插件装载快照（host plugins/list 归并输入）：pluginManagerService.list() 的
- *  本 thread 视图——name/mode/status。观察者命令：不重置 idle 计时。 */
 function handleGetPlugins(rt: WorkerRuntime, input: CommandInput): void {
   if (requireThread(rt, { ...input, command: "get_plugins" }) === undefined) return;
   const svc = rt.state.world?.ctx.tryUse(pluginManagerService);
@@ -280,7 +255,6 @@ function handleGetPlugins(rt: WorkerRuntime, input: CommandInput): void {
   respond(rt, { id: input.id, command: "get_plugins", data: { loaded } });
 }
 
-/** 读侧命令注册（注册表由 worker-commands 组装——保持单点分派面） */
 export function registerReadCommands(rt: WorkerRuntime, handlers: Map<string, Handler>): void {
   handlers.set("get_state", wrapSyncHandler((input) => handleGetState(rt, input)));
   handlers.set("get_inflight", wrapSyncHandler((input) => handleGetInflight(rt, input)));

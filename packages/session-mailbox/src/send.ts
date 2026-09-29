@@ -1,5 +1,3 @@
-// 原子投递与抢占排空（docs/AGENT-DELEGATION.md §5.3）。
-
 import { join } from "node:path";
 import { readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -36,7 +34,6 @@ function parseEnvelope(text: string): Envelope | undefined {
   return { id: raw.id, from: raw.from, to: raw.to, message: raw.message, ts: raw.ts, kind: raw.kind };
 }
 
-/** 投递：判活 → tmp 写入 → rename 发布（读方永不见半写文件） */
 export async function sendEnvelope(deps: SendDeps, to: string, body: { readonly from: string; readonly message: string; readonly kind: EnvelopeKind }): Promise<SendResult> {
   if (!isSafeBoxName(to) || !isSafeBoxName(body.from)) {
     return { ok: false, reason: `invalid-args:bad box name '${to}'/'${body.from}'` };
@@ -54,7 +51,6 @@ export async function sendEnvelope(deps: SendDeps, to: string, body: { readonly 
   return { ok: true, id: envelope.id };
 }
 
-/** 抢占排空：rename .proc 单读者保证；坏信封丢弃（onWarn）；at-most-once（crash 窗口 .proc 残留=接受丢失） */
 export async function drainInbox(deps: SendDeps, box: string): Promise<readonly Envelope[]> {
   const inbox = inboxDir(deps.root, box);
   let names: readonly string[];
@@ -71,7 +67,7 @@ export async function drainInbox(deps: SendDeps, box: string): Promise<readonly 
     try {
       await rename(base, proc);
     } catch {
-      continue; // 他 drain 先抢：单读者语义
+      continue;
     }
     const text = await readFile(proc, "utf8").catch(() => undefined);
     await rm(proc, { force: true });

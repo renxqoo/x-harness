@@ -1,5 +1,3 @@
-// 入站管线（DESIGN §8 管线序 + §1.3）：字节级预解密限流 → 解密（ratchet）→ cmd 桶 →
-// scope → 去重 → 路由。供 relay-link 的 onFrame 消费；错误全部降级为计数/丢弃（不崩）。
 import { DEVICE_BYTES_PER_SEC, DEVICE_BYTES_BURST, DEVICE_CMDS_BURST, DEVICE_CMDS_PER_SEC, judgeGwCommand, judgeHostCommand, parseFrame, type Frame } from "@x-harness/remote-protocol";
 
 export interface RateBucket {
@@ -10,7 +8,6 @@ export interface RateBucket {
 }
 
 export function newBucket(): RateBucket {
-  // 初始满突发额度（新连接允许瞬时突发，随后按速率回填）
   return { bytes: DEVICE_BYTES_BURST, bytesAt: 0, cmds: DEVICE_CMDS_BURST, cmdsAt: 0 };
 }
 
@@ -18,7 +15,6 @@ export type PreflightVerdict =
   | { ok: true }
   | { ok: false; code: "rate-limited" | "bad-envelope" | "bad-frame" | "ratchet-unavailable" };
 
-/** 字节级预解密限流（滑动补充桶：每秒回填 DEVICE_BYTES_PER_SEC，突发 DEVICE_BYTES_BURST） */
 export function preflightBytes(bucket: RateBucket, byteLength: number, now: number): boolean {
   const refill = ((now - bucket.bytesAt) / 1000) * DEVICE_BYTES_PER_SEC;
   bucket.bytes = Math.min(DEVICE_BYTES_BURST, bucket.bytes + refill);
@@ -28,7 +24,6 @@ export function preflightBytes(bucket: RateBucket, byteLength: number, now: numb
   return true;
 }
 
-/** 命令桶（解密后按 command 帧计数） */
 export function preflightCmds(bucket: RateBucket, now: number): boolean {
   const refill = ((now - bucket.cmdsAt) / 1000) * DEVICE_CMDS_PER_SEC;
   bucket.cmds = Math.min(DEVICE_CMDS_BURST, bucket.cmds + refill);
@@ -55,11 +50,9 @@ export type InboundOutcome =
   | { kind: "bad-envelope" }
   | { kind: "bad-frame" }
   | { kind: "ratchet-failed"; tagFailures: number }
-  /** scope 越权与 owner-only 对远程设备同面拒绝（§3.2 恒 owner 通道专属） */
   | { kind: "scope-denied"; command: string }
   | { kind: "unknown-command"; command: string };
 
-/** 管线主体：line 是 relay 侧 L3 信封 JSON（from==dev_<id> 已由 relay 执法） */
 export function processInboundLine(line: string, spec: InboundSpec): InboundOutcome {
   const now = spec.now();
   if (!preflightBytes(spec.bucket, Buffer.byteLength(line), now)) return { kind: "rate-limited" };

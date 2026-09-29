@@ -1,5 +1,3 @@
-// 适配器插件（docs/LLM.md §1.4）：注册适配器到 llmRuntime。
-
 import type { Plugin } from "@x-harness/core";
 import { llmRuntime } from "./tokens.ts";
 import { createAnthropicCompatAdapter } from "./pi-adapter.ts";

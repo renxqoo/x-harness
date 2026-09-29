@@ -1,6 +1,3 @@
-// 规则字符串解析（docs/EXEC-ENV.md §5）：`Tool(pattern):verdict`；词法开放但拼错 fail-closed 拒启
-// （构造期 throw——宿主起不来优于静默错配）。空 pattern 拒。
-
 import type { PermissionRule, RuleOrigin, RuleTool, Verdict } from "../types.ts";
 
 const TOOLS: readonly RuleTool[] = ["Danger", "Read", "Write", "Tool"];

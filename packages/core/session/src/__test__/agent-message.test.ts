@@ -1,6 +1,3 @@
-// 内部消息子系统本体（docs/AGENT-MESSAGE.md §1/§2/§6）：构造器、形状门正反例、
-// 投影 user 角色、表面第 5 类入投影、既有四类零扰回归。
-
 import { describe, expect, it } from "vitest";
 import { agentMessageData, isAgentContent, isAgentDirective } from "../agent-message.ts";
 import { validateSessionEvents } from "../gates.ts";
@@ -71,12 +68,12 @@ describe("agent/message 形状门（gates——AGENT-MESSAGE.md §1 词表纪律
     const ok = validateSessionEvents([agentMessageEvent(0)]);
     expect(ok).toBeUndefined();
     for (const bad of [
-      agentMessageEvent(0, { kind: "control" }), // 闭集外（历史名——钉死拒）
+      agentMessageEvent(0, { kind: "control" }),
       agentMessageEvent(0, { kind: "meta" }),
       agentMessageEvent(0, { source: "" }),
       agentMessageEvent(0, { content: [{ type: "image", data: "abc", mediaType: "image/png" }] }),
-      agentMessageEvent(0, { content: [{ type: "tool_use", callId: "c", name: "t", input: "{}" }] }), // text-only 契约：tool_use 同拒
-      { type: "agent/message", seq: 0, time: 1, data: { turn: 0, step: 1, source: "s", kind: "directive" } }, // 缺 content
+      agentMessageEvent(0, { content: [{ type: "tool_use", callId: "c", name: "t", input: "{}" }] }),
+      { type: "agent/message", seq: 0, time: 1, data: { turn: 0, step: 1, source: "s", kind: "directive" } },
     ]) {
       expect(validateSessionEvents([bad as never])).toMatch(/^corrupt-envelope:0:shape:agent\/message$/);
     }

@@ -1,5 +1,3 @@
-// hub 登记（docs/TASKS.md §1.2）：kind 键控唯一 + 字典序遍历快照。
-
 import type { TaskHub, TaskSource } from "./tokens.ts";
 
 export function createTaskHub(): TaskHub {

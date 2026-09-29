@@ -1,7 +1,3 @@
-// 插件热装/热卸（线程域命令——plugin-runtime §M1/§7）：在当前 thread 的 world ctx
-// 内直调 pluginManagerService。热装只收 name（装载事实从 registry 现读——agent 与
-// UI 都无法直传路径绕门）；vendor 件恒 worker 模式（P1 编排层：路径在 vendor 根内
-// 派生 + mode 落死）；builtin 热装走词表解析。热卸 = 同名锁 + 依赖检查（引擎语义）。
 import { pluginManagerService } from "@x-harness/plugin-manager";
 import { hubError } from "../shared/errors.ts";
 import { readVendorRegistry, vendorRootOf } from "../shared/plugins-registry.ts";
@@ -11,8 +7,6 @@ import { pluginEntryPath } from "../host/plugins-install.ts";
 import { respond, requireThread } from "./worker-commands.ts";
 import type { CommandInput, WorkerRuntime } from "./worker-commands.ts";
 
-/** 热装：name → 装载路径（builtin 词表解析 / vendor registry + 入口探测）。
- *  路径永远不接受请求直传——P1 编排层不变式。 */
 async function resolveHotInstallPath(rt: WorkerRuntime, name: string): Promise<{ path: string; mode: "process" | "worker" } | undefined> {
   const builtin = BUILTIN_PLUGINS[name];
   if (builtin !== undefined) {
@@ -43,8 +37,6 @@ export async function handleHotInstall(rt: WorkerRuntime, input: CommandInput): 
     respond(rt, { id: input.id, command: "plugins/hot_install", error: hubError("capability_plugin", "plugin manager not available in this world") });
     return;
   }
-  // disabled 名单与 apiVersion 门镜像（对抗审查 6a/6b）：set_enabled 写的停用语义在
-  // 热装面同判——绕过名单直发热装不可达；拒载口径与 plugins/list 同源（vendorLoadable）
   const settings = await readHubSettings(rt.agentDir);
   if ((settings["plugins.disabled"] ?? []).includes(name)) {
     respond(rt, { id: input.id, command: "plugins/hot_install", error: hubError("state_conflict", `plugin is disabled: ${name} (enable it first)`) });

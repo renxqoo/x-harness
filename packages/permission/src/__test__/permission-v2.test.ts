@@ -1,9 +1,3 @@
-// PERMISSION-V2 核心矩阵与不变式（DESIGN §4.2 执行矩阵 / §9 九不变式）：
-// 裁决类 × 档位 containment → {verdict, exec}；plan 硬闸先于规则；习得不越敏感面；
-// 显式 ask 压习得；拒记集（NEVER_MEMORIZE）选项裁剪；结构化 ask 记忆写入三面；
-// 审计 exec 随行；escalatable 资格；edit 归写族（V4：kind 声明面——映射表已删）；
-// 无专属面工具按档位缺省（full 直通）。
-
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -32,7 +26,7 @@ const ROOT = "/w/app";
 
 function decideFor(input: Parameters<typeof __decideFor>[0]): ReturnType<typeof __decideFor> {
   const faces = knobDecideOf(input.profile);
-  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined; // 测试注入：模拟 dispatch 从 ToolDefinition.kind 穿引
+  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined;
   return __decideFor({ ...input, ...(input.kind === undefined && family !== undefined ? { kind: family } : {}), ...(input.modeDecide === undefined && faces.decide !== undefined ? { modeDecide: faces.decide } : {}), ...(input.postureDecide === undefined && faces.posture !== undefined ? { postureDecide: faces.posture } : {}) });
 }
 
@@ -51,7 +45,7 @@ describe("执行矩阵（§4.2——f(裁决类, containment)）", () => {
   it("sandboxed-auto（fenced）：同裁决 allow → contained；未分类 → allow+contained（on-failure 围栏代问）", () => {
     expect(bash("git status", PROFILES.sandboxed)).toMatchObject({ verdict: "allow", exec: "contained" });
     expect(bash("mytool run", PROFILES.sandboxed)).toMatchObject({ verdict: "allow", exec: "contained", resolvedBy: "classifier:unclassified" });
-    expect(bash("node -e 'x'", PROFILES.sandboxed)).toMatchObject({ verdict: "allow", exec: "contained" }); // opaque 也围栏代问
+    expect(bash("node -e 'x'", PROFILES.sandboxed)).toMatchObject({ verdict: "allow", exec: "contained" });
   });
 
   it("edit-confirm：界内合成写 ask（不越 root 问）；auto 档同命令 direct", () => {
@@ -66,19 +60,19 @@ describe("执行矩阵（§4.2——f(裁决类, containment)）", () => {
 
   it("U7 归因重写：full 短路下 handwritten allow 规则命中 → 归因规则（不再被 mode:full 吞）；习得 grant 不重写", () => {
     const allowRule = [parseRule("Write(src/**):allow", "user")];
-    expect(bash("git status", PROFILES.full)).toMatchObject({ verdict: "allow", resolvedBy: "mode:full" }); // 无规则——mode 归因
+    expect(bash("git status", PROFILES.full)).toMatchObject({ verdict: "allow", resolvedBy: "mode:full" });
     const write = decideFor({ tool: "write", args: { path: "src/a.ts", content: "x" }, userRules: allowRule, sessionRules: [], profile: PROFILES.full, root: ROOT, extraRoots: [] });
-    expect(write).toMatchObject({ verdict: "allow", reason: "rule:src/**", resolvedBy: "rule:user", exec: "direct" }); // U7：handwritten 命中改写
+    expect(write).toMatchObject({ verdict: "allow", reason: "rule:src/**", resolvedBy: "rule:user", exec: "direct" });
     const learned = [{ ...parseRule("Write(src/**):allow", "session"), nature: "grant" as const }];
     const write2 = decideFor({ tool: "write", args: { path: "src/a.ts", content: "x" }, userRules: [], sessionRules: learned, profile: PROFILES.full, root: ROOT, extraRoots: [] });
-    expect(write2).toMatchObject({ verdict: "allow", resolvedBy: "mode:full" }); // 习得 grant 不重写（U7 边界——授权非显式权威）
+    expect(write2).toMatchObject({ verdict: "allow", resolvedBy: "mode:full" });
   });
 
   it("full：短路现口径（sudo deny；injection/rm-rf-root 被 A① 最小 ask 钳制）；exec direct", () => {
     expect(bash("sudo id", PROFILES.full)).toMatchObject({ verdict: "deny", resolvedBy: "mode:full" });
-    expect(bash("echo $(x)", PROFILES.full)).toMatchObject({ verdict: "ask", resolvedBy: "red-line:floor" }); // A①（2026-09-28）
+    expect(bash("echo $(x)", PROFILES.full)).toMatchObject({ verdict: "ask", resolvedBy: "red-line:floor" });
     expect(bash("rm -rf /", PROFILES.full)).toMatchObject({ verdict: "ask", resolvedBy: "red-line:floor" });
-    expect(bash("git status", PROFILES.full)).toMatchObject({ verdict: "allow", exec: "direct" }); // 净面命令仍直通
+    expect(bash("git status", PROFILES.full)).toMatchObject({ verdict: "allow", exec: "direct" });
   });
 
   it("plan bash 闸（V3 阶段二——严格缺省；富策略在 tool-plan 注册覆盖，宿主经真装配）：bash 全拒——allow/习得皆越不过；deny 规则核心先行（归因 rule）", () => {
@@ -87,7 +81,7 @@ describe("执行矩阵（§4.2——f(裁决类, containment)）", () => {
     expect(bash("git status", PROFILES.plan, wide)).toMatchObject({ verdict: "deny", reason: "plan mode disallows bash", resolvedBy: "mode:plan" });
     expect(bash("git push", PROFILES.plan, wide)).toMatchObject({ verdict: "deny", resolvedBy: "mode:plan" });
     expect(bash("git push", PROFILES.plan, learned)).toMatchObject({ verdict: "deny" });
-    expect(bash("git log", PROFILES.plan, [parseRule("Danger(git log):deny", "user")])).toMatchObject({ verdict: "deny", resolvedBy: "rule:user" }); // 红线 1：核心先行，归因规则
+    expect(bash("git log", PROFILES.plan, [parseRule("Danger(git log):deny", "user")])).toMatchObject({ verdict: "deny", resolvedBy: "rule:user" });
   });
 });
 
@@ -103,16 +97,16 @@ describe("优先序与不变式（§9）", () => {
   it("不变式 1（习得不越防线）：习得 allow 不越 argv 敏感面；硬拒/结构失败无记忆选项", () => {
     const learnedCat = [{ ...parseRule("Danger(cat:*):allow", "session"), nature: "grant" as const }];
     expect(bash("cat README.md", PROFILES.auto, learnedCat)).toMatchObject({ verdict: "allow", resolvedBy: "grant:session" });
-    expect(bash("cat ~/.ssh/id_rsa", PROFILES.auto, learnedCat)).toMatchObject({ verdict: "ask", resolvedBy: "argv-sensitive" }); // 习得被敏感面挡下
-    expect(bash("sudo id", PROFILES.auto).memorizable).toBeUndefined(); // 硬拒拒记
-    expect(bash("cat $F", PROFILES.auto).memorizable).toBeUndefined(); // 动态段拒记
-    expect(bash("mytool run", PROFILES.auto, [parseRule("Danger(mytool:*):ask", "user")]).memorizable).toBeUndefined(); // 显式 ask 抑制
+    expect(bash("cat ~/.ssh/id_rsa", PROFILES.auto, learnedCat)).toMatchObject({ verdict: "ask", resolvedBy: "argv-sensitive" });
+    expect(bash("sudo id", PROFILES.auto).memorizable).toBeUndefined();
+    expect(bash("cat $F", PROFILES.auto).memorizable).toBeUndefined();
+    expect(bash("mytool run", PROFILES.auto, [parseRule("Danger(mytool:*):ask", "user")]).memorizable).toBeUndefined();
   });
 
   it("习得 allow：session 作用域命中（grant:session）；显式 allow 越过 opaque", () => {
     const learned = [{ ...parseRule("Danger(git status:*):allow", "session"), nature: "grant" as const }];
     expect(bash("git status -s", PROFILES.auto, learned)).toMatchObject({ verdict: "allow", resolvedBy: "grant:session" });
-    expect(bash("bash x.sh", PROFILES.auto, [parseRule("Danger(bash:*):allow", "user")])).toMatchObject({ verdict: "allow", resolvedBy: "rule:user" }); // U16 opaque 可被显式 allow 委任
+    expect(bash("bash x.sh", PROFILES.auto, [parseRule("Danger(bash:*):allow", "user")])).toMatchObject({ verdict: "allow", resolvedBy: "rule:user" });
   });
 });
 
@@ -165,7 +159,7 @@ describe("插件级：结构化 ask 往返 + 记忆写入 + 审计 exec（§6.2/
       name: "test-grant-store",
       apply: (c) =>
         c.provide(permissionGrantStore, {
-          write: async () => ({ ok: true }), // 记账单一来源=permissionGrantWritten 事件
+          write: async () => ({ ok: true }),
         }),
     };
     const unload = await loadPlugins(ctx, [
@@ -187,7 +181,7 @@ describe("插件级：结构化 ask 往返 + 记忆写入 + 审计 exec（§6.2/
     const call = async (name: string, args: unknown, session?: SessionId): Promise<ToolOutcome> => {
       if (!registered.has(name)) {
         registered.add(name);
-        const family = (["read","write","edit","grep","bash"] as const).includes(name as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[name as "read"|"write"|"edit"|"grep"|"bash"] : undefined; // stub 模拟 ToolDefinition.kind 声明
+        const family = (["read","write","edit","grep","bash"] as const).includes(name as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[name as "read"|"write"|"edit"|"grep"|"bash"] : undefined;
         disposers.push(reg.register({ name, ...(family !== undefined ? { kind: family } : {}), inputSchema: Type.Object({}), execute: async () => ({ content: "ran" }) }));
       }
       return reg.dispatch({ callId: `c-${at}-${name}-${String(asks.length)}`, name, args, signal: new AbortController().signal, ...(session !== undefined ? { session } : {}) });
@@ -203,7 +197,7 @@ describe("插件级：结构化 ask 往返 + 记忆写入 + 审计 exec（§6.2/
     expect(b.grantsWritten).toEqual([{ scope: "session", rule: "Danger(mytool deploy:*):allow" }]);
     const second = await b.call("bash", { command: "mytool deploy staging" }, "s1" as SessionId);
     expect(second.content).toBe("ran");
-    expect(b.asks).toHaveLength(1); // 习得命中免问
+    expect(b.asks).toHaveLength(1);
     expect(b.audits.at(-1)).toMatchObject({ tool: "bash", verdict: "allow", exec: "direct", resolvedBy: "grant:session" });
     for (const d of b.unload) await d();
   });
@@ -226,9 +220,8 @@ describe("插件级：结构化 ask 往返 + 记忆写入 + 审计 exec（§6.2/
   it("敏感面 ask 精确记忆（不泛化——建议=精确全串）；批准后 direct 执行", async () => {
     const b = await bench({ replies: [{ verdict: "allow", memory: "session" }] });
     await b.call("bash", { command: "cat ~/.ssh/id_rsa" }, "s1" as SessionId);
-    expect(b.asks[0]?.suggestedRule).toBe("Danger(cat ~/.ssh/id_rsa):allow"); // U12 精确可记忆（不泛化）
+    expect(b.asks[0]?.suggestedRule).toBe("Danger(cat ~/.ssh/id_rsa):allow");
     expect(b.grantsWritten).toEqual([{ scope: "session", rule: "Danger(cat ~/.ssh/id_rsa):allow" }]);
-    // 习得的是精确规则——泛化形态 cat 别的敏感文件仍问
     await b.call("bash", { command: "cat ~/.ssh/known_hosts" }, "s1" as SessionId);
     expect(b.asks).toHaveLength(2);
     for (const d of b.unload) await d();
@@ -237,7 +230,7 @@ describe("插件级：结构化 ask 往返 + 记忆写入 + 审计 exec（§6.2/
   it("sandboxed-auto：未分类 direct 免问；escalatable 资格在 contained+on-failure（经 audit exec 面锚）", async () => {
     const b = await bench({ mode: "sandboxed-auto" });
     await b.call("bash", { command: "mytool run" }, "s1" as SessionId);
-    expect(b.asks).toHaveLength(0); // on-failure：围栏代问
+    expect(b.asks).toHaveLength(0);
     expect(b.audits[0]).toMatchObject({ tool: "bash", verdict: "allow", exec: "contained" });
     for (const d of b.unload) await d();
   });
@@ -246,7 +239,7 @@ describe("插件级：结构化 ask 往返 + 记忆写入 + 审计 exec（§6.2/
     const b = await bench({ replies: [{ verdict: "allow", memory: "session" }, { verdict: "deny" }] });
     await b.call("bash", { command: "mytool deploy prod" }, "s1" as SessionId);
     await b.call("bash", { command: "mytool deploy staging" }, "s2" as SessionId);
-    expect(b.asks).toHaveLength(2); // s2 不借 s1 的记忆
+    expect(b.asks).toHaveLength(2);
     for (const d of b.unload) await d();
   });
 

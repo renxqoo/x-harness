@@ -1,6 +1,3 @@
-// 终端审批 broker（docs/CLI.md §2.3）：decideApproval 词表闭集 + 交互/非交互两形态 +
-// EOF（Ctrl+C 强制关闭）= deny。IO 注入，不碰真终端。
-
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { permissionBroker } from "@x-harness/permission";

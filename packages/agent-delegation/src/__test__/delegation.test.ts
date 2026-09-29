@@ -1,5 +1,3 @@
-// 子代理全链测试（docs/AGENT-DELEGATION.md §11.1 迁移矩阵——X1–X20 覆盖项 + 件13 B 阶段新锚）。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionId } from "@x-harness/session";
 import type { LlmChunk } from "@x-harness/llm";
@@ -31,7 +29,6 @@ describe("子代理看门狗透传（streamIdleTimeoutMs）", () => {
   it("spawn 的子恒继承父 resolved 看门狗值（症状钉子：删透传字段曾不红）", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
-    // 父显式收紧 33ms——子代理（最常挂死的面）必须继承而非回落缺省
     const tight = await world.loop.create({ agent: { model: PARENT_MODEL, provider: "fake", streamIdleTimeoutMs: 33 } });
     expect(tight.ok).toBe(true);
     if (!tight.ok) return;
@@ -44,7 +41,7 @@ describe("子代理看门狗透传（streamIdleTimeoutMs）", () => {
     expect(spawned.isError).not.toBe(true);
     const child = world.loop.get(sessionOf(spawned.content));
     expect(child).toBeDefined();
-    expect(child?.agent.options.streamIdleTimeoutMs).toBe(33); // resolved 值直传
+    expect(child?.agent.options.streamIdleTimeoutMs).toBe(33);
     void parent;
   });
 
@@ -76,11 +73,11 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
     expect(spawned.isError).toBeUndefined();
     const agentId = agentIdOf(spawned.content);
     expect(spawned.content).toContain("type 'worker'");
-    expect(spawned.content).toContain("stays stable across restarts"); // 修订A：agentId 即持久身份引导
+    expect(spawned.content).toContain("stays stable across restarts");
     const turnCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
     await vi.waitFor(() => expect(turnCount()).toBe(2), { timeout: 5_000 });
     const agentMessages = parent.agent.session.events().filter((e) => e.type === "agent/message");
-    expect(agentMessages.length).toBe(1); // 通知（内部消息载体——docs/AGENT-MESSAGE.md §5）；快照与首话仍为 user/message
+    expect(agentMessages.length).toBe(1);
     expect(parent.agent.session.events().filter((e) => e.type === "user/message" && e.surfaceOp === "append")).toHaveLength(2);
     const notification = JSON.stringify(agentMessages[0]?.data);
     expect(notification).toContain("[agent-notification]");
@@ -97,7 +94,7 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "anchor probe", prompt: "x", subagent_type: "worker" }, session: parent.agent.session.id });
     const childSession = sessionOf(spawned.content);
     const header = world.ctx.use(sessionStore).get(childSession)?.header;
-    expect(header?.agentId).toBe(agentIdOf(spawned.content)); // id 持久锚（修订A）
+    expect(header?.agentId).toBe(agentIdOf(spawned.content));
     expect(header?.agentType).toBe("worker");
     expect(header?.agentDepth).toBe(1);
     expect(header?.parentSession).toBe(parent.agent.session.id);
@@ -121,23 +118,20 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
   it("model 覆盖序（§7.3）：按次 > 类型定义 > 父模型；fork 忽略 model 参数", async () => {
     const world = await makeWorld(await workerOptions());
     const parent = await spawnParent(world);
-    // ① 按次覆盖类型
     world.scripts.set("override-model", [textScript("override-model", "ok")]);
     const overridden = await callTool({ world, name: "agent_spawn", args: { description: "ov", prompt: "x", subagent_type: "worker", model: "override-model" }, session: parent.agent.session.id });
     const overrideSession = sessionOf(overridden.content);
     await vi.waitFor(() => expect(childEnded(world, overrideSession)).toBe(true), { timeout: 5_000 });
     const overrideHeader = eventsOf(world, overrideSession).find((e) => e.type === "request/header");
     expect(modelOf(overrideHeader)).toBe("override-model");
-    // ② 无类型无覆盖 → 父模型
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
-    parent.agent.followup("warm"); // 父产生末次 header
+    parent.agent.followup("warm");
     await parent.agent.whenIdle();
     const inherited = await callTool({ world, name: "agent_spawn", args: { description: "inh", prompt: "x" }, session: parent.agent.session.id });
     const inheritedSession = sessionOf(inherited.content);
     await vi.waitFor(() => expect(childEnded(world, inheritedSession)).toBe(true), { timeout: 5_000 });
     const inheritedHeader = eventsOf(world, inheritedSession).find((e) => e.type === "request/header");
     expect(modelOf(inheritedHeader)).toBe(PARENT_MODEL);
-    // ③ fork 带model 参数 → 忽略，固定父模型
     world.scripts.set(PARENT_MODEL, [...(world.scripts.get(PARENT_MODEL) ?? []), textScript(PARENT_MODEL, "again")]);
     const forked = await callTool({ world, name: "agent_spawn", args: { description: "fk", prompt: "continue", subagent_type: "fork", model: "lies" }, session: parent.agent.session.id });
     const forkSession = sessionOf(forked.content);
@@ -222,12 +216,12 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     expect(hijackStop.isError).toBe(true);
     expect(hijackStop.content).toContain("not-owner");
     const openMessage = await callTool({ world, name: "agent_message", args: { to: agentId, message: "hi" }, session: stranger.agent.session.id });
-    expect(openMessage.isError).toBeUndefined(); // 开放寻址：兄弟/他父可发（§4.4）
+    expect(openMessage.isError).toBeUndefined();
     expect(openMessage.content).toContain("Delivered");
     const unknown = await callTool({ world, name: "task_stop", args: { task_id: "agent-ffffffff" }, session: parent.agent.session.id });
     expect(unknown.isError).toBe(true);
     expect(unknown.content).toContain("not-found");
-    expect(unknown.content).toContain("no such task in any source"); // 件14 统一词表
+    expect(unknown.content).toContain("no such task in any source");
     await parent.dispose();
     await stranger.dispose();
   });
@@ -241,7 +235,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
     const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
-    await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 10"), { timeout: 5_000 }); // 通知：全文经 cap 截断
+    await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 10"), { timeout: 5_000 });
     expect(lastNotice()).toContain("agent_message");
     await parent.dispose();
   });
@@ -254,9 +248,9 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     const stopped = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: parent.agent.session.id });
     expect(stopped.isError).toBeUndefined();
     const again = await callTool({ world, name: "task_stop", args: { task_id: agentId }, session: parent.agent.session.id });
-    expect(again.content).toContain("already stopped"); // 幂等
+    expect(again.content).toContain("already stopped");
     const respawn = await callTool({ world, name: "agent_spawn", args: { description: "d2", prompt: "y" }, session: parent.agent.session.id });
-    expect(respawn.isError).toBeUndefined(); // 槽已释放
+    expect(respawn.isError).toBeUndefined();
     await parent.dispose();
   });
 
@@ -269,7 +263,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     expect(mine.content).toContain("kind=subagent");
     expect(mine.content).toMatch(/kind=subagent agent-[0-9a-f]{8} session=\S+/);
     const theirs = await callTool({ world, name: "list_agents", args: {}, session: other.agent.session.id });
-    expect(theirs.content).toContain("(no sub-agents)"); // 子树隔离
+    expect(theirs.content).toContain("(no sub-agents)");
     await parent.dispose();
     await other.dispose();
   });
@@ -310,7 +304,7 @@ describe("fork 重铸（X14）", () => {
     session.append("turn/end", { turn: 0, reason: { kind: "completed" } });
     const seed = forkSeed(session);
     const recast = seed.filter((e) => e.type === "agent/message");
-    expect(recast).toHaveLength(1); // content 继承、directive 丢弃（docs/AGENT-MESSAGE.md §5）
+    expect(recast).toHaveLength(1);
     expect(recast[0]?.data).toMatchObject({ source: "delegation-report", kind: "content", content: [{ type: "text", text: "sibling report fact" }] });
     await parent.dispose();
   });
@@ -407,7 +401,7 @@ describe("白名单双执法（X15）", () => {
     expect(grand.isError).toBeUndefined();
     const grandSession = sessionOf(grand.content);
     const grandHandle = world.loop.get(grandSession);
-    expect(world.registry.restrictionOf(grandSession)).toEqual(["allowed_tool"]); // 只收窄（W2A：唯一真相在 registry 会话层）
+    expect(world.registry.restrictionOf(grandSession)).toEqual(["allowed_tool"]);
     if (grandHandle !== undefined) await grandHandle.dispose();
     await parent.dispose();
   });
@@ -431,11 +425,11 @@ describe("生命周期（孤儿收养 / teardown 门 / 唤醒重验）", () => {
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x" }, session: parent.agent.session.id });
     const agentId = agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
-    await parent.dispose(); // 父先走
+    await parent.dispose();
     const refused = await callTool({ world, name: "agent_message", args: { to: agentId, message: "wake" }, session: stranger.agent.session.id });
     expect(refused.isError).toBe(true);
     expect(refused.content).toContain("not-found");
-    await vi.waitFor(() => expect(world.loop.get(childSession)).toBeUndefined(), { timeout: 5_000 }); // 收养收敛
+    await vi.waitFor(() => expect(world.loop.get(childSession)).toBeUndefined(), { timeout: 5_000 });
     await stranger.dispose();
   });
 
@@ -462,7 +456,7 @@ describe("X20：execute 内断信号不遗孤儿子", () => {
       signal: controller.signal,
       session: parent.agent.session.id,
     });
-    expect(outcome.isError).toBe(true); // dispatch 管线 abort 检查先挡（工具体未跑）
+    expect(outcome.isError).toBe(true);
     await parent.dispose();
   });
 

@@ -1,6 +1,3 @@
-// resolveModel 两层解析（docs/CLI.md §2.6）：新建 defaults 合成 vs resume 仅显式 overrides、
-// --provider/--model 归属矩阵（唯一命中/歧义/未命中）、--api-key 绑定 provider。
-
 import { describe, expect, it } from "vitest";
 import { parseProvidersConfig } from "../providers-file.ts";
 import { resolveModel } from "../resolve-model.ts";

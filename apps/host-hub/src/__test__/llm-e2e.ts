@@ -1,8 +1,3 @@
-// real LLM 门（opt-in 不进默认门禁——IMPLEMENTATION §5 层 5）：真 host 进程 + 真
-// worker + 真 compat adapter 拨号（GLM）。旅程：heartbeat → host_info → start(modelId)
-// → prompt settled → WAL assistant 消息 → 标题 → fork 分支对话 → 多会话并发（5
-// 线程隔离 + 批量收编）→ retire→parked 直读 → wake → EOF exit 0。
-// 运行：bun run e2e:llm（GLM_API_KEY 缺省回落 packages/e2e/.env 同源）
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,7 +31,6 @@ async function main(): Promise<void> {
   const baseUrl = process.env["GLM_BASE_URL"] ?? "https://open.bigmodel.cn/api/anthropic";
   const agentDir = await mkdtemp(join(tmpdir(), "hub-llm-"));
   await mkdir(join(agentDir, "sessions"), { recursive: true });
-  // 目录走 models.json custom 条目面（生产接入形态）
   await writeFile(
     join(agentDir, "providers.json"),
     JSON.stringify({
@@ -47,7 +41,6 @@ async function main(): Promise<void> {
   );
   const entry = join(import.meta.dirname, "../host/cli.ts");
   const proc = spawn(process.execPath, [entry], {
-    // mailbox 随 agentDir 隔离（真实 LLM 旅程同样真开箱——不污染 ~/.x-harness/mailbox）
     env: { ...process.env, HUB_AGENT_DIR: agentDir, X_HARNESS_MAILBOX_DIR: join(agentDir, "mailbox") } as NodeJS.ProcessEnv,
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -66,7 +59,6 @@ async function main(): Promise<void> {
   });
   proc.stderr.on("data", (chunk: Buffer) => process.stderr.write(`[llm-host] ${String(chunk)}`));
   const dump = (label: string): void => {
-    // 失败取证：按线程汇总帧名计数（定位停层——turn 未起/流中断/不收敛）
     const byThread = new Map<string, Map<string, number>>();
     for (const frame of lines) {
       if (frame.type !== "event") continue;

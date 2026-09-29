@@ -1,7 +1,3 @@
-// worker 入口（main guard；run 可单测——覆盖率口径零覆盖文件计 0%）。
-// 环境契约：HUB_AGENT_DIR（配置目录）、HUB_SESSIONS_ROOT（会话根，缺省
-// <agentDir>/sessions）。HUB_WORKER_DISPATCHED 哨兵：产物形态 host 双角色分派后
-// 抑制本文件 main-guard 重复执行（双 hello 回归锚）。
 import { join } from "node:path";
 import { runWorker } from "./worker.ts";
 

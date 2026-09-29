@@ -1,5 +1,3 @@
-// 通知路径与门禁补全：error/blocked 透传、busy 步边界、重唤醒复占、占位通知、纯函数直测。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LlmChunk } from "@x-harness/llm";
 import type { AgentHandle } from "@x-harness/agent-loop";
@@ -42,10 +40,9 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     expect(messaged.content).toContain("Delivered");
     await vi.waitFor(() => expect(turnCountOf(parent)).toBe(3), { timeout: 5_000 });
     const lastNotification = JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
-    // settleStream 把 finish.code 前缀折进 attempt 错误串（"test:boom"）——通知如实透传该串
     expect(lastNotification).toContain(`agent ${agentId} failed: test:boom`);
     expect(lastNotification).toContain(`session: ${String(sessionOf(spawned.content))}`);
-    expect(lastNotification).not.toContain("first turn output"); // error 轮不回潮前轮摘要
+    expect(lastNotification).not.toContain("first turn output");
     await parent.dispose();
   });
 
@@ -57,7 +54,6 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     await parent.agent.whenIdle();
     world.scripts.set(CHILD_MODEL, [
       (async function* (): AsyncGenerator<LlmChunk> {
-        // 全输出为不可见增量（thinking）或直接截断：content 空、撞上限
         yield { type: "usage", usage: { input: 3742, output: 8192, totalTokens: 11934 } };
         yield { type: "finish", finish: { kind: "max-tokens" } };
       })(),
@@ -69,8 +65,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     const agentId = agentIdOf(spawned.content);
     expect(lastNotification).toContain(`agent ${agentId} failed: hit the output token limit before producing any report (no summary)`);
     expect(lastNotification).toContain(`session: ${String(sessionOf(spawned.content))}`);
-    expect(lastNotification).toContain('\\"output\\":8192'); // 外层 stringify 转义后的 usage 行
-    // 失败子代理保持 idle 可唤醒（不 dispose 不自动 stop）：list 状态 idle + message 可投递
+    expect(lastNotification).toContain('\\"output\\":8192');
     const listed = await callTool({ world, name: "list_agents", args: {}, session: parent.agent.session.id });
     expect(listed.content).toContain(`${agentId}`);
     expect(listed.content.match(new RegExp(`${agentId}[^\\n]*status=(\\w+)`))?.[1]).toBe("idle");
@@ -91,7 +86,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     world.scripts.set(CHILD_MODEL, [
       textScript(CHILD_MODEL, "done once"),
       (async function* (): AsyncGenerator<LlmChunk> {
-        await gate; // 第二轮挂起：保持 running 占槽
+        await gate;
         yield { type: "finish", finish: { kind: "stop" } };
       })(),
     ]);
@@ -136,7 +131,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     const events = parent.agent.session.events();
     expect(events.filter((e) => e.type === "turn/start")).toHaveLength(1);
     const stepNotices = events.filter((e) => e.type === "agent/message");
-    expect(stepNotices.length).toBe(1); // 步边界消费的通知（内部消息载体，恰一条）
+    expect(stepNotices.length).toBe(1);
     expect(JSON.stringify(stepNotices[0]?.data)).toContain("[agent-notification]");
     expect(events.at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
     await parent.dispose();
@@ -159,15 +154,14 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
       emitFinished: (payload) => finished.push({ outcome: payload.outcome, detail: payload.detail }),
     });
     notifier({ session: row.sessionId, status: "running" });
-    notifier({ session: row.sessionId, status: "idle" }); // store.get(session-x) undefined → 占位路径
+    notifier({ session: row.sessionId, status: "idle" });
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "consume")]);
     const lastUserText = (): string => {
       const events = parent.agent.session.events().filter((e) => e.type === "agent/message");
       return JSON.stringify(events.at(-1)?.data);
     };
     await vi.waitFor(() => expect(lastUserText()).toContain("session-archived"), { timeout: 5_000 });
-    expect(lastUserText()).toContain("session: session-x"); // 占位通知同样带 session 行（档案指针）
-    // 占位路径的周期终结事件（BATCH2 §3）：idle 边沿已证跑完一轮 → completed + 缺档句
+    expect(lastUserText()).toContain("session: session-x");
     expect(finished).toContainEqual({ outcome: "completed", detail: "session-archived (no report available)" });
     await parent.dispose();
   });
@@ -180,7 +174,6 @@ describe("动词入参防线（invalid-args 分支）", () => {
     const noTo = await callTool({ world, name: "agent_message", args: { message: "hi" }, session: parent.agent.session.id });
     expect(noTo.isError).toBe(true);
     expect(noTo.content).toContain("to");
-    // message 为 schema 必填（spec 对齐）——缺参由 TypeBox 拦截
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "x" }, session: parent.agent.session.id });
     const bare = await callTool({ world, name: "agent_message", args: { to: (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] }, session: parent.agent.session.id });
     expect(bare.isError).toBe(true);
@@ -247,7 +240,6 @@ describe("五态通知词表（表驱动——docs/SUBAGENT-FAILURE-NOTIFICATION
       expect(text).toContain(row0.head === "finished" ? "finished: completed\n" : `${row0.head}: ${row0.detail}\n`);
       expect(text).toContain("session: 20260920T130824-ljcg3f");
     }
-    // error message 缺席兜底 + 未知 kind fail-closed
     expect(failureDetail({ status: "error", summary: undefined, usage: undefined })).toBe("turn ended with error");
     expect(failureDetail({ status: "weird-kind", summary: undefined, usage: undefined })).toBe("turn ended abnormally (unknown reason kind)");
   });
@@ -261,16 +253,16 @@ describe("五态通知词表（表驱动——docs/SUBAGENT-FAILURE-NOTIFICATION
     ] as never;
     const report = childReport(events);
     expect(report.status).toBe("completed");
-    expect(report.summary).toBe(long); // 全文——数据层不截，截断统一在消费方（summaryLines + reportCap）
+    expect(report.summary).toBe(long);
     expect(report.usage).toEqual({ input: 5, output: 6 });
     const row = { agentId: "a", sessionId: "s1" } as never;
     const text = notificationText(row, report, 1000);
-    expect(text).toContain(`summary: ${long}`); // 通知即全文（与报告同一 cap）
+    expect(text).toContain(`summary: ${long}`);
     expect(text).toContain("usage:");
     const capped = notificationText(row, report, 100);
-    expect(capped).toContain(`summary: ${"x".repeat(100)}`); // 超 cap 截断
+    expect(capped).toContain(`summary: ${"x".repeat(100)}`);
     expect(capped).toContain("truncated at 100");
-    expect(capped).toContain("agent_message"); // 追问走对话
+    expect(capped).toContain("agent_message");
     const bare = childReport([{ type: "assistant/message", seq: 0, time: 1, surfaceOp: "append", data: { turn: 0, step: 0, content: [], stopReason: "stop" } }] as never);
     expect(bare.status).toBe("error");
     const passthrough = childReport([

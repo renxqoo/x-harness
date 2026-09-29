@@ -156,12 +156,12 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
 
   it("autocompact/checkpoint 坏样本矩阵（docs/COMPACTION.md §2.B——ledger 非空/coveredSeq 非负/stale 仅 true）", () => {
     const bad: unknown[] = [
-      { turn: 0, step: 0, ledger: "", coveredSeq: 0 }, // 空账本
-      { turn: 0, step: 0, ledger: "L", coveredSeq: -1 }, // 负覆盖边界
-      { turn: 0, step: 0, ledger: "L", coveredSeq: 1.5 }, // 非整数
-      { turn: "0", step: 0, ledger: "L", coveredSeq: 0 }, // turn 非计数
-      { turn: 0, step: 0, ledger: "L", coveredSeq: 0, stale: false }, // stale 仅 true
-      { turn: 0, step: 0, coveredSeq: 0 }, // 缺 ledger
+      { turn: 0, step: 0, ledger: "", coveredSeq: 0 },
+      { turn: 0, step: 0, ledger: "L", coveredSeq: -1 },
+      { turn: 0, step: 0, ledger: "L", coveredSeq: 1.5 },
+      { turn: "0", step: 0, ledger: "L", coveredSeq: 0 },
+      { turn: 0, step: 0, ledger: "L", coveredSeq: 0, stale: false },
+      { turn: 0, step: 0, coveredSeq: 0 },
     ];
     for (const sample of bad) expect(gateEvent("autocompact/checkpoint", sample)).toBe("shape:autocompact/checkpoint");
   });
@@ -193,12 +193,11 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     const good = { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "rs_1", redacted: false, origin: { provider: "p", model: "m" } }] };
     expect(gateEvent("assistant/message", good)).toBeUndefined();
     expect(gateEvent("assistant/attempt", { turn: 0, step: 0, error: "boom", thinkingBlocks: [{ signature: "rs_1", redacted: true, origin: { provider: "p", model: "m" } }] })).toBeUndefined();
-    // 垃圾：空签名 / redacted 非布尔 / origin 缺 model / 非数组
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "", redacted: false, origin: { provider: "p", model: "m" } }] })).toBe("shape:assistant/message");
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "s", redacted: "no", origin: { provider: "p", model: "m" } }] })).toBe("shape:assistant/message");
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [{ signature: "s", redacted: false, origin: { provider: "p" } }] })).toBe("shape:assistant/message");
     expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: "x" })).toBe("shape:assistant/message");
-    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [] })).toBe("shape:assistant/message"); // 空数组=垃圾（缺席才省略）
+    expect(gateEvent("assistant/message", { turn: 0, step: 0, content: [], thinkingBlocks: [] })).toBe("shape:assistant/message");
   });
 
   it("assistant thinking/attempt content 可选（STREAM-PARTIAL-PERSISTENCE——截断已收内容落盘）", () => {
@@ -214,10 +213,10 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
   it("todo/snapshot 词条门表驱动（docs/TODO.md §13.2/§13.4——规范形/自环/悬空/seq 界）", () => {
     const ok = (data: unknown): boolean => gateEvent("todo/snapshot", data) === undefined;
     const bad = (data: unknown): string => gateEvent("todo/snapshot", data) ?? "passed";
-    expect(ok({ seq: 0, tasks: [], edges: [] })).toBe(true); // 空清单合法（max 空集取 0）
+    expect(ok({ seq: 0, tasks: [], edges: [] })).toBe(true);
     expect(ok({ seq: 3, tasks: [{ id: "1", subject: "A", status: "completed" }, { id: "3", subject: "B", status: "pending", description: "d" }], edges: [["3", "1"]] })).toBe(true);
-    expect(ok({ seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "pending" }], edges: [["1", "2"], ["1", "2"]] })).toBe(true); // 重复边过门（恢复灌 Set 去重——落档无害）
-    expect(bad({ seq: -1, tasks: [], edges: [] })).toBe("shape:todo/snapshot"); // 表驱动 brokenSamples 之外补界
+    expect(ok({ seq: 2, tasks: [{ id: "1", subject: "A", status: "pending" }, { id: "2", subject: "B", status: "pending" }], edges: [["1", "2"], ["1", "2"]] })).toBe(true);
+    expect(bad({ seq: -1, tasks: [], edges: [] })).toBe("shape:todo/snapshot");
     for (const [label, data] of [
       ["id 非规范形 01", { seq: 1, tasks: [{ id: "01", subject: "A", status: "pending" }], edges: [] }],
       ["id 非规范形 0", { seq: 0, tasks: [{ id: "0", subject: "A", status: "pending" }], edges: [] }],
@@ -252,13 +251,11 @@ describe("gateEvent（docs/SESSION.md §1.3 闭合词表 + §7 门失败矩阵�
     );
     expect(gateEvent("agent/inbox/spliced", { op: "clear", reason: "" })).toBe("shape:agent/inbox/spliced");
     expect(gateEvent("agent/inbox/spliced", { op: "noop", target: "next-turn" })).toBe("shape:agent/inbox/spliced");
-    // drop 单条移除（queue/drop 直写）：合法过门；空 id 串/空 reason/坏 target 拒
     expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-turn", dropped: ["msg_1"], reason: "client-drop" })).toBeUndefined();
     expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-step", dropped: [], reason: "client-drop" })).toBeUndefined();
     expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-turn", dropped: [""], reason: "client-drop" })).toBe("shape:agent/inbox/spliced");
     expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "next-turn", dropped: ["msg_1"], reason: "" })).toBe("shape:agent/inbox/spliced");
     expect(gateEvent("agent/inbox/spliced", { op: "drop", target: "side-queue", dropped: ["msg_1"], reason: "r" })).toBe("shape:agent/inbox/spliced");
-    // retarget 单条改道（queue/send_now 直写）：合法过门；空 id/坏 to 拒
     expect(gateEvent("agent/inbox/spliced", { op: "retarget", id: "msg_1", to: "next-step" })).toBeUndefined();
     expect(gateEvent("agent/inbox/spliced", { op: "retarget", id: "", to: "next-step" })).toBe("shape:agent/inbox/spliced");
     expect(gateEvent("agent/inbox/spliced", { op: "retarget", id: "msg_1", to: "next-page" })).toBe("shape:agent/inbox/spliced");

@@ -1,5 +1,3 @@
-// L1 清理（对照参照系 scavenger.test 语义；落账面改写为 tool/result 单点 replace）。
-
 import { describe, expect, it } from "vitest";
 import type { SurfaceNode } from "@x-harness/session";
 import { computeClearPlan, gainTokensOf, landClearPlan, lastTurnStartIndex, PLACEHOLDER_PREFIX } from "../scavenger.ts";
@@ -17,7 +15,6 @@ function toolUseAssistantNode(seq: number, call: { readonly callId: string; read
   } as never;
 }
 
-/** [u0 a1(use c1) t2 u3 a4(use c2) t5 u6]：两轮工具 + 在飞轮 u6 */
 function fixture(): { nodes: SurfaceNode[]; events: ReturnType<typeof logEvent>[] } {
   const nodes = [
     userNode(0, "turn-0"),
@@ -43,7 +40,6 @@ describe("computeClearPlan", () => {
     expect(lastTurnStartIndex(nodes)).toBe(6);
     const plan = computeClearPlan(nodes, events, CONFIG);
     expect(plan.entries.map((entry) => entry.callId).sort()).toEqual(["c1", "c2"]);
-    // 白名单外豁免
     const writeFixture = {
       nodes: [userNode(0, "t"), toolUseAssistantNode(1, { callId: "w", name: "write", args: JSON.stringify({ path: "/w.ts" }) }), toolResultNode(2, "w", textOf(10)), userNode(3, "next")],
       events: [logEvent("tool/call", 1, { turn: 0, step: 0, callId: "w", name: "write", arguments: JSON.stringify({ path: "/w.ts" }) })],
@@ -54,7 +50,7 @@ describe("computeClearPlan", () => {
   it("keepRecent 最新豁免：自尾向首保底 N 条", () => {
     const { nodes, events } = fixture();
     const plan = computeClearPlan(nodes, events, { ...CONFIG, clearKeepRecent: 1 });
-    expect(plan.entries.map((entry) => entry.callId)).toEqual(["c1"]); // 最新（尾部）的 c2 被豁免
+    expect(plan.entries.map((entry) => entry.callId)).toEqual(["c1"]);
   });
 
   it("占位幂等：已清理结果以 PLACEHOLDER_PREFIX 前缀识别跳过（二次计划为空）", () => {
@@ -97,7 +93,7 @@ describe("landClearPlan（装配层落账）", () => {
       seedToolTurn(session, { turn: 0, user: "go", tool: "read", callId: "c1", args: JSON.stringify({ path: "/a.ts" }), result: textOf(50) });
       seedToolTurn(session, { turn: 1, user: "next", tool: "read", callId: "c2", args: JSON.stringify({ path: "/b.ts" }), result: "err", usage: { input: 100, output: 1 } });
       const plan = computeClearPlan(session.surface(), session.events(), { clearableTools: ["read"], clearKeepRecent: 0 });
-      expect(plan.entries).toHaveLength(1); // 在飞轮（turn-1）整轮豁免
+      expect(plan.entries).toHaveLength(1);
       const landed = landClearPlan(session, session.surface(), plan.entries);
       expect(landed.landed).toBe(1);
       const cleared = session.surface().find((node) => node.event.type === "tool/result");
@@ -105,8 +101,7 @@ describe("landClearPlan（装配层落账）", () => {
       expect(data.callId).toBe("c1");
       expect(data.content.startsWith(PLACEHOLDER_PREFIX)).toBe(true);
       expect(data.content).toContain("/a.ts");
-      expect(session.deriveMessages().some((message) => message.role === "tool" && message.callId === "c1")).toBe(true); // 配对仍在
-      // 幂等：二次计划为空
+      expect(session.deriveMessages().some((message) => message.role === "tool" && message.callId === "c1")).toBe(true);
       expect(computeClearPlan(session.surface(), session.events(), { clearableTools: ["read"], clearKeepRecent: 0 }).entries).toEqual([]);
     } finally {
       await world.ctx.dispose();

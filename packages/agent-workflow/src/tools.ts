@@ -1,5 +1,3 @@
-// workflow_submit 工具面（docs/AGENT-WORKFLOW.md §9 外部契约 + W7 命名）。
-
 import { Type } from "@sinclair/typebox";
 import type { Static } from "@sinclair/typebox";
 import type { ToolDefinition } from "@x-harness/tools";

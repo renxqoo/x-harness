@@ -1,6 +1,3 @@
-// 命令注册面单元（BATCH3-DESIGN §2.1/§2.2）：词法表驱动、注册校验 fail-fast、
-// execute 三态（undefined/结果/重抛）、run|done 配对落账、commandsChange 通知、
-// gates 配对校验全卷回归。
 import { describe, expect, it } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import { sessionPlugin, sessionStore, validateSessionEvents } from "@x-harness/session";
@@ -27,8 +24,8 @@ async function makeSession(): Promise<{ session: Session; cleanup: () => Promise
 describe("parseCommand 词法（BATCH3-DESIGN §2.1——trim 保留 + 小写开头 + verbatim args）", () => {
   it.each([
     ["/compact", { name: "compact", rawInput: "" }],
-    ["/compact keep goals", { name: "compact", rawInput: " keep goals" }], // 分隔空白属 rawInput（逐字）
-    ["  /compact  spaced  ", { name: "compact", rawInput: "  spaced" }], // 前导/尾随 trim；名字后原文逐字（含分隔空白）
+    ["/compact keep goals", { name: "compact", rawInput: " keep goals" }],
+    ["  /compact  spaced  ", { name: "compact", rawInput: "  spaced" }],
     ["/a-b_c9", { name: "a-b_c9", rawInput: "" }],
   ])("%j → %j", (line, expected) => {
     expect(parseCommand(line)).toEqual(expected);
@@ -45,7 +42,6 @@ describe("commandRegistry 注册面", () => {
     try {
       const ctx = (made.session as unknown as { __ctx?: never }) && null;
       void ctx;
-      // 经插件装配的服务消费：重新建一个带 use 面的 ctx（registry 在 plugin 内 provide）
       const registry = await registryOf();
       const handler = () => ({ kind: "success" as const });
       registry.register({ name: "zeta", description: "z", execute: handler });
@@ -127,12 +123,12 @@ describe("execute 三态与配对落账", () => {
       expect(failed?.result).toEqual({ kind: "error", text: "expected failure" });
       const events = made.session.events().filter((e) => e.type.startsWith("command/"));
       const runIds = events.filter((e) => e.type === "command/run").map((e) => (e as { data: { commandId: string } }).data.commandId);
-      expect(new Set(runIds).size).toBe(3); // commandId 唯一
+      expect(new Set(runIds).size).toBe(3);
       const quietRun = events.find((e) => e.type === "command/run" && (e as { data: { name: string } }).data.name === "quiet");
-      expect((quietRun as { data: Record<string, unknown> }).data).not.toHaveProperty("args"); // recordInput:false
+      expect((quietRun as { data: Record<string, unknown> }).data).not.toHaveProperty("args");
       const dumpRun = events.find((e) => e.type === "command/run" && (e as { data: { name: string } }).data.name === "dump");
-      expect((dumpRun as { data: { args: string } }).data.args).toBe(" keep"); // 逐字（含分隔空白）
-      expect(made.session.surface()).toEqual([]); // log-only 不进模型上下文
+      expect((dumpRun as { data: { args: string } }).data.args).toBe(" keep");
+      expect(made.session.surface()).toEqual([]);
     } finally {
       await made.cleanup();
     }
@@ -175,15 +171,14 @@ describe("gates 配对校验全卷（at-most-once 双向；悬挂 run 合法）"
   const done = (seq: number, commandId: string): Record<string, unknown> => ({ type: "command/done", seq, time: 1, data: { commandId, kind: "success" } });
 
   it("正常配对/悬挂 run 通过；done 无 run、重复 run、重复 done 拒", () => {
-    expect(validateSessionEvents([run(0, "c1"), done(1, "c1"), run(2, "c2")])).toBeUndefined(); // 悬挂 run 合法
+    expect(validateSessionEvents([run(0, "c1"), done(1, "c1"), run(2, "c2")])).toBeUndefined();
     expect(validateSessionEvents([done(0, "c1")])).toMatch(/command-done-unpaired/);
     expect(validateSessionEvents([run(0, "c1"), run(1, "c1")])).toMatch(/command-run-duplicate/);
-    expect(validateSessionEvents([run(0, "c1"), done(1, "c1"), done(2, "c1")])).toMatch(/command-done-unpaired/); // 第二个 done 消费后仍须有未配对 run
-    expect(validateSessionEvents([{ type: "command/run", seq: 0, time: 1, data: { commandId: "", name: "x" } }])).toMatch(/shape:command\/run/); // 形状门
+    expect(validateSessionEvents([run(0, "c1"), done(1, "c1"), done(2, "c1")])).toMatch(/command-done-unpaired/);
+    expect(validateSessionEvents([{ type: "command/run", seq: 0, time: 1, data: { commandId: "", name: "x" } }])).toMatch(/shape:command\/run/);
   });
 });
 
-/** 独立 registry 装置（与 makeSession 分离——registry 无会话态） */
 async function registryOf() {
   const ctx = createContext();
   const unload = await loadPlugins(ctx, [commandsPlugin]);

@@ -1,8 +1,3 @@
-// 复读检测器纯函数面（docs/LLM-REPETITION-GUARD.md §2）：两档触发、排除面（纯标点/
-// 纯数字）、真周期判定（倍数别名收归最短周期）、通道分域互不串扰、跨 delta 帧切开的
-// 重复单元仍命中、尾窗裁剪不丢游程、attempt 结束（新实例）状态归零。
-// 症状命名：模型行内复读致文案前缀重复/烧穿 token（session 20260924T182924 实测形态）。
-
 import { describe, expect, it } from "vitest";
 import { RepetitionDetector, SHORT_UNIT_SPAN } from "../index.ts";
 
@@ -22,10 +17,10 @@ describe("RepetitionDetector 两档触发", () => {
 
   it("k=6 单元 ×26 命中（主闸阈值位）：长单元原地连抄 >25 次", () => {
     const fuse = new RepetitionDetector();
-    push(fuse, "剪刀石头布".repeat(34)); // k=3 保险丝：3×34=102 ≥100 触发
+    push(fuse, "剪刀石头布".repeat(34));
     expect(fuse.hit()).toBeDefined();
     const detector = new RepetitionDetector();
-    push(detector, "研究研究到底".repeat(26)); // k=6 主闸：×26 达阈（>25）
+    push(detector, "研究研究到底".repeat(26));
     expect(detector.hit()?.unit).toBe("研究研究到底");
   });
 
@@ -39,7 +34,7 @@ describe("RepetitionDetector 两档触发", () => {
 
   it("短单元高次重复达保险丝跨度触发：注意×16（span 32）不触发、注意×50（span 100）触发", () => {
     const light = new RepetitionDetector();
-    push(light, "注意".repeat(16)); // 实测落盘脏文案形态——span 32 < 100 放行（宁可漏）
+    push(light, "注意".repeat(16));
     expect(light.hit()).toBeUndefined();
     const runaway = new RepetitionDetector();
     push(runaway, "注意".repeat(50));
@@ -59,7 +54,7 @@ describe("排除面（不误判）", () => {
     push(lines, "-".repeat(40));
     expect(lines.hit()).toBeUndefined();
     const table = new RepetitionDetector();
-    push(table, "|---|---|---|---|---|---|---|---|---|"); // 单元 |---| ×10
+    push(table, "|---|---|---|---|---|---|---|---|---|");
     expect(table.hit()).toBeUndefined();
     const equals = new RepetitionDetector();
     push(equals, "======".repeat(10));
@@ -80,7 +75,7 @@ describe("排除面（不误判）", () => {
 
   it("最短周期取真单元：ABAB… 报 AB 不报 ABABAB", () => {
     const detector = new RepetitionDetector();
-    push(detector, "研究研究".repeat(26)); // 真单元「研究」k=2
+    push(detector, "研究研究".repeat(26));
     expect(detector.hit()?.unit).toBe("研究");
   });
 
@@ -88,15 +83,15 @@ describe("排除面（不误判）", () => {
     const detector = new RepetitionDetector();
     push(detector, "字".repeat(384));
     const hit = detector.hit();
-    expect(hit?.unit).toBe("字字"); // 真周期 2：hasSmallerPeriod 把 k=64 假单元收归
+    expect(hit?.unit).toBe("字字");
     expect(hit?.span).toBe(384);
   });
 
   it("真周期 >64 的整段循环结构性放弃：由 provider 截断与流空闲看门狗兜底", () => {
     const unit = "真周期超过六十四字符的长句子必须足够长才能验证结构性放弃行为，这里继续补足长度到七十字符以上的完整表述不留任何缝隙与歧义空间存在着";
-    expect(unit.length).toBeGreaterThan(64); // 真周期 65——k>MAX_UNIT 档位缺席
+    expect(unit.length).toBeGreaterThan(64);
     const detector = new RepetitionDetector();
-    push(detector, unit.repeat(6)); // 窗内尾部的 ≤64 假单元都非真周期 → 不触发
+    push(detector, unit.repeat(6));
     expect(detector.hit()).toBeUndefined();
   });
 });
@@ -104,8 +99,8 @@ describe("排除面（不误判）", () => {
 describe("流式边界", () => {
   it("跨 delta 帧切开的重复单元仍命中（帧边界不对齐单元边界）", () => {
     const detector = new RepetitionDetector();
-    const repeated = "deploy".repeat(26); // k=6 主闸：×26 达阈
-    for (const char of repeated) push(detector, char); // 单字符帧
+    const repeated = "deploy".repeat(26);
+    for (const char of repeated) push(detector, char);
     expect(detector.hit()?.unit).toBe("deploy");
   });
 
@@ -120,7 +115,7 @@ describe("流式边界", () => {
   it("尾窗裁剪不丢长游程：巨型单 delta 超窗后游程仍在窗内可判", () => {
     const detector = new RepetitionDetector();
     push(detector, "前置说明文字若干，不构成重复。".repeat(4));
-    push(detector, "truncate".repeat(50)); // k=8 ×50——span 400，尾窗 1664 内完整可见
+    push(detector, "truncate".repeat(50));
     expect(detector.hit()?.unit).toBe("truncate");
   });
 

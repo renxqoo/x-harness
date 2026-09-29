@@ -1,6 +1,3 @@
-// 件16 插件层单测：受管提交全旅程（Tier A 验收回炉闭环）+ W6 直通 + 派发 prompt 增补 +
-// 边沿补投。装置复用 delegation 测试 world（脚本假 adapter）。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,7 +21,6 @@ beforeEach(() => {
   resetWorlds();
 });
 
-// ————————————————— 装置（delegation world 的同构内联——workflow 装配面） —————————————————
 
 const worlds: Array<() => Promise<void>> = [];
 function resetWorlds(): void {
@@ -94,7 +90,6 @@ async function errorStream(message: string): Promise<AsyncGenerator<LlmChunk>> {
     yield { type: "error", message } as never;
   })();
 }
-// （stream 生成器内 for-await 直接消费 errorStream 产出——网络错误形态对齐 delegation world）
 
 function textScriptOf(_model: string, text: string): AsyncGenerator<LlmChunk> {
   return (async function* () {
@@ -106,14 +101,12 @@ function textScriptOf(_model: string, text: string): AsyncGenerator<LlmChunk> {
 const parentTextsOf = (world: TestWorld, session: SessionId): string =>
   world.ctx.use(sessionStore).get(session)?.events().map((e) => JSON.stringify(e.data)).join("\n") ?? "";
 
-/** 通知行判定（排除工具描述文本中的字样——请求头里的 tools 列表会带描述） */
 const notificationLinesOf = (world: TestWorld, session: SessionId): string =>
   world.ctx.use(sessionStore).get(session)?.events()
     .filter((e) => e.type === "agent/message" || e.type === "user/message")
     .map((e) => JSON.stringify(e.data))
     .join("\n") ?? "";
 
-// ————————————————— 用例 —————————————————
 
 describe("workflow_submit：W6 直通", () => {
   it("无验收参数 → 零 journal 足迹（root 无新 run 目录）+ 通知走 delegation 原路径", async () => {
@@ -125,11 +118,10 @@ describe("workflow_submit：W6 直通", () => {
     world.scripts.set(PARENT, [TEXT(PARENT, "child done")]);
     const sent = await world.submit("main-1" as SessionId, { description: "plain", prompt: "x" });
     expect(sent.ok).toBe(true);
-    // 通知原路径：[agent-notification]（非 workflow-notification）——消息面判定（排除工具描述文本）
     await vi.waitFor(() => expect(notificationLinesOf(world, "main-1" as SessionId)).toContain("agent-notification"), { timeout: 5_000 });
     expect(notificationLinesOf(world, "main-1" as SessionId)).not.toContain("workflow-notification");
     const entries = await (await import("node:fs/promises")).readdir(root).catch(() => [] as string[]);
-    expect(entries).toEqual([]); // 零 journal 足迹（A3 断言面）
+    expect(entries).toEqual([]);
     await parent.dispose();
     await world.dispose();
     await rm(root, { recursive: true, force: true });
@@ -145,17 +137,15 @@ describe("workflow_submit：Tier A 受管回炉", () => {
     const parent = parentMade.value;
     const schema = { type: "object", required: ["title"], properties: { title: { type: "string" } } };
     world.scripts.set(PARENT, [
-      TEXT(PARENT, '{"title": 123}'),          // 首轮：类型错
-      TEXT(PARENT, '{"title": "fixed value"}'), // 回炉后：合格
+      TEXT(PARENT, '{"title": 123}'),
+      TEXT(PARENT, '{"title": "fixed value"}'),
     ]);
     const sent = await world.submit("main-1" as SessionId, { description: "schema task", prompt: "produce the report", result_schema: schema });
     expect(sent.ok).toBe(true);
     await vi.waitFor(() => expect(parentTextsOf(world, "main-1" as SessionId)).toContain("workflow-notification"), { timeout: 5_000 });
     expect(parentTextsOf(world, "main-1" as SessionId)).toContain("finished: passed");
-    // B-9 回归：已验收交付物随通知回传（deliverable: 行含修复后的 JSON——不在则父代理需复活子会话取数）
     expect(parentTextsOf(world, "main-1" as SessionId)).toContain("deliverable:");
     expect(parentTextsOf(world, "main-1" as SessionId)).toContain("fixed value");
-    // journal 落账验证：run 目录存在且事件卷含 repair-issued 与终态
     const { readdir, readFile } = await import("node:fs/promises");
     const runs = await readdir(root);
     expect(runs).toHaveLength(1);
@@ -192,7 +182,6 @@ describe("workflow_submit：Tier A 受管回炉", () => {
     if (!parentMade.ok) throw new Error(parentMade.reason);
     const parent = parentMade.value;
     const schema = { type: "object", required: ["title"], properties: { title: { type: "string" } } };
-    // 让子代理直接 error：bucket 空 → errorStream
     world.scripts.set(PARENT, []);
     const sent = await world.submit("main-1" as SessionId, { description: "crasher", prompt: "x", result_schema: schema });
     expect(sent.ok).toBe(true);
@@ -216,8 +205,7 @@ describe("提交校验", () => {
     if (!parentMade.ok) throw new Error(parentMade.reason);
     const parent = parentMade.value;
     const critic = await world.submit("main-1" as SessionId, { description: "c", prompt: "x", critic: { type: "reviewer" } });
-    expect(critic.ok).toBe(true); // 期 2-B：critic 档解锁（类型缺失会在 spawn 链拒——此处真派发）
-    // acceptance 提交不再被拒（Tier B 期 1b 已接线）；无 execEnv 装置 → verify unknown → 终局 failed
+    expect(critic.ok).toBe(true);
     const acceptance = await world.submit("main-1" as SessionId, { description: "a", prompt: "x", acceptance: { command: "exit 0" } });
     expect(acceptance.ok).toBe(true);
     await vi.waitFor(() => expect(notificationLinesOf(world, "main-1" as SessionId)).toContain("workflow-notification"), { timeout: 5_000 });
@@ -264,15 +252,12 @@ describe("提交校验矩阵（runtime.submit 分支）", () => {
     const world = await makeWorld({ root });
     const runtime = (await import("../runtime.ts")).createRuntime({ ctx: world.ctx, root: join(root, "workflows"), mainSession: "main-1" as SessionId, loop: world.loop, store: world.ctx.use(sessionStore), view: undefined });
     const schema = { type: "object" };
-    // caller undefined
     const noCaller = await runtime.submit(undefined, { description: "d", prompt: "p", result_schema: schema });
     expect(noCaller.ok).toBe(false);
     expect(noCaller.ok === false && noCaller.reason).toContain("main conversation");
-    // view 缺席（delegation 未装配）——mainSession caller 也拒
     const noView = await runtime.submit("main-1" as SessionId, { description: "d", prompt: "p", result_schema: schema });
     expect(noView.ok).toBe(false);
     expect(noView.ok === false && noView.reason).toContain("no agent-delegation plugin");
-    // run busy：手工占锁后再提交（同 runId 概率冲突难造——直接断言 view 缺席短路即可）
     await world.dispose();
     await rm(root, { recursive: true, force: true });
   });
@@ -282,7 +267,6 @@ describe("期 1 限根会话（F13）", () => {
   it("子会话 caller 提交受管任务 → 拒（period 2 落档）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-childsub-"));
     const world = await makeWorld({ root });
-    // 经 world.submit（delegation+workflow 在场）但从子会话 caller：用 dispatch 传 child id
     const rejected = await world.submitVia("child-session-x" as SessionId, { description: "child task", prompt: "p", result_schema: { type: "object" } });
     expect(rejected.ok).toBe(false);
     expect(rejected.ok === false && rejected.reason).toContain("only available from the main conversation");
@@ -298,7 +282,6 @@ describe("dispatch 拒落账（A5-1）", () => {
     const rejected = await world.submit("main-1" as SessionId, { description: "   ", prompt: "p", result_schema: { type: "object" } });
     expect(rejected.ok).toBe(false);
     expect(rejected.ok === false && rejected.reason).toContain("invalid-args:description");
-    // journal 落账：run 建了、task 落 dispatch-failed、run settled failed
     const { readdir, readFile } = await import("node:fs/promises");
     const runs = await readdir(join(root, "workflows"));
     expect(runs).toHaveLength(1);
@@ -325,9 +308,7 @@ describe("通知铸文（notificationText）", () => {
       },
     };
     const text = notificationText(run as never);
-    expect(text.length).toBeGreaterThan(34_000); // 铸文侧不截断（截断归 deliverNotification 的 summaryLines）
-    // 截断分支（notify.ts summaryLines）单独验证：经 deliverNotification 投递后 ≤ cap+标记
-    // 截断归 deliverNotification（summaryLines 活父路径）——铸文侧保持全文（报告全文直送语义）
+    expect(text.length).toBeGreaterThan(34_000);
   });
 });
 
@@ -340,10 +321,8 @@ describe("死父通知悬置 → 边沿补投（A-11）", () => {
     world.scripts.set("parent-model", [TEXT("parent-model", '{"title":"late"}')]);
     const sent = await world.submit("main-1" as SessionId, { description: "orphan notify", prompt: "x", result_schema: { type: "object", required: ["title"] } });
     expect(sent.ok).toBe(true);
-    await parentMade.value.dispose(); // 父死（进程活）——子完成路径照常（受管豁免）
-    await sleep(600); // 等 sink 验收 + settleRun（通知悬置）
-    // 边沿：会话复活（新 handle 同 id）→ onSessionAlive 补投
-    // 边沿：复活同 id 会话（store 层同 id create 被拒——经 dispose 后的 store 允许重建）
+    await parentMade.value.dispose();
+    await sleep(600);
     const revived = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: "parent-model", provider: "fake" } });
     if (!revived.ok) throw new Error(revived.reason);
     await sleep(300);
@@ -354,7 +333,6 @@ describe("死父通知悬置 → 边沿补投（A-11）", () => {
   }, 15_000);
 });
 
-/** 简单等待 */
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
@@ -363,9 +341,9 @@ describe("入口策略（期 3：不经模型）", () => {
   it("缺省 userCommandOnly=true：workflow_submit 工具不注册给模型（入口=宿主命令/代理间）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-uco-"));
     const ctx = createContext();
-    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createAgentWorkflowPlugin({ root, mainSession: "m" as SessionId })]); // 缺省=不经模型
+    const unload = await loadPlugins(ctx, [sessionPlugin, toolsPlugin, systemPromptPlugin, llmPlugin, agentLoopPlugin, createAgentWorkflowPlugin({ root, mainSession: "m" as SessionId })]);
     const names = ctx.use(toolRegistry).schemas().map((t) => t.name);
-    expect(names.includes("workflow_submit")).toBe(false); // 工具面缺席
+    expect(names.includes("workflow_submit")).toBe(false);
     for (let i = unload.length - 1; i >= 0; i--) await unload[i]!();
     await ctx.dispose();
     await rm(root, { recursive: true, force: true });
@@ -375,10 +353,10 @@ describe("入口策略（期 3：不经模型）", () => {
 describe("错误注入分支（覆盖收口——busy/journal 失败）", () => {
   it("root 为文件路径 → openRunJournal 失败 → 提交拒 spawn-failed:journal（fail-fast 面可达）", async () => {
     const root = await mkdtemp(join(tmpdir(), "xh-wf-busy-"));
-    const fileAsRoot = join(root, "not-a-dir"); // 文件占位——mkdir 失败
+    const fileAsRoot = join(root, "not-a-dir");
     const { writeFile } = await import("node:fs/promises");
     await writeFile(fileAsRoot, "x");
-    const world = await makeWorld({ root: fileAsRoot }); // workflow root 指向文件
+    const world = await makeWorld({ root: fileAsRoot });
     const parentMade = await world.loop.create({ session: { id: "main-1" as SessionId }, agent: { model: PARENT, provider: "fake" } });
     if (!parentMade.ok) throw new Error(parentMade.reason);
     const rejected = await world.submit("main-1" as SessionId, { description: "d", prompt: "p", result_schema: { type: "object" } });

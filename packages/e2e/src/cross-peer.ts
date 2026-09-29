@@ -1,7 +1,3 @@
-// e2e 跨进程旅程的对端宿主程序（真子进程）：装配 harness（mailbox box "peer"、main 会话
-// "peer-main"）；假适配器脚本：第一轮收到消息后经 agent_message 回信 alpha；随后空闲。
-// 生命周期由父旅程控制（stdin 关闭即退出——无孤儿进程）。
-
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,7 +57,6 @@ if (!made.ok) {
 }
 console.log("cross-peer: ready");
 
-// stdin 关闭 = 父旅程命令退出（detached spawn 下 stdin inherit 关闭即 EOF）
 process.stdin.on("end", () => {
   void (async () => {
     await made.value.dispose();

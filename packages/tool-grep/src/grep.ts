@@ -1,7 +1,3 @@
-// grep 工具（docs/TOOLBOX.md §5）：rg 硬依赖单路径（解析链 rgPath → env X_HARNESS_RG_PATH →
-// rgBinDir 内置目录 → PATH 探测；缺席 fail-closed 报修复指引——绝不静默降级）。纯 argv 向量
-// 注入安全；selfKilled 达限即停成功终态；--json 事件组装；malformed 流 fail-closed。
-
 import { statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import { join } from "node:path";
@@ -15,15 +11,12 @@ const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1_000;
 const LINE_PREVIEW = 500;
 const RAW_CAP = 1_000_000;
-/** 目录搜索跳过集（`--glob !node_modules --glob !.git`；不尊重 gitignore——--no-ignore 声明） */
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
 
 const RG_GUIDANCE = "install ripgrep (brew install ripgrep / apt install ripgrep), place the bundled binary under <harness home>/bin/rg (bun run fetch:rg), set X_HARNESS_RG_PATH, or pass rgPath to createGrepPlugin";
 
 export interface GrepOptions {
   readonly rgPath?: string;
-  /** 内置 rg 目录（装配方从根配置推导——harness home 的 bin/；包本身不认识任何根配置）。
-   *  目录内定文件名 rg；在场（existsSync）即解析为 <dir>/rg，先于 PATH 探测。 */
   readonly rgBinDir?: string;
 }
 
@@ -34,9 +27,6 @@ export interface ResolveRgInput {
   readonly which?: (command: string) => string | null;
 }
 
-/** rg 解析链：显式 rgPath → env X_HARNESS_RG_PATH → rgBinDir 内置目录 → PATH 探测
- *  （PATH 目录不可写的信任前提落档 §7；rgBinDir 同前提——目录归属宿主数据区）。
- *  env/which 可注入——Bun.which 缓存启动期 PATH，运行时改 env 不生效，缺席态只能注入构造 */
 export function resolveRg(input: ResolveRgInput): string | null {
   if (input.explicit !== undefined && input.explicit !== "") return input.explicit;
   const env = input.env ?? process.env;
@@ -48,7 +38,6 @@ export function resolveRg(input: ResolveRgInput): string | null {
   return which("rg");
 }
 
-/** rg 在场判定：真文件（非目录/非死链——statSync 跟随符号链接，死链 false 落 PATH）。 */
 function isFile(path: string): boolean {
   try {
     return statSync(path).isFile();
@@ -74,7 +63,7 @@ export function createGrepTool(input: GrepToolInput): ToolDefinition {
     kind: "Read",
     readsSubtree: (args: unknown) => {
       const path = (args as { path?: unknown }).path;
-      return path === undefined || (typeof path === "string" && path !== "" && !/\.[A-Za-z0-9]{1,8}$/.test(path)); // 目录形/缺席=范围（R2 子树判定）；明确文件目标按直读规则
+      return path === undefined || (typeof path === "string" && path !== "" && !/\.[A-Za-z0-9]{1,8}$/.test(path));
     },
     description:
       "Search file contents with a regular expression (or literal:true for fixed strings) under a path in the workspace. Returns path:line:text matches with optional context lines. Zero matches is a successful empty result. Use read for full lines.",
@@ -109,7 +98,7 @@ async function grep(input: { readonly gate: PathGate; readonly options: GrepOpti
   const context = (args["context"] as number | undefined) ?? 0;
   const literal = (args["literal"] as boolean | undefined) === true;
   const ignoreCase = (args["ignore_case"] as boolean | undefined) === true;
-  const st = await env.stat(admitted.path); // 存在性门（目录/文件都合法——rg 自行分派）
+  const st = await env.stat(admitted.path);
   if (!st.ok) return { content: `FS_NOT_FOUND: ${targetRaw} does not exist`, isError: true };
   const rg = resolveRg({ explicit: options.rgPath, rgBinDir: options.rgBinDir });
   if (rg === null) {
@@ -157,7 +146,6 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
   const argv = rgArgv(a);
   const spawned = await a.env.spawn({ argv: [a.rgPath, ...argv], ...(a.session !== undefined ? { session: a.session } : {}), ...(a.exec !== undefined ? { exec: a.exec } : {}) });
   if (!spawned.ok) {
-    // 启动失败（二进制缺席等）——与 close(-1) 同终态
     return settleRg({ code: -1, signal: null, selfKilled: false, malformed: false, rawOverflow: false, aborted: a.signal.aborted, stderrTail: spawned.reason.detail, matches: [], limit: a.limit });
   }
   const proc = spawned.proc;
@@ -168,8 +156,8 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
   let selfKilled = false;
   const matches: Array<{ path: string; line: number; text: string; isContext: boolean }> = [];
 
-  let reached = false; // 达限后不再摄入（kill 后余量按截断处理）
-  let malformed = false; // 完整行 JSON 解析失败 = 输出流损坏——fail-closed，不静默当零命中
+  let reached = false;
+  let malformed = false;
   const abortRg = (): void => {
     selfKilled = true;
     void proc.kill("term");
@@ -177,7 +165,7 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
   a.signal.addEventListener("abort", abortRg, { once: true });
 
   const consumeChunk = (chunk: string): void => {
-    if (reached) return; // 达限闭流
+    if (reached) return;
     rawBytes += Buffer.byteLength(chunk);
     if (rawBytes > RAW_CAP) {
       rawOverflow = true;
@@ -198,7 +186,7 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
         if (parsed === "match" && matches.filter((m) => !m.isContext).length >= a.limit) {
           reached = true;
           abortRg();
-          return; // 达限即断：同 chunk 余行不再计入（kill 后余量按截断处理）
+          return;
         }
       }
       nl = raw.indexOf("\n");
@@ -221,13 +209,9 @@ async function runRg(a: SearchArgs & { readonly rgPath: string }): Promise<{ con
   await Promise.allSettled(pumps);
   a.signal.removeEventListener("abort", abortRg);
   await proc.settled;
-  // kill 落点之后的未解析输出（同 chunk 余行、撕裂半行）直接丢弃——已解析行即终态；
-  // 不做 kill 后排空：其结果在三路终态下均不可达（reached 排除、aborted/rawOverflow 优先归一）
   return settleRg({ code: exited.code, signal: exited.signal, selfKilled, malformed, rawOverflow, aborted: a.signal.aborted, stderrTail, matches, limit: a.limit });
 }
 
-/** 退出码矩阵：selfKilled→成功走 limit 页脚；1=零命中成功；2→FAILED（stderr 特征附 literal 提示）；
- *  malformed→FAILED（损坏流不可信——静默当零命中是假空，fail-closed） */
 function settleRg(input: { readonly code: number | null; readonly signal: string | null; readonly selfKilled: boolean; readonly malformed: boolean; readonly rawOverflow: boolean; readonly aborted: boolean; readonly stderrTail: string; readonly matches: Array<{ path: string; line: number; text: string; isContext: boolean }>; readonly limit: number }): { content: string; isError?: true } {
   if (input.aborted) return { content: "SEARCH_ABORTED: search cancelled", isError: true };
   if (input.rawOverflow) return { content: "SEARCH_RAW_OUTPUT_OVERFLOW: rg output exceeded 1MB", isError: true };
@@ -253,7 +237,7 @@ function parseRgLine(line: string, matches: Array<{ path: string; line: number; 
   try {
     parsed = JSON.parse(line) as RgLine;
   } catch {
-    return "malformed"; // 完整行解析失败 = 流损坏（撕裂半行已按 \n 切除，不会到这）
+    return "malformed";
   }
   if (parsed.type !== "match" && parsed.type !== "context") return "other";
   const path = parsed.data?.path?.text ?? "";
@@ -275,11 +259,10 @@ function expandBraces(glob: string, budget: { count: number } = { count: 1 }): s
   const suffix = glob.slice(close + 1);
   const parts = glob.slice(open + 1, close).split(",");
   budget.count *= parts.length;
-  if (budget.count > GLOB_EXPAND_CAP) return []; // 指数展开防护（顺序组 2^n 挂死）
+  if (budget.count > GLOB_EXPAND_CAP) return [];
   return parts.flatMap((part) => expandBraces(`${prefix}${part}${suffix}`, budget));
 }
 
-/** glob 校验：顶层逗号拒（brace 内放行）；负向拒；指数展开帽 */
 function globError(glob: string): string | undefined {
   if (glob.startsWith("!")) return "negative globs are not supported";
   let depth = 0;

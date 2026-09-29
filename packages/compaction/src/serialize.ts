@@ -1,15 +1,9 @@
-// 摘要面的序列化与注入中和（docs/COMPACTION.md §1.1）：投影节点 → 摘要提示词的
-// 纯文本形态（块角色化标注——摘要模型看得见工具脉络；单工具结果/入参截断防单条
-// 大输出淹没对话）；内容进提示词数据区前过三防线中和。
-
 import { isAgentDirective } from "@x-harness/session";
 import type { SurfaceNode } from "@x-harness/session";
 
 const TOOL_RESULT_MAX_CHARS = 2_000;
 const TOOL_INPUT_MAX_CHARS = 2_000;
 
-/** 行首角色标签（序列化器产出形，单一来源与 serializeConversation 的产出标签一致）：
- *  内容行不得与真实轮次行首同形（伪造轮次→持久化投毒面） */
 export const ROLE_LINE_PREFIXES = [
   "[System]",
   "[User]",
@@ -19,8 +13,6 @@ export const ROLE_LINE_PREFIXES = [
   "[Tool result]",
 ] as const;
 
-/** 中和名单单一来源：已知包裹标签的开标签全角化（conversation/previous-summary 与
- *  autocompact 账本回嵌共用）——伪造区块起点与真实包裹标签不再同形 */
 export const NEUTRALIZE_OPEN_TAGS = [
   "conversation",
   "previous-summary",
@@ -43,10 +35,6 @@ const ROLE_LINE_RE = new RegExp(`^(${[...ROLE_LINE_PREFIXES].map(escapeRe).join(
 const OPEN_TAG_RE = new RegExp(`<(${[...NEUTRALIZE_OPEN_TAGS].join("|")})>`, "g");
 const LINE_SPLIT_RE = /\n|\r|\u2028|\u2029/;
 
-/** 摘要面注入中和三防线：① `</` → `<\/`（字面闭合标签不可再关闭任何包裹标签）；
- *  ② 已知包裹标签的开标签转全角形；③ 行首角色标签前插空格（行边界含 U+2028/2029——
- *  部分渲染/分词面视为换行，防借其视觉换行伪造行首）。会话原文、previous-summary、
- *  autocompact 账本回嵌同一函数——二阶逃逸与一阶同源同修 */
 export function neutralizeForSummary(text: string): string {
   return text
     .replaceAll("</", "<\\/")
@@ -56,8 +44,6 @@ export function neutralizeForSummary(text: string): string {
     .join("\n");
 }
 
-/** 仅行首角色破坏（幂等）：截头可切掉中和加的前导空格——截断后对结果再跑一遍
- *  行首破坏封住复活面 */
 export function neutralizeLineStarts(text: string): string {
   return text
     .split(LINE_SPLIT_RE)
@@ -65,9 +51,6 @@ export function neutralizeLineStarts(text: string): string {
     .join("\n");
 }
 
-/** 摘要输入整体上界：超界截头留尾（近端上下文对续作优先，远端内容经 previous-summary
- *  累积更新携带）。总长恒 ≤ maxChars；标注长度依赖截除量、截除量又依赖标注长度——
- *  两遍收敛。maxChars ≤ 0 → 空串（调用方降级软失败） */
 export function capSerializedConversation(text: string, maxChars: number): string {
   if (maxChars <= 0) return "";
   if (text.length <= maxChars) return text;
@@ -76,7 +59,6 @@ export function capSerializedConversation(text: string, maxChars: number): strin
     const removed = text.length - room;
     room = Math.max(0, maxChars - `[... ${removed} characters truncated]`.length - 2);
   }
-  // 上界连标注+分隔都放不下：纯截尾保界（不标注，上界是硬契约）
   if (room <= 0) return text.slice(text.length - maxChars);
   const removed = text.length - room;
   return `[... ${removed} characters truncated]\n\n${text.slice(text.length - room)}`;
@@ -95,12 +77,11 @@ function textBlocksOf(content: readonly unknown[]): string {
     const record = block as Record<string, unknown>;
     if (record["type"] === "text" && typeof record["text"] === "string") parts.push(record["text"]);
     else if (record["type"] === "image") {
-      // 图不进摘要正文，但必须在场留痕——折叠后摘要里无任何图片痕迹 = 静默丢事实
       const mediaType = typeof record["mediaType"] === "string" ? record["mediaType"] : "unknown";
       parts.push(`[image: ${mediaType}]`);
     }
   }
-  return parts.join("\n"); // raw——中和由调用点在截断后做（转义膨胀不撑破截断上界）
+  return parts.join("\n");
 }
 
 function callsOf(content: readonly unknown[]): string[] {
@@ -150,12 +131,9 @@ function assistantPart(content: readonly unknown[]): string[] {
 
 function toolResultPart(data: Record<string, unknown>): string[] {
   const text = typeof data["content"] === "string" ? data["content"] : "";
-  // 300 headroom：转义膨胀（</→<\/ 每处 +1）不撑破截断上界
   return [`[Tool result]: ${neutralizeForSummary(truncateForSummary(text, TOOL_RESULT_MAX_CHARS - 300))}`];
 }
 
-/** 内部消息行（docs/AGENT-MESSAGE.md §3 矩阵）：directive 跳过（协议指令照做完作废——
- *  进摘要只会留下伪装成发言的过期噪音）；content 内容行保留（实质事实必须存活于摘要） */
 function agentMessagePart(node: SurfaceNode): string[] {
   if (isAgentDirective(node.event)) return [];
   const texts: string[] = [];
@@ -166,8 +144,6 @@ function agentMessagePart(node: SurfaceNode): string[] {
   return texts.length > 0 ? [`[Agent message]: ${neutralizeForSummary(texts.join("\n"))}`] : [];
 }
 
-/** 单节点 → 提示词行（块角色化标注；内容一律过 neutralizeForSummary——数据区标签
- *  不可关闭、角色行首不可伪造；tool_use 入参与 tool 结果截断带标注） */
 function partOf(node: SurfaceNode): string[] {
   const data = node.event.data as Record<string, unknown>;
   switch (node.event.type) {
@@ -184,7 +160,6 @@ function partOf(node: SurfaceNode): string[] {
   }
 }
 
-/** 投影节点 → 摘要提示词的对话文本 */
 export function serializeConversation(nodes: readonly SurfaceNode[]): string {
   const parts: string[] = [];
   for (const node of nodes) parts.push(...partOf(node));

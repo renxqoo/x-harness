@@ -1,29 +1,16 @@
-// 基础提示词（共享宿主内容——apps/cli 与 apps/host-hub 两宿主同源消费；内核
-// @x-harness/system-prompt 仅持锚点词汇表 wellKnown）：单一 base/core 段
-// （身份/守则/环境块）+ facts 变量；facts 由宿主探测传入（probeBaseFacts——
-// base-prompt-probe.ts 的 fs IO 边），入口归一（换行压空格——注入面收口）。
-// 锚点纯静态：日期已迁边沿注入快照通道（docs/TAIL-SNAPSHOT-CHANNEL.md——易变
-// 事实出锚点，漂移不再打穿缓存前缀）。环境块条件展示：facts 全缺席（文本三值
-// 降级 unknown 且非 git——宿主零探测）时整段省略，零信息不进 prompt。
-
 import type { Disposer, Plugin } from "@x-harness/core";
 import { systemPrompt, wellKnown } from "@x-harness/system-prompt";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 
-/** 环境事实（宿主探测后传入——进程内静态项）。git 两字段：在场才渲染对应行
- *  （docs/WORKTREE-CONTEXT-AWARENESS §1.3——键缺席 = 未知，不落 null/空串） */
 export interface BasePromptFacts {
   readonly cwd: string;
   readonly isGit: boolean;
-  /** 当前分支（probeGitFacts 解析；detached/非仓缺席） */
   readonly gitBranch?: string;
-  /** linked worktree 的主仓顶（.git file gitdir 解析；主仓本体/submodule 形态缺席） */
   readonly gitWorktreeMain?: string;
   readonly platform: string;
   readonly shell: string;
 }
 
-/** 单行归一：压掉换行与首尾空白（环境值插值前置——注入面收口） */
 export function inline(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
 }
@@ -33,8 +20,6 @@ function textOf(value: unknown): string {
   return cleaned !== "" ? cleaned : "unknown";
 }
 
-/** 环境归一：垃圾形态降级安全字面量，绝不产出 undefined/空行/带换行值。
- *  git 两字段：合法非空 string 才收，否则键省略（在场渲染门在 environmentBlock）。 */
 export function normalizeBaseFacts(input: {
   cwd?: unknown;
   isGit?: unknown;
@@ -59,14 +44,10 @@ export function normalizeBaseFacts(input: {
   };
 }
 
-/** 环境块在场判定：文本三值全降级 unknown 且非 git 仓 = 宿主零探测——零信息整段省略 */
 function environmentKnown(facts: BasePromptFacts): boolean {
   return facts.isGit || facts.cwd !== "unknown" || facts.platform !== "unknown" || facts.shell !== "unknown";
 }
 
-/** 环境块（条件行——git 两字段在场才渲染；下游 worktree-context 覆盖插件同构消费）。
- *  变量仍全部注册（第三方段 {{cwd}} 等不破）；本块由 base-prompt 源头拼接，
- *  不走 interpolate 通道——缺席行零残留。 */
 export function environmentBlock(facts: BasePromptFacts): string {
   const lines = [
     "## Environment",
@@ -204,7 +185,6 @@ already established in the conversation.
   return environment ? [head, env, tail].join("\n\n") : [head, tail].join("\n\n");
 }
 
-/** 注册 base/core 段（锚名 = 内核 wellKnown.baseCore 槽位）与环境变量；返回整体注销器 */
 export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromptFacts): Disposer {
   const normalized = normalizeBaseFacts(facts);
   const offs = [
@@ -219,7 +199,6 @@ export function registerBasePrompt(prompt: SystemPromptService, facts: BasePromp
   };
 }
 
-/** 基础段插件：inject system-prompt（硬依赖——无注册表的基础内容无意义，topo 保序） */
 export function createBasePromptPlugin(facts: BasePromptFacts): Plugin {
   return {
     name: "base-prompt",

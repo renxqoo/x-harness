@@ -1,5 +1,3 @@
-// host 流程补面：resume 成功路径（真档案 + 假 worker 内部应答）、keepalive/retire、
-// ui_response 广播、trusted 装载目录、set_model 转发（HOST_RELAYED live 交池）。
 import { EventEmitter } from "node:events";
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
@@ -59,7 +57,6 @@ async function waitResponse(client: readonly string[], command: string, id?: str
   }
 }
 
-/** response error 字段结构化断言面（code + message） */
 function errOf(frame: Record<string, unknown>): { code: string; message: string } {
   return frame["error"] as { code: string; message: string };
 }
@@ -104,7 +101,6 @@ async function startHost(): Promise<{ input: FakeInput; client: string[]; agentD
   return { input, client, agentDir, sessionsRoot, workers, send: (cmd) => input.send(cmd) };
 }
 
-/** 建真档案（resume/register 共用） */
 async function makeArchive(sessionsRoot: string, sid: string): Promise<string> {
   return makeArchiveIn(sessionsRoot, sid, "/w");
 }
@@ -144,13 +140,11 @@ describe("host 流程补面", () => {
     worker?.onLine(responseLine({ id: resume.id, command: "thread/resume", success: true, data: { threadId: "resumable01", cwd: "/w", sessionPath } }));
     const forwarded = await waitResponse(f.client, "thread/resume", "r1");
     expect(forwarded["success"]).toBe(true);
-    // keepalive：未知线程拒 + 已知设位
     f.send({ type: "thread/set_keepalive", id: "ka1", threadId: "ghost", keepalive: true });
     const unknownThread = await waitResponse(f.client, "thread/set_keepalive", "ka1");
     expect(errOf(unknownThread)).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
     f.send({ type: "thread/set_keepalive", id: "ka2", threadId: "resumable01", keepalive: true });
     await waitResponse(f.client, "thread/set_keepalive", "ka2");
-    // retire：live 表项 → retiring（ack ok；close 后 parked 帧）
     f.send({ type: "thread/retire", id: "rt1", threadId: "resumable01" });
     await waitResponse(f.client, "thread/retire", "rt1");
     worker?.close();
@@ -182,7 +176,6 @@ describe("host 流程补面", () => {
     const resume = JSON.parse(resumeLine as string) as { id: string };
     worker?.onLine(responseLine({ id: resume.id, command: "thread/resume", success: true, data: { threadId: "relayme0001", cwd: "/w", sessionPath } }));
     await waitResponse(f.client, "thread/resume", "r1");
-    // ui_response：host 恒 ack + 原文广播
     f.send({ type: "ui_response", id: "ur1", requestId: "rq-1", payload: { confirmed: true } });
     await waitResponse(f.client, "ui_response", "ur1");
     await new Promise<void>((resolve) => {
@@ -191,7 +184,6 @@ describe("host 流程补面", () => {
       }, 30);
     });
     expect(worker?.written.some((line) => line.includes("ui_response") && line.includes("rq-1"))).toBe(true);
-    // set_model 带 threadId：host 单点 → live 交池转发 worker
     f.send({ type: "set_model", id: "sm1", threadId: "relayme0001", provider: "glm", modelId: "glm-5.3" });
     await new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -206,7 +198,6 @@ describe("host 流程补面", () => {
 
   test("agents/list trusted project 目录装载 + get_models 数据面", async () => {
     const f = await startHost();
-    // trusted 线程（表项 trusted + cwd）→ agents/list 带 threadId 装载 project 目录
     const cwd = await tempDir("hub-proj-");
     const sessionPath = await makeArchiveIn(f.sessionsRoot, "agentproj01", cwd);
     f.send({ type: "thread/register", id: "rg1", sessionPath, trusted: true });
@@ -216,7 +207,6 @@ describe("host 流程补面", () => {
     f.send({ type: "agents/list", id: "al1", threadId: "agentproj01" });
     const listed = await waitResponse(f.client, "agents/list", "al1");
     expect((listed["data"] as { agents: Array<{ name: string; source: string }> }).agents.some((a) => a.name === "helper" && a.source === "project")).toBe(true);
-    // get_models：预设集（零配置）
     f.send({ type: "get_models", id: "gm1" });
     const models = await waitResponse(f.client, "get_models", "gm1");
     const entries = models["data"] as Array<{ id: string; provider: string; source: string }>;
@@ -244,12 +234,10 @@ describe("host 流程补面", () => {
     const resume = JSON.parse(resumeLine as string) as { id: string };
     worker?.onLine(responseLine({ id: resume.id, command: "thread/resume", success: true, data: { threadId: "aliasproof1", cwd: "/w", sessionPath } }));
     await waitResponse(f.client, "thread/resume", "r1");
-    // 同会话的 `./` 别名 resume → already open（占用键已归一 canonical）
     const alias = sessionPath.replace("/aliasproof1/", "/./aliasproof1/");
     f.send({ type: "thread/resume", id: "r2", sessionPath: alias });
     const rejected = await waitResponse(f.client, "thread/resume", "r2");
     expect(errOf(rejected)).toEqual({ code: "already_open", message: "already open" });
-    // 线程仍 live（别名不可把表项打死）
     f.send({ type: "thread/list", id: "l1" });
     const listed = await waitResponse(f.client, "thread/list", "l1");
     expect(((listed["data"] as Array<{ threadId: string; state: string }>).find((row) => row.threadId === "aliasproof1"))?.state).toBe("live");
@@ -279,7 +267,6 @@ describe("host 流程补面", () => {
     const proc = process as unknown as { emit(event: string, ...args: unknown[]): boolean };
     proc.emit("uncaughtException", new Error("boom-uncaught"));
     proc.emit("unhandledRejection", new Error("boom-rejection"), Promise.resolve());
-    // register 相对路径（fence 拒面——非 spawn 路径）
     input.send({ type: "thread/register", id: "rg-rel", sessionPath: "relative/events.jsonl" });
     await new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -309,10 +296,9 @@ describe("host 流程补面", () => {
     });
     const resumeLine = worker?.written.find((line) => line.includes('"thread/resume"'));
     const resume = JSON.parse(resumeLine as string) as { id: string; cwd?: string };
-    expect(resume.cwd).toBe("/explicit"); // 显式 cwd 透传 worker（装配 cwd 回退序第一级）
+    expect(resume.cwd).toBe("/explicit");
     worker?.onLine(responseLine({ id: resume.id, command: "thread/resume", success: true, data: { threadId: "cwdoverride1", cwd: "/explicit", sessionPath } }));
     await waitResponse(f.client, "thread/resume", "r1");
-    // thread/start 缺省 cwd = host 进程 cwd
     f.send({ type: "thread/start", id: "s1" });
     await new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -331,12 +317,11 @@ describe("host 流程补面", () => {
     f.send({ type: "workspace/trust", id: "wt2" });
     const listed = await waitResponse(f.client, "workspace/trust", "wt2");
     expect(((listed["data"] as { trusted: string[] }).trusted).length).toBeGreaterThan(0);
-    f.send({ type: "workspace/trust", id: "wt3", cwd, trusted: false }); // 撤销
+    f.send({ type: "workspace/trust", id: "wt3", cwd, trusted: false });
     await waitResponse(f.client, "workspace/trust", "wt3");
     f.send({ type: "workspace/trust", id: "wt4" });
     const afterRevoke = await waitResponse(f.client, "workspace/trust", "wt4");
     expect((afterRevoke["data"] as { trusted: string[] }).trusted).toEqual([]);
-    // 坏帧行：非对象 JSON / type 缺席 → unknown command 域
     f.input.emit("data", Buffer.from('"just a string"\n', "utf8"));
     f.input.emit("data", Buffer.from("{}\n", "utf8"));
     f.input.emit("data", Buffer.from(`${JSON.stringify({ noType: true })}\n`, "utf8"));
@@ -382,7 +367,7 @@ describe("host 流程补面", () => {
         resolve();
       }, 100);
     });
-    input.emit("end"); // EOF → shutdown（FakeInput 无 end——事件直发）
+    input.emit("end");
     await new Promise<void>((resolve) => {
       setTimeout(() => {
         resolve();
@@ -398,7 +383,6 @@ describe("host 流程补面", () => {
     const sessionPath = await makeArchiveIn(f.sessionsRoot, "register02", cwd);
     f.send({ type: "thread/register", id: "rg1", sessionPath, trusted: true });
     await waitResponse(f.client, "thread/register", "rg1");
-    // register trusted:true 登记注册表（host 转发链——entry.cwd 为项目目录）
     await new Promise<void>((resolve) => {
       setTimeout(() => {
         resolve();
@@ -406,9 +390,8 @@ describe("host 流程补面", () => {
     });
     const registry = JSON.parse(await Bun.file(join(f.agentDir, "trusted-workspaces.json")).text()) as string[];
     const { normalizeCwd } = await import("../shared/settings-store.ts");
-    expect(registry).toContain(await normalizeCwd(cwd)); // 登记存规范化形态（realpath）
+    expect(registry).toContain(await normalizeCwd(cwd));
     await mkdir(join(cwd, ".x-harness"), { recursive: true });
-    // 项目级 settings/set：目录自建 + 读取合并
     f.send({ type: "settings/set", id: "ss1", key: "permission.defaultMode", value: "plan", cwd });
     await waitResponse(f.client, "settings/set", "ss1");
     f.send({ type: "settings/get", id: "sg1", cwd });

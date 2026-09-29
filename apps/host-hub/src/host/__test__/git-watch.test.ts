@@ -1,7 +1,3 @@
-// git 变更监视单测（docs/GIT-INTERACTION-REDESIGN §6）：真 git 双目录语义
-// （HEAD 写落 gitdir、建分支写落 commonDir）、防抖合并、同值抑制、detached 事件、
-// fan-out 快照时点、reconcile diff 挂收、树删退避重挂。
-
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -36,7 +32,6 @@ async function gitRepo(): Promise<{ repo: string; wt: string }> {
   return { repo: realpathSync(repo), wt: realpathSync(wt) };
 }
 
-/** 防抖窗收敛等待（真 fs.watch 事件 + 150ms 防抖 + 余量） */
 const settle = (ms = 500): Promise<void> => new Promise((resolve) => { setTimeout(() => resolve(), ms); });
 
 describe("gitWatchDirsOf（锚点定位——双目录）", () => {
@@ -57,7 +52,6 @@ describe("gitWatchDirsOf（锚点定位——双目录）", () => {
   it("非 git 目录 / 空串 → undefined（temp 根须在系统 tmp——mkdtemp 于仓内会上寻命中本仓 .git）", async () => {
     const root = mkdtempSync(join(tmpdir(), "xh-gw-norepo-"));
     roots.push(root);
-    // tmp 环境不可假设无 git 仓（dotfiles 仓会上寻命中）——此处只断空串与文件形态：
     expect(gitWatchDirsOf("")).toBeUndefined();
   });
 });
@@ -73,7 +67,7 @@ describe("createGitWatchService（事件语义）", () => {
     });
     svc.reconcile();
     await settle(100);
-    await exec("git", ["-C", repo, "checkout", "-b", "side-a"]); // dev 被 wt 占用——主仓切独立分支
+    await exec("git", ["-C", repo, "checkout", "-b", "side-a"]);
     await settle(600);
     expect(events.some((e) => e.threadId === "t1" && e.cwd === repo && e.branch === "side-a")).toBe(true);
     svc.stop();
@@ -91,7 +85,7 @@ describe("createGitWatchService（事件语义）", () => {
     await settle(100);
     await exec("git", ["-C", wt, "branch", "created-in-wt"]);
     await settle(600);
-    expect(events.length).toBeGreaterThanOrEqual(1); // commonDir 命中（HEAD 未变也有事件——分支列表失效信号）
+    expect(events.length).toBeGreaterThanOrEqual(1);
     svc.stop();
   }, 10_000);
 
@@ -105,14 +99,12 @@ describe("createGitWatchService（事件语义）", () => {
     });
     svc.reconcile();
     await settle(100);
-    // 窗内：dev → main → dev（回到原值——终值与首读相同则整窗抑制）
     await exec("git", ["-C", wt, "checkout", "-b", "tmp/x"]);
-    await exec("git", ["-C", wt, "checkout", "-"]); // 回 dev
+    await exec("git", ["-C", wt, "checkout", "-"]);
     await settle(800);
-    // 首读无 lastBranch 基线 → tmp/x 或不发都可能；断言不重复发同值
     const branches = events.map((e) => e.branch);
     const unique = new Set(branches);
-    expect(unique.size).toBe(branches.length); // 无重复同值帧
+    expect(unique.size).toBe(branches.length);
     svc.stop();
   }, 10_000);
 
@@ -129,7 +121,7 @@ describe("createGitWatchService（事件语义）", () => {
     await exec("git", ["-C", repo, "checkout", "--detach"]);
     await settle(600);
     const detached = events.find((e) => e.branch === undefined);
-    expect(detached).toBeDefined(); // detached 事件在场（branch 键缺席）
+    expect(detached).toBeDefined();
     svc.stop();
   }, 10_000);
 
@@ -141,21 +133,18 @@ describe("createGitWatchService（事件语义）", () => {
       liveThreads: () => [
         { threadId: "t-main", cwd: repo },
         { threadId: "t-wt", cwd: wt },
-        { threadId: "t-else", cwd: "/tmp" }, // 不同 gitdir——不收帧
+        { threadId: "t-else", cwd: "/tmp" },
       ],
       debounceMs: 100,
     });
     svc.reconcile();
     await settle(100);
-    await exec("git", ["-C", repo, "checkout", "-b", "side-b"]); // 主仓 HEAD 变（dev 被占用）——commonDir 同目录但 gitdir 不同，只 t-main 收
+    await exec("git", ["-C", repo, "checkout", "-b", "side-b"]);
     await settle(600);
     expect(events.some((e) => e.threadId === "t-main")).toBe(true);
-    // t-wt 也收帧是正确语义：主仓建分支写 commonDir（与 wt 的 commonDir 同目录）——
-    // wt 的分支列表视图确实变了（refs 失效信号，非 HEAD 失效）；帧的 branch 字段仍是
-    // wt 自己的 HEAD（dev——尾沿读自己的 gitDir）
     const wtFrames = events.filter((e) => e.threadId === "t-wt");
     expect(wtFrames.every((e) => e.cwd === wt)).toBe(true);
-    expect(events.every((e) => e.threadId !== "t-else")).toBe(true); // 无关 cwd 不收
+    expect(events.every((e) => e.threadId !== "t-else")).toBe(true);
     svc.stop();
   }, 10_000);
 
@@ -168,13 +157,12 @@ describe("createGitWatchService（事件语义）", () => {
       debounceMs: 50,
     });
     svc.reconcile();
-    live = []; // 全下线
+    live = [];
     svc.reconcile();
     await settle(100);
-    live = [{ threadId: "t3", cwd: repo }]; // 重新上线
+    live = [{ threadId: "t3", cwd: repo }];
     svc.reconcile();
     const events: Array<{ branch?: string }> = [];
-    // 复用同一 service：重挂后仍能收事件（挂/收/重挂成对——F8 锚）
     const svc2 = createGitWatchService({
       emit: (f) => events.push(f),
       liveThreads: () => [{ threadId: "t3", cwd: repo }],
@@ -192,10 +180,8 @@ describe("createGitWatchService（事件语义）", () => {
   it("树删后退避重挂：目录重建 + 后续变更仍有事件（红线——F8）", async () => {
     vi.setConfig({ testTimeout: 20_000 });
     const { repo, wt } = await gitRepo();
-    // 删 worktree（树与 gitdir 一并消亡）
     await exec("git", ["-C", repo, "worktree", "remove", "--force", wt]);
     expect(existsSync(wt)).toBe(false);
-    // 同路径重建 worktree
     await exec("git", ["-C", repo, "worktree", "add", wt, "dev"]);
     const events: Array<{ branch?: string }> = [];
     const svc = createGitWatchService({
@@ -216,7 +202,7 @@ describe("branchAt（尾沿读取）", () => {
   it("detached → undefined；分支 → 名", async () => {
     const { repo } = await gitRepo();
     const initial = branchAt(join(repo, ".git"));
-    expect(initial === "main" || initial === "master").toBe(true); // init 默认依配置
+    expect(initial === "main" || initial === "master").toBe(true);
     await exec("git", ["-C", repo, "checkout", "--detach"]);
     expect(branchAt(join(repo, ".git"))).toBeUndefined();
   });

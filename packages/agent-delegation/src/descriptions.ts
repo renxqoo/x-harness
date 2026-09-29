@@ -1,8 +1,3 @@
-// 工具 description 逐字常量：与 Claude Code「子代理与后台任务」文档英文原文逐字一致
-// （源 /Users/wrr/work/claude-tool/agent-and-background-tasks.md）。映射：agent_spawn←Agent、
-// agent_message←SendMessage、list_agents←ListAgents。改动只能整体重同步源文档，禁止就地润色。
-// （TaskOutput/TaskStop 的跨源口径归 @x-harness/task-tools——件14，非逐字面。）
-
 export const AGENT_SPAWN_DESCRIPTION = `Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
 
 Available agent types are listed in \`<system-reminder>\` messages in the conversation.

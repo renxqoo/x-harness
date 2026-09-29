@@ -1,5 +1,3 @@
-// B4 单元：入站管线全支路（限流/解密失败/scope/去重前置/ack/ui_response）+ relay-link
-// 对真 relay 的 enroll/连接/收发旅程。
 import { describe, expect, it } from "vitest";
 import { newBucket, preflightBytes, preflightCmds, processInboundLine, type InboundSpec } from "../inbound.ts";
 import { startRelay } from "../../../hub-relay/src/main.ts";
@@ -16,7 +14,6 @@ function spec(over: Partial<InboundSpec> = {}): InboundSpec & { commands: string
     tier: "interact",
     bucket: newBucket(),
     decrypt: (payload) => {
-      // 明文直通（E2E 在 session-crypto 层——此处测管线序）
       return { plaintext: Buffer.from(payload, "base64").toString("utf8"), tagFailures: 0 };
     },
     onCommand: (_frame, command) => {
@@ -43,7 +40,7 @@ describe("限流桶", () => {
 
   it("命令桶：同时刻 20 连发过、21 拒；1.2s 后回填", () => {
     const bucket = newBucket();
-    for (let i = 0; i < 20; i++) expect(preflightCmds(bucket, 0)).toBe(true); // 突发 20 同刻
+    for (let i = 0; i < 20; i++) expect(preflightCmds(bucket, 0)).toBe(true);
     expect(preflightCmds(bucket, 0)).toBe(false);
     expect(preflightCmds(bucket, 1200)).toBe(true);
   });
@@ -62,18 +59,15 @@ describe("入站管线", () => {
     expect(processInboundLine(lineWith({ kind: "command", streamId: "c", seq: 1, body: {} }), failSpec)).toMatchObject({ kind: "ratchet-failed", tagFailures: 3 });
     const badFrame = spec({ decrypt: () => ({ plaintext: "not-a-frame", tagFailures: 0 }) });
     expect(processInboundLine(lineWith({}), badFrame)).toMatchObject({ kind: "bad-frame" });
-    // ack 通路
     const acks: Array<[string, number]> = [];
     const ackSpec = spec({ onAck: (streamId, upTo) => acks.push([streamId, upTo]) });
     expect(processInboundLine(lineWith({ kind: "ack", streamId: "a", seq: 1, body: { acks: [{ streamId: "ev:t1", upTo: 5 }] } }), ackSpec)).toMatchObject({ kind: "delivered" });
     expect(acks).toEqual([["ev:t1", 5]]);
-    // ui_response：interact 放行 / read 拒
     const uiSeen: string[] = [];
     const uiSpec = spec({ onUiResponse: (requestId) => uiSeen.push(requestId) });
     expect(processInboundLine(lineWith({ kind: "ui_response", streamId: "u", seq: 1, body: { requestId: "r1", payload: { confirmed: true } } }), uiSpec)).toMatchObject({ kind: "delivered" });
     expect(uiSeen).toEqual(["r1"]);
     expect(processInboundLine(lineWith({ kind: "ui_response", streamId: "u", seq: 2, body: { requestId: "r2" } }), spec({ tier: "read" }))).toMatchObject({ kind: "scope-denied", command: "ui_response" });
-    // 命令：interact 放 prompt；read 拒 prompt；interact 拒 bash；owner-only 拒；未知拒
     const cmdSpec = spec();
     expect(processInboundLine(lineWith({ kind: "command", streamId: "c", seq: 1, body: { command: "prompt", id: "m1", args: { threadId: "t" } } }), cmdSpec)).toMatchObject({ kind: "delivered" });
     expect(cmdSpec.commands).toEqual(["prompt"]);
@@ -81,7 +75,6 @@ describe("入站管线", () => {
     expect(processInboundLine(lineWith({ kind: "command", streamId: "c", seq: 3, body: { command: "bash", id: "m3" } }), spec({ tier: "interact" }))).toMatchObject({ kind: "scope-denied", command: "bash" });
     expect(processInboundLine(lineWith({ kind: "command", streamId: "c", seq: 4, body: { command: "auth/set_api_key", id: "m4" } }), spec({ tier: "full" }))).toMatchObject({ kind: "scope-denied", command: "auth/set_api_key" });
     expect(processInboundLine(lineWith({ kind: "command", streamId: "c", seq: 5, body: { command: "nope_cmd", id: "m5" } }), cmdSpec)).toMatchObject({ kind: "unknown-command", command: "nope_cmd" });
-    // gw/*：设备仅 gw/status
     expect(processInboundLine(lineWith({ kind: "command", streamId: "c", seq: 6, body: { command: "gw/status", id: "m6" } }), cmdSpec)).toMatchObject({ kind: "delivered" });
     expect(processInboundLine(lineWith({ kind: "command", streamId: "c", seq: 7, body: { command: "gw/devices/list", id: "m7" } }), cmdSpec)).toMatchObject({ kind: "scope-denied", command: "gw/devices/list" });
   });
@@ -113,7 +106,6 @@ describe("relay-link 对真 relay 旅程", () => {
     });
     const enrolled = await link.enrollOnce();
     expect(enrolled).not.toBeNull();
-    // 等 WSS 连接（enroll 前 link 已开始拨号——token 在 enroll 后设置，重拨带上）
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => {
         setTimeout(r, 100);
@@ -121,7 +113,6 @@ describe("relay-link 对真 relay 旅程", () => {
       if (link.connected()) break;
     }
     expect(link.connected()).toBe(true);
-    // send 面：连上后可发
     expect(link.send(JSON.stringify({ v: 1, from: `gw_${identity.installationId}`, to: "dev_none", payload: "eA==", nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAA=" }))).toBe(true);
     link.stop();
     for (let i = 0; i < 20; i++) {
@@ -153,7 +144,6 @@ describe("relay-link 对真 relay 旅程", () => {
       },
       log: () => {},
     });
-    // 无 token 拨号 → 401 → 内部自动 enroll → 连接成功
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => { setTimeout(r, 200); });
       if (link.connected()) break;
@@ -173,7 +163,6 @@ describe("relay-link 对真 relay 旅程", () => {
     const statuses: string[] = [];
     const dir = await mkdtemp(join(tmpdir(), "fp-"));
     const identity = await loadOrCreateIdentity({ agentDir: dir, installationIdFile: join(dir, "iid"), gatewayIdentityFile: join(dir, "gid.json") });
-    // 错指纹 → 连接后断
     const badLink = startRelayLink({
       relayUrl: `ws://127.0.0.1:${port}`,
       installationId: identity.installationId,
@@ -188,7 +177,6 @@ describe("relay-link 对真 relay 旅程", () => {
     await new Promise((r) => { setTimeout(r, 2500); });
     expect(statuses.some((x) => x.includes("mismatch") || x.includes("disconnected"))).toBe(true);
     badLink.stop();
-    // 对指纹 → 保持
     const goodLink = startRelayLink({
       relayUrl: `ws://127.0.0.1:${port}`,
       installationId: identity.installationId,
@@ -224,9 +212,7 @@ describe("relay-link 对真 relay 旅程", () => {
       onStatus: () => {},
       log: () => {},
     });
-    // 未 enroll（token null）→ 立即 null
     await expect(link.requestPairingTicket("pr_x")).resolves.toBeNull();
-    // enroll 失败（端口不可达）
     await expect(link.enrollOnce()).resolves.toBeNull();
     await expect(link.requestPairingTicket("pr_y")).resolves.toBeNull();
     link.stop();

@@ -1,7 +1,3 @@
-// 真内核 e2e（docs/SANDBOX.md §5）：darwin seatbelt 真跑——srt 引擎的执法面在 vitest 默认门。
-// wrapper 在场时零 skip（依赖缺失=测试失败，不静默跳过）；linux 真内核腿 in-repo 不可达
-// （darwin 开发机）——本包零平台分支（平台差异收敛在 srt 内），known-untested 延续。
-
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,7 +24,7 @@ async function withWorld(options: Partial<Parameters<typeof createSandboxPlugin>
   try {
     const ctx = createContext();
     const unload = await loadPlugins(ctx, [
-    createPermissionModesPlugin(), // V4 内置模式（base 零策略）
+    createPermissionModesPlugin(),
       toolsPlugin,
       createPermissionPlugin({ root }),
       createSandboxPlugin({ root, ...options }, realSrtRuntime),
@@ -38,7 +34,7 @@ async function withWorld(options: Partial<Parameters<typeof createSandboxPlugin>
     };
     await fn({ ctx, root, dispose });
   } finally {
-    await dispose().catch(() => {}); // 断言失败也必须拆卸——成员滞留会拖垮同进程后续用例
+    await dispose().catch(() => {});
     rmSync(root, { recursive: true, force: true });
   }
 }
@@ -65,21 +61,18 @@ async function run(w: World, command: string, session?: SessionId): Promise<RunR
   return { code: exited.code, out, err };
 }
 
-/** curl 退出码 ∈ 拒绝形态集（7 连不上/35 TLS 前/56 重置）——白名单拒绝的三种表现 */
 function expectCurlDenied(r: RunResult): void {
   const m = /curl_exit=(\d+)/.exec(r.out);
   expect(m, `curl output: ${r.out}`).not.toBeNull();
   expect(["7", "35", "56"]).toContain(m![1]);
 }
 
-/** 正向网络腿容错：真外网在并行负载下偶发超时（28）——重试一次，拒绝形态不在此列 */
 async function runCurlUntilSettled(w: World, command: string, session?: SessionId): Promise<RunResult> {
   let r = await run(w, command, session);
   if (/curl_exit=28/.test(r.out)) r = await run(w, command, session);
   return r;
 }
 
-/** 围栏内起本地服务器 + 回环自连——用户裁决④的回归锚（沙箱内跑测试/dev server 的最小形态） */
 const LOOPBACK_SCRIPT =
   `bun -e 'const s=Bun.serve({port:0,fetch:()=>new Response("loop-ok")});` +
   `const r=await fetch("http://127.0.0.1:"+s.port);console.log(await r.text());s.stop(true);process.exit(0)'`;
@@ -117,7 +110,7 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
 
   it("越根写拒：EPERM 非零退出可见（非 spawn 失败——围栏执法面在子进程）", async () => {
     await withWorld({}, async (w) => {
-      const outside = "/tmp/xh-sbxe2e-outside.txt"; // /tmp 不在白名单（root/tmpdir 之外）
+      const outside = "/tmp/xh-sbxe2e-outside.txt";
       const r = await run(w, `echo x > ${outside}`);
       expect(r.code).not.toBe(0);
       expect(r.err).toContain("Operation not permitted");
@@ -182,7 +175,7 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
       await spawned.proc.kill("term");
       const exited = await spawned.proc.exited;
       expect(exited).not.toBe(0);
-      await spawned.proc.settled; // 不挂起
+      await spawned.proc.settled;
     });
   }, 30_000);
 
@@ -191,10 +184,10 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
     try {
       await withWorld({}, async (w) => {
         const fenced = await run(w, `echo k=[$BW_PROBE_KEY]`);
-        expect(fenced.out.trim()).toBe("k=[]"); // 围栏会话：清洗照旧
+        expect(fenced.out.trim()).toBe("k=[]");
         w.ctx.use(permissionGrants).setUnrestricted(true);
         const raw = await run(w, `echo k=[$BW_PROBE_KEY]`, "s-raw" as never as SessionId);
-        expect(raw.out.trim()).toBe("k=[tool-key-probe]"); // 总括=不套壳不清洗（bw 症状回归锚）
+        expect(raw.out.trim()).toBe("k=[tool-key-probe]");
       });
     } finally {
       delete process.env.BW_PROBE_KEY;
@@ -203,8 +196,8 @@ describe("真内核 e2e：srt 围栏（darwin seatbelt）", () => {
 
   it("拆卸后 spawn fail-fast（sandbox_unavailable——绝不裸跑）", async () => {
     await withWorld({}, async (w) => {
-      const env = w.ctx.use(execEnv); // 先捕获——dispose 后服务下线，语义面向已持引用的调用方
-      await w.dispose(); // 本用例语义要求测试内先拆（withWorld finally 的拆卸是兜底）
+      const env = w.ctx.use(execEnv);
+      await w.dispose();
       const r = await env.spawn({ argv: ["/bin/true"], cwd: w.root });
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.reason.kind).toBe("sandbox_unavailable");

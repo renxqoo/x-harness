@@ -1,4 +1,3 @@
-// gw/* 命令族分派（DESIGN §3.2）——main.ts 拆分件（一动词一文件）；依赖经 GwDispatchDeps 注入。
 import type { GatewayIdentity } from "./identity.ts";
 import type { GatewayConfig } from "./config.ts";
 import type { AuditLog } from "./audit.ts";
@@ -19,9 +18,7 @@ export interface GwDispatchDeps {
   threads: ThreadsRegistry;
   host: HostAttach;
   pairingServer: PairingServerLike;
-  /** 配对确认回调（ratchet establish——注册落账后由 main 装配注入）。 */
   onPairingConfirmed(deviceId: string, ratchetSeed: Uint8Array): Promise<void>;
-  /** relay 链接访问面（撤销纵深——gw/devices/revoke 经 relay 吊销 token/路由）。 */
   relayLink(): RelayLinkHandle | null;
   cryptoSessions: CryptoSessionPool;
   fanout: Fanout;
@@ -35,7 +32,6 @@ export interface GwDispatchDeps {
 export interface PairingServerLike {
   startQr(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; qrPayload: string; ticket: string }>;
   startManual(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; manualCode: string; ticket: string }>;
-  /** owner 键入 SAS 确认（配对收尾：注册落账 + ratchet 种子 → gateway 侧会话建立）。 */
   confirmWithSas(spec: { pairingId: string; ownerTypedSas: string; deviceLongTermPub: string }): Promise<{ ok: true; deviceId: string; ratchetSeed: Uint8Array } | { ok: false; reason: string }>;
   cancel(pairingId: string): void;
 }
@@ -51,7 +47,6 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
     }
     if (command === "gw/config/get") return { ok: true, data: deps.config };
     if (command === "gw/config/set") {
-      // 热应用面：仅 remoteEnabled（其余键重启生效——如实返回）
       if (typeof args.remoteEnabled === "boolean") {
         deps.config.remoteEnabled = args.remoteEnabled;
         await deps.audit.record("config-changed", { remoteEnabled: args.remoteEnabled });
@@ -82,7 +77,6 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
       }
       const confirmed = await deps.pairingServer.confirmWithSas({ pairingId, ownerTypedSas, deviceLongTermPub });
       if (!confirmed.ok) return { ok: false, reason: confirmed.reason };
-      // 配对收尾（R1 H3）：ratchet 种子 → gateway 侧会话建立（设备首帧可解密）
       await deps.onPairingConfirmed(confirmed.deviceId, confirmed.ratchetSeed);
       return { ok: true, data: { deviceId: confirmed.deviceId } };
     }
@@ -117,7 +111,6 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
       return { ok: true, data: entry };
     }
     const hit = deps.devices.remove(deviceId);
-    // relay 侧同步吊销（R3 M1：token/路由即时失效——撤销纵深；relay 失败不阻断本地撤销）
     await deps.relayLink()?.revokeDevice(deviceId).then(
       (revoked) => revoked,
       () => false,

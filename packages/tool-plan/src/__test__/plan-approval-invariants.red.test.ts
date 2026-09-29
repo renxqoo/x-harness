@@ -1,18 +1,3 @@
-// 红测（adversarial——b85e043 plan 模式实现对抗审查）：plan_submit 审批不变量三则。
-//
-// 1) liftTo === "plan"（装配缺省档即 plan——CLI `--permission plan` 经 build-world
-//    defaultPermissionOf 传 liftTo="plan"；hub 经 fields.permissionMode ?? "auto" 同病）：
-//    批准路径 mode.set("plan") 是空操作，工具却返回 "Plan approved — plan mode lifted"。
-//    不变量：用户批准方案后会话必须真正离开 plan 档；文案不得在仍锁 plan 时宣告 lifted。
-// 2) world 拆卸后迟到 allow 仍执行 mode.set：permission 插件自身 ask 有 tearingDown
-//    双守卫（packages/permission/src/plugin.ts:113 拒新 ask / :123 丢弃在飞迟到裁决），
-//    plan_submit 直调 broker.ask 无任何守卫。不变量：拆卸后迟到裁决必须丢弃不解档。
-// 3) turn 取消（exec.signal abort）后迟到 allow 仍解档：hub dialogs.confirm 明确支持
-//    signal「中止即结算出队」，plan_submit 不观察 exec.signal。不变量：已取消的 turn
-//    不得改变权限档（CLI /new 重开会话沿用同一 world——迟到解档会泄漏进新会话）。
-//
-// 修好后应绿；当前实现下以下用例为红。
-
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,7 +23,6 @@ interface Fixture {
   verdict: "allow" | "deny";
 }
 
-/** 假 permission 面（同 plan.test.ts 装置形态）：mode 服务 + 即答 broker */
 function fakePermissionPlugin(fixture: Fixture): Plugin {
   return {
     name: "fake-permission",
@@ -63,7 +47,6 @@ function fakePermissionPlugin(fixture: Fixture): Plugin {
   };
 }
 
-/** 挂起 broker：ask 永挂直至 allow() 手动放行（模拟用户迟到点击批准） */
 function hangingBrokerPlugin(): { plugin: Plugin; asks: AskPayload[]; allow: () => void } {
   const asks: AskPayload[] = [];
   let release: ((reply: AskReply) => void) | undefined;
@@ -104,7 +87,6 @@ describe("plan_submit 审批不变量（红测）", () => {
       const fixture: Fixture = { mode: { current: "plan" }, asks: [], verdict: "allow" };
       const tool = await toolOf([toolsPlugin, createPlanSubmitPlugin({ liftTo: "plan", mainSession: "s1" as never }), fakePermissionPlugin(fixture)]);
       await tool.execute({ plan: "refactor in three steps" }, EXEC());
-      // 不变量：用户批准了方案 ⇒ 会话不再处于 plan 档（后续 write 不应再吃 plan 硬闸）
       expect(fixture.mode.current).not.toBe("plan");
     });
 
@@ -112,7 +94,6 @@ describe("plan_submit 审批不变量（红测）", () => {
       const fixture: Fixture = { mode: { current: "plan" }, asks: [], verdict: "allow" };
       const tool = await toolOf([toolsPlugin, createPlanSubmitPlugin({ liftTo: "plan", mainSession: "s1" as never }), fakePermissionPlugin(fixture)]);
       const out = await tool.execute({ plan: "refactor in three steps" }, EXEC());
-      // 修复后契约：normalize 到 auto——真解档 + 宣告的是实际档位
       expect(fixture.mode.current).toBe("auto");
       expect(out.content).toContain("plan mode lifted (permission mode: auto)");
     });
@@ -130,9 +111,9 @@ async function planWorld(): Promise<{ ctx: Context; disposers: readonly Disposer
   const broker = hangingBrokerPlugin();
   const ctx = createContext();
   const disposers = await loadPlugins(ctx, [
-    createPermissionModesPlugin(), // V4 内置模式（base 零策略）
+    createPermissionModesPlugin(),
     toolsPlugin,
-    createPlanSubmitPlugin({ mainSession: "s1" as never }), // liftTo 缺省 "auto"
+    createPlanSubmitPlugin({ mainSession: "s1" as never }),
     createPermissionPlugin({ root, mode: "plan" }),
     broker.plugin,
   ]);
@@ -147,11 +128,10 @@ describe("拆卸/取消窗口（真实 permission 插件 + 挂起 broker）", ()
     const tool = ctx.use(toolRegistry).get("plan_submit");
     if (tool === undefined) throw new Error("missing plan_submit");
     const pending = tool.execute({ plan: "x" }, EXEC());
-    await waitUntil(() => broker.asks.length === 1); // ask 已在飞（用户确认条挂着）
-    for (const dispose of disposers) await dispose(); // world 拆卸——permission 插件 tearingDown=true
-    broker.allow(); // 用户在已拆卸的确认条上迟到批准
+    await waitUntil(() => broker.asks.length === 1);
+    for (const dispose of disposers) await dispose();
+    broker.allow();
     const out = await pending;
-    // 不变量：迟到裁决丢弃，mode 不得被已拆卸的世界改写
     expect(svc.get()).toBe("plan");
     expect(out.isError === true || !out.content.includes("lifted")).toBe(true);
   });
@@ -163,10 +143,9 @@ describe("拆卸/取消窗口（真实 permission 插件 + 挂起 broker）", ()
     const controller = new AbortController();
     const pending = tool.execute({ plan: "x" }, { callId: "c1", name: "plan_submit", signal: controller.signal, session: "s1" as never });
     await waitUntil(() => broker.asks.length === 1);
-    controller.abort(); // turn 取消（CLI Ctrl+C / handle.dispose("disposed") 同源）
-    broker.allow(); // 取消后用户仍点了迟到批准
+    controller.abort();
+    broker.allow();
     await pending;
-    // 不变量：已取消的 turn 不得改变权限档（CLI /new 沿用同一 world——泄漏进新会话）
     expect(svc.get()).toBe("plan");
   });
 });

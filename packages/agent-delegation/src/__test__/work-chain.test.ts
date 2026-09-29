@@ -1,5 +1,3 @@
-// work 链（T39 D10.2）：spawn description 全程可见——agentSpawned 载荷、ChildView
-// 快照、header.agentWork 持久锚、复活回填四面对照（缺一面即中途丢弃）。
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -54,7 +52,6 @@ describe("work 链四面对照", () => {
       }, { timeout: 5_000 });
       await first.ctx.use(sessionStore).flush(childSession);
       await first.ctx.use(sessionStore).flush(firstParent.agent.session.id);
-      // 持久锚：磁盘 header.json 含 agentWork（跨重启载体）
       const headerRaw = await readFile(join(root, childSession, "header.json"), "utf8");
       expect(JSON.parse(headerRaw).agentWork).toBe("summarize the logs");
       await first.disposePlugins();
@@ -67,7 +64,7 @@ describe("work 链四面对照", () => {
       const woke = await callTool({ world: second, name: "agent_message", args: { to: agentId, message: "again" }, session: firstParent.agent.session.id });
       expect(woke.isError).toBeUndefined();
       await vi.waitFor(() => expect(spawnedLog).toHaveLength(1), { timeout: 5_000 });
-      expect(spawnedLog[0]?.work).toBe("summarize the logs"); // 复活发射回填
+      expect(spawnedLog[0]?.work).toBe("summarize the logs");
       const rows = subagentRows(await second.ctx.tryUse(delegationView)?.list(firstParent.agent.session.id) ?? []);
       expect(rows.find((r) => r.agentId === agentId)?.work).toBe("summarize the logs");
       await second.disposePlugins();
@@ -92,7 +89,6 @@ describe("work 链四面对照", () => {
       await first.ctx.use(sessionStore).flush(firstParent.agent.session.id);
       await first.disposePlugins();
 
-      // 手植旧形态 header：抹掉 agentWork（字段引入前的档案形状）
       const headerPath = join(root, childSession, "header.json");
       const header = JSON.parse(await readFile(headerPath, "utf8")) as Record<string, unknown>;
       delete header["agentWork"];
@@ -106,7 +102,7 @@ describe("work 链四面对照", () => {
       const woke = await callTool({ world: second, name: "agent_message", args: { to: agentId, message: "again" }, session: firstParent.agent.session.id });
       expect(woke.isError).toBeUndefined();
       await vi.waitFor(() => expect(spawnedLog).toHaveLength(1), { timeout: 5_000 });
-      expect("work" in (spawnedLog[0] ?? {})).toBe(false); // 键缺席而非 undefined 占位
+      expect("work" in (spawnedLog[0] ?? {})).toBe(false);
       const rows = subagentRows(await second.ctx.tryUse(delegationView)?.list(firstParent.agent.session.id) ?? []);
       const revived = rows.find((r) => r.agentId === agentId);
       expect(revived).toBeDefined();

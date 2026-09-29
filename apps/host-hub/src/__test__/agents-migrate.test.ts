@@ -1,6 +1,3 @@
-// 用户 agents 类型根一次性迁移回归（agentDir 派生缝的存量数据腿，与
-// skills-migrate 同构）：搬运/同名跳过/哨兵幂等/旧根不删/根同路径短路/旧根缺席
-// 静默/env 关闭缝。oldRoot 注入缝驱动（沙箱隔离）。
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,7 +35,6 @@ describe("migrateAgentTypeRoot（搬运基元）", () => {
     expect(moved.sort()).toEqual(["alpha.md", "beta.md"]);
     expect(skipped).toEqual([]);
     expect(await readFile(join(newRoot, "alpha.md"), "utf8")).toContain("alpha");
-    // 旧根不删（CLI 共享目录永不动删）——包括 notes.txt/subdir 全保留
     expect((await readdir(oldRoot)).sort()).toEqual(["alpha.md", "beta.md", "notes.txt", "subdir"]);
   });
 
@@ -73,7 +69,6 @@ describe("migrateLegacyAgentTypes（启动序一次性质）", () => {
     expect(await readFile(join(newRoot, "alpha.md"), "utf8")).toContain("alpha");
     expect(await readFile(join(agentDir, ".agents-migrated"), "utf8")).toContain(`migrated from ${oldRoot}`);
 
-    // 幂等：哨兵在场，再种旧根新类型也不搬
     await seedType(oldRoot, "late-arrival");
     await migrateLegacyAgentTypes(agentDir, oldRoot);
     expect(await readdir(newRoot)).toEqual(["alpha.md"]);
@@ -91,9 +86,9 @@ describe("migrateLegacyAgentTypes（启动序一次性质）", () => {
     const agentDir = await tempRoot("amig-agent4-");
     const newRoot = userAgentsDirOf(undefined, agentDir);
     await seedType(newRoot, "self");
-    await migrateLegacyAgentTypes(agentDir, newRoot); // override = 新根本身
+    await migrateLegacyAgentTypes(agentDir, newRoot);
     expect(await readFile(join(agentDir, ".agents-migrated"), "utf8")).toContain("roots identical");
-    expect(await readdir(newRoot)).toEqual(["self.md"]); // 无自拷贝副产物
+    expect(await readdir(newRoot)).toEqual(["self.md"]);
   });
 
   it("env 关闭缝：HUB_AGENTS_MIGRATION=0 跳过（不落哨兵）", async () => {

@@ -1,4 +1,3 @@
-// L2 可靠层余量：分片与解析门（DESIGN §1.2）。流状态机见 inbound-stream.ts / outbox.ts / reassemble.ts。
 import { FRAME_KINDS, type ChunkBody, type Frame, type FrameKind } from "./frames.ts";
 import { PLAIN_FRAME_CHUNK_THRESHOLD, REASSEMBLY_MAX_SEGMENTS } from "./limits.ts";
 
@@ -16,7 +15,6 @@ export interface ChunkSpec {
   data: string;
 }
 
-/** 明文帧 JSON 切片（base64 段） */
 export function chunkFrame(frameJson: string, threshold = PLAIN_FRAME_CHUNK_THRESHOLD): ChunkSpec[] | null {
   const bytes = Buffer.from(frameJson, "utf8");
   if (bytes.length <= threshold) return null;
@@ -35,7 +33,6 @@ export function chunkFrame(frameJson: string, threshold = PLAIN_FRAME_CHUNK_THRE
   return specs;
 }
 
-/** 帧合法性门（垃圾输入降级 null，不抛） */
 export function parseFrame(json: string): Frame | null {
   let raw: unknown;
   try {
@@ -52,7 +49,6 @@ export function parseFrame(json: string): Frame | null {
   return { kind: f.kind as FrameKind, streamId: f.streamId, seq: f.seq, body: f.body };
 }
 
-/** chunk body 校验（垃圾降级 null） */
 export function parseChunkBody(body: unknown): ChunkBody | null {
   if (typeof body !== "object" || body === null) return null;
   const c = body as Partial<ChunkBody>;

@@ -1,8 +1,3 @@
-// worker 引导（DESIGN §5/§7）：stdout 接管 → hello 首帧（先于心跳）→ 心跳 1Hz
-// （worker 侧真相：idleMs/streaming/sessionPath/rssBytes——busy 含在跑直执行与子代
-// 理在飞）→ 命令循环（failure 单点 emit；全部响应经 responseFrame id-first 序）→
-// 优雅退出（子代理 stopAll → 手动压缩 abortAll → 弹窗 denyAll → bash abort →
-// dispose → flush → exit 0；一次性跑完）。stdin EOF / EPIPE = host 亡 → 同径退出。
 import { CONFIRM_TIMEOUT_MS, WORKER_LINE_LIMIT, readLimits } from "../shared/limits.ts";
 import { OBSERVER_COMMANDS, WORKER_BACKEND_ID, WORKER_PROTOCOL_VERSION } from "../protocol/internal.ts";
 import { responseFrame, hubErrorFrame } from "../protocol/frames.ts";
@@ -23,11 +18,8 @@ export interface WorkerBoot {
   agentDir: string;
   sessionsRoot: string;
   env?: Record<string, string | undefined>;
-  /** 测试注入：命令到达流（缺省 stdin） */
   input?: NodeJS.ReadStream | { on(event: "data", cb: (chunk: Buffer) => void): void; on(event: "end", cb: () => void): void; on(event: "error", cb: (err: Error) => void): void };
-  /** 测试注入：帧出口断言（缺省接管 stdout） */
   writerOverride?: FrameWriter;
-  /** 测试注入：退出动作（缺省 process.exit） */
   exit?: (code: number) => void;
 }
 
@@ -43,7 +35,6 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     });
   let shuttingDown = false;
 
-  // hello 必须是首帧（先于心跳挂载——串行 writer 保序）
   void writer.write(`{"type":"hello","protocolVersion":${WORKER_PROTOCOL_VERSION},"backendId":"${WORKER_BACKEND_ID}"}`);
 
   const state: WorkerState = {
@@ -120,12 +111,9 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
   };
   const handlers = createWorkerCommands(rt);
 
-  // 暴毙兜底：exit 时同步 SIGKILL detached 登记簿全集——兜住 uncaughtException 等
-  // 不走优雅停机的路径（幂等，多 worker 同进程一次）
   installDetachExitSweep();
 
   let lastBusyAt = Date.now();
-  // busy = send 在飞 ∨ streaming ∨ 手动压缩 ∨ 弹窗挂起 ∨ 直执行在跑 ∨ 子代理在飞
   const busy = (): boolean =>
     rt.pendingSends > 0 || bridge.isStreaming() || bridge.commandBusy() || broker.pendingCount() > 0 || bash.isRunning() || bridge.childBusy();
 
@@ -144,8 +132,6 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     shuttingDown = true;
     clearInterval(heartbeat);
     try {
-      // 关闭序：子代理 stopAll → 手动压缩 abortAll → 弹窗 settleAll → bash abort →
-      // dispose（内含 flush）→ world 收殓
       const delegation = state.delegation;
       if (delegation !== undefined && state.threadId !== "") {
         await delegation.stopAll(state.threadId as never, "worker-shutdown");
@@ -165,7 +151,7 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     } catch (error) {
       hubLog(`worker: shutdown error: ${String(error)}`);
     }
-    await writer.idle(); // 末帧冲刷完成再退出（防截断）；detached 残留由 exit sweep 清场
+    await writer.idle();
     void reason;
     (boot.exit ?? ((code: number) => process.exit(code)))(0);
   }
@@ -213,7 +199,7 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
           void writer.write(responseFrame({ ...(typed.id !== undefined ? { id: typed.id } : {}), command: typed.type, success: false, error: hubError("unknown_command", "unknown command") }));
           continue;
         }
-        if (!OBSERVER_COMMANDS.has(typed.type)) markBusy(); // 观察者不重置 idle（§3）
+        if (!OBSERVER_COMMANDS.has(typed.type)) markBusy();
         void handler(typed as { id?: string; [key: string]: unknown }).catch((error: unknown) => {
           void writer.write(hubErrorFrame(String(error), state.threadId === "" ? undefined : state.threadId));
         });
@@ -221,7 +207,6 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     });
     input.on("end", () => {
       const tail = splitter.flush();
-      // 尾行处理 await 完成后再 shutdown（末命令的响应/事件不因退出竞输）
       void (async () => {
         for (const line of tail.lines) {
           try {
@@ -229,7 +214,6 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
             const handler = handlers.get(parsed.type);
             if (handler !== undefined) await handler(parsed);
           } catch {
-            // 尾行坏 JSON：flush 尾不补 parse failure（进程正在退出）
           }
         }
         await shutdown("stdin-end");

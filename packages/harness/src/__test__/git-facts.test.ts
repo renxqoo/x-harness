@@ -1,6 +1,3 @@
-// git 事实探测单测（docs/WORKTREE-CONTEXT-AWARENESS §1.1/§5）：表驱动手造 .git 形态
-// （零 git 二进制——真 git 形态留 e2e worktree 旅程）；D7 存在性前置与键省略降级。
-
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

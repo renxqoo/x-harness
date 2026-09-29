@@ -1,6 +1,3 @@
-// host 本地命令（DESIGN §3）：线程生命周期准入（围栏/占用/预算）、模型目录与
-// overrides、凭据、宿主信息与旋钮、agents/list、ui_response 广播。非本集且非线程域
-// → unknown command（池侧统一拒）；缺 threadId 由池侧判（线程域命令）。
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadAgentTypes, parseInlineTypes } from "@x-harness/agent-delegation";
@@ -20,12 +17,10 @@ import { PARKED_DIRECT_COMMANDS, createParkedReads } from "./parked-reads.ts";
 import { createModelsAuthCommands } from "./models-auth.ts";
 import { builtinAgentTypes } from "../worker/assembly.ts";
 import { createAdminCommands } from "./admin-commands.ts";
-import { userAgentsDirOf } from "@x-harness/agent-delegation"; // 路径常量单源内核包（防宿主散写漂移）
+import { userAgentsDirOf } from "@x-harness/agent-delegation";
 import { createTrustStore } from "./trust-store.ts";
 import type { TrustStore } from "./trust-store.ts";
 
-/** git 现算的行状态门：live 系（spawning/retiring 是占位过渡态，探测锚 = 成功后的
- *  归一 cwd，与 live 同源）；parked/dead 不探——parked 是历史快照、dead 行分支是噪音 */
 const LIVE_PROBE_STATES = new Set(["live", "spawning", "retiring"]);
 
 export interface HostCommandsDeps {
@@ -46,22 +41,16 @@ export interface HostCommandsDeps {
   emitClient: (line: string) => void;
   startedAt: number;
   version: string;
-  /** user 级 agents 目录的 HOME 注入缝（缺省真实 HOME；单测隔离） */
   homeDir?: string;
 }
 
 export interface HostCommandContext {
-  /** ui_response 广播给全部 live worker（恒 ack） */
   broadcastToWorkers: (line: string) => void;
-  /** 凭据/目录变更后刷新 worker spawn 装配快照缓存（host.ts 持有缓存） */
   refreshSnapshot: () => Promise<void>;
 }
 
-/** host 本地命令处理器面（注册表按命令名一分派） */
 type LocalHandler = (input: { type?: unknown; id?: unknown; [key: string]: unknown }, id: string | undefined) => Promise<void> | void;
 
-/** 词法围栏（同步段）：绝对路径 + 布局 + id 词法 + **词法规范化**（别名拼法归一
- *  canonical 形——占用表键不可被 `./`、双斜杠等拼法绕过；realpath 复核在占位后） */
 function shapeFence(sessionPath: string, sessionsRoot: string): { ok: true; threadId: string; sessionPath: string } | { ok: false; reason: HubErrorShape } {
   if (!sessionPath.startsWith("/")) {
     return { ok: false, reason: hubError("path_forbidden", "session path outside sessions dir: absolute path required") };
@@ -74,14 +63,11 @@ function shapeFence(sessionPath: string, sessionsRoot: string): { ok: true; thre
   }
   const canonical = join(sessionsRoot, id, "events.jsonl");
   if (sessionPath !== canonical) {
-    // 词法别名（./、重复段、非规范顺序）——占用判定按 canonical 归一
     return { ok: true, threadId: id, sessionPath: canonical };
   }
   return { ok: true, threadId: id, sessionPath };
 }
 
-/** trusted:true 的注册表登记（start/resume/register 共用——host 转发链执行，
- *  worker 永不写注册表） */
 function registerTrust(trust: TrustStore, input: { trusted?: unknown }, cwd: string): void {
   if (input.trusted === true) void trust.trust(cwd);
 }
@@ -103,27 +89,21 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   const trust = createTrustStore(deps.agentDir);
   const parkedReads = createParkedReads({ table: deps.table, direct: deps.direct, emitClient: deps.emitClient });
 
-  /** thread/resume 占位段：词法围栏 + 有界等待释放 + 预算 + 表占位（先于复核段） */
   async function reserveResumeSlot(
     input: { [key: string]: unknown },
     id: string | undefined,
   ): Promise<{ ok: true; shape: { threadId: string; sessionPath: string } } | { ok: false }> {
     const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
-    // 同步段：词法围栏 + 占用声明——先于一切 await（消灭双开竞态窗口）；
-    // realpath 围栏在占位后复核（失败撤位应答）
     const shape = shapeFence(sessionPath, deps.sessionsRoot);
     if (!shape.ok) {
       respond(id, "thread/resume", { error: shape.reason });
       return { ok: false };
     }
-    // retiring/spawning 持有者：有界等待释放（stop/retire 在途的收尾是有界拆除）；
-    // 超窗或稳定占用 → already open
     for (let waited = 0; waited < 12_000; waited += 250) {
       const holder = deps.table.holderOf(shape.sessionPath);
       if (holder === undefined) break;
       const holderEntry = deps.table.get(holder);
       if (holderEntry !== undefined && holderEntry.state === "dead") {
-        // dead 表项无 live worker——resume 直接接管（复活可重试语义，DESIGN §7）
         deps.table.remove(holder);
         break;
       }
@@ -152,9 +132,6 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     } else {
       deps.table.insert({
         threadId: shape.threadId,
-        // cwd 落 raw（成功路径 worker normalizeCwd 后回写归一值）；相对串的 git 现算
-        // 由 list 侧绝对路径门键省略（红测回归锚——resolve 会把相对串锚到宿主进程
-        // cwd，冒充仍成立；键省略才是如实形态）
         cwd: typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : process.cwd(),
         sessionPath: shape.sessionPath,
         state: "spawning",
@@ -165,7 +142,6 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     return { ok: true, shape };
   }
 
-  /** thread/resume 复核段：realpath 圈内复核 + 存在性——失败撤位应答 */
   async function verifyResumeSlot(input: { [key: string]: unknown }, id: string | undefined, shape: { threadId: string; sessionPath: string }): Promise<void> {
     const fence = await fenceSessionPath(shape.sessionPath, deps.sessionsRoot);
     if (!fence.ok) {
@@ -193,8 +169,8 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     const trusted = input.trusted === true;
     const cwd = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : process.cwd();
     const verdict = deps.pool.beginThread(JSON.stringify(input), trusted, cwd);
-    if (!verdict.ok) respond(id, "thread/start", { error: verdict.reason }); // 成功路径的响应经 worker 控制响应转发
-    else registerTrust(trust, input, cwd); // 注册表登记（host 转发链）
+    if (!verdict.ok) respond(id, "thread/start", { error: verdict.reason });
+    else registerTrust(trust, input, cwd);
   }
 
   async function handleThreadResume(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
@@ -203,7 +179,6 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     await verifyResumeSlot(input, id, reserved.shape);
   }
 
-  /** register 的占用面应答：live 写者 → failure；同 id/同路径非 live 表项 → 幂等返回 */
   function registerOccupied(holder: string, id: string | undefined): void {
     const entry = deps.table.get(holder);
     if (entry === undefined || entry.state === "live" || entry.state === "spawning" || entry.state === "retiring") {
@@ -238,8 +213,6 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
       respond(id, "thread/register", { error: hubError("session_unreadable", "Session file not readable") });
       return;
     }
-    // 占位复核：readState 的 await 窗口内 resume/start 可能已占同 path——insert 前
-    // 重查，占位冲突走幂等分支
     const occupant = deps.table.holderOf(fence.sessionPath);
     if (occupant !== undefined) {
       registerOccupied(occupant, id);
@@ -263,7 +236,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   function handleThreadStop(input: { [key: string]: unknown }, id: string | undefined): void {
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
-    deps.pool.retireThread(threadId, "stop"); // 幂等：未知 success
+    deps.pool.retireThread(threadId, "stop");
     respond(id, "thread/stop", {});
   }
 
@@ -280,10 +253,9 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     if (outcome === "not-persisted") {
       respond(id, "thread/retire", { error: hubError("state_conflict", "Session not persisted yet") });
     } else if (outcome === "in-flight") {
-      // wake 重试在飞：命令排队由 wake 终态收口（耗尽落 dead 后本命令重发可重试）
       respond(id, "thread/retire", { error: hubError("thread_not_live", "thread not live") });
     } else {
-      respond(id, "thread/retire", {}); // 三态幂等 ack；thread_parked 帧在 close 结算发
+      respond(id, "thread/retire", {});
     }
   }
 
@@ -301,10 +273,6 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
   function handleThreadList(_input: { [key: string]: unknown }, id: string | undefined): void {
     respond(id, "thread/list", {
       data: deps.table.list().map((entry) => {
-        // gitBranch 现算（D3：分支易变不落账——每调用探测，GUI 刷新即跟随）。
-        // 门两重：cwd 绝对路径门（落表归一前的历史脏数据/相对串——探到的是宿主进程
-        // 所在仓，键省略不冒充）+ 仅 live 系状态（dead 行分支是语义噪音且 1024 深表
-        // 全量同步探测在慢盘上饿死 host 事件循环——非 live 不探）
         const branch = isAbsolute(entry.cwd) && LIVE_PROBE_STATES.has(entry.state) ? probeGitFacts(entry.cwd).branch : undefined;
         return {
           threadId: entry.threadId,
@@ -323,16 +291,13 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   async function handleThreadListSaved(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
     const rawCwd = typeof input.cwd === "string" && input.cwd !== "" ? input.cwd : undefined;
-    const cwd = rawCwd !== undefined ? await normalizeCwd(rawCwd) : undefined; // 与存储侧 header.cwd 同口径（尾斜杠/symlink 拼法不漏会话）
+    const cwd = rawCwd !== undefined ? await normalizeCwd(rawCwd) : undefined;
     const sessions = await listSavedSessions(deps.sessionsRoot, cwd !== undefined ? { cwd } : {});
     respond(id, "thread/list_saved", { data: { sessions } });
   }
 
   async function handleAgentsList(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
-    // 目录栈（低→高）：user（恒在）；trusted 线程含 project 级（同名 project 覆盖
-    // user——来源按装载序分账：project 目录装载的条目标 project）；builtin 层为内联
-    // 资源（随 bundle 分发——与 worker 装配同源），同名可被盘上层遮蔽
-    const userDir = userAgentsDirOf(deps.homeDir, deps.agentDir); // agentDir 派生缝在场时 = <agentDir>/agents（与 skills 同序）
+    const userDir = userAgentsDirOf(deps.homeDir, deps.agentDir);
     const threadId = typeof input.threadId === "string" ? input.threadId : "";
     const entry = threadId !== "" ? deps.table.get(threadId) : undefined;
     const projectDir = entry !== undefined && entry.trusted ? join(entry.cwd, ".x-harness", "agents") : undefined;
@@ -399,7 +364,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   function handleUiResponse(input: { [key: string]: unknown }, id: string | undefined): void {
     ctx.broadcastToWorkers(JSON.stringify(input));
-    respond(id, "ui_response", {}); // 恒 ack（晚到/未知由 worker 忽略）
+    respond(id, "ui_response", {});
   }
 
   const handlers = new Map<string, LocalHandler>();
@@ -428,7 +393,6 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   return {
     credentials,
-    /** 返回 true = 已处理（host 本地，含 §3.4 parked/dead 直读接管）；false = 交池路由 */
     async handle(input: { type?: unknown; id?: unknown; [key: string]: unknown }): Promise<boolean> {
       const type = typeof input.type === "string" ? input.type : "";
       const id = typeof input.id === "string" ? input.id : undefined;
@@ -436,9 +400,6 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
       if (dual !== undefined) return dual;
       const handler = handlers.get(type);
       if (handler === undefined) {
-        // §3.4 矩阵：线程域收敛/直读命令在表项 parked/dead 时 host 接管（免唤醒）；
-        // live/spawning/retiring 或非接管集 → 交池（线程域由池路由，非线程域由池
-        // 统一拒绝 unknown command）
         if (PARKED_DIRECT_COMMANDS.has(type)) {
           return await parkedReads.tryAnswer(type, input, id);
         }

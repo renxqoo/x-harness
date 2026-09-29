@@ -1,4 +1,3 @@
-// RESP 编解码契约 + fake server 旅程（store-redis 经 fake server 走全命令面）
 import { describe, expect, it } from "vitest";
 import { encodeCommand, parseResp, RespClient } from "../resp.ts";
 import { startFakeRespServer } from "./fake-resp.ts";
@@ -50,7 +49,6 @@ describe("RespClient 旅程（fake server）", () => {
     await sleep(100);
     client.close();
     await fake.close();
-    // subscribe 消息经 client 的 subscribeHandlers 分发（此处仅验证不崩 + 写面全走）
     expect(fake.received.length).toBeGreaterThanOrEqual(6);
   });
 });

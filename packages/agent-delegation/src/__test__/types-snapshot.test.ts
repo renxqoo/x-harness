@@ -1,6 +1,3 @@
-// 类型系统快照注入（docs/AGENT-DELEGATION.md §7 + docs/TAIL-SNAPSHOT-CHANNEL.md）：
-// .md 唯一来源 + 边沿注入快照（信封 + <system-reminder> 体）+ 同步装载当轮可见。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionStore } from "@x-harness/session";
 import { systemPrompt as systemPromptToken } from "@x-harness/system-prompt";
@@ -16,7 +13,6 @@ const eventsOf = (world: World, session: SessionId): readonly ReturnType<Session
   return found === undefined ? [] : found.events();
 };
 
-/** user/message 的原文本块拼接（信封断言用——JSON.stringify 会转义引号） */
 const userTextsOf = (world: World, session: SessionId): string =>
   eventsOf(world, session)
     .filter((e) => e.type === "user/message" || e.type === "agent/message")
@@ -43,7 +39,6 @@ describe("类型系统（件13 §7：.md 唯一来源 + 快照注入——docs/T
     expect(snapshots).toContain("This snapshot supersedes earlier snapshots of this kind.");
     expect(snapshots).toContain("Available agent types:");
     expect(snapshots).toContain("- worker — test type worker (model: child-model)");
-    // 装配文本不再含类型段（锚点静态化）
     expect(world.ctx.use(systemPromptToken).assemble().text).not.toContain("Available agent types:");
     const empty = await makeWorld(await makeOptions({}));
     const bare = await spawnParent(empty);
@@ -63,10 +58,10 @@ describe("类型系统（件13 §7：.md 唯一来源 + 快照注入——docs/T
     const dir = (options.agentsDirs ?? [])[0] as string;
     await writeFile(join(dir, "late.md"), "---\nname: late\ndescription: added later\n---\nbody");
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "kick")]);
-    parent.agent.followup("reload probe"); // kick → running 边沿 → 同步探测+渲染+注入
+    parent.agent.followup("reload probe");
     await parent.agent.whenIdle();
     const snapshots = userTextsOf(world, parent.agent.session.id);
-    expect(snapshots).toContain("- late — added later"); // 同 kick 当轮可见——不待第二次 kick
+    expect(snapshots).toContain("- late — added later");
     await parent.dispose();
   });
 
@@ -94,14 +89,14 @@ describe("锚点静态锚（TAIL-SNAPSHOT-CHANNEL——症状：易变事实变�
     parent.agent.followup("one");
     await parent.agent.whenIdle();
     const baseline = systemCount();
-    expect(baseline).toBeGreaterThanOrEqual(1); // 首 kick 落锚
+    expect(baseline).toBeGreaterThanOrEqual(1);
     const dir = (options.agentsDirs ?? [])[0] as string;
     const { writeFile: writeLater } = await import("node:fs/promises");
     await writeLater(join(dir, "extra.md"), "---\nname: extra\ndescription: later\n---\nbody");
     parent.agent.followup("two");
     await parent.agent.whenIdle();
-    expect(userTextsOf(world, parent.agent.session.id)).toContain("- extra — later"); // 新类型经快照可见
-    expect(systemCount()).toBe(baseline); // 零 replace：锚点不动
+    expect(userTextsOf(world, parent.agent.session.id)).toContain("- extra — later");
+    expect(systemCount()).toBe(baseline);
     await parent.dispose();
   });
 });

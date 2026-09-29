@@ -1,8 +1,3 @@
-// 后台任务测试（docs/TOOLBOX.md §4/§6 + docs/TASK-PUSH-DESIGN.md §2.2/§4）：立返/状态机/
-// 日志路径契约与双流落盘/写帽快照面/并发帽/墙钟帽/幂等停/会话隔离/sessionDisposed 与
-// dispose 清场/onSettled 五路终态恰好一次与隔离/IO 拒启。模型侧停止动词（task_stop）与
-// 完成推送（[task-notification]）归任务层——本套件经登记簿句柄直接验证其 bash 源语义。
-
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +13,6 @@ import type { SessionId } from "@x-harness/session";
 import { createBashPlugin } from "../plugin.ts";
 import { toolsPlugin, toolRegistry } from "@x-harness/tools";
 
-/** SessionId 品牌（测试会话名都是普通字符串） */
 const sid = (v: string): SessionId => v as SessionId;
 
 let root: string;
@@ -81,15 +75,15 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     const started = Date.now();
     const r = await bash({ command: "sleep 1; echo bg-done", run_in_background: true }, "s1");
     expect(r.isError).toBeUndefined();
-    expect(Date.now() - started).toBeLessThan(300); // 不等命令完成
+    expect(Date.now() - started).toBeLessThan(300);
     const id = idOf(r.content);
     const logPath = logPathOf(r.content);
-    expect(logPath.startsWith(logRoot)).toBe(true); // 路径契约：<taskLogDir>/<sessionKey>/bash-task-<id>.log
+    expect(logPath.startsWith(logRoot)).toBe(true);
     await waitUntil(() => snapOf(tasks, sid("s1"), id)?.state === "completed");
     const snap = snapOf(tasks, sid("s1"), id);
     expect(snap?.exitCode).toBe(0);
     expect(snap?.logPath).toBe(logPath);
-    expect(readFileSync(logPath, "utf8")).toContain("bg-done"); // 读面 = 日志文件
+    expect(readFileSync(logPath, "utf8")).toContain("bg-done");
   });
 
   it("日志路径契约：会话子目录 + 匿名桶 _anon", async () => {
@@ -98,8 +92,8 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     const logPath = logPathOf(r.content);
     expect(logPath).toBe(join(logRoot, "s7", `bash-task-${id}.log`));
     await waitUntil(() => snapOf(tasks, sid("s7"), id)?.state === "completed");
-    expect(existsSync(logPath)).toBe(true); // 文件随流打开落位（完成态必在盘）
-    expect(existsSync(join(logRoot, "s7"))).toBe(true); // 目录先于 spawn 同步建
+    expect(existsSync(logPath)).toBe(true);
+    expect(existsSync(join(logRoot, "s7"))).toBe(true);
     const anon = new BackgroundTasks(defaultTaskLimits({ taskLogDir: logRoot }));
     const made = await anon.start({ command: "true", cwd: root, session: undefined, env: createLocalEnv(root) });
     expect(made.ok).toBe(true);
@@ -112,7 +106,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     expect(snapOf(tasks, sid("s1"), bad)?.exitCode).toBe(3);
     const killed = idOf((await bash({ command: "sleep 0.1; kill -9 $$", run_in_background: true }, "s1")).content);
     await waitUntil(() => (snapOf(tasks, sid("s1"), killed)?.exitCode ?? null) !== null);
-    expect(snapOf(tasks, sid("s1"), killed)?.exitCode).toBe(137); // 128+9
+    expect(snapOf(tasks, sid("s1"), killed)?.exitCode).toBe(137);
   });
 
   it("双流并流落盘：stdout/stderr 同窗到达，文件内双流 marker 齐备且同流保序", async () => {
@@ -122,9 +116,9 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     await waitUntil(() => snapOf(tasks, sid("s1"), id)?.state === "completed");
     const text = readFileSync(logPath, "utf8");
     for (const marker of ["o1", "e1", "o2", "e2", "o3"]) expect(text).toContain(marker);
-    expect(text.indexOf("o1")).toBeLessThan(text.indexOf("o2")); // 同流（stdout）内保序
+    expect(text.indexOf("o1")).toBeLessThan(text.indexOf("o2"));
     expect(text.indexOf("o2")).toBeLessThan(text.indexOf("o3"));
-    expect(text.indexOf("e1")).toBeLessThan(text.indexOf("e2")); // 同流（stderr）内保序
+    expect(text.indexOf("e1")).toBeLessThan(text.indexOf("e2"));
   });
 
   it("写帽快照面：超帽 → truncated + droppedBytes + 前缀保留（截断不撕裂多字节字符）", async () => {
@@ -137,8 +131,8 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     expect(snap?.droppedBytes).toBeGreaterThan(0);
     expect(snap?.bytes).toBeLessThanOrEqual(1_000);
     const text = readFileSync(started.value.logPath, "utf8");
-    expect(Buffer.byteLength(text)).toBe(snap?.bytes); // 快照 bytes = 文件实长
-    expect(text.endsWith("\uFFFD")).toBe(false); // 截断点 UTF-8 边界——无替换符
+    expect(Buffer.byteLength(text)).toBe(snap?.bytes);
+    expect(text.endsWith("\uFFFD")).toBe(false);
   }, 15_000);
 
   it("日志拒启：taskLogDir 不可写（路径被文件占用）→ TASK_LOG_DIR_UNWRITABLE，零进程副作用", async () => {
@@ -148,7 +142,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     const made = await bad.start({ command: "sleep 30", cwd: root, session: sid("s1"), env: createLocalEnv(root) });
     expect(made.ok).toBe(false);
     if (!made.ok) expect(made.reason).toContain("TASK_LOG_DIR_UNWRITABLE");
-    expect(bad.list(sid("s1"))).toEqual([]); // 未登记（spawn 未发生）
+    expect(bad.list(sid("s1"))).toEqual([]);
   });
 
   it("stop 幂等：running → killed；终态再 stop 返回当前快照", async () => {
@@ -159,19 +153,18 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     const again = tasks.stop(sid("s1"), id);
     expect(again.ok).toBe(true);
     if (again.ok) expect(again.value.state).toBe("killed");
-    await waitUntil(() => snapOf(tasks, sid("s1"), id)?.endedAt !== undefined, 5_000); // 真死（finalize 产物）而非乐观态
+    await waitUntil(() => snapOf(tasks, sid("s1"), id)?.endedAt !== undefined, 5_000);
     expect(snapOf(tasks, sid("s1"), id)?.state).toBe("killed");
   });
 
   it("墙钟帽：超时自动两段杀 → timed-out（marker 不出现）", async () => {
     const marker = join(root, "after-cap");
-    // 存活期（12s）必须超过 帽(2s)+宽限(5s)——否则 TERM 免疫者自然跑完也会 touch
     const id = idOf((await bash({ command: `trap "" TERM; sleep 12; touch ${marker}`, run_in_background: true }, "s1")).content);
     await waitUntil(() => snapOf(tasks, sid("s1"), id)?.state === "timed-out", 8_000);
     await new Promise((resolve) => {
       setTimeout(resolve, 6_500);
     });
-    expect(existsSync(marker)).toBe(false); // KILL 升级兜底——TERM 免疫的孙进程也被杀净
+    expect(existsSync(marker)).toBe(false);
   }, 15_000);
 
   it("并发帽：每会话 2——第三个拒绝 TASK_LIMIT；完成后可再启", async () => {
@@ -182,7 +175,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     const capped = await bash({ command: "true", run_in_background: true }, "s1");
     expect(capped.isError).toBe(true);
     expect(capped.content).toContain("TASK_LIMIT");
-    const other = await bash({ command: "true", run_in_background: true }, "s2"); // 会话键控：B 会话不受 A 影响
+    const other = await bash({ command: "true", run_in_background: true }, "s2");
     expect(other.isError).toBeUndefined();
     await waitUntil(() => tasks.runningOf(sid("s1")) === 0, 4_000);
     const after = await bash({ command: "true", run_in_background: true }, "s1");
@@ -195,7 +188,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     expect(stop.ok).toBe(false);
     if (!stop.ok) expect(stop.reason).toContain("TASK_NOT_FOUND");
     expect(tasks.list(sid("sB")).some((t) => t.id === id)).toBe(false);
-    expect(snapOf(tasks, sid("sA"), id)?.state).toBe("running"); // 隔离拒绝不动 A 的任务
+    expect(snapOf(tasks, sid("sA"), id)?.state).toBe("running");
   });
 
   it("sessionDisposed：会话终结两段杀并清桶（断言先于 teardown——不靠 dispose 兜底）", async () => {
@@ -213,13 +206,13 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
       if (!made.ok) throw new Error(made.reason);
       const r = await reg2.dispatch({ callId: "tx", name: "bash", args: { command: `sleep 6; touch ${marker}`, run_in_background: true }, signal: new AbortController().signal, session: "sY" as never });
       void idOf(r.content);
-      const disposed = ctx2.use((await import("@x-harness/session")).sessionStore).dispose("sY" as never); // → sessionDisposed → evict：两段杀 + 清桶
+      const disposed = ctx2.use((await import("@x-harness/session")).sessionStore).dispose("sY" as never);
       expect(disposed.ok).toBe(true);
-      expect(tasks2.list(sid("sY") as never)).toEqual([]); // 清桶——会话生命周期即登记生命周期
+      expect(tasks2.list(sid("sY") as never)).toEqual([]);
       await new Promise((resolve) => {
         setTimeout(resolve, 6_500);
       });
-      expect(existsSync(marker)).toBe(false); // 杀净证据在 teardown 之前取得（回归：曾靠 dispose 兜底假绿）
+      expect(existsSync(marker)).toBe(false);
     } finally {
       await unload2?.().catch(() => {});
       await ctx2.dispose();
@@ -231,7 +224,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     const id = idOf((await bash({ command: `sleep 6; touch ${marker}`, run_in_background: true }, "s1")).content);
     void id;
     for (const fn of disposers) await fn().catch(() => {});
-    disposers = []; // 已手动拆卸——afterEach 不再重复
+    disposers = [];
     await new Promise((resolve) => {
       setTimeout(resolve, 6_500);
     });
@@ -248,7 +241,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
       solo.start({ command: "sleep 0.3", cwd: root, session, env }),
     ]);
     const outcomes = [a.ok, b.ok].sort();
-    expect(outcomes).toEqual([false, true]); // 恰一成功——占位先于一切 await
+    expect(outcomes).toEqual([false, true]);
     if (!a.ok) expect(a.reason).toContain("TASK_LIMIT");
     if (!b.ok) expect(b.ok === false ? b.reason : "").toContain("TASK_LIMIT");
     await waitUntil(() => solo.runningOf(session) === 0, 4_000);
@@ -258,7 +251,7 @@ describe("后台任务（docs/TOOLBOX.md §4——登记簿即任务层的 bash 
     const made = await tasks.start({ command: "true", cwd: root, session: "../escape" as never, env: createLocalEnv(root) });
     expect(made.ok).toBe(false);
     if (!made.ok) expect(made.reason).toContain("INVALID_SESSION");
-    expect(tasks.list(undefined)).toEqual([]); // 未登记未落目录
+    expect(tasks.list(undefined)).toEqual([]);
   });
 
   it("spawn 失败透传 SPAWN_FAILED", async () => {
@@ -279,13 +272,13 @@ describe("onSettled 终态订阅（finalize 单点恰好一次）", () => {
     const r = await bash({ command: "printf 'full-output-marker'", run_in_background: true }, "s1");
     await waitUntil(() => seen.length > 0);
     off();
-    expect(seen.length).toBe(1); // 恰好一次
+    expect(seen.length).toBe(1);
     const snap = seen[0];
     if (snap === undefined) throw new Error("no snapshot");
     expect(snap.state).toBe("completed");
-    expect(snap.session).toBe(sid("s1")); // 路由键在场
+    expect(snap.session).toBe(sid("s1"));
     expect(snap.logPath).toBe(logPathOf(r.content));
-    expect(readFileSync(snap.logPath, "utf8")).toBe("full-output-marker"); // 发射时已全部落盘
+    expect(readFileSync(snap.logPath, "utf8")).toBe("full-output-marker");
     expect(statSync(snap.logPath).size).toBe(snap.bytes);
   });
 
@@ -351,9 +344,9 @@ describe("onSettled 终态订阅（finalize 单点恰好一次）", () => {
     const made = await tasks.start({ command: "true", cwd: root, session: sid("s-boom"), env: boomEnv });
     expect(made.ok).toBe(true);
     await waitUntil(() => seen.length > 0, 5_000);
-    expect(seen.length).toBe(1); // 兜底链 finalize(null,null)——不因 close/settle 异常静默跳过
+    expect(seen.length).toBe(1);
     const snap = tasks.list(sid("s-boom")).find((t) => t.id === (made.ok ? made.value.id : ""));
-    expect(snap?.endedAt).toBeDefined(); // 不卡 running
+    expect(snap?.endedAt).toBeDefined();
   });
 
   it("退订后不再发射", async () => {
@@ -374,6 +367,6 @@ describe("onSettled 终态订阅（finalize 单点恰好一次）", () => {
     tasks.onSettled((snap) => good.push(snap));
     await bash({ command: "true", run_in_background: true }, "s1");
     await waitUntil(() => good.length > 0);
-    expect(good.length).toBe(1); // 首 listener 的 bug 未吞掉后续
+    expect(good.length).toBe(1);
   });
 });

@@ -1,6 +1,3 @@
-// session-mailbox 单测（docs/AGENT-DELEGATION.md §5.3/§5.4/§11.2）：
-// 原子性三则、开箱认领、抢占单读者、墓碑两步回收、订阅结算、timing 注入。
-
 import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
@@ -11,7 +8,7 @@ import { createMailboxPlugin, resolveMailboxDir, defaultTiming } from "../plugin
 import { mailboxService } from "../tokens.ts";
 import type { BoxManifest, MailboxTiming } from "../types.ts";
 
-const DEAD_PID = 999_999_999; // 超出 pid 上限——kill 恒 ESRCH
+const DEAD_PID = 999_999_999;
 
 const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
   setTimeout(resolve, ms);
@@ -111,7 +108,6 @@ describe("session-mailbox", () => {
     const readTs = async (): Promise<number> => (JSON.parse(await readFile(join(root, "beat", "manifest.json"), "utf8")) as BoxManifest).updatedTs;
     const before = await readTs();
     const stop = box.startHeartbeat();
-    // 负载容忍：轮询等首拍推进（固定窗口在并行负载下偶发落空——审查处置）
     const deadline = Date.now() + 2_000;
     let after = before;
     while (after === before && Date.now() < deadline) {
@@ -124,7 +120,7 @@ describe("session-mailbox", () => {
     const quiesceA = await readTs();
     await sleep(30);
     const quiesceB = await readTs();
-    expect(quiesceB).toBe(quiesceA); // 停止后静默（双读相等——不钉具体值，免在飞拍竞态）
+    expect(quiesceB).toBe(quiesceA);
   });
 
   it("投递：活箱得 .msg（无 .tmp 残留）；死箱 not-live", async () => {
@@ -204,7 +200,7 @@ describe("session-mailbox", () => {
     await rawManifest(root, "gone", { pid: DEAD_PID, bootId: "aabbccddeeff", status: "running", updatedTs: timing.now() });
     await mkdir(join(root, "gone", "subs"), { recursive: true });
     await writeFile(join(root, "gone", "subs", `${watcher.name}.json`), `{"from":"${watcher.name}","ts":0}`);
-    timing.advance(7 * 24 * 3_600_000 + 1); // 超 staleMs
+    timing.advance(7 * 24 * 3_600_000 + 1);
     const found = await svc.discover();
     expect(found.map((b) => b.name)).not.toContain("gone");
     const drained = await svc.drain("watcher");
@@ -221,7 +217,6 @@ describe("session-mailbox", () => {
     await svc.subs.add("victim", watcher.name);
     await svc.reclaim("victim", {
       afterTombstone: async (tomb) => {
-        // 模拟判尸后、搬走前 owner 重写 manifest（活 pid）——rename 搬走的是新 manifest
         await writeFile(join(tomb, "manifest.json"), `${JSON.stringify({ pid: process.pid, bootId: "aabbccddeeff", status: "running", updatedTs: Date.now() })}\n`);
       },
     });
@@ -252,16 +247,16 @@ describe("session-mailbox", () => {
     const custom = await mkdtemp(join(tmpdir(), "xh-mailbox-"));
     const ctx = createContext();
     createMailboxPlugin({ root: custom, timing: makeTiming() }).apply(ctx);
-    expect(ctx.use(mailboxService).root).toBe(custom); // 原样透传——不解析不兜底
+    expect(ctx.use(mailboxService).root).toBe(custom);
     const envRoot = await mkdtemp(join(tmpdir(), "xh-mailbox-env-"));
     process.env["X_HARNESS_MAILBOX_DIR"] = envRoot;
     try {
-      expect(resolveMailboxDir()).toBe(envRoot); // env > 缺省（宿主边沿统一入口）
+      expect(resolveMailboxDir()).toBe(envRoot);
     } finally {
       delete process.env["X_HARNESS_MAILBOX_DIR"];
     }
     expect(resolveMailboxDir()).toBe(join(homedir(), ".x-harness", "mailbox"));
-    expect(resolveMailboxDir(custom)).toBe(custom); // 显式传入恒胜
+    expect(resolveMailboxDir(custom)).toBe(custom);
   });
 
   it("投递：坏名 invalid-args；信封形状坏（合法 JSON 缺字段）丢弃走 onWarn", async () => {

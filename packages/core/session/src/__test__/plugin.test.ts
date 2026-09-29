@@ -132,10 +132,10 @@ describe("双通道（docs/SESSION.md §1.2：UI 同步观察面 + 审计微任�
     const made = unwrap(await store.create());
     made.append("turn/start", { turn: 0 });
     made.append("turn/end", { turn: 0, reason: { kind: "completed" } });
-    expect(uiSeen).toEqual([0, 1]); // UI 通道：append 返回前同步
-    expect(auditSeen).toEqual([]); // 审计通道：此刻必未投递（微任务级）
-    await Promise.resolve(); // 让渡微任务队列
-    expect(auditSeen).toEqual([0, 1]); // FIFO 保序、不丢不重
+    expect(uiSeen).toEqual([0, 1]);
+    expect(auditSeen).toEqual([]);
+    await Promise.resolve();
+    expect(auditSeen).toEqual([0, 1]);
   });
 
   it("flush 结构排空：sessionFlush 派发前残余审计事件必已投递", async () => {
@@ -144,9 +144,9 @@ describe("双通道（docs/SESSION.md §1.2：UI 同步观察面 + 审计微任�
     ctx.on(sessionAuditEvent, ({ event }) => order.push(`audit:${String(event.seq)}`));
     ctx.on(sessionFlush, () => order.push("flush"));
     const made = unwrap(await store.create());
-    made.append("turn/start", { turn: 0 }); // 微任务尚未跑（同步紧邻 flush——契约最紧路径）
+    made.append("turn/start", { turn: 0 });
     await store.flush(made.id);
-    expect(order).toEqual(["audit:0", "flush"]); // 结构性保证：不依赖微任务时序
+    expect(order).toEqual(["audit:0", "flush"]);
   });
 
   it("drain 端口：同步排空立即可见，且与微任务投递不重复", async () => {
@@ -156,11 +156,11 @@ describe("双通道（docs/SESSION.md §1.2：UI 同步观察面 + 审计微任�
     const made = unwrap(await store.create());
     made.append("turn/start", { turn: 0 });
     ctx.use(sessionAuditDrain).drain();
-    expect(auditSeen).toEqual([0]); // 不等微任务
-    await Promise.resolve(); // 原子 swap：已排空的微任务不重复投递
+    expect(auditSeen).toEqual([0]);
+    await Promise.resolve();
     made.append("turn/end", { turn: 0, reason: { kind: "completed" } });
     await Promise.resolve();
-    expect(auditSeen).toEqual([0, 1]); // 排空后新事件照常微任务投递
+    expect(auditSeen).toEqual([0, 1]);
   });
 
   it("contextDisposing 排空：dispose 同步段残余审计事件仍可达监听器", async () => {
@@ -168,7 +168,7 @@ describe("双通道（docs/SESSION.md §1.2：UI 同步观察面 + 审计微任�
     const auditSeen: number[] = [];
     ctx.on(sessionAuditEvent, ({ event }) => auditSeen.push(event.seq));
     const made = unwrap(await store.create());
-    made.append("turn/start", { turn: 0 }); // 微任务未跑即 dispose——回卷最先广播时排空
+    made.append("turn/start", { turn: 0 });
     void made;
     await ctx.dispose();
     expect(auditSeen).toEqual([0]);
@@ -180,7 +180,6 @@ describe("双通道（docs/SESSION.md §1.2：UI 同步观察面 + 审计微任�
     const order: number[] = [];
     let flushed: { ok: boolean } | undefined;
     const midBatchAppend = (seq: number): void => {
-      // 批次中段 append（seq 2 入队尾）+ 重入排空（onFlush→deliverAudit）+ 屏障发起——PoC B 同款
       if (seq !== 0) return;
       made.append("turn/start", { turn: 1 });
       void store
@@ -195,12 +194,12 @@ describe("双通道（docs/SESSION.md §1.2：UI 同步观察面 + 审计微任�
       midBatchAppend(event.seq);
     });
     made.append("turn/start", { turn: 0 });
-    made.append("turn/end", { turn: 0, reason: { kind: "completed" } }); // 投递批次 [0,1]
+    made.append("turn/end", { turn: 0, reason: { kind: "completed" } });
     await new Promise((resolve) => {
-      setImmediate(resolve); // 让尽微任务（投递循环 + 重入屏障的 drain 段）
+      setImmediate(resolve);
     });
-    expect(order).toEqual([0, 1, 2]); // 批次中段 append 的事件续排本批之后——重入不得提前投递
-    expect(flushed).toEqual({ ok: true, value: true }); // 重入屏障照常成功
+    expect(order).toEqual([0, 1, 2]);
+    expect(flushed).toEqual({ ok: true, value: true });
   });
 
   it("审计载荷与 UI 通道同形同冻（构造期预冻共享）", async () => {

@@ -1,5 +1,3 @@
-// 初始消息拼接（docs/CLI.md §2.1）：stdin+@file+首条消息依序直连；全空 → undefined。
-
 import { describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 import { buildInitialMessage } from "../build-initial-message.ts";

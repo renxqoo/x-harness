@@ -1,5 +1,3 @@
-// connect.ts ingest 全路径（真 socket）：事件→ACK 合并、chunk 重组上抛、response 唤醒、
-// relay 控制帧日志。本地起最小 WS 服务端（复用协议包读写器）。
 import { describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { connectRemote, type RemoteClientHandle } from "../connect.ts";
@@ -11,7 +9,6 @@ interface MiniServer {
   port: number;
   received: string[];
   push(frame: Frame): void;
-  /** 摧毁既有连接（模拟服务端断开） */
   destroyConnections(): void;
   close(): Promise<void>;
 }
@@ -81,7 +78,6 @@ describe("connect ingest 全路径（真 socket）", () => {
       onStatus: () => {},
       log: () => {},
     });
-    // 等连接
     for (let i = 0; i < 60; i++) {
       await new Promise((r) => {
         setTimeout(r, 100);
@@ -90,7 +86,6 @@ describe("connect ingest 全路径（真 socket）", () => {
     }
     expect(client.connected()).toBe(true);
 
-    // 事件帧 ×33（跨 ACK 阈值 32 → 服务端应收到 ack）
     for (let i = 1; i <= 33; i++) {
       srv.push({ kind: "event", streamId: "ev:t1", seq: i, body: { threadId: "t1", name: "turn", payload: { i } } });
     }
@@ -105,12 +100,10 @@ describe("connect ingest 全路径（真 socket）", () => {
     });
     expect(acks.length).toBeGreaterThanOrEqual(1);
 
-    // response 唤醒
     srv.push({ kind: "response", streamId: "cmd:d", seq: 1, body: { id: "m9", command: "thread/list", success: true } });
     const res = await client.waitResponse("m9", 3000);
     expect(res.success).toBe(true);
 
-    // chunk 重组：两段组一帧（小阈值由段构造直接驱动——段 data 为帧 JSON 切片）
     const wholeFrame: Frame = { kind: "response", streamId: "cmd:d", seq: 2, body: { id: "m10", command: "get_messages", success: true, data: { blob: "z".repeat(200) } } };
     const json = JSON.stringify(wholeFrame);
     const bytes = Buffer.from(json, "utf8");
@@ -151,7 +144,6 @@ describe("connect ingest 全路径（真 socket）", () => {
       if (client.connected()) break;
     }
     expect(client.connected()).toBe(true);
-    // 服务端断开 → awaiting-reconnect（1s 退避后）
     srv.destroyConnections();
     for (let i = 0; i < 40; i++) {
       await new Promise((r) => {

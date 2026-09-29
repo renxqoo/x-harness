@@ -1,6 +1,3 @@
-// 报告全文单次交付口径：完成通知是报告唯一交付点——全文直送（reportCap 同一上界），
-// 追问具体信息走 agent_message。
-
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session, SessionId } from "@x-harness/session";
 import { sessionStore } from "@x-harness/session";
@@ -20,7 +17,7 @@ beforeEach(() => {
 
 describe("报告全文单次交付", () => {
   it("完成通知直送全文（与 reportCap 同一上界，不截断引导指向读动词）", async () => {
-    const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } })); // 缺省 reportCap 34000
+    const world = await makeWorld(await makeOptions({ worker: { model: CHILD_MODEL } }));
     const parent = await spawnParent(world);
     const long = "y".repeat(300);
     world.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, long)]);
@@ -29,8 +26,8 @@ describe("报告全文单次交付", () => {
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
     const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
-    await vi.waitFor(() => expect(lastNotice()).toContain(`summary: ${long}`), { timeout: 5_000 }); // 通知即全文
-    expect(lastNotice()).not.toContain("truncated at"); // 300 < reportCap——全文无截断
+    await vi.waitFor(() => expect(lastNotice()).toContain(`summary: ${long}`), { timeout: 5_000 });
+    expect(lastNotice()).not.toContain("truncated at");
     await parent.dispose();
   });
 
@@ -45,8 +42,8 @@ describe("报告全文单次交付", () => {
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
     const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 100"), { timeout: 5_000 });
-    expect(lastNotice()).toContain("use agent_message to ask the agent for specifics"); // 追问走对话，非读动词
-    expect(lastNotice()).toContain("or have it write the full content to a file"); // 件15 批2：文件中转半句——长内容正解可见
+    expect(lastNotice()).toContain("use agent_message to ask the agent for specifics");
+    expect(lastNotice()).toContain("or have it write the full content to a file");
     await parent.dispose();
   });
 });

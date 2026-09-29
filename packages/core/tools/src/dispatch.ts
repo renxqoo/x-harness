@@ -1,6 +1,3 @@
-// 执行管线（docs/TOOLS.md §1.3）：形状守卫 → abort → lookup → pre-execute → abort 复查 →
-// TypeBox 校验 → execute waterfall → 归一化。函数体整体 try/catch——dispatch 永不 reject。
-
 import { errorText } from "@x-harness/core";
 import type { SessionId } from "@x-harness/session";
 import type { PreExecuteDecision, ToolCallRequest, ToolDefinition, ToolOutcome, ToolRegistry } from "./types.ts";
@@ -28,7 +25,7 @@ function normalizeThrown(error: unknown): string {
     try {
       return error.message;
     } catch {
-      return "<unprintable thrown value>"; // hostile message getter
+      return "<unprintable thrown value>";
     }
   }
   try {
@@ -38,8 +35,6 @@ function normalizeThrown(error: unknown): string {
   }
 }
 
-/** 决策形状门：非判别形态 → deny invalid-decision（fail-closed）；allow 的执行指令
- *  附件白名单校验（exec∈{direct,contained}/escalatable===true），非法值整决策拒 */
 function gateDecision(value: unknown): PreExecuteDecision {
   if (typeof value === "object" && value !== null) {
     const record = value as Record<string, unknown>;
@@ -61,7 +56,6 @@ function gateDecision(value: unknown): PreExecuteDecision {
   return { kind: "deny", reason: "invalid-decision" };
 }
 
-/** 三布尔标志：出现即必须为 true（显式 false 是契约错误——与 session 词表同口径） */
 function flagsValid(record: Record<string, unknown>): boolean {
   for (const flag of ["isError", "aborted", "concludesTurn"] as const) {
     if (record[flag] !== undefined && record[flag] !== true) return false;
@@ -69,7 +63,6 @@ function flagsValid(record: Record<string, unknown>): boolean {
   return true;
 }
 
-/** additionalContexts：数组的数组的纯 text 块（tool_use 会被适配器丢弃，直接拒） */
 function contextsValid(value: unknown): boolean {
   if (!Array.isArray(value)) return false;
   for (const entry of value) {
@@ -84,14 +77,13 @@ function contextsValid(value: unknown): boolean {
   return true;
 }
 
-/** outcome 形状门：白名单字段构造（未知字段放行不拒），任何契约违规 → invalid-tool-output */
 function gateOutcome(raw: unknown): ToolOutcome {
   const invalid = (): ToolOutcome => errorOutcome("invalid-tool-output");
   if (typeof raw !== "object" || raw === null) return invalid();
   let record: Record<string, unknown>;
   try {
     record = raw as Record<string, unknown>;
-    if (typeof record["content"] !== "string") return invalid(); // hostile content getter 也归位于此
+    if (typeof record["content"] !== "string") return invalid();
     if (!flagsValid(record)) return invalid();
     if (record["additionalContexts"] !== undefined && !contextsValid(record["additionalContexts"])) return invalid();
   } catch {
@@ -128,26 +120,21 @@ async function runBody(
     if (request.signal.aborted) return abortedOutcome();
     return errorOutcome(normalizeThrown(error));
   }
-  if (request.signal.aborted) return abortedOutcome(); // success superseded：执行后取消，结果不可信
+  if (request.signal.aborted) return abortedOutcome();
   return gateOutcome(raw);
 }
 
-/** 范围型读判定：恒范围声明或谓词按参求值（grep 的目录形——文件目标不做范围判定） */
 function isScopeRead(tool: ToolDefinition, args: unknown): boolean {
   if (tool.readsSubtree === true) return true;
   return typeof tool.readsSubtree === "function" && tool.readsSubtree(args) === true;
 }
 
-/** preExecute 载荷：control 标记（isControlTool 工具——permission 直通依据）与 session
- *  缺省不伪造字段 */
 function preExecutePayload(tool: ToolDefinition, request: ToolCallRequest): {
   readonly callId: string;
   readonly name: string;
   readonly args: unknown;
   readonly control?: true;
-  /** 工具类别（ToolDefinition.kind 声明穿引——permission 路由/上层策略面） */
   readonly kind?: string;
-  /** path 是搜索范围（readsSubtree 声明穿引——内核子树拒读判定用） */
   readonly readsSubtree?: true;
   readonly session?: SessionId;
 } {
@@ -155,7 +142,7 @@ function preExecutePayload(tool: ToolDefinition, request: ToolCallRequest): {
     callId: request.callId,
     name: request.name,
     args: request.args,
-    ...(tool.isControlTool === true ? { control: true } : {}), // 显式 false ≠ 未声明（K#2——旧 !== undefined 穿引假值即直通）
+    ...(tool.isControlTool === true ? { control: true } : {}),
     ...(tool.kind !== undefined ? { kind: tool.kind } : {}),
     ...(isScopeRead(tool, request.args) ? { readsSubtree: true } : {}),
     ...(request.session !== undefined ? { session: request.session } : {}),
@@ -185,14 +172,12 @@ export function createDispatcher(deps: DispatcherDeps): ToolRegistry["dispatch"]
         return errorOutcome(`${violations}\nreceived: ${formatArgsEcho(request.args)}`);
       }
       return await deps.dispatchExecute(request, async (req) => {
-        // 中间件可换 signal（超时/取消包裹）；args/name/callId 不可换——替换即击穿校验先行的契约
         if (req.args !== request.args || req.name !== request.name || req.callId !== request.callId || req.session !== request.session) {
           return errorOutcome("request-altered");
         }
         return runBody(tool, req, decision.kind === "allow" ? decision : undefined);
       });
     } catch (error) {
-      // 逃逸 throw（中间件 bug/内核层回卷/垃圾输入）：归一化为模型可读结果，dispatch 永不 reject
       return errorOutcome(`internal:${errorText(error)}`);
     }
   };

@@ -1,8 +1,3 @@
-// compact 核心流程（docs/COMPACTION.md §1.1 落账形状）：切口 → 摘要 side-call →
-// 组装（正文 + 文件账本标签 + 续航注入语）→ replace 位置区间落账。全软失败判别联合，
-// 不抛业务异常；上一份摘要（含 autocompact L2 账本）位于区间首位、被本份替换——
-// 累积更新链。
-
 import type { LlmRuntime } from "@x-harness/llm";
 import { anchorIndexOf } from "@x-harness/session";
 import type { SessionId, SessionStore, SurfaceNode } from "@x-harness/session";
@@ -41,17 +36,13 @@ export type CompactionResult =
 
 export interface ResolvedConfig {
   readonly contextWindow: number;
-  /** 水位触发百分比（1–99）：占用 > min(主窗, servedWindow) × pct% → 强制压缩 */
   readonly triggerPct: number;
   readonly reserveTokens: number;
   readonly keepRecentTokens: number;
-  /** 轮次下限护栏（CONTEXT-TOKEN-UNIFICATION §7.3——best-effort；emergency 路径豁免） */
   readonly keepMinTurns: number;
   readonly fileTools: FileToolNames;
   readonly idleTimeoutMs: number;
   readonly summarizer: SummarizerFace | undefined;
-  /** 工厂级聚焦指令（每次摘要附加在提示词尾；逐调用指令在场时以其为准——参照系
-   *  「同一焦点两次表述互相稀释」裁决） */
   readonly customInstructions?: string;
 }
 
@@ -60,12 +51,9 @@ export interface CompactFields {
   readonly trigger: CompactTrigger;
   readonly customInstructions?: string;
   readonly keepRecentTokens?: number;
-  /** 逐调用护栏覆盖（CONTEXT-TOKEN-UNIFICATION §7.3——手动路径传 0 显式豁免；
-   *  缺省用 ResolvedConfig 值） */
   readonly keepMinTurns?: number;
   readonly turn: number;
   readonly step: number;
-  /** 触发上下文的取消信号（水位/自愈 = turn signal；手动可缺席）——联动摘要拨号 */
   readonly signal?: AbortSignal;
 }
 
@@ -82,16 +70,10 @@ export interface CompactDeps {
   readonly config: ResolvedConfig;
   readonly warn: (session: SessionId, code: string, detail?: Record<string, unknown>) => void;
   readonly landed: (payload: LandedPayload) => void;
-  /** per-session 单飞行账本（join 语义）：并发 compact 汇入在飞者共享同一结果——
-   *  消灭参照系「并发 compact 双落账」缺口；identity 删除防同 id 重生会话误摘新主 */
   readonly inflight: Map<SessionId, Flight>;
-  /** 会话世代账本（store.get 句柄无世代面）：sessionDisposed 推进世代；join 前比对
-   *  当前世代——旧世代飞行不得被同 id 重生会话的新调用误 join（会拿到旧会话的
-   *  session-unknown 结果，对活会话误报失败） */
   readonly epochs: Map<SessionId, number>;
 }
 
-/** 摘要终态 → 跳过理由词表（闭射——新终态必须显式入表） */
 const OUTCOME_REASONS: Readonly<Record<Exclude<SummarizeOutcome, { ok: true }>["reason"], CompactionSkipReason>> = {
   "budget-exhausted": "summary-input-budget-exhausted",
   empty: "summary-empty",
@@ -100,8 +82,6 @@ const OUTCOME_REASONS: Readonly<Record<Exclude<SummarizeOutcome, { ok: true }>["
   aborted: "aborted",
 };
 
-/** 上一份摘要节点：投影中末个 replace 型 user/message（compaction 摘要与 autocompact
- *  L2 账本都算——累积链跨层连续；L2 账本文本过 parseFileOperations 自然得空清单） */
 export function previousSummaryOf(nodes: readonly SurfaceNode[]): string | undefined {
   for (let i = nodes.length - 1; i >= 0; i -= 1) {
     const node = nodes[i];
@@ -116,15 +96,11 @@ export function previousSummaryOf(nodes: readonly SurfaceNode[]): string | undef
   return undefined;
 }
 
-/** 在飞飞行（带创建时世代——join 前比对，旧世代不汇入） */
 export interface Flight {
   readonly epoch: number;
   readonly promise: Promise<CompactionResult>;
 }
 
-/** 单飞行（join 语义）：同世代在飞者直接汇入（水位/自愈/手动并发共用）；落定后 identity
- *  删除（同 id 重生会话的新飞入不会被旧 finally 误摘）。旧世代飞行（会话已 dispose 且
- *  同 id 重生）不汇入——它对着已封存句柄，其 session-unknown 结果对当前会话是误报 */
 export function runCompact(deps: CompactDeps, fields: CompactFields): Promise<CompactionResult> {
   const session = deps.store.get(fields.session);
   if (session === undefined) return Promise.resolve({ ok: false, reason: "session-unknown" });
@@ -135,8 +111,6 @@ export function runCompact(deps: CompactDeps, fields: CompactFields): Promise<Co
     const current = deps.inflight.get(fields.session);
     if (current !== undefined && current.promise === promise) {
       deps.inflight.delete(fields.session);
-      // 世代账本联动清理：飞行落定且被摘除时,store 中该 id 已无会话 → 无可 join 的
-      // 旧飞行,epochs 条目可安全删除（长寿命宿主 delegation 密集生灭防无界增长）
       if (deps.store.get(fields.session) === undefined) deps.epochs.delete(fields.session);
     }
   });
@@ -144,24 +118,21 @@ export function runCompact(deps: CompactDeps, fields: CompactFields): Promise<Co
   return promise;
 }
 
-/** 摘要区间载荷：区间节点 + 上一份摘要（跨函数传递的参数对象——缺抽象即封装） */
 interface Span {
   readonly nodes: readonly SurfaceNode[];
   readonly previousSummary: string | undefined;
 }
 
-/** 摘要区间的文件账本（含上一份摘要的既有清单） */
 function fileListsOf(deps: CompactDeps, session: SessionId, span: Span) {
   const previousLists =
     span.previousSummary !== undefined ? parseFileOperations(span.previousSummary) : { readFiles: [], modifiedFiles: [] };
   const lists = computeFileLists(accumulateFileOps(span.nodes, previousLists, deps.config.fileTools));
   if (lists.readFiles.length === 0 && lists.modifiedFiles.length === 0 && hasPathBearingToolUse(span.nodes)) {
-    deps.warn(session, "file-ledger-empty"); // 有 path 型操作而清单为空——换名对齐信号
+    deps.warn(session, "file-ledger-empty");
   }
   return lists;
 }
 
-/** 摘要 side-call 入参（face/llm 在场性由调用方前置裁决并以参数传递——理由词区分） */
 interface SummarizeCall {
   readonly deps: CompactDeps;
   readonly fields: CompactFields;
@@ -170,7 +141,6 @@ interface SummarizeCall {
   readonly llm: LlmRuntime;
 }
 
-/** 聚焦指令：逐调用在场以其为准（参照系「同一焦点两次表述互相稀释」裁决），否则工厂级 */
 function focusOf(deps: CompactDeps, fields: CompactFields): string | undefined {
   if (fields.customInstructions !== undefined) return fields.customInstructions;
   return deps.config.customInstructions;
@@ -191,7 +161,6 @@ async function summarizeSpan(call: SummarizeCall): Promise<SummarizeOutcome> {
   });
 }
 
-/** 摘要终态失败告警（abort 静默；其余逐态——观测不静默纪律） */
 function warnOutcome(deps: CompactDeps, session: SessionId, outcome: Exclude<SummarizeOutcome, { ok: true }>): void {
   switch (outcome.reason) {
     case "failed":
@@ -207,11 +176,10 @@ function warnOutcome(deps: CompactDeps, session: SessionId, outcome: Exclude<Sum
       deps.warn(session, "summary-input-budget-exhausted");
       break;
     default:
-      break; // aborted 静默（操作者取消/看门狗跳过本轮）
+      break;
   }
 }
 
-/** 落账入参 */
 interface LandingCall {
   readonly deps: CompactDeps;
   readonly fields: CompactFields;
@@ -219,22 +187,17 @@ interface LandingCall {
   readonly start: number;
   readonly end: number;
   readonly summary: string;
-  /** 飞行创建时会话世代（世代门落账侧比对用） */
   readonly epoch: number;
 }
 
-/** replace 位置区间落账 + 观测广播 */
 function landSummary(call: LandingCall): CompactionResult {
   const { deps, fields, nodes, start, end, summary, epoch } = call;
-  // 世代门（落账侧）：飞行创建后 会话 dispose / 同 id 重生 → 当前世代已推进，
-  // 本飞行对着的是旧投影，落账即跨代写——丢弃
   if ((deps.epochs.get(fields.session) ?? 0) !== epoch) return { ok: false, reason: "session-unknown" };
   const session = deps.store.get(fields.session);
   if (session === undefined) return { ok: false, reason: "session-unknown" };
   const appended = session.append(
     "user/message",
     { turn: fields.turn, step: fields.step, content: [{ type: "text", text: summary }] },
-    // 空区间不可达（无进展护栏 cut > 首候选 ≥ start ⇒ 端点恒在场），undefined 收窄仅为类型完备
     { surfaceOp: { op: "replace", startSeq: nodes[start]?.seq ?? -1, endSeq: nodes[end]?.seq ?? -1 } },
   );
   if (!appended.ok) return { ok: false, reason: "replace-failed" };
@@ -252,28 +215,16 @@ async function compactSession(
   const { epoch, nodes } = leg;
   const quote = fields.trigger === "emergency" ? 0 : USER_QUOTE_TOKENS;
   const keep = fields.keepRecentTokens ?? deps.config.keepRecentTokens;
-  // cap 分母与水位同口径（对抗审查 B H-1）：min(装配窗, servedWindow)——装配窗在
-  // C≫S（切模型/子代理覆盖/413 缩窗）时会把保留区放大到仍越水位的量级
-  // （0.25C > 0.85S ⟺ S < 0.294C），落账后占用不降、每步重付 summarize
   const served = lastWindow(deps.store.get(fields.session)?.events() ?? []) ?? deps.config.contextWindow;
   const effectiveWindow = Math.min(deps.config.contextWindow, served);
-  // 保留头 = 锚点（首个含 text 节点——session anchorIndexOf 共用谓词）及其之前：
-  // 预锚注入（skill 清单等）与 system 锚点永不进摘要区间；无锚 → 0。
-  // 切口候选同步以 start 为下界（预锚 append 型 user 块不算真轮起点——不进护栏
-  // 分母、不占原话配额），防「区间只剩上一份摘要但护栏被预锚块虚假满足」。
   const start = anchorIndexOf(nodes) + 1;
   const cut = findCutPoint(nodes, keep, {
     userQuoteTokens: quote,
     protectedHead: start,
-    // 轮次护栏（§7.3 三让位规则之一）：emergency（413 自愈）豁免——keep=0 语义
-    // 纯净，配额放大保留区会导致自愈重试后仍超窗；硬顶 = 25% 有效窗（与水位同分母——小窗防线）；
-    // 逐调用覆盖（fields.keepMinTurns——手动路径显式豁免位）
     ...(fields.trigger !== "emergency" ? { keepMinTurns: fields.keepMinTurns ?? deps.config.keepMinTurns, windowCapTokens: Math.floor(effectiveWindow * 0.25) } : {}),
   });
   if (cut === undefined) return { ok: false, reason: "no-cut-point" };
 
-  // 区间 = [保留头之后首节点 .. cut 前末节点]（system 锚点与预锚注入保留；位置区间语义）。
-  // 空区间不可达：无进展护栏保证 cut > 首候选 ≥ start，故 end = cut − 1 ≥ start 恒成立
   const end = cut.cut - 1;
 
   const face = deps.config.summarizer;
@@ -296,7 +247,6 @@ async function compactSession(
     return { ok: false, reason: OUTCOME_REASONS[outcome.reason] };
   }
 
-  // 组装序：正文 → 文件账本标签 → 续航注入语（manual 不附加——人工压缩后自然对话）
   const tail = formatFileOperations(lists.readFiles, lists.modifiedFiles);
   const note = fields.trigger === "manual" ? "" : `\n\n${AUTO_CONTINUATION_NOTE}`;
   return landSummary({ deps, fields, nodes, start, end, summary: `${outcome.text}${tail}${note}`, epoch });

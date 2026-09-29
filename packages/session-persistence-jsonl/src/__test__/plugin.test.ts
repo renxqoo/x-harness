@@ -46,15 +46,15 @@ describe("全链路落盘（docs/SESSION.md §1.8 链来源与时序）", () => 
     world = await makeWorld(root);
     const s = unwrap(await world.store.create({ id: "rt" as SessionId }));
     turn(s, 0);
-    expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true }); // 确保 writer 已开
+    expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true });
     turn(s, 1);
-    turn(s, 2); // 全程无 flush——实时段（审计投递 → 链上 append，不 fsync）负责落盘
+    turn(s, 2);
     await waitUntil(async () => {
       const read = unwrap(await world.archive.read(s.id));
       return read.events.length === 3;
     });
     const read = unwrap(await world.archive.read(s.id));
-    expect(read.events).toEqual(s.events()); // 逐事件对账（含日志序）
+    expect(read.events).toEqual(s.events());
   });
 
   it("首灌含构造期事件：fork 子会话落盘 = 前缀 + inherited end-seed", async () => {
@@ -132,23 +132,23 @@ describe("串行链不变量（docs/SESSION.md §1.8 per-id 串行）", () => {
   });
 
   it("跨进程缺省铸号不撞名：同 root 两代 world 缺省 create 均可落盘（症状：子代理 session-0 撞孤儿目录 session-id-reused 永久拒写）", async () => {
-    world = await makeWorld(root); // 第一代（模拟首进程）
-    const gen1 = unwrap(await world.store.create()); // 缺省 id
+    world = await makeWorld(root);
+    const gen1 = unwrap(await world.store.create());
     turn(gen1, 0);
     expect(await world.store.flush(gen1.id)).toEqual({ ok: true, value: true });
     await world.ctx.dispose();
 
-    const gen2 = await makeWorld(root); // 第二代（模拟重启的新进程，旧实现计数器归零重铸 session-0）
+    const gen2 = await makeWorld(root);
     try {
-      const again = unwrap(await gen2.store.create()); // 缺省 id——必须不再撞 gen1 的目录
+      const again = unwrap(await gen2.store.create());
       expect(again.id).not.toBe(gen1.id);
-      expect(again.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/); // 证明走的是缺省铸号路径（mintSessionId 形态）
+      expect(again.id).toMatch(/^\d{8}T\d{6}-[a-z0-9]{6}$/);
       turn(again, 0);
-      expect(await gen2.store.flush(again.id)).toEqual({ ok: true, value: true }); // 旧实现此处 session-id-reused 必红
+      expect(await gen2.store.flush(again.id)).toEqual({ ok: true, value: true });
       const read1 = unwrap(await gen2.archive.read(gen1.id));
       const read2 = unwrap(await gen2.archive.read(again.id));
       expect(read1.events).toEqual(gen1.events());
-      expect(read2.events).toEqual(again.events()); // 两会话互不侵蚀
+      expect(read2.events).toEqual(again.events());
     } finally {
       await gen2.ctx.dispose().catch(() => {});
     }
@@ -159,7 +159,7 @@ describe("串行链不变量（docs/SESSION.md §1.8 per-id 串行）", () => {
     const s = unwrap(await world.store.create({ id: "uu" as SessionId }));
     turn(s, 0);
     turn(s, 1);
-    await world.unload[1]!(); // 装载序 [session, jsonl]：卸载 jsonl 插件
+    await world.unload[1]!();
     const read = unwrap(await world.archive.read("uu" as SessionId));
     expect(read.events).toHaveLength(2);
   });
@@ -174,7 +174,7 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     expect(await world.store.flush("dup" as SessionId)).toEqual({ ok: true, value: true });
     const before = await world.archive.read("dup" as SessionId);
     world.store.dispose("dup" as SessionId);
-    await new Promise((resolve) => { setTimeout(resolve, 3); }); // 跨毫秒，确保新 header createdAt 严格不同
+    await new Promise((resolve) => { setTimeout(resolve, 3); });
 
     const second = unwrap(await world.store.create({ id: "dup" as SessionId }));
     turn(second, 99);
@@ -183,7 +183,6 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     if (!flushed.ok) expect(flushed.reason).toContain("session-id-reused:dup");
     const reuseReported = (): boolean => world.ioErrors.some((message) => message.includes("session-id-reused:dup"));
     await waitUntil(async () => reuseReported());
-    // dead 闩：第二次 flush 仍报 session-id-reused（docs/SESSION-RESUME 审查 #8）
     const again = await world.store.flush("dup" as SessionId);
     expect(again.ok).toBe(false);
     if (!again.ok) expect(again.reason).toContain("session-id-reused:dup");
@@ -192,7 +191,7 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     expect(after.ok).toBe(true);
     expect(before.ok).toBe(true);
     if (!after.ok || !before.ok) return;
-    expect(after.value.events).toEqual(before.value.events); // 旧档零损毁
+    expect(after.value.events).toEqual(before.value.events);
     expect(after.value.header).toEqual(before.value.header);
   });
 
@@ -204,7 +203,7 @@ describe("同 id 重用 fail-closed（docs/SESSION.md §1.8 排他创建）", ()
     const snapshot = unwrap(await world.archive.read("tam" as SessionId));
     world.store.dispose("tam" as SessionId);
 
-    const shorter = snapshot.events.slice(0, -1); // 磁盘比当前日志长 → 前缀反向
+    const shorter = snapshot.events.slice(0, -1);
     const made = await world.store.create({ header: snapshot.header, seed: shorter });
     expect(made.ok).toBe(true);
     if (made.ok) turn(made.value, 1);
@@ -250,7 +249,6 @@ describe("resume 续写主链（docs/SESSION-RESUME §1.4/§7）", () => {
       return read.ok && read.value.events.length === snapshot.events.length;
     });
 
-    // resume：seed = 归档卷 + repair closers（此处无残 turn → closers 空），构造器补 end-seed
     const gen2 = unwrap(await world.store.create({ header: snapshot.header, seed: snapshot.events }));
     turn(gen2, 1);
     expect(await world.store.flush("rs" as SessionId)).toEqual({ ok: true, value: true });
@@ -258,9 +256,9 @@ describe("resume 续写主链（docs/SESSION-RESUME §1.4/§7）", () => {
     const expected = [...snapshot.events, { type: "session/end-seed" }, { type: "turn/start" }];
     expect(r2.events.map((e) => e.type)).toEqual(expected.map((e) => (e as { type: string }).type));
     const seqs = r2.events.map((e) => e.seq);
-    expect(new Set(seqs).size).toBe(seqs.length); // 无重复
+    expect(new Set(seqs).size).toBe(seqs.length);
     expect(r2.events).toEqual(gen2.events());
-    expect(r2.header).toEqual(snapshot.header); // header 原文保留
+    expect(r2.header).toEqual(snapshot.header);
   });
 
   it("二次续写幂等链：第二次前缀 = 第一次续写后全量", async () => {
@@ -306,7 +304,6 @@ describe("flush 失败路由（docs/SESSION.md §1.8 I/O 失败路由）", () =>
   });
 
   it("晚装载（错过 created）的会话：append 后 flush fail-closed，不写盘（症状：曾写literal undefined header）", async () => {
-    // 装配序 session → creator → jsonl：creator 在 apply 期建会话，其 created 早于 jsonl 装载
     const creatorPlugin = {
       name: "creator",
       inject: ["session"],
@@ -326,14 +323,13 @@ describe("flush 失败路由（docs/SESSION.md §1.8 I/O 失败路由）", () =>
     const store = ctx.use(sessionStoreToken);
     world = { ctx, store, archive: ctx.use(sessionArchiveToken), unload, ioErrors };
 
-    const made = await store.create({ id: "late2" as SessionId }); // 对照：正常会话可落盘
+    const made = await store.create({ id: "late2" as SessionId });
     expect(made.ok).toBe(true);
     if (made.ok) {
       turn(made.value, 0);
       expect(await store.flush(made.value.id)).toEqual({ ok: true, value: true });
     }
 
-    // created 已错过的 "late"：新 append 建出无 header 条目 → flush 必须 fail-closed
     const late = store.get("late" as SessionId);
     expect(late).toBeDefined();
     if (late === undefined) return;
@@ -342,7 +338,7 @@ describe("flush 失败路由（docs/SESSION.md §1.8 I/O 失败路由）", () =>
     expect(flushed.ok).toBe(false);
     if (!flushed.ok) expect(flushed.reason).toContain("writer-unopened:late");
     const read = await world.archive.read("late" as SessionId);
-    expect(read.ok).toBe(false); // 无 header，不落盘
+    expect(read.ok).toBe(false);
   });
 });
 
@@ -351,7 +347,6 @@ describe("排空竞态（回归：活引用批次长度膨胀误切未写事件�
     world = await makeWorld(root);
     const s = unwrap(await world.store.create({ id: "race" as SessionId }));
     turn(s, 0);
-    // marker 事件广播时挂 macrotask：在 writer.append 的 I/O await 窗口内追加新事件
     const appendSix = (): void => {
       turn(s, 6);
     };
@@ -361,7 +356,6 @@ describe("排空竞态（回归：活引用批次长度膨胀误切未写事件�
     turn(s, 5);
     expect(await world.store.flush(s.id)).toEqual({ ok: true, value: true });
     off();
-    // 竞态新事件曾随活引用批次被误切丢弃（永不落盘）；修复后留在 pending，后续 flush 必然写出
     const turnsOnDisk = async (): Promise<Array<number | undefined>> => {
       const read = unwrap(await world.archive.read(s.id));
       return read.events.map((e) => (e.data as { turn?: number }).turn);

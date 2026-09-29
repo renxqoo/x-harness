@@ -1,10 +1,3 @@
-// agent 动态注册插件工具（plugin-runtime §5）：plugin_propose——agent 把写好的
-// 插件源目录登记为受信候选（哈希源树），发 ui_request confirm 请用户批准。
-// 两道门不变式：
-// ① propose 只产数据（trustedSources 暂存 + 确认请求）——不触碰装载面；
-// ② 唯一执行口 pluginManagerService.install 的门（roots/approveInstall/引擎 P1）
-//   在 x-harness 侧，agent 与本工具都改不动。
-// 用户确认后由 UI 发 plugins/install（origin:"agent" + proposalId 落账）→ 热装。
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,21 +22,16 @@ export interface PluginProposalRecord {
   readonly requestedCapabilities: readonly string[];
   readonly sha256: string;
   readonly createdAt: number;
-  /** confirm 结果落账（一次性消费——install 校验） */
   confirmed: boolean;
   consumed: boolean;
 }
 
 export interface PluginProposeDeps {
-  /** 用户确认桥（ui_request confirm；超时/拒绝 = allowed:false） */
   readonly confirm: (fields: { tool: string; reason: string; options?: readonly string[] }) => Promise<{ allowed: boolean }>;
-  /** 提案登记面（host-hub 侧 shared 面注入——暂存与查询单一真相） */
   readonly record: (proposal: PluginProposalRecord) => Promise<void>;
-  /** 哈希上限防御（字节累计；缺省 8MiB——manifest+源码远小于此） */
   readonly maxHashBytes?: number;
 }
 
-/** 源树内容指纹（路径 + 字节规范化序——与 plugins-install hashTree 同构但不耦合） */
 async function hashSourceTree(root: string, budget: number): Promise<{ ok: true; sha256: string } | { ok: false; reason: string }> {
   const hash = createHash("sha256");
   const files: string[] = [];
@@ -95,7 +83,6 @@ export function createPluginProposePlugin(deps: PluginProposeDeps): Plugin {
 }
 
 
-/** manifest 展示面快照（坏 manifest 降级 undefined——形态门在 install 的 inspect） */
 async function manifestSnapshot(sourcePath: string): Promise<{ name?: string; description?: string }> {
   const raw = await readFile(join(sourcePath, "plugin.json"), "utf8").catch(() => undefined);
   if (raw === undefined) return {};
@@ -110,7 +97,6 @@ async function manifestSnapshot(sourcePath: string): Promise<{ name?: string; de
   }
 }
 
-/** 确认请求铸文（P2 语义：能力授予明示） */
 function confirmReason(fields: { name: string; description: string; sourcePath: string; sha256: string; requestedCapabilities: readonly string[] }): string {
   return [
     `Install plugin "${fields.name}"?`,
@@ -124,7 +110,6 @@ function confirmReason(fields: { name: string; description: string; sourcePath: 
     .join("\n");
 }
 
-/** propose 执行体（validate → hash → 登记 → confirm → 应答） */
 async function proposeExecute(deps: PluginProposeDeps, args: Static<typeof proposeSchema>): Promise<ToolOutcome> {
   const sourcePath = args.sourcePath;
   if (!sourcePath.startsWith("/")) {
@@ -141,7 +126,6 @@ async function proposeExecute(deps: PluginProposeDeps, args: Static<typeof propo
   const description = args.description ?? manifest.description ?? "";
   const requestedCapabilities = args.requestedCapabilities ?? [];
   const proposalId = `pp-${Date.now().toString(36)}-${hashed.sha256.slice(0, 8)}`;
-  // 先登记（未确认态），再发确认——confirm 应答即用户裁决（置位由 host confirm 命令面）
   await deps.record({
     proposalId,
     sourcePath,

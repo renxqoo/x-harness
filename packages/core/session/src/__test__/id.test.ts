@@ -1,5 +1,3 @@
-// mintSessionId（docs/SESSION.md §1.5 铸号契约）：词表安全 + 时间戳形态 + 注入随机的确定性/唯一性。
-
 import { describe, expect, it } from "vitest";
 import { isSafeSessionId, mintSessionId } from "../index.ts";
 
@@ -26,7 +24,7 @@ describe("mintSessionId", () => {
 
   it("注入 random 返回 ≥1（越界）钳到词表末位——不产出越界拼接串", () => {
     const id = mintSessionId(NOW, () => 1);
-    expect(id).toBe("20260919T080706-999999"); // 钳制到词表末位（[a-z0-9] 的 35 号 = '9'）：恒取词表内字符
+    expect(id).toBe("20260919T080706-999999");
     expect(isSafeSessionId(id)).toBe(true);
   });
 

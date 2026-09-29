@@ -1,9 +1,3 @@
-// 核实（对抗审查——worker 面）：thread/resume 的 gitBranch 锚 fields.cwd 是否
-// 可被未归一 header.cwd 带偏。结论：**不可达**——相对 cwd 在装配期先被
-// agent-delegation 的 workspaceRoot 绝对路径校验拒（plugin.ts:293），resume 应答
-// failure、无 gitBranch 可言。本文件保留该守卫的回归锚（若未来校验放松/前移 gitBranch
-// 产出位点，此锚即红——防线显性化）。
-
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -39,7 +33,7 @@ describe("worker 侧 resume gitBranch 锚守卫（防线回归锚）", () => {
     await exec("git", ["-C", dir, "add", "."]);
     await exec("git", ["-C", dir, "commit", "-m", "seed"]);
     await exec("git", ["-C", dir, "checkout", "-b", "victim/repo-branch"]);
-    process.chdir(dir); // worker 进程 cwd 停真仓（内嵌装置同进程）——若锚泄漏即见该分支
+    process.chdir(dir);
     await mkdir(join(dir, "relwork"), { recursive: true });
   });
 
@@ -61,7 +55,6 @@ describe("worker 侧 resume gitBranch 锚守卫（防线回归锚）", () => {
       await writeFile(join(dir, "events.jsonl"), events.map((e) => JSON.stringify(e)).join("\n"), "utf8");
       w.send({ type: "thread/resume", id: "r1", sessionPath: join(dir, "events.jsonl") });
       const res = await waitResponse(w.captured.lines, "thread/resume", "r1");
-      // 守卫在场：相对 cwd 装配失败（fail-loud），不会产出锚在宿主 cwd 的 gitBranch
       expect(res.success).toBe(false);
       expect((res.data as { gitBranch?: string } | undefined)?.gitBranch).toBeUndefined();
     } finally {

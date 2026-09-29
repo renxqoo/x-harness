@@ -1,5 +1,3 @@
-// autocompact 件 barrel（coverage 豁免惯例）。
-
 export { createAutoCompactPlugin } from "./plugin.ts";
 export type { AutoCompactOptions } from "./plugin.ts";
 export {

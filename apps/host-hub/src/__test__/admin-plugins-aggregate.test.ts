@@ -1,6 +1,3 @@
-// admin-commands plugins/list 装载态聚合（进程内）：pool 依赖注入面——
-// live 快照并入 listPlugins 归并（active 优先合并/坏形状行丢弃/查询异常退化空表）。
-// 真进程链理由 plugins-loaded-status.test.ts 背书。
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -79,7 +76,7 @@ describe("plugins/list 装载态聚合（admin-commands）", () => {
     admin.register(handlers);
     await handlers.get("plugins/list")?.({}, "q3");
     const rows = ((responses[0] ?? { result: {} }).result.data as { plugins: Array<{ name: string; status: string }> }).plugins;
-    expect(rows.find((row) => row.name === "token-analytics")?.status).toBe("unloaded"); // 坏行全丢 → 快照空
+    expect(rows.find((row) => row.name === "token-analytics")?.status).toBe("unloaded");
   });
 
   it("查询异常：退化 unloaded 视图（不阻塞管理面）", async () => {

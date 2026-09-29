@@ -1,8 +1,3 @@
-// jsonl 写面：两级打开（ax 全新 / EEXIST 可验证续写）、追加（失败截断回滚）、fsync、关闭（docs/SESSION-RESUME §1.4）。
-// 续写校验：尾态截断到最后换行 → 磁盘卷是当前日志前缀（规范化深度相等）∧ header 相等 → 'a' 续写并返回前缀长度；
-// 拒绝按来源分类报文（session-id-reused / archive-orphan-events / archive-corrupt / archive-prefix-mismatch），
-// 均标记 permanent——plugin 的 dead 闩据此闩死（区别于可重试的瞬时 I/O 错误）。
-
 import { mkdir, open, readFile, unlink, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,19 +7,16 @@ import { acquireSessionLock } from "./lock.ts";
 import type { SessionLock } from "./lock.ts";
 
 export interface SessionWriter {
-  /** lines 为已含尾换行的完整行；空数组为纯 sync 屏障。失败时截断回滚到批前长度再重抛（重试无重复字节） */
   append(lines: readonly string[]): Promise<void>;
   sync(): Promise<void>;
   close(): Promise<void>;
 }
 
-/** 打开结果：prefixLength = 磁盘已落账前缀长度（全新 = 0；续写 = 磁盘卷长度）——首灌 pending 按它裁剪 */
 export interface OpenedWriter {
   readonly writer: SessionWriter;
   readonly prefixLength: number;
 }
 
-/** 永久性拒绝（重用/档案损坏/前缀不符）：dead 闩依据；瞬时 I/O 错误不带此标记、可重试 */
 export function isPermanentRejection(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { permanent?: unknown }).permanent === true;
 }
@@ -42,9 +34,7 @@ export async function openSessionWriter(
   header: SessionHeader,
   currentEvents: readonly SessionEvent[],
 ): Promise<OpenedWriter> {
-  await mkdir(dir, { recursive: true }); // 会话目录惰性创建（幂等；含 root 前缀）
-  // 单写者锁先于任何卷操作（跨进程双开交织写防护，docs/CLI.md §2.6）；
-  // 打开失败必须释放，否则一次失败永久占死会话
+  await mkdir(dir, { recursive: true });
   const lock = await acquireSessionLock(dir, dirName(dir));
   let opened: OpenedWriter;
   try {
@@ -56,7 +46,6 @@ export async function openSessionWriter(
   return { writer: withLockRelease(opened.writer, lock), prefixLength: opened.prefixLength };
 }
 
-/** close 时随 fd 一并释放锁（先关 fd 后释放，任何路径都尽力而为） */
 function withLockRelease(writer: SessionWriter, lock: SessionLock): SessionWriter {
   return {
     append: (lines) => writer.append(lines),
@@ -86,7 +75,6 @@ async function openUnlocked(dir: string, header: SessionHeader, currentEvents: r
   try {
     await writeFile(headerPath, `${JSON.stringify(header)}\n`, { flag: "wx" });
   } catch (wxError) {
-    // 回滚各步独立兜错：close/unlink 自身的失败不得吞掉原始错误（残留空文件仅导致下次 ax EEXIST，可诊断）
     await fh.close().then(
       () => {},
       () => {},
@@ -131,7 +119,6 @@ function dirName(dir: string): string {
   return parts[parts.length - 1] || dir;
 }
 
-/** 尾态修复 + 磁盘卷解析：不以 \n 结尾则截到最后一个换行（半行丢弃；完整无尾换行行由 pending 重写） */
 function parseDiskVolume(text: string, dir: string): { readonly kept: string; readonly events: unknown[] } {
   let kept = text;
   if (text !== "" && !text.endsWith("\n")) {
@@ -169,7 +156,6 @@ function makeWriter(fh: FileHandle): SessionWriter {
       try {
         await fh.appendFile(lines.join(""));
       } catch (error) {
-        // 截断回滚到批前长度：同进程重试不产生重复字节（跨进程由续写前缀校验自愈）
         await fh.truncate(before).then(
           () => {},
           () => {},

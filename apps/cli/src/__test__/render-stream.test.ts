@@ -1,6 +1,3 @@
-// 流式渲染（docs/CLI.md §2.3）：帧序列 → 期望输出（sink 收集断言）。text/thinking 交错换行、
-// attempt 边界、工具行 pair、TTY dim 开关、参数/错误截断。
-
 import { describe, expect, it } from "vitest";
 import { createStreamRenderer } from "../render-stream.ts";
 import type { SessionEvent, SessionEventType } from "@x-harness/session";
@@ -9,7 +6,6 @@ function toolCall(name: string, args: string, callId = "c1"): SessionEvent<Sessi
   return { type: "tool/call", seq: 1, time: 0, data: { turn: 1, step: 1, callId, name, arguments: args } } as SessionEvent<SessionEventType>;
 }
 
-/** tool/result 事件不带工具名：渲染器从 callId 映射（name 参数仅用于命名 callId 的可读性） */
 function toolResult(callId: string, content: string, isError: boolean): SessionEvent<SessionEventType> {
   return { type: "tool/result", seq: 2, time: 0, data: { turn: 1, step: 1, callId, content, ...(isError ? { isError: true } : {}) } } as SessionEvent<SessionEventType>;
 }

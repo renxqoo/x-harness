@@ -1,6 +1,3 @@
-// settings-store/atomic-file 契约（MIGRATION §5 settings 块移植 + x-harness 词表）：
-// 白名单键值校验、坏文件降级方向、双级合并（覆盖型项目胜/名单并集）、分链串行 +
-// 回收有界、normalizeCwd 降级。
 import { afterAll, describe, expect, test } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -60,8 +57,6 @@ describe("settings-store", () => {
     expect(validateSettingValue("thinking.default", "huge").ok).toBe(false);
     expect(validateSettingValue("skills.disabled", ["a"]).ok).toBe(true);
     expect(validateSettingValue("skills.disabled", "a").ok).toBe(false);
-    // plugins.disabled：形状校验单点（非空字符串数组；词表成员校验放宽到 builtin ∪
-    // 已装 vendor 名——vendor 名单运行时读，admin 层收口；文件面回到形状门）
     expect(validateSettingValue("plugins.disabled", ["token-analytics", "some-vendor"])).toEqual({ ok: true, key: "plugins.disabled" });
     expect(validateSettingValue("plugins.disabled", [""]).ok).toBe(false);
     expect(validateSettingValue("plugins.disabled", "token-analytics").ok).toBe(false);
@@ -77,8 +72,6 @@ describe("settings-store", () => {
     const mixed = join(dir, "mixed.json");
     await Bun.write(mixed, JSON.stringify({ "thinking.default": "low", "permission.defaultMode": "bogus", other: 1 }));
     expect(await readSettingsFile(mixed)).toEqual({ "thinking.default": "low" });
-    // plugins.disabled 坏形状（非数组成员）→ 丢弃；合法形状（含 vendor 名——运行时
-    // 名单）保留——词表成员校验已放宽，文件面形状门兜底
     const badPlugin = join(dir, "bad-plugin.json");
     await Bun.write(badPlugin, JSON.stringify({ "plugins.disabled": ["ok-name", ""] }));
     expect(await readSettingsFile(badPlugin)).toEqual({});

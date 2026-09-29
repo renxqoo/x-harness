@@ -1,6 +1,3 @@
-// 流累积与结算单元（docs/AGENT-LOOP-DRIVER §1.4）：tool-call-delta 分片聚积/兜底值/
-// finish 三态/空结算/非 Error 抛值。
-
 import { describe, expect, it } from "vitest";
 import { settleStream, StreamAccumulator } from "../stream.ts";
 
@@ -51,7 +48,7 @@ describe("StreamAccumulator（docs/AGENT-LOOP-DRIVER §1.4）", () => {
     expect(accum.text).toBe("");
     expect(accum.textBlock).toEqual([]);
     expect(accum.toolUseBlocks).toEqual([]);
-    expect(accum.hasContent).toBe(false); // 空结算判定不含思考（思考不救活零产出完成）
+    expect(accum.hasContent).toBe(false);
 
     const bare = new StreamAccumulator();
     expect(bare.thinkingText).toBe("");
@@ -82,11 +79,9 @@ describe("settleStream（docs/AGENT-LOOP-DRIVER §1.4）", () => {
     bare.push({ type: "finish", finish: { kind: "error", message: "boom" } });
     expect(settleStream(bare, undefined, false)).toEqual({ kind: "attempt", error: "boom" });
 
-    // retryAfterMs 快车道透传（docs/LLM.md §1.2）
     const throttled = new StreamAccumulator();
     throttled.push({ type: "finish", finish: { kind: "error", message: "slow down", code: "http-429", retryAfterMs: 2500 } });
     expect(settleStream(throttled, undefined, false)).toEqual({ kind: "attempt", error: "http-429:slow down", code: "http-429", retryAfterMs: 2500 });
-    // rawReason 透传（WER C4 三级管道之二）：provider 原生 stop reason 随 attempt 结算透传
     const withRaw = new StreamAccumulator();
     withRaw.push({ type: "finish", finish: { kind: "error", message: "boom", code: "http-500", rawReason: "max_tokens" } });
     expect(settleStream(withRaw, undefined, false)).toEqual({ kind: "attempt", error: "http-500:boom", code: "http-500", rawReason: "max_tokens" });
@@ -95,14 +90,12 @@ describe("settleStream（docs/AGENT-LOOP-DRIVER §1.4）", () => {
   it("流无 finish → attempt；finish stop 零内容 → 空结算 attempt", () => {
     const noFinish = new StreamAccumulator();
     noFinish.push({ type: "text-delta", text: "x" });
-    // 无 finish 的截断流归 network（可重试）——驱动兜底对违约适配器同口径
     expect(settleStream(noFinish, undefined, false)).toEqual({ kind: "attempt", error: "stream ended without finish", code: "network" });
 
     const emptyStop = new StreamAccumulator();
     emptyStop.push({ type: "finish", finish: { kind: "stop" } });
     expect(settleStream(emptyStop, undefined, false)).toEqual({ kind: "attempt", error: "empty completion" });
 
-    // thinking-only 不救空结算：思考只广播不落账，stop 无正文/工具仍判空（docs/THINKING-STREAM.md 契约 5）
     const thinkingOnly = new StreamAccumulator();
     thinkingOnly.push({ type: "thinking-delta", text: "hmm" });
     thinkingOnly.push({ type: "finish", finish: { kind: "stop" } });

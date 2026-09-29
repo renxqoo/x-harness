@@ -1,7 +1,3 @@
-// 语义持久检查点全链（docs/SESSION-CHECKPOINT §4）：真实装配 session+jsonl 持久化+tools+llm+
-// system-prompt+agent-loop+checkpoint；假适配器与工具体在执行体内读 jsonl 文件——「先持久后派发」的
-// 时点证明；fail-closed 双边界（不可写 root）。
-
 import { mkdtemp, open, rm } from "node:fs/promises";
 import { chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -102,7 +98,6 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     worlds.push(world);
     const { agent, handle } = await spawn(world);
     const file = join(root, agent.session.id, "events.jsonl");
-    // 假适配器在流内读盘：派发时点的前缀可见性
     world.fake.scripts.push(
       (async function* (): AsyncGenerator<LlmChunk> {
         const disk = readFileSync(file, "utf8");
@@ -119,7 +114,7 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
   });
 
   it("请求边界 fail-closed：flush 失败 → turn/end{error} 且适配器零派发", async () => {
-    chmodSync(root, 0o555); // root 不可写 → 打开文件即败
+    chmodSync(root, 0o555);
     const world = await makeWorld(root, true);
     worlds.push(world);
     const { agent, handle } = await spawn(world);
@@ -130,7 +125,7 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     const end = agent.session.events().at(-1);
     const reason = (end?.data as { reason?: { message?: string } } | undefined)?.reason;
     expect(reason?.message).toContain("checkpoint-flush-failed");
-    chmodSync(root, 0o755); // 恢复可写供 afterEach 清理
+    chmodSync(root, 0o755);
     await handle.dispose();
   });
 
@@ -167,7 +162,6 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     const execute = vi.fn(async () => ({ content: "ran" }));
     world.registry.register({ name: "side", inputSchema: Type.Object({}), execute });
     const controller = new AbortController();
-    // 带 session：flush 失败 → 工具体零执行、isError、reason 可见（不借「未调 next」违约文本）
     const withSession = await world.registry.dispatch({
       callId: "c1",
       name: "side",
@@ -178,7 +172,6 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(withSession.isError).toBe(true);
     expect(withSession.content).toContain("checkpoint-flush-failed");
-    // 不带 session：非 agent 调用方直通
     const withoutSession = await world.registry.dispatch({ callId: "c2", name: "side", args: {}, signal: controller.signal });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(withoutSession).toMatchObject({ content: "ran" });
@@ -203,12 +196,11 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     const { agent, handle } = await spawn(world);
     world.fake.scripts.push(textScript("done"));
     agent.followup("hi");
-    await agent.whenIdle(); // 不 dispose——证明收尾屏障自身落盘，而非 dispose 兜底
+    await agent.whenIdle();
     const file = join(root, agent.session.id, "events.jsonl");
     const diskLines = (): string[] => readFileSync(file, "utf8").split("\n").filter((line) => line !== "");
     const hasEventType = (lines: readonly string[], type: string): boolean =>
       lines.some((line) => line.includes(`"type":"${type}"`));
-    // turn 收尾 flush 是异步告警式屏障，whenIdle 不承诺 fsync 完成：轮询等待 drain 落定
     const eventTypeOf = (line: string): string => line.match(/"type":"([^"]+)"/)?.[1] ?? "(unparsed)";
     const lines = await vi.waitFor(
       async () => {
@@ -220,7 +212,7 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
       },
       { timeout: 5000, interval: 25 },
     );
-    expect(lines.at(-1)).toContain('"turn/end"'); // 末行即收尾：防 drain 乱序假绿
+    expect(lines.at(-1)).toContain('"turn/end"');
     await handle.dispose();
   });
 
@@ -235,7 +227,6 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     world.fake.scripts.push(textScript("ok"));
     agent.followup("hi");
     await agent.whenIdle();
-    // 首灌 1 + 请求屏障 1 + 收尾屏障 1；实时段只 append 不 sync——删收尾挂点则恒 2
     await vi.waitFor(() => {
       if (syncSpy.mock.calls.length < 3) throw new Error(`屏障 fsync 次数 ${String(syncSpy.mock.calls.length)} < 3`);
     }, { timeout: 5000, interval: 25 });
@@ -244,19 +235,18 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
   });
 
   it("turn 收尾告警式：flush 失败告警且不阻断收尾，同会话只告警一次", async () => {
-    chmodSync(root, 0o555); // root 不可写 → 打开文件即败（请求屏障 fail-closed + turn 收尾 flush 失败）
+    chmodSync(root, 0o555);
     const world = await makeWorld(root, true);
     worlds.push(world);
     const { agent, handle } = await spawn(world);
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const diagnostics: string[] = [];
-    world.ctx.on(checkpointDiagnostic, (payload) => diagnostics.push(payload.code)); // 双通道：事件总线面
+    world.ctx.on(checkpointDiagnostic, (payload) => diagnostics.push(payload.code));
     try {
       agent.followup("hi");
       await agent.whenIdle();
       agent.followup("again");
       await agent.whenIdle();
-      // 两个 turn 均以 error 收尾（请求屏障 fail-closed），收尾链本身不被 turn-end flush 失败阻断
       const ends = agent.session.events().filter((e) => e.type === "turn/end");
       expect(ends).toHaveLength(2);
       expect(ends.every((e) => (e.data as { reason?: { kind?: string } }).reason?.kind === "error")).toBe(true);
@@ -264,12 +254,12 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
         stderr.mock.calls.filter((call) => String(call[0]).includes("turn-end-flush-failed")).length;
       await vi.waitFor(() => {
         if (warnHits() === 0) throw new Error("turn-end-flush-failed 告警未出现");
-        expect(warnHits()).toBe(1); // 两次收尾、一次告警：同会话去重
+        expect(warnHits()).toBe(1);
       }, { timeout: 5000, interval: 25 });
-      expect(diagnostics).toEqual(["turn-end-flush-failed"]); // 诊断事件与 stderr 同步送达且同样去重
+      expect(diagnostics).toEqual(["turn-end-flush-failed"]);
     } finally {
       stderr.mockRestore();
-      chmodSync(root, 0o755); // 恢复可写供 afterEach 清理
+      chmodSync(root, 0o755);
     }
     await handle.dispose();
   });
@@ -288,15 +278,14 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     world.ctx.on(checkpointDiagnostic, (payload) => diagnostics.push(payload.code));
     try {
       agent.followup("hi");
-      await agent.whenIdle(); // 若 .catch 缺席：then 内 throw → unhandled rejection → vitest 直接判败
-      // 闩位在送达成功之后：首次 write 被吞后 catch 重告必须送达，而非被去重闩静默
+      await agent.whenIdle();
       const delivered = (): boolean =>
         stderr.mock.calls.some((call) => String(call[0]).includes("warn-channel-failed"));
       await vi.waitFor(() => {
         if (!delivered()) throw new Error("通道故障后 catch 重告未送达（闩被误置）");
       }, { timeout: 5000, interval: 25 });
-      expect(diagnostics).toEqual(["turn-end-flush-failed"]); // 诊断事件面同样送达
-      expect(agent.session.events().at(-1)?.type).toBe("turn/end"); // 收尾链不受影响
+      expect(diagnostics).toEqual(["turn-end-flush-failed"]);
+      expect(agent.session.events().at(-1)?.type).toBe("turn/end");
     } finally {
       stderr.mockRestore();
       chmodSync(root, 0o755);
@@ -321,7 +310,7 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
         if (warnHits() === 0) throw new Error("第一代会话告警未出现");
       }, { timeout: 5000, interval: 25 });
       chmodSync(root, 0o755);
-      await first.value.dispose(); // → sessionDisposed → 去重闩随会话摘除
+      await first.value.dispose();
       chmodSync(root, 0o555);
       const second = await world.loop.create({ agent: AGENT, session: { id: "revive-me" as SessionId } });
       expect(second.ok).toBe(true);
@@ -338,4 +327,3 @@ describe("session-checkpoint（docs/SESSION-CHECKPOINT §1）", () => {
     }
   });
 });
-

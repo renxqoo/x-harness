@@ -1,6 +1,3 @@
-// 到达节奏直印探针：真端点直连，chunk 到达即打印（观感=到达节奏，显示层零加工）；
-// error finish 打到 stderr——失败不再静默（曾因请求体 model 字段错误而只收到 error finish）。
-// 用法：GLM_API_KEY=... [GLM_BASE_URL=...] [GLM_MODEL=...] bun packages/e2e/gap-probe.ts
 import { createAi } from "@x-harness/llm";
 const modesConfig: Record<string, {
   baseUrl?: string,

@@ -1,7 +1,3 @@
-// 内置类型内联资源装载（bundle 内联分发形态）：资源文本 → LoadedAgentType——与
-// 盘上 .md 同一解析管线（frontmatter 拆分 + flat 解析），垃圾资源 fail-fast 拒注册
-// （随包资源是构建产物——垃圾即构建期 bug，不静默）。目录优先级降序「前者胜」语义
-// 下，宿主把内联层垫在 agentsDirs 之后（最低优先级）。
 import { parseFlat, splitFrontmatter } from "@x-harness/md-frontmatter";
 import type { LoadedAgentType } from "./types.ts";
 import { splitDialRef } from "./lineage.ts";
@@ -13,7 +9,6 @@ export interface InlineTypeResource {
   readonly text: string;
 }
 
-/** model/provider 字段拆解：model 命中复合串 `provider/model` 拆双段；显式 provider 恒胜 */
 function dialFieldsOf(fields: ReadonlyMap<string, string>): { model?: string; provider?: string } {
   const rawModel = fields.get("model");
   const composite = rawModel !== undefined ? splitDialRef(rawModel) : undefined;
@@ -23,7 +18,6 @@ function dialFieldsOf(fields: ReadonlyMap<string, string>): { model?: string; pr
   };
 }
 
-/** 内联资源解析：单一资源垃圾 → 该类型拒注册并返回告警（不 throw 不崩） */
 export function parseInlineType(resource: InlineTypeResource): LoadedAgentType | string {
   const label = `agents: builtin resource '${resource.stem}'`;
   const matter = splitFrontmatter(resource.text);

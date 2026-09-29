@@ -1,4 +1,3 @@
-// ws 帧读写器契约：握手 key、文本帧编解码（掩码/非掩码/分片长度档）、控制帧回调
 import { describe, expect, it } from "vitest";
 import { acceptKey } from "@x-harness/remote-protocol";
 import { WebSocketFrameReader } from "@x-harness/remote-protocol";
@@ -13,7 +12,6 @@ describe("握手", () => {
 
 class Sink extends Writable {
   chunks: Buffer[] = [];
-  // eslint 触发器：write 必须 _write
   override _write(chunk: Buffer, _enc: string, cb: (e?: Error | null) => void): void {
     this.chunks.push(chunk);
     cb();
@@ -48,9 +46,8 @@ describe("帧写入", () => {
     const w = new WebSocketFrameWriter(sink as unknown as import("node:stream").Stream & { write(d: Buffer): boolean }, { clientMask: true });
     w.writeText("hi");
     const out = sink.joined();
-    expect(out[1]! & 0x80).toBe(0x80); // mask 位
-    expect(out.length).toBe(2 + 4 + 2); // 头 + 掩码 + 载荷
-    // 服务端可解（reader 掩码分支）
+    expect(out[1]! & 0x80).toBe(0x80);
+    expect(out.length).toBe(2 + 4 + 2);
     const r = new WebSocketFrameReader();
     r.push(out);
     expect(r.drainTextFrames()).toEqual(["hi"]);
@@ -89,8 +86,8 @@ describe("帧读取", () => {
     r.onNonText = () => {
       nonText++;
     };
-    r.push(Buffer.from([0x81, 0x02, 0x68, 0x69])); // "hi"
-    r.push(Buffer.from([0x89, 0x00])); // ping
+    r.push(Buffer.from([0x81, 0x02, 0x68, 0x69]));
+    r.push(Buffer.from([0x89, 0x00]));
     expect(r.drainTextFrames()).toEqual(["hi"]);
     expect(nonText).toBe(1);
   });
@@ -118,7 +115,7 @@ describe("帧读取", () => {
 
   it("F3 回归：RSV 位帧静默不计入文本（不崩）", () => {
     const r = new WebSocketFrameReader();
-    r.push(Buffer.from([0x91, 0x01, 0x41])); // FIN|RSV1, len1, 'A'
+    r.push(Buffer.from([0x91, 0x01, 0x41]));
     expect(r.drainTextFrames()).toEqual([]);
     expect(r.error).toBe("unsupported rsv bits");
   });

@@ -1,8 +1,3 @@
-// frontmatter 头内扁平字段替换：替换 head 中该键**最后一次**出现的行（与 parseFlat
-// 的 last-wins 读取语义同义），头体其余字节原样保留（逐字节重建：`---\n` + head +
-// `\n---\n` + body 即 splitFrontmatter 的逆）。无 frontmatter / 键缺席 / 键值形态
-// 非法 → undefined（不猜、不重建头、不部分改写）。
-
 import { splitFrontmatter } from "./split.ts";
 
 export function replaceFlatField(text: string, key: string, value: string): string | undefined {

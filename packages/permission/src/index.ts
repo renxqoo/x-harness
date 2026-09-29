@@ -1,6 +1,3 @@
-// @x-harness/permission：档位 profile 表 + 规则词汇表 + auto 决策 + 结构化 broker +
-// 会话授权/习得记忆（docs/PERMISSION-V2-DESIGN.md）。
-
 export type {
   AskPayload,
   AskReply,

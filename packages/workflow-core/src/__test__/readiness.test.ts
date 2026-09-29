@@ -1,10 +1,7 @@
-// 就绪推导单测（件 16 §10）：并发窗、熔断级联、依赖传播（期 2 形态预留验证）。
-
 import { describe, expect, it } from "vitest";
 import { dependencyVerdict, fold, readiness } from "../index.ts";
 import type { RunSnapshot, TaskOutcome, WorkflowEvent } from "../index.ts";
 
-/** 终态事件工厂（undefined = 未终态） */
 const settleOf = (taskId: string, outcome: TaskOutcome | undefined): WorkflowEvent | undefined =>
   outcome === undefined ? undefined : { type: "task/settled", taskId, outcome, cause: outcome === "failed" ? "child-failed" : "task-stop" };
 
@@ -29,7 +26,7 @@ describe("readiness：并发窗与就绪", () => {
   it("submitted 且窗未满 → dispatchable；窗满 → 留待下轮", () => {
     const two = withTasks(3);
     const result = readiness(two, { maxInFlight: 2, circuitBreak: 0 });
-    expect(result.dispatchable).toEqual(["t1", "t2"]); // 窗 2：前两个就绪
+    expect(result.dispatchable).toEqual(["t1", "t2"]);
   });
 
   it("settled 任务不占窗不计就绪", () => {
@@ -49,13 +46,12 @@ describe("readiness：熔断（R6——级联取消建议集）", () => {
     );
     const result = readiness(made, { maxInFlight: 3, circuitBreak: 3 });
     expect(result.dispatchable).toEqual([]);
-    expect(result.circuitDoomed).toEqual(["t4"]); // 未终态任务建议级联取消
+    expect(result.circuitDoomed).toEqual(["t4"]);
   });
 
   it("failed 计数被取消/完成清零 → 熔断不触发", () => {
     const outcomeAt: ReadonlyArray<TaskOutcome | undefined> = ["failed", "cancelled", "failed", undefined];
     const made = withTasks(4, (i) => settleOf(`t${String(i + 1)}`, outcomeAt[i]));
-    // t1 failed(1) → t2 cancelled 清零 → t3 failed(1)：未达 3，不熔断
     const result = readiness(made, { maxInFlight: 3, circuitBreak: 3 });
     expect(result.circuitDoomed).toEqual([]);
     expect(result.dispatchable).toEqual(["t4"]);

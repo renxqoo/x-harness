@@ -1,6 +1,3 @@
-// worktree git 事实纯函数单测（docs/WORKTREE-CONTEXT-AWARENESS.md §1.1/§1.2）：
-// .git file gitdir 解析、gitdir → 主仓顶、HEAD 文本 → 分支——字符串表驱动（零 IO）。
-
 import { describe, expect, it } from "vitest";
 import { branchOfHeadText, parseWorktreeGitdir, worktreeMainOfGitdir } from "../worktree-facts.ts";
 
@@ -16,7 +13,7 @@ describe("parseWorktreeGitdir（.git file 文本 → gitdir）", () => {
 
   it("多行文本中命中 gitdir 行（行首锚——前导空白不匹配）", () => {
     expect(parseWorktreeGitdir("garbage\ngitdir: /a/.git/worktrees/x\nmore")).toEqual({ gitdir: "/a/.git/worktrees/x" });
-    expect(parseWorktreeGitdir("garbage\n gitdir: /a/.git/worktrees/x\nmore")).toBeUndefined(); // 行首空格非 git 产物形态
+    expect(parseWorktreeGitdir("garbage\n gitdir: /a/.git/worktrees/x\nmore")).toBeUndefined();
   });
 
   it("无 gitdir 行（.git 目录读出的内容/坏文件）→ undefined", () => {
@@ -65,7 +62,7 @@ describe("branchOfHeadText（HEAD 文本 → 分支名）", () => {
   });
 
   it("垃圾文本 → undefined", () => {
-    expect(branchOfHeadText("ref: refs/remote/x\n")).toBeUndefined(); // 非 heads
+    expect(branchOfHeadText("ref: refs/remote/x\n")).toBeUndefined();
     expect(branchOfHeadText("nonsense")).toBeUndefined();
     expect(branchOfHeadText("")).toBeUndefined();
   });

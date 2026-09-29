@@ -1,4 +1,3 @@
-// 配对协议契约：QR 路径通道建立/转录签名/SAS、手输码 PAKE 往返、指纹钉存——DESIGN §1.4
 import { describe, expect, it } from "vitest";
 import {
   asGatewayLongTerm,
@@ -34,7 +33,6 @@ describe("QR 路径", () => {
       scope: "interact",
     });
     expect(ch).not.toBeNull();
-    // 手机侧独立派生同一 DH（x25519 双向一致）
     expect(Buffer.from(x25519(devEph.secret, gwEph.pub)!).toString("hex")).not.toBe("");
     const sig = signPairingTranscript(gwLong, ch!.transcript);
     expect(verifyPairingTranscript(gwLong.signingPub, ch!.transcript, sig)).toBe(true);
@@ -60,7 +58,6 @@ describe("QR 路径", () => {
     const sas2 = computeSas({ channelKey: ch.channelKey, transcript: ch.transcript, gatewayFingerprint: gwLong.signingPub, deviceFingerprint: devLong.pub });
     expect(sas1).toBe(sas2);
     expect(sas1).toMatch(/^\d{6}$/);
-    // 转录被改 → SAS 变
     const tampered = { ...ch.transcript, scope: "full" };
     expect(computeSas({ channelKey: ch.channelKey, transcript: tampered, gatewayFingerprint: gwLong.signingPub, deviceFingerprint: devLong.pub })).not.toBe(sas1);
   });

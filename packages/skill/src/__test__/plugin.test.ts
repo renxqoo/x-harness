@@ -1,7 +1,3 @@
-// plugin 装配集成（docs/SKILL.md §1.3/§7）：running 边沿无状态幂等注入——注入/幂等/
-// 同步红线/折叠自愈/封存降级/零快照无痕/多会话/dispose 摘除。
-// loop 以同名 stub 提供（get 返回预置 session）——装配面只消费 get。
-
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,7 +52,6 @@ async function makeWorld(withSkill: boolean, noWarn = false): Promise<World> {
   const unload = await loadPlugins(ctx, [
     stub,
     sessionPlugin,
-    // noWarn=true 不传 onWarn——走 stderr 缺省路径（jsonl onIoError 同例的用例面）
     createSkillPlugin(noWarn ? { skillsDirs: [skillsDir] } : { skillsDirs: [skillsDir], onWarn: (message) => warnings.push(message) }),
   ]);
   const created = await ctx.use(sessionStore).create();
@@ -192,7 +187,7 @@ describe("createSkillPlugin 注入", () => {
     running(world.ctx, world.session.id);
     running(world.ctx, world.session.id);
     const failed = world.warnings.filter((message) => message.includes("append failed") && message.includes("session-disposed"));
-    expect(failed).toHaveLength(2); // 每次 running 存在性检查重试，失败即告警，不崩不累积异常
+    expect(failed).toHaveLength(2);
   });
 
   it("头块（锚点前）经压缩折叠在场：replace 只吃锚点之后，块存活且不重注入", async () => {
@@ -200,7 +195,6 @@ describe("createSkillPlugin 注入", () => {
     running(world.ctx, world.session.id);
     const block = textBlocksOf(world.session)[0] ?? "";
     expect(block).not.toBe("");
-    // 构造 /compact 前形态：[skill块, system 锚点, 历史尾部]
     world.session.append("system/message", { turn: 0, step: 0, text: "system prompt" }, { surfaceOp: "append" });
     world.session.append("user/message", { turn: 1, step: 0, content: [{ type: "text", text: "old turn" }] }, { surfaceOp: "append" });
     const nodes = world.session.surface();
@@ -213,9 +207,9 @@ describe("createSkillPlugin 注入", () => {
       { surfaceOp: { op: "replace", startSeq: tail.seq, endSeq: tail.seq } },
     );
     expect(replaced.ok).toBe(true);
-    expect(textBlocksOf(world.session)).toContain(block); // 头块在锚点前，折叠后在场
+    expect(textBlocksOf(world.session)).toContain(block);
     running(world.ctx, world.session.id);
-    expect(textBlocksOf(world.session)).toEqual([block, "summary"]); // 幂等跳过——无第二块
+    expect(textBlocksOf(world.session)).toEqual([block, "summary"]);
   });
 
   it("多会话：各自首次注入一块", async () => {

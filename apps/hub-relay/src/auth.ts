@@ -1,12 +1,9 @@
-// relay token 体系（DESIGN §1.5）：HS256 JWT（类别隔离 device/gateway/pairing）+
-// enrollment 注册（gateway 长期钥钉存，冲突告警 fail-closed）。
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 
 export type TokenKind = "device" | "gateway" | "pairing";
 
 export interface TokenClaims {
   kind: TokenKind;
-  /** device: deviceId；gateway: installationId；pairing: pairingId */
   subject: string;
   installationId?: string;
   scope?: string;
@@ -41,12 +38,10 @@ export function verifyToken(secret: string, token: string, now: number): TokenCl
   return claims;
 }
 
-/** 新 jti */
 export function newJti(): string {
   return randomUUID();
 }
 
-/** enroll 转录签名内容（gateway 长期钥对它签名——relay 用 gatewayKeyPub 验） */
 export function enrollTranscript(spec: { installationId: string; gatewayKeyPub: string; nodeId: string; nonce: string }): string {
   return `enroll|${spec.installationId}|${spec.gatewayKeyPub}|${spec.nodeId}|${spec.nonce}`;
 }

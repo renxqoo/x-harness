@@ -1,4 +1,3 @@
-// 差距批修复的验收用例：parallel / waitFor / prepend / 装配 join / 生产热替换形态。
 import { describe, expect, it, vi } from "vitest";
 import { createContext } from "../create-context.ts";
 import { loadPlugins } from "../load-plugins.ts";
@@ -15,7 +14,6 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-/** Promise.race 的对侧：ms 后才落定的哨兵值 */
 const later = <T>(value: T, ms: number): Promise<T> =>
   new Promise<T>((resolve) => {
     setTimeout(() => resolve(value), ms);
@@ -38,8 +36,8 @@ describe("parallel 派发（emit 的异步屏障版）", () => {
       finished.push(v * 10);
     });
     await ctx.dispatch(token, { v: 1 });
-    expect(started).toEqual([1, 10]); // 都已启动（并发，非串行）
-    expect(finished).toEqual([10, 1]); // 短的先完成
+    expect(started).toEqual([1, 10]);
+    expect(finished).toEqual([10, 1]);
   });
 
   it("并发是真的：慢监听器不阻塞快监听器完成", async () => {
@@ -88,7 +86,7 @@ describe("parallel 派发（emit 的异步屏障版）", () => {
     child.on(token, (payload) => {
       frozen = Object.isFrozen(payload.nested);
     });
-    await ctx.dispatch(token, { nested: { x: 1 } }); // root 派发看不见 child
+    await ctx.dispatch(token, { nested: { x: 1 } });
     expect(frozen).toBe(false);
     await child.dispatch(token, { nested: { x: 1 } });
     expect(frozen).toBe(true);
@@ -116,23 +114,23 @@ describe("waitFor（延迟 use——DI 停靠的内核原语）", () => {
     const child = ctx.scope({ agentId: "c" });
     const token = defineService<{ n: number }>("svc-root-late");
     const waiting = child.waitFor(token);
-    ctx.provide(token, { n: 2 }); // root 提供
+    ctx.provide(token, { n: 2 });
     await expect(waiting).resolves.toEqual({ n: 2 });
   });
 
   it("方向性：等待者看不见的提供不解析；可见时立即拿到最近值", async () => {
     const ctx = createContext();
     const token = defineService<{ n: number }>("svc-dir");
-    const waiting = ctx.waitFor(token); // root 等待者
+    const waiting = ctx.waitFor(token);
     const child = ctx.scope({ agentId: "c" });
-    child.provide(token, { n: 9 }); // child 提供：root 的 use 看不见
+    child.provide(token, { n: 9 });
     const raced = await Promise.race([
       waiting.then(() => "resolved" as const),
       later("parked", 10),
     ]);
-    expect(raced).toBe("parked"); // 仍停靠
-    ctx.provide(token, { n: 1 }); // root 自己提供
-    await expect(waiting).resolves.toEqual({ n: 1 }); // 拿到 root 最近实现（非 child 的 9）
+    expect(raced).toBe("parked");
+    ctx.provide(token, { n: 1 });
+    await expect(waiting).resolves.toEqual({ n: 1 });
   });
 
   it("等待层 dispose：停靠中的 waiter reject", async () => {
@@ -151,12 +149,12 @@ describe("waitFor（延迟 use——DI 停靠的内核原语）", () => {
     const consumer: Plugin = {
       name: "consumer",
       apply: async (c) => {
-        const db = await c.waitFor(dbToken); // 依赖未到：apply 停靠在此
+        const db = await c.waitFor(dbToken);
         seen.push(db.query());
       },
     };
     const loading = loadPlugins(ctx, [consumer]);
-    await sleep(2); // consumer 已停靠
+    await sleep(2);
     await loadPlugins(ctx, [
       {
         name: "db",
@@ -198,7 +196,7 @@ describe("prepend 次序旋钮", () => {
     ctx.on(token, async (i, next) => next(i + 1));
     ctx.on(token, async (i, next) => next(i + 10), { prepend: true });
     const out = await ctx.dispatch(token, 1, async (i) => i);
-    expect(out).toBe(12); // (+10 外层)(+1 内层)
+    expect(out).toBe(12);
   });
 });
 
@@ -215,22 +213,21 @@ describe("装配 join（dispose 自动等在飞装配 settle）", () => {
         name: "slow",
         apply: async (c) => {
           c.provide(svc, { n: 1 });
-          await gated; // 装配在飞
+          await gated;
         },
       },
     ]);
     await sleep(2);
-    const disposing = ctx.dispose(); // 装配未 settle 即开始回卷
+    const disposing = ctx.dispose();
     await sleep(2);
-    // join 语义：dispose 不得在装配 settle 前完成（逆序回卷会先拆已注册项——冲突一律 fail-fast）
     const observed = await Promise.race([
       disposing.then(() => "disposed" as const),
       later("pending", 5),
     ]);
     expect(observed).toBe("pending");
     gate?.();
-    await expect(loading).rejects.toThrow(); // apply 收尾撞 disposing 层 → fail-fast
-    await expect(disposing).resolves.toBeUndefined(); // 装配 settle 后 dispose 完成、不挂死
+    await expect(loading).rejects.toThrow();
+    await expect(disposing).resolves.toBeUndefined();
     expect(ctx.tryUse(svc)).toBeUndefined();
   });
 
@@ -252,16 +249,16 @@ describe("装配 join（dispose 自动等在飞装配 settle）", () => {
       {
         name: "b",
         apply: (c) => {
-          void c.provide(defineService<{ x: number }>("svc-b"), { x: 1 }); // disposing 层 → throw
+          void c.provide(defineService<{ x: number }>("svc-b"), { x: 1 });
         },
       },
     ]);
     await sleep(2);
     const disposing = ctx.dispose();
     await sleep(2);
-    gate?.(); // 放行 a；b 的注册撞上 disposing 层
+    gate?.();
     await expect(loading).rejects.toThrow(/rejected after dispose/);
-    await expect(disposing).resolves.toBeUndefined(); // join effect 已 settle，dispose 完成
+    await expect(disposing).resolves.toBeUndefined();
   });
 });
 
@@ -270,14 +267,14 @@ describe("生产热替换形态（unload v1 + load v2，状态经宿主服务迁
     const ctx = createContext();
     const tick = defineEvent<{ v: number }>("tick-swap");
     const state = defineService<{ count: number }>("swap-state");
-    ctx.provide(state, { count: 0 }); // 宿主持有状态——插件版本的迁移通道
+    ctx.provide(state, { count: 0 });
 
     const [unloadV1] = await loadPlugins(ctx, [
       {
         name: "counter",
         apply: (c) => {
           c.on(tick, () => {
-            c.use(state).count += 1; // v1：+1
+            c.use(state).count += 1;
           });
         },
       },
@@ -293,17 +290,17 @@ describe("生产热替换形态（unload v1 + load v2，状态经宿主服务迁
         name: "counter",
         apply: (c) => {
           c.on(tick, () => {
-            c.use(state).count += 10; // v2：+10
+            c.use(state).count += 10;
           });
         },
       },
     ]);
     ctx.emit(tick, { v: 1 });
-    expect(ctx.use(state).count).toBe(12); // 状态保真 + 新行为
+    expect(ctx.use(state).count).toBe(12);
     const spy = vi.fn();
     ctx.on(tick, () => spy());
     ctx.emit(tick, { v: 1 });
-    expect(spy).toHaveBeenCalledTimes(1); // v1 的监听器已随卸载消失（只剩 v2 + 本监听）
+    expect(spy).toHaveBeenCalledTimes(1);
     expect(ctx.use(state).count).toBe(22);
   });
 });

@@ -1,9 +1,3 @@
-// 对抗审查红测（7c16b4e harness 面·裁决性用例）：真实 delegation 栈 spawn untyped
-// worktree 子，捕获子首 LLM 请求 system 文本——验证 Track U（docs/WORKTREE-CONTEXT-
-// AWARENESS §1.4：untyped/fork 子走 prompt.assemble 会话层覆盖，得完整 base/core +
-// worktree ENV）是否真的被消费。worktree-context.ts:1-4 注释自称「untyped/fork 子走
-// prompt.assemble（无静态 systemPrompt 短路）」——本用例核实该前提。
-
 import { describe, expect, it, afterEach } from "vitest";
 import { execFile } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, existsSync } from "node:fs";
@@ -99,7 +93,7 @@ describe("Track U 真实消费路径（untyped worktree 子经 agent_spawn）", 
     const parent = made.value;
     parent.agent.followup("go");
     await parent.agent.whenIdle();
-    const parentCalls = calls.length; // 父首请求已落卷——后续 calls 即子请求
+    const parentCalls = calls.length;
 
     const spawned = await registry.dispatch({
       callId: "adv-1",
@@ -115,17 +109,13 @@ describe("Track U 真实消费路径（untyped worktree 子经 agent_spawn）", 
     const wtPath = join(wtParent, entry);
     expect(existsSync(join(wtPath, ".git"))).toBe(true);
 
-    await sleep(600); // 子首步落卷
+    await sleep(600);
     const childCalls = calls.slice(parentCalls);
-    expect(childCalls.length).toBeGreaterThan(0); // 子首 LLM 请求在场
+    expect(childCalls.length).toBeGreaterThan(0);
     const childSystem = childCalls.map(systemTextOf).join("\n@@@\n");
-    // 断言 1（Track U 契约 docs/WORKTREE-CONTEXT-AWARENESS §1.4 D2'）：untyped/fork 子
-    // 走 prompt.assemble 会话层覆盖——system 应是完整 base/core + worktree ENV
     expect(childSystem).toContain("You are xh");
-    // 断言 2：ENV 块是 worktree 事实
     expect(childSystem).toContain(`- Working directory: ${wtPath}`);
     expect(childSystem).toContain(`- Git branch: x-harness/${agentId}`);
-    // 根层零污染
     expect(ctx.use(systemPrompt).assemble().text).toContain(`- Working directory: ${repo}`);
     await parent.dispose();
     await ctx.dispose();

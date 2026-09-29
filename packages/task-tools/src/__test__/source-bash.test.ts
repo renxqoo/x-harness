@@ -1,7 +1,3 @@
-// bash 源测试（docs/TASKS.md §3 + docs/TASK-PUSH-DESIGN.md §2.1）：probe 会话键控 /
-// stop 收敛终态非 mid-kill / 已终态 already finished / evict 竞态（读面归日志文件——
-// 输出断言见 tool-bash log-sink/tasks 测试）。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,7 +68,7 @@ describe("bash task source stop", () => {
     expect(out.text).toContain("Stopped");
     expect(out.text).toContain("killed");
     expect(out.text).not.toContain("mid-kill");
-    expect(out.text).toMatch(/exit=(143|137)/); // settle 后可渲染退出码（TERM=143/KILL=137）——null 属未收敛
+    expect(out.text).toMatch(/exit=(143|137)/);
   });
 
   it("an already-finished task stops with the already finished prefix (no false Stopped)", async () => {
@@ -84,13 +80,13 @@ describe("bash task source stop", () => {
     if (!out.ok) throw new Error(out.reason);
     expect(out.text).toContain("already finished");
     expect(out.text).toContain("completed exit=0");
-    expect(out.text).toContain("bytes="); // 状态行与通知首行同口径（bytes 在场）
+    expect(out.text).toContain("bytes=");
   });
 
   it("a task evicted mid-stop resolves to not-found (unified fallback at the router)", async () => {
     const source = bashTaskSource(tasks);
     const id = await start("sleep 30");
-    tasks.evict(SESSION); // stop 前记录已消失——发起即 404
+    tasks.evict(SESSION);
     const out = await source.stop(id, SESSION);
     expect(out).toEqual({ ok: false, reason: `not-found:${id}` });
   });
@@ -99,7 +95,7 @@ describe("bash task source stop", () => {
     const source = bashTaskSource(tasks);
     const id = await start("sleep 30");
     const stopping = source.stop(id, SESSION);
-    tasks.evict(SESSION); // 收敛窗内（waitSettled 首拍后）记录被逐出——settled=undefined 走 list 回落
+    tasks.evict(SESSION);
     const out = await stopping;
     expect(out).toEqual({ ok: false, reason: `not-found:${id}` });
   });

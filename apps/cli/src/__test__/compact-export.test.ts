@@ -1,8 +1,3 @@
-// /compact 与 /export 集成（docs/CLI.md §2.3、§4）：真装配世界 + 剧本 adapter。
-// compact 关键回归：折叠后保留 system 锚点；**折叠后再跑一个 turn，摘要仍在 surface**
-// （对抗审查 #1 症状：锚点被折叠 → 下一 turn 被锚点覆写机制摧毁摘要）。
-// export：flush 屏障后拷贝、已存在拒绝、--no-session 内存序列化。
-
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,7 +67,7 @@ async function makeFixture(scripts: LlmChunk[][], persist: boolean): Promise<Fix
 
     cwd: root,
     sessionRoot: join(root, "sessions"),
-    compaction: { contextWindow: 200_000, triggerPct: 92, autocompact: false }, // 手动 /compact 走 compactionRunner（生产路径）；autocompact:false 装置隔离——§7.4 分档后 cp 缺省显著降低，防 CP 抢占 script 队列
+    compaction: { contextWindow: 200_000, triggerPct: 92, autocompact: false },
     persist,
     config: CONFIG.config,
     resolution: CONFIG.resolution,
@@ -116,9 +111,9 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
     const surface = handle.agent.session.surface();
     expect(surface.length).toBeLessThan(before);
     const anchor = surface.find((node) => (node.event.data as { text?: unknown }).text !== undefined);
-    expect(anchor?.event.type).toBe("system/message"); // 锚点保留（anchorIndexOf 谓词定位——预锚快照可占 surface[0]）
+    expect(anchor?.event.type).toBe("system/message");
     const text = JSON.stringify(surface);
-    expect(text).toContain("SUMMARY-TEXT"); // 摘要落 surface（checkpoint user/message；尾轮原文按 keepRecent 保留）
+    expect(text).toContain("SUMMARY-TEXT");
     await handle.dispose();
   });
 
@@ -130,18 +125,14 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
     expect(opts.triggerPct).toBe(92);
     expect(opts.keepRecentTokens).toBe(999);
     expect(opts.keepMinTurns).toBe(7);
-    // 未传时不携带（档位缺省生效面）
     const bare = compactionOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 200_000 } });
     expect("triggerPct" in bare).toBe(false);
   });
 
   it("autocompact 装配在场:主窗与 compaction 同源派生(autoCompactOptionsOf),CP 摘要面缺省回落 runner.summarizer", async () => {
-    // 主窗同源:显式传参档
     expect(autoCompactOptionsOf({ config: CONFIG.config, resolution: CONFIG.resolution, compaction: { contextWindow: 77_000 } })).toEqual({ contextWindow: 77_000 });
-    // 主窗同源:兜底档(与 compactionOptionsOf 同一数字)
     const base = { config: CONFIG.config, resolution: CONFIG.resolution } as Parameters<typeof autoCompactOptionsOf>[0];
     expect(autoCompactOptionsOf(base).contextWindow).toBe(compactionOptionsOf(base).contextWindow);
-    // CP 面单一真相:world 里 runner.summarizer 在场(autoCompactKit 不传 summarizer 时的回落源)
     const fixture = await makeFixture([textScript("a-1")], false);
     const handle = await makeAgent(fixture, "auto-in");
     expect(fixture.world.ctx.use(compactionRunner).summarizer).toBeDefined();
@@ -150,42 +141,36 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
 
   it("主窗链三档:显式传参 > providers 声明窗 > 保守兜底 128k——contextWindow 必须吃 providers.json 声明(修复:恒兜底忽略声明窗)", async () => {
     const base: Parameters<typeof compactionOptionsOf>[0] = { config: CONFIG.config, resolution: CONFIG.resolution };
-    // 兜底档:档案无 contextWindow → 128_000
     expect(compactionOptionsOf(base).contextWindow).toBe(128_000);
-    // 声明窗档:档案带 contextWindow → 声明值生效
     const withWindow: Parameters<typeof compactionOptionsOf>[0] = {
       config: { ...CONFIG.config, providers: [{ ...CONFIG.config.providers[0]!, contextWindow: 999_000 }] },
       resolution: CONFIG.resolution,
     };
     expect(compactionOptionsOf(withWindow).contextWindow).toBe(999_000);
-    // 显式档:compaction.contextWindow 恒最高优先
     const explicit: Parameters<typeof compactionOptionsOf>[0] = { ...base, compaction: { contextWindow: 50_000 } };
     expect(compactionOptionsOf(explicit).contextWindow).toBe(50_000);
   });
 
   it("生产参数(缺省 keepRecentTokens=20k):小会话 → no-cut-point(nothing to compact);大粘贴越过保留区 → 真折叠", async () => {
-    // 小会话:两轮短对话总量远小于 20k 保留预算 → 尾保留吞没全部起点,无切口
     const small = await makeFixture([textScript("a-1"), textScript("a-2")], false);
     const smallHandle = await makeAgent(small, "compact-small");
     await runTurn(smallHandle, "question-1");
     await runTurn(smallHandle, "question-2");
     const noop = await small.world.ctx.use(compactionRunner).compact({ session: smallHandle.agent.session.id, signal: new AbortController().signal });
     expect(noop).toEqual({ ok: false, reason: "no-cut-point" });
-    expect(smallHandle.agent.session.events().some((event) => typeof event.surfaceOp === "object")).toBe(false); // 无落账
+    expect(smallHandle.agent.session.events().some((event) => typeof event.surfaceOp === "object")).toBe(false);
     await smallHandle.dispose();
 
-    // 大会话:中间轮 >20k token 的 CJK 粘贴越过保留预算 → 生产参数下真折叠
-    // (首个真轮不可折——被摘要区间须含真轮起点;大粘贴须在早轮之后的轮)
-    const bigPaste = "长".repeat(80_000); // CJK 1:1 计量——80k token 越过 20k 保留预算
+    const bigPaste = "长".repeat(80_000);
     const big = await makeFixture([textScript("b-1"), textScript("b-2"), textScript("b-3"), textScript("SUMMARY-BIG")], false);
     const bigHandle = await makeAgent(big, "compact-big");
     await runTurn(bigHandle, "question-1");
     await runTurn(bigHandle, bigPaste);
     await runTurn(bigHandle, "question-3");
     const folded = await big.world.ctx.use(compactionRunner).compact({ session: bigHandle.agent.session.id, signal: new AbortController().signal });
-    expect(folded.ok).toBe(true); // 不传 keepRecentTokens(生产形态)——大粘贴产生真切口
+    expect(folded.ok).toBe(true);
     const surface = bigHandle.agent.session.surface();
-    expect(surface.length).toBeLessThan(bigHandle.agent.session.events().length); // 投影收缩(replace 在场)
+    expect(surface.length).toBeLessThan(bigHandle.agent.session.events().length);
     expect(JSON.stringify(surface)).toContain("SUMMARY-BIG");
     await bigHandle.dispose();
   });
@@ -199,7 +184,7 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
     expect(folded.ok).toBe(true);
     await runTurn(handle, "question-3");
     const text = JSON.stringify(handle.agent.session.surface());
-    expect(text).toContain("SUMMARY-KEEP"); // 摘要存活
+    expect(text).toContain("SUMMARY-KEEP");
     expect(handle.agent.session.events().filter((event) => event.type === "system/message").length).toBeGreaterThanOrEqual(1);
     await handle.dispose();
   });
@@ -211,7 +196,7 @@ describe("compactionRunner 手动面（/compact 生产路径）", () => {
     await runTurn(handle, "question-2");
     const outcome = await fixture.world.ctx.use(compactionRunner).compact({ session: handle.agent.session.id, keepRecentTokens: 0, signal: new AbortController().signal });
     expect(outcome).toMatchObject({ ok: false, reason: "summarize-failed" });
-    expect(handle.agent.session.events().some((event) => typeof event.surfaceOp === "object")).toBe(false); // 失败不落账
+    expect(handle.agent.session.events().some((event) => typeof event.surfaceOp === "object")).toBe(false);
     await handle.dispose();
   });
 });

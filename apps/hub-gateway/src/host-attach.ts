@@ -1,15 +1,11 @@
-// host-hub 附着（DESIGN §4/§5）：spawn host 进程、stdin/stdout JSONL 泵、心跳死线监督
-// （>10s 杀+拉起）、response 帧分类回调（前缀识别不 parse body——host frame-classify 同思路）。
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { EventEmitter } from "node:events";
 
 export interface HostAttachOptions {
-  /** host 二进制解析结果（command + args） */
   exec: { command: string; args: string[] };
   env: Record<string, string>;
-  /** 心跳死线（ms） */
   heartbeatDeadlineMs: number;
   onLine(line: string): void;
   onRestart(reason: string): void;
@@ -23,12 +19,10 @@ export interface HostHandle {
   alive(): boolean;
 }
 
-/** hostBin 解析序（§3.3）：显式配置 → 仓库 apps/host-hub 源入口 → 拒启（不得把 gateway 自身当 host——E7） */
 export function resolveHostBin(hostBin: string | null): { command: string; args: string[] } {
   if (hostBin !== null && hostBin.length > 0) {
     return { command: hostBin, args: [] };
   }
-  // 仓库内形态：monorepo 根下 apps/host-hub/host 入口（bun 直跑 TS 源）
   const repoRoot = process.cwd();
   const candidates = [join(repoRoot, "apps/host-hub/src/host/cli.ts")];
   for (const candidate of candidates) {
@@ -81,8 +75,7 @@ export class HostAttach {
     });
     child.on("exit", (code, signal) => {
       if (this.child === child) this.child = null;
-      if (this.deadlined) return; // 停机/重启流程中——该路径自己负责
-      // 自然退出：有界重试拉起（C1——host 崩一次不能永久失联）
+      if (this.deadlined) return;
       this.options.onRestart(`host exited code=${String(code)} signal=${String(signal)}`);
       void this.restart(String(signal ?? code ?? "exit"));
     });
@@ -129,7 +122,6 @@ export class HostAttach {
     return this.child !== null && this.child.exitCode === null;
   }
 
-  /** 测试面：直接杀子进程（exit-拉起路径验证） */
   killChildForTest(): void {
     this.child?.kill("SIGKILL");
   }

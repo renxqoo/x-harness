@@ -1,6 +1,3 @@
-// error-recovery 插件集成装置：真装配 session+tools+llm+loop（+可选 llm-retry）+
-// 脚本化假适配器——分族升级/总封顶/清零/防预烧/死类直通/respond 落卷与脱敏/收束 resume。
-
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Plugin } from "@x-harness/core";
 import { llmPlugin, llmRuntime } from "@x-harness/llm";
@@ -31,7 +28,6 @@ export const resetRecoveryWorlds = (): void => {
   worlds = [];
 };
 
-/** 脚本耗尽后兜底：error E_EXHAUSTED（防「静默成功」干扰计数断言） */
 function fallbackScript(): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LlmChunk> {
     yield { type: "finish", finish: { kind: "error", message: "exhausted", code: "E_EXHAUSTED" } };

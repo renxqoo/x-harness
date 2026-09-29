@@ -1,14 +1,10 @@
-// 配对服务器（DESIGN §1.4）：配对会话（TTL 120s/单次/5 次锁定 5min）、QR 与手输码
-// 两路径、双向 SAS 录入（owner 键入手机 SAS）、pairingTicket 申请（经 relay）。
 import { computeSas, gatewayEstablishChannel, gatewayPakeRespond, generateManualCode, mixRatchetRoot, newDeviceEphemeral, newPairingId, signPairingTranscript, type GatewayLongTerm } from "@x-harness/remote-protocol";
 import type { GatewayIdentity } from "./identity.ts";
 import { PAIRING_LOCKOUT_MS, PAIRING_MAX_ATTEMPTS, PAIRING_TTL_MS, SAS_DIGITS } from "@x-harness/remote-protocol";
 import type { AuditLog } from "./audit.ts";
 
 export interface PairingSession {
-  /** 已签发的设备连接 token（单 token 语义——重放 device-keys 返回同一枚） */
   deviceToken: string | null;
-  /** 配对档位（R3 H6：startQr/startManual 的 scope 参数线程化——注册落账用） */
   scope: "read" | "interact" | "full";
   pairingId: string;
   mode: "qr" | "manual";
@@ -19,7 +15,6 @@ export interface PairingSession {
   consumed: boolean;
   failedAttempts: number;
   lockedUntil: number;
-  /** 握手中间态 */
   channelKey: Uint8Array | null;
   transcriptKey: string | null;
   deviceEphPub: string | null;
@@ -29,16 +24,11 @@ export interface PairingSession {
 export interface PairingServerOptions {
   identity: GatewayIdentity;
   relayUrl: string;
-  /** relay 签名钥指纹（QR 携带——E3：占位符会被手机钉存成假指纹） */
   relayKeyFingerprint: string;
   audit: AuditLog;
   now(): number;
-  /** pairingTicket 申请（经 relay HTTP；测试注入 fake） */
   requestPairingTicket(pairingId: string): Promise<string>;
-  /** 注册完成回调（登记设备 + 发 relay token——B3 由 relay-link 提供） */
   onRegistered(device: { deviceId: string; name: string; deviceType: string; platform: string; appVersion: string; longTermPub: string; scope: "read" | "interact" | "full" }): Promise<void>;
-  /** 设备连接 token 签发（注册落账后；ack 帧随 token 下发——手机端持久化后连 relay；
-   *  deviceLongTermPub 透传钉存——设备 token 续期挑战的验签锚） */
   requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null>;
   maxConcurrent: number;
 }
@@ -46,19 +36,14 @@ export interface PairingServerOptions {
 export interface PairingServer {
   startQr(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; qrPayload: string; ticket: string }>;
   startManual(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; manualCode: string; ticket: string }>;
-  /** 手机 request（QR 路径） */
   handleDeviceRequest(spec: { pairingId: string; deviceEphemeralPub: string; deviceInfo: { name: string; deviceType: string; platform: string; appVersion: string } }): Promise<{ ok: true; sas: string; gatewaySignature: string } | { ok: false; reason: string }>;
-  /** 手机 PAKE 发起（手输路径） */
   handlePakeInitiate(spec: { pairingId: string; messageA: string; deviceInfo: { name: string; deviceType: string; platform: string; appVersion: string } }): Promise<{ ok: true; messageB: string; confirm: string } | { ok: false; reason: string }>;
-  /** owner 键入 SAS（双向录入）→ 注册设备 */
   confirmWithSas(spec: { pairingId: string; ownerTypedSas: string; deviceLongTermPub: string; deviceBoxPub?: string }): Promise<{ ok: true; deviceId: string; ratchetSeed: Uint8Array } | { ok: false; reason: string }>;
   cancel(pairingId: string): void;
   sessionOf(pairingId: string): PairingSession | null;
-  /** 设备配对帧（relay pairing 面：QR request / PAKE 发起 / 设备长期钥呈递） */
   handlePairingFrame(spec: { pairingId: string; message: { p: string; [key: string]: unknown } }): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }>;
 }
 
-/** 帧载荷里的设备信息规整（缺省降级——垃圾输入不崩） */
 function coerceDeviceInfo(raw: unknown): { name: string; deviceType: string; platform: string; appVersion: string } {
   if (typeof raw !== "object" || raw === null) {
     return { name: "device", deviceType: "phone", platform: "unknown", appVersion: "1" };
@@ -75,7 +60,6 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
 
   function sweep(): void {
     const nowMs = options.now();
-    // 过期即删（TTL 是唯一有效性判据——E2：未消费的过期会话不得滞留）
     for (const [id, session] of sessions) {
       if (session.expiresAt < nowMs) sessions.delete(id);
     }
@@ -155,7 +139,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
         gwEphemeralPub: session.gwEphemeral.pub,
         deviceEphemeralPub: spec.deviceEphemeralPub,
         relayUrl: options.relayUrl,
-        scope: "read", // 转录域常量（R3 复审：与手机验签域同值钉死——session.scope 只进注册落账）
+        scope: "read",
       });
       if (channel === null) return Promise.resolve({ ok: false as const, reason: "channel establishment failed" });
       session.channelKey = channel.channelKey;
@@ -181,7 +165,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       }
       const resp = gatewayPakeRespond(session.manualCode, spec.messageA, session.pairingId);
       session.channelKey = new Uint8Array(Buffer.from(resp.channel.shared, "hex"));
-      session.deviceEphPub = spec.deviceInfo.name; // PAKE 路径无设备临时钥——用 name 占位（转录域）
+      session.deviceEphPub = spec.deviceInfo.name;
       session.sas = computeSas({ channelKey: session.channelKey, transcript: { pairingId: session.pairingId, gwEph: session.gwEphemeral.pub, devEph: spec.messageA, relayUrl: options.relayUrl, scope: "read" }, gatewayFingerprint: options.identity.signingPub, deviceFingerprint: spec.deviceInfo.name });
       return Promise.resolve({ ok: true as const, messageB: resp.message, confirm: resp.channel.confirm });
     },
@@ -211,7 +195,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
         platform: "unknown",
         appVersion: "1",
         longTermPub: spec.deviceLongTermPub,
-        scope: session.scope, // R3 复审 H6：落账用配对发起档（此前硬编码 read）
+        scope: session.scope,
       });
       void options.audit.record("pairing-confirmed", { pairingId: session.pairingId, deviceId });
       return Promise.resolve({ ok: true as const, deviceId, ratchetSeed });
@@ -228,8 +212,6 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       const session = sessions.get(spec.pairingId);
       if (session === undefined) return { ok: false, reason: "no such pairing" };
       const nowMs = options.now();
-      // device-keys 是配对收尾通道：confirm（consumed）后仍放行——ack 携 relayToken 是
-      // 设备注册的最后一步（其余帧在 consumed 后拒绝）
       if (spec.message.p === "device-keys") {
         if (nowMs > session.expiresAt) return { ok: false, reason: "pairing expired" };
         return pairingFrameInner({ server: this, session, spec, deps: options });
@@ -243,7 +225,6 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
 
 export { SAS_DIGITS };
 
-/** 配对帧分派（p 消息判别）——handlePairingFrame 的实现体（复杂度拆分件） */
 interface PairingFrameSpec {
   server: PairingServer;
   session: PairingSession;
@@ -276,13 +257,10 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
 
 }
 
-/** pake-b 应答构造（sas/gwEph/gatewayPub 随帧下发——手机端本地重建 SAS 转录与
- *  网关身份绑定校验用；线上 sas 仅作比对，本地推导是唯一真相（R2 P0 修复配套）。 */
 function pakeBReply(res: { ok: true; messageB: string; confirm: string }, sas: string | null, identity: { gwEphemeralPub: string; signingPub: string }): { ok: true; reply: { p: string; [key: string]: unknown } } {
   return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm, gwEph: identity.gwEphemeralPub, gatewayPub: identity.signingPub, ...(sas !== null ? { sas } : {}) } };
 }
 
-/** device-keys 帧应答（confirm 后携 relayToken——单 token 语义）。 */
 async function deviceKeysReply(ctx: { session: PairingSession; spec: { pairingId: string; message: { p: string; [key: string]: unknown } }; deps: PairingServerOptions }): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }> {
   const { session, spec, deps } = ctx;
   const longTermPub = typeof spec.message.longTermPub === "string" ? spec.message.longTermPub : "";
@@ -291,7 +269,6 @@ async function deviceKeysReply(ctx: { session: PairingSession; spec: { pairingId
   (session as PairingSession & { deviceLongTermPub?: string }).deviceLongTermPub = longTermPub;
   if (!session.consumed) return { ok: true, reply: { p: "ack" } };
   const deviceId = `d_${session.pairingId.slice(3)}`;
-  // 单 token 语义（R2 H6）：首枚缓存重发——重放不再铸造新 jti
   if (session.deviceToken === null) {
     const token = await deps.requestDeviceToken(deviceId, longTermPub);
     if (token === null) return { ok: false, reason: "device token unavailable" };

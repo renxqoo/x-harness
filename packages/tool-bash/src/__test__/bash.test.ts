@@ -1,5 +1,3 @@
-// bash 工具测试（docs/TOOLBOX.md §4/§6——交集 bash 11 条 + 进程泄漏回归源）。
-
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -44,7 +42,7 @@ const bash = (args: Record<string, unknown>, signal?: AbortSignal): Promise<{ co
 describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
   it("退出码可见且非 isError；成功静默 → (no output)；stdout 到场", async () => {
     const fail = await bash({ command: "echo out; exit 3" });
-    expect(fail.isError).toBeUndefined(); // 非零退出不是工具错误
+    expect(fail.isError).toBeUndefined();
     expect(fail.content).toContain("out");
     expect(fail.content).toContain("[exit code: 3]");
     const silent = await bash({ command: "true" });
@@ -68,7 +66,7 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
     const r = await bash({ command: "trap 'exit 0' TERM; sleep 30", timeout: 300 });
     expect(r.content).toContain("[timed out after 300ms]");
     expect(r.content).toContain("raise timeout");
-    expect(r.content).not.toMatch(/\[exit code: 0\]\s*$/); // 超时标记归因优先
+    expect(r.content).not.toMatch(/\[exit code: 0\]\s*$/);
   }, 15_000);
 
   it("timeout 校验表：0/负/超 maxTimeoutMs 拒绝", async () => {
@@ -79,26 +77,23 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
   });
 
   it("截断保尾部三件套：标注在场+尾部内容在场+spill 字节级等于全文（审查 B-P2）", async () => {
-    const r = await bash({ command: "seq 1 100000" }); // 100k 行 > 行帽
+    const r = await bash({ command: "seq 1 100000" });
     expect(r.content).toContain("[output truncated; full output:");
-    expect(r.content).toContain("100000"); // 尾部内容保住
+    expect(r.content).toContain("100000");
     const spill = r.content.match(/full output: ([^\]\s]+)/)?.[1];
     expect(spill).toBeDefined();
-    // 字节级全文比对（审查 B-P2：startsWith/endsWith 会漏中段损坏）
     const expected = Buffer.from(`${Array.from({ length: 100_000 }, (_, i) => String(i + 1)).join("\n")}\n`);
     expect(readFileSync(spill as string).equals(expected)).toBe(true);
-    // 行帽口径：展示 ≤ 2000 行（尾换行不多算）
     const shown = r.content.split("\n").filter((line) => /^\d+$/.test(line));
     expect(shown.length).toBeLessThanOrEqual(2_000);
-    expect(shown[0]).not.toBe("1"); // 头部被截
+    expect(shown[0]).not.toBe("1");
   }, 20_000);
 
   it("撕裂 UTF-8：跨 chunk 多字节字符解码正确（无替换符）；多字节超帽截断必收敛（回归：字节校验循环死循环 99% CPU）", async () => {
-    const r = await bash({ command: "printf '€%.0s' $(seq 1 20000)" }); // 60KB 欧元符跨 chunk
+    const r = await bash({ command: "printf '€%.0s' $(seq 1 20000)" });
     expect(r.content).not.toContain("�");
     expect(r.content).toContain("€");
-    // 4 字节/字符（emoji）超 30KB 帽：字符数帽内但字节超帽——取尾必须收敛而非空转
-    const emoji = await bash({ command: "printf '😀%.0s' $(seq 1 20000)" }); // 80KB emoji
+    const emoji = await bash({ command: "printf '😀%.0s' $(seq 1 20000)" });
     expect(emoji.content).not.toContain("�");
     expect(emoji.content).toContain("😀");
     expect(emoji.content).toContain("[output truncated");
@@ -112,21 +107,19 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
     });
     controller.abort();
     const r = await promise;
-    expect(r.content.toLowerCase()).toContain("abort"); // 管线归一文案
-    // 组探活：从输出反查不可行——改由下一条用例的 marker 法 + 此处只验收敛速度
+    expect(r.content.toLowerCase()).toContain("abort");
   }, 10_000);
 
   it("回归（进程泄漏）：abort/超时后无存活子进程（marker 文件法 + 墙钟）", async () => {
-    // 超时后被杀的组若仍有活进程，marker 会在杀后继续被写
     const marker = join(root, "alive-marker");
     const started = Date.now();
     await bash({ command: `(sleep 2; touch after-kill) & while true; do :; done; true`, timeout: 300 });
-    expect(Date.now() - started).toBeLessThan(8_000); // 墙钟：没挂到缺省 120s
+    expect(Date.now() - started).toBeLessThan(8_000);
     await new Promise((resolve) => {
       setTimeout(resolve, 2_500);
     });
     expect(existsSync(marker)).toBe(false);
-    expect(existsSync(join(root, "after-kill"))).toBe(false); // 组杀覆盖后台孙进程
+    expect(existsSync(join(root, "after-kill"))).toBe(false);
   }, 15_000);
 
   it("pre-abort 零 spawn（回归 D28）：marker 文件不出现", async () => {
@@ -145,7 +138,7 @@ describe("bash（docs/TOOLBOX.md §4——交集 11 条）", () => {
     const nul = await bash({ command: "a\u0000b" });
     expect(nul.content).toContain("NUL_IN_ARGUMENT");
     const killed = await bash({ command: "kill -9 $$" });
-    expect(killed.content).toContain("[exit code: 137]"); // 信号死如实可见（Bun 折算 128+9）
+    expect(killed.content).toContain("[exit code: 137]");
   });
 
   it("大输出场景双流不堵管：stdout+stderr 同发完成（防死锁假挂）", async () => {
@@ -160,12 +153,12 @@ describe("回归（审查 A-P1）：组长速死孙进程——组探活不提�
     const marker = join(root, "grandchild-marker");
     const started = Date.now();
     const r = await bash({ command: `sh -c 'trap "" TERM; sleep 6; touch ${marker}' >/dev/null 2>&1 & exit 0`, timeout: 500 });
-    expect(r.content).toContain("[exit code: 0]"); // 组长立即退出
-    expect(Date.now() - started).toBeLessThan(10_000); // 但工具等到组净（孙进程被 KILL 兜底）
+    expect(r.content).toContain("[exit code: 0]");
+    expect(Date.now() - started).toBeLessThan(10_000);
     await new Promise((resolve) => {
       setTimeout(resolve, 6_500);
     });
-    expect(existsSync(marker)).toBe(false); // 孙进程被升级 KILL——无孤儿
+    expect(existsSync(marker)).toBe(false);
   }, 20_000);
 
   it("普通 [INFO] 文本不被 ANSI 清洗啃噬（锚定 ESC 回归）", async () => {
@@ -178,7 +171,7 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
   it("宿主进程退出 → 活组被 exit handler SIGKILL（marker 不出现）", async () => {
     const marker = join(root, "leak-marker");
     const script = join(root, "host-exit-runner.ts");
-    const repo = resolve(import.meta.dirname, "../../../.."); // 仓根（cwd 无关——W3 F7 根治：从包目录启动 vitest 不再误诊）
+    const repo = resolve(import.meta.dirname, "../../../..");
     writeFileSync(
       script,
       [
@@ -198,9 +191,9 @@ describe("host-exit 清场（审查 B-P1：真子进程验证，非注册簿自�
     const code = await child.exited;
     expect(code).toBe(0);
     await new Promise((resolve) => {
-      setTimeout(resolve, 3_500); // sleep 3 到点：若组未被杀，marker 会出现
+      setTimeout(resolve, 3_500);
     });
-    expect(existsSync(marker)).toBe(false); // 清场杀净——无孤儿孙进程
+    expect(existsSync(marker)).toBe(false);
   }, 15_000);
 });
 

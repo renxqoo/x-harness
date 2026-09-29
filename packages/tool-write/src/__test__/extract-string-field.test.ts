@@ -1,10 +1,6 @@
-// 提取器测试（docs/TRUNCATED-TOOL-RESCUE.md 层 2 测试口径——参数化 field 跑 content 与
-// new_string 两遍）：转义边界、半截前缀、path 半截、丢序列、裸控制字符保真。
-
 import { describe, expect, it } from "vitest";
 import { extractStringField } from "../extract-string-field.ts";
 
-/** 参数化双字段：同一行为在 write（content）与 edit（new_string）两提取面各钉一遍 */
 const FIELDS = ["content", "new_string"] as const;
 
 describe("extractStringField（参数化：content + new_string）", () => {

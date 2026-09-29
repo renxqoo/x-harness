@@ -1,14 +1,7 @@
-// process 模式错误路由 + 注册落位（docs/PLUGIN-MANAGER.md 裁决 3 / 裁决 9）：
-//   错误路由——emit 监听器：catch → 归属记录 + 信封，不 rethrow（与内核 I3 隔离一致，但带归属）；
-//              waterfall/serial/guard/parallel 中间件：catch → 归属记录 → rethrow（关键路径不可吞）。
-//   注册落位——provide/on 落平台 root（可见性向上：chain-up 决定子层注册对平台不可见），
-//              disposer 链进插件 scope（回卷向下：scope dispose 收编 root 注册）。
-
 import type { AnyToken, Chain, ChainMiddleware, Context, Disposer, EventToken, Plugin, PluginCapabilities, ScopeFilter, ServiceToken } from "@x-harness/core";
 import { pluginEvent } from "@x-harness/core";
 import { META_TOKEN_NAMES } from "./capabilities.ts";
 
-/** thenable 判定（#18）：then+catch 双检——仅有 then 的普通对象不是可等待的 Promise */
 function isThenable(value: unknown): value is Promise<unknown> {
   return (
     value !== null &&
@@ -20,8 +13,6 @@ function isThenable(value: unknown): value is Promise<unknown> {
 
 export type ErrorSink = (where: string, message: string) => void;
 
-/** 错误路由依赖：sink（归属记录）、root（注册落位层）、onToken（token 注册表收集）、
- * capabilities（B 路线按名能力面——apply 第二参透传） */
 export interface ErrorRoutingDeps {
   readonly sink: ErrorSink;
   readonly root: Context;
@@ -31,7 +22,7 @@ export interface ErrorRoutingDeps {
 
 export function wrapPluginForErrorRouting(plugin: Plugin, deps: ErrorRoutingDeps): Plugin {
   return {
-    name: plugin.name, // inject 刻意丢弃：跨插件依赖语义归 plugin-manager（loadPlugins 只认同批）
+    name: plugin.name,
     apply: (scope: Context) => {
       const wrapped = wrapContext(scope, { ...deps, pluginName: plugin.name });
       return plugin.apply(wrapped, deps.capabilities);
@@ -55,7 +46,6 @@ function wrapContext(scope: Context, deps: WrapContextDeps): Context {
       ts: Date.now(),
     });
   };
-  // 落位 root + 回卷链 scope（裁决 9）：手动调用与层回卷都幂等（内核 registerEffect 自清理）
   const placeOnRoot = (disposer: Disposer): Disposer => {
     scope.effect(() => {
       void disposer();
@@ -72,8 +62,6 @@ function wrapContext(scope: Context, deps: WrapContextDeps): Context {
     tryUse: <T>(token: ServiceToken<T>): T | undefined => scope.tryUse(token),
     waitFor: <T>(token: ServiceToken<T>): Promise<T> => scope.waitFor(token),
     on: (token: AnyToken, fn: unknown, opts?: { readonly prepend?: boolean }): Disposer => {
-      // 元能力名拒收（对抗审查 2a）：与 worker 侧 host.ts 同判定——caps.on 之外
-      // 的 ctx.on 旁路同封（装载生命周期信封对第三方件不可见）
       if (META_TOKEN_NAMES.has(token.name)) {
         throw new Error(`listening on meta token not allowed: ${token.name}`);
       }
@@ -83,7 +71,6 @@ function wrapContext(scope: Context, deps: WrapContextDeps): Context {
       const routed =
         mode === "emit"
           ? (payload: unknown): unknown => {
-              // emit：吞（与内核隔离一致）——归属在此记录
               try {
                 const out = original(payload);
                 if (isThenable(out)) {
@@ -96,7 +83,6 @@ function wrapContext(scope: Context, deps: WrapContextDeps): Context {
               }
             }
           : (payload: unknown): unknown => {
-              // 关键路径：记录后原样上抛（同步 throw 与 async rejected promise 两条路都接）
               try {
                 const out = original(payload);
                 if (isThenable(out)) {

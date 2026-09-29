@@ -1,7 +1,3 @@
-// 描述对账（docs/TASKS.md §1.1/§5 + docs/TASK-PUSH-DESIGN.md §2.1）：锚词与参数面双向
-// 对账——描述承诺的参数 schema 必有，schema 有的参数描述必提（防描述承诺缺口复发——
-// 件14 立项目的）。task_stop 单工具。
-
 import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { TASK_STOP_DESCRIPTION } from "../descriptions.ts";

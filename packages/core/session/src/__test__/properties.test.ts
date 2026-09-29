@@ -5,7 +5,6 @@ import type { Session, SessionEvent, SessionHeader, SessionId, SurfaceEventType 
 
 const header: SessionHeader = { id: "s1" as SessionId, createdAt: 1, cwd: "/tmp" };
 
-/** 确定性 PRNG（mulberry32）：属性测试可复现，不引入外部属性测试依赖 */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
@@ -43,7 +42,6 @@ function dataFor(type: string, i: number): Record<string, unknown> {
 
 type RawAppend = (type: string, data: unknown, intent?: { surfaceOp: unknown }) => { ok: boolean };
 
-/** 随机驱动一个合法日志：surface append / 合法 replace / log-only 交错（弱类型通道直击运行时） */
 function driveRandomSession(seed: number): Session {
   const rand = mulberry32(seed);
   const session = createSession({ header, seed: [], inherited: false, onAppend: () => {} }).session;
@@ -76,16 +74,12 @@ describe("日志代数性质（DSH properties.spec 承接——种子化随机�
     const session = driveRandomSession(seed);
     const events = session.events();
 
-    // seq 严格从 0 连续
     expect(events.map((e) => e.seq)).toEqual(events.map((_, i) => i));
-    // 派生确定性：两次调用深度相等
     expect(session.deriveMessages()).toEqual(session.deriveMessages());
     expect(session.events()).toEqual([...events]);
-    // 增量投影 == 全量重算
     expect(session.surface().map((n) => n.seq)).toEqual(projectSurface(events).map((n) => n.seq));
     expect(session.surface().map((n) => n.event)).toEqual(projectSurface(events).map((n) => n.event));
 
-    // seed 重放等价：全量 events 作为 seed 重建，派生历史逐一致（end-seed 为 log-only 不上面）
     const replayed = createSession({ header, seed: events as SessionEvent[], inherited: false, onAppend: () => {} }).session;
     expect(replayed.events().slice(0, events.length)).toEqual(events);
     expect(replayed.deriveMessages()).toEqual(session.deriveMessages());

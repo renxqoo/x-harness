@@ -1,7 +1,3 @@
-// 分类器组合洞回归件（P0-1/P1-5——.adversarial/upper/u06+u07、redteam F1 迁移）：
-// find -exec 载体 + 越根搜索根 / xargs 内联载荷 / 环境面写目标（全局安装·任意包执行·
-// 容器生命周期·任意 target）——一律逐出只读/写安全类落 ask。
-
 import { describe, expect, it } from "vitest";
 import { classifyPipeline } from "../classifier.ts";
 import { parseBash } from "@x-harness/permission";
@@ -26,8 +22,8 @@ describe("find -exec 组合洞（P0-1——搜索根从不裁决的载体豁免�
     }
   });
   it("xargs 内联载荷参与分类：`find ~ | xargs cat` → unclassified（旧：xargs 载体跳过=readonly）", () => {
-    expect(classify(`find ~ -name "*.pem" | xargs cat`)).toBe("unclassified"); // 越根搜索根逐出（find 面门）
-    expect(classify(`ls | xargs cat`)).toBe("readonly"); // 界内运行期文件名读=无字面敏感面，与 cat 无字面同径（越根搜索根才是 F1 攻击面）
+    expect(classify(`find ~ -name "*.pem" | xargs cat`)).toBe("unclassified");
+    expect(classify(`ls | xargs cat`)).toBe("readonly");
   });
   it("界内搜索根的良性形仍只读（不误伤）", () => {
     expect(classify(`find . -name x -exec grep foo {} ;`)).toBe("readonly");

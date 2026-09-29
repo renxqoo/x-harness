@@ -1,11 +1,3 @@
-// V3 重构前置安全批次回归（docs/PERMISSION-V3-DESIGN.md §4.1 / U5——2026-09-28 三路审计
-// 坐实的 7 个安全级 bug，每条一钉：修后行为即等价迁移的规格基线）。
-// B-bug-1/5/10：planBash 读保护基线 + dynamic 过滤 + 旗面序
-// B-bug-2：writeOperandsInRoot 裸 ../. 与附着值旗
-// B-bug-3：rg --pre 执行钩子逐出只读
-// P-bug-1：路径/Tool 面手写 ask 规则消费
-// P-bug-3/4：grant 面修正（/ 不挂、once 不落、读不扩写）见 adjudicate/plugin 两套件内联钉
-
 import { describe, expect, it } from "vitest";
 import { adjudicateBash as __adjudicateBash } from "../bash/adjudicate.ts";
 import { knobDecideOf } from "@x-harness/permission-modes";
@@ -16,7 +8,7 @@ function adjudicateBash(input: Parameters<typeof __adjudicateBash>[0]): ReturnTy
 import { decideFor as __decideFor } from "../decide.ts";
 function decideFor(input: Parameters<typeof __decideFor>[0]): ReturnType<typeof __decideFor> {
   const faces = knobDecideOf(input.profile);
-  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined; // 测试注入：模拟 dispatch 从 ToolDefinition.kind 穿引
+  const family = (["read","write","edit","grep","bash"] as const).includes(input.tool as never) ? ({ read: "Read", write: "Write", edit: "Write", grep: "Read", bash: "Danger" } as const)[input.tool as "read" | "write" | "edit" | "grep" | "bash"] : undefined;
   return __decideFor({ ...input, ...(input.kind === undefined && family !== undefined ? { kind: family } : {}), ...(input.modeDecide === undefined && faces.decide !== undefined ? { modeDecide: faces.decide } : {}), ...(input.postureDecide === undefined && faces.posture !== undefined ? { postureDecide: faces.posture } : {}) });
 }
 import { protectGlobMatch } from "../sensitive.ts";
@@ -27,7 +19,6 @@ const PLAN = resolveProfile("plan")!;
 const AUTO = resolveProfile("auto")!;
 const ROOT = "/w/app";
 const rules = (texts: readonly string[] = []) => texts.map((t) => parseRule(t, "user"));
-// adjudicateBash 吃 rules、decideFor 吃 userRules——两键同带（同集）
 const base = (profile = AUTO, texts: readonly string[] = []) => {
   const list = rules(texts);
   return { rules: list, userRules: list, sessionRules: [], profile, root: ROOT, extraRoots: [] };
@@ -35,15 +26,15 @@ const base = (profile = AUTO, texts: readonly string[] = []) => {
 
 describe("B-bug-1：plan 档读保护基线（不因研究通道豁免）", () => {
   it("plan 档敏感面读 → deny（auto 档为 ask）——严格缺省全拒覆盖；富策略细分断言在 tool-plan/plan-mode.test", () => {
-    expect(adjudicateBash({ ...base(PLAN), command: "cat ~/.ssh/id_rsa" })).toMatchObject({ verdict: "deny", reason: "plan mode disallows bash" }); // V3 阶段二：纯直调=严格缺省
+    expect(adjudicateBash({ ...base(PLAN), command: "cat ~/.ssh/id_rsa" })).toMatchObject({ verdict: "deny", reason: "plan mode disallows bash" });
     expect(adjudicateBash({ ...base(PLAN), command: "cat < ~/.ssh/id_rsa" }).verdict).toBe("deny");
-    expect(adjudicateBash({ ...base(AUTO), command: "cat ~/.ssh/id_rsa" }).verdict).toBe("ask"); // 对照锚：auto 侧原有口径
+    expect(adjudicateBash({ ...base(AUTO), command: "cat ~/.ssh/id_rsa" }).verdict).toBe("ask");
   });
 });
 
 describe("B-bug-5：plan 档 dynamic 段过滤（classifyPipeline 前置条件执法）", () => {
   it("plan 档展开/通配词 → deny（不再静默进分类器误判 readonly）", () => {
-    expect(adjudicateBash({ ...base(PLAN), command: "cat $F" })).toMatchObject({ verdict: "deny", reason: "plan mode disallows bash" }); // V3 阶段二：严格缺省（富策略细分在 tool-plan）
+    expect(adjudicateBash({ ...base(PLAN), command: "cat $F" })).toMatchObject({ verdict: "deny", reason: "plan mode disallows bash" });
   });
 });
 
@@ -72,7 +63,6 @@ describe("P-bug-1：路径面/Tool 面手写 ask 规则", () => {
     expect(write).toMatchObject({ verdict: "ask", reason: "ask-rule:src/**" });
     const mystery = decideFor({ ...withAsk, tool: "mystery", args: {} });
     expect(mystery).toMatchObject({ verdict: "ask", reason: "ask-rule:mystery" });
-    // 对照锚：无 ask 规则时 in-root 放行、unknown 工具保守 ask 原口径不变
     expect(decideFor({ ...base(AUTO), tool: "write", args: { path: "src/a.ts", content: "x" } }).verdict).toBe("allow");
   });
 });
@@ -89,9 +79,9 @@ describe("P-bug-5：保护面目录感知匹配", () => {
 describe("D1 对抗审查回归：词面提权兜底仅在解析失败面", () => {
   it("可解析命令原文含 sudo/su → 不误判提权（full/plan 放行 readonly；真提权仍拒）", () => {
     expect(adjudicateBash({ ...base(AUTO), command: "grep sudo README.md" }).resolvedBy).toBe("classifier:readonly");
-    expect(adjudicateBash({ ...base(PLAN), command: "git log --grep=sudo" }).verdict).toBe("deny"); // plan 纯直调=严格缺省（bash 全拒）
+    expect(adjudicateBash({ ...base(PLAN), command: "git log --grep=sudo" }).verdict).toBe("deny");
     expect(adjudicateBash({ ...base(AUTO), command: "echo su" }).verdict).toBe("allow");
-    expect(adjudicateBash({ ...base(AUTO), command: "sudo ls" }).verdict).toBe("ask"); // 真 argv 提权仍拦
-    expect(adjudicateBash({ ...base(AUTO), command: "echo \x27sudo oops" }).verdict).toBe("ask"); // 解析失败保守 ask（auto）
+    expect(adjudicateBash({ ...base(AUTO), command: "sudo ls" }).verdict).toBe("ask");
+    expect(adjudicateBash({ ...base(AUTO), command: "echo \x27sudo oops" }).verdict).toBe("ask");
   });
 });

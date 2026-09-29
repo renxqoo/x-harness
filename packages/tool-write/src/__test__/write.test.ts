@@ -1,6 +1,3 @@
-// write 工具测试（docs/TOOLBOX.md §3/§6——交集 write 6 条 + 回归源）：观察门执行面，
-// 装配 read+write 两插件共享同一 gate+observed（配对契约——成对装配即此形态）。
-
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync, readFileSync, utimesSync, chmodSync, existsSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
@@ -69,12 +66,10 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
     await call("read", { path: "gated.txt" }, SESSION_A);
     const ok = await call("write", { path: "gated.txt", content: "replaced\n" }, SESSION_A);
     expect(ok.isError).toBeUndefined();
-    // 陈旧：外部改（utimes 改 mtime 构造版本变化）
     utimesSync(join(root, "gated.txt"), new Date(Date.now() + 5000), new Date(Date.now() + 5000));
     const stale = await call("write", { path: "gated.txt", content: "again" }, SESSION_A);
     expect(stale.isError).toBe(true);
     expect(stale.content).toContain("FS_STALE_VERSION");
-    // 重读后重试成功
     await call("read", { path: "gated.txt" }, SESSION_A);
     const retried = await call("write", { path: "gated.txt", content: "final\n" }, SESSION_A);
     expect(retried.isError).toBeUndefined();
@@ -86,20 +81,19 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
     const hijack = await call("write", { path: "secret.txt", content: "b-wins" }, SESSION_B);
     expect(hijack.isError).toBe(true);
     expect(hijack.content).toContain("FS_NOT_OBSERVED");
-    expect(readFileSync(join(root, "secret.txt"), "utf8")).toBe("data\n"); // 未被覆盖
+    expect(readFileSync(join(root, "secret.txt"), "utf8")).toBe("data\n");
   });
 
   it("write→write 连续写（自登记）；BOM round-trip 补回", async () => {
     const first = await call("write", { path: "chain.txt", content: "one" }, SESSION_A);
     expect(first.isError).toBeUndefined();
-    const second = await call("write", { path: "chain.txt", content: "two" }, SESSION_A); // 不需重读
+    const second = await call("write", { path: "chain.txt", content: "two" }, SESSION_A);
     expect(second.isError).toBeUndefined();
     expect(readFileSync(join(root, "chain.txt"), "utf8")).toBe("two");
-    // BOM round-trip
     writeFileSync(join(root, "bomw.txt"), "﻿orig");
     await call("read", { path: "bomw.txt" }, SESSION_A);
     await call("write", { path: "bomw.txt", content: "new" }, SESSION_A);
-    expect(readFileSync(join(root, "bomw.txt"), "utf8")).toBe("﻿new"); // BOM 补回
+    expect(readFileSync(join(root, "bomw.txt"), "utf8")).toBe("﻿new");
   });
 
   it("回归（症状：读空文件后覆写被 FS_NOT_OBSERVED 拒）：空文件 read 是有效观察", async () => {
@@ -107,7 +101,7 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
     const seen = await call("read", { path: "empty.txt" }, SESSION_A);
     expect(seen.content).toBe("(empty file)");
     const over = await call("write", { path: "empty.txt", content: "filled" }, SESSION_A);
-    expect(over.isError).toBeUndefined(); // 读过空文件 → 覆写开门
+    expect(over.isError).toBeUndefined();
     expect(readFileSync(join(root, "empty.txt"), "utf8")).toBe("filled");
   });
 
@@ -144,7 +138,7 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
     const w = await registry.dispatch({ callId: "t-pre2", name: "write", args: { path: "pre-new.txt", content: "x" }, signal: controller.signal });
     expect(w.isError).toBe(true);
     expect(w.content).toContain("aborted");
-    expect(existsSync(join(root, "pre-new.txt"))).toBe(false); // 零 I/O
+    expect(existsSync(join(root, "pre-new.txt"))).toBe(false);
   });
 
   it("D3 回归（症状：父段是已存在文件曾静默归 write_failed）：显式报 FS_NOT_DIRECTORY_PARENT", async () => {
@@ -161,8 +155,8 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
     await call("read", { path: "link.txt" }, SESSION_A);
     const r = await call("write", { path: "link.txt", content: "replaced" }, SESSION_A);
     expect(r.isError).toBeUndefined();
-    expect(readFileSync(join(root, "target-dir/real.txt"), "utf8")).toBe("real\n"); // 目标未动
-    expect(readFileSync(join(root, "link.txt"), "utf8")).toBe("replaced"); // 链接被替换为真文件
+    expect(readFileSync(join(root, "target-dir/real.txt"), "utf8")).toBe("real\n");
+    expect(readFileSync(join(root, "link.txt"), "utf8")).toBe("replaced");
   });
 
   it("目标是目录 → FS_IS_DIRECTORY；NUL 拒绝；同路径并发写可序列化（一完成后二可写）", async () => {
@@ -173,7 +167,6 @@ describe("write（docs/TOOLBOX.md §3——交集 write 6 条 + 回归）", () =
     expect(nul.content).toContain("NUL_IN_ARGUMENT");
     const nul2 = await call("write", { path: "ok.txt", content: "x\u0000y" }, SESSION_A);
     expect(nul2.content).toContain("NUL_IN_ARGUMENT");
-    // 并发双写同路径：都完成（互斥串行），最终内容是其中之一（无交错半截）
     const [w1, w2] = await Promise.all([
       call("write", { path: "conc.txt", content: "A".repeat(100) }, SESSION_A),
       call("write", { path: "conc.txt", content: "B".repeat(100) }, SESSION_A),

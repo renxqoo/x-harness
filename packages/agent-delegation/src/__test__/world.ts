@@ -1,6 +1,3 @@
-// 子代理测试共享装置：按 model 分桶的假适配器世界（未注册 model 报错——防串线静默假绿）。
-// 类型经临时 .md 目录种入（U4：类型唯一来源 = 文件）。
-
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,11 +26,9 @@ export interface TypeSpec {
   readonly model?: string;
   readonly provider?: string;
   readonly tools?: readonly string[];
-  /** 正文 = 子 system prompt */
   readonly body?: string;
 }
 
-/** 把类型规格写成临时 .md 目录（每个 makeOptions 独立目录，afterEach 清理） */
 export async function makeOptions(types: Record<string, TypeSpec>, over: Partial<DelegationOptions> = {}): Promise<DelegationOptions> {
   const dir = await mkdtemp(join(tmpdir(), "xh-agents-"));
   dirs = [...dirs, dir];
@@ -44,7 +39,6 @@ export async function makeOptions(types: Record<string, TypeSpec>, over: Partial
     if (spec.tools !== undefined) fields.push(`tools: ${spec.tools.join(", ")}`);
     await writeFile(join(dir, `${name}.md`), `---\n${fields.join("\n")}\n---\n${spec.body ?? ""}`);
   }
-  // 测试装置默认关启动清扫（防装置互扫真仓共享目录——审查 A-P1-2）；直测走 sweepWorktrees
   return { agentsDirs: [dir], workspaceRoot: process.cwd(), worktreeSweep: false, ...over };
 }
 

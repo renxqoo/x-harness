@@ -1,7 +1,3 @@
-// createSandboxEnv 拆卸窗口矩阵（docs/SANDBOX.md §1 拆卸契约）：wrap 在飞拆卸（fail-fast）/
-// base.spawn 在飞拆卸（逃逸复查自杀——不交还调用方）/ 正常路径活句柄登记与 settled 自清。
-// 可控假 base + 假 runtime——时序确定性（不经竞速）。
-
 import { describe, expect, it } from "vitest";
 import type { ExecEnv, ProcHandle, SpawnResult } from "@x-harness/exec-env";
 import { createSandboxEnv } from "../env.ts";
@@ -101,18 +97,18 @@ describe("createSandboxEnv 拆卸窗口", () => {
             isTornDown: () => tornDown,
     });
     const inFlight = env.spawn({ argv: ["/bin/true"], cwd: "/w" });
-    wrapGate.release(["/bin/true"]); // wrap 先过（tornDown 仍 false——post-wrap 检查放行）
+    wrapGate.release(["/bin/true"]);
     await new Promise((r) => {
       setTimeout(r, 0);
-    }); // 已抵达 base.spawn await
-    tornDown = true; // 拆卸发生在 spawn 在飞期
+    });
+    tornDown = true;
     const proc = makeFakeProc();
     spawnGate.release({ ok: true, proc });
     const r = await inFlight;
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason.kind).toBe("sandbox_unavailable");
-    expect(proc.kills).toEqual(["term"]); // 自杀起手 term（5s 宽限 kill 是 escalation 兜底）
-    expect(liveHandles()).toEqual([]); // 未登记——已拆围栏的句柄不入账
+    expect(proc.kills).toEqual(["term"]);
+    expect(liveHandles()).toEqual([]);
   });
 
   it("正常路径：活句柄登记，settled 后自清", async () => {
@@ -143,9 +139,9 @@ describe("createSandboxEnv 拆卸窗口", () => {
     });
     const r = await env.spawn({ argv: ["/bin/true"], cwd: "/w" });
     expect(r.ok).toBe(true);
-    expect(liveHandles()).toEqual([proc]); // settled 未决——登记在场
+    expect(liveHandles()).toEqual([proc]);
     proc.settle();
     await proc.settled;
-    expect(liveHandles()).toEqual([]); // settled 后自清
+    expect(liveHandles()).toEqual([]);
   });
 });

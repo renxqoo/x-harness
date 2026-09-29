@@ -1,5 +1,3 @@
-// agentLoop 插件（docs/AGENT-LOOP-DRIVER.md §1.1）：create/resume 工厂；每 agent 一个 scope 层。
-
 import type { Context, Disposer, Plugin } from "@x-harness/core";
 import type { Result } from "@x-harness/core";
 import { defineService, errorText } from "@x-harness/core";
@@ -58,11 +56,11 @@ export const agentLoopPlugin = {
         dispose: async () => {
           if (disposed) return;
           disposed = true;
-          live.delete(handle.agent.session.id); // 摘除先于处置 await：dispose 进行期 get 即缺位（delegation 孤儿判定不竞态）
+          live.delete(handle.agent.session.id);
           await innerDispose();
         },
       };
-      live.set(handle.agent.session.id, wrapped); // 存包装版——get 取出的句柄自带摘除语义
+      live.set(handle.agent.session.id, wrapped);
       return wrapped;
     };
 
@@ -91,18 +89,14 @@ export const agentLoopPlugin = {
         dispatchRequestError: (payload) =>
           agentScope.dispatch(agentRequestError, payload as never, async () => undefined),
         dispatchTurnStopping: (payload) => agentScope.dispatch(agentTurnStopping, payload as never),
-        // 收束窗口（agentTurnConclude）：final = undefined（无插件应答即现行收束路径——真 opt-in）
         dispatchTurnConclude: (payload) => agentScope.dispatch(agentTurnConclude, payload as never, async () => undefined),
-        // 抢救窗口（agentTruncatedTool）：final = undefined（无插件应答即无附注——真 opt-in）
         dispatchTruncatedTool: (payload) => agentScope.dispatch(agentTruncatedTool, payload as never, async () => undefined),
-        // F0② 落账前纠：final = 原样透传（content/stopReason——interrupted 内核独占，终审 2.2）
         dispatchAssistantSettle: (payload) =>
           agentScope.dispatch(agentAssistantSettle, payload as never, async (p) => ({
             content: p.content,
             stopReason: p.stopReason,
             ...(p.interrupted === true ? { interrupted: true } : {}),
           }) as never),
-        // F0③ 流拦截：final = runtime.stream 原样
         dispatchLlmStream: (request) => agentScope.dispatch(agentLlmStream, { request } as never, async (p) => llm.stream(p.request) as never),
       });
       const agent: Agent = {
@@ -123,8 +117,8 @@ export const agentLoopPlugin = {
           driver.cancel("disposed");
           await driver.whenIdle();
           await agentScope.dispose();
-          await store.flush(session.id); // dispose 前先 flush（消费方纪律）：字节完整后才封存，resume 不读截断卷
-          store.dispose(session.id); // 封存写权：append 此后 session-disposed；持久化层 drain-then-close
+          await store.flush(session.id);
+          store.dispose(session.id);
         },
       };
     };
@@ -139,7 +133,7 @@ export const agentLoopPlugin = {
         return { ok: true, value: register(handle) };
       } catch (error) {
         await agentScope.dispose().catch(() => {});
-        store.dispose(session.id); // 失败不留可写会话在 store
+        store.dispose(session.id);
         return { ok: false, reason: `spawn-failed:${errorText(error)}` };
       }
     };
@@ -161,7 +155,7 @@ export const agentLoopPlugin = {
         return { ok: true, value: register(handle) };
       } catch (error) {
         await agentScope.dispose().catch(() => {});
-        store.dispose(made.value.id); // 失败不留可写会话在 store
+        store.dispose(made.value.id);
         return { ok: false, reason: `spawn-failed:${errorText(error)}` };
       }
     };

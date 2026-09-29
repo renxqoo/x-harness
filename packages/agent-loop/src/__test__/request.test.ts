@@ -1,6 +1,3 @@
-// 拨号折叠与请求头落账单元（docs/AGENT-LOOP-DRIVER §1.4）：逐字段折叠（options 恒胜）、
-// headerChanged 规范化比较（含 tools）、lastRequestContext、toToolRefs 投影。
-
 import { describe, expect, it } from "vitest";
 import type { SessionEvent, ToolRef } from "@x-harness/session";
 import { foldDial, headerChanged, lastRequestContext, toToolRefs } from "../request.ts";
@@ -70,7 +67,7 @@ describe("headerChanged（规范化比较含 tools）", () => {
     const same = [headerEvent({ model: "m", provider: "p", temperature: 0.5, maxTokens: 10, tools: TOOLS })];
     expect(headerChanged(dial, TOOLS, same)).toBe(false);
     expect(headerChanged({ ...dial, temperature: 0.6 }, TOOLS, same)).toBe(true);
-    expect(headerChanged(dial, [{ name: "a" }, { name: "b" }], same)).toBe(true); // description 差异也算 tools 漂移
+    expect(headerChanged(dial, [{ name: "a" }, { name: "b" }], same)).toBe(true);
   });
 
   it("thinking 漂移 → 落账", () => {
@@ -78,7 +75,7 @@ describe("headerChanged（规范化比较含 tools）", () => {
     const headerSame = headerEvent({ model: "m", thinking: "low", tools: TOOLS });
     expect(headerChanged(dialSame, TOOLS, [headerSame])).toBe(false);
     expect(headerChanged({ ...dialSame, thinking: "high" }, TOOLS, [headerSame])).toBe(true);
-    expect(headerChanged({ model: "m" }, TOOLS, [headerSame])).toBe(true); // 有→无也是漂移
+    expect(headerChanged({ model: "m" }, TOOLS, [headerSame])).toBe(true);
   });
 
   it("可选字段缺席与显式 undefined 等价（undefined 不落账）", () => {

@@ -1,5 +1,3 @@
-// 管道 stdin 全量读取：流注入（可测）；TTY stdin 直接返回空（管道才有 prompt 语义）。
-
 export type StdinLike = NodeJS.ReadableStream & { readonly isTTY?: boolean };
 
 export async function readPipedStdin(stdin: StdinLike = process.stdin): Promise<string> {

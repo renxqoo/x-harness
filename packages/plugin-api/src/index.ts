@@ -1,8 +1,3 @@
-// 插件 API 纯函数 archetype 层（SDK-MIGRATION-P1）：transform/veto/tap × 三域 + 逃生舱。
-// 零新语义零新 token——全部为既有 waterfall 的语法糖；next 纪律/洋葱序/payload 形状由
-// 框架结构性保证（作者只写业务判断，不可能忘记 next 或写错洋葱方向）。
-// 洋葱纪律：veto 一律「先 next 后否决」（tools I2 契约——内层副作用保留，最外层否决胜）。
-
 import type { Context, Disposer } from "@x-harness/core";
 import { agentAssistantSettle, agentAssistantStream, agentLlmStream, agentPreStep, agentRequest, agentTurnStopping } from "@x-harness/agent-loop";
 import type { AssistantSettlement, Dial } from "@x-harness/agent-loop";
@@ -12,13 +7,7 @@ import type { ContentBlock, InboxEntry, SessionEvent, SessionId } from "@x-harne
 import { toolsExecute, toolsPreExecute } from "@x-harness/tools";
 import type { ToolCallRequest, ToolOutcome } from "@x-harness/tools";
 
-// —— 上下文域 ——
 
-/** pre-step 改写：fn 收当前生效领取批次（链上前者改写版或原始 claim），输出即落账版。
- *  改写须保留 entry.origin（docs/AGENT-MESSAGE.md §4 场景 C）——含 origin 的条目领取时
- *  材料化为 agent/message（内部消息：UI 隐藏、摘要按 kind 分流），典型写法
- *  `claim.map(e => ({ id: e.id, content: [...] }))` 会丢 origin 使内部消息降级为
- *  user/message（UI 泄漏成用户发言）——改写时按需透传或显式去除。 */
 export function transformMessages(ctx: Context, fn: (claim: readonly InboxEntry[]) => readonly InboxEntry[] | Promise<readonly InboxEntry[]>): Disposer {
   return ctx.on(agentPreStep, async (payload, next) => {
     const decision = await next(payload);
@@ -28,7 +17,6 @@ export function transformMessages(ctx: Context, fn: (claim: readonly InboxEntry[
   });
 }
 
-/** pre-step 否决：fn 返回 reason = reject（先 next 后否决——内层副作用保留） */
 export function vetoStep(ctx: Context, fn: (claim: readonly InboxEntry[]) => string | undefined): Disposer {
   return ctx.on(agentPreStep, async (payload, next) => {
     const outcome = await next(payload);
@@ -37,7 +25,6 @@ export function vetoStep(ctx: Context, fn: (claim: readonly InboxEntry[]) => str
   });
 }
 
-/** assistant 落账前纠：输出契约只 content/stopReason（interrupted 内核独占） */
 export function transformAssistant(ctx: Context, fn: (s: AssistantSettlement) => AssistantSettlement): Disposer {
   return ctx.on(agentAssistantSettle, async (payload, next) => {
     const out = await next(payload);
@@ -46,9 +33,7 @@ export function transformAssistant(ctx: Context, fn: (s: AssistantSettlement) =>
   });
 }
 
-// —— 工具域 ——
 
-/** 工具否决器：返回 deny 则拦截（先 next 后 deny——I2；最外层 deny 胜） */
 export function vetoTools(
   ctx: Context,
   fn: (call: { readonly callId: string; readonly name: string; readonly args: unknown; readonly session?: SessionId; readonly control?: true; readonly kind?: string; readonly readsSubtree?: true }) => { readonly kind: "deny"; readonly reason: string } | undefined,
@@ -60,9 +45,6 @@ export function vetoTools(
   });
 }
 
-/** 工具输出变换（execute 后处理）。注册序方向（终审 P1-1 勘误：先注册=最外层）：
- *  缺省（append）= **内层**——fn 见 final 的原始 outcome（先于他人后处理）；
- *  { prepend: true } = 外层——fn 见更早注册中间件（超时/检查点包裹）处理后的 outcome。 */
 export function transformToolResult(
   ctx: Context,
   fn: (outcome: ToolOutcome, request: ToolCallRequest) => ToolOutcome,
@@ -71,21 +53,16 @@ export function transformToolResult(
   return ctx.on(toolsExecute, async (request, next) => fn(await next(request), request) as never, opts);
 }
 
-// —— 循环域 ——
 
-/** 拨号参数变换（模型/温度/thinking 等） */
 export function transformDial(ctx: Context, fn: (dial: Dial) => Dial): Disposer {
   return ctx.on(agentRequest, async (payload, next) => fn(await next(payload)) as never);
 }
 
-/** agent 层流包裹：注入/截断/变换帧（每次调用须返回新迭代器——幂等契约） */
 export function wrapStream(ctx: Context, fn: (stream: AsyncIterable<LlmChunk>, request: LlmRequest) => AsyncIterable<LlmChunk>): Disposer {
   return ctx.on(agentLlmStream, async (payload, next) => fn(await next(payload), payload.request) as never);
 }
 
-// —— 观察类（tap：只读副作用）——
 
-/** assistant 结算观察（settle 后、落账前的形态） */
 export function tapAssistant(ctx: Context, fn: (s: AssistantSettlement) => void): Disposer {
   return ctx.on(agentAssistantSettle, async (payload, next) => {
     const out = await next(payload);
@@ -94,7 +71,6 @@ export function tapAssistant(ctx: Context, fn: (s: AssistantSettlement) => void)
   });
 }
 
-/** 工具调用观察（请求与结果） */
 export function tapToolCalls(ctx: Context, fn: (request: ToolCallRequest, outcome: ToolOutcome) => void): Disposer {
   return ctx.on(toolsExecute, async (request, next) => {
     const outcome = await next(request);
@@ -103,41 +79,30 @@ export function tapToolCalls(ctx: Context, fn: (request: ToolCallRequest, outcom
   });
 }
 
-/** 流帧观察（实时面） */
 export function tapStream(ctx: Context, fn: (frame: unknown) => void): Disposer {
   return ctx.on(agentAssistantStream, (payload) => {
     fn((payload as { frame?: unknown }).frame);
   });
 }
 
-/** turn 终态观察 */
 export function tapTurnEnd(ctx: Context, fn: () => void): Disposer {
   return ctx.on(agentTurnStopping, () => fn());
 }
 
-// —— 内容提取（11 处/19 插件重复的那一行——频率判定成立）——
 
-/** 提取 text 块并拼接为单串 */
 export function textOf(content: readonly ContentBlock[]): string {
   return content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("");
 }
 
-/** 只取 text 块（保留结构——需要逐块处理时用） */
 export function textBlocksOf(content: readonly ContentBlock[]): readonly { type: "text"; text: string }[] {
   return content.filter((b): b is { type: "text"; text: string } => b.type === "text");
 }
 
-/** 剥离 text 块（保留 tool_use 等——"只改文本不动结构"的插件用） */
 export function nonTextOf(content: readonly ContentBlock[]): readonly ContentBlock[] {
   return content.filter((b) => b.type !== "text");
 }
 
-// —— 逃生舱 ——
 
-/** 原始日志审计观察（审计通道微任务级投递、FIFO 保序——持久化/计量同款通道；异常进 sink 静默）。
- *  纪律：回调内 append 合法（同步重入卫兵不适用于异步投递），但不得恒重入——微任务链自繁殖
- *  会饿死进程；仍应先用领域面，此逃生舱仅在领域面表达不了时用。session 随载荷透传（按会话
- *  分账场景）。UI 观察走宿主各自的渲染面（sessionEvent 同步面仅宿主 UI 消费）。 */
 export function tapSessionEvents(ctx: Context, fn: (event: SessionEvent, session: SessionId) => void): Disposer {
   return ctx.on(sessionAuditEvent, (payload) => fn(payload.event, payload.session));
 }

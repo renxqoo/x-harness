@@ -1,6 +1,3 @@
-// replaceFlatField 表驱动（docs/SKILL-INSTALL.md §1.1）：last-wins 替换点、头体字节
-// 保真、不可替换形态整体 undefined（无 frontmatter/键缺席/键值形态非法）。
-
 import { describe, expect, it } from "vitest";
 import { replaceFlatField } from "../replace.ts";
 

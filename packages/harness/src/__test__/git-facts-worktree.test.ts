@@ -1,5 +1,3 @@
-// 「切错分支」疑点实证（真 git worktree——补 git-facts.test 手造形态的真值背书）：
-// worktree 读自己的 HEAD、切分支现算跟随、主仓切换不串扰、树删键省略不回退。
 import { execFile } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
@@ -29,7 +27,7 @@ const setup = async () => {
 it("① 手建 worktree 内直接探测：显示 dev 不显示 main", async () => {
   const repo = await setup();
   expect(probeGitFacts(repo).branch).toBe("main" in {} ? "" : (await exec("git", ["-C", repo, "rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim());
-  expect(probeGitFacts(join(root, "wt")).branch).toBe("dev"); // worktree 自己的 HEAD，非主仓
+  expect(probeGitFacts(join(root, "wt")).branch).toBe("dev");
 });
 
 it("② worktree 内切分支 → 现算跟随（下一轮询即新值）", async () => {
@@ -42,10 +40,10 @@ it("② worktree 内切分支 → 现算跟随（下一轮询即新值）", asyn
 
 it("③ 主仓切分支不影响 worktree 行（各读各的 HEAD）", async () => {
   const repo = await setup();
-  await exec("git", ["-C", repo, "checkout", "-b", "main-side-branch"]); // 主仓换到独立分支（dev 被 wt 占用不可 checkout）
-  expect(probeGitFacts(join(root, "wt")).branch).toBe("dev"); // wt 的 HEAD 不受主仓 checkout 影响
+  await exec("git", ["-C", repo, "checkout", "-b", "main-side-branch"]);
+  expect(probeGitFacts(join(root, "wt")).branch).toBe("dev");
   await exec("git", ["-C", repo, "checkout", "-b", "another/main-side"]);
-  expect(probeGitFacts(join(root, "wt")).branch).toBe("dev"); // 多次切换仍不受影响
+  expect(probeGitFacts(join(root, "wt")).branch).toBe("dev");
 });
 
 it("④ worktree 被删 → 键省略（不回退显示主仓分支）", async () => {

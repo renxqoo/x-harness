@@ -1,5 +1,3 @@
-// 会话授权集（docs/EXEC-ENV.md §5）：键控隔离/域名正负缓存/单飞互斥（同域单问异域并行）/逐出/seal。
-
 import { describe, expect, it } from "vitest";
 import { GrantsRegistry } from "../grants.ts";
 import type { SessionId } from "@x-harness/session";
@@ -21,7 +19,7 @@ describe("GrantsRegistry", () => {
     g.addExtraRoot(A, "/w/x");
     g.evict(A);
     expect(g.extraRootsOf(A)).toEqual([]);
-    g.addExtraRoot(A, "/w/y"); // 迟到授权不复活
+    g.addExtraRoot(A, "/w/y");
     g.addRule(A, { tool: "Read", pattern: "/x", verdict: "allow", origin: "session" });
     expect(g.extraRootsOf(A)).toEqual([]);
     expect(g.rulesOf(A)).toEqual([]);
@@ -34,7 +32,7 @@ describe("rootOverride（件13 接缝 3——worktree 会话根替换）", () =>
     expect(g.rootOverrideOf(A)).toBeUndefined();
     g.setRootOverride(A, "/wt/agent-1", "/repo");
     expect(g.rootOverrideOf(A)).toEqual({ dir: "/wt/agent-1", guard: "/repo" });
-    expect(g.rootOverrideOf(B)).toBeUndefined(); // 会话隔离
+    expect(g.rootOverrideOf(B)).toBeUndefined();
     g.evict(A);
     expect(g.rootOverrideOf(A)).toBeUndefined();
   });
@@ -51,8 +49,8 @@ describe("unrestricted 总括授权（docs/PERMISSION-FULL-UNRESTRICTED.md——
     const g = new GrantsRegistry();
     g.addExtraRoot(A, "/w/old-root");
     g.setUnrestricted(true);
-    expect(g.extraRootsOf(A)).toEqual(["/"]); // 已有逐目录授权被吸收
-    expect(g.extraRootsOf(B)).toEqual(["/"]); // 未建桶会话同
+    expect(g.extraRootsOf(A)).toEqual(["/"]);
+    expect(g.extraRootsOf(B)).toEqual(["/"]);
     expect(g.extraRootsOf(undefined)).toEqual(["/"]);
     expect(g.isUnrestricted(A)).toBe(true);
   });
@@ -62,9 +60,9 @@ describe("unrestricted 总括授权（docs/PERMISSION-FULL-UNRESTRICTED.md——
     g.setRootOverride(A, "/wt/agent-1", "/repo");
     g.addExtraRoot(A, "/wt/agent-1/sub");
     g.setUnrestricted(true);
-    expect(g.extraRootsOf(A)).toEqual(["/wt/agent-1/sub"]); // 逐目录读回，非 [] 非 ["/"]
+    expect(g.extraRootsOf(A)).toEqual(["/wt/agent-1/sub"]);
     expect(g.isUnrestricted(A)).toBe(false);
-    expect(g.extraRootsOf(B)).toEqual(["/"]); // 同一 registry 内两形态共存分叉
+    expect(g.extraRootsOf(B)).toEqual(["/"]);
     expect(g.isUnrestricted(B)).toBe(true);
   });
 
@@ -80,11 +78,11 @@ describe("unrestricted 总括授权（docs/PERMISSION-FULL-UNRESTRICTED.md——
     const g = new GrantsRegistry();
     g.setRootOverride(A, "/wt/agent-1", "/repo");
     g.setUnrestricted(true);
-    g.evict(A); // 会话终结逐出桶（rootOverrideOf 随桶清除——既有语义）
-    expect(g.rootOverrideOf(A)).toBeUndefined(); // 桶事实清除不变
-    expect(g.isUnrestricted(A)).toBe(false); // 但总括例外仍成立——不复活 ["/"]
+    g.evict(A);
+    expect(g.rootOverrideOf(A)).toBeUndefined();
+    expect(g.isUnrestricted(A)).toBe(false);
     expect(g.extraRootsOf(A)).toEqual([]);
-    expect(g.extraRootsOf(B)).toEqual(["/"]); // 普通会话不受影响
+    expect(g.extraRootsOf(B)).toEqual(["/"]);
   });
 
   it("seal 收回总括：拆卸后 isUnrestricted 恒 false（fail-closed 同向）", () => {

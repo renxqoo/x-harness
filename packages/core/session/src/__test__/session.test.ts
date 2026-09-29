@@ -90,7 +90,6 @@ describe("append 全词条（docs/SESSION.md §1.3 判别联合穷举）", () =>
 });
 
 describe("append 门失败矩阵（docs/SESSION.md §7——全部 Result 失败且日志零变动）", () => {
-  // 负向用例走弱类型通道（绕过编译期重载强制，直击运行时双门）
   type RawAppend = (type: string, data: unknown, intent?: unknown) => { ok: boolean; reason?: string };
   const raw = (session: ReturnType<typeof makeSession>["session"]): RawAppend => session.append as unknown as RawAppend;
 
@@ -154,14 +153,14 @@ describe("append 门失败矩阵（docs/SESSION.md §7——全部 Result 失败
     });
     expect(raw(session)("user/message", { turn: 0, step: 0, content: [] }, { surfaceOp: { op: "replace", startSeq: 1, endSeq: 0 } })).toEqual({
       ok: false,
-      reason: "replace-target-missing:1", // 位置语义：端点缺席先于位置逆序报出
+      reason: "replace-target-missing:1",
     });
     session.append("user/message", { turn: 0, step: 0, content: [] }, userAppend);
     expect(raw(session)("user/message", { turn: 0, step: 0, content: [] }, { surfaceOp: { op: "replace", startSeq: 1, endSeq: 0 } })).toEqual({
       ok: false,
-      reason: "replace-range:1>0", // 两端点在场、位置逆序
+      reason: "replace-range:1>0",
     });
-    expect(session.events()).toHaveLength(2); // 仅首条合法 append 落账，两次非法 replace 零变动
+    expect(session.events()).toHaveLength(2);
   });
 
   it("封存后 append → session-disposed（docs/SESSION.md §1.5 写权封存）", () => {
@@ -208,7 +207,7 @@ describe("投影与快照（docs/SESSION.md §1.4、§1.5）", () => {
     (intent.surfaceOp as { startSeq: number }).startSeq = 99;
     const logged = session.events()[1] as { surfaceOp: { startSeq: number } };
     expect(logged.surfaceOp.startSeq).toBe(0);
-    expect(Object.isFrozen(intent.surfaceOp)).toBe(false); // 调用方对象不被就地冻结
+    expect(Object.isFrozen(intent.surfaceOp)).toBe(false);
   });
 
   it("监听器内重入 append 被拒绝而非栈溢出；非重入监听器不受影响（G11）", () => {
@@ -220,7 +219,6 @@ describe("投影与快照（docs/SESSION.md §1.4、§1.5）", () => {
       onAppend: (_session, event) => {
         appended.push(event);
         if (appended.length === 1) {
-          // 恒重入监听器：第一次事件里再 append——必须得到拒绝而不是无限递归
           const reentrant = handle.session.append("turn/start", { turn: 99 });
           expect(reentrant).toEqual({ ok: false, reason: "append-reentrant" });
         }

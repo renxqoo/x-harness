@@ -1,8 +1,3 @@
-// worktree 上下文事件与环境块接线（docs/WORKTREE-CONTEXT-AWARENESS.md §1.4/§1.5）：
-// spawn/revive 发射 payload 三字段（worktree/branch/worktreeMain——.git 解析真值）、
-// named 子 options.systemPrompt 拼环境块（Track N——静态短路 assemble 的事实通道）、
-// 非 worktree named 子零改动、stop removed 发 agentWorktreeGone / kept-dirty 不发。
-
 import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
@@ -54,7 +49,6 @@ const grantsStub = (): Plugin => ({
   apply: (ctx) => ctx.provide(permissionGrants, new GrantsRegistry()),
 });
 
-/** worktree 世界 + typed 类型（named 子面——Track N） */
 async function typedWorktreeWorld() {
   const options = await makeOptions({ worker: { model: CHILD_MODEL, body: "you are a worker" } }, { workspaceRoot: repo as string, worktreeSweep: false });
   const world = await makeWorld(options, undefined, [grantsStub()]);
@@ -85,8 +79,7 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
     expect(payload).toBeDefined();
     expect(payload?.worktree).toBe(wtPath);
     expect(payload?.branch).toBe(`x-harness/${agentId}`);
-    expect(payload?.worktreeMain).toBe(repo); // gitdir 解析——非 repoTop rev-parse（嵌套形态分叉回归锚）
-    // Track N：named 子静态 systemPrompt = 类型正文 + 环境块（读回 loop options）
+    expect(payload?.worktreeMain).toBe(repo);
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
     const child = twins.world.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken).get(childSession);
     expect(child?.agent.options.systemPrompt).toContain("you are a worker");
@@ -110,12 +103,12 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
     expect(spawned.isError).toBeUndefined();
     const agentId = agentIdOf(spawned.content);
     const payload = spawnedLog.find((p) => p.agentId === agentId);
-    expect(payload?.worktree).toBeUndefined(); // 非 worktree 子三字段全缺席
+    expect(payload?.worktree).toBeUndefined();
     expect(payload?.branch).toBeUndefined();
     expect(payload?.worktreeMain).toBeUndefined();
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
     const child = twins.world.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken).get(childSession);
-    expect(child?.agent.options.systemPrompt).toBe("you are a worker"); // 不拼环境块
+    expect(child?.agent.options.systemPrompt).toBe("you are a worker");
     await twins.parent.dispose();
   });
 
@@ -134,7 +127,6 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
     const goneLog: AgentWorktreeGonePayload[] = [];
     twins.world.ctx.on(agentWorktreeGone, (payload) => goneLog.push(payload));
     const childSession = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
-    // 无改动 stop → removed：gone 恰一次（sessionId/agentId 如实）
     await callTool({ world: twins.world, name: "task_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
     expect(goneLog).toHaveLength(1);
     expect(goneLog[0]).toMatchObject({ sessionId: childSession, agentId });
@@ -157,7 +149,7 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
     const goneLog: AgentWorktreeGonePayload[] = [];
     twins.world.ctx.on(agentWorktreeGone, (payload) => goneLog.push(payload));
     await callTool({ world: twins.world, name: "task_stop", args: { task_id: agentId }, session: twins.parent.agent.session.id });
-    expect(goneLog).toHaveLength(0); // 树保留——不摘覆盖
+    expect(goneLog).toHaveLength(0);
     await twins.parent.dispose();
   });
 
@@ -174,7 +166,7 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
     const entry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId));
     const listed = await callTool({ world: twins.world, name: "list_agents", args: {}, session: twins.parent.agent.session.id });
     expect(listed.content).toContain(agentId);
-    expect(listed.content).toContain(join(worktreeParent(repo), entry ?? "")); // worktree 路径可见
+    expect(listed.content).toContain(join(worktreeParent(repo), entry ?? ""));
     await twins.parent.dispose();
   });
 
@@ -188,7 +180,6 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
       return makeWorld(options, undefined, [grantsStub(), createJsonlSessionPersistence({ root: persistRoot })]);
     };
     try {
-      // 装配一：spawn worktree 子 + flush 落盘 + 拆卸
       const first = await makePersistedWorld();
       const parent = await spawnParent(first, PARENT_MODEL, "wtcx-rv" as SessionId);
       first.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
@@ -203,12 +194,11 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
       const childSession0 = (spawned.content.match(/session ([A-Za-z0-9._-]+)/) ?? [""])[1] as SessionId;
       const entry = (await readdir(worktreeParent(repo))).find((f) => f.includes(agentId)) ?? "";
       const wtPath = join(worktreeParent(repo), entry);
-      writeFileSync(join(wtPath, "KEEP.md"), "dirty\n"); // kept-dirty：拆卸级联保留树
+      writeFileSync(join(wtPath, "KEEP.md"), "dirty\n");
       await first.ctx.use(sessionStore).flush(childSession0);
       await first.ctx.use(sessionStore).flush(parent.agent.session.id);
       await first.disposePlugins();
 
-      // 装配二：父 resume → agent_message 复活 → payload 预解析 + 环境块重建
       const second = await makePersistedWorld();
       await second.loop.resume({ id: parent.agent.session.id, agent: { model: PARENT_MODEL, provider: "fake" } });
       const spawnedLog: AgentSpawnedPayload[] = [];
@@ -217,11 +207,11 @@ describe("worktree 上下文事件与环境块", { timeout: 20_000 }, () => {
       expect(revived.isError).toBeUndefined();
       const payload = spawnedLog.find((p) => p.agentId === agentId);
       expect(payload?.worktree).toBe(wtPath);
-      expect(payload?.branch).toBe(`x-harness/${agentId}`); // gitdir HEAD 读回（非推定）
+      expect(payload?.branch).toBe(`x-harness/${agentId}`);
       expect(payload?.worktreeMain).toBe(repo);
       const child = second.ctx.use((await import("@x-harness/agent-loop")).agentLoopServiceToken).get(payload?.sessionId as never);
-      expect(child?.agent.options.systemPrompt).toContain("you are a worker"); // named 正文保留
-      expect(child?.agent.options.systemPrompt).toContain(`- Working directory: ${wtPath}`); // 复活重建环境块
+      expect(child?.agent.options.systemPrompt).toContain("you are a worker");
+      expect(child?.agent.options.systemPrompt).toContain(`- Working directory: ${wtPath}`);
       await second.loop.get(parent.agent.session.id)?.dispose();
       await second.disposePlugins();
     } finally {

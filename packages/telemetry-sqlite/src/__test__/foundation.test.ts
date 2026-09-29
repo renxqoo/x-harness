@@ -1,6 +1,3 @@
-// B1 地基测试：词表闭合（双向）、DDL 快照、版本门 fail-closed、executor 参数绑定。
-// 测试替身执行器（内存 Map）——不依赖 bun:sqlite 可达性；executor 单独用 bun:sqlite 直测。
-
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +9,6 @@ import { ensureSchema, SCHEMA_DDL } from "../schema.ts";
 import { LOG_SEVERITIES, SCHEMA_VERSION, SPAN_KINDS, SPAN_STATUSES } from "../types.ts";
 import type { SqlValue } from "../types.ts";
 
-/** 词表双向封闭：常量数组 == 文档词表（缺项/多项都红） */
 describe("词表闭合契约", () => {
   it("SPAN_KINDS == [INTERNAL, CLIENT]", () => {
     expect([...SPAN_KINDS]).toEqual(["INTERNAL", "CLIENT"]);
@@ -39,7 +35,6 @@ describe("ids", () => {
   });
 });
 
-/** DDL 快照：表/列/主键/索引 == 方案 §1.2（变了即契约漂移，须同步文档） */
 describe("schema", () => {
   it("DDL 语句数与覆盖的表封闭", () => {
     const tables = SCHEMA_DDL.map((ddl) => ddl.match(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/)?.[1]).filter(
@@ -93,7 +88,7 @@ describe("schema", () => {
         ["s1", 0, 2, "t", null, "WARN", "turn/start", null],
       );
       const rows = exec.all<{ seq: number; ts_ms: number }>("SELECT seq, ts_ms FROM otel_logs");
-      expect(rows).toEqual([{ seq: 0, ts_ms: 1 }]); // 首行胜出，重放不覆盖
+      expect(rows).toEqual([{ seq: 0, ts_ms: 1 }]);
     } finally {
       db.close();
     }
@@ -141,7 +136,7 @@ describe("createBunSqliteExecutor", () => {
       const mode = exec.all<{ journal_mode: string }>("PRAGMA journal_mode");
       expect(mode[0]?.journal_mode).toBe("wal");
       const sync = exec.all<{ synchronous: number }>("PRAGMA synchronous");
-      expect(sync[0]?.synchronous).toBe(2); // FULL
+      expect(sync[0]?.synchronous).toBe(2);
     } finally {
       db.close();
       rmSync(dir, { recursive: true, force: true });
@@ -153,14 +148,13 @@ describe("createBunSqliteExecutor", () => {
     try {
       expect(() => createBunSqliteExecutor(db)).not.toThrow();
       const mode = createBunSqliteExecutor(db).all<{ journal_mode: string }>("PRAGMA journal_mode");
-      expect(mode[0]?.journal_mode).toBe("memory"); // :memory: 无 wal 支持——降级不炸
+      expect(mode[0]?.journal_mode).toBe("memory");
     } finally {
       db.close();
     }
   });
 });
 
-/** 替身执行器契约面：后续 writer/fold 测试共用此形态（无 bun:sqlite 依赖） */
 export function createMemoryExecutor(): { exec: import("../types.ts").SqliteExecutor; log: { sql: string; params: readonly SqlValue[] | undefined }[] } {
   const log: { sql: string; params: readonly SqlValue[] | undefined }[] = [];
   return {

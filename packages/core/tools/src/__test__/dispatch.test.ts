@@ -1,5 +1,3 @@
-// dispatch 管线单元（docs/TOOLS.md §1.3 六段 + §7 路径矩阵）：stub 两段派发直击管线逻辑。
-
 import { describe, expect, it } from "vitest";
 import { Type } from "@sinclair/typebox";
 import { createDispatcher } from "../dispatch.ts";
@@ -36,7 +34,7 @@ describe("pre-execute 载荷（session 服务端透传——docs/EXEC-ENV.md §5
     await world.dispatch(call("ctrl"));
     await world.dispatch(call("plain"));
     expect(seen[0]).toMatchObject({ name: "ctrl", control: true });
-    expect(seen[1]).not.toHaveProperty("control"); // 缺省不伪造字段
+    expect(seen[1]).not.toHaveProperty("control");
   });
 
   it("请求携带 session → pre-execute 载荷透传（模型入参不可伪造的服务端事实）", async () => {
@@ -51,7 +49,7 @@ describe("pre-execute 载荷（session 服务端透传——docs/EXEC-ENV.md §5
     await dispatch(req);
     expect(seen[0]).toMatchObject({ callId: "c1", name: "noop", session: "sess-x" });
     await dispatch(call("noop"));
-    expect(seen[seen.length - 1]).not.toHaveProperty("session"); // 缺省不伪造字段
+    expect(seen[seen.length - 1]).not.toHaveProperty("session");
   });
 });
 
@@ -207,7 +205,7 @@ describe("outcome 形状门矩阵（docs/TOOLS.md §1.3）", () => {
     });
     const outcome = await dispatch(call("t"));
     expect(outcome).toEqual({ content: "", isError: true, concludesTurn: true, additionalContexts: [] });
-    expect("extra" in outcome).toBe(false); // 白名单构造：未知字段放行但不透传
+    expect("extra" in outcome).toBe(false);
   });
 
   it("hostile content getter → invalid-tool-output 而非 internal（F6 回归）", async () => {

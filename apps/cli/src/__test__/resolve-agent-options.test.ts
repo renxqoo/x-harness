@@ -1,7 +1,3 @@
-// AgentOptions 合成（docs/CLI.md §2.1/§2.6 表驱动）：create/resume 两层 dial + 系统提示词
-// 静态串形态。工具白/黑名单矩阵 = resolveToolNames 纯函数（restriction 注册的输入源，
-// W2B 后 options 不再携带 tools——通道删除，语义见 main.ts 装配处）。
-
 import { describe, expect, it } from "vitest";
 import { parseCliArgs } from "../parse-cli-args.ts";
 import { agentOptionsForCreate, agentOptionsForResume, resolveToolNames } from "../resolve-agent-options.ts";

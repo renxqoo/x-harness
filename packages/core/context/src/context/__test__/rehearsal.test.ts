@@ -1,5 +1,3 @@
-// §9 用法预演的验收剧本 + §10 风险 3（preset-on-scope 等价性）——
-// 实现期逐段对照，跑不通即为实现或规格缺陷（docs/CONTEXT.md §9 引言）。
 import { describe, expect, it } from "vitest";
 import { createContext } from "../create-context.ts";
 import { loadPlugins } from "../load-plugins.ts";
@@ -58,7 +56,7 @@ describe("§9 用法预演", () => {
     ctx.on(llmStream, async (input, next) => {
       for (let attempt = 1; ; attempt++) {
         const outcome = await next(input);
-        if (outcome === "transient-error" && attempt < 3) continue; // 串行重调
+        if (outcome === "transient-error" && attempt < 3) continue;
         return outcome;
       }
     });
@@ -86,7 +84,7 @@ describe("§9 用法预演", () => {
     expect(child.use(toolsService).list()).toEqual(["search"]);
     expect(ctx.use(toolsService).list()).toEqual(["search", "bash", "fs"]);
     await child.dispose();
-    expect(ctx.use(toolsService).list()).toEqual(["search", "bash", "fs"]); // 父完好
+    expect(ctx.use(toolsService).list()).toEqual(["search", "bash", "fs"]);
   });
 
   it("9.5 匿名链跨插件：服务共享 + onChain 层归属消费方", async () => {
@@ -96,7 +94,6 @@ describe("§9 用法预演", () => {
     }
     const agentsService = defineService<AgentsService>("agents");
 
-    // owner 插件：暴露 spawn 决策点
     const ownerPlugin: Plugin = {
       name: "agents",
       apply(c) {
@@ -106,14 +103,13 @@ describe("§9 用法预演", () => {
         c.provide(agentsService, { spawnDecide });
       },
     };
-    // 消费插件：经自己的 ctx 注册（层归属消费方）
     const consumerPlugin: Plugin = {
       name: "policy",
       inject: ["agents"],
       apply(c) {
         c.onChain(c.use(agentsService).spawnDecide, async (spec, next) => {
           const verdict = await next(spec);
-          return spec === 42 ? { allow: true } : verdict; // 42 永远放行
+          return spec === 42 ? { allow: true } : verdict;
         });
       },
     };
@@ -148,12 +144,11 @@ describe("§10 风险 3：preset-on-scope 等价性（M1 必测验收项）", ()
   it("双 sibling scope 各自 loadPlugins 同一插件：服务互不串、root 无此服务", async () => {
     const ctx = createContext();
     const counterService = defineService<{ n: number }>("counter");
-    // 同一插件工厂两次实例化（preset 场景：每 agent 一份）
     function createCounterPlugin(): Plugin {
       return {
         name: "counter",
         apply(c) {
-          c.provide(counterService, { n: 0 }); // 每层各一份
+          c.provide(counterService, { n: 0 });
         },
       };
     }
@@ -164,9 +159,9 @@ describe("§10 风险 3：preset-on-scope 等价性（M1 必测验收项）", ()
     await loadPlugins(b, [createCounterPlugin()]);
 
     a.use(counterService).n = 7;
-    expect(b.use(counterService).n).toBe(0); // 互不串
+    expect(b.use(counterService).n).toBe(0);
     expect(a.use(counterService)).not.toBe(b.use(counterService));
-    expect(ctx.tryUse(counterService)).toBeUndefined(); // root 无——没变成进程全局
+    expect(ctx.tryUse(counterService)).toBeUndefined();
   });
 
   it("双 sibling scope 的监听互不可见（事件面同口径）", async () => {
@@ -179,7 +174,7 @@ describe("§10 风险 3：preset-on-scope 等价性（M1 必测验收项）", ()
     const listener: Plugin = {
       name: "listener",
       apply(c) {
-        c.on(tick, ({ v }) => aHeard.push(v)); // a 与 b 各自装配
+        c.on(tick, ({ v }) => aHeard.push(v));
       },
     };
     await loadPlugins(a, [listener]);

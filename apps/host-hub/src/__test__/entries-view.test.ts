@@ -1,7 +1,3 @@
-// get_entries view 域集成测试（docs/SESSION.md 三视图分域）：真 idle-clear 旅程
-// （真 session 落账 + maybeIdleClear 真触发——非手写 replace 合成）、burst 护栏、
-// history 增量等式、双站点（entryWindowViewed 单入口）恒等、无 view golden。
-// 装置复用 autocompact helpers（真 sessionStore + seedToolTurn + makeSessionState）。
 import { describe, expect, test } from "vitest";
 import { maybeIdleClear, makeSessionState } from "@x-harness/autocompact";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
@@ -20,7 +16,6 @@ async function realSession(id: SessionId): Promise<Session> {
   return made.value;
 }
 
-/** 真工具轮 ×N → maybeIdleClear 真触发（clearableTools 白名单 + keepRecent 0） */
 async function sessionAfterIdleClear(n: number): Promise<Session> {
   const session = await realSession(sid("view-domain"));
   for (let i = 0; i < n; i += 1) {
@@ -34,7 +29,7 @@ async function sessionAfterIdleClear(n: number): Promise<Session> {
     });
   }
   const state = makeSessionState(sid("view-domain"));
-  state.lastTurnEndAt = Date.now() - 3_600_000; // 60 分钟前到期
+  state.lastTurnEndAt = Date.now() - 3_600_000;
   const landed = maybeIdleClear({
     session,
     state,
@@ -56,15 +51,13 @@ describe("get_entries view 域：真 idle-clear 旅程", () => {
     const session = await sessionAfterIdleClear(5);
     const events = session.events();
     const carriers = events.filter((e) => typeof e.surfaceOp === "object" && e.surfaceOp !== null && e.surfaceOp.op === "replace");
-    // 5 轮工具轮：末轮在飞轮（lastTurnStartIndex 之后）整轮豁免 → 载体 = 前 4 轮
     expect(carriers.length).toBe(4);
 
     const journal = entryWindowViewed(events, {});
     expect(journal.ok && journal.entries).toHaveLength(events.length);
     const history = entryWindowViewed(events, { view: "history" });
     expect(history.ok && history.entries).toHaveLength(events.length - 4);
-    expect(history.ok && history.leafSeq).toBe(journal.ok ? journal.leafSeq : -1); // 全集域
-    // history 中不得出现占位文案，且原文仍在
+    expect(history.ok && history.leafSeq).toBe(journal.ok ? journal.leafSeq : -1);
     const contents = JSON.stringify(history.ok ? history.entries : []);
     expect(contents).not.toContain("[cleared:");
     expect(contents).toContain("result-content-0-");
@@ -75,7 +68,6 @@ describe("get_entries view 域：真 idle-clear 旅程", () => {
     const events = session.events();
     const full = entryWindowViewed(events, { view: "history" });
     if (!full.ok) throw new Error("window failed");
-    // 自零起逐段增量拉取（leafSeq 上限内）
     const pulled: typeof full.entries = [];
     let cursor: number | undefined;
     for (;;) {
@@ -120,7 +112,7 @@ describe("get_entries view 域：真 idle-clear 旅程", () => {
     const t0 = Date.now();
     const history = entryWindowViewed(events, { view: "history" });
     const elapsed = Date.now() - t0;
-    expect(history.ok && history.entries.length).toBe(events.length - 262); // 末轮在飞轮豁免
+    expect(history.ok && history.entries.length).toBe(events.length - 262);
     expect(elapsed).toBeLessThan(500);
   });
 });
@@ -136,19 +128,17 @@ describe("get_entries view 域：窗口与失败族", () => {
 
   test("游标指向被滤载体行仍合法（全集域校验）——history 返回跳过该行不空洞", () => {
     const r = entryWindowViewed(mk(), { since: 1, view: "history" });
-    expect(r.ok && r.entries.map((e) => e.seq)).toEqual([3]); // 载体 2 滤除，非 cursor_stale
+    expect(r.ok && r.entries.map((e) => e.seq)).toEqual([3]);
   });
 
   test("无 view 参数 golden：响应与 projectEntries+entryWindow 现状路径字节等同", () => {
     const events = mk();
     const viaViewed = entryWindowViewed(events, {});
-    // 复刻改动前 live 路径：projectEntries → entryWindow（无 view）
     const legacy = entryWindow(projectEntries(events), {});
     expect(JSON.stringify(viaViewed)).toBe(JSON.stringify(legacy));
   });
 
   test("活锁防：limit 截断窗全为 L1 载体行时回补窗口外最近保留行（entries 非空且可推进）", () => {
-    // 构造：seq0 原文保留，seq1..seq11 连续 11 条单点载体（L1 密集清账段），history+limit=10
     const events: SessionEvent[] = [
       { type: "user/message", seq: 0, time: 1, data: { content: [] }, surfaceOp: "append" },
       { type: "assistant/message", seq: 1, time: 2, data: { content: [] }, surfaceOp: "append" },
@@ -157,11 +147,10 @@ describe("get_entries view 域：窗口与失败族", () => {
       events.push({ type: "tool/result", seq: i, time: i + 1, data: { callId: `c${String(i)}`, content: "[cleared: read x 5 chars]" }, surfaceOp: { op: "replace", startSeq: 1, endSeq: 1 } } as never as SessionEvent);
     }
     const r = entryWindowViewed(events, { limit: 10, view: "history" });
-    // 截断窗 = seq3..12（全载体）→ 若无回补则 entries:[] ∧ hasMore:true（活锁）
     expect(r.ok && r.entries.length).toBeGreaterThan(0);
     if (r.ok) {
       const lastSeq = r.entries.at(-1)?.seq;
-      expect(lastSeq).toBeDefined(); // 游标可推进
+      expect(lastSeq).toBeDefined();
       expect(r.entries.every((e) => e.event["type"] !== "tool/result" || e.event["content"] !== "[cleared: read x 5 chars]")).toBe(true);
     }
   });
@@ -169,7 +158,6 @@ describe("get_entries view 域：窗口与失败族", () => {
   test("逆序 span（迭代前缀替换形态）规整为数值升序 elide", () => {
     const events: SessionEvent[] = [
       { type: "user/message", seq: 0, time: 1, data: { content: [] }, surfaceOp: "append" },
-      // 头部节点携带 journal 尾 seq（100），其后保留节点 seq 51 → 落账 startSeq:100, endSeq:51
       { type: "user/message", seq: 1, time: 2, data: { content: [{ type: "text", text: "摘要" }] }, surfaceOp: { op: "replace", startSeq: 100, endSeq: 51 } },
     ] as never as SessionEvent[];
     const r = entryWindowViewed(events, { view: "history" });
@@ -181,8 +169,7 @@ describe("get_entries view 域：窗口与失败族", () => {
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.code).toBe("invalid_input");
     const limited = entryWindowViewed(mk(), { limit: 2, view: "history" });
-    // 全集最近 2 条 = seq 2,3 → history 变换后只剩 3（载体 2 滤除）
     expect(limited.ok && limited.entries.map((e) => e.seq)).toEqual([3]);
-    expect(limited.ok && limited.hasMore).toBe(true); // journal 域真值
+    expect(limited.ok && limited.hasMore).toBe(true);
   });
 });

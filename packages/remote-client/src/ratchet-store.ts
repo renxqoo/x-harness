@@ -1,4 +1,3 @@
-// 客户端侧 ratchet codec：RemoteCodec 的双 ratchet 实现（配对产物种子）。
 import {
   parseNonce,
   RatchetSession,
@@ -15,13 +14,11 @@ export interface RatchetCodecDeps {
 }
 
 export interface RatchetCodec {
-  /** 返回 {payload, nonce}（L3 信封两字段） */
   seal(frameJson: string): Promise<{ payload: string; nonce: string } | null>;
   open(payloadBase64: string, nonceBase64: string): Promise<string | null>;
   ratchet: RatchetSession;
 }
 
-/** 客户端方向 codec：seal direction=1（设备→网关）；open 串行化（接收游标顺序推进） */
 export function createRatchetCodec(deps: RatchetCodecDeps): RatchetCodec {
   const ratchet = new RatchetSession(
     {
@@ -43,7 +40,6 @@ export function createRatchetCodec(deps: RatchetCodecDeps): RatchetCodec {
       return { payload: Buffer.from(ct).toString("base64"), nonce: Buffer.from(outcome.nonce).toString("base64") };
     },
     open(payloadBase64, nonceBase64) {
-      // 串行化 + nonce 反解 index/epoch（WIRE §4 布局——密文自带序，乱序/重发三态由 ratchet 裁决）
       const run = openChain.then(async () => {
         const ct = new Uint8Array(Buffer.from(payloadBase64, "base64"));
         const nonceBytes = new Uint8Array(Buffer.from(nonceBase64, "base64"));

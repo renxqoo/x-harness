@@ -1,6 +1,3 @@
-// 恢复协议单测（件16 §5）：终态四分类算法（F8 合成 interrupted）、幂等判据（F7 已材料化）、
-// 窗口决策（abnormal 直落/repair 标记判）——纯函数层；全链 kill -9 旅程在 e2e（§12.5⑤ 收口）。
-
 import { describe, expect, it } from "vitest";
 import type { SessionEvent } from "@x-harness/session";
 import { classifyChildTerminal, lastAssistantText, markerMaterialized } from "../resume.ts";
@@ -44,7 +41,7 @@ describe("markerMaterialized（F7 幂等判据）", () => {
     const inboxOnly: SessionEvent[] = [
       { type: "agent/inbox/spliced", data: { op: "insert", entries: [{ id: "x", content: [{ type: "text", text: `${marker} fix` }] }] } } as never,
     ];
-    expect(markerMaterialized(inboxOnly, marker)).toBe(false); // 入队 ≠ 送达（F7）
+    expect(markerMaterialized(inboxOnly, marker)).toBe(false);
     expect(markerMaterialized([], marker)).toBe(false);
   });
 });
