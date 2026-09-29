@@ -400,6 +400,12 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         res.writeHead(400).end();
         return;
       }
+      // 归属校验（R2 H5）：只能撤销自己名下设备——跨租户 revoke+改绑劫持通道封死
+      const routed = await store.getDevice(body.deviceId);
+      if (routed === null || routed.installationId !== claims.subject) {
+        res.writeHead(409).end(JSON.stringify({ error: "device not bound to this installation" }));
+        return;
+      }
       await store.revoke(body.deviceId);
       await store.removeDevice(body.deviceId);
       res.writeHead(200).end(JSON.stringify({ ok: true }));
@@ -420,12 +426,13 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         res.writeHead(401).end();
         return;
       }
-      const body = JSON.parse(await readBody(req)) as { deviceId?: string; installationId?: string };
-      if (typeof body.deviceId !== "string" || body.deviceId.length === 0 || typeof body.installationId !== "string") {
-        res.writeHead(400).end();
+      const body = JSON.parse(await readBody(req)) as { deviceId?: string };
+      if (typeof body.deviceId !== "string" || !/^d_[0-9a-f]{16}$/.test(body.deviceId)) {
+        res.writeHead(400).end(JSON.stringify({ error: "bad deviceId format" }));
         return;
       }
-      const installationId = body.installationId;
+      // 归属取调用方身份（R2 H5）：body 自声明改绑通道封死；gateway token 即注册凭据
+      const installationId = claims.subject;
       // 设备路由登记：gateway 持有效 token 即为注册凭据（配对 confirm 已在 gateway 侧
       // 落账）。已登记设备校验归属一致（冒名/跨 installation 改绑拒绝）；未登记即写入。
       const routed = await store.getDevice(body.deviceId);

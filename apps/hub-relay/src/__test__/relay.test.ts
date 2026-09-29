@@ -105,6 +105,7 @@ describe("HTTP 面", () => {
   });
 
   it("revoke：gateway token 撤销 deviceId", async () => {
+    await relay.store.putDevice("dev_gone", { installationId, nodeId: relay.nodeId });
     const res = await httpPost({ port: relayPort(relay), path: "/api/revoke", body: { deviceId: "dev_gone" }, token: gwToken });
     expect(res.status).toBe(200);
     expect(await relay.store.isRevoked("dev_gone")).toBe(true);
@@ -283,16 +284,49 @@ describe("WSS 接入与路由", () => {
 
 describe("设备 token 签发（WIRE 设备注册收尾）", () => {
   it("gateway 代注册设备签发 kind:device token；未注册设备 404；无 token 401", async () => {
-    const res = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_new", installationId }, token: gwToken });
+    const res = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_aaaa00000000bbbb" }, token: gwToken });
     expect(res?.status).toBe(200);
     const parsed = JSON.parse((res?.body ?? "{}") as string) as { token?: string };
     expect(typeof parsed.token).toBe("string");
-    const unauthorized = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_new", installationId } });
+    const unauthorized = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_aaaa00000000bbbb" } });
     expect(unauthorized?.status).toBe(401);
-    // 未登记设备：gateway 持有效 token 即注册凭据（登记放行）；跨 installation 改绑 409
-    const freshDevice = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_fresh", installationId }, token: gwToken });
+    // 未登记设备：gateway 持有效 token 即注册凭据（登记放行——归属即调用方身份）
+    const freshDevice = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_f00d00000000beef" }, token: gwToken });
     expect(freshDevice?.status).toBe(200);
-    const rebound = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_fresh", installationId: "inst_other" }, token: gwToken });
-    expect(rebound?.status).toBe(409);
+  });
+});
+
+describe("R2 H5/H6 回归：租户执法与 deviceId 格式", () => {
+  it("revoke 跨租户 409（只能撤自己名下）", async () => {
+    // 第二个 gateway 身份
+    const kp2 = generateSigningKeyPair();
+    const challenge2 = await httpPost({ port: relayPort(relay), path: "/api/enroll/challenge", body: {} });
+    const ch2 = JSON.parse((challenge2?.body ?? "{}") as string) as { nonce: string; nodeId: string };
+    const transcript2 = enrollTranscript({ installationId: "inst_other", gatewayKeyPub: kp2.pub, nodeId: ch2.nodeId, nonce: ch2.nonce });
+    const sig2 = signBytes(kp2.secret, new TextEncoder().encode(transcript2));
+    const enroll2 = await httpPost({ port: relayPort(relay), path: "/api/enroll", body: { installationId: "inst_other", gatewayKeyPub: kp2.pub, sig: sig2, nonce: ch2.nonce } });
+    const tok2 = (JSON.parse((enroll2?.body ?? "{}") as string) as { token: string }).token;
+    // 主 gateway 登记设备
+    const reg = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_abcdef0123456789" }, token: gwToken });
+    expect(reg?.status).toBe(200);
+    // 他租户 revoke → 409
+    const cross = await httpPost({ port: relayPort(relay), path: "/api/revoke", body: { deviceId: "d_abcdef0123456789" }, token: tok2 });
+    expect(cross?.status).toBe(409);
+    // 属主 revoke → 200
+    const own = await httpPost({ port: relayPort(relay), path: "/api/revoke", body: { deviceId: "d_abcdef0123456789" }, token: gwToken });
+    expect(own?.status).toBe(200);
+  });
+
+  it("deviceId 格式门：非 d_<16hex> 拒 400", async () => {
+    const bad = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "arbitrary-junk-!!" }, token: gwToken });
+    expect(bad?.status).toBe(400);
+    const bad2 = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_short" }, token: gwToken });
+    expect(bad2?.status).toBe(400);
+  });
+
+  it("device-token 归属取调用方身份（body 无 installationId 字段）", async () => {
+    // body 只带 deviceId——归属即 token subject（body 改绑通道封死）
+    const res = await httpPost({ port: relayPort(relay), path: "/api/device-token", body: { deviceId: "d_0123456789abcdef" }, token: gwToken });
+    expect(res?.status).toBe(200);
   });
 });

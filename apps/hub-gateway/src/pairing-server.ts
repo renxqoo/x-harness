@@ -6,6 +6,8 @@ import { PAIRING_LOCKOUT_MS, PAIRING_MAX_ATTEMPTS, PAIRING_TTL_MS, SAS_DIGITS } 
 import type { AuditLog } from "./audit.ts";
 
 export interface PairingSession {
+  /** 已签发的设备连接 token（单 token 语义——重放 device-keys 返回同一枚） */
+  deviceToken: string | null;
   pairingId: string;
   mode: "qr" | "manual";
   gwEphemeral: { secret: string; pub: string };
@@ -87,6 +89,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
     const pairingId = newPairingId();
     const gwEphemeral = newDeviceEphemeral();
     const session: PairingSession = {
+      deviceToken: null,
       pairingId,
       mode,
       gwEphemeral,
@@ -269,9 +272,13 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
         // owner 已 confirm（会话消费）→ 注册落账 → 代发设备连接 token 随 ack 下发
         if (session.consumed) {
           const deviceId = `d_${session.pairingId.slice(3)}`;
-          const token = await options.requestDeviceToken(deviceId);
-          if (token === null) return { ok: false, reason: "device token unavailable" };
-          return { ok: true, reply: { p: "ack", relayToken: token, deviceId } };
+          // 单 token 语义（R2 H6）：首枚缓存重发——重放不再铸造新 jti（多 token 并存面消除）
+          if (session.deviceToken === null) {
+            const token = await options.requestDeviceToken(deviceId);
+            if (token === null) return { ok: false, reason: "device token unavailable" };
+            session.deviceToken = token;
+          }
+          return { ok: true, reply: { p: "ack", relayToken: session.deviceToken, deviceId } };
         }
         return { ok: true, reply: { p: "ack" } };
       }
