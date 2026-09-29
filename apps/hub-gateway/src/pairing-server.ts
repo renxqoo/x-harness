@@ -265,22 +265,7 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
         return pakeBReply(res, session.sas, { gwEphemeralPub: session.gwEphemeral.pub, signingPub: options.identity.signingPub });
       }
       if (spec.message.p === "device-keys") {
-        const longTermPub = typeof spec.message.longTermPub === "string" ? spec.message.longTermPub : "";
-        if (longTermPub.length === 0) return { ok: false, reason: "longTermPub required" };
-        session.deviceEphPub = session.deviceEphPub ?? longTermPub;
-        (session as PairingSession & { deviceLongTermPub?: string }).deviceLongTermPub = longTermPub;
-        // owner 已 confirm（会话消费）→ 注册落账 → 代发设备连接 token 随 ack 下发
-        if (session.consumed) {
-          const deviceId = `d_${session.pairingId.slice(3)}`;
-          // 单 token 语义（R2 H6）：首枚缓存重发——重放不再铸造新 jti（多 token 并存面消除）
-          if (session.deviceToken === null) {
-            const token = await options.requestDeviceToken(deviceId);
-            if (token === null) return { ok: false, reason: "device token unavailable" };
-            session.deviceToken = token;
-          }
-          return { ok: true, reply: { p: "ack", relayToken: session.deviceToken, deviceId } };
-        }
-        return { ok: true, reply: { p: "ack" } };
+        return deviceKeysReply({ session, spec, deps: options });
       }
       return { ok: false, reason: "unknown pairing message" };
 
@@ -290,4 +275,22 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
  *  网关身份绑定校验用；线上 sas 仅作比对，本地推导是唯一真相（R2 P0 修复配套）。 */
 function pakeBReply(res: { ok: true; messageB: string; confirm: string }, sas: string | null, identity: { gwEphemeralPub: string; signingPub: string }): { ok: true; reply: { p: string; [key: string]: unknown } } {
   return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm, gwEph: identity.gwEphemeralPub, gatewayPub: identity.signingPub, ...(sas !== null ? { sas } : {}) } };
+}
+
+/** device-keys 帧应答（confirm 后携 relayToken——单 token 语义）。 */
+async function deviceKeysReply(ctx: { session: PairingSession; spec: { pairingId: string; message: { p: string; [key: string]: unknown } }; deps: PairingServerOptions }): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }> {
+  const { session, spec, deps } = ctx;
+  const longTermPub = typeof spec.message.longTermPub === "string" ? spec.message.longTermPub : "";
+  if (longTermPub.length === 0) return { ok: false, reason: "longTermPub required" };
+  session.deviceEphPub = session.deviceEphPub ?? longTermPub;
+  (session as PairingSession & { deviceLongTermPub?: string }).deviceLongTermPub = longTermPub;
+  if (!session.consumed) return { ok: true, reply: { p: "ack" } };
+  const deviceId = `d_${session.pairingId.slice(3)}`;
+  // 单 token 语义（R2 H6）：首枚缓存重发——重放不再铸造新 jti
+  if (session.deviceToken === null) {
+    const token = await deps.requestDeviceToken(deviceId);
+    if (token === null) return { ok: false, reason: "device token unavailable" };
+    session.deviceToken = token;
+  }
+  return { ok: true, reply: { p: "ack", relayToken: session.deviceToken, deviceId } };
 }

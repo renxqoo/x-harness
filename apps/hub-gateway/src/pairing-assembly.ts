@@ -20,11 +20,6 @@ export interface PairingAssemblyDeps {
 
 export function assemblePairingServer(deps: PairingAssemblyDeps): PairingServer {
   const { identity, config, audit, devices, now } = deps;
-  const onPairingConfirmed = async (deviceId: string, ratchetSeed: Uint8Array): Promise<void> => {
-    // R1 H3：confirm 落账即 establish（gateway=initiator；种子 = mixRatchetRoot(channelKey, deviceLongTermPub)
-    // ——与设备端同式推导，见协议包 pairing 模块）
-    deps.cryptoSessions.establish({ deviceId, sharedSecret: ratchetSeed, initiator: true });
-  };
   return createPairingServer({
     identity,
     relayUrl: config.relayUrl,
