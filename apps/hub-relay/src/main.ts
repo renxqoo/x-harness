@@ -113,41 +113,40 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   });
 
   const server = createServer((req, res) => {
+  void dispatchHttp(req, res);
+});
+
+  /** HTTP 路由表（method+path → handler；GET 无 body 的直答内联）。 */
+  const httpRoutes: Array<{ method: string; path: string; handler: (req: IncomingMessage, res: import("node:http").ServerResponse) => void | Promise<void> }> = [
+    {
+      method: "GET",
+      path: "/api/node-key",
+      handler: (_req, res) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ signingPub: nodeSigningPub, nodeId }));
+      },
+    },
+    { method: "POST", path: "/api/pairing-ticket", handler: (req, res) => void handlePairingTicket(req, res) },
+    { method: "POST", path: "/api/enroll/challenge", handler: (req, res) => void handleEnrollChallenge(req, res) },
+    { method: "POST", path: "/api/enroll", handler: (req, res) => void handleEnroll(req, res) },
+    { method: "POST", path: "/api/revoke", handler: (req, res) => void handleRevoke(req, res) },
+    { method: "POST", path: "/api/device-token", handler: (req, res) => void handleDeviceToken(req, res) },
+    { method: "POST", path: "/api/device-token/refresh", handler: (req, res) => void handleDeviceTokenRefresh(req, res) },
+  ];
+
+  async function dispatchHttp(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, nodeId, conns: byConnId.size }));
       return;
     }
-    if (req.method === "GET" && req.url === "/api/node-key") {
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ signingPub: nodeSigningPub, nodeId }));
-      return;
-    }
-    if (req.method === "POST" && req.url === "/api/pairing-ticket") {
-      void handlePairingTicket(req, res);
-      return;
-    }
-    if (req.method === "POST" && req.url === "/api/enroll/challenge") {
-      void handleEnrollChallenge(req, res);
-      return;
-    }
-    if (req.method === "POST" && req.url === "/api/enroll") {
-      void handleEnroll(req, res);
-      return;
-    }
-    if (req.method === "POST" && req.url === "/api/revoke") {
-      void handleRevoke(req, res);
-      return;
-    }
-    if (req.method === "POST" && req.url === "/api/device-token") {
-      void handleDeviceToken(req, res);
-      return;
-    }
-    if (req.method === "POST" && req.url === "/api/device-token/refresh") {
-      void handleDeviceTokenRefresh(req, res);
+    const route = httpRoutes.find((candidate) => candidate.method === req.method && candidate.path === req.url);
+    if (route !== undefined) {
+      await route.handler(req, res);
       return;
     }
     res.writeHead(404).end();
-  });
+  }
 
   server.on("upgrade", (req, socket, head) => {
     void handleUpgrade(req, socket, head);
