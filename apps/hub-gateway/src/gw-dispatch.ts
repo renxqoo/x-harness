@@ -37,7 +37,7 @@ export interface PairingServerLike {
 }
 
 export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: Record<string, unknown>) => Promise<GwResult> {
-  async function handleGwCommand(command: string, args: Record<string, unknown>): Promise<GwResult> {
+  async function dispatch(command: string, args: Record<string, unknown>): Promise<GwResult> {
     if (command === "gw/status") {
       return { ok: true, data: { installationId: deps.identity.installationId, remoteEnabled: deps.config.remoteEnabled, devices: deps.devices.list().length, threads: deps.threads.all().length, hostAlive: deps.host.alive() } };
     }
@@ -119,5 +119,11 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
     return hit ? { ok: true, data: { deviceId } } : { ok: false, reason: "no such device" };
   }
 
-  return handleGwCommand;
+  return async (command, args) => {
+    try {
+      return await dispatch(command, args);
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
+  };
 }
