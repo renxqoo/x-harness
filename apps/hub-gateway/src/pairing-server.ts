@@ -259,7 +259,7 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
         const deviceInfo = coerceDeviceInfo(spec.message.deviceInfo);
         const res = await server.handlePakeInitiate({ pairingId: spec.pairingId, messageA, deviceInfo });
         if (!res.ok) return res;
-        return pakeBReply(res, session.sas);
+        return pakeBReply(res, session.sas, { gwEphemeralPub: session.gwEphemeral.pub, signingPub: options.identity.signingPub });
       }
       if (spec.message.p === "device-keys") {
         const longTermPub = typeof spec.message.longTermPub === "string" ? spec.message.longTermPub : "";
@@ -279,7 +279,8 @@ async function pairingFrameInner(ctx: PairingFrameSpec): Promise<{ ok: true; rep
 
 }
 
-/** pake-b 应答构造（sas 随帧下发——手机端展示与 owner 键入同源）。 */
-function pakeBReply(res: { ok: true; messageB: string; confirm: string }, sas: string | null): { ok: true; reply: { p: string; [key: string]: unknown } } {
-  return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm, ...(sas !== null ? { sas } : {}) } };
+/** pake-b 应答构造（sas/gwEph/gatewayPub 随帧下发——手机端本地重建 SAS 转录与
+ *  网关身份绑定校验用；线上 sas 仅作比对，本地推导是唯一真相（R2 P0 修复配套）。 */
+function pakeBReply(res: { ok: true; messageB: string; confirm: string }, sas: string | null, identity: { gwEphemeralPub: string; signingPub: string }): { ok: true; reply: { p: string; [key: string]: unknown } } {
+  return { ok: true, reply: { p: "pake-b", pakeB: res.messageB, confirm: res.confirm, gwEph: identity.gwEphemeralPub, gatewayPub: identity.signingPub, ...(sas !== null ? { sas } : {}) } };
 }

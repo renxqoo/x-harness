@@ -311,6 +311,12 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       return;
     }
     if (to.startsWith("pairing_")) {
+      // 配对面只收 gateway 身份的帧（R2 P0-3：任意 device/pairing 连接不得向手机配对面
+      // 注入伪造 pake-b/ack——MITM 绕过手输码的注入通道）
+      if (from.claims.kind !== "gateway") {
+        from.send(errorLine("forbidden"));
+        return;
+      }
       // 配对面：投给持 pairingTicket 的连接（单活键 pairing:<pairingId>）
       const target = conns.get(`pairing:${to.slice("pairing_".length)}`);
       if (target !== undefined) {
