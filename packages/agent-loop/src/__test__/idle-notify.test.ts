@@ -4,7 +4,7 @@
 // 崩溃修复按 insert 自身 target 分组（不错靶）、chainsNextTurn 两队列析取。
 
 import { describe, expect, test } from "vitest";
-import { LEADING_ORIGIN_BATCH_LIMIT, claimTurnBatch, foldInbox, turnClaimBatch, isOriginEntry } from "../inbox.ts";
+import { LEADING_ORIGIN_BATCH_LIMIT, claimTurnBatch, foldInbox, turnClaimBatch, isOriginEntry } from "../index.ts";
 import { chainsNextTurn } from "../driver.ts";
 import { interruptedTurnClosers } from "../repair.ts";
 import type { InboxEntry, SessionEvent } from "@x-harness/session";

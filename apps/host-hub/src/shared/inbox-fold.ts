@@ -1,4 +1,4 @@
-import { foldInbox } from "@x-harness/agent-loop";
+import { foldInbox, isOriginEntry } from "@x-harness/agent-loop";
 import type { ContentBlock, SessionEvent } from "@x-harness/session";
 
 export interface QueueEntryView {
@@ -23,9 +23,11 @@ function entryText(content: readonly ContentBlock[]): string {
 
 export function foldQueue(events: readonly SessionEvent[]): QueueView {
   const { nextTurn, nextStep } = foldInbox(events);
+  // origin 条目（内部事实通告）不投影进队列面：UI 队列镜像只呈现用户输入（转向/排队卡片），
+  // 系统通告显示为用户消息是伪造来源；queue/drop|send_now 寻址面不变（origin 条目不经这两个动词操作）。
   return {
-    steering: nextStep.map((entry) => ({ id: entry.id, text: entryText(entry.content) })),
-    followUp: nextTurn.map((entry) => ({ id: entry.id, text: entryText(entry.content) })),
+    steering: nextStep.filter((entry) => !isOriginEntry(entry)).map((entry) => ({ id: entry.id, text: entryText(entry.content) })),
+    followUp: nextTurn.filter((entry) => !isOriginEntry(entry)).map((entry) => ({ id: entry.id, text: entryText(entry.content) })),
   };
 }
 

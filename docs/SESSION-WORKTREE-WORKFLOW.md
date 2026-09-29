@@ -152,7 +152,7 @@ do not modify the main worktree at <cwd>.
 
 **子代理树通告：整族不做**（一审 P3 终审维持：删树六路径中三处在 emitSpawned 后，建树通告会留下摘要恒保留的假事实；stop 路径既有工具结果已带同语义尾注；`agent_message` 寻址经 agentId 不依赖树路径（nameaddr.ts:14-26 实码核实）、`list_agents` 视图本带 worktree 字段——发现通道既有）。
 
-来源登记：docs/AGENT-MESSAGE.md §5 迁移地图表 + PLUGIN-AUTHORING 已知来源表各一行。
+来源登记：source = `git-worktree`（本节即为登记——仓内来源注册表已随文档收敛移除，方案文档即来源清单）。
 
 ### 1.4 数据安全门判据（按域分治）
 
