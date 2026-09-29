@@ -121,6 +121,9 @@ describe("worktree 隔离（§8）", { timeout: 20_000 }, () => { // 真仓 git 
     await rm(wtPath, { recursive: true, force: true }).catch(() => {});
   });
 
+  // 净树但分支有未合并提交的保留面与已收编分支的清理面：见 worktree-cleanup-commit.test.ts
+  // （拆文件：本文件超 max-lines 门禁）
+
   it("remove 失败可见：git worktree lock 制造 → stop 文案报 remove-failed（非 has changes）+ onWarn 告警", async () => {
     repo = await gitRepo();
     const warnings: string[] = [];

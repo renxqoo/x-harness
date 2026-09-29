@@ -117,6 +117,8 @@ export type CleanupResult =
 
 /** 清理评估（docs/WORKSPACE-ROOT-INJECTION.md 锚定规则）：无改动 → remove + 分支删除；
  *  有改动 → 保留（改动不丢）；remove 失败 → remove-failed（onWarn 由调用方接）。
+ *  「无改动」= 工作树干净且分支无领先提交（commit 后净树仍算有改动——未合并提交
+ *  是仅存副本，删分支即数据丢失）。
  *  git 写操作锚 plan.repoTop（持久化事实——跨装配 resume/fork 换 cwd 不漂移）+
  *  per-repo lockfile（跨进程写互斥；锁不可重入——sweep 持锁时走 cleanupHeld）。 */
 export async function evaluateCleanup(plan: WorktreePlan, onDegraded?: LockDegraded): Promise<CleanupResult> {
@@ -156,6 +158,17 @@ async function cleanupHeld(plan: WorktreePlan): Promise<CleanupResult> {
     return { kind: "kept-dirty", path: plan.path }; // status 不可判 → 保守保留
   }
   if (status.trim() !== "") return { kind: "kept-dirty", path: plan.path };
+  // 提交面检查（数据丢失级回归锚：净树 ≠ 无改动——子代理 commit 后工作区干净，但分支上的
+  // 未合并提交是仅存副本，branch -D 即孤儿化）。判据 = 分支头被其他本地分支包含（头被包含
+  // ⟺ 全部祖先被包含，精确；基线不假设 main：worktree add 的起点是当时 HEAD，可为任意分支）。
+  // 含命令不可判时分支已删（并发先行者）→ 视为无独有提交续走删除；其余失败保守保留
+  const others = await git(["branch", "--contains", plan.branch], { cwd: plan.repoTop }).then(
+    (r) => r.stdout.split("\n").map((l) => l.replace(/^[*+] /, "").trim()).filter((n) => n !== "" && n !== plan.branch),
+    () => null,
+  );
+  if (others === null ? !(await branchGone(plan)) : others.length === 0) {
+    return { kind: "kept-dirty", path: plan.path };
+  }
   const removed = await (async () => {
     await git(["worktree", "remove", "--force", plan.path], { cwd: plan.repoTop });
     await git(["branch", "-D", plan.branch], { cwd: plan.repoTop });

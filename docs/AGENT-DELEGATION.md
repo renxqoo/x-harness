@@ -374,9 +374,12 @@ branch -D 兜底）。
 ### 8.3 清理时序（规格「无改动自动清理」）
 
 评估时机：子 dispose（teardown 级联/孤儿收养/驻留档化）、`task_stop`、**启动期对账清扫**
-（装配时扫描 worktree 根目录：无 live 行对应的目录——status --porcelain 空 → worktree
-remove + branch -D；非空 → 保留+日志——父进程崩溃泄漏兜底）。评估 = `git -C <path>
-status --porcelain` 空 → remove+branch -D（锚 repoTop + per-repo lock）；非空 → 保留，
+（装配时扫描 worktree 根目录：无 live 行对应的目录——无改动清、有改动保留——父进程崩溃泄漏兜底）。
+评估 = `git -C <path> status --porcelain` 空 **且分支头被其他本地分支包含**（净树 ≠
+无改动：子代理 commit 后工作区干净，但未合并提交是仅存副本，`branch -D` 即孤儿化——
+数据丢失级约束；基线不假设 main——worktree add 起点是当时 HEAD，判据用
+`branch --contains` 的头包含性，头被包含 ⟺ 全部祖先被包含）→ remove+branch -D
+（锚 repoTop + per-repo lock）；否则 → 保留，
 stop/通知文案带路径；**remove 失败 → remove-failed 形态（stop 文案如实报失败 +
 onWarn 告警，不谎报 has changes）**；目录已被外部删除 → `worktree prune` 后仍删分支
 （第三条泄漏路径）。清理结局判别三分：`removed` / `kept-dirty` / `remove-failed`。
