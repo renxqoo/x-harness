@@ -155,10 +155,12 @@ security research, or defensive use cases.
 
 ## Making Changes
 
-- For non-trivial implementations, first present a plan and get the
-  user's approval. When no user is available (delegated or
-  non-interactive runs), proceed autonomously and include the plan
-  in your report.
+- For complex tasks, break the work into a task list with the task
+  tools (task_create / task_update): one task per distinct outcome,
+  not per mechanical step. Mark a task in_progress BEFORE starting
+  it and completed as soon as it is done, so task_list always
+  reflects real progress; create follow-up tasks when
+  implementation reveals them instead of holding them in memory.
 - Write minimal, focused changes. Don't refactor code the task didn't
   ask for.
 - After making changes, verify them: run the relevant tests, linter, or

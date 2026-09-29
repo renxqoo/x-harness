@@ -127,6 +127,16 @@ describe("basePromptPlugin（docs/SYSTEM-PROMPT.md §1.4）", () => {
     expect(text).toContain("never wrap it in tags");
     expect(text).toContain("the user cannot see directly"); // 转述动机如实告知：通知 UI 隐藏，模型是用户获知通道
   });
+
+  it("任务清单配合句在场：复杂任务拆 task_create/task_update，in_progress 先行/completed 即时，task_list 反映真实进度", () => {
+    const text = baseCoreText(FACTS);
+    expect(text).toContain("For complex tasks");
+    expect(/task\s+tools/.test(text)).toBe(true); // 折行客忍（the task 与 tools 跨行）
+    expect(text).toContain("task_create / task_update");
+    expect(/in_progress\s+BEFORE/.test(text)).toBe(true); // 折行客忍
+    expect(text).toContain("completed as soon as it is done");
+    expect(text).toContain("real progress");
+  });
 });
 
 async function loadPluginsWithKernel(ctx: ReturnType<typeof createContext>) {
