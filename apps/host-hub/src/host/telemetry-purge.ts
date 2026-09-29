@@ -1,48 +1,65 @@
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { createQueryService } from "@x-harness/telemetry-sqlite";
+import { createBunSqliteExecutor, createQueryService } from "@x-harness/telemetry-sqlite";
 import type { TelemetryQueryService } from "@x-harness/telemetry-sqlite";
 
 export interface TelemetryPurge {
   purge(ids: readonly string[]): void;
+  close(): void;
 }
 
 export function telemetryDbPathOf(agentDir: string): string {
   return join(agentDir, "telemetry.db");
 }
 
-interface SqliteLike {
-  run(sql: string, ...params: (null | number | string | bigint | Uint8Array)[]): { changes: number | bigint };
-  query(sql: string): { all(...params: (null | number | string | bigint | Uint8Array)[]): unknown[] };
-}
-
-class BunExecutor {
-  private readonly db: SqliteLike;
-  constructor(db: SqliteLike) {
-    this.db = db;
-  }
-  run(sql: string, params: readonly (null | number | string | bigint | Uint8Array)[] = []): { changes: number | bigint } {
-    return this.db.run(sql, ...params);
-  }
-  all<T extends Record<string, null | number | string | bigint | Uint8Array>>(sql: string, params: readonly (null | number | string | bigint | Uint8Array)[] = []): T[] {
-    return this.db.query(sql).all(...params) as T[];
-  }
-}
-
 export function createTelemetryPurge(deps: { readonly dbPath: string; readonly onWarn?: (message: string) => void }): TelemetryPurge {
+  let connection: Database | undefined;
   let service: TelemetryQueryService | undefined;
   const onWarn = deps.onWarn ?? ((message: string) => process.stderr.write(`hub: ${message}\n`));
+
+  function reset(): void {
+    connection?.close();
+    connection = undefined;
+    service = undefined;
+  }
+
+  function sqliteCode(error: unknown): string {
+    return String((error as { code?: unknown })?.code ?? "");
+  }
+
+  function open(): TelemetryQueryService | undefined {
+    if (service !== undefined) return service;
+    try {
+      const db = new Database(deps.dbPath);
+      const executor = createBunSqliteExecutor(db);
+      executor.all("SELECT trace_id FROM otel_sessions LIMIT 1");
+      connection = db;
+      service = createQueryService(executor);
+      return service;
+    } catch (error) {
+      reset();
+      if (sqliteCode(error) === "SQLITE_CANTOPEN") return undefined;
+      if (sqliteCode(error) === "SQLITE_ERROR" && error instanceof Error && error.message.includes("no such table")) return undefined;
+      onWarn(`telemetry purge open failed: ${String(error)}`);
+      return undefined;
+    }
+  }
+
   return {
     purge(ids: readonly string[]): void {
       if (ids.length === 0) return;
+      const target = open();
+      if (target === undefined) return;
       try {
-        service ??= createQueryService(new BunExecutor(new Database(deps.dbPath) as unknown as SqliteLike));
-        for (const id of ids) service.deleteSession(id);
+        for (const id of ids) target.deleteSession(id);
       } catch (error) {
-        service = undefined;
-        if (error instanceof Error && error.message.startsWith("unable to open database file")) return;
+        reset();
+        if (sqliteCode(error) === "SQLITE_BUSY") return;
         onWarn(`telemetry purge failed: ${String(error)}`);
       }
+    },
+    close(): void {
+      reset();
     },
   };
 }

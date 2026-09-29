@@ -9,7 +9,7 @@ import type { ThreadTable } from "./thread-table.ts";
 import { fenceSessionPath } from "./read-history.ts";
 import type { DirectRead } from "./read-history.ts";
 import { deleteSession } from "./session-delete.ts";
-import { createTelemetryPurge, telemetryDbPathOf } from "./telemetry-purge.ts";
+import type { TelemetryPurge } from "./telemetry-purge.ts";
 import { taskLogsRootOf, probeGitFacts } from "@x-harness/harness";
 import { isAbsolute } from "node:path";
 import { listSavedSessions } from "./saved-query.ts";
@@ -28,6 +28,7 @@ export interface HostCommandsDeps {
   table: ThreadTable;
   pool: WorkerPool;
   direct: DirectRead;
+  telemetryPurge?: TelemetryPurge;
   agentDir: string;
   sessionsRoot: string;
   limits: {
@@ -243,7 +244,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
 
   async function handleThreadDelete(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
     const sessionPath = typeof input.sessionPath === "string" ? input.sessionPath : "";
-    const result = await deleteSession({ table: deps.table, sessionsRoot: deps.sessionsRoot, taskLogsRoot: taskLogsRootOf(deps.sessionsRoot), agentDir: deps.agentDir, telemetry: createTelemetryPurge({ dbPath: telemetryDbPathOf(deps.agentDir) }) }, sessionPath);
+    const result = await deleteSession({ table: deps.table, sessionsRoot: deps.sessionsRoot, taskLogsRoot: taskLogsRootOf(deps.sessionsRoot), agentDir: deps.agentDir, ...(deps.telemetryPurge !== undefined ? { telemetry: deps.telemetryPurge } : {}) }, sessionPath);
     if (!result.ok) respond(id, "thread/delete", { error: result.reason });
     else respond(id, "thread/delete", { data: { removed: result.removed } });
   }

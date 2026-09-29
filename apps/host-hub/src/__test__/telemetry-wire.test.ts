@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "vitest";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnScriptWorker, waitEvent, waitResponse } from "./kit/worker-harness.ts";
 import type { ScriptWorker } from "./kit/worker-harness.ts";
@@ -81,7 +82,7 @@ describe("worker 遥测装配（telemetryKit 写 <agentDir>/telemetry.db）", ()
 });
 
 describe("telemetry purge（thread/delete 配套清理）", () => {
-  test("purge 级联清三表；库缺席静默；坏句柄重置后可再 purge", async () => {
+  test("purge 级联清三表；重复 purge 复用同连接；close 后可再开", async () => {
     const root = await tempDir("hub-tel-purge-");
     const dbPath = join(root, "telemetry.db");
     const seed = new Database(dbPath);
@@ -94,20 +95,56 @@ describe("telemetry purge（thread/delete 配套清理）", () => {
     seed.close();
 
     const purge = createTelemetryPurge({ dbPath, onWarn: () => {} });
-    purge.purge(["gone", "kept"]);
+    purge.purge(["gone"]);
+    purge.purge(["kept"]);
+    purge.close();
 
     const reopen = new Database(dbPath, { readonly: true });
     expect((reopen.query("SELECT COUNT(*) AS n FROM otel_sessions").get() as { n: number }).n).toBe(0);
     expect((reopen.query("SELECT COUNT(*) AS n FROM otel_spans").get() as { n: number }).n).toBe(0);
     expect((reopen.query("SELECT COUNT(*) AS n FROM otel_logs").get() as { n: number }).n).toBe(0);
     reopen.close();
+  });
 
-    const missing = createTelemetryPurge({ dbPath: join(root, "no-such-dir", "telemetry.db"), onWarn: (message) => warnings.push(message) });
+  test("库文件缺席/目录不可写（CANTOPEN）静默不建库；库无 schema（no such table）静默", async () => {
+    const root = await tempDir("hub-tel-purge-missing-");
     const warnings: string[] = [];
+    const missing = createTelemetryPurge({ dbPath: join(root, "no-such-dir", "telemetry.db"), onWarn: (message) => warnings.push(message) });
     missing.purge(["gone"]);
     expect(warnings).toEqual([]);
-    missing.purge([]);
+    expect(existsSync(join(root, "no-such-dir"))).toBe(false);
+
+    const unschema = createTelemetryPurge({ dbPath: join(root, "empty.db"), onWarn: (message) => warnings.push(message) });
+    unschema.purge(["gone"]);
     expect(warnings).toEqual([]);
+    unschema.close();
+    const check = new Database(join(root, "empty.db"), { readonly: true });
+    expect((check.query("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table'").get() as { n: number }).n).toBe(0);
+    check.close();
+  });
+
+  test("BUSY 写锁竞争静默（等满 busy_timeout 后重置，解锁后可再 purge）", { timeout: 20_000 }, async () => {
+    const root = await tempDir("hub-tel-purge-busy-");
+    const dbPath = join(root, "telemetry.db");
+    const seed = new Database(dbPath);
+    const exec = createBunSqliteExecutor(seed);
+    ensureSchema(exec);
+    exec.run("INSERT INTO otel_sessions (session_id, trace_id, created_ms, header) VALUES ('busy1', 'tr-busy', 1, '{}')", []);
+    seed.close();
+
+    const blocker = new Database(dbPath);
+    blocker.exec("BEGIN EXCLUSIVE");
+    const warnings: string[] = [];
+    const purge = createTelemetryPurge({ dbPath, onWarn: (message) => warnings.push(message) });
+    purge.purge(["busy1"]);
+    expect(warnings).toEqual([]);
+    blocker.exec("COMMIT");
+    blocker.close();
+    purge.purge(["busy1"]);
+    purge.close();
+    const reopen = new Database(dbPath, { readonly: true });
+    expect((reopen.query("SELECT COUNT(*) AS n FROM otel_sessions").get() as { n: number }).n).toBe(0);
+    reopen.close();
   });
 
   test("删除流程接线：deleteSession 携 purge 后三表行随档案消失（含级联子会话）", async () => {

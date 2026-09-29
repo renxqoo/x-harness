@@ -15,6 +15,7 @@ import { eventFrame } from "../protocol/frames.ts";
 import { isAbsolute } from "node:path";
 import { createDirectRead } from "./read-history.ts";
 import { createHostCommands } from "./host-commands.ts";
+import { createTelemetryPurge, telemetryDbPathOf } from "./telemetry-purge.ts";
 import { heartbeatFrame, hubErrorFrame, responseFrame } from "../protocol/frames.ts";
 import { hubError } from "../shared/errors.ts";
 
@@ -121,11 +122,13 @@ export async function runHost(boot: HostBoot): Promise<void> {
   });
 
   const direct = createDirectRead({ sessionsRoot: boot.sessionsRoot });
+  const telemetryPurge = createTelemetryPurge({ dbPath: telemetryDbPathOf(boot.agentDir) });
   const commands = createHostCommands(
     {
       table,
       pool,
       direct,
+      telemetryPurge,
       agentDir: boot.agentDir,
       sessionsRoot: boot.sessionsRoot,
       limits,
@@ -163,6 +166,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
     gitWatch.stop();
     stopGitReconcile();
     clearInterval(heartbeat);
+    telemetryPurge.close();
     await pool.shutdownAll();
     await writer.idle();
     (boot.exit ?? ((code: number) => process.exit(code)))(0);
