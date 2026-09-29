@@ -121,7 +121,7 @@ describe("agentLoop 服务（docs/AGENT-LOOP-DRIVER §1.1）", () => {
     expect(made.ok).toBe(true);
     if (!made.ok) return;
     const agent = made.value.agent;
-    agent.notify("delegation-report", "content", "sub-agent finished the audit");
+    agent.notify({ source: "delegation-report", kind: "content", text: "sub-agent finished the audit" });
     await agent.whenIdle();
     const inserted = agent.session.events().find((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "insert");
     expect(inserted?.data).toMatchObject({ op: "insert", target: "next-step", entries: [{ origin: { source: "delegation-report", kind: "content" } }] });
@@ -138,6 +138,79 @@ describe("agentLoop 服务（docs/AGENT-LOOP-DRIVER §1.1）", () => {
     await made.value.dispose();
   });
 
+  it("notify target=next-turn（空闲投递）：不唤醒零 dial；下条用户消息同批材料化（同一 dial 见到通告与任务）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const calls: LlmRequest[] = [];
+    world.ctx.use(llmRuntime).registerAdapter({
+      name: "fake",
+      stream: (request) => {
+        calls.push(request);
+        return (async function* (): AsyncGenerator<LlmChunk> {
+          yield { type: "text-delta", text: "ok" };
+          yield { type: "usage", usage: { input: 1, output: 2 } };
+          yield { type: "finish", finish: { kind: "stop" } };
+        })();
+      },
+    });
+    const loop = world.ctx.use(agentLoopServiceToken);
+    const made = await loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const agent = made.value.agent;
+    await agent.whenIdle();
+    const dialCountBefore = calls.length;
+    agent.notify({ source: "git-worktree", kind: "content", text: "branch feat-x is now checked out at /tmp/wt-x for this task.", target: "next-turn" });
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(calls.length).toBe(dialCountBefore); // 未唤醒——零额外 LLM 调用
+    expect(agent.status).toBe("idle");
+    const inserted = agent.session.events().find((e) => e.type === "agent/inbox/spliced" && (e.data as { op?: string }).op === "insert");
+    expect(inserted?.data).toMatchObject({ op: "insert", target: "next-turn" });
+    agent.followup("start the login fix");
+    await agent.whenIdle();
+    expect(calls.length).toBe(dialCountBefore + 1); // 恰一次 dial：通告与用户消息同批
+    const last = calls[calls.length - 1] as unknown as { messages?: Array<{ role: string; content: unknown }> };
+    const projected = (last?.messages ?? []).map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("|");
+    expect(projected).toContain("feat-x");
+    expect(projected).toContain("start the login fix");
+    const noticeMaterialized = agent.session.events().filter((e) => e.type === "agent/message");
+    expect(noticeMaterialized.length).toBe(1);
+    expect(noticeMaterialized[0]?.data).toMatchObject({ source: "git-worktree", kind: "content" });
+    await made.value.dispose();
+  });
+
+  it("notify target=next-turn 仅剩 origin：不链式不空 kick（无 turn 括号）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const calls: LlmRequest[] = [];
+    world.ctx.use(llmRuntime).registerAdapter({
+      name: "fake",
+      stream: (request) => {
+        calls.push(request);
+        return (async function* (): AsyncGenerator<LlmChunk> {
+          yield { type: "text-delta", text: "ok" };
+          yield { type: "usage", usage: { input: 1, output: 2 } };
+          yield { type: "finish", finish: { kind: "stop" } };
+        })();
+      },
+    });
+    const loop = world.ctx.use(agentLoopServiceToken);
+    const made = await loop.create({ agent: AGENT });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const agent = made.value.agent;
+    await agent.whenIdle();
+    agent.followup("first task");
+    await agent.whenIdle();
+    const turnCount = agent.session.events().filter((e) => e.type === "turn/start").length;
+    const dialCount = calls.length;
+    agent.notify({ source: "git-worktree", kind: "content", text: "queued notice without user message", target: "next-turn" });
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(calls.length).toBe(dialCount); // 不空 kick
+    expect(agent.session.events().filter((e) => e.type === "turn/start").length).toBe(turnCount); // 无 turn 括号
+    await made.value.dispose();
+  });
+
   it("notify 垃圾输入降级：空 source / 非串 text 不落账不唤醒", async () => {
     const world = await makeWorld();
     worlds.push(world);
@@ -146,8 +219,8 @@ describe("agentLoop 服务（docs/AGENT-LOOP-DRIVER §1.1）", () => {
     expect(made.ok).toBe(true);
     if (!made.ok) return;
     const agent = made.value.agent;
-    agent.notify("", "content", "x");
-    agent.notify("s", "content", 42 as never);
+    agent.notify({ source: "", kind: "content", text: "x" });
+    agent.notify({ source: "s", kind: "content", text: 42 as never });
     expect(agent.status).toBe("idle");
     expect(agent.session.events().filter((e) => e.type === "agent/inbox/spliced")).toHaveLength(0);
     await made.value.dispose();

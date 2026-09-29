@@ -1,7 +1,7 @@
-import type { AgentMessageKind, ContentBlock, ImageBlock, InboxEntry, Session, SessionId } from "@x-harness/session";
+import type { AgentMessageKind, ContentBlock, ImageBlock, InboxEntry, InboxTarget, Session, SessionId } from "@x-harness/session";
 import { agentMessageData, AGENT_MESSAGE_KINDS } from "@x-harness/session";
 import { errorText } from "@x-harness/core";
-import { foldInbox, insertData } from "./inbox.ts";
+import { foldInbox, insertData, isOriginEntry } from "./inbox.ts";
 import { concludeWindow } from "./continuation.ts";
 import { runAttempt } from "./attempt.ts";
 import type { AttemptResult } from "./attempt.ts";
@@ -21,6 +21,7 @@ import {
   settleConclude,
 } from "./step.ts";
 import type { AssistantSettled, DriverDeps, ResolvedOptions, StepEntry, TurnOutcome, TurnScope } from "./step.ts";
+import type { NotifyTarget } from "./types.ts";
 
 export type { DriverDeps, ResolvedOptions };
 
@@ -59,7 +60,8 @@ export function chainsNextTurn(cancelled: string | undefined, turnEnds: TurnOutc
   if (cancelled !== undefined) return false;
   if (turnEnds !== undefined && turnEnds.kind !== "completed") return false;
   const inbox = foldInbox(session.events());
-  return inbox.nextTurn.length > 0 || inbox.nextStep.length > 0;
+  const hasUserInput = [...inbox.nextTurn, ...inbox.nextStep].some((entry) => !isOriginEntry(entry));
+  return hasUserInput;
 }
 
 function closeOpenStep(session: Session, turnNumber: number, openStep: number): void {
@@ -181,7 +183,7 @@ function turnEndData(turn: number, reason: TurnOutcome): Record<string, unknown>
 export function createDriver(deps: DriverDeps): {
   readonly followup: (text: string, options?: { images?: readonly ImageBlock[] }) => void;
   readonly steer: (text: string, options?: { images?: readonly ImageBlock[] }) => void;
-  readonly notify: (source: string, kind: AgentMessageKind, text: string) => void;
+  readonly notify: (message: { readonly source: string; readonly kind: AgentMessageKind; readonly text: string; readonly target?: NotifyTarget }) => void;
   readonly cancel: (cause: string, options?: { keepInbox?: boolean }) => void;
   readonly whenIdle: () => Promise<void>;
   readonly status: () => "idle" | "running";
@@ -218,7 +220,11 @@ export function createDriver(deps: DriverDeps): {
       deps.emitError(failedTurnRef.turn, errorText(error));
     } finally {
       phase = undefined;
-      const replay = wakeRequested && cancelled === undefined && foldInbox(session.events()).nextTurn.length > 0;
+      const inboxAfter = foldInbox(session.events());
+      const replay =
+        wakeRequested &&
+        cancelled === undefined &&
+        [...inboxAfter.nextTurn, ...inboxAfter.nextStep].some((entry) => !isOriginEntry(entry));
       wakeRequested = false;
       if (replay) {
         void kick();
@@ -307,9 +313,12 @@ export function createDriver(deps: DriverDeps): {
       appendEvent(session, "agent/inbox/spliced", insertData("next-step", userBlocks(text, options)));
       wake();
     },
-    notify: (source: string, kind: AgentMessageKind, text: string) => {
+    notify: (message: { readonly source: string; readonly kind: AgentMessageKind; readonly text: string; readonly target?: NotifyTarget }) => {
+      const { source, kind, text } = message;
       if (typeof text !== "string" || typeof source !== "string" || source === "" || !AGENT_MESSAGE_KINDS.has(kind)) return;
-      appendEvent(session, "agent/inbox/spliced", insertData("next-step", [{ type: "text", text }], { source, kind }));
+      const queue: InboxTarget = message.target === "next-turn" ? "next-turn" : "next-step";
+      appendEvent(session, "agent/inbox/spliced", insertData(queue, [{ type: "text", text }], { source, kind }));
+      if (queue === "next-turn") return;
       wake();
     },
     cancel: (cause: string, options?: { keepInbox?: boolean }) => {

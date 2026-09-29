@@ -5,6 +5,7 @@ export type {
   AgentOptions,
   AgentStatus,
   CreateAgentOptions,
+  NotifyTarget,
   ResumeAgentOptions,
 } from "./types.ts";
 export {
@@ -24,7 +25,7 @@ export {
 export type { TruncatedToolDecision, TruncatedToolPayload, AssistantSettlement, AssistantStreamFrame, Dial, PreStepDecision, RequestErrorDecision, RequestErrorPayload, RequestFailure, TurnConcludeDecision, TurnConcludePayload } from "./tokens.ts";
 export { isTruncatedArguments, TRUNCATED_TOOL_MESSAGE } from "./tool-calls.ts";
 export { agentLoopPlugin, agentLoopServiceToken } from "./plugin.ts";
-export { foldInbox } from "./inbox.ts";
+export { foldInbox, turnClaimBatch, isOriginEntry, LEADING_ORIGIN_BATCH_LIMIT } from "./inbox.ts";
 export { chainsNextTurn } from "./driver.ts";
 export { lastRequestContext } from "./request.ts";
 export type { InboxState } from "./inbox.ts";

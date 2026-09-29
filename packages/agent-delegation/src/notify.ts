@@ -184,7 +184,7 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
   if (childSession === undefined) {
     deps.emitFinished({ parent: row.parent, agentId: row.agentId, sessionId: row.sessionId, outcome: "completed", detail: "session-archived (no report available)" });
     try {
-      parentHandle.agent.notify(DELEGATION_REPORT_SOURCE, "content", archivedNotificationText(row));
+      parentHandle.agent.notify({ source: DELEGATION_REPORT_SOURCE, kind: "content", text: archivedNotificationText(row) });
     } catch {
     }
     return;
@@ -199,7 +199,7 @@ async function deliver(row: ChildRow, deps: NotifyDeps): Promise<void> {
     ...(report.summary !== undefined ? { summary: summaryLines(report.summary, deps.reportCap).join("\n") } : {}),
   });
   try {
-    parentHandle.agent.notify(DELEGATION_REPORT_SOURCE, "content", notificationText(row, report, deps.reportCap));
+    parentHandle.agent.notify({ source: DELEGATION_REPORT_SOURCE, kind: "content", text: notificationText(row, report, deps.reportCap) });
   } catch {
   }
 }

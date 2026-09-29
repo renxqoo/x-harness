@@ -20,6 +20,7 @@ export const THREAD_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
   "thread/start",
   "thread/resume",
   "thread/stop",
+  "thread/notify",
   "prompt",
   "steer",
   "follow_up",
@@ -59,6 +60,7 @@ export const THREAD_SCOPED_COMMANDS: ReadonlySet<string> = new Set([
 export const HOST_RELAYED_THREAD_COMMANDS: ReadonlySet<string> = new Set(["permission/set_mode", "permission/get_mode", "permission/grant", "permission/list_rules", "permission/remove_rule"]);
 
 export const OBSERVER_COMMANDS: ReadonlySet<string> = new Set([
+  "thread/notify",
   "get_state",
   "get_inflight",
   "get_messages",
@@ -77,6 +79,15 @@ export const OBSERVER_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 export const DRIVING_COMMANDS: ReadonlySet<string> = new Set(["prompt", "steer", "follow_up"]);
+
+/** live-only 命令：非 live 表项态（parked/dead/retiring/spawning）host 本地拒 thread_not_live——
+ *  不入 wake（parked 唤醒会复活 worker 跑一轮 LLM）、不入 retiring requeue（过期通告延迟材料化）。
+ *  routeLine 判定序：表项查找后、retiring requeue 前（SESSION-WORKTREE-WORKFLOW §1.2）。 */
+export const LIVE_ONLY_COMMANDS: ReadonlySet<string> = new Set(["thread/notify"]);
+
+export function isLiveOnly(command: string): boolean {
+  return LIVE_ONLY_COMMANDS.has(command);
+}
 
 export function isThreadScoped(command: string): boolean {
   return THREAD_SCOPED_COMMANDS.has(command);

@@ -55,6 +55,7 @@ export const COMMAND_NAMES: readonly string[] = [
   "thread/resume",
   "thread/register",
   "thread/stop",
+  "thread/notify",
   "thread/retire",
   "thread/set_keepalive",
   "thread/list",

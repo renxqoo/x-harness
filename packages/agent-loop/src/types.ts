@@ -16,13 +16,15 @@ export interface AgentOptions {
 
 export type AgentStatus = "idle" | "running";
 
+export type NotifyTarget = "next-step" | "next-turn";
+
 export interface Agent {
   readonly session: Session;
   readonly options: AgentOptions;
   readonly status: AgentStatus;
   followup(text: string, options?: { images?: readonly ImageBlock[] }): void;
   steer(text: string, options?: { images?: readonly ImageBlock[] }): void;
-  notify(source: string, kind: import("@x-harness/session").AgentMessageKind, text: string): void;
+  notify(message: { readonly source: string; readonly kind: import("@x-harness/session").AgentMessageKind; readonly text: string; readonly target?: NotifyTarget }): void;
   cancel(cause: string, options?: { keepInbox?: boolean }): void;
   whenIdle(): Promise<void>;
 }

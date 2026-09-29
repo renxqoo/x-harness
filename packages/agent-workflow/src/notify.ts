@@ -45,7 +45,7 @@ export async function deliverNotification(input: { readonly run: ActiveRun; read
   if (text === "") return;
   const [head, ...rest] = summaryLines(text, REPORT_CAP);
   try {
-    handle.agent.notify(NOTIFICATION_SOURCE, "content", [head, ...rest].join("\n"));
+    handle.agent.notify({ source: NOTIFICATION_SOURCE, kind: "content", text: [head, ...rest].join("\n") });
   } catch {
     return;
   }

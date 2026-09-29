@@ -71,8 +71,35 @@ export function insertData(
   };
 }
 
+/** 前导 origin 同批领取上限（超出留队下轮——零丢失，只防单批材料化撑爆） */
+export const LEADING_ORIGIN_BATCH_LIMIT = 8;
+
+/** 条目是否携带内部注入标记（origin 在场 = harness 注入，非用户输入） */
+export function isOriginEntry(entry: InboxEntry): boolean {
+  return entry.origin !== undefined;
+}
+
+/** next-turn 侧领取批：前导 origin 条目（≤上限）+ 首条非 origin 条目；无非 origin 存货时不领 next-turn 侧。
+ *  next-step 侧语义不变（全领）。纯函数，供 claimTurnBatch 与 blocked 回灌共用同一规则。 */
+export function turnClaimBatch(nextTurn: readonly InboxEntry[]): readonly InboxEntry[] {
+  const batch: InboxEntry[] = [];
+  let originCount = 0;
+  for (const entry of nextTurn) {
+    if (isOriginEntry(entry)) {
+      if (originCount >= LEADING_ORIGIN_BATCH_LIMIT) continue;
+      originCount += 1;
+      batch.push(entry);
+      continue;
+    }
+    batch.push(entry);
+    break;
+  }
+  if (batch.length > 0 && !batch.some((entry) => !isOriginEntry(entry))) return [];
+  return batch;
+}
+
 export function claimTurnBatch(state: InboxState): { readonly entries: readonly InboxEntry[]; readonly claimed: readonly string[] } {
-  const entries = [...(state.nextTurn.length > 0 ? [state.nextTurn[0] as InboxEntry] : []), ...state.nextStep];
+  const entries = [...turnClaimBatch(state.nextTurn), ...state.nextStep];
   return { entries, claimed: entries.map((entry) => entry.id) };
 }
 

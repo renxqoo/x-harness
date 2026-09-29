@@ -55,7 +55,7 @@ export function createBashTaskNotifier(deps: BashNotifierDeps): (snap: TaskSnaps
     void (async () => {
       const tail = await readTail(snap.logPath, TAIL_CAP_BYTES);
       try {
-        handle.agent.notify(BASH_TASK_NOTIFY_SOURCE, "content", taskNotificationText(snap, tail));
+        handle.agent.notify({ source: BASH_TASK_NOTIFY_SOURCE, kind: "content", text: taskNotificationText(snap, tail) });
       } catch (error) {
         warn(`bash-task notify dropped for '${snap.id}': ${String(error)}`);
       }

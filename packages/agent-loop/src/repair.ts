@@ -67,28 +67,26 @@ function trailingClaims(events: readonly SessionEvent[]): Array<{ target: string
 }
 
 function claimReinserts(events: readonly SessionEvent[]): Array<{ target: string; entries: InboxEntry[] }> {
-  const insertsById = new Map<string, InboxEntry>();
+  const insertsById = new Map<string, { target: string; entry: InboxEntry }>();
   for (const event of events) {
     if (event.type === "agent/inbox/spliced" && event.data.op === "insert") {
-      for (const entry of event.data.entries) insertsById.set(entry.id, entry);
+      for (const entry of event.data.entries) insertsById.set(entry.id, { target: event.data.target, entry });
     }
   }
   const reinsert = new Map<string, InboxEntry>();
   for (const claim of trailingClaims(events)) {
     for (const id of claim.claimed) {
-      const entry = insertsById.get(id);
-      if (entry !== undefined) reinsert.set(id, entry);
+      const found = insertsById.get(id);
+      if (found !== undefined) reinsert.set(id, found.entry);
     }
   }
   const byTarget = new Map<string, InboxEntry[]>();
-  for (const claim of trailingClaims(events)) {
-    for (const id of claim.claimed) {
-      const entry = reinsert.get(id);
-      if (entry === undefined) continue;
-      const list = byTarget.get(claim.target) ?? [];
-      if (!list.includes(entry)) list.push(entry);
-      byTarget.set(claim.target, list);
-    }
+  for (const id of reinsert.keys()) {
+    const found = insertsById.get(id);
+    if (found === undefined) continue;
+    const list = byTarget.get(found.target) ?? [];
+    if (!list.includes(found.entry)) list.push(found.entry);
+    byTarget.set(found.target, list);
   }
   return [...byTarget.entries()].map(([target, entries]) => ({ target, entries }));
 }

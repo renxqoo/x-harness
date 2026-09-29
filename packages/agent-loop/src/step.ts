@@ -4,7 +4,7 @@ import { anchorIndexOf } from "@x-harness/session";
 import type { ContentBlock, InboxEntry, InboxTarget, Session, SessionEvent } from "@x-harness/session";
 import type { SystemPromptService } from "@x-harness/system-prompt";
 import type { ToolRegistry } from "@x-harness/tools";
-import { claimStepBatch, claimTurnBatch, foldInbox, insertData } from "./inbox.ts";
+import { claimStepBatch, claimTurnBatch, foldInbox, insertData, turnClaimBatch } from "./inbox.ts";
 import type { InboxState } from "./inbox.ts";
 import { executeToolCalls, isTruncatedArguments, mustAppendPair, TRUNCATED_TOOL_MESSAGE } from "./tool-calls.ts";
 import type { ToolCallOutcomeCollected, ToolCallSpec } from "./tool-calls.ts";
@@ -162,7 +162,7 @@ export async function concludeStepEntry(scope: TurnScope, step: number): Promise
 }
 
 function reinsertClaimed(session: Session, inbox: InboxState, isStep0: boolean): void {
-  const turnEntries = isStep0 && inbox.nextTurn.length > 0 ? [inbox.nextTurn[0] as InboxEntry] : [];
+  const turnEntries = isStep0 ? turnClaimBatch(inbox.nextTurn) : [];
   insertBatch(session, "next-turn", turnEntries);
   insertBatch(session, "next-step", inbox.nextStep);
 }

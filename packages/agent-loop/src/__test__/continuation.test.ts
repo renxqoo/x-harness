@@ -294,7 +294,7 @@ describe("收束窗口机制（docs/OUTPUT-TOKEN-CONTINUATION.md 契约）", () 
     const { agent, handle } = await spawn(world);
     world.fake.scripts.push(textScript("ack"));
     agent.steer("user steer first");
-    agent.notify("delegation-report", "content", "report second");
+    agent.notify({ source: "delegation-report", kind: "content", text: "report second" });
     await agent.whenIdle();
     const surface = agent.session.surface().map((node) => node.event);
     const userAt = surface.findIndex((e) => e.type === "user/message" && JSON.stringify(e.data.content).includes("user steer first"));

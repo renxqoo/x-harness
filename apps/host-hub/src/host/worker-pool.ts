@@ -1,4 +1,5 @@
-import { DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS, INTERNAL_ID_PREFIX, isThreadScoped } from "../protocol/internal.ts";
+import { DRIVING_COMMANDS, HOST_RELAYED_THREAD_COMMANDS, INTERNAL_ID_PREFIX, isLiveOnly, isThreadScoped } from "../protocol/internal.ts";
+import { routeLiveOnly } from "./route-gates.ts";
 import type { ThreadEntry, ThreadTable } from "./thread-table.ts";
 import { spawnWorker, workerExecPath } from "./worker-process.ts";
 import type { WorkerHandle } from "./worker-process.ts";
@@ -376,26 +377,30 @@ export function createWorkerPool(deps: PoolDeps) {
     };
   }
 
+  function routeGateFailure(id: string | undefined, type: string, threadId: string): { code: "protocol" | "unknown_command" | "invalid_input"; message: string } | undefined {
+    if (id !== undefined && id.startsWith(INTERNAL_ID_PREFIX)) return { code: "protocol", message: "invalid id: reserved namespace" };
+    if (!isThreadScoped(type) && !HOST_RELAYED_THREAD_COMMANDS.has(type)) return { code: "unknown_command", message: "unknown command" };
+    if (threadId === "") return { code: "invalid_input", message: "threadId required" };
+    return undefined;
+  }
+
   async function routeLine(line: string): Promise<void> {
     const parsed = parseRouteLine(line);
     if (parsed === undefined) return;
     const { id, type, threadId } = parsed;
-    if (id !== undefined && id.startsWith(INTERNAL_ID_PREFIX)) {
-      emitFailure(id, type, hubError("protocol", "invalid id: reserved namespace"));
-      return;
-    }
-    if (!isThreadScoped(type) && !HOST_RELAYED_THREAD_COMMANDS.has(type)) {
-      emitFailure(id, type, hubError("unknown_command", "unknown command"));
-      return;
-    }
-    if (threadId === "") {
-      emitFailure(id, type, hubError("invalid_input", "threadId required"));
+    const gate = routeGateFailure(id, type, threadId);
+    if (gate !== undefined) {
+      emitFailure(id, type, hubError(gate.code, gate.message));
       return;
     }
     const entry = deps.table.get(threadId);
     if (entry === undefined) {
       emitFailure(id, type, hubError("unknown_thread", "Unknown threadId"));
       return;
+    }
+    if (isLiveOnly(type)) {
+      const consumed = routeLiveOnly({ id, type, threadId, entry, line }, { emitFailure, deliver: deliverIfLive });
+      if (consumed) return;
     }
     if (entry.state === "retiring") {
       requeueLine(threadId, line);
