@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { hubError, type HubErrorShape } from "../shared/errors.ts";
 import type { ThreadTable } from "./thread-table.ts";
+import type { TelemetryPurge } from "./telemetry-purge.ts";
 import { fenceSessionPath } from "./read-history.ts";
 
 export interface DeleteDeps {
@@ -11,6 +12,7 @@ export interface DeleteDeps {
   readonly sessionsRoot: string;
   readonly taskLogsRoot: string;
   readonly agentDir: string;
+  readonly telemetry?: TelemetryPurge;
 }
 
 export type DeleteResult = { ok: true; removed: string[] } | { ok: false; reason: HubErrorShape };
@@ -76,6 +78,10 @@ async function vanishTaskLogs(deps: DeleteDeps, id: string): Promise<boolean> {
   return outcome !== "failed";
 }
 
+function purgeTelemetry(deps: DeleteDeps, ids: readonly string[]): void {
+  deps.telemetry?.purge(ids);
+}
+
 async function cascadeChildren(deps: DeleteDeps, children: readonly string[]): Promise<string[]> {
   const removed: string[] = [];
   for (const child of children) {
@@ -137,6 +143,7 @@ export async function deleteSession(deps: DeleteDeps, sessionPath: string): Prom
     if (!(await vanishTaskLogs(deps, fence.threadId))) {
       return { ok: false, reason: hubError("io_failed", "delete failed: task-logs rename") };
     }
+    purgeTelemetry(deps, [fence.threadId]);
     return { ok: true, removed: [] };
   }
   if (isLiveFamily(holderState())) return { ok: false, reason: hubError("already_open", "already open") };
@@ -159,5 +166,6 @@ export async function deleteSession(deps: DeleteDeps, sessionPath: string): Prom
   if (vanished === "failed") return { ok: false, reason: hubError("io_failed", "delete failed: rename") };
   const removed = vanished === "renamed" ? [fence.threadId] : [];
   removed.push(...(await cascadeChildren(deps, children)));
+  purgeTelemetry(deps, removed);
   return { ok: true, removed };
 }

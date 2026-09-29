@@ -25,6 +25,7 @@ import {
   mailboxKit,
   workflowKit,
   meterKit,
+  telemetryKit,
   probeBaseFacts,
   createWorktreeContextPlugin,
   promptKit,
@@ -334,6 +335,7 @@ function defaultWorkerPlugins(resolved: {
     ...mailboxKit({ root: mailboxRootOfWorker(fields.env ?? process.env), onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`) }),
     ...workflowKit(workerWorkflowOptions(fields, mainSessionId)),
     ...meterKit(),
+    ...telemetryPluginsOf(fields),
     ...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...compactionOverrides }),
     commandsPlugin,
     commandCompactPlugin,
@@ -378,6 +380,11 @@ function derivedRgBinDir(fields: AssemblyFields): string | undefined {
   if (fields.rgBinDir !== undefined) return fields.rgBinDir;
   if (fields.agentDir !== undefined && fields.agentDir !== "") return join(fields.agentDir, "bin");
   return undefined;
+}
+
+function telemetryPluginsOf(fields: AssemblyFields): readonly Plugin[] {
+  if (fields.agentDir === undefined || fields.agentDir === "") return [];
+  return telemetryKit({ db: join(fields.agentDir, "telemetry.db"), resource: { serviceName: "x-harness-hub-worker" }, onIoError: (message) => process.stderr.write(`hub:worker: ${message}\n`) });
 }
 
 function planLiftOf(fields: Pick<AssemblyFields, "permissionMode">): import("@x-harness/permission").ProfileId {

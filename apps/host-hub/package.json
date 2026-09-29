@@ -33,6 +33,7 @@
     "@x-harness/session-persistence-jsonl": "workspace:*",
     "@x-harness/skill": "workspace:*",
     "@x-harness/system-prompt": "workspace:*",
+    "@x-harness/telemetry-sqlite": "workspace:*",
     "@x-harness/todo-tools": "workspace:*",
     "@x-harness/token-analytics": "workspace:*",
     "@x-harness/tool-plan": "workspace:*",

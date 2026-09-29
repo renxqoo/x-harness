@@ -541,7 +541,9 @@ stopReason/usage）；跨步/重连对账以 WAL 为准（get_entries since=turn
 worker = `createAgentWorld` + kit 配方（`promptKit(createBasePromptPlugin(
 probeBaseFacts(...)))`——base 系统提示词与 CLI 同源（@x-harness/harness
 base-prompt.ts：身份/守则/环境块 + facts=cwd/isGit/platform/shell 进程探测插值）/
-`durableSessionKit` / `toolboxKit` / `fenceKit` / `meterKit` / `compactionKit`+
+`durableSessionKit` / `toolboxKit` / `fenceKit` / `meterKit` / `telemetryKit`（
+`telemetry.db` 与 sessions 同根派生自 agentDir；thread/stop 与 worker 收殓经
+telemetry 插件 drain 落盘） / `compactionKit`+
 `autoCompactKit` / `llmKit(adapters)` / `loopKit` / `checkpointKit` /
 `delegationKit` / `skillKit`）+ 日期/项目指令快照插件（与 CLI 同源
 @x-harness/harness `createFactsSnapshotPlugin`——装配位紧随 skill 装配：每 kick
@@ -645,7 +647,7 @@ llm/stream tap）；对话框中继；直执行 bash（含溢写 7 天清扫）�
 | 会话删除 | **已支持（§3.10 thread/delete，BATCH2）** |
 | prompt images 已支持（§3.2）；已知边界：多轮携图全量投影受 get_messages 100MiB 软上限（超限 failure 引导 get_entries）、64MiB 直读上限（register 拒/list_saved 跳过——既有降级面携图更易触达）、compaction 折叠摘要以 `[image: <mediaType>]` 占位 | 量限/边界声明（BATCH2-DESIGN §1） |
 | 工具结果带图（pi 支持，内核 ToolOutcome 为单串） | 另一契约，挂账 |
-| telemetry sqlite | 不装（产品面未消费；后续按需加 kit） |
+| telemetry sqlite | **已装**：worker 装配 `telemetryKit`（`<agentDir>/telemetry.db`，OTel span/log/usage 落库）；thread/delete 级联清三表（best-effort） |
 | 跨进程 mailbox IPC | 不用（host↔worker 走 stdio 管道 JSONL） |
 
 ## 9. 并发与性能预算（违反 = 缺陷；括号内为测试锚）
