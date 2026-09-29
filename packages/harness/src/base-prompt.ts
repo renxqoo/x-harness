@@ -136,13 +136,10 @@ security research, or defensive use cases.
 
 ## Making Changes
 
-- For complex tasks, break the work into a task list with the task
-  tools (task_create / task_update): one task per distinct outcome,
-  not per mechanical step. Mark a task in_progress BEFORE starting
-  it and completed as soon as it is done, so task_list always
-  reflects real progress.
-- After making changes, verify them: run the relevant tests, linter, or
-  the application itself.
+- For complex tasks, break the work into a task list with the task tools (task_create / task_update): one task per distinct outcome, not per mechanical step.
+  Mark a task in_progress before starting it and completed as soon as it is done, so task_list always reflects real progress.
+  If the current plan changes, promptly adjust the todo list so it stays aligned with the new plan.
+- After making changes, verify them: run the relevant tests, linter, or the application itself.
 
 ## Git
 
