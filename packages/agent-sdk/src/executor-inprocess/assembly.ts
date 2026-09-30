@@ -23,6 +23,12 @@ export interface AssemblySpec {
   mainSessionId: SessionId;
   env?: Record<string, string | undefined>;
   onWarn: (message: string) => void;
+  delegation?: {
+    builtinTypes?: readonly import("@x-harness/agent-delegation").InlineTypeResource[];
+    resolveProviderOf?: (model: string) => string | undefined;
+    fallbackDial?: { model?: string; provider?: string };
+    dialable?: (ref: string) => boolean;
+  };
 }
 
 export interface AssemblyResult {
@@ -66,7 +72,15 @@ export async function assembleAgent(spec: AssemblySpec): Promise<AssemblyResult>
     ...errorRecoveryKit(),
     ...checkpointKit(),
     ...delegationKit(
-      { agentsDirs: [], workspaceRoot: spec.cwd, onWarn: spec.onWarn },
+      {
+        agentsDirs: [],
+        workspaceRoot: spec.cwd,
+        onWarn: spec.onWarn,
+        ...(spec.delegation?.builtinTypes !== undefined ? { builtinTypes: spec.delegation.builtinTypes } : {}),
+        ...(spec.delegation?.resolveProviderOf !== undefined ? { resolveProviderOf: spec.delegation.resolveProviderOf } : {}),
+        ...(spec.delegation?.fallbackDial !== undefined ? { fallbackDial: spec.delegation.fallbackDial } : {}),
+        ...(spec.delegation?.dialable !== undefined ? { dialable: spec.delegation.dialable } : {}),
+      },
       facts,
     ),
     ...skillKit({ skillsDirs }),

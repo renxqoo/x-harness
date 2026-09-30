@@ -203,8 +203,12 @@ function childAgentOptions(
   parentHandle: AgentHandle,
   spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId; readonly worktree?: WorktreePlan },
 ): { model?: string; provider?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
+  const typeModel = spec.named?.model;
+  if (typeModel !== undefined && deps.dialable !== undefined && !deps.dialable(typeModel)) {
+    deps.onWarn?.(`agent type '${spec.named?.name ?? "?"}' model '${typeModel}' is not dialable — falling back to inherited dial`);
+  }
   const dial = inheritDial(parentHandle, {
-    type: spec.named,
+    type: typeModel !== undefined && deps.dialable !== undefined && !deps.dialable(typeModel) ? undefined : spec.named,
     lastHeader: lastHeaderOf(deps, spec.caller),
     override: spec.isFork ? undefined : { model: spec.input.model },
     ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
