@@ -38,11 +38,14 @@ describe("token-analytics 口径（实报优先 + meter 兜底）", () => {
     const sid = await runOneTurn(tw, "fake", "fake-model");
 
     const b = svc.breakdown(sid as never);
-    // 分项（systemPrompt/tools/messages/remaining/utilization）已删——不再产
-    // “估算相减的残差”（两估之和超实报时会被钳成 0，与 total 自相矛盾）
-    expect("systemPrompt" in b).toBe(false);
+    // 静态分量在场（展示层据此把占用切成三行）；messages 刻意不产——
+    // 它是「占用 − 两估」的残差，两估之和超实报时会被钳成 0（旧「消息 0%」的成因），
+    // 故由展示层从实报占用实时派生
+    expect(b.systemPrompt).toBeGreaterThan(0);
+    expect(b.tools).toBeGreaterThan(0);
     expect("messages" in b).toBe(false);
     expect("remaining" in b).toBe(false);
+    expect("utilization" in b).toBe(false);
     expect(b.total).toBe(500);
     expect(b.contextWindow).toBe(100_000);
     expect(b.lastReportedInput).toBe(500);
@@ -175,7 +178,7 @@ describe("token-analytics 窗口解析（模型级 > 档案级 > 兜底——拨
   it("default 导出装载形状：{name, apply}——plugin-manager validateModule 面", () => {
     expect(loadable.name).toBe("token-analytics");
     expect(typeof loadable.apply).toBe("function");
-    expect(loadable.inject).toEqual(["session", "token-meter"]);
+    expect(loadable.inject).toEqual(["system-prompt", "tools", "session", "token-meter"]);
     expect(loadable.softInject).toEqual(["llm"]);
   });
 });

@@ -358,11 +358,13 @@ describe("get_token_analytics 旅程（外部插件消费面——docs/PLUGINS.m
     const res = await waitResponse(w.captured.lines, "get_token_analytics", "ta1");
     expect(res.success).toBe(true);
     const data = res.data as { breakdown: Record<string, number>; sessionOutput: number };
-    // 分项估算（systemPrompt/tools/messages/remaining/utilization/windowKnown）已删——
-    // 只留占用与窗口两个真值面
+    // 契约面：占用/窗口/缓存 + 两个静态分量（systemPrompt/tools——展示层切分占用构成用）。
+    // messages/remaining/utilization/windowKnown 刻意不产（残差与假分母的来源）。
     expect(Object.keys(data.breakdown).sort()).toEqual([
-      "cacheHitRate", "contextWindow", "lastReportedInput", "total", "totalCacheRead", "totalCacheWrite", "totalOutputTokens",
+      "cacheHitRate", "contextWindow", "lastReportedInput", "systemPrompt", "tools", "total", "totalCacheRead", "totalCacheWrite", "totalOutputTokens",
     ]);
+    expect(data.breakdown["systemPrompt"]).toBeGreaterThan(0);
+    expect(data.breakdown["tools"]).toBeGreaterThan(0);
     expect(data.breakdown["lastReportedInput"]).toBe(64);
     expect(data.breakdown["totalOutputTokens"]).toBe(17);
     expect(data.breakdown["contextWindow"]).toBe(200_000);

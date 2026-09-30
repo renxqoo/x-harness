@@ -2,14 +2,21 @@ import type { Context, Disposer, Plugin } from "@x-harness/core";
 import { defineService } from "@x-harness/core";
 import { sessionStore } from "@x-harness/session";
 import type { SessionEvent, SessionId } from "@x-harness/session";
+import { systemPrompt } from "@x-harness/system-prompt";
+import { toolRegistry } from "@x-harness/tools";
 import { llmRuntime } from "@x-harness/llm";
 import { tokenMeter } from "@x-harness/token-meter";
-import { estimateContextTokens } from "@x-harness/token-meter";
+import { estimateContextTokens, estimateTokensTypical } from "@x-harness/token-meter";
 
 export interface TokenBreakdown {
   /** 上下文占用：LLM 实报 input 优先（输入侧口径，含 cache 读/写）；无实报退
    *  meter 计费域估算（estimateContextTokens——与压缩水位同尺）。 */
   total: number;
+  /** 系统提示词估算 token（含技能段）。**静态分量**：会话内近似不变
+   *  （技能/项目指令变更时才动），与 `tools` 一同供展示层切分占用构成。 */
+  systemPrompt: number;
+  /** 工具 schema 估算 token（发给 LLM 的 tools 数组 JSON）。静态分量，见上。 */
+  tools: number;
   /** 上下文窗口（会话拨号查表——模型级 > 档案级）。解析不到则**缺席**："未知窗口"
    *  不是可展示的态（展示层无真窗口时不渲染百分比，不套假分母）。 */
   contextWindow?: number;
@@ -65,9 +72,11 @@ function dialOfEvents(events: readonly SessionEvent[]): DialFact | undefined {
 export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
   return {
     name: "token-analytics",
-    inject: ["session", "token-meter"],
+    inject: ["system-prompt", "tools", "session", "token-meter"],
     softInject: ["llm"],
     apply: (ctx: Context): Disposer => {
+      const prompt = ctx.use(systemPrompt);
+      const registry = ctx.use(toolRegistry);
       const store = ctx.use(sessionStore);
       const meter = ctx.use(tokenMeter);
       const runtime = ctx.tryUse(llmRuntime);
@@ -118,6 +127,13 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
 
       const analytics = {
         breakdown(sessionId?: SessionId): TokenBreakdown {
+          // 静态分量：系统提示词（含技能段）与工具 schema 的估算——展示层据此把
+          // 占用切成 系统提示词/工具/消息 三行（消息 = 占用 − 前两项，由展示层算）
+          const assembled = prompt.assemble(sessionId !== undefined ? { sessionId } : undefined);
+          const schemas = registry.schemas(sessionId !== undefined ? { sessionId } : undefined);
+          const systemPromptTokens = estimateTokensTypical(assembled.text);
+          const toolsTokens = estimateTokensTypical(JSON.stringify(schemas));
+
           const facts = sessionId !== undefined ? factsOfSession(sessionId) : factsOfAll();
 
           // 窗口：参数 > 会话拨号查表（模型级 > 档案级）> 无名查表。
@@ -134,6 +150,8 @@ export function tokenAnalyticsPlugin(options: TokenAnalyticsOptions): Plugin {
           const estimated = sessionId !== undefined ? estimateContextTokens(store.get(sessionId)?.surface() ?? []) : 0;
           const total = facts.lastReportedInput > 0 ? facts.lastReportedInput : estimated;
           return {
+            systemPrompt: systemPromptTokens,
+            tools: toolsTokens,
             total,
             ...(window !== undefined ? { contextWindow: window } : {}),
             lastReportedInput: facts.lastReportedInput,
