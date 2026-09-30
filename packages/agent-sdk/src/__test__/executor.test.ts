@@ -10,6 +10,21 @@ function makeEnv(script: unknown): Record<string, string> {
   return { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify(script) };
 }
 
+function waitFor(predicate: () => boolean, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    const iv = setInterval(() => {
+      if (predicate()) {
+        clearInterval(iv);
+        resolve();
+      }
+    }, 100);
+    setTimeout(() => {
+      clearInterval(iv);
+      resolve();
+    }, timeoutMs).unref?.();
+  });
+}
+
 async function makeWorld(scriptEnv?: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), "sdk-exec-"));
   const events: SdkEvent[] = [];
@@ -214,6 +229,34 @@ describe("in-process executor minimal face", () => {
       expect(report.ok && report.value.ok).toBe(false);
       if (report.ok && !report.value.ok) expect(report.value.reason).toBe("timeout");
       await thread.abort();
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
+  it("chained-turn attribution: queued send settles on its own turn (I17)", async () => {
+    const w = await makeWorld(makeEnv([{ delayMs: 400 }, { reply: "turn1-ok" }, { delayMs: 5000 }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const aP = thread.send("A", { sendId: "A", timeoutMs: 30_000 });
+      setTimeout(() => {
+        void thread.send("B", { sendId: "B", timeoutMs: 30_000 });
+      }, 120);
+      setTimeout(() => {
+        void thread.abort("mid");
+      }, 800);
+      const ra = await aP;
+      expect(ra.ok && ra.value.ok).toBe(true);
+      const bSeen = (): boolean => w.events.some((e) => e.kind === "settled" && e.sendId === "B");
+      await waitFor(bSeen, 20_000);
+      const aFrame = w.events.find((e) => e.kind === "settled" && e.sendId === "A");
+      const bFrame = w.events.find((e) => e.kind === "settled" && e.sendId === "B");
+      expect(aFrame?.kind === "settled" && aFrame.ok).toBe(true);
+      expect(bFrame?.kind === "settled" && bFrame.ok).toBe(false);
+      if (bFrame?.kind === "settled") expect(bFrame.reason).toBe("aborted");
       await thread.stop();
     } finally {
       await w.cleanup();

@@ -54,6 +54,7 @@ interface LiveThread {
   run: InprocessRun;
   listeners: Map<string, Set<(event: SdkEvent) => void>>;
   waiters: Map<string, SendWaiter>;
+  turnCursor: number;
 }
 
 export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
@@ -80,15 +81,16 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
   function settleWaiters(threadId: string, verdict: { ok: boolean; reason: string }): void {
     const thread = live.get(threadId);
     if (thread === undefined) return;
-    for (const [sendId, waiter] of thread.waiters) {
+    const pending = Array.from(thread.waiters.keys(), (key) => key);
+    for (const sendId of pending) {
       thread.waiters.delete(sendId);
-      if (waiter.timer !== undefined) clearTimeout(waiter.timer);
-      waiter.resolve({ sendId, ok: verdict.ok, reason: verdict.reason });
+      dispatch(threadId, { kind: "settled", threadId, sendId, ok: verdict.ok, reason: verdict.reason });
     }
   }
 
   async function drive(input: { threadId: string; text: string; mode: "auto" | "steer" | "followup"; sendOptions?: SendOptions }): Promise<SdkResult<SdkSendReport>> {
     const { threadId, text, mode, sendOptions } = input;
+    if (text === "") return { ok: false, reason: sdkError("invalid_input", "send text must not be empty") };
     const thread = live.get(threadId);
     if (thread === undefined) return { ok: false, reason: sdkError("unknown_thread", `Unknown threadId: ${threadId}`) };
     const sendId = sendOptions?.sendId ?? `send-${String(Math.random()).slice(2, 10)}`;
@@ -101,6 +103,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
         timer = setTimeout(() => {
           thread.waiters.delete(sendId);
           resolve({ sendId, ok: false, reason: "timeout" });
+          dispatch(threadId, { kind: "settled", threadId, sendId, ok: false, reason: "timeout" });
         }, sendOptions.timeoutMs);
         timer.unref?.();
       }
@@ -108,10 +111,8 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     });
     try {
       thread.run.markBusy();
-      if (text !== "") {
-        if (mode === "steer") agent.steer(text);
-        else agent.followup(text);
-      }
+      if (mode === "steer") agent.steer(text);
+      else agent.followup(text);
     } catch (error) {
       thread.run.markIdle();
       if (timer !== undefined) clearTimeout(timer);
@@ -139,12 +140,21 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
 
   function anchorVerdict(thread: LiveThread, anchorSeq: number): { ok: boolean; reason?: string } {
     const events = thread.run.handle.agent.session.events();
-    for (let i = events.length - 1; i >= anchorSeq; i -= 1) {
+    let verdict: { ok: boolean; reason?: string } | undefined;
+    let cursor = Math.max(thread.turnCursor, 0);
+    for (let i = cursor; i < events.length; i += 1) {
       const event = events[i];
       if (event === undefined || event.type !== "turn/end") continue;
-      return verdictOfTurnEnd(event);
+      if (event.seq <= anchorSeq) {
+        cursor = event.seq + 1;
+        continue;
+      }
+      verdict = verdictOfTurnEnd(event);
+      cursor = event.seq + 1;
+      break;
     }
-    return { ok: true };
+    thread.turnCursor = Math.max(thread.turnCursor, cursor);
+    return verdict ?? { ok: true };
   }
 
   function assemblySpec(spec: StartThreadSpec, mainSessionId: SessionId, resumeId: SessionId | undefined): AssemblySpec {
@@ -250,7 +260,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     try {
       const run = await startInprocess({ threadId: String(mainSessionId), spec: assemblySpec(spec, mainSessionId, undefined) });
       const threadId = String(run.handle.agent.session.id);
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map() };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), turnCursor: 0 };
       live.set(threadId, entry);
       void run.onEvent((event) => dispatch(threadId, event));
       client.internal.table.remove(slot);
@@ -298,7 +308,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
           spec.threadId as SessionId,
         ),
       });
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map() };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), turnCursor: 0 };
       live.set(spec.threadId, entry);
       void run.onEvent((event) => dispatch(spec.threadId, event));
       client.internal.table.remove(slot);
@@ -364,7 +374,6 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
       client.internal.table.update(threadId, { state: "parked", sessionPath: null });
       if (sessionPath !== null) client.internal.table.update(threadId, { sessionPath });
       client.internal.table.releaseOccupancy(threadId);
-      client.internal.emit({ kind: "settled", threadId, sendId: "", ok: false, reason: "shutdown" });
     }
   }
 
