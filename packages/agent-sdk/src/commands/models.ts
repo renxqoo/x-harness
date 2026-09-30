@@ -1,0 +1,145 @@
+import { readCatalog, providersFilePath } from "../shared/catalog.ts";
+import type { HubModelMeta, HubProvidersFile } from "../shared/catalog-types.ts";
+import { atomicWriteJson, readJson, updateJson } from "../shared/atomic-file.ts";
+import { hubError } from "../shared/errors.ts";
+import type { HubErrorShape } from "../shared/errors.ts";
+
+type ProvidersFile = HubProvidersFile & { modelOverrides?: Record<string, { contextWindow?: number; maxOutputTokens?: number }> };
+
+function seedApiKeyEnv(existing: { apiKeyEnv?: string } | undefined, input: { apiKeyEnv?: unknown }): string | undefined {
+  if (existing?.apiKeyEnv !== undefined) return existing.apiKeyEnv;
+  if (typeof input.apiKeyEnv === "string" && input.apiKeyEnv !== "") return input.apiKeyEnv;
+  return undefined;
+}
+
+async function readProvidersFile(agentDir: string): Promise<ProvidersFile> {
+  const parsed = await readJson<ProvidersFile>(providersFilePath(agentDir), { providers: [] });
+  return parsed !== undefined && Array.isArray((parsed as { providers?: unknown }).providers)
+    ? (parsed as ProvidersFile)
+    : { providers: [] };
+}
+
+export function updateProvidersFile(agentDir: string, mutate: (file: ProvidersFile) => ProvidersFile | Promise<ProvidersFile>): Promise<ProvidersFile> {
+  const path = providersFilePath(agentDir);
+  return updateJson<ProvidersFile>(path, {
+    read: () => readProvidersFile(agentDir),
+    write: (next) => atomicWriteJson(path, next),
+    mutate,
+  });
+}
+
+function positiveInt(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function modelShapeOf(entry: { model: string; provider: string; contextWindow?: number; maxTokens?: number; reasoning: boolean; input?: ("text" | "image")[]; cost?: Record<string, number>; source: "preset" | "custom" } | undefined): Record<string, unknown> | undefined {
+  if (entry === undefined) return undefined;
+  return {
+    id: entry.model,
+    provider: entry.provider,
+    ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
+    ...(entry.maxTokens !== undefined ? { maxTokens: entry.maxTokens } : {}),
+    reasoning: entry.reasoning,
+    ...(entry.input !== undefined ? { input: entry.input } : {}),
+    ...(entry.cost !== undefined ? { cost: entry.cost } : {}),
+    source: entry.source,
+  };
+}
+
+async function refreshedModelShape(agentDir: string, provider: string, id: string): Promise<Record<string, unknown> | undefined> {
+  const catalog = await readCatalog(agentDir);
+  const entry = catalog.entries.find((e) => e.provider === provider && e.model === id);
+  return modelShapeOf(entry);
+}
+
+function validateFields(input: { [key: string]: unknown }): HubErrorShape | undefined {
+  const { contextWindow, maxTokens, reasoning, cost, input: inputModes } = input;
+  if (contextWindow !== undefined && !positiveInt(contextWindow)) return hubError("invalid_input", `invalid model entry: contextWindow must be a positive integer (got ${String(contextWindow)})`);
+  if (maxTokens !== undefined && !positiveInt(maxTokens)) return hubError("invalid_input", `invalid model entry: maxTokens must be a positive integer (got ${String(maxTokens)})`);
+  if (reasoning !== undefined && typeof reasoning !== "boolean") return hubError("invalid_input", `invalid model entry: reasoning must be a boolean (got ${String(reasoning)})`);
+  if (cost !== undefined && (typeof cost !== "object" || cost === null || Array.isArray(cost))) return hubError("invalid_input", "invalid model entry: cost must be an object");
+  if (inputModes !== undefined && (!Array.isArray(inputModes) || inputModes.some((member) => member !== "text" && member !== "image"))) {
+    return hubError("invalid_input", `invalid model entry: input must be an array of text|image (got ${JSON.stringify(inputModes)})`);
+  }
+  return undefined;
+}
+
+function validateNewProfile(providerName: string, protocol: unknown, baseUrl: string): HubErrorShape | undefined {
+  if (providerName.trim() === "") return hubError("invalid_input", "invalid model entry: provider required for a new profile");
+  if (protocol !== "anthropic" && protocol !== "openai") return hubError("invalid_input", "invalid model entry: protocol must be one of anthropic, openai");
+  if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) return hubError("invalid_input", "invalid model entry: baseUrl must be an http(s) URL");
+  return undefined;
+}
+
+function metaOf(id: string, input: { [key: string]: unknown }): HubModelMeta {
+  const { contextWindow, maxTokens, reasoning, cost, input: inputModes } = input;
+  return {
+    id,
+    ...(positiveInt(contextWindow) ? { contextWindow: contextWindow as number } : {}),
+    ...(positiveInt(maxTokens) ? { maxTokens: maxTokens as number } : {}),
+    ...(typeof reasoning === "boolean" ? { reasoning } : {}),
+    ...(Array.isArray(inputModes) && inputModes.length > 0 ? { input: inputModes as ("text" | "image")[] } : {}),
+    ...(cost !== undefined ? { cost: cost as Record<string, number> } : {}),
+  };
+}
+
+export async function addModel(agentDir: string, input: { [key: string]: unknown }): Promise<{ ok: true; model: Record<string, unknown> | undefined } | { ok: false; error: HubErrorShape }> {
+  const id = typeof input.id === "string" ? input.id : "";
+  if (id.trim() === "") return { ok: false, error: hubError("invalid_input", "invalid model entry: id required") };
+  const providerName = typeof input.provider === "string" ? input.provider : "";
+  const baseUrl = typeof input.baseUrl === "string" ? input.baseUrl : "";
+  const fieldError = validateFields(input);
+  if (fieldError !== undefined) return { ok: false, error: fieldError };
+
+  const catalog = await readCatalog(agentDir);
+  const existing = catalog.profiles.find((profile) => profile.name === providerName);
+  if (existing === undefined) {
+    const profileError = validateNewProfile(providerName, input.protocol, baseUrl);
+    if (profileError !== undefined) return { ok: false, error: profileError };
+  } else if (catalog.entries.some((entry) => entry.provider === providerName && entry.model === id && entry.source === "preset")) {
+    return { ok: false, error: hubError("state_conflict", `invalid model entry: model id already covered by a preset (${id})`) };
+  }
+
+  const meta = metaOf(id, input);
+  const bareEntry = Object.keys(meta).length === 1;
+  await updateProvidersFile(agentDir, (file) => {
+    const providers = [...file.providers];
+    const index = providers.findIndex((profile) => profile.name === providerName);
+    if (index === -1) {
+      const seed = existing ?? { protocol: input.protocol as "anthropic" | "openai", baseUrl };
+      providers.push({
+        name: providerName,
+        protocol: seed.protocol,
+        baseUrl: seed.baseUrl,
+        ...(seedApiKeyEnv(existing, input) !== undefined ? { apiKeyEnv: seedApiKeyEnv(existing, input) } : {}),
+        ...(existing?.contextWindow !== undefined ? { contextWindow: existing.contextWindow } : {}),
+        ...(existing?.maxOutputTokens !== undefined ? { maxOutputTokens: existing.maxOutputTokens } : {}),
+        models: [bareEntry ? id : meta],
+      });
+      return { ...file, providers };
+    }
+    const profile = providers[index];
+    if (profile === undefined) return { ...file, providers };
+    const models: (string | HubModelMeta)[] = profile.models.filter((model) => (typeof model === "string" ? model !== id : (model as { id?: unknown }).id !== id));
+    models.push(bareEntry ? id : meta);
+    providers[index] = { ...profile, models };
+    return { ...file, providers };
+  });
+  return { ok: true, model: await refreshedModelShape(agentDir, providerName, id) };
+}
+
+export async function removeModel(agentDir: string, id: string): Promise<{ ok: true } | { ok: false; error: HubErrorShape }> {
+  const catalog = await readCatalog(agentDir);
+  const custom = catalog.entries.find((entry) => entry.model === id && entry.source === "custom");
+  if (custom === undefined) {
+    return { ok: false, error: hubError("model_unavailable", `unknown model preset: ${id} (available: ${catalog.entries.map((entry) => entry.model).join(", ")})`) };
+  }
+  await updateProvidersFile(agentDir, (file) => {
+    const providers = file.providers.map((profile) => {
+      const models = profile.models.filter((model) => (typeof model === "string" ? model !== id : (model as { id?: unknown }).id !== id));
+      return { ...profile, models };
+    }).filter((profile) => profile.models.length > 0);
+    return { ...file, providers };
+  });
+  return { ok: true };
+}
