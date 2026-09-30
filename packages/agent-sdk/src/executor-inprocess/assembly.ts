@@ -92,11 +92,7 @@ export async function assembleAgent(spec: AssemblySpec): Promise<AssemblyResult>
   return { world: world.value, handle: handle.value, sessionId: handle.value.agent.session.id };
 }
 
-const tornDown = new WeakSet<object>();
-
 export async function teardown(world: World): Promise<void> {
-  if (tornDown.has(world)) return;
-  tornDown.add(world);
   for (const disposer of world.unload) await disposer();
   await world.ctx.dispose();
 }

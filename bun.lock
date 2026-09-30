@@ -276,6 +276,7 @@
         "@x-harness/agent-continuation": "workspace:*",
         "@x-harness/agent-delegation": "workspace:*",
         "@x-harness/agent-loop": "workspace:*",
+        "@x-harness/agent-sdk": "workspace:*",
         "@x-harness/agent-workflow": "workspace:*",
         "@x-harness/autocompact": "workspace:*",
         "@x-harness/compaction": "workspace:*",

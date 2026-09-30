@@ -25,12 +25,20 @@ export interface InprocessStartPlan {
   spec: AssemblySpec;
 }
 
+function failureDetail(turnReason: { kind?: string; message?: string; reason?: string }, kind: string): string {
+  if (kind === "blocked") {
+    const detail = turnReason.reason;
+    return detail !== undefined && detail !== "" ? detail : kind;
+  }
+  const detail = turnReason.message;
+  return detail !== undefined && detail !== "" ? detail : kind;
+}
+
 export function verdictOfTurnEnd(event: SessionEvent): { ok: boolean; reason?: string } {
-  const turnReason = (event.data as { reason?: { kind?: string; message?: string } }).reason;
+  const turnReason = (event.data as { reason?: { kind?: string; message?: string; reason?: string } }).reason;
   const kind = turnReason?.kind;
   if (kind !== "error" && kind !== "blocked" && kind !== "aborted") return { ok: true };
-  const detail = kind === "error" ? turnReason?.message : kind;
-  return detail !== undefined && detail !== "" ? { ok: false, reason: detail } : { ok: false, reason: kind };
+  return { ok: false, reason: failureDetail(turnReason ?? {}, kind) };
 }
 
 function tapSessionEvents(tap: { world: World; run: { threadId: string }; emit: (event: SdkEvent) => void; offs: Array<() => void> }): void {

@@ -75,13 +75,16 @@ export function createSandboxPlugin(options: SandboxOptions, runtime: SrtRuntime
         const killTimer = setTimeout(() => {
           for (const proc of sandbox.liveHandles()) void proc.kill("kill");
         }, DISPOSE_GRACE_MS);
+        let settleTimer: ReturnType<typeof setTimeout> | undefined;
+        const settleCap = new Promise<void>((resolve) => {
+          settleTimer = setTimeout(resolve, SETTLE_CAP_MS);
+        });
         await Promise.race([
           Promise.allSettled(sandbox.liveHandles().map((proc) => proc.settled)),
-          new Promise<void>((resolve) => {
-            setTimeout(resolve, SETTLE_CAP_MS);
-          }),
+          settleCap,
         ]);
         clearTimeout(killTimer);
+        if (settleTimer !== undefined) clearTimeout(settleTimer);
         let detachError: unknown;
         try {
           await handle.detach();

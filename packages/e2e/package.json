@@ -34,7 +34,8 @@
     "@x-harness/tool-read": "workspace:*",
     "@x-harness/tool-write": "workspace:*",
     "@x-harness/tools": "workspace:*",
-    "@x-harness/workflow-core": "workspace:*"
+    "@x-harness/workflow-core": "workspace:*",
+    "@x-harness/agent-sdk": "workspace:*"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.0"

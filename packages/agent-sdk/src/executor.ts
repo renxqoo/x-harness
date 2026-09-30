@@ -109,8 +109,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     try {
       thread.run.markBusy();
       if (text !== "") {
-        const running = agent.status === "running";
-        if ((mode === "auto" && running) || mode === "steer") agent.steer(text);
+        if (mode === "steer") agent.steer(text);
         else agent.followup(text);
       }
     } catch (error) {
@@ -167,7 +166,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
       adapters,
       agentOptions,
       persistence: "durable",
-      mainSessionId,
+      mainSessionId: resumeId ?? mainSessionId,
       env: client.internal.env,
       onWarn: (message) => client.internal.log(message),
     };
@@ -295,7 +294,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
         threadId: spec.threadId,
         spec: assemblySpec(
           { cwd: spec.cwd ?? process.cwd(), trusted: spec.trusted, ...(spec.dial !== undefined ? { dial: spec.dial } : {}) },
-          mintSessionId(),
+          spec.threadId as SessionId,
           spec.threadId as SessionId,
         ),
       });
@@ -335,12 +334,16 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
       client.internal.log(`dispose error: ${String(error)}`);
     }
     live.delete(threadId);
-    if (intent === "stop") client.internal.table.remove(threadId);
-    else {
+    const from = entry.state;
+    if (intent === "stop") {
+      client.internal.table.remove(threadId);
+      client.internal.emit({ kind: "thread_state", threadId, from: from as "live", to: "dead", cause: intent });
+    } else {
       const sessionPath = entry.sessionPath;
       client.internal.table.update(threadId, { state: "parked", sessionPath: null });
       client.internal.table.update(threadId, { sessionPath });
       client.internal.table.releaseOccupancy(threadId);
+      client.internal.emit({ kind: "thread_state", threadId, from: from as "live", to: "parked", cause: intent });
     }
     return { ok: true, value: undefined };
   }
