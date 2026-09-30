@@ -314,12 +314,16 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
       if (userLoaded.types[name] !== undefined) return "user";
       return "builtin";
     };
-    const types = Object.values({ ...builtin.types, ...merged.types }).map((def) => ({
-      name: def.name,
-      description: def.description,
-      source: sourceOf(def.name),
-      ...(def.model !== undefined ? { model: def.model } : {}),
-    }));
+    const types = Object.values({ ...builtin.types, ...merged.types }).map((def) => {
+      const source = sourceOf(def.name);
+      return {
+        name: def.name,
+        description: def.description,
+        source,
+        ...(def.model !== undefined ? { model: def.model, modelOrigin: "type" } : { modelOrigin: "inherit" }),
+        ...(source === "builtin" ? { locked: ["prompt", "name", "tools"] } : {}),
+      };
+    });
     for (const warning of builtin.warnings) process.stderr.write(`hub:host: ${warning}\n`);
     respond(id, "agents/list", { data: { agents: types } });
   }

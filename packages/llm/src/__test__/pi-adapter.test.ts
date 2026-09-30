@@ -46,7 +46,7 @@ describe("pi-adapter 注入层", () => {
       yield { type: "text_end", contentIndex: 0, content: "四门全绿。", partial: output } as never;
       yield doneEvent();
     };
-    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", streamFn });
+    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", name: "GLM", streamFn });
     const chunks = await collect(adapter.stream(request()));
     const text = chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => (chunk as { text: string }).text).join("");
     expect(text).toBe("四门全绿。");
@@ -62,7 +62,7 @@ describe("pi-adapter 注入层", () => {
       yield { type: "thinking_end", contentIndex: 0, content: "思考完毕", partial: output } as never;
       yield doneEvent();
     };
-    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", streamFn });
+    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", name: "GLM", streamFn });
     const chunks = await collect(adapter.stream(request()));
     const text = chunks.filter((chunk) => chunk.type === "thinking-delta").map((chunk) => (chunk as { text: string }).text).join("");
     expect(text).toBe("思考完毕");
@@ -75,7 +75,7 @@ describe("pi-adapter 注入层", () => {
       yield doneEvent();
     };
     const controller = new AbortController();
-    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", streamFn });
+    const adapter = createAnthropicCompatAdapter({ baseUrl: "http://x", apiKey: "k1", name: "GLM", streamFn });
     const chunks = await collect(adapter.stream(request({ signal: controller.signal })));
     expect(chunks).toEqual([
       { type: "usage", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3 } },
@@ -86,7 +86,7 @@ describe("pi-adapter 注入层", () => {
     expect(first.model.api).toBe("anthropic-messages");
     expect(first.model.id).toBe("m");
     expect(first.model.baseUrl).toBe("http://x");
-    expect(first.model.provider).toBe("anthropic");
+    expect(first.model.provider).toBe("GLM");
     expect(first.options["apiKey"]).toBe("k1");
     expect((first.options["headers"] as Record<string, string>)["accept-encoding"]).toBe("identity");
     expect(first.options["maxRetries"]).toBe(0);

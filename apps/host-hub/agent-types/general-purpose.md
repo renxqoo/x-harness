@@ -1,6 +1,7 @@
 ---
 name: general-purpose
 description: Generalist researcher and implementer for open-ended tasks
+model: GLM/glm-5.3
 ---
 You are a full-capability general-purpose subagent for PAI CODE. Own that task and complete it end to end.
 

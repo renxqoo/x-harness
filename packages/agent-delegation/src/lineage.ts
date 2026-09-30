@@ -136,6 +136,19 @@ export function splitDialRef(ref: string): { provider: string; model: string } |
   return { provider: ref.slice(0, index), model: ref.slice(index + 1) };
 }
 
+function modelOf(
+  parentHandle: AgentHandle,
+  chain: {
+    readonly type?: LoadedAgentType;
+    readonly lastHeader?: { model?: string; provider?: string };
+    readonly override?: { model?: string; provider?: string };
+    readonly fallback?: { model?: string; provider?: string };
+  },
+): string | undefined {
+  const parentModel = chain.lastHeader?.model ?? parentHandle.agent.options.model;
+  return chain.override?.model ?? chain.type?.model ?? parentModel ?? chain.fallback?.model;
+}
+
 export function inheritDial(
   parentHandle: AgentHandle,
   chain: {
@@ -143,32 +156,31 @@ export function inheritDial(
     readonly lastHeader?: { model?: string; provider?: string };
     readonly override?: { model?: string; provider?: string };
     readonly resolveProviderOf?: (model: string) => string | undefined;
+    readonly fallback?: { model?: string; provider?: string };
   },
 ): { model?: string; provider?: string } {
-  const model = chain.override?.model ?? chain.type?.model ?? parentHandle.agent.options.model ?? chain.lastHeader?.model;
+  const model = modelOf(parentHandle, chain);
   if (model === undefined) return {};
   const composite = splitDialRef(model);
-  const provider = foldProvider(chain, { parentProvider: parentHandle.agent.options.provider, model, fromComposite: composite?.provider });
+  const parentProvider = chain.lastHeader?.provider ?? parentHandle.agent.options.provider;
+  const provider = composite?.provider ?? foldProvider(chain, { parentProvider, model });
   return { model: composite?.model ?? model, ...(provider !== undefined ? { provider } : {}) };
 }
 
 function foldProvider(
   chain: {
     readonly type?: LoadedAgentType;
-    readonly lastHeader?: { model?: string; provider?: string };
     readonly override?: { model?: string; provider?: string };
     readonly resolveProviderOf?: (model: string) => string | undefined;
+    readonly fallback?: { model?: string; provider?: string };
   },
-  spec: { readonly parentProvider: string | undefined; readonly model: string; readonly fromComposite: string | undefined },
+  spec: { readonly parentProvider: string | undefined; readonly model: string },
 ): string | undefined {
   const explicit = chain.override?.provider ?? chain.type?.provider;
   if (explicit !== undefined) return explicit;
-  if (spec.fromComposite !== undefined) return spec.fromComposite;
-  if (chain.resolveProviderOf !== undefined) {
-    const resolved = chain.resolveProviderOf(spec.model);
-    if (resolved !== undefined) return resolved;
-  }
-  return spec.parentProvider ?? chain.lastHeader?.provider;
+  const resolved = chain.resolveProviderOf?.(spec.model);
+  if (resolved !== undefined) return resolved;
+  return spec.parentProvider ?? chain.fallback?.provider;
 }
 
 export function narrowTools(callerTools: ToolFilter | undefined, typeTools: readonly string[] | undefined): ToolFilter | undefined {

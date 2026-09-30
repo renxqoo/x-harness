@@ -100,7 +100,7 @@ describe("catalog/reload 热更新(症状:存量 worker set_model 报 model_unav
     const next: WorkerCatalog = {
       providers: [
         { provider: "p1", protocol: "openai", baseUrl: "https://p1", apiKey: "", models: ["m1"] },
-        { provider: "p2", protocol: "anthropic", baseUrl: "https://p2", apiKey: "", models: ["m2"], contextWindow: 777_777 },
+        { provider: "p2", protocol: "anthropic", baseUrl: "https://p2", apiKey: "k2", models: ["m2"], contextWindow: 777_777 },
       ],
       default: { provider: "p1", model: "m1" },
       modelMeta: {},

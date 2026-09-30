@@ -35,6 +35,8 @@ export interface SpawnDeps {
   readonly emitWorktreeGone?: (payload: { sessionId: SessionId; agentId: string }) => void;
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
   readonly resolveProviderOf?: (model: string) => string | undefined;
+  readonly fallbackDial?: { model?: string; provider?: string };
+  readonly dialable?: (ref: string) => boolean;
 }
 
 export type SpawnOutcome = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly reason: string };
@@ -51,6 +53,9 @@ export async function spawnAgent(deps: SpawnDeps, execCtx: ToolExecContext, inpu
   }
   if (input.prompt.trim() === "") return { ok: false, reason: "invalid-args:prompt must be a non-empty string" };
   if (input.model === "") return { ok: false, reason: "invalid-args:model must be a non-empty string when provided" };
+  if (input.model !== undefined && deps.dialable !== undefined && !deps.dialable(input.model)) {
+    return { ok: false, reason: `invalid-args:model '${input.model}' is not dialable (not in catalog or adapter not registered); leave model unset to inherit the parent dial` };
+  }
   if (input.isolation === "remote") {
     return { ok: false, reason: "invalid-args:isolation 'remote' is not available in this build (availability is gated)" };
   }
@@ -203,6 +208,7 @@ function childAgentOptions(
     lastHeader: lastHeaderOf(deps, spec.caller),
     override: spec.isFork ? undefined : { model: spec.input.model },
     ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
+    ...(deps.fallbackDial !== undefined ? { fallback: deps.fallbackDial } : {}),
   });
   const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
   return {

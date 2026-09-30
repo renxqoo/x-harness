@@ -26,6 +26,8 @@ export interface DelegationOptions {
   readonly maxResident?: number;
   readonly onWarn?: (message: string) => void;
   readonly resolveProviderOf?: (model: string) => string | undefined;
+  readonly fallbackDial?: { model?: string; provider?: string };
+  readonly dialable?: (ref: string) => boolean;
 }
 
 export type ChildView =

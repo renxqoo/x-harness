@@ -124,7 +124,11 @@ function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: strin
 
 export function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined): LlmAdapter[] {
   if (script !== undefined) return [script];
-  return catalog.providers.map((p) => {
+  return catalog.providers.filter((p) => {
+    if (p.provider === "script" || p.apiKey !== "") return true;
+    process.stderr.write(`hub:worker: provider '${p.provider}' has no API key (set apiKey or apiKeyEnv in providers.json) — adapter not registered\n`);
+    return false;
+  }).map((p) => {
     const inputByModel: Record<string, readonly ("text" | "image")[]> = {};
     const contextWindowByModel: Record<string, number> = {};
     for (const model of p.models) {
@@ -232,6 +236,16 @@ function providerOfModel(catalog: WorkerCatalog): (model: string) => string | un
   return (model) => {
     const owners = catalog.providers.filter((p) => p.models.includes(model));
     return owners.length === 1 ? owners[0]?.provider : undefined;
+  };
+}
+
+function dialableOf(catalog: WorkerCatalog): (ref: string) => boolean {
+  return (ref) => {
+    const slash = ref.indexOf("/");
+    if (slash > 0 && slash < ref.length - 1) {
+      return catalogEntryOf(catalog, { provider: ref.slice(0, slash), model: ref.slice(slash + 1) }) !== undefined;
+    }
+    return providerOfModel(catalog)(ref) !== undefined;
   };
 }
 
@@ -350,6 +364,8 @@ function defaultWorkerPlugins(resolved: {
       workspaceRoot: cwd,
       builtinTypes: builtinAgentTypes(),
       resolveProviderOf: providerOfModel(catalog),
+      fallbackDial: { model: catalog.default.model, provider: catalog.default.provider },
+      dialable: dialableOf(catalog),
       mailbox: { box: `xh-${mainSessionId}`, mainSession: mainSessionId as never },
       onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
     }),

@@ -174,6 +174,8 @@ function spawnDepsOf(deps: {
   readonly onWarn: ((message: string) => void) | undefined;
   readonly lockDegraded: import("./lockfile.ts").LockDegraded | undefined;
   readonly resolveProviderOf: ((model: string) => string | undefined) | undefined;
+  readonly fallbackDial: { model?: string; provider?: string } | undefined;
+  readonly dialable: ((ref: string) => boolean) | undefined;
 }): import("./spawn.ts").SpawnDeps {
   return {
     loop: deps.loop,
@@ -191,6 +193,8 @@ function spawnDepsOf(deps: {
     emitWorktreeGone: deps.emitWorktreeGone,
     ...(deps.grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => deps.grants?.setRootOverride(session, dir, guard) } : {}),
     ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
+    ...(deps.fallbackDial !== undefined ? { fallbackDial: deps.fallbackDial } : {}),
+    ...(deps.dialable !== undefined ? { dialable: deps.dialable } : {}),
   };
 }
 
@@ -335,6 +339,8 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
         onWarn,
         lockDegraded,
         resolveProviderOf: options.resolveProviderOf,
+        fallbackDial: options.fallbackDial,
+        dialable: options.dialable,
       });
       if (options.worktreeSweep !== false) startupSweep({ workspaceRoot, lockDegraded, onWarn });
       const archive = ctx.tryUse(sessionArchive);
