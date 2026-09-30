@@ -81,9 +81,11 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
   function settleWaiters(threadId: string, verdict: { ok: boolean; reason: string }): void {
     const thread = live.get(threadId);
     if (thread === undefined) return;
-    const pending = Array.from(thread.waiters.keys(), (key) => key);
-    for (const sendId of pending) {
+    const pending = Array.from(thread.waiters.entries());
+    for (const [sendId, waiter] of pending) {
       thread.waiters.delete(sendId);
+      if (waiter.timer !== undefined) clearTimeout(waiter.timer);
+      waiter.resolve({ sendId, ok: verdict.ok, reason: verdict.reason });
       dispatch(threadId, { kind: "settled", threadId, sendId, ok: verdict.ok, reason: verdict.reason });
     }
   }
@@ -103,7 +105,6 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
         timer = setTimeout(() => {
           thread.waiters.delete(sendId);
           resolve({ sendId, ok: false, reason: "timeout" });
-          dispatch(threadId, { kind: "settled", threadId, sendId, ok: false, reason: "timeout" });
         }, sendOptions.timeoutMs);
         timer.unref?.();
       }
@@ -154,7 +155,9 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
       break;
     }
     thread.turnCursor = Math.max(thread.turnCursor, cursor);
-    return verdict ?? { ok: true };
+    if (verdict !== undefined) return verdict;
+    if (thread.run.handle.agent.status === "idle") return { ok: false, reason: "queue-cleared" };
+    return { ok: true };
   }
 
   function assemblySpec(spec: StartThreadSpec, mainSessionId: SessionId, resumeId: SessionId | undefined): AssemblySpec {
@@ -347,13 +350,13 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     const from = entry.state;
     if (intent === "stop") {
       client.internal.table.remove(threadId);
-      client.internal.emit({ kind: "thread_state", threadId, from: from as "live", to: "dead", cause: intent });
+      client.internal.emit({ kind: "thread_state", threadId, from: from, to: "dead", cause: intent });
     } else {
       const sessionPath = entry.sessionPath;
       client.internal.table.update(threadId, { state: "parked", sessionPath: null });
       client.internal.table.update(threadId, { sessionPath });
       client.internal.table.releaseOccupancy(threadId);
-      client.internal.emit({ kind: "thread_state", threadId, from: from as "live", to: "parked", cause: intent });
+      client.internal.emit({ kind: "thread_state", threadId, from: from, to: "parked", cause: intent });
     }
     return { ok: true, value: undefined };
   }

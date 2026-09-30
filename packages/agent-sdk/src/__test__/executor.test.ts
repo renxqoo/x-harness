@@ -263,6 +263,61 @@ describe("in-process executor minimal face", () => {
     }
   }, 60_000);
 
+  it("stop settles in-flight send promise and frame with stopped (R1)", async () => {
+    const w = await makeWorld(makeEnv([{ delayMs: 600000 }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const inflight = thread.send("hang", { sendId: "q1" });
+      setTimeout(() => {
+        void thread.stop();
+      }, 200);
+      const race = await Promise.race([
+        inflight,
+        new Promise<"HANG">((resolve) => {
+          setTimeout(() => resolve("HANG"), 5000).unref?.();
+        }),
+      ]);
+      expect(race).not.toBe("HANG");
+      if (race !== "HANG") {
+        expect(race.ok && race.value.ok).toBe(false);
+        if (race.ok && !race.value.ok) expect(race.value.reason).toBe("stopped");
+      }
+      const frame = w.events.find((e) => e.kind === "settled" && e.sendId === "q1");
+      expect(frame?.kind === "settled" && frame.ok).toBe(false);
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
+  it("abort-cleared queue send settles queue-cleared not fake ok (R2)", async () => {
+    const w = await makeWorld(makeEnv([{ delayMs: 400 }, { delayMs: 5000 }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const q1P = thread.send("q1", { sendId: "q1", timeoutMs: 30_000 });
+      setTimeout(() => {
+        void thread.send("q2", { sendId: "q2", timeoutMs: 30_000 });
+      }, 150);
+      setTimeout(() => {
+        void thread.abort("kill");
+      }, 600);
+      const q1 = await q1P;
+      expect(q1.ok && q1.value.ok).toBe(false);
+      if (q1.ok && !q1.value.ok) expect(q1.value.reason).toBe("aborted");
+      const q2Seen = (): boolean => w.events.some((e) => e.kind === "settled" && e.sendId === "q2");
+      await waitFor(q2Seen, 20_000);
+      const q2Frame = w.events.find((e) => e.kind === "settled" && e.sendId === "q2");
+      expect(q2Frame?.kind === "settled" && q2Frame.ok).toBe(false);
+      if (q2Frame?.kind === "settled") expect(q2Frame.reason).toBe("queue-cleared");
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
   it("garbage threadId fails with session_unreadable", async () => {
     const w = await makeWorld();
     try {
