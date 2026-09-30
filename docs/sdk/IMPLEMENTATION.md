@@ -108,7 +108,9 @@
 - **P1 命令面全量**：worker-commands 家族下沉为 sdk/commands/*——**响应抽象
   双宿主先行**（A#18：命令处理器=纯函数输入→结果+控制事实，配最小 worker
   假身契约测试，控制响应可被 client 截获触发 rebind/rekey）；admin 域下沉
-  （含 permission 双路由/catalog 快照 K9）；对应域测试同阶段迁移。
+  （含 permission 双路由/catalog 快照 K9）；对应域测试同阶段迁移；
+  **性能域（B 终审 N-1）**：anchorTurnOf/anchorVerdict 全量扫描改 hub 式
+  marker 增量索引（O(delta)），与背压/事件面一并处理。
   **阶段末：host-hub worker 重新指向 sdk/commands，删本地副本。**
 - **P2 worker 执行器**：executor-worker + worker-entry（spawn/relay/握手/心跳/
   park/wake/requeue/pendingCommands/sweep）；exec 解析注入 + host-hub 自托管 +
