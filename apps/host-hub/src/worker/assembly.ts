@@ -393,9 +393,9 @@ function createDelegationOf(input: { agentsDirs: readonly string[]; cwd: string;
     workspaceRoot: input.cwd,
     builtinTypes: builtinAgentTypes(),
     resolveProviderOf: registeredProviderOfModel(input.catalog),
-    fallbackDial: dialableOf(input.catalog)(`${input.catalog.default.provider}/${input.catalog.default.model}`)
-      ? { model: input.catalog.default.model, provider: input.catalog.default.provider }
-      : { model: undefined, provider: undefined },
+    ...(dialableOf(input.catalog)(`${input.catalog.default.provider}/${input.catalog.default.model}`)
+      ? { fallbackDial: { model: input.catalog.default.model, provider: input.catalog.default.provider } }
+      : {}),
     dialable: dialableOf(input.catalog),
     mailbox: { box: `xh-${input.mainSessionId}`, mainSession: input.mainSessionId as never },
     onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),

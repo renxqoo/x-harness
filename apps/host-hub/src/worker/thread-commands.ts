@@ -6,10 +6,10 @@ import type { ThinkingLevel } from "@x-harness/llm";
 import { permissionMode as permissionModeToken } from "@x-harness/permission";
 import { delegationView } from "@x-harness/agent-delegation";
 import { commandRegistry } from "@x-harness/commands";
-import { hubError, CodedError, errorOfCause } from "../shared/errors.ts";
+import { hubError, CodedError, errorOfCause, type HubErrorShape } from "../shared/errors.ts";
 import { assembleWorkerAgent, teardownWorld } from "./assembly.ts";
 import type { AssemblyResult } from "./assembly.ts";
-import { forkInputVerdict, respond, requireThread, sessionOf } from "./worker-commands.ts";
+import { respond, requireThread, sessionOf } from "./worker-commands.ts";
 import type { CommandInput, Handler, WorkerRuntime, WorkerState } from "./worker-commands.ts";
 import type { EventBridge } from "./event-bridge.ts";
 import { permissionModeOf, PERMISSION_MODES, THINKING_LEVELS, thinkingUnsupported } from "./meta-state.ts";
@@ -263,6 +263,15 @@ function serialized(handler: Handler): Handler {
     );
     return run;
   };
+}
+
+export function forkInputVerdict(rt: WorkerRuntime, lastSeq: number, input: CommandInput): HubErrorShape | undefined {
+  if (rt.bridge.isStreaming()) return hubError("streaming_window", "thread is streaming");
+  const seq = input.seq;
+  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0) return hubError("invalid_input", `invalid fork seq: ${String(seq)}`);
+  if (seq > lastSeq) return hubError("cursor_stale", "fork beyond durable boundary");
+  if (input.position !== "at" && seq === 0) return hubError("invalid_input", "fork before first event");
+  return undefined;
 }
 
 export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, Handler>): void {

@@ -5,7 +5,8 @@ import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
 import { hubError, errorOfCause } from "../shared/errors.ts";
-import { verdictOfTurnEnd } from "@x-harness/agent-sdk/src/executor-inprocess/run.ts";
+import { anchorAtKick, anchorVerdictOf, verdictOfTurnEnd } from "./settle-anchor.ts";
+import type { KickAnchor } from "./settle-anchor.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
@@ -139,12 +140,14 @@ function delegationError(reason: string): HubErrorShape {
   return hubError("internal", reason);
 }
 
-export function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
-  if (id === undefined) return false;
+export 
+function settleAfter(rt: WorkerRuntime, id: string | undefined, kickAnchor: KickAnchor | undefined): boolean {
+  if (id === undefined || kickAnchor === undefined) return false;
   const handle = rt.state.handle;
   if (handle === undefined) return false;
-  const threadIdAtKick = rt.state.threadId;
-  const marker = handle.agent.session.events().length;
+  const threadIdAtKick = kickAnchor.threadIdAtKick;
+  const marker = kickAnchor.marker;
+  const anchorTurn = kickAnchor.anchorTurn;
   rt.pendingSends += 1;
   void handle.agent
     .whenIdle()
@@ -238,18 +241,11 @@ function promptStreamingBranch(
     respond(rt, { id: input.id, command: "prompt", error: errorOfCause(error) });
     return;
   }
+  const kickAnchor = anchorAtKick(rt, input.id, behavior === "steer");
   respond(rt, { id: input.id, command: "prompt" });
-  settleAfter(rt, input.id);
+  settleAfter(rt, input.id, kickAnchor);
 }
 
-export function forkInputVerdict(rt: WorkerRuntime, lastSeq: number, input: CommandInput): HubErrorShape | undefined {
-  if (rt.bridge.isStreaming()) return hubError("streaming_window", "thread is streaming");
-  const seq = input.seq;
-  if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 0) return hubError("invalid_input", `invalid fork seq: ${String(seq)}`);
-  if (seq > lastSeq) return hubError("cursor_stale", "fork beyond durable boundary");
-  if (input.position !== "at" && seq === 0) return hubError("invalid_input", "fork before first event");
-  return undefined;
-}
 
 export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
@@ -279,6 +275,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, { id: input.id, command: "prompt", error: hubError("unknown_thread", "Unknown threadId") });
       return;
     }
+    const promptAnchor = anchorAtKick(rt, input.id, false);
     try {
       agent.followup(message, imageOptions(parsedImages.images));
     } catch (error) {
@@ -286,7 +283,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "prompt" });
-    settleAfter(rt, input.id);
+    settleAfter(rt, input.id, promptAnchor);
 
   });
 
@@ -307,6 +304,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, { id: input.id, command: "steer", error: hubError("unknown_thread", "Unknown threadId") });
       return;
     }
+    const steerAnchor = anchorAtKick(rt, input.id, true);
     try {
       agent.steer(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
     } catch (error) {
@@ -314,7 +312,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "steer" });
-    settleAfter(rt, input.id);
+    settleAfter(rt, input.id, steerAnchor);
 
   });
 
@@ -335,6 +333,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       respond(rt, { id: input.id, command: "follow_up", error: hubError("unknown_thread", "Unknown threadId") });
       return;
     }
+    const followAnchor = anchorAtKick(rt, input.id, false);
     try {
       agent.followup(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
     } catch (error) {
@@ -342,7 +341,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
       return;
     }
     respond(rt, { id: input.id, command: "follow_up" });
-    settleAfter(rt, input.id);
+    settleAfter(rt, input.id, followAnchor);
 
   });
 
