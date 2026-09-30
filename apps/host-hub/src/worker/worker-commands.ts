@@ -5,7 +5,7 @@ import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
 import { hubError, errorOfCause } from "../shared/errors.ts";
-import { anchorAtKick, anchorVerdictOf, verdictOfTurnEnd } from "./settle-anchor.ts";
+import { anchorAtKick, anchorVerdictOf } from "./settle-anchor.ts";
 import type { KickAnchor } from "./settle-anchor.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
@@ -154,31 +154,10 @@ function settleAfter(rt: WorkerRuntime, id: string | undefined, kickAnchor: Kick
     .then(() => {
       rt.pendingSends = Math.max(0, rt.pendingSends - 1);
       const events = handle.agent.session.events();
-      let ok = true;
-      let reason: string | undefined;
-      for (let i = marker; i < events.length; i++) {
-        const event = events[i];
-        if (event === undefined || event.type !== "turn/end") continue;
-        const verdict = verdictOfTurnEnd(event as never);
-        ok = verdict.ok;
-        reason = verdict.reason;
-        break;
-      }
-      if (ok && reason === undefined && handle.agent.status === "idle") {
-        let sawTurnEnd = false;
-        for (let i = marker; i < events.length; i++) {
-          const event = events[i];
-          if (event !== undefined && event.type === "turn/end") {
-            sawTurnEnd = true;
-            break;
-          }
-        }
-        if (!sawTurnEnd) {
-          ok = false;
-          reason = "queue-cleared";
-        }
-      }
-      rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ok, reason });
+      const verdict = handle.agent.status !== "idle"
+        ? { ok: true }
+        : anchorVerdictOf(events, anchorTurn, marker);
+      rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ...verdict });
     })
     .catch(() => {
       rt.pendingSends = Math.max(0, rt.pendingSends - 1);

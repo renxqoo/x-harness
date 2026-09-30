@@ -1,6 +1,4 @@
-import { verdictOfTurnEnd as verdictOfTurnEndImpl } from "@x-harness/agent-sdk/src/executor-inprocess/run.ts";
-
-export const verdictOfTurnEnd = verdictOfTurnEndImpl;
+import { verdictOfTurnEnd } from "@x-harness/agent-sdk/src/executor-inprocess/run.ts";
 import type { Agent } from "@x-harness/agent-loop";
 
 export interface KickAnchor {

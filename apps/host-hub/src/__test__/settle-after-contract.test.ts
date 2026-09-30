@@ -32,6 +32,37 @@ describe("settleAfter turn 锚定（真 worker 驱动）", () => {
     worker.input.end();
   }, 40_000);
 
+  it("判别：A 成功 + B 自身回合失败 → B ok=false（first-wins 会误报 ok=true）", async () => {
+    const { worker, threadId } = await startWorker([{ delayMs: 300 }, { reply: "A-ok" }, { error: { code: "E_TURN_B", message: "b-fails", retryable: false } }]);
+    worker.send({ type: "prompt", id: "A", threadId, message: "first" });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 120);
+    });
+    worker.send({ type: "follow_up", id: "B", threadId, message: "second" });
+    await waitResponse(worker.captured.lines, "follow_up", "B");
+    const sA = await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "A");
+    const sB = await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "B");
+    expect((sA.payload as { ok?: boolean }).ok).toBe(true);
+    expect((sB.payload as { ok?: boolean }).ok).toBe(false);
+    expect(typeof (sB.payload as { reason?: string }).reason).toBe("string");
+    worker.input.end();
+  }, 40_000);
+
+  it("判别：steer 并入同回合共享裁决（A/B 同 turn 同 ok=false）", async () => {
+    const { worker, threadId } = await startWorker([{ delayMs: 300 }, { error: { code: "E_SHARED", message: "turn-fails", retryable: false } }, { error: { code: "E_SHARED2", message: "turn-fails-2", retryable: false } }, { error: { code: "E_SHARED3", message: "turn-fails-3", retryable: false } }]);
+    worker.send({ type: "prompt", id: "A", threadId, message: "first" });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 120);
+    });
+    worker.send({ type: "steer", id: "B", threadId, message: "inject" });
+    await waitResponse(worker.captured.lines, "steer", "B");
+    const sA = await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "A");
+    const sB = await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "B");
+    expect((sA.payload as { ok?: boolean }).ok).toBe(false);
+    expect((sB.payload as { ok?: boolean }).ok).toBe(false);
+    worker.input.end();
+  }, 40_000);
+
   it("abort 清队后无回合的排队 send 结算 queue-cleared（假 ok 根除）", async () => {
     const { worker, threadId } = await startWorker([{ delayMs: 60000 }, { reply: "never" }]);
     worker.send({ type: "prompt", id: "g1", threadId, message: "slow" });
