@@ -123,7 +123,6 @@ describe("dual-host command contracts", () => {
       const agent = w.run.handle.agent;
       const state: SendCommandState = {
         session: agent.session,
-        threadId: String(agent.session.id),
         currentThreadId: String(agent.session.id),
         catalog: { providers: [], default: { provider: "", model: "" }, modelMeta: {} },
         dial: { provider: "script", model: "script-1" },
@@ -151,6 +150,41 @@ describe("dual-host command contracts", () => {
       await agent.whenIdle();
       const empty = await prompt(state, { message: "" });
       expect(empty.error?.code).toBe("invalid_input");
+    } finally {
+      await w.run.dispose();
+      await w.cleanup();
+    }
+  }, 30_000);
+
+  it("streaming prompt with valid behavior settles via state.settle (A1/P3-2)", async () => {
+    const w = await makeRun([{ delayMs: 300 }, { reply: "after" }]);
+    try {
+      const agent = w.run.handle.agent;
+      const settledIds: string[] = [];
+      const state: SendCommandState = {
+        session: agent.session,
+        currentThreadId: String(agent.session.id),
+        catalog: { providers: [], default: { provider: "", model: "" }, modelMeta: {} },
+        dial: { provider: "script", model: "script-1" },
+        commands: undefined,
+        agent,
+        streaming: () => true,
+        pendingSends: () => 0,
+        bash: { abortAdmissions: () => {}, abortRunning: () => {} },
+        broker: { denyAll: () => {} },
+        inflight: { abortAll: async () => {} },
+        delegation: undefined,
+        settle: (id) => {
+          if (typeof id === "string") settledIds.push(id);
+        },
+      };
+      const inflight = prompt(state, { message: "mid", streamingBehavior: "steer", id: "s1" });
+      const steered = await Promise.race([inflight, new Promise<"PENDING">((r) => { setTimeout(() => r("PENDING"), 2000).unref?.(); })]);
+      expect(steered).not.toBe("PENDING");
+      const noBehavior = await prompt(state, { message: "mid2" });
+      expect(noBehavior.error?.code).toBe("streaming_window");
+      await w.run.handle.agent.whenIdle();
+      expect(settledIds).toContain("s1");
     } finally {
       await w.run.dispose();
       await w.cleanup();

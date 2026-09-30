@@ -239,6 +239,14 @@ function providerOfModel(catalog: WorkerCatalog): (model: string) => string | un
   };
 }
 
+function registeredProviderOfModel(catalog: WorkerCatalog): (model: string) => string | undefined {
+  const registered = registeredProvidersOf(catalog);
+  return (model) => {
+    const owner = providerOfModel(catalog)(model);
+    return owner !== undefined && registered.has(owner) ? owner : undefined;
+  };
+}
+
 export function registeredProvidersOf(catalog: WorkerCatalog): ReadonlySet<string> {
   return new Set(catalog.providers.filter((p) => p.apiKey !== "").map((p) => p.provider));
 }
@@ -384,7 +392,7 @@ function createDelegationOf(input: { agentsDirs: readonly string[]; cwd: string;
     agentsDirs: input.agentsDirs,
     workspaceRoot: input.cwd,
     builtinTypes: builtinAgentTypes(),
-    resolveProviderOf: providerOfModel(input.catalog),
+    resolveProviderOf: registeredProviderOfModel(input.catalog),
     fallbackDial: dialableOf(input.catalog)(`${input.catalog.default.provider}/${input.catalog.default.model}`)
       ? { model: input.catalog.default.model, provider: input.catalog.default.provider }
       : { model: undefined, provider: undefined },

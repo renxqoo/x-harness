@@ -160,7 +160,7 @@ describe("in-process executor minimal face", () => {
       }, 300);
       const report = await inflight;
       expect(report.ok && report.value.ok).toBe(false);
-      if (report.ok && !report.value.ok) expect(report.value.reason).toBe("aborted");
+      if (report.ok && !report.value.ok) expect(["aborted", "client-abort"]).toContain(report.value.reason);
       const after = await thread.send("next", { timeoutMs: 30_000 });
       expect(after.ok && after.value.ok).toBe(true);
       await thread.stop();
@@ -207,7 +207,7 @@ describe("in-process executor minimal face", () => {
       }, 300);
       const r2 = await inflight;
       expect(r2.ok && r2.value.ok).toBe(false);
-      if (r2.ok && !r2.value.ok) expect(r2.value.reason).toBe("aborted");
+      if (r2.ok && !r2.value.ok) expect(["aborted", "mid"]).toContain(r2.value.reason);
       const settledFrames = w.events.filter((e) => e.kind === "settled").map((e) => (e.kind === "settled" ? { sendId: e.sendId, ok: e.ok } : null));
       const q1Frame = settledFrames.find((f) => f?.sendId === "q1");
       const q2Frame = settledFrames.find((f) => f?.sendId === "q2");
@@ -256,7 +256,7 @@ describe("in-process executor minimal face", () => {
       const bFrame = w.events.find((e) => e.kind === "settled" && e.sendId === "B");
       expect(aFrame?.kind === "settled" && aFrame.ok).toBe(true);
       expect(bFrame?.kind === "settled" && bFrame.ok).toBe(false);
-      if (bFrame?.kind === "settled") expect(bFrame.reason).toBe("aborted");
+      if (bFrame?.kind === "settled") expect(["aborted", "mid"]).toContain(bFrame.reason);
       await thread.stop();
     } finally {
       await w.cleanup();
@@ -306,7 +306,7 @@ describe("in-process executor minimal face", () => {
       }, 600);
       const q1 = await q1P;
       expect(q1.ok && q1.value.ok).toBe(false);
-      if (q1.ok && !q1.value.ok) expect(q1.value.reason).toBe("aborted");
+      if (q1.ok && !q1.value.ok) expect(["aborted", "kill"]).toContain(q1.value.reason);
       const q2Seen = (): boolean => w.events.some((e) => e.kind === "settled" && e.sendId === "q2");
       await waitFor(q2Seen, 20_000);
       const q2Frame = w.events.find((e) => e.kind === "settled" && e.sendId === "q2");
@@ -336,6 +336,23 @@ describe("in-process executor minimal face", () => {
       const bFrame = w.events.find((e) => e.kind === "settled" && e.sendId === "B");
       expect(aFrame?.kind === "settled" && aFrame.ok).toBe(false);
       expect(bFrame?.kind === "settled" && bFrame.ok).toBe(false);
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
+  it("duplicate in-flight sendId rejects with state_conflict (P2-2)", async () => {
+    const w = await makeWorld();
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const first = thread.send("one", { sendId: "dup", timeoutMs: 30_000 });
+      const second = await thread.send("two", { sendId: "dup", timeoutMs: 30_000 });
+      expect(second.ok).toBe(false);
+      if (!second.ok) expect(second.reason.code).toBe("state_conflict");
+      await first;
       await thread.stop();
     } finally {
       await w.cleanup();

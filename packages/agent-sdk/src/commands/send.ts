@@ -14,7 +14,6 @@ import type { CommandOutcome } from "./outcome.ts";
 
 export interface SendCommandState {
   session: Session | undefined;
-  threadId: string;
   currentThreadId: string | undefined;
   catalog: WorkerCatalog;
   dial: DialFact;
@@ -144,7 +143,9 @@ export async function followUp(state: SendCommandState, input: Record<string, un
   return { command: "follow_up" };
 }
 
-export async function abort(state: SendCommandState): Promise<CommandOutcome> {
+export async function abort(state: SendCommandState, input: Record<string, unknown> = {}): Promise<CommandOutcome> {
+  const gate = threadGate({ session: state.session, currentThreadId: state.currentThreadId }, { threadId: input.threadId, command: "abort" });
+  if (!gate.ok) return gate.outcome;
   const session = state.session;
   if (session === undefined) return noThread("abort");
   state.bash.abortAdmissions();

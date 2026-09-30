@@ -154,6 +154,26 @@
   随 P1 生命周期域；state_conflict 分支随 inline persistence 落地补测试；
   events.ts 的 tool_result kind 发射点随 P1 event-bridge 下沉补齐。
 
+## 3d. P1 双审登记项（批次归属，A#4/6/14/15 + B.P5-3/P6-1/P6-2/P2-1/P1-1/P4-1/P8-1）
+
+- **queue 族批**：clear_queue/queue/drop/queue/send_now 迁入 sdk commands；
+  dispatchCommand 补 inflight register/signal（A4）；queue-cleared 改 inbox
+  entry 折叠判别（B.P2-1，需 agent-loop 暴露 followup 返回 entry id）；
+  「followup 后 turn/start 同步可见」契约测试（B.P1-1）；permission 域
+  表驱动 + streaming 三分支回归（A14/15）。
+- **delegation 收敛批**：dialable/fallbackDial/resolveProviderOf 改
+  () => WorkerCatalog 取值函数（reload 滞留，B.P5-3）；SpawnDeps.dialable
+  收紧必填 + cli build-world/sdk executor-inprocess 注入补齐（B.P6-1，
+  最高优先）；type.model 过 dialable 门（B.P6-2）；script 模式 registered
+  空集的真源修正（B.R3，随取值函数一并）。
+- **shared 收敛批**（admin 域迁完后）：host-hub/shared 全部 re-export
+  sdk/shared（B.P4-1）；requestId 谓词统一只判 undefined（A6）；
+  sdk errors.ts 与 shared/errors.ts 单源（B.P4-2）；script-adapter 收进
+  shared（A10）。
+- **P2 worker 批**：跨进程 settings 文件锁（B.P8-1）；threadGate 谓词
+  对非字符串 threadId 统一（B.R6）。
+- **P1 收口硬项**：commands 域覆盖率 37/39 → ≥90/85（双审 B 实测）。
+
 ## 4. 测试计划（口径先行）
 
 - 契约级：错误码封闭（导出 == 文档）、事件词表封闭、命令词表闭集与派生集合

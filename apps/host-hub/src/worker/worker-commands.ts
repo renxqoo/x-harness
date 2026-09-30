@@ -5,6 +5,7 @@ import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
 import { hubError, errorOfCause } from "../shared/errors.ts";
+import { verdictOfTurnEnd } from "@x-harness/agent-sdk/src/executor-inprocess/run.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
@@ -138,14 +139,7 @@ function delegationError(reason: string): HubErrorShape {
   return hubError("internal", reason);
 }
 
-export function verdictReasonOf(reason: { kind: string; message?: string; reason?: string; cause?: string }): string | undefined {
-  if (reason.kind === "error") return reason.message ?? reason.kind;
-  if (reason.kind === "blocked") return reason.reason ?? reason.kind;
-  if (reason.kind === "aborted") return reason.cause ?? "aborted";
-  return undefined;
-}
-
-function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
+export function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
   if (id === undefined) return false;
   const handle = rt.state.handle;
   if (handle === undefined) return false;
@@ -161,15 +155,24 @@ function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
       let reason: string | undefined;
       for (let i = marker; i < events.length; i++) {
         const event = events[i];
-        if (event !== undefined && event.type === "turn/end") {
-          const verdict = verdictReasonOf(event.data.reason);
-          if (verdict !== undefined) {
-            ok = false;
-            reason = verdict;
-          } else {
-            ok = true;
-            reason = undefined;
+        if (event === undefined || event.type !== "turn/end") continue;
+        const verdict = verdictOfTurnEnd(event as never);
+        ok = verdict.ok;
+        reason = verdict.reason;
+        break;
+      }
+      if (ok && reason === undefined && handle.agent.status === "idle") {
+        let sawTurnEnd = false;
+        for (let i = marker; i < events.length; i++) {
+          const event = events[i];
+          if (event !== undefined && event.type === "turn/end") {
+            sawTurnEnd = true;
+            break;
           }
+        }
+        if (!sawTurnEnd) {
+          ok = false;
+          reason = "queue-cleared";
         }
       }
       rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ok, reason });

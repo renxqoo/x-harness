@@ -25,9 +25,13 @@ export interface InprocessStartPlan {
   spec: AssemblySpec;
 }
 
-function failureDetail(turnReason: { kind?: string; message?: string; reason?: string }, kind: string): string {
+function failureDetail(turnReason: { kind?: string; message?: string; reason?: string; cause?: string }, kind: string): string {
   if (kind === "blocked") {
     const detail = turnReason.reason;
+    return detail !== undefined && detail !== "" ? detail : kind;
+  }
+  if (kind === "aborted") {
+    const detail = turnReason.cause;
     return detail !== undefined && detail !== "" ? detail : kind;
   }
   const detail = turnReason.message;
@@ -35,7 +39,7 @@ function failureDetail(turnReason: { kind?: string; message?: string; reason?: s
 }
 
 export function verdictOfTurnEnd(event: SessionEvent): { ok: boolean; reason?: string } {
-  const turnReason = (event.data as { reason?: { kind?: string; message?: string; reason?: string } }).reason;
+  const turnReason = (event.data as { reason?: { kind?: string; message?: string; reason?: string; cause?: string } }).reason;
   const kind = turnReason?.kind;
   if (kind !== "error" && kind !== "blocked" && kind !== "aborted") return { ok: true };
   return { ok: false, reason: failureDetail(turnReason ?? {}, kind) };
