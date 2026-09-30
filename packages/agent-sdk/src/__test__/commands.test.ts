@@ -132,7 +132,7 @@ describe("dual-host command contracts", () => {
         pendingSends: () => 0,
         bash: { abortAdmissions: () => {}, abortRunning: () => {} },
         broker: { denyAll: () => {} },
-        inflight: { abortAll: async () => {} },
+        inflight: { abortAll: async () => {}, register: () => ({ signal: new AbortController().signal, unregister: () => {} }) },
         delegation: undefined,
         settle: () => {},
       };
@@ -172,7 +172,7 @@ describe("dual-host command contracts", () => {
         pendingSends: () => 0,
         bash: { abortAdmissions: () => {}, abortRunning: () => {} },
         broker: { denyAll: () => {} },
-        inflight: { abortAll: async () => {} },
+        inflight: { abortAll: async () => {}, register: () => ({ signal: new AbortController().signal, unregister: () => {} }) },
         delegation: undefined,
         settle: (id) => {
           if (typeof id === "string") settledIds.push(id);

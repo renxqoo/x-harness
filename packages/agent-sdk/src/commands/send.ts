@@ -23,7 +23,7 @@ export interface SendCommandState {
   pendingSends(): number;
   bash: { abortAdmissions(): void; abortRunning(id: string | undefined): void };
   broker: { denyAll(): void };
-  inflight: { abortAll(): Promise<void> };
+  inflight: { abortAll(): Promise<void>; register(): { signal: AbortSignal; unregister(): void } };
   delegation: { stopAll(id: SessionId, cause: string): Promise<void> } | undefined;
   settle(sendId: string | undefined): void;
 }
@@ -75,8 +75,9 @@ async function dispatchCommand(state: SendCommandState, requestId: unknown, spec
   if (spec.imagesPresent && parsed !== undefined && registry.find(parsed.name) !== undefined) {
     return { command: spec.command, error: hubError("invalid_input", "invalid images: compact does not accept images") };
   }
+  const registration = state.inflight.register();
   try {
-    const execution = await registry.execute(state.session, spec.line, new AbortController().signal);
+    const execution = await registry.execute(state.session, spec.line, registration.signal);
     if (execution === undefined) return undefined;
     if (execution.result.kind === "error") {
       return { command: spec.command, error: hubError("compact_rejected", execution.result.text) };
@@ -84,6 +85,8 @@ async function dispatchCommand(state: SendCommandState, requestId: unknown, spec
     return { command: spec.command, data: execution.result.data };
   } catch (error) {
     return { command: spec.command, error: errorOfCause(error) };
+  } finally {
+    registration.unregister();
   }
 }
 
