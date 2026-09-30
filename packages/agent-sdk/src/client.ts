@@ -1,0 +1,148 @@
+import { createThreadTable } from "./thread-table.ts";
+import type { ThreadTable } from "./thread-table.ts";
+import { readLimits } from "./limits.ts";
+import type { SdkLimits } from "./limits.ts";
+import type { SdkEvent } from "./events.ts";
+import type { SdkErrorShape, SdkResult } from "./errors.ts";
+import { sdkError } from "./errors.ts";
+
+export interface SdkClientOptions {
+  mode: "in-process" | "worker";
+  agentDir: string;
+  sessionsRoot: string;
+  env?: Record<string, string | undefined>;
+  mailboxRoot?: string;
+  workflowRoot?: string;
+  limits?: Partial<SdkLimits>;
+  onEvent?: (event: SdkEvent) => void;
+  onLog?: (message: string) => void;
+}
+
+export interface ThreadInfo {
+  threadId: string;
+  cwd: string;
+  trusted: boolean;
+  sessionPath: string | null;
+  state: string;
+  keepalive: boolean;
+  idleMs: number;
+  isStreaming: boolean;
+}
+
+export interface SdkThreadHandle {
+  readonly threadId: string;
+  readonly state: string;
+  readonly info: ThreadInfo;
+}
+
+const PENDING_PREFIX = "@pending-";
+
+export function createSdkClient(options: SdkClientOptions) {
+  const env: Record<string, string | undefined> = options.env !== undefined ? { ...options.env } : { ...process.env };
+  const limits: SdkLimits = { ...readLimits(env), ...options.limits };
+  const table: ThreadTable = createThreadTable();
+  let started = false;
+  let shutDown = false;
+  let pendingSeq = 0;
+
+  function log(message: string): void {
+    options.onLog?.(message);
+  }
+
+  function emit(event: SdkEvent): void {
+    options.onEvent?.(event);
+  }
+
+  function occupiedThreads(): number {
+    let pending = 0;
+    for (const entry of table.list()) {
+      if (entry.threadId.startsWith(PENDING_PREFIX)) pending += 1;
+    }
+    return table.liveCount() + pending;
+  }
+
+  function threadBudgetAvailable(): boolean {
+    return occupiedThreads() < limits.maxThreads;
+  }
+
+  function nextPendingId(): string {
+    pendingSeq += 1;
+    return `${PENDING_PREFIX}${pendingSeq}`;
+  }
+
+  function threadInfoOf(threadId: string): SdkResult<ThreadInfo> {
+    const entry = table.get(threadId);
+    if (entry === undefined) return { ok: false, reason: sdkError("unknown_thread", `Unknown threadId: ${threadId}`) };
+    return {
+      ok: true,
+      value: {
+        threadId: entry.threadId,
+        cwd: entry.cwd,
+        trusted: entry.trusted,
+        sessionPath: entry.sessionPath,
+        state: entry.state,
+        keepalive: entry.keepalive,
+        idleMs: entry.idleMs,
+        isStreaming: entry.isStreaming,
+      },
+    };
+  }
+
+  function listThreads(): SdkResult<ThreadInfo[]> {
+    return { ok: true, value: table.list().map((entry) => ({
+      threadId: entry.threadId,
+      cwd: entry.cwd,
+      trusted: entry.trusted,
+      sessionPath: entry.sessionPath,
+      state: entry.state,
+      keepalive: entry.keepalive,
+      idleMs: entry.idleMs,
+      isStreaming: entry.isStreaming,
+    })) };
+  }
+
+  async function startup(): Promise<SdkResult<void>> {
+    if (started) return { ok: true, value: undefined };
+    started = true;
+    shutDown = false;
+    log(`sdk: startup agentDir=${options.agentDir}`);
+    return { ok: true, value: undefined };
+  }
+
+  async function shutdown(): Promise<SdkResult<void>> {
+    if (shutDown) return { ok: true, value: undefined };
+    shutDown = true;
+    started = false;
+    log("sdk: shutdown");
+    return { ok: true, value: undefined };
+  }
+
+  return {
+    startup,
+    shutdown,
+    listThreads,
+    threadInfo: threadInfoOf,
+    limits: {
+      setIdleRetireMs: (ms: number): void => {
+        limits.idleRetireMs = Math.min(24 * 60 * 60 * 1000, Math.max(1_000, ms));
+      },
+      setRssRetireBytes: (n: number): void => {
+        limits.rssRetireBytes = n === 0 ? 0 : Math.min(2 * 1024 * 1024 * 1024 * 1024, Math.max(256 * 1024 * 1024, n));
+      },
+      current: (): SdkLimits => ({ ...limits }),
+    },
+    internal: {
+      table,
+      env,
+      threadBudgetAvailable,
+      nextPendingId,
+      emit,
+      log,
+      isStarted: (): boolean => started,
+      isShutDown: (): boolean => shutDown,
+    },
+  };
+}
+
+export type SdkClient = ReturnType<typeof createSdkClient>;
+export type { SdkErrorShape };

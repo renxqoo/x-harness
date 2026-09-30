@@ -1,0 +1,37 @@
+{
+  "name": "@x-harness/agent-sdk",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@x-harness/agent-delegation": "workspace:*",
+    "@x-harness/agent-loop": "workspace:*",
+    "@x-harness/agent-workflow": "workspace:*",
+    "@x-harness/autocompact": "workspace:*",
+    "@x-harness/commands": "workspace:*",
+    "@x-harness/compaction": "workspace:*",
+    "@x-harness/core": "workspace:*",
+    "@x-harness/error-recovery": "workspace:*",
+    "@x-harness/harness": "workspace:*",
+    "@x-harness/llm": "workspace:*",
+    "@x-harness/llm-retry": "workspace:*",
+    "@x-harness/md-frontmatter": "workspace:*",
+    "@x-harness/permission": "workspace:*",
+    "@x-harness/plugin-manager": "workspace:*",
+    "@x-harness/session": "workspace:*",
+    "@x-harness/session-checkpoint": "workspace:*",
+    "@x-harness/session-mailbox": "workspace:*",
+    "@x-harness/session-persistence-jsonl": "workspace:*",
+    "@x-harness/skill": "workspace:*",
+    "@x-harness/telemetry-sqlite": "workspace:*",
+    "@x-harness/todo-tools": "workspace:*",
+    "@x-harness/token-analytics": "workspace:*",
+    "@x-harness/tool-plan": "workspace:*",
+    "@x-harness/tools": "workspace:*",
+    "@x-harness/truncation-messages": "workspace:*",
+    "@x-harness/workflow-core": "workspace:*"
+  }
+}
