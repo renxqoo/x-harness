@@ -1,6 +1,7 @@
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { pluginManagerService } from "@x-harness/plugin-manager";
 import type { Session, SessionId } from "@x-harness/session";
+import { join } from "node:path";
 import { hubError } from "../shared/errors.ts";
 import { foldQueue } from "../shared/inbox-fold.ts";
 import { WORKER_RESPONSE_SOFT_CAP } from "../shared/limits.ts";
@@ -57,7 +58,7 @@ export function getState(state: ReadCommandState): CommandOutcome {
 }
 
 function sessionPathOf(state: ReadCommandState): string {
-  return `${state.sessionsRoot}/${state.threadId}/events.jsonl`;
+  return join(state.sessionsRoot, state.threadId, "events.jsonl");
 }
 
 export function getInflight(state: ReadCommandState): CommandOutcome {

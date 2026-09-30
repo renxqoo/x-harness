@@ -52,7 +52,7 @@ export async function prompt(state: SendCommandState, input: Record<string, unkn
   if (gate !== undefined) return { command: "prompt", error: hubError("capability_images", gate) };
   const dispatched = await dispatchCommand(state, input.id, { command: "prompt", line: message, imagesPresent: input.images !== undefined });
   if (dispatched !== undefined) return dispatched;
-  if (state.pendingSends() > 0 || state.streaming()) return promptStreamingBranch(state, input.id, { message, images: parsedImages.images });
+  if (state.pendingSends() > 0 || state.streaming()) return promptStreamingBranch(state, input.streamingBehavior, { message, images: parsedImages.images });
   const agent = state.agent;
   if (agent === undefined) return noThread("prompt");
   try {
@@ -83,22 +83,19 @@ async function dispatchCommand(state: SendCommandState, requestId: unknown, spec
   }
 }
 
-function promptStreamingBranch(state: SendCommandState, requestId: unknown, payload: { message: string; images: readonly WireImage[] | undefined }): CommandOutcome {
-  const behavior = behaviorOf(requestId);
-  void behavior;
+function promptStreamingBranch(state: SendCommandState, behavior: unknown, payload: { message: string; images: readonly WireImage[] | undefined }): CommandOutcome {
+  if (behavior !== "steer" && behavior !== "followUp") {
+    return { command: "prompt", error: hubError("streaming_window", "streamingBehavior required while streaming") };
+  }
   const agent = state.agent;
   if (agent === undefined) return noThread("prompt");
   try {
-    agent.steer(payload.message, imageOptions(payload.images));
+    if (behavior === "steer") agent.steer(payload.message, imageOptions(payload.images));
+    else agent.followup(payload.message, imageOptions(payload.images));
   } catch (error) {
     return { command: "prompt", error: errorOfCause(error) };
   }
-  state.settle(requestId2(requestId));
   return { command: "prompt" };
-}
-
-function behaviorOf(_requestId: unknown): undefined {
-  return undefined;
 }
 
 function requestId2(requestId: unknown): string | undefined {
