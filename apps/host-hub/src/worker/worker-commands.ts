@@ -32,10 +32,15 @@ import { handleHotInstall, handleHotUninstall } from "./plugins-hot.ts";
 import { registerBashCommands } from "./bash-commands.ts";
 
 
+export interface CatalogBox {
+  current: WorkerCatalog;
+}
+
 export interface WorkerState {
   handle: AgentHandle | undefined;
   world: World | undefined;
   catalog: WorkerCatalog;
+  catalogBox: CatalogBox;
   dial: DialFact;
   thinking: ThinkingLevel | undefined;
   permissionService: PermissionModeService | undefined;
@@ -482,6 +487,7 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
     }
     const swapped = swapWorldAdapters(rt, next);
     rt.state.catalog = next;
+    rt.state.catalogBox.current = next;
     respond(rt, { id: input.id, command: "catalog/reload", data: { providers: next.providers.length, adaptersSwapped: swapped } });
   });
 

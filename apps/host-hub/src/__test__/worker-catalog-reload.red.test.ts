@@ -13,6 +13,7 @@ function makeRuntime(catalog: WorkerCatalog): { rt: WorkerRuntime; lines: string
       handle: { agent: { session: { append: () => ({ ok: true }), events: () => [] } } },
       world: { ctx: { tryUse: () => undefined }, store: { flush: async () => ({ ok: true }) } },
       catalog,
+      catalogBox: { current: catalog },
       dial: { provider: "p1", model: "m1" },
       thinking: undefined,
       permissionService: undefined,
@@ -93,6 +94,7 @@ describe("catalog/reload 热更新(症状:存量 worker set_model 报 model_unav
     const off = runtime.registerAdapter({ name: "p1", stream: async function* () {} } as never);
     const rt = {
       state: {
+        catalogBox: { current: baseCatalog },
         world: { ctx },
         scriptAdapter: undefined,
       },

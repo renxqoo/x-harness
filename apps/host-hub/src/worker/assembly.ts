@@ -68,6 +68,7 @@ export interface AssemblyFields {
   resumeId?: string;
   modelId?: string;
   dial?: { provider: string; model: string };
+  readonly catalogBox?: { current: import("../shared/worker-catalog.ts").WorkerCatalog };
   thinkingDefault?: ThinkingLevel;
   compactionKeepRecentTokens?: number;
   compactionKeepMinTurns?: number;
@@ -373,7 +374,7 @@ function defaultWorkerPlugins(resolved: {
     ...errorRecoveryKit(),
     ...checkpointKit(),
     createTodoToolsPlugin(),
-    createDelegationOf({ agentsDirs, cwd, catalog, mainSessionId }),
+    createDelegationOf({ agentsDirs, cwd, catalog: fields.catalogBox !== undefined ? () => fields.catalogBox!.current : () => catalog, mainSessionId }),
     createWorktreeContextPlugin({ facts }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     createFactsSnapshotPlugin({ cwd }),
@@ -387,19 +388,24 @@ function compactionPluginsOf(contextWindow: number | undefined, dial: { provider
   return [...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...overrides }), ...autoCompactKit({ contextWindow }), commandCompactPlugin];
 }
 
-function createDelegationOf(input: { agentsDirs: readonly string[]; cwd: string; catalog: WorkerCatalog; mainSessionId: string }): Plugin {
+function createDelegationOf(input: { agentsDirs: readonly string[]; cwd: string; catalog: () => WorkerCatalog; mainSessionId: string }): Plugin {
   return createAgentDelegationPlugin({
     agentsDirs: input.agentsDirs,
     workspaceRoot: input.cwd,
     builtinTypes: builtinAgentTypes(),
-    resolveProviderOf: registeredProviderOfModel(input.catalog),
-    ...(dialableOf(input.catalog)(`${input.catalog.default.provider}/${input.catalog.default.model}`)
-      ? { fallbackDial: { model: input.catalog.default.model, provider: input.catalog.default.provider } }
-      : {}),
-    dialable: dialableOf(input.catalog),
+    resolveProviderOf: (model) => registeredProviderOfModel(input.catalog())(model),
+    fallbackDial: currentFallbackDial(input.catalog),
+    dialable: (ref) => dialableOf(input.catalog())(ref),
     mailbox: { box: `xh-${input.mainSessionId}`, mainSession: input.mainSessionId as never },
     onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
   });
+}
+
+function currentFallbackDial(catalog: () => WorkerCatalog): { model?: string; provider?: string } {
+  const current = catalog();
+  return dialableOf(current)(`${current.default.provider}/${current.default.model}`)
+    ? { model: current.default.model, provider: current.default.provider }
+    : {};
 }
 
 function workerWorkflowOptions(fields: AssemblyFields, mainSessionId: string): import("@x-harness/agent-workflow").WorkflowOptions {

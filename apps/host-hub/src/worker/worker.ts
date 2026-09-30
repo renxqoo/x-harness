@@ -41,6 +41,7 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
     handle: undefined,
     world: undefined,
     catalog: { providers: [], default: { provider: "", model: "" }, modelMeta: {} },
+    catalogBox: { current: { providers: [], default: { provider: "", model: "" }, modelMeta: {} } },
     dial: { provider: "", model: "" },
     thinking: undefined,
     permissionService: undefined,

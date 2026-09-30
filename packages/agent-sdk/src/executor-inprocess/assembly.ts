@@ -49,6 +49,19 @@ function sessionKit(spec: AssemblySpec): readonly Plugin[] {
     : durableSessionKit({ root: spec.sessionsRoot, onIoError: spec.onWarn });
 }
 
+function delegationOptionsOf(spec: AssemblySpec): import("@x-harness/agent-delegation").DelegationOptions {
+  const delegation = spec.delegation;
+  return {
+    agentsDirs: [],
+    workspaceRoot: spec.cwd,
+    onWarn: spec.onWarn,
+    ...(delegation?.builtinTypes !== undefined ? { builtinTypes: delegation.builtinTypes } : {}),
+    ...(delegation?.resolveProviderOf !== undefined ? { resolveProviderOf: delegation.resolveProviderOf } : {}),
+    ...(delegation?.fallbackDial !== undefined ? { fallbackDial: delegation.fallbackDial } : {}),
+    ...(delegation?.dialable !== undefined ? { dialable: delegation.dialable } : {}),
+  };
+}
+
 export async function assembleAgent(spec: AssemblySpec): Promise<AssemblyResult> {
   const facts = probeBaseFacts({ cwd: spec.cwd, platform: process.platform, env: spec.env ?? {} });
   const skillsDirs = trustedSkillsDirs(spec);
@@ -71,18 +84,7 @@ export async function assembleAgent(spec: AssemblySpec): Promise<AssemblyResult>
     ...continuationKit(),
     ...errorRecoveryKit(),
     ...checkpointKit(),
-    ...delegationKit(
-      {
-        agentsDirs: [],
-        workspaceRoot: spec.cwd,
-        onWarn: spec.onWarn,
-        ...(spec.delegation?.builtinTypes !== undefined ? { builtinTypes: spec.delegation.builtinTypes } : {}),
-        ...(spec.delegation?.resolveProviderOf !== undefined ? { resolveProviderOf: spec.delegation.resolveProviderOf } : {}),
-        ...(spec.delegation?.fallbackDial !== undefined ? { fallbackDial: spec.delegation.fallbackDial } : {}),
-        ...(spec.delegation?.dialable !== undefined ? { dialable: spec.delegation.dialable } : {}),
-      },
-      facts,
-    ),
+    ...delegationKit(delegationOptionsOf(spec), facts),
     ...skillKit({ skillsDirs }),
   ];
   const world = await createAgentWorld({ plugins });

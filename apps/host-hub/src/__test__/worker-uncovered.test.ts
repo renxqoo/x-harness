@@ -282,6 +282,7 @@ function makeRuntimeStub(): Parameters<typeof createWorkerCommands>[0] {
       handle: undefined,
       world: undefined,
       catalog: { providers: [], default: { provider: "", model: "" }, modelMeta: {} },
+      catalogBox: { current: { providers: [], default: { provider: "", model: "" }, modelMeta: {} } },
       dial: { provider: "script", model: "script-1" },
       thinking: undefined,
       permissionService: undefined,

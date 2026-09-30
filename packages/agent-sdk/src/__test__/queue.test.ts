@@ -8,7 +8,6 @@ import { createScriptAdapter } from "../script-adapter.ts";
 import type { AssemblySpec } from "../executor-inprocess/assembly.ts";
 import { clearQueue, queueDrop, queueSendNow } from "../commands/queue.ts";
 import type { QueueCommandState } from "../commands/queue.ts";
-import { prompt } from "../commands/send.ts";
 import type { SendCommandState } from "../commands/send.ts";
 
 async function makeRun(script: unknown[]) {

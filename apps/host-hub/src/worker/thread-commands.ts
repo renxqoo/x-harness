@@ -81,6 +81,7 @@ function applyAssembly(target: AssemblyTarget): void {
   rt.state.handle = assembled.handle;
   rt.state.world = assembled.world;
   rt.state.catalog = assembled.catalog;
+  rt.state.catalogBox.current = assembled.catalog;
   rt.state.dial = assembled.dial;
   rt.state.thinking = assembled.thinking;
   rt.state.threadId = assembled.sessionId;
@@ -110,6 +111,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
   const initialMode = params.paramMode ?? settings["permission.defaultMode"] ?? "auto";
   const assembled = await assembleWorkerAgent({
     ...plan.fields,
+    catalogBox: rt.state.catalogBox,
     agentDir: rt.agentDir,
     ...(rt.proposals !== undefined ? { proposalStore: rt.proposals } : {}),
     confirm: (fields) => rt.broker.confirm(rt.state.threadId === "" ? "unassigned" : rt.state.threadId, fields),
