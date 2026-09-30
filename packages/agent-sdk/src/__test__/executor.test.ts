@@ -6,24 +6,26 @@ import { createSdkClient } from "../client.ts";
 import { attachExecutor } from "../executor.ts";
 import type { SdkEvent } from "../events.ts";
 
-async function makeWorld() {
+function makeEnv(script: unknown): Record<string, string> {
+  return { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify(script) };
+}
+
+async function makeWorld(scriptEnv?: Record<string, string>) {
   const root = await mkdtemp(join(tmpdir(), "sdk-exec-"));
   const events: SdkEvent[] = [];
+  const env = scriptEnv ?? makeEnv([{ reply: "hello from script" }, { reply: "second" }, { reply: "third" }, { reply: "fourth" }, { reply: "fifth" }, { reply: "sixth" }]);
   const client = createSdkClient({
     mode: "in-process",
     agentDir: join(root, "agent"),
     sessionsRoot: join(root, "sessions"),
-    env: {
-      HUB_WORKER_PROVIDER: "script",
-      HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "hello from script" }, { reply: "second" }, { reply: "third" }, { reply: "fourth" }, { reply: "fifth" }, { reply: "sixth" }]),
-    },
+    env,
     onEvent: (event) => events.push(event),
   });
   const executor = attachExecutor(client, {
     mode: "in-process",
     agentDir: join(root, "agent"),
     sessionsRoot: join(root, "sessions"),
-    env: { HUB_WORKER_PROVIDER: "script", HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "hello from script" }, { reply: "second" }, { reply: "third" }, { reply: "fourth" }, { reply: "fifth" }, { reply: "sixth" }]) },
+    env,
   });
   return { root, client, executor, events, cleanup: () => rm(root, { recursive: true, force: true }) };
 }
@@ -56,7 +58,7 @@ describe("in-process executor minimal face", () => {
     }
   }, 60_000);
 
-  it("resumeThread wakes a parked thread", async () => {
+  it("resumeThread wakes a parked thread and rejects double open", async () => {
     const w = await makeWorld();
     try {
       const started = await w.executor.startThread({ cwd: w.root, trusted: false });
@@ -111,6 +113,113 @@ describe("in-process executor minimal face", () => {
     }
   }, 60_000);
 
+  it("per-sendId settled: concurrent sends settle their own turns (I3/I17)", async () => {
+    const w = await makeWorld();
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const [r1, r2] = await Promise.all([
+        thread.send("one", { sendId: "q1", timeoutMs: 30_000 }),
+        thread.send("two", { sendId: "q2", timeoutMs: 30_000 }),
+      ]);
+      expect(r1.ok && r1.value.sendId).toBe("q1");
+      expect(r2.ok && r2.value.sendId).toBe("q2");
+      expect(r1.ok && r1.value.ok).toBe(true);
+      expect(r2.ok && r2.value.ok).toBe(true);
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
+  it("abort settles the in-flight send with ok=false reason=aborted (I10)", async () => {
+    const w = await makeWorld(makeEnv([{ delayMs: 4000 }, { reply: "after" }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const inflight = thread.send("slow", { sendId: "q1", timeoutMs: 30_000 });
+      setTimeout(() => {
+        void thread.abort("client-abort");
+      }, 300);
+      const report = await inflight;
+      expect(report.ok && report.value.ok).toBe(false);
+      if (report.ok && !report.value.ok) expect(report.value.reason).toBe("aborted");
+      const after = await thread.send("next", { timeoutMs: 30_000 });
+      expect(after.ok && after.value.ok).toBe(true);
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
+  it("retire keeps parked sessionPath and frees occupancy (I2/I12)", async () => {
+    const w = await makeWorld(makeEnv([{ delayMs: 4000 }, { reply: "x" }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const inflight = thread.send("slow", { timeoutMs: 30_000 });
+      setTimeout(() => {
+        void thread.abort();
+      }, 200);
+      await inflight;
+      const retire = await thread.retire();
+      expect(retire.ok).toBe(true);
+      const parked = w.client.internal.table.get(thread.threadId);
+      expect(parked?.state).toBe("parked");
+      expect(parked?.sessionPath).toContain("events.jsonl");
+      const holder = w.client.internal.table.holderOf(parked?.sessionPath ?? "");
+      expect(holder).toBeUndefined();
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
+  it("divergent verdicts settle per-sendId on the event stream (I3)", async () => {
+    const w = await makeWorld(makeEnv([{ reply: "turn1-ok" }, { delayMs: 60000 }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const r1 = await thread.send("one", { sendId: "q1", timeoutMs: 30_000 });
+      expect(r1.ok && r1.value.ok).toBe(true);
+      const inflight = thread.send("two", { sendId: "q2", timeoutMs: 30_000 });
+      setTimeout(() => {
+        void thread.abort("mid");
+      }, 300);
+      const r2 = await inflight;
+      expect(r2.ok && r2.value.ok).toBe(false);
+      if (r2.ok && !r2.value.ok) expect(r2.value.reason).toBe("aborted");
+      const settledFrames = w.events.filter((e) => e.kind === "settled").map((e) => (e.kind === "settled" ? { sendId: e.sendId, ok: e.ok } : null));
+      const q1Frame = settledFrames.find((f) => f?.sendId === "q1");
+      const q2Frame = settledFrames.find((f) => f?.sendId === "q2");
+      expect(q1Frame?.ok).toBe(true);
+      expect(q2Frame?.ok).toBe(false);
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
+  it("timeoutMs arms the waiter timer (R2)", async () => {
+    const w = await makeWorld(makeEnv([{ delayMs: 600000 }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const report = await thread.send("hang", { timeoutMs: 250 });
+      expect(report.ok && report.value.ok).toBe(false);
+      if (report.ok && !report.value.ok) expect(report.value.reason).toBe("timeout");
+      await thread.abort();
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
   it("garbage threadId fails with session_unreadable", async () => {
     const w = await makeWorld();
     try {
@@ -122,17 +231,27 @@ describe("in-process executor minimal face", () => {
     }
   });
 
-  it("thread limit rejects startThread", async () => {
-    const w = await makeWorld();
+  it("thread limit rejects startThread beyond maxThreads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sdk-limit-"));
     try {
-      w.client.limits.setIdleRetireMs(0);
-      const first = await w.executor.startThread({ cwd: w.root, trusted: false });
+      const env = makeEnv([{ reply: "x" }, { reply: "y" }]);
+      const client = createSdkClient({
+        mode: "in-process",
+        agentDir: join(root, "agent"),
+        sessionsRoot: join(root, "sessions"),
+        env,
+        limits: { maxThreads: 1 },
+        onEvent: () => {},
+      });
+      const executor = attachExecutor(client, { mode: "in-process", agentDir: join(root, "agent"), sessionsRoot: join(root, "sessions"), env });
+      const first = await executor.startThread({ cwd: root, trusted: false });
       expect(first.ok).toBe(true);
+      const second = await executor.startThread({ cwd: root, trusted: false });
+      expect(second.ok).toBe(false);
+      if (!second.ok) expect(second.reason.code).toBe("thread_limit");
       if (first.ok) await first.value.stop();
-      const limited = await w.executor.startThread({ cwd: w.root, trusted: false });
-      expect(limited.ok).toBe(true);
     } finally {
-      await w.cleanup();
+      await rm(root, { recursive: true, force: true });
     }
   }, 60_000);
 });

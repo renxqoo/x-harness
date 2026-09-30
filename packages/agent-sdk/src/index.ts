@@ -1,5 +1,5 @@
 export { createSdkClient } from "./client.ts";
-export type { SdkClient, SdkClientOptions, SdkThreadHandle, ThreadInfo } from "./client.ts";
+export type { SdkClient, SdkClientOptions, ThreadInfo } from "./client.ts";
 export { attachExecutor } from "./executor.ts";
 export type { Executor, StartThreadSpec, SendOptions, SdkSendReport, ThreadHandle } from "./executor.ts";
 export { createScriptAdapter, scriptFromEnv } from "./script-adapter.ts";

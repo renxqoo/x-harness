@@ -17,7 +17,7 @@ export type SdkEvent =
   | { kind: "tool_result"; threadId: string; callId: string; summary: string; ok: boolean }
   | { kind: "settled"; threadId: string; sendId: string; ok: boolean; reason?: string }
   | { kind: "platform"; threadId: string; name: string; payload: unknown; agentName?: string }
-  | { kind: "session"; threadId: string; event: SessionEvent }
+  | { kind: "session"; threadId: string; owner: string; event: SessionEvent }
   | { kind: "ui_request"; threadId: string; requestId: string; method: string; payload: Record<string, unknown>; respond: (data: unknown) => void }
   | { kind: "thread_state"; threadId: string; from: ThreadStateName; to: ThreadStateName; cause: string }
   | { kind: "thread_rekeyed"; threadId: string; oldThreadId: string }

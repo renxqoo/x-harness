@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { SessionEvent } from "@x-harness/session";
+import type { SessionEvent, SessionId } from "@x-harness/session";
 import { sessionEvent } from "@x-harness/session";
 import { agentAssistantStream, agentStatus, agentToolStream } from "@x-harness/agent-loop";
 import type { AgentHandle } from "@x-harness/agent-loop";
@@ -10,11 +10,13 @@ import type { AssemblySpec } from "./assembly.ts";
 
 export interface InprocessRun {
   threadId: string;
+  mainSessionId: SessionId;
   handle: AgentHandle;
   world: World;
   onEvent: (listener: (event: SdkEvent) => void) => () => void;
-  trackSend: (delta: number) => void;
-  rescanSettled: () => void;
+  inFlightSends: () => number;
+  markBusy: () => void;
+  markIdle: () => void;
   dispose: () => Promise<void>;
 }
 
@@ -23,11 +25,19 @@ export interface InprocessStartPlan {
   spec: AssemblySpec;
 }
 
+export function verdictOfTurnEnd(event: SessionEvent): { ok: boolean; reason?: string } {
+  const turnReason = (event.data as { reason?: { kind?: string; message?: string } }).reason;
+  const kind = turnReason?.kind;
+  if (kind !== "error" && kind !== "blocked" && kind !== "aborted") return { ok: true };
+  const detail = kind === "error" ? turnReason?.message : kind;
+  return detail !== undefined && detail !== "" ? { ok: false, reason: detail } : { ok: false, reason: kind };
+}
+
 function tapSessionEvents(tap: { world: World; run: { threadId: string }; emit: (event: SdkEvent) => void; offs: Array<() => void> }): void {
   const { world, run, emit, offs } = tap;
   offs.push(
-    world.ctx.on(sessionEvent, ({ event }) => {
-      emit({ kind: "session", threadId: run.threadId, event: event as SessionEvent });
+    world.ctx.on(sessionEvent, (payload) => {
+      emit({ kind: "session", threadId: run.threadId, owner: String(payload.session), event: payload.event as SessionEvent });
     }),
   );
   offs.push(
@@ -49,13 +59,14 @@ function tapSessionEvents(tap: { world: World; run: { threadId: string }; emit: 
   );
   offs.push(
     world.ctx.on(agentStatus, (payload) => {
-      emit({ kind: "platform", threadId: run.threadId, name: agentStatus.name, payload: { status: payload.status } });
+      emit({ kind: "platform", threadId: run.threadId, name: agentStatus.name, payload: { session: String(payload.session), status: payload.status } });
     }),
   );
 }
 
 export async function startInprocess(plan: InprocessStartPlan): Promise<InprocessRun> {
   const assembled = await assembleAgent(plan.spec);
+  const mainSessionId = assembled.handle.agent.session.id;
   const run: { threadId: string } = { threadId: plan.threadId };
   const listeners = new Set<(event: SdkEvent) => void>();
   let closed = false;
@@ -68,71 +79,35 @@ export async function startInprocess(plan: InprocessStartPlan): Promise<Inproces
   const offs: Array<() => void> = [];
   tapSessionEvents({ world: assembled.world, run, emit, offs });
 
-  let turnScanFrom: number | null = null;
-  let pendingSends = 0;
-  offs.push(assembled.world.ctx.on(sessionEvent, ({ event }) => {
-    if (event.type === "turn/start") turnScanFrom = event.seq;
-  }));
+  let inFlight = 0;
 
-  const scheduleIdleRescan = (): void => {
-    const probe = (): void => {
-      if (closed) return;
-      if (pendingSends > 0) {
-        setTimeout(probe, 10);
-        return;
-      }
-      const from = turnScanFrom;
-      if (from !== null) emitSettledFrom(from);
-    };
-    setTimeout(probe, 10);
-  };
-
-  const emitSettledFrom = (from: number): void => {
-    turnScanFrom = null;
-    const events = assembled.handle.agent.session.events();
-    let ok = true;
-    let reason: string | undefined;
-    for (const event of events) {
-      if (event.seq < from || event.type !== "turn/end") continue;
-      const kind = (event.data as { reason?: { kind?: string; message?: string } }).reason?.kind;
-      if (kind === "error" || kind === "blocked") {
-        ok = false;
-        reason = kind === "error" ? (event.data as { reason?: { message?: string } }).reason?.message : kind;
-      }
-    }
-    emit({ kind: "settled", threadId: plan.threadId, sendId: "", ok, ...(reason !== undefined && reason !== "" ? { reason } : {}) });
-  };
-  const onIdleStatus = (): void => {
-    if (plan.threadId === "") return;
-    if (pendingSends > 0) {
-      scheduleIdleRescan();
-      return;
-    }
-    const from = turnScanFrom;
-    if (from !== null) emitSettledFrom(from);
-  };
   offs.push(assembled.world.ctx.on(agentStatus, (payload) => {
-    if (payload.status === "idle") onIdleStatus();
+    if (String(payload.session) !== String(mainSessionId)) return;
+    if (payload.status === "idle") {
+      const events = assembled.handle.agent.session.events();
+      const lastTurnEnd = [...events].reverse().find((event) => event.type === "turn/end");
+      if (lastTurnEnd === undefined) return;
+      emit({ kind: "settled", threadId: plan.threadId, sendId: "", ...verdictOfTurnEnd(lastTurnEnd) });
+    }
   }));
 
   return {
     threadId: plan.threadId,
+    mainSessionId,
     handle: assembled.handle,
     world: assembled.world,
     onEvent(listener: (event: SdkEvent) => void): () => void {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    trackSend(delta: number): void {
-      pendingSends = Math.max(0, pendingSends + delta);
+    inFlightSends(): number {
+      return inFlight;
     },
-    rescanSettled(): void {
-      if (pendingSends <= 0) {
-        const from = turnScanFrom;
-        if (from !== null) emitSettledFrom(from);
-        return;
-      }
-      scheduleIdleRescan();
+    markBusy(): void {
+      inFlight += 1;
+    },
+    markIdle(): void {
+      inFlight = Math.max(0, inFlight - 1);
     },
     async dispose(): Promise<void> {
       if (closed) return;
@@ -149,10 +124,6 @@ export async function startInprocess(plan: InprocessStartPlan): Promise<Inproces
 
 export function sessionPathOf(sessionsRoot: string, threadId: string): string {
   return join(sessionsRoot, threadId, "events.jsonl");
-}
-
-export async function eventsOfSession(handle: AgentHandle): Promise<readonly SessionEvent[]> {
-  return handle.agent.session.events();
 }
 
 export { teardown };

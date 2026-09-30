@@ -137,6 +137,18 @@
 
 实施纪律：每阶段独立提交引用本文件节号；实现推翻方案时同一提交先改文档。
 
+## 3c. P0 实施偏差登记（与 DESIGN/API 的差异，随 P1 收敛）
+
+- events AsyncIterable 有界面（birth 缓冲 + 背压）随 P1 实现——P0 事件面为
+  onEvent/thread.on 直通（无缓冲无界问题已消除）；
+- runCommand/slash 分发面随 P1 命令面（句柄不暴露 runCommand，非静默吞）；
+- client.shutdown 接执行器接线随 P1（executor.shutdownAll 已实现，client 侧
+  注册回执待接）；abort 完整取消链（bash/broker/inflight/delegation 四步）
+  随 P1 对应域下沉；
+- startThread 仅支持 cwd/trusted/dial（其余 API 字段随 P1 装配全量落地，
+  未实现字段不声明不吞）；
+- helloFrame 常量与 vocab 单源合并、hub 帧交叉断言随 P2 worker 执行器。
+
 ## 4. 测试计划（口径先行）
 
 - 契约级：错误码封闭（导出 == 文档）、事件词表封闭、命令词表闭集与派生集合

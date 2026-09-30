@@ -116,6 +116,9 @@ export function createThreadTable() {
       entries.delete(previousThreadId);
       this.insert({ ...next, keepalive: false });
     },
+    releaseOccupancy(threadId: string): void {
+      releaseOccupancy(threadId);
+    },
     remove(threadId: string): void {
       releaseOccupancy(threadId);
       entries.delete(threadId);

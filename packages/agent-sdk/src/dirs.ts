@@ -15,16 +15,12 @@ export function derivedWorkflowRoot(agentDir: string): string {
   return join(agentDir, "workflow");
 }
 
-export function mailboxRootOf(options: { explicit?: string; agentDir: string; env: Record<string, string | undefined> }): string {
+export function mailboxRootOf(options: { explicit?: string; agentDir: string }): string {
   if (options.explicit !== undefined && options.explicit !== "") return options.explicit;
-  const fromEnv = options.env["X_HARNESS_MAILBOX_DIR"];
-  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
   return derivedMailboxRoot(options.agentDir);
 }
 
-export function workflowRootOf(options: { explicit?: string; agentDir: string; env: Record<string, string | undefined> }): string {
+export function workflowRootOf(options: { explicit?: string; agentDir: string }): string {
   if (options.explicit !== undefined && options.explicit !== "") return options.explicit;
-  const fromEnv = options.env["X_HARNESS_WORKFLOW_DIR"];
-  if (fromEnv !== undefined && fromEnv !== "") return fromEnv;
   return derivedWorkflowRoot(options.agentDir);
 }

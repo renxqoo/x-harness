@@ -29,12 +29,6 @@ export interface ThreadInfo {
   isStreaming: boolean;
 }
 
-export interface SdkThreadHandle {
-  readonly threadId: string;
-  readonly state: string;
-  readonly info: ThreadInfo;
-}
-
 const PENDING_PREFIX = "@pending-";
 
 export function createSdkClient(options: SdkClientOptions) {
@@ -54,11 +48,7 @@ export function createSdkClient(options: SdkClientOptions) {
   }
 
   function occupiedThreads(): number {
-    let pending = 0;
-    for (const entry of table.list()) {
-      if (entry.threadId.startsWith(PENDING_PREFIX)) pending += 1;
-    }
-    return table.liveCount() + pending;
+    return table.liveCount();
   }
 
   function threadBudgetAvailable(): boolean {

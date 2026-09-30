@@ -1,6 +1,5 @@
 import { join } from "node:path";
 import type { Plugin } from "@x-harness/core";
-import { mintSessionId } from "@x-harness/session";
 import type { SessionId } from "@x-harness/session";
 import type { LlmAdapter } from "@x-harness/llm";
 import { probeBaseFacts, createBasePromptPlugin, createAgentWorld, durableSessionKit, inlineSessionKit, truncationMessagesKit, toolboxKit, fenceKit, planKit, mailboxKit, workflowKit, meterKit, llmKit, loopKit, continuationKit, errorRecoveryKit, checkpointKit, taskLogsRootOf, promptKit, skillKit, delegationKit } from "@x-harness/harness";
@@ -22,6 +21,7 @@ export interface AssemblySpec {
   agentOptions: AgentOptions;
   persistence: "durable" | "inline";
   mainSessionId: SessionId;
+  env?: Record<string, string | undefined>;
   onWarn: (message: string) => void;
 }
 
@@ -44,7 +44,7 @@ function sessionKit(spec: AssemblySpec): readonly Plugin[] {
 }
 
 export async function assembleAgent(spec: AssemblySpec): Promise<AssemblyResult> {
-  const facts = probeBaseFacts({ cwd: spec.cwd, platform: process.platform, env: {} });
+  const facts = probeBaseFacts({ cwd: spec.cwd, platform: process.platform, env: spec.env ?? {} });
   const skillsDirs = trustedSkillsDirs(spec);
   const plugins: readonly Plugin[] = [
     ...promptKit(createBasePromptPlugin(facts)),
@@ -73,12 +73,18 @@ export async function assembleAgent(spec: AssemblySpec): Promise<AssemblyResult>
   ];
   const world = await createAgentWorld({ plugins });
   if (!world.ok) throw new Error(world.reason);
-  const handle = spec.resumeId !== undefined
-    ? await world.value.loop.resume({ id: spec.resumeId, agent: spec.agentOptions })
-    : await world.value.loop.create({
-        agent: spec.agentOptions,
-        session: { header: { id: spec.mainSessionId, createdAt: Date.now(), cwd: spec.cwd } },
-      });
+  let handle: Awaited<ReturnType<World["loop"]["create"]>>;
+  try {
+    handle = spec.resumeId !== undefined
+      ? await world.value.loop.resume({ id: spec.resumeId, agent: spec.agentOptions })
+      : await world.value.loop.create({
+          agent: spec.agentOptions,
+          session: { header: { id: spec.mainSessionId, createdAt: Date.now(), cwd: spec.cwd } },
+        });
+  } catch (error) {
+    await teardown(world.value);
+    throw error;
+  }
   if (!handle.ok) {
     await teardown(world.value);
     throw new Error(handle.reason);
@@ -93,8 +99,4 @@ export async function teardown(world: World): Promise<void> {
   tornDown.add(world);
   for (const disposer of world.unload) await disposer();
   await world.ctx.dispose();
-}
-
-export function mintMainSessionId(): SessionId {
-  return mintSessionId();
 }
