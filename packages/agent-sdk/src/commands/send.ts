@@ -6,6 +6,7 @@ import type { WireImage } from "../shared/images.ts";
 import type { ImageBlock } from "@x-harness/session";
 import { parseCommand } from "@x-harness/commands";
 import { imagesUnsupported } from "./meta-state.ts";
+import { threadGate } from "./thread-gate.ts";
 import { currentDialOf } from "./meta-state.ts";
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import type { DialFact } from "../shared/meta-fold.ts";
@@ -14,6 +15,7 @@ import type { CommandOutcome } from "./outcome.ts";
 export interface SendCommandState {
   session: Session | undefined;
   threadId: string;
+  currentThreadId: string | undefined;
   catalog: WorkerCatalog;
   dial: DialFact;
   commands: { find(name: string): unknown; execute(session: Session, line: string, signal: AbortSignal): Promise<{ result: { kind: string; text: string; data?: unknown } } | undefined> } | undefined;
@@ -43,16 +45,19 @@ function imagesGate(state: SendCommandState, images: readonly WireImage[] | unde
 }
 
 export async function prompt(state: SendCommandState, input: Record<string, unknown>): Promise<CommandOutcome> {
-  if (state.session === undefined) return noThread("prompt");
+  const gate = threadGate({ session: state.session, currentThreadId: state.currentThreadId }, { threadId: input.threadId, command: "prompt" });
+  if (!gate.ok) return gate.outcome;
   const message = typeof input.message === "string" ? input.message : "";
   if (message === "") return { command: "prompt", error: hubError("invalid_input", "prompt message required") };
   const parsedImages = normalizeImages(input.images);
   if (!parsedImages.ok) return { command: "prompt", error: hubError(parsedImages.code, parsedImages.reason) };
-  const gate = imagesGate(state, parsedImages.images);
-  if (gate !== undefined) return { command: "prompt", error: hubError("capability_images", gate) };
+  const imagesDenied = imagesGate(state, parsedImages.images);
+  if (imagesDenied !== undefined) return { command: "prompt", error: hubError("capability_images", imagesDenied) };
   const dispatched = await dispatchCommand(state, input.id, { command: "prompt", line: message, imagesPresent: input.images !== undefined });
   if (dispatched !== undefined) return dispatched;
-  if (state.pendingSends() > 0 || state.streaming()) return promptStreamingBranch(state, input.streamingBehavior, { message, images: parsedImages.images });
+  if (state.pendingSends() > 0 || state.streaming()) {
+    return promptStreamingBranch({ state, behavior: input.streamingBehavior, requestId: requestId2(input.id), message, images: parsedImages.images });
+  }
   const agent = state.agent;
   if (agent === undefined) return noThread("prompt");
   try {
@@ -83,31 +88,33 @@ async function dispatchCommand(state: SendCommandState, requestId: unknown, spec
   }
 }
 
-function promptStreamingBranch(state: SendCommandState, behavior: unknown, payload: { message: string; images: readonly WireImage[] | undefined }): CommandOutcome {
+function promptStreamingBranch(input: { state: SendCommandState; behavior: unknown; requestId: string | undefined; message: string; images: readonly WireImage[] | undefined }): CommandOutcome {
+  const { state, behavior, requestId, message } = input;
   if (behavior !== "steer" && behavior !== "followUp") {
     return { command: "prompt", error: hubError("streaming_window", "streamingBehavior required while streaming") };
   }
   const agent = state.agent;
   if (agent === undefined) return noThread("prompt");
   try {
-    if (behavior === "steer") agent.steer(payload.message, imageOptions(payload.images));
-    else agent.followup(payload.message, imageOptions(payload.images));
+    if (behavior === "steer") agent.steer(message, imageOptions(input.images));
+    else agent.followup(message, imageOptions(input.images));
   } catch (error) {
     return { command: "prompt", error: errorOfCause(error) };
   }
+  state.settle(requestId);
   return { command: "prompt" };
 }
-
 function requestId2(requestId: unknown): string | undefined {
   return typeof requestId === "string" ? requestId : undefined;
 }
 
 export async function steer(state: SendCommandState, input: Record<string, unknown>): Promise<CommandOutcome> {
-  if (state.session === undefined) return noThread("steer");
+  const gate = threadGate({ session: state.session, currentThreadId: state.currentThreadId }, { threadId: input.threadId, command: "steer" });
+  if (!gate.ok) return gate.outcome;
   const parsedImages = normalizeImages(input.images);
   if (!parsedImages.ok) return { command: "steer", error: hubError(parsedImages.code, parsedImages.reason) };
-  const gate = imagesGate(state, parsedImages.images);
-  if (gate !== undefined) return { command: "steer", error: hubError("capability_images", gate) };
+  const imagesDenied = imagesGate(state, parsedImages.images);
+  if (imagesDenied !== undefined) return { command: "steer", error: hubError("capability_images", imagesDenied) };
   const agent = state.agent;
   if (agent === undefined) return noThread("steer");
   try {
@@ -120,11 +127,12 @@ export async function steer(state: SendCommandState, input: Record<string, unkno
 }
 
 export async function followUp(state: SendCommandState, input: Record<string, unknown>): Promise<CommandOutcome> {
-  if (state.session === undefined) return noThread("follow_up");
+  const gate = threadGate({ session: state.session, currentThreadId: state.currentThreadId }, { threadId: input.threadId, command: "follow_up" });
+  if (!gate.ok) return gate.outcome;
   const parsedImages = normalizeImages(input.images);
   if (!parsedImages.ok) return { command: "follow_up", error: hubError(parsedImages.code, parsedImages.reason) };
-  const gate = imagesGate(state, parsedImages.images);
-  if (gate !== undefined) return { command: "follow_up", error: hubError("capability_images", gate) };
+  const imagesDenied = imagesGate(state, parsedImages.images);
+  if (imagesDenied !== undefined) return { command: "follow_up", error: hubError("capability_images", imagesDenied) };
   const agent = state.agent;
   if (agent === undefined) return noThread("follow_up");
   try {

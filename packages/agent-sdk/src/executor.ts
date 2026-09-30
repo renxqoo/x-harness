@@ -96,6 +96,9 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     const thread = live.get(threadId);
     if (thread === undefined) return { ok: false, reason: sdkError("unknown_thread", `Unknown threadId: ${threadId}`) };
     const sendId = sendOptions?.sendId ?? `send-${String(Math.random()).slice(2, 10)}`;
+    if (thread.waiters.has(sendId)) {
+      return { ok: false, reason: sdkError("state_conflict", `sendId already in flight: ${sendId}`) };
+    }
     const agent = thread.run.handle.agent;
     const session = agent.session;
     const anchorTurn = anchorTurnOf(session.events(), mode === "steer");

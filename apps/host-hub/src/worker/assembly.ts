@@ -125,7 +125,7 @@ function trustedDirsOf(fields: AssemblyFields, cwd: string): { skillsDirs: strin
 export function buildAdapters(catalog: WorkerCatalog, script: ScriptAdapter | undefined): LlmAdapter[] {
   if (script !== undefined) return [script];
   return catalog.providers.filter((p) => {
-    if (p.provider === "script" || p.apiKey !== "") return true;
+    if (p.apiKey !== "") return true;
     process.stderr.write(`hub:worker: provider '${p.provider}' has no API key (set apiKey or apiKeyEnv in providers.json) — adapter not registered\n`);
     return false;
   }).map((p) => {
@@ -239,13 +239,21 @@ function providerOfModel(catalog: WorkerCatalog): (model: string) => string | un
   };
 }
 
+export function registeredProvidersOf(catalog: WorkerCatalog): ReadonlySet<string> {
+  return new Set(catalog.providers.filter((p) => p.apiKey !== "").map((p) => p.provider));
+}
+
 function dialableOf(catalog: WorkerCatalog): (ref: string) => boolean {
+  const registered = registeredProvidersOf(catalog);
   return (ref) => {
     const slash = ref.indexOf("/");
     if (slash > 0 && slash < ref.length - 1) {
-      return catalogEntryOf(catalog, { provider: ref.slice(0, slash), model: ref.slice(slash + 1) }) !== undefined;
+      const provider = ref.slice(0, slash);
+      const model = ref.slice(slash + 1);
+      return registered.has(provider) && catalogEntryOf(catalog, { provider, model }) !== undefined;
     }
-    return providerOfModel(catalog)(ref) !== undefined;
+    const owner = providerOfModel(catalog)(ref);
+    return owner !== undefined && registered.has(owner);
   };
 }
 
@@ -349,9 +357,7 @@ function defaultWorkerPlugins(resolved: {
     ...workflowKit(workerWorkflowOptions(fields, mainSessionId)),
     ...meterKit(),
     ...telemetryPluginsOf(fields),
-    ...(contextWindow !== undefined
-      ? [...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...compactionOverrides }), ...autoCompactKit({ contextWindow }), commandCompactPlugin]
-      : []),
+    ...compactionPluginsOf(contextWindow, dial, compactionOverrides),
     commandsPlugin,
     ...llmKit(adapters, { default: RETRY_POLICY }),
     ...loopKit(),
@@ -359,22 +365,33 @@ function defaultWorkerPlugins(resolved: {
     ...errorRecoveryKit(),
     ...checkpointKit(),
     createTodoToolsPlugin(),
-    createAgentDelegationPlugin({
-      agentsDirs,
-      workspaceRoot: cwd,
-      builtinTypes: builtinAgentTypes(),
-      resolveProviderOf: providerOfModel(catalog),
-      fallbackDial: { model: catalog.default.model, provider: catalog.default.provider },
-      dialable: dialableOf(catalog),
-      mailbox: { box: `xh-${mainSessionId}`, mainSession: mainSessionId as never },
-      onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
-    }),
+    createDelegationOf({ agentsDirs, cwd, catalog, mainSessionId }),
     createWorktreeContextPlugin({ facts }),
     createSkillPlugin({ skillsDirs, ...(disabled.size > 0 ? { disabled: [...disabled] } : {}) }),
     createFactsSnapshotPlugin({ cwd }),
     ...(proposalPlugins(fields)),
     dialHookPlugin(catalog),
   ];
+}
+
+function compactionPluginsOf(contextWindow: number | undefined, dial: { provider: string; model: string }, overrides: Record<string, unknown>): readonly Plugin[] {
+  if (contextWindow === undefined) return [];
+  return [...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...overrides }), ...autoCompactKit({ contextWindow }), commandCompactPlugin];
+}
+
+function createDelegationOf(input: { agentsDirs: readonly string[]; cwd: string; catalog: WorkerCatalog; mainSessionId: string }): Plugin {
+  return createAgentDelegationPlugin({
+    agentsDirs: input.agentsDirs,
+    workspaceRoot: input.cwd,
+    builtinTypes: builtinAgentTypes(),
+    resolveProviderOf: providerOfModel(input.catalog),
+    fallbackDial: dialableOf(input.catalog)(`${input.catalog.default.provider}/${input.catalog.default.model}`)
+      ? { model: input.catalog.default.model, provider: input.catalog.default.provider }
+      : { model: undefined, provider: undefined },
+    dialable: dialableOf(input.catalog),
+    mailbox: { box: `xh-${input.mainSessionId}`, mainSession: input.mainSessionId as never },
+    onWarn: (message) => process.stderr.write(`hub:worker: ${message}\n`),
+  });
 }
 
 function workerWorkflowOptions(fields: AssemblyFields, mainSessionId: string): import("@x-harness/agent-workflow").WorkflowOptions {

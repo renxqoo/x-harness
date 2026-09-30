@@ -7,6 +7,7 @@ import type { MetaCommandState } from "../commands/meta.ts";
 import { getMessages, getState, getEntries, withinResponseBudget } from "../commands/read.ts";
 import type { ReadCommandState } from "../commands/read.ts";
 import { outcomeLine, unknownCommandLine } from "../commands/worker-adapter.ts";
+import { threadGate } from "../commands/thread-gate.ts";
 import { prompt, steer, followUp, abort, bashOutcomeError } from "../commands/send.ts";
 import type { SendCommandState } from "../commands/send.ts";
 import { bash, abortBash } from "../commands/bash.ts";
@@ -123,6 +124,7 @@ describe("dual-host command contracts", () => {
       const state: SendCommandState = {
         session: agent.session,
         threadId: String(agent.session.id),
+        currentThreadId: String(agent.session.id),
         catalog: { providers: [], default: { provider: "", model: "" }, modelMeta: {} },
         dial: { provider: "script", model: "script-1" },
         commands: undefined,
@@ -155,14 +157,25 @@ describe("dual-host command contracts", () => {
     }
   }, 30_000);
 
+  it("threadGate rejects superseded and unknown threads (I11)", async () => {
+    const superseded = threadGate({ session: {}, currentThreadId: "t1" }, { threadId: "t2", command: "bash" });
+    expect(superseded.ok === false && superseded.outcome.error?.code).toBe("thread_superseded");
+    const noSession = threadGate({ session: undefined, currentThreadId: undefined }, { command: "bash" });
+    expect(noSession.ok === false && noSession.outcome.error?.code).toBe("unknown_thread");
+    const ok = threadGate({ session: {}, currentThreadId: "t1" }, { threadId: "t1", command: "bash" });
+    expect(ok.ok).toBe(true);
+    const absent = threadGate({ session: {}, currentThreadId: "t1" }, { command: "bash" });
+    expect(absent.ok).toBe(true);
+  });
+
   it("bash commands map outcomes to the closed error vocabulary", async () => {
-    const okState = { bash: fakeBash(async () => ({ ok: true, output: "done", exitCode: 0, cancelled: false, truncated: false })) };
+    const okState = bashState(async () => ({ ok: true, output: "done", exitCode: 0, cancelled: false, truncated: false }));
     const ran = await bash(okState, { command: "ls" });
     expect(ran.error).toBeUndefined();
-    const deniedState = { bash: fakeBash(async () => ({ ok: false, reason: "permission denied" })) };
+    const deniedState = bashState(async () => ({ ok: false, reason: "permission denied" }));
     const denied = await bash(deniedState, { command: "rm -rf /" });
     expect(denied.error?.code).toBe("bash_denied");
-    const aborted = abortBash({ bash: fakeBash(async () => ({ ok: true, output: "", exitCode: 0, cancelled: false, truncated: false })) }, {});
+    const aborted = abortBash(bashState(async () => ({ ok: true, output: "", exitCode: 0, cancelled: false, truncated: false })), {});
     expect(aborted.error).toBeUndefined();
     expect(bashOutcomeError("bash command id is already in use").code).toBe("state_conflict");
   });
@@ -181,6 +194,10 @@ describe("dual-host command contracts", () => {
 
 function fakeBash(exec: () => Promise<{ ok: true; output: string; exitCode: number; cancelled: boolean; truncated: boolean } | { ok: false; reason: string }>) {
   return { exec, abortAdmissions: () => {}, abortRunning: () => {} };
+}
+
+function bashState(exec: () => Promise<{ ok: true; output: string; exitCode: number; cancelled: boolean; truncated: boolean } | { ok: false; reason: string }>) {
+  return { session: {}, currentThreadId: "t1", bash: fakeBash(exec) };
 }
 
 function bigPayload(size: number): unknown {

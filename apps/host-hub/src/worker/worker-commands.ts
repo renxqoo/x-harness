@@ -138,7 +138,14 @@ function delegationError(reason: string): HubErrorShape {
   return hubError("internal", reason);
 }
 
-export function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
+export function verdictReasonOf(reason: { kind: string; message?: string; reason?: string; cause?: string }): string | undefined {
+  if (reason.kind === "error") return reason.message ?? reason.kind;
+  if (reason.kind === "blocked") return reason.reason ?? reason.kind;
+  if (reason.kind === "aborted") return reason.cause ?? "aborted";
+  return undefined;
+}
+
+function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean {
   if (id === undefined) return false;
   const handle = rt.state.handle;
   if (handle === undefined) return false;
@@ -155,10 +162,10 @@ export function settleAfter(rt: WorkerRuntime, id: string | undefined): boolean 
       for (let i = marker; i < events.length; i++) {
         const event = events[i];
         if (event !== undefined && event.type === "turn/end") {
-          const kind = event.data.reason.kind;
-          if (kind === "error" || kind === "blocked") {
+          const verdict = verdictReasonOf(event.data.reason);
+          if (verdict !== undefined) {
             ok = false;
-            reason = kind === "error" ? event.data.reason.message : (event.data.reason.reason ?? kind);
+            reason = verdict;
           } else {
             ok = true;
             reason = undefined;
