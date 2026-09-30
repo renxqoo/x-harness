@@ -32,6 +32,7 @@
     "@x-harness/tool-plan": "workspace:*",
     "@x-harness/tools": "workspace:*",
     "@x-harness/truncation-messages": "workspace:*",
-    "@x-harness/workflow-core": "workspace:*"
+    "@x-harness/workflow-core": "workspace:*",
+    "@sinclair/typebox": "^0.34.0"
   }
 }

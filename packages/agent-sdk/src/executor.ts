@@ -48,6 +48,7 @@ interface SendWaiter {
   resolve: (report: SdkSendReport) => void;
   timer: ReturnType<typeof setTimeout> | undefined;
   anchorTurn: number;
+  scannedSeq: number;
 }
 
 interface LiveThread {
@@ -98,6 +99,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     const agent = thread.run.handle.agent;
     const session = agent.session;
     const anchorTurn = anchorTurnOf(session.events(), mode === "steer");
+    const scannedSeq = session.events().length - 1;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const waiter = new Promise<SdkSendReport>((resolve) => {
       if (sendOptions?.timeoutMs !== undefined) {
@@ -107,7 +109,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
         }, sendOptions.timeoutMs);
         timer.unref?.();
       }
-      thread.waiters.set(sendId, { resolve, timer, anchorTurn });
+      thread.waiters.set(sendId, { resolve, timer, anchorTurn, scannedSeq });
     });
     try {
       thread.run.markBusy();
@@ -127,17 +129,24 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
   }
 
   function anchorTurnOf(events: readonly { seq: number; type: string; data: unknown }[], steerIntoRunning: boolean): number {
-    let lastTurn = -1;
+    const last = lastTurnBoundary(events);
+    return steerIntoRunning && last.running ? last.turn : last.turn + 1;
+  }
+
+  function lastTurnBoundary(events: readonly { seq: number; type: string; data: unknown }[]): { turn: number; running: boolean; endSeq: number } {
+    let turn = -1;
     let running = false;
+    let endSeq = -1;
     for (const event of events) {
       if (event.type === "turn/start") {
-        lastTurn = Number((event.data as { turn?: number }).turn ?? lastTurn + 1);
+        turn = Number((event.data as { turn?: number }).turn ?? turn + 1);
         running = true;
       } else if (event.type === "turn/end") {
         running = false;
+        endSeq = event.seq;
       }
     }
-    return steerIntoRunning && running ? lastTurn : lastTurn + 1;
+    return { turn, running, endSeq };
   }
 
   function settleFromAnchor(threadId: string, sendId: string): void {
@@ -145,17 +154,18 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     if (thread === undefined) return;
     const wait = thread.waiters.get(sendId);
     if (wait === undefined) return;
-    const verdict = anchorVerdict(thread, wait.anchorTurn);
+    const verdict = anchorVerdict(thread, wait.anchorTurn, wait.scannedSeq);
     thread.waiters.delete(sendId);
     if (wait.timer !== undefined) clearTimeout(wait.timer);
     wait.resolve({ sendId, ...verdict });
     dispatch(threadId, { kind: "settled", threadId, sendId, ...verdict });
   }
 
-  function anchorVerdict(thread: LiveThread, anchorTurn: number): { ok: boolean; reason?: string } {
+  function anchorVerdict(thread: LiveThread, anchorTurn: number, scannedSeq: number): { ok: boolean; reason?: string } {
     const events = thread.run.handle.agent.session.events();
-    for (const event of events) {
-      if (event.type !== "turn/end") continue;
+    for (let i = Math.max(scannedSeq, 0); i < events.length; i += 1) {
+      const event = events[i];
+      if (event === undefined || event.type !== "turn/end") continue;
       const turn = Number((event.data as { turn?: number }).turn ?? -1);
       if (turn < anchorTurn) continue;
       return verdictOfTurnEnd(event);
