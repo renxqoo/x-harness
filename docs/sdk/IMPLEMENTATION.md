@@ -147,7 +147,10 @@
   随 P1 对应域下沉；
 - startThread 仅支持 cwd/trusted/dial（其余 API 字段随 P1 装配全量落地，
   未实现字段不声明不吞）；
-- helloFrame 常量与 vocab 单源合并、hub 帧交叉断言随 P2 worker 执行器。
+- helloFrame 常量与 vocab 单源合并、hub 帧交叉断言随 P2 worker 执行器；
+- thread_state 事件 P0 覆盖终态迁移（live→parked/dead），spawning→live
+  随 P1 生命周期域；state_conflict 分支随 inline persistence 落地补测试；
+  events.ts 的 tool_result kind 发射点随 P1 event-bridge 下沉补齐。
 
 ## 4. 测试计划（口径先行）
 
