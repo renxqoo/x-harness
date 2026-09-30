@@ -318,6 +318,30 @@ describe("in-process executor minimal face", () => {
     }
   }, 60_000);
 
+  it("same-turn steer shares the turn verdict across sends (S-1)", async () => {
+    const w = await makeWorld(makeEnv([{ delayMs: 300 }, { error: { code: "E_FATAL", message: "boom" } }]));
+    try {
+      const started = await w.executor.startThread({ cwd: w.root, trusted: false });
+      if (!started.ok) throw new Error(started.reason.message);
+      const thread = started.value;
+      const aP = thread.send("A", { sendId: "A", timeoutMs: 30_000 });
+      setTimeout(() => {
+        void thread.steer("B", { sendId: "B", timeoutMs: 30_000 });
+      }, 100);
+      const ra = await aP;
+      expect(ra.ok && ra.value.ok).toBe(false);
+      const bSeen = (): boolean => w.events.some((e) => e.kind === "settled" && e.sendId === "B");
+      await waitFor(bSeen, 20_000);
+      const aFrame = w.events.find((e) => e.kind === "settled" && e.sendId === "A");
+      const bFrame = w.events.find((e) => e.kind === "settled" && e.sendId === "B");
+      expect(aFrame?.kind === "settled" && aFrame.ok).toBe(false);
+      expect(bFrame?.kind === "settled" && bFrame.ok).toBe(false);
+      await thread.stop();
+    } finally {
+      await w.cleanup();
+    }
+  }, 60_000);
+
   it("garbage threadId fails with session_unreadable", async () => {
     const w = await makeWorld();
     try {

@@ -47,14 +47,13 @@ export interface ThreadHandle {
 interface SendWaiter {
   resolve: (report: SdkSendReport) => void;
   timer: ReturnType<typeof setTimeout> | undefined;
-  anchorSeq: number;
+  anchorTurn: number;
 }
 
 interface LiveThread {
   run: InprocessRun;
   listeners: Map<string, Set<(event: SdkEvent) => void>>;
   waiters: Map<string, SendWaiter>;
-  turnCursor: number;
 }
 
 export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
@@ -98,7 +97,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     const sendId = sendOptions?.sendId ?? `send-${String(Math.random()).slice(2, 10)}`;
     const agent = thread.run.handle.agent;
     const session = agent.session;
-    const anchorSeq = session.events().length;
+    const anchorTurn = anchorTurnOf(session.events(), mode === "steer");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const waiter = new Promise<SdkSendReport>((resolve) => {
       if (sendOptions?.timeoutMs !== undefined) {
@@ -108,7 +107,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
         }, sendOptions.timeoutMs);
         timer.unref?.();
       }
-      thread.waiters.set(sendId, { resolve, timer, anchorSeq });
+      thread.waiters.set(sendId, { resolve, timer, anchorTurn });
     });
     try {
       thread.run.markBusy();
@@ -127,39 +126,43 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     return { ok: true, value: await waiter };
   }
 
+  function anchorTurnOf(events: readonly { seq: number; type: string; data: unknown }[], steerIntoRunning: boolean): number {
+    let lastTurn = -1;
+    let running = false;
+    for (const event of events) {
+      if (event.type === "turn/start") {
+        lastTurn = Number((event.data as { turn?: number }).turn ?? lastTurn + 1);
+        running = true;
+      } else if (event.type === "turn/end") {
+        running = false;
+      }
+    }
+    return steerIntoRunning && running ? lastTurn : lastTurn + 1;
+  }
+
   function settleFromAnchor(threadId: string, sendId: string): void {
     const thread = live.get(threadId);
     if (thread === undefined) return;
     const wait = thread.waiters.get(sendId);
     if (wait === undefined) return;
-    const verdict = anchorVerdict(thread, wait.anchorSeq);
+    const verdict = anchorVerdict(thread, wait.anchorTurn);
     thread.waiters.delete(sendId);
     if (wait.timer !== undefined) clearTimeout(wait.timer);
     wait.resolve({ sendId, ...verdict });
     dispatch(threadId, { kind: "settled", threadId, sendId, ...verdict });
   }
 
-  function anchorVerdict(thread: LiveThread, anchorSeq: number): { ok: boolean; reason?: string } {
+  function anchorVerdict(thread: LiveThread, anchorTurn: number): { ok: boolean; reason?: string } {
     const events = thread.run.handle.agent.session.events();
-    let verdict: { ok: boolean; reason?: string } | undefined;
-    let cursor = Math.max(thread.turnCursor, 0);
-    for (let i = cursor; i < events.length; i += 1) {
-      const event = events[i];
-      if (event === undefined || event.type !== "turn/end") continue;
-      if (event.seq <= anchorSeq) {
-        cursor = event.seq + 1;
-        continue;
-      }
-      verdict = verdictOfTurnEnd(event);
-      cursor = event.seq + 1;
-      break;
+    for (const event of events) {
+      if (event.type !== "turn/end") continue;
+      const turn = Number((event.data as { turn?: number }).turn ?? -1);
+      if (turn < anchorTurn) continue;
+      return verdictOfTurnEnd(event);
     }
-    thread.turnCursor = Math.max(thread.turnCursor, cursor);
-    if (verdict !== undefined) return verdict;
-    if (thread.run.handle.agent.status === "idle") return { ok: false, reason: "queue-cleared" };
-    return { ok: true };
+    if (thread.run.handle.agent.status !== "idle") return { ok: true };
+    return { ok: false, reason: "queue-cleared" };
   }
-
   function assemblySpec(spec: StartThreadSpec, mainSessionId: SessionId, resumeId: SessionId | undefined): AssemblySpec {
     const script = client.internal.env["HUB_WORKER_PROVIDER"] === "script";
     const adapters = script ? [createScriptAdapter(scriptFromEnv(client.internal.env))] : [];
@@ -263,7 +266,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     try {
       const run = await startInprocess({ threadId: String(mainSessionId), spec: assemblySpec(spec, mainSessionId, undefined) });
       const threadId = String(run.handle.agent.session.id);
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), turnCursor: 0 };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map() };
       live.set(threadId, entry);
       void run.onEvent((event) => dispatch(threadId, event));
       client.internal.table.remove(slot);
@@ -311,7 +314,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
           spec.threadId as SessionId,
         ),
       });
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), turnCursor: 0 };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map() };
       live.set(spec.threadId, entry);
       void run.onEvent((event) => dispatch(spec.threadId, event));
       client.internal.table.remove(slot);
