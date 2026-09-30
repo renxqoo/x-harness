@@ -7,6 +7,10 @@ import type { MetaCommandState } from "../commands/meta.ts";
 import { getMessages, getState, getEntries, withinResponseBudget } from "../commands/read.ts";
 import type { ReadCommandState } from "../commands/read.ts";
 import { outcomeLine, unknownCommandLine } from "../commands/worker-adapter.ts";
+import { prompt, steer, followUp, abort, bashOutcomeError } from "../commands/send.ts";
+import type { SendCommandState } from "../commands/send.ts";
+import { bash, abortBash } from "../commands/bash.ts";
+import { workflowList } from "../commands/workflow.ts";
 import { startInprocess } from "../executor-inprocess/run.ts";
 import { createScriptAdapter } from "../script-adapter.ts";
 import type { AssemblySpec } from "../executor-inprocess/assembly.ts";
@@ -112,7 +116,72 @@ describe("dual-host command contracts", () => {
     const unknown = unknownCommandLine("nope", "q3");
     expect(unknown).toBe('{"id":"q3","type":"response","command":"nope","success":false,"error":{"code":"unknown_command","message":"unknown command"}}');
   });
+  it("send commands drive a live session through the outcome contract", async () => {
+    const w = await makeRun([{ reply: "ack" }, { reply: "ack2" }, { reply: "ack3" }]);
+    try {
+      const agent = w.run.handle.agent;
+      const state: SendCommandState = {
+        session: agent.session,
+        threadId: String(agent.session.id),
+        catalog: { providers: [], default: { provider: "", model: "" }, modelMeta: {} },
+        dial: { provider: "script", model: "script-1" },
+        commands: undefined,
+        agent,
+        streaming: () => false,
+        pendingSends: () => 0,
+        bash: { abortAdmissions: () => {}, abortRunning: () => {} },
+        broker: { denyAll: () => {} },
+        inflight: { abortAll: async () => {} },
+        delegation: undefined,
+        settle: () => {},
+      };
+      const sent = await prompt(state, { message: "hello" });
+      expect(sent.error).toBeUndefined();
+      await agent.whenIdle();
+      const steered = await steer(state, { message: "again" });
+      expect(steered.error).toBeUndefined();
+      await agent.whenIdle();
+      const queued = await followUp(state, { message: "third" });
+      expect(queued.error).toBeUndefined();
+      await agent.whenIdle();
+      const aborted = await abort(state);
+      expect(aborted.error).toBeUndefined();
+      await agent.whenIdle();
+      const empty = await prompt(state, { message: "" });
+      expect(empty.error?.code).toBe("invalid_input");
+    } finally {
+      await w.run.dispose();
+      await w.cleanup();
+    }
+  }, 30_000);
+
+  it("bash commands map outcomes to the closed error vocabulary", async () => {
+    const okState = { bash: fakeBash(async () => ({ ok: true, output: "done", exitCode: 0, cancelled: false, truncated: false })) };
+    const ran = await bash(okState, { command: "ls" });
+    expect(ran.error).toBeUndefined();
+    const deniedState = { bash: fakeBash(async () => ({ ok: false, reason: "permission denied" })) };
+    const denied = await bash(deniedState, { command: "rm -rf /" });
+    expect(denied.error?.code).toBe("bash_denied");
+    const aborted = abortBash({ bash: fakeBash(async () => ({ ok: true, output: "", exitCode: 0, cancelled: false, truncated: false })) }, {});
+    expect(aborted.error).toBeUndefined();
+    expect(bashOutcomeError("bash command id is already in use").code).toBe("state_conflict");
+  });
+
+  it("workflow list resolves runs from an isolated root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "sdk-wf-"));
+    try {
+      const outcome = await workflowList({ session: undefined, env: {}, workflowRoot: root, world: undefined });
+      expect(outcome.error).toBeUndefined();
+      if (outcome.data !== undefined) expect((outcome.data as { runs: unknown[] }).runs).toEqual([]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
+
+function fakeBash(exec: () => Promise<{ ok: true; output: string; exitCode: number; cancelled: boolean; truncated: boolean } | { ok: false; reason: string }>) {
+  return { exec, abortAdmissions: () => {}, abortRunning: () => {} };
+}
 
 function bigPayload(size: number): unknown {
   return { blob: "x".repeat(size) };
