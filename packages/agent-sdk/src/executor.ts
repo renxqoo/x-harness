@@ -63,7 +63,6 @@ interface LiveThread {
   waiters: Map<string, SendWaiter>;
   eventBuffer: SdkEvent[];
   eventWaiters: Array<() => void>;
-  eventIteratorActive: boolean;
 }
 
 export function attachExecutor(client: SdkClientCore, options: SdkClientOptions) {
@@ -228,7 +227,6 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
         }
         let cursor = 0;
         const liveRef = thread;
-        liveRef.eventIteratorActive = true;
         return {
           async next(): Promise<IteratorResult<SdkEvent>> {
             for (;;) {
@@ -244,7 +242,6 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
             }
           },
           async return(): Promise<IteratorResult<SdkEvent>> {
-            liveRef.eventIteratorActive = false;
             return { value: undefined, done: true };
           },
         };
@@ -273,7 +270,9 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
           isStreaming: entry?.isStreaming ?? false,
         };
       },
-      events: threadEventsIterable(threadId),
+      get events(): AsyncIterable<SdkEvent> {
+        return threadEventsIterable(threadId);
+      },
       on(kind: string, listener: (event: SdkEvent) => void): () => void {
         const thread = live.get(threadId);
         if (thread === undefined) return () => {};
@@ -337,7 +336,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     try {
       const run = await startInprocess({ threadId: String(mainSessionId), spec: assemblySpec(spec, mainSessionId, undefined) });
       const threadId = String(run.handle.agent.session.id);
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), eventBuffer: [], eventWaiters: [], eventIteratorActive: false };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), eventBuffer: [], eventWaiters: [] };
       live.set(threadId, entry);
       void run.onEvent((event) => dispatch(threadId, event));
       client.internal.table.remove(slot);
@@ -390,7 +389,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
           spec.threadId as SessionId,
         ),
       });
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), eventBuffer: [], eventWaiters: [], eventIteratorActive: false };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), eventBuffer: [], eventWaiters: [] };
       live.set(spec.threadId, entry);
       void run.onEvent((event) => dispatch(spec.threadId, event));
       client.internal.table.remove(slot);

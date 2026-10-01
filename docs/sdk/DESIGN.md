@@ -240,11 +240,12 @@ type SdkEvent =
   并存，P3 适配器原样还原。
 - **settled 兜底唯一性**：线程终结（dead/park/异常/shutdown）时由 client 对
   未决 sendId 合成 settled，恰好一次的保证以 client 为唯一裁判。
-- **events 缓冲契约**（审查 A#26）：句柄 events 是 birth 缓冲（句柄创建起的
-  全部事件，订阅前不丢）+ 有界（容量 eventQueueCapacity，溢出策略同背压）；
-  `for await` 提前 break 即释放（迭代器 return() 清订阅）；resumeThread 后
-  事件「仅向后」（从唤醒时刻起，不回放历史——历史走 get_entries）；三条订阅面
-  （client.onEvent / thread.on / thread.events）同源分发、相对顺序一致。
+- **events 缓冲契约**（审查 A#26，实现化后对齐）：句柄 events 是 birth
+  环形缓冲（容量 4096 硬编码，订阅前事件不丢、溢出丢最旧）；`for await`
+  提前 break 即释放（迭代器 return()）；resumeThread 后事件「仅向后」
+  （历史走 get_entries）；client.onEvent/thread.on 直通无缓冲——events 面
+  慢消费丢最旧、on 面不丢，两面观察可能分叉（已知边界）。eventQueueCapacity
+  消费 + 按 kind 分级丢弃 + 终态保护挂 P2 事件面收尾批。
 - 心跳双形态：client 级心跳（含 cpuPercent，worker 壳还原 host 心跳字节）与
   线程级心跳（idleMs/streaming/rssBytes）；in-process 的 cpuPercent 无意义不报。
 
