@@ -183,6 +183,10 @@ describe("dual-host command contracts", () => {
       expect(steered).not.toBe("PENDING");
       const noBehavior = await prompt(state, { message: "mid2" });
       expect(noBehavior.error?.code).toBe("streaming_window");
+      const followUpBranch = await prompt(state, { message: "queued-while-streaming", streamingBehavior: "followUp", id: "s2" });
+      expect(followUpBranch.error).toBeUndefined();
+      await w.run.handle.agent.whenIdle();
+      expect(settledIds).toContain("s2");
       await w.run.handle.agent.whenIdle();
       expect(settledIds).toContain("s1");
     } finally {
