@@ -6,6 +6,9 @@ import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
 import { hubError, errorOfCause } from "../shared/errors.ts";
 import { anchorAtKick, anchorVerdictOf } from "./settle-anchor.ts";
+import { clearQueue as sdkClearQueue, queueDrop as sdkQueueDrop, queueSendNow as sdkQueueSendNow } from "@x-harness/agent-sdk/src/commands/queue.ts";
+import type { QueueCommandState } from "@x-harness/agent-sdk/src/commands/queue.ts";
+import { outcomeRespond } from "./outcome-bridge.ts";
 import type { KickAnchor } from "./settle-anchor.ts";
 import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
@@ -231,6 +234,19 @@ function promptStreamingBranch(
 }
 
 
+function sdkQueueState(rt: WorkerRuntime): QueueCommandState {
+  return {
+    session: sessionOf(rt),
+    currentThreadId: rt.state.threadId === "" ? undefined : rt.state.threadId,
+    world: { flush: async (id) => {
+      const flushed = await rt.state.world?.store.flush(id);
+      return flushed;
+    } },
+    streaming: () => rt.bridge.isStreaming(),
+    pendingSends: () => rt.pendingSends,
+  };
+}
+
 export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
   const handlers = new Map<string, Handler>();
   registerThreadCommands(rt, handlers);
@@ -344,75 +360,27 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
   });
 
   handlers.set("clear_queue", async (input) => {
-    const session = requireThread(rt, { ...input, command: "clear_queue" });
-    if (session === undefined) return;
-    const before = foldQueue(session.events());
-    const append = session.append("agent/inbox/spliced", { op: "clear", reason: "client-clear" });
-    if (!append.ok) {
-      respond(rt, { id: input.id, command: "clear_queue", error: hubError("io_failed", append.reason) });
-      return;
+    if (requireThread(rt, { ...input, command: "clear_queue" }) === undefined) return;
+    {
+      const outcome = await sdkClearQueue(sdkQueueState(rt), input);
+      outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
     }
-    const flushed = await rt.state.world?.store.flush(session.id);
-    if (flushed !== undefined && !flushed.ok) {
-      respond(rt, { id: input.id, command: "clear_queue", error: hubError("io_failed", flushed.reason) });
-      return;
-    }
-    respond(rt, { id: input.id, command: "clear_queue", data: before });
   });
 
   handlers.set("queue/drop", async (input) => {
-    const session = requireThread(rt, { ...input, command: "queue/drop" });
-    if (session === undefined) return;
-    const entryId = typeof input.entryId === "string" ? input.entryId : "";
-    if (entryId === "") {
-      respond(rt, { id: input.id, command: "queue/drop", error: hubError("invalid_input", "queue entryId required") });
-      return;
+    if (requireThread(rt, { ...input, command: "queue/drop" }) === undefined) return;
+    {
+      const outcome = await sdkQueueDrop(sdkQueueState(rt), input);
+      outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
     }
-    const target = findQueueEntryTarget(session.events(), entryId);
-    if (target === undefined) {
-      respond(rt, { id: input.id, command: "queue/drop", error: hubError("state_conflict", `queue entry not found: ${entryId}`) });
-      return;
-    }
-    const append = session.append("agent/inbox/spliced", { op: "drop", target, dropped: [entryId], reason: "client-drop" });
-    if (!append.ok) {
-      respond(rt, { id: input.id, command: "queue/drop", error: hubError("io_failed", append.reason) });
-      return;
-    }
-    const flushed = await rt.state.world?.store.flush(session.id);
-    if (flushed !== undefined && !flushed.ok) {
-      respond(rt, { id: input.id, command: "queue/drop", error: hubError("io_failed", flushed.reason) });
-      return;
-    }
-    respond(rt, { id: input.id, command: "queue/drop" });
   });
 
   handlers.set("queue/send_now", async (input) => {
-    const session = requireThread(rt, { ...input, command: "queue/send_now" });
-    if (session === undefined) return;
-    const entryId = typeof input.entryId === "string" ? input.entryId : "";
-    if (entryId === "") {
-      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("invalid_input", "queue entryId required") });
-      return;
+    if (requireThread(rt, { ...input, command: "queue/send_now" }) === undefined) return;
+    {
+      const outcome = await sdkQueueSendNow(sdkQueueState(rt), input);
+      outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
     }
-    if (!foldInbox(session.events()).nextTurn.some((entry) => entry.id === entryId)) {
-      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("state_conflict", `queue entry not in follow-up queue: ${entryId}`) });
-      return;
-    }
-    if (!rt.bridge.isStreaming() && rt.pendingSends === 0) {
-      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("streaming_window", "no running turn to steer into") });
-      return;
-    }
-    const append = session.append("agent/inbox/spliced", { op: "retarget", id: entryId, to: "next-step" });
-    if (!append.ok) {
-      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("io_failed", append.reason) });
-      return;
-    }
-    const flushed = await rt.state.world?.store.flush(session.id);
-    if (flushed !== undefined && !flushed.ok) {
-      respond(rt, { id: input.id, command: "queue/send_now", error: hubError("io_failed", flushed.reason) });
-      return;
-    }
-    respond(rt, { id: input.id, command: "queue/send_now" });
   });
 
   handlers.set("compact", async (input) => {
