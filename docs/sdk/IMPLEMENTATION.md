@@ -147,8 +147,8 @@
 - client.shutdown 接执行器接线随 P1（executor.shutdownAll 已实现，client 侧
   注册回执待接）；abort 完整取消链（bash/broker/inflight/delegation 四步）
   随 P1 对应域下沉；
-- startThread 仅支持 cwd/trusted/dial（其余 API 字段随 P1 装配全量落地，
-  未实现字段不声明不吞）；
+- startThread 仅支持 cwd/trusted/dial（API.md 九字段面随 P2 装配批落地，
+  未实现字段不声明不吞）；command() 分发面挂 P2 命令批（五域切换载体）；
 - helloFrame 常量与 vocab 单源合并、hub 帧交叉断言随 P2 worker 执行器；
 - thread_state 事件 P0 覆盖终态迁移（live→parked/dead），spawning→live
   随 P1 生命周期域；state_conflict 分支随 inline persistence 落地补测试；
@@ -169,6 +169,12 @@
   经 re-export 的全量口径）——未达 90/85，P2 续推，收口采用全量口径。
 - permission 表驱动 + streaming followUp 分支回归：已落（permission-table/
   commands streaming s2 帧）。
+- admin 域下沉（B 终审 B-4 补登记）：models/agents 两域已迁 sdk（P1 第五/
+  六批）；settings/skills/plugins/skills-install/plugins-install/trust/
+  permission-dual/catalog 快照 K9 七件**挂 P2 admin 批**——admin-commands.ts
+  853 行与 host 侧 install/trust 文件随 meta 模式逐域切。
+- meta 域切换已提前落（P2 期间）：worker-meta-commands 228→64 行（七命令
+  切 sdk meta.ts，outcomeRespond 序列化）。
 - build external 显式清单（28 项）：从 workspaces 派生的自动化随 T9 流水线
   批（人工同步为已知成本）；worker-exec.smoke 为手动脚本（依赖先 build），
   与 smoke-dist.test.ts 同形态，进门禁随 CI 批。

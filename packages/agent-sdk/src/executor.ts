@@ -239,7 +239,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
         }
       },
       async command<T>(name: string, _args?: object): Promise<SdkResult<T>> {
-        return { ok: false, reason: sdkError("unknown_command", `command surface lands in P1: ${name}`) };
+        return { ok: false, reason: sdkError("unknown_command", `command surface lands with the command-domain batches: ${name}`) };
       },
       async retire(): Promise<SdkResult<void>> {
         return await retireThread(threadId, "retire");

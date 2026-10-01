@@ -87,10 +87,11 @@ export interface ScriptWorker {
 export interface SpawnOptions {
   script?: readonly ScriptStep[];
   env?: Record<string, string | undefined>;
+  agentDir?: string;
 }
 
 export async function spawnScriptWorker(over: SpawnOptions = {}): Promise<ScriptWorker> {
-  const agentDir = await mkdtemp(join(tmpdir(), "hub-worker-"));
+  const agentDir = over.agentDir ?? (await mkdtemp(join(tmpdir(), "hub-worker-")));
   const sessionsRoot = join(agentDir, "sessions");
   const input = new FakeInput();
   const captured = captureWriter();
