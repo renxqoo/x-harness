@@ -9,6 +9,7 @@
 | apps/host-hub scenarios-resilience.test.ts「retire → parked → 直读」 | 14s 长用例并行压载偶红 | 2026-10-01 | 隔离绿 |
 | packages/tool-grep grep.test.ts「12000 字节 CJK 行」 | 5s 超时 | 2026-10-01 | 已修：30s 显式 timeout |
 | apps/host-hub smoke.test.ts「stdout 纯净」 | 30s 超时（coverage 高负载） | 2026-10-01 A 复核 | 隔离绿 |
+| 全量并行压载：随机单用例间歇红（thread-notify-e2e「parked」5s / plan-lift.red 5s / host-flows「thread/register」65ms / scenarios-resilience 14s） | 全量并行下不同用例轮换红、隔离均绿 | 2026-10-01 | 既有形态：真进程用例在 >350 文件并行时资源竞争；根治需并发度调优（vitest maxConcurrency）挂 T9 |
 
 口径：并行全量跑（>350 文件）下 5s 默认超时不足；「隔离复跑绿」即判定 flake
 而非缺陷。显式 timeout 修复随 P2 测试批；新增 flake 按此表登记。
