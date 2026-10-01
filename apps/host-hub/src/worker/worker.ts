@@ -192,12 +192,12 @@ export async function runWorker(boot: WorkerBoot): Promise<void> {
         }
         const typed = input_ as { type: string; id?: string };
         if (shuttingDown) {
-          void writer.write(responseFrame({ ...(typed.id !== undefined ? { id: typed.id } : {}), command: typed.type, success: false, error: hubError("protocol", "shutting down") }));
+          void writer.write(responseFrame({ ...(typeof typed.id === "string" && typed.id !== "" ? { id: typed.id } : {}), command: typed.type, success: false, error: hubError("protocol", "shutting down") }));
           continue;
         }
         const handler = handlers.get(typed.type);
         if (handler === undefined) {
-          void writer.write(responseFrame({ ...(typed.id !== undefined ? { id: typed.id } : {}), command: typed.type, success: false, error: hubError("unknown_command", "unknown command") }));
+          void writer.write(responseFrame({ ...(typeof typed.id === "string" && typed.id !== "" ? { id: typed.id } : {}), command: typed.type, success: false, error: hubError("unknown_command", "unknown command") }));
           continue;
         }
         if (!OBSERVER_COMMANDS.has(typed.type)) markBusy();

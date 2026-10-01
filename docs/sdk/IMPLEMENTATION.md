@@ -167,7 +167,11 @@
   当前 absence-based 判别的已知偏差（同 tick 链式）由 idle 守卫兜底。
 - 覆盖率硬项当前值：61.1/59.8（sdk 包内口径）· 77.0/70.5（含 host
   经 re-export 的全量口径）——未达 90/85，P2 续推，收口采用全量口径。
-- permission 表驱动 + streaming followUp 分支回归：挂 P2 测试批。
+- permission 表驱动 + streaming followUp 分支回归：已落（permission-table/
+  commands streaming s2 帧）。
+- build external 显式清单（28 项）：从 workspaces 派生的自动化随 T9 流水线
+  批（人工同步为已知成本）；worker-exec.smoke 为手动脚本（依赖先 build），
+  与 smoke-dist.test.ts 同形态，进门禁随 CI 批。
 
 - **queue 族批**：clear_queue/queue/drop/queue/send_now 迁入 sdk commands；
   dispatchCommand 补 inflight register/signal（A4）；queue-cleared 改 inbox
@@ -179,10 +183,12 @@
   收紧必填 + cli build-world/sdk executor-inprocess 注入补齐（B.P6-1，
   最高优先）；type.model 过 dialable 门（B.P6-2）；script 模式 registered
   空集的真源修正（B.R3，随取值函数一并）。
-- **shared 收敛批**（admin 域迁完后）：host-hub/shared 全部 re-export
-  sdk/shared（B.P4-1）；requestId 谓词统一只判 undefined（A6）；
-  sdk errors.ts 与 shared/errors.ts 单源（B.P4-2）；script-adapter 收进
-  shared（A10）。
+- **shared 收敛批**（已完成）：host-hub/shared 23 文件 re-export
+  sdk/shared（B.P4-1/A10/plugin-propose 均 100%）；requestId 谓词
+  统一为「非空字符串才带 id」（A6，落地语义与原文「只判 undefined」
+  的差异以实现为准——空串视为缺省）；sdk errors.ts 为 shared/errors.ts
+  alias 层（B.P4-2）——sdkError/hubError 双名保留：executor 域消费面
+  广，一次性改名收益<风险；isSdkErrorShape 死出口随 P2 清理批删。
 - **P2 worker 批**：跨进程 settings 文件锁（B.P8-1）；threadGate 谓词
   对非字符串 threadId 统一（B.R6）。
 - **P1 收口硬项**：commands 域覆盖率 37/39 → ≥90/85（双审 B 实测）。
