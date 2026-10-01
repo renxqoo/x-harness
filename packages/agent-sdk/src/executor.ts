@@ -10,6 +10,7 @@ import { loadCatalogSnapshot, scriptSnapshotOf } from "./catalog.ts";
 import type { CatalogSnapshot } from "./catalog.ts";
 import { WORLD_TEARDOWN_TIMEOUT_MS } from "./limits.ts";
 import { permissionBroker } from "@x-harness/permission";
+import { llmRuntime } from "@x-harness/llm";
 import { anchorTurnOf as anchorTurnOfSdk, anchorVerdictOf } from "./executor-worker/settle-anchor.ts";
 import { delegationView } from "@x-harness/agent-delegation";
 import type { InprocessRun } from "./executor-inprocess/run.ts";
@@ -465,9 +466,38 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     }
   }
 
+  async function reloadModels(): Promise<SdkResult<{ added: string[] }>> {
+    let next: CatalogSnapshot;
+    try {
+      next = await loadCatalogSnapshot(options.agentDir, client.internal.env);
+      if (next.adapters.length === 0) {
+        const script = scriptSnapshotOf(client.internal.env);
+        if (script !== undefined) next = script;
+      }
+    } catch (error) {
+      return { ok: false, reason: sdkError("io_failed", `catalog reload failed: ${String(error instanceof Error ? error.message : error)}`) };
+    }
+    catalogSnapshot = next;
+    catalogLoading = undefined;
+    const current = next;
+    const added: string[] = [];
+    for (const thread of live.values()) {
+      const runtime = thread.run.world?.ctx.tryUse(llmRuntime) as { hasAdapter(name: string): boolean; registerAdapter(adapter: unknown): () => void } | undefined;
+      if (runtime === undefined) continue;
+      for (const adapter of current.adapters) {
+        const name = (adapter as { name: string }).name;
+        if (runtime.hasAdapter(name)) continue;
+        runtime.registerAdapter(adapter);
+        added.push(name);
+      }
+    }
+    return { ok: true, value: { added } };
+  }
+
   return {
     startThread,
     resumeThread,
+    reloadModels,
     threadOf: (threadId: string): ThreadHandle | undefined => (live.has(threadId) ? makeHandle(threadId) : undefined),
     retireThread,
     shutdownAll,

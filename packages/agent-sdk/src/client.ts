@@ -49,13 +49,15 @@ export function createSdkClient(options: SdkClientOptions) {
     return await core.shutdown();
   }
 
+  const workerModeError = { code: "internal", message: "worker-mode executor lands in P2; use in-process mode" } as const;
   const lifecycle: ExecutorLifecycle =
     executor !== undefined
-      ? { startThread: executor.startThread, resumeThread: executor.resumeThread, threadOf: executor.threadOf }
+      ? { startThread: executor.startThread, resumeThread: executor.resumeThread, threadOf: executor.threadOf, reloadModels: executor.reloadModels }
       : {
-          startThread: async () => ({ ok: false, reason: { code: "internal", message: "worker-mode executor lands in P2; use in-process mode" } }),
-          resumeThread: async () => ({ ok: false, reason: { code: "internal", message: "worker-mode executor lands in P2; use in-process mode" } }),
+          startThread: async () => ({ ok: false, reason: workerModeError }),
+          resumeThread: async () => ({ ok: false, reason: workerModeError }),
           threadOf: () => undefined,
+          reloadModels: async () => ({ ok: false, reason: workerModeError }),
         };
 
   return {
@@ -173,6 +175,7 @@ interface ExecutorLifecycle {
   startThread(spec: import("./executor.ts").StartThreadSpec): Promise<SdkResult<import("./executor.ts").ThreadHandle>>;
   resumeThread(spec: { threadId: string; cwd?: string; trusted?: boolean; dial?: { provider: string; model: string } }): Promise<SdkResult<import("./executor.ts").ThreadHandle>>;
   threadOf(threadId: string): import("./executor.ts").ThreadHandle | undefined;
+  reloadModels(): Promise<SdkResult<{ added: string[] }>>;
 }
 
 export type SdkClient = ReturnType<typeof createClientCore> & { shutdown(): Promise<SdkResult<void>> } & ExecutorLifecycle;

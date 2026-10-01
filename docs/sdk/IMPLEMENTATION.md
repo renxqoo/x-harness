@@ -179,7 +179,9 @@
   plugins-admin/plugins-install/skills-migrate/agents-migrate 七域已迁 sdk；
   catalog 快照 K9 in-process 半已落（b622739）；余下 = settings/trust/
   permission-dual 三件编排 + K9 reload 广播 + host 侧 resolveDefaultDial
-  统一——P2 admin 批余项。
+  统一——P2 admin 批余项。K9 in-process reload 已落（sdk.reloadModels()——
+重读快照 + 活线程 registerMissingAdapters，只增不换；resolveDefaultDial
+统一仍余）。
 - meta 域切换已提前落（P2 期间）：worker-meta-commands 228→64 行（七命令
   切 sdk meta.ts，outcomeRespond 序列化）。
 - build external 显式清单（28 项）：从 workspaces 派生的自动化随 T9 流水线
