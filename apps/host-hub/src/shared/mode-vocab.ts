@@ -1,5 +1,1 @@
-import { PROFILE_IDS } from "@x-harness/permission";
-
-export function modeVocabulary(): string[] {
-  return [...PROFILE_IDS];
-}
+export * from "@x-harness/agent-sdk/src/shared/mode-vocab.ts";

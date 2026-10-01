@@ -63,7 +63,7 @@ export function createScriptAdapter(script: readonly ScriptStep[] = []): ScriptA
         }
         if ("toolCalls" in step) {
           for (const [index, call] of step.toolCalls.entries()) {
-            yield { type: "tool-call-delta", index, callId: `call-${cursor}-${index}`, name: call.name, argumentsDelta: call.input };
+            yield { type: "tool-call-delta", index, callId: `call-${String(cursor)}-${String(index)}`, name: call.name, argumentsDelta: call.input };
           }
           yield { type: "usage", usage: usageOf(64, 16) };
           yield { type: "finish", finish: { kind: "stop" } };

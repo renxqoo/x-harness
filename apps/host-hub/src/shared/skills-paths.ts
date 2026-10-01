@@ -1,1 +1,1 @@
-export { projectSkillsDirOf, userSkillsDirOf } from "@x-harness/skill";
+export * from "@x-harness/agent-sdk/src/shared/skills-paths.ts";
