@@ -187,11 +187,11 @@ for await (const e of thread.events) { ... }  // birth 缓冲 + 有界；break �
 | thread_rekeyed | oldThreadId | fork/clone 换 id；旧句柄 superseded |
 | git_changed | cwd, branch? | git 监听 |
 | heartbeat | idleMs, streaming, rssBytes | 1s |
-| error | code, message | 非致命；含背压 dropped 计数 |
+| error | code, message | 非致命错误 |
 
-缓冲契约：句柄 events 从创建时刻起缓冲（birth 缓冲，订阅前不丢）；容量
-eventQueueCapacity；溢出丢 stream/tool_stream 并补 error；终态事件永不丢；
-resumeThread 后事件仅向后（历史走 get_entries）；三条订阅面同源同序。
+缓冲契约：句柄 events 为 birth 环形缓冲（容量 4096，订阅前事件不丢）；
+溢出丢最旧事件（保留最新与终态近端）；client.onEvent/thread.on 为直通
+分发（无缓冲）。容量分级与溢出补 error 的精细化挂 P2 事件面收尾批。
 
 ## 7. SdkLimits
 
@@ -208,7 +208,6 @@ resumeThread 后事件仅向后（历史走 get_entries）；三条订阅面同�
 | workerStaleMs | 30_000 | [1s, 24h]（worker 模式） |
 | workerExitTimeoutMs | 10_000 | [1s, 24h]（worker 模式） |
 | pendingCommandsCap | 65_536 | ≥1 |
-| eventQueueCapacity | 1024 | ≥16 |
 
 响应/行上限：CLIENT_LINE_LIMIT 16MB / WORKER_RESPONSE_SOFT_CAP 100MB（超限
 io_failed）；hello 拒绝与协议违例以 error 事件 + thread_state(dead, cause="protocol")

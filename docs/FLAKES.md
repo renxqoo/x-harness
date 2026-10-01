@@ -2,7 +2,7 @@
 
 | 用例 | 症状 | 首次观测 | 处置 |
 | --- | --- | --- | --- |
-| apps/host-hub git-watch.test.ts「worktree 内建分支：refs 写落 commonDir → 事件」 | 5s 超时（真进程 git watcher 竞态窗口） | 2026-09-30 P0 双审期间 | 已修：describe 级 60s 显式 timeout |
+| apps/host-hub git-watch.test.ts「worktree 内建分支：refs 写落 commonDir → 事件」 | 5s 超时（真进程 git watcher 竞态窗口） | 2026-09-30 P0 双审期间 | 已修：createGitWatchService describe 级 60s（11 例统一放宽）——branchAt 误加的 60s 已还原（纯同步读无需放宽） |
 | apps/host-hub git-watch.test.ts「同值抑制：A→B→A」 | 5s 超时 | 2026-10-01 | 同上 |
 | packages/plugin-manager worker-slice.test.ts「完整链路 boot→ready→RPC」 | 5s 超时（真进程 RPC） | 2026-10-01 B 终审 | 已修：30s 显式 timeout |
 | packages/plugin-manager capabilities.test.ts「第三方件 worker 装载 caps RPC」 | 5s 超时 | 2026-10-01 | 已修：30s 显式 timeout |

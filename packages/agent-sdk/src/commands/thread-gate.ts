@@ -12,7 +12,7 @@ export function threadGate(gate: ThreadGate, input: { threadId?: unknown; comman
   if (gate.session === undefined || gate.currentThreadId === undefined || gate.currentThreadId === "") {
     return { ok: false, outcome: { command: input.command, error: hubError("unknown_thread", "Unknown threadId") } };
   }
-  if (typeof input.threadId === "string" && input.threadId !== gate.currentThreadId) {
+  if (input.threadId !== undefined && input.threadId !== gate.currentThreadId) {
     return { ok: false, outcome: { command: input.command, error: hubError("thread_superseded", "Unknown threadId") } };
   }
   return { ok: true };

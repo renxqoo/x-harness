@@ -196,7 +196,7 @@ describe("createGitWatchService（事件语义）", () => {
     expect(events.some((e) => e.branch === "after-rebuild")).toBe(true);
     svc.stop();
   }, 20_000);
-});
+}, 60000);
 
 describe("branchAt（尾沿读取）", () => {
   it("detached → undefined；分支 → 名", async () => {
@@ -206,4 +206,4 @@ describe("branchAt（尾沿读取）", () => {
     await exec("git", ["-C", repo, "checkout", "--detach"]);
     expect(branchAt(join(repo, ".git"))).toBeUndefined();
   });
-}, 60000);
+});
