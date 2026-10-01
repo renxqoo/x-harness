@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startHost } from "./kit/host-client.ts";
@@ -65,6 +65,7 @@ describe("K9 已知限制症状回归：reload 换 baseUrl 对已装配线程不
     host.send({ type: "prompt", id: "q3", threadId, message: "go" });
     await host.response("q3", 15_000);
     await host.wait((frame) => frame.type === "event" && (frame as { name?: string }).name === "settled", "settled", 20_000);
-    expect(hits.some((h) => h === `127.0.0.1:${String(port)}`)).toBe(true);
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((h) => h === `127.0.0.1:${String(port)}`)).toBe(true);
   }, 45_000);
 });
