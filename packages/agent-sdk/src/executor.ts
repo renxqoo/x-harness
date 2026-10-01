@@ -10,7 +10,7 @@ import type { InprocessRun } from "./executor-inprocess/run.ts";
 import type { AssemblySpec } from "./executor-inprocess/assembly.ts";
 import type { AgentOptions } from "@x-harness/agent-loop";
 import { createScriptAdapter, scriptFromEnv } from "./shared/script-adapter.ts";
-import type { ThreadInfo, SdkClient } from "./client.ts";
+import type { ThreadInfo, SdkClientCore } from "./client.ts";
 import type { SdkClientOptions } from "./client.ts";
 
 export interface StartThreadSpec {
@@ -57,7 +57,7 @@ interface LiveThread {
   waiters: Map<string, SendWaiter>;
 }
 
-export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
+export function attachExecutor(client: SdkClientCore, options: SdkClientOptions) {
   const paths = options;
   const live = new Map<string, LiveThread>();
 

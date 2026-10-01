@@ -2,6 +2,7 @@ import { createThreadTable } from "./thread-table.ts";
 import type { ThreadTable } from "./thread-table.ts";
 import { readLimits } from "./limits.ts";
 import type { SdkLimits } from "./limits.ts";
+import { attachExecutor } from "./executor.ts";
 import type { SdkEvent } from "./events.ts";
 import type { SdkErrorShape, SdkResult } from "./errors.ts";
 import { sdkError } from "./errors.ts";
@@ -37,7 +38,34 @@ export interface ThreadInfo {
 
 const PENDING_PREFIX = "@pending-";
 
+export type SdkClientCore = ReturnType<typeof createClientCore>;
+
 export function createSdkClient(options: SdkClientOptions) {
+  const core = createClientCore(options);
+  const executor = options.mode === "in-process" ? attachExecutor(core, options) : undefined;
+
+  async function shutdown(): Promise<SdkResult<void>> {
+    if (executor !== undefined) await executor.shutdownAll();
+    return await core.shutdown();
+  }
+
+  const lifecycle: ExecutorLifecycle =
+    executor !== undefined
+      ? { startThread: executor.startThread, resumeThread: executor.resumeThread, threadOf: executor.threadOf }
+      : {
+          startThread: async () => ({ ok: false, reason: { code: "internal", message: "worker-mode executor lands in P2; use in-process mode" } }),
+          resumeThread: async () => ({ ok: false, reason: { code: "internal", message: "worker-mode executor lands in P2; use in-process mode" } }),
+          threadOf: () => undefined,
+        };
+
+  return {
+    ...core,
+    shutdown,
+    ...lifecycle,
+  };
+}
+
+function createClientCore(options: SdkClientOptions) {
   const env: Record<string, string | undefined> = options.env !== undefined ? { ...options.env } : { ...process.env };
   const limits: SdkLimits = { ...readLimits(env), ...options.limits };
   const table: ThreadTable = createThreadTable();
@@ -140,5 +168,11 @@ export function createSdkClient(options: SdkClientOptions) {
   };
 }
 
-export type SdkClient = ReturnType<typeof createSdkClient>;
+interface ExecutorLifecycle {
+  startThread(spec: import("./executor.ts").StartThreadSpec): Promise<SdkResult<import("./executor.ts").ThreadHandle>>;
+  resumeThread(spec: { threadId: string; cwd?: string; trusted?: boolean; dial?: { provider: string; model: string } }): Promise<SdkResult<import("./executor.ts").ThreadHandle>>;
+  threadOf(threadId: string): import("./executor.ts").ThreadHandle | undefined;
+}
+
+export type SdkClient = ReturnType<typeof createClientCore> & { shutdown(): Promise<SdkResult<void>> } & ExecutorLifecycle;
 export type { SdkErrorShape };
