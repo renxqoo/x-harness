@@ -198,28 +198,35 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
   }
 }
 
+function gatedTypeOf(deps: SpawnDeps, named: LoadedAgentType | undefined): LoadedAgentType | undefined {
+  const typeModel = named?.model;
+  if (typeModel === undefined || deps.dialable === undefined || deps.dialable(typeModel)) return named;
+  deps.onWarn?.(`agent type '${named?.name ?? "?"}' model '${typeModel}' is not dialable — falling back to inherited dial`);
+  return undefined;
+}
+
+function personaPromptOf(spec: { readonly named?: LoadedAgentType; readonly worktree?: WorktreePlan }): string | undefined {
+  const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
+  if (persona === undefined) return undefined;
+  return spec.worktree !== undefined ? appendWorktreeEnv(persona, { path: spec.worktree.path, facts: spec.worktree.facts }) : persona;
+}
+
 function childAgentOptions(
   deps: SpawnDeps,
   parentHandle: AgentHandle,
   spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId; readonly worktree?: WorktreePlan },
 ): { model?: string; provider?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
-  const typeModel = spec.named?.model;
-  if (typeModel !== undefined && deps.dialable !== undefined && !deps.dialable(typeModel)) {
-    deps.onWarn?.(`agent type '${spec.named?.name ?? "?"}' model '${typeModel}' is not dialable — falling back to inherited dial`);
-  }
   const dial = inheritDial(parentHandle, {
-    type: typeModel !== undefined && deps.dialable !== undefined && !deps.dialable(typeModel) ? undefined : spec.named,
+    type: gatedTypeOf(deps, spec.named),
     lastHeader: lastHeaderOf(deps, spec.caller),
     override: spec.isFork ? undefined : { model: spec.input.model },
     ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
     ...(deps.fallbackDial !== undefined ? { fallback: deps.fallbackDial } : {}),
   });
-  const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
+  const systemPrompt = personaPromptOf(spec);
   return {
     ...dial,
-    ...(persona !== undefined
-      ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona, { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
-      : {}),
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs,
   };
 }
