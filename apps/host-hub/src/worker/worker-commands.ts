@@ -159,9 +159,7 @@ export function settleAfter(rt: WorkerRuntime, id: string | undefined, kickAncho
     .then(() => {
       rt.pendingSends = Math.max(0, rt.pendingSends - 1);
       const events = handle.agent.session.events();
-      const verdict = handle.agent.status !== "idle"
-        ? { ok: true }
-        : anchorVerdictOf(events, anchorTurn, marker);
+      const verdict = anchorVerdictOf(events, { anchorTurn, fromSeq: marker, agent: handle.agent });
       rt.bridge.emitSettledFor({ threadId: threadIdAtKick, sendId: id, ...verdict });
     })
     .catch(() => {

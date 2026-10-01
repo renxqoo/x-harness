@@ -30,7 +30,8 @@ export function anchorTurnOf(events: readonly { type: string; data: unknown }[],
   return steerIntoRunning && running ? turn : turn + 1;
 }
 
-export function anchorVerdictOf(events: readonly { seq: number; type: string; data: unknown }[], anchorTurn: number, fromSeq: number): { ok: boolean; reason?: string } {
+export function anchorVerdictOf(events: readonly { seq: number; type: string; data: unknown }[], query: { anchorTurn: number; fromSeq: number; agent?: { status: string } }): { ok: boolean; reason?: string } {
+  const { anchorTurn, fromSeq, agent } = query;
   for (let i = Math.max(fromSeq, 0); i < events.length; i += 1) {
     const event = events[i];
     if (event === undefined || event.type !== "turn/end") continue;
@@ -38,6 +39,7 @@ export function anchorVerdictOf(events: readonly { seq: number; type: string; da
     if (turn < anchorTurn) continue;
     return verdictOfTurnEnd(event as never);
   }
+  if (agent !== undefined && agent.status !== "idle") return { ok: true };
   return { ok: false, reason: "queue-cleared" };
 }
 

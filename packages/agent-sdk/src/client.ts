@@ -158,6 +158,7 @@ function createClientCore(options: SdkClientOptions) {
     internal: {
       table,
       env,
+      limits,
       threadBudgetAvailable,
       nextPendingId,
       emit,

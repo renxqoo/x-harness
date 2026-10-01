@@ -66,6 +66,7 @@ export function createDialogBroker(deps: DialogBrokerDeps) {
         };
         const onAbort = (): void => settle({ allowed: false });
         const timer = setTimeout(() => settle({ allowed: false }), deps.confirmTimeoutMs);
+        timer.unref?.();
         if (signal !== undefined) {
           if (signal.aborted) {
             settle({ allowed: false });

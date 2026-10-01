@@ -169,6 +169,12 @@
   经 re-export 的全量口径）——未达 90/85，P2 续推，收口采用全量口径。
 - permission 表驱动 + streaming followUp 分支回归：已落（permission-table/
   commands streaming s2 帧）。
+- abort 四步链 in-process 完整化：delegation.stopAll await 化（A#27 取消
+  链落地后才 resolve）+ inflight 接线——挂 P2 命令批；read 域 onWarn 通道
+  （get_tree/set_session_name 诊断丢失）同批。
+- whenIdle 现实现不可 reject（agent-loop driver 只 resolve）——executor
+  catch 为防御位（settleFromAnchor 抛错可达），settle-failed.test 真触发
+  验证（Proxy 注入 + 反向验证：禁用 catch 用例红）。
 - admin 域下沉（B 终审 B-4 补登记）：models/agents 两域已迁 sdk（P1 第五/
   六批）；settings/skills/plugins/skills-install/plugins-install/trust/
   permission-dual/catalog 快照 K9 七件**挂 P2 admin 批**——admin-commands.ts

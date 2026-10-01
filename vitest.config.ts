@@ -12,6 +12,12 @@ export default defineConfig({
         "packages/*/src/**/worker/**", "packages/core/*/src/**/worker/**",
         "packages/e2e/**",
       ],
+      thresholds: {
+        statements: 56,
+        branches: 52,
+        functions: 61,
+        lines: 60,
+      },
     },
   },
 });

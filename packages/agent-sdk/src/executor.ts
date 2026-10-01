@@ -6,6 +6,7 @@ import { sdkError } from "./errors.ts";
 import type { SdkResult } from "./errors.ts";
 import { mailboxRootOf, workflowRootOf } from "./dirs.ts";
 import { startInprocess, sessionPathOf } from "./executor-inprocess/run.ts";
+import { WORLD_TEARDOWN_TIMEOUT_MS } from "./limits.ts";
 import { permissionBroker } from "@x-harness/permission";
 import { anchorTurnOf as anchorTurnOfSdk, anchorVerdictOf } from "./executor-worker/settle-anchor.ts";
 import { delegationView } from "@x-harness/agent-delegation";
@@ -147,7 +148,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     if (thread === undefined) return;
     const wait = thread.waiters.get(sendId);
     if (wait === undefined) return;
-    const verdict = anchorVerdictOf(thread.run.handle.agent.session.events(), wait.anchorTurn, wait.scannedSeq);
+    const verdict = anchorVerdictOf(thread.run.handle.agent.session.events(), { anchorTurn: wait.anchorTurn, fromSeq: wait.scannedSeq, agent: thread.run.handle.agent });
     thread.waiters.delete(sendId);
     if (wait.timer !== undefined) clearTimeout(wait.timer);
     wait.resolve({ sendId, ...verdict });
@@ -366,21 +367,27 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
   }
 
   async function shutdownAll(): Promise<void> {
+    const deadline = Date.now() + client.internal.limits.shutdownBudgetMs;
     for (const threadId of live.keys()) {
       const entry = client.internal.table.get(threadId);
       settleWaiters(threadId, { ok: false, reason: "shutdown" });
       const thread = live.get(threadId);
       if (thread !== undefined) {
-        try {
-          await thread.run.dispose();
-        } catch {
-        }
+        const perWorld = Math.max(1_000, Math.min(WORLD_TEARDOWN_TIMEOUT_MS, deadline - Date.now()));
+        await Promise.race([
+          thread.run.dispose().catch(() => undefined),
+          new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, perWorld);
+            t.unref?.();
+          }),
+        ]);
       }
       live.delete(threadId);
       const sessionPath = entry?.sessionPath ?? null;
       client.internal.table.update(threadId, { state: "parked", sessionPath: null });
       if (sessionPath !== null) client.internal.table.update(threadId, { sessionPath });
       client.internal.table.releaseOccupancy(threadId);
+      if (Date.now() >= deadline) break;
     }
   }
 
