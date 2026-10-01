@@ -9,7 +9,7 @@ import { startInprocess, sessionPathOf, verdictOfTurnEnd } from "./executor-inpr
 import type { InprocessRun } from "./executor-inprocess/run.ts";
 import type { AssemblySpec } from "./executor-inprocess/assembly.ts";
 import type { AgentOptions } from "@x-harness/agent-loop";
-import { createScriptAdapter, scriptFromEnv } from "./script-adapter.ts";
+import { createScriptAdapter, scriptFromEnv } from "./shared/script-adapter.ts";
 import type { ThreadInfo, SdkClient } from "./client.ts";
 import type { SdkClientOptions } from "./client.ts";
 

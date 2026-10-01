@@ -1,6 +1,5 @@
 import type { CommandOutcome } from "@x-harness/agent-sdk/src/commands/outcome.ts";
 import { responseFrame } from "@x-harness/agent-sdk/src/frames.ts";
-import { hubError } from "../shared/errors.ts";
 
 export function outcomeRespond(emitLine: (line: string) => void, requestId: unknown, outcome: CommandOutcome): void {
   emitLine(responseFrame({
@@ -12,4 +11,3 @@ export function outcomeRespond(emitLine: (line: string) => void, requestId: unkn
   }));
 }
 
-export { hubError };

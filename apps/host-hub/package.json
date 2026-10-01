@@ -8,7 +8,7 @@
     "./worker": "./src/worker/main.ts"
   },
   "scripts": {
-    "build": "bun build src/host/cli.ts src/worker/main.ts --outdir dist --target bun --format esm --external \"@x-harness/*\"",
+    "build": "bun build src/host/cli.ts src/worker/main.ts --outdir dist --target bun --format esm --external \"@x-harness/core\" --external \"@x-harness/harness\" --external \"@x-harness/session\" --external \"@x-harness/session-persistence-jsonl\" --external \"@x-harness/session-mailbox\" --external \"@x-harness/agent-loop\" --external \"@x-harness/agent-delegation\" --external \"@x-harness/agent-workflow\" --external \"@x-harness/workflow-core\" --external \"@x-harness/llm\" --external \"@x-harness/llm-retry\" --external \"@x-harness/permission\" --external \"@x-harness/tools\" --external \"@x-harness/tool-plan\" --external \"@x-harness/skill\" --external \"@x-harness/commands\" --external \"@x-harness/compaction\" --external \"@x-harness/autocompact\" --external \"@x-harness/error-recovery\" --external \"@x-harness/truncation-messages\" --external \"@x-harness/session-checkpoint\" --external \"@x-harness/plugin-manager\" --external \"@x-harness/todo-tools\" --external \"@x-harness/telemetry-sqlite\" --external \"@x-harness/token-analytics\" --external \"@x-harness/md-frontmatter\" --external \"@x-harness/remote-protocol\"",
     "e2e:llm": "bun run src/__test__/llm-e2e.ts"
   },
   "dependencies": {

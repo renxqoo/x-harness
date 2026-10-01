@@ -156,6 +156,19 @@
 
 ## 3d. P1 双审登记项（批次归属，A#4/6/14/15 + B.P5-3/P6-1/P6-2/P2-1/P1-1/P4-1/P8-1）
 
+**P1 收口状态（收口终审 A 后如实标注）**：
+- 阶段末切换范围修正：P1 实际切换 queue×3 + bash×2 共 5 命令到 sdk
+  命令域（outcomeRespond 单点序列化），send/read/meta/workflow/thread
+  五域的 handler 切换**推迟至 P2**（worker-entry 迁移时一并切——
+  worker.ts 的依赖闭包在这些域上，分开切会双改）；本地副本在 P2
+  切换批删除。
+- B.P2-1（queue-cleared 改 inbox entry 折叠判别）：**未落，挂 P2**——
+  前置 agent-loop followup 返回 entry id 的接口变更属 P2 范围；
+  当前 absence-based 判别的已知偏差（同 tick 链式）由 idle 守卫兜底。
+- 覆盖率硬项当前值：61.1/59.8（sdk 包内口径）· 77.0/70.5（含 host
+  经 re-export 的全量口径）——未达 90/85，P2 续推，收口采用全量口径。
+- permission 表驱动 + streaming followUp 分支回归：挂 P2 测试批。
+
 - **queue 族批**：clear_queue/queue/drop/queue/send_now 迁入 sdk commands；
   dispatchCommand 补 inflight register/signal（A4）；queue-cleared 改 inbox
   entry 折叠判别（B.P2-1，需 agent-loop 暴露 followup 返回 entry id）；

@@ -1,6 +1,5 @@
 import type { ImageBlock, Session, SessionId } from "@x-harness/session";
 import type { AgentHandle } from "@x-harness/agent-loop";
-import { foldInbox } from "@x-harness/agent-loop";
 import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
@@ -14,7 +13,6 @@ import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
 import { createWorkflowHandlers } from "./workflow-commands.ts";
-import { findQueueEntryTarget, foldQueue } from "../shared/inbox-fold.ts";
 import { parseCommand } from "@x-harness/commands";
 import { normalizeImages } from "../shared/images.ts";
 import type { WireImage } from "../shared/images.ts";
@@ -89,7 +87,7 @@ export interface ResponseTarget {
 export function respond(rt: WorkerRuntime, target: ResponseTarget): void {
   rt.emitLine(
     responseFrame({
-      ...(target.id !== undefined ? { id: target.id } : {}),
+      ...(typeof target.id === "string" && target.id !== "" ? { id: target.id } : {}),
       command: target.command,
       success: target.error === undefined,
       ...(target.data !== undefined ? { data: target.data } : {}),
@@ -148,8 +146,7 @@ function delegationError(reason: string): HubErrorShape {
   return hubError("internal", reason);
 }
 
-export 
-function settleAfter(rt: WorkerRuntime, id: string | undefined, kickAnchor: KickAnchor | undefined): boolean {
+export function settleAfter(rt: WorkerRuntime, id: string | undefined, kickAnchor: KickAnchor | undefined): boolean {
   if (id === undefined || kickAnchor === undefined) return false;
   const handle = rt.state.handle;
   if (handle === undefined) return false;
@@ -361,26 +358,20 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
 
   handlers.set("clear_queue", async (input) => {
     if (requireThread(rt, { ...input, command: "clear_queue" }) === undefined) return;
-    {
-      const outcome = await sdkClearQueue(sdkQueueState(rt), input);
-      outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
-    }
+    const outcome = await sdkClearQueue(sdkQueueState(rt), input);
+    outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
   });
 
   handlers.set("queue/drop", async (input) => {
     if (requireThread(rt, { ...input, command: "queue/drop" }) === undefined) return;
-    {
-      const outcome = await sdkQueueDrop(sdkQueueState(rt), input);
-      outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
-    }
+    const outcome = await sdkQueueDrop(sdkQueueState(rt), input);
+    outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
   });
 
   handlers.set("queue/send_now", async (input) => {
     if (requireThread(rt, { ...input, command: "queue/send_now" }) === undefined) return;
-    {
-      const outcome = await sdkQueueSendNow(sdkQueueState(rt), input);
-      outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
-    }
+    const outcome = await sdkQueueSendNow(sdkQueueState(rt), input);
+    outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
   });
 
   handlers.set("compact", async (input) => {

@@ -4,11 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mintSessionId } from "@x-harness/session";
 import { startInprocess } from "../executor-inprocess/run.ts";
-import { createScriptAdapter } from "../script-adapter.ts";
+import { createScriptAdapter } from "../shared/script-adapter.ts";
 import type { AssemblySpec } from "../executor-inprocess/assembly.ts";
 import { clearQueue, queueDrop, queueSendNow } from "../commands/queue.ts";
 import type { QueueCommandState } from "../commands/queue.ts";
-import type { SendCommandState } from "../commands/send.ts";
 
 async function makeRun(script: unknown[]) {
   const root = await mkdtemp(join(tmpdir(), "sdk-queue-"));
@@ -44,16 +43,6 @@ describe("queue 命令族（outcome 契约）", () => {
     const w = await makeRun([{ reply: "ok" }]);
     try {
       const agent = w.run.handle.agent;
-      const sendState: SendCommandState = {
-        session: agent.session, currentThreadId: String(agent.session.id),
-        catalog: { providers: [], default: { provider: "", model: "" }, modelMeta: {} },
-        dial: { provider: "script", model: "script-1" }, commands: undefined, agent,
-        streaming: () => false, pendingSends: () => 0,
-        bash: { abortAdmissions: () => {}, abortRunning: () => {} },
-        broker: { denyAll: () => {} },
-        inflight: { abortAll: async () => {}, register: () => ({ signal: new AbortController().signal, unregister: () => {} }) },
-        delegation: undefined, settle: () => {},
-      };
       agent.followup("one");
       agent.followup("two");
       await agent.whenIdle();

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { threadNotify, threadStop, forkInputVerdict } from "../commands/lifecycle.ts";
 import { mintSessionId } from "@x-harness/session";
 import { startInprocess } from "../executor-inprocess/run.ts";
-import { createScriptAdapter } from "../script-adapter.ts";
+import { createScriptAdapter } from "../shared/script-adapter.ts";
 import type { AssemblySpec } from "../executor-inprocess/assembly.ts";
 
 describe("lifecycle command contracts", () => {

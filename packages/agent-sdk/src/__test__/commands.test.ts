@@ -13,7 +13,7 @@ import type { SendCommandState } from "../commands/send.ts";
 import { bash, abortBash } from "../commands/bash.ts";
 import { workflowList } from "../commands/workflow.ts";
 import { startInprocess } from "../executor-inprocess/run.ts";
-import { createScriptAdapter } from "../script-adapter.ts";
+import { createScriptAdapter } from "../shared/script-adapter.ts";
 import type { AssemblySpec } from "../executor-inprocess/assembly.ts";
 import type { SdkEvent } from "../events.ts";
 

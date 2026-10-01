@@ -18,7 +18,7 @@ function echoWorkerScript(): string {
     '    const line = pending.slice(0, nl);',
     '    pending = pending.slice(nl + 1);',
     '    if (line === "") continue;',
-    '    process.stdout.write(`${JSON.stringify({ echo: line })}\\n`);',
+    '    process.stdout.write(JSON.stringify({ echo: line }) + String.fromCharCode(10));',
     '  }',
     '});',
   ].join("\n");
