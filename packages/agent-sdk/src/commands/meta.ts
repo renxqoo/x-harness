@@ -1,6 +1,8 @@
 import type { Session, SessionId } from "@x-harness/session";
+import type { World } from "@x-harness/harness";
 import { memoryBlocked, parseRule } from "@x-harness/permission";
 import { permissionGrantStore, permissionGrants } from "@x-harness/permission";
+import type { RuleEntry } from "@x-harness/permission";
 import type { PermissionRule, RuleTool } from "@x-harness/permission";
 import { planControl } from "@x-harness/tool-plan";
 import { projectSettingsPath, readHubSettings, readProjectSettings, updateSettingsFile, userSettingsPath } from "../shared/settings-store.ts";
@@ -27,12 +29,9 @@ export interface MetaCommandState {
   trusted: boolean;
   catalog: import("../shared/worker-catalog.ts").WorkerCatalog;
   dial: import("../shared/meta-fold.ts").DialFact;
-  thinkingFallback: { level: import("@x-harness/llm").ThinkingLevel; source: "project" | "user" } | undefined;
-  permissionModeSource: "project" | "user" | "default" | undefined;
-  world: {
-    flush(sessionId: SessionId): Promise<{ ok: true } | { ok: false; reason: string } | undefined>;
-    tryUse(token: unknown): unknown;
-  } | undefined;
+  thinkingFallback: { level: import("@x-harness/llm").ThinkingLevel; source: string } | undefined;
+  permissionModeSource: string | undefined;
+  world: World | undefined;
   permissionService: { set(mode: string): void; get(): string | undefined } | undefined;
   streaming(): boolean;
 }
@@ -52,7 +51,7 @@ export async function setThinkingLevel(state: MetaCommandState, level: unknown):
   if (unsupported !== undefined) return outcomeError("set_thinking_level", "capability_thinking", unsupported);
   const append = session.append("session/meta", { key: META_KEY_THINKING, value: level });
   if (!append.ok) return outcomeError("set_thinking_level", "io_failed", append.reason);
-  const flushed = await state.world?.flush(session.id);
+  const flushed = await state.world?.store.flush(session.id);
   if (flushed !== undefined && !flushed.ok) return outcomeError("set_thinking_level", "io_failed", flushed.reason);
   return { command: "set_thinking_level" };
 }
@@ -82,7 +81,7 @@ export function getThinkingLevel(state: MetaCommandState): CommandOutcome {
 }
 
 export function applyPermissionMode(state: MetaCommandState, sessionId: SessionId, mode: string): void {
-  const control = state.world?.tryUse(planControl) as { enter(id: SessionId): void; exit(id: SessionId, mode: never): void; isPlan(): boolean } | undefined;
+  const control = state.world?.ctx.tryUse(planControl) as { enter(id: SessionId): void; exit(id: SessionId, mode: never): void; isPlan(): boolean } | undefined;
   if (control !== undefined) {
     if (mode === "plan") {
       control.enter(sessionId);
@@ -107,7 +106,7 @@ export async function setPermissionMode(state: MetaCommandState, mode: unknown):
   }
   const append = session.append("session/meta", { key: META_KEY_PERMISSION, value: mode });
   if (!append.ok) return outcomeError("permission/set_mode", "io_failed", append.reason);
-  const flushed = await state.world?.flush(session.id);
+  const flushed = await state.world?.store.flush(session.id);
   if (flushed !== undefined && !flushed.ok) return outcomeError("permission/set_mode", "io_failed", flushed.reason);
   applyPermissionMode(state, session.id, mode);
   return { command: "permission/set_mode" };
@@ -164,14 +163,14 @@ export async function permissionGrant(state: MetaCommandState, input: Record<str
   }
   const scope = granted.scope;
   if (scope === "session") {
-    const grants = state.world?.tryUse(permissionGrants) as { addRule(id: SessionId, rule: PermissionRule): void } | undefined;
+    const grants = state.world?.ctx.tryUse(permissionGrants) as { addRule(id: SessionId, rule: PermissionRule): void } | undefined;
     if (grants === undefined) return outcomeError("permission/grant", "internal", "permission service unavailable");
     grants.addRule(session.id, { tool: granted.tool, pattern: granted.pattern, verdict: "allow", origin: "session", nature: "grant", at: Date.now() });
     return { command: "permission/grant", data: { scope, rule: String(input.rule) } };
   }
-  const store = state.world?.tryUse(permissionGrantStore) as { write(scope: "project" | "user", entry: PermissionRule): Promise<{ ok: true } | { ok: false; reason: string }> } | undefined;
+  const store = state.world?.ctx.tryUse(permissionGrantStore) as { write(scope: "project" | "user", entry: RuleEntry): Promise<{ ok: true } | { ok: false; reason: string }> } | undefined;
   if (store === undefined) return outcomeError("permission/grant", "internal", "grant store unavailable");
-  const written = await store.write(scope, { tool: granted.tool, pattern: granted.pattern, verdict: "allow", origin: "session", nature: "grant", at: Date.now() });
+  const written = await store.write(scope, { tool: granted.tool, pattern: granted.pattern, verdict: "allow", nature: "grant", at: Date.now() });
   if (!written.ok) return outcomeError("permission/grant", "invalid_input", written.reason);
   return { command: "permission/grant", data: { scope, rule: String(input.rule) } };
 }
@@ -179,7 +178,7 @@ export async function permissionGrant(state: MetaCommandState, input: Record<str
 export async function permissionListRules(state: MetaCommandState): Promise<CommandOutcome> {
   const session = state.session;
   if (session === undefined) return outcomeError("permission/list_rules", "unknown_thread", "Unknown threadId");
-  const grants = state.world?.tryUse(permissionGrants) as { rulesOf(id: SessionId): PermissionRule[] } | undefined;
+  const grants = state.world?.ctx.tryUse(permissionGrants) as { rulesOf(id: SessionId): PermissionRule[] } | undefined;
   const sessionRules = (grants?.rulesOf(session.id) ?? []).map((entry) => ({
     tool: entry.tool, pattern: entry.pattern, verdict: entry.verdict, nature: entry.nature ?? "handwritten", at: entry.at, scope: "session" as const,
   }));

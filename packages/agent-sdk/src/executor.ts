@@ -104,7 +104,9 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     const anchorTurn = anchorTurnOf(session.events(), mode === "steer");
     const scannedSeq = session.events().length - 1;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let resolveWaiter: (report: SdkSendReport) => void = () => {};
     const waiter = new Promise<SdkSendReport>((resolve) => {
+      resolveWaiter = resolve;
       if (sendOptions?.timeoutMs !== undefined) {
         timer = setTimeout(() => {
           thread.waiters.delete(sendId);
@@ -127,6 +129,12 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
     void agent.whenIdle().then(() => {
       thread.run.markIdle();
       settleFromAnchor(threadId, sendId);
+    }).catch((error: unknown) => {
+      thread.waiters.delete(sendId);
+      if (timer !== undefined) clearTimeout(timer);
+      resolveWaiter({ sendId, ok: false, reason: "settle-failed" });
+      dispatch(threadId, { kind: "settled", threadId, sendId, ok: false, reason: "settle-failed" });
+      client.internal.emit({ kind: "error", code: "internal", message: `settle failed: ${String(error instanceof Error ? error.message : error)}` });
     });
     return { ok: true, value: await waiter };
   }
