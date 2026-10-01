@@ -6,6 +6,8 @@ import { sdkError } from "./errors.ts";
 import type { SdkResult } from "./errors.ts";
 import { mailboxRootOf, workflowRootOf } from "./dirs.ts";
 import { startInprocess, sessionPathOf } from "./executor-inprocess/run.ts";
+import { loadCatalogSnapshot, scriptSnapshotOf } from "./catalog.ts";
+import type { CatalogSnapshot } from "./catalog.ts";
 import { WORLD_TEARDOWN_TIMEOUT_MS } from "./limits.ts";
 import { permissionBroker } from "@x-harness/permission";
 import { anchorTurnOf as anchorTurnOfSdk, anchorVerdictOf } from "./executor-worker/settle-anchor.ts";
@@ -13,7 +15,6 @@ import { delegationView } from "@x-harness/agent-delegation";
 import type { InprocessRun } from "./executor-inprocess/run.ts";
 import type { AssemblySpec } from "./executor-inprocess/assembly.ts";
 import type { AgentOptions } from "@x-harness/agent-loop";
-import { createScriptAdapter, scriptFromEnv } from "./shared/script-adapter.ts";
 import type { ThreadInfo, SdkClientCore } from "./client.ts";
 import type { SdkClientOptions } from "./client.ts";
 
@@ -64,6 +65,19 @@ interface LiveThread {
 export function attachExecutor(client: SdkClientCore, options: SdkClientOptions) {
   const paths = options;
   const live = new Map<string, LiveThread>();
+  let catalogSnapshot: CatalogSnapshot | undefined = scriptSnapshotOf(client.internal.env);
+  let catalogLoading: Promise<void> | undefined = undefined;
+
+  function ensureCatalog(): Promise<void> {
+    if (catalogSnapshot !== undefined || catalogLoading !== undefined) return catalogLoading ?? Promise.resolve();
+    catalogLoading = (async () => {
+      catalogSnapshot = (await loadCatalogSnapshot(options.agentDir, client.internal.env)) as CatalogSnapshot;
+      if (catalogSnapshot.adapters.length === 0 && scriptSnapshotOf(client.internal.env) !== undefined) {
+        catalogSnapshot = scriptSnapshotOf(client.internal.env);
+      }
+    })();
+    return catalogLoading;
+  }
 
   function dispatch(threadId: string, event: SdkEvent): void {
     const thread = live.get(threadId);
@@ -155,12 +169,21 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     dispatch(threadId, { kind: "settled", threadId, sendId, ...verdict });
   }
 
+  function defaultDelegationOf(snapshot: CatalogSnapshot | undefined): { resolveProviderOf: (model: string) => string | undefined; fallbackDial: { model: string; provider: string } | undefined; dialable: (ref: string) => boolean } | undefined {
+    if (snapshot === undefined) return undefined;
+    return {
+      resolveProviderOf: snapshot.resolveProviderOf,
+      fallbackDial: snapshot.fallbackDial ?? { model: "", provider: "" },
+      dialable: snapshot.dialable,
+    };
+  }
+
   function assemblySpec(spec: StartThreadSpec, mainSessionId: SessionId, resumeId: SessionId | undefined): AssemblySpec {
-    const script = client.internal.env["HUB_WORKER_PROVIDER"] === "script";
-    const adapters = script ? [createScriptAdapter(scriptFromEnv(client.internal.env))] : [];
+    const snapshot = catalogSnapshot;
+    const adapters = snapshot?.adapters ?? [];
     let agentOptions: AgentOptions = {};
     if (spec.dial !== undefined) agentOptions = { provider: spec.dial.provider, model: spec.dial.model };
-    else if (script) agentOptions = { provider: "script", model: "script-1" };
+    else if (snapshot !== undefined) agentOptions = { provider: snapshot.dial.provider, model: snapshot.dial.model };
     return {
       cwd: spec.cwd,
       trusted: spec.trusted === true,
@@ -175,7 +198,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
       agentOptions,
       persistence: "durable",
       mainSessionId: resumeId ?? mainSessionId,
-      ...(options.delegation !== undefined ? { delegation: options.delegation } : {}),
+      ...((options.delegation ?? defaultDelegationOf(snapshot)) !== undefined ? { delegation: options.delegation ?? defaultDelegationOf(snapshot) } : {}),
       env: client.internal.env,
       onWarn: (message) => client.internal.log(message),
     };
@@ -252,6 +275,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
   }
 
   async function startThread(spec: StartThreadSpec): Promise<SdkResult<ThreadHandle>> {
+    await ensureCatalog();
     if (!client.internal.threadBudgetAvailable()) {
       return { ok: false, reason: sdkError("thread_limit", "too many live threads (limit reached)") };
     }
@@ -288,6 +312,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
   }
 
   async function resumeThread(spec: { threadId: string; cwd?: string; trusted?: boolean; dial?: { provider: string; model: string } }): Promise<SdkResult<ThreadHandle>> {
+    await ensureCatalog();
     if (!isSafeSessionId(spec.threadId)) {
       return { ok: false, reason: sdkError("session_unreadable", "Session file not readable") };
     }
