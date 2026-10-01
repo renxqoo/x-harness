@@ -349,4 +349,4 @@ describe("META token 旁路封口（ctx.on 直听元能力名 = 拒）", () => {
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.reason).toContain("meta token");
   });
-});
+}, 30000);

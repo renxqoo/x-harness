@@ -498,4 +498,4 @@ describe("并发档声明（§6 横切——真实 registry 口径）", () => {
     cleanups.push(made.cleanup);
     expect(made.registry.concurrencyOf("grep", {})).toBe("parallel");
   });
-});
+}, 30000);

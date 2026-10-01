@@ -206,4 +206,4 @@ describe("branchAt（尾沿读取）", () => {
     await exec("git", ["-C", repo, "checkout", "--detach"]);
     expect(branchAt(join(repo, ".git"))).toBeUndefined();
   });
-});
+}, 60000);

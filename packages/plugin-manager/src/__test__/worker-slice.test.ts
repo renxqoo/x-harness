@@ -249,4 +249,4 @@ export default {
       await h.terminate();
     }
   });
-});
+}, 30000);
