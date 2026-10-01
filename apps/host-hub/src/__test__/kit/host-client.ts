@@ -31,7 +31,7 @@ export interface HostHandle {
 }
 
 export interface StartHostOptions {
-  script: readonly ScriptStep[];
+  script?: readonly ScriptStep[];
   env?: Record<string, string | undefined>;
   entry?: string;
 }
@@ -47,8 +47,8 @@ export async function startHost(options: StartHostOptions): Promise<HostHandle> 
       X_HARNESS_MAILBOX_DIR: join(agentDir, "mailbox"),
       X_HARNESS_WORKFLOW_DIR: join(agentDir, "workflows"),
       HUB_WORKER_DISPATCHED: undefined,
-      HUB_WORKER_PROVIDER: "script",
-      HUB_WORKER_SCRIPT: JSON.stringify(options.script),
+      HUB_WORKER_PROVIDER: options.script !== undefined ? "script" : undefined,
+      ...(options.script !== undefined ? { HUB_WORKER_SCRIPT: JSON.stringify(options.script) } : {}),
       HUB_SKILLS_MIGRATION: "0",
       HUB_AGENTS_MIGRATION: "0",
       ...options.env,
