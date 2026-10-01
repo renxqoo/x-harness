@@ -196,6 +196,7 @@ export function attachExecutor(client: SdkClient, options: SdkClientOptions) {
       agentOptions,
       persistence: "durable",
       mainSessionId: resumeId ?? mainSessionId,
+      ...(options.delegation !== undefined ? { delegation: options.delegation } : {}),
       env: client.internal.env,
       onWarn: (message) => client.internal.log(message),
     };

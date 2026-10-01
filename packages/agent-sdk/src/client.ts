@@ -10,6 +10,12 @@ export interface SdkClientOptions {
   mode: "in-process" | "worker";
   agentDir: string;
   sessionsRoot: string;
+  delegation?: {
+    builtinTypes?: readonly import("@x-harness/agent-delegation").InlineTypeResource[];
+    resolveProviderOf?: (model: string) => string | undefined;
+    fallbackDial?: { model?: string; provider?: string };
+    dialable?: (ref: string) => boolean;
+  };
   env?: Record<string, string | undefined>;
   mailboxRoot?: string;
   workflowRoot?: string;
