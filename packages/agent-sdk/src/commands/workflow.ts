@@ -57,13 +57,13 @@ function parseSchema(raw: string): { ok: true; value: unknown } | { ok: false } 
 export async function workflowSubmit(state: WorkflowCommandState, input: Record<string, unknown>): Promise<CommandOutcome> {
   const session = state.session;
   if (session === undefined) return noThread("workflow/submit");
-  const view = state.world?.tryUse(workflowView) as { submit(id: SessionId, input: SubmitInput): Promise<{ ok: true; text: string } | { ok: false; reason: string }> } | undefined;
-  if (view === undefined) return { command: "workflow/submit", error: hubError("unknown_command", "workflow is not assembled in this build") };
   const schemaRaw = typeof input.resultSchema === "string" && input.resultSchema !== "" ? input.resultSchema : undefined;
   const schema = schemaRaw !== undefined ? parseSchema(schemaRaw) : undefined;
   if (schema !== undefined && !schema.ok) {
     return { command: "workflow/submit", error: hubError("invalid_input", `resultSchema JSON invalid: ${schemaRaw}`) };
   }
+  const view = state.world?.tryUse(workflowView) as { submit(id: SessionId, input: SubmitInput): Promise<{ ok: true; text: string } | { ok: false; reason: string }> } | undefined;
+  if (view === undefined) return { command: "workflow/submit", error: hubError("unknown_command", "workflow is not assembled in this build") };
   const made = await view.submit(session.id, submitInputOf(input, schema !== undefined && schema.ok ? schema.value : undefined));
   if (!made.ok) return { command: "workflow/submit", error: hubError("invalid_input", made.reason) };
   return { command: "workflow/submit", data: { text: made.text } };
