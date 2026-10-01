@@ -16,7 +16,7 @@ async function main(): Promise<void> {
       HUB_WORKER_PROVIDER: "script",
       HUB_WORKER_SCRIPT: JSON.stringify([{ reply: "smoke-ok" }]),
     } as unknown as Record<string, string>,
-    exec: { command: process.execPath, args: [resolve(process.cwd(), "apps/host-hub/dist/host/cli.js"), "--internal-worker"] },
+    exec: { command: process.execPath, args: [resolve(import.meta.dirname, "../../../../apps/host-hub/dist/host/cli.js"), "--internal-worker"] },
     onLine: (line) => {
       lines.push(line);
     },
