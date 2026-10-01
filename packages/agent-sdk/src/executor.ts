@@ -5,7 +5,10 @@ import type { SdkEvent } from "./events.ts";
 import { sdkError } from "./errors.ts";
 import type { SdkResult } from "./errors.ts";
 import { mailboxRootOf, workflowRootOf } from "./dirs.ts";
-import { startInprocess, sessionPathOf, verdictOfTurnEnd } from "./executor-inprocess/run.ts";
+import { startInprocess, sessionPathOf } from "./executor-inprocess/run.ts";
+import { permissionBroker } from "@x-harness/permission";
+import { anchorTurnOf as anchorTurnOfSdk, anchorVerdictOf } from "./executor-worker/settle-anchor.ts";
+import { delegationView } from "@x-harness/agent-delegation";
 import type { InprocessRun } from "./executor-inprocess/run.ts";
 import type { AssemblySpec } from "./executor-inprocess/assembly.ts";
 import type { AgentOptions } from "@x-harness/agent-loop";
@@ -101,7 +104,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     }
     const agent = thread.run.handle.agent;
     const session = agent.session;
-    const anchorTurn = anchorTurnOf(session.events(), mode === "steer");
+    const anchorTurn = anchorTurnOfSdk(session.events(), mode === "steer");
     const scannedSeq = session.events().length - 1;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let resolveWaiter: (report: SdkSendReport) => void = () => {};
@@ -139,51 +142,18 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     return { ok: true, value: await waiter };
   }
 
-  function anchorTurnOf(events: readonly { seq: number; type: string; data: unknown }[], steerIntoRunning: boolean): number {
-    const last = lastTurnBoundary(events);
-    return steerIntoRunning && last.running ? last.turn : last.turn + 1;
-  }
-
-  function lastTurnBoundary(events: readonly { seq: number; type: string; data: unknown }[]): { turn: number; running: boolean; endSeq: number } {
-    let turn = -1;
-    let running = false;
-    let endSeq = -1;
-    for (const event of events) {
-      if (event.type === "turn/start") {
-        turn = Number((event.data as { turn?: number }).turn ?? turn + 1);
-        running = true;
-      } else if (event.type === "turn/end") {
-        running = false;
-        endSeq = event.seq;
-      }
-    }
-    return { turn, running, endSeq };
-  }
-
   function settleFromAnchor(threadId: string, sendId: string): void {
     const thread = live.get(threadId);
     if (thread === undefined) return;
     const wait = thread.waiters.get(sendId);
     if (wait === undefined) return;
-    const verdict = anchorVerdict(thread, wait.anchorTurn, wait.scannedSeq);
+    const verdict = anchorVerdictOf(thread.run.handle.agent.session.events(), wait.anchorTurn, wait.scannedSeq);
     thread.waiters.delete(sendId);
     if (wait.timer !== undefined) clearTimeout(wait.timer);
     wait.resolve({ sendId, ...verdict });
     dispatch(threadId, { kind: "settled", threadId, sendId, ...verdict });
   }
 
-  function anchorVerdict(thread: LiveThread, anchorTurn: number, scannedSeq: number): { ok: boolean; reason?: string } {
-    const events = thread.run.handle.agent.session.events();
-    for (let i = Math.max(scannedSeq, 0); i < events.length; i += 1) {
-      const event = events[i];
-      if (event === undefined || event.type !== "turn/end") continue;
-      const turn = Number((event.data as { turn?: number }).turn ?? -1);
-      if (turn < anchorTurn) continue;
-      return verdictOfTurnEnd(event);
-    }
-    if (thread.run.handle.agent.status !== "idle") return { ok: true };
-    return { ok: false, reason: "queue-cleared" };
-  }
   function assemblySpec(spec: StartThreadSpec, mainSessionId: SessionId, resumeId: SessionId | undefined): AssemblySpec {
     const script = client.internal.env["HUB_WORKER_PROVIDER"] === "script";
     const adapters = script ? [createScriptAdapter(scriptFromEnv(client.internal.env))] : [];
@@ -208,6 +178,14 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
       env: client.internal.env,
       onWarn: (message) => client.internal.log(message),
     };
+  }
+
+  function abortChainOf(thread: LiveThread, cause: string): void {
+    const world = thread.run.world;
+    const broker = world?.ctx.tryUse(permissionBroker) as { denyAll(): void } | undefined;
+    broker?.denyAll();
+    const delegation = world?.ctx.tryUse(delegationView) as { stopAll(id: never, cause: string): Promise<void> } | undefined;
+    if (delegation !== undefined) void delegation.stopAll(thread.run.handle.agent.session.id as never, cause);
   }
 
   function makeHandle(threadId: string): ThreadHandle {
@@ -252,6 +230,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
         const thread = live.get(threadId);
         if (thread === undefined) return { ok: false, reason: sdkError("unknown_thread", `Unknown threadId: ${threadId}`) };
         try {
+          abortChainOf(thread, cause ?? "aborted");
           thread.run.handle.agent.cancel(cause ?? "aborted");
           await thread.run.handle.agent.whenIdle();
           return { ok: true, value: undefined };
