@@ -1,4 +1,4 @@
-import { readCatalog, buildAssemblySnapshot } from "./shared/catalog.ts";
+import { readCatalog, buildAssemblySnapshot, resolveDefaultDial } from "./shared/catalog.ts";
 import { createAnthropicCompatAdapter, createOpenaiCompatAdapter } from "@x-harness/llm";
 import type { LlmAdapter } from "@x-harness/llm";
 import { createScriptAdapter, scriptFromEnv } from "./shared/script-adapter.ts";
@@ -45,8 +45,9 @@ export async function loadCatalogSnapshot(agentDir: string, env: Record<string, 
         : createOpenaiCompatAdapter({ name: provider.provider, baseUrl: provider.baseUrl, apiKey: provider.apiKey }),
     );
   }
-  const dial = { provider: catalog.defaults.provider, model: catalog.defaults.model };
-  const fallbackDial = registered.has(dial.provider) ? dial : undefined;
+  const resolvedDefault = resolveDefaultDial(catalog) ?? { provider: catalog.defaults.provider, model: catalog.defaults.model };
+  const dial = resolvedDefault;
+  const fallbackDial = registered.has(dial.provider) && (modelsByProvider.get(dial.provider)?.includes(dial.model) ?? false) ? dial : undefined;
   const resolveProviderOf = (model: string): string | undefined => {
     const owners = [...modelsByProvider.entries()].filter(([, models]) => models.includes(model)).map(([name]) => name);
     return owners.length === 1 && registered.has(owners[0] as string) ? owners[0] : undefined;
