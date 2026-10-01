@@ -2,6 +2,8 @@ export { createSdkClient } from "./client.ts";
 export type { SdkClient, SdkClientOptions, ThreadInfo } from "./client.ts";
 export { attachExecutor } from "./executor.ts";
 export type { Executor, StartThreadSpec, SendOptions, SdkSendReport, ThreadHandle } from "./executor.ts";
+export { spawnWorker, workerExecPath } from "./executor-worker/spawn.ts";
+export type { WorkerSpawnSpec, WorkerHandle, SpawnFn } from "./executor-worker/spawn.ts";
 export { createScriptAdapter, scriptFromEnv } from "./script-adapter.ts";
 export type { ScriptStep, ScriptAdapter } from "./script-adapter.ts";
 export { SDK_ERROR_CODES, sdkError, isSdkErrorShape, errorOfCause, CodedError } from "./errors.ts";
