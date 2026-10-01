@@ -45,6 +45,7 @@ export interface ThreadHandle {
   followup(text: string, options?: SendOptions): Promise<SdkResult<SdkSendReport>>;
   abort(cause?: string): Promise<SdkResult<void>>;
   command<T = unknown>(name: string, args?: object): Promise<SdkResult<T>>;
+  readonly events: AsyncIterable<SdkEvent>;
   retire(): Promise<SdkResult<void>>;
   stop(): Promise<void>;
 }
@@ -60,6 +61,9 @@ interface LiveThread {
   run: InprocessRun;
   listeners: Map<string, Set<(event: SdkEvent) => void>>;
   waiters: Map<string, SendWaiter>;
+  eventBuffer: SdkEvent[];
+  eventWaiters: Array<() => void>;
+  eventIteratorActive: boolean;
 }
 
 export function attachExecutor(client: SdkClientCore, options: SdkClientOptions) {
@@ -82,8 +86,11 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
   function dispatch(threadId: string, event: SdkEvent): void {
     const thread = live.get(threadId);
     if (thread !== undefined) {
+      thread.eventBuffer.push(event);
+      if (thread.eventBuffer.length > 4096) thread.eventBuffer.splice(0, thread.eventBuffer.length - 4096);
       const listeners = thread.listeners.get(event.kind);
       if (listeners !== undefined) for (const listener of listeners) listener(event);
+      for (const wake of thread.eventWaiters.splice(0)) wake();
       if (event.kind === "settled" && event.sendId !== "") {
         const waiter = thread.waiters.get(event.sendId);
         if (waiter !== undefined) {
@@ -169,11 +176,11 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     dispatch(threadId, { kind: "settled", threadId, sendId, ...verdict });
   }
 
-  function defaultDelegationOf(snapshot: CatalogSnapshot | undefined): { resolveProviderOf: (model: string) => string | undefined; fallbackDial: { model: string; provider: string } | undefined; dialable: (ref: string) => boolean } | undefined {
+  function defaultDelegationOf(snapshot: CatalogSnapshot | undefined): { resolveProviderOf: (model: string) => string | undefined; fallbackDial?: { model: string; provider: string }; dialable: (ref: string) => boolean } | undefined {
     if (snapshot === undefined) return undefined;
     return {
       resolveProviderOf: snapshot.resolveProviderOf,
-      fallbackDial: snapshot.fallbackDial ?? { model: "", provider: "" },
+      ...(snapshot.fallbackDial !== undefined ? { fallbackDial: snapshot.fallbackDial } : {}),
       dialable: snapshot.dialable,
     };
   }
@@ -212,6 +219,39 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     if (delegation !== undefined) void delegation.stopAll(thread.run.handle.agent.session.id as never, cause);
   }
 
+  function threadEventsIterable(threadId: string): AsyncIterable<SdkEvent> {
+    return {
+      [Symbol.asyncIterator](): AsyncIterator<SdkEvent> {
+        const thread = live.get(threadId);
+        if (thread === undefined) {
+          return (async function* (): AsyncIterator<SdkEvent> {})();
+        }
+        let cursor = 0;
+        const liveRef = thread;
+        liveRef.eventIteratorActive = true;
+        return {
+          async next(): Promise<IteratorResult<SdkEvent>> {
+            for (;;) {
+              if (cursor < liveRef.eventBuffer.length) {
+                const value = liveRef.eventBuffer[cursor];
+                cursor += 1;
+                return { value: value as SdkEvent, done: false };
+              }
+              if (!live.has(threadId)) return { value: undefined, done: true };
+              await new Promise<void>((resolve) => {
+                liveRef.eventWaiters.push(resolve);
+              });
+            }
+          },
+          async return(): Promise<IteratorResult<SdkEvent>> {
+            liveRef.eventIteratorActive = false;
+            return { value: undefined, done: true };
+          },
+        };
+      },
+    };
+  }
+
   function makeHandle(threadId: string): ThreadHandle {
     return {
       get threadId(): string {
@@ -233,6 +273,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
           isStreaming: entry?.isStreaming ?? false,
         };
       },
+      events: threadEventsIterable(threadId),
       on(kind: string, listener: (event: SdkEvent) => void): () => void {
         const thread = live.get(threadId);
         if (thread === undefined) return () => {};
@@ -275,7 +316,11 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
   }
 
   async function startThread(spec: StartThreadSpec): Promise<SdkResult<ThreadHandle>> {
-    await ensureCatalog();
+    try {
+      await ensureCatalog();
+    } catch (error) {
+      return { ok: false, reason: sdkError("io_failed", `catalog load failed: ${String(error instanceof Error ? error.message : error)}`) };
+    }
     if (!client.internal.threadBudgetAvailable()) {
       return { ok: false, reason: sdkError("thread_limit", "too many live threads (limit reached)") };
     }
@@ -292,7 +337,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     try {
       const run = await startInprocess({ threadId: String(mainSessionId), spec: assemblySpec(spec, mainSessionId, undefined) });
       const threadId = String(run.handle.agent.session.id);
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map() };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), eventBuffer: [], eventWaiters: [], eventIteratorActive: false };
       live.set(threadId, entry);
       void run.onEvent((event) => dispatch(threadId, event));
       client.internal.table.remove(slot);
@@ -312,7 +357,11 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
   }
 
   async function resumeThread(spec: { threadId: string; cwd?: string; trusted?: boolean; dial?: { provider: string; model: string } }): Promise<SdkResult<ThreadHandle>> {
-    await ensureCatalog();
+    try {
+      await ensureCatalog();
+    } catch (error) {
+      return { ok: false, reason: sdkError("io_failed", `catalog load failed: ${String(error instanceof Error ? error.message : error)}`) };
+    }
     if (!isSafeSessionId(spec.threadId)) {
       return { ok: false, reason: sdkError("session_unreadable", "Session file not readable") };
     }
@@ -341,7 +390,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
           spec.threadId as SessionId,
         ),
       });
-      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map() };
+      const entry: LiveThread = { run, listeners: new Map(), waiters: new Map(), eventBuffer: [], eventWaiters: [], eventIteratorActive: false };
       live.set(spec.threadId, entry);
       void run.onEvent((event) => dispatch(spec.threadId, event));
       client.internal.table.remove(slot);
@@ -408,6 +457,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
         ]);
       }
       live.delete(threadId);
+      if (thread !== undefined) for (const wake of thread.eventWaiters.splice(0)) wake();
       const sessionPath = entry?.sessionPath ?? null;
       client.internal.table.update(threadId, { state: "parked", sessionPath: null });
       if (sessionPath !== null) client.internal.table.update(threadId, { sessionPath });

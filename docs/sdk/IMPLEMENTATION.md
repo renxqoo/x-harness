@@ -175,10 +175,11 @@
 - whenIdle 现实现不可 reject（agent-loop driver 只 resolve）——executor
   catch 为防御位（settleFromAnchor 抛错可达），settle-failed.test 真触发
   验证（Proxy 注入 + 反向验证：禁用 catch 用例红）。
-- admin 域下沉（B 终审 B-4 补登记）：models/agents 两域已迁 sdk（P1 第五/
-  六批）；settings/skills/plugins/skills-install/plugins-install/trust/
-  permission-dual/catalog 快照 K9 七件**挂 P2 admin 批**——admin-commands.ts
-  853 行与 host 侧 install/trust 文件随 meta 模式逐域切。
+- admin 域下沉（B 终审 B-4）：models/agents/skills-admin/skills-install/
+  plugins-admin/plugins-install/skills-migrate/agents-migrate 七域已迁 sdk；
+  catalog 快照 K9 in-process 半已落（b622739）；余下 = settings/trust/
+  permission-dual 三件编排 + K9 reload 广播 + host 侧 resolveDefaultDial
+  统一——P2 admin 批余项。
 - meta 域切换已提前落（P2 期间）：worker-meta-commands 228→64 行（七命令
   切 sdk meta.ts，outcomeRespond 序列化）。
 - build external 显式清单（28 项）：从 workspaces 派生的自动化随 T9 流水线
