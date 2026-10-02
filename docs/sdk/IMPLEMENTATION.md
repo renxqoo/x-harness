@@ -149,6 +149,11 @@
   随 P1 对应域下沉；
 - startThread 仅支持 cwd/trusted/dial（API.md 九字段面随 P2 装配批落地，
   未实现字段不声明不吞）；command() 分发面挂 P2 命令批（五域切换载体）；
+- 五域切换完成度（P2）：queue×3/bash×2/meta×7/read×13/send×3+compact/
+  admin×21/notify 已切 sdk（51 命令）；thread 域编排 5 + workflow 3 保留
+  本地（serializedLifecycle/rekey/装配面耦合宿主——随 executor-worker
+  完成度收尾时再切，§3c 登记）；事件面分级丢弃已落（eventQueueCapacity
+  消费 + 终态保护 + 洪泛截断兜底，event-trim.test 两例）；
 - helloFrame 常量与 vocab 单源合并、hub 帧交叉断言随 P2 worker 执行器；
 - thread_state 事件 P0 覆盖终态迁移（live→parked/dead），spawning→live
   随 P1 生命周期域；state_conflict 分支随 inline persistence 落地补测试；
