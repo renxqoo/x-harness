@@ -10,6 +10,8 @@ import { hubError, CodedError, errorOfCause, type HubErrorShape } from "../share
 import { assembleWorkerAgent, teardownWorld } from "./assembly.ts";
 import type { AssemblyResult } from "./assembly.ts";
 import { respond, requireThread, sessionOf } from "./worker-commands.ts";
+import { threadNotify as sdkThreadNotify } from "@x-harness/agent-sdk/src/commands/lifecycle.ts";
+import { outcomeRespond } from "./outcome-bridge.ts";
 import type { CommandInput, Handler, WorkerRuntime, WorkerState } from "./worker-commands.ts";
 import type { EventBridge } from "./event-bridge.ts";
 import { permissionModeOf, PERMISSION_MODES, THINKING_LEVELS, thinkingUnsupported } from "./meta-state.ts";
@@ -392,22 +394,11 @@ export function registerThreadCommands(rt: WorkerRuntime, handlers: Map<string, 
   }));
 
   handlers.set("thread/notify", async (input) => {
-    const source = typeof input.source === "string" ? input.source : "";
-    const text = typeof input.text === "string" ? input.text : "";
-    const kind = input.kind === "directive" || input.kind === "content" ? input.kind : undefined;
-    const agent = rt.state.handle?.agent;
-    if (source === "" || text === "" || kind === undefined || agent === undefined) {
-      respond(rt, { id: input.id, command: "thread/notify", error: hubError("invalid_input", "thread/notify requires source, kind (directive|content), text and a live thread") });
-      return;
-    }
-    const target = agent.status === "running" ? "next-step" : "next-turn";
-    try {
-      agent.notify({ source, kind, text, target });
-    } catch {
-      respond(rt, { id: input.id, command: "thread/notify" });
-      return;
-    }
-    respond(rt, { id: input.id, command: "thread/notify" });
+    const outcome = sdkThreadNotify(
+      { session: rt.state.handle?.agent.session, agent: rt.state.handle?.agent, stopAll: async () => {} },
+      input,
+    );
+    outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
   });
 }
 
