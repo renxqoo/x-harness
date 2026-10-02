@@ -189,9 +189,11 @@ for await (const e of thread.events) { ... }  // birth 缓冲 + 有界；break �
 | heartbeat | idleMs, streaming, rssBytes | 1s |
 | error | code, message | 非致命错误 |
 
-缓冲契约：句柄 events 为 birth 环形缓冲（容量 4096，订阅前事件不丢）；
-溢出丢最旧事件（保留最新与终态近端）；client.onEvent/thread.on 为直通
-分发（无缓冲）。容量分级与溢出补 error 的精细化挂 P2 事件面收尾批。
+缓冲契约：句柄 events 为 birth 缓冲（订阅前事件不丢）；容量
+eventQueueCapacity（缺省 1024，clamp ≥16）；溢出优先丢弃可丢类增量
+（stream/tool_stream/session/platform/heartbeat），终态类
+（settled/ui_request/thread_state/thread_rekeyed/git_changed）受保护，
+全部终态洪泛时按最旧截断兜底；client.onEvent/thread.on 直通无缓冲。
 
 ## 7. SdkLimits
 

@@ -176,8 +176,8 @@ interface SdkThreadHandle {
   （工具终止/弹窗拒绝/inflight 清空）后 resolve；settled(ok=false) 在其后必达。
 - **每线程并发 driving send 上限**：不发明新值——沿用现状 drivingIds 仅记账
   无上限（审查 A#29），pendingCommandsCap 兜底总量。
-- **慢消费背压**：events 面为 birth 环形缓冲（4096，溢出丢最旧）；on 面直通
-  无缓冲。分级丢弃与终态保护挂 P2 事件面收尾批。
+- **慢消费背压**：events 面为 birth 缓冲（容量 eventQueueCapacity，溢出
+  优先丢可丢类增量、终态类受保护、洪泛时最旧截断兜底）；on 面直通无缓冲。
 - **shutdown 兜底**（审查 A#17）：shutdown 时对全部未决 sendId 由 client 合成
   settled(ok=false, reason="shutdown")——worker 可能先退而帧未写出，client 是
   唯一兜底点。

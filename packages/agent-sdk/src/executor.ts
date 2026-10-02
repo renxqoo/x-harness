@@ -12,6 +12,7 @@ import { WORLD_TEARDOWN_TIMEOUT_MS } from "./limits.ts";
 import { permissionBroker } from "@x-harness/permission";
 import { llmRuntime } from "@x-harness/llm";
 import { anchorTurnOf as anchorTurnOfSdk, anchorVerdictOf } from "./executor-worker/settle-anchor.ts";
+import { trimEventBuffer, threadEventsIterable } from "./events-buffer.ts";
 import { delegationView } from "@x-harness/agent-delegation";
 import type { InprocessRun } from "./executor-inprocess/run.ts";
 import type { AssemblySpec } from "./executor-inprocess/assembly.ts";
@@ -87,7 +88,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     const thread = live.get(threadId);
     if (thread !== undefined) {
       thread.eventBuffer.push(event);
-      if (thread.eventBuffer.length > 4096) thread.eventBuffer.splice(0, thread.eventBuffer.length - 4096);
+      trimEventBuffer(thread, client.internal.limits.eventQueueCapacity);
       const listeners = thread.listeners.get(event.kind);
       if (listeners !== undefined) for (const listener of listeners) listener(event);
       for (const wake of thread.eventWaiters.splice(0)) wake();
@@ -219,37 +220,6 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
     if (delegation !== undefined) void delegation.stopAll(thread.run.handle.agent.session.id as never, cause);
   }
 
-  function threadEventsIterable(threadId: string): AsyncIterable<SdkEvent> {
-    return {
-      [Symbol.asyncIterator](): AsyncIterator<SdkEvent> {
-        const thread = live.get(threadId);
-        if (thread === undefined) {
-          return (async function* (): AsyncIterator<SdkEvent> {})();
-        }
-        let cursor = 0;
-        const liveRef = thread;
-        return {
-          async next(): Promise<IteratorResult<SdkEvent>> {
-            for (;;) {
-              if (cursor < liveRef.eventBuffer.length) {
-                const value = liveRef.eventBuffer[cursor];
-                cursor += 1;
-                return { value: value as SdkEvent, done: false };
-              }
-              if (!live.has(threadId)) return { value: undefined, done: true };
-              await new Promise<void>((resolve) => {
-                liveRef.eventWaiters.push(resolve);
-              });
-            }
-          },
-          async return(): Promise<IteratorResult<SdkEvent>> {
-            return { value: undefined, done: true };
-          },
-        };
-      },
-    };
-  }
-
   function makeHandle(threadId: string): ThreadHandle {
     return {
       get threadId(): string {
@@ -272,7 +242,7 @@ export function attachExecutor(client: SdkClientCore, options: SdkClientOptions)
         };
       },
       get events(): AsyncIterable<SdkEvent> {
-        return threadEventsIterable(threadId);
+        return threadEventsIterable(live, threadId);
       },
       on(kind: string, listener: (event: SdkEvent) => void): () => void {
         const thread = live.get(threadId);
