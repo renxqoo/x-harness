@@ -25,7 +25,8 @@ export interface SendCommandState {
   broker: { denyAll(): void };
   inflight: { abortAll(): Promise<void>; register(): { signal: AbortSignal; unregister(): void } };
   delegation: { stopAll(id: SessionId, cause: string): Promise<void> } | undefined;
-  settle(sendId: string | undefined): void;
+  beginSettle(requestId: string | undefined, steerIntoRunning: boolean): unknown;
+  settle(anchor: unknown): void;
 }
 
 function imageOptions(images: readonly WireImage[] | undefined): { images: readonly ImageBlock[] } | undefined {
@@ -59,16 +60,17 @@ export async function prompt(state: SendCommandState, input: Record<string, unkn
   }
   const agent = state.agent;
   if (agent === undefined) return noThread("prompt");
+  const anchor = state.beginSettle(requestId2(input.id), false);
   try {
     agent.followup(message, imageOptions(parsedImages.images));
   } catch (error) {
     return { command: "prompt", error: errorOfCause(error) };
   }
-  state.settle(requestId2(input.id));
+  state.settle(anchor);
   return { command: "prompt" };
 }
 
-async function dispatchCommand(state: SendCommandState, requestId: unknown, spec: { command: string; line: string; imagesPresent: boolean }): Promise<CommandOutcome | undefined> {
+export async function dispatchCommand(state: SendCommandState, requestId: unknown, spec: { command: string; line: string; imagesPresent: boolean }): Promise<CommandOutcome | undefined> {
   const registry = state.commands;
   if (registry === undefined || state.session === undefined) return undefined;
   const parsed = parseCommand(spec.line);
@@ -97,13 +99,15 @@ function promptStreamingBranch(input: { state: SendCommandState; behavior: unkno
   }
   const agent = state.agent;
   if (agent === undefined) return noThread("prompt");
+  const anchor = state.beginSettle(requestId, behavior === "steer");
   try {
     if (behavior === "steer") agent.steer(message, imageOptions(input.images));
     else agent.followup(message, imageOptions(input.images));
   } catch (error) {
     return { command: "prompt", error: errorOfCause(error) };
   }
-  state.settle(requestId);
+  state.settle(anchor);
+  void requestId;
   return { command: "prompt" };
 }
 function requestId2(requestId: unknown): string | undefined {
@@ -119,12 +123,13 @@ export async function steer(state: SendCommandState, input: Record<string, unkno
   if (imagesDenied !== undefined) return { command: "steer", error: hubError("capability_images", imagesDenied) };
   const agent = state.agent;
   if (agent === undefined) return noThread("steer");
+  const anchor = state.beginSettle(requestId2(input.id), true);
   try {
     agent.steer(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
   } catch (error) {
     return { command: "steer", error: errorOfCause(error) };
   }
-  state.settle(requestId2(input.id));
+  state.settle(anchor);
   return { command: "steer" };
 }
 
@@ -137,12 +142,13 @@ export async function followUp(state: SendCommandState, input: Record<string, un
   if (imagesDenied !== undefined) return { command: "follow_up", error: hubError("capability_images", imagesDenied) };
   const agent = state.agent;
   if (agent === undefined) return noThread("follow_up");
+  const anchor = state.beginSettle(requestId2(input.id), false);
   try {
     agent.followup(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
   } catch (error) {
     return { command: "follow_up", error: errorOfCause(error) };
   }
-  state.settle(requestId2(input.id));
+  state.settle(anchor);
   return { command: "follow_up" };
 }
 

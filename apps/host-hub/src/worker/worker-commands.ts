@@ -1,11 +1,12 @@
-import type { ImageBlock, Session, SessionId } from "@x-harness/session";
+import type { Session, SessionId } from "@x-harness/session";
 import type { AgentHandle } from "@x-harness/agent-loop";
 import type { World } from "@x-harness/harness";
 import type { ThinkingLevel } from "@x-harness/llm";
 import type { PermissionModeService } from "@x-harness/permission";
-import { hubError, errorOfCause } from "../shared/errors.ts";
+import { hubError } from "../shared/errors.ts";
 import { anchorAtKick, anchorVerdictOf } from "./settle-anchor.ts";
 import { clearQueue as sdkClearQueue, queueDrop as sdkQueueDrop, queueSendNow as sdkQueueSendNow } from "@x-harness/agent-sdk/src/commands/queue.ts";
+import { prompt as sdkPrompt, steer as sdkSteer, followUp as sdkFollowUp, dispatchCommand as sdkDispatchCommand } from "@x-harness/agent-sdk/src/commands/send.ts";
 import type { QueueCommandState } from "@x-harness/agent-sdk/src/commands/queue.ts";
 import { outcomeRespond } from "./outcome-bridge.ts";
 import type { KickAnchor } from "./settle-anchor.ts";
@@ -13,14 +14,11 @@ import type { HubErrorShape } from "../shared/errors.ts";
 import type { DelegationView } from "@x-harness/agent-delegation";
 import { responseFrame } from "../protocol/frames.ts";
 import { createWorkflowHandlers } from "./workflow-commands.ts";
-import { parseCommand } from "@x-harness/commands";
-import { normalizeImages } from "../shared/images.ts";
-import type { WireImage } from "../shared/images.ts";
 import { catalogEntryOf, catalogModelIds } from "../shared/worker-catalog.ts";
 import type { WorkerCatalog } from "../shared/worker-catalog.ts";
 import type { DialFact } from "../shared/meta-fold.ts";
 import type { ScriptAdapter } from "../shared/script-adapter.ts";
-import { currentDialOf, currentThinkingOf, imagesUnsupported, thinkingUnsupported, META_KEY_DIAL } from "./meta-state.ts";
+import { currentDialOf, currentThinkingOf, thinkingUnsupported, META_KEY_DIAL } from "./meta-state.ts";
 import type { DialogBroker } from "./dialogs.ts";
 import type { BashExec } from "./bash-exec.ts";
 import type { EventBridge } from "./event-bridge.ts";
@@ -124,20 +122,7 @@ export function wrapSyncHandler(fn: (input: CommandInput) => void): Handler {
   };
 }
 
-function parseImages(value: unknown): { ok: true; images: WireImage[] | undefined } | { ok: false; code: "invalid_input" | "images_too_many"; reason: string } {
-  return normalizeImages(value);
-}
 
-function imagesGate(rt: WorkerRuntime, images: WireImage[] | undefined): string | undefined {
-  if (images === undefined) return undefined;
-  const session = rt.state.handle?.agent.session;
-  const dial = session !== undefined ? currentDialOf(session.events(), rt.state.dial) : rt.state.dial;
-  return imagesUnsupported(rt.state.catalog, dial);
-}
-
-function imageOptions(images: WireImage[] | undefined): { images: readonly ImageBlock[] } | undefined {
-  return images === undefined ? undefined : { images: [...images] };
-}
 
 function delegationError(reason: string): HubErrorShape {
   if (reason.startsWith("invalid-args:") || reason.startsWith("not-found:") || reason.startsWith("not-owner:")) return hubError("invalid_input", reason);
@@ -169,65 +154,28 @@ export function settleAfter(rt: WorkerRuntime, id: string | undefined, kickAncho
   return true;
 }
 
-async function dispatchCommand(
-  rt: WorkerRuntime,
-  input: CommandInput,
-  spec: { command: string; line: string; imagesPresent: boolean },
-): Promise<boolean> {
-  const registry = rt.state.commands;
-  if (registry === undefined) return false;
-  const session = sessionOf(rt);
-  if (session === undefined) return false;
-  const parsed = parseCommand(spec.line);
-  if (spec.imagesPresent && parsed !== undefined && registry.find(parsed.name) !== undefined) {
-    respond(rt, { id: input.id, command: spec.command, error: hubError("invalid_input", "invalid images: compact does not accept images") });
-    return true;
-  }
-  const registration = rt.inflight.register();
-  try {
-    const execution = await registry.execute(session, spec.line, registration.signal);
-    if (execution === undefined) return false;
-    if (execution.result.kind === "error") {
-      respond(rt, { id: input.id, command: spec.command, error: hubError("compact_rejected", execution.result.text) });
-    } else {
-      respond(rt, { id: input.id, command: spec.command, data: execution.result.data });
-    }
-    return true;
-  } catch (error) {
-    respond(rt, { id: input.id, command: spec.command, error: errorOfCause(error) });
-    return true;
-  } finally {
-    registration.unregister();
-  }
-}
 
-function promptStreamingBranch(
-  rt: WorkerRuntime,
-  input: CommandInput,
-  payload: { message: string; images: WireImage[] | undefined },
-): void {
-  const behavior = input.streamingBehavior;
-  if (behavior !== "steer" && behavior !== "followUp") {
-    respond(rt, { id: input.id, command: "prompt", error: hubError("streaming_window", "streamingBehavior required while streaming") });
-    return;
-  }
-  const agent = rt.state.handle?.agent;
-  if (agent === undefined) {
-    respond(rt, { id: input.id, command: "prompt", error: hubError("unknown_thread", "Unknown threadId") });
-    return;
-  }
-  try {
-    if (behavior === "steer") agent.steer(payload.message, imageOptions(payload.images));
-    else agent.followup(payload.message, imageOptions(payload.images));
-  } catch (error) {
-    respond(rt, { id: input.id, command: "prompt", error: errorOfCause(error) });
-    return;
-  }
-  const kickAnchor = anchorAtKick(rt, input.id, behavior === "steer");
-  respond(rt, { id: input.id, command: "prompt" });
-  settleAfter(rt, input.id, kickAnchor);
+function sendStateOf(rt: WorkerRuntime): import("@x-harness/agent-sdk/src/commands/send.ts").SendCommandState {
+  return {
+    session: rt.state.handle?.agent.session,
+    currentThreadId: rt.state.threadId === "" ? undefined : rt.state.threadId,
+    catalog: rt.state.catalog,
+    dial: rt.state.dial,
+    commands: rt.state.commands as { find(name: string): unknown; execute(session: never, line: string, signal: AbortSignal): Promise<{ result: { kind: string; text: string; data?: unknown } } | undefined> } | undefined,
+    agent: rt.state.handle?.agent,
+    streaming: () => rt.bridge.isStreaming(),
+    pendingSends: () => rt.pendingSends,
+    bash: { abortAdmissions: () => rt.bash.abortAdmissions(), abortRunning: (id) => rt.bash.abortRunning(id) },
+    broker: { denyAll: () => rt.broker.denyAll() },
+    inflight: rt.inflight,
+    delegation: rt.state.delegation,
+    beginSettle: (requestId: string | undefined, steerIntoRunning: boolean) => anchorAtKick(rt, requestId, steerIntoRunning),
+    settle: (anchor: unknown) => {
+      const kick = anchor as { id: string } | undefined;
+      if (kick !== undefined) settleAfter(rt, kick.id, kick as never);
+    },
+  };
 }
-
 
 function sdkQueueState(rt: WorkerRuntime): QueueCommandState {
   return {
@@ -248,96 +196,20 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
 
   handlers.set("prompt", async (input) => {
     if (requireThread(rt, { ...input, command: "prompt" }) === undefined) return;
-    const message = typeof input.message === "string" ? input.message : "";
-    const parsedImages = parseImages(input.images);
-    if (!parsedImages.ok) {
-      respond(rt, { id: input.id, command: "prompt", error: hubError(parsedImages.code, parsedImages.reason) });
-      return;
-    }
-    const gate = imagesGate(rt, parsedImages.images);
-    if (gate !== undefined) {
-      respond(rt, { id: input.id, command: "prompt", error: hubError("capability_images", gate) });
-      return;
-    }
-    const dispatched = await dispatchCommand(rt, input, { command: "prompt", line: message, imagesPresent: input.images !== undefined });
-    if (dispatched) return;
-    if (rt.pendingSends > 0 || rt.bridge.isStreaming()) {
-      promptStreamingBranch(rt, input, { message, images: parsedImages.images });
-      return;
-    }
-    const agent = rt.state.handle?.agent;
-    if (agent === undefined) {
-      respond(rt, { id: input.id, command: "prompt", error: hubError("unknown_thread", "Unknown threadId") });
-      return;
-    }
-    const promptAnchor = anchorAtKick(rt, input.id, false);
-    try {
-      agent.followup(message, imageOptions(parsedImages.images));
-    } catch (error) {
-      respond(rt, { id: input.id, command: "prompt", error: errorOfCause(error) });
-      return;
-    }
-    respond(rt, { id: input.id, command: "prompt" });
-    settleAfter(rt, input.id, promptAnchor);
-
+    const outcome = await sdkPrompt(sendStateOf(rt), input);
+    outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
   });
 
   handlers.set("steer", async (input) => {
     if (requireThread(rt, { ...input, command: "steer" }) === undefined) return;
-    const parsedImages = parseImages(input.images);
-    if (!parsedImages.ok) {
-      respond(rt, { id: input.id, command: "steer", error: hubError(parsedImages.code, parsedImages.reason) });
-      return;
-    }
-    const gate = imagesGate(rt, parsedImages.images);
-    if (gate !== undefined) {
-      respond(rt, { id: input.id, command: "steer", error: hubError("capability_images", gate) });
-      return;
-    }
-    const agent = rt.state.handle?.agent;
-    if (agent === undefined) {
-      respond(rt, { id: input.id, command: "steer", error: hubError("unknown_thread", "Unknown threadId") });
-      return;
-    }
-    const steerAnchor = anchorAtKick(rt, input.id, true);
-    try {
-      agent.steer(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
-    } catch (error) {
-      respond(rt, { id: input.id, command: "steer", error: errorOfCause(error) });
-      return;
-    }
-    respond(rt, { id: input.id, command: "steer" });
-    settleAfter(rt, input.id, steerAnchor);
-
+    const outcome = await sdkSteer(sendStateOf(rt), input);
+    outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
   });
 
   handlers.set("follow_up", async (input) => {
     if (requireThread(rt, { ...input, command: "follow_up" }) === undefined) return;
-    const parsedImages = parseImages(input.images);
-    if (!parsedImages.ok) {
-      respond(rt, { id: input.id, command: "follow_up", error: hubError(parsedImages.code, parsedImages.reason) });
-      return;
-    }
-    const gate = imagesGate(rt, parsedImages.images);
-    if (gate !== undefined) {
-      respond(rt, { id: input.id, command: "follow_up", error: hubError("capability_images", gate) });
-      return;
-    }
-    const agent = rt.state.handle?.agent;
-    if (agent === undefined) {
-      respond(rt, { id: input.id, command: "follow_up", error: hubError("unknown_thread", "Unknown threadId") });
-      return;
-    }
-    const followAnchor = anchorAtKick(rt, input.id, false);
-    try {
-      agent.followup(typeof input.message === "string" ? input.message : "", imageOptions(parsedImages.images));
-    } catch (error) {
-      respond(rt, { id: input.id, command: "follow_up", error: errorOfCause(error) });
-      return;
-    }
-    respond(rt, { id: input.id, command: "follow_up" });
-    settleAfter(rt, input.id, followAnchor);
-
+    const outcome = await sdkFollowUp(sendStateOf(rt), input);
+    outcomeRespond((line) => rt.emitLine(line), input.id, outcome);
   });
 
   handlers.set("abort", async (input) => {
@@ -375,8 +247,9 @@ export function createWorkerCommands(rt: WorkerRuntime): Map<string, Handler> {
   handlers.set("compact", async (input) => {
     if (requireThread(rt, { ...input, command: "compact" }) === undefined) return;
     const custom = typeof input.customInstructions === "string" && input.customInstructions.trim() !== "" ? input.customInstructions.trim() : undefined;
-    const dispatched = await dispatchCommand(rt, input, { command: "compact", line: custom !== undefined ? `/compact ${custom}` : "/compact", imagesPresent: false });
-    if (!dispatched) respond(rt, { id: input.id, command: "compact", error: hubError("unknown_command", "unknown command") });
+    const dispatched = await sdkDispatchCommand(sendStateOf(rt), input.id, { command: "compact", line: custom !== undefined ? `/compact ${custom}` : "/compact", imagesPresent: false });
+    if (dispatched === undefined) respond(rt, { id: input.id, command: "compact", error: hubError("unknown_command", "unknown command") });
+    else outcomeRespond((line) => rt.emitLine(line), input.id, dispatched);
   });
 
   createWorkflowHandlers({

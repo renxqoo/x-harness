@@ -134,7 +134,7 @@ describe("dual-host command contracts", () => {
         broker: { denyAll: () => {} },
         inflight: { abortAll: async () => {}, register: () => ({ signal: new AbortController().signal, unregister: () => {} }) },
         delegation: undefined,
-        settle: () => {},
+        beginSettle: () => ({}), settle: () => {},
       };
       const sent = await prompt(state, { message: "hello" });
       expect(sent.error).toBeUndefined();
@@ -161,6 +161,7 @@ describe("dual-host command contracts", () => {
     try {
       const agent = w.run.handle.agent;
       const settledIds: string[] = [];
+      let currentId = "";
       const state: SendCommandState = {
         session: agent.session,
         currentThreadId: String(agent.session.id),
@@ -174,15 +175,18 @@ describe("dual-host command contracts", () => {
         broker: { denyAll: () => {} },
         inflight: { abortAll: async () => {}, register: () => ({ signal: new AbortController().signal, unregister: () => {} }) },
         delegation: undefined,
-        settle: (id) => {
-          if (typeof id === "string") settledIds.push(id);
+        beginSettle: () => currentId,
+        settle: (anchor) => {
+          if (typeof anchor === "string" && anchor !== "") settledIds.push(anchor);
         },
       };
+      currentId = "s1";
       const inflight = prompt(state, { message: "mid", streamingBehavior: "steer", id: "s1" });
       const steered = await Promise.race([inflight, new Promise<"PENDING">((r) => { setTimeout(() => r("PENDING"), 2000).unref?.(); })]);
       expect(steered).not.toBe("PENDING");
       const noBehavior = await prompt(state, { message: "mid2" });
       expect(noBehavior.error?.code).toBe("streaming_window");
+      currentId = "s2";
       const followUpBranch = await prompt(state, { message: "queued-while-streaming", streamingBehavior: "followUp", id: "s2" });
       expect(followUpBranch.error).toBeUndefined();
       await w.run.handle.agent.whenIdle();

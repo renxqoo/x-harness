@@ -47,7 +47,7 @@ function sendStateOf(run: Awaited<ReturnType<typeof makeRun>>["run"], over: Part
     bash: { abortAdmissions: () => {}, abortRunning: () => {} },
     broker: { denyAll: () => {} },
     inflight: { abortAll: async () => {}, register: () => ({ signal: new AbortController().signal, unregister: () => {} }) },
-    delegation: undefined, settle: () => {}, ...over,
+    delegation: undefined, beginSettle: () => ({}), settle: () => {}, ...over,
   };
 }
 
