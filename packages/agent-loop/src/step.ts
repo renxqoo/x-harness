@@ -338,7 +338,7 @@ export async function scheduleTools(scope: TurnScope, step: number, assistant: A
     specs,
   );
   for (const context of chunkContexts(collected.additionalContexts)) {
-    appendEvent(session, "agent/inbox/spliced", insertData("next-step", context));
+    appendEvent(session, "agent/inbox/spliced", insertData({ target: "next-step", contents: context }));
   }
   if (controller.signal.aborted) return { kind: "aborted" };
   return { kind: "ran", collected, hasTools: true, truncatedCount: assistant.stopReason === "max-tokens" ? specsTotal - specs.length : 0 };

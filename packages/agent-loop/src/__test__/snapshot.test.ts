@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { SurfaceNode } from "@x-harness/session";
-import { SNAPSHOT_SUPERSEDES, createRequestSnapshot, createTailSnapshot, isSnapshotNode, snapshotEnvelope } from "../snapshot.ts";
+import { SNAPSHOT_SOURCE, SNAPSHOT_SUPERSEDES, createRequestSnapshot, createTailSnapshot, isEnvelopeSnapshotNode, snapshotEnvelope } from "../snapshot.ts";
 import { agentRequest } from "../tokens.ts";
 import type { Dial } from "../tokens.ts";
 import { makeWorld, resetWorlds, spawn, textScript, worlds } from "./world.ts";
@@ -9,15 +9,34 @@ beforeEach(() => {
   resetWorlds();
 });
 
-function textsOf(agent: { session: { events: () => readonly unknown[] } }): string[] {
+interface SessionLike {
+  readonly session: { events: () => readonly unknown[] };
+}
+
+function contentTexts(event: { data: unknown }): string[] {
+  const content = (event.data as unknown as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
+  return content.flatMap((block) => (block.type === "text" && block.text !== undefined ? [block.text] : []));
+}
+
+/** 真实用户输入文本（user/message 是用户输入的唯一物化形态）。 */
+function userTextsOf(agent: SessionLike): string[] {
   const out: string[] = [];
   for (const raw of agent.session.events()) {
     const event = raw as { type: string; data: unknown };
     if (event.type !== "user/message") continue;
-    const content = (event.data as unknown as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
-    for (const block of content) {
-      if (block.type === "text" && block.text !== undefined) out.push(block.text);
-    }
+    out.push(...contentTexts(event));
+  }
+  return out;
+}
+
+/** 注入快照文本（agent/message ∧ source=SNAPSHOT_SOURCE）。 */
+function snapshotTextsOf(agent: SessionLike): string[] {
+  const out: string[] = [];
+  for (const raw of agent.session.events()) {
+    const event = raw as { type: string; data: unknown };
+    if (event.type !== "agent/message") continue;
+    if ((event.data as { source?: string }).source !== SNAPSHOT_SOURCE) continue;
+    out.push(...contentTexts(event));
   }
   return out;
 }
@@ -25,19 +44,45 @@ function textsOf(agent: { session: { events: () => readonly unknown[] } }): stri
 const nodeOf = (text: string, op: "append" | { op: "replace"; startSeq: number; endSeq: number } = "append"): SurfaceNode =>
   ({ seq: 1, event: { type: "user/message", seq: 1, time: 1, data: { turn: 0, step: 0, content: [{ type: "text", text }] }, surfaceOp: op } }) as unknown as SurfaceNode;
 
-describe("isSnapshotNode 四重谓词（append ∧ user/message ∧ 单 text 块 ∧ 信封首行+作废次行）", () => {
+describe("isEnvelopeSnapshotNode 四重谓词（append ∧ user/message ∧ 单 text 块 ∧ 信封首行+作废次行）", () => {
   it("合法快照 → true；四重缺一皆 false", () => {
-    expect(isSnapshotNode(nodeOf(snapshotEnvelope("date", "Today's date: 2026-09-21")))).toBe(true);
-    expect(isSnapshotNode(nodeOf("普通用户消息"))).toBe(false);
-    expect(isSnapshotNode(nodeOf(snapshotEnvelope("date", "x"), { op: "replace", startSeq: 0, endSeq: 0 }))).toBe(false);
-    expect(isSnapshotNode(nodeOf(`<snapshot kind="date">\n别的次行\nbody\n</snapshot>`))).toBe(false);
+    expect(isEnvelopeSnapshotNode(nodeOf(snapshotEnvelope("date", "Today's date: 2026-09-21")))).toBe(true);
+    expect(isEnvelopeSnapshotNode(nodeOf("普通用户消息"))).toBe(false);
+    expect(isEnvelopeSnapshotNode(nodeOf(snapshotEnvelope("date", "x"), { op: "replace", startSeq: 0, endSeq: 0 }))).toBe(false);
+    expect(isEnvelopeSnapshotNode(nodeOf(`<snapshot kind="date">\n别的次行\nbody\n</snapshot>`))).toBe(false);
     const two = { seq: 1, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: snapshotEnvelope("date", "x") }, { type: "text", text: "extra" }] } } } as unknown as SurfaceNode;
-    expect(isSnapshotNode(two)).toBe(false);
+    expect(isEnvelopeSnapshotNode(two)).toBe(false);
   });
 
   it("snapshotEnvelope 铸形：首行标签 + 次行作废声明 + body + 闭合", () => {
     const text = snapshotEnvelope("agent-types", "body line");
     expect(text).toBe(`<snapshot kind="agent-types">\n${SNAPSHOT_SUPERSEDES}\nbody line\n</snapshot>`);
+  });
+});
+
+describe("注入身份：快照落 agent/message(context-snapshot)，用户输入独占 user/message", () => {
+  it("症状回归「发一条消息显示两条相同气泡」：注入快照不是 user/message，用户气泡身份无外来帧可争", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const envelope = snapshotEnvelope("date", "Today's date: 2026-09-21");
+    const off = createTailSnapshot({ ctx: world.ctx, loop: world.loop, spec: { id: "date", render: () => envelope } });
+    const { agent, handle } = await spawn(world);
+    world.fake.scripts.push(textScript("a"));
+    agent.followup("用户真话");
+    await agent.whenIdle();
+    expect(userTextsOf(agent)).toEqual(["用户真话"]);
+    expect(snapshotTextsOf(agent)).toEqual([envelope]);
+    const injected = agent.session.events().find((event) => event.type === "agent/message");
+    expect(injected?.data).toMatchObject({ source: SNAPSHOT_SOURCE, kind: "content" });
+    off();
+    await handle.dispose();
+  });
+
+  it("信封形态历史落盘仍被识别（读旧会话：标题派生/切点对齐用），且不冒充新写入身份", () => {
+    const legacy = nodeOf(snapshotEnvelope("date", "Today's date: 2026-09-21"));
+    const typed = { seq: 1, event: { type: "agent/message", seq: 1, time: 1, data: { turn: 0, step: 0, source: SNAPSHOT_SOURCE, kind: "content", content: [{ type: "text", text: "x" }] }, surfaceOp: "append" } } as unknown as SurfaceNode;
+    expect(isEnvelopeSnapshotNode(legacy)).toBe(true);
+    expect(isEnvelopeSnapshotNode(typed)).toBe(false);
   });
 });
 
@@ -51,17 +96,34 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     const { agent, handle } = await spawn(world);
     world.fake.scripts.push(textScript("a"), textScript("b"));
     agent.followup("first");
-    expect(textsOf(agent)).toEqual([current]);
+    expect(snapshotTextsOf(agent)).toEqual([current]);
     await agent.whenIdle();
     agent.followup("second");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t === current)).toHaveLength(1);
+    expect(snapshotTextsOf(agent).filter((t) => t === current)).toHaveLength(1);
     current = snapshotEnvelope("date", "Today's date: 2026-09-22");
     agent.followup("third");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t.includes("2026-09-21"))).toHaveLength(1);
-    expect(textsOf(agent).filter((t) => t.includes("2026-09-22"))).toHaveLength(1);
+    expect(snapshotTextsOf(agent).filter((t) => t.includes("2026-09-21"))).toHaveLength(1);
+    expect(snapshotTextsOf(agent).filter((t) => t.includes("2026-09-22"))).toHaveLength(1);
     expect(warnings).toEqual([]);
+    off();
+    await handle.dispose();
+  });
+
+  it("信封形态历史快照在场：同文本不重注入（跨形态幂等）", async () => {
+    const world = await makeWorld();
+    worlds.push(world);
+    const envelope = snapshotEnvelope("date", "Today's date: 2026-09-21");
+    const off = createTailSnapshot({ ctx: world.ctx, loop: world.loop, spec: { id: "date", render: () => envelope } });
+    const { agent, handle } = await spawn(world);
+    const seeded = agent.session.append("user/message", { turn: 0, step: 0, content: [{ type: "text", text: envelope }] }, { surfaceOp: "append" });
+    if (!seeded.ok) throw new Error(seeded.reason);
+    world.fake.scripts.push(textScript("a"));
+    agent.followup("go");
+    await agent.whenIdle();
+    expect(snapshotTextsOf(agent)).toEqual([]);
+    expect(userTextsOf(agent).filter((t) => t === envelope)).toHaveLength(1);
     off();
     await handle.dispose();
   });
@@ -77,20 +139,20 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     }, onWarn: (m) => warnings.push(m) } });
     const { agent, handle } = await spawn(world);
     world.fake.scripts.push(textScript("a"), textScript("b"));
-    const snapshotTexts = (): string[] => textsOf(agent).filter((t) => t.startsWith("<snapshot"));
     agent.followup("first");
     await agent.whenIdle();
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("snapshot(x): render failed");
-    expect(textsOf(agent)).toEqual(["first"]);
+    expect(userTextsOf(agent)).toEqual(["first"]);
+    expect(snapshotTextsOf(agent)).toEqual([]);
     mode = "empty";
     agent.followup("second");
     await agent.whenIdle();
-    expect(textsOf(agent)).toEqual(["first", "second"]);
+    expect(userTextsOf(agent)).toEqual(["first", "second"]);
     mode = "ok";
     agent.followup("third");
     await agent.whenIdle();
-    expect(snapshotTexts()).toHaveLength(1);
+    expect(snapshotTextsOf(agent)).toHaveLength(1);
     off();
     await handle.dispose();
   });
@@ -105,12 +167,14 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     agent.followup("hi");
     await agent.whenIdle();
     const surface = agent.session.surface();
-    expect(surface[0]?.event.type).toBe("user/message");
+    expect(surface[0]?.event.type).toBe("agent/message");
     const first = surface[0]?.event.data as unknown as { content: Array<{ text: string }> };
     expect(first.content[0]?.text).toBe(envelope);
     expect(surface[1]?.event.type).toBe("system/message");
     expect(surface[2]?.event.type).toBe("user/message");
     expect(surface[3]?.event.type).toBe("assistant/message");
+    const messages = agent.session.deriveMessages();
+    expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: envelope }] });
     expect(JSON.stringify(world.fake.calls[0]?.messages)).toContain("Today's date: 2026-09-21");
     off();
     await handle.dispose();
@@ -131,7 +195,7 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     world.fake.scripts.push(textScript("ok"));
     agent.followup("hi");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t === envelope)).toHaveLength(2);
+    expect(snapshotTextsOf(agent)).toEqual([envelope]);
     off();
     await handle.dispose();
   });
@@ -153,7 +217,7 @@ describe("createTailSnapshot 幂等注入（同步点断言——docs/TAIL-SNAPS
     world.fake.scripts.push(textScript("a"));
     agent.followup("go");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t === text)).toHaveLength(2);
+    expect(snapshotTextsOf(agent)).toEqual([text]);
     off();
     await handle.dispose();
   });
@@ -177,7 +241,7 @@ describe("createRequestSnapshot 请求时点注入（agentRequest 派发内—�
     agent.followup("second");
     await agent.whenIdle();
     expect(seen).toEqual(["fake-model", "fake-model"]);
-    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(1);
+    expect(snapshotTextsOf(agent)).toHaveLength(1);
     off();
     await handle.dispose();
   });
@@ -201,11 +265,11 @@ describe("createRequestSnapshot 请求时点注入（agentRequest 派发内—�
     mode = "empty";
     agent.followup("second");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(0);
+    expect(snapshotTextsOf(agent)).toHaveLength(0);
     mode = "ok";
     agent.followup("third");
     await agent.whenIdle();
-    expect(textsOf(agent).filter((t) => t.startsWith("<snapshot"))).toHaveLength(1);
+    expect(snapshotTextsOf(agent)).toHaveLength(1);
     expect(warnings).toHaveLength(1);
     off();
     await handle.dispose();
@@ -238,7 +302,7 @@ describe("createRequestSnapshot 请求时点注入（agentRequest 派发内—�
     agent.followup("third");
     await agent.whenIdle();
     expect(seen).toEqual(["m-a", "m-b", "m-a"]);
-    const snaps = textsOf(agent).filter((t) => t.startsWith("<snapshot")).map((t) => (t.includes("m-a") ? "m-a" : "m-b"));
+    const snaps = snapshotTextsOf(agent).map((t) => (t.includes("m-a") ? "m-a" : "m-b"));
     expect(snaps).toEqual(["m-a", "m-b", "m-a"]);
     expect(JSON.stringify(world.fake.calls[2]?.messages)).toContain("the model m-a.");
     offRewrite();

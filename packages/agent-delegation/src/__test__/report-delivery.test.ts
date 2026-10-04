@@ -3,6 +3,7 @@ import type { Session, SessionId } from "@x-harness/session";
 import { sessionStore } from "@x-harness/session";
 import type { World } from "./world.ts";
 import { makeWorld, spawnParent, callTool, textScript, CHILD_MODEL, makeOptions, resetWorlds, agentIdOf, sessionOf } from "./world.ts";
+import { DELEGATION_REPORT_SOURCE } from "../notify.ts";
 
 const eventsOf = (world: World, session: SessionId): readonly ReturnType<Session["events"]>[number][] => {
   const found = world.ctx.use(sessionStore).get(session);
@@ -25,7 +26,7 @@ describe("报告全文单次交付", () => {
     void agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE).at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain(`summary: ${long}`), { timeout: 5_000 });
     expect(lastNotice()).not.toContain("truncated at");
     await parent.dispose();
@@ -40,7 +41,7 @@ describe("报告全文单次交付", () => {
     void agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE).at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 100"), { timeout: 5_000 });
     expect(lastNotice()).toContain("use agent_message to ask the agent for specifics");
     expect(lastNotice()).toContain("or have it write the full content to a file");

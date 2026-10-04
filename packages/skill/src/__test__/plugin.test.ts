@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createContext, loadPlugins } from "@x-harness/core";
 import type { Context, Disposer, Plugin } from "@x-harness/core";
-import { agentLoopServiceToken, agentStatus, isSnapshotNode, snapshotEnvelope } from "@x-harness/agent-loop";
+import { SNAPSHOT_SOURCE, agentLoopServiceToken, agentStatus, snapshotEnvelope } from "@x-harness/agent-loop";
 import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
 import { sessionPlugin, sessionStore } from "@x-harness/session";
 import type { Session, SessionId } from "@x-harness/session";
@@ -64,10 +64,11 @@ function running(ctx: Context, session: SessionId): void {
   ctx.emit(agentStatus, { session, status: "running" });
 }
 
+/** 会话里的文本块（注入快照走 agent/message，历史信封形态走 user/message——两形态都收）。 */
 function textBlocksOf(session: Session): string[] {
   return session
     .surface()
-    .filter((node) => node.event.type === "user/message")
+    .filter((node) => node.event.type === "user/message" || node.event.type === "agent/message")
     .flatMap((node) => (node.event.data as { readonly content: readonly { type: string; text?: string }[] }).content)
     .filter((block) => block.type === "text")
     .map((block) => block.text ?? "");
@@ -109,18 +110,19 @@ describe("createSkillPlugin 注入", () => {
     const world = await makeWorld(true);
     running(world.ctx, world.session.id);
     const surface = world.session.surface();
-    expect(surface[0]?.event.type).toBe("user/message");
+    expect(surface[0]?.event.type).toBe("agent/message");
     expect(textBlocksOf(world.session)).toEqual([block]);
     const messages = world.session.deriveMessages();
     expect(messages[0]).toMatchObject({ role: "user", content: [{ type: "text", text: block }] });
   });
 
-  it("清单帧入快照信封：isSnapshotNode 判 true——展示面跳过技能列表不展示（症状：技能清单在 UI 当普通消息展示）", async () => {
+  it("清单帧身份：agent/message(source=context-snapshot)——客户端按类型过滤，技能清单不上屏（症状：技能清单在 UI 当普通消息展示）", async () => {
     const world = await makeWorld(true);
     running(world.ctx, world.session.id);
     const node = world.session.surface()[0];
     if (node === undefined) throw new Error("injected block node missing");
-    expect(isSnapshotNode(node)).toBe(true);
+    expect(node.event.type).toBe("agent/message");
+    expect(node.event.type === "agent/message" ? node.event.data.source : "").toBe(SNAPSHOT_SOURCE);
   });
 
   it("同步红线：注入事件先于当轮 turn/start 落账", async () => {
@@ -128,7 +130,7 @@ describe("createSkillPlugin 注入", () => {
     running(world.ctx, world.session.id);
     world.session.append("turn/start", { turn: 0 });
     const events = world.session.events();
-    const injected = events.findIndex((event) => event.type === "user/message");
+    const injected = events.findIndex((event) => event.type === "agent/message");
     const turnStart = events.findIndex((event) => event.type === "turn/start");
     expect(injected).toBeGreaterThanOrEqual(0);
     expect(turnStart).toBeGreaterThanOrEqual(0);

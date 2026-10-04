@@ -46,7 +46,15 @@ export interface SessionEventData {
   readonly "step/start": { readonly turn: number; readonly step: number };
   readonly "step/end": { readonly turn: number; readonly step: number };
   readonly "system/message": { readonly turn: number; readonly step: number; readonly text: string };
-  readonly "user/message": { readonly turn: number; readonly step: number; readonly content: readonly ContentBlock[] };
+  readonly "user/message": {
+    readonly turn: number;
+    readonly step: number;
+    readonly content: readonly ContentBlock[];
+    /** 认领物化的 inbox 条目 id（与 content 前段 text 块按序对应；无认领物化 ——
+     *  如压缩摘要 replace 载体 —— 缺席）。客户端乐观回显按 id 精准配对收敛，
+     *  不依赖到达序启发（双队列认领序 ≠ 提交序：立即改向的较新条目可先物化）。 */
+    readonly claimedIds?: readonly string[];
+  };
   readonly "assistant/message": {
     readonly turn: number;
     readonly step: number;
@@ -133,6 +141,10 @@ export interface InboxEntry {
   readonly id: string;
   readonly content: readonly ContentBlock[];
   readonly origin?: { readonly source: string; readonly kind: AgentMessageKind };
+  /** 客户端提交的用户输入（prompt/followup/steer 物化产物）。内核内部注入
+   *  （additionalContexts、pre-step 改写等）无此标记：客户端乐观回显只对
+   *  标记条目配对，注入块不占用认领名额、不误推 userBlocks。 */
+  readonly user?: true;
 }
 
 export type InboxSpliceData =

@@ -8,8 +8,8 @@ function ev(seq: number, data: unknown): SessionEvent {
 
 describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
   it("insert 追加 + claim 按成员移除 + clear 双清", () => {
-    const a = insertData("next-turn", [{ type: "text", text: "a" }]);
-    const b = insertData("next-step", [{ type: "text", text: "b" }]);
+    const a = insertData({ target: "next-turn", contents: [{ type: "text", text: "a" }] });
+    const b = insertData({ target: "next-step", contents: [{ type: "text", text: "b" }] });
     const insertA = ev(0, a);
     const insertB = ev(1, b);
     expect(foldInbox([insertA, insertB])).toMatchObject({ nextTurn: [{ content: [{ text: "a" }] }], nextStep: [{ content: [{ text: "b" }] }] });
@@ -22,15 +22,15 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
   });
 
   it("判重按当前在场：claim 移除后同 id 再 insert 重新入队（repair 回灌依赖）", () => {
-    const a = insertData("next-turn", [{ type: "text", text: "a" }]);
+    const a = insertData({ target: "next-turn", contents: [{ type: "text", text: "a" }] });
     const idA = (a.entries[0] as { id: string }).id;
     const state = foldInbox([ev(0, a), ev(1, { op: "claim", target: "next-turn", turn: 0, claimed: [idA] }), ev(2, a)]);
     expect(state.nextTurn).toHaveLength(1);
   });
 
   it("drop 按目标队列单条移除（queue/drop 直写）；未知 id 幂等忽略", () => {
-    const a = insertData("next-turn", [{ type: "text", text: "a" }]);
-    const b = insertData("next-step", [{ type: "text", text: "b" }]);
+    const a = insertData({ target: "next-turn", contents: [{ type: "text", text: "a" }] });
+    const b = insertData({ target: "next-step", contents: [{ type: "text", text: "b" }] });
     const idA = (a.entries[0] as { id: string }).id;
     const state = foldInbox([
       ev(0, a),
@@ -42,8 +42,8 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
   });
 
   it("drop 只动目标队列：next-turn 的 drop 不波及 next-step 同文本条目", () => {
-    const a = insertData("next-turn", [{ type: "text", text: "dup" }]);
-    const b = insertData("next-step", [{ type: "text", text: "dup" }]);
+    const a = insertData({ target: "next-turn", contents: [{ type: "text", text: "dup" }] });
+    const b = insertData({ target: "next-step", contents: [{ type: "text", text: "dup" }] });
     const idA = (a.entries[0] as { id: string }).id;
     const state = foldInbox([ev(0, a), ev(1, b), ev(2, { op: "drop", target: "next-turn", dropped: [idA], reason: "client-drop" })]);
     expect(state.nextTurn).toHaveLength(0);
@@ -51,7 +51,7 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
   });
 
   it("retarget 单条改道：entry 本体与 id 原样跨队列移动（queue/send_now 直写）", () => {
-    const a = insertData("next-turn", [{ type: "text", text: "later" }]);
+    const a = insertData({ target: "next-turn", contents: [{ type: "text", text: "later" }] });
     const idA = (a.entries[0] as { id: string }).id;
     const state = foldInbox([ev(0, a), ev(1, { op: "retarget", id: idA, to: "next-step" })]);
     expect(state.nextTurn).toHaveLength(0);
@@ -61,7 +61,7 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
   });
 
   it("retarget 未知 id 幂等忽略", () => {
-    const a = insertData("next-turn", [{ type: "text", text: "a" }]);
+    const a = insertData({ target: "next-turn", contents: [{ type: "text", text: "a" }] });
     const state = foldInbox([ev(0, a), ev(1, { op: "retarget", id: "msg_missing", to: "next-step" })]);
     expect(state.nextTurn).toHaveLength(1);
     expect(state.nextStep).toHaveLength(0);
@@ -82,10 +82,10 @@ describe("foldInbox（docs/AGENT-LOOP-DRIVER §1.3）", () => {
 
 describe("insertData 单 entry 全块（BATCH2-DESIGN §1.1——图文拆轮防线回归）", () => {
   it("多块 → 单 entry：claimTurnBatch 队首领取即整条（图文同轮）", () => {
-    const d = insertData("next-turn", [
+    const d = insertData({ target: "next-turn", contents: [
       { type: "text", text: "hi" },
       { type: "image", data: "aGk=", mediaType: "image/png" },
-    ]);
+    ] });
     expect(d.entries).toHaveLength(1);
     expect(d.entries[0]).toMatchObject({
       content: [
@@ -98,6 +98,6 @@ describe("insertData 单 entry 全块（BATCH2-DESIGN §1.1——图文拆轮防
   });
 
   it("空块数组 → 零 entry", () => {
-    expect(insertData("next-step", []).entries).toEqual([]);
+    expect(insertData({ target: "next-step", contents: [] }).entries).toEqual([]);
   });
 });

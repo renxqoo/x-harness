@@ -24,7 +24,7 @@ function textsOf(session: { events: () => readonly unknown[] }): string[] {
   const out: string[] = [];
   for (const raw of session.events()) {
     const event = raw as { type: string; data: unknown };
-    if (event.type !== "user/message") continue;
+    if (event.type !== "user/message" && event.type !== "agent/message") continue;
     const content = (event.data as unknown as { content?: Array<{ type?: string; text?: string }> }).content ?? [];
     for (const block of content) {
       if (block.type === "text" && block.text !== undefined) out.push(block.text);

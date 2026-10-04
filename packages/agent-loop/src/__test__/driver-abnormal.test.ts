@@ -10,7 +10,7 @@ beforeEach(() => {
 });
 
 function queueNextTurn(agent: { session: { append: (type: never, data: never) => { ok: boolean } } }, text: string): void {
-  const appended = agent.session.append("agent/inbox/spliced" as never, insertData("next-turn", [{ type: "text", text } as ContentBlock] as readonly ContentBlock[]) as never);
+  const appended = agent.session.append("agent/inbox/spliced" as never, insertData({ target: "next-turn", contents: [{ type: "text", text } as ContentBlock] as readonly ContentBlock[] }) as never);
   expect(appended.ok).toBe(true);
 }
 

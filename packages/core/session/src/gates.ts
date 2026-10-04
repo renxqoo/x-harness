@@ -127,6 +127,7 @@ function isInboxEntries(value: unknown): boolean {
     Array.isArray(value) &&
     value.every((entry) => {
       if (!isObj(entry) || !isStr(entry["id"]) || entry["id"] === "" || !isContentBlocks(entry["content"], true)) return false;
+      if (entry["user"] !== undefined && entry["user"] !== true) return false;
       return entry["origin"] === undefined || (isEntryOrigin(entry["origin"]) && isTextOnlyBlocks(entry["content"]));
     })
   );
@@ -180,7 +181,12 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
   "step/start": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]),
   "step/end": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]),
   "system/message": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isStr(d["text"]),
-  "user/message": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isContentBlocks(d["content"], true),
+  "user/message": (d) =>
+    isObj(d) &&
+    isCount(d["turn"]) &&
+    isCount(d["step"]) &&
+    isContentBlocks(d["content"], true) &&
+    (d["claimedIds"] === undefined || (Array.isArray(d["claimedIds"]) && d["claimedIds"].every((id) => isStr(id) && id !== ""))),
   "assistant/message": (d) =>
     isObj(d) &&
     isCount(d["turn"]) &&

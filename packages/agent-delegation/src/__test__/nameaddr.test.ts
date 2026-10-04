@@ -3,6 +3,7 @@ import type { LlmChunk } from "@x-harness/llm";
 import { sessionStore } from "@x-harness/session";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, typesOf, agentIdOf } from "./world.ts";
 import type { World } from "./world.ts";
+import { DELEGATION_REPORT_SOURCE } from "../notify.ts";
 
 beforeEach(() => {
   resetWorlds();
@@ -144,7 +145,7 @@ describe("task_id 按号（output/stop）与 block/timeout", () => {
     };
     await vi.waitFor(running, { timeout: 5_000 });
     release();
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE).at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain("slow child finished"), { timeout: 5_000 });
     await parent.dispose();
   });

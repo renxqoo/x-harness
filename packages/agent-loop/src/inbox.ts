@@ -55,19 +55,23 @@ export function foldInbox(events: readonly SessionEvent[]): InboxState {
   return state;
 }
 
-export function insertData(
-  target: InboxTarget,
-  contents: readonly ContentBlock[],
-  origin?: { readonly source: string; readonly kind: AgentMessageKind },
-): {
+export interface InsertSpec {
+  readonly target: InboxTarget;
+  readonly contents: readonly ContentBlock[];
+  readonly origin?: { readonly source: string; readonly kind: AgentMessageKind };
+  readonly user?: true;
+}
+
+export function insertData(spec: InsertSpec): {
   readonly op: "insert";
   readonly target: InboxTarget;
   readonly entries: InboxEntry[];
 } {
+  const { target, contents, origin, user } = spec;
   return {
     op: "insert",
     target,
-    entries: contents.length === 0 ? [] : [{ id: crypto.randomUUID(), content: contents, ...(origin !== undefined ? { origin } : {}) }],
+    entries: contents.length === 0 ? [] : [{ id: crypto.randomUUID(), content: contents, ...(origin !== undefined ? { origin } : {}), ...(user === true ? { user: true as const } : {}) }],
   };
 }
 

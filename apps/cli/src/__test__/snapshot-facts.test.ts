@@ -81,7 +81,7 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
     const userTexts = (): string[] => {
       const out: string[] = [];
       for (const event of handle.agent.session.events()) {
-        if (event.type !== "user/message") continue;
+        if (event.type !== "user/message" && event.type !== "agent/message") continue;
         for (const block of (event.data as unknown as { content: Array<{ type: string; text: string }> }).content) {
           if (block.type === "text") out.push(block.text);
         }
@@ -99,7 +99,7 @@ describe("注入级旅程（buildWorld 真装配——A/C' 通道端到端）", 
       const surface = handle.agent.session.surface();
       const anchorIndex = surface.findIndex((n) => n.event.type === "system/message");
       expect(anchorIndex).toBeGreaterThan(0);
-      for (const node of surface.slice(0, anchorIndex)) expect(node.event.type === "user/message");
+      for (const node of surface.slice(0, anchorIndex)) expect(node.event.type === "agent/message");
       const afterAnchor = surface[anchorIndex + 1]?.event.data as unknown as { content?: Array<{ text?: string }> };
       expect(afterAnchor.content?.[0]?.text).toBe("one");
       expect(JSON.stringify(captured[0]?.messages)).toContain("agents instructions v1");

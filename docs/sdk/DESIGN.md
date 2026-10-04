@@ -248,6 +248,45 @@ type SdkEvent =
 - 心跳双形态：client 级心跳（含 cpuPercent，worker 壳还原 host 心跳字节）与
   线程级心跳（idleMs/streaming/rssBytes）；in-process 的 cpuPercent 无意义不报。
 
+### 3.5.1 注入上下文的事件身份（写入侧）
+
+内核注入的上下文（facts 快照 date/model/project-instructions/permission-mode、技能清单、
+agent 类型表）一律落 **`agent/message`**：`source: "context-snapshot"`（内核常量
+`SNAPSHOT_SOURCE`）、`kind: "content"`、单 text 块；模型可见文本仍是
+`<snapshot kind="…">…</snapshot>` 信封，逐字节不变。
+
+裁决：
+
+- **事件类型即身份**：`user/message` 从此只由用户输入产生（inbox 认领物化）。客户端按类型
+  过滤注入内容，**禁止**按信封文本启发判断——同一封信在客户端有「乐观回显（提交即上屏）」与
+  「权威落账（WAL seq）」两条到达路径，两者按 seq 收敛身份；任何被判成用户消息的外来帧都会
+  打断这次收敛，症状即「发一条消息显示两条相同气泡」。
+- **模型上下文不变**：`surfaceToMessages` 把 `agent/message` 映射为 user 轮；注入落点
+  （tail：轮启动边沿；request：函数调用派发时点）与信封正文不变。
+- **其余消费方随之归位**：会话标题派生、消息计数、fork 点列表不再把注入上下文算成用户消息；
+  compaction 的 pendingClaim 清理（`pendingClaimTokens`）只认真实 user/message。
+- **历史 WAL 形态**：既有会话里已落盘的信封形态 `user/message` 仍由内核单源谓词
+  `isEnvelopeSnapshotEvent` 识别（标题派生、压缩切点对齐）——它是数据形态判据，不是写入路径；
+  客户端不得据此渲染新数据。
+
+### 3.5.2 认领物化的回显身份（claimedIds）
+
+内核把同批认领的多条输入合并物化为单帧 `user/message`（多 text 块）。帧数据携带
+`claimedIds`：被认领条目中**user 标记**条目（prompt/followup/steer 的物化产物——
+`insertData(..., user: true)`，见 `InboxEntry.user`）的 inbox 条目 id，按序对应 content
+前段各条输入的 text 块。
+
+裁决：
+
+- **认领序 ≠ 提交序**：内核双队列（next-turn 每轮领首条 / next-step 全领）意味着
+  「立即改向」的较新条目可先于较旧的 followUp 条目物化。客户端乐观回显按 claimedIds
+  精准配对收敛，纯 FIFO 会错领别人的回显（症状：一条消息双气泡、另一条气泡消失）。
+- **注入块不占名额**：additionalContexts / pre-step 改写物等内核内部注入无 user 标记，
+  不进 claimedIds——客户端回显配对与注入内容互不干扰（一切皆插件架构下插件工具可
+  随时产注入上下文）。
+- **旧 hub 兼容**：帧无 claimedIds 时客户端退回块数兜底（userBlocks = text 块数）。
+- **无认领物化缺席**：压缩摘要 replace 载体、bash 信封等非认领物化不带 claimedIds。
+
 ### 3.6 命令面（command()）
 
 线程级命令 = THREAD_SCOPED + HOST_RELAYED 派生集合（作用域表以 internal.ts

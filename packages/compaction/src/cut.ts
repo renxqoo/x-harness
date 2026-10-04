@@ -1,9 +1,12 @@
 import type { SurfaceNode } from "@x-harness/session";
-import { isSnapshotNode } from "@x-harness/agent-loop";
+import { isEnvelopeSnapshotNode } from "@x-harness/agent-loop";
 import { nodeTokens } from "./estimate.ts";
 
+/** 真轮起点 = append 型 user/message（用户输入的唯一物化形态）。信封形态快照是历史 WAL
+ *  里的 user/message 注入（新写入走 agent/message，类型上已不是轮起点）——读既有会话时
+ *  仍要排除，否则压缩切口会落在快照上把一轮劈开。 */
 export function isTurnStartNode(node: SurfaceNode): boolean {
-  return node.event.type === "user/message" && node.event.surfaceOp === "append" && !isSnapshotNode(node);
+  return node.event.type === "user/message" && node.event.surfaceOp === "append" && !isEnvelopeSnapshotNode(node);
 }
 
 export const USER_QUOTE_TOKENS = 20_000;

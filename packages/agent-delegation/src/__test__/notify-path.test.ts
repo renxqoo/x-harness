@@ -4,7 +4,7 @@ import type { AgentHandle } from "@x-harness/agent-loop";
 import { sessionStore } from "@x-harness/session";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, agentIdOf, sessionOf } from "./world.ts";
 import type { World } from "./world.ts";
-import { createNotifier } from "../notify.ts";
+import { createNotifier, DELEGATION_REPORT_SOURCE } from "../notify.ts";
 
 beforeEach(() => {
   resetWorlds();
@@ -40,7 +40,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     expect(messaged.isError).toBeUndefined();
     expect(messaged.content).toContain("Delivered");
     await vi.waitFor(() => expect(turnCountOf(parent)).toBe(3), { timeout: 5_000 });
-    const lastNotification = JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
+    const lastNotification = JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE).at(-1)?.data);
     expect(lastNotification).toContain(`agent ${agentId} failed: test:boom`);
     expect(lastNotification).toContain(`session: ${String(sessionOf(spawned.content))}`);
     expect(lastNotification).not.toContain("first turn output");
@@ -60,7 +60,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
       })(),
     ]);
     const spawned = await callTool({ world, name: "agent_spawn", args: { description: "d", prompt: "diagnose", subagent_type: "worker" }, session: parent.agent.session.id });
-    const lastUserText = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
+    const lastUserText = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE).at(-1)?.data);
     await vi.waitFor(() => expect(lastUserText()).toContain("[agent-notification]"), { timeout: 5_000 });
     const lastNotification = lastUserText();
     const agentId = agentIdOf(spawned.content);
@@ -170,7 +170,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     await parent.agent.whenIdle();
     const events = parent.agent.session.events();
     expect(events.filter((e) => e.type === "turn/start")).toHaveLength(1);
-    const stepNotices = events.filter((e) => e.type === "agent/message");
+    const stepNotices = events.filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE);
     expect(stepNotices.length).toBe(1);
     expect(JSON.stringify(stepNotices[0]?.data)).toContain("[agent-notification]");
     expect(events.at(-1)?.data).toMatchObject({ reason: { kind: "completed" } });
@@ -197,7 +197,7 @@ describe("通知路径（error 透传/busy 步边界/重唤醒复占）", () => 
     notifier({ session: row.sessionId, status: "idle" });
     world.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "consume")]);
     const lastUserText = (): string => {
-      const events = parent.agent.session.events().filter((e) => e.type === "agent/message");
+      const events = parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE);
       return JSON.stringify(events.at(-1)?.data);
     };
     await vi.waitFor(() => expect(lastUserText()).toContain("session-archived"), { timeout: 5_000 });

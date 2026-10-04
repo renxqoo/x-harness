@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { SNAPSHOT_SUPERSEDES, isSnapshotNode } from "@x-harness/agent-loop";
+import { SNAPSHOT_SUPERSEDES, isEnvelopeSnapshotNode } from "@x-harness/agent-loop";
 import type { SurfaceNode } from "@x-harness/session";
 import { INSTRUCTIONS_CAP_BYTES, localToday, readInstructionFiles, renderDateSnapshot, renderModelSnapshot, renderPermissionModeNonOwnerSnapshot, renderPermissionModeSnapshot } from "../snapshot-facts.ts";
 
@@ -32,18 +32,18 @@ describe("日期快照（A）", () => {
     expect(renderDateSnapshot(new Date(noon.getTime() + 24 * 3_600_000))).not.toBe(day1);
   });
 
-  it("isSnapshotNode 对日期快照消息形态成立（跨包谓词闭环）", () => {
+  it("信封形态（历史 WAL 落盘）谓词成立——读旧会话时排除注入（跨包谓词闭环）", () => {
     const node = { seq: 0, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: renderDateSnapshot(at("2026-09-21T10:00:00+08:00")) }] } } } as unknown as SurfaceNode;
-    expect(isSnapshotNode(node)).toBe(true);
+    expect(isEnvelopeSnapshotNode(node)).toBe(true);
   });
 });
 
 describe("模型快照（powered-by 身份行——请求时点注入）", () => {
-  it("信封 kind=model + 作废声明 + 单行正文；isSnapshotNode 谓词成立", () => {
+  it("信封 kind=model + 作废声明 + 单行正文", () => {
     const text = renderModelSnapshot("glm-5.3");
     expect(text).toBe(`<snapshot kind="model">\n${SNAPSHOT_SUPERSEDES}\nYou are powered by the model glm-5.3.\n</snapshot>`);
     const node = { seq: 0, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text }] } } } as unknown as SurfaceNode;
-    expect(isSnapshotNode(node)).toBe(true);
+    expect(isEnvelopeSnapshotNode(node)).toBe(true);
   });
 });
 
@@ -56,7 +56,7 @@ describe("权限档快照（plan 模式告知——kick 时点注入）", () => 
     expect(planText).toContain("plan_submit");
     expect(renderPermissionModeSnapshot("auto")).toBe(`<snapshot kind="permission-mode">\n${SNAPSHOT_SUPERSEDES}\nPermission mode: auto.\n</snapshot>`);
     const node = { seq: 0, event: { type: "user/message", surfaceOp: "append", data: { turn: 0, step: 0, content: [{ type: "text", text: planText }] } } } as unknown as SurfaceNode;
-    expect(isSnapshotNode(node)).toBe(true);
+    expect(isEnvelopeSnapshotNode(node)).toBe(true);
   });
 
   it("非 owner 会话变体：plan 档渲染观察者事实行（无「等批准」指引、不含 You are in plan mode）", () => {

@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from "vitest";
+import { SNAPSHOT_SOURCE } from "@x-harness/agent-loop";
 import { spawnScriptWorker, waitEvent, waitFrame, waitResponse } from "./kit/worker-harness.ts";
 import type { ScriptWorker } from "./kit/worker-harness.ts";
 import type { ScriptStep } from "../shared/script-adapter.ts";
@@ -317,27 +318,25 @@ describe("worker 内嵌旅程", () => {
     await waitEvent(worker.captured.lines, "settled", (payload) => (payload as { sendId?: string }).sendId === "p1");
     worker.send({ type: "get_entries", id: "e1", threadId });
     const entries = await waitResponse(worker.captured.lines, "get_entries", "e1");
+    // 注入快照走 agent/message：user/message 只承载用户输入（症状回归——不再是「用户域混入注入」）
     const userMsg = (entries.data as { entries: Array<{ event: { type: string; content?: unknown } }> }).entries
       .filter((row) => row.event.type === "user/message")
-      .filter((row) => {
-        const blocks = (row.event.content as Array<{ type?: string; text?: string }> | undefined) ?? [];
-        return !(blocks.length === 1 && blocks[0]?.type === "text" && (blocks[0]?.text ?? "").startsWith("<snapshot"));
-      })
       .at(-1);
     expect(userMsg?.event.content).toEqual([
       { type: "text", text: "hi" },
       { type: "image", data: "aGk=", mediaType: "image/png" },
     ]);
-    const modelSnap = (entries.data as { entries: Array<{ event: { type: string; content?: unknown } }> }).entries
+    const modelSnap = (entries.data as { entries: Array<{ event: { type: string; source?: string; content?: unknown } }> }).entries
       .some((row) => {
-        if (row.event.type !== "user/message") return false;
+        if (row.event.type !== "agent/message") return false;
+        if (row.event.source !== SNAPSHOT_SOURCE) return false;
         const blocks = (row.event.content as Array<{ type?: string; text?: string }> | undefined) ?? [];
         return blocks.length === 1 && blocks[0]?.type === "text" && (blocks[0]?.text ?? "").startsWith('<snapshot kind="model">') && (blocks[0]?.text ?? "").includes("the model script-1.");
       });
     expect(modelSnap).toBe(true);
     worker.send({ type: "get_fork_messages", id: "f1", threadId });
     const forks = await waitResponse(worker.captured.lines, "get_fork_messages", "f1");
-    const forkRow = JSON.stringify((forks.data as unknown[]).filter((row) => !JSON.stringify(row).includes("<snapshot")).at(-1));
+    const forkRow = JSON.stringify((forks.data as unknown[]).at(-1));
     expect(forkRow).toContain("hi");
     expect(forkRow).toContain("[image: image/png]");
     worker.send({ type: "prompt", id: "p2", threadId, message: "hi", images: "junk" });

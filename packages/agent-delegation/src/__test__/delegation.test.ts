@@ -8,6 +8,8 @@ import type { World } from "./world.ts";
 import { makeWorld, spawnParent, callTool, textScript, PARENT_MODEL, CHILD_MODEL, makeOptions, workerOptions, resetWorlds, typesOf, agentIdOf, sessionOf } from "./world.ts";
 import { createAgentDelegationPlugin, validateOptions } from "../plugin.ts";
 import { forkSeed } from "../lineage.ts";
+import { DELEGATION_REPORT_SOURCE } from "../notify.ts";
+import { SNAPSHOT_SOURCE } from "@x-harness/agent-loop";
 
 const modelOf = (event: { readonly data: unknown } | undefined): string | undefined =>
   event === undefined ? undefined : (event.data as { model?: string }).model;
@@ -76,9 +78,11 @@ describe("spawn 与通知（X1/X2/X4/X10/X13）", () => {
     expect(spawned.content).toContain("stays stable across restarts");
     const turnCount = (): number => typesOf(parent).filter((t: string) => t === "turn/start").length;
     await vi.waitFor(() => expect(turnCount()).toBe(2), { timeout: 5_000 });
-    const agentMessages = parent.agent.session.events().filter((e) => e.type === "agent/message");
+    const agentMessages = parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE);
     expect(agentMessages.length).toBe(1);
-    expect(parent.agent.session.events().filter((e) => e.type === "user/message" && e.surfaceOp === "append")).toHaveLength(2);
+    // 注入快照落 agent/message：append 型 user/message 只剩用户真话那一条（不再混入用户域）
+    expect(parent.agent.session.events().filter((e) => e.type === "user/message" && e.surfaceOp === "append")).toHaveLength(1);
+    expect(parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === SNAPSHOT_SOURCE).length).toBeGreaterThan(0);
     const notification = JSON.stringify(agentMessages[0]?.data);
     expect(notification).toContain("[agent-notification]");
     expect(notification).toContain(agentId);
@@ -234,7 +238,7 @@ describe("动词族（X4/X11/X19 + 属主边界重划）", () => {
     void agentIdOf(spawned.content);
     const childSession = sessionOf(spawned.content);
     await vi.waitFor(() => expect(childEnded(world, childSession)).toBe(true), { timeout: 5_000 });
-    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message").at(-1)?.data);
+    const lastNotice = (): string => JSON.stringify(parent.agent.session.events().filter((e) => e.type === "agent/message" && e.data.source === DELEGATION_REPORT_SOURCE).at(-1)?.data);
     await vi.waitFor(() => expect(lastNotice()).toContain("truncated at 10"), { timeout: 5_000 });
     expect(lastNotice()).toContain("agent_message");
     await parent.dispose();

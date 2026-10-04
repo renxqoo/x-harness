@@ -36,14 +36,25 @@ function appendUserBatch(scope: TurnScope, step: number, entry: StepEntry): void
   if (entry.kind !== "enter" || entry.entries.length === 0) return;
   const session = deps.session;
   let plain: ContentBlock[] = [];
+  let claimedIds: string[] = [];
   const flushPlain = (): void => {
     if (plain.length === 0) return;
-    appendSurfaceEvent(session, { type: "user/message", data: { turn, step, content: plain }, surfaceOp: "append" });
+    appendSurfaceEvent(session, {
+      type: "user/message",
+      data: { turn, step, content: plain, ...(claimedIds.length > 0 ? { claimedIds } : {}) },
+      surfaceOp: "append",
+    });
     plain = [];
+    claimedIds = [];
   };
   for (const item of entry.entries) {
     if (item.origin === undefined) {
+      // 只登记 user 标记条目（prompt/followup/steer 物化产物）的 id：与 inbox
+      // insert 的条目 id 按序对应（每条用户输入 = 一段 text 块 + 附属图片）；
+      // 无标记的注入上下文（additionalContexts / pre-step 改写物）不登记 ——
+      // 客户端只对有 id 的段做回显配对，注入块不占用认领名额。
       plain = [...plain, ...item.content];
+      if (item.user === true) claimedIds = [...claimedIds, item.id];
       continue;
     }
     flushPlain();
@@ -305,19 +316,19 @@ export function createDriver(deps: DriverDeps): {
   return {
     followup: (text: string, options?: { images?: readonly ImageBlock[] }) => {
       if (typeof text !== "string") return;
-      appendEvent(session, "agent/inbox/spliced", insertData("next-turn", userBlocks(text, options)));
+      appendEvent(session, "agent/inbox/spliced", insertData({ target: "next-turn", contents: userBlocks(text, options), user: true }));
       wake();
     },
     steer: (text: string, options?: { images?: readonly ImageBlock[] }) => {
       if (typeof text !== "string") return;
-      appendEvent(session, "agent/inbox/spliced", insertData("next-step", userBlocks(text, options)));
+      appendEvent(session, "agent/inbox/spliced", insertData({ target: "next-step", contents: userBlocks(text, options), user: true }));
       wake();
     },
     notify: (message: { readonly source: string; readonly kind: AgentMessageKind; readonly text: string; readonly target?: NotifyTarget }) => {
       const { source, kind, text } = message;
       if (typeof text !== "string" || typeof source !== "string" || source === "" || !AGENT_MESSAGE_KINDS.has(kind)) return;
       const queue: InboxTarget = message.target === "next-turn" ? "next-turn" : "next-step";
-      appendEvent(session, "agent/inbox/spliced", insertData(queue, [{ type: "text", text }], { source, kind }));
+      appendEvent(session, "agent/inbox/spliced", insertData({ target: queue, contents: [{ type: "text", text }], origin: { source, kind } }));
       if (queue === "next-turn") return;
       wake();
     },
