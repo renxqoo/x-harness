@@ -16,6 +16,8 @@ export interface HubSettings {
   "plugins.disabled"?: string[];
   "compaction.keepRecentTokens"?: number;
   "compaction.keepMinTurns"?: number;
+  "compaction.summarizer.model"?: string;
+  "compaction.summarizer.provider"?: string;
 }
 
 export type HubSettingsKey = keyof HubSettings;
@@ -42,6 +44,8 @@ export function validateSettingValue(key: string, value: unknown): { ok: true; k
     "plugins.disabled": (value) => Array.isArray(value) && value.every((item) => typeof item === "string" && item !== ""),
     "compaction.keepRecentTokens": (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
     "compaction.keepMinTurns": (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0,
+    "compaction.summarizer.model": (value) => typeof value === "string" && value !== "",
+    "compaction.summarizer.provider": (value) => typeof value === "string" && value !== "",
   };
   const validator = validators[key];
   if (validator === undefined) {
@@ -71,7 +75,7 @@ function ruleEntryValid(value: unknown): value is RuleEntry {
 }
 
 function isKnownKey(key: string): key is HubSettingsKey {
-  return key === "permission.defaultMode" || key === "permission.rules" || key === "permission.profiles" || key === "thinking.default" || key === "skills.disabled" || key === "plugins.disabled" || key === "compaction.keepRecentTokens" || key === "compaction.keepMinTurns";
+  return key === "permission.defaultMode" || key === "permission.rules" || key === "permission.profiles" || key === "thinking.default" || key === "skills.disabled" || key === "plugins.disabled" || key === "compaction.keepRecentTokens" || key === "compaction.keepMinTurns" || key === "compaction.summarizer.model" || key === "compaction.summarizer.provider";
 }
 
 export async function readSettingsFile(path: string): Promise<HubSettings> {

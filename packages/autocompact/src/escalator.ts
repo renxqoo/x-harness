@@ -11,7 +11,7 @@ export interface L2Result {
 }
 
 export function ledgerReadyForL2(state: CheckpointState): boolean {
-  return !state.broken && ledgerReady(state.ledger);
+  return ledgerReady(state.ledger);
 }
 
 export function alignDownToTurnStart(nodes: readonly SurfaceNode[], ceiling: number, from = 0): number | undefined {

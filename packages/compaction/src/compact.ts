@@ -13,8 +13,8 @@ import {
   type FileToolNames,
 } from "./file-ops.ts";
 import { AUTO_CONTINUATION_NOTE } from "./prompts.ts";
-import { serializeConversation } from "./serialize.ts";
-import { summarize, type SummarizerFace, type SummarizeOutcome } from "./summarize.ts";
+import { summarizeFolded } from "./folded-summarize.ts";
+import type { SummarizerFace, SummarizeOutcome } from "./summarize.ts";
 
 export type CompactTrigger = "manual" | "auto" | "emergency";
 
@@ -41,7 +41,6 @@ export interface ResolvedConfig {
   readonly keepRecentTokens: number;
   readonly keepMinTurns: number;
   readonly fileTools: FileToolNames;
-  readonly idleTimeoutMs: number;
   readonly summarizer: SummarizerFace | undefined;
   readonly customInstructions?: string;
 }
@@ -149,15 +148,14 @@ function focusOf(deps: CompactDeps, fields: CompactFields): string | undefined {
 async function summarizeSpan(call: SummarizeCall): Promise<SummarizeOutcome> {
   const { deps, fields, span, face, llm } = call;
   const focus = focusOf(deps, fields);
-  return summarize({
+  return summarizeFolded({
     llm,
     face,
     reserveTokens: deps.config.reserveTokens,
-    conversation: serializeConversation(span.nodes),
+    nodes: span.nodes,
     ...(span.previousSummary !== undefined ? { previousSummary: span.previousSummary } : {}),
     ...(focus !== undefined ? { customInstructions: focus } : {}),
     signal: fields.signal ?? new AbortController().signal,
-    idleTimeoutMs: deps.config.idleTimeoutMs,
   });
 }
 

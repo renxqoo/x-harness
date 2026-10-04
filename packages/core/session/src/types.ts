@@ -96,6 +96,8 @@ export interface SessionEventData {
   };
   readonly "todo/snapshot": TodoSnapshotEventData;
   readonly "session/meta": { readonly key: string; readonly value: unknown };
+  readonly "compaction/diagnostic": { readonly turn: number; readonly step: number; readonly origin: string; readonly code: string; readonly detail?: Readonly<Record<string, unknown>> };
+  readonly "compaction/exhausted": { readonly turn: number; readonly step: number; readonly attempts: number };
   readonly "command/run": { readonly commandId: string; readonly name: string; readonly args?: string };
   readonly "command/done": { readonly commandId: string; readonly kind: "success" | "error"; readonly text?: string };
   readonly "agent/message": {

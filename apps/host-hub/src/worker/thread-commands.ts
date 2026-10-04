@@ -98,6 +98,15 @@ function applyAssembly(target: AssemblyTarget): void {
   rt.bridge.wire(assembled.world.ctx);
 }
 
+function compactionFieldsOf(settings: { readonly "compaction.keepRecentTokens"?: number; readonly "compaction.keepMinTurns"?: number; readonly "compaction.summarizer.model"?: string; readonly "compaction.summarizer.provider"?: string }): Partial<import("./assembly.ts").AssemblyFields> {
+  return {
+    ...(settings["compaction.keepRecentTokens"] !== undefined ? { compactionKeepRecentTokens: settings["compaction.keepRecentTokens"] } : {}),
+    ...(settings["compaction.keepMinTurns"] !== undefined ? { compactionKeepMinTurns: settings["compaction.keepMinTurns"] } : {}),
+    ...(settings["compaction.summarizer.model"] !== undefined ? { compactionSummarizerModel: settings["compaction.summarizer.model"] } : {}),
+    ...(settings["compaction.summarizer.provider"] !== undefined ? { compactionSummarizerProvider: settings["compaction.summarizer.provider"] } : {}),
+  };
+}
+
 export async function assembleThread(rt: WorkerRuntime, plan: {
   fields: import("./assembly.ts").AssemblyFields;
   input: SessionParamsInput;
@@ -118,8 +127,7 @@ export async function assembleThread(rt: WorkerRuntime, plan: {
     ...(rt.proposals !== undefined ? { proposalStore: rt.proposals } : {}),
     confirm: (fields) => rt.broker.confirm(rt.state.threadId === "" ? "unassigned" : rt.state.threadId, fields),
     ...(settings["thinking.default"] !== undefined ? { thinkingDefault: settings["thinking.default"] } : {}),
-    ...(settings["compaction.keepRecentTokens"] !== undefined ? { compactionKeepRecentTokens: settings["compaction.keepRecentTokens"] } : {}),
-    ...(settings["compaction.keepMinTurns"] !== undefined ? { compactionKeepMinTurns: settings["compaction.keepMinTurns"] } : {}),
+    ...compactionFieldsOf(settings),
     permissionMode: initialMode,
     ...permissionFieldsOf(settings, userFile, projectFile) as Partial<import("./assembly.ts").AssemblyFields>,
   });

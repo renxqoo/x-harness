@@ -27,10 +27,10 @@ function ladderNodes(tokens: number): SurfaceNode[] {
 }
 
 describe("ledgerReadyForL2 / alignDownToTurnStart", () => {
-  it("熔断/空账本 → false；ceiling 之下最近真轮起点；无候选 → undefined", () => {
+  it("空账本 → false（熔断不再连坐，回归：breaker 永久关闭 L2）；ceiling 之下最近真轮起点；无候选 → undefined", () => {
     const broken = stateWithLedger();
     broken.broken = true;
-    expect(ledgerReadyForL2(broken)).toBe(false);
+    expect(ledgerReadyForL2(broken)).toBe(true);
     expect(ledgerReadyForL2(emptyCheckpointState())).toBe(false);
     expect(ledgerReadyForL2(stateWithLedger())).toBe(true);
     const nodes = ladderNodes(1);

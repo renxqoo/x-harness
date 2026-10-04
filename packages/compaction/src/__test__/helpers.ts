@@ -179,11 +179,11 @@ export type { Context, Session, SessionStore };
 
 export async function dispatchPreStep(
   world: Awaited<ReturnType<typeof makeWorld>>,
-  fields: { readonly session: ReturnType<typeof sid>; readonly turn?: number; readonly step?: number },
+  fields: { readonly session: ReturnType<typeof sid>; readonly turn?: number; readonly step?: number; readonly signal?: AbortSignal },
 ) {
   return world.ctx.dispatch(
     agentPreStep,
-    { session: fields.session, turn: fields.turn ?? 9, step: fields.step ?? 0, messages: [], signal: new AbortController().signal } as never,
+    { session: fields.session, turn: fields.turn ?? 9, step: fields.step ?? 0, messages: [], signal: fields.signal ?? new AbortController().signal } as never,
     async () => ({ kind: "enter" }) as never,
   );
 }

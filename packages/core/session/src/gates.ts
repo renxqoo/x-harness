@@ -250,6 +250,16 @@ const shapeGates: { readonly [K in SessionEventType]: (data: unknown) => boolean
     return ids !== undefined && todoSnapshotEdges(d["edges"], ids);
   },
   "session/meta": (d) => isObj(d) && isStr(d["key"]) && d["key"] !== "",
+  "compaction/diagnostic": (d) =>
+    isObj(d) &&
+    isCount(d["turn"]) &&
+    isCount(d["step"]) &&
+    isStr(d["origin"]) &&
+    d["origin"] !== "" &&
+    isStr(d["code"]) &&
+    d["code"] !== "" &&
+    (d["detail"] === undefined || isObj(d["detail"])),
+  "compaction/exhausted": (d) => isObj(d) && isCount(d["turn"]) && isCount(d["step"]) && isCount(d["attempts"]) && d["attempts"] >= 1,
   "command/run": (d) => isObj(d) && isStr(d["commandId"]) && d["commandId"] !== "" && isStr(d["name"]) && (d["args"] === undefined || isStr(d["args"])),
   "command/done": (d) =>
     isObj(d) &&

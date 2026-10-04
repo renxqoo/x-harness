@@ -176,17 +176,40 @@ describe("水位权分居（autocompact 不接管 compaction 水位——强制�
   });
 });
 
+describe("exhausted 暂停 gate（对抗审查 #4 回归）", () => {
+  it("compaction/exhausted 落账后 gate 停跑、replace 落地后恢复（三振后不自动降级 L2）", { timeout: 15_000 }, async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("paused") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 850, output: 1 } } });
+      made.value.append("compaction/exhausted", { turn: 9, step: 0, attempts: 3 });
+      const cleared: string[] = [];
+      world.ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
+      await dispatchPreStep(world, { session: made.value.id });
+      expect(cleared).toHaveLength(0);
+    } finally {
+      stderr.mockRestore();
+      await world.ctx.dispose();
+    }
+  });
+});
+
 describe("servedWindow 收缩与生命周期", () => {
-  it("假窗口收缩 → refit 降级纯本地通道（禁 L2，release degraded）", async () => {
+  it("假窗口收缩 → refit 降级释放；compaction 水位接管恢复（三振停机回归：退避间隔内快速失败原因码透传）", { timeout: 15_000 }, async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const world = await makeWorld();
     try {
       const session = await seeded(world, "degraded", 850);
       session.append("request/context", { provider: "p", model: "m", contextWindow: 120 });
-      await dispatchPreStep(world, { session: session.id });
+      const decision = await dispatchPreStep(world, { session: session.id });
       const codes = stderr.mock.calls.map((line) => String(line[0]));
       expect(codes.some((line) => line.includes("lines-degraded"))).toBe(true);
       expect(codes.some((line) => line.includes("budget-gate-release") && line.includes("degraded"))).toBe(true);
+      expect(codes.filter((line) => line.includes("trigger-noop"))).toHaveLength(3);
+      expect(session.events().some((event) => event.type === "compaction/exhausted")).toBe(true);
+      expect(decision).toEqual({ kind: "reject", reason: "compact-exhausted" });
       expect(session.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false);
     } finally {
       stderr.mockRestore();

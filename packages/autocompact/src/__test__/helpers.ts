@@ -15,6 +15,16 @@ export function textScript(text: string): AsyncGenerator<LlmChunk> {
   })();
 }
 
+export function errorScript(): AsyncGenerator<LlmChunk> {
+  const failing = async (): Promise<IteratorResult<LlmChunk>> => {
+    throw new Error("provider unreachable");
+  };
+  const stream = {
+    [Symbol.asyncIterator]: () => ({ next: failing }),
+  };
+  return stream as unknown as AsyncGenerator<LlmChunk>;
+}
+
 export function emptyScript(): AsyncGenerator<LlmChunk> {
   return (async function* (): AsyncGenerator<LlmChunk> {
     yield { type: "finish", finish: { kind: "stop" } };

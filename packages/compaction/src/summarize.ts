@@ -12,6 +12,14 @@ export interface SummarizerFace {
 
 const PROMPT_OVERHEAD_CHARS = 4_000;
 
+export const IDLE_BASE_MS = 120_000;
+export const IDLE_MS_PER_KILO_CHAR = 500;
+export const IDLE_CAP_MS = 300_000;
+
+export function scaledIdleMs(segmentChars: number): number {
+  return Math.min(IDLE_CAP_MS, IDLE_BASE_MS + Math.floor((segmentChars / 1_000) * IDLE_MS_PER_KILO_CHAR));
+}
+
 export function summaryInputMaxChars(fields: {
   readonly face: SummarizerFace;
   readonly reserveTokens: number;
@@ -182,6 +190,7 @@ export async function runTextRequest(input: {
       ...(input.face.provider !== undefined ? { provider: input.face.provider } : {}),
       session: "internal:summarizer" as never,
       tools: [],
+      thinking: "off",
       messages: [
         { role: "system", text: input.system },
         { role: "user", content: [{ type: "text", text: input.prompt }] },

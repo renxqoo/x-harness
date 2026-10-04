@@ -1,16 +1,14 @@
 import { join } from "node:path";
 import { projectSkillsDirOf, userSkillsDirOf } from "../shared/skills-paths.ts";
 import type { Plugin } from "@x-harness/core";
+import { compactionPluginsOf } from "./compaction-dial.ts";
 import type { Context, Disposer } from "@x-harness/core";
 import { mintSessionId, sessionStore } from "@x-harness/session";
 import { agentRequest } from "@x-harness/agent-loop";
 import type { Dial } from "@x-harness/agent-loop";
-import { commandCompactPlugin } from "@x-harness/compaction";
 import { commandsPlugin } from "@x-harness/commands";
 import {
-  autoCompactKit,
   checkpointKit,
-  compactionKit,
   createAgentWorld,
   createBasePromptPlugin,
   createFactsSnapshotPlugin,
@@ -72,6 +70,8 @@ export interface AssemblyFields {
   thinkingDefault?: ThinkingLevel;
   compactionKeepRecentTokens?: number;
   compactionKeepMinTurns?: number;
+  compactionSummarizerModel?: string;
+  compactionSummarizerProvider?: string;
   env?: Record<string, string | undefined>;
   confirm?: (fields: ConfirmFields) => Promise<{ allowed: boolean; memory?: "session" | "project" | "user"; ruleOverride?: string }>;
   permissionMode?: ProfileId;
@@ -366,7 +366,14 @@ function defaultWorkerPlugins(resolved: {
     ...workflowKit(workerWorkflowOptions(fields, mainSessionId)),
     ...meterKit(),
     ...telemetryPluginsOf(fields),
-    ...compactionPluginsOf(contextWindow, dial, compactionOverrides),
+    ...compactionPluginsOf({
+      catalog,
+      contextWindow,
+      dial,
+      overrides: compactionOverrides,
+      summarizerModel: fields.compactionSummarizerModel,
+      summarizerProvider: fields.compactionSummarizerProvider,
+    }),
     commandsPlugin,
     ...llmKit(adapters, { default: RETRY_POLICY }),
     ...loopKit(),
@@ -381,11 +388,6 @@ function defaultWorkerPlugins(resolved: {
     ...(proposalPlugins(fields)),
     dialHookPlugin(catalog),
   ];
-}
-
-function compactionPluginsOf(contextWindow: number | undefined, dial: { provider: string; model: string }, overrides: Record<string, unknown>): readonly Plugin[] {
-  if (contextWindow === undefined) return [];
-  return [...compactionKit({ contextWindow, summarizer: { model: dial.model, provider: dial.provider }, ...overrides }), ...autoCompactKit({ contextWindow }), commandCompactPlugin];
 }
 
 function createDelegationOf(input: { agentsDirs: readonly string[]; cwd: string; catalog: () => WorkerCatalog; mainSessionId: string }): Plugin {

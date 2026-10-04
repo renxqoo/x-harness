@@ -130,6 +130,18 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       const warn = (session: SessionId, code: string, detail?: Record<string, unknown>): void => {
         const suffix = detail === undefined ? "" : ` ${JSON.stringify(detail)}`;
         process.stderr.write(`autocompact/${code} session=${session}${suffix}\n`);
+        const live = store.get(session);
+        if (live !== undefined) {
+          const fields = resolveAtOf(live);
+          const appended = live.append("compaction/diagnostic", {
+            turn: fields.turn,
+            step: fields.step,
+            origin: "autocompact",
+            code,
+            ...(detail !== undefined ? { detail } : {}),
+          });
+          if (!appended.ok) process.stderr.write(`autocompact/journal-failed session=${session} reason=${appended.reason}\n`);
+        }
         ctx.emit(autocompactDiagnostic, { session, code, ...detail } as never);
       };
       const emitCheckpoint = (session: SessionId) => (action: CheckpointAction, detail?: Record<string, unknown>) => {
@@ -171,13 +183,36 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       });
 
       const onPreStep = async (payload: PreStepPayload, next: (input: PreStepPayload) => Promise<unknown>): Promise<unknown> => {
-        const state = stateOf(payload.session);
-        if (state !== undefined) {
-          const deps = gateDepsOf(payload.session, state);
-          if (deps.session !== undefined) await runStepGate(deps, payload);
+        if (!gatePaused.has(payload.session)) {
+          const state = stateOf(payload.session);
+          if (state !== undefined) {
+            const deps = gateDepsOf(payload.session, state);
+            if (deps.session !== undefined) await runStepGate(deps, payload);
+          }
         }
         return next(payload);
       };
+
+      const resolveAtOf = (live: { events(): readonly SessionEvent[] }): { turn: number; step: number } => {
+        let openTurn = -1;
+        let step = 0;
+        let lastClosed = -1;
+        for (const event of live.events()) {
+          if (event.type === "turn/start") {
+            openTurn = event.data.turn;
+            step = 0;
+          } else if (event.type === "turn/end") {
+            lastClosed = event.data.turn;
+            openTurn = -1;
+          } else if (event.type === "step/start" && openTurn >= 0) {
+            step = event.data.step;
+          }
+        }
+        if (openTurn >= 0) return { turn: openTurn, step };
+        return { turn: Math.max(0, lastClosed), step: 0 };
+      };
+
+      const gatePaused = new Set<SessionId>();
 
       const onSessionEvent = ({ session, event }: { session: SessionId; event: SessionEvent }): void => {
         const state = states.get(session);
@@ -186,9 +221,18 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
           state.turnActive = true;
           state.cache.lastOccupancy = undefined;
           state.cache.l1Backoff = false;
+          state.checkpoint.consecutiveFailures = 0;
+          if (state.checkpoint.broken) {
+            state.checkpoint.broken = false;
+            warn(session, "breaker-recovered");
+          }
         } else if (event.type === "turn/end") {
           state.turnActive = false;
           state.lastTurnEndAt = event.time;
+        } else if (event.type === "compaction/exhausted") {
+          gatePaused.add(session);
+        } else if (event.type === "user/message" && typeof event.surfaceOp === "object" && event.surfaceOp.op === "replace") {
+          gatePaused.delete(session);
         }
       };
 
@@ -224,6 +268,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
           const state = states.get(session);
           if (state !== undefined) cancelJob(state.checkpoint);
           states.delete(session);
+          gatePaused.delete(session);
         }),
       ];
       return async () => {

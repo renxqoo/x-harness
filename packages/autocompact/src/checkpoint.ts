@@ -168,8 +168,8 @@ export function cancelJob(state: CheckpointState): void {
 
 export async function joinInflight(fields: { readonly state: CheckpointState; readonly timeoutMs: number; readonly signal?: AbortSignal }): Promise<boolean> {
   const job = fields.state.job;
-  if (job === undefined) return ledgerReady(fields.state.ledger) && !fields.state.broken;
-  if (fields.signal?.aborted) return ledgerReady(fields.state.ledger) && !fields.state.broken;
+  if (job === undefined) return ledgerReady(fields.state.ledger);
+  if (fields.signal?.aborted) return ledgerReady(fields.state.ledger);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   const watchdog = new Promise<void>((resolve) => {
@@ -186,7 +186,7 @@ export async function joinInflight(fields: { readonly state: CheckpointState; re
     if (timer !== undefined) clearTimeout(timer);
     if (onAbort !== undefined) fields.signal?.removeEventListener("abort", onAbort);
   }
-  return ledgerReady(fields.state.ledger) && !fields.state.broken;
+  return ledgerReady(fields.state.ledger);
 }
 
 export function firstUncoveredIndex(state: CheckpointState, nodes: readonly SurfaceNode[]): number {
@@ -238,8 +238,8 @@ async function runCheckpoint(fields: { readonly state: CheckpointState; readonly
     }
   } catch (error) {
     if (job.controller.signal.aborted) return;
-    deps.warn(deps.session.id, "checkpoint-failed", { error: error instanceof Error ? error.message : String(error) });
-    failOnce(state, deps);
+    deps.warn(deps.session.id, "checkpoint-failed", { error: error instanceof Error ? error.message : String(error), blame: "provider" });
+    failOnce(state, deps, "provider");
   }
 }
 
@@ -264,9 +264,9 @@ async function callCheckpointModel(fields: {
   const ledgerText = serializeLedger(state.ledger);
   const maxChars = checkpointMaxChars(deps.face, ledgerText.length);
   if (maxChars === undefined) {
-    deps.warn(deps.session.id, "checkpoint-failed", { reason: "cp-input-budget-exhausted" });
-    deps.emit("failed", { reason: "cp-input-budget-exhausted" });
-    failOnce(state, deps);
+    deps.warn(deps.session.id, "checkpoint-failed", { reason: "cp-input-budget-exhausted", blame: "self" });
+    deps.emit("failed", { reason: "cp-input-budget-exhausted", blame: "self" });
+    failOnce(state, deps, "self");
     return undefined;
   }
   const lastStart = lastTurnStartIndex(nodes);
@@ -277,7 +277,8 @@ async function callCheckpointModel(fields: {
     tokenBudget: Math.max(1, Math.floor(maxChars / 4)),
   });
   if (boxed === undefined) {
-    failOnce(state, deps);
+    deps.warn(deps.session.id, "checkpoint-failed", { reason: "segment-empty", blame: "self" });
+    failOnce(state, deps, "self");
     return undefined;
   }
   const segment = nodes.slice(boxed.start, boxed.end);
@@ -294,15 +295,20 @@ async function callCheckpointModel(fields: {
   });
   if (job.controller.signal.aborted) return undefined;
   if (!outcome.ok) {
-    if (outcome.reason === "failed") deps.warn(deps.session.id, "checkpoint-failed", { reason: "provider-error" });
-    else if (outcome.reason === "truncated") deps.warn(deps.session.id, "checkpoint-failed", { reason: "ledger-output-truncated" });
-    failOnce(state, deps);
+    if (outcome.reason === "failed") {
+      deps.warn(deps.session.id, "checkpoint-failed", { reason: "provider-error", blame: "provider" });
+      failOnce(state, deps, "provider");
+    } else {
+      const cause = selfFailureCause(outcome.reason);
+      deps.warn(deps.session.id, "checkpoint-failed", { reason: cause, blame: "self" });
+      failOnce(state, deps, "self");
+    }
     return undefined;
   }
   const patch = parseLedgerPatch(outcome.text);
   if (patch === undefined) {
-    deps.warn(deps.session.id, "checkpoint-failed", { reason: "ledger-patch-unparsable" });
-    failOnce(state, deps);
+    deps.warn(deps.session.id, "checkpoint-failed", { reason: "ledger-patch-unparsable", blame: "self" });
+    failOnce(state, deps, "self");
   }
   return patch;
 }
@@ -329,9 +335,10 @@ function acceptPatch(fields: {
     ...(stale ? { stale: true } : {}),
   });
   if (!recorded.ok) {
-    deps.emit("failed", { failures: state.consecutiveFailures + 1, reason: `append-failed:${recorded.reason}` });
     state.consecutiveFailures += 1;
+    deps.emit("failed", { failures: state.consecutiveFailures, reason: `append-failed:${recorded.reason}`, blame: "provider" });
     if (state.consecutiveFailures >= 3) {
+      state.broken = true;
       deps.emit("breaker", { failures: state.consecutiveFailures });
     }
     return;
@@ -339,9 +346,22 @@ function acceptPatch(fields: {
   deps.emit(stale ? "stale-accepted" : "advanced", { coveredSeq: state.coveredSeq });
 }
 
-function failOnce(state: CheckpointState, deps: CheckpointDeps): void {
+export type CheckpointBlame = "provider" | "self";
+
+function selfFailureCause(reason: "truncated" | "empty" | "aborted" | "budget-exhausted" | "failed"): string {
+  if (reason === "truncated") return "ledger-output-truncated";
+  if (reason === "aborted") return "idle-aborted";
+  if (reason === "budget-exhausted") return "cp-input-budget-exhausted";
+  return "ledger-output-empty";
+}
+
+function failOnce(state: CheckpointState, deps: CheckpointDeps, blame: CheckpointBlame = "provider"): void {
+  if (blame === "self") {
+    deps.emit("failed", { failures: state.consecutiveFailures, blame });
+    return;
+  }
   state.consecutiveFailures += 1;
-  deps.emit("failed", { failures: state.consecutiveFailures });
+  deps.emit("failed", { failures: state.consecutiveFailures, blame });
   if (state.consecutiveFailures < 3) return;
   state.broken = true;
   deps.emit("breaker", { failures: state.consecutiveFailures });
