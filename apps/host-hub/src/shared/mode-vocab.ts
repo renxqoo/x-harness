@@ -1,1 +1,1 @@
-export * from "@x-harness/agent-sdk/src/shared/mode-vocab.ts";
+export { modeVocabulary } from "@x-harness/agent-sdk/src/shared/mode-vocab.ts";

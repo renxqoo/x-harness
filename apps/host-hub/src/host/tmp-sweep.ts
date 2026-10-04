@@ -1,1 +1,1 @@
-export * from "@x-harness/agent-sdk/src/tmp-sweep.ts";
+export { cleanupTmpResidue } from "@x-harness/agent-sdk/src/tmp-sweep.ts";

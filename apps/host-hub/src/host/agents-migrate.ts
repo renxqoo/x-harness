@@ -1,1 +1,1 @@
-export * from "@x-harness/agent-sdk/src/commands/agents-migrate.ts";
+export { migrateAgentTypeRoot, migrateLegacyAgentTypes } from "@x-harness/agent-sdk/src/commands/agents-migrate.ts";

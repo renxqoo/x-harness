@@ -1,1 +1,17 @@
-export * from "@x-harness/agent-sdk/src/commands/meta-state.ts";
+export {
+  META_KEY_DIAL,
+  META_KEY_PERMISSION,
+  META_KEY_THINKING,
+  META_KEY_TITLE,
+  PERMISSION_MODES,
+  THINKING_LEVELS,
+  currentDialOf,
+  currentPermissionOf,
+  currentThinkingOf,
+  imagesUnsupported,
+  metaTailOf,
+  permissionModeOf,
+  thinkingLevelOf,
+  thinkingUnsupported,
+  titleOf,
+} from "@x-harness/agent-sdk/src/commands/meta-state.ts";
