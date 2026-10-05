@@ -6,6 +6,7 @@ export type { CompactTrigger, CompactionResult, CompactionSkipReason, ResolvedCo
 export { runCompact, previousSummaryOf } from "./compact.ts";
 export type { SummarizerFace, SummarizeOutcome, SummarizeInput } from "./summarize.ts";
 export { summarize, runTextRequest, summaryInputMaxChars, buildSummarizePrompt, SUMMARIZATION_SYSTEM_PROMPT } from "./summarize.ts";
+export { summarizeFolded, segmentNodes } from "./folded-summarize.ts";
 export { findCutPoint, isTurnStartNode, USER_QUOTE_TOKENS } from "./cut.ts";
 export type { CutPolicy } from "./cut.ts";
 export type { CutPoint } from "./cut.ts";
