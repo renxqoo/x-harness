@@ -2,6 +2,7 @@ import { runAgentJourney } from "./agent-journey.ts";
 import { runCliJourney } from "./cli-journey.ts";
 import { runCompactionJourney } from "./compaction-journey.ts";
 import { runCheckpointDialJourney } from "./checkpoint-dial-journey.ts";
+import { runCompactRealJourney } from "./compact-real-journey.ts";
 import { runOutputContinuationJourney } from "./output-continuation-journey.ts";
 import { runCrudScenario } from "./crud-scenario.ts";
 import { runDelegationJourney } from "./delegation-journey.ts";
@@ -17,6 +18,7 @@ try {
   await runAgentJourney();
   await runCompactionJourney();
   await runCheckpointDialJourney();
+  await runCompactRealJourney();
   await runOutputContinuationJourney();
   await runDelegationJourney();
   const wfIssues = await runWorkflowCrashJourneys();
@@ -29,7 +31,7 @@ try {
   await runWorktreeJourney();
   await runReviveJourney();
   await runCliJourney();
-  console.log("\n场景通过：动态注册 / 使用 / 销毁无法使用 / 重装复活 / agent 全链 / 压缩防线 / checkpoint dial 实拨 / 子代理旅程 / 长内容回传 / toolbox 四工具 / 轮次收敛双旅程 / 跨进程双宿主 / worktree / 复活 / todo 清单 / CLI 宿主子进程\n");
+  console.log("\n场景通过：动态注册 / 使用 / 销毁无法使用 / 重装复活 / agent 全链 / 压缩防线 / checkpoint dial 实拨 / compact 真实链路 / 子代理旅程 / 长内容回传 / toolbox 四工具 / 轮次收敛双旅程 / 跨进程双宿主 / worktree / 复活 / todo 清单 / CLI 宿主子进程\n");
 } catch (error) {
   console.error("e2e 失败：", error);
   process.exitCode = 1;
