@@ -29,18 +29,20 @@ export interface PairingServerOptions {
   now(): number;
   requestPairingTicket(pairingId: string): Promise<string>;
   onRegistered(device: { deviceId: string; name: string; deviceType: string; platform: string; appVersion: string; longTermPub: string; scope: "read" | "interact" | "full" }): Promise<void>;
+  onSessionEstablished(deviceId: string, ratchetSeed: Uint8Array): void;
   requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null>;
   maxConcurrent: number;
 }
 
 export interface PairingServer {
-  startQr(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; qrPayload: string; ticket: string }>;
+  startQr(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; qrPayload: string; manualCode: string; ticket: string }>;
   startManual(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; manualCode: string; ticket: string }>;
   handleDeviceRequest(spec: { pairingId: string; deviceEphemeralPub: string; deviceInfo: { name: string; deviceType: string; platform: string; appVersion: string } }): Promise<{ ok: true; sas: string; gatewaySignature: string } | { ok: false; reason: string }>;
   handlePakeInitiate(spec: { pairingId: string; messageA: string; deviceInfo: { name: string; deviceType: string; platform: string; appVersion: string } }): Promise<{ ok: true; messageB: string; confirm: string } | { ok: false; reason: string }>;
   confirmWithSas(spec: { pairingId: string; ownerTypedSas: string; deviceLongTermPub: string; deviceBoxPub?: string }): Promise<{ ok: true; deviceId: string; ratchetSeed: Uint8Array } | { ok: false; reason: string }>;
   cancel(pairingId: string): void;
   sessionOf(pairingId: string): PairingSession | null;
+  listActive(): PairingSession[];
   handlePairingFrame(spec: { pairingId: string; message: { p: string; [key: string]: unknown } }): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }>;
 }
 
@@ -73,6 +75,9 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
     if (mode === "qr" && options.relayKeyFingerprint.length === 0) {
       return { ok: false, reason: "relayKeyFingerprint required for QR pairing" };
     }
+    if (mode === "manual" && options.relayUrl.length === 0) {
+      return { ok: false, reason: "relayUrl required for pairing" };
+    }
     const pairingId = newPairingId();
     const gwEphemeral = newDeviceEphemeral();
     const session: PairingSession = {
@@ -81,7 +86,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       pairingId,
       mode,
       gwEphemeral,
-      manualCode: mode === "manual" ? generateManualCode() : null,
+      manualCode: generateManualCode(),
       createdAt: nowMs,
       expiresAt: nowMs + PAIRING_TTL_MS,
       consumed: false,
@@ -117,7 +122,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
         gwEphemeralPub: session.gwEphemeral.pub,
         pairingTicket: ticket,
       });
-      return { pairingId: session.pairingId, qrPayload, ticket };
+      return { pairingId: session.pairingId, qrPayload, manualCode: session.manualCode ?? "", ticket };
     },
     async startManual(scope) {
       const opened = await openSession("manual", scope);
@@ -155,7 +160,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       const nowMs = options.now();
       if (nowMs > session.expiresAt) return Promise.resolve({ ok: false as const, reason: "pairing expired" });
       if (session.consumed) return Promise.resolve({ ok: false as const, reason: "pairing already used" });
-      if (session.mode !== "manual" || session.manualCode === null) return Promise.resolve({ ok: false as const, reason: "manual pairing required" });
+      if (session.manualCode === null) return Promise.resolve({ ok: false as const, reason: "manual pairing required" });
       if (nowMs < session.lockedUntil) return Promise.resolve({ ok: false as const, reason: "locked" });
       session.failedAttempts += 1;
       if (session.failedAttempts >= PAIRING_MAX_ATTEMPTS) {
@@ -166,7 +171,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       const resp = gatewayPakeRespond(session.manualCode, spec.messageA, session.pairingId);
       session.channelKey = new Uint8Array(Buffer.from(resp.channel.shared, "hex"));
       session.deviceEphPub = spec.deviceInfo.name;
-      session.sas = computeSas({ channelKey: session.channelKey, transcript: { pairingId: session.pairingId, gwEph: session.gwEphemeral.pub, devEph: spec.messageA, relayUrl: options.relayUrl, scope: "read" }, gatewayFingerprint: options.identity.signingPub, deviceFingerprint: spec.deviceInfo.name });
+      session.sas = computeSas({ channelKey: session.channelKey, transcript: { pairingId: session.pairingId, gwEph: session.gwEphemeral.pub, devEph: spec.messageA, relayUrl: "", scope: "read" }, gatewayFingerprint: options.identity.signingPub, deviceFingerprint: spec.deviceInfo.name });
       return Promise.resolve({ ok: true as const, messageB: resp.message, confirm: resp.channel.confirm });
     },
     confirmWithSas(spec) {
@@ -193,6 +198,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       session.consumed = true;
       const deviceId = `d_${session.pairingId.slice(3)}`;
       const ratchetSeed = mixRatchetRoot(session.channelKey, deviceLongTermPub);
+      options.onSessionEstablished(deviceId, ratchetSeed);
       void options.onRegistered({
         deviceId,
         name: session.deviceEphPub ?? "device",
@@ -213,6 +219,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       }
     },
     sessionOf: (pairingId) => sessions.get(pairingId) ?? null,
+    listActive: () => [...sessions.values()].filter((session) => session.expiresAt > options.now()),
     async handlePairingFrame(spec) {
       const session = sessions.get(spec.pairingId);
       if (session === undefined) return { ok: false, reason: "no such pairing" };

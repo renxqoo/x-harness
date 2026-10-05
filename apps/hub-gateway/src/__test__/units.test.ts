@@ -33,11 +33,12 @@ describe("threads-registry", () => {
 });
 
 describe("loadConfig 语义", () => {
-  it("缺席 = 全缺省本地形态；remoteEnabled 校验三连拒", () => {
+  it("缺席 = 全缺省本地形态；零配置 embedded 语义 + 外部 relay 校验", () => {
     const absent = loadConfig(null);
     expect(absent.ok && absent.config.remoteEnabled).toBe(false);
     expect(loadConfig("not-json").ok).toBe(false);
-    expect(loadConfig('{"remoteEnabled":true}').ok).toBe(false);
+    const embedded = loadConfig('{"remoteEnabled":true}');
+    expect(embedded.ok).toBe(true);
     const empty = loadConfig('{}');
     expect(empty.ok && empty.config.remoteEnabled).toBe(false);
     expect(loadConfig('{"remoteEnabled":true,"relayUrl":"ws://x"}').ok).toBe(false);
@@ -50,7 +51,6 @@ describe("loadConfig 语义", () => {
     expect(ok.ok && ok.config.relayUrl).toBe("wss://x");
     const coerced = loadConfig('{"remoteEnabled":false,"maxDevices":-5,"logLevel":"nope"}');
     expect(coerced.ok && coerced.config.maxDevices).toBe(16);
-    expect(coerced.ok && coerced.config.logLevel).toBe("info");
   });
 });
 

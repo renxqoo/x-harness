@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { acceptKey, WebSocketFrameWriter } from "@x-harness/remote-protocol";
 import { WebSocketFrameReader } from "@x-harness/remote-protocol";
 import { createMemoryStore } from "./store-memory.ts";
+import { createAdminHttpHandlers } from "./admin-http.ts";
 import { createRedisStore } from "./store-redis.ts";
 import type { RouteStore } from "./store-memory.ts";
 import { decodeEnvelope, encodeEnvelope } from "@x-harness/remote-protocol";
@@ -19,6 +20,8 @@ export interface RelayOptions {
   singleInstance: boolean;
   redis?: { host: string; port: number; password?: string };
   nodeId?: string;
+  /** 网关描述回调（embedded 形态：6 位码发现端点按码反查网关接入信息）。 */
+  gatewayOfCode?: (code: string) => { relayUrl: string; installationId: string; gatewayKeyFingerprint: string; pairingId: string; pairingTicket: string } | null | Promise<{ relayUrl: string; installationId: string; gatewayKeyFingerprint: string; pairingId: string; pairingTicket: string } | null>;
 }
 
 interface Conn {
@@ -99,6 +102,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   void dispatchHttp(req, res);
 });
 
+  const adminHttp = createAdminHttpHandlers({ nodeId, tokenSecret: options.tokenSecret, store });
   const httpRoutes: Array<{ method: string; path: string; handler: (req: IncomingMessage, res: import("node:http").ServerResponse) => void | Promise<void> }> = [
     {
       method: "GET",
@@ -108,21 +112,45 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         res.end(JSON.stringify({ signingPub: nodeSigningPub, nodeId }));
       },
     },
-    { method: "POST", path: "/api/pairing-ticket", handler: (req, res) => void handlePairingTicket(req, res) },
-    { method: "POST", path: "/api/enroll/challenge", handler: (req, res) => void handleEnrollChallenge(req, res) },
-    { method: "POST", path: "/api/enroll", handler: (req, res) => void handleEnroll(req, res) },
-    { method: "POST", path: "/api/revoke", handler: (req, res) => void handleRevoke(req, res) },
-    { method: "POST", path: "/api/device-token", handler: (req, res) => void handleDeviceToken(req, res) },
-    { method: "POST", path: "/api/device-token/refresh", handler: (req, res) => void handleDeviceTokenRefresh(req, res) },
+    { method: "POST", path: "/api/pairing-ticket", handler: (req, res) => void adminHttp.handlePairingTicket(req, res) },
+    { method: "POST", path: "/api/enroll/challenge", handler: (req, res) => void adminHttp.handleEnrollChallenge(req, res) },
+    { method: "POST", path: "/api/enroll", handler: (req, res) => void adminHttp.handleEnroll(req, res) },
+    { method: "POST", path: "/api/revoke", handler: (req, res) => void adminHttp.handleRevoke(req, res) },
+    { method: "POST", path: "/api/device-token", handler: (req, res) => void adminHttp.handleDeviceToken(req, res) },
+    { method: "POST", path: "/api/device-token/refresh", handler: (req, res) => void adminHttp.handleDeviceTokenRefresh(req, res) },
+    {
+      method: "GET",
+      path: "/api/discover",
+      handler: (req, res) => {
+        const code = new URL(req.url ?? "/api/discover", "http://x").searchParams.get("code") ?? "";
+        void Promise.resolve(options.gatewayOfCode?.(code) ?? null).then((hit) => {
+          if (hit === null) {
+            res.writeHead(404).end();
+            return;
+          }
+          const host = req.headers.host ?? "";
+          const relayUrl = host.length > 0 && hit.relayUrl.length === 0 ? `ws://${host}` : hit.relayUrl;
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ...hit, relayUrl }));
+        });
+      },
+    },
   ];
 
   async function dispatchHttp(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-headers", "authorization, content-type");
+    if (req.method === "OPTIONS") {
+      res.writeHead(204).end();
+      return;
+    }
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, nodeId, conns: byConnId.size }));
       return;
     }
-    const route = httpRoutes.find((candidate) => candidate.method === req.method && candidate.path === req.url);
+    const routePath = (req.url ?? "/").split("?")[0] ?? "/";
+    const route = httpRoutes.find((candidate) => candidate.method === req.method && candidate.path === routePath);
     if (route !== undefined) {
       await route.handler(req, res);
       return;
@@ -271,7 +299,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     if (to.startsWith("dev_")) {
       const deviceId = to.slice(4);
       if (await store.isRevoked(deviceId)) {
-        from.send(errorLine("no-route"));
+        from.send(errorLine("no-route", to));
         return;
       }
       const target = conns.get(`device:${deviceId}`);
@@ -281,7 +309,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
       }
       const routed = await store.getDevice(deviceId);
       if (routed === null) {
-        from.send(errorLine("no-route"));
+        from.send(errorLine("no-route", to));
         return;
       }
       await store.publishCrossNode(routed.installationId, JSON.stringify({ kind: "cross", toInstallation: routed.installationId, line }));
@@ -318,164 +346,8 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     from.send(errorLine("no-route"));
   }
 
-  function errorLine(code: string): string {
-    return encodeEnvelope({ v: 1, from: "relay", to: "caller", payload: Buffer.from(JSON.stringify({ code })).toString("base64"), nonce: Buffer.alloc(17).toString("base64") });
-  }
-
-  async function readBody(req: IncomingMessage): Promise<string> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-    return Buffer.concat(chunks).toString("utf8");
-  }
-
-  async function handleEnrollChallenge(_req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
-    res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ nodeId, nonce: newJti() }));
-  }
-
-  async function handleEnroll(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
-    try {
-      const body = JSON.parse(await readBody(req)) as { installationId?: string; gatewayKeyPub?: string; sig?: string; nonce?: string };
-      if (typeof body.installationId !== "string" || typeof body.gatewayKeyPub !== "string" || typeof body.sig !== "string" || typeof body.nonce !== "string") {
-        res.writeHead(400).end();
-        return;
-      }
-      const transcript = enrollTranscript({ installationId: body.installationId, gatewayKeyPub: body.gatewayKeyPub, nodeId, nonce: body.nonce });
-      if (!verifyBytes(body.gatewayKeyPub, new TextEncoder().encode(transcript), body.sig)) {
-        res.writeHead(401).end(JSON.stringify({ error: "bad signature" }));
-        return;
-      }
-      const existing = await store.getInstallation(body.installationId);
-      if (existing !== null && existing.gatewayKeyPub.length > 0 && existing.gatewayKeyPub !== body.gatewayKeyPub) {
-        res.writeHead(409).end(JSON.stringify({ error: "installation key conflict" }));
-        return;
-      }
-      await store.putInstallation(body.installationId, { gatewayKeyPub: body.gatewayKeyPub, nodeId });
-      const now = Math.floor(Date.now() / 1000);
-      const token = issueToken(options.tokenSecret, { kind: "gateway", subject: body.installationId, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: newJti() });
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token, expiresIn: TOKEN_TTL_SECONDS }));
-    } catch {
-      res.writeHead(400).end();
-    }
-  }
-
-  async function handleRevoke(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
-    try {
-      const auth = req.headers.authorization ?? "";
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
-      if (claims === null || claims.kind !== "gateway") {
-        res.writeHead(401).end();
-        return;
-      }
-      const body = JSON.parse(await readBody(req)) as { deviceId?: string };
-      if (typeof body.deviceId !== "string" || body.deviceId.length === 0) {
-        res.writeHead(400).end();
-        return;
-      }
-      const routed = await store.getDevice(body.deviceId);
-      if (routed === null || routed.installationId !== claims.subject) {
-        res.writeHead(409).end(JSON.stringify({ error: "device not bound to this installation" }));
-        return;
-      }
-      await store.revoke(body.deviceId);
-      await store.removeDevice(body.deviceId);
-      await store.deleteDeviceKey(body.deviceId);
-
-      res.writeHead(200).end(JSON.stringify({ ok: true }));
-    } catch {
-      res.writeHead(400).end();
-    }
-  }
-
-  async function handleDeviceToken(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
-    try {
-      const auth = req.headers.authorization ?? "";
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
-      if (claims === null || claims.kind !== "gateway") {
-        res.writeHead(401).end();
-        return;
-      }
-      const body = JSON.parse(await readBody(req)) as { deviceId?: string; deviceLongTermPub?: string };
-      if (typeof body.deviceId !== "string" || !/^d_[0-9a-f]{16}$/.test(body.deviceId)) {
-        res.writeHead(400).end(JSON.stringify({ error: "bad deviceId format" }));
-        return;
-      }
-      if (typeof body.deviceLongTermPub === "string" && body.deviceLongTermPub.length > 0) {
-        const pinned = await store.getDeviceKey(body.deviceId);
-        if (pinned === null) await store.putDeviceKey(body.deviceId, body.deviceLongTermPub);
-        else if (pinned !== body.deviceLongTermPub) {
-          res.writeHead(409).end(JSON.stringify({ error: "device key conflict" }));
-          return;
-        }
-      }
-      const installationId = claims.subject;
-      const routed = await store.getDevice(body.deviceId);
-      if (routed !== null && routed.installationId !== installationId) {
-        res.writeHead(409).end(JSON.stringify({ error: "device bound to another installation" }));
-        return;
-      }
-      if (routed === null) {
-        await store.putDevice(body.deviceId, { installationId, nodeId });
-      }
-      const now = Math.floor(Date.now() / 1000);
-      const deviceToken = issueToken(options.tokenSecret, { kind: "device", subject: body.deviceId, installationId, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: newJti() });
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token: deviceToken, expiresIn: TOKEN_TTL_SECONDS }));
-    } catch {
-      res.writeHead(400).end();
-    }
-  }
-
-  async function handleDeviceTokenRefresh(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
-    try {
-      const body = JSON.parse(await readBody(req)) as { deviceId?: string; nonce?: string; sig?: string };
-      if (typeof body.deviceId !== "string" || !/^d_[0-9a-f]{16}$/.test(body.deviceId) || typeof body.nonce !== "string" || typeof body.sig !== "string") {
-        res.writeHead(400).end();
-        return;
-      }
-      const pinnedKey = await store.getDeviceKey(body.deviceId);
-      if (pinnedKey === null) {
-        res.writeHead(404).end(JSON.stringify({ error: "device key not pinned" }));
-        return;
-      }
-      const transcript = `device-refresh|${body.deviceId}|${nodeId}|${body.nonce}`;
-      if (!verifyBytes(pinnedKey, new TextEncoder().encode(transcript), body.sig)) {
-        res.writeHead(401).end(JSON.stringify({ error: "bad signature" }));
-        return;
-      }
-      const routed = await store.getDevice(body.deviceId);
-      if (routed === null) {
-        res.writeHead(404).end(JSON.stringify({ error: "device not registered" }));
-        return;
-      }
-      const now = Math.floor(Date.now() / 1000);
-      const deviceToken = issueToken(options.tokenSecret, { kind: "device", subject: body.deviceId, installationId: routed.installationId, iat: now, exp: now + TOKEN_TTL_SECONDS, jti: newJti() });
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ token: deviceToken, expiresIn: TOKEN_TTL_SECONDS, nodeId }));
-    } catch {
-      res.writeHead(400).end();
-    }
-  }
-
-  async function handlePairingTicket(req: IncomingMessage, res: import("node:http").ServerResponse): Promise<void> {
-    try {
-      const auth = req.headers.authorization ?? "";
-      const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      const claims = verifyToken(options.tokenSecret, token, Math.floor(Date.now() / 1000));
-      if (claims === null || claims.kind !== "gateway") {
-        res.writeHead(401).end();
-        return;
-      }
-      const body = JSON.parse(await readBody(req)) as { pairingId?: string };
-      if (typeof body.pairingId !== "string" || body.pairingId.length === 0) {
-        res.writeHead(400).end();
-        return;
-      }
-      const now = Math.floor(Date.now() / 1000);
-      const ticket = issueToken(options.tokenSecret, { kind: "pairing", subject: body.pairingId, iat: now, exp: now + PAIRING_TICKET_TTL_SECONDS, jti: newJti() });
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ticket }));
-    } catch {
-      res.writeHead(400).end();
-    }
+  function errorLine(code: string, to = "caller"): string {
+    return encodeEnvelope({ v: 1, from: "relay", to, payload: Buffer.from(JSON.stringify({ code })).toString("base64"), nonce: Buffer.alloc(17).toString("base64") });
   }
 
   await new Promise<void>((resolve) => {

@@ -14,6 +14,7 @@ export type AuditEvent =
   | "ui_request-settled"
   | "owner-only-denied"
   | "scope-denied"
+  | "unknown-command-denied"
   | "config-changed"
   | "rekey-performed"
   | "ratchet-regression"

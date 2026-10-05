@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { derivePaths, loadConfig } from "./config.ts";
+import { derivePaths, loadConfig, type GatewayConfig } from "./config.ts";
 import { loadOrCreateIdentity, type GatewayIdentity } from "./identity.ts";
 import { HostAttach, resolveHostBin } from "./host-attach.ts";
 import { loadThreads, type ThreadsRegistry } from "./threads-registry.ts";
@@ -15,9 +15,11 @@ import { assemblePairingServer } from "./pairing-assembly.ts";
 import { createLogBuffer } from "./log-buffer.ts";
 import { makeGwDispatcher } from "./gw-dispatch.ts";
 import { makeOwnerDispatcher } from "./owner-dispatch.ts";
-import { newBucket, processInboundLine, type RateBucket } from "./inbound.ts";
+import { newBucket, processInboundLine, type InboundOutcome, type RateBucket } from "./inbound.ts";
 import { startRelayLink, type RelayLinkHandle } from "./relay-link.ts";
 import { createCryptoSessionPool, type CryptoSessionPool } from "./session-crypto.ts";
+import { bindRelay, type RelayBinding } from "./relay-bind.ts";
+import { sendToDeviceInner, markDeviceOfflineFromRelayLine } from "./device-send.ts";
 export interface GatewayOptions {
   agentDir: string;
   now?(): number;
@@ -36,6 +38,7 @@ export interface GatewayHandle {
   cryptoSessions: CryptoSessionPool;
   pairingServer: import("./pairing-server.ts").PairingServer;
   relayLink: RelayLinkHandle | null;
+  relayBinding: RelayBinding;
   stop(): Promise<void>;
   handleOwnerFrame(session: OwnerSession, frame: Frame): Promise<void>;
   ingestDeviceLine(deviceId: string, line: string): Promise<void>;
@@ -81,7 +84,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   }
   const host = new HostAttach({
     exec,
-    env: { ...process.env, HUB_AGENT_DIR: options.agentDir } as Record<string, string>,
+    env: { ...process.env, ...exec.env, HUB_AGENT_DIR: options.agentDir } as Record<string, string>,
     heartbeatDeadlineMs: 10_000,
     onLine: (line) => ingestHostLine(line),
     onRestart: (reason) => {
@@ -119,13 +122,40 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
 
   host.start();
   const cryptoSessions = createCryptoSessionPool(paths.devicesDir, now);
-  const pairingServer = assemblePairingServer({ identity, config, audit, devices, now, relayLink: () => relayLinkRef, cryptoSessions });
+  let pairingServerRef: import("./pairing-server.ts").PairingServer | null = null;
+  const relayBinding = await bindRelay(config, {
+    singleInstance: true,
+    log,
+    gatewayOfCode: (code) => {
+      const server = pairingServerRef;
+      if (server === null) return null;
+      for (const session of server.listActive()) {
+        if (session.manualCode === code && !session.consumed) {
+          return Promise.resolve({ relayUrl: "", installationId: identity.installationId, gatewayKeyFingerprint: identity.signingPub, pairingId: session.pairingId, pairingTicket: session.deviceToken ?? "" })
+            .then(async (descriptor) => {
+              const relayLink = relayLinkRef;
+              const ticket = relayLink !== null ? await relayLink.requestPairingTicket(session.pairingId) : null;
+              return { ...descriptor, pairingTicket: ticket ?? "" };
+            });
+        }
+      }
+      return null;
+    },
+  });
+  const effectiveConfig: GatewayConfig = relayBinding.mode === "embedded"
+    ? { ...config, relayUrl: relayBinding.relayUrl, relayKeyFingerprint: relayBinding.relayKeyFingerprint }
+    : config;
+  const pairingServer = assemblePairingServer({ identity, config: effectiveConfig, audit, devices, now, relayLink: () => relayLinkRef, cryptoSessions,
+    onSessionEstablished: (deviceId, ratchetSeed) => {
+      cryptoSessions.establish({ deviceId, sharedSecret: ratchetSeed, initiator: true });
+    } });
+  pairingServerRef = pairingServer;
 
   const deviceBuckets = new Map<string, RateBucket>();
   const deviceIngestChains = new Map<string, Promise<void>>();
 
   async function sendToDevice(deviceId: string, frame: Frame): Promise<void> {
-    const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() => sendToDeviceInner(deviceId, frame));
+    const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() => sendToDeviceInner(deviceId, frame, deviceSendDeps()));
     deviceIngestChains.set(deviceId, run.then(
       () => undefined,
       () => undefined,
@@ -133,7 +163,10 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     return run;
   }
   const devicePending = new Map<string, Frame[]>();
-  const DEVICE_PENDING_MAX = 256;
+  const deviceOffline = new Set<string>();
+  function deviceSendDeps() {
+    return { installationId: identity.installationId, cryptoSessions, relayLink: () => relayLinkRef, deviceOffline, devicePending, log };
+  }
 
   async function ingestPairingFrame(pairingId: string, line: string): Promise<void> {
     const session = pairingServer.sessionOf(pairingId);
@@ -173,52 +206,11 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     const link = relayLinkRef;
     if (link === null || !link.connected()) return;
     for (const [deviceId, frames] of devicePending) {
+      if (deviceOffline.has(deviceId)) continue;
       for (const frame of frames) void sendToDevice(deviceId, frame);
       devicePending.set(deviceId, []);
     }
   }
-  async function sendToDeviceInner(deviceId: string, frame: Frame): Promise<void> {
-    const session = cryptoSessions.get(deviceId) ?? (await cryptoSessions.restore(deviceId));
-    const link = relayLinkRef;
-    if (session === null) return;
-    if (link === null || !link.connected()) {
-      const queue = devicePending.get(deviceId) ?? [];
-      queue.push(frame);
-      if (queue.length > DEVICE_PENDING_MAX) queue.splice(0, queue.length - DEVICE_PENDING_MAX);
-      devicePending.set(deviceId, queue);
-      return;
-    }
-    const segs = chunkFrame(frame);
-    if (segs === null) {
-      await sendSealed({ deviceId, link, ratchet: session.ratchet, frame });
-      return;
-    }
-    for (const seg of segs) {
-      const segFrame: Frame = { kind: "chunk", streamId: seg.streamId, seq: seg.seq, body: { segmentId: seg.segmentId, segmentCount: seg.segmentCount, totalBytes: 0, data: seg.data } };
-      await sendSealed({ deviceId, link, ratchet: session.ratchet, frame: segFrame });
-    }
-  }
-  interface SealedSendSpec {
-    deviceId: string;
-    link: RelayLinkHandle;
-    ratchet: import("./session-crypto.ts").DeviceCryptoSession["ratchet"];
-    frame: Frame;
-  }
-  async function sendSealed(spec: SealedSendSpec): Promise<void> {
-    const { deviceId, link, ratchet, frame } = spec;
-    const outcome = await ratchet.seal({ plaintext: new TextEncoder().encode(JSON.stringify(frame)), aadFrom: `gw_${identity.installationId}`, aadTo: `dev_${deviceId}` });
-    if (!outcome.ok) return;
-    const key = new Uint8Array(Buffer.from(outcome.keyUsed, "hex"));
-    const ct = aeadSeal({ key, nonce: outcome.nonce, plaintext: new TextEncoder().encode(JSON.stringify(frame)), aad: outcome.aad });
-    const payload = Buffer.from(ct).toString("base64");
-    if (payload.length > OUTBOUND_PAYLOAD_MAX) {
-      log(`outbound segment exceeds cap (${payload.length}B) — dropped`);
-      return;
-    }
-    const env = encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: `dev_${deviceId}`, payload, nonce: Buffer.from(outcome.nonce).toString("base64") });
-    link.send(env);
-  }
-
   function ingestDeviceLine(deviceId: string, line: string): Promise<void> {
     const run = (deviceIngestChains.get(deviceId) ?? Promise.resolve()).then(() => ingestDeviceLineInner(deviceId, line));
     deviceIngestChains.set(deviceId, run.then(
@@ -247,6 +239,11 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     });
     if (!outcome.ok) return;
     const plaintext = Buffer.from(outcome.plaintext).toString("utf8");
+    if (deviceOffline.delete(deviceId)) {
+      log(`device ${deviceId} back online — flushing pending frames`);
+      for (const frame of devicePending.get(deviceId) ?? []) void sendToDevice(deviceId, frame);
+      devicePending.set(deviceId, []);
+    }
     if (fanout.targetOf(deviceId) === null) {
       fanout.attach({
         target: deviceId,
@@ -259,7 +256,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     }
     const bucket = deviceBuckets.get(deviceId) ?? newBucket();
     deviceBuckets.set(deviceId, bucket);
-    processInboundLine(line, {
+    const inboundOutcome = processInboundLine(line, {
       deviceId,
       tier: entry.scope,
       bucket,
@@ -294,6 +291,23 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       },
       now,
     });
+    replyInboundRejection(deviceId, plaintext, inboundOutcome);
+  }
+  function replyInboundRejection(deviceId: string, plaintext: string, outcome: InboundOutcome): void {
+    if (outcome.kind !== "scope-denied" && outcome.kind !== "unknown-command") return;
+    const rejectedId = rejectedCommandIdOf(plaintext);
+    const code = outcome.kind === "scope-denied" ? "scope-denied" : "unknown-command";
+    const auditEvent: import("./audit.ts").AuditEvent = outcome.kind === "scope-denied" ? "scope-denied" : "unknown-command-denied";
+    void audit.record(auditEvent, { deviceId, command: outcome.command });
+    void sendToDevice(deviceId, { kind: "response", streamId: `cmd:${deviceId}`, seq: nextSeqFor(`cmd:${deviceId}`), body: { id: rejectedId, command: outcome.command, success: false, error: code } });
+  }
+  function rejectedCommandIdOf(plaintext: string): string {
+    try {
+      const frame = JSON.parse(plaintext) as { body?: { id?: unknown } };
+      return typeof frame.body?.id === "string" ? frame.body.id : "auto_0";
+    } catch {
+      return "auto_0";
+    }
   }
   let relayLinkRef: RelayLinkHandle | null = null;
   const rekeyTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -311,16 +325,20 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   }
   if (config.remoteEnabled) {
     relayLinkRef = startRelayLink({
-      relayUrl: config.relayUrl,
+      relayUrl: effectiveConfig.relayUrl,
       installationId: identity.installationId,
       gatewaySigningSecret: identity.signingSecret,
       gatewaySigningPub: identity.signingPub,
-      useTls: config.relayUrl.startsWith("wss://"),
-      expectedRelayFingerprint: config.relayUrl.startsWith("wss://") ? config.relayKeyFingerprint : "",
+      useTls: effectiveConfig.relayUrl.startsWith("wss://"),
+      expectedRelayFingerprint: effectiveConfig.relayUrl.startsWith("wss://") ? effectiveConfig.relayKeyFingerprint : "",
       onFrame: (line) => {
         try {
-          const parsed = JSON.parse(line) as { from?: string };
+          const parsed = JSON.parse(line) as { from?: string; to?: string };
           if (typeof parsed.from !== "string") return;
+          if (parsed.from === "relay") {
+            markDeviceOfflineFromRelayLine(line, parsed.to, { deviceOffline, devices, log });
+            return;
+          }
           if (parsed.from.startsWith("pairing_")) {
             void ingestPairingFrame(parsed.from.slice("pairing_".length), line);
             return;
@@ -418,9 +436,6 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   scheduleRekeyCheck();
   const handleGwCommand = makeGwDispatcher({
     identity,
-    onPairingConfirmed: async (deviceId, ratchetSeed) => {
-      cryptoSessions.establish({ deviceId, sharedSecret: ratchetSeed, initiator: true });
-    },
     relayLink: () => relayLinkRef,
     config,
     audit,
@@ -469,6 +484,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     cryptoSessions,
     pairingServer,
     relayLink: relayLinkRef,
+    relayBinding,
     handleOwnerFrame,
     ingestDeviceLine,
     async stop() {
@@ -478,6 +494,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       relayLinkRef?.stop();
       await ownerServer.close();
       await host.stop();
+      await relayBinding.stop();
     },
   };
   handleRef = handle;

@@ -19,7 +19,7 @@ export interface HostHandle {
   alive(): boolean;
 }
 
-export function resolveHostBin(hostBin: string | null): { command: string; args: string[] } {
+export function resolveHostBin(hostBin: string | null): { command: string; args: string[]; env?: Record<string, string> } {
   if (hostBin !== null && hostBin.length > 0) {
     return { command: hostBin, args: [] };
   }

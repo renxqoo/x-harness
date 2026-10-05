@@ -27,7 +27,7 @@ export const PAIRING_MAX_ATTEMPTS = 5;
 export const PAIRING_LOCKOUT_MS = 5 * 60_000;
 export const PAIRING_MAX_CONCURRENT = 8;
 export const SAS_DIGITS = 6;
-export const MANUAL_CODE_DIGITS = 8;
+export const MANUAL_CODE_DIGITS = 6;
 
 export const RATCHET_BATCH_FRAMES = 64;
 export const RATCHET_BATCH_MS = 200;

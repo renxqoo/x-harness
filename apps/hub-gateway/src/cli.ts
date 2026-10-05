@@ -14,12 +14,12 @@ if (typeof values["agent-dir"] !== "string" || values["agent-dir"].length === 0)
   process.stderr.write("usage: gateway-cli --agent-dir <dir> [--host-command <json>]\n");
   process.exit(2);
 }
-let hostOverride: { command: string; args: string[] } | undefined;
+let hostOverride: { command: string; args: string[]; env?: Record<string, string> } | undefined;
 if (typeof values["host-command"] === "string" && values["host-command"].length > 0) {
   try {
-    const parsed = JSON.parse(values["host-command"]) as { command?: string; args?: string[] };
+    const parsed = JSON.parse(values["host-command"]) as { command?: string; args?: string[]; env?: Record<string, string> };
     if (typeof parsed.command === "string" && Array.isArray(parsed.args)) {
-      hostOverride = { command: parsed.command, args: parsed.args };
+      hostOverride = { command: parsed.command, args: parsed.args, ...(parsed.env !== undefined ? { env: parsed.env } : {}) };
     }
   } catch {
     process.stderr.write("bad --host-command json\n");

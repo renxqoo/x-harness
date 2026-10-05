@@ -82,7 +82,7 @@ describe("QR 路径", () => {
 describe("手输码 PAKE", () => {
   it("正确码：双端同共享、confirm 互验通过", () => {
     const code = generateManualCode();
-    expect(code).toMatch(/^\d{8}$/);
+    expect(code).toMatch(/^\d{6}$/);
     const transcript = "pairing|transcript";
     const init = pakeInitiate(code);
     const resp = gatewayPakeRespond(code, init.message, transcript);

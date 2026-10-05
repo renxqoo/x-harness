@@ -92,7 +92,7 @@ describe("真 host-hub 集成旅程", () => {
     const threadId = (started.data as { threadId?: string }).threadId;
     expect(typeof threadId).toBe("string");
 
-    owner.send(JSON.stringify({ kind: "command", streamId: "owner", seq: 2, body: { command: "prompt", id: "r2", args: { threadId, text: "say hi" } } }));
+    owner.send(JSON.stringify({ kind: "command", streamId: "owner", seq: 2, body: { command: "prompt", id: "r2", args: { threadId, message: "say hi" } } }));
     const promptRes = await owner.waitResponse("r2");
     expect(promptRes.success).toBe(true);
 

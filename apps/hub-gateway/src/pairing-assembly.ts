@@ -14,10 +14,11 @@ export interface PairingAssemblyDeps {
   now(): number;
   relayLink(): RelayLinkHandle | null;
   cryptoSessions: { establish(spec: { deviceId: string; sharedSecret: Uint8Array; initiator: boolean }): unknown };
+  onSessionEstablished(deviceId: string, ratchetSeed: Uint8Array): void;
 }
 
 export function assemblePairingServer(deps: PairingAssemblyDeps): PairingServer {
-  const { identity, config, audit, devices, now } = deps;
+  const { identity, config, audit, devices, now, onSessionEstablished } = deps;
   return createPairingServer({
     identity,
     relayUrl: config.relayUrl,
@@ -40,6 +41,7 @@ export function assemblePairingServer(deps: PairingAssemblyDeps): PairingServer 
         rekeyCounter: 0,
       });
     },
+    onSessionEstablished,
     maxConcurrent: PAIRING_MAX_CONCURRENT,
   });
 }

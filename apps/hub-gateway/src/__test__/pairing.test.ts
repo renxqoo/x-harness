@@ -32,6 +32,7 @@ function makeServer(now: () => number, registered: Array<{ deviceId: string }> =
     onRegistered: async (device) => {
       registered.push({ deviceId: device.deviceId });
     },
+    onSessionEstablished: () => {},
     maxConcurrent: 8,
   });
   return { server, identity, auditLog, registered };
@@ -116,7 +117,7 @@ describe("手输码 PAKE 路径", () => {
     const ts = Date.now();
     const { server, registered } = makeServer(() => ts);
     const started = await server.startManual("read");
-    expect(started.manualCode).toMatch(/^\d{8}$/);
+    expect(started.manualCode).toMatch(/^\d{6}$/);
     const init = pakeInitiate(started.manualCode);
     const res = await server.handlePakeInitiate({ pairingId: started.pairingId, messageA: init.message, deviceInfo: { name: "My Phone", deviceType: "phone", platform: "android", appVersion: "1" } });
     expect(res.ok).toBe(true);

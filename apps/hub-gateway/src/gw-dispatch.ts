@@ -18,7 +18,6 @@ export interface GwDispatchDeps {
   threads: ThreadsRegistry;
   host: HostAttach;
   pairingServer: PairingServerLike;
-  onPairingConfirmed(deviceId: string, ratchetSeed: Uint8Array): Promise<void>;
   relayLink(): RelayLinkHandle | null;
   cryptoSessions: CryptoSessionPool;
   fanout: Fanout;
@@ -30,7 +29,7 @@ export interface GwDispatchDeps {
 }
 
 export interface PairingServerLike {
-  startQr(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; qrPayload: string; ticket: string }>;
+  startQr(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; qrPayload: string; manualCode: string; ticket: string }>;
   startManual(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; manualCode: string; ticket: string }>;
   confirmWithSas(spec: { pairingId: string; ownerTypedSas: string; deviceLongTermPub: string }): Promise<{ ok: true; deviceId: string; ratchetSeed: Uint8Array } | { ok: false; reason: string }>;
   cancel(pairingId: string): void;
@@ -77,7 +76,6 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
       }
       const confirmed = await deps.pairingServer.confirmWithSas({ pairingId, ownerTypedSas, deviceLongTermPub });
       if (!confirmed.ok) return { ok: false, reason: confirmed.reason };
-      await deps.onPairingConfirmed(confirmed.deviceId, confirmed.ratchetSeed);
       return { ok: true, data: { deviceId: confirmed.deviceId } };
     }
     if (command === "gw/pairing/cancel") {

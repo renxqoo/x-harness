@@ -182,7 +182,7 @@ describe("E1 端到端：手机经 relay 完成配对", () => {
     const started = await waitOwner("p2");
     expect(started.success).toBe(true);
     const { pairingId, manualCode } = started.data as { pairingId: string; manualCode: string };
-    expect(manualCode).toMatch(/^\d{8}$/);
+    expect(manualCode).toMatch(/^\d{6}$/);
     const { ticket } = started.data as { ticket: string };
     const phone = await dialPairing(ticket);
     const { pakeInitiate } = await import("@x-harness/remote-protocol");

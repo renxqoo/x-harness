@@ -75,9 +75,9 @@ function coerceConfig(raw: Partial<GatewayConfig>): GatewayConfig {
 }
 
 function validateRemote(config: GatewayConfig): string | null {
-  if (config.relayUrl.length === 0) return "relayUrl required when remoteEnabled";
+  if (config.relayUrl.length === 0) return null;
   if (config.relayUrl.startsWith("wss://")) {
-    if (config.relayKeyFingerprint.length === 0) return "relayKeyFingerprint required when remoteEnabled";
+    if (config.relayKeyFingerprint.length === 0) return "relayKeyFingerprint required for external wss relay";
     return null;
   }
   if (config.relayUrl.startsWith("ws://")) {
