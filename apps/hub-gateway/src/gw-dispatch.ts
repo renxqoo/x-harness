@@ -79,10 +79,10 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
       const pairingId = args.pairingId;
       const ownerTypedSas = args.ownerTypedSas;
       const deviceLongTermPub = args.deviceLongTermPub;
-      if (typeof pairingId !== "string" || typeof ownerTypedSas !== "string" || typeof deviceLongTermPub !== "string") {
-        return { ok: false, reason: "pairingId/ownerTypedSas/deviceLongTermPub required" };
+      if (typeof pairingId !== "string" || typeof ownerTypedSas !== "string") {
+        return { ok: false, reason: "pairingId/ownerTypedSas required" };
       }
-      const confirmed = await deps.pairingServer.confirmWithSas({ pairingId, ownerTypedSas, deviceLongTermPub });
+      const confirmed = await deps.pairingServer.confirmWithSas({ pairingId, ownerTypedSas, deviceLongTermPub: typeof deviceLongTermPub === "string" ? deviceLongTermPub : "" });
       if (!confirmed.ok) return { ok: false, reason: confirmed.reason };
       return { ok: true, data: { deviceId: confirmed.deviceId } };
     }
