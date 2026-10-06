@@ -116,6 +116,18 @@ describe("gateway B2 骨架", () => {
     client.close();
   });
 
+  it("gw/pairing/status：无会话 ownerSas null（owner 侧 SAS 查询面契约）", async () => {
+    const client = await dialOwner(socketPath);
+    client.send(commandFrame("ps0", "gw/pairing/status", { pairingId: "pr_nonexistent" }));
+    const res0 = await client.waitResponse("ps0");
+    expect(res0.success).toBe(true);
+    expect((res0.data as { ownerSas: string | null }).ownerSas).toBeNull();
+    client.send(commandFrame("ps1", "gw/pairing/status", {}));
+    const res1 = await client.waitResponse("ps1");
+    expect(res1.success).toBe(false);
+    client.close();
+  });
+
   it("host 命令管线：thread/start → response 认领回投 + 事件扇出到 owner + 注册表登记", { timeout: 15000 }, async () => {
     const client = await dialOwner(socketPath);
     client.send(commandFrame("c1", "thread/start", { cwd: "/tmp" }));

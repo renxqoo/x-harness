@@ -350,8 +350,12 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     return encodeEnvelope({ v: 1, from: "relay", to, payload: Buffer.from(JSON.stringify({ code })).toString("base64"), nonce: Buffer.alloc(17).toString("base64") });
   }
 
-  await new Promise<void>((resolve) => {
-    server.listen(options.port, options.host, () => resolve());
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(options.port, options.host, () => {
+      server.off("error", reject);
+      resolve();
+    });
   });
 
   return {

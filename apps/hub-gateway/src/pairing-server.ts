@@ -43,6 +43,7 @@ export interface PairingServer {
   cancel(pairingId: string): void;
   sessionOf(pairingId: string): PairingSession | null;
   listActive(): PairingSession[];
+  ownerSasOf(pairingId: string): string | null;
   handlePairingFrame(spec: { pairingId: string; message: { p: string; [key: string]: unknown } }): Promise<{ ok: true; reply: { p: string; [key: string]: unknown } } | { ok: false; reason: string }>;
 }
 
@@ -220,6 +221,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
     },
     sessionOf: (pairingId) => sessions.get(pairingId) ?? null,
     listActive: () => [...sessions.values()].filter((session) => session.expiresAt > options.now()),
+    ownerSasOf: (pairingId) => sessions.get(pairingId)?.sas ?? null,
     async handlePairingFrame(spec) {
       const session = sessions.get(spec.pairingId);
       if (session === undefined) return { ok: false, reason: "no such pairing" };

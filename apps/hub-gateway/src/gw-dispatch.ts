@@ -33,6 +33,7 @@ export interface PairingServerLike {
   startManual(scope: "read" | "interact" | "full"): Promise<{ pairingId: string; manualCode: string; ticket: string }>;
   confirmWithSas(spec: { pairingId: string; ownerTypedSas: string; deviceLongTermPub: string }): Promise<{ ok: true; deviceId: string; ratchetSeed: Uint8Array } | { ok: false; reason: string }>;
   cancel(pairingId: string): void;
+  ownerSasOf(pairingId: string): string | null;
 }
 
 export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: Record<string, unknown>) => Promise<GwResult> {
@@ -60,13 +61,20 @@ export function makeGwDispatcher(deps: GwDispatchDeps): (command: string, args: 
       }, 100);
       return { ok: true, data: { stopping: true } };
     }
-    if (command === "gw/pairing/start" || command === "gw/pairing/cancel" || command === "gw/pairing/confirm") {
+    if (command === "gw/pairing/start" || command === "gw/pairing/cancel" || command === "gw/pairing/confirm" || command === "gw/pairing/status") {
       return handleGwPairing(command, args);
     }
     return { ok: false, reason: "unknown gw command" };
   }
 
+  function pairingStatus(args: Record<string, unknown>): GwResult {
+    const pairingId = args.pairingId;
+    if (typeof pairingId !== "string") return { ok: false, reason: "pairingId required" };
+    return { ok: true, data: { pairingId, ownerSas: deps.pairingServer.ownerSasOf(pairingId) } };
+  }
+
   async function handleGwPairing(command: string, args: Record<string, unknown>): Promise<GwResult> {
+    if (command === "gw/pairing/status") return pairingStatus(args);
     if (command === "gw/pairing/confirm") {
       const pairingId = args.pairingId;
       const ownerTypedSas = args.ownerTypedSas;
