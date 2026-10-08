@@ -1,0 +1,71 @@
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+new file mode 100644
+index 0000000..af5c2fd
+--- /dev/null
++++ b/CONTRIBUTING.md
+@@ -0,0 +1,65 @@
++# Contributing to Hello-World
++
++Thank you for considering a contribution! This guide explains how to file an issue, how to open a pull request, and what we expect from every contribution. If anything here is unclear, please ask by opening an issue.
++
++## Ways to Contribute
++
++- Report bugs or problems you have run into.
++- Suggest ideas and improvements.
++- Improve documentation, including this guide.
++- Submit code or documentation changes via pull requests.
++
++## Filing an Issue
++
++1. Search the existing issues at <https://github.com/octocat/Hello-World/issues>, including closed ones, to see if your problem or idea has already been reported.
++2. If it has not, open a new issue with a short, descriptive title.
++3. In the description, include:
++   - What you expected to happen.
++   - What actually happened, with the steps to reproduce it.
++   - Relevant environment details, such as your operating system and the tools or versions involved.
++
++Issues are public. Please never include secrets, credentials, or other sensitive data in an issue report.
++
++## Opening a Pull Request
++
++1. Fork the repository to your own GitHub account.
++2. Clone your fork:
++
++   ```bash
++   git clone https://github.com/<username>/Hello-World.git
++   cd Hello-World
++   ```
++
++3. Create a branch for your change:
++
++   ```bash
++   git checkout -b my-contribution
++   ```
++
++4. Make your change and commit it with a clear, descriptive message:
++
++   ```bash
++   git add <changed-files>
++   git commit -m "Short summary of the change"
++   ```
++
++5. Push the branch to your fork:
++
++   ```bash
++   git push origin my-contribution
++   ```
++
++6. Open a pull request from your branch to the `master` branch of `octocat/Hello-World`.
++7. Describe what the change does and why it is needed, and link the related issue with `Fixes #<issue number>`. Every pull request should reference the issue it resolves.
++
++## Expectations for Contributions
++
++- Communicate respectfully and constructively in issues, reviews, and pull requests.
++- Keep changes small and focused on a single purpose.
++- Follow the existing style of the repository's files.
++
++This repository has no test suite, linter, or build system. Maintainers review changes by reading them, so a clear commit message and a well-described pull request are what make a contribution easy to review.
++
++## Questions?
++
++If you have a question that does not fit an issue, open one anyway and label it as a question. The issue tracker is the fastest way to reach the maintainers.

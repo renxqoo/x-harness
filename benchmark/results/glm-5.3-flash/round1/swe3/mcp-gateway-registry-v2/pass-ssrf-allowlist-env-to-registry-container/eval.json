@@ -1,0 +1,48 @@
+{
+  "task": "pass-ssrf-allowlist-env-to-registry-container",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 22,
+      "risk_awareness": 21,
+      "total": 87,
+      "notes": "The issue pins the exact gap (both variables present at docker-compose.yml:206-207, absent from docker-compose.prebuilt.yml and docker-compose.podman.yml, documented at .env.example:1184-1189) and I verified every one of those file/line claims plus the Helm (charts/registry/templates/deployment.yaml:150-154) and Terraform (ecs-services.tf:1406-1414) parity references against the repo. Acceptance criteria are genuinely testable, including the negative case (empty defaults keep the guard fail-closed) and a scan requirement rather than an assumed file list. Scope and non-goals are explicit, with the A2A_REVERSE_PROXY_ENABLED gap correctly deferred (I confirmed it exists only in the default compose at line 200). The only unverifiable claim is the cited external issue #1513, which the repo cannot confirm."
+    },
+    "lld": {
+      "completeness": 22,
+      "correctness": 19,
+      "specificity": 23,
+      "risk_awareness": 21,
+      "total": 85,
+      "notes": "Strongest aspect is decision-ready specificity: the insertion anchors are exact and real (prebuilt after REGISTRY_CONTACT_URL at line 90 before the BUILD_VERSION comment at 91; podman after line 84 before SECRET_KEY at 85), the comment text is quoted verbatim from the default file, and the alternatives analysis (extra_env mount, env_file:.env, no test) is honest. Two correctness defects cost it: the design repeatedly names a nonexistent symbol `_gateway_allowlist()` when the real consumer is `_proxy_allowlist()` at registry/utils/url_guard.py:181 (line refs 184-192 and settings fields at config.py:591/601 are correct), and the Step 3 test code it hands to the implementer contains a broken membership assertion that fails even on a correct tree. Risk handling is otherwise proportionate: lru_cache restart semantics, empty-default fail-closed behavior, and edit-anchor uniqueness are all addressed."
+    },
+    "review": {
+      "completeness": 22,
+      "correctness": 19,
+      "specificity": 21,
+      "risk_awareness": 21,
+      "total": 83,
+      "notes": "This is a real review, not role-play: it forced the compose-parity regression test into the design (R1, the actual root-cause prevention), surfaced the lru_cache restart requirement (R3), and rejected the env_file:.env wholesale alternative with a sound secret-surface argument, all tracked in a finding ledger with resolutions. Its claims check out against the repo (COMPOSE_FILES pattern at tests/security/test_container_security.py:24-30, empty-default security value, DHI/a2a exclusions - I confirmed docker-compose.dhi.yml defines no registry service). The material miss is that R2 reviewed the test code closely enough to worry about a bare StopIteration from next() but never noticed that `assert var in environment` does exact element equality against YAML-parsed strings like 'SSRF_ALLOWED_HOSTS=${SSRF_ALLOWED_HOSTS:-}' and therefore never passes; the recommended fix preserved the broken assertion."
+    },
+    "testing": {
+      "completeness": 22,
+      "correctness": 19,
+      "specificity": 22,
+      "risk_awareness": 21,
+      "total": 84,
+      "notes": "The plan covers the right levels for this change: docker compose config interpolation per variant, container printenv, the pytest regression suite, backwards compatibility (default file untouched, empty defaults preserve fail-closed), E2E symptom reproduction using the real status string from registry/constants.py:20, and rollback via git checkout with an explicit no-migration note. Commands agree with the repo (uv run pytest, the restart note is justified by the actual @lru_cache at url_guard.py:181, https://localhost matches the prebuilt 443:8443 mapping). The largest deficiency is that section 1.3's expected output claims the submitted regression tests pass; I empirically confirmed via yaml.safe_load that the membership assertion returns False against docker-compose.yml even with both entries present, so the documented happy-path expectation is false on a correctly patched tree."
+    },
+    "implementation": {
+      "completeness": 22,
+      "correctness": 18,
+      "specificity": 22,
+      "risk_awareness": 20,
+      "total": 82,
+      "notes": "The compose changes are exactly right: both hunks pass `git apply --check` against this checkout, the context lines match the real files byte-for-byte, the comment block mirrors docker-compose.yml:201-207 verbatim, and the claimed post-patch positions (prebuilt 96-97, podman 90-91) and the +84/-0 arithmetic check out. The largest defect is in the added tests/unit/test_compose_ssrf_env_passthrough.py: `assert var in environment` compares the bare name for exact equality against list elements that YAML-parse to 'SSRF_ALLOWED_HOSTS=${SSRF_ALLOWED_HOSTS:-}', so I confirmed by simulation that all six parametrized cases fail on a correctly patched tree, turning the review-mandated regression gate into an always-red CI test. The summary is otherwise honest about scope, deviations (a cosmetic comment change), and the deliberately excluded A2A_REVERSE_PROXY_ENABLED follow-up, and it does not claim tests were executed."
+    }
+  },
+  "task_score": 84.2,
+  "verdict": "An unusually well-grounded set of artifacts for a trivial compose-wiring fix - nearly every file, line, and parity claim verified against the repository and both compose hunks apply cleanly - whose single material limitation is that the shipped regression test's membership assertion fails against a correctly patched tree, so the one automated control the review mandated is broken."
+}

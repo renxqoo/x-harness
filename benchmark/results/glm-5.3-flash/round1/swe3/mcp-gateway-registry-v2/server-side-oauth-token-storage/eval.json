@@ -1,0 +1,48 @@
+{
+  "task": "server-side-oauth-token-storage",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 22,
+      "correctness": 21,
+      "specificity": 22,
+      "risk_awareness": 21,
+      "total": 86,
+      "notes": "Strongest aspect is a fully testable acceptance-criteria set (404-with-no-leak, TTL plus deterministic expiry, cookie-only validation, Mongo-down-never-blocks-login, pre-change-cookie compat) paired with genuine out-of-scope statements that each give a reason. I verified the core problem claims against the repo: `OAUTH_STORE_TOKENS_IN_SESSION` defaults false at auth_server/server.py:98 with the comment at 3064-3065 confirming tokens were removed in #490, and Sidebar.tsx:92/101 shows `fetchAdminTokens` posting to `/api/tokens/generate`, so the broken-feature framing is real. Largest deficiency: the AC \"cookie stays under ~2 KB even with multi-KB IdP tokens\" is not guaranteed while `id_token` deliberately remains in the cookie, and the issue never reconciles that tension. The #399/#490/#779 cross-references and the Helm shared-secret claim are externally unverifiable from this checkout."
+    },
+    "lld": {
+      "completeness": 23,
+      "correctness": 23,
+      "specificity": 24,
+      "risk_awareness": 22,
+      "total": 92,
+      "notes": "Every load-bearing claim I checked is grounded in real source, several to the exact line: `registry/main.py:856` mounts `auth_router` at `/api/auth`, `internal_router` carries `dependencies=[Depends(validate_internal_auth)]` at server.py:985-988, `backend_session_repository.py:47-87` is the lazy-collection/TTL-index template it cites, `credential_encryption.py` uses PBKDF2-100k with a purpose salt, `settings.auth_server_url` and `generate_internal_token(subject, purpose)` exist with those signatures, and nginx line 418 routes `^~ /api/auth` to the registry. The design commits to the hard decisions (merged 404 semantics, explicit `expires_at` definition, `token_ref` never in URLs, dual TTL check, distinct derivation salt, single-flag rollback) rather than listing components. Remaining gaps: the id_token-stays-in-cookie vs cookie-size tension is deferred rather than resolved, and the `server_routes.py:2357/2457` line references were only approximately confirmed. Alternatives matrix and rollout/rollback path are concrete and honest."
+    },
+    "review": {
+      "completeness": 22,
+      "correctness": 21,
+      "specificity": 22,
+      "risk_awareness": 22,
+      "total": 87,
+      "notes": "This is a real review, not role-play: it finds three genuine defects in its own draft design with correct consequences (B1 TTL expiring still-valid refresh tokens, B2 separate 403 inviting existence disclosure, S1 leaking `token_ref` through logout URLs enabling revoke-DoS), holds two NEEDS REVISION verdicts, and the LLD's revised sections demonstrably fold in each resolution. The frontend concern is verified against Sidebar.tsx:101 (`/api/tokens/generate` cannot return IdP tokens post-#490). Deductions: S1's premise attributes a query-param design to the draft that the submitted LLD already omits, so part of the \"catch\" reviews text not in evidence; \"nginx logs paths only by default - confirmed\" is asserted without config inspection; and the review misses the cookie-size/id_token tension and the Helm subchart key mismatch that the testing plan later gets wrong."
+    },
+    "testing": {
+      "completeness": 22,
+      "correctness": 19,
+      "specificity": 22,
+      "risk_awareness": 21,
+      "total": 84,
+      "notes": "The plan uses real oracles at the right levels: exact status codes and detail strings, the Fernet-prefix check (`gAAAAA` not `eyJ`) via mongosh as an encryption-at-rest oracle, TTL dual-check verification before and after the ~90s monitor window, and a strong backward-compatibility section (pre-change cookie validates with 404 degradation, flag-off restores legacy behavior, `/api/tokens/generate` unchanged, validation stays cookie-only with MongoDB stopped). Prerequisites and paths are repo-accurate (`tests/unit/utils/test_credential_encryption.py` and `tests/auth_server/unit/test_server.py` exist; `terraform/aws-ecs` exists). Largest defect: Section 4.3 uses `--set authServer.extraEnv[0]...` but the stack chart's dependency is named `auth-server` (Chart.yaml:16, values.yaml:366), so that command renders nothing and its own `grep -c >= 1` assertion fails; E2E-1 step 4 also hand-waves how the ref is captured for the before/after count."
+    },
+    "implementation": {
+      "completeness": 22,
+      "correctness": 19,
+      "specificity": 21,
+      "risk_awareness": 20,
+      "total": 82,
+      "notes": "The patch is real and repo-native: I verified every hunk's context and line numbers against the source (server.py hunks at 53/99/2197/2394/3061 including the two-blank-line convention confirmed by awk, routes.py at 1-15/202-217/317, interfaces.py tail 1486-1488, factory.py imports and `reset_repositories`, docker-compose 351-356, .env.example 659-664), and the production code implements the revised LLD end-to-end with correct symbols (`secrets` imported at server.py:13, `hash_username` at :421, `MONGODB_BACKENDS`, distinct salt from `credential_encryption`'s `b\"mcp-gateway-credential-encryption\"`) and repo-conventional `logging.basicConfig` matching sibling repositories. Largest defect: the shipped endpoint/callback tests are structurally broken — `_make_client` wraps only the import in `with patch(\"auth_server.server.get_oauth_token_repository\")`, so the mock is restored before any request and the handlers hit the real repository at call time, making `test_retrieve_happy_path` and the callback `assert_awaited_once` assertions fail if executed; the callback tests also sign the temp session with a hardcoded `TEST_SECRET_KEY` while the unused `auth_env` fixture never binds it to the `settings` singleton (`secret_key` defaults to `secrets.token_hex(32)` per config.py:666), and `roundtrip_empty_string` lacks a `test_` prefix so it is never collected. The summary is honest about tests not being run and about the deferred Sidebar wiring, and documents its three deviations accurately."
+    }
+  },
+  "task_score": 86.2,
+  "verdict": "An unusually well-grounded design set with an accurate, convention-following patch, whose largest material limitation is that the implementation's own test harness has a broken mock scope (and an unbound SECRET_KEY fixture) so the included verification would not actually verify the feature if run."
+}

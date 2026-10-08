@@ -1,0 +1,647 @@
+diff --git a/registry/api/agent_routes.py b/registry/api/agent_routes.py
+index 15e26a8..b0675bd 100644
+--- a/registry/api/agent_routes.py
++++ b/registry/api/agent_routes.py
+@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
+ from pydantic import BaseModel
+ 
+ from ..audit import set_audit_action
+-from ..auth.csrf import verify_csrf_token_flexible
++from ..auth.csrf import verify_csrf_token_if_session_cookie
+ from ..auth.dependencies import nginx_proxied_auth
+ from ..core.config import settings
+ from ..repositories.factory import get_search_repository
+@@ -984,7 +984,7 @@ async def toggle_agent(
+     path: str,
+     enabled: bool,
+     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
+-    _csrf: Annotated[None, Depends(verify_csrf_token_flexible)] = None,
++    _csrf: Annotated[None, Depends(verify_csrf_token_if_session_cookie)] = None,
+ ):
+     """
+     Enable or disable an agent.
+diff --git a/registry/api/server_routes.py b/registry/api/server_routes.py
+index 42dc4c7..0b905c0 100644
+--- a/registry/api/server_routes.py
++++ b/registry/api/server_routes.py
+@@ -11,7 +11,11 @@ from fastapi.templating import Jinja2Templates
+ from pydantic import BaseModel
+ 
+ from ..audit import set_audit_action
+-from ..auth.csrf import generate_csrf_token, verify_csrf_token_flexible
++from ..auth.csrf import (
++    generate_csrf_token,
++    verify_csrf_token_flexible,
++    verify_csrf_token_if_session_cookie,
++)
+ from ..auth.dependencies import enhanced_auth, nginx_proxied_auth
+ from ..auth.internal import validate_internal_auth
+ from ..constants import VALID_AUTH_SCHEMES
+@@ -546,7 +550,7 @@ async def toggle_service_route(
+     service_path: str,
+     enabled: Annotated[str | None, Form()] = None,
+     user_context: Annotated[dict, Depends(enhanced_auth)] = None,
+-    _csrf: Annotated[None, Depends(verify_csrf_token_flexible)] = None,
++    _csrf: Annotated[None, Depends(verify_csrf_token_if_session_cookie)] = None,
+ ):
+     """Toggle a service on/off (requires toggle_service UI permission)."""
+     from ..auth.dependencies import user_has_ui_permission_for_service
+@@ -1330,6 +1334,7 @@ async def internal_toggle_service(
+     request: Request,
+     caller: Annotated[str, Depends(validate_internal_auth)],
+     service_path: Annotated[str, Form()],
++    _csrf: Annotated[None, Depends(verify_csrf_token_if_session_cookie)] = None,
+ ):
+     """Internal service toggle endpoint for mcpgw-server (requires admin authentication)."""
+     from ..core.nginx_service import nginx_service
+@@ -3008,6 +3013,7 @@ async def toggle_service_api(
+     path: Annotated[str, Form()],
+     new_state: Annotated[bool, Form()],
+     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
++    _csrf: Annotated[None, Depends(verify_csrf_token_if_session_cookie)] = None,
+ ):
+     """
+     Toggle a service's enabled/disabled state via JWT authentication (External API).
+diff --git a/registry/api/skill_routes.py b/registry/api/skill_routes.py
+index c59fa57..0c612b8 100644
+--- a/registry/api/skill_routes.py
++++ b/registry/api/skill_routes.py
+@@ -29,7 +29,7 @@ from fastapi import (
+ from pydantic import BaseModel
+ 
+ from ..audit.context import set_audit_action
+-from ..auth.csrf import verify_csrf_token_flexible
++from ..auth.csrf import verify_csrf_token_if_session_cookie
+ from ..auth.dependencies import nginx_proxied_auth
+ from ..exceptions import (
+     SkillAlreadyExistsError,
+@@ -832,7 +832,7 @@ async def toggle_skill(
+     request: ToggleStateRequest,
+     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
+     skill_path: str = Path(..., description="Skill path or name"),
+-    _csrf: Annotated[None, Depends(verify_csrf_token_flexible)] = None,
++    _csrf: Annotated[None, Depends(verify_csrf_token_if_session_cookie)] = None,
+ ) -> dict:
+     """Toggle a skill's enabled state."""
+     normalized_path = normalize_skill_path(skill_path)
+diff --git a/registry/api/virtual_server_routes.py b/registry/api/virtual_server_routes.py
+index dd3d05d..2f98ac8 100644
+--- a/registry/api/virtual_server_routes.py
++++ b/registry/api/virtual_server_routes.py
+@@ -21,6 +21,7 @@ from fastapi import (
+ from pydantic import BaseModel
+ 
+ from ..audit.context import set_audit_action
++from ..auth.csrf import verify_csrf_token_if_session_cookie
+ from ..auth.dependencies import nginx_proxied_auth
+ from ..exceptions import (
+     VirtualServerAlreadyExistsError,
+@@ -460,6 +461,7 @@ async def toggle_virtual_server(
+     request: ToggleVirtualServerRequest,
+     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
+     vs_path: str = Path(..., description="Virtual server path"),
++    _csrf: Annotated[None, Depends(verify_csrf_token_if_session_cookie)] = None,
+ ) -> dict:
+     """Enable or disable a virtual MCP server.
+ 
+diff --git a/registry/auth/csrf.py b/registry/auth/csrf.py
+index bc29724..c6a8db8 100644
+--- a/registry/auth/csrf.py
++++ b/registry/auth/csrf.py
+@@ -155,3 +155,35 @@ async def verify_csrf_token_flexible(
+         )
+ 
+     logger.debug("CSRF token verified via flexible dependency")
++
++
++async def verify_csrf_token_if_session_cookie(request: Request) -> None:
++    """FastAPI dependency that enforces CSRF only for cookie-authenticated requests.
++
++    Policy: CSRF protection applies to cookie-authenticated (browser) requests;
++    bearer-authenticated requests are exempt because they carry no forgeable
++    ambient credential. Cross-site attackers cannot attach an Authorization
++    header to a victim's request - they can only ride ambient credentials such
++    as cookies. So:
++
++    - No session cookie -> the request must have authenticated with an explicit
++      credential (OAuth bearer token or internal JWT). CSRF validation is
++      skipped; the route's auth dependency remains the sole authority for
++      identifying the caller.
++    - Session cookie present -> the request may be a forged browser request.
++      A valid session-bound CSRF token is REQUIRED, same rules as
++      verify_csrf_token_flexible.
++
++    The cookie gate runs first and returns before any token parsing, so a
++    tokenless bearer request never reaches a 403 CSRF branch.
++    """
++    session_id = request.cookies.get(settings.session_cookie_name)
++    if not session_id:
++        logger.info(
++            "CSRF check skipped: no session cookie (non-browser/bearer-authenticated request)"
++        )
++        return
++
++    # Cookie present: enforce the full strict check (token via X-CSRF-Token
++    # header or csrf_token form field, validated against the session).
++    await verify_csrf_token_flexible(request)
+diff --git a/tests/unit/api/test_agent_routes.py b/tests/unit/api/test_agent_routes.py
+index f5dda8a..a8974f0 100644
+--- a/tests/unit/api/test_agent_routes.py
++++ b/tests/unit/api/test_agent_routes.py
+@@ -53,10 +53,10 @@ def test_app(mock_user_context):
+ 
+     # Override the auth dependency to return mock user context
+     from registry.api.agent_routes import nginx_proxied_auth
+-    from registry.auth.csrf import verify_csrf_token_flexible
++    from registry.auth.csrf import verify_csrf_token_if_session_cookie
+ 
+     app.dependency_overrides[nginx_proxied_auth] = lambda: mock_user_context
+-    app.dependency_overrides[verify_csrf_token_flexible] = lambda: None
++    app.dependency_overrides[verify_csrf_token_if_session_cookie] = lambda: None
+ 
+     client = TestClient(app)
+     yield client
+@@ -136,10 +136,10 @@ def test_app_admin(mock_admin_context):
+     app.include_router(router)
+ 
+     from registry.api.agent_routes import nginx_proxied_auth
+-    from registry.auth.csrf import verify_csrf_token_flexible
++    from registry.auth.csrf import verify_csrf_token_if_session_cookie
+ 
+     app.dependency_overrides[nginx_proxied_auth] = lambda: mock_admin_context
+-    app.dependency_overrides[verify_csrf_token_flexible] = lambda: None
++    app.dependency_overrides[verify_csrf_token_if_session_cookie] = lambda: None
+ 
+     client = TestClient(app)
+     yield client
+@@ -155,10 +155,10 @@ def test_app_limited(mock_limited_user_context):
+     app.include_router(router)
+ 
+     from registry.api.agent_routes import nginx_proxied_auth
+-    from registry.auth.csrf import verify_csrf_token_flexible
++    from registry.auth.csrf import verify_csrf_token_if_session_cookie
+ 
+     app.dependency_overrides[nginx_proxied_auth] = lambda: mock_limited_user_context
+-    app.dependency_overrides[verify_csrf_token_flexible] = lambda: None
++    app.dependency_overrides[verify_csrf_token_if_session_cookie] = lambda: None
+ 
+     client = TestClient(app)
+     yield client
+@@ -1671,3 +1671,118 @@ class TestRatingRequestModel:
+         # Arrange & Act & Assert
+         with pytest.raises(ValidationError):
+             RatingRequest(rating="invalid")
++
++
++# =============================================================================
++# TEST CSRF ON TOGGLE ENDPOINT (issue #891)
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++@pytest.mark.agents
++class TestToggleAgentCsrf:
++    """CSRF policy tests for POST /agents/{path:path}/toggle.
++
++    The route uses verify_csrf_token_if_session_cookie: bearer-style requests
++    (no session cookie) must pass; cookie-bearing requests must present a
++    valid session-bound CSRF token. Unlike the fixtures above, the CSRF
++    dependency is NOT overridden here so the real policy is exercised.
++    """
++
++    SESSION_ID = "csrf-test-session-0123456789abcdef"
++
++    @pytest.fixture
++    def csrf_app(self, mock_user_context):
++        """App with auth overridden but CSRF dependency enforced for real."""
++        from fastapi import FastAPI
++        from fastapi.testclient import TestClient
++
++        from registry.api.agent_routes import nginx_proxied_auth, router
++        from registry.core.config import settings
++
++        self.cookie_name = settings.session_cookie_name
++        app = FastAPI()
++        app.include_router(router)
++        app.dependency_overrides[nginx_proxied_auth] = lambda: mock_user_context
++        client = TestClient(app)
++        yield client
++        app.dependency_overrides.clear()
++
++    @pytest.mark.asyncio
++    async def test_bearer_request_without_cookie_passes(self, csrf_app, sample_agent_card):
++        """M2M bearer client (no session cookie) can toggle without a CSRF token."""
++        with (
++            patch("registry.api.agent_routes.agent_service") as mock_agent_service,
++            patch(
++                "registry.auth.dependencies.user_has_ui_permission_for_service", return_value=True
++            ),
++            patch("registry.search.service.faiss_service") as mock_faiss,
++        ):
++            mock_agent_service.get_agent_info = AsyncMock(return_value=sample_agent_card)
++            mock_agent_service.toggle_agent = AsyncMock(return_value=True)
++            mock_faiss.add_or_update_entity = AsyncMock()
++
++            response = csrf_app.post(
++                "/agents/test-agent/toggle?enabled=true",
++                headers={"Authorization": "Bearer some-m2m-token"},
++            )
++
++        assert response.status_code == status.HTTP_200_OK
++        assert response.json()["is_enabled"] is True
++
++    @pytest.mark.asyncio
++    async def test_cookie_without_token_rejected(self, csrf_app, sample_agent_card):
++        """Cookie-authenticated request without a CSRF token gets 403."""
++        with patch("registry.api.agent_routes.agent_service") as mock_agent_service:
++            mock_agent_service.get_agent_info = AsyncMock(return_value=sample_agent_card)
++
++            response = csrf_app.post(
++                "/agents/test-agent/toggle?enabled=true",
++                cookies={self.cookie_name: self.SESSION_ID},
++            )
++
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        assert response.json()["detail"] == "CSRF validation failed: no token provided"
++
++    @pytest.mark.asyncio
++    async def test_cookie_with_invalid_token_rejected(self, csrf_app, sample_agent_card):
++        """Cookie-authenticated request with a garbage token gets 403."""
++        with patch("registry.api.agent_routes.agent_service") as mock_agent_service:
++            mock_agent_service.get_agent_info = AsyncMock(return_value=sample_agent_card)
++
++            response = csrf_app.post(
++                "/agents/test-agent/toggle?enabled=true",
++                cookies={self.cookie_name: self.SESSION_ID},
++                headers={"X-CSRF-Token": "garbage-token"},
++            )
++
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        assert response.json()["detail"] == "CSRF validation failed: invalid token"
++
++    @pytest.mark.asyncio
++    async def test_cookie_with_valid_token_passes(self, csrf_app, sample_agent_card):
++        """Cookie + valid session-bound token passes and toggles the agent."""
++        from registry.auth.csrf import generate_csrf_token
++
++        token = generate_csrf_token(self.SESSION_ID)
++
++        with (
++            patch("registry.api.agent_routes.agent_service") as mock_agent_service,
++            patch(
++                "registry.auth.dependencies.user_has_ui_permission_for_service", return_value=True
++            ),
++            patch("registry.search.service.faiss_service") as mock_faiss,
++        ):
++            mock_agent_service.get_agent_info = AsyncMock(return_value=sample_agent_card)
++            mock_agent_service.toggle_agent = AsyncMock(return_value=True)
++            mock_faiss.add_or_update_entity = AsyncMock()
++
++            response = csrf_app.post(
++                "/agents/test-agent/toggle?enabled=true",
++                cookies={self.cookie_name: self.SESSION_ID},
++                headers={"X-CSRF-Token": token},
++            )
++
++        assert response.status_code == status.HTTP_200_OK
++        assert response.json()["is_enabled"] is True
+diff --git a/tests/unit/api/test_skill_routes.py b/tests/unit/api/test_skill_routes.py
+new file mode 100644
+index 0000000..77cc7a1
+--- /dev/null
++++ b/tests/unit/api/test_skill_routes.py
+@@ -0,0 +1,192 @@
++"""
++Unit tests for skill toggle API endpoints (registry/api/skill_routes.py).
++
++Focus: CSRF policy on POST /skills/{path:path}/toggle (issue #891).
++
++The route uses verify_csrf_token_if_session_cookie:
++- Bearer-style requests (no session cookie) must pass without a CSRF token.
++- Cookie-bearing requests must present a valid session-bound CSRF token.
++
++Conventions follow tests/unit/api/test_agent_routes.py: the auth dependency is
++overridden, the service is patched, and in these tests the CSRF dependency is
++deliberately NOT overridden so the real policy is exercised.
++"""
++
++import logging
++from typing import Any
++from unittest.mock import AsyncMock, MagicMock, patch
++
++import pytest
++from fastapi import FastAPI, status
++from fastapi.testclient import TestClient
++
++from registry.api.skill_routes import (
++    ToggleStateRequest,
++    router,
++)
++
++logger = logging.getLogger(__name__)
++
++
++# =============================================================================
++# FIXTURES
++# =============================================================================
++
++
++@pytest.fixture
++def mock_user_context() -> dict[str, Any]:
++    """Create a mock user context for authentication."""
++    return {
++        "username": "testuser",
++        "groups": ["test-group", "dev-group"],
++        "scopes": ["read:skills", "write:skills"],
++        "auth_method": "session",
++        "provider": "local",
++        "accessible_servers": ["all"],
++        "accessible_services": ["all"],
++        "accessible_agents": ["all"],
++        "ui_permissions": {
++            "toggle_service": ["all"],
++            "modify_service": ["all"],
++        },
++        "can_modify_servers": True,
++        "is_admin": False,
++    }
++
++
++@pytest.fixture
++def csrf_app(mock_user_context):
++    """App with auth overridden but the CSRF dependency enforced for real."""
++    from registry.api.skill_routes import nginx_proxied_auth
++    from registry.core.config import settings
++
++    app = FastAPI()
++    app.include_router(router)
++    app.dependency_overrides[nginx_proxied_auth] = lambda: mock_user_context
++    client = TestClient(app)
++    yield client, settings.session_cookie_name
++    app.dependency_overrides.clear()
++
++
++@pytest.fixture
++def sample_skill():
++    """Create a mock SkillCard owned by the test user (so modification passes)."""
++    mock = MagicMock()
++    mock.path = "/test-skill"
++    mock.name = "test-skill"
++    mock.owner = "testuser"
++    mock.tags = []
++    return mock
++
++
++# =============================================================================
++# TEST TOGGLE STATE REQUEST MODEL
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++class TestToggleStateRequestModel:
++    """Tests for the ToggleStateRequest Pydantic model."""
++
++    def test_toggle_state_request_valid(self):
++        """Test valid ToggleStateRequest creation."""
++        request = ToggleStateRequest(enabled=True)
++        assert request.enabled is True
++
++    def test_toggle_state_request_invalid_type(self):
++        """Test ToggleStateRequest with an invalid type."""
++        with pytest.raises(Exception):
++            ToggleStateRequest(enabled="not-a-bool")
++
++
++# =============================================================================
++# TEST CSRF ON SKILL TOGGLE ENDPOINT (issue #891)
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++class TestToggleSkillCsrf:
++    """CSRF policy tests for POST /skills/{path:path}/toggle."""
++
++    SESSION_ID = "csrf-test-session-0123456789abcdef"
++
++    async def test_bearer_request_without_cookie_passes(self, csrf_app, sample_skill):
++        """M2M bearer client (no session cookie) can toggle without a CSRF token."""
++        client, _cookie_name = csrf_app
++
++        with patch("registry.api.skill_routes.get_skill_service") as mock_get_service:
++            mock_service = AsyncMock()
++            mock_service.get_skill = AsyncMock(return_value=sample_skill)
++            mock_service.toggle_skill = AsyncMock(return_value=True)
++            mock_get_service.return_value = mock_service
++
++            response = client.post(
++                "/skills/test-skill/toggle",
++                json={"enabled": True},
++                headers={"Authorization": "Bearer some-m2m-token"},
++            )
++
++        assert response.status_code == status.HTTP_200_OK
++        assert response.json()["is_enabled"] is True
++
++    async def test_cookie_without_token_rejected(self, csrf_app, sample_skill):
++        """Cookie-authenticated request without a CSRF token gets 403."""
++        client, cookie_name = csrf_app
++
++        with patch("registry.api.skill_routes.get_skill_service") as mock_get_service:
++            mock_service = AsyncMock()
++            mock_service.get_skill = AsyncMock(return_value=sample_skill)
++            mock_get_service.return_value = mock_service
++
++            response = client.post(
++                "/skills/test-skill/toggle",
++                json={"enabled": True},
++                cookies={cookie_name: self.SESSION_ID},
++            )
++
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        assert response.json()["detail"] == "CSRF validation failed: no token provided"
++
++    async def test_cookie_with_invalid_token_rejected(self, csrf_app, sample_skill):
++        """Cookie-authenticated request with a garbage token gets 403."""
++        client, cookie_name = csrf_app
++
++        with patch("registry.api.skill_routes.get_skill_service") as mock_get_service:
++            mock_service = AsyncMock()
++            mock_service.get_skill = AsyncMock(return_value=sample_skill)
++            mock_get_service.return_value = mock_service
++
++            response = client.post(
++                "/skills/test-skill/toggle",
++                json={"enabled": True},
++                cookies={cookie_name: self.SESSION_ID},
++                headers={"X-CSRF-Token": "garbage-token"},
++            )
++
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        assert response.json()["detail"] == "CSRF validation failed: invalid token"
++
++    async def test_cookie_with_valid_token_passes(self, csrf_app, sample_skill):
++        """Cookie + valid session-bound token passes and toggles the skill."""
++        from registry.auth.csrf import generate_csrf_token
++
++        client, cookie_name = csrf_app
++        token = generate_csrf_token(self.SESSION_ID)
++
++        with patch("registry.api.skill_routes.get_skill_service") as mock_get_service:
++            mock_service = AsyncMock()
++            mock_service.get_skill = AsyncMock(return_value=sample_skill)
++            mock_service.toggle_skill = AsyncMock(return_value=True)
++            mock_get_service.return_value = mock_service
++
++            response = client.post(
++                "/skills/test-skill/toggle",
++                json={"enabled": True},
++                cookies={cookie_name: self.SESSION_ID},
++                headers={"X-CSRF-Token": token},
++            )
++
++        assert response.status_code == status.HTTP_200_OK
++        assert response.json()["is_enabled"] is True
+diff --git a/tests/unit/auth/test_csrf.py b/tests/unit/auth/test_csrf.py
+new file mode 100644
+index 0000000..9649b9c
+--- /dev/null
++++ b/tests/unit/auth/test_csrf.py
+@@ -0,0 +1,135 @@
++"""
++Unit tests for the session-conditional CSRF dependency.
++
++Covers verify_csrf_token_if_session_cookie in registry/auth/csrf.py:
++
++- No session cookie -> CSRF validation is skipped (bearer/M2M requests pass).
++- Session cookie present -> a valid session-bound CSRF token is required
++  (header or form field), matching verify_csrf_token_flexible semantics.
++- Hybrid requests (cookie + Authorization header) take the stricter branch.
++"""
++
++import logging
++
++import pytest
++from fastapi import Depends, FastAPI
++from fastapi.testclient import TestClient
++
++from registry.auth.csrf import (
++    generate_csrf_token,
++    verify_csrf_token_if_session_cookie,
++)
++from registry.core.config import settings
++
++logger = logging.getLogger(__name__)
++
++SESSION_ID = "test-session-id-0123456789abcdef"
++
++
++@pytest.fixture
++def probe_client():
++    """TestClient for an app whose /probe route requires the CSRF dependency."""
++    from fastapi import Depends
++
++    app = FastAPI()
++
++    @app.post("/probe")
++    async def probe(
++        _csrf: None = Depends(verify_csrf_token_if_session_cookie),
++    ):
++        return {"status": "ok"}
++
++    client = TestClient(app)
++    yield client
++
++
++@pytest.mark.unit
++@pytest.mark.auth
++class TestVerifyCsrfTokenIfSessionCookie:
++    """Tests for verify_csrf_token_if_session_cookie."""
++
++    def test_no_cookie_no_token_passes(self, probe_client):
++        """Bearer-style request without a session cookie skips CSRF entirely."""
++        response = probe_client.post("/probe")
++        assert response.status_code == 200
++        assert response.json() == {"status": "ok"}
++
++    def test_no_cookie_never_validates_token(self, probe_client):
++        """The skip path must not invoke token validation at all."""
++        from unittest.mock import patch
++
++        with patch("registry.auth.csrf.validate_csrf_token") as mock_validate:
++            response = probe_client.post("/probe")
++        assert response.status_code == 200
++        mock_validate.assert_not_called()
++
++    def test_cookie_without_token_rejected(self, probe_client):
++        """Cookie-authenticated request without a token gets the classic 403."""
++        response = probe_client.post(
++            "/probe", cookies={settings.session_cookie_name: SESSION_ID}
++        )
++        assert response.status_code == 403
++        assert response.json()["detail"] == "CSRF validation failed: no token provided"
++
++    def test_cookie_with_invalid_token_rejected(self, probe_client):
++        """Garbage token with a session cookie is rejected."""
++        response = probe_client.post(
++            "/probe",
++            cookies={settings.session_cookie_name: SESSION_ID},
++            headers={"X-CSRF-Token": "not-a-valid-token"},
++        )
++        assert response.status_code == 403
++        assert response.json()["detail"] == "CSRF validation failed: invalid token"
++
++    def test_cookie_with_token_for_other_session_rejected(self, probe_client):
++        """A validly signed token bound to a different session is rejected."""
++        other_token = generate_csrf_token("some-other-session")
++        response = probe_client.post(
++            "/probe",
++            cookies={settings.session_cookie_name: SESSION_ID},
++            headers={"X-CSRF-Token": other_token},
++        )
++        assert response.status_code == 403
++        assert response.json()["detail"] == "CSRF validation failed: invalid token"
++
++    def test_cookie_with_valid_header_token_passes(self, probe_client):
++        """Session cookie + matching X-CSRF-Token header passes validation."""
++        token = generate_csrf_token(SESSION_ID)
++        response = probe_client.post(
++            "/probe",
++            cookies={settings.session_cookie_name: SESSION_ID},
++            headers={"X-CSRF-Token": token},
++        )
++        assert response.status_code == 200
++        assert response.json() == {"status": "ok"}
++
++    def test_cookie_with_valid_form_token_passes(self, probe_client):
++        """Session cookie + csrf_token form field passes validation."""
++        token = generate_csrf_token(SESSION_ID)
++        response = probe_client.post(
++            "/probe",
++            cookies={settings.session_cookie_name: SESSION_ID},
++            data={"csrf_token": token},
++        )
++        assert response.status_code == 200
++        assert response.json() == {"status": "ok"}
++
++    def test_hybrid_cookie_and_bearer_requires_token(self, probe_client):
++        """Cookie + Authorization header: cookie wins, token still required."""
++        response = probe_client.post(
++            "/probe",
++            cookies={settings.session_cookie_name: SESSION_ID},
++            headers={"Authorization": "Bearer some-m2m-token"},
++        )
++        assert response.status_code == 403
++        assert response.json()["detail"] == "CSRF validation failed: no token provided"
++
++    def test_hybrid_cookie_and_bearer_with_valid_token_passes(self, probe_client):
++        """Cookie + Authorization header + valid token passes."""
++        token = generate_csrf_token(SESSION_ID)
++        response = probe_client.post(
++            "/probe",
++            cookies={settings.session_cookie_name: SESSION_ID},
++            headers={"Authorization": "Bearer some-m2m-token", "X-CSRF-Token": token},
++        )
++        assert response.status_code == 200

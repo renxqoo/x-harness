@@ -1,0 +1,182 @@
+diff --git a/registry/core/nginx_service.py b/registry/core/nginx_service.py
+index 71007f8..740ca04 100644
+--- a/registry/core/nginx_service.py
++++ b/registry/core/nginx_service.py
+@@ -1392,6 +1392,28 @@ map "$uri:$http_x_mcp_server_version" $versioned_backend {{
+         """
+         return re.sub(r"[/\-.]", "_", path)
+ 
++    @staticmethod
++    def _normalize_location_path(path: str) -> str:
++        """Normalize a registered server path for an nginx prefix location.
++
++        The generated block must own exactly the server's route subtree, so the
++        location carries a leading AND trailing slash: nginx prefix locations
++        match every URI that starts with the location string, and a bare
++        ``location /name`` would also hijack sibling namespaces such as
++        ``/apiv2`` -- and for a server registered at ``/a``, ``/api`` and
++        ``/auth``. Registration validation (``_SERVER_PATH_RE``) guarantees a
++        slug-only value, so normalization only ever moves or adds slashes; it
++        cannot meet nginx metacharacters.
++
++        Accepts the shapes found in the wild (leading slash missing on some
++        write paths, trailing slash persisted by others) and returns one
++        canonical form: ``/name/``. The root path ``/`` maps to itself.
++        """
++        segments = [seg for seg in path.split("/") if seg]
++        if not segments:
++            return "/"
++        return "/" + "/".join(segments) + "/"
++
+     @staticmethod
+     def _is_host_resolvable_at_startup(
+         hostname: str,
+@@ -2101,6 +2123,14 @@ map "$uri:$http_x_mcp_server_version" $versioned_backend {{
+     ) -> str:
+         """Create a single nginx location block with transport-specific configuration.
+ 
++        The location path is normalized to a leading+trailing slash
++        (``/name/``) so the prefix location owns exactly this server's route
++        subtree and cannot intercept sibling namespaces; a bare-path
++        exact-match block (``location = .../name``) keeps bare-path POSTs
++        working for servers registered with ``append_mcp_path=False``. Input
++        shapes with a missing leading slash or an extra trailing slash are
++        collapsed to the same canonical output.
++
+         Args:
+             path: Server location path
+             proxy_pass_url: Default backend URL
+@@ -2108,7 +2138,7 @@ map "$uri:$http_x_mcp_server_version" $versioned_backend {{
+             server_info: Full server info dict (for version support)
+ 
+         Returns:
+-            Nginx location block as string
++            Nginx location block(s) as string
+         """
+         # Check if this server has multiple versions
+         # The MongoDB document stores linked version IDs in "other_version_ids"
+@@ -2359,12 +2389,34 @@ map "$uri:$http_x_mcp_server_version" $versioned_backend {{
+         proxy_set_header Upgrade $http_upgrade;
+         chunked_transfer_encoding off;"""
+ 
+-        # Use the location path exactly as specified in the server configuration
+-        # Users have full control over the location path format (with or without trailing slash)
+-        location_path = path
++        # Normalize to a leading+trailing slash so the prefix location owns
++        # exactly this server's route subtree: nginx prefix locations match
++        # every URI starting with the location string, so the historical
++        # `location /name` also intercepted sibling namespaces (/apiv2, and
++        # for a server registered at /a: /api, /auth, /about) and 401-ed
++        # unauthenticated browser navigation via the block's auth_request.
++        # Clients are unaffected: /name/mcp, /name/sse, /name/messages still
++        # match the /name/ block.
++        location_path = self._normalize_location_path(path)
+         logger.info(f"Creating location block for {location_path} with {transport_type} transport")
+ 
+-        return f"""
++        # Bare-path compatibility for servers registered with
++        # append_mcp_path=False: their MCP clients POST the registered path
++        # itself, and a prefix location /name/ does not match /name. An
++        # exact-match block forwards those to the same auth_server mcp-proxy
++        # hop (the hop tolerates a missing transport segment --
++        # _registered_server_from_proxy_path keys on the first segment alone).
++        # Both blocks are assembled from the same settings fragments so the
++        # auth wiring can never diverge between them. The root path is all
++        # catch-all already: no bare exact block exists (or is valid) there.
++        bare_path = location_path.rstrip("/")
++        bare_block = ""
++        if bare_path:
++            bare_block = f"""
++    location = {{{{ROOT_PATH}}}}{bare_path} {{{transport_settings}{common_settings}
++    }}"""
++
++        return bare_block + f"""
+     location {{{{ROOT_PATH}}}}{location_path} {{{transport_settings}{common_settings}
+     }}"""
+ 
+diff --git a/tests/unit/core/test_nginx_service.py b/tests/unit/core/test_nginx_service.py
+index 4af8ba1..770a11f 100644
+--- a/tests/unit/core/test_nginx_service.py
++++ b/tests/unit/core/test_nginx_service.py
+@@ -1003,6 +1003,81 @@ def test_create_location_block_direct_transport(nginx_service):
+     assert "proxy_cache off" in block
+ 
+ 
++@pytest.mark.unit
++@pytest.mark.parametrize("raw_path", ["/test", "/test/", "test", "//test//"])
++def test_create_location_block_normalizes_trailing_slash(nginx_service, raw_path):
++    """Every input shape renders the same canonical /test/ prefix location.
++
++    nginx prefix locations match every URI that starts with the location
++    string, so the location must be slash-terminated: a bare `location /test`
++    also matches /test2 (and, for a server registered at /a, /api and /auth),
++    hijacking sibling routes into the block's auth_request.
++    """
++    block = nginx_service._create_location_block(
++        raw_path, "http://localhost:8000/mcp", "streamable-http"
++    )
++
++    assert "location {{ROOT_PATH}}/test/ {" in block
++    assert "location {{ROOT_PATH}}//test" not in block
++
++
++@pytest.mark.unit
++def test_create_location_block_sibling_prefix_collision(nginx_service):
++    """A server at /a owns /a/ and cannot intercept sibling namespaces."""
++    block = nginx_service._create_location_block("/a", "http://localhost:8000/mcp", "streamable-http")
++
++    assert "location {{ROOT_PATH}}/a/ {" in block
++    # nginx prefix semantics: /api does NOT start with /a/ (segment boundary),
++    # so none of these sibling URIs can match the generated location.
++    for sibling in ("/api", "/auth", "/about", "/apiv2"):
++        assert not sibling.startswith("/a/")
++
++
++@pytest.mark.unit
++def test_create_location_block_bare_path_exact_block(nginx_service):
++    """Bare-path POSTs (append_mcp_path=False servers) keep proxying.
++
++    A prefix location /test/ does not match /test, so an exact-match block
++    with the SAME auth + routing wiring forwards bare-path requests to the
++    same auth_server mcp-proxy hop (which tolerates a missing transport
++    segment). Both blocks are assembled from the same fragments, so their
++    wiring cannot diverge; the counts pin that invariant.
++    """
++    block = nginx_service._create_location_block(
++        "/test", "http://localhost:8000/mcp", "streamable-http"
++    )
++
++    assert "location = {{ROOT_PATH}}/test {" in block
++    assert block.count("auth_request /validate;") == 2
++    assert block.count("proxy_set_header X-Upstream-Url $backend_url;") == 2
++    assert block.count("proxy_pass http://auth-server:8888/mcp-proxy/test/") == 2
++
++
++@pytest.mark.unit
++def test_create_location_block_root_path_no_exact_block(nginx_service):
++    """Root registration: prefix block only, no bare exact block.
++
++    `location = ` (or an exact match on the bare root) is invalid/shadowing;
++    the root path is served through the catch-all either way.
++    """
++    block = nginx_service._create_location_block("/", "http://localhost:8000/mcp", "streamable-http")
++
++    assert "location = {{ROOT_PATH}}" not in block
++    assert "location {{ROOT_PATH}}/ {" in block
++
++
++@pytest.mark.unit
++def test_create_location_block_multi_segment_path(nginx_service):
++    """Two-segment registered path normalizes and gains the exact block."""
++    block = nginx_service._create_location_block(
++        "/peer/server", "http://localhost:8000/mcp", "streamable-http"
++    )
++
++    assert "location {{ROOT_PATH}}/peer/server/ {" in block
++    assert "location = {{ROOT_PATH}}/peer/server {" in block
++    assert block.count("proxy_pass http://auth-server:8888/mcp-proxy/peer/server/") == 2
++
++
+ # =============================================================================
+ # KEYCLOAK CONFIGURATION TESTS
+ # =============================================================================

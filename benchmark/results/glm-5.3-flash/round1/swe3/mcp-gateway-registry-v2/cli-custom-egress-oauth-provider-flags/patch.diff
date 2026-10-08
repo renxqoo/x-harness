@@ -1,0 +1,320 @@
+diff --git a/api/registry_client.py b/api/registry_client.py
+index bc10520..6058d2b 100755
+--- a/api/registry_client.py
++++ b/api/registry_client.py
+@@ -3883,12 +3883,18 @@ class RegistryClient:
+         client_secret: str | None = None,
+         scopes: list[str] | None = None,
+         target_audience: str | None = None,
++        custom_authorize_url: str | None = None,
++        custom_token_url: str | None = None,
++        custom_scope_separator: str | None = None,
++        custom_token_auth_style: str | None = None,
++        custom_resource: str | None = None,
+     ) -> dict[str, Any]:
+         """Configure per-user egress auth on a server (admin only).
+ 
+         Wraps POST /api/servers/{path}/egress-auth. Sets the egress auth mode
+         and the mode-specific parameters. For ``pat`` mode, pass ``mode="pat"``
+-        and ``provider=<slug>``.
++        and ``provider=<slug>``. For ``provider="custom"``, pass the custom
++        authorize/token URLs; the remaining custom_* fields are optional.
+ 
+         Args:
+             server_path: Server path (e.g., "/github" or "github").
+@@ -3898,6 +3904,13 @@ class RegistryClient:
+             client_secret: OAuth client secret (oauth_user only, write-only).
+             scopes: Optional list of OAuth scopes.
+             target_audience: Target audience (obo_exchange only).
++            custom_authorize_url: Custom OIDC authorize URL (custom provider only).
++            custom_token_url: Custom OIDC token URL (custom provider only).
++            custom_scope_separator: Scope separator for the custom provider
++                (custom provider only).
++            custom_token_auth_style: Token endpoint auth style, "post_body" or
++                "basic_header" (custom provider only).
++            custom_resource: RFC 8707 resource indicator (custom provider only).
+ 
+         Returns:
+             Non-secret egress config view dict.
+@@ -3920,6 +3933,16 @@ class RegistryClient:
+             body["scopes"] = scopes
+         if target_audience is not None:
+             body["target_audience"] = target_audience
++        if custom_authorize_url is not None:
++            body["custom_authorize_url"] = custom_authorize_url
++        if custom_token_url is not None:
++            body["custom_token_url"] = custom_token_url
++        if custom_scope_separator is not None:
++            body["custom_scope_separator"] = custom_scope_separator
++        if custom_token_auth_style is not None:
++            body["custom_token_auth_style"] = custom_token_auth_style
++        if custom_resource is not None:
++            body["custom_resource"] = custom_resource
+ 
+         response = self._make_request(
+             method="POST",
+diff --git a/api/registry_management.py b/api/registry_management.py
+index a3718a1..889e52f 100755
+--- a/api/registry_management.py
++++ b/api/registry_management.py
+@@ -2035,6 +2035,11 @@ def cmd_egress_configure(args: argparse.Namespace) -> int:
+             client_secret=args.client_secret,
+             scopes=_parse_scopes(args.scopes),
+             target_audience=args.target_audience,
++            custom_authorize_url=args.custom_authorize_url,
++            custom_token_url=args.custom_token_url,
++            custom_scope_separator=args.custom_scope_separator,
++            custom_token_auth_style=args.custom_token_auth_style,
++            custom_resource=args.custom_resource,
+         )
+         print(json.dumps(response, indent=2, default=str))
+         return 0
+@@ -6730,6 +6735,28 @@ Examples:
+     egress_configure_parser.add_argument(
+         "--target-audience", help="Target audience (obo_exchange only)"
+     )
++    egress_configure_parser.add_argument(
++        "--custom-authorize-url",
++        help="Custom OIDC authorize URL (provider custom only, https required)",
++    )
++    egress_configure_parser.add_argument(
++        "--custom-token-url",
++        help="Custom OIDC token URL (provider custom only, https required)",
++    )
++    egress_configure_parser.add_argument(
++        "--custom-scope-separator",
++        help="Scope separator for the custom provider (default: space)",
++    )
++    egress_configure_parser.add_argument(
++        "--custom-token-auth-style",
++        choices=["post_body", "basic_header"],
++        help="How the client secret is sent to the custom token endpoint "
++        "(default: post_body)",
++    )
++    egress_configure_parser.add_argument(
++        "--custom-resource",
++        help="RFC 8707 resource indicator (absolute https URI, no fragment)",
++    )
+ 
+     # Get egress config command
+     egress_config_get_parser = subparsers.add_parser(
+diff --git a/tests/unit/api/test_egress_configure_cli_custom_flags.py b/tests/unit/api/test_egress_configure_cli_custom_flags.py
+new file mode 100644
+index 0000000..e529914
+--- /dev/null
++++ b/tests/unit/api/test_egress_configure_cli_custom_flags.py
+@@ -0,0 +1,214 @@
++"""Unit tests for the egress-configure custom-provider CLI flags.
++
++These lock in the CLI/API contract for ``--provider custom``: the five
++``custom_*`` fields the server's ``EgressConfigRequest`` accepts must be
++forwarded from the ``egress-configure`` subparser through
++``RegistryClient.configure_egress_auth`` to
++POST /api/servers/{path}/egress-auth.
++
++Following the client's existing "only send what was supplied" convention,
++omitted flags must be absent from the JSON body (not null), so an edit that
++omits a flag cannot clear a stored value on the server.
++"""
++
++from __future__ import annotations
++
++import sys
++from pathlib import Path
++from types import SimpleNamespace
++from unittest.mock import MagicMock, patch
++
++import pytest
++
++from api.registry_client import RegistryClient
++
++# registry_management.py lives under api/ and imports sibling modules by name.
++_API_DIR = Path(__file__).resolve().parents[3] / "api"
++if str(_API_DIR) not in sys.path:
++    sys.path.insert(0, str(_API_DIR))
++
++import registry_management  # noqa: E402
++
++
++@pytest.fixture
++def client() -> RegistryClient:
++    """A RegistryClient pointed at a dummy URL with a dummy token."""
++    return RegistryClient(registry_url="http://localhost", token="dummy-token-1234567890")
++
++
++def _fake_response() -> MagicMock:
++    response = MagicMock(status_code=200)
++    response.raise_for_status.return_value = None
++    response.json.return_value = {"path": "/github"}
++    return response
++
++
++class TestConfigureEgressAuthPayload:
++    """Tests for the configure_egress_auth request body."""
++
++    def test_custom_flags_forwarded_in_json_body(
++        self,
++        client: RegistryClient,
++    ) -> None:
++        """All five custom_* fields are sent when supplied."""
++        with patch("api.registry_client.requests.request", return_value=_fake_response()) as req:
++            client.configure_egress_auth(
++                server_path="/github",
++                mode="oauth_user",
++                provider="custom",
++                client_id="cid",
++                client_secret="sek",
++                scopes=["openid", "profile"],
++                custom_authorize_url="https://tenant.example.com/oauth2/authorize",
++                custom_token_url="https://tenant.example.com/oauth2/token",
++                custom_scope_separator=" ",
++                custom_token_auth_style="post_body",
++                custom_resource="https://api.example.com",
++            )
++
++        kwargs = req.call_args.kwargs
++        assert kwargs["method"] == "POST"
++        assert kwargs["url"] == "http://localhost/api/servers/github/egress-auth"
++        body = kwargs["json"]
++        assert body["egress_auth_mode"] == "oauth_user"
++        assert body["egress_provider"] == "custom"
++        assert body["client_id"] == "cid"
++        assert body["scopes"] == ["openid", "profile"]
++        assert body["custom_authorize_url"] == "https://tenant.example.com/oauth2/authorize"
++        assert body["custom_token_url"] == "https://tenant.example.com/oauth2/token"
++        assert body["custom_scope_separator"] == " "
++        assert body["custom_token_auth_style"] == "post_body"
++        assert body["custom_resource"] == "https://api.example.com"
++
++    def test_omitted_custom_flags_are_absent_not_null(
++        self,
++        client: RegistryClient,
++    ) -> None:
++        """Omitted optional fields send no key at all (never null)."""
++        with patch("api.registry_client.requests.request", return_value=_fake_response()) as req:
++            client.configure_egress_auth(server_path="/github", mode="none")
++
++        body = req.call_args.kwargs["json"]
++        assert body == {"egress_auth_mode": "none"}
++        assert not any(v is None for v in body.values())
++
++    def test_falsy_custom_values_still_sent(
++        self,
++        client: RegistryClient,
++    ) -> None:
++        """A single-space scope separator and basic_header are still sent."""
++        with patch("api.registry_client.requests.request", return_value=_fake_response()) as req:
++            client.configure_egress_auth(
++                server_path="/github",
++                mode="oauth_user",
++                provider="custom",
++                custom_scope_separator=" ",
++                custom_token_auth_style="basic_header",
++            )
++
++        body = req.call_args.kwargs["json"]
++        assert body["custom_scope_separator"] == " "
++        assert body["custom_token_auth_style"] == "basic_header"
++        assert "custom_authorize_url" not in body
++        assert "custom_token_url" not in body
++        assert "custom_resource" not in body
++
++
++class TestCmdEgressConfigurePassThrough:
++    """Tests for the cmd_egress_configure handler wiring."""
++
++    def test_handler_forwards_custom_flags(self) -> None:
++        """The handler passes every custom_* namespace value to the client."""
++        args = SimpleNamespace(
++            path="/github",
++            mode="oauth_user",
++            provider="custom",
++            client_id="cid",
++            client_secret="sek",
++            scopes="openid,profile",
++            target_audience=None,
++            custom_authorize_url="https://tenant.example.com/oauth2/authorize",
++            custom_token_url="https://tenant.example.com/oauth2/token",
++            custom_scope_separator=None,
++            custom_token_auth_style="post_body",
++            custom_resource=None,
++        )
++        mock_client = MagicMock()
++        mock_client.configure_egress_auth.return_value = {"path": "/github"}
++
++        with patch.object(registry_management, "_create_client", return_value=mock_client):
++            code = registry_management.cmd_egress_configure(args)
++
++        assert code == 0
++        kwargs = mock_client.configure_egress_auth.call_args.kwargs
++        assert kwargs["server_path"] == "/github"
++        assert kwargs["mode"] == "oauth_user"
++        assert kwargs["provider"] == "custom"
++        assert kwargs["scopes"] == ["openid", "profile"]
++        assert kwargs["custom_authorize_url"] == "https://tenant.example.com/oauth2/authorize"
++        assert kwargs["custom_token_url"] == "https://tenant.example.com/oauth2/token"
++        assert kwargs["custom_scope_separator"] is None
++        assert kwargs["custom_token_auth_style"] == "post_body"
++        assert kwargs["custom_resource"] is None
++
++
++class TestEgressConfigureParser:
++    """Tests for egress-configure argparse wiring."""
++
++    def _argv(self, auth_style: str) -> list[str]:
++        return [
++            "registry_management.py",
++            "--registry-url",
++            "https://registry.example.com",
++            "egress-configure",
++            "--path",
++            "/github",
++            "--mode",
++            "oauth_user",
++            "--provider",
++            "custom",
++            "--client-id",
++            "cid",
++            "--client-secret",
++            "sek",
++            "--custom-authorize-url",
++            "https://tenant.example.com/oauth2/authorize",
++            "--custom-token-url",
++            "https://tenant.example.com/oauth2/token",
++            "--custom-token-auth-style",
++            auth_style,
++            "--custom-resource",
++            "https://api.example.com",
++        ]
++
++    def test_parse_accepts_custom_flags(self) -> None:
++        """A full custom invocation parses, runs, and reaches the client."""
++        mock_client = MagicMock()
++        mock_client.configure_egress_auth.return_value = {"path": "/github"}
++
++        with (
++            patch.object(sys, "argv", self._argv("post_body")),
++            patch.object(registry_management, "_create_client", return_value=mock_client),
++        ):
++            assert registry_management.main() == 0
++
++        kwargs = mock_client.configure_egress_auth.call_args.kwargs
++        assert kwargs["provider"] == "custom"
++        assert kwargs["custom_authorize_url"] == "https://tenant.example.com/oauth2/authorize"
++        assert kwargs["custom_token_url"] == "https://tenant.example.com/oauth2/token"
++        assert kwargs["custom_token_auth_style"] == "post_body"
++        assert kwargs["custom_resource"] == "https://api.example.com"
++
++    def test_invalid_token_auth_style_rejected_before_network(self) -> None:
++        """A bad --custom-token-auth-style fails at parse time with exit 2."""
++        mock_client = MagicMock()
++
++        with (
++            patch.object(sys, "argv", self._argv("header")),
++            patch.object(registry_management, "_create_client", return_value=mock_client),
++            pytest.raises(SystemExit) as excinfo,
++        ):
++            registry_management.main()
++
++        assert excinfo.value.code == 2
++        mock_client.configure_egress_auth.assert_not_called()

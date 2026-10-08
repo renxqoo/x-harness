@@ -1,0 +1,100 @@
+diff --git a/build_and_run.sh b/build_and_run.sh
+index 0e4fede..c14471b 100755
+--- a/build_and_run.sh
++++ b/build_and_run.sh
+@@ -14,6 +14,36 @@ handle_error() {
+     exit 1
+ }
+ 
++# Remove lines matching the POSIX extended regex $1 from .env, portably.
++# NOTE: this helper operates on ./.env only - build_and_run.sh enforces a
++# real .env in the repo root before any call (see the existence check at
++# the top of the script). Do not "generalize" it to a filename argument
++# without re-checking the same-filesystem-temp requirement below.
++# The previous implementation used `sed -i '<expr>' .env`, which GNU sed
++# accepts but BSD sed (macOS) rejects: there the first argument after -i
++# is a mandatory backup suffix. The failure was hidden by `2>/dev/null
++# || true`, leaving the empty placeholder in place and the generated
++# value appended below it (first-assignment-wins consumers then saw an
++# empty secret). Rewriting through a temp file behaves identically on
++# GNU and BSD userlands, and failures are loud.
++remove_env_lines() {
++    local pattern="$1"
++    local tmp_file grep_rc=0
++    tmp_file=$(mktemp .env.XXXXXX) || handle_error "Failed to create temp file while updating .env"
++    # grep exits 1 when it selects no lines (every line matched, i.e. the
++    # whole file is placeholder lines), which is a valid outcome.
++    # Exit >= 2 is a real error and must not be silenced.
++    grep -E -v -- "$pattern" .env > "$tmp_file" || grep_rc=$?
++    if [ "$grep_rc" -ge 2 ]; then
++        rm -f "$tmp_file"
++        handle_error "Failed to filter .env (portable sed -i replacement) for pattern: $pattern"
++    fi
++    if ! mv "$tmp_file" .env; then
++        rm -f "$tmp_file"
++        handle_error "Failed to rewrite .env (portable sed -i replacement) for pattern: $pattern"
++    fi
++}
++
+ # Parse command line arguments
+ USE_PREBUILT=false
+ USE_PODMAN=false
+@@ -344,8 +374,7 @@ if ! grep -q "SECRET_KEY=" .env || grep -q "SECRET_KEY=$" .env || grep -q "SECRE
+     SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))') || handle_error "Failed to generate SECRET_KEY"
+ 
+     # Remove any existing empty SECRET_KEY line
+-    sed -i '/^SECRET_KEY=$/d' .env 2>/dev/null || true
+-    sed -i '/^SECRET_KEY=""$/d' .env 2>/dev/null || true
++    remove_env_lines '^SECRET_KEY=$|^SECRET_KEY=""$'
+ 
+     # Add new SECRET_KEY
+     echo "SECRET_KEY=$SECRET_KEY" >> .env
+@@ -363,8 +392,7 @@ if ! grep -q "AUTH_SERVER_NGINX_MARKER_SECRET=" .env || grep -q "AUTH_SERVER_NGI
+     MARKER_SECRET=$(python3 -c 'import secrets; print(secrets.token_hex(32))') || handle_error "Failed to generate AUTH_SERVER_NGINX_MARKER_SECRET"
+ 
+     # Remove any existing empty marker line
+-    sed -i '/^AUTH_SERVER_NGINX_MARKER_SECRET=$/d' .env 2>/dev/null || true
+-    sed -i '/^AUTH_SERVER_NGINX_MARKER_SECRET=""$/d' .env 2>/dev/null || true
++    remove_env_lines '^AUTH_SERVER_NGINX_MARKER_SECRET=$|^AUTH_SERVER_NGINX_MARKER_SECRET=""$'
+ 
+     # Add new marker secret
+     echo "AUTH_SERVER_NGINX_MARKER_SECRET=$MARKER_SECRET" >> .env
+@@ -385,8 +413,7 @@ if ! grep -q "^DOCUMENTDB_PASSWORD=" .env || grep -q "^DOCUMENTDB_PASSWORD=$" .e
+     DOCUMENTDB_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(24))') || handle_error "Failed to generate DOCUMENTDB_PASSWORD"
+ 
+     # Remove any existing empty DOCUMENTDB_PASSWORD line
+-    sed -i '/^DOCUMENTDB_PASSWORD=$/d' .env 2>/dev/null || true
+-    sed -i '/^DOCUMENTDB_PASSWORD=""$/d' .env 2>/dev/null || true
++    remove_env_lines '^DOCUMENTDB_PASSWORD=$|^DOCUMENTDB_PASSWORD=""$'
+ 
+     # Add new DOCUMENTDB_PASSWORD
+     echo "DOCUMENTDB_PASSWORD=$DOCUMENTDB_PASSWORD" >> .env
+@@ -408,8 +435,7 @@ if ! grep -q "^METRICS_KEY_PEPPER=" .env || grep -q "^METRICS_KEY_PEPPER=$" .env
+     METRICS_KEY_PEPPER=$(python3 -c 'import secrets; print(secrets.token_hex(32))') || handle_error "Failed to generate METRICS_KEY_PEPPER"
+ 
+     # Remove any existing empty METRICS_KEY_PEPPER line
+-    sed -i '/^METRICS_KEY_PEPPER=$/d' .env 2>/dev/null || true
+-    sed -i '/^METRICS_KEY_PEPPER=""$/d' .env 2>/dev/null || true
++    remove_env_lines '^METRICS_KEY_PEPPER=$|^METRICS_KEY_PEPPER=""$'
+ 
+     # Add new METRICS_KEY_PEPPER
+     echo "METRICS_KEY_PEPPER=$METRICS_KEY_PEPPER" >> .env
+@@ -430,8 +456,7 @@ if ! grep -q "^OPENBAO_TOKEN=" .env || grep -q "^OPENBAO_TOKEN=$" .env || grep -
+     OPENBAO_TOKEN=$(python3 -c 'import secrets; print(secrets.token_hex(32))') || handle_error "Failed to generate OPENBAO_TOKEN"
+ 
+     # Remove any existing empty OPENBAO_TOKEN line
+-    sed -i '/^OPENBAO_TOKEN=$/d' .env 2>/dev/null || true
+-    sed -i '/^OPENBAO_TOKEN=""$/d' .env 2>/dev/null || true
++    remove_env_lines '^OPENBAO_TOKEN=$|^OPENBAO_TOKEN=""$'
+ 
+     # Add new OPENBAO_TOKEN
+     echo "OPENBAO_TOKEN=$OPENBAO_TOKEN" >> .env
+@@ -651,7 +676,7 @@ if $COMPOSE_CMD $COMPOSE_FILES config --services 2>/dev/null | grep -q "^metrics
+             NEW_TOKEN="mcp_metrics_$(openssl rand -hex 16)"
+ 
+             # Remove any existing line for this variable
+-            sed -i "/^$ENV_VAR_NAME=/d" .env 2>/dev/null || true
++            remove_env_lines "^${ENV_VAR_NAME}="
+ 
+             # Add new token
+             echo "$ENV_VAR_NAME=$NEW_TOKEN" >> .env

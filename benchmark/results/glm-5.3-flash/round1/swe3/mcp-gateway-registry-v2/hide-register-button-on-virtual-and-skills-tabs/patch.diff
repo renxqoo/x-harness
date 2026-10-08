@@ -1,0 +1,218 @@
+diff --git a/frontend/src/components/__tests__/Dashboard.test.tsx b/frontend/src/components/__tests__/Dashboard.test.tsx
+new file mode 100644
+index 0000000..30667db
+--- /dev/null
++++ b/frontend/src/components/__tests__/Dashboard.test.tsx
+@@ -0,0 +1,184 @@
++import React from 'react';
++import { render, screen, fireEvent } from '@testing-library/react';
++import { MemoryRouter } from 'react-router-dom';
++import Dashboard from '../Dashboard';
++
++// The header Register button lives in the search bar row that renders on every
++// tab except Discover. These tests pin the condition that shows it only on the
++// MCP Servers and Agents tabs (issue: competing add buttons on the Virtual MCP
++// Servers and Agent Skills tabs). Tabs are driven through the real tab bar.
++
++// Mock useServerStats
++const mockServerStats = {
++  stats: { total: 0, enabled: 0, disabled: 0, withIssues: 0 },
++  servers: [],
++  agents: [],
++  setServers: jest.fn(),
++  setAgents: jest.fn(),
++  activeFilter: 'all',
++  setActiveFilter: jest.fn(),
++  loading: false,
++  error: null,
++  refreshData: jest.fn(),
++};
++jest.mock('../../hooks/useServerStats', () => ({
++  useServerStats: () => mockServerStats,
++}));
++
++// Mock useSkills
++const mockSkills = {
++  skills: [],
++  setSkills: jest.fn(),
++  loading: false,
++  error: null,
++  refreshData: jest.fn(),
++};
++jest.mock('../../hooks/useSkills', () => ({
++  useSkills: () => mockSkills,
++}));
++
++// Mock useVirtualServers / useVirtualServer
++const mockVirtualServers = {
++  virtualServers: [],
++  loading: false,
++  error: null,
++  refreshData: jest.fn(),
++  createVirtualServer: jest.fn(),
++  updateVirtualServer: jest.fn(),
++  deleteVirtualServer: jest.fn(),
++  toggleVirtualServer: jest.fn(),
++};
++jest.mock('../../hooks/useVirtualServers', () => ({
++  useVirtualServers: () => mockVirtualServers,
++  useVirtualServer: () => ({ virtualServer: undefined, loading: false }),
++}));
++
++// Mock useAuth
++const mockUser = {
++  username: 'tester',
++  is_admin: true,
++  can_modify_servers: true,
++};
++jest.mock('../../contexts/AuthContext', () => ({
++  useAuth: () => ({ user: mockUser }),
++}));
++
++// Mock useRegistryConfig with every feature enabled so all tabs render
++const mockConfig = {
++  features: {
++    mcp_servers: true,
++    agents: true,
++    skills: true,
++    federation: true,
++  },
++};
++jest.mock('../../hooks/useRegistryConfig', () => ({
++  useRegistryConfig: () => ({ config: mockConfig, loading: false, error: null }),
++}));
++
++// Mock useSemanticSearch
++jest.mock('../../hooks/useSemanticSearch', () => ({
++  useSemanticSearch: () => ({ results: null, loading: false, error: null }),
++}));
++
++// Mock axios (imported by Dashboard for register/edit handlers; no calls at render)
++jest.mock('axios');
++
++// Mock heavy child components that are not under test
++jest.mock('../../components/ServerCard', () => {
++  const Mock = () => <div data-testid="server-card" />;
++  Mock.displayName = 'ServerCard';
++  return Mock;
++});
++jest.mock('../../components/AgentCard', () => {
++  const Mock = () => <div data-testid="agent-card" />;
++  Mock.displayName = 'AgentCard';
++  return Mock;
++});
++jest.mock('../../components/SkillCard', () => {
++  const Mock = () => <div data-testid="skill-card" />;
++  Mock.displayName = 'SkillCard';
++  return Mock;
++});
++jest.mock('../../components/VirtualServerCard', () => {
++  const Mock = () => <div data-testid="virtual-server-card" />;
++  Mock.displayName = 'VirtualServerCard';
++  return Mock;
++});
++jest.mock('../../components/DiscoverTab', () => {
++  const Mock = () => <div data-testid="discover-tab" />;
++  Mock.displayName = 'DiscoverTab';
++  return Mock;
++});
++jest.mock('../../components/SemanticSearchResults', () => {
++  const Mock = () => <div data-testid="semantic-search-results" />;
++  Mock.displayName = 'SemanticSearchResults';
++  return Mock;
++});
++jest.mock('../../components/VirtualServerForm', () => {
++  const Mock = () => <div data-testid="virtual-server-form" />;
++  Mock.displayName = 'VirtualServerForm';
++  return Mock;
++});
++
++const TAB_LABELS: Record<string, string> = {
++  servers: 'MCP Servers',
++  agents: 'Agents',
++  virtual: 'Virtual MCP Servers',
++  skills: 'Agent Skills',
++  external: 'External Registries',
++};
++
++const renderDashboard = () =>
++  render(
++    <MemoryRouter>
++      <Dashboard />
++    </MemoryRouter>
++  );
++
++const clickTab = (tab: string) => {
++  fireEvent.click(screen.getByRole('button', { name: TAB_LABELS[tab] }));
++};
++
++describe('Dashboard header Register button visibility', () => {
++  beforeEach(() => {
++    jest.clearAllMocks();
++  });
++
++  it.each([
++    ['servers', true],
++    ['agents', true],
++    ['virtual', false],
++    ['skills', false],
++    ['external', false],
++  ])(
++    '%s tab: header Register button rendered = %s',
++    (tab, expected) => {
++      renderDashboard();
++      clickTab(tab);
++      // Match by exact accessible name so the tab-scoped empty-state CTAs
++      // ("Register Server", "Register Skill") do not count as the header button.
++      const headerRegister = screen.queryByRole('button', { name: 'Register' });
++      if (expected) {
++        expect(headerRegister).toBeInTheDocument();
++      } else {
++        expect(headerRegister).not.toBeInTheDocument();
++      }
++    }
++  );
++
++  it('hides the whole search row on the Discover tab, as before', () => {
++    renderDashboard();
++    // viewFilter starts at 'discover'; no tab click needed.
++    expect(screen.queryByRole('button', { name: 'Register' })).not.toBeInTheDocument();
++    expect(screen.queryByPlaceholderText(/Search servers, agents/i)).not.toBeInTheDocument();
++  });
++
++  it('keeps the search input and Refresh Health button on tabs without the Register button', () => {
++    renderDashboard();
++    clickTab('virtual');
++    expect(screen.getByPlaceholderText(/Search servers, agents/i)).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: /refresh health/i })).toBeInTheDocument();
++    expect(screen.getByRole('button', { name: /add virtual server/i })).toBeInTheDocument();
++  });
++});
+diff --git a/frontend/src/pages/Dashboard.tsx b/frontend/src/pages/Dashboard.tsx
+index 36875e9..6c7d2a5 100644
+--- a/frontend/src/pages/Dashboard.tsx
++++ b/frontend/src/pages/Dashboard.tsx
+@@ -2407,13 +2407,16 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', selectedTag
+               )}
+             </div>
+ 
+-            <button
+-              onClick={handleRegisterServer}
+-              className="btn-primary flex items-center space-x-2 flex-shrink-0"
+-            >
+-              <PlusIcon className="h-4 w-4" />
+-              <span>Register</span>
+-            </button>
++            {/* Register opens the server/agent form, so show it only on the tabs where that is the tab's action */}
++            {(viewFilter === 'servers' || viewFilter === 'agents') && (
++              <button
++                onClick={handleRegisterServer}
++                className="btn-primary flex items-center space-x-2 flex-shrink-0"
++              >
++                <PlusIcon className="h-4 w-4" />
++                <span>Register</span>
++              </button>
++            )}
+ 
+             <button
+               onClick={handleRefreshHealth}

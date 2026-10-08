@@ -1,0 +1,1801 @@
+diff --git a/.env.example b/.env.example
+index e5d10aa..1d4db4c 100644
+--- a/.env.example
++++ b/.env.example
+@@ -659,6 +659,27 @@ SESSION_COOKIE_DOMAIN=
+ # Default: false (tokens are not used functionally, reduces cookie size)
+ OAUTH_STORE_TOKENS_IN_SESSION=false
+ 
++# =============================================================================
++# SERVER-SIDE OAUTH TOKEN STORAGE (Issue #399)
++# =============================================================================
++# Store IdP access/refresh tokens encrypted in MongoDB and keep only an
++# opaque token reference in the session cookie. Keeps cookies under the
++# browser 4096-byte limit for IdPs with large JWTs (Entra ID, Keycloak)
++# and re-enables token retrieval via GET /oauth2/tokens on the auth server.
++#
++# Requires STORAGE_BACKEND=documentdb (or mongodb/mongodb-ce/mongodb-atlas).
++# On file backend the feature degrades to disabled with a warning.
++#
++# Default: true (MongoDB-backed deployments get server-side storage)
++OAUTH_SERVER_SIDE_TOKEN_STORAGE=true
++
++# TTL (seconds) for server-side stored OAuth tokens.
++# 0 derives the TTL from the session max-age so records never outlive
++# their sessions (recommended). Clamped to [300, 86400].
++#
++# Default: 28800 (8 hours)
++OAUTH_TOKEN_STORAGE_TTL_SECONDS=28800
++
+ # =============================================================================
+ # EXTERNAL MCP SERVER AUTH TOKENS (Auto-generated from OAuth flows)
+ # =============================================================================
+diff --git a/auth_server/.env.template b/auth_server/.env.template
+index efcb009..9ce646d 100644
+--- a/auth_server/.env.template
++++ b/auth_server/.env.template
+@@ -47,3 +47,15 @@ AWS_REGION=us-east-1
+ # Set to false for large tokens (e.g., Entra ID) to avoid cookie size limits
+ # Default: false (tokens are not used functionally)
+ OAUTH_STORE_TOKENS_IN_SESSION=false
++
++# Server-side OAuth token storage (Issue #399): store IdP tokens encrypted
++# in MongoDB, keep only an opaque reference in the session cookie, and serve
++# them on demand via GET /oauth2/tokens. Requires a MongoDB storage backend;
++# degrades gracefully on the file backend.
++# Default: true
++OAUTH_SERVER_SIDE_TOKEN_STORAGE=true
++
++# TTL (seconds) for server-side stored OAuth tokens; 0 derives from the
++# session max-age (recommended). Clamped to [300, 86400].
++# Default: 28800 (8 hours)
++OAUTH_TOKEN_STORAGE_TTL_SECONDS=28800
+diff --git a/auth_server/server.py b/auth_server/server.py
+index d383243..4bcb207 100644
+--- a/auth_server/server.py
++++ b/auth_server/server.py
+@@ -17,7 +17,7 @@ import sys
+ import time
+ import urllib.parse
+ from contextlib import asynccontextmanager
+-from datetime import datetime
++from datetime import UTC, datetime, timedelta
+ from pathlib import Path
+ from string import Template
+ from typing import Any
+@@ -99,9 +99,26 @@ OAUTH_STORE_TOKENS_IN_SESSION: bool = (
+     os.environ.get("OAUTH_STORE_TOKENS_IN_SESSION", "false").lower() == "true"
+ )
+ 
++# Server-side OAuth token storage (issue #399): store IdP access/refresh
++# tokens encrypted in MongoDB and keep only an opaque token reference in
++# the session cookie. Default: true (MongoDB-backed deployments); set to
++# false to restore the pre-#399 behavior.
++OAUTH_SERVER_SIDE_TOKEN_STORAGE: bool = (
++    os.environ.get("OAUTH_SERVER_SIDE_TOKEN_STORAGE", "true").lower() == "true"
++)
++
++# TTL for server-side stored OAuth tokens. 0 means derive from the
++# session max-age. Clamped to [300, 86400] seconds.
++OAUTH_TOKEN_STORAGE_TTL_SECONDS: int = int(
++    os.environ.get("OAUTH_TOKEN_STORAGE_TTL_SECONDS", "28800")
++)
++
+ logging.info(
+     f"OAUTH_STORE_TOKENS_IN_SESSION={'enabled' if OAUTH_STORE_TOKENS_IN_SESSION else 'disabled'}"
+ )
++logging.info(
++    f"OAUTH_SERVER_SIDE_TOKEN_STORAGE={'enabled' if OAUTH_SERVER_SIDE_TOKEN_STORAGE else 'disabled'}"
++)
+ 
+ # Issue #779: multiple static API keys with per-key groups.
+ _REGISTRY_API_KEYS_RAW: str = os.environ.get("REGISTRY_API_KEYS", "").strip()
+@@ -2566,6 +2583,221 @@ if not SECRET_KEY:
+ 
+ signer = URLSafeTimedSerializer(SECRET_KEY)
+ 
++
++# --- Server-side OAuth token storage helpers (issue #399) ---
++
++
++def _resolve_oauth_token_ttl() -> int:
++    """Resolve the effective TTL (seconds) for server-side stored OAuth tokens.
++
++    OAUTH_TOKEN_STORAGE_TTL_SECONDS=0 derives the TTL from the configured
++    session max-age so records never outlive their sessions. Values are
++    clamped to [300, 86400].
++    """
++    ttl = OAUTH_TOKEN_STORAGE_TTL_SECONDS
++    if ttl <= 0:
++        try:
++            ttl = int(OAUTH2_CONFIG.get("session", {}).get("max_age_seconds", 28800))
++        except Exception:
++            ttl = 28800
++    return max(300, min(86400, ttl))
++
++
++async def _store_oauth_tokens_server_side(
++    token_data: dict[str, any],
++    mapped_user: dict[str, any],
++    provider: str,
++) -> str | None:
++    """Store IdP tokens encrypted in MongoDB and return the token reference.
++
++    Builds an opaque token reference, persists the Fernet-encrypted access
++    and refresh tokens under it, and returns the reference for the session
++    cookie. Returns None (with a warning log) when storage is disabled,
++    unavailable, or fails - login always continues without the reference.
++
++    Logging invariants: never log token material; refs are logged truncated
++    to a 6-char prefix; usernames are hashed.
++    """
++    if not OAUTH_SERVER_SIDE_TOKEN_STORAGE:
++        return None
++
++    if not token_data.get("access_token"):
++        return None
++
++    try:
++        from registry.repositories.factory import get_oauth_token_repository
++        from registry.schemas.oauth_token_models import OAuthTokenDocument
++        from registry.utils.oauth_token_encryption import encrypt_token
++
++        repo = get_oauth_token_repository()
++        if repo is None:
++            return None
++
++        token_ref = "tr_" + secrets.token_urlsafe(32)
++        ttl = _resolve_oauth_token_ttl()
++
++        refresh_encrypted = None
++        if token_data.get("refresh_token"):
++            refresh_encrypted = encrypt_token(token_data["refresh_token"])
++
++        doc = OAuthTokenDocument(
++            token_ref=token_ref,
++            username=mapped_user["username"],
++            provider=provider,
++            access_token_encrypted=encrypt_token(token_data["access_token"]),
++            refresh_token_encrypted=refresh_encrypted,
++            expires_in=token_data.get("expires_in"),
++            obtained_at=datetime.now(UTC),
++            expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
++        )
++        await repo.store_tokens(doc)
++        logger.info(
++            f"Server-side OAuth token storage: stored ref {token_ref[:6]} "
++            f"for user {hash_username(mapped_user['username'])} (ttl={ttl}s)"
++        )
++        return token_ref
++    except Exception as e:
++        logger.warning(
++            f"Server-side OAuth token storage failed (login continues): {type(e).__name__}"
++        )
++        return None
++
++
++async def _revoke_oauth_tokens_for_session(request: Request) -> None:
++    """Best-effort deletion of the stored token record for a logging-out session.
++
++    Reads the inbound session cookie; if it carries a token_ref, deletes the
++    matching record. Never raises - logout must proceed regardless.
++    """
++    try:
++        cookie_header = request.headers.get("Cookie", "")
++        cookie_value = None
++        for cookie in cookie_header.split(";"):
++            cookie = cookie.strip()
++            if cookie.startswith("mcp_gateway_session="):
++                cookie_value = cookie.split("=", 1)[1]
++                break
++        if not cookie_value:
++            return
++
++        data = signer.loads(cookie_value, max_age=28800)
++        token_ref = data.get("token_ref")
++        if not token_ref:
++            return
++
++        from registry.repositories.factory import get_oauth_token_repository
++
++        repo = get_oauth_token_repository()
++        if repo is None:
++            return
++
++        await repo.delete_by_ref(token_ref)
++        logger.info(
++            f"Revoked server-side OAuth tokens on logout: ref {token_ref[:6]} "
++            f"user {hash_username(data.get('username', ''))}"
++        )
++    except Exception as e:
++        logger.warning(f"OAuth token revocation on logout skipped: {type(e).__name__}")
++
++
++@app.get("/oauth2/tokens")
++async def get_stored_oauth_tokens(request: Request):
++    """Return the current user's stored IdP tokens (issue #399).
++
++    Session-cookie authenticated only: a stateless bearer cannot prove
++    ownership of the interactive session that created the record. The
++    record is looked up by the compound (token_ref, username) pair from
++    the cookie, so a record can only be retrieved by its owner.
++
++    The response is sensitive - always sent with Cache-Control: no-store.
++    Intended for on-demand display/copy, never client-side persistence.
++    """
++    cookie_header = request.headers.get("Cookie", "")
++    cookie_value = None
++    for cookie in cookie_header.split(";"):
++        cookie = cookie.strip()
++        if cookie.startswith("mcp_gateway_session="):
++            cookie_value = cookie.split("=", 1)[1]
++            break
++
++    if not cookie_value:
++        raise HTTPException(status_code=401, detail="Authentication required")
++
++    try:
++        data = signer.loads(cookie_value, max_age=28800)
++    except (SignatureExpired, BadSignature):
++        raise HTTPException(status_code=401, detail="Invalid or expired session")
++    except Exception:
++        raise HTTPException(status_code=401, detail="Invalid or expired session")
++
++    username = data.get("username")
++    if not username:
++        raise HTTPException(status_code=401, detail="Invalid or expired session")
++
++    token_ref = data.get("token_ref")
++    if not token_ref:
++        # Legacy session (pre-#399 login) or storage was disabled at login
++        raise HTTPException(
++            status_code=404,
++            detail="No stored tokens for this session. Please re-login to enable token retrieval.",
++        )
++
++    from registry.repositories.factory import get_oauth_token_repository
++    from registry.utils.oauth_token_encryption import decrypt_token
++
++    repo = get_oauth_token_repository()
++    if repo is None:
++        raise HTTPException(
++            status_code=404,
++            detail="No stored tokens for this session. Please re-login to enable token retrieval.",
++        )
++
++    try:
++        record = await repo.get_user_token(token_ref, username)
++    except Exception:
++        logger.error(
++            f"OAuth token retrieval failed for ref {token_ref[:6]} "
++            f"user {hash_username(username)}"
++        )
++        raise HTTPException(status_code=500, detail="Failed to retrieve stored tokens")
++
++    if record is None:
++        raise HTTPException(
++            status_code=404,
++            detail="No stored tokens for this session. Please re-login to enable token retrieval.",
++        )
++
++    access_token = decrypt_token(record.access_token_encrypted)
++    if access_token is None:
++        logger.error(
++            f"OAuth token decryption failed for ref {token_ref[:6]} "
++            f"user {hash_username(username)}"
++        )
++        raise HTTPException(status_code=500, detail="Failed to retrieve stored tokens")
++
++    refresh_token = (
++        decrypt_token(record.refresh_token_encrypted)
++        if record.refresh_token_encrypted
++        else None
++    )
++
++    logger.info(
++        f"OAuth tokens retrieved: ref {token_ref[:6]} user {hash_username(username)}"
++    )
++
++    return JSONResponse(
++        content={
++            "access_token": access_token,
++            "refresh_token": refresh_token,
++            "token_type": "Bearer",
++            "expires_in": record.expires_in,
++            "provider": record.provider,
++            "obtained_at": int(record.obtained_at.timestamp()),
++            "expires_at": int(record.expires_at.timestamp()),
++        },
++        headers={"Cache-Control": "no-store"},
++    )
++
+ # Initialize MCP audit logger for logging MCP server access events
+ # This logs all MCP requests that pass through the auth validation
+ _mcp_audit_logger = None
+@@ -3071,6 +3303,13 @@ async def oauth2_callback(
+                 }
+             )
+ 
++        # Issue #399: store IdP tokens server-side (encrypted) and keep only
++        # an opaque reference in the cookie. Best-effort: on any failure the
++        # login continues without a token_ref (pre-#399 behavior).
++        token_ref = await _store_oauth_tokens_server_side(token_data, mapped_user, provider)
++        if token_ref:
++            session_data["token_ref"] = token_ref
++
+         registry_session = signer.dumps(session_data)
+ 
+         # Redirect to registry with session cookie
+@@ -3257,6 +3496,10 @@ async def oauth2_logout(
+         provider_config = OAUTH2_CONFIG["providers"][provider]
+         logout_url = provider_config.get("logout_url")
+ 
++        # Issue #399: revoke the server-side stored token record for this
++        # session before clearing cookies (best-effort, never blocks logout).
++        await _revoke_oauth_tokens_for_session(request)
++
+         if not logout_url:
+             # If provider doesn't support logout URL, just redirect
+             redirect_url = redirect_uri or OAUTH2_CONFIG.get("registry", {}).get(
+diff --git a/charts/auth-server/templates/_helpers.tpl b/charts/auth-server/templates/_helpers.tpl
+index 0e61a0b..42cf38d 100644
+--- a/charts/auth-server/templates/_helpers.tpl
++++ b/charts/auth-server/templates/_helpers.tpl
+@@ -56,7 +56,9 @@ inject one of these via extraEnv gets a clear template-render error.
+ - KEYCLOAK_REALM
+ - KEYCLOAK_URL
+ - MAX_TOKENS_PER_USER_PER_HOUR
++- OAUTH_SERVER_SIDE_TOKEN_STORAGE
+ - OAUTH_STORE_TOKENS_IN_SESSION
++- OAUTH_TOKEN_STORAGE_TTL_SECONDS
+ - OKTA_AUTH_SERVER_ID
+ - OKTA_CLIENT_ID
+ - OKTA_DOMAIN
+diff --git a/charts/auth-server/templates/secret.yaml b/charts/auth-server/templates/secret.yaml
+index a374948..89feabc 100644
+--- a/charts/auth-server/templates/secret.yaml
++++ b/charts/auth-server/templates/secret.yaml
+@@ -197,6 +197,8 @@ data:
+   {{- end }}
+   MAX_TOKENS_PER_USER_PER_HOUR: {{ (.Values.app.maxTokensPerUserPerHour | default "100") | toString | b64enc | quote }}
+   OAUTH_STORE_TOKENS_IN_SESSION: {{ .Values.app.oauthStoreTokensInSession | toString | b64enc | quote }}
++  OAUTH_SERVER_SIDE_TOKEN_STORAGE: {{ (.Values.app.oauthServerSideTokenStorage | default true) | toString | b64enc | quote }}
++  OAUTH_TOKEN_STORAGE_TTL_SECONDS: {{ (.Values.app.oauthTokenStorageTtlSeconds | default 28800) | toString | b64enc | quote }}
+   SESSION_COOKIE_SECURE: {{ .Values.app.sessionCookieSecure | toString | b64enc | quote }}
+   SESSION_COOKIE_DOMAIN: {{ (.Values.app.sessionCookieDomain | default (printf ".%s" $domain)) | b64enc | quote }}
+ {{- if not .Values.global.sharedSecretName }}
+diff --git a/charts/auth-server/values.yaml b/charts/auth-server/values.yaml
+index 70b9fc5..560d277 100644
+--- a/charts/auth-server/values.yaml
++++ b/charts/auth-server/values.yaml
+@@ -34,6 +34,11 @@ app:
+   # (".team.example.com") if this stack lives under a subdomain.
+   sessionCookieDomain: ""
+   oauthStoreTokensInSession: false  # Store OAuth tokens in session (default: false)
++  # Server-side OAuth token storage (Issue #399): store IdP tokens encrypted
++  # in MongoDB; keep only an opaque token_ref in the session cookie.
++  oauthServerSideTokenStorage: true
++  # TTL (seconds) for stored OAuth tokens; 0 derives from session max-age.
++  oauthTokenStorageTtlSeconds: 28800
+ 
+   # Internal JWT configuration for service-to-service tokens
+   jwtIssuer: "mcp-auth-server"  # Issuer claim for internal JWT tokens
+diff --git a/charts/mcp-gateway-registry-stack/values.yaml b/charts/mcp-gateway-registry-stack/values.yaml
+index 520b697..b6a3c70 100644
+--- a/charts/mcp-gateway-registry-stack/values.yaml
++++ b/charts/mcp-gateway-registry-stack/values.yaml
+@@ -370,6 +370,8 @@ auth-server:
+     # above for guidance — keep these two in sync.
+     sessionCookieDomain: ""
+     oauthStoreTokensInSession: false  # Store OAuth tokens in session (default: false)
++    oauthServerSideTokenStorage: true  # Issue #399: encrypted server-side token store
++    oauthTokenStorageTtlSeconds: 28800  # 0 derives from session max-age
+     # Internal JWT configuration
+     jwtIssuer: "mcp-auth-server"  # Issuer claim for internal JWT tokens
+     jwtAudience: "mcp-registry"  # Audience claim for internal JWT tokens
+diff --git a/docker-compose.prebuilt.yml b/docker-compose.prebuilt.yml
+index 24d1d13..a69b6e7 100644
+--- a/docker-compose.prebuilt.yml
++++ b/docker-compose.prebuilt.yml
+@@ -130,6 +130,8 @@ services:
+       - FEDERATION_STATIC_TOKEN=${FEDERATION_STATIC_TOKEN:-}
+       # Auth server config (mirrored for config panel visibility)
+       - OAUTH_STORE_TOKENS_IN_SESSION=${OAUTH_STORE_TOKENS_IN_SESSION:-false}
++      - OAUTH_SERVER_SIDE_TOKEN_STORAGE=${OAUTH_SERVER_SIDE_TOKEN_STORAGE:-true}
++      - OAUTH_TOKEN_STORAGE_TTL_SECONDS=${OAUTH_TOKEN_STORAGE_TTL_SECONDS:-28800}
+       - REGISTRY_STATIC_TOKEN_AUTH_ENABLED=${REGISTRY_STATIC_TOKEN_AUTH_ENABLED:-false}
+       - REGISTRY_API_TOKEN=${REGISTRY_API_TOKEN:-}
+       - REGISTRY_API_KEYS=${REGISTRY_API_KEYS:-}
+@@ -311,6 +313,10 @@ services:
+       - REGISTRY_API_KEYS=${REGISTRY_API_KEYS:-}
+       # OAuth token storage in session (set to false for Entra ID large tokens)
+       - OAUTH_STORE_TOKENS_IN_SESSION=${OAUTH_STORE_TOKENS_IN_SESSION:-false}
++      # Server-side OAuth token storage (Issue #399): encrypted MongoDB store
++      # + opaque token_ref in the session cookie; retrieval via /oauth2/tokens
++      - OAUTH_SERVER_SIDE_TOKEN_STORAGE=${OAUTH_SERVER_SIDE_TOKEN_STORAGE:-true}
++      - OAUTH_TOKEN_STORAGE_TTL_SECONDS=${OAUTH_TOKEN_STORAGE_TTL_SECONDS:-28800}
+       # Application Log Configuration
+       - APP_LOG_MAX_BYTES=${APP_LOG_MAX_BYTES:-52428800}
+       - APP_LOG_BACKUP_COUNT=${APP_LOG_BACKUP_COUNT:-5}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index a84e837..e65afd0 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -427,6 +427,10 @@ services:
+       - FEDERATION_STATIC_TOKEN=${FEDERATION_STATIC_TOKEN:-}
+       # OAuth token storage in session (set to false for Entra ID large tokens)
+       - OAUTH_STORE_TOKENS_IN_SESSION=${OAUTH_STORE_TOKENS_IN_SESSION:-false}
++      # Server-side OAuth token storage (Issue #399): encrypted MongoDB store
++      # + opaque token_ref in the session cookie; retrieval via /oauth2/tokens
++      - OAUTH_SERVER_SIDE_TOKEN_STORAGE=${OAUTH_SERVER_SIDE_TOKEN_STORAGE:-true}
++      - OAUTH_TOKEN_STORAGE_TTL_SECONDS=${OAUTH_TOKEN_STORAGE_TTL_SECONDS:-28800}
+       # Application Log Configuration (Issue #886)
+       - APP_LOG_MAX_BYTES=${APP_LOG_MAX_BYTES:-52428800}
+       - APP_LOG_BACKUP_COUNT=${APP_LOG_BACKUP_COUNT:-5}
+diff --git a/docs/unified-parameter-reference.md b/docs/unified-parameter-reference.md
+index 72d4b0d..a6002de 100644
+--- a/docs/unified-parameter-reference.md
++++ b/docs/unified-parameter-reference.md
+@@ -324,6 +324,8 @@ Single URL; disables itself when unset.
+ | Secure flag | `SESSION_COOKIE_SECURE` | `session_cookie_secure` | `auth-server.app.sessionCookieSecure` | Must be `true` in HTTPS, `false` on plain-HTTP localhost. |
+ | Cookie domain | `SESSION_COOKIE_DOMAIN` | `session_cookie_domain` | `auth-server.app.sessionCookieDomain` | Leading dot for cross-subdomain; empty is safest. |
+ | Store OAuth tokens in session | `OAUTH_STORE_TOKENS_IN_SESSION` | `oauth_store_tokens_in_session` | `auth-server.app.oauthStoreTokensInSession` | Disable for Entra (large tokens). |
++| Server-side OAuth token storage | `OAUTH_SERVER_SIDE_TOKEN_STORAGE` | `oauth_server_side_token_storage` | `auth-server.app.oauthServerSideTokenStorage` | Issue #399: store IdP tokens encrypted in MongoDB, keep only an opaque `token_ref` in the cookie. Default on; requires MongoDB backend. |
++| OAuth token storage TTL | `OAUTH_TOKEN_STORAGE_TTL_SECONDS` | `oauth_token_storage_ttl_seconds` | `auth-server.app.oauthTokenStorageTtlSeconds` | TTL for stored tokens; `0` derives from session max-age (recommended). Clamped to [300, 86400]. |
+ 
+ ---
+ 
+diff --git a/registry/repositories/documentdb/oauth_token_repository.py b/registry/repositories/documentdb/oauth_token_repository.py
+new file mode 100644
+index 0000000..ad1bead
+--- /dev/null
++++ b/registry/repositories/documentdb/oauth_token_repository.py
+@@ -0,0 +1,147 @@
++"""
++DocumentDB (MongoDB) implementation for OAuth token storage repository.
++
++Stores OAuth IdP access/refresh tokens encrypted at rest, keyed by an
++opaque token reference (token-reference pattern, issue #399). Documents
++are looked up by the compound (token_ref, username) pair so a record can
++only ever be retrieved by the user it belongs to. A TTL index on
++expires_at automatically deletes expired records.
++"""
++
++import logging
++from datetime import UTC, datetime
++
++from motor.motor_asyncio import AsyncIOMotorCollection
++from pymongo import ASCENDING
++
++from ...schemas.oauth_token_models import OAuthTokenDocument
++from ..interfaces import OAuthTokenRepositoryBase
++from .client import get_collection_name, get_documentdb_client
++
++# Configure logging
++logging.basicConfig(
++    level=logging.INFO,
++    format="%(asctime)s,p%(process)s,{%(filename)s:%(lineno)d},%(levelname)s,%(message)s",
++)
++logger = logging.getLogger(__name__)
++
++
++class DocumentDBOAuthTokenRepository(OAuthTokenRepositoryBase):
++    """MongoDB implementation for encrypted OAuth token storage."""
++
++    def __init__(self):
++        self._collection: AsyncIOMotorCollection | None = None
++        self._collection_name = get_collection_name("oauth_tokens")
++        self._indexes_created = False
++
++    async def _get_collection(self) -> AsyncIOMotorCollection:
++        """Get DocumentDB collection, creating indexes on first access."""
++        if self._collection is None:
++            db = await get_documentdb_client()
++            self._collection = db[self._collection_name]
++            await self.ensure_indexes()
++        return self._collection
++
++    async def ensure_indexes(self) -> None:
++        """Create required indexes if not present.
++
++        Creates:
++        - TTL index on expires_at (deletes documents once expires_at passes)
++        - Index on username for operator queries
++        """
++        if self._indexes_created:
++            return
++
++        if self._collection is None:
++            return
++
++        try:
++            # TTL index: auto-delete documents once expires_at has passed.
++            # expireAfterSeconds=0 means "delete at the time stored in the field".
++            await self._collection.create_index(
++                [("expires_at", ASCENDING)],
++                expireAfterSeconds=0,
++                name="ttl_expires_at",
++            )
++
++            # Index for operator queries over a user's stored records
++            await self._collection.create_index(
++                [("username", ASCENDING)],
++                name="idx_username",
++            )
++
++            self._indexes_created = True
++            logger.info(
++                f"Created indexes for {self._collection_name} collection (TTL on expires_at)"
++            )
++        except Exception as e:
++            logger.warning(f"Could not create indexes for {self._collection_name}: {e}")
++
++    async def store_tokens(
++        self,
++        doc: OAuthTokenDocument,
++    ) -> None:
++        """Store or replace an encrypted OAuth token record (upsert).
++
++        Args:
++            doc: The token document. _id = token_ref, so re-storage with
++                the same ref replaces the record.
++        """
++        collection = await self._get_collection()
++
++        await collection.replace_one(
++            {"_id": doc.token_ref},
++            doc.model_dump(mode="json") | {"_id": doc.token_ref},
++            upsert=True,
++        )
++        # Never log token material; log only a short ref prefix
++        logger.debug(f"Stored OAuth token record: {doc.token_ref[:6]}")
++
++    async def get_user_token(
++        self,
++        token_ref: str,
++        username: str,
++    ) -> OAuthTokenDocument | None:
++        """Get the token record for a reference, scoped to its owner.
++
++        The compound (token_ref, username) predicate is the authorization
++        control: a record can only be retrieved by the username stored
++        with it. Expired documents are treated as gone (the MongoDB TTL
++        monitor may lag up to ~60s behind expires_at).
++
++        Args:
++            token_ref: Opaque reference from the session cookie.
++            username: Authenticated username from the session cookie.
++
++        Returns:
++            The token document, or None if not found or expired.
++        """
++        collection = await self._get_collection()
++
++        result = await collection.find_one({"_id": token_ref, "username": username})
++        if not result:
++            return None
++
++        parsed = OAuthTokenDocument.model_validate(result)
++        if parsed.expires_at <= datetime.now(UTC):
++            # TTL monitor has not collected it yet; delete on sight
++            await collection.delete_one({"_id": token_ref})
++            logger.info(f"Expired OAuth token record deleted on read: {token_ref[:6]}")
++            return None
++
++        return parsed
++
++    async def delete_by_ref(
++        self,
++        token_ref: str,
++    ) -> None:
++        """Delete a token record by reference (logout revocation).
++
++        Args:
++            token_ref: Opaque reference from the session cookie.
++        """
++        collection = await self._get_collection()
++
++        result = await collection.delete_one({"_id": token_ref})
++        if result.deleted_count > 0:
++            logger.info(f"Deleted OAuth token record: {token_ref[:6]}")
+diff --git a/registry/repositories/factory.py b/registry/repositories/factory.py
+index 24d6d0a..1df9131 100644
+--- a/registry/repositories/factory.py
++++ b/registry/repositories/factory.py
+@@ -11,6 +11,7 @@ from .interfaces import (
+     AgentRepositoryBase,
+     BackendSessionRepositoryBase,
+     FederationConfigRepositoryBase,
++    OAuthTokenRepositoryBase,
+     PeerFederationRepositoryBase,
+     RegistryCardRepositoryBase,
+     ScopeRepositoryBase,
+@@ -36,6 +37,7 @@ _audit_repo: AuditRepositoryBase | None = None
+ _skill_repo: SkillRepositoryBase | None = None
+ _virtual_server_repo: VirtualServerRepositoryBase | None = None
+ _backend_session_repo: BackendSessionRepositoryBase | None = None
++_oauth_token_repo: OAuthTokenRepositoryBase | None = None
+ _skill_security_scan_repo: SkillSecurityScanRepositoryBase | None = None
+ _registry_card_repo: RegistryCardRepositoryBase | None = None
+ _app_log_repo: AppLogRepository | None = None
+@@ -335,6 +337,35 @@ def get_registry_card_repository() -> RegistryCardRepositoryBase:
+     return _registry_card_repo
+ 
+ 
++def get_oauth_token_repository() -> OAuthTokenRepositoryBase | None:
++    """Get OAuth token storage repository singleton.
++
++    Note: OAuth token repository only supports DocumentDB/MongoDB backends.
++    Returns None if storage backend is 'file'. Callers must degrade
++    gracefully (skip server-side token storage) when None is returned.
++    """
++    global _oauth_token_repo
++
++    if _oauth_token_repo is not None:
++        return _oauth_token_repo
++
++    backend = settings.storage_backend
++    logger.info(f"Creating OAuth token repository with backend: {backend}")
++
++    if backend in MONGODB_BACKENDS:
++        from .documentdb.oauth_token_repository import DocumentDBOAuthTokenRepository
++
++        _oauth_token_repo = DocumentDBOAuthTokenRepository()
++    else:
++        logger.warning(
++            "OAuth token repository requires MongoDB backend. "
++            "Server-side OAuth token storage disabled for file backend."
++        )
++        return None
++
++    return _oauth_token_repo
++
++
+ def get_app_log_repository() -> AppLogRepository | None:
+     """Get application log repository singleton.
+ 
+@@ -371,6 +402,7 @@ def reset_repositories() -> None:
+         _skill_repo, \
+         _virtual_server_repo, \
+         _backend_session_repo, \
++        _oauth_token_repo, \
+         _skill_security_scan_repo, \
+         _registry_card_repo, \
+         _app_log_repo
+@@ -385,6 +417,7 @@ def reset_repositories() -> None:
+     _skill_repo = None
+     _virtual_server_repo = None
+     _backend_session_repo = None
++    _oauth_token_repo = None
+     _skill_security_scan_repo = None
+     _registry_card_repo = None
+     _app_log_repo = None
+diff --git a/registry/repositories/interfaces.py b/registry/repositories/interfaces.py
+index c17b629..63e3454 100644
+--- a/registry/repositories/interfaces.py
++++ b/registry/repositories/interfaces.py
+@@ -9,6 +9,7 @@ from typing import Any
+ 
+ from ..schemas.agent_models import AgentCard
+ from ..schemas.federation_schema import FederationConfig
++from ..schemas.oauth_token_models import OAuthTokenDocument
+ from ..schemas.registry_card import RegistryCard
+ 
+ # Import skill models with try/except to avoid circular import issues
+@@ -1486,3 +1487,59 @@ class RegistryCardRepositoryBase(ABC):
+     async def exists(self) -> bool:
+         """Check if Registry Card exists."""
+         pass
++
++
++class OAuthTokenRepositoryBase(ABC):
++    """Abstract base class for server-side OAuth token storage.
++
++    Stores OAuth IdP access/refresh tokens encrypted at rest, keyed by an
++    opaque token reference embedded in the session cookie (issue #399).
++    Retrieval is scoped to the record's owner: the compound
++    (token_ref, username) pair is the authorization control.
++    """
++
++    @abstractmethod
++    async def ensure_indexes(self) -> None:
++        """Create required indexes (TTL on expires_at, etc.)."""
++        pass
++
++    @abstractmethod
++    async def store_tokens(
++        self,
++        doc: OAuthTokenDocument,
++    ) -> None:
++        """Store or replace an encrypted OAuth token record (upsert).
++
++        Args:
++            doc: The token document (token_ref is the primary key).
++        """
++        pass
++
++    @abstractmethod
++    async def get_user_token(
++        self,
++        token_ref: str,
++        username: str,
++    ) -> OAuthTokenDocument | None:
++        """Get the token record for a reference, scoped to its owner.
++
++        Args:
++            token_ref: Opaque reference from the session cookie.
++            username: Authenticated username from the session cookie.
++
++        Returns:
++            The token document, or None if not found or expired.
++        """
++        pass
++
++    @abstractmethod
++    async def delete_by_ref(
++        self,
++        token_ref: str,
++    ) -> None:
++        """Delete a token record by reference (logout revocation).
++
++        Args:
++            token_ref: Opaque reference from the session cookie.
++        """
++        pass
+diff --git a/registry/schemas/oauth_token_models.py b/registry/schemas/oauth_token_models.py
+new file mode 100644
+index 0000000..55d78df
+--- /dev/null
++++ b/registry/schemas/oauth_token_models.py
+@@ -0,0 +1,60 @@
++"""
++OAuth token storage data models for server-side token reference sessions.
++
++Defines the schema for storing OAuth IdP access/refresh tokens encrypted
++at rest in MongoDB, keyed by an opaque token reference embedded in the
++session cookie (token-reference pattern, issue #399).
++"""
++
++from datetime import UTC, datetime
++
++from pydantic import BaseModel, Field
++
++
++def _utc_now() -> datetime:
++    """Return current UTC datetime (timezone-aware)."""
++    return datetime.now(UTC)
++
++
++class OAuthTokenDocument(BaseModel):
++    """MongoDB document holding one OAuth login's encrypted IdP tokens.
++
++    Stored with _id = token_ref (the opaque reference embedded in the
++    session cookie). TTL index on expires_at auto-deletes expired records.
++    """
++
++    token_ref: str = Field(
++        ...,
++        min_length=8,
++        max_length=128,
++        description="Opaque reference embedded in the session cookie ('tr_' + 32 url-safe bytes)",
++    )
++    username: str = Field(
++        ...,
++        min_length=1,
++        description="Owner of the tokens; retrieval is scoped to this identity",
++    )
++    provider: str | None = Field(
++        default=None,
++        description="OAuth2 provider that issued the tokens (e.g. 'entra', 'keycloak')",
++    )
++    access_token_encrypted: str = Field(
++        ...,
++        description="Fernet-encrypted IdP access token",
++    )
++    refresh_token_encrypted: str | None = Field(
++        default=None,
++        description="Fernet-encrypted IdP refresh token, if the IdP issued one",
++    )
++    expires_in: int | None = Field(
++        default=None,
++        description="Original IdP-reported access token lifetime in seconds",
++    )
++    obtained_at: datetime = Field(
++        default_factory=_utc_now,
++        description="When the tokens were obtained from the IdP",
++    )
++    expires_at: datetime = Field(
++        ...,
++        description="Storage TTL boundary; drives the MongoDB TTL index",
++    )
+diff --git a/registry/utils/oauth_token_encryption.py b/registry/utils/oauth_token_encryption.py
+new file mode 100644
+index 0000000..2e105c2
+--- /dev/null
++++ b/registry/utils/oauth_token_encryption.py
+@@ -0,0 +1,124 @@
++"""
++OAuth token encryption utilities.
++
++Provides Fernet-based encryption and decryption for OAuth IdP tokens
++(access/refresh) stored server-side in MongoDB. Uses the application
++SECRET_KEY (via PBKDF2 key derivation) for encryption.
++
++Follows the same pattern as credential_encryption.py but uses a
++purpose-specific salt so ciphertexts from one store cannot be replayed
++in another.
++"""
++
++import base64
++import hashlib
++import logging
++
++from cryptography.fernet import Fernet, InvalidToken
++
++logger = logging.getLogger(__name__)
++
++
++# Salt for PBKDF2 key derivation (purpose-specific to avoid key reuse)
++_KEY_DERIVATION_SALT: bytes = b"mcp-gateway-oauth-token-storage"
++
++# PBKDF2 iteration count
++_KEY_DERIVATION_ITERATIONS: int = 100_000
++
++
++def _derive_fernet_key(
++    secret_key: str,
++) -> bytes:
++    """Derive a Fernet-compatible key from the application SECRET_KEY using PBKDF2.
++
++    Args:
++        secret_key: Application SECRET_KEY string.
++
++    Returns:
++        32-byte url-safe base64-encoded key suitable for Fernet.
++    """
++    derived = hashlib.pbkdf2_hmac(
++        "sha256",
++        secret_key.encode(),
++        _KEY_DERIVATION_SALT,
++        _KEY_DERIVATION_ITERATIONS,
++    )
++    return base64.urlsafe_b64encode(derived)
++
++
++def _get_fernet() -> Fernet | None:
++    """Get a Fernet instance derived from the application SECRET_KEY.
++
++    Returns:
++        Fernet instance, or None if SECRET_KEY is not available.
++    """
++    try:
++        import os
++
++        secret_key = os.environ.get("SECRET_KEY")
++    except Exception as e:
++        logger.error(f"Could not load SECRET_KEY from environment: {e}")
++        return None
++
++    if not secret_key:
++        return None
++
++    try:
++        key = _derive_fernet_key(secret_key)
++        return Fernet(key)
++    except Exception as e:
++        logger.error(f"Failed to derive Fernet key from SECRET_KEY: {e}")
++        return None
++
++
++def encrypt_token(
++    token: str,
++) -> str:
++    """Encrypt an OAuth token for server-side storage.
++
++    Args:
++        token: Plaintext token (IdP access token or refresh token).
++
++    Returns:
++        Fernet-encrypted token string (base64-encoded).
++
++    Raises:
++        ValueError: If SECRET_KEY is not configured or encryption fails.
++    """
++    fernet = _get_fernet()
++    if not fernet:
++        raise ValueError(
++            "SECRET_KEY is not configured. Cannot encrypt OAuth tokens. "
++            "Set SECRET_KEY in your environment."
++        )
++
++    encrypted = fernet.encrypt(token.encode())
++    return encrypted.decode()
++
++
++def decrypt_token(
++    encrypted_token: str,
++) -> str | None:
++    """Decrypt an OAuth token from server-side storage.
++
++    Args:
++        encrypted_token: Fernet-encrypted token string.
++
++    Returns:
++        Plaintext token, or None if decryption fails (key mismatch or
++        corrupted ciphertext).
++    """
++    fernet = _get_fernet()
++    if not fernet:
++        logger.error("SECRET_KEY not configured. Cannot decrypt OAuth token.")
++        return None
++
++    try:
++        decrypted = fernet.decrypt(encrypted_token.encode())
++        return decrypted.decode()
++    except InvalidToken:
++        logger.error("Failed to decrypt OAuth token: invalid token (key mismatch or corruption)")
++        return None
++    except Exception as e:
++        logger.error(f"Failed to decrypt OAuth token: {type(e).__name__}")
++        return None
+diff --git a/terraform/aws-ecs/main.tf b/terraform/aws-ecs/main.tf
+index c25fa45..ca1bc1e 100755
+--- a/terraform/aws-ecs/main.tf
++++ b/terraform/aws-ecs/main.tf
+@@ -165,6 +165,8 @@ module "mcp_gateway" {
+ 
+   # OAuth token storage
+   oauth_store_tokens_in_session = var.oauth_store_tokens_in_session
++  oauth_server_side_token_storage = var.oauth_server_side_token_storage
++  oauth_token_storage_ttl_seconds = var.oauth_token_storage_ttl_seconds
+ 
+   # Registry static token auth
+   registry_static_token_auth_enabled = var.registry_static_token_auth_enabled
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+index 4f0edae..db2ba12 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+@@ -211,6 +211,14 @@ module "ecs_service_auth" {
+           name  = "OAUTH_STORE_TOKENS_IN_SESSION"
+           value = tostring(var.oauth_store_tokens_in_session)
+         },
++        {
++          name  = "OAUTH_SERVER_SIDE_TOKEN_STORAGE"
++          value = tostring(var.oauth_server_side_token_storage)
++        },
++        {
++          name  = "OAUTH_TOKEN_STORAGE_TTL_SECONDS"
++          value = tostring(var.oauth_token_storage_ttl_seconds)
++        },
+         {
+           name  = "REGISTRY_STATIC_TOKEN_AUTH_ENABLED"
+           value = tostring(var.registry_static_token_auth_enabled)
+@@ -927,6 +935,14 @@ module "ecs_service_registry" {
+           name  = "OAUTH_STORE_TOKENS_IN_SESSION"
+           value = tostring(var.oauth_store_tokens_in_session)
+         },
++        {
++          name  = "OAUTH_SERVER_SIDE_TOKEN_STORAGE"
++          value = tostring(var.oauth_server_side_token_storage)
++        },
++        {
++          name  = "OAUTH_TOKEN_STORAGE_TTL_SECONDS"
++          value = tostring(var.oauth_token_storage_ttl_seconds)
++        },
+         {
+           name  = "REGISTRY_STATIC_TOKEN_AUTH_ENABLED"
+           value = tostring(var.registry_static_token_auth_enabled)
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/variables.tf b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+index fa5ab27..9b29257 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/variables.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+@@ -364,6 +364,18 @@ variable "oauth_store_tokens_in_session" {
+   default     = false
+ }
+ 
++variable "oauth_server_side_token_storage" {
++  description = "Store IdP OAuth tokens encrypted in MongoDB and keep only an opaque token reference in the session cookie (issue #399). Requires a MongoDB storage backend; degrades gracefully on file backend."
++  type        = bool
++  default     = true
++}
++
++variable "oauth_token_storage_ttl_seconds" {
++  description = "TTL in seconds for server-side stored OAuth tokens. 0 derives the TTL from the session max-age (recommended). Clamped to [300, 86400]."
++  type        = number
++  default     = 28800
++}
++
+ # Security Scanning Configuration
+ variable "security_scan_enabled" {
+   description = "Enable/disable security scanning for MCP servers during registration"
+diff --git a/terraform/aws-ecs/terraform.tfvars.example b/terraform/aws-ecs/terraform.tfvars.example
+index ba721ac..d9479e0 100755
+--- a/terraform/aws-ecs/terraform.tfvars.example
++++ b/terraform/aws-ecs/terraform.tfvars.example
+@@ -206,6 +206,17 @@ session_cookie_domain = ""
+ # Default: false
+ oauth_store_tokens_in_session = false
+ 
++# Store IdP OAuth tokens encrypted in MongoDB; keep only an opaque token
++# reference in the session cookie (issue #399). Requires a MongoDB storage
++# backend; degrades gracefully on file backend.
++# Default: true
++oauth_server_side_token_storage = true
++
++# TTL (seconds) for server-side stored OAuth tokens; 0 derives from the
++# session max-age (recommended). Clamped to [300, 86400].
++# Default: 28800
++oauth_token_storage_ttl_seconds = 28800
++
+ # ============================================================================
+ # EMBEDDINGS CONFIGURATION
+ # ============================================================================
+diff --git a/terraform/aws-ecs/variables.tf b/terraform/aws-ecs/variables.tf
+index adf1b06..77b43f8 100755
+--- a/terraform/aws-ecs/variables.tf
++++ b/terraform/aws-ecs/variables.tf
+@@ -610,6 +610,18 @@ variable "oauth_store_tokens_in_session" {
+   default     = false
+ }
+ 
++variable "oauth_server_side_token_storage" {
++  description = "Store IdP OAuth tokens encrypted in MongoDB and keep only an opaque token reference in the session cookie (issue #399). Requires a MongoDB storage backend; degrades gracefully on file backend."
++  type        = bool
++  default     = true
++}
++
++variable "oauth_token_storage_ttl_seconds" {
++  description = "TTL in seconds for server-side stored OAuth tokens. 0 derives the TTL from the session max-age (recommended). Clamped to [300, 86400]."
++  type        = number
++  default     = 28800
++}
++
+ # =============================================================================
+ # REGISTRY STATIC TOKEN AUTH (IdP-independent API access)
+ # =============================================================================
+diff --git a/tests/auth_server/unit/test_oauth_token_routes.py b/tests/auth_server/unit/test_oauth_token_routes.py
+new file mode 100644
+index 0000000..f4b3160
+--- /dev/null
++++ b/tests/auth_server/unit/test_oauth_token_routes.py
+@@ -0,0 +1,352 @@
++"""
++Unit tests for server-side OAuth token storage routes (issue #399).
++
++Covers the GET /oauth2/tokens endpoint authorization matrix, the OAuth2
++callback token_ref wiring, and logout revocation. Uses the auth_server
++conftest auto-mock environment and mocks the repository at the factory
++boundary. SECRET_KEY is pinned before importing auth_server.server so
++session-cookie fixtures sign with a known key.
++"""
++
++import os
++import time
++from datetime import UTC, datetime, timedelta
++from unittest.mock import AsyncMock, MagicMock, patch
++
++import pytest
++
++# Pin SECRET_KEY BEFORE importing auth_server.server so the module-level
++# signer uses a known key (the module generates a random key otherwise).
++_TEST_SECRET_KEY = "unit-test-secret-key-for-issue-399"
++os.environ.setdefault("SECRET_KEY", _TEST_SECRET_KEY)
++
++import auth_server.server as server_module  # noqa: E402
++from itsdangerous import URLSafeTimedSerializer  # noqa: E402
++from registry.schemas.oauth_token_models import OAuthTokenDocument  # noqa: E402
++
++# Mark all tests in this file
++pytestmark = [pytest.mark.unit, pytest.mark.auth]
++
++_signer = URLSafeTimedSerializer(_TEST_SECRET_KEY)
++
++
++def _make_cookie(
++    username: str = "alice",
++    token_ref: str | None = "tr_testref1234567890",
++) -> str:
++    """Build a signed session cookie like the OAuth2 callback sets."""
++    data = {
++        "username": username,
++        "email": f"{username}@example.com",
++        "name": username.title(),
++        "groups": ["users"],
++        "provider": "entra",
++        "auth_method": "oauth2",
++    }
++    if token_ref:
++        data["token_ref"] = token_ref
++    return _signer.dumps(data)
++
++
++def _make_record(
++    token_ref: str = "tr_testref1234567890",
++    username: str = "alice",
++    expired: bool = False,
++) -> OAuthTokenDocument:
++    """Build a stored token record."""
++    return OAuthTokenDocument(
++        token_ref=token_ref,
++        username=username,
++        provider="entra",
++        access_token_encrypted="gAAAAAencrypted-access",
++        refresh_token_encrypted="gAAAAAencrypted-refresh",
++        expires_in=3600,
++        obtained_at=datetime.now(UTC),
++        expires_at=datetime.now(UTC)
++        + (timedelta(seconds=-1) if expired else timedelta(hours=8)),
++    )
++
++
++@pytest.fixture
++def mock_repo():
++    """Mock OAuth token repository."""
++    repo = MagicMock()
++    repo.store_tokens = AsyncMock()
++    repo.get_user_token = AsyncMock(return_value=None)
++    repo.delete_by_ref = AsyncMock()
++    return repo
++
++
++@pytest.fixture
++def client(mock_repo):
++    """TestClient with the OAuth token repository mocked at the factory."""
++    with patch(
++        "registry.repositories.factory.get_oauth_token_repository", return_value=mock_repo
++    ):
++        from fastapi.testclient import TestClient
++
++        yield TestClient(server_module.app)
++
++
++class TestGetStoredOAuthTokens:
++    """Tests for GET /oauth2/tokens."""
++
++    def test_200_returns_tokens_for_owner(self, client, mock_repo):
++        """Owner retrieval returns decrypted tokens with no-store."""
++        # Arrange
++        record = _make_record()
++        mock_repo.get_user_token.return_value = record
++        cookie = _make_cookie()
++
++        with patch(
++            "registry.utils.oauth_token_encryption.decrypt_token",
++            side_effect=lambda enc: "plain-access" if "access" in enc else "plain-refresh",
++        ):
++            # Act
++            response = client.get("/oauth2/tokens", headers={"Cookie": f"mcp_gateway_session={cookie}"})
++
++        # Assert
++        assert response.status_code == 200
++        assert response.headers.get("cache-control") == "no-store"
++        body = response.json()
++        assert body["access_token"] == "plain-access"
++        assert body["refresh_token"] == "plain-refresh"
++        assert body["token_type"] == "Bearer"
++        assert body["provider"] == "entra"
++        assert body["expires_in"] == 3600
++        # Compound predicate used for the lookup
++        args, _ = mock_repo.get_user_token.await_args
++        assert args == ("tr_testref1234567890", "alice")
++
++    def test_401_without_cookie(self, client):
++        """Missing cookie returns 401."""
++        response = client.get("/oauth2/tokens")
++        assert response.status_code == 401
++
++    def test_401_with_invalid_cookie(self, client):
++        """Tampered cookie returns 401."""
++        response = client.get(
++            "/oauth2/tokens", headers={"Cookie": "mcp_gateway_session=tampered.value"}
++        )
++        assert response.status_code == 401
++
++    def test_404_for_legacy_session(self, client, mock_repo):
++        """Cookie without token_ref (pre-#399 session) returns 404, not 5xx."""
++        cookie = _make_cookie(token_ref=None)
++        response = client.get(
++            "/oauth2/tokens", headers={"Cookie": f"mcp_gateway_session={cookie}"}
++        )
++        assert response.status_code == 404
++        mock_repo.get_user_token.assert_not_awaited()
++
++    def test_404_for_unknown_ref(self, client, mock_repo):
++        """Known-shape ref with no stored record returns 404."""
++        mock_repo.get_user_token.return_value = None
++        cookie = _make_cookie(token_ref="tr_unknown12345678")
++        response = client.get(
++            "/oauth2/tokens", headers={"Cookie": f"mcp_gateway_session={cookie}"}
++        )
++        assert response.status_code == 404
++
++    def test_404_for_other_users_record(self, client, mock_repo):
++        """Cross-user lookup is denied via the compound predicate (404, no leak)."""
++        mock_repo.get_user_token.return_value = None  # compound query misses
++        cookie = _make_cookie(username="alice", token_ref="tr_bobsref12345678")
++        response = client.get(
++            "/oauth2/tokens", headers={"Cookie": f"mcp_gateway_session={cookie}"}
++        )
++        assert response.status_code == 404
++        args, _ = mock_repo.get_user_token.await_args
++        assert args == ("tr_bobsref12345678", "alice")
++
++    def test_410_for_expired_record(self, client, mock_repo):
++        """Expired record (TTL lag) returns 410."""
++        mock_repo.get_user_token.return_value = _make_record(expired=True)
++        cookie = _make_cookie()
++        response = client.get(
++            "/oauth2/tokens", headers={"Cookie": f"mcp_gateway_session={cookie}"}
++        )
++        assert response.status_code == 410
++
++    def test_500_when_repo_raises(self, client, mock_repo):
++        """Storage backend failure surfaces as 500 with generic detail."""
++        mock_repo.get_user_token.side_effect = RuntimeError("connection refused")
++        cookie = _make_cookie()
++        response = client.get(
++            "/oauth2/tokens", headers={"Cookie": f"mcp_gateway_session={cookie}"}
++        )
++        assert response.status_code == 500
++
++    def test_404_when_repo_is_none(self, mock_repo):
++        """File-backend deployments (repo None) yield 404, not a crash."""
++        with patch(
++            "registry.repositories.factory.get_oauth_token_repository", return_value=None
++        ):
++            from fastapi.testclient import TestClient
++
++            with TestClient(server_module.app) as client:
++                cookie = _make_cookie()
++                response = client.get(
++                    "/oauth2/tokens", headers={"Cookie": f"mcp_gateway_session={cookie}"}
++                )
++                assert response.status_code == 404
++
++
++class TestCallbackTokenRefWiring:
++    """Tests for the oauth2_callback server-side storage wiring."""
++
++    def test_callback_stores_tokens_and_sets_ref(self, mock_repo):
++        """Successful storage puts token_ref in the cookie session."""
++        token_data = {
++            "access_token": "IDP-PLAINTEXT-ACCESS",
++            "refresh_token": "IDP-PLAINTEXT-REFRESH",
++            "id_token": "id-token-jwt",
++            "expires_in": 3600,
++        }
++        mapped_user = {
++            "username": "alice",
++            "email": "alice@example.com",
++            "name": "Alice",
++            "groups": ["users"],
++        }
++
++        # Call the storage helper directly (callback itself requires a full
++        # IdP round-trip; the helper is the unit under test).
++        import asyncio
++
++        with patch.object(
++            server_module.secrets, "token_urlsafe", return_value="fixedref1234567890"
++        ):
++            token_ref = asyncio.run(
++                server_module._store_oauth_tokens_server_side(
++                    token_data, mapped_user, "entra"
++                )
++            )
++
++        assert token_ref == "tr_fixedref1234567890"
++        # Record stored with ENCRYPTED tokens
++        stored_doc = mock_repo.store_tokens.await_args.args[0]
++        assert stored_doc.access_token_encrypted != "IDP-PLAINTEXT-ACCESS"
++        assert "IDP-PLAINTEXT-ACCESS" not in stored_doc.access_token_encrypted
++        assert stored_doc.refresh_token_encrypted != "IDP-PLAINTEXT-REFRESH"
++        assert stored_doc.username == "alice"
++        assert stored_doc.provider == "entra"
++
++    def test_storage_failure_returns_none(self, mock_repo):
++        """Any storage failure degrades to None (login continues)."""
++        import asyncio
++
++        mock_repo.store_tokens.side_effect = RuntimeError("mongodb down")
++        token_ref = asyncio.run(
++            server_module._store_oauth_tokens_server_side(
++                {"access_token": "tok"}, {"username": "alice"}, "entra"
++            )
++        )
++        assert token_ref is None
++
++    def test_storage_disabled_returns_none(self, mock_repo):
++        """Flag off reproduces pre-#399 behavior exactly."""
++        import asyncio
++
++        with patch.object(server_module, "OAUTH_SERVER_SIDE_TOKEN_STORAGE", False):
++            token_ref = asyncio.run(
++                server_module._store_oauth_tokens_server_side(
++                    {"access_token": "tok"}, {"username": "alice"}, "entra"
++                )
++            )
++        assert token_ref is None
++        mock_repo.store_tokens.assert_not_awaited()
++
++    def test_no_access_token_returns_none(self, mock_repo):
++        """Empty token_data stores nothing."""
++        import asyncio
++
++        token_ref = asyncio.run(
++            server_module._store_oauth_tokens_server_side(
++                {}, {"username": "alice"}, "entra"
++            )
++        )
++        assert token_ref is None
++        mock_repo.store_tokens.assert_not_awaited()
++
++
++class TestLogoutRevocation:
++    """Tests for logout revocation of stored tokens."""
++
++    def test_logout_deletes_stored_record(self, mock_repo):
++        """Logout with a token_ref cookie deletes the record."""
++        import asyncio
++
++        from fastapi import Request
++
++        cookie = _make_cookie()
++        scope = {
++            "type": "http",
++            "headers": [(b"cookie", f"mcp_gateway_session={cookie}".encode())],
++            "method": "GET",
++            "path": "/oauth2/logout/entra",
++            "query_string": b"",
++        }
++        request = Request(scope)
++
++        asyncio.run(server_module._revoke_oauth_tokens_for_session(request))
++        mock_repo.delete_by_ref.assert_awaited_once_with("tr_testref1234567890")
++
++    def test_logout_legacy_cookie_no_delete(self, mock_repo):
++        """Legacy cookie (no token_ref) skips deletion."""
++        import asyncio
++
++        from fastapi import Request
++
++        cookie = _make_cookie(token_ref=None)
++        scope = {
++            "type": "http",
++            "headers": [(b"cookie", f"mcp_gateway_session={cookie}".encode())],
++            "method": "GET",
++            "path": "/oauth2/logout/entra",
++            "query_string": b"",
++        }
++        request = Request(scope)
++
++        asyncio.run(server_module._revoke_oauth_tokens_for_session(request))
++        mock_repo.delete_by_ref.assert_not_awaited()
++
++    def test_logout_storage_failure_never_raises(self, mock_repo):
++        """Store failure during logout is swallowed (logout must proceed)."""
++        import asyncio
++
++        from fastapi import Request
++
++        mock_repo.delete_by_ref.side_effect = RuntimeError("mongodb down")
++        cookie = _make_cookie()
++        scope = {
++            "type": "http",
++            "headers": [(b"cookie", f"mcp_gateway_session={cookie}".encode())],
++            "method": "GET",
++            "path": "/oauth2/logout/entra",
++            "query_string": b"",
++        }
++        request = Request(scope)
++
++        # Must not raise
++        asyncio.run(server_module._revoke_oauth_tokens_for_session(request))
++
++
++class TestTtlResolution:
++    """Tests for _resolve_oauth_token_ttl."""
++
++    def test_explicit_ttl_used(self):
++        with patch.object(server_module, "OAUTH_TOKEN_STORAGE_TTL_SECONDS", 7200):
++            assert server_module._resolve_oauth_token_ttl() == 7200
++
++    def test_zero_derives_from_session_max_age(self):
++        with patch.object(server_module, "OAUTH_TOKEN_STORAGE_TTL_SECONDS", 0):
++            assert server_module._resolve_oauth_token_ttl() == 28800
++
++    def test_clamped_to_minimum(self):
++        with patch.object(server_module, "OAUTH_TOKEN_STORAGE_TTL_SECONDS", 1):
++            assert server_module._resolve_oauth_token_ttl() == 300
++
++    def test_clamped_to_maximum(self):
++        with patch.object(server_module, "OAUTH_TOKEN_STORAGE_TTL_SECONDS", 999999):
++            assert server_module._resolve_oauth_token_ttl() == 86400
+diff --git a/tests/unit/repositories/test_oauth_token_repository.py b/tests/unit/repositories/test_oauth_token_repository.py
+new file mode 100644
+index 0000000..3c10eca
+--- /dev/null
++++ b/tests/unit/repositories/test_oauth_token_repository.py
+@@ -0,0 +1,237 @@
++"""
++Unit tests for OAuth token storage models and repository (issue #399).
++
++Covers OAuthTokenDocument validation and the DocumentDB repository's
++store/retrieve/delete logic with a mocked Motor collection, including
++the compound (token_ref, username) authorization predicate and
++expired-record handling.
++"""
++
++from datetime import UTC, datetime, timedelta
++from unittest.mock import AsyncMock, MagicMock
++
++import pytest
++from pydantic import ValidationError
++
++from registry.schemas.oauth_token_models import OAuthTokenDocument
++
++
++def _make_doc(
++    token_ref: str = "tr_abc123",
++    username: str = "alice",
++    expires_at: datetime | None = None,
++    **overrides,
++) -> OAuthTokenDocument:
++    """Build a valid OAuthTokenDocument for tests."""
++    defaults = dict(
++        token_ref=token_ref,
++        username=username,
++        provider="entra",
++        access_token_encrypted="gAAAAAencrypted-access",
++        refresh_token_encrypted="gAAAAAencrypted-refresh",
++        expires_in=3600,
++        expires_at=expires_at or (datetime.now(UTC) + timedelta(hours=8)),
++    )
++    defaults.update(overrides)
++    return OAuthTokenDocument(**defaults)
++
++
++class TestOAuthTokenDocument:
++    """Tests for the OAuthTokenDocument model."""
++
++    def test_valid_document(self):
++        """Test creating a valid token document."""
++        doc = _make_doc()
++        assert doc.token_ref == "tr_abc123"
++        assert doc.username == "alice"
++        assert doc.provider == "entra"
++        assert doc.access_token_encrypted == "gAAAAAencrypted-access"
++        assert doc.refresh_token_encrypted == "gAAAAAencrypted-refresh"
++        assert doc.obtained_at is not None
++        assert doc.expires_at > doc.obtained_at
++
++    def test_optional_fields_default_to_none(self):
++        """refresh_token, provider, and expires_in are optional."""
++        doc = _make_doc(refresh_token_encrypted=None, provider=None, expires_in=None)
++        assert doc.refresh_token_encrypted is None
++        assert doc.provider is None
++        assert doc.expires_in is None
++
++    def test_default_timestamps_are_utc(self):
++        """obtained_at defaults to a timezone-aware UTC datetime."""
++        doc = _make_doc()
++        assert doc.obtained_at.tzinfo is not None
++
++    def test_requires_token_ref(self):
++        """token_ref is required."""
++        with pytest.raises(ValidationError):
++            OAuthTokenDocument(
++                username="alice",
++                access_token_encrypted="gAAAAAencrypted",
++                expires_at=datetime.now(UTC) + timedelta(hours=1),
++            )
++
++    def test_requires_username(self):
++        """username is required (authorization scoping depends on it)."""
++        with pytest.raises(ValidationError):
++            OAuthTokenDocument(
++                token_ref="tr_abc123",
++                access_token_encrypted="gAAAAAencrypted",
++                expires_at=datetime.now(UTC) + timedelta(hours=1),
++            )
++
++    def test_requires_access_token(self):
++        """access_token_encrypted is required."""
++        with pytest.raises(ValidationError):
++            OAuthTokenDocument(
++                token_ref="tr_abc123",
++                username="alice",
++                expires_at=datetime.now(UTC) + timedelta(hours=1),
++            )
++
++    def test_requires_expires_at(self):
++        """expires_at is required (drives the TTL index)."""
++        with pytest.raises(ValidationError):
++            OAuthTokenDocument(
++                token_ref="tr_abc123",
++                username="alice",
++                access_token_encrypted="gAAAAAencrypted",
++            )
++
++    def test_token_ref_min_length(self):
++        """token_ref must not be trivially short."""
++        with pytest.raises(ValidationError):
++            _make_doc(token_ref="tr_")
++
++    def test_model_dump_json_serializable(self):
++        """model_dump(mode='json') produces a MongoDB-ready dict."""
++        doc = _make_doc()
++        dumped = doc.model_dump(mode="json")
++        assert isinstance(dumped["expires_at"], str)
++        assert isinstance(dumped["obtained_at"], str)
++
++
++class _FakeCollection:
++    """Minimal fake of a Motor collection for repository logic tests."""
++
++    def __init__(self):
++        self.docs: dict[str, dict] = {}
++        self.find_one_calls: list[dict] = []
++        self.deleted: list[dict] = []
++
++    async def replace_one(self, query, doc, upsert=False):
++        self.docs[query["_id"]] = dict(doc)
++        return MagicMock(upserted_id=doc["_id"] if upsert else None)
++
++    async def find_one(self, query):
++        self.find_one_calls.append(dict(query))
++        return self.docs.get(query["_id"])
++
++    async def delete_one(self, query):
++        _id = query["_id"]
++        if _id in self.docs:
++            del self.docs[_id]
++            self.deleted.append(query)
++            return MagicMock(deleted_count=1)
++        return MagicMock(deleted_count=0)
++
++    def create_index_mock(self):
++        return AsyncMock()
++
++
++class TestDocumentDBOAuthTokenRepository:
++    """Tests for DocumentDBOAuthTokenRepository against a fake collection."""
++
++    @pytest.fixture
++    def repo(self):
++        from registry.repositories.documentdb.oauth_token_repository import (
++            DocumentDBOAuthTokenRepository,
++        )
++
++        r = DocumentDBOAuthTokenRepository()
++        fake = _FakeCollection()
++        r._collection = fake
++        r._indexes_created = True  # skip index creation in most tests
++        return r
++
++    @pytest.mark.asyncio
++    async def test_store_and_get_roundtrip(self, repo):
++        """Storing then retrieving with the matching (ref, username) returns the doc."""
++        doc = _make_doc()
++        await repo.store_tokens(doc)
++
++        result = await repo.get_user_token("tr_abc123", "alice")
++        assert result is not None
++        assert result.token_ref == "tr_abc123"
++        assert result.username == "alice"
++        assert result.access_token_encrypted == "gAAAAAencrypted-access"
++
++    @pytest.mark.asyncio
++    async def test_get_uses_compound_predicate(self, repo):
++        """The lookup query includes BOTH _id and username (authorization control)."""
++        await repo.store_tokens(_make_doc())
++        await repo.get_user_token("tr_abc123", "alice")
++
++        query = repo._collection.find_one_calls[-1]
++        assert query == {"_id": "tr_abc123", "username": "alice"}
++
++    @pytest.mark.asyncio
++    async def test_get_scoped_to_owner(self, repo):
++        """A different username gets None even with the correct ref."""
++        await repo.store_tokens(_make_doc(username="bob"))
++        assert await repo.get_user_token("tr_abc123", "alice") is None
++
++    @pytest.mark.asyncio
++    async def test_get_unknown_ref_returns_none(self, repo):
++        """Unknown ref returns None."""
++        assert await repo.get_user_token("tr_missing", "alice") is None
++
++    @pytest.mark.asyncio
++    async def test_expired_record_treated_as_gone_and_deleted(self, repo):
++        """An expired record (TTL monitor lag) returns None and is deleted on sight."""
++        await repo.store_tokens(
++            _make_doc(expires_at=datetime.now(UTC) - timedelta(seconds=1))
++        )
++        assert await repo.get_user_token("tr_abc123", "alice") is None
++        assert "tr_abc123" not in repo._collection.docs
++
++    @pytest.mark.asyncio
++    async def test_upsert_replaces_same_ref(self, repo):
++        """Re-storing the same ref replaces the record."""
++        await repo.store_tokens(_make_doc(access_token_encrypted="first"))
++        await repo.store_tokens(_make_doc(access_token_encrypted="second"))
++
++        result = await repo.get_user_token("tr_abc123", "alice")
++        assert result.access_token_encrypted == "second"
++
++    @pytest.mark.asyncio
++    async def test_delete_by_ref(self, repo):
++        """delete_by_ref removes the record."""
++        await repo.store_tokens(_make_doc())
++        await repo.delete_by_ref("tr_abc123")
++        assert await repo.get_user_token("tr_abc123", "alice") is None
++
++    @pytest.mark.asyncio
++    async def test_delete_unknown_ref_is_noop(self, repo):
++        """Deleting a missing ref does not raise."""
++        await repo.delete_by_ref("tr_missing")
++
++    @pytest.mark.asyncio
++    async def test_ensure_indexes_creates_ttl(self, repo):
++        """ensure_indexes creates the TTL index on expires_at."""
++        from registry.repositories.documentdb.oauth_token_repository import (
++            DocumentDBOAuthTokenRepository,
++        )
++
++        fresh = DocumentDBOAuthTokenRepository()
++        fake = _FakeCollection()
++        fresh._collection = fake
++        fresh._collection.create_index = AsyncMock()
++
++        await fresh.ensure_indexes()
++
++        assert fresh._collection.create_index.await_count == 2
++        args, kwargs = fresh._collection.create_index.await_args_list[0]
++        assert args[0] == [("expires_at", 1)]
++        assert kwargs["expireAfterSeconds"] == 0
++        assert kwargs["name"] == "ttl_expires_at"
+diff --git a/tests/unit/utils/test_oauth_token_encryption.py b/tests/unit/utils/test_oauth_token_encryption.py
+new file mode 100644
+index 0000000..5442df8
+--- /dev/null
++++ b/tests/unit/utils/test_oauth_token_encryption.py
+@@ -0,0 +1,139 @@
++"""
++Unit tests for registry.utils.oauth_token_encryption.
++
++Validates Fernet-based encryption/decryption of server-side stored OAuth
++tokens (issue #399): roundtrip behavior, at-rest guarantees, key
++separation from other derived keys, and failure handling.
++"""
++
++import base64
++from unittest.mock import patch
++
++import pytest
++from cryptography.fernet import Fernet
++
++from registry.utils.credential_encryption import _derive_fernet_key as _derive_credential_key
++from registry.utils.oauth_token_encryption import (
++    _derive_fernet_key,
++    decrypt_token,
++    encrypt_token,
++)
++
++
++class TestDeriveFernetKey:
++    """Tests for _derive_fernet_key."""
++
++    def test_derive_fernet_key_produces_valid_key(self):
++        """Verifies _derive_fernet_key returns a 44-byte base64-encoded key."""
++        # Arrange
++        secret = "test-secret-key-for-derivation"
++
++        # Act
++        key = _derive_fernet_key(secret)
++
++        # Assert
++        assert isinstance(key, bytes)
++        assert len(key) == 44
++        decoded = base64.urlsafe_b64decode(key)
++        assert len(decoded) == 32
++
++    def test_derive_fernet_key_deterministic(self):
++        """Same secret must always produce the same key."""
++        key_a = _derive_fernet_key("reproducible-secret")
++        key_b = _derive_fernet_key("reproducible-secret")
++        assert key_a == key_b
++
++    def test_derive_fernet_key_different_secrets_produce_different_keys(self):
++        """Different secrets must produce different keys."""
++        assert _derive_fernet_key("secret-one") != _derive_fernet_key("secret-two")
++
++    def test_key_is_purpose_separated_from_credential_encryption(self):
++        """The OAuth token store key must differ from the credential store key.
++
++        Issue #399 uses a purpose-specific salt so ciphertexts cannot be
++        replayed across stores.
++        """
++        secret = "shared-secret"
++        assert _derive_fernet_key(secret) != _derive_credential_key(secret)
++
++
++class TestEncryptDecryptRoundtrip:
++    """Tests for encrypt_token and decrypt_token working together."""
++
++    @patch("registry.utils.oauth_token_encryption._get_fernet")
++    def test_encrypt_decrypt_roundtrip(self, mock_get_fernet):
++        """Encrypting then decrypting returns the original token."""
++        # Arrange
++        mock_get_fernet.return_value = Fernet(Fernet.generate_key())
++        token = "eyJhbGciOiJSUzI1NiIsImtpZCI6Ik1yaUxhIn0.very-long-jwt-payload.signature"
++
++        # Act
++        encrypted = encrypt_token(token)
++        decrypted = decrypt_token(encrypted)
++
++        # Assert
++        assert decrypted == token
++
++    @patch("registry.utils.oauth_token_encryption._get_fernet")
++    def test_roundtrip_with_refresh_token_and_unicode(self, mock_get_fernet):
++        """Roundtrip handles unicode and arbitrary token shapes."""
++        mock_get_fernet.return_value = Fernet(Fernet.generate_key())
++        for token in ["refresh-token-abc123", "tökën-with-ünicode", "x" * 5000]:
++            encrypted = encrypt_token(token)
++            assert decrypt_token(encrypted) == token
++
++    def test_encrypt_decrypt_roundtrip_with_real_key(self):
++        """End-to-end roundtrip using the real key derivation path."""
++        with patch.dict("os.environ", {"SECRET_KEY": "roundtrip-secret"}):
++            encrypted = encrypt_token("access-token-xyz")
++            assert decrypt_token(encrypted) == "access-token-xyz"
++
++
++class TestEncryptionAtRest:
++    """Tests guaranteeing tokens are not stored in plaintext."""
++
++    def test_ciphertext_is_not_plaintext(self):
++        """The stored (encrypted) value must not contain the token."""
++        with patch.dict("os.environ", {"SECRET_KEY": "at-rest-secret"}):
++            token = "PLAINTEXT_SECRET_ACCESS_TOKEN_12345"
++            encrypted = encrypt_token(token)
++            assert token not in encrypted
++            assert encrypted != token
++
++    def test_encryption_is_non_deterministic(self):
++        """Fernet includes a random nonce; same input yields different ciphertexts."""
++        with patch.dict("os.environ", {"SECRET_KEY": "nonce-secret"}):
++            token = "same-input-token"
++            encrypted_a = encrypt_token(token)
++            encrypted_b = encrypt_token(token)
++            assert encrypted_a != encrypted_b
++            # Both decrypt to the same plaintext
++            assert decrypt_token(encrypted_a) == decrypt_token(encrypted_b) == token
++
++    def test_wrong_key_fails_to_decrypt(self):
++        """A ciphertext encrypted under one key must not decrypt under another."""
++        with patch.dict("os.environ", {"SECRET_KEY": "key-one"}):
++            encrypted = encrypt_token("secret-token")
++        with patch.dict("os.environ", {"SECRET_KEY": "key-two"}):
++            assert decrypt_token(encrypted) is None
++
++
++class TestFailureHandling:
++    """Tests for missing-key and corrupted-input paths."""
++
++    def test_encrypt_without_secret_key_raises(self):
++        """encrypt_token raises ValueError when SECRET_KEY is not configured."""
++        with patch.dict("os.environ", {}, clear=True):
++            with pytest.raises(ValueError):
++                encrypt_token("some-token")
++
++    def test_decrypt_without_secret_key_returns_none(self):
++        """decrypt_token returns None (does not raise) when SECRET_KEY is missing."""
++        with patch.dict("os.environ", {}, clear=True):
++            assert decrypt_token("gAAAAA-not-a-real-token") is None
++
++    def test_decrypt_corrupted_ciphertext_returns_none(self):
++        """decrypt_token returns None on corrupted input instead of raising."""
++        with patch.dict("os.environ", {"SECRET_KEY": "corruption-secret"}):
++            assert decrypt_token("not-a-valid-fernet-token") is None
++            assert decrypt_token("") is None

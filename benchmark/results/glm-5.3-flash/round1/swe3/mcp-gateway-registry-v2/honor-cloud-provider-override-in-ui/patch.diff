@@ -1,0 +1,129 @@
+diff --git a/registry/api/system_routes.py b/registry/api/system_routes.py
+index 6185a7d..4030d4b 100644
+--- a/registry/api/system_routes.py
++++ b/registry/api/system_routes.py
+@@ -343,14 +343,20 @@ async def get_telemetry_detection_info(
+     are triggered. Lets operators verify how their instance was classified
+     without tailing logs.
+ 
++    Returns the resolved value via ``_resolve_cloud()`` so the UI reports the
++    same cloud the telemetry events report: the ``MCP_CLOUD_PROVIDER`` override
++    (method ``explicit``) and the registry-card operator hint
++    (``operator_declared`` / ``operator_declined``) take precedence; without
++    them the raw auto-detection cascade is returned as before.
++
+     Returns:
+         Dictionary with:
+-        - cloud: aws/gcp/azure/unknown
+-        - cloud_detection_method: env/dmi/ecs_meta/k8s_heuristic/imds/unknown
++        - cloud: aws/gcp/azure/on_premises/other/unknown
++        - cloud_detection_method: explicit/operator_declared/operator_declined/env/dmi/ecs_meta/k8s_heuristic/imds/unknown
+     """
+-    from ..core.telemetry import _detect_cloud_provider_with_method
++    from ..core.telemetry import _resolve_cloud
+ 
+-    cloud, method = _detect_cloud_provider_with_method()
++    cloud, method = await _resolve_cloud()
+     return {"cloud": cloud, "cloud_detection_method": method}
+ 
+ 
+diff --git a/tests/unit/test_stats_endpoint.py b/tests/unit/test_stats_endpoint.py
+index b466c8e..7372801 100644
+--- a/tests/unit/test_stats_endpoint.py
++++ b/tests/unit/test_stats_endpoint.py
+@@ -456,3 +456,95 @@ class TestStatsEndpoint:
+         response = client.get("/api/system/telemetry-detection")
+ 
+         assert response.status_code == 401
++
++
++@pytest.mark.unit
++class TestTelemetryDetectionEndpoint:
++    """Regression tests: /api/system/telemetry-detection must return the
++    resolved cloud value (MCP_CLOUD_PROVIDER override -> operator hint ->
++    auto-detection cascade), the same value telemetry events report, instead
++    of the raw cascade.
++    """
++
++    _USER_CONTEXT = {
++        "username": "alice",
++        "groups": ["mcp-registry-user"],
++        "scopes": [],
++        "auth_method": "oauth2",
++        "provider": "keycloak",
++        "accessible_servers": [],
++        "accessible_services": [],
++        "accessible_agents": [],
++        "ui_permissions": {},
++        "can_modify_servers": False,
++        "is_admin": False,
++    }
++
++    @pytest.mark.asyncio
++    async def test_override_set_reports_explicit_value(self):
++        """With MCP_CLOUD_PROVIDER set, the endpoint reports the override with
++        method=explicit, even though the cascade would auto-detect aws."""
++        from registry.auth.dependencies import nginx_proxied_auth
++
++        with (
++            patch("registry.core.telemetry.settings") as mock_settings,
++            patch(
++                "registry.core.telemetry._detect_cloud_provider_with_method",
++                return_value=("aws", "env"),
++            ),
++            patch(
++                "registry.core.telemetry._get_operator_cloud_hint",
++                new_callable=AsyncMock,
++                return_value=None,
++            ),
++        ):
++            mock_settings.mcp_cloud_provider = "on_premises"
++
++            from registry.main import app
++
++            app.dependency_overrides[nginx_proxied_auth] = lambda: self._USER_CONTEXT
++            try:
++                client = TestClient(app)
++                response = client.get("/api/system/telemetry-detection")
++            finally:
++                app.dependency_overrides.pop(nginx_proxied_auth, None)
++
++            assert response.status_code == 200
++            data = response.json()
++            assert data == {
++                "cloud": "on_premises",
++                "cloud_detection_method": "explicit",
++            }
++
++    @pytest.mark.asyncio
++    async def test_override_unset_falls_through_to_cascade(self):
++        """With MCP_CLOUD_PROVIDER unset and no operator hint, the endpoint
++        returns the raw auto-detection cascade result as before the fix."""
++        from registry.auth.dependencies import nginx_proxied_auth
++
++        with (
++            patch("registry.core.telemetry.settings") as mock_settings,
++            patch(
++                "registry.core.telemetry._detect_cloud_provider_with_method",
++                return_value=("gcp", "dmi"),
++            ),
++            patch(
++                "registry.core.telemetry._get_operator_cloud_hint",
++                new_callable=AsyncMock,
++                return_value=None,
++            ),
++        ):
++            mock_settings.mcp_cloud_provider = None
++
++            from registry.main import app
++
++            app.dependency_overrides[nginx_proxied_auth] = lambda: self._USER_CONTEXT
++            try:
++                client = TestClient(app)
++                response = client.get("/api/system/telemetry-detection")
++            finally:
++                app.dependency_overrides.pop(nginx_proxied_auth, None)
++
++            assert response.status_code == 200
++            data = response.json()
++            assert data == {"cloud": "gcp", "cloud_detection_method": "dmi"}

@@ -1,0 +1,48 @@
+{
+  "task": "cli-custom-egress-oauth-provider-flags",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 23,
+      "risk_awareness": 18,
+      "total": 85,
+      "notes": "The root-cause claim is fully verified: cmd_egress_configure (api/registry_management.py:2018) forwards no custom_* fields, EgressConfigRequest (registry/api/egress_auth_routes.py:523-537) accepts exactly the five named fields, EgressOAuthConfig stores them, Dashboard.tsx:1540-1541 already sends them, and the quoted resolve_provider error string matches providers.py:98 verbatim. Acceptance criteria are testable (exact flag names, argparse choices for the two TokenEndpointAuthStyle values post_body/basic_header verified at registry/egress_auth/schemas.py:37, absent-key wire convention, fail-before-pass test requirement) and the out-of-scope list is explicit and justified. The largest deficiency is the claim that omitting a flag preserves the stored value on edit: the route rebuilds eo wholesale from the request body, so a custom-provider edit omitting the URLs fails resolve_provider with 400 rather than preserving anything. Risk discussion is otherwise thin (no edit-semantics or rollout note), though proportionate to a CLI-only bug."
+    },
+    "lld": {
+      "completeness": 23,
+      "correctness": 21,
+      "specificity": 23,
+      "risk_awareness": 20,
+      "total": 87,
+      "notes": "Exceptional grounding: every cited anchor I checked is exact — configure_egress_auth at registry_client.py:3877 with the only-send-what-was-supplied idiom at 3907-3917, cmd_egress_configure at 2018, the parser at 6708 with --mode choices at 6714-6718, resolve_provider at providers.py:74, TokenEndpointAuthStyle at schemas.py:37, and the file line counts (8105/5996) are literally correct; the Constraints section correctly analyzes that the route rebuilds eo from body defaults. The steps are decision-ready and the test patterns are copied from real files (test_registry_management_m2m_secret.py's parents[3]/sys.path idiom, test_registry_client_toggle_rate.py's RegistryClient fixture), both verified. Two defects: Alternative 1 cites a docker target registry-cli that does not exist anywhere in the repo (Dockerfile, docker/, build-config.yaml), and the design never states the actual operator-facing edit behavior — omitting the custom URLs on an already-custom server returns 400, which the \"cannot null out a stored value\" framing glosses."
+    },
+    "review": {
+      "completeness": 20,
+      "correctness": 18,
+      "specificity": 20,
+      "risk_awareness": 19,
+      "total": 77,
+      "notes": "The review does real, verifiable work: Pixel's finding that _egress_config_view echoes only the two URLs and custom_resource (not the separator or auth style) is confirmed at egress_auth_routes.py:540-553, and Byte's empty-string separator harmlessness is confirmed by resolve_provider's `custom_scope_separator or \" \"` normalization. But its one mechanism claim about failure is wrong: an invalid auth style would not cause a server-side 500, because TokenEndpointAuthStyle(...) raises ValueError inside resolve_provider, which the route catches and converts to a 400 (egress_auth_routes.py:653-656). Worse, no persona catches the real edge the design mishandles — omitting the custom URLs on an existing custom server 400s because eo is rebuilt from the body — and Byte affirmatively calls \"sending nothing... safe\" while Pixel asserts omitted means \"keep stored value\", both contradicted by the route code the review itself cites. The two should-fix items are LLD prose tidiness rather than design defects, so the stress-testing is genuine but stops one level short."
+    },
+    "testing": {
+      "completeness": 21,
+      "correctness": 19,
+      "specificity": 22,
+      "risk_awareness": 19,
+      "total": 81,
+      "notes": "Commands and paths agree with the repo (uv run python api/registry_management.py is the documented invocation in docs/agent-skills-operational-guide.md, egress-config-get exists at registry_management.py:6739, and the named unit-test files match the patch), and the oracles are concrete: exact JSON body keys, argparse exit=2 with no network call, jq-style field equality on the read-back view, and a git-stash fail-on-unpatched-tree check with the correct TypeError expectation. Backward compatibility is properly covered by test_pat_mode_body_is_unchanged and the omitted-keys-absent test. The material defect is Section 3's edit round-trip, which asserts \"resolve_provider re-reads the stored URLs it needs\" when the route builds eo fresh from the body — executing that step against an already-custom server with the five flags omitted yields a 400, so the plan encodes a wrong expectation and tests nothing for that path. Deployment sections are honestly marked N/A for an application-only patch."
+    },
+    "implementation": {
+      "completeness": 24,
+      "correctness": 24,
+      "specificity": 23,
+      "risk_awareness": 22,
+      "total": 93,
+      "notes": "git apply --check (dry-run via stdin, no tree modification) exits 0, and every hunk's context matches the real source at the cited lines (registry_client.py:3883-3925, registry_management.py:2034-2039 and 6730-6735); cmd_egress_configure is the sole caller of configure_egress_auth, so adding optional keyword parameters breaks nothing, and choices=[\"post_body\",\"basic_header\"] mirrors the verified enum. The two new test files clone the repo's actual patterns (m2m test's sys.path/parents[3] idiom, toggle_rate test's fixture and kwargs assertions) and their oracles are correct against the client's body assembly, including the exact pat-mode body {egress_auth_mode, egress_provider}; the summary's diffstats (+28/-1, +27/-0, +101, +104, +260/-1) recompute exactly and it is honest that tests were not executed and that the handler tests fail by KeyError pre-patch. Largest nits are cosmetic: one line exceeds the repo's 100-char ruff limit and the \"cannot null out a stored value on edit\" comment inherits the LLD's slightly misleading edit framing. Full LLD scope — client, handler, parser, both test layers — is present with no unrelated churn."
+    }
+  },
+  "task_score": 84.6,
+  "verdict": "A precisely repository-grounded, end-to-end-correct CLI parity fix with verified line-level claims and a cleanly applying patch, whose largest material limitation is a shared misunderstanding of custom-provider edit semantics — omitting the custom flags on an already-configured custom server returns 400 rather than preserving stored values — which the review endorsed and the testing plan encodes as a wrong expected outcome."
+}

@@ -1,0 +1,112 @@
+{
+  "task": "registration-admission-control-gate",
+  "repo": "https://github.com/agentic-community/mcp-gateway-registry",
+  "ref": "v1.0.19",
+  "complexity": "high",
+  "tags": [
+    "security",
+    "architecture",
+    "api",
+    "fastapi",
+    "webhooks",
+    "admission-control",
+    "fixed-in-1.0.20"
+  ],
+  "model": "glm-5.3-flash",
+  "model_slug": "glm-5.3-flash",
+  "agent": "xharness",
+  "skill": "swe3",
+  "provider": "endpoint",
+  "endpoint": "https://open.bigmodel.cn/api/anthropic",
+  "aws_region": null,
+  "serving": {
+    "instance_type": null,
+    "tensor_parallel_size": null,
+    "precision": null,
+    "context_window": null
+  },
+  "artifacts_produced": 6,
+  "artifacts_expected": 6,
+  "generation_tokens_per_sec": 42.0,
+  "token_accounting_warning": null,
+  "prompt_token_reconciliation": null,
+  "metrics": {
+    "note": "Headline metrics resolved to the best available source for each; see 'sources'. Values drawn from vllm_prometheus carry its single-tenant, server-wide caveat.",
+    "input_tokens": 10944708,
+    "output_tokens": 88582,
+    "cache_read_tokens": 10653056,
+    "cache_write_tokens": null,
+    "total_tokens": 11033290,
+    "total_cost_usd": null,
+    "latency_seconds": 2109.0,
+    "num_turns": 1,
+    "generation_tokens_per_sec": 42.0,
+    "prefix_cache_hit_rate": null,
+    "sources": {
+      "input_tokens": "xharness_api.usage.input",
+      "output_tokens": "xharness_api.usage.output",
+      "cache_read_tokens": "xharness_api.usage.cache_read_input_tokens",
+      "cache_write_tokens": "unavailable (backend reports no cache-write signal)",
+      "total_tokens": "total tokens processed once each (issue #136): input + output, plus cache_read + cache_write ONLY when the cache is additive (not a partition of input). An agent with disjoint counts declares that instead of being detected (issue #183).",
+      "total_cost_usd": "null (self-hosted: no per-token bill; cost is hardware-derived)",
+      "latency_seconds": "harness wall-clock (or xharness_api.duration_ms)",
+      "num_turns": "xharness_api.num_turns",
+      "generation_tokens_per_sec": "derived: output_tokens / latency_seconds",
+      "prefix_cache_hit_rate": "vllm_prometheus.derived.prefix_cache_hit_rate"
+    }
+  },
+  "input_tokens": 10944708,
+  "output_tokens": 88582,
+  "latency_seconds": 2109.0,
+  "num_turns": 1,
+  "total_cost_usd": null,
+  "is_error": false,
+  "result_subtype": "success",
+  "cache_read_tokens": 10653056,
+  "run_started_at": "2026-09-29T18:08:20.884206Z",
+  "run_ended_at": "2026-09-29T18:43:30.203962Z",
+  "metrics_that_matter": {
+    "note": "Headline metrics resolved to the best available source for each; see 'sources'. Values drawn from vllm_prometheus carry its single-tenant, server-wide caveat.",
+    "input_tokens": 10944708,
+    "output_tokens": 88582,
+    "cache_read_tokens": 10653056,
+    "cache_write_tokens": null,
+    "total_tokens": 11033290,
+    "total_cost_usd": null,
+    "latency_seconds": 2109.0,
+    "num_turns": 1,
+    "generation_tokens_per_sec": 42.0,
+    "prefix_cache_hit_rate": null,
+    "sources": {
+      "input_tokens": "xharness_api.usage.input",
+      "output_tokens": "xharness_api.usage.output",
+      "cache_read_tokens": "xharness_api.usage.cache_read_input_tokens",
+      "cache_write_tokens": "unavailable (backend reports no cache-write signal)",
+      "total_tokens": "total tokens processed once each (issue #136): input + output, plus cache_read + cache_write ONLY when the cache is additive (not a partition of input). An agent with disjoint counts declares that instead of being detected (issue #183).",
+      "total_cost_usd": "null (self-hosted: no per-token bill; cost is hardware-derived)",
+      "latency_seconds": "harness wall-clock (or xharness_api.duration_ms)",
+      "num_turns": "xharness_api.num_turns",
+      "generation_tokens_per_sec": "derived: output_tokens / latency_seconds",
+      "prefix_cache_hit_rate": "vllm_prometheus.derived.prefix_cache_hit_rate"
+    }
+  },
+  "vllm_prometheus": {
+    "available": false,
+    "source": "vllm_prometheus_window",
+    "note": "vLLM metrics were not reachable; run against a vLLM endpoint exposing /metrics to populate this block.",
+    "derived": {
+      "prefix_cache_hit_rate": null,
+      "prompt_tokens_cached_rate": null
+    },
+    "counters": {},
+    "histograms": {},
+    "gauges": {},
+    "gauges_sampled": {
+      "available": false,
+      "source": "vllm_prometheus_poll",
+      "note": "No vLLM gauges were sampled during the run; endpoint unreachable or not a vLLM server.",
+      "interval_seconds": 1.0,
+      "gauges": {}
+    }
+  }
+}

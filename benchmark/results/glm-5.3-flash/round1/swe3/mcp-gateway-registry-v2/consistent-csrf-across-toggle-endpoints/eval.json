@@ -1,0 +1,48 @@
+{
+  "task": "consistent-csrf-across-toggle-endpoints",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 21,
+      "correctness": 20,
+      "specificity": 22,
+      "risk_awareness": 20,
+      "total": 83,
+      "notes": "The six-endpoint inventory is fully verified in the repo (agent_routes.py:981/987, skill_routes.py:829/835, server_routes.py:543/549/1328/3005, virtual_server_routes.py:453) with testable acceptance criteria, explicit non-goals, and rejected alternatives. Two claims are overstated: \"agents and skills are registered disabled by default\" is contradicted for skills (skill_service.py:532 registers is_enabled=True; SkillCard default True), and the bearer-works-on-all-six criterion hides that endpoint 3's enhanced_auth is cookie-only (dependencies.py:477-486), so an M2M client still cannot succeed there regardless of CSRF. The 403 wording (\"no session\"/\"no token provided\") matches csrf.py:139/147 exactly, and the SameSite=Lax premise is verified at auth_server/server.py:2744. Strongest aspect is the precise, repo-grounded defect framing; largest deficiency is the endpoint-3 bearer framing that the fix cannot deliver."
+    },
+    "lld": {
+      "completeness": 23,
+      "correctness": 21,
+      "specificity": 23,
+      "risk_awareness": 22,
+      "total": 89,
+      "notes": "Every load-bearing citation checked out exactly: dependencies.py:538 nginx_proxied_auth, csrf.py ending at line 157, /edit retaining the flexible dep at server_routes.py:1542, AuthContext.tsx:68-113 interceptor, and the test_server_routes.py:265-316 cookie-bearing fixtures that Step 8 correctly updates. The design commits to one decision (cookie-presence discriminator), gives an implementable 8-step plan with code, documents residual cookie-injection DoS with directionality analysis, and covers rollout signal shift and rollback. Main correctness gap: the behavior table promises bearer \"200 on 1-5\", but for endpoint 3 enhanced_auth reads only the session cookie (dependencies.py:477-486), so a cookie-less bearer request is blocked at auth before CSRF; the LLD's own test design overrides enhanced_auth, masking this. It also repeats the unverified \"skills register disabled\" motivation. An entry-level implementer could execute this without re-making any major decision."
+    },
+    "review": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 23,
+      "risk_awareness": 22,
+      "total": 89,
+      "notes": "This is a real review, not praise theater: the Byte/Sage blocker is verified true (test_server_routes.py:272/312 attach mcp_gateway_session and override only verify_csrf_token_flexible, so post-swap the real dependency would 403 every toggle test), and it forced a Step 8 fix plus a corrected acceptance criterion. Checkable claims hold up: AuthContext.tsx:108-113 logs a warning and continues on CSRF-token fetch failure (Pixel's UX regression on newly protected endpoints 4-5 is real), agent tests build TestClient without a cookie jar (test_agent_routes.py:61), and lazy-import patch targets match server_routes.py:552-555. Two reviewers return NEEDS REVISION against their own design with prioritized must-fix/should-fix/nit items and tracked resolutions. The one miss a careful reader could expect: nobody flagged that endpoint 3's cookie-only enhanced_auth makes the bearer-passes-everywhere framing untrue in production."
+    },
+    "testing": {
+      "completeness": 22,
+      "correctness": 21,
+      "specificity": 22,
+      "risk_awareness": 22,
+      "total": 87,
+      "notes": "The plan pins exact oracles: 403 details match csrf.py:139/154 verbatim, request shapes match the real signatures (skill JSON ToggleStateRequest, form path/new_state on /servers/toggle, form service_path on /internal/toggle, enabled=on on the legacy route), and prerequisites are verified against tests/conftest.py:74-90 (DOCUMENTDB_*, REGISTRATION_GATE_ENABLED=false). It covers both policy unit tests and route-level tests that deliberately do NOT override the CSRF dependency, plus backward-compat including the required fixture update, rollback, and post-deploy log expectations. References check out: create_session_cookie exists (dependencies.py:687), _csrf_signer exists (csrf.py:18), tests/unit/auth/ exists. Main weakness: the bearer-200 expectation on the legacy UI route is achievable only by overriding enhanced_auth (which the plan discloses but does not problematize), preserving the design's endpoint-3 overstatement."
+    },
+    "implementation": {
+      "completeness": 22,
+      "correctness": 18,
+      "specificity": 21,
+      "risk_awareness": 19,
+      "total": 80,
+      "notes": "The production diff is complete and verified hunk-by-hunk against the real source: all six endpoints modified with exact context (agent_routes.py:28/987, skill_routes.py:32/835, server_routes.py:14/549/1332/3010, virtual_server_routes.py:24/462), the new dependency in csrf.py matches the LLD, and the review's must-fix fixture updates to test_server_routes.py:265-316 are included; hunk offsets are arithmetically consistent and conventions (multi-line sorted import, one-param-per-line, Google docstring) follow CLAUDE.md. Two defects sit in the new tests: tests/unit/auth/test_csrf.py's /protected route never attaches verify_csrf_for_session_requests (the import is unused), so its three 403-assertion tests fail and the pass tests are vacuous, and test_csrf_toggle_consistency.py's agent toggle tests do not patch faiss_service even though agent_routes.py:1029-1036 calls it (existing tests do patch it, test_agent_routes.py:1206), likely failing in the unit environment. The summary is honest about not running tests and about the dependency_overrides mechanism, but \"verified by re-reading the diff\" did not catch a fixture that cannot pass, which would land the branch red against the repo's own no-failing-tests rule."
+    }
+  },
+  "task_score": 85.6,
+  "verdict": "An exceptionally repository-grounded design set whose review caught a real, verified test-fixture flaw, limited mainly by an implementation that is correct in production code but ships two broken new tests and a bearer-access claim on the legacy UI route that cookie-only enhanced_auth cannot deliver."
+}

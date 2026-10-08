@@ -1,0 +1,48 @@
+{
+  "task": "derive-repo-url-from-skill-md",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 22,
+      "correctness": 23,
+      "specificity": 22,
+      "risk_awareness": 18,
+      "total": 85,
+      "notes": "Both product gaps (manual re-entry of the repo URL and no path to the repo root from the modals) are pinned down with testable acceptance criteria covering both URL shapes, enterprise hosts, the non-GitHub null case, editability, and both modals. Every factual claim I checked holds: Dashboard.tsx:1428-1435 shows Parse auto-filling only name/description/version/tags, SkillCard.tsx:651-662 shows the single 'View on GitHub' link, and SkillCard.repository_url exists at registry/schemas/skill_models.py:132. The strongest aspect is the explicit out-of-scope section (no network verification, no non-GitHub derivation) and the 'returns nothing rather than guessing' rule. The largest gap is risk blindness to legacy state: no mention that already-registered skills and stale search indexes lack repository_url, nor the edit-mode wipe at Dashboard.tsx:1387 that the review later caught."
+    },
+    "lld": {
+      "completeness": 23,
+      "correctness": 23,
+      "specificity": 23,
+      "risk_awareness": 21,
+      "total": 90,
+      "notes": "The design is grounded in the real repository at an accuracy level I rarely see: I verified essentially every cited site, including _parse_skill_md_content at skill_service.py:216 with the result dict at 279-287, parse route dict at skill_routes.py:243-253, SkillInfo (no repository_url) at skill_models.py:239, SkillSearchResult at search_routes.py:160 with mapping at 656-675, index metadata at documentdb/search_repository.py:818-826 and all three formatters at 1339/1596/1991, and the FAISS parity claim at file/search_repository.py:75-77. It commits to the one load-bearing decision (first-two-segments derivation plus raw-host normalization) with a complete normative function that is correct against the real _is_github_hostname/_is_raw_github_url predicates, and covers both SkillInfo construction sites (skill_routes.py:177 and list_skills at skill_service.py:658; list_skills_for_user delegates, so two is complete). Risk handling is strong (stale-index degradation, .get() for legacy docs, javascript: scheme, edit-mode prefill) though it defers backfill without a migration option, and one trivial placement inaccuracy ('near line 121' vs the actual end-of-file append at 163)."
+    },
+    "review": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 22,
+      "risk_awareness": 21,
+      "total": 87,
+      "notes": "This is a real review, not praise theater: it catches a genuine data-loss bug (edit-mode pre-fill hardcoding repository_url: '' at Dashboard.tsx:1387, which I confirmed in source), correctly verifies the exposure boundary claims (list_skills_for_user filters before SkillInfo and _user_can_access_skill at search_routes.py:651 filters before SkillSearchResult), and makes a defensible parity call to leave the FAISS branch untouched. Verdicts are differentiated and the consolidated must-fix list is prioritized. The main defect is that its central blocking finding (raw-host normalization) targets a pre-revision 'Step 1 sketch' that does not exist in the submitted LLD, so part of the review adjudicates a stale artifact, and Cipher's concern 2 leaves an unedited mid-sentence 'wait:' self-correction in the prose. Those reduce polish, not substance."
+    },
+    "testing": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 22,
+      "risk_awareness": 19,
+      "total": 85,
+      "notes": "The plan uses the right levels with real oracles: exact expected values for all four URL shapes plus negative cases (1.1.5 non-GitHub, 1.1.6 short path), backwards-compat checks that prior parse keys survive (verified against the actual key set at skill_routes.py:243-253), a register-list-search E2E round-trip whose expectation I confirmed is valid (registration stores request.repository_url at skill_service.py:514), and legacy-skill degradation. Commands agree with the repository: uv run pytest per CLAUDE.md, the query-param parse endpoint, POST /semantic with entity_types, and npm start exists in frontend/package.json. It honestly flags that enterprise-URL contract checks will 400 against a live registry because the fetch fails, which limits those cases to the unit level. Weakest area is that UX coverage is a manual checklist with no automated frontend test and no CI integration guidance beyond running the full suite."
+    },
+    "implementation": {
+      "completeness": 24,
+      "correctness": 24,
+      "specificity": 23,
+      "risk_awareness": 22,
+      "total": 93,
+      "notes": "I verified every hunk's context against the v1.0.19 checkout (HEAD is exactly 9d03185/v1.0.19) and all match, including indentation, in all 14 files: the helper lands in tests/unit/utils/ which exists with __init__.py, both SkillInfo construction sites are covered (list_skills_for_user delegates to list_skills so two is complete), all three DocumentDB formatters gain metadata.get('repository_url') which is None-safe for legacy docs, and the patch also fixes the edit-mode wipe at Dashboard.tsx:1387 that the review flagged. The helper's logic is correct against the real predicates (raw.githubusercontent.com -> github.com, raw.<enterprise> strips 'raw.', <2 path segments -> None), follows the file's multi-line def and Google-docstring conventions with modern str | None syntax, and implements all eleven acceptance criteria with 14 oracle-bearing unit tests. The summary is truthful (tests not executed, deviations cosmetic, backfill and non-GitHub derivation documented as deferred). Remaining risk is only the acknowledged absence of any backfill for pre-existing skills and stale search indexes."
+    }
+  },
+  "task_score": 88.0,
+  "verdict": "An unusually well-grounded, internally consistent artifact set whose patch I verified hunk-by-hunk against the real v1.0.19 source and implements every acceptance criterion end to end; the largest material limitation is that legacy skills and stale search indexes get no repository_url backfill (graceful degradation by design), and the review spends part of its blocking capital on a pre-revision LLD state."
+}

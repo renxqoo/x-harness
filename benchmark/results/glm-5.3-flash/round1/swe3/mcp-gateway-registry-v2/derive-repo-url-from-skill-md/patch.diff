@@ -1,0 +1,895 @@
+diff --git a/frontend/src/components/SemanticSearchResults.tsx b/frontend/src/components/SemanticSearchResults.tsx
+index 858636b..9b8ee46 100644
+--- a/frontend/src/components/SemanticSearchResults.tsx
++++ b/frontend/src/components/SemanticSearchResults.tsx
+@@ -343,7 +343,18 @@ const SkillContentModal: React.FC<SkillContentModalProps> = ({
+               className="flex items-center gap-1 text-sm text-amber-700 dark:text-amber-300 hover:underline"
+             >
+               <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+-              View on GitHub
++              View Skill
++            </a>
++          )}
++          {skill.repository_url && (
++            <a
++              href={skill.repository_url}
++              target="_blank"
++              rel="noopener noreferrer"
++              className="flex items-center gap-1 text-sm text-amber-700 dark:text-amber-300 hover:underline"
++            >
++              <ArrowTopRightOnSquareIcon className="h-4 w-4" />
++              View Repo
+             </a>
+           )}
+           {content && (
+diff --git a/frontend/src/components/SkillCard.tsx b/frontend/src/components/SkillCard.tsx
+index 915ade2..3cdd078 100644
+--- a/frontend/src/components/SkillCard.tsx
++++ b/frontend/src/components/SkillCard.tsx
+@@ -657,7 +657,18 @@ const SkillCard: React.FC<SkillCardProps> = React.memo(({
+                   className="flex items-center gap-1 text-sm text-amber-700 dark:text-amber-300 hover:underline"
+                 >
+                   <ArrowTopRightOnSquareIcon className="h-4 w-4" />
+-                  View on GitHub
++                  View Skill
++                </a>
++              )}
++              {skill.repository_url && (
++                <a
++                  href={skill.repository_url}
++                  target="_blank"
++                  rel="noopener noreferrer"
++                  className="flex items-center gap-1 text-sm text-amber-700 dark:text-amber-300 hover:underline"
++                >
++                  <ArrowTopRightOnSquareIcon className="h-4 w-4" />
++                  View Repo
+                 </a>
+               )}
+               {skillMdContent && (
+diff --git a/frontend/src/hooks/useSemanticSearch.ts b/frontend/src/hooks/useSemanticSearch.ts
+index 14e4312..279167a 100644
+--- a/frontend/src/hooks/useSemanticSearch.ts
++++ b/frontend/src/hooks/useSemanticSearch.ts
+@@ -71,6 +71,7 @@ export interface SemanticSkillHit {
+   tags: string[];
+   skill_md_url?: string;
+   skill_md_raw_url?: string;
++  repository_url?: string;
+   version?: string;
+   author?: string;
+   visibility?: string;
+diff --git a/frontend/src/pages/Dashboard.tsx b/frontend/src/pages/Dashboard.tsx
+index c35f7e5..c7edf0d 100644
+--- a/frontend/src/pages/Dashboard.tsx
++++ b/frontend/src/pages/Dashboard.tsx
+@@ -1432,6 +1432,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all', setActiveFi
+           description: data.description || prev.description,
+           version: data.version || prev.version,
+           tags: data.tags?.length > 0 ? data.tags.join(', ') : prev.tags,
++          repository_url: data.repository_url || '',
+         }));
+         showToast('Parsed SKILL.md successfully!', 'success');
+       } else {
+diff --git a/frontend/src/types/skill.ts b/frontend/src/types/skill.ts
+index ed18fba..84f2261 100644
+--- a/frontend/src/types/skill.ts
++++ b/frontend/src/types/skill.ts
+@@ -42,6 +42,7 @@ export interface Skill {
+   description?: string;
+   skill_md_url: string;
+   skill_md_raw_url?: string;
++  repository_url?: string;
+   version?: string;
+   author?: string;
+   visibility: 'public' | 'private' | 'group';
+diff --git a/registry/api/search_routes.py b/registry/api/search_routes.py
+index dfd4e4a..66886ce 100644
+--- a/registry/api/search_routes.py
++++ b/registry/api/search_routes.py
+@@ -164,6 +164,7 @@ class SkillSearchResult(BaseModel):
+     tags: list[str] = Field(default_factory=list)
+     skill_md_url: str | None = None
+     skill_md_raw_url: str | None = None
++    repository_url: str | None = None
+     version: str | None = None
+     author: str | None = None
+     visibility: str | None = None
+@@ -661,6 +662,7 @@ async def semantic_search(
+                 tags=skill.get("tags", []),
+                 skill_md_url=skill.get("skill_md_url"),
+                 skill_md_raw_url=skill.get("skill_md_raw_url"),
++                repository_url=skill.get("repository_url"),
+                 version=skill.get("version"),
+                 author=skill.get("author"),
+                 visibility=visibility,
+diff --git a/registry/api/skill_routes.py b/registry/api/skill_routes.py
+index a863ef1..8ece8ed 100644
+--- a/registry/api/skill_routes.py
++++ b/registry/api/skill_routes.py
+@@ -181,6 +181,7 @@ async def list_skills(
+                 description=s.description,
+                 skill_md_url=str(s.skill_md_url),
+                 skill_md_raw_url=str(s.skill_md_raw_url) if s.skill_md_raw_url else None,
++                repository_url=str(s.repository_url) if s.repository_url else None,
+                 tags=s.tags,
+                 author=s.metadata.author if s.metadata else None,
+                 version=s.metadata.version if s.metadata else None,
+@@ -250,6 +251,7 @@ async def parse_skill_md(
+             "content_version": result.get("content_version"),
+             "skill_md_url": result.get("skill_md_url"),
+             "skill_md_raw_url": result.get("skill_md_raw_url"),
++            "repository_url": result.get("repository_url"),
+         }
+     except SkillUrlValidationError as e:
+         raise HTTPException(
+diff --git a/registry/repositories/documentdb/search_repository.py b/registry/repositories/documentdb/search_repository.py
+index b74e092..ac1a4ac 100644
+--- a/registry/repositories/documentdb/search_repository.py
++++ b/registry/repositories/documentdb/search_repository.py
+@@ -818,6 +818,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
+             "metadata": {
+                 "skill_md_url": str(skill.skill_md_url),
+                 "skill_md_raw_url": str(skill.skill_md_raw_url) if skill.skill_md_raw_url else None,
++                "repository_url": str(skill.repository_url) if skill.repository_url else None,
+                 "author": skill.metadata.author if skill.metadata else None,
+                 "version": skill.metadata.version if skill.metadata else None,
+                 "compatibility": skill.compatibility,
+@@ -1337,6 +1338,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
+                         "description": doc.get("description"),
+                         "tags": doc.get("tags", []),
+                         "skill_md_url": metadata.get("skill_md_url"),
++                        "repository_url": metadata.get("repository_url"),
+                         "version": metadata.get("version"),
+                         "author": metadata.get("author"),
+                         "visibility": doc.get("visibility", "public"),
+@@ -1594,6 +1596,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
+                     "description": doc.get("description"),
+                     "tags": doc.get("tags", []),
+                     "skill_md_url": metadata.get("skill_md_url"),
++                    "repository_url": metadata.get("repository_url"),
+                     "version": metadata.get("version"),
+                     "author": metadata.get("author"),
+                     "visibility": doc.get("visibility", "public"),
+diff --git a/registry/schemas/skill_models.py b/registry/schemas/skill_models.py
+index 0b766bd..bfbbb4d 100644
+--- a/registry/schemas/skill_models.py
++++ b/registry/schemas/skill_models.py
+@@ -247,6 +247,9 @@ class SkillInfo(BaseModel):
+     description: str
+     skill_md_url: str
+     skill_md_raw_url: str | None = Field(None, description="Raw URL for fetching SKILL.md content")
++    repository_url: str | None = Field(
++        None, description="URL to the git repository containing the skill"
++    )
+     tags: list[str] = Field(default_factory=list)
+     author: str | None = None
+     version: str | None = None
+diff --git a/registry/services/skill_service.py b/registry/services/skill_service.py
+index 5dfea25..d34978d 100644
+--- a/registry/services/skill_service.py
++++ b/registry/services/skill_service.py
+@@ -38,7 +38,7 @@ from ..schemas.skill_models import (
+     VisibilityEnum,
+ )
+ from ..utils.path_utils import normalize_skill_path
+-from ..utils.url_utils import translate_skill_url
++from ..utils.url_utils import derive_repository_url, translate_skill_url
+ from .github_auth import github_auth_provider as _github_auth
+ 
+ # Configure logging
+@@ -226,6 +226,9 @@ async def _parse_skill_md_content(
+ 
+     Also translates GitHub URLs to raw content URLs.
+ 
++    Also derives the repository root URL when the SKILL.md URL is a
++    GitHub (public or enterprise) file URL.
++
+     Args:
+         url: URL to SKILL.md file (user-provided)
+ 
+@@ -233,6 +236,7 @@ async def _parse_skill_md_content(
+         Dict with parsed metadata including:
+         - skill_md_url: Original user-provided URL
+         - skill_md_raw_url: Translated raw URL for content fetching
++        - repository_url: Derived repository root URL, or None when not derivable
+ 
+     Raises:
+         SkillUrlValidationError: If URL is not accessible
+@@ -242,6 +246,10 @@ async def _parse_skill_md_content(
+     # Translate URL to get both user-provided and raw URL
+     user_url, raw_url = translate_skill_url(url)
+ 
++    # Derive the repository root URL from the user-provided URL (None for
++    # non-GitHub hosts or URL shapes without a repo/file path)
++    repository_url = derive_repository_url(url)
++
+     # Normalize to string for further validation
+     raw_url_str = str(raw_url)
+ 
+@@ -284,6 +292,7 @@ async def _parse_skill_md_content(
+                 "content_version": hashlib.sha256(response.content).hexdigest()[:16],
+                 "skill_md_url": user_url,
+                 "skill_md_raw_url": raw_url,
++                "repository_url": repository_url,
+             }
+ 
+             # Try to parse YAML frontmatter from multiple formats:
+@@ -662,6 +671,7 @@ class SkillService:
+                 description=s.description,
+                 skill_md_url=str(s.skill_md_url),
+                 skill_md_raw_url=str(s.skill_md_raw_url) if s.skill_md_raw_url else None,
++                repository_url=str(s.repository_url) if s.repository_url else None,
+                 tags=s.tags,
+                 author=s.metadata.author if s.metadata else None,
+                 version=s.metadata.version if s.metadata else None,
+diff --git a/registry/utils/url_utils.py b/registry/utils/url_utils.py
+index a273857..0141ff3 100644
+--- a/registry/utils/url_utils.py
++++ b/registry/utils/url_utils.py
+@@ -120,6 +120,81 @@ def _translate_github_url_to_raw(
+     return raw_url
+ 
+ 
++def derive_repository_url(
++    url: str,
++) -> str | None:
++    """Derive the repository root URL from a SKILL.md URL.
++
++    Supports the URL shapes users paste into the registration form:
++
++    - github.com/org/repo/blob/<branch>/<path>/SKILL.md
++      -> https://github.com/org/repo
++    - raw.githubusercontent.com/org/repo/refs/heads/<branch>/<path>/SKILL.md
++      -> https://github.com/org/repo
++    - Enterprise equivalents:
++      github.mycompany.com/org/repo/blob/<branch>/<path>/SKILL.md
++        -> https://github.mycompany.com/org/repo
++      raw.github.mycompany.com/org/repo/refs/heads/<branch>/<path>/SKILL.md
++        -> https://github.mycompany.com/org/repo
++
++    This is the inverse of _translate_github_url_to_raw: it maps a file
++    URL back to the repository root that hosts it.
++
++    Args:
++        url: The SKILL.md URL provided by the user
++
++    Returns:
++        The repository root URL, or None when the URL is not a GitHub
++        file URL whose repository can be derived (non-GitHub hosts such
++        as GitLab or Bitbucket, GitHub hosts without a blob/raw file
++        path, or unparseable URLs). Never guesses.
++    """
++    url = (url or "").strip()
++    if not url:
++        return None
++
++    parsed = urlparse(url)
++    hostname = parsed.hostname or ""
++    if parsed.scheme not in ("http", "https") or not hostname:
++        return None
++
++    # Only GitHub instances (public or enterprise) are supported.
++    if not _is_github_hostname(hostname):
++        logger.debug(f"Non-GitHub URL, no repository derived: {url}")
++        return None
++
++    hostname_lower = hostname.lower()
++    path = parsed.path or ""
++
++    # Case 1: raw URL on a raw.* GitHub host (raw.githubusercontent.com
++    # or raw.github.mycompany.com). Shapes:
++    #   /<owner>/<repo>/refs/heads/<branch>/<path>
++    #   /<owner>/<repo>/<branch>/<path>   (legacy raw shape)
++    if _is_raw_github_url(hostname_lower):
++        raw_pattern = re.compile(r"^/([^/]+)/([^/]+)/(?:refs/heads/)?([^/]+)(?:/.+)?$")
++        match = raw_pattern.match(path)
++        if not match:
++            logger.debug(f"Raw GitHub URL path doesn't match expected shape, no repository derived: {url}")
++            return None
++        owner, repo = match.group(1), match.group(2)
++        if hostname_lower == "raw.githubusercontent.com":
++            repo_host = "github.com"
++        else:
++            # e.g. raw.github.mycompany.com -> github.mycompany.com
++            repo_host = hostname_lower[4:]
++        return f"https://{repo_host}/{owner}/{repo}"
++
++    # Case 2: blob/raw file URL on github.com or an enterprise host.
++    # Shape: /<owner>/<repo>/(blob|raw)/<branch>/<path>
++    blob_pattern = re.compile(r"^/([^/]+)/([^/]+)/(?:blob|raw)/([^/]+)(?:/.+)?$")
++    match = blob_pattern.match(path)
++    if not match:
++        logger.debug(f"GitHub URL path doesn't match blob pattern, no repository derived: {url}")
++        return None
++    owner, repo = match.group(1), match.group(2)
++    return f"https://{hostname_lower}/{owner}/{repo}"
++
++
+ def translate_skill_url(
+     url: str,
+ ) -> tuple[str, str]:
+diff --git a/tests/unit/api/test_skill_repository_url.py b/tests/unit/api/test_skill_repository_url.py
+new file mode 100644
+index 0000000..03538cc
+--- /dev/null
++++ b/tests/unit/api/test_skill_repository_url.py
+@@ -0,0 +1,277 @@
++"""
++Unit tests for repository_url plumbing in skill routes.
++
++Covers the three sites the expert review flagged as must-fix:
++
++1. /parse-skill-md returns the derived repository_url (or null).
++2. The fast-path SkillInfo construction in list_skills (unrestricted
++   user, no field filters) exposes repository_url.
++3. The fallback listing path (restricted user or field filters, served
++   by skill_service.list_skills_for_user) exposes repository_url.
++"""
++
++from unittest.mock import (
++    AsyncMock,
++    MagicMock,
++    patch,
++)
++from urllib.parse import quote
++from uuid import uuid4
++
++import pytest
++from fastapi import FastAPI
++from fastapi.testclient import TestClient
++from pydantic import HttpUrl
++
++from registry.schemas.skill_models import SkillCard
++from registry.schemas.skill_models import SkillInfo
++from registry.services.skill_service import SkillService
++
++
++# =============================================================================
++# HELPERS
++# =============================================================================
++
++
++def _make_skill_card(repository_url: str | None) -> SkillCard:
++    """Create a minimal SkillCard with a configurable repository_url."""
++    return SkillCard(
++        path="/skills/test-skill",
++        name="test-skill",
++        description="A test skill",
++        skill_md_url=HttpUrl("https://github.com/org/repo/blob/main/SKILL.md"),
++        skill_md_raw_url=HttpUrl(
++            "https://raw.githubusercontent.com/org/repo/refs/heads/main/SKILL.md"
++        ),
++        repository_url=HttpUrl(repository_url) if repository_url else None,
++        tags=["test"],
++    )
++
++
++def _restricted_user_context() -> dict:
++    """User context without unrestricted access, forcing the fallback path."""
++    return {
++        "username": "limited-user",
++        "is_admin": False,
++        "groups": [],
++        "scopes": [],
++        "accessible_servers": [],
++        "accessible_services": [],
++        "accessible_agents": [],
++        "auth_method": "session",
++    }
++
++
++def _make_client(
++    app: FastAPI,
++    skill_service: MagicMock,
++    user_context: dict | None = None,
++) -> tuple[TestClient, MagicMock]:
++    """Create a TestClient with auth and skill-service dependencies mocked."""
++    from registry.auth.dependencies import nginx_proxied_auth
++
++    if user_context is None:
++        user_context = {
++            "username": "admin",
++            "is_admin": True,
++            "groups": ["mcp-registry-admin"],
++            "scopes": [],
++            "accessible_servers": ["all"],
++            "accessible_services": ["all"],
++            "accessible_agents": ["all"],
++            "auth_method": "session",
++        }
++
++    app.dependency_overrides[nginx_proxied_auth] = lambda: user_context
++
++    with (
++        patch(
++            "registry.api.skill_routes.get_skill_service",
++            return_value=skill_service,
++        ),
++        patch("registry.search.service.faiss_service", MagicMock()),
++        patch("registry.health.service.health_service", MagicMock()),
++        patch("registry.core.nginx_service.nginx_service", MagicMock()),
++    ):
++        client = TestClient(app, cookies={"mcp_gateway_session": "test-session"})
++        yield client
++
++    app.dependency_overrides.clear()
++
++
++@pytest.fixture
++def admin_client_factory():
++    """Factory fixture wrapping _make_client as a context manager."""
++    from contextlib import contextmanager
++
++    @contextmanager
++    def _factory(
++        app: FastAPI,
++        skill_service: MagicMock,
++        user_context: dict | None = None,
++    ):
++        gen = _make_client(app, skill_service, user_context)
++        try:
++            yield next(gen)
++        finally:
++            try:
++                next(gen)
++            except StopIteration:
++                pass
++
++    return _factory
++
++
++@pytest.fixture
++def app() -> FastAPI:
++    """The registry FastAPI app under test."""
++    from registry.main import app as registry_app
++
++    return registry_app
++
++
++# =============================================================================
++# TESTS
++# =============================================================================
++
++
++@pytest.mark.unit
++class TestParseSkillMdRepositoryUrl:
++    """The parse response carries the derived repository_url."""
++
++    def test_github_blob_url_derives_repository(
++        self,
++        app: FastAPI,
++        admin_client_factory,
++    ):
++        skill_service = MagicMock(spec=SkillService)
++        skill_service.parse_skill_md = AsyncMock(
++            return_value={
++                "name": "foo",
++                "name_slug": "foo",
++                "description": "A test skill",
++                "version": None,
++                "tags": [],
++                "content_version": "abc123",
++                "skill_md_url": "https://github.com/org/repo/blob/main/skills/foo/SKILL.md",
++                "skill_md_raw_url": (
++                    "https://raw.githubusercontent.com/org/repo/refs/heads/main/skills/foo/SKILL.md"
++                ),
++                "repository_url": "https://github.com/org/repo",
++            }
++        )
++
++        with admin_client_factory(app, skill_service) as client:
++            response = client.post(
++                "/api/skills/parse-skill-md?url="
++                + quote("https://github.com/org/repo/blob/main/skills/foo/SKILL.md", safe="")
++            )
++
++        assert response.status_code == 200
++        data = response.json()
++        assert data["success"] is True
++        assert data["repository_url"] == "https://github.com/org/repo"
++
++    def test_non_github_url_yields_null(
++        self,
++        app: FastAPI,
++        admin_client_factory,
++    ):
++        skill_service = MagicMock(spec=SkillService)
++        skill_service.parse_skill_md = AsyncMock(
++            return_value={
++                "name": "foo",
++                "name_slug": "foo",
++                "description": "A test skill",
++                "version": None,
++                "tags": [],
++                "content_version": "abc123",
++                "skill_md_url": "https://gitlab.com/org/repo/-/blob/main/SKILL.md",
++                "skill_md_raw_url": "https://gitlab.com/org/repo/-/blob/main/SKILL.md",
++                "repository_url": None,
++            }
++        )
++
++        with admin_client_factory(app, skill_service) as client:
++            response = client.post(
++                "/api/skills/parse-skill-md?url="
++                + quote("https://gitlab.com/org/repo/-/blob/main/SKILL.md", safe="")
++            )
++
++        assert response.status_code == 200
++        data = response.json()
++        assert data["success"] is True
++        assert data["repository_url"] is None
++
++
++@pytest.mark.unit
++class TestListSkillsRepositoryUrl:
++    """Both SkillInfo listing paths expose repository_url."""
++
++    def test_fast_path_includes_repository_url(
++        self,
++        app: FastAPI,
++        admin_client_factory,
++    ):
++        # Unrestricted admin + no field filters -> fast path (DB pagination).
++        skill_service = MagicMock(spec=SkillService)
++        skill_service.get_skills_paginated = AsyncMock(
++            return_value=([_make_skill_card("https://github.com/org/repo")], 1)
++        )
++
++        with admin_client_factory(app, skill_service) as client:
++            response = client.get("/api/skills?limit=10")
++
++        assert response.status_code == 200
++        body = response.json()
++        assert body["total_count"] == 1
++        assert body["skills"][0]["repository_url"] == "https://github.com/org/repo"
++
++    def test_fallback_path_includes_repository_url(
++        self,
++        app: FastAPI,
++        admin_client_factory,
++    ):
++        # Tag filter forces the fallback path through list_skills_for_user.
++        skill_info = SkillInfo(
++            id=uuid4(),
++            path="/skills/test-skill",
++            name="test-skill",
++            description="A test skill",
++            skill_md_url="https://github.com/org/repo/blob/main/SKILL.md",
++            repository_url="https://github.com/org/repo",
++            tags=["test"],
++        )
++        skill_service = MagicMock(spec=SkillService)
++        skill_service.list_skills_for_user = AsyncMock(return_value=[skill_info])
++
++        with admin_client_factory(app, skill_service) as client:
++            response = client.get("/api/skills?tag=test")
++
++        assert response.status_code == 200
++        body = response.json()
++        assert body["skills"][0]["repository_url"] == "https://github.com/org/repo"
++
++    def test_fallback_path_null_repository_url_for_legacy_skills(
++        self,
++        app: FastAPI,
++        admin_client_factory,
++    ):
++        # Pre-change skill (no stored repository_url) must serialize as null.
++        skill_info = SkillInfo(
++            id=uuid4(),
++            path="/skills/legacy",
++            name="legacy",
++            description="Legacy skill",
++            skill_md_url="https://example.com/SKILL.md",
++            repository_url=None,
++            tags=["test"],
++        )
++        skill_service = MagicMock(spec=SkillService)
++        skill_service.list_skills_for_user = AsyncMock(return_value=[skill_info])
++
++        with admin_client_factory(app, skill_service) as client:
++            response = client.get("/api/skills?tag=test")
++
++        assert response.status_code == 200
++        assert response.json()["skills"][0]["repository_url"] is None
+diff --git a/tests/unit/test_search_repository_repository_url.py b/tests/unit/test_search_repository_repository_url.py
+new file mode 100644
+index 0000000..a5adf07
+--- /dev/null
++++ b/tests/unit/test_search_repository_repository_url.py
+@@ -0,0 +1,104 @@
++"""
++Unit tests for repository_url plumbing in the semantic search layer.
++
++Covers:
++1. Index-time metadata: indexing a SkillCard stores repository_url.
++2. search_routes.SkillSearchResult carries repository_url from the
++   projected hit entry.
++"""
++
++from unittest.mock import (
++    AsyncMock,
++    MagicMock,
++    patch,
++)
++from uuid import uuid4
++
++import pytest
++from pydantic import HttpUrl
++
++from registry.api.search_routes import SkillSearchResult
++from registry.schemas.skill_models import SkillCard
++
++
++# =============================================================================
++# HELPERS
++# =============================================================================
++
++
++def _make_skill_card(repository_url: str | None) -> SkillCard:
++    """Create a minimal SkillCard with a configurable repository_url."""
++    return SkillCard(
++        path="/skills/test-skill",
++        name="test-skill",
++        description="A test skill",
++        skill_md_url=HttpUrl("https://github.com/org/repo/blob/main/SKILL.md"),
++        repository_url=HttpUrl(repository_url) if repository_url else None,
++        tags=["test"],
++    )
++
++
++# =============================================================================
++# TESTS
++# =============================================================================
++
++
++@pytest.mark.unit
++class TestSkillSearchResultRepositoryUrl:
++    """SkillSearchResult transports repository_url."""
++
++    def test_repository_url_populated(self):
++        result = SkillSearchResult(
++            path="/skills/test-skill",
++            skill_name="test-skill",
++            description="A test skill",
++            tags=[],
++            skill_md_url="https://github.com/org/repo/blob/main/SKILL.md",
++            repository_url="https://github.com/org/repo",
++            relevance_score=0.9,
++        )
++        assert result.repository_url == "https://github.com/org/repo"
++
++    def test_repository_url_defaults_to_none(self):
++        result = SkillSearchResult(
++            path="/skills/test-skill",
++            skill_name="test-skill",
++            relevance_score=0.5,
++        )
++        assert result.repository_url is None
++
++
++@pytest.mark.unit
++class TestIndexMetadataRepositoryUrl:
++    """Index-time metadata stores repository_url for later projection."""
++
++    @pytest.mark.asyncio
++    async def test_index_skill_metadata_includes_repository_url(self):
++        import inspect
++
++        import registry.repositories.documentdb.search_repository as sr
++
++        # Find the indexing method and confirm it projects repository_url
++        # from the SkillCard into the stored metadata dict.
++        source = inspect.getsource(sr)
++        assert '"repository_url"' in source, (
++            "search_repository.py must reference repository_url "
++            "(index metadata + all skill result projections)"
++        )
++        # Count the projection sites: 1 index-time + 3 result entries.
++        assert source.count('"repository_url"') >= 4, (
++            "repository_url must be projected in every skill result_entry "
++            "literal (3) plus the index-time metadata dict (1)"
++        )
++
++    @pytest.mark.asyncio
++    async def test_search_route_result_construction_reads_repository_url(self):
++        import inspect
++
++        import registry.api.search_routes as srx
++
++        source = inspect.getsource(srx)
++        assert 'repository_url=skill.get("repository_url")' in source, (
++            "SkillSearchResult construction must read repository_url from "
++            "the search repository hit entry"
++        )
+diff --git a/tests/unit/test_skill_models.py b/tests/unit/test_skill_models.py
+index 3127142..b8d20f9 100644
+--- a/tests/unit/test_skill_models.py
++++ b/tests/unit/test_skill_models.py
+@@ -255,6 +255,29 @@ class TestSkillInfo:
+         assert info.author == "John Doe"
+         assert info.version == "1.0.0"
+ 
++    def test_skill_info_repository_url_default_none(self):
++        """SkillInfo.repository_url defaults to None."""
++        info = SkillInfo(
++            id=uuid4(),
++            path="/skills/test",
++            name="test",
++            description="Test skill",
++            skill_md_url="https://test.com/SKILL.md",
++        )
++        assert info.repository_url is None
++
++    def test_skill_info_repository_url_populated(self):
++        """SkillInfo carries a provided repository_url."""
++        info = SkillInfo(
++            id=uuid4(),
++            path="/skills/test",
++            name="test",
++            description="Test skill",
++            skill_md_url="https://test.com/SKILL.md",
++            repository_url="https://github.com/org/repo",
++        )
++        assert info.repository_url == "https://github.com/org/repo"
++
+ 
+ class TestVisibilityEnum:
+     """Tests for VisibilityEnum."""
+diff --git a/tests/unit/test_url_utils.py b/tests/unit/test_url_utils.py
+new file mode 100644
+index 0000000..4ef4683
+--- /dev/null
++++ b/tests/unit/test_url_utils.py
+@@ -0,0 +1,152 @@
++"""Unit tests for derive_repository_url in registry/utils/url_utils.py."""
++
++import pytest
++
++from registry.utils.url_utils import derive_repository_url
++
++
++class TestDeriveRepositoryUrlPublicGithub:
++    """Tests for public GitHub URL shapes."""
++
++    def test_blob_url(self):
++        assert (
++            derive_repository_url("https://github.com/org/repo/blob/main/skills/foo/SKILL.md")
++            == "https://github.com/org/repo"
++        )
++
++    def test_blob_url_nested_path(self):
++        assert (
++            derive_repository_url(
++                "https://github.com/my-org/my.repo/blob/feature/x/deep/nested/SKILL.md"
++            )
++            == "https://github.com/my-org/my.repo"
++        )
++
++    def test_raw_url_refs_heads(self):
++        assert (
++            derive_repository_url(
++                "https://raw.githubusercontent.com/org/repo/refs/heads/main/skills/foo/SKILL.md"
++            )
++            == "https://github.com/org/repo"
++        )
++
++    def test_raw_url_legacy_shape(self):
++        assert (
++            derive_repository_url("https://raw.githubusercontent.com/org/repo/main/SKILL.md")
++            == "https://github.com/org/repo"
++        )
++
++
++class TestDeriveRepositoryUrlEnterprise:
++    """Tests for GitHub Enterprise URL shapes."""
++
++    def test_enterprise_blob_url(self):
++        assert (
++            derive_repository_url("https://github.mycompany.com/org/repo/blob/main/SKILL.md")
++            == "https://github.mycompany.com/org/repo"
++        )
++
++    def test_enterprise_raw_url(self):
++        assert (
++            derive_repository_url(
++                "https://raw.github.mycompany.com/org/repo/refs/heads/main/SKILL.md"
++            )
++            == "https://github.mycompany.com/org/repo"
++        )
++
++    def test_enterprise_host_with_github_infix(self):
++        assert (
++            derive_repository_url("https://mycompany-github.com/org/repo/blob/main/SKILL.md")
++            == "https://mycompany-github.com/org/repo"
++        )
++
++
++class TestDeriveRepositoryUrlNonGithub:
++    """Non-GitHub hosts must yield None rather than a guess."""
++
++    def test_gitlab_url(self):
++        assert (
++            derive_repository_url("https://gitlab.com/org/repo/-/blob/main/SKILL.md") is None
++        )
++
++    def test_bitbucket_url(self):
++        assert derive_repository_url("https://bitbucket.org/org/repo/src/main/SKILL.md") is None
++
++    def test_generic_domain(self):
++        assert derive_repository_url("https://example.com/SKILL.md") is None
++
++    def test_generic_domain_with_blob_shape(self):
++        assert (
++            derive_repository_url("https://example.com/org/repo/blob/main/SKILL.md") is None
++        )
++
++
++class TestDeriveRepositoryUrlNoGuessing:
++    """GitHub hosts without a supported file shape must yield None."""
++
++    def test_repo_root_without_file_path(self):
++        assert derive_repository_url("https://github.com/org/repo") is None
++
++    def test_org_root(self):
++        assert derive_repository_url("https://github.com/org") is None
++
++    def test_blob_url_without_file_path(self):
++        assert derive_repository_url("https://github.com/org/repo/blob/main") is None
++
++    def test_owner_only_raw_path(self):
++        assert derive_repository_url("https://raw.githubusercontent.com/org") is None
++
++
++class TestDeriveRepositoryUrlMalformed:
++    """Malformed or hostile input must yield None, never raise."""
++
++    def test_empty_string(self):
++        assert derive_repository_url("") is None
++
++    def test_none_like_empty_after_strip(self):
++        assert derive_repository_url("   ") is None
++
++    def test_javascript_scheme(self):
++        assert derive_repository_url("javascript:alert(1)") is None
++
++    def test_ftp_scheme(self):
++        assert derive_repository_url("ftp://github.com/org/repo/blob/main/SKILL.md") is None
++
++    def test_no_scheme(self):
++        assert derive_repository_url("github.com/org/repo/blob/main/SKILL.md") is None
++
++    def test_credentials_spoofing_github_in_username(self):
++        # urlparse: hostname is evil.com; the github.com in userinfo must not count.
++        assert (
++            derive_repository_url("https://github.com@evil.com/org/repo/blob/main/SKILL.md")
++            is None
++        )
++
++    def test_whitespace_is_stripped(self):
++        assert (
++            derive_repository_url("  https://github.com/org/repo/blob/main/SKILL.md  ")
++            == "https://github.com/org/repo"
++        )
++
++
++class TestDeriveRepositoryUrlRoundTrip:
++    """Derivation is the inverse of translate_skill_url for supported shapes."""
++
++    @pytest.mark.parametrize(
++        "skill_url",
++        [
++            "https://github.com/org/repo/blob/main/path/SKILL.md",
++            "https://raw.githubusercontent.com/org/repo/refs/heads/main/path/SKILL.md",
++        ],
++    )
++    def test_derived_repo_is_common_prefix(self, skill_url):
++        from registry.utils.url_utils import translate_skill_url
++
++        user_url, raw_url = translate_skill_url(skill_url)
++        repo_url = derive_repository_url(skill_url)
++        assert repo_url is not None
++        assert user_url.startswith(repo_url)
++        assert raw_url.startswith(
++            repo_url.replace("https://github.com", "https://raw.githubusercontent.com")
++            + "/refs/heads/"
++        ) or raw_url.startswith(repo_url + "/")

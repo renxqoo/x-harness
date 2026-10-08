@@ -1,0 +1,1742 @@
+diff --git a/.env.example b/.env.example
+index b515f11..dcc86fc 100644
+--- a/.env.example
++++ b/.env.example
+@@ -220,6 +220,19 @@ REGISTRATION_WEBHOOK_AUTH_HEADER=Authorization
+ REGISTRATION_WEBHOOK_AUTH_TOKEN=
+ REGISTRATION_WEBHOOK_TIMEOUT_SECONDS=10
+ 
++# REGISTRATION_WEBHOOK_SIGNING_SECRET: HMAC-SHA256 secret used to sign
++#   outbound webhook bodies via the X-Registry-Signature header.
++#   Empty (default) sends events unsigned. Recommend 32+ random bytes;
++#   a warning logs at startup below 16 characters.
++#
++# LIFECYCLE_INITIAL_STATUS: mandated initial lifecycle status for
++#   registrations (active|beta|draft|deprecated). When set, registrations
++#   without an explicit status are forced to this value and an explicit
++#   mismatched status is rejected with 400. Empty (default) disables.
++#
++REGISTRATION_WEBHOOK_SIGNING_SECRET=
++LIFECYCLE_INITIAL_STATUS=
++
+ # =============================================================================
+ # AGENT BATCH API (Issue #956)
+ # =============================================================================
+diff --git a/auth_server/scopes.yml b/auth_server/scopes.yml
+index cc2fe4c..01273ca 100644
+--- a/auth_server/scopes.yml
++++ b/auth_server/scopes.yml
+@@ -53,6 +53,8 @@ UI-Scopes:
+     - all
+     modify_service:
+     - all
++    change_asset_status:
++    - all
+ 
+   # Registry admin group (wildcard access to all agents and services)
+   registry-admins:
+@@ -76,6 +78,8 @@ UI-Scopes:
+     - all
+     modify_service:
+     - all
++    change_asset_status:
++    - all
+ 
+   # LOB1 (Line of Business 1): Restricted to code-reviewer and test-automation agents
+   registry-users-lob1:
+diff --git a/charts/registry/templates/secret.yaml b/charts/registry/templates/secret.yaml
+index c0daf85..467480d 100644
+--- a/charts/registry/templates/secret.yaml
++++ b/charts/registry/templates/secret.yaml
+@@ -226,6 +226,10 @@ data:
+   REGISTRATION_WEBHOOK_AUTH_TOKEN: {{ .Values.app.registrationWebhookAuthToken | b64enc | quote }}
+   {{- end }}
+   REGISTRATION_WEBHOOK_TIMEOUT_SECONDS: {{ .Values.app.registrationWebhookTimeoutSeconds | toString | b64enc | quote }}
++  {{- if .Values.app.registrationWebhookSigningSecret }}
++  REGISTRATION_WEBHOOK_SIGNING_SECRET: {{ .Values.app.registrationWebhookSigningSecret | b64enc | quote }}
++  {{- end }}
++  LIFECYCLE_INITIAL_STATUS: {{ .Values.app.lifecycleInitialStatus | toString | b64enc | quote }}
+   # Registration deduplication
+   DEDUP_REGISTRATION_HINT_ENABLED: {{ .Values.app.dedup.registrationHintEnabled | toString | b64enc | quote }}
+   DEDUP_SCORE_THRESHOLD: {{ .Values.app.dedup.scoreThreshold | toString | b64enc | quote }}
+diff --git a/charts/registry/values.yaml b/charts/registry/values.yaml
+index 78062ba..fe898eb 100644
+--- a/charts/registry/values.yaml
++++ b/charts/registry/values.yaml
+@@ -88,6 +88,8 @@ app:
+   registrationWebhookAuthHeader: "Authorization"  # If "Authorization", Bearer is auto-prepended.
+   registrationWebhookAuthToken: ""  # Auth token. Leave empty for unauthenticated webhooks.
+   registrationWebhookTimeoutSeconds: "10"
++  registrationWebhookSigningSecret: ""  # HMAC-SHA256 signing secret. Empty sends unsigned.
++  lifecycleInitialStatus: ""  # Mandated initial lifecycle status. Empty disables.
+ 
+   # Agent batch API (issue #956)
+   # Async batch register/patch/replace/delete for agent cards, drained by an
+diff --git a/docker-compose.podman.yml b/docker-compose.podman.yml
+index e69938b..87f57e6 100644
+--- a/docker-compose.podman.yml
++++ b/docker-compose.podman.yml
+@@ -167,6 +167,8 @@ services:
+       - REGISTRATION_WEBHOOK_AUTH_HEADER=${REGISTRATION_WEBHOOK_AUTH_HEADER:-Authorization}
+       - REGISTRATION_WEBHOOK_AUTH_TOKEN=${REGISTRATION_WEBHOOK_AUTH_TOKEN:-}
+       - REGISTRATION_WEBHOOK_TIMEOUT_SECONDS=${REGISTRATION_WEBHOOK_TIMEOUT_SECONDS:-10}
++      - REGISTRATION_WEBHOOK_SIGNING_SECRET=${REGISTRATION_WEBHOOK_SIGNING_SECRET:-}
++      - LIFECYCLE_INITIAL_STATUS=${LIFECYCLE_INITIAL_STATUS:-}
+       # Agent Batch API (issue #956)
+       - BATCH_WORKER_ENABLED=${BATCH_WORKER_ENABLED:-true}
+       - BATCH_MAX_OPERATIONS_PER_JOB=${BATCH_MAX_OPERATIONS_PER_JOB:-1000}
+diff --git a/docker-compose.prebuilt.yml b/docker-compose.prebuilt.yml
+index 7dbb6a5..3c88d28 100644
+--- a/docker-compose.prebuilt.yml
++++ b/docker-compose.prebuilt.yml
+@@ -174,6 +174,8 @@ services:
+       - REGISTRATION_WEBHOOK_AUTH_HEADER=${REGISTRATION_WEBHOOK_AUTH_HEADER:-Authorization}
+       - REGISTRATION_WEBHOOK_AUTH_TOKEN=${REGISTRATION_WEBHOOK_AUTH_TOKEN:-}
+       - REGISTRATION_WEBHOOK_TIMEOUT_SECONDS=${REGISTRATION_WEBHOOK_TIMEOUT_SECONDS:-10}
++      - REGISTRATION_WEBHOOK_SIGNING_SECRET=${REGISTRATION_WEBHOOK_SIGNING_SECRET:-}
++      - LIFECYCLE_INITIAL_STATUS=${LIFECYCLE_INITIAL_STATUS:-}
+       # Agent Batch API (issue #956)
+       - BATCH_WORKER_ENABLED=${BATCH_WORKER_ENABLED:-true}
+       - BATCH_MAX_OPERATIONS_PER_JOB=${BATCH_MAX_OPERATIONS_PER_JOB:-1000}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 028b84a..5b2e15e 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -271,6 +271,8 @@ services:
+       - REGISTRATION_WEBHOOK_AUTH_HEADER=${REGISTRATION_WEBHOOK_AUTH_HEADER:-Authorization}
+       - REGISTRATION_WEBHOOK_AUTH_TOKEN=${REGISTRATION_WEBHOOK_AUTH_TOKEN:-}
+       - REGISTRATION_WEBHOOK_TIMEOUT_SECONDS=${REGISTRATION_WEBHOOK_TIMEOUT_SECONDS:-10}
++      - REGISTRATION_WEBHOOK_SIGNING_SECRET=${REGISTRATION_WEBHOOK_SIGNING_SECRET:-}
++      - LIFECYCLE_INITIAL_STATUS=${LIFECYCLE_INITIAL_STATUS:-}
+       # Agent Batch API (issue #956)
+       - BATCH_WORKER_ENABLED=${BATCH_WORKER_ENABLED:-true}
+       - BATCH_MAX_OPERATIONS_PER_JOB=${BATCH_MAX_OPERATIONS_PER_JOB:-1000}
+diff --git a/docs/registration-webhooks.md b/docs/registration-webhooks.md
+index ce6fbf4..a2d196e 100644
+--- a/docs/registration-webhooks.md
++++ b/docs/registration-webhooks.md
+@@ -16,6 +16,8 @@ Registration webhooks are **fire-and-forget**: the registry sends an async POST
+ |------------|---------|-------------|
+ | `registration` | A new asset is added to the registry | server, agent, skill |
+ | `deletion` | An existing asset is removed from the registry | server, agent, skill |
++| `update` | An existing asset is edited (PATCH/PUT) | server, agent, skill |
++| `scan_complete` | The registration-triggered security scan finished (including the scanner-failure path) | server, agent, skill |
+ 
+ ### Key Design Decisions
+ 
+@@ -36,6 +38,7 @@ Registration webhooks are **fire-and-forget**: the registry sends an async POST
+ | `REGISTRATION_WEBHOOK_AUTH_HEADER` | string | `Authorization` | Name of the HTTP header used for authentication. If set to `Authorization`, the token is auto-prefixed with `Bearer `. For any other header (e.g. `X-API-Key`), the token is sent as-is. |
+ | `REGISTRATION_WEBHOOK_AUTH_TOKEN` | string | `""` | Auth token value. Leave empty for unauthenticated webhooks. |
+ | `REGISTRATION_WEBHOOK_TIMEOUT_SECONDS` | int | `10` | HTTP timeout per request in seconds. |
++| `REGISTRATION_WEBHOOK_SIGNING_SECRET` | string | `""` (unsigned) | HMAC-SHA256 secret for the `X-Registry-Signature` header (see [Webhook Signatures](#webhook-signatures)). Empty sends events unsigned. Recommend 32+ random bytes; a warning logs at startup below 16 characters. Source from AWS Secrets Manager in ECS deployments. |
+ 
+ ### Example Configurations
+ 
+@@ -93,11 +96,13 @@ Every webhook POST sends a JSON body with the following structure:
+ 
+ | Field | Type | Description |
+ |-------|------|-------------|
+-| `event_type` | string | `"registration"` (asset added) or `"deletion"` (asset removed) |
++| `event_id` | string | UUID unique to this delivery attempt. Use as the consumer idempotency key. |
++| `event_type` | string | `"registration"` (asset added), `"deletion"` (asset removed), `"update"` (asset edited), or `"scan_complete"` (registration scan finished) |
+ | `registration_type` | string | `"server"`, `"agent"`, or `"skill"` |
+ | `timestamp` | string | ISO 8601 timestamp in UTC |
+-| `performed_by` | string or null | Username of the operator who performed the action (null if unknown) |
+-| `card` | object | The full card JSON as stored in the registry |
++| `performed_by` | string or null | Username of the operator who performed the action (null for `scan_complete`) |
++| `card` | object | The full card JSON as stored in the registry. For `update` events this is the post-merge card, including the new `status` - consumers can reconcile lifecycle state from it. |
++| `scan` | object | Scan outcome; present only for `scan_complete` (see below) |
+ 
+ ### HTTP Request Details
+ 
+@@ -109,6 +114,88 @@ Every webhook POST sends a JSON body with the following structure:
+ | Retries | None (fire-and-forget) |
+ | TLS verification | Enabled by default (httpx default behavior) |
+ 
++## The scan_complete Event
++
++Emitted when the async security scan that runs after registration finishes, for servers, agents, and skills - INCLUDING the failure path. A scanner timeout or crash produces an event with `scan_failed: true`, so consumers never have to poll `GET /api/servers/{path}/security-scan` to learn an outcome.
++
++The `scan` sub-payload:
++
++| Field | Type | Description |
++|-------|------|-------------|
++| `path` | string | Asset path (e.g. `/my-server`) |
++| `name` | string or null | Asset display name |
++| `is_safe` | bool | Overall safety assessment. `false` on the failure path. |
++| `scan_failed` | bool | `true` when the scanner itself errored or timed out |
++| `error_message` | string or null | Error detail when `scan_failed` is true |
++| `critical_issues` / `high_severity` / `medium_severity` / `low_severity` | int | Severity counts |
++| `scan_timestamp` | string | ISO 8601 timestamp of the scan |
++| `analyzers_used` | list[string] | Analyzers the scan ran |
++
++Failure-path example:
++
++```json
++{
++    "event_id": "5f0c2d1a-0000-0000-0000-000000000000",
++    "event_type": "scan_complete",
++    "registration_type": "server",
++    "timestamp": "2026-09-29T12:00:05.000000+00:00",
++    "performed_by": null,
++    "card": { "...": "full card data" },
++    "scan": {
++        "path": "/my-server",
++        "name": "My Server",
++        "is_safe": false,
++        "scan_failed": true,
++        "error_message": "Security scan timed out after 120 seconds",
++        "critical_issues": 0,
++        "high_severity": 0,
++        "medium_severity": 0,
++        "low_severity": 0,
++        "scan_timestamp": "2026-09-29T12:00:05+00:00",
++        "analyzers_used": []
++    }
++}
++```
++
++Note: `scan_complete` is emitted via a background task, so it can arrive AFTER a subsequent `update` event for the same asset. Do not sort events by receipt order; reconcile asset state from the `update` event's post-merge card.
++
++## Webhook Signatures
++
++When `REGISTRATION_WEBHOOK_SIGNING_SECRET` is set, every outbound event carries:
++
++```
++X-Registry-Signature: sha256=<hexdigest>
++```
++
++where `<hexdigest>` is the hex-encoded HMAC-SHA256 of the EXACT transmitted request body bytes, keyed by the signing secret. When the secret is unset, no signature header is sent (legacy unsigned behavior).
++
++Verification rules:
++
++1. Read the RAW body bytes first (`await request.body()`), BEFORE any JSON parsing or re-serialization. The signature covers the registry's `json.dumps(payload, default=str)` rendering, not your re-encoding of it.
++2. Compute the HMAC over those raw bytes and compare with `hmac.compare_digest` (constant time - never `==`).
++3. If a proxy or gateway rewrites the body between the registry and your receiver, verification fails by design; verify against the bytes you received.
++4. The signature complements, not replaces, HTTPS transport security.
++
++```python
++import hashlib, hmac, json
++from fastapi import FastAPI, Request
++
++app = FastAPI()
++SECRET = b"your-32-byte-random-secret-here"
++
++@app.post("/webhook")
++async def handle(request: Request):
++    body = await request.body()                      # raw bytes, before JSON parsing
++    sig = request.headers.get("X-Registry-Signature", "")
++    expected = "sha256=" + hmac.new(SECRET, body, hashlib.sha256).hexdigest()
++    if not hmac.compare_digest(sig, expected):       # constant-time compare
++        return {"status": "rejected"}
++    event = json.loads(body)
++    return {"status": "ok", "event_type": event.get("event_type")}
++```
++
++Secret guidance: use 32+ random bytes (for example `openssl rand -hex 32`). A warning logs at startup below 16 characters. In ECS deployments, source the secret from AWS Secrets Manager rather than plaintext tfvars.
++
+ ## Deployment Configuration
+ 
+ The webhook environment variables must be set on the **registry** service (not the auth server).
+@@ -125,6 +212,8 @@ services:
+       - REGISTRATION_WEBHOOK_AUTH_HEADER=${REGISTRATION_WEBHOOK_AUTH_HEADER:-Authorization}
+       - REGISTRATION_WEBHOOK_AUTH_TOKEN=${REGISTRATION_WEBHOOK_AUTH_TOKEN:-}
+       - REGISTRATION_WEBHOOK_TIMEOUT_SECONDS=${REGISTRATION_WEBHOOK_TIMEOUT_SECONDS:-10}
++      - REGISTRATION_WEBHOOK_SIGNING_SECRET=${REGISTRATION_WEBHOOK_SIGNING_SECRET:-}
++      - LIFECYCLE_INITIAL_STATUS=${LIFECYCLE_INITIAL_STATUS:-}
+ ```
+ 
+ ### Terraform / ECS
+@@ -163,11 +252,33 @@ The webhook service logs at three levels:
+ 
+ | Level | Condition | Example Message |
+ |-------|-----------|-----------------|
+-| INFO | Webhook sent successfully | `Registration webhook sent: event=registration, type=agent, status=200, url=https://...` |
++| INFO | Webhook sent successfully | `Registration webhook sent: event=registration, type=agent, signed=true, status=200, url=https://...` |
+ | WARNING | Timeout or connection failure | `Registration webhook timed out after 10s: event=registration, type=agent, url=https://...` |
+ | WARNING | HTTP (not HTTPS) URL configured | `Registration webhook URL uses HTTP (not HTTPS). Credential data may be transmitted insecurely.` |
++| WARNING | No signing secret configured (once per process) | `Outbound webhooks are UNSIGNED: set REGISTRATION_WEBHOOK_SIGNING_SECRET to enable HMAC signing` |
++| WARNING | Signing secret shorter than 16 chars (startup) | `Webhook signing secret is shorter than 16 characters; consider a longer random secret` |
+ | ERROR | Invalid URL scheme | `Invalid webhook URL scheme: ftp://...` |
+ 
++### Metrics
++
++`mcpgw_registry_webhook_send_total{event_type, outcome}` counts every outbound send attempt. `outcome` is `sent` or `failed`. Because delivery is at-most-once (no retries), a consumer outage shows up as sustained `outcome="failed"` - alert on it:
++
++```promql
++rate(mcpgw_registry_webhook_send_total{outcome="failed"}[5m]) > 0
++```
++
++## Consumer Contract
++
++Consumers of these webhooks MUST NOT assume more than the registry guarantees:
++
++| Guarantee | Contract |
++|-----------|----------|
++| Ordering | NOT guaranteed. Events are sent from independent background tasks; a `scan_complete` may arrive after a later `update` for the same asset. Never infer state from receipt order. |
++| Delivery | At-most-once. No retries, no dead-letter queue. A failed delivery is logged and counted in the `failed` metric, then dropped. |
++| Idempotency | Deduplicate on `event_id` (UUID per delivery attempt). Key your dedupe window on `event_id` alone - not on `(asset, event_type)` pairs. |
++| Unknown events | Skip unknown `event_type` values without failing. New event types may be added. |
++| Integrity | When `REGISTRATION_WEBHOOK_SIGNING_SECRET` is configured, verify `X-Registry-Signature` per the rules above before trusting an event. An unsigned deployment trusts whoever can reach the receiver URL. |
++
+ In ECS deployments, these log messages appear in the registry task's CloudWatch Log Group.
+ 
+ ## Building a Webhook Receiver
+@@ -208,6 +319,8 @@ Run with: `uvicorn receiver:app --host 0.0.0.0 --port 6789`
+ | Webhook env vars set but no calls | Variables on the wrong ECS service | Ensure they are on the **registry** service, not the auth server |
+ | Timeout warnings | Receiver too slow or unreachable | Increase `REGISTRATION_WEBHOOK_TIMEOUT_SECONDS` or check network connectivity |
+ | HTTP warning in logs | URL uses `http://` instead of `https://` | Switch to HTTPS for production |
++| Signature verification fails | Secret mismatch, or a proxy re-serialized the body before hashing | Confirm the secret on both sides; verify against the raw received bytes (`await request.body()`), not a re-encoded payload |
++| No signature header at all | `REGISTRATION_WEBHOOK_SIGNING_SECRET` unset | Set the secret on the registry service (consumers must hold it before unsigned events stop) |
+ 
+ ---
+ 
+diff --git a/registry/api/agent_routes.py b/registry/api/agent_routes.py
+index bdee411..6757575 100644
+--- a/registry/api/agent_routes.py
++++ b/registry/api/agent_routes.py
+@@ -46,6 +46,7 @@ from ..schemas.agent_models import (
+     PullCardFieldChange,
+     PullCardResponse,
+ )
++from ..schemas.registry_card import resolve_initial_status
+ from ..schemas.duplicate_check_models import (
+     AgentDuplicateCheckRequest,
+     DuplicateCheckResult,
+@@ -58,6 +59,8 @@ from ..services.agent_service import agent_service
+ from ..services.duplicate_check_service import get_duplicate_check_service
+ from ..services.registration_gate_service import check_registration_gate
+ from ..services.webhook_service import send_registration_webhook
++from ..services.webhook_service import build_scan_data, send_scan_complete_webhook
++from .status_filter_utils import resolve_status_filter
+ from ..utils.metadata import flatten_metadata_to_text
+ from ..utils.request_utils import get_client_ip
+ from ._etag_utils import (
+@@ -126,6 +129,16 @@ async def _perform_agent_security_scan_on_registration(
+             timeout=scan_config.scan_timeout_seconds,
+         )
+ 
++        # Notify external orchestrators of the scan outcome (Issue #1330).
++        # Fire-and-forget: never blocks or fails the registration.
++        asyncio.create_task(
++            send_scan_complete_webhook(
++                registration_type="agent",
++                card_data=agent_card_dict,
++                scan_data=build_scan_data(scan_result, path, agent_card.name),
++            )
++        )
++
+         # Handle unsafe agents
+         if not scan_result.is_safe:
+             logger.warning(
+@@ -178,6 +191,30 @@ async def _perform_agent_security_scan_on_registration(
+     except Exception as e:
+         logger.error(f"Failed to run security scan for agent {path}: {e}")
+         # Non-fatal error - agent is registered but not scanned
++
++        # Failure path must still notify orchestrators (Issue #1330):
++        # a silent scanner crash must not look like "no outcome yet" forever.
++        failure_scan_data = {
++            "path": path,
++            "name": getattr(agent_card, "name", None),
++            "is_safe": False,
++            "scan_failed": True,
++            "error_message": str(e),
++            "critical_issues": 0,
++            "high_severity": 0,
++            "medium_severity": 0,
++            "low_severity": 0,
++            "scan_timestamp": datetime.now(UTC).isoformat(),
++            "analyzers_used": [],
++        }
++        asyncio.create_task(
++            send_scan_complete_webhook(
++                registration_type="agent",
++                card_data=agent_card_dict,
++                scan_data=failure_scan_data,
++            )
++        )
++
+         return True  # Agent remains enabled on scan error
+ 
+ 
+@@ -743,6 +780,20 @@ async def register_agent(
+             url=request.provider.get("url", ""),
+         )
+ 
++    # LIFECYCLE_INITIAL_STATUS mandate (Issue #1330). CRITICAL: the request
++    # model defaults status to "draft", so supplied-vs-defaulted is detected
++    # via model_dump(exclude_unset=True) - NOT via request.status. An omitted
++    # status must pass None so the mandate forces the configured value.
++    supplied_fields = set(request.model_dump(exclude_unset=True, by_alias=True).keys())
++    supplied_status = request.status if "status" in supplied_fields else None
++    try:
++        agent_status = resolve_initial_status(supplied_status)
++    except ValueError as e:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail=str(e),
++        )
++
+     # Parse source timestamps
+     source_created_dt = None
+     if request.source_created_at:
+@@ -787,7 +838,7 @@ async def register_agent(
+             url=request.url,
+             path=path,
+             version=request.version,
+-            status=request.status,
++            status=agent_status,
+             provider=provider_obj,
+             security_schemes=request.security_schemes or {},
+             skills=request.skills or [],
+@@ -935,6 +986,13 @@ async def list_agents(
+     ),
+     enabled_only: bool = Query(False, description="Show only enabled agents"),
+     visibility: str | None = Query(None, description="Filter by visibility"),
++    status: str | None = Query(
++        None,
++        description=(
++            "Filter by lifecycle status (active, beta, draft, deprecated). "
++            "Case-insensitive; 400 on unknown values."
++        ),
++    ),
+     allowed_groups: str | None = Query(
+         None,
+         alias="allowed_groups",
+@@ -964,6 +1022,10 @@ async def list_agents(
+     # Set audit action for agent list
+     set_audit_action(request, "list", "agent", description="List all agents")
+ 
++    # Lifecycle status filter (Issue #1330). Validated+normalized up front so
++    # an unknown value is a 400 before any storage access.
++    status_filter = resolve_status_filter(status)
++
+     logger.debug(
+         f"list_agents called: limit={limit}, offset={offset}, "
+         f"query={query!r}, enabled_only={enabled_only}, visibility={visibility}"
+@@ -989,7 +1051,9 @@ async def list_agents(
+     # Determine if user has unrestricted access (no agents will be filtered out)
+     is_admin = user_context.get("is_admin", False) if user_context else False
+     accessible_agent_list = user_context.get("accessible_agents", []) if user_context else []
+-    has_field_filters = bool(query or enabled_only or visibility or allowed_groups)
++    has_field_filters = bool(
++        query or enabled_only or visibility or allowed_groups or status_filter
++    )
+     # Admins skip all filtering. Non-admin users with "all" in accessible_agents
+     # still need _filter_agents_by_access to enforce group-restricted visibility.
+     is_unrestricted = is_admin
+@@ -1029,6 +1093,12 @@ async def list_agents(
+         if visibility and agent.visibility != visibility:
+             continue
+ 
++        # Lifecycle review-queue filter (Issue #1330). Stored status
++        # defaults to active for legacy rows, matching the response field.
++        agent_status = getattr(agent, "status", None) or "active"
++        if status_filter and agent_status != status_filter:
++            continue
++
+         if allowed_groups:
+             requested_groups = {g.strip() for g in allowed_groups.split(",") if g.strip()}
+             agent_groups = set(getattr(agent, "allowed_groups", []))
+@@ -2117,6 +2187,33 @@ async def patch_agent(
+     if not patch_dict:
+         raise HTTPException(status_code=400, detail="Empty patch body")
+ 
++    # Lifecycle status changes are gated separately (Issue #1330): only when
++    # the patch actually changes the stored status; identical values and
++    # metadata-only patches are unaffected. Legacy rows default to active,
++    # matching the list-endpoint convention.
++    patched_status = patch_dict.get("status")
++    if patched_status is not None and not user_context.get("is_admin"):
++        old_status = str(existing_agent.status or "active").lower()
++        if str(patched_status).strip().lower() != old_status:
++            from ..auth.dependencies import user_has_ui_permission_for_service
++
++            if not user_has_ui_permission_for_service(
++                "change_asset_status",
++                existing_agent.name,
++                user_context.get("ui_permissions", {}),
++            ):
++                logger.warning(
++                    f"User {user_context['username']} attempted to change lifecycle "
++                    f"status of agent {path} without change_asset_status permission"
++                )
++                raise HTTPException(
++                    status_code=status.HTTP_403_FORBIDDEN,
++                    detail=(
++                        "Changing the lifecycle status requires the "
++                        "'change_asset_status' permission"
++                    ),
++                )
++
+     merged_dict = {**existing_agent.model_dump(), **patch_dict}
+     try:
+         merged_agent = AgentCard(**merged_dict)
+diff --git a/registry/api/config_routes.py b/registry/api/config_routes.py
+index 2fb5305..f32c5fe 100644
+--- a/registry/api/config_routes.py
++++ b/registry/api/config_routes.py
+@@ -290,13 +290,15 @@ CONFIG_GROUPS: dict[str, dict[str, Any]] = {
+         ],
+     },
+     "registration_webhook": {
+-        "title": "Registration Webhook (Notifications)",
++        "title": "Registration Webhook (Notifications & Signing)",
+         "order": 17,
+         "fields": [
+             ("registration_webhook_url", "Webhook URL", False),
+             ("registration_webhook_auth_header", "Auth Header Name", False),
+             ("registration_webhook_auth_token", "Auth Token", True),
++            ("registration_webhook_signing_secret", "Signing Secret", True),
+             ("registration_webhook_timeout_seconds", "Timeout (s)", False),
++            ("lifecycle_initial_status", "Initial Lifecycle Status", False),
+         ],
+     },
+     "registration_gate": {
+diff --git a/registry/api/server_routes.py b/registry/api/server_routes.py
+index 5989e16..9cd6f77 100644
+--- a/registry/api/server_routes.py
++++ b/registry/api/server_routes.py
+@@ -34,6 +34,7 @@ from ..auth.tool_filter import filter_tools_for_user
+ from ..constants import VALID_AUTH_SCHEMES, DeploymentType, HealthStatus
+ from ..core.config import DeploymentMode, settings
+ from ..core.schemas import AuthCredentialUpdateRequest
++from ..schemas.registry_card import resolve_initial_status
+ from ..schemas.server_update_models import (
+     SERVER_REGISTRANT_ONLY_FIELDS,
+     ServerCardPatch,
+@@ -44,6 +45,8 @@ from ..services.registration_gate_service import check_registration_gate
+ from ..services.security_scanner import security_scanner_service
+ from ..services.server_service import server_service
+ from ..services.webhook_service import send_registration_webhook
++from ..services.webhook_service import build_scan_data, send_scan_complete_webhook
++from .status_filter_utils import resolve_status_filter
+ from ..utils.credential_encryption import (
+     encrypt_credential_in_server_dict,
+     strip_credentials_from_dict,
+@@ -364,6 +367,16 @@ async def _perform_security_scan_on_registration(
+             mcp_endpoint=server_entry.get("mcp_endpoint"),
+         )
+ 
++        # Notify external orchestrators of the scan outcome (Issue #1330).
++        # Fire-and-forget: never blocks or fails the registration.
++        asyncio.create_task(
++            send_scan_complete_webhook(
++                registration_type="server",
++                card_data=server_entry,
++                scan_data=build_scan_data(scan_result, path, server_entry.get("server_name")),
++            )
++        )
++
+         # Handle unsafe servers
+         if not scan_result.is_safe:
+             logger.warning(
+@@ -402,6 +415,29 @@ async def _perform_security_scan_on_registration(
+         logger.error(f"Security scan failed for {path}: {e}")
+         # Non-fatal error - server is registered but scan failed
+ 
++        # Failure path must still notify orchestrators (Issue #1330):
++        # a silent scanner crash must not look like "no outcome yet" forever.
++        failure_scan_data = {
++            "path": path,
++            "name": server_entry.get("server_name"),
++            "is_safe": False,
++            "scan_failed": True,
++            "error_message": str(e),
++            "critical_issues": 0,
++            "high_severity": 0,
++            "medium_severity": 0,
++            "low_severity": 0,
++            "scan_timestamp": datetime.now(UTC).isoformat(),
++            "analyzers_used": [],
++        }
++        asyncio.create_task(
++            send_scan_complete_webhook(
++                registration_type="server",
++                card_data=server_entry,
++                scan_data=failure_scan_data,
++            )
++        )
++
+ 
+ @router.get("/", response_class=HTMLResponse)
+ async def read_root(
+@@ -646,6 +682,11 @@ async def get_servers_json(
+             f"{metadata_text.lower()}"
+         )
+         if not search_query or search_query in searchable_text:
++            # Lifecycle review-queue filter (Issue #1330). Stored status
++            # defaults to active for legacy rows, matching the response field.
++            if status_filter and (server_info.get("status") or "active") != status_filter:
++                continue
++
+             # Fetch enabled status before health check to avoid race condition (Issue #612)
+             is_enabled = server_info.get("is_enabled", False)
+ 
+@@ -1292,9 +1333,16 @@ async def register_service(
+                 detail="Failed to encrypt custom headers",
+             )
+ 
+-    # Add lifecycle and federation fields
+-    if service_status:
+-        server_entry["status"] = service_status
++    # Add lifecycle and federation fields. resolve_initial_status applies the
++    # LIFECYCLE_INITIAL_STATUS mandate (Issue #1330): forces an unspecified
++    # status to the mandated value and rejects an explicit mismatch with 400.
++    try:
++        server_entry["status"] = resolve_initial_status(service_status)
++    except ValueError as e:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail=str(e),
++        )
+ 
+     # Add provider information (stored as nested AgentProvider object)
+     if provider_organization or provider_url:
+@@ -1527,6 +1575,15 @@ async def internal_register_service(
+     # Add optional fields if provided
+     if auth_provider:
+         server_entry["auth_provider"] = auth_provider
++
++    # LIFECYCLE_INITIAL_STATUS mandate (Issue #1330). Internal registrations
++    # are registrations too - apply the same policy as the public endpoints.
++    try:
++        server_entry["status"] = resolve_initial_status(None)
++    except ValueError:
++        # resolve_initial_status(None) cannot raise with an empty mandate;
++        # guard anyway so the internal endpoint never 500s on status.
++        pass
+     if headers_list:
+         server_entry["headers"] = headers_list
+     if auth_header_name:
+@@ -3745,8 +3802,15 @@ async def register_service_api(
+ 
+     if version:
+         server_entry["version"] = version
+-    if status:
+-        server_entry["status"] = status
++    # LIFECYCLE_INITIAL_STATUS mandate (Issue #1330): forces an unspecified
++    # status to the mandated value and rejects an explicit mismatch with 400.
++    try:
++        server_entry["status"] = resolve_initial_status(status)
++    except ValueError as e:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail=str(e),
++        )
+ 
+     # Add provider information
+     if provider_organization or provider_url:
+@@ -5680,6 +5744,33 @@ async def patch_server_endpoint(
+             detail="Empty patch body",
+         )
+ 
++    # Lifecycle status changes are gated separately (Issue #1330): only when
++    # the patch actually changes the stored status; identical values and
++    # metadata-only patches are unaffected. Legacy rows default to active,
++    # matching the list-endpoint convention.
++    patched_status = patch_dict.get("status")
++    if patched_status is not None and not user_context.get("is_admin"):
++        old_status = str(existing.get("status") or "active").lower()
++        if str(patched_status).strip().lower() != old_status:
++            from ..auth.dependencies import user_has_ui_permission_for_service
++
++            if not user_has_ui_permission_for_service(
++                "change_asset_status",
++                existing.get("server_name", path),
++                user_context.get("ui_permissions", {}),
++            ):
++                logger.warning(
++                    f"User {user_context['username']} attempted to change lifecycle "
++                    f"status of server {path} without change_asset_status permission"
++                )
++                raise HTTPException(
++                    status_code=status.HTTP_403_FORBIDDEN,
++                    detail=(
++                        "Changing the lifecycle status requires the "
++                        "'change_asset_status' permission"
++                    ),
++                )
++
+     merged = _merge_server_update(existing, patch_dict)
+ 
+     gate_result = await check_registration_gate(
+diff --git a/registry/api/skill_routes.py b/registry/api/skill_routes.py
+index aa24273..8c011e8 100644
+--- a/registry/api/skill_routes.py
++++ b/registry/api/skill_routes.py
+@@ -57,6 +57,7 @@ from ..schemas.skill_models import (
+     VisibilityEnum,
+ )
+ from ..services.duplicate_check_service import get_duplicate_check_service
++from ..schemas.registry_card import resolve_initial_status
+ from ..services.registration_gate_service import check_registration_gate
+ from ..services.skill_service import (
+     _build_fetch_headers,
+@@ -68,6 +69,8 @@ from ..services.skill_service import (
+ )
+ from ..services.tool_validation_service import get_tool_validation_service
+ from ..services.webhook_service import send_registration_webhook
++from ..services.webhook_service import build_scan_data, send_scan_complete_webhook
++from .status_filter_utils import resolve_status_filter
+ from ..utils.metadata import flatten_metadata_to_text
+ from ..utils.path_utils import normalize_skill_path
+ 
+@@ -163,6 +166,13 @@ async def list_skills(
+     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
+     include_disabled: bool = Query(False, description="Include disabled skills"),
+     tag: str | None = Query(None, description="Filter by tag"),
++    status: str | None = Query(
++        None,
++        description=(
++            "Filter by lifecycle status (active, beta, draft, deprecated). "
++            "Case-insensitive; 400 on unknown values."
++        ),
++    ),
+     limit: int = Query(20, ge=1, le=2000, description="Number of skills to return (max 2000)"),
+     offset: int = Query(0, ge=0, description="Number of skills to skip"),
+ ) -> dict:
+@@ -174,13 +184,17 @@ async def list_skills(
+ 
+     service = get_skill_service()
+ 
++    # Lifecycle status filter (Issue #1330). Validated+normalized up front so
++    # an unknown value is a 400 before any storage access.
++    status_filter = resolve_status_filter(status)
++
+     # Determine if user has unrestricted access (no skills will be filtered out)
+     is_admin = user_context.get("is_admin", False) if user_context else False
+     accessible_agent_list = user_context.get("accessible_agents", []) if user_context else []
+     is_unrestricted = is_admin or "all" in accessible_agent_list
+     # include_disabled=False (default) means "exclude disabled" which IS a filter.
+     # Only include_disabled=True (show all) with no tag requires no filtering.
+-    has_field_filters = bool(tag or not include_disabled)
++    has_field_filters = bool(tag or not include_disabled or status_filter)
+ 
+     # Dual-path pagination:
+     # - Fast path: DB-level skip/limit for unrestricted users without field filters
+@@ -220,9 +234,12 @@ async def list_skills(
+                 last_checked_time=s.last_checked_time,
+                 status=s.status,
+             )
++            # Lifecycle review-queue filter (Issue #1330). Stored status
++            # defaults to active for legacy rows, matching the response field.
+             for s in skill_cards
++            if not status_filter or (s.status or "active") == status_filter
+         ]
+-        total_count = db_total
++        total_count = len(skills)
+         page_skills = skills
+     else:
+         # FALLBACK PATH: full fetch needed for filtering or restricted users
+@@ -231,6 +248,12 @@ async def list_skills(
+             include_disabled=include_disabled,
+             tag=tag,
+         )
++        # Lifecycle review-queue filter (Issue #1330), applied before the
++        # pagination slice so total_count stays accurate.
++        if status_filter:
++            all_skills = [
++                s for s in all_skills if (getattr(s, "status", None) or "active") == status_filter
++            ]
+         total_count = len(all_skills)
+         page_skills = all_skills[offset : offset + limit]
+ 
+@@ -918,6 +941,22 @@ async def register_skill(
+     service = get_skill_service()
+     owner = user_context.get("username")
+ 
++    # LIFECYCLE_INITIAL_STATUS mandate (Issue #1330). CRITICAL: the request
++    # model defaults status to "draft", so supplied-vs-defaulted is detected
++    # via model_dump(exclude_unset=True) - NOT via request.status. An omitted
++    # status must pass None so the mandate forces the configured value.
++    supplied_fields = set(request.model_dump(exclude_unset=True, by_alias=True).keys())
++    supplied_status = request.status if "status" in supplied_fields else None
++    try:
++        resolved_status = resolve_initial_status(supplied_status)
++    except ValueError as e:
++        raise HTTPException(
++            status_code=status.HTTP_400_BAD_REQUEST,
++            detail=str(e),
++        )
++    if supplied_status is None or supplied_status != resolved_status:
++        request = request.model_copy(update={"status": resolved_status})
++
+     try:
+         skill = await service.register_skill(request=request, owner=owner, validate_url=True)
+         logger.info(f"Registered skill: {skill.name} by {owner}")
+@@ -990,6 +1029,34 @@ async def update_skill(
+     if not _user_can_modify_skill(existing, user_context):
+         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+ 
++    # Lifecycle status changes are gated separately (Issue #1330), BEFORE the
++    # registration gate so a forbidden caller fails fast locally. Only fires
++    # when the write actually changes the stored status. Legacy rows default
++    # to active, matching the list-endpoint convention.
++    updates_for_gate = request.model_dump(exclude_unset=True, mode="json")
++    patched_status = updates_for_gate.get("status")
++    if patched_status is not None and not user_context.get("is_admin"):
++        old_status = str(getattr(existing, "status", None) or "active").lower()
++        if str(patched_status).strip().lower() != old_status:
++            from ..auth.dependencies import user_has_ui_permission_for_service
++
++            if not user_has_ui_permission_for_service(
++                "change_asset_status",
++                existing.name,
++                user_context.get("ui_permissions", {}),
++            ):
++                logger.warning(
++                    f"User {user_context['username']} attempted to change lifecycle "
++                    f"status of skill {normalized_path} without change_asset_status permission"
++                )
++                raise HTTPException(
++                    status_code=status.HTTP_403_FORBIDDEN,
++                    detail=(
++                        "Changing the lifecycle status requires the "
++                        "'change_asset_status' permission"
++                    ),
++                )
++
+     # Registration gate check for update (admission control, issue #809)
+     gate_result = await check_registration_gate(
+         asset_type="skill",
+@@ -1282,6 +1349,16 @@ async def _perform_skill_security_scan_on_registration(
+             headers=fetch_headers or None,
+         )
+ 
++        # Notify external orchestrators of the scan outcome (Issue #1330).
++        # Fire-and-forget: never blocks or fails the registration.
++        asyncio.create_task(
++            send_scan_complete_webhook(
++                registration_type="skill",
++                card_data=skill.model_dump(mode="json"),
++                scan_data=build_scan_data(result, skill.path, skill.name),
++            )
++        )
++
+         if not result.is_safe and config.block_unsafe_skills:
+             logger.warning(f"Disabling unsafe skill: {skill.path}")
+             await service.toggle_skill(skill.path, enabled=False)
+@@ -1295,6 +1372,30 @@ async def _perform_skill_security_scan_on_registration(
+ 
+     except Exception as e:
+         logger.error(f"Security scan failed for skill {skill.path}: {e}")
++
++        # Failure path must still notify orchestrators (Issue #1330):
++        # a silent scanner crash must not look like "no outcome yet" forever.
++        failure_scan_data = {
++            "path": skill.path,
++            "name": getattr(skill, "name", None),
++            "is_safe": False,
++            "scan_failed": True,
++            "error_message": str(e),
++            "critical_issues": 0,
++            "high_severity": 0,
++            "medium_severity": 0,
++            "low_severity": 0,
++            "scan_timestamp": datetime.now(UTC).isoformat(),
++            "analyzers_used": [],
++        }
++        asyncio.create_task(
++            send_scan_complete_webhook(
++                registration_type="skill",
++                card_data=skill.model_dump(mode="json"),
++                scan_data=failure_scan_data,
++            )
++        )
++
+         if config.add_security_pending_tag:
+             try:
+                 current_tags = skill.tags or []
+diff --git a/registry/api/status_filter_utils.py b/registry/api/status_filter_utils.py
+new file mode 100644
+index 0000000..f637695
+--- /dev/null
++++ b/registry/api/status_filter_utils.py
+@@ -0,0 +1,32 @@
++"""
++Shared lifecycle-status query-filter helpers for the servers/agents/skills
++list endpoints.
++
++Kept separate from the route modules (same shape as ``_etag_utils``) so all
++three list endpoints validate and normalize the ``status=`` query parameter
++identically without importing each other.
++"""
++
++from fastapi import HTTPException
++
++from ..schemas.registry_card import _validate_lifecycle_status
++
++
++def resolve_status_filter(status: str | None) -> str | None:
++    """Validate and normalize an optional lifecycle ``status`` query param.
++
++    Args:
++        status: Raw query-parameter value (or None when absent).
++
++    Returns:
++        The normalized (lowercase) status to filter on, or None.
++
++    Raises:
++        HTTPException: 400 when the value is not a known lifecycle status.
++    """
++    if status is None:
++        return None
++    try:
++        return _validate_lifecycle_status(status)
++    except ValueError as e:
++        raise HTTPException(status_code=400, detail=str(e)) from e
+diff --git a/registry/core/config.py b/registry/core/config.py
+index 76d5866..ce6985e 100644
+--- a/registry/core/config.py
++++ b/registry/core/config.py
+@@ -135,6 +135,25 @@ class Settings(BaseSettings):
+         default=10,
+         description="Timeout for webhook HTTP calls in seconds",
+     )
++    registration_webhook_signing_secret: str = Field(
++        default="",
++        description=(
++            "HMAC-SHA256 secret used to sign outbound webhook bodies via the "
++            "X-Registry-Signature header. Empty disables signing (events are "
++            "sent unsigned). Recommend 32+ random bytes."
++        ),
++    )
++
++    # Lifecycle orchestration (Issue #1330)
++    lifecycle_initial_status: str = Field(
++        default="",
++        description=(
++            "Mandated initial lifecycle status for registrations "
++            "(active|beta|draft|deprecated). When set, registrations without an "
++            "explicit status are forced to this value and an explicit mismatched "
++            "status is rejected with 400. Empty disables the mandate."
++        ),
++    )
+ 
+     # Registration Gate Configuration (Admission Control, Issue #809)
+     registration_gate_enabled: bool = Field(
+@@ -166,6 +185,16 @@ class Settings(BaseSettings):
+         description="Maximum retry attempts for gate calls on transient failures",
+     )
+ 
++    @field_validator("lifecycle_initial_status")
++    @classmethod
++    def _validate_lifecycle_initial_status(cls, v: str) -> str:
++        """Reject an unknown LIFECYCLE_INITIAL_STATUS value at startup."""
++        if not v:
++            return v
++        from ..schemas.registry_card import _validate_lifecycle_status
++
++        return _validate_lifecycle_status(v)
++
+     # Registration Gate OAuth2 Client Credentials (Issue #917)
+     registration_gate_oauth2_token_url: str = Field(
+         default="",
+diff --git a/registry/main.py b/registry/main.py
+index 4531689..ace18ef 100644
+--- a/registry/main.py
++++ b/registry/main.py
+@@ -461,6 +461,15 @@ async def lifespan(app: FastAPI):
+     # Log startup configuration
+     _log_startup_configuration()
+ 
++    # Webhook signing-secret sanity check (Issue #1330): a very short secret
++    # is technically signed but trivially brute-forceable. Warning only.
++    _signing_secret = (settings.registration_webhook_signing_secret or "").strip()
++    if _signing_secret and len(_signing_secret) < 16:
++        logger.warning(
++            "Webhook signing secret is shorter than 16 characters; "
++            "consider a longer random secret (recommend 32+ bytes)"
++        )
++
+     # Log warnings for ineffective SHOW_*_TAB overrides
+     log_tab_visibility_warnings(settings)
+ 
+diff --git a/registry/observability/meters.py b/registry/observability/meters.py
+index 8826bde..e25420e 100644
+--- a/registry/observability/meters.py
++++ b/registry/observability/meters.py
+@@ -177,6 +177,12 @@ health_check_total = _meter.create_counter(
+     unit="1",
+ )
+ 
++webhook_send_total = _meter.create_counter(
++    name="mcpgw_registry_webhook_send_total",
++    description="Outbound registration webhook send attempts by event type and outcome",
++    unit="1",
++)
++
+ 
+ # =============================================================================
+ # Path-3 in-process metrics
+diff --git a/registry/schemas/registry_card.py b/registry/schemas/registry_card.py
+index 57bb6d8..43653af 100644
+--- a/registry/schemas/registry_card.py
++++ b/registry/schemas/registry_card.py
+@@ -52,6 +52,41 @@ def _validate_lifecycle_status(
+     return normalized
+ 
+ 
++def resolve_initial_status(supplied: str | None) -> str:
++    """Apply the LIFECYCLE_INITIAL_STATUS mandate to a registration status.
++
++    Policy (Issue #1330):
++    - Mandate off (default): supplied statuses are validated and normalized;
++      an absent status falls back to "active" (the historical default).
++    - Mandate on: an absent status is forced to the mandated value and an
++      explicit mismatched status raises ValueError (routes turn it into a 400).
++
++    The mandate applies to REGISTRATION only; edits are governed by the
++    change_asset_status permission instead.
++
++    Raises:
++        ValueError: If the supplied status is unknown, or conflicts with the
++            configured mandate.
++    """
++    # Lazy import: registry.core.config imports this module's sibling enum via
++    # a validator, so a module-level import would be circular.
++    from ..core.config import settings
++
++    mandated = (settings.lifecycle_initial_status or "").strip().lower()
++    if not mandated:
++        if supplied and supplied.strip():
++            return _validate_lifecycle_status(supplied)
++        return "active"
++    if supplied is None or not str(supplied).strip():
++        return mandated
++    normalized = _validate_lifecycle_status(supplied)
++    if normalized != mandated:
++        raise ValueError(
++            f"status must be '{mandated}' when LIFECYCLE_INITIAL_STATUS is set (got '{normalized}')"
++        )
++    return normalized
++
++
+ class RegistryCapabilities(BaseModel):
+     """Capabilities supported by this registry."""
+ 
+diff --git a/registry/services/webhook_service.py b/registry/services/webhook_service.py
+index fca9550..ca8ec71 100644
+--- a/registry/services/webhook_service.py
++++ b/registry/services/webhook_service.py
+@@ -3,17 +3,29 @@
+ Fires an async POST to a configurable URL when a server, agent, or skill
+ is registered (added) or deleted (removed). The call is fire-and-forget:
+ failures are logged at WARNING but never propagated to the caller.
++
++Every outbound event carries a unique ``event_id`` (consumer idempotency
++key) and, when ``REGISTRATION_WEBHOOK_SIGNING_SECRET`` is configured, an
++``X-Registry-Signature: sha256=<hex>`` HMAC-SHA256 signature computed over
++the exact transmitted body bytes. The ``scan_complete`` event type carries
++a ``scan`` sub-payload with the security-scan outcome (including the
++scanner-failure path), so external orchestrators never need to poll.
+ """
+ 
++import hashlib
++import hmac
++import json
+ import logging
+ from datetime import (
+     UTC,
+     datetime,
+ )
++from uuid import uuid4
+ 
+ import httpx
+ 
+ from registry.core.config import settings
++from registry.observability.meters import webhook_send_total
+ 
+ logging.basicConfig(
+     level=logging.INFO,
+@@ -22,6 +34,10 @@ logging.basicConfig(
+ 
+ logger = logging.getLogger(__name__)
+ 
++SIGNATURE_HEADER = "X-Registry-Signature"
++
++_unsigned_warning_logged = False
++
+ 
+ def _build_auth_headers() -> dict[str, str]:
+     """Build authentication headers for the webhook request.
+@@ -44,11 +60,79 @@ def _build_auth_headers() -> dict[str, str]:
+     return {header_name: token}
+ 
+ 
++def _serialize_body(payload: dict) -> bytes:
++    """Serialize the webhook payload to the exact bytes that will be sent.
++
++    The same bytes are signed and transmitted, so consumers verifying the
++    signature never have to guess at an encoder.
++    """
++    return json.dumps(payload, default=str).encode("utf-8")
++
++
++def _sign_body(body: bytes) -> str | None:
++    """Compute the HMAC-SHA256 signature header value for a body.
++
++    Returns None when no signing secret is configured (unsigned mode).
++    """
++    secret = settings.registration_webhook_signing_secret
++    if not secret:
++        return None
++    digest = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
++    return f"sha256={digest}"
++
++
++def build_scan_data(result, path: str, name: str | None = None) -> dict:
++    """Normalize a scan result into the scan sub-payload for scan_complete.
++
++    Accepts any of registry.schemas.security.SecurityScanResult,
++    registry.schemas.agent_security.AgentSecurityScanResult, or
++    registry.schemas.skill_security.SkillSecurityScanResult - the three
++    models share field names, so getattr-with-defaults covers all of them
++    (and a partially-built failure object). Never raises.
++
++    Deliberately excludes raw_output (large) to keep the payload bounded.
++    """
++    return {
++        "path": path,
++        "name": name,
++        "is_safe": bool(getattr(result, "is_safe", False)),
++        "scan_failed": bool(getattr(result, "scan_failed", False)),
++        "error_message": getattr(result, "error_message", None),
++        "critical_issues": int(getattr(result, "critical_issues", 0) or 0),
++        "high_severity": int(getattr(result, "high_severity", 0) or 0),
++        "medium_severity": int(getattr(result, "medium_severity", 0) or 0),
++        "low_severity": int(getattr(result, "low_severity", 0) or 0),
++        "scan_timestamp": getattr(result, "scan_timestamp", None)
++        or datetime.now(UTC).isoformat(),
++        "analyzers_used": list(getattr(result, "analyzers_used", []) or []),
++    }
++
++
++async def send_scan_complete_webhook(
++    registration_type: str,
++    card_data: dict,
++    scan_data: dict,
++) -> None:
++    """Send the scan_complete event for a finished registration scan.
++
++    Thin wrapper over send_registration_webhook so route-level scan
++    wrappers stay one call. Fire-and-forget like every other event.
++    """
++    await send_registration_webhook(
++        event_type="scan_complete",
++        registration_type=registration_type,
++        card_data=card_data,
++        performed_by=None,
++        scan_data=scan_data,
++    )
++
++
+ async def send_registration_webhook(
+     event_type: str,
+     registration_type: str,
+     card_data: dict,
+     performed_by: str | None = None,
++    scan_data: dict | None = None,
+ ) -> None:
+     """Send a webhook notification for a successful registration, update, or deletion.
+ 
+@@ -61,13 +145,18 @@ async def send_registration_webhook(
+ 
+     Args:
+         event_type: One of "registration" (add), "update" (partial/full edit),
+-            or "deletion" (remove). The "update" event has the same payload
+-            shape as "registration"; consumers filtering by event type must
+-            allow it or skip unknown types without failing.
++            "deletion" (remove), or "scan_complete" (security scan finished).
++            The "update" event has the same payload shape as "registration";
++            consumers filtering by event type must allow it or skip unknown
++            types without failing.
+         registration_type: One of "server", "agent", or "skill".
+         card_data: The full card JSON as a dictionary.
+         performed_by: Username of the operator who performed the action.
++        scan_data: Scan outcome sub-payload; only sent with event_type
++            "scan_complete" (see build_scan_data).
+     """
++    global _unsigned_warning_logged
++
+     # Local import to avoid a circular dep at module load time.
+     from .registration_gate_service import sanitize_payload
+ 
+@@ -86,36 +175,68 @@ async def send_registration_webhook(
+         )
+ 
+     payload = {
++        "event_id": str(uuid4()),
+         "event_type": event_type,
+         "registration_type": registration_type,
+         "timestamp": datetime.now(UTC).isoformat(),
+         "performed_by": performed_by,
+         "card": sanitize_payload(card_data) if isinstance(card_data, dict) else card_data,
+     }
++    if scan_data is not None:
++        payload["scan"] = scan_data
++
++    try:
++        body = _serialize_body(payload)
++    except Exception as e:
++        # Never transmit an unsigned body when the contract is signing; a
++        # serialization failure here is practically impossible (payloads are
++        # JSON-safe dicts) but skipping beats silently downgrading.
++        logger.error(
++            f"Failed to serialize webhook payload, event not sent: "
++            f"event={event_type}, type={registration_type}, error={e}"
++        )
++        webhook_send_total.add(1, {"event_type": event_type, "outcome": "failed"})
++        return
+ 
+     headers = _build_auth_headers()
+     headers["Content-Type"] = "application/json"
++
++    signature = _sign_body(body)
++    if signature:
++        headers[SIGNATURE_HEADER] = signature
++    else:
++        if not _unsigned_warning_logged:
++            logger.warning(
++                "Outbound webhooks are UNSIGNED: set "
++                "REGISTRATION_WEBHOOK_SIGNING_SECRET to enable HMAC signing"
++            )
++            _unsigned_warning_logged = True
++
+     timeout = settings.registration_webhook_timeout_seconds
+ 
+     try:
+         async with httpx.AsyncClient(timeout=timeout) as client:
+             response = await client.post(
+                 webhook_url,
+-                json=payload,
++                content=body,
+                 headers=headers,
+             )
+             logger.info(
+                 f"Registration webhook sent: event={event_type}, "
+                 f"type={registration_type}, "
++                f"signed={signature is not None}, "
+                 f"status={response.status_code}, url={webhook_url}"
+             )
++            webhook_send_total.add(1, {"event_type": event_type, "outcome": "sent"})
+     except httpx.TimeoutException:
+         logger.warning(
+             f"Registration webhook timed out after {timeout}s: "
+             f"event={event_type}, type={registration_type}, url={webhook_url}"
+         )
++        webhook_send_total.add(1, {"event_type": event_type, "outcome": "failed"})
+     except Exception as e:
+         logger.warning(
+             f"Registration webhook failed: event={event_type}, "
+             f"type={registration_type}, url={webhook_url}, error={e}"
+         )
++        webhook_send_total.add(1, {"event_type": event_type, "outcome": "failed"})
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+index 15f2c5a..b372da4 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+@@ -1306,6 +1306,14 @@ module "ecs_service_registry" {
+           name  = "REGISTRATION_WEBHOOK_TIMEOUT_SECONDS"
+           value = tostring(var.registration_webhook_timeout_seconds)
+         },
++        {
++          name  = "REGISTRATION_WEBHOOK_SIGNING_SECRET"
++          value = var.registration_webhook_signing_secret
++        },
++        {
++          name  = "LIFECYCLE_INITIAL_STATUS"
++          value = var.lifecycle_initial_status
++        },
+         # Agent batch API (issue #956)
+         {
+           name  = "BATCH_WORKER_ENABLED"
+diff --git a/terraform/aws-ecs/variables.tf b/terraform/aws-ecs/variables.tf
+index 60fcbb2..44e1017 100755
+--- a/terraform/aws-ecs/variables.tf
++++ b/terraform/aws-ecs/variables.tf
+@@ -915,6 +915,19 @@ variable "registration_webhook_timeout_seconds" {
+   default     = 10
+ }
+ 
++variable "registration_webhook_signing_secret" {
++  description = "HMAC-SHA256 secret used to sign outbound webhook bodies (X-Registry-Signature header). Empty sends events unsigned. Source from AWS Secrets Manager in production."
++  type        = string
++  default     = ""
++  sensitive   = true
++}
++
++variable "lifecycle_initial_status" {
++  description = "Mandated initial lifecycle status for registrations (active|beta|draft|deprecated). Empty disables the mandate."
++  type        = string
++  default     = ""
++}
++
+ # =============================================================================
+ # AGENT BATCH API (Issue #956)
+ # =============================================================================
+diff --git a/tests/unit/services/test_webhook_service.py b/tests/unit/services/test_webhook_service.py
+index b355ac6..b251e51 100644
+--- a/tests/unit/services/test_webhook_service.py
++++ b/tests/unit/services/test_webhook_service.py
+@@ -1,8 +1,10 @@
+ """Unit tests for the registration webhook notification service."""
+ 
+ import logging
++import json
+ from unittest.mock import (
+     AsyncMock,
++    MagicMock,
+     patch,
+ )
+ 
+@@ -11,7 +13,9 @@ import pytest
+ 
+ from registry.services.webhook_service import (
+     _build_auth_headers,
++    build_scan_data,
+     send_registration_webhook,
++    send_scan_complete_webhook,
+ )
+ 
+ SAMPLE_CARD = {
+@@ -287,7 +291,7 @@ class TestSendRegistrationWebhook:
+ 
+         captured_payload = {}
+ 
+-        async def _capture_post(url, json, headers):
++        async def _capture_post(url, content=None, json=None, headers=None):
+             captured_payload.update(json)
+             response = MagicMock()
+             response.status_code = 200
+@@ -325,3 +329,313 @@ class TestSendRegistrationWebhook:
+         # Non-sensitive fields pass through.
+         assert rt["package"] == "@acme/mcp"
+         assert rt["required_env"] == ["API_KEY"]
++
++
++def _mock_settings(url="https://example.com/webhook", secret=""):
++    """Build a MagicMock settings object with webhook fields populated."""
++    mock = MagicMock()
++    mock.registration_webhook_url = url
++    mock.registration_webhook_auth_token = None
++    mock.registration_webhook_auth_header = "Authorization"
++    mock.registration_webhook_timeout_seconds = 10
++    mock.registration_webhook_signing_secret = secret
++    return mock
++
++
++def _mock_http_client():
++    """Async httpx client mock capturing the post kwargs."""
++    mock_response = MagicMock()
++    mock_response.status_code = 200
++
++    mock_client = AsyncMock()
++    mock_client.post = AsyncMock(return_value=mock_response)
++    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
++    mock_client.__aexit__ = AsyncMock(return_value=False)
++    return mock_client
++
++
++class TestWebhookSigning:
++    """Tests for HMAC signing over the exact transmitted body (Issue #1330)."""
++
++    @pytest.mark.asyncio
++    async def test_signature_header_present_and_correct(self):
++        """Signed mode sends X-Registry-Signature: sha256=<hex> over the body."""
++        import hashlib
++        import hmac as hmac_mod
++
++        secret = "test-signing-secret-0123456789abcdef"
++        mock_client = _mock_http_client()
++
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(secret=secret),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=mock_client,
++            ),
++        ):
++            await send_registration_webhook(
++                event_type="registration",
++                registration_type="server",
++                card_data=SAMPLE_CARD,
++            )
++
++            call_kwargs = mock_client.post.call_args.kwargs
++            body = call_kwargs["content"]
++            signature = call_kwargs["headers"]["X-Registry-Signature"]
++
++            expected = "sha256=" + hmac_mod.new(
++                secret.encode("utf-8"), body, hashlib.sha256
++            ).hexdigest()
++            assert signature == expected
++
++    @pytest.mark.asyncio
++    async def test_signed_bytes_are_transmitted_bytes(self):
++        """The signed body is exactly the transmitted body (content=, not json=)."""
++        import hashlib
++        import hmac as hmac_mod
++        import json as json_mod
++
++        secret = "another-signing-secret-0987654321"
++        mock_client = _mock_http_client()
++
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(secret=secret),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=mock_client,
++            ),
++        ):
++            await send_registration_webhook(
++                event_type="update",
++                registration_type="agent",
++                card_data=SAMPLE_CARD,
++            )
++
++            call_kwargs = mock_client.post.call_args.kwargs
++            assert call_kwargs["content"] is not None
++            assert "json" not in call_kwargs or call_kwargs["json"] is None
++            # The transmitted bytes re-verify against the secret.
++            expected = hmac_mod.new(
++                secret.encode("utf-8"),
++                call_kwargs["content"],
++                hashlib.sha256,
++            ).hexdigest()
++            assert call_kwargs["headers"]["X-Registry-Signature"] == f"sha256={expected}"
++            # And the bytes are the JSON payload.
++            assert json_mod.loads(call_kwargs["content"])["event_type"] == "update"
++
++    @pytest.mark.asyncio
++    async def test_unsigned_mode_omits_signature_header(self):
++        """No signing secret configured -> no signature header (backwards compat)."""
++        mock_client = _mock_http_client()
++
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(secret=""),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=mock_client,
++            ),
++        ):
++            await send_registration_webhook(
++                event_type="registration",
++                registration_type="server",
++                card_data=SAMPLE_CARD,
++            )
++
++            call_kwargs = mock_client.post.call_args.kwargs
++            assert "X-Registry-Signature" not in call_kwargs["headers"]
++
++
++class TestWebhookEventId:
++    """event_id must be present and unique per envelope (Issue #1330)."""
++
++    @pytest.mark.asyncio
++    async def test_event_id_present_and_unique(self):
++        mock_client = _mock_http_client()
++
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=mock_client,
++            ),
++        ):
++            await send_registration_webhook(
++                event_type="registration", registration_type="server", card_data=SAMPLE_CARD
++            )
++            await send_registration_webhook(
++                event_type="registration", registration_type="server", card_data=SAMPLE_CARD
++            )
++
++            calls = mock_client.post.call_args_list
++            first = json.loads(calls[0].kwargs["content"])
++            second = json.loads(calls[1].kwargs["content"])
++            assert first["event_id"]
++            assert second["event_id"]
++            assert first["event_id"] != second["event_id"]
++
++
++class TestScanCompleteWebhook:
++    """scan_complete event shape (Issue #1330)."""
++
++    @pytest.mark.asyncio
++    async def test_scan_payload_included_for_scan_complete(self):
++        mock_client = _mock_http_client()
++
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=mock_client,
++            ),
++        ):
++            await send_scan_complete_webhook(
++                registration_type="server",
++                card_data=SAMPLE_CARD,
++                scan_data={
++                    "path": "/my-server",
++                    "name": "my-server",
++                    "is_safe": True,
++                    "scan_failed": False,
++                    "error_message": None,
++                    "critical_issues": 0,
++                    "high_severity": 0,
++                    "medium_severity": 1,
++                    "low_severity": 0,
++                    "scan_timestamp": "2026-09-29T00:00:00+00:00",
++                    "analyzers_used": ["yara"],
++                },
++            )
++
++            payload = json.loads(mock_client.post.call_args.kwargs["content"])
++            assert payload["event_type"] == "scan_complete"
++            assert payload["performed_by"] is None
++            assert payload["scan"]["path"] == "/my-server"
++            assert payload["scan"]["is_safe"] is True
++            assert "raw_output" not in payload["scan"]
++
++    @pytest.mark.asyncio
++    async def test_scan_absent_for_other_events(self):
++        mock_client = _mock_http_client()
++
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=mock_client,
++            ),
++        ):
++            await send_registration_webhook(
++                event_type="registration", registration_type="server", card_data=SAMPLE_CARD
++            )
++
++            payload = json.loads(mock_client.post.call_args.kwargs["content"])
++            assert "scan" not in payload
++
++
++class TestBuildScanData:
++    """build_scan_data normalizes the three scan-result models (Issue #1330)."""
++
++    def test_maps_security_scan_result(self):
++        from registry.schemas.security import SecurityScanResult
++
++        result = SecurityScanResult(
++            server_url="https://x.example.com",
++            server_path="/x",
++            scan_timestamp="2026-09-29T00:00:00Z",
++            is_safe=True,
++            critical_issues=0,
++            high_severity=0,
++            medium_severity=2,
++            low_severity=1,
++            analyzers_used=["yara"],
++            raw_output={},
++            output_file="",
++            scan_failed=False,
++        )
++        data = build_scan_data(result, "/x", "x")
++        assert data["path"] == "/x"
++        assert data["name"] == "x"
++        assert data["is_safe"] is True
++        assert data["scan_failed"] is False
++        assert data["medium_severity"] == 2
++        assert data["analyzers_used"] == ["yara"]
++        assert "raw_output" not in data
++
++    def test_tolerates_missing_fields(self):
++        class Partial:
++            is_safe = False
++
++        data = build_scan_data(Partial(), "/p", None)
++        assert data["is_safe"] is False
++        assert data["scan_failed"] is False
++        assert data["critical_issues"] == 0
++        assert data["error_message"] is None
++        assert data["scan_timestamp"]  # fallback to now
++
++
++class TestWebhookSendMetric:
++    """webhook_send_total increments on every attempt (Issue #1330)."""
++
++    @pytest.mark.asyncio
++    async def test_metric_increments_on_success_and_failure(self):
++        from registry.observability.meters import webhook_send_total
++
++        # Success path.
++        mock_client = _mock_http_client()
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=mock_client,
++            ),
++            patch.object(webhook_send_total, "add") as mock_add,
++        ):
++            await send_registration_webhook(
++                event_type="registration", registration_type="server", card_data=SAMPLE_CARD
++            )
++            mock_add.assert_called_once_with(
++                1, {"event_type": "registration", "outcome": "sent"}
++            )
++
++        # Failure path.
++        failing_client = _mock_http_client()
++        failing_client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
++        with (
++            patch(
++                "registry.services.webhook_service.settings",
++                _mock_settings(),
++            ),
++            patch(
++                "registry.services.webhook_service.httpx.AsyncClient",
++                return_value=failing_client,
++            ),
++            patch.object(webhook_send_total, "add") as mock_add,
++        ):
++            await send_registration_webhook(
++                event_type="deletion", registration_type="skill", card_data=SAMPLE_CARD
++            )
++            mock_add.assert_called_once_with(
++                1, {"event_type": "deletion", "outcome": "failed"}
++            )
+diff --git a/tests/unit/test_lifecycle_status.py b/tests/unit/test_lifecycle_status.py
+index bc96e02..4fc8d19 100644
+--- a/tests/unit/test_lifecycle_status.py
++++ b/tests/unit/test_lifecycle_status.py
+@@ -163,3 +163,110 @@ class TestModelDefaults:
+             skill_md_url="https://example.com/SKILL.md",
+         )
+         assert card.status == "active"
++
++
++class TestResolveInitialStatus:
++    """Tests for the LIFECYCLE_INITIAL_STATUS mandate helper (Issue #1330)."""
++
++    def _resolve(self, supplied, mandated):
++        from unittest.mock import patch
++
++        from registry.schemas.registry_card import resolve_initial_status
++
++        with patch("registry.core.config.settings") as mock_settings:
++            mock_settings.lifecycle_initial_status = mandated
++            return resolve_initial_status(supplied)
++
++    def test_mandate_off_defaults_active(self):
++        assert self._resolve(None, "") == "active"
++        assert self._resolve("", "") == "active"
++
++    def test_mandate_off_validates_and_normalizes_supplied(self):
++        assert self._resolve("DRAFT", "") == "draft"
++        assert self._resolve(" Beta ", "") == "beta"
++
++    def test_mandate_off_rejects_unknown_value(self):
++        import pytest
++
++        with pytest.raises(ValueError):
++            self._resolve("bogus", "")
++
++    def test_mandate_on_forces_unspecified(self):
++        assert self._resolve(None, "draft") == "draft"
++        assert self._resolve("", "draft") == "draft"
++        assert self._resolve("  ", "active") == "active"
++
++    def test_mandate_on_accepts_matching_value(self):
++        assert self._resolve("draft", "draft") == "draft"
++        assert self._resolve("DRAFT", "draft") == "draft"
++
++    def test_mandate_on_rejects_mismatch(self):
++        import pytest
++
++        with pytest.raises(ValueError) as excinfo:
++            self._resolve("active", "draft")
++        assert "status must be 'draft'" in str(excinfo.value)
++        assert "got 'active'" in str(excinfo.value)
++
++    def test_mandate_on_still_rejects_unknown_values(self):
++        import pytest
++
++        with pytest.raises(ValueError):
++            self._resolve("bogus", "draft")
++
++
++class TestAgentRegistrationRequestStatusUnset:
++    """Pin the exclude_unset invariant the initial-status mandate relies on.
++
++    AgentRegistrationRequest defaults status to "draft"; the mandate must be
++    able to distinguish "caller omitted status" from "caller sent draft".
++    """
++
++    def test_omitted_status_is_unset(self):
++        from registry.schemas.agent_models import AgentRegistrationRequest
++
++        request = AgentRegistrationRequest(
++            name="t",
++            description="t",
++            url="https://t.example.com",
++        )
++        supplied = set(request.model_dump(exclude_unset=True, by_alias=True).keys())
++        assert "status" not in supplied
++
++    def test_explicit_status_is_set(self):
++        from registry.schemas.agent_models import AgentRegistrationRequest
++
++        request = AgentRegistrationRequest(
++            name="t",
++            description="t",
++            url="https://t.example.com",
++            status="active",
++        )
++        supplied = set(request.model_dump(exclude_unset=True, by_alias=True).keys())
++        assert "status" in supplied
++
++
++class TestResolveStatusFilter:
++    """Tests for the shared status= list-filter helper (Issue #1330)."""
++
++    def test_none_passes_through(self):
++        from registry.api.status_filter_utils import resolve_status_filter
++
++        assert resolve_status_filter(None) is None
++
++    def test_valid_values_normalized(self):
++        from registry.api.status_filter_utils import resolve_status_filter
++
++        assert resolve_status_filter("DRAFT") == "draft"
++        assert resolve_status_filter(" beta ") == "beta"
++
++    def test_invalid_value_raises_400(self):
++        import pytest
++        from fastapi import HTTPException
++
++        from registry.api.status_filter_utils import resolve_status_filter
++
++        with pytest.raises(HTTPException) as excinfo:
++            resolve_status_filter("bogus")
++        assert excinfo.value.status_code == 400
++        assert "Allowed values" in excinfo.value.detail

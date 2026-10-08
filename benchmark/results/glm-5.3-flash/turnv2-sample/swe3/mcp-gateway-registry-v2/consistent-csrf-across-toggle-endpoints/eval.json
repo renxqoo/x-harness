@@ -1,0 +1,48 @@
+{
+  "task": "consistent-csrf-across-toggle-endpoints",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 23,
+      "correctness": 23,
+      "specificity": 24,
+      "risk_awareness": 22,
+      "total": 92,
+      "notes": "Every endpoint claim and file:line citation checks out against v1.0.20: the agent and skill toggles already carry verify_csrf_token_flexible (agent_routes.py:28,987; skill_routes.py:32,835) while POST /servers/toggle (server_routes.py:3005-3011) and the virtual-server toggle (virtual_server_routes.py:453-463) have no CSRF dependency, exactly the asymmetry the issue describes. Strongest aspect is the reproduction section tying nginx Authorization passthrough (docker/nginx_rev_proxy_http_and_https.conf:333,398) and the SPA X-CSRF-Token interceptor (frontend/src/contexts/AuthContext.tsx:74-80) to the m2m 403 symptom. Largest deficiency is that no live 403 was actually demonstrated; the reproduction is inferred from code reading, and acceptance criteria assume rather than cite CI evidence. Unverifiable claim: user-facing traffic ratios and any external reporter/issue references."
+    },
+    "lld": {
+      "completeness": 23,
+      "correctness": 22,
+      "specificity": 24,
+      "risk_awareness": 22,
+      "total": 91,
+      "notes": "The design is implementable verbatim: the verify_csrf_token_for_session wrapper slots onto the existing verify_csrf_token_flexible (csrf.py:107-157) with nginx_proxied_auth correctly cited at dependencies.py:538-686, and the behavior matrix matches the real signatures at server_routes.py:3007-3011 and virtual_server_routes.py:459-463, all confirmed. Strongest aspect is the alternatives analysis (bearer-exemption vs double-submit vs header-only) grounded in the repo's actual dual auth paths. Largest deficiency is citation drift: the nginx /api/ block containing auth_request and the Authorization passthrough sits at nginx_rev_proxy_http_and_https.conf:308-333, not the cited 461-507, though the substantive claim is true; the cited conftest TestSettings pattern does exist (tests/conftest.py:226-237). Unverifiable claim: token-expiry UX assumptions about the external auth server's re-issue behavior."
+    },
+    "review": {
+      "completeness": 22,
+      "correctness": 21,
+      "specificity": 22,
+      "risk_awareness": 23,
+      "total": 88,
+      "notes": "Its factual citations all verify: CORS allow_origin_regex with allow_credentials=True at main.py:837-845, session_max_age_seconds of 8 hours at core/config.py:39, samesite=lax at auth_server/server.py:2744, and Authorization forwarding in the nginx conf at lines 333 and 398. Strongest aspect is elevating a route-introspection consistency audit to a blocking acceptance criterion with an explicit Step 7.5 resolution log. Largest deficiency is that the review endorsed that tripwire without validating FastAPI dependency introspection semantics: in the pinned FastAPI 0.127.0, a sub-Dependant's .name is the parent parameter name (e.g. '_csrf'), so the d.name membership check it mandates can never match the dependency function name and d.call is required. Unverifiable claims: the five reviewers' asserted independent test-suite re-runs."
+    },
+    "testing": {
+      "completeness": 21,
+      "correctness": 17,
+      "specificity": 21,
+      "risk_awareness": 21,
+      "total": 80,
+      "notes": "Coverage design is strong: mount paths for all four nginx_proxied_auth toggles (/agents/{p}/toggle, /skills/{p}/toggle, /servers/toggle, /virtual-servers/{p}/toggle) verify correct against the routers, and the @pytest.mark.api/@pytest.mark.agents markers are registered in tests/conftest.py:109-118 so --strict-markers passes. Largest defect is the flagship audit design itself: dep_names = [d.name for d in route.dependant.dependencies] can never contain 'verify_csrf_token_for_session' because FastAPI 0.127.0 sets sub-dependant name to the parent parameter name ('_csrf'), so this mandatory test fails against correctly-patched code; additionally section 1.1.3's expected detail 'no session' is wrong when token and cookie are both absent, since csrf.py:135-140 raises 'no token provided' before the session check at 142-148 (the shipped patch test asserts the correct string, silently overriding the plan's oracle). Also material: the legacy-route cookie-mode cases (section 1.2.5) were designed but never shipped, and the tests were honestly disclosed as never executed. Unverifiable claim: projected CI runtime figures."
+    },
+    "implementation": {
+      "completeness": 23,
+      "correctness": 19,
+      "specificity": 23,
+      "risk_awareness": 22,
+      "total": 87,
+      "notes": "Every production hunk was verified line-by-line against v1.0.20: the new dependency appends cleanly after csrf.py:157, import insertions are isort-correct (e.g. virtual_server_routes.py:21-28), dependency swaps land exactly at agent_routes.py:987, skill_routes.py:835 and server_routes.py:549 with additions at server_routes.py:3010 and virtual_server_routes.py:461, and the internal toggle (server_routes.py:1328) is correctly left untouched; the bearer-exemption logic is sound and deviates from the LLD only where documented. Largest deficiency is the shipped 633-line test file's central consistency audit, which checks 'verify_csrf_token_for_session' against [d.name for d in route.dependant.dependencies]; FastAPI 0.127.0 populates .name with the parameter name ('_csrf'), so this regression tripwire fails on the very code the patch applies and CI would go red on first run (d.call is the correct attribute, and the companion negative audit passes only accidentally because '_csrf' contains 'csrf'). The double CSRF-dependency override in test_server_routes.py is a well-reasoned, honestly disclosed deviation, as is the admission that no tests were actually run. Unverifiable claim: the artifact's stated git apply and token round-trip results, since this read-only checkout has no environment to execute pytest."
+    }
+  },
+  "task_score": 87.6,
+  "verdict": "A strong, factually accurate submission whose production patch is correct and fully consistent with the design, undermined chiefly by a shipped consistency-audit test that introspects the wrong FastAPI Dependant attribute and would fail against the correctly-patched code, plus a wrong error-oracle in the testing plan and tests that were designed but never executed."
+}

@@ -1,0 +1,174 @@
+diff --git a/README.md b/README.md
+index f7686fe..b2741a4 100644
+--- a/README.md
++++ b/README.md
+@@ -11,7 +11,7 @@
+ 
+ [🚀 Get Running Now](#option-a-pre-built-images-instant-setup) | [macOS Setup Skill](.claude/skills/macos-setup/SKILL.md) | [AWS Workshop Studio](https://catalog.us-east-1.prod.workshops.aws/workshops/0c3265a6-1a4a-467b-ae56-e4d019184b0e/en-US) | [AWS Deployment](terraform/aws-ecs/README.md) | [Quick Start](#quick-start) | [Documentation](docs/) | [Community](#community)
+ 
+-**Demo Videos:** 🎥 [AWS Show & Tell](https://www.youtube.com/watch?v=dk0qVukHLGU) | ⭐ [MCP Registry CLI Demo](https://github.com/user-attachments/assets/98200866-e8bd-4ac3-bad6-c6d42b261dbe) | [Full End-to-End Functionality](https://github.com/user-attachments/assets/5ffd8e81-8885-4412-a4d4-3339bbdba4fb) | [OAuth 3-Legged Authentication](https://github.com/user-attachments/assets/3c3a570b-29e6-4dd3-b213-4175884396cc) | [Dynamic Tool Discovery](https://github.com/user-attachments/assets/cee25b31-61e4-4089-918c-c3757f84518c) | [Agent Skills](https://github.com/user-attachments/assets/5d1f227a-25f8-480d-9ff9-acba2498844b) | [Virtual MCP Servers](https://app.vidcast.io/share/954e6296-f217-4559-8d86-88cec25af763) | [Slide Deck](docs/slides/mcp-gateway-registry-presentation.pdf)
++**Demo Videos:** 📺 [All Demo Videos](docs/demo-videos.md) | 🎥 [AWS Show & Tell](https://www.youtube.com/watch?v=dk0qVukHLGU) | ⭐ [MCP Registry CLI Demo](https://github.com/user-attachments/assets/98200866-e8bd-4ac3-bad6-c6d42b261dbe) | [Full End-to-End Functionality](https://github.com/user-attachments/assets/5ffd8e81-8885-4412-a4d4-3339bbdba4fb) | [OAuth 3-Legged Authentication](https://github.com/user-attachments/assets/3c3a570b-29e6-4dd3-b213-4175884396cc) | [Dynamic Tool Discovery](https://github.com/user-attachments/assets/cee25b31-61e4-4089-918c-c3757f84518c) | [Agent Skills](https://github.com/user-attachments/assets/5d1f227a-25f8-480d-9ff9-acba2498844b) | [Virtual MCP Servers](https://app.vidcast.io/share/954e6296-f217-4559-8d86-88cec25af763) | [Slide Deck](docs/slides/mcp-gateway-registry-presentation.pdf)
+ 
+ </div>
+ 
+diff --git a/docs/demo-videos.md b/docs/demo-videos.md
+new file mode 100644
+index 0000000..c1e0533
+--- /dev/null
++++ b/docs/demo-videos.md
+@@ -0,0 +1,155 @@
++# Demo Videos
++
++This page indexes every demo video in the repository in one place. Videos are grouped by feature area so you can find the one you want; each entry says what the video shows and where else in the repo it is linked. Adding a demo video anywhere in the repo? Please add a row to the Quick Index and a section entry here (see [Maintenance](#maintenance)).
++
++## Quick Index
++
++| Video | Platform | Feature Area |
++|-------|----------|--------------|
++| [AWS Show & Tell](https://www.youtube.com/watch?v=dk0qVukHLGU) | YouTube | Platform overview |
++| [MCP Registry CLI Demo](https://github.com/user-attachments/assets/98200866-e8bd-4ac3-bad6-c6d42b261dbe) | GitHub | Tooling |
++| [Full End-to-End Functionality](https://github.com/user-attachments/assets/5ffd8e81-8885-4412-a4d4-3339bbdba4fb) | GitHub | Platform overview |
++| [MCP Servers, Agents and Skills Registry (title inferred)](https://github.com/user-attachments/assets/97c640db-f78b-4a6c-9662-894f975f66e2) | GitHub | Platform overview |
++| [OAuth 3-Legged Authentication](https://github.com/user-attachments/assets/3c3a570b-29e6-4dd3-b213-4175884396cc) | GitHub | Authentication |
++| [Security Scanning](https://github.com/user-attachments/assets/9450f027-ef7f-4ed7-a55c-ce970bf26fd8) | GitHub | Security |
++| [Dynamic Tool Discovery and Invocation](https://github.com/user-attachments/assets/cee25b31-61e4-4089-918c-c3757f84518c) | GitHub | Tool discovery |
++| [Dynamic Tool Discovery - Agent Integration](https://github.com/user-attachments/assets/cee1847d-ecc1-406b-a83e-ebc80768430d) | GitHub | Tool discovery |
++| [Agent Skills](https://github.com/user-attachments/assets/5d1f227a-25f8-480d-9ff9-acba2498844b) | GitHub | Agent skills |
++| [Virtual MCP Servers](https://app.vidcast.io/share/954e6296-f217-4559-8d86-88cec25af763) | Vidcast | Virtual servers |
++| [ANS Integration Walkthrough](https://app.vidcast.io/share/c2240a78-8899-46ad-9375-6fb0cc1345f3?playerMode=vidcast) | Vidcast | Trust & identity |
++| [AWS Agent Registry Federation](https://app.vidcast.io/share/6d2e0a43-4a68-477e-b5b9-2b3e2aa59f83?playerMode=vidcast) | Vidcast | Federation |
++| [Peer-to-Peer Federation](https://github.com/user-attachments/assets/630ce847-b151-4eaa-9cc9-2ec77797f2b5) | GitHub | Federation |
++
++## Platform Overviews & Getting Started
++
++### AWS Show & Tell
++
++A recorded presentation about the MCP Gateway & Registry project.
++
++Watch: [YouTube](https://www.youtube.com/watch?v=dk0qVukHLGU)
++
++Also referenced in: [README](../README.md)
++
++### MCP Registry CLI Demo
++
++A walkthrough of the MCP Registry command-line client.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/98200866-e8bd-4ac3-bad6-c6d42b261dbe)
++
++Also referenced in: [README](../README.md)
++
++### Full End-to-End Functionality
++
++A walkthrough of the platform's full end-to-end functionality.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/5ffd8e81-8885-4412-a4d4-3339bbdba4fb)
++
++Also referenced in: [README](../README.md), [docs/index.md](index.md), [release notes v1.0.3](../release-notes/v1.0.3.md)
++
++### MCP Servers, Agents and Skills Registry (title inferred)
++
++Shows how MCP Servers, A2A Agents, and External Registries work together for dynamic tool discovery. The link in the README is a bare URL with no title, so this title is inferred from the surrounding section heading.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/97c640db-f78b-4a6c-9662-894f975f66e2)
++
++Also referenced in: [README](../README.md)
++
++## Authentication & Security
++
++### OAuth 3-Legged Authentication
++
++A demonstration of the OAuth 3-legged authentication flow.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/3c3a570b-29e6-4dd3-b213-4175884396cc)
++
++Also referenced in: [README](../README.md), [docs/index.md](index.md), [release notes v1.0.3](../release-notes/v1.0.3.md)
++
++### Security Scanning
++
++An introduction to automated supply chain security scanning for MCP servers, A2A agents, and agent skills.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/9450f027-ef7f-4ed7-a55c-ce970bf26fd8)
++
++Also referenced in: [docs/security-scanner.md](security-scanner.md)
++
++## Dynamic Tool Discovery
++
++Two different demo videos exist for this feature; both are listed here.
++
++### Dynamic Tool Discovery and Invocation
++
++The Dynamic Tool Discovery & Invocation demo referenced from the README and the docs landing page.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/cee25b31-61e4-4089-918c-c3757f84518c)
++
++Also referenced in: [README](../README.md), [docs/index.md](index.md), [release notes v1.0.3](../release-notes/v1.0.3.md)
++
++### Dynamic Tool Discovery - Agent Integration
++
++Shows AI agents using dynamic tool discovery autonomously: the agent has access to both `intelligent_tool_finder` and `invoke_mcp_tool` and discovers and executes new capabilities on demand.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/cee1847d-ecc1-406b-a83e-ebc80768430d)
++
++Also referenced in: [docs/dynamic-tool-discovery.md](dynamic-tool-discovery.md) (embedded twice: Agent Integration section and Demo section)
++
++## Agent Skills & Virtual MCP Servers
++
++### Agent Skills
++
++Covers registering, managing, and using Agent Skills in the registry.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/5d1f227a-25f8-480d-9ff9-acba2498844b)
++
++Also referenced in: [README](../README.md), [docs/agent-skills-operational-guide.md](agent-skills-operational-guide.md)
++
++### Virtual MCP Servers
++
++Demonstrates Virtual MCP Server creation and management through the web UI. Virtual servers aggregate tools from multiple backend MCP servers into a single unified endpoint.
++
++Watch: [Vidcast](https://app.vidcast.io/share/954e6296-f217-4559-8d86-88cec25af763)
++
++Also referenced in: [README](../README.md), [docs/virtual-server-operations.md](virtual-server-operations.md)
++
++## Federation & Integrations
++
++### ANS Integration Walkthrough
++
++Covers the Agent Name Service integration architecture, configuration, API usage, and operational procedures.
++
++Watch: [Vidcast](https://app.vidcast.io/share/c2240a78-8899-46ad-9375-6fb0cc1345f3?playerMode=vidcast)
++
++Also referenced in: [README](../README.md), [docs/design/ans-integration.md](design/ans-integration.md)
++
++### AWS Agent Registry Federation
++
++How to federate MCP servers, A2A agents, and agent skills from Amazon Bedrock AgentCore registries into the MCP Gateway Registry.
++
++Watch: [Vidcast](https://app.vidcast.io/share/6d2e0a43-4a68-477e-b5b9-2b3e2aa59f83?playerMode=vidcast)
++
++Also referenced in: [docs/aws-agent-registry-federation.md](aws-agent-registry-federation.md)
++
++### Peer-to-Peer Federation
++
++Setting up and operating peer-to-peer federation between MCP Gateway Registry instances.
++
++Watch: [GitHub](https://github.com/user-attachments/assets/630ce847-b151-4eaa-9cc9-2ec77797f2b5)
++
++Also referenced in: [docs/federation-operational-guide.md](federation-operational-guide.md)
++
++## Related Resources
++
++- [Slide deck](../docs/slides/mcp-gateway-registry-presentation.pdf) (linked from the README header; not a video)
++- Animated GIF walkthroughs referenced from docs pages (not indexed as videos): `docs/img/MCP_tools.gif`, `docs/img/dynamic-tool-discovery-demo.gif`, `docs/img/iam.gif`, `docs/img/auth-scheme.gif`, `docs/img/mcp-server-versioning.gif`
++- The three launch videos (Full End-to-End, OAuth 3-Legged Authentication, Dynamic Tool Discovery) also appear in [release notes v1.0.3](../release-notes/v1.0.3.md)
++
++## Maintenance
++
++- This inventory was built by scanning the repository's markdown files for video URLs. To regenerate it:
++
++  ```
++  grep -rEoh 'https://(www\.youtube\.com/watch\?v=[A-Za-z0-9_-]+|app\.vidcast\.io/share/[A-Za-z0-9_-]+(\?playerMode=vidcast)?|github\.com/user-attachments/assets/[A-Za-z0-9-]+)' --include='*.md' . | sort -u
++  ```
++
++  Every URL the scan returns must appear on this page; if you add a new demo video anywhere in the repo, add one row to the Quick Index and one section entry here.
++- Follow-ups tracked separately: add `- Demo Videos: demo-videos.md` to the nav in `mkdocs.yml` so the page appears in the rendered docs site; fix the broken `#demo-videos` anchor link in `docs/index.md` (it points to a README anchor that does not exist).
++- Last verified against v1.24.3.

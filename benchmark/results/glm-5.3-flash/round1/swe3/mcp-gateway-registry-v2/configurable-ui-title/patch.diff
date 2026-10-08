@@ -1,0 +1,688 @@
+diff --git a/.env.example b/.env.example
+index e5d10aa..4b81767 100644
+--- a/.env.example
++++ b/.env.example
+@@ -69,6 +69,17 @@ REGISTRY_CONTACT_URL=
+ # Default: full (uncomment to change)
+ # REGISTRY_MODE=full
+ 
++# =============================================================================
++# UI BRANDING CONFIGURATION
++# =============================================================================
++
++# UI_TITLE overrides the title shown in the web UI header and auth pages.
++# When unset, the title is derived from DEPLOYMENT_MODE:
++#   - with-gateway (default): "AI Gateway & Registry"
++#   - registry-only: "AI Registry"
++# Set to your own product name to rebrand the deployment, e.g. UI_TITLE="Acme AI Platform"
++# UI_TITLE=
++
+ # Tab visibility overrides (AND-ed with REGISTRY_MODE feature flags)
+ # These control which tabs are shown in the UI without affecting backend APIs.
+ # REGISTRY_MODE is the master control — SHOW_*_TAB can only further restrict, never expand.
+diff --git a/charts/mcp-gateway-registry-stack/values.yaml b/charts/mcp-gateway-registry-stack/values.yaml
+index 520b697..7f2fc9e 100644
+--- a/charts/mcp-gateway-registry-stack/values.yaml
++++ b/charts/mcp-gateway-registry-stack/values.yaml
+@@ -212,6 +212,10 @@ registry:
+     # Deployment mode: with-gateway (nginx integration) or registry-only (catalog only)
+     deploymentMode: with-gateway
+ 
++    # Custom UI title. When empty, derived from deploymentMode:
++    # "AI Gateway & Registry" (with-gateway) or "AI Registry" (registry-only)
++    uiTitle: ""
++
+     # Registry mode: full, skills-only, mcp-servers-only, agents-only
+     registryMode: full
+ 
+diff --git a/charts/registry/templates/_helpers.tpl b/charts/registry/templates/_helpers.tpl
+index 2d4a4fb..8d5f4b7 100644
+--- a/charts/registry/templates/_helpers.tpl
++++ b/charts/registry/templates/_helpers.tpl
+@@ -26,6 +26,7 @@ inject one of these via extraEnv gets a clear template-render error.
+ - SHOW_VIRTUAL_SERVERS_TAB
+ - SHOW_SKILLS_TAB
+ - SHOW_AGENTS_TAB
++- UI_TITLE
+ - AWS_REGISTRY_FEDERATION_ENABLED
+ - KEYCLOAK_ADMIN_PASSWORD
+ - ENTRA_CLIENT_SECRET
+diff --git a/charts/registry/templates/deployment.yaml b/charts/registry/templates/deployment.yaml
+index a03a4b6..7e5cb21 100644
+--- a/charts/registry/templates/deployment.yaml
++++ b/charts/registry/templates/deployment.yaml
+@@ -89,6 +89,10 @@ spec:
+               value: {{ .Values.app.showSkillsTab | default true | quote }}
+             - name: SHOW_AGENTS_TAB
+               value: {{ .Values.app.showAgentsTab | default true | quote }}
++            {{- with .Values.app.uiTitle }}
++            - name: UI_TITLE
++              value: {{ . | quote }}
++            {{- end }}
+             {{- if .Values.awsRegistry.federationEnabled }}
+             - name: AWS_REGISTRY_FEDERATION_ENABLED
+               value: "true"
+diff --git a/charts/registry/tests/extra_env_test.yaml b/charts/registry/tests/extra_env_test.yaml
+index f4fdd6f..ccb91bf 100644
+--- a/charts/registry/tests/extra_env_test.yaml
++++ b/charts/registry/tests/extra_env_test.yaml
+@@ -48,11 +48,10 @@ tests:
+       # is env[6]; user extraEnv entries are appended at the end.
+       #
+       # NOTE: The indices below assume global.authProvider.type=keycloak
+-      # (set at the suite level) and awsRegistry.federationEnabled=false.
+-      # Enabling federation or changing the auth provider shifts these
+-      # indices. If you add a new conditional env block between the
+-      # SHOW_*_TAB entries and KEYCLOAK_ADMIN_PASSWORD, update the
+-      # expected index below.
++      # (set at the suite level), awsRegistry.federationEnabled=false, and
++      # app.uiTitle unset (the UI_TITLE entry is conditional and renders
++      # nothing by default). Enabling federation, setting app.uiTitle, or
++      # changing the auth provider shifts these indices.
+       - equal:
+           path: spec.template.spec.containers[0].env[0].name
+           value: DEPLOYMENT_MODE
+@@ -69,6 +68,32 @@ tests:
+           path: spec.template.spec.containers[0].env[8].name
+           value: MY_SECRET_VAR
+ 
++  - it: does not render UI_TITLE when app.uiTitle is unset
++    asserts:
++      - notContains:
++          path: spec.template.spec.containers[0].env
++          content:
++            name: UI_TITLE
++
++  - it: renders UI_TITLE from app.uiTitle and shifts conditional env indices
++    set:
++      app:
++        uiTitle: Acme
++    asserts:
++      - contains:
++          path: spec.template.spec.containers[0].env
++          content:
++            name: UI_TITLE
++            value: "Acme"
++      # UI_TITLE lands right after SHOW_AGENTS_TAB (env[5]), pushing the
++      # keycloak password to env[7] under this suite's keycloak preset.
++      - equal:
++          path: spec.template.spec.containers[0].env[6].name
++          value: UI_TITLE
++      - equal:
++          path: spec.template.spec.containers[0].env[7].name
++          value: KEYCLOAK_ADMIN_PASSWORD
++
+   - it: appends extraEnvFrom entries after chart-managed envFrom sources
+     set:
+       extraEnvFrom:
+@@ -113,6 +138,15 @@ tests:
+       - failedTemplate:
+           errorPattern: "\"DEPLOYMENT_MODE\" is a reserved variable"
+ 
++  - it: fails when extraEnv contains an env-block reserved name (UI_TITLE)
++    set:
++      extraEnv:
++        - name: UI_TITLE
++          value: "Acme"
++    asserts:
++      - failedTemplate:
++          errorPattern: "\"UI_TITLE\" is a reserved variable"
++
+   - it: fails when extraEnv contains an env-block reserved name (SHOW_SKILLS_TAB)
+     set:
+       extraEnv:
+diff --git a/charts/registry/values.yaml b/charts/registry/values.yaml
+index dd075a0..6668d0b 100644
+--- a/charts/registry/values.yaml
++++ b/charts/registry/values.yaml
+@@ -103,6 +103,10 @@ app:
+   # Deployment mode: with-gateway (nginx integration) or registry-only (catalog only)
+   deploymentMode: with-gateway
+ 
++  # Custom UI title. When empty, derived from deploymentMode:
++  # "AI Gateway & Registry" (with-gateway) or "AI Registry" (registry-only)
++  uiTitle: ""
++
+   # Registry mode: full, skills-only, mcp-servers-only, agents-only
+   registryMode: full
+ 
+diff --git a/docker-compose.podman.yml b/docker-compose.podman.yml
+index 359bc8d..ae3d770 100644
+--- a/docker-compose.podman.yml
++++ b/docker-compose.podman.yml
+@@ -18,6 +18,7 @@ services:
+       - SHOW_VIRTUAL_SERVERS_TAB=${SHOW_VIRTUAL_SERVERS_TAB:-true}
+       - SHOW_SKILLS_TAB=${SHOW_SKILLS_TAB:-true}
+       - SHOW_AGENTS_TAB=${SHOW_AGENTS_TAB:-true}
++      - UI_TITLE=${UI_TITLE:-}
+       - GATEWAY_ADDITIONAL_SERVER_NAMES=${GATEWAY_ADDITIONAL_SERVER_NAMES:-}
+       # Registry Card Configuration
+       - REGISTRY_URL=${REGISTRY_URL:-http://localhost}
+diff --git a/docker-compose.prebuilt.yml b/docker-compose.prebuilt.yml
+index 24d1d13..9f40375 100644
+--- a/docker-compose.prebuilt.yml
++++ b/docker-compose.prebuilt.yml
+@@ -23,6 +23,7 @@ services:
+       - SHOW_VIRTUAL_SERVERS_TAB=${SHOW_VIRTUAL_SERVERS_TAB:-true}
+       - SHOW_SKILLS_TAB=${SHOW_SKILLS_TAB:-true}
+       - SHOW_AGENTS_TAB=${SHOW_AGENTS_TAB:-true}
++      - UI_TITLE=${UI_TITLE:-}
+       - GATEWAY_ADDITIONAL_SERVER_NAMES=${GATEWAY_ADDITIONAL_SERVER_NAMES:-}
+       # Registry Card Configuration
+       - REGISTRY_URL=${REGISTRY_URL:-http://localhost}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index a84e837..c1a9412 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -84,6 +84,7 @@ services:
+       - SHOW_VIRTUAL_SERVERS_TAB=${SHOW_VIRTUAL_SERVERS_TAB:-true}
+       - SHOW_SKILLS_TAB=${SHOW_SKILLS_TAB:-true}
+       - SHOW_AGENTS_TAB=${SHOW_AGENTS_TAB:-true}
++      - UI_TITLE=${UI_TITLE:-}
+       - GATEWAY_ADDITIONAL_SERVER_NAMES=${GATEWAY_ADDITIONAL_SERVER_NAMES:-}
+       # Registry Card Configuration
+       - REGISTRY_URL=${REGISTRY_URL:-http://localhost}
+diff --git a/frontend/src/components/Layout.tsx b/frontend/src/components/Layout.tsx
+index b849a00..4bf87be 100644
+--- a/frontend/src/components/Layout.tsx
++++ b/frontend/src/components/Layout.tsx
+@@ -11,6 +11,7 @@ import {
+ import Sidebar from './Sidebar';
+ import UptimeDisplay from './UptimeDisplay';
+ import { useServerStats } from '../hooks/useServerStats';
++import { useRegistryConfig } from '../hooks/useRegistryConfig';
+ import { useAuth } from '../contexts/AuthContext';
+ import { apiUrl } from '../utils/basePath';
+ import logo from '../assets/logo.png';
+@@ -23,6 +24,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
+   const [sidebarOpen, setSidebarOpen] = useState(true);
+   const [version, setVersion] = useState<string | null>(null);
+   const { user, logout } = useAuth();
++  const { config } = useRegistryConfig();
+   const { stats, activeFilter, setActiveFilter } = useServerStats();
+   const [availableTags, setAvailableTags] = useState<string[]>([]);
+   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+@@ -93,7 +95,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
+                     className="h-8 w-8 dark:brightness-0 dark:invert"
+                   />
+                   <span className="ml-2 text-xl font-bold text-gray-900 dark:text-white">
+-                    AI Gateway & Registry
++                    {config?.ui_title ?? 'AI Gateway & Registry'}
+                   </span>
+                 </Link>
+               </div>
+diff --git a/frontend/src/components/UptimeDisplay.tsx b/frontend/src/components/UptimeDisplay.tsx
+index d57de60..4984386 100644
+--- a/frontend/src/components/UptimeDisplay.tsx
++++ b/frontend/src/components/UptimeDisplay.tsx
+@@ -6,6 +6,7 @@ import {
+   SystemStats,
+ } from '../types/stats';
+ import { apiUrl } from '../utils/basePath';
++import { useRegistryConfig } from '../hooks/useRegistryConfig';
+ 
+ 
+ /**
+@@ -28,6 +29,7 @@ const UptimeDisplay: React.FC = () => {
+   const [stats, setStats] = useState<SystemStats | null>(null);
+   const [detection, setDetection] = useState<TelemetryDetection | null>(null);
+   const [error, setError] = useState<boolean>(false);
++  const { config } = useRegistryConfig();
+ 
+ 
+   useEffect(() => {
+@@ -131,7 +133,7 @@ const UptimeDisplay: React.FC = () => {
+       <div className="absolute right-0 top-full mt-2 w-80 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg ring-1 ring-black ring-opacity-5 p-4">
+           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3">
+-            AI Gateway and Registry
++            {config?.ui_title ?? 'AI Gateway & Registry'}
+           </h3>
+ 
+           {/* Version & Start Time */}
+diff --git a/frontend/src/hooks/useRegistryConfig.ts b/frontend/src/hooks/useRegistryConfig.ts
+index 6040492..28c7e14 100644
+--- a/frontend/src/hooks/useRegistryConfig.ts
++++ b/frontend/src/hooks/useRegistryConfig.ts
+@@ -5,6 +5,7 @@ interface RegistryConfig {
+   deployment_mode: 'with-gateway' | 'registry-only';
+   registry_mode: 'full' | 'skills-only' | 'mcp-servers-only' | 'agents-only';
+   nginx_updates_enabled: boolean;
++  ui_title: string;
+   features: {
+     mcp_servers: boolean;
+     agents: boolean;
+@@ -19,6 +20,7 @@ const DEFAULT_CONFIG: RegistryConfig = {
+   deployment_mode: 'with-gateway',
+   registry_mode: 'full',
+   nginx_updates_enabled: true,
++  ui_title: 'AI Gateway & Registry',
+   features: {
+     mcp_servers: true,
+     agents: true,
+diff --git a/frontend/src/pages/Login.tsx b/frontend/src/pages/Login.tsx
+index e90d940..84db3af 100644
+--- a/frontend/src/pages/Login.tsx
++++ b/frontend/src/pages/Login.tsx
+@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
+ import { useSearchParams } from 'react-router-dom';
+ import axios from 'axios';
+ import { ExclamationTriangleIcon } from '@heroicons/react/24/outline';
++import { useRegistryConfig } from '../hooks/useRegistryConfig';
+ 
+ interface OAuthProvider {
+   name: string;
+@@ -13,6 +14,7 @@ const Login: React.FC = () => {
+   const [error, setError] = useState('');
+   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
+   const [authServerUrl, setAuthServerUrl] = useState<string>('');
++  const { config } = useRegistryConfig();
+   const [searchParams] = useSearchParams();
+ 
+   useEffect(() => {
+@@ -73,7 +75,7 @@ const Login: React.FC = () => {
+     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+       <div className="sm:mx-auto sm:w-full sm:max-w-md">
+         <h2 className="text-center text-3xl font-bold text-gray-900 dark:text-white">
+-          Sign in to AI Gateway & Registry
++          Sign in to {config?.ui_title ?? 'AI Gateway & Registry'}
+         </h2>
+         <p className="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
+           Access your AI management dashboard
+diff --git a/frontend/src/pages/Logout.tsx b/frontend/src/pages/Logout.tsx
+index 501e372..63579e2 100644
+--- a/frontend/src/pages/Logout.tsx
++++ b/frontend/src/pages/Logout.tsx
+@@ -1,9 +1,11 @@
+ import React, { useEffect } from 'react';
+ import { useNavigate } from 'react-router-dom';
+ import { CheckCircleIcon } from '@heroicons/react/24/outline';
++import { useRegistryConfig } from '../hooks/useRegistryConfig';
+ 
+ const Logout: React.FC = () => {
+   const navigate = useNavigate();
++  const { config } = useRegistryConfig();
+ 
+   useEffect(() => {
+     // Auto redirect to login after 5 seconds
+@@ -52,7 +54,7 @@ const Logout: React.FC = () => {
+ 
+         <div className="mt-6 text-center">
+           <p className="text-xs text-gray-500 dark:text-gray-400">
+-            AI Gateway & Registry - Secure Access Management
++            {config?.ui_title ?? 'AI Gateway & Registry'} - Secure Access Management
+           </p>
+         </div>
+       </div>
+diff --git a/registry/api/config_routes.py b/registry/api/config_routes.py
+index 8b6dad8..92ebe9a 100644
+--- a/registry/api/config_routes.py
++++ b/registry/api/config_routes.py
+@@ -39,6 +39,8 @@ CONFIG_GROUPS: dict[str, dict[str, Any]] = {
+         "fields": [
+             ("deployment_mode", "Deployment Mode", False),
+             ("registry_mode", "Registry Mode", False),
++            ("ui_title", "UI Title", False),
++            ("effective_ui_title", "UI Title (Effective)", False),
+             ("nginx_updates_enabled", "Nginx Updates Enabled", False),
+             ("show_servers_tab", "Show MCP Servers Tab", False),
+             ("show_virtual_servers_tab", "Show Virtual MCP Servers Tab", False),
+@@ -623,6 +625,7 @@ async def get_config() -> dict[str, Any]:
+         "deployment_mode": settings.deployment_mode.value,
+         "registry_mode": settings.registry_mode.value,
+         "nginx_updates_enabled": settings.nginx_updates_enabled,
++        "ui_title": settings.effective_ui_title,
+         "registration_gate_enabled": settings.registration_gate_enabled,
+         "asset_lifecycle_statuses": [s.value for s in LifecycleStatus],
+         "features": {
+diff --git a/registry/core/config.py b/registry/core/config.py
+index 40b9fcd..29a88e7 100644
+--- a/registry/core/config.py
++++ b/registry/core/config.py
+@@ -503,6 +503,17 @@ class Settings(BaseSettings):
+     show_skills_tab: bool = Field(default=True, description="Show Skills tab in UI")
+     show_agents_tab: bool = Field(default=True, description="Show Agents tab in UI")
+ 
++    # UI branding
++    ui_title: str | None = Field(
++        default=None,
++        description=(
++            "Custom UI title. When set, the UI shows this exact string. "
++            "When unset, the title is derived from DEPLOYMENT_MODE: "
++            "'AI Gateway & Registry' for with-gateway, 'AI Registry' for "
++            "registry-only. Set via UI_TITLE."
++        ),
++    )
++
+     # Telemetry settings (anonymous usage tracking)
+     telemetry_enabled: bool = Field(
+         default=True,
+@@ -545,6 +556,15 @@ class Settings(BaseSettings):
+         """Check if nginx updates should be performed."""
+         return self.deployment_mode == DeploymentMode.WITH_GATEWAY
+ 
++    @property
++    def effective_ui_title(self) -> str:
++        """UI title: UI_TITLE when set (non-blank), else derived from DEPLOYMENT_MODE."""
++        if self.ui_title and self.ui_title.strip():
++            return self.ui_title
++        if self.deployment_mode == DeploymentMode.REGISTRY_ONLY:
++            return "AI Registry"
++        return "AI Gateway & Registry"
++
+     # Storage Backend Configuration
+     storage_backend: str = Field(
+         default="file",
+diff --git a/terraform/aws-ecs/main.tf b/terraform/aws-ecs/main.tf
+index c25fa45..43c6e71 100755
+--- a/terraform/aws-ecs/main.tf
++++ b/terraform/aws-ecs/main.tf
+@@ -234,6 +234,7 @@ module "mcp_gateway" {
+   # Deployment mode configuration
+   deployment_mode = var.deployment_mode
+   registry_mode   = var.registry_mode
++  ui_title        = var.ui_title
+ 
+   # Tab visibility overrides
+   show_servers_tab         = var.show_servers_tab
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+index 4f0edae..3b02329 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+@@ -1082,6 +1082,14 @@ module "ecs_service_registry" {
+             name  = "MONGODB_CONNECTION_STRING"
+             value = var.mongodb_connection_string
+           }
++        ] : [],
++        # UI branding (issue #984): only emitted when set, keeping task
++        # definitions unchanged for deployments that do not use it.
++        var.ui_title != "" ? [
++          {
++            name  = "UI_TITLE"
++            value = var.ui_title
++          }
+         ] : []
+       )
+ 
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/variables.tf b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+index fa5ab27..ff3120d 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/variables.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+@@ -979,6 +979,12 @@ variable "registry_mode" {
+   default     = "full"
+ }
+ 
++variable "ui_title" {
++  description = "Custom UI title shown in the registry web UI. When empty (default), derived from deployment_mode: 'AI Gateway & Registry' for with-gateway, 'AI Registry' for registry-only."
++  type        = string
++  default     = ""
++}
++
+ variable "show_servers_tab" {
+   description = "Show the MCP Servers tab in the UI. AND-ed with registry_mode."
+   type        = bool
+diff --git a/terraform/aws-ecs/terraform.tfvars.example b/terraform/aws-ecs/terraform.tfvars.example
+index ba721ac..feb05ab 100755
+--- a/terraform/aws-ecs/terraform.tfvars.example
++++ b/terraform/aws-ecs/terraform.tfvars.example
+@@ -692,6 +692,11 @@ registry_api_token = "m3zT65wREARMVDToKosg_DgNkKqS_434hNxy3sslGPY"
+ # Default: "with-gateway" (uncomment to change)
+ deployment_mode = "registry-only"
+ 
++# UI_TITLE overrides the title shown in the registry web UI. When empty,
++# the title is derived from deployment_mode ("AI Gateway & Registry" for
++# with-gateway, "AI Registry" for registry-only).
++# ui_title = "Acme AI Platform"
++
+ # REGISTRY_MODE controls which features are enabled (informational - for UI feature flags)
+ # This setting affects the /api/config response which the frontend can use
+ # to show/hide navigation elements. Currently informational only - all APIs remain active.
+diff --git a/terraform/aws-ecs/variables.tf b/terraform/aws-ecs/variables.tf
+index adf1b06..0f83d93 100755
+--- a/terraform/aws-ecs/variables.tf
++++ b/terraform/aws-ecs/variables.tf
+@@ -973,6 +973,16 @@ variable "deployment_mode" {
+   }
+ }
+ 
++variable "ui_title" {
++  description = <<-EOT
++    Custom UI title shown in the registry web UI. When empty (default),
++    the title is derived from deployment_mode: "AI Gateway & Registry"
++    for with-gateway, "AI Registry" for registry-only.
++  EOT
++  type        = string
++  default     = ""
++}
++
+ variable "registry_mode" {
+   description = <<-EOT
+     Controls which features are enabled (informational - for UI feature flags).
+diff --git a/tests/unit/api/test_config_routes_title.py b/tests/unit/api/test_config_routes_title.py
+new file mode 100644
+index 0000000..6cad44a
+--- /dev/null
++++ b/tests/unit/api/test_config_routes_title.py
+@@ -0,0 +1,136 @@
++"""Unit tests for UI_TITLE exposure in the configuration API.
++
++Covers the two must-see surfaces from issue #984:
++- GET /api/config includes the effective ``ui_title``.
++- GET /api/config/full (System Config panel) lists ``ui_title`` and
++  ``effective_ui_title`` in the deployment group, unmasked.
++"""
++
++from unittest.mock import patch
++
++import pytest
++from fastapi.testclient import TestClient
++
++from registry.api import config_routes
++from registry.core.config import Settings
++
++
++# =============================================================================
++# FIXTURES
++# =============================================================================
++
++
++@pytest.fixture
++def client():
++    """TestClient for the config router with auth bypassed."""
++    from registry.main import app
++
++    with TestClient(app) as test_client:
++        with patch("registry.api.config_routes.enhanced_auth", return_value=None):
++            yield test_client
++
++
++@pytest.fixture
++def gateway_settings(monkeypatch, tmp_path):
++    """Settings with UI_TITLE unset, default with-gateway mode."""
++    monkeypatch.delenv("UI_TITLE", raising=False)
++    monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
++    monkeypatch.chdir(tmp_path)
++    return Settings()
++
++
++@pytest.fixture
++def registry_only_settings(monkeypatch, tmp_path):
++    """Settings with UI_TITLE unset, registry-only mode."""
++    monkeypatch.delenv("UI_TITLE", raising=False)
++    monkeypatch.setenv("DEPLOYMENT_MODE", "registry-only")
++    monkeypatch.chdir(tmp_path)
++    return Settings()
++
++
++@pytest.fixture
++def custom_title_settings(monkeypatch, tmp_path):
++    """Settings with an explicit UI_TITLE override."""
++    monkeypatch.setenv("UI_TITLE", "Acme AI Platform")
++    monkeypatch.setenv("DEPLOYMENT_MODE", "registry-only")
++    monkeypatch.chdir(tmp_path)
++    return Settings()
++
++
++# =============================================================================
++# TESTS: GET /api/config
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++class TestConfigEndpointUiTitle:
++    """The public config endpoint exposes the effective UI title."""
++
++    def test_ui_title_key_present(self, client):
++        """The response includes a ui_title key."""
++        response = client.get("/api/config")
++        assert response.status_code == 200
++        assert "ui_title" in response.json()
++
++    def test_ui_title_derived_with_gateway(self, client, gateway_settings):
++        """Unset UI_TITLE in with-gateway mode yields the gateway title."""
++        with patch.object(config_routes, "settings", gateway_settings):
++            response = client.get("/api/config")
++        assert response.status_code == 200
++        assert response.json()["ui_title"] == "AI Gateway & Registry"
++
++    def test_ui_title_derived_registry_only(self, client, registry_only_settings):
++        """Unset UI_TITLE in registry-only mode yields the registry title."""
++        with patch.object(config_routes, "settings", registry_only_settings):
++            response = client.get("/api/config")
++        assert response.status_code == 200
++        assert response.json()["ui_title"] == "AI Registry"
++
++    def test_ui_title_explicit_override(self, client, custom_title_settings):
++        """Explicit UI_TITLE is returned verbatim."""
++        with patch.object(config_routes, "settings", custom_title_settings):
++            response = client.get("/api/config")
++        assert response.status_code == 200
++        assert response.json()["ui_title"] == "Acme AI Platform"
++
++
++# =============================================================================
++# TESTS: GET /api/config/full (System Config panel)
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++class TestConfigFullUiTitle:
++    """The admin config panel lists both the configured and effective title."""
++
++    def _deployment_fields(self, client):
++        response = client.get("/api/config/full")
++        assert response.status_code == 200
++        groups = response.json()["groups"]
++        deployment = next(g for g in groups if g["id"] == "deployment")
++        return {f["key"]: f for f in deployment["fields"]}
++
++    def test_ui_title_entries_present_and_unmasked(self, client, gateway_settings):
++        """Both entries exist in the deployment group and are not masked."""
++        with patch.object(config_routes, "settings", gateway_settings):
++            fields = self._deployment_fields(client)
++        assert "ui_title" in fields
++        assert "effective_ui_title" in fields
++        assert fields["ui_title"]["is_masked"] is False
++        assert fields["effective_ui_title"]["is_masked"] is False
++
++    def test_effective_title_shown_when_derived(self, client, gateway_settings):
++        """When UI_TITLE is unset, ui_title shows (not set) and the effective entry shows the derived default."""
++        with patch.object(config_routes, "settings", gateway_settings):
++            fields = self._deployment_fields(client)
++        assert fields["ui_title"]["raw_value"] in (None, "")
++        assert fields["effective_ui_title"]["raw_value"] == "AI Gateway & Registry"
++
++    def test_explicit_title_shown(self, client, custom_title_settings):
++        """When UI_TITLE is set, both entries show the custom value."""
++        with patch.object(config_routes, "settings", custom_title_settings):
++            fields = self._deployment_fields(client)
++        assert fields["ui_title"]["raw_value"] == "Acme AI Platform"
++        assert fields["effective_ui_title"]["raw_value"] == "Acme AI Platform"
+diff --git a/tests/unit/core/test_config.py b/tests/unit/core/test_config.py
+index 532e417..0d4a88f 100644
+--- a/tests/unit/core/test_config.py
++++ b/tests/unit/core/test_config.py
+@@ -150,6 +150,81 @@ class TestSettingsInstantiation:
+         )
+ 
+ 
++# =============================================================================
++# TEST CLASS: UI Title Configuration
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.core
++class TestUiTitleConfiguration:
++    """Test UI_TITLE configuration and deployment-mode-aware derivation."""
++
++    def test_ui_title_default_is_none(self, monkeypatch, tmp_path) -> None:
++        """UI_TITLE unset means ui_title is None."""
++        monkeypatch.delenv("UI_TITLE", raising=False)
++        monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
++        monkeypatch.chdir(tmp_path)
++
++        settings = Settings()
++
++        assert settings.ui_title is None
++
++    def test_effective_ui_title_default_with_gateway(self, monkeypatch, tmp_path) -> None:
++        """Unset UI_TITLE with the default mode yields the gateway-and-registry title."""
++        monkeypatch.delenv("UI_TITLE", raising=False)
++        monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
++        monkeypatch.chdir(tmp_path)
++
++        settings = Settings()
++
++        assert settings.effective_ui_title == "AI Gateway & Registry"
++
++    def test_effective_ui_title_registry_only_derived(self, monkeypatch, tmp_path) -> None:
++        """Unset UI_TITLE in registry-only mode yields the registry-only title."""
++        monkeypatch.delenv("UI_TITLE", raising=False)
++        monkeypatch.setenv("DEPLOYMENT_MODE", "registry-only")
++        monkeypatch.chdir(tmp_path)
++
++        settings = Settings()
++
++        assert settings.deployment_mode.value == "registry-only"
++        assert settings.effective_ui_title == "AI Registry"
++
++    def test_effective_ui_title_explicit_override(self, monkeypatch, tmp_path) -> None:
++        """Explicit UI_TITLE wins over the mode-derived default."""
++        monkeypatch.setenv("UI_TITLE", "Acme AI Platform")
++        monkeypatch.setenv("DEPLOYMENT_MODE", "registry-only")
++        monkeypatch.chdir(tmp_path)
++
++        settings = Settings()
++
++        assert settings.ui_title == "Acme AI Platform"
++        assert settings.effective_ui_title == "Acme AI Platform"
++
++    def test_effective_ui_title_blank_string_treated_as_unset(self, monkeypatch, tmp_path) -> None:
++        """Empty (and whitespace-only) UI_TITLE falls back to the derived default."""
++        monkeypatch.setenv("UI_TITLE", "")
++        monkeypatch.setenv("DEPLOYMENT_MODE", "registry-only")
++        monkeypatch.chdir(tmp_path)
++
++        settings = Settings()
++
++        assert settings.effective_ui_title == "AI Registry"
++
++    def test_effective_ui_title_whitespace_only_treated_as_unset(
++        self, monkeypatch, tmp_path
++    ) -> None:
++        """Whitespace-only UI_TITLE falls back to the derived default."""
++        monkeypatch.setenv("UI_TITLE", "   ")
++        monkeypatch.delenv("DEPLOYMENT_MODE", raising=False)
++        monkeypatch.chdir(tmp_path)
++
++        settings = Settings()
++
++        assert settings.effective_ui_title == "AI Gateway & Registry"
++
++
+ # =============================================================================
+ # TEST CLASS: Environment Variable Loading
+ # =============================================================================

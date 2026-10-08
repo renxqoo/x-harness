@@ -1,0 +1,48 @@
+{
+  "task": "lifecycle-workflow-webhooks",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 21,
+      "correctness": 22,
+      "specificity": 21,
+      "risk_awareness": 19,
+      "total": 83,
+      "notes": "Four crisply separated gaps (no scan event, unsigned webhooks, no initial-status mandate, no register/promote permission split) each verified against the repo: the polling endpoint GET /api/servers/{path}/security-scan exists (server_routes.py:5047), scan wrappers swallow exceptions exactly as claimed, and mutations gate under modify_service (agent_routes.py:1909). Acceptance criteria are testable (exact header format, 400 on unknown filter value, 409-class rejection, unsigned-when-no-secret), and the Out of Scope section names five deliberate exclusions with rationale, which is the issue's strongest feature. Weaknesses: it is solution-first (a 6-part design embedded before the problem is fully framed), some ACs defer precision to the LLD ('clear 4xx' not a code, 'severity counts' unnamed), and operational rollout/reserved-env concerns are left entirely to the LLD. No independent task statement was supplied; coverage was judged against the task id and repo tags (webhooks/hmac/lifecycle/permissions), which the five capabilities match."
+    },
+    "lld": {
+      "completeness": 22,
+      "correctness": 21,
+      "specificity": 23,
+      "risk_awareness": 20,
+      "total": 86,
+      "notes": "Exceptional repo grounding: I verified ~20 file/line/symbol claims and all matched (wrappers at server_routes.py:318, agent_routes.py:87, skill_routes.py:1240; config.py:121-137 webhook block; auth/dependencies.py:224; _validate_lifecycle_status returns normalized lowercase and its exact error text; SENSITIVE_FIELD_SUBSTRINGS genuinely no-ops on the scan card; 'sensitive = true' TF pattern at variables.tf:907). It commits to the load-bearing decisions — HMAC over explicitly serialized bytes posted via content= (current code posts json=payload, so the hazard is real), model_fields_set as the supplied-status test, mandate-before-gate ordering, permission-only-on-change — and covers error codes, metric cardinality, alternatives, and rollback by unsetting three vars. Two behavioral statements are wrong: it claims agent PUT with omitted status 'keeps the stored status' when AgentRegistrationRequest.status defaults to a truthy 'draft' so today's code overwrites to draft (agent_routes.py:1960), and it claims the server PUT merge 're-pins' omitted status when status is not in SERVER_REGISTRANT_ONLY_FIELDS (server_update_models.py:14). The deployment checklist also misses charts/registry/reserved-env-names.txt (which lists the existing REGISTRATION_WEBHOOK_* names) and the chart unittest suites the repo's conventions require."
+    },
+    "review": {
+      "completeness": 20,
+      "correctness": 22,
+      "specificity": 21,
+      "risk_awareness": 19,
+      "total": 82,
+      "notes": "This is a real stress review, not role-play: its headline finding (a defaulted Pydantic status field makes 'supplied' ambiguous and would 403 ordinary agent PUTs) is verified true in the repo, it correctly demands mandate-before-gate ordering (gate calls confirmed at register_service:1247 / register_agent:831), and its sanitize_payload coupling concern checks out against the actual substrings list. The consolidated must-fix list with a resolution record maps cleanly onto the revised LLD, which does contain each fix (model_fields_set in Step 7, ordering in Step 5, the verbatim-card pin test, sensitive=true, shared helper). Deductions: no reviewer catches the charts/registry/reserved-env-names.txt omission despite SRE reviewing all deployment surfaces, nobody notices the agent/skill mandate only rejects mismatches and never forces the mandated value on omitted status, Byte #3's self-correcting monologue and Cipher #1's 'overkill/instead' hedging show unfinished reasoning, and the Frontend section reviews a surface the patch does not touch."
+    },
+    "testing": {
+      "completeness": 21,
+      "correctness": 21,
+      "specificity": 21,
+      "risk_awareness": 18,
+      "total": 81,
+      "notes": "The plan has real oracles throughout: the reference receiver recomputes HMAC over await request.body() with hmac.compare_digest, the mandate matrix asserts 409 plus 404-nothing-persisted, the filter negative case asserts 400 with 'Allowed values', and the unit tests assert the signature over the captured content= bytes and full card equality through sanitize_payload — all consistent with the implementation I read. Commands and paths check out: /api/servers/register is real (route /servers/register at server_routes.py:3491 plus the /api prefix in main.py:1115), the security-scan polling endpoint exists, and the env var and metric names match the patch. Largest gaps: the mandate matrix is only ever run with MANDATED_VALUE=draft, so it cannot distinguish 'forced' from 'model default' and would miss the implementation's agent/skill force gap; the agent-PUT compatibility bullet is a self-contradictory oracle ('keeps today's effective stored status ... pre-existing default-overwrite') no tester could assert; and step 1.8a confusingly mixes an admin cookie with an 'X-User: U' header. Route-level mandate/permission helpers get no unit coverage, only curl flows."
+    },
+    "implementation": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 22,
+      "risk_awareness": 18,
+      "total": 84,
+      "notes": "The patch implements all five capabilities end to end and its context lines match the repository essentially verbatim — I verified ~30 hunks at their exact locations (e.g. has_field_filters = bool(query) at server_routes.py:594, the AgentCard status expression at agent_routes.py:1960, patch_dict/AgentCard(**merged_dict) at 2117-2123, the meters insertion point, the .env.example/compose/terraform/Helm blocks, and both seed-admin JSON permission rows), and no functional bug on the main paths: the permission checks are correctly guarded so omitted status never 403s, and mandate insertion precedes every gate call. Two material gaps: the mandate only forces an omitted status on the three server entrypoints, while register_agent/register_skill apply it solely when 'status' in model_fields_set, so a non-default MANDATED_VALUE leaves omitted agent/skill registrations at 'draft' contrary to the AC and LLD (and unflagged in the summary); and charts/registry/reserved-env-names.txt plus the chart unittest suites are untouched despite new secret keys, violating the repo's stated chart conventions and letting extraEnv override the signing secret. Smaller defects: the code comment and implementation.md deviation #2 assert the agent PUT 'preserves the stored status' when it actually resets to draft (pre-existing, code unchanged, description wrong), the '(merge re-pins it)' comment is false since status is absent from SERVER_REGISTRANT_ONLY_FIELDS, and send_registration_webhook's docstring was not updated for the new event type. Tests were not executed per the summary's honest disclosure."
+    }
+  },
+  "task_score": 83.2,
+  "verdict": "An unusually well-grounded, near-complete design-and-implementation set whose claims survive line-level verification against the repository, with the largest material limitation being the status mandate's force-on-omitted-status path implemented only for servers (agents/skills merely reject mismatches) alongside the untouched Helm reserved-env-names/chart-test surface."
+}

@@ -1,0 +1,64 @@
+{
+  "task": "configurable-ui-title",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 22,
+      "correctness": 21,
+      "specificity": 22,
+      "risk_awareness": 20,
+      "total": 85,
+      "notes": "Strongest aspect is the set of testable acceptance criteria (exact expected strings per mode, empty-string-as-unset, default unchanged, three deployment surfaces) plus explicit non-goals. The problem statement is verified: the hardcoded string exists at frontend/src/components/Layout.tsx:92/96, frontend/src/pages/Login.tsx:76, and frontend/src/pages/Logout.tsx:55, and both /api/config and the CONFIG_GROUPS-backed /api/config/full exist with the shape described. Largest deficiency is that it enumerates only three files while frontend/src/components/UptimeDisplay.tsx:134 also renders a near-identical branded string (left to the review/LLD) and it never flags that docs/configuration.md's Deployment Mode env table (line 48) would also need the new variable. The cited reference issue #984 and the 'no option short of forking' claim cannot be verified offline, so those are treated as unsupported rather than credited."
+    },
+    "lld": {
+      "completeness": 22,
+      "correctness": 20,
+      "specificity": 22,
+      "risk_awareness": 20,
+      "total": 84,
+      "notes": "Strongest aspect is that the integration points are real and mostly line-accurate (config.py:79 registration_webhook_url, config.py:544 nginx_updates_enabled, config_routes.py:36-48 CONFIG_GROUPS, config_routes.py:620 get_config, charts/mcp-gateway-registry-stack/values.yaml:213) and the load-bearing decision to use a Settings property is correctly justified by registry/main.py:353 object.__setattr__ mode auto-correction. The largest deficiency is a factual error: it claims an un-special-cased ui_title would render '(not set)' in the admin panel, but _format_value (config_routes.py:368) renders 'None' for non-sensitive None, and it misstates that registry/static is the served bundle when registry/main.py:977 serves frontend/build. It also leaves the awkward design wart (exports and panel now print the derived title as if configured) as a documented tradeoff rather than resolving it, and omits docs/configuration.md's env table and any frontend component tests. Backward compatibility, empty-string semantics, alternatives, and rollout are otherwise handled soundly and grounded in verified repo behavior."
+    },
+    "review": {
+      "completeness": 19,
+      "correctness": 20,
+      "specificity": 20,
+      "risk_awareness": 19,
+      "total": 78,
+      "notes": "Strongest aspect is finding B1: registering (\"ui_title\", ...) without a special case would make the admin panel and exports report the raw value, which is a genuine gap in rev.1 verified against _get_field_value/_build_fields_list, and it explicitly disagrees with the LLD and the design is revised in response. Other claims check out against the source: UptimeDisplay.tsx:134 spells the title with 'and', _is_sensitive_field does not match 'ui_title', /api/config is in ALWAYS_ALLOWED_PREFIXES (mode_filter.py:24), and the ECS-vs-Helm asymmetry is real. Largest deficiency is that the B1 symptom is mis-stated as '(not set)' instead of 'None', and much of the artifact is persona filler (the repeated 'no new dependencies' sections and a security reviewer with no findings) that surfaces little a careful reader would miss. It also never flags the missing automated frontend coverage for the header/login/logout surfaces the acceptance criteria promise."
+    },
+    "testing": {
+      "completeness": 21,
+      "correctness": 20,
+      "specificity": 22,
+      "risk_awareness": 20,
+      "total": 83,
+      "notes": "Strongest aspect is that oracles are concrete and mostly repo-accurate: exact expected strings per mode, the empty-string negative case, the B1 admin-panel check, a 403 auth regression guard, the mode-auto-correction E2E-3 case, and deployment-surface checks; I verified compose service name 'registry', the /api/config/export?format= query param, the .groups[].id=='deployment' response shape, and the `uv run pytest` convention (CLAUDE.md:594). Largest deficiency is that Layout/Login/Logout rendering is covered only by manual UX checkboxes even though the repo has react-scripts/jest component tests, and the plan adds no unit test for the _get_field_value effective-title branch it insists is mandatory. One command is dubious: `terraform console <<< 'module.mcp_gateway'` cannot read a module input that way, so the stated jq oracle would not work as written. Coverage of negative, backward-compatibility, XSS, fallback, and rollback cases is otherwise good."
+    },
+    "implementation": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 22,
+      "risk_awareness": 20,
+      "total": 86,
+      "notes": "Strongest aspect is that every hunk matches the real source context across all 22 files I checked (Layout.tsx:92/96, Login.tsx:76, Logout.tsx:55, config.py:494/545, config_routes.py:44/403/623, ecs-services.tf:903, deployment.yaml:79, values.yaml:104, .env.example:57), and the backend design correctly uses a Settings property so registry/main.py:353 mode auto-correction is reflected, with the review-driven _get_field_value special case actually shipped. Edge cases are handled: UI_TITLE mapping works under extra='ignore'/case_sensitive=False (config.py:57-61), empty string derives the default, and the CONFIG_GROUPS addition does not break the existing test_config_export.py assertions (ui_title never yields a None line). Largest deficiency is that the three user-visible render surfaces have no automated tests and docs/configuration.md's Deployment Mode env table (line 48) is left un-updated, and the stale registry/static bundle is not what the app serves, so the summary's claim about it is imprecise though harmless. No caller-breaking, security, or data regressions were found; TLS/Helm/Compose/Terraform plumbing is consistent with empty-means-unset."
+    }
+  },
+  "task_score": 83.2,
+  "verdict": "A strong, well-grounded submission whose design and patch correctly implement a runtime-configurable UI title end to end; the largest material limitation is that the header/login/logout render behavior is verified only manually with no automated frontend coverage, alongside minor misstatements ('(not set)' vs 'None', registry/static as the served bundle).",
+  "judge": {
+    "model": "deepseek-v4.1-flash",
+    "provider": "codex-exec",
+    "repo_grounded": true,
+    "evaluated_at": "2026-09-29T14:15:40.296421Z",
+    "repo_ref": "1.23.0",
+    "reasoning_effort": "high",
+    "token_usage": {
+      "input_tokens": 2915069,
+      "cached_input_tokens": 2825472,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 34176,
+      "reasoning_output_tokens": 25211
+    },
+    "duration_ms": 405575
+  }
+}

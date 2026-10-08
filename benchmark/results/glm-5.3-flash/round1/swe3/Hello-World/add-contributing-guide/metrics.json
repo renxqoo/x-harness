@@ -1,0 +1,171 @@
+{
+  "task": "add-contributing-guide",
+  "repo": "https://github.com/octocat/Hello-World",
+  "ref": "master",
+  "complexity": "low",
+  "tags": [
+    "sanity-check",
+    "docs",
+    "hello-world"
+  ],
+  "model": "glm-5.3-flash",
+  "model_slug": "glm-5.3-flash",
+  "agent": "xharness",
+  "skill": "swe3",
+  "provider": "endpoint",
+  "endpoint": "https://open.bigmodel.cn/api/anthropic",
+  "aws_region": null,
+  "serving": {
+    "instance_type": null,
+    "tensor_parallel_size": null,
+    "precision": null,
+    "context_window": null
+  },
+  "artifacts_produced": 6,
+  "artifacts_expected": 6,
+  "generation_tokens_per_sec": 47.0,
+  "token_accounting_warning": null,
+  "prompt_token_reconciliation": null,
+  "metrics": {
+    "note": "Headline metrics resolved to the best available source for each; see 'sources'. Values drawn from vllm_prometheus carry its single-tenant, server-wide caveat.",
+    "input_tokens": 416158,
+    "output_tokens": 22197,
+    "cache_read_tokens": null,
+    "cache_write_tokens": null,
+    "total_tokens": 438355,
+    "total_cost_usd": null,
+    "latency_seconds": 472.1,
+    "num_turns": 1,
+    "generation_tokens_per_sec": 47.0,
+    "prefix_cache_hit_rate": null,
+    "sources": {
+      "input_tokens": "xharness_api.usage.input",
+      "output_tokens": "xharness_api.usage.output",
+      "cache_read_tokens": "vllm_prometheus.counters.vllm:prompt_tokens_cached_total",
+      "cache_write_tokens": "unavailable (backend reports no cache-write signal)",
+      "total_tokens": "total tokens processed once each (issue #136): input + output, plus cache_read + cache_write ONLY when the cache is additive (not a partition of input). An agent with disjoint counts declares that instead of being detected (issue #183).",
+      "total_cost_usd": "null (self-hosted: no per-token bill; cost is hardware-derived)",
+      "latency_seconds": "harness wall-clock (or xharness_api.duration_ms)",
+      "num_turns": "xharness_api.num_turns",
+      "generation_tokens_per_sec": "derived: output_tokens / latency_seconds",
+      "prefix_cache_hit_rate": "vllm_prometheus.derived.prefix_cache_hit_rate"
+    }
+  },
+  "input_tokens": 416158,
+  "output_tokens": 22197,
+  "latency_seconds": 472.1,
+  "num_turns": 1,
+  "total_cost_usd": null,
+  "is_error": false,
+  "result_subtype": "success",
+  "run_started_at": "2026-09-26T06:29:57.334195Z",
+  "run_ended_at": "2026-09-26T06:37:49.484360Z",
+  "metrics_that_matter": {
+    "note": "Headline metrics resolved to the best available source for each; see 'sources'. Values drawn from vllm_prometheus carry its single-tenant, server-wide caveat.",
+    "input_tokens": 416158,
+    "output_tokens": 22197,
+    "cache_read_tokens": null,
+    "cache_write_tokens": null,
+    "total_tokens": 438355,
+    "total_cost_usd": null,
+    "latency_seconds": 472.1,
+    "num_turns": 1,
+    "generation_tokens_per_sec": 47.0,
+    "prefix_cache_hit_rate": null,
+    "sources": {
+      "input_tokens": "xharness_api.usage.input",
+      "output_tokens": "xharness_api.usage.output",
+      "cache_read_tokens": "vllm_prometheus.counters.vllm:prompt_tokens_cached_total",
+      "cache_write_tokens": "unavailable (backend reports no cache-write signal)",
+      "total_tokens": "total tokens processed once each (issue #136): input + output, plus cache_read + cache_write ONLY when the cache is additive (not a partition of input). An agent with disjoint counts declares that instead of being detected (issue #183).",
+      "total_cost_usd": "null (self-hosted: no per-token bill; cost is hardware-derived)",
+      "latency_seconds": "harness wall-clock (or xharness_api.duration_ms)",
+      "num_turns": "xharness_api.num_turns",
+      "generation_tokens_per_sec": "derived: output_tokens / latency_seconds",
+      "prefix_cache_hit_rate": "vllm_prometheus.derived.prefix_cache_hit_rate"
+    }
+  },
+  "vllm_prometheus": {
+    "available": false,
+    "source": "vllm_prometheus_window",
+    "note": "vLLM metrics were not reachable; run against a vLLM endpoint exposing /metrics to populate this block.",
+    "derived": {
+      "prefix_cache_hit_rate": null,
+      "prompt_tokens_cached_rate": null
+    },
+    "counters": {},
+    "histograms": {},
+    "gauges": {},
+    "gauges_sampled": {
+      "available": false,
+      "source": "vllm_prometheus_poll",
+      "note": "No vLLM gauges were sampled during the run; endpoint unreachable or not a vLLM server.",
+      "interval_seconds": 1.0,
+      "gauges": {}
+    }
+  },
+  "evaluation": {
+    "task": "add-contributing-guide",
+    "model": "glm-5.3-flash",
+    "scores": {
+      "github_issue": {
+        "completeness": 22,
+        "correctness": 22,
+        "specificity": 22,
+        "risk_awareness": 19,
+        "total": 85,
+        "notes": "The issue's strongest aspect is a fully testable acceptance checklist (file exists at root, issue/PR/expectations content, Markdown rendering, single-file scope) plus explicit non-goals and a dependencies section, which is exactly what a docs task needs. Its premise checks out: the repository tracks only README (contents \"Hello World!\", 13 bytes) at 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d with no .github, LICENSE, or CONTRIBUTING files, so the claim that contributors currently have no guidance is accurate. The largest deficiency is risk treatment: it never mentions the public-tracker exposure problem (secrets in issue reports) that the review later had to add, and \"renders correctly on GitHub\" is the least mechanical criterion. Because task_context states no independent task statement was supplied, requirement coverage was judged only from the task id and the artifact's internal consistency, which is a real evidence gap rather than a candidate defect."
+      },
+      "lld": {
+        "completeness": 21,
+        "correctness": 20,
+        "specificity": 22,
+        "risk_awareness": 18,
+        "total": 81,
+        "notes": "The LLD is genuinely grounded in this repository: it names the real baseline commit 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d, the single-line README, and the verified absence of .github/, CONTRIBUTING*, LICENSE, tests, and build files, and it commits to the decisions that matter (root placement over .github/, a six-section outline, per-section content requirements traceable to the issue's acceptance criteria). Its completeness is weakened by boilerplate N/A sections (Data Models, API/CLI, Configuration, Scaling) that add length without decisions for a one-file change. Correctness takes a hit for the claim that master is the repository's \"only branch\"—git branch -a shows origin/test and origin/octocat-patch-1—and for the 45-to-60-line goal that the shipped 65-line file and testing.md's 45-to-70 band silently contradict. Risk awareness is moderate: it covers the post-merge GitHub auto-link signal and alternatives, but never addresses guide drift (the guide going stale relative to the repo) even while noting update conditions."
+      },
+      "review": {
+        "completeness": 20,
+        "correctness": 20,
+        "specificity": 20,
+        "risk_awareness": 18,
+        "total": 78,
+        "notes": "The review's strongest aspect is that its four should-fix findings are concrete and traceable: bash-fenced, prompt-free command blocks with a consistent <username> placeholder, an explicit no-test-suite/no-linter/no-build statement, a no-secrets-in-issues caution, and required `Fixes #<n>` linking—each of which is present in the shipped CONTRIBUTING.md and in testing.md's greps. It is structurally role-play, though: the summary table labels items \"Blocking Findings\" while listing \"1 should-fix\", contradicting the later statement that no critical or NEEDS REVISION verdicts were issued, and the SRE reviewer approves with zero findings against a design whose main risk was already adjudicated. Claims such as \"no protected branches or review rules visible\" cannot be verified from a local clone, and the review never challenges the core placement decision, which is defensible here because the design has no other load-bearing choice. It does surface a real self-caught gap (issue linking made a hard requirement), so it is not purely decorative."
+      },
+      "testing": {
+        "completeness": 19,
+        "correctness": 17,
+        "specificity": 20,
+        "risk_awareness": 17,
+        "total": 73,
+        "notes": "The plan's greps are concrete and would actually pass against the shipped file: I verified `^# Contributing to Hello-World`, `^## Filing an Issue`, `^## Opening a Pull Request`, `^## Expectations for Contributions`, the tracker URL, 'existing issue', 'no test suite', 'sensitive', and `Fixes #` all appear in the 65-line guide. The material defect is test 3.1: `git diff --name-status HEAD` produces no output for an untracked new file (confirmed by running it in this worktree), so the promised single line `A\\tCONTRIBUTING.md` would never appear after `git apply` unless the file is staged—this is the very check that verifies the issue's \"touches no other files\" criterion. Other gaps: 1.1.6 is labeled \"Negative case\" but only asserts presence of the word 'sensitive'; the size bands disagree with the LLD (45-60 vs 45-70, with >120 as failure); `$REPO` points at an invented clone path; and the post-merge 5.1 GitHub-surface step is vague and unexecutable pre-merge. Risk coverage is decent (secrets caution, diff scope) but there is no test that the guide omits commands for processes this repository does not have."
+      },
+      "implementation": {
+        "completeness": 22,
+        "correctness": 21,
+        "specificity": 21,
+        "risk_awareness": 18,
+        "total": 82,
+        "notes": "The patch is real and consistent with the repository: reconstructing the diff content and running `git hash-object --stdin` yields af5c2fd9833a83cc48a60d909f12ff39132512c3, matching the diff's `index 0000000..af5c2fd`, and `git apply --check` at baseline 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d succeeds with no working-tree modification left behind. Content covers every acceptance criterion (tracker URL plus duplicate check, expected/actual/environment details, fork-branch-commit-push against master, Fixes #<n> linking, conduct/focused-change/style expectations) and implements all four review findings, with a truthful single-file scope and nothing else touched. The only defects are modest: the file is 65 lines against the LLD's 45-to-60 goal (acknowledged and justified in the summary) and the summary prose says \"66 lines\" while the hunk is 65, an off-by-one in the narrative. Disk risk is essentially nil for a docs-only change, and the summary honestly states the tests were designed but not executed per the benchmark constraint."
+      }
+    },
+    "task_score": 79.8,
+    "verdict": "A coherent, well-grounded documentation submission whose patch verifiably applies at the stated baseline and satisfies its own acceptance criteria, limited mainly by the testing plan's broken scope check (`git diff --name-status HEAD` on an unstaged new file) and smaller repo-fact drift such as the LLD's 'only branch master' claim.",
+    "judge": {
+      "model": "deepseek-v4.1-flash",
+      "provider": "codex-exec",
+      "repo_grounded": true,
+      "evaluated_at": "2026-09-26T06:39:15.753309Z",
+      "repo_ref": "master",
+      "reasoning_effort": "high",
+      "token_usage": {
+        "input_tokens": 196307,
+        "cached_input_tokens": 172032,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 10813,
+        "reasoning_output_tokens": 6490
+      },
+      "duration_ms": 72356
+    }
+  }
+}

@@ -1,0 +1,2218 @@
+diff --git a/api/registry_client.py b/api/registry_client.py
+index 4239130..4f980f0 100755
+--- a/api/registry_client.py
++++ b/api/registry_client.py
+@@ -2132,17 +2132,22 @@ class RegistryClient:
+         window_seconds: int = 60,
+         fail_closed: bool = False,
+         enabled: bool = True,
++        group: str | None = None,
+     ) -> dict[str, Any]:
+         """Create or update a rate-limit definition (admin only).
+ 
+         Caller (group) axis: pass ``user_max_requests`` and/or ``agent_max_requests``.
+-        Target axis: pass ``max_requests``. The ``_id`` is derived server-side; this
+-        client builds the matching URL id.
++        Target axis: pass ``max_requests``. caller_target axis: pass ``group`` (the
++        caller rate-limit group) plus ``user_max_requests``/``agent_max_requests``.
++        The ``_id`` is derived server-side; this client builds the matching URL id.
+ 
+         Raises:
+             requests.HTTPError: If the request fails (e.g. 400 invalid definition).
+         """
+-        definition_id = f"{axis}:{entity_type}:{name}:{window_seconds}"
++        if axis == "caller_target":
++            definition_id = f"{axis}:{entity_type}:{group}:{name}:{window_seconds}"
++        else:
++            definition_id = f"{axis}:{entity_type}:{name}:{window_seconds}"
+         body: dict[str, Any] = {
+             "axis": axis,
+             "entity_type": entity_type,
+@@ -2159,6 +2164,8 @@ class RegistryClient:
+             body["user_max_requests"] = user_max_requests
+         if agent_max_requests is not None:
+             body["agent_max_requests"] = agent_max_requests
++        if group is not None:
++            body["group"] = group
+         logger.info(f"Setting rate-limit definition {definition_id}")
+         response = self._make_request(
+             method="PUT",
+@@ -2199,6 +2206,22 @@ class RegistryClient:
+         )
+         return response.json()
+ 
++    def get_rate_limit_membership(
++        self,
++        membership_id: str,
++    ) -> dict[str, Any]:
++        """Read a single rate-limit membership by id ('<subject_type>:<subject>').
++
++        Raises:
++            requests.HTTPError: If the request fails (e.g. 404 not found).
++        """
++        logger.info(f"Getting rate-limit membership {membership_id}")
++        response = self._make_request(
++            method="GET",
++            endpoint=f"/api/rate-limit-memberships/{membership_id}",
++        )
++        return response.json()
++
+     def set_rate_limit_enabled(
+         self,
+         definition_id: str,
+diff --git a/api/registry_management.py b/api/registry_management.py
+index 2cbb34a..1e84345 100755
+--- a/api/registry_management.py
++++ b/api/registry_management.py
+@@ -1097,8 +1097,13 @@ def cmd_rate_limit_set(args: argparse.Namespace) -> int:
+     """Create or update a rate-limit definition.
+ 
+     Caller (group) axis uses --user-max-requests / --agent-max-requests (at least
+-    one). Target axis uses --max-requests.
++    one). Target axis uses --max-requests. caller_target axis additionally
++    requires --group (the caller rate-limit group) and uses the per-caller-type
++    limits.
+     """
++    if args.axis == "caller_target" and not getattr(args, "group", None):
++        logger.error("--group is required when --axis caller_target")
++        return 1
+     try:
+         client = _create_client(args)
+         result = client.set_rate_limit(
+@@ -1111,6 +1116,7 @@ def cmd_rate_limit_set(args: argparse.Namespace) -> int:
+             window_seconds=args.window_seconds,
+             fail_closed=args.fail_closed,
+             enabled=not args.disabled,
++            group=getattr(args, "group", None),
+         )
+         logger.info("Rate-limit definition stored")
+         print(json.dumps(result, indent=2))
+@@ -1120,6 +1126,82 @@ def cmd_rate_limit_set(args: argparse.Namespace) -> int:
+         return 1
+ 
+ 
++def cmd_rate_limit_quarantine_list(args: argparse.Namespace) -> int:
++    """List every currently quarantined caller and target (issue #1504)."""
++    try:
++        client = _create_client(args)
++        result = client.list_rate_limit_memberships()
++        quarantined = {"callers": [], "targets": []}
++        for membership in result.get("memberships", []):
++            groups = membership.get("groups") or []
++            if "__quarantined_callers__" in groups:
++                # Skip the seed anchor itself; it is not an operational quarantine.
++                if membership.get("subject") != "__quarantined_callers__":
++                    quarantined["callers"].append(membership)
++            if "__quarantined_targets__" in groups:
++                if membership.get("subject") != "__quarantined_targets__":
++                    quarantined["targets"].append(membership)
++        print(json.dumps(quarantined, indent=2))
++        return 0
++    except Exception as e:
++        logger.error(f"Failed to list quarantined subjects: {e}")
++        return 1
++
++
++def _quarantine_apply_release(
++    args: argparse.Namespace,
++    subject_type: str,
++    reserved_group: str,
++) -> int:
++    """Add or remove a reserved quarantine group on a subject's membership.
++
++    Read-modify-write over the membership API: adding merges the reserved group
++    into the existing groups; releasing removes it and deletes the membership
++    doc when it becomes empty (never for the seed anchors, which are frozen).
++    """
++    subject = args.subject
++    membership_id = f"{subject_type}:{subject}"
++    if subject == reserved_group:
++        logger.error("the reserved quarantine anchor is managed by the system")
++        return 1
++    try:
++        client = _create_client(args)
++        try:
++            existing = client.get_rate_limit_membership(membership_id)
++            groups = [g for g in (existing.get("groups") or []) if g != reserved_group]
++        except Exception:
++            groups = []
++        if args.release:
++            if groups:
++                result = client.set_rate_limit_membership(
++                    subject_type, subject, groups
++                )
++                logger.info(f"Released {membership_id} from {reserved_group}")
++            else:
++                client.delete_rate_limit_membership(membership_id)
++                logger.info(f"Released {membership_id}; empty membership deleted")
++        else:
++            if reserved_group not in groups:
++                groups.append(reserved_group)
++            result = client.set_rate_limit_membership(subject_type, subject, groups)
++            logger.info(f"Quarantined {membership_id} via {reserved_group}")
++        print(json.dumps(result, indent=2))
++        return 0
++    except Exception as e:
++        logger.error(f"Failed to update quarantine for {membership_id}: {e}")
++        return 1
++
++
++def cmd_rate_limit_quarantine_caller(args: argparse.Namespace) -> int:
++    """Quarantine (or with --release release) a caller: absolute deny."""
++    return _quarantine_apply_release(args, "user", "__quarantined_callers__")
++
++
++def cmd_rate_limit_quarantine_target(args: argparse.Namespace) -> int:
++    """Quarantine (or with --release release) a target: deny for every caller."""
++    return _quarantine_apply_release(args, "target", "__quarantined_targets__")
++
++
+ def cmd_rate_limit_list(args: argparse.Namespace) -> int:
+     """List all rate-limit definitions."""
+     try:
+@@ -6141,7 +6223,7 @@ Examples:
+         "rate-limit-set", help="Create or update a rate-limit definition (admin)"
+     )
+     rate_limit_set_parser.add_argument(
+-        "--axis", required=True, choices=["caller", "target"], help="Which side of the call"
++        "--axis", required=True, choices=["caller", "target", "caller_target"], help="Which side of the call"
+     )
+     rate_limit_set_parser.add_argument(
+         "--entity-type",
+@@ -6170,6 +6252,11 @@ Examples:
+         dest="agent_max_requests",
+         help="CALLER/group axis: max requests per window for an agent/client (>= agent floor)",
+     )
++    rate_limit_set_parser.add_argument(
++        "--group",
++        dest="group",
++        help="CALLER_TARGET axis: rate-limit group the caller must belong to",
++    )
+     rate_limit_set_parser.add_argument(
+         "--window-seconds",
+         type=int,
+@@ -6258,6 +6345,35 @@ Examples:
+         "--id", required=True, help="Membership id, e.g. 'user:alice' or 'client:my-agent-id'"
+     )
+ 
++    # Quarantine kill-switch commands (issue #1504): absolute deny via the
++    # reserved rate-limit groups. Manageable through the same memberships API.
++    rate_limit_quarantine_list_parser = subparsers.add_parser(
++        "rate-limit-quarantine-list",
++        help="List every currently quarantined caller and target (admin)",
++    )
++
++    rate_limit_quarantine_caller_parser = subparsers.add_parser(
++        "rate-limit-quarantine-caller",
++        help="Quarantine a caller (absolute deny); --release to lift it (admin)",
++    )
++    rate_limit_quarantine_caller_parser.add_argument(
++        "--subject", required=True, help="The username to quarantine/release"
++    )
++    rate_limit_quarantine_caller_parser.add_argument(
++        "--release", action="store_true", help="Release the quarantine instead of applying it"
++    )
++
++    rate_limit_quarantine_target_parser = subparsers.add_parser(
++        "rate-limit-quarantine-target",
++        help="Quarantine a target (deny for ALL callers); --release to lift it (admin)",
++    )
++    rate_limit_quarantine_target_parser.add_argument(
++        "--subject", required=True, help="The target name (server path / agent path)"
++    )
++    rate_limit_quarantine_target_parser.add_argument(
++        "--release", action="store_true", help="Release the quarantine instead of applying it"
++    )
++
+     # Add to groups command
+     add_groups_parser = subparsers.add_parser("add-to-groups", help="Add server to groups")
+     add_groups_parser.add_argument("--server", required=True, help="Server name")
+@@ -7622,6 +7738,9 @@ Examples:
+         "rate-limit-member-set": cmd_rate_limit_member_set,
+         "rate-limit-member-list": cmd_rate_limit_member_list,
+         "rate-limit-member-delete": cmd_rate_limit_member_delete,
++        "rate-limit-quarantine-list": cmd_rate_limit_quarantine_list,
++        "rate-limit-quarantine-caller": cmd_rate_limit_quarantine_caller,
++        "rate-limit-quarantine-target": cmd_rate_limit_quarantine_target,
+         "add-to-groups": cmd_add_to_groups,
+         "remove-from-groups": cmd_remove_from_groups,
+         "create-group": cmd_create_group,
+diff --git a/auth_server/rate_limiting_config.py b/auth_server/rate_limiting_config.py
+index 9aabb7d..bad76ba 100644
+--- a/auth_server/rate_limiting_config.py
++++ b/auth_server/rate_limiting_config.py
+@@ -103,3 +103,21 @@ def get_rate_limiter() -> RateLimiter:
+             RATE_LIMIT_BACKEND_TIMEOUT_MS,
+         )
+     return _rate_limiter
++
++
++async def ensure_quarantine_groups_seeded() -> None:
++    """Best-effort seeding of the reserved quarantine groups (issue #1504).
++
++    Called from the auth-server startup hook on EVERY boot (independent of
++    ``RATE_LIMITING_ENABLED``) so the reserved caller/target quarantine groups
++    pre-exist an operator's first enablement. Never raises: a store outage at
++    boot must not block startup (the next restart retries; the limiter's
++    fail-open policy covers the window in between).
++    """
++    try:
++        # A throwaway repository: the cache is process-local and the collection
++        # handle is a singleton below it, so this stays cheap.
++        await MembershipsRepository().ensure_quarantine_seeds()
++        logger.info("Reserved quarantine groups seeded (if absent)")
++    except Exception as exc:
++        logger.warning(f"quarantine group seeding skipped (will retry next boot): {exc}")
+diff --git a/auth_server/server.py b/auth_server/server.py
+index a641be5..7c8b1e1 100644
+--- a/auth_server/server.py
++++ b/auth_server/server.py
+@@ -1415,10 +1415,21 @@ async def _enforce_rate_limit(
+         # the X-RateLimit-Throttled marker); the @forbidden_error named location in
+         # nginx captures those headers and rewrites the response into a real 429 +
+         # Retry-After for the client. Returning 429 here would surface as 500.
++        #
++        # A QUARANTINE deny (issue #1504) is NOT a throttle: it leaves as a plain
++        # 403 (its headers carry X-RateLimit-Quarantined, NOT the throttled marker,
++        # so nginx's 429 rewrite does not fire) with no Retry-After -- a kill
++        # switch is indefinite and must not tell an attacker when it clears.
++        if decision.kind == "quarantine":
++            error_code = (
++                "caller_quarantined" if decision.axis == "caller" else "target_quarantined"
++            )
++        else:
++            error_code = "rate_limit_exceeded"
+         raise HTTPException(
+             status_code=403,
+             detail={
+-                "error": "rate_limit_exceeded",
++                "error": error_code,
+                 "axis": decision.axis,
+                 "retry_after": decision.retry_after,
+             },
+@@ -1837,6 +1848,15 @@ async def startup_event():
+         # Fall back to empty config
+         SCOPES_CONFIG = {"group_mappings": {}}
+ 
++    # Seed the reserved quarantine groups (issue #1504): best-effort, runs on
++    # every boot (even with rate limiting disabled) so the groups always exist
++    # before an operator's first enablement. Never blocks or fails startup.
++    try:
++        from rate_limiting_config import ensure_quarantine_groups_seeded
++    except ImportError:
++        from auth_server.rate_limiting_config import ensure_quarantine_groups_seeded
++    await ensure_quarantine_groups_seeded()
++
+ 
+ # Add metrics collection middleware
+ add_auth_metrics_middleware(app)
+diff --git a/docs/design/rate-limiting.md b/docs/design/rate-limiting.md
+index d9e5779..af1c07c 100644
+--- a/docs/design/rate-limiting.md
++++ b/docs/design/rate-limiting.md
+@@ -169,9 +169,9 @@ Three design commitments shape everything else:
+ - **Correct when horizontally scaled.** The auth-server and registry can run as multiple replicas; the counters are shared state with atomic increments, so N replicas enforce a single limit, not N times the limit.
+ - **Availability first.** Rate limiting sits on the critical path of every call. If the counter store is unreachable, the default is to allow (fail open) and log loudly, rather than convert a limiter blip into a full gateway outage. Authorization continues to fail closed independently.
+ 
+-## The Two Axes and Windows
++## The Three Axes and Windows
+ 
+-A limit applies to one of two **axes**:
++A limit applies to one of three **axes**:
+ 
+ - **Caller axis (Limit A):** a caller (a user or agent), across *all* targets, may not exceed N requests per window. Limits target a **group** (name = group). A group carries **two separate numbers** — `user_max_requests` (applied to human callers) and `agent_max_requests` (applied to agent/M2M callers); at least one is required. The caller type is derived from the token: a genuine machine (`client_credentials`) token ⇒ agent, otherwise user. The distinction is made from the token's own `client_id` **claim** (present only on `client_credentials` tokens), NOT the `azp`-derived `client_id` that every OIDC token carries — otherwise a human browser/password-grant token (whose `azp` is the web OAuth client) would be misclassified as an agent. The matching number is used; a group that does not set that type's number does not gate that caller. Enforced **per caller** (each caller gets their own quota). If a caller is in several groups with limits at the same window, the **most restrictive** wins.
+ 
+@@ -182,6 +182,7 @@ A limit applies to one of two **axes**:
+   - **Admin bypass.** A caller with the admin role skips caller gates entirely (target gates still apply). An operator cannot rate-limit themselves out of the tool that manages the limits.
+   - **Config-time floors.** `RATE_LIMIT_USER_FLOOR_PER_MIN` (default 20) and `RATE_LIMIT_AGENT_FLOOR_PER_MIN` (default 10) are pure config (no API). On short windows (`<= 60s`), a group definition whose user/agent number is below its floor is **rejected at config time**. Longer (hourly/daily volume) windows are exempt so legitimate low volume caps still work.
+ - **Target axis (Limit B):** a target *entity*, across *all* callers combined, may not exceed `max_requests` per window. Only enforced for targets that define a limit. This protects a weak backend from combined load, and is **not** bypassed by admin.
++- **Caller-target axis (Limit C, issue #1504):** an independent quota **per (caller, target) pair**. A definition names the **target** (`entity_type` = `mcp_server` | `a2a_agent`, `name` = target path), the rate-limit **`group`** the caller must belong to, and the usual per-caller-type numbers (`user_max_requests` / `agent_max_requests`, at least one). The counter subject is the composite `<identity>|<target_name>`, so one noisy tenant can never consume another tenant's headroom against the same server, and a caller's traffic to server X never draws from its traffic to server Y. The definition id is five-segment: `caller_target:<entity_type>:<group>:<name>:<window_seconds>`. The config-time floors apply to this axis exactly as to the caller axis, and it is enforced at the same `/validate` hook with the same deny-does-not-consume behavior.
+ 
+ The target axis is **entity-type-generic**. v1 enforces two target kinds:
+ 
+@@ -190,7 +191,24 @@ The target axis is **entity-type-generic**. v1 enforces two target kinds:
+ 
+ The model also reserves `mcp_tool` and `a2a_skill` (name = `<parent>:<leaf>`) for a later phase; those require reading the JSON-RPC payload and are not enforced in v1 (the admin API rejects them with a clear message so an operator never gets a silently inert limit).
+ 
+-**Windows and volume limits.** A window is any length from one second up to a full day (`window_seconds` ≤ 86400). A per-day volume cap ("no more than 5000 calls/day") is therefore the *same mechanism* as a per-second burst cap, just a longer window. A single subject may hold **several limits at different windows at once** — e.g. `100/min` *and* `5000/day`. Each window is enforced as its own independent gate, and all applicable gates must pass. Most-restrictive resolution applies only *within* the same window.
++**Windows and volume limits.** A window is any length from one second up to a full day (`window_seconds` <= 86400). A per-day volume cap ("no more than 5000 calls/day") is therefore the *same mechanism* as a per-second burst cap, just a longer window. A single subject may hold **several limits at different windows at once** — e.g. `100/min` *and* `5000/day`. Each window is enforced as its own independent gate, and all applicable gates must pass. Most-restrictive resolution applies only *within* the same window.
++
++## Quarantine (Kill Switch)
++
++Issue #1504 adds two **reserved rate-limit groups** that act as an absolute deny, evaluated BEFORE any gate/counter work at `/validate`:
++
++- `__quarantined_callers__` — add this group to a caller's rate-limit membership (Users/M2M pages, membership API, or `registry_management.py rate-limit-quarantine-caller --subject <user|client>`) and every data-plane request from that caller is dropped.
++- `__quarantined_targets__` — a `target`-subject membership carrying this group (Rate Limits page quarantine panel, or `rate-limit-quarantine-target --subject <path>`) pulls that target out of rotation for EVERY caller.
++
++Both groups are **seeded automatically** (as frozen anchor documents in `rate_limit_memberships`) at auth-server startup, are undeletable (DELETE returns 409), and can never appear in a `RateLimitDefinition` (PUT returns 400): quarantine is a kill switch, never a throttle.
++
++Decided semantics:
++
++- **Response shape.** A throttle leaves `/validate` as a 403 carrying `X-RateLimit-Throttled: 1` and `Retry-After` (nginx rewrites it to 429). A quarantine deny carries `X-RateLimit-Quarantined: 1` and **no** `Retry-After`, and is NOT rewritten: a kill switch is indefinite, so the response must not promise (or reveal) a clear time. The body `error` is `caller_quarantined` / `target_quarantined` rather than `rate_limit_exceeded`.
++- **Admin bypass follows the axis.** An admin caller bypasses its own caller quarantine (consistent with the caller-gate bypass: an operator must not lock themselves out). A quarantined TARGET denies everyone, admins included (consistent with target gates). Accepted risk: a compromised ADMIN token is not contained by caller quarantine; contain it per target via target quarantine and revoke admin status at the IdP.
++- **Store-unavailable failure mode.** The caller-quarantine check rides the caller-membership lookup that caller gates already perform (no new dependency). The target-quarantine lookup follows the global `RATE_LIMIT_FAIL_OPEN` policy: fail-open (allow + log) by default; deployments that set `RATE_LIMIT_FAIL_OPEN=false` get a fail-closed quarantine.
++- **Observability.** Denies increment `mcpgw_rate_limit_quarantined_total{subject=caller|target}` (bounded labels; the identity is in the WARNING log). An increase in this metric means a kill switch is ACTIVE - page an operator.
++- **Release.** Remove the reserved group from the subject's membership (or `rate-limit-quarantine-caller --subject X --release`). It takes effect on the next request; membership mutations invalidate the read cache.
+ 
+ ## Data Model
+ 
+diff --git a/frontend/src/components/IAMRateLimits.tsx b/frontend/src/components/IAMRateLimits.tsx
+index b1743e8..90147ee 100644
+--- a/frontend/src/components/IAMRateLimits.tsx
++++ b/frontend/src/components/IAMRateLimits.tsx
+@@ -5,6 +5,7 @@ import {
+   TrashIcon,
+   ArrowLeftIcon,
+   PencilIcon,
++  ExclamationTriangleIcon,
+ } from '@heroicons/react/24/outline';
+ import {
+   useRateLimitDefinitions,
+@@ -12,9 +13,14 @@ import {
+   setRateLimitDefinition,
+   deleteRateLimitDefinition,
+   setRateLimitEnabled,
++  setRateLimitMembership,
++  deleteRateLimitMembership,
+   definitionId,
+   RateLimitDefinition,
++  RateLimitMembership,
+   TARGET_ENTITY_TYPES,
++  QUARANTINE_CALLER_GROUP,
++  QUARANTINE_TARGET_GROUP,
+ } from '../hooks/useRateLimits';
+ import DeleteConfirmation from './DeleteConfirmation';
+ import ListStateBoundary from './iam/ListStateBoundary';
+@@ -51,9 +57,10 @@ const StatTile: React.FC<{ label: string; value: number; hint?: string }> = ({
+ 
+ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+   const { definitions, isLoading, error, refetch } = useRateLimitDefinitions();
+-  // Memberships feed the "callers governed" summary tile (users + agents mapped
+-  // into rate-limit groups). Read-only here; the editor lives on Users/M2M.
+-  const { memberships } = useRateLimitMemberships();
++  // Memberships feed the "callers governed" tile and the quarantine panel;
++  // quarantine writes refetch BOTH lists (definitions refetch also refreshes
++  // the shared useIAMResource cache key the memberships hook reads).
++  const { memberships, refetch: refetchMemberships } = useRateLimitMemberships();
+   // Registered server + agent paths, for the target-name typeahead.
+   const { servers, isLoading: serversLoading } = useServerList();
+   const { agents, isLoading: agentsLoading } = useAgentList();
+@@ -62,9 +69,10 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+ 
+   // Form state. axis drives which limit fields show.
+   const [editingId, setEditingId] = useState<string | null>(null); // non-null => edit mode
+-  const [formAxis, setFormAxis] = useState<'caller' | 'target'>('caller');
++  const [formAxis, setFormAxis] = useState<'caller' | 'target' | 'caller_target'>('caller');
+   const [formEntityType, setFormEntityType] = useState('group');
+   const [formName, setFormName] = useState('');
++  const [formGroup, setFormGroup] = useState('');
+   const [formWindow, setFormWindow] = useState(60);
+   const [formUserMax, setFormUserMax] = useState('');
+   const [formAgentMax, setFormAgentMax] = useState('');
+@@ -72,6 +80,10 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+   const [formFailClosed, setFormFailClosed] = useState(false);
+   const [isSaving, setIsSaving] = useState(false);
+ 
++  // Quarantine panel state (issue #1504): target subject + busy flag.
++  const [quarantineTargetSubject, setQuarantineTargetSubject] = useState('');
++  const [quarantineBusy, setQuarantineBusy] = useState(false);
++
+   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+ 
+   const filtered = useMemo(() => {
+@@ -97,11 +109,31 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+       enabled: enabled.length,
+       caller: definitions.filter((d) => d.axis === 'caller').length,
+       target: definitions.filter((d) => d.axis === 'target').length,
++      callerTarget: definitions.filter((d) => d.axis === 'caller_target').length,
+       failClosed: definitions.filter((d) => d.fail_closed).length,
+       governed: callerSubjects.size,
++      // Quarantined = non-anchor docs carrying a reserved group (issue #1504).
++      quarantinedCallers: memberships.filter(
++        (m) => m.groups.includes(QUARANTINE_CALLER_GROUP) && m.subject !== QUARANTINE_CALLER_GROUP,
++      ).length,
++      quarantinedTargets: memberships.filter(
++        (m) => m.groups.includes(QUARANTINE_TARGET_GROUP) && m.subject !== QUARANTINE_TARGET_GROUP,
++      ).length,
+     };
+   }, [definitions, memberships]);
+ 
++  // Quarantined targets for the panel (server/agent paths + release buttons).
++  const quarantinedTargets = useMemo(
++    () =>
++      memberships.filter(
++        (m) =>
++          m.subject_type === 'target' &&
++          m.groups.includes(QUARANTINE_TARGET_GROUP) &&
++          m.subject !== QUARANTINE_TARGET_GROUP,
++      ),
++    [memberships],
++  );
++
+   // Typeahead options for the target name: registered server paths for
+   // mcp_server, agent paths for a2a_agent. name shown as the label's description.
+   const targetOptions = useMemo(() => {
+@@ -117,6 +149,7 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+     setFormAxis('caller');
+     setFormEntityType('group');
+     setFormName('');
++    setFormGroup('');
+     setFormWindow(60);
+     setFormUserMax('');
+     setFormAgentMax('');
+@@ -134,6 +167,7 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+     setFormAxis(d.axis);
+     setFormEntityType(d.entity_type);
+     setFormName(d.name);
++    setFormGroup(d.group || '');
+     setFormWindow(d.window_seconds);
+     setFormUserMax(d.user_max_requests != null ? String(d.user_max_requests) : '');
+     setFormAgentMax(d.agent_max_requests != null ? String(d.agent_max_requests) : '');
+@@ -142,6 +176,35 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+     setView('form');
+   };
+ 
++  // Quarantine actions (issue #1504): write the reserved group onto a
++  // target-subject membership; release removes it (deleting the doc when empty).
++  const quarantineTarget = async (subject: string) => {
++    if (!subject) return;
++    setQuarantineBusy(true);
++    try {
++      await setRateLimitMembership('target', subject, [QUARANTINE_TARGET_GROUP]);
++      onShowToast(`Target ${subject} quarantined`, 'success');
++      refetchMemberships();
++    } catch (err) {
++      onShowToast(apiError(err, 'Failed to quarantine target'), 'error');
++    } finally {
++      setQuarantineBusy(false);
++    }
++  };
++
++  const releaseTarget = async (subject: string) => {
++    setQuarantineBusy(true);
++    try {
++      await deleteRateLimitMembership(`target:${subject}`);
++      onShowToast(`Target ${subject} released`, 'success');
++      refetchMemberships();
++    } catch (err) {
++      onShowToast(apiError(err, 'Failed to release target'), 'error');
++    } finally {
++      setQuarantineBusy(false);
++    }
++  };
++
+   const handleSave = async () => {
+     if (!formName.trim()) {
+       onShowToast('Name is required', 'error');
+@@ -151,12 +214,19 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+       axis: formAxis,
+       entity_type: formAxis === 'caller' ? 'group' : formEntityType,
+       name: formName.trim(),
++      group: formAxis === 'caller_target' && formGroup.trim() ? formGroup.trim() : null,
+       window_seconds: formWindow,
+       fail_closed: formFailClosed,
+       enabled: true,
+       max_requests: formAxis === 'target' && formTargetMax ? Number(formTargetMax) : null,
+-      user_max_requests: formAxis === 'caller' && formUserMax ? Number(formUserMax) : null,
+-      agent_max_requests: formAxis === 'caller' && formAgentMax ? Number(formAgentMax) : null,
++      user_max_requests:
++        (formAxis === 'caller' || formAxis === 'caller_target') && formUserMax
++          ? Number(formUserMax)
++          : null,
++      agent_max_requests:
++        (formAxis === 'caller' || formAxis === 'caller_target') && formAgentMax
++          ? Number(formAgentMax)
++          : null,
+     };
+     setIsSaving(true);
+     try {
+@@ -199,11 +269,18 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+       if (d.agent_max_requests != null) parts.push(`agent ${d.agent_max_requests}`);
+       return `${parts.join(', ')} / ${w}`;
+     }
++    if (d.axis === 'caller_target') {
++      const parts: string[] = [];
++      if (d.user_max_requests != null) parts.push(`user ${d.user_max_requests}`);
++      if (d.agent_max_requests != null) parts.push(`agent ${d.agent_max_requests}`);
++      return `${parts.join(', ')} / ${w} @ group ${d.group || ''}`;
++    }
+     return `${d.max_requests} / ${w}`;
+   };
+ 
+   if (view === 'form') {
+     const isCaller = formAxis === 'caller';
++    const isCallerTarget = formAxis === 'caller_target';
+     return (
+       <div className="space-y-6">
+         <div className="flex items-center justify-between">
+@@ -225,11 +302,13 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+             <select
+               value={formAxis}
+               onChange={(e) => {
+-                const axis = e.target.value as 'caller' | 'target';
++                const axis = e.target.value as 'caller' | 'target' | 'caller_target';
+                 setFormAxis(axis);
+-                // Reset entity_type to a valid value for the chosen axis so a
+-                // target definition never submits the caller's 'group' type.
++                // Reset entity_type AND group to valid values for the chosen axis
++                // so a target definition never submits the caller's 'group' type
++                // and a stale group value never lands on a caller/target body.
+                 setFormEntityType(axis === 'caller' ? 'group' : TARGET_ENTITY_TYPES[0]);
++                setFormGroup('');
+                 setFormName('');
+               }}
+               disabled={!!editingId}
+@@ -237,6 +316,9 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+             >
+               <option value="caller">caller (a group of users/agents)</option>
+               <option value="target">target (an MCP server / A2A agent)</option>
++              <option value="caller_target">
++                caller_target (each caller, per target - fair share)
++              </option>
+             </select>
+           </div>
+ 
+@@ -256,6 +338,33 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+             </div>
+           )}
+ 
++          {isCallerTarget && (
++            <div>
++              <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
++                Caller group (the callers this limit applies to)
++              </label>
++              <input
++                type="text"
++                value={formGroup}
++                onChange={(e) => setFormGroup(e.target.value)}
++                disabled={!!editingId}
++                list="caller-group-options"
++                placeholder="e.g. tenant-a"
++                className={inputBase}
++              />
++              <datalist id="caller-group-options">
++                {definitions
++                  .filter((d) => d.axis === 'caller' && d.entity_type === 'group')
++                  .map((d) => (
++                    <option key={d.name} value={d.name} />
++                  ))}
++              </datalist>
++              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
++                Callers become subject via their rate-limit group membership (Users/M2M pages).
++              </p>
++            </div>
++          )}
++
+           <div>
+             <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
+               {isCaller ? 'Group name' : 'Target name (server path / agent path)'}
+@@ -400,8 +509,79 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+         <StatTile label="Enabled" value={summary.enabled} hint="Definitions currently enforced" />
+         <StatTile label="Caller (group)" value={summary.caller} hint="Per-caller group limits" />
+         <StatTile label="Target" value={summary.target} hint="Per MCP-server / A2A-agent limits" />
++        <StatTile label="Caller-target" value={summary.callerTarget} hint="Per (caller, target) fair-share limits" />
+         <StatTile label="Fail-closed" value={summary.failClosed} hint="Deny on backend error" />
+         <StatTile label="Callers governed" value={summary.governed} hint="Users/agents mapped into a rate-limit group" />
++        <StatTile
++          label="Quarantined callers"
++          value={summary.quarantinedCallers}
++          hint="Absolute-deny kill switch (issue #1504)"
++        />
++        <StatTile
++          label="Quarantined targets"
++          value={summary.quarantinedTargets}
++          hint="Targets out of rotation (deny everyone)"
++        />
++      </div>
++
++      {/* Quarantine kill-switch panel (issue #1504). A quarantined target denies
++          EVERY caller (admins included) with a plain 403 - no window, no retry. */}
++      <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 px-4 py-3">
++        <div className="flex items-center gap-2 mb-2">
++          <ExclamationTriangleIcon className="h-5 w-5 text-red-600 dark:text-red-400" />
++          <h3 className="text-sm font-semibold text-red-700 dark:text-red-300">
++            Quarantine (kill switch)
++          </h3>
++        </div>
++        <div className="flex flex-wrap items-center gap-2">
++          {quarantinedTargets.map((m: RateLimitMembership) => (
++            <span
++              key={m.subject}
++              className="inline-flex items-center px-2 py-1 text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-full"
++            >
++              <ExclamationTriangleIcon className="h-3.5 w-3.5 mr-1" />
++              {m.subject}
++              <button
++                type="button"
++                disabled={quarantineBusy}
++                onClick={() => releaseTarget(m.subject)}
++                className="ml-2 font-semibold hover:text-red-900 dark:hover:text-red-100 disabled:opacity-50"
++                title="Release from quarantine"
++              >
++                Release
++              </button>
++            </span>
++          ))}
++          {quarantinedTargets.length === 0 && (
++            <span className="text-xs text-gray-500 dark:text-gray-400">
++              No quarantined targets. Callers are quarantined via their rate-limit groups on the Users/M2M pages.
++            </span>
++          )}
++        </div>
++        <div className="mt-3 flex items-center gap-2 max-w-md">
++          <SearchableSelect
++            options={[
++              ...servers.map((s) => ({ value: s.path, label: s.path, description: s.name })),
++              ...agents.map((a) => ({ value: a.path, label: a.path, description: a.name })),
++            ]}
++            value={quarantineTargetSubject}
++            onChange={setQuarantineTargetSubject}
++            isLoading={serversLoading || agentsLoading}
++            allowCustom
++            placeholder="Pick a target to quarantine…"
++          />
++          <button
++            type="button"
++            disabled={quarantineBusy || !quarantineTargetSubject}
++            onClick={() => {
++              void quarantineTarget(quarantineTargetSubject);
++              setQuarantineTargetSubject('');
++            }}
++            className="px-3 py-2 bg-red-600 text-white text-sm rounded-md hover:bg-red-700 disabled:opacity-50 whitespace-nowrap"
++          >
++            Quarantine
++          </button>
++        </div>
+       </div>
+ 
+       <div className="relative max-w-md">
+@@ -436,11 +616,21 @@ const IAMRateLimits: React.FC<IAMRateLimitsProps> = ({ onShowToast }) => {
+             <tbody>
+               {filtered.map((d) => {
+                 const id = definitionId(d);
++                const isTargetQuarantined =
++                  d.axis === 'target' &&
++                  quarantinedTargets.some((m) => m.subject === d.name);
+                 return (
+                   <tr key={id} className="border-b border-gray-100 dark:border-gray-800">
+                     <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{d.axis}</td>
+                     <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{d.entity_type}</td>
+-                    <td className="py-2 pr-4 font-mono text-xs text-gray-900 dark:text-white">{d.name}</td>
++                    <td className="py-2 pr-4 font-mono text-xs text-gray-900 dark:text-white">
++                      {d.name}
++                      {isTargetQuarantined && (
++                        <span className="ml-2 inline-block px-2 py-0.5 text-xs rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300">
++                          QUARANTINED
++                        </span>
++                      )}
++                    </td>
+                     <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{limitSummary(d)}</td>
+                     <td className="py-2 pr-4">
+                       <span className={d.enabled ? 'text-green-600 dark:text-green-400' : 'text-gray-400'}>
+diff --git a/frontend/src/components/iam/RateLimitGroupsEditor.tsx b/frontend/src/components/iam/RateLimitGroupsEditor.tsx
+index e52d8ac..8abb84e 100644
+--- a/frontend/src/components/iam/RateLimitGroupsEditor.tsx
++++ b/frontend/src/components/iam/RateLimitGroupsEditor.tsx
+@@ -5,6 +5,7 @@ import {
+   setRateLimitMembership,
+   deleteRateLimitMembership,
+   RateLimitMembership,
++  QUARANTINE_CALLER_GROUP,
+ } from '../../hooks/useRateLimits';
+ 
+ interface RateLimitGroupsEditorProps {
+@@ -51,6 +52,19 @@ const RateLimitGroupsEditor: React.FC<RateLimitGroupsEditorProps> = ({
+     return m?.groups || [];
+   }, [memberships, subjectType, subject]);
+ 
++  // The reserved quarantine group is selectable so an operator can kill-switch a
++  // caller in place (issue #1504). It renders as a distinct red chip below.
++  const groupOptionsWithQuarantine = useMemo(() => {
++    if (groupOptions.some((o) => o.value === QUARANTINE_CALLER_GROUP)) return groupOptions;
++    return [
++      ...groupOptions,
++      {
++        value: QUARANTINE_CALLER_GROUP,
++        label: `${QUARANTINE_CALLER_GROUP} (quarantine: block all)`,
++      },
++    ];
++  }, [groupOptions]);
++
+   useEffect(() => {
+     if (editing) setSelected(new Set(currentGroups));
+   }, [editing, currentGroups]);
+@@ -97,9 +111,18 @@ const RateLimitGroupsEditor: React.FC<RateLimitGroupsEditorProps> = ({
+         {currentGroups.map((g) => (
+           <span
+             key={g}
+-            className="inline-block px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
++            className={
++              g === QUARANTINE_CALLER_GROUP
++                ? 'inline-block px-2 py-0.5 text-xs rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
++                : 'inline-block px-2 py-0.5 text-xs rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
++            }
++            title={
++              g === QUARANTINE_CALLER_GROUP
++                ? 'Quarantined: ALL data-plane requests are denied until released'
++                : undefined
++            }
+           >
+-            {g}
++            {g === QUARANTINE_CALLER_GROUP ? `quarantined: ${g}` : g}
+           </span>
+         ))}
+         {currentGroups.length === 0 && <span className="text-gray-400 text-xs">{'—'}</span>}
+@@ -139,7 +162,7 @@ const RateLimitGroupsEditor: React.FC<RateLimitGroupsEditorProps> = ({
+ 
+       <div className="max-w-sm">
+         <SearchableSelect
+-          options={groupOptions}
++          options={groupOptionsWithQuarantine}
+           value=""
+           onChange={addGroup}
+           placeholder={
+diff --git a/frontend/src/hooks/useRateLimits.ts b/frontend/src/hooks/useRateLimits.ts
+index 922a6a4..7781006 100644
+--- a/frontend/src/hooks/useRateLimits.ts
++++ b/frontend/src/hooks/useRateLimits.ts
+@@ -1,15 +1,17 @@
+ import axios from 'axios';
+ import { useIAMResource } from './useIAMResource';
+ 
+-// ─── Types ──────────────────────────────────────────────────────
++// ─── Types ───────────────────────────────────────────────────────
+ 
+ // A rate-limit definition. Caller (group) definitions carry per-caller-type
+ // limits (user_max_requests / agent_max_requests); target definitions carry a
+-// single max_requests. Mirrors registry/rate_limiting/models.py.
++// single max_requests; caller_target definitions name the target + the caller
++// group and carry the per-caller-type limits. Mirrors registry/rate_limiting/models.py.
+ export interface RateLimitDefinition {
+-  axis: 'caller' | 'target';
++  axis: 'caller' | 'target' | 'caller_target';
+   entity_type: string;
+   name: string;
++  group?: string | null;
+   max_requests?: number | null;
+   user_max_requests?: number | null;
+   agent_max_requests?: number | null;
+@@ -18,9 +20,10 @@ export interface RateLimitDefinition {
+   enabled: boolean;
+ }
+ 
+-// A rate-limit membership: maps a user/client to rate-limit group name(s).
++// A rate-limit membership: maps a user/client (or, for quarantine only, a
++// target) to rate-limit group name(s).
+ export interface RateLimitMembership {
+-  subject_type: 'user' | 'client';
++  subject_type: 'user' | 'client' | 'target';
+   subject: string;
+   groups: string[];
+ }
+@@ -28,8 +31,18 @@ export interface RateLimitMembership {
+ export const CALLER_ENTITY_TYPE = 'group';
+ export const TARGET_ENTITY_TYPES = ['mcp_server', 'a2a_agent'];
+ 
+-// Build the server-derived definition id: '<axis>:<entity_type>:<name>:<window_seconds>'.
++// Reserved quarantine groups (issue #1504). Managed via memberships; absolute
++// deny at /validate. Keep in sync with registry/rate_limiting/models.py.
++export const QUARANTINE_CALLER_GROUP = '__quarantined_callers__';
++export const QUARANTINE_TARGET_GROUP = '__quarantined_targets__';
++
++// Build the server-derived definition id:
++// '<axis>:<entity_type>:<name>:<window_seconds>' (caller/target) or
++// '<axis>:<entity_type>:<group>:<name>:<window_seconds>' (caller_target).
+ export function definitionId(d: RateLimitDefinition): string {
++  if (d.axis === 'caller_target') {
++    return `${d.axis}:${d.entity_type}:${d.group}:${d.name}:${d.window_seconds}`;
++  }
+   return `${d.axis}:${d.entity_type}:${d.name}:${d.window_seconds}`;
+ }
+ 
+@@ -88,7 +101,7 @@ export function useRateLimitMemberships() {
+ // list is stored as a membership with no groups; callers should delete instead
+ // when they want to remove the record entirely.
+ export async function setRateLimitMembership(
+-  subjectType: 'user' | 'client',
++  subjectType: 'user' | 'client' | 'target',
+   subject: string,
+   groups: string[],
+ ): Promise<RateLimitMembership> {
+diff --git a/registry/api/rate_limit_routes.py b/registry/api/rate_limit_routes.py
+index 246efc1..8d2e4ba 100644
+--- a/registry/api/rate_limit_routes.py
++++ b/registry/api/rate_limit_routes.py
+@@ -18,8 +18,15 @@ from registry.audit.context import set_audit_action
+ from registry.auth.dependencies import nginx_proxied_auth
+ from registry.core.config import settings
+ from registry.rate_limiting.definitions_repository import DefinitionsRepository
+-from registry.rate_limiting.memberships_repository import MembershipsRepository
++from registry.rate_limiting.memberships_repository import (
++    MembershipsRepository,
++    QUARANTINE_SEED_IDS,
++)
+ from registry.rate_limiting.models import (
++    QUARANTINE_CALLER_GROUP,
++    QUARANTINE_GROUPS,
++    QUARANTINE_SEED_SUBJECT_TYPES,
++    QUARANTINE_TARGET_GROUP,
+     UNENFORCED_ENTITY_TYPES,
+     RateLimitDefinition,
+     RateLimitMembership,
+@@ -74,8 +81,13 @@ def _validate_caller_floor(
+     >= the user floor and ``agent_max_requests`` >= the agent floor (both config-only,
+     no API). Longer windows (hourly/daily volume caps) are exempt because a low
+     per-day cap is a legitimate limit that a per-minute floor should not block.
++    Applies to the caller axis AND the caller_target axis (same per-caller-type
++    limits, same lockout hazard).
+     """
+-    if definition.axis != "caller" or definition.window_seconds > _FLOOR_WINDOW_SECONDS:
++    if (
++        definition.axis not in ("caller", "caller_target")
++        or definition.window_seconds > _FLOOR_WINDOW_SECONDS
++    ):
+         return
+ 
+     user_floor = settings.rate_limit_user_floor_per_min
+@@ -101,6 +113,33 @@ def _validate_caller_floor(
+         )
+ 
+ 
++def _validate_reserved_groups(
++    definition: RateLimitDefinition,
++) -> None:
++    """Reject a definition that names a reserved quarantine group (issue #1504).
++
++    Quarantine is a kill switch, never a throttle: no RateLimitDefinition may
++    target the reserved groups (as the target ``name`` or as the caller_target
++    ``group``), so they can never be diluted into a windowed limit.
++    """
++    if definition.name in QUARANTINE_GROUPS:
++        raise HTTPException(
++            status_code=400,
++            detail=(
++                f"'{definition.name}' is a reserved quarantine group and cannot be "
++                f"used in a rate-limit definition"
++            ),
++        )
++    if definition.group is not None and definition.group in QUARANTINE_GROUPS:
++        raise HTTPException(
++            status_code=400,
++            detail=(
++                f"group '{definition.group}' is a reserved quarantine group and "
++                f"cannot be used in a rate-limit definition"
++            ),
++        )
++
++
+ def _parse_definition(
+     body: dict,
+ ) -> RateLimitDefinition:
+@@ -145,6 +184,58 @@ def _parse_membership(
+         ) from exc
+ 
+ 
++def _validate_membership_reserved(
++    membership: RateLimitMembership,
++    membership_id: str,
++) -> None:
++    """Guard the reserved quarantine groups on a membership write (issue #1504).
++
++    SUBJECT-KIND/GROUP PAIRING (review resolution): a user/client membership may
++    carry ``__quarantined_callers__`` and a target membership may carry
++    ``__quarantined_targets__`` -- that IS how quarantine is applied. Rejected:
++    cross-kind usage, carrying BOTH reserved groups, or editing a seed document's
++    own groups (the seeds are frozen anchors; release edits the caller's doc, not
++    the seed).
++    """
++    reserved_in_groups = QUARANTINE_GROUPS.intersection(membership.groups)
++    if not reserved_in_groups:
++        # Still block edits that would unfreeze a seed document's own groups.
++        if membership_id in QUARANTINE_SEED_IDS:
++            raise HTTPException(
++                status_code=400,
++                detail=(
++                    f"'{membership_id}' is a reserved quarantine anchor and cannot "
++                    f"be modified"
++                ),
++            )
++        return
++    if len(reserved_in_groups) > 1:
++        raise HTTPException(
++            status_code=400,
++            detail="a membership cannot carry both reserved quarantine groups",
++        )
++    reserved_group = next(iter(reserved_in_groups))
++    expected_subject_type = QUARANTINE_SEED_SUBJECT_TYPES[reserved_group]
++    if membership.subject_type != expected_subject_type:
++        raise HTTPException(
++            status_code=400,
++            detail=(
++                f"'{reserved_group}' pairs with subject_type "
++                f"'{expected_subject_type}', got '{membership.subject_type}'"
++            ),
++        )
++    # A caller quarantine group is applied via the caller's OWN membership doc;
++    # the seed documents themselves are frozen.
++    if membership_id in QUARANTINE_SEED_IDS and membership.groups != [reserved_group]:
++        raise HTTPException(
++            status_code=400,
++            detail=(
++                f"'{membership_id}' is a reserved quarantine anchor; its groups "
++                f"cannot be changed"
++            ),
++        )
++
++
+ class _DeleteResponse(BaseModel):
+     """Response body for a delete operation."""
+ 
+@@ -216,6 +307,7 @@ async def put_rate_limit(
+     definition = _parse_definition(body)
+     _validate_enforceable(definition)
+     _validate_caller_floor(definition)
++    _validate_reserved_groups(definition)
+ 
+     built_id = definition.build_id()
+     if built_id != definition_id:
+@@ -326,6 +418,7 @@ async def put_rate_limit_membership(
+     _require_admin(user_context)
+     set_audit_action(request, "update", _MEMBERSHIP_RESOURCE_TYPE, resource_id=membership_id)
+     membership = _parse_membership(body)
++    _validate_membership_reserved(membership, membership_id)
+ 
+     built_id = membership.build_id()
+     if built_id != membership_id:
+@@ -350,6 +443,17 @@ async def delete_rate_limit_membership(
+     """Delete a membership by id (admin only)."""
+     _require_admin(user_context)
+     set_audit_action(request, "delete", _MEMBERSHIP_RESOURCE_TYPE, resource_id=membership_id)
++    if membership_id in QUARANTINE_SEED_IDS:
++        # 409 (not 404): the anchor exists but is intentionally undeletable;
++        # quarantine is released by removing the reserved group from the
++        # caller's/target's OWN membership document, never by deleting the seed.
++        raise HTTPException(
++            status_code=409,
++            detail=(
++                f"'{membership_id}' is a reserved quarantine anchor and cannot be "
++                f"deleted"
++            ),
++        )
+     deleted = await _get_memberships_repository().delete(membership_id)
+     if not deleted:
+         raise HTTPException(status_code=404, detail="Membership not found")
+diff --git a/registry/observability/meters.py b/registry/observability/meters.py
+index 69e85f0..9758234 100644
+--- a/registry/observability/meters.py
++++ b/registry/observability/meters.py
+@@ -204,6 +204,15 @@ rate_limit_errors_total = _meter.create_counter(
+     unit="1",
+ )
+ 
++# Quarantine (kill-switch) denies, issue #1504. Label "subject" is bounded:
++# "caller" | "target". NEVER the quarantined identity (unbounded) -- attribution
++# lives in the WARNING log. An increase means a kill switch is ACTIVE.
++rate_limit_quarantined_total = _meter.create_counter(
++    name="mcpgw_rate_limit_quarantined_total",
++    description="Requests denied by a reserved quarantine group (absolute deny)",
++    unit="1",
++)
++
+ rate_limit_backend_duration_ms = _meter.create_histogram(
+     name="mcpgw_rate_limit_backend_duration",
+     description="Per-op latency of the rate-limit counter-store round trip",
+diff --git a/registry/rate_limiting/definitions_repository.py b/registry/rate_limiting/definitions_repository.py
+index 38ea4ff..e832ba0 100644
+--- a/registry/rate_limiting/definitions_repository.py
++++ b/registry/rate_limiting/definitions_repository.py
+@@ -143,6 +143,36 @@ class DefinitionsRepository:
+         self._cache_put(cache_key, definitions)
+         return definitions
+ 
++    async def list_caller_target_limits(
++        self,
++        entity_type: str,
++        name: str,
++        groups: list[str],
++    ) -> list[RateLimitDefinition]:
++        """Return enabled caller_target definitions for one target x the caller's groups.
++
++        The caller's rate-limit groups are already resolved by the limiter; this
++        matches definitions whose ``group`` is one of them, for the classified
++        target entity. Cached like every hot-path read; empty ``groups``
++        short-circuits (a caller with no groups can never match).
++        """
++        if not groups:
++            return []
++        cache_key = f"caller_target:{entity_type}:{name}:{','.join(sorted(groups))}"
++        cached = self._cache_get(cache_key)
++        if cached is not None:
++            return cached
++        query = {
++            "axis": "caller_target",
++            "entity_type": entity_type,
++            "name": name,
++            "group": {"$in": groups},
++            "enabled": True,
++        }
++        definitions = await self._find_definitions(query)
++        self._cache_put(cache_key, definitions)
++        return definitions
++
+     async def upsert(
+         self,
+         definition: RateLimitDefinition,
+diff --git a/registry/rate_limiting/limiter.py b/registry/rate_limiting/limiter.py
+index b9162b2..3379997 100644
+--- a/registry/rate_limiting/limiter.py
++++ b/registry/rate_limiting/limiter.py
+@@ -22,6 +22,7 @@ import time
+ from ..observability.meters import (
+     rate_limit_checks_total,
+     rate_limit_errors_total,
++    rate_limit_quarantined_total,
+     rate_limit_throttled_total,
+ )
+ from .backend import RateLimiterBackend
+@@ -31,6 +32,8 @@ from .models import (
+     AXIS_ABBREVIATION,
+     CALLER_TYPE_AGENT,
+     CALLER_TYPE_USER,
++    QUARANTINE_CALLER_GROUP,
++    QUARANTINE_TARGET_GROUP,
+     RateLimitDecision,
+     RateLimitDefinition,
+ )
+@@ -180,6 +183,81 @@ class RateLimiter:
+             )
+         return gates
+ 
++    async def _build_caller_target_gates(
++        self,
++        identity: str,
++        groups: list[str],
++        caller_type: str,
++        target_entity_type: str | None,
++        target_name: str | None,
++    ) -> list[_Gate]:
++        """Build one gate per window for the (caller, target) pair (issue #1504).
++
++        A ``caller_target`` definition names the classified TARGET plus the
++        rate-limit ``group`` the caller must belong to; the limit used is the
++        per-caller-type number (user/agent), mirroring the caller axis. The
++        counter subject is the COMPOSITE "<identity>|<target_name>" so each
++        (caller, target) pair has its own independent bucket. Definitions whose
++        group is not one of the caller's rate-limit groups simply do not apply.
++        """
++        if not groups or not target_entity_type or not target_name:
++            return []
++        pair_defs = await self._definitions.list_caller_target_limits(
++            target_entity_type, target_name, groups
++        )
++        gates: list[_Gate] = []
++        for definition in pair_defs:
++            limit = definition.limit_for_caller_type(caller_type)
++            if limit is None:
++                continue
++            gates.append(
++                _Gate(
++                    AXIS_ABBREVIATION["caller_target"],
++                    definition.entity_type,
++                    f"{identity}|{target_name}",
++                    definition.window_seconds,
++                    limit,
++                    definition.fail_closed,
++                )
++            )
++        return gates
++
++    def _is_caller_quarantined(
++        self,
++        groups: list[str],
++    ) -> bool:
++        """True when the caller's rate-limit groups contain the reserved caller group."""
++        return QUARANTINE_CALLER_GROUP in groups
++
++    async def _is_target_quarantined(
++        self,
++        target_entity_type: str | None,
++        target_name: str | None,
++    ) -> bool:
++        """True when the classified target carries the reserved target group.
++
++        Reads the target's membership doc (a 'target:<name>' subject, cached like
++        every membership read). A store error follows the limiter's fail-open
++        policy (an availability guardrail): fail-open unless the global fail-open
++        is disabled, in which case quarantine fails closed.
++        """
++        if not target_entity_type or not target_name:
++            return False
++        try:
++            target_groups = await self._memberships.get_groups_for_target(target_name)
++        except Exception as exc:
++            rate_limit_errors_total.add(1, {"axis": AXIS_ABBREVIATION["target"]})
++            if not self._fail_open:
++                logger.warning(
++                    f"rate-limit quarantine lookup failed (fail-closed): {exc}"
++                )
++                return True
++            logger.warning(
++                f"rate-limit quarantine lookup failed (fail-open): {exc}"
++            )
++            return False
++        return QUARANTINE_TARGET_GROUP in target_groups
++
+     async def check(
+         self,
+         *,
+@@ -198,10 +276,19 @@ class RateLimiter:
+         for the caller is the user- or agent-specific number based on caller type
+         (agent when a ``client_id`` is present, else user).
+ 
++        QUARANTINE (issue #1504) is evaluated FIRST, before any gate is built or any
++        counter touched: a caller whose rate-limit groups contain the reserved
++        caller group is denied outright (unless ``is_admin`` -- admins keep the
++        caller-gate bypass so an operator cannot lock themselves out), and a target
++        whose membership doc carries the reserved target group is denied for EVERY
++        caller, admins included (mirroring target gates, which protect the backend
++        from everyone). Quarantine denies are indefinite and carry no Retry-After.
++
+         **Admin callers bypass caller gates** (an operator must not be able to lock
+-        themselves out); target gates still apply so a weak backend stays protected.
+-        Gates are evaluated **sequentially, tightest-window-first**, short-circuiting
+-        on the first denial (deny-does-not-consume across windows).
++        themselves out); target gates and target quarantine still apply so a weak
++        backend stays protected. Gates are evaluated **sequentially,
++        tightest-window-first**, short-circuiting on the first denial
++        (deny-does-not-consume across windows).
+ 
+         NOTE: this is only called for DATA-PLANE requests (an MCP/A2A target); the
+         caller (``server.py``) skips enforcement for control-plane ``/api/*`` calls,
+@@ -214,12 +301,44 @@ class RateLimiter:
+         # Per-caller counter subject: prefer client_id (agents), else username.
+         identity = client_id or username or ""
+ 
+-        caller_gates: list[_Gate] = []
+         if not is_admin:
+             groups = await self._memberships.get_groups_for(username, client_id)
++            # Quarantine first: an absolute deny consumes NO counter quota.
++            if self._is_caller_quarantined(groups):
++                rate_limit_quarantined_total.add(1, {"subject": "caller"})
++                logger.warning(
++                    f"rate-limit quarantine: caller quarantined "
++                    f"caller_username={username or ''} "
++                    f"caller_client_id={client_id or ''}"
++                )
++                return RateLimitDecision.quarantine("caller")
++            if await self._is_target_quarantined(target_entity_type, target_name):
++                rate_limit_quarantined_total.add(1, {"subject": "target"})
++                logger.warning(
++                    f"rate-limit quarantine: target quarantined name={target_name or ''} "
++                    f"caller_username={username or ''} "
++                    f"caller_client_id={client_id or ''}"
++                )
++                return RateLimitDecision.quarantine("target")
+             caller_gates = await self._build_caller_gates(identity, groups, caller_type)
++        else:
++            # Admins bypass CALLER quarantine (lockout safety), but a quarantined
++            # TARGET denies everyone, admins included. No membership read is made
++            # on the admin path beyond the target-quarantine lookup.
++            if await self._is_target_quarantined(target_entity_type, target_name):
++                rate_limit_quarantined_total.add(1, {"subject": "target"})
++                logger.warning(
++                    f"rate-limit quarantine: target quarantined name={target_name or ''} "
++                    f"caller_username={username or ''} "
++                    f"caller_client_id={client_id or ''} (admin)"
++                )
++                return RateLimitDecision.quarantine("target")
++            groups = []
+         target_gates = await self._build_target_gates(target_entity_type, target_name)
+-        gates = caller_gates + target_gates
++        pair_gates = await self._build_caller_target_gates(
++            identity, groups, caller_type, target_entity_type, target_name
++        )
++        gates = caller_gates + target_gates + pair_gates
+         if not gates:
+             return RateLimitDecision.allow()
+ 
+diff --git a/registry/rate_limiting/memberships_repository.py b/registry/rate_limiting/memberships_repository.py
+index 1b6ef92..3a4f311 100644
+--- a/registry/rate_limiting/memberships_repository.py
++++ b/registry/rate_limiting/memberships_repository.py
+@@ -20,7 +20,7 @@ from ..repositories.documentdb.client import (
+     get_collection_name,
+     get_documentdb_client,
+ )
+-from .models import RateLimitMembership
++from .models import QUARANTINE_SEED_SUBJECT_TYPES, RateLimitMembership
+ 
+ # Configure logging with basicConfig
+ logging.basicConfig(
+@@ -35,6 +35,13 @@ MEMBERSHIPS_COLLECTION_BASE: str = "rate_limit_memberships"
+ # Default in-process cache TTL for membership reads.
+ DEFAULT_CACHE_TTL_SECONDS: float = 30.0
+ 
++# Reserved quarantine anchor document ids (issue #1504). Seeded at auth-server
++# startup by ``ensure_quarantine_seeds`` and undeletable via the admin API.
++QUARANTINE_SEED_IDS: tuple[str, ...] = (
++    "user:__quarantined_callers__",
++    "target:__quarantined_targets__",
++)
++
+ 
+ class MembershipsRepository:
+     """Repository for rate-limit memberships with a small time-based read cache."""
+@@ -121,6 +128,18 @@ class MembershipsRepository:
+                 unique.append(group)
+         return unique
+ 
++    async def get_groups_for_target(
++        self,
++        target_name: str,
++    ) -> list[str]:
++        """Resolve the rate-limit groups of a TARGET entity (target quarantine).
++
++        Reads the ``target:<name>`` membership doc (cached like every membership
++        read). In v1 a target doc only ever carries the reserved target quarantine
++        group; any other group on a target doc is inert.
++        """
++        return await self._groups_for_id(f"target:{target_name}")
++
+     async def upsert(
+         self,
+         membership: RateLimitMembership,
+@@ -173,3 +192,30 @@ class MembershipsRepository:
+             except Exception as exc:
+                 logger.warning(f"skipping malformed rate-limit membership: {exc}")
+         return memberships
++
++    async def ensure_quarantine_seeds(self) -> None:
++        """Idempotently create the reserved quarantine anchor documents (issue #1504).
++
++        The two reserved groups must exist so an operator never has to create them
++        before their first quarantine action. Each seed is a membership document
++        whose subject IS the group name (a self-describing anchor); ``$setOnInsert``
++        makes re-running startup a no-op that never clobbers operator edits.
++        """
++        collection = await self._get_collection()
++        for group, subject_type in QUARANTINE_SEED_SUBJECT_TYPES.items():
++            doc_id = f"{subject_type}:{group}"
++            await collection.update_one(
++                {"_id": doc_id},
++                {
++                    "$setOnInsert": {
++                        "subject_type": subject_type,
++                        "subject": group,
++                        "groups": [group],
++                        "enabled": True,
++                    }
++                },
++                upsert=True,
++            )
++        # The seeds must never be invisible behind a warm 30s read cache (e.g. a
++        # replica that started serving traffic before the anchors existed).
++        self.invalidate_cache()
+diff --git a/registry/rate_limiting/models.py b/registry/rate_limiting/models.py
+index 6dfa596..b5cd103 100644
+--- a/registry/rate_limiting/models.py
++++ b/registry/rate_limiting/models.py
+@@ -46,7 +46,29 @@ TARGET_ENTITY_TYPES: frozenset[str] = frozenset(
+ UNENFORCED_ENTITY_TYPES: frozenset[str] = frozenset({"mcp_tool", "a2a_skill"})
+ 
+ # Axis abbreviations used in counter keys (kept short and stable).
+-AXIS_ABBREVIATION: dict[str, str] = {"caller": "clr", "target": "tgt"}
++AXIS_ABBREVIATION: dict[str, str] = {
++    "caller": "clr",
++    "target": "tgt",
++    "caller_target": "ct",
++}
++
++# Reserved quarantine groups (issue #1504). These are RATE-LIMIT groups, not
++# definitions: membership in the caller group is an absolute deny for that
++# caller, membership of a target (via a 'target'-subject membership doc) is an
++# absolute deny for that target. They are seeded as permanent anchor membership
++# documents at auth-server startup (see MembershipsRepository.ensure_quarantine_seeds)
++# and are undeletable / unlimitable (admin API guards) -- quarantine is a kill
++# switch, never a throttle, so no RateLimitDefinition may name them.
++QUARANTINE_CALLER_GROUP: str = "__quarantined_callers__"
++QUARANTINE_TARGET_GROUP: str = "__quarantined_targets__"
++QUARANTINE_GROUPS: frozenset[str] = frozenset(
++    {QUARANTINE_CALLER_GROUP, QUARANTINE_TARGET_GROUP}
++)
++# The seed document for each reserved group: subject_type of its anchor doc.
++QUARANTINE_SEED_SUBJECT_TYPES: dict[str, str] = {
++    QUARANTINE_CALLER_GROUP: "user",
++    QUARANTINE_TARGET_GROUP: "target",
++}
+ 
+ # Bounds for window_seconds: 1 second up to one full day.
+ MIN_WINDOW_SECONDS: int = 1
+@@ -68,11 +90,17 @@ class RateLimitDefinition(BaseModel):
+     - ``axis="target"``: aggregate limit on one target entity across all callers
+       via ``max_requests`` (v1 enforced: an MCP server or an A2A agent; tool/skill
+       modeled but not wired).
++    - ``axis="caller_target"``: independent limit per (caller, target) pair. The
++      definition names the TARGET (``entity_type`` + ``name``, classified exactly
++      like the target axis) and the rate-limit ``group`` the caller must belong
++      to; the limit fields are the per-caller-type numbers (at least one). The
++      counter subject is the composite "<identity>|<target_name>", so one noisy
++      caller never consumes another caller's headroom against the same server.
+     """
+ 
+     axis: str = Field(
+         ...,
+-        description="Which side of the call: 'caller' or 'target'",
++        description="Which side of the call: 'caller', 'target', or 'caller_target'",
+     )
+     entity_type: str = Field(
+         ...,
+@@ -83,6 +111,15 @@ class RateLimitDefinition(BaseModel):
+         min_length=1,
+         description="Group name, server path, or agent name this applies to",
+     )
++    # caller_target axis only: the rate-limit group the caller must belong to.
++    group: str | None = Field(
++        default=None,
++        min_length=1,
++        description=(
++            "caller_target axis: the rate-limit group the caller must belong to "
++            "for this per-(caller, target) limit to apply"
++        ),
++    )
+     # Target axis uses this single aggregate limit.
+     max_requests: int | None = Field(
+         default=None,
+@@ -121,7 +158,11 @@ class RateLimitDefinition(BaseModel):
+         if self.axis not in AXIS_ABBREVIATION:
+             raise ValueError(f"axis must be one of {sorted(AXIS_ABBREVIATION)}, got '{self.axis}'")
+ 
+-        allowed = CALLER_ENTITY_TYPES if self.axis == "caller" else TARGET_ENTITY_TYPES
++        if self.axis == "caller":
++            allowed = CALLER_ENTITY_TYPES
++        else:
++            # Both the target and caller_target axes classify TARGET entities.
++            allowed = TARGET_ENTITY_TYPES
+         if self.entity_type not in allowed:
+             raise ValueError(
+                 f"entity_type '{self.entity_type}' invalid for axis '{self.axis}' "
+@@ -135,10 +176,22 @@ class RateLimitDefinition(BaseModel):
+                     "a caller (group) definition must set user_max_requests and/or "
+                     "agent_max_requests"
+                 )
++        elif self.axis == "caller_target":
++            # Per-(caller, target): names the caller group + per-caller-type limits.
++            if self.group is None:
++                raise ValueError("a caller_target definition must set group")
++            if self.user_max_requests is None and self.agent_max_requests is None:
++                raise ValueError(
++                    "a caller_target definition must set user_max_requests and/or "
++                    "agent_max_requests"
++                )
+         else:
+             # Target axis uses the single max_requests.
+             if self.max_requests is None:
+                 raise ValueError("a target definition must set max_requests")
++        # The caller-side discriminator must not leak onto the other axes.
++        if self.axis != "caller_target" and self.group is not None:
++            raise ValueError("group is only valid on the caller_target axis")
+         return self
+ 
+     def limit_for_caller_type(
+@@ -151,13 +204,27 @@ class RateLimitDefinition(BaseModel):
+         return self.user_max_requests
+ 
+     def build_id(self) -> str:
+-        """Build the definition document ``_id``: '<axis>:<entity_type>:<name>:<window_seconds>'."""
++        """Build the definition document ``_id``.
++
++        caller_target embeds ``group`` between entity_type and name (the id is
++        opaque everywhere else; it is never parsed back into fields):
++        '<axis>:<entity_type>:<group>:<name>:<window_seconds>'.
++        """
++        if self.axis == "caller_target":
++            return (
++                f"{self.axis}:{self.entity_type}:{self.group}:"
++                f"{self.name}:{self.window_seconds}"
++            )
+         return f"{self.axis}:{self.entity_type}:{self.name}:{self.window_seconds}"
+ 
+ 
+-# Subject kinds for a rate-limit membership: a human user (by username) or an
+-# agent / M2M client (by client_id). Rejected if outside this set (fail closed).
+-MEMBERSHIP_SUBJECT_TYPES: frozenset[str] = frozenset({"user", "client"})
++# Subject kinds for a rate-limit membership: a human user (by username), an
++# agent / M2M client (by client_id), or a TARGET entity (by its classified name:
++# server path / agent path). The target kind exists solely for target quarantine
++# (a 'target:<name>' doc carrying the reserved target quarantine group); a
++# target membership doc carrying any other group is inert. Rejected if outside
++# this set (fail closed).
++MEMBERSHIP_SUBJECT_TYPES: frozenset[str] = frozenset({"user", "client", "target"})
+ 
+ 
+ class RateLimitMembership(BaseModel):
+@@ -172,7 +239,7 @@ class RateLimitMembership(BaseModel):
+ 
+     subject_type: str = Field(
+         ...,
+-        description="'user' (name = username) or 'client' (name = client_id / azp)",
++        description="'user' (username), 'client' (client_id / azp), or 'target' (target name)",
+     )
+     subject: str = Field(
+         ...,
+@@ -208,6 +275,12 @@ class RateLimitDecision(BaseModel):
+     """
+ 
+     allowed: bool
++    # Deny flavor. "throttle" = windowed limit (default, every deny built by the
++    # pre-existing paths); "quarantine" = reserved-group kill switch (no window,
++    # no Retry-After). NOTE: on a quarantine decision ``axis`` carries the SUBJECT
++    # kind ("caller"/"target"), not the axis abbreviation -- consumers must branch
++    # on ``kind`` first, never on ``axis`` alone.
++    kind: str = "throttle"
+     axis: str | None = None
+     entity_type: str | None = None
+     limit: int | None = None
+@@ -223,6 +296,19 @@ class RateLimitDecision(BaseModel):
+         """Build an allow decision. ``remaining`` is best-effort headroom for headers."""
+         return cls(allowed=True, remaining=max(0, remaining))
+ 
++    @classmethod
++    def quarantine(
++        cls,
++        subject_kind: str,
++    ) -> "RateLimitDecision":
++        """Build a quarantine (kill-switch) deny for a 'caller' or 'target' subject.
++
++        No window/reset/retry: a quarantine is indefinite, and the response must
++        not tell an attacker when (or whether) it clears. ``axis`` carries the
++        subject kind for log/metric attribution (see the ``kind`` field note).
++        """
++        return cls(allowed=False, kind="quarantine", axis=subject_kind, remaining=0)
++
+     def headers(self) -> dict[str, str]:
+         """Build the ``X-RateLimit-*`` / ``Retry-After`` headers for a throttle response.
+ 
+@@ -232,7 +318,17 @@ class RateLimitDecision(BaseModel):
+         401 that ``auth_request`` forwards), and nginx rewrites it back into a real
+         429 with these headers for the client. See the ``@forbidden_error`` named
+         location in the nginx templates.
++
++        A QUARANTINE deny deliberately does NOT carry that marker (so nginx leaves
++        it a plain 403 -- an authorization-level block, not a retryable throttle)
++        and carries no ``Retry-After`` (there is no window to wait out). The
++        ``X-RateLimit-Quarantined`` marker is for log scrapers and diagnostics.
+         """
++        if self.kind == "quarantine":
++            return {
++                "X-RateLimit-Quarantined": "1",
++                "Connection": "close",
++            }
+         return {
+             "X-RateLimit-Throttled": "1",
+             "X-RateLimit-Limit": str(self.limit if self.limit is not None else 0),
+diff --git a/tests/unit/api/test_rate_limit_routes.py b/tests/unit/api/test_rate_limit_routes.py
+index e2f9a74..fc4532a 100644
+--- a/tests/unit/api/test_rate_limit_routes.py
++++ b/tests/unit/api/test_rate_limit_routes.py
+@@ -348,3 +348,107 @@ class TestMemberships:
+         """A non-admin gets 403 on membership list."""
+         resp = client.get("/api/rate-limit-memberships")
+         assert resp.status_code == 403
++
++
++@pytest.mark.unit
++class TestQuarantineGuards:
++    """Reserved quarantine group guards (issue #1504)."""
++
++    def test_put_definition_rejects_reserved_name(self, client, mock_auth_admin, mock_repository):
++        """A definition whose name is a reserved quarantine group is rejected 400."""
++        response = client.put(
++            "/api/rate-limits/target:mcp_server:__quarantined_targets__:60",
++            json={
++                "axis": "target",
++                "entity_type": "mcp_server",
++                "name": "__quarantined_targets__",
++                "max_requests": 10,
++            },
++        )
++        assert response.status_code == 400
++        assert "reserved quarantine group" in response.json()["detail"]
++
++    def test_put_definition_rejects_reserved_group(
++        self, client, mock_auth_admin, mock_repository
++    ):
++        """A caller_target definition whose group is a reserved group is rejected."""
++        response = client.put(
++            "/api/rate-limits/caller_target:mcp_server:__quarantined_callers__:mcpgw:60",
++            json={
++                "axis": "caller_target",
++                "entity_type": "mcp_server",
++                "group": "__quarantined_callers__",
++                "name": "mcpgw",
++                "user_max_requests": 10,
++            },
++        )
++        assert response.status_code == 400
++        assert "reserved quarantine group" in response.json()["detail"]
++
++    def test_put_caller_target_definition_accepted(
++        self, client, mock_auth_admin, mock_repository
++    ):
++        """A well-formed caller_target definition is stored (5-segment id)."""
++        response = client.put(
++            "/api/rate-limits/caller_target:mcp_server:tenant-a:mcpgw:60",
++            json={
++                "axis": "caller_target",
++                "entity_type": "mcp_server",
++                "group": "tenant-a",
++                "name": "mcpgw",
++                "user_max_requests": 30,
++                "agent_max_requests": 20,
++            },
++        )
++        assert response.status_code == 200
++        assert response.json()["axis"] == "caller_target"
++        assert response.json()["group"] == "tenant-a"
++
++    def test_put_membership_caller_quarantine_pairing_ok(
++        self, client, mock_auth_admin, mock_memberships_repository
++    ):
++        """A user membership may carry __quarantined_callers__ (how quarantine applies)."""
++        response = client.put(
++            "/api/rate-limit-memberships/user:alice",
++            json={
++                "subject_type": "user",
++                "subject": "alice",
++                "groups": ["dev", "__quarantined_callers__"],
++            },
++        )
++        assert response.status_code == 200
++
++    def test_put_membership_cross_kind_pairing_rejected(
++        self, client, mock_auth_admin, mock_memberships_repository
++    ):
++        """A user membership may NOT carry the TARGET quarantine group (400)."""
++        response = client.put(
++            "/api/rate-limit-memberships/user:alice",
++            json={
++                "subject_type": "user",
++                "subject": "alice",
++                "groups": ["__quarantined_targets__"],
++            },
++        )
++        assert response.status_code == 400
++        assert "pairs with subject_type" in response.json()["detail"]
++
++    def test_put_membership_target_quarantine_ok(
++        self, client, mock_auth_admin, mock_memberships_repository
++    ):
++        """A target membership may carry __quarantined_targets__."""
++        response = client.put(
++            "/api/rate-limit-memberships/target:mcpgw",
++            json={
++                "subject_type": "target",
++                "subject": "mcpgw",
++                "groups": ["__quarantined_targets__"],
++            },
++        )
++        assert response.status_code == 200
++
++    def test_delete_membership_seed_conflict(self, client, mock_auth_admin, mock_memberships_repository):
++        """Deleting a reserved seed anchor returns 409 (undeletable, not 404)."""
++        response = client.delete("/api/rate-limit-memberships/user:__quarantined_callers__")
++        assert response.status_code == 409
++        assert "reserved quarantine anchor" in response.json()["detail"]
+diff --git a/tests/unit/rate_limiting/test_limiter.py b/tests/unit/rate_limiting/test_limiter.py
+index 2054124..80b375d 100644
+--- a/tests/unit/rate_limiting/test_limiter.py
++++ b/tests/unit/rate_limiting/test_limiter.py
+@@ -5,9 +5,13 @@ Covers the behaviors the design calls out as critical: the Blocker-1 regression
+ resolution within a window, gate stacking, and fail-open / fail-closed.
+ """
+ 
+-from registry.rate_limiting.backend import IncrResult, RateLimiterBackend
+ from registry.rate_limiting.limiter import RateLimiter
+-from registry.rate_limiting.models import RateLimitDefinition
++from registry.rate_limiting.models import (
++    QUARANTINE_CALLER_GROUP,
++    QUARANTINE_TARGET_GROUP,
++    RateLimitDefinition,
++)
++from registry.rate_limiting.backend import IncrResult, RateLimiterBackend
+ 
+ 
+ class _FakeBackend(RateLimiterBackend):
+@@ -68,16 +72,19 @@ class _FakeDefs:
+     """Minimal DefinitionsRepository stand-in returning fixed lists.
+ 
+     Filters caller defs by entity_type and name (like the real repo), so a
+-    group/user/client query only sees its own definitions.
++    group/user/client query only sees its own definitions. Also serves
++    caller_target defs by (entity_type, name) with a group-membership filter.
+     """
+ 
+     def __init__(
+         self,
+         caller_defs: list[RateLimitDefinition],
+         target_defs: list[RateLimitDefinition],
++        caller_target_defs: list[RateLimitDefinition] | None = None,
+     ) -> None:
+         self._caller_defs = caller_defs
+         self._target_defs = target_defs
++        self._caller_target_defs = caller_target_defs or []
+ 
+     async def list_caller_limits(self, entity_type, names):
+         return [d for d in self._caller_defs if d.entity_type == entity_type and d.name in names]
+@@ -85,17 +92,26 @@ class _FakeDefs:
+     async def list_target_limits(self, entity_type, name):
+         return [d for d in self._target_defs if d.entity_type == entity_type and d.name == name]
+ 
++    async def list_caller_target_limits(self, entity_type, name, groups):
++        return [
++            d
++            for d in self._caller_target_defs
++            if d.entity_type == entity_type and d.name == name and d.group in groups
++        ]
++
+ 
+ class _FakeMemberships:
+-    """MembershipsRepository stand-in mapping username/client_id -> rate-limit groups."""
++    """MembershipsRepository stand-in mapping username/client_id/target -> groups."""
+ 
+     def __init__(
+         self,
+         by_user: dict[str, list[str]] | None = None,
+         by_client: dict[str, list[str]] | None = None,
++        by_target: dict[str, list[str]] | None = None,
+     ) -> None:
+         self._by_user = by_user or {}
+         self._by_client = by_client or {}
++        self._by_target = by_target or {}
+ 
+     async def get_groups_for(self, username, client_id):
+         groups: list[str] = []
+@@ -105,6 +121,16 @@ class _FakeMemberships:
+             groups.extend(self._by_client[client_id])
+         return groups
+ 
++    async def get_groups_for_target(self, target_name):
++        return list(self._by_target.get(target_name, []))
++
++
++class _ExplodingMemberships(_FakeMemberships):
++    """A memberships stand-in whose TARGET lookups always raise (store outage)."""
++
++    async def get_groups_for_target(self, target_name):
++        raise RuntimeError("db down")
++
+ 
+ def _make_limiter(
+     backend,
+@@ -113,11 +139,12 @@ def _make_limiter(
+     memberships=None,
+     fail_open=True,
+     backend_timeout_seconds=0.25,
++    caller_target_defs=None,
+ ):
+     """Build a RateLimiter with fake defs + memberships (keeps tests concise)."""
+     return RateLimiter(
+         backend,
+-        _FakeDefs(caller_defs or [], target_defs or []),
++        _FakeDefs(caller_defs or [], target_defs or [], caller_target_defs),
+         memberships or _FakeMemberships(),
+         fail_open=fail_open,
+         backend_timeout_seconds=backend_timeout_seconds,
+@@ -461,3 +488,275 @@ class TestRateLimiter:
+         )
+         decision = await limiter.check(username="x", client_id=None)
+         assert decision.allowed is False
++
++
++def _pair(name, group, max_requests, window_seconds, entity_type="mcp_server"):
++    """A caller_target definition (per-(caller, target) quota)."""
++    return RateLimitDefinition(
++        axis="caller_target",
++        entity_type=entity_type,
++        name=name,
++        group=group,
++        user_max_requests=max_requests,
++        agent_max_requests=max_requests,
++        window_seconds=window_seconds,
++    )
++
++
++class TestCallerTargetAxis:
++    """Per-(caller, target) limits (issue #1504): composite-subject gates."""
++
++    async def test_pair_limit_enforced_per_caller_per_target(self):
++        """Each (caller, target) pair has its OWN bucket; others are unaffected."""
++        backend = _FakeBackend()
++        limiter = _make_limiter(
++            backend,
++            caller_target_defs=[_pair("mcpgw", "dev", 3, 60)],
++            memberships=_FakeMemberships(by_user={"alice": ["dev"], "bob": ["dev"]}),
++        )
++        kwargs = dict(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert await _count_allowed(limiter, 5, **kwargs) == 3
++        # A different caller against the same target still has headroom.
++        other = dict(kwargs, username="bob")
++        assert await _count_allowed(limiter, 5, **other) == 3
++        # The same caller against a different target has an independent bucket.
++        elseq = dict(kwargs, target_name="other-server")
++        assert await _count_allowed(limiter, 5, **elseq) == 5
++
++    async def test_pair_gate_applies_only_to_group_members(self):
++        """A caller outside the definition's group is not gated by it."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            caller_target_defs=[_pair("mcpgw", "dev", 1, 60)],
++            memberships=_FakeMemberships(by_user={"alice": ["dev"]}),
++        )
++        assert await _count_allowed(
++            limiter,
++            5,
++            username="zoe",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        ) == 5
++
++    async def test_pair_gate_requires_a_classified_target(self):
++        """No classified target -> no pair gates (control plane stays exempt)."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            caller_target_defs=[_pair("mcpgw", "dev", 1, 60)],
++            memberships=_FakeMemberships(by_user={"alice": ["dev"]}),
++        )
++        assert await _count_allowed(limiter, 5, username="alice", client_id=None) == 5
++
++    async def test_pair_uses_per_caller_type_limit(self):
++        """An agent caller draws from agent_max_requests; user limit is ignored."""
++        definition = RateLimitDefinition(
++            axis="caller_target",
++            entity_type="mcp_server",
++            name="mcpgw",
++            group="dev",
++            user_max_requests=5,
++            agent_max_requests=2,
++            window_seconds=60,
++        )
++        limiter = _make_limiter(
++            _FakeBackend(),
++            caller_target_defs=[definition],
++            memberships=_FakeMemberships(by_client=["dev"]),
++        )
++        allowed = await _count_allowed(
++            limiter,
++            6,
++            username=None,
++            client_id="svc-1",
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert allowed == 2
++
++    async def test_pair_counter_key_is_composite(self):
++        """The counter key embeds '<identity>|<target>' (composite subject)."""
++        backend = _FakeBackend()
++        limiter = _make_limiter(
++            backend,
++            caller_target_defs=[_pair("mcpgw", "dev", 3, 60)],
++            memberships=_FakeMemberships(by_user={"alice": ["dev"]}),
++        )
++        await limiter.check(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        (key,) = backend.counts.keys()
++        assert key.startswith("ct:mcp_server:alice|mcpgw:60")
++
++    async def test_pair_gate_stacks_with_existing_axes(self):
++        """A caller_target deny behaves like any gate deny (short-circuits)."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            caller_target_defs=[_pair("mcpgw", "dev", 1, 60)],
++            memberships=_FakeMemberships(by_user={"alice": ["dev"]}),
++        )
++        kwargs = dict(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert await _count_allowed(limiter, 3, **kwargs) == 1
++        decision = await limiter.check(**kwargs)
++        assert decision.allowed is False
++        # A throttle (not quarantine): nginx can rewrite it to 429.
++        assert decision.kind == "throttle"
++        assert "Retry-After" in decision.headers()
++
++    async def test_most_restrictive_pair_def_wins_within_window(self):
++        """Two matching pair defs at the same window: both enforced, min wins."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            caller_target_defs=[_pair("mcpgw", "dev", 1, 60), _pair("mcpgw", "dev", 4, 60)],
++            memberships=_FakeMemberships(by_user={"alice": ["dev", "vip"]}),
++        )
++        kwargs = dict(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert await _count_allowed(limiter, 5, **kwargs) == 1
++
++
++class TestQuarantine:
++    """Reserved quarantine groups: early absolute deny before any counter work."""
++
++    async def test_quarantined_caller_denied_before_counters(self):
++        """A quarantined caller is denied with zero counter consumption."""
++        backend = _FakeBackend()
++        limiter = _make_limiter(
++            backend,
++            caller_target_defs=[_pair("mcpgw", "dev", 3, 60)],
++            memberships=_FakeMemberships(
++                by_user={"alice": ["dev", QUARANTINE_CALLER_GROUP]}
++            ),
++        )
++        decision = await limiter.check(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert decision.allowed is False
++        assert decision.kind == "quarantine"
++        assert backend.counts == {}  # quarantine consumes NOTHING
++
++    async def test_quarantine_headers_have_no_retry_after(self):
++        """The quarantine response carries the marker, not Retry-After."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            memberships=_FakeMemberships(by_user={"alice": [QUARANTINE_CALLER_GROUP]}),
++        )
++        decision = await limiter.check(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        headers = decision.headers()
++        assert headers.get("X-RateLimit-Quarantined") == "1"
++        assert "Retry-After" not in headers
++        assert "X-RateLimit-Throttled" not in headers
++
++    async def test_admin_bypasses_caller_quarantine(self):
++        """An admin is NOT denied by the caller quarantine (lockout safety)."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            memberships=_FakeMemberships(by_user={"ops": [QUARANTINE_CALLER_GROUP]}),
++        )
++        decision = await limiter.check(
++            username="ops",
++            client_id=None,
++            is_admin=True,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert decision.allowed is True
++
++    async def test_quarantined_target_denies_everyone_including_admin(self):
++        """A quarantined target denies non-admins AND admins alike."""
++        memberships = _FakeMemberships(by_target={"mcpgw": [QUARANTINE_TARGET_GROUP]})
++        limiter = _make_limiter(_FakeBackend(), memberships=memberships)
++        for is_admin in (False, True):
++            decision = await limiter.check(
++                username="someone",
++                client_id=None,
++                is_admin=is_admin,
++                target_entity_type="mcp_server",
++                target_name="mcpgw",
++            )
++            assert decision.allowed is False
++            assert decision.kind == "quarantine"
++            assert decision.axis == "target"
++
++    async def test_target_quarantine_lookup_fail_open_by_default(self):
++        """Store outage on the target lookup: fail-open (allow + log)."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            memberships=_ExplodingMemberships(),
++            fail_open=True,
++        )
++        decision = await limiter.check(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert decision.allowed is True
++
++    async def test_target_quarantine_lookup_fail_closed_when_global_off(self):
++        """Store outage with the global fail-open OFF: quarantine denies."""
++        limiter = _make_limiter(
++            _FakeBackend(),
++            memberships=_ExplodingMemberships(),
++            fail_open=False,
++        )
++        decision = await limiter.check(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        assert decision.allowed is False
++        assert decision.kind == "quarantine"
++
++    async def test_no_classified_target_skips_target_quarantine_lookup(self):
++        """Without a target there is nothing to quarantine (and no lookup)."""
++        exploding = _ExplodingMemberships()
++        limiter = _make_limiter(_FakeBackend(), memberships=exploding, fail_open=True)
++        decision = await limiter.check(username="alice", client_id=None)
++        assert decision.allowed is True
++
++    async def test_quarantine_wins_over_throttle(self):
++        """A caller both quarantined and over a pair limit: quarantine fires."""
++        backend = _FakeBackend()
++        limiter = _make_limiter(
++            backend,
++            caller_target_defs=[_pair("mcpgw", "dev", 1, 60)],
++            memberships=_FakeMemberships(
++                by_user={"alice": ["dev", QUARANTINE_CALLER_GROUP]}
++            ),
++        )
++        kwargs = dict(
++            username="alice",
++            client_id=None,
++            target_entity_type="mcp_server",
++            target_name="mcpgw",
++        )
++        first = await limiter.check(**kwargs)
++        assert first.kind == "quarantine"  # not a windowed throttle
++        assert backend.counts == {}
+diff --git a/tests/unit/rate_limiting/test_models.py b/tests/unit/rate_limiting/test_models.py
+index 20c800c..d47efa2 100644
+--- a/tests/unit/rate_limiting/test_models.py
++++ b/tests/unit/rate_limiting/test_models.py
+@@ -152,3 +152,112 @@ class TestRateLimitDecision:
+         assert headers["X-RateLimit-Reset"] == "1000"
+         assert headers["Retry-After"] == "30"
+         assert headers["Connection"] == "close"
++
++
++class TestCallerTargetDefinition:
++    """caller_target axis validation (issue #1504)."""
++
++    def test_valid_caller_target_definition(self):
++        """A caller_target definition names the target + group + per-type limits."""
++        d = RateLimitDefinition(
++            axis="caller_target",
++            entity_type="mcp_server",
++            name="mcpgw",
++            group="tenant-a",
++            user_max_requests=30,
++            agent_max_requests=20,
++            window_seconds=60,
++        )
++        assert d.build_id() == "caller_target:mcp_server:tenant-a:mcpgw:60"
++        assert d.limit_for_caller_type("user") == 30
++        assert d.limit_for_caller_type("agent") == 20
++
++    def test_caller_target_requires_group(self):
++        """A caller_target definition without group is rejected."""
++        with pytest.raises(ValidationError, match="must set group"):
++            RateLimitDefinition(
++                axis="caller_target",
++                entity_type="mcp_server",
++                name="mcpgw",
++                user_max_requests=30,
++            )
++
++    def test_caller_target_requires_per_type_limit(self):
++        """A caller_target definition with neither per-type limit is rejected."""
++        with pytest.raises(ValidationError, match="must set user_max_requests"):
++            RateLimitDefinition(
++                axis="caller_target",
++                entity_type="mcp_server",
++                name="mcpgw",
++                group="tenant-a",
++            )
++
++    def test_caller_target_rejects_caller_entity_type(self):
++        """The caller_target axis classifies TARGET entities, not caller groups."""
++        with pytest.raises(ValidationError, match="invalid for axis 'caller_target'"):
++            RateLimitDefinition(
++                axis="caller_target",
++                entity_type="group",
++                name="devs",
++                group="tenant-a",
++                user_max_requests=30,
++            )
++
++    def test_group_rejected_on_caller_axis(self):
++        """group is only valid on the caller_target axis (no silent leakage)."""
++        with pytest.raises(ValidationError, match="only valid on the caller_target"):
++            RateLimitDefinition(
++                axis="caller",
++                entity_type="group",
++                name="devs",
++                group="tenant-a",
++                user_max_requests=30,
++            )
++
++    def test_group_rejected_on_target_axis(self):
++        """A target definition carrying group is rejected."""
++        with pytest.raises(ValidationError, match="only valid on the caller_target"):
++            RateLimitDefinition(
++                axis="target",
++                entity_type="mcp_server",
++                name="mcpgw",
++                group="tenant-a",
++                max_requests=100,
++            )
++
++
++class TestRateLimitMembershipQuarantine:
++    """Membership model additions for quarantine (issue #1504)."""
++
++    def test_target_subject_type_accepted(self):
++        """A 'target' subject membership parses (used for target quarantine)."""
++        m = RateLimitMembership(
++            subject_type="target", subject="mcpgw", groups=["__quarantined_targets__"]
++        )
++        assert m.build_id() == "target:mcpgw"
++
++    def test_unknown_subject_type_rejected(self):
++        """An unknown subject_type is still rejected (fail closed)."""
++        with pytest.raises(ValidationError, match="subject_type"):
++            RateLimitMembership(subject_type="robot", subject="x", groups=[])
++
++
++class TestRateLimitDecisionQuarantine:
++    """Decision kind semantics (issue #1504)."""
++
++    def test_default_kind_is_throttle(self):
++        """Pre-existing constructions keep the throttle kind (backward compat)."""
++        d = RateLimitDecision(allowed=False, axis="clr")
++        assert d.kind == "throttle"
++        assert "X-RateLimit-Throttled" in d.headers()
++        assert "Retry-After" in d.headers()
++
++    def test_quarantine_headers(self):
++        """A quarantine decision: marker yes, Retry-After / throttled marker no."""
++        d = RateLimitDecision.quarantine("caller")
++        assert d.allowed is False
++        assert d.kind == "quarantine"
++        headers = d.headers()
++        assert headers["X-RateLimit-Quarantined"] == "1"
++        assert "Retry-After" not in headers
++        assert "X-RateLimit-Throttled" not in headers
+diff --git a/tests/unit/rate_limiting/test_quarantine_seeding.py b/tests/unit/rate_limiting/test_quarantine_seeding.py
+new file mode 100644
+index 0000000..9b86dc4
+--- /dev/null
++++ b/tests/unit/rate_limiting/test_quarantine_seeding.py
+@@ -0,0 +1,95 @@
++"""Unit tests for the seeding helper and the seeding repository hook (issue #1504).
++
++The reserved quarantine groups must exist without operator action, seeding must
++be idempotent ($setOnInsert semantics), and a store outage at boot must never
++block or fail startup (SRE must-fix from the expert review).
++"""
++
++from unittest.mock import AsyncMock, MagicMock
++
++from registry.rate_limiting.memberships_repository import (
++    MembershipsRepository,
++    QUARANTINE_SEED_IDS,
++)
++
++
++def _repo_with_collection() -> tuple[MembershipsRepository, MagicMock]:
++    """Build a repository whose collection is a MagicMock with an async update_one."""
++    repo = MembershipsRepository()
++    collection = MagicMock()
++    collection.update_one = AsyncMock(return_value=None)
++
++    async def _fake_get_collection():
++        return collection
++
++    repo._get_collection = _fake_get_collection  # type: ignore[assignment]
++    return repo, collection
++
++
++class TestEnsureQuarantineSeeds:
++    """The seeding hook on MembershipsRepository."""
++
++    async def test_seeds_both_anchor_documents(self):
++        """Both reserved groups get an anchor doc keyed by their seed subject type."""
++        repo, collection = _repo_with_collection()
++        await repo.ensure_quarantine_seeds()
++        assert collection.update_one.await_count == 2
++        seeded_ids = [call.args[0]["_id"] for call in collection.update_one.await_args_list]
++        assert sorted(seeded_ids) == sorted(QUARANTINE_SEED_IDS)
++
++    async def test_seeding_is_set_on_insert(self):
++        """Seeding uses $setOnInsert so restarts never clobber operator edits."""
++        repo, collection = _repo_with_collection()
++        await repo.ensure_quarantine_seeds()
++        for call in collection.update_one.await_args_list:
++            update = call.args[1]
++            assert set(update.keys()) == {"$setOnInsert"}
++            assert update["$setOnInsert"]["enabled"] is True
++            # Self-describing: the doc's groups list names its own reserved group.
++            assert update["$setOnInsert"]["groups"] == [update["$setOnInsert"]["subject"]]
++
++    async def test_seeding_invalidates_cache(self):
++        """After seeding, the read cache is dropped (anchors immediately visible)."""
++        repo, _ = _repo_with_collection()
++        repo._cache["user:x"] = (float("inf"), ["dev"])
++        await repo.ensure_quarantine_seeds()
++        assert repo._cache == {}
++
++
++class TestEnsureQuarantineGroupsSeeded:
++    """The auth-server startup helper: best-effort by contract."""
++
++    async def test_store_outage_never_raises(self):
++        """A raising store must not propagate: startup proceeds (SRE must-fix)."""
++        repo = MembershipsRepository()
++
++        async def _boom():
++            raise RuntimeError("db down")
++
++        repo._get_collection = _boom  # type: ignore[assignment]
++        # The repository-level hook itself is allowed to raise; the helper in
++        # auth_server.rate_limiting_config swallows. Replicate its contract here
++        # by asserting the repo raises and the helper's except covers it.
++        try:
++            await repo.ensure_quarantine_seeds()
++            raised = False
++        except RuntimeError:
++            raised = True
++        assert raised is True
++
++        # And the helper swallows it (import inside the function to reuse the
++        # same lazy-import pattern as server.py).
++        from auth_server.rate_limiting_config import ensure_quarantine_groups_seeded
++
++        async def _seed_boom():
++            raise RuntimeError("db down")
++
++        # Patch the repository construction inside the helper via its module.
++        import auth_server.rate_limiting_config as cfg
++
++        original = cfg.MembershipsRepository
++        try:
++            cfg.MembershipsRepository = lambda: repo  # type: ignore[misc]
++            await ensure_quarantine_groups_seeded()  # must NOT raise
++        finally:
++            cfg.MembershipsRepository = original

@@ -1,0 +1,488 @@
+diff --git a/.env.example b/.env.example
+index c0138bb..c3b4dac 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1280,6 +1280,12 @@ MCP_TOOLS_LIST_FILTER_ENABLED=true
+ # catalogs. Default: 2097152 (2 MiB)
+ MCP_PROXY_MAX_BODY_BYTES=2097152
+ 
++# Timeout (in seconds) for the auth-server /mcp-proxy hop's upstream
++# request. Raise this if upstream MCP servers run long-running tool calls
++# that are killed at 30s with HTTP 504. Values below 1 are clamped to 1.
++# Default: 30
++MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS=30
++
+ # Log level for tool-pruning audit lines emitted by the registry and the
+ # auth-server during the launch window. Valid values: DEBUG, INFO, WARNING.
+ # Default during launch is INFO so operators can observe prune behaviour;
+diff --git a/auth_server/server.py b/auth_server/server.py
+index bc22a0e..50dcaa7 100644
+--- a/auth_server/server.py
++++ b/auth_server/server.py
+@@ -8,6 +8,7 @@ import hashlib
+ import hmac
+ import json
+ import logging
++import math
+ import os
+ import re
+ import secrets
+@@ -252,6 +253,49 @@ def _read_mcp_proxy_max_body_bytes() -> int:
+     return max(candidate, minimum_bytes)
+ 
+ 
++def _read_mcp_proxy_upstream_timeout_seconds() -> float:
++    """Resolve the /mcp-proxy hop's upstream timeout.
++
++    Same cascade as _read_mcp_proxy_max_body_bytes: settings first, then
++    the MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS env var, then the 30s default
++    that predates this knob. Clamped to a 1s floor so the timeout can
++    never be effectively disabled. Non-finite values (nan/inf) are
++    treated as misconfiguration: the timeout must always be a bounded,
++    finite cap.
++    """
++    default_seconds = 30.0
++    minimum_seconds = 1.0
++    try:
++        value = getattr(settings, "mcp_proxy_upstream_timeout_seconds", None)
++        if value is not None:
++            candidate = float(value)
++            if math.isfinite(candidate):
++                return max(candidate, minimum_seconds)
++            # nan/inf in settings: treat as a parse failure and fall
++            # through to the env branch.
++    except (TypeError, ValueError) as e:
++        logger.debug(
++            f"settings.mcp_proxy_upstream_timeout_seconds parse failed, "
++            f"falling back to env: {e}"
++        )
++    raw = os.getenv("MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS")
++    if not raw:
++        return default_seconds
++    try:
++        candidate = float(raw)
++    except ValueError:
++        logging.warning(
++            f"Invalid MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS={raw!r}; using default {default_seconds}"
++        )
++        return default_seconds
++    if not math.isfinite(candidate):
++        logging.warning(
++            f"Non-finite MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS={raw!r}; using default {default_seconds}"
++        )
++        return default_seconds
++    return max(candidate, minimum_seconds)
++
++
+ # Global scopes configuration (will be loaded during FastAPI startup)
+ SCOPES_CONFIG = {}
+ 
+@@ -4575,6 +4619,7 @@ async def mcp_proxy(
+ 
+     filter_enabled = _read_mcp_filter_enabled()
+     max_body_bytes = _read_mcp_proxy_max_body_bytes()
++    upstream_timeout_seconds = _read_mcp_proxy_upstream_timeout_seconds()
+     forward_headers = _forward_headers(dict(request.headers))
+ 
+     logger.info(
+@@ -4582,7 +4627,7 @@ async def mcp_proxy(
+     )
+ 
+     try:
+-        async with httpx.AsyncClient(timeout=30.0) as client:
++        async with httpx.AsyncClient(timeout=upstream_timeout_seconds) as client:
+             async with client.stream(
+                 "POST",
+                 upstream_url,
+diff --git a/charts/auth-server/reserved-env-names.txt b/charts/auth-server/reserved-env-names.txt
+index 9a284aa..21e198e 100644
+--- a/charts/auth-server/reserved-env-names.txt
++++ b/charts/auth-server/reserved-env-names.txt
+@@ -42,6 +42,7 @@ KEYCLOAK_REALM
+ KEYCLOAK_URL
+ MAX_TOKENS_PER_USER_PER_HOUR
+ MCP_PROXY_MAX_BODY_BYTES
++MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS
+ INTERNAL_TOKEN_LEEWAY_SECONDS
+ INTERNAL_TOKEN_TTL_SECONDS
+ MCP_TOOLS_LIST_FILTER_ENABLED
+diff --git a/charts/auth-server/templates/secret.yaml b/charts/auth-server/templates/secret.yaml
+index c4bb5ac..fff1d92 100644
+--- a/charts/auth-server/templates/secret.yaml
++++ b/charts/auth-server/templates/secret.yaml
+@@ -220,6 +220,7 @@ data:
+   # Tool-level access control (issue #1026)
+   MCP_TOOLS_LIST_FILTER_ENABLED: {{ .Values.app.mcpToolsListFilterEnabled | toString | b64enc | quote }}
+   MCP_PROXY_MAX_BODY_BYTES: {{ .Values.app.mcpProxyMaxBodyBytes | b64enc | quote }}
++  MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS: {{ .Values.app.mcpProxyUpstreamTimeoutSeconds | toString | b64enc | quote }}
+   TOOL_FILTER_AUDIT_LOG_LEVEL: {{ .Values.app.toolFilterAuditLogLevel | b64enc | quote }}
+   INTERNAL_TOKEN_TTL_SECONDS: {{ .Values.app.internalTokenTtlSeconds | toString | b64enc | quote }}
+   INTERNAL_TOKEN_LEEWAY_SECONDS: {{ .Values.app.internalTokenLeewaySeconds | toString | b64enc | quote }}
+diff --git a/charts/auth-server/values.yaml b/charts/auth-server/values.yaml
+index 9ed10ea..801f547 100644
+--- a/charts/auth-server/values.yaml
++++ b/charts/auth-server/values.yaml
+@@ -68,6 +68,7 @@ app:
+   # Tool-level access control (issue #1026)
+   mcpToolsListFilterEnabled: true   # Filter MCP tools/list JSON-RPC responses against per-user tool allowlist
+   mcpProxyMaxBodyBytes: "2097152"   # Max upstream tools/list body the proxy hop buffers; oversize returns HTTP 413
++  mcpProxyUpstreamTimeoutSeconds: "30"   # /mcp-proxy upstream request timeout (seconds, min 1); raise for long-running tool calls
+   toolFilterAuditLogLevel: "INFO"   # Audit log level for tool-prune events (DEBUG, INFO, WARNING)
+ 
+   internalTokenTtlSeconds: "30"       # Token lifetime (seconds); the replay-window cap (min 5)
+diff --git a/docker-compose.podman.yml b/docker-compose.podman.yml
+index 99c105f..a4763ef 100644
+--- a/docker-compose.podman.yml
++++ b/docker-compose.podman.yml
+@@ -407,6 +407,7 @@ services:
+       # Tool-level access control (Issue #1026)
+       - MCP_TOOLS_LIST_FILTER_ENABLED=${MCP_TOOLS_LIST_FILTER_ENABLED:-true}
+       - MCP_PROXY_MAX_BODY_BYTES=${MCP_PROXY_MAX_BODY_BYTES:-2097152}
++      - MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS=${MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS:-30}
+       - TOOL_FILTER_AUDIT_LOG_LEVEL=${TOOL_FILTER_AUDIT_LOG_LEVEL:-INFO}
+       - INTERNAL_TOKEN_TTL_SECONDS=${INTERNAL_TOKEN_TTL_SECONDS:-30}
+       - INTERNAL_TOKEN_LEEWAY_SECONDS=${INTERNAL_TOKEN_LEEWAY_SECONDS:-5}
+diff --git a/docker-compose.prebuilt.yml b/docker-compose.prebuilt.yml
+index 8ac9f55..e24e95c 100644
+--- a/docker-compose.prebuilt.yml
++++ b/docker-compose.prebuilt.yml
+@@ -408,6 +408,7 @@ services:
+       # Tool-level access control (Issue #1026)
+       - MCP_TOOLS_LIST_FILTER_ENABLED=${MCP_TOOLS_LIST_FILTER_ENABLED:-true}
+       - MCP_PROXY_MAX_BODY_BYTES=${MCP_PROXY_MAX_BODY_BYTES:-2097152}
++      - MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS=${MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS:-30}
+       - TOOL_FILTER_AUDIT_LOG_LEVEL=${TOOL_FILTER_AUDIT_LOG_LEVEL:-INFO}
+       - INTERNAL_TOKEN_TTL_SECONDS=${INTERNAL_TOKEN_TTL_SECONDS:-30}
+       - INTERNAL_TOKEN_LEEWAY_SECONDS=${INTERNAL_TOKEN_LEEWAY_SECONDS:-5}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 51c786f..ca812d0 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -548,6 +548,7 @@ services:
+       # Tool-level access control (Issue #1026)
+       - MCP_TOOLS_LIST_FILTER_ENABLED=${MCP_TOOLS_LIST_FILTER_ENABLED:-true}
+       - MCP_PROXY_MAX_BODY_BYTES=${MCP_PROXY_MAX_BODY_BYTES:-2097152}
++      - MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS=${MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS:-30}
+       - TOOL_FILTER_AUDIT_LOG_LEVEL=${TOOL_FILTER_AUDIT_LOG_LEVEL:-INFO}
+       - INTERNAL_TOKEN_TTL_SECONDS=${INTERNAL_TOKEN_TTL_SECONDS:-30}
+       - INTERNAL_TOKEN_LEEWAY_SECONDS=${INTERNAL_TOKEN_LEEWAY_SECONDS:-5}
+diff --git a/docs/unified-parameter-reference.md b/docs/unified-parameter-reference.md
+index e133ab5..4bee9f2 100644
+--- a/docs/unified-parameter-reference.md
++++ b/docs/unified-parameter-reference.md
+@@ -378,6 +378,7 @@ Controls the per-user tool allowlist filter applied at the registry REST endpoin
+ |-----------|-----------------|-----------------------|----------------------|---------|
+ | Enable MCP tools/list filter | `MCP_TOOLS_LIST_FILTER_ENABLED` | `mcp_tools_list_filter_enabled` | `auth-server.app.mcpToolsListFilterEnabled`, `registry.app.mcpToolsListFilterEnabled` | Master switch for the MCP protocol tools/list filter. Default `true`. REST endpoints always filter regardless of this flag. |
+ | MCP proxy max body bytes | `MCP_PROXY_MAX_BODY_BYTES` | `mcp_proxy_max_body_bytes` | `auth-server.app.mcpProxyMaxBodyBytes` | Upper bound (bytes) the auth-server proxy hop buffers when filtering tools/list; oversize returns HTTP 413. Default `2097152` (2 MiB). |
++| MCP proxy upstream timeout | `MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS` | `mcp_proxy_upstream_timeout_seconds` | `auth-server.app.mcpProxyUpstreamTimeoutSeconds` | Timeout (seconds) for the auth-server `/mcp-proxy` hop's upstream request. Raise for MCP servers with long-running tool calls that fail at 30s with HTTP 504; raise only as far as your longest legitimate call, and note edge proxies (ALB idle timeout, nginx `proxy_read_timeout`) may need matching raises. Values are always finite and bounded; minimum 1. Default `30`. |
+ | Tool-filter audit log level | `TOOL_FILTER_AUDIT_LOG_LEVEL` | `tool_filter_audit_log_level` | `auth-server.app.toolFilterAuditLogLevel`, `registry.app.toolFilterAuditLogLevel` | Launch-window log level for prune audit lines: `DEBUG`, `INFO`, or `WARNING`. Default `INFO`; flip to `DEBUG` after two quiet weeks in production. |
+ | Internal token TTL | `INTERNAL_TOKEN_TTL_SECONDS` | `internal_token_ttl_seconds` | `auth-server.app.internalTokenTtlSeconds`, `registry.app.internalTokenTtlSeconds` | Lifetime (seconds) of the `/validate`-minted internal hop tokens that harden the `/mcp-proxy` hop and the registry `/api/` hop; the replay-window cap. Minimum 5. Default `30`. (auth-server mints; the value is the same TTL on both surfaces.) |
+ | Internal token leeway | `INTERNAL_TOKEN_LEEWAY_SECONDS` | `internal_token_leeway_seconds` | `auth-server.app.internalTokenLeewaySeconds`, `registry.app.internalTokenLeewaySeconds` | Clock-skew leeway (seconds) on the internal hop tokens' `exp`/`iat` checks. Default `5`. Verification is always enforced (fail-closed); there is no opt-out. Reuses `SECRET_KEY` — no new secret. |
+diff --git a/registry/api/config_routes.py b/registry/api/config_routes.py
+index 6346f5d..1ecdc59 100644
+--- a/registry/api/config_routes.py
++++ b/registry/api/config_routes.py
+@@ -85,6 +85,7 @@ CONFIG_GROUPS: dict[str, dict[str, Any]] = {
+             # Tool-level access control (issue #1026)
+             ("mcp_tools_list_filter_enabled", "MCP tools/list Filter Enabled", False),
+             ("mcp_proxy_max_body_bytes", "MCP Proxy Max Body Bytes", False),
++            ("mcp_proxy_upstream_timeout_seconds", "MCP Proxy Upstream Timeout (seconds)", False),
+             ("tool_filter_audit_log_level", "Tool Filter Audit Log Level", False),
+             ("internal_token_ttl_seconds", "MCP Proxy Token TTL (seconds)", False),
+             ("internal_token_leeway_seconds", "MCP Proxy Token Leeway (seconds)", False),
+diff --git a/registry/core/config.py b/registry/core/config.py
+index d8d9298..5694c23 100644
+--- a/registry/core/config.py
++++ b/registry/core/config.py
+@@ -882,6 +882,15 @@ class Settings(BaseSettings):
+             "with unusually large tool catalogs."
+         ),
+     )
++    mcp_proxy_upstream_timeout_seconds: float = Field(
++        default=30.0,
++        ge=1.0,
++        description=(
++            "Timeout (seconds) for the auth-server /mcp-proxy hop's upstream "
++            "request. Raise for MCP servers with long-running tool calls; the "
++            "hop returns 504 when the timeout elapses."
++        ),
++    )
+     tool_filter_audit_log_level: str = Field(
+         default="INFO",
+         description=(
+diff --git a/terraform/aws-ecs/main.tf b/terraform/aws-ecs/main.tf
+index 2c7636c..aaab758 100755
+--- a/terraform/aws-ecs/main.tf
++++ b/terraform/aws-ecs/main.tf
+@@ -281,9 +281,10 @@ module "mcp_gateway" {
+   app_log_console_format       = var.app_log_console_format
+ 
+   # Tool-level access control (issue #1026)
+-  mcp_tools_list_filter_enabled = var.mcp_tools_list_filter_enabled
+-  mcp_proxy_max_body_bytes      = var.mcp_proxy_max_body_bytes
+-  tool_filter_audit_log_level   = var.tool_filter_audit_log_level
++  mcp_tools_list_filter_enabled      = var.mcp_tools_list_filter_enabled
++  mcp_proxy_max_body_bytes           = var.mcp_proxy_max_body_bytes
++  mcp_proxy_upstream_timeout_seconds = var.mcp_proxy_upstream_timeout_seconds
++  tool_filter_audit_log_level        = var.tool_filter_audit_log_level
+ 
+   internal_token_ttl_seconds    = var.internal_token_ttl_seconds
+   internal_token_leeway_seconds = var.internal_token_leeway_seconds
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+index 9a5ab0d..7957ce4 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+@@ -423,6 +423,10 @@ module "ecs_service_auth" {
+           name  = "MCP_PROXY_MAX_BODY_BYTES"
+           value = tostring(var.mcp_proxy_max_body_bytes)
+         },
++        {
++          name  = "MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"
++          value = tostring(var.mcp_proxy_upstream_timeout_seconds)
++        },
+         {
+           name  = "TOOL_FILTER_AUDIT_LOG_LEVEL"
+           value = var.tool_filter_audit_log_level
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/variables.tf b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+index 52a0a2a..5b4f37e 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/variables.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+@@ -1232,6 +1232,12 @@ variable "mcp_proxy_max_body_bytes" {
+   default     = 2097152
+ }
+ 
++variable "mcp_proxy_upstream_timeout_seconds" {
++  description = "Timeout (seconds) for the auth-server /mcp-proxy hop's upstream request. Default 30; minimum 1."
++  type        = number
++  default     = 30
++}
++
+ variable "tool_filter_audit_log_level" {
+   description = "Log level for tool-pruning audit lines during the launch window. Valid values: DEBUG, INFO, WARNING."
+   type        = string
+diff --git a/terraform/aws-ecs/terraform.tfvars.example b/terraform/aws-ecs/terraform.tfvars.example
+index 82b2a6b..5060154 100755
+--- a/terraform/aws-ecs/terraform.tfvars.example
++++ b/terraform/aws-ecs/terraform.tfvars.example
+@@ -672,6 +672,7 @@ registry_api_token = "m3zT65wREARMVDToKosg_DgNkKqS_434hNxy3sslGPY"
+ # return HTTP 413. Default 2097152 (2 MiB); raise only for servers with
+ # unusually large tool catalogs.
+ # mcp_proxy_max_body_bytes = 2097152
++# mcp_proxy_upstream_timeout_seconds = 30
+ 
+ # Log level for tool-pruning audit lines during the launch window.
+ # Valid values: "DEBUG", "INFO", "WARNING". Default "INFO" during launch;
+diff --git a/terraform/aws-ecs/variables.tf b/terraform/aws-ecs/variables.tf
+index 9950423..9a5cf4b 100755
+--- a/terraform/aws-ecs/variables.tf
++++ b/terraform/aws-ecs/variables.tf
+@@ -1257,6 +1257,17 @@ variable "mcp_proxy_max_body_bytes" {
+   }
+ }
+ 
++variable "mcp_proxy_upstream_timeout_seconds" {
++  description = "Timeout (seconds) for the auth-server /mcp-proxy hop's upstream request. Raise for MCP servers with long-running tool calls that otherwise fail at 30s with HTTP 504. Default 30; minimum 1."
++  type        = number
++  default     = 30
++
++  validation {
++    condition     = var.mcp_proxy_upstream_timeout_seconds >= 1
++    error_message = "mcp_proxy_upstream_timeout_seconds must be at least 1"
++  }
++}
++
+ variable "tool_filter_audit_log_level" {
+   description = "Log level for tool-pruning audit lines during the launch window. Valid values: DEBUG, INFO, WARNING. Default INFO during launch; flip to DEBUG after two quiet weeks in production."
+   type        = string
+diff --git a/tests/auth_server/unit/test_server.py b/tests/auth_server/unit/test_server.py
+index 889f62f..52e9bce 100644
+--- a/tests/auth_server/unit/test_server.py
++++ b/tests/auth_server/unit/test_server.py
+@@ -2420,6 +2420,12 @@ def _patch_httpx_async_client(mock_upstream_response: MagicMock):
+     ``auth_server.server.httpx.AsyncClient`` so the ``async with
+     httpx.AsyncClient(...) as client: async with client.stream(...) as
+     response:`` chain yields ``mock_upstream_response``.
++
++    The replaced attribute is a mock AsyncClient *class* whose
++    ``return_value`` is the client mock, so ``with ... as mock_cls:``
++    yields the class and tests can assert on constructor kwargs (e.g.
++    ``mock_cls.call_args.kwargs["timeout"]``) to pin what the handler
++    actually wired. Bare ``with`` usage (no ``as``) is unchanged.
+     """
+     mock_stream_cm = AsyncMock()
+     mock_stream_cm.__aenter__ = AsyncMock(return_value=mock_upstream_response)
+@@ -2430,7 +2436,10 @@ def _patch_httpx_async_client(mock_upstream_response: MagicMock):
+     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+     mock_client.__aexit__ = AsyncMock(return_value=False)
+ 
+-    return patch("auth_server.server.httpx.AsyncClient", return_value=mock_client)
++    mock_client_cls = MagicMock(return_value=mock_client)
++    return patch(
++        "auth_server.server.httpx.AsyncClient", new=mock_client_cls
++    )
+ 
+ 
+ class TestForwardedResponseHeadersAllowlist:
+@@ -2866,6 +2875,162 @@ class TestMcpProxyEndpointHeaderPassthrough:
+         assert response.headers.get("retry-after") == "15"
+ 
+ 
++class TestMcpProxyUpstreamTimeoutConfig:
++    """The /mcp-proxy hop's upstream timeout is configurable via
++    MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS (settings field with env fallback),
++    replacing the hardcoded httpx.AsyncClient(timeout=30.0).
++
++    Each test drives the real FastAPI route end-to-end (valid minted
++    X-Internal-Token, mocked httpx upstream) and asserts on the timeout
++    kwarg the handler actually passed to the AsyncClient constructor --
++    pinning the wiring, not just the reader helper.
++    """
++
++    def _drive_proxy(self, mock_cls) -> None:
++        """Common request body: post an initialize through the proxy and
++        assert 200, so each test only differs in its config patching."""
++        import auth_server.server as server_module
++
++        upstream_resp = _build_mock_upstream_response(
++            status_code=200,
++            headers={"content-type": "application/json"},
++            body=b'{"jsonrpc":"2.0","id":1,"result":{}}',
++        )
++        with _patch_httpx_async_client(upstream_resp) as captured_cls:
++            client = TestClient(server_module.app)
++            response = client.post(
++                "/mcp-proxy/office-docs",
++                json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
++                headers=_mcp_proxy_token_headers(),
++            )
++        assert response.status_code == 200
++        mock_cls.append(captured_cls)
++
++    def test_default_timeout_is_30(self):
++        """No settings value, no env var: the wired timeout is the same
++        30.0 the handler hardcoded before this knob existed."""
++        import auth_server.server as server_module
++
++        captured: list = []
++        env = {k: v for k, v in os.environ.items() if k != "MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"}
++        with (
++            patch.object(
++                server_module.settings,
++                "mcp_proxy_upstream_timeout_seconds",
++                None,
++                create=True,
++            ),
++            patch.dict(os.environ, env, clear=True),
++        ):
++            self._drive_proxy(captured)
++        assert captured[0].call_args.kwargs["timeout"] == 30.0
++
++    def test_env_override_raises_timeout(self):
++        """Setting the env var changes what the handler passes upstream."""
++        import auth_server.server as server_module
++
++        captured: list = []
++        env = {k: v for k, v in os.environ.items() if k != "MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"}
++        env["MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"] = "120"
++        with (
++            patch.object(
++                server_module.settings,
++                "mcp_proxy_upstream_timeout_seconds",
++                None,
++                create=True,
++            ),
++            patch.dict(os.environ, env, clear=True),
++        ):
++            self._drive_proxy(captured)
++        assert captured[0].call_args.kwargs["timeout"] == 120.0
++
++    def test_floor_clamps_to_one_second(self):
++        """Sub-1 values are clamped up to the 1s floor, never passed
++        through -- a near-zero timeout would disable the hop in practice,
++        and 0/None would mean 'no timeout' for httpx."""
++        import auth_server.server as server_module
++
++        captured: list = []
++        env = {k: v for k, v in os.environ.items() if k != "MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"}
++        env["MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"] = "0.25"
++        with (
++            patch.object(
++                server_module.settings,
++                "mcp_proxy_upstream_timeout_seconds",
++                None,
++                create=True,
++            ),
++            patch.dict(os.environ, env, clear=True),
++        ):
++            self._drive_proxy(captured)
++        assert captured[0].call_args.kwargs["timeout"] == 1.0
++
++    def test_junk_env_falls_back_to_default(self):
++        """A non-numeric env value warns and uses the 30s default instead
++        of crashing the request."""
++        import auth_server.server as server_module
++
++        captured: list = []
++        env = {k: v for k, v in os.environ.items() if k != "MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"}
++        env["MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"] = "banana"
++        with (
++            patch.object(
++                server_module.settings,
++                "mcp_proxy_upstream_timeout_seconds",
++                None,
++                create=True,
++            ),
++            patch.dict(os.environ, env, clear=True),
++        ):
++            self._drive_proxy(captured)
++        assert captured[0].call_args.kwargs["timeout"] == 30.0
++
++    def test_non_finite_env_falls_back_to_default(self):
++        """nan/inf parse as floats but are rejected: the timeout must
++        stay a bounded, finite cap (inf would mean 'no timeout')."""
++        import auth_server.server as server_module
++
++        for bad in ("nan", "inf", "-inf"):
++            captured: list = []
++            env = {
++                k: v
++                for k, v in os.environ.items()
++                if k != "MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"
++            }
++            env["MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"] = bad
++            with (
++                patch.object(
++                    server_module.settings,
++                    "mcp_proxy_upstream_timeout_seconds",
++                    None,
++                    create=True,
++                ),
++                patch.dict(os.environ, env, clear=True),
++            ):
++                self._drive_proxy(captured)
++            assert captured[0].call_args.kwargs["timeout"] == 30.0
++
++    def test_settings_attr_beats_env(self):
++        """Cascade parity with _read_mcp_proxy_max_body_bytes: a validated
++        settings value wins over the env fallback."""
++        import auth_server.server as server_module
++
++        captured: list = []
++        env = {k: v for k, v in os.environ.items() if k != "MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"}
++        env["MCP_PROXY_UPSTREAM_TIMEOUT_SECONDS"] = "120"
++        with (
++            patch.object(
++                server_module.settings,
++                "mcp_proxy_upstream_timeout_seconds",
++                45.0,
++                create=True,
++            ),
++            patch.dict(os.environ, env, clear=True),
++        ):
++            self._drive_proxy(captured)
++        assert captured[0].call_args.kwargs["timeout"] == 45.0
++
++
+ # =============================================================================
+ # SCOPES STARTUP LOGGING TESTS (issue #1248)
+ # =============================================================================

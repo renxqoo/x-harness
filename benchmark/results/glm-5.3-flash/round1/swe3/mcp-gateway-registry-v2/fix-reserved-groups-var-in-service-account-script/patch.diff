@@ -1,0 +1,52 @@
+diff --git a/keycloak/setup/setup-agent-service-account.sh b/keycloak/setup/setup-agent-service-account.sh
+index cbf078b..133c19d 100755
+--- a/keycloak/setup/setup-agent-service-account.sh
++++ b/keycloak/setup/setup-agent-service-account.sh
+@@ -401,13 +401,18 @@ verify_setup() {
+     echo "Verifying setup..."
+ 
+     # Check service account exists and is in the right group
+-    GROUPS=$(curl -s -H "Authorization: Bearer $TOKEN" \
++    # NOTE: GROUPS is a reserved bash array variable (the caller's supplementary
++    # group IDs); assigning a scalar to it fails under `set -e`. Keep the
++    # declaration and assignment split - `local var=$(cmd)` would mask the
++    # command's exit status and defeat fail-fast.
++    local service_account_groups
++    service_account_groups=$(curl -s -H "Authorization: Bearer $TOKEN" \
+         "$ADMIN_URL/admin/realms/$REALM/users/$USER_ID/groups" | \
+         jq -r '.[].name')
+ 
+-    echo "Service account groups: $GROUPS"
++    echo "Service account groups: $service_account_groups"
+ 
+-    if echo "$GROUPS" | grep -q "$TARGET_GROUP"; then
++    if echo "$service_account_groups" | grep -Fxq "$TARGET_GROUP"; then
+         echo -e "${GREEN}✓ Service account is in '$TARGET_GROUP' group${NC}"
+     else
+         echo -e "${RED}✗ Service account is NOT in '$TARGET_GROUP' group${NC}"
+diff --git a/keycloak/setup/setup-m2m-service-account.sh b/keycloak/setup/setup-m2m-service-account.sh
+index 55249b6..0a7d008 100755
+--- a/keycloak/setup/setup-m2m-service-account.sh
++++ b/keycloak/setup/setup-m2m-service-account.sh
+@@ -232,13 +232,18 @@ verify_setup() {
+     echo "Verifying setup..."
+ 
+     # Check service account exists and is in the right group
+-    GROUPS=$(curl -s -H "Authorization: Bearer $TOKEN" \
++    # NOTE: GROUPS is a reserved bash array variable (the caller's supplementary
++    # group IDs); assigning a scalar to it fails under `set -e`. Keep the
++    # declaration and assignment split - `local var=$(cmd)` would mask the
++    # command's exit status and defeat fail-fast.
++    local service_account_groups
++    service_account_groups=$(curl -s -H "Authorization: Bearer $TOKEN" \
+         "$ADMIN_URL/admin/realms/$REALM/users/$USER_ID/groups" | \
+         jq -r '.[].name')
+ 
+-    echo "Service account groups: $GROUPS"
++    echo "Service account groups: $service_account_groups"
+ 
+-    if echo "$GROUPS" | grep -q "$TARGET_GROUP"; then
++    if echo "$service_account_groups" | grep -Fxq "$TARGET_GROUP"; then
+         echo -e "${GREEN}✓ Service account is in '$TARGET_GROUP' group${NC}"
+     else
+         echo -e "${RED}✗ Service account is NOT in '$TARGET_GROUP' group${NC}"

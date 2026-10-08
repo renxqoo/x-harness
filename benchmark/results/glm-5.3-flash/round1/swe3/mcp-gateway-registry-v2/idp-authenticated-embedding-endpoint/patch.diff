@@ -1,0 +1,1120 @@
+diff --git a/docker-compose.podman.yml b/docker-compose.podman.yml
+index e268b1d..d4c8ad6 100644
+--- a/docker-compose.podman.yml
++++ b/docker-compose.podman.yml
+@@ -239,6 +239,12 @@ services:
+       - EMBEDDINGS_API_KEY=${EMBEDDINGS_API_KEY}
+       - EMBEDDINGS_API_BASE=${EMBEDDINGS_API_BASE}
+       - EMBEDDINGS_AWS_REGION=${EMBEDDINGS_AWS_REGION:-us-east-1}
++      - EMBEDDINGS_IDP_ENABLED=${EMBEDDINGS_IDP_ENABLED:-false}
++      - EMBEDDINGS_IDP_TOKEN_URL=${EMBEDDINGS_IDP_TOKEN_URL:-}
++      - EMBEDDINGS_IDP_CLIENT_ID=${EMBEDDINGS_IDP_CLIENT_ID:-}
++      - EMBEDDINGS_IDP_CLIENT_SECRET=${EMBEDDINGS_IDP_CLIENT_SECRET:-}
++      - EMBEDDINGS_IDP_SCOPE=${EMBEDDINGS_IDP_SCOPE:-}
++      - EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS=${EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS:-60}
+       # ANS (Agent Name Service) Configuration
+       - ANS_INTEGRATION_ENABLED=${ANS_INTEGRATION_ENABLED:-false}
+       - ANS_API_ENDPOINT=${ANS_API_ENDPOINT:-https://api.godaddy.com}
+diff --git a/docker-compose.prebuilt.yml b/docker-compose.prebuilt.yml
+index 2adca0e..68c9eda 100644
+--- a/docker-compose.prebuilt.yml
++++ b/docker-compose.prebuilt.yml
+@@ -243,6 +243,12 @@ services:
+       - EMBEDDINGS_API_KEY=${EMBEDDINGS_API_KEY}
+       - EMBEDDINGS_API_BASE=${EMBEDDINGS_API_BASE}
+       - EMBEDDINGS_AWS_REGION=${EMBEDDINGS_AWS_REGION:-us-east-1}
++      - EMBEDDINGS_IDP_ENABLED=${EMBEDDINGS_IDP_ENABLED:-false}
++      - EMBEDDINGS_IDP_TOKEN_URL=${EMBEDDINGS_IDP_TOKEN_URL:-}
++      - EMBEDDINGS_IDP_CLIENT_ID=${EMBEDDINGS_IDP_CLIENT_ID:-}
++      - EMBEDDINGS_IDP_CLIENT_SECRET=${EMBEDDINGS_IDP_CLIENT_SECRET:-}
++      - EMBEDDINGS_IDP_SCOPE=${EMBEDDINGS_IDP_SCOPE:-}
++      - EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS=${EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS:-60}
+       # ANS (Agent Name Service) Configuration
+       - ANS_INTEGRATION_ENABLED=${ANS_INTEGRATION_ENABLED:-false}
+       - ANS_API_ENDPOINT=${ANS_API_ENDPOINT:-https://api.godaddy.com}
+diff --git a/docker-compose.yml b/docker-compose.yml
+index f9f0e19..7828b0d 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -391,6 +391,12 @@ services:
+       - EMBEDDINGS_API_KEY=${EMBEDDINGS_API_KEY}
+       - EMBEDDINGS_API_BASE=${EMBEDDINGS_API_BASE}
+       - EMBEDDINGS_AWS_REGION=${EMBEDDINGS_AWS_REGION:-us-east-1}
++      - EMBEDDINGS_IDP_ENABLED=${EMBEDDINGS_IDP_ENABLED:-false}
++      - EMBEDDINGS_IDP_TOKEN_URL=${EMBEDDINGS_IDP_TOKEN_URL:-}
++      - EMBEDDINGS_IDP_CLIENT_ID=${EMBEDDINGS_IDP_CLIENT_ID:-}
++      - EMBEDDINGS_IDP_CLIENT_SECRET=${EMBEDDINGS_IDP_CLIENT_SECRET:-}
++      - EMBEDDINGS_IDP_SCOPE=${EMBEDDINGS_IDP_SCOPE:-}
++      - EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS=${EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS:-60}
+       # ANS (Agent Name Service) Configuration
+       - ANS_INTEGRATION_ENABLED=${ANS_INTEGRATION_ENABLED:-false}
+       - ANS_API_ENDPOINT=${ANS_API_ENDPOINT:-https://api.godaddy.com}
+diff --git a/docker/registry-entrypoint.sh b/docker/registry-entrypoint.sh
+index 8cd13b9..f830d6a 100644
+--- a/docker/registry-entrypoint.sh
++++ b/docker/registry-entrypoint.sh
+@@ -292,6 +292,12 @@ elif [ "$EMBEDDINGS_PROVIDER" = "litellm" ]; then
+     echo "Model: $EMBEDDINGS_MODEL_NAME"
+     if [[ "$EMBEDDINGS_MODEL_NAME" == bedrock/* ]]; then
+         echo "Bedrock model will use AWS credential chain for authentication"
++    elif [ "$EMBEDDINGS_IDP_ENABLED" = "true" ]; then
++        echo "IdP auth: enabled (token endpoint: $EMBEDDINGS_IDP_TOKEN_URL)"
++        if [ ! -z "$EMBEDDINGS_IDP_CLIENT_ID" ]; then
++            echo "IdP client ID: $EMBEDDINGS_IDP_CLIENT_ID"
++        fi
++        echo "API key ignored: bearer tokens are obtained from the IdP"
+     elif [ ! -z "$EMBEDDINGS_API_KEY" ]; then
+         echo "API key configured for cloud embeddings"
+     else
+diff --git a/docs/embeddings.md b/docs/embeddings.md
+index eb7469b..9fd5d74 100644
+--- a/docs/embeddings.md
++++ b/docs/embeddings.md
+@@ -95,9 +95,56 @@ EMBEDDINGS_AWS_REGION=us-east-1
+ | `EMBEDDINGS_API_KEY` | API key for cloud provider (OpenAI, Cohere, etc.) | - | For cloud* |
+ | `EMBEDDINGS_API_BASE` | Custom API endpoint (LiteLLM only) | - | No |
+ | `EMBEDDINGS_AWS_REGION` | AWS region for Bedrock (LiteLLM only) | - | For Bedrock |
++| `EMBEDDINGS_IDP_ENABLED` | Enable IdP-issued bearer tokens (LiteLLM only) | `false` | No |
++| `EMBEDDINGS_IDP_TOKEN_URL` | OAuth2 token endpoint URL (IdP mode) | - | When IdP enabled |
++| `EMBEDDINGS_IDP_CLIENT_ID` | OAuth2 client ID (IdP mode) | - | When IdP enabled |
++| `EMBEDDINGS_IDP_CLIENT_SECRET` | OAuth2 client secret (IdP mode; never logged, masked in UI) | - | When IdP enabled |
++| `EMBEDDINGS_IDP_SCOPE` | Optional space-separated OAuth2 scope (IdP mode) | - | No |
++| `EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS` | Refresh bearer this many seconds before expiry (IdP mode) | `60` | No |
+ 
+ *Not required for AWS Bedrock - use standard AWS credential chain (IAM roles, environment variables, ~/.aws/credentials)
+ 
++### IdP-Authenticated Endpoints (OAuth2 Client-Credentials)
++
++Some enterprise embedding endpoints are OpenAI-compatible on the wire but are gated by a
++short-lived access token (typically a ~60 minute JWT) issued by an identity provider. With
++the static `EMBEDDINGS_API_KEY`, such endpoints start returning 401 after one token
++lifetime. Enable IdP mode to obtain and refresh the bearer automatically:
++
++```bash
++# In .env
++EMBEDDINGS_PROVIDER=litellm
++EMBEDDINGS_MODEL_NAME=openai/text-embedding-3-small
++EMBEDDINGS_MODEL_DIMENSIONS=1536
++EMBEDDINGS_IDP_ENABLED=true
++EMBEDDINGS_IDP_TOKEN_URL=https://idp.example.com/oauth2/token
++EMBEDDINGS_IDP_CLIENT_ID=embeddings-client
++EMBEDDINGS_IDP_CLIENT_SECRET=your-idp-client-secret
++# Optional:
++#EMBEDDINGS_IDP_SCOPE=embeddings.read
++#EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS=60
++```
++
++Behaviour:
++
++- Each embedding call sends a freshly obtained `Authorization: Bearer` token (OAuth2
++  client-credentials grant) via LiteLLM's per-call `api_key`; the static `EMBEDDINGS_API_KEY`
++  is not used and is not pushed into provider environment variables in this mode.
++- The token is cached in memory and refreshed automatically before it expires
++  (`EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS` early; keep at least 60 seconds so clock skew
++  cannot serve an already-expired token).
++- Startup fails fast with a clear error if IdP mode is enabled but the token URL, client
++  ID, or client secret is missing.
++- The client secret is never logged and is masked in the config UI.
++- All IdP settings default to unset/disabled: with them unset, existing providers behave
++  exactly as before.
++
++**Dimension / re-index caveat:** switching to an IdP-gated endpoint usually means switching
++embedding models, and a different model usually produces a different vector dimension. The
++collection/index name embeds the configured `EMBEDDINGS_MODEL_DIMENSIONS`, so changing the
++model requires re-indexing existing content (or accepting degraded hybrid-search quality).
++See the [switching embedding models FAQ](faq/switching-embedding-models.md).
++
+ ### Terraform Configuration
+ 
+ For AWS ECS deployments, configure embeddings in your `terraform.tfvars`:
+diff --git a/docs/unified-parameter-reference.md b/docs/unified-parameter-reference.md
+index fab1ead..3aa8ebc 100644
+--- a/docs/unified-parameter-reference.md
++++ b/docs/unified-parameter-reference.md
+@@ -531,6 +531,37 @@ Used by `registry` and `mcpgw` services.
+ | API key **(secret)** | `EMBEDDINGS_API_KEY` | `embeddings_api_key` | `mcpgw.app.embeddingsApiKey` / `mcpgw.app.embeddingsApiKeyExistingSecret` | For `litellm` cloud providers. |
+ | Custom API base | `EMBEDDINGS_API_BASE` | — | `mcpgw.app.embeddingsApiBase` | — |
+ | AWS region | `EMBEDDINGS_AWS_REGION` | `embeddings_aws_region` | `mcpgw.app.embeddingsAwsRegion` | Bedrock. |
++| IdP enabled | `EMBEDDINGS_IDP_ENABLED` | `embeddings_idp_enabled` | `extraEnv` (below) | Opt-in: OAuth2 client-credentials bearer tokens instead of the static API key. Default `false`. |
++| IdP token URL | `EMBEDDINGS_IDP_TOKEN_URL` | `embeddings_idp_token_url` | `extraEnv` | OAuth2 token endpoint (http/https). Required when IdP enabled. |
++| IdP client ID | `EMBEDDINGS_IDP_CLIENT_ID` | `embeddings_idp_client_id` | `extraEnv` | Required when IdP enabled. |
++| IdP client secret **(secret)** | `EMBEDDINGS_IDP_CLIENT_SECRET` | `embeddings_idp_client_secret` | `extraEnvFrom` secret | Required when IdP enabled. Never logged; masked in the config UI. |
++| IdP scope | `EMBEDDINGS_IDP_SCOPE` | `embeddings_idp_scope` | `extraEnv` | Optional space-separated OAuth2 scope. |
++| IdP refresh buffer | `EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS` | `embeddings_idp_refresh_buffer_seconds` | `extraEnv` | Refresh the bearer this many seconds before expiry. Default `60`; at least 60 recommended. |
++
++For the IdP parameters on Helm, the registry chart carries `EMBEDDINGS_*` variables through
++the generic `extraEnv` / `extraEnvFrom` mechanism (validated against the chart's reserved
++names). Example for the registry subchart:
++
++```yaml
++extraEnv:
++  - name: EMBEDDINGS_IDP_ENABLED
++    value: "true"
++  - name: EMBEDDINGS_IDP_TOKEN_URL
++    value: "https://idp.example.com/oauth2/token"
++  - name: EMBEDDINGS_IDP_CLIENT_ID
++    value: "embeddings-client"
++extraEnvFrom:
++  - secretRef:
++      name: embeddings-idp   # must expose EMBEDDINGS_IDP_CLIENT_SECRET
++```
++
++When `EMBEDDINGS_IDP_ENABLED=true`, IdP mode replaces the static API key on the embeddings
++path: each call sends a freshly obtained `Authorization: Bearer` token (OAuth2
++client-credentials grant), refreshed automatically before it expires. Startup fails fast if
++the token URL, client ID, or client secret is missing. Note the dimension caveat: an
++IdP-gated endpoint usually implies a different embedding model and dimension, so existing
++vectors must be re-indexed or search quality degrades — see
++`docs/faq/switching-embedding-models.md`.
+ 
+ ---
+ 
+diff --git a/registry/api/config_routes.py b/registry/api/config_routes.py
+index 99e00e3..1825231 100644
+--- a/registry/api/config_routes.py
++++ b/registry/api/config_routes.py
+@@ -180,6 +180,12 @@ CONFIG_GROUPS: dict[str, dict[str, Any]] = {
+             ("vector_search_ef_search", "Vector Search EF", False),
+             ("embeddings_api_key", "API Key", True),
+             ("embeddings_secret_key", "Secret Key", True),
++            ("embeddings_idp_enabled", "IdP Enabled", False),
++            ("embeddings_idp_token_url", "IdP Token URL", False),
++            ("embeddings_idp_client_id", "IdP Client ID", False),
++            ("embeddings_idp_client_secret", "IdP Client Secret", True),
++            ("embeddings_idp_scope", "IdP Scope", False),
++            ("embeddings_idp_refresh_buffer_seconds", "IdP Refresh Buffer (s)", False),
+         ],
+     },
+     "health_check": {
+diff --git a/registry/core/config.py b/registry/core/config.py
+index 5fc8668..bdafe75 100644
+--- a/registry/core/config.py
++++ b/registry/core/config.py
+@@ -5,7 +5,7 @@ from pathlib import Path
+ from typing import Annotated
+ from urllib.parse import urlparse
+ 
+-from pydantic import Field, field_validator
++from pydantic import Field, SecretStr, field_validator
+ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+ 
+ from registry.common.secret_key import validate_secret_key
+@@ -431,6 +431,47 @@ class Settings(BaseSettings):
+     embeddings_api_base: str | None = None
+     embeddings_aws_region: str | None = "us-east-1"
+ 
++    # IdP-issued short-lived bearer tokens for OpenAI-compatible embedding endpoints
++    # (only used when embeddings_provider='litellm' and embeddings_idp_enabled=True).
++    # Opt-in: all fields default to unset/disabled, and with them unset the embeddings
++    # path is byte-for-byte identical to the static-key behaviour. The client secret is
++    # never logged and is masked in the config UI.
++    embeddings_idp_enabled: bool = Field(
++        default=False,
++        description=(
++            "Enable OAuth2 client-credentials bearer tokens for LiteLLM embeddings. "
++            "When true, EMBEDDINGS_IDP_TOKEN_URL, EMBEDDINGS_IDP_CLIENT_ID, and "
++            "EMBEDDINGS_IDP_CLIENT_SECRET are required."
++        ),
++    )
++    embeddings_idp_token_url: str | None = Field(
++        default=None,
++        description="OAuth2 token endpoint URL used to obtain embeddings bearer tokens",
++    )
++    embeddings_idp_client_id: str | None = Field(
++        default=None,
++        description="OAuth2 client id used to obtain embeddings bearer tokens",
++    )
++    embeddings_idp_client_secret: SecretStr | None = Field(
++        default=None,
++        description=(
++            "OAuth2 client secret used to obtain embeddings bearer tokens. "
++            "Never logged; masked in the config UI."
++        ),
++    )
++    embeddings_idp_scope: str | None = Field(
++        default=None,
++        description="Optional space-separated OAuth2 scope sent with the embeddings token request",
++    )
++    embeddings_idp_refresh_buffer_seconds: int = Field(
++        default=60,
++        description=(
++            "Refresh the embeddings bearer token this many seconds before it expires. "
++            "A buffer of at least 60 seconds is recommended so clock skew cannot serve "
++            "an already-expired token. Must be >= 0."
++        ),
++    )
++
+     # Health check settings
+     health_check_interval_seconds: int = (
+         300  # 5 minutes for automatic background checks (configurable via env var)
+@@ -1837,6 +1878,41 @@ class Settings(BaseSettings):
+                 "and registry replicas (see chart values.yaml)."
+             )
+         self._validate_egress_auth_config()
++        self._validate_embeddings_idp_config()
++
++    def _validate_embeddings_idp_config(self) -> None:
++        """Fail fast when IdP mode is selected but required settings are missing.
++
++        Single-field validators can't see siblings, so this cross-field check lives
++        here (same pattern as _validate_egress_auth_config): a clear startup error
++        beats a mystery 401 an hour into production.
++        """
++        if not self.embeddings_idp_enabled:
++            return
++
++        missing = [
++            name
++            for name, value in (
++                ("EMBEDDINGS_IDP_TOKEN_URL", self.embeddings_idp_token_url),
++                ("EMBEDDINGS_IDP_CLIENT_ID", self.embeddings_idp_client_id),
++                ("EMBEDDINGS_IDP_CLIENT_SECRET", self.embeddings_idp_client_secret),
++            )
++            if not value
++        ]
++        if missing:
++            raise ValueError(
++                f"EMBEDDINGS_IDP_ENABLED=true requires {', '.join(missing)} to be set. "
++                "Set them or unset EMBEDDINGS_IDP_ENABLED."
++            )
++
++        if not self.embeddings_idp_token_url.lower().startswith(("http://", "https://")):
++            raise ValueError(
++                f"EMBEDDINGS_IDP_TOKEN_URL must be an http(s) URL; got "
++                f"{self.embeddings_idp_token_url!r}."
++            )
++
++        if self.embeddings_idp_refresh_buffer_seconds < 0:
++            raise ValueError("EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS must be >= 0.")
+ 
+     def _validate_egress_auth_config(self) -> None:
+         """Cross-field startup checks for the egress credential vault.
+diff --git a/registry/embeddings/__init__.py b/registry/embeddings/__init__.py
+index aff3774..562dc95 100644
+--- a/registry/embeddings/__init__.py
++++ b/registry/embeddings/__init__.py
+@@ -6,10 +6,18 @@ from .client import (
+     SentenceTransformersClient,
+     create_embeddings_client,
+ )
++from .idp_token_manager import (
++    EmbeddingsIdPTokenError,
++    EmbeddingsIdPTokenManager,
++    create_idp_token_manager,
++)
+ 
+ __all__ = [
+     "EmbeddingsClient",
+     "SentenceTransformersClient",
+     "LiteLLMClient",
+     "create_embeddings_client",
++    "EmbeddingsIdPTokenError",
++    "EmbeddingsIdPTokenManager",
++    "create_idp_token_manager",
+ ]
+diff --git a/registry/embeddings/client.py b/registry/embeddings/client.py
+index 9f0acdc..05b98a7 100644
+--- a/registry/embeddings/client.py
++++ b/registry/embeddings/client.py
+@@ -19,6 +19,8 @@ import numpy as np
+ if TYPE_CHECKING:
+     from sentence_transformers import SentenceTransformer
+ 
++    from registry.embeddings.idp_token_manager import EmbeddingsIdPTokenManager
++
+ logger = logging.getLogger(__name__)
+ 
+ 
+@@ -183,6 +185,7 @@ class LiteLLMClient(EmbeddingsClient):
+         api_base: str | None = None,
+         aws_region: str | None = None,
+         embedding_dimension: int | None = None,
++        idp_token_manager: "EmbeddingsIdPTokenManager | None" = None,
+     ):
+         """
+         Initialize the LiteLLM client.
+@@ -190,10 +193,14 @@ class LiteLLMClient(EmbeddingsClient):
+         Args:
+             model_name: LiteLLM model identifier (e.g., 'bedrock/amazon.titan-embed-text-v1',
+                        'openai/text-embedding-3-small', 'cohere/embed-english-v3.0')
+-            api_key: Optional API key for the provider
++            api_key: Optional API key for the provider. Ignored (not pushed into the
++                     provider environment variable) when idp_token_manager is set.
+             api_base: Optional API base URL for the provider
+             aws_region: Optional AWS region for Bedrock
+             embedding_dimension: Expected embedding dimension (will be validated)
++            idp_token_manager: Optional IdP token manager. When set, each encode() call
++                     supplies a fresh bearer token via LiteLLM's per-call api_key
++                     parameter instead of relying on the static api_key.
+ 
+         Note:
+             For AWS Bedrock, this client uses the standard AWS credential chain
+@@ -206,9 +213,12 @@ class LiteLLMClient(EmbeddingsClient):
+         self.aws_region = aws_region
+         self._embedding_dimension = embedding_dimension
+         self._validated_dimension: int | None = None
++        self.idp_token_manager = idp_token_manager
+ 
+-        # Set environment variables for LiteLLM
+-        if self.api_key:
++        # Set environment variables for LiteLLM. In IdP mode the per-call bearer
++        # replaces the static credential entirely, so a stale EMBEDDINGS_API_KEY must
++        # not be published into the provider environment variable.
++        if self.api_key and self.idp_token_manager is None:
+             self._set_api_key_env()
+         if self.aws_region:
+             os.environ["AWS_REGION_NAME"] = self.aws_region
+@@ -265,6 +275,13 @@ class LiteLLMClient(EmbeddingsClient):
+             if self.api_base:
+                 kwargs["api_base"] = self.api_base
+ 
++            # IdP mode: supply a fresh short-lived bearer per call via LiteLLM's
++            # per-call api_key (takes precedence over provider environment variables).
++            # get_token raises on failure rather than returning None, so a failed
++            # refresh is loud instead of degrading to an unauthenticated request.
++            if self.idp_token_manager is not None:
++                kwargs["api_key"] = self.idp_token_manager.get_token()
++
+             logger.debug(f"Calling LiteLLM embedding API with model: {self.model_name}")
+             response = embedding(**kwargs)
+ 
+@@ -333,6 +350,7 @@ def create_embeddings_client(
+     api_base: str | None = None,
+     aws_region: str | None = None,
+     embedding_dimension: int | None = None,
++    idp_token_manager: "EmbeddingsIdPTokenManager | None" = None,
+ ) -> EmbeddingsClient:
+     """
+     Factory function to create an embeddings client based on provider.
+@@ -342,10 +360,13 @@ def create_embeddings_client(
+         model_name: Model identifier
+         model_dir: Optional local model directory (sentence-transformers only)
+         cache_dir: Optional cache directory (sentence-transformers only)
+-        api_key: Optional API key (litellm only)
++        api_key: Optional API key (litellm only; ignored in IdP mode)
+         api_base: Optional API base URL (litellm only)
+         aws_region: Optional AWS region (litellm with Bedrock only)
+         embedding_dimension: Optional embedding dimension
++        idp_token_manager: Optional IdP token manager (litellm only). When set, each
++            encode() call injects a fresh bearer token via LiteLLM's per-call api_key.
++            The sentence-transformers provider ignores it, matching api_key handling.
+ 
+     Returns:
+         EmbeddingsClient instance
+@@ -385,6 +406,7 @@ def create_embeddings_client(
+             api_base=api_base,
+             aws_region=aws_region,
+             embedding_dimension=embedding_dimension,
++            idp_token_manager=idp_token_manager,
+         )
+ 
+     else:
+diff --git a/registry/embeddings/idp_token_manager.py b/registry/embeddings/idp_token_manager.py
+new file mode 100644
+index 0000000..a83e55b
+--- /dev/null
++++ b/registry/embeddings/idp_token_manager.py
+@@ -0,0 +1,228 @@
++"""OAuth2 client-credentials token manager for IdP-gated embedding endpoints.
++
++Some enterprise embedding endpoints are OpenAI-compatible on the wire but are gated by a
++short-lived access token (typically a ~60 minute JWT) obtained from an identity provider
++using the OAuth2 client-credentials grant. This module provides a thread-safe token
++manager that fetches, caches, and refreshes that bearer token, plus a factory that builds
++the manager from registry settings.
++
++Mirrors the token-manager pattern used for federation auth
++(``registry.services.federation.federation_auth.FederationAuthManager``): threading.Lock
++around the cache check + refresh, an expiry buffer so tokens are refreshed before they
++actually expire, and error messages that never contain the client secret or the token.
++
++Opt-in: when EMBEDDINGS_IDP_ENABLED is false (the default), ``create_idp_token_manager``
++returns None and the embeddings path behaves exactly as before.
++"""
++
++import logging
++import threading
++from datetime import UTC, datetime, timedelta
++
++import httpx
++
++logger = logging.getLogger(__name__)
++
++# Refresh the cached token this many seconds before it actually expires. Mirrors
++# TOKEN_REFRESH_BUFFER_SECONDS in federation_auth.py.
++DEFAULT_REFRESH_BUFFER_SECONDS: int = 60
++
++# Timeout for token endpoint HTTP calls. Mirrors DEFAULT_TOKEN_TIMEOUT_SECONDS in
++# federation_auth.py.
++DEFAULT_TOKEN_TIMEOUT_SECONDS: float = 30.0
++
++# Assumed lifetime (seconds) when the IdP omits expires_in. Mirrors federation_auth.py;
++# a warning is logged because assuming a lifetime for a short-lived token risks caching
++# past the real expiry.
++DEFAULT_EXPIRES_IN_SECONDS: int = 3600
++
++
++class EmbeddingsIdPTokenError(RuntimeError):
++    """The embeddings IdP token endpoint failed (network, non-2xx, unparseable).
++
++    Error messages intentionally contain only the HTTP status or the exception type
++    name: never the request body, the client secret, or the bearer token.
++    """
++
++
++class EmbeddingsIdPTokenManager:
++    """Thread-safe OAuth2 client-credentials token cache for embeddings calls.
++
++    Fetches a bearer token from an OAuth2 token endpoint, caches it with its expiry,
++    and refreshes it automatically once it is within the refresh buffer of expiry.
++    All access is serialized through a lock so concurrent callers never stampede the
++    token endpoint: the loser of the race re-checks the cache after acquiring the lock
++    and finds the fresh token.
++
++    Unlike the federation manager, ``get_token`` raises on failure instead of returning
++    None: a None bearer would silently degrade the embedding call to an unauthenticated
++    request.
++    """
++
++    def __init__(
++        self,
++        token_url: str,
++        client_id: str,
++        client_secret: str,
++        scope: str | None = None,
++        refresh_buffer_seconds: int = DEFAULT_REFRESH_BUFFER_SECONDS,
++        timeout_seconds: float = DEFAULT_TOKEN_TIMEOUT_SECONDS,
++    ):
++        """Initialize the token manager.
++
++        Args:
++            token_url: OAuth2 token endpoint URL (validated at startup).
++            client_id: OAuth2 client id.
++            client_secret: OAuth2 client secret. Never logged.
++            scope: Optional space-separated scope string sent with the grant.
++            refresh_buffer_seconds: Refresh the token this many seconds before expiry.
++            timeout_seconds: HTTP timeout for token endpoint calls.
++        """
++        self._token_url = token_url
++        self._client_id = client_id
++        self._client_secret = client_secret
++        self._scope = scope
++        self._refresh_buffer_seconds = refresh_buffer_seconds
++        self._token_lock = threading.Lock()
++        self._access_token: str | None = None
++        self._token_expiry: datetime | None = None
++        self._http_client = httpx.Client(timeout=timeout_seconds)
++
++    def get_token(self) -> str:
++        """Return a cached bearer token, refreshing it if within the buffer window.
++
++        Returns:
++            A valid (not yet within-buffer-of-expiry) access token.
++
++        Raises:
++            EmbeddingsIdPTokenError: If the token endpoint is unreachable, returns a
++                non-2xx or non-JSON response, or omits access_token.
++        """
++        with self._token_lock:
++            if self._is_token_valid():
++                logger.debug("Using cached embeddings IdP access token")
++                return self._access_token
++            logger.info("Requesting new access token for embeddings IdP")
++            return self._refresh_token()
++
++    def clear_token(self) -> None:
++        """Clear the cached token, forcing a refresh on the next call."""
++        with self._token_lock:
++            self._access_token = None
++            self._token_expiry = None
++
++    def _is_token_valid(self) -> bool:
++        """Return True only if a cached token exists and is past the refresh buffer."""
++        if not self._access_token or not self._token_expiry:
++            return False
++        buffered = self._token_expiry - timedelta(seconds=self._refresh_buffer_seconds)
++        return datetime.now(UTC) < buffered
++
++    def _refresh_token(self) -> str:
++        """Request a new access token via the client-credentials grant.
++
++        Returns:
++            The fresh access token.
++
++        Raises:
++            EmbeddingsIdPTokenError: On network failure, non-2xx status, non-JSON body,
++                or a missing access_token field.
++        """
++        data = {
++            "grant_type": "client_credentials",
++            "client_id": self._client_id,
++            "client_secret": self._client_secret,
++        }
++        if self._scope:
++            data["scope"] = self._scope
++
++        logger.debug("Requesting embeddings IdP token from %s", self._token_url)
++
++        try:
++            response = self._http_client.post(
++                self._token_url,
++                data=data,
++                headers={
++                    "Content-Type": "application/x-www-form-urlencoded",
++                    "Accept": "application/json",
++                },
++            )
++        except httpx.HTTPError as exc:
++            # Log only the exception type: the error may embed the URL and we must
++            # never leak credentials through logs.
++            logger.error("Embeddings IdP token request failed: %s", type(exc).__name__)
++            raise EmbeddingsIdPTokenError(
++                f"embeddings IdP token endpoint unreachable: {type(exc).__name__}"
++            ) from exc
++
++        if response.status_code >= 400:
++            logger.error(
++                "Embeddings IdP token request rejected with HTTP %s",
++                response.status_code,
++            )
++            raise EmbeddingsIdPTokenError(
++                f"embeddings IdP token request failed with HTTP {response.status_code}"
++            )
++
++        try:
++            payload = response.json()
++        except ValueError as exc:
++            logger.error("Embeddings IdP token endpoint returned non-JSON response")
++            raise EmbeddingsIdPTokenError(
++                "embeddings IdP token endpoint returned a non-JSON response"
++            ) from exc
++
++        token = payload.get("access_token")
++        if not token:
++            logger.error("Embeddings IdP token response missing access_token field")
++            raise EmbeddingsIdPTokenError(
++                "embeddings IdP token response missing access_token"
++            )
++
++        expires_in = payload.get("expires_in")
++        if expires_in is None:
++            logger.warning(
++                "Embeddings IdP token response omitted expires_in; assuming %ss",
++                DEFAULT_EXPIRES_IN_SECONDS,
++            )
++            expires_in = DEFAULT_EXPIRES_IN_SECONDS
++
++        self._access_token = token
++        self._token_expiry = datetime.now(UTC) + timedelta(seconds=int(expires_in))
++        logger.info(
++            "Successfully obtained embeddings IdP access token (expires in %ss)",
++            expires_in,
++        )
++        return self._access_token
++
++    def __del__(self):
++        """Close the HTTP client on deletion."""
++        if hasattr(self, "_http_client"):
++            self._http_client.close()
++
++
++def create_idp_token_manager(settings) -> EmbeddingsIdPTokenManager | None:
++    """Build an IdP token manager from settings, or None when the feature is disabled.
++
++    Opt-in contract: with EMBEDDINGS_IDP_ENABLED unset/false this returns None and no
++    IdP machinery is constructed. Required settings are validated at startup
++    (Settings._validate_embeddings_idp_config), so a fully-enabled configuration is
++    guaranteed to have all fields present by the time this factory runs.
++
++    Args:
++        settings: The registry Settings instance.
++
++    Returns:
++        An EmbeddingsIdPTokenManager, or None when IdP mode is disabled.
++    """
++    if not settings.embeddings_idp_enabled:
++        return None
++
++    secret = settings.embeddings_idp_client_secret
++    return EmbeddingsIdPTokenManager(
++        token_url=settings.embeddings_idp_token_url,
++        client_id=settings.embeddings_idp_client_id,
++        client_secret=secret.get_secret_value() if secret else "",
++        scope=settings.embeddings_idp_scope,
++        refresh_buffer_seconds=settings.embeddings_idp_refresh_buffer_seconds,
++    )
+diff --git a/registry/repositories/documentdb/search_repository.py b/registry/repositories/documentdb/search_repository.py
+index 4dd19e5..54a375e 100644
+--- a/registry/repositories/documentdb/search_repository.py
++++ b/registry/repositories/documentdb/search_repository.py
+@@ -664,7 +664,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
+     async def _get_embedding_model(self):
+         """Lazy load embedding model."""
+         if self._embedding_model is None:
+-            from ...embeddings import create_embeddings_client
++            from ...embeddings import create_embeddings_client, create_idp_token_manager
+ 
+             self._embedding_model = create_embeddings_client(
+                 provider=settings.embeddings_provider,
+@@ -674,6 +674,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
+                 api_base=settings.embeddings_api_base,
+                 aws_region=settings.embeddings_aws_region,
+                 embedding_dimension=settings.embeddings_model_dimensions,
++                idp_token_manager=create_idp_token_manager(settings),
+             )
+         return self._embedding_model
+ 
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+index 356e44e..0d4a4c4 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+@@ -1081,6 +1081,29 @@ module "ecs_service_registry" {
+           name  = "EMBEDDINGS_AWS_REGION"
+           value = var.embeddings_aws_region
+         },
++        # IdP-issued short-lived bearer tokens for OpenAI-compatible embedding
++        # endpoints (opt-in). The client secret is injected from Secrets Manager
++        # below, next to EMBEDDINGS_API_KEY.
++        {
++          name  = "EMBEDDINGS_IDP_ENABLED"
++          value = tostring(var.embeddings_idp_enabled)
++        },
++        {
++          name  = "EMBEDDINGS_IDP_TOKEN_URL"
++          value = var.embeddings_idp_token_url
++        },
++        {
++          name  = "EMBEDDINGS_IDP_CLIENT_ID"
++          value = var.embeddings_idp_client_id
++        },
++        {
++          name  = "EMBEDDINGS_IDP_SCOPE"
++          value = var.embeddings_idp_scope
++        },
++        {
++          name  = "EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS"
++          value = tostring(var.embeddings_idp_refresh_buffer_seconds)
++        },
+         # Registration deduplication. Advisory check; never blocks
+         # registration. Reuses the embeddings model above.
+         {
+@@ -1797,6 +1820,10 @@ module "ecs_service_registry" {
+           {
+             name      = "EMBEDDINGS_API_KEY"
+             valueFrom = aws_secretsmanager_secret.embeddings_api_key.arn
++          },
++          {
++            name      = "EMBEDDINGS_IDP_CLIENT_SECRET"
++            valueFrom = aws_secretsmanager_secret.embeddings_idp_client_secret.arn
+           }
+         ],
+         # PR #947: MongoDB connection string override (Secrets Manager variant).
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/iam.tf b/terraform/aws-ecs/modules/mcp-gateway/iam.tf
+index 8a3ca17..a7b5ea0 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/iam.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/iam.tf
+@@ -19,6 +19,7 @@ resource "aws_iam_policy" "ecs_secrets_access" {
+             aws_secretsmanager_secret.keycloak_client_secret.arn,
+             aws_secretsmanager_secret.keycloak_m2m_client_secret.arn,
+             aws_secretsmanager_secret.embeddings_api_key.arn,
++            aws_secretsmanager_secret.embeddings_idp_client_secret.arn,
+             aws_secretsmanager_secret.keycloak_admin_password.arn
+           ],
+           var.documentdb_credentials_secret_arn != "" ? [var.documentdb_credentials_secret_arn] : [],
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/secrets.tf b/terraform/aws-ecs/modules/mcp-gateway/secrets.tf
+index 00affb7..20e946b 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/secrets.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/secrets.tf
+@@ -205,6 +205,25 @@ resource "aws_secretsmanager_secret_version" "embeddings_api_key" {
+   }
+ }
+ 
++# Embeddings IdP client secret (optional - only needed when embeddings_idp_enabled
++# is true and the embedding endpoint is gated by IdP-issued short-lived tokens)
++resource "aws_secretsmanager_secret" "embeddings_idp_client_secret" {
++  #checkov:skip=CKV2_AWS_57:IdP client secret managed in external IdP dashboard, not rotatable via Secrets Manager
++  name_prefix             = "${local.name_prefix}-embeddings-idp-client-secret-"
++  description             = "OAuth2 client secret used to obtain embeddings bearer tokens from the IdP"
++  recovery_window_in_days = 0
++  kms_key_id              = aws_kms_key.secrets.id
++  tags                    = local.common_tags
++}
++
++resource "aws_secretsmanager_secret_version" "embeddings_idp_client_secret" {
++  secret_id     = aws_secretsmanager_secret.embeddings_idp_client_secret.id
++  secret_string = var.embeddings_idp_client_secret != "" ? var.embeddings_idp_client_secret : "not-configured"
++
++  lifecycle {
++    ignore_changes = [secret_string]
++  }
++}
+ 
+ # Microsoft Entra ID client secret (for OAuth and IAM operations)
+ resource "aws_secretsmanager_secret" "entra_client_secret" {
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/variables.tf b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+index 19e18c3..7c782a6 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/variables.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+@@ -346,6 +346,45 @@ variable "embeddings_api_key" {
+   sensitive   = true
+ }
+ 
++# IdP-issued short-lived bearer tokens for OpenAI-compatible embedding endpoints.
++# Only used when embeddings_provider is 'litellm' and embeddings_idp_enabled is true.
++# The client secret is stored in Secrets Manager and injected via valueFrom.
++variable "embeddings_idp_enabled" {
++  description = "Enable OAuth2 client-credentials bearer tokens for LiteLLM embeddings"
++  type        = bool
++  default     = false
++}
++
++variable "embeddings_idp_token_url" {
++  description = "OAuth2 token endpoint URL used to obtain embeddings bearer tokens (required when embeddings_idp_enabled is true)"
++  type        = string
++  default     = ""
++}
++
++variable "embeddings_idp_client_id" {
++  description = "OAuth2 client id used to obtain embeddings bearer tokens (required when embeddings_idp_enabled is true)"
++  type        = string
++  default     = ""
++}
++
++variable "embeddings_idp_client_secret" {
++  description = "OAuth2 client secret used to obtain embeddings bearer tokens (required when embeddings_idp_enabled is true)"
++  type        = string
++  default     = ""
++  sensitive   = true
++}
++
++variable "embeddings_idp_scope" {
++  description = "Optional space-separated OAuth2 scope sent with the embeddings token request"
++  type        = string
++  default     = ""
++}
++
++variable "embeddings_idp_refresh_buffer_seconds" {
++  description = "Refresh the embeddings bearer token this many seconds before it expires (at least 60 recommended)"
++  type        = number
++  default     = 60
++}
+ 
+ # Registration Deduplication. Advisory only; reuses the embeddings
+ # model above. The /api/<entity>/check-duplicates endpoints are always
+diff --git a/tests/unit/embeddings/test_idp_token_manager.py b/tests/unit/embeddings/test_idp_token_manager.py
+new file mode 100644
+index 0000000..a3ed627
+--- /dev/null
++++ b/tests/unit/embeddings/test_idp_token_manager.py
+@@ -0,0 +1,311 @@
++"""Unit tests for the embeddings IdP token manager.
++
++Covers the OAuth2 client-credentials flow, caching with refresh buffer,
++thread-safety (single-flight refresh), error handling, secret hygiene, the
++LiteLLMClient per-call bearer injection, and the Settings fail-fast validation
++described in lld.md.
++"""
++
++import logging
++import threading
++from datetime import UTC, datetime, timedelta
++from unittest.mock import MagicMock, patch
++
++import httpx
++import numpy as np
++import pytest
++
++from registry.embeddings.client import LiteLLMClient, create_embeddings_client
++from registry.embeddings.idp_token_manager import (
++    DEFAULT_EXPIRES_IN_SECONDS,
++    EmbeddingsIdPTokenError,
++    EmbeddingsIdPTokenManager,
++    create_idp_token_manager,
++)
++
++
++# =============================================================================
++# FIXTURES
++# =============================================================================
++
++
++@pytest.fixture
++def idp_settings(monkeypatch):
++    """Base settings for IdP-enabled embeddings configuration.
++
++    SECRET_KEY and AUTH_SERVER_NGINX_MARKER_SECRET are set by tests/conftest.py
++    before Settings is imported, so only the IdP fields are needed here.
++    """
++    monkeypatch.setenv("EMBEDDINGS_IDP_ENABLED", "true")
++    monkeypatch.setenv("EMBEDDINGS_IDP_TOKEN_URL", "https://idp.example.com/oauth2/token")
++    monkeypatch.setenv("EMBEDDINGS_IDP_CLIENT_ID", "embeddings-client")
++    monkeypatch.setenv("EMBEDDINGS_IDP_CLIENT_SECRET", "super-secret-value")
++    monkeypatch.setenv("EMBEDDINGS_IDP_SCOPE", "embeddings.read")
++    monkeypatch.setenv("EMBEDDINGS_IDP_REFRESH_BUFFER_SECONDS", "60")
++
++
++def _make_manager(**overrides) -> EmbeddingsIdPTokenManager:
++    """Build a manager with a mocked HTTP client for testing."""
++    manager = EmbeddingsIdPTokenManager(
++        token_url="https://idp.example.com/oauth2/token",
++        client_id="embeddings-client",
++        client_secret="super-secret-value",
++        scope="embeddings.read",
++        **overrides,
++    )
++    manager._http_client = MagicMock(spec=httpx.Client)
++    return manager
++
++
++def _mock_response(status_code=200, payload=None, json_error=False):
++    response = MagicMock()
++    response.status_code = status_code
++    if json_error:
++        response.json.side_effect = ValueError("not json")
++    else:
++        response.json.return_value = payload or {
++            "access_token": "tok-1",
++            "expires_in": 3600,
++        }
++    return response
++
++
++# =============================================================================
++# TESTS: EmbeddingsIdPTokenManager
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.embeddings
++class TestIdPTokenManager:
++    def test_first_fetch_posts_client_credentials_grant(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response()
++
++        token = manager.get_token()
++
++        assert token == "tok-1"
++        _, kwargs = manager._http_client.post.call_args
++        assert kwargs["data"]["grant_type"] == "client_credentials"
++        assert kwargs["data"]["client_id"] == "embeddings-client"
++        assert kwargs["data"]["client_secret"] == "super-secret-value"
++        assert kwargs["data"]["scope"] == "embeddings.read"
++
++    def test_cache_hit_within_buffer_does_not_refetch(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response()
++
++        manager.get_token()
++        manager.get_token()
++
++        assert manager._http_client.post.call_count == 1
++
++    def test_buffer_refresh_fetches_new_token(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response()
++        manager.get_token()
++
++        # Simulate the cached token being inside the buffer window.
++        manager._token_expiry = datetime.now(UTC) + timedelta(seconds=1)
++        manager._http_client.post.return_value = _mock_response(
++            payload={"access_token": "tok-2", "expires_in": 3600}
++        )
++
++        assert manager.get_token() == "tok-2"
++        assert manager._http_client.post.call_count == 2
++
++    def test_concurrent_callers_single_flight(self):
++        manager = _make_manager()
++        barrier = threading.Barrier(16)
++
++        def slow_post(*args, **kwargs):
++            barrier.wait()
++            return _mock_response()
++
++        manager._http_client.post.side_effect = slow_post
++
++        tokens = []
++        lock = threading.Lock()
++
++        def fetch():
++            token = manager.get_token()
++            with lock:
++                tokens.append(token)
++
++        threads = [threading.Thread(target=fetch) for _ in range(16)]
++        for t in threads:
++            t.start()
++        for t in threads:
++            t.join()
++
++        assert tokens == ["tok-1"] * 16
++        assert manager._http_client.post.call_count == 1
++
++    def test_http_error_status_raises(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response(status_code=400)
++
++        with pytest.raises(EmbeddingsIdPTokenError) as exc:
++            manager.get_token()
++        assert "400" in str(exc.value)
++        assert "super-secret-value" not in str(exc.value)
++
++    def test_network_error_raises_with_type_only(self):
++        manager = _make_manager()
++        manager._http_client.post.side_effect = httpx.ConnectError("boom")
++
++        with pytest.raises(EmbeddingsIdPTokenError) as exc:
++            manager.get_token()
++        assert "ConnectError" in str(exc.value)
++        assert "super-secret-value" not in str(exc.value)
++
++    def test_non_json_response_raises(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response(json_error=True)
++
++        with pytest.raises(EmbeddingsIdPTokenError, match="non-JSON"):
++            manager.get_token()
++
++    def test_missing_access_token_raises(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response(payload={})
++
++        with pytest.raises(EmbeddingsIdPTokenError, match="access_token"):
++            manager.get_token()
++
++    def test_missing_expires_in_defaults_with_warning(self, caplog):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response(
++            payload={"access_token": "tok-1"}
++        )
++
++        with caplog.at_level(logging.WARNING):
++            token = manager.get_token()
++
++        assert token == "tok-1"
++        assert manager._token_expiry - datetime.now(UTC) > timedelta(
++            seconds=DEFAULT_EXPIRES_IN_SECONDS - 5
++        )
++        assert any("expires_in" in record.message for record in caplog.records)
++
++    def test_clear_token_forces_refetch(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response()
++        manager.get_token()
++
++        manager.clear_token()
++        manager.get_token()
++
++        assert manager._http_client.post.call_count == 2
++
++    def test_no_secret_in_logs_on_failure(self, caplog):
++        manager = _make_manager()
++        manager._http_client.post.side_effect = httpx.ConnectError("boom")
++
++        with caplog.at_level(logging.DEBUG):
++            with pytest.raises(EmbeddingsIdPTokenError):
++                manager.get_token()
++
++        for record in caplog.records:
++            assert "super-secret-value" not in record.getMessage()
++            assert "tok-" not in record.getMessage()
++
++
++# =============================================================================
++# TESTS: LiteLLMClient injection
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.embeddings
++class TestLiteLLMClientIdPInjection:
++    def _run_encode(self, client, capture):
++        def fake_embedding(**kwargs):
++            capture.update(kwargs)
++            return {"data": [{"embedding": [0.1, 0.2], "index": 0}]}
++
++        with patch("litellm.embedding", side_effect=fake_embedding):
++            return client.encode(["hello"])
++
++    def test_idp_mode_injects_bearer_per_call(self):
++        manager = _make_manager()
++        manager._http_client.post.return_value = _mock_response()
++        client = LiteLLMClient(
++            model_name="openai/text-embedding-3-small",
++            api_base="https://embed.example.com",
++            idp_token_manager=manager,
++        )
++        capture: dict = {}
++        self._run_encode(client, capture)
++
++        assert capture["api_key"] == "tok-1"
++        assert "input" in capture and "model" in capture
++
++    def test_static_mode_has_no_api_key_kwarg(self):
++        client = LiteLLMClient(model_name="openai/text-embedding-3-small")
++        capture: dict = {}
++        self._run_encode(client, capture)
++
++        assert "api_key" not in capture
++
++    def test_idp_mode_skips_env_push(self):
++        manager = _make_manager()
++        with patch.dict("os.environ", {}, clear=False):
++            LiteLLMClient(
++                model_name="openai/text-embedding-3-small",
++                api_key="STATIC",
++                idp_token_manager=manager,
++            )
++            import os
++
++            assert os.environ.get("OPENAI_API_KEY") != "STATIC"
++
++    def test_static_mode_still_pushes_env(self):
++        import os
++
++        client = LiteLLMClient(
++            model_name="openai/text-embedding-3-small", api_key="STATIC"
++        )
++        assert os.environ.get("OPENAI_API_KEY") == "STATIC"
++        client._set_api_key_env()  # idempotent; guard is at construction
++
++    def test_factory_passthrough(self):
++        manager = _make_manager()
++        client = create_embeddings_client(
++            provider="litellm",
++            model_name="openai/text-embedding-3-small",
++            idp_token_manager=manager,
++        )
++        assert client.idp_token_manager is manager
++
++
++# =============================================================================
++# TESTS: create_idp_token_manager factory
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.embeddings
++class TestCreateIdPTokenManager:
++    def _settings(self, idp_enabled, **field_overrides):
++        settings = MagicMock()
++        settings.embeddings_idp_enabled = idp_enabled
++        settings.embeddings_idp_token_url = "https://idp.example.com/oauth2/token"
++        settings.embeddings_idp_client_id = "embeddings-client"
++        secret = MagicMock()
++        secret.get_secret_value.return_value = "super-secret-value"
++        settings.embeddings_idp_client_secret = secret
++        settings.embeddings_idp_scope = "embeddings.read"
++        settings.embeddings_idp_refresh_buffer_seconds = 60
++        for key, value in field_overrides.items():
++            setattr(settings, key, value)
++        return settings
++
++    def test_disabled_returns_none(self):
++        assert create_idp_token_manager(self._settings(idp_enabled=False)) is None
++
++    def test_enabled_builds_manager_and_unwraps_secret(self):
++        manager = create_idp_token_manager(self._settings(idp_enabled=True))
++        assert isinstance(manager, EmbeddingsIdPTokenManager)
++        assert manager._client_secret == "super-secret-value"
++        assert manager._refresh_buffer_seconds == 60

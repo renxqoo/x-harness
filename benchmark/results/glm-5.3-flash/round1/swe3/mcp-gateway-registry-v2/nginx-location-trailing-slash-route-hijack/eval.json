@@ -1,0 +1,48 @@
+{
+  "task": "nginx-location-trailing-slash-route-hijack",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 22,
+      "correctness": 21,
+      "specificity": 21,
+      "risk_awareness": 18,
+      "total": 82,
+      "notes": "The problem statement is verifiable against the source: registry/core/nginx_service.py:2362-2369 does emit `location {ROOT_PATH}{path}` with no trailing slash, and the template's `^~` guards cover only /api/auth, /api/health, /api/version, /api/public/, /api/ard/ (docker/nginx_rev_proxy_http_only.conf:264-325), so the hijack analysis is real. Acceptance criteria are mostly testable (trailing-slash emission, no /apiv2-style match, double-slash guard, deployment convergence via startup regeneration, which main.py does perform), and non-goals are stated with rationale. The largest deficiency is the blanket 'bare /name is redirected (308)' criterion, which would break the documented bare-path POST client shape at docs/server-versioning-operations.md:147/159 — the LLD had to walk this back to non-POST-only. Reference to upstream issue #1501 is unverifiable from the repository."
+    },
+    "lld": {
+      "completeness": 23,
+      "correctness": 20,
+      "specificity": 23,
+      "risk_awareness": 20,
+      "total": 86,
+      "notes": "Strongest aspect is grounding: I verified essentially every citation — _create_agent_location_block's exact+trailing-slash precedent (nginx_service.py:1896, 1948, 1977), the commented unhealthy block using `{path}/` at ~898, contains_nginx_metacharacters at url_guard.py:328-343 (`:` indeed absent), the '/'-registerable docstring at 484-487, all nine existing test assertion lines (787, 872, 891, 906, 921, 952, 968, 984, 998), and the version map keyed `$uri:$http_x_mcp_server_version` at nginx_service.py:1371. The design commits to every load-bearing decision (POST-carve-out backed by real docs, degenerate '/' guard, dropped dead colon block, single-string contract) and an implementer could build it without re-deciding anything. Two verified inaccuracies: the pre-fix proxied remainder for /name/mcp was `/mcp` (yielding `//mcp`), not `mcp` — harmless only because auth_server's `split('/',1)[1].lstrip('/')` (server.py:~6447) normalizes; and the claim that exact-match collisions with template `location =` entries are 'unchanged from today' is wrong — a registration like /favicon.ico would now produce a duplicate exact-match location that nginx -t rejects (fail-closed, but a behavior change the design asserts away). The map is also misattributed to the docker template rather than the generator."
+    },
+    "review": {
+      "completeness": 21,
+      "correctness": 20,
+      "specificity": 21,
+      "risk_awareness": 21,
+      "total": 83,
+      "notes": "This review actually stresses the design and wins real corrections: Byte's `:`-rejection catch is verified correct against the metachar set, the degenerate-empty-path forcing matches the url_guard.py:484-487 docstring, and the implementation-discovery addendum's two findings are both repo-grounded (the map at nginx_service.py:1371 is keyed on `$uri:$http_x_mcp_server_version`, and docs/server-versioning-operations.md:147/159 really does configure bare-URL POST clients). Recommendations are prioritized into a consolidated must-fix list with recorded resolutions, and the negative-assertion demand for the new tests is the right testing insight. Weaknesses: the Frontend and SRE voices are comparatively thin, and the review repeats the LLD's incorrect 'collisions with template `location =` entries are unchanged from today' analysis without scrutiny; the addendum's 'docker template line 184' citation is also wrong (the live map is generated in nginx_service.py:1371, though docs/design/server-versioning.md:184 does contain it)."
+    },
+    "testing": {
+      "completeness": 22,
+      "correctness": 20,
+      "specificity": 22,
+      "risk_awareness": 19,
+      "total": 83,
+      "notes": "The plan uses real oracles at the right levels: the unit command targets the actual file (tests/unit/core/test_nginx_service.py exists with the cited assertions), the live checks pin exact status codes and bodies (308 with redirect_url, query preservation, /about returning 200 SPA rather than 401 `Authentication required`, /afoo 404, /a/mcp 401 with WWW-Authenticate), and the `^~ /api/version` expectation matches the template at line 292. Backward compatibility, the bare-POST carve-out, deployment convergence (before/after grep with the precise `location /a/ {` and zero `^    location /a {` shapes) and rollback are all covered, with honest N/A for Terraform/Helm. The largest gaps: $MCP_TOKEN is used in Section 2 but never defined in prerequisites, the defined COOKIE variable is never used, section 1.2 has duplicate numbering, and no check probes the duplicate-exact-match registration edge (e.g. registering /favicon.ico) that this change newly turns into an nginx -t rejection."
+    },
+    "implementation": {
+      "completeness": 23,
+      "correctness": 19,
+      "specificity": 22,
+      "risk_awareness": 18,
+      "total": 82,
+      "notes": "The patch implements the revised design end-to-end and its content is verified against the real source: the replaced lines match nginx_service.py:2362-2369 exactly, all nine modified test assertions exist at the cited lines, the 1003-1008 insertion context matches, and the new tests' expected counts are internally consistent with the emission (proxy_pass, `if ($versioned_backend != \"\")`, and X-MCP-Version-Routing each appearing twice for a versioned server). The largest defect is mechanical: the diff as submitted fails `git apply --check` with 'corrupt patch' (one missing `-` blank line makes the declared old-line count 15 vs 14 present); I reproduced the failure and confirmed the one-line-repaired variant applies cleanly, so the content is right but the artifact does not apply verbatim and the summary's 'reverse-git apply --check clean' claim is inconsistent with what was submitted. The summary is otherwise honest about deviations (inline directives instead of helper, dropped colon block, POST carve-out, degenerate guard) and about tests not being executed; the unhandled regression class is the new duplicate `location =` for registrations colliding with template exact-match entries, which nginx -t will reject (fail-closed via last-good restore)."
+    }
+  },
+  "task_score": 83.2,
+  "verdict": "A genuinely strong, repository-grounded design-and-implementation set whose artifacts check out against the source almost line-for-line, with the largest material limitation being that the submitted diff does not apply verbatim (one-line corruption) alongside a shared, factually wrong dismissal of the exact-match collision regression for registrations like /favicon.ico."
+}

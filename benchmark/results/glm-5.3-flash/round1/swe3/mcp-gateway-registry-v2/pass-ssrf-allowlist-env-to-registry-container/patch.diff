@@ -1,0 +1,36 @@
+diff --git a/docker-compose.podman.yml b/docker-compose.podman.yml
+index 433d8eb..de629e5 100644
+--- a/docker-compose.podman.yml
++++ b/docker-compose.podman.yml
+@@ -82,6 +82,13 @@ services:
+       - REGISTRY_DESCRIPTION=${REGISTRY_DESCRIPTION:-}
+       - REGISTRY_CONTACT_EMAIL=${REGISTRY_CONTACT_EMAIL:-}
+       - REGISTRY_CONTACT_URL=${REGISTRY_CONTACT_URL:-}
++      # SSRF guard bypass for internal MCP-server / A2A-agent upstreams at private
++      # IPs (e.g. docker-network hostnames). The health checker and proxy validate
++      # each upstream URL through the SSRF guard, which blocks private IPs by
++      # default. List exact hosts (least privilege) or CIDR ranges here; the cloud
++      # metadata address (169.254.169.254) is never permitted by either.
++      - SSRF_ALLOWED_HOSTS=${SSRF_ALLOWED_HOSTS:-}
++      - SSRF_ALLOWED_CIDRS=${SSRF_ALLOWED_CIDRS:-}
+       - SECRET_KEY=${SECRET_KEY}
+       # Per-user egress credential vault (off by default)
+       - EGRESS_AUTH_ENABLED=${EGRESS_AUTH_ENABLED:-false}
+diff --git a/docker-compose.prebuilt.yml b/docker-compose.prebuilt.yml
+index e0c1a0c..041a9df 100644
+--- a/docker-compose.prebuilt.yml
++++ b/docker-compose.prebuilt.yml
+@@ -88,6 +88,13 @@ services:
+       - REGISTRY_DESCRIPTION=${REGISTRY_DESCRIPTION:-}
+       - REGISTRY_CONTACT_EMAIL=${REGISTRY_CONTACT_EMAIL:-}
+       - REGISTRY_CONTACT_URL=${REGISTRY_CONTACT_URL:-}
++      # SSRF guard bypass for internal MCP-server / A2A-agent upstreams at private
++      # IPs (e.g. docker-network hostnames). The health checker and proxy validate
++      # each upstream URL through the SSRF guard, which blocks private IPs by
++      # default. List exact hosts (least privilege) or CIDR ranges here; the cloud
++      # metadata address (169.254.169.254) is never permitted by either.
++      - SSRF_ALLOWED_HOSTS=${SSRF_ALLOWED_HOSTS:-}
++      - SSRF_ALLOWED_CIDRS=${SSRF_ALLOWED_CIDRS:-}
+       # BUILD_VERSION is NOT set here: it is baked into the image by the
+       # publish pipeline (issue #919). Setting it at the compose level with
+       # a "${BUILD_VERSION:-1.0.0}" default would stomp the image-baked

@@ -1,0 +1,123 @@
+diff --git a/.claude/skills/macos-setup/SKILL.md b/.claude/skills/macos-setup/SKILL.md
+index 4273f6e..6764a73 100644
+--- a/.claude/skills/macos-setup/SKILL.md
++++ b/.claude/skills/macos-setup/SKILL.md
+@@ -127,7 +127,101 @@ echo "=== Docker ==="
+ docker --version 2>/dev/null && docker ps >/dev/null 2>&1 && echo "DOCKER_OK" || echo "DOCKER_FAIL"
+ 
+ echo "=== Python ==="
+-python3 --version 2>/dev/null && echo "PYTHON_OK" || echo "PYTHON_FAIL"
++if ! command -v python3 >/dev/null 2>&1; then
++    echo "PYTHON_FAIL"
++else
++    INSTALL_DIR="${INSTALL_DIR}" python3 << 'PYEOF'
++import os
++import re
++import sys
++
++FALLBACK_SPEC = ">=3.14"  # documented minimum (docs/macos-setup-guide.md)
++
++def fail2(msg):
++    print(msg)
++    sys.exit(2)
++
++try:
++    # 1. Read the minimum from project metadata (requires-python in
++    #    pyproject.toml); fall back to the documented minimum only when
++    #    no pyproject.toml is reachable (e.g. skill run remotely, pre-clone).
++    spec = None
++    source = "documented minimum; pyproject.toml not found"
++    candidates = [
++        os.path.join(os.getcwd(), "pyproject.toml"),
++        os.path.join(os.environ.get("INSTALL_DIR", ""), "pyproject.toml"),
++    ]
++    for path in candidates:
++        try:
++            if path and os.path.isfile(path):
++                with open(path, "r", encoding="utf-8") as fh:
++                    m = re.search(
++                        r'^requires-python\s*=\s*["\']([^"\']+)["\']',
++                        fh.read(), re.MULTILINE)
++                if m:
++                    spec = m.group(1).strip()
++                    source = path
++                    break
++        except OSError:
++            pass
++    if not spec:
++        spec = FALLBACK_SPEC
++
++    # 2. Parse into comparator clauses (comma-separated).
++    clauses = []
++    for raw in [c.strip() for c in spec.split(",") if c.strip()]:
++        m = re.match(r'^(>=|<=|==|!=|>|<)\s*(.+)$', raw)
++        if not m or not re.search(r'\d', m.group(2)):
++            fail2("Could not evaluate Python requirement '%s' (source: %s)"
++                  % (spec, source))
++        clauses.append((m.group(1), m.group(2)))
++
++    # 3. Compare numerically with zero-padded tuples (pre-release suffixes
++    #    like 3.14.0rc1 count as their numeric core 3.14.0).
++    def ver(text):
++        parts = re.findall(r"\d+", text)
++        return tuple(int(p) for p in parts[:3]) if parts else None
++
++    running = tuple(sys.version_info[:3])
++    ok = True
++    for op, req_text in clauses:
++        req = ver(req_text)
++        if req is None:
++            fail2("Could not evaluate Python requirement '%s' (source: %s)"
++                  % (spec, source))
++        n = max(len(req), len(running))
++        a = req + (0,) * (n - len(req))
++        b = running + (0,) * (n - len(running))
++        passed = {">=": a <= b, "<=": a >= b, "==": a == b,
++                  "!=": a != b, ">": a < b, "<": a > b}[op]
++        if not passed:
++            ok = False
++            break
++
++    # 4. Report: exit 0 = OK, 1 = too old, 2 = requirement unevaluable.
++    running_str = ".".join(str(p) for p in running)
++    if ok:
++        print("Python %s meets requirement '%s' (source: %s)"
++              % (running_str, spec, source))
++        sys.exit(0)
++    print("Python %s does not meet requirement '%s' (source: %s)"
++          % (running_str, spec, source))
++    sys.exit(1)
++except SystemExit:
++    raise
++except Exception as exc:  # fail closed on anything unexpected
++    print("Could not evaluate Python requirement (%s)" % exc)
++    sys.exit(2)
++PYEOF
++    PY_CHECK_RC=$?
++    if [ "$PY_CHECK_RC" -eq 0 ]; then
++        echo "PYTHON_OK"
++    elif [ "$PY_CHECK_RC" -eq 1 ]; then
++        echo "PYTHON_VERSION_FAIL"
++    else
++        echo "PYTHON_FAIL"
++    fi
++fi
+ 
+ echo "=== uv ==="
+ uv --version 2>/dev/null && echo "UV_OK" || echo "UV_FAIL"
+@@ -151,13 +245,14 @@ For any failed check, display the install instructions:
+ |-------|----------------|
+ | DOCKER_FAIL | "Install Docker Desktop from https://www.docker.com/products/docker-desktop/ then start it and wait for the whale icon in the menu bar" |
+ | PYTHON_FAIL | `brew install python@3.14` |
++| PYTHON_VERSION_FAIL | `brew install python@3.14` (project requires the version printed above) |
+ | UV_FAIL | `curl -LsSf https://astral.sh/uv/install.sh \| sh` — then restart your terminal |
+ | NODE_FAIL | `brew install node@20` or download from https://nodejs.org/ |
+ | GIT_FAIL | `xcode-select --install` |
+ | JQ_FAIL | `brew install jq` |
+ | GETTEXT_FAIL | `brew install gettext` |
+ 
+-**Do not proceed if Docker or git fail.** Python, uv, Node.js, jq, and gettext must also be present before continuing. Ask the user to install missing tools and retry.
++**Do not proceed if Docker or git fail.** Python, uv, Node.js, jq, and gettext must also be present, and Python must satisfy the project's minimum version (no `PYTHON_VERSION_FAIL`), before continuing. Ask the user to install missing tools and retry.
+ 
+ Log: `{ 1, "Prerequisites Check", DONE/FAILED, list of what passed/failed }`
+ 

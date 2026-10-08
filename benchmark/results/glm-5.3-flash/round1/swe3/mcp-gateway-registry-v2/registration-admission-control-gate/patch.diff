@@ -1,0 +1,1437 @@
+diff --git a/.env.example b/.env.example
+index 0854bdc..a8ad269 100644
+--- a/.env.example
++++ b/.env.example
+@@ -589,6 +589,29 @@ EMBEDDINGS_MODEL_DIMENSIONS=1024
+ #       - AWS credentials file (~/.aws/credentials)
+ # EMBEDDINGS_AWS_REGION=us-east-1
+ 
++# =============================================================================
++# REGISTRATION ADMISSION CONTROL GATE CONFIGURATION
++# =============================================================================
++
++# Enable the external admission-control gate consulted before any agent,
++# server, or skill registration or update is persisted. Off by default.
++REGISTRATION_GATE_ENABLED=false
++
++# Full URL of the external gate webhook (required when enabled).
++# The gate must answer HTTP 200 to allow a registration; HTTP 403 with a
++# {"reason": "..."} body denies it; timeouts, connection errors, and any
++# other status BLOCK the registration (fail-closed).
++REGISTRATION_GATE_URL=
++
++# Per-call HTTP timeout in seconds (clamped to a 30s maximum)
++REGISTRATION_GATE_TIMEOUT_SECONDS=5
++
++# Header used to authenticate to the gate (only sent when a token is set)
++REGISTRATION_GATE_AUTH_HEADER=Authorization
++
++# Value for the auth header; leave empty to send no auth header
++REGISTRATION_GATE_AUTH_TOKEN=
++
+ # =============================================================================
+ # ANS (AGENT NAMING SERVICE) CONFIGURATION
+ # =============================================================================
+diff --git a/charts/registry/templates/secret.yaml b/charts/registry/templates/secret.yaml
+index fdd05cd..4c27d4f 100644
+--- a/charts/registry/templates/secret.yaml
++++ b/charts/registry/templates/secret.yaml
+@@ -149,6 +149,14 @@ data:
+   {{- end }}
+   SKILL_SECURITY_SCAN_ENABLED: {{ .Values.app.skillSecurityScanEnabled | toString | b64enc | quote }}
+   SKILL_SECURITY_ANALYZERS: {{ .Values.app.skillSecurityAnalyzers | b64enc | quote }}
++  # Registration Admission Control Gate
++  REGISTRATION_GATE_ENABLED: {{ .Values.registrationGate.enabled | toString | b64enc | quote }}
++  REGISTRATION_GATE_URL: {{ .Values.registrationGate.url | b64enc | quote }}
++  REGISTRATION_GATE_TIMEOUT_SECONDS: {{ .Values.registrationGate.timeoutSeconds | toString | b64enc | quote }}
++  REGISTRATION_GATE_AUTH_HEADER: {{ .Values.registrationGate.authHeader | b64enc | quote }}
++  {{- if and .Values.registrationGate.authToken (not .Values.registrationGate.authTokenExistingSecret) }}
++  REGISTRATION_GATE_AUTH_TOKEN: {{ .Values.registrationGate.authToken | b64enc | quote }}
++  {{- end }}
+   # ANS (Agent Name Service) Integration
+   {{- if .Values.ans.enabled }}
+   ANS_INTEGRATION_ENABLED: {{ "true" | b64enc | quote }}
+diff --git a/charts/registry/values.yaml b/charts/registry/values.yaml
+index a44b145..c380647 100644
+--- a/charts/registry/values.yaml
++++ b/charts/registry/values.yaml
+@@ -71,6 +71,16 @@ app:
+ awsRegistry:
+   federationEnabled: false  # Enable AWS Agent Registry federation (overrides MongoDB config on startup)
+ 
++# Registration Admission Control Gate
++registrationGate:
++  enabled: false  # Enable external admission-control gate for registrations/updates
++  url: ""  # Full URL of the external gate webhook (required when enabled)
++  timeoutSeconds: "5"  # Per-call HTTP timeout in seconds
++  authHeader: "Authorization"  # Header name used to authenticate to the gate
++  authToken: ""  # Header value; empty sends no auth header
++  authTokenExistingSecret: ""  # If set, read REGISTRATION_GATE_AUTH_TOKEN from this K8s secret
++  authTokenExistingSecretKey: "REGISTRATION_GATE_AUTH_TOKEN"  # Key within the existing secret
++
+ # ANS (Agent Name Service) Integration
+ ans:
+   enabled: false  # Enable ANS integration for trust verification
+diff --git a/docker-compose.yml b/docker-compose.yml
+index 92b8a61..45baad1 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -197,6 +197,12 @@ services:
+       - ANS_API_TIMEOUT_SECONDS=${ANS_API_TIMEOUT_SECONDS:-30}
+       - ANS_SYNC_INTERVAL_HOURS=${ANS_SYNC_INTERVAL_HOURS:-6}
+       - ANS_VERIFICATION_CACHE_TTL_SECONDS=${ANS_VERIFICATION_CACHE_TTL_SECONDS:-3600}
++      # Registration Admission Control Gate Configuration
++      - REGISTRATION_GATE_ENABLED=${REGISTRATION_GATE_ENABLED:-false}
++      - REGISTRATION_GATE_URL=${REGISTRATION_GATE_URL:-}
++      - REGISTRATION_GATE_TIMEOUT_SECONDS=${REGISTRATION_GATE_TIMEOUT_SECONDS:-5}
++      - REGISTRATION_GATE_AUTH_HEADER=${REGISTRATION_GATE_AUTH_HEADER:-Authorization}
++      - REGISTRATION_GATE_AUTH_TOKEN=${REGISTRATION_GATE_AUTH_TOKEN:-}
+       # Federation Peer Sync Configuration
+       - FEDERATION_TOKEN_ENDPOINT=${FEDERATION_TOKEN_ENDPOINT}
+       - FEDERATION_CLIENT_ID=${FEDERATION_CLIENT_ID}
+diff --git a/registry/api/agent_routes.py b/registry/api/agent_routes.py
+index f30942d..6a3d698 100644
+--- a/registry/api/agent_routes.py
++++ b/registry/api/agent_routes.py
+@@ -36,6 +36,10 @@ from ..schemas.agent_models import (
+     AgentRegistrationRequest,
+ )
+ from ..services.agent_service import agent_service
++from ..services.registration_gate import (
++    GATE_UNAVAILABLE_MESSAGE,
++    check_registration_gate,
++)
+ from ..utils.request_utils import get_client_ip
+ 
+ 
+@@ -487,6 +491,22 @@ async def register_agent(
+             detail=f"Invalid agent card: {str(e)}",
+         )
+ 
++    decision = await check_registration_gate(
++        asset_type="agent",
++        endpoint="/agents/register",
++        action="register",
++        payload=agent_card.model_dump(mode="json"),
++        username=user_context["username"],
++        path=path,
++    )
++    if not decision.allowed:
++        if decision.failure:
++            raise HTTPException(
++                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                detail=GATE_UNAVAILABLE_MESSAGE,
++            )
++        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.reason)
++
+     success = await agent_service.register_agent(agent_card)
+ 
+     if not success:
+@@ -1309,6 +1329,22 @@ async def update_agent(
+             detail=f"Invalid agent card: {str(e)}",
+         )
+ 
++    decision = await check_registration_gate(
++        asset_type="agent",
++        endpoint=f"/agents/{path}",
++        action="update",
++        payload=updated_agent.model_dump(mode="json"),
++        username=user_context["username"],
++        path=path,
++    )
++    if not decision.allowed:
++        if decision.failure:
++            raise HTTPException(
++                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                detail=GATE_UNAVAILABLE_MESSAGE,
++            )
++        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.reason)
++
+     success = await agent_service.update_agent(path, updated_agent)
+ 
+     if not success:
+diff --git a/registry/api/config_routes.py b/registry/api/config_routes.py
+index 0fc8d2d..8142b69 100644
+--- a/registry/api/config_routes.py
++++ b/registry/api/config_routes.py
+@@ -270,6 +270,17 @@ CONFIG_GROUPS: dict[str, dict[str, Any]] = {
+             ("github_api_base_url", "API Base URL", False),
+         ],
+     },
++    "registration_gate": {
++        "title": "Registration Gate",
++        "order": 18,
++        "fields": [
++            ("registration_gate_enabled", "Enabled", False),
++            ("registration_gate_url", "Gate URL", False),
++            ("registration_gate_timeout_seconds", "Timeout (s)", False),
++            ("registration_gate_auth_header", "Auth Header", False),
++            ("registration_gate_auth_token", "Auth Token", True),
++        ],
++    },
+ }
+ 
+ 
+diff --git a/registry/api/server_routes.py b/registry/api/server_routes.py
+index 2e3fc28..3ca3ccc 100644
+--- a/registry/api/server_routes.py
++++ b/registry/api/server_routes.py
+@@ -17,6 +17,10 @@ from ..auth.internal import validate_internal_auth
+ from ..constants import VALID_AUTH_SCHEMES
+ from ..core.config import DeploymentMode, settings
+ from ..core.schemas import AuthCredentialUpdateRequest
++from ..services.registration_gate import (
++    GATE_UNAVAILABLE_MESSAGE,
++    check_registration_gate,
++)
+ from ..services.security_scanner import security_scanner_service
+ from ..services.server_service import server_service
+ from ..utils.credential_encryption import encrypt_credential_in_server_dict
+@@ -785,6 +789,26 @@ async def register_service(
+         except ValueError:
+             logger.warning(f"Invalid source_updated_at format: {source_updated_at}")
+ 
++    # Consult the admission-control gate before persisting
++    decision = await check_registration_gate(
++        asset_type="server",
++        endpoint="/register",
++        action="register",
++        payload=server_entry,
++        username=user_context["username"],
++        path=path,
++    )
++    if not decision.allowed:
++        if decision.failure:
++            return JSONResponse(
++                status_code=503,
++                content={"error": "Service registration blocked", "detail": GATE_UNAVAILABLE_MESSAGE},
++            )
++        return JSONResponse(
++            status_code=403,
++            content={"error": "Registration denied", "detail": decision.reason},
++        )
++
+     # Register the server (or new version if path exists with different version)
+     result = await server_service.register_server(server_entry)
+ 
+@@ -1028,6 +1052,29 @@ async def internal_register_service(
+             },
+         )
+ 
++    # Consult the admission-control gate before persisting. Overwriting an
++    # existing server is an update from the gate's perspective.
++    gate_action = "update" if (existing_server and overwrite) else "register"
++    decision = await check_registration_gate(
++        asset_type="server",
++        endpoint="/internal/register",
++        action=gate_action,
++        payload=server_entry,
++        username=caller,
++        path=path,
++        overwrite=overwrite if existing_server else None,
++    )
++    if not decision.allowed:
++        if decision.failure:
++            return JSONResponse(
++                status_code=503,
++                content={"error": "Service registration blocked", "reason": GATE_UNAVAILABLE_MESSAGE},
++            )
++        return JSONResponse(
++            status_code=403,
++            content={"error": "Registration denied", "reason": decision.reason},
++        )
++
+     # Register the server (this will overwrite if server exists and overwrite=True)
+     logger.warning(
+         "INTERNAL REGISTER: Calling server_service.register_server"
+@@ -1587,6 +1634,27 @@ async def edit_server_submit(
+         updated_server_entry.pop("auth_credential_encrypted", None)
+         updated_server_entry.pop("auth_header_name", None)
+ 
++    # Consult the admission-control gate before persisting. Always answer
++    # with a JSON error body, never a redirect.
++    decision = await check_registration_gate(
++        asset_type="server",
++        endpoint=f"/edit/{service_path}",
++        action="update",
++        payload=updated_server_entry,
++        username=user_context["username"],
++        path=service_path,
++    )
++    if not decision.allowed:
++        if decision.failure:
++            return JSONResponse(
++                status_code=503,
++                content={"error": "Server update blocked", "detail": GATE_UNAVAILABLE_MESSAGE},
++            )
++        return JSONResponse(
++            status_code=403,
++            content={"error": "Update denied", "detail": decision.reason},
++        )
++
+     # Update server
+     success = await server_service.update_server(service_path, updated_server_entry)
+ 
+diff --git a/registry/api/skill_routes.py b/registry/api/skill_routes.py
+index a863ef1..f96207c 100644
+--- a/registry/api/skill_routes.py
++++ b/registry/api/skill_routes.py
+@@ -47,6 +47,10 @@ from ..schemas.skill_models import (
+     VisibilityEnum,
+ )
+ from ..services.github_auth import github_auth_provider as _github_auth
++from ..services.registration_gate import (
++    GATE_UNAVAILABLE_MESSAGE,
++    check_registration_gate,
++)
+ from ..services.skill_service import (
+     _is_safe_url,
+     get_skill_service,
+@@ -634,6 +638,22 @@ async def register_skill(
+     service = get_skill_service()
+     owner = user_context.get("username")
+ 
++    decision = await check_registration_gate(
++        asset_type="skill",
++        endpoint="/skills",
++        action="register",
++        payload=request.model_dump(mode="json"),
++        username=owner,
++        path=request.name,
++    )
++    if not decision.allowed:
++        if decision.failure:
++            raise HTTPException(
++                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                detail=GATE_UNAVAILABLE_MESSAGE,
++            )
++        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.reason)
++
+     try:
+         skill = await service.register_skill(request=request, owner=owner, validate_url=True)
+         logger.info(f"Registered skill: {skill.name} by {owner}")
+@@ -691,6 +711,22 @@ async def update_skill(
+ 
+     updates = request.model_dump(exclude_unset=True, mode="json")
+ 
++    decision = await check_registration_gate(
++        asset_type="skill",
++        endpoint=normalized_path,
++        action="update",
++        payload={"path": normalized_path, **updates},
++        username=user_context.get("username"),
++        path=normalized_path,
++    )
++    if not decision.allowed:
++        if decision.failure:
++            raise HTTPException(
++                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
++                detail=GATE_UNAVAILABLE_MESSAGE,
++            )
++        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.reason)
++
+     # Convert raw metadata dict to SkillMetadata structure for consistent storage
+     if "metadata" in updates and updates["metadata"] is not None:
+         raw_meta = updates["metadata"]
+diff --git a/registry/core/config.py b/registry/core/config.py
+index 3f52288..80e137c 100644
+--- a/registry/core/config.py
++++ b/registry/core/config.py
+@@ -345,6 +345,28 @@ class Settings(BaseSettings):
+     show_skills_tab: bool = Field(default=True, description="Show Skills tab in UI")
+     show_agents_tab: bool = Field(default=True, description="Show Agents tab in UI")
+ 
++    # Registration admission control gate (external policy webhook)
++    registration_gate_enabled: bool = Field(
++        default=False,
++        description="Enable external admission-control gate for registrations and updates",
++    )
++    registration_gate_url: str = Field(
++        default="",
++        description="URL of the external registration gate webhook",
++    )
++    registration_gate_timeout_seconds: float = Field(
++        default=5.0,
++        description="Timeout in seconds for registration gate HTTP calls",
++    )
++    registration_gate_auth_header: str = Field(
++        default="Authorization",
++        description="HTTP header name used to authenticate to the registration gate",
++    )
++    registration_gate_auth_token: str = Field(
++        default="",
++        description="HTTP header value used to authenticate to the registration gate",
++    )
++
+     # Telemetry settings (anonymous usage tracking)
+     telemetry_enabled: bool = Field(
+         default=True,
+diff --git a/registry/services/registration_gate.py b/registry/services/registration_gate.py
+new file mode 100644
+index 0000000..3f1b6cd
+--- /dev/null
++++ b/registry/services/registration_gate.py
+@@ -0,0 +1,173 @@
++# registry/services/registration_gate.py
++
++"""Registration admission control gate client.
++
++Calls an external policy webhook before any agent, server, or skill
++registration or update is persisted. Fail-closed: any gate error,
++timeout, or unexpected response blocks the registration.
++"""
++
++import logging
++import time
++from dataclasses import dataclass
++from typing import Any
++from urllib.parse import urlsplit
++
++import httpx
++
++from registry.core.config import settings
++
++logger = logging.getLogger(__name__)
++
++GATE_UNAVAILABLE_MESSAGE = "Registration gate unavailable, registration blocked (fail-closed)"
++GATE_DENIED_FALLBACK_MESSAGE = "Registration denied by registration gate policy"
++
++# Keys that must never be sent to the external gate, plus a name-based
++# fallback for anything credential-shaped added later.
++_CREDENTIAL_MARKERS = ("credential", "password", "secret", "token")
++
++MAX_GATE_TIMEOUT_SECONDS = 30.0
++MAX_REASON_LENGTH = 300
++
++
++@dataclass
++class GateDecision:
++    """Result of an admission-control gate check.
++
++    failure=True means the gate itself failed (timeout, unreachable,
++    unexpected status, misconfiguration): routes return 503 with the
++    fixed message. failure=False with allowed=False is a policy deny:
++    routes return 403 with the gate's reason.
++    """
++
++    allowed: bool
++    reason: str
++    failure: bool = False
++
++
++def _effective_timeout() -> float:
++    """Clamp the configured timeout to a sane maximum."""
++    return min(settings.registration_gate_timeout_seconds, MAX_GATE_TIMEOUT_SECONDS)
++
++
++def _is_sensitive_key(key: str) -> bool:
++    """Return True if a payload key must not leave the registry."""
++    key_lower = key.lower()
++    return any(marker in key_lower for marker in _CREDENTIAL_MARKERS)
++
++
++def _scrub_value(value: Any) -> Any:
++    """Recursively drop credential-bearing keys from dicts and lists."""
++    if isinstance(value, dict):
++        cleaned = {}
++        for key, item in value.items():
++            if _is_sensitive_key(str(key)):
++                continue
++            cleaned[key] = _scrub_value(item)
++        return cleaned
++    if isinstance(value, list):
++        return [_scrub_value(item) for item in value]
++    return value
++
++
++def _build_gate_payload(
++    asset_type: str,
++    endpoint: str,
++    action: str,
++    payload: dict[str, Any],
++    username: str | None,
++    path: str | None = None,
++    overwrite: bool | None = None,
++) -> dict[str, Any]:
++    """Build the JSON body sent to the gate, scrubbing credential fields."""
++    body: dict[str, Any] = {
++        "asset_type": asset_type,
++        "endpoint": endpoint,
++        "action": action,
++        "user": username,
++        "path": path,
++        "payload": _scrub_value(payload),
++    }
++    if overwrite is not None:
++        body["overwrite"] = overwrite
++    return body
++
++
++async def check_registration_gate(
++    asset_type: str,
++    endpoint: str,
++    action: str,
++    payload: dict[str, Any],
++    username: str | None = None,
++    path: str | None = None,
++    overwrite: bool | None = None,
++) -> GateDecision:
++    """Consult the external admission-control gate.
++
++    Returns a GateDecision and never raises. A disabled gate allows
++    everything; an enabled gate must answer HTTP 200 to allow a
++    registration. Any other outcome is fail-closed.
++    """
++    if not settings.registration_gate_enabled:
++        return GateDecision(allowed=True, reason="gate disabled")
++
++    gate_url = settings.registration_gate_url
++    if not gate_url:
++        logger.error("Registration gate enabled but REGISTRATION_GATE_URL is not set")
++        return GateDecision(allowed=False, reason=GATE_UNAVAILABLE_MESSAGE, failure=True)
++    if not gate_url.lower().startswith(("http://", "https://")):
++        logger.error(f"Registration gate URL must be http(s), got: {gate_url}")
++        return GateDecision(allowed=False, reason=GATE_UNAVAILABLE_MESSAGE, failure=True)
++
++    body = _build_gate_payload(
++        asset_type, endpoint, action, payload, username, path=path, overwrite=overwrite
++    )
++
++    headers = {"Content-Type": "application/json"}
++    if settings.registration_gate_auth_token:
++        headers[settings.registration_gate_auth_header] = settings.registration_gate_auth_token
++
++    timeout = _effective_timeout()
++    started = time.monotonic()
++    try:
++        async with httpx.AsyncClient(timeout=timeout) as client:
++            response = await client.post(gate_url, json=body, headers=headers)
++    except httpx.TimeoutException:
++        logger.error(
++            f"Registration gate timed out after {timeout}s for {asset_type} "
++            f"{action} from {endpoint} (gate={urlsplit(gate_url).netloc})"
++        )
++        return GateDecision(allowed=False, reason=GATE_UNAVAILABLE_MESSAGE, failure=True)
++    except httpx.HTTPError as e:
++        logger.error(
++            f"Registration gate unreachable for {asset_type} {action} from {endpoint} "
++            f"(gate={urlsplit(gate_url).netloc}): {e}"
++        )
++        return GateDecision(allowed=False, reason=GATE_UNAVAILABLE_MESSAGE, failure=True)
++    duration_ms = int((time.monotonic() - started) * 1000)
++
++    if response.status_code == 200:
++        logger.info(
++            f"Registration gate allowed {asset_type} {action} from {endpoint} "
++            f"(user={username}, {duration_ms}ms)"
++        )
++        return GateDecision(allowed=True, reason="allowed")
++
++    if response.status_code == 403:
++        reason = GATE_DENIED_FALLBACK_MESSAGE
++        try:
++            reason = response.json().get("reason") or reason
++        except Exception:
++            pass
++        reason = reason[:MAX_REASON_LENGTH]
++        logger.warning(
++            f"Registration gate denied {asset_type} {action} from {endpoint} "
++            f"(user={username}, {duration_ms}ms): {reason}"
++        )
++        return GateDecision(allowed=False, reason=reason, failure=False)
++
++    logger.error(
++        f"Registration gate returned unexpected status {response.status_code} "
++        f"for {asset_type} {action} from {endpoint} (gate={urlsplit(gate_url).netloc})"
++    )
++    return GateDecision(allowed=False, reason=GATE_UNAVAILABLE_MESSAGE, failure=True)
+diff --git a/terraform/aws-ecs/main.tf b/terraform/aws-ecs/main.tf
+index ae63911..44c4660 100755
+--- a/terraform/aws-ecs/main.tf
++++ b/terraform/aws-ecs/main.tf
+@@ -124,6 +124,13 @@ module "mcp_gateway" {
+   security_scan_timeout         = var.security_scan_timeout
+   security_add_pending_tag      = var.security_add_pending_tag
+ 
++  # Registration admission control gate configuration
++  registration_gate_enabled         = var.registration_gate_enabled
++  registration_gate_url             = var.registration_gate_url
++  registration_gate_timeout_seconds = var.registration_gate_timeout_seconds
++  registration_gate_auth_header     = var.registration_gate_auth_header
++  registration_gate_auth_token      = var.registration_gate_auth_token
++
+   # Microsoft Entra ID configuration
+   entra_enabled              = var.entra_enabled
+   entra_tenant_id            = var.entra_tenant_id
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+index b531a6a..82342c9 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/ecs-services.tf
+@@ -690,6 +690,26 @@ module "ecs_service_registry" {
+           name  = "SECURITY_SCAN_ENABLED"
+           value = tostring(var.security_scan_enabled)
+         },
++        {
++          name  = "REGISTRATION_GATE_ENABLED"
++          value = tostring(var.registration_gate_enabled)
++        },
++        {
++          name  = "REGISTRATION_GATE_URL"
++          value = var.registration_gate_url
++        },
++        {
++          name  = "REGISTRATION_GATE_TIMEOUT_SECONDS"
++          value = tostring(var.registration_gate_timeout_seconds)
++        },
++        {
++          name  = "REGISTRATION_GATE_AUTH_HEADER"
++          value = var.registration_gate_auth_header
++        },
++        {
++          name  = "REGISTRATION_GATE_AUTH_TOKEN"
++          value = var.registration_gate_auth_token
++        },
+         {
+           name  = "SECURITY_SCAN_ON_REGISTRATION"
+           value = tostring(var.security_scan_on_registration)
+diff --git a/terraform/aws-ecs/modules/mcp-gateway/variables.tf b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+index b57c749..bc98f8a 100755
+--- a/terraform/aws-ecs/modules/mcp-gateway/variables.tf
++++ b/terraform/aws-ecs/modules/mcp-gateway/variables.tf
+@@ -383,6 +383,38 @@ variable "security_block_unsafe_servers" {
+   default     = true
+ }
+ 
++# Registration Admission Control Gate Configuration
++variable "registration_gate_enabled" {
++  description = "Enable the external admission-control gate for registrations and updates"
++  type        = bool
++  default     = false
++}
++
++variable "registration_gate_url" {
++  description = "URL of the external registration gate webhook (required when enabled)"
++  type        = string
++  default     = ""
++}
++
++variable "registration_gate_timeout_seconds" {
++  description = "Per-call HTTP timeout in seconds for registration gate calls"
++  type        = number
++  default     = 5
++}
++
++variable "registration_gate_auth_header" {
++  description = "HTTP header name used to authenticate to the registration gate"
++  type        = string
++  default     = "Authorization"
++}
++
++variable "registration_gate_auth_token" {
++  description = "HTTP header value used to authenticate to the registration gate"
++  type        = string
++  default     = ""
++  sensitive   = true
++}
++
+ variable "security_analyzers" {
+   description = "Comma-separated list of analyzers to use for security scanning (available: yara, llm, api)"
+   type        = string
+diff --git a/terraform/aws-ecs/variables.tf b/terraform/aws-ecs/variables.tf
+index 5b158ef..28a4a3a 100755
+--- a/terraform/aws-ecs/variables.tf
++++ b/terraform/aws-ecs/variables.tf
+@@ -394,6 +394,41 @@ variable "security_block_unsafe_servers" {
+   default     = false
+ }
+ 
++# =============================================================================
++# REGISTRATION ADMISSION CONTROL GATE CONFIGURATION
++# =============================================================================
++
++variable "registration_gate_enabled" {
++  description = "Enable the external admission-control gate for registrations and updates"
++  type        = bool
++  default     = false
++}
++
++variable "registration_gate_url" {
++  description = "URL of the external registration gate webhook (required when enabled)"
++  type        = string
++  default     = ""
++}
++
++variable "registration_gate_timeout_seconds" {
++  description = "Per-call HTTP timeout in seconds for registration gate calls"
++  type        = number
++  default     = 5
++}
++
++variable "registration_gate_auth_header" {
++  description = "HTTP header name used to authenticate to the registration gate"
++  type        = string
++  default     = "Authorization"
++}
++
++variable "registration_gate_auth_token" {
++  description = "HTTP header value used to authenticate to the registration gate"
++  type        = string
++  default     = ""
++  sensitive   = true
++}
++
+ variable "security_analyzers" {
+   description = "Analyzers to use for security scanning (comma-separated: yara, llm, api)"
+   type        = string
+diff --git a/tests/unit/api/test_registration_gate_routes.py b/tests/unit/api/test_registration_gate_routes.py
+new file mode 100644
+index 0000000..76edf11
+--- /dev/null
++++ b/tests/unit/api/test_registration_gate_routes.py
+@@ -0,0 +1,419 @@
++"""Route-level unit tests for the registration admission control gate.
++
++Verifies that the seven registration/update paths consult the gate and
++map its verdicts to the documented HTTP responses: 200-allow proceeds,
++403-deny surfaces the gate reason, and gate failure returns 503 with the
++fixed fail-closed message. The disabled-flag no-op is covered by the
++client tests in tests/unit/services/test_registration_gate.py.
++"""
++
++import logging
++from typing import Any
++from unittest.mock import AsyncMock, MagicMock, patch
++
++import pytest
++from fastapi import FastAPI, status
++from fastapi.testclient import TestClient
++
++from registry.api.agent_routes import router as agent_router
++from registry.api.skill_routes import router as skill_router
++from registry.schemas.agent_models import AgentCard
++from registry.services.registration_gate import (
++    GATE_UNAVAILABLE_MESSAGE,
++    GateDecision,
++)
++
++logger = logging.getLogger(__name__)
++
++
++# =============================================================================
++# FIXTURES
++# =============================================================================
++
++
++@pytest.fixture
++def user_context() -> dict[str, Any]:
++    """Authenticated user with publish permissions."""
++    return {
++        "username": "testuser",
++        "groups": ["test-group"],
++        "scopes": ["read:agents", "write:agents"],
++        "auth_method": "session",
++        "provider": "local",
++        "accessible_servers": ["all"],
++        "accessible_services": ["all"],
++        "accessible_agents": ["all"],
++        "ui_permissions": {
++            "publish_agent": ["all"],
++            "register_service": ["all"],
++            "modify_service": ["all"],
++        },
++        "can_modify_servers": True,
++        "is_admin": False,
++    }
++
++
++def _agent_app(user_context: dict[str, Any]) -> TestClient:
++    """Test client for agent routes with mocked auth."""
++    from registry.auth.csrf import verify_csrf_token_flexible
++    from registry.auth.dependencies import nginx_proxied_auth
++
++    app = FastAPI()
++    app.include_router(agent_router)
++    app.dependency_overrides[nginx_proxied_auth] = lambda: user_context
++    app.dependency_overrides[verify_csrf_token_flexible] = lambda: None
++    return TestClient(app)
++
++
++def _skill_app(user_context: dict[str, Any]) -> TestClient:
++    """Test client for skill routes with mocked auth."""
++    from registry.auth.csrf import verify_csrf_token_flexible
++    from registry.auth.dependencies import nginx_proxied_auth
++
++    app = FastAPI()
++    app.include_router(skill_router)
++    app.dependency_overrides[nginx_proxied_auth] = lambda: user_context
++    app.dependency_overrides[verify_csrf_token_flexible] = lambda: None
++    return TestClient(app)
++
++
++AGENT_REQUEST = {
++    "name": "gate-agent",
++    "description": "d",
++    "url": "http://localhost:9000/agent",
++    "version": "1.0",
++    "protocol_version": "1.0",
++    "tags": "",
++    "supported_protocol": "a2a",
++    "provider": None,
++    "security_schemes": {},
++    "skills": [],
++    "visibility": "public",
++}
++
++
++def _allow() -> GateDecision:
++    return GateDecision(allowed=True, reason="allowed")
++
++
++def _deny() -> GateDecision:
++    return GateDecision(allowed=False, reason="naming violation", failure=False)
++
++
++def _failure() -> GateDecision:
++    return GateDecision(allowed=False, reason=GATE_UNAVAILABLE_MESSAGE, failure=True)
++
++
++def _validation_ok() -> MagicMock:
++    result = MagicMock()
++    result.is_valid = True
++    result.errors = []
++    result.warnings = []
++    return result
++
++
++# =============================================================================
++# AGENT ROUTES
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++class TestAgentRegistrationGate:
++    """Gate enforcement on POST /agents/register and PUT /agents/{path}."""
++
++    def test_register_allow(self, user_context):
++        client = _agent_app(user_context)
++        with (
++            patch(
++                "registry.api.agent_routes.check_registration_gate",
++                new=AsyncMock(return_value=_allow()),
++            ),
++            patch("registry.api.agent_routes.agent_service") as mock_service,
++            patch("registry.utils.agent_validator.agent_validator") as mock_validator,
++            patch("registry.search.service.faiss_service") as mock_faiss,
++        ):
++            mock_service.get_agent_info = AsyncMock(return_value=None)
++            mock_service.register_agent = AsyncMock(return_value=True)
++            mock_service.is_agent_enabled.return_value = True
++            mock_validator.validate_agent_card = AsyncMock(return_value=_validation_ok())
++            mock_faiss.add_or_update_entity = AsyncMock()
++
++            response = client.post("/agents/register", json=AGENT_REQUEST)
++        assert response.status_code == status.HTTP_201_CREATED
++
++    def test_register_deny_surfaces_reason(self, user_context):
++        client = _agent_app(user_context)
++        with patch(
++            "registry.api.agent_routes.check_registration_gate",
++            new=AsyncMock(return_value=_deny()),
++        ), patch("registry.api.agent_routes.agent_service") as mock_service:
++            mock_service.get_agent_info = AsyncMock(return_value=None)
++
++            response = client.post("/agents/register", json=AGENT_REQUEST)
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        assert "naming violation" in response.json()["detail"]
++        mock_service.register_agent.assert_not_called()
++
++    def test_register_failure_returns_503_fixed_message(self, user_context):
++        client = _agent_app(user_context)
++        with patch(
++            "registry.api.agent_routes.check_registration_gate",
++            new=AsyncMock(return_value=_failure()),
++        ):
++            response = client.post("/agents/register", json=AGENT_REQUEST)
++        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
++        assert response.json()["detail"] == GATE_UNAVAILABLE_MESSAGE
++
++    def test_register_gate_called_with_routing_fields(self, user_context):
++        client = _agent_app(user_context)
++        with (
++            patch(
++                "registry.api.agent_routes.check_registration_gate",
++                new=AsyncMock(return_value=_allow()),
++            ) as mock_gate,
++            patch("registry.api.agent_routes.agent_service") as mock_service,
++            patch("registry.utils.agent_validator.agent_validator") as mock_validator,
++            patch("registry.search.service.faiss_service") as mock_faiss,
++        ):
++            mock_service.get_agent_info = AsyncMock(return_value=None)
++            mock_service.register_agent = AsyncMock(return_value=True)
++            mock_service.is_agent_enabled.return_value = True
++            mock_validator.validate_agent_card = AsyncMock(return_value=_validation_ok())
++            mock_faiss.add_or_update_entity = AsyncMock()
++
++            response = client.post("/agents/register", json=AGENT_REQUEST)
++        assert response.status_code == status.HTTP_201_CREATED
++        kwargs = mock_gate.call_args.kwargs
++        assert kwargs["asset_type"] == "agent"
++        assert kwargs["endpoint"] == "/agents/register"
++        assert kwargs["action"] == "register"
++        assert kwargs["username"] == "testuser"
++        assert kwargs["path"] == "/gate-agent"
++
++    def test_update_deny(self, user_context):
++        """A denied agent update surfaces the gate reason as 403."""
++        client = _agent_app(user_context)
++        existing = AgentCard(
++            protocol_version="1.0",
++            name="gate-agent",
++            description="d",
++            url="http://localhost:9000/agent",
++            version="1.0",
++            path="/gate-agent",
++            registered_by="testuser",
++            supported_protocol="a2a",
++        )
++
++        with patch(
++            "registry.api.agent_routes.check_registration_gate",
++            new=AsyncMock(return_value=_deny()),
++        ) as mock_gate, patch("registry.api.agent_routes.agent_service") as mock_service:
++            mock_service.get_agent_info = AsyncMock(return_value=existing)
++
++            response = client.put("/agents/gate-agent", json=AGENT_REQUEST)
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        assert "naming violation" in response.json()["detail"]
++        kwargs = mock_gate.call_args.kwargs
++        assert kwargs["action"] == "update"
++        assert kwargs["endpoint"] == "/agents/gate-agent"
++
++
++# =============================================================================
++# SKILL ROUTES
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++class TestSkillRegistrationGate:
++    """Gate enforcement on POST /skills and PUT /skills/{path}."""
++
++    SKILL_REQUEST = {
++        "name": "gate-skill",
++        "description": "d",
++        "skill_md_url": "https://example.com/SKILL.md",
++        "visibility": "public",
++    }
++
++    def test_register_deny(self, user_context):
++        client = _skill_app(user_context)
++        mock_service = MagicMock()
++        mock_service.register_skill = AsyncMock()
++        with patch(
++            "registry.api.skill_routes.check_registration_gate",
++            new=AsyncMock(return_value=_deny()),
++        ) as mock_gate, patch(
++            "registry.api.skill_routes.get_skill_service",
++            return_value=mock_service,
++        ):
++            response = client.post("/skills", json=self.SKILL_REQUEST)
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        assert "naming violation" in response.json()["detail"]
++        mock_service.register_skill.assert_not_called()
++        assert mock_gate.call_args.kwargs["endpoint"] == "/skills"
++
++    def test_register_failure_503(self, user_context):
++        client = _skill_app(user_context)
++        mock_service = MagicMock()
++        with patch(
++            "registry.api.skill_routes.check_registration_gate",
++            new=AsyncMock(return_value=_failure()),
++        ), patch(
++            "registry.api.skill_routes.get_skill_service",
++            return_value=mock_service,
++        ):
++            response = client.post("/skills", json=self.SKILL_REQUEST)
++        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
++        assert response.json()["detail"] == GATE_UNAVAILABLE_MESSAGE
++
++    def test_update_deny(self, user_context):
++        client = _skill_app(user_context)
++        existing = MagicMock()
++        existing.owner = "testuser"
++        existing.visibility = "public"
++        existing.name = "gate-skill"
++        mock_service = MagicMock()
++        mock_service.get_skill = AsyncMock(return_value=existing)
++        mock_service.update_skill = AsyncMock()
++        with patch(
++            "registry.api.skill_routes.check_registration_gate",
++            new=AsyncMock(return_value=_deny()),
++        ) as mock_gate, patch(
++            "registry.api.skill_routes.get_skill_service",
++            return_value=mock_service,
++        ):
++            response = client.put("/skills/gate-skill", json=self.SKILL_REQUEST)
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        kwargs = mock_gate.call_args.kwargs
++        assert kwargs["action"] == "update"
++        assert kwargs["endpoint"] == "/skills/gate-skill"
++        mock_service.update_skill.assert_not_called()
++
++
++# =============================================================================
++# SERVER ROUTES
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.api
++class TestServerRegistrationGate:
++    """Gate enforcement on POST /register, /internal/register, /edit."""
++
++    def _form(self, **overrides) -> dict[str, str]:
++        data = {
++            "name": "gate-server",
++            "description": "d",
++            "path": "/gate-server",
++            "proxy_pass_url": "http://localhost:8080",
++            "tags": "",
++            "visibility": "public",
++        }
++        data.update(overrides)
++        return data
++
++    def _server_app(self, user_context: dict[str, Any]) -> TestClient:
++        from registry.api.server_routes import router as server_router
++        from registry.auth.csrf import verify_csrf_token_flexible
++        from registry.auth.dependencies import enhanced_auth
++
++        app = FastAPI()
++        app.include_router(server_router)
++        app.dependency_overrides[enhanced_auth] = lambda: user_context
++        app.dependency_overrides[verify_csrf_token_flexible] = lambda: None
++        return TestClient(app)
++
++    def test_register_deny(self, user_context):
++        client = self._server_app(user_context)
++        with patch(
++            "registry.api.server_routes.check_registration_gate",
++            new=AsyncMock(return_value=_deny()),
++        ) as mock_gate:
++            response = client.post("/register", data=self._form())
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        body = response.json()
++        assert body["error"] == "Registration denied"
++        assert body["detail"] == "naming violation"
++        assert mock_gate.call_args.kwargs["endpoint"] == "/register"
++
++    def test_register_failure_503(self, user_context):
++        client = self._server_app(user_context)
++        with patch(
++            "registry.api.server_routes.check_registration_gate",
++            new=AsyncMock(return_value=_failure()),
++        ):
++            response = client.post("/register", data=self._form())
++        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
++        assert response.json()["detail"] == GATE_UNAVAILABLE_MESSAGE
++
++    def test_register_allow_proceeds(self, user_context):
++        client = self._server_app(user_context)
++        with (
++            patch(
++                "registry.api.server_routes.check_registration_gate",
++                new=AsyncMock(return_value=_allow()),
++            ),
++            patch("registry.api.server_routes.server_service") as mock_service,
++            patch("registry.core.nginx_service.nginx_service") as mock_nginx,
++            patch("registry.search.service.faiss_service") as mock_faiss,
++            patch("registry.health.service.health_service") as mock_health,
++            patch("registry.api.server_routes.security_scanner_service") as mock_scanner,
++        ):
++            mock_scanner.get_scan_config.return_value.enabled = False
++            mock_service.register_server = AsyncMock(
++                return_value={"success": True, "is_new_version": False}
++            )
++            mock_service.is_service_enabled = AsyncMock(return_value=True)
++            mock_service.get_enabled_services = AsyncMock(return_value=[])
++            mock_nginx.generate_config_async = AsyncMock()
++            mock_faiss.add_or_update_service = AsyncMock()
++            mock_health.broadcast_health_update = AsyncMock()
++
++            response = client.post("/register", data=self._form())
++        assert response.status_code == status.HTTP_201_CREATED
++
++    def test_internal_register_deny(self, user_context):
++        from registry.api.server_routes import router as server_router
++        from registry.auth.internal import validate_internal_auth
++
++        app = FastAPI()
++        app.include_router(server_router)
++        app.dependency_overrides[validate_internal_auth] = lambda: "svc-account"
++        client = TestClient(app)
++
++        with patch(
++            "registry.api.server_routes.check_registration_gate",
++            new=AsyncMock(return_value=_deny()),
++        ) as mock_gate:
++            response = client.post("/internal/register", data=self._form())
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        body = response.json()
++        assert body["error"] == "Registration denied"
++        assert body["reason"] == "naming violation"
++        kwargs = mock_gate.call_args.kwargs
++        assert kwargs["endpoint"] == "/internal/register"
++        assert kwargs["action"] == "register"  # new server, no overwrite
++
++    def test_edit_deny_returns_json_not_redirect(self, user_context):
++        client = self._server_app(user_context)
++        with (
++            patch(
++                "registry.api.server_routes.check_registration_gate",
++                new=AsyncMock(return_value=_deny()),
++            ),
++            patch("registry.api.server_routes.server_service") as mock_service,
++            patch(
++                "registry.auth.dependencies.user_has_ui_permission_for_service",
++                return_value=True,
++            ),
++        ):
++            existing = MagicMock()
++            existing.server_name = "gate-server"
++            mock_service.get_server_info = AsyncMock(return_value=existing)
++            mock_service.user_can_access_server_path = AsyncMock(return_value=True)
++
++            response = client.post("/edit/gate-server", data=self._form())
++        assert response.status_code == status.HTTP_403_FORBIDDEN
++        body = response.json()
++        assert body["detail"] == "naming violation"
+diff --git a/tests/unit/services/test_registration_gate.py b/tests/unit/services/test_registration_gate.py
+new file mode 100644
+index 0000000..7fc6bb7
+--- /dev/null
++++ b/tests/unit/services/test_registration_gate.py
+@@ -0,0 +1,321 @@
++"""Unit tests for the registration admission control gate client.
++
++Covers the verdict matrix (allow, deny, timeout, unreachable, unexpected
++status), the disabled no-op, misconfiguration fail-closed behavior, and
++credential scrubbing of the outbound payload.
++"""
++
++import logging
++from unittest.mock import AsyncMock, MagicMock, patch
++
++import httpx
++import pytest
++
++from registry.services.registration_gate import (
++    GATE_DENIED_FALLBACK_MESSAGE,
++    GATE_UNAVAILABLE_MESSAGE,
++    GateDecision,
++    _build_gate_payload,
++    check_registration_gate,
++)
++
++logger = logging.getLogger(__name__)
++
++
++# =============================================================================
++# FIXTURES
++# =============================================================================
++
++
++@pytest.fixture
++def gate_enabled():
++    """Enable the registration gate with a stub URL."""
++    with (
++        patch("registry.services.registration_gate.settings") as mock_settings,
++    ):
++        mock_settings.registration_gate_enabled = True
++        mock_settings.registration_gate_url = "http://gate.example.com/admit"
++        mock_settings.registration_gate_timeout_seconds = 5.0
++        mock_settings.registration_gate_auth_header = "Authorization"
++        mock_settings.registration_gate_auth_token = ""
++        yield mock_settings
++
++
++@pytest.fixture
++def gate_disabled():
++    """Disable the registration gate (default configuration)."""
++    with patch("registry.services.registration_gate.settings") as mock_settings:
++        mock_settings.registration_gate_enabled = False
++        yield mock_settings
++
++
++def _mock_response(status_code: int, json_body=None):
++    response = MagicMock()
++    response.status_code = status_code
++    if json_body is None:
++        response.json.side_effect = ValueError("not json")
++    else:
++        response.json.return_value = json_body
++    return response
++
++
++SAMPLE_PAYLOAD = {
++    "name": "test-server",
++    "path": "/test-server",
++    "proxy_pass_url": "http://localhost:8080",
++    "auth_credential": "super-secret",
++    "auth_credential_encrypted": "enc",
++    "tags": ["a"],
++}
++
++
++# =============================================================================
++# TESTS
++# =============================================================================
++
++
++@pytest.mark.unit
++@pytest.mark.services
++class TestCheckRegistrationGate:
++    """Tests for check_registration_gate verdicts."""
++
++    @pytest.mark.asyncio
++    async def test_disabled_gate_allows_without_http(self, gate_disabled):
++        """Disabled gate allows immediately and makes no HTTP call."""
++        with patch("registry.services.registration_gate.httpx.AsyncClient") as mock_client:
++            decision = await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++        assert decision.allowed is True
++        assert decision.failure is False
++        mock_client.assert_not_called()
++
++    @pytest.mark.asyncio
++    async def test_allow_on_200(self, gate_enabled):
++        """HTTP 200 allows the registration."""
++        with patch(
++            "registry.services.registration_gate.httpx.AsyncClient"
++        ) as mock_client_cls:
++            client = AsyncMock()
++            client.post = AsyncMock(return_value=_mock_response(200, {"status": "ok"}))
++            client.__aenter__ = AsyncMock(return_value=client)
++            client.__aexit__ = AsyncMock(return_value=False)
++            mock_client_cls.return_value = client
++
++            decision = await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++        assert decision.allowed is True
++        assert decision.failure is False
++        assert client.post.await_count == 1
++
++    @pytest.mark.asyncio
++    async def test_deny_on_403_with_reason(self, gate_enabled):
++        """HTTP 403 with a reason denies and surfaces the reason."""
++        with patch(
++            "registry.services.registration_gate.httpx.AsyncClient"
++        ) as mock_client_cls:
++            client = AsyncMock()
++            client.post = AsyncMock(
++                return_value=_mock_response(403, {"reason": "naming violation"})
++            )
++            client.__aenter__ = AsyncMock(return_value=client)
++            client.__aexit__ = AsyncMock(return_value=False)
++            mock_client_cls.return_value = client
++
++            decision = await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++        assert decision.allowed is False
++        assert decision.failure is False
++        assert decision.reason == "naming violation"
++
++    @pytest.mark.asyncio
++    async def test_deny_on_403_without_reason_uses_fallback(self, gate_enabled):
++        """HTTP 403 with an unparseable body falls back to the fixed reason."""
++        with patch(
++            "registry.services.registration_gate.httpx.AsyncClient"
++        ) as mock_client_cls:
++            client = AsyncMock()
++            client.post = AsyncMock(return_value=_mock_response(403, None))
++            client.__aenter__ = AsyncMock(return_value=client)
++            client.__aexit__ = AsyncMock(return_value=False)
++            mock_client_cls.return_value = client
++
++            decision = await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++        assert decision.allowed is False
++        assert decision.failure is False
++        assert decision.reason == GATE_DENIED_FALLBACK_MESSAGE
++
++    @pytest.mark.asyncio
++    async def test_timeout_fails_closed(self, gate_enabled):
++        """A gate timeout blocks the registration as a failure."""
++        with patch(
++            "registry.services.registration_gate.httpx.AsyncClient"
++        ) as mock_client_cls:
++            client = AsyncMock()
++            client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
++            client.__aenter__ = AsyncMock(return_value=client)
++            client.__aexit__ = AsyncMock(return_value=False)
++            mock_client_cls.return_value = client
++
++            decision = await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++        assert decision.allowed is False
++        assert decision.failure is True
++        assert decision.reason == GATE_UNAVAILABLE_MESSAGE
++
++    @pytest.mark.asyncio
++    async def test_unreachable_gate_fails_closed(self, gate_enabled):
++        """A connection error blocks the registration as a failure."""
++        with patch(
++            "registry.services.registration_gate.httpx.AsyncClient"
++        ) as mock_client_cls:
++            client = AsyncMock()
++            client.post = AsyncMock(side_effect=httpx.ConnectError("refused"))
++            client.__aenter__ = AsyncMock(return_value=client)
++            client.__aexit__ = AsyncMock(return_value=False)
++            mock_client_cls.return_value = client
++
++            decision = await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++        assert decision.allowed is False
++        assert decision.failure is True
++
++    @pytest.mark.asyncio
++    async def test_unexpected_status_fails_closed(self, gate_enabled):
++        """Any non-200/403 status blocks the registration as a failure."""
++        for status_code in (500, 302, 401):
++            with patch(
++                "registry.services.registration_gate.httpx.AsyncClient"
++            ) as mock_client_cls:
++                client = AsyncMock()
++                client.post = AsyncMock(return_value=_mock_response(status_code, {}))
++                client.__aenter__ = AsyncMock(return_value=client)
++                client.__aexit__ = AsyncMock(return_value=False)
++                mock_client_cls.return_value = client
++
++                decision = await check_registration_gate(
++                    "server", "/register", "register", SAMPLE_PAYLOAD
++                )
++            assert decision.allowed is False
++            assert decision.failure is True
++
++    @pytest.mark.asyncio
++    async def test_enabled_without_url_fails_closed(self, gate_enabled):
++        """Enabled gate with no URL blocks the registration."""
++        gate_enabled.registration_gate_url = ""
++        decision = await check_registration_gate(
++            "server", "/register", "register", SAMPLE_PAYLOAD
++        )
++        assert decision.allowed is False
++        assert decision.failure is True
++
++    @pytest.mark.asyncio
++    async def test_non_http_url_fails_closed(self, gate_enabled):
++        """A non-http(s) gate URL blocks the registration."""
++        gate_enabled.registration_gate_url = "ftp://gate.example.com"
++        decision = await check_registration_gate(
++            "server", "/register", "register", SAMPLE_PAYLOAD
++        )
++        assert decision.allowed is False
++        assert decision.failure is True
++
++    @pytest.mark.asyncio
++    async def test_auth_header_sent_when_token_configured(self, gate_enabled):
++        """The configured auth header/value are sent when a token is set."""
++        gate_enabled.registration_gate_auth_token = "tok-123"
++        with patch(
++            "registry.services.registration_gate.httpx.AsyncClient"
++        ) as mock_client_cls:
++            client = AsyncMock()
++            client.post = AsyncMock(return_value=_mock_response(200, {}))
++            client.__aenter__ = AsyncMock(return_value=client)
++            client.__aexit__ = AsyncMock(return_value=False)
++            mock_client_cls.return_value = client
++
++            await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++            _, kwargs = client.post.await_args
++        assert kwargs["headers"]["Authorization"] == "tok-123"
++
++    @pytest.mark.asyncio
++    async def test_timeout_clamped_to_maximum(self, gate_enabled):
++        """Configured timeouts above 30s are clamped."""
++        gate_enabled.registration_gate_timeout_seconds = 600.0
++        with patch(
++            "registry.services.registration_gate.httpx.AsyncClient"
++        ) as mock_client_cls:
++            client = AsyncMock()
++            client.post = AsyncMock(return_value=_mock_response(200, {}))
++            client.__aenter__ = AsyncMock(return_value=client)
++            client.__aexit__ = AsyncMock(return_value=False)
++            mock_client_cls.return_value = client
++
++            await check_registration_gate(
++                "server", "/register", "register", SAMPLE_PAYLOAD
++            )
++            _, kwargs = mock_client_cls.call_args
++        assert kwargs["timeout"] == 30.0
++
++
++@pytest.mark.unit
++@pytest.mark.services
++class TestGatePayload:
++    """Tests for the outbound gate payload builder."""
++
++    def test_payload_contains_routing_fields(self):
++        body = _build_gate_payload(
++            "server", "/register", "register", SAMPLE_PAYLOAD, "alice", path="/test-server"
++        )
++        assert body["asset_type"] == "server"
++        assert body["endpoint"] == "/register"
++        assert body["action"] == "register"
++        assert body["user"] == "alice"
++        assert body["path"] == "/test-server"
++        assert "payload" in body
++
++    def test_payload_scrubs_credential_keys(self):
++        body = _build_gate_payload(
++            "server", "/register", "register", SAMPLE_PAYLOAD, "alice"
++        )
++        assert "auth_credential" not in body["payload"]
++        assert "auth_credential_encrypted" not in body["payload"]
++
++    def test_payload_scrubs_nested_and_list_entries(self):
++        payload = {
++            "metadata": {"client_secret": "x", "keep": 1},
++            "items": [{"api_key": "y"}, {"ok": True}],
++            "password": "z",
++        }
++        body = _build_gate_payload("agent", "/agents/register", "register", payload, "bob")
++        assert "client_secret" not in body["payload"]["metadata"]
++        assert "api_key" not in body["payload"]["items"][0]
++        assert "password" not in body["payload"]
++        assert body["payload"]["metadata"]["keep"] == 1
++        assert body["payload"]["items"][1] == {"ok": True}
++
++    def test_overwrite_field_included_only_when_provided(self):
++        body = _build_gate_payload(
++            "server", "/internal/register", "update", SAMPLE_PAYLOAD, "sys", overwrite=True
++        )
++        assert body["overwrite"] is True
++        body2 = _build_gate_payload(
++            "server", "/register", "register", SAMPLE_PAYLOAD, "sys"
++        )
++        assert "overwrite" not in body2
++
++
++@pytest.mark.unit
++@pytest.mark.services
++class TestGateDecision:
++    """Sanity tests for the decision dataclass."""
++
++    def test_default_is_not_failure(self):
++        decision = GateDecision(allowed=False, reason="denied")
++        assert decision.failure is False

@@ -1,0 +1,48 @@
+{
+  "task": "lifecycle-workflow-webhooks",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 22,
+      "correctness": 22,
+      "specificity": 21,
+      "risk_awareness": 18,
+      "total": 83,
+      "notes": "Every factual anchor checks out: the polling endpoint GET /api/servers/{path}/security-scan exists (server_routes.py:5047), PATCH does gate status under modify_service via _check_server_permission, and the status vocabulary matches the LifecycleStatus enum in registry/schemas/registry_card.py:27-33, including the exact 400 detail format produced by _validate_lifecycle_status. Acceptance criteria are genuinely testable (exact header format sha256=<hex>, 400/403 semantics, metric name following the repo's mcpgw_registry_* convention, no-bypass across PUT and batch). The explicit out-of-scope list with rationale (no transition events, no retries, no rescan events) is the strongest aspect. Weakest: it never surfaces the chart reserved-env-name contract that the repo's own CLAUDE.md mandates for new secret-rendered env vars, and it does not flag the full-body-PUT default-status nuance that later bites the implementation; upstream issue #1330 contents and label availability are unverifiable from the repo."
+    },
+    "lld": {
+      "completeness": 22,
+      "correctness": 20,
+      "specificity": 23,
+      "risk_awareness": 20,
+      "total": 85,
+      "notes": "This is the most repo-grounded artifact: I verified _ADMIN_ACTION_PREFIXES exactly as quoted at auth/dependencies.py:343-350, has_field_filters at server_routes.py:594 and agent_routes.py:992, the batch module's None-equals-absent rule near agent_batch_item_processor.py:250, and the skill fast-path structure it reasons about — the line references are accurate, not invented. It commits to the load-bearing decisions (sign exact transmitted bytes via content=, exclude_unset vs None per surface, synthesized failure scan results, admin-prefix safety, internal endpoint force-only, deployment parity across five surfaces). Two real gaps: the deployment checklist omits charts/registry/reserved-env-names.txt (which lists REGISTRATION_WEBHOOK_* at lines 103-106 and is a documented matched-pair contract), and the Observability section still says 3 outcomes/36 series after Step 2 was revised to 4 outcomes; the phrase \"when the update request supplies status\" is also imprecise for full-body PUTs whose models default status to \"draft\", which is exactly the trap the implementation falls into."
+    },
+    "review": {
+      "completeness": 21,
+      "correctness": 21,
+      "specificity": 21,
+      "risk_awareness": 19,
+      "total": 82,
+      "notes": "The review does real work rather than role-playing: the edit-form bypass is genuine (edit_server_submit sets updated_server_entry[\"status\"] under modify_service at server_routes.py:~2390), the skill fast-path total_count concern matches the actual code shape, and the batch-replace and metric-outcome blockers are legitimate and verifiably resolved in the revised LLD's resolution log. Reviewer claims I checked (admin-prefix safety, ECS secret-in-taskdef parity, deployment surface enumeration) are all accurate, and reviewers disagree with the LLD they are reviewing. The misses are telling: no reviewer traced the agent scan helper's early `return False` on the unsafe-and-blocked path, which is exactly where the shipped implementation drops the event, and none raised the chart reserved-env-name/chart-test contract; verdicts are uniformly APPROVED WITH CHANGES but are each defensible on the evidence."
+    },
+    "testing": {
+      "completeness": 20,
+      "correctness": 17,
+      "specificity": 21,
+      "risk_awareness": 19,
+      "total": 77,
+      "notes": "The plan has real oracles at the right levels: exact status codes and detail strings, jq assertions on total_count vs filtered counts, HMAC recomputation over raw bytes, per-surface greps, and a backwards-compatibility matrix that pins the same-value-resubmission case and legacy-receiver tolerance; endpoints are correct (POST /api/servers/register is register_service_api at server_routes.py:3490, batch at agent_routes.py:1544, skill PUT at skill_routes.py:963). The largest correctness defect is the Docker Compose service name: the plan uses `docker compose up -d mcp-gateway-registry` but the actual service is `registry` (docker-compose.yml:72), so two commands fail as written; the stated security_scan_timeout=60s default is also wrong (schemas/security.py defaults to 300s). It misses PUT-omitted-status as a backwards-compat case (precisely where the implementation regresses) and adds no helm-unittest/reserved-name coverage for the chart changes, though §5.2's unsafe-scan flow would, if run against an agent, expose the implementation's missing-event bug."
+    },
+    "implementation": {
+      "completeness": 19,
+      "correctness": 18,
+      "specificity": 21,
+      "risk_awareness": 18,
+      "total": 76,
+      "notes": "Every hunk I checked matches the real source and follows repo conventions — single-serialization signing sent with content=, sanitize_payload at the transport boundary, raw_output excluded, _CounterAdapter counter, defense-in-depth fast-path totals, and full deployment parity across .env.example, three compose files, Terraform, and the chart. The two real defects: in _perform_agent_security_scan_on_registration the unsafe-and-block_unsafe_agents path (default True) executes `return False` before the inserted create_task, so scan_complete is never emitted for exactly the unsafe-agent-disabled case the issue's headline scenario depends on; and update_skill gates on request.status (defaults to \"draft\" when omitted) instead of the LLD's updates.get(\"status\") from the exclude_unset dict, false-403ing owners who omit status on skills stored as \"active\" — a deviation the summary does not disclose. Additionally charts/registry/reserved-env-names.txt is not extended despite two new chart-rendered secret keys (CLAUDE.md's documented matched-pair rule), and the LLD-promised route-level, batch, and webhook-service test extensions are absent from the patch, leaving the riskiest behaviors covered only by helper and webhook unit tests. The files-touched table is otherwise honest about scope."
+    }
+  },
+  "task_score": 80.6,
+  "verdict": "A well-grounded, internally reviewed design set with a largely faithful and convention-respecting patch, whose largest material limitation is that the implementation drops the scan_complete event on the unsafe-agent auto-disable path and false-403s skill PUTs that omit status, undercutting the issue's headline acceptance criteria."
+}

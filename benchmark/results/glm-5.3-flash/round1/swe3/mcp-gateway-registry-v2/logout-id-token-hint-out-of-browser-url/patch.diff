@@ -1,0 +1,457 @@
+diff --git a/.env.example b/.env.example
+index 686795e..46bb08d 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1521,6 +1521,19 @@ INTERNAL_TOKEN_TTL_SECONDS=30
+ # Clock-skew leeway (seconds) on the token's exp/iat checks. Default: 5
+ INTERNAL_TOKEN_LEEWAY_SECONDS=5
+ 
++# -----------------------------------------------------------------------------
++# Logout id_token_hint delivery (issue #1503)
++# -----------------------------------------------------------------------------
++
++# When true (default), the registry fetches the IdP logout URL from the auth
++# server over the internal network (POST /internal/logout-url) during logout
++# instead of putting the OIDC id_token_hint into the browser-facing
++# /oauth2/logout redirect URL (WAFs reject large query strings, and the JWT
++# leaks into browser history and proxy logs). Any internal-call failure falls
++# back to the legacy browser-facing redirect. Set false to disable the
++# internal hop entirely. Default: true
++LOGOUT_HINT_VIA_INTERNAL=true
++
+ # =============================================================================
+ # AUDIT LOGGING CONFIGURATION
+ # =============================================================================
+diff --git a/auth_server/server.py b/auth_server/server.py
+index a641be5..2de3840 100644
+--- a/auth_server/server.py
++++ b/auth_server/server.py
+@@ -4438,6 +4438,113 @@ async def reload_scopes(caller_identity: str = Depends(validate_internal_auth)):
+         raise HTTPException(status_code=500, detail="Failed to reload scopes configuration")
+ 
+ 
++class InternalLogoutUrlRequest(BaseModel):
++    """Body for POST /internal/logout-url (issue #1503).
++
++    The registry sends the OIDC id_token over the internal network so the hint
++    never has to traverse a browser-facing URL (which WAFs reject by size and
++    which leaks into browser history and proxy logs).
++    """
++
++    provider: str = Field(..., min_length=1, description="OAuth2 provider key as configured in OAUTH2_CONFIG")
++    id_token: str | None = Field(default=None, description="OIDC ID token to pass as id_token_hint; None when the session has none")
++    redirect_uri: str | None = Field(
++        default=None,
++        description="Registry URL to send the browser back to after the IdP logout",
++    )
++
++
++class InternalLogoutUrlResponse(BaseModel):
++    """Response for POST /internal/logout-url."""
++
++    logout_url: str = Field(..., min_length=1, description="Fully built IdP logout URL for a browser redirect")
++    id_token_hint_included: bool = Field(
++        ...,
++        description="Whether the hint was embedded (False for Cognito-shaped providers and hint-less responses)",
++    )
++
++
++@internal_router.post("/logout-url", response_model=InternalLogoutUrlResponse)
++async def internal_logout_url(
++    body: InternalLogoutUrlRequest,
++    request: Request,
++    caller: str = Depends(validate_internal_auth),
++):
++    """Build the IdP logout URL for the given provider (internal hop).
++
++    Called by the registry during RP-initiated logout so the OIDC id_token_hint
++    is delivered over the internal network instead of a browser-facing redirect
++    URL (issue #1503). The registry 303-redirects the browser straight to the
++    returned IdP URL. Gated by the router-level ``validate_internal_auth``
++    dependency; ``caller`` re-declares it for audit logging (cached per
++    request).
++
++    A provider with no ``logout_url`` configured yields a 200 whose
++    ``logout_url`` is the (absolutized) registry return URL and
++    ``id_token_hint_included`` is False - a success, mirroring the legacy
++    browser-facing endpoint's local-only redirect for that case.
++    """
++    logger.info(f"Internal logout-url call from '{caller}' for provider '{body.provider}'")
++
++    if body.provider not in OAUTH2_CONFIG.get("providers", {}):
++        raise HTTPException(status_code=404, detail=f"Provider {body.provider} not found")
++
++    provider_config = OAUTH2_CONFIG["providers"][body.provider]
++
++    # Same redirect-safety guard as the legacy oauth2_logout: an absolute
++    # redirect_uri outside the deployment's cookie domain is dropped (falls
++    # back to /login-derived default below) rather than erroring, so a bad
++    # value can never reach the IdP through this path either.
++    redirect_uri = body.redirect_uri
++    if redirect_uri:
++        parsed = urlparse(redirect_uri)
++        if parsed.scheme or parsed.netloc:
++            cookie_domain = os.environ.get("SESSION_COOKIE_DOMAIN", "").strip()
++            if not _is_redirect_within_cookie_domain(redirect_uri, cookie_domain, request=request):
++                logger.warning(
++                    f"Blocked unsafe logout redirect_uri for {body.provider}: {redirect_uri}"
++                )
++                redirect_uri = None
++
++    if not provider_config.get("logout_url"):
++        # Provider has no IdP logout endpoint: hand back the registry return
++        # URL so the caller finishes the local-only logout as the legacy
++        # endpoint would.
++        fallback_url = redirect_uri or OAUTH2_CONFIG.get("registry", {}).get(
++            "success_redirect", "/login"
++        )
++        if not fallback_url.startswith("http"):
++            registry_base = os.environ.get("REGISTRY_URL")
++            if not registry_base:
++                referer = request.headers.get("referer", "")
++                if referer:
++                    parsed = urlparse(referer)
++                    registry_base = f"{parsed.scheme}://{parsed.netloc}"
++                else:
++                    registry_base = "http://localhost"
++            fallback_url = f"{registry_base.rstrip('/')}{fallback_url}"
++        return InternalLogoutUrlResponse(logout_url=fallback_url, id_token_hint_included=False)
++
++    full_redirect_uri = redirect_uri or "/login"
++    if not full_redirect_uri.startswith("http"):
++        registry_base = os.environ.get("REGISTRY_URL")
++        if not registry_base:
++            referer = request.headers.get("referer", "")
++            if referer:
++                parsed = urlparse(referer)
++                registry_base = f"{parsed.scheme}://{parsed.netloc}"
++            else:
++                registry_base = "http://localhost"
++        full_redirect_uri = f"{registry_base.rstrip('/')}{full_redirect_uri}"
++
++    logout_redirect_url, id_token_hint_included = _build_provider_logout_url(
++        body.provider, provider_config, body.id_token, full_redirect_uri
++    )
++    return InternalLogoutUrlResponse(
++        logout_url=logout_redirect_url, id_token_hint_included=id_token_hint_included
++    )
++
++
+ # Mount the /internal/* router. All routes registered on
+ # ``internal_router`` inherit the signed-Bearer authentication
+ # requirement via its router-level dependency; mounting it here keeps
+@@ -5621,6 +5728,66 @@ def map_user_info(user_info: dict, provider_config: dict) -> dict:
+     return mapped
+ 
+ 
++def _build_provider_logout_url(
++    provider: str,
++    provider_config: dict,
++    id_token_hint: str | None,
++    full_redirect_uri: str,
++) -> tuple[str, bool]:
++    """Build the provider-specific IdP logout URL.
++
++    Returns ``(logout_redirect_url, id_token_hint_included)``. The branch
++    conditions and parameters are moved verbatim from ``oauth2_logout`` so the
++    legacy browser-facing endpoint and the internal ``POST /internal/logout-url``
++    endpoint produce byte-identical URLs for the same inputs (issue #1503).
++    """
++    logout_url = provider_config.get("logout_url")
++
++    # Detect provider type and build appropriate logout URL
++    # Keycloak uses post_logout_redirect_uri, Cognito uses logout_uri
++    parsed_logout_url = urlparse(logout_url)
++    logout_hostname = parsed_logout_url.hostname or ""
++    logout_path = parsed_logout_url.path or ""
++
++    if "keycloak" in provider.lower() or "/realms/" in logout_path:
++        # Keycloak logout parameters
++        logout_params = {
++            "client_id": provider_config["client_id"],
++            "post_logout_redirect_uri": full_redirect_uri,
++        }
++        if id_token_hint:
++            logout_params["id_token_hint"] = id_token_hint
++        logger.debug(f"Keycloak logout params built: has_id_token_hint={bool(id_token_hint)}")
++    elif logout_hostname == "login.microsoftonline.com" or "entra" in provider.lower():
++        # Entra ID logout parameters
++        logout_params = {
++            "post_logout_redirect_uri": full_redirect_uri,
++        }
++        if id_token_hint:
++            logout_params["id_token_hint"] = id_token_hint
++        logger.debug(f"Entra ID logout params built: has_id_token_hint={bool(id_token_hint)}")
++    elif "okta" in provider.lower() or (
++        logout_hostname and logout_hostname.endswith(".okta.com")
++    ):
++        # Okta logout parameters
++        logout_params = {
++            "post_logout_redirect_uri": full_redirect_uri,
++        }
++        if id_token_hint:
++            logout_params["id_token_hint"] = id_token_hint
++        logger.debug(f"Okta logout params built: has_id_token_hint={bool(id_token_hint)}")
++    else:
++        # Cognito logout parameters (no id_token_hint support)
++        logout_params = {
++            "client_id": provider_config["client_id"],
++            "logout_uri": full_redirect_uri,
++        }
++        logger.debug("Cognito logout params built (no id_token_hint)")
++
++    logout_redirect_url = f"{logout_url}?{urllib.parse.urlencode(logout_params)}"
++    return logout_redirect_url, bool(id_token_hint)
++
++
+ @app.get("/oauth2/logout/{provider}")
+ async def oauth2_logout(
+     provider: str,
+@@ -5674,48 +5841,9 @@ async def oauth2_logout(
+ 
+             full_redirect_uri = f"{registry_base.rstrip('/')}{full_redirect_uri}"
+ 
+-        # Detect provider type and build appropriate logout URL
+-        # Keycloak uses post_logout_redirect_uri, Cognito uses logout_uri
+-        parsed_logout_url = urlparse(logout_url)
+-        logout_hostname = parsed_logout_url.hostname or ""
+-        logout_path = parsed_logout_url.path or ""
+-
+-        if "keycloak" in provider.lower() or "/realms/" in logout_path:
+-            # Keycloak logout parameters
+-            logout_params = {
+-                "client_id": provider_config["client_id"],
+-                "post_logout_redirect_uri": full_redirect_uri,
+-            }
+-            if id_token_hint:
+-                logout_params["id_token_hint"] = id_token_hint
+-            logger.debug(f"Keycloak logout params built: has_id_token_hint={bool(id_token_hint)}")
+-        elif logout_hostname == "login.microsoftonline.com" or "entra" in provider.lower():
+-            # Entra ID logout parameters
+-            logout_params = {
+-                "post_logout_redirect_uri": full_redirect_uri,
+-            }
+-            if id_token_hint:
+-                logout_params["id_token_hint"] = id_token_hint
+-            logger.debug(f"Entra ID logout params built: has_id_token_hint={bool(id_token_hint)}")
+-        elif "okta" in provider.lower() or (
+-            logout_hostname and logout_hostname.endswith(".okta.com")
+-        ):
+-            # Okta logout parameters
+-            logout_params = {
+-                "post_logout_redirect_uri": full_redirect_uri,
+-            }
+-            if id_token_hint:
+-                logout_params["id_token_hint"] = id_token_hint
+-            logger.debug(f"Okta logout params built: has_id_token_hint={bool(id_token_hint)}")
+-        else:
+-            # Cognito logout parameters (no id_token_hint support)
+-            logout_params = {
+-                "client_id": provider_config["client_id"],
+-                "logout_uri": full_redirect_uri,
+-            }
+-            logger.debug("Cognito logout params built (no id_token_hint)")
+-
+-        logout_redirect_url = f"{logout_url}?{urllib.parse.urlencode(logout_params)}"
++        logout_redirect_url, _ = _build_provider_logout_url(
++            provider, provider_config, id_token_hint, full_redirect_uri
++        )
+ 
+         logger.info(f"Redirecting to {provider} logout")
+         return RedirectResponse(url=logout_redirect_url, status_code=302)
+diff --git a/registry/auth/routes.py b/registry/auth/routes.py
+index a3d8a7d..e6b2805 100644
+--- a/registry/auth/routes.py
++++ b/registry/auth/routes.py
+@@ -15,6 +15,12 @@ from registry.observability.meters import (
+ from registry.observability.meters import (
+     logout_id_token_hint_present_total as logout_id_token_hint_present,
+ )
++from registry.observability.meters import (
++    logout_internal_hint_fallback_total as logout_internal_hint_fallback,
++)
++from registry.observability.meters import (
++    logout_internal_hint_success_total as logout_internal_hint_success,
++)
+ from registry.observability.meters import (
+     logout_jwt_validation_failed_total as logout_jwt_validation_failed,
+ )
+@@ -234,6 +240,59 @@ async def oauth2_callback(request: Request, error: str = None, details: str = No
+         return RedirectResponse(url="/login?error=oauth2_callback_error", status_code=302)
+ 
+ 
++async def _fetch_logout_url_via_internal(
++    provider: str,
++    id_token: str | None,
++    redirect_uri: str,
++) -> tuple[str, bool] | None:
++    """Fetch the IdP logout URL from the auth server over the internal hop.
++
++    Called during OAuth2 logout so the OIDC id_token_hint travels over the
++    internal network (POST /internal/logout-url, internal-JWT gated) instead
++    of a browser-facing redirect URL, where WAFs reject the large query string
++    and the JWT leaks into browser history and proxy logs (issue #1503).
++
++    Returns ``(logout_url, id_token_hint_included)`` on success, or None when
++    the internal path is unavailable (caller falls back to the legacy
++    browser-facing redirect). Never raises.
++    """
++    try:
++        from .internal import generate_internal_token
++
++        token = generate_internal_token(
++            subject="registry-service",
++            purpose="logout-url",
++        )
++        async with httpx.AsyncClient() as client:
++            response = await client.post(
++                f"{settings.auth_server_url}/internal/logout-url",
++                json={
++                    "provider": provider,
++                    "id_token": id_token,
++                    "redirect_uri": redirect_uri,
++                },
++                headers={"Authorization": f"Bearer {token}"},
++                timeout=5.0,
++            )
++
++        if response.status_code != 200:
++            logger.warning(
++                "Internal logout-url fetch failed: HTTP %s (falling back to legacy redirect)",
++                response.status_code,
++            )
++            logout_internal_hint_fallback.inc()
++            return None
++
++        data = response.json()
++        return data["logout_url"], bool(data.get("id_token_hint_included", False))
++    except Exception as e:
++        logger.warning(
++            f"Internal logout-url fetch failed: {type(e).__name__} (falling back to legacy redirect)"
++        )
++        logout_internal_hint_fallback.inc()
++        return None
++
++
+ async def logout_handler(
+     request: Request,
+     session: Annotated[str | None, Cookie(alias=settings.session_cookie_name)] = None,
+@@ -289,29 +348,44 @@ async def logout_handler(
+         if provider:
+             auth_external_url = settings.auth_server_external_url
+             redirect_uri = _build_external_url(request, "/logout")
+-            logout_url = f"{auth_external_url}/oauth2/logout/{provider}?redirect_uri={redirect_uri}"
+-
+-            # Append id_token_hint for proper SSO session termination if we
+-            # have an id_token from the server-side session record.
+-            if id_token:
+-                if not _validate_jwt_format(id_token):
+-                    logger.debug("id_token failed JWT format validation, not forwarding")
+-                    logout_jwt_validation_failed.inc()
++            legacy_logout_url = f"{auth_external_url}/oauth2/logout/{provider}?redirect_uri={redirect_uri}"
++
++            logout_url: str | None = None
++            if settings.logout_hint_via_internal and id_token:
++                # Deliver the hint over the internal network instead of a
++                # browser-facing URL (issue #1503). Only attempted when the
++                # session carries an id_token; the no-token case goes straight
++                # to legacy so logout_id_token_hint_missing keeps its meaning.
++                fetched = await _fetch_logout_url_via_internal(provider, id_token, redirect_uri)
++                if fetched is not None:
++                    logout_url = fetched[0]
++                    logout_internal_hint_success.inc()
++                    logger.debug("Logout hint delivered via internal hop, has_id_token=True")
++
++            if logout_url is None:
++                # Legacy browser-facing flow: the auth server builds the IdP
++                # URL with the hint in the query string. Also used as the
++                # fallback whenever the internal fetch did not return a URL.
++                logout_url = legacy_logout_url
++                if id_token:
++                    if not _validate_jwt_format(id_token):
++                        logger.debug("id_token failed JWT format validation, not forwarding")
++                        logout_jwt_validation_failed.inc()
++                    else:
++                        encoded_token = urllib.parse.quote(id_token, safe="")
++                        logout_url = f"{logout_url}&id_token_hint={encoded_token}"
++
++                        if len(logout_url) > 2000:
++                            logger.debug(
++                                f"Logout URL length ({len(logout_url)}) exceeds recommended limit (2000)"
++                            )
++                            logout_url_length_warning.inc()
++
++                        logger.debug("id_token extracted and forwarded, has_id_token=True")
++                        logout_id_token_hint_present.inc()
+                 else:
+-                    encoded_token = urllib.parse.quote(id_token, safe="")
+-                    logout_url = f"{logout_url}&id_token_hint={encoded_token}"
+-
+-                    if len(logout_url) > 2000:
+-                        logger.debug(
+-                            f"Logout URL length ({len(logout_url)}) exceeds recommended limit (2000)"
+-                        )
+-                        logout_url_length_warning.inc()
+-
+-                    logger.debug("id_token extracted and forwarded, has_id_token=True")
+-                    logout_id_token_hint_present.inc()
+-            else:
+-                logger.debug("id_token not present in session, has_id_token=False")
+-                logout_id_token_hint_missing.inc()
++                    logger.debug("id_token not present in session, has_id_token=False")
++                    logout_id_token_hint_missing.inc()
+ 
+             logger.debug(f"Redirecting to {provider} logout")
+             response = RedirectResponse(url=logout_url, status_code=status.HTTP_303_SEE_OTHER)
+diff --git a/registry/core/config.py b/registry/core/config.py
+index b4c09e3..6673654 100644
+--- a/registry/core/config.py
++++ b/registry/core/config.py
+@@ -200,6 +200,17 @@ class Settings(BaseSettings):
+     )
+     auth_server_url: str = "http://localhost:8888"
+     auth_server_external_url: str = "http://localhost:8888"  # External URL for OAuth redirects
++    logout_hint_via_internal: bool = Field(
++        default=True,
++        description=(
++            "Deliver the OIDC id_token_hint to the auth server over the internal "
++            "network (POST /internal/logout-url) during logout instead of putting "
++            "it into the browser-facing /oauth2/logout redirect URL. Falls back "
++            "to the legacy redirect when the internal call fails (e.g. an auth "
++            "server without the new endpoint). Set false to disable the internal "
++            "hop entirely."
++        ),
++    )
+     trusted_external_hosts: str = Field(
+         default="",
+         description=(
+diff --git a/registry/observability/meters.py b/registry/observability/meters.py
+index 69e85f0..7b40cc2 100644
+--- a/registry/observability/meters.py
++++ b/registry/observability/meters.py
+@@ -418,6 +418,25 @@ _logout_url_length_warning_counter = _meter.create_counter(
+ logout_url_length_warning_total = _CounterAdapter(_logout_url_length_warning_counter)
+ 
+ 
++# Internal-hop hint delivery (issue #1503). success = the registry fetched the
++# IdP logout URL from the auth server over POST /internal/logout-url; fallback
++# = that call failed and the legacy browser-facing redirect (hint in the URL)
++# was used instead.
++_logout_internal_hint_success_counter = _meter.create_counter(
++    name="mcpgw_registry_logout_internal_hint_success_total",
++    description="Logouts where the id_token_hint was delivered via the internal hop",
++    unit="1",
++)
++logout_internal_hint_success_total = _CounterAdapter(_logout_internal_hint_success_counter)
++
++_logout_internal_hint_fallback_counter = _meter.create_counter(
++    name="mcpgw_registry_logout_internal_hint_fallback_total",
++    description="Logouts where the internal hint hop failed and the legacy browser-facing redirect was used",
++    unit="1",
++)
++logout_internal_hint_fallback_total = _CounterAdapter(_logout_internal_hint_fallback_counter)
++
++
+ # Session store (registry/auth/session_store.py:32)
+ _session_store_resolve_counter = _meter.create_counter(
+     name="mcpgw_registry_session_store_resolve_total",

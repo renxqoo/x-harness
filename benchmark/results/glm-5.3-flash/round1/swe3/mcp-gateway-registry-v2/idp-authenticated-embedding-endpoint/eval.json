@@ -1,0 +1,48 @@
+{
+  "task": "idp-authenticated-embedding-endpoint",
+  "model": "glm-5.3-flash",
+  "scores": {
+    "github_issue": {
+      "completeness": 21,
+      "correctness": 21,
+      "specificity": 20,
+      "risk_awareness": 19,
+      "total": 81,
+      "notes": "Every load-bearing repo claim verified: registry/embeddings/client.py:210-236 really does push a static EMBEDDINGS_API_KEY into OPENAI_API_KEY at construction, registry/services/federation/federation_auth.py exists exactly as the cited token-manager pattern, and all named deployment surfaces (three compose files, terraform/aws-ecs module, charts/registry, unified-parameter-reference.md Group 20, docs/faq/switching-embedding-models.md) are real. Acceptance criteria are concretely testable (unset-settings parity, fail-fast startup, per-call api_key, no env write, masked secret) and the out-of-scope list is explicit with rationale (no wire-format change, client-credentials only, no auto re-index, no CDK). The largest gap is minor: the litellm-only provider constraint is implied rather than stated as a criterion, and the referenced issue #1415 is unverifiable from the evidence. Risk coverage is proportionate for an issue: backwards compatibility, secret logging/masking, misconfiguration fail-fast, and the dimension/re-index caveat."
+    },
+    "lld": {
+      "completeness": 22,
+      "correctness": 19,
+      "specificity": 22,
+      "risk_awareness": 20,
+      "total": 83,
+      "notes": "Exceptionally repository-grounded: every file/line claim I checked is accurate (search_repository.py:664-678 sole call site, config.py:426-432 fields and 1838-1841 validation chain, secrets.tf embeddings_api_key resource with ignore_changes, ecs-services.tf:1797 secrets block, iam.tf ARN list, compose/helm/param-ref locations), and it commits to the decisions that matter (injected non-singleton provider, per-call litellm api_key, double-checked locking, fail-loud errors, module boundary without Settings import). Four concrete inaccuracies cost correctness: it names CONFIG_SECTIONS where the repo symbol is CONFIG_GROUPS (config_routes.py:45), it misses that embeddings_idp_token_url matches the \"_token\" SENSITIVE_PATTERNS fallback and will therefore be masked too, it uses collection name mcp-embeddings-{d}-{ns} where the actual is mcp_embeddings_{d}_{ns} (docs/configuration.md:327), and the buffer-clamp rationale (\"never-refreshing\") is muddled. It also omits the charts/registry/reserved-env-names.txt matched-pair requirement the repo documents. Risk handling is otherwise sharp, including the httpx-exception secret-leak path and the honest residual LiteLLM-side exposure."
+    },
+    "review": {
+      "completeness": 20,
+      "correctness": 20,
+      "specificity": 21,
+      "risk_awareness": 20,
+      "total": 81,
+      "notes": "This is a real review, not role-play: Cipher's must-fix (str(httpx.HTTPStatusError) embeds the request whose form body carries client_secret) is technically correct and anchored to the repo's own containment pattern in registry/utils/pingfederate_manager.py:241-246, and Byte's claim that _get_embedding_model is the only production construction path is verified (create_embeddings_client is called only from search_repository.py:669). Byte's double-checked-locking and failure-state findings are genuine concurrency subtleties, the SRE catches the verified terraform ignore_changes/once-seeded semantics, and blockers are prioritized with an explicit resolution map into a revised LLD. Weaknesses: all five voices approve-with-changes and every recommendation is adopted with no disagreement, and the review still misses two things it was positioned to catch — the charts/registry/reserved-env-names.txt convention for new chart-managed env names, and that its own masking discussion asserts the token-url field renders unmasked when the \"_token\" pattern fallback will mask it."
+    },
+    "testing": {
+      "completeness": 21,
+      "correctness": 17,
+      "specificity": 21,
+      "risk_awareness": 19,
+      "total": 78,
+      "notes": "The unit tables have real oracles (exact client_credentials form body, exactly one token request across 8 threads, secret-absence in error messages, cached-state preservation) and would in fact catch the two real implementation defects, and the commands agree with the repo (uv run pytest tests/unit/embeddings/, registered markers under --strict-markers, real /api/config route mounted at registry/main.py:1156, terraform plan -var and helm template --set matching the added values). Backwards-compat, rollback, failure-injection (token endpoint down), and a rotation soak round it out. Correctness is dinged by three wrong oracles: 1.4.1 expects embeddings_idp_token_url to render is_masked:false when the \"_token\" SENSITIVE_PATTERNS fallback masks it, expects display secr**** when _mask_sensitive_value emits first-4 plus 8 asterisks, and 5.2 uses the wrong collection-name format mcp-embeddings-{d}-{ns}; the time-advance mechanism for the 60s stub is also underspecified."
+    },
+    "implementation": {
+      "completeness": 19,
+      "correctness": 13,
+      "specificity": 20,
+      "risk_awareness": 16,
+      "total": 68,
+      "notes": "The patch is broad and faithful: I verified every hunk's context against the 1.28.0 tree (client.py kwargs construction, CONFIG_GROUPS at config_routes.py:180, settings validation insertion after _validate_egress_auth_config, all six terraform files, helm secret.yaml values.yaml, both docs), it correctly uses the repo symbol the LLD got wrong, and the terraform secret mirrors the embeddings_api_key pattern verbatim. The critical defect is that create_embeddings_client references IdpBearerTokenProvider while client.py imports only TOKEN_REFRESH_BUFFER_SECONDS from the new module, so enabling IdP mode raises NameError — the headline feature cannot run and the patch's own test_idp_settings_build_provider fails; second, effective_buffer is computed and logged but never applied, so _is_token_valid still uses the unclamped buffer and test_buffer_larger_than_lifetime_is_clamped fails, confirming the admitted no-execution. Smaller gaps: charts/registry/reserved-env-names.txt and .env.example untouched despite the repo's matched-pair rule and the LLD checklist, the docs use the wrong collection-name format, and the summary undercounts its own tests (claims 21, the diff contains 27). Static-path regression guarding and secret-free error handling are genuinely correct."
+    }
+  },
+  "task_score": 78.2,
+  "verdict": "A strong, repository-grounded design set with an unusually genuine expert review, materially undermined by an implementation whose headline IdP path crashes on a missing import (NameError for IdpBearerTokenProvider in registry/embeddings/client.py) plus a dead buffer-clamp, neither caught because the tests were never executed."
+}
