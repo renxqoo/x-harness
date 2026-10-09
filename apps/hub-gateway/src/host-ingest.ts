@@ -1,4 +1,5 @@
 import { readCommandError } from "@x-harness/remote-protocol";
+import { uiRequestPayloadOf } from "../../host-hub/src/protocol/frames.ts";
 import { classifyHostLine } from "./fanout.ts";
 import type { Fanout } from "./fanout.ts";
 import type { DeviceRegistry } from "./device-registry.ts";
@@ -80,7 +81,7 @@ export function createHostIngest(deps: HostIngestDeps): HostIngest {
       return;
     }
     if (typeof parsed.requestId === "string" && typeof parsed.threadId === "string" && typeof parsed.method === "string") {
-      deps.fanout.fanoutUiRequest({ requestId: parsed.requestId, threadId: parsed.threadId, method: parsed.method, payload: (parsed.payload as Record<string, unknown>) ?? {} });
+      deps.fanout.fanoutUiRequest({ requestId: parsed.requestId, threadId: parsed.threadId, method: parsed.method, payload: uiRequestPayloadOf(parsed) });
     }
   }
 
