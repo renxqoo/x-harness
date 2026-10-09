@@ -29,6 +29,8 @@ import { EMBEDDED_RELAY_PORT } from "../relay-bind.ts";
 let gw: GatewayHandle;
 let agentDir: string;
 let relayPortNum: number;
+let relayHttpOrigin: string;
+let relayHttpHost: string;
 
 function hostExec(): { command: string; args: string[]; env: Record<string, string> } {
   const entry = join(process.cwd(), "apps/host-hub/src/host/cli.ts");
@@ -56,6 +58,10 @@ beforeAll(async () => {
   }
   if (gw.relayLink?.connected() !== true) throw new Error("embedded relay link never connected");
   relayPortNum = gw.relayBinding.mode === "embedded" ? gw.relayBinding.port : EMBEDDED_RELAY_PORT;
+  // 内嵌 relay 绑 0.0.0.0；本机若另有 relay 绑 127.0.0.1，loopback 连接会被它截走
+  // （更具体的绑定优先），表现为发现端点 404 且与网关无关。故按实际 relayUrl 取 origin。
+  relayHttpOrigin = new URL(gw.relayBinding.relayUrl.replace(/^ws/, "http")).origin;
+  relayHttpHost = new URL(relayHttpOrigin).hostname;
 }, 30000);
 
 afterAll(async () => {
@@ -82,7 +88,7 @@ async function ownerCommand(body: Record<string, unknown>): Promise<Record<strin
 }
 
 async function dialWs(path: string, token: string): Promise<{ send(line: string): void; lines(): string[]; close(): void }> {
-  const socket = netConnect({ host: "127.0.0.1", port: relayPortNum });
+  const socket = netConnect({ host: relayHttpHost, port: relayPortNum });
   await new Promise<void>((resolve, reject) => { socket.once("connect", resolve); socket.once("error", reject); });
   const key = randomBytes(16).toString("base64");
   socket.write(`GET ${path}?token=${encodeURIComponent(token)} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${key}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
@@ -133,20 +139,20 @@ describe("E2E 零配置：内置 relay + 6 位码发现 → PAKE 配对 → ratc
   it("6 位码发现端点：/api/discover?code=xxx 返回网关接入信息（含 ticket）", { timeout: 30000 }, async () => {
     const started = await ownerCommand({ command: "gw/pairing/start", id: "ps2", args: { scope: "interact" } });
     const { manualCode, pairingId } = started.data as { manualCode: string; pairingId: string };
-    const res = await fetch(`http://127.0.0.1:${relayPortNum}/api/discover?code=${manualCode}`);
+    const res = await fetch(`${relayHttpOrigin}/api/discover?code=${manualCode}`);
     expect(res.status).toBe(200);
     const hit = (await res.json()) as { relayUrl: string; installationId: string; pairingId: string; pairingTicket: string; gatewayKeyFingerprint: string };
     expect(hit.pairingId).toBe(pairingId);
     expect(hit.installationId).toBe(gw.identity.installationId);
     expect(hit.pairingTicket.split(".")).toHaveLength(3);
-    const miss = await fetch(`http://127.0.0.1:${relayPortNum}/api/discover?code=000000`);
+    const miss = await fetch(`${relayHttpOrigin}/api/discover?code=000000`);
     expect(miss.status === 404 || miss.status === 200).toBe(true);
   });
 
   it("完整旅程：6 位码发现 → PAKE → owner SAS 确认 → 设备加密会话 → prompt 聊天 → settled", { timeout: 90000 }, async () => {
     const started = await ownerCommand({ command: "gw/pairing/start", id: "ps3", args: { scope: "interact" } });
     const { manualCode, pairingId } = started.data as { manualCode: string; pairingId: string };
-    const discover = await fetch(`http://127.0.0.1:${relayPortNum}/api/discover?code=${manualCode}`);
+    const discover = await fetch(`${relayHttpOrigin}/api/discover?code=${manualCode}`);
     const hit = (await discover.json()) as { relayUrl: string; installationId: string; pairingTicket: string };
     const installationId = hit.installationId;
 
