@@ -390,12 +390,12 @@ describe("host 本地命令（注入 IO）", () => {
     expect(errOf(ghostThread)).toEqual({ code: "unknown_thread", message: "Unknown threadId" });
   });
 
-  test("thread/list_saved：真实档案折叠（title 派生/updatedAt 序/子代理滤除）", async () => {
+  test("thread/list_saved：真实档案折叠（title 派生/createdAt 序/子代理滤除）", async () => {
     const f = await startHost();
-    const mk = async (sid: string, title: string | undefined, shape?: { agent?: string; withSnapshots?: true }): Promise<void> => {
+    const mk = async (sid: string, title: string | undefined, shape?: { agent?: string; withSnapshots?: true; withDisposeTrail?: true; createdAt?: number; lastTime?: number; disposeTime?: number }): Promise<void> => {
       const dir = join(f.sessionsRoot, sid);
       await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, "header.json"), JSON.stringify({ id: sid, createdAt: 1, cwd: "/proj", ...(shape?.agent !== undefined ? { agentId: shape.agent } : {}) }), "utf8");
+      await writeFile(join(dir, "header.json"), JSON.stringify({ id: sid, createdAt: shape?.createdAt ?? 1, cwd: "/proj", ...(shape?.agent !== undefined ? { agentId: shape.agent } : {}) }), "utf8");
       const snapshot = (kind: string, body: string) => ({
         type: "user/message",
         time: 5,
@@ -408,23 +408,33 @@ describe("host 本地命令（注入 IO）", () => {
         ...(shape?.withSnapshots === true ? [snapshot("agent-types", "Available agent types:\n- explore"), snapshot("date", "Today's date: 2026-09-30")] : []),
         { type: "user/message", time: 11, data: { turn: 0, step: 0, content: [{ type: "text", text: "first user message" }] }, surfaceOp: "append" },
         ...(title !== undefined ? [{ type: "session/meta", time: 12, data: { key: "title", value: title } }] : []),
-        { type: "turn/end", time: 13, data: { turn: 0, reason: { kind: "completed" } } },
+        { type: "turn/end", time: shape?.lastTime ?? 13, data: { turn: 0, reason: { kind: "completed" } } },
+        ...(shape?.withDisposeTrail === true ? [{ type: "agent/inbox/spliced", time: shape?.disposeTime ?? 999, data: { op: "clear", reason: "disposed" } }] : []),
       ].map((event, index) => ({ ...event, seq: index }));
       await writeFile(join(dir, "events.jsonl"), `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
     };
-    await mk("saveda", undefined);
-    await mk("savedb", "named thread");
-    await mk("agentchild", undefined, { agent: "agent-12345678" });
+    await mk("saveda", undefined, { createdAt: 100, lastTime: 20 });
+    await mk("savedb", "named thread", { createdAt: 300, lastTime: 20 });
+    await mk("agentchild", undefined, { agent: "agent-12345678", createdAt: 50, lastTime: 999 });
     // 症状回归「对话列表把快照信封当会话标题」：首条落账是注入快照时
-    await mk("snapfirst", undefined, { withSnapshots: true });
+    await mk("snapfirst", undefined, { withSnapshots: true, createdAt: 200, lastTime: 20 });
+    // 症状回归「点开会话就被盖上刚刚的戳」：退役清算事件晚于真话，不得冒充 updatedAt
+    await mk("staleopen", undefined, { createdAt: 400, lastTime: 14, withDisposeTrail: true, disposeTime: 999 });
     f.send({ type: "thread/list_saved", id: "ls1" });
     const listed = await waitResponse(f.client, "thread/list_saved", "ls1");
-    const sessions = (listed["data"] as { sessions: Array<{ id: string; title: string; messageCount: number; lastSeq: number; updatedAt: number }> }).sessions;
-    expect(sessions.map((s) => s.id).sort()).toEqual(["saveda", "savedb", "snapfirst"]);
+    const sessions = (listed["data"] as { sessions: Array<{ id: string; title: string; messageCount: number; lastSeq: number; updatedAt: number; createdAt: number; sessionPath: string }> }).sessions;
+    expect(sessions.map((s) => s.id).sort()).toEqual(["saveda", "savedb", "snapfirst", "staleopen"]);
+    expect(sessions.map((s) => s.id)).toEqual(["staleopen", "savedb", "snapfirst", "saveda"]);
     const a = sessions.find((s) => s.id === "saveda");
     expect(a?.title).toBe("first user message");
     expect(a?.messageCount).toBe(1);
     expect(a?.lastSeq).toBe(2);
+    // 症状回归「远端设备拿到归档会话却恢复不了」：归档行必须带绝对 sessionPath，
+    // 否则 device 面无从 thread/resume，会话只能标 detached 永不可用
+    expect(a?.sessionPath).toBe(join(f.sessionsRoot, "saveda", "events.jsonl"));
+    expect(sessions.every((s) => s.sessionPath === join(f.sessionsRoot, s.id, "events.jsonl"))).toBe(true);
+    // 清算尾事件不得污染 updatedAt（真话 time=11，清算 time=999）
+    expect(sessions.find((s) => s.id === "staleopen")?.updatedAt).toBe(11);
     // 快照不再冒充标题（症状：对话列表显示 `<snapshot kind="agent-types">`）
     expect(sessions.find((s) => s.id === "snapfirst")?.title).toBe("first user message");
   });

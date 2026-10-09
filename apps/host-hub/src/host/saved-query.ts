@@ -1,5 +1,6 @@
 import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import { isEnvelopeSnapshotEvent } from "@x-harness/agent-loop";
+import { join } from "node:path";
 import type { SessionEvent, SessionHeader } from "@x-harness/session";
 import { foldDial, foldMeta } from "../shared/meta-fold.ts";
 import { DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
@@ -7,6 +8,8 @@ import { hubLog } from "../shared/hub-log.ts";
 
 export interface SavedSession {
   id: string;
+  /** 归档事件文件绝对路径——唤活（thread/resume）与远端设备恢复的唯一投递依据。 */
+  sessionPath: string;
   createdAt: number;
   updatedAt: number;
   title: string;
@@ -36,14 +39,26 @@ function derivedTitle(events: readonly SessionEvent[]): string {
   return "";
 }
 
-function foldSummary(header: SessionHeader, events: readonly SessionEvent[]): SavedSession {
+function lastConversationTime(events: readonly SessionEvent[], fallback: number): number {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event === undefined) continue;
+    if (event.type !== "user/message" && event.type !== "assistant/message") continue;
+    if (isEnvelopeSnapshotEvent(event)) continue;
+    return event.time;
+  }
+  return fallback;
+}
+
+function foldSummary(header: SessionHeader, events: readonly SessionEvent[], sessionsRoot: string): SavedSession {
   const meta = foldMeta(events);
-  const last = events[events.length - 1];
   const dial = foldDial(events, { provider: "", model: "" });
+  const id = String(header.id);
   return {
-    id: String(header.id),
+    id,
+    sessionPath: join(sessionsRoot, id, "events.jsonl"),
     createdAt: header.createdAt,
-    updatedAt: last?.time ?? header.createdAt,
+    updatedAt: lastConversationTime(events, header.createdAt),
     title: typeof meta["title"] === "string" && meta["title"] !== "" ? meta["title"] : derivedTitle(events),
     ...(dial.model !== "" ? { model: dial.model } : {}),
     ...(header.cwd !== undefined ? { cwd: header.cwd } : {}),
@@ -75,8 +90,8 @@ export async function listSavedSessions(sessionsRoot: string, query: { cwd?: str
       hubLog(`list_saved: archive exceeds direct-read cap (${String(header.id)})`);
       continue;
     }
-    out.push(foldSummary(header, snapshot.value.events));
+    out.push(foldSummary(header, snapshot.value.events, sessionsRoot));
   }
-  out.sort((a, b) => b.updatedAt - a.updatedAt);
+  out.sort((a, b) => b.createdAt - a.createdAt);
   return out;
 }
