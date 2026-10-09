@@ -1,3 +1,4 @@
+import { readCommandError } from "@x-harness/remote-protocol";
 import { classifyHostLine } from "./fanout.ts";
 import type { Fanout } from "./fanout.ts";
 import type { DeviceRegistry } from "./device-registry.ts";
@@ -49,7 +50,7 @@ export function createHostIngest(deps: HostIngestDeps): HostIngest {
     const pending = deps.pendingByHostId.get(hostId);
     deps.pendingByHostId.delete(hostId);
     if (pending === undefined) return;
-    const responseBody = { id: pending.commandId, command: pending.command, success: parsed.success === true, data: parsed.data, error: typeof parsed.error === "string" ? parsed.error : undefined };
+    const responseBody = { id: pending.commandId, command: pending.command, success: parsed.success === true, data: parsed.data, error: readCommandError(parsed.error) ?? undefined };
     void deps.devices.appendResponse(pending.deviceId, pending.commandId, responseBody);
     adoptThreadFromResponse(parsed.data, pending.deviceId);
     void deps.audit.record("command-issued", { deviceId: pending.deviceId, command: pending.command, ok: responseBody.success });

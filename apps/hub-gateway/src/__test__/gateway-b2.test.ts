@@ -249,7 +249,7 @@ describe("gateway B2 骨架", () => {
     client.send(commandFrame("x1", "rm -rf /"));
     const res = await client.waitResponse("x1");
     expect(res.success).toBe(false);
-    expect(res.error).toBe("unknown-command");
+    expect(res.error).toEqual({ code: "unknown-command" });
     client.close();
   });
 

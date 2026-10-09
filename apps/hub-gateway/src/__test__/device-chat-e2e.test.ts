@@ -269,7 +269,7 @@ describe("E2E 设备加密会话：配对 → ratchet 通道 → host 聊天", (
     await device.sendCommand("c2", "prompt", { threadId: "t", message: "x" });
     const denied = await device.waitResponse("c2");
     expect(denied.success).toBe(false);
-    expect(denied.error).toBe("scope-denied");
+    expect(denied.error).toEqual({ code: "scope-denied" });
     device.close();
   });
 });

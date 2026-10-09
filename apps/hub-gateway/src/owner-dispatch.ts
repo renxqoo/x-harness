@@ -1,4 +1,4 @@
-import { judgeGwCommand, type Frame } from "@x-harness/remote-protocol";
+import { commandError, judgeGwCommand, type Frame } from "@x-harness/remote-protocol";
 import type { OwnerSession } from "./owner-server.ts";
 
 export interface OwnerDispatchDeps {
@@ -25,17 +25,17 @@ export function makeOwnerDispatcher(deps: OwnerDispatchDeps): (session: OwnerSes
     const command = body.command;
     const id = body.id;
     if (typeof command !== "string" || typeof id !== "string") {
-      session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id: "?", command: "?", success: false, error: "invalid command frame" } });
+      session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id: "?", command: "?", success: false, error: commandError("bad-frame", "invalid command frame") } });
       return;
     }
     if (judgeGwCommand(command, "owner") !== "unknown-command") {
       const result = await deps.handleGwCommand(command, body.args ?? {});
-      session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id, command, success: result.ok, ...(result.ok ? { data: result.data } : { error: result.reason }) } });
+      session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id, command, success: result.ok, ...(result.ok ? { data: result.data } : { error: commandError("gw-command-failed", result.reason) }) } });
       return;
     }
     if (judgeGwCommand(command, "owner") === "unknown-command" && command.startsWith("gw/")) {
       await deps.auditRecord("owner-only-denied", { deviceId: "owner", command });
-      session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id, command, success: false, error: "unknown gw command" } });
+      session.send({ kind: "response", streamId: "owner", seq: deps.nextOwnerSeq(), body: { id, command, success: false, error: commandError("unknown-command", "unknown gw command") } });
       return;
     }
     await deps.submitOwnerCommand({ session, commandId: id, command, args: body.args ?? {} });

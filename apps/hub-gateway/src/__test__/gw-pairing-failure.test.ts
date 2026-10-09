@@ -45,7 +45,8 @@ describe("症状回归：配对失败以未捕获 rejection 穿出网关进程�
     ownerSock.write(`${JSON.stringify({ kind: "command", streamId: "owner", seq: 1, body: { command: "gw/pairing/start", id: "pfail", args: { scope: "interact", mode: "qr" } } })}\n`);
     const failed = await waitOwner("pfail");
     expect(failed.success).toBe(false);
-    expect(String(failed.error)).toContain("relayKeyFingerprint");
+    expect(failed.error).toMatchObject({ code: "gw-command-failed" });
+    expect(String((failed.error as { message?: unknown }).message)).toContain("relayKeyFingerprint");
 
     ownerSock.write(`${JSON.stringify({ kind: "command", streamId: "owner", seq: 2, body: { command: "gw/status", id: "pafter", args: {} } })}\n`);
     const status = await waitOwner("pafter");

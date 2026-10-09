@@ -10,7 +10,7 @@ import { createHostIngest } from "./host-ingest.ts";
 import { openAuditLog, type AuditLog } from "./audit.ts";
 import { createHash } from "node:crypto";
 const OUTBOUND_PAYLOAD_MAX = 12 * 1024 * 1024;
-import { chunkFrame, aeadSeal, buildAad, decodeEnvelope, encodeEnvelope, judgeHostCommand, parseNonce, rekeyDue, startRekey, type Frame } from "@x-harness/remote-protocol";
+import { chunkFrame, aeadSeal, buildAad, commandError, decodeEnvelope, encodeEnvelope, judgeHostCommand, parseNonce, rekeyDue, startRekey, type Frame } from "@x-harness/remote-protocol";
 import { assemblePairingServer } from "./pairing-assembly.ts";
 import { createLogBuffer } from "./log-buffer.ts";
 import { makeGwDispatcher } from "./gw-dispatch.ts";
@@ -90,7 +90,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     onRestart: (reason) => {
       void audit.record("host-restarted", { reason });
       for (const [hostId, pending] of pendingByHostId) {
-        void devices.appendResponse(pending.deviceId, pending.commandId, { id: pending.commandId, command: pending.command, success: false, error: "host unavailable" });
+        void devices.appendResponse(pending.deviceId, pending.commandId, { id: pending.commandId, command: pending.command, success: false, error: commandError("host-unavailable", "host unavailable") });
         pendingByHostId.delete(hostId);
       }
     },
@@ -299,7 +299,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     const code = outcome.kind === "scope-denied" ? "scope-denied" : "unknown-command";
     const auditEvent: import("./audit.ts").AuditEvent = outcome.kind === "scope-denied" ? "scope-denied" : "unknown-command-denied";
     void audit.record(auditEvent, { deviceId, command: outcome.command });
-    void sendToDevice(deviceId, { kind: "response", streamId: `cmd:${deviceId}`, seq: nextSeqFor(`cmd:${deviceId}`), body: { id: rejectedId, command: outcome.command, success: false, error: code } });
+    void sendToDevice(deviceId, { kind: "response", streamId: `cmd:${deviceId}`, seq: nextSeqFor(`cmd:${deviceId}`), body: { id: rejectedId, command: outcome.command, success: false, error: commandError(code) } });
   }
   function rejectedCommandIdOf(plaintext: string): string {
     try {
@@ -395,21 +395,21 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     if (verdict !== "allow") {
       if (verdict === "owner-only") {
         await audit.record("owner-only-denied", { deviceId, command });
-        reply.send({ id: commandId, command, success: false, error: "owner-only" });
+        reply.send({ id: commandId, command, success: false, error: commandError("owner-only") });
         return;
       }
       if (verdict === "scope-denied") {
         await audit.record("scope-denied", { deviceId, command });
-        reply.send({ id: commandId, command, success: false, error: "scope-denied" });
+        reply.send({ id: commandId, command, success: false, error: commandError("scope-denied") });
         return;
       }
-      reply.send({ id: commandId, command, success: false, error: "unknown-command" });
+      reply.send({ id: commandId, command, success: false, error: commandError("unknown-command") });
       return;
     }
     const dedup = devices.dedupLookup(deviceId, commandId);
     if (dedup !== null) {
       if (dedup.response !== undefined) reply.send(dedup.response);
-      else reply.send({ id: commandId, command, success: false, error: "command-expired" });
+      else reply.send({ id: commandId, command, success: false, error: commandError("command-expired") });
       return;
     }
     const hostId = fanout.mintHostId();
@@ -423,7 +423,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     const line = JSON.stringify({ ...args, type: command, id: hostId });
     const written = host.write(line);
     if (!written) {
-      const failure = { id: commandId, command, success: false, error: "host unavailable" };
+      const failure = { id: commandId, command, success: false, error: commandError("host-unavailable", "host unavailable") };
       pendingByHostId.delete(hostId);
       void devices.appendResponse(deviceId, commandId, failure);
       reply.send(failure);

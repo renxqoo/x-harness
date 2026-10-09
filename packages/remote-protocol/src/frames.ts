@@ -1,3 +1,5 @@
+import type { CommandError } from "./command-error.ts";
+
 export const FRAME_KINDS = [
   "command",
   "response",
@@ -25,7 +27,7 @@ export interface ResponseBody {
   command: string;
   success: boolean;
   data?: unknown;
-  error?: string;
+  error?: CommandError;
 }
 
 export interface EventBody {

@@ -1,4 +1,5 @@
 export * from "./frames.ts";
+export * from "./command-error.ts";
 export * from "./envelope.ts";
 export * from "./reliable.ts";
 export * from "./crypto.ts";

@@ -31,7 +31,7 @@ bun apps/hub-gateway/src/main.ts --agent-dir ~/.x-harness/hub
 
 - socket：`<agentDir>/gateway.sock`（0600；pid 旁置 `gateway.pid`——连接失败 + pid 死 = 清残留后提示启动）。
 - 协议：JSONL（L2 帧，明文——本机同用户即信任域）；`gw/status` 握手探测。
-- 命令族：`gw/status|devices/list|devices/rename|devices/set_scope|devices/revoke|pairing/start|pairing/cancel|config/get|config/set|logs/tail|shutdown` + host 60 命令直通（owner 全权，词表外拒）。
+- 命令族：`gw/status|devices/list|devices/rename|devices/set_scope|devices/revoke|pairing/start|pairing/cancel|config/get|config/set|logs/tail|shutdown` + host 82 命令直通（owner 全权，词表外拒）。
 
 ## 设备配对
 
@@ -43,4 +43,5 @@ bun apps/hub-gateway/src/main.ts --agent-dir ~/.x-harness/hub
 
 - 帧恒 E2E 加密（双 ratchet；relay 只见元数据）；撤销按 deviceId 拉黑。
 - 审计（`<agentDir>/audit/`，按天轮转）：配对/撤销/scope 变更/命令发放/ui_request 应答者——可回答「谁批准了那条危险命令」。
-- scope 矩阵 60 命令×4 档表驱动（`packages/remote-protocol/src/vocab.ts`）；未知命令默认拒。
+- scope 矩阵 82 命令×4 档表驱动（`packages/remote-protocol/src/vocab.ts`），逐行覆盖 host `COMMAND_NAMES`；未知命令默认拒。
+- 命令失败一律回 `error: {code, message}`（`CommandError`）——host 的 `{code,message}` 原样上行，网关自身拒绝（scope/词表/宿主不可用）同形状补齐，owner 面与设备面拿到的是同一份原因。
