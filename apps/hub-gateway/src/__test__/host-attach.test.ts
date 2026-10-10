@@ -29,7 +29,7 @@ describe("HostAttach", () => {
     await vi.waitFor(() => {
       if (!attach.alive()) throw new Error("not alive");
     });
-    attach.write(JSON.stringify({ type: "get_state", id: "q1" }));
+    attach.deliver(JSON.stringify({ type: "get_state", id: "q1" }));
     const hasEcho = (): boolean => lines.some((l) => l.includes("q1"));
     await vi.waitFor(
       () => {
@@ -91,6 +91,6 @@ describe("HostAttach", () => {
     });
     await attach.stop();
     expect(attach.alive()).toBe(false);
-    expect(attach.write("{}")).toBe(false);
+    expect(attach.deliver("{}")).toEqual({ delivered: false });
   }, 15000);
 });

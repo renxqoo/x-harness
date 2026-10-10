@@ -283,7 +283,10 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
         ));
       },
       onUiResponse(requestId, payload) {
-        host.write(JSON.stringify({ type: "ui_response", requestId, payload }));
+        const delivered = host.deliver(JSON.stringify({ type: "ui_response", requestId, payload }));
+        if (!delivered.delivered) {
+          void audit.record("ui_request-undeliverable", { requestId, deviceId });
+        }
         void audit.record("ui_request-settled", { requestId, deviceId, decision: JSON.stringify(payload) });
       },
       onAck(streamId, upTo) {
@@ -421,10 +424,11 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     const target = fanout.targetOf(deviceId);
     if (threadId !== null && target !== null) target.subscribedThreads.add(threadId);
     const line = JSON.stringify({ ...args, type: command, id: hostId });
-    const written = host.write(line);
-    if (!written) {
+    const delivered = host.deliver(line);
+    if (!delivered.delivered) {
       const failure = { id: commandId, command, success: false, error: commandError("host-unavailable", "host unavailable") };
       pendingByHostId.delete(hostId);
+      devices.unmapHostId(hostId);
       void devices.appendResponse(deviceId, commandId, failure);
       reply.send(failure);
     }
@@ -454,7 +458,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     logBuffer,
   });
   const handleOwnerFrame = makeOwnerDispatcher({
-    hostWrite: (line) => host.write(line),
+    hostWrite: (line) => { host.deliver(line); },
     auditRecord: (event: import("./audit.ts").AuditEvent, detail: Record<string, unknown>) => audit.record(event, detail),
     handleGwCommand,
     nextOwnerSeq: () => nextSeqFor("owner"),

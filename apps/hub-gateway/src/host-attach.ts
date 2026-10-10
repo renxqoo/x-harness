@@ -14,10 +14,17 @@ export interface HostAttachOptions {
 
 export interface HostHandle {
   readonly child: ChildProcess | null;
-  write(line: string): boolean;
+  deliver(line: string): DeliverOutcome;
   kill(): Promise<void>;
   alive(): boolean;
 }
+
+/**
+ * 投递结果。只回答「字节交出去了吗」，不裁决命令成败——成败由 host 回包说了算。
+ * `delivered: false` 只在管道本身不可写时出现（host 已死 / stdin 已关），
+ * 那时 host 从未见过这条命令，是干净的失败。
+ */
+export type DeliverOutcome = { delivered: true } | { delivered: false };
 
 export function resolveHostBin(hostBin: string | null): { command: string; args: string[]; env?: Record<string, string> } {
   if (hostBin !== null && hostBin.length > 0) {
@@ -73,6 +80,9 @@ export class HostAttach {
     child.stderr?.on("data", (chunk: Buffer) => {
       this.options.log(`host stderr: ${chunk.toString("utf8").trimEnd()}`);
     });
+    child.stdin?.on("error", (error: Error) => {
+      this.options.log(`host stdin write failed: ${String(error)}`);
+    });
     child.on("exit", (code, signal) => {
       if (this.child === child) this.child = null;
       if (this.deadlined) return;
@@ -112,10 +122,17 @@ export class HostAttach {
     this.child = null;
   }
 
-  write(line: string): boolean {
+  deliver(line: string): DeliverOutcome {
     const child = this.child;
-    if (child === null || child.stdin === null || child.exitCode !== null) return false;
-    return child.stdin.write(`${line}\n`);
+    if (child === null || child.stdin === null || child.exitCode !== null) {
+      return { delivered: false };
+    }
+    const stdin = child.stdin;
+    if (stdin.destroyed || stdin.writableEnded || stdin.writable === false) {
+      return { delivered: false };
+    }
+    stdin.write(`${line}\n`, "utf8", () => {});
+    return { delivered: true };
   }
 
   alive(): boolean {
@@ -133,6 +150,7 @@ export class HostAttach {
     }
     this.deadlined = true;
     const child = this.child;
+    this.child = null;
     if (child === null) return;
     child.stdin?.end();
     await new Promise<void>((resolve) => {

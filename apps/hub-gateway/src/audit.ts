@@ -12,6 +12,7 @@ export type AuditEvent =
   | "device-scope-changed"
   | "command-issued"
   | "ui_request-settled"
+  | "ui_request-undeliverable"
   | "owner-only-denied"
   | "scope-denied"
   | "unknown-command-denied"

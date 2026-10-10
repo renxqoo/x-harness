@@ -2,7 +2,7 @@ import { commandError, judgeGwCommand, type Frame } from "@x-harness/remote-prot
 import type { OwnerSession } from "./owner-server.ts";
 
 export interface OwnerDispatchDeps {
-  hostWrite(line: string): boolean;
+  hostWrite(line: string): void;
   auditRecord(event: string, detail: Record<string, unknown>): Promise<void>;
   handleGwCommand(command: string, args: Record<string, unknown>): Promise<{ ok: true; data: unknown } | { ok: false; reason: string }>;
   nextOwnerSeq(): number;

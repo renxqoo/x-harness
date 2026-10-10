@@ -119,6 +119,7 @@ interface DeviceSession {
   waitDecoded(pred: (frame: Frame) => boolean, timeoutMs?: number): Promise<Frame>;
   sendCommand(id: string, command: string, args: Record<string, unknown>): Promise<void>;
   waitResponse(id: string, timeoutMs?: number): Promise<{ success: boolean; data?: unknown; error?: unknown }>;
+  decodedFrames(): Frame[];
   close(): void;
 }
 
@@ -226,6 +227,10 @@ async function pairDevice(scope: "read" | "interact" | "full"): Promise<DeviceSe
       const frame = await session.waitDecoded((f) => f.kind === "response" && (f.body as { id?: string }).id === id, timeoutMs);
       return frame.body as { success: boolean; data?: unknown; error?: unknown };
     },
+    decodedFrames: () => {
+      decodeLoop();
+      return [...decoded];
+    },
     close: () => dataWire.close(),
   };
   return session;
@@ -259,6 +264,66 @@ describe("E2E 设备加密会话：配对 → ratchet 通道 → host 聊天", (
     expect(seen.has("turn/start")).toBe(true);
     device.close();
   }, );
+
+  it("症状「发一条带图消息，手机上出现两条一模一样的气泡」：大图 prompt 不被误报失败，且只落一次账", { timeout: 120000 }, async () => {
+    const device = await pairDevice("interact");
+    await device.sendCommand("c1", "thread/start", { cwd: process.cwd(), trusted: true });
+    const startRes = await device.waitResponse("c1");
+    const threadId = (startRes.data as { threadId?: string }).threadId;
+    expect(typeof threadId).toBe("string");
+
+    const message = "你看一下我加了一张图 60% 为什么不能缩小了";
+    const pad = "A".repeat(2 * 1024 * 1024);
+    await device.sendCommand("c2", "prompt", {
+      threadId,
+      message,
+      images: [{ type: "image", data: pad, mediaType: "image/png" }],
+    });
+    const promptRes = await device.waitResponse("c2", 30_000);
+
+    await device.waitDecoded((f) => f.kind === "event" && (f.body as { name?: string }).name === "settled", 30_000);
+    await new Promise((r) => { setTimeout(r, 1500); });
+
+    expect(promptRes.error).toBeUndefined();
+
+    const userMsgs = device
+      .decodedFrames()
+      .filter((f) => f.kind === "event" && (f.body as { name?: string }).name === "user/message")
+      .map((f) => (f.body as { payload?: { content?: Array<{ text?: string }> } }).payload?.content?.[0]?.text);
+
+    expect(userMsgs).toEqual([message]);
+    device.close();
+  });
+
+  it("症状「发一条带图消息，手机上出现两条一模一样的气泡」：同 commandId 重投不二次落账（去重不被大包绕开）", { timeout: 120000 }, async () => {
+    const device = await pairDevice("interact");
+    await device.sendCommand("c1", "thread/start", { cwd: process.cwd(), trusted: true });
+    const startRes = await device.waitResponse("c1");
+    const threadId = (startRes.data as { threadId?: string }).threadId;
+    expect(typeof threadId).toBe("string");
+
+    const message = "你看一下我加了一张图 60% 为什么不能缩小了";
+    const args = {
+      threadId,
+      message,
+      images: [{ type: "image", data: "A".repeat(2 * 1024 * 1024), mediaType: "image/png" }],
+    };
+    await device.sendCommand("c2", "prompt", args);
+    await device.waitResponse("c2", 30_000);
+    await device.waitDecoded((f) => f.kind === "event" && (f.body as { name?: string }).name === "settled", 30_000);
+
+    await device.sendCommand("c2", "prompt", args);
+    await device.waitResponse("c2", 30_000).catch(() => ({ success: false }) as never);
+    await new Promise((r) => { setTimeout(r, 1500); });
+
+    const userMsgs = device
+      .decodedFrames()
+      .filter((f) => f.kind === "event" && (f.body as { name?: string }).name === "user/message")
+      .map((f) => (f.body as { payload?: { content?: Array<{ text?: string }> } }).payload?.content?.[0]?.text);
+
+    expect(userMsgs).toEqual([message]);
+    device.close();
+  });
 
   it("read 设备：prompt 被 scope 拒（scope-denied）——权限矩阵真链路回归", { timeout: 60000 }, async () => {
     const device = await pairDevice("read");
