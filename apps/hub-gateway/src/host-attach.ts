@@ -10,6 +10,10 @@ export interface HostAttachOptions {
   onLine(line: string): void;
   onRestart(reason: string): void;
   log(message: string): void;
+  /** 优雅退出宽限：超时则强杀。不读 stdin 的 host 不会自退，正在落盘的必须等它写完 */
+  stopGraceMs?: number;
+  /** 强杀后等 exit 事件的宽限 */
+  stopKillWaitMs?: number;
 }
 
 export interface HostHandle {
@@ -31,10 +35,14 @@ export interface HostHandle {
  */
 export type DeliverOutcome = { delivered: true } | { delivered: false };
 
-/** 优雅退出宽限：超时则强杀，避免不读 stdin 的 host 靠对端配合才退出 */
-const HOST_STOP_GRACE_MS = 2_000;
+/**
+ * 优雅退出宽限：不读 stdin 的 host 看不到 end、不会自己退出，到点必须强杀；
+ * 但真 host 的 shutdown 会 `await pool.shutdownAll()`（单个 worker 最长等 30s），
+ * 正在落盘时 SIGKILL 会丢 session/WAL —— 此值不得低于修复前的 5s。
+ */
+export const HOST_STOP_GRACE_MS = 5_000;
 /** 强杀后等 exit 事件的宽限 */
-const HOST_STOP_KILL_WAIT_MS = 1_000;
+export const HOST_STOP_KILL_WAIT_MS = 1_000;
 
 export function resolveHostBin(hostBin: string | null): { command: string; args: string[]; env?: Record<string, string> } {
   if (hostBin !== null && hostBin.length > 0) {
@@ -66,6 +74,7 @@ export class HostAttach {
   constructor(private readonly options: HostAttachOptions) {}
 
   start(): void {
+    this.stopping = false;
     this.spawnHost();
     this.timer = setInterval(() => {
       if (this.child === null) return;
@@ -187,8 +196,8 @@ export class HostAttach {
           return;
         }
         child.kill("SIGKILL");
-        setTimeout(done, HOST_STOP_KILL_WAIT_MS);
-      }, HOST_STOP_GRACE_MS);
+        setTimeout(done, this.options.stopKillWaitMs ?? HOST_STOP_KILL_WAIT_MS);
+      }, this.options.stopGraceMs ?? HOST_STOP_GRACE_MS);
     });
   }
 }

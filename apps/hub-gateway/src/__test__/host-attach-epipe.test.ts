@@ -9,9 +9,12 @@ const HOST_ATTACH = new URL("../host-attach.ts", import.meta.url).pathname;
 
 const STDIN_ERROR_LISTENER = /child\.stdin\?\.on\("error",[\s\S]*?\}\);\n/;
 
+const EPIPE = "EPIPE";
+
 interface HarnessOutcome {
   code: number | null;
   stderr: string;
+  timedOut: boolean;
 }
 
 async function buildHarness(source: string, name: string): Promise<string> {
@@ -59,32 +62,48 @@ function runOnRealNode(bin: string, runner: string): Promise<HarnessOutcome> {
       stderr += chunk.toString("utf8");
     });
     child.once("exit", (code) => {
-      resolve({ code, stderr });
+      resolve({ code, stderr, timedOut: false });
     });
     setTimeout(() => {
       child.kill("SIGKILL");
-      resolve({ code: null, stderr });
+      resolve({ code: null, stderr, timedOut: true });
     }, 20_000);
   });
 }
 
 const realNode = await findRealNodeBin();
+const nodeMissingReason = "找不到非 bun 伪装的真 node —— EPIPE 崩溃路径只在真 node 下可复现";
 
-describe.skipIf(realNode === null)("症状「网关进程被 EPIPE 打死，设备全部掉线」", () => {
-  it("真 node 下死管道 hammer 写：挂着 stdin error 监听则宿主存活", { timeout: 90_000 }, async () => {
+describe("症状「网关进程被 EPIPE 打死，设备全部掉线」", () => {
+  it.skipIf(realNode === null)("真 node 下死管道 hammer 写：挂着 stdin error 监听则宿主存活", { timeout: 90_000 }, async () => {
     const runner = await buildHarness(await Bun.file(HOST_ATTACH).text(), "with");
     const result = await runOnRealNode(realNode as string, runner);
+
+    expect(result.timedOut).toBe(false);
     expect(result.code).toBe(0);
     expect(result.stderr).toContain("HARNESS_SURVIVED");
+    expect(result.stderr).not.toContain(EPIPE);
   });
 
-  it("抽掉 stdin error 监听即被打死 —— 这三行是承重墙，删掉必须变红", { timeout: 90_000 }, async () => {
+  it.skipIf(realNode === null)("抽掉 stdin error 监听即被打死 —— 这三行是承重墙，删掉必须变红", { timeout: 90_000 }, async () => {
     const source = await Bun.file(HOST_ATTACH).text();
     expect(STDIN_ERROR_LISTENER.test(source)).toBe(true);
     const stripped = source.replace(STDIN_ERROR_LISTENER, "");
     expect(stripped).not.toBe(source);
     const runner = await buildHarness(stripped, "without");
     const result = await runOnRealNode(realNode as string, runner);
-    expect(result.code).not.toBe(0);
+
+    // 区分「被 EPIPE 打死」与「看门狗兜底」：前者有非零退出码且 stderr 留 EPIPE 痕迹。
+    // 若只断言 not.toBe(0)，harness 因别的原因挂死（code=null）也会被判通过——那就是假绿。
+    expect(result.timedOut).toBe(false);
+    expect(result.code).toBeGreaterThan(0);
+    expect(result.stderr).toContain(EPIPE);
+    expect(result.stderr).not.toContain("HARNESS_SURVIVED");
+  });
+
+  it("真 node 缺失必须显式失败，不许静默跳过让承重墙裸奔", () => {
+    // 静默 skip 就是假绿：Linux CI 上若只有 bun 软链，这组会全跳且报绿。
+    // 宁可在这里红，也不让 EPIPE 承重墙无测试守护。
+    expect(realNode, `findRealNodeBin() 为空——${nodeMissingReason}`).not.toBeNull();
   });
 });

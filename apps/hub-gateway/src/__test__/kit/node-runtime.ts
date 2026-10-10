@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 const CANDIDATE_BINS = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"];
-const ECHO_HOST = new URL("./echo-host.ts", import.meta.url).pathname;
 
 function nodeVersionOf(bin: string): Promise<string | null> {
   return new Promise((resolve) => {

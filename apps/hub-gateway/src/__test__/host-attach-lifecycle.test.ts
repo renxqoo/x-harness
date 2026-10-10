@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HostAttach } from "../host-attach.ts";
+import { HostAttach, HOST_STOP_GRACE_MS } from "../host-attach.ts";
 
 /** 不读 stdin、也不响应 end 的 host——停不掉自己 */
 const DEAF_HOST = "process.stdin.resume(); setTimeout(()=>{},120000);";
@@ -52,5 +52,33 @@ describe("症状「网关退出后 host 子进程还活着，资源泄漏」", (
     const afterStop = attach.childPid();
     expect(aliveOf(afterStop)).toBe(false);
     expect(afterStop).toBeUndefined();
+  }, 30_000);
+});
+describe("症状「stop 强杀打断 host 正在落盘的 session」", () => {
+  it("默认宽限不得短于真 host 落盘所需（pool.shutdownAll 单 worker 最长等 30s）", () => {
+    expect(HOST_STOP_GRACE_MS).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it("关机耗时超过宽限的一半也必须放行落盘，不得中途 SIGKILL", async () => {
+    const flushMs = 900;
+    const attach = new HostAttach({
+      exec: {
+        command: process.execPath,
+        args: ["-e", `process.stdin.on("end",()=>{const t=Date.now();while(Date.now()-t<${String(flushMs)}){}process.exit(0);});`],
+      },
+      env: { ...process.env } as Record<string, string>,
+      heartbeatDeadlineMs: 600_000,
+      stopGraceMs: 3_000,
+      stopKillWaitMs: 500,
+      onLine: () => {},
+      onRestart: () => {},
+      log: () => {},
+    });
+    attach.start();
+    await delay(500);
+
+    await attach.stop();
+
+    expect(attach.childPid()).toBeUndefined();
   }, 30_000);
 });
