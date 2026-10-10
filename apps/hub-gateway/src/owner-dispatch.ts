@@ -2,7 +2,7 @@ import { commandError, judgeGwCommand, type Frame } from "@x-harness/remote-prot
 import type { OwnerSession } from "./owner-server.ts";
 
 export interface OwnerDispatchDeps {
-  hostWrite(line: string): void;
+  hostWrite(line: string): boolean;
   auditRecord(event: string, detail: Record<string, unknown>): Promise<void>;
   handleGwCommand(command: string, args: Record<string, unknown>): Promise<{ ok: true; data: unknown } | { ok: false; reason: string }>;
   nextOwnerSeq(): number;
@@ -15,7 +15,8 @@ export function makeOwnerDispatcher(deps: OwnerDispatchDeps): (session: OwnerSes
       if (frame.kind === "ui_response") {
         const body = frame.body as { requestId?: string; payload?: Record<string, unknown> };
         if (typeof body.requestId === "string") {
-          deps.hostWrite(JSON.stringify({ type: "ui_response", requestId: body.requestId, payload: body.payload ?? {} }));
+          const delivered = deps.hostWrite(JSON.stringify({ type: "ui_response", requestId: body.requestId, payload: body.payload ?? {} }));
+          if (!delivered) await deps.auditRecord("ui_request-undeliverable", { requestId: body.requestId, deviceId: "owner" });
           await deps.auditRecord("ui_request-settled", { requestId: body.requestId, deviceId: "owner", decision: JSON.stringify(body.payload ?? {}) });
         }
       }

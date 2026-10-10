@@ -17,14 +17,24 @@ export interface HostHandle {
   deliver(line: string): DeliverOutcome;
   kill(): Promise<void>;
   alive(): boolean;
+  /** 当前 host 子进程 pid（无子进程时 undefined）——供生命周期用例断言进程存活性 */
+  childPid(): number | undefined;
 }
 
 /**
  * 投递结果。只回答「字节交出去了吗」，不裁决命令成败——成败由 host 回包说了算。
- * `delivered: false` 只在管道本身不可写时出现（host 已死 / stdin 已关），
- * 那时 host 从未见过这条命令，是干净的失败。
+ *
+ * `delivered: false` 只覆盖「管道已经不可写」这一种（host 已死 / stdin 已关），
+ * 那时 host 从未见过这条命令，是干净的失败。它不是完备判据：host 正在退出、
+ * exit 事件尚未派发时投递仍会报 delivered:true 而字节已丢——这类窗口由
+ * onRestart 把残留 pending 判死、再由 dedup 挡重复执行兜住，不要在这里假完备。
  */
 export type DeliverOutcome = { delivered: true } | { delivered: false };
+
+/** 优雅退出宽限：超时则强杀，避免不读 stdin 的 host 靠对端配合才退出 */
+const HOST_STOP_GRACE_MS = 2_000;
+/** 强杀后等 exit 事件的宽限 */
+const HOST_STOP_KILL_WAIT_MS = 1_000;
 
 export function resolveHostBin(hostBin: string | null): { command: string; args: string[]; env?: Record<string, string> } {
   if (hostBin !== null && hostBin.length > 0) {
@@ -50,6 +60,7 @@ export class HostAttach {
   private buffer = Buffer.alloc(0);
   private lastHeartbeat = Date.now();
   private deadlined = false;
+  private stopping = false;
   readonly events = new EventEmitter();
 
   constructor(private readonly options: HostAttachOptions) {}
@@ -108,6 +119,7 @@ export class HostAttach {
     this.deadlined = true;
     this.killChild();
     await sleep(200);
+    if (this.stopping) return;
     this.spawnHost();
     this.options.onRestart(reason);
   }
@@ -139,6 +151,10 @@ export class HostAttach {
     return this.child !== null && this.child.exitCode === null;
   }
 
+  childPid(): number | undefined {
+    return this.child?.pid;
+  }
+
   killChildForTest(): void {
     this.child?.kill("SIGKILL");
   }
@@ -148,15 +164,31 @@ export class HostAttach {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.stopping = true;
     this.deadlined = true;
     const child = this.child;
     this.child = null;
     if (child === null) return;
     child.stdin?.end();
     await new Promise<void>((resolve) => {
-      const done = (): void => resolve();
+      let settled = false;
+      const done = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(killTimer);
+        resolve();
+      };
       child.once("exit", done);
-      setTimeout(done, 5000);
+      // 对端不读 stdin 就看不到 end、不会自己退出——到期由这边动手杀，
+      // 杀完再等一小拍收 exit，不留孤儿进程
+      const killTimer = setTimeout(() => {
+        if (child.exitCode !== null) {
+          done();
+          return;
+        }
+        child.kill("SIGKILL");
+        setTimeout(done, HOST_STOP_KILL_WAIT_MS);
+      }, HOST_STOP_GRACE_MS);
     });
   }
 }

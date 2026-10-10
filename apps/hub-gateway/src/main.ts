@@ -458,7 +458,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     logBuffer,
   });
   const handleOwnerFrame = makeOwnerDispatcher({
-    hostWrite: (line) => { host.deliver(line); },
+    hostWrite: (line) => host.deliver(line).delivered,
     auditRecord: (event: import("./audit.ts").AuditEvent, detail: Record<string, unknown>) => audit.record(event, detail),
     handleGwCommand,
     nextOwnerSeq: () => nextSeqFor("owner"),
