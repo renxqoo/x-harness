@@ -57,7 +57,7 @@ import { confirmFieldsOf } from "./ask-confirm-fields.ts";
 import type { ExternalPluginsDeps } from "./external-plugins.ts";
 import { installExternalPlugins, uninstallExternalPlugins } from "./external-plugins.ts";
 
-export const RETRY_POLICY: RetryPolicy = { maxRetries: 3, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
+export const RETRY_POLICY: RetryPolicy = { maxRetries: 5, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
 
 export interface AssemblyFields {
   sessionsRoot: string;
