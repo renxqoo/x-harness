@@ -1,3 +1,4 @@
+import { createPreviewCache } from "./preview-cache.ts";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { loadAgentTypes, parseInlineTypes } from "@x-harness/agent-delegation";
@@ -273,9 +274,21 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
     respond(id, "thread/set_keepalive", {});
   }
 
-  function handleThreadList(_input: { [key: string]: unknown }, id: string | undefined): void {
+  const previewCache = createPreviewCache({
+    read: async (threadId) => {
+      const state = await deps.direct.readState(threadId);
+      return typeof state?.preview === "string" ? state.preview : null;
+    },
+  });
+
+  async function handleThreadList(input: { [key: string]: unknown }, id: string | undefined): Promise<void> {
+    const entries = deps.table.list();
+    // preview 默认不带：桌面端监控每 2s 轮询一次（1024 线程表上限），逐会话全档读 +
+    // 校验 + 解析会把轮询放大成 IO 风暴。需要摘要的调用方显式传 includePreview
+    // （移动端会话列表/内容搜索）。带缓存：同一轮询内同一档只读一次。
+    const previews = input["includePreview"] === true ? await previewCache.load(entries) : new Map<string, string>();
     respond(id, "thread/list", {
-      data: deps.table.list().map((entry) => {
+      data: entries.map((entry, index) => {
         const branch = isAbsolute(entry.cwd) && LIVE_PROBE_STATES.has(entry.state) ? probeGitFacts(entry.cwd).branch : undefined;
         return {
           threadId: entry.threadId,
@@ -286,6 +299,7 @@ export function createHostCommands(deps: HostCommandsDeps, ctx: HostCommandConte
           rssBytes: entry.state === "live" ? entry.rssBytes : null,
           keepalive: entry.keepalive,
           isStreaming: entry.state === "live" ? entry.isStreaming : false,
+          ...(previews.size > 0 ? { preview: previews.get(entry.threadId) ?? "" } : {}),
           ...(branch !== undefined ? { gitBranch: branch } : {}),
         };
       }),

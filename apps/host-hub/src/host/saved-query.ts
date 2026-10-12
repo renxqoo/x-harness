@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { SessionEvent, SessionHeader } from "@x-harness/session";
 import { foldDial, foldMeta } from "../shared/meta-fold.ts";
 import { DIRECT_READ_MAX_BYTES } from "../shared/limits.ts";
+import { derivedPreview } from "../shared/preview-fold.ts";
 import { hubLog } from "../shared/hub-log.ts";
 
 export interface SavedSession {
@@ -18,6 +19,8 @@ export interface SavedSession {
   forkParent?: string;
   messageCount: number;
   lastSeq: number;
+  /** 首条用户消息之后的正文摘要（列表预览 + 内容搜索的锚点；与 title 互补不重复）。 */
+  preview: string;
 }
 
 const TITLE_DERIVED_CAP = 80;
@@ -50,7 +53,7 @@ function lastConversationTime(events: readonly SessionEvent[], fallback: number)
   return fallback;
 }
 
-function foldSummary(header: SessionHeader, events: readonly SessionEvent[], sessionsRoot: string): SavedSession {
+export function foldSummary(header: SessionHeader, events: readonly SessionEvent[], sessionsRoot: string): SavedSession {
   const meta = foldMeta(events);
   const dial = foldDial(events, { provider: "", model: "" });
   const id = String(header.id);
@@ -65,6 +68,7 @@ function foldSummary(header: SessionHeader, events: readonly SessionEvent[], ses
     ...(header.parentSession !== undefined ? { forkParent: String(header.parentSession) } : {}),
     messageCount: events.filter((event) => event.type === "user/message" || event.type === "assistant/message").length,
     lastSeq: events.length - 1,
+    preview: derivedPreview(events, typeof meta["title"] === "string" && meta["title"] !== "" ? meta["title"] : derivedTitle(events)),
   };
 }
 

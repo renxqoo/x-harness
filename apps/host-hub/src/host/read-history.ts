@@ -4,6 +4,7 @@ import { createArchiveReader } from "@x-harness/session-persistence-jsonl";
 import type { SessionEvent } from "@x-harness/session";
 import { foldQueue } from "../shared/inbox-fold.ts";
 import { foldDial } from "../shared/meta-fold.ts";
+import { derivedPreview } from "../shared/preview-fold.ts";
 import { titleOf } from "../worker/meta-state.ts";
 import { entryWindowViewed, type EntryLine } from "../worker/entries-window.ts";
 import { hubError, type HubErrorShape } from "../shared/errors.ts";
@@ -80,6 +81,7 @@ export function createDirectRead(deps: DirectReadDeps) {
         sessionFile: `${deps.sessionsRoot}/${threadId}/events.jsonl`,
         messageCount,
         queue: foldQueue(events),
+        preview: derivedPreview(events, titleOf(events) ?? ""),
       };
     },
     async readHeader(threadId: string): Promise<{ cwd?: string } | undefined> {
