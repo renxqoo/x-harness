@@ -85,7 +85,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
   // 码空间全局上限：6 位码只有 100 万空间，且注册面开放（任意已配对网关都能注册）。
   // 单网关条数上限挡不住「针对性顶号」——攻击者只需反复注册受害方当前码。
   const PAIRING_CODES_TOTAL_MAX = 4096;
-  const pairingCodes = new Map<string, { pairingId: string; installationId: string; gatewayKeyFingerprint: string; exp: number }>();
+  const pairingCodes = new Map<string, { pairingId: string; installationId: string; gatewayKeyFingerprint: string; pairingTicket: string; exp: number }>();
 
   await store.subscribeCrossNode((_installationId, message) => {
     try {
@@ -137,15 +137,18 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         // 外部 relay 形态：查网关注册表（仅在线网关的码）；嵌入式形态（同进程回调）仍走 gatewayOfCode。
         const registered = pairingCodes.get(code);
         const hit = registered !== undefined && registered.exp > Math.floor(Date.now() / 1000) && localDeliver.has(registered.installationId)
-          ? { relayUrl: "", installationId: registered.installationId, gatewayKeyFingerprint: registered.gatewayKeyFingerprint, pairingId: registered.pairingId, pairingTicket: "" }
+          ? { relayUrl: "", installationId: registered.installationId, gatewayKeyFingerprint: registered.gatewayKeyFingerprint, pairingId: registered.pairingId, pairingTicket: registered.pairingTicket }
           : null;
         void Promise.resolve(hit ?? options.gatewayOfCode?.(code) ?? null).then((resolved) => {
           if (resolved === null) {
             res.writeHead(404).end();
             return;
           }
+          // 回环协议必须与本请求一致：降级成 ws:// 会让按 wss 连的设备握手失败
+          // （relay 的 TLS 面在同端口，X-Forwarded-Proto 由前置终结器给出）。
           const host = req.headers.host ?? "";
-          const relayUrl = host.length > 0 && resolved.relayUrl.length === 0 ? `ws://${host}` : resolved.relayUrl;
+          const proto = (req.headers["x-forwarded-proto"] ?? "").toString().split(",")[0]?.trim() === "http" ? "ws" : "wss";
+          const relayUrl = host.length > 0 && resolved.relayUrl.length === 0 ? `${proto}://${host}` : resolved.relayUrl;
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ ...resolved, relayUrl }));
         });
@@ -323,7 +326,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
     if (to === "relay" && from.claims.kind === "gateway") {
       const env = decodeEnvelope(line);
       const payload = env === null ? null : Buffer.from(env.payload, "base64").toString("utf8");
-      let message: { register?: { code: string; pairingId: string; gatewayKeyFingerprint: string; exp: number }; unregister?: string } | null = null;
+      let message: { register?: { code: string; pairingId: string; gatewayKeyFingerprint: string; pairingTicket?: string; exp: number }; unregister?: string } | null = null;
       try { message = payload === null ? null : JSON.parse(payload); } catch { message = null; }
       const nowSec = Math.floor(Date.now() / 1000);
       if (message?.register !== undefined && /^[0-9]{6}$/.test(message.register.code)) {
@@ -335,7 +338,7 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
         const takeover = holder !== undefined && holder.installationId !== from.claims.subject;
         const ownRenewal = holder !== undefined && holder.installationId === from.claims.subject;
         if (!takeover && owned.length < PAIRING_CODES_PER_GATEWAY_MAX && (ownRenewal || pairingCodes.size < PAIRING_CODES_TOTAL_MAX)) {
-          pairingCodes.set(message.register.code, { pairingId: message.register.pairingId, installationId: from.claims.subject, gatewayKeyFingerprint: message.register.gatewayKeyFingerprint, exp: Math.min(message.register.exp, nowSec + PAIRING_CODE_TTL_MAX_SECONDS) });
+          pairingCodes.set(message.register.code, { pairingId: message.register.pairingId, installationId: from.claims.subject, gatewayKeyFingerprint: message.register.gatewayKeyFingerprint, pairingTicket: message.register.pairingTicket ?? "", exp: Math.min(message.register.exp, nowSec + PAIRING_CODE_TTL_MAX_SECONDS) });
         }
       } else if (typeof message?.unregister === "string") {
         for (const [code, row] of pairingCodes) if (row.pairingId === message.unregister && row.installationId === from.claims.subject) pairingCodes.delete(code);

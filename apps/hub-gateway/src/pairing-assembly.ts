@@ -15,6 +15,8 @@ export interface PairingAssemblyDeps {
   relayLink(): RelayLinkHandle | null;
   cryptoSessions: { establish(spec: { deviceId: string; sharedSecret: Uint8Array; initiator: boolean }): unknown };
   onSessionEstablished(deviceId: string, ratchetSeed: Uint8Array): void;
+  /** 6 位码上报（外部 relay 形态的发现面——码注册进 relay 的 /api/discover 查询表）。 */
+  onManualCodeRegistered?(pairingId: string, manualCode: string | null, expiresAt: number, ticket?: string): void;
 }
 
 export function assemblePairingServer(deps: PairingAssemblyDeps): PairingServer {
@@ -26,6 +28,7 @@ export function assemblePairingServer(deps: PairingAssemblyDeps): PairingServer 
     audit,
     now,
     requestPairingTicket: async (pairingId) => (await deps.relayLink()?.requestPairingTicket(pairingId)) ?? "",
+    onManualCodeRegistered: deps.onManualCodeRegistered,
     requestDeviceToken: async (deviceId, deviceLongTermPub) => (await deps.relayLink()?.requestDeviceToken(deviceId, deviceLongTermPub)) ?? null,
     onRegistered: async (device) => {
       devices.put({

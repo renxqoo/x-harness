@@ -32,6 +32,11 @@ export interface PairingServerOptions {
   onSessionEstablished(deviceId: string, ratchetSeed: Uint8Array): void;
   requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null>;
   maxConcurrent: number;
+  /** 6 位码上报（外部 relay 形态：码注册到 relay 的发现表；嵌入形态可空着）。 */
+  /** manualCode 为 null 表示注销该 pairingId。ticket 是本次会话的配对票据——
+   *  外部 relay 形态下 6 位码配对必须经 relay 发现面下发票据（/pairing 升级面只认
+   *  pairing kind 的 token，设备端无法自造），故与码一并注册。 */
+  onManualCodeRegistered?(pairingId: string, manualCode: string | null, expiresAt: number, ticket?: string): void;
 }
 
 export interface PairingServer {
@@ -105,6 +110,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       sessions.delete(pairingId);
       return { ok: false, reason: "pairing ticket unavailable (relay enroll pending?)" };
     }
+    options.onManualCodeRegistered?.(pairingId, session.manualCode, session.expiresAt, ticket);
     return { session, ticket };
   }
 
@@ -217,6 +223,7 @@ export function createPairingServer(options: PairingServerOptions): PairingServe
       if (session !== undefined) {
         session.consumed = true;
         sessions.delete(pairingId);
+        options.onManualCodeRegistered?.(pairingId, null, 0);
       }
     },
     sessionOf: (pairingId) => sessions.get(pairingId) ?? null,

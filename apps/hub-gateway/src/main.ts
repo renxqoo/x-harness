@@ -148,6 +148,16 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const pairingServer = assemblePairingServer({ identity, config: effectiveConfig, audit, devices, now, relayLink: () => relayLinkRef, cryptoSessions,
     onSessionEstablished: (deviceId, ratchetSeed) => {
       cryptoSessions.establish({ deviceId, sharedSecret: ratchetSeed, initiator: true });
+    },
+    onManualCodeRegistered: (pairingId, manualCode, expiresAt, ticket) => {
+      // 外部 relay 形态：6 位码注册到 relay 的发现表（控制信箱帧）；嵌入形态同帧无害
+      // （relay 由网关自己进程内持有，gatewayOfCode 回调本就可答，注册表只作加速）。
+      const link = relayLinkRef;
+      if (link === null || !link.connected()) return;
+      const payload = manualCode === null
+        ? JSON.stringify({ unregister: pairingId })
+        : JSON.stringify({ register: { code: manualCode, pairingId, gatewayKeyFingerprint: identity.signingPub, exp: Math.floor(expiresAt / 1000), pairingTicket: ticket ?? "" } });
+      link.send(encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: "relay", payload: Buffer.from(payload).toString("base64"), nonce: Buffer.alloc(17).toString("base64") }));
     } });
   pairingServerRef = pairingServer;
 
@@ -355,7 +365,16 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       },
       onStatus: (status, detail) => {
         log(`relay ${status}: ${detail}`);
-        if (status === "connected") flushDevicePending();
+        if (status === "connected") {
+          flushDevicePending();
+          // 重连后重放活跃配对码注册（relay 侧注册表随断连丢码——网关是注册的单一来源）
+          for (const session of pairingServer.listActive()) {
+            if (session.manualCode !== null && !session.consumed) {
+              const payload = JSON.stringify({ register: { code: session.manualCode, pairingId: session.pairingId, gatewayKeyFingerprint: identity.signingPub, exp: Math.floor(session.expiresAt / 1000) } });
+              relayLinkRef?.send(encodeEnvelope({ v: 1, from: `gw_${identity.installationId}`, to: "relay", payload: Buffer.from(payload).toString("base64"), nonce: Buffer.alloc(17).toString("base64") }));
+            }
+          }
+        }
         fanout.fanoutEvent({ threadId: "*", name: "gateway/presence", payload: { relay: status, detail } });
       },
       log,
