@@ -144,10 +144,13 @@ export async function startRelay(options: RelayOptions): Promise<RelayHandle> {
             res.writeHead(404).end();
             return;
           }
-          // 回环协议必须与本请求一致：降级成 ws:// 会让按 wss 连的设备握手失败
-          // （relay 的 TLS 面在同端口，X-Forwarded-Proto 由前置终结器给出）。
+          // 回环协议取「设备实际能用的那个」：relay 自身只监听明文 HTTP（无 TLS 面，
+          // createServer 来自 node:http），TLS 由前置终结器终止并透传 X-Forwarded-Proto。
+          // 无该头即明文——早前默认 wss 会让直连 relay 的设备拿到 wss 地址后握手失败
+          //（浏览器对 wss://明文端口直接 not_open）。
           const host = req.headers.host ?? "";
-          const proto = (req.headers["x-forwarded-proto"] ?? "").toString().split(",")[0]?.trim() === "http" ? "ws" : "wss";
+          const forwarded = (req.headers["x-forwarded-proto"] ?? "").toString().split(",")[0]?.trim();
+          const proto = forwarded === "https" || forwarded === "wss" ? "wss" : "ws";
           const relayUrl = host.length > 0 && resolved.relayUrl.length === 0 ? `${proto}://${host}` : resolved.relayUrl;
           res.writeHead(200, { "content-type": "application/json" });
           res.end(JSON.stringify({ ...resolved, relayUrl }));
