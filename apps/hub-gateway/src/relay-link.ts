@@ -4,6 +4,13 @@ import { randomBytes } from "node:crypto";
 import { WebSocketFrameReader, WebSocketFrameWriter, signBytes } from "@x-harness/remote-protocol";
 import { enrollTranscript } from "../../hub-relay/src/auth.ts";
 
+// TLS 拨号选项：hostname 是 IP 时省略 servername（Node/Bun 均拒 IP 型 SNI——
+// ERR_INVALID_ARG_VALUE；IP 证书走 SAN-IP 校验，不需要 SNI）。
+function tlsOptions(hostname: string, port: number): { host: string; port: number; servername?: string } {
+  const isIp = /^[0-9.]+$/.test(hostname) || hostname.includes(":");
+  return isIp ? { host: hostname, port } : { host: hostname, port, servername: hostname };
+}
+
 export interface RelayLinkOptions {
   relayUrl: string;
   installationId: string;
@@ -99,7 +106,7 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
   function openConnection(): void {
     if (stopped) return;
     options.onStatus("disconnected", `dialing ${url.host}`);
-    const s = options.useTls ? tlsConnect({ host: url.hostname, port, servername: url.hostname }) : netConnect({ host: url.hostname, port });
+    const s = options.useTls ? tlsConnect(tlsOptions(url.hostname, port)) : netConnect({ host: url.hostname, port });
     wire(s);
   }
 
@@ -140,16 +147,36 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
     }
   }
 
+  // HTTP API 的 401 = gateway token 过期（15min TTL）——re-enroll 后重试一次。
+  // 只有 WS 握手 401 触发续期的话，长连接闲置超过 TTL 后配对/设备令牌全部假死
+  // （症状：pairing-ticket failed: 401 反复出现，直到连接意外断开才自愈）。
+  async function postWithEnrollRetry(path: string, body: string): Promise<{ status: number; body: string } | null> {
+    if (gatewayToken === null) {
+      const enrolled = await enrollOnce();
+      if (enrolled === null) return null;
+    }
+    const first = await httpPost(url, { useTls: options.useTls, path, body, token: gatewayToken ?? undefined });
+    if (first !== null && first.status !== 401) return first;
+    options.log(`relay api ${path} unauthorized — re-enrolling`);
+    gatewayToken = null;
+    const enrolled = await enrollOnce();
+    if (enrolled === null) return first;
+    return httpPost(url, { useTls: options.useTls, path, body, token: enrolled.token });
+  }
+
   async function revokeDevice(deviceId: string): Promise<boolean> {
     if (gatewayToken === null) return false;
-    const reply = await httpPost(url, { useTls: options.useTls, path: "/api/revoke", body: JSON.stringify({ deviceId }), token: gatewayToken });
+    const reply = await postWithEnrollRetry("/api/revoke", JSON.stringify({ deviceId }));
     return reply !== null && reply.status === 200;
   }
 
   async function requestDeviceToken(deviceId: string, deviceLongTermPub?: string): Promise<string | null> {
-    if (gatewayToken === null) return null;
+    if (gatewayToken === null) {
+      const enrolled = await enrollOnce();
+      if (enrolled === null) return null;
+    }
     const body = JSON.stringify({ deviceId, ...(deviceLongTermPub !== undefined && deviceLongTermPub.length > 0 ? { deviceLongTermPub } : {}) });
-    const reply = await httpPost(url, { useTls: options.useTls, path: "/api/device-token", body, token: gatewayToken });
+    const reply = await postWithEnrollRetry("/api/device-token", body);
     if (reply === null || reply.status !== 200) {
       options.log(`device-token failed: ${String(reply?.status)}`);
       return null;
@@ -159,9 +186,12 @@ export function startRelayLink(options: RelayLinkOptions): RelayLinkHandle {
   }
 
   async function requestPairingTicket(pairingId: string): Promise<string | null> {
-    if (gatewayToken === null) return null;
+    if (gatewayToken === null) {
+      const enrolled = await enrollOnce();
+      if (enrolled === null) return null;
+    }
     const body = JSON.stringify({ pairingId });
-    const reply = await httpPost(url, { useTls: options.useTls, path: "/api/pairing-ticket", body, token: gatewayToken });
+    const reply = await postWithEnrollRetry("/api/pairing-ticket", body);
     if (reply === null || reply.status !== 200) {
       options.log(`pairing-ticket failed: ${String(reply?.status)}`);
       return null;
@@ -232,7 +262,7 @@ async function httpPost(url: URL, spec: { useTls: boolean; path: string; body: s
   const defaultPort2 = useTls ? 443 : 80;
   const port = url.port === "" ? defaultPort2 : Number(url.port);
   return new Promise((resolve) => {
-    const s = useTls ? tlsConnect({ host: url.hostname, port, servername: url.hostname }) : netConnect({ host: url.hostname, port });
+    const s = useTls ? tlsConnect(tlsOptions(url.hostname, port)) : netConnect({ host: url.hostname, port });
     const fail = (): void => resolve(null);
     s.once("error", fail);
     s.on("connect", () => {
@@ -277,7 +307,7 @@ async function httpGet(url: URL, spec: { useTls: boolean; path: string }): Promi
   const defaultPort = useTls ? 443 : 80;
   const port = url.port === "" ? defaultPort : Number(url.port);
   return new Promise((resolve) => {
-    const s = useTls ? tlsConnect({ host: url.hostname, port, servername: url.hostname }) : netConnect({ host: url.hostname, port });
+    const s = useTls ? tlsConnect(tlsOptions(url.hostname, port)) : netConnect({ host: url.hostname, port });
     const fail = (): void => resolve(null);
     s.once("error", fail);
     s.on("connect", () => {
