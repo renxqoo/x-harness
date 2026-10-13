@@ -38,7 +38,7 @@ import { createFactsSnapshotPlugin, probeBaseFacts } from "@x-harness/harness";
 import type { ProvidersConfig, ProviderProfile } from "./providers-file.ts";
 import type { ModelResolution } from "./resolve-model.ts";
 
-export const RETRY_POLICY: RetryPolicy = { maxRetries: 5, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
+export const RETRY_POLICY: RetryPolicy = { maxRetries: 10, initialDelayMs: 500, maxDelayMs: 30_000, jitterRatio: 0, retryableCodes: [...DEFAULT_RETRYABLE_CODES, "repetition"] };
 
 import type { World } from "@x-harness/harness";
 import { resolveAgentDirs } from "@x-harness/agent-delegation";
