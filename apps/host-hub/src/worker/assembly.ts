@@ -249,7 +249,7 @@ function registeredProviderOfModel(catalog: WorkerCatalog): (model: string) => s
 }
 
 export function registeredProvidersOf(catalog: WorkerCatalog): ReadonlySet<string> {
-  return new Set(catalog.providers.filter((p) => p.apiKey !== "").map((p) => p.provider));
+  return new Set(catalog.providers.filter((p) => p.apiKey !== "" || p.baseUrl === "script://local").map((p) => p.provider));
 }
 
 function dialableOf(catalog: WorkerCatalog): (ref: string) => boolean {

@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { startHost } from "./kit/host-client.ts";
 import type { HostHandle } from "./kit/host-client.ts";
 
-async function startDualServer(): Promise<{ baseUrl: string; server: Server; hits: Array<{ path: string; model: string }> }> {
+async function startDualServer(spawnArgs = { description: "cross dial", prompt: "do work", subagent_type: "cross-model" }): Promise<{ baseUrl: string; server: Server; hits: Array<{ path: string; model: string }> }> {
   const hits: Array<{ path: string; model: string }> = [];
   const seenA = { count: 0 };
   const seenB = { count: 0 };
@@ -23,7 +23,7 @@ async function startDualServer(): Promise<{ baseUrl: string; server: Server; hit
         res.writeHead(200, { "content-type": "text/event-stream" });
         seenA.count += 1;
         if (seenA.count === 1) {
-          const args = JSON.stringify({ description: "cross dial", prompt: "do work", subagent_type: "cross-model" });
+          const args = JSON.stringify(spawnArgs);
           res.write(`event: message_start\ndata: {"type":"message_start","message":{"id":"m1","model":"${model}","usage":{"input_tokens":1,"output_tokens":0}}}\n\n`);
           res.write(`event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call-1","name":"agent_spawn"}}\n\n`);
           res.write(`event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"${args.replace(/"/g, '\\"')}"}}\n\n`);
@@ -108,5 +108,43 @@ describe("子代理跨模型拨号（真 adapter 路由）", () => {
     expect(payload.outcome).toBe("completed");
     expect(payload.detail).toBe("completed");
     expect(dual.hits.some((hit) => hit.model === "model-b" && !hit.path.includes("/v1/messages"))).toBe(true);
+  }, 120_000);
+
+  test("症状回归：双渠道同名模型 + 类型声明 provider → 子请求打到声明 provider（裸名歧义不再静默换父模型）", async () => {
+    const dual = await startDualServer({ description: "dual name dial", prompt: "do work", subagent_type: "dual-name" });
+    servers.push(dual.server);
+    const home = await tempDir("hub-sub-home2-");
+    const host = await startHost({
+      script: [],
+      env: { HOME: home, HUB_WORKER_PROVIDER: "real", HUB_WORKER_SCRIPT: "" },
+    });
+    hosts.push(host);
+    host.send({ type: "models/add", id: "shared-model", provider: "a", protocol: "anthropic", baseUrl: dual.baseUrl });
+    const m1 = await host.response("shared-model");
+    expect(m1.error).toBeUndefined();
+    host.send({ type: "models/add", id: "shared-model", provider: "b", protocol: "openai", baseUrl: dual.baseUrl });
+    const m2 = await host.event("catalog/updated").catch(() => null);
+    void m2;
+    host.send({ type: "auth/set_api_key", id: "k1", provider: "a", apiKey: "k" });
+    const k1 = await host.response("k1");
+    expect(k1.error).toBeUndefined();
+    host.send({ type: "auth/set_api_key", id: "k2", provider: "b", apiKey: "k" });
+    const k2 = await host.response("k2");
+    expect(k2.error).toBeUndefined();
+    host.send({ type: "agents/create", id: "ag1", name: "dual-name", description: "dual provider same model name", model: "shared-model", provider: "b", systemPrompt: "you are a dual name child" });
+    const ag = await host.response("ag1");
+    expect(ag.error).toBeUndefined();
+    host.send({ type: "thread/start", id: "s1", cwd: host.agentDir, modelId: "shared-model" });
+    const started = await host.response("s1");
+    expect(started.error).toBeUndefined();
+    const threadId = (started.data as { threadId: string }).threadId;
+    host.send({ type: "prompt", id: "p1", threadId, message: "spawn dual name child" });
+    const ack = await host.response("p1");
+    expect(ack.error).toBeUndefined();
+    const finished = await host.event("agent/finished", undefined, 60_000);
+    const payload = finished.payload as { outcome: string; detail: string };
+    expect(payload.outcome).toBe("completed");
+    expect(payload.detail).toBe("completed");
+    expect(dual.hits.some((hit) => hit.model === "shared-model" && !hit.path.includes("/v1/messages"))).toBe(true);
   }, 120_000);
 });

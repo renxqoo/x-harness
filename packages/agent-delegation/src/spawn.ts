@@ -53,9 +53,6 @@ export async function spawnAgent(deps: SpawnDeps, execCtx: ToolExecContext, inpu
   }
   if (input.prompt.trim() === "") return { ok: false, reason: "invalid-args:prompt must be a non-empty string" };
   if (input.model === "") return { ok: false, reason: "invalid-args:model must be a non-empty string when provided" };
-  if (input.model !== undefined && deps.dialable !== undefined && !deps.dialable(input.model)) {
-    return { ok: false, reason: `invalid-args:model '${input.model}' is not dialable (not in catalog or adapter not registered); leave model unset to inherit the parent dial` };
-  }
   if (input.isolation === "remote") {
     return { ok: false, reason: "invalid-args:isolation 'remote' is not available in this build (availability is gated)" };
   }
@@ -113,10 +110,12 @@ async function buildChild(
   const typeName = named !== undefined ? named.name : plan.resolved.kind;
   const seed = isFork ? forkSeedOf(deps, caller) : [];
   const forked = seed.length > 0;
+  const dial = resolveChildDial(deps, parentHandle, { named, isFork, input: plan.input, caller });
+  if (!dial.ok) return dial;
   const worktree = await prepareWorktree(deps, agentId, plan.input.isolation);
   if (!worktree.ok) return worktree;
 
-  const made = await createChildSession(deps, { caller, plan, agentId, typeName, seed: forked ? seed : [], worktree: worktree.plan });
+  const made = await createChildSession(deps, { caller, plan, agentId, typeName, seed: forked ? seed : [], worktree: worktree.plan, dial: dial.value });
   if (!made.ok) return spawnFailed(made.reason, worktree.plan, deps);
   const childHandle = made.value;
   restrictChildTools(deps, { caller, child: childHandle, named });
@@ -198,11 +197,51 @@ export async function kickChild(deps: SpawnDeps, spec: { readonly row: ChildRow;
   }
 }
 
-function gatedTypeOf(deps: SpawnDeps, named: LoadedAgentType | undefined): LoadedAgentType | undefined {
-  const typeModel = named?.model;
-  if (typeModel === undefined || deps.dialable === undefined || deps.dialable(typeModel)) return named;
-  deps.onWarn?.(`agent type '${named?.name ?? "?"}' model '${typeModel}' is not dialable — falling back to inherited dial`);
-  return undefined;
+function dialRefOf(dial: { model?: string; provider?: string }): string {
+  return dial.provider !== undefined ? `${dial.provider}/${dial.model ?? ""}` : (dial.model ?? "");
+}
+
+function dialChainOf(deps: SpawnDeps, parentHandle: AgentHandle, spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId } & { readonly withOverride?: boolean }): { model?: string; provider?: string } {
+  return inheritDial(parentHandle, {
+    type: spec.named,
+    lastHeader: lastHeaderOf(deps, spec.caller),
+    ...(spec.withOverride === true && !spec.isFork ? { override: { model: spec.input.model } } : {}),
+    ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
+    ...(deps.fallbackDial !== undefined ? { fallback: deps.fallbackDial } : {}),
+  });
+}
+
+function overrideDialCheck(deps: SpawnDeps, parentHandle: AgentHandle, spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId }): string | undefined {
+  if (spec.input.model === undefined || spec.isFork || deps.dialable === undefined) return undefined;
+  const overrideRef = dialRefOf(dialChainOf(deps, parentHandle, { ...spec, withOverride: true }));
+  if (deps.dialable(overrideRef)) return undefined;
+  return `invalid-args:model '${spec.input.model}' resolves to dial '${overrideRef}' which is not dialable (not in catalog or adapter not registered); use a 'provider/model' reference or leave model unset to inherit the parent dial`;
+}
+
+function typeDialDropped(deps: SpawnDeps, parentHandle: AgentHandle, spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId }): boolean {
+  if (spec.named === undefined || spec.isFork || deps.dialable === undefined) return false;
+  return !deps.dialable(dialRefOf(dialChainOf(deps, parentHandle, spec)));
+}
+
+function resolveChildDial(
+  deps: SpawnDeps,
+  parentHandle: AgentHandle,
+  spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId },
+): { ok: true; value: { model?: string; provider?: string } } | { ok: false; reason: string } {
+  const rejected = overrideDialCheck(deps, parentHandle, spec);
+  if (rejected !== undefined) return { ok: false, reason: rejected };
+  const dropped = typeDialDropped(deps, parentHandle, spec);
+  if (dropped) {
+    deps.onWarn?.(`agent type '${spec.named?.name ?? "?"}' model '${spec.named?.model ?? "?"}' resolves to dial '${dialRefOf(dialChainOf(deps, parentHandle, spec))}' which is not dialable — dial falls back to the parent dial`);
+  }
+  const value = inheritDial(parentHandle, {
+    type: dropped ? undefined : spec.named,
+    lastHeader: lastHeaderOf(deps, spec.caller),
+    override: spec.isFork ? undefined : { model: spec.input.model },
+    ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
+    ...(deps.fallbackDial !== undefined ? { fallback: deps.fallbackDial } : {}),
+  });
+  return { ok: true, value };
 }
 
 function personaPromptOf(spec: { readonly named?: LoadedAgentType; readonly worktree?: WorktreePlan }): string | undefined {
@@ -214,18 +253,11 @@ function personaPromptOf(spec: { readonly named?: LoadedAgentType; readonly work
 function childAgentOptions(
   deps: SpawnDeps,
   parentHandle: AgentHandle,
-  spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId; readonly worktree?: WorktreePlan },
+  spec: { readonly named?: LoadedAgentType; readonly isFork: boolean; readonly input: SpawnInput; readonly caller: SessionId; readonly worktree?: WorktreePlan; readonly dial: { model?: string; provider?: string } },
 ): { model?: string; provider?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
-  const dial = inheritDial(parentHandle, {
-    type: gatedTypeOf(deps, spec.named),
-    lastHeader: lastHeaderOf(deps, spec.caller),
-    override: spec.isFork ? undefined : { model: spec.input.model },
-    ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
-    ...(deps.fallbackDial !== undefined ? { fallback: deps.fallbackDial } : {}),
-  });
   const systemPrompt = personaPromptOf(spec);
   return {
-    ...dial,
+    ...spec.dial,
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     streamIdleTimeoutMs: parentHandle.agent.options.streamIdleTimeoutMs,
   };
@@ -268,6 +300,7 @@ function createChildSession(
     readonly typeName: string;
     readonly seed: readonly SessionEvent[];
     readonly worktree?: WorktreePlan;
+    readonly dial: { model?: string; provider?: string };
   },
 ): ReturnType<AgentLoopService["create"]> {
   const named = spec.plan.resolved.kind === "named" ? spec.plan.resolved.type : undefined;
@@ -277,7 +310,7 @@ function createChildSession(
       ...(spec.seed.length > 0 ? { seed: spec.seed } : {}),
       agent: { id: spec.agentId, type: spec.typeName, depth: spec.plan.depth, work: spec.plan.input.description, ...(spec.worktree !== undefined ? { worktree: spec.worktree.path } : {}) },
     },
-    agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller, ...(spec.worktree !== undefined ? { worktree: spec.worktree } : {}) }),
+    agent: childAgentOptions(deps, deps.loop.get(spec.caller) as AgentHandle, { named, isFork: spec.plan.resolved.kind === "fork", input: spec.plan.input, caller: spec.caller, ...(spec.worktree !== undefined ? { worktree: spec.worktree } : {}), dial: spec.dial }),
   });
 }
 

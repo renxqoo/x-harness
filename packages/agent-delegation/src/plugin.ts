@@ -57,12 +57,16 @@ export function validateOptions(options: Pick<DelegationOptions, "maxDepth" | "m
   return { maxDepth, maxConcurrent, reportCap, maxResident };
 }
 
-export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>>): string {
+export function renderTypesBlock(types: Readonly<Record<string, LoadedAgentType>>, dialable: ((ref: string) => boolean) | undefined = undefined, resolveProviderOf: ((model: string) => string | undefined) | undefined = undefined): string {
   const names = Object.keys(types).sort();
   if (names.length === 0) return "";
   const lines = names.map((name) => {
     const type = types[name];
-    return `- ${name} — ${type?.description ?? ""}${type?.model !== undefined ? ` (model: ${type.model})` : ""}`;
+    if (type?.model === undefined) return `- ${name} — ${type?.description ?? ""}`;
+    const ref = type.provider !== undefined ? `${type.provider}/${type.model}` : type.model;
+    const reachable = dialable === undefined ? true : dialable(ref) || (type.provider === undefined && (resolveProviderOf?.(type.model) ?? undefined) !== undefined);
+    const modelNote = reachable ? ` (model: ${type.model})` : ` (model: ${type.model} — not dialable in this deployment, falls back to the parent dial)`;
+    return `- ${name} — ${type?.description ?? ""}${modelNote}`;
   });
   return `<system-reminder>\nAvailable agent types:\n${lines.join("\n")}\n</system-reminder>`;
 }
@@ -201,25 +205,33 @@ function spawnDepsOf(deps: {
 function reviveDepsOf(deps: {
   readonly archive: import("@x-harness/session").SessionArchive;
   readonly loop: import("@x-harness/agent-loop").AgentLoopService;
+  readonly store: import("@x-harness/session").SessionStore;
   readonly registry: import("@x-harness/tools").ToolRegistry;
   readonly lineage: Lineage;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
   readonly emitSpawned: (payload: AgentSpawnedPayload) => void;
   readonly grants: import("@x-harness/permission").GrantsRegistry | undefined;
+  readonly resolveProviderOf: ((model: string) => string | undefined) | undefined;
+  readonly fallbackDial: { model?: string; provider?: string } | undefined;
+  readonly dialable: ((ref: string) => boolean) | undefined;
   readonly onWarn?: (message: string) => void;
 }): Parameters<typeof reviveByAgentId>[0] {
-  const { archive, loop, registry, lineage, types, emitSpawned, grants, onWarn } = deps;
+  const { archive, loop, store, registry, lineage, types, emitSpawned, grants, resolveProviderOf, fallbackDial, dialable, onWarn } = deps;
   return {
     archive,
     loop,
+    store,
     registry,
     lineage,
     types,
-    parentModelOf: (session: SessionId) => loop.get(session)?.agent.options.model,
+    parentHandleOf: (session: SessionId) => loop.get(session),
     parentIdleTimeoutOf: (session: SessionId) => loop.get(session)?.agent.options.streamIdleTimeoutMs,
     parentToolsOf: (session: SessionId) => registry.restrictionOf(session),
     emitSpawned,
     ...(grants !== undefined ? { setRootOverride: (session: SessionId, dir: string, guard: string) => grants.setRootOverride(session, dir, guard) } : {}),
+    ...(resolveProviderOf !== undefined ? { resolveProviderOf } : {}),
+    ...(fallbackDial !== undefined ? { fallbackDial } : {}),
+    ...(dialable !== undefined ? { dialable } : {}),
     ...(onWarn !== undefined ? { onWarn } : {}),
   };
 }
@@ -346,7 +358,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
       const archive = ctx.tryUse(sessionArchive);
       const revive = archive === undefined
         ? undefined
-        : (caller: SessionId, agentId: string) => reviveByAgentId(reviveDepsOf({ archive, loop, registry, lineage, types: () => current, emitSpawned, grants, onWarn }), caller, agentId);
+        : (caller: SessionId, agentId: string) => reviveByAgentId(reviveDepsOf({ archive, loop, store, registry, lineage, types: () => current, emitSpawned, grants, resolveProviderOf: options.resolveProviderOf, fallbackDial: options.fallbackDial, dialable: options.dialable, onWarn }), caller, agentId);
 
       const evictIdle = (): void => {
         if (archive === undefined) return;
@@ -411,7 +423,7 @@ export function createAgentDelegationPlugin(options: DelegationOptions): Plugin 
           id: "agent-types",
           render: () => {
             refreshTypes();
-            const body = renderTypesBlock(current);
+            const body = renderTypesBlock(current, options.dialable, options.resolveProviderOf);
             return body === "" ? "" : snapshotEnvelope("agent-types", body);
           },
           ...(onWarn !== undefined ? { onWarn } : {}),

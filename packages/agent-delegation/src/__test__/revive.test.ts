@@ -116,6 +116,80 @@ describe("archive 惰性复活（§6.2——修订A：按 agentId）", () => {
       await rm(root, { recursive: true, force: true }).catch(() => {});
     }
   });
+
+  it("症状回归：复活不再串错拨号——类型带 provider 的模型复活后拨声明 provider（旧实现丢 provider 落到归档 header 的父 provider）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-revive-dial-"));
+    try {
+      const firstOptions = await makeOptions({ worker: { model: "GLM/child-model", body: "you are the worker" } }, { fallbackDial: { model: PARENT_MODEL, provider: "fake" } });
+      const first = await makeWorld(firstOptions, undefined, [createJsonlSessionPersistence({ root })]);
+      const parent = await spawnParent(first, PARENT_MODEL, "p1" as never);
+      first.scripts.set("child-model", [textScript("child-model", "first life")]);
+      first.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
+      parent.agent.followup("go");
+      await parent.agent.whenIdle();
+      const spawned = await callTool({ world: first, name: "agent_spawn", args: { description: "d", prompt: "work", subagent_type: "worker" }, session: parent.agent.session.id });
+      const agentId = (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] as string;
+      const childSession = sessionOf(spawned.content);
+      await vi.waitFor(() => expect(hasTurnEnd(first, childSession)).toBe(true), { timeout: 5_000 });
+      const firstHeader = first.ctx.use(sessionStore).get(childSession)?.events().find((e: { type: string }) => e.type === "request/header");
+      expect((firstHeader?.data as { model?: string } | undefined)?.model).toBe("child-model");
+      expect((firstHeader?.data as { provider?: string } | undefined)?.provider).toBe("GLM");
+      await first.ctx.use(sessionStore).flush(childSession);
+      await first.ctx.use(sessionStore).flush(parent.agent.session.id);
+      await first.disposePlugins();
+
+      const secondOptions = await makeOptions({ worker: { model: "GLM/child-model", body: "you are the worker" } }, { fallbackDial: { model: PARENT_MODEL, provider: "fake" } });
+      const second = await makeWorld(secondOptions, undefined, [createJsonlSessionPersistence({ root })]);
+      second.scripts.set("child-model", [textScript("child-model", "second life")]);
+      await second.loop.resume({ id: parent.agent.session.id, agent: { model: PARENT_MODEL, provider: "fake" } });
+      const woke = await callTool({ world: second, name: "agent_message", args: { to: agentId, message: "wake up" }, session: parent.agent.session.id });
+      expect(woke.isError).toBeUndefined();
+      await vi.waitFor(() => {
+        expect(turnEndCount(second, childSession)).toBe(2);
+      }, { timeout: 5_000 });
+      const secondHeader = second.ctx.use(sessionStore).get(childSession)?.events().filter((e: { type: string }) => e.type === "request/header").pop();
+      expect((secondHeader?.data as { model?: string } | undefined)?.model).toBe("child-model");
+      expect((secondHeader?.data as { provider?: string } | undefined)?.provider).toBe("GLM");
+      await second.disposePlugins();
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it("症状回归：复活时类型模型不可拨 → 明确报错不复活（旧实现无门禁串 fake/裸名错拨）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xh-revive-gate-"));
+    try {
+      const gateDeps = {
+        dialable: (ref: string) => ref === `fake/${PARENT_MODEL}` || ref === `fake/${CHILD_MODEL}`,
+        resolveProviderOf: (model: string) => (model === PARENT_MODEL || model === CHILD_MODEL ? "fake" : undefined),
+      };
+      const firstOptions = await makeOptions({ worker: { model: CHILD_MODEL, body: "you are the worker" } }, gateDeps);
+      const first = await makeWorld(firstOptions, undefined, [createJsonlSessionPersistence({ root })]);
+      const parent = await spawnParent(first, PARENT_MODEL, "p1" as never);
+      first.scripts.set(CHILD_MODEL, [textScript(CHILD_MODEL, "one")]);
+      first.scripts.set(PARENT_MODEL, [textScript(PARENT_MODEL, "p")]);
+      parent.agent.followup("go");
+      await parent.agent.whenIdle();
+      const spawned = await callTool({ world: first, name: "agent_spawn", args: { description: "d", prompt: "work", subagent_type: "worker" }, session: parent.agent.session.id });
+      const agentId = (spawned.content.match(/agent-[0-9a-f]{8}/) ?? [""])[0] as string;
+      const childSession = sessionOf(spawned.content);
+      await vi.waitFor(() => expect(hasTurnEnd(first, childSession)).toBe(true), { timeout: 5_000 });
+      await first.ctx.use(sessionStore).flush(childSession);
+      await first.ctx.use(sessionStore).flush(parent.agent.session.id);
+      await first.disposePlugins();
+
+      const goneOptions = await makeOptions({ worker: { model: "ghost-model", body: "you are the worker" } }, gateDeps);
+      const second = await makeWorld(goneOptions, undefined, [createJsonlSessionPersistence({ root })]);
+      await second.loop.resume({ id: parent.agent.session.id, agent: { model: PARENT_MODEL, provider: "fake" } });
+      const denied = await callTool({ world: second, name: "agent_message", args: { to: agentId, message: "wake up" }, session: parent.agent.session.id });
+      expect(denied.isError).toBe(true);
+      expect(denied.content).toContain("agent type 'worker' model 'ghost-model' resolves to dial");
+      expect(denied.content).toContain("not dialable");
+      await second.disposePlugins();
+    } finally {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 });
 
 describe("驻留档化（§2.2 maxResident）", () => {

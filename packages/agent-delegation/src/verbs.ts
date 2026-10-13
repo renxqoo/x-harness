@@ -72,6 +72,7 @@ async function crossFallback(deps: VerbDeps, caller: SessionId, plan: { readonly
   if (deps.reviveByName !== undefined) {
     const revived = await deps.reviveByName(caller, input.to);
     if (revived.kind === "row") return deliverToRow(deps, revived.row, input.message);
+    if (revived.kind === "error") return { ok: false, reason: revived.reason };
   }
   return { ok: false, reason: missReason };
 }

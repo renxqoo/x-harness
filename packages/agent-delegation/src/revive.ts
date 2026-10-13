@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
-import type { AgentLoopService } from "@x-harness/agent-loop";
+import type { AgentHandle, AgentLoopService } from "@x-harness/agent-loop";
+import type { SessionStore, SessionArchive, SessionId } from "@x-harness/session";
 import type { ToolFilter, ToolRegistry } from "@x-harness/tools";
-import type { SessionArchive, SessionId } from "@x-harness/session";
-import { narrowTools } from "./lineage.ts";
+import { inheritDial, narrowTools } from "./lineage.ts";
 import { mainRepoTopOf, registerLiveTree, worktreeFactsOf } from "./worktree.ts";
 import type { WorktreePlan } from "./worktree.ts";
 import { appendWorktreeEnv } from "./worktree-env.ts";
@@ -12,18 +12,22 @@ import type { LoadedAgentType } from "./types.ts";
 export interface ReviveDeps {
   readonly archive: SessionArchive;
   readonly loop: AgentLoopService;
+  readonly store: SessionStore;
   readonly registry: ToolRegistry;
   readonly lineage: Lineage;
   readonly types: () => Readonly<Record<string, LoadedAgentType>>;
-  readonly parentModelOf: (session: SessionId) => string | undefined;
+  readonly parentHandleOf: (session: SessionId) => AgentHandle | undefined;
   readonly parentIdleTimeoutOf: (session: SessionId) => number | undefined;
   readonly parentToolsOf: (session: SessionId) => ToolFilter | undefined;
   readonly emitSpawned: (payload: { parent: SessionId; agentId: string; sessionId: SessionId; type: string; depth: number; work?: string }) => void;
   readonly setRootOverride?: (session: SessionId, dir: string, guard: string) => void;
+  readonly resolveProviderOf?: (model: string) => string | undefined;
+  readonly fallbackDial?: { model?: string; provider?: string };
+  readonly dialable?: (ref: string) => boolean;
   readonly onWarn?: (message: string) => void;
 }
 
-export type ReviveOutcome = { readonly kind: "row"; readonly row: ChildRow } | { readonly kind: "miss" };
+export type ReviveOutcome = { readonly kind: "row"; readonly row: ChildRow } | { readonly kind: "miss" } | { readonly kind: "error"; reason: string };
 
 const RESERVED = new Set(["fork", "untyped"]);
 
@@ -38,9 +42,11 @@ export async function reviveByAgentId(deps: ReviveDeps, caller: SessionId, agent
   const named = typeOf(deps, header.agentType);
   if (named === undefined && header.agentType !== undefined && !RESERVED.has(header.agentType)) return { kind: "miss" };
   const worktree = await preparseWorktree(header.agentWorktree);
+  const dial = revivedDial(deps, caller, named);
+  if (!dial.ok) return { kind: "error", reason: dial.reason };
   const made = await deps.loop.resume({
     id: header.id,
-    agent: revivedOptions({ deps, caller, named, worktree }),
+    agent: revivedOptions({ deps, caller, named, worktree, dial: dial.value }),
   });
   if (!made.ok) return { kind: "miss" };
   const effectiveTools = narrowTools(deps.parentToolsOf(caller), named?.tools);
@@ -114,12 +120,45 @@ function typeOf(deps: ReviveDeps, agentType: string | undefined): LoadedAgentTyp
   return deps.types()[agentType];
 }
 
-function revivedOptions(spec: { readonly deps: ReviveDeps; readonly caller: SessionId; readonly named: LoadedAgentType | undefined; readonly worktree: WorktreePlan | undefined }): { model?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
-  const model = spec.named?.model ?? spec.deps.parentModelOf(spec.caller);
+function revivedDial(
+  deps: ReviveDeps,
+  caller: SessionId,
+  named: LoadedAgentType | undefined,
+): { ok: true; value: { model?: string; provider?: string } } | { ok: false; reason: string } {
+  const parentHandle = deps.parentHandleOf(caller);
+  if (parentHandle === undefined) return { ok: true, value: {} };
+  const value = inheritDial(parentHandle, {
+    type: named,
+    lastHeader: lastHeaderOf(deps, caller),
+    ...(deps.resolveProviderOf !== undefined ? { resolveProviderOf: deps.resolveProviderOf } : {}),
+    ...(deps.fallbackDial !== undefined ? { fallback: deps.fallbackDial } : {}),
+  });
+  if (named?.model !== undefined && deps.dialable !== undefined) {
+    const ref = value.provider !== undefined ? `${value.provider}/${value.model ?? ""}` : (value.model ?? "");
+    if (!deps.dialable(ref)) {
+      return { ok: false, reason: `invalid-args:agent type '${named.name}' model '${named.model}' resolves to dial '${ref}' which is not dialable (not in catalog or adapter not registered); fix the type's model field or catalog registration` };
+    }
+  }
+  return { ok: true, value };
+}
+
+function lastHeaderOf(deps: ReviveDeps, caller: SessionId): { model?: string; provider?: string } | undefined {
+  const session = deps.store.get(caller);
+  if (session === undefined) return undefined;
+  let header: { model?: string; provider?: string } | undefined;
+  for (const event of session.events()) {
+    if (event.type === "request/header") {
+      header = { model: event.data.model, ...(event.data.provider !== undefined ? { provider: event.data.provider } : {}) };
+    }
+  }
+  return header;
+}
+
+function revivedOptions(spec: { readonly deps: ReviveDeps; readonly caller: SessionId; readonly named: LoadedAgentType | undefined; readonly worktree: WorktreePlan | undefined; readonly dial: { model?: string; provider?: string } }): { model?: string; provider?: string; systemPrompt?: string; streamIdleTimeoutMs?: number } {
   const idle = spec.deps.parentIdleTimeoutOf(spec.caller);
   const persona = spec.named !== undefined && spec.named.prompt !== "" ? spec.named.prompt : undefined;
   return {
-    ...(model !== undefined ? { model } : {}),
+    ...spec.dial,
     ...(persona !== undefined
       ? { systemPrompt: spec.worktree !== undefined ? appendWorktreeEnv(persona, { path: spec.worktree.path, facts: spec.worktree.facts }) : persona }
       : {}),
