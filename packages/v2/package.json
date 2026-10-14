@@ -1,0 +1,15 @@
+{
+  "name": "x-harness-kernel-workspace",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "bun ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json && bun scripts/check-types.ts",
+    "lint": "oxlint --type-aware --deny-warnings -c .oxlintrc.json core/src scripts vitest.config.ts && bun scripts/check-kernel.ts",
+    "build": "bun build core/src/index.ts --outdir core/dist --target browser",
+    "test": "bun ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts --coverage"
+  },
+  "devDependencies": {
+    "oxlint": "^1.88.0",
+    "oxlint-tsgolint": "^7.0.2004"
+  }
+}

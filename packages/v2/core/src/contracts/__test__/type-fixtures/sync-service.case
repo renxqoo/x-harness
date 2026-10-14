@@ -1,0 +1,1 @@
+defineService<{run(input:string):Result<number>}>({name:"sync",methods:{run:{}}});

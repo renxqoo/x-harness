@@ -1,0 +1,1 @@
+defineService<{value:number}>({name:"value",methods:{value:{}}});

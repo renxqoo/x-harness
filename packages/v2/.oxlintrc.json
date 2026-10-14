@@ -1,0 +1,46 @@
+{
+  "plugins": [
+    "typescript",
+    "promise",
+    "unicorn"
+  ],
+  "rules": {
+    "typescript/no-explicit-any": "error",
+    "eslint/no-unused-vars": "error",
+    "eslint/no-console": "error",
+    "eslint/eqeqeq": [
+      "error",
+      "smart"
+    ],
+    "eslint/no-nested-ternary": "error",
+    "eslint/max-lines": [
+      "error",
+      {
+        "max": 500,
+        "skipBlankLines": true
+      }
+    ],
+    "eslint/max-params": [
+      "error",
+      {
+        "max": 3
+      }
+    ],
+    "unicorn/filename-case": [
+      "error",
+      {
+        "case": "kebabCase"
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": [
+        "core/src/chains/create-continuation.ts"
+      ],
+      "rules": {
+        "unicorn/no-thenable": "off"
+      }
+    }
+  ]
+}

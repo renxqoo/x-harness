@@ -1,0 +1,1 @@
+ctx.on(chain,(input,next)=>next(1));
