@@ -36,7 +36,6 @@ bun run build     # 各包 bun build
 bun run test      # vitest（bunx --bun vitest run --coverage，运行时显式钉死 Bun——测试依赖 bun:sqlite 等 Bun 专属模块）：各模块 __test__ 单测 + T1 夹具回归 + 覆盖率门禁
 ```
 
-- 覆盖率：行/语句/函数 ≥ 90、分支 ≥ 85（vitest v8 覆盖率真实强制），只升不降；未达标只许补测试，禁止调阈值换绿
 - 每个里程碑完成 = 该步骤 `__test__` 测试全绿 + 四门全绿
 - 每个修复的 bug 必须带回归用例，用例名注明症状
 - 汇报必须如实报告用例数与覆盖率数字；「门禁全绿」不等于「覆盖率达标」
