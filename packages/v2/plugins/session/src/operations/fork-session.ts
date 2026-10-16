@@ -16,7 +16,12 @@ export async function forkSession(store: Repository, raw: unknown, signal?: Abor
   const metadata = snapshotJson(input.value.metadata ?? null, limits.maxMetadataBytes); if (!metadata.ok) return metadata;
   const origin = await fingerprint(`fork:${sourceId}:${throughRevision}:${input.value.metadata === undefined ? "inherit" : metadata.value.json}`);
   const existing = await store.storage.read({ namespace, id });
-  if (existing.ok) return existing.value.head.origin === origin ? readStoredHead(existing.value.head, limits.maxMetadataBytes) : fail("already-exists");
+  if (existing.ok) {
+    if (existing.value.head.origin !== origin) return fail("already-exists");
+    const stored = readStoredHead(existing.value.head, limits.maxMetadataBytes); if (!stored.ok) return stored;
+    if (stored.value.revision !== throughRevision || stored.value.bytes < 0 || stored.value.parent?.id !== sourceId || stored.value.parent.revision !== throughRevision) return fail("storage-corrupt");
+    return stored;
+  }
   if (existing.error.source !== "session" || existing.error.code !== "not-found") return existing;
   const source = await store.storage.read({ namespace, id: sourceId }); if (!source.ok) return source;
   const head = readStoredHead(source.value.head, limits.maxMetadataBytes); if (!head.ok) return head;

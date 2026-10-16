@@ -22,12 +22,14 @@ export async function appendSession(store: Repository, raw: unknown): Promise<Se
   const requestFingerprint = await fingerprint(`${expectedRevision}:${snapshot.value.json}`); const namespace = store.options.namespace;
   const state = await store.storage.read({ namespace, id, commitId, projection: true }); if (!state.ok) return state;
   const head = readStoredHead(state.value.head, limits.maxMetadataBytes); if (!head.ok) return head;
+  const revision = expectedRevision + entries.length;
   if (state.value.commit) {
     if (state.value.commit.fingerprint !== requestFingerprint) return fail("commit-conflict");
-    const receipt = readStoredCommit(state.value.commit); return receipt;
+    const receipt = readStoredCommit(state.value.commit); if (!receipt.ok) return receipt;
+    if (receipt.value.firstSeq !== expectedRevision + 1 || receipt.value.lastSeq !== revision) return fail("storage-corrupt");
+    return receipt;
   }
   if (head.value.revision !== expectedRevision) return fail("revision-conflict");
-  const revision = expectedRevision + entries.length;
   if (!Number.isSafeInteger(revision) || revision > limits.maxRecords || head.value.bytes + bytes > limits.maxSessionBytes) return fail("capacity-exceeded");
   const nodes = state.value.nodes;
   if (!nodes || nodes.length > limits.maxConversationNodes || nodes.some((node, i) => !count(node.position) || !node.position || node.position > node.seq || !count(node.seq) || !node.seq || node.seq > expectedRevision || (i > 0 && node.position <= nodes[i - 1]!.position)) || new Set(nodes.map((node) => node.seq)).size !== nodes.length) return fail("storage-corrupt");
