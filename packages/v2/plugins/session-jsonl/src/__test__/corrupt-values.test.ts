@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { namespacePath } from "../store-path";
 import { digest, encodeLine } from "../encode-line";
 import { readHead, readRecord, readCommit, readNodes } from "../read-values";
 import { readStorageRequest } from "../../../session/src/storage";
@@ -24,8 +25,8 @@ it("valid checksums cannot hide invalid commit semantics or namespace identity",
   const header = JSON.parse(original[0]!) as { payload: Record<string, unknown> }; await writeFile(f.file, encodeLine({ ...header.payload, namespace: "wrong" })); expect(await f.storage.read(key)).toMatchObject({ error: { code: "storage-corrupt" } });
 });
 it("damaged configuration and incomplete namespace bootstrap cannot be accepted as valid policy", async () => {
-  const f = await fixture(); value(await f.storage.initialize({ namespace: key.namespace, policy })); const path = join(f.path, "namespaces/default/policy.json"); const good = await readFile(path);
+  const f = await fixture(); value(await f.storage.initialize({ namespace: key.namespace, policy })); const path = join(namespacePath(f.path, "default"), "policy.json"); const good = await readFile(path);
   for (const raw of ["partial", "\n", encodeLine({ namespace: "other", policy }), encodeLine({ namespace: key.namespace, policy: {} }), encodeLine({ namespace: key.namespace, policy }, digest("wrong"))]) { await writeFile(path, raw); expect(await f.storage.read(key)).toMatchObject({ error: { code: "storage-corrupt" } }); }
-  await writeFile(path, good); await mkdir(join(f.path, "namespaces/incomplete")); await writeFile(join(f.path, "namespaces/incomplete/unrelated"), "foreign"); expect(await f.storage.initialize({ namespace: "incomplete", policy })).toMatchObject({ error: { code: "storage-corrupt" } });
+  await writeFile(path, good); await mkdir(namespacePath(f.path, "incomplete")); await writeFile(join(namespacePath(f.path, "incomplete"), "unrelated"), "foreign"); expect(await f.storage.initialize({ namespace: "incomplete", policy })).toMatchObject({ error: { code: "storage-corrupt" } });
   expect(readStorageRequest("unknown" as never, key)).toMatchObject({ error: { code: "invalid-input" } });
 });

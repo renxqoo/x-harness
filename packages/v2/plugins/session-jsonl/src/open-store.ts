@@ -10,6 +10,7 @@ import { cleanPending } from "./publish-file";
 import { syncPath } from "./sync-path";
 import { replayJournal } from "./replay-journal";
 import { compactJournal, compactSize } from "./compact-journal";
+import { sessionPath } from "./store-path";
 import { fail, failure, stop } from "./fail";
 export async function openJsonlStore(path: string, limits: JsonlLimits, io: FileIO = createFileIO()): Promise<JsonlStore> {
   await io.mkdir(resolve(path), { recursive: true, mode: 0o700 }); await directory(io, resolve(path)); const root = await io.realpath(resolve(path));
@@ -31,7 +32,7 @@ export async function openJsonlStore(path: string, limits: JsonlLimits, io: File
       return result! as Awaited<ReturnType<typeof action>>;
     },
     async load(op, { namespace, id, compact }, policy) {
-      const path = join(root, "namespaces", namespace, "sessions", `${id}.jsonl`); let handle;
+      const path = sessionPath(root, { namespace, id }); let handle;
       try { handle = await openFile(io, path); } catch (error) { if (missing(error)) stop("not-found"); throw error; }
       try {
         const stat = await handle.stat({ bigint: true }); const identity = `${stat.dev}:${stat.ino}`; const size = Number(stat.size); let state: Journal;

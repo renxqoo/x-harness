@@ -5,7 +5,8 @@ import type { StoragePolicy, StorageNode } from "../../session/src/storage";
 import type { Journal, Operation, RecordIndex } from "./types";
 import { digest, parseLine, payload } from "./encode-line";
 import { readLines } from "./read-lines";
-import { readHead, readRecord, readNodes, readCommit } from "./read-values";
+import { readRecord, readNodes, readCommit } from "./read-values";
+import { readJournalHeader } from "./read-header";
 import { stop } from "./fail";
 export async function replayJournal(op: Operation, file: FileHandle, input: { namespace: string; id: string; policy: StoragePolicy; size: number; previous?: Journal }): Promise<Journal> {
   const { namespace, id, policy, size, previous } = input;
@@ -15,9 +16,7 @@ export async function replayJournal(op: Operation, file: FileHandle, input: { na
   for await (const line of readLines(file, { start: state?.end ?? 0, size, maximum: Math.max(4194304, 6 * policy.maxRecordBytes + 1024), check: op.check })) {
     const parsed = parseLine(line.raw);
     if (!state) {
-      const head = payload(parsed); if (parsed.checksum !== digest(JSON.stringify(head)) || Object.keys(head).join(",") !== "kind,namespace,head,mode,receipts" || head.kind !== "header" || head.namespace !== namespace || !["empty", "fork", "snapshot"].includes(head.mode as string) || !isStorageCount(head.receipts) || head.receipts > policy.maxRecords) stop("storage-corrupt");
-      const value = readHead(head.head, id, policy); mode = head.mode; mandatory = mode !== "empty"; receipts = head.receipts;
-      if ((mode === "empty" && (value.revision !== 0 || value.bytes !== 0 || value.parent || receipts)) || (mode === "fork" && (!value.parent || value.parent.revision !== value.revision || receipts))) stop("storage-corrupt");
+      const header = readJournalHeader(parsed, { namespace, id, policy }); const value = header.head; mode = header.mode; mandatory = mode !== "empty"; receipts = header.receipts;
       state = { head: value, records: [], nodes: [], commits: new Map(), digest: parsed.checksum as string, end: line.raw.length, recordBytes: 0, identity: "", size: 0, modified: 0n }; receiptEnd = value.parent?.revision ?? 0; chain = createHash("sha256").update(state.digest); continue;
     }
     if (Object.keys(parsed).join(",") === "record") {

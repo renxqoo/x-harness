@@ -6,6 +6,7 @@ import { createHost } from "../../../../core/src/index";
 import type { Result } from "../../../../core/src/index";
 import { sessionStorage, defaultSessionLimits, storagePolicyKeys } from "../../../session/src/storage";
 import type { StoragePolicy } from "../../../session/src/storage";
+import { sessionPath } from "../store-path";
 import { createJsonlSessionPlugin } from "../index";
 
 export function value<T, E>(result: Result<T, E>): T { if (!result.ok) throw new Error(JSON.stringify(result.error)); return result.value; }
@@ -17,6 +18,6 @@ export function fixtures() {
   return async () => {
     const path = await realpath(await mkdtemp(join(tmpdir(), "session-jsonl-"))); cleanups.push(() => rm(path, { recursive: true, force: true }));
     const open = async () => { const host = value(createHost({ limits: { callTimeoutMs: 30000, closeTimeoutMs: 30000 } })); cleanups.push(() => host.close()); value(await host.install([value(createJsonlSessionPlugin({ path }))])); return { host, storage: value(host.use(sessionStorage)) }; };
-    return { ...await open(), open, path, file: join(path, "namespaces/default/sessions/one.jsonl") };
+    return { ...await open(), open, path, file: sessionPath(path, key) };
   };
 }

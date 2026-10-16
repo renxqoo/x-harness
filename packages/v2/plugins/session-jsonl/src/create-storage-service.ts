@@ -3,6 +3,7 @@ import type { SessionStorage, StoragePolicy } from "../../session/src/storage";
 import { readStorageRequest } from "../../session/src/storage";
 import type { SessionResult } from "../../session/src/contracts";
 import type { JsonlStore, Operation, SessionFile } from "./types";
+import { listSessions } from "./list-sessions";
 import { readNamespace } from "./read-config";
 import { createSession } from "./create-session";
 import { appendJournal } from "./append-journal";
@@ -15,6 +16,7 @@ export function createJsonlStorage(store: JsonlStore): ServiceImplementation<Ses
   const session = async <T>(op: Operation, input: { namespace: string; id: string; policy: StoragePolicy; compact?: boolean }, action: (file: SessionFile) => Promise<SessionResult<T>>): Promise<SessionResult<T>> => { const file = await store.load(op, input, input.policy); try { return await action(file); } finally { await file.handle.close(); } };
   return {
     initialize(raw, call) { const read = readStorageRequest("initialize", raw); if (!read.ok) return Promise.resolve(read); return store.run(call.signal, async (op) => { await readNamespace(op, read.value.namespace, read.value.policy); return { ok: true, value: undefined }; }); },
+    list: (raw, call) => run("list", raw, { signal: call.signal, action: listSessions }),
     create: (raw, call) => run("create", raw, { signal: call.signal, action: (op, policy, input) => createSession(store, op, { policy, input }) }),
     fork: (raw, call) => run("fork", raw, { signal: call.signal, action: (op, policy, input) => createSession(store, op, { policy, input }) }),
     commit: (raw, call) => run("commit", raw, { signal: call.signal, action: (op, policy, input) => session(op, { ...input, policy, compact: true }, (file) => appendJournal(op, file, input)) }),

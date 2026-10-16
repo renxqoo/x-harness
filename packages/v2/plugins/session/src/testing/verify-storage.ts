@@ -11,6 +11,7 @@ export async function verifySessionStorage(input: { first: SessionStorage; secon
   const policy = { maxRecordBytes, maxSessionBytes, maxRecords, maxConversationNodes, maxMetadataBytes, maxSessions };
   value(await first.initialize({ namespace, policy })); value(await second.initialize({ namespace, policy }));
   check("namespace policy conflict", failure(await second.initialize({ namespace, policy: { ...policy, maxSessions: 1 } }), "configuration-conflict"));
+  check("empty namespace enumeration", value(await first.list({ namespace, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes })).sessions.length === 0);
   const created = value(await first.create({ namespace, id: "contract", origin: "a".repeat(64), metadata: "null" }));
   check("create idempotency", JSON.stringify(value(await second.create({ namespace, id: "contract", origin: "a".repeat(64), metadata: "null" }))) === JSON.stringify(created));
   check("create identity conflict", failure(await second.create({ namespace, id: "contract", origin: "b".repeat(64), metadata: "null" }), "already-exists"));
@@ -45,7 +46,15 @@ export async function verifySessionStorage(input: { first: SessionStorage; secon
   const same: StorageCommit = { namespace, id: "contract", expectedRevision: 3, commitId: "same", fingerprint: "0".repeat(64), records: [record(4, "same")], nodes: [...nodes, { position: 3, seq: 3 }, { position: 4, seq: 4 }] };
   const duplicate = await Promise.all([first.commit(same), second.commit(same)]);
   check("concurrent identical commit", JSON.stringify(value(duplicate[0]!)) === JSON.stringify(value(duplicate[1]!)) && value(await first.read({ namespace, id: "contract" })).head.revision === 4);
+  const catalog = value(await first.list({ namespace, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
+  const following = value(await second.list({ namespace, after: catalog.next!, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
+  check("paged catalog", catalog.sessions[0]?.id === "child" && catalog.next === "child" && following.sessions[0]?.id === "contract" && following.next === undefined);
+  const summary = catalog.sessions[0]!;
+  check("immutable summary identity", summary.createdAt === child.createdAt && summary.metadata === child.metadata && summary.parent?.id === "contract" && summary.parent.revision === 2 && !("revision" in summary) && !("bytes" in summary));
+  check("catalog page budget", failure(await first.list({ namespace, limit: 1, maxPageBytes: 1024 }), "record-too-large"));
+  const end = value(await second.list({ namespace, after: "zzzz", limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
+  check("catalog cursor beyond end", end.sessions.length === 0 && end.next === undefined);
   value(await first.initialize({ namespace: `${namespace}-other`, policy }));
-  check("namespace isolation", failure(await second.read({ namespace: `${namespace}-other`, id: "contract" }), "not-found"));
+  check("namespace isolation", failure(await second.read({ namespace: `${namespace}-other`, id: "contract" }), "not-found") && value(await second.list({ namespace: `${namespace}-other`, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes })).sessions.length === 0);
   return Object.freeze({ checks: Object.freeze(checks) });
 }

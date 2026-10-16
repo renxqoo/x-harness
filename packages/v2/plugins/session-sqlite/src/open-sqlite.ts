@@ -20,7 +20,7 @@ export async function openSqlite(path: string, timeout: number): Promise<Databas
     if (stopped) return Promise.reject();
     return new Promise((resolve, reject) => { const id = ++next; pending.set(id, { resolve, reject }); worker.postMessage({ id, text, values, close: text === undefined }); });
   };
-  const query: Query = { all: execute, lock: () => Promise.resolve() };
+  const query: Query = { textCollation: "BINARY", all: execute, lock: () => Promise.resolve() };
   return {
     async transaction(write, run) {
       await execute(write ? "BEGIN IMMEDIATE" : "BEGIN");

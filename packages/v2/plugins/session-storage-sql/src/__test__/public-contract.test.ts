@@ -8,7 +8,7 @@ for (const kind of ["sqlite", "postgres"] as const) describe(`${kind} public sto
   it("passes the reusable contract with independent connections", async () => {
     const fixture = await setup(kind); const second = await fixture.independent();
     const result = await verifySessionStorage({ first: fixture.service, second, namespace: crypto.randomUUID() });
-    expect(result.checks).toContain("concurrent CAS"); expect(result.checks).toContain("atomic fork"); expect(result.checks).toContain("concurrent identical commit"); expect(result.checks).toHaveLength(20);
+    expect(result.checks).toContain("concurrent CAS"); expect(result.checks).toContain("atomic fork"); expect(result.checks).toContain("concurrent identical commit"); expect(result.checks).toHaveLength(25);
   });
   it("the public contract detects a backend that acknowledges a commit without persisting it", async () => {
     const fixture = await setup(kind); const broken = { ...fixture.service, async commit(input: Parameters<typeof fixture.service.commit>[0]) { return input.records.length ? { ok: true as const, value: { commitId: "batch", firstSeq: 1, lastSeq: 2, revision: 2 } } : fixture.service.commit(input); } };

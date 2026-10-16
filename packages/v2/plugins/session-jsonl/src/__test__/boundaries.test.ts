@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { mkdir, writeFile, symlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { namespacePath } from "../store-path";
 import { createJsonlSessionPlugin } from "../index";
 import { openJsonlStore } from "../open-store";
 import { defaultJsonlLimits } from "../read-options";
@@ -13,14 +14,14 @@ it("public options reject garbage, accessors, unknown keys and excessive budgets
 it("bootstrap resumes after lock creation, abandoned staging and empty namespace creation", async () => {
   const f = await fixture(); value(await f.host.close());
   const root = join(f.path, "fresh"); await mkdir(root); await writeFile(join(root, "store.lock"), ""); await writeFile(join(root, "pending.jsonl"), "partial");
-  const store = await openJsonlStore(root, defaultJsonlLimits); value(await store.run(undefined, async (op) => { await mkdir(join(op.root, "namespaces/default")); return { ok: true, value: undefined }; })); await store.close();
+  const store = await openJsonlStore(root, defaultJsonlLimits); value(await store.run(undefined, async (op) => { await mkdir(namespacePath(op.root, "default")); return { ok: true, value: undefined }; })); await store.close();
   const reopened = await openJsonlStore(root, defaultJsonlLimits); await reopened.close(); expect((await readFile(join(root, "format.json"), "utf8")).endsWith("\n")).toBe(true);
 });
 it("unowned directories, symlink roots, symlink logs and unrelated names are refused", async () => {
   const f = await fixture(); const root = join(f.path, "unowned"); await mkdir(root); await writeFile(join(root, "foreign"), "data"); await writeFile(join(root, "pending.jsonl"), "external-data"); await expect(openJsonlStore(root, defaultJsonlLimits)).rejects.toMatchObject({ error: { code: "configuration-conflict" } }); expect(await readFile(join(root, "pending.jsonl"), "utf8")).toBe("external-data");
   const link = join(f.path, "link"); await symlink(root, link); await expect(openJsonlStore(link, defaultJsonlLimits)).rejects.toMatchObject({ error: { code: "storage-corrupt" } });
   value(await f.storage.initialize({ namespace: key.namespace, policy })); await symlink(join(f.path, "format.json"), f.file); expect(await f.storage.read(key)).toMatchObject({ ok: false, error: { code: "storage-unavailable" } });
-  await writeFile(join(f.path, "namespaces/default/sessions/foreign"), "x"); expect(await f.storage.create({ ...key, id: "new", origin: hash, metadata: "null" })).toMatchObject({ ok: false, error: { code: "storage-corrupt" } });
+  await writeFile(join(namespacePath(f.path, "default"), "sessions/foreign"), "x"); expect(await f.storage.create({ ...key, id: "new", origin: hash, metadata: "null" })).toMatchObject({ ok: false, error: { code: "storage-corrupt" } });
 });
 it("record, session, metadata, node and session-count quotas are atomic", async () => {
   const f = await fixture(); value(await f.storage.initialize({ namespace: key.namespace, policy: { ...policy, maxRecordBytes: 5, maxRecords: 2, maxConversationNodes: 1, maxSessionBytes: 10, maxMetadataBytes: 4, maxSessions: 1 } }));

@@ -1,0 +1,203 @@
+{
+  "date": "2026-10-17",
+  "workspace": "/Users/wrr/work/x-harness/packages/v2",
+  "environment": {
+    "os": "macOS-26.5.2-arm64-arm-64bit",
+    "bun": "1.4.3"
+  },
+  "gates": {
+    "lint": {
+      "passed": true,
+      "logSha256": "25026430be0b69bd39a8f6dda0cd22fdf2b68f0b20d57f51d4a3ecef142406a8"
+    },
+    "typecheck": {
+      "passed": true,
+      "logSha256": "66398f887a8084de6198b5df6de70258653f0d9036006bc6905cf30ed92eadea"
+    },
+    "build": {
+      "passed": true,
+      "logSha256": "6bbf409d234a68d3f9a240c411cba9fc2d0a721fa66510b1a340566ae451bb46"
+    },
+    "test": {
+      "passed": true,
+      "logSha256": "edf80efd830d9e3175b698993a38d98664fcd8d5e03b7db9b76e43bf188abe0c"
+    }
+  },
+  "tests": {
+    "files": 103,
+    "passed": 751,
+    "failed": 0,
+    "added": 23,
+    "jsonlFiles": 10,
+    "jsonlTests": 57,
+    "storageChecks": 25
+  },
+  "typecheck": {
+    "negativeFixtures": 122,
+    "documentationExamples": 31
+  },
+  "coverage": {
+    "lines": {
+      "total": 3242,
+      "covered": 3188,
+      "skipped": 0,
+      "pct": 98.33
+    },
+    "statements": {
+      "total": 5518,
+      "covered": 5153,
+      "skipped": 0,
+      "pct": 93.38
+    },
+    "functions": {
+      "total": 921,
+      "covered": 902,
+      "skipped": 0,
+      "pct": 97.93
+    },
+    "branches": {
+      "total": 3945,
+      "covered": 3608,
+      "skipped": 0,
+      "pct": 91.45
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "thresholds": {
+    "statements": 90,
+    "branches": 88,
+    "functions": 95,
+    "lines": 96
+  },
+  "mutations": [
+    {
+      "mutation": "SQL namespace isolation",
+      "detected": true,
+      "failed": 5,
+      "passed": 7
+    },
+    {
+      "mutation": "SQL cursor advancement",
+      "detected": true,
+      "failed": 6,
+      "passed": 6
+    },
+    {
+      "mutation": "public namespace cursor",
+      "detected": true,
+      "failed": 3,
+      "passed": 9
+    },
+    {
+      "mutation": "public summary order",
+      "detected": true,
+      "failed": 1,
+      "passed": 12
+    },
+    {
+      "mutation": "storage page budget",
+      "detected": true,
+      "failed": 3,
+      "passed": 9
+    },
+    {
+      "mutation": "public next identity",
+      "detected": true,
+      "failed": 1,
+      "passed": 12
+    },
+    {
+      "mutation": "filesystem identity case",
+      "detected": true,
+      "failed": 2,
+      "passed": 10
+    },
+    {
+      "mutation": "path format recognition",
+      "detected": true,
+      "failed": 1,
+      "passed": 3
+    }
+  ],
+  "independentReview": {
+    "confirmedDefects": 0,
+    "sqlitePaginationCases": 81,
+    "base32RoundTrips": 10000,
+    "forgedPages": 3,
+    "jsonlHandlesAfterClose": 0
+  },
+  "coreChanges": [],
+  "filesSha256": {
+    "packages/v2/VERIFICATION.md": "b2712a4cebb74df1ea16c637021d01c75108df64c3ced390a15983aca0b3b453",
+    "packages/v2/plugins/session-jsonl/README.md": "3fb313d290d1568fff48391d000eb6232b21cbeb56945218f7c57e9237fe94d8",
+    "packages/v2/plugins/session-jsonl/plans/DESIGN.md": "d85dd6a6f1dc4d207e661637d47781e84618263821b9f8d1d337839b00d0ce0d",
+    "packages/v2/plugins/session-jsonl/reviews/independent-runtime-probe.ts": "5be8e93c090d1dda31d9bf8f9d1eb7d661f2f624cf0ebebe43912ba52ba6ca4d",
+    "packages/v2/plugins/session-jsonl/src/__test__/boundaries.test.ts": "9a88c44145ca40c1b83a9b0ca6418245717e8f38394c788d636f09c2f7e77ff6",
+    "packages/v2/plugins/session-jsonl/src/__test__/catalog.test.ts": "2de1cab598fbc65cc31b98220cea3106d9e34a38369bd5723bd7d1e65126563c",
+    "packages/v2/plugins/session-jsonl/src/__test__/contract.test.ts": "970004880199d7a35ecd1b1ee143ab7c4c73166f155290dc5f3abf43da098aaf",
+    "packages/v2/plugins/session-jsonl/src/__test__/corrupt-values.test.ts": "1115a98a7741a7eb133066f6558a352b1308baca9ed67e31e6db8e59fbe34cb8",
+    "packages/v2/plugins/session-jsonl/src/__test__/helpers.ts": "c24f441e45a83c518cb51512ee0c988842737365a7b3e50faffd624d93aef98e",
+    "packages/v2/plugins/session-jsonl/src/__test__/jsonl-process.ts": "143fcc20ec0b839e131f1eba39a9e1b0973e54a601042faa2558d554e6765700",
+    "packages/v2/plugins/session-jsonl/src/__test__/recovery.test.ts": "75d15ef04f71a7ce5f466f3365525f3aae22392e56487c66366b1bc897015020",
+    "packages/v2/plugins/session-jsonl/src/create-session.ts": "0e99586cdd74ea88c85d45d3811ba3ec215730096851f762a9a53b08019d329b",
+    "packages/v2/plugins/session-jsonl/src/create-storage-service.ts": "00e77265b6a76096c1707c10278d725a0181dbd91052b596584bd196ddb57412",
+    "packages/v2/plugins/session-jsonl/src/encode-id.ts": "f91cb78921aa496fda1679726bbcff528a2b9d0fcfb2a6c9e51b495a828f0206",
+    "packages/v2/plugins/session-jsonl/src/list-sessions.ts": "8711dc7b94b13249ac5ccac778582356dfb4aa62563c2291660f77306896b139",
+    "packages/v2/plugins/session-jsonl/src/open-store.ts": "8f8ac4ab1ee385cfde7bd61d0da323365f38ff1f68cff4950312af4ec91faabd",
+    "packages/v2/plugins/session-jsonl/src/read-config.ts": "2254b3832639feff731c8e9932c11fe28ed3f652000f529688d95190ff18bc35",
+    "packages/v2/plugins/session-jsonl/src/read-header.ts": "f95649b693b1450d9d1a1854cd557d0c0e1aca2e23ac10733e8daa9b998757e2",
+    "packages/v2/plugins/session-jsonl/src/replay-journal.ts": "c27697ca402f7e42f8591108be78010b7d4cc81d7b1e99c091cf9f5ffbea9829",
+    "packages/v2/plugins/session-jsonl/src/store-path.ts": "bb9293a4538d5319d2e5c61def2f41f5dfbb537776a5bde5dd46e9547ece920c",
+    "packages/v2/plugins/session-postgres/src/open-postgres.ts": "628c27c10e454b95d729f0a392338b415b60af216db3741786c337a4aa340b72",
+    "packages/v2/plugins/session-sqlite/src/open-sqlite.ts": "07e3dedf594e98ec8a18981f40d91550236a12bfc0b0426f5e4d48356fd75f27",
+    "packages/v2/plugins/session-storage-sql/src/__test__/fixtures.ts": "df67a5ca57e285138b310bea85549561efbdb3fcb18a237c88da5a58a5c1b8bf",
+    "packages/v2/plugins/session-storage-sql/src/__test__/projection-batching.test.ts": "5bd73688d20e2fb09f630e0245c0641b779c0b58c4977dd0fd5264f60f5e1a40",
+    "packages/v2/plugins/session-storage-sql/src/__test__/public-contract.test.ts": "92a55f8155e41024fe93d79e9961f764846fd6cf7821b68114a2b72717c60f1f",
+    "packages/v2/plugins/session-storage-sql/src/create-storage-service.ts": "93913336866eac30445729f584d4998e71abaf287a9a36dae497d9a9a2fdd38e",
+    "packages/v2/plugins/session-storage-sql/src/initialize-store.ts": "a554eab06cf3f0dbfd980a3321c917a1b7f00c7f5fe752ea26d2b6878be9211b",
+    "packages/v2/plugins/session-storage-sql/src/list-sessions.ts": "2b0592f0ebcc39fd3297996c19f72a0f4b2a3afd77239cc7f32af41435325075",
+    "packages/v2/plugins/session-storage-sql/src/open-store.ts": "b33cdde51411869fe20dd1d1c00426931e9ce25b53716b2e3ef12fbea8190d3f",
+    "packages/v2/plugins/session-storage-sql/src/text-order.ts": "4000d293fd1bdbf98b2113ae24fb69dcb1e1da95d37f32c40037f73aeea75734",
+    "packages/v2/plugins/session-storage-sql/src/types.ts": "efe46274d74cf898c58f1c26151877a0f86f7e56762285b25f59a9e1a3ea38ba",
+    "packages/v2/plugins/session/README.md": "f2c1cadc9f087b51482d0d30920e91e69980f4afc159bafcfa8e2cf82f4bb489",
+    "packages/v2/plugins/session/plans/BEHAVIOR-MATRIX.md": "62a9d86f82e91e2c9d9bf632d08c4c3661d46a347b3176a89fe379cbd87ffd5d",
+    "packages/v2/plugins/session/plans/list-sessions.md": "f74d3e27503007cc2b7058e905616a95ae06b62cd850e62a1e43e6e96b894554",
+    "packages/v2/plugins/session/reviews/check-list-mutations.py": "11aed8fd3bd59340023665d17f73a22f2660c12dde39466860696b59f587684c",
+    "packages/v2/plugins/session/reviews/list-acceptance.md": "bdc3249734aaeb02643cb9dd17e183956868bc86c67088d4286ec3f6aeefd9a9",
+    "packages/v2/plugins/session/reviews/list-mutation-results.json": "c64b6d090b8818ca03c98b4e89734612c7d6b9362bb62b8352999c98719dd852",
+    "packages/v2/plugins/session/reviews/list-review.md": "5dd27c2d9777a65145a56ba448d3e876b12d74a1026ca3bf793650b2f586de0b",
+    "packages/v2/plugins/session/src/__test__/catalog-process.ts": "9da153e296ff953cdc17d488e902eef159e16e6610d606366b5fd49617dae58a",
+    "packages/v2/plugins/session/src/__test__/independent-storage.test.ts": "608f99147eeee7066e7a41ab5c0e482eb2e894088f39ddec4436f36f7ddc3835",
+    "packages/v2/plugins/session/src/__test__/list-fixtures.ts": "fc8a0d8444cbf26f8f443a376f877539c231afde333c1117af55f2c561be203c",
+    "packages/v2/plugins/session/src/__test__/list-forged.test.ts": "6bef853465d56cc1c2148ce4112fcda233a41886abb39174f0c4e954297e6adc",
+    "packages/v2/plugins/session/src/__test__/list-process.test.ts": "22298a79da55f88668f62345d244124704b6e10d1a60a3b2e6d7eb47f489257c",
+    "packages/v2/plugins/session/src/__test__/list.test.ts": "199f9070742487e41bd34ef43ffd260a085939fc90cf1feee08bfb2bf3d29ce6",
+    "packages/v2/plugins/session/src/__test__/memory-storage.ts": "684e6e1dcc632245662a3e13dbd080cec9f2b92531580310c4426f4578f5921e",
+    "packages/v2/plugins/session/src/__test__/performance-invariants.test.ts": "e26ae189d6a67d3fe72d3e54f6f95f877c36e35463cd7f8b34aee414432e8248",
+    "packages/v2/plugins/session/src/__test__/type-fixtures/list-summary-fields.case": "2da60146a3cfd790d9762be704535382ca81aa98df153be3f2f3310c340de88e",
+    "packages/v2/plugins/session/src/__test__/type-fixtures/missing-list-input.case": "8732827c152bef92fa73bec83342eef17d413f0565bef204e0922101cda63ac6",
+    "packages/v2/plugins/session/src/__test__/type-fixtures/wrong-list-cursor.case": "f02cd4b452e502d16d9ed13764f5c4e60fe60eefad3d9df58af070cf1472e0a4",
+    "packages/v2/plugins/session/src/__test__/type-fixtures/wrong-list-limit.case": "a48ea6e4456a86d1723178c3fad62f6cf8cb65952da3075c106ecb53d19e819c",
+    "packages/v2/plugins/session/src/contracts.ts": "95ca34360ca892713bf4b3ff26bc26e078ccc12360a33809f9f8127c55159134",
+    "packages/v2/plugins/session/src/contracts/define-session.ts": "74e4d3fd2ef3d70774e262a3c733f5e14dd4305cae2913a0f105a3db8ed9cb3a",
+    "packages/v2/plugins/session/src/contracts/read-array.ts": "3ac0e23649a47ecafd9f7cfe2a19219352a735f1544efb5c5934a3a86e50a2f1",
+    "packages/v2/plugins/session/src/contracts/types.ts": "fe54925c885418b862e70fb08c4da95b0993a0f097fb1ba3737d7d5a5ed43fe5",
+    "packages/v2/plugins/session/src/create-session-plugin.ts": "54b8d64e0d822bc3160c8181401d7b93fa1676fc13b6ceb5c40d08c3af5df974",
+    "packages/v2/plugins/session/src/index.ts": "cbef38223d002adc90e0150f2b8c792a23941faaa487cc8d04ca049d4d02a11c",
+    "packages/v2/plugins/session/src/operations/list-sessions.ts": "6ebf2caf742df41ebc581c1dc8c13a55defc3da278d063ad4ddece37ee9e83ac",
+    "packages/v2/plugins/session/src/storage.ts": "a47370d744c7ee22f22992fd17ee91965eb34ce7468a3dc7b29101ba1b00b88d",
+    "packages/v2/plugins/session/src/storage/__test__/request.test.ts": "6797dc16cbc0126bb5becb1ea42fc5f54fbcc734535e21fb2261ae7150a88b94",
+    "packages/v2/plugins/session/src/storage/create-list-page.ts": "0cf04e719542d4773707a78eb4a56b073f7ac9ba5b11bc1cc488043c0d38dbe9",
+    "packages/v2/plugins/session/src/storage/define-storage.ts": "3fb9b89d04f47a7087bf6679715965936822ba84a4b1229a5f7f8f025facbdfd",
+    "packages/v2/plugins/session/src/storage/read-storage-request.ts": "7f43113e7a7bbe1585eba07c4b936a245f6e809983def50738fdf8928d389d5b",
+    "packages/v2/plugins/session/src/storage/read-summary.ts": "5bb2e584bf68b3ac333ad8d9a4fa56ca4c2ba675aad0246fb4124846608dd6af",
+    "packages/v2/plugins/session/src/storage/types.ts": "72bd817b3fed3fc578d93b340e7f9ad40a2bf7723382321276febf14bdaf6d1a",
+    "packages/v2/plugins/session/src/testing/verify-storage.ts": "63472ae3e75f8d41acfcc6acbde4d00a627b3f60373d23f8efdf71b691aee371",
+    "packages/v2/vitest.config.ts": "8313607b1035d9cba11c595de6b4402d4737c110d884c896c916da389e23cfee"
+  }
+}

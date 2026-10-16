@@ -36,7 +36,11 @@ export interface HistoryRequest { readonly id: string; readonly after?: number; 
 export interface ConversationRequest { readonly id: string; readonly after?: string; readonly revision?: number; readonly limit?: number }
 export interface HistoryPage { readonly revision: number; readonly records: readonly SessionRecord[]; readonly next?: number }
 export interface ConversationPage { readonly revision: number; readonly nodes: readonly ConversationNode[]; readonly next?: string }
+export type SessionSummary = Pick<SessionInfo, "id" | "createdAt" | "metadata" | "parent">;
+export interface ListSessions { readonly after?: string; readonly limit?: number }
+export interface SessionListPage { readonly sessions: readonly SessionSummary[]; readonly next?: string }
 export interface SessionService {
+  list(input: ListSessions): Promise<SessionResult<SessionListPage>>;
   create(input: CreateSession): Promise<SessionResult<SessionInfo>>;
   get(input: { readonly id: string }): Promise<SessionResult<SessionInfo>>;
   append(input: AppendSession): Promise<SessionResult<CommitReceipt>>;

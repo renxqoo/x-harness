@@ -8,6 +8,7 @@ import { headerLine, basePayload } from "./compact-journal";
 import { createHash } from "node:crypto";
 import { encodeLine } from "./encode-line";
 import { recordLine } from "./read-record";
+import { namespacePath, sessionPath, sessionId } from "./store-path";
 import { fail, failure, stop } from "./fail";
 export async function createSession(store: JsonlStore, op: Operation, options: { policy: StoragePolicy; input: StorageCreate | StorageFork }) {
   const { policy, input } = options;
@@ -16,7 +17,7 @@ export async function createSession(store: JsonlStore, op: Operation, options: {
   catch (error) { const result = failure(error); if (result.error.source !== "session" || result.error.code !== "not-found") return result; }
   finally { await existing?.handle.close(); }
   if (!isStorageText(input.metadata, policy.maxMetadataBytes)) return fail("capacity-exceeded"); if (!readStorageMetadata(input.metadata, policy.maxMetadataBytes).ok) return fail("storage-corrupt");
-  const directory = join(op.root, "namespaces", input.namespace, "sessions"); const entries = await op.io.readdir(directory); if (entries.some((entry) => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.jsonl$/.test(entry))) return fail("storage-corrupt"); if (entries.length >= policy.maxSessions) return fail("capacity-exceeded");
+  const directory = join(namespacePath(op.root, input.namespace), "sessions"); const entries = await op.io.readdir(directory); for (const entry of entries) sessionId(entry); if (entries.length >= policy.maxSessions) return fail("capacity-exceeded");
   let source: SessionFile | undefined; let head: StoredHead = Object.freeze({ id: input.id, origin: input.origin, createdAt: Date.now(), revision: 0, bytes: 0, metadata: input.metadata });
   try {
     if ("sourceId" in input) {
@@ -27,7 +28,7 @@ export async function createSession(store: JsonlStore, op: Operation, options: {
     }
     const state: Journal = { head, records: [], nodes: "nodes" in input ? input.nodes : [], commits: new Map(), digest: "", end: 0, recordBytes: 0, identity: "", size: 0, modified: 0n };
     const header = headerLine(input.namespace, state, source ? "fork" : "empty"); const initial = JSON.parse(header) as { checksum: string };
-    await publishFile(op, join(directory, `${input.id}.jsonl`), async (target) => {
+    await publishFile(op, sessionPath(op.root, input), async (target) => {
       let offset = await writeLine(target, header, 0); if (!source) return;
       const chain = createHash("sha256").update(initial.checksum);
       for (let index = 0; index < head.revision; index++) { op.check(); const record = source.journal.records[index]; if (!record) stop("storage-corrupt"); const raw = await recordLine(source.handle, record); chain.update(raw); offset += await writeLine(target, raw, offset); }

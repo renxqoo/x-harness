@@ -1,0 +1,1 @@
+void service.list({}).then((result) => { if (result.ok) void result.value.sessions[0]!.revision; });

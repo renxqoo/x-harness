@@ -1,12 +1,13 @@
 import { mkdtemp, rm, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sessionPath } from '../src/store-path.ts';
 import { openJsonlStore } from '../src/open-store.ts';
 import { createJsonlStorage } from '../src/create-storage-service.ts';
 import { createFileIO } from '../src/create-file-io.ts';
 import { defaultJsonlLimits } from '../src/read-options.ts';
 import { defaultSessionLimits, storagePolicyKeys } from '../../session/src/storage.ts';
-const root=await realpath(await mkdtemp(join(tmpdir(),'jsonl-review-'))); const file=join(root,'namespaces/n/sessions/s.jsonl');
+const root=await realpath(await mkdtemp(join(tmpdir(),'jsonl-review-'))); const file=sessionPath(root,{namespace:'n',id:'s'});
 const policy=Object.fromEntries(storagePolicyKeys.map(k=>[k,defaultSessionLimits[k]]));const hash='a'.repeat(64);const key={namespace:'n',id:'s'};const ctx={signal:new AbortController().signal};
 const io=createFileIO();const originalOpen=io.open;let armed=false;let footerWritten=false;let failures=0;
 io.open=async(...args:any[])=>{const handle=await originalOpen(...args);if(String(args[0])!==file)return handle;return new Proxy(handle,{get(target,k){if(k==='write')return async(...p:any[])=>{const result=await target.write(...p);if(armed&&p[0].toString().includes('"kind":"commit"'))footerWritten=true;return result;};if(k==='sync')return async()=>{if(armed&&footerWritten){armed=false;failures++;throw Error('sync outcome unknown');}await target.sync();};const v=Reflect.get(target,k,target);return typeof v==='function'?v.bind(target):v;}});};

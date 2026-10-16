@@ -12,7 +12,7 @@ export function openSqlStore(database: Database, limits: StorageLimits, maximum:
       try {
         return await database.transaction(input.write, async (query) => {
           const check = () => { if (input.signal?.aborted || Date.now() >= deadline) { rejected = fail("cancelled"); throw rollback; } };
-          const guarded: Query = { all(text, values) { check(); return query.all(text, values); }, lock(key) { check(); return query.lock(key); } };
+          const guarded: Query = { textCollation: query.textCollation, all(text, values) { check(); return query.all(text, values); }, lock(key) { check(); return query.lock(key); } };
           check(); const result = await action(guarded); if (!result.ok) { rejected = result; throw rollback; } check(); return result;
         });
       } catch (error) { return error === rollback && rejected ? rejected : fail("storage-unavailable"); }

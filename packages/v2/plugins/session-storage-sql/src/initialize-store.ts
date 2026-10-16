@@ -1,6 +1,7 @@
 import type { Query } from "./types";
 import type { NamespaceOptions } from "./types";
 import type { SessionResult } from "../../session/src/contracts";
+import { textOrder } from "./text-order";
 import { fail } from "./fail";
 
 export async function initializeStore(query: Query, options: NamespaceOptions): Promise<SessionResult<void>> {
@@ -13,6 +14,7 @@ export async function initializeStore(query: Query, options: NamespaceOptions): 
     "CREATE TABLE IF NOT EXISTS xh_session_commits (namespace TEXT NOT NULL, id TEXT NOT NULL, commit_id TEXT NOT NULL, fingerprint TEXT NOT NULL, first_seq BIGINT NOT NULL, last_seq BIGINT NOT NULL, PRIMARY KEY(namespace,id,commit_id), FOREIGN KEY(namespace,id) REFERENCES xh_session_heads(namespace,id))",
     "CREATE TABLE IF NOT EXISTS xh_session_view (namespace TEXT NOT NULL, id TEXT NOT NULL, position BIGINT NOT NULL CHECK(position>0), seq BIGINT NOT NULL, PRIMARY KEY(namespace,id,position), UNIQUE(namespace,id,seq), FOREIGN KEY(namespace,id,seq) REFERENCES xh_session_records(namespace,id,seq))",
   ]) await query.all(statement);
+  if (query.textCollation === "C") await query.all(`CREATE INDEX IF NOT EXISTS xh_session_heads_list ON xh_session_heads(namespace,id COLLATE ${textOrder(query)})`);
   const signature = "immutable-history-position-view-commit-receipt";
   const formats = await query.all("SELECT signature FROM xh_session_format");
   if (formats.length && (formats.length !== 1 || formats[0]?.signature !== signature)) return fail("configuration-conflict");

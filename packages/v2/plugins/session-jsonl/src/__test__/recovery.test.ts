@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import { readFile, writeFile, appendFile, truncate, stat, rename } from "node:fs/promises";
+import { sessionPath } from "../store-path";
 import { fixtures, value, policy, key, hash, commit } from "./helpers";
 const fixture = fixtures();
 it("every torn append boundary recovers to the last complete commit and accepts a retry", async () => {
@@ -21,7 +22,7 @@ it.each(["malformed", "checksum", "utf8", "sequence", "record-digest", "footer-d
 it("header truncation and published fork truncation never become empty sessions", async () => {
   const f = await fixture(); value(await f.storage.initialize({ namespace: key.namespace, policy })); value(await f.storage.create({ ...key, origin: hash, metadata: "null" })); value(await f.storage.commit(commit()));
   value(await f.storage.fork({ namespace: key.namespace, id: "fork", origin: hash, metadata: "null", sourceId: key.id, throughRevision: 1, bytes: 6, nodes: [{ position: 1, seq: 1 }] }));
-  const forkFile = f.file.replace("one.jsonl", "fork.jsonl"); const fork = await readFile(forkFile); await truncate(forkFile, fork.lastIndexOf(10, fork.length - 2) + 1);
+  const forkFile = sessionPath(f.path, { ...key, id: "fork" }); const fork = await readFile(forkFile); await truncate(forkFile, fork.lastIndexOf(10, fork.length - 2) + 1);
   expect(await f.storage.read({ ...key, id: "fork" })).toMatchObject({ ok: false, error: { code: "storage-corrupt" } }); await truncate(f.file, 5); expect(await f.storage.read(key)).toMatchObject({ ok: false, error: { code: "storage-corrupt" } });
 });
 it("inode replacement and shrink invalidate offsets while external appends replay incrementally", async () => {

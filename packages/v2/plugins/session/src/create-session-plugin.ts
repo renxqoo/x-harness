@@ -5,6 +5,7 @@ import { session } from "./contracts";
 import { sessionStorage } from "./storage";
 import { readOptions } from "./read-options";
 import { createSession } from "./operations/create-session";
+import { listSessions } from "./operations/list-sessions";
 import { getSession } from "./operations/get-session";
 import { appendSession } from "./operations/append-session";
 import { readHistory } from "./operations/read-history";
@@ -18,6 +19,7 @@ export function createSessionPlugin(input: SessionOptions = {}): SessionResult<P
   const plugin = definePlugin({ name: "session", requires: { storage: sessionStorage }, provides: { session }, async setup(ctx) {
     const initialized = await ctx.deps.storage.initialize({ namespace: options.value.namespace, policy: { maxRecordBytes, maxSessionBytes, maxRecords, maxConversationNodes, maxMetadataBytes, maxSessions } }); if (!initialized.ok) return initialized;
     return ctx.service({ session: {
+      list: (input, call) => listSessions({ options: options.value, storage: call.deps.storage }, input),
       create: (input, call) => createSession({ options: options.value, storage: call.deps.storage }, input),
       get: (input, call) => getSession({ options: options.value, storage: call.deps.storage }, input),
       append: (input, call) => appendSession({ options: options.value, storage: call.deps.storage }, input),

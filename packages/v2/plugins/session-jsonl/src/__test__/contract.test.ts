@@ -5,7 +5,7 @@ import { fixtures, value, policy, key, hash, commit } from "./helpers";
 const fixture = fixtures();
 it("two independent JSONL clients implement the complete public storage contract", async () => {
   const f = await fixture(); const second = await f.open();
-  const report = await verifySessionStorage({ first: f.storage, second: second.storage, namespace: "conformance" }); expect(report.checks).toHaveLength(20);
+  const report = await verifySessionStorage({ first: f.storage, second: second.storage, namespace: "conformance" }); expect(report.checks).toHaveLength(25);
 });
 it("reopening preserves immutable history, receipts and replacement positions", async () => {
   const f = await fixture(); value(await f.storage.initialize({ namespace: key.namespace, policy })); value(await f.storage.create({ ...key, origin: hash, metadata: "null" }));

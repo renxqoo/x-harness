@@ -1,4 +1,5 @@
 import type { SessionStorage, StoragePolicy, StoredHead, StoredRecord, StorageNode, StoredCommit } from "../storage";
+import { createStorageListPage } from "../storage";
 import type { SessionResult } from "../contracts";
 
 export function memoryStorage(): SessionStorage {
@@ -12,6 +13,11 @@ export function memoryStorage(): SessionStorage {
     return items.length && !selected.length ? fail("record-too-large") : ok({ records: selected, more: selected.length < items.length });
   };
   return {
+    async list(input) {
+      const policy = policies.get(input.namespace); if (!policy) return fail("configuration-conflict"); const page = createStorageListPage(input, policy);
+      const entries = [...heads.entries()].filter(([key]) => key.startsWith(`${input.namespace}/`)).map(([, head]) => head).sort((a, b) => a.id < b.id ? -1 : Number(a.id > b.id));
+      for (const head of entries) { if (head.id <= (input.after ?? "")) continue; const result = page.add({ id: head.id, createdAt: head.createdAt, metadata: head.metadata, ...(head.parent ? { parent: head.parent } : {}) }); if (!result.ok) return result; if (!result.value) break; } return ok(page.finish());
+    },
     async initialize(input) { const old = policies.get(input.namespace); if (old && JSON.stringify(old) !== JSON.stringify(input.policy)) return fail("configuration-conflict"); policies.set(input.namespace, structuredClone(input.policy)); return ok(undefined); },
     async create(input) {
       const id = key(input); const old = heads.get(id); if (old) return old.origin === input.origin ? ok(old) : fail("already-exists");

@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
+    maxWorkers: 8,
     globalSetup: ["./plugins/session/src/__test__/start-postgres.ts"],
     include: ["plugins/*/src/**/__test__/*.test.ts", "core/src/**/__test__/*.test.ts", "standard/src/**/__test__/*.test.ts", "application/src/**/__test__/*.test.ts", "loader/src/**/__test__/*.test.ts", "create/src/**/__test__/*.test.ts", "fixtures/**/*.test.ts", "scripts/benchmark/**/__test__/*.test.ts"],
     testTimeout: 5000,

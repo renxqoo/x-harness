@@ -15,7 +15,11 @@ export interface StorageHistory extends StoragePageRequest { readonly after: num
 export interface StorageConversation extends StoragePageRequest { readonly position: number; readonly revision?: number }
 export interface StorageHistoryPage { readonly revision: number; readonly records: readonly StoredRecord[]; readonly next?: number }
 export interface StorageConversationPage { readonly revision: number; readonly records: readonly (StoredRecord & StorageNode)[]; readonly next?: number }
+export type StoredSessionSummary = Pick<StoredHead, "id" | "createdAt" | "metadata" | "parent">;
+export interface StorageList { readonly namespace: string; readonly after?: string; readonly limit: number; readonly maxPageBytes: number }
+export interface StorageListPage { readonly sessions: readonly StoredSessionSummary[]; readonly next?: string }
 export interface SessionStorage {
+  list(input: StorageList): Promise<SessionResult<StorageListPage>>;
   initialize(input: { readonly namespace: string; readonly policy: StoragePolicy }): Promise<SessionResult<void>>;
   read(input: StorageKey & { readonly commitId?: string; readonly projection?: boolean }): Promise<SessionResult<StorageSnapshot>>;
   create(input: StorageCreate): Promise<SessionResult<StoredHead>>;

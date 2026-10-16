@@ -6,11 +6,11 @@
 
 createJsonlSessionPlugin({ path?, limits? }) 返回 SessionResult<Plugin>，提供规范 sessionStorage token。默认目录 ./data/sessions-jsonl。limits 仅包含 maxQueue=64、lockTimeoutMs=1000、operationTimeoutMs=10000，正整数，可降至1或提高至默认四倍。当前部署目标为本机 macOS 或 Linux/glibc，运行时 Bun。其他平台或无法取得系统锁明确返回 configuration-conflict/storage-unavailable；不使用过期时间接管锁。多机共享网络文件系统、复制与选主由其他后端承担。
 
-保持 initialize/read/create/commit/history/conversation/fork/getCommit 形状、错误及幂等语义。领域投影算法不进入本插件。metadata 是有界 JSON，复用公开解码器；记录正文按存储契约保持不透明字符串。session 与 core 不导入本后端。
+保持 initialize/list/read/create/commit/history/conversation/fork/getCommit 形状、错误及幂等语义。领域投影算法不进入本插件。metadata 是有界 JSON，复用公开解码器；记录正文按存储契约保持不透明字符串。session 与 core 不导入本后端。
 
 ## 数据布局
 
-目录由插件独占：format.json、store.lock、pending.jsonl、namespaces/<namespace>/policy.json、namespaces/<namespace>/sessions/<id>.jsonl。标识符来自统一契约验证器。新目录0700、数据和锁文件0600。拒绝符号链接及非普通日志文件，文件打开使用 O_NOFOLLOW。根无format时只允许store.lock及pending.jsonl两个保留名；锁内清理pending并原子发布format，完成各级目录sync，恢复首次初始化死亡。其他无格式非空目录拒绝。namespace无policy时仅允许空目录；policy经根pending原子发布并同步祖先后，才创建sessions。
+目录由插件独占：format.json、store.lock、pending.jsonl、namespaces/<base32(namespace)>/policy.json、namespaces/<namespace>/sessions/<base32(id)>.jsonl。标识符来自统一契约验证器，路径采用规范小写base32编码；根format声明paths=base32。最长ID编码205字符，不超过常见255字节文件名限制。新目录0700、数据和锁文件0600。拒绝符号链接及非普通日志文件，文件打开使用 O_NOFOLLOW。根无format时只允许store.lock及pending.jsonl两个保留名；锁内清理pending并原子发布format，完成各级目录sync，恢复首次初始化死亡。其他无格式非空目录拒绝。namespace无policy时仅允许空目录；policy经根pending原子发布并同步祖先后，才创建sessions。
 
 命名空间六项关键配额持久化为校验保护的配置，重复初始化必须一致。会话数量直接从命名空间 sessions 目录中的已发布日志计数，不设置第二套计数事实。创建和分支在全库锁内检查配额，以同一文件系统的原子 rename 发布完成文件；跨进程读也取得同一锁，因此目标完整可见与配额观察一致。
 

@@ -14,7 +14,7 @@ function countingStore(counts: { sql: string; values: number }[]): Store {
     async transaction(write, run) {
       db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
       try {
-        const query: Query = { all(sql: string, values: (string | number | null)[] = []) { counts.push({ sql: sql.replace(/\$\d+/g, "?").slice(0, 48), values: values.length }); return Promise.resolve(db.query(sql.replace(/\$(\d+)/g, "?$1")).all(...values) as Row[]); }, lock: () => Promise.resolve() };
+        const query: Query = { textCollation: "BINARY", all(sql: string, values: (string | number | null)[] = []) { counts.push({ sql: sql.replace(/\$\d+/g, "?").slice(0, 48), values: values.length }); return Promise.resolve(db.query(sql.replace(/\$(\d+)/g, "?$1")).all(...values) as Row[]); }, lock: () => Promise.resolve() };
         const result = await run(query); db.exec("COMMIT"); return result;
       } catch (error) { db.exec("ROLLBACK"); throw error; }
     },

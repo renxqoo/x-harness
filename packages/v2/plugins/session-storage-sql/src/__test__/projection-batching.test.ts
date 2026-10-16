@@ -16,7 +16,7 @@ it("projection replacement never issues a statement exceeding the batching bound
     async transaction(write, run) {
       db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN");
       try {
-        const query: Query = {
+        const query: Query = { textCollation: "BINARY",
           all(sql, values = []) { counts.push(values.length); return Promise.resolve(db.query(sql.replace(/\$(\d+)/g, "?$1")).all(...values) as Row[]); },
           lock: () => Promise.resolve(),
         };

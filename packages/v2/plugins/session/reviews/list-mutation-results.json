@@ -1,0 +1,50 @@
+[
+  {
+    "mutation": "SQL namespace isolation",
+    "detected": true,
+    "failed": 5,
+    "passed": 7
+  },
+  {
+    "mutation": "SQL cursor advancement",
+    "detected": true,
+    "failed": 6,
+    "passed": 6
+  },
+  {
+    "mutation": "public namespace cursor",
+    "detected": true,
+    "failed": 3,
+    "passed": 9
+  },
+  {
+    "mutation": "public summary order",
+    "detected": true,
+    "failed": 1,
+    "passed": 12
+  },
+  {
+    "mutation": "storage page budget",
+    "detected": true,
+    "failed": 3,
+    "passed": 9
+  },
+  {
+    "mutation": "public next identity",
+    "detected": true,
+    "failed": 1,
+    "passed": 12
+  },
+  {
+    "mutation": "filesystem identity case",
+    "detected": true,
+    "failed": 2,
+    "passed": 10
+  },
+  {
+    "mutation": "path format recognition",
+    "detected": true,
+    "failed": 1,
+    "passed": 3
+  }
+]

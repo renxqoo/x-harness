@@ -3,6 +3,7 @@ import type { SessionStorage } from "../../session/src/storage";
 import type { SessionResult } from "../../session/src/contracts";
 import type { Store, Query, NamespaceOptions } from "./types";
 import { readStorageRequest } from "../../session/src/storage";
+import { listSessions } from "./list-sessions";
 import { readNamespace } from "./read-namespace";
 import { initializeStore } from "./initialize-store";
 import { readSnapshot } from "./read-snapshot";
@@ -20,6 +21,7 @@ export function createSqlStorage(store: Store): ServiceImplementation<SessionSto
   };
   return {
     initialize(raw, call) { const input = readStorageRequest("initialize", raw); if (!input.ok) return Promise.resolve(input); return store.run({ write: true, signal: call.signal }, (query) => initializeStore(query, { namespace: input.value.namespace, limits: input.value.policy })); },
+    list: (input, call) => run("list", input, { write: false, signal: call.signal, action: listSessions }),
     read: (input, call) => run("read", input, { write: false, signal: call.signal, action: readSnapshot }),
     create: (input, call) => run("create", input, { write: true, signal: call.signal, action: createStoredSession }),
     commit: (input, call) => run("commit", input, { write: true, signal: call.signal, action: commitSession }),

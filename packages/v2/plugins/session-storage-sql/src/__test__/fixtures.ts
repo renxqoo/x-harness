@@ -20,10 +20,10 @@ export function fixtures() {
     let database: SqlDatabase;
     if (kind === "sqlite") {
       const db = new Database(join(directory, "data.sqlite")); db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON");
-      database = { async transaction(write, run) { db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN"); try { const result = await run({ all(sql, values = []) { return Promise.resolve(db.query(sql.replace(/\$(\d+)/g, "?$1")).all(...values) as Record<string, unknown>[]); }, lock: () => Promise.resolve() }); db.exec("COMMIT"); return result; } catch (error) { db.exec("ROLLBACK"); throw error; } }, close() { db.close(); return Promise.resolve(); } };
+      database = { async transaction(write, run) { db.exec(write ? "BEGIN IMMEDIATE" : "BEGIN"); try { const result = await run({ textCollation: "BINARY", all(sql, values = []) { return Promise.resolve(db.query(sql.replace(/\$(\d+)/g, "?$1")).all(...values) as Record<string, unknown>[]); }, lock: () => Promise.resolve() }); db.exec("COMMIT"); return result; } catch (error) { db.exec("ROLLBACK"); throw error; } }, close() { db.close(); return Promise.resolve(); } };
     } else {
       const db = new SQL(inject("sessionPostgresUrl"));
-      database = { transaction(write, run) { return db.begin(write ? "isolation level read committed" : "isolation level repeatable read read only", async (tx) => run({ all: (sql, values = []) => tx.unsafe<Record<string, unknown>[]>(sql, [...values]), async lock(key) { await tx.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [key]); } })); }, close: () => db.close() };
+      database = { transaction(write, run) { return db.begin(write ? "isolation level read committed" : "isolation level repeatable read read only", async (tx) => run({ textCollation: "C", all: (sql, values = []) => tx.unsafe<Record<string, unknown>[]>(sql, [...values]), async lock(key) { await tx.unsafe("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [key]); } })); }, close: () => db.close() };
     }
     const store = openSqlStore(database, defaultStorageLimits, kind === "sqlite" ? 1 : 8); cleanups.push(async () => { value(await store.close()); });
     const open = async (source: Store = store) => {

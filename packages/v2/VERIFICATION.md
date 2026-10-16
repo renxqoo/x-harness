@@ -41,21 +41,21 @@ bun run test
 
 | 检查 | 结果 |
 | --- | --- |
-| lint | 类型感知检查零错误、零警告；103 个内核源码和106个外围源码通过依赖、运行时无环、平台隔离及代码风格检查 |
-| typecheck | strict 检查通过；111 个内核及7个session负例产生预期诊断；30 个文档示例通过真实公开入口检查（含session） |
-| build | core、core/validation、standard、application、session、session-storage-sql 的浏览器目标及 loader、create、create CLI、session-sqlite、session-postgres及SQLite Worker的 Bun 目标 ESM 构建通过 |
-| test | 83 个测试文件，646/646 用例通过 |
+| lint | 类型感知检查零错误、零警告；103 个内核源码和140个外围源码通过依赖、运行时无环、平台隔离及代码风格检查 |
+| typecheck | strict 检查通过；111 个内核及11个session负例产生预期诊断；31 个文档示例通过真实公开入口检查（含session） |
+| build | core、core/validation、standard、application、session、session-storage-sql 的浏览器目标及 loader、create、create CLI、session-sqlite、session-postgres、session-jsonl及SQLite Worker的 Bun 目标 ESM 构建通过 |
+| test | 103 个测试文件，751/751 用例通过 |
 
-类型正例包含真实作者门面，负例覆盖未声明依赖、错误输入输出、同步服务、缺失/额外提供、扩展点权限、可选依赖未检查和无效生命周期等场景。Manifest派生的独立setup、实现、Invocation、resource及task保持相同约束，函数注解不能反向扩大声明权限。文档示例包含 EXAMPLES 的9个代码块、内核使用指南的16个代码块，以及standard/application/loader/create/session各1个代码块。
+类型正例包含真实作者门面，负例覆盖未声明依赖、错误输入输出、同步服务、缺失/额外提供、扩展点权限、可选依赖未检查和无效生命周期等场景。Manifest派生的独立setup、实现、Invocation、resource及task保持相同约束，函数注解不能反向扩大声明权限。文档示例包含 EXAMPLES 的9个代码块、内核使用指南的16个代码块，以及standard/application/loader/create各1个代码块、session的2个代码块。
 
 覆盖率统计未排除新增生产实现，阈值保持语句 90%、分支 88%、函数 95%、行 96%。
 
 | 指标 | 实测 | 已覆盖 / 总数 |
 | --- | --- | --- |
-| 语句 | 92.94% | 4307 / 4634 |
-| 分支 | 90.87% | 3008 / 3310 |
-| 函数 | 97.64% | 787 / 806 |
-| 行 | 98.16% | 2895 / 2949 |
+| 语句 | 93.38% | 5153 / 5518 |
+| 分支 | 91.45% | 3608 / 3945 |
+| 函数 | 97.93% | 902 / 921 |
+| 行 | 98.33% | 3188 / 3242 |
 
 数字来自 coverage/coverage-summary.json；覆盖率用于发现遗漏，不能代替行为断言。
 
@@ -107,7 +107,7 @@ API 职责另有四项隔离副本故障注入：取消处理器种类检查、�
 
 多轮独立只读审查发现的问题已转成回归，包括门面状态快照、恶意名称强制转换、批量提供的半提交、临时租约失败缓存、清理资源身份、暂存子范围、迟到微任务和取消后的资源清理父项。混合操作检查另外覆盖相同 token 重新安装后的暂存依赖。空能力批次也在不可信 options 描述器读取后重新检查准入，宿主已停止时不会报告提供成功。
 
-尚未执行 60 分钟持续运行、同条件多轮延迟分位基准、发布包下载安装或跨进程故障恢复。这里不宣称性能最优、不中断替换或分布式高可用认证。进程内无法强制中断的执行由外部 Worker/进程监督处理，持久化与业务恢复属于外部插件。
+尚未执行 60 分钟持续运行、同条件多轮延迟分位基准、发布包下载安装或硬件断电恢复。这里不宣称性能最优、不中断替换或分布式高可用认证。进程内无法强制中断的执行由外部 Worker/进程监督处理，持久化与业务恢复属于外部插件。
 
 ## 原生作者与在途替换对照
 
@@ -159,8 +159,14 @@ Result规范化直接读取两个自有数据属性，避免通用对象副本�
 
 ## Session及独立存储插件
 
-会话通过公共契约支持SQLite、PostgreSQL及JSONL。真实数据库、位置投影、容量、跨进程CAS、提交前后SIGKILL、源码/构建进程及同步备库提升共同回归。JSONL另覆盖逐字节断尾、强制完整快照、索引增量读取、bootstrap死亡、分支原子发布和文件同步故障。另一程序Agent新增的并发/边界/伪造后端TDD一同执行；公共检查器验证20项存储规则。
+会话通过公共契约支持SQLite、PostgreSQL及JSONL。真实数据库、位置投影、容量、跨进程CAS、提交前后SIGKILL、源码/构建进程及同步备库提升共同回归。JSONL另覆盖逐字节断尾、强制完整快照、索引增量读取、bootstrap死亡、分支原子发布和文件同步故障。另一程序Agent新增的并发/边界/伪造后端TDD一同执行；公共检查器验证25项存储规则。
 
-全工作区99文件728用例通过。覆盖率Statements93.26%、Branches91.27%、Functions97.89%、Lines98.29%，阈值90/88/95/96保持。Lint、typecheck、build通过。118个类型负例按预期拒绝，31个文档示例通过公开API类型检查。
+全工作区103文件751用例通过。覆盖率Statements93.38%、Branches91.45%、Functions97.93%、Lines98.33%，阈值90/88/95/96保持。Lint、typecheck、build通过。122个类型负例按预期拒绝，31个文档示例通过公开API类型检查。
 
 公开contracts/storage入口保证源码与构建共享token，存储作者工具只有一套实现。JSONL终审额外106条行为断言通过，8项隔离突变由明确行为断言检出。完整数字、审查核销、部署限制及重跑脚本见[JSONL验收](plugins/session-jsonl/reviews/acceptance.md)。SQL及Session边界见[使用指南](plugins/session/README.md)。
+
+## 会话发现验收
+
+session.list({ after?, limit? }) 在SQLite、PostgreSQL、JSONL统一提供持久会话摘要发现，按ASCII ID顺序分页；游标绑定namespace，不持有跨页事务。包含重开及源码/构建真实子进程的未知ID发现、UTF8页预算、最长游标、大小写身份、伪造页、取消及句柄释放验证。core源码保持不变。
+
+新接口8项隔离突变及JSONL已有8项故障突变均被明确断言检出；独立审查额外验证81组SQL分页、10000组路径编码及JSONL资源生命周期。103个测试文件使用8个worker，避免压垮隔离PG的64个连接容量，所有断言、期限及覆盖率阈值保留。行为矩阵补齐持久会话发现裁决，原活跃Agent对象枚举归属运行时。JSONL编码路径与根格式标记一致，不匹配目录被拒绝且不会自动改写。详见[验收记录](plugins/session/reviews/list-acceptance.md)。

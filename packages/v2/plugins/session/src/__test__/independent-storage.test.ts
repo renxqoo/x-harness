@@ -7,7 +7,7 @@ import { memoryStorage } from "./memory-storage";
 import { value, message } from "./helpers";
 
 it("a backend with no SQL or database dependency passes the common contract and supplies the session plugin", async () => {
-  const storage = memoryStorage(); expect((await verifySessionStorage({ first: storage, second: storage, namespace: "contract" })).checks).toHaveLength(20);
+  const storage = memoryStorage(); expect((await verifySessionStorage({ first: storage, second: storage, namespace: "contract" })).checks).toHaveLength(25);
   const host = value(createHost());
   try {
     value(await host.install([value(createSessionPlugin()), definePlugin({ name: "custom-store", provides: { storage: sessionStorage }, setup(ctx) { return ctx.service({ storage }); } })]));
@@ -34,6 +34,7 @@ it("append rejects a backend projection whose position exceeds its own history s
   const err = (code: import("../contracts").SessionErrorCode) => ({ ok: false as const, error: { source: "session" as const, code } });
   const head = { id: "one", origin: "f".repeat(64), createdAt: 1, revision: 3, bytes: 100, metadata: "null" };
   const forged: import("../storage").SessionStorage = {
+    async list() { return okHead({ sessions: [] }); },
     async initialize() { return okHead(undefined); },
     async read() { return okHead({ head, nodes: [{ position: 5, seq: 3 }] }); },
     async create() { return okHead(head); },
