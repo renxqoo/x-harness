@@ -95,6 +95,56 @@ describe("分区放行（eff=900：cp=540 / warn=701 / l1=l2=801——单线基�
       await world.ctx.dispose();
     }
   });
+
+  it("死区联动（症状:mrod40 卡 707k 在 l1/l2 间空转）:l1-backoff 且 occupancy 超 l1 线 15 点 → 未到 l2 线也 escalateOrJoin", async () => {
+    const world = await makeWorld({ l1Pct: 50, l2Pct: 95, checkpointPct: 20, summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined });
+    try {
+      const made = await world.store.create({ id: sid("deadzone") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 900, output: 1 } } });
+      seedTurn(made.value, { turn: 1, user: textOf(3), assistant: { text: textOf(3), usage: { input: 660, output: 1 } } });
+      await dispatchPreStep(world, { session: made.value.id });
+      const warn = made.value.events().find((event) => event.type === "compaction/diagnostic" && JSON.stringify(event.data).includes("l1-no-gain"));
+      expect(warn).toBeDefined();
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("超窗检测（症状:128k 假窗口会话 input 达窗口 223% 静默跑完）:usage 锚超声明窗口 → window-overfill 告警且按实测收缩水位", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const world = await makeWorld({ contextWindow: 1_000, l1Pct: 50, l2Pct: 95, checkpointPct: 20, summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined });
+    try {
+      const made = await world.store.create({ id: sid("overfill") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 2_000, output: 1 } } });
+      seedTurn(made.value, { turn: 1, user: textOf(3), assistant: { text: textOf(3), usage: { input: 2_000, output: 1 } } });
+      await dispatchPreStep(world, { session: made.value.id });
+      const overfill = stderr.mock.calls.find((line) => String(line[0]).includes("window-overfill"));
+      expect(overfill).toBeDefined();
+      expect(String(overfill?.[0])).toContain('"declared":1000');
+    } finally {
+      stderr.mockRestore();
+      await world.ctx.dispose();
+    }
+  });
+
+  it("L2 单步预测（症状:cmxidv 越线 +186k 才压缩）:occupancy 未到 l2 但单步增量预测越线 → 提前 escalateOrJoin", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const world = await makeWorld({ l1Pct: 50, l2Pct: 95, checkpointPct: 20, summarizer: undefined, clearKeepRecent: 0 }, { summarizer: undefined });
+    try {
+      const made = await world.store.create({ id: sid("predict") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 600, output: 1 } } });
+      seedTurn(made.value, { turn: 1, user: textOf(3), assistant: { text: textOf(3), usage: { input: 660, output: 1 } } });
+      await dispatchPreStep(world, { session: made.value.id });
+      const released = stderr.mock.calls.some((line) => String(line[0]).includes("budget-gate-release"));
+      expect(released).toBe(true);
+    } finally {
+      stderr.mockRestore();
+      await world.ctx.dispose();
+    }
+  });
 });
 
 describe("CP + L2 旅程（账本就绪 → 越线 L2 零新 CP）", () => {
@@ -319,11 +369,11 @@ describe("空闲清理（时间分支）", () => {
 
 
 describe("阈值窗口分档（autocompact）", () => {
-  it("三档表与档位解析：1M→30/55/78、512k→35/55/75、256k(≤300k 档)→40/50/72；段 10/10/12%", () => {
+  it("三档表与档位解析：1M→43/50/68、512k→45/55/70、256k(≤300k 档)→50/60/75（cp 由 l2−25 派生）；段 10/10/12%", () => {
     const [first, second, third] = TIERS;
-    expect(first).toMatchObject({ checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12 });
-    expect(second).toMatchObject({ checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10 });
-    expect(third).toMatchObject({ checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10 });
+    expect(first).toMatchObject({ l1Pct: 60, l2Pct: 75, segmentPct: 12 });
+    expect(second).toMatchObject({ l1Pct: 55, l2Pct: 70, segmentPct: 10 });
+    expect(third).toMatchObject({ l1Pct: 50, l2Pct: 68, segmentPct: 10 });
     expect(tierOf(300_000)).toBe(first);
     expect(tierOf(300_001)).toBe(second);
     expect(tierOf(700_000)).toBe(second);
@@ -348,13 +398,12 @@ describe("阈值窗口分档（autocompact）", () => {
     }
   });
 
-  it("缺省档位真行为（H-3 区分度）：档位 l1=55% < 兼容缺省 70%——lineTiersOf 直锁 + 装配不撞线", () => {
+  it("缺省档位真行为（H-3 区分度）：1M 档 43/50/68、cp=l2−25 派生——lineTiersOf 直锁", () => {
     const tierDefaults = lineTiersOf({ contextWindow: 1_000_000 } as never);
-    expect(tierDefaults).toEqual({ checkpointPct: 30, l1Pct: 55, l2Pct: 78 });
+    expect(tierDefaults).toEqual({ checkpointPct: 43, l1Pct: 50, l2Pct: 68 });
     const mixed = lineTiersOf({ contextWindow: 1_000_000, checkpointPct: 60 } as never);
     expect(mixed).toEqual({ checkpointPct: 60, l1Pct: 70, l2Pct: 85 });
-    const eff = 1_000_000 - 200;
-    expect(560_000).toBeGreaterThan(Math.floor(eff * 0.55));
-    expect(560_000).toBeLessThan(Math.floor(eff * 0.7));
+    const small = lineTiersOf({ contextWindow: 256_000 } as never);
+    expect(small).toEqual({ checkpointPct: 50, l1Pct: 60, l2Pct: 75 });
   });
 });

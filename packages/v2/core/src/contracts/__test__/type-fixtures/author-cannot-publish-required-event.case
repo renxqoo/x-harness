@@ -1,0 +1,1 @@
+import { definePlugin } from "__PUBLIC_ENTRY__"; definePlugin({ name: "bad", requires: { event }, setup(ctx) { return ctx.emit("event", "input"); } });

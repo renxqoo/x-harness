@@ -21,7 +21,7 @@ for (const entry of catalog.entries) {
     ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
   };
 }
-const defaults = resolveDefaultDial(catalog);
+const defaults = resolveDefaultDial(catalog, {}, process.env);
 process.env["HUB_WORKER_PROVIDERS"] = JSON.stringify({
   providers,
   ...(defaults !== undefined ? { default: defaults } : {}),

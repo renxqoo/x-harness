@@ -1,0 +1,50 @@
+[
+  {
+    "mutation": "CAS",
+    "detected": true,
+    "failed": 1,
+    "passed": 1
+  },
+  {
+    "mutation": "fingerprint",
+    "detected": true,
+    "failed": 1,
+    "passed": 1
+  },
+  {
+    "mutation": "checksum",
+    "detected": true,
+    "failed": 2,
+    "passed": 7
+  },
+  {
+    "mutation": "durable sync",
+    "detected": true,
+    "failed": 2,
+    "passed": 9
+  },
+  {
+    "mutation": "fork prefix",
+    "detected": true,
+    "failed": 1,
+    "passed": 1
+  },
+  {
+    "mutation": "tail recovery",
+    "detected": true,
+    "failed": 1,
+    "passed": 8
+  },
+  {
+    "mutation": "snapshot baseline",
+    "detected": true,
+    "failed": 1,
+    "passed": 2
+  },
+  {
+    "mutation": "publication cancellation",
+    "detected": true,
+    "failed": 1,
+    "passed": 10
+  }
+]

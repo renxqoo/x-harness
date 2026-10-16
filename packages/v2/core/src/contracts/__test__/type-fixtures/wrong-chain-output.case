@@ -1,1 +1,1 @@
-ctx.on(chain,()=>({ok:true,value:"wrong"}));
+ctx.middleware(chain,()=>({ok:true,value:"wrong"}));

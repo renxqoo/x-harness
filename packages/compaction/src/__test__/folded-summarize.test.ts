@@ -104,7 +104,7 @@ describe("summarizeFolded", () => {
         nodes: made.value.surface(),
         signal: new AbortController().signal,
       });
-      expect(outcome).toEqual({ ok: false, reason: "failed" });
+      expect(outcome).toEqual({ ok: false, reason: "failed", failure: { code: "http-500", message: "boom" } });
     } finally {
       await world.ctx.dispose();
     }

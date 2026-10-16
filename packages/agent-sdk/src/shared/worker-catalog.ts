@@ -75,16 +75,18 @@ export function workerCatalogFromEnv(env: Readonly<Record<string, string | undef
     return { providers: [], default: { provider: "", model: "" }, modelMeta: {} };
   }
   const providers = validProviders(parsed.providers);
-  const defaults = defaultsOf(parsed, providers);
+  const defaults = dialableDefaultOf(parsed.default, providers);
   return { providers, default: defaults, modelMeta: parsed.modelMeta ?? {} };
 }
 
-function defaultsOf(parsed: SnapshotJson, providers: readonly AssemblyProvider[]): DialFact {
-  const def = parsed.default;
-  if (def !== undefined && typeof def.provider === "string" && typeof def.model === "string") {
-    return { provider: def.provider, model: def.model };
+function dialableDefaultOf(def: SnapshotJson["default"], providers: readonly AssemblyProvider[]): DialFact {
+  const wanted = def !== undefined && typeof def.provider === "string" && typeof def.model === "string"
+    ? { provider: def.provider, model: def.model }
+    : undefined;
+  if (wanted !== undefined && providers.some((p) => p.provider === wanted.provider && p.apiKey !== "" && p.models.includes(wanted.model))) {
+    return wanted;
   }
-  const fallback = providers[0];
+  const fallback = providers.find((p) => p.apiKey !== "" && p.models.length > 0);
   if (fallback !== undefined) return { provider: fallback.provider, model: fallback.models[0] ?? "" };
   return { provider: "", model: "" };
 }

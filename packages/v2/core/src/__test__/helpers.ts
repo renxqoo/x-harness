@@ -1,8 +1,8 @@
-import type { ContextOptions, Result, RootContext, Scheduler } from "../index";
-import { createContext } from "../index";
+import type { HostOptions, Result, Host, Scheduler } from "../index";
+import { createHost } from "../index";
 
 export function value<T, E>(result: Result<T, E>): T {
-  if (!result.ok) throw new Error(JSON.stringify(result.reason));
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 }
 
@@ -43,16 +43,16 @@ export async function flush() {
   for (let turn = 0; turn < 40; turn += 1) await Promise.resolve();
 }
 
-export function root(options: ContextOptions = {}): RootContext {
-  return value(createContext(options));
+export function root(options: HostOptions = {}): Host {
+  return value(createHost(options));
 }
 
 export const text = (input: unknown): Result<string> => {
   if (typeof input === "string") return { ok: true, value: input };
-  return { ok: false, reason: { source: "core", code: "invalid-input", message: "invalid-input" } };
+  return { ok: false, error: { source: "core", code: "invalid-input", message: "invalid-input" } };
 };
 
 export const number = (input: unknown): Result<number> => {
   if (typeof input === "number") return { ok: true, value: input };
-  return { ok: false, reason: { source: "core", code: "invalid-input", message: "invalid-input" } };
+  return { ok: false, error: { source: "core", code: "invalid-input", message: "invalid-input" } };
 };

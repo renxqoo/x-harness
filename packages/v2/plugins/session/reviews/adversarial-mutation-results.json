@@ -1,0 +1,42 @@
+[
+  {
+    "mutation": "read-history: page continuity",
+    "detected": true,
+    "detail": "failed=6 passed=18"
+  },
+  {
+    "mutation": "append: session byte budget is inclusive",
+    "detected": true,
+    "detail": "failed=1 passed=8"
+  },
+  {
+    "mutation": "append: receipt passthrough restored",
+    "detected": true,
+    "detail": "failed=2 passed=6"
+  },
+  {
+    "mutation": "getCommit: receipt passthrough restored",
+    "detected": true,
+    "detail": "failed=1 passed=7"
+  },
+  {
+    "mutation": "read-conversation: position order check dropped",
+    "detected": true,
+    "detail": "failed=2 passed=6"
+  },
+  {
+    "mutation": "read-conversation: next advance check dropped",
+    "detected": true,
+    "detail": "failed=1 passed=7"
+  },
+  {
+    "mutation": "read-history: next advance check dropped",
+    "detected": true,
+    "detail": "failed=1 passed=7"
+  },
+  {
+    "mutation": "read-entry: content block ceiling off-by-one",
+    "detected": true,
+    "detail": "failed=1 passed=8"
+  }
+]

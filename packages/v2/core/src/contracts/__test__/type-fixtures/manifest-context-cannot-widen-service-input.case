@@ -1,0 +1,5 @@
+import type { PluginContext } from "__PUBLIC_ENTRY__";
+import type { NarrowManifest, WideManifest } from "__AUTHORING_FIXTURE__";
+declare const source: PluginContext<NarrowManifest>;
+const widened: PluginContext<WideManifest> = source;
+void widened;

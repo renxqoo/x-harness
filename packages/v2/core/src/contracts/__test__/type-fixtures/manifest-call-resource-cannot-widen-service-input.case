@@ -1,0 +1,5 @@
+import type { PluginInvocation, PluginResource } from "__PUBLIC_ENTRY__";
+import type { NarrowManifest, WideManifest } from "__AUTHORING_FIXTURE__";
+declare const call: PluginInvocation<NarrowManifest>;
+declare const resource: PluginResource<string, never, WideManifest>;
+call.resource(resource);

@@ -1,0 +1,5 @@
+import type { PluginResource } from "__PUBLIC_ENTRY__";
+import type { NarrowManifest, WideManifest } from "__AUTHORING_FIXTURE__";
+declare const resource: PluginResource<string, never, WideManifest>;
+const misplaced: PluginResource<string, never, NarrowManifest> = resource;
+void misplaced;

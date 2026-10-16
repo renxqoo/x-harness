@@ -1,0 +1,4 @@
+import type { Owner, Provider } from "__INTERNAL_TYPES__";
+declare const owner: Owner;
+declare const provider: Provider;
+owner.providers.add(provider);

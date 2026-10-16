@@ -7,6 +7,7 @@ import { calibrationFactor, pushCalibrationSample } from "./calibration.ts";
 import { joinInflight, maybeStartCheckpoint } from "./checkpoint.ts";
 import type { CheckpointConfig } from "./checkpoint.ts";
 import { escalateL2, ledgerReadyForL2 } from "./escalator.ts";
+import { DIFF_TRUNCATE_SUFFIX } from "./plugin.ts";
 import { budgetOverflowPredicted, computeLines, l1PreGateWorth, refitLines } from "./lines.ts";
 import type { Lines } from "./lines.ts";
 import { measureOccupancy, pruneAbsorbedGains, pushGain } from "./measure.ts";
@@ -21,6 +22,8 @@ export interface GateConfig extends CheckpointConfig {
   readonly checkpointMinSegmentTokens: number;
   readonly clearKeepRecent: number;
   readonly clearableTools: readonly string[];
+  readonly diffTools: readonly string[];
+  readonly diffKeepLines: number;
   readonly idleClearMinutes: number;
   readonly idleClearMinGainTokens: number;
   readonly warnBufferTokens: number;
@@ -42,13 +45,22 @@ export interface GateDeps {
   readonly emitCheckpoint: (action: import("./tokens.ts").CheckpointAction, detail?: Record<string, unknown>) => void;
 }
 
+function servedWithOverfill(declared: number, events: readonly SessionEvent[]): { readonly served: number | undefined; readonly observed: number | undefined } {
+  const served = lastWindow(events);
+  const anchor = lastAnchorInput(events);
+  const observed = anchor !== undefined && anchor > declared ? anchor : undefined;
+  return { served, observed };
+}
+
 function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
   const cache = deps.state.cache;
-  const served = lastWindow(events);
-  if (cache.lines !== undefined && served === cache.servedWindow) return cache.lines;
+  const declared = deps.config.contextWindow;
+  const { served, observed } = servedWithOverfill(declared, events);
+  const effectiveServed = observed !== undefined ? Math.max(served ?? 0, observed) : served;
+  if (cache.lines !== undefined && served === cache.servedWindow && observed === cache.observedOverfill) return cache.lines;
   let lines = computeLines({
-    contextWindow: deps.config.contextWindow,
-    ...(served !== undefined ? { servedWindow: served } : {}),
+    contextWindow: declared,
+    ...(effectiveServed !== undefined ? { servedWindow: effectiveServed } : {}),
     ...(deps.face !== undefined ? { summarizerMaxOutput: deps.face.maxOutputTokens } : {}),
     checkpointPct: deps.config.checkpointPct,
     l1Pct: deps.config.l1Pct,
@@ -56,6 +68,13 @@ function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
     warnBufferTokens: deps.config.warnBufferTokens,
   });
   lines = refitLines(lines);
+  if (observed !== undefined && !cache.warnedOverfill) {
+    cache.warnedOverfill = true;
+    if (deps.session !== undefined) {
+      deps.warn(deps.session.id, "window-overfill", { declared, observed });
+      deps.emitLinesDegraded(deps.session.id, lines.effectiveWindow);
+    }
+  }
   if (lines.degraded && !cache.warnedDegraded) {
     cache.warnedDegraded = true;
     if (deps.session !== undefined) {
@@ -65,7 +84,18 @@ function currentLines(deps: GateDeps, events: readonly SessionEvent[]): Lines {
   }
   cache.lines = lines;
   cache.servedWindow = served;
+  cache.observedOverfill = observed;
   return lines;
+}
+
+function lastAnchorInput(events: readonly SessionEvent[]): number | undefined {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    if (event === undefined || event.type !== "assistant/message") continue;
+    const input = (event.data as { usage?: { input?: unknown } }).usage?.input;
+    if (typeof input === "number" && Number.isFinite(input) && input > 0) return input;
+  }
+  return undefined;
 }
 
 export function updateCalibration(cache: SessionState["cache"], pair: { readonly trailingTokens: number; readonly gainTokens: number; readonly hasAnchor: boolean; readonly anchorTokens: number }): void {
@@ -197,6 +227,15 @@ function armOrStartCheckpoint(fields: {
   });
 }
 
+export const DEAD_ZONE_PCT = 15;
+
+function l2OverflowPredicted(fields: { readonly occupancy: number; readonly lines: Lines; readonly deps: GateDeps }): boolean {
+  const last = fields.deps.state.cache.lastOccupancy;
+  if (last === undefined) return false;
+  const delta = Math.max(0, fields.occupancy - last);
+  return fields.occupancy + delta * 1.5 > fields.lines.l2Line;
+}
+
 async function routeZones(fields: {
   readonly deps: GateDeps;
   readonly lines: Lines;
@@ -238,33 +277,57 @@ async function l1AndBeyond(fields: {
   readonly signal: AbortSignal;
 }): Promise<void> {
   const { deps, lines, nodes, events, occupancy, signal } = fields;
-  const { state, config } = deps;
+  const { state } = deps;
   const session = deps.session;
   if (session === undefined) return;
   if (!state.cache.l1Backoff) {
-    const plan = computeClearPlan(nodes, events, { clearableTools: config.clearableTools, clearKeepRecent: config.clearKeepRecent });
-    if (plan.entries.length > 0 && l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines })) {
-      const landed = landClearPlan(session, nodes, plan.entries);
-      if (landed.landed === 0) deps.warn(session.id, "l1-redact-failed");
-      if (landed.landed > 0) {
-        deps.emitL1Cleared(session.id, "watermark", landed.gainTokens);
-        const lastEvent = session.events()[session.events().length - 1];
-        if (lastEvent !== undefined && landed.gainTokens > 0) {
-          pushGain(state.gains, { tokens: landed.gainTokens, sinceSeq: lastEvent.seq });
-        }
-        state.cache.journalSeen = session.events().length;
-        const remeasured = remeasure(deps);
-        if (remeasured < lines.l1Line) return;
-      }
-    }
-    if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines }))) {
-      state.cache.l1Backoff = true;
-      deps.warn(session.id, "l1-no-gain", { gainTokens: plan.gainTokens });
-    }
+    const cleared = await runL1Clearing({ deps, lines, nodes, events, occupancy });
+    if (cleared) return;
   }
   const post = remeasure(deps);
-  if (post < lines.l2Line) return;
-  await escalateOrJoin({ deps, lines, signal });
+  if (post >= lines.l2Line) {
+    await escalateOrJoin({ deps, lines, signal });
+    return;
+  }
+  if (l2OverflowPredicted({ occupancy: post, lines, deps })) {
+    await escalateOrJoin({ deps, lines, signal });
+    return;
+  }
+  if (state.cache.l1Backoff && post > lines.l1Line + (lines.effectiveWindow * DEAD_ZONE_PCT) / 100) {
+    await escalateOrJoin({ deps, lines, signal });
+  }
+}
+
+async function runL1Clearing(fields: {
+  readonly deps: GateDeps;
+  readonly lines: Lines;
+  readonly nodes: readonly SurfaceNode[];
+  readonly events: Parameters<typeof computeClearPlan>[1];
+  readonly occupancy: number;
+}): Promise<boolean> {
+  const { deps, lines, nodes, events, occupancy } = fields;
+  const { state, config } = deps;
+  const session = deps.session as Session;
+  const plan = computeClearPlan(nodes, events, { clearableTools: config.clearableTools, clearKeepRecent: config.clearKeepRecent, diffTools: config.diffTools, diffKeepLines: config.diffKeepLines, diffSuffix: DIFF_TRUNCATE_SUFFIX });
+  if (plan.entries.length > 0 && l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines })) {
+    const landed = landClearPlan(session, nodes, plan.entries);
+    if (landed.landed === 0) deps.warn(session.id, "l1-redact-failed");
+    if (landed.landed > 0) {
+      deps.emitL1Cleared(session.id, "watermark", landed.gainTokens);
+      const lastEvent = session.events()[session.events().length - 1];
+      if (lastEvent !== undefined && landed.gainTokens > 0) {
+        pushGain(state.gains, { tokens: landed.gainTokens, sinceSeq: lastEvent.seq });
+      }
+      state.cache.journalSeen = session.events().length;
+      const remeasured = remeasure(deps);
+      if (remeasured < lines.l1Line) return true;
+    }
+  }
+  if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines }))) {
+    state.cache.l1Backoff = true;
+    deps.warn(session.id, "l1-no-gain", { gainTokens: plan.gainTokens });
+  }
+  return false;
 }
 
 async function escalateOrJoin(fields: { readonly deps: GateDeps; readonly lines: Lines; readonly signal: AbortSignal }): Promise<void> {

@@ -1,0 +1,4 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+import type { PluginInvocation } from "__PUBLIC_ENTRY__";
+function run(call: PluginInvocation<{ requires: { chain: typeof chain } }>) { return call.dispatch("chain", "wrong"); }
+definePlugin({ name: "bad", setup(ctx) { return ctx.startTask({ label: "bad", run }); } });

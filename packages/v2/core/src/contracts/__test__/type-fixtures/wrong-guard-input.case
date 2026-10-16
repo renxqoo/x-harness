@@ -1,1 +1,1 @@
-ctx.on(guard,(input:number)=>({ok:true,value:{kind:"allow"}}));
+ctx.guard(guard,(input:number)=>({ok:true,value:{kind:"allow"}}));

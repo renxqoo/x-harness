@@ -1,0 +1,6 @@
+{
+  "name": "@x-harness/session-jsonl",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "sideEffects": false
+}

@@ -95,7 +95,7 @@ export async function runHost(boot: HostBoot): Promise<void> {
         ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
       };
     }
-    const defaults = resolveDefaultDial(catalogNow);
+    const defaults = resolveDefaultDial(catalogNow, creds.keys, env);
     const payload = {
       providers,
       ...(defaults !== undefined ? { default: defaults } : {}),

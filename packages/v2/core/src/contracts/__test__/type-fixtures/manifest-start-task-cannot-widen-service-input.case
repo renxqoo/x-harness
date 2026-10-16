@@ -1,0 +1,5 @@
+import type { PluginContext, PluginTask } from "__PUBLIC_ENTRY__";
+import type { NarrowManifest, WideManifest } from "__AUTHORING_FIXTURE__";
+declare const extracted: PluginContext<NarrowManifest>;
+declare const task: PluginTask<string, never, WideManifest>;
+extracted.startTask(task);

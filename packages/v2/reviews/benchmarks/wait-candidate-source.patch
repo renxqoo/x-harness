@@ -1,0 +1,28 @@
+--- a/core/src/execution/create-execution.ts
++++ b/core/src/execution/create-execution.ts
+@@ -47,14 +47,17 @@
+     beginWait(): void { waits += 1; },
+     endWait(): void { waits -= 1; },
+     wait(source: string, target: string): Result<() => void> {
+-      const pending = [target];
+-      const seen = new Set<string>();
+-      while (pending.length) {
+-        const node = pending.pop()!;
+-        if (node === source) return fault("wait-cycle");
+-        if (seen.has(node)) continue;
+-        seen.add(node);
+-        pending.push(...(waiting.get(node)?.keys() ?? []));
++      if (source === target) return fault("wait-cycle");
++      if (waiting.has(target)) {
++        const pending = [target];
++        const seen = new Set<string>();
++        while (pending.length) {
++          const node = pending.pop()!;
++          if (node === source) return fault("wait-cycle");
++          if (seen.has(node)) continue;
++          seen.add(node);
++          pending.push(...(waiting.get(node)?.keys() ?? []));
++        }
+       }
+       const edges = waiting.get(source) ?? new Map<string, number>();
+       edges.set(target, (edges.get(target) ?? 0) + 1);

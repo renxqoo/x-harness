@@ -1,0 +1,21 @@
+import assert from "node:assert/strict";
+import { Context } from "__CORDIS_ENTRY__";
+import type { Endpoint } from "__COMPARISON_TYPES__";
+import { unwrap } from "__UNWRAP__";
+
+declare module "__CORDIS_CONTEXT__" {
+  interface Context { journeySource: Endpoint; journeyTarget: Endpoint }
+}
+
+export async function readService() {
+  const host = new Context();
+  try {
+    await host.plugin({ name: "source", apply(ctx) {
+      ctx.provide("journeySource", { async read(input) { return { ok: true, value: `hello:${input}` }; } } satisfies Endpoint);
+    } });
+    await host.plugin({ name: "target", inject: ["journeySource"], apply(ctx) {
+      ctx.provide("journeyTarget", { async read(input) { return ctx.journeySource.read(input); } } satisfies Endpoint);
+    } });
+    return unwrap(await host.journeyTarget.read("world"));
+  } finally { await host.fiber.dispose(); assert.equal(host.registry.size, 0); }
+}

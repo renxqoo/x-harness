@@ -1,0 +1,40 @@
+[
+  {
+    "runtime": "1.4.3",
+    "jit": "false",
+    "count": 10,
+    "mode": "method",
+    "retained": [
+      0,
+      9
+    ]
+  },
+  {
+    "runtime": "1.4.3",
+    "jit": "false",
+    "count": 100,
+    "mode": "method",
+    "retained": [
+      0,
+      99
+    ]
+  },
+  {
+    "runtime": "1.4.3",
+    "jit": "false",
+    "count": 10,
+    "mode": "arrow",
+    "retained": [
+      9
+    ]
+  },
+  {
+    "runtime": "1.4.3",
+    "jit": "false",
+    "count": 100,
+    "mode": "arrow",
+    "retained": [
+      99
+    ]
+  }
+]

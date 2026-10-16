@@ -16,12 +16,59 @@
     "types": [
       "bun"
     ],
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "@x-harness/core": [
+        "./core/src/index.ts"
+      ],
+      "@x-harness/standard": [
+        "./standard/src/index.ts"
+      ],
+      "@x-harness/application": [
+        "./application/src/index.ts"
+      ],
+      "@x-harness/loader": [
+        "./loader/src/index.ts"
+      ],
+      "@x-harness/create": [
+        "./create/src/index.ts"
+      ],
+      "@x-harness/core/validation": [
+        "./core/src/validation.ts"
+      ],
+      "@x-harness/session": [
+        "./plugins/session/src/index.ts"
+      ],
+      "@x-harness/session/contracts": [
+        "./plugins/session/src/contracts.ts"
+      ],
+      "@x-harness/session/storage": [
+        "./plugins/session/src/storage.ts"
+      ],
+      "@x-harness/session-jsonl": ["./plugins/session-jsonl/src/index.ts"],
+      "@x-harness/session-sqlite": [
+        "./plugins/session-sqlite/src/index.ts"
+      ],
+      "@x-harness/session-postgres": [
+        "./plugins/session-postgres/src/index.ts"
+      ],
+      "@x-harness/session-storage-sql": [
+        "./plugins/session-storage-sql/src/index.ts"
+      ],
+      "@x-harness/session/testing": [
+        "./plugins/session/src/testing.ts"
+      ]
+    }
   },
   "include": [
     "core/src/**/*.ts",
     "scripts/**/*.ts",
     "vitest.config.ts",
-    "fixtures/**/*.ts"
+    "fixtures/**/*.ts",
+    "standard/src/**/*.ts",
+    "application/src/**/*.ts",
+    "loader/src/**/*.ts",
+    "create/src/**/*.ts",
+    "plugins/*/src/**/*.ts"
   ]
 }

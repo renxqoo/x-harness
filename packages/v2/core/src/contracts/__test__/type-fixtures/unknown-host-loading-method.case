@@ -1,0 +1,1 @@
+import type { Host } from "__PUBLIC_ENTRY__"; declare const app: Host; app.load([]);

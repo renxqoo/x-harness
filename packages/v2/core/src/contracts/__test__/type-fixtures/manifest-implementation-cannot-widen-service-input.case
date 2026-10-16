@@ -1,0 +1,5 @@
+import type { PluginImplementations } from "__PUBLIC_ENTRY__";
+import type { NarrowProvider, WideProvider } from "__AUTHORING_FIXTURE__";
+declare const implementation: PluginImplementations<NarrowProvider>;
+const misplaced: PluginImplementations<WideProvider> = implementation;
+void misplaced;

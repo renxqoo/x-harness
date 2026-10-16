@@ -1,0 +1,124 @@
+--- a/scripts/benchmark-kernel.ts
++++ b/scripts/benchmark-kernel.ts
+@@ -22,7 +22,7 @@
+ const meterHash = await meter();
+ const environment = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("BUN_JSC_") && !["NODE_OPTIONS", "BUN_OPTIONS"].includes(key))), BUN_JSC_useJIT: "true" };
+ const samples: (Sample & { round: number })[] = [];
+-for (const scenario of ["plain", "unused", "nested"] as const) {
++for (const scenario of ["plain", "unused", "nested", "selective"] as const) {
+   for (let round = 0; round < 7; round++) {
+     for (const engine of (round % 2 ? ["harness", "cordis"] : ["cordis", "harness"]) as Engine[]) {
+       const child: Bun.Subprocess<"ignore", "pipe", "pipe"> = Bun.spawn([process.execPath, resolve(import.meta.dir, "benchmark/measure-service.ts"), engine, scenario, directory], { stdin: "ignore", stdout: "pipe", stderr: "pipe", env: environment });
+@@ -34,13 +34,16 @@
+         assert.equal(sample.worker.bun, Bun.version); assert.deepEqual(sample.worker.execArgv, []); assert.equal(sample.worker.jit, "true");
+         assert.equal(sample.engine, engine); assert.equal(sample.scenario, scenario);
+         assert.equal(sample.iterations, 10000); assert.equal(sample.batch, 100); assert.equal(sample.batchMeanUs.length, 100);
+-        assert.equal(sample.checksum, 49995000 + (scenario === "nested" ? 40000 : 10000));
++        let increments = 10000;
++        if (scenario === "nested") increments = 40000;
++        else if (scenario === "selective") increments = 20000;
++        assert.equal(sample.checksum, 49995000 + increments);
+         samples.push({ ...sample, round });
+       } finally { clearTimeout(timer); child.kill(); }
+     }
+   }
+ }
+-const summary = (["plain", "unused", "nested"] as Scenario[]).flatMap((scenario) => (["cordis", "harness"] as Engine[]).map((engine) => summarizeSamples(samples.filter((sample) => sample.engine === engine && sample.scenario === scenario))));
++const summary = (["plain", "unused", "nested", "selective"] as Scenario[]).flatMap((scenario) => (["cordis", "harness"] as Engine[]).map((engine) => summarizeSamples(samples.filter((sample) => sample.engine === engine && sample.scenario === scenario))));
+ assert.equal(await meter(), meterHash, "Measurement scripts changed during sampling");
+ assert.deepEqual(await describeSource(sources.harness, configs.harness), provenance.harness, "Harness source or dependencies changed during sampling");
+ assert.deepEqual(await describeSource(sources.cordis, configs.cordis), provenance.cordis, "Cordis source or dependencies changed during sampling");
+--- a/scripts/benchmark/measure-service.ts
++++ b/scripts/benchmark/measure-service.ts
+@@ -5,12 +5,14 @@
+ 
+ const [engine, scenario, directory] = process.argv.slice(2);
+ assert(engine === "harness" || engine === "cordis");
+-assert(scenario === "plain" || scenario === "unused" || scenario === "nested");
++assert(scenario === "plain" || scenario === "unused" || scenario === "nested" || scenario === "selective");
+ assert(directory);
+ const target = engine === "harness" ? await openHarness(scenario) : await openCordis(directory, scenario);
+ const iterations = 10000;
+ const batch = 100;
+-const depth = scenario === "nested" ? 4 : 1;
++let depth = 1;
++if (scenario === "nested") depth = 4;
++else if (scenario === "selective") depth = 2;
+ const batchMeanUs: number[] = [];
+ let checksum = 0;
+ let elapsedMs = 0;
+--- a/scripts/benchmark/open-harness.ts
++++ b/scripts/benchmark/open-harness.ts
+@@ -4,7 +4,8 @@
+ 
+ export async function openHarness(scenario: Scenario): Promise<Target> {
+   const depth = scenario === "nested" ? 4 : 1;
+-  const unused = scenario === "unused" ? 16 : 0;
++  const unused = scenario === "unused" || scenario === "selective" ? 16 : 0;
++  const selected = Array.from({ length: unused }, () => 0); let consumerCalls = 0;
+   const tokens = Array.from({ length: unused + depth }, (_, i) => {
+     const result = defineService<Endpoint>({ name: i < unused ? `unused${i}` : `step${i - unused}`, methods: { read: {} } });
+     assert(result.ok); return result.value;
+@@ -12,7 +13,7 @@
+   const created = createHost(); assert(created.ok); const host = created.value;
+   if (unused) {
+     const provides = Object.fromEntries(tokens.slice(0, unused).map((token, n) => [`unused${n}`, token]));
+-    const implementations = Object.fromEntries(Object.keys(provides).map((name) => [name, { async read(input: number) { return { ok: true as const, value: input + 1 }; } }]));
++    const implementations = Object.fromEntries(Object.keys(provides).map((name, n) => [name, { async read(input: number) { if (scenario === "selective") selected[n]!++; return { ok: true as const, value: input + 1 }; } }]));
+     assert((await host.install([definePlugin({ name: "unused", provides, setup(ctx) { return ctx.service(implementations); } })])).ok);
+   }
+   for (let i = 0; i < depth; i++) {
+@@ -20,12 +21,14 @@
+     const requires = i ? { previous: tokens[unused + i - 1]! } : Object.fromEntries(tokens.slice(0, unused).map((token, n) => [`unused${n}`, token]));
+     const installed = await host.install([definePlugin({ name: `step${i}`, provides: { current }, requires,
+       setup(ctx) { return ctx.service({ current: { async read(input, call) {
++        if (scenario === "selective") { consumerCalls++; return call.deps.unused0!.read(input + 1); }
+         return i ? call.deps.previous!.read(input + 1) : { ok: true, value: input + 1 };
+       } } }); },
+     })]); assert(installed.ok);
+   }
+   const acquired = host.use(tokens.at(-1)!); assert(acquired.ok);
+   return { endpoint: acquired.value, async close() {
++    if (scenario === "selective") { assert(consumerCalls > 0); assert.deepEqual(selected, [consumerCalls, ...Array.from({ length: unused - 1 }, () => 0)]); }
+     assert((await host.close()).ok);
+     const state = host.inspect();
+     assert.equal(state.plugins.length, 0); assert.equal(state.activeCalls, 0); assert.equal(state.serviceLeases, 0); assert.equal(state.effects, 0);
+--- a/scripts/benchmark/open-cordis.ts
++++ b/scripts/benchmark/open-cordis.ts
+@@ -15,17 +15,22 @@
+   const module = await import(pathToFileURL(resolve(directory, "packages/core/src/index.ts")).href) as { Context: new () => CordisContext };
+   const host = new module.Context();
+   const depth = scenario === "nested" ? 4 : 1;
+-  const unused = scenario === "unused" ? 16 : 0;
++  const unused = scenario === "unused" || scenario === "selective" ? 16 : 0;
++  const selected = Array.from({ length: unused }, () => 0); let consumerCalls = 0;
+   if (unused) await host.plugin((ctx) => {
+-    for (let i = 0; i < unused; i++) ctx.provide(`unused${i}`, { async read(input) { return { ok: true, value: input + 1 }; } });
++    for (let i = 0; i < unused; i++) ctx.provide(`unused${i}`, { async read(input) { if (scenario === "selective") selected[i]!++; return { ok: true, value: input + 1 }; } });
+   });
+   for (let i = 0; i < depth; i++) await host.plugin({
+     name: `step${i}`, inject: i ? [`step${i - 1}`] : Array.from({ length: unused }, (_, n) => `unused${n}`),
+     apply(ctx) {
+       ctx.provide(`step${i}`, { async read(input) {
++        if (scenario === "selective") { consumerCalls++; return (ctx.unused0 as Endpoint).read(input + 1); }
+         return i ? (ctx[`step${i - 1}`] as Endpoint).read(input + 1) : { ok: true, value: input + 1 };
+       } });
+     },
+   });
+-  return { endpoint: host[`step${depth - 1}`] as Endpoint, async close() { await host.fiber.dispose(); assert.equal(host.registry.size, 0); } };
++  return { endpoint: host[`step${depth - 1}`] as Endpoint, async close() {
++    if (scenario === "selective") { assert(consumerCalls > 0); assert.deepEqual(selected, [consumerCalls, ...Array.from({ length: unused - 1 }, () => 0)]); }
++    await host.fiber.dispose(); assert.equal(host.registry.size, 0);
++  } };
+ }
+--- a/scripts/benchmark/types.ts
++++ b/scripts/benchmark/types.ts
+@@ -1,7 +1,7 @@
+ import type { Result } from "../../core/src/index";
+ 
+ export type Engine = "cordis" | "harness";
+-export type Scenario = "plain" | "unused" | "nested";
++export type Scenario = "plain" | "unused" | "nested" | "selective";
+ export interface Endpoint { read(input: number): Promise<Result<number>> }
+ export interface Target { endpoint: Endpoint; close(): Promise<void> }
+ export interface Sample {

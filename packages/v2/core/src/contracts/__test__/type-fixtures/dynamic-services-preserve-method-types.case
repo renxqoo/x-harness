@@ -1,0 +1,6 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+import { greeting, ok } from "__AUTHORING_FIXTURE__";
+const provides: Record<string, typeof greeting> = { greeting };
+definePlugin({ name: "invalid-dynamic", provides, setup(ctx) {
+  return ctx.service({ greeting: { async greet(input: number) { return ok(String(input)); } } });
+} });

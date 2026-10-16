@@ -1,0 +1,6 @@
+import type { PluginImplementations } from "__PUBLIC_ENTRY__";
+import { users } from "__AUTHORING_FIXTURE__";
+const implementations: PluginImplementations<{ provides: { users: typeof users } }> = {
+  users: { async find() { return { ok: true, value: 42 }; } },
+};
+void implementations;

@@ -1,0 +1,6 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+import type { PluginContext } from "__PUBLIC_ENTRY__";
+import { narrow } from "__AUTHORING_FIXTURE__";
+import type { NarrowManifest, WideManifest } from "__AUTHORING_FIXTURE__";
+function run(ctx: PluginContext<WideManifest>) { return ctx.deps.source.run("wrong"); }
+definePlugin<NarrowManifest>({ name: "bad", requires: { source: narrow }, setup: run });

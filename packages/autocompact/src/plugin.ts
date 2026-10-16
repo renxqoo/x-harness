@@ -32,6 +32,8 @@ export interface AutoCompactOptions {
   readonly ledgerBudgetTokens?: number;
   readonly clearKeepRecent?: number;
   readonly clearableTools?: readonly string[];
+  readonly diffTools?: readonly string[];
+  readonly diffKeepLines?: number;
   readonly idleClearMinutes?: number;
   readonly idleClearMinGainTokens?: number;
   readonly warnBufferTokens?: number;
@@ -46,7 +48,7 @@ type WritableGateConfig = { -readonly [K in keyof GateConfig]: GateConfig[K] };
 
 const DEFAULTS = {
   clearKeepRecent: 5,
-  clearableTools: ["read", "grep", "bash"],
+  clearableTools: ["read", "grep", "bash", "task_update", "task_create", "list_agents", "task_list"],
   idleClearMinutes: 60,
   idleClearMinGainTokens: 0,
   checkpointMaxRetries: 2,
@@ -54,11 +56,17 @@ const DEFAULTS = {
   toolResultCapTokens: 25_000,
 } as const;
 
+export const DIFF_TOOLS = ["edit", "write"] as const;
+export const DIFF_TRUNCATE_KEEP_LINES = 40;
+export const DIFF_TRUNCATE_SUFFIX = "[diff truncated: full result offloaded by context manager]";
+
 export const TIERS = [
-  { maxWindow: 300_000, checkpointPct: 40, l1Pct: 50, l2Pct: 72, segmentPct: 12, warnBufferTokens: 10_000, ledgerBudgetTokens: 12_000 },
-  { maxWindow: 700_000, checkpointPct: 35, l1Pct: 55, l2Pct: 75, segmentPct: 10, warnBufferTokens: 15_000, ledgerBudgetTokens: 16_000 },
-  { maxWindow: Number.POSITIVE_INFINITY, checkpointPct: 30, l1Pct: 55, l2Pct: 78, segmentPct: 10, warnBufferTokens: 20_000, ledgerBudgetTokens: 16_000 },
+  { maxWindow: 300_000, l1Pct: 60, l2Pct: 75, segmentPct: 12, warnBufferTokens: 10_000, ledgerBudgetTokens: 12_000 },
+  { maxWindow: 700_000, l1Pct: 55, l2Pct: 70, segmentPct: 10, warnBufferTokens: 15_000, ledgerBudgetTokens: 16_000 },
+  { maxWindow: Number.POSITIVE_INFINITY, l1Pct: 50, l2Pct: 68, segmentPct: 10, warnBufferTokens: 20_000, ledgerBudgetTokens: 16_000 },
 ] as const;
+
+export const CP_LAG_PCT = 25;
 
 const [, , FALLBACK_TIER] = TIERS;
 
@@ -68,9 +76,10 @@ export function tierOf(contextWindow: number): (typeof TIERS)[number] {
 
 export function lineTiersOf(options: AutoCompactOptions): Pick<WritableGateConfig, "checkpointPct" | "l1Pct" | "l2Pct"> {
   const tier = tierOf(options.contextWindow);
+  const tierCpPct = Math.max(5, tier.l2Pct - CP_LAG_PCT);
   const customLines = options.checkpointPct !== undefined || options.l1Pct !== undefined || options.l2Pct !== undefined;
   return {
-    checkpointPct: options.checkpointPct ?? (customLines ? 60 : tier.checkpointPct),
+    checkpointPct: options.checkpointPct ?? (customLines ? 60 : tierCpPct),
     l1Pct: options.l1Pct ?? (customLines ? DEFAULT_L1_PCT : tier.l1Pct),
     l2Pct: options.l2Pct ?? (customLines ? DEFAULT_L2_PCT : tier.l2Pct),
   };
@@ -93,6 +102,8 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
     ...lineTiersOf(options),
     clearKeepRecent: options.clearKeepRecent ?? DEFAULTS.clearKeepRecent,
     clearableTools: options.clearableTools ?? DEFAULTS.clearableTools,
+    diffTools: options.diffTools ?? DIFF_TOOLS,
+    diffKeepLines: options.diffKeepLines ?? DIFF_TRUNCATE_KEEP_LINES,
     checkpointMaxRetries: options.checkpointMaxRetries ?? DEFAULTS.checkpointMaxRetries,
     checkpointIdleTimeoutMs: options.checkpointIdleTimeoutMs ?? DEFAULTS.checkpointIdleTimeoutMs,
     toolResultCapTokens: options.toolResultCapTokens ?? DEFAULTS.toolResultCapTokens,
@@ -223,8 +234,12 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
           state.cache.l1Backoff = false;
           state.checkpoint.consecutiveFailures = 0;
           if (state.checkpoint.broken) {
-            state.checkpoint.broken = false;
-            warn(session, "breaker-recovered");
+            if (state.checkpoint.fatal) {
+              warn(session, "breaker-held", { cause: "deterministic-failure" });
+            } else {
+              state.checkpoint.broken = false;
+              warn(session, "breaker-recovered");
+            }
           }
         } else if (event.type === "turn/end") {
           state.turnActive = false;

@@ -1,0 +1,4 @@
+import type { PluginContext } from "__PUBLIC_ENTRY__";
+declare const numbers: EventToken<number>;
+declare const extracted: PluginContext<{ provides: { event: typeof event; numbers: typeof numbers } }>;
+extracted.emit("numbers", "wrong");

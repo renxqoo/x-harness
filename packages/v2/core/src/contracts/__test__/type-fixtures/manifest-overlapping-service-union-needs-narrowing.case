@@ -1,0 +1,3 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+declare const protocol: ServiceToken<{ run(input: "only"): Promise<Result<string>> } | { run(input: string): Promise<Result<string>> }>;
+definePlugin({ name: "bad", provides: { protocol }, setup(ctx) { return ctx.service({ protocol: { async run(input: "only") { return { ok: true as const, value: input }; } } }); } });

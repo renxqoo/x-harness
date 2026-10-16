@@ -180,6 +180,20 @@ describe("worker-catalog 解析", () => {
     expect(noDefault.default).toEqual({ provider: "p1", model: "m1" });
   });
 
+  test("default 落无 key 档案 → 重解析到首个有凭证档案（症状:快照 default 指向空 key 预设致装配 dial 无 adapter、CP/compact 全败）", () => {
+    const snapshot = JSON.stringify({
+      providers: [
+        { provider: "empty", protocol: "anthropic", baseUrl: "https://e", apiKey: "", models: ["m"] },
+        { provider: "GLM", protocol: "anthropic", baseUrl: "https://g", apiKey: "k", models: ["glm-5.3", "glm-5.3-flash"] },
+      ],
+      default: { provider: "empty", model: "m" },
+    });
+    const catalog = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: snapshot });
+    expect(catalog.default).toEqual({ provider: "GLM", model: "glm-5.3" });
+    const noneCredible = workerCatalogFromEnv({ HUB_WORKER_PROVIDERS: JSON.stringify({ providers: [{ provider: "empty", protocol: "anthropic", baseUrl: "https://e", apiKey: "", models: ["m"] }], default: { provider: "empty", model: "m" } }) });
+    expect(noneCredible.default).toEqual({ provider: "", model: "" });
+  });
+
   test("快照 round-trip：host buildAssemblySnapshot → HUB_WORKER_PROVIDERS JSON → worker 侧解析保形（maxOutputTokensByModel 单源值直达装配面）", async () => {
     const dir = await tempRoot("hub-rt-");
     await Bun.write(join(dir, "providers.json"), JSON.stringify({

@@ -1,0 +1,8 @@
+{
+  "name": "@x-harness/session-sqlite",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

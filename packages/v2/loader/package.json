@@ -1,0 +1,11 @@
+{
+  "name": "@x-harness/loader",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false,
+  "dependencies": {
+    "acorn": "8.15.0"
+  }
+}

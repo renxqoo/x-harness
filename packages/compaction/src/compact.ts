@@ -81,6 +81,10 @@ const OUTCOME_REASONS: Readonly<Record<Exclude<SummarizeOutcome, { ok: true }>["
   aborted: "aborted",
 };
 
+export function failureDetailOf(outcome: Exclude<SummarizeOutcome, { ok: true }>): Record<string, unknown> | undefined {
+  return outcome.reason === "failed" ? { code: outcome.failure.code ?? "unknown", ...(outcome.failure.message !== undefined ? { message: outcome.failure.message.slice(0, 300) } : {}) } : undefined;
+}
+
 export function previousSummaryOf(nodes: readonly SurfaceNode[]): string | undefined {
   for (let i = nodes.length - 1; i >= 0; i -= 1) {
     const node = nodes[i];
@@ -162,7 +166,7 @@ async function summarizeSpan(call: SummarizeCall): Promise<SummarizeOutcome> {
 function warnOutcome(deps: CompactDeps, session: SessionId, outcome: Exclude<SummarizeOutcome, { ok: true }>): void {
   switch (outcome.reason) {
     case "failed":
-      deps.warn(session, "summarize-failed");
+      deps.warn(session, "summarize-failed", failureDetailOf(outcome));
       break;
     case "truncated":
       deps.warn(session, "summary-truncated");

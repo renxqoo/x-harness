@@ -1,0 +1,14 @@
+{
+  "checks": 1880,
+  "sourceHashes": [
+    {
+      "entry": "/var/folders/dv/5c0y_g4j38sfrnzl5_r9vkvh0000gn/T/kernel-result-baseline-9tymv6t3/workspace/packages/v2/core/src/contracts/normalize-result.ts",
+      "hash": "68cffe54346468de565eebe47ccf857eb02c6b36dc91bc60ed2d8cccc7a0e3a0"
+    },
+    {
+      "entry": "/Users/wrr/.codex/worktrees/plugin-api/x-harness/packages/v2/core/src/contracts/normalize-result.ts",
+      "hash": "026c0cec2e3791dc22c3e6e9127c88296f12d06abb1431d5d0e9ab9da736baa6"
+    }
+  ],
+  "scope": "Envelope structures, descriptor snapshots, metadata mutations and valid fault/business payloads; not exhaustive over arbitrary Proxy programs"
+}

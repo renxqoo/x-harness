@@ -1,0 +1,5 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+declare const strings: ServiceToken<{ run(input: string): Promise<Result<string>> }>;
+declare const numbers: ServiceToken<{ run(input: number): Promise<Result<number>> }>;
+type Manifest = { provides: { slot: typeof strings } } | { provides: { slot: typeof numbers } };
+definePlugin<Manifest>({ name: "bad", provides: { slot: numbers }, setup(ctx) { return ctx.service({ slot: { async run(input: string) { return { ok: true as const, value: input.toUpperCase() }; } } }); } });

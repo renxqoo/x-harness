@@ -1,0 +1,3 @@
+import { createApplication } from "__APPLICATION_ENTRY__";
+const created = createApplication();
+if (created.ok) created.value.install([]);

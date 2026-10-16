@@ -1,0 +1,96 @@
+{
+  "rebuiltBeforeHash": "b3a5ec4ec0f5bad1cb60dae9cd5e7b1f4750f559d398bbb22ee1da36abb088ee",
+  "afterHash": "0c7c8dec683991514967fb88153aa8d9438fe4a6984f72f4d435a6798577924f",
+  "meterHash": "8c8ab6e810b4f1e98f10b91af2e2bb4d4df11b1ee1a97f92eca3e333b4c38a18",
+  "summary": [
+    {
+      "scenario": "plain",
+      "beforeMedianUs": 1.901395899999999,
+      "afterMedianUs": 1.9075129499999985,
+      "roundsPerStage": 14,
+      "perGroup": {
+        "a": {
+          "before": 1.9003616000000023,
+          "after": 1.9066794999999992
+        },
+        "b": {
+          "before": 1.9024301999999955,
+          "after": 1.9083463999999979
+        }
+      },
+      "changePercent": 0.3217136420668343,
+      "afterRangeUs": [
+        1.8491707999999996,
+        2.2099669000000004
+      ],
+      "gainClaimed": false
+    },
+    {
+      "scenario": "unused",
+      "beforeMedianUs": 1.9134346000000009,
+      "afterMedianUs": 1.8982519999999994,
+      "roundsPerStage": 14,
+      "perGroup": {
+        "a": {
+          "before": 1.8983667000000066,
+          "after": 1.9198079999999977
+        },
+        "b": {
+          "before": 1.9251573999999998,
+          "after": 1.8923289999999997
+        }
+      },
+      "changePercent": -0.7934736833964173,
+      "afterRangeUs": [
+        1.8664965000000016,
+        2.0802750999999984
+      ],
+      "gainClaimed": false
+    },
+    {
+      "scenario": "nested",
+      "beforeMedianUs": 11.2982813,
+      "afterMedianUs": 11.209123700000008,
+      "roundsPerStage": 14,
+      "perGroup": {
+        "a": {
+          "before": 11.290883000000003,
+          "after": 10.971966000000005
+        },
+        "b": {
+          "before": 11.305679599999994,
+          "after": 11.352616199999995
+        }
+      },
+      "changePercent": -0.7891253336026582,
+      "afterRangeUs": [
+        10.8797205,
+        11.846316800000007
+      ],
+      "gainClaimed": false
+    },
+    {
+      "scenario": "selective",
+      "beforeMedianUs": 7.698473400000005,
+      "afterMedianUs": 6.5451210500000006,
+      "roundsPerStage": 14,
+      "perGroup": {
+        "a": {
+          "before": 7.6596588999999975,
+          "after": 6.537154200000001
+        },
+        "b": {
+          "before": 7.7946623000000095,
+          "after": 6.575612300000004
+        }
+      },
+      "changePercent": -14.981572190663195,
+      "afterRangeUs": [
+        6.185475300000001,
+        6.976857900000004
+      ],
+      "gainClaimed": true
+    }
+  ],
+  "scope": "Process mean call medians; fixed warmup; no verified steady state, tail latency, saturation throughput or memory claim"
+}

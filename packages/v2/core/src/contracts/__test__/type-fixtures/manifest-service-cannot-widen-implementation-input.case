@@ -1,0 +1,5 @@
+import type { PluginContext, PluginImplementations } from "__PUBLIC_ENTRY__";
+import type { NarrowProvider, WideProvider } from "__AUTHORING_FIXTURE__";
+declare const extracted: PluginContext<WideProvider>;
+declare const implementation: PluginImplementations<NarrowProvider>;
+extracted.service(implementation);

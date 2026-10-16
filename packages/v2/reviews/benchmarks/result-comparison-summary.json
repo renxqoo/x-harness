@@ -1,0 +1,74 @@
+{
+  "rebuiltBeforeHash": "be3fa8b9dbc75149610c38b885b053e98f3573bb71b7a1982580d6923170b26e",
+  "afterHash": "b3a5ec4ec0f5bad1cb60dae9cd5e7b1f4750f559d398bbb22ee1da36abb088ee",
+  "meterHash": "324c0a03c848bed581fe90c1073dc142374d41ca5976c372fbf65551493dc742",
+  "summary": [
+    {
+      "scenario": "plain",
+      "beforeMedianUs": 2.0193711000000003,
+      "afterMedianUs": 1.9316941999999995,
+      "roundsPerStage": 14,
+      "perGroup": {
+        "a": {
+          "before": 2.0089047000000004,
+          "after": 1.9517288999999989
+        },
+        "b": {
+          "before": 2.0298375,
+          "after": 1.9274506999999983
+        }
+      },
+      "changePercent": -4.341792353074714,
+      "afterRangeUs": [
+        1.8899043000000002,
+        2.090379200000003
+      ],
+      "gainClaimed": true
+    },
+    {
+      "scenario": "unused",
+      "beforeMedianUs": 1.9910502000000008,
+      "afterMedianUs": 1.9322637000000011,
+      "roundsPerStage": 14,
+      "perGroup": {
+        "a": {
+          "before": 1.979028799999999,
+          "after": 1.9123790999999986
+        },
+        "b": {
+          "before": 1.998645800000002,
+          "after": 1.9459745999999989
+        }
+      },
+      "changePercent": -2.952537309204939,
+      "afterRangeUs": [
+        1.8618121000000007,
+        2.003095300000002
+      ],
+      "gainClaimed": true
+    },
+    {
+      "scenario": "nested",
+      "beforeMedianUs": 11.554921099999989,
+      "afterMedianUs": 11.424343699999994,
+      "roundsPerStage": 14,
+      "perGroup": {
+        "a": {
+          "before": 11.552887099999989,
+          "after": 11.543271199999996
+        },
+        "b": {
+          "before": 11.555229299999988,
+          "after": 11.356495699999991
+        }
+      },
+      "changePercent": -1.1300587764289882,
+      "afterRangeUs": [
+        11.237082999999993,
+        12.459624800000014
+      ],
+      "gainClaimed": false
+    }
+  ],
+  "scope": "Process mean call medians; fixed warmup; no verified steady state, tail latency, saturation throughput or memory claim"
+}

@@ -1,0 +1,4 @@
+import type { PluginInvocation } from "__PUBLIC_ENTRY__";
+import { users } from "__AUTHORING_FIXTURE__";
+declare const call: PluginInvocation<{ optional?: { users: typeof users } }>;
+if (call.deps.users) void call.deps.users.find({ id: "missing" });

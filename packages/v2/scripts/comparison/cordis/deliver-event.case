@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { Context } from "__CORDIS_ENTRY__";
+
+declare module "__CORDIS_EVENTS__" {
+  interface Events { "journey/change"(value: string): void | Promise<void> }
+}
+
+export async function deliverEvent() {
+  const host = new Context(); const delivered: string[] = [];
+  try {
+    await host.plugin({ name: "listener", apply(ctx) { ctx.on("journey/change", (value) => { delivered.push(value); }); } });
+    await host.parallel("journey/change", "changed");
+    return delivered;
+  } finally { await host.fiber.dispose(); assert.equal(host.registry.size, 0); }
+}

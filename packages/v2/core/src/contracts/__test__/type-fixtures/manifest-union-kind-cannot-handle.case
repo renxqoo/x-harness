@@ -1,0 +1,3 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+type Manifest = { provides: { slot: typeof service } } | { provides: { slot: typeof chain } };
+definePlugin<Manifest>({ name: "bad", provides: { slot: service }, setup(ctx) { return ctx.handle("slot", (input: string) => ({ ok: true, value: input.length })); } });

@@ -1,0 +1,3 @@
+import type { Effect } from "__INTERNAL_TYPES__";
+declare const effect: Effect;
+effect.dependencies.clear();

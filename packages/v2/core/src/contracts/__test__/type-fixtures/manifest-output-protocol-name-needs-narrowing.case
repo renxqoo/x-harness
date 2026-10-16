@@ -1,0 +1,5 @@
+import type { PluginInvocation } from "__PUBLIC_ENTRY__";
+declare const strings: ChainToken<string, string>;
+declare const call: PluginInvocation<{ requires: { chain: typeof chain; strings: typeof strings } }>;
+declare const name: "chain" | "strings";
+call.dispatch(name, "wrong");

@@ -1,0 +1,82 @@
+--- /dev/null
++++ b/core/src/execution/create-cancellation-observer.ts
+@@ -0,0 +1,30 @@
++import { observeSignal, signalAborted } from "../contracts/observe-signal";
++
++const idle = () => {};
++
++export function createCancellationObserver() {
++  const signals = new WeakMap<AbortSignal, Set<() => void>>();
++  return (signal: AbortSignal, callback: () => void): (() => void) => {
++    if (signalAborted(signal)) return idle;
++    let callbacks = signals.get(signal);
++    if (!callbacks) {
++      callbacks = new Set();
++      observeSignal(signal, notify(signals, signal, callbacks));
++      signals.set(signal, callbacks);
++    }
++    callbacks.add(callback);
++    let active = true;
++    return () => { if (!active) return; active = false; callbacks.delete(callback); };
++  };
++}
++
++function notify(signals: WeakMap<AbortSignal, Set<() => void>>, signal: AbortSignal, callbacks: Set<() => void>) {
++  return () => {
++    signals.delete(signal);
++    for (const callback of Array.from(callbacks)) {
++      if (!callbacks.delete(callback)) continue;
++      try { callback(); } catch {}
++    }
++    callbacks.clear();
++  };
++}
+--- a/core/src/execution/create-execution.ts
++++ b/core/src/execution/create-execution.ts
+@@ -1,3 +1,4 @@
++import { createCancellationObserver } from "./create-cancellation-observer";
+ import type { Result } from "../contracts/types";
+ import type { Kernel, Owner, TaskCell, Work } from "../foundation/types";
+ 
+@@ -11,7 +12,9 @@
+   let calls = 0;
+   let activeTasks = 0;
+   let waits = 0;
++  const observeLifetimeSignal = createCancellationObserver();
+   return Object.freeze({
++    observeLifetimeSignal,
+     activities: (owner: Owner): ReadonlySet<Work> => owned(owner),
+     works: () => [...works.values()],
+     waitingFor: (id: string) => Object.freeze([...(waiting.get(id)?.keys() ?? [])]),
+--- a/core/src/execution/start-work.ts
++++ b/core/src/execution/start-work.ts
+@@ -67,9 +67,11 @@
+       return kernel.fault("timeout", args.executor);
+     }
+     const cancel = () => work.fail(kernel.fault("cancelled", args.executor));
+-    for (const signal of sources) {
+-      if (!signal) continue;
+-      unlink.push(observeSignal(signal, cancel));
++    for (let index = 0; index < sources.length; index++) {
++      const signal = sources[index];
++      if (!signal || sources.indexOf(signal) !== index) continue;
++      const observe = !cleanup && index < 3 ? kernel.execution.observeLifetimeSignal : observeSignal;
++      unlink.push(observe(signal, cancel));
+       if (signalAborted(signal)) cancel();
+     }
+     unlink.push(observeSignal(controller.signal, () => finishOutcome(kernel.fault("cancelled", args.executor))));
+--- a/core/src/contracts/read-call-options.ts
++++ b/core/src/contracts/read-call-options.ts
+@@ -3,8 +3,11 @@
+ import { signalAborted } from "./observe-signal";
+ import { readData } from "./read-data";
+ 
++const empty: Result<CallOptions> = Object.freeze({ ok: true, value: Object.freeze(Object.create(null) as CallOptions) });
++
+ export function readCallOptions(input: unknown): Result<CallOptions> {
+-  const parsed = readData(input ?? {});
++  if (input === undefined || input === null) return empty;
++  const parsed = readData(input);
+   if (!parsed.ok) return parsed;
+   const data = parsed.value;
+   if (Object.keys(data).some((key) => !["signal", "timeoutMs"].includes(key))) return createFault("invalid-input");

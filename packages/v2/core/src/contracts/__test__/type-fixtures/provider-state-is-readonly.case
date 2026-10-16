@@ -1,0 +1,3 @@
+import type { Provider } from "__INTERNAL_TYPES__";
+declare const provider: Provider;
+provider.active = true;

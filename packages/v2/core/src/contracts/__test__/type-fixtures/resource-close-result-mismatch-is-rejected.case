@@ -1,0 +1,3 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+import { greeting, userStore, changed, ok, openConnection } from "__AUTHORING_FIXTURE__";
+definePlugin({ name: 'bad', async setup(ctx) { const resource = await ctx.resource({ open: (acquire) => openConnection(acquire.signal), close: () => ok(42) }); if (!resource.ok) return resource; return ok(); } });

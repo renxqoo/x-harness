@@ -45,7 +45,7 @@ export async function loadCatalogSnapshot(agentDir: string, env: Record<string, 
         : createOpenaiCompatAdapter({ name: provider.provider, baseUrl: provider.baseUrl, apiKey: provider.apiKey }),
     );
   }
-  const resolvedDefault = resolveDefaultDial(catalog) ?? { provider: catalog.defaults.provider, model: catalog.defaults.model };
+  const resolvedDefault = resolveDefaultDial(catalog, credentials, env) ?? { provider: catalog.defaults.provider, model: catalog.defaults.model };
   const dial = resolvedDefault;
   const fallbackDial = registered.has(dial.provider) && (modelsByProvider.get(dial.provider)?.includes(dial.model) ?? false) ? dial : undefined;
   const resolveProviderOf = (model: string): string | undefined => {

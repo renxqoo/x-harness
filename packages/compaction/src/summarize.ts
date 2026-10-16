@@ -30,9 +30,17 @@ export function summaryInputMaxChars(fields: {
   return Math.floor((fields.face.contextWindow - fields.reserveTokens - overhead) / WIDE_TOKENS_PER_CHAR);
 }
 
+export interface FailureDetail {
+  readonly code: string | undefined;
+  readonly message: string | undefined;
+}
+
 export type SummarizeOutcome =
   | { readonly ok: true; readonly text: string }
-  | { readonly ok: false; readonly reason: "budget-exhausted" | "truncated" | "empty" | "failed" | "aborted" };
+  | (
+      | { readonly ok: false; readonly reason: "budget-exhausted" | "truncated" | "empty" | "aborted" }
+      | { readonly ok: false; readonly reason: "failed"; readonly failure: FailureDetail }
+    );
 
 export interface SummarizeInput {
   readonly llm: LlmRuntime;
@@ -130,10 +138,10 @@ async function consumeSummarizeStream(fields: ConsumeFields): Promise<Consumed> 
 function outcomeOf(consumed: Consumed, parentAborted: boolean): SummarizeOutcome {
   if (consumed.aborted || parentAborted) return { ok: false, reason: "aborted" };
   const { finish, text } = consumed;
-  if (finish === undefined) return { ok: false, reason: "failed" };
+  if (finish === undefined) return { ok: false, reason: "failed", failure: { code: "stream-error", message: undefined } };
   if (finish.kind === "stop") return text.trim() === "" ? { ok: false, reason: "empty" } : { ok: true, text };
   if (finish.kind === "max-tokens") return { ok: false, reason: "truncated" };
-  return { ok: false, reason: "failed" };
+  return { ok: false, reason: "failed", failure: { code: finish.code, message: finish.message } };
 }
 
 export function buildSummarizePrompt(input: {

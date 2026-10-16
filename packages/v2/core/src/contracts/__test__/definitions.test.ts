@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createContext, defineChain, defineEvent, defineGuard, defineService } from "../../index";
+import { createHost, defineChain, defineEvent, defineGuard, defineService } from "../../index";
 import type { Result } from "../../index";
 
 const valid = (input: unknown): Result<unknown> => ({ ok: true, value: input });
@@ -31,6 +31,6 @@ describe("definition and input boundaries", () => {
     expect(factories.every((result) => result.ok && Object.isFrozen(result.value))).toBe(true);
   });
   it.each([{ maxScopes: 0 }, { unknown: 1 }, { maxScopes: 1.5 }, { callTimeoutMs: Infinity }])("rejects invalid limits: %j", (limits) => {
-    expect(createContext({ limits } as Parameters<typeof createContext>[0]).ok).toBe(false);
+    expect(createHost({ limits } as Parameters<typeof createHost>[0]).ok).toBe(false);
   });
 });

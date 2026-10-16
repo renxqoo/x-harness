@@ -1,579 +1,319 @@
-# 通用插件内核使用指南
+# 通用插件内核
 
-core 提供进程内的插件宿主。应用定义自己的服务、处理链、决策关口和通知事件，插件通过这些契约协作。Agent、会话、消息上下文、模型、工具、skill、压缩、权限规则和房间都由外部插件实现。
+core 为应用提供插件装配、能力协作、受管执行和资源生命周期。普通服务端、AI 应用或其他程序使用同一套机制；内核不包含 HTTP、数据库、模型或其他领域实现。
 
-本文的 TypeScript 片段共用前文的类型和函数，全部针对真实公开入口进行类型检查。快速开始是完整的创建、装配、调用和关闭流程，其余片段可以按需要组合。
+## 常用接口
 
-## 1. 接入包
-
-公开入口为 `@x-harness/core`。本地应用应把依赖明确指向本目录，例如应用的 package.json：
-
-```json
-{
-  "dependencies": {
-    "@x-harness/core": "file:/Users/wrr/work/x-harness/packages/v2/core"
-  }
-}
-```
-
-在该应用目录安装依赖后，从包入口导入。不要从内部模块路径导入，也不要重新创建一份同名 token。
-
-包的 exports 当前指向 TypeScript 源码，需要 Bun 或能够处理 TypeScript 的构建工具。`packages/v2` 中的构建命令生成 `core/dist/index.js`，运行实现使用标准 Promise、AbortSignal 和计时器，没有 node/bun 平台 I/O 依赖。本目录没有发布 npm 包的流程。
-
-## 2. 快速开始
-
-下面定义一个服务，装配它的提供插件，调用服务，然后等待整个宿主关闭。`runQuickStart("小明")` 成功时返回 `{ ok: true, value: "你好，小明" }`。
-
-```ts
-import { createContext, defineService } from "@x-harness/core";
-import type { Plugin, Result } from "@x-harness/core";
-
-interface GreetingService {
-  greet(input: { name: string }): Promise<Result<string>>;
-}
-
-export async function runQuickStart(name: string): Promise<Result<string>> {
-  const contract = defineService<GreetingService>({
-    name: "example/greeting",
-    methods: { greet: {} },
-  });
-  if (!contract.ok) return contract;
-  const greeting = contract.value;
-
-  const provider: Plugin = {
-    name: "greeting-provider",
-    provides: [greeting],
-    apply(ctx) {
-      return ctx.provide(greeting, {
-        async greet(input) {
-          return { ok: true, value: `你好，${input.name}` };
-        },
-      });
-    },
-  };
-
-  const created = createContext();
-  if (!created.ok) return created;
-  const root = created.value;
-  const loaded = await root.load([provider]);
-  if (!loaded.ok) {
-    const closed = await root.dispose();
-    return closed.ok ? loaded : closed;
-  }
-
-  const service = root.use(greeting);
-  const result = service.ok
-    ? await service.value.greet({ name })
-    : service;
-  const closed = await root.dispose();
-  return closed.ok ? result : closed;
-}
-```
-
-真实应用通常在启动时创建 root，在运行期间保留它，在应用退出时 `await root.dispose()`。只调用 requestClose 表示发起停止，不能代替等待清理结果。
-
-## 3. 选择扩展机制
-
-| 机制 | 定义 | 提供 / 接入 | 执行 | 适用场景 |
-| --- | --- | --- | --- | --- |
-| 服务 | defineService | provide / use | 调用服务方法 | 状态读写、上下文修改、工具执行、实例管理 |
-| 调用链 | defineChain | provide / on | dispatch | 请求变换、短路、顺序重试 |
-| 决策关口 | defineGuard | provide / on | dispatch | 应用显式调用的授权或策略判断 |
-| 通知事件 | defineEvent | provide / on | emit | 有界异步通知、观察和唤醒 |
-| 作用域 | ctx.scope | root.load 的 scope 参数 | root.closeScope | 隔离插件实例和资源生命周期 |
-| 任务 | ctx.spawn / call.spawn | run | root.wait / call.wait | 后台工作或结构化子任务 |
-| 资源 | ctx.effect / call.effect | disposer | 关闭时清理 | 连接、订阅、临时上下文登记 |
-
-普通插件优先通过服务表达意图。例如插入系统提示词就是调用外部上下文服务；需要改变某条执行过程时才接入 chain。
-
-下文使用的额外公开类型：
-
-```ts
-import type {
-  ChainToken,
-  Context,
-  Disposer,
-  EventToken,
-  GuardToken,
-  Invocation,
-  LoadReport,
-  PluginRef,
-  RootContext,
-  ServiceToken,
-  TaskHandle,
-} from "@x-harness/core";
-```
-
-## 4. 定义契约与处理结果
-
-契约定义应放在应用的公共契约模块。装配时处理工厂的 Result，并把成功的 token 传给插件工厂。消费者和提供者必须持有同一个 token 对象；名称相同不代表同一个契约。
-
-服务接口只包含方法，每个方法接收一个参数并返回 `Promise<Result<T, E>>`。无输入方法使用 `input: void`，调用时传 undefined；不使用同步返回、多参数、可选参数、rest、泛型方法或重载。
-
-成功和失败分别读取 value 和 reason：
-
-```ts
-type RequestFailure = { kind: "rejected"; message: string };
-
-function describeRequest(result: Result<string, RequestFailure>): string {
-  if (result.ok) return result.value;
-  if ("source" in result.reason && result.reason.source === "core") {
-    return result.reason.code;
-  }
-  if ("kind" in result.reason) return result.reason.message;
-  return result.reason.message;
-}
-```
-
-`source: "core"` 是内核保留的错误判别。业务错误可以使用自己的 code，包括 timeout，但不能占用该来源字段。回调抛错会变成 callback-failed；非法返回形态变成 invalid-result。
-
-服务可以为 input、output 和业务 failure 配置校验器。未配置时，进程内值按声明的业务契约传递，不进行隐式 JSON 转换或深拷贝。chain、guard 和 event 必须提供校验器。下面是共享字符串校验器：
-
-```ts
-function parseText(input: unknown): Result<string> {
-  if (typeof input === "string") return { ok: true, value: input };
-  return {
-    ok: false,
-    reason: { source: "core", code: "invalid-input", message: "Expected a string" },
-  };
-}
-```
-
-定义名称由小写字母、数字、连字符和斜杠组成，例如 example/request；以字母开头，最长 160 字符。定义的 core/ 前缀保留给内核。完整错误词表与签名见 [API](../API.md)。
-
-## 5. 编写普通插件
-
-| 字段 | 含义 |
+| 用途 | 接口 |
 | --- | --- |
-| name | 同一装配作用域内唯一的插件名称 |
-| provides | apply 必须实际提供的服务或扩展点 |
-| requires | 激活前必须存在的依赖 |
-| optional | 可以缺席的依赖；缺席也是固定装配结果 |
-| apply(ctx, call) | 登记能力和资源，返回 Result<void> 或 Result<Disposer> |
+| 提供服务 | ctx.service |
+| 提供处理链终结函数 | ctx.handle |
+| 使用服务依赖 | setup 内使用 ctx.deps，处理函数内使用 call.deps |
+| 监听事件、发出事件 | ctx.on、ctx.emit |
+| 登记中间件、决策处理器 | ctx.middleware、ctx.guard |
+| 执行处理链或关口 | call.dispatch；初始化时可用 ctx.dispatch |
+| 创建与关闭资源 | ctx.resource({ open, close })；消费方资源使用 call.resource |
+| 登记清理动作 | ctx.addCleanup；调用上下文保留 call.effect |
+| 启动任务 | ctx.startTask；结构化子任务使用 call.spawn |
+| 创建范围 | ctx.createScope |
+| 查看所在范围 | ctx.scopeId、ctx.scopeState |
+| 宿主管理 | createHost、app.install、app.uninstall、app.close |
+| 宿主取得服务 | app.use(token) |
 
-load 按依赖顺序激活整个批次，全部成功后才发布。缺少依赖、循环依赖、声明的提供项未实现或激活失败都会拒绝安装。失败批次回滚受管登记与资源；任意外部写入的补偿由插件自己负责。
+## 第一个插件
 
-依赖在装配时绑定固定实例。在线安装新的提供者不会自动补上先前缺席的 optional，也不会把现有消费者重定向到另一代服务。重新装配需要宿主明确卸载并安装相关插件。
-
-### 系统提示词、skill 列表与纠正消息
-
-上下文协议属于外部领域。下面的插件只依赖该协议，内核不需要识别消息角色或 skill。
+用服务契约定义方法，用插件交付实现。服务 token 必须共享，不要复制同名 token。
 
 ```ts
-interface ContextMaterial {
-  key: string;
-  role: "system" | "user";
-  content: string;
-}
+import { createHost, definePlugin, defineService } from "@x-harness/core";
+import type { ChainToken, CleanupInvocation, Context, EventToken, GuardToken, Invocation, Plugin, PluginContext, PluginImplementations, Result, Host, ServiceToken } from "@x-harness/core";
 
-interface ConversationService {
-  register(input: ContextMaterial): Promise<Result<Disposer>>;
-  append(input: { role: "user"; content: string }): Promise<Result<void>>;
-}
-
-function createSystemPromptPlugin(
-  conversation: ServiceToken<ConversationService>,
-  prompt: string,
-): Plugin {
-  return {
-    name: "system-prompt",
-    requires: [conversation],
-    apply(ctx) {
-      const service = ctx.use(conversation);
-      if (!service.ok) return service;
-      return service.value.register({
-        key: "instruction",
-        role: "system",
-        content: prompt,
-      });
-    },
-  };
-}
-
-function createSkillListPlugin(
-  conversation: ServiceToken<ConversationService>,
-  loadList: (call: Invocation) => Promise<Result<string>>,
-): Plugin {
-  return {
-    name: "skill-list",
-    requires: [conversation],
-    async apply(ctx, call) {
-      const service = ctx.use(conversation);
-      if (!service.ok) return service;
-      const list = await loadList(call);
-      if (!list.ok) return list;
-      return service.value.register({
-        key: "available-skills",
-        role: "user",
-        content: list.value,
-      });
-    },
-  };
-}
+type Greeting = { greet(input: { name: string }): Promise<Result<string>> };
+const greetingContract = defineService<Greeting>({ name: "greeting", methods: { greet: {} } });
 ```
 
-register 返回的 disposer 表示撤销登记，apply 可以直接返回它。提供者应使用 call.effect 把这份登记归到消费方生命周期。扫描、过滤、渲染和目录更新属于 skill 插件；对话材料的写入与投影属于对话插件。
-
-纠正消息在运行时通过绑定的依赖门面写入：
+插件声明 `provides`，并在 `setup` 中提供实现。`input` 自动推断，登记自动归插件。宿主负责安装、使用和关闭。
 
 ```ts
-async function appendCorrection(
-  ctx: Context,
-  call: Invocation,
-  conversation: ServiceToken<ConversationService>,
-  content: string,
-): Promise<Result<void>> {
-  const bound = call.bind(ctx);
-  if (!bound.ok) return bound;
-  const service = bound.value.use(conversation);
-  if (!service.ok) return service;
-  return service.value.append({ role: "user", content });
-}
-```
-
-这里的 user 是模型消息角色。真实调用来源来自 core 的 Invocation.origin，不能用角色字段冒充实际用户。压缩同样通过外部对话服务修改上下文，其并发条件、消息边界、日志和恢复协议由该领域定义。
-
-## 6. 嵌套调用与 Invocation
-
-消费者调用服务时不传 Invocation；提供者实现的第二个参数由 core 生成。它包含本次调用身份、父调用身份、来源、执行者、资源拥有者、signal、deadline 和执行阶段。
-
-在服务方法、chain、guard、observer 或 task 内调用其他依赖时，用 `call.bind(ctx)`。绑定后的 use/dispatch 继承父调用、取消和截止时间。单纯闭包捕获 ctx 再 use，不会自动推断异步父调用。
-
-apply 中的静态登记可以直接 ctx.use。明确的后台任务使用 ctx.spawn，不通过未绑定的服务调用隐式制造后台工作。不要保存绑定的服务门面供未来调用；其所属调用结束后门面失效。
-
-## 7. 调用链：变换与顺序重试
-
-```ts
-import { defineChain, defineEvent, defineGuard } from "@x-harness/core";
-
-function defineRequestChain() {
-  return defineChain<string, string, RequestFailure>({
-    name: "example/request",
-    input: parseText,
-    output: parseText,
-  });
-}
-
-function createRequestProvider(chain: ChainToken<string, string, RequestFailure>): Plugin {
-  return {
-    name: "request-provider",
-    provides: [chain],
-    apply(ctx) {
-      return ctx.provide(chain, async (input) => ({ ok: true, value: input.trim() }));
-    },
-  };
-}
-
-function createRetryPlugin(chain: ChainToken<string, string, RequestFailure>): Plugin {
-  return {
-    name: "request-retry",
-    requires: [chain],
-    apply(ctx) {
-      return ctx.on(chain, async (input, next, call) => {
-        const first = await next(input);
-        if (first.ok || call.signal.aborted) return first;
-        if (!("kind" in first.reason) || first.reason.kind !== "rejected") return first;
-        return await next(input);
-      });
-    },
-  };
-}
-
-async function dispatchRequest(root: RootContext, chain: ChainToken<string, string, RequestFailure>) {
-  return root.dispatch(chain, " request ", { timeoutMs: 2000 });
-}
-```
-
-provide 登记终结处理器，on 登记中间件。处理器按作用域和装配顺序执行，可以修改输入、返回 next 或直接短路返回 Result。不要依赖调用方安装数组的书写顺序替代依赖顺序。
-
-next 必须等待或直接返回，顺序重试合法，并发调用返回 concurrent-next。处理器返回后再调用 next 返回 late-next；未结算 next 或派生 Continuation 返回 unfinished-next，未观察失败返回 unobserved-next。then/catch/finally 的派生链也参与检查，底层未结束时不会释放实际工作记录。
-
-重试条件、退避和外部副作用去重由业务插件定义；示例只是接入写法，不代表所有 rejected 都适合重试。实际授权应该处在每次重试都会经过的执行路径中。
-
-## 8. 决策关口：明确允许或拒绝
-
-```ts
-function defineAccessGuard() {
-  return defineGuard({ name: "example/access", input: parseText });
-}
-
-function createAccessProvider(gate: GuardToken<string>): Plugin {
-  return {
-    name: "access-provider",
-    provides: [gate],
-    apply(ctx) {
-      return ctx.provide(gate);
-    },
-  };
-}
-
-function createAccessPolicy(gate: GuardToken<string>): Plugin {
-  return {
-    name: "access-policy",
-    requires: [gate],
-    apply(ctx) {
-      return ctx.on(gate, (input) => ({
-        ok: true,
-        value: input === "allowed"
-          ? { kind: "allow" }
-          : { kind: "deny", reason: "Access denied" },
-      }));
-    },
-  };
-}
-
-async function executeAllowed(
-  ctx: Context,
-  call: Invocation,
-  gate: GuardToken<string>,
-  input: string,
-): Promise<Result<string, RequestFailure>> {
-  const bound = call.bind(ctx);
-  if (!bound.ok) return bound;
-  const decision = await bound.value.dispatch(gate, input);
-  if (!decision.ok) return decision;
-  if (decision.value.kind === "deny") {
-    return { ok: false, reason: { kind: "rejected", message: decision.value.reason } };
+async function greetingApplication(): Promise<Result<string>> {
+  if (!greetingContract.ok) return greetingContract;
+  const greeting = greetingContract.value;
+  const created = createHost();
+  if (!created.ok) return created;
+  const app = created.value;
+  try {
+    const installed = await app.install([definePlugin({
+      name: "greeting",
+      provides: { greeting },
+      setup(ctx) {
+        return ctx.service({ greeting: {
+          async greet(input) { return { ok: true, value: `你好，${input.name}` }; },
+        } });
+      },
+    })]);
+    if (!installed.ok) return installed;
+    const service = app.use(greeting);
+    if (!service.ok) return service;
+    return service.value.greet({ name: "小明" });
+  } finally {
+    const closed = await app.close();
+    if (!closed.ok) return closed;
   }
-  return { ok: true, value: input };
 }
 ```
 
-无处理器返回 guard-unconfigured；所有处理器明确 allow 才允许，首次 deny 停止后续处理器。异常、取消、超时和非法返回都是失败。应用的执行服务必须主动调用 guard 并阻断失败；core 不会自动知道哪条业务路径需要授权。
+`definePlugin` 创建不可变声明，不安装插件。`setup` 返回 Result；成功值不解释为清理回调。需要清理的资源显式使用 resource 或 effect。安装失败回滚整批，成功后一次发布。
 
-## 9. 通知事件：订阅与发送
+## 声明与调用依赖
 
-```ts
-function defineChangedEvent() {
-  return defineEvent({ name: "example/changed", payload: parseText });
-}
-
-function createChangedPublisher(changed: EventToken<string>): Plugin {
-  return {
-    name: "changed-publisher",
-    provides: [changed],
-    apply(ctx) {
-      return ctx.provide(changed);
-    },
-  };
-}
-
-function createChangedObserver(
-  changed: EventToken<string>,
-  receive: (payload: string, call: Invocation) => Promise<void>,
-): Plugin {
-  return {
-    name: "changed-observer",
-    requires: [changed],
-    apply(ctx) {
-      return ctx.on(changed, (payload, _origin, call) => receive(payload, call));
-    },
-  };
-}
-
-function notifyChanged(root: RootContext, changed: EventToken<string>) {
-  return root.emit(changed, "updated");
-}
-```
-
-emit 成功仅表示接受了通知，回执 acceptedListeners 是接受的监听者数，不表示它们已经处理成功。同一监听者 FIFO、最多一个实际在途处理；不同监听者独立运行。监听超时会暂停该监听者并撤销其待执行队列，其他监听者继续运行。
-
-事件载荷必须是有界 JSON 数据；发送时制作不可变快照，拒绝访问器、循环、非法原型、非有限数字和超限数据。origin 由 core 填充，sequence 仅表示本宿主的通知接受顺序。
-
-插件只有事件提供者可以直接 emit 自己的事件；订阅插件声明 requires/optional 后 on。需要允许消费者提交消息时，由提供者公开受控服务。宿主可以 emit 可见事件。事件不提供持久化、确认、重放或可靠投递协议。
-
-## 10. 作用域与宿主控制
+requires 是必需依赖，optional 是可选依赖，provides 是输出能力。三者都是本地名称到共享 token 的映射。名称不能跨组冲突，同一 token 只声明一次。服务、处理链、关口和事件使用同一声明协议。
 
 ```ts
-async function installIsolated(
-  root: RootContext,
-  plugins: readonly Plugin[],
-): Promise<Result<Context>> {
-  const child = root.scope({ label: "isolated-instance" });
-  if (!child.ok) return child;
-  const loaded = await root.load(plugins, { scope: child.value });
-  if (!loaded.ok) {
-    const closed = await root.closeScope(child.value);
-    return closed.ok ? loaded : closed;
-  }
-  return child;
-}
-```
+type User = { id: string; name: string };
+type UserStore = { findUser(input: { id: string }): Promise<Result<User | null>> };
+type Users = { find(input: { id: string }): Promise<Result<User | null>> };
+declare const userStore: ServiceToken<UserStore>;
+declare const users: ServiceToken<Users>;
 
-作用域控制可见能力和生命周期；可继承祖先能力，不访问兄弟作用域的私有登记。默认不允许覆盖祖先服务；明确需要遮蔽时，提供者使用 `ctx.provide(token, implementation, { shadow: true })`。作用域预算只能收紧，不能通过增加子作用域绕过根宿主总量限制。
-
-多 Agent 可以使用独立作用域装配独立领域插件，再由外部房间服务协调。core 不判断 Agent 角色、成员、发言轮次或消息路由。
-
-ctx.state 描述作用域状态；插件实例是否 active/stopping 应通过宿主 inspect 查看。
-
-root.load/unload/closeScope/dispose/wait 是宿主接口，不交给普通插件。插件只能创建自己的子作用域，或 requestClose 请求自身停止；宿主负责等待最终关闭。需要动态创建实例时，应用公开受控实例管理服务，由宿主实施装配，避免插件获得整个 RootContext。
-
-## 11. 任务、取消与超时
-
-```ts
-function startStructuredTask(ctx: Context): Result<TaskHandle<number>> {
-  return ctx.spawn<number>({
-    label: "parent-task",
-    timeoutMs: 2000,
-    async run(call) {
-      const child = call.spawn<number>({
-        label: "child-task",
-        run: () => ({ ok: true, value: 21 }),
-      });
-      if (!child.ok) return child;
-      const result = await call.wait(child.value);
-      if (!result.ok) return result;
-      return { ok: true, value: result.value * 2 };
-    },
-  });
-}
-
-async function waitForTask(root: RootContext, task: TaskHandle<number>) {
-  return root.wait(task, { timeoutMs: 1000 });
-}
-```
-
-ctx.spawn 创建拥有者级任务；call.spawn 创建本次调用的结构化子任务。父调用会连接等待其未显式等待的子任务，未处理的子任务失败影响父调用。等待环返回 wait-cycle。
-
-wait 超时只结束本次等待，不取消目标。需要取消时调用 task.cancel，或为任务配置 signal。任务或调用超时后公开返回失败，底层工作仍被追踪，TaskHandle.state 在实际结束前保持 running，迟到成功不会覆盖第一次 timeout/cancelled。
-
-服务方法没有额外的调用选项参数；通过父调用的 bind 继承取消和期限。需要在宿主为一段服务工作设置独立预算，可以在带 signal/timeoutMs 的 root.spawn 任务中执行，并用 call.bind(root) 取得依赖门面。chain/guard 的 dispatch 可直接传 CallOptions。
-
-外部 I/O 应接收 call.signal 并及时结束。core 不会强制终止 JavaScript 同步循环；进程终止与执行隔离属于外部宿主。
-
-## 12. 资源登记与清理
-
-ctx.provide、ctx.on 和 ctx.effect 的成功值都是受管 disposer；登记自动归当前拥有者，不需要再收集一遍 off 列表。同一拥有者重复登记同一个 disposer 不重复释放；跨拥有者复用同一个函数会被拒绝。
-
-| 登记方式 | 生命周期拥有者 | 清理执行者 |
-| --- | --- | --- |
-| ctx.effect | 当前插件或作用域拥有者 | 当前拥有者 |
-| call.effect | 本次调用的 resourceOwner | 当前 executor |
-
-服务为消费者创建连接或上下文材料时，使用 call.effect，使消费者卸载时资源随之释放。清理闭包应在分配外部资源之前登记，并保存随后取得的句柄。
-
-```ts
-interface ResourceHandle {
-  id: string;
-}
-
-interface ResourceService {
-  open(input: void): Promise<Result<Disposer>>;
-}
-
-function createResourceProvider(
-  token: ServiceToken<ResourceService>,
-  adapter: {
-    open(signal: AbortSignal): Promise<Result<ResourceHandle>>;
-    close(handle: ResourceHandle, signal: AbortSignal): Promise<Result<void>>;
+const usersPlugin = definePlugin({
+  name: "users",
+  requires: { userStore },
+  provides: { users },
+  setup(ctx) {
+    return ctx.service({ users: {
+      async find(input, call) { return call.deps.userStore.findUser(input); },
+    } });
   },
-): Plugin {
-  return {
-    name: "resource-provider",
-    provides: [token],
-    apply(ctx) {
-      return ctx.provide(token, {
-        async open(_input, call) {
-          let handle: ResourceHandle | undefined;
-          const owned = call.effect(async (cleanup) => {
-            if (!handle) return { ok: true, value: undefined };
-            return adapter.close(handle, cleanup.signal);
-          });
-          if (!owned.ok) return owned;
-          const opened = await adapter.open(call.signal);
-          if (!opened.ok) {
-            const released = await owned.value({
-              context: ctx,
-              signal: call.signal,
-              deadline: call.deadline,
-            });
-            return released.ok ? opened : released;
-          }
-          handle = opened.value;
-          return owned;
-        },
-      });
+});
+```
+
+ctx.deps 用于初始化，激活结束后失效。方法、处理器、任务和资源取得函数使用 call.deps；它只包含该插件声明的服务依赖，自动继承父调用、取消、期限和逻辑消费方。不要捕获初始化门面供后续请求使用。
+
+可选依赖缺席时为 undefined。装配结果固定，之后安装提供者不会自动补齐；已绑定门面也不会重定向。
+
+依赖表具有完整、可枚举的声明名称，表和服务门面均冻结。多服务表的每个槽位在首次读取时创建并缓存门面，单服务表直接创建唯一门面；调用方法时才取得服务租约。Object.keys 仅枚举名称，Object.values、展开和解构会读取对应的值。取得租约失败不会缓存该失败，容量释放后可重试。多服务槽位是只读 getter，反射代码应通过属性读取取得值。
+
+```ts
+const optionalUsers = definePlugin({
+  name: "optional-users",
+  optional: { userStore },
+  provides: { users },
+  setup(ctx) {
+    return ctx.service({ users: {
+      async find(input, call) {
+        if (!call.deps.userStore) return { ok: true, value: null };
+        return call.deps.userStore.findUser(input);
+      },
+    } });
+  },
+});
+```
+
+## 抽出实现函数
+
+保存一份声明，使用 typeof 声明推导作者类型。独立函数和内联 setup 使用相同权限，不需要重新填写依赖和提供者列表。
+
+```ts
+const usersManifest = { name: "extracted-users", requires: { userStore }, provides: { users } };
+const usersImplementation: PluginImplementations<typeof usersManifest> = {
+  users: { async find(input, call) { return call.deps.userStore.findUser(input); } },
+};
+
+function setupUsers(ctx: PluginContext<typeof usersManifest>) {
+  return ctx.service(usersImplementation);
+}
+
+const extractedUsersPlugin = definePlugin({ ...usersManifest, setup: setupUsers });
+```
+
+PluginInvocation 使用相同的 typeof 声明；PluginResource 和 PluginTask 的参数为结果值、业务错误、声明。optional 仍需判空。仅保存与业务无关的实现工厂或无状态函数；连接、缓存和可变状态在 setup 内为每次安装创建。
+
+声明表应是确定存在的对象。表本身可选或可能为 undefined 时，类型不会假定其中有能力；不同分支中同名槽的种类或服务协议不一致时，应先收窄声明再定义插件。可选服务写在确定存在的 optional 表中。
+
+同协议的多个名称可以使用联合变量调用，参数和结果保持精确；不同协议的名称变量需先分支判断，再调用对应名称。
+
+## 配置
+
+配置属于插件工厂。业务工厂先校验输入，再创建插件；内核不内置配置 schema 或业务默认值。
+
+```ts
+function createGreetingPlugin(prefix: unknown): Result<Plugin> {
+  if (typeof prefix !== "string" || !greetingContract.ok) return { ok: false, error: { source: "core", code: "invalid-input", message: "invalid-input" } };
+  const greeting = greetingContract.value;
+  return { ok: true, value: definePlugin({
+    name: "configured-greeting", provides: { greeting },
+    setup(ctx) {
+      return ctx.service({ greeting: {
+        async greet(input) { return { ok: true, value: prefix + input.name }; },
+      } });
     },
-  };
+  }) };
 }
 ```
 
-先登记再分配，才能确保取消后迟到创建的句柄仍归资源账本。内核先等待实际创建工作结束，再执行清理，不会因为一开始句柄为空就提前删除清理记录。
+## 资源取得与关闭
 
-清理回调收到内核提供的 cleanup.context、signal 和 deadline。cleanup.context 只能使用固定清理依赖，不允许创建新的插件、资源或后台任务；它能在提供者 stopping 时调用尚未最终释放的服务。需要调用依赖清理时，重新从 cleanup.context.use 获取门面，不使用已取消的业务门面。
-
-受管 disposer 手动调用时，参数不会替换内核生成的清理上下文和预算。提供者仍被依赖或存在在途工作时，手动撤销返回 plugin-in-use。一般由宿主 unload/closeScope/dispose 完成有序清理；apply 可直接返回 ctx.provide/on/effect 或服务返回的受管 disposer。
-
-## 13. 在线装配与卸载
+resource 在调用 open 前预留容量并登记清理。open 获得本次取得工作的调用上下文；close 获得独立的清理信号和固定清理依赖。
 
 ```ts
-function installExtension(root: RootContext, plugin: Plugin): Promise<Result<LoadReport>> {
-  return root.load([plugin]);
+interface Connection {
+  read(input: { id: string }, signal: AbortSignal): Promise<Result<User | null>>;
+  close(signal: AbortSignal): Promise<Result<void>>;
 }
+declare function connect(signal: AbortSignal): Promise<Result<Connection>>;
 
-async function removeExtension(root: RootContext, ref: PluginRef): Promise<Result<void>> {
-  const removed = await root.unload(ref);
+const databasePlugin = definePlugin({
+  name: "database", provides: { userStore },
+  async setup(ctx) {
+    const acquired = await ctx.resource({
+      open: (call) => connect(call.signal),
+      close: (connection, cleanup) => connection.close(cleanup.signal),
+    });
+    if (!acquired.ok) return acquired;
+    const connection = acquired.value;
+    return ctx.service({ userStore: {
+      async findUser(input, call) { return connection.read(input, call.signal); },
+    } });
+  },
+});
+```
+
+成功交付的资源随归属者关闭。取消、超时后迟到取得且未交付的资源，在取得工作实际结束后立即回收，不等待活跃归属者退出。取得失败的空登记会移除；内部部分分配却没有交付句柄的补偿由 adapter 负责。清理失败保留账本和必要依赖。
+
+ctx.resource 归插件；call.resource 归逻辑消费方。自动关闭只保证受管工作，无法推断任意裸对象或 JavaScript 闭包的使用关系。普通资源值没有内核提前释放句柄。需要提前关闭时，创建独立子范围，由范围停止准入、排空并清理。
+
+仅需登记清理动作时使用 addCleanup。异步创建资源优先使用 resource，让容量预留、创建和清理由同一操作负责。
+
+```ts
+function ownCleanup(app: Context, cleanup: (call: CleanupInvocation) => Promise<Result<void>>) {
+  return app.addCleanup(cleanup);
+}
+```
+
+## 处理链
+
+链提供一个终结者和有序处理中间件。next 返回受跟踪 Continuation，支持 then/catch/finally；同一帧禁止并发 next，处理器不能遗留未完成或未观察的失败。
+
+```ts
+declare const transform: ChainToken<string, string>;
+const terminalPlugin = definePlugin({
+  name: "transform", provides: { transform },
+  setup(ctx) { return ctx.handle("transform", (input) => ({ ok: true, value: input })); },
+});
+const middlewarePlugin = definePlugin({
+  name: "uppercase", requires: { transform },
+  setup(ctx) { return ctx.middleware("transform", (input, next) => next(input.toUpperCase())); },
+});
+```
+
+请求中的链和关口使用 call.dispatch，保持本次执行关系。setup 中可以使用 ctx.dispatch 做受管初始化。
+
+```ts
+declare const render: ServiceToken<{ run(input: string): Promise<Result<string>> }>;
+const renderPlugin = definePlugin({
+  name: "render", requires: { transform }, provides: { render },
+  setup(ctx) {
+    return ctx.service({ render: {
+      async run(input, call) { return call.dispatch("transform", input); },
+    } });
+  },
+});
+```
+
+## 决策关口
+
+关口由处理器返回 allow 或 deny；拒绝优先，配置为空时返回 guard-unconfigured。规则本身由业务插件定义。
+
+```ts
+declare const access: GuardToken<{ userId: string }>;
+const accessPlugin = definePlugin({
+  name: "access", provides: { access },
+  setup(ctx) {
+    return ctx.guard("access", (input) => ({ ok: true, value: input.userId
+      ? { kind: "allow" } : { kind: "deny", reason: "missing-user" } }));
+  },
+});
+```
+
+## 内存事件
+
+事件和关口在 provides 声明后，由内核在 setup 前建立暂存登记，安装成功时统一发布，无需提供 undefined 实现。事件提供者通过本地名称发布，订阅者声明依赖后监听。载荷经过验证和快照，监听串行运行。事件失败会停止该监听；事件不提供持久化、确认或重放。
+
+```ts
+declare const changed: EventToken<{ id: string }>;
+const publisherPlugin = definePlugin({
+  name: "publisher", provides: { changed },
+  setup() { return { ok: true, value: undefined }; },
+});
+const listenerPlugin = definePlugin({
+  name: "listener", requires: { changed },
+  setup(ctx) { return ctx.on("changed", async (payload, _origin, call) => { void payload.id; void call.signal; }); },
+});
+```
+
+监听者不能通过声明依赖取得发布权限。若消费者需要提交消息，由提供者暴露受控服务。容量不足的监听等待实际工作释放容量后重试；撤销监听会移除等待和排队载荷。
+
+## 后台任务
+
+显式后台任务归插件生命周期；任务中的依赖仍通过 call.deps 调用。需要结果的宿主应保存 TaskHandle 并 wait。取消或超时回执不表示实际函数已经结束。
+
+```ts
+const taskPlugin = definePlugin({
+  name: "refresh", requires: { userStore },
+  setup(ctx) {
+    return ctx.startTask({ label: "refresh-user", run(call) { return call.deps.userStore.findUser({ id: "42" }); } });
+  },
+});
+```
+
+## 宿主管理与动态装卸
+
+宿主使用 install、uninstall、createScope、closeScope、close、inspect。宿主通过 token 使用服务或登记能力；插件作者通过 definePlugin 获得类型化的命名接口。on 只监听事件，middleware 登记链中间件，guard 登记决策处理器，handle 提供链终结者。两者进入相同登记、执行和生命周期机制。
+
+```ts
+async function mount(app: Host, plugin: Plugin): Promise<Result<void>> {
+  const installed = await app.install([plugin]);
+  if (!installed.ok) return installed;
+  const removed = await app.uninstall(installed.value.plugins[0]!);
   if (!removed.ok) return removed;
   return { ok: true, value: undefined };
 }
 ```
 
-PluginRef 从 load.value.plugins 或 inspect().plugins 中取得，保留原对象；不要根据名称拼装、复制或从另一个宿主传入引用。
+被依赖的提供者默认拒绝卸载。cascade 显式选择同时停止依赖闭包。替换依赖时由宿主卸载、清理并重新装配；代码导入、文件监听、包管理、重启与流量切换属于外部宿主。
 
-默认 unload 拒绝仍有固定消费者的提供者。宿主明确传 `{ cascade: true }` 时，会连同相关消费者及其拥有的子作用域一起按依赖关闭。真正的外部宿主依赖仍可能阻断卸载。级联意味着相关插件一起停止，不是服务热替换。
-
-在线安装的处理器只影响后续捕获的执行计划；已进入的调用继续执行其原计划。若计划中的处理器尚未进入就被撤销，该调用返回 extension-revoked。根宿主统一串行化装配和卸载，关闭信号可以打断正在激活的插件。apply 或清理回调不要等待新的装配；由宿主在当前操作完成后处理实例创建需求，避免等待自己所占用的装配队列。
-
-npm 下载、依赖解析、模块导入、配置许可与包的执行隔离由外部应用实现。core.load 接收已经取得的 Plugin 对象；core 不接收 npm 包名，也不执行 package manager。已加载到同一 JavaScript 进程的第三方插件不是安全沙箱。
-
-## 14. 配置、诊断与关闭失败
+子范围组织可见性和资源。宿主通过 register 显式登记 token；shadow 必须显式声明，不会通过插件包装器改变范围。
 
 ```ts
-function createConfiguredHost() {
-  return createContext({
-    limits: {
-      maxPlugins: 256,
-      maxActiveCalls: 512,
-      maxActiveTasks: 128,
-      maxPendingEvents: 256,
-      callTimeoutMs: 15000,
-      activationTimeoutMs: 5000,
-      closeTimeoutMs: 10000,
-    },
-  });
+function isolated(app: Host, token: ServiceToken<Greeting>) {
+  const scope = app.createScope({ label: "tenant" });
+  if (!scope.ok) return scope;
+  return scope.value.register(token, { async greet(input) { return { ok: true, value: input.name }; } }, { shadow: true });
 }
 ```
 
-数量与时间使用正安全整数，单位为毫秒；非法配置返回 invalid-input。完整默认值见 [限制与时间](../API.md#9-限制与时间)。测试可注入单调 Scheduler；生产配置应保持 now 单调且计时器可撤销。
+Scope 不是不可信代码沙箱。强制结束不可收敛代码需要进程或 Worker 隔离。
 
-inspect 返回只读快照，包含插件状态、调用、任务、事件排队、服务门面、资源及剩余工作身份。diagnostics 返回有界诊断；可在 createContext 的 onDiagnostic 中接入外部日志。日志接入自身出错不会让诊断递归。
+## 状态和故障
 
-dispose/closeScope 的并发或重复调用共用关闭操作，不重新延长预算。关闭会停止新准入，取消工作，等待实际结算，先释放消费方资源，再释放提供者能力。
+所有装配、登记、调用和关闭失败返回 Result。内核错误带 source: core 与稳定 code；业务失败保持业务类型。inspect 和 diagnostics 返回只读快照。清理失败、实际未结束工作和未释放资源不会被成功回执掩盖。
 
-| 结果 | 宿主应如何处理 |
-| --- | --- |
-| 成功回执 | 对应生命周期已完成清理 |
-| close-incomplete | 截止时间到达或仍有未收敛工作；检查剩余身份，不假装成功 |
-| activation-unsettled | 失败装配未完成回滚；宿主 degraded，拒绝继续装配 |
-| close-failed 状态 | 清理失败或尚未完成，检查诊断与资源账本 |
-
-关闭截止时间到达时可以先返回失败；底层工作随后真正结束，inspect 可能最终变成 closed，先前失败回执不会改写。清理失败仍会继续处理其他资源，没有隐式重试或强制删除账本。
-
-## 15. 验证与更多文档
-
-在 `/Users/wrr/work/x-harness/packages/v2` 执行：
-
-```sh
-bun run typecheck
-bun run lint
-bun run build
-bun run test
+```ts
+function inspectApplication(app: Host) {
+  const state = app.inspect();
+  return {
+    dependencies: state.plugins.map(({ ref, dependencies }) => ({ plugin: ref.name, dependencies })),
+    work: state.work,
+    resources: state.resources,
+    diagnostics: app.diagnostics(),
+  };
+}
 ```
 
-typecheck 验证源码、类型负例和文档示例；test 在 Bun 下运行内核用例并输出覆盖率诊断。测试位于 core/src/**/__test__/，按行为、异常、边界和故障回归验收。
+## 验证
 
-- [完整接口与错误语义](../API.md)
-- [架构边界](../ARCHITECTURE.md)
-- [外部插件组合示例](../EXAMPLES.md)
-- [测试组织与异常矩阵](src/__test__/README.md)
-- [当前验收记录](../VERIFICATION.md)
+在 packages/v2 运行 bun run lint、bun run typecheck、bun run build、bun run test。测试在 Bun 运行，包含公共接口回归、类型负例、GC 检查、应用组合和覆盖率门禁。普通服务端组合使用真实 HTTP 与 SQLite，不依赖 AI 包。
+
+inspect 的 work 能看到任务标签、服务方法、执行插件、资源拥有者和等待关系。任务已取消但函数还没有返回时，仍然留在这里。resources 能看到资源种类、归属、清理依赖和 active/closing/failed 状态；plugins 能看到固定提供者和可选依赖是否缺席。
+
+缺依赖、卸载受阻和关闭未完成会返回定位详情。错误内的 diagnosticId 对应 diagnostics 的记录；每份列表最多展示 8 条并报告总数与省略数，完整关系由 inspect 获取。这里只输出元数据；任务 label 请使用稳定名称，避免填写连接串或凭据。

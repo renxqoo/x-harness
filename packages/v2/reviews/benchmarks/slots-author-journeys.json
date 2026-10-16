@@ -1,0 +1,286 @@
+{
+  "runtime": {
+    "bun": "1.4.3",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "toolHash": "a44fb8b633681ec042f6d57575a2aa897431367135408073a7f5b7a5e88113c4",
+  "provenance": {
+    "toolchains": {
+      "author": {
+        "typescript": {
+          "files": 416,
+          "hash": "79437fde2373d55d7a80ec1c8a98fc8d08fff4f676cb3376002e8e6c7bb84b0a"
+        },
+        "@typescript/typescript-darwin-arm64": {
+          "files": 113,
+          "hash": "60b00342e550785053df20bd84f708c6400ba68eea5e27fb8103c9e1a0aa900f"
+        },
+        "bun-types": {
+          "files": 368,
+          "hash": "5aadcd2be4f332766a86f6980d0bb3354333ee6314141d7949d203941e534e44"
+        },
+        "@types/node": {
+          "files": 74,
+          "hash": "a436233c1f760e91a26691bd2230ecd388d67bb4fe132a571725c296586bb246"
+        },
+        "undici-types": {
+          "files": 41,
+          "hash": "6ef9d069bd3038b2470e0f24d132db2b0b3dde0ab294c12288e6b728e79b3f49"
+        }
+      },
+      "declarations": {
+        "typescript": {
+          "files": 132,
+          "hash": "87fd165df70f2f1566da0f1aca18683091612d9182ecc01e340ad2ad55967eb2"
+        },
+        "cosmokit": {
+          "files": 14,
+          "hash": "574e0d7270813b5d01002bbfb457f4752716a24b3429da095773595ec4a9e4a2"
+        },
+        "@standard-schema/spec": {
+          "files": 7,
+          "hash": "b44e70a91c60ae29b34e06bcb15aa58a9d8bb5168fb05e91670d8afa3a2f37e5"
+        },
+        "@cordisjs/unyaml": {
+          "files": 11,
+          "hash": "6014e8bbe9f3fb4dd038956643a152f5db2285d0d23b175e18c7ca68cca86870"
+        },
+        "@types/node": {
+          "files": 91,
+          "hash": "7cae29ca07ee3affbf28e844679c0b959777ffec881197fc35882fe3611960aa"
+        },
+        "undici-types": {
+          "files": 47,
+          "hash": "be36c746b8faa05ad59fe1ab4e9d0071e333ba4dbf8ca498dd84d723cf86c7f8"
+        }
+      }
+    },
+    "core": {
+      "source": "/Users/wrr/.codex/worktrees/plugin-api/x-harness/packages/v2/core/src",
+      "sourceHash": "0c7c8dec683991514967fb88153aa8d9438fe4a6984f72f4d435a6798577924f",
+      "files": 103,
+      "dependencies": [],
+      "manifests": {
+        "bun.lock": "21b5d4416f3cd6ead99d97f2925fa6518db2032eed7a377fee1ab44743d775ff",
+        "package.json": "805abaa35e5be4cd46ebdbf6df8a17c530ac9f7b12fe684f86067e8ef9882c86",
+        "packages/v2/package.json": "8b56cc73e38db9e52c2e6a9b120c35be7a2626c54713d12eb3fa86d979f73cb0",
+        "node_modules/typescript/package.json": "3722b30210616a13a3213ded11575ba6b2dbab10c32a5ef67afca8513e27017e",
+        "packages/v2/tsconfig.json": "0ca692eff0732ac0df41f5663c6efa1e7138dae4bd98eeb21b42c37ebd21b8e4"
+      },
+      "git": {
+        "head": "78e51c45e06ee7aa606101b6b39390a89f92dee9",
+        "status": "M bun.lock\n M packages/v2/core/README.md\n M packages/v2/core/package.json\n M packages/v2/core/src/__test__/README.md\n M packages/v2/core/src/__test__/helpers.ts\n D packages/v2/core/src/chains/collect-handlers.ts\n D packages/v2/core/src/chains/create-continuation.ts\n D packages/v2/core/src/chains/dispatch-chain.ts\n D packages/v2/core/src/chains/register-handler.ts\n M packages/v2/core/src/context/__test__/architecture-boundaries.review.test.ts\n M packages/v2/core/src/context/__test__/architecture-lifecycles.review.gc-case.ts\n M packages/v2/core/src/context/__test__/architecture-lifecycles.review.test.ts\n M packages/v2/core/src/context/__test__/architecture-transactions.review.test.ts\n M packages/v2/core/src/context/__test__/extensions.test.ts\n M packages/v2/core/src/context/__test__/invalid-inputs.test.ts\n M packages/v2/core/src/context/__test__/lifecycle-safety.test.ts\n M packages/v2/core/src/context/__test__/lifecycle.test.ts\n M packages/v2/core/src/context/__test__/review-regressions.test.ts\n M packages/v2/core/src/context/__test__/shutdown-boundaries.test.ts\n M packages/v2/core/src/context/__test__/task-deadline-regressions.test.ts\n M packages/v2/core/src/context/create-context-view.ts\n D packages/v2/core/src/context/create-context.ts\n M packages/v2/core/src/context/create-dependency-context.ts\n M packages/v2/core/src/context/create-invocation.ts\n M packages/v2/core/src/context/inspect-context.ts\n M packages/v2/core/src/contracts/__test__/definitions.test.ts\n M packages/v2/core/src/contracts/__test__/type-fixtures/cleanup-registration.case\n M packages/v2/core/src/contracts/__test__/type-fixtures/plugin-control.case\n M packages/v2/core/src/contracts/__test__/type-fixtures/wrong-chain-input.case\n M packages/v2/core/src/contracts/__test__/type-fixtures/wrong-chain-output.case\n M packages/v2/core/src/contracts/__test__/type-fixtures/wrong-guard-input.case\n M packages/v2/core/src/contracts/__test__/type-fixtures/wrong-service-error.case\n M packages/v2/core/src/contracts/__test__/type-fixtures/wrong-service-input.case\n M packages/v2/core/src/contracts/__test__/type-fixtures/wrong-service-output.case\n M packages/v2/core/src/contracts/__test__/validator-failures.test.ts\n M packages/v2/core/src/contracts/create-fault.ts\n M packages/v2/core/src/contracts/normalize-result.ts\n M packages/v2/core/src/contracts/read-call-options.ts\n M packages/v2/core/src/contracts/types.ts\n D packages/v2/core/src/diagnostics/report-diagnostic.ts\n D packages/v2/core/src/effects/__test__/collect-closed-runtime.gc-case.ts\n D packages/v2/core/src/effects/__test__/release-references.test.ts\n D packages/v2/core/src/effects/register-effect.ts\n D packages/v2/core/src/effects/release-effect.ts\n D packages/v2/core/src/events/__test__/snapshot-boundaries.test.ts\n D packages/v2/core/src/events/drain-events.ts\n D packages/v2/core/src/events/emit-event.ts\n D packages/v2/core/src/events/snapshot-event.ts\n D packages/v2/core/src/guards/dispatch-guard.ts\n M packages/v2/core/src/index.ts\n D packages/v2/core/src/plugins/identify-plugin.ts\n D packages/v2/core/src/plugins/load-plugins.ts\n D packages/v2/core/src/plugins/plan-load.ts\n D packages/v2/core/src/plugins/queue-mutation.ts\n D packages/v2/core/src/plugins/unload-plugin.ts\n D packages/v2/core/src/runtime/check-admission.ts\n D packages/v2/core/src/runtime/create-owner.ts\n D packages/v2/core/src/runtime/default-limits.ts\n D packages/v2/core/src/runtime/identify-owner.ts\n D packages/v2/core/src/runtime/types.ts\n D packages/v2/core/src/scopes/close-owner.ts\n D packages/v2/core/src/scopes/close-scope.ts\n D packages/v2/core/src/scopes/create-scope.ts\n D packages/v2/core/src/scopes/describe-incomplete-close.ts\n D packages/v2/core/src/scopes/stop-owner.ts\n D packages/v2/core/src/scopes/within-deadline.ts\n D packages/v2/core/src/services/__test__/boundaries.test.ts\n D packages/v2/core/src/services/__test__/services.test.ts\n D packages/v2/core/src/services/invoke-service.ts\n D packages/v2/core/src/services/prepare-implementation.ts\n D packages/v2/core/src/services/provide-definition.ts\n D packages/v2/core/src/services/resolve-provider.ts\n D packages/v2/core/src/services/revoke-lease.ts\n D packages/v2/core/src/services/revoke-provider.ts\n D packages/v2/core/src/services/use-service.ts\n D packages/v2/core/src/tasks/add-wait.ts\n D packages/v2/core/src/tasks/spawn-task.ts\n D packages/v2/core/src/tasks/start-work.ts\n D packages/v2/core/src/tasks/wait-task.ts\n?? packages/v2/core/src/assembly/\n?? packages/v2/core/src/context/__test__/authoring-regressions.test.ts\n?? packages/v2/core/src/context/__test__/cancellation-ownership-gc.test.ts\n?? packages/v2/core/src/context/__test__/cancellation-ownership.gc-case.ts\n?? packages/v2/core/src/context/__test__/cancellation-ownership.test.ts\n?? packages/v2/core/src/context/__test__/dependency-slots-gc.test.ts\n?? packages/v2/core/src/context/__test__/dependency-slots.gc-case.ts\n?? packages/v2/core/src/context/__test__/dependency-slots.test.ts\n?? packages/v2/core/src/context/__test__/derived-capabilities.gc-case.ts\n?? packages/v2/core/src/context/__test__/derived-capabilities.test.ts\n?? packages/v2/core/src/context/__test__/diagnostics.gc-case.ts\n?? packages/v2/core/src/context/__test__/diagnostics.test.ts\n?? packages/v2/core/src/context/__test__/execution-budget-regressions.test.ts\n?? packages/v2/core/src/context/__test__/lazy-dependencies.test.ts\n?? packages/v2/core/src/context/__test__/manifest-authoring.test.ts\n?? packages/v2/core/src/context/__test__/owned-shutdown-regressions.test.ts\n?? packages/v2/core/src/context/__test__/plugin-authoring.test.ts\n?? packages/v2/core/src/context/__test__/public-api.test.ts\n?? packages/v2/core/src/context/__test__/result-boundary.test.ts\n?? packages/v2/core/src/context/__test__/review-round-regressions.test.ts\n?? packages/v2/core/src/context/__test__/waiting-cycle.test.ts\n?? packages/v2/core/src/context/create-dependencies.ts\n?? packages/v2/core/src/context/create-host.ts\n?? packages/v2/core/src/context/create-plugin-context.ts\n?? packages/v2/core/src/context/define-plugin.ts\n?? packages/v2/core/src/context/describe-dependencies.ts\n?? packages/v2/core/src/context/inspect-plugin.ts\n?? packages/v2/core/src/context/read-capability.ts\n?? packages/v2/core/src/context/register-plugin-handler.ts\n?? packages/v2/core/src/context/remember-revocation.ts\n?? packages/v2/core/src/context/retain-revocation.ts\n?? packages/v2/core/src/context/revocation-data.ts\n?? packages/v2/core/src/contracts/__test__/call-options.test.ts\n?? packages/v2/core/src/contracts/__test__/fault-boundaries.test.ts\n?? packages/v2/core/src/contracts/__test__/normalize-result.test.ts\n?? packages/v2/core/src/contracts/__test__/type-fixtures/application-cannot-bypass-assembly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/application-snapshot-is-readonly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/array-plugin-manifest.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/author-cannot-handle-required-chain.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/author-cannot-publish-required-event.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/author-cannot-register-raw-provider.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/author-chain-output-is-checked.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/author-event-listener-rejects-guard.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/author-guard-decision-is-checked.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/authoring-positive.ts\n?? packages/v2/core/src/contracts/__test__/type-fixtures/chain-cannot-be-registered-as-service.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/dependency-input-type-is-preserved.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/dynamic-services-preserve-method-types.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/effect-dependencies-are-readonly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/effect-state-is-readonly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/event-cannot-be-injected-as-service.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/event-cannot-be-registered-as-service.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/event-listener-rejects-chain.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/event-payload-mismatch-is-rejected.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/extra-service-is-rejected-at-registration.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/guard-rejects-event.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/listener-name-must-be-declared.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-authoring-positive.ts\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-call-resource-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-context-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-context-resource-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-dependencies-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-different-protocol-name-needs-narrowing.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-empty-overload-needs-name.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-explicit-setup-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-extra-field.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-cannot-infer-chain-handling.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-cannot-infer-event-listening.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-cannot-infer-event-publishing.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-cannot-infer-permissions.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-optional-needs-check.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-undeclared-dependency.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-helper-wrong-implementation.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-implementation-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-invocation-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-invocation-helper-cannot-infer-dispatch.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-optional-table-grants-no-optional.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-optional-table-grants-no-provides.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-optional-table-grants-no-requires.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-output-protocol-name-needs-narrowing.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-overlapping-manifest-union-needs-narrowing.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-overlapping-service-union-needs-narrowing.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-overlapping-token-union-needs-narrowing.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-overload-keeps-event-payload.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-overload-keeps-input-type.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-overload-keeps-output-type.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-pick-cannot-infer-chain-handling.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-pick-cannot-infer-dispatch.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-pick-cannot-infer-event-publishing.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-pick-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-resource-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-service-cannot-widen-implementation-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-spawn-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-start-task-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-task-cannot-widen-service-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-undefined-table-grants-no-requires.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-union-cannot-hide-extra-field.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-union-kind-cannot-dispatch.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-union-kind-cannot-handle.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-union-kind-cannot-listen.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-union-protocol-cannot-pick-implementation.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manifest-union-service-cannot-pick-implementation.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/manual-disposer-context.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/middleware-rejects-event.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/missing-declared-service-is-rejected.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/optional-dependency-must-be-checked.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/owner-providers-are-readonly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/owner-state-is-readonly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/plugin-cannot-install-other-plugins.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/provider-pins-are-readonly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/provider-state-is-readonly.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/request-cannot-use-undeclared-dependency.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/resource-acquisition-cannot-use-undeclared-dependency.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/resource-close-result-mismatch-is-rejected.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/resource-value-has-no-kernel-early-release-handle.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/service-output-mismatch-is-rejected.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/setup-cannot-use-undeclared-dependency.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/sync-service-implementation-is-rejected.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/timer-dependency-input.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/timer-undeclared-dependency.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-context-effect-method.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-context-provider-method.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-context-spawn-method.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-context-state-property.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-host-factory.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-host-loading-method.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-plugin-lifecycle.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-resource-callback-fields.case\n?? packages/v2/core/src/contracts/__test__/type-fixtures/unknown-result-failure-field.case\n?? packages/v2/core/src/contracts/__test__/validate-plugin.test.ts\n?? packages/v2/core/src/contracts/normalize-failure.ts\n?? packages/v2/core/src/contracts/observe-signal.ts\n?? packages/v2/core/src/contracts/plugin-types.ts\n?? packages/v2/core/src/contracts/read-core-fault.ts\n?? packages/v2/core/src/contracts/read-json-value.ts\n?? packages/v2/core/src/contracts/read-registration-options.ts\n?? packages/v2/core/src/contracts/validate-plugin.ts\n?? packages/v2/core/src/execution/\n?? packages/v2/core/src/foundation/\n?? packages/v2/core/src/lifetime/\n?? packages/v2/core/src/mechanisms/\n?? packages/v2/core/src/registry/\n?? packages/v2/core/src/validation.ts"
+      }
+    },
+    "application": {
+      "source": "/Users/wrr/.codex/worktrees/plugin-api/x-harness/packages/v2/application/src",
+      "sourceHash": "ce6698aa37715252203aa7a72e885d5c3a58b3a44e56d14cbf6da4216ef8b607",
+      "files": 7,
+      "dependencies": [],
+      "manifests": {
+        "packages/v2/application/package.json": "5c8138a2814d5ebdae0254956e7d3cef523237720495ea02579c8d7fbbad4ae8"
+      },
+      "git": {
+        "head": "78e51c45e06ee7aa606101b6b39390a89f92dee9",
+        "status": "?? packages/v2/application/"
+      }
+    },
+    "cordis": {
+      "source": "/Users/wrr/work/cordis/packages/core/src",
+      "sourceHash": "754930ab0069f4cbee87e93d3bc78c9b0e221f0674bcdbb1db5cb0f9a09568ad",
+      "files": 9,
+      "dependencies": [
+        {
+          "specifier": "@standard-schema/spec",
+          "entry": "/Users/wrr/work/cordis/node_modules/@standard-schema/spec/dist/index.js",
+          "entryHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "manifestPath": "/Users/wrr/work/cordis/node_modules/@standard-schema/spec/package.json",
+          "manifestHash": "58e5bd75ddd0684c88b07cd799585cc72a37fd6efb8ab0c936d49e230d5164fb",
+          "version": "1.1.0"
+        },
+        {
+          "specifier": "cosmokit",
+          "entry": "/Users/wrr/work/cordis/node_modules/cosmokit/lib/index.mjs",
+          "entryHash": "8c493c6ab7e44ab7608e407e84a79e86dfb6c17b8067cbccfcf29c011285f72a",
+          "manifestPath": "/Users/wrr/work/cordis/node_modules/cosmokit/package.json",
+          "manifestHash": "0a0c4b1ad727fef5ff734b2f824d6476660a0c48ad9fa91a8d5b717b0b85024d",
+          "version": "1.8.1"
+        }
+      ],
+      "manifests": {
+        "yarn.lock": "40ead28f6191f4a4f6dd2692e8a75b4eddb9f27a48520dd1ea8c2edd15d680b4",
+        "package.json": "2777fed716f76821cd14813df8aae0200bbfa27d448e344e902e1d17f46e3084",
+        "packages/core/package.json": "4f79e613ba482a616c3d161ffa40edc25a14345849d3b7bfd54c929e78b188e6",
+        "tsconfig.base.json": "679935fb7bfd19ea62d907dabfcb154a3063e32268b63c7567523ac14dd25bb8",
+        "packages/core/tsconfig.json": "38473a930317c487af4422f830d04ba63353c7d9e145104d588daa6c852be880",
+        "node_modules/typescript/package.json": "822ef7ca6452205657b6288b066481ecf508bfbf43455d715cf7d3ec457561e6"
+      },
+      "git": {
+        "head": "9aa1415af032f9a8f48253e7138a518da0dc7ed0",
+        "status": ""
+      }
+    }
+  },
+  "authorCheck": {
+    "compilerVersion": "7.0.2",
+    "strictArguments": [
+      "--ignoreConfig",
+      "--noEmit",
+      "--strict",
+      "--noUncheckedIndexedAccess",
+      "--verbatimModuleSyntax",
+      "--isolatedModules",
+      "--skipLibCheck",
+      "--allowImportingTsExtensions",
+      "--target",
+      "ESNext",
+      "--lib",
+      "ESNext,DOM",
+      "--module",
+      "ESNext",
+      "--moduleResolution",
+      "bundler",
+      "--types",
+      "/Users/wrr/.codex/worktrees/plugin-api/x-harness/node_modules/bun-types/index.d.ts"
+    ],
+    "entries": {
+      "harness": "/Users/wrr/.codex/worktrees/plugin-api/x-harness/packages/v2/scripts/comparison/run-harness.ts",
+      "cordis": "generated from the native API templates"
+    },
+    "negativeControls": [
+      {
+        "engine": "harness",
+        "symptom": "wrong service implementation input",
+        "diagnostic": 2322
+      },
+      {
+        "engine": "harness",
+        "symptom": "wrong event payload",
+        "diagnostic": 2345
+      },
+      {
+        "engine": "cordis",
+        "symptom": "wrong service implementation input",
+        "diagnostic": 2322
+      },
+      {
+        "engine": "cordis",
+        "symptom": "wrong event payload",
+        "diagnostic": 2769
+      }
+    ]
+  },
+  "cordisDeclarations": {
+    "compilerVersion": "5.9.3",
+    "arguments": [
+      "-p",
+      "/Users/wrr/work/cordis/packages/core/tsconfig.json",
+      "--outDir",
+      "<temporary declarations>",
+      "--incremental",
+      "false",
+      "--composite",
+      "false"
+    ],
+    "files": 9,
+    "hash": "d40dd07507e41556e281f3699ff189e9c7986d985f7717f53269b83db08da5ee"
+  },
+  "scope": {
+    "service": "Shared Result business protocol; required by Harness, voluntarily used by Cordis",
+    "task": "Cordis explicitly aborts and joins its owned Promise in its disposer; Harness uses startTask",
+    "event": "Harness admission plus explicit delivery signal; Cordis parallel awaits listeners",
+    "replacement": "Harness application setPlugins; Cordis dispose/install plus dependent Fiber.await",
+    "inFlight": "Ordinary Cordis service Promise without explicit per-call tracking; Harness managed invocation",
+    "observation": "128 microtask turns with the body gate held; bounded observation, not a proof over every scheduling interleaving",
+    "timings": "No latency, throughput, memory or boilerplate-score claim"
+  },
+  "drainControl": {
+    "normal": {
+      "detected": false,
+      "result": {
+        "closedBeforeGate": false,
+        "replacementSettledBeforeGate": false,
+        "bodySawClosed": false,
+        "savedEntryBlocked": true,
+        "next": "new"
+      }
+    },
+    "withoutActualDrain": {
+      "detected": true,
+      "result": {
+        "closedBeforeGate": true,
+        "replacementSettledBeforeGate": true,
+        "bodySawClosed": true,
+        "savedEntryBlocked": true,
+        "next": "new"
+      }
+    }
+  },
+  "results": {
+    "harness": {
+      "service": "hello:world",
+      "resource": {
+        "opened": 1,
+        "closed": 1
+      },
+      "task": {
+        "finished": 1,
+        "cancelled": true,
+        "closeWaited": true
+      },
+      "event": [
+        "changed"
+      ],
+      "replacement": {
+        "before": "old",
+        "after": "new",
+        "starts": 2,
+        "cleanup": [
+          "consumer",
+          "provider:old"
+        ],
+        "savedEntry": "revoked"
+      },
+      "inFlight": {
+        "closedBeforeGate": false,
+        "replacementSettledBeforeGate": false,
+        "bodySawClosed": false,
+        "savedEntryBlocked": true,
+        "next": "new"
+      }
+    },
+    "cordis": {
+      "service": "hello:world",
+      "resource": {
+        "opened": 1,
+        "closed": 1
+      },
+      "task": {
+        "finished": 1,
+        "cancelled": true,
+        "closeWaited": true
+      },
+      "event": [
+        "changed"
+      ],
+      "replacement": {
+        "before": "old",
+        "after": "new",
+        "starts": 2,
+        "cleanup": [
+          "consumer",
+          "provider:old"
+        ],
+        "savedEntry": "new"
+      },
+      "inFlight": {
+        "closedBeforeGate": true,
+        "replacementSettledBeforeGate": true,
+        "bodySawClosed": true,
+        "savedEntryBlocked": false,
+        "next": "new"
+      }
+    }
+  }
+}

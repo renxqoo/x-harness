@@ -1,0 +1,142 @@
+{
+  "date": "2026-10-17",
+  "environment": {
+    "os": "macOS 26.5.2 arm64",
+    "bun": "1.4.3"
+  },
+  "gates": {
+    "lint": "passed, zero errors and warnings",
+    "typecheck": "passed, 118 negative fixtures and 31 documentation examples",
+    "build": "passed",
+    "test": {
+      "files": 99,
+      "passed": 728,
+      "failed": 0
+    }
+  },
+  "coverage": {
+    "lines": {
+      "total": 3176,
+      "covered": 3122,
+      "skipped": 0,
+      "pct": 98.29
+    },
+    "statements": {
+      "total": 5328,
+      "covered": 4969,
+      "skipped": 0,
+      "pct": 93.26
+    },
+    "functions": {
+      "total": 903,
+      "covered": 884,
+      "skipped": 0,
+      "pct": 97.89
+    },
+    "branches": {
+      "total": 3794,
+      "covered": 3463,
+      "skipped": 0,
+      "pct": 91.27
+    },
+    "branchesTrue": {
+      "total": 0,
+      "covered": 0,
+      "skipped": 0,
+      "pct": 100
+    }
+  },
+  "thresholds": {
+    "statements": 90,
+    "branches": 88,
+    "functions": 95,
+    "lines": 96
+  },
+  "jsonl": {
+    "productionFiles": 23,
+    "testFiles": 9,
+    "tests": 53,
+    "publicContractChecks": 20
+  },
+  "independentRuntimeAssertions": 106,
+  "mutationControls": [
+    {
+      "mutation": "CAS",
+      "detected": true,
+      "failed": 1,
+      "passed": 1
+    },
+    {
+      "mutation": "fingerprint",
+      "detected": true,
+      "failed": 1,
+      "passed": 1
+    },
+    {
+      "mutation": "checksum",
+      "detected": true,
+      "failed": 2,
+      "passed": 7
+    },
+    {
+      "mutation": "durable sync",
+      "detected": true,
+      "failed": 2,
+      "passed": 9
+    },
+    {
+      "mutation": "fork prefix",
+      "detected": true,
+      "failed": 1,
+      "passed": 1
+    },
+    {
+      "mutation": "tail recovery",
+      "detected": true,
+      "failed": 1,
+      "passed": 8
+    },
+    {
+      "mutation": "snapshot baseline",
+      "detected": true,
+      "failed": 1,
+      "passed": 2
+    },
+    {
+      "mutation": "publication cancellation",
+      "detected": true,
+      "failed": 1,
+      "passed": 10
+    }
+  ],
+  "sourceHashes": {
+    "plugins/session-jsonl/src/append-journal.ts": "1baed77187d2f313dbf4f0b98488c7c7538c865e8218e7188399d2eaa55a191d",
+    "plugins/session-jsonl/src/compact-journal.ts": "f87a3863fee96fa060314d328598ef18099c81520552d39d038e0b03eb2638d0",
+    "plugins/session-jsonl/src/create-file-io.ts": "b09c92849c2e0c8d026cc30849df6735274856e567d45f3f2575afc0b8582483",
+    "plugins/session-jsonl/src/create-plugin.ts": "a7725c484589623cac00e79f81c03c43dbb63c739baf0b3046935ebda54529c5",
+    "plugins/session-jsonl/src/create-session.ts": "42a5d34a14b28eb84425e3768a7f2b2254c3e03cbf5498294f6db79a78fc2452",
+    "plugins/session-jsonl/src/create-storage-service.ts": "221e161f6ac995588b48658eb3b13ea2e9d666852e69bc9f7435b4baf7c97686",
+    "plugins/session-jsonl/src/encode-line.ts": "10e295f58207cdf924c7fe9ed7f28adf071f796b872d74945d03400f5b8e7676",
+    "plugins/session-jsonl/src/fail.ts": "959d404019da7e941ddb4464f7d4da341934bb01abeae20dbe7dd27a2cc01e56",
+    "plugins/session-jsonl/src/index.ts": "5f0bedc75b107071ceee82598e7c26558ad2597d2410872dfbfa01e34a4b3e47",
+    "plugins/session-jsonl/src/open-file.ts": "9a34b3329a4117e6e3aa5c8980c847e15da73c67382674490e03d4ba00ddfd12",
+    "plugins/session-jsonl/src/open-lock.ts": "00ceaf593008a970689849f3244f7541c05c2755f1b612f28f24459a52c69aa9",
+    "plugins/session-jsonl/src/open-store.ts": "64613c3cf49944c4f866ae781f71b128a5314fc56d4938fc279b8faaaf7151a2",
+    "plugins/session-jsonl/src/publish-file.ts": "7f0b76f754682a518a75d79c1e71735c57ab517fd27c2d2a3caecaf73e8f8ad7",
+    "plugins/session-jsonl/src/read-config.ts": "877d2300ae1dbc812095b08d358e7212061af2c5685cf428e8a5fdf5ac9bbc0a",
+    "plugins/session-jsonl/src/read-lines.ts": "c020ce451ed6b56f48408f08f8965054275bf44bd3d9a350a0d7bc7e3b30e674",
+    "plugins/session-jsonl/src/read-options.ts": "bec3171eb80d92d14798333ed4f0e565083514ea17389d0a5f9189c26ec5bf68",
+    "plugins/session-jsonl/src/read-page.ts": "f9a03aae3837fc3fa86e8aba924f38855ba3d58c8cf2df1ce822121b7b725fc6",
+    "plugins/session-jsonl/src/read-record.ts": "ad63ff747733c0df7b919b743d307f08cf1ffec92c94584d6f0061e9b080d32e",
+    "plugins/session-jsonl/src/read-values.ts": "3fdc3feedb802118bf60cfd3e0b9402841d906958fb20287c6573176594f5876",
+    "plugins/session-jsonl/src/replay-journal.ts": "5bf3696d9faa245d2418f28bc6c0a62502e234570cc7aaca5e746b6187758447",
+    "plugins/session-jsonl/src/sync-path.ts": "0389d2d500449ad65c71855488447d87e5aee4523802dbd650977c390823e1e5",
+    "plugins/session-jsonl/src/types.ts": "f08e1567ee6c96ca1551224039eb89ee4fc0f278e417aae2d6380e1ab19f93c2",
+    "plugins/session-jsonl/src/write-line.ts": "3c177e3e0d839eec4ba48e93224b8edc7280a764cd6a4e638a80fc0050eab6a1"
+  },
+  "limitations": [
+    "Linux/glibc code path not measured on this host",
+    "No physical power-cut hardware test",
+    "Local filesystem only; no cross-node failover guarantee"
+  ]
+}

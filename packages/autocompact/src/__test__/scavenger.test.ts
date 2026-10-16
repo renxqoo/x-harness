@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SurfaceNode } from "@x-harness/session";
+import { estimateText } from "@x-harness/token-meter";
 import { computeClearPlan, gainTokensOf, landClearPlan, lastTurnStartIndex, PLACEHOLDER_PREFIX } from "../scavenger.ts";
 import { logEvent, textOf, toolResultNode, userNode } from "./helpers.ts";
 
@@ -73,6 +74,34 @@ describe("computeClearPlan", () => {
       const plan = computeClearPlan(nodes, events, { clearableTools: [name], clearKeepRecent: 0 });
       expect(plan.entries[0]?.placeholder).toContain(expected);
     }
+  });
+
+  it("列表型工具进默认名单（症状:mrod40 卡 707k 时 edit/task_update 共 2.2 万 token 永不可清致 l1-no-gain 空转）", () => {
+    const nodes = [userNode(0, "t"), toolUseAssistantNode(1, { callId: "c1", name: "task_update", args: "{}" }), toolResultNode(2, "c1", "Task #1 status updated to completed"), toolUseAssistantNode(3, { callId: "c2", name: "list_agents", args: "{}" }), toolResultNode(4, "c2", "agent-1 idle agent-2 busy"), userNode(5, "n")];
+    const events = [
+      logEvent("tool/call", 1, { turn: 0, step: 0, callId: "c1", name: "task_update", arguments: "{}" }),
+      logEvent("tool/call", 3, { turn: 0, step: 1, callId: "c2", name: "list_agents", arguments: "{}" }),
+    ];
+    const plan = computeClearPlan(nodes, events, { clearableTools: ["read", "grep", "bash", "task_update", "task_create", "list_agents", "task_list"], clearKeepRecent: 0 });
+    expect(plan.entries.map((e) => e.toolName).sort()).toEqual(["list_agents", "task_update"]);
+  });
+
+  it("diff 工具截断而非清除：保留头部 diffKeepLines 行 + 截断尾注，收益按差值计（症状:edit 未清残留 16k token 为 L1 死区最大头）", () => {
+    const longDiff = Array.from({ length: 200 }, (_, i) => `@@ -${String(i)} +${String(i)} @@ context line ${String(i)}`).join("\n");
+    const nodes = [userNode(0, "t"), toolUseAssistantNode(1, { callId: "e1", name: "edit", args: JSON.stringify({ path: "/a.ts" }) }), toolResultNode(2, "e1", longDiff), userNode(3, "n")];
+    const events = [logEvent("tool/call", 1, { turn: 0, step: 0, callId: "e1", name: "edit", arguments: JSON.stringify({ path: "/a.ts" }) })];
+    const plan = computeClearPlan(nodes, events, { clearableTools: [], clearKeepRecent: 0, diffTools: ["edit", "write"], diffKeepLines: 40, diffSuffix: "[diff truncated]" });
+    expect(plan.entries).toHaveLength(1);
+    const placeholder = plan.entries[0]?.placeholder ?? "";
+    expect(placeholder.split("\n")).toHaveLength(41);
+    expect(placeholder.endsWith("[diff truncated]")).toBe(true);
+    expect(plan.gainTokens).toBeGreaterThan(0);
+    expect(plan.gainTokens).toBeLessThan(estimateText(longDiff));
+    const shortDiff = Array.from({ length: 10 }, (_, i) => `line ${String(i)}`).join("\n");
+    const nodes2 = [userNode(0, "t"), toolUseAssistantNode(1, { callId: "e2", name: "edit", args: "{}" }), toolResultNode(2, "e2", shortDiff), userNode(3, "n")];
+    const events2 = [logEvent("tool/call", 1, { turn: 0, step: 0, callId: "e2", name: "edit", arguments: "{}" })];
+    const plan2 = computeClearPlan(nodes2, events2, { clearableTools: [], clearKeepRecent: 0, diffTools: ["edit", "write"], diffKeepLines: 40, diffSuffix: "[diff truncated]" });
+    expect(plan2.entries).toEqual([]);
   });
 
   it("单轮会话无候选（唯一真轮起点必须保留——lastStart=0）", () => {

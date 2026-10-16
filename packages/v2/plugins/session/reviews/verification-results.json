@@ -1,0 +1,263 @@
+{
+  "status": "verified",
+  "scope": "packages/v2",
+  "workspace": "/Users/wrr/work/x-harness",
+  "workflow": "repo-migration-e2e-v2",
+  "testFiles": 83,
+  "tests": 646,
+  "pluginTestFiles": 22,
+  "pluginTests": 118,
+  "preservedBaselineTests": 608,
+  "typeNegativeFixtures": 118,
+  "documentationExamples": 30,
+  "productionFiles": 62,
+  "productionSha256": "524602b61ad1e2551e58879e8e4adc2d36fd4433e012378271666cdbaeced651",
+  "sourceFiles": {
+    "plugins/session/src/contracts/define-session.ts": "58bf1049db5e0089865d3b5bd651bfc4f31ef6a92a6a492587116712e99f95b8",
+    "plugins/session/src/contracts/session-limits.ts": "8e7da270c59357fe7ae4504d8cbf62ff6192e9d21d252860f50340eeec846c44",
+    "plugins/session/src/contracts/snapshot-json.ts": "05092814f35308ee6a67f3485943df6c6022c019cbef0ee77059fa214a4b9053",
+    "plugins/session/src/contracts/types.ts": "70d31818930fe7b8ab5cb2c2cabfbf7841b7661f2ce64b5a6b60081017270d77",
+    "plugins/session/src/contracts.ts": "6bdd14f8cfc1d8b7658c4ca78ce8afb46321e901fb8912534c26bdc52b07789c",
+    "plugins/session/src/create-session-plugin.ts": "b7bd582038aaefc2f65e830971b16fe0c58d1d910511e5450512143b5dbec41d",
+    "plugins/session/src/domain/fail.ts": "8d324efe53a52768a4e37f2bdb23b3e6e3dd2ee4734b4a1e82aa8c6126540cc8",
+    "plugins/session/src/domain/fingerprint.ts": "3bbfd71a45b3e09b481498182e825c897e4b38da464c042648f927b50ed6419d",
+    "plugins/session/src/domain/project-entries.ts": "56c535bdc813489f824fd3b4392146a13ccbf8919c6050102f7604acd0f24d99",
+    "plugins/session/src/domain/read-entry.ts": "733b42755279bb002f54226955f5ece3b9ea03c78ffa7e57073dbf00f72a0609",
+    "plugins/session/src/domain/read-input.ts": "6e0f1ebf313acb3abb4a13ea84919950e7949faf1c59c77c6e97926c2472dfde",
+    "plugins/session/src/domain/read-stored-head.ts": "241905ba114f6decb13516c4af18bf1604dfa198a96085ea2364ec7c5f9bfd84",
+    "plugins/session/src/domain/read-stored-record.ts": "15233e6a0907a05be0994e36a67bb3e0bfde4520aaa5c84a7ba9ef3022077e9b",
+    "plugins/session/src/index.ts": "158d990ffdca2ef0ead957dac63939519555977aa5fc161137ca173c573246b3",
+    "plugins/session/src/operations/append-session.ts": "558bb86c7739c2e6aa1f7c893e3382336023738f782042360855077fa14d7cb4",
+    "plugins/session/src/operations/create-session.ts": "f1dc9723e03901f5742e1a718771e4de4a2054ea040c39446d8a6f4d93c04485",
+    "plugins/session/src/operations/fork-session.ts": "fbf503fa1a2b58739e47923a52cd379ac7d47d3f3e09f65a3a500866313588e7",
+    "plugins/session/src/operations/get-commit.ts": "db696d74dfac3e0c0a7c100f63074b0e66c52be8034f9f241b8e0061dfba6fb1",
+    "plugins/session/src/operations/get-session.ts": "87a3b3363a0c5fcadb317354560bf4ed6feeb6f7ccd5ae54c0940e1a43e2812c",
+    "plugins/session/src/operations/read-conversation.ts": "2a0e962efe605c65721992313b7d06f5626f82eefeea582059b8a12c0fe235b9",
+    "plugins/session/src/operations/read-history.ts": "fce8b8beaed8bc4d78eaea7d250a9ab4b5e4d2bcdcaa43a2a6ea1a53cfe4d273",
+    "plugins/session/src/operations/types.ts": "ba34598f11acedecd174fe0ceeeab0b700c7ddd393b792da0e45d16bf3b6166e",
+    "plugins/session/src/read-options.ts": "5dcb48cea382261e9cd84bf19afe977e28885d946078aa537e99602d6f719083",
+    "plugins/session/src/storage/define-storage.ts": "fb24ac498e0084df5693ed5211cb14836fab4c88f88bd78c7684d9f0d6a7bb5b",
+    "plugins/session/src/storage/read-metadata.ts": "09394df8c82e0cb8b5db1827553591b3ed0734c5a6d0198c91b4505dc4b083d2",
+    "plugins/session/src/storage/types.ts": "8e1aceb7641bc122870d4b201f2fa537acca67b8f5228dbba3872c5a94bdef66",
+    "plugins/session/src/storage.ts": "8f5f62bce11268675a6a9f379ba9d55bfdfc0548ea3ad2b1e1978e0c71650566",
+    "plugins/session/src/testing/verify-storage.ts": "685639df8920c5651f3e731afd2f6b866332aa2e76336ff28e0864cf05512092",
+    "plugins/session/src/testing.ts": "6597f30aa20a844fd5578e8e64448c5ea845111edff8ffcd8cee60749f2ac1b9",
+    "plugins/session-storage-sql/src/commit-session.ts": "d973302fce9630c5b9304330b3ffab6dbfe041f2fc0b43f92cc38590d8e04da1",
+    "plugins/session-storage-sql/src/create-gate.ts": "19b41e54a3a1a46dd79898aa541ca7df0a5226d7792a8d54fd1236f9dc13a603",
+    "plugins/session-storage-sql/src/create-head.ts": "25c8b9d7031cc35c0d2b442ebc6ebda41b52b5a3b7a1244ecc1749d286b247c1",
+    "plugins/session-storage-sql/src/create-session.ts": "a5ffff1f3386550db3691b9793c7a8f77816ec177e0617f1e10df15a308ed8ca",
+    "plugins/session-storage-sql/src/create-storage-service.ts": "f3e6f40370949c7c6e6bfcc0f52b7bd2d9796e18135cf7d64bc84d8ca83ad9c5",
+    "plugins/session-storage-sql/src/fail.ts": "07f7c9c23cdb88bb48fe94f1aeb7a6c7a6dbeed9dd4c4f31a967895d278c1fef",
+    "plugins/session-storage-sql/src/fork-session.ts": "222c5c34147581d5fe33e945191f2f8dbe50d88a8fb64d80b98084562ec8ed92",
+    "plugins/session-storage-sql/src/index.ts": "261de04e3c9d9157d99a32b46a4e18fc457708baaf8994a7f5019ad9cef76b44",
+    "plugins/session-storage-sql/src/initialize-store.ts": "7d7689ba6c7134761c1c650eb781dc528b193621f4ac49c4b92e51d7d1ba7e4b",
+    "plugins/session-storage-sql/src/insert-records.ts": "17e80b2477e931f2ec1fb3e3afb5fce82c718a9c4b369a3babfc7f974a6658ce",
+    "plugins/session-storage-sql/src/open-store.ts": "46178bad2028af4fb6136a36e8d40f80976913d7a365c2064e56a82353438d2f",
+    "plugins/session-storage-sql/src/persist-projection.ts": "be08ff1b5ebe32bb73f61b2538a19000212dc23fc27befe833df0bd648046cf3",
+    "plugins/session-storage-sql/src/read-conversation.ts": "5114ea3aa9909fb61618e5fa6c7035caa3c783488911495f22ed2476ab85eddf",
+    "plugins/session-storage-sql/src/read-head.ts": "0290e83dbee3d9c52d5f4c82531834883e6bd623d2d4a936b12ba29f07e32080",
+    "plugins/session-storage-sql/src/read-history.ts": "1d9ef5826075a696b28d54ad4ff874edf4dad04bc56135a64e4f100c6a77ee1d",
+    "plugins/session-storage-sql/src/read-limits.ts": "345b89ae7da9a0e625f9cea722abf0fbfcadd08dfdd3c750f410935358795e20",
+    "plugins/session-storage-sql/src/read-namespace.ts": "831412aa6dd710ed9272de3f64937a60ae3d485241cbc9c7aa5e0d006bb1330b",
+    "plugins/session-storage-sql/src/read-nodes.ts": "bb308607ff4f3f4c9eb87d979b7de542e361d180ce3a1ae51339f817698e2511",
+    "plugins/session-storage-sql/src/read-policy.ts": "abd8f5957da073a5b4db1f55c78b4b673fbd2ac488605f952b0a09027d604ddb",
+    "plugins/session-storage-sql/src/read-receipt.ts": "f7d9ec5da0cd1dca6c291ea70a81166e87d343bb11f4ebfe1df2a4a789d9f474",
+    "plugins/session-storage-sql/src/read-record.ts": "2692b33daabed002ded6263e03291d20dc816f9134baca106c1590716b6ea094",
+    "plugins/session-storage-sql/src/read-request.ts": "0177a4f29777b4816708d684989c4c8f697761c146021124c3bb29fc71e5fa32",
+    "plugins/session-storage-sql/src/read-snapshot.ts": "cd333c6710b1aeb5954a3f16658f8fadad6b8800d7bf878331fcc030b2467520",
+    "plugins/session-storage-sql/src/select-page.ts": "3f9a58ebc019cfd1eaf4630bcd4daa7f68dc271d30e1065ec9126be6b15194bd",
+    "plugins/session-storage-sql/src/types.ts": "7f6b03f0c1516684083316ce6741c30e01b12309bd27e5f39451ae2b3984af4b",
+    "plugins/session-sqlite/src/create-plugin.ts": "72504581c5baf65290963f6a44b1ecaa97c1f09a94059f913f9a3f35aca76f72",
+    "plugins/session-sqlite/src/index.ts": "d7fd12f4d9b18a4930d9b3f9ba0dde8e12cdbc885f45da8e18b3004267a85340",
+    "plugins/session-sqlite/src/open-sqlite.ts": "7305157e3c1f404f64651fc8563c6a798c560ad911ac2bf4c1fd02ef57ce8a8b",
+    "plugins/session-sqlite/src/serve-sqlite.ts": "339e1f3ad5c15753e2c3eb327a60da7ed4997e64fb0fcc8a9a290a201dc4dd48",
+    "plugins/session-sqlite/src/sqlite-worker.ts": "30bd723aa779694b33cf6057d0b5094090db0fd4941727c3fbb00073da9e77bc",
+    "plugins/session-postgres/src/create-plugin.ts": "19c735a8b73a4511aa7ba76dbc666e4a6da5e4e8f0c6bdadba3d3fb4fb8a2985",
+    "plugins/session-postgres/src/index.ts": "1966e610e5e301762697f8cc0458c659f7f449776ab2cc44c043fc745c0c8a7c",
+    "plugins/session-postgres/src/open-postgres.ts": "22031ac7414c4f6e3d12b3fc6a9f11102d5b18301e01d733425e70b6935cbe59"
+  },
+  "gates": {
+    "lint": {
+      "passed": true,
+      "errors": 0,
+      "warnings": 0,
+      "kernelSources": 103,
+      "platformSources": 106
+    },
+    "typecheck": {
+      "passed": true
+    },
+    "build": {
+      "passed": true,
+      "domainTarget": "browser",
+      "driverTarget": "bun"
+    },
+    "test": {
+      "passed": true
+    }
+  },
+  "coverage": {
+    "total": {
+      "statements": {
+        "total": 4634,
+        "covered": 4307,
+        "skipped": 0,
+        "pct": 92.94
+      },
+      "branches": {
+        "total": 3310,
+        "covered": 3008,
+        "skipped": 0,
+        "pct": 90.87
+      },
+      "functions": {
+        "total": 806,
+        "covered": 787,
+        "skipped": 0,
+        "pct": 97.64
+      },
+      "lines": {
+        "total": 2949,
+        "covered": 2895,
+        "skipped": 0,
+        "pct": 98.16
+      }
+    },
+    "plugins": {
+      "session": {
+        "statements": {
+          "covered": 435,
+          "total": 468,
+          "pct": 92.95
+        },
+        "branches": {
+          "covered": 436,
+          "total": 470,
+          "pct": 92.77
+        },
+        "functions": {
+          "covered": 58,
+          "total": 58,
+          "pct": 100.0
+        },
+        "lines": {
+          "covered": 260,
+          "total": 260,
+          "pct": 100.0
+        }
+      },
+      "session-storage-sql": {
+        "statements": {
+          "covered": 447,
+          "total": 478,
+          "pct": 93.51
+        },
+        "branches": {
+          "covered": 358,
+          "total": 391,
+          "pct": 91.56
+        },
+        "functions": {
+          "covered": 69,
+          "total": 69,
+          "pct": 100.0
+        },
+        "lines": {
+          "covered": 230,
+          "total": 232,
+          "pct": 99.14
+        }
+      },
+      "session-sqlite": {
+        "statements": {
+          "covered": 98,
+          "total": 101,
+          "pct": 97.03
+        },
+        "branches": {
+          "covered": 37,
+          "total": 40,
+          "pct": 92.5
+        },
+        "functions": {
+          "covered": 18,
+          "total": 18,
+          "pct": 100.0
+        },
+        "lines": {
+          "covered": 42,
+          "total": 43,
+          "pct": 97.67
+        }
+      },
+      "session-postgres": {
+        "statements": {
+          "covered": 30,
+          "total": 31,
+          "pct": 96.77
+        },
+        "branches": {
+          "covered": 15,
+          "total": 17,
+          "pct": 88.24
+        },
+        "functions": {
+          "covered": 11,
+          "total": 11,
+          "pct": 100.0
+        },
+        "lines": {
+          "covered": 18,
+          "total": 18,
+          "pct": 100.0
+        }
+      }
+    },
+    "pluginsCombined": {
+      "statements": {
+        "covered": 1010,
+        "total": 1078,
+        "pct": 93.69
+      },
+      "branches": {
+        "covered": 846,
+        "total": 918,
+        "pct": 92.16
+      },
+      "functions": {
+        "covered": 156,
+        "total": 156,
+        "pct": 100.0
+      },
+      "lines": {
+        "covered": 550,
+        "total": 553,
+        "pct": 99.46
+      }
+    }
+  },
+  "mutationControls": {
+    "baselinePassed": true,
+    "detected": 6,
+    "total": 6
+  },
+  "review": {
+    "design": "R1-R5 resolved",
+    "runtime": "R6-R8 resolved and independently rechecked",
+    "readOnlyRuntimeScenarios": 7
+  },
+  "backends": [
+    "sqlite",
+    "postgres"
+  ],
+  "realJourneys": [
+    "multi-process CAS",
+    "SIGKILL after commit",
+    "SIGKILL before commit",
+    "source and build provider processes",
+    "synchronous PostgreSQL standby promotion",
+    "actual committed database reopening"
+  ],
+  "baselineFixtureSha256": "b0b2be8b4a7ce2239219f6d15c84e9ad6374759a2ed6136b0c09e14ad735c197",
+  "unsupportedClaim": "No multi-node availability claim for SQLite or unimplemented JSONL provider"
+}

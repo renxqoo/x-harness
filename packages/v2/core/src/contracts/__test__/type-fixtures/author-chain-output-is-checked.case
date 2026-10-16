@@ -1,0 +1,1 @@
+import { definePlugin } from "__PUBLIC_ENTRY__"; definePlugin({ name: "bad", provides: { chain }, setup(ctx) { return ctx.handle("chain", (input) => ({ ok: true, value: input })); } });

@@ -54,8 +54,8 @@ describe("终态矩阵", () => {
     expect(await run(truncatedScript("partial"))).toEqual({ ok: false, reason: "truncated" });
   });
 
-  it("provider 错（H4）→ failed；abort（联动）→ aborted 静默", async () => {
-    expect(await run(errorScript("http-500"))).toEqual({ ok: false, reason: "failed" });
+  it("provider 错（H4）→ failed 且携带 finish 诊断码（症状:provider-error 塔缩丢失 code/message 无法定位根因）；abort（联动）→ aborted 静默", async () => {
+    expect(await run(errorScript("http-500"))).toEqual({ ok: false, reason: "failed", failure: { code: "http-500", message: "summarizer boom" } });
     const aborting = new AbortController();
     aborting.abort();
     const outcome = await run(errorScript("http-500"), { signal: aborting.signal });
@@ -81,12 +81,12 @@ describe("终态矩阵", () => {
     expect(fake.calls).toHaveLength(0);
   });
 
-  it("流抛非取消异常（违约流）→ failed", async () => {
+  it("流抛非取消异常（违约流）→ failed（无 finish 时码为 stream-error）", async () => {
     const throwing = (async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
       yield { type: "text-delta", text: "partial" };
       throw new Error("adapter blew up");
     })();
-    expect(await run(throwing)).toEqual({ ok: false, reason: "failed" });
+    expect(await run(throwing)).toEqual({ ok: false, reason: "failed", failure: { code: "stream-error", message: undefined } });
   });
 
   it("看门狗：流静默挂死 → aborted 跳过本轮不悬挂（挂起面收口）", async () => {

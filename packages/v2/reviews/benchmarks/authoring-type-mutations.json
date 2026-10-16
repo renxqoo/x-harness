@@ -1,0 +1,72 @@
+[
+  {
+    "mutation": "required-optional-dependency",
+    "regression": "manifest-helper-optional-needs-check.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "accepted-extra-manifest-field",
+    "regression": "manifest-extra-field.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "absent-table-permission",
+    "regression": "manifest-optional-table-grants-no-optional.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "structural-helper-permission",
+    "regression": "manifest-pick-cannot-infer-chain-handling.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "union-branch-permission",
+    "regression": "manifest-union-kind-cannot-dispatch.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "overlapping-protocol-union",
+    "regression": "manifest-overlapping-service-union-needs-narrowing.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "union-hidden-extra-key",
+    "regression": "manifest-union-cannot-hide-extra-field.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "widened-service-input",
+    "regression": "manifest-pick-cannot-widen-service-input.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "resource-wrapper-shortcut",
+    "regression": "manifest-resource-cannot-widen-service-input.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  },
+  {
+    "mutation": "implementation-wrapper-shortcut",
+    "regression": "manifest-implementation-cannot-widen-service-input.case",
+    "baseline_rejected_api_usage": true,
+    "mutant_accepted_api_usage": true,
+    "rejected_by_api_type_assertion": true
+  }
+]

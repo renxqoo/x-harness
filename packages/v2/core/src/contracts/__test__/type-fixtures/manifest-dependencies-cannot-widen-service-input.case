@@ -1,0 +1,5 @@
+import type { PluginDependencies } from "__PUBLIC_ENTRY__";
+import type { NarrowManifest, WideManifest } from "__AUTHORING_FIXTURE__";
+declare const source: PluginDependencies<NarrowManifest>;
+const widened: PluginDependencies<WideManifest> = source;
+void widened;

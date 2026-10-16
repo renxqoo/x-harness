@@ -1,0 +1,8 @@
+{
+  "name": "@x-harness/session-storage-sql",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

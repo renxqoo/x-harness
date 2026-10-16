@@ -21,7 +21,7 @@ describe("catalog", () => {
     expect(catalog.degraded).toBe(false);
     expect(catalog.entries.length).toBeGreaterThan(0);
     expect(catalog.entries.every((e) => e.source === "preset")).toBe(true);
-    expect(resolveDefaultDial(catalog)).toEqual({ provider: "glm", model: "glm-5.3" });
+    expect(resolveDefaultDial(catalog, { glm: "cred-key" })).toEqual({ provider: "glm", model: "glm-5.3" });
     const glm = catalog.entries.find((e) => e.model === "glm-5.3");
     expect(glm?.contextWindow).toBe(1_000_000);
     expect(glm?.reasoning).toBe(true);
@@ -57,16 +57,16 @@ describe("catalog", () => {
     expect(catalog.defaults).toEqual({ provider: "glm", model: "glm-5.3" });
   });
 
-  test("file.default 覆写缺省；挤出目录时回落首条", async () => {
+  test("file.default 覆写缺省（需有凭证）；无凭证时挤出到首个可信条目", async () => {
     const dir = await tempDir();
     await Bun.write(join(dir, "providers.json"), JSON.stringify({
-      providers: [{ name: "p2", protocol: "openai", baseUrl: "https://p2.example", models: ["m2"] }],
+      providers: [{ name: "p2", protocol: "openai", baseUrl: "https://p2.example", apiKey: "inline", models: ["m2"] }],
       default: { provider: "glm", model: "glm-5.3" },
     }));
     const catalog = await readCatalog(dir);
-    expect(resolveDefaultDial(catalog)).toEqual({ provider: "glm", model: "glm-5.3" });
+    expect(resolveDefaultDial(catalog, {}, { GLM_API_KEY: "env-key" })).toEqual({ provider: "glm", model: "glm-5.3" });
     await Bun.write(join(dir, "providers.json"), JSON.stringify({
-      providers: [{ name: "p2", protocol: "openai", baseUrl: "https://p2.example", models: ["m2"] }],
+      providers: [{ name: "p2", protocol: "openai", baseUrl: "https://p2.example", apiKey: "inline", models: ["m2"] }],
       default: { provider: "gone", model: "x" },
     }));
     const fallback = await readCatalog(dir);

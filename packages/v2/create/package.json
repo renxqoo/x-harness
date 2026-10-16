@@ -1,0 +1,8 @@
+{
+  "name": "@x-harness/create",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

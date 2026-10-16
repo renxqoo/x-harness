@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createContext, defineService } from "../../index";
-import type { Context, ContextOptions, Result, RootContext, ServiceToken } from "../../index";
+import { createHost, defineService } from "../../index";
+import type { Context, HostOptions, Result, Host, ServiceToken } from "../../index";
 
 function value<T, E>(result: Result<T, E>): T {
-  if (!result.ok) throw new Error(JSON.stringify(result.reason));
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 }
 
@@ -18,9 +18,9 @@ async function flush() {
 }
 
 type Endpoint = { run(input: void): Promise<Result<string>> };
-const roots: RootContext[] = [];
-function setup(options?: ContextOptions) {
-  const host = value(createContext(options));
+const roots: Host[] = [];
+function setup(options?: HostOptions) {
+  const host = value(createHost(options));
   roots.push(host);
   return host;
 }
@@ -52,7 +52,7 @@ function clock() {
 }
 
 afterEach(async () => {
-  for (const host of roots.splice(0)) await host.dispose();
+  for (const host of roots.splice(0)) await host.close();
 });
 
 describe("architecture transaction invariants", () => {
@@ -60,23 +60,23 @@ describe("architecture transaction invariants", () => {
     const host = setup();
     const token = endpoint("reservation");
     const gate = deferred<void>();
-    const installing = host.load([{ name: "plugin", provides: [token], async apply(ctx) {
-      const provided = ctx.provide(token, { run: () => Promise.resolve({ ok: true, value: "plugin" }) });
+    const installing = host.install([{ name: "plugin", provides: { token }, async setup(ctx) {
+      const provided = ctx.register(token, { run: () => Promise.resolve({ ok: true, value: "plugin" }) });
       if (!provided.ok) return provided;
       await gate.promise;
       return { ok: true, value: undefined };
     } }]);
     await flush();
-    const competing = host.provide(token, { run: () => Promise.resolve({ ok: true, value: "host" }) });
+    const competing = host.register(token, { run: () => Promise.resolve({ ok: true, value: "host" }) });
     gate.resolve();
     value(await installing);
-    const child = value(host.scope({ label: "consumer" }));
+    const child = value(host.createScope({ label: "consumer" }));
     const outputs = [
       value(await value(host.use(token)).run(undefined)),
       value(await value(child.use(token)).run(undefined)),
     ];
     expect({ competing, outputs }).toMatchObject({
-      competing: { ok: false, reason: { code: "duplicate-provider" } },
+      competing: { ok: false, error: { code: "duplicate-provider" } },
       outputs: ["plugin", "plugin"],
     });
   });
@@ -85,16 +85,16 @@ describe("architecture transaction invariants", () => {
     const time = clock();
     const host = setup({ scheduler: time.scheduler, limits: { closeTimeoutMs: 10 } });
     let first!: Context;
-    const installing = host.load([
-      { name: "first", apply(ctx) { first = ctx; return { ok: true, value: undefined }; } },
-      { name: "second", apply(ctx) {
-        value(ctx.effect(() => {
+    const installing = host.install([
+      { name: "first", setup(ctx) { first = ctx; return { ok: true, value: undefined }; } },
+      { name: "second", setup(ctx) {
+        value(ctx.addCleanup(() => {
           if (first.signal.aborted) return { ok: true, value: undefined };
           return new Promise<Result<void>>((resolve) => {
             first.signal.addEventListener("abort", () => resolve({ ok: true, value: undefined }), { once: true });
           });
         }));
-        return { ok: false, reason: "activation rejected" };
+        return { ok: false, error: "activation rejected" };
       } },
     ]);
     await flush();
@@ -102,11 +102,11 @@ describe("architecture transaction invariants", () => {
     const result = await installing;
     const inspection = host.inspect();
     const firstCancelled = first.signal.aborted;
-    const disposing = host.dispose();
+    const disposing = host.close();
     await flush();
     await disposing;
     expect({ result, inspection, firstCancelled }).toMatchObject({
-      result: { ok: false, reason: { code: "activation-failed" } },
+      result: { ok: false, error: { code: "activation-failed" } },
       inspection: { degraded: false, plugins: [], effects: 0 },
       firstCancelled: true,
     });
@@ -117,8 +117,8 @@ describe("architecture transaction invariants", () => {
     const host = setup({ scheduler: time.scheduler, limits: { activationTimeoutMs: 10, callTimeoutMs: 1000 } });
     let parentId: string | undefined;
     let cancelled = false;
-    const installing = host.load([{ name: "worker", apply(ctx) {
-      value(ctx.spawn({ label: "background", run(call) {
+    const installing = host.install([{ name: "worker", setup(ctx) {
+      value(ctx.startTask({ label: "background", run(call) {
         parentId = call.parentId;
         return new Promise<Result<void>>((resolve) => {
           call.signal.addEventListener("abort", () => {
@@ -133,7 +133,7 @@ describe("architecture transaction invariants", () => {
     time.advance(10);
     const result = await installing;
     const inspection = host.inspect();
-    await host.dispose();
+    await host.close();
     expect({ result, parentId, inspection, cancelled }).toMatchObject({
       result: { ok: true },
       parentId: undefined,
@@ -146,28 +146,28 @@ describe("architecture transaction invariants", () => {
     const host = setup({ limits: { maxDefinitions: 1 } });
     const a = endpoint("optional-a");
     const b = endpoint("optional-b");
-    expect(await host.load([{ name: "consumer", optional: [a, b], apply() {
+    expect(await host.install([{ name: "consumer", optional: { a, b }, setup() {
       return { ok: true, value: undefined };
-    } }])).toMatchObject({ ok: false, reason: { code: "resource-limit" } });
+    } }])).toMatchObject({ ok: false, error: { code: "resource-limit" } });
   });
 
   it("missing optional definition identity cannot be replaced by another token with its name", async () => {
     const host = setup();
     const original = endpoint("identity");
-    value(await host.load([{ name: "consumer", optional: [original], apply() {
+    value(await host.install([{ name: "consumer", optional: { original }, setup() {
       return { ok: true, value: undefined };
     } }]));
     const replacement = endpoint("identity");
-    expect(host.provide(replacement, { run: () => Promise.resolve({ ok: true, value: "replacement" }) }))
-      .toMatchObject({ ok: false, reason: { code: "definition-conflict" } });
+    expect(host.register(replacement, { run: () => Promise.resolve({ ok: true, value: "replacement" }) }))
+      .toMatchObject({ ok: false, error: { code: "definition-conflict" } });
   });
 
   it("subtree close receipt includes every plugin that the successful close stopped", async () => {
     const host = setup();
-    const child = value(host.scope({ label: "application" }));
-    const grandchild = value(child.scope({ label: "agent" }));
-    value(await host.load([{ name: "application", apply() { return { ok: true, value: undefined }; } }], { scope: child }));
-    value(await host.load([{ name: "agent", apply() { return { ok: true, value: undefined }; } }], { scope: grandchild }));
+    const child = value(host.createScope({ label: "application" }));
+    const grandchild = value(child.createScope({ label: "agent" }));
+    value(await host.install([{ name: "application", setup() { return { ok: true, value: undefined }; } }], { scope: child }));
+    value(await host.install([{ name: "agent", setup() { return { ok: true, value: undefined }; } }], { scope: grandchild }));
     const receipt = value(await host.closeScope(child));
     expect(host.inspect()).toMatchObject({ plugins: [], scopes: 1 });
     expect(receipt.stoppedPlugins.map((plugin) => plugin.name).sort()).toEqual(["agent", "application"]);
@@ -175,10 +175,10 @@ describe("architecture transaction invariants", () => {
 
   it("subtree close receipt cannot report negative released effects from unrelated registration", async () => {
     const host = setup();
-    const child = value(host.scope({ label: "application" }));
+    const child = value(host.createScope({ label: "application" }));
     const gate = deferred<void>();
     let cleaning = false;
-    value(child.effect(async () => {
+    value(child.addCleanup(async () => {
       cleaning = true;
       await gate.promise;
       return { ok: true, value: undefined };
@@ -186,8 +186,8 @@ describe("architecture transaction invariants", () => {
     const closing = host.closeScope(child);
     await flush();
     expect(cleaning).toBe(true);
-    value(host.effect(() => ({ ok: true, value: undefined })));
-    value(host.effect(() => ({ ok: true, value: undefined })));
+    value(host.addCleanup(() => ({ ok: true, value: undefined })));
+    value(host.addCleanup(() => ({ ok: true, value: undefined })));
     gate.resolve();
     const receipt = value(await closing);
     expect(host.inspect()).toMatchObject({ effects: 2, scopes: 1 });
@@ -198,29 +198,29 @@ describe("architecture transaction invariants", () => {
     const host = setup();
     const token = endpoint("atomic");
     const gate = deferred<void>();
-    const installing = host.load([{ name: "provider", provides: [token], async apply(ctx) {
-      value(ctx.provide(token, { run: () => Promise.resolve({ ok: true, value: "hidden" }) }));
+    const installing = host.install([{ name: "provider", provides: { token }, async setup(ctx) {
+      value(ctx.register(token, { run: () => Promise.resolve({ ok: true, value: "hidden" }) }));
       await gate.promise;
-      return { ok: false, reason: "failed" };
+      return { ok: false, error: "failed" };
     } }]);
     await flush();
-    expect(host.use(token)).toMatchObject({ ok: false, reason: { code: "service-unavailable" } });
+    expect(host.use(token)).toMatchObject({ ok: false, error: { code: "service-unavailable" } });
     gate.resolve();
-    expect(await installing).toMatchObject({ ok: false, reason: { code: "activation-failed" } });
+    expect(await installing).toMatchObject({ ok: false, error: { code: "activation-failed" } });
     expect(host.inspect()).toMatchObject({ plugins: [], effects: 0, degraded: false });
   });
 
   it("old facade never redirects to a replacement provider generation", async () => {
     const host = setup();
     const token = endpoint("generations");
-    const provider = (name: string) => ({ name, provides: [token], apply(ctx: Context) {
-      return ctx.provide(token, { run: () => Promise.resolve({ ok: true, value: name }) });
+    const provider = (name: string) => ({ name, provides: { token }, setup(ctx: Context) {
+      return ctx.register(token, { run: () => Promise.resolve({ ok: true, value: name }) });
     } });
-    const first = value(await host.load([provider("first")]));
+    const first = value(await host.install([provider("first")]));
     const retained = value(host.use(token));
-    value(await host.unload(first.plugins[0]!));
-    value(await host.load([provider("second")]));
-    expect(await retained.run(undefined)).toMatchObject({ ok: false, reason: { code: "service-unavailable" } });
+    value(await host.uninstall(first.plugins[0]!));
+    value(await host.install([provider("second")]));
+    expect(await retained.run(undefined)).toMatchObject({ ok: false, error: { code: "service-unavailable" } });
     expect(value(await value(host.use(token)).run(undefined))).toBe("second");
   });
 
@@ -228,19 +228,19 @@ describe("architecture transaction invariants", () => {
     const a = setup({ limits: { maxDefinitions: 1, maxPlugins: 1 } });
     const b = setup({ limits: { maxDefinitions: 1, maxPlugins: 1 } });
     const token = endpoint("instances");
-    const provider = { name: "provider", provides: [token], apply(ctx: Context) {
+    const provider = { name: "provider", provides: { token }, setup(ctx: Context) {
       let count = 0;
-      return ctx.provide(token, { run: () => Promise.resolve({ ok: true, value: String(++count) }) });
+      return ctx.register(token, { run: () => Promise.resolve({ ok: true, value: String(++count) }) });
     } };
-    const loadedA = value(await a.load([provider]));
-    const loadedB = value(await b.load([provider]));
+    const loadedA = value(await a.install([provider]));
+    const loadedB = value(await b.install([provider]));
     expect(value(await value(a.use(token)).run(undefined))).toBe("1");
     expect(value(await value(a.use(token)).run(undefined))).toBe("2");
     expect(value(await value(b.use(token)).run(undefined))).toBe("1");
-    expect(await a.unload(loadedB.plugins[0]!)).toMatchObject({ ok: false, reason: { code: "plugin-not-found" } });
-    expect(await a.load([{ name: "extra", apply() { return { ok: true, value: undefined }; } }]))
-      .toMatchObject({ ok: false, reason: { code: "resource-limit" } });
-    value(await a.unload(loadedA.plugins[0]!));
+    expect(await a.uninstall(loadedB.plugins[0]!)).toMatchObject({ ok: false, error: { code: "plugin-not-found" } });
+    expect(await a.install([{ name: "extra", setup() { return { ok: true, value: undefined }; } }]))
+      .toMatchObject({ ok: false, error: { code: "resource-limit" } });
+    value(await a.uninstall(loadedA.plugins[0]!));
     expect(b.inspect()).toMatchObject({ plugins: [{ state: "active" }], degraded: false });
   });
 });

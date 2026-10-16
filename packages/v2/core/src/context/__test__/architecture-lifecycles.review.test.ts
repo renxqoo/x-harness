@@ -1,10 +1,10 @@
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { createContext, defineChain, defineService } from "../../index";
-import type { Result, RootContext, Scheduler, TaskHandle } from "../../index";
+import { createHost, defineChain, defineService } from "../../index";
+import type { Result, Host, Scheduler, TaskHandle } from "../../index";
 
 function value<T, E>(result: Result<T, E>): T {
-  if (!result.ok) throw new Error(JSON.stringify(result.reason));
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
   return result.value;
 }
 
@@ -31,16 +31,16 @@ function clock() {
 
 it("cleanup outward timeout must not publish closed while its actual service still runs", async () => {
   const time = clock();
-  const host = value(createContext({ scheduler: time.scheduler, limits: { callTimeoutMs: 10, closeTimeoutMs: 100 } }));
+  const host = value(createHost({ scheduler: time.scheduler, limits: { callTimeoutMs: 10, closeTimeoutMs: 100 } }));
   const token = value(defineService<{ run(input: void): Promise<Result<void>> }>({ name: "review/cleanup-drain", methods: { run: {} } }));
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
-  value(host.provide(token, { async run() { await gate; return { ok: true, value: undefined }; } }));
-  value(host.effect(async (cleanup) => {
+  value(host.register(token, { async run() { await gate; return { ok: true, value: undefined }; } }));
+  value(host.addCleanup(async (cleanup) => {
     await value(cleanup.context.use(token)).run(undefined);
     return { ok: true, value: undefined };
   }));
-  const closing = host.dispose();
+  const closing = host.close();
   try {
     await flush();
     time.advance(10);
@@ -56,10 +56,10 @@ it("cleanup outward timeout must not publish closed while its actual service sti
 
 it("activation ctx.spawn background work must not block the plugin batch publication", async () => {
   const time = clock();
-  const host = value(createContext({ scheduler: time.scheduler, limits: { activationTimeoutMs: 10 } }));
+  const host = value(createHost({ scheduler: time.scheduler, limits: { activationTimeoutMs: 10 } }));
   let published = false;
-  const loading = host.load([{ name: "review-background", apply(ctx) {
-    const task = ctx.spawn({ label: "background", async run(call) {
+  const loading = host.install([{ name: "review-background", setup(ctx) {
+    const task = ctx.startTask({ label: "background", async run(call) {
       await new Promise<void>((resolve) => { call.signal.addEventListener("abort", () => resolve(), { once: true }); });
       return { ok: true, value: undefined };
     } });
@@ -71,7 +71,7 @@ it("activation ctx.spawn background work must not block the plugin batch publica
     expect(published).toBe(true);
     expect(host.inspect().activeTasks).toBe(1);
   } finally {
-    const closing = host.dispose();
+    const closing = host.close();
     time.advance(100);
     await flush();
     await loading;
@@ -81,48 +81,48 @@ it("activation ctx.spawn background work must not block the plugin batch publica
 
 it("root wait must use the default call budget even when its target has a longer deadline", async () => {
   const time = clock();
-  const host: RootContext = value(createContext({ scheduler: time.scheduler, limits: { callTimeoutMs: 10 } }));
+  const host: Host = value(createHost({ scheduler: time.scheduler, limits: { callTimeoutMs: 10 } }));
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
-  const task = value(host.spawn({ label: "long-target", timeoutMs: 100, async run() { await gate; return { ok: true, value: 1 }; } }));
+  const task = value(host.startTask({ label: "long-target", timeoutMs: 100, async run() { await gate; return { ok: true, value: 1 }; } }));
   let result: Result<number> | undefined;
   const waiting = host.wait(task).then((settled) => { result = settled; });
   try {
     await flush();
     time.advance(10);
     await flush();
-    expect(result).toMatchObject({ ok: false, reason: { code: "timeout" } });
+    expect(result).toMatchObject({ ok: false, error: { code: "timeout" } });
     expect(task.state).toBe("running");
   } finally {
     release();
     await waiting;
-    await host.dispose();
+    await host.close();
   }
 });
 
 it("a structured child waiting on its parent reports wait-cycle instead of deadlocking", async () => {
-  const host = value(createContext());
+  const host = value(createHost());
   let parent!: TaskHandle<undefined>;
-  parent = value(host.spawn({ label: "parent", run(call) {
+  parent = value(host.startTask({ label: "parent", run(call) {
     value(call.spawn({ label: "child", run: (child) => child.wait(parent) }));
     return { ok: true, value: undefined };
   } }));
   try {
-    expect(await host.wait(parent)).toMatchObject({ ok: false, reason: { code: "wait-cycle" } });
+    expect(await host.wait(parent)).toMatchObject({ ok: false, error: { code: "wait-cycle" } });
     await flush();
     expect(host.inspect().activeTasks).toBe(0);
   } finally {
-    await host.dispose();
+    await host.close();
   }
 });
 
 it("outward child timeout remains a parent failure after the child's actual late success", async () => {
   const time = clock();
-  const host = value(createContext({ scheduler: time.scheduler }));
+  const host = value(createHost({ scheduler: time.scheduler }));
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   let child!: TaskHandle<undefined>;
-  const parent = value(host.spawn({ label: "parent", run(call) {
+  const parent = value(host.startTask({ label: "parent", run(call) {
     child = value(call.spawn({ label: "child", timeoutMs: 10, async run() { await gate; return { ok: true, value: undefined }; } }));
     return { ok: true, value: undefined };
   } }));
@@ -132,30 +132,30 @@ it("outward child timeout remains a parent failure after the child's actual late
     await flush();
     expect(child.state).toBe("running");
     release();
-    expect(await host.wait(parent)).toMatchObject({ ok: false, reason: { code: "timeout" } });
+    expect(await host.wait(parent)).toMatchObject({ ok: false, error: { code: "timeout" } });
     await flush();
     expect(child.state).toBe("settled");
     expect(host.inspect().activeTasks).toBe(0);
   } finally {
     release();
-    await host.dispose();
+    await host.close();
   }
 });
 
 it("unobserved completed continuation failure becomes a managed dispatch failure", async () => {
-  const host = value(createContext());
+  const host = value(createHost());
   const validate = (input: unknown): Result<string> => typeof input === "string"
     ? { ok: true, value: input }
-    : { ok: false, reason: { source: "core", code: "invalid-input", message: "invalid" } };
+    : { ok: false, error: { source: "core", code: "invalid-input", message: "invalid" } };
   const token = value(defineChain({ name: "review/unobserved", input: validate, output: validate }));
-  value(host.provide(token, () => ({ ok: false, reason: { source: "core", code: "callback-failed", message: "failed" } })));
-  value(host.on(token, async (input, next) => { void next(input); await flush(); return { ok: true, value: input }; }));
+  value(host.register(token, () => ({ ok: false, error: { source: "core", code: "callback-failed", message: "failed" } })));
+  value(host.middleware(token, async (input, next) => { void next(input); await flush(); return { ok: true, value: input }; }));
   try {
-    expect(await host.dispatch(token, "input")).toMatchObject({ ok: false, reason: { code: "unobserved-next" } });
+    expect(await host.dispatch(token, "input")).toMatchObject({ ok: false, error: { code: "unobserved-next" } });
     await flush();
     expect(host.inspect().activeCalls).toBe(0);
   } finally {
-    await host.dispose();
+    await host.close();
   }
 });
 
@@ -173,7 +173,7 @@ async function collect(caseName: string) {
   }
 }
 
-it.each(["bound", "cleanup", "wait"])("revoked %s capability must release consumer references with a successful GC control", async (caseName) => {
+it.each(["bound", "cleanup", "wait", "plugin"])("revoked %s capability must release consumer references with a successful GC control", async (caseName) => {
   const result = await collect(caseName);
   expect(result.controlCollected).toBe(true);
   expect(result.subjectCollected).toBe(true);

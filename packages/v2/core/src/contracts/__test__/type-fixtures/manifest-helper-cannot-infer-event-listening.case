@@ -1,0 +1,4 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+import type { PluginContext } from "__PUBLIC_ENTRY__";
+function listen(ctx: PluginContext<{ requires: { event: typeof event } }>) { return ctx.on("event", async () => {}); }
+definePlugin({ name: "bad", setup: listen });

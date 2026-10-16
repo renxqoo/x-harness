@@ -1,0 +1,8 @@
+{
+  "name": "@x-harness/session-postgres",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

@@ -70,11 +70,12 @@ export interface CheckpointState {
   armed: boolean;
   consecutiveFailures: number;
   broken: boolean;
+  fatal: boolean;
   job: CheckpointJob | undefined;
 }
 
 export function emptyCheckpointState(): CheckpointState {
-  return { ledger: emptyLedger(), coveredSeq: -1, armed: true, consecutiveFailures: 0, broken: false, job: undefined };
+  return { ledger: emptyLedger(), coveredSeq: -1, armed: true, consecutiveFailures: 0, broken: false, fatal: false, job: undefined };
 }
 
 export interface CheckpointDeps {
@@ -239,7 +240,7 @@ async function runCheckpoint(fields: { readonly state: CheckpointState; readonly
   } catch (error) {
     if (job.controller.signal.aborted) return;
     deps.warn(deps.session.id, "checkpoint-failed", { error: error instanceof Error ? error.message : String(error), blame: "provider" });
-    failOnce(state, deps, "provider");
+    failOnce({ state, deps, blame: "provider", failureCode: undefined });
   }
 }
 
@@ -266,7 +267,7 @@ async function callCheckpointModel(fields: {
   if (maxChars === undefined) {
     deps.warn(deps.session.id, "checkpoint-failed", { reason: "cp-input-budget-exhausted", blame: "self" });
     deps.emit("failed", { reason: "cp-input-budget-exhausted", blame: "self" });
-    failOnce(state, deps, "self");
+    failOnce({ state, deps, blame: "self", failureCode: undefined });
     return undefined;
   }
   const lastStart = lastTurnStartIndex(nodes);
@@ -278,7 +279,7 @@ async function callCheckpointModel(fields: {
   });
   if (boxed === undefined) {
     deps.warn(deps.session.id, "checkpoint-failed", { reason: "segment-empty", blame: "self" });
-    failOnce(state, deps, "self");
+    failOnce({ state, deps, blame: "self", failureCode: undefined });
     return undefined;
   }
   const segment = nodes.slice(boxed.start, boxed.end);
@@ -296,19 +297,20 @@ async function callCheckpointModel(fields: {
   if (job.controller.signal.aborted) return undefined;
   if (!outcome.ok) {
     if (outcome.reason === "failed") {
-      deps.warn(deps.session.id, "checkpoint-failed", { reason: "provider-error", blame: "provider" });
-      failOnce(state, deps, "provider");
+      const failureCode = outcome.failure.code ?? "unknown";
+      deps.warn(deps.session.id, "checkpoint-failed", { reason: "provider-error", blame: "provider", code: failureCode, ...(outcome.failure.message !== undefined ? { message: outcome.failure.message.slice(0, 300) } : {}) });
+      failOnce({ state, deps, blame: "provider", failureCode });
     } else {
       const cause = selfFailureCause(outcome.reason);
       deps.warn(deps.session.id, "checkpoint-failed", { reason: cause, blame: "self" });
-      failOnce(state, deps, "self");
+      failOnce({ state, deps, blame: "self", failureCode: undefined });
     }
     return undefined;
   }
   const patch = parseLedgerPatch(outcome.text);
   if (patch === undefined) {
     deps.warn(deps.session.id, "checkpoint-failed", { reason: "ledger-patch-unparsable", blame: "self" });
-    failOnce(state, deps, "self");
+    failOnce({ state, deps, blame: "self", failureCode: undefined });
   }
   return patch;
 }
@@ -355,16 +357,33 @@ function selfFailureCause(reason: "truncated" | "empty" | "aborted" | "budget-ex
   return "ledger-output-empty";
 }
 
-function failOnce(state: CheckpointState, deps: CheckpointDeps, blame: CheckpointBlame = "provider"): void {
-  if (blame === "self") {
-    deps.emit("failed", { failures: state.consecutiveFailures, blame });
+const DETERMINISTIC_FAILURE_CODES: ReadonlySet<string> = new Set(["no-adapter", "non-retryable"]);
+
+export function isDeterministicFailure(code: string): boolean {
+  return DETERMINISTIC_FAILURE_CODES.has(code);
+}
+
+interface FailureStrike {
+  readonly state: CheckpointState;
+  readonly deps: CheckpointDeps;
+  readonly blame: CheckpointBlame;
+  readonly failureCode: string | undefined;
+}
+
+function failOnce(strike: FailureStrike): void {
+  const { state, deps } = strike;
+  if (strike.blame === "self") {
+    deps.emit("failed", { failures: state.consecutiveFailures, blame: strike.blame });
     return;
   }
   state.consecutiveFailures += 1;
-  deps.emit("failed", { failures: state.consecutiveFailures, blame });
-  if (state.consecutiveFailures < 3) return;
+  const { failureCode } = strike;
+  deps.emit("failed", { failures: state.consecutiveFailures, blame: strike.blame, ...(failureCode !== undefined ? { failureCode } : {}) });
+  const fatal = failureCode !== undefined && isDeterministicFailure(failureCode);
+  if (!fatal && state.consecutiveFailures < 3) return;
   state.broken = true;
-  deps.emit("breaker", { failures: state.consecutiveFailures });
+  state.fatal = fatal;
+  deps.emit("breaker", { failures: state.consecutiveFailures, ...(failureCode !== undefined ? { failureCode } : {}) });
 }
 
 export function foldCheckpointEvents(events: readonly SessionEvent[]): { readonly ledger: Ledger; readonly coveredSeq: number } {

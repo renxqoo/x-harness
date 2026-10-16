@@ -288,4 +288,31 @@ describe("CP 终态矩阵补面（截断/错错/预中止/词条落败）", () =
       await bare.dispose();
     }
   });
+
+  it("no-adapter 确定性失败单发即熔断且 fatal 保持（症状:空 key dial 致 194 次 checkpoint-failed 循环）", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("cp-fatal") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: "u0", assistant: { text: "a0" } });
+      seedTurn(made.value, { turn: 1, user: "u1", assistant: { text: "a1" } });
+      const noAdapter = (async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
+        yield { type: "finish", finish: { kind: "error", message: "No API key for provider: glm", code: "non-retryable" } };
+      })();
+      const warns: Array<Record<string, unknown>> = [];
+      const emits: Array<{ action: string; detail?: Record<string, unknown> }> = [];
+      const state = emptyCheckpointState();
+      const deps = depsOf({ session: made.value, scripts: [noAdapter], warn: (_s, _c, detail) => { warns.push(detail ?? {}); }, emit: (action, detail) => { emits.push({ action, detail }); } });
+      maybeStartCheckpoint({ state, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await state.job?.done;
+      expect(state.consecutiveFailures).toBe(1);
+      expect(state.broken).toBe(true);
+      expect(state.fatal).toBe(true);
+      expect(warns[0]).toMatchObject({ reason: "provider-error", blame: "provider", code: "non-retryable", message: "No API key for provider: glm" });
+      expect(emits.some((e) => e.action === "breaker" && e.detail?.["failureCode"] === "non-retryable")).toBe(true);
+      expect(maybeStartCheckpoint({ state, deps: depsOf({ session: made.value, scripts: [noAdapter] }), stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 2, step: 0 })).toBe(false);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
 });

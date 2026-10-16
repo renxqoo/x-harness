@@ -9,6 +9,8 @@ import type { Lines } from "./lines.ts";
 export interface GateCache {
   lines: Lines | undefined;
   servedWindow: number | undefined;
+  observedOverfill: number | undefined;
+  warnedOverfill: boolean;
   warnedDegraded: boolean;
   lastOccupancy: number | undefined;
   l1Backoff: boolean;
@@ -34,6 +36,8 @@ export function makeSessionState(id: SessionId): SessionState {
     cache: {
       lines: undefined,
       servedWindow: undefined,
+      observedOverfill: undefined,
+      warnedOverfill: false,
       warnedDegraded: false,
       lastOccupancy: undefined,
       l1Backoff: false,

@@ -1,0 +1,71 @@
+{
+  "xh_session_format": [
+    {
+      "signature": "immutable-history-position-view-commit-receipt"
+    }
+  ],
+  "xh_session_namespaces": [
+    {
+      "namespace": "baseline-open",
+      "settings": "[1048576,536870912,100000,10000,16384,10000]",
+      "sessions": 1
+    }
+  ],
+  "xh_session_heads": [
+    {
+      "namespace": "baseline-open",
+      "id": "existing",
+      "origin": "5e5d8482c534f7d78ace0754e148e89901f310df019d84eae12ec452a7c4792c",
+      "created": 1792169453976,
+      "revision": 3,
+      "bytes": 291,
+      "metadata": "{\"title\":\"kept\"}",
+      "parent": null,
+      "parent_revision": null
+    }
+  ],
+  "xh_session_records": [
+    {
+      "namespace": "baseline-open",
+      "id": "existing",
+      "seq": 1,
+      "time": 1792169453976,
+      "entry": "{\"kind\":\"message\",\"message\":{\"content\":[{\"text\":\"A\",\"type\":\"text\"}],\"role\":\"user\"}}",
+      "bytes": 83
+    },
+    {
+      "namespace": "baseline-open",
+      "id": "existing",
+      "seq": 2,
+      "time": 1792169453976,
+      "entry": "{\"kind\":\"message\",\"message\":{\"content\":[{\"text\":\"B\",\"type\":\"text\"}],\"role\":\"user\"}}",
+      "bytes": 83
+    },
+    {
+      "namespace": "baseline-open",
+      "id": "existing",
+      "seq": 3,
+      "time": 1792169453976,
+      "entry": "{\"kind\":\"message\",\"message\":{\"content\":[{\"text\":\"summary\",\"type\":\"text\"}],\"role\":\"user\"},\"replace\":{\"endSeq\":2,\"startSeq\":1}}",
+      "bytes": 125
+    }
+  ],
+  "xh_session_commits": [
+    {
+      "namespace": "baseline-open",
+      "id": "existing",
+      "commit_id": "before",
+      "fingerprint": "40f62f25c74f2f1ca31a739b7cc56138116b5aaf529d06d462efbf3879df428b",
+      "first_seq": 1,
+      "last_seq": 3
+    }
+  ],
+  "xh_session_view": [
+    {
+      "namespace": "baseline-open",
+      "id": "existing",
+      "position": 1,
+      "seq": 3
+    }
+  ]
+}

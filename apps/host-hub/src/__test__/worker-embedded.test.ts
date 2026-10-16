@@ -33,7 +33,7 @@ async function spawnTextOnlyWorker(): Promise<ScriptWorker> {
     env: {
       HUB_WORKER_PROVIDER: undefined,
       HUB_WORKER_PROVIDERS: JSON.stringify({
-        providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://127.0.0.1:9", apiKey: "", models: ["m1"] }],
+        providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://127.0.0.1:9", apiKey: "test-key", models: ["m1"] }],
         default: { provider: "p", model: "m1" },
         modelMeta: { "p\u0000m1": { reasoning: true } },
       }),
@@ -222,7 +222,7 @@ describe("worker 内嵌旅程", () => {
       env: {
         HUB_WORKER_PROVIDER: undefined,
         HUB_WORKER_PROVIDERS: JSON.stringify({
-          providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://127.0.0.1:9", apiKey: "", models: ["m1"] }],
+          providers: [{ provider: "p", protocol: "anthropic", baseUrl: "http://127.0.0.1:9", apiKey: "test-key", models: ["m1"] }],
           default: { provider: "p", model: "m1" },
           modelMeta: { "p\u0000m1": { reasoning: false } },
         }),

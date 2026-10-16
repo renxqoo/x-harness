@@ -1,0 +1,4 @@
+import type { Provider, Effect } from "__INTERNAL_TYPES__";
+declare const provider: Provider;
+declare const effect: Effect;
+provider.pins.add(effect);

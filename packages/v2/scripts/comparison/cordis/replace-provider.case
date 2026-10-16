@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import { Context } from "__CORDIS_ENTRY__";
+import type { Endpoint } from "__COMPARISON_TYPES__";
+import { unwrap } from "__UNWRAP__";
+
+declare module "__CORDIS_CONTEXT__" {
+  interface Context { journeyVersion: Endpoint; journeyClient: Endpoint }
+}
+
+export async function replaceProvider() {
+  const host = new Context(); const cleanup: string[] = []; let starts = 0;
+  const provider = (label: string) => ({ name: "provider", apply(ctx: Context) {
+    ctx.provide("journeyVersion", { async read() { return { ok: true, value: label }; } } satisfies Endpoint);
+    return () => { cleanup.push(`provider:${label}`); };
+  } });
+  try {
+    const old = await host.plugin(provider("old"));
+    const consumer = await host.plugin({ name: "consumer", inject: ["journeyVersion"], apply(ctx) {
+      starts++; ctx.provide("journeyClient", { async read(input) { return ctx.journeyVersion.read(input); } } satisfies Endpoint);
+      return () => { cleanup.push("consumer"); };
+    } });
+    const saved = host.journeyClient; const before = unwrap(await saved.read("before"));
+    await old.dispose(); await host.plugin(provider("new")); await consumer.await();
+    const after = unwrap(await host.journeyClient.read("after")); const stale = await saved.read("saved");
+    return { before, after, starts, cleanup: [...cleanup], savedEntry: stale.ok ? stale.value : "revoked" };
+  } finally { await host.fiber.dispose(); assert.equal(host.registry.size, 0); }
+}

@@ -1,0 +1,30 @@
+# Bun 插件加载与热更新
+
+createLoader({ entries, shared?, watch?, debounceMs?, maxImports?, importTimeoutMs?, application? }) 返回 Promise<Result<Loader, LoaderFault>>。entries 是绝对文件路径列表，每个模块默认导出一个 Plugin。加载器拥有 application，外部通过 use/dispatch 调用业务，通过 snapshot/inspect/status 观察，通过 reload 手动重新构建，通过 close 关闭。依赖 Bun，平台无关的内核不依赖本包。
+
+```ts
+import { createLoader } from "@x-harness/loader";
+const created = await createLoader({
+  entries: ["/srv/example/plugins/database.ts", "/srv/example/plugins/http.ts"],
+  shared: { "example-contracts": { path: "/srv/example/contracts/index.ts", directory: "/srv/example/contracts" } },
+  watch: true,
+});
+if (created.ok) {
+  const runtime = created.value;
+  const snapshot = runtime.snapshot();
+  if (snapshot.plugins.some((plugin) => plugin.state !== "active")) await runtime.reload();
+  await runtime.close();
+}
+```
+
+契约目录独立于可热更的实现目录。宿主从 shared.path 导入 token，插件用配置的 specifier 或该目录中的实际路径导入同一模块。core、core/validation 和 standard 公共入口使用稳定模块身份；其他依赖打进单一 ESM 产物，不拆 chunk。插件私有模块不能自行动态加载其他私有文件。产物用 Acorn 解析，拒绝剩余动态 import、计算式 require、import.meta 非直接 url/main 读取能力（包括 require 解构、动态属性、反射）和未允许的外部静态依赖。普通静态 require/import 可以被完整打包。框架 SDK 和共享契约属于稳定代码，修改 SDK 应重启进程。
+
+构建和导入均在发布前完成。语法或导入失败保留当前插件集合；清理未收敛时 application 阻止替换。多个入口的构建/导入失败不发布半份新集合；激活阶段按 application 的逐条 active/pending/failed 状态报告，不宣称跨插件业务事务回滚或零中断。
+
+watch 合并变更，最多保留一个后续刷新标记。默认延迟25ms。入口和 shared 目录递归监听，构建发现的私有依赖目录也监听；构建失败仍登记新目录，所以修复依赖后可以继续更新。操作系统事件不是可靠消息；部署系统可主动调用 reload 校验。close 先关闭监听和延迟回调，再取消应用并排空正在进行的加载操作，不会在关闭后发布迟到结果。
+
+JavaScript 模块缓存不能卸载。进程全局 Symbol 端口将所有加载器副本的导入预算合计限制为64，源码与构建入口共享；默认单加载器上限也是64，可通过 maxImports 降低。每次新模块的导入尝试都会占预算，包括导入失败和顶层 await 超期；相同产物不重复导入；单个入口导入成功即保留准备缓存，后续入口构建失败也不会丢弃；已导入但尚未装配成功的定义也保留准备缓存，清理迟到收敛后的重试不额外占预算。初始装配失败且宿主关闭未收敛时要求重启进程。status().imports 是该加载器已使用的尝试预算。达到预算、共享目录改变、导入超过默认5秒期限时返回 restart-required，保留可用实例，由外部进程监督重启。预算不是安全沙箱，模块仅接受可信代码；模块顶层不能创建未登记副作用。无限同步循环和宿主外副作用由进程隔离与监督处理。
+
+单产物最多1MiB。shared最多32项，快照最多1024个文件系统条目、单文件1MiB、总16MiB，拒绝符号链接；shared目录中任意内容或空目录变化要求重启。监听路径最多512个，已删除的私有目录会从监听集合清除，达到界限要求重启。临时构建产物在导入成功、失败和超期后均删除；模块缓存的内存只可通过进程结束释放。
+
+构建接口与扩展点依据 [Bun Bundler](https://bun.sh/docs/bundler) 和 [Bun 插件文档](https://bun.sh/docs/bundler/plugins)，行为由真实 Bun 构建、文件监听和 HTTP 服务切换测试验证。

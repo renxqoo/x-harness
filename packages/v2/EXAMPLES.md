@@ -61,24 +61,13 @@ function defineConversationContract(): Result<ServiceToken<ConversationService>>
 ## 3. 系统提示词
 
 ```ts
-function createSystemPromptPlugin(
-  conversation: ServiceToken<ConversationService>,
-  prompt: string,
-): Plugin {
-  return {
-    name: "system-prompt",
-    requires: [conversation],
-    apply(ctx) {
-      const service = ctx.use(conversation);
-      if (!service.ok) return service;
-
-      return service.value.registerContext({
-        key: "instruction",
-        role: "system",
-        content: prompt,
-      });
+function createSystemPromptPlugin(conversation: ServiceToken<ConversationService>, prompt: string): Plugin {
+  return definePlugin({
+    name: "system-prompt", requires: { conversation },
+    setup(ctx) {
+      return ctx.deps.conversation.registerContext({ key: "instruction", role: "system", content: prompt });
     },
-  };
+  });
 }
 ```
 
@@ -87,49 +76,32 @@ function createSystemPromptPlugin(
 ## 4. user 纠正消息
 
 ```ts
-async function appendCorrection(
-  ctx: DependencyContext,
-  conversation: ServiceToken<ConversationService>,
-  text: string,
-): Promise<Result<{ readonly messageId: string }>> {
-  const service = ctx.use(conversation);
-  if (!service.ok) return service;
+type ConversationCall = PluginInvocation<{ requires: { conversation: ServiceToken<ConversationService> } }>;
 
-  return await service.value.append({
-    role: "user",
-    content: text,
-  });
+async function appendErrorNotification(call: ConversationCall, text: string): Promise<Result<{ readonly messageId: string }>> {
+  return call.deps.conversation.append({ role: "user", content: text });
 }
 ```
 
 调用发生在错误处理插件自己的业务时机。它不是实际用户输入。对话提供者保留调用来源并提交消息记录。
 
-这里的依赖门面由运行期调用通过 call.bind(ctx) 取得，继承原请求取消和截止时间。
+这里的 call.deps 自动绑定本次请求，继承取消和截止时间。
 
 ## 5. skill 列表
 
 ```ts
 function createSkillListPlugin(
   conversation: ServiceToken<ConversationService>,
-  loadList: (call: Invocation) => Promise<Result<string>>,
+  loadList: (signal: AbortSignal) => Promise<Result<string>>,
 ): Plugin {
-  return {
-    name: "skill-list",
-    requires: [conversation],
-    async apply(ctx, call) {
-      const service = ctx.use(conversation);
-      if (!service.ok) return service;
-
-      const list = await loadList(call);
+  return definePlugin({
+    name: "skill-list", requires: { conversation },
+    async setup(ctx) {
+      const list = await loadList(ctx.signal);
       if (!list.ok) return list;
-
-      return await service.value.registerContext({
-        key: "available-skills",
-        role: "user",
-        content: list.value,
-      });
+      return ctx.deps.conversation.registerContext({ key: "available-skills", role: "user", content: list.value });
     },
-  };
+  });
 }
 ```
 
@@ -140,15 +112,8 @@ function createSkillListPlugin(
 ## 6. 压缩上下文
 
 ```ts
-async function applySummary(
-  ctx: DependencyContext,
-  conversation: ServiceToken<ConversationService>,
-  replacement: ContextReplacement,
-): Promise<Result<void>> {
-  const service = ctx.use(conversation);
-  if (!service.ok) return service;
-
-  return await service.value.replace(replacement);
+async function replaceSummary(call: ConversationCall, replacement: ContextReplacement): Promise<Result<void>> {
+  return call.deps.conversation.replace(replacement);
 }
 ```
 
@@ -159,27 +124,21 @@ core 不解析 summary，不判断消息范围，不将摘要伪造为实际用�
 ## 7. 顺序恢复调用
 
 ```ts
-function createRetryPlugin<I, O, E>(
-  chain: ChainToken<I, O, E>,
-  shouldRetry: (reason: E | CoreFault) => boolean,
-): Plugin {
-  return {
-    name: "request-recovery",
-    requires: [chain],
-    apply(ctx) {
-      return ctx.on(chain, async (input, next, call) => {
+function createRetryPlugin<I, O, E>(chain: ChainToken<I, O, E>, shouldRetry: (reason: E | CoreFault) => boolean): Plugin {
+  return definePlugin({
+    name: "request-recovery", requires: { chain },
+    setup(ctx) {
+      return ctx.middleware("chain", async (input, next, call) => {
         let result = await next(input);
-
         for (let attempt = 1; attempt < 3; attempt += 1) {
           if (result.ok || call.signal.aborted) return result;
-          if (!shouldRetry(result.reason)) return result;
+          if (!shouldRetry(result.error)) return result;
           result = await next(input);
         }
-
         return result;
       });
     },
-  };
+  });
 }
 ```
 
@@ -192,81 +151,53 @@ core 提供 next 身份、顺序、预算和取消，不提供 retry 错误清�
 ## 8. 决策插件
 
 ```ts
-function createPolicyPlugin<I>(
-  guard: GuardToken<I>,
-  decide: GuardHandler<I>,
-): Plugin {
-  return {
-    name: "access-policy",
-    requires: [guard],
-    apply(ctx) {
-      return ctx.on(guard, decide);
-    },
-  };
+function createPolicyPlugin<I>(guard: GuardToken<I>, decide: (input: I, signal: AbortSignal) => MaybePromise<Result<GuardDecision>>): Plugin {
+  return definePlugin({
+    name: "access-policy", requires: { guard },
+    setup(ctx) { return ctx.guard("guard", (input, call) => decide(input, call.signal)); },
+  });
 }
 ```
 
-访问规则、资源判定和等待审批由 decide 实现。guard 的提供者先通过 provide 登记扩展点。实际执行服务必须明确调用 guard 并阻断失败，core 不知道路径、工具名或用户权限。
+访问规则、资源判定和等待审批由 decide 实现。guard 的提供者先通过 ctx.service 登记扩展点。实际执行服务必须明确调用 guard 并阻断失败，core 不知道路径、工具名或用户权限。
 
 ## 9. 提供者的写法
 
 ```ts
-function createConversationProvider(
-  conversation: ServiceToken<ConversationService>,
-  create: (ctx: Context) => ServiceImplementation<ConversationService>,
-): Plugin {
-  return {
-    name: "conversation",
-    provides: [conversation],
-    apply(ctx) {
-      return ctx.provide(conversation, create(ctx));
-    },
-  };
+type ConversationManifest = { provides: { conversation: ServiceToken<ConversationService> } };
+type CreateConversation = (ctx: PluginContext<ConversationManifest>) => PluginImplementations<ConversationManifest>;
+
+function createConversationProvider(conversation: ServiceToken<ConversationService>, create: CreateConversation): Plugin {
+  return definePlugin({
+    name: "conversation", provides: { conversation },
+    setup(ctx) { return ctx.service(create(ctx)); },
+  });
 }
 
-async function assembleExample(
-  conversation: ServiceToken<ConversationService>,
-  create: (ctx: Context) => ServiceImplementation<ConversationService>,
-): Promise<Result<LoadReport>> {
-  const root = createContext();
+async function assembleExample(conversation: ServiceToken<ConversationService>, create: CreateConversation): Promise<Result<InstallReport>> {
+  const root = createHost();
   if (!root.ok) return root;
-
-  const loaded = await root.value.load([
+  const loaded = await root.value.install([
     createConversationProvider(conversation, create),
     createSystemPromptPlugin(conversation, "按用户目标完成任务。"),
   ]);
-
-  if (!loaded.ok) {
-    await root.value.dispose();
-    return loaded;
-  }
-
-  const closed = await root.value.dispose();
+  const closed = await root.value.close();
   if (!closed.ok) return closed;
   return loaded;
 }
 ```
 
-create 的可变实例状态在 apply 内初始化。复用同一个 Plugin 定义对象创建多个宿主，不能共享材料表、会话或连接。
+create 的可变实例状态在 setup 内初始化。复用同一个 Plugin 定义对象创建多个宿主，不能共享材料表、会话或连接。
 
-例子的装配函数演示从创建到关闭的完整资源生命周期；实际应用由宿主保留 RootContext 并在应用退出时关闭。
+例子的装配函数演示从创建到关闭的完整资源生命周期；实际应用由宿主保留 Host 并在应用退出时关闭。
 
 ## 10. 运行期间的嵌套调用
 
-apply 中登记静态提示词可以直接 use。服务方法或处理器内的依赖调用通过 call.bind(ctx) 关联父调用，才能继承本次取消与截止时间。
+setup 使用 ctx.deps 登记静态材料；服务方法和处理器使用 call.deps，自动关联父调用。
 
 ```ts
-async function appendWithinCall(
-  ctx: Context,
-  call: Invocation,
-  conversation: ServiceToken<ConversationService>,
-  message: MessageInput,
-): Promise<Result<{ readonly messageId: string }>> {
-  const bound = call.bind(ctx);
-  if (!bound.ok) return bound;
-  const service = bound.value.use(conversation);
-  if (!service.ok) return service;
-  return service.value.append(message);
+async function appendWithinCall(call: ConversationCall, message: MessageInput): Promise<Result<{ readonly messageId: string }>> {
+  return call.deps.conversation.append(message);
 }
 ```
 
@@ -276,7 +207,7 @@ async function appendWithinCall(
 
 | 场景 | 外部插件契约 | core 使用点 |
 | --- | --- | --- |
-| 受限执行环境 | 环境服务、执行路由、资源与取消协议 | provide/use、chain、guard、scope/effect |
+| 受限执行环境 | 环境服务、执行路由、资源与取消协议 | service/deps、chain、guard、scope/resource |
 | 房间成员管理 | 房间状态与成员服务 | 服务及作用域 |
 | 房间可靠投递 | 消息记录、目标投递身份、确认与去重 | 服务、任务、内存通知 |
 | 独立 Agent 实例 | 会话、运行、输入队列服务 | 子作用域、服务、任务 |
@@ -285,7 +216,7 @@ async function appendWithinCall(
 
 每个房间参与实例有独立会话和可变状态。房间日志决定消息顺序，接收队列使用稳定投递身份去重。core 的 Event 只通知有新工作；实际业务消息留在外部持久记录中。
 
-仅需不同业务状态的实例使用外部领域工厂。每个实例需要独立插件集合时，使用宿主提供的受限实例管理服务：插件提交获准配置身份和参数，服务登记调用者拥有的创建请求，宿主创建子作用域并调用 root.load。实例服务返回不透明身份与受理回执，随后提供状态查询，不交出 RootContext。安装失败关闭子作用域，调用者停止取消未完成创建并关闭已经创建的实例。
+仅需不同业务状态的实例使用外部领域工厂。每个实例需要独立插件集合时，使用宿主提供的受限实例管理服务：插件提交获准配置身份和参数，服务登记调用者拥有的创建请求，宿主创建子作用域并调用 root.install。实例服务返回不透明身份与受理回执，随后提供状态查询，不交出 Host。安装失败关闭子作用域，调用者停止取消未完成创建并关闭已经创建的实例。
 
 activation/cleanup 阶段不等待新的装配；激活中申请的需求由宿主在当前提交后处理。停止请求先返回受理，宿主再等待关闭，避免实例在自身服务调用中等待自己。配置许可、成员规则、实例名称和请求记录全部属于外部服务。
 

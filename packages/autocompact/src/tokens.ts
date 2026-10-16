@@ -14,7 +14,7 @@ export type CheckpointDetail =
   | { readonly segmentFrom: number }
   | { readonly coveredSeq: number }
   | { readonly retries: number }
-  | { readonly reason?: string; readonly failures: number }
+  | { readonly reason?: string; readonly failures: number; readonly failureCode?: string }
   | Record<string, never>;
 
 export const autocompactCheckpoint = defineEvent<{

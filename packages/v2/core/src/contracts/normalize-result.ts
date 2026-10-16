@@ -1,24 +1,24 @@
-import { coreFaultCodes } from "./fault-codes";
 import { createFault } from "./create-fault";
-import { readData } from "./read-data";
+import { normalizeFailure } from "./normalize-failure";
 import type { Result } from "./types";
 
 export function normalizeResult(input: unknown): Result<unknown, unknown> {
-  const data = readData(input);
-  if (!data.ok) return createFault("invalid-result");
-  const value = data.value;
-  const keys = Object.keys(value);
-  if (keys.length !== 2) return createFault("invalid-result");
-  if (value.ok === true && "value" in value && !("reason" in value)) {
-    return { ok: true, value: value.value };
-  }
-  if (value.ok === false && value.reason !== undefined && !("value" in value)) {
-    const reason = readData(value.reason);
-    if (reason.ok && reason.value.source === "core") {
-      const valid = coreFaultCodes.some((code) => code === reason.value.code);
-      if (!valid || typeof reason.value.message !== "string") return createFault("invalid-result");
-    }
-    return { ok: false, reason: value.reason };
-  }
+  try {
+    if (input === null || typeof input !== "object") return createFault("invalid-result");
+    const prototype = Object.getPrototypeOf(input);
+    if (prototype !== Object.prototype && prototype !== null) return createFault("invalid-result");
+    const keys = Reflect.ownKeys(input);
+    if (keys.length !== 2 || !keys.includes("ok")) return createFault("invalid-result");
+    const payload = keys[0] === "ok" ? keys[1] : keys[0];
+    if (payload !== "value" && payload !== "error") return createFault("invalid-result");
+    const first = Object.getOwnPropertyDescriptor(input, keys[0]!);
+    if (!first || !("value" in first)) return createFault("invalid-result");
+    const second = Object.getOwnPropertyDescriptor(input, keys[1]!);
+    if (!second || !("value" in second)) return createFault("invalid-result");
+    const ok: unknown = keys[0] === "ok" ? first.value : second.value;
+    const value: unknown = keys[0] === "ok" ? second.value : first.value;
+    if (ok === true && payload === "value") return { ok: true, value };
+    if (ok === false && payload === "error") return normalizeFailure(value);
+  } catch { return createFault("invalid-result"); }
   return createFault("invalid-result");
 }

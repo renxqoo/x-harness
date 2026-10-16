@@ -1,0 +1,2 @@
+const released = ctx.addCleanup(() => ({ ok: true, value: undefined }));
+if (released.ok) released.value({ context: ctx, signal: ctx.signal, deadline: 1 });

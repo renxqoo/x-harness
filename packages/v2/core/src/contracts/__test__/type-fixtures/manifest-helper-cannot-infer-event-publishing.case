@@ -1,0 +1,5 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+import type { PluginContext } from "__PUBLIC_ENTRY__";
+declare const changed: EventToken<string>;
+function publish(ctx: PluginContext<{ provides: { changed: typeof changed } }>) { return ctx.emit("changed", "wrong"); }
+definePlugin({ name: "bad", setup: publish });

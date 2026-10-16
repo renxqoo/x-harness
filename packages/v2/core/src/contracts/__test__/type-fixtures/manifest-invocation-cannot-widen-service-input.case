@@ -1,0 +1,5 @@
+import type { PluginInvocation } from "__PUBLIC_ENTRY__";
+import type { NarrowManifest, WideManifest } from "__AUTHORING_FIXTURE__";
+declare const source: PluginInvocation<NarrowManifest>;
+const widened: PluginInvocation<WideManifest> = source;
+void widened;

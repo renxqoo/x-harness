@@ -36,7 +36,7 @@
   "overrides": [
     {
       "files": [
-        "core/src/chains/create-continuation.ts"
+        "core/src/mechanisms/chains/create-continuation.ts"
       ],
       "rules": {
         "unicorn/no-thenable": "off"

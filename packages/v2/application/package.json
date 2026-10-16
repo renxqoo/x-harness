@@ -1,0 +1,8 @@
+{
+  "name": "@x-harness/application",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

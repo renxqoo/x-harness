@@ -1,0 +1,203 @@
+--- a/packages/v2/core/src/context/create-context-view.ts
++++ b/packages/v2/core/src/context/create-context-view.ts
+@@ -14,6 +14,7 @@
+ import { closeOwner } from "../lifetime/close-owner";
+ import { checkAdmission } from "../foundation/check-admission";
+ import { createDependencies } from "./create-dependencies";
++import { describeDependencies } from "./describe-dependencies";
+ import { registerServices } from "../mechanisms/register-services";
+ import { handleChain } from "../mechanisms/chains/handle-chain";
+ 
+@@ -44,9 +45,9 @@
+       if (!cell.current) return Object.freeze({});
+       const { kernel, view } = cell.current;
+       if (!view.owner.activation || view.owner.activation.settled) return Object.freeze({});
+-      dependencies = createDependencies(kernel.createDependencyContext({ ...view, bound: view.owner.activation }), {
++      dependencies = createDependencies(describeDependencies(view.owner, view.owner.bindings), {
++        context: kernel.createDependencyContext({ ...view, bound: view.owner.activation }),
+         required: view.owner.plugin?.requires ?? {}, optional: view.owner.plugin?.optional ?? {},
+-        absent: new Set([...view.owner.bindings].filter(([, provider]) => provider === null).map(([token]) => token)),
+       });
+       return dependencies;
+     },
+--- a/packages/v2/core/src/context/create-dependencies.ts
++++ b/packages/v2/core/src/context/create-dependencies.ts
+@@ -1,21 +1,23 @@
+ import type { DefinitionRef, DependencyContext, Result, ServiceToken } from "../contracts/types";
+-import { definitionData } from "../contracts/definition-data";
++import type { DependencyLayout } from "./describe-dependencies";
+ import { createFault } from "../contracts/create-fault";
+ import { retainRevocation } from "./retain-revocation";
+ 
+ type Service = Record<string, (input: unknown) => Promise<Result<unknown, unknown>>>;
+ interface DependencyCell { expired?: "service-unavailable"; current?: { context: DependencyContext; token: ServiceToken<Service>; acquired?: Service } }
++const empty: Readonly<Record<string, unknown>> = Object.freeze(Object.create(null) as Record<string, unknown>);
+ 
+-export function createDependencies(context: DependencyContext, declarations: {
+-  required: Readonly<Record<string, DefinitionRef>>; optional: Readonly<Record<string, DefinitionRef>>; absent: ReadonlySet<DefinitionRef>;
++export function createDependencies(layout: DependencyLayout, source?: {
++  context: DependencyContext; required: Readonly<Record<string, DefinitionRef>>; optional: Readonly<Record<string, DefinitionRef>>;
+ }): Readonly<Record<string, unknown>> {
++  if (!layout.length) return empty;
+   const dependencies: Record<string, unknown> = Object.create(null);
+-  for (const [name, token] of Object.entries({ ...declarations.required, ...declarations.optional })) {
+-    if (token.kind !== "service") continue;
+-    if (declarations.absent.has(token)) { dependencies[name] = undefined; continue; }
+-    const cell: DependencyCell = { current: { context, token: token as ServiceToken<Service> } };
+-    retainRevocation(context, () => { if (cell.current?.acquired) cell.expired = "service-unavailable"; cell.current = undefined; });
+-    dependencies[name] = dependencyFacade(cell, Object.keys(definitionData.get(token)!.methods));
++  for (const { name, methods } of layout) {
++    if (!methods) { dependencies[name] = undefined; continue; }
++    const token = source?.required[name] ?? source?.optional[name];
++    const cell: DependencyCell = { current: source && token ? { context: source.context, token: token as ServiceToken<Service> } : undefined };
++    if (source) retainRevocation(source.context, () => { if (cell.current?.acquired) cell.expired = "service-unavailable"; cell.current = undefined; });
++    dependencies[name] = dependencyFacade(cell, methods);
+   }
+   return Object.freeze(dependencies);
+ }
+--- a/packages/v2/core/src/context/create-invocation.ts
++++ b/packages/v2/core/src/context/create-invocation.ts
+@@ -1,5 +1,5 @@
+ import type { CallOptions, Context, Invocation, Result, TaskHandle } from "../contracts/types";
+-import type { Kernel, Work } from "../foundation/types";
++import type { Kernel, Owner, Work } from "../foundation/types";
+ import { signalAborted } from "../contracts/observe-signal";
+ import { createFault } from "../contracts/create-fault";
+ import { collectDependencies } from "../foundation/collect-dependencies";
+@@ -10,28 +10,43 @@
+ import { unknownTask, waitTask } from "../execution/wait-task";
+ import { createDependencies } from "./create-dependencies";
+ import { readCapability } from "./read-capability";
++import { describeDependencies } from "./describe-dependencies";
++import type { DependencyLayout } from "./describe-dependencies";
++
++interface InvocationCell { current?: { kernel: Kernel; work: Work; bindings: Owner["bindings"] } }
++type Metadata = Pick<Invocation, "id" | "parentId" | "signal" | "deadline" | "origin" | "executor" | "resourceOwner" | "phase">;
+ 
+ export function createInvocation(kernel: Kernel, work: Work): Invocation {
+-  let cell: { kernel: Kernel; work: Work } | undefined = { kernel, work };
+-  work.revokeInvocation = () => { cell = undefined; };
+   const bindings = work.phase === "cleanup"
+     ? (work.executor === work.view.owner ? work.view.dependencies : undefined) ?? collectDependencies(work.executor, true)
+     : work.executor.bindings;
+-  const deps = createDependencies(kernel.createDependencyContext({
+-    owner: work.executor, scope: work.executor.scope, bound: work, cleanup: work.phase === "cleanup",
+-    cleanupControl: work.view.cleanupControl, dependencies: work.phase === "cleanup" ? bindings : undefined,
+-  }), {
+-    required: work.executor.plugin?.requires ?? {}, optional: work.executor.plugin?.optional ?? {},
+-    absent: new Set([...bindings].filter(([, provider]) => provider === null).map(([token]) => token)),
+-  });
+-  return Object.freeze({
+-    deps,
++  const cell: InvocationCell = { current: { kernel, work, bindings } };
++  work.revokeInvocation = () => { cell.current = undefined; };
++  return facade(cell, describeDependencies(work.executor, bindings), {
+     id: work.id, parentId: work.parent?.id, signal: work.controller.signal, deadline: work.deadline,
+     origin: identifyOwner(work.view.owner), executor: identifyOwner(work.executor),
+     resourceOwner: identifyOwner(work.resourceOwner), phase: work.phase,
++  });
++}
++
++function facade(cell: InvocationCell, layout: DependencyLayout, metadata: Metadata): Invocation {
++  let dependencies: Invocation["deps"] | undefined;
++  return Object.freeze({
++    ...metadata,
++    get deps() {
++      if (dependencies) return dependencies;
++      if (!cell.current || !layout.length) return dependencies = createDependencies(layout);
++      const { kernel, work, bindings } = cell.current;
++      return dependencies = createDependencies(layout, {
++        context: kernel.createDependencyContext({
++          owner: work.executor, scope: work.executor.scope, bound: work, cleanup: work.phase === "cleanup",
++          cleanupControl: work.view.cleanupControl, dependencies: work.phase === "cleanup" ? bindings : undefined,
++        }), required: work.executor.plugin?.requires ?? {}, optional: work.executor.plugin?.optional ?? {},
++      });
++    },
+     bind(context: Context) {
+-      if (!cell) return createFault("cancelled");
+-      const { kernel, work } = cell;
++      if (!cell.current) return createFault("cancelled");
++      const { kernel, work } = cell.current;
+       const target = kernel.registry.view(context);
+       if (!target || (target.owner !== work.executor && !(target.owner.kind === "host" && target.scope.creator === work.executor)) || !work.bodyOpen || work.settled || signalAborted(work.controller.signal)) {
+         return kernel.fault("invalid-input", work.executor);
+@@ -46,8 +61,8 @@
+       }) } as const;
+     },
+     dispatch(name, input, options) {
+-      if (!cell) return Promise.resolve(createFault("cancelled"));
+-      const { kernel, work } = cell;
++      if (!cell.current) return Promise.resolve(createFault("cancelled"));
++      const { kernel, work } = cell.current;
+       const declaration = work.executor.plugin;
+       const token = readCapability({ ...declaration?.requires, ...declaration?.optional, ...declaration?.provides }, name);
+       if (!token.ok) return Promise.resolve(token);
+@@ -59,27 +74,27 @@
+       }).dispatch(token.value as never, input, options);
+     },
+     effect(disposer) {
+-      if (!cell) return createFault("cancelled");
+-      const { kernel, work } = cell;
++      if (!cell.current) return createFault("cancelled");
++      const { kernel, work } = cell.current;
+       if (!work.bodyOpen || signalAborted(work.controller.signal) || work.phase === "cleanup") return kernel.fault("cancelled", work.executor);
+       return registerEffect(kernel, { owner: work.resourceOwner, executor: work.executor, disposer, consumer: true });
+     },
+     resource(spec) {
+-      if (!cell) return Promise.resolve(createFault("cancelled"));
+-      const { kernel, work } = cell;
++      if (!cell.current) return Promise.resolve(createFault("cancelled"));
++      const { kernel, work } = cell.current;
+       return openResource(kernel, {
+         owner: work.executor, scope: work.executor.scope, bound: work, cleanup: work.phase === "cleanup",
+       }, spec);
+     },
+     spawn(spec) {
+-      if (!cell) return createFault("cancelled");
+-      const { kernel, work } = cell;
++      if (!cell.current) return createFault("cancelled");
++      const { kernel, work } = cell.current;
+       if (work.phase === "cleanup") return kernel.fault("scope-closed", work.executor);
+       return spawnTask(kernel, { owner: work.executor, scope: work.executor.scope, bound: work }, spec);
+     },
+     wait<T, E>(handle: TaskHandle<T, E>, options?: CallOptions): Promise<Result<T, E>> {
+-      if (!cell) return Promise.resolve(createFault("cancelled"));
+-      const { kernel, work } = cell;
++      if (!cell.current) return Promise.resolve(createFault("cancelled"));
++      const { kernel, work } = cell.current;
+       const task = lookupTask(kernel, handle);
+       if (!task) return unknownTask(kernel);
+       return waitTask(kernel, { task, waiter: work, options }) as Promise<Result<T, E>>;
+--- /dev/null
++++ b/packages/v2/core/src/context/describe-dependencies.ts
+@@ -0,0 +1,19 @@
++import { definitionData } from "../contracts/definition-data";
++import type { Owner } from "../foundation/types";
++
++export type DependencyLayout = readonly Readonly<{ name: string; methods?: readonly string[] }>[];
++const layouts = new WeakMap<Owner, WeakMap<Owner["bindings"], DependencyLayout>>();
++const empty: DependencyLayout = Object.freeze([]);
++
++export function describeDependencies(owner: Owner, bindings: Owner["bindings"]): DependencyLayout {
++  let entries = layouts.get(owner);
++  const cached = entries?.get(bindings);
++  if (cached) return cached;
++  const layout = Object.entries({ ...owner.plugin?.requires, ...owner.plugin?.optional }).flatMap(([name, token]) => {
++    if (token.kind !== "service") return [];
++    return [Object.freeze({ name, methods: bindings.get(token) === null ? undefined : Object.freeze(Object.keys(definitionData.get(token)!.methods)) })];
++  });
++  if (!entries) { entries = new WeakMap(); layouts.set(owner, entries); }
++  const frozen = layout.length ? Object.freeze(layout) : empty;
++  entries.set(bindings, frozen); return frozen;
++}
+--- a/packages/v2/core/src/contracts/plugin-types.ts
++++ b/packages/v2/core/src/contracts/plugin-types.ts
+@@ -54,7 +54,7 @@
+   Context, "deps" | "service" | "handle" | "register" | "use" | "on" | "middleware" | "guard" | "dispatch" | "emit" | "resource" | "startTask"
+ > {
+   readonly deps: PluginDependencies<D, O>;
+-  service<const I extends PluginImplementations<P, D, O>>(implementations: I & Record<Exclude<keyof I, Keys<P, "service">>, never>, options?: RegistrationOptions): Result<{ readonly [K in keyof P as P[K] extends { readonly kind: "service" } ? K : never]: Disposer }>;
++  service<const I extends PluginImplementations<P, D, O>>(implementations: I & Record<Exclude<keyof I, keyof PluginImplementations<P, D, O>>, never>, options?: RegistrationOptions): Result<{ readonly [K in keyof P as P[K] extends { readonly kind: "service" } ? K : never]: Disposer }>;
+   handle<K extends Keys<P, "chain">>(name: K, terminal: Implementation<P[K], D, P, O>, options?: RegistrationOptions): Result<Disposer>;
+   middleware<K extends Keys<D & P & O, "chain">>(name: K, handler: Handler<(D & P & O)[K], D, P, O>): Result<Disposer>;
+   guard<K extends Keys<D & P & O, "guard">>(name: K, handler: Handler<(D & P & O)[K], D, P, O>): Result<Disposer>;

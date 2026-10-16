@@ -129,9 +129,21 @@ function applyOverride(entry: CatalogEntry, spec: { provider: string; model: str
   };
 }
 
-export function resolveDefaultDial(catalog: ModelsCatalog): { provider: string; model: string } | undefined {
+export function resolveDefaultDial(
+  catalog: ModelsCatalog,
+  credentials: Readonly<Record<string, string>> = {},
+  env: Readonly<Record<string, string | undefined>> = {},
+): { provider: string; model: string } | undefined {
+  const hasCredential = (provider: string): boolean => {
+    const profile = catalog.profiles.find((p) => p.name === provider);
+    if (profile === undefined) return false;
+    const fromEnv = profile.apiKeyEnv !== undefined ? env[profile.apiKeyEnv] : undefined;
+    return (credentials[provider] ?? profile.apiKey ?? fromEnv ?? "") !== "";
+  };
   const exact = catalog.entries.find((e) => e.provider === catalog.defaults.provider && e.model === catalog.defaults.model);
-  if (exact !== undefined) return { provider: exact.provider, model: exact.model };
+  if (exact !== undefined && hasCredential(exact.provider)) return { provider: exact.provider, model: exact.model };
+  const firstCredible = catalog.entries.find((e) => hasCredential(e.provider));
+  if (firstCredible !== undefined) return { provider: firstCredible.provider, model: firstCredible.model };
   const first = catalog.entries[0];
   return first !== undefined ? { provider: first.provider, model: first.model } : undefined;
 }

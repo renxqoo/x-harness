@@ -1,0 +1,3 @@
+import { definePlugin } from "__PUBLIC_ENTRY__";
+import { greeting, userStore, changed, ok, openConnection } from "__AUTHORING_FIXTURE__";
+definePlugin({ name: 'bad', requires: { changed }, setup(ctx) { const registered = ctx.on('changed', (event: { path: number }) => { void event; }); if (!registered.ok) return registered; return ok(); } });

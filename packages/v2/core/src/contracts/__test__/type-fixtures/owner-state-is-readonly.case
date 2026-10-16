@@ -1,0 +1,3 @@
+import type { Owner } from "__INTERNAL_TYPES__";
+declare const owner: Owner;
+owner.state = "active";
