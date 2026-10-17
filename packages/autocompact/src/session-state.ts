@@ -13,6 +13,9 @@ export interface GateCache {
   warnedOverfill: boolean;
   warnedDegraded: boolean;
   lastOccupancy: number | undefined;
+  /** 本 turn 开始时的占用基准：turn/start 复位 lastOccupancy 后，增量估计用
+   *  该观测值而非全局 cap 常量，防小窗溢出预测恒真（审查 A1） */
+  turnStartOccupancy: number | undefined;
   l1Backoff: boolean;
   journalSeen: number;
   calibration: Calibration;
@@ -41,6 +44,7 @@ export function makeSessionState(id: SessionId): SessionState {
       warnedOverfill: false,
       warnedDegraded: false,
       lastOccupancy: undefined,
+      turnStartOccupancy: undefined,
       l1Backoff: false,
       journalSeen: 0,
       calibration: emptyCalibration(),

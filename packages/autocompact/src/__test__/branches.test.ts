@@ -216,7 +216,7 @@ describe("词表锁与补面", () => {
     }
   });
 
-  it("首步增量缺省（无 lastOccupancy 时 cap × maxParallel）也预测越窗", async () => {
+  it("首步增量缺省（无任何观测时才退 cap × maxParallel；跨 turn 有观测增量则用观测值——审查 A1 回归：128k 小窗下 cap 缺省曾使谓词恒真）", async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const world = await makeWorld({ summarizer: undefined }, { summarizer: undefined });
     try {

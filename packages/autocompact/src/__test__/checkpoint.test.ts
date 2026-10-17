@@ -186,6 +186,44 @@ describe("maybeStartCheckpoint / joinInflight", () => {
     }
   });
 
+  it("provider→确定性self 击序不得 fatal（复查 F3 回归：混合击序曾决定 fatality——一次瞬态 provider 抖动把确定性阈值从 2 降到 1）", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("cp-mixed") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: "u0", assistant: { text: "a0" } });
+      seedTurn(made.value, { turn: 1, user: "u1", assistant: { text: "a1" } });
+      // 序 A：provider 1 击 + det-self 1 击 → 不 fatal（self 分账只 1）
+      const stateA = emptyCheckpointState();
+      const a1 = depsOf({ session: made.value, scripts: [errorScript()] });
+      maybeStartCheckpoint({ state: stateA, deps: a1, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateA.job?.done;
+      const a2 = depsOf({ session: made.value, scripts: [textScript("garbage output")] });
+      maybeStartCheckpoint({ state: stateA, deps: a2, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateA.job?.done;
+      expect(stateA.broken).toBe(false);
+      expect(stateA.fatal).toBe(false);
+      // 序 B（对照）：det-self 1 击 + provider 1 击 → 同样不 fatal
+      const stateB = emptyCheckpointState();
+      const b1 = depsOf({ session: made.value, scripts: [textScript("garbage output")] });
+      maybeStartCheckpoint({ state: stateB, deps: b1, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateB.job?.done;
+      const b2 = depsOf({ session: made.value, scripts: [errorScript()] });
+      maybeStartCheckpoint({ state: stateB, deps: b2, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateB.job?.done;
+      expect(stateB.broken).toBe(false);
+      expect(stateB.fatal).toBe(false);
+      // 两序后再各补一发 det-self → 连续 2 次确定性 self 达标才 fatal
+      const a3 = depsOf({ session: made.value, scripts: [textScript("garbage output")] });
+      maybeStartCheckpoint({ state: stateA, deps: a3, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateA.job?.done;
+      expect(stateA.broken).toBe(true);
+      expect(stateA.fatal).toBe(true);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
   it("段被吞（外部 compaction 落账吞掉未收编段）→ 重锚丢弃、非失败不计数", async () => {
     const world = await makeWorld();
     try {

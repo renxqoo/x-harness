@@ -69,13 +69,14 @@ export interface CheckpointState {
   coveredSeq: number;
   armed: boolean;
   consecutiveFailures: number;
+  consecutiveSelfFailures: number;
   broken: boolean;
   fatal: boolean;
   job: CheckpointJob | undefined;
 }
 
 export function emptyCheckpointState(): CheckpointState {
-  return { ledger: emptyLedger(), coveredSeq: -1, armed: true, consecutiveFailures: 0, broken: false, fatal: false, job: undefined };
+  return { ledger: emptyLedger(), coveredSeq: -1, armed: true, consecutiveFailures: 0, consecutiveSelfFailures: 0, broken: false, fatal: false, job: undefined };
 }
 
 export interface CheckpointDeps {
@@ -376,24 +377,40 @@ interface FailureStrike {
 
 const SELF_BREAKER_THRESHOLD = 2;
 
+/** 确定性 self 失败分账计数：fatal 门槛要求【连续】SELF_BREAKER_THRESHOLD 次
+ *  确定性 self 失败（复发证据），任何 provider/瞬态击重置它——一次瞬态抖动
+ *  不能把确定性阈值从 2 降到 1（复查 F3：混合击序曾决定 fatality）。 */
+function consecutiveSelfStrikes(state: CheckpointState, deterministicSelf: boolean): number {
+  if (!deterministicSelf) {
+    state.consecutiveSelfFailures = 0;
+    return 0;
+  }
+  state.consecutiveSelfFailures += 1;
+  return state.consecutiveSelfFailures;
+}
+
 function failOnce(strike: FailureStrike): void {
   const { state, deps } = strike;
   state.consecutiveFailures += 1;
   const failures = state.consecutiveFailures;
-  if (strike.blame === "self" && strike.transient !== true) {
+  const deterministicSelf = strike.blame === "self" && strike.transient !== true;
+  if (deterministicSelf) {
     // 确定性 self 失败（patch 不可解析 / 输入预算耗尽 / 输出为空）：不计数会在每个
-    // step 无限重启 checkpoint，每次都是真实 LLM 调用。阈值取 2（比 provider 更严），
-    // fatal（turn/start 不复位——确定性失败换 turn 也不会好，等人工换 summarizer）。
-    deps.emit("failed", { failures, blame: strike.blame });
-    if (failures < SELF_BREAKER_THRESHOLD) return;
+    // step 无限重启 checkpoint，每次都是真实 LLM 调用。fatal 判定用分账计数
+    // （连续 2 次确定性 self，非混合总数）——fatal 不随 turn/start 复位，
+    // 等人工换 summarizer。
+    const selfStrikes = consecutiveSelfStrikes(state, true);
+    deps.emit("failed", { failures, selfStrikes, blame: strike.blame });
+    if (selfStrikes < SELF_BREAKER_THRESHOLD) return;
     state.broken = true;
     state.fatal = true;
-    deps.emit("breaker", { failures });
+    deps.emit("breaker", { failures: selfStrikes });
     return;
   }
+  consecutiveSelfStrikes(state, false);
   // provider 失败与瞬态 self 失败（idle-aborted）共用三振 non-fatal 语义；
-  // fatality 只由 provider 确定性错误码决定。混合序列与纯序列同归：
-  // 计数共享但阈值判定在同一分支，不存在「顺序决定 fatality」的分叉。
+  // fatality 只由各自类别的确定性证据决定（self 分账 / provider 错误码），
+  // 混击序不再影响判定。
   const { failureCode } = strike;
   deps.emit("failed", { failures, blame: strike.blame, ...(failureCode !== undefined ? { failureCode } : {}) });
   const fatal = strike.blame === "provider" && failureCode !== undefined && isDeterministicFailure(failureCode);

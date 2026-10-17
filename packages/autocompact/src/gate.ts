@@ -229,6 +229,19 @@ function armOrStartCheckpoint(fields: {
 
 export const DEAD_ZONE_PCT = 15;
 
+/** turn 首步（lastOccupancy 被 turn/start 复位）的增量估计：全局 cap 常量对
+ *  小窗口会让溢出预测恒真（A1：128k 窗 + 125k×parallel×1.5 必越线），从而每 turn
+ *  首步触发破坏性 escalate。改为观测值优先：同会话上一 turn 结束时的占用增量；
+ *  仅首个 turn 无任何观测时才退回 cap 常量（此时会话刚建，占用远低于 warn 线，
+ *  实际不可达谓词）。*/
+function observedStepDelta(deps: GateDeps, occupancy: number, maxParallel: number): number {
+  const last = deps.state.cache.lastOccupancy;
+  if (last !== undefined) return Math.max(0, occupancy - last);
+  const turnStartOccupancy = deps.state.cache.turnStartOccupancy;
+  if (turnStartOccupancy !== undefined) return Math.max(0, occupancy - turnStartOccupancy);
+  return deps.config.toolResultCapTokens * Math.max(1, maxParallel);
+}
+
 function l2OverflowPredicted(fields: { readonly occupancy: number; readonly lines: Lines; readonly deps: GateDeps }): boolean {
   const last = fields.deps.state.cache.lastOccupancy;
   if (last === undefined) return false;
@@ -249,10 +262,7 @@ async function routeZones(fields: {
   if (occupancy < lines.l1Line) {
     if (occupancy < lines.warnLine) return;
     warnParallelApproach(deps, { occupancy, maxParallel: measured.maxParallel }, lines);
-    const lastStepDelta =
-      deps.state.cache.lastOccupancy === undefined
-        ? deps.config.toolResultCapTokens * Math.max(1, measured.maxParallel)
-        : Math.max(0, occupancy - (deps.state.cache.lastOccupancy ?? 0));
+    const lastStepDelta = observedStepDelta(deps, occupancy, measured.maxParallel);
     if (budgetOverflowPredicted({ occupancy, lastStepDelta, lines })) {
       await escalateOrJoin({ deps, lines, signal: payload.signal });
     }

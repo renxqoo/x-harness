@@ -267,8 +267,14 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         if (event.type === "turn/start") {
           state.turnActive = true;
           state.cache.lastOccupancy = undefined;
+          // 跨 turn 增量基准：turn/start 时把上一 turn 末尾占用转存（审查 A1——
+          // 首步外推用观测增量而非全局 cap 常量，防小窗溢出预测恒真）。
+          // 事件驱动转存不依赖 gate 时序（sessionAuditEvent 是 microtask 投递，
+          // 但 turn/start 一定先于同 turn 的 pre-step dispatch 到达）。
+          state.cache.turnStartOccupancy = state.cache.lastOccupancy;
           state.cache.l1Backoff = false;
           state.checkpoint.consecutiveFailures = 0;
+          state.checkpoint.consecutiveSelfFailures = 0;
           if (state.checkpoint.broken) {
             if (state.checkpoint.fatal) {
               warn(session, "breaker-held", { cause: "deterministic-failure" });
