@@ -445,6 +445,18 @@ describe("hostile activation failures", () => {
     expect(host.register(token, { run: () => Promise.resolve({ ok: true, value: "after" }) })).toMatchObject({ ok: true });
   });
 
+  it("a hostile Error subclass getter still rolls the batch back", async () => {
+    const host = setup();
+    const token = endpoint("hostile-getter");
+    const hostile = new Error("m");
+    Object.defineProperty(hostile, "name", { get() { throw new Error("boom-name"); } });
+    expect(await host.install([{ name: "evil-getter", provides: { token }, setup() {
+      return { ok: false, error: hostile };
+    } }])).toMatchObject({ ok: false, error: { code: "activation-failed", pluginName: "evil-getter" } });
+    expect(host.inspect()).toMatchObject({ plugins: [], degraded: false });
+    expect(host.register(token, { run: () => Promise.resolve({ ok: true, value: "after" }) })).toMatchObject({ ok: true });
+  });
+
   it("an Error instance is preserved as a normalized cause payload", async () => {
     const host = setup();
     const token = endpoint("error-cause");

@@ -4,7 +4,9 @@ import { readJsonValue } from "../contracts/read-json-value";
 import { readCoreFault } from "../contracts/read-core-fault";
 
 function normalizeCause(error: unknown): unknown {
-  if (error instanceof Error) return { name: error.name, message: error.message };
+  try {
+    if (error instanceof Error) return { name: error.name, message: error.message };
+  } catch { return error; }
   return error;
 }
 
