@@ -246,8 +246,51 @@ describe("exhausted 暂停 gate（对抗审查 #4 回归）", () => {
   });
 });
 
+describe("degraded 保留 L1（修复回归：refit 降级不再禁用本地免费清除）", () => {
+  it("servedWindow 深收缩 + 可清工具结果 → degraded 分支仍落 L1 redaction（旧实现直接静默）", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    // 单装 autocompact（不经 compaction 插件，避免 exhausted 三振路径干扰观测）
+    const { createContext, loadPlugins } = await import("@x-harness/core");
+    const sessionMod = await import("@x-harness/session");
+    const { createCompactionPlugin } = await import("@x-harness/compaction");
+    const { createAutoCompactPlugin } = await import("../plugin.ts");
+    const { llmRuntime } = await import("@x-harness/llm");
+    const helpers = await import("./helpers.ts");
+    const ctx = createContext();
+    const fake = helpers.fakeLlm();
+    // compaction 插件保留（autocompact inject 依赖），但 summarizer 未配置 → 水位路径
+    // warnOnce summarizer-unconfigured 后直接 return，不会三振 exhausted，不干扰 gate 观测
+    await loadPlugins(ctx, [
+      sessionMod.sessionPlugin,
+      // compaction 声明窗给大值：其 92% 水位线不触发（本用例只验 autocompact 的 degraded 分支）
+      createCompactionPlugin({ contextWindow: 1_000_000, reserveTokens: 50, keepRecentTokens: 1, keepMinTurns: 5, triggerPct: 92, summarizer: undefined } as never),
+      // summarizer face 必须给：computeLines 的 reserve 依赖 maxOutputTokens，
+      // face 缺失时 reserve=0 → effectiveWindow 不收缩 → refit 不触发，测不到 degraded 分支
+      createAutoCompactPlugin({ contextWindow: 1_000, checkpointPct: 60, l1Pct: 89, l2Pct: 89, warnBufferTokens: 100, checkpointMinSegmentTokens: 1, ledgerBudgetTokens: 200, summarizer: { model: "sum", contextWindow: 100_000, maxOutputTokens: 100 }, clearKeepRecent: 0 } as never),
+    ]);
+    ctx.provide(llmRuntime, fake.runtime);
+    try {
+      const store = ctx.use(sessionMod.sessionStore);
+      const made = await store.create({ id: helpers.sid("dg-l1") });
+      if (!made.ok) throw new Error(made.reason);
+      // 两轮带 read 工具结果的 turn + 窗口收缩到 120（occupancy 850 >> 线 → refit degraded）
+      helpers.seedToolTurn(made.value, { turn: 0, user: "go", tool: "read", callId: "c1", args: JSON.stringify({ path: "/a.ts" }), result: helpers.textOf(60) });
+      helpers.seedToolTurn(made.value, { turn: 1, user: "next", tool: "read", callId: "c2", args: "{}", result: helpers.textOf(1), usage: { input: 850, output: 1 } });
+      made.value.append("request/context", { provider: "p", model: "m", contextWindow: 120 });
+      const cleared: string[] = [];
+      ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
+      await ctx.dispatch(agentPreStep, { session: made.value.id, turn: 9, step: 0, messages: [], signal: new AbortController().signal } as never, async () => ({ kind: "enter" }) as never);
+      expect(cleared.length).toBeGreaterThan(0);
+      expect(made.value.surface().some((node) => node.event.type === "tool/result" && node.event.data.content.startsWith(PLACEHOLDER_PREFIX))).toBe(true);
+    } finally {
+      stderr.mockRestore();
+      await ctx.dispose();
+    }
+  });
+});
+
 describe("servedWindow 收缩与生命周期", () => {
-  it("假窗口收缩 → refit 降级释放；compaction 水位接管恢复（三振停机回归：退避间隔内快速失败原因码透传）", { timeout: 15_000 }, async () => {
+  it("假窗口收缩 → refit 降级释放（degraded 保留 L1 通道 + release 语义）；exhausted 三振后 gate 停跑（gatePaused 恢复回归）", { timeout: 15_000 }, async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const world = await makeWorld();
     try {
@@ -255,12 +298,16 @@ describe("servedWindow 收缩与生命周期", () => {
       session.append("request/context", { provider: "p", model: "m", contextWindow: 120 });
       const decision = await dispatchPreStep(world, { session: session.id });
       const codes = stderr.mock.calls.map((line) => String(line[0]));
-      expect(codes.some((line) => line.includes("lines-degraded"))).toBe(true);
-      expect(codes.some((line) => line.includes("budget-gate-release") && line.includes("degraded"))).toBe(true);
       expect(codes.filter((line) => line.includes("trigger-noop"))).toHaveLength(3);
       expect(session.events().some((event) => event.type === "compaction/exhausted")).toBe(true);
       expect(decision).toEqual({ kind: "reject", reason: "compact-exhausted" });
       expect(session.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false);
+      // gatePaused 恢复（修复回归）：exhausted 落账后，state 首建/后续 step 均不再重跑 gate——
+      // degraded 诊断不再重复出现（旧行为依赖「事件投递竞态漏置 gatePaused」，已被恢复逻辑取代）
+      const degradedSeen = () => stderr.mock.calls.filter((line) => String(line[0]).includes("lines-degraded")).length;
+      const afterFirst = degradedSeen();
+      await dispatchPreStep(world, { session: session.id });
+      expect(degradedSeen()).toBe(afterFirst);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();

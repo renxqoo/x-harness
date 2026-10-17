@@ -5,6 +5,7 @@ import type { LlmRuntime } from "@x-harness/llm";
 import { DEFAULT_FILE_TOOLS, compactionRunner, type FileToolNames, type SummarizerFace } from "@x-harness/compaction";
 import { sessionDisposed, sessionAuditEvent, sessionStore } from "@x-harness/session";
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
+import { WIDE_TOKENS_PER_CHAR } from "@x-harness/token-meter";
 import { cancelJob } from "./checkpoint.ts";
 import { maybeIdleClear } from "./idle.ts";
 import { assertLinesDomain, computeLines, DEFAULT_L1_PCT, DEFAULT_L2_PCT } from "./lines.ts";
@@ -39,6 +40,8 @@ export interface AutoCompactOptions {
   readonly warnBufferTokens?: number;
   readonly checkpointMaxRetries?: number;
   readonly checkpointIdleTimeoutMs?: number;
+  /** 预测用的单工具结果 token 上界。缺省按 agent-loop 的入库截断（默认
+   *  100_000 chars）取最宽情形上界；装配层同时持有两边时应显式传入，避免漂移。 */
   readonly toolResultCapTokens?: number;
   readonly summarizer?: SummarizerFace;
   readonly fileTools?: FileToolNames;
@@ -53,8 +56,19 @@ const DEFAULTS = {
   idleClearMinGainTokens: 0,
   checkpointMaxRetries: 2,
   checkpointIdleTimeoutMs: 120_000,
-  toolResultCapTokens: 25_000,
 } as const;
+
+/** agent-loop 的入库截断默认值（agent-loop/src/plugin.ts DEFAULT_MAX_RESULT_CHARS）。
+ *  显式复述而不 import，避免 autocompact → agent-loop 的运行时依赖；两处若
+ *  变更需同步。 */
+const DEFAULT_MAX_TOOL_RESULT_CHARS = 100_000;
+
+/** agent-loop 入库截断是字符数，占用计量是 token 数，两者换算依赖内容宽度：
+ *  ASCII ≈ chars/4，全宽字符 ≈ chars × 1.25，相差 5 倍。预测必须取保守上界
+ *  （最宽情形），否则中文会话的溢出预测会系统性低估 5 倍。 */
+export function toolResultCapTokensOf(maxToolResultChars: number): number {
+  return Math.ceil(maxToolResultChars * WIDE_TOKENS_PER_CHAR);
+}
 
 export const DIFF_TOOLS = ["edit", "write"] as const;
 export const DIFF_TRUNCATE_KEEP_LINES = 40;
@@ -106,7 +120,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
     diffKeepLines: options.diffKeepLines ?? DIFF_TRUNCATE_KEEP_LINES,
     checkpointMaxRetries: options.checkpointMaxRetries ?? DEFAULTS.checkpointMaxRetries,
     checkpointIdleTimeoutMs: options.checkpointIdleTimeoutMs ?? DEFAULTS.checkpointIdleTimeoutMs,
-    toolResultCapTokens: options.toolResultCapTokens ?? DEFAULTS.toolResultCapTokens,
+    toolResultCapTokens: options.toolResultCapTokens ?? toolResultCapTokensOf(DEFAULT_MAX_TOOL_RESULT_CHARS),
     checkpointMinSegmentTokens: 0,
   };
   const fileTools = options.fileTools ?? DEFAULT_FILE_TOOLS;
@@ -194,61 +208,12 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       });
 
       const onPreStep = async (payload: PreStepPayload, next: (input: PreStepPayload) => Promise<unknown>): Promise<unknown> => {
-        if (!gatePaused.has(payload.session)) {
-          const state = stateOf(payload.session);
-          if (state !== undefined) {
-            const deps = gateDepsOf(payload.session, state);
-            if (deps.session !== undefined) await runStepGate(deps, payload);
-          }
+        const state = stateOf(payload.session);
+        if (state !== undefined && !state.gatePaused) {
+          const deps = gateDepsOf(payload.session, state);
+          if (deps.session !== undefined) await runStepGate(deps, payload);
         }
         return next(payload);
-      };
-
-      const resolveAtOf = (live: { events(): readonly SessionEvent[] }): { turn: number; step: number } => {
-        let openTurn = -1;
-        let step = 0;
-        let lastClosed = -1;
-        for (const event of live.events()) {
-          if (event.type === "turn/start") {
-            openTurn = event.data.turn;
-            step = 0;
-          } else if (event.type === "turn/end") {
-            lastClosed = event.data.turn;
-            openTurn = -1;
-          } else if (event.type === "step/start" && openTurn >= 0) {
-            step = event.data.step;
-          }
-        }
-        if (openTurn >= 0) return { turn: openTurn, step };
-        return { turn: Math.max(0, lastClosed), step: 0 };
-      };
-
-      const gatePaused = new Set<SessionId>();
-
-      const onSessionEvent = ({ session, event }: { session: SessionId; event: SessionEvent }): void => {
-        const state = states.get(session);
-        if (state === undefined) return;
-        if (event.type === "turn/start") {
-          state.turnActive = true;
-          state.cache.lastOccupancy = undefined;
-          state.cache.l1Backoff = false;
-          state.checkpoint.consecutiveFailures = 0;
-          if (state.checkpoint.broken) {
-            if (state.checkpoint.fatal) {
-              warn(session, "breaker-held", { cause: "deterministic-failure" });
-            } else {
-              state.checkpoint.broken = false;
-              warn(session, "breaker-recovered");
-            }
-          }
-        } else if (event.type === "turn/end") {
-          state.turnActive = false;
-          state.lastTurnEndAt = event.time;
-        } else if (event.type === "compaction/exhausted") {
-          gatePaused.add(session);
-        } else if (event.type === "user/message" && typeof event.surfaceOp === "object" && event.surfaceOp.op === "replace") {
-          gatePaused.delete(session);
-        }
       };
 
       const tickIdle = (): void => {
@@ -276,6 +241,51 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       const timer = idleMs > 0 ? setInterval(tickIdle, Math.min(60_000, Math.max(250, idleMs))) : undefined;
       timer?.unref?.();
 
+      const resolveAtOf = (live: { events(): readonly SessionEvent[] }): { turn: number; step: number } => {
+        let openTurn = -1;
+        let step = 0;
+        let lastClosed = -1;
+        for (const event of live.events()) {
+          if (event.type === "turn/start") {
+            openTurn = event.data.turn;
+            step = 0;
+          } else if (event.type === "turn/end") {
+            lastClosed = event.data.turn;
+            openTurn = -1;
+          } else if (event.type === "step/start" && openTurn >= 0) {
+            step = event.data.step;
+          }
+        }
+        if (openTurn >= 0) return { turn: openTurn, step };
+        return { turn: Math.max(0, lastClosed), step: 0 };
+      };
+
+      const onSessionEvent = ({ session, event }: { session: SessionId; event: SessionEvent }): void => {
+        const state = states.get(session);
+        if (state === undefined) return;
+        if (event.type === "turn/start") {
+          state.turnActive = true;
+          state.cache.lastOccupancy = undefined;
+          state.cache.l1Backoff = false;
+          state.checkpoint.consecutiveFailures = 0;
+          if (state.checkpoint.broken) {
+            if (state.checkpoint.fatal) {
+              warn(session, "breaker-held", { cause: "deterministic-failure" });
+            } else {
+              state.checkpoint.broken = false;
+              warn(session, "breaker-recovered");
+            }
+          }
+        } else if (event.type === "turn/end") {
+          state.turnActive = false;
+          state.lastTurnEndAt = event.time;
+        } else if (event.type === "compaction/exhausted") {
+          state.gatePaused = true;
+        } else if (event.type === "user/message" && typeof event.surfaceOp === "object" && event.surfaceOp.op === "replace") {
+          state.gatePaused = false;
+        }
+      };
+
       const offs = [
         ctx.on(agentPreStep, onPreStep as never),
         ctx.on(sessionAuditEvent, onSessionEvent as never),
@@ -283,7 +293,6 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
           const state = states.get(session);
           if (state !== undefined) cancelJob(state.checkpoint);
           states.delete(session);
-          gatePaused.delete(session);
         }),
       ];
       return async () => {

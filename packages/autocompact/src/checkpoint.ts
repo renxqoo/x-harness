@@ -370,10 +370,21 @@ interface FailureStrike {
   readonly failureCode: string | undefined;
 }
 
+const SELF_BREAKER_THRESHOLD = 2;
+
 function failOnce(strike: FailureStrike): void {
   const { state, deps } = strike;
   if (strike.blame === "self") {
-    deps.emit("failed", { failures: state.consecutiveFailures, blame: strike.blame });
+    // self 失败（patch 不可解析 / 输入预算耗尽 / 输出为空）是确定性的：不计数会在每个
+    // step 无限重启 checkpoint，每次都是真实 LLM 调用。阈值取 2（比 provider 更严），
+    // turn/start 仍会复位 non-fatal breaker，允许用户换 summarizer 后重试。
+    state.consecutiveFailures += 1;
+    const failures = state.consecutiveFailures;
+    deps.emit("failed", { failures, blame: strike.blame });
+    if (failures < SELF_BREAKER_THRESHOLD) return;
+    state.broken = true;
+    state.fatal = true;
+    deps.emit("breaker", { failures });
     return;
   }
   state.consecutiveFailures += 1;

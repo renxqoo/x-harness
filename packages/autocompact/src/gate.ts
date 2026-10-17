@@ -258,6 +258,9 @@ async function routeZones(fields: {
     }
     return;
   }
+  // degraded（窗口收缩/refit）时不升级（escalateOrJoin 自己会释放），但 L1 本地清除
+  // 不花 LLM 调用、不改对话语义，保留执行——degraded 恰是窗口最紧的时刻，丢掉这个
+  // 零成本杠杆会退到更贵的摘要压缩（compaction 插件水位）。
   await l1AndBeyond({ deps, lines, nodes, events, occupancy, signal: payload.signal });
 }
 
@@ -280,6 +283,15 @@ async function l1AndBeyond(fields: {
   const { state } = deps;
   const session = deps.session;
   if (session === undefined) return;
+  if (lines.degraded) {
+    // degraded 下保留 L1 本地清除（无 LLM 成本，尽力清）；不走 escalation。
+    // refit 后 l1Line 为负值，pre-gate 恒不满足——degraded 分支跳过 pre-gate
+    // （语义从“清回线下”退化为“能清多少清多少”）；清完仍显式打 release，
+    // 语义不变：交还 compaction 插件水位接管。
+    const cleared = await runL1Clearing({ deps, lines, nodes, events, occupancy, skipPreGate: true });
+    if (!cleared) deps.warn(session.id, "budget-gate-release", { reason: "degraded" });
+    return;
+  }
   if (!state.cache.l1Backoff) {
     const cleared = await runL1Clearing({ deps, lines, nodes, events, occupancy });
     if (cleared) return;
@@ -304,12 +316,14 @@ async function runL1Clearing(fields: {
   readonly nodes: readonly SurfaceNode[];
   readonly events: Parameters<typeof computeClearPlan>[1];
   readonly occupancy: number;
+  readonly skipPreGate?: boolean;
 }): Promise<boolean> {
   const { deps, lines, nodes, events, occupancy } = fields;
   const { state, config } = deps;
   const session = deps.session as Session;
   const plan = computeClearPlan(nodes, events, { clearableTools: config.clearableTools, clearKeepRecent: config.clearKeepRecent, diffTools: config.diffTools, diffKeepLines: config.diffKeepLines, diffSuffix: DIFF_TRUNCATE_SUFFIX });
-  if (plan.entries.length > 0 && l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines })) {
+  const worth = fields.skipPreGate === true || l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines });
+  if (plan.entries.length > 0 && worth) {
     const landed = landClearPlan(session, nodes, plan.entries);
     if (landed.landed === 0) deps.warn(session.id, "l1-redact-failed");
     if (landed.landed > 0) {
@@ -323,7 +337,7 @@ async function runL1Clearing(fields: {
       if (remeasured < lines.l1Line) return true;
     }
   }
-  if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines }))) {
+  if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !worth)) {
     state.cache.l1Backoff = true;
     deps.warn(session.id, "l1-no-gain", { gainTokens: plan.gainTokens });
   }

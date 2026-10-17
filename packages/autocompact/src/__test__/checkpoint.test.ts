@@ -14,6 +14,8 @@ import { parseLedgerPatch, serializeLedger } from "../ledger.ts";
 import { logEvent } from "./helpers.ts";
 import type { Session } from "@x-harness/session";
 
+const SELF_BREAKER_THRESHOLD = 2;
+
 const PATCH = `<goals>\ngoal-1\n</goals>\n<current>\nstep-1\n</current>`;
 
 function depsOf(overrides: Partial<CheckpointDeps> & { session: Session; scripts: Array<AsyncGenerator<import("@x-harness/llm").LlmChunk>> }): CheckpointDeps {
@@ -114,7 +116,7 @@ describe("maybeStartCheckpoint / joinInflight", () => {
     }
   });
 
-  it("自限失败不计败（回归：无过错失败与 provider 失败共计数致永久熔断）：垃圾输出三轮不熔断；provider 错连续 3 败才熔断（breaker 事件）", async () => {
+  it("自限失败两振熔断（回归：不计数会每 step 重启 checkpoint 无限烧 LLM；修复后确定性失败快速停机）：垃圾输出第 2 败即熔断且 fatal；turn/reset 后恢复；provider 错连续 3 败才熔断（breaker 事件）", async () => {
     const world = await makeWorld();
     try {
       const made = await world.store.create({ id: sid("cp-breaker") });
@@ -123,25 +125,31 @@ describe("maybeStartCheckpoint / joinInflight", () => {
       seedTurn(session, { turn: 0, user: "u0", assistant: { text: "a0" } });
       seedTurn(session, { turn: 1, user: "u1", assistant: { text: "a1" } });
       const state = emptyCheckpointState();
-      for (let round = 0; round < 3; round += 1) {
-        const deps = depsOf({ session, scripts: [textScript("garbage output")] });
-        maybeStartCheckpoint({ state, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
-        await state.job?.done;
-        expect(state.broken).toBe(false);
-        expect(state.consecutiveFailures).toBe(0);
-      }
       const breakerSeen: number[] = [];
-      for (let round = 0; round < 3; round += 1) {
-        const deps = depsOf({ session, scripts: [errorScript()], emit: (action, detail) => {
+      for (let round = 0; round < SELF_BREAKER_THRESHOLD; round += 1) {
+        const deps = depsOf({ session, scripts: [textScript("garbage output")], emit: (action, detail) => {
           if (action === "breaker") breakerSeen.push((detail as { failures: number } | undefined)?.failures ?? -1);
         } });
         maybeStartCheckpoint({ state, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
         await state.job?.done;
-        if (round < 2) expect(state.broken).toBe(false);
+        if (round < SELF_BREAKER_THRESHOLD - 1) expect(state.broken).toBe(false);
       }
       expect(state.broken).toBe(true);
-      expect(breakerSeen).toEqual([3]);
-      expect(maybeStartCheckpoint({ state, deps: depsOf({ session, scripts: [] }), stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 2, step: 0 })).toBe(false);
+      expect(state.fatal).toBe(true);
+      expect(breakerSeen).toEqual([SELF_BREAKER_THRESHOLD]);
+      const breakerSeen2: number[] = [];
+      const state2 = emptyCheckpointState();
+      for (let round = 0; round < 3; round += 1) {
+        const deps = depsOf({ session, scripts: [errorScript()], emit: (action, detail) => {
+          if (action === "breaker") breakerSeen2.push((detail as { failures: number } | undefined)?.failures ?? -1);
+        } });
+        maybeStartCheckpoint({ state: state2, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+        await state2.job?.done;
+        if (round < 2) expect(state2.broken).toBe(false);
+      }
+      expect(state2.broken).toBe(true);
+      expect(breakerSeen2).toEqual([3]);
+      expect(maybeStartCheckpoint({ state: state2, deps: depsOf({ session, scripts: [] }), stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 2, step: 0 })).toBe(false);
     } finally {
       await world.ctx.dispose();
     }
@@ -217,7 +225,7 @@ describe("maybeStartCheckpoint / joinInflight", () => {
 });
 
 describe("CP 终态矩阵补面（截断/错错/预中止/词条落败）", () => {
-  it("输出截断 → 自限不计败；provider 错 → 计败（分类回归）", async () => {
+  it("输出截断 → 自限计败 1 次（不熔断，阈值 2）；provider 错 → 计败（分类回归）", async () => {
     const world = await makeWorld();
     try {
       const made = await world.store.create({ id: sid("cp-trunc") });
@@ -232,7 +240,8 @@ describe("CP 终态矩阵补面（截断/错错/预中止/词条落败）", () =
       const deps1 = depsOf({ session: made.value, scripts: [truncated] });
       maybeStartCheckpoint({ state, deps: deps1, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
       await state.job?.done;
-      expect(state.consecutiveFailures).toBe(0);
+      expect(state.consecutiveFailures).toBe(1);
+      expect(state.broken).toBe(false);
       const failing = (async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
         yield { type: "finish", finish: { kind: "error", message: "boom", code: "http-500" } };
       })();
