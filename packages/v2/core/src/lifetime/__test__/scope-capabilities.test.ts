@@ -77,7 +77,7 @@ describe("scoped capability delegation", () => {
     const saved = take(child.use(token));
     expect(take(await saved.run("first"))).toBe("child");
     take(await remove());
-    expect(child.use(token)).toMatchObject({ ok: false, error: { code: "service-unavailable" } });
+    expect(take(await take(child.use(token)).run("fallback"))).toBe("parent");
     expect(await saved.run("stale")).toMatchObject({ ok: false, error: { code: "service-unavailable" } });
     expect(take(await take(root.use(token)).run("parent"))).toBe("parent");
   });

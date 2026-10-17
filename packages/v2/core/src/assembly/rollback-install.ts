@@ -21,5 +21,6 @@ export async function rollbackInstall(kernel: Kernel, scope: Scope, transaction:
     return { ok: true, value: undefined };
   });
   const settled = await withinDeadline(kernel, rollback, { deadline });
-  return kernel.fault(settled.ok ? "activation-failed" : "activation-unsettled");
+  if (settled.ok) return transaction.cause ?? kernel.fault("activation-failed");
+  return kernel.fault("activation-unsettled");
 }

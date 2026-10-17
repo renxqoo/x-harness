@@ -412,6 +412,7 @@ export interface Limits {
   readonly maxPlugins: number;
   readonly maxEffects: number;
   readonly maxServiceLeases: number;
+  readonly maxServiceLeasesPerOwner: number;
   readonly maxDefinitions: number;
   readonly maxRegistrationsPerOwner: number;
   readonly maxActiveTasks: number;
@@ -631,7 +632,8 @@ Plugin Context 的 requestClose 只请求自身拥有者或自己创建的作用
 | maxPluginsPerScope | 128 | 每个装配作用域，包含 staging/stopping |
 | maxPlugins | 2048 | 根宿主插件总量，包含 staging/stopping |
 | maxEffects | 8192 | 根宿主全部受管资源与登记 |
-| maxServiceLeases | 8192 | 根宿主全部有效服务门面绑定 |
+| maxServiceLeases | 8192 | 根宿主全部有效服务门面绑定（稳定消费关系；请求内临时依赖门面不计入） |
+| maxServiceLeasesPerOwner | 4096 | 每个资源拥有者的稳定服务门面绑定 |
 | maxDefinitions | 2048 | 根宿主活跃定义及有引用的定义 |
 | maxRegistrationsPerOwner | 1024 | 每个资源拥有者 |
 | maxActiveTasks | 2048 | 根宿主实际未结算任务 |
@@ -660,6 +662,8 @@ Plugin Context 的 requestClose 只请求自身拥有者或自己创建的作用
 install 的发布单位是一个批次。InstallOptions.scope 必须属于本宿主且为 open。uninstall 默认拒绝存在已绑定消费者的提供者；cascade 明确按逆依赖顺序关闭。
 
 同一根宿主的 install/uninstall 操作统一串行化，包括祖先与子作用域。发布前重新检查祖先状态、固定依赖代次与预算。关闭信号绕过 mutation 队列，能取消正在激活的插件。关闭不是一项排在 hung activation 后面的普通 mutation。
+
+install 失败的 Result 保留首次失败原因的归因：setup 返回业务失败报 activation-failed 并在 details.cause 保留归一化的业务错误；setup 抛出异常报 callback-failed；声明能力未兑现报 activation-failed；发布阶段失败原样返回该阶段的精确错误码（duplicate-provider、scope-closed、resource-limit 等）。全部带 pluginName。
 
 关闭未收敛的 staging 批次保留账本并标记 degraded，新的装配返回 activation-unsettled，不假装锁和资源已经释放。其他已发布能力是否仍可调用由其自身拥有者状态决定。宿主可以请求全局关闭，强制终止由外部执行宿主处理。
 

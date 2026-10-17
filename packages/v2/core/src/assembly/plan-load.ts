@@ -40,7 +40,6 @@ export function planLoad(kernel: Kernel, scope: Scope, input: readonly Plugin[])
       let provider = transaction.providers.get(token);
       for (let current: Scope | undefined = scope; current && !provider; current = current.parent) {
         provider = current.providers.get(token);
-        if (!provider && current.tombstones.has(token)) break;
       }
       if (!provider && Object.values(owner.plugin?.requires ?? {}).includes(token)) return kernel.fault("missing-dependency", owner, { definition: token });
       kernel.registry.prepareBinding(owner, token, provider ?? null);

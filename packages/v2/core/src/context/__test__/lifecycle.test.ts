@@ -24,7 +24,7 @@ describe("installation transactions", () => {
         throw new Error("secret");
       } },
     ]);
-    expect(loaded).toMatchObject({ ok: false, error: { code: "activation-failed" } });
+    expect(loaded).toMatchObject({ ok: false, error: { code: "callback-failed", pluginName: "second" } });
     expect(host.use(token).ok).toBe(false);
     expect(released).toEqual([2, 1]);
     expect(host.inspect().effects).toBe(0);

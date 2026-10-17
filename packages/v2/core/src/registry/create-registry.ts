@@ -187,17 +187,23 @@ export function createRegistry(root: Scope, fault: Kernel["fault"]) {
     },
     leaseCount: () => leases,
     lease(lease: ServiceLease): void {
-      leases += 1;
-      owned(lease.view!.owner).leases.add(lease);
-      provided(lease.provider!).leases.add(lease);
+      const counted = !lease.view?.bound || lease.view.bound === lease.view.owner.activation;
+      lease.counted = counted;
+      if (counted) {
+        leases += 1;
+        owned(lease.view!.owner).leases.add(lease);
+        provided(lease.provider!).leases.add(lease);
+      }
       lease.view!.bound?.leases.add(lease);
       lease.view!.cleanupControl?.leases?.add(lease);
     },
     revokeLease(lease: ServiceLease): void {
-      if (lease.kernel) leases -= 1;
+      if (lease.counted) leases -= 1;
       if (lease.view && lease.provider) caches.get(lease.view)?.delete(lease.provider);
-      if (lease.provider) provided(lease.provider).leases.delete(lease);
-      if (lease.view) owned(lease.view.owner).leases.delete(lease);
+      if (lease.counted) {
+        if (lease.provider) provided(lease.provider).leases.delete(lease);
+        if (lease.view) owned(lease.view.owner).leases.delete(lease);
+      }
       lease.view?.bound?.leases.delete(lease);
       lease.view?.cleanupControl?.leases?.delete(lease);
       lease.kernel = undefined;

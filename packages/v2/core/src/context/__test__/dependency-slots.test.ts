@@ -21,7 +21,7 @@ it("enumerated dependency slots remain frozen, independently cached and usable a
         expect(Object.getPrototypeOf(deps)).toBeNull(); expect(Object.isFrozen(deps)).toBe(true); expect(Reflect.set(deps, "one", null)).toBe(false);
         const first = deps.one; expect(first).toBe(deps.one); expect(Object.isFrozen(first)).toBe(true); expect(app.inspect().serviceLeases).toBe(before);
         const read = first.read; const a = value(await read(input)); const b = value(await deps.two.read(input)); const c = value(await deps.constructor!.read(input));
-        expect(first).not.toBe(deps.two); expect(app.inspect().serviceLeases).toBe(before + 3);
+        expect(first).not.toBe(deps.two); expect(app.inspect().serviceLeases).toBe(before);
         check = async () => {
           expect(Object.keys(deps)).toEqual(["one", "two", "constructor", "missing"]); expect(deps.missing).toBeUndefined();
           for (const source of [deps.one, deps.two, deps.constructor!]) expect(await source.read("expired")).toMatchObject({ ok: false, error: { code: "service-unavailable" } });
