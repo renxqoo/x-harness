@@ -287,9 +287,14 @@ async function l1AndBeyond(fields: {
     // degraded 下保留 L1 本地清除（无 LLM 成本，尽力清）；不走 escalation。
     // refit 后 l1Line 为负值，pre-gate 恒不满足——degraded 分支跳过 pre-gate
     // （语义从“清回线下”退化为“能清多少清多少”）；清完仍显式打 release，
-    // 语义不变：交还 compaction 插件水位接管。
-    const cleared = await runL1Clearing({ deps, lines, nodes, events, occupancy, skipPreGate: true });
-    if (!cleared) deps.warn(session.id, "budget-gate-release", { reason: "degraded" });
+    // 语义不变：交还 compaction 插件水位接管。l1Backoff 复用：清不动时
+    // 退避到下一真轮，与主路径同一防每 step 空转纪律（journal 每 step +2 条
+    // 事件的重复诊断是噪音）；新 turn 复位后若出现新的可清内容会再试。
+    if (!state.cache.l1Backoff) {
+      const cleared = await runL1Clearing({ deps, lines, nodes, events, occupancy, skipPreGate: true });
+      if (cleared) return;
+    }
+    deps.warn(session.id, "budget-gate-release", { reason: "degraded" });
     return;
   }
   if (!state.cache.l1Backoff) {

@@ -5,7 +5,6 @@ import type { LlmRuntime } from "@x-harness/llm";
 import { DEFAULT_FILE_TOOLS, compactionRunner, type FileToolNames, type SummarizerFace } from "@x-harness/compaction";
 import { sessionDisposed, sessionAuditEvent, sessionStore } from "@x-harness/session";
 import type { SessionEvent, SessionId, SessionStore } from "@x-harness/session";
-import { WIDE_TOKENS_PER_CHAR } from "@x-harness/token-meter";
 import { cancelJob } from "./checkpoint.ts";
 import { maybeIdleClear } from "./idle.ts";
 import { assertLinesDomain, computeLines, DEFAULT_L1_PCT, DEFAULT_L2_PCT } from "./lines.ts";
@@ -64,10 +63,12 @@ const DEFAULTS = {
 const DEFAULT_MAX_TOOL_RESULT_CHARS = 100_000;
 
 /** agent-loop 入库截断是字符数，占用计量是 token 数，两者换算依赖内容宽度：
- *  ASCII ≈ chars/4，全宽字符 ≈ chars × 1.25，相差 5 倍。预测必须取保守上界
- *  （最宽情形），否则中文会话的溢出预测会系统性低估 5 倍。 */
+ *  ASCII ≈ chars/4（0.25 倍），全宽字符 ≈ chars × 1.25，相差 5 倍。取几何均值
+ *  √(0.25×1.25) ≈ 0.56 倍 chars 作缺省折中：CJK 不再系统性低估 5 倍（旧值 25k），
+ *  ASCII 不因最宽上界（125k）在 warn 区首步即预测穿窗而过早触发不可逆 L2 替换。
+ *  预测方向仍偏保守（折中 ≥ ASCII 真值 25k）。装配层同时持有两边时应显式传入。 */
 export function toolResultCapTokensOf(maxToolResultChars: number): number {
-  return Math.ceil(maxToolResultChars * WIDE_TOKENS_PER_CHAR);
+  return Math.ceil(maxToolResultChars * 0.56);
 }
 
 export const DIFF_TOOLS = ["edit", "write"] as const;
@@ -280,8 +281,14 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
           state.turnActive = false;
           state.lastTurnEndAt = event.time;
         } else if (event.type === "compaction/exhausted") {
-          state.gatePaused = true;
+          if (!state.gatePaused) {
+            state.gatePaused = true;
+            // 与 checkpoint 熔断的 breaker-held 对称：gate 暂停需要可观测痕迹，
+            // 否则运维只能靠诊断流断流反推
+            warn(session, "gate-held", { cause: "compaction-exhausted" });
+          }
         } else if (event.type === "user/message" && typeof event.surfaceOp === "object" && event.surfaceOp.op === "replace") {
+          if (state.gatePaused) warn(session, "gate-resumed");
           state.gatePaused = false;
         }
       };

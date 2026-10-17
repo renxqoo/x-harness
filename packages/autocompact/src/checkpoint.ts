@@ -302,8 +302,9 @@ async function callCheckpointModel(fields: {
       failOnce({ state, deps, blame: "provider", failureCode });
     } else {
       const cause = selfFailureCause(outcome.reason);
-      deps.warn(deps.session.id, "checkpoint-failed", { reason: cause, blame: "self" });
-      failOnce({ state, deps, blame: "self", failureCode: undefined });
+      const transient = outcome.reason === "aborted";
+      deps.warn(deps.session.id, "checkpoint-failed", { reason: cause, blame: "self", ...(transient ? { transient: true } : {}) });
+      failOnce({ state, deps, blame: "self", failureCode: undefined, ...(transient ? { transient: true } : {}) });
     }
     return undefined;
   }
@@ -368,18 +369,21 @@ interface FailureStrike {
   readonly deps: CheckpointDeps;
   readonly blame: CheckpointBlame;
   readonly failureCode: string | undefined;
+  /** 瞬态 self 失败（idle 超时）：与 provider 同语义三振 non-fatal，
+   *  turn/start 可复位。流停滞会自愈，fatal 会把 L2 通道一并锁死。 */
+  readonly transient?: boolean;
 }
 
 const SELF_BREAKER_THRESHOLD = 2;
 
 function failOnce(strike: FailureStrike): void {
   const { state, deps } = strike;
-  if (strike.blame === "self") {
-    // self 失败（patch 不可解析 / 输入预算耗尽 / 输出为空）是确定性的：不计数会在每个
+  state.consecutiveFailures += 1;
+  const failures = state.consecutiveFailures;
+  if (strike.blame === "self" && strike.transient !== true) {
+    // 确定性 self 失败（patch 不可解析 / 输入预算耗尽 / 输出为空）：不计数会在每个
     // step 无限重启 checkpoint，每次都是真实 LLM 调用。阈值取 2（比 provider 更严），
-    // turn/start 仍会复位 non-fatal breaker，允许用户换 summarizer 后重试。
-    state.consecutiveFailures += 1;
-    const failures = state.consecutiveFailures;
+    // fatal（turn/start 不复位——确定性失败换 turn 也不会好，等人工换 summarizer）。
     deps.emit("failed", { failures, blame: strike.blame });
     if (failures < SELF_BREAKER_THRESHOLD) return;
     state.broken = true;
@@ -387,14 +391,16 @@ function failOnce(strike: FailureStrike): void {
     deps.emit("breaker", { failures });
     return;
   }
-  state.consecutiveFailures += 1;
+  // provider 失败与瞬态 self 失败（idle-aborted）共用三振 non-fatal 语义；
+  // fatality 只由 provider 确定性错误码决定。混合序列与纯序列同归：
+  // 计数共享但阈值判定在同一分支，不存在「顺序决定 fatality」的分叉。
   const { failureCode } = strike;
-  deps.emit("failed", { failures: state.consecutiveFailures, blame: strike.blame, ...(failureCode !== undefined ? { failureCode } : {}) });
-  const fatal = failureCode !== undefined && isDeterministicFailure(failureCode);
-  if (!fatal && state.consecutiveFailures < 3) return;
+  deps.emit("failed", { failures, blame: strike.blame, ...(failureCode !== undefined ? { failureCode } : {}) });
+  const fatal = strike.blame === "provider" && failureCode !== undefined && isDeterministicFailure(failureCode);
+  if (!fatal && failures < 3) return;
   state.broken = true;
   state.fatal = fatal;
-  deps.emit("breaker", { failures: state.consecutiveFailures, ...(failureCode !== undefined ? { failureCode } : {}) });
+  deps.emit("breaker", { failures, ...(failureCode !== undefined ? { failureCode } : {}) });
 }
 
 export function foldCheckpointEvents(events: readonly SessionEvent[]): { readonly ledger: Ledger; readonly coveredSeq: number } {

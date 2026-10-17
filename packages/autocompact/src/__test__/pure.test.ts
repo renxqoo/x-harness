@@ -140,7 +140,7 @@ describe("账本七节（参照系 ledger 语义）", () => {
     expect(floored.goals).toEqual([]);
   });
 
-  it("无界节裁剪（回归：decisions/goals append-only 顶爆预算）：只有 decisions 超预算时最旧 decision 被裁到预算内", () => {
+  it("无界节裁剪（回归：decisions/goals/unverified append-only 顶爆预算）：只有 decisions 超预算时最旧 decision 被裁到预算内", () => {
     const decisions = Array.from({ length: 40 }, (_, i) => `decision-${String(i).padStart(2, "0")}: adopt row-level security for tenant isolation variant ${String(i)}`);
     const ledger = { ...emptyLedger(), decisions };
     const budget = 200;
@@ -149,6 +149,20 @@ describe("账本七节（参照系 ledger 语义）", () => {
     expect(trimmed.decisions.length).toBeLessThan(40);
     expect(trimmed.decisions).toContain(decisions[39] as string);
     expect(trimmed.decisions).not.toContain(decisions[0] as string);
+  });
+
+  it("unverified 无界裁剪（回归：unverified 与 decisions 同为 append-only 却不在裁剪序）：纯 unverified 超预算裁到预算内，混合场景 done 清空后轮到 unverified", () => {
+    const unverified = Array.from({ length: 40 }, (_, i) => `assumption-${String(i).padStart(2, "0")}: the cache layer is single-writer variant ${String(i)}`);
+    const pure = { ...emptyLedger(), factsUnverified: unverified };
+    const t1 = trimLedgerWithFiles(pure, 200).ledger;
+    expect(ledgerTokens(t1)).toBeLessThanOrEqual(200);
+    expect(t1.factsUnverified.length).toBeLessThan(40);
+    expect(t1.factsUnverified).toContain(unverified[39] as string);
+    const mixed = { ...emptyLedger(), tasksDone: ["d"], factsUnverified: unverified };
+    const t2 = trimLedgerWithFiles(mixed, 200).ledger;
+    expect(ledgerTokens(t2)).toBeLessThanOrEqual(200);
+    expect(t2.tasksDone).toEqual([]);
+    expect(t2.factsUnverified.length).toBeLessThan(40);
   });
 
   it("files 预算面（D5 回归）：files 文本超 50% 预算被行级从尾截断——机械清单不再无界增长撞 L2 线", () => {
