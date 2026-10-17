@@ -151,6 +151,16 @@ describe("账本七节（参照系 ledger 语义）", () => {
     expect(trimmed.decisions).not.toContain(decisions[0] as string);
   });
 
+  it("toolResultCapTokensOf 折中系数直锁（审查 A5）：0.56 × chars，介于 ASCII 真值 0.25 与 CJK 上界 1.25 之间", async () => {
+    const { toolResultCapTokensOf } = await import("../plugin.ts");
+    expect(toolResultCapTokensOf(100_000)).toBe(Math.ceil(100_000 * 0.56));
+    const ascii = 100_000 / 4;
+    const cjk = 100_000 * 1.25;
+    const v = toolResultCapTokensOf(100_000);
+    expect(v).toBeGreaterThan(ascii);
+    expect(v).toBeLessThan(cjk);
+  });
+
   it("unverified 无界裁剪（回归：unverified 与 decisions 同为 append-only 却不在裁剪序）：纯 unverified 超预算裁到预算内，混合场景 done 清空后轮到 unverified", () => {
     const unverified = Array.from({ length: 40 }, (_, i) => `assumption-${String(i).padStart(2, "0")}: the cache layer is single-writer variant ${String(i)}`);
     const pure = { ...emptyLedger(), factsUnverified: unverified };

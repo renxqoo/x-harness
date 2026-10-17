@@ -58,8 +58,8 @@ const DEFAULTS = {
 } as const;
 
 /** agent-loop 的入库截断默认值（agent-loop/src/plugin.ts DEFAULT_MAX_RESULT_CHARS）。
- *  显式复述而不 import，避免 autocompact → agent-loop 的运行时依赖；两处若
- *  变更需同步。 */
+ *  哑复述：该常量未从 agent-loop export（依赖本身已存在），agent-loop 侧调整
+ *  maxToolResultChars 缺省时此处需同步——待 agent-loop export 后改 import 收敛。 */
 const DEFAULT_MAX_TOOL_RESULT_CHARS = 100_000;
 
 /** agent-loop 入库截断是字符数，占用计量是 token 数，两者换算依赖内容宽度：

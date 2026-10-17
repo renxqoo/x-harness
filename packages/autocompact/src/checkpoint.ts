@@ -375,7 +375,7 @@ interface FailureStrike {
   readonly transient?: boolean;
 }
 
-const SELF_BREAKER_THRESHOLD = 2;
+export const SELF_BREAKER_THRESHOLD = 2;
 
 /** 确定性 self 失败分账计数：fatal 门槛要求【连续】SELF_BREAKER_THRESHOLD 次
  *  确定性 self 失败（复发证据），任何 provider/瞬态击重置它——一次瞬态抖动

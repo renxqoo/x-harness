@@ -239,6 +239,19 @@ describe("exhausted 暂停 gate（对抗审查 #4 回归）", () => {
       world.ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
       await dispatchPreStep(world, { session: made.value.id });
       expect(cleared).toHaveLength(0);
+      // 判别场景（审查 A4：上一断言在旧实现同样通过——事件投递时序使然）：
+      // journal 预置 exhausted + 存在可清工具结果 → 新建 state 首步必须零落账。
+      // 旧实现（内存 Set + 恢复逻辑缺失）此场景会错误清账（L1-CLEARED 落 placeholder）。
+      const made2 = await world.store.create({ id: sid("paused-recover") });
+      if (!made2.ok) throw new Error(made2.reason);
+      seedToolTurn(made2.value, { turn: 0, user: "go", tool: "read", callId: "cr", args: "{}", result: textOf(60) });
+      seedToolTurn(made2.value, { turn: 1, user: "next", tool: "read", callId: "cr2", args: "{}", result: textOf(1), usage: { input: 950, output: 1 } });
+      made2.value.append("compaction/exhausted", { turn: 9, step: 0, attempts: 3 });
+      const cleared2: string[] = [];
+      world.ctx.on(autocompactL1Cleared, (payload) => cleared2.push(payload.trigger));
+      await dispatchPreStep(world, { session: made2.value.id });
+      expect(cleared2).toHaveLength(0);
+      expect(made2.value.surface().some((node) => node.event.type === "tool/result" && node.event.data.content.startsWith(PLACEHOLDER_PREFIX))).toBe(false);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();

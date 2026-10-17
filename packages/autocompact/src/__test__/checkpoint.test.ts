@@ -14,7 +14,7 @@ import { parseLedgerPatch, serializeLedger } from "../ledger.ts";
 import { logEvent } from "./helpers.ts";
 import type { Session } from "@x-harness/session";
 
-const SELF_BREAKER_THRESHOLD = 2;
+import { SELF_BREAKER_THRESHOLD } from "../checkpoint.ts";
 
 const PATCH = `<goals>\ngoal-1\n</goals>\n<current>\nstep-1\n</current>`;
 
@@ -116,7 +116,7 @@ describe("maybeStartCheckpoint / joinInflight", () => {
     }
   });
 
-  it("自限失败两振熔断（回归：不计数会每 step 重启 checkpoint 无限烧 LLM；修复后确定性失败快速停机）：垃圾输出第 2 败即熔断且 fatal；turn/reset 后恢复；provider 错连续 3 败才熔断（breaker 事件）", async () => {
+  it("自限失败两振熔断（回归：不计数会每 step 重启 checkpoint 无限烧 LLM）：连续 2 次确定性 self 即熔断且 fatal（进程内不复位，重启即恢复）；provider 错连续 3 败才熔断（breaker 事件）", async () => {
     const world = await makeWorld();
     try {
       const made = await world.store.create({ id: sid("cp-breaker") });
