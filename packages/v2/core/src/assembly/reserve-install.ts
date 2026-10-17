@@ -2,8 +2,8 @@ import type { Result } from "../contracts/types";
 import type { Install, Kernel, Scope } from "../foundation/types";
 
 export function reserveInstall(kernel: Kernel, scope: Scope, transaction: Install): Result<void> {
-  for (const [token] of transaction.providers) {
-    if (kernel.registry.reserved(scope, token) || scope.providers.has(token)) return kernel.fault("duplicate-provider");
+  for (const [token, provider] of transaction.providers) {
+    if (kernel.registry.reserved(scope, token) || scope.providers.has(token)) return kernel.fault("duplicate-provider", provider.owner);
   }
   const retained: object[] = [];
   for (const owner of transaction.owners) {

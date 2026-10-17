@@ -663,7 +663,7 @@ install 的发布单位是一个批次。InstallOptions.scope 必须属于本宿
 
 同一根宿主的 install/uninstall 操作统一串行化，包括祖先与子作用域。发布前重新检查祖先状态、固定依赖代次与预算。关闭信号绕过 mutation 队列，能取消正在激活的插件。关闭不是一项排在 hung activation 后面的普通 mutation。
 
-install 失败的 Result 保留首次失败原因的归因：setup 返回业务失败报 activation-failed 并在 details.cause 保留归一化的业务错误；setup 抛出异常报 callback-failed；声明能力未兑现报 activation-failed；发布阶段失败原样返回该阶段的精确错误码（duplicate-provider、scope-closed、resource-limit 等）。全部带 pluginName。
+install 失败的 Result 保留首次失败原因的归因：setup 返回业务失败报 activation-failed，业务错误可归一化为 JSON（Error 实例归一为 {name, message}）时在 details.cause 保留，否则省略 details；setup 抛出异常报 callback-failed；声明能力未兑现报 activation-failed；发布阶段失败原样返回该阶段的精确错误码（duplicate-provider、resource-limit 等）。setup 与发布阶段的失败带 pluginName；作用域已关闭等批次级检查无法归属到插件，仅带 scopeId。
 
 关闭未收敛的 staging 批次保留账本并标记 degraded，新的装配返回 activation-unsettled，不假装锁和资源已经释放。其他已发布能力是否仍可调用由其自身拥有者状态决定。宿主可以请求全局关闭，强制终止由外部执行宿主处理。
 

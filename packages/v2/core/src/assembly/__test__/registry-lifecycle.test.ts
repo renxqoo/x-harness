@@ -260,6 +260,23 @@ describe("provider reservations and definition references", () => {
     }
   });
 
+  it("definitions registered inside a rolled back batch are collectable after close", async () => {
+    const child = Bun.spawn(["bun", fileURLToPath(new URL("./collect-rollback-definitions.gc-case.ts", import.meta.url))], {
+      stdout: "pipe", stderr: "pipe", env: { ...process.env, BUN_JSC_useJIT: "false" },
+    });
+    const deadline = setTimeout(() => { child.kill(); }, 1500);
+    try {
+      const [output, error, status] = await Promise.all([
+        new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+      ]);
+      expect(error).toBe("");
+      expect(status).toBe(0);
+      expect(output).toBe("definitions collected\n");
+    } finally {
+      clearTimeout(deadline);
+    }
+  });
+
   it.each([null, false, 0, ""])("an explicit invalid scope %j cannot broaden installation to root", async (scope) => {
     const host = setup();
     const configuration = { scope } as unknown as Parameters<Host["install"]>[1];
@@ -372,7 +389,7 @@ describe("activation failure attribution", () => {
 
 describe("service lease budget independence", () => {
   it("three dependencies across 350 concurrent calls acquire without lease exhaustion", async () => {
-    const host = setup();
+    const host = setup({ limits: { maxServiceLeases: 32, maxServiceLeasesPerOwner: 32 } });
     const one = endpoint("lease-one");
     const two = endpoint("lease-two");
     const three = endpoint("lease-three");
@@ -409,5 +426,30 @@ describe("service lease budget independence", () => {
     expect(host.register(endpoint("owner-limit-extra"), { run: () => Promise.resolve({ ok: true, value: "extra" }) })).toMatchObject({ ok: true });
     value(await host.closeScope(holder));
     expect(host.use(first)).toMatchObject({ ok: true });
+  });
+});
+
+describe("hostile activation failures", () => {
+  it("a hostile error payload still rolls the batch back and releases reservations", async () => {
+    const host = setup();
+    const token = endpoint("hostile-payload");
+    const evil = new Proxy({}, {
+      has() { throw new Error("boom-has"); },
+      getOwnPropertyDescriptor() { return undefined; },
+      getPrototypeOf() { return Object.prototype; },
+    });
+    expect(await host.install([{ name: "evil", provides: { token }, setup() {
+      return { ok: false, error: evil };
+    } }])).toMatchObject({ ok: false, error: { code: "activation-failed", pluginName: "evil" } });
+    expect(host.inspect()).toMatchObject({ plugins: [], degraded: false });
+    expect(host.register(token, { run: () => Promise.resolve({ ok: true, value: "after" }) })).toMatchObject({ ok: true });
+  });
+
+  it("an Error instance is preserved as a normalized cause payload", async () => {
+    const host = setup();
+    const token = endpoint("error-cause");
+    expect(await host.install([{ name: "error-biz", provides: { token }, setup() {
+      return { ok: false, error: new Error("boom-message") };
+    } }])).toMatchObject({ ok: false, error: { code: "activation-failed", pluginName: "error-biz", details: { cause: { name: "Error", message: "boom-message" } } } });
   });
 });

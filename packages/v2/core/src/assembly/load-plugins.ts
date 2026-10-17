@@ -45,8 +45,8 @@ async function activate(kernel: Kernel, scope: Scope, plugins: readonly Plugin[]
     }
 
   }
-  if (failed) return rollbackInstall(kernel, scope, { ...transaction, cause: failed });
+  if (failed) { transaction.cause = failed; return rollbackInstall(kernel, scope, transaction); }
   const published = publishInstall(kernel, scope, transaction);
-  if (!published.ok) return rollbackInstall(kernel, scope, { ...transaction, cause: published });
+  if (!published.ok) { transaction.cause = published; return rollbackInstall(kernel, scope, transaction); }
   return { ok: true, value: Object.freeze({ plugins: Object.freeze(transaction.owners.map((owner) => kernel.assembly.identify(owner))) }) };
 }

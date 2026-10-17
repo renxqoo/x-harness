@@ -198,9 +198,11 @@ export function createRegistry(root: Scope, fault: Kernel["fault"]) {
       lease.view!.cleanupControl?.leases?.add(lease);
     },
     revokeLease(lease: ServiceLease): void {
-      if (lease.counted) leases -= 1;
+      const counted = lease.counted === true;
+      lease.counted = false;
+      if (counted) leases -= 1;
       if (lease.view && lease.provider) caches.get(lease.view)?.delete(lease.provider);
-      if (lease.counted) {
+      if (counted) {
         if (lease.provider) provided(lease.provider).leases.delete(lease);
         if (lease.view) owned(lease.view.owner).leases.delete(lease);
       }

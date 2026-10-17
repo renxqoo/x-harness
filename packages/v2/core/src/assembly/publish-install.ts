@@ -7,7 +7,7 @@ export function publishInstall(kernel: Kernel, scope: Scope, transaction: Instal
   for (let current: Scope | undefined = scope; current; current = current.parent) {
     if (current.state !== "open") return kernel.fault("scope-closed");
   }
-  if (kernel.registry.definitionCount() > scope.limits.maxDefinitions) return kernel.fault("resource-limit");
+  if (kernel.registry.definitionCount() > scope.limits.maxDefinitions) return kernel.fault("resource-limit", transaction.owners[0]);
   for (const owner of transaction.participants) {
     if (signalAborted(owner.controller.signal) || (owner.kind === "plugin" && owner.state !== "staging") || owner.scope.state !== "open") return kernel.fault("scope-closed", owner);
     for (const provider of owner.bindings.values()) {

@@ -60,7 +60,7 @@ describe("scoped capability delegation", () => {
     expect(take(await take(child.use(token)).run("read"))).toBe("child");
   });
 
-  it("revoking a delegated self capability's local shadow cannot silently fall back to its ancestor", async () => {
+  it("an inherited binding keeps resolving after the local shadow is revoked", async () => {
     const root = host();
     const token = service("revoked-self-shadow");
     let child!: Context;
