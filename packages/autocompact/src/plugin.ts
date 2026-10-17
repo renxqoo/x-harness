@@ -266,12 +266,15 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
         if (state === undefined) return;
         if (event.type === "turn/start") {
           state.turnActive = true;
-          state.cache.lastOccupancy = undefined;
-          // 跨 turn 增量基准：turn/start 时把上一 turn 末尾占用转存（审查 A1——
-          // 首步外推用观测增量而非全局 cap 常量，防小窗溢出预测恒真）。
+          // 跨 turn 增量基准：先转存后清空（次序错不得——先清空则转存 undefined，
+          // turnStartOccupancy 永远拿不到真值，首步外推退回 cap 常量，A1 白修）。
           // 事件驱动转存不依赖 gate 时序（sessionAuditEvent 是 microtask 投递，
           // 但 turn/start 一定先于同 turn 的 pre-step dispatch 到达）。
-          state.cache.turnStartOccupancy = state.cache.lastOccupancy;
+          // 转存仅当 lastOccupancy 存在：连续 turn/start（中间无 gate 跑动，
+          // 如测试种子或异常事件流）不清掉已转存的基准——丢失基准会让首步
+          // 外推退回 cap 常量（A1 复发）。
+          if (state.cache.lastOccupancy !== undefined) state.cache.turnStartOccupancy = state.cache.lastOccupancy;
+          state.cache.lastOccupancy = undefined;
           state.cache.l1Backoff = false;
           state.checkpoint.consecutiveFailures = 0;
           state.checkpoint.consecutiveSelfFailures = 0;

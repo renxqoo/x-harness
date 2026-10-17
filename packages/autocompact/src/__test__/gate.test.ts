@@ -302,6 +302,35 @@ describe("degraded 保留 L1（修复回归：refit 降级不再禁用本地免�
   });
 });
 
+describe("跨 turn 首步观测增量（审查 A1 判别回归：转存次序 bug 曾使 turnStartOccupancy 恒 undefined、首步外推退 cap 常量恒越窗）", () => {
+  it("turn0 末占用 60k → turn1 首步 70k（小增量）→ 不触发 escalate（cap 路径会算 70k+84k>128k 误升级）", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, contextWindow: 128_000, l1Pct: 60, l2Pct: 75, warnBufferTokens: 10_000 }, { summarizer: undefined, contextWindow: 128_000 });
+    try {
+      const made = await world.store.create({ id: sid("turnstep") });
+      if (!made.ok) throw new Error(made.reason);
+      // turn0：anchor 60k，gate 跑完写 lastOccupancy
+      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 60_000, output: 1 } } });
+      await dispatchPreStep(world, { session: made.value.id, turn: 0 });
+      // 真实 turn 边界：turn/start 落 journal 并经 microtask 投递
+      made.value.append("turn/start", { turn: 1 });
+      await new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), 10);
+      });
+      // turn1 首步：anchor 70k ∈ [warnLine, l1Line) 警告区，跨 turn 观测增量 10k
+      // （种子不含 turn/start——手动边界事件已发，重复事件会二次触发转存路径）
+      made.value.append("user/message", { turn: 1, step: 0, content: [{ type: "text", text: textOf(3) }] }, { surfaceOp: "append" });
+      made.value.append("assistant/message", { turn: 1, step: 0, content: [{ type: "text", text: textOf(3) }], usage: { input: 70_000, output: 1 }, stopReason: "stop" }, { surfaceOp: "append" });
+      await dispatchPreStep(world, { session: made.value.id, turn: 1 });
+      const escalated = stderr.mock.calls.filter((line) => String(line[0]).includes("budget-gate-release")).length;
+      expect(escalated).toBe(0);
+    } finally {
+      stderr.mockRestore();
+      await world.ctx.dispose();
+    }
+  });
+});
+
 describe("servedWindow 收缩与生命周期", () => {
   it("假窗口收缩 → refit 降级释放（degraded 保留 L1 通道 + release 语义）；exhausted 三振后 gate 停跑（gatePaused 恢复回归）", { timeout: 15_000 }, async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
