@@ -3,6 +3,7 @@ import { mkdir, writeFile, symlink, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createLoader } from "../index";
+import type { Loader } from "../types";
 import { readLoaderOptions } from "../read-loader-options";
 import { checkBundle } from "../check-bundle";
 import { fingerprintShared } from "../fingerprint-shared";
@@ -95,13 +96,13 @@ it("shared snapshots enforce file size and total entry bounds", async () => {
 });
 
 it("real filesystem watching coalesces changes and stops after close", async () => {
-  const p = await project(); try {
-    const loader = value(await createLoader({ ...p.options, watch: true, debounceMs: 5 })); const token = await p.token();
+  const p = await project(); let loader: Loader | undefined; try {
+    loader = value(await createLoader({ ...p.options, watch: true, debounceMs: 5 })); const token = await p.token();
     for (let i = 0; i < 3; i += 1) await p.write(`watch-${i}`);
     for (let i = 0; i < 100 && value(await value(loader.use(token)).read()) !== "watch-2"; i += 1) await Bun.sleep(5);
     expect(value(await value(loader.use(token)).read())).toBe("watch-2"); expect(loader.status().imports).toBeLessThanOrEqual(4);
     value(await loader.close()); const count = loader.status().imports; await p.write("after-close"); await Bun.sleep(20); expect(loader.status().imports).toBe(count);
-  } finally { await p.close(); }
+  } finally { await loader?.close(); await p.close(); }
 });
 
 it("computed require cannot load unbundled private modules", async () => {
@@ -113,8 +114,8 @@ it("computed require cannot load unbundled private modules", async () => {
 });
 
 it("watch recovers when a newly discovered dependency directory is fixed after a failed build", async () => {
-  const p = await project(); try {
-    const loader = value(await createLoader({ ...p.options, watch: true, debounceMs: 5 })); const token = await p.token();
+  const p = await project(); let loader: Loader | undefined; try {
+    loader = value(await createLoader({ ...p.options, watch: true, debounceMs: 5 })); const token = await p.token();
     const nested = join(p.privateDir, "new"); await mkdir(nested); const dependency = join(nested, "value.ts"); await writeFile(dependency, "syntax error {");
     await writeFile(p.entry, 'import{token}from"contracts";import{text}from"./new/value";export default{name:"example",provides:{token},setup(ctx){return ctx.register(token,{async read(){return{ok:true,value:text}}})}}');
     expect((await loader.reload()).ok).toBe(false); expect(value(await value(loader.use(token)).read())).toBe("one");
@@ -124,18 +125,18 @@ it("watch recovers when a newly discovered dependency directory is fixed after a
       if (received === "repaired") break; await Bun.sleep(5);
     }
     expect(received).toBe("repaired"); value(await loader.close());
-  } finally { await p.close(); }
+  } finally { await loader?.close(); await p.close(); }
 });
 
 it("removing an obsolete dependency directory does not permanently poison the watch set", async () => {
-  const p = await project(); try {
+  const p = await project(); let loader: Loader | undefined; try {
     const old = join(p.privateDir, "old"); const next = join(p.privateDir, "next"); await mkdir(old); await mkdir(next);
     await writeFile(join(old, "value.ts"), 'export const text="old"'); await writeFile(join(next, "value.ts"), 'export const text="next"');
     const source = (folder: string) => `import{token}from"contracts";import{text}from"./${folder}/value";export default{name:"example",provides:{token},setup(ctx){return ctx.register(token,{async read(){return{ok:true,value:text}}})}}`;
-    await writeFile(p.entry, source("old")); const loader = value(await createLoader({ ...p.options, watch: true, debounceMs: 5 })); const token = await p.token();
+    await writeFile(p.entry, source("old")); loader = value(await createLoader({ ...p.options, watch: true, debounceMs: 5 })); const token = await p.token();
     await rm(old, { recursive: true }); await writeFile(p.entry, source("next")); const updated = await loader.reload(); expect(updated.ok).toBe(true); value(updated);
     expect(value(await value(loader.use(token)).read())).toBe("next"); value(await loader.reload()); expect(loader.status().error).toBeUndefined(); value(await loader.close());
-  } finally { await p.close(); }
+  } finally { await loader?.close(); await p.close(); }
 });
 
 it("retrying replacement after actual drain reuses the prepared module without spending another import", async () => {

@@ -1,7 +1,8 @@
+import type { WatchTarget } from "./watch-types";
 import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
-export async function normalizeWatchDirectories(directories: Set<string>, roots: ReadonlySet<string>): Promise<{ paths: readonly string[]; signature: string }> {
+export async function normalizeWatchDirectories(directories: Set<string>, roots: ReadonlySet<string>): Promise<readonly WatchTarget[]> {
   const existing = new Map<string, string>(); const retained = new Set<string>();
   for (const path of new Set([...directories, ...roots])) {
     let directory = path;
@@ -19,5 +20,5 @@ export async function normalizeWatchDirectories(directories: Set<string>, roots:
   }
   directories.clear(); for (const directory of retained) directories.add(directory);
   const ordered = [...existing].sort(([left], [right]) => left.localeCompare(right));
-  return { paths: ordered.map(([path]) => path), signature: JSON.stringify(ordered) };
+  return ordered.map(([path, identity]) => Object.freeze({ path, identity, recursive: roots.has(path) }));
 }

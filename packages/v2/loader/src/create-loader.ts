@@ -8,30 +8,28 @@ import { fingerprintShared } from "./fingerprint-shared";
 import { buildModule } from "./build-module";
 import { importModule } from "./import-module";
 import { loaderFault } from "./loader-fault";
-import { watchDirectories } from "./watch-directories";
+import { createDirectoryWatch } from "./create-directory-watch";
+import { createRefresh } from "./create-refresh";
 import type { Loader, LoaderFault, LoaderOptions } from "./types";
 
 export async function createLoader(options: LoaderOptions): Promise<Result<Loader, LoaderFault>> {
   const parsed = await readLoaderOptions(options); if (!parsed.ok) return parsed; const config = parsed.value;
   let fingerprint: string; try { fingerprint = await fingerprintShared(config.shared); } catch { return loaderFault("invalid-input"); }
   const created = createApplication(config.application); if (!created.ok) return created; const app = created.value;
-  let closed = false; let restart = false; let count = 0; let error: LoaderFault | undefined; let dirty = false;
-  let running: Promise<Result<ApplicationSnapshot, LoaderFault>> | undefined; let closing: Promise<Result<CloseReport>> | undefined;
-  let clearWatch: (() => void) | undefined; let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false; let restart = false; let count = 0; let error: LoaderFault | undefined;
+  let closing: Promise<Result<CloseReport>> | undefined;
   const directories = new Set([...config.entries.map(dirname), ...[...config.shared.values()].map((item) => item.directory)]);
-  const recursive = new Set(directories); let watched = "";
+  const recursive = new Set(directories);
   const cache = new Map<string, { hash: string; plugin: Plugin }>();
   const fail = (code: LoaderFault["code"]) => { const fault = loaderFault(code); error = fault.error; if (code === "restart-required") restart = true; return fault; };
-  const schedule = () => { if (closed || restart) return; dirty = true; if (running || timer) return; timer = setTimeout(() => { timer = undefined; void reload(); }, config.debounceMs); };
+  const watching = createDirectoryWatch({ changed() { refresh.changed(); }, failed() { fail("watch-failed"); refresh.failed(); } });
   const syncWatch = async (): Promise<boolean> => {
     if (!config.watch || closed) return true;
     let snapshot: Awaited<ReturnType<typeof normalizeWatchDirectories>>;
     try { snapshot = await normalizeWatchDirectories(directories, recursive); } catch { fail("watch-failed"); return false; }
     if (closed) return true;
-    const paths = snapshot.paths; const next = snapshot.signature; if (next === watched) return true;
-    const watching = watchDirectories(paths, recursive, { changed: schedule, failed: () => { fail("watch-failed"); clearWatch?.(); clearWatch = undefined; watched = ""; schedule(); } });
-    if (!watching.ok) { fail("watch-failed"); return false; }
-    clearWatch?.(); clearWatch = watching.value; watched = next; dirty = true; return true;
+    const synced = watching.sync(snapshot); if (!synced.ok) { fail("watch-failed"); return false; }
+    if (synced.value) refresh.revalidate(); return true;
   };
   const apply = async (): Promise<Result<ApplicationSnapshot, LoaderFault>> => {
     try { if (await fingerprintShared(config.shared) !== fingerprint) return fail("restart-required"); } catch { return fail("restart-required"); }
@@ -54,17 +52,14 @@ export async function createLoader(options: LoaderOptions): Promise<Result<Loade
     if (result.ok) error = undefined;
     return result;
   };
-  const reload = (): Promise<Result<ApplicationSnapshot, LoaderFault>> => {
-    if (closed) return Promise.resolve(fail("closed")); if (restart) return Promise.resolve(fail("restart-required"));
-    if (timer) { clearTimeout(timer); timer = undefined; }
-    dirty = true; if (running) return running;
-    running = (async () => { let result: Result<ApplicationSnapshot, LoaderFault>;
-      do { dirty = false; result = await apply(); } while (dirty && !closed && !restart);
-      return result;
-    })().finally(() => { running = undefined; }); return running;
-  };
+  const refresh = createRefresh({
+    async run() { try { return await apply(); } catch { return fail("restart-required"); } },
+    blocked() { if (closed) return "closed"; if (restart) return "restart-required"; return undefined; },
+    debounceMs: config.debounceMs, watch: config.watch,
+  });
+  const reload = () => { if (closed) return Promise.resolve(fail("closed")); if (restart) return Promise.resolve(fail("restart-required")); return refresh.reload(); };
   const close = () => {
-    if (!closing) { closed = true; dirty = false; if (timer) clearTimeout(timer); timer = undefined; clearWatch?.(); clearWatch = undefined; cache.clear(); const closingApp = app.close(); closing = Promise.all([closingApp, running]).then(([result]) => result); }
+    if (!closing) { closed = true; watching.close(); cache.clear(); closing = Promise.all([app.close(), refresh.close()]).then(([result]) => result); }
     return closing;
   };
   const status = () => {
@@ -73,7 +68,7 @@ export async function createLoader(options: LoaderOptions): Promise<Result<Loade
   };
   if (!await syncWatch()) { await close(); return fail("watch-failed"); }
   const initial = await reload(); if (!initial.ok) { const closed = await close(); return closed.ok ? initial : fail("restart-required"); }
-  if (config.watch) schedule();
+  if (config.watch) refresh.changed();
   return { ok: true, value: Object.freeze({ reload, close, use: app.use, dispatch: app.dispatch, snapshot: () => app.snapshot(), inspect: () => app.inspect(),
     status,
   } satisfies Loader) };

@@ -41,6 +41,15 @@ try {
     await assert.rejects(fetch(first));
     await writeFile(p.entry, "syntax error {"); assert.equal((await loader.reload()).ok, false);
     assert.deepEqual(await (await fetch(current)).json(), { ok: true, value: "updated" });
+    await p.write("recovered");
+    let recovered = current;
+    for (let iteration = 0; iteration < 200; iteration += 1) {
+      const handle = loader.use(contracts.endpoint);
+      if (handle.ok) { const result = await handle.value.url(); if (result.ok) recovered = result.value; }
+      if (recovered !== current) break; await Bun.sleep(5);
+    }
+    assert.notEqual(recovered, current); assert.deepEqual(await (await fetch(recovered)).json(), { ok: true, value: "recovered" }); await assert.rejects(fetch(current));
+    current = recovered;
     value(await loader.close()); assert.equal(loader.inspect().effects, 0); assert.equal(loader.inspect().activeTasks, 0); await assert.rejects(fetch(current));
   }
   assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("x-harness-module-") && !temporary.has(name)), []);
