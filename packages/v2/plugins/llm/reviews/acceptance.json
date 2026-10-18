@@ -1,0 +1,180 @@
+{
+  "date": "2026-10-18",
+  "workspace": "packages/v2",
+  "runtime": "Bun 1.4.3 / macOS arm64",
+  "gates": {
+    "lint": {
+      "exitCode": 0,
+      "errors": 0,
+      "warnings": 0,
+      "kernelSourceFiles": 104,
+      "platformSourceFiles": 208
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "coreNegativeFixtures": 111,
+      "coreDocumentationExamples": 29,
+      "sessionNegativeFixtures": 11,
+      "sessionDocumentationExamples": 2,
+      "llmNegativeFixtures": 13,
+      "llmDocumentationExamples": 2
+    },
+    "build": {
+      "exitCode": 0
+    },
+    "test": {
+      "exitCode": 0,
+      "files": 131,
+      "cases": 1097,
+      "unhandledErrors": 0
+    }
+  },
+  "coverage": {
+    "statements": {
+      "total": 7883,
+      "covered": 7269,
+      "skipped": 0,
+      "pct": 92.21
+    },
+    "branches": {
+      "total": 6706,
+      "covered": 6060,
+      "skipped": 0,
+      "pct": 90.36
+    },
+    "functions": {
+      "total": 1127,
+      "covered": 1107,
+      "skipped": 0,
+      "pct": 98.22
+    },
+    "lines": {
+      "total": 3925,
+      "covered": 3863,
+      "skipped": 0,
+      "pct": 98.42
+    }
+  },
+  "packageCoverage": {
+    "llm": {
+      "statements": {
+        "covered": 1027,
+        "total": 1123,
+        "pct": 91.45
+      },
+      "branches": {
+        "covered": 1259,
+        "total": 1362,
+        "pct": 92.44
+      },
+      "functions": {
+        "covered": 118,
+        "total": 120,
+        "pct": 98.33
+      },
+      "lines": {
+        "covered": 345,
+        "total": 349,
+        "pct": 98.85
+      }
+    },
+    "llm-http": {
+      "statements": {
+        "covered": 263,
+        "total": 280,
+        "pct": 93.93
+      },
+      "branches": {
+        "covered": 231,
+        "total": 257,
+        "pct": 89.88
+      },
+      "functions": {
+        "covered": 28,
+        "total": 28,
+        "pct": 100.0
+      },
+      "lines": {
+        "covered": 76,
+        "total": 77,
+        "pct": 98.7
+      }
+    },
+    "llm-openai": {
+      "statements": {
+        "covered": 482,
+        "total": 583,
+        "pct": 82.68
+      },
+      "branches": {
+        "covered": 563,
+        "total": 691,
+        "pct": 81.48
+      },
+      "functions": {
+        "covered": 30,
+        "total": 30,
+        "pct": 100.0
+      },
+      "lines": {
+        "covered": 146,
+        "total": 148,
+        "pct": 98.65
+      }
+    },
+    "llm-anthropic": {
+      "statements": {
+        "covered": 312,
+        "total": 354,
+        "pct": 88.14
+      },
+      "branches": {
+        "covered": 373,
+        "total": 430,
+        "pct": 86.74
+      },
+      "functions": {
+        "covered": 26,
+        "total": 26,
+        "pct": 100.0
+      },
+      "lines": {
+        "covered": 89,
+        "total": 90,
+        "pct": 98.89
+      }
+    }
+  },
+  "thresholds": {
+    "statements": 90,
+    "branches": 88,
+    "functions": 95,
+    "lines": 96
+  },
+  "mutations": {
+    "baselineCases": 168,
+    "detected": 10,
+    "total": 10
+  },
+  "benchmark": {
+    "normalizationSamples": 54,
+    "loopbackHttpSamples": 9,
+    "sourceSha256": "eb1e01eece4319acd889012acba1d11505cd9905af4c45fea80562595d8ee1d3"
+  },
+  "liveVendorCalls": {
+    "executed": false,
+    "reason": "Opt-in only; no explicit model/credentials supplied or read."
+  },
+  "integration": {
+    "jsonlCleanup": "Three stores explicitly closed in finally, with user authorization; assertions unchanged.",
+    "coreGcFixture": "User-authorized bounded eventual-GC fixture applied: at most 1000 ms, early completion after all targets collected; production core code and all parent assertions unchanged.",
+    "coreGcVerification": {
+      "targetedFiles": 1,
+      "targetedCases": 11,
+      "stressRuns": 64,
+      "stressConcurrency": 8,
+      "stressPassed": 64,
+      "strongReferenceNegativeControlRejected": true
+    }
+  }
+}

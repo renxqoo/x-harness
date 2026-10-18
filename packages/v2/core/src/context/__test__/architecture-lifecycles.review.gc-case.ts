@@ -64,10 +64,12 @@ if (caseName === "wait") {
   control = await capability(caseName, false);
   subject = await capability(caseName, true);
 }
-for (let iteration = 0; iteration < 15; iteration += 1) {
+const deadline = performance.now() + 1000;
+do {
   await Bun.sleep(1);
   Bun.gc(true);
-}
+  if (control.weak.deref() === undefined && subject.weak.deref() === undefined && retired.every((weak) => weak.deref() === undefined)) break;
+} while (performance.now() < deadline);
 process.stdout.write(JSON.stringify({ controlCollected: control.weak.deref() === undefined, subjectCollected: subject.weak.deref() === undefined && retired.every((weak) => weak.deref() === undefined), retainedDefinitions: retired.filter((weak) => weak.deref() !== undefined).length }));
 void subject.saved;
 release?.();

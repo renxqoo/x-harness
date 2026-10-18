@@ -1,0 +1,25 @@
+import { afterEach, expect, it } from "vitest";
+import { createHost, definePlugin } from "../../../../core/src/index";
+import type { Host } from "../../../../core/src/index";
+import { createLlmPlugin, defineLlmProvider, llm, llmRequest } from "../index";
+import type { LlmResult, ProviderStreamInput, ProviderEnd, LlmService, LlmEvent, LlmLimits } from "../contracts";
+function value<T>(result: LlmResult<T>): T { if (!result.ok) throw new Error(JSON.stringify(result.error)); return result.value; }
+const hosts: Host[] = []; afterEach(async () => { for (const host of hosts.splice(0)) value(await host.close()); });
+async function fixture(run: (input: ProviderStreamInput) => Promise<LlmResult<ProviderEnd>>, limits?: Partial<LlmLimits>): Promise<{ host: Host; service: LlmService }> {
+  const host = value(createHost({ limits: { callTimeoutMs: 500 } })); hosts.push(host); const token = value(defineLlmProvider("fake")); const plugin = definePlugin({ name: "fake", provides: { provider: token }, setup(ctx) { return ctx.service({ provider: { async describe({ model }) { return { ok: true, value: { protocol: "test", model, input: ["text"], output: ["text"], developer: false, tools: true, citations: false, providerTools: [] } }; }, stream: run } }); } }); value(await host.install([plugin, value(createLlmPlugin({ providers: { p: token }, defaultProvider: "p", limits }))])); return { host, service: value(host.use(llm)) };
+}
+const request = { model: "m", messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] } as const;
+it("a provider cannot hide an earlier rejected frame by later returning a successful end", async () => {
+  const f = await fixture(async (input) => { await input.onEvent({ type: "text-delta", id: "missing", delta: "bad" }); for (const event of [{ type: "block-start", block: { kind: "text", id: "t" } }, { type: "text-delta", id: "t", delta: "good" }, { type: "block-end", id: "t", status: "complete" }] as const) await input.onEvent(event); return { ok: true, value: { reason: { kind: "stop" } } }; }); const events: LlmEvent[] = []; expect(await f.service.stream({ ...request, onEvent(event) { events.push(event); } })).toMatchObject({ ok: false, error: { code: "protocol-error" } }); expect(events.some((e) => e.type === "finish")).toBe(false);
+});
+it("provider callbacks retained after completion are revoked and cannot publish more output", async () => {
+  let retained: ProviderStreamInput["onEvent"] | undefined; const f = await fixture(async (input) => { retained = input.onEvent; return { ok: true, value: { reason: { kind: "stop" } } }; }); const events: LlmEvent[] = []; value(await f.service.stream({ ...request, onEvent(event) { events.push(event); } })); expect(await retained!({ type: "provider-event", scope: "request", name: "test/late", data: null })).toMatchObject({ ok: false, error: { code: "closed" } }); expect(events.map((e) => e.type)).toEqual(["start", "finish"]);
+});
+it("overload rejects promptly while cancellation keeps the actual request slot until the sink ends", async () => {
+  let release!: () => void; let entered!: () => void; const gate = new Promise<void>((r) => { release = r; }); const ready = new Promise<void>((r) => { entered = r; }); const abort = new AbortController();
+  const f = await fixture(async (input) => { const event = await input.onEvent({ type: "block-start", block: { id: "t", kind: "text" } }); return event.ok ? { ok: true, value: { reason: { kind: "stop" } } } : event; }, { maxActiveRequests: 1 });
+  const first = f.service.stream({ ...request, signal: abort.signal, async onEvent(event) { if (event.type === "block-start") { entered(); await gate; } } });
+  try { await ready; abort.abort(); expect(await f.service.stream({ ...request, onEvent() {} })).toMatchObject({ ok: false, error: { code: "busy" } }); expect(f.host.inspect().activeCalls).toBeGreaterThan(0); } finally { release(); }
+  expect(await first).toMatchObject({ ok: false });
+});
+it("core cancellation receipt does not release the global slot before actual child work drains", async () => { let release!: () => void; let entered!: () => void; const gate = new Promise<void>((r) => { release = r; }); const ready = new Promise<void>((r) => { entered = r; }); const abort = new AbortController(); const f = await fixture(async (input) => { for (const event of [{ type: "block-start", block: { id: "t", kind: "text" } }, { type: "block-end", id: "t", status: "complete" }] as const) { const sent = await input.onEvent(event); if (!sent.ok) return sent; } return { ok: true, value: { reason: { kind: "stop" } } }; }, { maxActiveRequests: 1 }); const first = f.host.dispatch(llmRequest, { request, collect: false, async onEvent(event) { if (event.type === "block-start") { entered(); await gate; } } }, { signal: abort.signal }); try { await ready; abort.abort(); expect(await first).toMatchObject({ ok: false, error: { source: "core" } }); await new Promise((r) => setTimeout(r, 5)); expect(await f.service.stream({ ...request, onEvent() {} })).toMatchObject({ ok: false, error: { code: "busy" } }); } finally { release(); } });

@@ -1,0 +1,1 @@
+const call: LlmToolCall = { callId: "c", name: "x", input: { ok: true, value: [] } };

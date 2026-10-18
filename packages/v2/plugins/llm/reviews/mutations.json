@@ -1,0 +1,70 @@
+{
+  "command": "bun scripts/verify-llm-mutations.ts",
+  "runtime": "1.4.3",
+  "baseline": {
+    "code": 0,
+    "cases": 168
+  },
+  "reports": [
+    {
+      "name": "lost cancellation listener",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 'pending' to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "early global capacity release",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, error: { code: 'busy' } }"
+    },
+    {
+      "name": "unawaited consumer",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected false to be true // Object.is equality"
+    },
+    {
+      "name": "missing frame byte bound",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected [] to match object [ { ok: false, …(1) } ]"
+    },
+    {
+      "name": "EOF promoted to stop",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false }"
+    },
+    {
+      "name": "forged empty tool input",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { type: 'tool-call', id: 'c', …(1) } to match object { type: 'tool-call', …(1) }"
+    },
+    {
+      "name": "double cached usage",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { complete: true, …(5) } to deeply equal { inputTokens: 8, …(5) }"
+    },
+    {
+      "name": "cross-model continuation",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, value: undefined } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "callback survives terminal",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: false, …(1) } to match object { Object (ok, error) }"
+    },
+    {
+      "name": "shared mutable partial",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { type: 'text-delta', id: 't', …(1) } to deeply equal { type: 'text-delta', id: 't', …(1) }"
+    }
+  ]
+}

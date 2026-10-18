@@ -1,6 +1,6 @@
 # LLM 施工图
 
-状态：草稿。设计未定稿前不写生产实现。与DESIGN.md同步维护。
+状态：已核销。与DESIGN.md同步维护。
 
 ## 1. 顺序
 
@@ -16,8 +16,8 @@
 
 | 包 | 主要文件职责 |
 | --- | --- |
-| llm | contracts、provider、testing公开入口；define-llm、define-provider；read-options、read-request、read-event、advance-stream；create-plugin、route-request、stream-model、generate-model、describe-model、stream-llm |
-| llm-http | read-http-options、open-response、read-sse、close-reader、read-retry-after、read-http-failure；同目录测试 |
+| llm | contracts、provider、testing公开入口；contracts/define-llm、provider/define-provider；domain/read-request、read-event、read-run-input、read-run-output；create-plugin、stream/run-model、advance-state、create-emitter；stream-llm |
+| llm-http | read-options、request-stream、create-sse-parser、open-response-reader、read-retry-after、read-http-failure；同目录测试 |
 | llm-openai | 插件工厂、请求转换、Responses事件转换、Chat事件转换、结束原因与usage转换，各自独立文件 |
 | llm-anthropic | 插件工厂、请求转换、Messages事件转换、原生推理载荷、结束原因与usage转换，各自独立文件 |
 

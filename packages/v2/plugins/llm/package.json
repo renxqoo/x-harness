@@ -1,0 +1,11 @@
+{
+  "name": "@x-harness/llm",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts.ts",
+    "./provider": "./src/provider.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "sideEffects": false
+}

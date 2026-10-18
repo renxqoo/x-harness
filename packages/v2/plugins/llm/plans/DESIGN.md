@@ -1,6 +1,6 @@
 # LLM 设计基线
 
-状态：草稿，讨论与独立方案审查阶段。级别：大，新子系统。工作流：feature-dev-v2；采用设计基线、施工图、验证口径三件套，并审计已有行为。2026-10-17。
+状态：已核销。级别：大，新子系统。工作流：feature-dev-v2；采用设计基线、施工图、验证口径三件套，并审计已有行为。2026-10-17。
 
 ## 1. 已确定的范围
 
@@ -35,7 +35,7 @@ llm-http 是共享实现库，不再注册一个转发服务；用于三个协�
 
 ## 3. 对外调用与生命周期
 
-拟定主服务：
+主服务：
 
 ```ts
 interface LlmService {
@@ -75,7 +75,7 @@ reasoning含明确的effort、budgetTokens及展示意图；不同提供者允�
 
 流事件为封闭判别联合，每个事件带同一次本地requestId及从0递增的sequence。上游responseId/requestId/model在response-info中报告，本地ID和上游ID不混用。块ID在一次请求中唯一；一个块start一次、end一次，delta只能出现在中间，不复用上游不同维度的index充当全局ID。
 
-以下为拟定词表。LlmResult复用core.Result，JsonValue复用core JSON类型；协议事件没有JS对象、异常、响应句柄或SDK私有实例。
+事件词表：LlmResult复用core.Result，JsonValue复用core JSON类型；协议事件没有JS对象、异常、响应句柄或SDK私有实例。
 
 ```ts
 type LlmEvent = LlmEventBody & {
@@ -174,7 +174,7 @@ interface LlmUsage {
 
 文本与推理多个块按ID归属，允许不同块交错。tool-call完成值在其block-end之前发布；citation与完整continuation允许在对应块已结束、请求尚未终态时补充一次或多条各自独立引用，不允许因此继续文本/参数delta。provider-event显式区分请求级和块级，块级必须引用已存在的块，不能把ID隐藏在任意JSON中绕过状态校验。reasoning.text与summary区分；隐藏推理不合成可见占位文案。signature-delta只是上游签名字节增量；可用于下一次请求的完整opaque载荷只在continuation中发布一次。continuation绑定提供者、协议及模型，不能当文本展示或跨模型静默回放；请求传入不匹配载荷时返回invalid-input，消费方可在调用前显式移除。原生模型别名只有在配置中明确解析到同一canonical模型时才能回传，不猜测模型家族兼容。请求同样携带这些完成后的原生continuation；规范化层不改写其内部数据。
 
-工具callId及name也可能按片段到达，因此tool-call-delta明确区分三个字段。input增量保留原始字符串，UTF8解码跨网络分片，JSON只在调用结束时完整解析一次。tool-call为块完成结果，最多一次，input.ok只证明参数是完整JSON对象，不证明允许执行；上层还须依据最终结束原因及权限进行决策；工具业务schema校验、权限和执行归tool-orch。截断JSON保留原文，不自动补括号或替换为{}。不足以形成调用身份时只将块标incomplete，不能生成可执行调用。
+工具callId及name也可能按片段到达，因此tool-call-delta明确区分三个字段。提供者只提交字段增量和块结束，公开tool-call由统一层生成并解析一次，防止不同适配器各自修补参数。input增量保留原始字符串，UTF8解码跨网络分片，JSON只在调用结束时完整解析一次。tool-call为块完成结果，最多一次，input.ok只证明参数是完整JSON对象，不证明允许执行；上层还须依据最终结束原因及权限进行决策；工具业务schema校验、权限和执行归tool-orch。截断JSON保留原文，不自动补括号或替换为{}。不足以形成调用身份时只将块标incomplete，不能生成可执行调用。
 
 citation明确绑定内容块，引用目标区分URL、请求文档和服务端文件；检索得到的file citation保留提供者fileId/filename，不伪造为请求中不存在的sourceId。请求document/search-result引用的sourceId则必须存在；fileId与提供者/协议共同组成原生身份，与本地sourceId分属不同身份域。range起点包含、终点不包含，base与unit显式声明。定位信息保留已知单位或提供者原生定位格式，不默认字符偏移等于UTF16偏移。provider-event为受大小限制且具命名空间的扩展数据，不绕开状态机，不用来携带未知的可执行客户端工具。未知辅助事件允许保留并继续，未知影响内容或结束语义的结构明确unsupported-feature/protocol-error，不能丢弃后声称完整支持。服务端工具与客户端工具分开，首批仅按显式providerTools声明启用已支持的引用工具，不默认启用任何服务器工具，不执行或代配浏览器/电脑/远程代码工具。
 
@@ -200,7 +200,7 @@ llmRequest调用链为请求策略扩展点，整个调用链直到流结束才�
 
 ## 8. 默认预算与过载
 
-下列数字为拟定默认值，集中在单一配置模块；可向下调，向上调受硬上限约束。字节指规范化UTF8载荷，不等于JS堆占用，实际有有界解码/快照副本。
+下列数字为默认值，集中在单一配置模块；可向下调，向上调受硬上限约束。字节指规范化UTF8载荷，不等于JS堆占用，实际有有界解码/快照副本。
 
 | 预算 | 默认 / 硬上限 |
 | --- | --- |
@@ -216,19 +216,19 @@ llmRequest调用链为请求策略扩展点，整个调用链直到流结束才�
 | 请求总期限 | 180s / 1800s，同时受父调用更短期限约束 |
 | 响应头 / 上游读取无进展 / 消费者回调 | 30s / 60s / 30s，上限分别120s / 600s / 600s |
 
-每请求最多一个总期限timer和一个当前阶段timer，核心自有timer另计。等待onEvent时不运行上游read-idle计时，不把本地消费者慢误判成网络断流。ping能证明连接有字节进展但不能突破总期限或事件/字节预算。被取消请求即使对外已经返回，实际未结束前不能释放并发槽给新请求。总并发由llm实例持有，每提供者网络并发由提供者插件实例持有，不能用路由别名建立第二份计数绕过同一提供者的限额。第三方工厂从同一提供者实例建立准入器，跨路由调用仍受其预算。
+每请求最多两个总期限timer（统一层与可独立调用的提供者各一个）和一个当前阶段timer，核心自有timer另计。输出预算保守预留至多8192字节、最多总预算的四分之一供终态，事件数量同样预留一个终态位置，所有实际发布事件仍计入总预算；块结束生成的工具完成事件同样计数。等待onEvent时不运行上游read-idle计时，不把本地消费者慢误判成网络断流。ping能证明连接有字节进展但不能突破总期限或事件/字节预算。被取消请求即使对外已经返回，实际未结束前不能释放并发槽给新请求。总并发由llm实例持有，每提供者网络并发由提供者插件实例持有，不能用路由别名建立第二份计数绕过同一提供者的限额。第三方工厂从同一提供者实例建立准入器，跨路由调用仍受其预算。
 
-共享HTTP/SSE读取器采用流式TextDecoder、CR/LF及多行data解析，有界行/帧/累计字节，处理BOM、注释及UTF8跨片段；不支持自动SSE重连，不在未知处理进度时重放POST。格式未完成的尾帧不补出成功事件。Chat的finish_reason先进入尾部阶段，仅允许协议定义的usage/控制帧，DONE或明确合法EOF才完成；Responses completed/incomplete/failed与Anthropic message_stop属于协议终止边界。完成前检查已经解码的帧，关闭reader后不继续无限排空或承诺探测未来恶意尾数据。尾部阶段仍受idle及总期限约束。
+共享HTTP/SSE读取器采用流式TextDecoder、CR/LF及多行data解析，有界行/帧/累计字节（行分隔保守计2字节），处理BOM、注释及UTF8跨片段；不支持自动SSE重连，不在未知处理进度时重放POST。格式未完成的尾帧不补出成功事件。Chat的finish_reason先进入尾部阶段，仅允许协议定义的usage/控制帧，DONE或明确合法EOF才完成；Responses completed/incomplete/failed与Anthropic message_stop属于协议终止边界。完成前检查已经解码的帧，关闭reader后不继续无限排空或承诺探测未来恶意尾数据。尾部阶段仍受idle及总期限约束。
 
 ## 9. 关闭、错误和秘密
 
 fetch、reader、取消监听、timer和并发预留都在同一请求try/finally中结算。signal立即通知网络abort，即使消费者回调正在等待，也不能等它结算才发取消；实际工作排空仍等待回调与读取真正结束。reader.cancel及releaseLock只在所有权正确时执行，不与未结束read并发破坏同一流。
 
-错误是Result，拟定封闭code：invalid-input、unsupported-feature、provider-not-found、busy、cancelled、timeout、authentication-failed、permission-denied、rate-limited、context-overflow、request-too-large、network-error、provider-error、protocol-error、invalid-output、capacity-exceeded、consumer-failed、closed。携带phase、可选HTTP status/providerCode/requestId/retryAfterMs和hasOutput；不靠任意错误文案猜所有错误为network，不把429的token额度误判成上下文溢出，不因零outputTokens就判断overflow。retryAfterMs是提示，不承诺可安全重放。
+错误是Result，封闭code：invalid-input、unsupported-feature、provider-not-found、busy、cancelled、timeout、authentication-failed、permission-denied、rate-limited、context-overflow、request-too-large、network-error、provider-error、protocol-error、invalid-output、capacity-exceeded、consumer-failed、closed。携带phase、可选HTTP status/providerCode/requestId/retryAfterMs和hasOutput；不靠任意错误文案猜所有错误为network，不把429的token额度误判成上下文溢出，不因零outputTokens就判断overflow。retryAfterMs是提示，不承诺可安全重放。
 
 API key和自定义认证头只从插件配置取得；不允许请求providerOptions改写。禁止将凭据、完整响应header或原始错误body默认放入流事件/diagnostics；只保留白名单元信息及有界中性错误。连接目标为受信任宿主配置，默认拒绝重定向以免认证跨地址传播；不自动请求输入中的图片/引用URL。引用URL只接受绝对HTTP/HTTPS地址，不输出javascript等可执行scheme；文件ID不作为本地路径使用。fetch与时钟可注入，生产配置与测试替身使用同一传输路径。
 
-## 10. 研究依据与待核定内容
+## 10. 研究依据与裁决
 
 先检查现有源码及SDK包装，再核对官方协议。OpenAI使用OpenAI Docs官方资料；其他协议参考各自官方文档，AI SDK仅参考内容块生命周期、类型分层及背压设计，不复制其工具循环、UI消息或实现。
 
@@ -243,4 +243,22 @@ API key和自定义认证头只从插件配置取得；不允许请求providerOp
 - [Ajv安全](https://ajv.js.org/security.html)及[选项](https://ajv.js.org/options)：受限schema、无数据修改及首错退出；不接受任意正则/递归schema。
 - [WHATWG SSE](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation)：传输拆帧规则。
 
-本稿的服务入口、完整事件词表、状态机、预算和提供者装配方式需完成独立方案审查后定稿。首批协议与模态已由用户确定；这里的API名字、数据细节及数值为设计建议，不能标作用户已逐项裁决。实施遵守[施工图](IMPLEMENTATION.md)、[测试口径](VERIFICATION.md)及[行为审计](BEHAVIOR-MATRIX.md)。
+四项独立方案审查问题已闭合，见../reviews/plan-review.md。用户已授权按本方案开始实现；首批协议与模态为明确用户裁决，API细节及数值为本方案的实施裁决。实施遵守[施工图](IMPLEMENTATION.md)、[测试口径](VERIFICATION.md)及[行为审计](BEHAVIOR-MATRIX.md)。
+
+## 11. 实施细化
+
+提供者流调用通过call.spawn创建一次有限受管子任务，call.wait取得首次回执，TaskHandle.finished用于等待包含提供者实际工作的排空。总并发槽在finished结算后释放；不能在提供者门面先返回cancelled时立即释放。调用输入及网络signal仍在首次取消时立即传播。
+
+llmRequest链输入为{request,onEvent,collect}，输出为{summary,content?,output?}，整个流结束后才完成。collect是统一累积器的模式：stream的纯文本模式不持有全部正文，generate收集；JSON格式都使用同一最终校验与解析结果。链输出中的output为同一次解析产物；stream公开返回summary，generate公开返回content/output。策略插件可以包装onEvent，但必须遵守同一公开事件协议，不得复用已经终态的attempt回传通道。多次尝试需要单独requestId和明确的外部策略，本次不隐式重试。
+
+Responses 的 done 载荷采用前缀核对：适配器有界保存当前未核销内容块的原始片段，完整 snapshot 必须以前面全部片段为精确前缀，只发布尚未交付的后缀；矛盾内容直接 protocol-error。单块保留受事件字节预算约束，工具受工具参数预算，推理受 continuation 预算，全部活跃块合计受输出预算；内容块核销后释放。统一层的纯文本 stream 不再额外保存全文，适配器不会在请求完成后保留它。此规则同时处理原生初始非空块、done-only 数据和缺失末尾 delta，不猜测首尾重叠。
+
+提供者 describe 接受可选 signal；请求总期限在 describe 前启动，描述、schema 准入及传输共享总预算。所有失败出口都补齐实际 hasOutput，错误终态回调仍受消费者期限与实际排空约束。
+
+构建遵守仓库已有源码/产物混合装配契约：公共 token 入口只引用唯一源码模块，core 构建共享 definition-data 与 revocation-data 两份身份元数据。部署保留完整包目录或由应用整体打包，不能只复制 dist。构建旅程同时验证严格 token 身份与两个方向的源码/产物装配。
+
+提供者公共检查器必须指定 expected 标准输出场景：text（可选精确 text）或 tool-call（必须 name，可选精确 input）。检查器要求真实触达对应标准块与慢消费者回调；只有 provider-event 或空数组不能证明实现文本/工具协议。检查器覆盖给定场景，不宣称自动认证未执行的全部能力与外部网络资源。
+
+Anthropic 对 document 与 search-result 分别要求同类型输入中的 citations 开关全同，缺省按关闭，不跨类型强制等同；tool_result 中 search-result 不与其他内容混装。公开 summary/hidden 映射 native summarized/omitted，text 展示不可冒充摘要。累计 usage 的原生非缓存输入与缓存读写分别更新，null 表示本帧未知并保留已有累计值。
+
+Responses 普通 assistant 文本以合法 EasyInputMessage/input_text 回传。缺少完整原生消息身份的 refusal 历史明确 unsupported，不猜测/合成上游 messageId；拒绝输出仍按 refusal 完整保留。这是协议输入的显式限制，不修改调用方历史内容。

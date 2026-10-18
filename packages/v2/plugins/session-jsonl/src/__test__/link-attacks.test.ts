@@ -10,21 +10,25 @@ import { policy, key, hash, value } from "./helpers";
 
 it("a symlinked session journal is refused instead of followed", async () => {
   const directory = await mkdtemp(join(tmpdir(), "session-symlink-"));
+  let opened: Awaited<ReturnType<typeof directStore>> | undefined;
   try {
-    const { storage } = await directStore(join(directory, "store"));
+    opened = await directStore(join(directory, "store"));
+    const { storage } = opened;
     value(await storage.initialize({ namespace: key.namespace, policy }));
     value(await storage.create({ ...key, origin: hash, metadata: "null" }));
     const journal = join(directory, "store", "namespaces", encodeId(key.namespace), "sessions", `${encodeId(key.id)}.jsonl`);
     await rm(journal);
     await symlink("/etc/hostname", journal);
     expect(await storage.read(key)).toMatchObject({ ok: false, error: { code: "storage-unavailable" } });
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { if (opened) value(await opened.store.close()); await rm(directory, { recursive: true, force: true }); }
 });
 
 it("a hardlinked session journal is reported as corruption", async () => {
   const directory = await mkdtemp(join(tmpdir(), "session-hardlink-"));
+  let opened: Awaited<ReturnType<typeof directStore>> | undefined;
   try {
-    const { storage } = await directStore(join(directory, "store"));
+    opened = await directStore(join(directory, "store"));
+    const { storage } = opened;
     value(await storage.initialize({ namespace: key.namespace, policy }));
     value(await storage.create({ ...key, origin: hash, metadata: "null" }));
     const journal = join(directory, "store", "namespaces", encodeId(key.namespace), "sessions", `${encodeId(key.id)}.jsonl`);
@@ -33,14 +37,16 @@ it("a hardlinked session journal is reported as corruption", async () => {
     await writeFile(original, "x");
     await link(original, journal);
     expect(await storage.read(key)).toMatchObject({ ok: false, error: { code: "storage-corrupt" } });
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { if (opened) value(await opened.store.close()); await rm(directory, { recursive: true, force: true }); }
 });
 
 it("a symlinked lock file prevents store activation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "session-locklink-"));
+  let opened: Awaited<ReturnType<typeof directStore>> | undefined;
   try {
     const store = join(directory, "store");
-    const { storage } = await directStore(store);
+    opened = await directStore(store);
+    const { storage } = opened;
     value(await storage.initialize({ namespace: key.namespace, policy }));
     const lock = join(store, "store.lock");
     await rm(lock);
@@ -51,5 +57,5 @@ it("a symlinked lock file prevents store activation", async () => {
       expect(plugin.ok).toBe(true);
       expect((await host.install([value(plugin)])).ok).toBe(false);
     } finally { await host.close(); }
-  } finally { await rm(directory, { recursive: true, force: true }); }
+  } finally { if (opened) value(await opened.store.close()); await rm(directory, { recursive: true, force: true }); }
 });

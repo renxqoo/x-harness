@@ -1,0 +1,1 @@
+const event: ProviderEvent = { type: "provider-event", scope: "block", name: "x/data", data: null };

@@ -45,7 +45,9 @@
       "@x-harness/session/storage": [
         "./plugins/session/src/storage.ts"
       ],
-      "@x-harness/session-jsonl": ["./plugins/session-jsonl/src/index.ts"],
+      "@x-harness/session-jsonl": [
+        "./plugins/session-jsonl/src/index.ts"
+      ],
       "@x-harness/session-sqlite": [
         "./plugins/session-sqlite/src/index.ts"
       ],
@@ -57,6 +59,25 @@
       ],
       "@x-harness/session/testing": [
         "./plugins/session/src/testing.ts"
+      ],
+      "@x-harness/llm": [
+        "./plugins/llm/src/index.ts"
+      ],
+      "@x-harness/llm-http": [
+        "./plugins/llm-http/src/index.ts"
+      ],
+      "@x-harness/llm-anthropic": ["./plugins/llm-anthropic/src/index.ts"],
+      "@x-harness/llm-openai": [
+        "./plugins/llm-openai/src/index.ts"
+      ],
+      "@x-harness/llm/contracts": [
+        "./plugins/llm/src/contracts.ts"
+      ],
+      "@x-harness/llm/provider": [
+        "./plugins/llm/src/provider.ts"
+      ],
+      "@x-harness/llm/testing": [
+        "./plugins/llm/src/testing.ts"
       ]
     }
   },

@@ -1,0 +1,16 @@
+{
+  "source": "core/src/context/__test__/architecture-lifecycles.review.gc-case.ts",
+  "runs": 64,
+  "concurrency": 8,
+  "passed": 64,
+  "strongReferenceNegativeControl": {
+    "exitCode": 0,
+    "result": {
+      "controlCollected": true,
+      "subjectCollected": false,
+      "retainedDefinitions": 1
+    },
+    "stderr": ""
+  },
+  "interpretation": "The original parent test assertion rejects subjectCollected=false; production core code and all parent assertions remain unchanged."
+}
