@@ -1,0 +1,2 @@
+declare const call:Invocation;
+call.initiator.id="forged";

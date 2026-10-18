@@ -4,6 +4,7 @@ import { signalAborted } from "../contracts/observe-signal";
 import { createFault } from "../contracts/create-fault";
 import { collectDependencies } from "../foundation/collect-dependencies";
 import { identifyOwner } from "../foundation/identify-owner";
+import { inspectOwner } from "../foundation/inspect-owner";
 import { registerEffect } from "../lifetime/register-effect";
 import { openResource } from "../lifetime/open-resource";
 import { spawnTask, lookupTask } from "../execution/spawn-task";
@@ -14,7 +15,7 @@ import { describeDependencies } from "./describe-dependencies";
 import type { DependencyLayout } from "./describe-dependencies";
 
 interface InvocationCell { current?: { kernel: Kernel; work: Work; bindings: Owner["bindings"] } }
-type Metadata = Pick<Invocation, "id" | "parentId" | "signal" | "deadline" | "origin" | "executor" | "resourceOwner" | "phase">;
+type Metadata = Pick<Invocation, "id" | "parentId" | "signal" | "deadline" | "origin" | "originId" | "originSignal" | "initiator" | "executor" | "resourceOwner" | "phase">;
 
 export function createInvocation(kernel: Kernel, work: Work): Invocation {
   const bindings = work.phase === "cleanup"
@@ -22,9 +23,12 @@ export function createInvocation(kernel: Kernel, work: Work): Invocation {
     : work.executor.bindings;
   const cell: InvocationCell = { current: { kernel, work, bindings } };
   work.revokeInvocation = () => { cell.current = undefined; };
+  let first = work;
+  while (first.parent) first = first.parent;
   return facade(cell, describeDependencies(work.executor, bindings), {
     id: work.id, parentId: work.parent?.id, signal: work.controller.signal, deadline: work.deadline,
     origin: identifyOwner(work.view.owner), executor: identifyOwner(work.executor),
+    originId: work.view.owner.id, originSignal: work.view.owner.controller.signal, initiator: inspectOwner(first.view.owner),
     resourceOwner: identifyOwner(work.resourceOwner), phase: work.phase,
   });
 }
@@ -33,6 +37,7 @@ function facade(cell: InvocationCell, layout: DependencyLayout, metadata: Metada
   let dependencies: Invocation["deps"] | undefined;
   return Object.freeze({
     ...metadata,
+    get remainingMs() {if(!cell.current)return 0;try {const now=cell.current.kernel.scheduler.now();return Number.isFinite(now)?Math.max(0,metadata.deadline-now):0;}catch {return 0;}},
     get deps() {
       if (dependencies) return dependencies;
       if (!cell.current || !layout.length) return dependencies = createDependencies(layout);

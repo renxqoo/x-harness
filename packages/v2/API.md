@@ -164,10 +164,15 @@ export interface Invocation {
   readonly parentId?: string;
   readonly signal: AbortSignal;
   readonly deadline: number;
+  readonly remainingMs: number;
   readonly origin: Origin;
+  readonly originId: string;
+  readonly originSignal: AbortSignal;
+  readonly initiator: OwnerInspection;
   readonly executor: Origin;
   readonly resourceOwner: Origin;
   readonly phase: "activation" | "business" | "observer" | "cleanup";
+  cancel(reason?: "cancelled" | "timeout"): Result<void>;
   bind(context: Context): Result<DependencyContext>;
   dispatch(name: string, input: unknown, options?: CallOptions): Promise<Result<unknown, unknown>>;
   effect(cleanup: Cleanup): Result<Disposer>;

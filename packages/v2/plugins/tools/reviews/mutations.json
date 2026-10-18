@@ -1,7 +1,7 @@
 {
   "command": "bun run test:tools:mutations",
   "runtime": "1.4.3",
-  "baselineCases": 133,
+  "baselineCases": 172,
   "reports": [
     {
       "name": "missing schema validation",

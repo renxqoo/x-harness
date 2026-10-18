@@ -95,6 +95,18 @@
       ],
       "@x-harness/tool-scheduler/contracts": [
         "./plugins/tool-scheduler/src/contracts.ts"
+      ],
+      "@x-harness/execution": [
+        "./plugins/execution/src/index.ts"
+      ],
+      "@x-harness/execution-process": [
+        "./plugins/execution-process/src/index.ts"
+      ],
+      "@x-harness/execution-local": [
+        "./plugins/execution-local/src/index.ts"
+      ],
+      "@x-harness/sandbox": [
+        "./plugins/sandbox/src/index.ts"
       ]
     }
   },

@@ -1,0 +1,127 @@
+{
+  "command": "bun run benchmark:execution",
+  "timestamp": "2026-10-18T19:38:07.189Z",
+  "runtime": "1.4.3",
+  "platform": "darwin",
+  "arch": "arm64",
+  "sourceSha256": "2158846ded48e46a738428e99dba16a81d9438289fcd0ea5c3a35c3b8fae834c",
+  "hashedProductionFiles": 198,
+  "warmupRuns": 1,
+  "samples": [
+    {
+      "kind": "read",
+      "run": 1,
+      "calls": 32,
+      "milliseconds": 17.826125000000005,
+      "peak": 8,
+      "permissionPeak": 1
+    },
+    {
+      "kind": "read",
+      "run": 2,
+      "calls": 32,
+      "milliseconds": 12.548999999999992,
+      "peak": 8,
+      "permissionPeak": 1
+    },
+    {
+      "kind": "read",
+      "run": 3,
+      "calls": 32,
+      "milliseconds": 14.036374999999992,
+      "peak": 8,
+      "permissionPeak": 1
+    },
+    {
+      "kind": "write",
+      "run": 1,
+      "calls": 32,
+      "milliseconds": 47.40462500000001,
+      "peak": 1,
+      "permissionPeak": 1
+    },
+    {
+      "kind": "write",
+      "run": 2,
+      "calls": 32,
+      "milliseconds": 47.421707999999995,
+      "peak": 1,
+      "permissionPeak": 1
+    },
+    {
+      "kind": "write",
+      "run": 3,
+      "calls": 32,
+      "milliseconds": 48.490999999999985,
+      "peak": 1,
+      "permissionPeak": 1
+    },
+    {
+      "kind": "permission",
+      "run": 1,
+      "calls": 32,
+      "milliseconds": 33.63216700000004,
+      "peak": 2,
+      "permissionPeak": 32
+    },
+    {
+      "kind": "permission",
+      "run": 2,
+      "calls": 32,
+      "milliseconds": 32.28641699999997,
+      "peak": 2,
+      "permissionPeak": 32
+    },
+    {
+      "kind": "permission",
+      "run": 3,
+      "calls": 32,
+      "milliseconds": 31.100167,
+      "peak": 2,
+      "permissionPeak": 32
+    },
+    {
+      "kind": "local",
+      "run": 1,
+      "calls": 1,
+      "milliseconds": 1.6684590000000412,
+      "peak": 1
+    },
+    {
+      "kind": "local",
+      "run": 2,
+      "calls": 1,
+      "milliseconds": 1.6480840000000399,
+      "peak": 1
+    },
+    {
+      "kind": "local",
+      "run": 3,
+      "calls": 1,
+      "milliseconds": 1.4311250000000086,
+      "peak": 1
+    },
+    {
+      "kind": "sandbox",
+      "run": 1,
+      "calls": 1,
+      "milliseconds": 108.49450000000002,
+      "peak": 1
+    },
+    {
+      "kind": "sandbox",
+      "run": 2,
+      "calls": 1,
+      "milliseconds": 106.62370799999997,
+      "peak": 1
+    },
+    {
+      "kind": "sandbox",
+      "run": 3,
+      "calls": 1,
+      "milliseconds": 106.545208,
+      "peak": 1
+    }
+  ],
+  "interpretation": "Local end-to-end observations with 1ms simulated tool work and 5ms policy waiting, plus real process startup and drain. Read concurrency and serial conflicting writes are asserted. Sandbox includes per-command SRT worker startup; no comparison with other frameworks, distributed availability or peak-heap claim."
+}

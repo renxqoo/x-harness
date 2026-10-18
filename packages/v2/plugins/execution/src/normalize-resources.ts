@@ -1,0 +1,3 @@
+import type {ResourceClaim} from "./types";
+function covers(a:ResourceClaim,b:ResourceClaim){if(a.domain!==b.domain||a.mode==="read"&&b.mode==="write"||a.path.length>b.path.length||a.scope==="exact"&&(b.scope!=="exact"||a.path.length!==b.path.length))return false;return a.path.every((part,index)=>part===b.path[index]);}
+export function normalizeResources(input:readonly ResourceClaim[]){const result:ResourceClaim[]=[];for(const claim of input){if(result.some(existing=>covers(existing,claim)))continue;for(let i=result.length-1;i>=0;i--)if(covers(claim,result[i]!))result.splice(i,1);result.push(claim);}return Object.freeze(result);}

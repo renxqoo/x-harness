@@ -62,3 +62,5 @@ schema在创建插件时用Ajv编译，支持type（含nullable）、properties�
 Bun部署保留完整包目录或应用整体打包；源码和构建入口共享公开及内部token身份，不能只复制dist目录。可运行工作区四门、test:tools:mutations和benchmark:tools复核行为。
 
 需要等待名额、批量并发、调用依赖或优先级时，使用独立[tool-scheduler](../tool-scheduler/README.md)。`@x-harness/tools/validation`公开readToolJson(raw,limits)、readToolOutput(raw,maxBytes)和readToolError(raw)，供其他插件复用同一份有界数据与输出契约验证。
+
+工具效果声明、可撤销权限、资源读写协调与独立命令执行见 [受控执行与权限扩展](./EXECUTION.md)。默认 maxPreparedPlans 为 256；资源等待使用 prepare/checkPrepared/executePrepared，不在直接 execute 中增加隐式队列。

@@ -745,6 +745,7 @@
     "packages/v2": {
       "name": "x-harness-kernel-workspace",
       "dependencies": {
+        "@anthropic-ai/sandbox-runtime": "0.0.77",
         "acorn": "8.15.0",
         "ajv": "8.20.0",
       },

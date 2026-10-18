@@ -1,0 +1,68 @@
+{
+  "command": "bun run test:execution:mutations",
+  "runtime": "1.4.3",
+  "platform": "darwin",
+  "baselineCases": 96,
+  "reports": [
+    {
+      "name": "directory cleanup omitted",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected \"close\" to be called 9 times, but got 0 times"
+    },
+    {
+      "name": "resource conflicts ignored",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected true to be false // Object.is equality"
+    },
+    {
+      "name": "revocable predicate ignored",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "prepared status retains request scope",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { Object (control, subject, ...) } to match object { control: true, subject: true, …(2) }"
+    },
+    {
+      "name": "process group completion not awaited",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected '18' to be '0' // Object.is equality"
+    },
+    {
+      "name": "sandbox process creation permitted",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected +0 not to be +0 // Object.is equality"
+    },
+    {
+      "name": "hard link validation removed",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "proxy environment lost",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 'curl: (7) Failed to connect to 127.0.…' to be '' // Object.is equality"
+    },
+    {
+      "name": "read-only roots become writable",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected +0 not to be +0 // Object.is equality"
+    },
+    {
+      "name": "changed target identity accepted",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    }
+  ]
+}

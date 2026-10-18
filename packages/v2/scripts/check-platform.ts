@@ -5,8 +5,8 @@ import { SyntaxKind } from "typescript/unstable/ast";
 import { scanTokens } from "./scan-tokens";
 
 const root = resolve(import.meta.dir, ".."); const transpiler = new Bun.Transpiler({ loader: "ts" }); let checked = 0;
-const dependencies: Record<string, readonly string[]> = { "plugins/tool-scheduler": ["core", "plugins/tools"], "plugins/tools": ["core"], "plugins/llm": ["core"], "plugins/llm-http": ["core", "plugins/llm"], "plugins/llm-openai": ["core", "plugins/llm", "plugins/llm-http"], "plugins/llm-anthropic": ["core", "plugins/llm", "plugins/llm-http"], "plugins/session": ["core"], "plugins/session-jsonl": ["core", "plugins/session"], "plugins/session-storage-sql": ["core", "plugins/session"], "plugins/session-sqlite": ["core", "plugins/session", "plugins/session-storage-sql"], "plugins/session-postgres": ["core", "plugins/session", "plugins/session-storage-sql"], standard: ["core"], application: ["core"], loader: ["core", "application", "standard"], create: ["core"] };
-const runtimeImports: Record<string, readonly string[]> = { "plugins/tools": ["ajv"], "plugins/llm": ["ajv"], "plugins/session-sqlite": ["bun:sqlite"], "plugins/session-postgres": ["bun"], "plugins/session-jsonl": ["bun:ffi"], loader: ["acorn"] };
+const dependencies: Record<string, readonly string[]> = { "plugins/execution-process":["core","plugins/execution"], "plugins/execution-local":["plugins/execution-process"], "plugins/sandbox":["core","plugins/execution","plugins/execution-process"], "plugins/tool-scheduler": ["core", "plugins/tools"], "plugins/tools": ["core", "plugins/execution"], "plugins/execution": ["core"], "plugins/llm": ["core"], "plugins/llm-http": ["core", "plugins/llm"], "plugins/llm-openai": ["core", "plugins/llm", "plugins/llm-http"], "plugins/llm-anthropic": ["core", "plugins/llm", "plugins/llm-http"], "plugins/session": ["core"], "plugins/session-jsonl": ["core", "plugins/session"], "plugins/session-storage-sql": ["core", "plugins/session"], "plugins/session-sqlite": ["core", "plugins/session", "plugins/session-storage-sql"], "plugins/session-postgres": ["core", "plugins/session", "plugins/session-storage-sql"], standard: ["core"], application: ["core"], loader: ["core", "application", "standard"], create: ["core"] };
+const runtimeImports: Record<string, readonly string[]> = { "plugins/sandbox":["@anthropic-ai/sandbox-runtime"], "plugins/tools": ["ajv"], "plugins/llm": ["ajv"], "plugins/session-sqlite": ["bun:sqlite"], "plugins/session-postgres": ["bun"], "plugins/session-jsonl": ["bun:ffi"], loader: ["acorn"] };
 for (const [name, allowed] of Object.entries(dependencies)) {
   const sourceRoot = resolve(root, name, "src");
   for await (const file of new Bun.Glob("**/*.ts").scan({ cwd: sourceRoot })) {
@@ -20,7 +20,7 @@ for (const [name, allowed] of Object.entries(dependencies)) {
     if (!production) continue;
     for (const entry of transpiler.scan(source).imports) {
       if (!entry.path.startsWith(".")) {
-        if (!runtimeImports[name]?.includes(entry.path) && (!["loader", "create", "plugins/session-sqlite", "plugins/session-postgres", "plugins/session-jsonl"].includes(name) || !isBuiltin(entry.path))) throw new Error(`External dependency in ${name}/${file}: ${entry.path}`);
+        if (!runtimeImports[name]?.includes(entry.path) && (!["loader", "create", "plugins/session-sqlite", "plugins/session-postgres", "plugins/session-jsonl", "plugins/execution-process", "plugins/sandbox"].includes(name) || !isBuiltin(entry.path))) throw new Error(`External dependency in ${name}/${file}: ${entry.path}`);
         continue;
       }
       const target = resolve(dirname(path), entry.path).replace(/\.ts$/, ""); const own = relative(sourceRoot, target);

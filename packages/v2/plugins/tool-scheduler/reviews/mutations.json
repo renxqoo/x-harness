@@ -1,13 +1,13 @@
 {
   "command": "bun run test:scheduler:mutations",
   "runtime": "1.4.3",
-  "baselineCases": 78,
+  "baselineCases": 89,
   "reports": [
     {
       "name": "global concurrency ignored",
       "detected": true,
       "code": 1,
-      "evidence": "AssertionError: expected 2 to be 1 // Object.is equality"
+      "evidence": "AssertionError: expected 'started' to be 'queued' // Object.is equality"
     },
     {
       "name": "dependency order ignored",

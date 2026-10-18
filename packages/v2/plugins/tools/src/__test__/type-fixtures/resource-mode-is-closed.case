@@ -1,0 +1,1 @@
+createToolPlugin({name:"echo",inputSchema:{type:"object"},async prepare(){return {ok:true,value:{resources:[{domain:"filesystem",path:[],scope:"subtree",mode:"edit"}]}};},async execute(){return {ok:true,value:{content:[]}};}});

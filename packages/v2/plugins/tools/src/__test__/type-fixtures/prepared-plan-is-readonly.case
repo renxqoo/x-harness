@@ -1,0 +1,2 @@
+const result = await service.prepare({name:"echo",callId:"a",input:{}});
+if(result.ok) result.value.plan.execution!.argv.push("changed");

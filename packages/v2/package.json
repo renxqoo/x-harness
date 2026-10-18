@@ -13,7 +13,9 @@
     "test:tools:mutations": "bun scripts/verify-tools-mutations.ts",
     "benchmark:tools": "bun scripts/benchmark-tools.ts",
     "test:scheduler:mutations": "bun scripts/verify-scheduler-mutations.ts",
-    "benchmark:scheduler": "bun scripts/benchmark-scheduler.ts"
+    "benchmark:scheduler": "bun scripts/benchmark-scheduler.ts",
+    "test:execution:mutations": "bun scripts/verify-execution-mutations.ts",
+    "benchmark:execution": "bun scripts/benchmark-execution.ts"
   },
   "devDependencies": {
     "oxlint": "^1.88.0",
@@ -21,6 +23,7 @@
   },
   "dependencies": {
     "acorn": "8.15.0",
-    "ajv": "8.20.0"
+    "ajv": "8.20.0",
+    "@anthropic-ai/sandbox-runtime": "0.0.77"
   }
 }

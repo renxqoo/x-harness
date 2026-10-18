@@ -1,155 +1,155 @@
 {
   "command": "bun run benchmark:scheduler",
-  "timestamp": "2026-10-18T14:09:50.178Z",
+  "timestamp": "2026-10-18T19:38:06.256Z",
   "runtime": "1.4.3",
   "platform": "darwin",
   "arch": "arm64",
-  "sourceSha256": "5f30d07cfe0214ff9bb5da5d2d48b0b3ddfc8048e3e1a311a08cce155cd926b4",
+  "sourceSha256": "c319d620468bdee96b0b5d539af8a535d3fbfb2c4829d416a197b093ef1b8255",
   "warmupRuns": 1,
   "samples": [
     {
       "calls": 1,
       "payloadBytes": 32,
       "run": 1,
-      "milliseconds": 0.5407909999999987
+      "milliseconds": 0.8678750000000051
     },
     {
       "calls": 1,
       "payloadBytes": 32,
       "run": 2,
-      "milliseconds": 4.470209000000004
+      "milliseconds": 0.6950410000000034
     },
     {
       "calls": 1,
       "payloadBytes": 32,
       "run": 3,
-      "milliseconds": 0.740916999999996
+      "milliseconds": 0.6061669999999992
     },
     {
       "calls": 1,
       "payloadBytes": 4096,
       "run": 1,
-      "milliseconds": 1.357332999999997
+      "milliseconds": 0.5483750000000001
     },
     {
       "calls": 1,
       "payloadBytes": 4096,
       "run": 2,
-      "milliseconds": 0.4473339999999979
+      "milliseconds": 0.5059579999999997
     },
     {
       "calls": 1,
       "payloadBytes": 4096,
       "run": 3,
-      "milliseconds": 0.9655419999999992
+      "milliseconds": 0.49499999999999744
     },
     {
       "calls": 8,
       "payloadBytes": 32,
       "run": 1,
-      "milliseconds": 1.133749999999992
+      "milliseconds": 3.675582999999996
     },
     {
       "calls": 8,
       "payloadBytes": 32,
       "run": 2,
-      "milliseconds": 1.0390000000000015
+      "milliseconds": 1.9537919999999929
     },
     {
       "calls": 8,
       "payloadBytes": 32,
       "run": 3,
-      "milliseconds": 3.2000829999999922
+      "milliseconds": 1.9487089999999938
     },
     {
       "calls": 8,
       "payloadBytes": 4096,
       "run": 1,
-      "milliseconds": 3.8269169999999946
+      "milliseconds": 1.690540999999996
     },
     {
       "calls": 8,
       "payloadBytes": 4096,
       "run": 2,
-      "milliseconds": 1.7085840000000019
+      "milliseconds": 2.6378330000000005
     },
     {
       "calls": 8,
       "payloadBytes": 4096,
       "run": 3,
-      "milliseconds": 1.138417000000004
+      "milliseconds": 1.4691249999999911
     },
     {
       "calls": 32,
       "payloadBytes": 32,
       "run": 1,
-      "milliseconds": 9.476584000000003
+      "milliseconds": 7.4168750000000045
     },
     {
       "calls": 32,
       "payloadBytes": 32,
       "run": 2,
-      "milliseconds": 4.030124999999998
+      "milliseconds": 7.497416999999999
     },
     {
       "calls": 32,
       "payloadBytes": 32,
       "run": 3,
-      "milliseconds": 13.501916999999992
+      "milliseconds": 6.959790999999996
     },
     {
       "calls": 32,
       "payloadBytes": 4096,
       "run": 1,
-      "milliseconds": 20.045625
+      "milliseconds": 7.446584000000001
     },
     {
       "calls": 32,
       "payloadBytes": 4096,
       "run": 2,
-      "milliseconds": 8.652915999999976
+      "milliseconds": 7.977292000000006
     },
     {
       "calls": 32,
       "payloadBytes": 4096,
       "run": 3,
-      "milliseconds": 3.3045840000000055
+      "milliseconds": 6.724417000000017
     },
     {
       "calls": 128,
       "payloadBytes": 32,
       "run": 1,
-      "milliseconds": 10.910959000000048
+      "milliseconds": 34.805582999999984
     },
     {
       "calls": 128,
       "payloadBytes": 32,
       "run": 2,
-      "milliseconds": 14.268958999999995
+      "milliseconds": 31.105333
     },
     {
       "calls": 128,
       "payloadBytes": 32,
       "run": 3,
-      "milliseconds": 16.54699999999997
+      "milliseconds": 29.847667
     },
     {
       "calls": 128,
       "payloadBytes": 4096,
       "run": 1,
-      "milliseconds": 17.66337500000003
+      "milliseconds": 27.40333400000003
     },
     {
       "calls": 128,
       "payloadBytes": 4096,
       "run": 2,
-      "milliseconds": 14.596542
+      "milliseconds": 28.342874999999992
     },
     {
       "calls": 128,
       "payloadBytes": 4096,
       "run": 3,
-      "milliseconds": 15.40991699999995
+      "milliseconds": 27.894499999999994
     }
   ],
   "interpretation": "Local complete authorized batches including discovery, scheduling, validation and report; no remote latency, peak heap, distributed availability or other-framework performance claim."

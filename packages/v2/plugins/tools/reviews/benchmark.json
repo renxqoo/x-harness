@@ -1,221 +1,221 @@
 {
   "command": "bun run benchmark:tools",
-  "date": "2026-10-18T14:05:07.757Z",
+  "date": "2026-10-18T19:38:05.843Z",
   "runtime": "1.4.3",
   "platform": "darwin",
   "arch": "arm64",
-  "sourceSha256": "0d8162c26c96005ce81f27b1de090b86491ecdb017fe58e1191e4e50e5524151",
+  "sourceSha256": "4ec3a67c2d79c3d21fe318034b840e1defbeded35b014368b628b57758e92130",
   "warmupRuns": 1,
   "samples": [
     {
       "tools": 0,
       "payloadBytes": 32,
       "run": 1,
-      "listMs": 0.0794169999999994,
+      "listMs": 0.06229199999999935,
       "executeMs": null
     },
     {
       "tools": 0,
       "payloadBytes": 32,
       "run": 2,
-      "listMs": 0.05595800000000395,
+      "listMs": 0.05108300000000199,
       "executeMs": null
     },
     {
       "tools": 0,
       "payloadBytes": 32,
       "run": 3,
-      "listMs": 0.06254200000000054,
+      "listMs": 0.051874999999999005,
       "executeMs": null
     },
     {
       "tools": 0,
       "payloadBytes": 4096,
       "run": 1,
-      "listMs": 0.1955419999999961,
+      "listMs": 0.04220799999999869,
       "executeMs": null
     },
     {
       "tools": 0,
       "payloadBytes": 4096,
       "run": 2,
-      "listMs": 0.1673329999999993,
+      "listMs": 0.03716700000000017,
       "executeMs": null
     },
     {
       "tools": 0,
       "payloadBytes": 4096,
       "run": 3,
-      "listMs": 0.10091699999999548,
+      "listMs": 0.028792000000002815,
       "executeMs": null
     },
     {
       "tools": 1,
       "payloadBytes": 32,
       "run": 1,
-      "listMs": 0.2724580000000003,
-      "executeMs": 0.24883300000000474
+      "listMs": 0.09812500000000313,
+      "executeMs": 0.2916669999999968
     },
     {
       "tools": 1,
       "payloadBytes": 32,
       "run": 2,
-      "listMs": 0.08904100000000881,
-      "executeMs": 4.515000000000001
+      "listMs": 0.08774999999999977,
+      "executeMs": 0.24020799999999554
     },
     {
       "tools": 1,
       "payloadBytes": 32,
       "run": 3,
-      "listMs": 0.4741250000000008,
-      "executeMs": 0.2545829999999967
+      "listMs": 0.06887500000000557,
+      "executeMs": 0.26004199999999855
     },
     {
       "tools": 1,
       "payloadBytes": 4096,
       "run": 1,
-      "listMs": 0.10545799999999872,
-      "executeMs": 0.15945800000000077
+      "listMs": 0.0643749999999983,
+      "executeMs": 0.20579200000000242
     },
     {
       "tools": 1,
       "payloadBytes": 4096,
       "run": 2,
-      "listMs": 0.08287500000000136,
-      "executeMs": 0.5346669999999989
+      "listMs": 0.05687499999999801,
+      "executeMs": 0.20170800000000355
     },
     {
       "tools": 1,
       "payloadBytes": 4096,
       "run": 3,
-      "listMs": 0.225332999999992,
-      "executeMs": 0.1687079999999952
+      "listMs": 0.06050000000000466,
+      "executeMs": 0.19520799999999383
     },
     {
       "tools": 8,
       "payloadBytes": 32,
       "run": 1,
-      "listMs": 0.34508400000001416,
-      "executeMs": 0.2750419999999849
+      "listMs": 0.24833299999998815,
+      "executeMs": 0.4207499999999982
     },
     {
       "tools": 8,
       "payloadBytes": 32,
       "run": 2,
-      "listMs": 1.08137499999998,
-      "executeMs": 0.5670000000000073
+      "listMs": 0.20754200000000367,
+      "executeMs": 0.38433299999999804
     },
     {
       "tools": 8,
       "payloadBytes": 32,
       "run": 3,
-      "listMs": 0.26258300000000645,
-      "executeMs": 0.5570829999999773
+      "listMs": 0.20195799999999053,
+      "executeMs": 0.40133299999999394
     },
     {
       "tools": 8,
       "payloadBytes": 4096,
       "run": 1,
-      "listMs": 0.6589999999999918,
-      "executeMs": 0.4177089999999737
+      "listMs": 0.1856250000000017,
+      "executeMs": 0.36950000000000216
     },
     {
       "tools": 8,
       "payloadBytes": 4096,
       "run": 2,
-      "listMs": 0.2546660000000145,
-      "executeMs": 0.37162500000002296
+      "listMs": 0.19179200000000662,
+      "executeMs": 0.30512500000000387
     },
     {
       "tools": 8,
       "payloadBytes": 4096,
       "run": 3,
-      "listMs": 0.2510830000000226,
-      "executeMs": 0.2985830000000078
+      "listMs": 0.17245900000000347,
+      "executeMs": 0.2949169999999981
     },
     {
       "tools": 32,
       "payloadBytes": 32,
       "run": 1,
-      "listMs": 0.9582920000000286,
-      "executeMs": 1.4776669999999967
+      "listMs": 0.5643340000000023,
+      "executeMs": 0.735416999999984
     },
     {
       "tools": 32,
       "payloadBytes": 32,
       "run": 2,
-      "listMs": 1.3815419999999676,
-      "executeMs": 1.6361670000000004
+      "listMs": 0.5128750000000082,
+      "executeMs": 0.705457999999993
     },
     {
       "tools": 32,
       "payloadBytes": 32,
       "run": 3,
-      "listMs": 1.1027920000000222,
-      "executeMs": 1.0715830000000324
+      "listMs": 0.5159999999999911,
+      "executeMs": 0.6367079999999987
     },
     {
       "tools": 32,
       "payloadBytes": 4096,
       "run": 1,
-      "listMs": 1.4392090000000053,
-      "executeMs": 1.0676670000000286
+      "listMs": 0.5323329999999942,
+      "executeMs": 0.7084580000000074
     },
     {
       "tools": 32,
       "payloadBytes": 4096,
       "run": 2,
-      "listMs": 0.594916000000012,
-      "executeMs": 0.6160830000000033
+      "listMs": 0.5528339999999616,
+      "executeMs": 0.6890000000000214
     },
     {
       "tools": 32,
       "payloadBytes": 4096,
       "run": 3,
-      "listMs": 0.5715410000000247,
-      "executeMs": 0.4825829999999769
+      "listMs": 0.47870799999998326,
+      "executeMs": 0.6517910000000029
     },
     {
       "tools": 64,
       "payloadBytes": 32,
       "run": 1,
-      "listMs": 13.530374999999822,
-      "executeMs": 8.731791000000158
+      "listMs": 1.0365409999999997,
+      "executeMs": 1.1974579999999833
     },
     {
       "tools": 64,
       "payloadBytes": 32,
       "run": 2,
-      "listMs": 7.142166999999972,
-      "executeMs": 8.633417000000009
+      "listMs": 0.9314580000000205,
+      "executeMs": 1.085125000000005
     },
     {
       "tools": 64,
       "payloadBytes": 32,
       "run": 3,
-      "listMs": 1.8161250000000564,
-      "executeMs": 1.0036250000000564
+      "listMs": 0.8336659999999938,
+      "executeMs": 1.0267920000000004
     },
     {
       "tools": 64,
       "payloadBytes": 4096,
       "run": 1,
-      "listMs": 1.1433329999999842,
-      "executeMs": 1.2141669999998612
+      "listMs": 0.9564159999999902,
+      "executeMs": 1.2487499999999727
     },
     {
       "tools": 64,
       "payloadBytes": 4096,
       "run": 2,
-      "listMs": 1.0329169999999976,
-      "executeMs": 0.8573750000000473
+      "listMs": 0.8756670000000213,
+      "executeMs": 1.043833999999947
     },
     {
       "tools": 64,
       "payloadBytes": 4096,
       "run": 3,
-      "listMs": 0.9821249999999964,
-      "executeMs": 0.7477499999999964
+      "listMs": 1.361167000000023,
+      "executeMs": 2.3731250000000728
     }
   ],
   "interpretation": "Local authorized directory traversal, validation and execution only. No remote latency or peak heap claim. Dynamic core chains consume call depth; this benchmark explicitly configures maxCallDepth 256."
