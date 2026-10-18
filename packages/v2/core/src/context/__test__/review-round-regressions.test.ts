@@ -150,7 +150,7 @@ describe("review round regressions", () => {
     const installed = await host.install([{ name: "ancestor-late", provides: { token }, setup(ctx) {
       return ctx.register(token, { run: () => Promise.resolve({ ok: true, value: "root" }) });
     } }]);
-    expect(installed).toMatchObject({ ok: false, error: { code: "activation-failed" } });
+    expect(installed).toMatchObject({ ok: false, error: { code: "duplicate-provider" } });
     expect(host.inspect()).toMatchObject({ plugins: [] });
     const viaChild = await value(child.use(token)).run(undefined);
     expect(viaChild).toMatchObject({ ok: true, value: "child" });

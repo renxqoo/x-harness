@@ -372,6 +372,7 @@ export interface Limits {
   readonly maxPlugins: number;
   readonly maxEffects: number;
   readonly maxServiceLeases: number;
+  readonly maxServiceLeasesPerOwner: number;
   readonly maxDefinitions: number;
   readonly maxRegistrationsPerOwner: number;
   readonly maxActiveTasks: number;

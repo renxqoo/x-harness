@@ -120,6 +120,7 @@ export interface ServiceLease {
   kernel?: Kernel;
   view?: View;
   provider?: Provider;
+  counted?: boolean;
 }
 
 export interface Work {
@@ -152,6 +153,7 @@ export interface Install {
   owners: Owner[];
   providers: Map<DefinitionRef, Provider>;
   phase: "staging" | "committed" | "rollback";
+  cause?: Result<never>;
 }
 
 export interface TaskCell {

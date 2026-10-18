@@ -11,7 +11,8 @@ export function useService<S>(kernel: Kernel, view: View, token: ServiceToken<S>
   if (token.kind !== "service" || !provider.implementation) return kernel.fault("service-unavailable", view.owner, { definition: token });
   const existing = kernel.registry.cached(view, provider);
   if (existing) return { ok: true, value: existing as S };
-  if (view.owner.leases.size >= view.scope.limits.maxRegistrationsPerOwner || kernel.registry.leaseCount() >= view.scope.limits.maxServiceLeases) return kernel.fault("resource-limit", view.owner);
+  const counted = !view.bound || view.bound === view.owner.activation;
+  if (counted && (view.owner.leases.size >= view.scope.limits.maxServiceLeasesPerOwner || kernel.registry.leaseCount() >= view.scope.limits.maxServiceLeases)) return kernel.fault("resource-limit", view.owner);
   const lease: ServiceLease = { kernel, view, provider };
   kernel.registry.lease(lease);
   const facade: Record<string, unknown> = Object.create(null);

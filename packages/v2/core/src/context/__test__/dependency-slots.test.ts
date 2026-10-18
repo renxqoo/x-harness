@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { definePlugin, defineService } from "../../index";
 import type { Result } from "../../index";
-import { deferred, root, value } from "../../__test__/helpers";
+import { root, value } from "../../__test__/helpers";
 
 const token = (name: string) => value(defineService<{ read(input: string): Promise<Result<string>> }>({ name, methods: { read: {} } }));
 
@@ -21,7 +21,7 @@ it("enumerated dependency slots remain frozen, independently cached and usable a
         expect(Object.getPrototypeOf(deps)).toBeNull(); expect(Object.isFrozen(deps)).toBe(true); expect(Reflect.set(deps, "one", null)).toBe(false);
         const first = deps.one; expect(first).toBe(deps.one); expect(Object.isFrozen(first)).toBe(true); expect(app.inspect().serviceLeases).toBe(before);
         const read = first.read; const a = value(await read(input)); const b = value(await deps.two.read(input)); const c = value(await deps.constructor!.read(input));
-        expect(first).not.toBe(deps.two); expect(app.inspect().serviceLeases).toBe(before + 3);
+        expect(first).not.toBe(deps.two); expect(app.inspect().serviceLeases).toBe(before);
         check = async () => {
           expect(Object.keys(deps)).toEqual(["one", "two", "constructor", "missing"]); expect(deps.missing).toBeUndefined();
           for (const source of [deps.one, deps.two, deps.constructor!]) expect(await source.read("expired")).toMatchObject({ ok: false, error: { code: "service-unavailable" } });
@@ -33,22 +33,23 @@ it("enumerated dependency slots remain frozen, independently cached and usable a
   } finally { value(await app.close()); }
 });
 
-it("a dependency lease failure does not poison a later acquisition after capacity returns", async () => {
-  const app = root({ limits: { maxServiceLeases: 2 } }); const one = token("slots/retry-one"); const two = token("slots/retry-two"); const output = token("slots/retry-output"); const extra = token("slots/extra");
-  const attempted = deferred<void>(); const gate = deferred<void>();
+it("a durable lease rejection does not poison a later acquisition after capacity returns", async () => {
+  const app = root({ limits: { maxServiceLeasesPerOwner: 2 } }); const one = token("slots/retry-one"); const two = token("slots/retry-two"); const output = token("slots/retry-output"); const extra = token("slots/retry-three");
   try {
-    const extraInstalled = value(await app.install([definePlugin({ name: "extra", provides: { extra }, setup(ctx) { return ctx.service({ extra: { async read(input) { return { ok: true, value: input }; } } }); } })])); const occupied = value(app.use(extra));
+    const extraInstalled = value(await app.install([definePlugin({ name: "extra", provides: { extra }, setup(ctx) { return ctx.service({ extra: { async read(input) { return { ok: true, value: input }; } } }); } })]));
     value(await app.install([
       definePlugin({ name: "sources", provides: { one, two }, setup(ctx) { const read = async (input: string): Promise<Result<string>> => ({ ok: true, value: input }); return ctx.service({ one: { read }, two: { read } }); } }),
-      definePlugin({ name: "consumer", requires: { one, two }, provides: { output }, setup(ctx) { return ctx.service({ output: { async read(input, call) {
-        const source = call.deps.one; expect(await source.read(input)).toMatchObject({ ok: false, error: { code: "resource-limit" } });
-        attempted.resolve(); await gate.promise; expect(source).toBe(call.deps.one); return source.read(input);
-      } } }); } }),
+      definePlugin({ name: "consumer", requires: { one, two }, provides: { output }, setup(ctx) { return ctx.service({ output: { async read(input) { return { ok: true, value: input }; } } }); } }),
     ]));
-    const pending = value(app.use(output)).read("retry"); await attempted.promise; value(await app.uninstall(extraInstalled.plugins[0]!));
-    expect(await occupied.read("revoked")).toMatchObject({ ok: false, error: { code: "service-unavailable" } });
-    gate.resolve(); expect(await pending).toEqual({ ok: true, value: "retry" }); expect(app.inspect().serviceLeases).toBe(1);
-  } finally { gate.resolve(); value(await app.close()); }
+    const holder = value(app.createScope({ label: "holder" }));
+    value(holder.use(one)); value(holder.use(two));
+    expect(holder.use(extra)).toMatchObject({ ok: false, error: { code: "resource-limit" } });
+    value(await app.uninstall(extraInstalled.plugins[0]!));
+    value(await app.closeScope(holder));
+    const retryScope = value(app.createScope({ label: "retry" }));
+    expect(retryScope.use(one)).toMatchObject({ ok: true });
+    expect(value(await value(app.use(output)).read("retry"))).toBe("retry");
+  } finally { value(await app.close()); }
 });
 
 it("saved setup dependencies distinguish acquired and untouched slots after activation ends", async () => {

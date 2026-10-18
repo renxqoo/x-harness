@@ -15,9 +15,6 @@ export function resolveProvider(kernel: Kernel, view: View, token: DefinitionRef
     if (self) return { ok: true, value: self };
   }
   const bindings = view.dependencies ?? view.owner.bindings;
-  const bound = bindings.get(token);
-  const staging = bound?.active && bound.owner.transaction?.phase === "staging" && bound.owner.transaction === view.owner.transaction;
-  if (!view.cleanup && view.scope.tombstones.has(token) && !staging) return kernel.fault(unavailable, view.owner, { definition: token });
   if (bindings.has(token)) {
     const provider = bindings.get(token);
     if (provider && (provider.active || view.cleanup)) return { ok: true, value: provider };

@@ -67,36 +67,27 @@ it("batch provider capacity is checked before any provider is registered", async
   expect(app.inspect()).toMatchObject({ plugins: [], effects: 0 });
 });
 
-it("temporary dependency lease exhaustion does not poison a later retry in the same request", async () => {
-  const app = host({ limits: { maxServiceLeases: 2 } });
+it("per-call dependency facades do not consume the durable lease budget under concurrency", async () => {
+  const app = host({ limits: { maxServiceLeasesPerOwner: 1 } });
   const source = service("regression/lease-source");
   const target = service("regression/lease-target");
   const firstGate = deferred<void>();
-  const retryGate = deferred<void>();
-  const rejected = deferred<Result<string>>();
   value(app.register(source, { async run(input) {
     if (input === "first") await firstGate.promise;
     return { ok: true, value: input };
   } }));
   value(await app.install([definePlugin({ name: "consumer", requires: { source }, provides: { target }, setup(ctx) {
     return ctx.service({ target: { async run(input, call) {
-      if (input === "first") return call.deps.source.run(input);
-      rejected.resolve(await call.deps.source.run(input));
-      await retryGate.promise;
       return call.deps.source.run(input);
     } } });
   } })]));
   const bound = value(app.use(target));
-  const first = bound.run("first");
+  const pending = Array.from({ length: 30 }, () => bound.run("first"));
   await flush();
-  const second = bound.run("second");
-  const failure = await rejected.promise;
   firstGate.resolve();
-  await first;
-  retryGate.resolve();
-  const retried = await second;
-  expect(failure).toMatchObject({ ok: false, error: { code: "resource-limit" } });
-  expect(retried).toEqual({ ok: true, value: "second" });
+  const concurrent = await Promise.all(pending);
+  expect(concurrent.every((result) => result.ok && result.value === "first")).toBe(true);
+  expect(app.inspect().serviceLeases).toBe(1);
 });
 
 it("consumer resource cleanup preserves resourceOwner across dependency service calls", async () => {
