@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assistantNode, errorScript, FACE, fakeLlm, makeWorld, seedTurn, sid, textOf, textScript, userNode } from "./helpers.ts";
+import { assistantNode, errorScript, FACE, fakeLlm, hangScript, makeWorld, seedTurn, sid, textOf, textScript, userNode } from "./helpers.ts";
 import {
   boxSegment,
   checkpointMaxChars,
@@ -14,16 +14,18 @@ import { parseLedgerPatch, serializeLedger } from "../ledger.ts";
 import { logEvent } from "./helpers.ts";
 import type { Session } from "@x-harness/session";
 
+import { SELF_BREAKER_THRESHOLD } from "../checkpoint.ts";
+
 const PATCH = `<goals>\ngoal-1\n</goals>\n<current>\nstep-1\n</current>`;
 
-function depsOf(overrides: Partial<CheckpointDeps> & { session: Session; scripts: Array<AsyncGenerator<import("@x-harness/llm").LlmChunk>> }): CheckpointDeps {
+function depsOf(overrides: Partial<CheckpointDeps> & { session: Session; scripts: Array<AsyncGenerator<import("@x-harness/llm").LlmChunk>>; idleTimeoutMs?: number }): CheckpointDeps {
   const fake = fakeLlm();
   fake.scripts.push(...overrides.scripts);
   const events: Array<{ action: string; detail?: Record<string, unknown> }> = [];
   const deps: CheckpointDeps = {
     llm: fake.runtime,
     face: FACE,
-    config: { ledgerBudgetTokens: 16_000, checkpointMaxRetries: 2, checkpointIdleTimeoutMs: 0 },
+    config: { ledgerBudgetTokens: 16_000, checkpointMaxRetries: 2, checkpointIdleTimeoutMs: overrides.idleTimeoutMs ?? 0 },
     fileTools: { read: ["read"], written: ["write"], edited: [] },
     warn: () => {},
     emit: (action, detail) => {
@@ -114,7 +116,7 @@ describe("maybeStartCheckpoint / joinInflight", () => {
     }
   });
 
-  it("自限失败不计败（回归：无过错失败与 provider 失败共计数致永久熔断）：垃圾输出三轮不熔断；provider 错连续 3 败才熔断（breaker 事件）", async () => {
+  it("自限失败两振熔断（回归：不计数会每 step 重启 checkpoint 无限烧 LLM）：连续 2 次确定性 self 即熔断且 fatal（进程内不复位，重启即恢复）；provider 错连续 3 败才熔断（breaker 事件）", async () => {
     const world = await makeWorld();
     try {
       const made = await world.store.create({ id: sid("cp-breaker") });
@@ -123,25 +125,100 @@ describe("maybeStartCheckpoint / joinInflight", () => {
       seedTurn(session, { turn: 0, user: "u0", assistant: { text: "a0" } });
       seedTurn(session, { turn: 1, user: "u1", assistant: { text: "a1" } });
       const state = emptyCheckpointState();
-      for (let round = 0; round < 3; round += 1) {
-        const deps = depsOf({ session, scripts: [textScript("garbage output")] });
-        maybeStartCheckpoint({ state, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
-        await state.job?.done;
-        expect(state.broken).toBe(false);
-        expect(state.consecutiveFailures).toBe(0);
-      }
       const breakerSeen: number[] = [];
-      for (let round = 0; round < 3; round += 1) {
-        const deps = depsOf({ session, scripts: [errorScript()], emit: (action, detail) => {
+      for (let round = 0; round < SELF_BREAKER_THRESHOLD; round += 1) {
+        const deps = depsOf({ session, scripts: [textScript("garbage output")], emit: (action, detail) => {
           if (action === "breaker") breakerSeen.push((detail as { failures: number } | undefined)?.failures ?? -1);
         } });
         maybeStartCheckpoint({ state, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
         await state.job?.done;
-        if (round < 2) expect(state.broken).toBe(false);
+        if (round < SELF_BREAKER_THRESHOLD - 1) expect(state.broken).toBe(false);
       }
       expect(state.broken).toBe(true);
-      expect(breakerSeen).toEqual([3]);
-      expect(maybeStartCheckpoint({ state, deps: depsOf({ session, scripts: [] }), stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 2, step: 0 })).toBe(false);
+      expect(state.fatal).toBe(true);
+      expect(breakerSeen).toEqual([SELF_BREAKER_THRESHOLD]);
+      const breakerSeen2: number[] = [];
+      const state2 = emptyCheckpointState();
+      for (let round = 0; round < 3; round += 1) {
+        const deps = depsOf({ session, scripts: [errorScript()], emit: (action, detail) => {
+          if (action === "breaker") breakerSeen2.push((detail as { failures: number } | undefined)?.failures ?? -1);
+        } });
+        maybeStartCheckpoint({ state: state2, deps, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+        await state2.job?.done;
+        if (round < 2) expect(state2.broken).toBe(false);
+      }
+      expect(state2.broken).toBe(true);
+      expect(breakerSeen2).toEqual([3]);
+      expect(maybeStartCheckpoint({ state: state2, deps: depsOf({ session, scripts: [] }), stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 2, step: 0 })).toBe(false);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("idle 超时（瞬态 self）与 provider 混合序列：三振 non-fatal、turn/start 可复位（回归：F1/F3——瞬态 idle-aborted 曾拿 2 振 fatal 且混合序列 fatality 由击序决定）", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("cp-idle") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: "u0", assistant: { text: "a0" } });
+      seedTurn(made.value, { turn: 1, user: "u1", assistant: { text: "a1" } });
+      const state = emptyCheckpointState();
+      // hangScript：先吐 chunk 再挂起，30ms idle watchdog → reason "aborted"（瞬态 self）
+      const deps1 = depsOf({ session: made.value, scripts: [hangScript()], idleTimeoutMs: 30 });
+      maybeStartCheckpoint({ state, deps: deps1, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await state.job?.done;
+      expect(state.consecutiveFailures).toBe(1);
+      expect(state.broken).toBe(false);
+      // 瞬态 self 1 + provider 1 = 2 击：不再 fatal（旧行为在 self 第二击 fatal）
+      const deps2 = depsOf({ session: made.value, scripts: [errorScript()] });
+      maybeStartCheckpoint({ state, deps: deps2, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await state.job?.done;
+      expect(state.broken).toBe(false);
+      expect(state.fatal).toBe(false);
+      // 第三击（瞬态 self）→ 三振 non-fatal
+      const deps3 = depsOf({ session: made.value, scripts: [hangScript()], idleTimeoutMs: 30 });
+      maybeStartCheckpoint({ state, deps: deps3, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await state.job?.done;
+      expect(state.broken).toBe(true);
+      expect(state.fatal).toBe(false);
+    } finally {
+      await world.ctx.dispose();
+    }
+  });
+
+  it("provider→确定性self 击序不得 fatal（复查 F3 回归：混合击序曾决定 fatality——一次瞬态 provider 抖动把确定性阈值从 2 降到 1）", async () => {
+    const world = await makeWorld();
+    try {
+      const made = await world.store.create({ id: sid("cp-mixed") });
+      if (!made.ok) throw new Error(made.reason);
+      seedTurn(made.value, { turn: 0, user: "u0", assistant: { text: "a0" } });
+      seedTurn(made.value, { turn: 1, user: "u1", assistant: { text: "a1" } });
+      // 序 A：provider 1 击 + det-self 1 击 → 不 fatal（self 分账只 1）
+      const stateA = emptyCheckpointState();
+      const a1 = depsOf({ session: made.value, scripts: [errorScript()] });
+      maybeStartCheckpoint({ state: stateA, deps: a1, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateA.job?.done;
+      const a2 = depsOf({ session: made.value, scripts: [textScript("garbage output")] });
+      maybeStartCheckpoint({ state: stateA, deps: a2, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateA.job?.done;
+      expect(stateA.broken).toBe(false);
+      expect(stateA.fatal).toBe(false);
+      // 序 B（对照）：det-self 1 击 + provider 1 击 → 同样不 fatal
+      const stateB = emptyCheckpointState();
+      const b1 = depsOf({ session: made.value, scripts: [textScript("garbage output")] });
+      maybeStartCheckpoint({ state: stateB, deps: b1, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateB.job?.done;
+      const b2 = depsOf({ session: made.value, scripts: [errorScript()] });
+      maybeStartCheckpoint({ state: stateB, deps: b2, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateB.job?.done;
+      expect(stateB.broken).toBe(false);
+      expect(stateB.fatal).toBe(false);
+      // 两序后再各补一发 det-self → 连续 2 次确定性 self 达标才 fatal
+      const a3 = depsOf({ session: made.value, scripts: [textScript("garbage output")] });
+      maybeStartCheckpoint({ state: stateA, deps: a3, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
+      await stateA.job?.done;
+      expect(stateA.broken).toBe(true);
+      expect(stateA.fatal).toBe(true);
     } finally {
       await world.ctx.dispose();
     }
@@ -217,7 +294,7 @@ describe("maybeStartCheckpoint / joinInflight", () => {
 });
 
 describe("CP 终态矩阵补面（截断/错错/预中止/词条落败）", () => {
-  it("输出截断 → 自限不计败；provider 错 → 计败（分类回归）", async () => {
+  it("输出截断 → 自限计败 1 次（不熔断，阈值 2）；provider 错 → 计败（分类回归）", async () => {
     const world = await makeWorld();
     try {
       const made = await world.store.create({ id: sid("cp-trunc") });
@@ -232,7 +309,8 @@ describe("CP 终态矩阵补面（截断/错错/预中止/词条落败）", () =
       const deps1 = depsOf({ session: made.value, scripts: [truncated] });
       maybeStartCheckpoint({ state, deps: deps1, stepSignal: new AbortController().signal, lastTurnStart: 3, turn: 1, step: 0 });
       await state.job?.done;
-      expect(state.consecutiveFailures).toBe(0);
+      expect(state.consecutiveFailures).toBe(1);
+      expect(state.broken).toBe(false);
       const failing = (async function* (): AsyncGenerator<import("@x-harness/llm").LlmChunk> {
         yield { type: "finish", finish: { kind: "error", message: "boom", code: "http-500" } };
       })();

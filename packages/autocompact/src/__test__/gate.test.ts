@@ -239,6 +239,91 @@ describe("exhausted 暂停 gate（对抗审查 #4 回归）", () => {
       world.ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
       await dispatchPreStep(world, { session: made.value.id });
       expect(cleared).toHaveLength(0);
+      // 判别场景（审查 A4：上一断言在旧实现同样通过——事件投递时序使然）：
+      // journal 预置 exhausted + 存在可清工具结果 → 新建 state 首步必须零落账。
+      // 旧实现（内存 Set + 恢复逻辑缺失）此场景会错误清账（L1-CLEARED 落 placeholder）。
+      const made2 = await world.store.create({ id: sid("paused-recover") });
+      if (!made2.ok) throw new Error(made2.reason);
+      seedToolTurn(made2.value, { turn: 0, user: "go", tool: "read", callId: "cr", args: "{}", result: textOf(60) });
+      seedToolTurn(made2.value, { turn: 1, user: "next", tool: "read", callId: "cr2", args: "{}", result: textOf(1), usage: { input: 950, output: 1 } });
+      made2.value.append("compaction/exhausted", { turn: 9, step: 0, attempts: 3 });
+      const cleared2: string[] = [];
+      world.ctx.on(autocompactL1Cleared, (payload) => cleared2.push(payload.trigger));
+      await dispatchPreStep(world, { session: made2.value.id });
+      expect(cleared2).toHaveLength(0);
+      expect(made2.value.surface().some((node) => node.event.type === "tool/result" && node.event.data.content.startsWith(PLACEHOLDER_PREFIX))).toBe(false);
+    } finally {
+      stderr.mockRestore();
+      await world.ctx.dispose();
+    }
+  });
+});
+
+describe("degraded 保留 L1（修复回归：refit 降级不再禁用本地免费清除）", () => {
+  it("servedWindow 深收缩 + 可清工具结果 → degraded 分支仍落 L1 redaction（旧实现直接静默）", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    // 单装 autocompact（不经 compaction 插件，避免 exhausted 三振路径干扰观测）
+    const { createContext, loadPlugins } = await import("@x-harness/core");
+    const sessionMod = await import("@x-harness/session");
+    const { createCompactionPlugin } = await import("@x-harness/compaction");
+    const { createAutoCompactPlugin } = await import("../plugin.ts");
+    const { llmRuntime } = await import("@x-harness/llm");
+    const helpers = await import("./helpers.ts");
+    const ctx = createContext();
+    const fake = helpers.fakeLlm();
+    // compaction 插件保留（autocompact inject 依赖），但 summarizer 未配置 → 水位路径
+    // warnOnce summarizer-unconfigured 后直接 return，不会三振 exhausted，不干扰 gate 观测
+    await loadPlugins(ctx, [
+      sessionMod.sessionPlugin,
+      // compaction 声明窗给大值：其 92% 水位线不触发（本用例只验 autocompact 的 degraded 分支）
+      createCompactionPlugin({ contextWindow: 1_000_000, reserveTokens: 50, keepRecentTokens: 1, keepMinTurns: 5, triggerPct: 92, summarizer: undefined } as never),
+      // summarizer face 必须给：computeLines 的 reserve 依赖 maxOutputTokens，
+      // face 缺失时 reserve=0 → effectiveWindow 不收缩 → refit 不触发，测不到 degraded 分支
+      createAutoCompactPlugin({ contextWindow: 1_000, checkpointPct: 60, l1Pct: 89, l2Pct: 89, warnBufferTokens: 100, checkpointMinSegmentTokens: 1, ledgerBudgetTokens: 200, summarizer: { model: "sum", contextWindow: 100_000, maxOutputTokens: 100 }, clearKeepRecent: 0 } as never),
+    ]);
+    ctx.provide(llmRuntime, fake.runtime);
+    try {
+      const store = ctx.use(sessionMod.sessionStore);
+      const made = await store.create({ id: helpers.sid("dg-l1") });
+      if (!made.ok) throw new Error(made.reason);
+      // 两轮带 read 工具结果的 turn + 窗口收缩到 120（occupancy 850 >> 线 → refit degraded）
+      helpers.seedToolTurn(made.value, { turn: 0, user: "go", tool: "read", callId: "c1", args: JSON.stringify({ path: "/a.ts" }), result: helpers.textOf(60) });
+      helpers.seedToolTurn(made.value, { turn: 1, user: "next", tool: "read", callId: "c2", args: "{}", result: helpers.textOf(1), usage: { input: 850, output: 1 } });
+      made.value.append("request/context", { provider: "p", model: "m", contextWindow: 120 });
+      const cleared: string[] = [];
+      ctx.on(autocompactL1Cleared, (payload) => cleared.push(payload.trigger));
+      await ctx.dispatch(agentPreStep, { session: made.value.id, turn: 9, step: 0, messages: [], signal: new AbortController().signal } as never, async () => ({ kind: "enter" }) as never);
+      expect(cleared.length).toBeGreaterThan(0);
+      expect(made.value.surface().some((node) => node.event.type === "tool/result" && node.event.data.content.startsWith(PLACEHOLDER_PREFIX))).toBe(true);
+    } finally {
+      stderr.mockRestore();
+      await ctx.dispose();
+    }
+  });
+});
+
+describe("跨 turn 首步观测增量（审查 A1 判别回归：转存次序 bug 曾使 turnStartOccupancy 恒 undefined、首步外推退 cap 常量恒越窗）", () => {
+  it("turn0 末占用 60k → turn1 首步 70k（小增量）→ 不触发 escalate（cap 路径会算 70k+84k>128k 误升级）", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const world = await makeWorld({ summarizer: undefined, clearKeepRecent: 0, contextWindow: 128_000, l1Pct: 60, l2Pct: 75, warnBufferTokens: 10_000 }, { summarizer: undefined, contextWindow: 128_000 });
+    try {
+      const made = await world.store.create({ id: sid("turnstep") });
+      if (!made.ok) throw new Error(made.reason);
+      // turn0：anchor 60k，gate 跑完写 lastOccupancy
+      seedTurn(made.value, { turn: 0, user: textOf(3), assistant: { text: textOf(3), usage: { input: 60_000, output: 1 } } });
+      await dispatchPreStep(world, { session: made.value.id, turn: 0 });
+      // 真实 turn 边界：turn/start 落 journal 并经 microtask 投递
+      made.value.append("turn/start", { turn: 1 });
+      await new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), 10);
+      });
+      // turn1 首步：anchor 70k ∈ [warnLine, l1Line) 警告区，跨 turn 观测增量 10k
+      // （种子不含 turn/start——手动边界事件已发，重复事件会二次触发转存路径）
+      made.value.append("user/message", { turn: 1, step: 0, content: [{ type: "text", text: textOf(3) }] }, { surfaceOp: "append" });
+      made.value.append("assistant/message", { turn: 1, step: 0, content: [{ type: "text", text: textOf(3) }], usage: { input: 70_000, output: 1 }, stopReason: "stop" }, { surfaceOp: "append" });
+      await dispatchPreStep(world, { session: made.value.id, turn: 1 });
+      const escalated = stderr.mock.calls.filter((line) => String(line[0]).includes("budget-gate-release")).length;
+      expect(escalated).toBe(0);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();
@@ -247,7 +332,7 @@ describe("exhausted 暂停 gate（对抗审查 #4 回归）", () => {
 });
 
 describe("servedWindow 收缩与生命周期", () => {
-  it("假窗口收缩 → refit 降级释放；compaction 水位接管恢复（三振停机回归：退避间隔内快速失败原因码透传）", { timeout: 15_000 }, async () => {
+  it("假窗口收缩 → refit 降级释放（degraded 保留 L1 通道 + release 语义）；exhausted 三振后 gate 停跑（gatePaused 恢复回归）", { timeout: 15_000 }, async () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const world = await makeWorld();
     try {
@@ -255,12 +340,16 @@ describe("servedWindow 收缩与生命周期", () => {
       session.append("request/context", { provider: "p", model: "m", contextWindow: 120 });
       const decision = await dispatchPreStep(world, { session: session.id });
       const codes = stderr.mock.calls.map((line) => String(line[0]));
-      expect(codes.some((line) => line.includes("lines-degraded"))).toBe(true);
-      expect(codes.some((line) => line.includes("budget-gate-release") && line.includes("degraded"))).toBe(true);
       expect(codes.filter((line) => line.includes("trigger-noop"))).toHaveLength(3);
       expect(session.events().some((event) => event.type === "compaction/exhausted")).toBe(true);
       expect(decision).toEqual({ kind: "reject", reason: "compact-exhausted" });
       expect(session.events().some((event) => event.type === "user/message" && typeof event.surfaceOp === "object")).toBe(false);
+      // gatePaused 恢复（修复回归）：exhausted 落账后，state 首建/后续 step 均不再重跑 gate——
+      // degraded 诊断不再重复出现（旧行为依赖「事件投递竞态漏置 gatePaused」，已被恢复逻辑取代）
+      const degradedSeen = () => stderr.mock.calls.filter((line) => String(line[0]).includes("lines-degraded")).length;
+      const afterFirst = degradedSeen();
+      await dispatchPreStep(world, { session: session.id });
+      expect(degradedSeen()).toBe(afterFirst);
     } finally {
       stderr.mockRestore();
       await world.ctx.dispose();

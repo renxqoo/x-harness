@@ -229,6 +229,19 @@ function armOrStartCheckpoint(fields: {
 
 export const DEAD_ZONE_PCT = 15;
 
+/** turn 首步（lastOccupancy 被 turn/start 复位）的增量估计：全局 cap 常量对
+ *  小窗口会让溢出预测恒真（A1：128k 窗 + 125k×parallel×1.5 必越线），从而每 turn
+ *  首步触发破坏性 escalate。改为观测值优先：同会话上一 turn 结束时的占用增量；
+ *  仅首个 turn 无任何观测时才退回 cap 常量（此时会话刚建，占用远低于 warn 线，
+ *  实际不可达谓词）。*/
+function observedStepDelta(deps: GateDeps, occupancy: number, maxParallel: number): number {
+  const last = deps.state.cache.lastOccupancy;
+  if (last !== undefined) return Math.max(0, occupancy - last);
+  const turnStartOccupancy = deps.state.cache.turnStartOccupancy;
+  if (turnStartOccupancy !== undefined) return Math.max(0, occupancy - turnStartOccupancy);
+  return deps.config.toolResultCapTokens * Math.max(1, maxParallel);
+}
+
 function l2OverflowPredicted(fields: { readonly occupancy: number; readonly lines: Lines; readonly deps: GateDeps }): boolean {
   const last = fields.deps.state.cache.lastOccupancy;
   if (last === undefined) return false;
@@ -249,15 +262,15 @@ async function routeZones(fields: {
   if (occupancy < lines.l1Line) {
     if (occupancy < lines.warnLine) return;
     warnParallelApproach(deps, { occupancy, maxParallel: measured.maxParallel }, lines);
-    const lastStepDelta =
-      deps.state.cache.lastOccupancy === undefined
-        ? deps.config.toolResultCapTokens * Math.max(1, measured.maxParallel)
-        : Math.max(0, occupancy - (deps.state.cache.lastOccupancy ?? 0));
+    const lastStepDelta = observedStepDelta(deps, occupancy, measured.maxParallel);
     if (budgetOverflowPredicted({ occupancy, lastStepDelta, lines })) {
       await escalateOrJoin({ deps, lines, signal: payload.signal });
     }
     return;
   }
+  // degraded（窗口收缩/refit）时不升级（escalateOrJoin 自己会释放），但 L1 本地清除
+  // 不花 LLM 调用、不改对话语义，保留执行——degraded 恰是窗口最紧的时刻，丢掉这个
+  // 零成本杠杆会退到更贵的摘要压缩（compaction 插件水位）。
   await l1AndBeyond({ deps, lines, nodes, events, occupancy, signal: payload.signal });
 }
 
@@ -280,6 +293,20 @@ async function l1AndBeyond(fields: {
   const { state } = deps;
   const session = deps.session;
   if (session === undefined) return;
+  if (lines.degraded) {
+    // degraded 下保留 L1 本地清除（无 LLM 成本，尽力清）；不走 escalation。
+    // refit 后 l1Line 为负值，pre-gate 恒不满足——degraded 分支跳过 pre-gate
+    // （语义从“清回线下”退化为“能清多少清多少”）；清完仍显式打 release，
+    // 语义不变：交还 compaction 插件水位接管。l1Backoff 复用：清不动时
+    // 退避到下一真轮，与主路径同一防每 step 空转纪律（journal 每 step +2 条
+    // 事件的重复诊断是噪音）；新 turn 复位后若出现新的可清内容会再试。
+    if (!state.cache.l1Backoff) {
+      const cleared = await runL1Clearing({ deps, lines, nodes, events, occupancy, skipPreGate: true });
+      if (cleared) return;
+    }
+    deps.warn(session.id, "budget-gate-release", { reason: "degraded" });
+    return;
+  }
   if (!state.cache.l1Backoff) {
     const cleared = await runL1Clearing({ deps, lines, nodes, events, occupancy });
     if (cleared) return;
@@ -304,12 +331,14 @@ async function runL1Clearing(fields: {
   readonly nodes: readonly SurfaceNode[];
   readonly events: Parameters<typeof computeClearPlan>[1];
   readonly occupancy: number;
+  readonly skipPreGate?: boolean;
 }): Promise<boolean> {
   const { deps, lines, nodes, events, occupancy } = fields;
   const { state, config } = deps;
   const session = deps.session as Session;
   const plan = computeClearPlan(nodes, events, { clearableTools: config.clearableTools, clearKeepRecent: config.clearKeepRecent, diffTools: config.diffTools, diffKeepLines: config.diffKeepLines, diffSuffix: DIFF_TRUNCATE_SUFFIX });
-  if (plan.entries.length > 0 && l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines })) {
+  const worth = fields.skipPreGate === true || l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines });
+  if (plan.entries.length > 0 && worth) {
     const landed = landClearPlan(session, nodes, plan.entries);
     if (landed.landed === 0) deps.warn(session.id, "l1-redact-failed");
     if (landed.landed > 0) {
@@ -323,7 +352,7 @@ async function runL1Clearing(fields: {
       if (remeasured < lines.l1Line) return true;
     }
   }
-  if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !l1PreGateWorth({ occupancy, gainTokens: plan.gainTokens, lines }))) {
+  if (plan.gainTokens < 1_000 || (plan.entries.length > 0 && !worth)) {
     state.cache.l1Backoff = true;
     deps.warn(session.id, "l1-no-gain", { gainTokens: plan.gainTokens });
   }

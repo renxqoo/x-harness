@@ -135,7 +135,11 @@ export function trimLedgerWithFiles(
 ): { readonly ledger: Ledger; readonly filesText: string | undefined } {
   const filesBudget = Math.floor(budgetTokens * 0.5);
   const clampedFiles = clampFilesText(filesText, filesBudget);
-  let trimmed: Ledger = { ...ledger, tasksDone: [...ledger.tasksDone], factsVerified: [...ledger.factsVerified] };
+  let trimmed: Ledger = { ...ledger, tasksDone: [...ledger.tasksDone], factsVerified: [...ledger.factsVerified], factsUnverified: [...ledger.factsUnverified], goals: [...ledger.goals], decisions: [...ledger.decisions], tasksPending: [...ledger.tasksPending] };
+  // 裁剪顺序：done/verified 最先（历史事实，丢失成本最低），然后 unverified
+  // （未证实假设，与 decisions 同为 append-only 却曾不在裁剪序），再 goals/pending
+  // （目标可能已过时），最后 decisions（最旧优先——被取代的旧决策在新决策行里
+  // 已有声明）。current 不裁（工作状态，丢了下一步就断）。
   while (ledgerTokens(trimmed, clampedFiles) > budgetTokens) {
     if (trimmed.tasksDone.length > 0) {
       trimmed = { ...trimmed, tasksDone: trimmed.tasksDone.slice(1) };
@@ -143,6 +147,22 @@ export function trimLedgerWithFiles(
     }
     if (trimmed.factsVerified.length > 0) {
       trimmed = { ...trimmed, factsVerified: trimmed.factsVerified.slice(1) };
+      continue;
+    }
+    if (trimmed.factsUnverified.length > 0) {
+      trimmed = { ...trimmed, factsUnverified: trimmed.factsUnverified.slice(1) };
+      continue;
+    }
+    if (trimmed.goals.length > 0) {
+      trimmed = { ...trimmed, goals: trimmed.goals.slice(1) };
+      continue;
+    }
+    if (trimmed.tasksPending.length > 0) {
+      trimmed = { ...trimmed, tasksPending: trimmed.tasksPending.slice(1) };
+      continue;
+    }
+    if (trimmed.decisions.length > 0) {
+      trimmed = { ...trimmed, decisions: trimmed.decisions.slice(1) };
       continue;
     }
     break;

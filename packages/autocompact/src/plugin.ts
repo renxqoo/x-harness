@@ -39,6 +39,8 @@ export interface AutoCompactOptions {
   readonly warnBufferTokens?: number;
   readonly checkpointMaxRetries?: number;
   readonly checkpointIdleTimeoutMs?: number;
+  /** 预测用的单工具结果 token 上界。缺省按 agent-loop 的入库截断（默认
+   *  100_000 chars）取最宽情形上界；装配层同时持有两边时应显式传入，避免漂移。 */
   readonly toolResultCapTokens?: number;
   readonly summarizer?: SummarizerFace;
   readonly fileTools?: FileToolNames;
@@ -53,8 +55,21 @@ const DEFAULTS = {
   idleClearMinGainTokens: 0,
   checkpointMaxRetries: 2,
   checkpointIdleTimeoutMs: 120_000,
-  toolResultCapTokens: 25_000,
 } as const;
+
+/** agent-loop 的入库截断默认值（agent-loop/src/plugin.ts DEFAULT_MAX_RESULT_CHARS）。
+ *  哑复述：该常量未从 agent-loop export（依赖本身已存在），agent-loop 侧调整
+ *  maxToolResultChars 缺省时此处需同步——待 agent-loop export 后改 import 收敛。 */
+const DEFAULT_MAX_TOOL_RESULT_CHARS = 100_000;
+
+/** agent-loop 入库截断是字符数，占用计量是 token 数，两者换算依赖内容宽度：
+ *  ASCII ≈ chars/4（0.25 倍），全宽字符 ≈ chars × 1.25，相差 5 倍。取几何均值
+ *  √(0.25×1.25) ≈ 0.56 倍 chars 作缺省折中：CJK 不再系统性低估 5 倍（旧值 25k），
+ *  ASCII 不因最宽上界（125k）在 warn 区首步即预测穿窗而过早触发不可逆 L2 替换。
+ *  预测方向仍偏保守（折中 ≥ ASCII 真值 25k）。装配层同时持有两边时应显式传入。 */
+export function toolResultCapTokensOf(maxToolResultChars: number): number {
+  return Math.ceil(maxToolResultChars * 0.56);
+}
 
 export const DIFF_TOOLS = ["edit", "write"] as const;
 export const DIFF_TRUNCATE_KEEP_LINES = 40;
@@ -106,7 +121,7 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
     diffKeepLines: options.diffKeepLines ?? DIFF_TRUNCATE_KEEP_LINES,
     checkpointMaxRetries: options.checkpointMaxRetries ?? DEFAULTS.checkpointMaxRetries,
     checkpointIdleTimeoutMs: options.checkpointIdleTimeoutMs ?? DEFAULTS.checkpointIdleTimeoutMs,
-    toolResultCapTokens: options.toolResultCapTokens ?? DEFAULTS.toolResultCapTokens,
+    toolResultCapTokens: options.toolResultCapTokens ?? toolResultCapTokensOf(DEFAULT_MAX_TOOL_RESULT_CHARS),
     checkpointMinSegmentTokens: 0,
   };
   const fileTools = options.fileTools ?? DEFAULT_FILE_TOOLS;
@@ -194,61 +209,12 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       });
 
       const onPreStep = async (payload: PreStepPayload, next: (input: PreStepPayload) => Promise<unknown>): Promise<unknown> => {
-        if (!gatePaused.has(payload.session)) {
-          const state = stateOf(payload.session);
-          if (state !== undefined) {
-            const deps = gateDepsOf(payload.session, state);
-            if (deps.session !== undefined) await runStepGate(deps, payload);
-          }
+        const state = stateOf(payload.session);
+        if (state !== undefined && !state.gatePaused) {
+          const deps = gateDepsOf(payload.session, state);
+          if (deps.session !== undefined) await runStepGate(deps, payload);
         }
         return next(payload);
-      };
-
-      const resolveAtOf = (live: { events(): readonly SessionEvent[] }): { turn: number; step: number } => {
-        let openTurn = -1;
-        let step = 0;
-        let lastClosed = -1;
-        for (const event of live.events()) {
-          if (event.type === "turn/start") {
-            openTurn = event.data.turn;
-            step = 0;
-          } else if (event.type === "turn/end") {
-            lastClosed = event.data.turn;
-            openTurn = -1;
-          } else if (event.type === "step/start" && openTurn >= 0) {
-            step = event.data.step;
-          }
-        }
-        if (openTurn >= 0) return { turn: openTurn, step };
-        return { turn: Math.max(0, lastClosed), step: 0 };
-      };
-
-      const gatePaused = new Set<SessionId>();
-
-      const onSessionEvent = ({ session, event }: { session: SessionId; event: SessionEvent }): void => {
-        const state = states.get(session);
-        if (state === undefined) return;
-        if (event.type === "turn/start") {
-          state.turnActive = true;
-          state.cache.lastOccupancy = undefined;
-          state.cache.l1Backoff = false;
-          state.checkpoint.consecutiveFailures = 0;
-          if (state.checkpoint.broken) {
-            if (state.checkpoint.fatal) {
-              warn(session, "breaker-held", { cause: "deterministic-failure" });
-            } else {
-              state.checkpoint.broken = false;
-              warn(session, "breaker-recovered");
-            }
-          }
-        } else if (event.type === "turn/end") {
-          state.turnActive = false;
-          state.lastTurnEndAt = event.time;
-        } else if (event.type === "compaction/exhausted") {
-          gatePaused.add(session);
-        } else if (event.type === "user/message" && typeof event.surfaceOp === "object" && event.surfaceOp.op === "replace") {
-          gatePaused.delete(session);
-        }
       };
 
       const tickIdle = (): void => {
@@ -276,6 +242,66 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
       const timer = idleMs > 0 ? setInterval(tickIdle, Math.min(60_000, Math.max(250, idleMs))) : undefined;
       timer?.unref?.();
 
+      const resolveAtOf = (live: { events(): readonly SessionEvent[] }): { turn: number; step: number } => {
+        let openTurn = -1;
+        let step = 0;
+        let lastClosed = -1;
+        for (const event of live.events()) {
+          if (event.type === "turn/start") {
+            openTurn = event.data.turn;
+            step = 0;
+          } else if (event.type === "turn/end") {
+            lastClosed = event.data.turn;
+            openTurn = -1;
+          } else if (event.type === "step/start" && openTurn >= 0) {
+            step = event.data.step;
+          }
+        }
+        if (openTurn >= 0) return { turn: openTurn, step };
+        return { turn: Math.max(0, lastClosed), step: 0 };
+      };
+
+      const onSessionEvent = ({ session, event }: { session: SessionId; event: SessionEvent }): void => {
+        const state = states.get(session);
+        if (state === undefined) return;
+        if (event.type === "turn/start") {
+          state.turnActive = true;
+          // 跨 turn 增量基准：先转存后清空（次序错不得——先清空则转存 undefined，
+          // turnStartOccupancy 永远拿不到真值，首步外推退回 cap 常量，A1 白修）。
+          // 事件驱动转存不依赖 gate 时序（sessionAuditEvent 是 microtask 投递，
+          // 但 turn/start 一定先于同 turn 的 pre-step dispatch 到达）。
+          // 转存仅当 lastOccupancy 存在：连续 turn/start（中间无 gate 跑动，
+          // 如测试种子或异常事件流）不清掉已转存的基准——丢失基准会让首步
+          // 外推退回 cap 常量（A1 复发）。
+          if (state.cache.lastOccupancy !== undefined) state.cache.turnStartOccupancy = state.cache.lastOccupancy;
+          state.cache.lastOccupancy = undefined;
+          state.cache.l1Backoff = false;
+          state.checkpoint.consecutiveFailures = 0;
+          state.checkpoint.consecutiveSelfFailures = 0;
+          if (state.checkpoint.broken) {
+            if (state.checkpoint.fatal) {
+              warn(session, "breaker-held", { cause: "deterministic-failure" });
+            } else {
+              state.checkpoint.broken = false;
+              warn(session, "breaker-recovered");
+            }
+          }
+        } else if (event.type === "turn/end") {
+          state.turnActive = false;
+          state.lastTurnEndAt = event.time;
+        } else if (event.type === "compaction/exhausted") {
+          if (!state.gatePaused) {
+            state.gatePaused = true;
+            // 与 checkpoint 熔断的 breaker-held 对称：gate 暂停需要可观测痕迹，
+            // 否则运维只能靠诊断流断流反推
+            warn(session, "gate-held", { cause: "compaction-exhausted" });
+          }
+        } else if (event.type === "user/message" && typeof event.surfaceOp === "object" && event.surfaceOp.op === "replace") {
+          if (state.gatePaused) warn(session, "gate-resumed");
+          state.gatePaused = false;
+        }
+      };
+
       const offs = [
         ctx.on(agentPreStep, onPreStep as never),
         ctx.on(sessionAuditEvent, onSessionEvent as never),
@@ -283,7 +309,6 @@ export function createAutoCompactPlugin(options: AutoCompactOptions): Plugin {
           const state = states.get(session);
           if (state !== undefined) cancelJob(state.checkpoint);
           states.delete(session);
-          gatePaused.delete(session);
         }),
       ];
       return async () => {

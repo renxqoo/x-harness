@@ -69,13 +69,14 @@ export interface CheckpointState {
   coveredSeq: number;
   armed: boolean;
   consecutiveFailures: number;
+  consecutiveSelfFailures: number;
   broken: boolean;
   fatal: boolean;
   job: CheckpointJob | undefined;
 }
 
 export function emptyCheckpointState(): CheckpointState {
-  return { ledger: emptyLedger(), coveredSeq: -1, armed: true, consecutiveFailures: 0, broken: false, fatal: false, job: undefined };
+  return { ledger: emptyLedger(), coveredSeq: -1, armed: true, consecutiveFailures: 0, consecutiveSelfFailures: 0, broken: false, fatal: false, job: undefined };
 }
 
 export interface CheckpointDeps {
@@ -302,8 +303,9 @@ async function callCheckpointModel(fields: {
       failOnce({ state, deps, blame: "provider", failureCode });
     } else {
       const cause = selfFailureCause(outcome.reason);
-      deps.warn(deps.session.id, "checkpoint-failed", { reason: cause, blame: "self" });
-      failOnce({ state, deps, blame: "self", failureCode: undefined });
+      const transient = outcome.reason === "aborted";
+      deps.warn(deps.session.id, "checkpoint-failed", { reason: cause, blame: "self", ...(transient ? { transient: true } : {}) });
+      failOnce({ state, deps, blame: "self", failureCode: undefined, ...(transient ? { transient: true } : {}) });
     }
     return undefined;
   }
@@ -368,22 +370,54 @@ interface FailureStrike {
   readonly deps: CheckpointDeps;
   readonly blame: CheckpointBlame;
   readonly failureCode: string | undefined;
+  /** 瞬态 self 失败（idle 超时）：与 provider 同语义三振 non-fatal，
+   *  turn/start 可复位。流停滞会自愈，fatal 会把 L2 通道一并锁死。 */
+  readonly transient?: boolean;
+}
+
+export const SELF_BREAKER_THRESHOLD = 2;
+
+/** 确定性 self 失败分账计数：fatal 门槛要求【连续】SELF_BREAKER_THRESHOLD 次
+ *  确定性 self 失败（复发证据），任何 provider/瞬态击重置它——一次瞬态抖动
+ *  不能把确定性阈值从 2 降到 1（复查 F3：混合击序曾决定 fatality）。 */
+function consecutiveSelfStrikes(state: CheckpointState, deterministicSelf: boolean): number {
+  if (!deterministicSelf) {
+    state.consecutiveSelfFailures = 0;
+    return 0;
+  }
+  state.consecutiveSelfFailures += 1;
+  return state.consecutiveSelfFailures;
 }
 
 function failOnce(strike: FailureStrike): void {
   const { state, deps } = strike;
-  if (strike.blame === "self") {
-    deps.emit("failed", { failures: state.consecutiveFailures, blame: strike.blame });
+  state.consecutiveFailures += 1;
+  const failures = state.consecutiveFailures;
+  const deterministicSelf = strike.blame === "self" && strike.transient !== true;
+  if (deterministicSelf) {
+    // 确定性 self 失败（patch 不可解析 / 输入预算耗尽 / 输出为空）：不计数会在每个
+    // step 无限重启 checkpoint，每次都是真实 LLM 调用。fatal 判定用分账计数
+    // （连续 2 次确定性 self，非混合总数）——fatal 不随 turn/start 复位，
+    // 等人工换 summarizer。
+    const selfStrikes = consecutiveSelfStrikes(state, true);
+    deps.emit("failed", { failures, selfStrikes, blame: strike.blame });
+    if (selfStrikes < SELF_BREAKER_THRESHOLD) return;
+    state.broken = true;
+    state.fatal = true;
+    deps.emit("breaker", { failures: selfStrikes });
     return;
   }
-  state.consecutiveFailures += 1;
+  consecutiveSelfStrikes(state, false);
+  // provider 失败与瞬态 self 失败（idle-aborted）共用三振 non-fatal 语义；
+  // fatality 只由各自类别的确定性证据决定（self 分账 / provider 错误码），
+  // 混击序不再影响判定。
   const { failureCode } = strike;
-  deps.emit("failed", { failures: state.consecutiveFailures, blame: strike.blame, ...(failureCode !== undefined ? { failureCode } : {}) });
-  const fatal = failureCode !== undefined && isDeterministicFailure(failureCode);
-  if (!fatal && state.consecutiveFailures < 3) return;
+  deps.emit("failed", { failures, blame: strike.blame, ...(failureCode !== undefined ? { failureCode } : {}) });
+  const fatal = strike.blame === "provider" && failureCode !== undefined && isDeterministicFailure(failureCode);
+  if (!fatal && failures < 3) return;
   state.broken = true;
   state.fatal = fatal;
-  deps.emit("breaker", { failures: state.consecutiveFailures, ...(failureCode !== undefined ? { failureCode } : {}) });
+  deps.emit("breaker", { failures, ...(failureCode !== undefined ? { failureCode } : {}) });
 }
 
 export function foldCheckpointEvents(events: readonly SessionEvent[]): { readonly ledger: Ledger; readonly coveredSeq: number } {
