@@ -317,3 +317,7 @@ function inspectApplication(app: Host) {
 inspect 的 work 能看到任务标签、服务方法、执行插件、资源拥有者和等待关系。任务已取消但函数还没有返回时，仍然留在这里。resources 能看到资源种类、归属、清理依赖和 active/closing/failed 状态；plugins 能看到固定提供者和可选依赖是否缺席。
 
 缺依赖、卸载受阻和关闭未完成会返回定位详情。错误内的 diagnosticId 对应 diagnostics 的记录；每份列表最多展示 8 条并报告总数与省略数，完整关系由 inspect 获取。这里只输出元数据；任务 label 请使用稳定名称，避免填写连接串或凭据。
+
+调用实现可用 `call.cancel()` 取消当前调用，或在自己管理的期限到期时用 `call.cancel("timeout")`。首次回执立即失败并通知子工作，实际函数、资源和容量仍等排空；不能把回执当作已经退出。该方法只接受这两种内核原因，不能借此绕过服务的业务错误校验。
+
+父调用的首次超时原因会传递给子工作和等待者，避免下层取消覆盖超时。内核不透传外部AbortSignal.reason，调用信号仍使用原生DOMException。

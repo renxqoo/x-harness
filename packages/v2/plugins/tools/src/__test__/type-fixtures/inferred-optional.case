@@ -1,0 +1,1 @@
+createToolPlugin({name:"x",inputSchema:{type:"object",properties:{text:{type:"string"}}},execute:async(input)=>{const text:string=input.text;return {ok:true,value:{content:[]}};}});

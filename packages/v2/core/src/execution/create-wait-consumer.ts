@@ -41,7 +41,7 @@ export function createWaitConsumer(args: {
     }
     if (cell.current && state.waiter) {
       state.unlink.push(observeSignal(state.waiter.controller.signal, aborted));
-      if (signalAborted(state.waiter.controller.signal)) finishFault(cell, "cancelled");
+      if (signalAborted(state.waiter.controller.signal)) finishFault(cell, state.waiter.cancellation ?? "cancelled");
     }
     if (!cell.current) return;
     const clearTimer = state.kernel.scheduler.delay(timeout(cell), Math.max(0, state.deadline - state.kernel.scheduler.now()));
@@ -52,7 +52,7 @@ export function createWaitConsumer(args: {
 }
 
 function cancellation(cell: WaitConsumerCell): () => void {
-  return () => finishFault(cell, "cancelled");
+  return () => finishFault(cell, cell.current?.waiter?.cancellation ?? "cancelled");
 }
 
 function timeout(cell: WaitConsumerCell): () => void {

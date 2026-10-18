@@ -1,0 +1,142 @@
+{
+  "date": "2026-10-18",
+  "runtime": "Bun 1.4.3 / macOS arm64",
+  "workspace": "packages/v2",
+  "baseline": {
+    "files": 131,
+    "cases": 1097
+  },
+  "gates": {
+    "lint": {
+      "exitCode": 0,
+      "errors": 0,
+      "warnings": 0,
+      "kernelSourceFiles": 104,
+      "platformSourceFiles": 230
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "coreNegativeFixtures": 112,
+      "sessionNegativeFixtures": 11,
+      "llmNegativeFixtures": 13,
+      "toolsNegativeFixtures": 12,
+      "documentationExamples": {
+        "core": 29,
+        "session": 2,
+        "llm": 2,
+        "tools": 2
+      }
+    },
+    "build": {
+      "exitCode": 0
+    },
+    "test": {
+      "exitCode": 0,
+      "files": 143,
+      "cases": 1237,
+      "toolsFiles": 10,
+      "toolsCases": 133,
+      "unhandledErrors": 0
+    }
+  },
+  "coverage": {
+    "statements": {
+      "total": 8388,
+      "covered": 7735,
+      "skipped": 0,
+      "pct": 92.21
+    },
+    "branches": {
+      "total": 7247,
+      "covered": 6549,
+      "skipped": 0,
+      "pct": 90.36
+    },
+    "functions": {
+      "total": 1200,
+      "covered": 1180,
+      "skipped": 0,
+      "pct": 98.33
+    },
+    "lines": {
+      "total": 4064,
+      "covered": 4002,
+      "skipped": 0,
+      "pct": 98.47
+    }
+  },
+  "toolsCoverage": {
+    "statements": {
+      "covered": 455,
+      "total": 493,
+      "pct": 92.29
+    },
+    "branches": {
+      "covered": 458,
+      "total": 506,
+      "pct": 90.51
+    },
+    "functions": {
+      "covered": 72,
+      "total": 72,
+      "pct": 100.0
+    },
+    "lines": {
+      "covered": 130,
+      "total": 130,
+      "pct": 100.0
+    }
+  },
+  "thresholds": {
+    "statements": 90,
+    "branches": 88,
+    "functions": 95,
+    "lines": 96
+  },
+  "mutations": {
+    "toolsDetected": 11,
+    "toolsTotal": 11,
+    "toolsBaselineCases": 133,
+    "llmDetected": 10,
+    "llmTotal": 10
+  },
+  "benchmarks": {
+    "toolsSamples": 30,
+    "llmNormalizationSamples": 54,
+    "llmLoopbackSamples": 9
+  },
+  "reviews": {
+    "plan": "closed",
+    "implementation": "closed",
+    "falseGreen": "passed",
+    "httpDrainNegativeControls": 2
+  },
+  "deployment": "Bun with complete package sources or whole application bundle",
+  "knownFeatureDefects": [],
+  "verificationHistory": [
+    "An existing independent PostgreSQL process startup returned storage-unavailable in one full run; its 8-case suite then passed and the next complete 1237-case suite passed. No session code was changed.",
+    "LLM HTTP drainage assertion now separately checks first receipt and bounded actual completion before host.close; all original assertions preserved, two independent negative controls failed as expected."
+  ],
+  "integration": {
+    "originalWorkspace": "/Users/wrr/work/x-harness/packages/v2",
+    "explicitPaths": 87,
+    "conflictingPaths": 0,
+    "originalGates": {
+      "lint": 0,
+      "typecheck": 0,
+      "build": 0,
+      "test": 0
+    },
+    "originalTests": {
+      "files": 143,
+      "cases": 1237
+    },
+    "sourceAndArtifactMatches": true,
+    "benchmarkFingerprintsMatch": true
+  },
+  "schedulerIntegration": {
+    "acceptance": "../../tool-scheduler/reviews/acceptance.json",
+    "toolsValidationPublicEntry": true,
+    "sharedIndexBuildJourney": true
+  }
+}

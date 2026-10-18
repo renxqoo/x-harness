@@ -44,6 +44,13 @@ function facade(cell: InvocationCell, layout: DependencyLayout, metadata: Metada
         }), required: work.executor.plugin?.requires ?? {}, optional: work.executor.plugin?.optional ?? {},
       });
     },
+    cancel(reason: "cancelled" | "timeout" = "cancelled") {
+      if (!cell.current) return createFault("cancelled");
+      if (reason !== "cancelled" && reason !== "timeout") return createFault("invalid-input");
+      const { kernel, work } = cell.current;
+      work.fail(kernel.fault(reason, work.executor));
+      return { ok: true, value: undefined } as const;
+    },
     bind(context: Context) {
       if (!cell.current) return createFault("cancelled");
       const { kernel, work } = cell.current;

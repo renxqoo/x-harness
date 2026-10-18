@@ -1,0 +1,1 @@
+createToolPlugin({name:"x",inputSchema:{type:"object"},execute:async(_input,call)=>{await call.deps.missing.run();return {ok:true,value:{content:[]}};}});

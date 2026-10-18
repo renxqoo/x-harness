@@ -1,0 +1,2 @@
+import { expect,it } from "vitest";
+it("scheduler source and build share identity and drain concurrent real HTTP work in a fresh process",async()=>{const child=Bun.spawn([process.execPath,new URL("./scheduler-built-case.ts",import.meta.url).pathname],{stdout:"pipe",stderr:"pipe",timeout:5000});try{const [code,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);expect({code,stderr}).toEqual({code:0,stderr:""});expect(stdout).toContain("scheduler HTTP build passed");}finally{child.kill();await child.exited;}});

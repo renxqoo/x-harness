@@ -1,0 +1,73 @@
+{
+  "command": "bun run test:tools:mutations",
+  "runtime": "1.4.3",
+  "baselineCases": 133,
+  "reports": [
+    {
+      "name": "missing schema validation",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, value: { content: [] } } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "authorization bypass",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "instance budget ignored",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "lost root cancellation",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 'blocked' to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "progress receipt waits for actual drain",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 'blocked' to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "same-name replacement steals stale ticket",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected true to be false // Object.is equality"
+    },
+    {
+      "name": "ignored consumer failure",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "retained consumer callback",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { control: true, subject: false, …(1) } to match object { control: true, subject: true, …(1) }"
+    },
+    {
+      "name": "schema keyword smuggling",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, value: { …(5) } } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "secret error echo",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected '{\"ok\":false,\"error\":{\"source\":\"tools\"…' not to contain 'my-private-key'"
+    },
+    {
+      "name": "capacity released before actual completion",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: false, error: { …(6) } } to match object { ok: false, error: { code: 'busy' } }"
+    }
+  ]
+}

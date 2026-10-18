@@ -53,7 +53,7 @@ bun run build
 bun run test
 ```
 
-typecheck 包括公开入口正例、111 个编译负例和文档插件示例；lint 包括类型感知检查、纯内核依赖边界和外围包公开入口边界；test 在 Bun 下运行并生成覆盖率诊断。测试组织及具体异常矩阵见 [测试说明](core/src/__test__/README.md)。
+typecheck 包括公开入口正例、112 个内核编译负例和文档插件示例；lint 包括类型感知检查、纯内核依赖边界和外围包公开入口边界；test 在 Bun 下运行并生成覆盖率诊断。测试组织及具体异常矩阵见 [测试说明](core/src/__test__/README.md)。
 
 core 是进程内插件宿主。npm 包获取、模块导入、配置审批与执行隔离由外部宿主提供；已导入插件的在线装配和卸载由 core 提供。通知事件使用内存队列，可靠投递与业务持久化由外部插件提供。
 
@@ -62,6 +62,8 @@ core 是进程内插件宿主。npm 包获取、模块导入、配置审批与�
 | 包 | 职责 | 文档 |
 | --- | --- | --- |
 | core | 通用插件机制、固定依赖和生命周期 | [内核指南](core/README.md) |
+| plugins/tools | 工具定义、schema校验、权限扩展和受管执行 | [工具插件](plugins/tools/README.md) |
+| plugins/tool-scheduler | 有界排队、批量并发、公平轮转及工具调用依赖 | [工具调度](plugins/tool-scheduler/README.md) |
 | plugins/session-sqlite / session-postgres | SQLite / PostgreSQL storage providers | [Storage contract](plugins/session/README.md) |
 | plugins/session | 持久历史、有效对话、分支恢复与事务提交 | [会话插件](plugins/session/README.md) |
 | standard | logger、timer、JSON config | [标准插件](standard/README.md) |

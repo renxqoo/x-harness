@@ -1,0 +1,1 @@
+service.batch({calls:[],onProgress(delta:string){void delta;}});

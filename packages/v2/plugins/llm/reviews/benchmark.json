@@ -1,10 +1,10 @@
 {
   "command": "bun scripts/benchmark-llm.ts",
-  "timestamp": "2026-10-18T08:04:21.645Z",
+  "timestamp": "2026-10-18T09:16:41.865Z",
   "runtime": "1.4.3",
   "platform": "darwin",
   "arch": "arm64",
-  "sourceSha256": "eb1e01eece4319acd889012acba1d11505cd9905af4c45fea80562595d8ee1d3",
+  "sourceSha256": "a8f9c10f3d9610db46fa17d5041087637f0b46328c266bd92f9138d16adf56f3",
   "warmupRunsPerCase": 1,
   "samples": [
     {
@@ -15,8 +15,8 @@
       "chunkBytes": 1,
       "run": 1,
       "frames": 64,
-      "milliseconds": 4.065249999999999,
-      "mibPerSecond": 3.8435520570690622,
+      "milliseconds": 4.840040999999999,
+      "mibPerSecond": 3.2282784381371976,
       "retainedTextBytes": 0
     },
     {
@@ -27,8 +27,8 @@
       "chunkBytes": 1,
       "run": 2,
       "frames": 64,
-      "milliseconds": 3.0799590000000023,
-      "mibPerSecond": 5.073119479837228,
+      "milliseconds": 3.6648330000000016,
+      "mibPerSecond": 4.26349577184008,
       "retainedTextBytes": 0
     },
     {
@@ -39,8 +39,8 @@
       "chunkBytes": 1,
       "run": 3,
       "frames": 64,
-      "milliseconds": 3.0039170000000013,
-      "mibPerSecond": 5.2015418535199185,
+      "milliseconds": 3.6132500000000007,
+      "mibPerSecond": 4.324361724209506,
       "retainedTextBytes": 0
     },
     {
@@ -51,8 +51,8 @@
       "chunkBytes": 64,
       "run": 1,
       "frames": 64,
-      "milliseconds": 0.3329999999999984,
-      "mibPerSecond": 46.92192192192215,
+      "milliseconds": 0.35541700000000276,
+      "mibPerSecond": 43.962444114940695,
       "retainedTextBytes": 0
     },
     {
@@ -63,8 +63,8 @@
       "chunkBytes": 64,
       "run": 2,
       "frames": 64,
-      "milliseconds": 0.3241250000000022,
-      "mibPerSecond": 48.20671037408375,
+      "milliseconds": 0.3825000000000003,
+      "mibPerSecond": 40.84967320261435,
       "retainedTextBytes": 0
     },
     {
@@ -75,8 +75,8 @@
       "chunkBytes": 64,
       "run": 3,
       "frames": 64,
-      "milliseconds": 0.3285419999999988,
-      "mibPerSecond": 47.55860742309981,
+      "milliseconds": 0.38554099999999636,
+      "mibPerSecond": 40.527466598883514,
       "retainedTextBytes": 0
     },
     {
@@ -87,8 +87,8 @@
       "chunkBytes": 4096,
       "run": 1,
       "frames": 64,
-      "milliseconds": 0.2660839999999993,
-      "mibPerSecond": 58.72205769606605,
+      "milliseconds": 0.2568339999999978,
+      "mibPerSecond": 60.83696083851879,
       "retainedTextBytes": 0
     },
     {
@@ -99,8 +99,8 @@
       "chunkBytes": 4096,
       "run": 2,
       "frames": 64,
-      "milliseconds": 0.2498339999999999,
-      "mibPerSecond": 62.54152757430937,
+      "milliseconds": 1.5389589999999984,
+      "mibPerSecond": 10.152967038108239,
       "retainedTextBytes": 0
     },
     {
@@ -111,8 +111,8 @@
       "chunkBytes": 4096,
       "run": 3,
       "frames": 64,
-      "milliseconds": 0.215916,
-      "mibPerSecond": 72.36610533726079,
+      "milliseconds": 0.24758399999999625,
+      "mibPerSecond": 63.10989401576935,
       "retainedTextBytes": 0
     },
     {
@@ -123,8 +123,8 @@
       "chunkBytes": 1,
       "run": 1,
       "frames": 256,
-      "milliseconds": 9.322625000000002,
-      "mibPerSecond": 6.704120352368563,
+      "milliseconds": 12.381874999999994,
+      "mibPerSecond": 5.047700772298221,
       "retainedTextBytes": 0
     },
     {
@@ -135,8 +135,8 @@
       "chunkBytes": 1,
       "run": 2,
       "frames": 256,
-      "milliseconds": 8.781874999999992,
-      "mibPerSecond": 7.116931179275502,
+      "milliseconds": 11.443207999999998,
+      "mibPerSecond": 5.461755130204748,
       "retainedTextBytes": 0
     },
     {
@@ -147,8 +147,8 @@
       "chunkBytes": 1,
       "run": 3,
       "frames": 256,
-      "milliseconds": 8.512625,
-      "mibPerSecond": 7.342036093449436,
+      "milliseconds": 13.959083000000007,
+      "mibPerSecond": 4.477371472037237,
       "retainedTextBytes": 0
     },
     {
@@ -159,8 +159,8 @@
       "chunkBytes": 64,
       "run": 1,
       "frames": 256,
-      "milliseconds": 0.8740829999999988,
-      "mibPerSecond": 71.50350710401653,
+      "milliseconds": 1.3269999999999982,
+      "mibPerSecond": 47.098718914845584,
       "retainedTextBytes": 0
     },
     {
@@ -171,8 +171,8 @@
       "chunkBytes": 64,
       "run": 2,
       "frames": 256,
-      "milliseconds": 0.6557910000000078,
-      "mibPerSecond": 95.3047541061089,
+      "milliseconds": 0.8254160000000041,
+      "mibPerSecond": 75.71939482636596,
       "retainedTextBytes": 0
     },
     {
@@ -183,8 +183,8 @@
       "chunkBytes": 64,
       "run": 3,
       "frames": 256,
-      "milliseconds": 0.6657500000000027,
-      "mibPerSecond": 93.87908374014232,
+      "milliseconds": 0.7977499999999935,
+      "mibPerSecond": 78.34534628643122,
       "retainedTextBytes": 0
     },
     {
@@ -195,8 +195,8 @@
       "chunkBytes": 4096,
       "run": 1,
       "frames": 256,
-      "milliseconds": 0.5347500000000025,
-      "mibPerSecond": 116.87704534829305,
+      "milliseconds": 0.6138750000000073,
+      "mibPerSecond": 101.81225819588558,
       "retainedTextBytes": 0
     },
     {
@@ -207,8 +207,8 @@
       "chunkBytes": 4096,
       "run": 2,
       "frames": 256,
-      "milliseconds": 0.8062919999999991,
-      "mibPerSecond": 77.51534183645636,
+      "milliseconds": 0.9976669999999928,
+      "mibPerSecond": 62.64615347606011,
       "retainedTextBytes": 0
     },
     {
@@ -219,8 +219,8 @@
       "chunkBytes": 4096,
       "run": 3,
       "frames": 256,
-      "milliseconds": 0.5444159999999982,
-      "mibPerSecond": 114.80191618174375,
+      "milliseconds": 0.6134160000000008,
+      "mibPerSecond": 101.88844112315283,
       "retainedTextBytes": 0
     },
     {
@@ -231,8 +231,8 @@
       "chunkBytes": 1,
       "run": 1,
       "frames": 1024,
-      "milliseconds": 36.999792,
-      "mibPerSecond": 6.756794740900165,
+      "milliseconds": 50.627166999999986,
+      "mibPerSecond": 4.9380602315748785,
       "retainedTextBytes": 0
     },
     {
@@ -243,8 +243,8 @@
       "chunkBytes": 1,
       "run": 2,
       "frames": 1024,
-      "milliseconds": 31.834000000000003,
-      "mibPerSecond": 7.85323867562983,
+      "milliseconds": 45.69670899999997,
+      "mibPerSecond": 5.47085349187838,
       "retainedTextBytes": 0
     },
     {
@@ -255,8 +255,8 @@
       "chunkBytes": 1,
       "run": 3,
       "frames": 1024,
-      "milliseconds": 29.46237500000001,
-      "mibPerSecond": 8.485398750100762,
+      "milliseconds": 34.01658400000002,
+      "mibPerSecond": 7.349356419798056,
       "retainedTextBytes": 0
     },
     {
@@ -267,8 +267,8 @@
       "chunkBytes": 64,
       "run": 1,
       "frames": 1024,
-      "milliseconds": 2.7562499999999943,
-      "mibPerSecond": 90.70294784580517,
+      "milliseconds": 3.3622910000000275,
+      "mibPerSecond": 74.35406394033055,
       "retainedTextBytes": 0
     },
     {
@@ -279,8 +279,8 @@
       "chunkBytes": 64,
       "run": 2,
       "frames": 1024,
-      "milliseconds": 2.7616250000000093,
-      "mibPerSecond": 90.52641108043241,
+      "milliseconds": 3.2351249999999823,
+      "mibPerSecond": 77.27676674008002,
       "retainedTextBytes": 0
     },
     {
@@ -291,8 +291,8 @@
       "chunkBytes": 64,
       "run": 3,
       "frames": 1024,
-      "milliseconds": 2.734166999999985,
-      "mibPerSecond": 91.4355267984733,
+      "milliseconds": 3.2409999999999854,
+      "mibPerSecond": 77.13668620796085,
       "retainedTextBytes": 0
     },
     {
@@ -303,8 +303,8 @@
       "chunkBytes": 4096,
       "run": 1,
       "frames": 1024,
-      "milliseconds": 2.041665999999992,
-      "mibPerSecond": 122.44901957519052,
+      "milliseconds": 2.3250000000000455,
+      "mibPerSecond": 107.52688172042801,
       "retainedTextBytes": 0
     },
     {
@@ -315,8 +315,8 @@
       "chunkBytes": 4096,
       "run": 2,
       "frames": 1024,
-      "milliseconds": 2.3319170000000042,
-      "mibPerSecond": 107.20793235779814,
+      "milliseconds": 2.5228329999999914,
+      "mibPerSecond": 99.09494603883843,
       "retainedTextBytes": 0
     },
     {
@@ -327,8 +327,8 @@
       "chunkBytes": 4096,
       "run": 3,
       "frames": 1024,
-      "milliseconds": 2.278334000000001,
-      "mibPerSecond": 109.72930220064306,
+      "milliseconds": 2.8075000000000045,
+      "mibPerSecond": 89.04719501335694,
       "retainedTextBytes": 0
     },
     {
@@ -339,8 +339,8 @@
       "chunkBytes": 1,
       "run": 1,
       "frames": 64,
-      "milliseconds": 2.055958000000004,
-      "mibPerSecond": 7.599863421334468,
+      "milliseconds": 2.365541999999948,
+      "mibPerSecond": 6.605251566026029,
       "retainedTextBytes": 0
     },
     {
@@ -351,8 +351,8 @@
       "chunkBytes": 1,
       "run": 2,
       "frames": 64,
-      "milliseconds": 2.1614580000000103,
-      "mibPerSecond": 7.228916777471469,
+      "milliseconds": 2.3203329999999482,
+      "mibPerSecond": 6.733947239469657,
       "retainedTextBytes": 0
     },
     {
@@ -363,8 +363,8 @@
       "chunkBytes": 1,
       "run": 3,
       "frames": 64,
-      "milliseconds": 1.9121670000000108,
-      "mibPerSecond": 8.171357418049737,
+      "milliseconds": 2.164874999999995,
+      "mibPerSecond": 7.217506784456394,
       "retainedTextBytes": 0
     },
     {
@@ -375,8 +375,8 @@
       "chunkBytes": 64,
       "run": 1,
       "frames": 64,
-      "milliseconds": 0.2137079999999969,
-      "mibPerSecond": 73.11378142137977,
+      "milliseconds": 0.23250000000001592,
+      "mibPerSecond": 67.20430107526421,
       "retainedTextBytes": 0
     },
     {
@@ -387,8 +387,8 @@
       "chunkBytes": 64,
       "run": 2,
       "frames": 64,
-      "milliseconds": 0.22416699999999423,
-      "mibPerSecond": 69.70249858364703,
+      "milliseconds": 0.24237499999998136,
+      "mibPerSecond": 64.4662197008817,
       "retainedTextBytes": 0
     },
     {
@@ -399,8 +399,8 @@
       "chunkBytes": 64,
       "run": 3,
       "frames": 64,
-      "milliseconds": 0.2079999999999984,
-      "mibPerSecond": 75.12019230769288,
+      "milliseconds": 0.22891699999996717,
+      "mibPerSecond": 68.2561801875887,
       "retainedTextBytes": 0
     },
     {
@@ -411,8 +411,8 @@
       "chunkBytes": 4096,
       "run": 1,
       "frames": 64,
-      "milliseconds": 0.1370420000000081,
-      "mibPerSecond": 114.01614103704759,
+      "milliseconds": 0.16783299999997325,
+      "mibPerSecond": 93.0984967199686,
       "retainedTextBytes": 0
     },
     {
@@ -423,8 +423,8 @@
       "chunkBytes": 4096,
       "run": 2,
       "frames": 64,
-      "milliseconds": 0.1494169999999997,
-      "mibPerSecond": 104.57310747773032,
+      "milliseconds": 0.16595799999998917,
+      "mibPerSecond": 94.1503271912232,
       "retainedTextBytes": 0
     },
     {
@@ -435,8 +435,8 @@
       "chunkBytes": 4096,
       "run": 3,
       "frames": 64,
-      "milliseconds": 0.1440409999999872,
-      "mibPerSecond": 108.47605889990619,
+      "milliseconds": 0.16479199999997718,
+      "mibPerSecond": 94.8164959464183,
       "retainedTextBytes": 0
     },
     {
@@ -447,8 +447,8 @@
       "chunkBytes": 1,
       "run": 1,
       "frames": 256,
-      "milliseconds": 8.561832999999979,
-      "mibPerSecond": 7.299838714443526,
+      "milliseconds": 9.767667000000017,
+      "mibPerSecond": 6.398662034649614,
       "retainedTextBytes": 0
     },
     {
@@ -459,8 +459,8 @@
       "chunkBytes": 1,
       "run": 2,
       "frames": 256,
-      "milliseconds": 9.152207999999973,
-      "mibPerSecond": 6.828953188126864,
+      "milliseconds": 10.61266599999999,
+      "mibPerSecond": 5.889189389357967,
       "retainedTextBytes": 0
     },
     {
@@ -471,8 +471,8 @@
       "chunkBytes": 1,
       "run": 3,
       "frames": 256,
-      "milliseconds": 8.640166999999963,
-      "mibPerSecond": 7.233656479093549,
+      "milliseconds": 10.599375000000009,
+      "mibPerSecond": 5.896574090453441,
       "retainedTextBytes": 0
     },
     {
@@ -483,8 +483,8 @@
       "chunkBytes": 64,
       "run": 1,
       "frames": 256,
-      "milliseconds": 0.888417000000004,
-      "mibPerSecond": 70.34984697501254,
+      "milliseconds": 1.1230830000000083,
+      "mibPerSecond": 55.65038380956665,
       "retainedTextBytes": 0
     },
     {
@@ -495,8 +495,8 @@
       "chunkBytes": 64,
       "run": 2,
       "frames": 256,
-      "milliseconds": 0.6571250000000077,
-      "mibPerSecond": 95.11128019783034,
+      "milliseconds": 0.815166999999974,
+      "mibPerSecond": 76.6714059818442,
       "retainedTextBytes": 0
     },
     {
@@ -507,8 +507,8 @@
       "chunkBytes": 64,
       "run": 3,
       "frames": 256,
-      "milliseconds": 0.6745410000000334,
-      "mibPerSecond": 92.65559839949967,
+      "milliseconds": 0.7802079999999592,
+      "mibPerSecond": 80.10684330332843,
       "retainedTextBytes": 0
     },
     {
@@ -519,8 +519,8 @@
       "chunkBytes": 4096,
       "run": 1,
       "frames": 256,
-      "milliseconds": 0.5449169999999981,
-      "mibPerSecond": 114.69636660262063,
+      "milliseconds": 0.6096249999999941,
+      "mibPerSecond": 102.5220422390824,
       "retainedTextBytes": 0
     },
     {
@@ -531,8 +531,8 @@
       "chunkBytes": 4096,
       "run": 2,
       "frames": 256,
-      "milliseconds": 0.7486670000000117,
-      "mibPerSecond": 83.48170815596121,
+      "milliseconds": 1.0792909999999551,
+      "mibPerSecond": 57.90838615350503,
       "retainedTextBytes": 0
     },
     {
@@ -543,8 +543,8 @@
       "chunkBytes": 4096,
       "run": 3,
       "frames": 256,
-      "milliseconds": 0.5243330000000128,
-      "mibPerSecond": 119.1990586135118,
+      "milliseconds": 0.6090419999999881,
+      "mibPerSecond": 102.62018054584284,
       "retainedTextBytes": 0
     },
     {
@@ -555,8 +555,8 @@
       "chunkBytes": 1,
       "run": 1,
       "frames": 1024,
-      "milliseconds": 32.13854100000003,
-      "mibPerSecond": 7.778822318038635,
+      "milliseconds": 38.54137499999996,
+      "mibPerSecond": 6.486535573782727,
       "retainedTextBytes": 0
     },
     {
@@ -567,8 +567,8 @@
       "chunkBytes": 1,
       "run": 2,
       "frames": 1024,
-      "milliseconds": 32.485833999999954,
-      "mibPerSecond": 7.695662053804755,
+      "milliseconds": 40.482958999999994,
+      "mibPerSecond": 6.175437916976376,
       "retainedTextBytes": 0
     },
     {
@@ -579,8 +579,8 @@
       "chunkBytes": 1,
       "run": 3,
       "frames": 1024,
-      "milliseconds": 33.217291999999986,
-      "mibPerSecond": 7.526200510264355,
+      "milliseconds": 43.19033299999995,
+      "mibPerSecond": 5.788332310380665,
       "retainedTextBytes": 0
     },
     {
@@ -591,8 +591,8 @@
       "chunkBytes": 64,
       "run": 1,
       "frames": 1024,
-      "milliseconds": 4.4513749999999845,
-      "mibPerSecond": 56.16242172362492,
+      "milliseconds": 3.6760000000000446,
+      "mibPerSecond": 68.0087051142538,
       "retainedTextBytes": 0
     },
     {
@@ -603,8 +603,8 @@
       "chunkBytes": 64,
       "run": 2,
       "frames": 1024,
-      "milliseconds": 3.660582999999974,
-      "mibPerSecond": 68.29513222347417,
+      "milliseconds": 4.041917000000012,
+      "mibPerSecond": 61.85183911495443,
       "retainedTextBytes": 0
     },
     {
@@ -615,8 +615,8 @@
       "chunkBytes": 64,
       "run": 3,
       "frames": 1024,
-      "milliseconds": 4.216375000000028,
-      "mibPerSecond": 59.29263881889025,
+      "milliseconds": 4.228749999999991,
+      "mibPerSecond": 59.119125036949576,
       "retainedTextBytes": 0
     },
     {
@@ -627,8 +627,8 @@
       "chunkBytes": 4096,
       "run": 1,
       "frames": 1024,
-      "milliseconds": 2.4761250000000246,
-      "mibPerSecond": 100.96420818819628,
+      "milliseconds": 2.8144159999999374,
+      "mibPerSecond": 88.82837505187776,
       "retainedTextBytes": 0
     },
     {
@@ -639,8 +639,8 @@
       "chunkBytes": 4096,
       "run": 2,
       "frames": 1024,
-      "milliseconds": 2.5172919999999976,
-      "mibPerSecond": 99.31307134809956,
+      "milliseconds": 2.8457500000000664,
+      "mibPerSecond": 87.85030308354358,
       "retainedTextBytes": 0
     },
     {
@@ -651,8 +651,8 @@
       "chunkBytes": 4096,
       "run": 3,
       "frames": 1024,
-      "milliseconds": 2.305749999999989,
-      "mibPerSecond": 108.42459069717063,
+      "milliseconds": 2.453416999999945,
+      "mibPerSecond": 101.89869883513713,
       "retainedTextBytes": 0
     }
   ],
@@ -660,64 +660,64 @@
     {
       "bytes": 16384,
       "run": 0,
-      "firstTextMs": 2.7439999999999714,
-      "totalMs": 3.1925830000000133,
+      "firstTextMs": 3.6399169999999685,
+      "totalMs": 4.163832999999954,
       "outputBytes": 16384
     },
     {
       "bytes": 16384,
       "run": 1,
-      "firstTextMs": 0.48225000000002183,
-      "totalMs": 0.5561250000000086,
+      "firstTextMs": 0.7804169999999431,
+      "totalMs": 0.8922919999999976,
       "outputBytes": 16384
     },
     {
       "bytes": 16384,
       "run": 2,
-      "firstTextMs": 0.3932909999999765,
-      "totalMs": 0.466165999999987,
+      "firstTextMs": 0.45887500000003456,
+      "totalMs": 0.5440830000000005,
       "outputBytes": 16384
     },
     {
       "bytes": 65536,
       "run": 0,
-      "firstTextMs": 0.7196250000000077,
-      "totalMs": 0.7764999999999986,
+      "firstTextMs": 1.0314170000000331,
+      "totalMs": 1.1372920000000022,
       "outputBytes": 65536
     },
     {
       "bytes": 65536,
       "run": 1,
-      "firstTextMs": 0.7530409999999961,
-      "totalMs": 0.8274580000000356,
+      "firstTextMs": 0.8909590000000662,
+      "totalMs": 1.0326670000000604,
       "outputBytes": 65536
     },
     {
       "bytes": 65536,
       "run": 2,
-      "firstTextMs": 0.7959170000000313,
-      "totalMs": 0.8546249999999986,
+      "firstTextMs": 1.0715410000000247,
+      "totalMs": 1.1455829999999878,
       "outputBytes": 65536
     },
     {
       "bytes": 262144,
       "run": 0,
-      "firstTextMs": 3.0512089999999716,
-      "totalMs": 3.182124999999985,
+      "firstTextMs": 3.4588750000000346,
+      "totalMs": 3.800875000000019,
       "outputBytes": 262144
     },
     {
       "bytes": 262144,
       "run": 1,
-      "firstTextMs": 1.7131669999999986,
-      "totalMs": 1.7901669999999967,
+      "firstTextMs": 2.8374999999999773,
+      "totalMs": 3.0385829999999032,
       "outputBytes": 262144
     },
     {
       "bytes": 262144,
       "run": 2,
-      "firstTextMs": 1.6663750000000164,
-      "totalMs": 1.720624999999984,
+      "firstTextMs": 2.0736670000000004,
+      "totalMs": 2.1940419999999676,
       "outputBytes": 262144
     }
   ],

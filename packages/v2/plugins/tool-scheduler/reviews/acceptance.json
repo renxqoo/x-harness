@@ -1,0 +1,133 @@
+{
+  "date": "2026-10-18",
+  "runtime": "Bun 1.4.3 / macOS arm64",
+  "baseline": {
+    "files": 143,
+    "cases": 1237
+  },
+  "gates": {
+    "lint": {
+      "exitCode": 0,
+      "errors": 0,
+      "warnings": 0,
+      "kernelSourceFiles": 104,
+      "platformSourceFiles": 255
+    },
+    "typecheck": {
+      "exitCode": 0,
+      "negativeFixtures": {
+        "core": 112,
+        "session": 11,
+        "llm": 13,
+        "tools": 12,
+        "scheduler": 8
+      },
+      "completeExamples": {
+        "core": 29,
+        "session": 2,
+        "llm": 2,
+        "tools": 2,
+        "scheduler": 2
+      }
+    },
+    "build": {
+      "exitCode": 0
+    },
+    "test": {
+      "exitCode": 0,
+      "files": 152,
+      "cases": 1316,
+      "schedulerFiles": 8,
+      "schedulerCases": 78,
+      "freshProcessHttpCases": 1,
+      "unhandledErrors": 0
+    }
+  },
+  "coverage": {
+    "statements": {
+      "total": 8777,
+      "covered": 8097,
+      "skipped": 0,
+      "pct": 92.25
+    },
+    "branches": {
+      "total": 7559,
+      "covered": 6828,
+      "skipped": 0,
+      "pct": 90.32
+    },
+    "functions": {
+      "total": 1259,
+      "covered": 1239,
+      "skipped": 0,
+      "pct": 98.41
+    },
+    "lines": {
+      "total": 4135,
+      "covered": 4072,
+      "skipped": 0,
+      "pct": 98.47
+    }
+  },
+  "schedulerCoverage": {
+    "statements": {
+      "covered": 362,
+      "total": 389,
+      "pct": 93.06
+    },
+    "branches": {
+      "covered": 278,
+      "total": 312,
+      "pct": 89.1
+    },
+    "functions": {
+      "covered": 59,
+      "total": 59,
+      "pct": 100.0
+    },
+    "lines": {
+      "covered": 70,
+      "total": 71,
+      "pct": 98.59
+    }
+  },
+  "thresholds": {
+    "statements": 90,
+    "branches": 88,
+    "functions": 95,
+    "lines": 96
+  },
+  "mutations": {
+    "detected": 8,
+    "total": 8,
+    "baselineCases": 78
+  },
+  "benchmarkSamples": 24,
+  "independentReview": "closed",
+  "independentNegativeControls": [
+    "GC retained consumer detected",
+    "HTTP dependency bypass detected"
+  ],
+  "knownFeatureDefects": [],
+  "scope": "In-process bounded scheduling; no distributed queue or automatic retry",
+  "verificationHistory": [
+    "First slice full run exposed an unchanged PostgreSQL process startup storage-unavailable; later full runs passed.",
+    "One full run under parallel mutation load hit unchanged core cleanup test closeTimeoutMs=10, returning close-incomplete; isolated 17-case recheck and subsequent complete 1316-case run passed. No core/session source or existing tests were modified."
+  ],
+  "integration": {
+    "originalWorkspace": "/Users/wrr/work/x-harness/packages/v2",
+    "explicitPaths": 72,
+    "conflictingPaths": 0,
+    "gates": {
+      "lint": 0,
+      "typecheck": 0,
+      "build": 0,
+      "test": 0
+    },
+    "files": 152,
+    "cases": 1316,
+    "identicalToIsolatedWorkspace": true,
+    "schedulerAndToolsBenchmarkFingerprintsMatch": true,
+    "kernelAndExistingTestsModified": false
+  }
+}

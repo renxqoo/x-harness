@@ -28,7 +28,9 @@ export function createLlmPlugin(raw: LlmOptions): LlmResult<Plugin> {
     const terminal = ctx.handle("request", execute); if (!terminal.ok) return terminal;
     const invoke = async (raw: unknown, collect: boolean, call: PluginInvocation<Manifest>): Promise<LlmResult<LlmRunOutput>> => {
       const data = readData(raw); if (!data.ok || (!collect && typeof data.value.onEvent !== "function")) return fail("invalid-input"); const request = readLlmRequest(raw, limits.value); if (!request.ok) return request;
-      return call.dispatch("request", { request: request.value, collect, onEvent: collect ? () => {} : data.value.onEvent as LlmStreamInput["onEvent"] });
+      const result=await call.dispatch("request", { request: request.value, collect, onEvent: collect ? () => {} : data.value.onEvent as LlmStreamInput["onEvent"] }, {signal:request.value.signal,timeoutMs:request.value.timeoutMs??limits.value.timeoutMs});
+      if(!result.ok&&result.error.source==="core"&&(result.error.code==="cancelled"||result.error.code==="timeout"))call.cancel(result.error.code);
+      return result;
     };
     return ctx.service({ llm: {
       async stream(input, call) { const result = await invoke(input, false, call); return result.ok ? { ok: true, value: result.value.summary } : result; },

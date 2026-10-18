@@ -1,0 +1,55 @@
+{
+  "command": "bun run test:scheduler:mutations",
+  "runtime": "1.4.3",
+  "baselineCases": 78,
+  "reports": [
+    {
+      "name": "global concurrency ignored",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 2 to be 1 // Object.is equality"
+    },
+    {
+      "name": "dependency order ignored",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 0 to be greater than 2"
+    },
+    {
+      "name": "permission recheck removed",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "priority starvation",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected [ 'block', 'high0', 'high1', …(3) ] to deeply equal [ 'block', 'high0', 'high1', …(3) ]"
+    },
+    {
+      "name": "report budget ignored",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected true to be false // Object.is equality"
+    },
+    {
+      "name": "input graph budget ignored",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected true to be false // Object.is equality"
+    },
+    {
+      "name": "capacity released on receipt",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected +0 to be 1 // Object.is equality"
+    },
+    {
+      "name": "single progress discarded",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected [] to deeply equal [ 'x' ]"
+    }
+  ]
+}

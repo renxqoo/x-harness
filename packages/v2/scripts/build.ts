@@ -2,9 +2,9 @@ import { resolve, relative, dirname } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 
 const root = resolve(import.meta.dir, "..");
-const publicEntries = ["plugins/session/src/contracts", "plugins/session/src/storage", "plugins/llm/src/contracts", "plugins/llm/src/provider", "plugins/llm/src/testing", "plugins/llm-http/src/index"];
+const publicEntries = ["plugins/tools/src/index", "plugins/tool-scheduler/src/contracts", "plugins/tools/src/validation", "plugins/tools/src/contracts", "plugins/tools/src/internal","plugins/session/src/contracts", "plugins/session/src/storage", "plugins/llm/src/contracts", "plugins/llm/src/provider", "plugins/llm/src/testing", "plugins/llm-http/src/index"];
 const dependency = (outdir: string): Bun.BunPlugin => ({ name: "public-core", setup(build) {
-  build.onResolve({ filter: /\/(contracts|storage|provider|testing|index)(\.ts)?$/ }, (args) => {
+  build.onResolve({ filter: /\/(contracts|internal|storage|provider|testing|validation|index)(\.ts)?$/ }, (args) => {
     if (!args.importer) return;
     const resolved = resolve(dirname(args.importer), args.path).replace(/\.ts$/, "");
     const contract = publicEntries.find((entry) => resolved === resolve(root, entry));
@@ -20,6 +20,8 @@ const dependency = (outdir: string): Bun.BunPlugin => ({ name: "public-core", se
   });
 } });
 for (const config of [
+  { entrypoints: ["plugins/tool-scheduler/src/index.ts"], outdir: "plugins/tool-scheduler/dist", target: "browser" as const },
+  { entrypoints: ["plugins/tools/src/index.ts"], outdir: "plugins/tools/dist", target: "browser" as const },
   { entrypoints: ["plugins/llm/src/index.ts", "plugins/llm/src/provider.ts", "plugins/llm/src/testing.ts"], outdir: "plugins/llm/dist", target: "browser" as const },
   { entrypoints: ["plugins/llm-http/src/index.ts"], outdir: "plugins/llm-http/dist", target: "browser" as const },
   { entrypoints: ["plugins/llm-openai/src/index.ts"], outdir: "plugins/llm-openai/dist", target: "browser" as const },
@@ -38,7 +40,7 @@ for (const config of [
   await rm(resolve(root, config.outdir), { recursive: true, force: true });
   const built = await Bun.build({ ...config, splitting: true, entrypoints: config.entrypoints.map((entry) => resolve(root, entry)), outdir: resolve(root, config.outdir), plugins: [dependency(config.outdir)] });
   if (!built.success) throw new Error(built.logs.map(String).join("\n"));
-  for (const entry of publicEntries.filter((entry) => /\/(contracts|storage)$/.test(entry) && dirname(entry).replace("/src", "/dist") === config.outdir)) {
+  for (const entry of publicEntries.filter((entry) => /\/(contracts|storage|validation)$/.test(entry) && dirname(entry).replace("/src", "/dist") === config.outdir)) {
     const name = entry.split("/").at(-1)!; await writeFile(resolve(root, config.outdir, `${name}.js`), `export * from ${JSON.stringify("./" + relative(resolve(root, config.outdir), resolve(root, `${entry}.ts`)))};\n`);
   }
   process.stdout.write(`${config.outdir}: ${built.outputs.map((output) => `${output.kind} ${output.size} bytes`).join(", ")}\n`);

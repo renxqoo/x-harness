@@ -1,0 +1,474 @@
+{
+  "originalWorkspace": "/Users/wrr/work/x-harness/packages/v2",
+  "fingerprintBaseline": "/tmp/tools-implementation-baseline/manifest.json",
+  "conflicts": [],
+  "verifiedFiles": [
+    {
+      "path": "packages/v2/API.md",
+      "previousSha256": "b818918c895ac4fbbcd8de45f184113fcc63eb73bd5ee94595953693db3dbc90",
+      "integratedSha256": "f28c06d11401c08040f5b6df64b133c6a40a1271993cafed0dbc72f96081e7f5"
+    },
+    {
+      "path": "packages/v2/README.md",
+      "previousSha256": "0d0d70897ef4d6538962be47841a38f3cb09a7b9a2c1b296ee2194d1e49ce400",
+      "integratedSha256": "f360a5298c14d0736f166fea86a2474daf505a8ddcde23b717662ce3314a296f"
+    },
+    {
+      "path": "packages/v2/core/README.md",
+      "previousSha256": "6a941d54d75aa0d8205ff75a202c00a9408dc123f5edb3fa878a84dbb28420ec",
+      "integratedSha256": "f0e251c7ed467924b1184030b06aa5e83b9b6c9bd7351d70a945d3c4f8dcd5e0"
+    },
+    {
+      "path": "packages/v2/core/src/context/__test__/self-cancel.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "7d64163c2a4e205dbb67e2c7cb4e83a34615add12d6c2e493b7c6c9c35dd928b"
+    },
+    {
+      "path": "packages/v2/core/src/context/create-invocation.ts",
+      "previousSha256": "74c685db56bf536cff7bf25c3c5b21aa8565e6d85ec5d1c6f7cc4158d6133c14",
+      "integratedSha256": "fceb4c33877edb2aed8667bf7dad58a5a1a2b7f61cb50bd5578dc1b7b04e09a7"
+    },
+    {
+      "path": "packages/v2/core/src/contracts/__test__/type-fixtures/invalid-call-cancel-reason.case",
+      "previousSha256": null,
+      "integratedSha256": "801efa613c39cd05f6f7d2a1e2355a8f44e6306b61353f80edef99919af12baa"
+    },
+    {
+      "path": "packages/v2/core/src/contracts/types.ts",
+      "previousSha256": "43609eee6980c43ec5d6b9d47fae5ca200142839e60e966a02140d26c10f0624",
+      "integratedSha256": "5e3ea9044ae3012746ef4a7d41f5e5574fab43f7f685acce90a311467cfecf67"
+    },
+    {
+      "path": "packages/v2/core/src/execution/create-wait-consumer.ts",
+      "previousSha256": "f5984dd46886a26f7362c67284aefeda6a41a3da591a73ba37584f65b6964cc2",
+      "integratedSha256": "94c46b2f256b3ae579d00a43cfbdf136819f2d1e9cab1c3a167c1a28b29abc85"
+    },
+    {
+      "path": "packages/v2/core/src/execution/start-work.ts",
+      "previousSha256": "6cff04107f1ad3f7e6c6223e7a3346c3d10877d8c96e1f9d1d990f2505669dbf",
+      "integratedSha256": "124b4680e7dcb18ca8543bbcc477a735e2a4e937b151692748e6f40a0a4bcce0"
+    },
+    {
+      "path": "packages/v2/core/src/execution/wait-task.ts",
+      "previousSha256": "48304d4b4aeea95a884a1a43895d2bd18613f4f9ddf7e765e4968b9884d0d322",
+      "integratedSha256": "7959f4a37b585fbf3234bacc414eb9ad65d050ff566d9a09c8fd22620b4411d7"
+    },
+    {
+      "path": "packages/v2/core/src/foundation/types.ts",
+      "previousSha256": "2473572edd8c7c68c65ced2b01930f142e02f8d08cf7b8ef1540499e376bc15b",
+      "integratedSha256": "a360319d861e1ce4d72797064cf5281be5670cfdf29d3efddade01fa96c7ac88"
+    },
+    {
+      "path": "packages/v2/fixtures/tools-built-case.ts",
+      "previousSha256": null,
+      "integratedSha256": "bfbd8c6da1188d515238afef81816dc04c082030ac1f8954b06300a258f51fab"
+    },
+    {
+      "path": "packages/v2/fixtures/tools-built.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "c5ceccb74e520f0659c246050efe10728b486523713d36bbb77577ff25ef7c40"
+    },
+    {
+      "path": "packages/v2/package.json",
+      "previousSha256": "bc29906cd6016334c195df3e9c7291c51d86434f8e4af4ef49491bf9f9178560",
+      "integratedSha256": "9dea6fb3a0de2e76cdc378b69e452ab0d64d0b8c071b589182e34a31334cf679"
+    },
+    {
+      "path": "packages/v2/plugins/llm-openai/src/__test__/http-failures.test.ts",
+      "previousSha256": "0c626682185471caf6493f29fb2bbbc9b0104f6053267168ddaaa512fdef8936",
+      "integratedSha256": "d323944d7cd296b4f00d61f5292e5eb87b57d6125b5fe5b8f5af1dc46b185e9d"
+    },
+    {
+      "path": "packages/v2/plugins/llm/plans/DESIGN.md",
+      "previousSha256": "f050a4ec7e1a9422a78e15f0e6ac8a1540814037035bf4ce05f55422229e4364",
+      "integratedSha256": "1b38eacc1d17c1cc8f94777acdd369d035fddc2edbe5607cefa7de5891cb537b"
+    },
+    {
+      "path": "packages/v2/plugins/llm/reviews/acceptance.json",
+      "previousSha256": "9fe98ab5bc2cbe171b17655846f1b4e1c608960b3537c2e15a20e057544b8b06",
+      "integratedSha256": "8921474ab0e4d32cf97ca3ae245e0d5853be39efb3b9a635550e1b96ee37f445"
+    },
+    {
+      "path": "packages/v2/plugins/llm/reviews/acceptance.md",
+      "previousSha256": "53b5403b8acf77489634b619c06580c5be05afa4c01487e98b588f5a4ca079df",
+      "integratedSha256": "d604635ab751acd6e7b2ef76db32ee61fb90b188169cca2cfa54ad29dd2affbb"
+    },
+    {
+      "path": "packages/v2/plugins/llm/reviews/benchmark.json",
+      "previousSha256": "fe7c855bc64aa1d1fd995983bbe0aea2978eff64123b78ccd096de7fe9d1f544",
+      "integratedSha256": "c911409e4a5a6940b88b1abb961be5668782ca5b45b9e7bb37f2eab7b2d08215"
+    },
+    {
+      "path": "packages/v2/plugins/llm/reviews/mutations.json",
+      "previousSha256": "abab72c62ec0a728bc9b993f062c858b5312e9f3390f89aa21653ef75001dcd3",
+      "integratedSha256": "da93270316d2952249b50a40e3e5dddb172951b62118a550326c16d408611300"
+    },
+    {
+      "path": "packages/v2/plugins/llm/src/__test__/runtime.test.ts",
+      "previousSha256": "d95755c6a754d8e61548c25e1334c391d66335c060cf1de0fbdd41c57f9a9b61",
+      "integratedSha256": "243bbe28340288903952c4fbbef7a6d3f122cc0e3269b77775bb8e2a91dc1882"
+    },
+    {
+      "path": "packages/v2/plugins/llm/src/create-plugin.ts",
+      "previousSha256": "e3558fbe04baa5dc60165b4c48d25376b02544b922375d3c25564f5858f53bb9",
+      "integratedSha256": "c330a65f1b00dc2f9b02ea51f67304855558a68bdfd9cde4d45e4cc9c1d7a5d4"
+    },
+    {
+      "path": "packages/v2/plugins/tools/POLICY.md",
+      "previousSha256": null,
+      "integratedSha256": "572ca48a437660bc644aab66d9f762fae9f46ed7c9d64fc52f50bae553dca4ea"
+    },
+    {
+      "path": "packages/v2/plugins/tools/README.md",
+      "previousSha256": null,
+      "integratedSha256": "b6a9a72e6ac87d162356f638c9a1d51e107378361812697271691cdc4d50bcf1"
+    },
+    {
+      "path": "packages/v2/plugins/tools/package.json",
+      "previousSha256": null,
+      "integratedSha256": "ac7881f4cc907e69bc54caabedcf16ec46653e88cd851f16014d900ce884fb1e"
+    },
+    {
+      "path": "packages/v2/plugins/tools/plans/BEHAVIOR-MATRIX.md",
+      "previousSha256": null,
+      "integratedSha256": "64d4cbb1306d8f204dd7a13537487a3c335cf4bc22752aac5389421e4d51a1d1"
+    },
+    {
+      "path": "packages/v2/plugins/tools/plans/DESIGN.md",
+      "previousSha256": null,
+      "integratedSha256": "82978980b14e450e0dfaa7abd69430cf0b535825ecdb13ee146e4e54e453dbc9"
+    },
+    {
+      "path": "packages/v2/plugins/tools/plans/IMPLEMENTATION.md",
+      "previousSha256": null,
+      "integratedSha256": "4b12e0f3046de054250d097c2934a2cfd189393d02d54e2767aee032700a36d8"
+    },
+    {
+      "path": "packages/v2/plugins/tools/plans/VERIFICATION.md",
+      "previousSha256": null,
+      "integratedSha256": "a7f6e70cc356c009156e298b1c28c4f6a029a7f6a47d598e9fc30f520bfa5a29"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/acceptance.json",
+      "previousSha256": null,
+      "integratedSha256": "4bd07b015bccc4217a510cbf10e743ecb0c7e393669c5d9f8bb5c0beb9e12ee3"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/acceptance.md",
+      "previousSha256": null,
+      "integratedSha256": "c78d4d07e3c6749ee0bd072988e50e20d10152a2c53b457f56347956e62bc733"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/benchmark.json",
+      "previousSha256": null,
+      "integratedSha256": "3050452b69f455848492cfe9086e5e8a61127f18846512ea76a8eaa6889a5b9a"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/implementation-review.md",
+      "previousSha256": null,
+      "integratedSha256": "5c1c990f0f8e65496c86741e42b977431602046ef7c5adbe67732f12e702c707"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/mutations.json",
+      "previousSha256": null,
+      "integratedSha256": "f615fa2d19ce06743f36bb779c1b53df95d797a20b74f752c14493643c058daa"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/plan-review.md",
+      "previousSha256": null,
+      "integratedSha256": "173402240a159a74eaa3d588adcaed5ce74fc96047ed3a93ee2c3da475bc2010"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/boundaries.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "b4466a54a103d04dd72d7215989a0e45f6a9ea69c97d0d81934f8d04b6d07ec5"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/concurrency.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "23280e98cc0b6bd0011845edd246eb15fea706e256e1072d7cb1eebb7e88bd8a"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/dependencies.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "0814f6c6f5def62b666c9536dc1611ef4c15c47dfd69b8adda68332072c2d44d"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/helpers.ts",
+      "previousSha256": null,
+      "integratedSha256": "7336ca4733b9600ec06811850424ffa9d04bfc672025541451a26d41d75f31d2"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/identity.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "6085ed53ac6e0943b6677ab48ed1ce9f28152219b1eae017afe49fecc1b6c86a"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/lifecycle.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "cd258e5f53b70194c85f7d61ded16b7912956c59e492f257727b507268b9c446"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/output-content.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "5b8806e87df9caa4756aa042d3835cd017dcf50eb558089e8b04fcdc8a316451"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/progress-retention.gc-case.ts",
+      "previousSha256": null,
+      "integratedSha256": "075f55ece5385051fe148bd393c52af66623e9d91f3f4860a5f6b8dffff890cb"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/progress-retention.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "1dcd712de07c1a85e7c98e0e2d269d2d5a113d1a15ab3cce8ae593a6e08ea065"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/progress.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "18f468514f1f0a362d4fc3f1c54524685c55656faf7f76e3e417623bc52430c3"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/schema-constraints.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "02586080a25b5adfad6c2b23921b21e0458483717d922d765c0ac068759d0cf8"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/schema-data.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "4c4dc0f840b97e0e9bc7f9283b2c58d535ffcc53ba37019a465faa422f413687"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/caller-is-readonly.case",
+      "previousSha256": null,
+      "integratedSha256": "66a743cab744d16b2358f874b8ee8dc827ec5173ff2b01e9eb3e381ed78d561f"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/inferred-enum.case",
+      "previousSha256": null,
+      "integratedSha256": "25a7db6e7d8886697561a9974b65b6d71f1a01ede339579645741afb2f063938"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/inferred-optional.case",
+      "previousSha256": null,
+      "integratedSha256": "c298024e172914dc9fa26aced09b01f4bd159bfeb2746644cb2afced3fcf648f"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/inferred-string.case",
+      "previousSha256": null,
+      "integratedSha256": "6e3e6b0933b86e0f120914dafeb52fa95f664caf77abab40278d0b4148aa068b"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/optional-dependency.case",
+      "previousSha256": null,
+      "integratedSha256": "5b4eb2a22a6d2e5b92482022c94632c36b38f93fe7fea67081760183d94dd856"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/undeclared-dependency.case",
+      "previousSha256": null,
+      "integratedSha256": "ad9f75c5c817a58dece63306afd336d84eeb8e2f78409f61727799539710db4b"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/unknown-error.case",
+      "previousSha256": null,
+      "integratedSha256": "bf7dab0655bdda8ab59cc823a0cd633d33568796fe939d0d67b0951d01bbe3c2"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/wrong-dependency-input.case",
+      "previousSha256": null,
+      "integratedSha256": "98cbe081bf00059159189eb8ac46d28e10aea688ba61ab4b0c8168c88019759f"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/wrong-input.case",
+      "previousSha256": null,
+      "integratedSha256": "8b9a6069c089d78c5b3790b50086b79ae5c116f999720c61931f27a86492acbe"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/wrong-output.case",
+      "previousSha256": null,
+      "integratedSha256": "4d922a31942bd1d79e3a713a688718c3970050e69c05cc86479b4e15370cce51"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/wrong-progress.case",
+      "previousSha256": null,
+      "integratedSha256": "18675c63626b84aeadeecb0a67e1b9acaba580d26f5ea1f549c360226de407b7"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/__test__/type-fixtures/wrong-root-schema.case",
+      "previousSha256": null,
+      "integratedSha256": "e1c8ba1704d1dbc4321737accc11dd9f5c3a374659e4fd6b476e794f50425857"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/contracts.ts",
+      "previousSha256": null,
+      "integratedSha256": "b3547d3f17675d53f5d9ba897d2b310015793cb62076182e2b98e0d2e924b5cc"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/contracts/define-tools.ts",
+      "previousSha256": null,
+      "integratedSha256": "a4119fb41e1ed9ee502ba4f7cf068dc9c1f5c653068151ed6ece56f8618bead9"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/contracts/types.ts",
+      "previousSha256": null,
+      "integratedSha256": "5a552f5df5217ec9ba6539707f25ca1a3b3ddb8c323a9e1421ac342d295b9d3a"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/create-tool-plugin.ts",
+      "previousSha256": null,
+      "integratedSha256": "83cbbbe8505399f01c5c5948ac95276ca72fc1bda72d78cb9b5dd77b56c7f097"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/create-tools-plugin.ts",
+      "previousSha256": null,
+      "integratedSha256": "591d9985a2745e550aff879e67787bc6a78a272c81f84db3e1e8dbf7087678d1"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/fail.ts",
+      "previousSha256": null,
+      "integratedSha256": "22230392cd49dfc9c0d5388b9cd41704735b50fedf9e0414076d174a37c9ea50"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/query-catalog.ts",
+      "previousSha256": null,
+      "integratedSha256": "0bedd178ce9e8734ad056f2d5407ebb5eecedbb7f4198731945b4a731018161f"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-access.ts",
+      "previousSha256": null,
+      "integratedSha256": "b9cbce40442a48e4f5ad1680b586c6b0db6d64807f3a4954e29093198541622d"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-description.ts",
+      "previousSha256": null,
+      "integratedSha256": "6c85e5718e927a74d8032afb6836fe13ae83b034f57864f0ebe8dcff5c4c66b2"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-error.ts",
+      "previousSha256": null,
+      "integratedSha256": "335ef805ffaed475f69d6b140537028b7ec884315c7aacd56bf244407f55defc"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-json.ts",
+      "previousSha256": null,
+      "integratedSha256": "bbbecdc7e7c07638b37c6c9f2cad6b513e0f29521a3862da11dfbed1bc2217ab"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-limits.ts",
+      "previousSha256": null,
+      "integratedSha256": "9a02686220defd4cf3bc84f1331855f21f14fdd34f3891b95108aacfd6c41b8e"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-output.ts",
+      "previousSha256": null,
+      "integratedSha256": "666f62d68a143588d43ac9510192c68e1b60d1c4bd498984d266a048567208f9"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-request.ts",
+      "previousSha256": null,
+      "integratedSha256": "a740b61605a45b8a2c800022c1b2c73ce520949b1f5ff82efaf2164cd4d9178b"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/domain/read-values.ts",
+      "previousSha256": null,
+      "integratedSha256": "a3e2d19110eb1e40eb0ef930ff8e30e959ee62f0bfd575695547d5a834b52d0c"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/execution/create-progress.ts",
+      "previousSha256": null,
+      "integratedSha256": "bbc240b1e97f9fcd801dab044831a2d93d1304727a31a2becaf0555e6b678a85"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/execution/propagate-cancellation.ts",
+      "previousSha256": null,
+      "integratedSha256": "27d275b01186c41a8b74f5f820f44fb59d689683eaa86b58fb21ed1bf67bc523"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/execution/run-tool.ts",
+      "previousSha256": null,
+      "integratedSha256": "d487c204ec6d6df280b54a5c4f7bc5c5b720d5681070cb9f266dbbdfc1986497"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/index.ts",
+      "previousSha256": null,
+      "integratedSha256": "7253abdfa38018cf0fac53abd089265982b11c9a90926477707a4a52da0da8ca"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/internal.ts",
+      "previousSha256": null,
+      "integratedSha256": "c16af3b93d96443855496afb62424fd02aaf00d9247609a8bab6576dc70b9b35"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/schema/compile-schema.ts",
+      "previousSha256": null,
+      "integratedSha256": "f04d82c5917b67270b1159ec15d48e770ed8c3a9a39ad78597bc4442f785da71"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/schema/read-schema.ts",
+      "previousSha256": null,
+      "integratedSha256": "d0ca785075dd143130201acb5e4e7394f932dc92dd21c6513e9c6142412e3fc8"
+    },
+    {
+      "path": "packages/v2/scripts/benchmark-tools.ts",
+      "previousSha256": null,
+      "integratedSha256": "0786a119f9c05516a090f98c6c74672b552b69457b82552a0ea1510541351c55"
+    },
+    {
+      "path": "packages/v2/scripts/build.ts",
+      "previousSha256": "5a6589f78b105e748eff0c16a5a21fc17ca29315589f58212870317c3ce94e93",
+      "integratedSha256": "1cc0a0bdd3cc2baa9f160b8e060345c435af0d7320f8586f50579347c512c2b9"
+    },
+    {
+      "path": "packages/v2/scripts/check-platform.ts",
+      "previousSha256": "3ef7270f0ba8fc276ce12a67fc34ccca14bfd6f40df01924644d00bf53ff9527",
+      "integratedSha256": "bbfe6ae58405c0c8349223834ad8afdff90d3197714e81ad1ea3844328ebfa6b"
+    },
+    {
+      "path": "packages/v2/scripts/check-tools-types.ts",
+      "previousSha256": null,
+      "integratedSha256": "f52a8091435b1290b0fbe99cd6b1ebd34cfeee1095b36efe2681cf1f006b5083"
+    },
+    {
+      "path": "packages/v2/scripts/verify-tools-mutations.ts",
+      "previousSha256": null,
+      "integratedSha256": "b5ff5fc84dcda252753177de9e790d60ffd74d5a1d340077b63addd62ebbf256"
+    },
+    {
+      "path": "packages/v2/tsconfig.json",
+      "previousSha256": "437a95f5ab7db2f8ad97b4e360ccc4225aa18b411d60a901c230ffddec151a42",
+      "integratedSha256": "5ab9e896c6c710ee27c1e4ea9f398f8b3a89f77025d4850b5db14d072450b7a9"
+    }
+  ],
+  "gates": {
+    "lint": 0,
+    "typecheck": 0,
+    "build": 0,
+    "test": 0
+  },
+  "coverage": {
+    "statements": {
+      "total": 8388,
+      "covered": 7735,
+      "skipped": 0,
+      "pct": 92.21
+    },
+    "branches": {
+      "total": 7247,
+      "covered": 6549,
+      "skipped": 0,
+      "pct": 90.36
+    },
+    "functions": {
+      "total": 1200,
+      "covered": 1180,
+      "skipped": 0,
+      "pct": 98.33
+    },
+    "lines": {
+      "total": 4064,
+      "covered": 4002,
+      "skipped": 0,
+      "pct": 98.47
+    }
+  }
+}

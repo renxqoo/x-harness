@@ -11,7 +11,7 @@ export function waitTask(kernel: Kernel, args: { task: Work | TaskCell; waiter?:
   const parsed = readCallOptions(args.options);
   if (!parsed.ok) return Promise.resolve(parsed);
   const options = parsed.value;
-  if ((waiter && !waiter.bodyOpen) || waiter?.settled || (waiter && signalAborted(waiter.controller.signal)) || (options.signal && signalAborted(options.signal))) return Promise.resolve(kernel.fault("cancelled"));
+  if ((waiter && !waiter.bodyOpen) || waiter?.settled || (waiter && signalAborted(waiter.controller.signal)) || (options.signal && signalAborted(options.signal))) return Promise.resolve(kernel.fault(waiter?.cancellation ?? "cancelled"));
   const limits = waiter?.view.scope.limits ?? kernel.root.limits;
   if (kernel.execution.counts().waits >= limits.maxActiveWaits) return Promise.resolve(kernel.fault("resource-limit"));
   let deadline: number;

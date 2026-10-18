@@ -176,5 +176,12 @@
       "stressPassed": 64,
       "strongReferenceNegativeControlRejected": true
     }
+  },
+  "cancellationIntegration": {
+    "acceptance": "../../tools/reviews/acceptance.json",
+    "llmMutationsDetected": 10,
+    "llmNormalizationSamples": 54,
+    "llmLoopbackSamples": 9,
+    "httpDrainNegativeControls": 2
   }
 }

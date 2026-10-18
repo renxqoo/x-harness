@@ -1,0 +1,404 @@
+{
+  "originalWorkspace": "/Users/wrr/work/x-harness/packages/v2",
+  "baseline": "/tmp/tool-scheduler-baseline/manifest.json",
+  "conflicts": [],
+  "files": [
+    {
+      "path": "packages/v2/API.md",
+      "previousSha256": "f28c06d11401c08040f5b6df64b133c6a40a1271993cafed0dbc72f96081e7f5",
+      "integratedSha256": "9b373a221f408fe5e1aa986c962359b864357e1902c3ddea95b86d42b5a9820f"
+    },
+    {
+      "path": "packages/v2/README.md",
+      "previousSha256": "f360a5298c14d0736f166fea86a2474daf505a8ddcde23b717662ce3314a296f",
+      "integratedSha256": "2d3d67898bd677e253dbbfe2574ca7900382704650adaee5b5c5581ff2962027"
+    },
+    {
+      "path": "packages/v2/fixtures/scheduler-built-case.ts",
+      "previousSha256": null,
+      "integratedSha256": "4a70f316888ac7ccf7a59ee282a4d7cc7eff78499988ebafbfff424c276e05f6"
+    },
+    {
+      "path": "packages/v2/fixtures/scheduler-built.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "fdfd625fc3c1355fb608095e5ab0442408a99d2dc9753d6ab439849db45486a2"
+    },
+    {
+      "path": "packages/v2/package.json",
+      "previousSha256": "9dea6fb3a0de2e76cdc378b69e452ab0d64d0b8c071b589182e34a31334cf679",
+      "integratedSha256": "20f466521e8271aa82bd42411b07d8d0409c04634c3174fb870ad16621432d34"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/POLICY.md",
+      "previousSha256": null,
+      "integratedSha256": "ff494f1f262cc9fb1140f42037793fa79c668efcf145453b81296e2a52b76296"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/README.md",
+      "previousSha256": null,
+      "integratedSha256": "1e9e4b1ddeab6813552f19819100cc800b5829d82805e9d09849f709818744e1"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/package.json",
+      "previousSha256": null,
+      "integratedSha256": "8965d4add8070ec7ae3e729fce43d59bda3263c5db1db98ca90caae0607607f3"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/plans/BEHAVIOR-MATRIX.md",
+      "previousSha256": null,
+      "integratedSha256": "eb29b6015a4ac1c4401b5fa26a5b0a8fda7efcf1558b79b1065a1b5e15cf9707"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/plans/DESIGN.md",
+      "previousSha256": null,
+      "integratedSha256": "bdcbbbed0e293122064148ce078cf66ec993d78b3d27ce96ea48b8f4acdb39a3"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/plans/IMPLEMENTATION.md",
+      "previousSha256": null,
+      "integratedSha256": "f15e4a5e6189fd6dc4b13b911ff512f23f0496707d1a8b9dada0cd9ae2c9f64e"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/plans/VERIFICATION.md",
+      "previousSha256": null,
+      "integratedSha256": "6e57f68b7737ef78f0efa56b302e909e40400cd2c4c26a44c4298c0767619fc8"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/reviews/acceptance.json",
+      "previousSha256": null,
+      "integratedSha256": "7bd41ad98beb835b2ef9bb4485895315ea38a0401ea35742009cedee264acf35"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/reviews/acceptance.md",
+      "previousSha256": null,
+      "integratedSha256": "d98a55ea7bff04d23261db8c89fae70e840c547b85b6ded6f222198b9885c444"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/reviews/benchmark.json",
+      "previousSha256": null,
+      "integratedSha256": "9ede54ea21570e7be702e2295971b6cc375f77aaf28324fa6a17fa57ef14416d"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/reviews/implementation-review.md",
+      "previousSha256": null,
+      "integratedSha256": "9ea817dd8919c6c9a9a40f6d2a873bafc54394050a8c9cca801da01c191d3a19"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/reviews/mutations.json",
+      "previousSha256": null,
+      "integratedSha256": "cfad3b1e1e6b3927ffbb22378d9caff98fad405cb7a81fb25381923291ef62d0"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/reviews/plan-review.md",
+      "previousSha256": null,
+      "integratedSha256": "70ace3502a1d0a9e9c626554675235a06e31b7c1dd9500291e189ad948197d37"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/batch.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "8b7fbcb7315cfb8af7e93bfc3da421018e2468872570627468dee662fadc9f8d"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/fairness.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "e6e53d0f50eff504326e30f1d40121f798020025f0b6153d66dd06909184cebb"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/helpers.ts",
+      "previousSha256": null,
+      "integratedSha256": "7b05a62737159d06dbebcd360c29efeeec46a16bbdd50fe6e22ab215a396d4ca"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/lifecycle.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "174b8a749e5fe13eba8573920296f127301cdc8f7b26359acfd5d2469a53e07b"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/permissions.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "1d192364636bde9bc7ebc92e452775cc70804fe2531b9cb52a64ed5395ef88e7"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/progress.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "3dd598756c332ccc0aad957d16c1b10a47180e2ef96f87372e6d9dd5477398b5"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/queue.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "bce72ff3d5d90fa4eb5731c3e7ad9e9cb80484e6c05e243d81a17bc54e72bc02"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/retention.gc-case.ts",
+      "previousSha256": null,
+      "integratedSha256": "16ae9258ff1073fac8b1c6e5432b8660194dfb7d5ab84451fa6ba9ef96403766"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/retention.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "ba329635a90cd8b1558ffa94f6a0ad190d37aed1693fe25d2c561a13a3d5ed3d"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/batch-progress-type.case",
+      "previousSha256": null,
+      "integratedSha256": "54edada0d920432a803d343cb63f76a58f06ba035e4df11c887f93d0e852bdc6"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/dependency-id-type.case",
+      "previousSha256": null,
+      "integratedSha256": "d7a1becd719df382c980011d3cc578a0e610a43565a8cbbd9c75f01250c35a2d"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/invalid-mode.case",
+      "previousSha256": null,
+      "integratedSha256": "5bc8f086c48a092aeb03cc3df27e696d3c23c5a65b064257a1fe7088bd0aa30b"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/invalid-priority.case",
+      "previousSha256": null,
+      "integratedSha256": "ea6c5dc5e0d6b88b7da652ffe9c22ea254ac95b63f2b239f8785f0befba5d667"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/non-object-input.case",
+      "previousSha256": null,
+      "integratedSha256": "9891ad61478bd653192115ebac7d8ddf0d519d656749b00eda93c3dfaa7bf70a"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/single-progress-type.case",
+      "previousSha256": null,
+      "integratedSha256": "4e266283c97127e04226fbc6e01ea7e806d47b435ec427e56753449973067d07"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/unknown-error.case",
+      "previousSha256": null,
+      "integratedSha256": "cc8c8442499f58dfd1437f3cdffa063817fc509550e9257b26d7b06c09968fa6"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/type-fixtures/unknown-limits.case",
+      "previousSha256": null,
+      "integratedSha256": "69b98de1fc2445fa6af616386ff67c00a809b5392a02ac9ce7371b15a0aea70d"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/__test__/validation.test.ts",
+      "previousSha256": null,
+      "integratedSha256": "ebc2ade71299f1613b4d5fcc5eeb827d81879efa268a5f0cf322b65bf94479f4"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/contracts.ts",
+      "previousSha256": null,
+      "integratedSha256": "f25a2be7796ebdcbafe7e2bea59013ef55015c171c1295319f4c9aee43a97241"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/contracts/define-scheduler.ts",
+      "previousSha256": null,
+      "integratedSha256": "191c8a849d7a8cf5df4a10b10a3b4d916e191aa4082fb741c41a05f67b808918"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/contracts/types.ts",
+      "previousSha256": null,
+      "integratedSha256": "7f204664560f0f2aa61aa6099d71d115111bc1f67c172f9fa0968d3bb211d4ab"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/create-plugin.ts",
+      "previousSha256": null,
+      "integratedSha256": "bcd7d0575bc7189926e72004e967f33b9d9b8c60c58cf5d14e6c582d1c4bdc38"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/check-graph.ts",
+      "previousSha256": null,
+      "integratedSha256": "72de9fd887f6827760994521b78df9020f9f73161324eed3e9ffbe345a0ecc82"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/fail.ts",
+      "previousSha256": null,
+      "integratedSha256": "4f15345fa93a61ff71939323b88f7f026aab32a042780c70d79232626fcbf7fe"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/read-access.ts",
+      "previousSha256": null,
+      "integratedSha256": "7ba6cb079ae19a3515bb77bc68d869dd0953f19d8c2071df9756fa7855ad6911"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/read-calls.ts",
+      "previousSha256": null,
+      "integratedSha256": "e2bb0950ef959b0643e7f9fdef29ce778a993ca3aef5f082e0df101721787bb7"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/read-failure.ts",
+      "previousSha256": null,
+      "integratedSha256": "34bc1b38f1444def1e3f809cf7297f41ccc8009bcd35fbc60e1ed3070f98b6bc"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/read-limits.ts",
+      "previousSha256": null,
+      "integratedSha256": "b58b3cc3c632fb2f8b19022566263adef1f191fd9c8a09e95654b2aca3fe1d16"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/read-report.ts",
+      "previousSha256": null,
+      "integratedSha256": "e528c2eee8cb13419e230acad9fc8c02fe4f945b6a3482e1b3a336d4d449dac1"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/read-request.ts",
+      "previousSha256": null,
+      "integratedSha256": "3ee19717577a00bb6e4157b0423313d40d0c590030a740b5a817f30f43d75995"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/domain/read-values.ts",
+      "previousSha256": null,
+      "integratedSha256": "8f19bcdc276e012faf69f1f6f13539d0d8c73345b4ad17ae91aa223f0f269655"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/index.ts",
+      "previousSha256": null,
+      "integratedSha256": "69972c7372893eade5e935c016f9865e3694171e09cfbe2d4a376a2b139d669c"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/complete-batch.ts",
+      "previousSha256": null,
+      "integratedSha256": "8f8211071839774d08adb01da284459926bd9e991cb27b28609f2364d6abaab7"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/create-runtime.ts",
+      "previousSha256": null,
+      "integratedSha256": "17cfb1309866c7fa296825d83e61f9a37d9fda979d4e1cc7745737b21b35d29f"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/pump-queue.ts",
+      "previousSha256": null,
+      "integratedSha256": "7097d5f4a834f40b35c7fbdb5c2d24886717f0c37a57a3aa77a13c59eb0c595d"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/record-result.ts",
+      "previousSha256": null,
+      "integratedSha256": "64613349fb8853783815cc74df062df4ad7c15409975c0314b92e2b7adc88581"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/release-node.ts",
+      "previousSha256": null,
+      "integratedSha256": "1d0c5d0c1d5bb39ebf63eb99230f154e030726139ec1ab71a58fd7291d2ca49b"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/run-batch.ts",
+      "previousSha256": null,
+      "integratedSha256": "a5ca53ff1523f96c0b397696e541f6c91e85ad9dfb1928d7da2503c03b184ac6"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/select-node.ts",
+      "previousSha256": null,
+      "integratedSha256": "34df11a88529f51e4b914d571c261204d578bd48789b1c9c7cd360f647dc7421"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/start-node.ts",
+      "previousSha256": null,
+      "integratedSha256": "9794760f8c8481b8bff4ff5775ac1422fbe4a0fee948ee537e5a3f77ad959c43"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/stop-batch.ts",
+      "previousSha256": null,
+      "integratedSha256": "5162f2cc297f37e7702d62c2958eb48ab844389793cafae117ab3476611be126"
+    },
+    {
+      "path": "packages/v2/plugins/tool-scheduler/src/runtime/types.ts",
+      "previousSha256": null,
+      "integratedSha256": "f1535664eb0806142d65a7de62b3012b3ba5f198f4a917a3d057a3581e86c652"
+    },
+    {
+      "path": "packages/v2/plugins/tools/README.md",
+      "previousSha256": "b6a9a72e6ac87d162356f638c9a1d51e107378361812697271691cdc4d50bcf1",
+      "integratedSha256": "da8894fbac410d950c027839ea026f009b52a87875cc3423ad24fe3f94577141"
+    },
+    {
+      "path": "packages/v2/plugins/tools/package.json",
+      "previousSha256": "ac7881f4cc907e69bc54caabedcf16ec46653e88cd851f16014d900ce884fb1e",
+      "integratedSha256": "39e55c612cbe0e34f58c8703d1165e3ec458af16899dcf8cbf3588fe4762ff5e"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/acceptance.json",
+      "previousSha256": "1b2ef8309eff62d47ef7cf4065dfc6c5b62c80025542747954067dca7e16fc05",
+      "integratedSha256": "4bb27bcbc33963388a56616a88a483ffe9aacb4c7532cccea66b1295cd37d44d"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/acceptance.md",
+      "previousSha256": "dcf2d6bb9372b25705045c739ebb41f5fb592670d598e07805d131dfdbc64e95",
+      "integratedSha256": "3d0696e704a1a1d4369e2c7ee59b699c6a6d35554bd8899b96ab6b9ec15afca7"
+    },
+    {
+      "path": "packages/v2/plugins/tools/reviews/benchmark.json",
+      "previousSha256": "3050452b69f455848492cfe9086e5e8a61127f18846512ea76a8eaa6889a5b9a",
+      "integratedSha256": "e8b4457b482e008966b4054084c8535732edb58ab4a5c0abcb0bb1e350d7cb70"
+    },
+    {
+      "path": "packages/v2/plugins/tools/src/validation.ts",
+      "previousSha256": null,
+      "integratedSha256": "a39b8a09edd260118beed2005896d0a8668db5a1bda30f3b8ccb41023c5ac285"
+    },
+    {
+      "path": "packages/v2/scripts/benchmark-scheduler.ts",
+      "previousSha256": null,
+      "integratedSha256": "9d4ea93b6f50c7f8efff26a06a4e9f7cbde8e875fd36171067fb2b84e1ebfbaa"
+    },
+    {
+      "path": "packages/v2/scripts/build.ts",
+      "previousSha256": "1cc0a0bdd3cc2baa9f160b8e060345c435af0d7320f8586f50579347c512c2b9",
+      "integratedSha256": "8cbab013c5f17e2a3e53bcf49ad0a8d07e9f30a8e21500a8b0996c23ffb9e9c7"
+    },
+    {
+      "path": "packages/v2/scripts/check-platform.ts",
+      "previousSha256": "bbfe6ae58405c0c8349223834ad8afdff90d3197714e81ad1ea3844328ebfa6b",
+      "integratedSha256": "a507f16c56cd1a138d76e71a205381be1222089a30170fd5b07ab514503c9fc5"
+    },
+    {
+      "path": "packages/v2/scripts/check-scheduler-types.ts",
+      "previousSha256": null,
+      "integratedSha256": "8c5f29bbd78ec2305867fba295c3a8f5a04913e4b3063c938a0cebc301d5fcb6"
+    },
+    {
+      "path": "packages/v2/scripts/verify-scheduler-mutations.ts",
+      "previousSha256": null,
+      "integratedSha256": "43b66088aee76d625ae8a9551824c350bd97b28c8ac01cac2af8af4ba6d3ef21"
+    },
+    {
+      "path": "packages/v2/tsconfig.json",
+      "previousSha256": "5ab9e896c6c710ee27c1e4ea9f398f8b3a89f77025d4850b5db14d072450b7a9",
+      "integratedSha256": "5c8309488aae1f3555f89ae2a9c5df99596ed017eb6e1e2fd2cbc6f7dac4062e"
+    }
+  ],
+  "gates": {
+    "lint": 0,
+    "typecheck": 0,
+    "build": 0,
+    "test": 0
+  },
+  "tests": {
+    "files": 152,
+    "cases": 1316
+  },
+  "coverage": {
+    "statements": {
+      "total": 8777,
+      "covered": 8097,
+      "skipped": 0,
+      "pct": 92.25
+    },
+    "branches": {
+      "total": 7559,
+      "covered": 6828,
+      "skipped": 0,
+      "pct": 90.32
+    },
+    "functions": {
+      "total": 1259,
+      "covered": 1239,
+      "skipped": 0,
+      "pct": 98.41
+    },
+    "lines": {
+      "total": 4135,
+      "covered": 4072,
+      "skipped": 0,
+      "pct": 98.47
+    }
+  },
+  "sourceFingerprintsMatch": true
+}

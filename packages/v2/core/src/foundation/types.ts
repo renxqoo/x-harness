@@ -135,6 +135,7 @@ export interface Work {
   parent?: Work;
   depth: number;
   controller: AbortController;
+  cancellation?: "cancelled" | "timeout";
   deadline: number;
   actual: Promise<AnyResult>;
   outcome: Promise<AnyResult>;

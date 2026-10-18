@@ -1,0 +1,10 @@
+{
+  "name": "@x-harness/tools",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts.ts",
+    "./validation": "./src/validation.ts"
+  },
+  "sideEffects": false
+}

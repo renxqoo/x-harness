@@ -128,6 +128,7 @@ export interface Invocation {
   readonly executor: Origin;
   readonly resourceOwner: Origin;
   readonly phase: "activation" | "business" | "observer" | "cleanup";
+  cancel(reason?: "cancelled" | "timeout"): Result<void>;
   bind(context: Context): Result<DependencyContext>;
   dispatch(name: string, input: unknown, options?: CallOptions): Promise<Result<unknown, unknown>>;
   effect(cleanup: Cleanup): Result<Disposer>;

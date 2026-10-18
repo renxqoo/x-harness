@@ -29,7 +29,7 @@ flowchart TB
 
 llm/contracts 定义请求、流事件、完成结果和错误；llm/provider 定义提供者服务与公共状态校验工具；llm/testing 提供公共提供者检查器。源码及构建入口共享同一 token 身份。协议插件只依赖这些公开入口，不导入私有实现或其他包的测试。
 
-llm-http 是共享实现库，不再注册一个转发服务；用于三个协议相同的传输预算、SSE拆帧及关闭算法。业务协议解码留在各适配器。llm 不依赖 fetch、文件系统、数据库或厂商 SDK；内核无改动。
+llm-http 是共享实现库，不再注册一个转发服务；用于三个协议相同的传输预算、SSE拆帧及关闭算法。业务协议解码留在各适配器。llm 不依赖 fetch、文件系统、数据库或厂商 SDK；内核只提供通用的受管调用、取消和生命周期机制。
 
 模型请求类型由 llm 自己定义，不引用 SessionMessage、SessionId 或工具运行时类型。agent-loop 负责读取session、构造模型输入、保存模型输出及决定何时执行工具。Session已有JSON metadata可保存模型来源、签名和引用；具体编码器在agent-loop阶段实现，不能以丢失不认识的块来完成转换。
 
@@ -174,7 +174,7 @@ interface LlmUsage {
 
 文本与推理多个块按ID归属，允许不同块交错。tool-call完成值在其block-end之前发布；citation与完整continuation允许在对应块已结束、请求尚未终态时补充一次或多条各自独立引用，不允许因此继续文本/参数delta。provider-event显式区分请求级和块级，块级必须引用已存在的块，不能把ID隐藏在任意JSON中绕过状态校验。reasoning.text与summary区分；隐藏推理不合成可见占位文案。signature-delta只是上游签名字节增量；可用于下一次请求的完整opaque载荷只在continuation中发布一次。continuation绑定提供者、协议及模型，不能当文本展示或跨模型静默回放；请求传入不匹配载荷时返回invalid-input，消费方可在调用前显式移除。原生模型别名只有在配置中明确解析到同一canonical模型时才能回传，不猜测模型家族兼容。请求同样携带这些完成后的原生continuation；规范化层不改写其内部数据。
 
-工具callId及name也可能按片段到达，因此tool-call-delta明确区分三个字段。提供者只提交字段增量和块结束，公开tool-call由统一层生成并解析一次，防止不同适配器各自修补参数。input增量保留原始字符串，UTF8解码跨网络分片，JSON只在调用结束时完整解析一次。tool-call为块完成结果，最多一次，input.ok只证明参数是完整JSON对象，不证明允许执行；上层还须依据最终结束原因及权限进行决策；工具业务schema校验、权限和执行归tool-orch。截断JSON保留原文，不自动补括号或替换为{}。不足以形成调用身份时只将块标incomplete，不能生成可执行调用。
+工具callId及name也可能按片段到达，因此tool-call-delta明确区分三个字段。提供者只提交字段增量和块结束，公开tool-call由统一层生成并解析一次，防止不同适配器各自修补参数。input增量保留原始字符串，UTF8解码跨网络分片，JSON只在调用结束时完整解析一次。tool-call为块完成结果，最多一次，input.ok只证明参数是完整JSON对象，不证明允许执行；上层还须依据最终结束原因及权限进行决策；工具业务schema校验、权限和执行归tools；批调度归agent-loop或独立调度插件。截断JSON保留原文，不自动补括号或替换为{}。不足以形成调用身份时只将块标incomplete，不能生成可执行调用。
 
 citation明确绑定内容块，引用目标区分URL、请求文档和服务端文件；检索得到的file citation保留提供者fileId/filename，不伪造为请求中不存在的sourceId。请求document/search-result引用的sourceId则必须存在；fileId与提供者/协议共同组成原生身份，与本地sourceId分属不同身份域。range起点包含、终点不包含，base与unit显式声明。定位信息保留已知单位或提供者原生定位格式，不默认字符偏移等于UTF16偏移。provider-event为受大小限制且具命名空间的扩展数据，不绕开状态机，不用来携带未知的可执行客户端工具。未知辅助事件允许保留并继续，未知影响内容或结束语义的结构明确unsupported-feature/protocol-error，不能丢弃后声称完整支持。服务端工具与客户端工具分开，首批仅按显式providerTools声明启用已支持的引用工具，不默认启用任何服务器工具，不执行或代配浏览器/电脑/远程代码工具。
 
@@ -262,3 +262,7 @@ Responses 的 done 载荷采用前缀核对：适配器有界保存当前未核�
 Anthropic 对 document 与 search-result 分别要求同类型输入中的 citations 开关全同，缺省按关闭，不跨类型强制等同；tool_result 中 search-result 不与其他内容混装。公开 summary/hidden 映射 native summarized/omitted，text 展示不可冒充摘要。累计 usage 的原生非缓存输入与缓存读写分别更新，null 表示本帧未知并保留已有累计值。
 
 Responses 普通 assistant 文本以合法 EasyInputMessage/input_text 回传。缺少完整原生消息身份的 refusal 历史明确 unsupported，不猜测/合成上游 messageId；拒绝输出仍按 refusal 完整保留。这是协议输入的显式限制，不修改调用方历史内容。
+
+服务入口把请求signal/期限传入core处理链CallOptions，并将该链首次取消/超时回执传给当前调用的cancel；不增加额外服务层计时器，不按performance与注入Scheduler推测故障原因。
+
+HTTP取消旅程分别检查首次取消回执与一秒内实际排空；在宿主close之前核对activeCalls/activeTasks为零、服务端两条取消均触达，不能用宿主关闭代替传输自行响应取消。

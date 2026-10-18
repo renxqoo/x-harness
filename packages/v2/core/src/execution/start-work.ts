@@ -38,24 +38,28 @@ export function startWork(kernel: Kernel, args: WorkOptions, run: (call: Invocat
   const sources = cleanup
     ? [cleanup.controller.signal, parent?.controller.signal, options.signal]
     : [args.view.owner.controller.signal, args.view.scope.controller.signal, args.executor.controller.signal, parent?.controller.signal, options.signal];
-  if (sources.some((signal) => signal && signalAborted(signal))) return kernel.fault("cancelled", args.executor);
+  if (sources.some((signal) => signal && signalAborted(signal))) return kernel.fault(parent?.cancellation ?? "cancelled", args.executor);
   let deadline: number;
   try { deadline = Math.min(kernel.scheduler.now() + timeout, parent?.deadline ?? Infinity, cleanup?.deadline ?? Infinity); }
   catch { deadline = safeNow(kernel) + timeout; }
-  let finishOutcome!: (result: AnyResult) => void;
+  let finishOutcome!: (result: AnyResult) => AnyResult;
   let firstResult: AnyResult | undefined;
   const outcome = new Promise<AnyResult>((resolve) => {
     finishOutcome = (result) => {
-      if (firstResult) return;
-      firstResult = result;
-      resolve(result);
+      if (!firstResult) { firstResult = result; resolve(result); }
+      return firstResult;
     };
   });
   const work: Work = {
     label: args.label, bodyOpen: true, id: `work-${kernel.id()}`, kind, phase: args.phase ?? parent?.phase ?? (args.view.owner.state === "staging" ? "activation" : "business"), view: args.view,
     executor: args.executor, resourceOwner: parent?.resourceOwner ?? args.view.resourceOwner ?? args.view.owner,
     parent, depth: (parent?.depth ?? 0) + 1, controller, deadline,
-    actual: outcome, outcome, fail(result) { finishOutcome(result); controller.abort(); }, children: new Set(), leases: new Set(), revokeContexts: new Set(), settled: false, observation: { observed: false },
+    actual: outcome, outcome, fail(result) {
+      const first = finishOutcome(result);
+      const error = first.ok ? undefined : first.error;
+      work.cancellation ??= error && typeof error === "object" && "source" in error && error.source === "core" && "code" in error && error.code === "timeout" ? "timeout" : "cancelled";
+      controller.abort();
+    }, children: new Set(), leases: new Set(), revokeContexts: new Set(), settled: false, observation: { observed: false },
   };
   const edge = parent ? kernel.execution.wait(parent.id, work.id) : undefined;
   if (edge && !edge.ok) return edge;
@@ -66,7 +70,7 @@ export function startWork(kernel: Kernel, args: WorkOptions, run: (call: Invocat
       if (edge?.ok) edge.value();
       return kernel.fault("timeout", args.executor);
     }
-    const cancel = () => work.fail(kernel.fault("cancelled", args.executor));
+    const cancel = () => work.fail(kernel.fault(parent?.cancellation ?? "cancelled", args.executor));
     for (let index = 0; index < sources.length; index++) {
       const signal = sources[index];
       if (!signal || sources.indexOf(signal) !== index) continue;

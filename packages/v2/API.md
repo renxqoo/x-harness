@@ -694,3 +694,9 @@ missing-dependency 的 details.definition 指出缺失定义。plugin-in-use 的
 诊断只复制身份和状态，不包含业务参数、业务返回值、连接值、函数、token 或原始异常。快照不随后续完成而变化，也不会延长运行对象的生命周期。宿主拥有完整检查权限；插件上下文不获得 inspect 或 diagnostics 方法。标签属于调用者提供的诊断元数据，应用应使用稳定名称。
 
 TaskHandle.finished 等待任务和全部子工作真正结算，供宿主和生命周期适配器排空；取消和超时之后仍可能等待实际函数返回。受管调用内部使用 call.wait 维护等待图与调用期限。
+
+`Invocation.cancel(reason?: "cancelled" | "timeout"): Result<void>` 结算当前调用的首次取消/超时回执并通知子工作；不强制终止函数，也不提前移除实际工作。省略reason为cancelled。
+
+取消沿调用树保留首次timeout/cancelled原因；不会把外部signal.reason带进内核工作信号。
+
+通用工具批次通过独立toolScheduler服务execute/batch/inspect调用；有界队列、优先级、调用者公平轮转和显式dependsOn由[工具调度插件](plugins/tool-scheduler/README.md)提供，不进入内核。

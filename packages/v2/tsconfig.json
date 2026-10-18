@@ -66,7 +66,9 @@
       "@x-harness/llm-http": [
         "./plugins/llm-http/src/index.ts"
       ],
-      "@x-harness/llm-anthropic": ["./plugins/llm-anthropic/src/index.ts"],
+      "@x-harness/llm-anthropic": [
+        "./plugins/llm-anthropic/src/index.ts"
+      ],
       "@x-harness/llm-openai": [
         "./plugins/llm-openai/src/index.ts"
       ],
@@ -78,6 +80,21 @@
       ],
       "@x-harness/llm/testing": [
         "./plugins/llm/src/testing.ts"
+      ],
+      "@x-harness/tools": [
+        "./plugins/tools/src/index.ts"
+      ],
+      "@x-harness/tools/contracts": [
+        "./plugins/tools/src/contracts.ts"
+      ],
+      "@x-harness/tool-scheduler": [
+        "./plugins/tool-scheduler/src/index.ts"
+      ],
+      "@x-harness/tools/validation": [
+        "./plugins/tools/src/validation.ts"
+      ],
+      "@x-harness/tool-scheduler/contracts": [
+        "./plugins/tool-scheduler/src/contracts.ts"
       ]
     }
   },
