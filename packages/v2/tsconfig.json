@@ -107,6 +107,15 @@
       ],
       "@x-harness/sandbox": [
         "./plugins/sandbox/src/index.ts"
+      ],
+      "@x-harness/agent-loop": [
+        "./plugins/agent-loop/src/index.ts"
+      ],
+      "@x-harness/agent-loop/contracts": [
+        "./plugins/agent-loop/src/contracts.ts"
+      ],
+      "@x-harness/llm/validation": [
+        "./plugins/llm/src/validation.ts"
       ]
     }
   },

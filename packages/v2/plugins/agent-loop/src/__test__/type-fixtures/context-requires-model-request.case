@@ -1,0 +1,1 @@
+definePlugin({name:"bad",requires:{agentContext},setup:ctx=>ctx.middleware("agentContext",()=>({ok:true,value:{runId:"r"}}))});

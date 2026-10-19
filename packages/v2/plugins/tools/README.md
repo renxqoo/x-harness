@@ -66,3 +66,5 @@ Bun部署保留完整包目录或应用整体打包；源码和构建入口共�
 工具效果声明、可撤销权限、资源读写协调与独立命令执行见 [受控执行与权限扩展](./EXECUTION.md)。默认 maxPreparedPlans 为 256；资源等待使用 prepare/checkPrepared/executePrepared，不在直接 execute 中增加隐式队列。
 
 普通插件可直接使用公开处理链贡献工具，见[工具作者示例](./AUTHORING.md)；完整授权与询问见[权限策略](./POLICY.md)。所有执行校验位于tools边界，工厂只提供便利封装。
+
+`@x-harness/tools/validation` 的 validateToolInput(description,input) 在任何执行前按公开目录 schema 校验参数；它不会调用工具或授权执行。可变作者描述先快照，受支持的 schema、字节和编译预算与 tools 一致；实际执行仍重新校验。

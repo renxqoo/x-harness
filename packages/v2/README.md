@@ -62,6 +62,7 @@ core 是进程内插件宿主。npm 包获取、模块导入、配置审批与�
 | 包 | 职责 | 文档 |
 | --- | --- | --- |
 | core | 通用插件机制、固定依赖和生命周期 | [内核指南](core/README.md) |
+| plugins/agent-loop | 有界模型工具循环、流事件与公开检查点扩展 | [Agent 编排](plugins/agent-loop/README.md) |
 | plugins/tools | 工具定义、schema校验、权限扩展和受管执行 | [工具插件](plugins/tools/README.md) |
 | plugins/tool-scheduler | 有界排队、批量并发、公平轮转及工具调用依赖 | [工具调度](plugins/tool-scheduler/README.md) |
 | plugins/execution | 不可变执行目标、输出与资源声明契约 | [执行契约](plugins/execution/README.md) |

@@ -61,3 +61,5 @@ JSON/schema 校验在 `finish` 前完成，流式和完整输出的成功条件�
 可以从 [提供者作者完整示例](PROVIDERS.md) 开始实现自己的插件；该示例和调用示例都经过公开入口类型检查。
 
 可选线上文本连通检查：显式配置 `LLM_API`（responses/chat-completions/anthropic-messages）、`LLM_BASE_URL`、`LLM_API_KEY` 和 `LLM_MODEL` 后，在工作区执行 `bun run test:llm:live`。该命令会调用指定付费接口，只验证给定配置的文本流与正常结束；默认四门不会执行，也不代表全部模态认证。密钥不写入报告或代码。
+
+`@x-harness/llm/validation` 公开 readLlmRequest(raw,limits?)、readLlmRunOutput(raw)、readLlmEvent(raw)，供编排插件复用相同的有界请求、最终响应与规范化事件验证。校验不调用模型。

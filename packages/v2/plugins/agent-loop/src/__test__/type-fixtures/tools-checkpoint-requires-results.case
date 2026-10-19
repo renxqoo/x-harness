@@ -1,0 +1,1 @@
+const completed:AgentCheckpoint={runId:"r",step:1,caller:checkpoint.caller,request:checkpoint.request,response:checkpoint.response,messages:checkpoint.messages,phase:"tools"};

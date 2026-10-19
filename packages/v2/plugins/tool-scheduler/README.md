@@ -55,3 +55,5 @@ execute接受name/callId/input以及signal、timeoutMs、onProgress、priority�
 工具内部嵌套调用同一调度器时，使用immediate并处理busy，或直接调用已声明服务。父工具占满容量又等待新任务的wait调用会等到整体期限；调度器不会突破并发限制来递归执行。批次先后关系应通过dependsOn表达。
 
 资源、命令与完整效果权限由 tools 统一协调，多个 scheduler 和直接调用共用相同资源表；调度器不猜测 bash/run_code 能否并行。见 [受控执行](../tools/EXECUTION.md)。
+
+公开 maximumSchedulerLimits 提供不可变硬预算元数据，供编排插件复用同一批次上限；实际实例配置可能更低，仍以提交结果为准。

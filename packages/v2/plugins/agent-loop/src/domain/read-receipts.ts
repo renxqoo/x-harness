@@ -1,0 +1,6 @@
+import {maximumSchedulerLimits} from "../../../tool-scheduler/src/index";
+import type {AgentToolReceipt,AgentResult} from "../contracts/types";
+import {readToolOutput} from "../../../tools/src/validation";
+import {data,keys,text} from "./read-values";
+import {fail} from "./fail";
+export function readReceipts(raw:unknown):AgentResult<readonly AgentToolReceipt[]>{if(!Array.isArray(raw)||raw.length>maximumSchedulerLimits.maxBatchCalls)return fail("invalid-input");const values:AgentToolReceipt[]=[],seen=new Set<string>();for(const value of raw){const d=data(value);if(!d||!keys(d,["callId","outcome","output","error"])||!text(d.callId)||seen.has(d.callId))return fail("invalid-input");seen.add(d.callId);if(d.outcome==="returned"){if(d.error!==undefined)return fail("invalid-input");const output=readToolOutput(d.output,4194304);if(!output.ok)return fail("invalid-input");values.push({callId:d.callId,outcome:"returned",output:output.value});}else{const error=data(d.error);if(d.outcome!=="unknown"||d.output!==undefined||!error||!keys(error,["source","code"])||!text(error.source)||!text(error.code))return fail("invalid-input");values.push({callId:d.callId,outcome:"unknown",error:{source:error.source,code:error.code}});}}return {ok:true,value:Object.freeze(values)};}

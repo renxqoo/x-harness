@@ -1,0 +1,104 @@
+{
+  "command": "bun run benchmark:agent",
+  "timestamp": "2026-10-19T17:30:27.533Z",
+  "runtime": "1.4.3",
+  "platform": "darwin",
+  "arch": "arm64",
+  "sourceSha256": "16e6a3ede92e2ce83ba4fb7662e056d7c95429971347de7d8df459befed5c1e3",
+  "hashedProductionFiles": 250,
+  "warmupBatches": 1,
+  "runsPerBatch": 10,
+  "samples": [
+    {
+      "kind": "text",
+      "run": 1,
+      "runs": 10,
+      "milliseconds": 7.103875000000002,
+      "modelRequests": 10,
+      "toolCalls": 0,
+      "peak": 0,
+      "events": 90
+    },
+    {
+      "kind": "text",
+      "run": 2,
+      "runs": 10,
+      "milliseconds": 6.071083000000002,
+      "modelRequests": 10,
+      "toolCalls": 0,
+      "peak": 0,
+      "events": 90
+    },
+    {
+      "kind": "text",
+      "run": 3,
+      "runs": 10,
+      "milliseconds": 6.561125000000004,
+      "modelRequests": 10,
+      "toolCalls": 0,
+      "peak": 0,
+      "events": 90
+    },
+    {
+      "kind": "tools-1",
+      "run": 1,
+      "runs": 10,
+      "milliseconds": 59.53979099999998,
+      "modelRequests": 20,
+      "toolCalls": 10,
+      "peak": 1,
+      "events": 190
+    },
+    {
+      "kind": "tools-1",
+      "run": 2,
+      "runs": 10,
+      "milliseconds": 56.29537499999998,
+      "modelRequests": 20,
+      "toolCalls": 10,
+      "peak": 1,
+      "events": 190
+    },
+    {
+      "kind": "tools-1",
+      "run": 3,
+      "runs": 10,
+      "milliseconds": 58.67500000000001,
+      "modelRequests": 20,
+      "toolCalls": 10,
+      "peak": 1,
+      "events": 190
+    },
+    {
+      "kind": "tools-8",
+      "run": 1,
+      "runs": 10,
+      "milliseconds": 88.71899999999994,
+      "modelRequests": 20,
+      "toolCalls": 80,
+      "peak": 8,
+      "events": 610
+    },
+    {
+      "kind": "tools-8",
+      "run": 2,
+      "runs": 10,
+      "milliseconds": 87.88037499999996,
+      "modelRequests": 20,
+      "toolCalls": 80,
+      "peak": 8,
+      "events": 610
+    },
+    {
+      "kind": "tools-8",
+      "run": 3,
+      "runs": 10,
+      "milliseconds": 99.29025000000001,
+      "modelRequests": 20,
+      "toolCalls": 80,
+      "peak": 8,
+      "events": 610
+    }
+  ],
+  "interpretation": "Local complete public provider, model, event, tool and scheduler path. Tools use 1ms simulated work. Samples are total elapsed time for ten sequential runs; no per-request tail latency, remote model latency, cross-framework superiority or distributed availability claim."
+}

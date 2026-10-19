@@ -1,0 +1,14 @@
+import type {Invocation} from "../../../../core/src/index";
+import type {AgentEventBody,AgentEvent,AgentLimits,AgentRunInput,AgentResult} from "../contracts/types";
+import {readEvent} from "../domain/read-event";
+import {fail} from "../domain/fail";
+interface State {readonly call:Invocation;readonly limits:AgentLimits;readonly callback?:AgentRunInput["onEvent"];readonly notify:(event:AgentEvent)=>void;readonly runId:string;sequence:number;bytes:number;terminal:boolean}
+interface Cell {current?:State;failure?:ReturnType<typeof fail>;tail:Promise<unknown>;pending:number}
+export function createEmitter(input:{runId:string;call:Invocation;limits:AgentLimits;callback?:AgentRunInput["onEvent"];notify:(event:AgentEvent)=>void}){const cell:Cell={current:{...input,sequence:0,bytes:0,terminal:false},tail:Promise.resolve(),pending:0};return {send:sender(cell),error:()=>cell.failure,cancel:()=>cancel(cell,"cancelled"),close(){cell.current=undefined;}};}
+function sender(cell:Cell){return (body:AgentEventBody):Promise<AgentResult<void>>=>{if(!cell.current)return Promise.resolve(fail("closed"));if(cell.failure)return Promise.resolve(cell.failure);if(cell.pending>=129){cell.failure=fail("capacity-exceeded");return Promise.resolve(cell.failure);}cell.pending++;const work=cell.tail.then(()=>deliver(cell,body)).finally(()=>{cell.pending--;});cell.tail=work;return work;};}
+async function deliver(cell:Cell,body:AgentEventBody):Promise<AgentResult<void>>{const state=cell.current;if(!state)return fail("closed");if(cell.failure)return cell.failure;if(state.terminal)return fail("closed");const terminal=body.type==="finish"||body.type==="error";const read=readEvent({...body,runId:state.runId,sequence:state.sequence});if(!read.ok)return cell.failure=fail("invalid-output");const bytes=new TextEncoder().encode(JSON.stringify(read.value)).length;if(bytes>state.limits.maxEventBytes||state.bytes+bytes>state.limits.maxEventTotalBytes||state.sequence>=state.limits.maxEvents-Number(!terminal))return cell.failure=fail("capacity-exceeded");state.bytes+=bytes;state.sequence++;state.terminal=terminal;state.notify(read.value);
+ if(state.callback){const callback=state.callback;const task=state.call.spawn({label:"agent-consumer",timeoutMs:state.limits.consumerTimeoutMs,async run(call){try{await callback(read.value,call.signal);return {ok:true as const,value:undefined};}catch{return fail("consumer-failed");}}});if(!task.ok)return cell.failure=fail("consumer-failed");try{const result=await state.call.wait(task.value);if(!result.ok){cell.failure=fail("consumer-failed");cancel(cell,result.error.source==="core"&&result.error.code==="timeout"?"timeout":"cancelled");return cell.failure;}}finally{await task.value.finished;}}
+ return {ok:true,value:undefined};
+}
+function cancel(cell:Cell,reason:"timeout"|"cancelled"){cell.current?.call.cancel(reason);}
+export type AgentEmitter=ReturnType<typeof createEmitter>;

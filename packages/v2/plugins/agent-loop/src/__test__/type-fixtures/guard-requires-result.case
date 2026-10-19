@@ -1,0 +1,1 @@
+definePlugin({name:"bad",requires:{agentRunAccess},setup:ctx=>ctx.guard("agentRunAccess",()=>({kind:"allow"}))});

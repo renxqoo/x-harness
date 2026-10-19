@@ -1,0 +1,79 @@
+{
+  "command": "bun run test:agent:mutations",
+  "runtime": "1.4.3",
+  "baselineCases": 159,
+  "reports": [
+    {
+      "name": "valid 129-call receipts rejected after execution",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected false to be true // Object.is equality"
+    },
+    {
+      "name": "tool schema preflight omitted",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: false, error: { …(5) } } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "context removal leaves execution capability",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 1 to be +0 // Object.is equality"
+    },
+    {
+      "name": "length response executes tool calls",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected false to be true // Object.is equality"
+    },
+    {
+      "name": "checkpoint confirmation not awaited",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 1 to be +0 // Object.is equality"
+    },
+    {
+      "name": "consumer failure blocks until provider actually exits",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 'blocked' to match object { ok: false, error: { …(2) } }"
+    },
+    {
+      "name": "cancelled run releases capacity before actual completion",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, value: { …(7) } } to match object { ok: false, error: { code: 'busy' } }"
+    },
+    {
+      "name": "later model error loses side-effect risk",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: false, error: { …(4) } } to match object { ok: false, error: { …(3) } }"
+    },
+    {
+      "name": "mutable tool description reuses stale schema",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected true to be false // Object.is equality"
+    },
+    {
+      "name": "checkpoint receipt content not matched",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected true to be false // Object.is equality"
+    },
+    {
+      "name": "completed stream retains service",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { code: 1, …(1) } to deeply equal { code: +0, stderr: '' }"
+    },
+    {
+      "name": "duplicate call ID may execute again",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: false, error: { …(4) } } to match object { ok: false, …(1) }"
+    }
+  ]
+}

@@ -5,7 +5,8 @@
     ".": "./src/index.ts",
     "./contracts": "./src/contracts.ts",
     "./provider": "./src/provider.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./validation": "./src/validation.ts"
   },
   "sideEffects": false
 }

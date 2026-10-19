@@ -2,7 +2,7 @@ import { resolve, relative, dirname } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 
 const root = resolve(import.meta.dir, "..");
-const publicEntries = ["plugins/execution/src/contracts", "plugins/execution/src/index", "plugins/tools/src/planning/shared", "plugins/tools/src/index", "plugins/tool-scheduler/src/contracts", "plugins/tools/src/validation", "plugins/tools/src/contracts","plugins/session/src/contracts", "plugins/session/src/storage", "plugins/llm/src/contracts", "plugins/llm/src/provider", "plugins/llm/src/testing", "plugins/llm-http/src/index"];
+const publicEntries = ["plugins/agent-loop/src/index", "plugins/llm/src/index", "plugins/tool-scheduler/src/index", "plugins/agent-loop/src/contracts", "plugins/llm/src/validation", "plugins/execution/src/contracts", "plugins/execution/src/index", "plugins/tools/src/planning/shared", "plugins/tools/src/index", "plugins/tool-scheduler/src/contracts", "plugins/tools/src/validation", "plugins/tools/src/contracts","plugins/session/src/contracts", "plugins/session/src/storage", "plugins/llm/src/contracts", "plugins/llm/src/provider", "plugins/llm/src/testing", "plugins/llm-http/src/index"];
 const dependency = (outdir: string): Bun.BunPlugin => ({ name: "public-core", setup(build) {
   build.onResolve({ filter: /\/(shared|contracts|storage|provider|testing|validation|index)(\.ts)?$/ }, (args) => {
     if (!args.importer) return;
@@ -20,13 +20,14 @@ const dependency = (outdir: string): Bun.BunPlugin => ({ name: "public-core", se
   });
 } });
 for (const config of [
+  { entrypoints: ["plugins/agent-loop/src/index.ts"], outdir: "plugins/agent-loop/dist", target: "browser" as const },
   { entrypoints: ["plugins/execution-process/src/index.ts"], outdir: "plugins/execution-process/dist", target: "bun" as const },
   { entrypoints: ["plugins/execution-local/src/index.ts"], outdir: "plugins/execution-local/dist", target: "bun" as const },
   { entrypoints: ["plugins/sandbox/src/index.ts","plugins/sandbox/src/sandbox-worker.ts"], outdir: "plugins/sandbox/dist", target: "bun" as const },
   { entrypoints: ["plugins/execution/src/index.ts"], outdir: "plugins/execution/dist", target: "browser" as const },
   { entrypoints: ["plugins/tool-scheduler/src/index.ts"], outdir: "plugins/tool-scheduler/dist", target: "browser" as const },
   { entrypoints: ["plugins/tools/src/index.ts"], outdir: "plugins/tools/dist", target: "browser" as const },
-  { entrypoints: ["plugins/llm/src/index.ts", "plugins/llm/src/provider.ts", "plugins/llm/src/testing.ts"], outdir: "plugins/llm/dist", target: "browser" as const },
+  { entrypoints: ["plugins/llm/src/index.ts", "plugins/llm/src/provider.ts", "plugins/llm/src/testing.ts", "plugins/llm/src/validation.ts"], outdir: "plugins/llm/dist", target: "browser" as const },
   { entrypoints: ["plugins/llm-http/src/index.ts"], outdir: "plugins/llm-http/dist", target: "browser" as const },
   { entrypoints: ["plugins/llm-openai/src/index.ts"], outdir: "plugins/llm-openai/dist", target: "browser" as const },
   { entrypoints: ["plugins/llm-anthropic/src/index.ts"], outdir: "plugins/llm-anthropic/dist", target: "browser" as const },
