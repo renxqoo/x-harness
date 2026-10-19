@@ -1,14 +1,19 @@
 import type { Invocation } from "../../../../core/src/index";
 import { normalizeResult } from "../../../../core/src/validation";
 import type { ValidateFunction } from "ajv";
-import type { TicketData } from "../internal";
+import type { ExecutionFacade } from "../../../execution/src/index";
+import type { CatalogEntry } from "../contributions/read-contribution";
+import type { ToolRequest } from "../contracts/types";
+import type { ToolExecutionPlan } from "../planning/types";
+import type { Origin } from "../../../../core/src/index";
+export interface ToolRunData {readonly entry:CatalogEntry;readonly request:ToolRequest;readonly caller:Origin;readonly cancel:(reason:"cancelled"|"timeout")=>void;readonly plan:ToolExecutionPlan;readonly execution?:ExecutionFacade}
 import type { ToolOutput,ToolsLimits,ToolsResult,ToolInvocation } from "../contracts/types";
 import { readJson } from "../domain/read-json";
 import { readOutput } from "../domain/read-output";
 import { readError } from "../domain/read-error";
 import { fail } from "../domain/fail";
 import { createProgress } from "./create-progress";
-export async function runTool(options:{ticket:TicketData;call:Invocation;limits:ToolsLimits;inputSchema:ValidateFunction;outputSchema:ValidateFunction|undefined;execute:(input:unknown,call:ToolInvocation)=>unknown}):Promise<ToolsResult<ToolOutput>>{
+export async function runTool(options:{ticket:ToolRunData;call:Invocation;limits:ToolsLimits;inputSchema:ValidateFunction;outputSchema:ValidateFunction|undefined;execute:(input:unknown,call:ToolInvocation)=>unknown}):Promise<ToolsResult<ToolOutput>>{
  const {ticket,call,limits,inputSchema,outputSchema,execute}=options;
  const parsed=readJson(ticket.request.input,{maxBytes:limits.maxInputBytes});if(!parsed.ok)return parsed;if(!inputSchema(parsed.value))return fail("invalid-input");
  const progress=createProgress({call,callback:ticket.request.onProgress,limits,cancel:ticket.cancel});

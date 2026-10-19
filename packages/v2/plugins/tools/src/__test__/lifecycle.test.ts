@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { createHost, definePlugin } from "../../../../core/src/index";
 import type { Result } from "../../../../core/src/index";
-import { createToolsPlugin, createToolPlugin, tools, toolAccess } from "../index";
+import { createToolsPlugin, createToolPlugin, tools, toolAccess, toolExecutionAccess } from "../index";
 function value<T,E>(r: Result<T,E>): T { if (!r.ok) throw new Error(JSON.stringify(r.error)); return r.value; }
 const schema = { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false } as const;
 function echo(name = "echo") { return value(createToolPlugin({ name, inputSchema: schema, execute: async (input) => ({ ok: true, value: { content: [{ type: "text", text: input.text }] } }) })); }
@@ -33,7 +33,7 @@ it("missing authorization denies list get and execute until an explicit policy i
   try{
     value(await host.install([value(createToolsPlugin()),echo()])); const service=value(host.use(tools));
     expect(value(await service.list({}))).toEqual([]);expect(value(await service.get({name:"echo"}))).toBeNull();expect(await service.execute({name:"echo",callId:"x",input:{text:"x"}})).toMatchObject({ok:false,error:{code:"access-denied"}});
-    value(await host.install([definePlugin({name:"allow",requires:{toolAccess},setup(ctx){return ctx.guard("toolAccess",()=>({ok:true,value:{kind:"allow"}}));}})]));
+    value(await host.install([definePlugin({name:"allow",requires:{toolAccess,toolExecutionAccess},setup(ctx){const base=ctx.guard("toolAccess",()=>({ok:true,value:{kind:"allow"}}));if(!base.ok)return base;return ctx.guard("toolExecutionAccess",authorization=>authorization.allow({signal:ctx.signal}));}})]));
     expect(value(await service.list({}))).toHaveLength(1);expect((await service.execute({name:"echo",callId:"x",input:{text:"x"}})).ok).toBe(true);
   }finally{value(await host.close());}
 });

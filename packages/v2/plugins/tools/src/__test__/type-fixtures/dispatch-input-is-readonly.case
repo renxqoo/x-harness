@@ -1,0 +1,1 @@
+definePlugin({name:"ordinary",requires:{toolDispatch},setup:ctx=>ctx.middleware("toolDispatch",(request,next)=>{request.input={};return next(request);})});

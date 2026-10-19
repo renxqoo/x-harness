@@ -45,7 +45,7 @@ try {
 
 `list({})` 返回按名称排序的不可变声明；`get({name})` 返回声明或null。两者只返回权限允许的工具。`execute({name,callId,input,signal?,timeoutMs?,onProgress?})`返回最终结果，输入是JSON对象，不接受未解析的模型参数字符串。模型工具调用还需agent-loop依据完整结束原因决定是否执行。
 
-`access`默认required，没有策略就拒绝；示例的allow是宿主明确允许全部已安装工具。独立权限/人工审批插件声明toolAccess依赖并登记guard，拒绝优先。校验的operation为list/get/execute；origin来自外层core调用，不从工具参数推断身份。列举过滤不代替执行授权。策略中的审批存储、用户认证及沙箱由对应插件负责；in-process插件是受信任应用代码。
+`access`默认required，没有策略就拒绝；示例的allow是宿主明确允许全部已安装工具。独立权限/人工审批插件通过普通guard接入；toolAccess负责基础准入，toolExecutionAccess负责完整计划许可，拒绝优先。校验的operation为list/get/execute；origin来自外层core调用，不从工具参数推断身份。列举过滤不代替执行授权。策略中的审批存储、用户认证及沙箱由对应插件负责；in-process插件是受信任应用代码。
 
 作者参数从受支持的JSON Schema推断；动态生成schema的作者应自行收窄未知字段。requires/optional按core规则声明，execute里的call.deps只含本工具依赖，不能捕获初始化门面。call保留core的effect、spawn、resource、signal和deadline；caller明确表示外层调用者，内部链的origin有它自己的执行语义。
 
@@ -64,3 +64,5 @@ Bun部署保留完整包目录或应用整体打包；源码和构建入口共�
 需要等待名额、批量并发、调用依赖或优先级时，使用独立[tool-scheduler](../tool-scheduler/README.md)。`@x-harness/tools/validation`公开readToolJson(raw,limits)、readToolOutput(raw,maxBytes)和readToolError(raw)，供其他插件复用同一份有界数据与输出契约验证。
 
 工具效果声明、可撤销权限、资源读写协调与独立命令执行见 [受控执行与权限扩展](./EXECUTION.md)。默认 maxPreparedPlans 为 256；资源等待使用 prepare/checkPrepared/executePrepared，不在直接 execute 中增加隐式队列。
+
+普通插件可直接使用公开处理链贡献工具，见[工具作者示例](./AUTHORING.md)；完整授权与询问见[权限策略](./POLICY.md)。所有执行校验位于tools边界，工厂只提供便利封装。

@@ -1,7 +1,7 @@
 {
   "command": "bun run test:tools:mutations",
   "runtime": "1.4.3",
-  "baselineCases": 172,
+  "baselineCases": 200,
   "reports": [
     {
       "name": "missing schema validation",
@@ -37,7 +37,7 @@
       "name": "same-name replacement steals stale ticket",
       "detected": true,
       "code": 1,
-      "evidence": "AssertionError: expected true to be false // Object.is equality"
+      "evidence": "AssertionError: expected { ok: true, …(1) } to deeply equal { ok: true, …(1) }"
     },
     {
       "name": "ignored consumer failure",
@@ -68,6 +68,42 @@
       "detected": true,
       "code": 1,
       "evidence": "AssertionError: expected { ok: false, error: { …(6) } } to match object { ok: false, error: { code: 'busy' } }"
+    },
+    {
+      "name": "bare guard allow bypasses controlled grants",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, …(1) }"
+    },
+    {
+      "name": "late grant remains open",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, value: { kind: 'allow' } } to match object { ok: true, value: { kind: 'deny' } }"
+    },
+    {
+      "name": "revoked plan retains later signal listeners",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { stdout: '', …(2) } to deeply equal { Object (stdout, stderr, ...) }"
+    },
+    {
+      "name": "ordinary tool capacity released before exit",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: true, …(1) } to match object { ok: false, error: { code: 'busy' } }"
+    },
+    {
+      "name": "fresh catalog identity bypasses capacity",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected 'f4e7f790-67bf-4a3c-8b1b-d573775ee260' to be '8e97768b-e7cc-47c8-a78d-1a783179f7ed' // Object.is equality"
+    },
+    {
+      "name": "Unicode signature order depends on insertion",
+      "detected": true,
+      "code": 1,
+      "evidence": "AssertionError: expected { ok: false, error: { …(3) } } to match object { ok: true, …(1) }"
     }
   ]
 }

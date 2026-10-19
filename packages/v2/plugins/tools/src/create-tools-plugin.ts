@@ -12,7 +12,7 @@ import { definePlugin } from "../../../core/src/index";
 import type { Plugin,Invocation } from "../../../core/src/index";
 import type { ToolsOptions,ToolsResult,ToolDescription } from "./contracts/types";
 import { tools,toolAccess,toolExecutionAccess,toolAvailability } from "./contracts";
-import { toolCatalog,toolDispatch,toolPreparation } from "./internal";
+import { toolCatalog,toolDispatch,toolPreparation } from "./contracts";
 import { propagateCancellation } from "./execution/propagate-cancellation";
 import { queryCatalog } from "./domain/query-catalog";
 import { readLimits } from "./domain/read-limits";
@@ -24,9 +24,8 @@ export function createToolsPlugin(raw:ToolsOptions={}):ToolsResult<Plugin>{
  return {ok:true,value:definePlugin({name:"tools",provides:{tools,toolAccess,toolExecutionAccess,toolAvailability,toolCatalog,toolDispatch,toolPreparation},optional:{execution},setup(ctx){let active=0;
   const runtime:PlanningRuntime={closed:false,limits:limits.value,pending:new Set(),listeners:new Set(),watches:new Set(),active:new Set(),toolActive:new Map(),emit(){for(const listener of runtime.listeners){try{listener();}catch{}}ctx.emit("toolAvailability",null);},discover:call=>discover(call),lease(state){return ctx.startTask<void>({label:"prepared-tool-lease",timeoutMs:state.leaseTimeoutMs,async run(call){if(state.phase==="closed")return {ok:true,value:undefined};await new Promise<void>(resolve=>{const abort=()=>{if(state.phase==="running")state.cancel?.("timeout");else closePlan(state,"timeout");resolve();};state.endLease=resolve;state.off.push(observeSignal(call.signal,abort));if(signalAborted(call.signal))abort();});return {ok:true,value:undefined};}});}};
   const cleanup=ctx.addCleanup(()=>{runtime.closed=true;for(const close of runtime.watches)close();for(const handle of runtime.pending){const state=preparedCells.get(handle)?.current;if(state)closePlan(state);}for(const state of runtime.active)state.cancel?.();return {ok:true,value:undefined};});if(!cleanup.ok)return cleanup;
-  const policy=ctx.guard("toolExecutionAccess",()=>({ok:true,value:{kind:"allow"}}));if(!policy.ok)return policy;
   const preparation=ctx.handle("toolPreparation",()=>fail("not-found"));if(!preparation.ok)return preparation;
-  if(d.access==="allow"){const allow=ctx.guard("toolAccess",()=>({ok:true,value:{kind:"allow"}}));if(!allow.ok)return allow;}
+  if(d.access==="allow"){const policy=ctx.guard("toolExecutionAccess",request=>request.allow({signal:ctx.signal}));if(!policy.ok)return policy;const allow=ctx.guard("toolAccess",()=>({ok:true,value:{kind:"allow"}}));if(!allow.ok)return allow;}
   const catalog=ctx.handle("toolCatalog",()=>({ok:true,value:undefined}));if(!catalog.ok)return catalog;const terminal=ctx.handle("toolDispatch",()=>fail("not-found"));if(!terminal.ok)return terminal;
   const discover=async(call:Invocation)=>{const query=queryCatalog(limits.value);try{const result=await call.dispatch("toolCatalog",query.input);if(!result.ok)return result as ToolsResult<never>;return query.finish();}finally{query.close();}};
   const visible=async(raw:unknown,operation:"list"|"get",call:Invocation):Promise<ToolsResult<readonly ToolDescription[]>>=>{const d=data(raw);if(!d||!keys(d,operation==="list"?[]:["name"])||operation==="get"&&!name(d.name))return fail("invalid-input");const catalog=await discover(call);if(!catalog.ok)return catalog;const found:ToolDescription[]=[];

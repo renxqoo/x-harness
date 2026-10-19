@@ -2,9 +2,9 @@ import { resolve, relative, dirname } from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 
 const root = resolve(import.meta.dir, "..");
-const publicEntries = ["plugins/execution/src/contracts", "plugins/execution/src/index", "plugins/tools/src/planning/shared", "plugins/tools/src/index", "plugins/tool-scheduler/src/contracts", "plugins/tools/src/validation", "plugins/tools/src/contracts", "plugins/tools/src/internal","plugins/session/src/contracts", "plugins/session/src/storage", "plugins/llm/src/contracts", "plugins/llm/src/provider", "plugins/llm/src/testing", "plugins/llm-http/src/index"];
+const publicEntries = ["plugins/execution/src/contracts", "plugins/execution/src/index", "plugins/tools/src/planning/shared", "plugins/tools/src/index", "plugins/tool-scheduler/src/contracts", "plugins/tools/src/validation", "plugins/tools/src/contracts","plugins/session/src/contracts", "plugins/session/src/storage", "plugins/llm/src/contracts", "plugins/llm/src/provider", "plugins/llm/src/testing", "plugins/llm-http/src/index"];
 const dependency = (outdir: string): Bun.BunPlugin => ({ name: "public-core", setup(build) {
-  build.onResolve({ filter: /\/(shared|contracts|internal|storage|provider|testing|validation|index)(\.ts)?$/ }, (args) => {
+  build.onResolve({ filter: /\/(shared|contracts|storage|provider|testing|validation|index)(\.ts)?$/ }, (args) => {
     if (!args.importer) return;
     const resolved = resolve(dirname(args.importer), args.path).replace(/\.ts$/, "");
     const contract = publicEntries.find((entry) => resolved === resolve(root, entry));

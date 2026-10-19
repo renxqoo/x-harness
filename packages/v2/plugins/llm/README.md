@@ -52,7 +52,7 @@ JSON/schema 校验在 `finish` 前完成，流式和完整输出的成功条件�
 
 默认无重试、无等待队列。总并发 32、提供者并发 16，满即 `busy`；输入/输出各 16MiB，单事件 1MiB，工具参数 256KiB，续接数据 512KiB。总期限 180s，同时受宿主更短期限约束；响应头 30s、读取无进展 60s、消费者 30s。取消立即通知网络，实际未结束的任务仍占容量。不合作的回调需要宿主进程监督。`hasOutput` 告知失败前是否有内容，不能据此自动推断重试安全。
 
-扩展提供者：用 `defineLlmProvider` 创建 token，使用 `llm/provider` 的 `createLlmProviderPlugin({ token, models, run })` 提供服务。`run(input, context)` 按顺序 await `input.onEvent(event)`，返回明确 `ProviderEnd`，不能自行发布 start/finish/error。公共工厂统一处理容量、请求快照、取消、描述与回调撤销。使用 `llm/testing` 的 `verifyLlmProvider({ service, provider, request, expected: { kind: "text" } })` 按指定 text/tool-call 场景检查标准内容、描述、状态机、背压和预取消，不能用任意 provider-event 代替标准内容；真实网络的超时、资源排空及厂商能力仍需作者专项测试。
+扩展提供者：用 `defineLlmProvider` 创建 token，普通 `definePlugin({ provides: { provider: token } })` 可以通过 `ctx.service({ provider: ... })` 实现公开 `LlmProviderService`，无需专用插件工厂。也可以使用 `llm/provider` 的 `createLlmProviderPlugin({ token, models, run })` 提供服务。`run(input, context)` 按顺序 await `input.onEvent(event)`，返回明确 `ProviderEnd`，不能自行发布 start/finish/error。公共工厂统一处理容量、请求快照、取消、描述与回调撤销。使用 `llm/testing` 的 `verifyLlmProvider({ service, provider, request, expected: { kind: "text" } })` 按指定 text/tool-call 场景检查标准内容、描述、状态机、背压和预取消，不能用任意 provider-event 代替标准内容；真实网络的超时、资源排空及厂商能力仍需作者专项测试。
 
 `llmRequest` 是声明依赖后使用的请求策略 chain，输入 `{ request, onEvent, collect }`，输出 `{ summary, content?, output? }`。策略可以包装回调、显式选择路由，不应在已经输出内容后隐式重试。
 

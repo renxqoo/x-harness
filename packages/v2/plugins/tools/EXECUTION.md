@@ -81,9 +81,9 @@ export async function readDocument(
 
 `actions` 是业务 JSON 命名空间。工具作者可以声明文件、数据库、支付或任意自定义动作；框架不会依据工具名字猜测效果。直接在宿主 JavaScript 中调用 fs、fetch 或子进程的插件是受信任代码，声明资源本身不会把 JavaScript 隔离进沙箱。需要隔离的命令必须通过 execution 提供者运行。
 
-`createToolPolicyPlugin({name,requires?,optional?,authorize})` 支持普通 core 服务依赖。`authorize` 返回 `{ok:true,value:{kind:"allow",signal?,isValid?}}` 或 deny；抛错、无效结果、任何一个插件拒绝都阻止执行。异步等待审批不占执行槽或资源锁。允许之后、真正提交之前同步检查 `isValid() === true`；需要及时撤销时提供 AbortSignal，权限插件卸载也会撤销已有许可。运行中撤销会请求取消，但锁和容量仍保留到实际结束。LLM 评估插件与普通策略一样参与 deny-wins 合并，不能覆盖其他限制。
+普通插件通过 `ctx.guard("toolExecutionAccess", handler)` 检查 `authorization.plan`，允许时返回 `authorization.allow({signal:ctx.signal,revocation?,isValid?})`。完整示例见[权限策略](./POLICY.md)。`createToolPolicyPlugin({name,requires?,optional?,authorize})` 是同一公开协议的可选封装，支持普通 core 服务依赖。`authorize` 返回 `{ok:true,value:{kind:"allow",signal?,isValid?}}` 或 deny；抛错、无效结果、任何一个插件拒绝都阻止执行。异步等待审批不占执行槽或资源锁。允许之后、真正提交之前同步检查 `isValid() === true`；需要及时撤销时提供 AbortSignal，权限插件卸载也会撤销已有许可。运行中撤销会请求取消，但锁和容量仍保留到实际结束。LLM 评估插件与普通策略一样参与 deny-wins 合并，不能覆盖其他限制。
 
-`plan.origin`/`originId` 表示实际委托者及其安装身份；`plan.initiator` 表示 core 记录的调用链发起者。调度委托时两者可以不同。它们都不是登录用户，用户身份由宿主的受信任服务映射；不能相信 input 自报身份。原有 `toolAccess` 仍负责目录可见性及执行前授权，`toolExecutionAccess` 负责完整效果计划；两层拒绝均生效。没有配置 toolAccess 时，默认 required 模式拒绝全部请求。
+`plan.origin`/`originId` 表示实际委托者及其安装身份；`plan.initiator` 表示 core 记录的调用链发起者。调度委托时两者可以不同。它们都不是登录用户，用户身份由宿主的受信任服务映射；不能相信 input 自报身份。原有 `toolAccess` 仍负责目录可见性及执行前授权，`toolExecutionAccess` 负责完整效果计划；两层拒绝均生效。默认 required 模式要求基础准入和完整计划许可；任何一层没有配置或未授予许可都拒绝执行。access:allow为显式全部允许，仍不能覆盖其他策略拒绝或许可撤销。
 
 资源声明为 `{domain,path:[...分段],scope:"exact"|"subtree",mode:"read"|"write"}`。读读并行，重叠写互斥，全部资源一起提交。较早的冲突写意图阻止新读者插队；无关资源不阻塞。提供者自动加入文件根与可执行文件声明，工具补充的资源与之合并，最终最多 128 个。自定义工具须把资源转换成该领域的统一身份；例如直接使用宿主文件 API 的工具，应在 prepare 中通过自己的文件服务解析真实路径，不能把不同的路径别名当成不同资源。该协调范围是同一个 tools 实例，外部进程和跨机器事务由相应系统协调。
 

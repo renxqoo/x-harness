@@ -1,4 +1,4 @@
-import type { Origin,OwnerInspection,PluginInvocation,TokenMap,Result } from "../../../../core/src/index";
+import type { Origin,OwnerInspection,PluginInvocation,TokenMap,Result,GuardDecision } from "../../../../core/src/index";
 import type { ResourceClaim,ExecutionRequest,ExecutionTarget,ExecutionFacade } from "../../../execution/src/index";
 import type { JsonObject,ToolDescription,ToolRequest,ToolsResult } from "../contracts/types";
 export interface ToolEffects {readonly actions?:JsonObject;readonly resources?:readonly ResourceClaim[];readonly execution?:ExecutionRequest}
@@ -11,3 +11,6 @@ export type ToolPermission={readonly kind:"allow";readonly isValid?:()=>boolean;
 export interface ToolPolicyOptions<D extends TokenMap=Record<never,never>,O extends TokenMap=Record<never,never>> {readonly name:string;readonly requires?:D;readonly optional?:O;readonly authorize:(plan:ToolExecutionPlan,call:PluginInvocation<{requires:D;optional:O}>)=>Result<ToolPermission>|Promise<Result<ToolPermission>>}
 export type ToolPreparationInvocation<D extends TokenMap=Record<never,never>,O extends TokenMap=Record<never,never>>=PluginInvocation<{requires:D;optional:O}> & {readonly callId:string;readonly name:string;readonly caller:Origin};
 export type ToolExecutionContext={readonly plan:ToolExecutionPlan;readonly execution?:ExecutionFacade};
+
+export interface ToolGrant {readonly signal:AbortSignal;readonly revocation?:AbortSignal;readonly isValid?:()=>boolean}
+export interface ToolAuthorization {readonly plan:ToolExecutionPlan;readonly allow:(grant:ToolGrant)=>Result<GuardDecision>}

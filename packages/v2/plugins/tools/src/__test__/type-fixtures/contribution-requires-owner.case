@@ -1,0 +1,1 @@
+const contribution:ToolContribution={tool:{name:"echo",concurrency:1,inputSchema:{type:"object"}}};
