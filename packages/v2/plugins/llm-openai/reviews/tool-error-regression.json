@@ -1,0 +1,21 @@
+{
+  "date": "2026-10-21",
+  "baselineCommit": "6e98c1b",
+  "runtime": "Bun 1.4.3",
+  "tests": [
+    "plugins/llm-openai/src/__test__/request-mapping.test.ts",
+    "fixtures/agent-multistep.test.ts"
+  ],
+  "isolation": "Temporary source copy; only the two OpenAI request mappers replaced by committed sources; identical tests; PostgreSQL global setup omitted because these tests use only HTTP and SQLite",
+  "red": {
+    "exitCode": 1,
+    "passed": 19,
+    "failed": 9,
+    "symptom": "Tool isError receipts reject the next model round with unsupported-feature"
+  },
+  "green": {
+    "exitCode": 0,
+    "passed": 28,
+    "failed": 0
+  }
+}

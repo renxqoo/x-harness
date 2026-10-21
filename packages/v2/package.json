@@ -17,6 +17,7 @@
     "test:execution:mutations": "bun scripts/verify-execution-mutations.ts",
     "benchmark:execution": "bun scripts/benchmark-execution.ts",
     "test:agent:mutations": "bun scripts/verify-agent-mutations.ts",
+    "test:agent:live": "bun scripts/verify-agent-live.ts",
     "benchmark:agent": "bun scripts/benchmark-agent.ts"
   },
   "devDependencies": {

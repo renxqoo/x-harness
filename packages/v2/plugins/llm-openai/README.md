@@ -10,4 +10,6 @@ Responses 的普通 assistant 历史以 input_text 回传；缺少完整原生�
 
 两个协议都发送单次流式 POST，无自动重试或 SSE 重连。Chat 收到 finish_reason 后继续等待用量尾帧及 DONE/合法 EOF。Responses 必须有完成/截断/失败证据，最终全文与增量精确核对，只补发完整快照明确包含的后缀；不猜测重叠。工具参数由 LLM 统一层在完成时只解析一次。原生服务器工具只作为有界 provider 内容，不能被当作客户端工具执行。
 
+工具业务错误 `isError:true` 在 Chat 和 Responses 的工具结果内容前增加文本块 `{"isError":true}`，随后保留原始内容及顺序。这是应用层的可见错误标记，不是协议原生字段；模型可以据此修正后续动作。成功回执不增加标记，Chat 仍只接受文本工具结果，Responses 保留原生文本与图片。原始消息及持久检查点保留结构化 `isError`，标记数量受输入消息预算约束。
+
 身份、终态、usage、来源引用、断流及结构化输出在真实回环 HTTP 测试中验证。协议依据：[OpenAI 官方流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)、[Chat 流事件](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events)、[结构化输出](https://developers.openai.com/api/docs/guides/structured-outputs)。默认门禁不调用付费接口；特定模型的在线能力需在部署环境验证。

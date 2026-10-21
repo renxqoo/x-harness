@@ -2,6 +2,7 @@ import type { JsonValue } from "../../../core/src/index";
 import type { JsonObject, LlmResult } from "../../llm/src/contracts";
 import { llmFailure } from "../../llm/src/provider";
 import type { ProtocolInput } from "../../llm-http/src/index";
+import { encodeToolContent } from "./encode-tool-content";
 export function createResponsesRequest(input: ProtocolInput): LlmResult<JsonObject> {
   const request = input.request; if (request.stop?.length || request.reasoning?.budgetTokens !== undefined || request.reasoning?.display === "text") return llmFailure("unsupported-feature");
   const items: JsonValue[] = [];
@@ -9,8 +10,8 @@ export function createResponsesRequest(input: ProtocolInput): LlmResult<JsonObje
     const content: JsonValue[] = [];
     const flush = () => { if (content.length) { items.push({ role: message.role, content: content.splice(0) }); } };
     if (message.role === "tool") {
-      const output: JsonValue[] = []; for (const block of message.content) { if (block.type === "text") output.push({ type: "input_text", text: block.text }); else if (block.type === "image") output.push({ type: "input_image", image_url: block.source.type === "url" ? block.source.url : `data:${block.source.mediaType};base64,${block.source.data}` }); else return llmFailure("unsupported-feature"); }
-      if (message.isError) return llmFailure("unsupported-feature"); items.push({ type: "function_call_output", call_id: message.callId, output }); continue;
+      const output: JsonValue[] = []; for (const block of encodeToolContent(message)) { if (block.type === "text") output.push({ type: "input_text", text: block.text }); else if (block.type === "image") output.push({ type: "input_image", image_url: block.source.type === "url" ? block.source.url : `data:${block.source.mediaType};base64,${block.source.data}` }); else return llmFailure("unsupported-feature"); }
+      items.push({ type: "function_call_output", call_id: message.callId, output }); continue;
     }
     for (const block of message.content) {
       if (block.type === "text") content.push({ type: "input_text", text: block.text });

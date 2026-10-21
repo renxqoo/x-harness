@@ -2,13 +2,14 @@ import type { JsonValue } from "../../../core/src/index";
 import type { JsonObject, LlmResult } from "../../llm/src/contracts";
 import { llmFailure } from "../../llm/src/provider";
 import type { ProtocolInput } from "../../llm-http/src/index";
+import { encodeToolContent } from "./encode-tool-content";
 export function createChatRequest(input: ProtocolInput): LlmResult<JsonObject> {
   const request = input.request; if (request.providerTools?.length || request.reasoning?.budgetTokens !== undefined || (request.reasoning?.display && request.reasoning.display !== "text")) return llmFailure("unsupported-feature");
   const messages: JsonValue[] = [];
   for (const message of request.messages) {
-    if (message.role === "tool" && (message.isError || message.content.some((block) => block.type !== "text"))) return llmFailure("unsupported-feature");
+    if (message.role === "tool" && message.content.some((block) => block.type !== "text")) return llmFailure("unsupported-feature");
     const content: JsonValue[] = []; const calls: JsonValue[] = []; const reasoning: string[] = [];
-    for (const block of message.content) {
+    for (const block of encodeToolContent(message)) {
       if (block.type === "text") content.push({ type: "text", text: block.text });
       else if (block.type === "refusal") content.push({ type: "refusal", refusal: block.text });
       else if (block.type === "image") content.push({ type: "image_url", image_url: { url: block.source.type === "url" ? block.source.url : `data:${block.source.mediaType};base64,${block.source.data}` } });
