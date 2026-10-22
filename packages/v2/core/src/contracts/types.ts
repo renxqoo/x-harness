@@ -58,33 +58,29 @@ export interface EventToken<T> extends DefinitionRef {
   readonly payloadType?: (value: T) => T;
 }
 
-export type ResultValue<R> =
-  R extends { readonly ok: true; readonly value: infer T } ? T : never;
+export type ResultValue<R> = R extends { readonly ok: true; readonly value: infer T } ? T : never;
 export type BusinessFailure<R> = Exclude<
   R extends { readonly ok: false; readonly error: infer E } ? E : never,
   CoreFault
 >;
 export type SameSignature<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends
-  (<T>() => T extends B ? 1 : 2) ? true : false;
-export type MethodSpec<F> =
-  F extends (input: infer I) => Promise<infer R>
-    ? SameSignature<F, (input: I) => Promise<R>> extends true
-      ? [R] extends [Result<unknown, unknown>]
-        ? {
-            readonly input?: Validator<I>;
-            readonly output?: Validator<ResultValue<R>>;
-            readonly failure?: Validator<BusinessFailure<R>>;
-          }
-        : never
+  (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+export type MethodSpec<F> = F extends (input: infer I) => Promise<infer R>
+  ? SameSignature<F, (input: I) => Promise<R>> extends true
+    ? [R] extends [Result<unknown, unknown>]
+      ? {
+          readonly input?: Validator<I>;
+          readonly output?: Validator<ResultValue<R>>;
+          readonly failure?: Validator<BusinessFailure<R>>;
+        }
       : never
-    : never;
+    : never
+  : never;
 
 export type ServiceImplementation<S> = {
-  readonly [K in keyof S]:
-    S[K] extends (input: infer I) => Promise<infer R>
-      ? (input: I, call: Invocation) => Promise<R>
-      : never;
+  readonly [K in keyof S]: S[K] extends (input: infer I) => Promise<infer R>
+    ? (input: I, call: Invocation) => Promise<R>
+    : never;
 };
 
 export interface ServiceSpec<S> {
@@ -145,8 +141,18 @@ export interface DependencyContext {
   readonly scopeId: string;
   readonly signal: AbortSignal;
   use<S>(this: void, token: ServiceToken<S>): Result<S>;
-  dispatch<I, O, E>(this: void, token: ChainToken<I, O, E>, input: I, options?: CallOptions): Promise<Result<O, E>>;
-  dispatch<I>(this: void, token: GuardToken<I>, input: I, options?: CallOptions): Promise<Result<GuardDecision>>;
+  dispatch<I, O, E>(
+    this: void,
+    token: ChainToken<I, O, E>,
+    input: I,
+    options?: CallOptions,
+  ): Promise<Result<O, E>>;
+  dispatch<I>(
+    this: void,
+    token: GuardToken<I>,
+    input: I,
+    options?: CallOptions,
+  ): Promise<Result<GuardDecision>>;
 }
 
 export interface CleanupContext extends DependencyContext {}
@@ -194,25 +200,28 @@ export interface Continuation<T> extends PromiseLike<T> {
 }
 
 export type Next<I, O, E = never> = (input: I) => Continuation<Result<O, E>>;
-export type ChainHandler<I, O, E = never> =
-  (input: I, next: Next<I, O, E>, call: Invocation) => MaybePromise<Result<O, E>>;
-export type ChainTerminal<I, O, E = never> =
-  (input: I, call: Invocation) => MaybePromise<Result<O, E>>;
+export type ChainHandler<I, O, E = never> = (
+  input: I,
+  next: Next<I, O, E>,
+  call: Invocation,
+) => MaybePromise<Result<O, E>>;
+export type ChainTerminal<I, O, E = never> = (
+  input: I,
+  call: Invocation,
+) => MaybePromise<Result<O, E>>;
 
 export type GuardDecision =
   | { readonly kind: "allow" }
   | { readonly kind: "deny"; readonly reason: string };
 
-export type GuardHandler<I> =
-  (input: I, call: Invocation) => MaybePromise<Result<GuardDecision>>;
+export type GuardHandler<I> = (input: I, call: Invocation) => MaybePromise<Result<GuardDecision>>;
 
 export interface EventOrigin extends Origin {
   readonly emissionId: string;
   readonly sequence: number;
 }
 
-export type Observer<T> =
-  (payload: T, origin: EventOrigin, call: Invocation) => MaybePromise<void>;
+export type Observer<T> = (payload: T, origin: EventOrigin, call: Invocation) => MaybePromise<void>;
 
 export interface EmitReceipt {
   readonly emissionId: string;
@@ -229,24 +238,52 @@ export interface RegistrationOptions {
 }
 
 export type ProviderArguments<T> =
-  T extends ServiceToken<infer S> ? [implementation: ServiceImplementation<S>, options?: RegistrationOptions] :
-  T extends ChainToken<infer I, infer O, infer E> ? [terminal: ChainTerminal<I, O, E>, options?: RegistrationOptions] :
-  T extends { readonly kind: "event" | "guard" } ? [] : never;
+  T extends ServiceToken<infer S>
+    ? [implementation: ServiceImplementation<S>, options?: RegistrationOptions]
+    : T extends ChainToken<infer I, infer O, infer E>
+      ? [terminal: ChainTerminal<I, O, E>, options?: RegistrationOptions]
+      : T extends { readonly kind: "event" | "guard" }
+        ? []
+        : never;
 
 export interface Context {
   readonly deps: Readonly<Record<string, unknown>>;
   readonly scopeId: string;
   readonly scopeState: ScopeState;
   readonly signal: AbortSignal;
-  service(implementations: Readonly<Record<string, unknown>>, options?: RegistrationOptions): Result<Readonly<Record<string, Disposer>>>;
-  handle<I, O, E>(token: ChainToken<I, O, E>, terminal: ChainTerminal<I, O, E>, options?: RegistrationOptions): Result<Disposer>;
-  register<T extends DefinitionRef>(this: void, token: T, ...args: ProviderArguments<NoInfer<T>>): Result<Disposer>;
+  service(
+    implementations: Readonly<Record<string, unknown>>,
+    options?: RegistrationOptions,
+  ): Result<Readonly<Record<string, Disposer>>>;
+  handle<I, O, E>(
+    token: ChainToken<I, O, E>,
+    terminal: ChainTerminal<I, O, E>,
+    options?: RegistrationOptions,
+  ): Result<Disposer>;
+  register<T extends DefinitionRef>(
+    this: void,
+    token: T,
+    ...args: ProviderArguments<NoInfer<T>>
+  ): Result<Disposer>;
   use<S>(this: void, token: ServiceToken<S>): Result<S>;
   on<T>(token: EventToken<T>, handler: Observer<NoInfer<T>>): Result<Disposer>;
-  middleware<I, O, E>(token: ChainToken<I, O, E>, handler: ChainHandler<NoInfer<I>, NoInfer<O>, NoInfer<E>>): Result<Disposer>;
+  middleware<I, O, E>(
+    token: ChainToken<I, O, E>,
+    handler: ChainHandler<NoInfer<I>, NoInfer<O>, NoInfer<E>>,
+  ): Result<Disposer>;
   guard<I>(token: GuardToken<I>, handler: GuardHandler<NoInfer<I>>): Result<Disposer>;
-  dispatch<I, O, E>(this: void, token: ChainToken<I, O, E>, input: I, options?: CallOptions): Promise<Result<O, E>>;
-  dispatch<I>(this: void, token: GuardToken<I>, input: I, options?: CallOptions): Promise<Result<GuardDecision>>;
+  dispatch<I, O, E>(
+    this: void,
+    token: ChainToken<I, O, E>,
+    input: I,
+    options?: CallOptions,
+  ): Promise<Result<O, E>>;
+  dispatch<I>(
+    this: void,
+    token: GuardToken<I>,
+    input: I,
+    options?: CallOptions,
+  ): Promise<Result<GuardDecision>>;
   emit<T>(this: void, token: EventToken<T>, payload: T): Result<EmitReceipt>;
   addCleanup(cleanup: Cleanup): Result<Disposer>;
   resource<T, E = never>(spec: ResourceSpec<T, E>): Promise<Result<T, E>>;
@@ -407,4 +444,3 @@ export interface HostOptions {
   readonly scheduler?: Scheduler;
   readonly onDiagnostic?: (diagnostic: Diagnostic) => void;
 }
-

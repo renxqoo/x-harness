@@ -6,13 +6,32 @@ createApplication 创建独占装配权的宿主。setPlugins 提交完整插件
 import { definePlugin, defineService } from "@x-harness/core";
 import type { Result } from "@x-harness/core";
 import { createApplication } from "@x-harness/application";
-const defined = defineService<{ read(input: void): Promise<Result<string>> }>({ name: "demo/store", methods: { read: {} } });
+const defined = defineService<{ read(input: void): Promise<Result<string>> }>({
+  name: "demo/store",
+  methods: { read: {} },
+});
 if (!defined.ok) throw new Error("Invalid contract");
 const store = defined.value;
-const consumer = definePlugin({ name: "consumer", requires: { store }, setup() { return { ok: true, value: undefined }; } });
-const provider = definePlugin({ name: "provider", provides: { store }, setup(ctx) {
-  return ctx.service({ store: { async read() { return { ok: true, value: "ready" }; } } });
-} });
+const consumer = definePlugin({
+  name: "consumer",
+  requires: { store },
+  setup() {
+    return { ok: true, value: undefined };
+  },
+});
+const provider = definePlugin({
+  name: "provider",
+  provides: { store },
+  setup(ctx) {
+    return ctx.service({
+      store: {
+        async read() {
+          return { ok: true, value: "ready" };
+        },
+      },
+    });
+  },
+});
 const created = createApplication();
 if (created.ok) {
   const app = created.value;
@@ -20,9 +39,12 @@ if (created.ok) {
     await app.setPlugins([consumer]);
     const assembled = await app.setPlugins([consumer, provider]);
     if (assembled.ok && assembled.value.plugins.every((entry) => entry.state === "active")) {
-      const service = app.use(store); if (service.ok) await service.value.read();
+      const service = app.use(store);
+      if (service.ok) await service.value.read();
     }
-  } finally { await app.close(); }
+  } finally {
+    await app.close();
+  }
 }
 ```
 

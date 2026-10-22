@@ -1,1 +1,2 @@
-const got=ctx.use(service); if(got.ok) got.value.run({text:1});
+const got = ctx.use(service);
+if (got.ok) got.value.run({ text: 1 });

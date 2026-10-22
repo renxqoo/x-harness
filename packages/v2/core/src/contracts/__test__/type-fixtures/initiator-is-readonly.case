@@ -1,2 +1,2 @@
-declare const call:Invocation;
-call.initiator.id="forged";
+declare const call: Invocation;
+call.initiator.id = "forged";

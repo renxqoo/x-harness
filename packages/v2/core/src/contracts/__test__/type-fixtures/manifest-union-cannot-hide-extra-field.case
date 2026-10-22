@@ -1,5 +1,14 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import type { PluginSpec } from "__PUBLIC_ENTRY__";
-type Manifest = { provides: { service: typeof service }; priority: number } | { provides: { service: typeof service } };
-const spec: PluginSpec<Manifest> = { name: "bad", provides: { service }, priority: 1, setup() { return { ok: true, value: undefined }; } };
+type Manifest =
+  | { provides: { service: typeof service }; priority: number }
+  | { provides: { service: typeof service } };
+const spec: PluginSpec<Manifest> = {
+  name: "bad",
+  provides: { service },
+  priority: 1,
+  setup() {
+    return { ok: true, value: undefined };
+  },
+};
 definePlugin<Manifest>(spec);

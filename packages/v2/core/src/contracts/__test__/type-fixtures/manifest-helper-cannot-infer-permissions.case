@@ -1,7 +1,18 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import type { PluginContext } from "__PUBLIC_ENTRY__";
 import { userStore, users } from "__AUTHORING_FIXTURE__";
-function setup(ctx: PluginContext<{ requires: { userStore: typeof userStore }; provides: { users: typeof users } }>) {
-  return ctx.service({ users: { async find(input, call) { return call.deps.userStore.findUser(input); } } });
+function setup(
+  ctx: PluginContext<{
+    requires: { userStore: typeof userStore };
+    provides: { users: typeof users };
+  }>,
+) {
+  return ctx.service({
+    users: {
+      async find(input, call) {
+        return call.deps.userStore.findUser(input);
+      },
+    },
+  });
 }
 definePlugin({ name: "bad", provides: { users }, setup });

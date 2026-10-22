@@ -6,13 +6,28 @@ import { readCoreFault } from "../contracts/read-core-fault";
 function normalizeCause(error: unknown): unknown {
   try {
     if (error instanceof Error) return { name: error.name, message: error.message };
-  } catch { return error; }
+  } catch {
+    return error;
+  }
+
   return error;
 }
 
-export function attributeFailure(kernel: Kernel, owner: Owner, result: { ok: false; error: unknown }): Result<never> {
+export function attributeFailure(
+  kernel: Kernel,
+  owner: Owner,
+  result: { ok: false; error: unknown },
+): Result<never> {
   const fault = readCoreFault(result.error);
-  if (fault.ok) return kernel.fault(fault.value.code, owner, { details: fault.value.details, callId: fault.value.callId });
+
+  if (fault.ok)
+    return kernel.fault(fault.value.code, owner, {
+      details: fault.value.details,
+      callId: fault.value.callId,
+    });
+
   const cause = readJsonValue(normalizeCause(result.error));
-  return kernel.fault("activation-failed", owner, { details: cause.ok ? { cause: cause.value } : undefined });
+  return kernel.fault("activation-failed", owner, {
+    details: cause.ok ? { cause: cause.value } : undefined,
+  });
 }

@@ -4,21 +4,21 @@ core 为应用提供插件装配、能力协作、受管执行和资源生命周
 
 ## 常用接口
 
-| 用途 | 接口 |
-| --- | --- |
-| 提供服务 | ctx.service |
-| 提供处理链终结函数 | ctx.handle |
-| 使用服务依赖 | setup 内使用 ctx.deps，处理函数内使用 call.deps |
-| 监听事件、发出事件 | ctx.on、ctx.emit |
-| 登记中间件、决策处理器 | ctx.middleware、ctx.guard |
-| 执行处理链或关口 | call.dispatch；初始化时可用 ctx.dispatch |
-| 创建与关闭资源 | ctx.resource({ open, close })；消费方资源使用 call.resource |
-| 登记清理动作 | ctx.addCleanup；调用上下文保留 call.effect |
-| 启动任务 | ctx.startTask；结构化子任务使用 call.spawn |
-| 创建范围 | ctx.createScope |
-| 查看所在范围 | ctx.scopeId、ctx.scopeState |
-| 宿主管理 | createHost、app.install、app.uninstall、app.close |
-| 宿主取得服务 | app.use(token) |
+| 用途                   | 接口                                                        |
+| ---------------------- | ----------------------------------------------------------- |
+| 提供服务               | ctx.service                                                 |
+| 提供处理链终结函数     | ctx.handle                                                  |
+| 使用服务依赖           | setup 内使用 ctx.deps，处理函数内使用 call.deps             |
+| 监听事件、发出事件     | ctx.on、ctx.emit                                            |
+| 登记中间件、决策处理器 | ctx.middleware、ctx.guard                                   |
+| 执行处理链或关口       | call.dispatch；初始化时可用 ctx.dispatch                    |
+| 创建与关闭资源         | ctx.resource({ open, close })；消费方资源使用 call.resource |
+| 登记清理动作           | ctx.addCleanup；调用上下文保留 call.effect                  |
+| 启动任务               | ctx.startTask；结构化子任务使用 call.spawn                  |
+| 创建范围               | ctx.createScope                                             |
+| 查看所在范围           | ctx.scopeId、ctx.scopeState                                 |
+| 宿主管理               | createHost、app.install、app.uninstall、app.close           |
+| 宿主取得服务           | app.use(token)                                              |
 
 ## 第一个插件
 
@@ -26,7 +26,20 @@ core 为应用提供插件装配、能力协作、受管执行和资源生命周
 
 ```ts
 import { createHost, definePlugin, defineService } from "@x-harness/core";
-import type { ChainToken, CleanupInvocation, Context, EventToken, GuardToken, Invocation, Plugin, PluginContext, PluginImplementations, Result, Host, ServiceToken } from "@x-harness/core";
+import type {
+  ChainToken,
+  CleanupInvocation,
+  Context,
+  EventToken,
+  GuardToken,
+  Invocation,
+  Plugin,
+  PluginContext,
+  PluginImplementations,
+  Result,
+  Host,
+  ServiceToken,
+} from "@x-harness/core";
 
 type Greeting = { greet(input: { name: string }): Promise<Result<string>> };
 const greetingContract = defineService<Greeting>({ name: "greeting", methods: { greet: {} } });
@@ -42,15 +55,21 @@ async function greetingApplication(): Promise<Result<string>> {
   if (!created.ok) return created;
   const app = created.value;
   try {
-    const installed = await app.install([definePlugin({
-      name: "greeting",
-      provides: { greeting },
-      setup(ctx) {
-        return ctx.service({ greeting: {
-          async greet(input) { return { ok: true, value: `你好，${input.name}` }; },
-        } });
-      },
-    })]);
+    const installed = await app.install([
+      definePlugin({
+        name: "greeting",
+        provides: { greeting },
+        setup(ctx) {
+          return ctx.service({
+            greeting: {
+              async greet(input) {
+                return { ok: true, value: `你好，${input.name}` };
+              },
+            },
+          });
+        },
+      }),
+    ]);
     if (!installed.ok) return installed;
     const service = app.use(greeting);
     if (!service.ok) return service;
@@ -80,9 +99,13 @@ const usersPlugin = definePlugin({
   requires: { userStore },
   provides: { users },
   setup(ctx) {
-    return ctx.service({ users: {
-      async find(input, call) { return call.deps.userStore.findUser(input); },
-    } });
+    return ctx.service({
+      users: {
+        async find(input, call) {
+          return call.deps.userStore.findUser(input);
+        },
+      },
+    });
   },
 });
 ```
@@ -99,12 +122,14 @@ const optionalUsers = definePlugin({
   optional: { userStore },
   provides: { users },
   setup(ctx) {
-    return ctx.service({ users: {
-      async find(input, call) {
-        if (!call.deps.userStore) return { ok: true, value: null };
-        return call.deps.userStore.findUser(input);
+    return ctx.service({
+      users: {
+        async find(input, call) {
+          if (!call.deps.userStore) return { ok: true, value: null };
+          return call.deps.userStore.findUser(input);
+        },
       },
-    } });
+    });
   },
 });
 ```
@@ -116,7 +141,11 @@ const optionalUsers = definePlugin({
 ```ts
 const usersManifest = { name: "extracted-users", requires: { userStore }, provides: { users } };
 const usersImplementation: PluginImplementations<typeof usersManifest> = {
-  users: { async find(input, call) { return call.deps.userStore.findUser(input); } },
+  users: {
+    async find(input, call) {
+      return call.deps.userStore.findUser(input);
+    },
+  },
 };
 
 function setupUsers(ctx: PluginContext<typeof usersManifest>) {
@@ -138,16 +167,28 @@ PluginInvocation 使用相同的 typeof 声明；PluginResource 和 PluginTask �
 
 ```ts
 function createGreetingPlugin(prefix: unknown): Result<Plugin> {
-  if (typeof prefix !== "string" || !greetingContract.ok) return { ok: false, error: { source: "core", code: "invalid-input", message: "invalid-input" } };
+  if (typeof prefix !== "string" || !greetingContract.ok)
+    return {
+      ok: false,
+      error: { source: "core", code: "invalid-input", message: "invalid-input" },
+    };
   const greeting = greetingContract.value;
-  return { ok: true, value: definePlugin({
-    name: "configured-greeting", provides: { greeting },
-    setup(ctx) {
-      return ctx.service({ greeting: {
-        async greet(input) { return { ok: true, value: prefix + input.name }; },
-      } });
-    },
-  }) };
+  return {
+    ok: true,
+    value: definePlugin({
+      name: "configured-greeting",
+      provides: { greeting },
+      setup(ctx) {
+        return ctx.service({
+          greeting: {
+            async greet(input) {
+              return { ok: true, value: prefix + input.name };
+            },
+          },
+        });
+      },
+    }),
+  };
 }
 ```
 
@@ -163,7 +204,8 @@ interface Connection {
 declare function connect(signal: AbortSignal): Promise<Result<Connection>>;
 
 const databasePlugin = definePlugin({
-  name: "database", provides: { userStore },
+  name: "database",
+  provides: { userStore },
   async setup(ctx) {
     const acquired = await ctx.resource({
       open: (call) => connect(call.signal),
@@ -171,9 +213,13 @@ const databasePlugin = definePlugin({
     });
     if (!acquired.ok) return acquired;
     const connection = acquired.value;
-    return ctx.service({ userStore: {
-      async findUser(input, call) { return connection.read(input, call.signal); },
-    } });
+    return ctx.service({
+      userStore: {
+        async findUser(input, call) {
+          return connection.read(input, call.signal);
+        },
+      },
+    });
   },
 });
 ```
@@ -197,12 +243,18 @@ function ownCleanup(app: Context, cleanup: (call: CleanupInvocation) => Promise<
 ```ts
 declare const transform: ChainToken<string, string>;
 const terminalPlugin = definePlugin({
-  name: "transform", provides: { transform },
-  setup(ctx) { return ctx.handle("transform", (input) => ({ ok: true, value: input })); },
+  name: "transform",
+  provides: { transform },
+  setup(ctx) {
+    return ctx.handle("transform", (input) => ({ ok: true, value: input }));
+  },
 });
 const middlewarePlugin = definePlugin({
-  name: "uppercase", requires: { transform },
-  setup(ctx) { return ctx.middleware("transform", (input, next) => next(input.toUpperCase())); },
+  name: "uppercase",
+  requires: { transform },
+  setup(ctx) {
+    return ctx.middleware("transform", (input, next) => next(input.toUpperCase()));
+  },
 });
 ```
 
@@ -211,11 +263,17 @@ const middlewarePlugin = definePlugin({
 ```ts
 declare const render: ServiceToken<{ run(input: string): Promise<Result<string>> }>;
 const renderPlugin = definePlugin({
-  name: "render", requires: { transform }, provides: { render },
+  name: "render",
+  requires: { transform },
+  provides: { render },
   setup(ctx) {
-    return ctx.service({ render: {
-      async run(input, call) { return call.dispatch("transform", input); },
-    } });
+    return ctx.service({
+      render: {
+        async run(input, call) {
+          return call.dispatch("transform", input);
+        },
+      },
+    });
   },
 });
 ```
@@ -227,10 +285,13 @@ const renderPlugin = definePlugin({
 ```ts
 declare const access: GuardToken<{ userId: string }>;
 const accessPlugin = definePlugin({
-  name: "access", provides: { access },
+  name: "access",
+  provides: { access },
   setup(ctx) {
-    return ctx.guard("access", (input) => ({ ok: true, value: input.userId
-      ? { kind: "allow" } : { kind: "deny", reason: "missing-user" } }));
+    return ctx.guard("access", (input) => ({
+      ok: true,
+      value: input.userId ? { kind: "allow" } : { kind: "deny", reason: "missing-user" },
+    }));
   },
 });
 ```
@@ -242,12 +303,21 @@ const accessPlugin = definePlugin({
 ```ts
 declare const changed: EventToken<{ id: string }>;
 const publisherPlugin = definePlugin({
-  name: "publisher", provides: { changed },
-  setup() { return { ok: true, value: undefined }; },
+  name: "publisher",
+  provides: { changed },
+  setup() {
+    return { ok: true, value: undefined };
+  },
 });
 const listenerPlugin = definePlugin({
-  name: "listener", requires: { changed },
-  setup(ctx) { return ctx.on("changed", async (payload, _origin, call) => { void payload.id; void call.signal; }); },
+  name: "listener",
+  requires: { changed },
+  setup(ctx) {
+    return ctx.on("changed", async (payload, _origin, call) => {
+      void payload.id;
+      void call.signal;
+    });
+  },
 });
 ```
 
@@ -259,9 +329,15 @@ const listenerPlugin = definePlugin({
 
 ```ts
 const taskPlugin = definePlugin({
-  name: "refresh", requires: { userStore },
+  name: "refresh",
+  requires: { userStore },
   setup(ctx) {
-    return ctx.startTask({ label: "refresh-user", run(call) { return call.deps.userStore.findUser({ id: "42" }); } });
+    return ctx.startTask({
+      label: "refresh-user",
+      run(call) {
+        return call.deps.userStore.findUser({ id: "42" });
+      },
+    });
   },
 });
 ```
@@ -288,7 +364,15 @@ async function mount(app: Host, plugin: Plugin): Promise<Result<void>> {
 function isolated(app: Host, token: ServiceToken<Greeting>) {
   const scope = app.createScope({ label: "tenant" });
   if (!scope.ok) return scope;
-  return scope.value.register(token, { async greet(input) { return { ok: true, value: input.name }; } }, { shadow: true });
+  return scope.value.register(
+    token,
+    {
+      async greet(input) {
+        return { ok: true, value: input.name };
+      },
+    },
+    { shadow: true },
+  );
 }
 ```
 
@@ -306,7 +390,10 @@ Scope 不是不可信代码沙箱。强制结束不可收敛代码需要进程�
 function inspectApplication(app: Host) {
   const state = app.inspect();
   return {
-    dependencies: state.plugins.map(({ ref, dependencies }) => ({ plugin: ref.name, dependencies })),
+    dependencies: state.plugins.map(({ ref, dependencies }) => ({
+      plugin: ref.name,
+      dependencies,
+    })),
     work: state.work,
     resources: state.resources,
     diagnostics: app.diagnostics(),

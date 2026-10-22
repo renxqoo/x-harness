@@ -1,6 +1,106 @@
-import { expect,it } from "vitest";
+import { expect, it } from "vitest";
 import { createToolPlugin } from "../../../tools/src/index";
-import { world,value,text,gate,request } from "./helpers";
-it("batch progress carries callId and awaits consumer backpressure",async()=>{const hold=gate(),entered=gate();let finished=false;const seen:unknown[]=[];const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async(_i,call)=>{const result=await call.progress("delta");if(!result.ok)return result;finished=true;return text("x");}}))]);try{const pending=service.batch({calls:[request("echo","node")],async onProgress(event){seen.push(event);entered.resolve();await hold.promise;}});await entered.promise;expect(finished).toBe(false);expect(seen).toEqual([{callId:"node",delta:"delta"}]);hold.resolve();value(await pending);expect(finished).toBe(true);}finally{hold.resolve();value(await host.close());}});
-it("a throwing batch consumer is a node failure and never echoes secrets",async()=>{const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async(_i,call)=>{await call.progress("x");return text("x");}}))]);try{const report=value(await service.batch({calls:[request()],onProgress(){throw new Error("private-key");}}));expect(report.results[0]!.result).toMatchObject({ok:false,error:{code:"consumer-failed"}});expect(JSON.stringify(report)).not.toContain("private-key");}finally{value(await host.close());}});
-it("single execute progress preserves its plain text callback contract",async()=>{const seen:string[]=[];const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async(_i,call)=>{const sent=await call.progress("x");return sent.ok?text("x"):sent;}}))]);try{value(await service.execute({...request(),onProgress(delta){seen.push(delta);}}));expect(seen).toEqual(["x"]);}finally{value(await host.close());}});
+import { world, value, text, gate, request } from "./helpers";
+it("batch progress carries callId and awaits consumer backpressure", async () => {
+  const hold = gate(),
+    entered = gate();
+  let finished = false;
+  const seen: unknown[] = [];
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: { type: "object" },
+        execute: async (_i, call) => {
+          const result = await call.progress("delta");
+
+          if (!result.ok) return result;
+
+          finished = true;
+          return text("x");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const pending = service.batch({
+      calls: [request("echo", "node")],
+      async onProgress(event) {
+        seen.push(event);
+        entered.resolve();
+        await hold.promise;
+      },
+    });
+    await entered.promise;
+    expect(finished).toBe(false);
+    expect(seen).toEqual([{ callId: "node", delta: "delta" }]);
+    hold.resolve();
+    value(await pending);
+    expect(finished).toBe(true);
+  } finally {
+    hold.resolve();
+    value(await host.close());
+  }
+});
+it("a throwing batch consumer is a node failure and never echoes secrets", async () => {
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: { type: "object" },
+        execute: async (_i, call) => {
+          await call.progress("x");
+          return text("x");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const report = value(
+      await service.batch({
+        calls: [request()],
+        onProgress() {
+          throw new Error("private-key");
+        },
+      }),
+    );
+    expect(report.results[0]!.result).toMatchObject({
+      ok: false,
+      error: { code: "consumer-failed" },
+    });
+    expect(JSON.stringify(report)).not.toContain("private-key");
+  } finally {
+    value(await host.close());
+  }
+});
+it("single execute progress preserves its plain text callback contract", async () => {
+  const seen: string[] = [];
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: { type: "object" },
+        execute: async (_i, call) => {
+          const sent = await call.progress("x");
+          return sent.ok ? text("x") : sent;
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    value(
+      await service.execute({
+        ...request(),
+        onProgress(delta) {
+          seen.push(delta);
+        },
+      }),
+    );
+    expect(seen).toEqual(["x"]);
+  } finally {
+    value(await host.close());
+  }
+});

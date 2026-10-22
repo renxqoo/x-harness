@@ -1,0 +1,42 @@
+{
+  "jsPlugins": ["@stylistic/eslint-plugin"],
+  "rules": {
+    "@stylistic/padding-line-between-statements": [
+      "error",
+      {
+        "blankLine": "always",
+        "prev": "*",
+        "next": [
+          "function",
+          "block-like",
+          "if",
+          "for",
+          "while",
+          "do",
+          "switch",
+          "try",
+          {
+            "selector": "VariableDeclaration:has(VariableDeclarator > ArrowFunctionExpression.init), VariableDeclaration:has(VariableDeclarator > FunctionExpression.init)"
+          }
+        ]
+      },
+      {
+        "blankLine": "always",
+        "prev": [
+          "function",
+          "block-like",
+          "if",
+          "for",
+          "while",
+          "do",
+          "switch",
+          "try",
+          {
+            "selector": "VariableDeclaration:has(VariableDeclarator > ArrowFunctionExpression.init), VariableDeclaration:has(VariableDeclarator > FunctionExpression.init)"
+          }
+        ],
+        "next": "*"
+      }
+    ]
+  }
+}

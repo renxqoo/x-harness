@@ -1,1 +1,1 @@
-cleanup.addCleanup(()=>({ok:true,value:undefined}));
+cleanup.addCleanup(() => ({ ok: true, value: undefined }));

@@ -3,6 +3,8 @@ import { userStore } from "__AUTHORING_FIXTURE__";
 type Manifest = { requires?: { userStore: typeof userStore } };
 const spec: PluginSpec<Manifest> = {
   name: "bad",
-  setup(ctx) { return ctx.deps.userStore.findUser({ id: "missing" }); },
+  setup(ctx) {
+    return ctx.deps.userStore.findUser({ id: "missing" });
+  },
 };
 void spec;

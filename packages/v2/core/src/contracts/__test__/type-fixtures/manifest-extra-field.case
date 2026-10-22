@@ -1,4 +1,9 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import { users, ok } from "__AUTHORING_FIXTURE__";
 const manifest = { name: "bad", provides: { users }, priority: 1 };
-definePlugin({ ...manifest, setup() { return ok(); } });
+definePlugin({
+  ...manifest,
+  setup() {
+    return ok();
+  },
+});

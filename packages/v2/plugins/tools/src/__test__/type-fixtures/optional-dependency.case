@@ -1,1 +1,9 @@
-createToolPlugin({name:"x",optional:{clock},inputSchema:{type:"object"},execute:async(_input,call)=>{await call.deps.clock.read(undefined);return {ok:true,value:{content:[]}};}});
+createToolPlugin({
+  name: "x",
+  optional: { clock },
+  inputSchema: { type: "object" },
+  execute: async (_input, call) => {
+    await call.deps.clock.read(undefined);
+    return { ok: true, value: { content: [] } };
+  },
+});

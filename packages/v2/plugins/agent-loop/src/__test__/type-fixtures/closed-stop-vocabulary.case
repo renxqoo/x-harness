@@ -1,1 +1,1 @@
-const stopped:AgentStopReason="retry-forever";
+const stopped: AgentStopReason = "retry-forever";

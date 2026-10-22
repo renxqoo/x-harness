@@ -4,10 +4,21 @@ import type { Continuation, GuardHandler, Invocation, Result, Host } from "../..
 import { clock, deferred, flush, number, root, text, value } from "../../__test__/helpers";
 
 const roots: Host[] = [];
-afterEach(async () => { for (const item of roots.splice(0)) await item.close(); });
-const setup = (options?: Parameters<typeof root>[0]) => { const item = root(options); roots.push(item); return item; };
-const chain = () => value(defineChain<string, number>({ name: "execute", input: text, output: number }));
+afterEach(async () => {
+  for (const item of roots.splice(0)) await item.close();
+});
+
+const setup = (options?: Parameters<typeof root>[0]) => {
+  const item = root(options);
+  roots.push(item);
+  return item;
+};
+
+const chain = () =>
+  value(defineChain<string, number>({ name: "execute", input: text, output: number }));
+
 const guard = () => value(defineGuard({ name: "policy", input: text }));
+
 const event = () => value(defineEvent({ name: "notice", payload: text }));
 
 describe("chain and guard execution", () => {
@@ -15,13 +26,34 @@ describe("chain and guard execution", () => {
     const host = setup();
     const token = chain();
     const order: string[] = [];
-    value(host.register(token, (input) => { order.push(input); return { ok: true, value: 1 }; }));
-    value(host.middleware(token, async (input, next) => { order.push("outer"); const result = await next(input); order.push("done"); return result; }));
-    value(host.middleware(token, (input, next) => { order.push("inner"); return next(input); }));
+    value(
+      host.register(token, (input) => {
+        order.push(input);
+        return { ok: true, value: 1 };
+      }),
+    );
+    value(
+      host.middleware(token, async (input, next) => {
+        order.push("outer");
+        const result = await next(input);
+        order.push("done");
+        return result;
+      }),
+    );
+    value(
+      host.middleware(token, (input, next) => {
+        order.push("inner");
+        return next(input);
+      }),
+    );
     expect(value(await host.dispatch(token, "terminal"))).toBe(1);
     expect(order).toEqual(["outer", "inner", "terminal", "done"]);
     const second = setup();
-    value(second.register(token, () => { throw new Error("must not enter"); }));
+    value(
+      second.register(token, () => {
+        throw new Error("must not enter");
+      }),
+    );
     value(second.middleware(token, () => ({ ok: true, value: 9 })));
     expect(value(await second.dispatch(token, "short"))).toBe(9);
   });
@@ -30,16 +62,29 @@ describe("chain and guard execution", () => {
     const token = chain();
     const ids: string[] = [];
     let calls = 0;
-    value(host.register(token, (_input, call) => {
-      ids.push(call.id); calls += 1;
-      if (calls === 1) return { ok: false, error: { source: "core", code: "callback-failed", message: "callback-failed" } };
-      return { ok: true, value: 7 };
-    }));
-    value(host.middleware(token, async (input, next) => {
-      const first = await next(input);
-      if (first.ok) return first;
-      return await next(input);
-    }));
+    value(
+      host.register(token, (_input, call) => {
+        ids.push(call.id);
+        calls += 1;
+
+        if (calls === 1)
+          return {
+            ok: false,
+            error: { source: "core", code: "callback-failed", message: "callback-failed" },
+          };
+
+        return { ok: true, value: 7 };
+      }),
+    );
+    value(
+      host.middleware(token, async (input, next) => {
+        const first = await next(input);
+
+        if (first.ok) return first;
+
+        return await next(input);
+      }),
+    );
     expect(value(await host.dispatch(token, "retry"))).toBe(7);
     expect(new Set(ids).size).toBe(2);
   });
@@ -49,12 +94,19 @@ describe("chain and guard execution", () => {
     const delayed = deferred<Result<number>>();
     let calls = 0;
     let second: Result<number> | undefined;
-    value(host.register(token, () => { calls += 1; return delayed.promise; }));
-    value(host.middleware(token, async (input, next) => {
-      const first = next(input);
-      second = await next(input);
-      return await first;
-    }));
+    value(
+      host.register(token, () => {
+        calls += 1;
+        return delayed.promise;
+      }),
+    );
+    value(
+      host.middleware(token, async (input, next) => {
+        const first = next(input);
+        second = await next(input);
+        return await first;
+      }),
+    );
     const pending = host.dispatch(token, "a");
     await flush();
     expect(second).toMatchObject({ ok: false, error: { code: "concurrent-next" } });
@@ -67,7 +119,12 @@ describe("chain and guard execution", () => {
     const token = chain();
     let saved!: (input: string) => Continuation<Result<number>>;
     value(host.register(token, () => ({ ok: true, value: 1 })));
-    value(host.middleware(token, (_input, next) => { saved = next; return { ok: true, value: 2 }; }));
+    value(
+      host.middleware(token, (_input, next) => {
+        saved = next;
+        return { ok: true, value: 2 };
+      }),
+    );
     expect(value(await host.dispatch(token, "a"))).toBe(2);
     expect(await saved("a")).toMatchObject({ ok: false, error: { code: "late-next" } });
   });
@@ -76,7 +133,12 @@ describe("chain and guard execution", () => {
     const token = chain();
     const delayed = deferred<Result<number>>();
     value(host.register(token, () => delayed.promise));
-    value(host.middleware(token, (input, next) => { next(input); return { ok: true, value: 3 }; }));
+    value(
+      host.middleware(token, (input, next) => {
+        next(input);
+        return { ok: true, value: 3 };
+      }),
+    );
     const pending = host.dispatch(token, "a");
     await flush();
     expect(host.inspect().activeCalls).toBeGreaterThan(0);
@@ -88,7 +150,12 @@ describe("chain and guard execution", () => {
     const token = chain();
     const gate = deferred<void>();
     value(host.register(token, () => ({ ok: true, value: 1 })));
-    value(host.middleware(token, async (input, next) => { await gate.promise; return await next(input); }));
+    value(
+      host.middleware(token, async (input, next) => {
+        await gate.promise;
+        return await next(input);
+      }),
+    );
     const off = value(host.middleware(token, (input, next) => next(input)));
     const pending = host.dispatch(token, "a");
     await flush();
@@ -101,9 +168,23 @@ describe("chain and guard execution", () => {
     const token = chain();
     value(host.register(token, () => ({ ok: true, value: 1 })));
     expect(value(await host.dispatch(token, "a"))).toBe(1);
-    const installed = value(await host.install([{ name: "extension", requires: { token }, setup(ctx) {
-      return ctx.middleware(token, async (input, next) => { const result = await next(input); if (!result.ok) return result; return { ok: true, value: result.value + 10 }; });
-    } }]));
+    const installed = value(
+      await host.install([
+        {
+          name: "extension",
+          requires: { token },
+          setup(ctx) {
+            return ctx.middleware(token, async (input, next) => {
+              const result = await next(input);
+
+              if (!result.ok) return result;
+
+              return { ok: true, value: result.value + 10 };
+            });
+          },
+        },
+      ]),
+    );
     expect(value(await host.dispatch(token, "a"))).toBe(11);
     value(await host.uninstall(installed.plugins[0]!));
     expect(value(await host.dispatch(token, "a"))).toBe(1);
@@ -112,25 +193,48 @@ describe("chain and guard execution", () => {
     const host = setup();
     const token = chain();
     let calls = 0;
-    value(host.register(token, () => { calls += 1; return { ok: true, value: "wrong" as unknown as number }; }));
+    value(
+      host.register(token, () => {
+        calls += 1;
+        return { ok: true, value: "wrong" as unknown as number };
+      }),
+    );
     expect((await host.dispatch(token, 1 as unknown as string)).ok).toBe(false);
     expect(calls).toBe(0);
-    expect(await host.dispatch(token, "a")).toMatchObject({ ok: false, error: { code: "invalid-result" } });
+    expect(await host.dispatch(token, "a")).toMatchObject({
+      ok: false,
+      error: { code: "invalid-result" },
+    });
   });
   it("guard requires explicit decisions and stops at the first denial", async () => {
     const host = setup();
     const token = guard();
     value(host.register(token));
-    expect(await host.dispatch(token, "a")).toMatchObject({ ok: false, error: { code: "guard-unconfigured" } });
+    expect(await host.dispatch(token, "a")).toMatchObject({
+      ok: false,
+      error: { code: "guard-unconfigured" },
+    });
     let after = 0;
     value(host.guard(token, () => ({ ok: true, value: { kind: "allow" as const } })));
-    value(host.guard(token, () => ({ ok: true, value: { kind: "deny" as const, reason: "blocked" } })));
-    value(host.guard(token, () => { after += 1; return { ok: true, value: { kind: "allow" as const } }; }));
+    value(
+      host.guard(token, () => ({ ok: true, value: { kind: "deny" as const, reason: "blocked" } })),
+    );
+    value(
+      host.guard(token, () => {
+        after += 1;
+        return { ok: true, value: { kind: "allow" as const } };
+      }),
+    );
     expect(value(await host.dispatch(token, "a"))).toEqual({ kind: "deny", reason: "blocked" });
     expect(after).toBe(0);
   });
   it("a thrown guard and an invalid guard result cannot allow execution", async () => {
-    for (const implementation of [() => { throw new Error("secret"); }, () => undefined]) {
+    for (const implementation of [
+      () => {
+        throw new Error("secret");
+      },
+      () => undefined,
+    ]) {
       const host = setup();
       const token = guard();
       value(host.register(token));
@@ -143,7 +247,12 @@ describe("chain and guard execution", () => {
     const host = setup();
     const token = chain();
     let call!: Invocation;
-    value(host.register(token, (_input, invocation) => { call = invocation; return { ok: true, value: 1 }; }));
+    value(
+      host.register(token, (_input, invocation) => {
+        call = invocation;
+        return { ok: true, value: 1 };
+      }),
+    );
     value(await host.dispatch(token, "a"));
     expect(call.origin.scopeId).toBe("root");
     expect(call.executor.scopeId).toBe("root");
@@ -159,8 +268,18 @@ describe("bounded notification delivery", () => {
     const gate = deferred<void>();
     const slow: string[] = [];
     const fast: string[] = [];
-    value(host.on(token, async (input) => { slow.push(input); if (input === "one") await gate.promise; }));
-    value(host.on(token, (input) => { fast.push(input); }));
+    value(
+      host.on(token, async (input) => {
+        slow.push(input);
+
+        if (input === "one") await gate.promise;
+      }),
+    );
+    value(
+      host.on(token, (input) => {
+        fast.push(input);
+      }),
+    );
     value(host.emit(token, "one"));
     value(host.emit(token, "two"));
     await flush();
@@ -172,10 +291,20 @@ describe("bounded notification delivery", () => {
   });
   it("event payload is a stable shared immutable snapshot", async () => {
     const host = setup();
-    const token = value(defineEvent<{ item: string }>({ name: "objects", payload: (input) => ({ ok: true, value: input as { item: string } }) }));
+    const token = value(
+      defineEvent<{ item: string }>({
+        name: "objects",
+        payload: (input) => ({ ok: true, value: input as { item: string } }),
+      }),
+    );
     value(host.register(token));
     const received: string[] = [];
-    value(host.on(token, (input) => { expect(Object.isFrozen(input)).toBe(true); received.push(input.item); }));
+    value(
+      host.on(token, (input) => {
+        expect(Object.isFrozen(input)).toBe(true);
+        received.push(input.item);
+      }),
+    );
     const input = { item: "before" };
     value(host.emit(token, input));
     input.item = "after";
@@ -187,8 +316,16 @@ describe("bounded notification delivery", () => {
     const token = event();
     value(host.register(token));
     let calls = 0;
-    value(host.on(token, () => { calls += 1; }));
-    value(host.on(token, () => { calls += 1; }));
+    value(
+      host.on(token, () => {
+        calls += 1;
+      }),
+    );
+    value(
+      host.on(token, () => {
+        calls += 1;
+      }),
+    );
     expect(host.emit(token, "a")).toMatchObject({ ok: false, error: { code: "resource-limit" } });
     await flush();
     expect(calls).toBe(0);
@@ -200,7 +337,12 @@ describe("bounded notification delivery", () => {
     value(host.register(token));
     const gate = deferred<void>();
     const received: string[] = [];
-    value(host.on(token, async (input) => { received.push(input); await gate.promise; }));
+    value(
+      host.on(token, async (input) => {
+        received.push(input);
+        await gate.promise;
+      }),
+    );
     value(host.emit(token, "one"));
     value(host.emit(token, "two"));
     await flush();
@@ -220,25 +362,49 @@ describe("bounded notification delivery", () => {
     const child = value(host.createScope({ label: "child" }));
     const sibling = value(host.createScope({ label: "sibling" }));
     const calls: string[] = [];
-    value(host.on(token, () => { calls.push("root"); }));
-    value(child.on(token, () => { calls.push("child"); }));
-    value(sibling.on(token, () => { calls.push("sibling"); }));
+    value(
+      host.on(token, () => {
+        calls.push("root");
+      }),
+    );
+    value(
+      child.on(token, () => {
+        calls.push("child");
+      }),
+    );
+    value(
+      sibling.on(token, () => {
+        calls.push("sibling");
+      }),
+    );
     value(child.emit(token, "a"));
     await flush();
     expect(calls).toEqual(["root", "child"]);
   });
-  it.each([Infinity, () => {}, Symbol("bad"), new Date()])("rejects non-JSON notification data: %s", (input) => {
-    const host = setup();
-    const token = value(defineEvent<unknown>({ name: "json", payload: (raw) => ({ ok: true, value: raw }) }));
-    value(host.register(token));
-    expect(host.emit(token, input).ok).toBe(false);
-  });
+  it.each([Infinity, () => {}, Symbol("bad"), new Date()])(
+    "rejects non-JSON notification data: %s",
+    (input) => {
+      const host = setup();
+      const token = value(
+        defineEvent<unknown>({ name: "json", payload: (raw) => ({ ok: true, value: raw }) }),
+      );
+      value(host.register(token));
+      expect(host.emit(token, input).ok).toBe(false);
+    },
+  );
   it("accessor payloads are rejected without running a getter", () => {
     const host = setup();
-    const token = value(defineEvent<unknown>({ name: "accessor", payload: (raw) => ({ ok: true, value: raw }) }));
+    const token = value(
+      defineEvent<unknown>({ name: "accessor", payload: (raw) => ({ ok: true, value: raw }) }),
+    );
     value(host.register(token));
     let called = 0;
-    const payload = { get value() { called += 1; return "secret"; } };
+    const payload = {
+      get value() {
+        called += 1;
+        return "secret";
+      },
+    };
     expect(host.emit(token, payload).ok).toBe(false);
     expect(called).toBe(0);
   });
@@ -246,11 +412,17 @@ describe("bounded notification delivery", () => {
     const host = setup({ limits: { maxEventBytes: 10 } });
     const token = event();
     value(host.register(token));
-    expect(host.emit(token, "x".repeat(100))).toMatchObject({ ok: false, error: { code: "resource-limit" } });
+    expect(host.emit(token, "x".repeat(100))).toMatchObject({
+      ok: false,
+      error: { code: "resource-limit" },
+    });
     expect(value(host.emit(token, "ok")).acceptedListeners).toBe(0);
-    const any = value(defineEvent<unknown>({ name: "cycle", payload: (raw) => ({ ok: true, value: raw }) }));
+    const any = value(
+      defineEvent<unknown>({ name: "cycle", payload: (raw) => ({ ok: true, value: raw }) }),
+    );
     value(host.register(any));
-    const cycle: { self?: unknown } = {}; cycle.self = cycle;
+    const cycle: { self?: unknown } = {};
+    cycle.self = cycle;
     expect(host.emit(any, cycle).ok).toBe(false);
   });
 });

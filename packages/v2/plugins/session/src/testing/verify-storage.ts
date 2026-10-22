@@ -2,59 +2,356 @@ import type { SessionStorage, StorageCommit, StorageNode, StoredRecord } from ".
 import { defaultSessionLimits } from "../storage";
 import type { SessionResult } from "../contracts";
 
-export async function verifySessionStorage(input: { first: SessionStorage; second: SessionStorage; namespace: string }): Promise<{ readonly checks: readonly string[] }> {
-  const { first, second, namespace } = input; const checks: string[] = [];
-  const check = (name: string, condition: boolean) => { if (!condition) throw new Error(`Storage contract failed: ${name}`); checks.push(name); };
-  const value = <T>(result: SessionResult<T>): T => { if (!result.ok) throw new Error(`Storage contract failed: unexpected ${result.error.code}`); return result.value; };
-  const failure = (result: SessionResult<unknown>, code: string) => !result.ok && result.error.code === code;
-  const { maxRecordBytes, maxSessionBytes, maxRecords, maxConversationNodes, maxMetadataBytes, maxSessions } = defaultSessionLimits;
-  const policy = { maxRecordBytes, maxSessionBytes, maxRecords, maxConversationNodes, maxMetadataBytes, maxSessions };
-  value(await first.initialize({ namespace, policy })); value(await second.initialize({ namespace, policy }));
-  check("namespace policy conflict", failure(await second.initialize({ namespace, policy: { ...policy, maxSessions: 1 } }), "configuration-conflict"));
-  check("empty namespace enumeration", value(await first.list({ namespace, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes })).sessions.length === 0);
-  const created = value(await first.create({ namespace, id: "contract", origin: "a".repeat(64), metadata: "null" }));
-  check("create idempotency", JSON.stringify(value(await second.create({ namespace, id: "contract", origin: "a".repeat(64), metadata: "null" }))) === JSON.stringify(created));
-  check("create identity conflict", failure(await second.create({ namespace, id: "contract", origin: "b".repeat(64), metadata: "null" }), "already-exists"));
-  const record = (seq: number, text: string): StoredRecord => ({ seq, time: 1, json: text, bytes: new TextEncoder().encode(text).length });
-  const initial = [record(1, "opaque:first"), record(2, "opaque:second")]; const nodes: StorageNode[] = [{ position: 1, seq: 1 }, { position: 2, seq: 2 }];
-  const batch: StorageCommit = { namespace, id: "contract", expectedRevision: 0, commitId: "batch", fingerprint: "b".repeat(64), records: initial, nodes };
+export async function verifySessionStorage(input: {
+  first: SessionStorage;
+  second: SessionStorage;
+  namespace: string;
+}): Promise<{ readonly checks: readonly string[] }> {
+  const { first, second, namespace } = input;
+  const checks: string[] = [];
+
+  const check = (name: string, condition: boolean) => {
+    if (!condition) throw new Error(`Storage contract failed: ${name}`);
+
+    checks.push(name);
+  };
+
+  const value = <T>(result: SessionResult<T>): T => {
+    if (!result.ok) throw new Error(`Storage contract failed: unexpected ${result.error.code}`);
+
+    return result.value;
+  };
+
+  const failure = (result: SessionResult<unknown>, code: string) =>
+    !result.ok && result.error.code === code;
+
+  const {
+    maxRecordBytes,
+    maxSessionBytes,
+    maxRecords,
+    maxConversationNodes,
+    maxMetadataBytes,
+    maxSessions,
+  } = defaultSessionLimits;
+  const policy = {
+    maxRecordBytes,
+    maxSessionBytes,
+    maxRecords,
+    maxConversationNodes,
+    maxMetadataBytes,
+    maxSessions,
+  };
+  value(await first.initialize({ namespace, policy }));
+  value(await second.initialize({ namespace, policy }));
+  check(
+    "namespace policy conflict",
+    failure(
+      await second.initialize({ namespace, policy: { ...policy, maxSessions: 1 } }),
+      "configuration-conflict",
+    ),
+  );
+  check(
+    "empty namespace enumeration",
+    value(
+      await first.list({ namespace, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }),
+    ).sessions.length === 0,
+  );
+  const created = value(
+    await first.create({ namespace, id: "contract", origin: "a".repeat(64), metadata: "null" }),
+  );
+  check(
+    "create idempotency",
+    JSON.stringify(
+      value(
+        await second.create({
+          namespace,
+          id: "contract",
+          origin: "a".repeat(64),
+          metadata: "null",
+        }),
+      ),
+    ) === JSON.stringify(created),
+  );
+  check(
+    "create identity conflict",
+    failure(
+      await second.create({ namespace, id: "contract", origin: "b".repeat(64), metadata: "null" }),
+      "already-exists",
+    ),
+  );
+
+  const record = (seq: number, text: string): StoredRecord => ({
+    seq,
+    time: 1,
+    json: text,
+    bytes: new TextEncoder().encode(text).length,
+  });
+
+  const initial = [record(1, "opaque:first"), record(2, "opaque:second")];
+  const nodes: StorageNode[] = [
+    { position: 1, seq: 1 },
+    { position: 2, seq: 2 },
+  ];
+  const batch: StorageCommit = {
+    namespace,
+    id: "contract",
+    expectedRevision: 0,
+    commitId: "batch",
+    fingerprint: "b".repeat(64),
+    records: initial,
+    nodes,
+  };
   const receipt = value(await first.commit(batch));
-  check("empty commit rejected", failure(await first.commit({ ...batch, commitId: "empty", expectedRevision: 2, records: [] }), "invalid-input"));
+  check(
+    "empty commit rejected",
+    failure(
+      await first.commit({ ...batch, commitId: "empty", expectedRevision: 2, records: [] }),
+      "invalid-input",
+    ),
+  );
   const snapshot = value(await second.read({ namespace, id: "contract", projection: true }));
-  check("atomic records head projection", snapshot.head.revision === 2 && snapshot.head.bytes === initial.reduce((n, r) => n + r.bytes, 0) && JSON.stringify(snapshot.nodes) === JSON.stringify(nodes));
-  check("receipt identity", JSON.stringify(value(await second.getCommit({ namespace, id: "contract", commitId: "batch" })).receipt) === JSON.stringify(receipt));
-  const races = await Promise.all([first.commit({ namespace, id: "contract", expectedRevision: 2, commitId: "race-a", fingerprint: "c".repeat(64), records: [record(3, "A")], nodes: [...nodes, { position: 3, seq: 3 }] }), second.commit({ namespace, id: "contract", expectedRevision: 2, commitId: "race-b", fingerprint: "d".repeat(64), records: [record(3, "B")], nodes: [...nodes, { position: 3, seq: 3 }] })]);
-  check("concurrent CAS", races.filter((r) => r.ok).length === 1 && races.some((r) => failure(r, "revision-conflict")));
-  check("receipt before revision", JSON.stringify(value(await second.commit(batch))) === JSON.stringify(receipt));
-  check("commit identity conflict", failure(await second.commit({ ...batch, fingerprint: "e".repeat(64) }), "commit-conflict"));
-  const page = value(await first.history({ namespace, id: "contract", after: 0, throughRevision: 2, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
-  const rest = value(await second.history({ namespace, id: "contract", after: page.next!, throughRevision: page.revision, limit: 100, maxPageBytes: defaultSessionLimits.maxPageBytes }));
-  check("fixed history snapshot", page.revision === 2 && page.next === 1 && page.records[0]?.json === initial[0]!.json && rest.records.length === 1 && rest.records[0]?.seq === 2 && rest.next === undefined);
-  check("future history boundary", failure(await first.history({ namespace, id: "contract", after: 0, throughRevision: 4, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }), "invalid-input"));
-  check("stale projection boundary", failure(await first.conversation({ namespace, id: "contract", position: 0, revision: 2, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }), "revision-conflict"));
-  const conversation = value(await first.conversation({ namespace, id: "contract", position: 1, revision: 3, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
-  check("projection pagination", conversation.records[0]?.position === 2 && conversation.next === 2);
-  check("unreadable page fails", failure(await first.history({ namespace, id: "contract", after: 0, limit: 1, maxPageBytes: 1024 }), "record-too-large"));
-  const fork = { namespace, id: "child", origin: "f".repeat(64), metadata: "null", sourceId: "contract", throughRevision: 2, bytes: initial.reduce((n, r) => n + r.bytes, 0), nodes };
+  check(
+    "atomic records head projection",
+    snapshot.head.revision === 2 &&
+      snapshot.head.bytes === initial.reduce((n, r) => n + r.bytes, 0) &&
+      JSON.stringify(snapshot.nodes) === JSON.stringify(nodes),
+  );
+  check(
+    "receipt identity",
+    JSON.stringify(
+      value(await second.getCommit({ namespace, id: "contract", commitId: "batch" })).receipt,
+    ) === JSON.stringify(receipt),
+  );
+  const races = await Promise.all([
+    first.commit({
+      namespace,
+      id: "contract",
+      expectedRevision: 2,
+      commitId: "race-a",
+      fingerprint: "c".repeat(64),
+      records: [record(3, "A")],
+      nodes: [...nodes, { position: 3, seq: 3 }],
+    }),
+    second.commit({
+      namespace,
+      id: "contract",
+      expectedRevision: 2,
+      commitId: "race-b",
+      fingerprint: "d".repeat(64),
+      records: [record(3, "B")],
+      nodes: [...nodes, { position: 3, seq: 3 }],
+    }),
+  ]);
+  check(
+    "concurrent CAS",
+    races.filter((r) => r.ok).length === 1 && races.some((r) => failure(r, "revision-conflict")),
+  );
+  check(
+    "receipt before revision",
+    JSON.stringify(value(await second.commit(batch))) === JSON.stringify(receipt),
+  );
+  check(
+    "commit identity conflict",
+    failure(await second.commit({ ...batch, fingerprint: "e".repeat(64) }), "commit-conflict"),
+  );
+  const page = value(
+    await first.history({
+      namespace,
+      id: "contract",
+      after: 0,
+      throughRevision: 2,
+      limit: 1,
+      maxPageBytes: defaultSessionLimits.maxPageBytes,
+    }),
+  );
+  const rest = value(
+    await second.history({
+      namespace,
+      id: "contract",
+      after: page.next!,
+      throughRevision: page.revision,
+      limit: 100,
+      maxPageBytes: defaultSessionLimits.maxPageBytes,
+    }),
+  );
+  check(
+    "fixed history snapshot",
+    page.revision === 2 &&
+      page.next === 1 &&
+      page.records[0]?.json === initial[0]!.json &&
+      rest.records.length === 1 &&
+      rest.records[0]?.seq === 2 &&
+      rest.next === undefined,
+  );
+  check(
+    "future history boundary",
+    failure(
+      await first.history({
+        namespace,
+        id: "contract",
+        after: 0,
+        throughRevision: 4,
+        limit: 1,
+        maxPageBytes: defaultSessionLimits.maxPageBytes,
+      }),
+      "invalid-input",
+    ),
+  );
+  check(
+    "stale projection boundary",
+    failure(
+      await first.conversation({
+        namespace,
+        id: "contract",
+        position: 0,
+        revision: 2,
+        limit: 1,
+        maxPageBytes: defaultSessionLimits.maxPageBytes,
+      }),
+      "revision-conflict",
+    ),
+  );
+  const conversation = value(
+    await first.conversation({
+      namespace,
+      id: "contract",
+      position: 1,
+      revision: 3,
+      limit: 1,
+      maxPageBytes: defaultSessionLimits.maxPageBytes,
+    }),
+  );
+  check(
+    "projection pagination",
+    conversation.records[0]?.position === 2 && conversation.next === 2,
+  );
+  check(
+    "unreadable page fails",
+    failure(
+      await first.history({ namespace, id: "contract", after: 0, limit: 1, maxPageBytes: 1024 }),
+      "record-too-large",
+    ),
+  );
+  const fork = {
+    namespace,
+    id: "child",
+    origin: "f".repeat(64),
+    metadata: "null",
+    sourceId: "contract",
+    throughRevision: 2,
+    bytes: initial.reduce((n, r) => n + r.bytes, 0),
+    nodes,
+  };
   const child = value(await first.fork(fork));
-  const copied = value(await second.history({ namespace, id: "child", after: 0, limit: 100, maxPageBytes: defaultSessionLimits.maxPageBytes }));
-  const projected = value(await second.conversation({ namespace, id: "child", position: 0, limit: 100, maxPageBytes: defaultSessionLimits.maxPageBytes }));
-  check("atomic fork", child.revision === 2 && child.parent?.id === "contract" && child.parent.revision === 2 && child.bytes === fork.bytes && child.metadata === fork.metadata && JSON.stringify(copied.records) === JSON.stringify(initial) && JSON.stringify(projected.records.map(({ position, seq }) => ({ position, seq }))) === JSON.stringify(nodes));
-  check("fork idempotency", JSON.stringify(value(await second.fork(fork))) === JSON.stringify(child));
-  check("fork receipt isolation", failure(await first.getCommit({ namespace, id: "child", commitId: "batch" }), "not-found"));
-  check("fork prefix validation", failure(await first.fork({ ...fork, id: "bad", bytes: fork.bytes + 1 }), "storage-corrupt") && failure(await second.read({ namespace, id: "bad" }), "not-found"));
-  const same: StorageCommit = { namespace, id: "contract", expectedRevision: 3, commitId: "same", fingerprint: "0".repeat(64), records: [record(4, "same")], nodes: [...nodes, { position: 3, seq: 3 }, { position: 4, seq: 4 }] };
+  const copied = value(
+    await second.history({
+      namespace,
+      id: "child",
+      after: 0,
+      limit: 100,
+      maxPageBytes: defaultSessionLimits.maxPageBytes,
+    }),
+  );
+  const projected = value(
+    await second.conversation({
+      namespace,
+      id: "child",
+      position: 0,
+      limit: 100,
+      maxPageBytes: defaultSessionLimits.maxPageBytes,
+    }),
+  );
+  check(
+    "atomic fork",
+    child.revision === 2 &&
+      child.parent?.id === "contract" &&
+      child.parent.revision === 2 &&
+      child.bytes === fork.bytes &&
+      child.metadata === fork.metadata &&
+      JSON.stringify(copied.records) === JSON.stringify(initial) &&
+      JSON.stringify(projected.records.map(({ position, seq }) => ({ position, seq }))) ===
+        JSON.stringify(nodes),
+  );
+  check(
+    "fork idempotency",
+    JSON.stringify(value(await second.fork(fork))) === JSON.stringify(child),
+  );
+  check(
+    "fork receipt isolation",
+    failure(await first.getCommit({ namespace, id: "child", commitId: "batch" }), "not-found"),
+  );
+  check(
+    "fork prefix validation",
+    failure(await first.fork({ ...fork, id: "bad", bytes: fork.bytes + 1 }), "storage-corrupt") &&
+      failure(await second.read({ namespace, id: "bad" }), "not-found"),
+  );
+  const same: StorageCommit = {
+    namespace,
+    id: "contract",
+    expectedRevision: 3,
+    commitId: "same",
+    fingerprint: "0".repeat(64),
+    records: [record(4, "same")],
+    nodes: [...nodes, { position: 3, seq: 3 }, { position: 4, seq: 4 }],
+  };
   const duplicate = await Promise.all([first.commit(same), second.commit(same)]);
-  check("concurrent identical commit", JSON.stringify(value(duplicate[0]!)) === JSON.stringify(value(duplicate[1]!)) && value(await first.read({ namespace, id: "contract" })).head.revision === 4);
-  const catalog = value(await first.list({ namespace, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
-  const following = value(await second.list({ namespace, after: catalog.next!, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
-  check("paged catalog", catalog.sessions[0]?.id === "child" && catalog.next === "child" && following.sessions[0]?.id === "contract" && following.next === undefined);
+  check(
+    "concurrent identical commit",
+    JSON.stringify(value(duplicate[0]!)) === JSON.stringify(value(duplicate[1]!)) &&
+      value(await first.read({ namespace, id: "contract" })).head.revision === 4,
+  );
+  const catalog = value(
+    await first.list({ namespace, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }),
+  );
+  const following = value(
+    await second.list({
+      namespace,
+      after: catalog.next!,
+      limit: 1,
+      maxPageBytes: defaultSessionLimits.maxPageBytes,
+    }),
+  );
+  check(
+    "paged catalog",
+    catalog.sessions[0]?.id === "child" &&
+      catalog.next === "child" &&
+      following.sessions[0]?.id === "contract" &&
+      following.next === undefined,
+  );
   const summary = catalog.sessions[0]!;
-  check("immutable summary identity", summary.createdAt === child.createdAt && summary.metadata === child.metadata && summary.parent?.id === "contract" && summary.parent.revision === 2 && !("revision" in summary) && !("bytes" in summary));
-  check("catalog page budget", failure(await first.list({ namespace, limit: 1, maxPageBytes: 1024 }), "record-too-large"));
-  const end = value(await second.list({ namespace, after: "zzzz", limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes }));
+  check(
+    "immutable summary identity",
+    summary.createdAt === child.createdAt &&
+      summary.metadata === child.metadata &&
+      summary.parent?.id === "contract" &&
+      summary.parent.revision === 2 &&
+      !("revision" in summary) &&
+      !("bytes" in summary),
+  );
+  check(
+    "catalog page budget",
+    failure(await first.list({ namespace, limit: 1, maxPageBytes: 1024 }), "record-too-large"),
+  );
+  const end = value(
+    await second.list({
+      namespace,
+      after: "zzzz",
+      limit: 1,
+      maxPageBytes: defaultSessionLimits.maxPageBytes,
+    }),
+  );
   check("catalog cursor beyond end", end.sessions.length === 0 && end.next === undefined);
   value(await first.initialize({ namespace: `${namespace}-other`, policy }));
-  check("namespace isolation", failure(await second.read({ namespace: `${namespace}-other`, id: "contract" }), "not-found") && value(await second.list({ namespace: `${namespace}-other`, limit: 1, maxPageBytes: defaultSessionLimits.maxPageBytes })).sessions.length === 0);
+  check(
+    "namespace isolation",
+    failure(await second.read({ namespace: `${namespace}-other`, id: "contract" }), "not-found") &&
+      value(
+        await second.list({
+          namespace: `${namespace}-other`,
+          limit: 1,
+          maxPageBytes: defaultSessionLimits.maxPageBytes,
+        }),
+      ).sessions.length === 0,
+  );
   return Object.freeze({ checks: Object.freeze(checks) });
 }

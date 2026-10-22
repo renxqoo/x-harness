@@ -1,17 +1,11 @@
 {
-  "plugins": [
-    "typescript",
-    "promise",
-    "unicorn"
-  ],
+  "extends": ["./.oxlint-spacing.json"],
+  "plugins": ["typescript", "promise", "unicorn"],
   "rules": {
     "typescript/no-explicit-any": "error",
     "eslint/no-unused-vars": "error",
     "eslint/no-console": "error",
-    "eslint/eqeqeq": [
-      "error",
-      "smart"
-    ],
+    "eslint/eqeqeq": ["error", "smart"],
     "eslint/no-nested-ternary": "error",
     "eslint/max-lines": [
       "error",
@@ -35,9 +29,7 @@
   },
   "overrides": [
     {
-      "files": [
-        "core/src/mechanisms/chains/create-continuation.ts"
-      ],
+      "files": ["core/src/mechanisms/chains/create-continuation.ts"],
       "rules": {
         "unicorn/no-thenable": "off"
       }

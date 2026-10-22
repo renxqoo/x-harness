@@ -1,17 +1,211 @@
-import { expect,it } from "vitest";
+import { expect, it } from "vitest";
 import { definePlugin } from "../../../../core/src/index";
-import { createToolPlugin,toolAccess } from "../index";
-import { toolDispatch,toolCatalog } from "../index";
-import { world,value,emptySchema,request,text,deferred } from "./helpers";
-it("an old dispatch snapshot cannot execute a same-name replacement",async()=>{const entered=deferred();const gate=deferred();let fresh=0;const hold=definePlugin({name:"hold",requires:{toolDispatch},setup:ctx=>ctx.middleware("toolDispatch",async(input,next)=>{entered.resolve();await gate.promise;return next(input);})});const {host,service}=await world([hold]);try{const old=value(await host.install([value(createToolPlugin({name:"echo",inputSchema:emptySchema,execute:async()=>text("old")}))]));const pending=service.execute(request());await entered.promise;value(await host.uninstall(old.plugins[0]!));value(await host.install([value(createToolPlugin({name:"echo",inputSchema:emptySchema,execute:async()=>{fresh++;return text("new");}}))]));gate.resolve();expect((await pending).ok).toBe(false);expect(fresh).toBe(0);expect((await service.execute(request())).ok).toBe(true);expect(fresh).toBe(1);}finally{gate.resolve();value(await host.close());}});
-it("approval keeps the admitted identity when a duplicate arrives and new requests reject conflicts",async()=>{const entered=deferred();const gate=deferred();let oldRuns=0,newRuns=0;const policy=definePlugin({name:"approval",requires:{toolAccess},setup:ctx=>ctx.guard("toolAccess",async input=>{if(input.operation==="execute"){entered.resolve();await gate.promise;}return {ok:true,value:{kind:"allow"}};})});const {host,service}=await world([policy,value(createToolPlugin({name:"echo",inputSchema:emptySchema,execute:async()=>{oldRuns++;return text("old");}}))]);try{const pending=service.execute(request());await entered.promise;const duplicate=value(createToolPlugin({name:"echo",inputSchema:emptySchema,execute:async()=>{newRuns++;return text("new");}}));value(await host.install([{...duplicate,name:"other-installation"}]));gate.resolve();expect((await pending).ok).toBe(true);expect(oldRuns).toBe(1);expect(newRuns).toBe(0);expect(await service.list({})).toMatchObject({ok:false,error:{code:"name-conflict"}});expect(await service.execute(request())).toMatchObject({ok:false,error:{code:"name-conflict"}});}finally{gate.resolve();value(await host.close());}});
-it("dispatch middleware cannot replace the sealed input ticket",async()=>{let called=0;const bad=definePlugin({name:"tamper",requires:{toolDispatch},setup:ctx=>ctx.middleware("toolDispatch",(input,next)=>next({...input}))});const {host,service}=await world([bad,value(createToolPlugin({name:"echo",inputSchema:emptySchema,execute:async()=>{called++;return text("bad");}}))]);try{expect((await service.execute(request())).ok).toBe(false);expect(called).toBe(0);}finally{value(await host.close());}});
-it("an unadvertised same-name handler cannot intercept another owner's approved plan",async()=>{
- let hiddenSignal:AbortSignal|undefined,hiddenRuns=0,selectedRuns=0;
- const original=value(createToolPlugin({name:"echo",inputSchema:emptySchema,execute:async()=>{hiddenRuns++;return text("hidden");}}));
- const hidden={...original,name:"hidden",setup(ctx:import("../../../../core/src/index").Context,call:import("../../../../core/src/index").Invocation){hiddenSignal=ctx.signal;return original.setup(ctx,call);}};
- const filter=definePlugin({name:"catalog-filter",requires:{toolCatalog},setup:ctx=>ctx.middleware("toolCatalog",(query,next)=>next({visit(entry){return entry.signal===hiddenSignal?{ok:true,value:undefined}:query.visit(entry);}}))});
- const selected={...value(createToolPlugin({name:"echo",inputSchema:emptySchema,execute:async()=>{selectedRuns++;return text("selected");}})),name:"selected"};
- const {host,service}=await world([filter,hidden,selected]);
- try{expect(value(await service.list({}))).toHaveLength(1);expect(await service.execute(request())).toEqual(text("selected"));expect(hiddenRuns).toBe(0);expect(selectedRuns).toBe(1);}finally{value(await host.close());}
+import { createToolPlugin, toolAccess } from "../index";
+import { toolDispatch, toolCatalog } from "../index";
+import { world, value, emptySchema, request, text, deferred } from "./helpers";
+it("an old dispatch snapshot cannot execute a same-name replacement", async () => {
+  const entered = deferred();
+  const gate = deferred();
+  let fresh = 0;
+  const hold = definePlugin({
+    name: "hold",
+    requires: { toolDispatch },
+    setup: (ctx) =>
+      ctx.middleware("toolDispatch", async (input, next) => {
+        entered.resolve();
+        await gate.promise;
+        return next(input);
+      }),
+  });
+  const { host, service } = await world([hold]);
+
+  try {
+    const old = value(
+      await host.install([
+        value(
+          createToolPlugin({
+            name: "echo",
+            inputSchema: emptySchema,
+            execute: async () => text("old"),
+          }),
+        ),
+      ]),
+    );
+    const pending = service.execute(request());
+    await entered.promise;
+    value(await host.uninstall(old.plugins[0]!));
+    value(
+      await host.install([
+        value(
+          createToolPlugin({
+            name: "echo",
+            inputSchema: emptySchema,
+            execute: async () => {
+              fresh++;
+              return text("new");
+            },
+          }),
+        ),
+      ]),
+    );
+    gate.resolve();
+    expect((await pending).ok).toBe(false);
+    expect(fresh).toBe(0);
+    expect((await service.execute(request())).ok).toBe(true);
+    expect(fresh).toBe(1);
+  } finally {
+    gate.resolve();
+    value(await host.close());
+  }
+});
+it("approval keeps the admitted identity when a duplicate arrives and new requests reject conflicts", async () => {
+  const entered = deferred();
+  const gate = deferred();
+  let oldRuns = 0,
+    newRuns = 0;
+  const policy = definePlugin({
+    name: "approval",
+    requires: { toolAccess },
+    setup: (ctx) =>
+      ctx.guard("toolAccess", async (input) => {
+        if (input.operation === "execute") {
+          entered.resolve();
+          await gate.promise;
+        }
+
+        return { ok: true, value: { kind: "allow" } };
+      }),
+  });
+  const { host, service } = await world([
+    policy,
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        execute: async () => {
+          oldRuns++;
+          return text("old");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const pending = service.execute(request());
+    await entered.promise;
+    const duplicate = value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        execute: async () => {
+          newRuns++;
+          return text("new");
+        },
+      }),
+    );
+    value(await host.install([{ ...duplicate, name: "other-installation" }]));
+    gate.resolve();
+    expect((await pending).ok).toBe(true);
+    expect(oldRuns).toBe(1);
+    expect(newRuns).toBe(0);
+    expect(await service.list({})).toMatchObject({ ok: false, error: { code: "name-conflict" } });
+    expect(await service.execute(request())).toMatchObject({
+      ok: false,
+      error: { code: "name-conflict" },
+    });
+  } finally {
+    gate.resolve();
+    value(await host.close());
+  }
+});
+it("dispatch middleware cannot replace the sealed input ticket", async () => {
+  let called = 0;
+  const bad = definePlugin({
+    name: "tamper",
+    requires: { toolDispatch },
+    setup: (ctx) => ctx.middleware("toolDispatch", (input, next) => next({ ...input })),
+  });
+  const { host, service } = await world([
+    bad,
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        execute: async () => {
+          called++;
+          return text("bad");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    expect((await service.execute(request())).ok).toBe(false);
+    expect(called).toBe(0);
+  } finally {
+    value(await host.close());
+  }
+});
+it("an unadvertised same-name handler cannot intercept another owner's approved plan", async () => {
+  let hiddenSignal: AbortSignal | undefined,
+    hiddenRuns = 0,
+    selectedRuns = 0;
+  const original = value(
+    createToolPlugin({
+      name: "echo",
+      inputSchema: emptySchema,
+      execute: async () => {
+        hiddenRuns++;
+        return text("hidden");
+      },
+    }),
+  );
+  const hidden = {
+    ...original,
+    name: "hidden",
+    setup(
+      ctx: import("../../../../core/src/index").Context,
+      call: import("../../../../core/src/index").Invocation,
+    ) {
+      hiddenSignal = ctx.signal;
+      return original.setup(ctx, call);
+    },
+  };
+  const filter = definePlugin({
+    name: "catalog-filter",
+    requires: { toolCatalog },
+    setup: (ctx) =>
+      ctx.middleware("toolCatalog", (query, next) =>
+        next({
+          visit(entry) {
+            return entry.signal === hiddenSignal
+              ? { ok: true, value: undefined }
+              : query.visit(entry);
+          },
+        }),
+      ),
+  });
+  const selected = {
+    ...value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        execute: async () => {
+          selectedRuns++;
+          return text("selected");
+        },
+      }),
+    ),
+    name: "selected",
+  };
+  const { host, service } = await world([filter, hidden, selected]);
+
+  try {
+    expect(value(await service.list({}))).toHaveLength(1);
+    expect(await service.execute(request())).toEqual(text("selected"));
+    expect(hiddenRuns).toBe(0);
+    expect(selectedRuns).toBe(1);
+  } finally {
+    value(await host.close());
+  }
 });

@@ -1,1 +1,1 @@
-service.execute({name:"echo",callId:"x",input:{},priority:"high"});
+service.execute({ name: "echo", callId: "x", input: {}, priority: "high" });

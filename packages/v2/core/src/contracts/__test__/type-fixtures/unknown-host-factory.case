@@ -1,1 +1,2 @@
-import * as api from "__PUBLIC_ENTRY__"; api.createContext();
+import * as api from "__PUBLIC_ENTRY__";
+api.createContext();

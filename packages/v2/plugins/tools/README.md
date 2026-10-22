@@ -34,7 +34,9 @@ try {
     name: "echo",
     callId: "example-call",
     input: { text: "hello" },
-    onProgress(delta) { console.log(delta); },
+    onProgress(delta) {
+      console.log(delta);
+    },
   });
   if (result.ok) console.log(result.value.content);
   else console.error(result.error.code);

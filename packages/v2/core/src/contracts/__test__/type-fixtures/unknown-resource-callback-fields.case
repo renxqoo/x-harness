@@ -1,1 +1,4 @@
-ctx.resource({ acquire: () => ({ ok: true, value: 1 }), release: () => ({ ok: true, value: undefined }) });
+ctx.resource({
+  acquire: () => ({ ok: true, value: 1 }),
+  release: () => ({ ok: true, value: undefined }),
+});

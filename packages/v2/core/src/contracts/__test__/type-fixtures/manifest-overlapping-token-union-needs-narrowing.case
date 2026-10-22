@@ -1,4 +1,16 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import { narrow, wide } from "__AUTHORING_FIXTURE__";
 type Manifest = { provides: { source: typeof narrow | typeof wide } };
-definePlugin<Manifest>({ name: "bad", provides: { source: wide }, setup(ctx) { return ctx.service({ source: { async run(input: "only") { return { ok: true as const, value: input }; } } }); } });
+definePlugin<Manifest>({
+  name: "bad",
+  provides: { source: wide },
+  setup(ctx) {
+    return ctx.service({
+      source: {
+        async run(input: "only") {
+          return { ok: true as const, value: input };
+        },
+      },
+    });
+  },
+});

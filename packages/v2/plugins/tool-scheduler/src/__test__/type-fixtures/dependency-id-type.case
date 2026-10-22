@@ -1,1 +1,1 @@
-service.batch({calls:[{name:"echo",callId:"x",input:{},dependsOn:[1]}]});
+service.batch({ calls: [{ name: "echo", callId: "x", input: {}, dependsOn: [1] }] });

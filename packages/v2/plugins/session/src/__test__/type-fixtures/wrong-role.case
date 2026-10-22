@@ -1,1 +1,6 @@
-service.append({ id: "one", expectedRevision: 0, commitId: "c", entries: [{ kind: "message", message: { role: "operator", content: [] } }] });
+service.append({
+  id: "one",
+  expectedRevision: 0,
+  commitId: "c",
+  entries: [{ kind: "message", message: { role: "operator", content: [] } }],
+});

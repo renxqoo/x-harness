@@ -1,2 +1,20 @@
-import {expect,it} from "vitest";
-it("agent-loop completes a real HTTP tool round, persists checkpoints with valid bounded keys and explicitly resumes after SQLite reopen across source and built plugins",async()=>{const child=Bun.spawn([process.execPath,new URL("./agent-loop-built-case.ts",import.meta.url).pathname],{stdout:"pipe",stderr:"pipe",timeout:15000});try{const [code,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);expect({code,stderr}).toEqual({code:0,stderr:""});expect(stdout).toContain("agent HTTP SQLite source/dist journey passed");}finally{child.kill();await child.exited;}});
+import { expect, it } from "vitest";
+it("agent-loop completes a real HTTP tool round, persists checkpoints with valid bounded keys and explicitly resumes after SQLite reopen across source and built plugins", async () => {
+  const child = Bun.spawn(
+    [process.execPath, new URL("./agent-loop-built-case.ts", import.meta.url).pathname],
+    { stdout: "pipe", stderr: "pipe", timeout: 15000 },
+  );
+
+  try {
+    const [code, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+    expect(stdout).toContain("agent HTTP SQLite source/dist journey passed");
+  } finally {
+    child.kill();
+    await child.exited;
+  }
+});

@@ -1,2 +1,21 @@
-import{it,expect}from"vitest";import{createLoader}from"../index";import{project}from"./helpers";import{writeFile}from"node:fs/promises";
-it("module namespace default exports support live bindings",async()=>{let p=await project();try{await writeFile(p.entry,"export default{name:'plain',setup(){return{ok:true,value:undefined}}}");let r=await createLoader(p.options);if(r.ok)await r.value.close();expect(r.ok).toBe(true)}finally{await p.close()}});
+import { it, expect } from "vitest";
+import { createLoader } from "../index";
+import { project } from "./helpers";
+import { writeFile } from "node:fs/promises";
+it("module namespace default exports support live bindings", async () => {
+  let p = await project();
+
+  try {
+    await writeFile(
+      p.entry,
+      "export default{name:'plain',setup(){return{ok:true,value:undefined}}}",
+    );
+    let r = await createLoader(p.options);
+
+    if (r.ok) await r.value.close();
+
+    expect(r.ok).toBe(true);
+  } finally {
+    await p.close();
+  }
+});

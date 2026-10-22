@@ -8,21 +8,42 @@ import type { LoaderFault } from "./types";
 import { loaderFault } from "./loader-fault";
 
 import { reserveImport } from "./reserve-import";
-export async function importModule(source: string, timeoutMs: number): Promise<Result<Plugin, LoaderFault>> {
+
+export async function importModule(
+  source: string,
+  timeoutMs: number,
+): Promise<Result<Plugin, LoaderFault>> {
   if (!reserveImport()) return loaderFault("restart-required", { phase: "import" });
+
   let directory: string | undefined;
+
   try {
-    directory = await mkdtemp(join(tmpdir(), "x-harness-module-")); const path = join(directory, "plugin.mjs");
+    directory = await mkdtemp(join(tmpdir(), "x-harness-module-"));
+    const path = join(directory, "plugin.mjs");
     await writeFile(path, source, { flag: "wx", mode: 0o600 });
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), timeoutMs); });
+    const timeout = new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), timeoutMs);
+    });
     let module: unknown;
-    try { module = await Promise.race([import(pathToFileURL(path).href), timeout]); }
-    finally { clearTimeout(timer); }
+
+    try {
+      module = await Promise.race([import(pathToFileURL(path).href), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+
     if (module === undefined) return loaderFault("restart-required", { phase: "import" });
+
     const exported: unknown = Reflect.get(module as object, "default");
-    const plugin = validatePlugin(exported); if (!plugin.ok) return loaderFault("invalid-plugin", { phase: "validate" });
+    const plugin = validatePlugin(exported);
+
+    if (!plugin.ok) return loaderFault("invalid-plugin", { phase: "validate" });
+
     return plugin;
-  } catch { return loaderFault("import-failed", { phase: "import" }); }
-  finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+  } catch {
+    return loaderFault("import-failed", { phase: "import" });
+  } finally {
+    if (directory) await rm(directory, { recursive: true, force: true });
+  }
 }

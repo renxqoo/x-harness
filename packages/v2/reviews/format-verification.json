@@ -1,0 +1,145 @@
+{
+  "verifiedAt": "2026-10-22",
+  "baselineCommit": "b0c8b564baa7d7ad9c6a6e18859cc68556a7a978",
+  "runtime": {
+    "bun": "1.4.3",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "tooling": {
+    "oxfmt": "0.74.0",
+    "stylistic": "5.10.0",
+    "oxcParser": "0.150.0"
+  },
+  "scope": "packages/v2 standalone workspace",
+  "gates": {
+    "lint": {
+      "passed": true,
+      "errors": 0,
+      "warnings": 0,
+      "kernelSources": 106,
+      "platformSources": 356,
+      "sdkPublicEntries": 33,
+      "internalIdentityEntries": 4
+    },
+    "typecheck": {
+      "passed": true,
+      "negativeFixtures": 181,
+      "documentationExamples": 42
+    },
+    "build": {
+      "passed": true
+    },
+    "test": {
+      "passed": true,
+      "files": 218,
+      "cases": 1889
+    }
+  },
+  "coverage": {
+    "statements": {
+      "total": 10970,
+      "covered": 10221,
+      "skipped": 0,
+      "pct": 93.17
+    },
+    "branches": {
+      "total": 9530,
+      "covered": 8750,
+      "skipped": 0,
+      "pct": 91.81
+    },
+    "functions": {
+      "total": 1555,
+      "covered": 1534,
+      "skipped": 0,
+      "pct": 98.64
+    },
+    "lines": {
+      "total": 9369,
+      "covered": 9027,
+      "skipped": 0,
+      "pct": 96.34
+    }
+  },
+  "unchangedCoverageThresholds": {
+    "statements": 90,
+    "branches": 88,
+    "functions": 95,
+    "lines": 96
+  },
+  "spacingAcceptance": {
+    "unformattedRejected": true,
+    "fixedAccepted": true,
+    "functionsSeparated": true,
+    "functionExpressionsSeparated": true,
+    "blockStatementsSeparated": true,
+    "formatIdempotent": true
+  },
+  "runtimeAstAudit": {
+    "trackedProductionSources": 461,
+    "equivalentNormalizedAst": 459,
+    "intentionalRuntimeChanges": [
+      "loader/src/build-module.ts",
+      "loader/src/check-bundle.ts"
+    ],
+    "newRuntimeSources": [
+      "loader/src/is-native-module.ts"
+    ],
+    "normalization": [
+      "source locations",
+      "literal spelling",
+      "ordered associative logical expression grouping"
+    ]
+  },
+  "regressions": {
+    "nativeImports": {
+      "redObserved": true,
+      "test": "loader/src/__test__/native-modules.test.ts"
+    },
+    "nativeIdentityFalsePositives": {
+      "redObserved": true,
+      "aliasesRejected": 8,
+      "test": "loader/src/__test__/native-modules.test.ts"
+    },
+    "regexMutationAnchors": {
+      "redObserved": true,
+      "test": "scripts/mutations/__test__/regular-expression-mutation.test.ts"
+    },
+    "lockFixtureStartup": {
+      "observedFailure": "lock unavailable",
+      "consecutivePassingRuns": 10,
+      "test": "plugins/session-jsonl/src/__test__/process-journeys.test.ts"
+    }
+  },
+  "mutations": [
+    {
+      "report": "plugins/agent-loop/reviews/mutations.json",
+      "cases": 12,
+      "detected": 12
+    },
+    {
+      "report": "plugins/llm/reviews/mutations.json",
+      "cases": 10,
+      "detected": 10
+    },
+    {
+      "report": "plugins/tool-scheduler/reviews/mutations.json",
+      "cases": 8,
+      "detected": 8
+    },
+    {
+      "report": "plugins/tools/reviews/mutations.json",
+      "cases": 17,
+      "detected": 17
+    },
+    {
+      "report": "reviews/tool-execution/mutations.json",
+      "cases": 10,
+      "detected": 10
+    }
+  ],
+  "liveModelRerun": false,
+  "liveModelRerunReason": "Formatting and loader verification use deterministic local regressions; existing live-model evidence is retained separately.",
+  "formattedFilesChecked": 1080
+}

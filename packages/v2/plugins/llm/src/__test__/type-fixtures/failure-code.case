@@ -1,1 +1,6 @@
-const failure: LlmError = { source: "llm", code: "random-error", phase: "stream", hasOutput: false };
+const failure: LlmError = {
+  source: "llm",
+  code: "random-error",
+  phase: "stream",
+  hasOutput: false,
+};

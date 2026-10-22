@@ -1,1 +1,1 @@
-createToolSchedulerPlugin({limits:{workers:8}});
+createToolSchedulerPlugin({ limits: { workers: 8 } });

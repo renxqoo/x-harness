@@ -46,19 +46,25 @@ export async function readDocument(
       additionalProperties: false,
     },
     async prepare(input) {
-      return { ok: true, value: {
-        actions: { filesystem: { read: input.path } },
-        execution: { profile: "documents", argv: ["/bin/cat", input.path] },
-      } };
+      return {
+        ok: true,
+        value: {
+          actions: { filesystem: { read: input.path } },
+          execution: { profile: "documents", argv: ["/bin/cat", input.path] },
+        },
+      };
     },
     async execute(_input, call) {
       if (!call.execution) return { ok: true, value: { content: [], isError: true } };
       const output = await call.execution.run();
       if (!output.ok) return { ok: true, value: { content: [], isError: true } };
-      return { ok: true, value: {
-        content: [{ type: "text", text: output.value.stdout }],
-        isError: output.value.exitCode !== 0,
-      } };
+      return {
+        ok: true,
+        value: {
+          content: [{ type: "text", text: output.value.stdout }],
+          isError: output.value.exitCode !== 0,
+        },
+      };
     },
   });
   const opened = createHost({ limits: { callTimeoutMs: 60000, maxCallDepth: 256 } });
@@ -66,7 +72,13 @@ export async function readDocument(
     throw new Error("Invalid configuration");
   const app = opened.value;
   try {
-    const installed = await app.install([registry.value, scheduler.value, sandbox.value, policy.value, reader.value]);
+    const installed = await app.install([
+      registry.value,
+      scheduler.value,
+      sandbox.value,
+      policy.value,
+      reader.value,
+    ]);
     if (!installed.ok) throw new Error("Installation failed");
     const service = app.use(toolScheduler);
     if (!service.ok) throw new Error("Scheduler unavailable");

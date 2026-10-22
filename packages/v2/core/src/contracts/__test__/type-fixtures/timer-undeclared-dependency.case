@@ -1,6 +1,15 @@
 import { createTimer } from "__STANDARD_ENTRY__";
 import { definePlugin } from "__PUBLIC_ENTRY__";
-definePlugin({ name: "timer-types", setup(ctx) {
-  const timer = createTimer(ctx); if (!timer.ok) return timer;
-  return timer.value.timeout({ ms: 1, run(call) { return call.deps.unknown.run(); } });
-} });
+definePlugin({
+  name: "timer-types",
+  setup(ctx) {
+    const timer = createTimer(ctx);
+    if (!timer.ok) return timer;
+    return timer.value.timeout({
+      ms: 1,
+      run(call) {
+        return call.deps.unknown.run();
+      },
+    });
+  },
+});

@@ -1,36 +1,322 @@
-import {mkdtemp,readFile,writeFile,rm} from "node:fs/promises";
-import {isDeepStrictEqual} from "node:util";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {createHost,definePlugin} from "../core/src/index";
-import type {Result,JsonValue,Host} from "../core/src/index";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { isDeepStrictEqual } from "node:util";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHost, definePlugin } from "../core/src/index";
+import type { Result, JsonValue, Host } from "../core/src/index";
 import * as sourceAgent from "../plugins/agent-loop/src/index";
 import * as sourceLlm from "../plugins/llm/src/index";
 import * as sourceTools from "../plugins/tools/src/index";
 import * as sourceScheduler from "../plugins/tool-scheduler/src/index";
-import {createOpenaiPlugin} from "../plugins/llm-openai/src/index";
-import {createSessionPlugin,session} from "../plugins/session/src/index";
-import {createSqliteSessionPlugin} from "../plugins/session-sqlite/src/index";
-import type {AgentCheckpoint} from "../plugins/agent-loop/src/index";
-import {createLlmServer,sse} from "./llm-server";
-const builtAgent=await import(new URL("../plugins/agent-loop/dist/index.js",import.meta.url).href) as typeof sourceAgent;
-const builtLlm=await import(new URL("../plugins/llm/dist/index.js",import.meta.url).href) as typeof sourceLlm;
-const builtTools=await import(new URL("../plugins/tools/dist/index.js",import.meta.url).href) as typeof sourceTools;
-const builtScheduler=await import(new URL("../plugins/tool-scheduler/dist/index.js",import.meta.url).href) as typeof sourceScheduler;
-function value<T,E>(r:Result<T,E>):T{if(!r.ok)throw new Error(JSON.stringify(r.error));return r.value;}
-if(builtAgent.agentLoop!==sourceAgent.agentLoop||builtAgent.agentCheckpoint!==sourceAgent.agentCheckpoint)throw new Error("split agent contract identity");
-for(const [agent,llm,tools,scheduler] of [[sourceAgent,builtLlm,builtTools,sourceScheduler],[builtAgent,sourceLlm,sourceTools,builtScheduler]] as const){
- const server=createLlmServer(),directory=await mkdtemp(join(tmpdir(),"xh-agent-loop-")),path=join(directory,"session.sqlite"),document=join(directory,"document");let reads=0;const hosts:Host[]=[];const requestCount=()=>server.requests.length;
- try{await writeFile(document,"stored-value");const first=await open();const storage=value(first.use(session));value(await storage.create({id:"conversation"}));sceneTool();sceneText("finished");const selected=value(first.use(agent.agentLoop));const stream=agent.streamAgent(selected,{model:"m",runId:"external/运行:"+"x".repeat(160),messages:[{role:"user",content:[{type:"text",text:"read document"}]}]});let terminal=0;for await(const event of stream)if(event.type==="finish")terminal++;const result=value(await stream.result);if(terminal!==1||result.steps!==2||result.toolCalls!==1||reads!==1||requestCount()!==2)throw new Error("agent tool journey failed");
-  const secondBody=server.requests[1]!.body as {messages:{role:string;content:unknown;tool_call_id?:string}[]};if(secondBody.messages.at(-1)?.role!=="tool"||secondBody.messages.at(-1)?.tool_call_id!=="call"||JSON.stringify(secondBody.messages.at(-1)?.content)!==JSON.stringify([{type:"text",text:"stored-value"}]))throw new Error("tool receipt lost in HTTP request");value(await first.close());hosts.splice(hosts.indexOf(first),1);
-  const reopened=await open();const history=value(await value(reopened.use(session)).history({id:"conversation",limit:20}));if(history.records.length!==3)throw new Error("checkpoint commit count mismatch");const checkpoints=history.records.map(record=>record.entry.kind==="event"?record.entry.data as unknown as AgentCheckpoint:undefined);if(checkpoints.map(x=>x?.phase).join(",")!=="response,tools,response")throw new Error("checkpoint phase order mismatch");const durable=checkpoints.at(-1)!;if(!isDeepStrictEqual(JSON.parse(JSON.stringify(durable.messages)),JSON.parse(JSON.stringify(result.messages)))||!isDeepStrictEqual(JSON.parse(JSON.stringify(checkpoints[1]!.results)),[{callId:"call",outcome:"returned",output:{content:[{type:"text",text:"stored-value"}]}}]))throw new Error("checkpoint data changed after reopen");
-  sceneText("resumed");const resumed=value(await value(reopened.use(agent.agentLoop)).run({model:"m",messages:[...durable.messages,{role:"user",content:[{type:"text",text:"continue"}]}]}));if(resumed.steps!==1||resumed.toolCalls!==0||reads!==1||requestCount()!==3||resumed.messages.length!==result.messages.length+2)throw new Error("explicit resume repeated a tool or lost history");for(const host of hosts)if(host.inspect().activeTasks||host.inspect().activeCalls)throw new Error("work not drained");
- }finally{for(const host of hosts)value(await host.close());await server.close();await rm(directory,{recursive:true,force:true});}
- async function open(){const host=value(createHost({limits:{callTimeoutMs:10000,closeTimeoutMs:3000,maxCallDepth:256}}));hosts.push(host);const provider=value(llm.defineLlmProvider("loopback"));const policy=definePlugin({name:"policy",requires:{agentRunAccess:agent.agentRunAccess,toolScheduleAccess:scheduler.toolScheduleAccess,toolAccess:tools.toolAccess,toolExecutionAccess:tools.toolExecutionAccess},setup(ctx){const run=ctx.guard("agentRunAccess",input=>({ok:true,value:input.caller.origin.scopeId==="root"?{kind:"allow"}:{kind:"deny",reason:"caller"}}));if(!run.ok)return run;const schedule=ctx.guard("toolScheduleAccess",input=>({ok:true,value:input.origin.pluginName==="agent-loop"?{kind:"allow"}:{kind:"deny",reason:"delegate"}}));if(!schedule.ok)return schedule;const basic=ctx.guard("toolAccess",input=>({ok:true,value:["agent-loop","tool-scheduler"].includes(input.origin.pluginName??"")?{kind:"allow"}:{kind:"deny",reason:"delegate"}}));if(!basic.ok)return basic;return ctx.guard("toolExecutionAccess",authorization=>authorization.plan.actions.read===true?authorization.allow({signal:ctx.signal}):{ok:true,value:{kind:"deny",reason:"action"}});}});
-  const checkpoints=definePlugin({name:"checkpoint-store",requires:{agentCheckpoint:agent.agentCheckpoint,session},setup:ctx=>ctx.middleware("agentCheckpoint",async(input,next,call)=>{const current=await call.deps.session.get({id:"conversation"});if(!current.ok)return {ok:false,error:{source:"agent-loop",code:"checkpoint-failed"}};const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(JSON.stringify([input.runId,input.step,input.phase])));const commitId=Array.from(new Uint8Array(digest),byte=>byte.toString(16).padStart(2,"0")).join("");const appended=await call.deps.session.append({id:"conversation",expectedRevision:current.value.revision,commitId,entries:[{kind:"event",type:"agent/checkpoint",data:JSON.parse(JSON.stringify(input)) as JsonValue}]});return appended.ok?next(input):{ok:false,error:{source:"agent-loop",code:"checkpoint-failed"}};})});
-  value(await host.install([value(createSqliteSessionPlugin({path})),value(createSessionPlugin({namespace:"agent-loop"})),value(createOpenaiPlugin({api:"chat-completions",token:provider,baseUrl:server.baseUrl,apiKey:"fixture",models:{m:{}}})),value(llm.createLlmPlugin({providers:{loopback:provider},defaultProvider:"loopback"})),value(tools.createToolsPlugin()),value(scheduler.createToolSchedulerPlugin()),policy,checkpoints,value(tools.createToolPlugin({name:"read",inputSchema:{type:"object",additionalProperties:false},async prepare(){return {ok:true,value:{actions:{read:true}}};},async execute(){reads++;return {ok:true,value:{content:[{type:"text",text:await readFile(document,"utf8")}]}};}})),value(agent.createAgentLoopPlugin())]));return host;
- }
- function sceneTool(){server.scene({chunks:[sse({choices:[{index:0,delta:{role:"assistant",tool_calls:[{index:0,id:"call",type:"function",function:{name:"read",arguments:"{}"}}]}}]}),sse({choices:[{index:0,delta:{},finish_reason:"tool_calls"}]}),sse("[DONE]")]});}
- function sceneText(text:string){server.scene({chunks:[sse({choices:[{index:0,delta:{role:"assistant",content:text}}]}),sse({choices:[{index:0,delta:{},finish_reason:"stop"}]}),sse("[DONE]")]});}
+import { createOpenaiPlugin } from "../plugins/llm-openai/src/index";
+import { createSessionPlugin, session } from "../plugins/session/src/index";
+import { createSqliteSessionPlugin } from "../plugins/session-sqlite/src/index";
+import type { AgentCheckpoint } from "../plugins/agent-loop/src/index";
+import { createLlmServer, sse } from "./llm-server";
+const builtAgent = (await import(
+  new URL("../plugins/agent-loop/dist/index.js", import.meta.url).href
+)) as typeof sourceAgent;
+const builtLlm = (await import(
+  new URL("../plugins/llm/dist/index.js", import.meta.url).href
+)) as typeof sourceLlm;
+const builtTools = (await import(
+  new URL("../plugins/tools/dist/index.js", import.meta.url).href
+)) as typeof sourceTools;
+const builtScheduler = (await import(
+  new URL("../plugins/tool-scheduler/dist/index.js", import.meta.url).href
+)) as typeof sourceScheduler;
+
+function value<T, E>(r: Result<T, E>): T {
+  if (!r.ok) throw new Error(JSON.stringify(r.error));
+
+  return r.value;
 }
+
+if (
+  builtAgent.agentLoop !== sourceAgent.agentLoop ||
+  builtAgent.agentCheckpoint !== sourceAgent.agentCheckpoint
+)
+  throw new Error("split agent contract identity");
+
+for (const [agent, llm, tools, scheduler] of [
+  [sourceAgent, builtLlm, builtTools, sourceScheduler],
+  [builtAgent, sourceLlm, sourceTools, builtScheduler],
+] as const) {
+  const server = createLlmServer(),
+    directory = await mkdtemp(join(tmpdir(), "xh-agent-loop-")),
+    path = join(directory, "session.sqlite"),
+    document = join(directory, "document");
+  let reads = 0;
+  const hosts: Host[] = [];
+
+  const requestCount = () => server.requests.length;
+
+  try {
+    await writeFile(document, "stored-value");
+    const first = await open();
+    const storage = value(first.use(session));
+    value(await storage.create({ id: "conversation" }));
+    sceneTool();
+    sceneText("finished");
+    const selected = value(first.use(agent.agentLoop));
+    const stream = agent.streamAgent(selected, {
+      model: "m",
+      runId: "external/运行:" + "x".repeat(160),
+      messages: [{ role: "user", content: [{ type: "text", text: "read document" }] }],
+    });
+    let terminal = 0;
+
+    for await (const event of stream) if (event.type === "finish") terminal++;
+
+    const result = value(await stream.result);
+
+    if (
+      terminal !== 1 ||
+      result.steps !== 2 ||
+      result.toolCalls !== 1 ||
+      reads !== 1 ||
+      requestCount() !== 2
+    )
+      throw new Error("agent tool journey failed");
+
+    const secondBody = server.requests[1]!.body as {
+      messages: { role: string; content: unknown; tool_call_id?: string }[];
+    };
+
+    if (
+      secondBody.messages.at(-1)?.role !== "tool" ||
+      secondBody.messages.at(-1)?.tool_call_id !== "call" ||
+      JSON.stringify(secondBody.messages.at(-1)?.content) !==
+        JSON.stringify([{ type: "text", text: "stored-value" }])
+    )
+      throw new Error("tool receipt lost in HTTP request");
+
+    value(await first.close());
+    hosts.splice(hosts.indexOf(first), 1);
+    const reopened = await open();
+    const history = value(
+      await value(reopened.use(session)).history({ id: "conversation", limit: 20 }),
+    );
+
+    if (history.records.length !== 3) throw new Error("checkpoint commit count mismatch");
+
+    const checkpoints = history.records.map((record) =>
+      record.entry.kind === "event" ? (record.entry.data as unknown as AgentCheckpoint) : undefined,
+    );
+
+    if (checkpoints.map((x) => x?.phase).join(",") !== "response,tools,response")
+      throw new Error("checkpoint phase order mismatch");
+
+    const durable = checkpoints.at(-1)!;
+
+    if (
+      !isDeepStrictEqual(
+        JSON.parse(JSON.stringify(durable.messages)),
+        JSON.parse(JSON.stringify(result.messages)),
+      ) ||
+      !isDeepStrictEqual(JSON.parse(JSON.stringify(checkpoints[1]!.results)), [
+        {
+          callId: "call",
+          outcome: "returned",
+          output: { content: [{ type: "text", text: "stored-value" }] },
+        },
+      ])
+    )
+      throw new Error("checkpoint data changed after reopen");
+
+    sceneText("resumed");
+    const resumed = value(
+      await value(reopened.use(agent.agentLoop)).run({
+        model: "m",
+        messages: [
+          ...durable.messages,
+          { role: "user", content: [{ type: "text", text: "continue" }] },
+        ],
+      }),
+    );
+
+    if (
+      resumed.steps !== 1 ||
+      resumed.toolCalls !== 0 ||
+      reads !== 1 ||
+      requestCount() !== 3 ||
+      resumed.messages.length !== result.messages.length + 2
+    )
+      throw new Error("explicit resume repeated a tool or lost history");
+
+    for (const host of hosts)
+      if (host.inspect().activeTasks || host.inspect().activeCalls)
+        throw new Error("work not drained");
+  } finally {
+    for (const host of hosts) value(await host.close());
+
+    await server.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+
+  async function open() {
+    const host = value(
+      createHost({ limits: { callTimeoutMs: 10000, closeTimeoutMs: 3000, maxCallDepth: 256 } }),
+    );
+    hosts.push(host);
+    const provider = value(llm.defineLlmProvider("loopback"));
+    const policy = definePlugin({
+      name: "policy",
+      requires: {
+        agentRunAccess: agent.agentRunAccess,
+        toolScheduleAccess: scheduler.toolScheduleAccess,
+        toolAccess: tools.toolAccess,
+        toolExecutionAccess: tools.toolExecutionAccess,
+      },
+      setup(ctx) {
+        const run = ctx.guard("agentRunAccess", (input) => ({
+          ok: true,
+          value:
+            input.caller.origin.scopeId === "root"
+              ? { kind: "allow" }
+              : { kind: "deny", reason: "caller" },
+        }));
+
+        if (!run.ok) return run;
+
+        const schedule = ctx.guard("toolScheduleAccess", (input) => ({
+          ok: true,
+          value:
+            input.origin.pluginName === "agent-loop"
+              ? { kind: "allow" }
+              : { kind: "deny", reason: "delegate" },
+        }));
+
+        if (!schedule.ok) return schedule;
+
+        const basic = ctx.guard("toolAccess", (input) => ({
+          ok: true,
+          value: ["agent-loop", "tool-scheduler"].includes(input.origin.pluginName ?? "")
+            ? { kind: "allow" }
+            : { kind: "deny", reason: "delegate" },
+        }));
+
+        if (!basic.ok) return basic;
+
+        return ctx.guard("toolExecutionAccess", (authorization) =>
+          authorization.plan.actions.read === true
+            ? authorization.allow({ signal: ctx.signal })
+            : { ok: true, value: { kind: "deny", reason: "action" } },
+        );
+      },
+    });
+    const checkpoints = definePlugin({
+      name: "checkpoint-store",
+      requires: { agentCheckpoint: agent.agentCheckpoint, session },
+      setup: (ctx) =>
+        ctx.middleware("agentCheckpoint", async (input, next, call) => {
+          const current = await call.deps.session.get({ id: "conversation" });
+
+          if (!current.ok)
+            return { ok: false, error: { source: "agent-loop", code: "checkpoint-failed" } };
+
+          const digest = await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(JSON.stringify([input.runId, input.step, input.phase])),
+          );
+          const commitId = Array.from(new Uint8Array(digest), (byte) =>
+            byte.toString(16).padStart(2, "0"),
+          ).join("");
+          const appended = await call.deps.session.append({
+            id: "conversation",
+            expectedRevision: current.value.revision,
+            commitId,
+            entries: [
+              {
+                kind: "event",
+                type: "agent/checkpoint",
+                data: JSON.parse(JSON.stringify(input)) as JsonValue,
+              },
+            ],
+          });
+          return appended.ok
+            ? next(input)
+            : { ok: false, error: { source: "agent-loop", code: "checkpoint-failed" } };
+        }),
+    });
+    value(
+      await host.install([
+        value(createSqliteSessionPlugin({ path })),
+        value(createSessionPlugin({ namespace: "agent-loop" })),
+        value(
+          createOpenaiPlugin({
+            api: "chat-completions",
+            token: provider,
+            baseUrl: server.baseUrl,
+            apiKey: "fixture",
+            models: { m: {} },
+          }),
+        ),
+        value(
+          llm.createLlmPlugin({ providers: { loopback: provider }, defaultProvider: "loopback" }),
+        ),
+        value(tools.createToolsPlugin()),
+        value(scheduler.createToolSchedulerPlugin()),
+        policy,
+        checkpoints,
+        value(
+          tools.createToolPlugin({
+            name: "read",
+            inputSchema: { type: "object", additionalProperties: false },
+            async prepare() {
+              return { ok: true, value: { actions: { read: true } } };
+            },
+            async execute() {
+              reads++;
+              return {
+                ok: true,
+                value: { content: [{ type: "text", text: await readFile(document, "utf8") }] },
+              };
+            },
+          }),
+        ),
+        value(agent.createAgentLoopPlugin()),
+      ]),
+    );
+    return host;
+  }
+
+  function sceneTool() {
+    server.scene({
+      chunks: [
+        sse({
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: "assistant",
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: "call",
+                    type: "function",
+                    function: { name: "read", arguments: "{}" },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        sse({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }),
+        sse("[DONE]"),
+      ],
+    });
+  }
+
+  function sceneText(text: string) {
+    server.scene({
+      chunks: [
+        sse({ choices: [{ index: 0, delta: { role: "assistant", content: text } }] }),
+        sse({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+        sse("[DONE]"),
+      ],
+    });
+  }
+}
+
 process.stdout.write("agent HTTP SQLite source/dist journey passed\n");

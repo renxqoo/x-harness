@@ -9,6 +9,11 @@ export interface Logger {
   error(input: LogInput): Promise<Result<void>>;
 }
 
-const defined = defineService<Logger>({ name: "standard/logger", methods: { debug: {}, info: {}, warn: {}, error: {} } });
+const defined = defineService<Logger>({
+  name: "standard/logger",
+  methods: { debug: {}, info: {}, warn: {}, error: {} },
+});
+
 if (!defined.ok) throw new Error("Invalid logger contract");
+
 export const logger = defined.value;

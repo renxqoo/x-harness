@@ -23,16 +23,22 @@ function configured<T, E>(result: Result<T, E>): T {
 }
 
 const host = configured(createHost());
-configured(await host.install([
-  configured(createJsonlSessionPlugin({ path: "./data/sessions-jsonl" })),
-  configured(createSessionPlugin({ namespace: "workspace" })),
-]));
+configured(
+  await host.install([
+    configured(createJsonlSessionPlugin({ path: "./data/sessions-jsonl" })),
+    configured(createSessionPlugin({ namespace: "workspace" })),
+  ]),
+);
 const sessions = configured(host.use(session));
 const created = await sessions.create({ id: "chat" });
 const appended = created.ok
   ? await sessions.append({
-      id: "chat", expectedRevision: created.value.revision, commitId: "input-1",
-      entries: [{ kind: "message", message: { role: "user", content: [{ type: "text", text: "你好" }] } }],
+      id: "chat",
+      expectedRevision: created.value.revision,
+      commitId: "input-1",
+      entries: [
+        { kind: "message", message: { role: "user", content: [{ type: "text", text: "你好" }] } },
+      ],
     })
   : created;
 configured(await host.close());

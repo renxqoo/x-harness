@@ -1,24 +1,185 @@
-import {cp,mkdtemp,readFile,rm,symlink,writeFile,mkdir} from "node:fs/promises";
-import {resolve} from "node:path";
-import {tmpdir} from "node:os";
-const root=resolve(import.meta.dir,".."),base="plugins/agent-loop/src/";
-const cases=[
- {name:"valid 129-call receipts rejected after execution",file:base+"domain/read-receipts.ts",before:'raw.length>maximumSchedulerLimits.maxBatchCalls',after:'raw.length>128',test:base+"__test__/tools.test.ts",pattern:"configured 129-call batch"},
- {name:"tool schema preflight omitted",file:base+"runtime/run-agent.ts",before:'||!validateToolInput(catalog.get(tool.name)!,tool.input.value).ok',after:'',test:base+"__test__/tools.test.ts",pattern:"one malformed tool input"},
- {name:"context removal leaves execution capability",file:base+"runtime/prepare-context.ts",before:'catalog:new Map((validated.value.tools??[]).map(tool=>[tool.name,catalog.get(tool.name)!]))',after:'catalog',test:base+"__test__/access.test.ts",pattern:"removing a tool from the model context"},
- {name:"length response executes tool calls",file:base+"domain/map-response.ts",before:'response.reason.kind==="tool-calls";',after:'response.reason.kind==="tool-calls"||response.reason.kind==="length";',test:base+"__test__/responses.test.ts",pattern:"a length response cannot execute"},
- {name:"checkpoint confirmation not awaited",file:base+"runtime/run-agent.ts",before:'const saved=await call.dispatch("agentCheckpoint",checkpoint);',after:'const saved={ok:true,value:undefined};void call.dispatch("agentCheckpoint",checkpoint);',test:base+"__test__/tools.test.ts",pattern:"checkpoint approval is awaited"},
- {name:"consumer failure blocks until provider actually exits",file:base+"runtime/create-emitter.ts",before:'cell.current?.call.cancel(reason);',after:'',test:base+"__test__/cancellation.test.ts",pattern:"throwing consumer returns before a noncooperative"},
- {name:"cancelled run releases capacity before actual completion",file:base+"create-plugin.ts",before:'await task.value.finished;active.delete(source.runId);',after:'active.delete(source.runId);',test:base+"__test__/cancellation.test.ts",pattern:"abort returns before a noncooperative"},
- {name:"later model error loses side-effect risk",file:base+"create-plugin.ts",before:'...(progress.toolsMayHaveRun?{toolsMayHaveRun:true}:{})',after:'',test:base+"__test__/tools.test.ts",pattern:"later model failure preserves"},
- {name:"mutable tool description reuses stale schema",file:"plugins/tools/src/schema/validate-input.ts",before:'compileDescription(snapshot.value)',after:'compileDescription(tool)',test:"plugins/tools/src/__test__/input-validation.test.ts",pattern:"mutating a caller-owned schema"},
- {name:"checkpoint receipt content not matched",file:base+"domain/read-checkpoint.ts",before:'||!equalJson(d.messages.slice(-receipts.value.length),mapReceipts(receipts.value))',after:'',test:base+"__test__/checkpoint-validation.test.ts",pattern:"invalid tools checkpoints"},
- {name:"completed stream retains service",file:base+"stream/create-stream.ts",before:'source.service=undefined;',after:'',test:base+"__test__/retention.test.ts",pattern:"saved model callbacks"},
- {name:"duplicate call ID may execute again",file:base+"runtime/run-agent.ts",before:'seen.has(tool.callId)||',after:'',test:base+"__test__/tools.test.ts",pattern:"tool call ID from the input history"},
+import { applyMutation } from "./mutations/apply-mutation";
+import { cp, mkdtemp, readFile, rm, symlink, writeFile, mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+const root = resolve(import.meta.dir, ".."),
+  base = "plugins/agent-loop/src/";
+const cases = [
+  {
+    name: "valid 129-call receipts rejected after execution",
+    file: base + "domain/read-receipts.ts",
+    before: "raw.length>maximumSchedulerLimits.maxBatchCalls",
+    after: "raw.length>128",
+    test: base + "__test__/tools.test.ts",
+    pattern: "configured 129-call batch",
+  },
+  {
+    name: "tool schema preflight omitted",
+    file: base + "runtime/run-agent.ts",
+    before: "||!validateToolInput(catalog.get(tool.name)!,tool.input.value).ok",
+    after: "",
+    test: base + "__test__/tools.test.ts",
+    pattern: "one malformed tool input",
+  },
+  {
+    name: "context removal leaves execution capability",
+    file: base + "runtime/prepare-context.ts",
+    before:
+      "catalog:new Map((validated.value.tools??[]).map(tool=>[tool.name,catalog.get(tool.name)!]))",
+    after: "catalog",
+    test: base + "__test__/access.test.ts",
+    pattern: "removing a tool from the model context",
+  },
+  {
+    name: "length response executes tool calls",
+    file: base + "domain/map-response.ts",
+    before: 'response.reason.kind==="tool-calls";',
+    after: 'response.reason.kind==="tool-calls"||response.reason.kind==="length";',
+    test: base + "__test__/responses.test.ts",
+    pattern: "a length response cannot execute",
+  },
+  {
+    name: "checkpoint confirmation not awaited",
+    file: base + "runtime/run-agent.ts",
+    before: 'const saved=await call.dispatch("agentCheckpoint",checkpoint);',
+    after:
+      'const saved={ok:true,value:undefined};void call.dispatch("agentCheckpoint",checkpoint);',
+    test: base + "__test__/tools.test.ts",
+    pattern: "checkpoint approval is awaited",
+  },
+  {
+    name: "consumer failure blocks until provider actually exits",
+    file: base + "runtime/create-emitter.ts",
+    before: "cell.current?.call.cancel(reason);",
+    after: "",
+    test: base + "__test__/cancellation.test.ts",
+    pattern: "throwing consumer returns before a noncooperative",
+  },
+  {
+    name: "cancelled run releases capacity before actual completion",
+    file: base + "create-plugin.ts",
+    before: "await task.value.finished;active.delete(source.runId);",
+    after: "active.delete(source.runId);",
+    test: base + "__test__/cancellation.test.ts",
+    pattern: "abort returns before a noncooperative",
+  },
+  {
+    name: "later model error loses side-effect risk",
+    file: base + "create-plugin.ts",
+    before: "...(progress.toolsMayHaveRun?{toolsMayHaveRun:true}:{})",
+    after: "...{}",
+    test: base + "__test__/tools.test.ts",
+    pattern: "later model failure preserves",
+  },
+  {
+    name: "mutable tool description reuses stale schema",
+    file: "plugins/tools/src/schema/validate-input.ts",
+    before: "compileDescription(snapshot.value)",
+    after: "compileDescription(tool)",
+    test: "plugins/tools/src/__test__/input-validation.test.ts",
+    pattern: "mutating a caller-owned schema",
+  },
+  {
+    name: "checkpoint receipt content not matched",
+    file: base + "domain/read-checkpoint.ts",
+    before: "||!equalJson(d.messages.slice(-receipts.value.length),mapReceipts(receipts.value))",
+    after: "",
+    test: base + "__test__/checkpoint-validation.test.ts",
+    pattern: "invalid tools checkpoints",
+  },
+  {
+    name: "completed stream retains service",
+    file: base + "stream/create-stream.ts",
+    before: "source.service=undefined;",
+    expectedMatches: 2,
+    after: "",
+    test: base + "__test__/retention.test.ts",
+    pattern: "saved model callbacks",
+  },
+  {
+    name: "duplicate call ID may execute again",
+    file: base + "runtime/run-agent.ts",
+    before: "seen.has(tool.callId)||",
+    after: "",
+    test: base + "__test__/tools.test.ts",
+    pattern: "tool call ID from the input history",
+  },
 ];
-const directory=await mkdtemp(resolve(tmpdir(),"agent-mutations-")),target=resolve(directory,"packages/v2"),reports:{name:string;detected:boolean;code:number;evidence:string}[]=[];
-async function run(test:string,pattern?:string){const child=Bun.spawn([process.execPath,resolve(root,"../../node_modules/vitest/vitest.mjs"),"run",test,...(pattern?["-t",pattern]:[])],{cwd:target,stdout:"pipe",stderr:"pipe",timeout:20000});const [code,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);return {code,output:stdout+stderr};}
-try{await mkdir(resolve(directory,"packages"));await cp(root,target,{recursive:true,filter:path=>!["node_modules","dist","coverage",".git",".vitest"].includes(path.split("/").at(-1)!)});await symlink(resolve(root,"../../node_modules"),resolve(directory,"node_modules"));await symlink(resolve(root,"node_modules"),resolve(target,"node_modules"));const baseline=await run(base+"__test__");const baselineCases=Number(/Tests\s+(\d+) passed/.exec(baseline.output)?.[1]??0);if(baseline.code||!baselineCases)throw new Error("Agent mutation baseline failed: "+baseline.output);
- for(const change of cases){const file=resolve(target,change.file),source=await readFile(file,"utf8");if(!source.includes(change.before))throw new Error("Missing mutation anchor: "+change.name);await writeFile(file,source.replaceAll(change.before,change.after));try{const result=await run(change.test,change.pattern),assertion=result.output.split("\n").find(line=>line.includes("AssertionError:"));const detected=result.code!==0&&!!assertion&&!result.output.includes("Test timed out")&&!result.output.includes("Failed to resolve");reports.push({name:change.name,detected,code:result.code,evidence:assertion??result.output.slice(-3000)});process.stdout.write(`${detected?"detected":"SURVIVED"}: ${change.name}\n`);}finally{await writeFile(file,source);}}
- await mkdir(resolve(root,"plugins/agent-loop/reviews"),{recursive:true});await writeFile(resolve(root,"plugins/agent-loop/reviews/mutations.json"),JSON.stringify({command:"bun run test:agent:mutations",runtime:Bun.version,baselineCases,reports},null,2)+"\n");if(reports.some(report=>!report.detected))throw new Error("Agent mutation survived or failed without a behavioral assertion");
-}finally{await rm(directory,{recursive:true,force:true});}
+const directory = await mkdtemp(resolve(tmpdir(), "agent-mutations-")),
+  target = resolve(directory, "packages/v2"),
+  reports: { name: string; detected: boolean; code: number; evidence: string }[] = [];
+
+async function run(test: string, pattern?: string) {
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      resolve(root, "../../node_modules/vitest/vitest.mjs"),
+      "run",
+      test,
+      ...(pattern ? ["-t", pattern] : []),
+    ],
+    { cwd: target, stdout: "pipe", stderr: "pipe", timeout: 20000 },
+  );
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { code, output: stdout + stderr };
+}
+
+try {
+  await mkdir(resolve(directory, "packages"));
+  await cp(root, target, {
+    recursive: true,
+    filter: (path) =>
+      !["node_modules", "dist", "coverage", ".git", ".vitest"].includes(path.split("/").at(-1)!),
+  });
+  await symlink(resolve(root, "../../node_modules"), resolve(directory, "node_modules"));
+  await symlink(resolve(root, "node_modules"), resolve(target, "node_modules"));
+  const baseline = await run(base + "__test__");
+  const baselineCases = Number(/Tests\s+(\d+) passed/.exec(baseline.output)?.[1] ?? 0);
+
+  if (baseline.code || !baselineCases)
+    throw new Error("Agent mutation baseline failed: " + baseline.output);
+
+  for (const change of cases) {
+    const file = resolve(target, change.file),
+      source = await readFile(file, "utf8");
+    await writeFile(file, applyMutation(source, change));
+
+    try {
+      const result = await run(change.test, change.pattern),
+        assertion = result.output.split("\n").find((line) => line.includes("AssertionError:"));
+      const detected =
+        result.code !== 0 &&
+        !!assertion &&
+        !result.output.includes("Test timed out") &&
+        !result.output.includes("Failed to resolve");
+      reports.push({
+        name: change.name,
+        detected,
+        code: result.code,
+        evidence: assertion ?? result.output.slice(-3000),
+      });
+      process.stdout.write(`${detected ? "detected" : "SURVIVED"}: ${change.name}\n`);
+    } finally {
+      await writeFile(file, source);
+    }
+  }
+
+  await mkdir(resolve(root, "plugins/agent-loop/reviews"), { recursive: true });
+  await writeFile(
+    resolve(root, "plugins/agent-loop/reviews/mutations.json"),
+    JSON.stringify(
+      { command: "bun run test:agent:mutations", runtime: Bun.version, baselineCases, reports },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  if (reports.some((report) => !report.detected))
+    throw new Error("Agent mutation survived or failed without a behavioral assertion");
+} finally {
+  await rm(directory, { recursive: true, force: true });
+}

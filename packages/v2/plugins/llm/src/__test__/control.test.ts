@@ -1,4 +1,51 @@
 import { expect, it } from "vitest";
 import { createLlmControl } from "../domain/create-control";
-it("overlapping phase operations abort and latch a protocol failure instead of replacing a live timer", async () => { const control = createLlmControl({ signals: [], timeoutMs: 100 }); let release!: () => void; const gate = new Promise<void>((r) => { release = r; }); let settled = false; const first = control.step("headers", 80, async () => { await gate; return { ok: true, value: "first" }; }).then((value) => { settled = true; return value; }); try { expect(await control.step("stream", 80, async () => ({ ok: true, value: "second" }))).toMatchObject({ ok: false, error: { code: "protocol-error" } }); expect(control.signal.aborted).toBe(true); expect(settled).toBe(false); release(); expect(await first).toMatchObject({ ok: false, error: { code: "protocol-error" } }); expect(control.error()?.code).toBe("protocol-error"); } finally { release(); await first; control.close(); } });
-it("a closed control rejects subsequent operations and synchronous failures remain typed", async () => { const control = createLlmControl({ signals: [], timeoutMs: 100 }); expect(await control.step("headers", 20, async () => { throw new Error("secret"); })).toMatchObject({ ok: false, error: { code: "network-error" } }); expect(await control.step("consumer", 20, async () => { throw new Error("secret"); })).toMatchObject({ ok: false, error: { code: "consumer-failed" } }); control.close(); expect(await control.step("stream", 20, async () => ({ ok: true, value: undefined }))).toMatchObject({ ok: false, error: { code: "closed" } }); });
+it("overlapping phase operations abort and latch a protocol failure instead of replacing a live timer", async () => {
+  const control = createLlmControl({ signals: [], timeoutMs: 100 });
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  let settled = false;
+  const first = control
+    .step("headers", 80, async () => {
+      await gate;
+      return { ok: true, value: "first" };
+    })
+    .then((value) => {
+      settled = true;
+      return value;
+    });
+
+  try {
+    expect(
+      await control.step("stream", 80, async () => ({ ok: true, value: "second" })),
+    ).toMatchObject({ ok: false, error: { code: "protocol-error" } });
+    expect(control.signal.aborted).toBe(true);
+    expect(settled).toBe(false);
+    release();
+    expect(await first).toMatchObject({ ok: false, error: { code: "protocol-error" } });
+    expect(control.error()?.code).toBe("protocol-error");
+  } finally {
+    release();
+    await first;
+    control.close();
+  }
+});
+it("a closed control rejects subsequent operations and synchronous failures remain typed", async () => {
+  const control = createLlmControl({ signals: [], timeoutMs: 100 });
+  expect(
+    await control.step("headers", 20, async () => {
+      throw new Error("secret");
+    }),
+  ).toMatchObject({ ok: false, error: { code: "network-error" } });
+  expect(
+    await control.step("consumer", 20, async () => {
+      throw new Error("secret");
+    }),
+  ).toMatchObject({ ok: false, error: { code: "consumer-failed" } });
+  control.close();
+  expect(
+    await control.step("stream", 20, async () => ({ ok: true, value: undefined })),
+  ).toMatchObject({ ok: false, error: { code: "closed" } });
+});

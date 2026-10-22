@@ -1,2 +1,19 @@
 import type { ResourceClaim } from "../../../execution/src/index";
-export function conflicts(a:readonly ResourceClaim[],b:readonly ResourceClaim[]){return a.some(x=>b.some(y=>{if(x.domain!==y.domain||x.mode==="read"&&y.mode==="read")return false;const length=Math.min(x.path.length,y.path.length);for(let i=0;i<length;i++)if(x.path[i]!==y.path[i])return false;return x.path.length===y.path.length||x.path.length<y.path.length&&x.scope==="subtree"||y.path.length<x.path.length&&y.scope==="subtree";}));}
+
+export function conflicts(a: readonly ResourceClaim[], b: readonly ResourceClaim[]) {
+  return a.some((x) =>
+    b.some((y) => {
+      if (x.domain !== y.domain || (x.mode === "read" && y.mode === "read")) return false;
+
+      const length = Math.min(x.path.length, y.path.length);
+
+      for (let i = 0; i < length; i++) if (x.path[i] !== y.path[i]) return false;
+
+      return (
+        x.path.length === y.path.length ||
+        (x.path.length < y.path.length && x.scope === "subtree") ||
+        (y.path.length < x.path.length && y.scope === "subtree")
+      );
+    }),
+  );
+}

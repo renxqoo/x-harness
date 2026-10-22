@@ -86,7 +86,11 @@ type LlmEvent = LlmEventBody & {
 type LlmBlockStart =
   | { readonly kind: "text"; readonly id: string }
   | { readonly kind: "refusal"; readonly id: string }
-  | { readonly kind: "reasoning"; readonly id: string; readonly visibility: "text" | "summary" | "hidden" }
+  | {
+      readonly kind: "reasoning";
+      readonly id: string;
+      readonly visibility: "text" | "summary" | "hidden";
+    }
   | { readonly kind: "tool-call"; readonly id: string }
   | { readonly kind: "provider"; readonly id: string; readonly providerType: string };
 
@@ -98,12 +102,28 @@ type LlmEventBody =
   | { readonly type: "refusal-delta"; readonly id: string; readonly delta: string }
   | { readonly type: "reasoning-delta"; readonly id: string; readonly delta: string }
   | { readonly type: "signature-delta"; readonly id: string; readonly delta: string }
-  | { readonly type: "tool-call-delta"; readonly id: string; readonly field: "callId" | "name" | "input"; readonly delta: string }
+  | {
+      readonly type: "tool-call-delta";
+      readonly id: string;
+      readonly field: "callId" | "name" | "input";
+      readonly delta: string;
+    }
   | { readonly type: "tool-call"; readonly id: string; readonly call: LlmToolCall }
   | { readonly type: "continuation"; readonly id: string; readonly value: ProviderContinuation }
   | { readonly type: "citation"; readonly id: string; readonly citation: LlmCitation }
-  | { readonly type: "provider-event"; readonly scope: "request"; readonly name: string; readonly data: JsonValue }
-  | { readonly type: "provider-event"; readonly scope: "block"; readonly id: string; readonly name: string; readonly data: JsonValue }
+  | {
+      readonly type: "provider-event";
+      readonly scope: "request";
+      readonly name: string;
+      readonly data: JsonValue;
+    }
+  | {
+      readonly type: "provider-event";
+      readonly scope: "block";
+      readonly id: string;
+      readonly name: string;
+      readonly data: JsonValue;
+    }
   | { readonly type: "block-end"; readonly id: string; readonly status: "complete" | "incomplete" }
   | { readonly type: "usage"; readonly usage: LlmUsage }
   | { readonly type: "finish"; readonly summary: LlmSummary }
@@ -114,7 +134,11 @@ interface LlmToolCall {
   readonly name: string;
   readonly input:
     | { readonly ok: true; readonly value: Readonly<Record<string, JsonValue>> }
-    | { readonly ok: false; readonly reason: "invalid-json" | "not-object" | "incomplete"; readonly raw: string };
+    | {
+        readonly ok: false;
+        readonly reason: "invalid-json" | "not-object" | "incomplete";
+        readonly raw: string;
+      };
 }
 
 interface ProviderContinuation {
@@ -142,12 +166,36 @@ interface ResponseInfo {
 }
 
 type LlmCitation =
-  | { readonly kind: "url"; readonly url: string; readonly title?: string; readonly position?: CitationPosition }
-  | { readonly kind: "document"; readonly sourceId: string; readonly title?: string; readonly citedText?: string; readonly position: CitationPosition }
-  | { readonly kind: "file"; readonly provider: string; readonly protocol: string; readonly fileId: string; readonly filename?: string; readonly position?: CitationPosition };
+  | {
+      readonly kind: "url";
+      readonly url: string;
+      readonly title?: string;
+      readonly position?: CitationPosition;
+    }
+  | {
+      readonly kind: "document";
+      readonly sourceId: string;
+      readonly title?: string;
+      readonly citedText?: string;
+      readonly position: CitationPosition;
+    }
+  | {
+      readonly kind: "file";
+      readonly provider: string;
+      readonly protocol: string;
+      readonly fileId: string;
+      readonly filename?: string;
+      readonly position?: CitationPosition;
+    };
 
 type CitationPosition =
-  | { readonly kind: "range"; readonly start: number; readonly end: number; readonly unit: "codepoint" | "utf16" | "utf8" | "page" | "content-block"; readonly base: 0 | 1 }
+  | {
+      readonly kind: "range";
+      readonly start: number;
+      readonly end: number;
+      readonly unit: "codepoint" | "utf16" | "utf8" | "page" | "content-block";
+      readonly base: 0 | 1;
+    }
   | { readonly kind: "provider"; readonly format: string; readonly value: JsonValue };
 
 interface LlmSummary {
@@ -202,19 +250,19 @@ llmRequest调用链为请求策略扩展点，整个调用链直到流结束才�
 
 下列数字为默认值，集中在单一配置模块；可向下调，向上调受硬上限约束。字节指规范化UTF8载荷，不等于JS堆占用，实际有有界解码/快照副本。
 
-| 预算 | 默认 / 硬上限 |
-| --- | --- |
-| 总并发请求 / 每提供者并发网络请求 | 32 / 16，硬上限均256 |
-| 路由提供者数 | 32 / 128 |
-| 等待队列 | 0，满即busy，不建立无限等待 |
-| 每请求输入字节 | 16MiB / 64MiB |
-| 消息 / 工具 / 输出块数量 | 4096 / 256 / 512，硬上限分别8192 / 1024 / 2048 |
-| 单SSE帧 / 单规范化事件 | 1MiB / 1MiB，硬上限均4MiB |
-| 单工具参数 / 单continuation | 256KiB / 512KiB，硬上限均1MiB |
-| 一次输出累计字节 / 事件数量 | 16MiB / 200000，硬上限64MiB / 1000000 |
-| JSON深度 / 节点数 | 32 / 100000，硬上限64 / 200000 |
-| 请求总期限 | 180s / 1800s，同时受父调用更短期限约束 |
-| 响应头 / 上游读取无进展 / 消费者回调 | 30s / 60s / 30s，上限分别120s / 600s / 600s |
+| 预算                                 | 默认 / 硬上限                                  |
+| ------------------------------------ | ---------------------------------------------- |
+| 总并发请求 / 每提供者并发网络请求    | 32 / 16，硬上限均256                           |
+| 路由提供者数                         | 32 / 128                                       |
+| 等待队列                             | 0，满即busy，不建立无限等待                    |
+| 每请求输入字节                       | 16MiB / 64MiB                                  |
+| 消息 / 工具 / 输出块数量             | 4096 / 256 / 512，硬上限分别8192 / 1024 / 2048 |
+| 单SSE帧 / 单规范化事件               | 1MiB / 1MiB，硬上限均4MiB                      |
+| 单工具参数 / 单continuation          | 256KiB / 512KiB，硬上限均1MiB                  |
+| 一次输出累计字节 / 事件数量          | 16MiB / 200000，硬上限64MiB / 1000000          |
+| JSON深度 / 节点数                    | 32 / 100000，硬上限64 / 200000                 |
+| 请求总期限                           | 180s / 1800s，同时受父调用更短期限约束         |
+| 响应头 / 上游读取无进展 / 消费者回调 | 30s / 60s / 30s，上限分别120s / 600s / 600s    |
 
 每请求最多两个总期限timer（统一层与可独立调用的提供者各一个）和一个当前阶段timer，核心自有timer另计。输出预算保守预留至多8192字节、最多总预算的四分之一供终态，事件数量同样预留一个终态位置，所有实际发布事件仍计入总预算；块结束生成的工具完成事件同样计数。等待onEvent时不运行上游read-idle计时，不把本地消费者慢误判成网络断流。ping能证明连接有字节进展但不能突破总期限或事件/字节预算。被取消请求即使对外已经返回，实际未结束前不能释放并发槽给新请求。总并发由llm实例持有，每提供者网络并发由提供者插件实例持有，不能用路由别名建立第二份计数绕过同一提供者的限额。第三方工厂从同一提供者实例建立准入器，跨路由调用仍受其预算。
 

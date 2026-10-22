@@ -2,13 +2,27 @@ import assert from "node:assert/strict";
 import { Context } from "__CORDIS_ENTRY__";
 
 export async function closeResource() {
-  const host = new Context(); let opened = 0; let closed = 0;
+  const host = new Context();
+  let opened = 0;
+  let closed = 0;
   try {
-    await host.plugin({ name: "resource", async apply() {
-      await Promise.resolve(); const connection = { name: "connection" }; opened++;
-      return async () => { await Promise.resolve(); assert.equal(connection.name, "connection"); closed++; };
-    } });
+    await host.plugin({
+      name: "resource",
+      async apply() {
+        await Promise.resolve();
+        const connection = { name: "connection" };
+        opened++;
+        return async () => {
+          await Promise.resolve();
+          assert.equal(connection.name, "connection");
+          closed++;
+        };
+      },
+    });
     assert.equal(closed, 0);
-  } finally { await host.fiber.dispose(); assert.equal(host.registry.size, 0); }
+  } finally {
+    await host.fiber.dispose();
+    assert.equal(host.registry.size, 0);
+  }
   return { opened, closed };
 }

@@ -1,11 +1,238 @@
-import {expect,it} from "vitest";
-import {world,value,request,gate,answer} from "./helpers";
-it.each(["abort","timeout"])("%s returns before a noncooperative provider exits while retaining its run slot",async mode=>{const entered=gate(),release=gate();let calls=0;const f=await world({agent:{limits:{maxActiveRuns:1}},async run(input){if(!calls++){entered.resolve();await release.promise;}return answer(input);}});const controller=new AbortController();try{const running=f.service.run({...request,...(mode==="timeout"?{timeoutMs:25}:{signal:controller.signal})});await entered.promise;if(mode==="abort")controller.abort();expect(await Promise.race([running,new Promise(resolve=>setTimeout(()=>resolve("blocked"),200))])).toMatchObject({ok:false,error:{code:mode==="abort"?"cancelled":"timeout"}});expect(await f.service.run(request)).toMatchObject({ok:false,error:{code:"busy"}});expect(f.host.inspect().activeTasks).toBeGreaterThan(0);release.resolve();for(let i=0;i<200&&f.host.inspect().activeTasks;i++)await new Promise(resolve=>setTimeout(resolve,1));expect((await f.service.run(request)).ok).toBe(true);}finally{release.resolve();value(await f.host.close());}});
-it("a consumer timeout returns before the callback exits and retains admission until actual drain",async()=>{const entered=gate(),release=gate();const f=await world({agent:{limits:{maxActiveRuns:1,consumerTimeoutMs:10}}});try{const running=f.service.run({...request,async onEvent(){entered.resolve();await release.promise;}});await entered.promise;expect(await Promise.race([running,new Promise(resolve=>setTimeout(()=>resolve("blocked"),150))])).toMatchObject({ok:false,error:{code:"timeout"}});expect(await f.service.run(request)).toMatchObject({ok:false,error:{code:"busy"}});release.resolve();for(let i=0;i<200&&f.host.inspect().activeTasks;i++)await new Promise(resolve=>setTimeout(resolve,1));expect((await f.service.run(request)).ok).toBe(true);}finally{release.resolve();value(await f.host.close());}});
-it("concurrent duplicate run IDs reject but distinct attempts may proceed",async()=>{const entered=gate(),release=gate();let models=0;const f=await world({async run(input){if(!models++){entered.resolve();await release.promise;}return answer(input);}});try{const first=f.service.run({...request,runId:"same"});await entered.promise;expect(await f.service.run({...request,runId:"same"})).toMatchObject({ok:false,error:{code:"busy"}});expect((await f.service.run({...request,runId:"other"})).ok).toBe(true);release.resolve();expect((await first).ok).toBe(true);expect((await f.service.run({...request,runId:"same"})).ok).toBe(true);}finally{release.resolve();value(await f.host.close());}});
-it("a pre-aborted request never starts a model",async()=>{let models=0;const controller=new AbortController();controller.abort();const f=await world({async run(input){models++;return answer(input);}});try{expect(await f.service.run({...request,signal:controller.signal})).toMatchObject({ok:false,error:{code:"cancelled"}});expect(models).toBe(0);}finally{value(await f.host.close());}});
-it("unloading the loop cancels its run while actual provider work still drains",async()=>{const entered=gate(),release=gate();const f=await world({async run(input){entered.resolve();await release.promise;return answer(input);}});try{const running=f.service.run(request);await entered.promise;const unloaded=f.host.uninstall(f.installed.plugins.at(-1)!);expect(await Promise.race([running,new Promise(resolve=>setTimeout(()=>resolve("blocked"),150))])).toMatchObject({ok:false});expect((await f.service.run(request)).ok).toBe(false);release.resolve();expect((await unloaded).ok).toBe(true);}finally{release.resolve();value(await f.host.close());}});
+import { expect, it } from "vitest";
+import { world, value, request, gate, answer } from "./helpers";
+it.each(["abort", "timeout"])(
+  "%s returns before a noncooperative provider exits while retaining its run slot",
+  async (mode) => {
+    const entered = gate(),
+      release = gate();
+    let calls = 0;
+    const f = await world({
+      agent: { limits: { maxActiveRuns: 1 } },
+      async run(input) {
+        if (!calls++) {
+          entered.resolve();
+          await release.promise;
+        }
 
-it("a throwing consumer returns before a noncooperative provider exits and retains capacity",async()=>{const entered=gate(),release=gate();let calls=0;const f=await world({agent:{limits:{maxActiveRuns:1}},async run(input){if(!calls++){await input.onEvent({type:"block-start",block:{kind:"text",id:"t"}});entered.resolve();await release.promise;}return answer(input);}});try{const running=f.service.run({...request,onEvent(event){if(event.type==="model-event"&&event.event.type==="block-start")throw new Error("private-consumer");}});await entered.promise;expect(await Promise.race([running,new Promise(resolve=>setTimeout(()=>resolve("blocked"),150))])).toMatchObject({ok:false,error:{source:"core",code:"cancelled"}});expect(await f.service.run(request)).toMatchObject({ok:false,error:{code:"busy"}});expect(f.host.inspect().activeTasks).toBeGreaterThan(0);release.resolve();for(let i=0;i<200&&f.host.inspect().activeTasks;i++)await new Promise(resolve=>setTimeout(resolve,1));expect((await f.service.run(request)).ok).toBe(true);}finally{release.resolve();value(await f.host.close());}});
+        return answer(input);
+      },
+    });
+    const controller = new AbortController();
 
-it("an event budget failure returns before a noncooperative provider drains",async()=>{const entered=gate(),release=gate();const f=await world({agent:{limits:{maxActiveRuns:1,maxEvents:4}},async run(input){await input.onEvent({type:"block-start",block:{kind:"text",id:"t"}});entered.resolve();await release.promise;return answer(input);}});try{const running=f.service.run(request);await entered.promise;expect(await Promise.race([running,new Promise(resolve=>setTimeout(()=>resolve("blocked"),150))])).toMatchObject({ok:false,error:{source:"core",code:"cancelled"}});expect(await f.service.run(request)).toMatchObject({ok:false,error:{code:"busy"}});}finally{release.resolve();value(await f.host.close());}});
+    try {
+      const running = f.service.run({
+        ...request,
+        ...(mode === "timeout" ? { timeoutMs: 25 } : { signal: controller.signal }),
+      });
+      await entered.promise;
+
+      if (mode === "abort") controller.abort();
+
+      expect(
+        await Promise.race([
+          running,
+          new Promise((resolve) => setTimeout(() => resolve("blocked"), 200)),
+        ]),
+      ).toMatchObject({ ok: false, error: { code: mode === "abort" ? "cancelled" : "timeout" } });
+      expect(await f.service.run(request)).toMatchObject({ ok: false, error: { code: "busy" } });
+      expect(f.host.inspect().activeTasks).toBeGreaterThan(0);
+      release.resolve();
+
+      for (let i = 0; i < 200 && f.host.inspect().activeTasks; i++)
+        await new Promise((resolve) => setTimeout(resolve, 1));
+
+      expect((await f.service.run(request)).ok).toBe(true);
+    } finally {
+      release.resolve();
+      value(await f.host.close());
+    }
+  },
+);
+it("a consumer timeout returns before the callback exits and retains admission until actual drain", async () => {
+  const entered = gate(),
+    release = gate();
+  const f = await world({ agent: { limits: { maxActiveRuns: 1, consumerTimeoutMs: 10 } } });
+
+  try {
+    const running = f.service.run({
+      ...request,
+      async onEvent() {
+        entered.resolve();
+        await release.promise;
+      },
+    });
+    await entered.promise;
+    expect(
+      await Promise.race([
+        running,
+        new Promise((resolve) => setTimeout(() => resolve("blocked"), 150)),
+      ]),
+    ).toMatchObject({ ok: false, error: { code: "timeout" } });
+    expect(await f.service.run(request)).toMatchObject({ ok: false, error: { code: "busy" } });
+    release.resolve();
+
+    for (let i = 0; i < 200 && f.host.inspect().activeTasks; i++)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+
+    expect((await f.service.run(request)).ok).toBe(true);
+  } finally {
+    release.resolve();
+    value(await f.host.close());
+  }
+});
+it("concurrent duplicate run IDs reject but distinct attempts may proceed", async () => {
+  const entered = gate(),
+    release = gate();
+  let models = 0;
+  const f = await world({
+    async run(input) {
+      if (!models++) {
+        entered.resolve();
+        await release.promise;
+      }
+
+      return answer(input);
+    },
+  });
+
+  try {
+    const first = f.service.run({ ...request, runId: "same" });
+    await entered.promise;
+    expect(await f.service.run({ ...request, runId: "same" })).toMatchObject({
+      ok: false,
+      error: { code: "busy" },
+    });
+    expect((await f.service.run({ ...request, runId: "other" })).ok).toBe(true);
+    release.resolve();
+    expect((await first).ok).toBe(true);
+    expect((await f.service.run({ ...request, runId: "same" })).ok).toBe(true);
+  } finally {
+    release.resolve();
+    value(await f.host.close());
+  }
+});
+it("a pre-aborted request never starts a model", async () => {
+  let models = 0;
+  const controller = new AbortController();
+  controller.abort();
+  const f = await world({
+    async run(input) {
+      models++;
+      return answer(input);
+    },
+  });
+
+  try {
+    expect(await f.service.run({ ...request, signal: controller.signal })).toMatchObject({
+      ok: false,
+      error: { code: "cancelled" },
+    });
+    expect(models).toBe(0);
+  } finally {
+    value(await f.host.close());
+  }
+});
+it("unloading the loop cancels its run while actual provider work still drains", async () => {
+  const entered = gate(),
+    release = gate();
+  const f = await world({
+    async run(input) {
+      entered.resolve();
+      await release.promise;
+      return answer(input);
+    },
+  });
+
+  try {
+    const running = f.service.run(request);
+    await entered.promise;
+    const unloaded = f.host.uninstall(f.installed.plugins.at(-1)!);
+    expect(
+      await Promise.race([
+        running,
+        new Promise((resolve) => setTimeout(() => resolve("blocked"), 150)),
+      ]),
+    ).toMatchObject({ ok: false });
+    expect((await f.service.run(request)).ok).toBe(false);
+    release.resolve();
+    expect((await unloaded).ok).toBe(true);
+  } finally {
+    release.resolve();
+    value(await f.host.close());
+  }
+});
+
+it("a throwing consumer returns before a noncooperative provider exits and retains capacity", async () => {
+  const entered = gate(),
+    release = gate();
+  let calls = 0;
+  const f = await world({
+    agent: { limits: { maxActiveRuns: 1 } },
+    async run(input) {
+      if (!calls++) {
+        await input.onEvent({ type: "block-start", block: { kind: "text", id: "t" } });
+        entered.resolve();
+        await release.promise;
+      }
+
+      return answer(input);
+    },
+  });
+
+  try {
+    const running = f.service.run({
+      ...request,
+      onEvent(event) {
+        if (event.type === "model-event" && event.event.type === "block-start")
+          throw new Error("private-consumer");
+      },
+    });
+    await entered.promise;
+    expect(
+      await Promise.race([
+        running,
+        new Promise((resolve) => setTimeout(() => resolve("blocked"), 150)),
+      ]),
+    ).toMatchObject({ ok: false, error: { source: "core", code: "cancelled" } });
+    expect(await f.service.run(request)).toMatchObject({ ok: false, error: { code: "busy" } });
+    expect(f.host.inspect().activeTasks).toBeGreaterThan(0);
+    release.resolve();
+
+    for (let i = 0; i < 200 && f.host.inspect().activeTasks; i++)
+      await new Promise((resolve) => setTimeout(resolve, 1));
+
+    expect((await f.service.run(request)).ok).toBe(true);
+  } finally {
+    release.resolve();
+    value(await f.host.close());
+  }
+});
+
+it("an event budget failure returns before a noncooperative provider drains", async () => {
+  const entered = gate(),
+    release = gate();
+  const f = await world({
+    agent: { limits: { maxActiveRuns: 1, maxEvents: 4 } },
+    async run(input) {
+      await input.onEvent({ type: "block-start", block: { kind: "text", id: "t" } });
+      entered.resolve();
+      await release.promise;
+      return answer(input);
+    },
+  });
+
+  try {
+    const running = f.service.run(request);
+    await entered.promise;
+    expect(
+      await Promise.race([
+        running,
+        new Promise((resolve) => setTimeout(() => resolve("blocked"), 150)),
+      ]),
+    ).toMatchObject({ ok: false, error: { source: "core", code: "cancelled" } });
+    expect(await f.service.run(request)).toMatchObject({ ok: false, error: { code: "busy" } });
+  } finally {
+    release.resolve();
+    value(await f.host.close());
+  }
+});

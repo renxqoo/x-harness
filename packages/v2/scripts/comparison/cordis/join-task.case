@@ -4,16 +4,44 @@ import { defer } from "__DEFER__";
 import { settle } from "__SETTLE__";
 
 export async function joinTask() {
-  const host = new Context(); const started = defer(); const gate = defer(); const aborted = defer(); let finished = 0; let cancelled = false;
+  const host = new Context();
+  const started = defer();
+  const gate = defer();
+  const aborted = defer();
+  let finished = 0;
+  let cancelled = false;
   try {
-    await host.plugin({ name: "task", apply() {
-      const controller = new AbortController(); controller.signal.addEventListener("abort", () => aborted.resolve(), { once: true });
-      const actual = (async () => { started.resolve(); await gate.promise; cancelled = controller.signal.aborted; finished++; })();
-      return async () => { controller.abort(); await actual; };
-    } });
-    await started.promise; let closed = false; const closing = host.fiber.dispose().then(() => { closed = true; });
-    await aborted.promise; await settle(); const closeWaited = !closed;
-    gate.resolve(); await closing;
+    await host.plugin({
+      name: "task",
+      apply() {
+        const controller = new AbortController();
+        controller.signal.addEventListener("abort", () => aborted.resolve(), { once: true });
+        const actual = (async () => {
+          started.resolve();
+          await gate.promise;
+          cancelled = controller.signal.aborted;
+          finished++;
+        })();
+        return async () => {
+          controller.abort();
+          await actual;
+        };
+      },
+    });
+    await started.promise;
+    let closed = false;
+    const closing = host.fiber.dispose().then(() => {
+      closed = true;
+    });
+    await aborted.promise;
+    await settle();
+    const closeWaited = !closed;
+    gate.resolve();
+    await closing;
     return { finished, cancelled, closeWaited };
-  } finally { gate.resolve(); await host.fiber.dispose(); assert.equal(host.registry.size, 0); }
+  } finally {
+    gate.resolve();
+    await host.fiber.dispose();
+    assert.equal(host.registry.size, 0);
+  }
 }

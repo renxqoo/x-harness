@@ -1,1 +1,5 @@
-createToolPlugin({name:"x",inputSchema:{type:"object"},execute:async()=>({ok:true,value:{content:"text"}})});
+createToolPlugin({
+  name: "x",
+  inputSchema: { type: "object" },
+  execute: async () => ({ ok: true, value: { content: "text" } }),
+});

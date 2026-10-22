@@ -1,1 +1,1 @@
-ctx.on(event,(input:number)=>{});
+ctx.on(event, (input: number) => {});

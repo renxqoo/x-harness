@@ -1,18 +1,167 @@
-import {readBackend} from "./read-backend";
-import type {ProcessBackend} from "./read-backend";
-import {createFault} from "../../../core/src/validation";
-import {mkdtemp,mkdir,rm} from "node:fs/promises";
-import {tmpdir} from "node:os";
-import {join} from "node:path";
-import {definePlugin} from "../../../core/src/index";
-import type {Plugin} from "../../../core/src/index";
-import {execution} from "../../execution/src/index";
-import type {ExecutionTarget,ExecutionResult} from "../../execution/src/index";
-import type {ProcessExecutionOptions,ProcessTarget,CanonicalProfile} from "./types";
-import {readOptions} from "./read-options";
-import {canonicalizeProfile} from "./canonicalize-profile";
-import {prepareTarget} from "./prepare-target";
-import {checkTarget} from "./check-target";
-import {readRun} from "./read-run";
-import {fail} from "./fail";
-export function createProcessExecutionPlugin(raw:ProcessExecutionOptions,backendInput:ProcessBackend):ExecutionResult<Plugin>{const checkedBackend=readBackend(backendInput);if(!checkedBackend.ok)return checkedBackend;const backend=checkedBackend.value;const options=readOptions(raw);if(!options.ok)return options;return {ok:true,value:definePlugin({name:backend.name,provides:{execution},async setup(ctx){const profiles=new Map<string,CanonicalProfile>();for(const [name,value]of Object.entries(options.value.profiles)){const profile=await canonicalizeProfile(value);if(!profile.ok)return profile;if(backend.isolation==="none"&&value.allowedDomains!==undefined)return fail("invalid-input");profiles.set(name,profile.value);}const directory=await ctx.resource({async open(){try{return {ok:true,value:await mkdtemp(join(tmpdir(),"xh-execution-"))};}catch{return fail("backend-unavailable");}},async close(root){try{await rm(root,{recursive:true,force:true});return {ok:true,value:undefined};}catch{return createFault("cleanup-failed");}}});if(!directory.ok)return directory;const targets=new WeakMap<ExecutionTarget,ProcessTarget>();let active=0;return ctx.service({execution:{async prepare(input){const prepared=await prepareTarget(input,{backend:backend.name,isolation:backend.isolation,systemReadRoots:backend.systemReadRoots??[],profiles,root:directory.value});if(!prepared.ok)return prepared;targets.set(prepared.value.target,prepared.value);return {ok:true,value:prepared.value.target};},async run(raw,call){const parsed=readRun(raw);if(!parsed.ok)return parsed;const input=parsed.value,data=targets.get(input.target);if(!data||data.used)return fail("closed");if(active>=options.value.limits.maxActiveRequests)return fail("busy");data.used=true;active++;const task=call.spawn({label:"execution-process",signal:input.signal,timeoutMs:Math.min(input.timeoutMs??options.value.limits.timeoutMs,options.value.limits.timeoutMs),async run(child){const checked=await checkTarget(data);if(!checked.ok)return checked;let result:ExecutionResult<import("../../execution/src/index").ExecutionOutput>;try{await mkdir(data.scratch,{recursive:false,mode:448});result=await backend.run({target:data.target,profile:data.profile,scratch:data.scratch,root:directory.value,signal:child.signal,limits:options.value.limits});}catch{result=fail("execution-failed");}try{await rm(data.scratch,{recursive:true,force:true});}catch{return fail("execution-failed");}return result;}});if(!task.ok){active--;return task;}try{const result=await call.wait(task.value);if(!result.ok&&result.error.source==="core"&&(result.error.code==="cancelled"||result.error.code==="timeout"))call.cancel(result.error.code);return result;}finally{await task.value.finished;active--;}}}});}})};}
+import { readBackend } from "./read-backend";
+import type { ProcessBackend } from "./read-backend";
+import { createFault } from "../../../core/src/validation";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { definePlugin } from "../../../core/src/index";
+import type { Plugin } from "../../../core/src/index";
+import { execution } from "../../execution/src/index";
+import type { ExecutionTarget, ExecutionResult } from "../../execution/src/index";
+import type { ProcessExecutionOptions, ProcessTarget, CanonicalProfile } from "./types";
+import { readOptions } from "./read-options";
+import { canonicalizeProfile } from "./canonicalize-profile";
+import { prepareTarget } from "./prepare-target";
+import { checkTarget } from "./check-target";
+import { readRun } from "./read-run";
+import { fail } from "./fail";
+
+export function createProcessExecutionPlugin(
+  raw: ProcessExecutionOptions,
+  backendInput: ProcessBackend,
+): ExecutionResult<Plugin> {
+  const checkedBackend = readBackend(backendInput);
+
+  if (!checkedBackend.ok) return checkedBackend;
+
+  const backend = checkedBackend.value;
+  const options = readOptions(raw);
+
+  if (!options.ok) return options;
+
+  return {
+    ok: true,
+    value: definePlugin({
+      name: backend.name,
+      provides: { execution },
+      async setup(ctx) {
+        const profiles = new Map<string, CanonicalProfile>();
+
+        for (const [name, value] of Object.entries(options.value.profiles)) {
+          const profile = await canonicalizeProfile(value);
+
+          if (!profile.ok) return profile;
+
+          if (backend.isolation === "none" && value.allowedDomains !== undefined)
+            return fail("invalid-input");
+
+          profiles.set(name, profile.value);
+        }
+
+        const directory = await ctx.resource({
+          async open() {
+            try {
+              return { ok: true, value: await mkdtemp(join(tmpdir(), "xh-execution-")) };
+            } catch {
+              return fail("backend-unavailable");
+            }
+          },
+          async close(root) {
+            try {
+              await rm(root, { recursive: true, force: true });
+              return { ok: true, value: undefined };
+            } catch {
+              return createFault("cleanup-failed");
+            }
+          },
+        });
+
+        if (!directory.ok) return directory;
+
+        const targets = new WeakMap<ExecutionTarget, ProcessTarget>();
+        let active = 0;
+        return ctx.service({
+          execution: {
+            async prepare(input) {
+              const prepared = await prepareTarget(input, {
+                backend: backend.name,
+                isolation: backend.isolation,
+                systemReadRoots: backend.systemReadRoots ?? [],
+                profiles,
+                root: directory.value,
+              });
+
+              if (!prepared.ok) return prepared;
+
+              targets.set(prepared.value.target, prepared.value);
+              return { ok: true, value: prepared.value.target };
+            },
+            async run(raw, call) {
+              const parsed = readRun(raw);
+
+              if (!parsed.ok) return parsed;
+
+              const input = parsed.value,
+                data = targets.get(input.target);
+
+              if (!data || data.used) return fail("closed");
+
+              if (active >= options.value.limits.maxActiveRequests) return fail("busy");
+
+              data.used = true;
+              active++;
+              const task = call.spawn({
+                label: "execution-process",
+                signal: input.signal,
+                timeoutMs: Math.min(
+                  input.timeoutMs ?? options.value.limits.timeoutMs,
+                  options.value.limits.timeoutMs,
+                ),
+                async run(child) {
+                  const checked = await checkTarget(data);
+
+                  if (!checked.ok) return checked;
+
+                  let result: ExecutionResult<import("../../execution/src/index").ExecutionOutput>;
+
+                  try {
+                    await mkdir(data.scratch, { recursive: false, mode: 448 });
+                    result = await backend.run({
+                      target: data.target,
+                      profile: data.profile,
+                      scratch: data.scratch,
+                      root: directory.value,
+                      signal: child.signal,
+                      limits: options.value.limits,
+                    });
+                  } catch {
+                    result = fail("execution-failed");
+                  }
+
+                  try {
+                    await rm(data.scratch, { recursive: true, force: true });
+                  } catch {
+                    return fail("execution-failed");
+                  }
+
+                  return result;
+                },
+              });
+
+              if (!task.ok) {
+                active--;
+                return task;
+              }
+
+              try {
+                const result = await call.wait(task.value);
+
+                if (
+                  !result.ok &&
+                  result.error.source === "core" &&
+                  (result.error.code === "cancelled" || result.error.code === "timeout")
+                )
+                  call.cancel(result.error.code);
+
+                return result;
+              } finally {
+                await task.value.finished;
+                active--;
+              }
+            },
+          },
+        });
+      },
+    }),
+  };
+}

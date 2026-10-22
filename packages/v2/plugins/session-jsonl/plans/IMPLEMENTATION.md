@@ -4,15 +4,15 @@
 
 ## 存量盘点与裁决
 
-| 来源 | 结论 | 动作 |
-| --- | --- | --- |
-| session/storage/types | 后端无SQL契约已完整 | 只依赖公共入口，接口保持 |
-| session-storage-sql/read-request / read-policy | 纯校验器，无SQL及平台依赖 | 移到session/storage作者工具；不留旧路径别名 |
-| session-storage-sql/create-gate | 纯有界串行准入，取消及排空已覆盖 | 移到session/storage作者工具并迁原测试 |
-| session/storage/read-metadata | 安全JSON及预算检查 | 复用，不进入消息投影 |
-| session/testing/verify-storage | 20项公共一致性检查 | 两独立JSONL客户端运行，不替代真实故障测试 |
-| sessionSQL故障/进程装置 | 真实DB测试不适用于文件协议 | JSONL自有同目录进程探针；现有SQL断言不改 |
-| 另一Agent新增并发/伪造后端/边界TDD | 在途独立工作 | 只读跟踪，不改其测试，不以其在途失败改弱门禁 |
+| 来源                                           | 结论                             | 动作                                         |
+| ---------------------------------------------- | -------------------------------- | -------------------------------------------- |
+| session/storage/types                          | 后端无SQL契约已完整              | 只依赖公共入口，接口保持                     |
+| session-storage-sql/read-request / read-policy | 纯校验器，无SQL及平台依赖        | 移到session/storage作者工具；不留旧路径别名  |
+| session-storage-sql/create-gate                | 纯有界串行准入，取消及排空已覆盖 | 移到session/storage作者工具并迁原测试        |
+| session/storage/read-metadata                  | 安全JSON及预算检查               | 复用，不进入消息投影                         |
+| session/testing/verify-storage                 | 20项公共一致性检查               | 两独立JSONL客户端运行，不替代真实故障测试    |
+| sessionSQL故障/进程装置                        | 真实DB测试不适用于文件协议       | JSONL自有同目录进程探针；现有SQL断言不改     |
+| 另一Agent新增并发/伪造后端/边界TDD             | 在途独立工作                     | 只读跟踪，不改其测试，不以其在途失败改弱门禁 |
 
 ## 文件组织
 

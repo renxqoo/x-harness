@@ -1,10 +1,247 @@
-import { expect,it } from "vitest";
+import { expect, it } from "vitest";
 import { createToolPlugin } from "../index";
-import { world,value,emptySchema,request,text,deferred,flush } from "./helpers";
-it("a slow progress consumer applies backpressure and drains before success",async()=>{const gate=deferred();const entered=deferred();let after=false;const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:emptySchema,async execute(_input,call){const sent=await call.progress("first");if(!sent.ok)return sent;after=true;return text("done");}}))]);try{const result=service.execute({...request(),async onProgress(delta){expect(delta).toBe("first");entered.resolve();await gate.promise;}});await entered.promise;expect(after).toBe(false);gate.resolve();expect((await result).ok).toBe(true);expect(host.inspect().activeTasks).toBe(0);}finally{gate.resolve();value(await host.close());}});
-it("ignored progress consumer failure cannot become successful tool output",async()=>{const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:emptySchema,async execute(_i,call){await call.progress("x");return text("ignored");}}))]);try{expect(await service.execute({...request(),onProgress(){throw new Error("secret");}})).toMatchObject({ok:false,error:{code:"consumer-failed"}});}finally{value(await host.close());}});
-it("concurrent and unawaited progress is rejected while actual work still drains",async()=>{const gate=deferred();const entered=deferred();let saved:((x:string)=>Promise<unknown>)|undefined;const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:emptySchema,async execute(_i,call){saved=call.progress;void call.progress("one");const second=await call.progress("two");expect(second.ok).toBe(false);return text("bad");}}))]);try{const result=service.execute({...request(),async onProgress(){entered.resolve();await gate.promise;}});await entered.promise;await flush();expect(host.inspect().activeTasks).toBeGreaterThan(0);gate.resolve();expect((await result).ok).toBe(false);value(await host.close());expect(await saved!("late")).toMatchObject({ok:false,error:{code:"closed"}});}finally{gate.resolve();value(await host.close());}});
-it("progress timeout aborts the callback task signal and never accepts late success",async()=>{const entered=deferred();let aborted=false;const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:emptySchema,limits:{consumerTimeoutMs:10},async execute(_i,call){const sent=await call.progress("x");return sent.ok?text("done"):sent;}}))]);try{const result=await service.execute({...request(),onProgress(_d,signal){entered.resolve();return new Promise<void>(resolve=>{signal.addEventListener("abort",()=>{aborted=true;resolve();},{once:true});});}});expect(aborted).toBe(true);expect(result).toMatchObject({ok:false,error:{code:"timeout"}});value(await host.close());expect(host.inspect().activeTasks).toBe(0);}finally{value(await host.close());}});
-it.each([{maxProgressBytes:2},{maxProgressTotalBytes:3},{maxProgressEvents:1}])("progress budgets are latched even if ignored: %j",async limits=>{const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:emptySchema,limits,async execute(_i,call){await call.progress("xx");await call.progress("xx");return text("done");}}))]);try{expect((await service.execute(request())).ok).toBe(limits.maxProgressBytes===2);}finally{value(await host.close());}});
-it.each([{maxProgressBytes:1},{maxProgressTotalBytes:1},{maxProgressEvents:1}])("instance progress limits apply to tool defaults: %j",async limits=>{const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:emptySchema,async execute(_i,call){await call.progress("xx");await call.progress("xx");return text("ignored");}}))],{access:"allow",limits});try{expect(await service.execute(request())).toMatchObject({ok:false,error:{code:"capacity-exceeded"}});}finally{value(await host.close());}});
-it("consumer timeout reaches the author before an uncooperative callback drains",async()=>{const gate=deferred();const receipt=deferred<unknown>();const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:emptySchema,async execute(_i,call){const sent=await call.progress("x");receipt.resolve(sent);return sent.ok?text("late"):sent;}}))],{access:"allow",limits:{consumerTimeoutMs:10}});try{const running=service.execute({...request(),onProgress:async()=>{await gate.promise;}});expect(await Promise.race([receipt.promise,new Promise(resolve=>setTimeout(()=>resolve("blocked"),80))])).toMatchObject({ok:false,error:{code:"timeout"}});expect(await running).toMatchObject({ok:false,error:{code:"timeout"}});expect(host.inspect().activeTasks).toBeGreaterThan(0);}finally{gate.resolve();value(await host.close());}});
+import { world, value, emptySchema, request, text, deferred, flush } from "./helpers";
+it("a slow progress consumer applies backpressure and drains before success", async () => {
+  const gate = deferred();
+  const entered = deferred();
+  let after = false;
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        async execute(_input, call) {
+          const sent = await call.progress("first");
+
+          if (!sent.ok) return sent;
+
+          after = true;
+          return text("done");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const result = service.execute({
+      ...request(),
+      async onProgress(delta) {
+        expect(delta).toBe("first");
+        entered.resolve();
+        await gate.promise;
+      },
+    });
+    await entered.promise;
+    expect(after).toBe(false);
+    gate.resolve();
+    expect((await result).ok).toBe(true);
+    expect(host.inspect().activeTasks).toBe(0);
+  } finally {
+    gate.resolve();
+    value(await host.close());
+  }
+});
+it("ignored progress consumer failure cannot become successful tool output", async () => {
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        async execute(_i, call) {
+          await call.progress("x");
+          return text("ignored");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    expect(
+      await service.execute({
+        ...request(),
+        onProgress() {
+          throw new Error("secret");
+        },
+      }),
+    ).toMatchObject({ ok: false, error: { code: "consumer-failed" } });
+  } finally {
+    value(await host.close());
+  }
+});
+it("concurrent and unawaited progress is rejected while actual work still drains", async () => {
+  const gate = deferred();
+  const entered = deferred();
+  let saved: ((x: string) => Promise<unknown>) | undefined;
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        async execute(_i, call) {
+          saved = call.progress;
+          void call.progress("one");
+          const second = await call.progress("two");
+          expect(second.ok).toBe(false);
+          return text("bad");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const result = service.execute({
+      ...request(),
+      async onProgress() {
+        entered.resolve();
+        await gate.promise;
+      },
+    });
+    await entered.promise;
+    await flush();
+    expect(host.inspect().activeTasks).toBeGreaterThan(0);
+    gate.resolve();
+    expect((await result).ok).toBe(false);
+    value(await host.close());
+    expect(await saved!("late")).toMatchObject({ ok: false, error: { code: "closed" } });
+  } finally {
+    gate.resolve();
+    value(await host.close());
+  }
+});
+it("progress timeout aborts the callback task signal and never accepts late success", async () => {
+  const entered = deferred();
+  let aborted = false;
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: emptySchema,
+        limits: { consumerTimeoutMs: 10 },
+        async execute(_i, call) {
+          const sent = await call.progress("x");
+          return sent.ok ? text("done") : sent;
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const result = await service.execute({
+      ...request(),
+      onProgress(_d, signal) {
+        entered.resolve();
+        return new Promise<void>((resolve) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              resolve();
+            },
+            { once: true },
+          );
+        });
+      },
+    });
+    expect(aborted).toBe(true);
+    expect(result).toMatchObject({ ok: false, error: { code: "timeout" } });
+    value(await host.close());
+    expect(host.inspect().activeTasks).toBe(0);
+  } finally {
+    value(await host.close());
+  }
+});
+it.each([{ maxProgressBytes: 2 }, { maxProgressTotalBytes: 3 }, { maxProgressEvents: 1 }])(
+  "progress budgets are latched even if ignored: %j",
+  async (limits) => {
+    const { host, service } = await world([
+      value(
+        createToolPlugin({
+          name: "echo",
+          inputSchema: emptySchema,
+          limits,
+          async execute(_i, call) {
+            await call.progress("xx");
+            await call.progress("xx");
+            return text("done");
+          },
+        }),
+      ),
+    ]);
+
+    try {
+      expect((await service.execute(request())).ok).toBe(limits.maxProgressBytes === 2);
+    } finally {
+      value(await host.close());
+    }
+  },
+);
+it.each([{ maxProgressBytes: 1 }, { maxProgressTotalBytes: 1 }, { maxProgressEvents: 1 }])(
+  "instance progress limits apply to tool defaults: %j",
+  async (limits) => {
+    const { host, service } = await world(
+      [
+        value(
+          createToolPlugin({
+            name: "echo",
+            inputSchema: emptySchema,
+            async execute(_i, call) {
+              await call.progress("xx");
+              await call.progress("xx");
+              return text("ignored");
+            },
+          }),
+        ),
+      ],
+      { access: "allow", limits },
+    );
+
+    try {
+      expect(await service.execute(request())).toMatchObject({
+        ok: false,
+        error: { code: "capacity-exceeded" },
+      });
+    } finally {
+      value(await host.close());
+    }
+  },
+);
+it("consumer timeout reaches the author before an uncooperative callback drains", async () => {
+  const gate = deferred();
+  const receipt = deferred<unknown>();
+  const { host, service } = await world(
+    [
+      value(
+        createToolPlugin({
+          name: "echo",
+          inputSchema: emptySchema,
+          async execute(_i, call) {
+            const sent = await call.progress("x");
+            receipt.resolve(sent);
+            return sent.ok ? text("late") : sent;
+          },
+        }),
+      ),
+    ],
+    { access: "allow", limits: { consumerTimeoutMs: 10 } },
+  );
+
+  try {
+    const running = service.execute({
+      ...request(),
+      onProgress: async () => {
+        await gate.promise;
+      },
+    });
+    expect(
+      await Promise.race([
+        receipt.promise,
+        new Promise((resolve) => setTimeout(() => resolve("blocked"), 80)),
+      ]),
+    ).toMatchObject({ ok: false, error: { code: "timeout" } });
+    expect(await running).toMatchObject({ ok: false, error: { code: "timeout" } });
+    expect(host.inspect().activeTasks).toBeGreaterThan(0);
+  } finally {
+    gate.resolve();
+    value(await host.close());
+  }
+});

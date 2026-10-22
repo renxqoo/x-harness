@@ -17,23 +17,40 @@ function value<T>(result: { ok: true; value: T } | { ok: false; error: unknown }
 const provider = value(defineLlmProvider("primary"));
 const app = value(createHost({ limits: { callTimeoutMs: 180000, maxCallDepth: 256 } }));
 try {
-  value(await app.install([
-    value(createOpenaiPlugin({
-      api: "chat-completions", token: provider,
-      baseUrl: "https://api.openai.com/v1", apiKey: "provided-by-your-configuration",
-      models: { "your-model": {} },
-    })),
-    value(createLlmPlugin({ providers: { primary: provider }, defaultProvider: "primary" })),
-    value(createToolsPlugin({ access: "allow" })),
-    value(createToolSchedulerPlugin({ access: "allow" })),
-    value(createToolPlugin({
-      name: "echo", inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
-      async execute(input) { return { ok: true, value: { content: [{ type: "text", text: input.text }] } }; },
-    })),
-    value(createAgentLoopPlugin({ access: "allow" })),
-  ]));
+  value(
+    await app.install([
+      value(
+        createOpenaiPlugin({
+          api: "chat-completions",
+          token: provider,
+          baseUrl: "https://api.openai.com/v1",
+          apiKey: "provided-by-your-configuration",
+          models: { "your-model": {} },
+        }),
+      ),
+      value(createLlmPlugin({ providers: { primary: provider }, defaultProvider: "primary" })),
+      value(createToolsPlugin({ access: "allow" })),
+      value(createToolSchedulerPlugin({ access: "allow" })),
+      value(
+        createToolPlugin({
+          name: "echo",
+          inputSchema: {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"],
+            additionalProperties: false,
+          },
+          async execute(input) {
+            return { ok: true, value: { content: [{ type: "text", text: input.text }] } };
+          },
+        }),
+      ),
+      value(createAgentLoopPlugin({ access: "allow" })),
+    ]),
+  );
   const stream = streamAgent(value(app.use(agentLoop)), {
-    model: "your-model", tools: ["echo"],
+    model: "your-model",
+    tools: ["echo"],
     messages: [{ role: "user", content: [{ type: "text", text: "Use echo to say hello" }] }],
   });
   for await (const event of stream) {

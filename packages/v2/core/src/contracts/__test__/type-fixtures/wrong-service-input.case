@@ -1,1 +1,2 @@
-declare const bad: (input: number, call: Invocation)=>Promise<Result<number,{kind:"denied"}>>; ctx.register(service,{run:bad});
+declare const bad: (input: number, call: Invocation) => Promise<Result<number, { kind: "denied" }>>;
+ctx.register(service, { run: bad });

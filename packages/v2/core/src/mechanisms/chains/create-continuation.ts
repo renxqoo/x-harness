@@ -8,14 +8,28 @@ export interface Observation {
   failed: boolean;
 }
 
-export function createContinuation<T>(promise: Promise<T>, observations: Observation[]): Continuation<T> {
-  const state: Observation = { actual: Promise.resolve(), settled: false, observed: false, failed: false };
+export function createContinuation<T>(
+  promise: Promise<T>,
+  observations: Observation[],
+): Continuation<T> {
+  const state: Observation = {
+    actual: Promise.resolve(),
+    settled: false,
+    observed: false,
+    failed: false,
+  };
   observations.push(state);
-  state.actual = promise.then((value) => {
-    state.settled = true;
-    const data = readData(value);
-    state.failed = data.ok && data.value.ok === false && "error" in data.value;
-  }, () => { state.settled = true; state.failed = true; });
+  state.actual = promise.then(
+    (value) => {
+      state.settled = true;
+      const data = readData(value);
+      state.failed = data.ok && data.value.ok === false && "error" in data.value;
+    },
+    () => {
+      state.settled = true;
+      state.failed = true;
+    },
+  );
   const continuation: Continuation<T> = {
     then(fulfilled, rejected) {
       state.observed = true;

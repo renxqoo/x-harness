@@ -1,7 +1,7 @@
 {
   "command": "bun run test:tools:mutations",
   "runtime": "1.4.3",
-  "baselineCases": 200,
+  "baselineCases": 212,
   "reports": [
     {
       "name": "missing schema validation",
@@ -97,7 +97,7 @@
       "name": "fresh catalog identity bypasses capacity",
       "detected": true,
       "code": 1,
-      "evidence": "AssertionError: expected 'f4e7f790-67bf-4a3c-8b1b-d573775ee260' to be '8e97768b-e7cc-47c8-a78d-1a783179f7ed' // Object.is equality"
+      "evidence": "AssertionError: expected 'c224565a-d767-4004-897d-0760ff0efc89' to be '53f9f65e-69bb-4d74-9823-334fb74988a1' // Object.is equality"
     },
     {
       "name": "Unicode signature order depends on insertion",

@@ -1,1 +1,8 @@
-createToolPlugin({name:"x",inputSchema:{type:"object"},execute:async(_input,call)=>{call.caller.scopeId="forged";return {ok:true,value:{content:[]}};}});
+createToolPlugin({
+  name: "x",
+  inputSchema: { type: "object" },
+  execute: async (_input, call) => {
+    call.caller.scopeId = "forged";
+    return { ok: true, value: { content: [] } };
+  },
+});

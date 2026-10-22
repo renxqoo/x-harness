@@ -1,1 +1,1 @@
-authorization.allow({signal:new AbortController().signal,revocation:"invalid"});
+authorization.allow({ signal: new AbortController().signal, revocation: "invalid" });

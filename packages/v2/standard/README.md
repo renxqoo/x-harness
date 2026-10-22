@@ -27,19 +27,41 @@ config.get(undefined) 返回 { revision, value }。admin.update(value) 校验并
 ```ts
 import { createHost, definePlugin } from "@x-harness/core";
 import { createLoggerPlugin, logger, createTimer, createConfigPlugin } from "@x-harness/standard";
-const settings = createConfigPlugin({ name: "demo", initial: "hello", validate: (value) => ({ ok: true, value: String(value) }) });
-const logging = createLoggerPlugin({ write(record) { console.log(record.level, record.message); } });
+const settings = createConfigPlugin({
+  name: "demo",
+  initial: "hello",
+  validate: (value) => ({ ok: true, value: String(value) }),
+});
+const logging = createLoggerPlugin({
+  write(record) {
+    console.log(record.level, record.message);
+  },
+});
 const created = createHost();
 if (created.ok && settings.ok && logging.ok) {
   const app = created.value;
   try {
-    await app.install([logging.value, settings.value.plugin, definePlugin({
-      name: "heartbeat", requires: { logger }, setup(ctx) {
-        const timers = createTimer(ctx); if (!timers.ok) return timers;
-        return timers.value.interval({ ms: 1000, run(call) { return call.deps.logger.info({ message: "alive" }); } });
-      },
-    })]);
-  } finally { await app.close(); }
+    await app.install([
+      logging.value,
+      settings.value.plugin,
+      definePlugin({
+        name: "heartbeat",
+        requires: { logger },
+        setup(ctx) {
+          const timers = createTimer(ctx);
+          if (!timers.ok) return timers;
+          return timers.value.interval({
+            ms: 1000,
+            run(call) {
+              return call.deps.logger.info({ message: "alive" });
+            },
+          });
+        },
+      }),
+    ]);
+  } finally {
+    await app.close();
+  }
 }
 ```
 

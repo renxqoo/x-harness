@@ -1,1 +1,6 @@
-createToolPolicyPlugin({name:"policy",async authorize(){return {ok:true,value:{kind:"maybe"}};}});
+createToolPolicyPlugin({
+  name: "policy",
+  async authorize() {
+    return { ok: true, value: { kind: "maybe" } };
+  },
+});

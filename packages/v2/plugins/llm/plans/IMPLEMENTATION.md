@@ -14,12 +14,12 @@
 
 ## 2. 文件职责
 
-| 包 | 主要文件职责 |
-| --- | --- |
-| llm | contracts、provider、testing公开入口；contracts/define-llm、provider/define-provider；domain/read-request、read-event、read-run-input、read-run-output；create-plugin、stream/run-model、advance-state、create-emitter；stream-llm |
-| llm-http | read-options、request-stream、create-sse-parser、open-response-reader、read-retry-after、read-http-failure；同目录测试 |
-| llm-openai | 插件工厂、请求转换、Responses事件转换、Chat事件转换、结束原因与usage转换，各自独立文件 |
-| llm-anthropic | 插件工厂、请求转换、Messages事件转换、原生推理载荷、结束原因与usage转换，各自独立文件 |
+| 包            | 主要文件职责                                                                                                                                                                                                                       |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| llm           | contracts、provider、testing公开入口；contracts/define-llm、provider/define-provider；domain/read-request、read-event、read-run-input、read-run-output；create-plugin、stream/run-model、advance-state、create-emitter；stream-llm |
+| llm-http      | read-options、request-stream、create-sse-parser、open-response-reader、read-retry-after、read-http-failure；同目录测试                                                                                                             |
+| llm-openai    | 插件工厂、请求转换、Responses事件转换、Chat事件转换、结束原因与usage转换，各自独立文件                                                                                                                                             |
+| llm-anthropic | 插件工厂、请求转换、Messages事件转换、原生推理载荷、结束原因与usage转换，各自独立文件                                                                                                                                              |
 
 一个动词一文件；模块围绕单一职责组织，不以拆成大量只转发一行的文件冒充模块化。不新增class、代码注释、TODO或历史入口别名。
 

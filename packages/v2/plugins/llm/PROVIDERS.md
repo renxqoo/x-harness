@@ -47,8 +47,16 @@ try {
   if (!installed.ok) throw new Error("Installation failed");
   const backend = app.use(token.value);
   if (!backend.ok) throw new Error("Provider unavailable");
-  const request = { model: "local", messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] } as const;
-  await verifyLlmProvider({ service: backend.value, provider: "local", request, expected: { kind: "text", text: "hello" } });
+  const request = {
+    model: "local",
+    messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+  } as const;
+  await verifyLlmProvider({
+    service: backend.value,
+    provider: "local",
+    request,
+    expected: { kind: "text", text: "hello" },
+  });
   const selected = app.use(llm);
   if (!selected.ok) throw new Error("LLM unavailable");
   const response = await selected.value.generate(request);

@@ -3,7 +3,10 @@ import type { ServiceToken, EventToken, Result, Disposer } from "../../../index"
 
 export function ok<T>(value: T): Result<T>;
 export function ok(): Result<void>;
-export function ok(value?: unknown): Result<unknown> { return { ok: true, value }; }
+
+export function ok(value?: unknown): Result<unknown> {
+  return { ok: true, value };
+}
 
 interface GreetingService {
   greet(input: { name: string }): Promise<Result<string>>;
@@ -77,7 +80,9 @@ export const databasePlugin = definePlugin({
       open: (acquire) => openConnection(acquire.signal),
       close: (connection, cleanup) => connection.close(cleanup.signal),
     });
+
     if (!connected.ok) return connected;
+
     const connection = connected.value;
     return ctx.service({
       database: {
@@ -96,7 +101,9 @@ export const indexPlugin = definePlugin({
     const listening = ctx.on("changed", async (event, _origin, call) => {
       await updateIndex(event.path, call.signal);
     });
+
     if (!listening.ok) return listening;
+
     return ok();
   },
 });
@@ -106,7 +113,9 @@ export const setupDependencyPlugin = definePlugin({
   requires: { greeting },
   async setup(ctx) {
     const result = await ctx.deps.greeting.greet({ name: "小明" });
+
     if (!result.ok) return result;
+
     return ok();
   },
 });
@@ -118,7 +127,9 @@ export const acquireFailurePlugin = definePlugin({
       open: () => ({ ok: false, error: { kind: "disconnected" } }),
       close: (connection, cleanup) => connection.close(cleanup.signal),
     });
+
     if (!result.ok) return result;
+
     return ok();
   },
 });
@@ -134,7 +145,9 @@ export const providerReceiptPlugin = definePlugin({
         },
       },
     });
+
     if (!provided.ok) return provided;
+
     const revoke: Disposer = provided.value.greeting;
     void revoke;
     return ok();
@@ -153,8 +166,21 @@ export const acquireDependencyPlugin = definePlugin({
 });
 
 export function dynamicServicePlugin(provides: Record<string, ServiceToken<GreetingService>>) {
-  const implementations = Object.fromEntries(Object.keys(provides).map((name) => [name, {
-    async greet(input: { name: string }) { return ok(input.name); },
-  }]));
-  return definePlugin({ name: "dynamic-services", provides, setup(ctx) { return ctx.service(implementations); } });
+  const implementations = Object.fromEntries(
+    Object.keys(provides).map((name) => [
+      name,
+      {
+        async greet(input: { name: string }) {
+          return ok(input.name);
+        },
+      },
+    ]),
+  );
+  return definePlugin({
+    name: "dynamic-services",
+    provides,
+    setup(ctx) {
+      return ctx.service(implementations);
+    },
+  });
 }

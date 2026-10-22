@@ -5,32 +5,357 @@ import { readModels } from "../../../llm-http/src/index";
 import type { ProtocolInput } from "../../../llm-http/src/index";
 import { readLlmLimits } from "../../../llm/src/provider";
 import type { LlmRequest, LlmResult } from "../../../llm/src/contracts";
-function value<T>(result: LlmResult<T>): T { if (!result.ok) throw new Error(JSON.stringify(result.error)); return result.value; }
-function spec(request: Partial<LlmRequest> = {}): ProtocolInput { return { request: { model: "m", messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }], ...request }, provider: "p", model: value(readModels({ m: { maxOutputTokens: 100 } }, "openai-responses")).m!, limits: value(readLlmLimits()) }; }
-it("Responses maps multimodal history, separate function calls and complete native continuations", () => { const result = value(createResponsesRequest(spec({ messages: [{ role: "developer", content: [{ type: "text", text: "rules" }] }, { role: "user", content: [{ type: "image", source: { type: "url", url: "https://example.com/a.png" } }, { type: "image", source: { type: "base64", mediaType: "image/png", data: "YQ==" } }, { type: "document", sourceId: "f", source: { type: "file-id", id: "file" } }, { type: "document", sourceId: "u", source: { type: "url", url: "https://example.com/a.pdf" } }, { type: "document", sourceId: "b", title: "a.pdf", source: { type: "base64", mediaType: "application/pdf", data: "YQ==" } }] }, { role: "assistant", content: [{ type: "text", text: "calling" }, { type: "reasoning", continuation: { provider: "p", protocol: "openai-responses", model: "m", data: { type: "reasoning", encrypted_content: "cipher" } } }, { type: "tool-call", callId: "c", name: "f", input: { id: 1 } }] }, { role: "tool", callId: "c", content: [{ type: "text", text: "result" }, { type: "image", source: { type: "base64", mediaType: "image/png", data: "YQ==" } }] }], tools: [{ name: "f", description: "function", strict: true, inputSchema: { type: "object" } }], toolChoice: { name: "f" }, output: { type: "json" }, temperature: 0, topP: 0, maxOutputTokens: 10, providerOptions: { metadata: { a: "b" }, store: false } }))); expect(result).toMatchObject({ max_output_tokens: 10, temperature: 0, top_p: 0, tool_choice: { type: "function", name: "f" }, text: { format: { type: "json_object" } }, metadata: { a: "b" } }); expect(result.input).toEqual([{ role: "developer", content: [{ type: "input_text", text: "rules" }] }, { role: "user", content: [{ type: "input_image", image_url: "https://example.com/a.png" }, { type: "input_image", image_url: "data:image/png;base64,YQ==" }, { type: "input_file", file_id: "file" }, { type: "input_file", file_url: "https://example.com/a.pdf" }, { type: "input_file", filename: "a.pdf", file_data: "data:application/pdf;base64,YQ==" }] }, { role: "assistant", content: [{ type: "input_text", text: "calling" }] }, { type: "reasoning", encrypted_content: "cipher" }, { type: "function_call", call_id: "c", name: "f", arguments: '{"id":1}' }, { type: "function_call_output", call_id: "c", output: [{ type: "input_text", text: "result" }, { type: "input_image", image_url: "data:image/png;base64,YQ==" }] }]); });
-it("Chat maps image, file, reasoning, tools, results and zero-valued controls", () => { const result = value(createChatRequest(spec({ messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://example.com/i" } }, { type: "image", source: { type: "base64", mediaType: "image/png", data: "YQ==" } }, { type: "document", sourceId: "d", source: { type: "file-id", id: "file" } }, { type: "document", sourceId: "b", source: { type: "base64", mediaType: "application/pdf", data: "YQ==" } }] }, { role: "assistant", content: [{ type: "refusal", text: "no" }, { type: "reasoning", text: "think" }, { type: "tool-call", callId: "c", name: "f", input: {} }] }, { role: "tool", callId: "c", content: [{ type: "text", text: "done" }] }], tools: [{ name: "f", description: "fn", strict: false, inputSchema: { type: "object" } }], toolChoice: { name: "f" }, output: { type: "json-schema", name: "r", schema: { type: "object" }, strict: false }, reasoning: { effort: "low", display: "text" }, stop: ["END"], temperature: 0, topP: 0, maxOutputTokens: 5, providerOptions: { seed: 0 } }))); expect(result).toMatchObject({ max_completion_tokens: 5, stop: ["END"], temperature: 0, top_p: 0, seed: 0, reasoning_effort: "low", response_format: { json_schema: { strict: false } } }); expect(result.messages).toMatchObject([{ content: [{ type: "image_url" }, { image_url: { url: "data:image/png;base64,YQ==" } }, { file: { file_id: "file" } }, { file: { filename: "b.pdf" } }] }, { role: "assistant", reasoning_content: "think", tool_calls: [{ id: "c" }] }, { tool_call_id: "c" }]); });
-it.each([createChatRequest, createResponsesRequest])("request mapping keeps configured default output limit and auto choice", (create) => { expect(value(create(spec({ toolChoice: "auto" })))).toMatchObject({ tool_choice: "auto" }); });
+
+function value<T>(result: LlmResult<T>): T {
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+
+  return result.value;
+}
+
+function spec(request: Partial<LlmRequest> = {}): ProtocolInput {
+  return {
+    request: {
+      model: "m",
+      messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      ...request,
+    },
+    provider: "p",
+    model: value(readModels({ m: { maxOutputTokens: 100 } }, "openai-responses")).m!,
+    limits: value(readLlmLimits()),
+  };
+}
+
+it("Responses maps multimodal history, separate function calls and complete native continuations", () => {
+  const result = value(
+    createResponsesRequest(
+      spec({
+        messages: [
+          { role: "developer", content: [{ type: "text", text: "rules" }] },
+          {
+            role: "user",
+            content: [
+              { type: "image", source: { type: "url", url: "https://example.com/a.png" } },
+              { type: "image", source: { type: "base64", mediaType: "image/png", data: "YQ==" } },
+              { type: "document", sourceId: "f", source: { type: "file-id", id: "file" } },
+              {
+                type: "document",
+                sourceId: "u",
+                source: { type: "url", url: "https://example.com/a.pdf" },
+              },
+              {
+                type: "document",
+                sourceId: "b",
+                title: "a.pdf",
+                source: { type: "base64", mediaType: "application/pdf", data: "YQ==" },
+              },
+            ],
+          },
+          {
+            role: "assistant",
+            content: [
+              { type: "text", text: "calling" },
+              {
+                type: "reasoning",
+                continuation: {
+                  provider: "p",
+                  protocol: "openai-responses",
+                  model: "m",
+                  data: { type: "reasoning", encrypted_content: "cipher" },
+                },
+              },
+              { type: "tool-call", callId: "c", name: "f", input: { id: 1 } },
+            ],
+          },
+          {
+            role: "tool",
+            callId: "c",
+            content: [
+              { type: "text", text: "result" },
+              { type: "image", source: { type: "base64", mediaType: "image/png", data: "YQ==" } },
+            ],
+          },
+        ],
+        tools: [
+          { name: "f", description: "function", strict: true, inputSchema: { type: "object" } },
+        ],
+        toolChoice: { name: "f" },
+        output: { type: "json" },
+        temperature: 0,
+        topP: 0,
+        maxOutputTokens: 10,
+        providerOptions: { metadata: { a: "b" }, store: false },
+      }),
+    ),
+  );
+  expect(result).toMatchObject({
+    max_output_tokens: 10,
+    temperature: 0,
+    top_p: 0,
+    tool_choice: { type: "function", name: "f" },
+    text: { format: { type: "json_object" } },
+    metadata: { a: "b" },
+  });
+  expect(result.input).toEqual([
+    { role: "developer", content: [{ type: "input_text", text: "rules" }] },
+    {
+      role: "user",
+      content: [
+        { type: "input_image", image_url: "https://example.com/a.png" },
+        { type: "input_image", image_url: "data:image/png;base64,YQ==" },
+        { type: "input_file", file_id: "file" },
+        { type: "input_file", file_url: "https://example.com/a.pdf" },
+        { type: "input_file", filename: "a.pdf", file_data: "data:application/pdf;base64,YQ==" },
+      ],
+    },
+    { role: "assistant", content: [{ type: "input_text", text: "calling" }] },
+    { type: "reasoning", encrypted_content: "cipher" },
+    { type: "function_call", call_id: "c", name: "f", arguments: '{"id":1}' },
+    {
+      type: "function_call_output",
+      call_id: "c",
+      output: [
+        { type: "input_text", text: "result" },
+        { type: "input_image", image_url: "data:image/png;base64,YQ==" },
+      ],
+    },
+  ]);
+});
+it("Chat maps image, file, reasoning, tools, results and zero-valued controls", () => {
+  const result = value(
+    createChatRequest(
+      spec({
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "image", source: { type: "url", url: "https://example.com/i" } },
+              { type: "image", source: { type: "base64", mediaType: "image/png", data: "YQ==" } },
+              { type: "document", sourceId: "d", source: { type: "file-id", id: "file" } },
+              {
+                type: "document",
+                sourceId: "b",
+                source: { type: "base64", mediaType: "application/pdf", data: "YQ==" },
+              },
+            ],
+          },
+          {
+            role: "assistant",
+            content: [
+              { type: "refusal", text: "no" },
+              { type: "reasoning", text: "think" },
+              { type: "tool-call", callId: "c", name: "f", input: {} },
+            ],
+          },
+          { role: "tool", callId: "c", content: [{ type: "text", text: "done" }] },
+        ],
+        tools: [{ name: "f", description: "fn", strict: false, inputSchema: { type: "object" } }],
+        toolChoice: { name: "f" },
+        output: { type: "json-schema", name: "r", schema: { type: "object" }, strict: false },
+        reasoning: { effort: "low", display: "text" },
+        stop: ["END"],
+        temperature: 0,
+        topP: 0,
+        maxOutputTokens: 5,
+        providerOptions: { seed: 0 },
+      }),
+    ),
+  );
+  expect(result).toMatchObject({
+    max_completion_tokens: 5,
+    stop: ["END"],
+    temperature: 0,
+    top_p: 0,
+    seed: 0,
+    reasoning_effort: "low",
+    response_format: { json_schema: { strict: false } },
+  });
+  expect(result.messages).toMatchObject([
+    {
+      content: [
+        { type: "image_url" },
+        { image_url: { url: "data:image/png;base64,YQ==" } },
+        { file: { file_id: "file" } },
+        { file: { filename: "b.pdf" } },
+      ],
+    },
+    { role: "assistant", reasoning_content: "think", tool_calls: [{ id: "c" }] },
+    { tool_call_id: "c" },
+  ]);
+});
+it.each([createChatRequest, createResponsesRequest])(
+  "request mapping keeps configured default output limit and auto choice",
+  (create) => {
+    expect(value(create(spec({ toolChoice: "auto" })))).toMatchObject({ tool_choice: "auto" });
+  },
+);
 it.each([
-  { messages: [{ role: "assistant", content: [{ type: "refusal", text: "no" }] }] }, { stop: ["END"] }, { reasoning: { budgetTokens: 1 } }, { reasoning: { display: "text" } }, { providerOptions: { unsupported: true } }, { messages: [{ role: "user", content: [{ type: "search-result", sourceId: "s", title: "t", source: "https://example.com", content: [] }] }] }, { messages: [{ role: "user", content: [{ type: "document", sourceId: "d", source: { type: "text", text: "doc" } }] }] }, { messages: [{ role: "assistant", content: [{ type: "reasoning", text: "no continuation" }] }] },
-] as readonly Partial<LlmRequest>[])("Responses refuses unsupported semantic input (%#)", (request) => { expect(createResponsesRequest(spec(request))).toMatchObject({ ok: false, error: { code: "unsupported-feature" } }); });
-it.each([{ providerTools: [{ type: "web-search" }] }, { reasoning: { budgetTokens: 1 } }, { reasoning: { display: "summary" } }, { providerOptions: { unsupported: true } }, { messages: [{ role: "user", content: [{ type: "document", sourceId: "d", citations: true, source: { type: "text", text: "doc" } }] }] }] as readonly Partial<LlmRequest>[])("Chat refuses unsupported semantic input (%#)", (request) => { expect(createChatRequest(spec(request))).toMatchObject({ ok: false, error: { code: "unsupported-feature" } }); });
-it("Chat tool results reject unsupported image content even when the result is an error", () => { for (const isError of [false, true]) expect(createChatRequest(spec({ messages: [{ role: "tool", callId: "c", isError, content: [{ type: "image", source: { type: "url", url: "https://example.com/image" } }] }] }))).toMatchObject({ ok: false, error: { code: "unsupported-feature" } }); });
-it.each([createChatRequest, createResponsesRequest])("tool business errors no longer abort the next model round and retain their original text (%#)", create => {
-  const messages = [{ role: "tool", callId: "c", isError: true, content: [{ type: "text", text: "missing file" }, { type: "text", text: "try another path" }] }] as const;
-  const mapped = value(create(spec({ messages })));
-  const type = create === createChatRequest ? "text" : "input_text";
-  const content = [{ type, text: '{"isError":true}' }, { type, text: "missing file" }, { type, text: "try another path" }];
-  expect(create === createChatRequest ? mapped.messages : mapped.input).toEqual(create === createChatRequest ? [{ role: "tool", tool_call_id: "c", content }] : [{ type: "function_call_output", call_id: "c", output: content }]);
-  expect(messages[0].content).toHaveLength(2);
+  { messages: [{ role: "assistant", content: [{ type: "refusal", text: "no" }] }] },
+  { stop: ["END"] },
+  { reasoning: { budgetTokens: 1 } },
+  { reasoning: { display: "text" } },
+  { providerOptions: { unsupported: true } },
+  {
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "search-result",
+            sourceId: "s",
+            title: "t",
+            source: "https://example.com",
+            content: [],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "document", sourceId: "d", source: { type: "text", text: "doc" } }],
+      },
+    ],
+  },
+  { messages: [{ role: "assistant", content: [{ type: "reasoning", text: "no continuation" }] }] },
+] as readonly Partial<LlmRequest>[])(
+  "Responses refuses unsupported semantic input (%#)",
+  (request) => {
+    expect(createResponsesRequest(spec(request))).toMatchObject({
+      ok: false,
+      error: { code: "unsupported-feature" },
+    });
+  },
+);
+it.each([
+  { providerTools: [{ type: "web-search" }] },
+  { reasoning: { budgetTokens: 1 } },
+  { reasoning: { display: "summary" } },
+  { providerOptions: { unsupported: true } },
+  {
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "document",
+            sourceId: "d",
+            citations: true,
+            source: { type: "text", text: "doc" },
+          },
+        ],
+      },
+    ],
+  },
+] as readonly Partial<LlmRequest>[])("Chat refuses unsupported semantic input (%#)", (request) => {
+  expect(createChatRequest(spec(request))).toMatchObject({
+    ok: false,
+    error: { code: "unsupported-feature" },
+  });
 });
-it.each([createChatRequest, createResponsesRequest])("empty tool errors remain visible and successful receipts have no error marker (%#)", create => {
-  for (const isError of [undefined, false, true]) {
-    const mapped = value(create(spec({ messages: [{ role: "tool", callId: "c", ...(isError !== undefined ? { isError } : {}), content: [] }] })));
-    const content = isError ? [{ type: create === createChatRequest ? "text" : "input_text", text: '{"isError":true}' }] : [];
-    expect(create === createChatRequest ? mapped.messages : mapped.input).toEqual(create === createChatRequest ? [{ role: "tool", tool_call_id: "c", content }] : [{ type: "function_call_output", call_id: "c", output: content }]);
-  }
+it("Chat tool results reject unsupported image content even when the result is an error", () => {
+  for (const isError of [false, true])
+    expect(
+      createChatRequest(
+        spec({
+          messages: [
+            {
+              role: "tool",
+              callId: "c",
+              isError,
+              content: [
+                { type: "image", source: { type: "url", url: "https://example.com/image" } },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toMatchObject({ ok: false, error: { code: "unsupported-feature" } });
 });
+it.each([createChatRequest, createResponsesRequest])(
+  "tool business errors no longer abort the next model round and retain their original text (%#)",
+  (create) => {
+    const messages = [
+      {
+        role: "tool",
+        callId: "c",
+        isError: true,
+        content: [
+          { type: "text", text: "missing file" },
+          { type: "text", text: "try another path" },
+        ],
+      },
+    ] as const;
+    const mapped = value(create(spec({ messages })));
+    const type = create === createChatRequest ? "text" : "input_text";
+    const content = [
+      { type, text: '{"isError":true}' },
+      { type, text: "missing file" },
+      { type, text: "try another path" },
+    ];
+    expect(create === createChatRequest ? mapped.messages : mapped.input).toEqual(
+      create === createChatRequest
+        ? [{ role: "tool", tool_call_id: "c", content }]
+        : [{ type: "function_call_output", call_id: "c", output: content }],
+    );
+    expect(messages[0].content).toHaveLength(2);
+  },
+);
+it.each([createChatRequest, createResponsesRequest])(
+  "empty tool errors remain visible and successful receipts have no error marker (%#)",
+  (create) => {
+    for (const isError of [undefined, false, true]) {
+      const mapped = value(
+        create(
+          spec({
+            messages: [
+              {
+                role: "tool",
+                callId: "c",
+                ...(isError !== undefined ? { isError } : {}),
+                content: [],
+              },
+            ],
+          }),
+        ),
+      );
+      const content = isError
+        ? [{ type: create === createChatRequest ? "text" : "input_text", text: '{"isError":true}' }]
+        : [];
+      expect(create === createChatRequest ? mapped.messages : mapped.input).toEqual(
+        create === createChatRequest
+          ? [{ role: "tool", tool_call_id: "c", content }]
+          : [{ type: "function_call_output", call_id: "c", output: content }],
+      );
+    }
+  },
+);
 it("Responses tool errors preserve native images after the visible error marker", () => {
-  const mapped = value(createResponsesRequest(spec({ messages: [{ role: "tool", callId: "c", isError: true, content: [{ type: "image", source: { type: "url", url: "https://example.com/error.png" } }] }] })));
-  expect(mapped.input).toEqual([{ type: "function_call_output", call_id: "c", output: [{ type: "input_text", text: '{"isError":true}' }, { type: "input_image", image_url: "https://example.com/error.png" }] }]);
+  const mapped = value(
+    createResponsesRequest(
+      spec({
+        messages: [
+          {
+            role: "tool",
+            callId: "c",
+            isError: true,
+            content: [
+              { type: "image", source: { type: "url", url: "https://example.com/error.png" } },
+            ],
+          },
+        ],
+      }),
+    ),
+  );
+  expect(mapped.input).toEqual([
+    {
+      type: "function_call_output",
+      call_id: "c",
+      output: [
+        { type: "input_text", text: '{"isError":true}' },
+        { type: "input_image", image_url: "https://example.com/error.png" },
+      ],
+    },
+  ]);
 });

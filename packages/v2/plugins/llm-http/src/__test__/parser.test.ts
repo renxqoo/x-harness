@@ -2,20 +2,103 @@ import { expect, it } from "vitest";
 import { createSseParser, readRetryAfter, readHttpOptions } from "../index";
 const limits = { maxEventBytes: 1048576, maxOutputBytes: 16777216, maxEvents: 200000 };
 it("SSE preserves UTF8, BOM, CRLF boundaries, multiline data, empty data and named events at every byte split", () => {
-  const bytes = new TextEncoder().encode('\ufeff: comment\r\nevent: named\r\ndata: {"text":\r\ndata: "你好😀"}\r\n\r\ndata:\n\nretry: 10\nunknown: ignored\n\ndata: last\r\r');
-  for (let split = 0; split <= bytes.length; split++) { const parser = createSseParser(limits); const results = [...parser.push(bytes.subarray(0, split)), ...parser.push(bytes.subarray(split))]; expect(results).toEqual([{ ok: true, value: { event: "named", data: '{"text":\n"你好😀"}' } }, { ok: true, value: { event: "message", data: "" } }, { ok: true, value: { event: "message", data: "last" } }]); expect(parser.finish().ok).toBe(true); }
+  const bytes = new TextEncoder().encode(
+    '\ufeff: comment\r\nevent: named\r\ndata: {"text":\r\ndata: "你好😀"}\r\n\r\ndata:\n\nretry: 10\nunknown: ignored\n\ndata: last\r\r',
+  );
+
+  for (let split = 0; split <= bytes.length; split++) {
+    const parser = createSseParser(limits);
+    const results = [
+      ...parser.push(bytes.subarray(0, split)),
+      ...parser.push(bytes.subarray(split)),
+    ];
+    expect(results).toEqual([
+      { ok: true, value: { event: "named", data: '{"text":\n"你好😀"}' } },
+      { ok: true, value: { event: "message", data: "" } },
+      { ok: true, value: { event: "message", data: "last" } },
+    ]);
+    expect(parser.finish().ok).toBe(true);
+  }
 });
 it("SSE rejects invalid UTF8 and quota excess while incomplete final frames are never invented", () => {
-  const parser = createSseParser(limits); expect([...parser.push(new Uint8Array([255]))]).toMatchObject([{ ok: false, error: { code: "protocol-error" } }]); expect(parser.finish().ok).toBe(false); expect([...parser.push(new Uint8Array())]).toMatchObject([{ ok: false }]);
-  const tail = createSseParser(limits); expect([...tail.push(new TextEncoder().encode("data: {}"))]).toEqual([]); expect(tail.finish().ok).toBe(true);
-  const utf8 = createSseParser(limits); expect([...utf8.push(new Uint8Array([240]))]).toEqual([]); expect(utf8.finish().ok).toBe(false);
-  for (const source of ["data: "+"x".repeat(100), ":"+"x".repeat(100)+"\n\n"]) expect([...createSseParser({ ...limits, maxEventBytes: 32 }).push(new TextEncoder().encode(source))]).toMatchObject([{ ok: false, error: { code: "capacity-exceeded" } }]);
-  expect([...createSseParser({ ...limits, maxEvents: 1 }).push(new TextEncoder().encode("data: 1\n\ndata: 2\n\n"))]).toMatchObject([{ ok: true }, { ok: false }]); expect([...createSseParser({ ...limits, maxOutputBytes: 1, maxEventBytes: 1 }).push(new Uint8Array(6))]).toMatchObject([{ ok: false }]);
+  const parser = createSseParser(limits);
+  expect([...parser.push(new Uint8Array([255]))]).toMatchObject([
+    { ok: false, error: { code: "protocol-error" } },
+  ]);
+  expect(parser.finish().ok).toBe(false);
+  expect([...parser.push(new Uint8Array())]).toMatchObject([{ ok: false }]);
+  const tail = createSseParser(limits);
+  expect([...tail.push(new TextEncoder().encode("data: {}"))]).toEqual([]);
+  expect(tail.finish().ok).toBe(true);
+  const utf8 = createSseParser(limits);
+  expect([...utf8.push(new Uint8Array([240]))]).toEqual([]);
+  expect(utf8.finish().ok).toBe(false);
+
+  for (const source of ["data: " + "x".repeat(100), ":" + "x".repeat(100) + "\n\n"])
+    expect([
+      ...createSseParser({ ...limits, maxEventBytes: 32 }).push(new TextEncoder().encode(source)),
+    ]).toMatchObject([{ ok: false, error: { code: "capacity-exceeded" } }]);
+
+  expect([
+    ...createSseParser({ ...limits, maxEvents: 1 }).push(
+      new TextEncoder().encode("data: 1\n\ndata: 2\n\n"),
+    ),
+  ]).toMatchObject([{ ok: true }, { ok: false }]);
+  expect([
+    ...createSseParser({ ...limits, maxOutputBytes: 1, maxEventBytes: 1 }).push(new Uint8Array(6)),
+  ]).toMatchObject([{ ok: false }]);
 });
-it.each([["2.5", 2500], ["0", 0], ["-1", undefined], ["", undefined], ["garbage", undefined], ["Wed, 21 Oct 2015 07:28:00 GMT", 0], ["999999999", 86400000]] as const)("retry-after has bounded numeric and date semantics: %s", (header, expected) => { expect(readRetryAfter(new Headers({ "retry-after": header }), Date.UTC(2026, 9, 17))).toBe(expected); });
+it.each([
+  ["2.5", 2500],
+  ["0", 0],
+  ["-1", undefined],
+  ["", undefined],
+  ["garbage", undefined],
+  ["Wed, 21 Oct 2015 07:28:00 GMT", 0],
+  ["999999999", 86400000],
+] as const)("retry-after has bounded numeric and date semantics: %s", (header, expected) => {
+  expect(readRetryAfter(new Headers({ "retry-after": header }), Date.UTC(2026, 9, 17))).toBe(
+    expected,
+  );
+});
 it("retry millisecond headers and HTTP credential boundaries are explicit", () => {
-  expect(readRetryAfter(new Headers({ "retry-after-ms": "1.2" }), 0)).toBe(2); expect(readRetryAfter(new Headers({ "retry-after-ms": "bad" }), 0)).toBeUndefined(); expect(readRetryAfter(new Headers(), 0)).toBeUndefined();
-  for (const options of [null, { baseUrl: "file:///x", apiKey: "k" }, { baseUrl: "https://u:p@host", apiKey: "k" }, { baseUrl: "http://host?x=1", apiKey: "k" }, { baseUrl: "http://host", apiKey: "\n" }, { baseUrl: "http://host", apiKey: "k", headers: { Authorization: "override" } }, { baseUrl: "http://host", apiKey: "k", headers: { x: "\n" } }, { baseUrl: "http://host", apiKey: "k", headers: { X: "a", x: "b" } }]) expect(readHttpOptions(options as never).ok).toBe(false);
-  expect(readHttpOptions({ baseUrl: "http://host/v1/", apiKey: "k", headers: { "X-Custom": "value" } })).toMatchObject({ ok: true, value: { baseUrl: "http://host/v1", headers: { "x-custom": "value" } } });
+  expect(readRetryAfter(new Headers({ "retry-after-ms": "1.2" }), 0)).toBe(2);
+  expect(readRetryAfter(new Headers({ "retry-after-ms": "bad" }), 0)).toBeUndefined();
+  expect(readRetryAfter(new Headers(), 0)).toBeUndefined();
+
+  for (const options of [
+    null,
+    { baseUrl: "file:///x", apiKey: "k" },
+    { baseUrl: "https://u:p@host", apiKey: "k" },
+    { baseUrl: "http://host?x=1", apiKey: "k" },
+    { baseUrl: "http://host", apiKey: "\n" },
+    { baseUrl: "http://host", apiKey: "k", headers: { Authorization: "override" } },
+    { baseUrl: "http://host", apiKey: "k", headers: { x: "\n" } },
+    { baseUrl: "http://host", apiKey: "k", headers: { X: "a", x: "b" } },
+  ])
+    expect(readHttpOptions(options as never).ok).toBe(false);
+
+  expect(
+    readHttpOptions({ baseUrl: "http://host/v1/", apiKey: "k", headers: { "X-Custom": "value" } }),
+  ).toMatchObject({
+    ok: true,
+    value: { baseUrl: "http://host/v1", headers: { "x-custom": "value" } },
+  });
 });
-it("protocol model descriptions cannot advertise unsupported native features", async () => { const { readModels } = await import("../index"); for (const [protocol, config] of [["openai-chat-completions", { providerTools: ["web-search"] }], ["openai-chat-completions", { reasoning: { budget: true, efforts: [], display: ["text"] } }], ["openai-responses", { reasoning: { budget: false, efforts: [], display: ["text"] } }], ["openai-responses", { input: ["search-result"] }], ["anthropic-messages", { developer: true }], ["anthropic-messages", { output: ["json"] }], ["anthropic-messages", { reasoning: { budget: true, efforts: [], display: ["text"] } }]] as const) expect(readModels({ m: config }, protocol)).toMatchObject({ ok: false, error: { code: "unsupported-feature" } }); });
+it("protocol model descriptions cannot advertise unsupported native features", async () => {
+  const { readModels } = await import("../index");
+
+  for (const [protocol, config] of [
+    ["openai-chat-completions", { providerTools: ["web-search"] }],
+    ["openai-chat-completions", { reasoning: { budget: true, efforts: [], display: ["text"] } }],
+    ["openai-responses", { reasoning: { budget: false, efforts: [], display: ["text"] } }],
+    ["openai-responses", { input: ["search-result"] }],
+    ["anthropic-messages", { developer: true }],
+    ["anthropic-messages", { output: ["json"] }],
+    ["anthropic-messages", { reasoning: { budget: true, efforts: [], display: ["text"] } }],
+  ] as const)
+    expect(readModels({ m: config }, protocol)).toMatchObject({
+      ok: false,
+      error: { code: "unsupported-feature" },
+    });
+});

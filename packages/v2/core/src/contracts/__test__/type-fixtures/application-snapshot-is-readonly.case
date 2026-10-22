@@ -1,3 +1,4 @@
 import { createApplication } from "__APPLICATION_ENTRY__";
 const created = createApplication();
-if (created.ok) created.value.snapshot().plugins.push({ name: "forged", state: "active", missing: [] });
+if (created.ok)
+  created.value.snapshot().plugins.push({ name: "forged", state: "active", missing: [] });

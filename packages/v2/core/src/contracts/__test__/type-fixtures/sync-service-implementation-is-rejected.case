@@ -1,3 +1,15 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import { greeting, userStore, changed, ok, openConnection } from "__AUTHORING_FIXTURE__";
-definePlugin({ name: 'bad', provides: { greeting }, setup(ctx) { return ctx.service({ greeting: { greet(input) { return ok(input.name); } } }); } });
+definePlugin({
+  name: "bad",
+  provides: { greeting },
+  setup(ctx) {
+    return ctx.service({
+      greeting: {
+        greet(input) {
+          return ok(input.name);
+        },
+      },
+    });
+  },
+});

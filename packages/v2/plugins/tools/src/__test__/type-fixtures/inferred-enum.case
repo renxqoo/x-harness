@@ -1,1 +1,12 @@
-createToolPlugin({name:"x",inputSchema:{type:"object",properties:{choice:{enum:["a","b"]}},required:["choice"]},execute:async(input)=>{const choice:"c"=input.choice;return {ok:true,value:{content:[]}};}});
+createToolPlugin({
+  name: "x",
+  inputSchema: {
+    type: "object",
+    properties: { choice: { enum: ["a", "b"] } },
+    required: ["choice"],
+  },
+  execute: async (input) => {
+    const choice: "c" = input.choice;
+    return { ok: true, value: { content: [] } };
+  },
+});

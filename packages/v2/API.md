@@ -12,7 +12,13 @@
 
 ```ts
 import { definePlugin, defineService } from "@x-harness/core";
-import type { Plugin, PluginContext, PluginImplementations, PluginInvocation, Result } from "@x-harness/core";
+import type {
+  Plugin,
+  PluginContext,
+  PluginImplementations,
+  PluginInvocation,
+  Result,
+} from "@x-harness/core";
 
 interface EchoService {
   echo(input: { text: string }): Promise<Result<string>>;
@@ -25,7 +31,10 @@ function createEchoPlugin(): Result<Plugin> {
   const implementations: PluginImplementations<typeof manifest> = {
     echo: { echo: echoText },
   };
-  async function echoText(input: { text: string }, _call: PluginInvocation<typeof manifest>): Promise<Result<string>> {
+  async function echoText(
+    input: { text: string },
+    _call: PluginInvocation<typeof manifest>,
+  ): Promise<Result<string>> {
     return { ok: true, value: input.text };
   }
   function setup(ctx: PluginContext<typeof manifest>) {
@@ -37,13 +46,13 @@ function createEchoPlugin(): Result<Plugin> {
 void createEchoPlugin;
 ```
 
-| 阶段 | 成功含义 | 使用方式 |
-| --- | --- | --- |
-| definePlugin | 获得冻结声明 | install 时校验声明并执行 setup |
-| 配置工厂 | 配置已通过工厂校验 | 继续提交返回的 Plugin |
-| Host.install | 整个批次已发布 | 使用固定依赖和公开能力 |
-| Application.setPlugins | 期望集合已处理 | 检查 snapshot 中的 active、pending、failed |
-| Loader 创建或刷新 | 模块已构建并提交装配 | 同时检查装配快照；加载错误包含阶段和入口索引 |
+| 阶段                   | 成功含义             | 使用方式                                     |
+| ---------------------- | -------------------- | -------------------------------------------- |
+| definePlugin           | 获得冻结声明         | install 时校验声明并执行 setup               |
+| 配置工厂               | 配置已通过工厂校验   | 继续提交返回的 Plugin                        |
+| Host.install           | 整个批次已发布       | 使用固定依赖和公开能力                       |
+| Application.setPlugins | 期望集合已处理       | 检查 snapshot 中的 active、pending、failed   |
+| Loader 创建或刷新      | 模块已构建并提交装配 | 同时检查装配快照；加载错误包含阶段和入口索引 |
 
 setup 使用 ctx.deps 完成初始化。方法、处理器、资源取得和结构化子任务使用 call.deps，继承当前调用的取消、截止时间和有效执行预算。后台工作通过 ctx.startTask 明确建立拥有者级生命周期。具体资源与关闭协议见后文。
 
@@ -151,30 +160,30 @@ Plugin Context 的 requestClose 只请求自身拥有者或自己创建的作用
 
 ## 9. 限制与时间
 
-| 配置 | 默认值 | 计数范围 |
-| --- | --- | --- |
-| maxScopes | 1024 | 根宿主内全部作用域 |
-| maxPluginsPerScope | 128 | 每个装配作用域，包含 staging/stopping |
-| maxPlugins | 2048 | 根宿主插件总量，包含 staging/stopping |
-| maxEffects | 8192 | 根宿主全部受管资源与登记 |
-| maxServiceLeases | 8192 | 根宿主全部有效服务门面绑定（稳定消费关系；请求内临时依赖门面不计入） |
-| maxServiceLeasesPerOwner | 4096 | 每个资源拥有者的稳定服务门面绑定 |
-| maxDefinitions | 2048 | 根宿主活跃定义及有引用的定义 |
-| maxRegistrationsPerOwner | 1024 | 每个资源拥有者 |
-| maxActiveTasks | 2048 | 根宿主实际未结算任务 |
-| maxActiveCalls | 4096 | 根宿主实际未结算调用 |
-| maxPendingEvents | 1024 | 根宿主尚未开始的监听投递 |
-| maxEventBytes | 65536 | 一个 JSON 快照的 UTF-8 编码 |
-| maxEventDepth | 32 | 一个 JSON 快照 |
-| maxEventNodes | 10000 | 一个 JSON 快照 |
-| maxNextCallsPerFrame | 16 | 一次中间件进入 |
-| maxCallDepth | 64 | 一条调用祖先链 |
-| maxDiagnostics | 256 | 根宿主诊断环形缓冲 |
-| maxPendingMutations | 128 | 根宿主等待的装配/卸载操作 |
-| callTimeoutMs | 30000 | 默认服务、chain、guard、任务与等待 |
-| activationTimeoutMs | 10000 | 单插件激活 |
-| observerTimeoutMs | 5000 | 单观察者 |
-| closeTimeoutMs | 30000 | 一个关闭操作的完整预算 |
+| 配置                     | 默认值 | 计数范围                                                             |
+| ------------------------ | ------ | -------------------------------------------------------------------- |
+| maxScopes                | 1024   | 根宿主内全部作用域                                                   |
+| maxPluginsPerScope       | 128    | 每个装配作用域，包含 staging/stopping                                |
+| maxPlugins               | 2048   | 根宿主插件总量，包含 staging/stopping                                |
+| maxEffects               | 8192   | 根宿主全部受管资源与登记                                             |
+| maxServiceLeases         | 8192   | 根宿主全部有效服务门面绑定（稳定消费关系；请求内临时依赖门面不计入） |
+| maxServiceLeasesPerOwner | 4096   | 每个资源拥有者的稳定服务门面绑定                                     |
+| maxDefinitions           | 2048   | 根宿主活跃定义及有引用的定义                                         |
+| maxRegistrationsPerOwner | 1024   | 每个资源拥有者                                                       |
+| maxActiveTasks           | 2048   | 根宿主实际未结算任务                                                 |
+| maxActiveCalls           | 4096   | 根宿主实际未结算调用                                                 |
+| maxPendingEvents         | 1024   | 根宿主尚未开始的监听投递                                             |
+| maxEventBytes            | 65536  | 一个 JSON 快照的 UTF-8 编码                                          |
+| maxEventDepth            | 32     | 一个 JSON 快照                                                       |
+| maxEventNodes            | 10000  | 一个 JSON 快照                                                       |
+| maxNextCallsPerFrame     | 16     | 一次中间件进入                                                       |
+| maxCallDepth             | 64     | 一条调用祖先链                                                       |
+| maxDiagnostics           | 256    | 根宿主诊断环形缓冲                                                   |
+| maxPendingMutations      | 128    | 根宿主等待的装配/卸载操作                                            |
+| callTimeoutMs            | 30000  | 默认服务、chain、guard、任务与等待                                   |
+| activationTimeoutMs      | 10000  | 单插件激活                                                           |
+| observerTimeoutMs        | 5000   | 单观察者                                                             |
+| closeTimeoutMs           | 30000  | 一个关闭操作的完整预算                                               |
 
 计数限制是默认资源预算，不是性能承诺。数量必须为正安全整数；时间必须为正有限整数。非法配置返回 invalid-input，不静默修正。
 

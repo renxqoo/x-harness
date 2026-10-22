@@ -1,3 +1,32 @@
-const pathFilter=(path:string)=>`(subpath ${JSON.stringify(path)})`;
-function outside(paths:readonly string[],literals:readonly string[]){return `(require-all ${[...paths.map(pathFilter),...literals.map(path=>`(literal ${JSON.stringify(path)})`)].map(filter=>`(require-not ${filter})`).join(" ")})`;}
-export function createRules(options:{readRoots:readonly string[];writeRoots:readonly string[];scratch:string;jobRoot:string;protectedPaths:readonly string[];network:boolean}){const devices=["/dev/null","/dev/stdout","/dev/stderr","/dev/random","/dev/urandom"];const rules=["(deny process-fork)","(deny file-link)",`(allow file-read* (vnode-type SYMLINK))`,`(deny file-read-data (require-all (require-not (vnode-type SYMLINK)) ${outside([...options.readRoots,options.scratch],['/',...devices])}))`,`(deny file-write* ${outside([...options.writeRoots,options.scratch],['/dev/null','/dev/stdout','/dev/stderr'])})`,`(deny file-read-data (require-all ${pathFilter(options.jobRoot)} (require-not ${pathFilter(options.scratch)})))`,`(deny file-write* (require-all ${pathFilter(options.jobRoot)} (require-not ${pathFilter(options.scratch)})))`,`(deny mach-lookup (global-name "com.apple.mDNSResponder"))`];for(const path of options.protectedPaths)rules.push(`(deny file-write* ${pathFilter(path)})`);if(!options.network)rules.push("(deny network*)");return rules.join("\n");}
+const pathFilter = (path: string) => `(subpath ${JSON.stringify(path)})`;
+
+function outside(paths: readonly string[], literals: readonly string[]) {
+  return `(require-all ${[...paths.map(pathFilter), ...literals.map((path) => `(literal ${JSON.stringify(path)})`)].map((filter) => `(require-not ${filter})`).join(" ")})`;
+}
+
+export function createRules(options: {
+  readRoots: readonly string[];
+  writeRoots: readonly string[];
+  scratch: string;
+  jobRoot: string;
+  protectedPaths: readonly string[];
+  network: boolean;
+}) {
+  const devices = ["/dev/null", "/dev/stdout", "/dev/stderr", "/dev/random", "/dev/urandom"];
+  const rules = [
+    "(deny process-fork)",
+    "(deny file-link)",
+    `(allow file-read* (vnode-type SYMLINK))`,
+    `(deny file-read-data (require-all (require-not (vnode-type SYMLINK)) ${outside([...options.readRoots, options.scratch], ["/", ...devices])}))`,
+    `(deny file-write* ${outside([...options.writeRoots, options.scratch], ["/dev/null", "/dev/stdout", "/dev/stderr"])})`,
+    `(deny file-read-data (require-all ${pathFilter(options.jobRoot)} (require-not ${pathFilter(options.scratch)})))`,
+    `(deny file-write* (require-all ${pathFilter(options.jobRoot)} (require-not ${pathFilter(options.scratch)})))`,
+    `(deny mach-lookup (global-name "com.apple.mDNSResponder"))`,
+  ];
+
+  for (const path of options.protectedPaths) rules.push(`(deny file-write* ${pathFilter(path)})`);
+
+  if (!options.network) rules.push("(deny network*)");
+
+  return rules.join("\n");
+}

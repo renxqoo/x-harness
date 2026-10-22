@@ -1,10 +1,7 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "lib": [
-      "ESNext",
-      "DOM"
-    ],
+    "lib": ["ESNext", "DOM"],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -13,110 +10,42 @@
     "isolatedModules": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": [
-      "bun"
-    ],
+    "types": ["bun"],
     "allowImportingTsExtensions": true,
     "paths": {
-      "@x-harness/core": [
-        "./core/src/index.ts"
-      ],
-      "@x-harness/standard": [
-        "./standard/src/index.ts"
-      ],
-      "@x-harness/application": [
-        "./application/src/index.ts"
-      ],
-      "@x-harness/loader": [
-        "./loader/src/index.ts"
-      ],
-      "@x-harness/create": [
-        "./create/src/index.ts"
-      ],
-      "@x-harness/core/validation": [
-        "./core/src/validation.ts"
-      ],
-      "@x-harness/session": [
-        "./plugins/session/src/index.ts"
-      ],
-      "@x-harness/session/contracts": [
-        "./plugins/session/src/contracts.ts"
-      ],
-      "@x-harness/session/storage": [
-        "./plugins/session/src/storage.ts"
-      ],
-      "@x-harness/session-jsonl": [
-        "./plugins/session-jsonl/src/index.ts"
-      ],
-      "@x-harness/session-sqlite": [
-        "./plugins/session-sqlite/src/index.ts"
-      ],
-      "@x-harness/session-postgres": [
-        "./plugins/session-postgres/src/index.ts"
-      ],
-      "@x-harness/session-storage-sql": [
-        "./plugins/session-storage-sql/src/index.ts"
-      ],
-      "@x-harness/session/testing": [
-        "./plugins/session/src/testing.ts"
-      ],
-      "@x-harness/llm": [
-        "./plugins/llm/src/index.ts"
-      ],
-      "@x-harness/llm-http": [
-        "./plugins/llm-http/src/index.ts"
-      ],
-      "@x-harness/llm-anthropic": [
-        "./plugins/llm-anthropic/src/index.ts"
-      ],
-      "@x-harness/llm-openai": [
-        "./plugins/llm-openai/src/index.ts"
-      ],
-      "@x-harness/llm/contracts": [
-        "./plugins/llm/src/contracts.ts"
-      ],
-      "@x-harness/llm/provider": [
-        "./plugins/llm/src/provider.ts"
-      ],
-      "@x-harness/llm/testing": [
-        "./plugins/llm/src/testing.ts"
-      ],
-      "@x-harness/tools": [
-        "./plugins/tools/src/index.ts"
-      ],
-      "@x-harness/tools/contracts": [
-        "./plugins/tools/src/contracts.ts"
-      ],
-      "@x-harness/tool-scheduler": [
-        "./plugins/tool-scheduler/src/index.ts"
-      ],
-      "@x-harness/tools/validation": [
-        "./plugins/tools/src/validation.ts"
-      ],
-      "@x-harness/tool-scheduler/contracts": [
-        "./plugins/tool-scheduler/src/contracts.ts"
-      ],
-      "@x-harness/execution": [
-        "./plugins/execution/src/index.ts"
-      ],
-      "@x-harness/execution-process": [
-        "./plugins/execution-process/src/index.ts"
-      ],
-      "@x-harness/execution-local": [
-        "./plugins/execution-local/src/index.ts"
-      ],
-      "@x-harness/sandbox": [
-        "./plugins/sandbox/src/index.ts"
-      ],
-      "@x-harness/agent-loop": [
-        "./plugins/agent-loop/src/index.ts"
-      ],
-      "@x-harness/agent-loop/contracts": [
-        "./plugins/agent-loop/src/contracts.ts"
-      ],
-      "@x-harness/llm/validation": [
-        "./plugins/llm/src/validation.ts"
-      ]
+      "@x-harness/core": ["./core/src/index.ts"],
+      "@x-harness/standard": ["./standard/src/index.ts"],
+      "@x-harness/application": ["./application/src/index.ts"],
+      "@x-harness/loader": ["./loader/src/index.ts"],
+      "@x-harness/create": ["./create/src/index.ts"],
+      "@x-harness/core/validation": ["./core/src/validation.ts"],
+      "@x-harness/session": ["./plugins/session/src/index.ts"],
+      "@x-harness/session/contracts": ["./plugins/session/src/contracts.ts"],
+      "@x-harness/session/storage": ["./plugins/session/src/storage.ts"],
+      "@x-harness/session-jsonl": ["./plugins/session-jsonl/src/index.ts"],
+      "@x-harness/session-sqlite": ["./plugins/session-sqlite/src/index.ts"],
+      "@x-harness/session-postgres": ["./plugins/session-postgres/src/index.ts"],
+      "@x-harness/session-storage-sql": ["./plugins/session-storage-sql/src/index.ts"],
+      "@x-harness/session/testing": ["./plugins/session/src/testing.ts"],
+      "@x-harness/llm": ["./plugins/llm/src/index.ts"],
+      "@x-harness/llm-http": ["./plugins/llm-http/src/index.ts"],
+      "@x-harness/llm-anthropic": ["./plugins/llm-anthropic/src/index.ts"],
+      "@x-harness/llm-openai": ["./plugins/llm-openai/src/index.ts"],
+      "@x-harness/llm/contracts": ["./plugins/llm/src/contracts.ts"],
+      "@x-harness/llm/provider": ["./plugins/llm/src/provider.ts"],
+      "@x-harness/llm/testing": ["./plugins/llm/src/testing.ts"],
+      "@x-harness/tools": ["./plugins/tools/src/index.ts"],
+      "@x-harness/tools/contracts": ["./plugins/tools/src/contracts.ts"],
+      "@x-harness/tool-scheduler": ["./plugins/tool-scheduler/src/index.ts"],
+      "@x-harness/tools/validation": ["./plugins/tools/src/validation.ts"],
+      "@x-harness/tool-scheduler/contracts": ["./plugins/tool-scheduler/src/contracts.ts"],
+      "@x-harness/execution": ["./plugins/execution/src/index.ts"],
+      "@x-harness/execution-process": ["./plugins/execution-process/src/index.ts"],
+      "@x-harness/execution-local": ["./plugins/execution-local/src/index.ts"],
+      "@x-harness/sandbox": ["./plugins/sandbox/src/index.ts"],
+      "@x-harness/agent-loop": ["./plugins/agent-loop/src/index.ts"],
+      "@x-harness/agent-loop/contracts": ["./plugins/agent-loop/src/contracts.ts"],
+      "@x-harness/llm/validation": ["./plugins/llm/src/validation.ts"]
     }
   },
   "include": [

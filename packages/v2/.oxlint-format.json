@@ -1,0 +1,13 @@
+{
+  "extends": ["./.oxlint-spacing.json"],
+  "categories": {
+    "correctness": "off"
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "coverage/**",
+    "**/reviews/**",
+    "**/.vitest/**"
+  ]
+}

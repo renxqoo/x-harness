@@ -1,1 +1,7 @@
-service.stream({ model: "m", messages: [], onEvent() { return true; } });
+service.stream({
+  model: "m",
+  messages: [],
+  onEvent() {
+    return true;
+  },
+});

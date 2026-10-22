@@ -1,1 +1,1 @@
-void service.execute({name:"x",callId:"a",input:{},onProgress:()=>"wrong"});
+void service.execute({ name: "x", callId: "a", input: {}, onProgress: () => "wrong" });

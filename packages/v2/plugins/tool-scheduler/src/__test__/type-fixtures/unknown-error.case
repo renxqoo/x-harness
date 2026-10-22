@@ -1,1 +1,2 @@
-const error:SchedulerError={source:"tool-scheduler",code:"invented",message:"invented"};void error;
+const error: SchedulerError = { source: "tool-scheduler", code: "invented", message: "invented" };
+void error;

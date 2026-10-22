@@ -1,4 +1,41 @@
-import type { LlmBlockStart, LlmToolCall, LlmCitation, LlmUsage, ProviderContinuation, LlmRequest, LlmLimits, ResponseInfo } from "../contracts";
+import type {
+  LlmBlockStart,
+  LlmToolCall,
+  LlmCitation,
+  LlmUsage,
+  ProviderContinuation,
+  LlmRequest,
+  LlmLimits,
+  ResponseInfo,
+} from "../contracts";
 import type { JsonValue } from "../../../../core/src/index";
-export interface BlockState { readonly block: LlmBlockStart; ended: boolean; status: "complete" | "incomplete"; readonly chunks: string[]; readonly signatures: string[]; readonly fields: { callId: string[]; name: string[]; input: string[] }; inputBytes: number; signatureBytes: number; call?: LlmToolCall; continuation?: ProviderContinuation; readonly citations: LlmCitation[]; readonly providerEvents: { readonly name: string; readonly data: JsonValue }[] }
-export interface StreamState { readonly request: LlmRequest; readonly provider: string; readonly protocol: string; readonly canonicalModel: string; readonly limits: LlmLimits; readonly collect: boolean; readonly keepText: boolean; readonly blocks: Map<string, BlockState>; readonly callIds: Set<string>; readonly sourceIds: Set<string>; usage: LlmUsage; response: ResponseInfo; hasOutput: boolean; sealed: boolean }
+export interface BlockState {
+  readonly block: LlmBlockStart;
+  ended: boolean;
+  status: "complete" | "incomplete";
+  readonly chunks: string[];
+  readonly signatures: string[];
+  readonly fields: { callId: string[]; name: string[]; input: string[] };
+  inputBytes: number;
+  signatureBytes: number;
+  call?: LlmToolCall;
+  continuation?: ProviderContinuation;
+  readonly citations: LlmCitation[];
+  readonly providerEvents: { readonly name: string; readonly data: JsonValue }[];
+}
+export interface StreamState {
+  readonly request: LlmRequest;
+  readonly provider: string;
+  readonly protocol: string;
+  readonly canonicalModel: string;
+  readonly limits: LlmLimits;
+  readonly collect: boolean;
+  readonly keepText: boolean;
+  readonly blocks: Map<string, BlockState>;
+  readonly callIds: Set<string>;
+  readonly sourceIds: Set<string>;
+  usage: LlmUsage;
+  response: ResponseInfo;
+  hasOutput: boolean;
+  sealed: boolean;
+}

@@ -1,4 +1,10 @@
 import type { PluginContext } from "__PUBLIC_ENTRY__";
 import { users, ok } from "__AUTHORING_FIXTURE__";
 declare const extracted: PluginContext<{ provides?: { users: typeof users } }>;
-extracted.service({ users: { async find() { return ok("missing"); } } });
+extracted.service({
+  users: {
+    async find() {
+      return ok("missing");
+    },
+  },
+});

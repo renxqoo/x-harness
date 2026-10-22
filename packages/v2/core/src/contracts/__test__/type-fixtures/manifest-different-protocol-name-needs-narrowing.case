@@ -1,5 +1,7 @@
 import type { PluginInvocation } from "__PUBLIC_ENTRY__";
 declare const numbers: ChainToken<number, string>;
-declare const call: PluginInvocation<{ requires: { chain: typeof chain; numbers: typeof numbers } }>;
+declare const call: PluginInvocation<{
+  requires: { chain: typeof chain; numbers: typeof numbers };
+}>;
 declare const name: "chain" | "numbers";
 call.dispatch(name, "wrong");

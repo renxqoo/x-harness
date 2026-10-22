@@ -1,1 +1,1 @@
-ctx.middleware(chain,(input,next)=>next(1));
+ctx.middleware(chain, (input, next) => next(1));

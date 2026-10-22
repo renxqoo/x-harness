@@ -4,10 +4,28 @@ import type { LlmError } from "./error-types";
 import { readRunOutput } from "../domain/read-run-output";
 import { createFault } from "../../../../core/src/validation";
 import { readLlmError } from "../domain/read-error";
-const service = defineService<LlmService>({ name: "llm", methods: { stream: { failure: readLlmError }, generate: { failure: readLlmError }, describe: { failure: readLlmError } } });
+const service = defineService<LlmService>({
+  name: "llm",
+  methods: {
+    stream: { failure: readLlmError },
+    generate: { failure: readLlmError },
+    describe: { failure: readLlmError },
+  },
+});
+
 if (!service.ok) throw new Error("Invalid LLM definition");
+
 export const llm = service.value;
 import { readRunInput } from "../domain/read-run-input";
-const chain = defineChain<LlmRunInput, LlmRunOutput, LlmError>({ name: "llm/request", input: readRunInput, output: (raw) => { const result = readRunOutput(raw); return result.ok ? result : createFault("invalid-result"); } });
+const chain = defineChain<LlmRunInput, LlmRunOutput, LlmError>({
+  name: "llm/request",
+  input: readRunInput,
+  output: (raw) => {
+    const result = readRunOutput(raw);
+    return result.ok ? result : createFault("invalid-result");
+  },
+});
+
 if (!chain.ok) throw new Error("Invalid LLM request definition");
+
 export const llmRequest = chain.value;

@@ -1,4 +1,6 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import type { PluginContext } from "__PUBLIC_ENTRY__";
-function handle(ctx: PluginContext<{ provides: { chain: typeof chain } }>) { return ctx.handle("chain", (input) => ({ ok: true, value: input.length })); }
+function handle(ctx: PluginContext<{ provides: { chain: typeof chain } }>) {
+  return ctx.handle("chain", (input) => ({ ok: true, value: input.length }));
+}
 definePlugin({ name: "bad", setup: handle });

@@ -33,91 +33,153 @@ export function createContextView(kernel: Kernel, view: View): Context {
 }
 
 function revocation(cell: ContextCapability): () => void {
-  return () => { cell.current = undefined; for (const release of cell.releases) release(); cell.releases.clear(); };
+  return () => {
+    cell.current = undefined;
+
+    for (const release of cell.releases) release();
+
+    cell.releases.clear();
+  };
 }
 
-function facade(cell: ContextCapability, dependency: import("../contracts/types").DependencyContext, scope: WeakRef<Scope>): Context {
+function facade(
+  cell: ContextCapability,
+  dependency: import("../contracts/types").DependencyContext,
+  scope: WeakRef<Scope>,
+): Context {
   let dependencies: Readonly<Record<string, unknown>> | undefined;
   return Object.freeze({
     ...dependency,
     get deps() {
       if (dependencies) return dependencies;
+
       if (!cell.current) return Object.freeze({});
+
       const { kernel, view } = cell.current;
+
       if (!view.owner.activation || view.owner.activation.settled) return Object.freeze({});
+
       dependencies = createDependencies(describeDependencies(view.owner, view.owner.bindings), {
         context: kernel.createDependencyContext({ ...view, bound: view.owner.activation }),
-        required: view.owner.plugin?.requires ?? {}, optional: view.owner.plugin?.optional ?? {},
+        required: view.owner.plugin?.requires ?? {},
+        optional: view.owner.plugin?.optional ?? {},
       });
       return dependencies;
     },
-    get scopeState() { return scope.deref()?.state ?? "closed"; },
+    get scopeState() {
+      return scope.deref()?.state ?? "closed";
+    },
     service(implementations, options) {
       if (!cell.current) return createFault("scope-closed");
+
       return registerServices(cell.current.kernel, cell.current.view, { implementations, options });
     },
     register: ((token: DefinitionRef, implementation?: unknown, options?: RegistrationOptions) => {
       if (!cell.current) return createFault("scope-closed");
+
       const { kernel, view } = cell.current;
       return provideDefinition(kernel, { view, token, implementation, options });
     }) as Context["register"],
     handle(token, terminal, options) {
       if (!cell.current) return createFault("scope-closed");
-      return handleChain(cell.current.kernel, { view: cell.current.view, token, implementation: terminal, options });
+
+      return handleChain(cell.current.kernel, {
+        view: cell.current.view,
+        token,
+        implementation: terminal,
+        options,
+      });
     },
     on(token, handler) {
       if (!cell.current) return createFault("scope-closed");
-      return registerHandler(cell.current.kernel, { view: cell.current.view, token, handler, kind: "event" });
+
+      return registerHandler(cell.current.kernel, {
+        view: cell.current.view,
+        token,
+        handler,
+        kind: "event",
+      });
     },
     middleware(token, handler) {
       if (!cell.current) return createFault("scope-closed");
-      return registerHandler(cell.current.kernel, { view: cell.current.view, token, handler, kind: "chain" });
+
+      return registerHandler(cell.current.kernel, {
+        view: cell.current.view,
+        token,
+        handler,
+        kind: "chain",
+      });
     },
     guard(token, handler) {
       if (!cell.current) return createFault("scope-closed");
-      return registerHandler(cell.current.kernel, { view: cell.current.view, token, handler, kind: "guard" });
+
+      return registerHandler(cell.current.kernel, {
+        view: cell.current.view,
+        token,
+        handler,
+        kind: "guard",
+      });
     },
     emit(token, payload) {
       if (!cell.current) return createFault("scope-closed");
+
       const { kernel, view } = cell.current;
       return emitEvent(kernel, { view, token, payload });
     },
     addCleanup(disposer) {
       if (!cell.current) return createFault("scope-closed");
+
       const { kernel, view } = cell.current;
       const admitted = checkAdmission(view);
+
       if (!admitted.ok) return admitted;
+
       return registerEffect(kernel, { owner: view.owner, executor: view.owner, disposer });
     },
     resource(spec) {
       if (!cell.current) return Promise.resolve(createFault("scope-closed"));
+
       return openResource(cell.current.kernel, cell.current.view, spec);
     },
     createScope(options) {
       if (!cell.current) return createFault("scope-closed");
+
       const { kernel, view } = cell.current;
       const child = createScope(kernel, view, options);
+
       if (!child.ok) return child;
+
       return { ok: true, value: createContextView(kernel, child.value) };
     },
     startTask(spec) {
       if (!cell.current) return createFault("scope-closed");
+
       return spawnTask(cell.current.kernel, cell.current.view, spec);
     },
     requestClose() {
       if (!cell.current) return createFault("scope-closed");
+
       const { kernel, view } = cell.current;
+
       if (view.owner.kind === "plugin") {
         for (const provider of view.owner.providers) {
-          const consumers = kernel.registry.consumers(provider).filter((owner) => !ownsOwner(view.owner, owner));
-          const resources = [...provider.pins].filter((effect) => !ownsOwner(view.owner, effect.owner));
-          if (consumers.length || resources.length) return kernel.fault("plugin-in-use", view.owner, {
-            details: describeProviderUse(provider, { consumers, resources }),
-          });
+          const consumers = kernel.registry
+            .consumers(provider)
+            .filter((owner) => !ownsOwner(view.owner, owner));
+          const resources = [...provider.pins].filter(
+            (effect) => !ownsOwner(view.owner, effect.owner),
+          );
+
+          if (consumers.length || resources.length)
+            return kernel.fault("plugin-in-use", view.owner, {
+              details: describeProviderUse(provider, { consumers, resources }),
+            });
         }
       }
+
       if (view.owner.kind === "host") void kernel.closeScope(view.scope);
       else void closeOwner(kernel, view.owner);
+
       return { ok: true, value: undefined };
     },
   } satisfies Context);

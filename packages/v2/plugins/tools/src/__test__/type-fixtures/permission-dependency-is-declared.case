@@ -1,1 +1,7 @@
-createToolPolicyPlugin({name:"policy",async authorize(_plan,call){await call.deps.clock.read();return {ok:true,value:{kind:"allow"}};}});
+createToolPolicyPlugin({
+  name: "policy",
+  async authorize(_plan, call) {
+    await call.deps.clock.read();
+    return { ok: true, value: { kind: "allow" } };
+  },
+});

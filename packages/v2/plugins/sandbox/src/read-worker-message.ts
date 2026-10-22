@@ -1,3 +1,28 @@
-import {readData} from "../../../core/src/validation";
-export type WorkerMessage={readonly kind:"done";readonly exitCode:number}|{readonly kind:"failed";readonly code:"backend-unavailable"|"execution-failed"};
-export function readWorkerMessage(raw:unknown):WorkerMessage|undefined{const d=readData(raw);if(!d.ok)return undefined;const x=d.value;if(x.kind==="done"&&Object.keys(x).every(k=>["kind","exitCode"].includes(k))&&Number.isSafeInteger(x.exitCode))return {kind:"done",exitCode:x.exitCode as number};if(x.kind==="failed"&&Object.keys(x).every(k=>["kind","code"].includes(k))&&["backend-unavailable","execution-failed"].includes(x.code as string))return {kind:"failed",code:x.code as "backend-unavailable"|"execution-failed"};return undefined;}
+import { readData } from "../../../core/src/validation";
+export type WorkerMessage =
+  | { readonly kind: "done"; readonly exitCode: number }
+  | { readonly kind: "failed"; readonly code: "backend-unavailable" | "execution-failed" };
+
+export function readWorkerMessage(raw: unknown): WorkerMessage | undefined {
+  const d = readData(raw);
+
+  if (!d.ok) return undefined;
+
+  const x = d.value;
+
+  if (
+    x.kind === "done" &&
+    Object.keys(x).every((k) => ["kind", "exitCode"].includes(k)) &&
+    Number.isSafeInteger(x.exitCode)
+  )
+    return { kind: "done", exitCode: x.exitCode as number };
+
+  if (
+    x.kind === "failed" &&
+    Object.keys(x).every((k) => ["kind", "code"].includes(k)) &&
+    ["backend-unavailable", "execution-failed"].includes(x.code as string)
+  )
+    return { kind: "failed", code: x.code as "backend-unavailable" | "execution-failed" };
+
+  return undefined;
+}

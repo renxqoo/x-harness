@@ -1,7 +1,22 @@
 import type { DefinitionData } from "../contracts/definition-data";
 import type {
-  Context, DependencyContext, Invocation, CoreFaultCode, DefinitionRef, Diagnostic, JsonValue, Cleanup, Disposer, Limits, MaybePromise,
-  Origin, Plugin, PluginState, Result, Scheduler, ScopeState,
+  Context,
+  DependencyContext,
+  Invocation,
+  CoreFaultCode,
+  DefinitionRef,
+  Diagnostic,
+  JsonValue,
+  Cleanup,
+  Disposer,
+  Limits,
+  MaybePromise,
+  Origin,
+  Plugin,
+  PluginState,
+  Result,
+  Scheduler,
+  ScopeState,
 } from "../contracts/types";
 
 export type AnyResult = Result<unknown, unknown>;
@@ -58,7 +73,9 @@ export interface Provider {
   readonly published: boolean;
   readonly configured: boolean;
   readonly shadow: boolean;
-  readonly implementation?: Readonly<Record<string, (input: unknown, call: unknown) => Promise<AnyResult>>>;
+  readonly implementation?: Readonly<
+    Record<string, (input: unknown, call: unknown) => Promise<AnyResult>>
+  >;
   readonly terminal?: Handler;
   readonly pins: ReadonlySet<Effect>;
   readonly leases: ReadonlySet<ServiceLease>;
@@ -186,7 +203,18 @@ export interface Kernel {
   readonly execution: ReturnType<typeof import("../execution/create-execution").createExecution>;
   readonly lifetime: ReturnType<typeof import("../lifetime/create-lifetime").createLifetime>;
   readonly assembly: ReturnType<typeof import("../assembly/create-assembly").createAssembly>;
-  readonly events: ReturnType<typeof import("../mechanisms/events/create-event-queue").createEventQueue>;
+  readonly events: ReturnType<
+    typeof import("../mechanisms/events/create-event-queue").createEventQueue
+  >;
   readonly diagnostics: () => readonly Diagnostic[];
-  readonly fault: (code: CoreFaultCode, owner?: Owner, context?: { definition?: DefinitionRef; details?: JsonValue; scopeId?: string; callId?: string }) => Result<never>;
+  readonly fault: (
+    code: CoreFaultCode,
+    owner?: Owner,
+    context?: {
+      definition?: DefinitionRef;
+      details?: JsonValue;
+      scopeId?: string;
+      callId?: string;
+    },
+  ) => Result<never>;
 }

@@ -1,1 +1,5 @@
-declare const bad: (input:{text:string},call:Invocation)=>Promise<Result<number,{kind:"other"}>>; ctx.register(service,{run:bad});
+declare const bad: (
+  input: { text: string },
+  call: Invocation,
+) => Promise<Result<number, { kind: "other" }>>;
+ctx.register(service, { run: bad });

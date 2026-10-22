@@ -1,19 +1,19 @@
 # 通用插件平台
 
-本目录包含通用插件内核与独立外围包的实现、架构、公开接口与验收标准。内核实现位于 core/src，公开入口是 core/src/index.ts；各包的单元测试与资源回收检查放在同目录 __test__ 中，组合旅程放在 fixtures 中。
+本目录包含通用插件内核与独立外围包的实现、架构、公开接口与验收标准。内核实现位于 core/src，公开入口是 core/src/index.ts；各包的单元测试与资源回收检查放在同目录 `__test__` 中，组合旅程放在 fixtures 中。
 
 core 是与业务无关的 Context 插件宿主。应用通过插件定义服务、调用链、决策关口和通知事件，再组合成普通服务端、AI 应用或其他应用。
 
 ## 文档入口
 
-| 文档 | 内容 |
-| --- | --- |
-| [内核使用指南](core/README.md) | 接入包、快速开始、插件编写、扩展点、资源与在线装配 |
-| [架构与边界](ARCHITECTURE.md) | 内核职责、依赖方向、服务作用域、扩展机制与保证边界 |
-| [公开接口](API.md) | 公开类型入口、错误语义、服务调用、事件、调用链和宿主操作 |
-| [实现说明](IMPLEMENTATION.md) | 数据结构、算法、生命周期状态机、实现阶段与工程组织 |
-| [插件示例](EXAMPLES.md) | 外部应用的服务、材料、重试、权限与组合示例；普通 HTTP/SQLite 应用见 fixtures/server-application |
-| [验收规范](VERIFICATION.md) | 契约、故障、类型、资源、性能与外部应用组合测试 |
+| 文档                           | 内容                                                                                            |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| [内核使用指南](core/README.md) | 接入包、快速开始、插件编写、扩展点、资源与在线装配                                              |
+| [架构与边界](ARCHITECTURE.md)  | 内核职责、依赖方向、服务作用域、扩展机制与保证边界                                              |
+| [公开接口](API.md)             | 公开类型入口、错误语义、服务调用、事件、调用链和宿主操作                                        |
+| [实现说明](IMPLEMENTATION.md)  | 数据结构、算法、生命周期状态机、实现阶段与工程组织                                              |
+| [插件示例](EXAMPLES.md)        | 外部应用的服务、材料、重试、权限与组合示例；普通 HTTP/SQLite 应用见 fixtures/server-application |
+| [验收规范](VERIFICATION.md)    | 契约、故障、类型、资源、性能与外部应用组合测试                                                  |
 
 公开签名以 core/src/index.ts 的导出为准，行为以 API 为准，模块职责以 ARCHITECTURE 为准，交付步骤以 IMPLEMENTATION 为准。示例通过真实公开入口编译；实现改变这些规则时，同一变更先更新规范，再更新实现和测试。
 
@@ -53,28 +53,32 @@ bun run build
 bun run test
 ```
 
+依赖由仓库根目录的 bun.lock 锁定，在仓库根目录执行 `bun install --frozen-lockfile` 安装。代码格式由固定版本 oxfmt 和本目录 .oxfmtrc.json 统一管理：`bun run format` 写入格式，`bun run format:check` 只检查。lint 先执行格式检查，再检查类型感知规则与模块边界。格式化包括源码、测试、TypeScript 类型用例、配置和文档，生成的 dist、coverage、node_modules、.vitest 和 reviews 验收产物由配置排除。
+
+函数声明与函数表达式之间，以及 if、for、while、do、switch、try 等块语句与相邻语句之间保留一行空行。空行规则集中在 .oxlint-spacing.json，格式命令先通过 Oxlint 的 Stylistic 规则自动修复空行，再由 oxfmt 统一缩进与换行。格式专用配置只启用布局规则；完整 lint 保留现有检查并加载同一份空行规则。
+
 typecheck 包括公开入口正例、113 个内核编译负例和文档插件示例；lint 包括类型感知检查、纯内核依赖边界和外围包公开入口边界；test 在 Bun 下运行并生成覆盖率诊断。测试组织及具体异常矩阵见 [测试说明](core/src/__test__/README.md)。
 
 core 是进程内插件宿主。npm 包获取、模块导入、配置审批与执行隔离由外部宿主提供；已导入插件的在线装配和卸载由 core 提供。通知事件使用内存队列，可靠投递与业务持久化由外部插件提供。
 
 ## 外围包
 
-| 包 | 职责 | 文档 |
-| --- | --- | --- |
-| core | 通用插件机制、固定依赖和生命周期 | [内核指南](core/README.md) |
-| plugins/agent-loop | 有界模型工具循环、流事件与公开检查点扩展 | [Agent 编排](plugins/agent-loop/README.md) |
-| plugins/tools | 工具定义、schema校验、权限扩展和受管执行 | [工具插件](plugins/tools/README.md) |
-| plugins/tool-scheduler | 有界排队、批量并发、公平轮转及工具调用依赖 | [工具调度](plugins/tool-scheduler/README.md) |
-| plugins/execution | 不可变执行目标、输出与资源声明契约 | [执行契约](plugins/execution/README.md) |
-| plugins/sandbox | SRT 支撑的 macOS 单进程文件和网络隔离 | [沙箱](plugins/sandbox/README.md) |
-| plugins/execution-local | 显式可信程序执行及进程生命周期监督 | [本地执行](plugins/execution-local/README.md) |
-| plugins/execution-process | 执行提供者共用的进程、目标和预算支撑 | [进程支撑](plugins/execution-process/README.md) |
-| plugins/session-sqlite / session-postgres | SQLite / PostgreSQL storage providers | [Storage contract](plugins/session/README.md) |
-| plugins/session | 持久历史、有效对话、分支恢复与事务提交 | [会话插件](plugins/session/README.md) |
-| standard | logger、timer、JSON config | [标准插件](standard/README.md) |
-| application | 期望插件集合、待定依赖和自动重新装配 | [应用装配](application/README.md) |
-| loader | Bun 构建、稳定共享契约、文件监听和受限 HMR | [模块加载](loader/README.md) |
-| create | 本地 SDK 插件工程生成器 | [脚手架](create/README.md) |
+| 包                                        | 职责                                       | 文档                                            |
+| ----------------------------------------- | ------------------------------------------ | ----------------------------------------------- |
+| core                                      | 通用插件机制、固定依赖和生命周期           | [内核指南](core/README.md)                      |
+| plugins/agent-loop                        | 有界模型工具循环、流事件与公开检查点扩展   | [Agent 编排](plugins/agent-loop/README.md)      |
+| plugins/tools                             | 工具定义、schema校验、权限扩展和受管执行   | [工具插件](plugins/tools/README.md)             |
+| plugins/tool-scheduler                    | 有界排队、批量并发、公平轮转及工具调用依赖 | [工具调度](plugins/tool-scheduler/README.md)    |
+| plugins/execution                         | 不可变执行目标、输出与资源声明契约         | [执行契约](plugins/execution/README.md)         |
+| plugins/sandbox                           | SRT 支撑的 macOS 单进程文件和网络隔离      | [沙箱](plugins/sandbox/README.md)               |
+| plugins/execution-local                   | 显式可信程序执行及进程生命周期监督         | [本地执行](plugins/execution-local/README.md)   |
+| plugins/execution-process                 | 执行提供者共用的进程、目标和预算支撑       | [进程支撑](plugins/execution-process/README.md) |
+| plugins/session-sqlite / session-postgres | SQLite / PostgreSQL storage providers      | [Storage contract](plugins/session/README.md)   |
+| plugins/session                           | 持久历史、有效对话、分支恢复与事务提交     | [会话插件](plugins/session/README.md)           |
+| standard                                  | logger、timer、JSON config                 | [标准插件](standard/README.md)                  |
+| application                               | 期望插件集合、待定依赖和自动重新装配       | [应用装配](application/README.md)               |
+| loader                                    | Bun 构建、稳定共享契约、文件监听和受限 HMR | [模块加载](loader/README.md)                    |
+| create                                    | 本地 SDK 插件工程生成器                    | [脚手架](create/README.md)                      |
 
 core不依赖这些外围包。只需要固定装卸时直接使用createHost；需要依赖出现后自动激活时使用createApplication；需要文件热更时使用createLoader。作者仍只编写definePlugin和setup(ctx)，不需要了解加载器内部。
 

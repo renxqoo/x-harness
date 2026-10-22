@@ -1,3 +1,17 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
-declare const protocol: ServiceToken<{ run(input: string): Promise<Result<string>> } | { run(input: number): Promise<Result<number>> }>;
-definePlugin({ name: "bad", provides: { protocol }, setup(ctx) { return ctx.service({ protocol: { async run(input: string) { return { ok: true as const, value: input.toUpperCase() }; } } }); } });
+declare const protocol: ServiceToken<
+  { run(input: string): Promise<Result<string>> } | { run(input: number): Promise<Result<number>> }
+>;
+definePlugin({
+  name: "bad",
+  provides: { protocol },
+  setup(ctx) {
+    return ctx.service({
+      protocol: {
+        async run(input: string) {
+          return { ok: true as const, value: input.toUpperCase() };
+        },
+      },
+    });
+  },
+});

@@ -1,3 +1,9 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 type Manifest = { requires: { slot: typeof event } } | { requires: { slot: typeof chain } };
-definePlugin<Manifest>({ name: "bad", requires: { slot: chain }, setup(ctx) { return ctx.on("slot", async () => {}); } });
+definePlugin<Manifest>({
+  name: "bad",
+  requires: { slot: chain },
+  setup(ctx) {
+    return ctx.on("slot", async () => {});
+  },
+});

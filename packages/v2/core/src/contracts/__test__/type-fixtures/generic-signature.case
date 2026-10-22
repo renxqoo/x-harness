@@ -1,1 +1,1 @@
-defineService<{run<T>(input:T):Promise<Result<T>>}>({name:"generic",methods:{run:{}}});
+defineService<{ run<T>(input: T): Promise<Result<T>> }>({ name: "generic", methods: { run: {} } });

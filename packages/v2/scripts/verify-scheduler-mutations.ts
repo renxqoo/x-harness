@@ -1,20 +1,166 @@
-import { cp,mkdtemp,readFile,rm,symlink,writeFile,mkdir } from "node:fs/promises";
+import { applyMutation } from "./mutations/apply-mutation";
+import { cp, mkdtemp, readFile, rm, symlink, writeFile, mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
-const root=resolve(import.meta.dir,"..");
-const cases=[
- {name:"global concurrency ignored",file:"runtime/pump-queue.ts",before:'while(runtime.running+runtime.committing<runtime.limits.concurrency&&runtime.checking<32)',after:'while(runtime.running+runtime.committing<128&&runtime.checking<32)',extra:[{file:"runtime/create-runtime.ts",before:'createToolCapacity(limits.concurrency)',after:'createToolCapacity(128)'}],test:"queue",pattern:"asynchronous preparation cannot overcommit"},
- {name:"dependency order ignored",file:"runtime/select-node.ts",before:'parent=>parent.actualDone&&parent.result?.ok&&!parent.result.value.isError',after:'parent=>true',test:"batch",pattern:"DAG waits for successful"},
- {name:"permission recheck removed",file:"runtime/start-node.ts",before:'const access=await call.dispatch("access",batch.access);',after:'const access={ok:true as const,value:{kind:"allow" as const}};',test:"permissions",pattern:"permission revoked while queued"},
- {name:"priority starvation",file:"runtime/select-node.ts",before:'streak>=3?eligible[0]!',after:'false?eligible[0]!',test:"fairness",pattern:"priority selects higher priority"},
- {name:"report budget ignored",file:"runtime/record-result.ts",before:'if(batch.bytes>runtime.limits.maxResultBytes)',after:'if(false)',test:"validation",pattern:"complete result report budget"},
- {name:"input graph budget ignored",file:"domain/read-calls.ts",before:'maxBytes:limits.maxInputBytes',after:'maxBytes:4194304',test:"validation",pattern:"complete calls input budget"},
- {name:"capacity released on receipt",file:"runtime/start-node.ts",before:'void task.value.finished.then(',after:'void batch.call.wait(task.value).then(',test:"lifecycle",pattern:"cancelled noncooperative author keeps"},
- {name:"single progress discarded",file:"domain/read-request.ts",before:'callback(event.delta,signal)',after:'undefined',test:"progress",pattern:"single execute progress"},
+const root = resolve(import.meta.dir, "..");
+const cases = [
+  {
+    name: "global concurrency ignored",
+    file: "runtime/pump-queue.ts",
+    before:
+      "while(runtime.running+runtime.committing<runtime.limits.concurrency&&runtime.checking<32)",
+    after: "while(runtime.running+runtime.committing<128&&runtime.checking<32)",
+    extra: [
+      {
+        file: "runtime/create-runtime.ts",
+        before: "createToolCapacity(limits.concurrency)",
+        after: "createToolCapacity(128)",
+      },
+    ],
+    test: "queue",
+    pattern: "asynchronous preparation cannot overcommit",
+  },
+  {
+    name: "dependency order ignored",
+    file: "runtime/select-node.ts",
+    before: "parent=>parent.actualDone&&parent.result?.ok&&!parent.result.value.isError",
+    after: "parent=>true",
+    test: "batch",
+    pattern: "DAG waits for successful",
+  },
+  {
+    name: "permission recheck removed",
+    file: "runtime/start-node.ts",
+    before: 'const access=await call.dispatch("access",batch.access);',
+    after: 'const access={ok:true as const,value:{kind:"allow" as const}};',
+    test: "permissions",
+    pattern: "permission revoked while queued",
+  },
+  {
+    name: "priority starvation",
+    file: "runtime/select-node.ts",
+    before: "streak>=3?eligible[0]!",
+    after: "false?eligible[0]!",
+    test: "fairness",
+    pattern: "priority selects higher priority",
+  },
+  {
+    name: "report budget ignored",
+    file: "runtime/record-result.ts",
+    before: "if(batch.bytes>runtime.limits.maxResultBytes)",
+    after: "if(false)",
+    test: "validation",
+    pattern: "complete result report budget",
+  },
+  {
+    name: "input graph budget ignored",
+    file: "domain/read-calls.ts",
+    before: "maxBytes:limits.maxInputBytes",
+    after: "maxBytes:4194304",
+    test: "validation",
+    pattern: "complete calls input budget",
+  },
+  {
+    name: "capacity released on receipt",
+    file: "runtime/start-node.ts",
+    before: "void task.value.finished.then(",
+    after: "void batch.call.wait(task.value).then(",
+    test: "lifecycle",
+    pattern: "cancelled noncooperative author keeps",
+  },
+  {
+    name: "single progress discarded",
+    file: "domain/read-request.ts",
+    before: "callback(event.delta,signal)",
+    after: "undefined",
+    test: "progress",
+    pattern: "single execute progress",
+  },
 ];
-const directory=await mkdtemp(resolve(tmpdir(),"scheduler-mutations-"));const target=resolve(directory,"packages/v2");const reports:{name:string;detected:boolean;code:number;evidence:string}[]=[];
-async function run(test:string,pattern?:string){const child=Bun.spawn([process.execPath,resolve(root,"../../node_modules/vitest/vitest.mjs"),"run",test,...(pattern?["-t",pattern]:[])],{cwd:target,stdout:"pipe",stderr:"pipe",timeout:20000});const [code,stdout,stderr]=await Promise.all([child.exited,new Response(child.stdout).text(),new Response(child.stderr).text()]);return {code,output:stdout+stderr};}
-try{await mkdir(resolve(directory,"packages"));await cp(root,target,{recursive:true,filter:path=>!["node_modules","dist","coverage",".git",".vitest"].includes(path.split("/").at(-1)!)});await symlink(resolve(root,"../../node_modules"),resolve(directory,"node_modules"));await symlink(resolve(root,"node_modules"),resolve(target,"node_modules"));const baseline=await run("plugins/tool-scheduler/src/__test__");const count=Number(/Tests\s+(\d+) passed/.exec(baseline.output)?.[1]??0);if(baseline.code||!count)throw new Error("Mutation baseline failed: "+baseline.output);
- for(const mutation of cases){const edits=[mutation,...("extra" in mutation?mutation.extra??[]:[])];const originals:{path:string;source:string}[]=[];for(const edit of edits){const path=resolve(target,"plugins/tool-scheduler/src",edit.file),source=await readFile(path,"utf8");if(!source.includes(edit.before))throw new Error("Missing mutation anchor: "+mutation.name);originals.push({path,source});await writeFile(path,source.replaceAll(edit.before,edit.after));}try{const result=await run(`plugins/tool-scheduler/src/__test__/${mutation.test}.test.ts`,mutation.pattern);const evidence=result.output.split("\n").find(line=>line.includes("AssertionError:"))??result.output.slice(0,1000);const detected=result.code!==0&&result.output.includes("AssertionError:")&&!result.output.includes("Test timed out")&&!result.output.includes("Failed to resolve");reports.push({name:mutation.name,detected,code:result.code,evidence});process.stdout.write(`${detected?"detected":"SURVIVED"}: ${mutation.name}\n`);}finally{for(const {path,source}of originals)await writeFile(path,source);}}
- await writeFile(resolve(root,"plugins/tool-scheduler/reviews/mutations.json"),JSON.stringify({command:"bun run test:scheduler:mutations",runtime:Bun.version,baselineCases:count,reports},null,2)+"\n");if(reports.some(r=>!r.detected))throw new Error("Mutation was not rejected by a behavioral assertion");
-}finally{await rm(directory,{recursive:true,force:true});}
+const directory = await mkdtemp(resolve(tmpdir(), "scheduler-mutations-"));
+const target = resolve(directory, "packages/v2");
+const reports: { name: string; detected: boolean; code: number; evidence: string }[] = [];
+
+async function run(test: string, pattern?: string) {
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      resolve(root, "../../node_modules/vitest/vitest.mjs"),
+      "run",
+      test,
+      ...(pattern ? ["-t", pattern] : []),
+    ],
+    { cwd: target, stdout: "pipe", stderr: "pipe", timeout: 20000 },
+  );
+  const [code, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  return { code, output: stdout + stderr };
+}
+
+try {
+  await mkdir(resolve(directory, "packages"));
+  await cp(root, target, {
+    recursive: true,
+    filter: (path) =>
+      !["node_modules", "dist", "coverage", ".git", ".vitest"].includes(path.split("/").at(-1)!),
+  });
+  await symlink(resolve(root, "../../node_modules"), resolve(directory, "node_modules"));
+  await symlink(resolve(root, "node_modules"), resolve(target, "node_modules"));
+  const baseline = await run("plugins/tool-scheduler/src/__test__");
+  const count = Number(/Tests\s+(\d+) passed/.exec(baseline.output)?.[1] ?? 0);
+
+  if (baseline.code || !count) throw new Error("Mutation baseline failed: " + baseline.output);
+
+  for (const mutation of cases) {
+    const edits = [mutation, ...("extra" in mutation ? (mutation.extra ?? []) : [])];
+    const originals: { path: string; source: string }[] = [];
+
+    for (const edit of edits) {
+      const path = resolve(target, "plugins/tool-scheduler/src", edit.file),
+        source = await readFile(path, "utf8");
+      originals.push({ path, source });
+      await writeFile(path, applyMutation(source, edit));
+    }
+
+    try {
+      const result = await run(
+        `plugins/tool-scheduler/src/__test__/${mutation.test}.test.ts`,
+        mutation.pattern,
+      );
+      const evidence =
+        result.output.split("\n").find((line) => line.includes("AssertionError:")) ??
+        result.output.slice(0, 1000);
+      const detected =
+        result.code !== 0 &&
+        result.output.includes("AssertionError:") &&
+        !result.output.includes("Test timed out") &&
+        !result.output.includes("Failed to resolve");
+      reports.push({ name: mutation.name, detected, code: result.code, evidence });
+      process.stdout.write(`${detected ? "detected" : "SURVIVED"}: ${mutation.name}\n`);
+    } finally {
+      for (const { path, source } of originals) await writeFile(path, source);
+    }
+  }
+
+  await writeFile(
+    resolve(root, "plugins/tool-scheduler/reviews/mutations.json"),
+    JSON.stringify(
+      {
+        command: "bun run test:scheduler:mutations",
+        runtime: Bun.version,
+        baselineCases: count,
+        reports,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+
+  if (reports.some((r) => !r.detected))
+    throw new Error("Mutation was not rejected by a behavioral assertion");
+} finally {
+  await rm(directory, { recursive: true, force: true });
+}

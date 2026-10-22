@@ -1,1 +1,11 @@
-createToolPlugin({name:"echo",inputSchema:{type:"object",properties:{text:{type:"string"}},required:["text"]},async prepare(input){input.text.toFixed();return {ok:true,value:{}};},async execute(){return {ok:true,value:{content:[]}};}});
+createToolPlugin({
+  name: "echo",
+  inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
+  async prepare(input) {
+    input.text.toFixed();
+    return { ok: true, value: {} };
+  },
+  async execute() {
+    return { ok: true, value: { content: [] } };
+  },
+});

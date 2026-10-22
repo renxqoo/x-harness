@@ -9,4 +9,7 @@ export interface WatchCallbacks {
   changed(this: void): void;
   failed(this: void): void;
 }
-export type OpenDirectoryWatch = (target: WatchTarget, callbacks: WatchCallbacks) => Result<() => void, LoaderFault>;
+export type OpenDirectoryWatch = (
+  target: WatchTarget,
+  callbacks: WatchCallbacks,
+) => Result<() => void, LoaderFault>;

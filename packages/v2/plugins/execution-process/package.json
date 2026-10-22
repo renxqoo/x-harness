@@ -1,1 +1,8 @@
-{"name":"@x-harness/execution-process","type":"module","exports":{".":"./src/index.ts"},"sideEffects":false}
+{
+  "name": "@x-harness/execution-process",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

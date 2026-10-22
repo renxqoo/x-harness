@@ -1,7 +1,63 @@
-import type {AgentContext} from "../contracts/types";
-import {maximumAgentLimits as limits} from "./read-limits";
-import {readJson} from "./read-json";
-import {data,keys,text,count} from "./read-values";
-import {fail} from "./fail";
-import {readModelRequest} from "./read-model-request";
-export function readContext(raw:unknown){const d=data(raw);if(!d||!keys(d,["runId","step","caller","metadata","request"])||!text(d.runId)||!count(d.step)||!d.step)return fail("invalid-input");const caller=data(d.caller),origin=data(caller?.origin),initiator=data(caller?.initiator);if(!caller||!keys(caller,["origin","initiator"])||!origin||!keys(origin,["scopeId","pluginName"])||!text(origin.scopeId)||origin.pluginName!==undefined&&!text(origin.pluginName)||!initiator||!keys(initiator,["id","kind","scopeId","pluginName"])||!text(initiator.id)||!["plugin","host"].includes(initiator.kind as string)||!text(initiator.scopeId)||initiator.pluginName!==undefined&&!text(initiator.pluginName))return fail("invalid-input");if(d.metadata!==undefined){const tags=readJson(d.metadata,65536);if(!tags.ok||!data(tags.value))return fail("invalid-input");}const request=readModelRequest(d.request);if(!request.ok)return request;const snapshot=readJson({runId:d.runId,step:d.step,caller,request:request.value,...(d.metadata!==undefined?{metadata:d.metadata}:{})},limits.maxTranscriptBytes*2);return snapshot.ok?{ok:true as const,value:snapshot.value as unknown as AgentContext}:snapshot;}
+import type { AgentContext } from "../contracts/types";
+import { maximumAgentLimits as limits } from "./read-limits";
+import { readJson } from "./read-json";
+import { data, keys, text, count } from "./read-values";
+import { fail } from "./fail";
+import { readModelRequest } from "./read-model-request";
+
+export function readContext(raw: unknown) {
+  const d = data(raw);
+
+  if (
+    !d ||
+    !keys(d, ["runId", "step", "caller", "metadata", "request"]) ||
+    !text(d.runId) ||
+    !count(d.step) ||
+    !d.step
+  )
+    return fail("invalid-input");
+
+  const caller = data(d.caller),
+    origin = data(caller?.origin),
+    initiator = data(caller?.initiator);
+
+  if (
+    !caller ||
+    !keys(caller, ["origin", "initiator"]) ||
+    !origin ||
+    !keys(origin, ["scopeId", "pluginName"]) ||
+    !text(origin.scopeId) ||
+    (origin.pluginName !== undefined && !text(origin.pluginName)) ||
+    !initiator ||
+    !keys(initiator, ["id", "kind", "scopeId", "pluginName"]) ||
+    !text(initiator.id) ||
+    !["plugin", "host"].includes(initiator.kind as string) ||
+    !text(initiator.scopeId) ||
+    (initiator.pluginName !== undefined && !text(initiator.pluginName))
+  )
+    return fail("invalid-input");
+
+  if (d.metadata !== undefined) {
+    const tags = readJson(d.metadata, 65536);
+
+    if (!tags.ok || !data(tags.value)) return fail("invalid-input");
+  }
+
+  const request = readModelRequest(d.request);
+
+  if (!request.ok) return request;
+
+  const snapshot = readJson(
+    {
+      runId: d.runId,
+      step: d.step,
+      caller,
+      request: request.value,
+      ...(d.metadata !== undefined ? { metadata: d.metadata } : {}),
+    },
+    limits.maxTranscriptBytes * 2,
+  );
+  return snapshot.ok
+    ? { ok: true as const, value: snapshot.value as unknown as AgentContext }
+    : snapshot;
+}

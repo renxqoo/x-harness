@@ -1,5 +1,111 @@
-const fail=()=>({ok:false as const,error:{source:"execution" as const,code:"backend-unavailable" as const,message:"backend-unavailable"}});
-interface Word {readonly start:number;readonly end:number;readonly value:string;readonly literal:boolean}
-function words(source:string){const result:Word[]=[];let i=0;while(i<source.length){if(/[\s;&|(){}<>]/.test(source[i]!)){i++;continue;}const start=i;let value="",literal=true;while(i<source.length&&!/[\s;&|(){}<>]/.test(source[i]!)){const c=source[i++]!;if(c==="'"){const end=source.indexOf("'",i);if(end<0)return undefined;value+=source.slice(i,end);i=end+1;}else if(c==='"'){let ended=false;while(i<source.length){const x=source[i++]!;if(x==='"'){ended=true;break;}if(x==="\\"){if(i>=source.length)return undefined;value+=source[i++]!;}else{if(x==="$"||x==="`")literal=false;value+=x;}}if(!ended)return undefined;}else if(c==="\\"){if(i>=source.length)return undefined;value+=source[i++]!;}else{if(c==="$"||c==="`")literal=false;value+=c;}}result.push({start,end:i,value,literal});}return result;}
-const quote=(text:string)=>"'"+text.replaceAll("'","'\\''")+"'";
-export function restrictCommand(source:string,rules:string){if(source.length>1048576||rules.length>262144)return fail();const tokens=words(source);if(!tokens)return fail();const matches=tokens.filter((token,index)=>token.literal&&token.value==="/usr/bin/sandbox-exec"&&tokens[index+1]?.literal&&tokens[index+1]?.value==="-p"&&tokens[index+2]?.literal&&tokens[index+2]?.value.trimStart().startsWith("(version 1)"));if(matches.length!==1)return fail();const index=tokens.indexOf(matches[0]!),profile=tokens[index+2]!;return {ok:true as const,value:source.slice(0,profile.start)+quote(profile.value+"\n"+rules)+source.slice(profile.end)};}
+const fail = () => ({
+  ok: false as const,
+  error: {
+    source: "execution" as const,
+    code: "backend-unavailable" as const,
+    message: "backend-unavailable",
+  },
+});
+
+interface Word {
+  readonly start: number;
+  readonly end: number;
+  readonly value: string;
+  readonly literal: boolean;
+}
+
+function words(source: string) {
+  const result: Word[] = [];
+  let i = 0;
+
+  while (i < source.length) {
+    if (/[\s;&|(){}<>]/.test(source[i]!)) {
+      i++;
+      continue;
+    }
+
+    const start = i;
+    let value = "",
+      literal = true;
+
+    while (i < source.length && !/[\s;&|(){}<>]/.test(source[i]!)) {
+      const c = source[i++]!;
+
+      if (c === "'") {
+        const end = source.indexOf("'", i);
+
+        if (end < 0) return undefined;
+
+        value += source.slice(i, end);
+        i = end + 1;
+      } else if (c === '"') {
+        let ended = false;
+
+        while (i < source.length) {
+          const x = source[i++]!;
+
+          if (x === '"') {
+            ended = true;
+            break;
+          }
+
+          if (x === "\\") {
+            if (i >= source.length) return undefined;
+
+            value += source[i++]!;
+          } else {
+            if (x === "$" || x === "`") literal = false;
+
+            value += x;
+          }
+        }
+
+        if (!ended) return undefined;
+      } else if (c === "\\") {
+        if (i >= source.length) return undefined;
+
+        value += source[i++]!;
+      } else {
+        if (c === "$" || c === "`") literal = false;
+
+        value += c;
+      }
+    }
+
+    result.push({ start, end: i, value, literal });
+  }
+
+  return result;
+}
+
+const quote = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
+
+export function restrictCommand(source: string, rules: string) {
+  if (source.length > 1048576 || rules.length > 262144) return fail();
+
+  const tokens = words(source);
+
+  if (!tokens) return fail();
+
+  const matches = tokens.filter(
+    (token, index) =>
+      token.literal &&
+      token.value === "/usr/bin/sandbox-exec" &&
+      tokens[index + 1]?.literal &&
+      tokens[index + 1]?.value === "-p" &&
+      tokens[index + 2]?.literal &&
+      tokens[index + 2]?.value.trimStart().startsWith("(version 1)"),
+  );
+
+  if (matches.length !== 1) return fail();
+
+  const index = tokens.indexOf(matches[0]!),
+    profile = tokens[index + 2]!;
+  return {
+    ok: true as const,
+    value:
+      source.slice(0, profile.start) +
+      quote(profile.value + "\n" + rules) +
+      source.slice(profile.end),
+  };
+}

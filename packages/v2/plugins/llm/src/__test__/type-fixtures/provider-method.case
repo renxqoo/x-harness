@@ -1,1 +1,11 @@
-const provider: LlmProviderService = { async stream() { return { ok: true, value: "text" }; }, async describe() { return { ok: false, error: { source: "llm", code: "closed", phase: "close", hasOutput: false } }; } };
+const provider: LlmProviderService = {
+  async stream() {
+    return { ok: true, value: "text" };
+  },
+  async describe() {
+    return {
+      ok: false,
+      error: { source: "llm", code: "closed", phase: "close", hasOutput: false },
+    };
+  },
+};

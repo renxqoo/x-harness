@@ -13,14 +13,18 @@ export const policy = definePlugin({
   setup(ctx) {
     const schedule = ctx.guard("toolScheduleAccess", (input) => ({
       ok: true,
-      value: input.origin.pluginName === "worker" && input.calls.every(call => call.name === "echo")
-        ? { kind: "allow" } : { kind: "deny", reason: "submission-not-allowed" },
+      value:
+        input.origin.pluginName === "worker" && input.calls.every((call) => call.name === "echo")
+          ? { kind: "allow" }
+          : { kind: "deny", reason: "submission-not-allowed" },
     }));
     if (!schedule.ok) return schedule;
     return ctx.guard("toolAccess", (input) => ({
       ok: true,
-      value: input.origin.pluginName === "tool-scheduler" && input.tool.name === "echo"
-        ? { kind: "allow" } : { kind: "deny", reason: "execution-not-allowed" },
+      value:
+        input.origin.pluginName === "tool-scheduler" && input.tool.name === "echo"
+          ? { kind: "allow" }
+          : { kind: "deny", reason: "execution-not-allowed" },
     }));
   },
 });

@@ -1,18 +1,57 @@
 import type { Result, Scheduler } from "../../../core/src/index";
 
-export function value<T, E>(result: Result<T, E>): T { if (!result.ok) throw new Error(JSON.stringify(result.error)); return result.value; }
-export function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
-export async function flush() { for (let turn = 0; turn < 60; turn += 1) await Promise.resolve(); }
+export function value<T, E>(result: Result<T, E>): T {
+  if (!result.ok) throw new Error(JSON.stringify(result.error));
+
+  return result.value;
+}
+
+export function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+export async function flush() {
+  for (let turn = 0; turn < 60; turn += 1) await Promise.resolve();
+}
+
 export function clock() {
-  let time = 0; let next = 0;
+  let time = 0;
+  let next = 0;
   const timers = new Map<number, { at: number; callback: () => void }>();
-  const scheduler: Scheduler = { now: () => time, delay(callback, duration) { const id = ++next; timers.set(id, { at: time + duration, callback }); return () => { timers.delete(id); }; } };
-  return { scheduler, timers, advance(ms: number) {
-    const end = time + ms;
-    while (true) {
-      const timer = [...timers].filter(([, timer]) => timer.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
-      if (!timer) break; time = timer[1].at; timers.delete(timer[0]); timer[1].callback();
-    }
-    time = end;
-  } };
+  const scheduler: Scheduler = {
+    now: () => time,
+    delay(callback, duration) {
+      const id = ++next;
+      timers.set(id, { at: time + duration, callback });
+
+      return () => {
+        timers.delete(id);
+      };
+    },
+  };
+  return {
+    scheduler,
+    timers,
+    advance(ms: number) {
+      const end = time + ms;
+
+      while (true) {
+        const timer = [...timers]
+          .filter(([, timer]) => timer.at <= end)
+          .sort((a, b) => a[1].at - b[1].at)[0];
+
+        if (!timer) break;
+
+        time = timer[1].at;
+        timers.delete(timer[0]);
+        timer[1].callback();
+      }
+
+      time = end;
+    },
+  };
 }

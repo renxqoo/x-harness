@@ -12,16 +12,16 @@
 
 ## 测试迁移矩阵
 
-| 基线文件 | 迁移方式 | 断言处理 |
-| --- | --- | --- |
-| contract / boundaries / projection-properties / capacity-journeys | 保持 session 包，装配两个独立插件 | 保留业务断言；非法存储配置断言移到存储工厂 |
-| storage-faults / postgres-failover / process-journeys | 保持真数据库全链验证 | 只调整工厂装配及子进程参数；未提交崩溃探针直接用各数据库驱动开启事务，避免跨包导入私有SQL库；保留故障与数据终态断言 |
-| contract-identity | 同时验证 session 与 storage 的源码/构建token | 保留原断言并增加存储token身份 |
-| transaction-boundaries | 领域重放/投影断言留原包，底层取消回滚移SQL库同目录测试 | 保留全部故障断言 |
-| unknown-outcome | 移SQL库，在提交前暂停真实事务 | 保留not-found后仍可成功和同ID重试断言 |
-| gate / close-worker / sqlite-protocol | 各自移到归属包同目录测试 | 保留全部断言，无跨包引用私有测试文件 |
-| snapshot-json | 保留 | 全部保留 |
-| 7个类型负例 | 保留，存储配置负例按新领域入口验证拒绝 | 不减少负例 |
+| 基线文件                                                          | 迁移方式                                               | 断言处理                                                                                                            |
+| ----------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| contract / boundaries / projection-properties / capacity-journeys | 保持 session 包，装配两个独立插件                      | 保留业务断言；非法存储配置断言移到存储工厂                                                                          |
+| storage-faults / postgres-failover / process-journeys             | 保持真数据库全链验证                                   | 只调整工厂装配及子进程参数；未提交崩溃探针直接用各数据库驱动开启事务，避免跨包导入私有SQL库；保留故障与数据终态断言 |
+| contract-identity                                                 | 同时验证 session 与 storage 的源码/构建token           | 保留原断言并增加存储token身份                                                                                       |
+| transaction-boundaries                                            | 领域重放/投影断言留原包，底层取消回滚移SQL库同目录测试 | 保留全部故障断言                                                                                                    |
+| unknown-outcome                                                   | 移SQL库，在提交前暂停真实事务                          | 保留not-found后仍可成功和同ID重试断言                                                                               |
+| gate / close-worker / sqlite-protocol                             | 各自移到归属包同目录测试                               | 保留全部断言，无跨包引用私有测试文件                                                                                |
+| snapshot-json                                                     | 保留                                                   | 全部保留                                                                                                            |
+| 7个类型负例                                                       | 保留，存储配置负例按新领域入口验证拒绝                 | 不减少负例                                                                                                          |
 
 ## 测试计划
 
@@ -45,7 +45,7 @@
 ## 装置适配记录
 
 A1：测试配置对象持有分开的 sessionOptions 与 backendOptions；生产领域类型删除 storage 字段。所有业务断言保持。
-A2：底层事务取消/关闭测试转入实现包自己的 __test__，使用本包 value helper；禁止跨包引用 session/__test__。
+A2：底层事务取消/关闭测试转入实现包自己的 `__test__`，使用本包 value helper；禁止跨包引用 `session/__test__`。
 A3：源码/构建进程探针必须同时选择对应形态的 session 与存储插件入口，避免只验证领域产物而存储一直运行源码。
 A4：事务前暂停的未知结果测试直接针对存储 commit，保留真实事务和另一连接查证，不以延迟返回已提交结果冒充在途提交。
 A5：领域重放跨多次请求，整次期限沿用core调用预算；数据库事务预算仍为单次10秒。读取分页和分支重放必须在页间观察取消。

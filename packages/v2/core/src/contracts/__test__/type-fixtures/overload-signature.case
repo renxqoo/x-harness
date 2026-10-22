@@ -1,1 +1,5 @@
-interface Overloaded {run(input:string):Promise<Result<string>>;run(input:number):Promise<Result<number>>} defineService<Overloaded>({name:"overloaded",methods:{run:{}}});
+interface Overloaded {
+  run(input: string): Promise<Result<string>>;
+  run(input: number): Promise<Result<number>>;
+}
+defineService<Overloaded>({ name: "overloaded", methods: { run: {} } });

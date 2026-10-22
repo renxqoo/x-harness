@@ -8,4 +8,10 @@ export { createTimerPlugin } from "./timer/create-timer-plugin";
 export { createTimer } from "./timer/create-timer";
 export type { TimerOwner, ScheduleSpec, ScheduledTask, ScopedTimer } from "./timer/types";
 export { createConfigPlugin } from "./config/create-config-plugin";
-export type { ConfigOptions, ConfigSnapshot, ConfigReader, ConfigWriter, ConfigPlugin } from "./config/types";
+export type {
+  ConfigOptions,
+  ConfigSnapshot,
+  ConfigReader,
+  ConfigWriter,
+  ConfigPlugin,
+} from "./config/types";

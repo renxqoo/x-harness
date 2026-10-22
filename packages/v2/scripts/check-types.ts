@@ -9,40 +9,139 @@ const compiler = resolve(import.meta.dir, "../../../node_modules/typescript/bin/
 const imports = `import { defineService } from ${JSON.stringify(entry)};\nimport type { Context, CleanupContext, Invocation, ServiceToken, ChainToken, GuardToken, EventToken, Result, CoreFault, MethodSpec } from ${JSON.stringify(entry)};\n`;
 const common = `declare const ctx: Context;\ndeclare const cleanup: CleanupContext;\ndeclare const service: ServiceToken<{ run(input: { text: string }): Promise<Result<number, { kind: "denied" }>> }>;\ndeclare const chain: ChainToken<string, number>;\ndeclare const guard: GuardToken<string>;\ndeclare const event: EventToken<string>;\n`;
 let count = 0;
+
 try {
   for (const name of (await readdir(fixtures)).filter((item) => item.endsWith(".case")).sort()) {
-    const source = (await readFile(resolve(fixtures, name), "utf8")).replaceAll('"__PUBLIC_ENTRY__"', JSON.stringify(entry)).replaceAll('"__INTERNAL_TYPES__"', JSON.stringify(resolve(import.meta.dir, "../core/src/foundation/types.ts"))).replaceAll('"__STANDARD_ENTRY__"', JSON.stringify(resolve(import.meta.dir, "../standard/src/index.ts"))).replaceAll('"__APPLICATION_ENTRY__"', JSON.stringify(resolve(import.meta.dir, "../application/src/index.ts"))).replaceAll('"__AUTHORING_FIXTURE__"', JSON.stringify(resolve(fixtures, "authoring-positive.ts")));
+    const source = (await readFile(resolve(fixtures, name), "utf8"))
+      .replaceAll('"__PUBLIC_ENTRY__"', JSON.stringify(entry))
+      .replaceAll(
+        '"__INTERNAL_TYPES__"',
+        JSON.stringify(resolve(import.meta.dir, "../core/src/foundation/types.ts")),
+      )
+      .replaceAll(
+        '"__STANDARD_ENTRY__"',
+        JSON.stringify(resolve(import.meta.dir, "../standard/src/index.ts")),
+      )
+      .replaceAll(
+        '"__APPLICATION_ENTRY__"',
+        JSON.stringify(resolve(import.meta.dir, "../application/src/index.ts")),
+      )
+      .replaceAll(
+        '"__AUTHORING_FIXTURE__"',
+        JSON.stringify(resolve(fixtures, "authoring-positive.ts")),
+      );
     const file = resolve(directory, `${name}.ts`);
     await writeFile(file, imports + common + source);
-    const child = Bun.spawn(["bun", compiler, "--ignoreConfig", "--noEmit", "--allowImportingTsExtensions", "--strict", "--skipLibCheck", "--target", "ESNext", "--lib", "ESNext,DOM", "--module", "ESNext", "--moduleResolution", "bundler", file], { stdout: "pipe", stderr: "pipe" });
-    const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+    const child = Bun.spawn(
+      [
+        "bun",
+        compiler,
+        "--ignoreConfig",
+        "--noEmit",
+        "--allowImportingTsExtensions",
+        "--strict",
+        "--skipLibCheck",
+        "--target",
+        "ESNext",
+        "--lib",
+        "ESNext,DOM",
+        "--module",
+        "ESNext",
+        "--moduleResolution",
+        "bundler",
+        file,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [output, errors, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
     const diagnostics = [...(output + errors).matchAll(/\.case\.ts\((\d+),\d+\): error TS(\d+)/g)];
-    const rejectedUsage = diagnostics.some((match) => Number(match[1]) >= 9 && ![2307, 2688, 5097].includes(Number(match[2])));
-    if (code === 0 || !rejectedUsage || /error TS5097/.test(output + errors)) throw new Error(`Negative type fixture did not reject its API usage: ${name}`);
+    const rejectedUsage = diagnostics.some(
+      (match) => Number(match[1]) >= 9 && ![2307, 2688, 5097].includes(Number(match[2])),
+    );
+
+    if (code === 0 || !rejectedUsage || /error TS5097/.test(output + errors))
+      throw new Error(`Negative type fixture did not reject its API usage: ${name}`);
+
     count += 1;
   }
+
   const documents = [
     { path: "../API.md", count: 1, prefix: "" },
     {
-      path: "../EXAMPLES.md", count: 9,
+      path: "../EXAMPLES.md",
+      count: 9,
       prefix: `import { createHost, definePlugin, defineService } from ${JSON.stringify(entry)};\nimport type { Context, DependencyContext, Invocation, PluginContext, PluginInvocation, PluginImplementations, GuardDecision, MaybePromise, ServiceImplementation, ServiceToken, ChainToken, GuardToken, GuardHandler, Plugin, Disposer, Result, CoreFault, InstallReport } from ${JSON.stringify(entry)};\n`,
     },
     { path: "../core/README.md", count: 16, prefix: "" },
-    ...["standard", "application", "loader", "create"].map((name) => ({ path: `../${name}/README.md`, count: 1, prefix: "" })),
+    ...["standard", "application", "loader", "create"].map((name) => ({
+      path: `../${name}/README.md`,
+      count: 1,
+      prefix: "",
+    })),
   ];
   let examples = 0;
+
   for (const document of documents) {
     const source = await readFile(resolve(import.meta.dir, document.path), "utf8");
     const blocks = [...source.matchAll(/```ts\n([\s\S]*?)```/g)].map((match) => match[1]);
-    if (blocks.length !== document.count) throw new Error(`Unexpected example block count: ${document.path}`);
+
+    if (blocks.length !== document.count)
+      throw new Error(`Unexpected example block count: ${document.path}`);
+
     const example = resolve(directory, "examples.ts");
-    let examplesSource = document.prefix + blocks.join("\n").replaceAll('"@x-harness/core"', JSON.stringify(entry));
-    for (const name of ["standard", "application", "loader", "create"]) examplesSource = examplesSource.replaceAll(`"@x-harness/${name}"`, JSON.stringify(resolve(import.meta.dir, `../${name}/src/index.ts`)));
+    let examplesSource =
+      document.prefix + blocks.join("\n").replaceAll('"@x-harness/core"', JSON.stringify(entry));
+
+    for (const name of ["standard", "application", "loader", "create"])
+      examplesSource = examplesSource.replaceAll(
+        `"@x-harness/${name}"`,
+        JSON.stringify(resolve(import.meta.dir, `../${name}/src/index.ts`)),
+      );
+
     await writeFile(example, examplesSource);
-    const child = Bun.spawn(["bun", compiler, "--ignoreConfig", "--noEmit", "--allowImportingTsExtensions", "--strict", "--noUncheckedIndexedAccess", "--skipLibCheck", "--target", "ESNext", "--lib", "ESNext,DOM", "--module", "ESNext", "--moduleResolution", "bundler", "--types", resolve(import.meta.dir, "../../../node_modules/bun-types/index.d.ts"), example], { stdout: "pipe", stderr: "pipe" });
-    const [output, errors, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    if (code !== 0) throw new Error(`Examples failed typechecking in ${document.path}: ${output}${errors}`);
+    const child = Bun.spawn(
+      [
+        "bun",
+        compiler,
+        "--ignoreConfig",
+        "--noEmit",
+        "--allowImportingTsExtensions",
+        "--strict",
+        "--noUncheckedIndexedAccess",
+        "--skipLibCheck",
+        "--target",
+        "ESNext",
+        "--lib",
+        "ESNext,DOM",
+        "--module",
+        "ESNext",
+        "--moduleResolution",
+        "bundler",
+        "--types",
+        resolve(import.meta.dir, "../../../node_modules/bun-types/index.d.ts"),
+        example,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [output, errors, code] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+
+    if (code !== 0)
+      throw new Error(`Examples failed typechecking in ${document.path}: ${output}${errors}`);
+
     examples += blocks.length;
   }
-  process.stdout.write(`${count} negative type fixtures rejected; ${examples} documentation examples passed public API typechecking\n`);
-} finally { await rm(directory, { recursive: true, force: true }); }
+
+  process.stdout.write(
+    `${count} negative type fixtures rejected; ${examples} documentation examples passed public API typechecking\n`,
+  );
+} finally {
+  await rm(directory, { recursive: true, force: true });
+}

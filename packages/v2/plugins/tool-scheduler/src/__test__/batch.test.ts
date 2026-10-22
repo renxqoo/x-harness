@@ -1,12 +1,202 @@
-import { expect,it } from "vitest";
+import { expect, it } from "vitest";
 import { createToolPlugin } from "../../../tools/src/index";
-import { world,value,text,gate,request } from "./helpers";
-it("DAG waits for successful parents and preserves input order in the report",async()=>{const order:string[]=[];const {host,service}=await world([value(createToolPlugin({name:"echo",concurrency:3,inputSchema:{type:"object",properties:{id:{type:"string"}},required:["id"]},execute:async input=>{order.push(input.id);return text(input.id);}}))]);try{const result=value(await service.batch({calls:[{...request("echo","child"),input:{id:"child"},dependsOn:["parent"]},{...request("echo","independent"),input:{id:"independent"}},{...request("echo","parent"),input:{id:"parent"}}]}));expect(order.indexOf("child")).toBeGreaterThan(order.indexOf("parent"));expect(result.results.map(r=>r.callId)).toEqual(["child","independent","parent"]);expect(result.results.every(r=>r.result.ok)).toBe(true);}finally{value(await host.close());}});
-it.each([false,true])("a parent failure blocks only its descendants, business error=%s",async business=>{const runs:string[]=[];const {host,service}=await world([value(createToolPlugin({name:"echo",concurrency:3,inputSchema:{type:"object"},execute:async(_input,call)=>{runs.push(call.callId);if(call.callId==="bad")return business?{ok:true,value:{content:[],isError:true}}:{ok:false,error:{source:"tools",code:"execution-failed",message:"execution-failed"}};return text("ok");}}))]);try{const result=value(await service.batch({calls:[request("echo","bad"),{...request("echo","child"),dependsOn:["bad"]},{...request("echo","grandchild"),dependsOn:["child"]},request("echo","independent")]}));expect(runs.sort()).toEqual(["bad","independent"]);for(const id of ["child","grandchild"])expect(result.results.find(r=>r.callId===id)?.result).toMatchObject({ok:false,error:{source:"tool-scheduler",code:"dependency-failed"}});expect(result.results[3]!.result.ok).toBe(true);}finally{value(await host.close());}});
-it.each([
- [],[request(),request()], [{...request(),dependsOn:["missing"]}], [{...request(),dependsOn:["call"]}],
- [{...request("echo","a"),dependsOn:["b"]},{...request("echo","b"),dependsOn:["a"]}],
- [{...request("echo","a"),dependsOn:["b","b"]},request("echo","b"),request("echo","c")],
-].map(calls=>({calls})))("invalid batch graphs are rejected atomically before author side effects %#",async({calls})=>{let runs=0;const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async()=>{runs++;return text("x");}}))]);try{expect(await service.batch({calls})).toMatchObject({ok:false,error:{code:"invalid-input"}});expect(runs).toBe(0);expect(value(await service.inspect({}))).toEqual({running:0,queued:0,requests:0});}finally{value(await host.close());}});
-it("per batch concurrency is enforced independently of the global limit",async()=>{const hold=gate();const entered=gate();let active=0,max=0;const {host,service}=await world([value(createToolPlugin({name:"echo",concurrency:8,inputSchema:{type:"object"},execute:async()=>{active++;max=Math.max(max,active);entered.resolve();await hold.promise;active--;return text("x");}}))],{concurrency:8});try{const pending=service.batch({calls:Array.from({length:5},(_,i)=>request("echo",String(i))),concurrency:2});await entered.promise;await expect.poll(async()=>value(await service.inspect({})).running).toBe(2);hold.resolve();expect(value(await pending).results).toHaveLength(5);expect(max).toBe(2);}finally{hold.resolve();value(await host.close());}});
-it("unknown tools fail their own nodes without preventing independent tools",async()=>{const {host,service}=await world([value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async()=>text("x")}))]);try{const report=value(await service.batch({calls:[request("missing","missing"),request("echo","good")]}));expect(report.results[0]!.result).toMatchObject({ok:false,error:{source:"tools",code:"not-found"}});expect(report.results[1]!.result.ok).toBe(true);}finally{value(await host.close());}});
+import { world, value, text, gate, request } from "./helpers";
+it("DAG waits for successful parents and preserves input order in the report", async () => {
+  const order: string[] = [];
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        concurrency: 3,
+        inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+        execute: async (input) => {
+          order.push(input.id);
+          return text(input.id);
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const result = value(
+      await service.batch({
+        calls: [
+          { ...request("echo", "child"), input: { id: "child" }, dependsOn: ["parent"] },
+          { ...request("echo", "independent"), input: { id: "independent" } },
+          { ...request("echo", "parent"), input: { id: "parent" } },
+        ],
+      }),
+    );
+    expect(order.indexOf("child")).toBeGreaterThan(order.indexOf("parent"));
+    expect(result.results.map((r) => r.callId)).toEqual(["child", "independent", "parent"]);
+    expect(result.results.every((r) => r.result.ok)).toBe(true);
+  } finally {
+    value(await host.close());
+  }
+});
+it.each([false, true])(
+  "a parent failure blocks only its descendants, business error=%s",
+  async (business) => {
+    const runs: string[] = [];
+    const { host, service } = await world([
+      value(
+        createToolPlugin({
+          name: "echo",
+          concurrency: 3,
+          inputSchema: { type: "object" },
+          execute: async (_input, call) => {
+            runs.push(call.callId);
+
+            if (call.callId === "bad")
+              return business
+                ? { ok: true, value: { content: [], isError: true } }
+                : {
+                    ok: false,
+                    error: {
+                      source: "tools",
+                      code: "execution-failed",
+                      message: "execution-failed",
+                    },
+                  };
+
+            return text("ok");
+          },
+        }),
+      ),
+    ]);
+
+    try {
+      const result = value(
+        await service.batch({
+          calls: [
+            request("echo", "bad"),
+            { ...request("echo", "child"), dependsOn: ["bad"] },
+            { ...request("echo", "grandchild"), dependsOn: ["child"] },
+            request("echo", "independent"),
+          ],
+        }),
+      );
+      expect(runs.sort()).toEqual(["bad", "independent"]);
+
+      for (const id of ["child", "grandchild"])
+        expect(result.results.find((r) => r.callId === id)?.result).toMatchObject({
+          ok: false,
+          error: { source: "tool-scheduler", code: "dependency-failed" },
+        });
+
+      expect(result.results[3]!.result.ok).toBe(true);
+    } finally {
+      value(await host.close());
+    }
+  },
+);
+it.each(
+  [
+    [],
+    [request(), request()],
+    [{ ...request(), dependsOn: ["missing"] }],
+    [{ ...request(), dependsOn: ["call"] }],
+    [
+      { ...request("echo", "a"), dependsOn: ["b"] },
+      { ...request("echo", "b"), dependsOn: ["a"] },
+    ],
+    [
+      { ...request("echo", "a"), dependsOn: ["b", "b"] },
+      request("echo", "b"),
+      request("echo", "c"),
+    ],
+  ].map((calls) => ({ calls })),
+)(
+  "invalid batch graphs are rejected atomically before author side effects %#",
+  async ({ calls }) => {
+    let runs = 0;
+    const { host, service } = await world([
+      value(
+        createToolPlugin({
+          name: "echo",
+          inputSchema: { type: "object" },
+          execute: async () => {
+            runs++;
+            return text("x");
+          },
+        }),
+      ),
+    ]);
+
+    try {
+      expect(await service.batch({ calls })).toMatchObject({
+        ok: false,
+        error: { code: "invalid-input" },
+      });
+      expect(runs).toBe(0);
+      expect(value(await service.inspect({}))).toEqual({ running: 0, queued: 0, requests: 0 });
+    } finally {
+      value(await host.close());
+    }
+  },
+);
+it("per batch concurrency is enforced independently of the global limit", async () => {
+  const hold = gate();
+  const entered = gate();
+  let active = 0,
+    max = 0;
+  const { host, service } = await world(
+    [
+      value(
+        createToolPlugin({
+          name: "echo",
+          concurrency: 8,
+          inputSchema: { type: "object" },
+          execute: async () => {
+            active++;
+            max = Math.max(max, active);
+            entered.resolve();
+            await hold.promise;
+            active--;
+            return text("x");
+          },
+        }),
+      ),
+    ],
+    { concurrency: 8 },
+  );
+
+  try {
+    const pending = service.batch({
+      calls: Array.from({ length: 5 }, (_, i) => request("echo", String(i))),
+      concurrency: 2,
+    });
+    await entered.promise;
+    await expect.poll(async () => value(await service.inspect({})).running).toBe(2);
+    hold.resolve();
+    expect(value(await pending).results).toHaveLength(5);
+    expect(max).toBe(2);
+  } finally {
+    hold.resolve();
+    value(await host.close());
+  }
+});
+it("unknown tools fail their own nodes without preventing independent tools", async () => {
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        inputSchema: { type: "object" },
+        execute: async () => text("x"),
+      }),
+    ),
+  ]);
+
+  try {
+    const report = value(
+      await service.batch({ calls: [request("missing", "missing"), request("echo", "good")] }),
+    );
+    expect(report.results[0]!.result).toMatchObject({
+      ok: false,
+      error: { source: "tools", code: "not-found" },
+    });
+    expect(report.results[1]!.result.ok).toBe(true);
+  } finally {
+    value(await host.close());
+  }
+});

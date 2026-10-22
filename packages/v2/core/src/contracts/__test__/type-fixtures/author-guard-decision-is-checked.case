@@ -1,1 +1,8 @@
-import { definePlugin } from "__PUBLIC_ENTRY__"; definePlugin({ name: "bad", requires: { guard }, setup(ctx) { return ctx.guard("guard", () => ({ ok: true, value: { kind: "maybe" } })); } });
+import { definePlugin } from "__PUBLIC_ENTRY__";
+definePlugin({
+  name: "bad",
+  requires: { guard },
+  setup(ctx) {
+    return ctx.guard("guard", () => ({ ok: true, value: { kind: "maybe" } }));
+  },
+});

@@ -7,5 +7,12 @@ import { replaceProvider } from "./replace-provider";
 import { drainReplacement } from "./drain-replacement";
 
 export async function runCordis(): Promise<Journeys> {
-  return { service: await readService(), resource: await closeResource(), task: await joinTask(), event: await deliverEvent(), replacement: await replaceProvider(), inFlight: await drainReplacement() };
+  return {
+    service: await readService(),
+    resource: await closeResource(),
+    task: await joinTask(),
+    event: await deliverEvent(),
+    replacement: await replaceProvider(),
+    inFlight: await drainReplacement(),
+  };
 }

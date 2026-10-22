@@ -10,13 +10,13 @@
 
 ## 2. 协议表
 
-| 维度 | 必须覆盖 |
-| --- | --- |
-| Responses | 多output_item、多content_part、交错块、函数参数delta与done、reasoning summary与opaque完成载荷、completed/incomplete/failed、引用、最终usage |
-| Chat Completions | role空片段、文本、refusal、并行tool index、callId/name/input分片、finish_reason与usage尾帧、DONE/EOF、多个choice明确拒绝、显式reasoning兼容能力 |
-| Anthropic Messages | message_start/blocks/message_delta/message_stop、初始非空内容、partial JSON、signature delta、redacted推理原文保留、累计usage、ping、流内error、各stop reason |
-| 请求转换 | system/developer、文本/图片URL/base64、工具对象及结果、思考预算、显式max tokens配置优先级、output schema、原生continuation来源校验、document/search-result启用引用、Responses显式引用工具 |
-| 输入错误 | 空/垃圾/越界、循环及深JSON、重复ID、孤儿工具结果、不完整配对、schema不支持关键字/正则/引用/复杂分支、Anthropic引用与json-schema互斥、providerOptions覆盖保留字段 |
+| 维度               | 必须覆盖                                                                                                                                                                                  |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Responses          | 多output_item、多content_part、交错块、函数参数delta与done、reasoning summary与opaque完成载荷、completed/incomplete/failed、引用、最终usage                                               |
+| Chat Completions   | role空片段、文本、refusal、并行tool index、callId/name/input分片、finish_reason与usage尾帧、DONE/EOF、多个choice明确拒绝、显式reasoning兼容能力                                           |
+| Anthropic Messages | message_start/blocks/message_delta/message_stop、初始非空内容、partial JSON、signature delta、redacted推理原文保留、累计usage、ping、流内error、各stop reason                             |
+| 请求转换           | system/developer、文本/图片URL/base64、工具对象及结果、思考预算、显式max tokens配置优先级、output schema、原生continuation来源校验、document/search-result启用引用、Responses显式引用工具 |
+| 输入错误           | 空/垃圾/越界、循环及深JSON、重复ID、孤儿工具结果、不完整配对、schema不支持关键字/正则/引用/复杂分支、Anthropic引用与json-schema互斥、providerOptions覆盖保留字段                          |
 
 start不能读取可变partial并重发首字；delta/end补全文本必须有明确前缀关系，禁止猜测两段文本的重叠。工具参数逐字节保留，合法JSON只解析一次，截断/数组/原始字符串明确不可执行，不补{}。
 

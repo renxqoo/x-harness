@@ -1,1 +1,8 @@
-{ "name": "@x-harness/llm-openai", "type": "module", "exports": { ".": "./src/index.ts" }, "sideEffects": false }
+{
+  "name": "@x-harness/llm-openai",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "sideEffects": false
+}

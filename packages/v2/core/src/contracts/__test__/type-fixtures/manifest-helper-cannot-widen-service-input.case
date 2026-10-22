@@ -2,5 +2,7 @@ import { definePlugin } from "__PUBLIC_ENTRY__";
 import type { PluginContext } from "__PUBLIC_ENTRY__";
 declare const narrow: ServiceToken<{ run(input: "only"): Promise<Result<string>> }>;
 declare const wide: ServiceToken<{ run(input: string): Promise<Result<string>> }>;
-function run(ctx: PluginContext<{ requires: { source: typeof wide } }>) { return ctx.deps.source.run("wrong"); }
+function run(ctx: PluginContext<{ requires: { source: typeof wide } }>) {
+  return ctx.deps.source.run("wrong");
+}
 definePlugin({ name: "bad", requires: { source: narrow }, setup: run });

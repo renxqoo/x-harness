@@ -1,5 +1,79 @@
-import {opendir,lstat} from "node:fs/promises";
-import {join} from "node:path";
-import {signalAborted} from "../../../core/src/validation";
-import type {ExecutionResult} from "../../execution/src/index";
-export async function checkFilesystemRoots(options:{roots:readonly string[];maxEntries:number;signal:AbortSignal}):Promise<ExecutionResult<void>>{const queue=[...options.roots];let count=0;try{while(queue.length){if(signalAborted(options.signal))return {ok:false,error:{source:"execution",code:"cancelled",message:"cancelled"}};const path=queue.pop()!;if(++count>options.maxEntries)return {ok:false,error:{source:"execution",code:"access-denied",message:"access-denied"}};const info=await lstat(path);if(info.isSymbolicLink())continue;if(info.isFile()&&info.nlink>1)return {ok:false,error:{source:"execution",code:"access-denied",message:"access-denied"}};if(info.isDirectory()){const directory=await opendir(path,{bufferSize:32});try{for(;;){if(signalAborted(options.signal))return {ok:false,error:{source:"execution",code:"cancelled",message:"cancelled"}};const entry=await directory.read();if(!entry)break;if(count+queue.length>=options.maxEntries)return {ok:false,error:{source:"execution",code:"access-denied",message:"access-denied"}};queue.push(join(path,entry.name));}}finally{await directory.close();}}}if(signalAborted(options.signal))return {ok:false,error:{source:"execution",code:"cancelled",message:"cancelled"}};return {ok:true,value:undefined};}catch{return {ok:false,error:{source:"execution",code:"access-denied",message:"access-denied"}};}}
+import { opendir, lstat } from "node:fs/promises";
+import { join } from "node:path";
+import { signalAborted } from "../../../core/src/validation";
+import type { ExecutionResult } from "../../execution/src/index";
+
+export async function checkFilesystemRoots(options: {
+  roots: readonly string[];
+  maxEntries: number;
+  signal: AbortSignal;
+}): Promise<ExecutionResult<void>> {
+  const queue = [...options.roots];
+  let count = 0;
+
+  try {
+    while (queue.length) {
+      if (signalAborted(options.signal))
+        return {
+          ok: false,
+          error: { source: "execution", code: "cancelled", message: "cancelled" },
+        };
+
+      const path = queue.pop()!;
+
+      if (++count > options.maxEntries)
+        return {
+          ok: false,
+          error: { source: "execution", code: "access-denied", message: "access-denied" },
+        };
+
+      const info = await lstat(path);
+
+      if (info.isSymbolicLink()) continue;
+
+      if (info.isFile() && info.nlink > 1)
+        return {
+          ok: false,
+          error: { source: "execution", code: "access-denied", message: "access-denied" },
+        };
+
+      if (info.isDirectory()) {
+        const directory = await opendir(path, { bufferSize: 32 });
+
+        try {
+          for (;;) {
+            if (signalAborted(options.signal))
+              return {
+                ok: false,
+                error: { source: "execution", code: "cancelled", message: "cancelled" },
+              };
+
+            const entry = await directory.read();
+
+            if (!entry) break;
+
+            if (count + queue.length >= options.maxEntries)
+              return {
+                ok: false,
+                error: { source: "execution", code: "access-denied", message: "access-denied" },
+              };
+
+            queue.push(join(path, entry.name));
+          }
+        } finally {
+          await directory.close();
+        }
+      }
+    }
+
+    if (signalAborted(options.signal))
+      return { ok: false, error: { source: "execution", code: "cancelled", message: "cancelled" } };
+
+    return { ok: true, value: undefined };
+  } catch {
+    return {
+      ok: false,
+      error: { source: "execution", code: "access-denied", message: "access-denied" },
+    };
+  }
+}

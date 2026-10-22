@@ -7,6 +7,13 @@ export function signalAborted(signal: AbortSignal): boolean {
 }
 
 export function observeSignal(signal: AbortSignal, callback: () => void): () => void {
-  Reflect.apply(add.value as (...args: unknown[]) => void, signal, ["abort", callback, { once: true }]);
-  return () => { Reflect.apply(remove.value as (...args: unknown[]) => void, signal, ["abort", callback]); };
+  Reflect.apply(add.value as (...args: unknown[]) => void, signal, [
+    "abort",
+    callback,
+    { once: true },
+  ]);
+
+  return () => {
+    Reflect.apply(remove.value as (...args: unknown[]) => void, signal, ["abort", callback]);
+  };
 }

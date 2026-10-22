@@ -1,3 +1,9 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import { greeting, userStore, changed, ok, openConnection } from "__AUTHORING_FIXTURE__";
-definePlugin({ name: 'bad', setup(ctx) { void ctx.install([]); return ok(); } });
+definePlugin({
+  name: "bad",
+  setup(ctx) {
+    void ctx.install([]);
+    return ok();
+  },
+});

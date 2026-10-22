@@ -1,12 +1,216 @@
-import {expect,it} from "vitest";
-import {definePlugin} from "../../../../core/src/index";
-import {agentCheckpoint,agentContext,agentRunAccess} from "../index";
-import type {AgentEvent} from "../index";
-import {world,value,request,answer} from "./helpers";
-it("a text run preserves model events, final transcript, checkpoint and one terminal",async()=>{const checkpoints:string[]=[];const sink=definePlugin({name:"save",requires:{agentCheckpoint},setup:ctx=>ctx.middleware("agentCheckpoint",async(input,next)=>{checkpoints.push(input.phase);expect(input.caller.origin.scopeId).toBe("root");expect(Object.isFrozen(input.messages)).toBe(true);return next(input);})});const f=await world({plugins:[sink]});try{const events:AgentEvent[]=[];const result=value(await f.service.run({...request,onEvent(event){events.push(event);}}));expect(result.stopReason).toBe("model");expect(result.steps).toBe(1);expect(result.toolCalls).toBe(0);expect(result.messages).toEqual([...request.messages,{role:"assistant",content:[{type:"text",text:"answer"}]}]);expect(result.usage).toEqual([{step:1,usage:{inputTokens:10,outputTokens:3,totalTokens:13,complete:true}}]);expect(checkpoints).toEqual(["response"]);expect(events.map(e=>e.sequence)).toEqual(events.map((_,i)=>i));expect(events.at(-1)?.type).toBe("finish");expect(events.filter(e=>e.type==="finish")).toHaveLength(1);expect(events.filter(e=>e.type==="model-event").map(e=>e.event.type)).toEqual(["start","block-start","text-delta","block-end","usage","finish"]);}finally{value(await f.host.close());}});
-it("an ordinary context plugin changes the actual request while keeping the input history",async()=>{let called=0;const context=definePlugin({name:"context",requires:{agentContext},setup:ctx=>ctx.middleware("agentContext",(input,next)=>next({...input,request:{...input.request,messages:[...input.request.messages,{role:"user",content:[{type:"text",text:"extra"}]}]}}))});const f=await world({plugins:[context],async run(input){called++;expect(input.request.messages.at(-1)).toEqual({role:"user",content:[{type:"text",text:"extra"}]});return answer(input);}});try{const result=value(await f.service.run(request));expect(called).toBe(1);expect(result.messages[0]).toEqual(request.messages[0]);expect(result.messages).toHaveLength(2);}finally{value(await f.host.close());}});
-it("required run authorization rejects missing and denying policies before the model",async()=>{let called=0;const f=await world({agent:{access:"required"},async run(input){called++;return answer(input);}});try{expect(await f.service.run(request)).toMatchObject({ok:false,error:{code:"access-denied"}});expect(called).toBe(0);value(await f.host.install([definePlugin({name:"deny",requires:{agentRunAccess},setup:ctx=>ctx.guard("agentRunAccess",()=>({ok:true,value:{kind:"deny",reason:"policy"}}))})]));expect(await f.service.run(request)).toMatchObject({ok:false,error:{code:"access-denied"}});expect(called).toBe(0);}finally{value(await f.host.close());}});
-it("explicit trust cannot override another run authorization denial",async()=>{const policy=definePlugin({name:"deny",requires:{agentRunAccess},setup:ctx=>ctx.guard("agentRunAccess",()=>({ok:true,value:{kind:"deny",reason:"policy"}}))});const f=await world({plugins:[policy]});try{expect(await f.service.run(request)).toMatchObject({ok:false,error:{code:"access-denied"}});}finally{value(await f.host.close());}});
-it("a checkpoint failure blocks successful completion and does not expose exception secrets",async()=>{const sink=definePlugin({name:"broken-save",requires:{agentCheckpoint},setup:ctx=>ctx.middleware("agentCheckpoint",()=>{throw new Error("secret-password");})});const f=await world({plugins:[sink]});try{const events:AgentEvent[]=[];const result=await f.service.run({...request,onEvent:e=>{events.push(e);}});expect(result).toMatchObject({ok:false,error:{code:"checkpoint-failed"}});expect(JSON.stringify(result)).not.toContain("secret-password");expect(events.at(-1)).toMatchObject({type:"error",error:{code:"checkpoint-failed"}});expect(events.some(e=>e.type==="finish")).toBe(false);}finally{value(await f.host.close());}});
-it("empty completed assistant content remains a valid reusable transcript",async()=>{const f=await world({async run(){return {ok:true,value:{reason:{kind:"stop"}}};}});try{const result=value(await f.service.run(request));expect(result.messages.at(-1)).toEqual({role:"assistant",content:[{type:"text",text:""}]});expect((await f.service.run({...request,messages:result.messages})).ok).toBe(true);}finally{value(await f.host.close());}});
-it("a host consumer failure is latched before any further event or successful finish",async()=>{const f=await world();try{let calls=0;const result=await f.service.run({...request,onEvent(){calls++;throw new Error("secret-consumer");}});expect(result).toMatchObject({ok:false,error:{source:"core",code:"cancelled"}});expect(calls).toBe(1);expect(JSON.stringify(result)).not.toContain("secret-consumer");}finally{value(await f.host.close());}});
+import { expect, it } from "vitest";
+import { definePlugin } from "../../../../core/src/index";
+import { agentCheckpoint, agentContext, agentRunAccess } from "../index";
+import type { AgentEvent } from "../index";
+import { world, value, request, answer } from "./helpers";
+it("a text run preserves model events, final transcript, checkpoint and one terminal", async () => {
+  const checkpoints: string[] = [];
+  const sink = definePlugin({
+    name: "save",
+    requires: { agentCheckpoint },
+    setup: (ctx) =>
+      ctx.middleware("agentCheckpoint", async (input, next) => {
+        checkpoints.push(input.phase);
+        expect(input.caller.origin.scopeId).toBe("root");
+        expect(Object.isFrozen(input.messages)).toBe(true);
+        return next(input);
+      }),
+  });
+  const f = await world({ plugins: [sink] });
+
+  try {
+    const events: AgentEvent[] = [];
+    const result = value(
+      await f.service.run({
+        ...request,
+        onEvent(event) {
+          events.push(event);
+        },
+      }),
+    );
+    expect(result.stopReason).toBe("model");
+    expect(result.steps).toBe(1);
+    expect(result.toolCalls).toBe(0);
+    expect(result.messages).toEqual([
+      ...request.messages,
+      { role: "assistant", content: [{ type: "text", text: "answer" }] },
+    ]);
+    expect(result.usage).toEqual([
+      { step: 1, usage: { inputTokens: 10, outputTokens: 3, totalTokens: 13, complete: true } },
+    ]);
+    expect(checkpoints).toEqual(["response"]);
+    expect(events.map((e) => e.sequence)).toEqual(events.map((_, i) => i));
+    expect(events.at(-1)?.type).toBe("finish");
+    expect(events.filter((e) => e.type === "finish")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "model-event").map((e) => e.event.type)).toEqual([
+      "start",
+      "block-start",
+      "text-delta",
+      "block-end",
+      "usage",
+      "finish",
+    ]);
+  } finally {
+    value(await f.host.close());
+  }
+});
+it("an ordinary context plugin changes the actual request while keeping the input history", async () => {
+  let called = 0;
+  const context = definePlugin({
+    name: "context",
+    requires: { agentContext },
+    setup: (ctx) =>
+      ctx.middleware("agentContext", (input, next) =>
+        next({
+          ...input,
+          request: {
+            ...input.request,
+            messages: [
+              ...input.request.messages,
+              { role: "user", content: [{ type: "text", text: "extra" }] },
+            ],
+          },
+        }),
+      ),
+  });
+  const f = await world({
+    plugins: [context],
+    async run(input) {
+      called++;
+      expect(input.request.messages.at(-1)).toEqual({
+        role: "user",
+        content: [{ type: "text", text: "extra" }],
+      });
+      return answer(input);
+    },
+  });
+
+  try {
+    const result = value(await f.service.run(request));
+    expect(called).toBe(1);
+    expect(result.messages[0]).toEqual(request.messages[0]);
+    expect(result.messages).toHaveLength(2);
+  } finally {
+    value(await f.host.close());
+  }
+});
+it("required run authorization rejects missing and denying policies before the model", async () => {
+  let called = 0;
+  const f = await world({
+    agent: { access: "required" },
+    async run(input) {
+      called++;
+      return answer(input);
+    },
+  });
+
+  try {
+    expect(await f.service.run(request)).toMatchObject({
+      ok: false,
+      error: { code: "access-denied" },
+    });
+    expect(called).toBe(0);
+    value(
+      await f.host.install([
+        definePlugin({
+          name: "deny",
+          requires: { agentRunAccess },
+          setup: (ctx) =>
+            ctx.guard("agentRunAccess", () => ({
+              ok: true,
+              value: { kind: "deny", reason: "policy" },
+            })),
+        }),
+      ]),
+    );
+    expect(await f.service.run(request)).toMatchObject({
+      ok: false,
+      error: { code: "access-denied" },
+    });
+    expect(called).toBe(0);
+  } finally {
+    value(await f.host.close());
+  }
+});
+it("explicit trust cannot override another run authorization denial", async () => {
+  const policy = definePlugin({
+    name: "deny",
+    requires: { agentRunAccess },
+    setup: (ctx) =>
+      ctx.guard("agentRunAccess", () => ({ ok: true, value: { kind: "deny", reason: "policy" } })),
+  });
+  const f = await world({ plugins: [policy] });
+
+  try {
+    expect(await f.service.run(request)).toMatchObject({
+      ok: false,
+      error: { code: "access-denied" },
+    });
+  } finally {
+    value(await f.host.close());
+  }
+});
+it("a checkpoint failure blocks successful completion and does not expose exception secrets", async () => {
+  const sink = definePlugin({
+    name: "broken-save",
+    requires: { agentCheckpoint },
+    setup: (ctx) =>
+      ctx.middleware("agentCheckpoint", () => {
+        throw new Error("secret-password");
+      }),
+  });
+  const f = await world({ plugins: [sink] });
+
+  try {
+    const events: AgentEvent[] = [];
+    const result = await f.service.run({
+      ...request,
+      onEvent: (e) => {
+        events.push(e);
+      },
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: "checkpoint-failed" } });
+    expect(JSON.stringify(result)).not.toContain("secret-password");
+    expect(events.at(-1)).toMatchObject({ type: "error", error: { code: "checkpoint-failed" } });
+    expect(events.some((e) => e.type === "finish")).toBe(false);
+  } finally {
+    value(await f.host.close());
+  }
+});
+it("empty completed assistant content remains a valid reusable transcript", async () => {
+  const f = await world({
+    async run() {
+      return { ok: true, value: { reason: { kind: "stop" } } };
+    },
+  });
+
+  try {
+    const result = value(await f.service.run(request));
+    expect(result.messages.at(-1)).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "" }],
+    });
+    expect((await f.service.run({ ...request, messages: result.messages })).ok).toBe(true);
+  } finally {
+    value(await f.host.close());
+  }
+});
+it("a host consumer failure is latched before any further event or successful finish", async () => {
+  const f = await world();
+
+  try {
+    let calls = 0;
+    const result = await f.service.run({
+      ...request,
+      onEvent() {
+        calls++;
+        throw new Error("secret-consumer");
+      },
+    });
+    expect(result).toMatchObject({ ok: false, error: { source: "core", code: "cancelled" } });
+    expect(calls).toBe(1);
+    expect(JSON.stringify(result)).not.toContain("secret-consumer");
+  } finally {
+    value(await f.host.close());
+  }
+});

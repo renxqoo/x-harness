@@ -1,14 +1,515 @@
-import type {Plugin} from "../../../../core/src/index";
-import {expect,it} from "vitest";
-import {definePlugin} from "../../../../core/src/index";
-import {createToolPlugin,createToolPolicyPlugin,toolAccess,tools} from "../../../tools/src/index";
-import {toolScheduleAccess} from "../index";
-import {world,value,text,gate,request,flush} from "./helpers";
-it.each(["plan","tools","scheduler"])("waiting for %s authorization does not occupy execution slots or block unrelated tools",async kind=>{const hold=gate(),entered=gate();let checks=0;let policy:Plugin;if(kind==="plan")policy=value(createToolPolicyPlugin({name:"approval",async authorize(plan){if(plan.callId==="ask"){entered.resolve();await hold.promise;}return {ok:true,value:{kind:"allow"}};}}));else if(kind==="tools")policy=definePlugin({name:"approval",requires:{toolAccess},setup:ctx=>ctx.guard("toolAccess",async input=>{if(input.operation==="execute"&&input.callId==="ask"){entered.resolve();await hold.promise;}return {ok:true,value:{kind:"allow"}};})});else policy=definePlugin({name:"approval",requires:{toolScheduleAccess},setup:ctx=>ctx.guard("toolScheduleAccess",async input=>{if(input.calls[0]?.callId==="ask"&&++checks>1){entered.resolve();await hold.promise;}return {ok:true,value:{kind:"allow"}};})});const {host,service}=await world([policy,value(createToolPlugin({name:"echo",concurrency:2,inputSchema:{type:"object"},execute:async()=>text("x")}))],{concurrency:1});try{const waiting=service.execute(request("echo","ask"));await entered.promise;expect(value(await service.inspect({})).running).toBe(0);value(await service.execute(request("echo","free")));expect(value(await service.inspect({})).running).toBe(0);hold.resolve();value(await waiting);}finally{hold.resolve();value(await host.close());}});
-it("shared resources coordinate direct tools with scheduled calls without holding a scheduler slot",async()=>{const hold=gate(),entered=gate();let runs=0;const {host,service}=await world([value(createToolPlugin({name:"echo",concurrency:2,inputSchema:{type:"object"},prepare:async()=>({ok:true,value:{resources:[{domain:"shared",path:["x"],scope:"subtree",mode:"write"}]}}),execute:async()=>{if(++runs===1){entered.resolve();await hold.promise;}return text("x");}}))],{concurrency:1});try{const direct=value(host.use(tools)).execute(request());await entered.promise;const queued=service.execute(request("echo","queued"));await expect.poll(async()=>value(await service.inspect({})).queued).toBe(1);expect(value(await service.inspect({})).running).toBe(0);expect(runs).toBe(1);hold.resolve();value(await direct);value(await queued);expect(runs).toBe(2);}finally{hold.resolve();value(await host.close());}});
-it("revoked resource waiters finish immediately and block only their descendants",async()=>{const hold=gate(),entered=gate(),revoked=new AbortController();const runs:string[]=[];const {host,service}=await world([value(createToolPolicyPlugin({name:"approval",authorize:async plan=>({ok:true,value:{kind:"allow",...(plan.callId==="queued"?{signal:revoked.signal}:{})}})})),value(createToolPlugin({name:"echo",concurrency:3,inputSchema:{type:"object"},prepare:async()=>({ok:true,value:{resources:[{domain:"shared",path:["x"],scope:"exact",mode:"write"}]}}),execute:async(_input,call)=>{runs.push(call.callId);if(call.callId==="direct"){entered.resolve();await hold.promise;}return text("x");}}))]);try{const direct=value(host.use(tools)).execute(request("echo","direct"));await entered.promise;const batch=service.batch({calls:[request("echo","queued"),{...request("echo","child"),dependsOn:["queued"]}]});await expect.poll(async()=>value(await service.inspect({})).queued).toBe(2);await flush();revoked.abort();const report=value(await batch);expect(report.results[0]?.result).toMatchObject({ok:false,error:{code:"access-denied"}});expect(report.results[1]?.result).toMatchObject({ok:false,error:{code:"dependency-failed"}});expect(runs).toEqual(["direct"]);hold.resolve();value(await direct);}finally{hold.resolve();value(await host.close());}});
-it("immediate resource conflicts return busy and leave no abandoned writer intent",async()=>{const hold=gate(),entered=gate();const {host,service}=await world([value(createToolPlugin({name:"echo",concurrency:2,inputSchema:{type:"object"},prepare:async()=>({ok:true,value:{resources:[{domain:"shared",path:[],scope:"subtree",mode:"write"}]}}),execute:async()=>{entered.resolve();await hold.promise;return text("x");}}))]);try{const first=value(host.use(tools)).execute(request());await entered.promise;expect(await service.execute({...request("echo","next"),mode:"immediate"})).toMatchObject({ok:false,error:{code:"busy"}});expect(value(await service.inspect({})).queued).toBe(0);hold.resolve();value(await first);value(await service.execute(request()));}finally{hold.resolve();value(await host.close());}});
-it("a checked queued tool replacement clears the old commit before authorizing the new plan",async()=>{const guardEntered=gate(),guardHold=gate(),blockEntered=gate(),blockHold=gate();let checks=0;const policy=definePlugin({name:"replacement-approval",requires:{toolAccess},setup:ctx=>ctx.guard("toolAccess",async input=>{if(input.operation==="execute"&&input.callId==="queued"&&++checks===2){guardEntered.resolve();await guardHold.promise;}return {ok:true,value:{kind:"allow"}};})});const {host,service}=await world([policy,value(createToolPlugin({name:"block",inputSchema:{type:"object"},execute:async()=>{blockEntered.resolve();await blockHold.promise;return text("block");}}))],{concurrency:1});try{const old=value(await host.install([value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async()=>text("old")}))]));const queued=service.execute(request("echo","queued"));await guardEntered.promise;const block=service.execute(request("block","block"));await blockEntered.promise;guardHold.resolve();await expect.poll(()=>host.inspect().work.some(work=>work.label==="tool-check")).toBe(false);value(await host.uninstall(old.plugins[0]!));value(await host.install([value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async()=>text("new")}))]));blockHold.resolve();value(await block);expect(value(await queued).content).toEqual([{type:"text",text:"new"}]);expect(checks).toBe(4);}finally{guardHold.resolve();blockHold.resolve();value(await host.close());}});
-it("batch result overflow removes pending writer intents before returning failure",async()=>{const hold=gate(),entered=gate(),prepared=gate();const resource={domain:"shared",path:["x"],scope:"exact",mode:"write"} as const;const {host,service}=await world([value(createToolPlugin({name:"echo",concurrency:3,inputSchema:{type:"object"},prepare:async(_input,call)=>{if(call.callId==="queued")prepared.resolve();return {ok:true,value:{resources:[resource]}};},execute:async(_input,call)=>{if(call.callId==="direct"){entered.resolve();await hold.promise;}return text("x");}})),value(createToolPlugin({name:"large",inputSchema:{type:"object"},execute:async()=>{await prepared.promise;await flush();return text("x".repeat(1000));}}))],{concurrency:2,maxResultBytes:200});try{const direct=value(host.use(tools));const active=direct.execute(request("echo","direct"));await entered.promise;expect(await service.batch({calls:[request("echo","queued"),request("large","large")]})).toMatchObject({ok:false,error:{code:"capacity-exceeded"}});hold.resolve();value(await active);await flush();value(await direct.execute(request("echo","next")));await expect.poll(()=>host.inspect().activeTasks).toBe(0);}finally{hold.resolve();value(await host.close());}});
-it("request budget pressure waits for notification instead of starving timers with admission retries",async()=>{const {createHost}=await import("../../../../core/src/index");const {createToolsPlugin}=await import("../../../tools/src/index");const {createToolSchedulerPlugin,toolScheduler}=await import("../index");const entered=gate();let timerFired=false;const host=value(createHost({limits:{callTimeoutMs:1000,maxCallDepth:256}}));try{value(await host.install([value(createToolsPlugin({access:"allow",limits:{maxActiveRequests:1}})),value(createToolSchedulerPlugin({access:"allow"})),value(createToolPlugin({name:"echo",inputSchema:{type:"object"},execute:async(_input,call)=>{if(call.callId==="direct"){entered.resolve();await new Promise<void>(resolve=>setTimeout(()=>{timerFired=true;resolve();},20));}return text("x");}}))]));const direct=value(host.use(tools)).execute(request("echo","direct"));await entered.promise;const queued=value(host.use(toolScheduler)).execute(request("echo","queued"));value(await direct);value(await queued);expect(timerFired).toBe(true);expect(value(await value(host.use(toolScheduler)).inspect({}))).toEqual({running:0,queued:0,requests:0});}finally{value(await host.close());}});
-it("synchronous permission changes release blocked intentions and keep scheduling",async()=>{const blocker=new AbortController();let checks=0,runs=0;const {tools,createToolPolicyPlugin}=await import("../../../tools/src/index");const resource={domain:"store",path:["shared"],scope:"exact",mode:"read"} as const;const author=(name:string)=>value(createToolPlugin({name,inputSchema:{type:"object"},prepare:async()=>({ok:true,value:{resources:[{...resource,mode:name==="blocker"?"write":"read"}]}}),async execute(){runs++;return text("done");}}));const policy=value(createToolPolicyPlugin({name:"reentrant",authorize:async plan=>({ok:true,value:plan.tool.name==="probe"?{kind:"allow",isValid(){checks++;if(checks===3){blocker.abort();return false;}return true;}}:{kind:"allow"}})}));const {host,service}=await world([author("blocker"),author("reader"),value(createToolPlugin({name:"probe",inputSchema:{type:"object"},execute:async()=>text("probe")})),policy]);try{const direct=value(host.use(tools));value(await direct.prepare({name:"blocker",callId:"block",input:{},signal:blocker.signal}));const batch=service.batch({calls:[{name:"reader",callId:"read",input:{}},{name:"probe",callId:"probe",input:{}}]});const report=await Promise.race([batch,new Promise<"stalled">(resolve=>setTimeout(()=>resolve("stalled"),200))]);expect(report).not.toBe("stalled");if(report==="stalled")return;const rows=value(report).results;expect(rows[0]!.result.ok).toBe(true);expect(rows[1]!.result).toMatchObject({ok:false,error:{code:"access-denied"}});expect(runs).toBe(1);}finally{blocker.abort();value(await host.close());}});
+import type { Plugin } from "../../../../core/src/index";
+import { expect, it } from "vitest";
+import { definePlugin } from "../../../../core/src/index";
+import {
+  createToolPlugin,
+  createToolPolicyPlugin,
+  toolAccess,
+  tools,
+} from "../../../tools/src/index";
+import { toolScheduleAccess } from "../index";
+import { world, value, text, gate, request, flush } from "./helpers";
+it.each(["plan", "tools", "scheduler"])(
+  "waiting for %s authorization does not occupy execution slots or block unrelated tools",
+  async (kind) => {
+    const hold = gate(),
+      entered = gate();
+    let checks = 0;
+    let policy: Plugin;
+
+    if (kind === "plan")
+      policy = value(
+        createToolPolicyPlugin({
+          name: "approval",
+          async authorize(plan) {
+            if (plan.callId === "ask") {
+              entered.resolve();
+              await hold.promise;
+            }
+
+            return { ok: true, value: { kind: "allow" } };
+          },
+        }),
+      );
+    else if (kind === "tools")
+      policy = definePlugin({
+        name: "approval",
+        requires: { toolAccess },
+        setup: (ctx) =>
+          ctx.guard("toolAccess", async (input) => {
+            if (input.operation === "execute" && input.callId === "ask") {
+              entered.resolve();
+              await hold.promise;
+            }
+
+            return { ok: true, value: { kind: "allow" } };
+          }),
+      });
+    else
+      policy = definePlugin({
+        name: "approval",
+        requires: { toolScheduleAccess },
+        setup: (ctx) =>
+          ctx.guard("toolScheduleAccess", async (input) => {
+            if (input.calls[0]?.callId === "ask" && ++checks > 1) {
+              entered.resolve();
+              await hold.promise;
+            }
+
+            return { ok: true, value: { kind: "allow" } };
+          }),
+      });
+
+    const { host, service } = await world(
+      [
+        policy,
+        value(
+          createToolPlugin({
+            name: "echo",
+            concurrency: 2,
+            inputSchema: { type: "object" },
+            execute: async () => text("x"),
+          }),
+        ),
+      ],
+      { concurrency: 1 },
+    );
+
+    try {
+      const waiting = service.execute(request("echo", "ask"));
+      await entered.promise;
+      expect(value(await service.inspect({})).running).toBe(0);
+      value(await service.execute(request("echo", "free")));
+      expect(value(await service.inspect({})).running).toBe(0);
+      hold.resolve();
+      value(await waiting);
+    } finally {
+      hold.resolve();
+      value(await host.close());
+    }
+  },
+);
+it("shared resources coordinate direct tools with scheduled calls without holding a scheduler slot", async () => {
+  const hold = gate(),
+    entered = gate();
+  let runs = 0;
+  const { host, service } = await world(
+    [
+      value(
+        createToolPlugin({
+          name: "echo",
+          concurrency: 2,
+          inputSchema: { type: "object" },
+          prepare: async () => ({
+            ok: true,
+            value: {
+              resources: [{ domain: "shared", path: ["x"], scope: "subtree", mode: "write" }],
+            },
+          }),
+          execute: async () => {
+            if (++runs === 1) {
+              entered.resolve();
+              await hold.promise;
+            }
+
+            return text("x");
+          },
+        }),
+      ),
+    ],
+    { concurrency: 1 },
+  );
+
+  try {
+    const direct = value(host.use(tools)).execute(request());
+    await entered.promise;
+    const queued = service.execute(request("echo", "queued"));
+    await expect.poll(async () => value(await service.inspect({})).queued).toBe(1);
+    expect(value(await service.inspect({})).running).toBe(0);
+    expect(runs).toBe(1);
+    hold.resolve();
+    value(await direct);
+    value(await queued);
+    expect(runs).toBe(2);
+  } finally {
+    hold.resolve();
+    value(await host.close());
+  }
+});
+it("revoked resource waiters finish immediately and block only their descendants", async () => {
+  const hold = gate(),
+    entered = gate(),
+    revoked = new AbortController();
+  const runs: string[] = [];
+  const { host, service } = await world([
+    value(
+      createToolPolicyPlugin({
+        name: "approval",
+        authorize: async (plan) => ({
+          ok: true,
+          value: { kind: "allow", ...(plan.callId === "queued" ? { signal: revoked.signal } : {}) },
+        }),
+      }),
+    ),
+    value(
+      createToolPlugin({
+        name: "echo",
+        concurrency: 3,
+        inputSchema: { type: "object" },
+        prepare: async () => ({
+          ok: true,
+          value: { resources: [{ domain: "shared", path: ["x"], scope: "exact", mode: "write" }] },
+        }),
+        execute: async (_input, call) => {
+          runs.push(call.callId);
+
+          if (call.callId === "direct") {
+            entered.resolve();
+            await hold.promise;
+          }
+
+          return text("x");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const direct = value(host.use(tools)).execute(request("echo", "direct"));
+    await entered.promise;
+    const batch = service.batch({
+      calls: [request("echo", "queued"), { ...request("echo", "child"), dependsOn: ["queued"] }],
+    });
+    await expect.poll(async () => value(await service.inspect({})).queued).toBe(2);
+    await flush();
+    revoked.abort();
+    const report = value(await batch);
+    expect(report.results[0]?.result).toMatchObject({
+      ok: false,
+      error: { code: "access-denied" },
+    });
+    expect(report.results[1]?.result).toMatchObject({
+      ok: false,
+      error: { code: "dependency-failed" },
+    });
+    expect(runs).toEqual(["direct"]);
+    hold.resolve();
+    value(await direct);
+  } finally {
+    hold.resolve();
+    value(await host.close());
+  }
+});
+it("immediate resource conflicts return busy and leave no abandoned writer intent", async () => {
+  const hold = gate(),
+    entered = gate();
+  const { host, service } = await world([
+    value(
+      createToolPlugin({
+        name: "echo",
+        concurrency: 2,
+        inputSchema: { type: "object" },
+        prepare: async () => ({
+          ok: true,
+          value: { resources: [{ domain: "shared", path: [], scope: "subtree", mode: "write" }] },
+        }),
+        execute: async () => {
+          entered.resolve();
+          await hold.promise;
+          return text("x");
+        },
+      }),
+    ),
+  ]);
+
+  try {
+    const first = value(host.use(tools)).execute(request());
+    await entered.promise;
+    expect(await service.execute({ ...request("echo", "next"), mode: "immediate" })).toMatchObject({
+      ok: false,
+      error: { code: "busy" },
+    });
+    expect(value(await service.inspect({})).queued).toBe(0);
+    hold.resolve();
+    value(await first);
+    value(await service.execute(request()));
+  } finally {
+    hold.resolve();
+    value(await host.close());
+  }
+});
+it("a checked queued tool replacement clears the old commit before authorizing the new plan", async () => {
+  const guardEntered = gate(),
+    guardHold = gate(),
+    blockEntered = gate(),
+    blockHold = gate();
+  let checks = 0;
+  const policy = definePlugin({
+    name: "replacement-approval",
+    requires: { toolAccess },
+    setup: (ctx) =>
+      ctx.guard("toolAccess", async (input) => {
+        if (input.operation === "execute" && input.callId === "queued" && ++checks === 2) {
+          guardEntered.resolve();
+          await guardHold.promise;
+        }
+
+        return { ok: true, value: { kind: "allow" } };
+      }),
+  });
+  const { host, service } = await world(
+    [
+      policy,
+      value(
+        createToolPlugin({
+          name: "block",
+          inputSchema: { type: "object" },
+          execute: async () => {
+            blockEntered.resolve();
+            await blockHold.promise;
+            return text("block");
+          },
+        }),
+      ),
+    ],
+    { concurrency: 1 },
+  );
+
+  try {
+    const old = value(
+      await host.install([
+        value(
+          createToolPlugin({
+            name: "echo",
+            inputSchema: { type: "object" },
+            execute: async () => text("old"),
+          }),
+        ),
+      ]),
+    );
+    const queued = service.execute(request("echo", "queued"));
+    await guardEntered.promise;
+    const block = service.execute(request("block", "block"));
+    await blockEntered.promise;
+    guardHold.resolve();
+    await expect
+      .poll(() => host.inspect().work.some((work) => work.label === "tool-check"))
+      .toBe(false);
+    value(await host.uninstall(old.plugins[0]!));
+    value(
+      await host.install([
+        value(
+          createToolPlugin({
+            name: "echo",
+            inputSchema: { type: "object" },
+            execute: async () => text("new"),
+          }),
+        ),
+      ]),
+    );
+    blockHold.resolve();
+    value(await block);
+    expect(value(await queued).content).toEqual([{ type: "text", text: "new" }]);
+    expect(checks).toBe(4);
+  } finally {
+    guardHold.resolve();
+    blockHold.resolve();
+    value(await host.close());
+  }
+});
+it("batch result overflow removes pending writer intents before returning failure", async () => {
+  const hold = gate(),
+    entered = gate(),
+    prepared = gate();
+  const resource = { domain: "shared", path: ["x"], scope: "exact", mode: "write" } as const;
+  const { host, service } = await world(
+    [
+      value(
+        createToolPlugin({
+          name: "echo",
+          concurrency: 3,
+          inputSchema: { type: "object" },
+          prepare: async (_input, call) => {
+            if (call.callId === "queued") prepared.resolve();
+
+            return { ok: true, value: { resources: [resource] } };
+          },
+          execute: async (_input, call) => {
+            if (call.callId === "direct") {
+              entered.resolve();
+              await hold.promise;
+            }
+
+            return text("x");
+          },
+        }),
+      ),
+      value(
+        createToolPlugin({
+          name: "large",
+          inputSchema: { type: "object" },
+          execute: async () => {
+            await prepared.promise;
+            await flush();
+            return text("x".repeat(1000));
+          },
+        }),
+      ),
+    ],
+    { concurrency: 2, maxResultBytes: 200 },
+  );
+
+  try {
+    const direct = value(host.use(tools));
+    const active = direct.execute(request("echo", "direct"));
+    await entered.promise;
+    expect(
+      await service.batch({ calls: [request("echo", "queued"), request("large", "large")] }),
+    ).toMatchObject({ ok: false, error: { code: "capacity-exceeded" } });
+    hold.resolve();
+    value(await active);
+    await flush();
+    value(await direct.execute(request("echo", "next")));
+    await expect.poll(() => host.inspect().activeTasks).toBe(0);
+  } finally {
+    hold.resolve();
+    value(await host.close());
+  }
+});
+it("request budget pressure waits for notification instead of starving timers with admission retries", async () => {
+  const { createHost } = await import("../../../../core/src/index");
+  const { createToolsPlugin } = await import("../../../tools/src/index");
+  const { createToolSchedulerPlugin, toolScheduler } = await import("../index");
+  const entered = gate();
+  let timerFired = false;
+  const host = value(createHost({ limits: { callTimeoutMs: 1000, maxCallDepth: 256 } }));
+
+  try {
+    value(
+      await host.install([
+        value(createToolsPlugin({ access: "allow", limits: { maxActiveRequests: 1 } })),
+        value(createToolSchedulerPlugin({ access: "allow" })),
+        value(
+          createToolPlugin({
+            name: "echo",
+            inputSchema: { type: "object" },
+            execute: async (_input, call) => {
+              if (call.callId === "direct") {
+                entered.resolve();
+                await new Promise<void>((resolve) =>
+                  setTimeout(() => {
+                    timerFired = true;
+                    resolve();
+                  }, 20),
+                );
+              }
+
+              return text("x");
+            },
+          }),
+        ),
+      ]),
+    );
+    const direct = value(host.use(tools)).execute(request("echo", "direct"));
+    await entered.promise;
+    const queued = value(host.use(toolScheduler)).execute(request("echo", "queued"));
+    value(await direct);
+    value(await queued);
+    expect(timerFired).toBe(true);
+    expect(value(await value(host.use(toolScheduler)).inspect({}))).toEqual({
+      running: 0,
+      queued: 0,
+      requests: 0,
+    });
+  } finally {
+    value(await host.close());
+  }
+});
+it("synchronous permission changes release blocked intentions and keep scheduling", async () => {
+  const blocker = new AbortController();
+  let checks = 0,
+    runs = 0;
+  const { tools, createToolPolicyPlugin } = await import("../../../tools/src/index");
+  const resource = { domain: "store", path: ["shared"], scope: "exact", mode: "read" } as const;
+
+  const author = (name: string) =>
+    value(
+      createToolPlugin({
+        name,
+        inputSchema: { type: "object" },
+        prepare: async () => ({
+          ok: true,
+          value: { resources: [{ ...resource, mode: name === "blocker" ? "write" : "read" }] },
+        }),
+        async execute() {
+          runs++;
+          return text("done");
+        },
+      }),
+    );
+
+  const policy = value(
+    createToolPolicyPlugin({
+      name: "reentrant",
+      authorize: async (plan) => ({
+        ok: true,
+        value:
+          plan.tool.name === "probe"
+            ? {
+                kind: "allow",
+                isValid() {
+                  checks++;
+
+                  if (checks === 3) {
+                    blocker.abort();
+                    return false;
+                  }
+
+                  return true;
+                },
+              }
+            : { kind: "allow" },
+      }),
+    }),
+  );
+  const { host, service } = await world([
+    author("blocker"),
+    author("reader"),
+    value(
+      createToolPlugin({
+        name: "probe",
+        inputSchema: { type: "object" },
+        execute: async () => text("probe"),
+      }),
+    ),
+    policy,
+  ]);
+
+  try {
+    const direct = value(host.use(tools));
+    value(
+      await direct.prepare({ name: "blocker", callId: "block", input: {}, signal: blocker.signal }),
+    );
+    const batch = service.batch({
+      calls: [
+        { name: "reader", callId: "read", input: {} },
+        { name: "probe", callId: "probe", input: {} },
+      ],
+    });
+    const report = await Promise.race([
+      batch,
+      new Promise<"stalled">((resolve) => setTimeout(() => resolve("stalled"), 200)),
+    ]);
+    expect(report).not.toBe("stalled");
+
+    if (report === "stalled") return;
+
+    const rows = value(report).results;
+    expect(rows[0]!.result.ok).toBe(true);
+    expect(rows[1]!.result).toMatchObject({ ok: false, error: { code: "access-denied" } });
+    expect(runs).toBe(1);
+  } finally {
+    blocker.abort();
+    value(await host.close());
+  }
+});

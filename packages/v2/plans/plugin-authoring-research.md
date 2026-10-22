@@ -22,15 +22,15 @@ core 定位为通用插件底层系统。AI Agent、普通服务端应用和其�
 
 以下资料来自官方文档和官方源码；Cordis 使用本地副本。远端 main 和 latest 是查阅时快照，不代表锁定发布版本；本文保留查阅来源，用于解释取舍，不声称已经实测第三方框架性能。
 
-| 系统 | 实际核验的机制 | 借鉴 | 不复制的场景假设 |
-| --- | --- | --- | --- |
-| Cordis | Registry.plugin、Fiber.effect、epoch/inertia、固定 Impl | 资源统一归实例，生命周期集中协调 | Proxy、原型访问推断、自动重装配 |
-| Fastify / Avvio | register、插件树、关闭队列、Boot._addPlugin | 一个简单安装入口，清楚的装配和诊断 | 不能把启动装配当运行时热插拔 |
-| Hapi | register、dependency、expose、stop | 元数据与安装函数清楚，错误尽早报告 | 连接停止期限不等于所有扩展清理都有期限 |
-| VS Code | activate、subscriptions、Extension Host | 常见作者只处理激活和登记 | 普通 Disposable 不等待异步 dispose |
-| Pluggy | hookspec、hookimpl、HookCaller、_multicall | 契约与实现分开，固定组合策略 | 同步 hook 注册不等于异步工作和资源宿主 |
-| Effect | acquireRelease、Scope、finalizer | 分配和清理作为一个完整操作 | 不要求作者采用整套 DSL、generator 与 Fiber |
-| OSGi DS | static/dynamic、reluctant/greedy、activate/deactivate | 动态依赖必须明确策略，默认减少重绑 | 不复制复杂策略矩阵或要求作者处理每次重绑竞态 |
+| 系统            | 实际核验的机制                                          | 借鉴                               | 不复制的场景假设                             |
+| --------------- | ------------------------------------------------------- | ---------------------------------- | -------------------------------------------- |
+| Cordis          | Registry.plugin、Fiber.effect、epoch/inertia、固定 Impl | 资源统一归实例，生命周期集中协调   | Proxy、原型访问推断、自动重装配              |
+| Fastify / Avvio | register、插件树、关闭队列、Boot._addPlugin             | 一个简单安装入口，清楚的装配和诊断 | 不能把启动装配当运行时热插拔                 |
+| Hapi            | register、dependency、expose、stop                      | 元数据与安装函数清楚，错误尽早报告 | 连接停止期限不等于所有扩展清理都有期限       |
+| VS Code         | activate、subscriptions、Extension Host                 | 常见作者只处理激活和登记           | 普通 Disposable 不等待异步 dispose           |
+| Pluggy          | hookspec、hookimpl、HookCaller、_multicall              | 契约与实现分开，固定组合策略       | 同步 hook 注册不等于异步工作和资源宿主       |
+| Effect          | acquireRelease、Scope、finalizer                        | 分配和清理作为一个完整操作         | 不要求作者采用整套 DSL、generator 与 Fiber   |
+| OSGi DS         | static/dynamic、reluctant/greedy、activate/deactivate   | 动态依赖必须明确策略，默认减少重绑 | 不复制复杂策略矩阵或要求作者处理每次重绑竞态 |
 
 ### 2.1 Fastify / Avvio
 
@@ -42,7 +42,7 @@ Fastify 的 override 可以创建子实例，也可以因插件包装标记跳�
 
 ### 2.2 Hapi
 
-Hapi 用插件名称、register、dependency 和 expose 描述能力与安装关系，并在初始化/启动前验证依赖。可借鉴元数据清晰、启动前拒绝不完整装配；不因此改成字符串名称自动连接。server.stop 的连接期限与扩展回调等待规则需要分别理解。[官方 API](https://hapi.dev/api/21.x.x/#server.dependency())、[官方 Server 实现](https://github.com/hapijs/hapi/blob/master/lib/server.js)、[官方 Core 实现](https://github.com/hapijs/hapi/blob/master/lib/core.js)
+Hapi 用插件名称、register、dependency 和 expose 描述能力与安装关系，并在初始化/启动前验证依赖。可借鉴元数据清晰、启动前拒绝不完整装配；不因此改成字符串名称自动连接。server.stop 的连接期限与扩展回调等待规则需要分别理解。[官方 API](<https://hapi.dev/api/21.x.x/#server.dependency()>)、[官方 Server 实现](https://github.com/hapijs/hapi/blob/master/lib/server.js)、[官方 Core 实现](https://github.com/hapijs/hapi/blob/master/lib/core.js)
 
 ### 2.3 VS Code
 
@@ -64,10 +64,10 @@ OSGi DS 明确区分 static/dynamic 与 reluctant/greedy。动态替换把额外
 
 只保留两个容易解释的上下文：
 
-| 对象 | 含义 | 典型用途 |
-| --- | --- | --- |
-| ctx | 这次插件安装的能力与资源 | setup、提供服务、登记监听、连接资源 |
-| call | 这次具体执行的身份与期限 | 请求依赖、取消信号、消费方资源 |
+| 对象 | 含义                     | 典型用途                            |
+| ---- | ------------------------ | ----------------------------------- |
+| ctx  | 这次插件安装的能力与资源 | setup、提供服务、登记监听、连接资源 |
+| call | 这次具体执行的身份与期限 | 请求依赖、取消信号、消费方资源      |
 
 常见作者需要掌握：
 
@@ -240,15 +240,15 @@ flowchart TB
 
 ## 10. 实现落点
 
-| 作者任务 | 实现与验证 |
-| --- | --- |
-| 声明与推断 | define-plugin、plugin-types；不可变声明和真实正负例 |
-| 服务依赖 | create-dependencies；绑定当前工作、成功门面缓存、临时配额失败可重试 |
-| 一次提供 | provide-capabilities；完整校验、容量预留、无回调同步提交 |
-| 资源操作 | open-resource；先登记再取得、迟到成功立即清理、失败保留依赖 |
-| 扩展点 | 本地名称解析；同一 requires/optional/provides 声明、提供者发送权限 |
-| 普通应用 | server-application 夹具；真实 SQLite 与 HTTP、两轮级联卸载和重新安装 |
-| 运行诊断 | inspect 与有界诊断；插件、工作、资源和关闭失败可观察 |
+| 作者任务   | 实现与验证                                                           |
+| ---------- | -------------------------------------------------------------------- |
+| 声明与推断 | define-plugin、plugin-types；不可变声明和真实正负例                  |
+| 服务依赖   | create-dependencies；绑定当前工作、成功门面缓存、临时配额失败可重试  |
+| 一次提供   | provide-capabilities；完整校验、容量预留、无回调同步提交             |
+| 资源操作   | open-resource；先登记再取得、迟到成功立即清理、失败保留依赖          |
+| 扩展点     | 本地名称解析；同一 requires/optional/provides 声明、提供者发送权限   |
+| 普通应用   | server-application 夹具；真实 SQLite 与 HTTP、两轮级联卸载和重新安装 |
+| 运行诊断   | inspect 与有界诊断；插件、工作、资源和关闭失败可观察                 |
 
 旧生命周期字段和数组声明已经删除，不接受兼容字段。底层宿主 Context 保留显式 token 登记与管理能力，类型化 PluginContext 只转交同一运行时的受限能力。
 

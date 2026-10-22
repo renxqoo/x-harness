@@ -1,1 +1,4 @@
-defineService<{run(input:string,...extra:number[]):Promise<Result<number>>}>({name:"rest",methods:{run:{}}});
+defineService<{ run(input: string, ...extra: number[]): Promise<Result<number>> }>({
+  name: "rest",
+  methods: { run: {} },
+});

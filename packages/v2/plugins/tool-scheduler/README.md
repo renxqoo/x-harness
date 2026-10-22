@@ -11,9 +11,17 @@ const opened = createHost({ limits: { callTimeoutMs: 60000, maxCallDepth: 256 } 
 const tools = createToolsPlugin({ access: "allow" });
 const scheduler = createToolSchedulerPlugin({ access: "allow", limits: { concurrency: 4 } });
 const echo = createToolPlugin({
-  name: "echo", concurrency: 2,
-  inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
-  async execute(input) { return { ok: true, value: { content: [{ type: "text", text: input.text }] } }; },
+  name: "echo",
+  concurrency: 2,
+  inputSchema: {
+    type: "object",
+    properties: { text: { type: "string" } },
+    required: ["text"],
+    additionalProperties: false,
+  },
+  async execute(input) {
+    return { ok: true, value: { content: [{ type: "text", text: input.text }] } };
+  },
 });
 if (!opened.ok || !tools.ok || !scheduler.ok || !echo.ok) throw new Error("Invalid configuration");
 const app = opened.value;
@@ -29,7 +37,9 @@ try {
     ],
     concurrency: 2,
     timeoutMs: 30000,
-    onProgress(event) { console.log(event.callId, event.delta); },
+    onProgress(event) {
+      console.log(event.callId, event.delta);
+    },
   });
   if (result.ok) console.log(result.value.results);
   else console.error(result.error.code);

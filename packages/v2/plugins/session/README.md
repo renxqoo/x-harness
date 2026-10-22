@@ -16,9 +16,11 @@ function configured<T, E>(result: Result<T, E>): T {
 }
 
 const host = configured(createHost());
-const plugin = configured(createSessionPlugin({
-  namespace: "workspace-a",
-}));
+const plugin = configured(
+  createSessionPlugin({
+    namespace: "workspace-a",
+  }),
+);
 const storage = configured(createSqliteSessionPlugin({ path: "./data/sessions.sqlite" }));
 configured(await host.install([storage, plugin]));
 const sessions = configured(host.use(session));
@@ -28,7 +30,12 @@ const result = created.ok
       id: created.value.id,
       expectedRevision: created.value.revision,
       commitId: "input-42",
-      entries: [{ kind: "message", message: { role: "user", content: [{ type: "text", text: "分析项目" }] } }],
+      entries: [
+        {
+          kind: "message",
+          message: { role: "user", content: [{ type: "text", text: "分析项目" }] },
+        },
+      ],
     })
   : created;
 const catalog = await sessions.list({ limit: 20 });

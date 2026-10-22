@@ -6,25 +6,75 @@ import { unwrap } from "__UNWRAP__";
 import { settle } from "__SETTLE__";
 
 declare module "__CORDIS_CONTEXT__" {
-  interface Context { journeyInFlight: Endpoint }
+  interface Context {
+    journeyInFlight: Endpoint;
+  }
 }
 
 export async function drainReplacement() {
-  const host = new Context(); const started = defer(); const stopping = defer(); const gate = defer(); let closed = false; let bodySawClosed = false;
+  const host = new Context();
+  const started = defer();
+  const stopping = defer();
+  const gate = defer();
+  let closed = false;
+  let bodySawClosed = false;
   try {
-    const old = await host.plugin({ name: "provider", async apply(ctx) {
-      await Promise.resolve();
-      ctx.provide("journeyInFlight", { async read() { started.resolve(); await gate.promise; bodySawClosed = closed; return { ok: true, value: "old" }; } } satisfies Endpoint);
-      return async () => { await Promise.resolve(); closed = true; stopping.resolve(); };
-    } });
-    const saved = host.journeyInFlight; const pending = saved.read("start"); await started.promise;
-    let replaced = false; const replacing = (async () => {
+    const old = await host.plugin({
+      name: "provider",
+      async apply(ctx) {
+        await Promise.resolve();
+        ctx.provide("journeyInFlight", {
+          async read() {
+            started.resolve();
+            await gate.promise;
+            bodySawClosed = closed;
+            return { ok: true, value: "old" };
+          },
+        } satisfies Endpoint);
+        return async () => {
+          await Promise.resolve();
+          closed = true;
+          stopping.resolve();
+        };
+      },
+    });
+    const saved = host.journeyInFlight;
+    const pending = saved.read("start");
+    await started.promise;
+    let replaced = false;
+    const replacing = (async () => {
       await old.dispose();
-      await host.plugin({ name: "provider", apply(ctx) { ctx.provide("journeyInFlight", { async read() { return { ok: true, value: "new" }; } } satisfies Endpoint); } });
+      await host.plugin({
+        name: "provider",
+        apply(ctx) {
+          ctx.provide("journeyInFlight", {
+            async read() {
+              return { ok: true, value: "new" };
+            },
+          } satisfies Endpoint);
+        },
+      });
       replaced = true;
     })();
-    await stopping.promise; await settle(); const closedBeforeGate = closed; const replacementSettledBeforeGate = replaced;
-    gate.resolve(); await replacing; await pending; const observed = bodySawClosed; const stale = await saved.read("stale");
-    return { closedBeforeGate, replacementSettledBeforeGate, bodySawClosed: observed, savedEntryBlocked: !stale.ok, next: unwrap(await host.journeyInFlight.read("next")) };
-  } finally { gate.resolve(); await host.fiber.dispose(); assert.equal(host.registry.size, 0); }
+    await stopping.promise;
+    await settle();
+    const closedBeforeGate = closed;
+    const replacementSettledBeforeGate = replaced;
+    gate.resolve();
+    await replacing;
+    await pending;
+    const observed = bodySawClosed;
+    const stale = await saved.read("stale");
+    return {
+      closedBeforeGate,
+      replacementSettledBeforeGate,
+      bodySawClosed: observed,
+      savedEntryBlocked: !stale.ok,
+      next: unwrap(await host.journeyInFlight.read("next")),
+    };
+  } finally {
+    gate.resolve();
+    await host.fiber.dispose();
+    assert.equal(host.registry.size, 0);
+  }
 }

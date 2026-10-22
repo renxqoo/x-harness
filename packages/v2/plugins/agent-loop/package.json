@@ -1,6 +1,9 @@
 {
   "name": "@x-harness/agent-loop",
   "type": "module",
-  "exports": { ".": "./src/index.ts", "./contracts": "./src/contracts.ts" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts.ts"
+  },
   "sideEffects": false
 }

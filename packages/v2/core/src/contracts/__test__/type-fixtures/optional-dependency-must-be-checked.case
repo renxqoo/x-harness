@@ -1,1 +1,8 @@
-import { definePlugin } from "__PUBLIC_ENTRY__"; definePlugin({ name: "bad", optional: { service }, async setup(ctx) { return ctx.deps.service.run({ text: "input" }); } });
+import { definePlugin } from "__PUBLIC_ENTRY__";
+definePlugin({
+  name: "bad",
+  optional: { service },
+  async setup(ctx) {
+    return ctx.deps.service.run({ text: "input" });
+  },
+});

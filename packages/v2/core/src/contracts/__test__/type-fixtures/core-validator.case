@@ -1,1 +1,2 @@
-declare const validator:(input:unknown)=>Result<CoreFault>; const spec:MethodSpec<(input:string)=>Promise<Result<number>>>={failure:validator};
+declare const validator: (input: unknown) => Result<CoreFault>;
+const spec: MethodSpec<(input: string) => Promise<Result<number>>> = { failure: validator };

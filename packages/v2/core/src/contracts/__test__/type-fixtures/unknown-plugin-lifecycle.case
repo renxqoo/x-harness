@@ -1,1 +1,4 @@
-const plugin: import("__PUBLIC_ENTRY__").Plugin = { name: "bad", apply: () => ({ ok: true, value: undefined }) };
+const plugin: import("__PUBLIC_ENTRY__").Plugin = {
+  name: "bad",
+  apply: () => ({ ok: true, value: undefined }),
+};

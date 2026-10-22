@@ -14,7 +14,8 @@ const generated = await createProject({ directory: "/srv/new-greeting", name: "g
 if (generated.ok) {
   const directory = generated.value.directory;
   const files = generated.value.files;
-  void directory; void files;
+  void directory;
+  void files;
 }
 ```
 

@@ -1,4 +1,6 @@
 import { definePlugin } from "__PUBLIC_ENTRY__";
 import type { PluginContext } from "__PUBLIC_ENTRY__";
-function publish(ctx: Pick<PluginContext<{ provides: { event: typeof event } }>, "emit">) { return ctx.emit("event", "wrong"); }
+function publish(ctx: Pick<PluginContext<{ provides: { event: typeof event } }>, "emit">) {
+  return ctx.emit("event", "wrong");
+}
 definePlugin({ name: "bad", setup: publish });

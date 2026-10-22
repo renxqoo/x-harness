@@ -2,19 +2,24 @@
 
 扩展入口是公开契约。用 definePlugin 声明依赖，用 ctx.guard/ctx.middleware 注册，调用依赖时使用本次 call.deps。
 
-| 契约 | 行为 |
-| --- | --- |
-| agentRunAccess | 默认 required；上下文前、实际模型请求前、工具提交前检查可信 caller 与请求；拒绝不能被显式 allow 覆盖 |
-| agentContext | 输入 runId/step/caller/metadata?/request，返回 AgentModelRequest；可调整模型/消息及缩减工具，不能提供 signal 或放大工具 schema |
-| agentCheckpoint | 等待确认的持久化链，返回 void；失败阻止后续动作 |
-| agentContinue | 完整工具回执保存后检查；任一拒绝以 policy 结束，允许不突破预算 |
-| agentEvent | 同一流事件的有界异步通知；不替代等待确认 |
+| 契约            | 行为                                                                                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| agentRunAccess  | 默认 required；上下文前、实际模型请求前、工具提交前检查可信 caller 与请求；拒绝不能被显式 allow 覆盖                           |
+| agentContext    | 输入 runId/step/caller/metadata?/request，返回 AgentModelRequest；可调整模型/消息及缩减工具，不能提供 signal 或放大工具 schema |
+| agentCheckpoint | 等待确认的持久化链，返回 void；失败阻止后续动作                                                                                |
+| agentContinue   | 完整工具回执保存后检查；任一拒绝以 policy 结束，允许不突破预算                                                                 |
+| agentEvent      | 同一流事件的有界异步通知；不替代等待确认                                                                                       |
 
 ```ts
 import { definePlugin } from "@x-harness/core";
 import type { JsonValue } from "@x-harness/core";
 import { session } from "@x-harness/session";
-import { agentRunAccess, agentContext, agentCheckpoint, agentContinue } from "@x-harness/agent-loop";
+import {
+  agentRunAccess,
+  agentContext,
+  agentCheckpoint,
+  agentContinue,
+} from "@x-harness/agent-loop";
 
 export const applicationAgent = definePlugin({
   name: "application-agent",
@@ -22,38 +27,51 @@ export const applicationAgent = definePlugin({
   setup(ctx) {
     const access = ctx.guard("agentRunAccess", (input) => ({
       ok: true,
-      value: input.caller.origin.scopeId === "root"
-        ? { kind: "allow" }
-        : { kind: "deny", reason: "caller-not-approved" },
+      value:
+        input.caller.origin.scopeId === "root"
+          ? { kind: "allow" }
+          : { kind: "deny", reason: "caller-not-approved" },
     }));
     if (!access.ok) return access;
-    const context = ctx.middleware("agentContext", (input, next) => next({
-      ...input,
-      request: {
-        ...input.request,
-        messages: [
-          { role: "system", content: [{ type: "text", text: "Answer precisely." }] },
-          ...input.request.messages,
-        ],
-      },
-    }));
+    const context = ctx.middleware("agentContext", (input, next) =>
+      next({
+        ...input,
+        request: {
+          ...input.request,
+          messages: [
+            { role: "system", content: [{ type: "text", text: "Answer precisely." }] },
+            ...input.request.messages,
+          ],
+        },
+      }),
+    );
     if (!context.ok) return context;
     const checkpoint = ctx.middleware("agentCheckpoint", async (input, next, call) => {
       const head = await call.deps.session.get({ id: "conversation" });
-      if (!head.ok) return { ok: false, error: { source: "agent-loop", code: "checkpoint-failed" } };
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
-        JSON.stringify([input.runId, input.step, input.phase]),
-      ));
-      const commitId = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      if (!head.ok)
+        return { ok: false, error: { source: "agent-loop", code: "checkpoint-failed" } };
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode(JSON.stringify([input.runId, input.step, input.phase])),
+      );
+      const commitId = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, "0"),
+      ).join("");
       const saved = await call.deps.session.append({
-        id: "conversation", expectedRevision: head.value.revision,
+        id: "conversation",
+        expectedRevision: head.value.revision,
         commitId,
-        entries: [{
-          kind: "event", type: "agent/checkpoint",
-          data: JSON.parse(JSON.stringify(input)) as JsonValue,
-        }],
+        entries: [
+          {
+            kind: "event",
+            type: "agent/checkpoint",
+            data: JSON.parse(JSON.stringify(input)) as JsonValue,
+          },
+        ],
       });
-      return saved.ok ? next(input) : { ok: false, error: { source: "agent-loop", code: "checkpoint-failed" } };
+      return saved.ok
+        ? next(input)
+        : { ok: false, error: { source: "agent-loop", code: "checkpoint-failed" } };
     });
     if (!checkpoint.ok) return checkpoint;
     return ctx.guard("agentContinue", (input) => ({

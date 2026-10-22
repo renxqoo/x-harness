@@ -1,9 +1,20 @@
-import type { Cleanup, Disposer, MaybePromise, Result, Scheduler, TaskHandle } from "../../../core/src/index";
+import type {
+  Cleanup,
+  Disposer,
+  MaybePromise,
+  Result,
+  Scheduler,
+  TaskHandle,
+} from "../../../core/src/index";
 
 export interface TimerOwner<C extends { readonly signal: AbortSignal }> {
   readonly signal: AbortSignal;
   addCleanup(cleanup: Cleanup): Result<Disposer>;
-  startTask(spec: { readonly label: string; readonly run: (call: C) => MaybePromise<Result<unknown, unknown>>; readonly timeoutMs?: number }): Result<TaskHandle<unknown, unknown>>;
+  startTask(spec: {
+    readonly label: string;
+    readonly run: (call: C) => MaybePromise<Result<unknown, unknown>>;
+    readonly timeoutMs?: number;
+  }): Result<TaskHandle<unknown, unknown>>;
 }
 export interface ScheduleSpec<C> {
   readonly ms: number;
@@ -26,7 +37,14 @@ export interface ScheduleSlot<C extends { readonly signal: AbortSignal }> {
   readonly closed: Promise<Result<void, unknown>>;
   close(result: Result<void, unknown>): void;
   current?: {
-    owner: TimerOwner<C>; scheduler: Scheduler; spec: ScheduleSpec<C>; repeat: boolean;
-    dispose?: Disposer; clear?: () => void; task?: TaskHandle<unknown, unknown>; terminal?: Result<void, unknown>; onAbort: (this: void) => void;
+    owner: TimerOwner<C>;
+    scheduler: Scheduler;
+    spec: ScheduleSpec<C>;
+    repeat: boolean;
+    dispose?: Disposer;
+    clear?: () => void;
+    task?: TaskHandle<unknown, unknown>;
+    terminal?: Result<void, unknown>;
+    onAbort: (this: void) => void;
   };
 }

@@ -1,1 +1,1 @@
-service.run({model:"m",messages:[],tools:[{name:"echo",inputSchema:{}}]});
+service.run({ model: "m", messages: [], tools: [{ name: "echo", inputSchema: {} }] });

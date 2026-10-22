@@ -1,1 +1,15 @@
-export const systemReadRoots=Object.freeze(["/usr/bin","/usr/sbin","/usr/lib","/usr/share","/bin","/sbin","/System/Library","/private/etc/ssl/openssl.cnf","/private/etc/ssl/cert.pem","/private/etc/ssl/x509v3.cnf","/private/etc/hosts","/private/etc/services","/private/etc/protocols"]);
+export const systemReadRoots = Object.freeze([
+  "/usr/bin",
+  "/usr/sbin",
+  "/usr/lib",
+  "/usr/share",
+  "/bin",
+  "/sbin",
+  "/System/Library",
+  "/private/etc/ssl/openssl.cnf",
+  "/private/etc/ssl/cert.pem",
+  "/private/etc/ssl/x509v3.cnf",
+  "/private/etc/hosts",
+  "/private/etc/services",
+  "/private/etc/protocols",
+]);

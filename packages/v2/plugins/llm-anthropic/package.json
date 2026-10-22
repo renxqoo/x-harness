@@ -1,1 +1,8 @@
-{"name":"@x-harness/llm-anthropic","private":true,"type":"module","exports":{".":"./src/index.ts"}}
+{
+  "name": "@x-harness/llm-anthropic",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

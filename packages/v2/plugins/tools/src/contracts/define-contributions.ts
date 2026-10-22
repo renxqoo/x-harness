@@ -1,13 +1,53 @@
 import { defineChain } from "../../../../core/src/index";
 import { createFault } from "../../../../core/src/validation";
-import type { ToolCatalogQuery,ToolPreparationRequest,ToolDispatchRequest } from "../contributions/types";
+import type {
+  ToolCatalogQuery,
+  ToolPreparationRequest,
+  ToolDispatchRequest,
+} from "../contributions/types";
 import type { ToolEffects } from "../planning/types";
-import type { ToolOutput,ToolsError } from "./types";
-import { readPreparationRequest,readDispatchRequest } from "../contributions/create-request";
+import type { ToolOutput, ToolsError } from "./types";
+import { readPreparationRequest, readDispatchRequest } from "../contributions/create-request";
 import { readEffects } from "../planning/read-effects";
-import { data,keys } from "../domain/read-values";
+import { data, keys } from "../domain/read-values";
 import { readOutput } from "../domain/read-output";
 import { maximumToolsLimits } from "../domain/read-limits";
-const catalog=defineChain<ToolCatalogQuery,void,ToolsError>({name:"tools/catalog",input(raw){const d=data(raw);return d&&keys(d,["visit"])&&typeof d.visit==="function"?{ok:true,value:raw as ToolCatalogQuery}:createFault("invalid-input");},output:raw=>raw===undefined?{ok:true,value:undefined}:createFault("invalid-result")});if(!catalog.ok)throw new Error("Invalid tool catalog definition");export const toolCatalog=catalog.value;
-const preparation=defineChain<ToolPreparationRequest,ToolEffects,ToolsError>({name:"tools/prepare",input:readPreparationRequest,output(raw){const result=readEffects(raw);return result.ok?result:createFault("invalid-result");}});if(!preparation.ok)throw new Error("Invalid preparation definition");export const toolPreparation=preparation.value;
-const dispatch=defineChain<ToolDispatchRequest,ToolOutput,ToolsError>({name:"tools/dispatch",input:readDispatchRequest,output(raw){const result=readOutput(raw,maximumToolsLimits.maxOutputBytes);return result.ok?result:createFault("invalid-result");}});if(!dispatch.ok)throw new Error("Invalid tool dispatch definition");export const toolDispatch=dispatch.value;
+const catalog = defineChain<ToolCatalogQuery, void, ToolsError>({
+  name: "tools/catalog",
+  input(raw) {
+    const d = data(raw);
+    return d && keys(d, ["visit"]) && typeof d.visit === "function"
+      ? { ok: true, value: raw as ToolCatalogQuery }
+      : createFault("invalid-input");
+  },
+  output: (raw) =>
+    raw === undefined ? { ok: true, value: undefined } : createFault("invalid-result"),
+});
+
+if (!catalog.ok) throw new Error("Invalid tool catalog definition");
+
+export const toolCatalog = catalog.value;
+const preparation = defineChain<ToolPreparationRequest, ToolEffects, ToolsError>({
+  name: "tools/prepare",
+  input: readPreparationRequest,
+  output(raw) {
+    const result = readEffects(raw);
+    return result.ok ? result : createFault("invalid-result");
+  },
+});
+
+if (!preparation.ok) throw new Error("Invalid preparation definition");
+
+export const toolPreparation = preparation.value;
+const dispatch = defineChain<ToolDispatchRequest, ToolOutput, ToolsError>({
+  name: "tools/dispatch",
+  input: readDispatchRequest,
+  output(raw) {
+    const result = readOutput(raw, maximumToolsLimits.maxOutputBytes);
+    return result.ok ? result : createFault("invalid-result");
+  },
+});
+
+if (!dispatch.ok) throw new Error("Invalid tool dispatch definition");
+
+export const toolDispatch = dispatch.value;

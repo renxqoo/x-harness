@@ -1,1 +1,11 @@
-{"name":"@x-harness/sandbox","type":"module","exports":{".":"./src/index.ts"},"dependencies":{"@anthropic-ai/sandbox-runtime":"0.0.77"},"sideEffects":false}
+{
+  "name": "@x-harness/sandbox",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.77"
+  },
+  "sideEffects": false
+}

@@ -4,14 +4,14 @@
 
 两组示例分别调用真实公开 API，没有共享框架适配层。`harness/` 是可直接阅读和运行的 TypeScript；`cordis/` 的 `.case` 只替换导入路径，生成用于执行和类型检查的 TypeScript。共同的 Endpoint 是一个业务协议；它的 Result 形式是本系统要求，Cordis 作者可以自由选择其他返回形式。
 
-| 场景 | 本系统 | Cordis |
-| --- | --- | --- |
-| 服务 | token、声明、ctx.service、call.deps | Context 扩充、provide、inject、Context 属性 |
-| 异步资源 | ctx.resource 的 open/close | async apply 返回 async disposer |
-| 后台任务 | ctx.startTask 绑定取消及实际结束 | 作者显式 AbortController，disposer 等待实际 Promise |
-| 事件 | 声明 payload，发送准入后显式等待到达 | Events 扩充，parallel 等待监听者结束 |
-| 提供者替换 | application.setPlugins 重装受影响消费者 | dispose/install，等待依赖 Fiber 就绪 |
-| 在途调用 | 受管调用实际结束后清理资源 | 示例中普通 Promise 没有额外逐调用登记 |
+| 场景       | 本系统                                  | Cordis                                              |
+| ---------- | --------------------------------------- | --------------------------------------------------- |
+| 服务       | token、声明、ctx.service、call.deps     | Context 扩充、provide、inject、Context 属性         |
+| 异步资源   | ctx.resource 的 open/close              | async apply 返回 async disposer                     |
+| 后台任务   | ctx.startTask 绑定取消及实际结束        | 作者显式 AbortController，disposer 等待实际 Promise |
+| 事件       | 声明 payload，发送准入后显式等待到达    | Events 扩充，parallel 等待监听者结束                |
+| 提供者替换 | application.setPlugins 重装受影响消费者 | dispose/install，等待依赖 Fiber 就绪                |
+| 在途调用   | 受管调用实际结束后清理资源              | 示例中普通 Promise 没有额外逐调用登记               |
 
 双方服务、资源、任务、事件及消费者重启得到相同业务结果。保存的本系统入口在替换后拒绝调用；Cordis 示例中保存的消费入口通过 Context 解析新提供者。直接保存的 Cordis 旧提供者对象仍可以执行原函数。后两项是本次用法下的默认行为；Cordis 作者可以手动跟踪调用、失效状态和资源归属，不能将示例解释为 Cordis 无法实现安全替换。
 

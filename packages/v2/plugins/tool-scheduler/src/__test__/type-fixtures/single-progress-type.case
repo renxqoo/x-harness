@@ -1,1 +1,8 @@
-service.execute({name:"echo",callId:"x",input:{},onProgress(event:{callId:string}){void event;}});
+service.execute({
+  name: "echo",
+  callId: "x",
+  input: {},
+  onProgress(event: { callId: string }) {
+    void event;
+  },
+});

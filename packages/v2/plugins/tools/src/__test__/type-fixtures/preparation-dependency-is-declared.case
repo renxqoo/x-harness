@@ -1,1 +1,11 @@
-createToolPlugin({name:"echo",inputSchema:{type:"object"},async prepare(_input,call){await call.deps.clock.read();return {ok:true,value:{}};},async execute(){return {ok:true,value:{content:[]}};}});
+createToolPlugin({
+  name: "echo",
+  inputSchema: { type: "object" },
+  async prepare(_input, call) {
+    await call.deps.clock.read();
+    return { ok: true, value: {} };
+  },
+  async execute() {
+    return { ok: true, value: { content: [] } };
+  },
+});
