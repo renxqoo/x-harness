@@ -23,7 +23,7 @@ async function unload(kernel: Kernel, ref: PluginRef, options?: UninstallOptions
   const plugins = [...selected].filter((owner) => owner.kind !== "host").map((owner) => ({ name: owner.name!, scopeId: owner.scope.id, instanceId: owner.id }));
   const released = kernel.lifetime.observe((effect) => selected.has(effect.owner) ||
     (effect.consumer && [...effect.dependencies.values()].some((provider) => provider && selected.has(provider.owner))));
-  const initialTasks = [...kernel.execution.works()].filter((work) => work.kind === "task" && (selected.has(work.executor) || selected.has(work.resourceOwner))).length;
+  const initialTasks = [...kernel.execution.works()].filter((work) => work.kind === "task" && work.owners.some(owner => selected.has(owner))).length;
   const owners = [...kernel.lifetime.owners()].filter((owner) => selected.has(owner)).reverse();
   for (const owner of owners) stopOwner(kernel, owner);
   const actual = Promise.resolve().then(async (): Promise<Result<CloseReport>> => {

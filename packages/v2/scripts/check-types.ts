@@ -22,6 +22,7 @@ try {
     count += 1;
   }
   const documents = [
+    { path: "../API.md", count: 1, prefix: "" },
     {
       path: "../EXAMPLES.md", count: 9,
       prefix: `import { createHost, definePlugin, defineService } from ${JSON.stringify(entry)};\nimport type { Context, DependencyContext, Invocation, PluginContext, PluginInvocation, PluginImplementations, GuardDecision, MaybePromise, ServiceImplementation, ServiceToken, ChainToken, GuardToken, GuardHandler, Plugin, Disposer, Result, CoreFault, InstallReport } from ${JSON.stringify(entry)};\n`,

@@ -9,7 +9,7 @@ import { validateValue } from "../../contracts/validate-value";
 export function dispatchGuard(kernel: Kernel, args: { view: View; provider: Provider; input: unknown; options?: CallOptions }): Promise<AnyResult> {
   const plan = kernel.registry.handlers(args.view, args.provider);
   if (!plan.length) return Promise.resolve(kernel.fault("guard-unconfigured", args.view.owner));
-  const started = startWork(kernel, { label: args.provider.definition.token.name, view: args.view, executor: args.view.owner, parent: resolveParent(args.view), options: args.options, phase: args.view.cleanup ? "cleanup" : undefined }, async (call) => {
+  const started = startWork(kernel, { label: args.provider.definition.token.name, view: args.view, executor: args.view.owner, provider: args.provider, parent: resolveParent(args.view), options: args.options, phase: args.view.cleanup ? "cleanup" : undefined }, async (call) => {
     for (const registration of plan) {
       if ((!registration.active && !args.view.cleanup) || !registration.handler) return kernel.fault("extension-revoked");
       const input = validateValue(args.input, args.provider.definition.input);

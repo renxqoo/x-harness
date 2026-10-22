@@ -1,0 +1,253 @@
+{
+  "verifiedAt": "2026-10-22",
+  "runtime": {
+    "bun": "1.4.3",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "scope": [
+    "inherited-execution-limits",
+    "provider-revocation-and-actual-drain",
+    "segmented-deadlines",
+    "stable-sdk-identity-and-generation",
+    "unambiguous-source-fingerprints",
+    "tool-invocation-lifetime",
+    "installable-policy-identities",
+    "public-api-documentation"
+  ],
+  "gates": {
+    "lint": {
+      "passed": true,
+      "warnings": 0,
+      "errors": 0,
+      "kernelSources": 106,
+      "platformSources": 355,
+      "sdkPublicEntries": 33,
+      "internalIdentityEntries": 4
+    },
+    "typecheck": {
+      "passed": true,
+      "negativeFixtures": 181,
+      "documentationExamples": 42
+    },
+    "build": {
+      "passed": true
+    },
+    "test": {
+      "passed": true,
+      "files": 200,
+      "tests": 1779
+    }
+  },
+  "coverage": {
+    "statements": {
+      "total": 10964,
+      "covered": 10029,
+      "skipped": 0,
+      "pct": 91.47
+    },
+    "branches": {
+      "total": 9528,
+      "covered": 8600,
+      "skipped": 0,
+      "pct": 90.26
+    },
+    "functions": {
+      "total": 1554,
+      "covered": 1522,
+      "skipped": 0,
+      "pct": 97.94
+    },
+    "lines": {
+      "total": 4572,
+      "covered": 4501,
+      "skipped": 0,
+      "pct": 98.44
+    }
+  },
+  "tdd": {
+    "core": {
+      "initialRed": {
+        "failed": 9,
+        "passed": 0
+      },
+      "providerDiagnosticRed": {
+        "failed": 2,
+        "passed": 2
+      },
+      "finalRegressionGreen": 13
+    },
+    "tools": {
+      "red": {
+        "failed": 7,
+        "passed": 1
+      },
+      "green": 8
+    },
+    "loader": {
+      "initialRed": {
+        "failed": 5,
+        "passed": 0
+      },
+      "additionalRedWindows": [
+        "sdk-dependency-change",
+        "new-loader-after-sdk-change",
+        "sdk-change-before-first-loader",
+        "path-content-and-entry-kind-fingerprint-alias"
+      ],
+      "finalRegressionFiles": 4,
+      "finalRegressionTests": 13
+    },
+    "documentation": {
+      "documentedSignatureRedDiagnostics": {
+        "TS2707": 4,
+        "TS2558": 1
+      },
+      "publicExamplesGreen": 30
+    }
+  },
+  "rotation": {
+    "iterations": 10000,
+    "retained": 0,
+    "inspection": {
+      "state": "closed",
+      "degraded": false,
+      "scopes": 0,
+      "plugins": [],
+      "activeWaits": 0,
+      "activeCalls": 0,
+      "serviceLeases": 0,
+      "activeTasks": 0,
+      "pendingEvents": 0,
+      "effects": 0,
+      "work": [],
+      "resources": []
+    },
+    "runtime": "1.4.3",
+    "collect": false,
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "rotationWithCollection": {
+    "iterations": 10000,
+    "retained": 0,
+    "inspection": {
+      "state": "closed",
+      "degraded": false,
+      "scopes": 0,
+      "plugins": [],
+      "activeWaits": 0,
+      "activeCalls": 0,
+      "serviceLeases": 0,
+      "activeTasks": 0,
+      "pendingEvents": 0,
+      "effects": 0,
+      "work": [],
+      "resources": []
+    },
+    "runtime": "1.4.3",
+    "collect": true,
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "liveAgent": {
+    "ok": true,
+    "model": "deepseek-v4.1-flash",
+    "reasoningEffort": "none",
+    "steps": 6,
+    "toolCalls": 5,
+    "calls": [
+      "read_report",
+      "read_invoice",
+      "calculate_invoice",
+      "save_report",
+      "read_report"
+    ],
+    "events": 191,
+    "checkpoints": 11,
+    "resumedSteps": 1,
+    "resumedToolCalls": 0,
+    "usage": [
+      {
+        "step": 1,
+        "usage": {
+          "complete": true,
+          "inputTokens": 536,
+          "outputTokens": 21,
+          "totalTokens": 557,
+          "cacheReadTokens": 128,
+          "reasoningTokens": 0
+        }
+      },
+      {
+        "step": 2,
+        "usage": {
+          "complete": true,
+          "inputTokens": 593,
+          "outputTokens": 22,
+          "totalTokens": 615,
+          "cacheReadTokens": 512,
+          "reasoningTokens": 0
+        }
+      },
+      {
+        "step": 3,
+        "usage": {
+          "complete": true,
+          "inputTokens": 681,
+          "outputTokens": 22,
+          "totalTokens": 703,
+          "cacheReadTokens": 512,
+          "reasoningTokens": 0
+        }
+      },
+      {
+        "step": 4,
+        "usage": {
+          "complete": true,
+          "inputTokens": 747,
+          "outputTokens": 76,
+          "totalTokens": 823,
+          "cacheReadTokens": 640,
+          "reasoningTokens": 0
+        }
+      },
+      {
+        "step": 5,
+        "usage": {
+          "complete": true,
+          "inputTokens": 845,
+          "outputTokens": 21,
+          "totalTokens": 866,
+          "cacheReadTokens": 640,
+          "reasoningTokens": 0
+        }
+      },
+      {
+        "step": 6,
+        "usage": {
+          "complete": true,
+          "inputTokens": 910,
+          "outputTokens": 32,
+          "totalTokens": 942,
+          "cacheReadTokens": 768,
+          "reasoningTokens": 0
+        }
+      }
+    ],
+    "resumedUsage": [
+      {
+        "step": 1,
+        "usage": {
+          "complete": true,
+          "inputTokens": 558,
+          "outputTokens": 32,
+          "totalTokens": 590,
+          "cacheReadTokens": 0,
+          "reasoningTokens": 0
+        }
+      }
+    ],
+    "elapsedMs": 6238
+  }
+}

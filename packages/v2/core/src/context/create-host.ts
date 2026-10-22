@@ -4,6 +4,7 @@ import { createFault } from "../contracts/create-fault";
 import { readData } from "../contracts/read-data";
 import { readLimits } from "../foundation/read-limits";
 import { createDiagnostics } from "../foundation/create-diagnostics";
+import { createScheduler } from "../foundation/create-scheduler";
 import { createRegistry } from "../registry/create-registry";
 import { createExecution } from "../execution/create-execution";
 import { createLifetime } from "../lifetime/create-lifetime";
@@ -26,10 +27,7 @@ export function createHost(options: HostOptions = {}): Result<Host> {
   const config = parsed.value as HostOptions;
   const limits = readLimits(config.limits);
   if (!limits.ok) return limits;
-  let scheduler: Scheduler = {
-    now: () => performance.now(),
-    delay(callback, delayMs) { const timer = setTimeout(callback, delayMs); return () => clearTimeout(timer); },
-  };
+  let scheduler: Scheduler = createScheduler();
   if (config.scheduler !== undefined) {
     const supplied = readData(config.scheduler);
     if (!supplied.ok || typeof supplied.value.now !== "function" || typeof supplied.value.delay !== "function") return createFault("invalid-input");

@@ -17,7 +17,7 @@ export function invokeService(kernel: Kernel, args: { view: View; provider: Prov
   const method = provider.implementation[name];
   const spec = provider.definition.methods[name];
   const work = startWork(kernel, {
-    label: `${provider.definition.token.name}.${name}`, view, executor: provider.owner, parent: resolveParent(view),
+    label: `${provider.definition.token.name}.${name}`, view, executor: provider.owner, provider, parent: resolveParent(view),
     phase: view.cleanup ? "cleanup" : undefined, cleanup: args.cleanup,
   }, async (call) => {
     const validated = validateValue(input, spec?.input);

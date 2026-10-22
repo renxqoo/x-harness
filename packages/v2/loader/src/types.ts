@@ -11,7 +11,8 @@ export interface LoaderOptions {
   readonly importTimeoutMs?: number;
   readonly application?: ApplicationOptions;
 }
-export interface LoaderFault { readonly source: "loader"; readonly code: "invalid-input" | "build-failed" | "import-failed" | "invalid-plugin" | "restart-required" | "watch-failed" | "closed"; readonly message: string }
+export type LoaderPhase = "sdk" | "shared" | "watch" | "build" | "import" | "validate" | "close";
+export interface LoaderFault { readonly source: "loader"; readonly code: "invalid-input" | "build-failed" | "import-failed" | "invalid-plugin" | "restart-required" | "watch-failed" | "closed"; readonly message: string; readonly phase?: LoaderPhase; readonly entryIndex?: number }
 export interface LoaderStatus { readonly state: "open" | "closed" | "restart-required"; readonly imports: number; readonly maxImports: number; readonly error?: LoaderFault }
 export interface Loader {
   reload(): Promise<Result<ApplicationSnapshot, LoaderFault>>;

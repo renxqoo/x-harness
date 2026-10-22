@@ -17,11 +17,15 @@ if (created.ok) {
 }
 ```
 
-契约目录独立于可热更的实现目录。宿主从 shared.path 导入 token，插件用配置的 specifier 或该目录中的实际路径导入同一模块。core、core/validation 和 standard 公共入口使用稳定模块身份；其他依赖打进单一 ESM 产物，不拆 chunk。插件私有模块不能自行动态加载其他私有文件。产物用 Acorn 解析，拒绝剩余动态 import、计算式 require、import.meta 非直接 url/main 读取能力（包括 require 解构、动态属性、反射）和未允许的外部静态依赖。普通静态 require/import 可以被完整打包。框架 SDK 和共享契约属于稳定代码，修改 SDK 应重启进程。
+契约目录独立于可热更的实现目录。宿主从 shared.path 导入自定义 token，插件用配置的 specifier 或该目录中的实际路径导入同一模块。全部官方 SDK 公开入口由 sdk/src/index.ts 统一声明，包含 Agent、LLM、Tools、调度器、会话和执行包；公开包名、源码入口和构建入口统一连接同一源码模块身份，无需额外配置 shared。构建器使用同一清单，平台门禁核对清单与各 package.json 的 exports 完全一致。用户私有实现及其他依赖打进各自的单一 ESM 产物，不拆 chunk。插件私有模块不能自行动态加载其他私有文件。产物用 Acorn 解析，拒绝剩余动态 import、计算式 require、import.meta 非直接 url/main 读取能力（包括 require 解构、动态属性、反射）和未允许的外部静态依赖。普通静态 require/import 可以被完整打包。框架 SDK 和共享契约属于稳定代码，修改 SDK 应重启进程。
+
+LoaderFault 的 phase 标识 sdk、shared、watch、build、import、validate 或 close；定位到某个入口时提供0至127的 entryIndex，对应 options.entries 的零基索引。错误不包含文件路径、源码、构建器输出或异常消息；宿主可用自己的入口配置定位文件。status().error 保留同一有界诊断，成功 reload 后清除；需要重启时后续 reload 保留原诊断。
 
 构建和导入均在发布前完成。语法或导入失败保留当前插件集合；清理未收敛时 application 阻止替换。多个入口的构建/导入失败不发布半份新集合；激活阶段按 application 的逐条 active/pending/failed 状态报告，不宣称跨插件业务事务回滚或零中断。
 
-watch 合并变更，最多保留一个后续刷新标记。默认延迟25ms。入口和 shared 目录递归监听，构建发现的私有依赖目录也监听；构建失败仍登记新目录。按路径、设备号、inode和递归模式复用未变监听，新增登记成功后才关闭过期监听；登记失败只回滚新增项。
+官方 SDK 源目录和内部平台元数据使用有界内容指纹，排除 __test__；最多2048个条目、单文件1MiB、合计16MiB。每次发布前后复核，变化或无法读取时保留当前实例并返回 restart-required。加载 Loader 模块时取得的首个 SDK 指纹通过进程级端口固定，同一 SDK 的源码和构建加载器共享该基线；新建 Loader 不能接受同进程内变化的 SDK。端口最多记录64个 SDK 根，达到上限同样要求进程重启。
+
+watch 合并变更，最多保留一个后续刷新标记。默认延迟25ms。入口、官方 SDK 源目录和 shared 目录递归监听，构建发现的私有依赖目录也监听；构建失败仍登记新目录。按路径、设备号、inode和递归模式复用未变监听，新增登记成功后才关闭过期监听；登记失败只回滚新增项。
 
 运行中的 watch 实例遇到构建或监听失败，会在100/200/400/800/1000ms后复核，后续间隔封顶1000ms且不短于debounceMs。只有一个恢复计时器且构建串行；新文件事件按debounceMs提前触发复核，成功后停止重试并清零退避。无效构建保留当前服务，不消耗新模块的导入预算。导入、插件校验与激活失败不自动重试，避免重复副作用；修正代码后可由尚存监听的文件事件或手动reload触发；这类失败后若全部监听也失效，需要宿主手动reload，成功后重新允许故障补偿。watch=false不启用后台恢复，初始创建失败仍关闭并返回错误。
 

@@ -3,15 +3,17 @@ import { isBuiltin } from "node:module";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import type { Result } from "../../core/src/index";
+import { sdkPublicEntries } from "../../sdk/src/index";
 import { checkBundle } from "./check-bundle";
 import { loaderFault } from "./loader-fault";
 import type { LoaderConfig, LoaderFault } from "./types";
 
-const publicModules = new Map([
-  ["@x-harness/core", import.meta.resolve("../../core/src/index.ts")],
-  ["@x-harness/core/validation", import.meta.resolve("../../core/src/validation.ts")],
-  ["@x-harness/standard", import.meta.resolve("../../standard/src/index.ts")],
-]);
+const publicModules = new Map(sdkPublicEntries.map((entry) => [entry.specifier, new URL("../../" + entry.source, import.meta.url).href]));
+const publicPaths = new Map(sdkPublicEntries.flatMap((entry) => {
+  const source = new URL("../../" + entry.source, import.meta.url);
+  const built = new URL("../../" + entry.source.replace("/src/", "/dist/").replace(/\.ts$/, ".js"), import.meta.url);
+  return [[fileURLToPath(source), source.href], [fileURLToPath(built), source.href]];
+}));
 
 export async function buildModule(entry: string, config: LoaderConfig, discovered: (directory: string) => void = () => {}): Promise<Result<{ source: string; hash: string; directories: readonly string[] }, LoaderFault>> {
   const allowed = new Set<string>();
@@ -32,7 +34,9 @@ export async function buildModule(entry: string, config: LoaderConfig, discovere
         throw error;
       }
       const url = pathToFileURL(resolved).href;
-      if ([...publicModules.values()].some((item) => fileURLToPath(item) === resolved) || [...config.shared.values()].some((item) => {
+      const canonical = publicPaths.get(resolved);
+      if (canonical) { allowed.add(canonical); return { path: canonical, external: true }; }
+      if ([...config.shared.values()].some((item) => {
         const path = relative(item.directory, resolved); return !path.startsWith("..") && !isAbsolute(path);
       })) { allowed.add(url); return { path: url, external: true }; }
       discovered(dirname(resolved)); return { path: resolved };

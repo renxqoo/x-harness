@@ -12,7 +12,7 @@ export function waitTask(kernel: Kernel, args: { task: Work | TaskCell; waiter?:
   if (!parsed.ok) return Promise.resolve(parsed);
   const options = parsed.value;
   if ((waiter && !waiter.bodyOpen) || waiter?.settled || (waiter && signalAborted(waiter.controller.signal)) || (options.signal && signalAborted(options.signal))) return Promise.resolve(kernel.fault(waiter?.cancellation ?? "cancelled"));
-  const limits = waiter?.view.scope.limits ?? kernel.root.limits;
+  const limits = waiter?.limits ?? kernel.root.limits;
   if (kernel.execution.counts().waits >= limits.maxActiveWaits) return Promise.resolve(kernel.fault("resource-limit"));
   let deadline: number;
   try { deadline = Math.min(kernel.scheduler.now() + (options.timeoutMs ?? limits.callTimeoutMs), waiter?.deadline ?? Infinity); }

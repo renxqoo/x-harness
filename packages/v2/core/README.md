@@ -280,7 +280,7 @@ async function mount(app: Host, plugin: Plugin): Promise<Result<void>> {
 }
 ```
 
-被依赖的提供者默认拒绝卸载。cascade 显式选择同时停止依赖闭包。替换依赖时由宿主卸载、清理并重新装配；代码导入、文件监听、包管理、重启与流量切换属于外部宿主。
+被依赖的提供者默认拒绝卸载。cascade 显式选择同时停止依赖闭包。service、chain 和 guard 的在途调用同时关联其固定提供者；撤销提供者会取消这些调用并阻止尚未进入的处理器，已有门面不会改绑新提供者。卸载仍等待处理器及子工作实际结束后才释放提供者资源；不合作处理器超过关闭期限返回 close-incomplete，实际工作继续留在账本。资源清理使用独立清理信号，仍可调用停止中尚未释放的固定依赖。替换依赖时由宿主卸载、清理并重新装配；代码导入、文件监听、包管理、重启与流量切换属于外部宿主。
 
 子范围组织可见性和资源。宿主通过 register 显式登记 token；shadow 必须显式声明，不会通过插件包装器改变范围。
 
@@ -291,6 +291,10 @@ function isolated(app: Host, token: ServiceToken<Greeting>) {
   return scope.value.register(token, { async greet(input) { return { ok: true, value: input.name }; } }, { shadow: true });
 }
 ```
+
+每次受管工作按调用者作用域、执行者作用域和父工作的有效预算逐项取最严格限制。绑定的依赖调用、子任务、等待和 continuation 不因跨作用域而恢复较宽预算；调用者身份、执行者和资源拥有者分别保持原语义。取消回执不释放仍在实际执行的调用或任务容量。
+
+默认调度器使用单调截止时间，将超出原生计时器范围的合法长期限分段调度；分段不重置期限，取消会移除待执行计时器与回调。宿主注入的 scheduler 应遵守同一单调时钟和取消契约。
 
 Scope 不是不可信代码沙箱。强制结束不可收敛代码需要进程或 Worker 隔离。
 

@@ -53,6 +53,7 @@ export interface Provider {
   readonly definition: DefinitionData;
   readonly scope: Scope;
   readonly owner: Owner;
+  readonly signal: AbortSignal;
   readonly active: boolean;
   readonly published: boolean;
   readonly configured: boolean;
@@ -132,6 +133,9 @@ export interface Work {
   view: View;
   executor: Owner;
   resourceOwner: Owner;
+  owners: readonly Owner[];
+  provider?: Provider;
+  limits: Limits;
   parent?: Work;
   depth: number;
   controller: AbortController;

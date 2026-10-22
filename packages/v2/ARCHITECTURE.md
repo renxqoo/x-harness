@@ -33,7 +33,9 @@ flowchart TB
   Application --> Core
 ```
 
-文件系统与Bun运行时只在loader/create。standard与application使用core公开入口；core/validation子入口复用安全读取、JSON快照、结果归一与错误构造，外层不复制验证协议。自动重新装配通过卸载旧实例再安装新实例实现，保持core的固定依赖语义；它不在Registry里修改现有消费者绑定。
+core、standard 和 application 保持平台无关。文件系统与 Bun 运行时依赖限制在 loader/create 及存储、执行适配器中，由平台边界门禁检查。standard 与 application 使用 core 公开入口；core/validation 子入口复用安全读取、JSON 快照、结果归一与错误构造，外层不复制验证协议。自动重新装配通过卸载旧实例再安装新实例实现，保持 core 的固定依赖语义；它不在 Registry 里修改现有消费者绑定。
+
+sdk/src 保存公开入口与必要内部共享身份的纯数据清单，构建器和 Loader 共用，门禁验证清单与包导出一致。Loader 将 SDK 的包名、源码和构建路径归到同一稳定入口，业务私有实现独立打包并热更。SDK 源码变化要求进程重启；进程级有界指纹登记阻止新 Loader 绕过稳定代次。
 
 Invocation的依赖按首次读取生成。同一Owner和固定绑定快照共用仅含名称及方法字符串的冻结布局，缓存使用弱键；未读取deps的调用不生成依赖上下文和服务门面。实际结算后首次读取仍返回具有声明方法的失效门面，方法报告cancelled；已经取得服务的门面继续报告service-unavailable。布局不持有token、Provider或Kernel，cleanup使用自己的旧依赖快照。
 
@@ -117,6 +119,10 @@ Assembly 先验证全部声明和依赖，按输入优先级稳定拓扑排序�
 
 Work 分别记录 bodyOpen、outcome 和 actual。函数体结果确定后先关闭子工作准入，再排空已登记孩子，最后结算 actual。取消和超时可以先结束 outcome，不能释放仍在实际使用的预算、锁或资源。迟到微任务不能在 join 结束后再加入子工作。
 
+Work 保存有效执行限制，由调用视图、执行者作用域和父工作的有效限制逐项取最严格值。嵌套服务、dispatch、spawn、wait 和 chain 的 next 使用同一限制快照。origin、executor 和 resourceOwner 只表达身份及所有权，改变执行者不能扩大已有调用预算。显式拥有者级后台任务仍从其自身作用域建立预算。
+
+服务、chain 和 guard 的 Work 显式关联当前 Provider。Provider 停止时撤销业务执行，未进入的处理器不再运行；实际工作同时记入提供者拥有者的活动账本，卸载必须等实际排空。清理阶段使用独立信号和保留的固定依赖，不因业务能力停止而失去清理通道。
+
 call.deps 与 call.dispatch 自动绑定执行者获准依赖、本次父工作、期限、取消和逻辑消费方。setup 的 ctx.deps 只属于激活工作，激活后失效。临时容量失败不缓存为永久依赖失败；成功门面仍由 Registry 缓存并可撤销。
 
 ctx.resource 属于插件；call.resource 属于逻辑消费方。取得前先预留和登记，成功值先进入清理记录再交付。未交付的迟到成功立即受管回收；成功交付的资源随归属者关闭。清理失败保留资源与必要提供者。
@@ -132,6 +138,8 @@ Service 使用冻结且可撤销的方法门面，支持可选输入、输出和
 Chain 捕获稳定处理器计划，支持短路与顺序 next；Continuation 跟踪 then/catch/finally，禁止并发、迟到、未完成和未观察的失败。每层 next 挂在当前处理器工作。
 
 Guard 按顺序聚合明确的 allow/deny，没有处理器时失败，不能默认放行。
+
+外围在 Invocation 上增加业务字段时保留动态属性描述符与撤销门面，remainingMs 和 deps 在读取时才求值。执行完成后的门面保持失效语义，不保存剩余期限快照。
 
 Event 保存有界 JSON 快照、每监听者 FIFO 与实际串行执行。队列只属于事件机制，其他登记不分配事件状态。容量不足时订阅实际工作释放通知；撤销会清除排队和容量等待。事件监听属于监听者，发出者是来源而非结构化父项。
 

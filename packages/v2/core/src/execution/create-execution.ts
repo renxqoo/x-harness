@@ -25,8 +25,7 @@ export function createExecution(fault: Kernel["fault"]) {
       if (work.kind === "call") calls += 1;
       else activeTasks += 1;
       work.parent?.children.add(work);
-      owned(work.executor).add(work);
-      owned(work.resourceOwner).add(work);
+      for (const owner of work.owners) owned(owner).add(work);
       work.view.cleanupControl?.works.add(work);
     },
     finish(work: Work): void {
@@ -34,8 +33,7 @@ export function createExecution(fault: Kernel["fault"]) {
       if (work.kind === "call") calls -= 1;
       else activeTasks -= 1;
       work.view.cleanupControl?.works.delete(work);
-      owned(work.executor).delete(work);
-      owned(work.resourceOwner).delete(work);
+      for (const owner of work.owners) owned(owner).delete(work);
       for (const notify of Array.from(capacity)) notify();
     },
     onCapacity(notify: () => void): () => void {

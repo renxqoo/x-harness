@@ -16,7 +16,7 @@ export function createRegistry(root: Scope, fault: Kernel["fault"]) {
     if (!entry) { entry = { bindings: new Map(), providers: new Set(), registrations: new Set(), leases: new Set() }; ownerEntries.set(owner, entry); }
     return entry;
   };
-  const providerEntries = new WeakMap<Provider, { active: boolean; published: boolean; configured: boolean; shadow: boolean; implementation?: Provider["implementation"]; terminal?: Provider["terminal"]; pins: Set<Effect>; leases: Set<ServiceLease> }>();
+  const providerEntries = new WeakMap<Provider, { active: boolean; published: boolean; configured: boolean; shadow: boolean; controller: AbortController; implementation?: Provider["implementation"]; terminal?: Provider["terminal"]; pins: Set<Effect>; leases: Set<ServiceLease> }>();
   const provided = (provider: Provider) => providerEntries.get(provider)!;
   const registrationEntries = new WeakMap<Registration, { active: boolean; published: boolean; handler?: Registration["handler"]; onRetire?: () => void }>();
   const registered = (registration: Registration) => registrationEntries.get(registration)!;
@@ -27,8 +27,8 @@ export function createRegistry(root: Scope, fault: Kernel["fault"]) {
     ownerRegistrations: (owner: Owner): Owner["registrations"] => owned(owner).registrations,
     ownerLeases: (owner: Owner): Owner["leases"] => owned(owner).leases,
     createProvider(args: { id: string; definition: Provider["definition"]; owner: Owner }): Provider {
-      const entry = { active: false, published: !args.owner.transaction, configured: false, shadow: false, implementation: undefined as Provider["implementation"], terminal: undefined as Provider["terminal"], pins: new Set<Effect>(), leases: new Set<ServiceLease>() };
-      const provider: Provider = Object.freeze({ ...args, scope: args.owner.scope,
+      const entry = { active: false, published: !args.owner.transaction, configured: false, shadow: false, controller: new AbortController(), implementation: undefined as Provider["implementation"], terminal: undefined as Provider["terminal"], pins: new Set<Effect>(), leases: new Set<ServiceLease>() };
+      const provider: Provider = Object.freeze({ ...args, scope: args.owner.scope, signal: entry.controller.signal,
         get active() { return entry.active; }, get published() { return entry.published; }, get configured() { return entry.configured; }, get shadow() { return entry.shadow; },
         get implementation() { return entry.implementation; }, get terminal() { return entry.terminal; }, pins: entry.pins, leases: entry.leases,
       });
@@ -129,10 +129,12 @@ export function createRegistry(root: Scope, fault: Kernel["fault"]) {
     },
     retireProvider(provider: Provider): void {
       provided(provider).active = false;
+      provided(provider).controller.abort();
       if (provider.published) provider.scope.tombstones.add(provider.definition.token);
     },
     revokeProvider(provider: Provider): void {
       provided(provider).active = false;
+      provided(provider).controller.abort();
       for (const lease of provider.leases) registry.revokeLease(lease);
       provided(provider).implementation = undefined;
       provided(provider).terminal = undefined;

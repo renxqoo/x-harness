@@ -16,7 +16,7 @@ export function dispatchChain(kernel: Kernel, args: { view: View; provider: Prov
     if (!args.provider.active && !args.view.cleanup) return Promise.resolve(kernel.fault("extension-revoked"));
     const executor = registration?.owner ?? args.provider.owner;
     const work = startWork(kernel, {
-      label: args.provider.definition.token.name, view: args.view, executor, parent: parent ?? resolveParent(args.view), options: args.options,
+      label: args.provider.definition.token.name, view: args.view, executor, provider: args.provider, parent: parent ?? resolveParent(args.view), options: args.options,
       phase: args.view.cleanup ? "cleanup" : undefined,
     }, async (call) => {
       const validated = validateValue(input, args.provider.definition.input);
@@ -41,6 +41,7 @@ export function dispatchChain(kernel: Kernel, args: { view: View; provider: Prov
 }
 
 async function executeFrame(kernel: Kernel, args: { registration: Registration; input: unknown; call: Invocation; execute: (input: unknown) => Promise<AnyResult> }): Promise<AnyResult> {
+  const limits = kernel.execution.work(args.call.id)!.limits;
   let active = false;
   let closed = false;
   let count = 0;
@@ -51,7 +52,7 @@ async function executeFrame(kernel: Kernel, args: { registration: Registration; 
     else if (kernel.scheduler.now() >= args.call.deadline) promise = Promise.resolve(kernel.fault("timeout"));
     else if (signalAborted(args.call.signal)) promise = Promise.resolve(kernel.fault("cancelled"));
     else if (active) promise = Promise.resolve(kernel.fault("concurrent-next"));
-    else if (count >= args.registration.owner.scope.limits.maxNextCallsPerFrame) promise = Promise.resolve(kernel.fault("resource-limit"));
+    else if (count >= limits.maxNextCallsPerFrame) promise = Promise.resolve(kernel.fault("resource-limit"));
     else {
       count += 1;
       active = true;

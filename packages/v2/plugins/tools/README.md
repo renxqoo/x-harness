@@ -47,7 +47,9 @@ try {
 
 `access`默认required，没有策略就拒绝；示例的allow是宿主明确允许全部已安装工具。独立权限/人工审批插件通过普通guard接入；toolAccess负责基础准入，toolExecutionAccess负责完整计划许可，拒绝优先。校验的operation为list/get/execute；origin来自外层core调用，不从工具参数推断身份。列举过滤不代替执行授权。策略中的审批存储、用户认证及沙箱由对应插件负责；in-process插件是受信任应用代码。
 
-作者参数从受支持的JSON Schema推断；动态生成schema的作者应自行收窄未知字段。requires/optional按core规则声明，execute里的call.deps只含本工具依赖，不能捕获初始化门面。call保留core的effect、spawn、resource、signal和deadline；caller明确表示外层调用者，内部链的origin有它自己的执行语义。
+工具与权限工厂的业务name均接受1至64个ASCII字母、数字、下划线或连字符，首字符为字母或下划线。工厂使用相同的无碰撞编码生成core插件名称，保留业务名称的大小写及标点区别；工具名仍用于目录查询和执行。
+
+作者参数从受支持的JSON Schema推断；动态生成schema的作者应自行收窄未知字段。requires/optional按core规则声明，execute里的call.deps只含本工具依赖，不能捕获初始化门面。prepare和execute收到的call均为冻结门面，保留core的effect、spawn、resource、signal和deadline。remainingMs按宿主调度时钟实时递减，调用实际结束后为零；deps保持延迟读取，保存的调用能力在结束后失效；caller明确表示外层调用者，内部链的origin有它自己的执行语义。
 
 输出content为文本或图片块数组，支持显式HTTP(S) URL和image/png、jpeg、gif、webp的base64来源；工具层不代拉取URL。structured可携带JSON对象，outputSchema声明时必须存在并满足该schema。isError:true表示工具显式返回的业务失败；它与设施错误Result分开。工具层不自动把progress拼入content，也不把任意异常文案返回模型。
 

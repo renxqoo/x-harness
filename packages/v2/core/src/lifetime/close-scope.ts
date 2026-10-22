@@ -1,5 +1,5 @@
 import type { CloseReport, Result } from "../contracts/types";
-import type { Kernel, Scope } from "../foundation/types";
+import type { Kernel, Scope, Work } from "../foundation/types";
 import { describeIncompleteClose } from "./describe-incomplete-close";
 import { stopLifetimes } from "./stop-lifetimes";
 import { releaseEffect } from "./release-effect";
@@ -12,9 +12,10 @@ export function requestScopeClose(kernel: Kernel, scope: Scope): void {
 
 export function closeScope(kernel: Kernel, scope: Scope): Promise<Result<CloseReport>> {
   if (scope.close) return scope.close;
+  const containsWork = (work: Work) => work.owners.some(owner => isInScope(owner.scope, scope));
   const releases = kernel.lifetime.observe((effect) => isInScope(effect.owner.scope, scope) ||
     (effect.consumer && [...effect.dependencies.values()].some((provider) => provider && isInScope(provider.scope, scope))));
-  const initialTasks = [...kernel.execution.works()].filter((work) => work.kind === "task" && (isInScope(work.executor.scope, scope) || isInScope(work.resourceOwner.scope, scope))).length;
+  const initialTasks = [...kernel.execution.works()].filter((work) => work.kind === "task" && containsWork(work)).length;
   const refs = [...kernel.lifetime.owners()].filter((owner) => isInScope(owner.scope, scope) && owner.kind === "plugin" && owner.plugin).map((owner) => ({
     name: owner.name!, scopeId: owner.scope.id, instanceId: owner.id,
   }));
@@ -24,8 +25,8 @@ export function closeScope(kernel: Kernel, scope: Scope): Promise<Result<CloseRe
       for (let current: Scope | undefined = ownerScope; current; current = current.parent) if (current === scope) return true;
       return false;
     };
-    while ([...kernel.execution.works()].some((work) => inSubtree(work.executor.scope) || inSubtree(work.resourceOwner.scope))) {
-      await Promise.all([...kernel.execution.works()].filter((work) => inSubtree(work.executor.scope) || inSubtree(work.resourceOwner.scope)).map((work) => work.actual));
+    while (kernel.execution.works().some(containsWork)) {
+      await Promise.all(kernel.execution.works().filter(containsWork).map((work) => work.actual));
     }
     for (const effect of kernel.lifetime.effects().reverse()) {
       if (effect.consumer && (inSubtree(effect.owner.scope) || [...effect.dependencies.values()].some((provider) => provider && inSubtree(provider.scope)))) {

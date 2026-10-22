@@ -6,528 +6,46 @@
 
 所有异步控制入口返回 Result。同步登记和能力定义返回 Result；definePlugin 仅返回不可变插件声明，非法声明在 install 时拒绝。业务错误保持原错误类型，内核错误进入同一判别联合。同步读取的诊断与状态返回只读快照。
 
-以下声明块固定公开接口。以 core/src 的公开导出为类型来源，文档与源码契约必须一致，示例对公开入口进行类型检查。
+公开类型和函数签名以 [公开入口](core/src/index.ts) 的导出为唯一来源：[通用类型](core/src/contracts/types.ts)、[Manifest 作者类型](core/src/contracts/plugin-types.ts)、[插件声明工厂](core/src/context/define-plugin.ts)。本文件维护行为契约，使用示例直接导入公开入口并参与类型门禁。
+
+作者类型从同一份 Manifest 推导。PluginContext、PluginInvocation、PluginImplementations、PluginDependencies 和 PluginSpec 接收一个 Manifest 类型参数；PluginResource 和 PluginTask 在值、错误类型之后接收该 Manifest。
 
 ```ts
-export type MaybePromise<T> = T | PromiseLike<T>;
+import { definePlugin, defineService } from "@x-harness/core";
+import type { Plugin, PluginContext, PluginImplementations, PluginInvocation, Result } from "@x-harness/core";
 
-export type JsonValue =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly JsonValue[]
-  | { readonly [key: string]: JsonValue };
-
-export type CoreFaultCode =
-  | "invalid-input"
-  | "invalid-definition"
-  | "invalid-result"
-  | "definition-conflict"
-  | "duplicate-provider"
-  | "missing-dependency"
-  | "undeclared-dependency"
-  | "service-unavailable"
-  | "extension-unavailable"
-  | "extension-revoked"
-  | "guard-unconfigured"
-  | "dependency-cycle"
-  | "plugin-in-use"
-  | "plugin-not-found"
-  | "activation-failed"
-  | "activation-unsettled"
-  | "resource-limit"
-  | "scope-closed"
-  | "cancelled"
-  | "timeout"
-  | "callback-failed"
-  | "cleanup-failed"
-  | "resource-conflict"
-  | "close-incomplete"
-  | "concurrent-next"
-  | "late-next"
-  | "unfinished-next"
-  | "unobserved-next"
-  | "wait-cycle";
-
-export interface CoreFault {
-  readonly source: "core";
-  readonly code: CoreFaultCode;
-  readonly message: string;
-  readonly scopeId?: string;
-  readonly pluginName?: string;
-  readonly callId?: string;
-  readonly diagnosticId?: string;
-  readonly details?: JsonValue;
+interface EchoService {
+  echo(input: { text: string }): Promise<Result<string>>;
 }
 
-export type Result<T, E = never> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: E | CoreFault };
-
-export type Validator<T> = (input: unknown) => Result<T>;
-
-export type ScopeState = "open" | "closing" | "closed" | "close-failed";
-export type PluginState = "staging" | "active" | "stopping" | "stopped" | "failed";
-export type TaskState = "running" | "settled";
-
-export interface DefinitionRef {
-  readonly kind: "service" | "chain" | "guard" | "event";
-  readonly name: string;
+function createEchoPlugin(): Result<Plugin> {
+  const defined = defineService<EchoService>({ name: "example/echo", methods: { echo: {} } });
+  if (!defined.ok) return defined;
+  const manifest = { name: "example/echo", provides: { echo: defined.value } };
+  const implementations: PluginImplementations<typeof manifest> = {
+    echo: { echo: echoText },
+  };
+  async function echoText(input: { text: string }, _call: PluginInvocation<typeof manifest>): Promise<Result<string>> {
+    return { ok: true, value: input.text };
+  }
+  function setup(ctx: PluginContext<typeof manifest>) {
+    return ctx.service(implementations);
+  }
+  return { ok: true, value: definePlugin({ ...manifest, setup }) };
 }
 
-export interface ServiceToken<S> extends DefinitionRef {
-  readonly kind: "service";
-  readonly serviceType?: (value: S) => S;
-}
-
-export interface ChainToken<I, O, E = never> extends DefinitionRef {
-  readonly kind: "chain";
-  readonly inputType?: (value: I) => I;
-  readonly outputType?: (value: O) => O;
-  readonly errorType?: (value: E) => E;
-}
-
-export interface GuardToken<I> extends DefinitionRef {
-  readonly kind: "guard";
-  readonly inputType?: (value: I) => I;
-}
-
-export interface EventToken<T> extends DefinitionRef {
-  readonly kind: "event";
-  readonly payloadType?: (value: T) => T;
-}
-
-export type ResultValue<R> =
-  R extends { readonly ok: true; readonly value: infer T } ? T : never;
-export type BusinessFailure<R> = Exclude<
-  R extends { readonly ok: false; readonly error: infer E } ? E : never,
-  CoreFault
->;
-export type SameSignature<A, B> =
-  (<T>() => T extends A ? 1 : 2) extends
-  (<T>() => T extends B ? 1 : 2) ? true : false;
-export type MethodSpec<F> =
-  F extends (input: infer I) => Promise<infer R>
-    ? SameSignature<F, (input: I) => Promise<R>> extends true
-      ? [R] extends [Result<unknown, unknown>]
-        ? {
-            readonly input?: Validator<I>;
-            readonly output?: Validator<ResultValue<R>>;
-            readonly failure?: Validator<BusinessFailure<R>>;
-          }
-        : never
-      : never
-    : never;
-
-export type ServiceImplementation<S> = {
-  readonly [K in keyof S]:
-    S[K] extends (input: infer I) => Promise<infer R>
-      ? (input: I, call: Invocation) => Promise<R>
-      : never;
-};
-
-export interface ServiceSpec<S> {
-  readonly name: string;
-  readonly methods: { readonly [K in keyof S]: MethodSpec<S[K]> };
-}
-
-export interface ChainSpec<I, O> {
-  readonly name: string;
-  readonly input: Validator<I>;
-  readonly output: Validator<O>;
-}
-
-export interface GuardSpec<I> {
-  readonly name: string;
-  readonly input: Validator<I>;
-}
-
-export interface EventSpec<T> {
-  readonly name: string;
-  readonly payload: Validator<T>;
-}
-
-export interface Origin {
-  readonly scopeId: string;
-  readonly pluginName?: string;
-}
-
-export interface CallOptions {
-  readonly signal?: AbortSignal;
-  readonly timeoutMs?: number;
-}
-
-export interface Invocation {
-  readonly deps: Readonly<Record<string, unknown>>;
-  readonly id: string;
-  readonly parentId?: string;
-  readonly signal: AbortSignal;
-  readonly deadline: number;
-  readonly remainingMs: number;
-  readonly origin: Origin;
-  readonly originId: string;
-  readonly originSignal: AbortSignal;
-  readonly initiator: OwnerInspection;
-  readonly executor: Origin;
-  readonly resourceOwner: Origin;
-  readonly phase: "activation" | "business" | "observer" | "cleanup";
-  cancel(reason?: "cancelled" | "timeout"): Result<void>;
-  bind(context: Context): Result<DependencyContext>;
-  dispatch(name: string, input: unknown, options?: CallOptions): Promise<Result<unknown, unknown>>;
-  effect(cleanup: Cleanup): Result<Disposer>;
-  resource<T, E = never>(spec: ResourceSpec<T, E>): Promise<Result<T, E>>;
-  spawn<T, E = never>(spec: TaskSpec<T, E>): Result<TaskHandle<T, E>>;
-  wait<T, E = never>(task: TaskHandle<T, E>, options?: CallOptions): Promise<Result<T, E>>;
-}
-
-export interface DependencyContext {
-  readonly scopeId: string;
-  readonly signal: AbortSignal;
-  use<S>(this: void, token: ServiceToken<S>): Result<S>;
-  dispatch<I, O, E>(this: void, token: ChainToken<I, O, E>, input: I, options?: CallOptions): Promise<Result<O, E>>;
-  dispatch<I>(this: void, token: GuardToken<I>, input: I, options?: CallOptions): Promise<Result<GuardDecision>>;
-}
-
-export interface CleanupContext extends DependencyContext {}
-
-export interface CleanupInvocation {
-  readonly signal: AbortSignal;
-  readonly deadline: number;
-  readonly context: CleanupContext;
-}
-
-export type Cleanup = (invocation: CleanupInvocation) => MaybePromise<Result<void>>;
-
-export interface ResourceSpec<T, E = never> {
-  readonly open: (call: Invocation) => MaybePromise<Result<T, E>>;
-  readonly close: (value: T, cleanup: CleanupInvocation) => MaybePromise<Result<void>>;
-}
-
-export type Disposer = () => MaybePromise<Result<void>>;
-
-export interface TaskSpec<T, E = never> {
-  readonly label: string;
-  readonly run: (call: Invocation) => MaybePromise<Result<T, E>>;
-  readonly signal?: AbortSignal;
-  readonly timeoutMs?: number;
-}
-
-export interface TaskHandle<T, E = never> {
-  readonly finished: Promise<Result<T, E>>;
-  readonly id: string;
-  readonly state: TaskState;
-  readonly valueType?: (value: T) => T;
-  readonly errorType?: (value: E) => E;
-  cancel(): Result<void>;
-}
-
-export interface Continuation<T> extends PromiseLike<T> {
-  then<TFulfilled = T, TRejected = never>(
-    fulfilled?: ((value: T) => TFulfilled | PromiseLike<TFulfilled>) | null,
-    rejected?: ((error: unknown) => TRejected | PromiseLike<TRejected>) | null,
-  ): Continuation<TFulfilled | TRejected>;
-  catch<TRejected = never>(
-    rejected?: ((error: unknown) => TRejected | PromiseLike<TRejected>) | null,
-  ): Continuation<T | TRejected>;
-  finally(settled?: (() => void) | null): Continuation<T>;
-}
-
-export type Next<I, O, E = never> = (input: I) => Continuation<Result<O, E>>;
-export type ChainHandler<I, O, E = never> =
-  (input: I, next: Next<I, O, E>, call: Invocation) => MaybePromise<Result<O, E>>;
-export type ChainTerminal<I, O, E = never> =
-  (input: I, call: Invocation) => MaybePromise<Result<O, E>>;
-
-export type GuardDecision =
-  | { readonly kind: "allow" }
-  | { readonly kind: "deny"; readonly reason: string };
-
-export type GuardHandler<I> =
-  (input: I, call: Invocation) => MaybePromise<Result<GuardDecision>>;
-
-export interface EventOrigin extends Origin {
-  readonly emissionId: string;
-  readonly sequence: number;
-}
-
-export type Observer<T> =
-  (payload: T, origin: EventOrigin, call: Invocation) => MaybePromise<void>;
-
-export interface EmitReceipt {
-  readonly emissionId: string;
-  readonly acceptedListeners: number;
-}
-
-export interface ScopeOptions {
-  readonly label: string;
-  readonly limits?: Partial<Limits>;
-}
-
-export interface RegistrationOptions {
-  readonly shadow?: boolean;
-}
-
-export type ProviderArguments<T> =
-  T extends ServiceToken<infer S> ? [implementation: ServiceImplementation<S>, options?: RegistrationOptions] :
-  T extends ChainToken<infer I, infer O, infer E> ? [terminal: ChainTerminal<I, O, E>, options?: RegistrationOptions] :
-  T extends { readonly kind: "event" | "guard" } ? [] : never;
-
-export interface Context {
-  readonly deps: Readonly<Record<string, unknown>>;
-  readonly scopeId: string;
-  readonly scopeState: ScopeState;
-  readonly signal: AbortSignal;
-  service(implementations: Readonly<Record<string, unknown>>, options?: RegistrationOptions): Result<Readonly<Record<string, Disposer>>>;
-  handle<I, O, E>(token: ChainToken<I, O, E>, terminal: ChainTerminal<I, O, E>, options?: RegistrationOptions): Result<Disposer>;
-  register<T extends DefinitionRef>(this: void, token: T, ...args: ProviderArguments<NoInfer<T>>): Result<Disposer>;
-  use<S>(this: void, token: ServiceToken<S>): Result<S>;
-  on<T>(token: EventToken<T>, handler: Observer<NoInfer<T>>): Result<Disposer>;
-  middleware<I, O, E>(token: ChainToken<I, O, E>, handler: ChainHandler<NoInfer<I>, NoInfer<O>, NoInfer<E>>): Result<Disposer>;
-  guard<I>(token: GuardToken<I>, handler: GuardHandler<NoInfer<I>>): Result<Disposer>;
-  dispatch<I, O, E>(this: void, token: ChainToken<I, O, E>, input: I, options?: CallOptions): Promise<Result<O, E>>;
-  dispatch<I>(this: void, token: GuardToken<I>, input: I, options?: CallOptions): Promise<Result<GuardDecision>>;
-  emit<T>(this: void, token: EventToken<T>, payload: T): Result<EmitReceipt>;
-  addCleanup(cleanup: Cleanup): Result<Disposer>;
-  resource<T, E = never>(spec: ResourceSpec<T, E>): Promise<Result<T, E>>;
-  createScope(options: ScopeOptions): Result<Context>;
-  startTask<T, E = never>(spec: TaskSpec<T, E>): Result<TaskHandle<T, E>>;
-  requestClose(): Result<void>;
-}
-
-export interface Plugin {
-  readonly name: string;
-  readonly requires?: Readonly<Record<string, DefinitionRef>>;
-  readonly optional?: Readonly<Record<string, DefinitionRef>>;
-  readonly provides?: Readonly<Record<string, DefinitionRef>>;
-  setup(ctx: Context, call: Invocation): MaybePromise<Result<unknown, unknown>>;
-}
-
-export interface PluginRef {
-  readonly name: string;
-  readonly scopeId: string;
-  readonly instanceId: string;
-}
-
-export interface InstallOptions {
-  readonly scope?: Context;
-}
-
-export interface UninstallOptions {
-  readonly cascade?: boolean;
-}
-
-export interface InstallReport {
-  readonly plugins: readonly PluginRef[];
-}
-
-export interface CloseReport {
-  readonly scopeId: string;
-  readonly stoppedPlugins: readonly PluginRef[];
-  readonly settledTasks: number;
-  readonly releasedEffects: number;
-}
-
-export interface Diagnostic {
-  readonly id: string;
-  readonly time: number;
-  readonly code: CoreFaultCode;
-  readonly scopeId: string;
-  readonly pluginName?: string;
-  readonly callId?: string;
-  readonly message: string;
-  readonly details?: JsonValue;
-}
-
-export interface OwnerInspection {
-  readonly id: string;
-  readonly kind: "host" | "plugin";
-  readonly scopeId: string;
-  readonly pluginName?: string;
-}
-
-export interface ProviderInspection {
-  readonly id: string;
-  readonly definition: DefinitionRef;
-  readonly owner: OwnerInspection;
-}
-
-export interface DependencyInspection {
-  readonly name: string;
-  readonly definition: DefinitionRef;
-  readonly optional: boolean;
-  readonly provider: ProviderInspection | null;
-}
-
-export interface WorkInspection {
-  readonly id: string;
-  readonly kind: "call" | "task";
-  readonly phase: Invocation["phase"];
-  readonly label?: string;
-  readonly executor: OwnerInspection;
-  readonly resourceOwner: OwnerInspection;
-  readonly parentId?: string;
-  readonly cancelled: boolean;
-  readonly bodyComplete: boolean;
-  readonly waitingFor: readonly string[];
-}
-
-export interface ResourceInspection {
-  readonly id: string;
-  readonly kind: "cleanup" | "resource" | "provider" | "registration";
-  readonly owner: OwnerInspection;
-  readonly executor: OwnerInspection;
-  readonly state: "active" | "closing" | "failed";
-  readonly dependencies: readonly ProviderInspection[];
-}
-
-export interface Inspection {
-  readonly state: ScopeState;
-  readonly degraded: boolean;
-  readonly scopes: number;
-  readonly plugins: readonly {
-    readonly ref: PluginRef;
-    readonly state: PluginState;
-    readonly dependencies: readonly DependencyInspection[];
-    readonly provides: readonly ProviderInspection[];
-  }[];
-  readonly activeWaits: number;
-  readonly activeCalls: number;
-  readonly serviceLeases: number;
-  readonly activeTasks: number;
-  readonly pendingEvents: number;
-  readonly effects: number;
-  readonly work: readonly WorkInspection[];
-  readonly resources: readonly ResourceInspection[];
-}
-
-export interface Host extends Context {
-  install(plugins: readonly Plugin[], options?: InstallOptions): Promise<Result<InstallReport>>;
-  uninstall(plugin: PluginRef, options?: UninstallOptions): Promise<Result<CloseReport>>;
-  closeScope(scope: Context): Promise<Result<CloseReport>>;
-  close(): Promise<Result<CloseReport>>;
-  wait<T, E = never>(task: TaskHandle<T, E>, options?: CallOptions): Promise<Result<T, E>>;
-  inspect(): Inspection;
-  diagnostics(): readonly Diagnostic[];
-}
-
-export interface Limits {
-  readonly maxScopes: number;
-  readonly maxPluginsPerScope: number;
-  readonly maxPlugins: number;
-  readonly maxEffects: number;
-  readonly maxServiceLeases: number;
-  readonly maxServiceLeasesPerOwner: number;
-  readonly maxDefinitions: number;
-  readonly maxRegistrationsPerOwner: number;
-  readonly maxActiveTasks: number;
-  readonly maxActiveCalls: number;
-  readonly maxActiveWaits: number;
-  readonly maxPendingEvents: number;
-  readonly maxEventBytes: number;
-  readonly maxEventDepth: number;
-  readonly maxEventNodes: number;
-  readonly maxNextCallsPerFrame: number;
-  readonly maxCallDepth: number;
-  readonly maxDiagnostics: number;
-  readonly maxPendingMutations: number;
-  readonly callTimeoutMs: number;
-  readonly activationTimeoutMs: number;
-  readonly observerTimeoutMs: number;
-  readonly closeTimeoutMs: number;
-}
-
-export interface Scheduler {
-  now(): number;
-  delay(callback: () => void, delayMs: number): () => void;
-}
-
-export interface HostOptions {
-  readonly limits?: Partial<Limits>;
-  readonly scheduler?: Scheduler;
-  readonly onDiagnostic?: (diagnostic: Diagnostic) => void;
-}
-
-
-export type TokenMap = Readonly<Record<string, DefinitionRef>>;
-type ServiceOf<T> = T extends ServiceToken<infer S> ? S : never;
-export type Dependencies<D extends TokenMap> = {
-  readonly [K in keyof D as D[K] extends { readonly kind: "service" } ? K : never]: ServiceOf<D[K]>;
-};
-export type PluginDependencies<D extends TokenMap, O extends TokenMap> = Dependencies<D> & Partial<Dependencies<O>>;
-
-export interface PluginResource<T, E, D extends TokenMap, P extends TokenMap, O extends TokenMap> {
-  readonly open: (call: PluginInvocation<D, P, O>) => MaybePromise<Result<T, E>>;
-  readonly close: (value: T, cleanup: CleanupInvocation) => MaybePromise<Result<void>>;
-}
-
-export interface PluginTask<T, E, D extends TokenMap, P extends TokenMap, O extends TokenMap> extends CallOptions {
-  readonly label: string;
-  readonly run: (call: PluginInvocation<D, P, O>) => MaybePromise<Result<T, E>>;
-}
-
-export interface PluginInvocation<D extends TokenMap, P extends TokenMap, O extends TokenMap> extends Omit<Invocation, "deps" | "resource" | "spawn" | "dispatch"> {
-  readonly deps: PluginDependencies<D, O>;
-  dispatch<K extends Keys<D & P & O, "chain" | "guard">>(name: K, input: Dispatch<(D & P & O)[K]>[0], options?: CallOptions): Promise<Dispatch<(D & P & O)[K]>[1]>;
-  resource<T, E = never>(spec: PluginResource<T, E, D, P, O>): Promise<Result<T, E>>;
-  spawn<T, E = never>(spec: PluginTask<T, E, D, P, O>): Result<TaskHandle<T, E>>;
-}
-
-type Implementation<T, D extends TokenMap, P extends TokenMap, O extends TokenMap> =
-  T extends ServiceToken<infer S> ? {
-    readonly [K in keyof S]: S[K] extends (input: infer I) => Promise<infer R>
-      ? (input: I, call: PluginInvocation<D, P, O>) => Promise<R> : never;
-  } : T extends ChainToken<infer I, infer R, infer E>
-    ? (input: I, call: PluginInvocation<D, P, O>) => MaybePromise<Result<R, E>>
-    : never;
-
-export type PluginImplementations<P extends TokenMap, D extends TokenMap, O extends TokenMap> = {
-  readonly [K in keyof P as P[K] extends { readonly kind: "service" } ? K : never]: Implementation<P[K], D, P, O>;
-};
-
-type Handler<T, D extends TokenMap, P extends TokenMap, O extends TokenMap> =
-  T extends ChainToken<infer I, infer R, infer E> ? (input: I, next: Next<I, R, E>, call: PluginInvocation<D, P, O>) => MaybePromise<Result<R, E>>
-    : T extends GuardToken<infer I> ? (input: I, call: PluginInvocation<D, P, O>) => MaybePromise<Result<GuardDecision>>
-      : T extends EventToken<infer I> ? (input: I, origin: import("./types").EventOrigin, call: PluginInvocation<D, P, O>) => MaybePromise<void> : never;
-
-type Dispatch<T> = T extends ChainToken<infer I, infer R, infer E> ? [input: I, result: Result<R, E>]
-  : T extends GuardToken<infer I> ? [input: I, result: Result<GuardDecision>] : never;
-type Keys<T extends TokenMap, Kind extends DefinitionRef["kind"]> = {
-  [K in keyof T]: T[K] extends { readonly kind: Kind } ? K : never;
-}[keyof T];
-
-export interface PluginContext<D extends TokenMap, P extends TokenMap, O extends TokenMap> extends Omit<
-  Context, "deps" | "service" | "handle" | "register" | "use" | "on" | "middleware" | "guard" | "dispatch" | "emit" | "resource" | "startTask"
-> {
-  readonly deps: PluginDependencies<D, O>;
-  service<const I extends PluginImplementations<P, D, O>>(implementations: I & Record<Exclude<keyof I, Keys<P, "service">>, never>, options?: RegistrationOptions): Result<{ readonly [K in keyof P as P[K] extends { readonly kind: "service" } ? K : never]: Disposer }>;
-  handle<K extends Keys<P, "chain">>(name: K, terminal: Implementation<P[K], D, P, O>, options?: RegistrationOptions): Result<Disposer>;
-  middleware<K extends Keys<D & P & O, "chain">>(name: K, handler: Handler<(D & P & O)[K], D, P, O>): Result<Disposer>;
-  guard<K extends Keys<D & P & O, "guard">>(name: K, handler: Handler<(D & P & O)[K], D, P, O>): Result<Disposer>;
-  on<K extends Keys<D & P & O, "event">>(name: K, handler: Handler<(D & P & O)[K], D, P, O>): Result<Disposer>;
-  dispatch<K extends Keys<D & P & O, "chain" | "guard">>(name: K, input: Dispatch<(D & P & O)[K]>[0], options?: CallOptions): Promise<Dispatch<(D & P & O)[K]>[1]>;
-  emit<K extends Keys<P, "event">>(name: K, payload: P[K] extends EventToken<infer I> ? I : never): Result<import("./types").EmitReceipt>;
-  resource<T, E = never>(spec: PluginResource<T, E, D, P, O>): Promise<Result<T, E>>;
-  startTask<T, E = never>(spec: PluginTask<T, E, D, P, O>): Result<TaskHandle<T, E>>;
-}
-
-export interface PluginSpec<D extends TokenMap, P extends TokenMap, O extends TokenMap> {
-  readonly name: string;
-  readonly requires?: D;
-  readonly provides?: P;
-  readonly optional?: O;
-  readonly setup: (ctx: PluginContext<NoInfer<D>, NoInfer<P>, NoInfer<O>>) => MaybePromise<Result<unknown, unknown>>;
-}
-
-
-export declare function defineService<S>(spec: ServiceSpec<S>): Result<ServiceToken<S>>;
-export declare function defineChain<I, O, E = never>(spec: ChainSpec<I, O>): Result<ChainToken<I, O, E>>;
-export declare function defineGuard<I>(spec: GuardSpec<I>): Result<GuardToken<I>>;
-export declare function defineEvent<T>(spec: EventSpec<T>): Result<EventToken<T>>;
-export declare function createHost(options?: HostOptions): Result<Host>;
-export declare function validatePlugin(input: unknown): Result<Plugin>;
-export declare function definePlugin<const D extends TokenMap = Record<never, never>, const P extends TokenMap = Record<never, never>, const O extends TokenMap = Record<never, never>>(spec: PluginSpec<D, P, O>): Plugin;
+void createEchoPlugin;
 ```
+
+| 阶段 | 成功含义 | 使用方式 |
+| --- | --- | --- |
+| definePlugin | 获得冻结声明 | install 时校验声明并执行 setup |
+| 配置工厂 | 配置已通过工厂校验 | 继续提交返回的 Plugin |
+| Host.install | 整个批次已发布 | 使用固定依赖和公开能力 |
+| Application.setPlugins | 期望集合已处理 | 检查 snapshot 中的 active、pending、failed |
+| Loader 创建或刷新 | 模块已构建并提交装配 | 同时检查装配快照；加载错误包含阶段和入口索引 |
+
+setup 使用 ctx.deps 完成初始化。方法、处理器、资源取得和结构化子任务使用 call.deps，继承当前调用的取消、截止时间和有效执行预算。后台工作通过 ctx.startTask 明确建立拥有者级生命周期。具体资源与关闭协议见后文。
 
 ## 2. 声明与装配
 
@@ -584,6 +102,8 @@ next 返回局部 Continuation thenable，不依赖覆写原生 Promise.then 检
 ## 6. Guard
 
 处理器只能返回明确 allow 或 deny 的 Result。没有处理器时为 guard-unconfigured。按顺序执行，首次 deny 返回该判断，不执行后续判断；处理器失败、非法结果或取消立即返回失败。
+
+service、chain 和 guard 的执行关联提供者生命周期。提供者停止时取消当前业务调用，尚未进入的处理器不会继续执行；卸载等待关联工作的实际结束。非协作处理器仍未结束时保留账本，并在关闭期限到达时报告未完成。清理阶段继续使用独立的受管调用通道。
 
 只有全部明确 allow 才返回 allow。core 不把 undefined、异常或超时理解成默认允许。
 
@@ -660,7 +180,11 @@ Plugin Context 的 requestClose 只请求自身拥有者或自己创建的作用
 
 子作用域只能收紧祖先限制。所有适用祖先均参与准入，不能通过不断创建子作用域绕过总量限制。
 
+每次受管执行合并调用视图作用域、执行者作用域和父调用的有效限制。嵌套依赖调用、dispatch、结构化子任务、wait 与 next 不能放宽该快照；身份与资源归属保持各自语义。
+
 显式 timeoutMs 不能延长既有父调用截止时间。now 使用单调时间；clock 和 timer 归本宿主，关闭后没有遗留 timer。等待、事件、激活和关闭的计时器分别登记，重复关闭不重置预算。
+
+默认调度器按截止时间分段处理超过平台单次定时范围的长期限，不缩短合法超时配置。取消和实际结束会撤销当前分段。
 
 ## 10. 宿主装配接口
 

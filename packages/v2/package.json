@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "bun ../../node_modules/typescript/bin/tsc --noEmit -p tsconfig.json && bun scripts/check-types.ts && bun scripts/check-session-types.ts && bun scripts/check-llm-types.ts && bun scripts/check-tools-types.ts && bun scripts/check-scheduler-types.ts && bun scripts/check-agent-types.ts",
-    "lint": "oxlint --type-aware --deny-warnings -c .oxlintrc.json plugins/*/src core/src standard/src application/src loader/src create/src fixtures scripts vitest.config.ts && bun scripts/check-kernel.ts && bun scripts/check-platform.ts",
+    "lint": "oxlint --type-aware --deny-warnings -c .oxlintrc.json plugins/*/src core/src standard/src application/src loader/src create/src sdk/src fixtures scripts vitest.config.ts && bun scripts/check-kernel.ts && bun scripts/check-platform.ts",
     "build": "bun scripts/build.ts",
     "test": "bun ../../node_modules/vitest/vitest.mjs run --config vitest.config.ts --coverage",
     "test:llm:mutations": "bun scripts/verify-llm-mutations.ts",

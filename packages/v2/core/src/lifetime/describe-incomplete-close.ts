@@ -12,7 +12,7 @@ export function describeIncompleteClose(kernel: Kernel, target: { scope?: Scope;
   };
   const effects = target.effect ? kernel.lifetime.effects().filter((effect) => effect === target.effect) : kernel.lifetime.effects().filter((effect) =>
     contains(effect.owner) || [...effect.dependencies.values()].some((provider) => provider && contains(provider.owner)));
-  const works = target.effect ? [...(target.effect.cleanupWork ?? [])] : kernel.execution.works().filter((work) => contains(work.executor) || contains(work.resourceOwner));
+  const works = target.effect ? [...(target.effect.cleanupWork ?? [])] : kernel.execution.works().filter((work) => work.owners.some(contains));
   return kernel.fault("close-incomplete", target.owner ?? target.effect?.owner, {
     scopeId: target.scope?.id ?? target.owner?.scope.id ?? target.effect?.owner.scope.id,
     details: {

@@ -1,16 +1,18 @@
 import type { CallOptions, Invocation, MaybePromise, Result } from "../contracts/types";
-import type { AnyResult, Owner, Kernel, View, Work } from "../foundation/types";
+import type { AnyResult, Owner, Kernel, Provider, View, Work } from "../foundation/types";
 import { readCallOptions } from "../contracts/read-call-options";
 import { observeSignal, signalAborted } from "../contracts/observe-signal";
 import { normalizeResult } from "../contracts/normalize-result";
 import { checkAdmission } from "../foundation/check-admission";
 import { safeNow } from "../foundation/safe-now";
 import { createFault } from "../contracts/create-fault";
+import { inheritLimits } from "../foundation/inherit-limits";
 
 export interface WorkOptions {
   label?: string;
   view: View;
   executor: Owner;
+  provider?: Provider;
   kind?: "call" | "task";
   phase?: Work["phase"];
   parent?: Work;
@@ -23,7 +25,7 @@ export function startWork(kernel: Kernel, args: WorkOptions, run: (call: Invocat
   if (!admission.ok) return admission;
   if (args.view.owner.kind === "host" && args.view.owner.transaction?.phase === "staging" && !args.parent && args.phase !== "observer") return kernel.fault("scope-closed", args.executor);
   const kind = args.kind ?? "call";
-  const limits = args.view.scope.limits;
+  const limits = inheritLimits(args.view.scope.limits, args.executor.scope.limits, ...(args.parent ? [args.parent.limits] : []));
   const count = kind === "call" ? kernel.execution.counts().calls : kernel.execution.counts().tasks;
   const maximum = kind === "call" ? limits.maxActiveCalls : limits.maxActiveTasks;
   const parent = args.parent;
@@ -37,7 +39,7 @@ export function startWork(kernel: Kernel, args: WorkOptions, run: (call: Invocat
   const controller = new AbortController();
   const sources = cleanup
     ? [cleanup.controller.signal, parent?.controller.signal, options.signal]
-    : [args.view.owner.controller.signal, args.view.scope.controller.signal, args.executor.controller.signal, parent?.controller.signal, options.signal];
+    : [args.view.owner.controller.signal, args.view.scope.controller.signal, args.executor.controller.signal, args.provider?.signal, parent?.controller.signal, options.signal];
   if (sources.some((signal) => signal && signalAborted(signal))) return kernel.fault(parent?.cancellation ?? "cancelled", args.executor);
   let deadline: number;
   try { deadline = Math.min(kernel.scheduler.now() + timeout, parent?.deadline ?? Infinity, cleanup?.deadline ?? Infinity); }
@@ -50,10 +52,12 @@ export function startWork(kernel: Kernel, args: WorkOptions, run: (call: Invocat
       return firstResult;
     };
   });
+  const resourceOwner = parent?.resourceOwner ?? args.view.resourceOwner ?? args.view.owner;
+  const owners = Object.freeze([...new Set([args.executor, resourceOwner, ...(args.provider ? [args.provider.owner] : [])])]);
   const work: Work = {
     label: args.label, bodyOpen: true, id: `work-${kernel.id()}`, kind, phase: args.phase ?? parent?.phase ?? (args.view.owner.state === "staging" ? "activation" : "business"), view: args.view,
-    executor: args.executor, resourceOwner: parent?.resourceOwner ?? args.view.resourceOwner ?? args.view.owner,
-    parent, depth: (parent?.depth ?? 0) + 1, controller, deadline,
+    executor: args.executor, resourceOwner, owners,
+    provider: args.provider, limits, parent, depth: (parent?.depth ?? 0) + 1, controller, deadline,
     actual: outcome, outcome, fail(result) {
       const first = finishOutcome(result);
       const error = first.ok ? undefined : first.error;
@@ -74,7 +78,7 @@ export function startWork(kernel: Kernel, args: WorkOptions, run: (call: Invocat
     for (let index = 0; index < sources.length; index++) {
       const signal = sources[index];
       if (!signal || sources.indexOf(signal) !== index) continue;
-      const observe = !cleanup && index < 3 ? kernel.execution.observeLifetimeSignal : observeSignal;
+      const observe = !cleanup && index < 4 ? kernel.execution.observeLifetimeSignal : observeSignal;
       unlink.push(observe(signal, cancel));
       if (signalAborted(signal)) cancel();
     }
